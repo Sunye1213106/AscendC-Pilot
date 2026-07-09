@@ -1,0 +1,20 @@
+﻿[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "understand-operator"
+version = "0.1.0"
+description = "AscendC operator knowledge-base plugin backed by codebase-memory-mcp"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+uo-prepare = "understand_operator.scripts.prepare_operator:main"
+uo-quality = "understand_operator.scripts.quality_gate:main"
+uo-cbm = "understand_operator.scripts.cbm_query:main"
+
+[tool.setuptools.packages.find]
+where = ["understand-operator-plugin"]
+include = ["understand_operator*"]

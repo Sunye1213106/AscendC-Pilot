@@ -1,0 +1,15 @@
+{
+  "name": "understand-operator",
+  "metadata": {
+    "description": "AscendC operator KB plugin backed by codebase-memory-mcp"
+  },
+  "owner": {
+    "name": "local"
+  },
+  "plugins": [
+    {
+      "name": "understand-operator",
+      "source": "understand-operator-plugin"
+    }
+  ]
+}

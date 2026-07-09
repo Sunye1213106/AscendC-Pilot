@@ -1,0 +1,17 @@
+{
+  "name": "understand-operator",
+  "description": "AscendC operator KB plugin backed by codebase-memory-mcp",
+  "version": "0.1.0",
+  "author": {
+    "name": "local"
+  },
+  "license": "MIT",
+  "keywords": [
+    "codebase-analysis",
+    "knowledge-graph",
+    "architecture",
+    "ascendc"
+  ],
+  "skills": "skills",
+  "agents": "agents"
+}
