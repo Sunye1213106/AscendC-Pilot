@@ -242,6 +242,9 @@ Output:
 
 - `kernel/kernel_path_matrix.yaml`
 - `kernel/sync_buffer_map.yaml`
+- `tiling/kernel_evidence_backfill.yaml`
+
+After Phase 5, the host must apply confirmed backfills from kernel evidence to the affected `tiling/*.yaml` artifacts. Do not leave tiling-side `unknown` or hint-only kernel parameters unresolved when an approved kernel path artifact has direct evidence. Record conflicts instead of overwriting contradictory tiling evidence.
 
 ## Phase 6 - Evidence Consistency Agent
 

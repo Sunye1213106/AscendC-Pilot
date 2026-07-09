@@ -33,6 +33,7 @@ def main(argv: list[str] | None = None) -> int:
     tiling_route = read_text(tiling_route_path)
     dispatch_variables = read_text(dispatch_variables_path)
     predicate_space = read_text(predicate_space_path)
+    kernel_backfill = read_text(base / "tiling" / "kernel_evidence_backfill.yaml")
     branch_matrix = read_text(base / "tiling" / "branch_matrix.yaml")
     kernel_task_plan = read_text(base / "kernel" / "kernel_task_plan.yaml")
     kernel_dispatch_review = read_text(base / "kernel" / "kernel_dispatch_review.yaml")
@@ -65,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
         warnings.append("tiling branch matrix is empty")
     if re.search(r"kernel_paths:\s*\[\]", kernel_matrix):
         warnings.append("kernel path matrix is empty")
+    _check_kernel_evidence_backfill(kernel_backfill, tiling_families, branch_matrix, kernel_matrix, warnings)
     if tiling_families:
         _check_tiling_family_contract(tiling_families, tiling_route, kernel_task_plan, warnings, blockers)
     if branch_matrix and not re.search(r"branches:\s*\[\]", branch_matrix):
@@ -84,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
         dispatch_variables,
         predicate_space,
         branch_matrix,
+        kernel_backfill,
         kernel_task_plan,
         kernel_dispatch_review,
         kernel_matrix,
@@ -112,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
         f"branch_matrix_materialization_status: {_branch_materialization_status(branch_matrix, _family_count(tiling_families))}",
         f"compute_flow_confidence: {_confidence(compute_flow)}",
         f"kernel_alignment_confidence: {_confidence(kernel_matrix)}",
+        f"kernel_evidence_backfill_status: {_kernel_backfill_status(kernel_backfill)}",
         f"evidence_consistency_status: {'fail' if blockers else ('warning' if warnings else 'pass')}",
         f"unknown_ratio: {unknown_ratio}",
         f"decision: {decision}",
@@ -136,6 +140,63 @@ def _confidence(text: str) -> str:
     if "confidence: medium" in lowered:
         return "medium"
     return "low"
+
+
+def _check_kernel_evidence_backfill(
+    kernel_backfill: str,
+    tiling_families: str,
+    branch_matrix: str,
+    kernel_matrix: str,
+    warnings: list[str],
+) -> None:
+    if not _has_kernel_path_evidence(kernel_matrix):
+        return
+    if not _has_tiling_kernel_unknowns(tiling_families, branch_matrix):
+        return
+
+    status = _kernel_backfill_status(kernel_backfill)
+    if status == "missing":
+        warnings.append(
+            "kernel evidence can refine tiling unknowns, but tiling/kernel_evidence_backfill.yaml is missing"
+        )
+    elif status in {"pending", "empty"}:
+        warnings.append(
+            "kernel evidence backfill was not applied while tiling-side kernel fields still contain unknowns or hints"
+        )
+
+
+def _kernel_backfill_status(kernel_backfill: str) -> str:
+    if not kernel_backfill.strip():
+        return "missing"
+    lowered = kernel_backfill.lower()
+    if re.search(r"(?m)^\s*status\s*:\s*applied\b", lowered):
+        return "applied"
+    if re.search(r"(?m)^\s*status\s*:\s*partial\b", lowered):
+        return "partial"
+    if re.search(r"(?m)^\s*backfills\s*:\s*\[\]", lowered):
+        return "empty"
+    if re.search(r"(?m)^\s*status\s*:\s*pending\b", lowered):
+        return "pending"
+    return "present"
+
+
+def _has_kernel_path_evidence(kernel_matrix: str) -> bool:
+    if not kernel_matrix.strip() or re.search(r"kernel_paths:\s*\[\]", kernel_matrix):
+        return False
+    lowered = kernel_matrix.lower()
+    return any(marker in lowered for marker in ("family_to_kernel_path", "kernel_path", "source_family", "tiling_key_to_kernel"))
+
+
+def _has_tiling_kernel_unknowns(tiling_families: str, branch_matrix: str) -> bool:
+    combined = f"{tiling_families}\n{branch_matrix}".lower()
+    patterns = [
+        r"kernel_path_hint\s*:\s*(?:[\"']?)unknown\b",
+        r"kernel_entry_hint\s*:[\s\S]{0,160}\bunknown\b",
+        r"predicted_kernel_path_hint\s*:[\s\S]{0,160}\bunknown\b",
+        r"tiling_key_witness\s*:[\s\S]{0,160}\bunknown\b",
+        r"needs_alignment\s*:\s*true\b",
+    ]
+    return any(re.search(pattern, combined) for pattern in patterns)
 
 
 def _check_tiling_family_contract(

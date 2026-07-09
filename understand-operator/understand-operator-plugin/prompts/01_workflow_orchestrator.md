@@ -27,6 +27,7 @@
 9. **并行 Task → 多个 `uo-kernel-path`（每个 approved task_id 一个 foreground Task，等待返回后 barrier）**
 9b. **barrier** → `verify_subagent_barrier.py --phase kernel_path`，通过后再 Read `kernel/paths/*`
 10. Kernel Alignment Builder。（宿主按 `prompts/07_kernel_alignment_builder.md` 执行）
+10b. Kernel evidence backfill：宿主必须确认 `tiling/kernel_evidence_backfill.yaml` 已生成，并且已将 kernel 证据能解析的 tiling unknown/hint 回填到对应 `tiling/*.yaml`。
 11. Evidence Consistency Agent。（宿主按 `prompts/08_evidence_consistency_agent.md` 执行）
 12. Operator KB / Route Builder。（宿主按 `prompts/09_route_builder.md` 执行）
 13. Quality Gate。（宿主执行脚本）
@@ -45,6 +46,7 @@
 要求：
 
 - 所有中间结果都写入 artifact。
+- Kernel Path/Alignment 阶段确认的 tiling 参数、kernel entry、tiling data reader/writer alignment 不得只留在 `kernel/*`；必须通过 `tiling/kernel_evidence_backfill.yaml` 回填早期 tiling unknown/hint，冲突则记录 conflict。
 - route.md 只做地图，不写长报告。
 - 不生成真实测试代码。
 - 没有证据不要编造。

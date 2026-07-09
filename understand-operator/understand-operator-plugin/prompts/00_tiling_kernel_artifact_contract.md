@@ -9,6 +9,7 @@ Do not generate tests, do not run tests, do not add coverage, and do not add ins
 - `tiling_branch_families.yaml` is the primary tiling dispatch artifact.
 - `branch_matrix.yaml` is a representative sample table, not a full tiling key enumeration.
 - Tiling-side kernel facts are hints unless tiling source explicitly selects kernel entry, kernel type, or template instance.
+- Unknown tiling-side kernel facts must not stay unknown after Kernel Path Agents provide direct evidence. Kernel Alignment Builder must backfill only those fields that kernel evidence resolves, preserving the original tiling evidence and recording the kernel evidence used.
 - Numeric tiling data variants do not split kernel tasks by themselves.
 - `source_spans`, `trigger_preconditions`, `traceability`, and `downstream_preparation` are indexes for later analysis, not test cases.
 
@@ -288,3 +289,31 @@ approved_task_ids: []
 ```
 
 For `decision: dispatch_all`, `approved_task_ids` must equal `dispatchable_task_ids`.
+
+## Kernel Evidence Backfill Schema
+
+`tiling/kernel_evidence_backfill.yaml` records facts learned from kernel path analysis that resolve earlier tiling-side `unknown`, `hint`, or `needs_alignment` fields.
+
+The builder may update existing `tiling/*.yaml` artifacts only when all of these are true:
+
+- the target field is currently `unknown`, empty, hint-only, or listed under unresolved/blocking/downstream questions;
+- at least one approved `kernel/paths/Kxxx_kernel_path.yaml` contains direct evidence for the replacement;
+- the replacement does not contradict host/tiling source evidence.
+
+Do not overwrite tiling-source facts with kernel guesses. If kernel evidence conflicts with host evidence, leave the original field unchanged and write the conflict under `conflicts`.
+
+```yaml
+version: 1
+status: pending | applied | partial | skipped
+backfills:
+  - target_artifact: tiling/tiling_branch_families.yaml
+    target_selector: "families[family_id=TF001].kernel_entry_hint"
+    previous_value: unknown
+    new_value: {}
+    source_kernel_paths: [K001]
+    evidence: []
+    applied: true | false
+    reason: ""
+conflicts: []
+unresolved_after_backfill: []
+```

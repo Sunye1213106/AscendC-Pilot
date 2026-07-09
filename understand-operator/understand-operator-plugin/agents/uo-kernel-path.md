@@ -53,6 +53,7 @@ Do not invent kernel entries, compute steps, buffer behavior, sync behavior, or 
 The YAML must include:
 
 - `kernel_path`
+- `tiling_backfill_candidates`
 - `io_alignment`
 - `compute_step_alignment`
 - `tiling_data_usage`
@@ -66,6 +67,8 @@ The YAML must include:
 - `confidence`
 
 `compute_step_alignment` is the most important section. It must identify implemented, skipped, fused, conditional, and evidence-missing compute steps.
+
+`tiling_backfill_candidates` is required. The subagent must not edit `tiling/*`, but it must list any tiling-side `unknown` or hint that this kernel path resolves, with `target_artifact`, `target_selector`, `previous_unknown_or_hint`, `resolved_value`, `evidence`, and `confidence`.
 
 ## Completion Manifest
 

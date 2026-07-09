@@ -35,6 +35,7 @@
 YAML 必须包含：
 
 - kernel_path
+- tiling_backfill_candidates
 - io_alignment
 - compute_step_alignment
 - tiling_data_usage
@@ -56,3 +57,14 @@ YAML 必须包含：
 - 和 tiling_data_signature 对齐。
 - 没有证据不要编造。
 - kernel 入口不确定时写 unknown，并说明候选函数。
+
+## Tiling Unknown 回填候选
+
+Kernel Path Agent 只分析自己的 path，不能直接改 `tiling/*`，但必须在 `tiling_backfill_candidates` 中列出本 path 能够用 kernel 证据解析的 tiling unknown/hint：
+
+- `source_family` / `representative_case_id` 对应的真实 `kernel_entry`、实现类、模板参数、tiling data struct；
+- kernel 实际读取的 tiling data 字段及其 host writer 对齐；
+- tiling_key witness 与 kernel dispatch gate 的关系；
+- 早期 `predicted_kernel_path_hint`、`kernel_entry_hint`、`needs_alignment`、`unresolved_for_downstream` 中可被本 path 证据消解的项。
+
+每条候选必须包含 `target_artifact`、`target_selector`、`previous_unknown_or_hint`、`resolved_value`、`evidence` 和 `confidence`。证据不足时不要列为 resolved；写入 `missing_items`。

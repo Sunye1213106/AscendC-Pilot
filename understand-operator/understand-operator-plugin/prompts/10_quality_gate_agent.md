@@ -14,6 +14,7 @@
 - `tiling/tiling_route.yaml`
 - `tiling/dispatch_variables.yaml`
 - `tiling/tiling_predicate_space.yaml`
+- `tiling/kernel_evidence_backfill.yaml`
 - `tiling/branch_matrix.yaml`
 - `kernel/kernel_task_plan.yaml`
 - `kernel/kernel_path_matrix.yaml`
@@ -34,6 +35,7 @@
 - branch_matrix_materialization_status
 - compute_flow_confidence
 - kernel_alignment_confidence
+- kernel_evidence_backfill_status
 - evidence_consistency_status
 - unknown_ratio
 - decision
@@ -70,6 +72,7 @@ decision 只能是 green、yellow、red。
 - family 缺少 `guard_signature`、`structural_tiling_signature`、`representative_cases` 或 route action -> yellow。
 - 非关键 family 的模板/编译期常量未解析 -> yellow。
 - kernel alignment warning 但主路径完整 -> yellow。
+- kernel path 已有直接证据但没有生成或应用 `tiling/kernel_evidence_backfill.yaml`，且 tiling 侧仍保留相关 unknown/hint -> yellow。
 - 主路径完整、输入输出清楚、证据充分、风险可控 -> green。
 
 `branch_matrix.yaml` 是 branch family 的代表样本表，不是全量 tiling_key 枚举表。判断 kernel task 粒度时，以 `tiling_branch_families.yaml`、`tiling_route.yaml` 和 `kernel/kernel_task_plan.yaml` 为准。
