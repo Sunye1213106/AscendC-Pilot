@@ -2,20 +2,31 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-SKILL_SRC="$REPO_ROOT/understand-operator-plugin/skills/understand-operator"
+SKILLS_ROOT="$REPO_ROOT/understand-operator-plugin/skills"
 AGENTS_SRC="$REPO_ROOT/understand-operator-plugin/agents"
 PLATFORM="${1:-opencode}"
 
+SKILL_NAMES=(uo-init uo-query uo-update uo-diff understand-operator)
+
 case "$PLATFORM" in
-  opencode|codex) TARGET="$HOME/.agents/skills" ;;
+  opencode) TARGET="$HOME/.config/opencode/skills" ;;
+  codex) TARGET="$HOME/.agents/skills" ;;
   cursor) TARGET="$HOME/.cursor/skills" ;;
   *) echo "Unknown platform: $PLATFORM"; exit 1 ;;
 esac
 
-SKILL_DEST="$TARGET/understand-operator"
 mkdir -p "$TARGET"
-rm -rf "$SKILL_DEST"
-ln -s "$SKILL_SRC" "$SKILL_DEST"
+for name in "${SKILL_NAMES[@]}"; do
+  src="$SKILLS_ROOT/$name"
+  dest="$TARGET/$name"
+  if [ ! -d "$src" ]; then
+    echo "Missing skill source: $src" >&2
+    exit 1
+  fi
+  rm -rf "$dest"
+  ln -s "$src" "$dest"
+  echo "Installed skill: $dest -> $src"
+done
 
 if [ "$PLATFORM" = "cursor" ] && [ -d "$AGENTS_SRC" ]; then
   AGENTS_DEST="$HOME/.cursor/agents"
@@ -25,5 +36,5 @@ if [ "$PLATFORM" = "cursor" ] && [ -d "$AGENTS_SRC" ]; then
   echo "Installed understand-operator subagents: $AGENTS_DEST/uo-*.md"
 fi
 
-echo "Installed understand-operator skill: $SKILL_DEST -> $SKILL_SRC"
-echo "For Cursor: add the repository root as a local plugin, or rely on the installed ~/.cursor/agents links."
+echo "Commands: /uo-init  /uo-query  /uo-update  /uo-diff"
+echo "For Cursor: add the repository root as a local plugin, or rely on the installed skill links."

@@ -25,11 +25,10 @@
 | `uo-p0` | Phase 0 — 预检与 CBM 预取 |
 | `uo-p05` | Phase 0.5 — Macro 执行范围人工审阅（闸门） |
 | `uo-p1` | Phase 1 — 宏观边界 Macro Boundary |
-| `uo-p15` | Phase 1.5 — 边界人工审阅（闸门） |
 | `uo-p2a` | Phase 2a — 并行下发 host + flow subagent |
 | `uo-p2b` | Phase 2b — barrier 校验并读取 tiling/flows |
 | `uo-p3` | Phase 3 — Kernel 任务规划 |
-| `uo-p35` | Phase 3.5 — Kernel 分发人工审阅（闸门） |
+| `uo-p35` | Phase 3.5 — Kernel 分发人工审阅（闸门，含全量 tiling/family） |
 | `uo-p4a` | Phase 4a — 并行下发 kernel path subagent |
 | `uo-p4b` | Phase 4b — barrier 校验并读取 kernel paths |
 | `uo-p5` | Phase 5 — Kernel 对齐矩阵 |
@@ -37,13 +36,15 @@
 | `uo-p7` | Phase 7 — Route / KB 地图 |
 | `uo-p8` | Phase 8 — Quality Gate |
 
+> **不要**创建 `uo-p15`。Phase 1.5 已取消。
+
 ### 2. 每个 phase 的标准节奏
 
 对每个 todo item：
 
 1. **开始前**：TodoWrite → 该项 `in_progress`；在对话里用 1–3 句话说明**正在做什么**。
 2. **完成后**：TodoWrite → 该项 `completed`；在对话里汇报**产出路径**或**等待用户的选择**。
-3. **闸门 phase（0.5 / 1.5 / 3.5）**：完成后 todo 保持 `in_progress` 或单独标记为 waiting，**必须 STOP 等用户**，不得自动 continue。
+3. **闸门 phase（仅 0.5 / 3.5）**：完成后 todo 保持 `in_progress` 或 waiting，**必须 STOP 等用户**，并通过 `review_checkpoint.py` 交互菜单收集决策。Phase 3.5 摘要必须含完整 tiling/family 信息。
 
 ### 3. 默认连续执行到人工审核点
 
@@ -53,7 +54,7 @@
 | subagent 下发 / barrier | 可以在 subagent 全部返回后继续跑 barrier；必须先 barrier 通过再读产物 |
 | 闸门 turn | 只展示审阅摘要 + 等用户 |
 
-默认允许执行到 `Phase 0.5 Macro Scope Review`，然后**必须 STOP 等用户确认 Phase 1 的探索范围**。用户通过 Scope Review 后，默认继续执行 `Phase 1 → Phase 1.5 Boundary Review` 再停。用户通过 Boundary Review 后，默认继续执行到 `Phase 3.5 Kernel Dispatch Review` 再停。禁止越过 `Phase 0.5` / `Phase 1.5` / `Phase 3.5` 三个人工审核点。
+默认允许执行到 `Phase 0.5 Macro Scope Review`，然后**必须 STOP**。用户 `continue` 后，默认连续执行 `Phase 1 → Phase 2 → Phase 3 → Phase 3.5`，在 **3.5** 再停（此时必须展示全量 tiling/family）。**禁止**越过 `Phase 0.5` / `Phase 3.5`。**禁止**再停在旧的 Phase 1.5。
 
 ### 4. Subagent 必须 foreground
 

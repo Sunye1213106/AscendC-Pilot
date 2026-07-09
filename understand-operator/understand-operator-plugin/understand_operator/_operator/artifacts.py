@@ -226,9 +226,9 @@ notes: Workflow not started.
 todos:
   - id: uo-p0
     status: pending
-  - id: uo-p1
+  - id: uo-p05
     status: pending
-  - id: uo-p15
+  - id: uo-p1
     status: pending
   - id: uo-p2a
     status: pending
@@ -252,11 +252,11 @@ todos:
     status: pending
 """,
         "summary/boundary_review.yaml": """checkpoint: boundary
-status: pending
-decision: pending
+status: skipped
+decision: skipped_phase_1_5_retired
 reviewer: null
 reviewed_at: null
-comments: ""
+comments: "Phase 1.5 Boundary Review retired; Macro Boundary proceeds directly to Phase 2."
 summary:
   required_input_count: 0
   optional_input_count: 0
@@ -277,6 +277,15 @@ non_dispatchable_task_ids: []
 needs_review_task_ids: []
 approved_task_ids: []
 rejected_task_ids: []
+family_coverage_summary:
+  total_families: 0
+  task_mapped_families: []
+  excluded_families: []
+  needs_review_families: []
+tiling_brief:
+  frontier_entries: []
+  dispatch_variable_categories: []
+  key_predicates: []
 summary:
   high_priority_tasks: []
   unknown_kernel_entry_tasks: []

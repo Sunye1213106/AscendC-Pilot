@@ -1,10 +1,10 @@
 ﻿<#
 .SYNOPSIS
-  Install understand-operator skill for OpenCode / Codex / compatible agents.
+  Install understand-operator skills for OpenCode / Codex / Cursor.
 
 .EXAMPLE
-  ./install.ps1 opencode
-  ./install.ps1 -Uninstall opencode
+  ./install.ps1 cursor
+  ./install.ps1 -Uninstall cursor
 #>
 
 param(
@@ -15,11 +15,20 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$SkillSrc = Join-Path $RepoRoot "understand-operator-plugin\\skills\\understand-operator"
+$SkillsRoot = Join-Path $RepoRoot "understand-operator-plugin\\skills"
 $AgentsSrc = Join-Path $RepoRoot "understand-operator-plugin\\agents"
 
+$SkillNames = @(
+    "uo-init",
+    "uo-query",
+    "uo-update",
+    "uo-diff",
+    "understand-operator"
+)
+
 $Targets = @{
-    opencode = Join-Path $HOME ".agents\skills"
+    # OpenCode primary global skills dir (also discovers ~/.agents/skills)
+    opencode = Join-Path $HOME ".config\opencode\skills"
     codex    = Join-Path $HOME ".agents\skills"
     cursor   = Join-Path $HOME ".cursor\skills"
 }
@@ -32,17 +41,29 @@ if (-not $Targets.ContainsKey($Platform)) {
     Write-Error "Unknown platform: $Platform. Supported: $($Targets.Keys -join ', ')"
 }
 
-$SkillDest = Join-Path $Targets[$Platform] "understand-operator"
+$TargetRoot = $Targets[$Platform]
+
 if ($Uninstall) {
-    if (Test-Path $SkillDest) { Remove-Item $SkillDest -Recurse -Force }
-    Write-Host "Removed skill link: $SkillDest"
+    foreach ($name in $SkillNames) {
+        $dest = Join-Path $TargetRoot $name
+        if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+        Write-Host "Removed skill link: $dest"
+    }
     exit 0
 }
 
-New-Item -ItemType Directory -Force -Path $Targets[$Platform] | Out-Null
+New-Item -ItemType Directory -Force -Path $TargetRoot | Out-Null
 
-if (Test-Path $SkillDest) { Remove-Item $SkillDest -Recurse -Force }
-New-Item -ItemType Junction -Path $SkillDest -Target $SkillSrc | Out-Null
+foreach ($name in $SkillNames) {
+    $src = Join-Path $SkillsRoot $name
+    if (-not (Test-Path $src)) {
+        Write-Error "Missing skill source: $src"
+    }
+    $dest = Join-Path $TargetRoot $name
+    if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+    New-Item -ItemType Junction -Path $dest -Target $src | Out-Null
+    Write-Host "Installed skill: $dest -> $src"
+}
 
 if ($Platform -eq "cursor" -and (Test-Path $AgentsSrc)) {
     $AgentsDestRoot = $AgentTargets[$Platform]
@@ -52,13 +73,9 @@ if ($Platform -eq "cursor" -and (Test-Path $AgentsSrc)) {
         $agentDest = Join-Path $AgentsDestRoot $_.Name
         Copy-Item -Path $_.FullName -Destination $agentDest -Force
     }
+    Write-Host "Installed subagents: $AgentsDestRoot\uo-*.md"
 }
 
-Write-Host "Installed understand-operator skill:"
-Write-Host "  $SkillDest -> $SkillSrc"
-if ($Platform -eq "cursor") {
-    Write-Host "Installed understand-operator subagents:"
-    Write-Host "  $AgentsDestRoot\uo-*.md (copied from $AgentsSrc)"
-}
 Write-Host ""
-Write-Host "For Cursor: add the repository root as a local plugin, or rely on the installed ~/.cursor/agents links."
+Write-Host "Commands: /uo-init  /uo-query  /uo-update  /uo-diff"
+Write-Host "For Cursor: add the repository root as a local plugin, or rely on the installed skill links."

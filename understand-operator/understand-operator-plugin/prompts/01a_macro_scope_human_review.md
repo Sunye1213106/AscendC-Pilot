@@ -37,11 +37,33 @@
 
 面向用户展示时，用 2-4 句话解释每个待确认项，不要只列路径。
 
-向用户询问：
+## 交互选择（必须，chat-first）
+
+展示完摘要后，按 `prompts/00_review_menu.md`：
+
+1. 打印选项（脚本默认不抢键盘）：
+
+```powershell
+python "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --gate macro_scope
+```
+
+2. **STOP**，请用户在**聊天输入框**回复：`continue` / `revise` / `stop` / `manual_supplement: ...`
+3. 收到回复后落盘：
+
+```powershell
+python "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --gate macro_scope --decision <choice> [--notes "..."]
+```
+
+**禁止**对 agent shell 使用 `--interactive` / `--arrows`（会导致弹窗无法在聊天里输入）。
+
+菜单选项：
 
 - `continue`：按当前范围进入 Phase 1。
 - `revise`：用户补充 include/exclude/skip 规则后，更新本审阅并再次展示。
 - `stop`：停止 workflow。
+- `manual_supplement`：手工补充额外范围/约束；写入 notes 后重新跑菜单。
+
+读取 `UO_REVIEW_DECISION=...` 与 `summary/macro_scope_decision.json`。
 
 必须写入 `summary/macro_scope_review.yaml`：
 
@@ -72,13 +94,14 @@ uncertain_scope:
     suggested_default: ""
     evidence: []
 decision:
-  value: pending # continue | revise | stop | pending
+  value: pending # continue | revise | stop | manual_supplement | pending
   decided_at: null
   notes: ""
 ```
 
 Gate rules:
 
-- 不得在用户明确选择 `continue` 前启动 Phase 1。
-- 如果用户选择 `revise`，更新 `summary/macro_scope_review.yaml` 后重新展示本审阅。
+- 不得在用户通过交互菜单明确选择 `continue` 前启动 Phase 1。
+- 如果用户选择 `revise`，更新 `summary/macro_scope_review.yaml` 后重新展示本审阅并再次运行菜单。
+- 如果用户选择 `manual_supplement`，把补充写入 review yaml / notes，然后重新运行菜单。
 - 如果用户选择 `stop`，结束 workflow 并汇报当前 artifact。

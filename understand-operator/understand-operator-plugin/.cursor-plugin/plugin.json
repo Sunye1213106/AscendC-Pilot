@@ -1,7 +1,7 @@
 {
   "name": "understand-operator",
-  "description": "AscendC operator KB plugin backed by codebase-memory-mcp",
-  "version": "0.1.0",
+  "description": "AscendC operator KB via /uo-init /uo-query /uo-update /uo-diff (CBM-first)",
+  "version": "0.2.0",
   "author": {
     "name": "local"
   },

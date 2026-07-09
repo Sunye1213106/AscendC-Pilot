@@ -28,7 +28,7 @@ Every code lookup must start with `cbm_query.py`.
 - Inspect a function snippet: `get_code_snippet`
 - Find API names, strings, tiling fields, or sync operations: `search_code`
 
-Do not read whole kernel `.cpp` / `.h` files. Read source only with line scope after CBM gives a file+line, when macro/template/string context is incomplete, or when a CBM query returns empty/error and that query is recorded.
+CBM first for every source lookup. After CBM success, prefer line-scoped Read. Only when CBM fails (empty/error; record the query) may you fall back to reading source, including whole-file Read as last resort.
 
 ## Scope
 

@@ -40,18 +40,20 @@ Subagent 写完产物后必须写 completion manifest（见各 `agents/uo-*.md`�
 | Phase | 执行方式 | Prompt |
 |---|---|---|
 | 0 预检 | 宿主跑脚本 | — |
+| 0.5 Macro Scope Review | 宿主协调（闸门） | `prompts/01a_macro_scope_human_review.md` |
 | 1 Macro Boundary | 宿主按 prompt 执行 | `prompts/02_macro_boundary_agent.md` |
-| 1.5 Boundary Review | 宿主协调 | `prompts/02a_boundary_human_review.md` |
 | 3 Kernel Task Builder | 宿主按 prompt 执行 | `prompts/05_kernel_path_task_builder.md` |
-| 3.5 Kernel Dispatch Review | 宿主协调 | `prompts/05a_kernel_dispatch_human_review.md` |
+| 3.5 Kernel Dispatch Review | 宿主协调（闸门，须含全量 tiling/family） | `prompts/05a_kernel_dispatch_human_review.md` |
 | 5 Kernel Alignment | 宿主按 prompt 执行 | `prompts/07_kernel_alignment_builder.md` |
 | 6 Evidence Consistency | 宿主按 prompt 执行 | `prompts/08_evidence_consistency_agent.md` |
 | 7 Route Builder | 宿主按 prompt 执行 | `prompts/09_route_builder.md` |
 | 8 Quality Gate | 宿主跑脚本 | — |
 
+> Phase 1.5 Boundary Review **已取消**。`02a_boundary_human_review.md` 仅作退役说明。
+
 ## 并行点 1：host + flow
 
-在用户通过 Boundary Review（`continue`）后：
+Phase 1 Macro Boundary **完成后直接**进入（不再等 Boundary Review）：
 
 1. **同一条宿主消息**里发起两个 Task（foreground，不要用 background）：
    - `Task` → `uo-host-extraction`
