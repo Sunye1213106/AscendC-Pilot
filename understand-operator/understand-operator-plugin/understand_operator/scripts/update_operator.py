@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from datetime import datetime, timezone
@@ -73,6 +74,7 @@ def main(argv: list[str] | None = None) -> int:
 
     write_text(base / "cbm" / "change_set.yaml", _to_yaml(change_set))
     write_text(base / "archive" / "runs" / "update_plan.yaml", _to_yaml(update_plan))
+    write_text(base / "archive" / "runs" / "stale_artifacts.yaml", _to_yaml(_build_stale_artifacts(update_plan)))
     _append_update_history(base, change_set, update_plan)
 
     # Keep index_meta stamped so query/update share the same baseline pointer.
@@ -146,6 +148,7 @@ def _build_update_plan(change_set: dict[str, Any]) -> dict[str, Any]:
 
     areas: list[str] = []
     phases: list[str] = []
+    invalidations: dict[str, list[str]] = {}
 
     def hit(*needles: str) -> bool:
         return any(n in blob for n in needles)
@@ -153,40 +156,158 @@ def _build_update_plan(change_set: dict[str, Any]) -> dict[str, Any]:
     if hit("proto", "op_api", "acl_op", "operator_io", "def.cpp", "def.h"):
         areas.append("boundary_io")
         phases.append("phase1")
+        invalidations["operator_interface"] = [
+            "operator.yaml",
+            "registry/symbols.yaml",
+            "registry/variables.yaml",
+            "contracts/query.yaml",
+        ]
     if hit("tiling", "op_host", "tilingdata", "tiling_key"):
         areas.append("tiling_host")
         phases.append("phase2_host")
+        invalidations["host_tiling"] = [
+            "tiling/variables.yaml",
+            "tiling/constraints.yaml",
+            "tiling/key_space.yaml",
+            "tiling/families.yaml",
+            "tiling/data_model.yaml",
+            "registry/variables.yaml",
+            "cross_layer/input_to_tiling.yaml",
+            "cross_layer/variable_lineage.yaml",
+        ]
     if hit("datacopy", "setflag", "waitflag", "pipe_", "dataflow", "compute"):
         areas.append("compute_dataflow")
         phases.append("phase2_flow")
+        invalidations["flow_dataflow"] = [
+            "flow/compute_graph.yaml",
+            "flow/dataflow.yaml",
+            "flow/golden_model.yaml",
+            "flow/numerical_model.yaml",
+            "cross_layer/behavior_graph.yaml",
+        ]
     if hit("op_kernel", "kernel", "process(", "init("):
         areas.append("kernel")
         phases.extend(["phase3", "phase3.5", "phase4", "phase5"])
+        invalidations["kernel"] = [
+            "kernel/compile_model.yaml",
+            "kernel/variables.yaml",
+            "kernel/paths.yaml",
+            "kernel/branches.yaml",
+            "kernel/pipeline.yaml",
+            "kernel/resources.yaml",
+            "cross_layer/tiling_to_kernel.yaml",
+            "cross_layer/behavior_graph.yaml",
+            "cross_layer/impact_graph.yaml",
+        ]
     if hit("golden", "test", "accuracy"):
         areas.append("test_contract")
         phases.append("phase7")
+        invalidations["test_contract"] = [
+            "test/contract.yaml",
+            "contracts/testcase.yaml",
+            "contracts/pr_review.yaml",
+        ]
 
     if not areas and change_set.get("status") != "empty":
         areas.append("unknown_needs_review")
         phases.extend(["phase1", "phase2_host", "phase2_flow"])
+        invalidations["unknown_needs_review"] = [
+            "operator.yaml",
+            "registry/symbols.yaml",
+            "registry/variables.yaml",
+            "cross_layer/impact_graph.yaml",
+        ]
 
     phases = _unique(phases)
     if phases:
         phases.extend(["phase6", "phase7", "phase8"])
         phases = _unique(phases)
 
+    derived_stale = _derived_stale_from_invalidations(invalidations)
     return {
         "version": 1,
         "status": "planned",
         "created_at": datetime.now(tz=timezone.utc).isoformat(),
         "impacted_areas": areas,
         "phases_to_rerun": phases,
+        "artifact_invalidations": invalidations,
+        "derived_views_to_mark_stale": derived_stale,
+        "dependency_hash": _dependency_hash(change_set),
+        "generator_version": "understand-operator-update-v2",
         "preserve_untouched_artifacts": True,
         "full_rebuild_recommended": False,
         "notes": [
             "Agent should re-run only listed phases using the same prompts as /uo-init.",
             "Keep human review gates when boundary or kernel dispatch plans change.",
             "Source lookups remain CBM-first; whole-file Read only after CBM failure.",
+            "Only the deterministic KB compiler should promote proposal/intermediate artifacts into canonical v2 slices.",
+        ],
+    }
+
+
+def _derived_stale_from_invalidations(invalidations: dict[str, list[str]]) -> list[str]:
+    stale: set[str] = set()
+    for artifacts in invalidations.values():
+        blob = " ".join(artifacts)
+        if "tiling/" in blob or "operator.yaml" in blob:
+            stale.update(
+                [
+                    "cross_layer/input_to_tiling.yaml",
+                    "cross_layer/variable_lineage.yaml",
+                    "contracts/testcase.yaml",
+                    "query/routes.yaml",
+                ]
+            )
+        if "kernel/" in blob:
+            stale.update(
+                [
+                    "cross_layer/tiling_to_kernel.yaml",
+                    "cross_layer/behavior_graph.yaml",
+                    "cross_layer/impact_graph.yaml",
+                    "contracts/code_change.yaml",
+                    "contracts/pr_review.yaml",
+                    "contracts/testcase.yaml",
+                    "query/routes.yaml",
+                ]
+            )
+        if "flow/" in blob:
+            stale.update(["cross_layer/behavior_graph.yaml", "contracts/testcase.yaml", "query/routes.yaml"])
+    return sorted(stale)
+
+
+def _dependency_hash(change_set: dict[str, Any]) -> str:
+    payload = {
+        "changed_files": change_set.get("changed_files") or [],
+        "changed_symbols": change_set.get("changed_symbols") or [],
+        "raw_preview": change_set.get("raw_preview") or "",
+    }
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _build_stale_artifacts(update_plan: dict[str, Any]) -> dict[str, Any]:
+    now = datetime.now(tz=timezone.utc).isoformat()
+    artifacts = sorted(
+        {
+            item
+            for values in (update_plan.get("artifact_invalidations") or {}).values()
+            for item in (values or [])
+        }
+        | set(update_plan.get("derived_views_to_mark_stale") or [])
+    )
+    return {
+        "version": 1,
+        "created_at": now,
+        "dependency_hash": update_plan.get("dependency_hash"),
+        "stale_artifacts": [
+            {
+                "path": artifact,
+                "stale": True,
+                "reason": "source change may affect this KB slice",
+                "must_refresh_before": ["phase6", "phase7", "phase8"]
+                if artifact.startswith(("cross_layer/", "contracts/", "query/"))
+                else ["owning_phase", "phase6", "phase8"],
+            }
+            for artifact in artifacts
         ],
     }
 

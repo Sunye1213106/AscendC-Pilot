@@ -67,6 +67,35 @@ EXPORT_VIEWS: dict[str, list[str]] = {
         "quality.yaml",
         "evidence/issues.yaml",
     ],
+    "query": [
+        "query/routes.yaml",
+        "contracts/query.yaml",
+        "registry/variables.yaml",
+        "cross_layer/variable_lineage.yaml",
+        "quality.yaml",
+    ],
+    "code-change": [
+        "contracts/code_change.yaml",
+        "cross_layer/impact_graph.yaml",
+        "registry/symbols.yaml",
+        "registry/variables.yaml",
+        "evidence/artifact_dependencies.yaml",
+        "quality.yaml",
+    ],
+    "pr-review": [
+        "contracts/pr_review.yaml",
+        "cross_layer/impact_graph.yaml",
+        "evidence/issues.yaml",
+        "quality.yaml",
+    ],
+    "testcase-contract": [
+        "contracts/testcase.yaml",
+        "test/contract.yaml",
+        "tiling/coverage_model.yaml",
+        "kernel/branches.yaml",
+        "cross_layer/impact_graph.yaml",
+        "quality.yaml",
+    ],
 }
 
 LEGACY_MARKERS = [

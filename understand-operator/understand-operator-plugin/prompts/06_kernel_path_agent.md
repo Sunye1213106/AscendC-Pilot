@@ -49,6 +49,31 @@ archive/raw_agents/kernel_paths/.uo_kernel_path_<task_id>_complete.json
 - buffers / workspaces / sync_events
 - 对精度/性能测试的影响（hints only，不生成测试）
 
+## Two-step Kernel Task Model（强制）
+
+每个 approved Kernel Task 内部必须拆为两步，raw YAML 也必须保留这两步的中间结构。
+
+### Kernel Step 1 - compile/runtime variable discovery
+
+先回答“这个 Kernel 有哪些编译配置和路径决定变量？”。必须抽取并写入：
+
+- `kernel_compile_model`: 宏、constexpr、enum、template 参数、template specialization、`if constexpr`、dtype/layout/architecture feature、deterministic 参数、optional feature 参数、TilingKey 到 template 参数绑定。
+- `kernel_variable_inventory`: TilingData fields、shape-derived value、tail、loop count、block index、core split、offset、length、buffer size、optional/sparse/boundary flag。
+- `template_bindings`: 每个 binding 要有 stable id、来源、参数、关联 TilingKey/TilingData、evidence_refs。
+- `branch_frontier`: `if` / `else if` / `switch` / early return / full-tail / empty tensor / single-multi-core / TND / deterministic / dtype-layout / sync-buffer 分支。
+
+### Kernel Step 2 - path/dataflow/resource semantics
+
+基于 Step 1 变量清单继续分析：
+
+- `path_semantics`: kernel 路径、branch predicate、compute step、input/output access、TilingData reader、loop/full-tail 行为。
+- `pipeline`: stages、pipeline order、events、set/wait、barrier。
+- `buffer_map`: buffer 生命周期、复用、workspace、producer/consumer。
+- `sync_events`: event / set / wait / lock / unlock。
+- `accuracy_sensitive_paths`: 精度敏感路径与输出行为。
+
+每条 path/branch 必须关联使用变量、predicate、template binding、TilingKey/TilingData、compute/buffer/sync/output 影响和源码 evidence。证据不足写 `unresolved` / `conflicts`，不要直接升级为 confirmed。
+
 ## 规则
 
 - 与 `operator.yaml` IO、`flow/compute_graph.yaml` Cxxx、`tiling/families.yaml` TFxxx 对齐。

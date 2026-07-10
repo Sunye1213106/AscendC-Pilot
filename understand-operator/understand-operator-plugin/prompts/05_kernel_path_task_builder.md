@@ -50,3 +50,20 @@
 - `risks` / `evidence_refs` / `confidence` / `source_locator`
 
 完成后进入 Kernel Dispatch Human Review。在用户明确批准分发前，不要启动任何 Kernel Path Agent。
+## Kernel Task Granularity (mandatory v2)
+
+The target task granularity is:
+
+```text
+kernel_entry
++ template_binding_signature
++ structural_flow_signature
+```
+
+Do not assume one family equals one Kernel Path Task, and do not create one Kernel Agent for every TilingKey.
+
+- Merge multiple TilingKeys/families into one task when they map to the same kernel entry, template parameters, main flow, and branch skeleton.
+- Split tasks when the same family contains different template specializations, `if constexpr` taken paths, kernel entries, dataflow, buffer strategy, or sync strategy.
+- Each `kernel/paths.yaml` task must include `split_rationale` and `merge_rationale`.
+- Phase 3.5 human review must show the split/merge rationale, not just a task id list.
+- Prefer stable ids from `registry/`, key fields, variables, and template bindings; do not join tasks only by natural-language names.

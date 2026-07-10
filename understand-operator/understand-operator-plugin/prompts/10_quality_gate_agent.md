@@ -73,3 +73,15 @@ python "$SKILL_DIR/quality_gate.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 status: green | yellow | red
 
 Quality Gate 不生成测试、不插装、不运行覆盖率、不生成 golden 代码。
+## Canonical v2 Checks
+
+The quality gate script now invokes the deterministic KB compiler. In addition to legacy checks, review:
+
+- `registry/*.yaml` stable ids, aliases, duplicate ids, alias conflicts, scope/type conflicts.
+- `kernel/compile_model.yaml`, `kernel/variables.yaml`, and `kernel/branches.yaml` for the two-step Kernel model.
+- `cross_layer/input_to_tiling.yaml`, `tiling_to_kernel.yaml`, `variable_lineage.yaml`, `behavior_graph.yaml`, and `impact_graph.yaml`.
+- `query/routes.yaml` for minimal-slice routing.
+- `contracts/query.yaml`, `contracts/code_change.yaml`, `contracts/pr_review.yaml`, and `contracts/testcase.yaml`.
+- `archive/runs/kb_compile_report.yaml` and `archive/runs/canonical_hashes.yaml`.
+
+The gate must fail or warn on dangling stable ids, missing evidence for key relations, missing template bindings, host/kernel read-write mismatch signals, unresolved conflicts, and stale dependency reports.

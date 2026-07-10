@@ -9,6 +9,7 @@ from typing import Any
 ARTIFACT_DIR = ".understand-operator"
 
 CANONICAL_ROOT_FILES = [
+    "manifest.yaml",
     "index.yaml",
     "route.md",
     "operator.yaml",
@@ -50,7 +51,10 @@ CANONICAL_FLOW_FILES = [
 
 CANONICAL_KERNEL_FILES = [
     "kernel/index.yaml",
+    "kernel/compile_model.yaml",
+    "kernel/variables.yaml",
     "kernel/paths.yaml",
+    "kernel/branches.yaml",
     "kernel/pipeline.yaml",
     "kernel/resources.yaml",
 ]
@@ -65,6 +69,33 @@ CANONICAL_EVIDENCE_FILES = [
     "evidence/fact_index.yaml",
     "evidence/artifact_dependencies.yaml",
     "evidence/issues.yaml",
+]
+
+CANONICAL_REGISTRY_FILES = [
+    "registry/symbols.yaml",
+    "registry/variables.yaml",
+    "registry/aliases.yaml",
+    "registry/evidence.yaml",
+]
+
+CANONICAL_CROSS_LAYER_FILES = [
+    "cross_layer/input_to_tiling.yaml",
+    "cross_layer/tiling_to_kernel.yaml",
+    "cross_layer/variable_lineage.yaml",
+    "cross_layer/behavior_graph.yaml",
+    "cross_layer/impact_graph.yaml",
+]
+
+CANONICAL_QUERY_FILES = [
+    "query/routes.yaml",
+    "query/terminology.yaml",
+]
+
+CANONICAL_CONTRACT_FILES = [
+    "contracts/query.yaml",
+    "contracts/code_change.yaml",
+    "contracts/pr_review.yaml",
+    "contracts/testcase.yaml",
 ]
 
 
@@ -104,10 +135,17 @@ def init_operator_layout(base: Path, op_name: str, repo_root: Path) -> None:
         "kernel",
         "test",
         "evidence",
+        "registry",
+        "cross_layer",
+        "query/summaries",
+        "contracts",
         "human",
         "archive/cbm",
         "archive/runs",
         "archive/legacy",
+        "archive/intermediate",
+        "archive/proposals",
+        "archive/conflicts",
         "archive/raw_agents/kernel_paths",
     ]:
         (base / rel).mkdir(parents=True, exist_ok=True)
@@ -117,6 +155,9 @@ def init_operator_layout(base: Path, op_name: str, repo_root: Path) -> None:
         "archive/cbm/.gitkeep",
         "archive/runs/.gitkeep",
         "archive/legacy/.gitkeep",
+        "archive/intermediate/.gitkeep",
+        "archive/proposals/.gitkeep",
+        "archive/conflicts/.gitkeep",
         "archive/raw_agents/.gitkeep",
         "archive/raw_agents/kernel_paths/.gitkeep",
     ]:
@@ -1331,6 +1372,8 @@ todos:
 """,
     )
 
+    _init_kb_v2_layout(base, op_name, repo_root)
+
     write_json(
         base / "archive" / "runs" / "run_manifest.json",
         {
@@ -1338,6 +1381,444 @@ todos:
             "repo_path": str(repo_root),
             "created_at": datetime.now(tz=timezone.utc).isoformat(),
             "artifact_root": str(base),
-            "kb_layout": "canonical_v1",
+            "kb_layout": "canonical_v2",
         },
     )
+
+
+def _init_kb_v2_layout(base: Path, op_name: str, repo_root: Path) -> None:
+    write_text(
+        base / "manifest.yaml",
+        f"""version: 2
+op_name: {op_name}
+repo_root: {repo_root.as_posix()}
+artifact_version: canonical_v2
+generator:
+  name: understand-operator
+  version: 0.2.0
+source:
+  commit: unknown
+  dependency_hash: unknown
+generated_at: {datetime.now(tz=timezone.utc).isoformat()}
+stale: false
+layers:
+  fact:
+    - operator.yaml
+    - registry/*.yaml
+    - tiling/*.yaml
+    - kernel/compile_model.yaml
+    - kernel/variables.yaml
+  semantic:
+    - tiling/constraints.yaml
+    - kernel/branches.yaml
+    - cross_layer/*.yaml
+  derived_views:
+    - query/routes.yaml
+    - contracts/*.yaml
+compatibility:
+  legacy_operator_file: operator.yaml
+  legacy_test_contract: test/contract.yaml
+  testcase_contract: contracts/testcase.yaml
+  archive_raw_agents: archive/raw_agents/
+""",
+    )
+
+    write_text(
+        base / "registry" / "symbols.yaml",
+        f"""version: 1
+op_name: {op_name}
+purpose: stable symbol registry for source-backed facts
+symbols: []
+schema:
+  required: [id, kind, canonical_name, scope, evidence_refs]
+  id_examples: [SYM_HOST_TILING_ENTRY, SYM_KERNEL_ENTRY_MAIN]
+  kinds: [file, function, class, struct, field, macro, enum, constexpr, template, kernel_entry, tiling_entry]
+  notes:
+    - Agents propose symbols under archive/proposals; the KB compiler validates and merges them here.
+""",
+    )
+    write_text(
+        base / "registry" / "variables.yaml",
+        f"""version: 1
+op_name: {op_name}
+purpose: stable variable/entity registry shared by host, tiling, flow, kernel, and cross-layer artifacts
+variables: []
+schema:
+  required: [id, kind, canonical_name, scope, data_type]
+  id_examples: [VAR_ATTEN_MASK_PRESENT, VAR_TILING_KEY_MASK_MODE]
+  scopes: [operator, host, tiling, kernel, flow, cross_layer]
+  kinds: [input, attr, derived_variable, tiling_key_field, tilingdata_field, template_parameter, runtime_variable, buffer, sync_event]
+  alias_policy:
+    same_name_different_meaning: conflict
+    different_name_same_meaning: merge_with_alias
+    type_conflict: conflict
+""",
+    )
+    write_text(
+        base / "registry" / "aliases.yaml",
+        f"""version: 1
+op_name: {op_name}
+aliases: []
+conflicts: []
+schema:
+  alias_entry: {{alias: "", target_id: "", scope: "", evidence_refs: [], status: proposed}}
+  conflict_entry: {{id: "", aliases: [], candidate_ids: [], reason: "", status: unresolved}}
+""",
+    )
+    write_text(
+        base / "registry" / "evidence.yaml",
+        f"""version: 1
+op_name: {op_name}
+evidence: []
+schema:
+  required: [id, file, lines, symbol, kind]
+  line_formats:
+    - [start, end]
+    - {{start: 1, end: 1}}
+  status: [confirmed, proposed, uncertain, conflicting, unresolved]
+""",
+    )
+
+    write_text(
+        base / "kernel" / "compile_model.yaml",
+        f"""version: 1
+op_name: {op_name}
+purpose: "Kernel Step 1: compile-time configuration and template binding model"
+template_bindings: []
+compile_time_configs: []
+if_constexpr_sites: []
+macro_bindings: []
+unresolved: []
+schema:
+  template_binding: {{id: KTPL_EXAMPLE, kernel_entry: KPATH_EXAMPLE, parameters: {{}}, source: {{}}, evidence_refs: []}}
+""",
+    )
+    write_text(
+        base / "kernel" / "variables.yaml",
+        f"""version: 1
+op_name: {op_name}
+purpose: "Kernel Step 1: runtime path variable inventory"
+runtime_variables: []
+tilingdata_reads: []
+path_decision_points: []
+unresolved: []
+schema:
+  runtime_variable: {{id: VAR_KERNEL_EXAMPLE, kind: runtime_variable, canonical_name: "", source: {{}}, evidence_refs: []}}
+""",
+    )
+    write_text(
+        base / "kernel" / "branches.yaml",
+        f"""version: 1
+op_name: {op_name}
+purpose: "Kernel Step 2: branch/path predicates and resource behavior links"
+branches: []
+path_semantics: []
+dataflow_links: []
+resource_links: []
+unresolved: []
+schema:
+  branch: {{id: KBR_EXAMPLE, path_id: KPATH_EXAMPLE, predicate: {{}}, controls: [], evidence_refs: []}}
+""",
+    )
+
+    for rel, purpose in {
+        "cross_layer/input_to_tiling.yaml": "input/attr/shape/dtype/layout to host variables, tiling predicates, key, family, and tilingdata",
+        "cross_layer/tiling_to_kernel.yaml": "tiling key/family/data to kernel entry, template binding, runtime variable, branch, and path",
+        "cross_layer/variable_lineage.yaml": "where variables are produced, transformed, written, read, and consumed",
+        "cross_layer/behavior_graph.yaml": "operator-input to output behavior graph across host, tiling, kernel, compute, buffer, and sync",
+        "cross_layer/impact_graph.yaml": "code-change impact graph from symbol/field/predicate to downstream behavior and test obligations",
+    }.items():
+        write_text(
+            base / rel,
+            f"""version: 1
+op_name: {op_name}
+purpose: "{purpose}"
+nodes: []
+edges: []
+relations: []
+links: []
+unresolved: []
+conflicts: []
+schema:
+  node: {{id: "", kind: "", label: "", source_refs: [], evidence_refs: []}}
+  edge: {{id: "", type: affects, source: "", target: "", expression: {{}}, evidence_refs: [], status: proposed}}
+""",
+        )
+
+    write_text(
+        base / "query" / "routes.yaml",
+        f"""version: 1
+op_name: {op_name}
+default_policy:
+  kb_first: true
+  read_archive_by_default: false
+  require_source_status: true
+routes:
+  operator_understanding:
+    intents: [io, optional_input, tiling_entry, kernel_entry, family_selection, tilingdata_field, kernel_path]
+    read: [operator.yaml, registry/symbols.yaml, registry/variables.yaml, tiling/index.yaml, kernel/index.yaml, quality.yaml]
+  variable_trace:
+    intents: [where_from, writer, reader, controls_branch, affects_key_family_template_buffer_output]
+    read: [registry/variables.yaml, cross_layer/variable_lineage.yaml, cross_layer/behavior_graph.yaml, evidence/fact_index.yaml, quality.yaml]
+  code_change_impact:
+    intents: [function_change, field_change, optional_input_addition, tiling_key_change, buffer_change, template_change]
+    read: [contracts/code_change.yaml, cross_layer/impact_graph.yaml, registry/symbols.yaml, registry/variables.yaml, evidence/artifact_dependencies.yaml, quality.yaml]
+  pr_review:
+    intents: [changed_symbol_risk, cross_layer_consistency, missing_tests, evidence_conflict]
+    read: [contracts/pr_review.yaml, cross_layer/impact_graph.yaml, evidence/issues.yaml, quality.yaml]
+  testcase_contract:
+    intents: [key_family_coverage, kernel_branch_coverage, variable_boundaries, regression_selection]
+    read: [contracts/testcase.yaml, tiling/coverage_model.yaml, kernel/branches.yaml, cross_layer/impact_graph.yaml, test/contract.yaml]
+  evidence:
+    intents: [source_lines, confidence, unresolved, conflict]
+    read: [registry/evidence.yaml, evidence/fact_index.yaml, evidence/source_index.yaml, evidence/issues.yaml, quality.yaml]
+minimal_slice_rule: "Choose the narrowest route matching the question; never load the whole KB by default."
+""",
+    )
+    write_text(
+        base / "query" / "terminology.yaml",
+        f"""version: 1
+op_name: {op_name}
+terms:
+  stable_id: "Machine-stable id used across artifacts instead of natural-language names."
+  canonical_kb: "Validated facts, relations, cross-layer mappings, and derived views."
+  proposal: "LLM/subagent output that must pass compiler validation before canonical merge."
+  fact_layer: "Directly source-confirmed files, symbols, fields, IO, calls, reads/writes, branches."
+  semantic_layer: "Typed relations between facts."
+  derived_view_layer: "Task-specific query, code-change, PR-review, testcase, and documentation slices."
+aliases: []
+""",
+    )
+
+    write_text(
+        base / "contracts" / "query.yaml",
+        f"""version: 1
+op_name: {op_name}
+purpose: "Query view contract for KB-first answers"
+required_response_fields:
+  - answer
+  - kb_sources
+  - source_verification
+  - confidence
+  - unresolved_or_conflicts
+routing_source: query/routes.yaml
+""",
+    )
+    write_text(
+        base / "contracts" / "code_change.yaml",
+        f"""version: 1
+op_name: {op_name}
+purpose: "Code change impact contract; does not modify AscendC source"
+target:
+  symbol_id: null
+upstream:
+  input_variables: []
+  caller_functions: []
+  compile_time_conditions: []
+downstream:
+  affected_variables: []
+  tiling_key_fields: []
+  families: []
+  tilingdata_fields: []
+  kernel_entries: []
+  template_bindings: []
+  branches: []
+  buffers: []
+  synchronization: []
+  output_semantics: []
+  related_test_obligations: []
+evidence_refs: []
+recommended_checks:
+  - host/kernel consistency
+  - struct field compatibility
+  - template coverage
+  - boundary tests
+status: proposed
+""",
+    )
+    write_text(
+        base / "contracts" / "pr_review.yaml",
+        f"""version: 1
+op_name: {op_name}
+purpose: "PR review view derived from canonical KB and impact graph"
+review_slices:
+  symbol_risks: []
+  cross_layer_consistency: []
+  evidence_gaps: []
+  test_obligations: []
+  unresolved_conflicts: []
+recommended_checks:
+  - changed symbols map to registry ids
+  - host writes align with kernel reads
+  - template bindings have sources
+  - impacted testcase obligations are listed
+""",
+    )
+    write_text(
+        base / "contracts" / "testcase.yaml",
+        f"""version: 1
+op_name: {op_name}
+purpose: "Derived testcase contract for a future Testcase Agent; not the whole KB and not generated cases"
+input_domain: []
+optional_inputs: []
+shape_dtype_layout: []
+derived_variables: []
+typed_constraints: []
+key_encoding: []
+families: []
+template_bindings: []
+input_realization: []
+unreachable: []
+tilingdata_boundaries: []
+kernel_compile_configurations: []
+kernel_branch_obligations: []
+loop_tail_classes: []
+accuracy_sensitive_paths: []
+source_contracts:
+  legacy_test_contract: ../test/contract.yaml
+  coverage_model: ../tiling/coverage_model.yaml
+  kernel_branches: ../kernel/branches.yaml
+""",
+    )
+
+    _extend_index_for_kb_v2(base)
+    _extend_route_for_kb_v2(base)
+
+
+def _extend_index_for_kb_v2(base: Path) -> None:
+    path = base / "index.yaml"
+    text = read_text(path)
+    canonical_block = """  manifest: manifest.yaml
+  registry_symbols: registry/symbols.yaml
+  registry_variables: registry/variables.yaml
+  registry_aliases: registry/aliases.yaml
+  registry_evidence: registry/evidence.yaml
+  kernel_compile_model: kernel/compile_model.yaml
+  kernel_variables: kernel/variables.yaml
+  kernel_branches: kernel/branches.yaml
+  cross_layer_input_to_tiling: cross_layer/input_to_tiling.yaml
+  cross_layer_tiling_to_kernel: cross_layer/tiling_to_kernel.yaml
+  cross_layer_variable_lineage: cross_layer/variable_lineage.yaml
+  cross_layer_behavior_graph: cross_layer/behavior_graph.yaml
+  cross_layer_impact_graph: cross_layer/impact_graph.yaml
+  query_routes: query/routes.yaml
+  query_terminology: query/terminology.yaml
+  contract_query: contracts/query.yaml
+  contract_code_change: contracts/code_change.yaml
+  contract_pr_review: contracts/pr_review.yaml
+  contract_testcase: contracts/testcase.yaml
+"""
+    query_block = """  registry:
+    read: [registry/symbols.yaml, registry/variables.yaml, registry/aliases.yaml, registry/evidence.yaml]
+  variable_trace:
+    read: [query/routes.yaml, registry/variables.yaml, cross_layer/variable_lineage.yaml, cross_layer/behavior_graph.yaml]
+  code_change_impact:
+    read: [query/routes.yaml, contracts/code_change.yaml, cross_layer/impact_graph.yaml, evidence/artifact_dependencies.yaml]
+  pr_review:
+    read: [contracts/pr_review.yaml, cross_layer/impact_graph.yaml, evidence/issues.yaml, quality.yaml]
+  testcase_contract_v2:
+    read: [contracts/testcase.yaml, tiling/coverage_model.yaml, kernel/branches.yaml, cross_layer/impact_graph.yaml]
+  cross_layer:
+    read: [cross_layer/input_to_tiling.yaml, cross_layer/tiling_to_kernel.yaml, cross_layer/variable_lineage.yaml, cross_layer/behavior_graph.yaml, cross_layer/impact_graph.yaml]
+"""
+    export_block = """  query:
+    read:
+      - query/routes.yaml
+      - contracts/query.yaml
+      - registry/variables.yaml
+      - cross_layer/variable_lineage.yaml
+      - quality.yaml
+  code-change:
+    read:
+      - contracts/code_change.yaml
+      - cross_layer/impact_graph.yaml
+      - registry/symbols.yaml
+      - registry/variables.yaml
+      - evidence/artifact_dependencies.yaml
+      - quality.yaml
+  pr-review:
+    read:
+      - contracts/pr_review.yaml
+      - cross_layer/impact_graph.yaml
+      - evidence/issues.yaml
+      - quality.yaml
+  testcase-contract:
+    read:
+      - contracts/testcase.yaml
+      - test/contract.yaml
+      - tiling/coverage_model.yaml
+      - kernel/branches.yaml
+      - cross_layer/impact_graph.yaml
+      - quality.yaml
+"""
+    deps_block = """  registry/variables.yaml:
+    affects:
+      - cross_layer/variable_lineage.yaml
+      - cross_layer/behavior_graph.yaml
+      - query/routes.yaml
+      - contracts/code_change.yaml
+      - contracts/testcase.yaml
+  registry/symbols.yaml:
+    affects:
+      - cross_layer/impact_graph.yaml
+      - contracts/code_change.yaml
+      - contracts/pr_review.yaml
+  kernel/compile_model.yaml:
+    affects:
+      - kernel/branches.yaml
+      - cross_layer/tiling_to_kernel.yaml
+      - contracts/testcase.yaml
+  kernel/variables.yaml:
+    affects:
+      - kernel/branches.yaml
+      - cross_layer/variable_lineage.yaml
+      - cross_layer/behavior_graph.yaml
+  kernel/branches.yaml:
+    affects:
+      - cross_layer/tiling_to_kernel.yaml
+      - cross_layer/behavior_graph.yaml
+      - contracts/testcase.yaml
+  cross_layer/impact_graph.yaml:
+    affects:
+      - contracts/code_change.yaml
+      - contracts/pr_review.yaml
+      - query/routes.yaml
+"""
+    text = _insert_once(text, "qa_routes:\n", canonical_block, "registry_symbols:")
+    text = _insert_once(text, "export_views:\n", query_block, "code_change_impact:")
+    text = _insert_once(text, "artifact_dependencies:\n", export_block, "code-change:")
+    text = text.rstrip() + "\n" + deps_block if "registry/variables.yaml:" not in text else text
+    write_text(path, text)
+
+
+def _extend_route_for_kb_v2(base: Path) -> None:
+    path = base / "route.md"
+    text = read_text(path)
+    if "Code Change Impact" in text:
+        return
+    text = text.rstrip() + """
+
+## KB v2 Task Routes
+
+| Task | Read First | Then Read | Evidence |
+|---|---|---|---|
+| Trace variable lineage | `query/routes.yaml` | `cross_layer/variable_lineage.yaml` | `registry/evidence.yaml` |
+| Code Change Impact | `contracts/code_change.yaml` | `cross_layer/impact_graph.yaml` | `evidence/artifact_dependencies.yaml` |
+| PR Review | `contracts/pr_review.yaml` | `cross_layer/impact_graph.yaml` | `evidence/issues.yaml` |
+| Testcase Contract | `contracts/testcase.yaml` | `tiling/coverage_model.yaml`, `kernel/branches.yaml` | `evidence/fact_index.yaml` |
+
+## KB v2 Notes
+- Stable ids in `registry/` are the primary cross-file join keys.
+- Subagents write proposals/intermediate artifacts; the deterministic KB compiler validates before canonical use.
+- `cross_layer/` holds input-to-tiling, tiling-to-kernel, lineage, behavior, and impact graphs.
+- `contracts/` are derived task views; they do not replace canonical facts.
+"""
+    write_text(path, text)
+
+
+def _insert_once(text: str, marker: str, block: str, sentinel: str) -> str:
+    if sentinel in text:
+        return text
+    if marker not in text:
+        return text.rstrip() + "\n" + block
+    return text.replace(marker, block + marker, 1)

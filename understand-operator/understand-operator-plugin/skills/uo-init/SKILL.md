@@ -187,3 +187,11 @@ python "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" -
 - review decisions
 - `quality.yaml` decision
 - point user to `route.md` then `operator.yaml` / `index.yaml`
+## Canonical v2 additions
+
+- Initialize and maintain `registry/`, `cross_layer/`, `query/`, and `contracts/`.
+- Phase 5 must build cross-layer alignment (`input_to_tiling`, `tiling_to_kernel`, `variable_lineage`, `behavior_graph`, `impact_graph`), not only a kernel alignment matrix.
+- Phase 7 must refresh `query/routes.yaml` and `contracts/{query,code_change,pr_review,testcase}.yaml`.
+- Phase 8 must run `quality_gate.py`; the gate calls the deterministic KB compiler and writes `archive/runs/kb_compile_report.yaml`.
+- Only validator/compiler logic may promote proposals/intermediate artifacts into canonical v2 files.
+- Preserve `test/contract.yaml` for compatibility; derive `contracts/testcase.yaml` for the future Testcase Agent.

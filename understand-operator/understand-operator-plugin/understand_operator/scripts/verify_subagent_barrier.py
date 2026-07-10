@@ -21,6 +21,7 @@ PHASE_HOST_FLOW = "host_flow"
 PHASE_KERNEL_PATH = "kernel_path"
 
 HOST_FLOW_ARTIFACTS = [
+    "archive/proposals/host_tiling_proposal.yaml",
     "tiling/route.md",
     "tiling/index.yaml",
     "tiling/variables.yaml",
@@ -33,6 +34,7 @@ HOST_FLOW_ARTIFACTS = [
 ] + list(REQUIRED_TILING_ARCHIVE_FILES)
 
 FLOW_ARTIFACTS = [
+    "archive/proposals/flow_dataflow_proposal.yaml",
     "flow/index.yaml",
     "flow/compute_graph.yaml",
     "flow/dataflow.yaml",

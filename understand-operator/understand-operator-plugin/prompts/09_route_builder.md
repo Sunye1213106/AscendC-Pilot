@@ -59,3 +59,22 @@ Fast Task Routes 使用新路径（operator.yaml / tiling/* / flow/* / kernel/* 
 understand-operator 不生成真实测试；TestGenerate 消费 test/contract.yaml + tiling/coverage_model.yaml + flow/golden_model.yaml。
 GoldenGenerate 消费 flow/golden_model.yaml + flow/numerical_model.yaml + operator.yaml + tiling/data_model.yaml。
 ```
+## Canonical v2 Derived Views
+
+Route Builder must keep `test/contract.yaml` compatible, and additionally build task contracts under `contracts/`:
+
+- `contracts/query.yaml`
+- `contracts/code_change.yaml`
+- `contracts/pr_review.yaml`
+- `contracts/testcase.yaml`
+
+Also write/update `query/routes.yaml` so questions route to the smallest necessary KB slice. Required route families:
+
+- operator understanding
+- variable trace
+- code change impact
+- PR review
+- testcase contract / regression selection
+- evidence / unresolved / conflict
+
+Do not make Canonical KB equal to Solver IR. Testcase Solver IR must be derived later from `contracts/testcase.yaml` plus canonical facts.

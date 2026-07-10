@@ -45,3 +45,22 @@
 - 已确认的 kernel_entry / template / tilingdata reader-writer / key gate → 回填 tiling
 - 冲突写入 backfill `conflicts`，不改原 tiling 字段
 - 仍无法解析 → `unresolved_after_backfill`
+## Canonical v2 Merge Rules
+
+Only the host-side alignment/KB compiler may promote raw kernel path proposals into canonical files. Do not treat a raw agent's `complete: true`, `confidence: high`, or `no conflict` claim as final truth.
+
+In addition to the existing kernel outputs, merge the two-step kernel model into:
+
+- `kernel/compile_model.yaml` from raw `kernel_compile_model` / `template_bindings`.
+- `kernel/variables.yaml` from raw `kernel_variable_inventory` / TilingData reader facts.
+- `kernel/branches.yaml` from raw `branch_frontier` and Step 2 path predicates.
+
+Phase 5 must also build cross-layer artifacts:
+
+- `cross_layer/input_to_tiling.yaml`
+- `cross_layer/tiling_to_kernel.yaml`
+- `cross_layer/variable_lineage.yaml`
+- `cross_layer/behavior_graph.yaml`
+- `cross_layer/impact_graph.yaml`
+
+Every promoted relation should prefer stable ids from `registry/` and include `evidence_refs`, `status`, and unresolved/conflict markers when applicable.

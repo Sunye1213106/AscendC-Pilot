@@ -78,6 +78,12 @@ Minimum bar when any `key_space.fields.*.kind` is `hard_dispatch`:
 
 ## Required Outputs
 
+Before writing canonical drafts, also write a source-backed proposal:
+
+- `archive/proposals/host_tiling_proposal.yaml`
+
+This proposal should include stable id candidates, aliases, facts, typed relations, evidence refs, unresolved items, and conflicts. The canonical files below are draft canonical slices for compatibility with the existing barrier; the deterministic KB compiler/quality gate must validate them before they are trusted.
+
 ### Canonical (9)
 
 1. `tiling/route.md`

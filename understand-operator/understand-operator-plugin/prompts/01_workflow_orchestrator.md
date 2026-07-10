@@ -56,3 +56,18 @@
 - 不重新实现 AST / call graph / reference graph / symbol graph。
 - Task 返回后先 `verify_subagent_barrier.py`，再 Read 产物。
 - 禁止宿主自己写 `tiling/*` / `flow/*` / `archive/raw_agents/kernel_paths/*` 冒充 subagent 完成。
+## Canonical v2 Workflow Additions
+
+Keep the existing phase order and human gates. Add these canonical v2 responsibilities:
+
+- Phase 1 also initializes `registry/` stable symbol/variable aliases and operator-level ids.
+- Phase 2 subagents write proposals/intermediate artifacts first; host merge plus compiler promotes valid facts into canonical tiling/flow/registry slices.
+- After the Phase 2 subagent barrier, run schema/reference validation before reading merged canonical outputs.
+- Phase 3 Kernel Task Builder uses `kernel_entry + template_binding_signature + structural_flow_signature`, not one task per family or one task per TilingKey.
+- Phase 4 Kernel Path agents use the two-step kernel model: Step 1 compile/runtime variable discovery, Step 2 path/dataflow/resource semantics.
+- After the Phase 4 barrier, host alignment merges into `kernel/compile_model.yaml`, `kernel/variables.yaml`, `kernel/branches.yaml`, `kernel/paths.yaml`, `kernel/pipeline.yaml`, and `kernel/resources.yaml`.
+- Phase 5 builds cross-layer mappings: `input_to_tiling`, `tiling_to_kernel`, `variable_lineage`, `behavior_graph`, and `impact_graph`.
+- Phase 7 builds `query/routes.yaml` and task contracts in `contracts/`.
+- Phase 8 runs `quality_gate.py`, which calls the deterministic KB compiler and writes `archive/runs/kb_compile_report.yaml`.
+
+Only validator/compiler logic may promote proposal/intermediate artifacts into canonical v2 files. Preserve `test/contract.yaml` for compatibility; derive `contracts/testcase.yaml` from canonical KB for future testcase agents.

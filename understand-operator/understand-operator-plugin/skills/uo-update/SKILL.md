@@ -54,6 +54,13 @@ python "$SCRIPT_DIR/prepare_operator.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --
 
 可选：若只需本地写 plan 骨架且 MCP 已查完，可再跑脚本做 YAML 落盘；**不要**依赖脚本去调 CLI CBM。
 
+The local plan now also writes:
+
+- `archive/runs/update_plan.yaml` with `artifact_invalidations`, `derived_views_to_mark_stale`, `dependency_hash`, and `generator_version`.
+- `archive/runs/stale_artifacts.yaml` with stale canonical slices.
+
+Use these stale lists to patch only affected partitions. Do not default to full rebuild unless the plan says `full_rebuild_recommended: true` or the affected scope is unknown and review confirms rebuild.
+
 ### 2. Plan impacted phases
 
 | Changed area | Refresh |
@@ -64,11 +71,21 @@ python "$SCRIPT_DIR/prepare_operator.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --
 | kernel impl / path | `kernel/paths.yaml` + pipeline/resources |
 | accuracy / coverage contract | `test/contract.yaml` + flow golden/numerical |
 
+Canonical v2 partitions:
+
+| Changed area | Also refresh / mark stale |
+|---|---|
+| operator IO / attrs | `registry/symbols.yaml`, `registry/variables.yaml`, `contracts/query.yaml` |
+| host tiling | `cross_layer/input_to_tiling.yaml`, `variable_lineage.yaml`, `contracts/testcase.yaml`, `query/routes.yaml` |
+| kernel compile/path | `kernel/compile_model.yaml`, `kernel/variables.yaml`, `kernel/branches.yaml`, `cross_layer/tiling_to_kernel.yaml`, `impact_graph.yaml` |
+| cross-layer mapping | `contracts/code_change.yaml`, `contracts/pr_review.yaml`, `contracts/testcase.yaml`, `query/routes.yaml` |
+
 ### 3. Incremental re-run
 
 - Re-run **only** impacted phases using the same prompts as `uo-init`.
 - Keep human review gates when boundary or kernel dispatch plans materially change.
 - After patches: run `quality_gate.py` and update `index.yaml` / `route.md` if needed.
+- Before accepting canonical v2 patches, run the deterministic KB compiler (`uo-compile-kb` or quality gate) and inspect `archive/runs/kb_compile_report.yaml`.
 
 ### 4. Parallel points
 

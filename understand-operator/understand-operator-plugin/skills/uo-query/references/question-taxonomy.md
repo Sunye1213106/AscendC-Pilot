@@ -45,3 +45,14 @@
 | 必选输入有哪些 | `io_boundary` | `index.yaml` → `operator.yaml` |
 | 后续怎么生成 golden | `golden_generation` | `index.yaml` → `flow/golden_model.yaml` + `numerical_model.yaml` |
 | TestGenerate 要覆盖什么 | `test_contract` | `index.yaml` → `test/contract.yaml` + `tiling/coverage_model.yaml` |
+## Canonical v2 Types
+
+Add these types before falling back to legacy/mixed:
+
+| type | Meaning | First files |
+|---|---|---|
+| `variable_trace` | where a variable comes from, who writes/reads it, branches it controls, downstream key/family/template/buffer/output impact | `query/routes.yaml`, `cross_layer/variable_lineage.yaml`, `cross_layer/behavior_graph.yaml` |
+| `code_change_impact` | what a function/field/template/key/buffer change affects | `contracts/code_change.yaml`, `cross_layer/impact_graph.yaml` |
+| `pr_review` | changed-symbol risk, cross-layer consistency, evidence conflict, missing test obligations | `contracts/pr_review.yaml`, `cross_layer/impact_graph.yaml` |
+| `testcase_contract` | testcase obligations derived from canonical KB | `contracts/testcase.yaml`, `tiling/coverage_model.yaml`, `kernel/branches.yaml` |
+| `registry_lookup` | stable id, alias, symbol, evidence lookup | `registry/*.yaml` |

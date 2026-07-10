@@ -140,3 +140,18 @@ barrier / quality gate 会检查上述前 5 个非空且非 pending。调试宏/
 - 每次读完整 KB
 - 用 branch_matrix / seed_cases 回答 full tiling_key coverage
 - 用 family count 回答 tiling_key coverage
+## Canonical v2 Additions
+
+The old canonical files remain valid. New task-oriented slices:
+
+| Question type | Read |
+|---|---|
+| stable id / alias / entity lookup | `registry/symbols.yaml` + `registry/variables.yaml` + `registry/aliases.yaml` |
+| variable lineage | `query/routes.yaml` + `cross_layer/variable_lineage.yaml` + `cross_layer/behavior_graph.yaml` |
+| code change impact | `contracts/code_change.yaml` + `cross_layer/impact_graph.yaml` + `evidence/artifact_dependencies.yaml` |
+| PR review | `contracts/pr_review.yaml` + `cross_layer/impact_graph.yaml` + `evidence/issues.yaml` |
+| testcase contract | `contracts/testcase.yaml` + `tiling/coverage_model.yaml` + `kernel/branches.yaml` + `test/contract.yaml` |
+| cross-layer alignment | `cross_layer/input_to_tiling.yaml` + `cross_layer/tiling_to_kernel.yaml` + `cross_layer/variable_lineage.yaml` |
+| kernel two-step model | `kernel/compile_model.yaml` + `kernel/variables.yaml` + `kernel/branches.yaml` + `kernel/paths.yaml` |
+
+Prefer `query/routes.yaml` over loading all canonical files. Do not read `archive/proposals`, `archive/intermediate`, or `archive/raw_agents` by default.

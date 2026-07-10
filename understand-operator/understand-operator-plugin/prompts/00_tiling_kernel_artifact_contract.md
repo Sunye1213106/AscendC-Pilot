@@ -1,3 +1,72 @@
+## Canonical KB v2 Layers
+
+The KB is logically split into three layers:
+
+1. Fact layer: source-confirmed files, symbols, functions, classes, structs, fields, macros, enums, constexprs, template parameters, IO, attributes, shapes, dtype/layout, calls, reads/writes, branches, kernel entries, tiling entries, and evidence locations.
+2. Semantic relation layer: typed relations such as `derives`, `reads`, `writes`, `controls`, `determines`, `implies`, `requires`, `conflicts_with`, `compatible_with`, `encodes`, `binds`, `dispatches_to`, `enables`, `maps_to`, `affects`, `consumes`, and `produces`.
+3. Derived view layer: query, code-change impact, PR review, testcase contract, and documentation views.
+
+Canonical v2 adds these logical folders while keeping the existing canonical files compatible:
+
+```text
+registry/
+  symbols.yaml
+  variables.yaml
+  aliases.yaml
+  evidence.yaml
+kernel/
+  compile_model.yaml
+  variables.yaml
+  branches.yaml
+cross_layer/
+  input_to_tiling.yaml
+  tiling_to_kernel.yaml
+  variable_lineage.yaml
+  behavior_graph.yaml
+  impact_graph.yaml
+query/
+  routes.yaml
+  terminology.yaml
+contracts/
+  query.yaml
+  code_change.yaml
+  pr_review.yaml
+  testcase.yaml
+archive/
+  proposals/
+  intermediate/
+  conflicts/
+```
+
+Do not create empty files outside the prepared schema skeleton. When agents discover real facts, write proposal/intermediate artifacts first; only the deterministic KB compiler/host merge may promote them into canonical v2 files.
+
+## Stable ID and Registry Rules
+
+All cross-file joins should prefer stable ids:
+
+- `SYM_*` for source symbols.
+- `VAR_*` for input, derived, tiling, kernel, buffer, and sync variables.
+- `REL_*` for semantic relations.
+- `EV_*` / `SRC_*` for evidence/source spans.
+- `KPATH_*`, `KTPL_*`, `KBR_*` for kernel path, template binding, and branch entities.
+
+Handle alias merge, same-name-different-meaning, different-name-same-meaning, dangling references, duplicate definitions, scope conflicts, and type conflicts in `registry/aliases.yaml` and compiler reports. Do not join host/tiling/kernel artifacts by natural-language string equality alone.
+
+## Deterministic KB Compiler
+
+LLM/subagents are responsible for discovery and proposals. Deterministic code is responsible for:
+
+- schema validation
+- stable id/reference validation
+- type and evidence validation
+- alias/duplicate detection
+- cross-layer consistency checks
+- unresolved/conflict aggregation
+- canonical artifact hashes
+- quality report inputs
+
+Do not trust `complete: true`, `confidence: high`, `all branches covered`, or `no conflict` unless the compiler and quality gate validate the relevant fields.
+
 # Tiling / Kernel Task Artifact Contract
 
 This is a schema contract, not a workflow phase. It prepares traceability and downstream impact analysis only.

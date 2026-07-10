@@ -14,6 +14,10 @@ from understand_operator._operator.artifacts import (
     CANONICAL_EVIDENCE_FILES,
     CANONICAL_FLOW_FILES,
     CANONICAL_KERNEL_FILES,
+    CANONICAL_CONTRACT_FILES,
+    CANONICAL_CROSS_LAYER_FILES,
+    CANONICAL_QUERY_FILES,
+    CANONICAL_REGISTRY_FILES,
     CANONICAL_ROOT_FILES,
     CANONICAL_TEST_FILES,
     CANONICAL_TILING_FILES,
@@ -67,6 +71,10 @@ def main(argv: list[str] | None = None) -> int:
         + CANONICAL_KERNEL_FILES
         + CANONICAL_TEST_FILES
         + CANONICAL_EVIDENCE_FILES
+        + CANONICAL_REGISTRY_FILES
+        + CANONICAL_CROSS_LAYER_FILES
+        + CANONICAL_QUERY_FILES
+        + CANONICAL_CONTRACT_FILES
     )
 
     missing = [rel for rel in canonical if not (base / rel).exists()]
@@ -254,6 +262,9 @@ def main(argv: list[str] | None = None) -> int:
         missing_map = sorted(fid for fid in family_ids if fid not in planned)
         if missing_map:
             warnings.append("some families have no kernel path mapping yet: " + ", ".join(missing_map[:5]))
+
+    compiler_checks = _run_kb_compiler(base, op_name, warnings, blockers)
+    checks.update(compiler_checks)
 
     scores = {
         "boundary_confidence": _score_text(read_text(base / "operator.yaml")),
@@ -637,6 +648,69 @@ def _check_key_logic_relations(
     ):
         if audit and flag not in audit:
             warnings.append(f"coverage_model.audit_requirements missing {flag}")
+
+    return checks
+
+
+def _run_kb_compiler(
+    base: Path,
+    op_name: str,
+    warnings: list[str],
+    blockers: list[str],
+) -> dict[str, str]:
+    checks: dict[str, str] = {
+        "kb_compiler_passed": "pass",
+        "stable_ids_present": "pass",
+        "registry_aliases_valid": "pass",
+        "cross_layer_graphs_present": "pass",
+        "kernel_two_step_present": "pass",
+        "task_contracts_present": "pass",
+    }
+    try:
+        from understand_operator._operator.kb_compiler import compile_kb
+
+        result = compile_kb(base, op_name, write_outputs=True)
+    except Exception as exc:  # noqa: BLE001
+        checks["kb_compiler_passed"] = "fail"
+        blockers.append(f"KB compiler crashed: {exc}")
+        return checks
+
+    if result.status == "fail":
+        checks["kb_compiler_passed"] = "fail"
+    elif result.status == "warn":
+        checks["kb_compiler_passed"] = "warn"
+
+    if result.entity_count == 0:
+        checks["stable_ids_present"] = "fail"
+        warnings.append("registry has no stable ids yet")
+    if result.alias_count == 0:
+        checks["registry_aliases_valid"] = "warn"
+        warnings.append("registry has no aliases yet")
+
+    for issue in result.issues:
+        line = f"{issue.code}: {issue.message}"
+        if issue.artifact:
+            line += f" ({issue.artifact})"
+        if issue.severity == "error":
+            blockers.append(line)
+        elif issue.severity == "warning":
+            warnings.append(line)
+
+    for rel in (
+        "cross_layer/input_to_tiling.yaml",
+        "cross_layer/tiling_to_kernel.yaml",
+        "cross_layer/variable_lineage.yaml",
+        "cross_layer/behavior_graph.yaml",
+        "cross_layer/impact_graph.yaml",
+    ):
+        if not (base / rel).exists():
+            checks["cross_layer_graphs_present"] = "fail"
+    for rel in ("kernel/compile_model.yaml", "kernel/variables.yaml", "kernel/branches.yaml"):
+        if not (base / rel).exists():
+            checks["kernel_two_step_present"] = "fail"
+    for rel in ("contracts/query.yaml", "contracts/code_change.yaml", "contracts/pr_review.yaml", "contracts/testcase.yaml"):
+        if not (base / rel).exists():
+            checks["task_contracts_present"] = "fail"
 
     return checks
 

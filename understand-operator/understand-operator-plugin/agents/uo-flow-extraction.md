@@ -48,6 +48,12 @@ Do not analyze host tiling families or rewrite tiling canonical files.
 
 ## Required Outputs
 
+Before writing canonical drafts, also write:
+
+- `archive/proposals/flow_dataflow_proposal.yaml`
+
+The proposal should carry stable id candidates, flow/dataflow facts, semantic relations, evidence refs, unresolved items, and conflicts. The canonical files below remain required for compatibility with the existing barrier; the deterministic KB compiler/quality gate validates them before trusted use.
+
 1. `flow/index.yaml`
 2. `flow/compute_graph.yaml`
 3. `flow/dataflow.yaml`

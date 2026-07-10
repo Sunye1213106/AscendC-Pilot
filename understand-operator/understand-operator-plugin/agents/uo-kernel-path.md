@@ -46,6 +46,22 @@ Align the kernel implementation with:
 
 Do not invent kernel entries, compute steps, buffer behavior, sync behavior, or evidence. Do not generate tests, do not run tests, do not add coverage, and do not add instrumentation. Do not split paths by numeric tilingdata variants.
 
+## Two-step kernel analysis (mandatory)
+
+Do the task in two ordered steps inside the raw agent output:
+
+1. **Kernel Step 1 - compile/runtime variable discovery**
+   - compile-time configs: macros, constexpr, enum, template parameters, specialization, `if constexpr`, dtype/layout/arch feature flags, deterministic/optional feature parameters, TilingKey-to-template bindings.
+   - runtime variables: TilingData fields, shape-derived values, tail, loop count, block index, core split, offset, length, buffer size, optional/sparse/boundary flags.
+   - decision points: `if`, `else if`, `switch`, early return, full/tail tile, empty tensor, single/multi-core, TND/non-TND, deterministic, dtype/layout, sync/buffer branches.
+   - write these into raw YAML sections `kernel_compile_model`, `kernel_variable_inventory`, `template_bindings`, and `branch_frontier`.
+
+2. **Kernel Step 2 - path/dataflow/resource semantics**
+   - paths, branch predicates, compute steps, IO access, TilingData readers, loops, full/tail behavior, dataflow, buffer lifecycle/reuse, pipeline order, events, set/wait, lock/unlock, barriers, workspace, accuracy-sensitive paths, output behavior.
+   - link every path/branch to variables, predicates, template bindings, TilingKey/TilingData refs, compute/buffer/sync/output effects, and source evidence.
+
+Step 1 sections must be present before Step 2 conclusions. If evidence is insufficient, write `unresolved` or `conflicts`; do not silently infer.
+
 ## Required Outputs (raw agent; host merges)
 
 Write temporary per-task outputs under:
@@ -62,6 +78,10 @@ The YAML must include enough detail for the host Alignment Builder to merge into
 Required sections in the raw YAML:
 
 - `kernel_path` (id, source_family, entry, reachability, route_action)
+- `kernel_compile_model`
+- `kernel_variable_inventory`
+- `template_bindings`
+- `branch_frontier`
 - `tiling_backfill_candidates`
 - `io_alignment`
 - `compute_step_alignment`
