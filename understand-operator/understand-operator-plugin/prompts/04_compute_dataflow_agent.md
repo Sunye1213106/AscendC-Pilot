@@ -63,8 +63,11 @@
 
 ## 规则
 
+- `flow/*` describes semantic compute and abstract data dependency only. Do not record kernel hardware/resource details here: `LocalTensor`, `GlobalTensor`, Queue, UB/L1/L0 allocation, set/wait events, barriers, pipeline stage order, workspace, buffer reuse, and sync lifecycle belong to `kernel/*` after Kernel Path analysis.
 - 如果 golden 和 kernel 语义不一致，写入 risks / issues，不要假装一致。
 - fused step 不要拆成不存在的函数。
 - optional input / feature flag 控制的步骤必须写 `enabled_when`。
 - compute_step id（Cxxx）与 golden_step id（Gxxx）必须稳定，供 Kernel Path / TestGenerate 对齐。
 - 每个关键 fact 必须有 fact_id、confidence、evidence_refs，以及 source_locator（或明确 reason）。
+
+When writing proposals, use the unified `canonical_updates` envelope under `archive/proposals/*.yaml`. Draft `flow/*` files are compatibility artifacts and are not trusted until `uo-kb-compile promote ... --phase phase2` succeeds.

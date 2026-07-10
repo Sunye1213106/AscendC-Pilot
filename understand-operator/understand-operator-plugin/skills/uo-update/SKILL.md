@@ -85,7 +85,14 @@ Canonical v2 partitions:
 - Re-run **only** impacted phases using the same prompts as `uo-init`.
 - Keep human review gates when boundary or kernel dispatch plans materially change.
 - After patches: run `quality_gate.py` and update `index.yaml` / `route.md` if needed.
-- Before accepting canonical v2 patches, run the deterministic KB compiler (`uo-compile-kb` or quality gate) and inspect `archive/runs/kb_compile_report.yaml`.
+- Before accepting canonical v2 patches, run the deterministic KB compiler and inspect `archive/runs/kb_compile_report.yaml`.
+
+```powershell
+uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase <phase>
+uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase <phase>
+```
+
+Use `promote` only when proposals/raw promoted updates exist. Use `validate` after every patched phase. Keep stale artifacts from `archive/runs/stale_artifacts.yaml` marked unresolved until validation succeeds and the derived `cross_layer/*`, `query/*`, and `contracts/*` views are refreshed.
 
 ### 4. Parallel points
 

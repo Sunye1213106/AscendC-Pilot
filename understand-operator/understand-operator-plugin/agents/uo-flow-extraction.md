@@ -38,6 +38,8 @@ Produce a golden **semantic model** for future GoldenGenerate. Do **not** genera
 
 Do not analyze host tiling families or rewrite tiling canonical files.
 
+Do not put kernel implementation details in Flow canonical files. `flow/*` may describe semantic compute steps, tensors, abstract data dependencies, golden semantics, dtype/cast policy, and unresolved links to future kernel evidence. Hardware/resource facts such as `LocalTensor`, `GlobalTensor`, Queue, UB/L1/L0 allocation, set/wait events, barriers, pipeline stage order, or buffer reuse belong to `kernel/*` and cross-layer mappings after Phase 4/5.
+
 ## Inputs
 
 - `operator.yaml`
@@ -53,6 +55,35 @@ Before writing canonical drafts, also write:
 - `archive/proposals/flow_dataflow_proposal.yaml`
 
 The proposal should carry stable id candidates, flow/dataflow facts, semantic relations, evidence refs, unresolved items, and conflicts. The canonical files below remain required for compatibility with the existing barrier; the deterministic KB compiler/quality gate validates them before trusted use.
+
+The proposal must use the unified envelope. Do not write arbitrary top-level canonical paths:
+
+```yaml
+version: 1
+op_name: "<OP_NAME>"
+proposal_id: "flow_dataflow_<stable_suffix>"
+producer: "uo-flow-extraction"
+phase: "phase2"
+canonical_updates:
+  - target: "registry/evidence.yaml"
+    section: "evidence"
+    mode: "by_id"
+    items: []
+  - target: "flow/compute_graph.yaml"
+    section: "compute_steps"
+    mode: "by_id"
+    items: []
+  - target: "flow/dataflow.yaml"
+    section: "dataflow_edges"
+    mode: "by_id"
+    items: []
+  - target: "flow/golden_model.yaml"
+    section: "golden_steps"
+    mode: "by_id"
+    items: []
+```
+
+Allowed targets are only `registry/`, `tiling/`, `flow/`, `kernel/`, `cross_layer/`, `query/`, `contracts/`, and `evidence/` YAML files under `UO_ROOT`. Draft canonical files are compatibility artifacts only; the host must run `uo-kb-compile promote ... --phase phase2` and trust only promoted canonical output.
 
 1. `flow/index.yaml`
 2. `flow/compute_graph.yaml`

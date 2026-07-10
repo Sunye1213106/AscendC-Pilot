@@ -84,6 +84,35 @@ Before writing canonical drafts, also write a source-backed proposal:
 
 This proposal should include stable id candidates, aliases, facts, typed relations, evidence refs, unresolved items, and conflicts. The canonical files below are draft canonical slices for compatibility with the existing barrier; the deterministic KB compiler/quality gate must validate them before they are trusted.
 
+The proposal must use the unified envelope. Do not write arbitrary top-level canonical paths:
+
+```yaml
+version: 1
+op_name: "<OP_NAME>"
+proposal_id: "host_tiling_<stable_suffix>"
+producer: "uo-host-extraction"
+phase: "phase2"
+canonical_updates:
+  - target: "registry/evidence.yaml"
+    section: "evidence"
+    mode: "by_id"
+    items: []
+  - target: "tiling/variables.yaml"
+    section: "variables"
+    mode: "by_id"
+    items: []
+  - target: "tiling/key_space.yaml"
+    section: "key_fields"
+    mode: "by_id"
+    items: []
+  - target: "tiling/constraints.yaml"
+    section: "relations"
+    mode: "by_id"
+    items: []
+```
+
+Allowed targets are only `registry/`, `tiling/`, `flow/`, `kernel/`, `cross_layer/`, `query/`, `contracts/`, and `evidence/` YAML files under `UO_ROOT`. Draft canonical files are compatibility artifacts only; the host must run `uo-kb-compile promote ... --phase phase2` and trust only promoted canonical output.
+
 ### Canonical (9)
 
 1. `tiling/route.md`

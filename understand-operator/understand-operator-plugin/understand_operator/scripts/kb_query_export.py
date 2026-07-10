@@ -12,6 +12,7 @@ except ImportError:  # pragma: no cover - PyYAML optional at runtime
     yaml = None  # type: ignore[assignment]
 
 from understand_operator._operator.artifacts import operator_root, read_text, safe_op_name
+from understand_operator._operator.kb_compiler import build_entity_index
 
 EXPORT_VIEWS: dict[str, list[str]] = {
     "tiling-test": [
@@ -98,6 +99,18 @@ EXPORT_VIEWS: dict[str, list[str]] = {
     ],
 }
 
+CONTEXT_VIEWS = {
+    "operator-understanding",
+    "variable-trace",
+    "tiling-field-trace",
+    "tilingdata-trace",
+    "kernel-path-trace",
+    "code-change-impact",
+    "pr-review",
+    "testcase-contract",
+    "evidence-conflict",
+}
+
 LEGACY_MARKERS = [
     "summary/operator_io.yaml",
     "summary/operator_manifest.yaml",
@@ -167,6 +180,188 @@ def export_view(uo_root: Path, op_name: str, view: str) -> dict[str, Any]:
     }
 
 
+def export_context_slice(uo_root: Path, op_name: str, view: str, entity: str | None = None) -> dict[str, Any]:
+    docs = _load_context_docs(uo_root)
+    entity_index = build_entity_index(docs)
+    graph = _load_graph(docs, "cross_layer/behavior_graph.yaml")
+    impact = _load_graph(docs, "cross_layer/impact_graph.yaml")
+    selected = set[str]()
+
+    if entity:
+        selected.add(entity)
+        selected.update(_neighbors(entity, graph, direction="both", depth=2))
+        if view in {"code-change-impact", "pr-review"}:
+            selected.update(_neighbors(entity, impact, direction="downstream", depth=4))
+    elif view == "operator-understanding":
+        selected.update(_ids_by_kind(entity_index, {"symbol", "variable", "key", "family"}))
+    elif view == "testcase-contract":
+        selected.update(_ids_by_kind(entity_index, {"key", "family", "template_binding", "kernel_branch", "compute_step"}))
+    elif view == "evidence-conflict":
+        selected.update(_ids_by_kind(entity_index, {"evidence", "relation"}))
+    else:
+        selected.update(list(entity_index.keys())[:20])
+
+    entities = [entity_index[eid] for eid in sorted(selected) if eid in entity_index]
+    relations = _filter_edges(graph.get("edges", []) + impact.get("edges", []) + impact.get("impacts", []), selected)
+    upstream = _filter_edges(graph.get("edges", []), selected, incoming=True)
+    downstream = _filter_edges(graph.get("edges", []) + impact.get("impacts", []), selected, outgoing=True)
+    evidence = _collect_evidence(docs, entities, relations)
+    unresolved, conflicts = _collect_unresolved_conflicts(docs)
+
+    return {
+        "query": {
+            "intent": view,
+            "entity_id": entity,
+            "kb_first": True,
+            "archive_read": False,
+        },
+        "entities": entities,
+        "relations": relations,
+        "upstream": upstream,
+        "downstream": downstream,
+        "paths": _paths_for_entities(docs, selected),
+        "evidence": evidence,
+        "unresolved": unresolved,
+        "conflicts": conflicts,
+        "source_artifacts": sorted(_source_artifacts(entities, relations)),
+    }
+
+
+def _load_context_docs(uo_root: Path) -> dict[str, Any]:
+    rels = set(
+        [
+            "registry/symbols.yaml",
+            "registry/variables.yaml",
+            "registry/aliases.yaml",
+            "registry/evidence.yaml",
+            "cross_layer/variable_lineage.yaml",
+            "cross_layer/behavior_graph.yaml",
+            "cross_layer/impact_graph.yaml",
+            "cross_layer/input_to_tiling.yaml",
+            "cross_layer/tiling_to_kernel.yaml",
+            "contracts/query.yaml",
+            "contracts/code_change.yaml",
+            "contracts/pr_review.yaml",
+            "contracts/testcase.yaml",
+            "kernel/paths.yaml",
+            "kernel/branches.yaml",
+            "tiling/key_space.yaml",
+            "tiling/families.yaml",
+            "tiling/data_model.yaml",
+            "flow/compute_graph.yaml",
+            "evidence/issues.yaml",
+        ]
+    )
+    docs: dict[str, Any] = {}
+    for rel in sorted(rels):
+        path = uo_root / rel
+        if path.exists():
+            try:
+                docs[rel] = _load_file(uo_root, rel)
+            except Exception:  # noqa: BLE001
+                docs[rel] = {}
+    return docs
+
+
+def _load_graph(docs: dict[str, Any], rel: str) -> dict[str, Any]:
+    data = docs.get(rel)
+    return data if isinstance(data, dict) else {}
+
+
+def _neighbors(entity: str, graph: dict[str, Any], *, direction: str, depth: int) -> set[str]:
+    edges = graph.get("edges") or graph.get("impacts") or []
+    adjacency: dict[str, set[str]] = {}
+    reverse: dict[str, set[str]] = {}
+    for edge in edges if isinstance(edges, list) else []:
+        if not isinstance(edge, dict):
+            continue
+        src = str(edge.get("source_id") or edge.get("source") or "")
+        dst = str(edge.get("target_id") or edge.get("target") or "")
+        if not src or not dst:
+            continue
+        adjacency.setdefault(src, set()).add(dst)
+        reverse.setdefault(dst, set()).add(src)
+    result: set[str] = set()
+    frontier = {entity}
+    for _ in range(depth):
+        next_frontier: set[str] = set()
+        for node in frontier:
+            if direction in {"both", "downstream"}:
+                next_frontier.update(adjacency.get(node, set()))
+            if direction in {"both", "upstream"}:
+                next_frontier.update(reverse.get(node, set()))
+        next_frontier -= result
+        result.update(next_frontier)
+        frontier = next_frontier
+    return result
+
+
+def _ids_by_kind(entity_index: dict[str, Any], kinds: set[str]) -> set[str]:
+    return {eid for eid, meta in entity_index.items() if meta.get("kind") in kinds}
+
+
+def _filter_edges(edges: Any, selected: set[str], *, incoming: bool = False, outgoing: bool = False) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for edge in edges if isinstance(edges, list) else []:
+        if not isinstance(edge, dict):
+            continue
+        src = str(edge.get("source_id") or edge.get("source") or "")
+        dst = str(edge.get("target_id") or edge.get("target") or "")
+        if incoming and dst in selected:
+            out.append(edge)
+        elif outgoing and src in selected:
+            out.append(edge)
+        elif not incoming and not outgoing and (src in selected or dst in selected):
+            out.append(edge)
+    return out
+
+
+def _collect_evidence(docs: dict[str, Any], entities: list[dict[str, Any]], relations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    refs = {ref for item in entities + relations for ref in (item.get("evidence_refs") or [])}
+    evidence_entries = docs.get("registry/evidence.yaml", {})
+    evidence = evidence_entries.get("evidence") if isinstance(evidence_entries, dict) else []
+    return [item for item in evidence if isinstance(item, dict) and item.get("id") in refs]
+
+
+def _collect_unresolved_conflicts(docs: dict[str, Any]) -> tuple[list[Any], list[Any]]:
+    unresolved: list[Any] = []
+    conflicts: list[Any] = []
+    for rel, data in docs.items():
+        if not isinstance(data, dict):
+            continue
+        for item in data.get("unresolved") or data.get("unknowns") or []:
+            unresolved.append({"artifact": rel, "item": item})
+        for item in data.get("conflicts") or []:
+            conflicts.append({"artifact": rel, "item": item})
+    issues = docs.get("evidence/issues.yaml")
+    if isinstance(issues, dict):
+        conflicts.extend({"artifact": "evidence/issues.yaml", "item": item} for item in issues.get("conflicts") or [])
+        unresolved.extend({"artifact": "evidence/issues.yaml", "item": item} for item in issues.get("unknowns") or [])
+    return unresolved, conflicts
+
+
+def _paths_for_entities(docs: dict[str, Any], selected: set[str]) -> list[dict[str, Any]]:
+    paths = docs.get("kernel/paths.yaml", {})
+    items = paths.get("kernel_paths") if isinstance(paths, dict) else []
+    out = []
+    for item in items.values() if isinstance(items, dict) else items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        blob = json.dumps(item, ensure_ascii=False)
+        if any(eid in blob for eid in selected):
+            out.append(item)
+    return out
+
+
+def _source_artifacts(entities: list[dict[str, Any]], relations: list[dict[str, Any]]) -> set[str]:
+    out = set()
+    for item in entities + relations:
+        artifact = item.get("artifact")
+        if artifact:
+            out.add(str(artifact))
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Export canonical operator KB views (no source reads, no CBM, no archive)."
@@ -175,10 +370,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--op-name", required=True, help="Operator name")
     parser.add_argument(
         "--view",
-        choices=sorted(EXPORT_VIEWS.keys()),
+        choices=sorted(set(EXPORT_VIEWS) | CONTEXT_VIEWS),
         default="tiling-test",
         help="Export view",
     )
+    parser.add_argument("--entity", help="Stable entity id for focused context-slice views")
     parser.add_argument(
         "--format",
         choices=["yaml", "json"],
@@ -192,7 +388,10 @@ def main(argv: list[str] | None = None) -> int:
     uo_root = operator_root(repo_root, op_name)
 
     try:
-        payload = export_view(uo_root, op_name, args.view)
+        if args.view in CONTEXT_VIEWS:
+            payload = export_context_slice(uo_root, op_name, args.view, args.entity)
+        else:
+            payload = export_view(uo_root, op_name, args.view)
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
         print(str(exc), file=sys.stderr)
         return 1

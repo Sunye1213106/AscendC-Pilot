@@ -85,3 +85,5 @@ The quality gate script now invokes the deterministic KB compiler. In addition t
 - `archive/runs/kb_compile_report.yaml` and `archive/runs/canonical_hashes.yaml`.
 
 The gate must fail or warn on dangling stable ids, missing evidence for key relations, missing template bindings, host/kernel read-write mismatch signals, unresolved conflicts, and stale dependency reports.
+
+Validation is phase-aware. A file may be `empty`, `placeholder`, `valid`, `not_applicable`, `stale`, or `conflicting`; later phases must not pass with placeholder canonical slices. `not_applicable` requires a reason and evidence refs. Final quality must inspect stale classifications from `/uo-update` and the generated `behavior_graph.yaml` / `impact_graph.yaml`.

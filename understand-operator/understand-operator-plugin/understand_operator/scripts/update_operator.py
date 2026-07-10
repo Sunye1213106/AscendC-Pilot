@@ -17,6 +17,11 @@ from understand_operator._core.config import load_config
 from understand_operator._operator.artifacts import operator_root, safe_op_name, write_text
 from understand_operator._operator.cbm_client import OperatorCbmClient, load_index_meta, summarize_result
 
+try:
+    import yaml
+except ImportError:  # pragma: no cover
+    yaml = None  # type: ignore[assignment]
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
@@ -70,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
     detect = client.call("detect_changes", {"repo_path": str(repo_root)}, persist=False)
     change_payload = detect.get("result")
     change_set = _normalize_change_set(change_payload, repo_root=repo_root, op_name=op_name)
-    update_plan = _build_update_plan(change_set)
+    update_plan = _build_update_plan(change_set, base=base)
 
     write_text(base / "cbm" / "change_set.yaml", _to_yaml(change_set))
     write_text(base / "archive" / "runs" / "update_plan.yaml", _to_yaml(update_plan))
@@ -141,7 +146,7 @@ def _normalize_change_set(payload: Any, *, repo_root: Path, op_name: str) -> dic
     }
 
 
-def _build_update_plan(change_set: dict[str, Any]) -> dict[str, Any]:
+def _build_update_plan(change_set: dict[str, Any], base: Path | None = None) -> dict[str, Any]:
     files = [f.lower().replace("\\", "/") for f in change_set.get("changed_files") or []]
     symbols = [s.lower() for s in change_set.get("changed_symbols") or []]
     blob = " ".join(files + symbols)
@@ -175,6 +180,21 @@ def _build_update_plan(change_set: dict[str, Any]) -> dict[str, Any]:
             "cross_layer/input_to_tiling.yaml",
             "cross_layer/variable_lineage.yaml",
         ]
+        if _tiling_change_requires_kernel(blob, base):
+            areas.append("kernel_impacted_by_tiling")
+            phases.extend(["phase3", "phase3.5", "phase4", "phase5"])
+            invalidations["kernel_from_tiling"] = [
+                "kernel/compile_model.yaml",
+                "kernel/variables.yaml",
+                "kernel/paths.yaml",
+                "kernel/branches.yaml",
+                "kernel/pipeline.yaml",
+                "kernel/resources.yaml",
+                "cross_layer/tiling_to_kernel.yaml",
+                "cross_layer/impact_graph.yaml",
+            ]
+        else:
+            areas.append("tilingdata_numeric_local")
     if hit("datacopy", "setflag", "waitflag", "pipe_", "dataflow", "compute"):
         areas.append("compute_dataflow")
         phases.append("phase2_flow")
@@ -224,6 +244,10 @@ def _build_update_plan(change_set: dict[str, Any]) -> dict[str, Any]:
         phases = _unique(phases)
 
     derived_stale = _derived_stale_from_invalidations(invalidations)
+    graph_impacts = _impact_graph_invalidations(change_set, base)
+    if graph_impacts:
+        invalidations["behavior_graph_dependency"] = graph_impacts
+        derived_stale = sorted(set(derived_stale) | set(graph_impacts))
     return {
         "version": 1,
         "status": "planned",
@@ -232,6 +256,7 @@ def _build_update_plan(change_set: dict[str, Any]) -> dict[str, Any]:
         "phases_to_rerun": phases,
         "artifact_invalidations": invalidations,
         "derived_views_to_mark_stale": derived_stale,
+        "stale_classification": _stale_classification(invalidations, derived_stale),
         "dependency_hash": _dependency_hash(change_set),
         "generator_version": "understand-operator-update-v2",
         "preserve_untouched_artifacts": True,
@@ -242,6 +267,74 @@ def _build_update_plan(change_set: dict[str, Any]) -> dict[str, Any]:
             "Source lookups remain CBM-first; whole-file Read only after CBM failure.",
             "Only the deterministic KB compiler should promote proposal/intermediate artifacts into canonical v2 slices.",
         ],
+    }
+
+
+def _tiling_change_requires_kernel(blob: str, base: Path | None) -> bool:
+    if any(token in blob for token in ("tiling_key", "family", "template", "dispatch", "kernel_entry")):
+        return True
+    if "tilingdata" in blob and not any(token in blob for token in ("key", "family", "template", "dispatch")):
+        return False
+    if "op_host" in blob or "tiling" in blob:
+        if _impact_graph_mentions_kernel(base):
+            return True
+        return True
+    return False
+
+
+def _impact_graph_mentions_kernel(base: Path | None) -> bool:
+    if base is None or yaml is None:
+        return False
+    graph = _read_yaml_file(base / "cross_layer" / "impact_graph.yaml")
+    blob = json.dumps(graph, ensure_ascii=False).lower()
+    return any(token in blob for token in ("kernel/", "kpath_", "ktpl_", "kbr_", "kernel_path", "template_binding"))
+
+
+def _impact_graph_invalidations(change_set: dict[str, Any], base: Path | None) -> list[str]:
+    if base is None or yaml is None:
+        return []
+    symbols = {str(s).lower() for s in change_set.get("changed_symbols") or []}
+    files = {str(f).lower().replace("\\", "/") for f in change_set.get("changed_files") or []}
+    if not symbols and not files:
+        return []
+    graph = _read_yaml_file(base / "cross_layer" / "impact_graph.yaml")
+    impacts = []
+    for item in (graph.get("impacts") or graph.get("edges") or []) if isinstance(graph, dict) else []:
+        blob = json.dumps(item, ensure_ascii=False).lower()
+        if any(sym and sym in blob for sym in symbols) or any(path and path in blob for path in files):
+            target = str(item.get("target_id") or item.get("target") or "")
+            if target.startswith(("KPATH_", "KTPL_", "KBR_")):
+                impacts.extend(["kernel/paths.yaml", "kernel/branches.yaml", "cross_layer/tiling_to_kernel.yaml"])
+            elif target.startswith(("VAR_", "KEY_", "FAM_")):
+                impacts.extend(["registry/variables.yaml", "cross_layer/variable_lineage.yaml", "cross_layer/behavior_graph.yaml"])
+            else:
+                impacts.append("cross_layer/impact_graph.yaml")
+    return sorted(set(impacts))
+
+
+def _read_yaml_file(path: Path) -> dict[str, Any]:
+    if not path.exists() or yaml is None:
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8", errors="ignore")) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _stale_classification(invalidations: dict[str, list[str]], derived_stale: list[str]) -> dict[str, list[str]]:
+    invalidated = sorted({item for values in invalidations.values() for item in values})
+    needs_review = sorted(
+        item
+        for item in invalidated
+        if item.startswith(("kernel/", "cross_layer/")) or item in {"operator.yaml", "registry/variables.yaml"}
+    )
+    safe_to_preserve = sorted(set(derived_stale) - set(invalidated))
+    return {
+        "invalidated": invalidated,
+        "stale": sorted(derived_stale),
+        "needs_review": needs_review,
+        "safe_to_preserve": safe_to_preserve,
     }
 
 

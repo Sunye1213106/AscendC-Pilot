@@ -71,3 +71,33 @@ Keep the existing phase order and human gates. Add these canonical v2 responsibi
 - Phase 8 runs `quality_gate.py`, which calls the deterministic KB compiler and writes `archive/runs/kb_compile_report.yaml`.
 
 Only validator/compiler logic may promote proposal/intermediate artifacts into canonical v2 files. Preserve `test/contract.yaml` for compatibility; derive `contracts/testcase.yaml` from canonical KB for future testcase agents.
+
+## Deterministic KB Commands
+
+After the Phase 2 host/flow barrier and `verify_subagent_barrier.py`, promote proposals before reading canonical tiling/flow as trusted:
+
+```powershell
+uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase2
+uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase2
+```
+
+After the Phase 4 kernel path barrier and host alignment, promote or validate kernel updates before Phase 5:
+
+```powershell
+uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase4
+uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase4
+```
+
+After Phase 5 cross-layer artifacts are built:
+
+```powershell
+uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase5
+```
+
+After Phase 7 query routes and contracts are built:
+
+```powershell
+uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase7
+```
+
+Phase 8 quality gate must run final validation and inspect `archive/runs/kb_compile_report.yaml`. Draft canonical slices, raw agent YAML, and proposal files are not trusted until the deterministic compiler accepts them.

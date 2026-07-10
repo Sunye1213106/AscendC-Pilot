@@ -195,3 +195,28 @@ python "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" -
 - Phase 8 must run `quality_gate.py`; the gate calls the deterministic KB compiler and writes `archive/runs/kb_compile_report.yaml`.
 - Only validator/compiler logic may promote proposals/intermediate artifacts into canonical v2 files.
 - Preserve `test/contract.yaml` for compatibility; derive `contracts/testcase.yaml` for the future Testcase Agent.
+
+## Canonical v2 command checkpoints
+
+After Phase 2 subagents finish and the barrier passes:
+
+```powershell
+uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase2
+uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase2
+```
+
+After Phase 4 kernel raw agents finish and host alignment writes kernel canonical files:
+
+```powershell
+uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase4
+uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase4
+```
+
+After Phase 5 and Phase 7:
+
+```powershell
+uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase5
+uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase7
+```
+
+Phase 8 runs `quality_gate.py` for final validation. Treat `archive/proposals/*`, `archive/raw_agents/*`, and draft canonical slices as untrusted until these commands pass.

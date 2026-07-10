@@ -62,6 +62,8 @@ Do the task in two ordered steps inside the raw agent output:
 
 Step 1 sections must be present before Step 2 conclusions. If evidence is insufficient, write `unresolved` or `conflicts`; do not silently infer.
 
+Every Step 2 compute claim must reference existing `flow/compute_graph.yaml` compute step ids (`Cxxx` or stable ids present in that file). If a kernel action cannot be mapped to a Flow compute step, write it under `unresolved_compute_alignment` instead of inventing a new compute step.
+
 ## Required Outputs (raw agent; host merges)
 
 Write temporary per-task outputs under:
@@ -96,6 +98,8 @@ Required sections in the raw YAML:
 `compute_step_alignment` is the most important section.
 
 `tiling_backfill_candidates` is required. Do **not** edit `tiling/*` directly.
+
+Raw agent output is not canonical. The host Alignment Builder and deterministic KB compiler are the only components allowed to promote raw kernel facts into `kernel/compile_model.yaml`, `kernel/variables.yaml`, `kernel/branches.yaml`, `kernel/paths.yaml`, `kernel/pipeline.yaml`, `kernel/resources.yaml`, and `cross_layer/*`.
 
 ## Completion Manifest
 
