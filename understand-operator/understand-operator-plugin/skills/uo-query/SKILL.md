@@ -3,140 +3,191 @@ name: uo-query
 description: >-
   Answer questions from an existing AscendC operator knowledge base.
   Use when the user runs /uo-query, understand_operator_query, or asks about an
-  operator using the KB. Classify the question first, resolve the real KB path,
-  read route.md then typed artifacts; if KB is missing, ask init vs source-read.
+  operator using the KB. Workflow: KB draft fast, then CBM MCP verify when
+  medium/unknown/conflict/needs_alignment before final answer. NEVER Read/Grep
+  operator .cpp/.h before codebase-memory-mcp MCP tools. Do NOT use cbm_query.py.
 disable-model-invocation: true
 argument-hint: "[path] [--op-name <name>] <question>"
 ---
 
-# uo-query — KB-First Q&A
+# uo-query — KB 起草 + CBM MCP 校验
 
-Answer from the **existing** operator KB. Do **not** rebuild unless the user chooses init.
+从**已有**算子 KB 回答。除非用户选择 init，否则不要重建。
 
-## Variables
+**默认语言：中文。** 对用户的正文、引用段标题、置信度说明用中文；路径/符号/工具名可保留英文。
 
-- `PROJECT_ROOT`: AscendC operator repo root (prefer the directory that contains `op_host/` / `op_kernel/`, or the path the user gave).
-- `PLUGIN_ROOT`: two levels up from this skill directory (`.../understand-operator-plugin`).
-- `PROMPT_DIR`: `$PLUGIN_ROOT/prompts`.
-- `SCRIPT_DIR`: `$PLUGIN_ROOT/skills/understand-operator`.
-- `OP_NAME`: `--op-name` if given; otherwise resolve from KB (see below). **Do not** blindly use a parent folder name like `FAG_test`.
-- `UO_ROOT`: resolved KB root that contains `route.md`.
+## Core workflow（强制）
 
-## Mandatory references (read these)
+```text
+1) KB 快速起草（route → typed artifacts）
+2) 判断置信度 / 是否有冲突
+3a) KB 已 high-confidence 且无冲突 → 直接输出（可 KB-only）
+3b) medium / low / unknown / needs_alignment / conflict / Caveat / 用户要源码证明
+    → 必须用 codebase-memory-mcp MCP 校验关键符号（禁止此时以 KB-only 收尾）
+4) 用 MCP 结果修正答案后再输出（含「引用」段）
+```
 
-Before answering, load:
+**用户要的是：快答案 + 必要时源码校验后的结论。**  
+**不要**输出「置信度=medium / needs_alignment + 源码查找: KB-only」这种未校验草稿。
 
-1. `references/question-taxonomy.md` — classify the question
-2. `references/kb-file-map.md` — which KB files store what
+## HARD GATE — 怎么碰源码
 
-Also follow `$PROMPT_DIR/00_cbm_first_rule.md` for any **source** lookup.
+校验时：
 
-## Step 0 — Resolve KB path (fix the “找不到知识库” bug)
+1. 从 KB Caveat / `evidence_index.yaml` / evidence 取 **symbol / file / line**。
+2. **先**调用 MCP 服务器 `codebase-memory-mcp` 的工具（见下）。
+3. MCP 成功后：可选 **line-scoped** `Read`（≤80 行）核对片段。
+4. 整文件 `Read` 或源码 `Grep`：**仅**在 MCP 失败（空/报错/未连接）且已说明之后。
 
-Real layout is:
+### 禁止
+
+- Shell 跑 `cbm_query.py` / `uo-cbm` / `codebase-memory-mcp cli ...` 做交互查询
+- 未调 MCP 就 `Read`/`Grep` `op_host/**`、`op_kernel/**`、任意 `*.cpp` / `*.h`
+- `Glob` 找 `*tiling*.cpp` 后立刻 `Read`
+
+MCP 常驻服务负责建库（`index_repository`）与查询；`cbm_query.py` / CLI 索引对 agent 已废弃。
+
+详情：`references/source-lookup-gate.md`。全局规则：`$PROMPT_DIR/00_cbm_first_rule.md`、`$PROMPT_DIR/00_cbm_on_demand.md`。
+
+## Variables（禁止全盘搜索脚本）
+
+- `THIS_SKILL`: 本 `SKILL.md` 所在目录（可为 `~/.config/opencode/skills/uo-query`）。
+- `SCRIPT_DIR`: **优先** `THIS_SKILL/../understand-operator`（含 `review_checkpoint.py`）；见 `prompts/00_path_resolution.md`。
+- `PLUGIN_ROOT` / `PROMPT_DIR`: 从 `SCRIPT_DIR/../..` 解析（须含 `prompts/00_cbm_first_rule.md`）。
+- `PROJECT_ROOT`: 算子仓库根（含 `op_host/`）；**不是** opencode 配置目录。
+- `OP_NAME`: `--op-name`；否则从 KB 解析。**不要**盲目用父目录名如 `FAG_test`。
+- `UO_ROOT`: 含 `route.md` 的 KB 根。
+
+OpenCode 常见脚本路径：`%USERPROFILE%\.config\opencode\skills\understand-operator\`。  
+**禁止** `Get-ChildItem C:\ -Recurse` 找脚本。
+
+## Mandatory references
+
+回答前加载：
+
+1. `references/question-taxonomy.md`
+2. `references/kb-file-map.md`
+3. `references/source-lookup-gate.md`
+
+## Step 0 — Resolve KB path
 
 ```text
 <operator_repo>/.understand-operator/<op_name>/route.md
 ```
 
-Example that must work:
+搜索顺序（命中即停）：
 
-```text
-D:\PR-review\TEST\FAG_test\flash_attention_score_grad\.understand-operator\flash_attention_score_grad\route.md
-```
+1. `--op-name X` → `$PROJECT_ROOT/.understand-operator/X/route.md`
+2. `$PROJECT_ROOT/.understand-operator/*/route.md`（优先同名目录 / 唯一候选 / 否则询问）
+3. 向上最多 3 层找 `.understand-operator/*/route.md`
+4. Glob `**/.understand-operator/*/route.md`
 
-**Search order** (stop at first hit that has `route.md`):
+`UO_ROOT` = 含 `route.md` 的目录；`OP_NAME` = 该目录名。
 
-1. If user passed `--op-name X`: `$PROJECT_ROOT/.understand-operator/X/route.md`
-2. If `$PROJECT_ROOT/.understand-operator/*/route.md` exists (one or more child dirs): pick the best match
-   - prefer directory name == current folder name
-   - else prefer the only child that has `route.md`
-   - else list candidates and ask the user which op
-3. Walk up at most 3 parents looking for `.understand-operator/*/route.md` (workspace may be opened at `FAG_test` while KB lives under `flash_attention_score_grad/`)
-4. Glob: `**/.understand-operator/*/route.md` under the workspace / given path
+## Step 1 — KB missing
 
-Set `UO_ROOT` to the directory that **contains** `route.md` (the `<op_name>` folder), and set `OP_NAME` from that folder name.
-
-**Wrong** (do not do this):
-
-- `$PROJECT_ROOT/.understand-operator/FAG_test/route.md` when the repo folder is `FAG_test` but the op KB is `flash_attention_score_grad`
-- assuming `UO_ROOT = .understand-operator` without the `<op_name>` child
-
-## Step 1 — If KB missing: user choice (mandatory)
-
-If no `route.md` found after Step 0, **do not** only say “请先 /uo-init”.  
-Present a choice and wait:
-
-```text
-未找到可用 KB（缺少 route.md）。请选择：
-1) init — 运行 /uo-init 构建完整知识库后再问
-2) source — 不建库，直接用 CBM→源码回答本次问题（答案不落 KB）
-3) stop — 取消
-```
-
-Prefer asking in chat (do **not** open an interactive stdin popup):
-
-```text
-未找到可用 KB（缺少 route.md）。请在聊天回复：
-1) init — 运行 /uo-init 构建完整知识库后再问
-2) source — 不建库，直接用 CBM→源码回答本次问题（答案不落 KB）
-3) stop — 取消
-4) manual_supplement: <说明 KB 路径或 op-name>
-```
-
-Optional helper (prints menu only; does not block):
+无 `route.md` 时让用户选：`init` / `source` / `stop`（可用 AskQuestion）。  
+`source` 路径同样：**MCP first**，禁止直接整文件 Read，禁止 `cbm_query.py`。
 
 ```powershell
-python "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --gate query_missing_kb --title "未找到 KB：请选择"
+python "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --gate query_missing_kb --decision <choice> [--notes "..."]
 ```
 
-After the user replies in chat, record:
+## Step 2 — Classify
 
-```powershell
-python "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --gate query_missing_kb --decision init
-```
+打印：`问题类型: <type>`  
+类型见 `question-taxonomy.md`。
 
-Never use `--interactive` / `--arrows` inside OpenCode agent shells.
+## Step 3 — KB draft（快）
 
-- `init` → tell user to run `/uo-init <operator_repo> --op-name <op> --full`（或你代为启动 uo-init）
-- `source` → skip KB; answer with CBM-first then source; state clearly this is source-only
-- `stop` → end
+1. 读 `route.md` / `route.json`。
+2. Legacy tiling：若无 `tiling/index.yaml`+`key_space.yaml` 但有旧文件 → 提示 regenerate。
+3. `host_tiling`：先 `tiling/index.yaml`，再按 `qa_routes` 读（不要默认读完所有 tiling YAML）。
+4. 按 `kb-file-map.md` 打开对应文件，**起草**答案要点。
 
-## Step 2 — Classify the question
+## Step 4 — Verify gate（强制，MCP）
 
-Using `references/question-taxonomy.md`, set:
+对草稿做检查。出现任一信号 → **进入 MCP 校验，不得直接输出**：
 
-- `question_type`: `io_boundary` | `host_tiling` | `compute_dataflow` | `kernel_path` | `evidence_quality` | `testing_hints` | `overview_route` | `mixed`
-- optional `secondary_types`
+- `confidence: medium` / `low`
+- `needs_alignment`
+- `unknown` / `conflicting`
+- Caveat / Hot Risks / “张力” / “待确认” / “建议核对源码”
+- KB 内部矛盾
+- 用户明确要源码行 / 证明
 
-Print one line: `问题类型: <type>`
+校验步骤：
 
-Example: “哪种输入 shape 更容易命中 IsTndSwizzle” → `host_tiling`.
+1. 从 KB 抽出要查的 symbol（如 `SetSplitAxis`、`CheckExceedL2Cache`）。
+2. 调 MCP（见下方 helper）；优先 `search_graph` → `get_code_snippet`，不要整文件。
+3. 用结果更新：命中条件、是否可达、置信度。
+4. **禁止**输出未校验的 medium Caveat + `源码查找: KB-only`。
 
-## Step 3 — KB read order
+仅当草稿已 **high-confidence**、无冲突、用户也未要求源码时，才允许 `源码查找: KB-only`。
 
-1. Read `route.md` (and `route.json` if useful) — use Fast Task Routes / maps as the jump table.
-2. Open typed files from `references/kb-file-map.md` for `question_type`.
-3. Answer from KB when enough; cite paths.
-4. If KB has `unknown` / conflict / user wants code proof:
-   - CBM first via `cbm_query.py`
-   - only then source `Read` (whole file only after CBM failure)
+若 MCP 服务器未连接：停止并提示配置（见仓库 `docs/cbm-mcp-setup.md`），不要用 Grep/`cbm_query.py` 顶替。
 
-Never open `.cpp/.h` before CBM for a source lookup.
+### host_tiling 区分
+
+- tiling 机制 / 变量清单 / 影响分类 → `variables.yaml`（`tiling_mechanism` / `variables` / `impact_classification`）
+- family / 结构路径 → `families.yaml`
+- tiling_key 字段（编码）→ `key_space.yaml`（`fields` / `fields_order` / `derived_fields`）
+- tiling_key 逻辑关系（mutex/implies/合法组合）→ `constraints.yaml`（`relations` / `variable_constraints`）
+- tiling_key 剪枝 / 合并 → `constraints.yaml`（`tiling_key_pruning` / `tiling_key_merging`）
+- tiling_key → 输入构造 → `constraints.yaml`（`input_realization`）+ `operator.yaml`
+- 关系覆盖债务 → `coverage_model.yaml`（`key_relation_obligations.must_cover` + `linked_relations`）
+- tilingdata 数值 → `data_model.yaml`
+- optional input → `variables.yaml` + `key_space.yaml` + `data_model.yaml`
+- unreachable（family）→ `families.yaml`；unreachable（key 组合）→ `constraints.yaml`（`key_unreachable`）
+- 覆盖债务总览 → `coverage_model.yaml`
 
 ## Answer style
 
-- First line: `问题类型: ...`
-- Then the direct answer
-- Cite KB paths (e.g. `tiling/tiling_decision_tree.md`, `tiling/dispatch_variables.yaml`)
-- If route pointed you somewhere, say so briefly
-- If used CBM/source, say so + confidence
-- If quality gate is red/yellow or conflicts exist, mention relevant Hot Risks from `route.md`
+- 首行：`问题类型: ...`
+- 中间：直接结论（校验后）+ 必要表格/条件
+- **结尾必须有「引用」段**（见下），缺这段视为回答未完成
 
-## CBM helper
+### 强制结尾模板：引用
 
-```powershell
-python "$SCRIPT_DIR/cbm_query.py" "$PROJECT_ROOT" search_graph --op-name "$OP_NAME" --name-pattern ".*IsTndSwizzle.*" --label Function --phase query
+```markdown
+## 引用
+
+**KB**
+- `tiling/families.yaml` TF007（或对应 family_id / 字段）
+- `tiling/key_space.yaml`（相关 key field）
+- `tiling/route.md` / `tiling/data_model.yaml` / `tiling/coverage_model.yaml`（用到的才列）
+- `kernel/paths/K_TASK_xxx_kernel_path.yaml`（若相关）
+
+**源码核实**
+- `op_host/.../foo.cpp:440-463` — 作用一句话
+- （若本次未做：写「未做 — 原因：KB high-confidence」或「MCP 失败/未连接：…」）
+
+**置信度**
+- 高 / 中 / 低 — 一句话理由
+- 若有唯一不确定项：单独写清 + 建议如何确认
+
+**源码查找**
+- `KB-only（KB high-confidence，无需校验）` 或 `KB + MCP(search_graph/get_code_snippet) 已校验`
 ```
 
-`PROJECT_ROOT` must be the **operator repo** that was indexed (the folder containing `op_host/`), not the plugin repo.
+规则：
+
+1. **KB** 至少 1 条真实读过的路径；优先 canonical tiling 文件。
+2. **源码核实** 在做过 MCP / line-scoped Read 时必须带 `file:line-line`。
+3. 答案含 `medium` / `needs_alignment` / Caveat 时，**源码核实** 不得写「未做」。
+4. **源码查找** 行写 `MCP(...)`，不要写 `cbm_query.py`。
+
+## MCP helper（唯一查询入口）
+
+调用 MCP server **`codebase-memory-mcp`**：
+
+| 目的 | tool | 参数 |
+|---|---|---|
+| 找符号 | `search_graph` | `name_pattern=".*SetSplitAxis.*"`, `label="Function"` |
+| 找字符串 | `search_code` | `pattern="CheckExceedL2Cache"` |
+| 函数片段 | `get_code_snippet` | 先 `search_graph` 得 qualified name，再查 `symbol` |
+| 调用链 | `trace_path` | `function_name=...`, `depth=5` |
+| 是否已索引 | `list_projects` / `index_status` | `repo_path=PROJECT_ROOT` |
+
+`PROJECT_ROOT` = 已索引的算子仓库根（含 `op_host/`）。  
+未索引 → 提示用户 Index / `/uo-init --full`，**不要**用全树 Grep 或 `cbm_query.py` 代替。

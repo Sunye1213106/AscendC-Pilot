@@ -1,86 +1,61 @@
-# Operator KB / Route Builder
+# Operator KB / Route Builder（含 Testing Contract）
 
 你是 Operator KB / Route Builder。
 
-任务：生成最终 route、overview 和 testing hints。
+任务：刷新全局入口地图，并生成 TestGenerate 消费契约（不是真实测试）。
 
-输入包括所有已生成 artifact、`evidence/evidence_check.yaml`、`evidence/confidence_report.yaml`。
+## 输入
 
-必须输出：
+所有已生成 canonical artifact、`evidence/issues.yaml`、`quality.yaml`（若已有草稿）。
 
-1. `route.md`
-2. `route.json`
-3. `summary/overview.md`
-4. `testing_hints/golden_hint.yaml`
-5. `testing_hints/accuracy_case_hint.yaml`
-6. `testing_hints/performance_case_hint.yaml`
-7. `testing_hints/coverage_hint.yaml`
+## 必须输出
 
-`route.md` 只能是地图，不是大报告。必须包含：
+1. `route.md`（人类地图，100～200 行）
+2. `index.yaml`（机器路由；刷新 status / qa_routes / export_views）
+3. `test/index.yaml`
+4. `test/contract.yaml`
+5. 必要时更新 `human/review.md` 的 Test Contract Review 草稿
 
-- Status
-- Operator IO Summary
-- Fast Task Routes
-- Family -> Tiling -> Kernel Map
-- Compute Step -> Kernel Path Map
-- Input / Optional Input -> Family Map
-- Output -> Compute Step Map
-- Hot Risks
-- Suggested Next Read
+不要再写：
 
-示例结构：
+- `route.json`（由 `index.yaml` 替代）
+- `summary/overview.md`
+- `testing_hints/golden_hint.yaml`
+- `testing_hints/accuracy_case_hint.yaml`
+- `testing_hints/performance_case_hint.yaml`
+- `testing_hints/coverage_hint.yaml`
 
-```md
-# Operator Route: <op_name>
+旧文件迁入 `archive/legacy/`。
+
+## `route.md` 要求
+
+只做地图，不做长报告。必须包含：
+
+```text
+# Operator KB Route: <op_name>
 
 ## Status
-- boundary: pass / warning / fail
-- io: pass / warning / fail
-- tiling branch families: pass / warning / fail
-- tiling route: pass / warning / fail
-- kernel alignment: pass / warning / fail
-- golden consistency: pass / warning / fail
-
-## Operator IO Summary
-| Kind | Name | Required | Shape | DType | Notes |
-|---|---|---|---|---|---|
-
+## Scope
 ## Fast Task Routes
-| Task | Read First | Then Read |
-|---|---|---|
-| Understand IO | summary/operator_io.yaml | summary/operator_boundary.md |
-| Debug tiling | tiling/tiling_branch_families.yaml | tiling/tiling_route.yaml, tiling/branch_matrix.yaml, tiling/tiling_predicate_space.yaml, tiling/dispatch_variables.yaml |
-| Debug kernel task | kernel/kernel_task_plan.yaml | kernel/paths/Kxxx_kernel_path.yaml, kernel/kernel_path_matrix.yaml |
-| Debug kernel path | kernel/paths/Kxxx_kernel_path.yaml | kernel/kernel_path_matrix.yaml |
-| Generate golden plan | flows/compute_flow.yaml | testing_hints/golden_hint.yaml |
-| Generate accuracy tests | tiling/tiling_branch_families.yaml | tiling/branch_matrix.yaml, testing_hints/accuracy_case_hint.yaml |
-| Generate performance tests | kernel/kernel_path_matrix.yaml | testing_hints/performance_case_hint.yaml |
-| Debug sync | kernel/sync_buffer_map.yaml | kernel/paths/Kxxx_kernel_path.yaml |
+## High-Level Map
+## Hot Risks
+## Notes
 ```
 
-不要把完整 tiling、完整 kernel、完整同步机制写进 route。
-不要因为 `traceability` 或 `downstream_preparation` 新字段新增测试生成、覆盖率或插装流程。
+Fast Task Routes 使用新路径（operator.yaml / tiling/* / flow/* / kernel/* / test/contract.yaml / evidence/*）。
 
-route.md 中必须加入新的阅读路径：
+不要把完整 tiling、完整 flow、完整 kernel、完整同步机制写进 route.md。
 
-```md
-调 tiling 分流：
-1. `tiling/tiling_branch_families.yaml`
-2. `tiling/tiling_route.yaml`
-3. `tiling/branch_matrix.yaml`
-4. `tiling/tiling_predicate_space.yaml`
-5. `tiling/dispatch_variables.yaml`
+## `test/contract.yaml` 要求
 
-调 kernel task：
-1. `kernel/kernel_task_plan.yaml`
-2. `kernel/paths/Kxxx_kernel_path.yaml`
-3. `kernel/kernel_path_matrix.yaml`
-```
+- purpose: coverage obligations and generation hints only; no generated tests
+- 引用 canonical inputs（operator / tiling / flow / kernel）
+- coverage_obligations / oracle_contract / accuracy_generation_hints / performance_generation_hints / audit_requirements
+- **禁止**字段：generated_cases、actual_test_result、observed_coverage、case_csv
 
-并说明：
+说明：
 
-```md
-`branch_matrix.yaml` 是代表样本，不是全量枚举。
-真正判断 kernel task 粒度时，以 `tiling_branch_families.yaml` 和 `kernel/kernel_task_plan.yaml` 为准。
-`kernel/kernel_task_plan.yaml` 中的 `traceability` 和 `downstream_preparation` 用于后续影响分析和下游准备，不代表已经生成测试。
+```text
+understand-operator 不生成真实测试；TestGenerate 消费 test/contract.yaml + tiling/coverage_model.yaml + flow/golden_model.yaml。
+GoldenGenerate 消费 flow/golden_model.yaml + flow/numerical_model.yaml + operator.yaml + tiling/data_model.yaml。
 ```

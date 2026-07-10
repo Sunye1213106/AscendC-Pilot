@@ -2,7 +2,7 @@
 
 你是 `understand-operator` 的宿主 orchestrator。workflow 里**只有两处需要 subagent 并行**；其余 phase 由宿主 agent 按对应 prompt 直接执行。
 
-**CBM 按需查询**：读 `prompts/00_cbm_on_demand.md`。宿主与各 subagent 通过 Shell 调 `cbm_query.py`，自定义 tool/payload；结果走 stdout，默认只追加 `cbm/query_journal.jsonl`，不要批量落盘 `cbm/*.json`。
+**CBM 按需查询**：读 `prompts/00_cbm_on_demand.md`。宿主与各 subagent 通过 **`codebase-memory-mcp` MCP 工具**查代码；**禁止** Shell 调 `cbm_query.py`。
 
 **进度**：见 `prompts/00_progress_visibility.md`。下发 subagent 必须用 **foreground Task**，并在对话说明「已启动，等待返回」。
 
@@ -22,7 +22,7 @@ python "$SKILL_DIR/verify_subagent_barrier.py" "$PROJECT_ROOT" --op-name "$OP_NA
 ```
 
 4. **仅当 barrier 返回 `ok: true`**：再从磁盘 `Read` subagent 写的 artifact，进入宿主 phase。
-5. **barrier 失败**：用 Task `resume` 让 subagent 补写，或重新下发；**禁止**宿主自己写 `tiling/*` / `flows/*` / `kernel/paths/*` 冒充完成。
+5. **barrier 失败**：用 Task `resume` 让 subagent 补写，或重新下发；**禁止**宿主自己写 `tiling/*` / `flow/*` / `archive/raw_agents/kernel_paths/*` 冒充完成。
 
 Subagent 写完产物后必须写 completion manifest（见各 `agents/uo-*.md`）。宿主以 manifest + barrier 脚本为准，不以 Task 文本摘要代替文件校验。
 
@@ -60,21 +60,22 @@ Phase 1 Macro Boundary **完成后直接**进入（不再等 Boundary Review）�
    - `Task` → `uo-flow-extraction`
 2. 等待两个 Task 都返回。
 3. 运行 `verify_subagent_barrier.py --phase host_flow`。
-4. barrier 通过后，再 Read `tiling/*` 与 `flows/*`，进入 Phase 3。
+4. barrier 通过后，再 Read `tiling/*` 与 `flow/*`，进入 Phase 3。
+   - barrier 现已检查 `tiling/archive/` 五个强制中间文件（frontier / dispatch_variables / predicate_space / compile_time_bindings / decision_tree）。若仍 pending/空 → resume host subagent，禁止宿主手填。
 
 ## 并行点 2：多个 kernel path
 
 在用户批准 kernel dispatch 后：
 
-1. 读取 `kernel/kernel_dispatch_review.yaml` 的 `approved_task_ids`。
+1. 读取 `human/kernel_dispatch_review.yaml`（或 legacy `kernel/kernel_dispatch_review.yaml`）的 `approved_task_ids`。
 2. **同一条宿主消息**里为每个 `task_id` 各发一个 `Task` → `uo-kernel-path`。
 3. 等待所有 Task 返回。
 4. 运行 `verify_subagent_barrier.py --phase kernel_path`。
-5. barrier 通过后，再 Read `kernel/paths/*`，进入 Phase 5。
+5. barrier 通过后，再由宿主 Alignment Builder 合并，进入后续 phase。
 
 ## Task prompt 模板
 
-宿主**必须**把 `CBM_QUERY` 填成可直接运行的绝对路径命令（`SKILL_DIR` 用真实安装路径解析后的绝对路径，例如 junction 解析后的实际目录），不要留 `<SKILL_DIR>` 占位符，否则 subagent 会找不到脚本、退回整文件 `Read`。
+宿主**必须**写明使用 MCP，不要再填 `CBM_QUERY=python .../cbm_query.py`。
 
 ```text
 Run understand-operator <parallel-point> for operator <OP_NAME>.
@@ -88,15 +89,17 @@ Input artifacts:
 - <path1>
 - <path2>
 
-CBM evidence:
+CBM evidence (MCP only):
 - index: <UO_ROOT>/cbm/index_meta.json
-- CBM_QUERY (可直接运行，绝对路径): python "<abs>/cbm_query.py" "<PROJECT_ROOT>" <tool> --op-name "<OP_NAME>" --phase <phase> ...
+- MCP server: codebase-memory-mcp
+- Tools: search_graph | search_code | get_code_snippet | trace_path | list_projects | index_status
+- DO NOT run cbm_query.py / uo-cbm / codebase-memory-mcp cli for lookups
 
 CBM-first（强制）：
-- 每次要查代码/找符号/看实现/跟调用链，第一个动作必须是 Shell 调上面的 CBM_QUERY。
+- 每次要查代码/找符号/看实现/跟调用链，第一个动作必须是调用 MCP 工具（上表）。
 - 禁止为了「快/稳」先把 .cpp/.h 整文件 Read。
-- 仅在以下情况才允许带行号小范围 Read：CBM 返回了 file+行号需核对 / 宏·模板·字符串 CBM 拿不全 / CBM 返回空或报错（须先记录该查询）。
-- 常用：search_graph --name-pattern / search_code --code-pattern / get_code_snippet --file --symbol / trace_path --function-name。
+- 仅在以下情况才允许带行号小范围 Read：MCP 返回了 file+行号需核对 / 宏·模板·字符串 MCP 拿不全 / MCP 返回空或报错（须先说明）。
+- 若 MCP 未连接：停止并报告，不要用 Grep 顶替。
 
 Extra description:
 <user text>
@@ -108,6 +111,6 @@ Return a short summary listing files created.
 
 ## 失败处理
 
-- 若在并行点 1/2 发现自己正在宿主会话里写 `tiling/*`、`flows/*` 或 `kernel/paths/*`，立即停止，改用 Task 重新下发。
+- 若在并行点 1/2 发现自己正在宿主会话里写 `tiling/*`、`flow/*` 或 `archive/raw_agents/kernel_paths/*`，立即停止，改用 Task 重新下发。
 - 若 barrier 失败但 Task 摘要声称完成，以磁盘文件 + manifest 为准，resume subagent 补写。
 - 若在非并行 phase 误启 subagent，停止 subagent，改由宿主按 prompt 执行。

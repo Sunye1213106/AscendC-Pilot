@@ -1,0 +1,31 @@
+﻿version: 1
+op_name: demo_op
+coverage_policy:
+  family_coverage: required
+  key_field_value_coverage: required
+  key_relation_coverage: required
+  tilingdata_coverage: required
+  unreachable_proof: required
+family_obligations:
+  - {family_id: TF001, reachability: reachable, reason: base path}
+  - {family_id: TF002, reachability: reachable, reason: tnd path}
+key_field_obligations:
+  SplitAxis: {values: [0, 1, 2], min_cases: 1}
+  InputDType: {values: [0, 1], min_cases: 1}
+  DeterType: {values: [0, 1], min_cases: 1}
+  IsTnd: {values: [0, 1], min_cases: 1}
+key_relation_obligations:
+  - name: tnd_deter
+    fields: [IsTnd, DeterType]
+    combinations:
+      - {IsTnd: 1, DeterType: 0}
+    reason: TND forces DeterType=0
+tilingdata_obligations:
+  - {block: BaseParams, fields: [s1BaseSize], families: [TF001], reason: base tilingdata}
+  - {block: TndParam, fields: [actualSeqQLen], families: [TF002], reason: tnd tilingdata}
+seed_cases:
+  - id: SEED001
+    role: representative
+    family_id: TF001
+    key_snapshot: {SplitAxis: 0, InputDType: 0, DeterType: 0, IsTnd: 0}
+    reason: base seed

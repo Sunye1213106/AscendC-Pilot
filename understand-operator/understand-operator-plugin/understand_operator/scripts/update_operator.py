@@ -72,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     update_plan = _build_update_plan(change_set)
 
     write_text(base / "cbm" / "change_set.yaml", _to_yaml(change_set))
-    write_text(base / "summary" / "update_plan.yaml", _to_yaml(update_plan))
+    write_text(base / "archive" / "runs" / "update_plan.yaml", _to_yaml(update_plan))
     _append_update_history(base, change_set, update_plan)
 
     # Keep index_meta stamped so query/update share the same baseline pointer.
@@ -97,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Incremental update plan for {op_name}")
     print(f"KB: {base}")
     print(f"change_set: {base / 'cbm' / 'change_set.yaml'}")
-    print(f"update_plan: {base / 'summary' / 'update_plan.yaml'}")
+    print(f"update_plan: {base / 'archive' / 'runs' / 'update_plan.yaml'}")
     print(f"impacted_areas: {', '.join(update_plan.get('impacted_areas') or ['none'])}")
     print("Next: agent re-runs only impacted phases (see /uo-update skill), then quality_gate.py")
     return 0
@@ -163,7 +163,7 @@ def _build_update_plan(change_set: dict[str, Any]) -> dict[str, Any]:
         areas.append("kernel")
         phases.extend(["phase3", "phase3.5", "phase4", "phase5"])
     if hit("golden", "test", "accuracy"):
-        areas.append("testing_hints")
+        areas.append("test_contract")
         phases.append("phase7")
 
     if not areas and change_set.get("status") != "empty":
@@ -192,7 +192,7 @@ def _build_update_plan(change_set: dict[str, Any]) -> dict[str, Any]:
 
 
 def _append_update_history(base: Path, change_set: dict[str, Any], update_plan: dict[str, Any]) -> None:
-    path = base / "summary" / "update_history.yaml"
+    path = base / "archive" / "runs" / "update_history.yaml"
     entry = (
         f"- at: {update_plan.get('created_at')}\n"
         f"  changed_files: {len(change_set.get('changed_files') or [])}\n"

@@ -1,0 +1,7 @@
+﻿version: 1
+op_name: demo_op
+canonical_files:
+  key_space: key_space.yaml
+  families: families.yaml
+  data_model: data_model.yaml
+  coverage_model: coverage_model.yaml

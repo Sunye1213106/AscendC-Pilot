@@ -2,8 +2,9 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-SKILLS_ROOT="$REPO_ROOT/understand-operator-plugin/skills"
-AGENTS_SRC="$REPO_ROOT/understand-operator-plugin/agents"
+PLUGIN_ROOT="$REPO_ROOT/understand-operator-plugin"
+SKILLS_ROOT="$PLUGIN_ROOT/skills"
+AGENTS_SRC="$PLUGIN_ROOT/agents"
 PLATFORM="${1:-opencode}"
 
 SKILL_NAMES=(uo-init uo-query uo-update uo-diff understand-operator)
@@ -14,6 +15,8 @@ case "$PLATFORM" in
   cursor) TARGET="$HOME/.cursor/skills" ;;
   *) echo "Unknown platform: $PLATFORM"; exit 1 ;;
 esac
+
+PLUGIN_LINK="$(dirname "$TARGET")/understand-operator-plugin"
 
 mkdir -p "$TARGET"
 for name in "${SKILL_NAMES[@]}"; do
@@ -27,6 +30,12 @@ for name in "${SKILL_NAMES[@]}"; do
   ln -s "$src" "$dest"
   echo "Installed skill: $dest -> $src"
 done
+
+if [ -d "$PLUGIN_ROOT" ]; then
+  rm -rf "$PLUGIN_LINK"
+  ln -s "$PLUGIN_ROOT" "$PLUGIN_LINK"
+  echo "Installed plugin: $PLUGIN_LINK -> $PLUGIN_ROOT"
+fi
 
 if [ "$PLATFORM" = "cursor" ] && [ -d "$AGENTS_SRC" ]; then
   AGENTS_DEST="$HOME/.cursor/agents"

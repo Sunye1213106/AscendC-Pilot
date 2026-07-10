@@ -15,8 +15,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$SkillsRoot = Join-Path $RepoRoot "understand-operator-plugin\\skills"
-$AgentsSrc = Join-Path $RepoRoot "understand-operator-plugin\\agents"
+$PluginRoot = Join-Path $RepoRoot "understand-operator-plugin"
+$SkillsRoot = Join-Path $PluginRoot "skills"
+$AgentsSrc = Join-Path $PluginRoot "agents"
+$PromptsSrc = Join-Path $PluginRoot "prompts"
 
 $SkillNames = @(
     "uo-init",
@@ -43,11 +45,22 @@ if (-not $Targets.ContainsKey($Platform)) {
 
 $TargetRoot = $Targets[$Platform]
 
+$PluginLinks = @{
+    opencode = Join-Path (Split-Path $TargetRoot -Parent) "understand-operator-plugin"
+    codex    = Join-Path (Split-Path $TargetRoot -Parent) "understand-operator-plugin"
+    cursor   = Join-Path (Split-Path $TargetRoot -Parent) "understand-operator-plugin"
+}
+
 if ($Uninstall) {
     foreach ($name in $SkillNames) {
         $dest = Join-Path $TargetRoot $name
         if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
         Write-Host "Removed skill link: $dest"
+    }
+    if ($PluginLinks.ContainsKey($Platform)) {
+        $pluginDest = $PluginLinks[$Platform]
+        if (Test-Path $pluginDest) { Remove-Item $pluginDest -Recurse -Force }
+        Write-Host "Removed plugin link: $pluginDest"
     }
     exit 0
 }
@@ -65,6 +78,14 @@ foreach ($name in $SkillNames) {
     Write-Host "Installed skill: $dest -> $src"
 }
 
+# Prompts + agents live under plugin root; agents need them for human-review UX (question UI).
+if ($PluginLinks.ContainsKey($Platform) -and (Test-Path $PluginRoot)) {
+    $pluginDest = $PluginLinks[$Platform]
+    if (Test-Path $pluginDest) { Remove-Item $pluginDest -Recurse -Force }
+    New-Item -ItemType Junction -Path $pluginDest -Target $PluginRoot | Out-Null
+    Write-Host "Installed plugin: $pluginDest -> $PluginRoot"
+}
+
 if ($Platform -eq "cursor" -and (Test-Path $AgentsSrc)) {
     $AgentsDestRoot = $AgentTargets[$Platform]
     New-Item -ItemType Directory -Force -Path $AgentsDestRoot | Out-Null
@@ -78,4 +99,12 @@ if ($Platform -eq "cursor" -and (Test-Path $AgentsSrc)) {
 
 Write-Host ""
 Write-Host "Commands: /uo-init  /uo-query  /uo-update  /uo-diff"
+Write-Host "Shared scripts: $(Join-Path $TargetRoot 'understand-operator')\prepare_operator.py"
+if ($PluginLinks.ContainsKey($Platform)) {
+    Write-Host "Prompts: $(Join-Path $PluginLinks[$Platform] 'prompts')"
+}
+Write-Host "Agents must NOT search C:\ for scripts; use the path above."
+if ($Platform -eq "opencode") {
+    Write-Host "OpenCode human review: ensure opencode.json has `"permission`": { `"question`": `"allow`" }"
+}
 Write-Host "For Cursor: add the repository root as a local plugin, or rely on the installed skill links."

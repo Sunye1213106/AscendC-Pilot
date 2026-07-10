@@ -6,23 +6,23 @@
 
 ## 触发时机
 
-Kernel Path Task Builder 已完成，且 `kernel/kernel_task_plan.yaml` 已生成。
+Kernel Path Task Builder 已完成，且 `kernel/paths.yaml` skeleton 已生成。
 
 ## 任务
 
 1. 读取并综合以下产物（缺一不可，缺了要在摘要里标 `missing`）：
-   - `kernel/kernel_task_plan.yaml`
-   - `tiling/tiling_branch_families.yaml`
-   - `tiling/tiling_route.yaml`
-   - `tiling/tiling_frontier.yaml`
-   - `tiling/dispatch_variables.yaml`
-   - `tiling/tiling_predicate_space.yaml`
-   - `tiling/branch_matrix.yaml`
-   - `tiling/tiling_data_signature.yaml`（若存在）
-   - `summary/operator_io.yaml`
-   - `flows/compute_flow.yaml`
-   - `flows/dataflow.yaml`
-2. 按下方「强制展示模板」生成面向用户的审阅摘要（中文优先）。
+   - `kernel/paths.yaml`
+   - `tiling/route.md`
+   - `tiling/index.yaml`
+   - `tiling/families.yaml`
+   - `tiling/key_space.yaml`
+   - `tiling/data_model.yaml`
+   - `tiling/coverage_model.yaml`（seed_cases 仅作代表样本）
+   - `tiling/evidence_index.yaml`（按需，默认不展开全文）
+   - `operator.yaml`
+   - `flow/compute_graph.yaml`
+   - `flow/dataflow.yaml`
+2. 按下方「强制展示模板」生成面向用户的审阅摘要（**必须中文**，项目默认语言）。
 3. **禁止**只给一张 task 表就结束；family / tiling 信息必须说全。
 4. 展示完后按 `prompts/00_review_menu.md` 运行交互菜单。
 5. 仅在用户批准后进入 Phase 4。
@@ -34,44 +34,52 @@ Kernel Path Task Builder 已完成，且 `kernel/kernel_task_plan.yaml` 已生�
 ```markdown
 ## 进度 · Phase 3.5 Kernel 分发人工审阅
 - 状态: 等待用户决策
-- 产物: `kernel/kernel_task_plan.yaml`
+- 产物: `kernel/paths.yaml`
 - 下一步: 看完 tiling/family 全貌后，用菜单决定是否进入 Phase 4
 
 ### 1. 总览
 - tiling family 总数 / 将生成 task 数 / 排除数 / needs_review 数
 - dispatch_all 预计启动的 `uo-kernel-path` 数量
-- IO 摘要（required/optional/output 名称，来自 operator_io.yaml）
+- IO 摘要（required/optional/output 名称，来自 operator.yaml）
+- 提醒：family coverage != tiling_key coverage；seed_cases != full key enumeration
 
 ### 2. Tiling 背景（决策必需）
-- **frontier**：关键 tiling 入口 / 关键函数 / 文件（来自 tiling_frontier.yaml）
-- **dispatch 变量类别**：有哪些变量驱动分支（来自 dispatch_variables.yaml；列出类别与代表变量名）
-- **predicate space**：主要谓词原子（平台 / dtype / deterministic / sparse / 模板尺寸等；来自 tiling_predicate_space.yaml）
-- **tiling data signature**：关键 tiling 字段族（若有）
+- **entry / dispatch**：tiling entry 与 top-level dispatch（来自 tiling/route.md、families.yaml.dispatch_tree）
+- **variables（Step 1）**：`tiling_mechanism` 概述 + 变量数与 impact_classification 分布（来自 variables.yaml）
+- **key space**：tiling_key 编码宏、fields_order、关键 domain（来自 key_space.yaml；不要用 family 数代替）
+- **key 逻辑关系（Step 2 / TestGenerate）**（来自 constraints.yaml + coverage_model.yaml）：
+  - `relations` 按 type 计数（mutex/implies/requires/…）与是否有 evidence_gap
+  - `tiling_key_pruning` / `tiling_key_merging` 是否已回答（true/false/unknown）
+  - `input_realization` 条数，是否覆盖可达 family key_pattern
+  - `derived_fields` / `independent:false` 是否标明非自由维度
+  - key-level `key_unreachable` vs family-level unreachable
+- **data model**：always/conditional tilingdata blocks、varlen numeric overlay（来自 data_model.yaml）
+- **coverage obligations**：family / key_field / key_relation（含 must_cover）/ input_realization / tilingdata 债务摘要（来自 coverage_model.yaml）
 
 ### 3. Family 全表（每个 family 都要写，含被排除的）
-对 `tiling_branch_families.yaml` 里**每一个** family：
+对 `families.yaml` 里**每一个** family：
 
-| family_id | 名称/含义 | 关键谓词 / 触发条件 | reachability | 结构签名要点 | 代表 case | route_action | → task_id 或排除原因 |
-|---|---|---|---|---|---|---|---|
+| family_id | 名称/含义 | 关键谓词 / 触发条件 | reachability | struct_signature | key_pattern | seed case | route_action | → task_id 或排除原因 |
+|---|---|---|---|---|---|---|---|---|
 
 每个 family 在表下再用 2–4 句展开（不要只留表）：
 - 这条 family 覆盖什么计算路径 / 平台 / dtype / deterministic 等
-- 与哪些 tiling_key / branch 样本相关（可引用 branch_matrix 代表行）
-- 若 `excluded` / `needs_review` / `needs_alignment`：为什么，跳过或暂缓的风险是什么
+- 与哪些 tiling_key field / seed_cases 相关（seed 只是代表样本）
+- 若 `has_dedicated_key_bit: false`（如 varlen）：说明共享 key、tilingdata 数值不同
+- 若 `excluded` / `needs_review` / `needs_alignment` / `unreachable`：为什么，跳过或暂缓的风险是什么
 - 若映射到 task：对应 kernel entry hint、priority、dispatchable
 
-### 4. 将分发的 Kernel Tasks（展开，不只一行）
-对每个 `kernel_tasks` 项写：
-- `task_id` / `source_family` / `route_action` / `dispatchable` / `task_priority`
-- `kernel_entry_hints`（函数/文件，unknown 要标出）
-- `traceability.related_branches` 数量与代表 branch
-- `traceability.related_tiling_keys`
+### 4. 将分发的 Kernel Paths（展开，不只一行）
+对 `kernel/paths.yaml` 中每个 `kernel_paths.Kxxx`（或等价 task）写：
+- `id` / `source_family` / `route_action` / `reachability` / `task_priority`（若有）
+- `entry`（函数/文件，unknown 要标出）
+- `tiling` refs / representative_cases
 - `compute_scope.required_steps`（步骤名列表，不要只写个数）
-- `downstream_preparation.unresolved_for_alignment`（有则逐条列出）
+- risks / unresolved（有则逐条列出）
 - 分发风险 / 不分发风险（各 1 句）
 
 ### 5. 未覆盖与风险
-- 未覆盖的 family / representative case / compute step
+- 未覆盖的 family / seed case / compute step
 - 高风险或 `unknown` 入口任务
 - 建议用户重点确认的 3–5 点（每点写清：确认什么、不同选择影响什么）
 
@@ -94,29 +102,28 @@ Kernel Path Task Builder 已完成，且 `kernel/kernel_task_plan.yaml` 已生�
 
 ## 向用户提出的问题
 
-必须通过 `prompts/00_review_menu.md` 的 **chat-first** 流程（聊天输入框回复），禁止抢 stdin 的弹窗：
+必须通过 `prompts/00_review_menu.md` 的 **Plan 风格选择 UI**（OpenCode `question` / Cursor AskQuestion）：
+
+1. 先展示完整 tiling/family 摘要
+2. 弹出单选；**最后一项支持输入**：
+   - `dispatch_all`
+   - `dispatch_subset`（选后在输入里写 task_id，或再追问一次）
+   - `revise`
+   - `stop`
+   - `manual_supplement` — 手工补充（我来输入）
+3. 用户确认后落盘：
 
 ```powershell
-python "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --gate kernel_dispatch
-# 用户在聊天回复后：
 python "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --gate kernel_dispatch --decision <choice> [--approved-task-ids "..."] [--notes "..."]
 ```
 
-选项：
-
-- `dispatch_all`：分发全部 `normal_kernel_task` 且 `dispatchable: true` 的任务
-- `dispatch_subset`：只分发指定 `task_id`（回复里带上 id）
-- `revise`：修订 `kernel_task_plan.yaml` 后重新审阅
-- `stop`：停止，不分发
-- `manual_supplement`：手工补充后再重新展示
-
-**禁止** `--interactive` / `--arrows`（OpenCode 下会导致聊天无法输入）。
+**禁止** `--interactive` / `--arrows` 作为默认路径。
 
 `dispatch_all` 不得自动包含 `needs_review` / `needs_alignment`；若要分发它们，必须 `dispatch_subset` 显式点名。
 
 ## 输出
 
-写入 `kernel/kernel_dispatch_review.yaml`，字段：
+写入 `human/kernel_dispatch_review.yaml`，字段：
 
 - `checkpoint`: `kernel_dispatch`
 - `status`: `pending` | `approved` | `rejected` | `revision_requested`
@@ -131,9 +138,12 @@ python "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" -
   - `excluded_families`
   - `needs_review_families`
 - `tiling_brief`:
-  - `frontier_entries`
-  - `dispatch_variable_categories`
-  - `key_predicates`
+  - `entry_and_dispatch`
+  - `tiling_variables`（variable_count、impact_classification 分布）
+  - `key_space_fields`
+  - `key_logic_relations`（relations by type、pruning/merging 是否回答、input_realization 覆盖、key vs family unreachable）
+  - `data_model_blocks`
+  - `coverage_obligation_summary`
 - `summary`:
   - `high_priority_tasks`
   - `unknown_kernel_entry_tasks`

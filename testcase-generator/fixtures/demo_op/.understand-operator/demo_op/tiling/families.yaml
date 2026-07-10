@@ -1,0 +1,21 @@
+﻿version: 1
+op_name: demo_op
+families:
+  TF001:
+    reachability: reachable
+    struct_signature: Base
+    route_action: normal_kernel_task
+    guard: {IsTnd: 0}
+    key_pattern: {SplitAxis: [0, 1]}
+  TF002:
+    reachability: reachable
+    struct_signature: Tnd
+    route_action: normal_kernel_task
+    guard: {IsTnd: 1}
+    key_pattern: {SplitAxis: [0]}
+  TF003:
+    reachability: unreachable
+    unreachable_reason: legacy path removed
+    struct_signature: Empty
+    route_action: excluded
+    guard: {}

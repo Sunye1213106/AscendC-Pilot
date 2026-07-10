@@ -1,42 +1,39 @@
----
+﻿---
 name: uo-diff
 description: >-
-  Reserved understand-operator diff interface. Use when the user runs /uo-diff or
-  understand_operator_diff. Keep behavior stable; do not redesign this command yet.
+  Reserved read-only AscendC operator change summary against an existing KB.
+  Use when the user runs /uo-diff or asks for a diff-style summary of operator
+  code changes vs the last understand-operator state. Kept as-is; not redesigned.
 disable-model-invocation: true
 argument-hint: "[path] [--op-name <name>]"
 ---
 
-# uo-diff — Reserved Diff Interface
+# uo-diff — Reserved Diff API (keep as-is)
 
-**Status: keep as-is / reserved. Do not change the product contract in this iteration.**
-
-## Intent
-
-Expose a stable diff-facing entry for comparing repository / CBM / KB-related change signals. Implementation may stay thin.
+Provide a **read-only** change summary for an AscendC operator relative to the existing KB. Do **not** redesign this command in the current refactor.
 
 ## Variables
 
-- `PROJECT_ROOT`: AscendC repository root.
-- `SCRIPT_DIR`: sibling `skills/understand-operator` under the plugin.
-- `OP_NAME`: `--op-name` or repository name.
-- `UO_ROOT`: `$PROJECT_ROOT/.understand-operator/$OP_NAME`.
+- `PROJECT_ROOT`: 算子仓库根。
+- `THIS_SKILL` / `SCRIPT_DIR`: 同 uo-init，优先 `THIS_SKILL/../understand-operator`；禁止全盘搜脚本。
+- `PROMPT_DIR`: `$SCRIPT_DIR/../../prompts`。
+- `OP_NAME` / `UO_ROOT`: `$PROJECT_ROOT/.understand-operator/$OP_NAME`。
 
 ## Current behavior (preserve)
 
 1. If `$UO_ROOT` is missing, report that and suggest `/uo-init`.
-2. Run CBM change detection and print a concise summary:
+2. Run CBM change detection via MCP and print a concise summary:
 
-```powershell
-python "$SCRIPT_DIR/cbm_query.py" "$PROJECT_ROOT" detect_changes --op-name "$OP_NAME" --phase diff
-```
+   - MCP server: `codebase-memory-mcp`
+   - Tool: `detect_changes`
+   - Arg: `repo_path` = `$PROJECT_ROOT`
 
-3. If `cbm/change_set.yaml` or `cbm/30_detect_changes.json` already exists (from update/prefetch), summarize that file instead of inventing diffs.
+3. If `cbm/change_set.yaml` or related detect_changes artifacts already exist (from update/prefetch), summarize that file instead of inventing diffs.
 4. Do **not** modify KB artifacts in this command (read-only). Incremental KB patching belongs to `/uo-update`.
 
 ## Global rule
 
-If any source lookup is needed beyond the change API, follow `prompts/00_cbm_first_rule.md` (CBM first, then source on failure).
+If any source lookup is needed beyond the change API, follow `prompts/00_cbm_first_rule.md` (**MCP first**, then source on failure). Do not use `cbm_query.py`.
 
 ## Out of scope for now
 

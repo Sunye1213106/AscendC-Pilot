@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "codebase-memory-mcp": {
+      "command": "C:/Users/sunye/bin/codebase-memory-mcp.cmd",
+      "args": []
+    }
+  }
+}

@@ -32,7 +32,7 @@ GATE_OPTIONS: dict[str, list[tuple[str, str]]] = {
     "kernel_dispatch": [
         ("dispatch_all", "分发全部可自动 dispatch 的 kernel tasks"),
         ("dispatch_subset", "只分发指定 task_id 子集"),
-        ("revise", "修订 kernel_task_plan 后重新审阅"),
+        ("revise", "修订 kernel/paths.yaml 后重新审阅"),
         ("stop", "停止 workflow，不分发"),
         ("manual_supplement", "手工补充（在聊天里写补充内容）"),
     ],
@@ -45,10 +45,10 @@ GATE_OPTIONS: dict[str, list[tuple[str, str]]] = {
 }
 
 GATE_OUTPUT: dict[str, str] = {
-    "macro_scope": "summary/macro_scope_decision.json",
-    "boundary": "summary/boundary_decision.json",
-    "kernel_dispatch": "kernel/kernel_dispatch_decision.json",
-    "query_missing_kb": "summary/query_missing_kb_decision.json",
+    "macro_scope": "archive/runs/macro_scope_decision.json",
+    "boundary": "archive/runs/boundary_decision.json",
+    "kernel_dispatch": "human/kernel_dispatch_decision.json",
+    "query_missing_kb": "archive/runs/query_missing_kb_decision.json",
 }
 
 
@@ -439,7 +439,7 @@ def _prompt_multiline(header: str) -> str:
 
 def _patch_review_yaml(base: Path, gate: str, decision: dict[str, Any]) -> None:
     if gate == "query_missing_kb":
-        path = base / "summary" / "query_missing_kb_review.yaml"
+        path = base / "archive" / "runs" / "query_missing_kb_review.yaml"
         write_text(
             path,
             (
@@ -454,9 +454,9 @@ def _patch_review_yaml(base: Path, gate: str, decision: dict[str, Any]) -> None:
         return
 
     mapping = {
-        "macro_scope": base / "summary" / "macro_scope_review.yaml",
-        "boundary": base / "summary" / "boundary_review.yaml",
-        "kernel_dispatch": base / "kernel" / "kernel_dispatch_review.yaml",
+        "macro_scope": base / "archive" / "runs" / "macro_scope_review.yaml",
+        "boundary": base / "archive" / "runs" / "boundary_review.yaml",
+        "kernel_dispatch": base / "human" / "kernel_dispatch_review.yaml",
     }
     path = mapping[gate]
     stamp = decision["decided_at"]

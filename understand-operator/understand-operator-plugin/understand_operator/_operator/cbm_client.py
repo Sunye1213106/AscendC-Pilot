@@ -136,7 +136,7 @@ class OperatorCbmClient:
             f"- cbm_binary: {self.binary or 'not found'}",
             f"- cbm_project: {self.project_name or 'not resolved'}",
             "",
-            "Runtime queries use `cbm_query.py` (stdout + optional `cbm/query_journal.jsonl`).",
+            "Agent runtime queries use MCP server `codebase-memory-mcp` (not cbm_query.py).",
             "",
             "| # | Tool | Output | Status | Notes |",
             "|---|---|---|---|---|",

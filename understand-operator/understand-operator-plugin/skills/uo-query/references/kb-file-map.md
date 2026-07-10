@@ -1,115 +1,142 @@
-# KB File Map
+# KB File Map（canonical）
 
 KB 根目录形态：
 
 ```text
 <repo>/.understand-operator/<op_name>/
-  route.md                 # 总路由地图（问答入口，必读）
-  route.json               # 机器可读路由
-  quality_gate.yaml        # 质量门 green/yellow/red
-  cbm/                     # 索引与查询审计
-  summary/                 # IO / 边界 / 进度
-  tiling/                  # host tiling 分流
-  flows/                   # compute + dataflow
-  kernel/                  # kernel task / path / sync
-  evidence/                # 一致性与冲突
-  testing_hints/           # 测试设计提示（非真实测例）
+  index.yaml               # 全局机器路由入口（先读）
+  route.md                 # 人类地图（overview）
+  operator.yaml            # 边界 / IO / ontology / analysis_plan
+  quality.yaml             # 质量门
+  human/review.md          # 人工确认合并入口
+  tiling/                  # canonical tiling（已定稿，勿重设计）
+  flow/                    # compute / dataflow / golden / numerical
+  kernel/                  # paths / pipeline / resources
+  test/                    # contract only（非真实测试）
+  evidence/                # source / fact / deps / issues
+  archive/                 # cbm dumps / runs / legacy / raw_agents（默认不读）
+  cbm/                     # 运行时 CBM 工作目录（工具用；非问答默认读）
 ```
 
-下面「存什么」按真实完整 KB（如 `flash_attention_score_grad`）归纳。
+## 默认读取逻辑
 
-## 总览 / 路由
+**所有问题先读 `<op>/index.yaml`。**
 
-| 文件 | 存什么 | 何时读 |
-|---|---|---|
-| `route.md` | Status、IO 摘要、Fast Task Routes、Family↔Kernel 图、Compute↔Path 图、Input↔Family、Hot Risks、Suggested Next Read | **任何问题先读** |
-| `route.json` | 同上的结构化版本（kernel_tasks、conflicts、suggested_next_read） | 需要精确 id / 程序化跳转 |
-| `quality_gate.yaml` | 整体是否可依赖 | 回答前看置信度 |
-| `summary/overview.md` | 算子文字总览 | overview 类问题 |
+然后按 `index.yaml.qa_routes` 或下表下钻。不要默认读完整 KB。不要默认读 `archive/`、raw agent output、legacy 文件。
 
-## summary/ — IO 与边界（`io_boundary`）
+| 问题类型 | 读取路径 |
+|---|---|
+| overview | `route.md` |
+| operator / IO / optional / dtype / layout | `operator.yaml` |
+| tiling | `tiling/index.yaml` → 按其 `qa_routes` |
+| tiling 机制 / 变量 / 影响分类 | `tiling/variables.yaml`（`tiling_mechanism` / `variables` / `impact_classification`） |
+| tiling_key（编码） | `tiling/key_space.yaml` + `tiling/families.yaml` |
+| tiling_key 逻辑关系 / 合法组合 / mutex·implies | `tiling/constraints.yaml`（`relations` / `variable_constraints`）+ `tiling/key_space.yaml`（`derived_fields`） |
+| tiling_key 剪枝 / 合并 | `tiling/constraints.yaml`（`tiling_key_pruning` / `tiling_key_merging`） |
+| tiling_key → 输入构造（TestGenerate） | `tiling/constraints.yaml`（`input_realization`）+ `operator.yaml` |
+| tiling_key 关系覆盖债务 | `tiling/coverage_model.yaml`（`key_relation_obligations`） |
+| tilingdata | `tiling/data_model.yaml` + `tiling/families.yaml` |
+| compute flow | `flow/index.yaml` + `flow/compute_graph.yaml` |
+| dataflow | `flow/dataflow.yaml` |
+| golden generation | `flow/golden_model.yaml` + `flow/numerical_model.yaml` + `operator.yaml` + `tiling/data_model.yaml` |
+| numerical accuracy | `flow/numerical_model.yaml` + `flow/golden_model.yaml` + `test/contract.yaml` |
+| kernel path | `kernel/index.yaml` + `kernel/paths.yaml` |
+| kernel pipeline | `kernel/pipeline.yaml` + `flow/compute_graph.yaml` |
+| buffer / sync | `kernel/resources.yaml` + `flow/dataflow.yaml` |
+| test generation | `test/index.yaml` + `test/contract.yaml` + `tiling/coverage_model.yaml` + `flow/golden_model.yaml` |
+| source / evidence | `evidence/fact_index.yaml` + `evidence/source_index.yaml` |
+| missing / conflict | `evidence/issues.yaml` + `quality.yaml` |
+| human decision | `human/review.md` |
+
+## 导出视图（脚本）
+
+```bash
+python kb_query_export.py <PROJECT_ROOT> --op-name <OP> --view tiling-test|golden-gen|testgenerate|kernel-debug|human
+```
+
+视图文件列表以 `index.yaml.export_views` 为准。
+
+## tiling/（已定稿）
+
+| 文件 | 语义 |
+|---|---|
+| `variables.yaml` | Step 1 variable-model source of truth (mechanism + variables + impact classification) |
+| `key_space.yaml` | tiling_key encoding source of truth |
+| `constraints.yaml` | Step 2 constraint-model source of truth (relations + pruning + merging + input_realization + key_unreachable) |
+| `families.yaml` | structural route / family source of truth |
+| `data_model.yaml` | tilingdata source of truth |
+| `coverage_model.yaml` | coverage obligations only |
+| `route.md` | human tiling route |
+| `index.yaml` | tiling qa_routes |
+| `evidence_index.yaml` | tiling source evidence |
+
+### tiling/archive/（init 强制中间层，问答默认不读）
+
+远程旧版把这些放在 `tiling/` 根目录；本地合并成 7 个 canonical 后曾变成可选，导致 AI 跳过宏/编译期细节。现已恢复为 **`/uo-init` 强制落盘**：
+
+| 文件 | 语义 |
+|---|---|
+| `frontier.yaml` | 所有 tiling 决策点（guard / key setter / writer / template） |
+| `dispatch_variables.yaml` | 分流变量分类（再合并进 key_space） |
+| `predicate_space.yaml` | 归一化谓词与 mutex/implies 关系 |
+| `compile_time_bindings.yaml` | 宏 / constexpr / 模板 / `if constexpr` reachability |
+| `decision_tree.md` | 编译期 vs 运行期决策树，叶子 → TFxxx |
+| `kernel_evidence_backfill.yaml` | Phase 5 回填（非 host 阶段） |
+
+barrier / quality gate 会检查上述前 5 个非空且非 pending。调试宏/DeterType/arch 开关时，可显式读 archive。
+
+重要区分：
+
+- family coverage != tiling_key coverage
+- seed_cases / branch samples != full key enumeration
+- has_varlen-like paths may share tiling_key but differ in tilingdata numeric behavior
+- compile-time axes (DeterType / arch / dtype) must be in `compile_time_bindings` before shallow family merge
+
+## flow/
 
 | 文件 | 存什么 |
 |---|---|
-| `operator_io.yaml` | required/optional inputs、outputs、attributes、dtype/shape/layout 约束 |
-| `operator_boundary.md` | host/tiling/kernel/golden/test 文件边界与职责 |
-| `operator_manifest.yaml` | 入口符号、源文件清单、confidence |
-| `analysis_plan.yaml` | 后续分析计划、open questions、source_hints |
-| `ontology.yaml` | 术语/实体关系 |
-| `macro_scope_review.yaml` | 探索范围审阅决策 |
-| `workflow_progress.yaml` | 流水线进度 |
-| `ignore_rules.md` | 忽略规则 |
+| `compute_graph.yaml` | 计算语义步骤 Cxxx（非 kernel pipeline） |
+| `dataflow.yaml` | 搬运 / memory level Dxxx |
+| `golden_model.yaml` | GoldenGenerate 语义模型（无代码） |
+| `numerical_model.yaml` | dtype / cast / tolerance / randomness |
 
-## tiling/ — Host tiling（`host_tiling`）
+## kernel/
 
 | 文件 | 存什么 |
 |---|---|
-| `tiling_decision_tree.md` | 可读的 tiling 决策树 / 模板参数 / GetWorkspaceSize 等逻辑摘要 |
-| `tiling_frontier.yaml` | tiling 代码前沿：关键函数、文件、入口 |
-| `dispatch_variables.yaml` | 驱动分流的变量类别与代表名（含 IsTndSwizzle 等） |
-| `tiling_predicate_space.yaml` | 规范化谓词原子（平台/dtype/deterministic/TND…） |
-| `tiling_branch_families.yaml` | **主产物**：family 分组、谓词、结构签名、代表 case |
-| `tiling_route.yaml` | family → normal/needs_review/excluded 路由 |
-| `branch_matrix.yaml` | 代表 branch 样本表（非全量枚举） |
-| `tiling_key.yaml` | tiling key / 模板描述 |
-| `tiling_data_signature.yaml` | tiling data 字段签名 |
-| `tiling_data_map.yaml` | tiling data 字段映射 |
-| `kernel_evidence_backfill.yaml` | 从 kernel 回填的 tiling 修正 |
+| `paths.yaml` | family ↔ kernel path 结构映射 |
+| `pipeline.yaml` | path 内 stages + compute_step_alignment |
+| `resources.yaml` | buffer / workspace / sync |
 
-问「哪种 shape 命中某 flag」时优先：
-
-1. `route.md`（Input/Family、Hot Risks）
-2. `tiling/dispatch_variables.yaml` + `tiling_predicate_space.yaml`
-3. `tiling/tiling_decision_tree.md` + `tiling_route.yaml`
-4. `tiling/tiling_branch_families.yaml` + `branch_matrix.yaml`
-
-## flows/ — 计算与搬运（`compute_dataflow`）
+## test/
 
 | 文件 | 存什么 |
 |---|---|
-| `compute_flow.yaml` / `.md` | 规范计算步骤（如 C001–C018）、依赖与语义 |
-| `dataflow.yaml` / `.md` | 数据搬运、pipeline、同步相关数据面 |
+| `contract.yaml` | TestGenerate 契约；禁止 generated_cases / CSV / observed_coverage |
 
-## kernel/ — Kernel 路径（`kernel_path`）
-
-| 文件 | 存什么 |
-|---|---|
-| `kernel_task_plan.yaml` | family→task 规划、entry hints、dispatchable |
-| `kernel_dispatch_review.yaml` | 人工分发决策与 approved_task_ids |
-| `kernel_path_matrix.yaml` | path 对齐矩阵 |
-| `sync_buffer_map.yaml` | buffer / sync 事件图 |
-| `paths/Kxxx_kernel_path.yaml` | 单条 kernel path：入口、对齐 IO/tiling/compute、细节 |
-
-## evidence/ — 证据质量（`evidence_quality`）
+## evidence/
 
 | 文件 | 存什么 |
 |---|---|
-| `evidence_check.yaml` | 检查项状态 |
-| `consistency_report.md` | 一致性文字报告 |
-| `missing_items.yaml` | 缺失项 |
-| `conflict_items.yaml` | 冲突项 |
-| `confidence_report.yaml` | 分项置信度 |
+| `source_index.yaml` | SPxxx source spans |
+| `fact_index.yaml` | fact ↔ evidence ↔ spans |
+| `artifact_dependencies.yaml` | PR impact / 增量更新 |
+| `issues.yaml` | missing / conflicts / warnings / unknowns |
 
-## testing_hints/ — 测试提示（`testing_hints`）
+## Legacy KB 检测
 
-| 文件 | 存什么 |
-|---|---|
-| `golden_hint.yaml` | golden 设计提示 |
-| `accuracy_case_hint.yaml` | 精度测例提示 |
-| `performance_case_hint.yaml` | 性能测例提示 |
-| `coverage_hint.yaml` | 覆盖提示 |
+若缺少 `index.yaml` / `operator.yaml` / `flow/`，但存在旧文件（`summary/`、`flows/`、`testing_hints/`、`route.json`、`quality_gate.yaml`、`tiling/tiling_branch_families.yaml` 等），提示：
 
-**注意**：这里是 hints，不是可执行测试。
+> This KB uses legacy artifacts. Run `/uo-update` or `/uo-init` to regenerate canonical KB files.
 
-## cbm/
+不要在 uo-query 里做复杂 legacy migration。
 
-| 文件 | 存什么 |
-|---|---|
-| `index_meta.json` | CBM 项目/索引元数据 |
-| `cbm_query_log.md` | Phase 0 索引日志 |
-| `query_journal.jsonl` | 按需查询审计 |
+## 禁止
 
-## 用 route 跳转（推荐）
-
-`route.md` 的 Fast Task Routes / Family→Kernel / Suggested Next Read 就是官方跳转表。  
-分类后优先跟 route 指的路径，再下钻具体 yaml/md。
+- 默认读取 `archive/`
+- 默认读取 raw agent output
+- 默认读取旧 legacy 主产物
+- 每次读完整 KB
+- 用 branch_matrix / seed_cases 回答 full tiling_key coverage
+- 用 family count 回答 tiling_key coverage

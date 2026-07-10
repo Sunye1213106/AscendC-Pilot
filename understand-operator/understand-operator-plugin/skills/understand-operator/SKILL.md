@@ -20,7 +20,9 @@ Tell the user to use one of:
 | `/uo-update` | Incremental KB update from code changes |
 | `/uo-diff` | Reserved diff interface (unchanged / read-only) |
 
-Shared scripts remain in this directory (`prepare_operator.py`, `cbm_query.py`, `update_operator.py`, `quality_gate.py`, `verify_subagent_barrier.py`).
+Shared scripts remain in this directory (`prepare_operator.py`, `update_operator.py`, `quality_gate.py`, `verify_subagent_barrier.py`). Agent-side CBM lookups use MCP `codebase-memory-mcp`, not `cbm_query.py`.
+
+Default user-facing language is Chinese (`prompts/00_language.md`); TodoWrite titles must be Chinese.
 
 If the user clearly wants a full build, load and follow `../uo-init/SKILL.md`.
 If they ask a question about an existing KB, load `../uo-query/SKILL.md`.

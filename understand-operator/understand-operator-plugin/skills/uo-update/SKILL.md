@@ -1,4 +1,4 @@
----
+﻿---
 name: uo-update
 description: >-
   Incrementally update an AscendC operator knowledge base from code changes since
@@ -12,74 +12,70 @@ argument-hint: "[path] [--op-name <name>]"
 
 Detect code changes since the last KB state and **incrementally** update affected artifacts. Prefer patching over full rebuild.
 
-## Variables
+## Variables（禁止全盘搜索脚本）
 
-- `PROJECT_ROOT`: AscendC repository root.
-- `PLUGIN_ROOT`: two levels up from this skill directory (`.../understand-operator-plugin`).
-- `PROMPT_DIR`: `$PLUGIN_ROOT/prompts`.
-- `SCRIPT_DIR`: `$PLUGIN_ROOT/skills/understand-operator`.
-- `OP_NAME`: `--op-name` or repository name.
+- `THIS_SKILL`: 本 `SKILL.md` 所在目录。
+- `SCRIPT_DIR`: **优先** `THIS_SKILL/../understand-operator`（须含 `prepare_operator.py`）。
+- `PLUGIN_ROOT` / `PROMPT_DIR`: 见 `prompts/00_path_resolution.md`。
+- `PROJECT_ROOT`: 算子仓库根。
+- `OP_NAME`: `--op-name` 或仓库名。
 - `UO_ROOT`: `$PROJECT_ROOT/.understand-operator/$OP_NAME`.
+
+OpenCode：`%USERPROFILE%\.config\opencode\skills\understand-operator\prepare_operator.py`。  
+**禁止**全盘 `Get-ChildItem C:\ -Recurse`。
 
 ## Global rule
 
 Follow `$PROMPT_DIR/00_cbm_first_rule.md`:
-**CBM first for source lookups; on CBM failure, then read source (whole file allowed as last resort).**
+**MCP first for source lookups; on MCP failure, then read source.**
+
+**默认语言：中文。** 见 `$PROMPT_DIR/00_language.md`。TodoWrite / 进度 / 审阅摘要用中文标题。
 
 ## Preconditions
 
 - `$UO_ROOT` must exist (from a prior `/uo-init`). If missing → tell user to run `/uo-init`.
-- Prefer existing `route.md` + `cbm/index_meta.json` as the previous KB baseline.
+- Prefer existing `index.yaml` + `route.md` + `cbm/index_meta.json` as the previous KB baseline.
 
 ## Workflow
 
-### 1. Detect delta
+### 1. Refresh MCP index + detect delta（强制 MCP）
 
-Run:
-
-```powershell
-python "$SCRIPT_DIR/update_operator.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
-```
-
-This writes/updates:
-
-- `cbm/change_set.yaml` — changed files / symbols / suggested impacted areas
-- `summary/update_plan.yaml` — which KB sections to refresh
-- refreshes CBM index status (incremental; use `--full` only if user requests)
-
-Also use CBM `detect_changes` via `cbm_query.py` when the script output is insufficient:
+1. MCP `index_repository` — `repo_path=$PROJECT_ROOT`, `mode=fast`（或用户要求 full）  
+   （让 MCP 更新 graph DB；不要跑 `update_operator.py` 里的 CLI 索引。）
+2. MCP `detect_changes` — `repo_path=$PROJECT_ROOT`
+3. 把变更摘要写入 / 更新：
+   - `cbm/change_set.yaml`（可由你根据 MCP 结果整理）
+   - `archive/runs/update_plan.yaml`
+4. 若 project 名有变，刷新 meta：
 
 ```powershell
-python "$SCRIPT_DIR/cbm_query.py" "$PROJECT_ROOT" detect_changes --op-name "$OP_NAME" --phase update
+python "$SCRIPT_DIR/prepare_operator.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --write-index-meta --cbm-project "<MCP_PROJECT_NAME>"
 ```
+
+可选：若只需本地写 plan 骨架且 MCP 已查完，可再跑脚本做 YAML 落盘；**不要**依赖脚本去调 CLI CBM。
 
 ### 2. Plan impacted phases
 
-From `summary/update_plan.yaml` / change set, map changes to KB areas:
-
 | Changed area | Refresh |
 |---|---|
-| proto / host IO / entry | Phase 1 boundary + IO |
+| proto / host IO / entry | Phase 1 → `operator.yaml` |
 | tiling / host dispatch | host extraction (`tiling/*`) |
-| compute / data move | flow extraction (`flows/*`) |
-| kernel impl / path | kernel tasks + paths |
-| only docs/tests unrelated | maybe skip or light touch |
+| compute / data move / golden semantics | flow extraction (`flow/*`) |
+| kernel impl / path | `kernel/paths.yaml` + pipeline/resources |
+| accuracy / coverage contract | `test/contract.yaml` + flow golden/numerical |
 
-### 3. Incremental re-run (not full init)
+### 3. Incremental re-run
 
 - Re-run **only** impacted phases using the same prompts as `uo-init`.
 - Keep human review gates when boundary or kernel dispatch plans materially change.
-- Reuse unchanged artifacts; do not wipe the whole `$UO_ROOT` unless the user asks for full rebuild (`/uo-init --full`).
-- After patches: run `quality_gate.py` and update `route.md` if the map changed.
-- Append a short entry to `summary/update_history.yaml` (create if missing).
+- After patches: run `quality_gate.py` and update `index.yaml` / `route.md` if needed.
 
 ### 4. Parallel points
 
-Same as init: only `uo-host-extraction`+`uo-flow-extraction`, and `uo-kernel-path` × N when those areas are impacted. Barrier required.
+Same as init: only `uo-host-extraction`+`uo-flow-extraction`, and `uo-kernel-path` × N when impacted. Barrier required.
 
 ## Report
 
-- What changed in code (summary)
+- What changed in code
 - Which KB artifacts were updated vs left untouched
-- New quality gate decision
-- Whether a full `/uo-init` is recommended instead
+- MCP index / detect_changes 是否成功

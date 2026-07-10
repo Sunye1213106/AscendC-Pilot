@@ -1,0 +1,12 @@
+﻿version: 1
+op_name: demo_op
+io:
+  required_inputs:
+    - {name: query, dtype: [float16, bfloat16]}
+    - {name: key, dtype: [float16, bfloat16]}
+  optional_inputs:
+    - {name: atten_mask}
+  outputs:
+    - {name: dq}
+  attrs:
+    - {name: keep_prob}

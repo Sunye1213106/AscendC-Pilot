@@ -17,6 +17,7 @@ uo-review = "understand_operator.scripts.review_checkpoint:main"
 uo-quality = "understand_operator.scripts.quality_gate:main"
 uo-verify-barrier = "understand_operator.scripts.verify_subagent_barrier:main"
 uo-cbm = "understand_operator.scripts.cbm_query:main"
+uo-kb-export = "understand_operator.scripts.kb_query_export:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

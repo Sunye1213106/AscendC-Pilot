@@ -2,79 +2,74 @@
 
 你是 Quality Gate Agent。
 
-任务：根据 evidence 和 route 生成 understand-operator 的质量判断。
+任务：根据 evidence 与 canonical KB 生成 `quality.yaml`。优先运行脚本：
 
-输入包括：
+```bash
+python "$SKILL_DIR/quality_gate.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+```
 
-- `summary/operator_io.yaml`
-- `evidence/evidence_check.yaml`
-- `evidence/confidence_report.yaml`
-- `route.json`
-- `tiling/tiling_branch_families.yaml`
-- `tiling/tiling_route.yaml`
-- `tiling/dispatch_variables.yaml`
-- `tiling/tiling_predicate_space.yaml`
-- `tiling/kernel_evidence_backfill.yaml`
-- `tiling/branch_matrix.yaml`
-- `kernel/kernel_task_plan.yaml`
-- `kernel/kernel_path_matrix.yaml`
-- `testing_hints/`
+然后人工复核脚本结果，必要时补充 blockers / warnings / decision。
 
-必须输出：
+## 输入
 
-- `quality_gate.yaml`
+- `index.yaml` / `route.md` / `operator.yaml`
+- `tiling/` canonical
+- `flow/` canonical
+- `kernel/` canonical
+- `test/contract.yaml`
+- `evidence/*`
+- `human/review.md`
 
-字段：
+若只有 legacy 产物而没有 `index.yaml` + `operator.yaml` + `flow/`，在 warnings 中提示：
 
-- io_confidence
-- boundary_confidence
-- tiling_family_confidence
-- tiling_route_confidence
-- dispatch_variable_confidence
-- predicate_space_confidence
-- branch_matrix_materialization_status
-- compute_flow_confidence
-- kernel_alignment_confidence
-- kernel_evidence_backfill_status
-- evidence_consistency_status
-- unknown_ratio
-- decision
-- blockers
-- warnings
-- next_actions
+> This KB uses legacy artifacts. Run /uo-update or /uo-init to regenerate canonical KB files.
 
-decision 只能是 green、yellow、red。
+## 必须输出
 
-判定规则：
+- `quality.yaml`
 
-- evidence 有 fail -> red。
-- required input 或 output 缺少证据 -> red。
-- 关键 family 没有 kernel path -> red。
-- `tiling_branch_families.yaml` 缺失 -> red。
-- `tiling_route.yaml` 缺失 -> red。
-- 所有 family 都是 unknown -> red。
-- 存在 high priority family 但没有 normal task、needs_alignment task 或 needs_review task -> red。
-- 关键 family 的模板实例、宏、编译期常量或平台开关未解析，且影响 reachability / structural_tiling_signature -> red。
-- `reachability.status: unknown` 的 family 被当作 confirmed kernel path -> red。
-- `branch_matrix.yaml` 中存在没有 `family_id` 的 branch -> yellow 或 red，按风险决定。
-- `branch_matrix.yaml` 中 branch 缺少 `materialization_role` -> yellow。
-- `branch_matrix.yaml` 中 branch 缺少 `representative_case_id`、`condition_snapshot`、`reachability`、`trigger_preconditions`、`source_spans`、`predicate_refs` 或 `structural_tiling_signature_id` -> yellow。
-- `branch_matrix.yaml` 看起来是全量枚举（数量远大于 family 数量，并且没有 `materialization_role`）-> yellow 或 red。
-- family 缺少 `source_spans`、`trigger_preconditions`、`tiling_key_expectation`、`downstream_preparation` 或 `impact_trace` -> yellow。
-- route 缺少 `dispatchable`、`required_followups` 或 `blocks_downstream_preparation` -> yellow。
-- kernel task 缺少 `traceability` 或 `downstream_preparation` -> yellow。
-- `dispatch_all` 包含 `route_action: needs_review`、`route_action: needs_alignment` 或 `dispatchable: false` 的任务 -> red。
-- unknown compile-time binding 影响 high priority family -> yellow。
-- only numeric variant 被拆成多个 kernel task -> yellow，并在 `evidence/consistency_report.md` 中提示 task 过度拆分。
-- compute_flow 大量 unknown -> yellow 或 red。
-- optional input 触发条件不清楚 -> yellow。
-- tiling branch family 或代表样本不完整 -> yellow。
-- family 缺少 `guard_signature`、`structural_tiling_signature`、`representative_cases` 或 route action -> yellow。
-- 非关键 family 的模板/编译期常量未解析 -> yellow。
-- kernel alignment warning 但主路径完整 -> yellow。
-- kernel path 已有直接证据但没有生成或应用 `tiling/kernel_evidence_backfill.yaml`，且 tiling 侧仍保留相关 unknown/hint -> yellow。
-- 主路径完整、输入输出清楚、证据充分、风险可控 -> green。
+不要再把 `quality_gate.yaml` 当作主产物。
 
-`branch_matrix.yaml` 是 branch family 的代表样本表，不是全量 tiling_key 枚举表。判断 kernel task 粒度时，以 `tiling_branch_families.yaml`、`tiling_route.yaml` 和 `kernel/kernel_task_plan.yaml` 为准。
+## 至少检查
 
-green 代表 KB 可用于后续下游分析和影响分析准备。yellow 代表可辅助分析但需要人工确认。red 代表只能作为草稿。Quality Gate 不生成测试、不插装、不运行覆盖率。
+1. 所有 canonical files 是否存在
+2. 所有 YAML 是否可解析
+3. index.yaml canonical_files 是否存在
+4. domain index 的 qa_routes 是否引用存在文件
+5. 每个关键 fact 是否有 fact_id
+6. 每个关键 fact 是否有 evidence_refs
+7. 每个关键 fact 是否有 source_locator 或明确 reason
+8. evidence_refs 是否能解析到 evidence/fact_index.yaml
+9. source spans 是否能解析到 evidence/source_index.yaml
+10. artifact_dependencies 是否覆盖关键源码文件
+11. route.md 是否没有变成长报告
+12. uo-query 是否没有默认读取 archive（但 init 必须写 archive）
+13. test/contract.yaml 是否没有 generated_cases / observed_results
+14. flow/golden_model.yaml 是否没有生成真实 golden code
+15. coverage_model.yaml 是否没有声称已经覆盖
+16. family coverage 是否没有被当成 tiling_key coverage
+17. branch representative samples 是否没有被当成 full key enumeration
+18. **key 逻辑关系（两步 / TestGenerate）**：
+    - Step 1：`variables.yaml` 有 `tiling_mechanism` + `variables` + 非空 `impact_classification`
+    - Step 2：`constraints.relations` 在存在 hard_dispatch 时非空且 type 合法（或以 `variable_constraints.independent` 记录独立性）
+    - `constraints.tiling_key_pruning.performed` / `tiling_key_merging.performed` 明确回答（true/false/unknown）
+    - `constraints.input_realization` 覆盖可达 family key_pattern
+    - `coverage_model.key_relation_obligations` 可执行（must_cover 或 linked_relations）
+    - key-level `constraints.key_unreachable` 未与 family-level 混写
+19. **tiling archive 中间层（防偷懒）**：
+    - `tiling/archive/frontier.yaml` / `dispatch_variables.yaml` / `predicate_space.yaml` / `compile_time_bindings.yaml` / `decision_tree.md` 存在且非 pending 骨架
+    - `compile_time_bindings` 对宏/constexpr/模板有内容，或显式 `unresolved_symbols`（禁止全空）
+20. compute_graph 是否有 golden step mapping
+21. kernel pipeline 是否有 compute_step_alignment
+22. resources 是否有 producer / consumer / sync relation
+
+## decision
+
+- `usable_for_query`
+- `usable_for_golden_with_review`
+- `usable_for_testgenerate_with_review`
+- `not_usable`
+
+status: green | yellow | red
+
+Quality Gate 不生成测试、不插装、不运行覆盖率、不生成 golden 代码。

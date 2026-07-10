@@ -4,270 +4,643 @@ This is a schema contract, not a workflow phase. It prepares traceability and do
 
 Do not generate tests, do not run tests, do not add coverage, and do not add instrumentation.
 
+## Two-Step Tiling Extraction
+
+Host tiling extraction is modeled as **two ordered steps**, both first-class canonical (queryable by uo-query, consumed by TestGenerate):
+
+- **Step 1 — Variable model** (`variables.yaml`): how tiling is computed, which variables / influencing factors exist, classified by **impact scope**. This is the raw inventory, written to disk before Step 2.
+- **Step 2 — Constraint model** (`constraints.yaml`): abstract the code relations of those variables into constraints (**value / range / relation**), plus explicit **tiling_key pruning (剪枝)** and **merging (合并)** analysis, so downstream can build tests.
+
+`key_space.yaml` remains the pure **tiling_key encoding** truth (macro, `fields_order`, key fields). It references Step 1 variables and defers all constraints/pruning/merging/input construction to Step 2 `constraints.yaml`.
+
 ## Shared Rules
 
-- `tiling_branch_families.yaml` is the primary tiling dispatch artifact.
-- `branch_matrix.yaml` is a representative sample table, not a full tiling key enumeration.
+- Canonical tiling output lives under `tiling/` as **nine** primary files plus optional `tiling/archive/`.
+- `variables.yaml` is the **Step 1 variable-model source of truth** (mechanism + variables + impact classification).
+- `constraints.yaml` is the **Step 2 constraint-model source of truth** (value/range/relation constraints + tiling_key pruning + merging + input_realization + key-level unreachable).
+- `key_space.yaml` is the **tiling_key encoding source of truth** (encoding macro, `fields_order`, key fields only; no constraints/pruning here).
+- `families.yaml` is the **structural route source of truth**.
+- `data_model.yaml` is the **tilingdata source of truth**.
+- `coverage_model.yaml` is the **TestGenerate coverage obligation source of truth** (declares what should be covered, not what is already covered).
+- `route.md` is the human QA quick entry.
+- `index.yaml` is the uo-query / TestGenerate routing entry.
+- `evidence_index.yaml` is the evidence traceability entry; do not read by default.
+- `families.yaml` does **not** enumerate all tiling_key values.
+- `coverage_model.yaml` `seed_cases` are representative seeds only, not full key enumeration.
+- Family coverage != tiling_key coverage.
+- Branch representative samples != full key enumeration.
+- Key relation coverage != field-value coverage: TestGenerate needs typed `constraints.relations`, `constraints.input_realization`, and executable `key_relation_obligations`.
+- Key-level `key_unreachable` in `constraints.yaml` is distinct from family-level `unreachable` in `families.yaml`.
+- tiling_key **pruning** (剪枝: impossible/folded combos) and **merging** (合并: distinct variable combos sharing one key/family) must be explicitly recorded in `constraints.yaml`, not implied.
 - Tiling-side kernel facts are hints unless tiling source explicitly selects kernel entry, kernel type, or template instance.
 - Unknown tiling-side kernel facts must not stay unknown after Kernel Path Agents provide direct evidence. Kernel Alignment Builder must backfill only those fields that kernel evidence resolves, preserving the original tiling evidence and recording the kernel evidence used.
 - Numeric tiling data variants do not split kernel tasks by themselves.
-- `source_spans`, `trigger_preconditions`, `traceability`, and `downstream_preparation` are indexes for later analysis, not test cases.
+- Variables like `has_varlen` that share tiling_key but differ in tilingdata numeric behavior belong in `data_model.yaml` / `coverage_model.yaml`, not as fake tiling_key bits.
+- Intermediate analysis artifacts live under `tiling/archive/`. **Five archive files are REQUIRED during `/uo-init` host extraction** (anti-laziness). uo-query / TestGenerate still default-read only the nine canonical files; archive is for depth + gate + debug.
+- Skipping archive intermediates and jumping straight to thin `key_space` / `families` is a **workflow failure** (barrier + quality gate).
 
-## Tiling Family Schema
+## Canonical Tiling Folder
 
-Each `families[]` item in `tiling/tiling_branch_families.yaml` must include:
-
-```yaml
-family_id: TF001
-stable_key: ""
-name: ""
-guard_signature:
-  predicates: []
-  normalized: ""
-reachability:
-  status: taken | not_taken | runtime_conditional | skipped_by_review | unknown
-  reason: ""
-  evidence: []
-template_context:
-  templates: []
-  compile_time_bindings: []
-  unresolved_symbols: []
-dispatch_variables:
-  hard_dispatch: []
-  optional_io_gate: []
-  performance_knob: []
-  tiling_data_value: []
-  unknown: []
-structural_tiling_signature:
-  signature_id: ""
-  fields: {}
-  reason: ""
-numeric_variants:
-  fields: []
-  observed_or_predicted_ranges: {}
-  note: "numeric variants do not split kernel task unless evidence says they change structural path"
-related_branches: []
-source_spans:
-  - span_id: SP_TILING_001
-    file: ""
-    function: ""
-    line_range: []
-    role: guard_condition | key_setter | tiling_data_writer | compile_time_binding | optional_io_gate | unknown
-    evidence: []
-trigger_preconditions:
-  dtype_constraints: []
-  shape_constraints: []
-  layout_constraints: []
-  optional_input_constraints: []
-  attr_constraints: []
-  compile_time_constraints: []
-  negative_constraints: []
-  satisfiable: true | false | unknown
-tiling_key_expectation:
-  mode: single | set | range | expression | unknown
-  values: []
-  expression: ""
-  role: witness | exact | hint | unknown
-predicted_kernel_path_hint:
-  status: known | unknown | conflicting
-  possible_entries: []
-  reason: ""
-kernel_entry_hint:
-  status: known | unknown | conflicting
-  possible_entries: []
-  reason: ""
-needs_alignment: true | false
-downstream_preparation:
-  needs_kernel_task: true | false
-  needs_alignment: true | false
-  likely_affected_compute_steps: []
-  likely_affected_dataflow_edges: []
-  unresolved_for_downstream: []
-impact_trace:
-  affected_by_change_types:
-    - tiling_condition_change
-    - tiling_key_change
-    - tiling_data_structural_change
-    - optional_io_gate_change
-    - compile_time_binding_change
-  downstream_artifacts:
-    kernel_tasks: []
-    kernel_paths: []
-    route_entries: []
-representative_cases: []
-split_risks: []
-evidence: []
-confidence: high | medium | low
+```text
+tiling/
+├── route.md
+├── index.yaml
+├── variables.yaml                   # STEP 1: mechanism + variables + impact classification
+├── key_space.yaml                   # tiling_key encoding truth (fields only)
+├── constraints.yaml                 # STEP 2: constraints + pruning + merging + input_realization
+├── families.yaml
+├── data_model.yaml
+├── coverage_model.yaml
+├── evidence_index.yaml
+└── archive/                         # REQUIRED intermediates (not optional for init)
+    ├── frontier.yaml                # decision sites (guard/key/writer/template)
+    ├── dispatch_variables.yaml      # raw variable capture before variables.yaml merge
+    ├── predicate_space.yaml         # normalized predicates + relations (feeds constraints)
+    ├── compile_time_bindings.yaml   # macros / constexpr / templates / if constexpr
+    ├── decision_tree.md             # human decision tree (compile vs runtime)
+    └── kernel_evidence_backfill.yaml  # written later by alignment
 ```
 
-Top-level companion fields:
+Step mapping: `archive/frontier.yaml` + `archive/dispatch_variables.yaml` → **Step 1** `variables.yaml`; `archive/predicate_space.yaml` + `archive/compile_time_bindings.yaml` → **Step 2** `constraints.yaml`.
+
+## REQUIRED Intermediate Archive (anti-laziness)
+
+Host extraction **must write non-placeholder** content to all five files before claiming Phase 2 complete. Merge into canonical files only after these exist.
+
+| File | Must capture | Merge target |
+|---|---|---|
+| `archive/frontier.yaml` | Every tiling decision site: guard, key setter, tilingdata writer, compile-time binding, optional IO gate, kernel hint, template instantiation | `evidence_index` + family/key sources |
+| `archive/dispatch_variables.yaml` | Every dispatch / shape / dtype / deter / performance variable with `kind` + `domain_source` | **Step 1** `variables.yaml` + `key_space.fields` / `constants` / `derived_fields` + `data_model` |
+| `archive/predicate_space.yaml` | Stable predicate atoms + mutex/implies/compile_time relations | **Step 2** `constraints.relations` + `families.guard` |
+| `archive/compile_time_bindings.yaml` | Macros, `constexpr`, template instantiations, each `if constexpr` reachability (`taken` / `not_taken` / `unknown`) | `key_space.constants`, `families.reachability`, `constraints.relations` type `compile_time_fixed`, `constraints.tiling_key_pruning` |
+| `archive/decision_tree.md` | Ordered decision tree; compile-time vs runtime nodes; leaves → `family_id` | human QA + `families.dispatch_tree` |
+
+### Minimum bar (empty = fail)
+
+- `frontier_nodes` non-empty when a tiling entry exists.
+- `dispatch_variables.variables` non-empty when hard_dispatch / deter / dtype switches exist in source.
+- `compile_time_bindings`: if source has `#define` / `enum` / `constexpr` / templates affecting branches, corresponding lists must be non-empty **or** `unresolved_symbols` + `blocking_questions` must list them (never silent empty).
+- `decision_tree.md` must not still say `(unknown — host extraction must replace this skeleton)`.
+- DeterType / arch / dtype compile-time axes must appear in `compile_time_bindings` **and** either split families or be proven foldable with `not_taken` proof — do not collapse into one shallow “deterministic fusion” family without archive evidence.
+
+### Schema sketches
 
 ```yaml
+# tiling/archive/frontier.yaml
 version: 1
 status: analyzed
-families: []
-excluded_families: []
+frontier_nodes:
+  - id: FR001
+    role: key_setter | guard | tilingdata_writer | compile_time_binding | optional_io_gate | kernel_hint | template_inst | other
+    symbol: ""
+    file: ""
+    lines: []
+    affects: [key, family, tilingdata, template, kernel_hint]
+    evidence_refs: []
+unresolved_frontier: []
+```
+
+```yaml
+# tiling/archive/dispatch_variables.yaml
+version: 1
+status: analyzed
+variables:
+  - name: ""
+    kind: hard_dispatch | optional_io_gate | performance_knob | derived | constant | tiling_data_value | unknown
+    domain: []
+    domain_source: enum_macro | constexpr | runtime_branch | derived | unknown
+    enters_tiling_key: true | false
+    maps_to_key_space: ""
+    source: {file: "", lines: [], symbol: ""}
+unknown_variables: []
+```
+
+```yaml
+# tiling/archive/predicate_space.yaml
+version: 1
+status: analyzed
+predicate_atoms:
+  - id: P001
+    expr: ""
+    kind: runtime_guard | compile_time | optional_io | dtype_layout | shape | deter | other
+    source: {file: "", lines: [], symbol: ""}
+predicate_relations:
+  - id: PR001
+    type: mutex | implies | requires | compatible_set | compile_time_fixed | runtime_guard | other
+    atoms: []
+    expr: ""
+    case_impact: exclude | force_combo | narrow_domain
+    maps_to_legal_constraint: LC001
+```
+
+```yaml
+# tiling/archive/compile_time_bindings.yaml
+version: 1
+status: analyzed
+macros: []          # name / value / kind / affects_branches / source
+constexpr_constants: []
+templates:
+  instantiations: []  # template_name / args / call_site / specialization / maps_to_families
+if_constexpr_sites: []  # condition / reachability / proof_kind / folds_to_family / source
+unresolved_symbols: []
 blocking_questions: []
 ```
 
-## Branch Representative Schema
+`decision_tree.md` must label each node compile-time vs runtime and map leaves to `TFxxx`.
 
-Each `branches[]` item in `tiling/branch_matrix.yaml` must include:
+## 1. route.md Schema
+
+Human-readable tiling route (100–200 lines). Must include:
+
+- scope
+- tiling entry
+- top-level dispatch
+- registry dispatch order
+- family overview table
+- varlen / swizzle / deter and other high-risk notes
+- explicit note: family coverage != tiling_key coverage
+- explicit note: branch representative samples != full key enumeration
+- step 1 summary: variable count + impact_classification breakdown (how many affect key / template / family / tilingdata / core_split / buffer …)
+- step 2 summary: constraint/relation counts by type, input_realization coverage, key-level vs family-level unreachable, and whether tiling_key **pruning** / **merging** were performed
+- pointers to machine files: `index.yaml`, `variables.yaml`, `key_space.yaml`, `constraints.yaml`, `families.yaml`, `data_model.yaml`, `coverage_model.yaml`, `evidence_index.yaml`
+
+## 2. index.yaml Schema
+
+Machine routing entry for uo-query and TestGenerate.
 
 ```yaml
-id: B001
-family_id: TF001
-materialization_role: representative | boundary | risk | unknown | manual_keep
-representative_case_id: TF001_R1
-representative_reason: ""
-condition_snapshot:
-  raw: ""
-  normalized: ""
-  kind: compile_time | runtime | mixed | macro_guard | template_specialization | unknown
-reachability:
-  status: taken | not_taken | runtime_conditional | skipped_by_review | unknown
-  reason: ""
-  evidence: []
-predicate_refs: []
-dispatch_variable_refs: []
-structural_tiling_signature_id: ""
-tiling_key_witness:
-  mode: single | set | range | expression | unknown
-  values: []
-  expression: ""
-  role: witness | exact | hint | unknown
-trigger_preconditions:
-  dtype_constraints: []
-  shape_constraints: []
-  layout_constraints: []
-  optional_input_constraints: []
-  attr_constraints: []
-  compile_time_constraints: []
-  negative_constraints: []
-  satisfiable: true | false | unknown
-boundary_values: {}
-source_spans:
-  - span_id: SP_BRANCH_001
+version: 1
+op_name: ""
+scope:
+  arch: ""
+  path_group: ""
+  excluded: []
+
+canonical_files:
+  route: route.md
+  variables: variables.yaml
+  key_space: key_space.yaml
+  constraints: constraints.yaml
+  families: families.yaml
+  data_model: data_model.yaml
+  coverage_model: coverage_model.yaml
+  evidence: evidence_index.yaml
+
+qa_routes:
+  overview:
+    read: [route.md]
+  entry_or_dispatch:
+    read: [route.md, families.yaml]
+  tiling_mechanism:
+    read: [variables.yaml, route.md]
+  tiling_variables:
+    read: [variables.yaml]
+  tiling_key:
+    read: [key_space.yaml, families.yaml]
+  key_constraints_relations:
+    read: [constraints.yaml, key_space.yaml]
+  tiling_key_pruning_merging:
+    read: [constraints.yaml, key_space.yaml, families.yaml]
+  input_realization:
+    read: [constraints.yaml, key_space.yaml]
+  optional_input:
+    read: [variables.yaml, key_space.yaml, data_model.yaml]
+  dtype_layout_shape:
+    read: [key_space.yaml, families.yaml]
+  tilingdata:
+    read: [data_model.yaml, families.yaml]
+  coverage:
+    read: [coverage_model.yaml, constraints.yaml, key_space.yaml, families.yaml]
+  evidence:
+    read: [evidence_index.yaml]
+
+testgenerate_contract:
+  required_files:
+    - variables.yaml
+    - key_space.yaml
+    - constraints.yaml
+    - families.yaml
+    - data_model.yaml
+    - coverage_model.yaml
+  rules:
+    - "Do not treat family coverage as full tiling_key coverage."
+    - "Do not treat seed_cases as full enumeration."
+    - "Use variables.yaml for the variable inventory and impact classification."
+    - "Use key_space.yaml as tiling_key encoding truth."
+    - "Do not blind-cartesian fields; apply constraints.relations + constraints.key_unreachable first."
+    - "Honor constraints.tiling_key_pruning (do not generate pruned combos) and tiling_key_merging (treat merged combos as one key, differ only in overlay)."
+    - "Use constraints.input_realization to construct inputs for key patterns."
+    - "Treat derived_fields / independent:false as computed, not free dimensions."
+    - "Use key_relation_obligations.must_cover for relation witnesses, not full key enum."
+    - "Use data_model.yaml for varlen and numeric tilingdata coverage."
+    - "Use families.yaml for reachability and structural family coverage."
+```
+
+## 3. variables.yaml Schema (STEP 1 — variable model)
+
+Source of truth for **how tiling is computed** and **which variables / influencing factors** exist, classified by **impact scope**. Written before Step 2. Merges/promotes `archive/frontier.yaml` + `archive/dispatch_variables.yaml`.
+
+```yaml
+version: 1
+op_name: ""
+scope: ""
+
+tiling_mechanism:
+  entry: {file: "", symbol: "", lines: []}
+  key_setter: {macro: "", file: "", symbol: "", lines: []}   # GET_TPL_TILING_KEY or equiv
+  produces: []          # subset of [tiling_key, tilingdata, blockdim, workspace, sync]
+  flow_summary: ""      # 3-6 lines: how host decides split / key / data
+  registry_dispatch: [] # ordered dispatch entry points, if any
+
+variables: {}
+# Vxxx:
+#   name: ""
+#   meaning: ""
+#   raw_domain: [] | {min, max} | expression   # observed/declared domain before constraints
+#   domain_source: enum_macro | constexpr | runtime_branch | derived | input_shape | attr | unknown
+#   kind: hard_dispatch | optional_io_gate | performance_knob | derived | constant | tiling_data_value | unknown
+#   impact_scope: []    # 1+ from the impact_classification enum below
+#   influences: []      # [tiling_key, template, family, tilingdata, blockdim, workspace, buffer, none]
+#   enters_tiling_key: true | false
+#   maps_to: {key_field: "", constant: "", data_model: ""}  # cross-ref to key_space / data_model
+#   source: {file: "", lines: [], symbol: ""}
+#   evidence_refs: []
+
+impact_classification:
+  tiling_key: []            # variable ids that change tiling_key / dispatch
+  template_compile_time: [] # affect template specialization / if constexpr
+  family_structural: []     # change structural route / family
+  tilingdata_numeric: []    # only numeric tilingdata values
+  core_split: []            # blockDim / multi-core split
+  buffer_workspace: []      # UB / L1 / workspace / buffer_num
+  optional_io_gate: []      # optional input/output presence
+  derived: []               # computed from other variables
+  constant: []              # compile-time constants
+  unknown: []               # evidence insufficient
+
+unresolved_variables: []
+# - {name, why_unknown, blocking_questions, evidence_refs}   # never silently empty when gaps exist
+```
+
+Rules:
+
+- Every influencing factor discovered in the key setter / guards / tilingdata writers / compile-time bindings must appear as a `Vxxx` with at least one `impact_scope`.
+- `impact_classification` is a fast index; every variable id must appear in exactly the scopes listed in its own `impact_scope`.
+- Do not resolve constraints here — Step 1 records domains and classification only; relations belong to `constraints.yaml`.
+- Unknown / unresolved variables must be listed in `unresolved_variables`, not dropped.
+
+## 4. key_space.yaml Schema
+
+Tiling_key **encoding** source of truth (encoding macro, `fields_order`, key fields). No constraints / pruning / input construction here — those live in `constraints.yaml`.
+
+```yaml
+version: 1
+op_name: ""
+scope: ""
+
+encoding:
+  macro: ""
+  source:
     file: ""
-    function: ""
-    line_range: []
-    role: branch_condition | key_setter | tiling_data_writer | unknown
-    evidence: []
-numeric_variant_refs: []
-risk_refs: []
-evidence: []
-confidence: high | medium | low
+    lines: []
+  fields_order: []
+
+fields: {}
+# Each key field (required keys when field exists):
+#   domain: [] | {min, max} | expression
+#   domain_source: enum_macro | constexpr | runtime_branch | derived | unknown
+#   independent: true | false   # false => do not cartesian-product in TestGenerate
+#   affects: [key, struct, tilingdata, kernel_template]
+#   kind: hard_dispatch | optional_io_gate | performance_knob | constant | derived
+#   set_when: ""                # host predicate / guard that selects this field value
+#   variable_ref: Vxxx          # back-ref to variables.yaml
+#   source: {file, lines, symbol}
+
+constants: {}
+# name: {value, affects: [], source: {file, lines, symbol}}
+
+derived_fields: {}
+# Each derived field (required):
+#   from: []                    # parent field names
+#   rule: ""                    # executable-ish: e.g. "hasMask = (mask != nullptr)"
+#   rule_kind: bool_expr | enum_map | arithmetic | host_helper | unknown
+#   enters_key_bit: true | false
+#   affects: [key, struct, tilingdata]
+#   variable_ref: Vxxx
+#   source: {file, lines, symbol}
 ```
 
-## Tiling Route Schema
+Rules:
 
-Each `routes[]` item in `tiling/tiling_route.yaml` must include:
+- Extract from `GET_TPL_TILING_KEY` or equivalent key setter.
+- Optional inputs affecting key (mask, pse, dropout, rope) must appear in `fields` or `derived_fields`, each with a `variable_ref`.
+- Do not use `branch_matrix` or family count as full tiling_key enumeration.
+- Constraints, pruning, merging, and input construction are **not** in this file — see `constraints.yaml`.
+
+## 5. constraints.yaml Schema (STEP 2 — constraint model)
+
+Abstracts variable relations from code into constraints (**value / range / relation**) for testing, and records tiling_key **pruning (剪枝)** and **merging (合并)**. Merges/promotes `archive/predicate_space.yaml` + `archive/compile_time_bindings.yaml`.
+
+Empty `relations` / `input_realization` is a quality failure when hard_dispatch fields exist.
 
 ```yaml
-route_id: TR001
-family_id: TF001
-action: normal_kernel_task | needs_review | excluded | needs_alignment
-dispatchable: true | false
-reason: ""
-task_priority: high | medium | low | needs_review | excluded
-required_human_review: true | false
-required_cbm_followup: []
-required_followups:
-  - kernel_task_builder
-  - kernel_alignment
-  - evidence_consistency
-  - downstream_preparation
-blocks_downstream_preparation: true | false
-evidence: []
+version: 1
+op_name: ""
+scope: ""
+
+variable_constraints: []
+# Per-variable value/range refinement. Each item:
+#   id: VC001
+#   variable: Vxxx              # -> variables.yaml (or key field name)
+#   legal_values: [] | {min, max} | expression
+#   boundary_values: []         # values TestGenerate should hit for boundary coverage
+#   independent: true | false   # false => bound by a relation, not a free dimension
+#   reason: ""
+#   evidence_refs: []
+
+relations: []
+# Typed cross-variable relations. Each item:
+#   id: R001
+#   type: mutex | implies | requires | compatible_set | compile_time_fixed | runtime_guard | other
+#   variables: []               # variable ids / key field names involved
+#   expr: ""                    # machine-oriented: "A=x => B in {y,z}" / "not (A=x and B=y)"
+#   when: ""                    # optional scope / family / template context
+#   reason: ""
+#   case_impact: exclude | force_combo | narrow_domain
+#   evidence_refs: []
+
+tiling_key_pruning:                # 剪枝: combos the code makes impossible / folds away
+  performed: true | false | unknown
+  pruned_combinations: []
+  # - id: PR001
+  #   pattern: {}                  # field->value combo that never occurs
+  #   reason: ""
+  #   proof_kind: compile_time_fold | runtime_guard | encoding_gap | domain_constraint | evidence_gap
+  #   evidence_refs: []
+  notes: ""
+
+tiling_key_merging:                # 合并: distinct variable combos sharing one key / family
+  performed: true | false | unknown
+  merged_groups: []
+  # - id: MG001
+  #   merged_into: ""              # resulting key pattern or TFxxx
+  #   source_combinations: []      # distinct variable combos that collapse together
+  #   reason: ""                   # equivalent dispatch / numeric-only diff / ...
+  #   differs_in: []               # e.g. tilingdata numeric fields (overlay), if any
+  #   evidence_refs: []
+  notes: ""
+
+input_realization: {}
+# Pattern id -> how TestGenerate should construct inputs for a key / field pattern.
+# Required for every hard_dispatch field value in a reachable family key_pattern,
+# and for every key_relation_obligation.must_cover combination.
+#   IR001:
+#     matches: {key_pattern: {}, family_refs: []}
+#     inputs: {required: [], optional_present: [], optional_absent: []}
+#     shape_intent: ""            # e.g. "TND with S>1", not a full case
+#     dtype_layout_intent: ""
+#     feature_flags: {}
+#     notes: ""
+#     evidence_refs: []
+
+key_unreachable: []
+# Key-level unreachable only (not family-level). Each item:
+#   id: KU001
+#   level: key
+#   constraint: ""                # field pattern that cannot occur
+#   reason: ""
+#   proof_kind: compile_time_fold | runtime_guard | encoding_gap | evidence_gap
+#   evidence_refs: []
 ```
 
-Route semantics:
+Rules:
 
-- `normal_kernel_task`: generate a normal kernel task.
-- `needs_alignment`: generate a kernel task with split risks and review questions.
-- `needs_review`: generate a task draft only; do not auto-dispatch.
-- `excluded`: do not generate a normal kernel task.
+- **TestGenerate must not blind-cartesian key fields.** Apply `relations` + `key_unreachable` + `tiling_key_pruning` first; use `input_realization` to build inputs; treat `derived_fields` / `independent: false` as computed.
+- Every `relations[].type` must be one of the allowed enum values.
+- `tiling_key_pruning.performed` and `tiling_key_merging.performed` must be answered (`true`/`false`/`unknown` with `notes`), never omitted — this is the explicit 剪枝/合并 record the KB must carry.
+- `key_unreachable` is **key-level** only; family-level unreachable belongs in `families.yaml`.
+- If evidence is insufficient, write an explicit stub with `reason: evidence_gap` and raise it in `coverage_model` obligations — do not silently leave lists empty when hard_dispatch fields exist.
+- Minimum bar when `key_space.fields` has any `kind: hard_dispatch`:
+  - at least one `relations` entry **or** all such fields marked `independent: true` in `variable_constraints` with an explicit independence relation; and
+  - non-empty `input_realization` covering each reachable family `key_pattern`; and
+  - `tiling_key_pruning.performed` and `tiling_key_merging.performed` explicitly set.
 
-## Kernel Task Plan Schema
+## 6. families.yaml Schema
 
-Each `kernel_tasks[]` item in `kernel/kernel_task_plan.yaml` must include:
+Structural route source of truth. Merges legacy `tiling_branch_families.yaml`, `tiling_route.yaml`, `tiling_decision_tree.md`.
 
 ```yaml
-task_id: K_TASK_001
-source_family: TF001
-stable_key: ""
-route_action: normal_kernel_task | needs_review | needs_alignment
-dispatchable: true | false
-task_priority: high | medium | low | needs_review
-dispatch_signature:
-  predicates: []
-  hard_dispatch_variables: []
-  optional_io_gates: []
-  structural_tiling_signature_id: ""
-  structural_tiling_signature: {}
-  numeric_variants: []
-reachability:
-  status: taken | runtime_conditional | unknown
-  reason: ""
-  evidence: []
-family_template_context:
-  templates: []
-  compile_time_bindings: []
-  unresolved_symbols: []
-io_scope:
-  inputs: []
-  optional_inputs: []
-  outputs: []
-kernel_entry_hints: []
-compute_scope:
-  required_steps: []
-  dataflow_edges: []
-representative_cases: []
-traceability:
+version: 1
+op_name: ""
+scope: ""
+
+dispatch_tree:
+  entry: ""
+  top_level: []
+  # nodes: {id, guard, children, family_id, compile_time, runtime, unreachable_reason}
+
+families:
+  TF001:
+    name: ""
+    reachability: reachable | reachable_narrow | runtime_conditional | unreachable | excluded | unknown
+    unreachable_reason: ""
+    struct_signature: ""
+    guard: {}
+    key_pattern: {}
+    variable_key_fields: []
+    route_action: normal_kernel_task | needs_alignment | excluded | needs_review
+    coverage_role:
+      structural: true
+      key_witness: false
+    has_dedicated_key_bit: true | false
+    data_behavior: ""
+    needs_alignment: false
+    varlen_overlay: false
+    kernel_entry_hint:
+      status: known | unknown | conflicting
+      possible_entries: []
+      reason: ""
+    risks: []
+    evidence_refs: []
+```
+
+Rules:
+
+- Do not enumerate all tiling_key values here.
+- Preserve unreachable families (e.g. TF008) with `unreachable_reason`.
+- Varlen paths sharing tiling_key: `has_dedicated_key_bit: false`, document `data_behavior`.
+
+## 7. data_model.yaml Schema
+
+Tilingdata source of truth. Merges legacy `tiling_data_signature.yaml`, `tiling_data_map.yaml`.
+
+```yaml
+version: 1
+op_name: ""
+scope: ""
+
+structs:
+  EmptyTensor: {}
+  RegbaseTemplate: {}
+  # Each struct block:
+  #   role: ""
+  #   fields: ["fieldName", "dqIsNeedDeter[36]"]   # quote names with []
+  #   coverage_points: []
+  #   present_when: ""
+  #   used_by: []
+
+family_to_struct: {}
+
+numeric_overlay: {}
+# e.g. has_varlen:
+#   shared_key_with: TF001
+#   differs_in: [TndParam, TndSwizzleParam]
+#   coverage_points: []
+```
+
+RegbaseTemplate blocks (minimum):
+
+- always: BaseParams, SplitCoreParams, BlockNumList, PreParams, PostParams
+- conditional: BaseDeterParam, DeterParam, TndParam, TndSwizzleParam
+
+YAML readability: field names containing `[]` must be quoted strings in lists.
+
+## 8. coverage_model.yaml Schema
+
+TestGenerate coverage obligations only. Does **not** claim cases are generated or covered.
+
+```yaml
+version: 1
+op_name: ""
+scope: ""
+
+coverage_policy:
+  family_coverage: required
+  key_field_value_coverage: required
+  key_relation_coverage: required
+  tilingdata_coverage: required
+  unreachable_proof: required
+  observed_key_audit: required
+  input_realization_coverage: required
+
+family_obligations: []
+# - {family_id, reachability, reason, evidence_refs}
+
+key_field_obligations: {}
+# field_name:
+#   values: []
+#   min_cases: 0
+#   independent: true | false
+#   notes: ""
+
+key_relation_obligations: []
+# Each obligation (required keys):
+#   id: KR001
+#   name: ""
+#   relation_type: pairwise | implies | mutex | boundary | risk | compatible_set
+#   fields: []
+#   must_cover: []              # list of combo maps or expr strings TestGenerate must hit
+#   linked_relations: []        # R ids from constraints.yaml
+#   linked_input_realization: []  # IR ids from constraints.yaml
+#   min_cases: 1
+#   reason: ""
+#   evidence_refs: []
+
+tilingdata_obligations: []
+# - {block, fields, boundary_values, families, reason}
+
+seed_cases: []
+# - {id, role: representative | boundary | risk | manual_keep, family_id, key_snapshot, reason}
+# MUST NOT be treated as full enumeration
+
+audit_requirements:
+  expected_key_required: true
+  observed_key_required: true
+  mismatch_is_failure: true
+  report_missing_field_values: true
+  report_missing_relations: true
+  report_missing_input_realization: true
+  report_illegal_cartesian_without_constraints: true
+```
+
+Rules:
+
+- `key_relation_obligations` must be executable for TestGenerate: prefer `must_cover` + `linked_relations` over free-text `reason` alone.
+- When `constraints.relations` is non-empty, each relation that affects reachable keys should appear in `linked_relations` of at least one relation obligation **or** be reflected in `constraints.tiling_key_pruning` with a proof.
+- Do not duplicate full key enumeration into `must_cover`; list relation witnesses / critical combos only.
+- `seed_cases` remain representative; relation coverage is owned by `key_relation_obligations`, not seed count.
+
+## 9. evidence_index.yaml Schema
+
+Evidence traceability index. Default: do not expand unless needed.
+
+```yaml
+version: 1
+op_name: ""
+
+symbols:
+  SymbolName:
+    file: ""
+    lines: []
+    role: ""
+
+evidence_policy:
+  default_read: false
+  use_when:
+    - "user asks for source evidence"
+    - "user asks exact source line"
+    - "quality gate detects conflict"
+    - "TestGenerate requires traceability report"
+```
+
+## Kernel Path Skeleton Schema（canonical）
+
+Kernel path planning writes `kernel/paths.yaml` (not legacy `kernel/kernel_task_plan.yaml`).
+
+Each `kernel_paths.Kxxx` item must include:
+
+```yaml
+K001:
+  stable_key: ""
+  name: ""
   source_family: TF001
-  related_branches: []
-  related_tiling_keys:
-    mode: single | set | range | expression | unknown
-    values: []
-    expression: ""
-    role: witness | exact | hint | unknown
-  source_spans: []
-  predicate_refs: []
-  dispatch_variable_refs: []
-  tiling_data_signature_refs: []
-  route_id: ""
-downstream_preparation:
-  trigger_preconditions:
-    dtype_constraints: []
-    shape_constraints: []
-    layout_constraints: []
-    optional_input_constraints: []
-    attr_constraints: []
-    compile_time_constraints: []
-    negative_constraints: []
-    satisfiable: true | false | unknown
-  expected_tiling_key:
-    mode: single | set | range | expression | unknown
-    values: []
-    expression: ""
-    role: witness | exact | hint | unknown
-  expected_compute_steps: []
-  expected_dataflow_edges: []
-  unresolved_for_kernel_path_agent: []
-  unresolved_for_alignment: []
-review_questions: []
-split_risks: []
-evidence: []
+  reachability: reachable | runtime_conditional | unreachable | excluded | unknown
+  route_action: normal_kernel_task | needs_review | excluded
+  entry:
+    file: ""
+    symbol: ""
+    class: ""
+    function: ""
+  template_context:
+    templates: []
+    compile_time_bindings: []
+    unresolved_symbols: []
+  tiling:
+    family_ref: TF001
+    key_pattern_ref: ""
+    data_model_ref: ""
+  compute_scope:
+    required_steps: []
+    skipped_steps: []
+  pipeline_ref: ""
+  resource_refs: []
+  representative_cases: []
+  risks: []
+  evidence_refs: []
+  confidence: high | medium | low
+  source_locator:
+    primary: null
+    reason: "pending kernel path analysis"
 ```
 
-Top-level companion fields:
+Top-level companion fields in `kernel/paths.yaml`:
 
 ```yaml
 version: 1
 status: analyzed
-kernel_tasks: []
+kernel_paths: {}
 excluded_families: []
-needs_review_families: []
+needs_review: []
 task_generation_summary:
   source_family_count: 0
   normal_task_count: 0
@@ -277,9 +650,16 @@ task_generation_summary:
   split_count: 0
 ```
 
+Rules:
+
+- Do not split kernel paths by tiling_key enumeration or numeric tilingdata variants.
+- Default one structural family → one kernel path.
+- Kernel task builder reads `tiling/families.yaml`, `tiling/key_space.yaml`, and `tiling/constraints.yaml` (not family count as key coverage).
+- Legacy `kernel/kernel_task_plan.yaml` may exist only under `archive/legacy/`.
+
 ## Dispatch Review Fields
 
-`kernel/kernel_dispatch_review.yaml` must include:
+`human/kernel_dispatch_review.yaml` must include:
 
 ```yaml
 dispatchable_task_ids: []
@@ -292,9 +672,9 @@ For `decision: dispatch_all`, `approved_task_ids` must equal `dispatchable_task_
 
 ## Kernel Evidence Backfill Schema
 
-`tiling/kernel_evidence_backfill.yaml` records facts learned from kernel path analysis that resolve earlier tiling-side `unknown`, `hint`, or `needs_alignment` fields.
+`tiling/archive/kernel_evidence_backfill.yaml` (or legacy path if migrating) records facts learned from kernel path analysis.
 
-The builder may update existing `tiling/*.yaml` artifacts only when all of these are true:
+The builder may update existing `tiling/*.yaml` canonical artifacts only when all of these are true:
 
 - the target field is currently `unknown`, empty, hint-only, or listed under unresolved/blocking/downstream questions;
 - at least one approved `kernel/paths/Kxxx_kernel_path.yaml` contains direct evidence for the replacement;
@@ -306,7 +686,7 @@ Do not overwrite tiling-source facts with kernel guesses. If kernel evidence con
 version: 1
 status: pending | applied | partial | skipped
 backfills:
-  - target_artifact: tiling/tiling_branch_families.yaml
+  - target_artifact: tiling/families.yaml
     target_selector: "families[family_id=TF001].kernel_entry_hint"
     previous_value: unknown
     new_value: {}

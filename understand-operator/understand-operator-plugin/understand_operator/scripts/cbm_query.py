@@ -18,7 +18,11 @@ from understand_operator._operator.cbm_client import OperatorCbmClient, append_q
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Run an on-demand CBM query; print JSON to stdout; append one journal line by default",
+        description=(
+            "DEPRECATED for agent/runtime lookups. Prefer MCP server codebase-memory-mcp "
+            "(search_graph/search_code/get_code_snippet/trace_path). "
+            "This CLI remains for offline/scripted use only."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_CLI_EXAMPLES,
     )
@@ -89,6 +93,12 @@ def main(argv: list[str] | None = None) -> int:
         seq = _next_journal_seq(artifact_root)
         output_name = f"{seq:04d}_{args.tool}.json"
 
+    print(
+        "WARNING: cbm_query.py is deprecated for agent lookups; "
+        "use MCP server codebase-memory-mcp instead. See docs/cbm-mcp-setup.md",
+        file=sys.stderr,
+    )
+
     data = client.call(args.tool, payload, output_name=output_name, persist=args.save)
     envelope = {
         "ok": data.get("ok", False),
@@ -97,6 +107,8 @@ def main(argv: list[str] | None = None) -> int:
         "phase": args.phase,
         "result": data.get("result"),
         "error": data.get("error", ""),
+        "deprecated_for_agents": True,
+        "prefer": "MCP codebase-memory-mcp",
     }
 
     if not args.no_journal:
