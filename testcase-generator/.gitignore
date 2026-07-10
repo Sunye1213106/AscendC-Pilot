@@ -1,8 +1,0 @@
-# Generated smoke outputs (keep fixture KB only)
-fixtures/**/.testcase-generator/
-__pycache__/
-*.pyc
-*.egg-info/
-.eggs/
-dist/
-build/

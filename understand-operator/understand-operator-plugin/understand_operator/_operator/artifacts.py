@@ -1656,28 +1656,45 @@ recommended_checks:
     )
     write_text(
         base / "contracts" / "testcase.yaml",
-        f"""version: 1
+        f"""version: 2
 op_name: {op_name}
-purpose: "Derived testcase contract for a future Testcase Agent; not the whole KB and not generated cases"
-input_domain: []
-optional_inputs: []
-shape_dtype_layout: []
-derived_variables: []
+
+source:
+  understand_run_id: null
+  understand_phase: phase7
+  quality_status: draft
+  canonical_hashes: {{}}
+  contract_hash: null
+
+interface:
+  required_inputs: []
+  optional_inputs: []
+  outputs: []
+  attrs: []
+  dtype_layout_domains: []
+
 typed_constraints: []
-key_encoding: []
-families: []
-template_bindings: []
-input_realization: []
-unreachable: []
-tilingdata_boundaries: []
-kernel_compile_configurations: []
-kernel_branch_obligations: []
-loop_tail_classes: []
-accuracy_sensitive_paths: []
-source_contracts:
+
+coverage_obligations:
+  tiling_keys: []
+  tilingdata: []
+  kernel_paths: []
+  numerical: []
+  negative: []
+
+golden_contract:
+  inputs: []
+  outputs: []
+  generation_policy: []
+  tolerance_policy: []
+
+unresolved: []
+conflicts: []
+evidence_refs: []
+
+compatibility:
   legacy_test_contract: ../test/contract.yaml
-  coverage_model: ../tiling/coverage_model.yaml
-  kernel_branches: ../kernel/branches.yaml
+  notes: "contracts/testcase.yaml is the TestAgent machine SoT; test/contract.yaml is a derived compatibility view."
 """,
     )
 

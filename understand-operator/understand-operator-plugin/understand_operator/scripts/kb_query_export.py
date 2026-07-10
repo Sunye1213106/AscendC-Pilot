@@ -231,7 +231,30 @@ def export_context_slice(
         else:
             selected.update(entity_index.keys())
     elif view == "testcase-contract":
-        selected.update(_ids_by_kind(entity_index, {"key", "family", "template_binding", "kernel_branch", "compute_step"}))
+        selected.update(
+            _ids_by_kind(
+                entity_index,
+                {
+                    "key",
+                    "family",
+                    "template_binding",
+                    "kernel_branch",
+                    "compute_step",
+                    "tilingdata_field",
+                    "kernel_runtime_variable",
+                    "tilingdata_read",
+                    "kernel_decision_point",
+                    "compile_variable",
+                    "compile_decision",
+                    "pipeline_stage",
+                    "coverage_obligation",
+                    "numerical_policy",
+                },
+            )
+        )
+        contract = docs.get("contracts/testcase.yaml")
+        if isinstance(contract, dict):
+            selected.update(_ids_from_contract(contract))
     elif view == "evidence-conflict":
         selected.update(_ids_by_kind(entity_index, {"evidence", "relation"}))
     else:
@@ -249,7 +272,7 @@ def export_context_slice(
     downstream, _ = _limit_list(downstream, DETAIL_LIMITS[detail_level]["relations"])
     evidence, evidence_omitted = _limit_list(evidence, DETAIL_LIMITS[detail_level]["evidence"])
 
-    return {
+    payload = {
         "query": {
             "intent": view,
             "entity_id": entity,
@@ -273,6 +296,26 @@ def export_context_slice(
             "evidence": evidence_omitted,
         },
     }
+    if view == "testcase-contract":
+        contract = docs.get("contracts/testcase.yaml")
+        if isinstance(contract, dict):
+            payload["testcase_contract"] = contract
+    return payload
+
+
+def _ids_from_contract(contract: dict[str, Any]) -> set[str]:
+    found: set[str] = set()
+    obligations = contract.get("coverage_obligations")
+    if isinstance(obligations, dict):
+        for items in obligations.values():
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if isinstance(item, dict) and item.get("id"):
+                    found.add(str(item["id"]))
+                for ref in item.get("target_refs") or [] if isinstance(item, dict) else []:
+                    found.add(str(ref))
+    return found
 
 
 def _entity_suggestions(entity: str, entity_index: dict[str, Any]) -> list[str]:
@@ -309,10 +352,15 @@ def _load_context_docs(uo_root: Path) -> dict[str, Any]:
             "contracts/testcase.yaml",
             "kernel/paths.yaml",
             "kernel/branches.yaml",
+            "kernel/compile_model.yaml",
+            "kernel/variables.yaml",
+            "kernel/pipeline.yaml",
             "tiling/key_space.yaml",
             "tiling/families.yaml",
             "tiling/data_model.yaml",
+            "tiling/coverage_model.yaml",
             "flow/compute_graph.yaml",
+            "flow/numerical_model.yaml",
             "evidence/issues.yaml",
         ]
     )

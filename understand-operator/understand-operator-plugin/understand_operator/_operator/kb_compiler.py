@@ -23,8 +23,90 @@ except ImportError:  # pragma: no cover
 
 
 STABLE_ID_RE = re.compile(
-    r"^(SYM|VAR|REL|EV|SRC|KEY|FAM|KPATH|KBR|KTPL|CL|CON|VIEW|BUF|SYNC|RES)_[A-Z0-9_]+$"
+    r"^(SYM|VAR|REL|EV|SRC|KEY|FAM|KPATH|KBR|KTPL|CL|CON|VIEW|BUF|SYNC|RES|TDF|KVAR|KDEC|PIPE|COV|NUM)_[A-Z0-9_]+$"
 )
+PROPOSAL_HASH_RUNTIME_FIELDS = frozenset(
+    {
+        "proposal_hash",
+        "consumed_at",
+        "status",
+        "promoted_at",
+        "rejected_at",
+        "failure_reason",
+        "transaction_id",
+        "recovery_status",
+    }
+)
+TEST_CONSUMABLE_FILES = (
+    "operator.yaml",
+    "tiling/key_space.yaml",
+    "tiling/constraints.yaml",
+    "tiling/families.yaml",
+    "tiling/data_model.yaml",
+    "tiling/coverage_model.yaml",
+    "flow/golden_model.yaml",
+    "flow/numerical_model.yaml",
+    "kernel/compile_model.yaml",
+    "kernel/variables.yaml",
+    "kernel/paths.yaml",
+    "kernel/branches.yaml",
+    "contracts/testcase.yaml",
+)
+ENTITY_KINDS = {
+    "symbol",
+    "variable",
+    "relation",
+    "evidence",
+    "key",
+    "family",
+    "compute_step",
+    "template_binding",
+    "kernel_path",
+    "kernel_branch",
+    "buffer",
+    "sync",
+    "resource",
+    "view",
+    "contract",
+    "tilingdata_field",
+    "kernel_runtime_variable",
+    "tilingdata_read",
+    "kernel_decision_point",
+    "compile_variable",
+    "compile_decision",
+    "pipeline_stage",
+    "coverage_obligation",
+    "numerical_policy",
+}
+PREFIX_TO_KIND = {
+    "SYM_": "symbol",
+    "VAR_": "variable",
+    "REL_": "relation",
+    "EV_": "evidence",
+    "SRC_": "evidence",
+    "KEY_": "key",
+    "FAM_": "family",
+    "KTPL_": "template_binding",
+    "KPATH_": "kernel_path",
+    "KBR_": "kernel_branch",
+    "CON_": "contract",
+    "VIEW_": "view",
+    "BUF_": "buffer",
+    "SYNC_": "sync",
+    "RES_": "resource",
+    "TDF_": "tilingdata_field",
+    "KVAR_": "kernel_runtime_variable",
+    "KDEC_": "kernel_decision_point",
+    "PIPE_": "pipeline_stage",
+    "COV_": "coverage_obligation",
+    "NUM_": "numerical_policy",
+}
+PREFIX_KIND_ALIASES = {
+    "VAR_": {"variable", "tilingdata_field", "kernel_runtime_variable", "compile_variable"},
+    "TDF_": {"tilingdata_field", "tilingdata_read"},
+    "KVAR_": {"kernel_runtime_variable", "variable"},
+    "KDEC_": {"kernel_decision_point", "compile_decision"},
+}
 LEGACY_ID_RE = re.compile(r"^(TF\d+|K\d+|C\d+|D\d+|P\d+)$")
 STATUS_ENUM = {"confirmed", "proposed", "uncertain", "conflicting", "unresolved", "deprecated"}
 RELATION_TYPES = {
@@ -189,7 +271,7 @@ MATURITY_RULES: dict[str, tuple[str, ...]] = {
     "contracts/query.yaml": ("required_response_fields", "routes"),
     "contracts/code_change.yaml": ("target", "upstream", "downstream"),
     "contracts/pr_review.yaml": ("review_slices", "recommended_checks"),
-    "contracts/testcase.yaml": ("input_domain", "typed_constraints", "kernel_branch_obligations"),
+    "contracts/testcase.yaml": ("version", "source", "interface", "typed_constraints", "coverage_obligations", "golden_contract"),
     "test/contract.yaml": ("input_domain", "typed_constraints", "kernel_branch_obligations"),
     "quality.yaml": ("status", "checks", "decision"),
 }
@@ -231,6 +313,7 @@ class CompileResult:
     artifact_hashes: dict[str, str] = field(default_factory=dict)
     entity_index: dict[str, dict[str, Any]] = field(default_factory=dict)
     maturity: dict[str, str] = field(default_factory=dict)
+    consumability: dict[str, dict[str, Any]] = field(default_factory=dict)
     promotion_report: dict[str, Any] = field(default_factory=dict)
     relation_count: int = 0
     unresolved_count: int = 0
@@ -262,7 +345,9 @@ class TransactionResult:
     planned_artifacts: list[str]
     committed_artifacts: list[str] = field(default_factory=list)
     rolled_back_artifacts: list[str] = field(default_factory=list)
+    metadata_artifacts: list[str] = field(default_factory=list)
     transaction_status: str = "pending"
+    recovery_status: str = ""
     failure_reason: str = ""
 
 
@@ -296,6 +381,8 @@ def validate_kb(
     _validate_cross_layer(docs, result, phase)
     _validate_contracts(docs, result, phase)
     _validate_stale(uo_root, result, phase)
+    if _phase_rank(phase) >= _phase_rank("final"):
+        result.consumability = _validate_consumability(docs, result)
     if write_outputs:
         _write_compile_outputs(uo_root, result)
     return result
@@ -312,6 +399,8 @@ def promote_kb(
 ) -> CompileResult:
     phase = _normalize_phase(phase)
     result = CompileResult(op_name=op_name, phase=phase)
+    if write_outputs:
+        _recover_pending_transactions(uo_root, op_name)
     docs = _load_all_existing_docs(uo_root, result)
     before_hashes = _hash_docs(docs)
     proposals = _load_proposals(uo_root, result, run_id=run_id, proposal_paths=proposal_paths)
@@ -325,7 +414,9 @@ def promote_kb(
         if not _validate_proposal_envelope(proposal_path, proposal, op_name, phase, result):
             continue
         proposal_id = str(proposal.get("proposal_id") or "")
-        proposal_hash = _proposal_hash(proposal)
+        proposal_hash = _computed_proposal_hash(proposal)
+        if not _validate_proposal_hash(proposal_path, proposal, proposal_hash, result):
+            continue
         state = _proposal_consumption_state(uo_root, proposal_id, proposal_hash, result)
         if state == "already_promoted":
             skipped.append({"proposal_id": proposal_id, "proposal_hash": proposal_hash, "code": "ALREADY_PROMOTED"})
@@ -415,28 +506,6 @@ def promote_kb(
 
     after_hashes = _hash_artifacts_from_docs(candidate)
     transaction: TransactionResult | None = None
-    if write_outputs:
-        transaction = _transactional_write_docs(uo_root, candidate, docs)
-        if transaction.transaction_status != "committed":
-            result.add("PROMOTION_TRANSACTION_ROLLED_BACK", "error", transaction.failure_reason, "canonical_kb")
-            result.promotion_report = _promotion_report(
-                op_name,
-                phase,
-                "rolled_back",
-                applied,
-                result,
-                before_hashes,
-                {},
-                transaction=transaction,
-                run_id=run_id,
-                proposal_ids=proposal_ids,
-                proposal_hashes=proposal_hashes,
-                skipped_proposals=skipped,
-            )
-            _write_promotion_report(uo_root, result)
-            _write_rejected_proposals(uo_root, run_id, proposals, result)
-            return result
-        _resolve_stale_after_success(uo_root, phase=phase, run_id=run_id, changed_artifacts=transaction.committed_artifacts)
     result.promotion_report = _promotion_report(
         op_name,
         phase,
@@ -445,16 +514,64 @@ def promote_kb(
         result,
         before_hashes,
         after_hashes,
-        transaction=transaction,
         run_id=run_id,
         proposal_ids=proposal_ids,
         proposal_hashes=proposal_hashes,
         skipped_proposals=skipped,
     )
     if write_outputs:
-        _write_compile_outputs(uo_root, result)
-        _write_promotion_report(uo_root, result)
-        _write_promotion_receipt(uo_root, result, run_id, proposal_ids, proposal_hashes, before_hashes, after_hashes, transaction)
+        stale_payload = _compute_stale_resolution(
+            uo_root,
+            phase=phase,
+            run_id=run_id,
+            changed_artifacts=sorted(path for path, digest in after_hashes.items() if before_hashes.get(path) != digest),
+            artifact_hashes=after_hashes,
+            validation_status="pass" if result.status != "fail" else "fail",
+        )
+        payloads = _build_promotion_payloads(
+            uo_root,
+            candidate,
+            docs,
+            result,
+            run_id=run_id,
+            proposal_ids=proposal_ids,
+            proposal_hashes=proposal_hashes,
+            before_hashes=before_hashes,
+            after_hashes=after_hashes,
+            stale_payload=stale_payload,
+        )
+        transaction = _execute_promotion_transaction(
+            uo_root,
+            op_name,
+            payloads,
+            phase=phase,
+            run_id=run_id,
+            proposal_hashes=proposal_hashes,
+        )
+        result.promotion_report["transaction_id"] = transaction.transaction_id
+        result.promotion_report["metadata_artifacts"] = transaction.metadata_artifacts
+        result.promotion_report["transaction_status"] = transaction.transaction_status
+        result.promotion_report["recovery_status"] = transaction.recovery_status
+        result.promotion_report["failure_reason"] = transaction.failure_reason
+        result.promotion_report["committed_artifacts"] = transaction.committed_artifacts
+        result.promotion_report["rolled_back_artifacts"] = transaction.rolled_back_artifacts
+        if transaction.transaction_status == "commit_complete":
+            pass
+        elif transaction.transaction_status in {"canonical_committed", "metadata_pending"}:
+            result.add(
+                "PROMOTION_METADATA_PENDING",
+                "warning",
+                "canonical committed but metadata pending recovery",
+                "archive/runs/transactions",
+            )
+            result.promotion_report["status"] = "promoted"
+            result.promotion_report["transaction_status"] = "metadata_pending"
+        else:
+            result.add("PROMOTION_TRANSACTION_ROLLED_BACK", "error", transaction.failure_reason, "canonical_kb")
+            result.promotion_report["status"] = "rolled_back"
+            _write_promotion_report(uo_root, result)
+            _write_rejected_proposals(uo_root, run_id, proposals, result)
+            return result
     return result
 
 
@@ -472,7 +589,10 @@ def collect_entity_definitions(docs: dict[str, Any], result: CompileResult | Non
         if result and item_id in index and index[item_id]["kind"] != kind:
             result.add("ID_KIND_CONFLICT", "error", f"{item_id} reused as {index[item_id]['kind']} and {kind}", artifact, item_id)
         if result and expected_kind and kind and expected_kind != kind and not item_id.startswith(("TF", "K", "C", "D", "P")):
-            result.add("ID_KIND_PREFIX_MISMATCH", "warning", f"{item_id} prefix suggests {expected_kind}, got {kind}", artifact, item_id)
+            prefix = next((p for p in PREFIX_KIND_ALIASES if item_id.startswith(p)), "")
+            allowed = PREFIX_KIND_ALIASES.get(prefix, {expected_kind})
+            if kind not in allowed:
+                result.add("ID_KIND_PREFIX_MISMATCH", "warning", f"{item_id} prefix suggests {expected_kind}, got {kind}", artifact, item_id)
         existing = index.get(item_id)
         if existing:
             existing.setdefault("artifacts", [])
@@ -501,10 +621,34 @@ def collect_entity_definitions(docs: dict[str, Any], result: CompileResult | Non
                 add(str(item.get("id")), "symbol", rel, "symbols", item)
         if rel == "registry/variables.yaml":
             for item in _iter_entries(doc.get("variables")):
-                add(str(item.get("id")), "variable", rel, "variables", item)
+                kind = str(item.get("kind") or "variable")
+                add(str(item.get("id")), kind if kind in ENTITY_KINDS else "variable", rel, "variables", item)
         if rel == "registry/evidence.yaml":
             for item in _iter_entries(doc.get("evidence")):
                 add(str(item.get("id")), "evidence", rel, "evidence", item)
+        if rel == "tiling/data_model.yaml":
+            for struct_name, struct in _iter_mapping_entries(doc.get("structs")):
+                for field_name, field in _iter_mapping_entries(struct.get("fields") if isinstance(struct, dict) else None):
+                    item_id = str(field.get("id") or field.get("stable_id") or f"TDF_{_stable_slug(struct_name)}_{_stable_slug(field_name)}")
+                    add(item_id, "tilingdata_field", rel, f"structs.{struct_name}.fields", {**field, "canonical_name": field_name, "struct": struct_name})
+            for family, struct_name in _iter_mapping_entries(doc.get("family_to_struct")):
+                if isinstance(struct_name, str) and struct_name:
+                    add(f"TDF_FAM_{_stable_slug(family)}", "tilingdata_field", rel, "family_to_struct", {"canonical_name": family, "struct": struct_name})
+            for overlay_key, overlay in _iter_mapping_entries(doc.get("numeric_overlay")):
+                item_id = str(overlay.get("id") or f"TDF_NUM_{_stable_slug(overlay_key)}")
+                add(item_id, "tilingdata_field", rel, "numeric_overlay", {**overlay, "canonical_name": overlay_key})
+        if rel == "tiling/coverage_model.yaml":
+            for item in _iter_entries(doc.get("family_obligations")):
+                item_id = str(item.get("id") or f"COV_FAM_{_stable_slug(item.get('name') or item.get('family_id') or '')}")
+                add(item_id, "coverage_obligation", rel, "family_obligations", item)
+            for key, item in _iter_mapping_entries(doc.get("key_field_obligations")):
+                payload = item if isinstance(item, dict) else {"name": key}
+                item_id = str(payload.get("id") or f"COV_KEY_{_stable_slug(key)}")
+                add(item_id, "coverage_obligation", rel, "key_field_obligations", payload)
+            for item in _iter_entries(doc.get("key_relation_obligations")):
+                add(str(item.get("id") or f"COV_REL_{_stable_slug(item.get('name') or '')}"), "coverage_obligation", rel, "key_relation_obligations", item)
+            for item in _iter_entries(doc.get("tilingdata_obligations")):
+                add(str(item.get("id") or f"COV_TDF_{_stable_slug(item.get('name') or '')}"), "coverage_obligation", rel, "tilingdata_obligations", item)
         if rel == "tiling/key_space.yaml":
             for item in _iter_entries(doc.get("fields")):
                 item_id = str(item.get("id") or item.get("stable_id") or f"KEY_{str(item.get('canonical_name') or item.get('name') or '').upper()}")
@@ -521,6 +665,39 @@ def collect_entity_definitions(docs: dict[str, Any], result: CompileResult | Non
         if rel == "kernel/compile_model.yaml":
             for item in _iter_entries(doc.get("template_bindings")):
                 add(str(item.get("id")), "template_binding", rel, "template_bindings", item)
+            for item in _iter_entries(doc.get("compile_variables")):
+                kind = str(item.get("kind") or "compile_variable")
+                add(str(item.get("id")), kind if kind in ENTITY_KINDS else "compile_variable", rel, "compile_variables", item)
+            for item in _iter_entries(doc.get("compile_decisions")):
+                add(str(item.get("id") or f"KDEC_{_stable_slug(item.get('name') or '')}"), "compile_decision", rel, "compile_decisions", item)
+        if rel == "kernel/variables.yaml":
+            for item in _iter_entries(doc.get("runtime_variables")):
+                kind = str(item.get("kind") or "kernel_runtime_variable")
+                add(str(item.get("id")), kind if kind in ENTITY_KINDS else "kernel_runtime_variable", rel, "runtime_variables", item)
+            for item in _iter_entries(doc.get("tilingdata_reads")):
+                add(str(item.get("id") or f"TDF_READ_{_stable_slug(item.get('field') or item.get('name') or '')}"), "tilingdata_read", rel, "tilingdata_reads", item)
+            for item in _iter_entries(doc.get("path_decision_points")):
+                add(str(item.get("id") or f"KDEC_{_stable_slug(item.get('name') or '')}"), "kernel_decision_point", rel, "path_decision_points", item)
+        if rel == "kernel/pipeline.yaml":
+            for item in _iter_entries(doc.get("stages")):
+                add(str(item.get("id") or f"PIPE_{_stable_slug(item.get('name') or '')}"), "pipeline_stage", rel, "stages", item)
+            for pipeline_name, pipeline in _iter_mapping_entries(doc.get("pipelines")):
+                for item in _iter_entries(pipeline.get("stages") if isinstance(pipeline, dict) else None):
+                    add(str(item.get("id") or f"PIPE_{_stable_slug(pipeline_name)}_{_stable_slug(item.get('name') or '')}"), "pipeline_stage", rel, f"pipelines.{pipeline_name}.stages", item)
+        if rel == "flow/numerical_model.yaml":
+            for item in _iter_entries(doc.get("dtype_policy")):
+                add(str(item.get("id") or f"NUM_DTYPE_{_stable_slug(item.get('name') or '')}"), "numerical_policy", rel, "dtype_policy", item)
+            tolerance = _as_dict(doc.get("tolerance_policy"))
+            for key in ("default",):
+                if tolerance.get(key):
+                    add(f"NUM_TOL_{_stable_slug(key)}", "numerical_policy", rel, "tolerance_policy", {"canonical_name": key, **(_as_dict(tolerance.get(key)))})
+            for key, value in tolerance.items():
+                if key == "default":
+                    continue
+                add(f"NUM_TOL_{_stable_slug(key)}", "numerical_policy", rel, f"tolerance_policy.{key}", value if isinstance(value, dict) else {"value": value})
+            randomness = _as_dict(doc.get("randomness_policy"))
+            for key, value in randomness.items():
+                add(f"NUM_RND_{_stable_slug(key)}", "numerical_policy", rel, f"randomness_policy.{key}", value if isinstance(value, dict) else {"value": value})
         if rel == "kernel/paths.yaml":
             for item in _iter_entries(doc.get("kernel_paths")):
                 add(str(item.get("id") or item.get("stable_key")), "kernel_path", rel, "kernel_paths", item)
@@ -541,8 +718,27 @@ def collect_entity_definitions(docs: dict[str, Any], result: CompileResult | Non
         if rel.startswith("contracts/"):
             for item in _iter_entries(doc.get("views")):
                 add(str(item.get("id")), "view", rel, "views", item)
+            if rel == "contracts/testcase.yaml":
+                for section in ("coverage_obligations",):
+                    obligations = _as_dict(doc.get(section))
+                    for bucket, items in obligations.items():
+                        for item in _iter_entries(items):
+                            item_id = str(item.get("id") or f"COV_{_stable_slug(bucket)}_{_stable_slug(item.get('name') or '')}")
+                            add(item_id, "coverage_obligation", rel, f"{section}.{bucket}", item)
 
     return dict(sorted(index.items()))
+
+
+def _iter_mapping_entries(value: Any) -> list[tuple[str, dict[str, Any]]]:
+    if isinstance(value, dict):
+        out: list[tuple[str, dict[str, Any]]] = []
+        for key, item in value.items():
+            if isinstance(item, dict):
+                out.append((str(key), item))
+            else:
+                out.append((str(key), {"value": item}))
+        return out
+    return []
 
 
 def validate_entity_references(
@@ -704,31 +900,60 @@ def _validate_proposal_envelope(
     return ok
 
 
-def _proposal_hash(proposal: dict[str, Any]) -> str:
-    explicit = str(proposal.get("proposal_hash") or "").strip()
-    if explicit:
-        return explicit
-    payload = {k: v for k, v in proposal.items() if k not in {"consumed_at", "status"}}
+def _computed_proposal_hash(proposal: dict[str, Any]) -> str:
+    payload = {k: v for k, v in proposal.items() if k not in PROPOSAL_HASH_RUNTIME_FIELDS}
     return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def _proposal_hash(proposal: dict[str, Any]) -> str:
+    return _computed_proposal_hash(proposal)
+
+
+def _validate_proposal_hash(path: Path, proposal: dict[str, Any], computed_hash: str, result: CompileResult) -> bool:
+    explicit = str(proposal.get("proposal_hash") or "").strip()
+    if not explicit:
+        return True
+    if explicit == computed_hash:
+        return True
+    result.add(
+        "PROPOSAL_HASH_MISMATCH",
+        "error",
+        f"proposal_hash mismatch for {proposal.get('proposal_id')}: declared {explicit}, computed {computed_hash}",
+        path.as_posix(),
+        str(proposal.get("proposal_id") or ""),
+    )
+    return False
 
 
 def _proposal_consumption_state(uo_root: Path, proposal_id: str, proposal_hash: str, result: CompileResult) -> str:
     if not proposal_id:
         return "new"
+    sources: list[tuple[str, dict[str, Any]]] = []
     for receipt in sorted((uo_root / "archive" / "promoted").glob("*/promotion_receipt.yaml")):
         data = _read_yaml(receipt, result)
-        hashes = _as_dict(data.get("proposal_hashes")) if isinstance(data, dict) else {}
+        if isinstance(data, dict):
+            sources.append((receipt.as_posix(), data))
+    # Canonical may already be committed while receipt is missing; treat pending tx as consumed.
+    for state_path in sorted((uo_root / "archive" / "runs" / "transactions").glob("*/state.yaml")):
+        data = _read_yaml(state_path, result)
+        if not isinstance(data, dict):
+            continue
+        status = str(data.get("transaction_status") or "")
+        if status in {"canonical_committed", "metadata_pending", "commit_complete"}:
+            sources.append((state_path.as_posix(), data))
+    for source, data in sources:
+        hashes = _as_dict(data.get("proposal_hashes"))
         if proposal_id not in hashes:
             continue
         previous_hash = str(hashes.get(proposal_id) or "")
         if previous_hash == proposal_hash:
-            result.add("ALREADY_PROMOTED", "warning", f"proposal {proposal_id} already promoted", receipt.as_posix(), proposal_id)
+            result.add("ALREADY_PROMOTED", "warning", f"proposal {proposal_id} already promoted", source, proposal_id)
             return "already_promoted"
         result.add(
             "PROPOSAL_ID_REUSED_WITH_DIFFERENT_CONTENT",
             "error",
             f"proposal_id {proposal_id} was already promoted with different content",
-            receipt.as_posix(),
+            source,
             proposal_id,
         )
         return "conflict"
@@ -1170,13 +1395,45 @@ def _resolve_stale_after_success(
     phase: str,
     run_id: str | None,
     changed_artifacts: list[str],
+    artifact_hashes: dict[str, str] | None = None,
+    validation_status: str = "pass",
+    dependency_hash: str | None = None,
 ) -> list[str]:
+    payload = _compute_stale_resolution(
+        uo_root,
+        phase=phase,
+        run_id=run_id,
+        changed_artifacts=changed_artifacts,
+        artifact_hashes=artifact_hashes or {},
+        validation_status=validation_status,
+        dependency_hash=dependency_hash,
+    )
+    if payload is None:
+        return []
+    write_text(uo_root / "archive" / "runs" / "stale_artifacts.yaml", _to_yaml(payload))
+    return sorted(
+        str(item.get("path"))
+        for item in _as_list(payload.get("stale_artifacts"))
+        if isinstance(item, dict) and item.get("resolution_reason")
+    )
+
+
+def _compute_stale_resolution(
+    uo_root: Path,
+    *,
+    phase: str,
+    run_id: str | None,
+    changed_artifacts: list[str],
+    artifact_hashes: dict[str, str],
+    validation_status: str,
+    dependency_hash: str | None = None,
+) -> dict[str, Any] | None:
     stale_path = uo_root / "archive" / "runs" / "stale_artifacts.yaml"
     if not stale_path.exists():
-        return []
+        return None
     data = _read_yaml(stale_path)
     if not isinstance(data, dict):
-        return []
+        return None
     changed = set(changed_artifacts)
     resolved: list[str] = []
     entries: list[dict[str, Any]] = []
@@ -1185,26 +1442,53 @@ def _resolve_stale_after_success(
         path = str(item.get("path") or "")
         expected_run = str(item.get("expected_refresh_run_id") or "")
         owner_phase = _normalize_owner_phase(str(item.get("owner_phase") or _owner_phase_for(path)))
-        can_resolve = (
-            bool(path)
-            and item.get("stale") is True
-            and path in changed
-            and owner_phase == phase
-            and (not expected_run or not run_id or expected_run == run_id)
-        )
-        if can_resolve:
-            item["stale"] = False
-            item["resolved_at"] = _now()
-            item["resolved_by_run_id"] = run_id
-            resolved.append(path)
+        current_hash = artifact_hashes.get(path, "")
+        old_hash = str(item.get("old_artifact_hash") or item.get("canonical_hash_before") or "")
+        dep_hash = str(item.get("dependency_hash") or "")
+        if item.get("stale") is not True:
+            entries.append(item)
+            continue
+        if owner_phase != phase:
+            entries.append(item)
+            continue
+        if expected_run and (not run_id or expected_run != run_id):
+            entries.append(item)
+            continue
+        if validation_status != "pass":
+            entries.append(item)
+            continue
+        if dep_hash and dependency_hash and dep_hash != dependency_hash:
+            entries.append(item)
+            continue
+        hash_changed = bool(path and path in changed and current_hash and old_hash and current_hash != old_hash)
+        hash_unchanged = bool(path and current_hash and old_hash and current_hash == old_hash)
+        can_resolve = bool(path) and (hash_changed or hash_unchanged or path in changed)
+        if not can_resolve:
+            entries.append(item)
+            continue
+        item["stale"] = False
+        item["validated_at"] = _now()
+        item["validated_by_run_id"] = run_id
+        item["validation_status"] = validation_status
+        item["resolved_at"] = _now()
+        item["resolved_by_run_id"] = run_id
+        item["resolution_reason"] = "changed_and_validated" if hash_changed else "unchanged_but_validated"
+        resolved.append(path)
         entries.append(item)
     history = _as_list(data.get("resolution_history"))
     if resolved:
-        history.append({"resolved_at": _now(), "run_id": run_id, "phase": phase, "artifacts": sorted(resolved)})
+        history.append(
+            {
+                "resolved_at": _now(),
+                "run_id": run_id,
+                "phase": phase,
+                "artifacts": sorted(resolved),
+                "validation_status": validation_status,
+            }
+        )
     data["stale_artifacts"] = entries
     data["resolution_history"] = history
-    write_text(stale_path, _to_yaml(data))
-    return sorted(resolved)
+    return data
 
 
 def _owner_phase_for(path: str) -> str:
@@ -1270,9 +1554,14 @@ def _build_graphs(docs: dict[str, Any], op_name: str, result: CompileResult | No
                         "section": section,
                         "status": "unresolved",
                         "reason": "relation_direction_missing",
+                        "source_ids": sources,
+                        "target_ids": targets,
+                        "relation_id": item.get("id") or "",
                         "evidence_refs": _as_list(item.get("evidence_refs")),
                     }
-                    unresolved.append(unresolved_item)
+                    unresolved_key = _unresolved_key(unresolved_item)
+                    if unresolved_key not in { _unresolved_key(x) for x in unresolved }:
+                        unresolved.append(unresolved_item)
                     if result:
                         result.add("RELATION_DIRECTION_MISSING", "error", "relation missing explicit source_ids/target_ids", rel, str(item.get("id") or ""))
                     continue
@@ -1297,6 +1586,7 @@ def _build_graphs(docs: dict[str, Any], op_name: str, result: CompileResult | No
                         }
 
     behavior = _as_dict(docs.get("cross_layer/behavior_graph.yaml"))
+    deduped_unresolved = _dedupe_unresolved(unresolved)
     behavior.update(
         {
             "version": 1,
@@ -1304,8 +1594,8 @@ def _build_graphs(docs: dict[str, Any], op_name: str, result: CompileResult | No
             "purpose": "deterministically built behavior graph",
             "nodes": [nodes[key] for key in sorted(nodes)],
             "edges": [edges[key] for key in sorted(edges)],
-            "unresolved": sorted(_as_list(behavior.get("unresolved")) + unresolved, key=lambda x: _canonical_json(x)),
-            "conflicts": behavior.get("conflicts", []),
+            "unresolved": deduped_unresolved,
+            "conflicts": _dedupe_conflicts(_as_list(behavior.get("conflicts"))),
         }
     )
     docs["cross_layer/behavior_graph.yaml"] = behavior
@@ -1321,8 +1611,8 @@ def _build_graphs(docs: dict[str, Any], op_name: str, result: CompileResult | No
             "edges": impact_edges,
             "impacts": impact_edges,
             "traversal_policy": {"max_depth": 8, "cycle_protection": "path_ancestors", "edge_types": sorted(RELATION_TYPES)},
-            "unresolved": impact.get("unresolved", []),
-            "conflicts": impact.get("conflicts", []),
+            "unresolved": [],
+            "conflicts": [],
         }
     )
     docs["cross_layer/impact_graph.yaml"] = impact
@@ -1345,6 +1635,22 @@ def _derive_impact_edges(edges: dict[str, dict[str, Any]]) -> list[dict[str, Any
             for edge in adjacency.get(node, []):
                 dst = str(edge.get("target_id"))
                 edge_path = path + [str(edge.get("id"))]
+                if dst in path_nodes:
+                    impact_id = f"REL_IMPACT_{_stable_slug(start)}_TO_{_stable_slug(dst)}"
+                    impacts[f"{impact_id}:cycle:{':'.join(edge_path)}"] = {
+                        "id": impact_id + "_CYCLE",
+                        "type": "affects",
+                        "source_id": start,
+                        "target_id": dst,
+                        "impact_kind": "cycle",
+                        "depth": depth + 1,
+                        "confidence": "possible",
+                        "path": edge_path,
+                        "alternative_paths": [],
+                        "status": "unresolved",
+                        "evidence_refs": [],
+                    }
+                    continue
                 impact_id = f"REL_IMPACT_{_stable_slug(start)}_TO_{_stable_slug(dst)}"
                 relation = "direct" if depth == 0 else "transitive"
                 impact_key = f"{impact_id}:{relation}"
@@ -1368,21 +1674,6 @@ def _derive_impact_edges(edges: dict[str, dict[str, Any]]) -> list[dict[str, Any
                     impacts[impact_key] = candidate
                 elif existing is not None and edge_path != existing.get("path"):
                     existing["alternative_paths"] = sorted(_as_list(existing.get("alternative_paths")) + [edge_path])
-                if dst in path_nodes:
-                    impacts[f"{impact_id}:cycle:{':'.join(edge_path)}"] = {
-                        "id": impact_id + "_CYCLE",
-                        "type": "affects",
-                        "source_id": start,
-                        "target_id": dst,
-                        "impact_kind": "cycle",
-                        "depth": depth + 1,
-                        "confidence": "possible",
-                        "path": edge_path,
-                        "alternative_paths": [],
-                        "status": "unresolved",
-                        "evidence_refs": [],
-                    }
-                    continue
                 if best_depth.get(dst, 999) <= depth + 1:
                     continue
                 best_depth[dst] = depth + 1
@@ -1407,6 +1698,7 @@ def _write_compile_outputs(uo_root: Path, result: CompileResult) -> None:
         "status": result.status,
         "summary": summary,
         "maturity": result.maturity,
+        "consumability": result.consumability,
         "issues": [issue.to_dict() for issue in result.issues],
     }
     write_text(uo_root / "archive" / "runs" / "kb_compile_report.yaml", _to_yaml(out))
@@ -1489,10 +1781,340 @@ def _promotion_report(
         "planned_artifacts": planned,
         "committed_artifacts": transaction.committed_artifacts if transaction else planned,
         "rolled_back_artifacts": transaction.rolled_back_artifacts if transaction else [],
-        "transaction_status": transaction.transaction_status if transaction else ("committed" if status == "promoted" else "not_started"),
+        "metadata_artifacts": transaction.metadata_artifacts if transaction else [],
+        "transaction_status": transaction.transaction_status if transaction else ("commit_complete" if status == "promoted" else "not_started"),
+        "recovery_status": transaction.recovery_status if transaction else "",
         "failure_reason": transaction.failure_reason if transaction else "",
         "issues": [issue.to_dict() for issue in result.issues],
     }
+
+
+def _unresolved_key(item: dict[str, Any]) -> str:
+    return _canonical_json(
+        {
+            "artifact": item.get("artifact"),
+            "section": item.get("section"),
+            "relation_id": item.get("relation_id") or item.get("id"),
+            "reason": item.get("reason"),
+            "source_ids": sorted(_as_list(item.get("source_ids"))),
+            "target_ids": sorted(_as_list(item.get("target_ids"))),
+        }
+    )
+
+
+def _dedupe_unresolved(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for item in sorted(items, key=lambda x: _unresolved_key(x)):
+        key = _unresolved_key(item)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
+def _dedupe_conflicts(items: list[Any]) -> list[Any]:
+    seen: set[str] = set()
+    out: list[Any] = []
+    for item in items:
+        key = _canonical_json(item)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
+def _artifact_not_applicable(data: dict[str, Any]) -> bool:
+    return str(data.get("status") or "") == "not_applicable" and bool(data.get("reason")) and bool(_as_list(data.get("evidence_refs")))
+
+
+def _validate_consumability(docs: dict[str, Any], result: CompileResult) -> dict[str, dict[str, Any]]:
+    consumability: dict[str, dict[str, Any]] = {}
+    for rel in TEST_CONSUMABLE_FILES:
+        data = _as_dict(docs.get(rel))
+        blockers: list[str] = []
+        schema_valid = bool(data)
+        semantically_complete = schema_valid and result.maturity.get(rel) in {"valid", "not_applicable"}
+        test_consumable = semantically_complete
+        if not schema_valid:
+            blockers.append("missing_or_empty")
+        if rel == "flow/golden_model.yaml" and schema_valid and not _artifact_not_applicable(data):
+            if not _as_list(data.get("golden_inputs")):
+                blockers.append("golden_inputs_empty")
+            if not _as_list(data.get("golden_outputs")):
+                blockers.append("golden_outputs_empty")
+            contract = data.get("golden_generation_contract")
+            if contract in (None, "", {}, []):
+                blockers.append("golden_generation_contract_empty")
+        if rel == "contracts/testcase.yaml" and schema_valid:
+            if int(data.get("version") or 0) < 2:
+                blockers.append("testcase_contract_version_lt_2")
+            for key in ("source", "interface", "coverage_obligations", "golden_contract"):
+                if key not in data:
+                    blockers.append(f"missing_{key}")
+        if blockers:
+            test_consumable = False
+            for blocker in blockers:
+                result.add("NOT_TEST_CONSUMABLE", "error", f"{rel}: {blocker}", rel, blocker)
+        consumability[rel] = {
+            "schema_valid": schema_valid,
+            "semantically_complete": semantically_complete,
+            "test_consumable": test_consumable and not blockers,
+            "blockers": blockers,
+        }
+    return consumability
+
+
+def _build_promotion_payloads(
+    uo_root: Path,
+    candidate: dict[str, Any],
+    previous: dict[str, Any],
+    result: CompileResult,
+    *,
+    run_id: str | None,
+    proposal_ids: list[str],
+    proposal_hashes: dict[str, str],
+    before_hashes: dict[str, str],
+    after_hashes: dict[str, str],
+    stale_payload: dict[str, Any] | None,
+) -> dict[str, str]:
+    payloads: dict[str, str] = {}
+    for rel, data in candidate.items():
+        if rel.startswith(("archive/", "cbm/")):
+            continue
+        if _canonical_json(previous.get(rel)) != _canonical_json(data):
+            payloads[rel] = _to_yaml(data)
+    summary = {
+        "entity_count": result.entity_count,
+        "alias_count": result.alias_count,
+        "evidence_count": result.evidence_count,
+        "relation_count": result.relation_count,
+        "unresolved_count": result.unresolved_count,
+        "conflict_count": result.conflict_count,
+    }
+    compile_report = {
+        "version": 1,
+        "op_name": result.op_name,
+        "phase": result.phase,
+        "compiled_at": _now(),
+        "status": result.status,
+        "summary": summary,
+        "maturity": result.maturity,
+        "consumability": result.consumability,
+        "issues": [issue.to_dict() for issue in result.issues],
+    }
+    payloads["archive/runs/kb_compile_report.yaml"] = _to_yaml(compile_report)
+    payloads["archive/runs/canonical_hashes.yaml"] = _to_yaml(
+        {"version": 1, "op_name": result.op_name, "generated_at": _now(), "artifact_hashes": result.artifact_hashes}
+    )
+    payloads["archive/runs/entity_index.yaml"] = _to_yaml(
+        {"version": 1, "op_name": result.op_name, "generated_at": _now(), "entities": result.entity_index}
+    )
+    payloads["archive/runs/kb_promotion_report.yaml"] = _to_yaml(result.promotion_report)
+    changed = sorted(path for path, digest in after_hashes.items() if before_hashes.get(path) != digest)
+    receipt = {
+        "version": 1,
+        "run_id": run_id,
+        "phase": result.phase,
+        "proposal_ids": proposal_ids,
+        "proposal_hashes": proposal_hashes,
+        "promoted_at": _now(),
+        "changed_artifacts": changed,
+        "before_hashes": {path: before_hashes.get(path) for path in changed},
+        "after_hashes": {path: after_hashes.get(path) for path in changed},
+        "transaction_id": result.promotion_report.get("transaction_id"),
+        "status": "promoted",
+    }
+    payloads[f"archive/promoted/{run_id or 'manual'}/promotion_receipt.yaml"] = _to_yaml(receipt)
+    if stale_payload is not None:
+        payloads["archive/runs/stale_artifacts.yaml"] = _to_yaml(stale_payload)
+    return payloads
+
+
+def _transaction_dir(uo_root: Path, transaction_id: str) -> Path:
+    return uo_root / "archive" / "runs" / "transactions" / transaction_id
+
+
+def _write_transaction_state(uo_root: Path, tx: TransactionResult, *, op_name: str, phase: str, run_id: str | None, proposal_hashes: dict[str, str]) -> None:
+    tx_dir = _transaction_dir(uo_root, tx.transaction_id)
+    tx_dir.mkdir(parents=True, exist_ok=True)
+    write_text(
+        tx_dir / "state.yaml",
+        _to_yaml(
+            {
+                "version": 1,
+                "transaction_id": tx.transaction_id,
+                "op_name": op_name,
+                "phase": phase,
+                "run_id": run_id,
+                "proposal_hashes": proposal_hashes,
+                "planned_artifacts": tx.planned_artifacts,
+                "committed_artifacts": tx.committed_artifacts,
+                "rolled_back_artifacts": tx.rolled_back_artifacts,
+                "metadata_artifacts": tx.metadata_artifacts,
+                "transaction_status": tx.transaction_status,
+                "recovery_status": tx.recovery_status,
+                "failure_reason": tx.failure_reason,
+                "updated_at": _now(),
+            }
+        ),
+    )
+
+
+def _execute_promotion_transaction(
+    uo_root: Path,
+    op_name: str,
+    payloads: dict[str, str],
+    *,
+    phase: str,
+    run_id: str | None,
+    proposal_hashes: dict[str, str],
+) -> TransactionResult:
+    canonical = [rel for rel in sorted(payloads) if not rel.startswith("archive/")]
+    metadata = [rel for rel in sorted(payloads) if rel.startswith("archive/")]
+    tx = TransactionResult(
+        transaction_id=f"TX_{datetime.now(tz=timezone.utc).strftime('%Y%m%d%H%M%S%f')}",
+        planned_artifacts=sorted(payloads),
+        transaction_status="prepared",
+    )
+    _write_transaction_state(uo_root, tx, op_name=op_name, phase=phase, run_id=run_id, proposal_hashes=proposal_hashes)
+    canonical_payload = {rel: payloads[rel] for rel in canonical}
+    canonical_previous = {rel: read_text(uo_root / rel) for rel in canonical if (uo_root / rel).exists()}
+    canonical_docs = {rel: _read_yaml_from_text(canonical_payload[rel], rel) for rel in canonical}
+    previous_docs = {rel: _read_yaml_from_text(canonical_previous.get(rel, ""), rel) for rel in canonical if rel in canonical_previous}
+    canonical_tx = _transactional_write_texts(uo_root, canonical_payload)
+    tx.committed_artifacts = canonical_tx.committed_artifacts
+    tx.rolled_back_artifacts = canonical_tx.rolled_back_artifacts
+    if canonical_tx.transaction_status != "committed":
+        tx.transaction_status = "rolled_back"
+        tx.failure_reason = canonical_tx.failure_reason
+        _write_transaction_state(uo_root, tx, op_name=op_name, phase=phase, run_id=run_id, proposal_hashes=proposal_hashes)
+        return tx
+    tx.transaction_status = "canonical_committed"
+    _write_transaction_state(uo_root, tx, op_name=op_name, phase=phase, run_id=run_id, proposal_hashes=proposal_hashes)
+    metadata_payload = {rel: payloads[rel] for rel in metadata}
+    metadata_tx = _transactional_write_texts(uo_root, metadata_payload)
+    tx.metadata_artifacts = metadata_tx.committed_artifacts
+    if metadata_tx.transaction_status != "committed":
+        tx.transaction_status = "metadata_pending"
+        tx.failure_reason = metadata_tx.failure_reason
+        tx.recovery_status = "metadata_pending"
+        _write_transaction_state(uo_root, tx, op_name=op_name, phase=phase, run_id=run_id, proposal_hashes=proposal_hashes)
+        return tx
+    tx.transaction_status = "commit_complete"
+    write_text(_transaction_dir(uo_root, tx.transaction_id) / "commit.yaml", _to_yaml({"transaction_id": tx.transaction_id, "committed_at": _now()}))
+    _write_transaction_state(uo_root, tx, op_name=op_name, phase=phase, run_id=run_id, proposal_hashes=proposal_hashes)
+    return tx
+
+
+def _transactional_write_texts(uo_root: Path, payloads: dict[str, str]) -> TransactionResult:
+    changed = sorted(payloads)
+    tx = TransactionResult(
+        transaction_id=f"TX_{datetime.now(tz=timezone.utc).strftime('%Y%m%d%H%M%S%f')}",
+        planned_artifacts=changed,
+        transaction_status="prepared" if changed else "committed",
+    )
+    if not changed:
+        return tx
+    temp_paths: dict[str, Path] = {}
+    backup_paths: dict[str, Path] = {}
+    existed: dict[str, bool] = {}
+    try:
+        for rel in changed:
+            path = uo_root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+            temp_path = Path(tmp_name)
+            with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+                tmp.write(payloads[rel])
+                tmp.flush()
+                os.fsync(tmp.fileno())
+            temp_paths[rel] = temp_path
+        for rel in changed:
+            path = uo_root / rel
+            existed[rel] = path.exists()
+            if not existed[rel]:
+                continue
+            fd, backup_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".bak", dir=str(path.parent))
+            os.close(fd)
+            backup = Path(backup_name)
+            shutil.copy2(path, backup)
+            backup_paths[rel] = backup
+        for rel in changed:
+            path = uo_root / rel
+            os.replace(temp_paths[rel], path)
+            tx.committed_artifacts.append(rel)
+        tx.transaction_status = "committed"
+        for backup in backup_paths.values():
+            backup.unlink(missing_ok=True)
+        return tx
+    except Exception as exc:  # noqa: BLE001
+        tx.transaction_status = "rolled_back"
+        tx.failure_reason = str(exc)
+        for rel in reversed(tx.committed_artifacts):
+            path = uo_root / rel
+            backup = backup_paths.get(rel)
+            try:
+                if existed.get(rel) and backup and backup.exists():
+                    os.replace(backup, path)
+                elif path.exists():
+                    path.unlink()
+                tx.rolled_back_artifacts.append(rel)
+            except Exception as rollback_exc:  # noqa: BLE001
+                tx.failure_reason += f"; rollback failed for {rel}: {rollback_exc}"
+        for rel, tmp in temp_paths.items():
+            if rel not in tx.committed_artifacts:
+                tmp.unlink(missing_ok=True)
+        for backup in backup_paths.values():
+            backup.unlink(missing_ok=True)
+        return tx
+
+
+def _read_yaml_from_text(text: str, rel: str) -> Any:
+    if not text.strip() or yaml is None:
+        return {}
+    try:
+        return yaml.safe_load(text) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _recover_pending_transactions(uo_root: Path, op_name: str) -> None:
+    tx_root = uo_root / "archive" / "runs" / "transactions"
+    if not tx_root.exists():
+        return
+    for state_path in sorted(tx_root.glob("*/state.yaml")):
+        state = _read_yaml(state_path)
+        if not isinstance(state, dict):
+            continue
+        if str(state.get("op_name") or "") not in {"", op_name}:
+            continue
+        if (state_path.parent / "commit.yaml").exists():
+            continue
+        status = str(state.get("transaction_status") or "")
+        if status not in {"canonical_committed", "metadata_pending"}:
+            continue
+        tx = TransactionResult(
+            transaction_id=str(state.get("transaction_id") or state_path.parent.name),
+            planned_artifacts=_as_list(state.get("planned_artifacts")),
+            committed_artifacts=[str(x) for x in _as_list(state.get("committed_artifacts"))],
+            rolled_back_artifacts=[str(x) for x in _as_list(state.get("rolled_back_artifacts"))],
+            metadata_artifacts=[str(x) for x in _as_list(state.get("metadata_artifacts"))],
+            transaction_status=status,
+            recovery_status="recovering",
+        )
+        pending = [rel for rel in tx.planned_artifacts if rel.startswith("archive/") and rel not in tx.metadata_artifacts]
+        if not pending:
+            tx.transaction_status = "commit_complete"
+            tx.recovery_status = "already_complete"
+            write_text(state_path.parent / "commit.yaml", _to_yaml({"transaction_id": tx.transaction_id, "committed_at": _now(), "recovered": True}))
+            _write_transaction_state(uo_root, tx, op_name=op_name, phase=str(state.get("phase") or "final"), run_id=str(state.get("run_id") or "") or None, proposal_hashes=_as_dict(state.get("proposal_hashes")))
+            continue
+        # Metadata recovery requires caller-provided payloads on next promotion; mark for manual recovery.
+        tx.recovery_status = "metadata_pending"
+        _write_transaction_state(uo_root, tx, op_name=op_name, phase=str(state.get("phase") or "final"), run_id=str(state.get("run_id") or "") or None, proposal_hashes=_as_dict(state.get("proposal_hashes")))
 
 
 def _atomic_write_docs(uo_root: Path, candidate: dict[str, Any], *, only_changed_against: dict[str, Any]) -> None:
@@ -1651,7 +2273,10 @@ def _collect_id_like_values(value: Any) -> set[str]:
         for item in value:
             found.update(_collect_id_like_values(item))
     elif isinstance(value, str):
-        for token in re.findall(r"\b(?:SYM|VAR|REL|EV|SRC|KEY|FAM|KPATH|KBR|KTPL|CL|CON|VIEW|BUF|SYNC|RES)_[A-Z0-9_]+\b", value):
+        for token in re.findall(
+            r"\b(?:SYM|VAR|REL|EV|SRC|KEY|FAM|KPATH|KBR|KTPL|CL|CON|VIEW|BUF|SYNC|RES|TDF|KVAR|KDEC|PIPE|COV|NUM)_[A-Z0-9_]+\b",
+            value,
+        ):
             found.add(token)
         for token in re.findall(r"\b(?:TF\d+|K\d+|C\d+|D\d+|P\d+)\b", value):
             found.add(token)
@@ -1698,36 +2323,15 @@ def _normalize_phase(phase: str) -> str:
 
 
 def _kind_from_prefix(item_id: str) -> str:
-    if item_id.startswith("SYM_"):
-        return "symbol"
-    if item_id.startswith("VAR_"):
-        return "variable"
-    if item_id.startswith("REL_"):
-        return "relation"
-    if item_id.startswith(("EV_", "SRC_")):
-        return "evidence"
-    if item_id.startswith("KEY_"):
-        return "key"
-    if item_id.startswith("FAM_") or item_id.startswith("TF"):
+    for prefix, kind in PREFIX_TO_KIND.items():
+        if item_id.startswith(prefix):
+            return kind
+    if item_id.startswith("TF"):
         return "family"
-    if item_id.startswith("KTPL_"):
-        return "template_binding"
-    if item_id.startswith("KPATH_") or re.match(r"K\d+", item_id):
+    if re.match(r"K\d+", item_id):
         return "kernel_path"
-    if item_id.startswith("KBR_"):
-        return "kernel_branch"
-    if item_id.startswith("CON_"):
-        return "contract"
-    if item_id.startswith("VIEW_"):
-        return "view"
     if item_id.startswith("C"):
         return "compute_step"
-    if item_id.startswith("BUF_"):
-        return "buffer"
-    if item_id.startswith("SYNC_"):
-        return "sync"
-    if item_id.startswith("RES_"):
-        return "resource"
     return ""
 
 

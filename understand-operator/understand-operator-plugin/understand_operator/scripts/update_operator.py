@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -180,7 +181,7 @@ def _build_update_plan(change_set: dict[str, Any], base: Path | None = None) -> 
             "cross_layer/input_to_tiling.yaml",
             "cross_layer/variable_lineage.yaml",
         ]
-        if _tiling_change_requires_kernel(blob, base):
+        if _tiling_change_requires_kernel(blob, base, change_set):
             areas.append("kernel_impacted_by_tiling")
             phases.extend(["phase3", "phase3.5", "phase4", "phase5"])
             invalidations["kernel_from_tiling"] = [
@@ -192,9 +193,15 @@ def _build_update_plan(change_set: dict[str, Any], base: Path | None = None) -> 
                 "kernel/resources.yaml",
                 "cross_layer/tiling_to_kernel.yaml",
                 "cross_layer/impact_graph.yaml",
+                "cross_layer/behavior_graph.yaml",
+                "contracts/testcase.yaml",
             ]
         else:
             areas.append("tilingdata_numeric_local")
+            invalidations["tilingdata_numeric_local"] = [
+                "tiling/data_model.yaml",
+                "flow/numerical_model.yaml",
+            ]
     if hit("datacopy", "setflag", "waitflag", "pipe_", "dataflow", "compute"):
         areas.append("compute_dataflow")
         phases.append("phase2_flow")
@@ -270,45 +277,166 @@ def _build_update_plan(change_set: dict[str, Any], base: Path | None = None) -> 
     }
 
 
-def _tiling_change_requires_kernel(blob: str, base: Path | None) -> bool:
+def _tiling_change_requires_kernel(blob: str, base: Path | None, change_set: dict[str, Any] | None = None) -> bool:
     if any(token in blob for token in ("tiling_key", "family", "template", "dispatch", "kernel_entry")):
         return True
     if "tilingdata" in blob and not any(token in blob for token in ("key", "family", "template", "dispatch")):
-        return not _tilingdata_numeric_only_proven(base)
+        return not _tilingdata_numeric_only_proven(base, change_set)
     if "op_host" in blob or "tiling" in blob:
-        if _impact_graph_mentions_kernel(base):
-            return True
         return True
     return False
 
 
-def _tilingdata_numeric_only_proven(base: Path | None) -> bool:
+def _tilingdata_numeric_only_proven(base: Path | None, change_set: dict[str, Any] | None = None) -> bool:
+    """Prove numeric-only via field stable IDs + lineage/impact graph, not YAML string search."""
     if base is None or yaml is None:
         return False
-    docs = [
-        _read_yaml_file(base / "cross_layer" / "impact_graph.yaml"),
-        _read_yaml_file(base / "cross_layer" / "variable_lineage.yaml"),
-        _read_yaml_file(base / "tiling" / "data_model.yaml"),
-    ]
-    forbidden = ("kbr_", "kpath_", "ktpl_", "branch", "path", "pipeline", "workspace", "buffer", "resource", "sync", "core split", "loop count", "tail path")
-    saw_numeric_only = False
-    for doc in docs:
-        blob = json.dumps(doc, ensure_ascii=False).lower()
-        if "tilingdata" not in blob:
-            continue
-        if any(token in blob for token in forbidden):
+    field_ids = _resolve_changed_tilingdata_fields(base, change_set or {})
+    if not field_ids:
+        return False
+    data_model = _read_yaml_file(base / "tiling" / "data_model.yaml")
+    lineage = _read_yaml_file(base / "cross_layer" / "variable_lineage.yaml")
+    impact = _read_yaml_file(base / "cross_layer" / "impact_graph.yaml")
+    behavior = _read_yaml_file(base / "cross_layer" / "behavior_graph.yaml")
+    for field_id in field_ids:
+        field_meta = _find_tilingdata_field_meta(data_model, field_id)
+        if not field_meta:
             return False
-        if "numeric_only" in blob:
-            saw_numeric_only = True
-    return saw_numeric_only
+        impact_class = str(field_meta.get("impact_class") or field_meta.get("impact_scope") or "").strip()
+        if impact_class != "numeric_only":
+            return False
+        control_refs = _as_list(field_meta.get("downstream_control_refs"))
+        kernel_refs = _as_list(field_meta.get("downstream_kernel_refs"))
+        if control_refs or kernel_refs:
+            return False
+        if _field_has_non_numeric_downstream(field_id, lineage, impact, behavior):
+            return False
+    return True
+
+
+def _resolve_changed_tilingdata_fields(base: Path, change_set: dict[str, Any]) -> list[str]:
+    symbols = {str(s) for s in change_set.get("changed_symbols") or []}
+    files = {str(f).replace("\\", "/") for f in change_set.get("changed_files") or []}
+    data_model = _read_yaml_file(base / "tiling" / "data_model.yaml")
+    found: list[str] = []
+    structs = data_model.get("structs") if isinstance(data_model.get("structs"), dict) else {}
+    for struct_name, struct in structs.items():
+        fields = struct.get("fields") if isinstance(struct, dict) else {}
+        if not isinstance(fields, dict):
+            continue
+        for field_name, field in fields.items():
+            if not isinstance(field, dict):
+                continue
+            field_id = str(field.get("id") or field.get("stable_id") or f"TDF_{_slug(struct_name)}_{_slug(field_name)}")
+            source = field.get("source") if isinstance(field.get("source"), dict) else {}
+            src_file = str(source.get("file") or "").replace("\\", "/")
+            src_symbol = str(source.get("symbol") or field.get("symbol") or "")
+            names = {field_id, field_name, str(field.get("canonical_name") or ""), src_symbol}
+            if any(sym and sym in names for sym in symbols) or (src_file and src_file in files):
+                found.append(field_id)
+            elif any("tilingdata" in f.lower() for f in files) and field.get("impact_class") == "numeric_only":
+                found.append(field_id)
+    overlay = data_model.get("numeric_overlay") if isinstance(data_model.get("numeric_overlay"), dict) else {}
+    for key, item in overlay.items():
+        payload = item if isinstance(item, dict) else {}
+        field_id = str(payload.get("id") or f"TDF_NUM_{_slug(key)}")
+        if field_id not in found and (payload.get("impact_class") == "numeric_only" or any("tilingdata" in f.lower() for f in files)):
+            if payload.get("impact_class") == "numeric_only":
+                found.append(field_id)
+    return sorted(set(found))
+
+
+def _find_tilingdata_field_meta(data_model: dict[str, Any], field_id: str) -> dict[str, Any] | None:
+    structs = data_model.get("structs") if isinstance(data_model.get("structs"), dict) else {}
+    for struct_name, struct in structs.items():
+        fields = struct.get("fields") if isinstance(struct, dict) else {}
+        if not isinstance(fields, dict):
+            continue
+        for field_name, field in fields.items():
+            if not isinstance(field, dict):
+                continue
+            item_id = str(field.get("id") or field.get("stable_id") or f"TDF_{_slug(struct_name)}_{_slug(field_name)}")
+            if item_id == field_id:
+                return field
+    overlay = data_model.get("numeric_overlay") if isinstance(data_model.get("numeric_overlay"), dict) else {}
+    for key, item in overlay.items():
+        payload = item if isinstance(item, dict) else {}
+        item_id = str(payload.get("id") or f"TDF_NUM_{_slug(key)}")
+        if item_id == field_id:
+            return payload
+    return None
+
+
+def _field_has_non_numeric_downstream(
+    field_id: str,
+    lineage: dict[str, Any],
+    impact: dict[str, Any],
+    behavior: dict[str, Any],
+) -> bool:
+    control_kinds = {
+        "kernel_branch",
+        "kernel_path",
+        "template_binding",
+        "kernel_decision_point",
+        "pipeline_stage",
+        "buffer",
+        "sync",
+        "resource",
+        "compile_decision",
+        "compile_variable",
+    }
+    control_prefixes = ("KBR_", "KPATH_", "KTPL_", "KDEC_", "PIPE_", "BUF_", "SYNC_", "RES_")
+    edges = []
+    for doc in (lineage, impact, behavior):
+        for section in ("edges", "impacts", "relations", "links", "lineage"):
+            value = doc.get(section)
+            if isinstance(value, list):
+                edges.extend(item for item in value if isinstance(item, dict))
+            elif isinstance(value, dict):
+                edges.extend(item for item in value.values() if isinstance(item, dict))
+    for edge in edges:
+        src = str(edge.get("source_id") or edge.get("source") or "")
+        dst = str(edge.get("target_id") or edge.get("target") or "")
+        sources = [str(x) for x in (edge.get("source_ids") or [])] + ([src] if src else [])
+        targets = [str(x) for x in (edge.get("target_ids") or [])] + ([dst] if dst else [])
+        if field_id not in sources:
+            continue
+        for target in targets:
+            if target.startswith(control_prefixes):
+                return True
+            kind = str(edge.get("target_kind") or edge.get("kind") or "")
+            if kind in control_kinds:
+                return True
+    return False
+
+
+def _slug(value: Any) -> str:
+    text = re.sub(r"[^A-Za-z0-9]+", "_", str(value or "")).strip("_").upper()
+    return text or "UNKNOWN"
+
+
+def _as_list(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if value in (None, "", {}, []):
+        return []
+    return [value]
 
 
 def _impact_graph_mentions_kernel(base: Path | None) -> bool:
     if base is None or yaml is None:
         return False
     graph = _read_yaml_file(base / "cross_layer" / "impact_graph.yaml")
-    blob = json.dumps(graph, ensure_ascii=False).lower()
-    return any(token in blob for token in ("kernel/", "kpath_", "ktpl_", "kbr_", "kernel_path", "template_binding"))
+    for item in (graph.get("impacts") or graph.get("edges") or []) if isinstance(graph, dict) else []:
+        if not isinstance(item, dict):
+            continue
+        target = str(item.get("target_id") or item.get("target") or "")
+        if target.startswith(("KPATH_", "KTPL_", "KBR_", "KDEC_", "PIPE_", "BUF_", "SYNC_", "RES_")):
+            return True
+        kind = str(item.get("target_kind") or item.get("kind") or "")
+        if kind in {"kernel_path", "template_binding", "kernel_branch", "kernel_decision_point", "pipeline_stage"}:
+            return True
+    return False
 
 
 def _impact_graph_invalidations(change_set: dict[str, Any], base: Path | None) -> list[str]:
@@ -415,14 +543,21 @@ def _build_stale_artifacts(update_plan: dict[str, Any]) -> dict[str, Any]:
         "stale_artifacts": [
             {
                 "path": artifact,
-                "owner_phase": _owner_phase_for_artifact(artifact),
                 "stale": True,
+                "owner_phase": _owner_phase_for_artifact(artifact),
+                "expected_refresh_run_id": update_plan.get("run_id"),
+                "invalidated_by": update_plan.get("dependency_hash"),
+                "dependency_hash": update_plan.get("dependency_hash"),
+                "old_artifact_hash": None,
+                "validation_status": "pending",
+                "validated_by_run_id": None,
+                "validated_at": None,
+                "resolution_reason": None,
                 "reason": "source change may affect this KB slice",
                 "source_dependencies": [],
                 "source_hash_before": None,
                 "source_hash_after": None,
                 "canonical_hash_before": None,
-                "expected_refresh_run_id": update_plan.get("run_id"),
                 "invalidated_at": now,
                 "resolved_at": None,
                 "resolved_by_run_id": None,

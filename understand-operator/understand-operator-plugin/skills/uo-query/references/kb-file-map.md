@@ -150,7 +150,7 @@ The old canonical files remain valid. New task-oriented slices:
 | variable lineage | `query/routes.yaml` + `cross_layer/variable_lineage.yaml` + `cross_layer/behavior_graph.yaml` |
 | code change impact | `contracts/code_change.yaml` + `cross_layer/impact_graph.yaml` + `evidence/artifact_dependencies.yaml` |
 | PR review | `contracts/pr_review.yaml` + `cross_layer/impact_graph.yaml` + `evidence/issues.yaml` |
-| testcase contract | `contracts/testcase.yaml` + `tiling/coverage_model.yaml` + `kernel/branches.yaml` + `test/contract.yaml` |
+| testcase contract | `contracts/testcase.yaml` (version 2 machine SoT) + `tiling/coverage_model.yaml` + `kernel/branches.yaml` + derived `test/contract.yaml` |
 | cross-layer alignment | `cross_layer/input_to_tiling.yaml` + `cross_layer/tiling_to_kernel.yaml` + `cross_layer/variable_lineage.yaml` |
 | kernel two-step model | `kernel/compile_model.yaml` + `kernel/variables.yaml` + `kernel/branches.yaml` + `kernel/paths.yaml` |
 

@@ -49,24 +49,28 @@ Fast Task Routes 使用新路径（operator.yaml / tiling/* / flow/* / kernel/* 
 ## `test/contract.yaml` 要求
 
 - purpose: coverage obligations and generation hints only; no generated tests
+- **Derived compatibility / human-readable view only**
 - 引用 canonical inputs（operator / tiling / flow / kernel）
 - coverage_obligations / oracle_contract / accuracy_generation_hints / performance_generation_hints / audit_requirements
 - **禁止**字段：generated_cases、actual_test_result、observed_coverage、case_csv
+- **禁止**与 `contracts/testcase.yaml` 由不同 Agent 独立维护
 
 说明：
 
 ```text
-understand-operator 不生成真实测试；TestGenerate 消费 test/contract.yaml + tiling/coverage_model.yaml + flow/golden_model.yaml。
+understand-operator 不生成真实测试。
+TestAgent 唯一机器真源：contracts/testcase.yaml (version: 2)
+test/contract.yaml 只是兼容视图 / 人类可读 derived artifact。
 GoldenGenerate 消费 flow/golden_model.yaml + flow/numerical_model.yaml + operator.yaml + tiling/data_model.yaml。
 ```
 ## Canonical v2 Derived Views
 
-Route Builder must keep `test/contract.yaml` compatible, and additionally build task contracts under `contracts/`:
+Route Builder must keep `test/contract.yaml` as a derived compatibility view, and treat `contracts/testcase.yaml` as the frozen TestAgent machine SoT (version 2):
 
-- `contracts/query.yaml`
-- `contracts/code_change.yaml`
-- `contracts/pr_review.yaml`
-- `contracts/testcase.yaml`
+- `source` / `interface` / `typed_constraints`
+- `coverage_obligations` (tiling_keys / tilingdata / kernel_paths / numerical / negative)
+- `golden_contract`
+- `unresolved` / `conflicts` / `evidence_refs`
 
 Also write/update `query/routes.yaml` so questions route to the smallest necessary KB slice. Required route families:
 
