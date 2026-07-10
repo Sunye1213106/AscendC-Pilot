@@ -70,4 +70,4 @@
 - compute_step id（Cxxx）与 golden_step id（Gxxx）必须稳定，供 Kernel Path / TestGenerate 对齐。
 - 每个关键 fact 必须有 fact_id、confidence、evidence_refs，以及 source_locator（或明确 reason）。
 
-When writing proposals, use the unified `canonical_updates` envelope under `archive/proposals/*.yaml`. Draft `flow/*` files are compatibility artifacts and are not trusted until `uo-kb-compile promote ... --phase phase2` succeeds.
+When writing proposals, use the unified `canonical_updates` envelope under `archive/proposals/<run_id>/*.yaml`. Draft `flow/*` files are compatibility artifacts and are not trusted until `uo-kb-compile promote ... --phase phase2 --run-id <run_id>` succeeds.

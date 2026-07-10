@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import shutil
 import hashlib
 import json
 import os
@@ -150,28 +151,56 @@ REPLACE_SECTION_ALLOWLIST = {
 }
 
 MATURITY_RULES: dict[str, tuple[str, ...]] = {
+    "manifest.yaml": ("artifact_version", "layers"),
+    "index.yaml": ("canonical_files", "qa_routes"),
+    "operator.yaml": ("scope", "entrypoints", "io"),
     "registry/variables.yaml": ("variables",),
     "registry/symbols.yaml": ("symbols",),
+    "registry/aliases.yaml": ("aliases", "conflicts"),
     "registry/evidence.yaml": ("evidence",),
     "tiling/variables.yaml": ("variables", "tiling_mechanism"),
     "tiling/constraints.yaml": ("relations", "variable_constraints", "input_realization"),
     "tiling/key_space.yaml": ("fields", "derived_fields", "constants"),
+    "tiling/families.yaml": ("families", "dispatch_tree"),
+    "tiling/data_model.yaml": ("structs", "family_to_struct", "numeric_overlay"),
+    "tiling/coverage_model.yaml": ("coverage_policy", "family_obligations", "key_field_obligations"),
+    "tiling/evidence_index.yaml": ("symbols", "evidence_policy"),
     "flow/compute_graph.yaml": ("compute_steps", "outputs"),
     "flow/dataflow.yaml": ("dataflow_edges", "tensor_lifecycle"),
+    "flow/golden_model.yaml": ("golden_inputs", "golden_outputs", "golden_generation_contract"),
+    "flow/numerical_model.yaml": ("dtype_policy", "tolerance_policy", "randomness_policy"),
+    "evidence/fact_index.yaml": ("facts", "evidence_refs"),
+    "evidence/source_index.yaml": ("source_spans", "symbols"),
+    "evidence/artifact_dependencies.yaml": ("dependencies", "artifact_to_source"),
+    "evidence/issues.yaml": ("missing", "conflicts", "warnings", "unknowns"),
     "kernel/compile_model.yaml": ("template_bindings", "compile_time_configs", "compile_variables", "compile_decisions"),
     "kernel/variables.yaml": ("runtime_variables", "tilingdata_reads", "path_decision_points"),
     "kernel/branches.yaml": ("branches", "path_semantics", "dataflow_links", "resource_links"),
     "kernel/paths.yaml": ("kernel_paths",),
+    "kernel/pipeline.yaml": ("pipelines", "stages", "resources"),
+    "kernel/resources.yaml": ("buffers", "sync_events", "workspaces", "resources"),
     "cross_layer/input_to_tiling.yaml": ("nodes", "edges", "relations", "links"),
     "cross_layer/tiling_to_kernel.yaml": ("nodes", "edges", "relations", "links"),
     "cross_layer/variable_lineage.yaml": ("variables", "lineage", "relations", "edges"),
     "cross_layer/behavior_graph.yaml": ("nodes", "edges"),
     "cross_layer/impact_graph.yaml": ("nodes", "edges", "impacts"),
     "query/routes.yaml": ("routes",),
+    "query/terminology.yaml": ("terms", "aliases"),
     "contracts/query.yaml": ("required_response_fields", "routes"),
     "contracts/code_change.yaml": ("target", "upstream", "downstream"),
     "contracts/pr_review.yaml": ("review_slices", "recommended_checks"),
     "contracts/testcase.yaml": ("input_domain", "typed_constraints", "kernel_branch_obligations"),
+    "test/contract.yaml": ("input_domain", "typed_constraints", "kernel_branch_obligations"),
+    "quality.yaml": ("status", "checks", "decision"),
+}
+ALLOWED_EMPTY_MATURITY_FILES = {
+    "registry/aliases.yaml",
+    "tiling/evidence_index.yaml",
+    "flow/golden_model.yaml",
+    "flow/numerical_model.yaml",
+    "evidence/fact_index.yaml",
+    "evidence/source_index.yaml",
+    "evidence/issues.yaml",
 }
 
 
@@ -227,6 +256,16 @@ class CompileResult:
             self.status = "warn"
 
 
+@dataclass
+class TransactionResult:
+    transaction_id: str
+    planned_artifacts: list[str]
+    committed_artifacts: list[str] = field(default_factory=list)
+    rolled_back_artifacts: list[str] = field(default_factory=list)
+    transaction_status: str = "pending"
+    failure_reason: str = ""
+
+
 def compile_kb(
     uo_root: Path,
     op_name: str,
@@ -267,6 +306,7 @@ def promote_kb(
     op_name: str,
     *,
     phase: str = "phase2",
+    run_id: str | None = None,
     proposal_paths: list[Path] | None = None,
     write_outputs: bool = True,
 ) -> CompileResult:
@@ -274,13 +314,26 @@ def promote_kb(
     result = CompileResult(op_name=op_name, phase=phase)
     docs = _load_all_existing_docs(uo_root, result)
     before_hashes = _hash_docs(docs)
-    proposals = _load_proposals(uo_root, result, proposal_paths)
+    proposals = _load_proposals(uo_root, result, run_id=run_id, proposal_paths=proposal_paths)
     candidate = copy.deepcopy(docs)
 
     applied: list[dict[str, Any]] = []
+    proposal_ids: list[str] = []
+    proposal_hashes: dict[str, str] = {}
+    skipped: list[dict[str, Any]] = []
     for proposal_path, proposal in proposals:
         if not _validate_proposal_envelope(proposal_path, proposal, op_name, phase, result):
             continue
+        proposal_id = str(proposal.get("proposal_id") or "")
+        proposal_hash = _proposal_hash(proposal)
+        state = _proposal_consumption_state(uo_root, proposal_id, proposal_hash, result)
+        if state == "already_promoted":
+            skipped.append({"proposal_id": proposal_id, "proposal_hash": proposal_hash, "code": "ALREADY_PROMOTED"})
+            continue
+        if state == "conflict":
+            continue
+        proposal_ids.append(proposal_id)
+        proposal_hashes[proposal_id] = proposal_hash
         for update in _as_list(proposal.get("canonical_updates")):
             if not isinstance(update, dict):
                 result.add("BAD_PROPOSAL_UPDATE", "error", "canonical_updates entries must be mappings", proposal_path.as_posix())
@@ -300,14 +353,27 @@ def promote_kb(
                 )
 
     if any(issue.severity == "error" for issue in result.issues):
-        result.promotion_report = _promotion_report(op_name, phase, "failed", applied, result, before_hashes, {})
+        result.promotion_report = _promotion_report(
+            op_name,
+            phase,
+            "failed",
+            applied,
+            result,
+            before_hashes,
+            {},
+            run_id=run_id,
+            proposal_ids=proposal_ids,
+            proposal_hashes=proposal_hashes,
+            skipped_proposals=skipped,
+        )
         if write_outputs:
             _write_promotion_report(uo_root, result)
+            _write_rejected_proposals(uo_root, run_id, proposals, result)
         return result
 
     _normalize_candidate(candidate)
-    _build_graphs(candidate, op_name)
     candidate_result = CompileResult(op_name=op_name, phase=phase)
+    _build_graphs(candidate, op_name, candidate_result)
     candidate_result.artifact_hashes = _hash_artifacts_from_docs(candidate)
     candidate_result.maturity = _check_maturity(candidate, phase, candidate_result)
     candidate_result.entity_index = build_entity_index(candidate, candidate_result)
@@ -321,9 +387,22 @@ def promote_kb(
     result.issues.extend(candidate_result.issues)
     if candidate_result.status == "fail":
         result.status = "fail"
-        result.promotion_report = _promotion_report(op_name, phase, "failed", applied, result, before_hashes, {})
+        result.promotion_report = _promotion_report(
+            op_name,
+            phase,
+            "failed",
+            applied,
+            result,
+            before_hashes,
+            {},
+            run_id=run_id,
+            proposal_ids=proposal_ids,
+            proposal_hashes=proposal_hashes,
+            skipped_proposals=skipped,
+        )
         if write_outputs:
             _write_promotion_report(uo_root, result)
+            _write_rejected_proposals(uo_root, run_id, proposals, result)
         return result
     if candidate_result.status == "warn":
         result.status = "warn"
@@ -335,16 +414,51 @@ def promote_kb(
     result.conflict_count = candidate_result.conflict_count
 
     after_hashes = _hash_artifacts_from_docs(candidate)
+    transaction: TransactionResult | None = None
     if write_outputs:
-        _atomic_write_docs(uo_root, candidate, only_changed_against=docs)
-    result.promotion_report = _promotion_report(op_name, phase, "promoted", applied, result, before_hashes, after_hashes)
+        transaction = _transactional_write_docs(uo_root, candidate, docs)
+        if transaction.transaction_status != "committed":
+            result.add("PROMOTION_TRANSACTION_ROLLED_BACK", "error", transaction.failure_reason, "canonical_kb")
+            result.promotion_report = _promotion_report(
+                op_name,
+                phase,
+                "rolled_back",
+                applied,
+                result,
+                before_hashes,
+                {},
+                transaction=transaction,
+                run_id=run_id,
+                proposal_ids=proposal_ids,
+                proposal_hashes=proposal_hashes,
+                skipped_proposals=skipped,
+            )
+            _write_promotion_report(uo_root, result)
+            _write_rejected_proposals(uo_root, run_id, proposals, result)
+            return result
+        _resolve_stale_after_success(uo_root, phase=phase, run_id=run_id, changed_artifacts=transaction.committed_artifacts)
+    result.promotion_report = _promotion_report(
+        op_name,
+        phase,
+        "promoted",
+        applied,
+        result,
+        before_hashes,
+        after_hashes,
+        transaction=transaction,
+        run_id=run_id,
+        proposal_ids=proposal_ids,
+        proposal_hashes=proposal_hashes,
+        skipped_proposals=skipped,
+    )
     if write_outputs:
         _write_compile_outputs(uo_root, result)
         _write_promotion_report(uo_root, result)
+        _write_promotion_receipt(uo_root, result, run_id, proposal_ids, proposal_hashes, before_hashes, after_hashes, transaction)
     return result
 
 
-def build_entity_index(docs: dict[str, Any], result: CompileResult | None = None) -> dict[str, dict[str, Any]]:
+def collect_entity_definitions(docs: dict[str, Any], result: CompileResult | None = None) -> dict[str, dict[str, Any]]:
     index: dict[str, dict[str, Any]] = {}
 
     def add(item_id: str, kind: str, artifact: str, section: str, meta: dict[str, Any] | None = None) -> None:
@@ -375,10 +489,12 @@ def build_entity_index(docs: dict[str, Any], result: CompileResult | None = None
             "scope": meta.get("scope") or "",
             "data_type": meta.get("data_type") or meta.get("dtype") or "",
             "evidence_refs": _as_list(meta.get("evidence_refs")),
+            "status": meta.get("status") if meta.get("status") in STATUS_ENUM else "",
             "artifacts": [{"artifact": artifact, "section": section}],
         }
 
-    for rel, data in docs.items():
+    for rel in sorted(docs):
+        data = docs[rel]
         doc = _as_dict(data)
         if rel == "registry/symbols.yaml":
             for item in _iter_entries(doc.get("symbols")):
@@ -389,11 +505,6 @@ def build_entity_index(docs: dict[str, Any], result: CompileResult | None = None
         if rel == "registry/evidence.yaml":
             for item in _iter_entries(doc.get("evidence")):
                 add(str(item.get("id")), "evidence", rel, "evidence", item)
-        if rel == "registry/aliases.yaml":
-            for item in _iter_entries(doc.get("aliases")):
-                target = str(item.get("target_id") or item.get("canonical_id") or "")
-                if result and target and target not in index:
-                    result.add("DANGLING_ALIAS", "error", f"alias targets unknown id {target}", rel, target)
         if rel == "tiling/key_space.yaml":
             for item in _iter_entries(doc.get("fields")):
                 item_id = str(item.get("id") or item.get("stable_id") or f"KEY_{str(item.get('canonical_name') or item.get('name') or '').upper()}")
@@ -419,16 +530,28 @@ def build_entity_index(docs: dict[str, Any], result: CompileResult | None = None
         if rel == "kernel/resources.yaml":
             for section in ("buffers", "sync_events", "workspaces", "resources"):
                 for item in _iter_entries(doc.get(section)):
-                    kind = "sync" if section == "sync_events" else "resource"
+                    raw_id = str(item.get("id") or "")
+                    kind = "sync" if section == "sync_events" or raw_id.startswith("SYNC_") else "buffer" if raw_id.startswith("BUF_") else "resource"
                     add(str(item.get("id")), kind, rel, section, item)
         for section in ("relations", "links", "edges", "impacts"):
             for item in _iter_entries(doc.get(section)):
                 item_id = str(item.get("id") or "")
                 if item_id:
                     add(item_id, "relation", rel, section, item)
+        if rel.startswith("contracts/"):
+            for item in _iter_entries(doc.get("views")):
+                add(str(item.get("id")), "view", rel, "views", item)
 
+    return dict(sorted(index.items()))
+
+
+def validate_entity_references(
+    docs: dict[str, Any],
+    index: dict[str, dict[str, Any]],
+    result: CompileResult,
+) -> None:
     aliases_by_scope: dict[tuple[str, str], str] = {}
-    alias_targets: dict[str, str] = {}
+    alias_targets: dict[tuple[str, str], str] = {}
     for item_id, meta in sorted(index.items()):
         name = str(meta.get("canonical_name") or "").strip()
         scope = str(meta.get("scope") or "").strip()
@@ -440,11 +563,50 @@ def build_entity_index(docs: dict[str, Any], result: CompileResult | None = None
             result.add("DUPLICATE_CANONICAL_NAME", "warning", f"{scope}.{name} defined by {prev} and {item_id}", meta.get("artifact", ""), name)
         aliases_by_scope[key] = item_id
         for alias in meta.get("aliases") or []:
-            alias_key = str(alias)
+            alias_key = (scope, str(alias))
             prev_alias = alias_targets.get(alias_key)
             if result and prev_alias and prev_alias != item_id:
-                result.add("ALIAS_CONFLICT", "error", f"alias {alias} maps to both {prev_alias} and {item_id}", meta.get("artifact", ""), str(alias))
+                result.add("ALIAS_CONFLICT", "error", f"alias {alias} maps to both {prev_alias} and {item_id} in scope {scope}", meta.get("artifact", ""), str(alias))
+            if (scope, str(alias)) in aliases_by_scope and aliases_by_scope[(scope, str(alias))] != item_id:
+                result.add("ALIAS_CANONICAL_NAME_CONFLICT", "error", f"alias {alias} conflicts with canonical name", meta.get("artifact", ""), str(alias))
             alias_targets[alias_key] = item_id
+
+    alias_doc = _as_dict(docs.get("registry/aliases.yaml"))
+    seen_alias_entries: dict[tuple[str, str], str] = {}
+    for item in _iter_entries(alias_doc.get("aliases")):
+        alias = str(item.get("alias") or item.get("name") or "").strip()
+        scope = str(item.get("scope") or "").strip()
+        target = str(item.get("target_id") or item.get("canonical_id") or "").strip()
+        if not alias:
+            result.add("BAD_ALIAS_ENTRY", "error", "alias entry missing alias", "registry/aliases.yaml")
+            continue
+        if not target or target not in index:
+            result.add("DANGLING_ALIAS", "error", f"alias targets unknown id {target}", "registry/aliases.yaml", target)
+            continue
+        key = (scope, alias)
+        prev = seen_alias_entries.get(key)
+        if prev and prev != target:
+            result.add("ALIAS_SCOPE_CONFLICT", "error", f"alias {alias} in scope {scope} maps to both {prev} and {target}", "registry/aliases.yaml", alias)
+        seen_alias_entries[key] = target
+        canonical_conflict = aliases_by_scope.get(key)
+        if canonical_conflict and canonical_conflict != target:
+            result.add("ALIAS_CANONICAL_NAME_CONFLICT", "error", f"alias {alias} conflicts with canonical name {canonical_conflict}", "registry/aliases.yaml", alias)
+        existing = alias_targets.get(key)
+        if existing and existing != target:
+            result.add("ALIAS_CONFLICT", "error", f"alias {alias} maps to both {existing} and {target} in scope {scope}", "registry/aliases.yaml", alias)
+        alias_targets[key] = target
+        aliases = index[target].setdefault("aliases", [])
+        if alias not in aliases:
+            aliases.append(alias)
+
+    for meta in index.values():
+        meta["aliases"] = sorted(str(alias) for alias in meta.get("aliases") or [])
+
+
+def build_entity_index(docs: dict[str, Any], result: CompileResult | None = None) -> dict[str, dict[str, Any]]:
+    index = collect_entity_definitions(docs, result)
+    if result:
+        validate_entity_references(docs, index, result)
     return dict(sorted(index.items()))
 
 
@@ -486,10 +648,15 @@ def _read_yaml(path: Path, result: CompileResult | None = None) -> Any:
 def _load_proposals(
     uo_root: Path,
     result: CompileResult,
+    *,
+    run_id: str | None = None,
     proposal_paths: list[Path] | None = None,
 ) -> list[tuple[Path, dict[str, Any]]]:
     if proposal_paths is None:
-        proposal_paths = sorted((uo_root / "archive" / "proposals").glob("*.yaml"))
+        if not run_id:
+            result.add("RUN_ID_REQUIRED", "error", "promote requires --run-id when --proposal is not provided", "archive/proposals")
+            return []
+        proposal_paths = sorted((uo_root / "archive" / "proposals" / run_id).glob("*.yaml"))
     proposals: list[tuple[Path, dict[str, Any]]] = []
     for path in proposal_paths:
         if not path.exists():
@@ -501,7 +668,7 @@ def _load_proposals(
         else:
             result.add("BAD_PROPOSAL", "error", "proposal must parse to mapping", path.as_posix())
     if not proposals:
-        result.add("NO_PROPOSALS", "warning", "no proposal files found", "archive/proposals")
+        result.add("NO_PROPOSALS", "warning", "no proposal files found", f"archive/proposals/{run_id or ''}".rstrip("/"))
     return proposals
 
 
@@ -523,13 +690,77 @@ def _validate_proposal_envelope(
         ok = False
     producer = _as_dict(proposal.get("producer"))
     prop_phase = str(producer.get("phase") or "")
-    if prop_phase and _phase_rank(prop_phase) > _phase_rank(phase):
-        result.add("PROPOSAL_PHASE_TOO_NEW", "error", f"proposal phase {prop_phase} cannot promote in {phase}", path.as_posix())
-        ok = False
+    if prop_phase:
+        try:
+            normalized_prop_phase = _normalize_owner_phase(prop_phase)
+        except ValueError:
+            normalized_prop_phase = prop_phase
+        if normalized_prop_phase != phase:
+            result.add("PROPOSAL_PHASE_MISMATCH", "error", f"proposal phase {prop_phase} cannot promote in {phase}", path.as_posix())
+            ok = False
     if not _as_list(proposal.get("canonical_updates")):
         result.add("PROPOSAL_NO_UPDATES", "error", "proposal has no canonical_updates", path.as_posix())
         ok = False
     return ok
+
+
+def _proposal_hash(proposal: dict[str, Any]) -> str:
+    explicit = str(proposal.get("proposal_hash") or "").strip()
+    if explicit:
+        return explicit
+    payload = {k: v for k, v in proposal.items() if k not in {"consumed_at", "status"}}
+    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def _proposal_consumption_state(uo_root: Path, proposal_id: str, proposal_hash: str, result: CompileResult) -> str:
+    if not proposal_id:
+        return "new"
+    for receipt in sorted((uo_root / "archive" / "promoted").glob("*/promotion_receipt.yaml")):
+        data = _read_yaml(receipt, result)
+        hashes = _as_dict(data.get("proposal_hashes")) if isinstance(data, dict) else {}
+        if proposal_id not in hashes:
+            continue
+        previous_hash = str(hashes.get(proposal_id) or "")
+        if previous_hash == proposal_hash:
+            result.add("ALREADY_PROMOTED", "warning", f"proposal {proposal_id} already promoted", receipt.as_posix(), proposal_id)
+            return "already_promoted"
+        result.add(
+            "PROPOSAL_ID_REUSED_WITH_DIFFERENT_CONTENT",
+            "error",
+            f"proposal_id {proposal_id} was already promoted with different content",
+            receipt.as_posix(),
+            proposal_id,
+        )
+        return "conflict"
+    return "new"
+
+
+def _write_rejected_proposals(
+    uo_root: Path,
+    run_id: str | None,
+    proposals: list[tuple[Path, dict[str, Any]]],
+    result: CompileResult,
+) -> None:
+    if not proposals:
+        return
+    target_dir = uo_root / "archive" / "rejected" / (run_id or "unknown_run")
+    issues = [issue.to_dict() for issue in result.issues]
+    for path, proposal in proposals:
+        out = target_dir / f"{path.stem}.rejected.yaml"
+        write_text(
+            out,
+            _to_yaml(
+                {
+                    "version": 1,
+                    "rejected_at": _now(),
+                    "source_path": path.as_posix(),
+                    "proposal_id": proposal.get("proposal_id"),
+                    "proposal_hash": _proposal_hash(proposal),
+                    "failure_reason": "; ".join(issue["code"] for issue in issues if issue.get("severity") == "error") or "promotion failed",
+                    "issues": issues,
+                }
+            ),
+        )
 
 
 def _apply_update(candidate: dict[str, Any], update: dict[str, Any], proposal_path: Path, result: CompileResult) -> bool:
@@ -727,8 +958,11 @@ def _check_maturity(docs: dict[str, Any], phase: str, result: CompileResult) -> 
             maturity[rel] = "valid"
             continue
         has_real = False
+        present_keys = 0
         for key in rules:
             value = data.get(key)
+            if key in data:
+                present_keys += 1
             if isinstance(value, dict) and value:
                 has_real = True
             elif isinstance(value, list) and value:
@@ -736,6 +970,8 @@ def _check_maturity(docs: dict[str, Any], phase: str, result: CompileResult) -> 
             elif value not in (None, "", {}, []):
                 has_real = True
         if has_real:
+            maturity[rel] = "valid"
+        elif rel in ALLOWED_EMPTY_MATURITY_FILES and present_keys == len(rules):
             maturity[rel] = "valid"
         else:
             maturity[rel] = "placeholder"
@@ -813,10 +1049,25 @@ def _validate_flow_kernel_boundary(docs: dict[str, Any], result: CompileResult) 
         for item in _iter_entries(_as_dict(docs.get("flow/compute_graph.yaml")).get("compute_steps"))
         if item.get("id")
     }
-    hardware_terms = ("LocalTensor", "GlobalTensor", "Queue", "UB", "L1", "L0", "set/wait", "SetFlag", "WaitFlag", "event", "barrier")
+    hardware_patterns = [
+        re.compile(pattern)
+        for pattern in (
+            r"\bLocalTensor\b",
+            r"\bGlobalTensor\b",
+            r"\bTQue\b",
+            r"\bTBuf\b",
+            r"\bDataCopy\b",
+            r"\bSetFlag\b",
+            r"\bWaitFlag\b",
+            r"\bPIPE_[A-Z0-9_]+\b",
+            r"\bL0[A-C]?\b",
+            r"\bL1\b",
+            r"\bUB\b",
+        )
+    ]
     for rel in ("flow/compute_graph.yaml", "flow/dataflow.yaml", "flow/golden_model.yaml"):
-        text = _canonical_json(docs.get(rel, {}))
-        if any(term.lower() in text.lower() for term in hardware_terms):
+        values = _structured_boundary_values(docs.get(rel, {}))
+        if any(pattern.search(value) for value in values for pattern in hardware_patterns):
             result.add("FLOW_HARDWARE_DETAIL", "warning", f"{rel} appears to contain kernel hardware/resource detail", rel)
     for rel in ("kernel/paths.yaml", "kernel/pipeline.yaml", "kernel/branches.yaml"):
         data = _as_dict(docs.get(rel))
@@ -824,6 +1075,23 @@ def _validate_flow_kernel_boundary(docs: dict[str, Any], result: CompileResult) 
             for ref in _as_list(refs):
                 if ref and ref not in compute_ids:
                     result.add("KERNEL_UNKNOWN_COMPUTE_STEP", "error", f"kernel references unknown compute step {ref}", rel, path)
+
+
+def _structured_boundary_values(value: Any) -> list[str]:
+    fields = {"api", "operation", "resource", "buffer", "pipeline", "sync", "implementation", "hardware_detail", "description"}
+    found: list[str] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if str(key) in fields:
+                if isinstance(child, str):
+                    found.append(child)
+                elif isinstance(child, (list, dict)):
+                    found.append(_canonical_json(child))
+            found.extend(_structured_boundary_values(child))
+    elif isinstance(value, list):
+        for item in value:
+            found.extend(_structured_boundary_values(item))
+    return found
 
 
 def _validate_kernel_two_step(docs: dict[str, Any], result: CompileResult) -> None:
@@ -896,7 +1164,74 @@ def _validate_stale(uo_root: Path, result: CompileResult, phase: str) -> None:
         result.add("STALE_ARTIFACTS_REMAIN", "error", f"{len(stale)} stale artifacts remain", stale_path.as_posix())
 
 
-def _build_graphs(docs: dict[str, Any], op_name: str) -> None:
+def _resolve_stale_after_success(
+    uo_root: Path,
+    *,
+    phase: str,
+    run_id: str | None,
+    changed_artifacts: list[str],
+) -> list[str]:
+    stale_path = uo_root / "archive" / "runs" / "stale_artifacts.yaml"
+    if not stale_path.exists():
+        return []
+    data = _read_yaml(stale_path)
+    if not isinstance(data, dict):
+        return []
+    changed = set(changed_artifacts)
+    resolved: list[str] = []
+    entries: list[dict[str, Any]] = []
+    for raw in _as_list(data.get("stale_artifacts")):
+        item = dict(raw) if isinstance(raw, dict) else {}
+        path = str(item.get("path") or "")
+        expected_run = str(item.get("expected_refresh_run_id") or "")
+        owner_phase = _normalize_owner_phase(str(item.get("owner_phase") or _owner_phase_for(path)))
+        can_resolve = (
+            bool(path)
+            and item.get("stale") is True
+            and path in changed
+            and owner_phase == phase
+            and (not expected_run or not run_id or expected_run == run_id)
+        )
+        if can_resolve:
+            item["stale"] = False
+            item["resolved_at"] = _now()
+            item["resolved_by_run_id"] = run_id
+            resolved.append(path)
+        entries.append(item)
+    history = _as_list(data.get("resolution_history"))
+    if resolved:
+        history.append({"resolved_at": _now(), "run_id": run_id, "phase": phase, "artifacts": sorted(resolved)})
+    data["stale_artifacts"] = entries
+    data["resolution_history"] = history
+    write_text(stale_path, _to_yaml(data))
+    return sorted(resolved)
+
+
+def _owner_phase_for(path: str) -> str:
+    if path.startswith(("operator.yaml", "manifest.yaml", "index.yaml", "registry/")):
+        return "phase2"
+    if path.startswith("flow/"):
+        return "phase2"
+    if path.startswith(("tiling/", "cross_layer/input_to_tiling", "cross_layer/variable_lineage")):
+        return "phase2"
+    if path.startswith("kernel/"):
+        return "phase4"
+    if path.startswith("cross_layer/"):
+        return "phase5"
+    if path.startswith(("query/", "contracts/", "test/")):
+        return "phase7"
+    return "final"
+
+
+def _normalize_owner_phase(phase: str) -> str:
+    phase = phase.replace("_host", "").replace("_flow", "")
+    try:
+        return _normalize_phase(phase)
+    except ValueError:
+        return _owner_phase_for(phase)
+
+
+def _build_graphs(docs: dict[str, Any], op_name: str, result: CompileResult | None = None) -> None:
     entity_result = CompileResult(op_name=op_name)
     source_docs = {
         rel: data
@@ -908,15 +1243,18 @@ def _build_graphs(docs: dict[str, Any], op_name: str) -> None:
     edges: dict[str, dict[str, Any]] = {}
 
     for eid, meta in entity_index.items():
+        if eid.startswith(("EV_", "SRC_")):
+            continue
         nodes[eid] = {
             "id": eid,
             "kind": meta.get("kind"),
             "label": meta.get("canonical_name") or eid,
             "artifact": meta.get("artifact"),
-            "status": "confirmed" if meta.get("evidence_refs") else "proposed",
+            "status": meta.get("status") or "proposed",
             "evidence_refs": meta.get("evidence_refs") or [],
         }
 
+    unresolved: list[dict[str, Any]] = []
     for rel, doc in source_docs.items():
         data = _as_dict(doc)
         for section in ("relations", "links", "edges"):
@@ -925,13 +1263,26 @@ def _build_graphs(docs: dict[str, Any], op_name: str) -> None:
                 sources = _as_list(item.get("source_ids"))
                 targets = _as_list(item.get("target_ids"))
                 if not sources or not targets:
-                    refs = sorted(_collect_id_like_values(item))
-                    if len(refs) >= 2:
-                        sources = [refs[0]]
-                        targets = refs[1:]
+                    unresolved_item = {
+                        "id": item.get("id") or "",
+                        "type": item.get("type") or "affects",
+                        "artifact": rel,
+                        "section": section,
+                        "status": "unresolved",
+                        "reason": "relation_direction_missing",
+                        "evidence_refs": _as_list(item.get("evidence_refs")),
+                    }
+                    unresolved.append(unresolved_item)
+                    if result:
+                        result.add("RELATION_DIRECTION_MISSING", "error", "relation missing explicit source_ids/target_ids", rel, str(item.get("id") or ""))
+                    continue
                 for src in sources:
                     for dst in targets:
                         if not src or not dst or src == dst:
+                            continue
+                        if str(src).startswith(("EV_", "SRC_")) or str(dst).startswith(("EV_", "SRC_")):
+                            if result:
+                                result.add("GRAPH_EVIDENCE_NODE_SKIPPED", "warning", "evidence/source ids are not behavior graph business nodes", rel, str(item.get("id") or ""))
                             continue
                         edge_id = str(item.get("id") or f"REL_{_stable_slug(src)}_TO_{_stable_slug(dst)}")
                         edge_key = f"{edge_id}:{src}:{dst}"
@@ -953,7 +1304,7 @@ def _build_graphs(docs: dict[str, Any], op_name: str) -> None:
             "purpose": "deterministically built behavior graph",
             "nodes": [nodes[key] for key in sorted(nodes)],
             "edges": [edges[key] for key in sorted(edges)],
-            "unresolved": behavior.get("unresolved", []),
+            "unresolved": sorted(_as_list(behavior.get("unresolved")) + unresolved, key=lambda x: _canonical_json(x)),
             "conflicts": behavior.get("conflicts", []),
         }
     )
@@ -969,7 +1320,7 @@ def _build_graphs(docs: dict[str, Any], op_name: str) -> None:
             "nodes": [nodes[key] for key in sorted(nodes)],
             "edges": impact_edges,
             "impacts": impact_edges,
-            "traversal_policy": {"max_depth": 8, "cycle_protection": "visited_set", "edge_types": sorted(RELATION_TYPES)},
+            "traversal_policy": {"max_depth": 8, "cycle_protection": "path_ancestors", "edge_types": sorted(RELATION_TYPES)},
             "unresolved": impact.get("unresolved", []),
             "conflicts": impact.get("conflicts", []),
         }
@@ -981,44 +1332,61 @@ def _derive_impact_edges(edges: dict[str, dict[str, Any]]) -> list[dict[str, Any
     adjacency: dict[str, list[dict[str, Any]]] = {}
     for edge in edges.values():
         adjacency.setdefault(str(edge.get("source_id")), []).append(edge)
+    for node in adjacency:
+        adjacency[node] = sorted(adjacency[node], key=lambda e: (str(e.get("target_id")), str(e.get("id"))))
     impacts: dict[str, dict[str, Any]] = {}
     for start in sorted(adjacency):
-        queue: list[tuple[str, int, list[str]]] = [(start, 0, [])]
-        visited = {start}
+        queue: list[tuple[str, int, list[str], list[str]]] = [(start, 0, [], [start])]
+        best_depth: dict[str, int] = {start: 0}
         while queue:
-            node, depth, path = queue.pop(0)
+            node, depth, path, path_nodes = queue.pop(0)
             if depth >= 8:
                 continue
             for edge in adjacency.get(node, []):
                 dst = str(edge.get("target_id"))
+                edge_path = path + [str(edge.get("id"))]
                 impact_id = f"REL_IMPACT_{_stable_slug(start)}_TO_{_stable_slug(dst)}"
                 relation = "direct" if depth == 0 else "transitive"
-                impacts[f"{impact_id}:{relation}"] = {
+                impact_key = f"{impact_id}:{relation}"
+                candidate = {
                     "id": impact_id,
                     "type": "affects",
                     "source_id": start,
                     "target_id": dst,
                     "impact_kind": relation,
+                    "depth": depth + 1,
                     "confidence": "confirmed" if edge.get("status") == "confirmed" else "possible",
-                    "path": path + [str(edge.get("id"))],
+                    "path": edge_path,
+                    "alternative_paths": [],
                     "status": edge.get("status") or "proposed",
                     "evidence_refs": edge.get("evidence_refs") or [],
                 }
-                if dst in visited:
-                    impacts[f"{impact_id}:cycle"] = {
+                existing = impacts.get(impact_key)
+                if existing is None or (candidate["depth"], candidate["path"]) < (existing.get("depth", 999), existing.get("path", [])):
+                    if existing is not None:
+                        candidate["alternative_paths"] = sorted(_as_list(existing.get("alternative_paths")) + [existing.get("path")])
+                    impacts[impact_key] = candidate
+                elif existing is not None and edge_path != existing.get("path"):
+                    existing["alternative_paths"] = sorted(_as_list(existing.get("alternative_paths")) + [edge_path])
+                if dst in path_nodes:
+                    impacts[f"{impact_id}:cycle:{':'.join(edge_path)}"] = {
                         "id": impact_id + "_CYCLE",
                         "type": "affects",
                         "source_id": start,
                         "target_id": dst,
                         "impact_kind": "cycle",
+                        "depth": depth + 1,
                         "confidence": "possible",
-                        "path": path + [str(edge.get("id"))],
+                        "path": edge_path,
+                        "alternative_paths": [],
                         "status": "unresolved",
                         "evidence_refs": [],
                     }
                     continue
-                visited.add(dst)
-                queue.append((dst, depth + 1, path + [str(edge.get("id"))]))
+                if best_depth.get(dst, 999) <= depth + 1:
+                    continue
+                best_depth[dst] = depth + 1
+                queue.append((dst, depth + 1, edge_path, path_nodes + [dst]))
     return [impacts[key] for key in sorted(impacts)]
 
 
@@ -1060,6 +1428,35 @@ def _write_promotion_report(uo_root: Path, result: CompileResult) -> None:
         write_text(out, _to_yaml({"version": 1, "op_name": result.op_name, "conflicts": conflicts}))
 
 
+def _write_promotion_receipt(
+    uo_root: Path,
+    result: CompileResult,
+    run_id: str | None,
+    proposal_ids: list[str],
+    proposal_hashes: dict[str, str],
+    before_hashes: dict[str, str],
+    after_hashes: dict[str, str],
+    transaction: TransactionResult | None,
+) -> None:
+    if result.promotion_report.get("status") != "promoted":
+        return
+    changed = sorted(path for path, digest in after_hashes.items() if before_hashes.get(path) != digest)
+    receipt = {
+        "version": 1,
+        "run_id": run_id,
+        "phase": result.phase,
+        "proposal_ids": proposal_ids,
+        "proposal_hashes": proposal_hashes,
+        "promoted_at": _now(),
+        "changed_artifacts": changed,
+        "before_hashes": {path: before_hashes.get(path) for path in changed},
+        "after_hashes": {path: after_hashes.get(path) for path in changed},
+        "transaction_id": transaction.transaction_id if transaction else None,
+        "status": "promoted",
+    }
+    write_text(uo_root / "archive" / "promoted" / (run_id or "manual") / "promotion_receipt.yaml", _to_yaml(receipt))
+
+
 def _promotion_report(
     op_name: str,
     phase: str,
@@ -1068,37 +1465,115 @@ def _promotion_report(
     result: CompileResult,
     before_hashes: dict[str, str],
     after_hashes: dict[str, str],
+    *,
+    transaction: TransactionResult | None = None,
+    run_id: str | None = None,
+    proposal_ids: list[str] | None = None,
+    proposal_hashes: dict[str, str] | None = None,
+    skipped_proposals: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    planned = transaction.planned_artifacts if transaction else sorted(path for path, digest in after_hashes.items() if before_hashes.get(path) != digest)
     return {
         "version": 1,
         "op_name": op_name,
         "phase": phase,
+        "run_id": run_id,
         "status": status,
         "promoted_at": _now(),
         "applied_updates": applied,
+        "proposal_ids": proposal_ids or [],
+        "proposal_hashes": proposal_hashes or {},
+        "skipped_proposals": skipped_proposals or [],
         "changed_artifacts": sorted(path for path, digest in after_hashes.items() if before_hashes.get(path) != digest),
+        "transaction_id": transaction.transaction_id if transaction else None,
+        "planned_artifacts": planned,
+        "committed_artifacts": transaction.committed_artifacts if transaction else planned,
+        "rolled_back_artifacts": transaction.rolled_back_artifacts if transaction else [],
+        "transaction_status": transaction.transaction_status if transaction else ("committed" if status == "promoted" else "not_started"),
+        "failure_reason": transaction.failure_reason if transaction else "",
         "issues": [issue.to_dict() for issue in result.issues],
     }
 
 
 def _atomic_write_docs(uo_root: Path, candidate: dict[str, Any], *, only_changed_against: dict[str, Any]) -> None:
-    for rel, data in candidate.items():
-        if rel.startswith(("archive/", "cbm/")):
-            continue
-        old = only_changed_against.get(rel)
-        if _canonical_json(old) == _canonical_json(data):
-            continue
-        path = uo_root / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = _to_yaml(data)
-        fd, tmp_name = tempfile.mkstemp(prefix=path.name, suffix=".tmp", dir=str(path.parent))
-        try:
+    result = _transactional_write_docs(uo_root, candidate, only_changed_against)
+    if result.transaction_status != "committed":
+        raise RuntimeError(result.failure_reason)
+
+
+def _transactional_write_docs(
+    uo_root: Path,
+    candidate: dict[str, Any],
+    previous: dict[str, Any],
+) -> TransactionResult:
+    changed = [
+        rel
+        for rel, data in sorted(candidate.items())
+        if not rel.startswith(("archive/", "cbm/")) and _canonical_json(previous.get(rel)) != _canonical_json(data)
+    ]
+    tx = TransactionResult(
+        transaction_id=f"TX_{datetime.now(tz=timezone.utc).strftime('%Y%m%d%H%M%S%f')}",
+        planned_artifacts=changed,
+        transaction_status="prepared" if changed else "committed",
+    )
+    if not changed:
+        return tx
+
+    temp_paths: dict[str, Path] = {}
+    backup_paths: dict[str, Path] = {}
+    existed: dict[str, bool] = {}
+    try:
+        for rel in changed:
+            path = uo_root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+            temp_path = Path(tmp_name)
             with os.fdopen(fd, "w", encoding="utf-8") as tmp:
-                tmp.write(payload)
-            os.replace(tmp_name, path)
-        finally:
-            if os.path.exists(tmp_name):
-                os.unlink(tmp_name)
+                tmp.write(_to_yaml(candidate[rel]))
+                tmp.flush()
+                os.fsync(tmp.fileno())
+            temp_paths[rel] = temp_path
+
+        for rel in changed:
+            path = uo_root / rel
+            existed[rel] = path.exists()
+            if not existed[rel]:
+                continue
+            fd, backup_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".bak", dir=str(path.parent))
+            os.close(fd)
+            backup = Path(backup_name)
+            shutil.copy2(path, backup)
+            backup_paths[rel] = backup
+
+        for rel in changed:
+            path = uo_root / rel
+            os.replace(temp_paths[rel], path)
+            tx.committed_artifacts.append(rel)
+
+        tx.transaction_status = "committed"
+        for backup in backup_paths.values():
+            backup.unlink(missing_ok=True)
+        return tx
+    except Exception as exc:  # noqa: BLE001
+        tx.transaction_status = "rolled_back"
+        tx.failure_reason = str(exc)
+        for rel in reversed(tx.committed_artifacts):
+            path = uo_root / rel
+            backup = backup_paths.get(rel)
+            try:
+                if existed.get(rel) and backup and backup.exists():
+                    os.replace(backup, path)
+                elif path.exists():
+                    path.unlink()
+                tx.rolled_back_artifacts.append(rel)
+            except Exception as rollback_exc:  # noqa: BLE001
+                tx.failure_reason += f"; rollback failed for {rel}: {rollback_exc}"
+        for rel, tmp in temp_paths.items():
+            if rel not in tx.committed_artifacts:
+                tmp.unlink(missing_ok=True)
+        for backup in backup_paths.values():
+            backup.unlink(missing_ok=True)
+        return tx
 
 
 def _hash_artifacts(uo_root: Path, result: CompileResult) -> None:
@@ -1241,10 +1716,18 @@ def _kind_from_prefix(item_id: str) -> str:
         return "kernel_path"
     if item_id.startswith("KBR_"):
         return "kernel_branch"
+    if item_id.startswith("CON_"):
+        return "contract"
+    if item_id.startswith("VIEW_"):
+        return "view"
     if item_id.startswith("C"):
         return "compute_step"
-    if item_id.startswith(("BUF_", "SYNC_", "RES_")):
-        return "resource" if not item_id.startswith("SYNC_") else "sync"
+    if item_id.startswith("BUF_"):
+        return "buffer"
+    if item_id.startswith("SYNC_"):
+        return "sync"
+    if item_id.startswith("RES_"):
+        return "resource"
     return ""
 
 
@@ -1294,13 +1777,21 @@ def main(argv: list[str] | None = None) -> int:
     promote.add_argument("repo_root", type=Path)
     promote.add_argument("--op-name", required=True)
     promote.add_argument("--phase", default="phase2")
-    promote.add_argument("--proposal", action="append", type=Path, help="Specific proposal path; defaults to archive/proposals/*.yaml")
+    promote.add_argument("--run-id", help="Only consume proposals under archive/proposals/<run_id>/")
+    promote.add_argument("--proposal", action="append", type=Path, help="Specific proposal path; otherwise --run-id is required")
 
     validate = sub.add_parser("validate", help="Validate canonical KB without modifying canonical artifacts")
     validate.add_argument("repo_root", type=Path)
     validate.add_argument("--op-name", required=True)
     validate.add_argument("--phase", default="final")
     validate.add_argument("--check-only", action="store_true", help="Do not write reports")
+
+    resolve = sub.add_parser("resolve-stale", help="Resolve stale artifacts after a successful phase refresh")
+    resolve.add_argument("repo_root", type=Path)
+    resolve.add_argument("--op-name", required=True)
+    resolve.add_argument("--phase", required=True)
+    resolve.add_argument("--run-id", required=True)
+    resolve.add_argument("--artifact", action="append", default=[], help="Refreshed canonical artifact path")
 
     parser.add_argument("repo_root", nargs="?", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--op-name", dest="legacy_op_name", help=argparse.SUPPRESS)
@@ -1320,7 +1811,15 @@ def main(argv: list[str] | None = None) -> int:
         repo_root = args.repo_root.resolve()
         op_name = safe_op_name(args.op_name, repo_root)
         uo_root = operator_root(repo_root, op_name)
-        result = promote_kb(uo_root, op_name, phase=args.phase, proposal_paths=args.proposal)
+        result = promote_kb(uo_root, op_name, phase=args.phase, run_id=args.run_id, proposal_paths=args.proposal)
+    elif args.command == "resolve-stale":
+        repo_root = args.repo_root.resolve()
+        op_name = safe_op_name(args.op_name, repo_root)
+        uo_root = operator_root(repo_root, op_name)
+        phase = _normalize_phase(args.phase)
+        resolved = _resolve_stale_after_success(uo_root, phase=phase, run_id=args.run_id, changed_artifacts=args.artifact)
+        result = CompileResult(op_name=op_name, phase=phase)
+        result.promotion_report = {"status": "resolved", "resolved_artifacts": resolved}
     else:
         repo_root = args.repo_root.resolve()
         op_name = safe_op_name(args.op_name, repo_root)

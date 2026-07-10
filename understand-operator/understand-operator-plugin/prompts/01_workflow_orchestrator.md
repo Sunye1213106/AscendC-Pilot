@@ -77,14 +77,14 @@ Only validator/compiler logic may promote proposal/intermediate artifacts into c
 After the Phase 2 host/flow barrier and `verify_subagent_barrier.py`, promote proposals before reading canonical tiling/flow as trusted:
 
 ```powershell
-uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase2
+uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase2 --run-id "$RUN_ID"
 uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase2
 ```
 
 After the Phase 4 kernel path barrier and host alignment, promote or validate kernel updates before Phase 5:
 
 ```powershell
-uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase4
+uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase4 --run-id "$RUN_ID"
 uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase4
 ```
 

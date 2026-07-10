@@ -88,7 +88,7 @@ Canonical v2 partitions:
 - Before accepting canonical v2 patches, run the deterministic KB compiler and inspect `archive/runs/kb_compile_report.yaml`.
 
 ```powershell
-uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase <phase>
+uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase <phase> --run-id "$RUN_ID"
 uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase <phase>
 ```
 

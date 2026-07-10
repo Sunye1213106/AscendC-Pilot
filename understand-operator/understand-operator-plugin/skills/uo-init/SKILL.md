@@ -201,14 +201,14 @@ python "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" -
 After Phase 2 subagents finish and the barrier passes:
 
 ```powershell
-uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase2
+uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase2 --run-id "$RUN_ID"
 uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase2
 ```
 
 After Phase 4 kernel raw agents finish and host alignment writes kernel canonical files:
 
 ```powershell
-uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase4
+uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase4 --run-id "$RUN_ID"
 uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase4
 ```
 

@@ -83,7 +83,7 @@ canonical_updates:
     items: []
 ```
 
-Allowed targets are only `registry/`, `tiling/`, `flow/`, `kernel/`, `cross_layer/`, `query/`, `contracts/`, and `evidence/` YAML files under `UO_ROOT`. Draft canonical files are compatibility artifacts only; the host must run `uo-kb-compile promote ... --phase phase2` and trust only promoted canonical output.
+Allowed targets are only `registry/`, `tiling/`, `flow/`, `kernel/`, `cross_layer/`, `query/`, `contracts/`, and `evidence/` YAML files under `UO_ROOT`. Write proposal envelopes under `archive/proposals/<run_id>/`. Draft canonical files are compatibility artifacts only; the host must run `uo-kb-compile promote ... --phase phase2 --run-id <run_id>` and trust only promoted canonical output.
 
 1. `flow/index.yaml`
 2. `flow/compute_graph.yaml`

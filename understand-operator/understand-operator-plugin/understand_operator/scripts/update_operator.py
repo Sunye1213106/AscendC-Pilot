@@ -274,12 +274,33 @@ def _tiling_change_requires_kernel(blob: str, base: Path | None) -> bool:
     if any(token in blob for token in ("tiling_key", "family", "template", "dispatch", "kernel_entry")):
         return True
     if "tilingdata" in blob and not any(token in blob for token in ("key", "family", "template", "dispatch")):
-        return False
+        return not _tilingdata_numeric_only_proven(base)
     if "op_host" in blob or "tiling" in blob:
         if _impact_graph_mentions_kernel(base):
             return True
         return True
     return False
+
+
+def _tilingdata_numeric_only_proven(base: Path | None) -> bool:
+    if base is None or yaml is None:
+        return False
+    docs = [
+        _read_yaml_file(base / "cross_layer" / "impact_graph.yaml"),
+        _read_yaml_file(base / "cross_layer" / "variable_lineage.yaml"),
+        _read_yaml_file(base / "tiling" / "data_model.yaml"),
+    ]
+    forbidden = ("kbr_", "kpath_", "ktpl_", "branch", "path", "pipeline", "workspace", "buffer", "resource", "sync", "core split", "loop count", "tail path")
+    saw_numeric_only = False
+    for doc in docs:
+        blob = json.dumps(doc, ensure_ascii=False).lower()
+        if "tilingdata" not in blob:
+            continue
+        if any(token in blob for token in forbidden):
+            return False
+        if "numeric_only" in blob:
+            saw_numeric_only = True
+    return saw_numeric_only
 
 
 def _impact_graph_mentions_kernel(base: Path | None) -> bool:
@@ -329,12 +350,12 @@ def _stale_classification(invalidations: dict[str, list[str]], derived_stale: li
         for item in invalidated
         if item.startswith(("kernel/", "cross_layer/")) or item in {"operator.yaml", "registry/variables.yaml"}
     )
-    safe_to_preserve = sorted(set(derived_stale) - set(invalidated))
     return {
         "invalidated": invalidated,
         "stale": sorted(derived_stale),
         "needs_review": needs_review,
-        "safe_to_preserve": safe_to_preserve,
+        "safe_to_preserve": [],
+        "safe_to_preserve_computed": False,
     }
 
 
@@ -394,15 +415,35 @@ def _build_stale_artifacts(update_plan: dict[str, Any]) -> dict[str, Any]:
         "stale_artifacts": [
             {
                 "path": artifact,
+                "owner_phase": _owner_phase_for_artifact(artifact),
                 "stale": True,
                 "reason": "source change may affect this KB slice",
+                "source_dependencies": [],
+                "source_hash_before": None,
+                "source_hash_after": None,
+                "canonical_hash_before": None,
+                "expected_refresh_run_id": update_plan.get("run_id"),
+                "invalidated_at": now,
+                "resolved_at": None,
+                "resolved_by_run_id": None,
                 "must_refresh_before": ["phase6", "phase7", "phase8"]
                 if artifact.startswith(("cross_layer/", "contracts/", "query/"))
                 else ["owning_phase", "phase6", "phase8"],
             }
             for artifact in artifacts
         ],
+        "resolution_history": [],
     }
+
+
+def _owner_phase_for_artifact(path: str) -> str:
+    if path.startswith("kernel/"):
+        return "phase4"
+    if path.startswith("cross_layer/") and not path.startswith(("cross_layer/input_to_tiling", "cross_layer/variable_lineage")):
+        return "phase5"
+    if path.startswith(("query/", "contracts/", "test/")):
+        return "phase7"
+    return "phase2"
 
 
 def _append_update_history(base: Path, change_set: dict[str, Any], update_plan: dict[str, Any]) -> None:

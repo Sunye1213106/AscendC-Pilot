@@ -110,6 +110,18 @@ CONTEXT_VIEWS = {
     "testcase-contract",
     "evidence-conflict",
 }
+ENTITY_REQUIRED_VIEWS = {
+    "variable-trace",
+    "tiling-field-trace",
+    "tilingdata-trace",
+    "kernel-path-trace",
+    "code-change-impact",
+}
+DETAIL_LIMITS = {
+    "summary": {"entities": 20, "relations": 20, "evidence": 10},
+    "normal": {"entities": 80, "relations": 80, "evidence": 30},
+    "full": {"entities": 10_000, "relations": 10_000, "evidence": 10_000},
+}
 
 LEGACY_MARKERS = [
     "summary/operator_io.yaml",
@@ -180,7 +192,18 @@ def export_view(uo_root: Path, op_name: str, view: str) -> dict[str, Any]:
     }
 
 
-def export_context_slice(uo_root: Path, op_name: str, view: str, entity: str | None = None) -> dict[str, Any]:
+def export_context_slice(
+    uo_root: Path,
+    op_name: str,
+    view: str,
+    entity: str | None = None,
+    *,
+    detail_level: str = "summary",
+) -> dict[str, Any]:
+    if detail_level not in DETAIL_LIMITS:
+        raise ValueError(f"Unsupported detail level: {detail_level}")
+    if view in ENTITY_REQUIRED_VIEWS and not entity:
+        raise ValueError(json.dumps({"status": "error", "code": "ENTITY_REQUIRED", "view": view}, ensure_ascii=False))
     docs = _load_context_docs(uo_root)
     entity_index = build_entity_index(docs)
     graph = _load_graph(docs, "cross_layer/behavior_graph.yaml")
@@ -188,18 +211,31 @@ def export_context_slice(uo_root: Path, op_name: str, view: str, entity: str | N
     selected = set[str]()
 
     if entity:
+        if entity not in entity_index:
+            suggestions = _entity_suggestions(entity, entity_index)
+            raise ValueError(
+                json.dumps(
+                    {"status": "error", "code": "ENTITY_NOT_FOUND", "view": view, "entity": entity, "suggestions": suggestions},
+                    ensure_ascii=False,
+                )
+            )
         selected.add(entity)
         selected.update(_neighbors(entity, graph, direction="both", depth=2))
         if view in {"code-change-impact", "pr-review"}:
             selected.update(_neighbors(entity, impact, direction="downstream", depth=4))
     elif view == "operator-understanding":
-        selected.update(_ids_by_kind(entity_index, {"symbol", "variable", "key", "family"}))
+        if detail_level == "summary":
+            selected.update(_ids_by_kind(entity_index, {"symbol", "variable", "family"}))
+        elif detail_level == "normal":
+            selected.update(_ids_by_kind(entity_index, {"symbol", "variable", "key", "family", "kernel_path"}))
+        else:
+            selected.update(entity_index.keys())
     elif view == "testcase-contract":
         selected.update(_ids_by_kind(entity_index, {"key", "family", "template_binding", "kernel_branch", "compute_step"}))
     elif view == "evidence-conflict":
         selected.update(_ids_by_kind(entity_index, {"evidence", "relation"}))
     else:
-        selected.update(list(entity_index.keys())[:20])
+        selected.update(_ids_by_kind(entity_index, {"evidence", "relation"}))
 
     entities = [entity_index[eid] for eid in sorted(selected) if eid in entity_index]
     relations = _filter_edges(graph.get("edges", []) + impact.get("edges", []) + impact.get("impacts", []), selected)
@@ -207,6 +243,11 @@ def export_context_slice(uo_root: Path, op_name: str, view: str, entity: str | N
     downstream = _filter_edges(graph.get("edges", []) + impact.get("impacts", []), selected, outgoing=True)
     evidence = _collect_evidence(docs, entities, relations)
     unresolved, conflicts = _collect_unresolved_conflicts(docs)
+    entities, entity_omitted = _limit_list(entities, DETAIL_LIMITS[detail_level]["entities"])
+    relations, relation_omitted = _limit_list(relations, DETAIL_LIMITS[detail_level]["relations"])
+    upstream, _ = _limit_list(upstream, DETAIL_LIMITS[detail_level]["relations"])
+    downstream, _ = _limit_list(downstream, DETAIL_LIMITS[detail_level]["relations"])
+    evidence, evidence_omitted = _limit_list(evidence, DETAIL_LIMITS[detail_level]["evidence"])
 
     return {
         "query": {
@@ -214,6 +255,7 @@ def export_context_slice(uo_root: Path, op_name: str, view: str, entity: str | N
             "entity_id": entity,
             "kb_first": True,
             "archive_read": False,
+            "detail_level": detail_level,
         },
         "entities": entities,
         "relations": relations,
@@ -224,7 +266,29 @@ def export_context_slice(uo_root: Path, op_name: str, view: str, entity: str | N
         "unresolved": unresolved,
         "conflicts": conflicts,
         "source_artifacts": sorted(_source_artifacts(entities, relations)),
+        "truncated": any((entity_omitted, relation_omitted, evidence_omitted)),
+        "omitted_counts": {
+            "entities": entity_omitted,
+            "relations": relation_omitted,
+            "evidence": evidence_omitted,
+        },
     }
+
+
+def _entity_suggestions(entity: str, entity_index: dict[str, Any]) -> list[str]:
+    needle = entity.lower()
+    candidates: list[str] = []
+    for eid, meta in sorted(entity_index.items()):
+        names = [eid, str(meta.get("canonical_name") or ""), *(str(alias) for alias in meta.get("aliases") or [])]
+        if any(needle in name.lower() or name.lower() in needle for name in names if name):
+            candidates.append(eid)
+    return candidates[:5]
+
+
+def _limit_list(items: list[Any], limit: int) -> tuple[list[Any], int]:
+    if len(items) <= limit:
+        return items, 0
+    return items[:limit], len(items) - limit
 
 
 def _load_context_docs(uo_root: Path) -> dict[str, Any]:
@@ -376,6 +440,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--entity", help="Stable entity id for focused context-slice views")
     parser.add_argument(
+        "--detail-level",
+        choices=sorted(DETAIL_LIMITS),
+        default="summary",
+        help="Context slice size for operator-understanding and other context views",
+    )
+    parser.add_argument(
         "--format",
         choices=["yaml", "json"],
         default="json",
@@ -389,7 +459,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.view in CONTEXT_VIEWS:
-            payload = export_context_slice(uo_root, op_name, args.view, args.entity)
+            payload = export_context_slice(uo_root, op_name, args.view, args.entity, detail_level=args.detail_level)
         else:
             payload = export_view(uo_root, op_name, args.view)
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
