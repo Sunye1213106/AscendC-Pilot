@@ -6,7 +6,7 @@ from typing import Any
 
 from .hashing import semantic_snapshot_hash, stable_hash
 from .io import ensure_output_dirs, output_root, write_json, write_yaml
-from .understand import export_testcase_contract, run_final_validation, safe_op_name, understand_root
+from .understand import UnderstandExportError, export_testcase_contract, run_final_validation, safe_op_name, understand_root
 from .validation import quality_status_from, validate_intake
 
 
@@ -59,13 +59,14 @@ def tg_init(project_root: Path, op_name: str) -> dict[str, Any]:
         final_validation = run_final_validation(project_root, op_name, uo_root)
         export_payload = export_testcase_contract(project_root, op_name, uo_root)
     except Exception as exc:
+        code = exc.code if isinstance(exc, UnderstandExportError) else "UNDERSTAND_EXPORT_OR_VALIDATION_FAILED"
         run["status"] = "fail"
         write_yaml(out_root / "run.yaml", run)
         report = {
             "status": "fail",
             "blocking_issues": [
                 {
-                    "code": "UNDERSTAND_EXPORT_OR_VALIDATION_FAILED",
+                    "code": code,
                     "severity": "error",
                     "path": uo_root.as_posix(),
                     "target": op_name,

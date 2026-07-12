@@ -8,6 +8,10 @@ from .hashing import stable_hash
 PRIORITY_WEIGHT = {"hard": 100, "high": 10, "normal": 1}
 
 
+class CandidateError(RuntimeError):
+    pass
+
+
 def build_candidate(obligation: dict[str, Any], solve_result: dict[str, Any], covered_obligation_ids: list[str] | None = None) -> dict[str, Any]:
     model = solve_result.get("model") if isinstance(solve_result.get("model"), dict) else {}
     signature = coverage_signature(model)
@@ -35,7 +39,7 @@ def abstract_candidate_model(model: dict[str, Any], obligation: dict[str, Any]) 
         "family": model.get("VAR_FAMILY"),
         "expected_template": model.get("VAR_TEMPLATE"),
         "expected_kernel_path": model.get("VAR_KERNEL_PATH"),
-        "expected_branch_truth": {key.removeprefix("VAR_BRANCH_"): value for key, value in sorted(model.items()) if key.startswith("VAR_BRANCH_")},
+        "expected_branch_truth": branch_truth(model),
         "tilingdata_boundary_bucket": model.get("VAR_TILINGDATA_BUCKET"),
         "core_split_boundary_bucket": model.get("VAR_CORE_SPLIT_BUCKET"),
         "tail_boundary_bucket": model.get("VAR_TAIL_BUCKET"),
@@ -53,7 +57,7 @@ def coverage_signature(model: dict[str, Any]) -> dict[str, Any]:
         "family_ref": model.get("VAR_FAMILY"),
         "template_ref": model.get("VAR_TEMPLATE"),
         "path_ref": model.get("VAR_KERNEL_PATH"),
-        "branch_truth": {key.removeprefix("VAR_BRANCH_"): value for key, value in sorted(model.items()) if key.startswith("VAR_BRANCH_")},
+        "branch_truth": branch_truth(model),
         "tilingdata_buckets": {
             "TDF": model.get("VAR_TILINGDATA_BUCKET"),
             "core_split": model.get("VAR_CORE_SPLIT_BUCKET"),
@@ -76,10 +80,40 @@ def dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         existing = by_signature[signature_key]
         merged = sorted(set(existing["covered_obligation_ids"]) | set(candidate["covered_obligation_ids"]))
+        _ensure_no_contradictory_branch_coverage(merged)
         sources = sorted(set(existing.get("source_obligation_ids") or []) | set(candidate.get("source_obligation_ids") or []))
         existing["covered_obligation_ids"] = merged
         existing["source_obligation_ids"] = sources
     return sorted(by_signature.values(), key=lambda item: item["id"])
+
+
+def is_branch_variable(var_id: str) -> bool:
+    return var_id.startswith(("VAR_BRANCH_", "VAR_KBR_", "VAR_KDEC_"))
+
+
+def branch_stable_key(var_id: str) -> str:
+    if var_id.startswith("VAR_KBR_") or var_id.startswith("VAR_KDEC_"):
+        return var_id.removeprefix("VAR_")
+    if var_id.startswith("VAR_BRANCH_"):
+        return var_id.removeprefix("VAR_BRANCH_")
+    raise ValueError(f"Not a branch variable: {var_id}")
+
+
+def branch_truth(model: dict[str, Any]) -> dict[str, Any]:
+    return {branch_stable_key(key): value for key, value in sorted(model.items()) if is_branch_variable(key)}
+
+
+def _ensure_no_contradictory_branch_coverage(obligation_ids: list[str]) -> None:
+    states: dict[str, set[str]] = {}
+    for oid in obligation_ids:
+        text = str(oid).upper()
+        if "_TRUE" in text:
+            states.setdefault(text.split("_TRUE", 1)[0], set()).add("true")
+        if "_FALSE" in text:
+            states.setdefault(text.split("_FALSE", 1)[0], set()).add("false")
+    conflicts = sorted(key for key, values in states.items() if values == {"true", "false"})
+    if conflicts:
+        raise CandidateError(f"CONTRADICTORY_BRANCH_COVERAGE: {', '.join(conflicts)}")
 
 
 def greedy_set_cover(candidates: list[dict[str, Any]], obligations: list[dict[str, Any]]) -> dict[str, Any]:
@@ -114,4 +148,3 @@ def greedy_set_cover(candidates: list[dict[str, Any]], obligations: list[dict[st
         for oid in sorted(uncovered)
     ]
     return {"selected_candidates": selected, "uncovered_obligations": uncovered_items}
-

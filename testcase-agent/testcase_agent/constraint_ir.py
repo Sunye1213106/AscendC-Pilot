@@ -122,7 +122,8 @@ def compile_obligation_target(obligation: dict[str, Any], ir: dict[str, Any] | s
     try:
         expr = obligation_target_expr(obligation, variable_ids)
     except ConstraintIRError as exc:
-        return _target_failure(obligation, priority, str(exc))
+        code = "RELATION_NOT_ATOMIC" if str(exc).startswith("RELATION_NOT_ATOMIC") else "OBLIGATION_TARGET_NOT_COMPILED"
+        return _target_failure(obligation, priority, str(exc), code=code)
     if expr is None:
         return _target_failure(obligation, priority, "Obligation has no compilable target expression")
     unknown = sorted(var_id for var_id in collect_expr_variables(expr) if var_id not in variable_ids)
@@ -141,6 +142,8 @@ def obligation_target_expr(obligation: dict[str, Any], variable_ids: set[str]) -
             return normalize_expr(constraints[key])
     must_cover = constraints.get("must_cover")
     if isinstance(must_cover, list) and must_cover:
+        if len(must_cover) != 1:
+            raise ConstraintIRError("RELATION_NOT_ATOMIC: must_cover must be atomized by planner before target compilation")
         first = must_cover[0]
         if isinstance(first, dict):
             return normalize_expr({"op": "and", "args": [{"op": "eq", "var": _var_id(k), "value": v} for k, v in sorted(first.items())]})
@@ -200,19 +203,23 @@ def compile_relation_expr(constraints: dict[str, Any]) -> dict[str, Any] | None:
         if not source or not target:
             raise ConstraintIRError(f"{relation_type} relation requires source and target")
         return {
-            "op": "implies",
-            "antecedent": {"op": "eq", "var": _relation_var_id(str(source)), "value": True},
-            "consequent": {"op": "eq", "var": _relation_var_id(str(target)), "value": True},
+            "op": "and",
+            "args": [
+                {"op": "eq", "var": _relation_var_id(str(source)), "value": True},
+                {"op": "eq", "var": _relation_var_id(str(target)), "value": True},
+            ],
         }
     if relation_type == "compatible_set":
         combinations = constraints.get("combinations") or constraints.get("must_cover")
-        if isinstance(combinations, list) and combinations:
+        if isinstance(combinations, list) and len(combinations) == 1:
             args = []
             for combo in combinations:
                 if isinstance(combo, dict):
                     args.append({"op": "and", "args": [{"op": "eq", "var": _relation_var_id(str(key)), "value": value} for key, value in sorted(combo.items())]})
             if args:
-                return args[0] if len(args) == 1 else {"op": "or", "args": args}
+                return args[0]
+        if isinstance(combinations, list) and len(combinations) > 1:
+            raise ConstraintIRError("RELATION_NOT_ATOMIC: compatible_set must be atomized by planner before target compilation")
         raise ConstraintIRError("compatible_set relation requires concrete combinations")
     if relation_type in {"pairwise", "must_cover"}:
         raise ConstraintIRError(f"{relation_type} relation does not provide a deterministic target expression")
@@ -320,11 +327,13 @@ def _variables_from_context_slice(variables: dict[str, dict[str, Any]], context_
             _ensure_bool(variables, var_id)
         elif data_type in {"int", "integer"} or _list_is_ints(domain):
             values = [int(value) for value in domain] if isinstance(domain, list) and domain else None
-            _ensure_int(variables, var_id, values)
+            min_value = entity.get("min")
+            max_value = entity.get("max")
+            _ensure_int(variables, var_id, values, min_value=min_value, max_value=max_value, source="context_entity")
         elif isinstance(domain, list) and domain:
             _ensure_enum(variables, var_id, [str(item) for item in domain])
         elif entity_id.startswith(("KEY_", "TDF_", "KVAR_")):
-            _ensure_int(variables, var_id)
+            _ensure_int(variables, var_id, source="context_entity_type_only")
         elif entity_id.startswith(("KPATH_", "KTPL_", "FAM_", "NUM_")):
             bucket_var = {
                 "KPATH_": "VAR_KERNEL_PATH",
@@ -363,9 +372,9 @@ def _variables_from_obligations(variables: dict[str, dict[str, Any]], obligation
             if field:
                 var_id = _key_var_id(refs[0] if refs else field, field)
                 if isinstance(values, list) and all(isinstance(v, int) and not isinstance(v, bool) for v in values):
-                    _ensure_int(variables, var_id, values)
+                    _ensure_int(variables, var_id, values, source="obligation_values")
                 elif isinstance(target_value, int) and not isinstance(target_value, bool):
-                    _ensure_int(variables, var_id, [target_value])
+                    _ensure_int(variables, var_id, [target_value], source="obligation_target_value")
                 else:
                     enum_values = [str(v) for v in _as_list(values)] or ([str(target_value)] if target_value not in (None, "") else refs)
                     _ensure_enum(variables, var_id, enum_values)
@@ -404,13 +413,21 @@ def normalize_domain(var_type: str, spec: dict[str, Any]) -> Any:
     if var_type == "bool":
         return [False, True]
     if "domain" in spec:
-        return spec["domain"]
+        domain = spec["domain"]
+        if var_type == "int" and isinstance(domain, dict):
+            return {"min": domain.get("min"), "max": domain.get("max"), "explicit": True, "sources": ["contract_variables"]}
+        return domain
     if "values" in spec:
-        return spec["values"]
+        values = spec["values"]
+        if var_type == "int" and isinstance(values, list) and values:
+            return {"min": min(values), "max": max(values), "explicit": True, "sources": ["contract_variables"]}
+        return values
     if "enum_values" in spec:
         return spec["enum_values"]
     if var_type == "int":
-        return {"min": int(spec.get("min", 0)), "max": int(spec.get("max", 1024))}
+        if "min" in spec or "max" in spec:
+            return {"min": spec.get("min"), "max": spec.get("max"), "explicit": True, "sources": ["contract_variables"]}
+        return {"min": None, "max": None, "explicit": False, "sources": ["contract_type_only"]}
     return []
 
 
@@ -446,19 +463,34 @@ def collect_expr_variables(expr: Any) -> set[str]:
     return found
 
 
-def _target_failure(obligation: dict[str, Any], priority: str, reason: str) -> TargetCompileResult:
+def _target_failure(obligation: dict[str, Any], priority: str, reason: str, *, code: str = "OBLIGATION_TARGET_NOT_COMPILED") -> TargetCompileResult:
     if priority in {"hard", "high"}:
-        return TargetCompileResult(status="error", expr=None, code="OBLIGATION_TARGET_NOT_COMPILED", reason=reason)
-    return TargetCompileResult(status="skipped", expr=None, code="OBLIGATION_TARGET_NOT_COMPILED", reason=reason)
+        return TargetCompileResult(status="error", expr=None, code=code, reason=reason)
+    return TargetCompileResult(status="skipped", expr=None, code=code, reason=reason)
 
 
 def _ensure_bool(variables: dict[str, dict[str, Any]], var_id: str) -> None:
     variables.setdefault(var_id, {"id": var_id, "name": var_id, "type": "bool", "domain": [False, True], "stable_id": var_id, "free": True, "derived": False, "definition": None, "source": "derived_from_plan"})
 
 
-def _ensure_int(variables: dict[str, dict[str, Any]], var_id: str, values: list[int] | None = None) -> None:
-    domain = sorted(dict.fromkeys(values or [0, 1]))
-    variables.setdefault(var_id, {"id": var_id, "name": var_id, "type": "int", "domain": {"min": min(domain), "max": max(domain)}, "stable_id": var_id, "free": True, "derived": False, "definition": None, "source": "derived_from_plan"})
+def _ensure_int(
+    variables: dict[str, dict[str, Any]],
+    var_id: str,
+    values: list[int] | None = None,
+    *,
+    min_value: Any = None,
+    max_value: Any = None,
+    source: str = "derived_from_plan",
+) -> None:
+    domain = _int_domain(values, min_value=min_value, max_value=max_value, source=source)
+    if var_id not in variables:
+        variables[var_id] = {"id": var_id, "name": var_id, "type": "int", "domain": domain, "stable_id": var_id, "free": True, "derived": False, "definition": None, "source": source}
+        return
+    existing = variables[var_id]
+    if existing.get("type") != "int" or existing.get("derived"):
+        return
+    existing["domain"] = _merge_int_domain(existing.get("domain"), domain)
+    existing["source"] = ",".join(sorted(set(str(existing.get("source") or "").split(",")) | {source}))
 
 
 def _ensure_enum(variables: dict[str, dict[str, Any]], var_id: str, domain: list[str]) -> None:
@@ -472,6 +504,34 @@ def _ensure_enum(variables: dict[str, dict[str, Any]], var_id: str, domain: list
     variables[var_id] = {"id": var_id, "name": var_id, "type": "enum", "domain": clean, "stable_id": var_id, "free": True, "derived": False, "definition": None, "source": "derived_from_plan"}
 
 
+def _int_domain(values: list[int] | None = None, *, min_value: Any = None, max_value: Any = None, source: str) -> dict[str, Any]:
+    clean = sorted(dict.fromkeys(int(value) for value in values or []))
+    if clean:
+        return {"min": min(clean), "max": max(clean), "explicit": True, "sources": [source]}
+    if min_value is not None or max_value is not None:
+        return {
+            "min": int(min_value) if min_value is not None else None,
+            "max": int(max_value) if max_value is not None else None,
+            "explicit": True,
+            "sources": [source],
+        }
+    return {"min": None, "max": None, "explicit": False, "sources": [source]}
+
+
+def _merge_int_domain(left: Any, right: Any) -> dict[str, Any]:
+    left = left if isinstance(left, dict) else {"min": None, "max": None, "explicit": False, "sources": []}
+    right = right if isinstance(right, dict) else {"min": None, "max": None, "explicit": False, "sources": []}
+    mins = [value for value in (left.get("min"), right.get("min")) if value is not None]
+    maxs = [value for value in (left.get("max"), right.get("max")) if value is not None]
+    explicit = bool(left.get("explicit") or right.get("explicit"))
+    return {
+        "min": min(mins) if mins else None,
+        "max": max(maxs) if maxs else None,
+        "explicit": explicit,
+        "sources": sorted(set(_as_list(left.get("sources")) + _as_list(right.get("sources")))),
+    }
+
+
 def _key_var_id(target_ref: str, field: str) -> str:
     if target_ref.startswith("KEY_"):
         return _var_id(target_ref)
@@ -479,7 +539,7 @@ def _key_var_id(target_ref: str, field: str) -> str:
 
 
 def _branch_var_id(target_ref: str) -> str:
-    if target_ref.startswith("KBR_"):
+    if target_ref.startswith(("KBR_", "KDEC_")):
         return _var_id(target_ref)
     if target_ref.startswith("VAR_BRANCH_"):
         return target_ref

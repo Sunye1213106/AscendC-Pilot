@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from testcase_agent.candidates import dedupe_candidates, greedy_set_cover
+from testcase_agent.candidates import branch_stable_key, coverage_signature, dedupe_candidates, greedy_set_cover
 from testcase_agent.constraint_ir import build_constraint_ir, compile_obligation_target, parse_bool_literal
 from testcase_agent.hashing import semantic_plan_hash, semantic_snapshot_hash
 from testcase_agent.io import read_yaml, write_json, write_yaml
@@ -326,7 +326,7 @@ def test_relation_mutex_and_implies_compile() -> None:
     ir = {"variables": [{"id": "VAR_A"}, {"id": "VAR_B"}]}
 
     assert compile_obligation_target(mutex, ir).status == "ok"
-    assert compile_obligation_target(implies, ir).expr["op"] == "implies"
+    assert compile_obligation_target(implies, ir).expr["op"] == "and"
 
 
 def test_insufficient_relation_information_does_not_solve_sat() -> None:
@@ -444,3 +444,65 @@ def test_strict_bool_literal_parser() -> None:
     assert parse_bool_literal("true") is True
     with pytest.raises(Exception, match="INVALID_BOOL_LITERAL"):
         parse_bool_literal("nope")
+
+
+def test_branch_signature_recognizes_kbr_and_kdec_variables() -> None:
+    true_sig = coverage_signature({"VAR_KBR_HAS_TAIL": True, "VAR_KDEC_USE_MULTI_CORE": False})
+    false_sig = coverage_signature({"VAR_KBR_HAS_TAIL": False, "VAR_KDEC_USE_MULTI_CORE": False})
+
+    assert true_sig["branch_truth"] == {"KBR_HAS_TAIL": True, "KDEC_USE_MULTI_CORE": False}
+    assert false_sig["branch_truth"]["KBR_HAS_TAIL"] is False
+    assert true_sig != false_sig
+    assert branch_stable_key("VAR_BRANCH_LEGACY") == "LEGACY"
+
+
+def test_branch_true_false_candidates_do_not_dedupe() -> None:
+    candidates = [
+        {"id": "CAND_TRUE", "coverage_signature": coverage_signature({"VAR_KBR_HAS_TAIL": True}), "source_obligation_ids": ["OB_TRUE"], "covered_obligation_ids": ["OB_TRUE"]},
+        {"id": "CAND_FALSE", "coverage_signature": coverage_signature({"VAR_KBR_HAS_TAIL": False}), "source_obligation_ids": ["OB_FALSE"], "covered_obligation_ids": ["OB_FALSE"]},
+    ]
+
+    assert len(dedupe_candidates(candidates)) == 2
+
+
+def test_unknown_int_domain_does_not_limit_to_zero_one() -> None:
+    contract = _contract(variables=[{"id": "VAR_KEY_SPLIT_AXIS", "type": "int"}])
+    obligation = _pending("OB_AXIS_2", constraints={"expr": {"op": "eq", "var": "VAR_KEY_SPLIT_AXIS", "value": 2}})
+    result = solve_from_docs(_snapshot(contract), _obligations([obligation]), {"decision": "approve"})
+    variables = {item["id"]: item for item in result["constraint_ir"]["variables"]}
+
+    assert variables["VAR_KEY_SPLIT_AXIS"]["domain"]["explicit"] is False
+    assert result["solve_results"][0]["status"] == "sat"
+    assert result["solve_results"][0]["model"]["VAR_KEY_SPLIT_AXIS"] == 2
+
+
+def test_obligation_values_expand_int_domain() -> None:
+    contract = _contract(variables=[{"id": "VAR_KEY_SPLIT_AXIS", "type": "int", "domain": {"min": 0, "max": 1}}])
+    obligation = _pending("OB_AXIS_3", kind="tiling_key_field_value", target_refs=["KEY_SPLIT_AXIS"], constraints={"field": "split_axis", "values": [0, 1, 2, 3]})
+    result = build_constraint_ir(_snapshot(contract), _obligations([obligation]), {"decision": "approve"})
+    variables = {item["id"]: item for item in result.ir["variables"]}
+
+    assert variables["VAR_KEY_SPLIT_AXIS"]["domain"]["max"] == 3
+
+
+def test_compatible_set_must_be_atomic_for_target_compiler() -> None:
+    obligation = _pending(
+        "OB_COMPAT",
+        priority="high",
+        kind="tiling_key_relation",
+        constraints={"relation_type": "compatible_set", "combinations": [{"VAR_A": 0}, {"VAR_A": 1}]},
+    )
+    result = compile_obligation_target(obligation, {"variables": [{"id": "VAR_A"}]})
+
+    assert result.status == "error"
+    assert result.code == "RELATION_NOT_ATOMIC"
+
+
+def test_implies_witness_requires_antecedent_true() -> None:
+    contract = _contract(variables=[{"id": "VAR_A", "type": "bool"}, {"id": "VAR_B", "type": "bool"}])
+    obligation = _pending("OB_IMPLIES", kind="tiling_key_relation", constraints={"relation_type": "implies", "source": "VAR_A", "target": "VAR_B"})
+    result = solve_from_docs(_snapshot(contract), _obligations([obligation]), {"decision": "approve"})
+
+    assert result["solve_results"][0]["status"] == "sat"
+    assert result["solve_results"][0]["model"]["VAR_A"] is True
+    assert result["solve_results"][0]["model"]["VAR_B"] is True

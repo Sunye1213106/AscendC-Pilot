@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .candidates import build_candidate, dedupe_candidates, greedy_set_cover
+from .candidates import CandidateError, build_candidate, dedupe_candidates, greedy_set_cover
 from .constraint_ir import build_constraint_ir
 from .hashing import semantic_plan_hash, semantic_snapshot_hash
 from .io import ensure_output_dirs, output_root, read_json, read_yaml, write_yaml
@@ -107,7 +107,11 @@ def solve_from_docs(
     else:
         solve_results = [{"obligation_id": item.get("id"), "status": "skipped", "model": {}, "reason": "constraint IR has compile errors"} for item in obligations]
 
-    deduped = dedupe_candidates(candidates)
+    try:
+        deduped = dedupe_candidates(candidates)
+    except CandidateError as exc:
+        errors.append({"code": "CONTRADICTORY_BRANCH_COVERAGE", "message": str(exc)})
+        deduped = []
     selected = greedy_set_cover(deduped, [item for item in obligations if item.get("status") == "pending"])
     report = build_solver_report(obligations, solve_results, candidates, deduped, selected, unsat, unknown, errors)
     return {

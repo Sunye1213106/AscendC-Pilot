@@ -128,12 +128,12 @@ def add_key_field_obligations(out: list[dict[str, Any]], coverage: dict[str, Any
 
 def add_key_relation_obligations(out: list[dict[str, Any]], coverage: dict[str, Any], contract: dict[str, Any]) -> None:
     for item in _iter_items(coverage.get("key_relation_obligations")):
-        out.append(make_obligation("tiling_key_relation", item, priority=item.get("priority") or "high"))
+        out.extend(expand_relation_obligations(item, priority=item.get("priority") or "high"))
 
     for item in _iter_items(_as_dict(contract.get("coverage_obligations")).get("tiling_keys")):
         kind = str(item.get("kind") or item.get("coverage_kind") or "").lower()
         if kind == "tiling_key_relation" or item.get("relation_type") or item.get("linked_relations") or item.get("must_cover"):
-            out.append(make_obligation("tiling_key_relation", item, priority=item.get("priority") or "high"))
+            out.extend(expand_relation_obligations(item, priority=item.get("priority") or "high"))
 
 
 def add_contract_bucket_obligations(out: list[dict[str, Any]], contract: dict[str, Any]) -> None:
@@ -260,6 +260,54 @@ def expand_kernel_branch_obligations(item: dict[str, Any], *, priority: str) -> 
     return obligations
 
 
+def expand_relation_obligations(item: dict[str, Any], *, priority: str) -> list[dict[str, Any]]:
+    relation_type = str(item.get("relation_type") or "").lower()
+    combinations = item.get("combinations")
+    constraints = _as_dict(item.get("constraints"))
+    if combinations is None:
+        combinations = item.get("must_cover", constraints.get("must_cover"))
+    if relation_type in {"compatible_set", "must_cover"} or isinstance(combinations, list):
+        if not combinations:
+            return [
+                make_obligation(
+                    "tiling_key_relation",
+                    {**item, "status": "unresolved", "reason": "empty relation combination list", "coverage_bucket": relation_type or "must_cover"},
+                    priority=priority,
+                )
+            ]
+        obligations: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for combo in combinations:
+            if not isinstance(combo, dict):
+                return [
+                    make_obligation(
+                        "tiling_key_relation",
+                        {**item, "status": "unresolved", "reason": "relation combination must be a mapping", "coverage_bucket": relation_type or "must_cover"},
+                        priority=priority,
+                    )
+                ]
+            signature = stable_hash(combo)
+            if signature in seen:
+                continue
+            seen.add(signature)
+            unreachable = str(combo.get("reachability") or combo.get("status") or "").lower() in UNREACHABLE
+            combo_values = {key: value for key, value in combo.items() if key not in {"reachability", "status", "reason", "unreachable_reason"}}
+            payload = {
+                **item,
+                "parent_obligation_id": str(item.get("id") or item.get("target_ref") or ""),
+                "coverage_bucket": relation_type or "must_cover",
+                "target_expr": _combo_expr(combo_values),
+                "target_value": combo_values,
+                "target_refs": sorted(str(key) for key in combo_values),
+            }
+            if unreachable:
+                payload["reachability"] = "unreachable"
+                payload["reason"] = str(combo.get("reason") or combo.get("unreachable_reason") or "relation combination marked unreachable")
+            obligations.append(make_obligation("tiling_key_relation", payload, target_refs=payload["target_refs"], priority=priority))
+        return obligations
+    return [make_obligation("tiling_key_relation", item, priority=priority)]
+
+
 def make_obligation(kind: str, item: dict[str, Any], *, target_refs: list[str] | None = None, priority: str = "normal") -> dict[str, Any]:
     reachability = str(item.get("reachability") or item.get("reachable") or "").lower()
     if str(item.get("status") or "").lower() in UNREACHABLE:
@@ -384,7 +432,7 @@ def contract_gaps(contract: dict[str, Any], coverage: dict[str, Any]) -> list[di
 def build_review(snapshot: dict[str, Any], obligations: list[dict[str, Any]], matrix: dict[str, Any], unresolved: dict[str, Any]) -> str:
     horizontal = [
         kind
-        for kind in ("family", "tiling_key_field", "tiling_key_relation", "compile_template", "kernel_path", "kernel_branch")
+        for kind in ("family", "tiling_key_field_value", "tiling_key_relation", "compile_template", "kernel_path", "kernel_branch")
         if matrix["by_kind"].get(kind, {}).get("total", 0)
     ]
     vertical = [
@@ -403,6 +451,11 @@ def build_review(snapshot: dict[str, Any], obligations: list[dict[str, Any]], ma
         f"- 横向覆盖对象: {', '.join(horizontal) if horizontal else '无'}",
         f"- 纵向覆盖对象: {', '.join(vertical) if vertical else '无'}",
         f"- Hard / High / Normal 数量: {counts.get('hard', 0)} / {counts.get('high', 0)} / {counts.get('normal', 0)}",
+        f"- TilingKey 字段数: {len({ref for item in obligations if item['kind'] == 'tiling_key_field_value' for ref in item.get('target_refs') or []})}",
+        f"- TilingKey 原子值义务数: {matrix['by_kind'].get('tiling_key_field_value', {}).get('total', 0)}",
+        f"- Branch true/false 义务数: {matrix['by_kind'].get('kernel_branch', {}).get('total', 0)}",
+        f"- Optional present/absent 义务数: {matrix['by_kind'].get('optional_input_mode', {}).get('total', 0)}",
+        f"- Relation Combination 义务数: {len([item for item in obligations if item['kind'] == 'tiling_key_relation' and item.get('coverage_bucket') in {'compatible_set', 'must_cover'}])}",
         f"- 不可达对象: {len(unreachable)}",
         f"- 未解决问题: {len(unresolved['blocking_hard_obligations']) + len(unresolved['unresolved_obligations'])}",
         f"- Contract 信息缺口: {len(unresolved['contract_gaps'])}",
@@ -474,11 +527,11 @@ def write_plan_outputs(out_root: Path, plan: dict[str, Any], snapshot: dict[str,
 def normalize_constraints(item: dict[str, Any]) -> dict[str, Any]:
     if isinstance(item.get("constraints"), dict) and "expr" in item["constraints"]:
         base = dict(item["constraints"])
-        for key in ("must_cover", "fields", "values", "boundary_values", "relation_type", "linked_relations"):
+        for key in ("must_cover", "combinations", "fields", "values", "boundary_values", "relation_type", "linked_relations"):
             if key in item:
                 base[key] = item[key]
         return base
-    keys = ("constraints", "must_cover", "fields", "values", "boundary_values", "relation_type", "linked_relations")
+    keys = ("constraints", "must_cover", "combinations", "fields", "values", "boundary_values", "relation_type", "linked_relations")
     return {key: item[key] for key in keys if key in item}
 
 
@@ -537,6 +590,13 @@ def _expr_eq(var_id: str, value: Any) -> dict[str, Any]:
     return {"expr": {"op": "eq", "var": var_id, "value": value}}
 
 
+def _combo_expr(combo: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "op": "and",
+        "args": [{"op": "eq", "var": _relation_var_id(str(key)), "value": value} for key, value in sorted(combo.items())],
+    }
+
+
 def _key_var_id(target_ref: str, field: str) -> str:
     if target_ref.startswith("KEY_"):
         return _var_id(target_ref)
@@ -544,7 +604,7 @@ def _key_var_id(target_ref: str, field: str) -> str:
 
 
 def _branch_var_id(target_ref: str) -> str:
-    if target_ref.startswith("KBR_"):
+    if target_ref.startswith(("KBR_", "KDEC_")):
         return _var_id(target_ref)
     return _var_id(f"BRANCH_{target_ref}")
 
@@ -558,6 +618,14 @@ def _var_id(name: str) -> str:
     if text.startswith("VAR_"):
         return text
     return f"VAR_{text or 'UNKNOWN'}"
+
+
+def _relation_var_id(ref: str) -> str:
+    if ref.startswith("VAR_"):
+        return ref
+    if ref.startswith(("KEY_", "TDF_", "KVAR_", "KBR_", "KDEC_")):
+        return _var_id(ref)
+    return _var_id(ref)
 
 
 def _bool_or_none(value: Any) -> bool | None:

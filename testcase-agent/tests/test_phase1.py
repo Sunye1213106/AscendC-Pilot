@@ -9,8 +9,10 @@ import pytest
 from testcase_agent import init as init_mod
 from testcase_agent.hashing import semantic_snapshot_hash
 from testcase_agent.init import TgInitError, tg_init
-from testcase_agent.io import read_json, read_yaml, write_json
+from testcase_agent.io import read_json, read_yaml, write_json, write_yaml
 from testcase_agent.planner import build_plan, tg_plan
+from testcase_agent.solve import tg_solve
+from testcase_agent.understand import UnderstandExportError, add_understand_to_path, export_testcase_contract
 
 
 def _repo(tmp_path: Path) -> tuple[Path, Path]:
@@ -84,6 +86,50 @@ def _payload(contract: dict[str, Any] | None = None, quality: dict[str, Any] | N
             "quality.yaml": quality or {"status": "pass", "decision": "pass"},
         },
     }
+
+
+def _real_uo_fixture(uo: Path, contract: dict[str, Any] | None = None) -> None:
+    contract = contract or _contract(
+        coverage_obligations={
+            "families": [{"id": "COV_FAM_MAIN", "target_refs": ["FAM_MAIN"], "priority": "hard"}],
+            "kernel_paths": [{"id": "COV_PATH_MAIN", "target_refs": ["KPATH_MAIN"], "priority": "hard"}],
+            "tiling_keys": [],
+            "tilingdata": [],
+            "numerical": [],
+        },
+        variables=[
+            {"id": "VAR_FAMILY", "type": "enum", "domain": ["FAM_MAIN"]},
+            {"id": "VAR_KERNEL_PATH", "type": "enum", "domain": ["KPATH_MAIN"]},
+        ],
+    )
+    files = {
+        "contracts/testcase.yaml": contract,
+        "test/contract.yaml": {"input_domain": {}, "typed_constraints": [], "kernel_branch_obligations": []},
+        "tiling/coverage_model.yaml": {
+            "family_obligations": [{"id": "COV_FAM_MAIN", "family_id": "FAM_MAIN", "priority": "hard"}],
+            "key_field_obligations": {"split_axis": {"id": "KEY_SPLIT_AXIS", "values": [0, 1, 2], "independent": True}},
+            "key_relation_obligations": [
+                {
+                    "id": "COV_REL_COMPAT",
+                    "relation_type": "compatible_set",
+                    "combinations": [
+                        {"KEY_SPLIT_AXIS": 0, "KBR_HAS_TAIL": True},
+                        {"KEY_SPLIT_AXIS": 1, "KBR_HAS_TAIL": True},
+                        {"KEY_SPLIT_AXIS": 2, "KBR_HAS_TAIL": False},
+                    ],
+                }
+            ],
+        },
+        "kernel/branches.yaml": {"branches": [{"id": "KBR_HAS_TAIL", "priority": "high"}]},
+        "cross_layer/impact_graph.yaml": {"nodes": [], "edges": [], "impacts": []},
+        "quality.yaml": {"status": "pass", "decision": "pass"},
+        "tiling/key_space.yaml": {"fields": [{"id": "KEY_SPLIT_AXIS", "kind": "key", "data_type": "int", "values": [0, 1, 2]}]},
+        "tiling/families.yaml": {"families": [{"id": "FAM_MAIN"}]},
+        "kernel/paths.yaml": {"kernel_paths": [{"id": "KPATH_MAIN"}]},
+        "registry/evidence.yaml": {"evidence": []},
+    }
+    for rel, data in files.items():
+        write_yaml(uo / rel, data)
 
 
 def _patch_intake(monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any], validation: dict[str, Any] | None = None) -> None:
@@ -307,6 +353,146 @@ def test_dtype_layout_class_generates_atomic_obligations() -> None:
     plan = build_plan({"op_name": "DemoOp", "files": _payload(contract)["files"], "snapshot_hash": "s"})
 
     assert [item["target_refs"][0] for item in plan["obligations"] if item["kind"] == "dtype_layout_class"] == ["BF16_ND", "FP16_TND"]
+
+
+def test_export_view_and_context_slice_are_merged(tmp_path: Path) -> None:
+    repo, uo = _repo(tmp_path)
+    _real_uo_fixture(uo)
+
+    payload = export_testcase_contract(repo, "DemoOp", uo)
+
+    assert set(payload["files"]) >= {
+        "contracts/testcase.yaml",
+        "test/contract.yaml",
+        "tiling/coverage_model.yaml",
+        "kernel/branches.yaml",
+        "cross_layer/impact_graph.yaml",
+        "quality.yaml",
+    }
+    assert payload["context_slice"]["entities"]
+    assert payload["context_slice"]["testcase_contract"] == payload["files"]["contracts/testcase.yaml"]
+
+
+def test_contract_view_context_mismatch_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo, uo = _repo(tmp_path)
+
+    def view(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {"files": {"contracts/testcase.yaml": {"version": 2, "value": "view"}}}
+
+    def context(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {"testcase_contract": {"version": 2, "value": "context"}}
+
+    add_understand_to_path(repo)
+    import understand_operator.scripts.kb_query_export as export_mod
+
+    monkeypatch.setattr(export_mod, "export_view", view)
+    monkeypatch.setattr(export_mod, "export_context_slice", context)
+
+    with pytest.raises(UnderstandExportError, match="CONTRACT_CONTEXT_MISMATCH"):
+        export_testcase_contract(repo, "DemoOp", uo)
+
+
+def test_context_entity_resolves_hard_ref(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo, _uo = _repo(tmp_path)
+    contract = _contract(
+        coverage_obligations={
+            "kernel_paths": [{"id": "COV_KERNEL_PATH_HARD", "priority": "hard", "target_refs": ["KPATH_CONTEXT"]}],
+            "tiling_keys": [],
+        }
+    )
+    payload = _payload(contract)
+    payload["context_slice"] = {"entities": [{"id": "KPATH_CONTEXT", "kind": "kernel_path"}], "relations": [], "paths": []}
+    _patch_intake(monkeypatch, payload)
+
+    result = tg_init(repo, "DemoOp")
+
+    assert result["validation_report"]["status"] in {"pass", "warn"}
+
+
+def test_compatible_set_and_must_cover_atomize_combinations() -> None:
+    files = _payload(
+        coverage={
+            "family_obligations": [],
+            "key_field_obligations": {},
+            "key_relation_obligations": [
+                {"id": "COV_COMPAT", "relation_type": "compatible_set", "combinations": [{"KEY_A": 0, "KEY_B": 0}, {"KEY_A": 0, "KEY_B": 0}, {"KEY_A": 1, "KEY_B": 1}]},
+                {"id": "COV_MUST", "relation_type": "must_cover", "must_cover": [{"KEY_A": 2}, {"KEY_A": 3}]},
+            ],
+        }
+    )["files"]
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"})
+    relation_obligations = [item for item in plan["obligations"] if item["kind"] == "tiling_key_relation"]
+
+    assert len([item for item in relation_obligations if item.get("parent_obligation_id") == "COV_COMPAT"]) == 2
+    assert len([item for item in relation_obligations if item.get("parent_obligation_id") == "COV_MUST"]) == 2
+    assert all(item.get("target_expr", {}).get("op") == "and" for item in relation_obligations)
+
+
+def test_unreachable_relation_combination_is_proof_required() -> None:
+    files = _payload(
+        coverage={
+            "family_obligations": [],
+            "key_field_obligations": {},
+            "key_relation_obligations": [{"id": "COV_COMPAT", "relation_type": "compatible_set", "combinations": [{"KEY_A": 0, "status": "unreachable"}]}],
+        }
+    )["files"]
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"})
+
+    relation = next(item for item in plan["obligations"] if item["kind"] == "tiling_key_relation")
+    assert relation["status"] == "proof_required"
+
+
+def test_review_mentions_tiling_key_value_kind() -> None:
+    files = _payload(
+        coverage={
+            "family_obligations": [],
+            "key_field_obligations": {"split_axis": {"id": "KEY_SPLIT_AXIS", "values": [0]}},
+            "key_relation_obligations": [],
+        }
+    )["files"]
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"})
+
+    assert "tiling_key_field_value" in plan["review"]
+    assert "TilingKey 原子值义务数" in plan["review"]
+
+
+def test_real_format_fixture_end_to_end_phase1_phase2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo, uo = _repo(tmp_path)
+    _real_uo_fixture(uo)
+    monkeypatch.setattr(init_mod, "run_final_validation", lambda project_root, op_name, uo_root: _validation())
+
+    init_result = tg_init(repo, "DemoOp")
+    plan = tg_plan(repo, "DemoOp")
+    root = repo / ".testcase-generator" / "DemoOp"
+    supplement_path = root / "plan" / "human_supplement.yaml"
+    write_yaml(
+        supplement_path,
+        {
+            "version": 1,
+            "status": "approved",
+            "decision": "approve",
+            "approved_snapshot_hash": init_result["snapshot"]["snapshot_hash"],
+            "approved_plan_hash": plan["plan_hash"],
+            "approved_at": "2026-01-01T00:00:00+00:00",
+            "supplements": [],
+            "notes": "",
+        },
+    )
+    solve = tg_solve(repo, "DemoOp")
+
+    snapshot = read_json(root / "snapshot" / "understand_contract.json")
+    assert "tiling/coverage_model.yaml" in snapshot["files"]
+    assert snapshot["context_slice"]["entities"]
+    assert plan["unresolved"]["contract_gaps"] == []
+    assert len([item for item in plan["obligations"] if item["kind"] == "tiling_key_field_value" and item["target_refs"] == ["KEY_SPLIT_AXIS"]]) == 3
+    assert len([item for item in plan["obligations"] if item["kind"] == "kernel_branch" and item["target_refs"] == ["KBR_HAS_TAIL"]]) == 2
+    branch_candidates = [item for item in solve["deduped_candidates"] if "KBR_HAS_TAIL" in item["coverage_signature"]["branch_truth"]]
+    assert len({item["id"] for item in branch_candidates}) >= 2
+    assert any(item["model"].get("VAR_KEY_SPLIT_AXIS") == 2 and item["status"] == "sat" for item in solve["solve_results"])
+    assert any(len(item["covered_obligation_ids"]) > 1 for item in solve["deduped_candidates"])
+    assert len([item for item in plan["obligations"] if item["kind"] == "tiling_key_relation" and item.get("parent_obligation_id") == "COV_REL_COMPAT"]) == 3
+    assert not list(root.rglob("*.csv"))
+    assert not (root / "run" / "operator_execution.yaml").exists()
 
 
 def test_conflicting_hard_obligation_blocks_approval(tmp_path: Path) -> None:

@@ -80,12 +80,17 @@ class ValidationReport:
 def validate_intake(export_payload: dict[str, Any], final_validation: dict[str, Any]) -> ValidationReport:
     report = ValidationReport()
     files = _as_dict(export_payload.get("files"))
+    context_slice = _as_dict(export_payload.get("context_slice"))
     contract = _as_dict(files.get("contracts/testcase.yaml"))
     quality = _as_dict(files.get("quality.yaml"))
 
     if not contract:
         report.add("MISSING_TESTCASE_CONTRACT", "error", "contracts/testcase.yaml is missing from testcase-contract export")
         return report
+
+    context_contract = _as_dict(context_slice.get("testcase_contract"))
+    if context_contract and context_contract != contract:
+        report.add("CONTRACT_CONTEXT_MISMATCH", "error", "contracts/testcase.yaml differs from context_slice.testcase_contract", "context_slice.testcase_contract")
 
     if int(contract.get("version") or 0) != 2:
         report.add(
@@ -115,8 +120,8 @@ def validate_intake(export_payload: dict[str, Any], final_validation: dict[str, 
     if not source_hashes:
         report.add("SOURCE_HASHES_MISSING", "error", "Snapshot source artifact hashes are required", "contracts/testcase.yaml", "source.canonical_hashes")
 
-    known_ids = collect_known_ids(files)
-    validate_stable_ids(files, report)
+    known_ids = collect_known_ids({"files": files, "context_slice": context_slice})
+    validate_stable_ids({"files": files, "context_slice": context_slice}, report)
     validate_hard_refs(contract, known_ids, report)
     validate_blocking_states(files, report)
     collect_warning_states(files, report)

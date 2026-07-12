@@ -168,8 +168,10 @@ class Z3Backend:
             if spec["type"] == "int":
                 domain = spec.get("domain") or {}
                 if isinstance(domain, dict):
-                    self._assert_tracked(solver, sym >= int(domain.get("min", 0)), f"domain:{var_id}:min", labels)
-                    self._assert_tracked(solver, sym <= int(domain.get("max", 1024)), f"domain:{var_id}:max", labels)
+                    if domain.get("min") is not None:
+                        self._assert_tracked(solver, sym >= int(domain["min"]), f"domain:{var_id}:min", labels)
+                    if domain.get("max") is not None:
+                        self._assert_tracked(solver, sym <= int(domain["max"]), f"domain:{var_id}:max", labels)
                 elif isinstance(domain, list) and domain:
                     self._assert_tracked(solver, z3.Or([sym == int(value) for value in domain]), f"domain:{var_id}:values", labels)
             elif spec["type"] == "enum":
