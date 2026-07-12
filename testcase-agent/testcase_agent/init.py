@@ -91,6 +91,8 @@ def tg_init(project_root: Path, op_name: str) -> dict[str, Any]:
         "op_name": op_name,
         "view": "testcase-contract",
         "understand_root": uo_root.as_posix(),
+        "contract_view": files,
+        "context_slice": export_payload.get("context_slice"),
         "files": files,
         "source_artifact_hashes": dict(sorted(source_hashes.items())),
         "final_validation": final_validation,

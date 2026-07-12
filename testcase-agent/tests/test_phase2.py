@@ -6,23 +6,25 @@ from typing import Any
 import pytest
 
 from testcase_agent.candidates import dedupe_candidates, greedy_set_cover
-from testcase_agent.constraint_ir import build_constraint_ir
+from testcase_agent.constraint_ir import build_constraint_ir, compile_obligation_target, parse_bool_literal
+from testcase_agent.hashing import semantic_plan_hash, semantic_snapshot_hash
 from testcase_agent.io import read_yaml, write_json, write_yaml
 from testcase_agent.solve import TgSolveError, solve_from_docs, tg_solve
 from testcase_agent.z3_backend import Z3Backend
 
 
 def _snapshot(contract: dict[str, Any] | None = None) -> dict[str, Any]:
-    return {
+    snapshot = {
         "version": 1,
         "op_name": "DemoOp",
         "view": "testcase-contract",
-        "snapshot_hash": "snap",
         "files": {
             "contracts/testcase.yaml": contract or _contract(),
             "quality.yaml": {"status": "pass"},
         },
     }
+    snapshot["snapshot_hash"] = semantic_snapshot_hash(snapshot)
+    return snapshot
 
 
 def _contract(**updates: Any) -> dict[str, Any]:
@@ -50,8 +52,8 @@ def _contract(**updates: Any) -> dict[str, Any]:
     return base
 
 
-def _obligations(items: list[dict[str, Any]]) -> dict[str, Any]:
-    return {"version": 1, "snapshot_hash": "snap", "obligations": items}
+def _obligations(items: list[dict[str, Any]], snapshot_hash: str | None = None) -> dict[str, Any]:
+    return {"version": 1, "snapshot_hash": snapshot_hash or "snap", "obligations": items}
 
 
 def _pending(oid: str, *, priority: str = "normal", constraints: dict[str, Any] | None = None, kind: str = "tiling_key_field", target_refs: list[str] | None = None) -> dict[str, Any]:
@@ -75,9 +77,31 @@ def _repo_with_phase1(tmp_path: Path, contract: dict[str, Any], obligations: dic
     root = repo / ".testcase-generator" / "DemoOp"
     (root / "snapshot").mkdir(parents=True)
     (root / "plan").mkdir(parents=True)
-    write_json(root / "snapshot" / "understand_contract.json", _snapshot(contract))
+    snapshot = _snapshot(contract)
+    obligations["snapshot_hash"] = snapshot["snapshot_hash"]
+    matrix = {"version": 1, "snapshot_hash": snapshot["snapshot_hash"], "by_kind": {}, "priority_counts": {}, "total": len(obligations.get("obligations", [])), "unreachable": []}
+    unresolved = {"version": 1, "snapshot_hash": snapshot["snapshot_hash"], "status": "ready_for_manual_review", "blocking_hard_obligations": [], "unresolved_obligations": [], "contract_gaps": []}
+    plan_hash = semantic_plan_hash(snapshot["snapshot_hash"], obligations.get("obligations", []), matrix, unresolved)
+    obligations["plan_hash"] = plan_hash
+    matrix["plan_hash"] = plan_hash
+    unresolved["plan_hash"] = plan_hash
+    write_json(root / "snapshot" / "understand_contract.json", snapshot)
     write_yaml(root / "plan" / "coverage_obligations.yaml", obligations)
-    write_yaml(root / "plan" / "human_supplement.yaml", supplement or {"version": 1, "decision": "approve", "supplements": []})
+    write_yaml(root / "plan" / "coverage_matrix.yaml", matrix)
+    write_yaml(root / "plan" / "unresolved.yaml", unresolved)
+    write_yaml(
+        root / "plan" / "human_supplement.yaml",
+        supplement
+        or {
+            "version": 1,
+            "decision": "approve",
+            "approved_snapshot_hash": snapshot["snapshot_hash"],
+            "approved_plan_hash": plan_hash,
+            "approved_at": "2026-01-01T00:00:00+00:00",
+            "supplements": [],
+            "notes": "",
+        },
+    )
     return repo
 
 
@@ -185,12 +209,14 @@ def test_unsupported_expression_fails_explicitly() -> None:
 def test_duplicate_candidate_dedupes() -> None:
     candidate = {
         "id": "CAND_A",
-        "coverage_signature": {"family_refs": ["FAM_A"], "covered_obligation_ids": ["OB1"]},
+        "coverage_signature": {"family_ref": "FAM_A"},
+        "source_obligation_ids": ["OB1"],
         "covered_obligation_ids": ["OB1"],
     }
     duplicate = {
         "id": "CAND_B",
-        "coverage_signature": {"family_refs": ["FAM_A"], "covered_obligation_ids": ["OB1"]},
+        "coverage_signature": {"family_ref": "FAM_A"},
+        "source_obligation_ids": ["OB2"],
         "covered_obligation_ids": ["OB1"],
     }
 
@@ -268,3 +294,153 @@ def test_tg_solve_writes_outputs(tmp_path: Path) -> None:
     assert (root / "candidates.yaml").exists()
     assert (root / "selected_candidates.yaml").exists()
     assert (root / "unsat_obligations.yaml").exists()
+
+
+def test_hard_targetless_obligation_is_error() -> None:
+    obligation = _pending("OB_NO_TARGET", priority="hard", constraints={}, kind="unknown_kind", target_refs=[])
+    result = compile_obligation_target(obligation, {"variables": []})
+
+    assert result.status == "error"
+    assert result.code == "OBLIGATION_TARGET_NOT_COMPILED"
+
+
+def test_normal_targetless_obligation_is_skipped() -> None:
+    obligation = _pending("OB_NO_TARGET", priority="normal", constraints={}, kind="unknown_kind", target_refs=[])
+    result = compile_obligation_target(obligation, {"variables": []})
+
+    assert result.status == "skipped"
+    assert result.code == "OBLIGATION_TARGET_NOT_COMPILED"
+
+
+def test_pipeline_resource_mode_compiles() -> None:
+    obligation = _pending("OB_PIPE", kind="pipeline_resource_mode", target_refs=["PIPE_SHARED"])
+    result = compile_obligation_target(obligation, {"variables": [{"id": "VAR_PIPELINE_RESOURCE_MODE"}]})
+
+    assert result.status == "ok"
+    assert result.expr == {"op": "eq", "var": "VAR_PIPELINE_RESOURCE_MODE", "value": "PIPE_SHARED"}
+
+
+def test_relation_mutex_and_implies_compile() -> None:
+    mutex = _pending("OB_MUTEX", kind="tiling_key_relation", constraints={"relation_type": "mutex", "fields": ["VAR_A", "VAR_B"]})
+    implies = _pending("OB_IMPLIES", kind="tiling_key_relation", constraints={"relation_type": "implies", "source": "VAR_A", "target": "VAR_B"})
+    ir = {"variables": [{"id": "VAR_A"}, {"id": "VAR_B"}]}
+
+    assert compile_obligation_target(mutex, ir).status == "ok"
+    assert compile_obligation_target(implies, ir).expr["op"] == "implies"
+
+
+def test_insufficient_relation_information_does_not_solve_sat() -> None:
+    obligation = _pending("OB_PAIRWISE", priority="high", kind="tiling_key_relation", constraints={"relation_type": "pairwise", "fields": ["VAR_A", "VAR_B"]})
+    result = solve_from_docs(_snapshot(), _obligations([obligation]), {"decision": "approve"})
+
+    assert result["solve_results"][0]["status"] == "error"
+    assert result["solve_results"][0]["code"] == "OBLIGATION_TARGET_NOT_COMPILED"
+    assert not result["candidates"]
+
+
+def test_one_model_can_cover_multiple_obligations() -> None:
+    obligations = _obligations(
+        [
+            _pending("OB_FAMILY", priority="hard", kind="family", target_refs=["FAM_A"]),
+            _pending("OB_PATH", priority="hard", kind="kernel_path", target_refs=["KPATH_A"]),
+            _pending("OB_BRANCH", priority="high", kind="kernel_branch", target_refs=["KBR_HAS_TAIL"], constraints={"expr": {"op": "eq", "var": "VAR_KBR_HAS_TAIL", "value": True}}),
+        ]
+    )
+    contract = _contract(
+        variables=[{"id": "VAR_FAMILY", "type": "enum", "domain": ["FAM_A"]}, {"id": "VAR_KERNEL_PATH", "type": "enum", "domain": ["KPATH_A"]}, {"id": "VAR_KBR_HAS_TAIL", "type": "bool"}],
+        typed_constraints=[{"id": "CON_BRANCH_TRUE", "expr": {"op": "eq", "var": "VAR_KBR_HAS_TAIL", "value": True}}],
+    )
+
+    result = solve_from_docs(_snapshot(contract), obligations, {"decision": "approve"})
+
+    assert any(set(candidate["covered_obligation_ids"]) == {"OB_BRANCH", "OB_FAMILY", "OB_PATH"} for candidate in result["deduped_candidates"])
+    assert len(result["selected_candidates"]) == 1
+
+
+def test_coverage_signature_excludes_obligation_ids_after_dedupe() -> None:
+    obligations = _obligations(
+        [
+            _pending("OB_A", constraints={"expr": {"op": "eq", "var": "VAR_ENUM", "value": "A"}}),
+            _pending("OB_A2", constraints={"expr": {"op": "eq", "var": "VAR_ENUM", "value": "A"}}),
+        ]
+    )
+    result = solve_from_docs(_snapshot(), obligations, {"decision": "approve"})
+
+    assert len(result["deduped_candidates"]) == 1
+    candidate = result["deduped_candidates"][0]
+    assert "covered_obligation_ids" not in candidate["coverage_signature"]
+    assert candidate["source_obligation_ids"] == ["OB_A", "OB_A2"]
+
+
+def test_unknown_variable_reference_fails_in_ir() -> None:
+    contract = _contract(typed_constraints=[{"id": "CON_UNKNOWN", "expr": {"op": "eq", "var": "VAR_MISSING", "value": 1}}])
+    result = build_constraint_ir(_snapshot(contract), _obligations([]), {"decision": "approve"})
+
+    assert any(error["code"] == "UNKNOWN_VARIABLE_REFERENCE" and error["variable_id"] == "VAR_MISSING" for error in result.errors)
+
+
+def test_context_slice_entities_create_ir_variables_without_top_level_variables() -> None:
+    snapshot = _snapshot(_contract(variables=[]))
+    snapshot["context_slice"] = {"entities": [{"id": "KEY_SPLIT_AXIS", "data_type": "int", "values": [0, 1]}, {"id": "KBR_HAS_TAIL", "data_type": "bool"}]}
+    result = build_constraint_ir(snapshot, _obligations([]), {"decision": "approve"})
+    variables = {item["id"]: item for item in result.ir["variables"]}
+
+    assert variables["VAR_KEY_SPLIT_AXIS"]["type"] == "int"
+    assert variables["VAR_KBR_HAS_TAIL"]["type"] == "bool"
+
+
+def test_tg_solve_rejects_stale_approval_and_plan_hash(tmp_path: Path) -> None:
+    repo = _repo_with_phase1(tmp_path, _contract(), _obligations([_pending("OB_A")]))
+    root = repo / ".testcase-generator" / "DemoOp"
+    supplement = read_yaml(root / "plan" / "human_supplement.yaml")
+    supplement["approved_plan_hash"] = "stale"
+    write_yaml(root / "plan" / "human_supplement.yaml", supplement)
+
+    with pytest.raises(TgSolveError, match="APPROVAL_PLAN_MISMATCH"):
+        tg_solve(repo, "DemoOp")
+
+
+def test_tg_solve_rejects_blocked_unresolved(tmp_path: Path) -> None:
+    repo = _repo_with_phase1(tmp_path, _contract(), _obligations([_pending("OB_A")]))
+    root = repo / ".testcase-generator" / "DemoOp"
+    unresolved = read_yaml(root / "plan" / "unresolved.yaml")
+    unresolved["status"] = "blocked"
+    unresolved["blocking_hard_obligations"] = [{"id": "OB_A"}]
+    plan_hash = semantic_plan_hash(
+        read_yaml(root / "plan" / "coverage_obligations.yaml")["snapshot_hash"],
+        read_yaml(root / "plan" / "coverage_obligations.yaml")["obligations"],
+        read_yaml(root / "plan" / "coverage_matrix.yaml"),
+        unresolved,
+    )
+    obligations_doc = read_yaml(root / "plan" / "coverage_obligations.yaml")
+    matrix = read_yaml(root / "plan" / "coverage_matrix.yaml")
+    supplement = read_yaml(root / "plan" / "human_supplement.yaml")
+    obligations_doc["plan_hash"] = plan_hash
+    matrix["plan_hash"] = plan_hash
+    unresolved["plan_hash"] = plan_hash
+    supplement["approved_plan_hash"] = plan_hash
+    write_yaml(root / "plan" / "coverage_obligations.yaml", obligations_doc)
+    write_yaml(root / "plan" / "coverage_matrix.yaml", matrix)
+    write_yaml(root / "plan" / "unresolved.yaml", unresolved)
+    write_yaml(root / "plan" / "human_supplement.yaml", supplement)
+
+    with pytest.raises(TgSolveError, match="PLAN_BLOCKED"):
+        tg_solve(repo, "DemoOp")
+
+
+def test_snapshot_hash_mismatch_is_rejected(tmp_path: Path) -> None:
+    repo = _repo_with_phase1(tmp_path, _contract(), _obligations([_pending("OB_A")]))
+    root = repo / ".testcase-generator" / "DemoOp"
+    snapshot = read_yaml(root / "snapshot" / "understand_contract.json")
+    snapshot["files"]["quality.yaml"]["status"] = "warn"
+    write_json(root / "snapshot" / "understand_contract.json", snapshot)
+
+    with pytest.raises(TgSolveError, match="SNAPSHOT_HASH_MISMATCH"):
+        tg_solve(repo, "DemoOp")
+
+
+def test_strict_bool_literal_parser() -> None:
+    assert parse_bool_literal("false") is False
+    assert parse_bool_literal("true") is True
+    with pytest.raises(Exception, match="INVALID_BOOL_LITERAL"):
+        parse_bool_literal("nope")

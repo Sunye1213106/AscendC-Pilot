@@ -41,6 +41,14 @@ class IRBuildResult:
     errors: list[dict[str, str]]
 
 
+@dataclass(frozen=True)
+class TargetCompileResult:
+    status: str
+    expr: dict[str, Any] | None
+    code: str = ""
+    reason: str = ""
+
+
 def build_constraint_ir(snapshot: dict[str, Any], obligations_doc: dict[str, Any], human_supplement: dict[str, Any] | None = None) -> IRBuildResult:
     files = snapshot.get("files") if isinstance(snapshot.get("files"), dict) else {}
     contract = _as_dict(files.get("contracts/testcase.yaml"))
@@ -50,6 +58,8 @@ def build_constraint_ir(snapshot: dict[str, Any], obligations_doc: dict[str, Any
     variables: dict[str, dict[str, Any]] = {}
     constraints: list[dict[str, Any]] = []
 
+    context_slice = _as_dict(snapshot.get("context_slice") or files.get("context_slice") or files.get("__context_slice__"))
+    _variables_from_context_slice(variables, context_slice)
     for spec in _iter_items(contract.get("variables")) + _iter_items(_as_dict(contract.get("constraint_ir")).get("variables")):
         _add_variable(variables, spec, errors, "contracts/testcase.yaml.variables")
     _variables_from_interface(variables, contract)
@@ -77,6 +87,18 @@ def build_constraint_ir(snapshot: dict[str, Any], obligations_doc: dict[str, Any
         except ConstraintIRError as exc:
             errors.append({"code": "UNSUPPORTED_EXPRESSION", "constraint_id": cid, "message": str(exc)})
 
+    for constraint in constraints:
+        for var_id in sorted(collect_expr_variables(constraint["expr"])):
+            if var_id not in variables:
+                errors.append(
+                    {
+                        "code": "UNKNOWN_VARIABLE_REFERENCE",
+                        "variable_id": var_id,
+                        "constraint_id": str(constraint["id"]),
+                        "message": f"Constraint references undeclared variable: {var_id}",
+                    }
+                )
+
     for var in list(variables.values()):
         if var["type"] == "enum" and not var.get("domain"):
             errors.append({"code": "ENUM_DOMAIN_REQUIRED", "variable_id": var["id"], "message": "Enum variables must declare an explicit domain"})
@@ -94,9 +116,26 @@ def build_constraint_ir(snapshot: dict[str, Any], obligations_doc: dict[str, Any
     return IRBuildResult(ir=ir, errors=errors)
 
 
+def compile_obligation_target(obligation: dict[str, Any], ir: dict[str, Any] | set[str]) -> TargetCompileResult:
+    variable_ids = set(ir) if isinstance(ir, set) else {str(item.get("id")) for item in ir.get("variables", []) if isinstance(item, dict)}
+    priority = str(obligation.get("priority") or "normal").lower()
+    try:
+        expr = obligation_target_expr(obligation, variable_ids)
+    except ConstraintIRError as exc:
+        return _target_failure(obligation, priority, str(exc))
+    if expr is None:
+        return _target_failure(obligation, priority, "Obligation has no compilable target expression")
+    unknown = sorted(var_id for var_id in collect_expr_variables(expr) if var_id not in variable_ids)
+    if unknown:
+        return _target_failure(obligation, priority, f"Target references undeclared variable(s): {', '.join(unknown)}")
+    return TargetCompileResult(status="ok", expr=expr)
+
+
 def obligation_target_expr(obligation: dict[str, Any], variable_ids: set[str]) -> dict[str, Any] | None:
     constraints = _as_dict(obligation.get("constraints"))
     hints = _as_dict(obligation.get("realization_hints"))
+    if isinstance(obligation.get("target_expr"), dict):
+        return normalize_expr(obligation["target_expr"])
     for key in ("expr", "constraint", "constraints"):
         if key in constraints:
             return normalize_expr(constraints[key])
@@ -116,14 +155,14 @@ def obligation_target_expr(obligation: dict[str, Any], variable_ids: set[str]) -
     if kind == "compile_template" and target_refs:
         return {"op": "eq", "var": "VAR_TEMPLATE", "value": target_refs[0]}
     if kind == "kernel_branch" and target_refs:
-        return {"op": "eq", "var": _var_id(f"branch_{target_refs[0]}"), "value": True}
+        return {"op": "eq", "var": _branch_var_id(target_refs[0]), "value": obligation.get("target_value", True)}
     if kind == "optional_input_mode" and target_refs:
-        return {"op": "eq", "var": _var_id(f"optional_{target_refs[0]}"), "value": True}
+        return {"op": "eq", "var": _optional_var_id(target_refs[0]), "value": obligation.get("target_value", True)}
     if kind == "dtype_layout_class" and target_refs:
         return {"op": "eq", "var": "VAR_DTYPE_LAYOUT_CLASS", "value": target_refs[0]}
     if kind == "numerical_mode" and target_refs:
         return {"op": "eq", "var": "VAR_NUMERICAL_MODE", "value": target_refs[0]}
-    if kind.endswith("_boundary") and target_refs:
+    if kind.endswith("_boundary") or kind == "pipeline_resource_mode":
         var = {
             "tilingdata_boundary": "VAR_TILINGDATA_BUCKET",
             "core_split_boundary": "VAR_CORE_SPLIT_BUCKET",
@@ -131,13 +170,53 @@ def obligation_target_expr(obligation: dict[str, Any], variable_ids: set[str]) -
             "workspace_boundary": "VAR_WORKSPACE_BUCKET",
             "pipeline_resource_mode": "VAR_PIPELINE_RESOURCE_MODE",
         }.get(kind)
-        if var:
+        if var and target_refs:
             return {"op": "eq", "var": var, "value": target_refs[0]}
+    if kind == "tiling_key_relation":
+        return compile_relation_expr(constraints)
     field = constraints.get("field") or constraints.get("field_name")
     values = constraints.get("values")
     if field and isinstance(values, list) and values:
-        return {"op": "eq", "var": _var_id(str(field)), "value": values[0]}
+        return {"op": "eq", "var": _var_id(f"KEY_{field}"), "value": values[0]}
     return None
+
+
+def compile_relation_expr(constraints: dict[str, Any]) -> dict[str, Any] | None:
+    relation_type = str(constraints.get("relation_type") or "").lower()
+    if not relation_type:
+        return None
+    if relation_type == "mutex":
+        fields = [str(item) for item in _as_list(constraints.get("fields")) if str(item)]
+        if len(fields) < 2:
+            raise ConstraintIRError("mutex relation requires at least two fields")
+        return {"op": "not", "arg": {"op": "and", "args": [{"op": "eq", "var": _relation_var_id(field), "value": True} for field in fields]}}
+    if relation_type in {"implies", "requires"}:
+        source = constraints.get("source")
+        target = constraints.get("target")
+        if not source or not target:
+            fields = [str(item) for item in _as_list(constraints.get("fields")) if str(item)]
+            if len(fields) >= 2:
+                source, target = fields[0], fields[1]
+        if not source or not target:
+            raise ConstraintIRError(f"{relation_type} relation requires source and target")
+        return {
+            "op": "implies",
+            "antecedent": {"op": "eq", "var": _relation_var_id(str(source)), "value": True},
+            "consequent": {"op": "eq", "var": _relation_var_id(str(target)), "value": True},
+        }
+    if relation_type == "compatible_set":
+        combinations = constraints.get("combinations") or constraints.get("must_cover")
+        if isinstance(combinations, list) and combinations:
+            args = []
+            for combo in combinations:
+                if isinstance(combo, dict):
+                    args.append({"op": "and", "args": [{"op": "eq", "var": _relation_var_id(str(key)), "value": value} for key, value in sorted(combo.items())]})
+            if args:
+                return args[0] if len(args) == 1 else {"op": "or", "args": args}
+        raise ConstraintIRError("compatible_set relation requires concrete combinations")
+    if relation_type in {"pairwise", "must_cover"}:
+        raise ConstraintIRError(f"{relation_type} relation does not provide a deterministic target expression")
+    raise ConstraintIRError(f"Unsupported relation_type: {relation_type}")
 
 
 def normalize_expr(expr: Any) -> dict[str, Any]:
@@ -196,14 +275,19 @@ def _add_variable(variables: dict[str, dict[str, Any]], spec: dict[str, Any], er
     if var_type not in SUPPORTED_VAR_TYPES:
         errors.append({"code": "UNSUPPORTED_VARIABLE_TYPE", "variable_id": var_id, "message": f"Unsupported variable type: {var_type}"})
         return
+    try:
+        derived = parse_bool_literal(spec.get("derived", False))
+    except ConstraintIRError as exc:
+        errors.append({"code": "INVALID_BOOL_LITERAL", "variable_id": var_id, "message": str(exc)})
+        return
     variables[var_id] = {
         "id": var_id,
         "name": str(spec.get("name") or spec.get("canonical_name") or var_id),
         "type": var_type,
         "domain": normalize_domain(var_type, spec),
         "stable_id": var_id,
-        "free": not bool(spec.get("derived")),
-        "derived": bool(spec.get("derived")),
+        "free": not derived,
+        "derived": derived,
         "definition": spec.get("definition") or spec.get("expr"),
         "source": source,
     }
@@ -219,7 +303,36 @@ def _variables_from_interface(variables: dict[str, dict[str, Any]], contract: di
     for item in _iter_items(interface.get("optional_inputs")):
         name = str(item.get("id") or item.get("name") or item.get("input") or "")
         if name:
-            _ensure_bool(variables, _var_id(f"optional_{name}"))
+            _ensure_bool(variables, _optional_var_id(name))
+
+
+def _variables_from_context_slice(variables: dict[str, dict[str, Any]], context_slice: dict[str, Any]) -> None:
+    for entity in _iter_items(context_slice.get("entities")):
+        entity_id = str(entity.get("id") or entity.get("stable_id") or "")
+        if not entity_id:
+            continue
+        var_id = _entity_var_id(entity_id)
+        if not var_id:
+            continue
+        data_type = str(entity.get("data_type") or entity.get("type") or entity.get("value_type") or "").lower()
+        domain = entity.get("domain") or entity.get("values") or entity.get("enum_values")
+        if entity_id.startswith(("KBR_", "KDEC_")) or data_type in {"bool", "boolean"}:
+            _ensure_bool(variables, var_id)
+        elif data_type in {"int", "integer"} or _list_is_ints(domain):
+            values = [int(value) for value in domain] if isinstance(domain, list) and domain else None
+            _ensure_int(variables, var_id, values)
+        elif isinstance(domain, list) and domain:
+            _ensure_enum(variables, var_id, [str(item) for item in domain])
+        elif entity_id.startswith(("KEY_", "TDF_", "KVAR_")):
+            _ensure_int(variables, var_id)
+        elif entity_id.startswith(("KPATH_", "KTPL_", "FAM_", "NUM_")):
+            bucket_var = {
+                "KPATH_": "VAR_KERNEL_PATH",
+                "KTPL_": "VAR_TEMPLATE",
+                "FAM_": "VAR_FAMILY",
+                "NUM_": "VAR_NUMERICAL_MODE",
+            }[next(prefix for prefix in ("KPATH_", "KTPL_", "FAM_", "NUM_") if entity_id.startswith(prefix))]
+            _ensure_enum(variables, bucket_var, [entity_id])
 
 
 def _variables_from_obligations(variables: dict[str, dict[str, Any]], obligations: list[dict[str, Any]]) -> None:
@@ -238,19 +351,24 @@ def _variables_from_obligations(variables: dict[str, dict[str, Any]], obligation
         refs = [str(ref) for ref in item.get("target_refs") or []]
         if kind == "kernel_branch":
             for ref in refs:
-                _ensure_bool(variables, _var_id(f"branch_{ref}"))
+                _ensure_bool(variables, _branch_var_id(ref))
         elif kind == "optional_input_mode":
             for ref in refs:
-                _ensure_bool(variables, _var_id(f"optional_{ref}"))
-        elif kind == "tiling_key_field":
+                _ensure_bool(variables, _optional_var_id(ref))
+        elif kind in {"tiling_key_field", "tiling_key_field_value"}:
             constraints = _as_dict(item.get("constraints"))
             field = str(constraints.get("field") or constraints.get("field_name") or (refs[0] if refs else ""))
             values = constraints.get("values")
+            target_value = item.get("target_value")
             if field:
+                var_id = _key_var_id(refs[0] if refs else field, field)
                 if isinstance(values, list) and all(isinstance(v, int) and not isinstance(v, bool) for v in values):
-                    _ensure_int(variables, _var_id(field), values)
+                    _ensure_int(variables, var_id, values)
+                elif isinstance(target_value, int) and not isinstance(target_value, bool):
+                    _ensure_int(variables, var_id, [target_value])
                 else:
-                    _ensure_enum(variables, _var_id(field), [str(v) for v in _as_list(values)] or refs)
+                    enum_values = [str(v) for v in _as_list(values)] or ([str(target_value)] if target_value not in (None, "") else refs)
+                    _ensure_enum(variables, var_id, enum_values)
         elif kind in {"tilingdata_boundary", "core_split_boundary", "tail_boundary", "workspace_boundary", "pipeline_resource_mode"}:
             var = {
                 "tilingdata_boundary": "VAR_TILINGDATA_BUCKET",
@@ -296,6 +414,44 @@ def normalize_domain(var_type: str, spec: dict[str, Any]) -> Any:
     return []
 
 
+def parse_bool_literal(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool) and value in {0, 1}:
+        return bool(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text == "true":
+            return True
+        if text == "false":
+            return False
+    raise ConstraintIRError(f"INVALID_BOOL_LITERAL: {value!r}")
+
+
+def collect_expr_variables(expr: Any) -> set[str]:
+    found: set[str] = set()
+
+    def visit(node: Any) -> None:
+        if isinstance(node, dict):
+            var = node.get("var") or node.get("variable")
+            if isinstance(var, str):
+                found.add(var)
+            for child in node.values():
+                visit(child)
+        elif isinstance(node, list):
+            for child in node:
+                visit(child)
+
+    visit(expr)
+    return found
+
+
+def _target_failure(obligation: dict[str, Any], priority: str, reason: str) -> TargetCompileResult:
+    if priority in {"hard", "high"}:
+        return TargetCompileResult(status="error", expr=None, code="OBLIGATION_TARGET_NOT_COMPILED", reason=reason)
+    return TargetCompileResult(status="skipped", expr=None, code="OBLIGATION_TARGET_NOT_COMPILED", reason=reason)
+
+
 def _ensure_bool(variables: dict[str, dict[str, Any]], var_id: str) -> None:
     variables.setdefault(var_id, {"id": var_id, "name": var_id, "type": "bool", "domain": [False, True], "stable_id": var_id, "free": True, "derived": False, "definition": None, "source": "derived_from_plan"})
 
@@ -314,6 +470,46 @@ def _ensure_enum(variables: dict[str, dict[str, Any]], var_id: str, domain: list
             variables[var_id]["domain"] = sorted(dict.fromkeys([*variables[var_id].get("domain", []), *clean]))
         return
     variables[var_id] = {"id": var_id, "name": var_id, "type": "enum", "domain": clean, "stable_id": var_id, "free": True, "derived": False, "definition": None, "source": "derived_from_plan"}
+
+
+def _key_var_id(target_ref: str, field: str) -> str:
+    if target_ref.startswith("KEY_"):
+        return _var_id(target_ref)
+    return _var_id(f"KEY_{field}")
+
+
+def _branch_var_id(target_ref: str) -> str:
+    if target_ref.startswith("KBR_"):
+        return _var_id(target_ref)
+    if target_ref.startswith("VAR_BRANCH_"):
+        return target_ref
+    return _var_id(f"BRANCH_{target_ref}")
+
+
+def _optional_var_id(ref: str) -> str:
+    if ref.startswith("VAR_OPTIONAL_"):
+        return ref
+    return _var_id(f"OPTIONAL_{ref}")
+
+
+def _relation_var_id(ref: str) -> str:
+    if ref.startswith("VAR_"):
+        return ref
+    if ref.startswith(("KEY_", "TDF_", "KVAR_", "KBR_", "KDEC_")):
+        return _var_id(ref)
+    return _var_id(ref)
+
+
+def _entity_var_id(entity_id: str) -> str:
+    if entity_id.startswith("VAR_"):
+        return entity_id
+    if entity_id.startswith(("KEY_", "TDF_", "KVAR_", "KBR_", "KDEC_", "PIPE_")):
+        return _var_id(entity_id)
+    return ""
+
+
+def _list_is_ints(value: Any) -> bool:
+    return isinstance(value, list) and bool(value) and all(isinstance(item, int) and not isinstance(item, bool) for item in value)
 
 
 def _collect_contract_targets(contract: dict[str, Any], bucket: str) -> list[str]:

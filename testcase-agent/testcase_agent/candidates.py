@@ -8,15 +8,16 @@ from .hashing import stable_hash
 PRIORITY_WEIGHT = {"hard": 100, "high": 10, "normal": 1}
 
 
-def build_candidate(obligation: dict[str, Any], solve_result: dict[str, Any]) -> dict[str, Any]:
+def build_candidate(obligation: dict[str, Any], solve_result: dict[str, Any], covered_obligation_ids: list[str] | None = None) -> dict[str, Any]:
     model = solve_result.get("model") if isinstance(solve_result.get("model"), dict) else {}
-    signature = coverage_signature(obligation, model)
+    signature = coverage_signature(model)
+    covered = sorted(dict.fromkeys(covered_obligation_ids or [str(obligation.get("id"))]))
     candidate = {
         "id": "",
-        "source_obligation_id": obligation.get("id"),
+        "source_obligation_ids": [str(obligation.get("id"))],
         "abstract_model": abstract_candidate_model(model, obligation),
         "coverage_signature": signature,
-        "covered_obligation_ids": [str(obligation.get("id"))],
+        "covered_obligation_ids": covered,
         "status": "candidate",
     }
     candidate["id"] = "CAND_" + stable_hash(signature)[:12].upper()
@@ -46,20 +47,20 @@ def abstract_candidate_model(model: dict[str, Any], obligation: dict[str, Any]) 
     }
 
 
-def coverage_signature(obligation: dict[str, Any], model: dict[str, Any]) -> dict[str, Any]:
-    kind = str(obligation.get("kind") or "")
-    target_refs = [str(ref) for ref in obligation.get("target_refs") or []]
-    key_refs = []
-    if kind in {"tiling_key_field", "tiling_key_relation"}:
-        key_refs = target_refs
+def coverage_signature(model: dict[str, Any]) -> dict[str, Any]:
     return {
-        "covered_obligation_ids": [str(obligation.get("id"))],
-        "key_refs": key_refs,
-        "family_refs": _refs_for(kind, target_refs, "family", model.get("VAR_FAMILY")),
-        "template_refs": _refs_for(kind, target_refs, "compile_template", model.get("VAR_TEMPLATE")),
-        "path_refs": _refs_for(kind, target_refs, "kernel_path", model.get("VAR_KERNEL_PATH")),
+        "key_fields": {key: value for key, value in sorted(model.items()) if key.startswith("VAR_KEY_")},
+        "family_ref": model.get("VAR_FAMILY"),
+        "template_ref": model.get("VAR_TEMPLATE"),
+        "path_ref": model.get("VAR_KERNEL_PATH"),
         "branch_truth": {key.removeprefix("VAR_BRANCH_"): value for key, value in sorted(model.items()) if key.startswith("VAR_BRANCH_")},
-        "tilingdata_buckets": [value for value in [model.get("VAR_TILINGDATA_BUCKET"), model.get("VAR_CORE_SPLIT_BUCKET"), model.get("VAR_TAIL_BUCKET"), model.get("VAR_WORKSPACE_BUCKET")] if value is not None],
+        "tilingdata_buckets": {
+            "TDF": model.get("VAR_TILINGDATA_BUCKET"),
+            "core_split": model.get("VAR_CORE_SPLIT_BUCKET"),
+            "tail": model.get("VAR_TAIL_BUCKET"),
+            "workspace": model.get("VAR_WORKSPACE_BUCKET"),
+            "pipeline_resource_mode": model.get("VAR_PIPELINE_RESOURCE_MODE"),
+        },
         "optional_input_mask": {key.removeprefix("VAR_OPTIONAL_").lower(): value for key, value in sorted(model.items()) if key.startswith("VAR_OPTIONAL_")},
         "dtype_layout_class": model.get("VAR_DTYPE_LAYOUT_CLASS"),
         "numerical_mode": model.get("VAR_NUMERICAL_MODE"),
@@ -75,8 +76,9 @@ def dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         existing = by_signature[signature_key]
         merged = sorted(set(existing["covered_obligation_ids"]) | set(candidate["covered_obligation_ids"]))
+        sources = sorted(set(existing.get("source_obligation_ids") or []) | set(candidate.get("source_obligation_ids") or []))
         existing["covered_obligation_ids"] = merged
-        existing["coverage_signature"]["covered_obligation_ids"] = merged
+        existing["source_obligation_ids"] = sources
     return sorted(by_signature.values(), key=lambda item: item["id"])
 
 
@@ -113,8 +115,3 @@ def greedy_set_cover(candidates: list[dict[str, Any]], obligations: list[dict[st
     ]
     return {"selected_candidates": selected, "uncovered_obligations": uncovered_items}
 
-
-def _refs_for(kind: str, target_refs: list[str], wanted_kind: str, model_value: Any) -> list[str]:
-    if kind == wanted_kind:
-        return target_refs
-    return [str(model_value)] if model_value else []

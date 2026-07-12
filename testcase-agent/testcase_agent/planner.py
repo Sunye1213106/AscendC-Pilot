@@ -6,12 +6,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .hashing import stable_hash
-from .io import ensure_output_dirs, output_root, read_json, write_yaml
+from .hashing import semantic_plan_hash, semantic_snapshot_hash, stable_hash
+from .io import ensure_output_dirs, output_root, read_json, read_yaml, write_yaml
 
 
 SUPPORTED_KINDS = [
     "family",
+    "tiling_key_field_value",
     "tiling_key_field",
     "tiling_key_relation",
     "compile_template",
@@ -44,6 +45,9 @@ def tg_plan(project_root: Path, op_name: str) -> dict[str, Any]:
         raise TgPlanError(f"Snapshot missing. Run tg-init first: {snapshot_path}")
 
     snapshot = read_json(snapshot_path)
+    expected_hash = semantic_snapshot_hash(snapshot)
+    if snapshot.get("snapshot_hash") != expected_hash:
+        raise TgPlanError("SNAPSHOT_HASH_MISMATCH: snapshot_hash does not match snapshot contents")
     plan = build_plan(snapshot)
     write_plan_outputs(out_root, plan, snapshot)
     return plan
@@ -75,6 +79,7 @@ def build_plan(snapshot: dict[str, Any]) -> dict[str, Any]:
         "contract_gaps": contract_gaps(contract, coverage),
     }
     review = build_review(snapshot, obligations, matrix, unresolved)
+    plan_hash = semantic_plan_hash(snapshot.get("snapshot_hash"), obligations, matrix, unresolved)
     return {
         "version": 1,
         "created_at": _now(),
@@ -83,7 +88,7 @@ def build_plan(snapshot: dict[str, Any]) -> dict[str, Any]:
         "matrix": matrix,
         "unresolved": unresolved,
         "review": review,
-        "plan_hash": stable_hash({"snapshot_hash": snapshot.get("snapshot_hash"), "obligations": obligations, "matrix": matrix, "unresolved": unresolved}),
+        "plan_hash": plan_hash,
     }
 
 
@@ -107,7 +112,7 @@ def add_key_field_obligations(out: list[dict[str, Any]], coverage: dict[str, Any
         if is_derived_or_bound(item):
             continue
         payload = {"field": field_name, **item}
-        out.append(make_obligation("tiling_key_field", payload, target_refs=[str(item.get("id") or field_name)], priority=item.get("priority") or "high"))
+        out.extend(expand_key_field_obligations(payload, priority=item.get("priority") or "high"))
 
     for item in _iter_items(_as_dict(contract.get("coverage_obligations")).get("tiling_keys")):
         kind = str(item.get("kind") or item.get("coverage_kind") or "").lower()
@@ -118,7 +123,7 @@ def add_key_field_obligations(out: list[dict[str, Any]], coverage: dict[str, Any
         if is_derived_or_bound(item):
             continue
         if item.get("field") or item.get("field_name") or item.get("values"):
-            out.append(make_obligation("tiling_key_field", item, priority=item.get("priority") or "high"))
+            out.extend(expand_key_field_obligations(item, priority=item.get("priority") or "high"))
 
 
 def add_key_relation_obligations(out: list[dict[str, Any]], coverage: dict[str, Any], contract: dict[str, Any]) -> None:
@@ -148,14 +153,15 @@ def add_contract_bucket_obligations(out: list[dict[str, Any]], contract: dict[st
     }
     for bucket, kind in bucket_kind.items():
         for item in _iter_items(buckets.get(bucket)):
-            out.append(make_obligation(kind, item, priority=item.get("priority") or default_priority(kind)))
+            if kind == "kernel_branch":
+                out.extend(expand_kernel_branch_obligations(item, priority=item.get("priority") or default_priority(kind)))
+            else:
+                out.append(make_obligation(kind, item, priority=item.get("priority") or default_priority(kind)))
 
 
 def add_kernel_branch_obligations(out: list[dict[str, Any]], branches: dict[str, Any]) -> None:
     for item in _iter_items(branches.get("branches")):
-        target = str(item.get("id") or item.get("branch_id") or item.get("name") or "")
-        if target:
-            out.append(make_obligation("kernel_branch", item, target_refs=[target], priority=item.get("priority") or "high"))
+        out.extend(expand_kernel_branch_obligations(item, priority=item.get("priority") or "high"))
 
 
 def add_interface_dimension_obligations(out: list[dict[str, Any]], contract: dict[str, Any]) -> None:
@@ -164,14 +170,18 @@ def add_interface_dimension_obligations(out: list[dict[str, Any]], contract: dic
         name = str(item.get("id") or item.get("name") or item.get("input") or "")
         if not name:
             continue
-        payload = {
-            "id": item.get("id") or f"optional_{name}",
-            "name": name,
-            "dimension_policy": "attach_to_reachable_family_or_path",
-            "notes": "Optional input modes are additional dimensions, not a family cartesian expansion.",
-            **item,
-        }
-        out.append(make_obligation("optional_input_mode", payload, target_refs=[name], priority=item.get("priority") or "normal"))
+        for state, value in (("present", True), ("absent", False)):
+            payload = {
+                "id": item.get("id") or f"optional_{name}_{state}",
+                "name": name,
+                "target_value": value,
+                "target_state": state,
+                "optional_state": state,
+                "dimension_policy": "additional_dimension_no_cartesian_product",
+                "notes": "Optional input modes are additional dimensions, not a family cartesian expansion.",
+                **item,
+            }
+            out.append(make_obligation("optional_input_mode", payload, target_refs=[_optional_ref(name)], priority=item.get("priority") or "normal"))
 
     for item in _iter_items(interface.get("dtype_layout_domains")):
         name = str(item.get("id") or item.get("name") or item.get("class") or item.get("dtype") or "")
@@ -190,6 +200,66 @@ def add_impact_resource_obligations(out: list[dict[str, Any]], impact: dict[str,
             out.append(make_obligation("pipeline_resource_mode", item, priority=item.get("priority") or "normal"))
 
 
+def expand_key_field_obligations(item: dict[str, Any], *, priority: str) -> list[dict[str, Any]]:
+    field = str(item.get("field") or item.get("field_name") or item.get("id") or "")
+    target_ref = str(item.get("target_ref") or item.get("id") or field)
+    if not field:
+        return []
+    fixed = item.get("compile_time_fixed") is True or item.get("fixed") is True
+    values = _as_list(item.get("values") or item.get("enum_values"))
+    if fixed:
+        fixed_value = item.get("value", values[0] if values else item.get("fixed_value"))
+        payload = {**item, "field": field, "target_value": fixed_value, "coverage_bucket": "fixed_value"}
+        payload["constraints"] = _expr_eq(_key_var_id(target_ref, field), fixed_value)
+        return [make_obligation("tiling_key_field_value", payload, target_refs=[target_ref], priority=priority)]
+    if values:
+        obligations = []
+        unreachable_values = {str(value) for value in _as_list(item.get("unreachable_values"))}
+        for value in values:
+            payload = {**item, "field": field, "target_value": value, "coverage_bucket": "discrete_value"}
+            payload["constraints"] = _expr_eq(_key_var_id(target_ref, field), value)
+            if str(value) in unreachable_values:
+                payload["reachability"] = "unreachable"
+                payload.setdefault("reason", "value marked unreachable by contract")
+            obligations.append(make_obligation("tiling_key_field_value", payload, target_refs=[target_ref], priority=priority))
+        return obligations
+    boundary_values = _as_list(item.get("boundary_values") or item.get("buckets"))
+    return [
+        make_obligation(
+            "tiling_key_field_value",
+            {**item, "field": field, "target_value": value, "coverage_bucket": "declared_boundary", "constraints": _expr_eq(_key_var_id(target_ref, field), value)},
+            target_refs=[target_ref],
+            priority=priority,
+        )
+        for value in boundary_values
+    ]
+
+
+def expand_kernel_branch_obligations(item: dict[str, Any], *, priority: str) -> list[dict[str, Any]]:
+    target = str(item.get("target_ref") or item.get("branch_ref") or item.get("id") or item.get("branch_id") or item.get("name") or "")
+    if not target:
+        return []
+    if "target_value" in item:
+        value = _bool_or_none(item["target_value"])
+        if value is None:
+            return []
+        payload = {**item, "target_value": value, "constraints": _expr_eq(_branch_var_id(target), value)}
+        return [make_obligation("kernel_branch", payload, target_refs=[target], priority=priority)]
+    if item.get("single_side") is True or item.get("cover_false") is False:
+        values = [True]
+    else:
+        values = [True, False]
+    unreachable_values = {str(_bool_or_none(value)).lower() for value in _as_list(item.get("unreachable_values") or item.get("unreachable_sides"))}
+    obligations = []
+    for value in values:
+        payload = {**item, "target_value": value, "target_state": str(value).lower(), "constraints": _expr_eq(_branch_var_id(target), value)}
+        if str(value).lower() in unreachable_values:
+            payload["reachability"] = "unreachable"
+            payload.setdefault("reason", f"branch side {value} marked unreachable by contract")
+        obligations.append(make_obligation("kernel_branch", payload, target_refs=[target], priority=priority))
+    return obligations
+
+
 def make_obligation(kind: str, item: dict[str, Any], *, target_refs: list[str] | None = None, priority: str = "normal") -> dict[str, Any]:
     reachability = str(item.get("reachability") or item.get("reachable") or "").lower()
     if str(item.get("status") or "").lower() in UNREACHABLE:
@@ -206,7 +276,7 @@ def make_obligation(kind: str, item: dict[str, Any], *, target_refs: list[str] |
     refs = [str(ref) for ref in (target_refs if target_refs is not None else _as_list(item.get("target_refs") or item.get("target_ref") or item.get("family_refs") or item.get("family_id") or item.get("id"))) if str(ref)]
     source_refs = [str(ref) for ref in _as_list(item.get("source_refs") or item.get("source_ref")) if str(ref)]
     evidence_refs = [str(ref) for ref in _as_list(item.get("evidence_refs") or item.get("evidence_ref")) if str(ref)]
-    return {
+    obligation = {
         "id": "",
         "kind": kind,
         "target_refs": sorted(dict.fromkeys(refs)),
@@ -219,6 +289,10 @@ def make_obligation(kind: str, item: dict[str, Any], *, target_refs: list[str] |
         "evidence_refs": sorted(dict.fromkeys(evidence_refs)),
         "unresolved_reason": unresolved_reason,
     }
+    for key in ("target_value", "target_state", "target_expr", "parent_obligation_id", "coverage_bucket", "optional_state"):
+        if key in item:
+            obligation[key] = item[key]
+    return obligation
 
 
 def deterministic_obligations(obligations: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -231,6 +305,8 @@ def deterministic_obligations(obligations: list[dict[str, Any]]) -> list[dict[st
         key=lambda item: (
             KIND_ORDER.get(item["kind"], 999),
             ",".join(item.get("target_refs") or []),
+            str(item.get("target_value", "")),
+            str(item.get("target_state", "")),
             item.get("priority", ""),
             stable_hash(item),
         ),
@@ -353,8 +429,8 @@ def build_review(snapshot: dict[str, Any], obligations: list[dict[str, Any]], ma
 
 def write_plan_outputs(out_root: Path, plan: dict[str, Any], snapshot: dict[str, Any]) -> None:
     write_yaml(out_root / "plan" / "coverage_obligations.yaml", {"version": 1, "snapshot_hash": snapshot.get("snapshot_hash"), "obligations": plan["obligations"], "plan_hash": plan["plan_hash"]})
-    write_yaml(out_root / "plan" / "coverage_matrix.yaml", {"version": 1, "snapshot_hash": snapshot.get("snapshot_hash"), **plan["matrix"]})
-    write_yaml(out_root / "plan" / "unresolved.yaml", {"version": 1, "snapshot_hash": snapshot.get("snapshot_hash"), **plan["unresolved"]})
+    write_yaml(out_root / "plan" / "coverage_matrix.yaml", {"version": 1, "snapshot_hash": snapshot.get("snapshot_hash"), **plan["matrix"], "plan_hash": plan["plan_hash"]})
+    write_yaml(out_root / "plan" / "unresolved.yaml", {"version": 1, "snapshot_hash": snapshot.get("snapshot_hash"), **plan["unresolved"], "plan_hash": plan["plan_hash"]})
     (out_root / "plan" / "review.md").write_text(plan["review"], encoding="utf-8")
     supplement = out_root / "plan" / "human_supplement.yaml"
     if not supplement.exists():
@@ -364,14 +440,44 @@ def write_plan_outputs(out_root: Path, plan: dict[str, Any], snapshot: dict[str,
                 "version": 1,
                 "status": "pending",
                 "decision": "",
+                "approved_snapshot_hash": "",
+                "approved_plan_hash": "",
+                "approved_at": "",
                 "options": ["approve", "revise", "supplement", "stop"],
                 "supplements": [],
                 "notes": "Human input is independent from Understand Canonical KB.",
             },
         )
+    else:
+        current = read_yaml(supplement)
+        changed = (
+            current.get("approved_snapshot_hash") not in {"", snapshot.get("snapshot_hash")}
+            or current.get("approved_plan_hash") not in {"", plan["plan_hash"]}
+        )
+        current.setdefault("version", 1)
+        current.setdefault("supplements", [])
+        current.setdefault("notes", "")
+        current.setdefault("approved_at", "")
+        if changed:
+            current["status"] = "reapproval_required"
+            current["decision"] = ""
+            current["approved_snapshot_hash"] = ""
+            current["approved_plan_hash"] = ""
+        else:
+            current.setdefault("status", "pending")
+            current.setdefault("decision", "")
+            current.setdefault("approved_snapshot_hash", "")
+            current.setdefault("approved_plan_hash", "")
+        write_yaml(supplement, current)
 
 
 def normalize_constraints(item: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(item.get("constraints"), dict) and "expr" in item["constraints"]:
+        base = dict(item["constraints"])
+        for key in ("must_cover", "fields", "values", "boundary_values", "relation_type", "linked_relations"):
+            if key in item:
+                base[key] = item[key]
+        return base
     keys = ("constraints", "must_cover", "fields", "values", "boundary_values", "relation_type", "linked_relations")
     return {key: item[key] for key in keys if key in item}
 
@@ -425,6 +531,47 @@ def _as_list(value: Any) -> list[Any]:
     if value in (None, "", {}, []):
         return []
     return [value]
+
+
+def _expr_eq(var_id: str, value: Any) -> dict[str, Any]:
+    return {"expr": {"op": "eq", "var": var_id, "value": value}}
+
+
+def _key_var_id(target_ref: str, field: str) -> str:
+    if target_ref.startswith("KEY_"):
+        return _var_id(target_ref)
+    return _var_id(f"KEY_{field}")
+
+
+def _branch_var_id(target_ref: str) -> str:
+    if target_ref.startswith("KBR_"):
+        return _var_id(target_ref)
+    return _var_id(f"BRANCH_{target_ref}")
+
+
+def _optional_ref(name: str) -> str:
+    return name if name.startswith("VAR_OPTIONAL_") else _var_id(f"OPTIONAL_{name}")
+
+
+def _var_id(name: str) -> str:
+    text = "".join(ch if ch.isalnum() else "_" for ch in str(name)).strip("_").upper()
+    if text.startswith("VAR_"):
+        return text
+    return f"VAR_{text or 'UNKNOWN'}"
+
+
+def _bool_or_none(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text == "true":
+            return True
+        if text == "false":
+            return False
+    return None
 
 
 def _now() -> str:

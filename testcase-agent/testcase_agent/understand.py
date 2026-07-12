@@ -52,6 +52,27 @@ def run_final_validation(project_root: Path, op_name: str, uo_root: Path) -> dic
 def export_testcase_contract(project_root: Path, op_name: str, uo_root: Path) -> dict[str, Any]:
     add_understand_to_path(project_root)
     try:
+        from understand_operator.scripts.kb_query_export import export_context_slice
+
+        payload = export_context_slice(uo_root, op_name, view="testcase-contract", detail_level="full")
+        if isinstance(payload, dict) and "files" in payload:
+            payload.setdefault("context_slice", {key: payload.get(key) for key in ("testcase_contract", "entities", "relations", "upstream", "downstream", "paths", "evidence", "unresolved", "conflicts", "source_artifacts") if key in payload})
+            return payload
+        if isinstance(payload, dict):
+            contract = payload.get("testcase_contract") or payload.get("contract") or {}
+            return {
+                "op_name": op_name,
+                "uo_root": uo_root.as_posix(),
+                "view": "testcase-contract",
+                "context_slice": payload,
+                "files": {
+                    "contracts/testcase.yaml": contract,
+                    "__context_slice__": payload,
+                },
+            }
+    except Exception:
+        pass
+    try:
         from understand_operator.scripts.kb_query_export import export_view
     except Exception as exc:  # pragma: no cover
         raise RuntimeError(f"uo-kb-export testcase-contract view is unavailable: {exc}") from exc

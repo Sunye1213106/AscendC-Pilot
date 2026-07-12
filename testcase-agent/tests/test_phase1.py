@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from testcase_agent import init as init_mod
+from testcase_agent.hashing import semantic_snapshot_hash
 from testcase_agent.init import TgInitError, tg_init
 from testcase_agent.io import read_json, read_yaml, write_json
 from testcase_agent.planner import build_plan, tg_plan
@@ -93,17 +94,15 @@ def _patch_intake(monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any], vali
 def _snapshot(repo: Path, files: dict[str, Any]) -> None:
     root = repo / ".testcase-generator" / "DemoOp" / "snapshot"
     root.mkdir(parents=True)
-    write_json(
-        root / "understand_contract.json",
-        {
-            "version": 1,
-            "op_name": "DemoOp",
-            "view": "testcase-contract",
-            "files": files,
-            "source_artifact_hashes": {"contracts/testcase.yaml": "a" * 64},
-            "snapshot_hash": "snapshot-hash",
-        },
-    )
+    snapshot = {
+        "version": 1,
+        "op_name": "DemoOp",
+        "view": "testcase-contract",
+        "files": files,
+        "source_artifact_hashes": {"contracts/testcase.yaml": "a" * 64},
+    }
+    snapshot["snapshot_hash"] = semantic_snapshot_hash(snapshot)
+    write_json(root / "understand_contract.json", snapshot)
 
 
 def _tree_hash(root: Path) -> dict[str, str]:
@@ -216,9 +215,10 @@ def test_derived_field_is_not_free_obligation(tmp_path: Path) -> None:
     )["files"]
     plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"})
 
-    fields = [item for item in plan["obligations"] if item["kind"] == "tiling_key_field"]
+    fields = [item for item in plan["obligations"] if item["kind"] == "tiling_key_field_value"]
     assert len(fields) == 1
     assert fields[0]["target_refs"] == ["layout"]
+    assert fields[0]["target_value"] == "ND"
 
 
 def test_unreachable_and_reachable_are_distinguished(tmp_path: Path) -> None:
@@ -253,7 +253,60 @@ def test_optional_input_does_not_replicate_all_families(tmp_path: Path) -> None:
     plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"})
 
     assert len([item for item in plan["obligations"] if item["kind"] == "family"]) == 2
-    assert len([item for item in plan["obligations"] if item["kind"] == "optional_input_mode"]) == 2
+    assert len([item for item in plan["obligations"] if item["kind"] == "optional_input_mode"]) == 4
+
+
+def test_key_field_values_expand_to_atomic_obligations() -> None:
+    files = _payload(
+        coverage={
+            "family_obligations": [],
+            "key_field_obligations": {"split_axis": {"id": "KEY_SPLIT_AXIS", "values": [0, 1, 2], "independent": True}},
+            "key_relation_obligations": [],
+        }
+    )["files"]
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"})
+
+    fields = [item for item in plan["obligations"] if item["kind"] == "tiling_key_field_value"]
+    assert [item["target_value"] for item in fields] == [0, 1, 2]
+    assert all(item["constraints"]["expr"]["var"] == "VAR_KEY_SPLIT_AXIS" for item in fields)
+
+
+def test_fixed_key_field_generates_one_obligation() -> None:
+    files = _payload(
+        coverage={
+            "family_obligations": [],
+            "key_field_obligations": {"mode": {"id": "KEY_MODE", "values": [1, 2], "compile_time_fixed": True, "value": 2}},
+            "key_relation_obligations": [],
+        }
+    )["files"]
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"})
+
+    fields = [item for item in plan["obligations"] if item["kind"] == "tiling_key_field_value"]
+    assert len(fields) == 1
+    assert fields[0]["target_value"] == 2
+
+
+def test_kernel_branch_expands_true_false_and_unreachable_side() -> None:
+    files = _payload(
+        _contract(
+            coverage_obligations={
+                "kernel_branches": [{"id": "KBR_HAS_TAIL", "unreachable_values": [False]}],
+                "tiling_keys": [],
+            }
+        )
+    )["files"]
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"})
+
+    branches = [item for item in plan["obligations"] if item["kind"] == "kernel_branch"]
+    assert [item["target_value"] for item in branches] == [False, True]
+    assert {item["target_value"]: item["status"] for item in branches}[False] == "proof_required"
+
+
+def test_dtype_layout_class_generates_atomic_obligations() -> None:
+    contract = _contract(interface={"optional_inputs": [], "dtype_layout_domains": [{"id": "FP16_TND"}, {"id": "BF16_ND"}]})
+    plan = build_plan({"op_name": "DemoOp", "files": _payload(contract)["files"], "snapshot_hash": "s"})
+
+    assert [item["target_refs"][0] for item in plan["obligations"] if item["kind"] == "dtype_layout_class"] == ["BF16_ND", "FP16_TND"]
 
 
 def test_conflicting_hard_obligation_blocks_approval(tmp_path: Path) -> None:

@@ -15,4 +15,11 @@ After it completes, stop for human review. In OpenCode, prefer a `question` sele
 - `supplement`: add human test focus
 - `stop`: stop
 
-Human supplements must be written to `.testcase-generator/<op_name>/plan/human_supplement.yaml`. Do not modify Understand Canonical KB.
+Human supplements must be written to `.testcase-generator/<op_name>/plan/human_supplement.yaml`. Approval requires:
+
+- `decision: approve`
+- `approved_snapshot_hash: <current snapshot_hash>`
+- `approved_plan_hash: <current plan_hash>`
+- `approved_at: <review timestamp>`
+
+Do not modify Understand Canonical KB.

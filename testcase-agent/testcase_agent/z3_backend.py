@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .constraint_ir import ConstraintIRError, normalize_expr, obligation_target_expr
+from .constraint_ir import ConstraintIRError, compile_obligation_target, normalize_expr, parse_bool_literal
 
 
 class Z3BackendError(RuntimeError):
@@ -47,9 +47,17 @@ class Z3Backend:
             self._add_base_domains(solver, labels)
             self._add_derived_constraints(solver, labels)
             self._add_contract_constraints(solver, labels)
-            target_expr = obligation_target_expr(obligation, variable_ids or set(self.variables))
-            if target_expr is not None:
-                self._assert_tracked(solver, self._compile_bool(target_expr), f"obligation:{obligation.get('id')}", labels)
+            target = compile_obligation_target(obligation, self.ir)
+            if target.status != "ok":
+                return {
+                    "obligation_id": obligation.get("id"),
+                    "status": target.status,
+                    "code": target.code,
+                    "model": {},
+                    "unsat_core": [],
+                    "reason": target.reason,
+                }
+            self._assert_tracked(solver, self._compile_bool(target.expr), f"obligation:{obligation.get('id')}", labels)
             check = solver.check()
             if check == z3.sat:
                 model = solver.model()
@@ -85,6 +93,35 @@ class Z3Backend:
             }
         finally:
             solver.pop()
+
+    def evaluate_model_coverage(self, model: dict[str, Any], obligations: list[dict[str, Any]]) -> list[str]:
+        covered: list[str] = []
+        for obligation in obligations:
+            if obligation.get("status") in {"proof_required", "conflicting", "unresolved"}:
+                continue
+            target = compile_obligation_target(obligation, self.ir)
+            if target.status != "ok":
+                continue
+            if self.model_satisfies(model, target.expr):
+                covered.append(str(obligation.get("id")))
+        return sorted(dict.fromkeys(covered))
+
+    def model_satisfies(self, model: dict[str, Any], expr: dict[str, Any]) -> bool:
+        z3 = self.z3
+        solver = z3.Solver()
+        solver.set(timeout=self.config.timeout_ms)
+        labels: dict[str, str] = {}
+        try:
+            self._add_base_domains(solver, labels)
+            self._add_derived_constraints(solver, labels)
+            self._add_contract_constraints(solver, labels)
+            for var_id, value in sorted(model.items()):
+                if var_id in self.variables and not self.variables[var_id].get("derived"):
+                    solver.add(self.symbols[var_id] == self._value(var_id, value))
+            solver.add(self._compile_bool(expr))
+            return solver.check() == z3.sat
+        except (ConstraintIRError, Z3BackendError, TypeError, ValueError):
+            return False
 
     def abstract_model(self, model: Any) -> dict[str, Any]:
         out: dict[str, Any] = {}
@@ -165,27 +202,33 @@ class Z3Backend:
         op = expr["op"]
         if op == "eq":
             if "lhs" in expr:
-                return self._literal_or_expr(expr["lhs"]) == self._literal_or_expr(expr["rhs"])
+                lhs, rhs = self._binary_values(expr["lhs"], expr["rhs"])
+                return lhs == rhs
             return self._symbol(expr["var"]) == self._value(expr["var"], expr.get("value"))
         if op == "ne":
             if "lhs" in expr:
-                return self._literal_or_expr(expr["lhs"]) != self._literal_or_expr(expr["rhs"])
+                lhs, rhs = self._binary_values(expr["lhs"], expr["rhs"])
+                return lhs != rhs
             return self._symbol(expr["var"]) != self._value(expr["var"], expr.get("value"))
         if op == "lt":
             if "lhs" in expr:
-                return self._literal_or_expr(expr["lhs"]) < self._literal_or_expr(expr["rhs"])
+                lhs, rhs = self._binary_values(expr["lhs"], expr["rhs"])
+                return lhs < rhs
             return self._symbol(expr["var"]) < self._value(expr["var"], expr.get("value"))
         if op == "le":
             if "lhs" in expr:
-                return self._literal_or_expr(expr["lhs"]) <= self._literal_or_expr(expr["rhs"])
+                lhs, rhs = self._binary_values(expr["lhs"], expr["rhs"])
+                return lhs <= rhs
             return self._symbol(expr["var"]) <= self._value(expr["var"], expr.get("value"))
         if op == "gt":
             if "lhs" in expr:
-                return self._literal_or_expr(expr["lhs"]) > self._literal_or_expr(expr["rhs"])
+                lhs, rhs = self._binary_values(expr["lhs"], expr["rhs"])
+                return lhs > rhs
             return self._symbol(expr["var"]) > self._value(expr["var"], expr.get("value"))
         if op == "ge":
             if "lhs" in expr:
-                return self._literal_or_expr(expr["lhs"]) >= self._literal_or_expr(expr["rhs"])
+                lhs, rhs = self._binary_values(expr["lhs"], expr["rhs"])
+                return lhs >= rhs
             return self._symbol(expr["var"]) >= self._value(expr["var"], expr.get("value"))
         if op == "in":
             return z3.Or([self._symbol(expr["var"]) == self._value(expr["var"], value) for value in expr["values"]])
@@ -260,6 +303,15 @@ class Z3Backend:
             return self.z3.IntVal(value)
         return value
 
+    def _binary_values(self, lhs: Any, rhs: Any) -> tuple[Any, Any]:
+        lhs_var = lhs.get("var") if isinstance(lhs, dict) and "var" in lhs and "op" not in lhs else None
+        rhs_var = rhs.get("var") if isinstance(rhs, dict) and "var" in rhs and "op" not in rhs else None
+        if lhs_var and not rhs_var and not isinstance(rhs, dict):
+            return self._symbol(str(lhs_var)), self._value(str(lhs_var), rhs)
+        if rhs_var and not lhs_var and not isinstance(lhs, dict):
+            return self._value(str(rhs_var), lhs), self._symbol(str(rhs_var))
+        return self._literal_or_expr(lhs), self._literal_or_expr(rhs)
+
     def _symbol(self, var_id: str) -> Any:
         if var_id not in self.symbols:
             raise Z3BackendError(f"Unknown variable: {var_id}")
@@ -274,7 +326,7 @@ class Z3Backend:
                 raise Z3BackendError(f"Value {value} is outside enum domain for {var_id}")
             return self.enum_value_to_int[var_id][str(value)]
         if spec["type"] == "bool":
-            return bool(value)
+            return parse_bool_literal(value)
         return int(value)
 
     def _assert_tracked(self, solver: Any, expr: Any, label: str, labels: dict[str, str]) -> None:

@@ -6,6 +6,7 @@ from typing import Any
 
 from .candidates import build_candidate, dedupe_candidates, greedy_set_cover
 from .constraint_ir import build_constraint_ir
+from .hashing import semantic_plan_hash, semantic_snapshot_hash
 from .io import ensure_output_dirs, output_root, read_json, read_yaml, write_yaml
 from .z3_backend import SolveConfig, Z3Backend
 
@@ -20,25 +21,47 @@ def tg_solve(project_root: Path, op_name: str, *, timeout_ms: int = 5000) -> dic
     ensure_output_dirs(out_root)
     snapshot_path = out_root / "snapshot" / "understand_contract.json"
     obligations_path = out_root / "plan" / "coverage_obligations.yaml"
+    matrix_path = out_root / "plan" / "coverage_matrix.yaml"
+    unresolved_path = out_root / "plan" / "unresolved.yaml"
     supplement_path = out_root / "plan" / "human_supplement.yaml"
     if not snapshot_path.exists():
         raise TgSolveError(f"Missing phase-one snapshot: {snapshot_path}")
     if not obligations_path.exists():
         raise TgSolveError(f"Missing phase-one coverage plan: {obligations_path}")
+    if not matrix_path.exists():
+        raise TgSolveError(f"Missing phase-one coverage matrix: {matrix_path}")
+    if not unresolved_path.exists():
+        raise TgSolveError(f"Missing phase-one unresolved report: {unresolved_path}")
     if not supplement_path.exists():
         raise TgSolveError(f"Missing phase-one approval result: {supplement_path}")
 
     snapshot = read_json(snapshot_path)
+    if snapshot.get("snapshot_hash") != semantic_snapshot_hash(snapshot):
+        raise TgSolveError("SNAPSHOT_HASH_MISMATCH: snapshot_hash does not match snapshot contents")
     obligations_doc = read_yaml(obligations_path)
+    matrix_doc = read_yaml(matrix_path)
+    unresolved_doc = read_yaml(unresolved_path)
     supplement = read_yaml(supplement_path)
-    _require_approval(supplement)
+    plan_hash = semantic_plan_hash(snapshot.get("snapshot_hash"), obligations_doc.get("obligations", []), matrix_doc, unresolved_doc)
+    recorded_plan_hash = obligations_doc.get("plan_hash") or matrix_doc.get("plan_hash") or unresolved_doc.get("plan_hash")
+    if recorded_plan_hash != plan_hash:
+        raise TgSolveError("PLAN_HASH_MISMATCH: plan_hash does not match phase-one plan contents")
+    _require_approval(supplement, snapshot.get("snapshot_hash"), plan_hash, unresolved_doc)
 
-    result = solve_from_docs(snapshot, obligations_doc, supplement, timeout_ms=timeout_ms)
+    result = solve_from_docs(snapshot, obligations_doc, supplement, timeout_ms=timeout_ms, matrix_doc=matrix_doc, unresolved_doc=unresolved_doc)
     write_solve_outputs(out_root, result)
     return result
 
 
-def solve_from_docs(snapshot: dict[str, Any], obligations_doc: dict[str, Any], supplement: dict[str, Any], *, timeout_ms: int = 5000) -> dict[str, Any]:
+def solve_from_docs(
+    snapshot: dict[str, Any],
+    obligations_doc: dict[str, Any],
+    supplement: dict[str, Any],
+    *,
+    timeout_ms: int = 5000,
+    matrix_doc: dict[str, Any] | None = None,
+    unresolved_doc: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     obligations = [item for item in obligations_doc.get("obligations", []) if isinstance(item, dict)]
     ir_result = build_constraint_ir(snapshot, obligations_doc, supplement)
     ir = ir_result.ir
@@ -57,7 +80,8 @@ def solve_from_docs(snapshot: dict[str, Any], obligations_doc: dict[str, Any], s
             result = backend.solve_one(obligation)
             solve_results.append(result)
             if result["status"] == "sat":
-                candidates.append(build_candidate(obligation, result))
+                covered_ids = backend.evaluate_model_coverage(result.get("model") or {}, obligations)
+                candidates.append(build_candidate(obligation, result, covered_ids))
             elif result["status"] == "unsat":
                 unsat.append(
                     {
@@ -79,7 +103,7 @@ def solve_from_docs(snapshot: dict[str, Any], obligations_doc: dict[str, Any], s
                     }
                 )
             elif result["status"] == "error":
-                errors.append({"code": "OBLIGATION_SOLVE_ERROR", "obligation_id": str(result["obligation_id"]), "message": result.get("reason", "")})
+                errors.append({"code": result.get("code") or "OBLIGATION_SOLVE_ERROR", "obligation_id": str(result["obligation_id"]), "message": result.get("reason", "")})
     else:
         solve_results = [{"obligation_id": item.get("id"), "status": "skipped", "model": {}, "reason": "constraint IR has compile errors"} for item in obligations]
 
@@ -191,12 +215,26 @@ def build_solver_report(
     }
 
 
-def _require_approval(supplement: dict[str, Any]) -> None:
+def _require_approval(supplement: dict[str, Any], snapshot_hash: str | None, plan_hash: str | None, unresolved: dict[str, Any]) -> None:
+    required = {"decision", "approved_snapshot_hash", "approved_plan_hash", "approved_at", "supplements", "notes"}
+    missing = sorted(key for key in required if key not in supplement)
+    if missing:
+        raise TgSolveError(f"APPROVAL_REQUIRED: approval file missing field(s): {', '.join(missing)}")
     decision = str(supplement.get("decision") or supplement.get("approval") or "").strip().lower()
     status = str(supplement.get("status") or "").strip().lower()
     approved = supplement.get("approved") is True
     if decision != "approve" and status not in {"approved", "approve"} and not approved:
-        raise TgSolveError("Phase-one approval is required before tg-solve. Set plan/human_supplement.yaml decision: approve.")
+        raise TgSolveError("APPROVAL_REQUIRED: phase-one approval is required before tg-solve")
+    if supplement.get("approved_snapshot_hash") != snapshot_hash:
+        raise TgSolveError("APPROVAL_SNAPSHOT_MISMATCH: approval does not match current snapshot_hash")
+    if supplement.get("approved_plan_hash") != plan_hash:
+        raise TgSolveError("APPROVAL_PLAN_MISMATCH: approval does not match current plan_hash")
+    blocking = unresolved.get("blocking_hard_obligations") or []
+    gaps = unresolved.get("contract_gaps") or []
+    if unresolved.get("status") != "ready_for_manual_review" or blocking:
+        raise TgSolveError("PLAN_BLOCKED: unresolved hard blockers must be cleared before tg-solve")
+    if gaps:
+        raise TgSolveError("CONTRACT_GAPS_PRESENT: contract gaps must be resolved before tg-solve")
 
 
 def _summarize_unsat(unsat: list[dict[str, Any]]) -> list[str]:
