@@ -1,0 +1,13 @@
+thirdparty/*
+!thirdparty/README.md
+!thirdparty/.gitkeep
+understand-flow-plugin/thirdparty/*
+!understand-flow-plugin/thirdparty/README.md
+!understand-flow-plugin/thirdparty/.gitkeep
+understand-operator-plugin/thirdparty/*
+!understand-operator-plugin/thirdparty/README.md
+!understand-operator-plugin/thirdparty/.gitkeep
+.claude/
+.opencode/
+__pycache__/
+*.py[cod]

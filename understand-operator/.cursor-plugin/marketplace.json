@@ -1,0 +1,15 @@
+{
+  "name": "understand-operator",
+  "metadata": {
+    "description": "AscendC operator KB via /uo-init /uo-query /uo-update /uo-diff"
+  },
+  "owner": {
+    "name": "local"
+  },
+  "plugins": [
+    {
+      "name": "understand-operator",
+      "source": "understand-operator-plugin"
+    }
+  ]
+}

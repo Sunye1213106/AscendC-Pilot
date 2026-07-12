@@ -1,0 +1,23 @@
+.claude/
+.opencode/
+
+# Python cache and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Packaging/build metadata
+*.egg-info/
+build/
+dist/
+
+# Local environments
+.venv/
+venv/
+env/
+
+# Editor/system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

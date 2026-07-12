@@ -1,0 +1,265 @@
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from typing import Any
+
+
+STABLE_ID_RE = re.compile(
+    r"^(SYM|VAR|REL|EV|SRC|KEY|FAM|KPATH|KBR|KTPL|CL|CON|VIEW|BUF|SYNC|RES|TDF|KVAR|KDEC|PIPE|COV|NUM)_[A-Z0-9_]+$"
+)
+LEGACY_ID_RE = re.compile(r"^(TF\d+|K\d+|C\d+|D\d+|P\d+|R\d+|IR\d+|KR\d+|VC\d+|KU\d+|PR\d+|MG\d+)$")
+ID_TOKEN_RE = re.compile(
+    r"\b(?:SYM|VAR|REL|EV|SRC|KEY|FAM|KPATH|KBR|KTPL|CL|CON|VIEW|BUF|SYNC|RES|TDF|KVAR|KDEC|PIPE|COV|NUM)_[A-Za-z0-9_]+\b"
+)
+HARD_WORDS = {"hard", "blocking", "blocker", "error", "fail", "failed", "conflicting", "unresolved"}
+REF_KEYS = {
+    "target_ref",
+    "target_refs",
+    "source_ref",
+    "source_refs",
+    "evidence_ref",
+    "evidence_refs",
+    "linked_relations",
+    "linked_input_realization",
+    "family_ref",
+    "family_refs",
+    "kernel_path_ref",
+    "kernel_path_refs",
+    "branch_ref",
+    "branch_refs",
+}
+
+
+@dataclass
+class ValidationIssue:
+    code: str
+    severity: str
+    message: str
+    path: str = ""
+    target: str = ""
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "code": self.code,
+            "severity": self.severity,
+            "path": self.path,
+            "target": self.target,
+            "message": self.message,
+        }
+
+
+@dataclass
+class ValidationReport:
+    status: str = "pass"
+    blocking_issues: list[ValidationIssue] = field(default_factory=list)
+    warnings: list[ValidationIssue] = field(default_factory=list)
+    info: list[ValidationIssue] = field(default_factory=list)
+
+    def add(self, code: str, severity: str, message: str, path: str = "", target: str = "") -> None:
+        issue = ValidationIssue(code, severity, message, path, target)
+        if severity == "error":
+            self.status = "fail"
+            self.blocking_issues.append(issue)
+        elif severity == "warning":
+            if self.status == "pass":
+                self.status = "warn"
+            self.warnings.append(issue)
+        else:
+            self.info.append(issue)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "blocking_issues": [issue.to_dict() for issue in self.blocking_issues],
+            "warnings": [issue.to_dict() for issue in self.warnings],
+            "info": [issue.to_dict() for issue in self.info],
+        }
+
+
+def validate_intake(export_payload: dict[str, Any], final_validation: dict[str, Any]) -> ValidationReport:
+    report = ValidationReport()
+    files = _as_dict(export_payload.get("files"))
+    contract = _as_dict(files.get("contracts/testcase.yaml"))
+    quality = _as_dict(files.get("quality.yaml"))
+
+    if not contract:
+        report.add("MISSING_TESTCASE_CONTRACT", "error", "contracts/testcase.yaml is missing from testcase-contract export")
+        return report
+
+    if int(contract.get("version") or 0) != 2:
+        report.add(
+            "TESTCASE_CONTRACT_VERSION",
+            "error",
+            "contracts/testcase.yaml version must be exactly 2",
+            "contracts/testcase.yaml",
+            str(contract.get("version")),
+        )
+
+    for key in ("source", "interface", "typed_constraints", "coverage_obligations", "golden_contract"):
+        if key not in contract:
+            report.add("MISSING_REQUIRED_FIELD", "error", f"contracts/testcase.yaml missing required field: {key}", "contracts/testcase.yaml", key)
+
+    quality_status = quality_status_from(files)
+    if quality_status == "fail":
+        report.add("QUALITY_FAIL", "error", "Understand quality status is fail", "quality.yaml", quality_status)
+    elif not quality_status:
+        report.add("QUALITY_STATUS_MISSING", "warning", "Unable to determine Understand quality status", "quality.yaml")
+
+    if final_validation.get("status") == "fail":
+        report.add("FINAL_VALIDATION_FAIL", "error", "Understand final validation failed", target="final_validation")
+    elif final_validation.get("status") == "warn":
+        report.add("FINAL_VALIDATION_WARN", "warning", "Understand final validation returned warnings", target="final_validation")
+
+    source_hashes = _as_dict(final_validation.get("source_artifact_hashes")) or _as_dict(_as_dict(contract.get("source")).get("canonical_hashes"))
+    if not source_hashes:
+        report.add("SOURCE_HASHES_MISSING", "error", "Snapshot source artifact hashes are required", "contracts/testcase.yaml", "source.canonical_hashes")
+
+    known_ids = collect_known_ids(files)
+    validate_stable_ids(files, report)
+    validate_hard_refs(contract, known_ids, report)
+    validate_blocking_states(files, report)
+    collect_warning_states(files, report)
+    return report
+
+
+def quality_status_from(files: dict[str, Any]) -> str:
+    quality = _as_dict(files.get("quality.yaml"))
+    contract = _as_dict(files.get("contracts/testcase.yaml"))
+    source = _as_dict(contract.get("source"))
+    candidates = [
+        quality.get("status"),
+        quality.get("decision"),
+        quality.get("quality_status"),
+        source.get("quality_status"),
+    ]
+    for candidate in candidates:
+        text = str(candidate or "").strip().lower()
+        if text:
+            return text
+    return ""
+
+
+def collect_known_ids(value: Any) -> set[str]:
+    ids: set[str] = set()
+
+    def visit(node: Any) -> None:
+        if isinstance(node, dict):
+            for key, child in node.items():
+                if key in {"id", "stable_id", "family_id", "source_family", "stable_key"} and isinstance(child, str):
+                    ids.add(child)
+                visit(child)
+        elif isinstance(node, list):
+            for child in node:
+                visit(child)
+
+    visit(value)
+    return ids
+
+
+def validate_stable_ids(value: Any, report: ValidationReport) -> None:
+    for token, path in _iter_stable_tokens(value):
+        if not is_stable_id(token):
+            report.add("INVALID_STABLE_ID", "error", f"Invalid stable id format: {token}", path, token)
+
+
+def validate_hard_refs(contract: dict[str, Any], known_ids: set[str], report: ValidationReport) -> None:
+    for item, path in _iter_dicts(contract):
+        if not _is_hard_item(item):
+            continue
+        for key in REF_KEYS:
+            if key not in item:
+                continue
+            for ref in _as_list(item.get(key)):
+                if not isinstance(ref, str):
+                    continue
+                if not (is_stable_id(ref) or LEGACY_ID_RE.match(ref)):
+                    report.add("INVALID_HARD_REF_ID", "error", f"Hard reference is not a legal id: {ref}", f"{path}.{key}", ref)
+                elif ref not in known_ids:
+                    report.add("DANGLING_HARD_REF", "error", f"Hard reference cannot be resolved: {ref}", f"{path}.{key}", ref)
+
+
+def validate_blocking_states(files: dict[str, Any], report: ValidationReport) -> None:
+    for item, path in _iter_dicts(files):
+        state = _state_text(item)
+        if not state:
+            continue
+        if any(word in state for word in ("stale", "conflicting", "unresolved")) and _is_blocking_item(item):
+            report.add("BLOCKING_UNDERSTAND_ISSUE", "error", f"Blocking stale/conflicting/unresolved issue: {state}", path, str(item.get("id") or ""))
+
+
+def collect_warning_states(files: dict[str, Any], report: ValidationReport) -> None:
+    for item, path in _iter_dicts(files):
+        state = _state_text(item)
+        if "warning" in state or "warn" in state:
+            report.add("UNDERSTAND_WARNING", "warning", f"Understand warning carried into intake: {state}", path, str(item.get("id") or ""))
+        if item.get("severity") == "warning":
+            report.add("UNDERSTAND_WARNING", "warning", str(item.get("message") or item.get("reason") or "warning"), path, str(item.get("id") or ""))
+
+
+def is_stable_id(value: str) -> bool:
+    return bool(STABLE_ID_RE.match(value))
+
+
+def _iter_stable_tokens(value: Any, path: str = "$") -> list[tuple[str, str]]:
+    found: list[tuple[str, str]] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = f"{path}.{key}"
+            if isinstance(child, str):
+                if key in {"id", "stable_id"} and (child.startswith(tuple(prefix + "_" for prefix in _stable_prefixes())) or ID_TOKEN_RE.search(child)):
+                    found.append((child, child_path))
+                for token in ID_TOKEN_RE.findall(child):
+                    found.append((token, child_path))
+            found.extend(_iter_stable_tokens(child, child_path))
+    elif isinstance(value, list):
+        for idx, child in enumerate(value):
+            found.extend(_iter_stable_tokens(child, f"{path}[{idx}]"))
+    return found
+
+
+def _stable_prefixes() -> tuple[str, ...]:
+    return ("SYM", "VAR", "REL", "EV", "SRC", "KEY", "FAM", "KPATH", "KBR", "KTPL", "CL", "CON", "VIEW", "BUF", "SYNC", "RES", "TDF", "KVAR", "KDEC", "PIPE", "COV", "NUM")
+
+
+def _iter_dicts(value: Any, path: str = "$") -> list[tuple[dict[str, Any], str]]:
+    found: list[tuple[dict[str, Any], str]] = []
+    if isinstance(value, dict):
+        found.append((value, path))
+        for key, child in value.items():
+            found.extend(_iter_dicts(child, f"{path}.{key}"))
+    elif isinstance(value, list):
+        for idx, child in enumerate(value):
+            found.extend(_iter_dicts(child, f"{path}[{idx}]"))
+    return found
+
+
+def _is_hard_item(item: dict[str, Any]) -> bool:
+    text = " ".join(str(item.get(key) or "").lower() for key in ("priority", "severity", "requirement_level", "level", "obligation_level"))
+    return any(word in text.split() for word in {"hard", "blocking", "blocker", "error", "fail"})
+
+
+def _is_blocking_item(item: dict[str, Any]) -> bool:
+    text = _state_text(item)
+    explicit = " ".join(str(item.get(key) or "").lower() for key in ("priority", "severity", "level", "blocking"))
+    return (
+        any(word in explicit for word in HARD_WORDS)
+        or item.get("blocking") is True
+        or text in {"conflicting", "unresolved", "stale"}
+    )
+
+
+def _state_text(item: dict[str, Any]) -> str:
+    return " ".join(str(item.get(key) or "").lower() for key in ("status", "state", "severity", "kind", "type", "reason"))
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_list(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if value in (None, "", {}, []):
+        return []
+    return [value]

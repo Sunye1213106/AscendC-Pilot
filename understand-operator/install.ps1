@@ -1,0 +1,110 @@
+﻿<#
+.SYNOPSIS
+  Install understand-operator skills for OpenCode / Codex / Cursor.
+
+.EXAMPLE
+  ./install.ps1 cursor
+  ./install.ps1 -Uninstall cursor
+#>
+
+param(
+    [Parameter(Position = 0)]
+    [string]$Platform = "opencode",
+    [string]$Uninstall
+)
+
+$ErrorActionPreference = 'Stop'
+$RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$PluginRoot = Join-Path $RepoRoot "understand-operator-plugin"
+$SkillsRoot = Join-Path $PluginRoot "skills"
+$AgentsSrc = Join-Path $PluginRoot "agents"
+$PromptsSrc = Join-Path $PluginRoot "prompts"
+
+$SkillNames = @(
+    "uo-init",
+    "uo-query",
+    "uo-update",
+    "uo-diff",
+    "understand-operator"
+)
+
+$Targets = @{
+    # OpenCode primary global skills dir (also discovers ~/.agents/skills)
+    opencode = Join-Path $HOME ".config\opencode\skills"
+    codex    = Join-Path $HOME ".agents\skills"
+    cursor   = Join-Path $HOME ".cursor\skills"
+}
+
+$AgentTargets = @{
+    cursor = Join-Path $HOME ".cursor\agents"
+}
+
+if (-not $Targets.ContainsKey($Platform)) {
+    Write-Error "Unknown platform: $Platform. Supported: $($Targets.Keys -join ', ')"
+}
+
+$TargetRoot = $Targets[$Platform]
+
+$PluginLinks = @{
+    opencode = Join-Path (Split-Path $TargetRoot -Parent) "understand-operator-plugin"
+    codex    = Join-Path (Split-Path $TargetRoot -Parent) "understand-operator-plugin"
+    cursor   = Join-Path (Split-Path $TargetRoot -Parent) "understand-operator-plugin"
+}
+
+if ($Uninstall) {
+    foreach ($name in $SkillNames) {
+        $dest = Join-Path $TargetRoot $name
+        if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+        Write-Host "Removed skill link: $dest"
+    }
+    if ($PluginLinks.ContainsKey($Platform)) {
+        $pluginDest = $PluginLinks[$Platform]
+        if (Test-Path $pluginDest) { Remove-Item $pluginDest -Recurse -Force }
+        Write-Host "Removed plugin link: $pluginDest"
+    }
+    exit 0
+}
+
+New-Item -ItemType Directory -Force -Path $TargetRoot | Out-Null
+
+foreach ($name in $SkillNames) {
+    $src = Join-Path $SkillsRoot $name
+    if (-not (Test-Path $src)) {
+        Write-Error "Missing skill source: $src"
+    }
+    $dest = Join-Path $TargetRoot $name
+    if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+    New-Item -ItemType Junction -Path $dest -Target $src | Out-Null
+    Write-Host "Installed skill: $dest -> $src"
+}
+
+# Prompts + agents live under plugin root; agents need them for human-review UX (question UI).
+if ($PluginLinks.ContainsKey($Platform) -and (Test-Path $PluginRoot)) {
+    $pluginDest = $PluginLinks[$Platform]
+    if (Test-Path $pluginDest) { Remove-Item $pluginDest -Recurse -Force }
+    New-Item -ItemType Junction -Path $pluginDest -Target $PluginRoot | Out-Null
+    Write-Host "Installed plugin: $pluginDest -> $PluginRoot"
+}
+
+if ($Platform -eq "cursor" -and (Test-Path $AgentsSrc)) {
+    $AgentsDestRoot = $AgentTargets[$Platform]
+    New-Item -ItemType Directory -Force -Path $AgentsDestRoot | Out-Null
+    Get-ChildItem $AgentsDestRoot -Filter "uo-*.md" -ErrorAction SilentlyContinue | Remove-Item -Force
+    Get-ChildItem $AgentsSrc -Filter "uo-*.md" | ForEach-Object {
+        $agentDest = Join-Path $AgentsDestRoot $_.Name
+        Copy-Item -Path $_.FullName -Destination $agentDest -Force
+    }
+    Write-Host "Installed subagents: $AgentsDestRoot\uo-*.md"
+}
+
+Write-Host ""
+Write-Host "Commands: /uo-init  /uo-query  /uo-update  /uo-diff"
+Write-Host "Shared scripts: $(Join-Path $TargetRoot 'understand-operator')\prepare_operator.py"
+if ($PluginLinks.ContainsKey($Platform)) {
+    Write-Host "Prompts: $(Join-Path $PluginLinks[$Platform] 'prompts')"
+}
+Write-Host "Agents must NOT search C:\ for scripts; use the path above."
+if ($Platform -eq "opencode") {
+    Write-Host "OpenCode human review: ensure opencode.json has `"permission`": { `"question`": `"allow`" }"
+}
+Write-Host "For Cursor: add the repository root as a local plugin, or rely on the installed skill links."
