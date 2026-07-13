@@ -23,7 +23,7 @@ except ImportError:  # pragma: no cover
 
 
 STABLE_ID_RE = re.compile(
-    r"^(SYM|VAR|REL|EV|SRC|KEY|FAM|KPATH|KBR|KTPL|CL|CON|VIEW|BUF|SYNC|RES|TDF|KVAR|KDEC|PIPE|COV|NUM)_[A-Z0-9_]+$"
+    r"^(SYM|VAR|REL|EV|SRC|KEY|FAM|COMP|GOLD|KPATH|KBR|KTPL|CL|CON|VIEW|BUF|SYNC|RES|TDF|KVAR|KDEC|PIPE|COV|NUM)_[A-Z0-9_]+$"
 )
 PROPOSAL_HASH_RUNTIME_FIELDS = frozenset(
     {
@@ -40,6 +40,7 @@ PROPOSAL_HASH_RUNTIME_FIELDS = frozenset(
 TEST_CONSUMABLE_FILES = (
     "operator.yaml",
     "tiling/key_space.yaml",
+    "tiling/exhaustive_key_space.yaml",
     "tiling/constraints.yaml",
     "tiling/families.yaml",
     "tiling/data_model.yaml",
@@ -60,6 +61,7 @@ ENTITY_KINDS = {
     "key",
     "family",
     "compute_step",
+    "golden_step",
     "template_binding",
     "kernel_path",
     "kernel_branch",
@@ -86,6 +88,8 @@ PREFIX_TO_KIND = {
     "SRC_": "evidence",
     "KEY_": "key",
     "FAM_": "family",
+    "COMP_": "compute_step",
+    "GOLD_": "golden_step",
     "KTPL_": "template_binding",
     "KPATH_": "kernel_path",
     "KBR_": "kernel_branch",
@@ -106,6 +110,8 @@ PREFIX_KIND_ALIASES = {
     "TDF_": {"tilingdata_field", "tilingdata_read"},
     "KVAR_": {"kernel_runtime_variable", "variable"},
     "KDEC_": {"kernel_decision_point", "compile_decision"},
+    # Compatibility for KBs generated before the dedicated COMP_ namespace.
+    "COV_": {"coverage_obligation", "compute_step"},
 }
 LEGACY_ID_RE = re.compile(r"^(TF\d+|K\d+|C\d+|D\d+|P\d+)$")
 STATUS_ENUM = {"confirmed", "proposed", "uncertain", "conflicting", "unresolved", "deprecated"}
@@ -249,6 +255,7 @@ TILING_FILES = (
     "tiling/variables.yaml",
     "tiling/constraints.yaml",
     "tiling/key_space.yaml",
+    "tiling/exhaustive_key_space.yaml",
     "tiling/families.yaml",
     "tiling/data_model.yaml",
     "tiling/coverage_model.yaml",
@@ -323,6 +330,7 @@ MATURITY_RULES: dict[str, tuple[str, ...]] = {
     "tiling/variables.yaml": ("variables", "tiling_mechanism"),
     "tiling/constraints.yaml": ("relations", "variable_constraints", "input_realization"),
     "tiling/key_space.yaml": ("fields", "derived_fields", "constants"),
+    "tiling/exhaustive_key_space.yaml": ("enumeration_source", "summary", "template_blocks"),
     "tiling/families.yaml": ("families", "dispatch_tree"),
     "tiling/data_model.yaml": ("structs", "family_to_struct", "numeric_overlay"),
     "tiling/coverage_model.yaml": ("coverage_policy", "family_obligations", "key_field_obligations"),
@@ -357,6 +365,9 @@ MATURITY_RULES: dict[str, tuple[str, ...]] = {
 }
 ALLOWED_EMPTY_MATURITY_FILES = {
     "registry/aliases.yaml",
+    # Phase-aware promotion tests and incremental runs may not have reached the
+    # evidence audit yet.  Phase barriers/final quality enforce non-empty
+    # evidence where it is required for handoff.
     "tiling/evidence_index.yaml",
     "flow/golden_model.yaml",
     "flow/numerical_model.yaml",
@@ -364,6 +375,24 @@ ALLOWED_EMPTY_MATURITY_FILES = {
     "evidence/source_index.yaml",
     "evidence/issues.yaml",
 }
+
+
+def _default_entity_scope(kind: str, artifact: str) -> str:
+    """Infer a stable domain scope when producers omit the optional field.
+
+    Canonical names such as ``block_size`` legitimately occur in both the
+    tiling key model and a kernel template binding.  Treating every omitted
+    scope as the same empty scope creates false duplicate-name warnings and
+    encourages destructive bulk renames.  Explicit scopes still win.
+    """
+    domain = artifact.split("/", 1)[0] if "/" in artifact else "root"
+    if domain in {"tiling", "flow", "kernel", "cross_layer", "evidence", "registry"}:
+        return domain
+    if artifact.startswith("contracts/"):
+        return "contract"
+    if kind == "evidence":
+        return "evidence"
+    return domain
 
 
 @dataclass
@@ -696,7 +725,7 @@ def collect_entity_definitions(docs: dict[str, Any], result: CompileResult | Non
             "section": section,
             "canonical_name": meta.get("canonical_name") or meta.get("name") or meta.get("label") or item_id,
             "aliases": aliases,
-            "scope": meta.get("scope") or "",
+            "scope": meta.get("scope") or _default_entity_scope(kind, artifact),
             "data_type": meta.get("data_type") or meta.get("dtype") or "",
             "evidence_refs": _as_list(meta.get("evidence_refs")),
             "status": meta.get("status") if meta.get("status") in STATUS_ENUM else "",
@@ -743,6 +772,10 @@ def collect_entity_definitions(docs: dict[str, Any], result: CompileResult | Non
             for item in _iter_entries(doc.get("fields")):
                 item_id = str(item.get("id") or item.get("stable_id") or f"KEY_{str(item.get('canonical_name') or item.get('name') or '').upper()}")
                 add(item_id, "key", rel, "fields", item)
+        if rel == "tiling/exhaustive_key_space.yaml":
+            for item in _iter_entries(doc.get("template_blocks")):
+                item_id = str(item.get("id") or f"KTPL_TILING_KEY_BLOCK_{_stable_slug(item.get('name') or item.get('dtype_section') or '')}")
+                add(item_id, "template_binding", rel, "template_blocks", item)
         if rel == "tiling/families.yaml":
             for item in _iter_entries(doc.get("families")):
                 item_id = str(item.get("id") or item.get("family_id") or "")
@@ -752,6 +785,10 @@ def collect_entity_definitions(docs: dict[str, Any], result: CompileResult | Non
         if rel == "flow/compute_graph.yaml":
             for item in _iter_entries(doc.get("compute_steps")):
                 add(str(item.get("id")), "compute_step", rel, "compute_steps", item)
+        if rel == "flow/golden_model.yaml":
+            for item in _iter_entries(doc.get("golden_steps")):
+                if item.get("id"):
+                    add(str(item.get("id")), "golden_step", rel, "golden_steps", item)
         if rel == "kernel/compile_model.yaml":
             for item in _iter_entries(doc.get("template_bindings")):
                 add(str(item.get("id")), "template_binding", rel, "template_bindings", item)
@@ -1340,21 +1377,47 @@ def _link_computation_steps(
         step_id = str(item.get("id") or item.get("step_id"))
         item["id"] = step_id
         item["step_id"] = step_id
-        if "depends_on" not in item:
+        has_explicit_depends_on = "depends_on" in item
+        bad_dependency_format = False
+        if not has_explicit_depends_on:
             item["depends_on"] = [str(linked[-1].get("id"))] if ordered and linked else []
         else:
-            item["depends_on"] = [str(dep) for dep in _as_list(item.get("depends_on"))]
-        item["dependency_status"] = "resolved" if item["depends_on"] or idx == 0 and ordered else "unresolved"
+            item["depends_on"], bad_dependency_format = _normalize_dependency_list(item.get("depends_on"))
+        item["dependency_status"], item["is_root"] = _dependency_status(
+            has_explicit_depends_on=has_explicit_depends_on,
+            depends_on=item["depends_on"],
+            ordered=ordered,
+            is_first=idx == 0,
+        )
+        if bad_dependency_format:
+            item["dependency_status"] = "invalid"
+            item["is_root"] = False
+            if result is not None:
+                result.add(
+                    "FLOW_BAD_DEPENDENCY_FORMAT",
+                    "error",
+                    f"{step_id} has invalid depends_on format",
+                    artifact,
+                    path_id or step_id,
+                )
         linked.append(item)
     step_by_id = {str(step["id"]): step for step in linked}
     downstream_by_id = {step_id: [] for step_id in step_by_id}
     for step in linked:
+        missing_dependencies = []
         for dep in step.get("depends_on") or []:
             if dep not in step_by_id:
+                missing_dependencies.append(dep)
                 if result is not None:
                     result.add("FLOW_UNKNOWN_DEPENDENCY", "error", f"{step['id']} depends on unknown step {dep}", artifact, path_id or str(step["id"]))
                 continue
             downstream_by_id[dep].append(str(step["id"]))
+        if missing_dependencies:
+            step["dependency_status"] = "unresolved"
+            step["missing_dependencies"] = sorted(set(missing_dependencies))
+            step["is_root"] = False
+        else:
+            step.pop("missing_dependencies", None)
     for step in linked:
         step["downstream_steps"] = sorted(downstream_by_id.get(str(step["id"]), []))
         transitions = []
@@ -1368,8 +1431,46 @@ def _link_computation_steps(
             step["execution_transition"] = transitions[0]
         else:
             step.pop("execution_transition", None)
-    _detect_step_cycles(linked, result, artifact=artifact, path_id=path_id)
+    cycle_nodes = _detect_step_cycles(linked, result, artifact=artifact, path_id=path_id)
+    for step in linked:
+        if str(step.get("id")) in cycle_nodes:
+            step["dependency_status"] = "invalid"
+            step["is_root"] = False
     return linked
+
+
+def _normalize_dependency_list(value: Any) -> tuple[list[str], bool]:
+    if isinstance(value, list):
+        return [str(dep) for dep in value if str(dep)], False
+    return [], True
+
+
+def _dependency_status(
+    *,
+    has_explicit_depends_on: bool,
+    depends_on: list[str],
+    ordered: bool,
+    is_first: bool,
+) -> tuple[str, bool]:
+    """Return normalized DAG dependency metadata.
+
+    Phase 3 consumers may directly consume only `root` and `resolved`.
+    `unspecified`, `unresolved`, and `invalid` require blocking or human review:
+    - root: explicit empty dependency list, or first ordered-sequence step.
+    - resolved: all declared predecessors are present.
+    - unspecified: no dependency field and no ordered sequence policy.
+    - unresolved: declared predecessor cannot be resolved.
+    - invalid: cycle or illegal dependency structure.
+    """
+    if has_explicit_depends_on:
+        if not depends_on:
+            return "root", True
+        return "resolved", False
+    if ordered:
+        if is_first:
+            return "root", True
+        return "resolved", False
+    return "unspecified", False
 
 
 def _normalize_computation_step(
@@ -1445,7 +1546,7 @@ def _canonical_step_entries(doc: dict[str, Any], artifact: str, result: CompileR
 
 def _rewrite_depends_on_aliases(steps: list[dict[str, Any]], id_map: dict[str, str]) -> None:
     for step in steps:
-        if "depends_on" in step:
+        if "depends_on" in step and isinstance(step.get("depends_on"), list):
             step["depends_on"] = [id_map.get(str(dep), str(dep)) for dep in _as_list(step.get("depends_on"))]
 
 
@@ -1472,17 +1573,18 @@ def _transition_semantics(upstream: dict[str, Any], step: dict[str, Any], unit: 
     return {"status": status, "evidence": evidence}
 
 
-def _detect_step_cycles(steps: list[dict[str, Any]], result: CompileResult | None, *, artifact: str, path_id: str = "") -> None:
-    if result is None:
-        return
+def _detect_step_cycles(steps: list[dict[str, Any]], result: CompileResult | None, *, artifact: str, path_id: str = "") -> set[str]:
     graph = {str(step.get("id")): [str(dep) for dep in _as_list(step.get("depends_on"))] for step in steps}
     visiting: set[str] = set()
     visited: set[str] = set()
+    cycle_nodes: set[str] = set()
 
     def visit(node: str, path: list[str]) -> None:
         if node in visiting:
             cycle = path[path.index(node):] if node in path else path + [node]
-            result.add("FLOW_DEPENDENCY_CYCLE", "error", f"cycle in flow dependencies: {', '.join(cycle)}", artifact, path_id or node)
+            cycle_nodes.update(cycle)
+            if result is not None:
+                result.add("FLOW_DEPENDENCY_CYCLE", "error", f"cycle in flow dependencies: {', '.join(cycle)}", artifact, path_id or node)
             return
         if node in visited:
             return
@@ -1495,6 +1597,7 @@ def _detect_step_cycles(steps: list[dict[str, Any]], result: CompileResult | Non
 
     for node in sorted(graph):
         visit(node, [node])
+    return cycle_nodes
 
 
 def _canonical_step_id(step: dict[str, Any], index: int, *, op_name: str, path_id: str = "", id_prefix: str) -> str:
@@ -1823,9 +1926,27 @@ def _validate_evidence(docs: dict[str, Any], result: CompileResult) -> None:
 
     for rel, doc in docs.items():
         for refs, path in _find_keys(doc, "evidence_refs"):
-            ref_values = refs.keys() if isinstance(refs, dict) else _as_list(refs)
+            if not isinstance(refs, (list, dict)):
+                result.add(
+                    "BAD_EVIDENCE_REFS_TYPE",
+                    "error",
+                    "evidence_refs must be a YAML list (or an id-keyed mapping for legacy input)",
+                    rel,
+                    path,
+                )
+                continue
+            ref_values = refs.keys() if isinstance(refs, dict) else refs
             for ref in ref_values:
                 ref_s = str(ref).strip()
+                if not ref_s or not re.fullmatch(r"(?:EV|SRC)_[A-Z0-9_]+", ref_s):
+                    result.add(
+                        "BAD_EVIDENCE_REF_FORMAT",
+                        "error",
+                        f"evidence ref must be a stable EV_/SRC_ id: {ref_s!r}",
+                        rel,
+                        path,
+                    )
+                    continue
                 if ref_s and ref_s not in evidence_ids:
                     result.add("DANGLING_EVIDENCE_REF", "error", f"unknown evidence ref {ref_s}", rel, path)
 
@@ -1917,7 +2038,13 @@ def _validate_step_container(steps: list[dict[str, Any]], result: CompileResult,
         result.add("FLOW_STEP_ID_COLLISION", "error", f"duplicate flow step id {step_id}", artifact, path_id or step_id)
     for step in steps:
         step_id = str(step.get("id") or step.get("step_id") or "")
-        for dep in _as_list(step.get("depends_on")):
+        if "depends_on" in step:
+            deps, bad_format = _normalize_dependency_list(step.get("depends_on"))
+        else:
+            deps, bad_format = [], False
+        if bad_format:
+            result.add("FLOW_BAD_DEPENDENCY_FORMAT", "error", f"{step_id} has invalid depends_on format", artifact, path_id or step_id)
+        for dep in deps:
             dep_id = str(dep)
             if dep_id and dep_id not in step_set:
                 result.add("FLOW_UNKNOWN_DEPENDENCY", "error", f"{step_id} depends on unknown step {dep_id}", artifact, path_id or step_id)

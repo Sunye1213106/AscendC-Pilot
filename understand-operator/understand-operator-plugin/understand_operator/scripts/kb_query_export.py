@@ -11,7 +11,7 @@ try:
 except ImportError:  # pragma: no cover - PyYAML optional at runtime
     yaml = None  # type: ignore[assignment]
 
-from understand_operator._operator.artifacts import operator_root, read_text, safe_op_name
+from understand_operator._operator.artifacts import existing_operator_root, read_text, resolve_existing_operator_root, safe_op_name
 from understand_operator._operator.kb_compiler import build_entity_index
 
 EXPORT_VIEWS: dict[str, list[str]] = {
@@ -95,6 +95,14 @@ EXPORT_VIEWS: dict[str, list[str]] = {
         "tiling/coverage_model.yaml",
         "kernel/branches.yaml",
         "cross_layer/impact_graph.yaml",
+        "quality.yaml",
+    ],
+    "tiling-key-exhaustive": [
+        "tiling/key_space.yaml",
+        "tiling/exhaustive_key_space.yaml",
+        "tiling/constraints.yaml",
+        "tiling/coverage_model.yaml",
+        "test/contract.yaml",
         "quality.yaml",
     ],
 }
@@ -512,7 +520,12 @@ def main(argv: list[str] | None = None) -> int:
 
     repo_root = args.repo_root.resolve()
     op_name = safe_op_name(args.op_name, repo_root)
-    uo_root = operator_root(repo_root, op_name)
+    resolved = resolve_existing_operator_root(repo_root, op_name)
+    if resolved is None:
+        uo_root = existing_operator_root(repo_root, op_name)
+        print(f"KB not found: {uo_root}", file=sys.stderr)
+        return 2
+    op_name, uo_root = resolved
 
     try:
         if args.view in CONTEXT_VIEWS:

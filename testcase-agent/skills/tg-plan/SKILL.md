@@ -1,3 +1,12 @@
+---
+name: tg-plan
+description: >-
+  Build the TestAgent phase 1 coverage-obligation plan from a frozen tg-init
+  snapshot. Use when the user runs /tg-plan or asks to plan testcase generation
+  coverage from TestAgent intake.
+argument-hint: "<project_root> --op-name <op_name>"
+---
+
 # /tg-plan
 
 Use this command to build the phase 1 coverage plan from a frozen TestAgent snapshot.

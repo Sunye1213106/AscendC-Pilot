@@ -1,3 +1,12 @@
+---
+name: tg-solve
+description: >-
+  Run TestAgent phase 2 abstract SMT solving from an approved coverage plan. Use
+  when the user runs /tg-solve or asks to solve approved testcase generation
+  obligations into abstract candidates.
+argument-hint: "<project_root> --op-name <op_name>"
+---
+
 # /tg-solve
 
 Use this command to run phase 2 abstract SMT solving from an approved TestAgent plan.

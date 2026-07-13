@@ -8,7 +8,7 @@
 python "$SKILL_DIR/quality_gate.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 ```
 
-然后人工复核脚本结果，必要时补充 blockers / warnings / decision。
+然后只读复核脚本结果。不得人工补充、删除或修改 `quality.yaml` 中的 blockers / warnings / decision；需要调整判断时必须修改 validator 并附最小复现与回归测试，再重新运行脚本。
 
 ## 输入
 
@@ -64,6 +64,36 @@ python "$SKILL_DIR/quality_gate.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 22. resources 是否有 producer / consumer / sync relation
 
 ## decision
+
+## Hard integrity rule: never edit quality YAML manually
+
+`quality.yaml` is the generated result of this final review, not an artifact an agent may repair. The only permitted writer is `quality_gate.py` during Phase 8.
+
+- Never manually edit `quality.yaml` (including `status`, `decision`, scores, checks, blockers, or warnings).
+- Never relabel `red` as `yellow`/`green`, remove blockers, or create a replacement quality file to make the KB appear usable.
+- When the gate is red, identify the owning phase/artifact, repair that source artifact through its owner (resume/re-dispatch a subagent when applicable), then rerun `quality_gate.py`.
+- Report the script's actual exit result and generated `quality.yaml`; a manually modified quality file is invalid and must be overwritten by rerunning the gate.
+
+## Red-gate remediation loop (mandatory; do not hand off red)
+
+If `quality_gate.py` returns `red` / `not_usable`, **do not output the normal completion report, do not mark the workflow complete, and do not present the KB as usable**. Treat the generated `quality.yaml` and `archive/runs/kb_compile_report.yaml` as the repair queue, then continue work as follows:
+
+1. Group blockers by artifact and owner phase.
+2. Route each repair to its owner:
+   - Phase 1 host-owned artifacts (for example `operator.yaml`) → host repairs from source-backed evidence.
+   - Phase 2 `tiling/*` → resume `uo-host-extraction`; Phase 2 `flow/*` → resume `uo-flow-extraction`.
+   - Phase 4 raw kernel-path evidence → resume the matching `uo-kernel-path` task; then rerun host Phase 5 alignment.
+   - Phase 5/6/7 canonical alignment, evidence registry, cross-layer graphs, routes, and contracts → host rebuilds them from validated preceding artifacts, following the phase prompt.
+   - A reproducible compiler/gate defect with valid canonical input → stop with the minimal reproduction; do not weaken the rule to pass this KB.
+3. Rerun the relevant barrier and phase compiler validation after each owner repair, then rerun `quality_gate.py`.
+4. Continue until status is `yellow` or `green`. Only then emit the normal final report. If a human review gate, unavailable MCP evidence, or a repeated reproducible tool defect blocks repair, emit a **blocked** report naming that exact blocker; never emit a successful completion for red.
+
+### Forbidden red-gate shortcuts
+
+- Do not write a bulk “fix quality” script that invents registry entities, stable ids, relations, paths, source spans, contracts, or evidence merely to satisfy required keys.
+- Do not rename IDs or relation types by global search-and-replace without tracing every definition and reference through the registry/compiler.
+- Do not alter `MATURITY_RULES`, `RELATION_TYPES`, evidence validation, or severity levels to fit one generated KB without a minimal reproduction and regression test.
+- Do not start a general subagent for Phase 5–8 remediation. Resume only the allowed Phase 2/4 owner subagents; otherwise the host performs the specified phase work.
 
 - `usable_for_query`
 - `usable_for_golden_with_review`

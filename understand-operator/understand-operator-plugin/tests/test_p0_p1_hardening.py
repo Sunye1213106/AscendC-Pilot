@@ -16,11 +16,26 @@ from understand_operator._operator import kb_compiler
 from understand_operator._operator.artifacts import init_operator_layout, operator_root
 from understand_operator._operator.kb_compiler import promote_kb, validate_kb
 from understand_operator.scripts.kb_query_export import export_context_slice
+from understand_operator.scripts.kb_query_export import main as kb_query_export_main
 from understand_operator.scripts.macro_scope_scan import main as macro_scope_scan_main
+from understand_operator.scripts.quality_gate import main as quality_gate_main
 from understand_operator.scripts.update_operator import (
     _build_stale_artifacts,
     _build_update_plan,
     _tilingdata_numeric_only_proven,
+)
+from understand_operator.scripts.verify_subagent_barrier import (
+    _id_contract_problems,
+    _is_placeholder,
+    _proposal_contract_problems,
+    _semantic_contract_problems,
+    _yaml_problem,
+)
+from understand_operator.scripts.quality_gate import (
+    _check_cross_layer_graph_completeness,
+    _check_text_encoding,
+    _has_compute_golden_mapping,
+    _has_resource_flow,
 )
 
 
@@ -33,6 +48,7 @@ def _repo(tmp_path: Path) -> tuple[Path, Path]:
         "registry/symbols.yaml",
         "tiling/constraints.yaml",
         "tiling/key_space.yaml",
+        "tiling/exhaustive_key_space.yaml",
         "tiling/families.yaml",
         "tiling/data_model.yaml",
         "tiling/coverage_model.yaml",
@@ -75,6 +91,15 @@ def test_macro_scope_scan_artifact_initialized(tmp_path: Path) -> None:
     assert "macro_scope_scan.yaml" in (base / "index.yaml").read_text(encoding="utf-8")
 
 
+def test_read_only_tools_do_not_create_empty_kb_for_unknown_op(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    assert kb_query_export_main([str(repo), "--op-name", "fasg", "--view", "human"]) == 2
+    assert quality_gate_main([str(repo), "--op-name", "fasg"]) == 2
+    assert not (repo / ".understand-operator" / "fasg").exists()
+
+
 def test_tool_selection_prompts_scope_scan_before_semantic_cbm() -> None:
     rule = (ROOT / "prompts" / "00_cbm_first_rule.md").read_text(encoding="utf-8")
     review = (ROOT / "prompts" / "01a_macro_scope_human_review.md").read_text(encoding="utf-8")
@@ -115,6 +140,121 @@ def test_macro_scope_scan_script_generates_deterministic_candidates(tmp_path: Pa
     assert scan["large_files"] == [
         {"path": "op_host/large.cpp", "size_bytes": 513 * 1024, "read_policy": "line_scoped_only"}
     ]
+
+
+def test_dispatch_variables_placeholder_check_matches_top_level_variables_only() -> None:
+    complete_with_unknowns = """version: 1
+status: analyzed
+
+variables:
+  - name: IsEmptyTensor
+    kind: optional_io_gate
+
+unknown_variables: []
+"""
+    empty_top_level_variables = """version: 1
+status: analyzed
+
+variables: []
+unknown_variables: []
+"""
+
+    rel = "tiling/archive/dispatch_variables.yaml"
+    assert _is_placeholder(rel, complete_with_unknowns) is False
+    assert _is_placeholder(rel, empty_top_level_variables) is True
+
+
+def test_exhaustive_key_space_placeholder_and_count_validation() -> None:
+    rel = "tiling/exhaustive_key_space.yaml"
+    assert _is_placeholder(rel, "version: 1\nstatus: pending\ntemplate_blocks: []\n") is True
+
+    valid = """version: 1
+status: analyzed
+enumeration_source:
+  files: [op_kernel/arch35/demo_template_tiling_key.h]
+summary:
+  block_count: 2
+  expanded_key_count: 5
+template_blocks:
+  - id: KTPL_TILING_KEY_BLOCK_001
+    field_domains: {IsDrop: [0, 1]}
+    fixed_fields: {InputDType: 3}
+    product_count: 2
+  - id: KTPL_TILING_KEY_BLOCK_002
+    field_domains: {DTemplateNum: [64, 128, 192]}
+    fixed_fields: {InputDType: 2}
+    product_count: 3
+reverse_realization_index: {}
+"""
+    assert _semantic_contract_problems(rel, valid) == []
+
+    invalid = valid.replace("expanded_key_count: 5", "expanded_key_count: 4")
+    assert any("product sum=5" in problem for problem in _semantic_contract_problems(rel, invalid))
+
+
+def test_exhaustive_key_space_not_applicable_requires_evidence() -> None:
+    rel = "tiling/exhaustive_key_space.yaml"
+    valid = """version: 1
+status: not_applicable
+reason: no template tiling key file
+evidence_refs: [EV_HOST_017]
+"""
+    assert _semantic_contract_problems(rel, valid) == []
+    invalid = "version: 1\nstatus: not_applicable\nreason: no template tiling key file\n"
+    assert any("not_applicable requires" in problem for problem in _semantic_contract_problems(rel, invalid))
+
+
+def test_barrier_rejects_invalid_or_non_mapping_yaml() -> None:
+    rel = "tiling/archive/dispatch_variables.yaml"
+    assert _yaml_problem(rel, "variables: [")
+    assert _yaml_problem(rel, "- a\n- b\n") == "YAML root must be a mapping"
+    assert _yaml_problem(rel, "variables:\n  - name: IsEmptyTensor\n") is None
+
+
+def test_barrier_rejects_bad_stable_id_and_sp_evidence_ref() -> None:
+    text = """branches:
+  - id: BF001
+    evidence_refs: [SP001]
+"""
+    problems = _id_contract_problems("kernel/branches.yaml", text)
+    assert any("invalid stable id" in problem for problem in problems)
+    assert any("invalid evidence ref" in problem for problem in problems)
+    assert _id_contract_problems(
+        "flow/compute_graph.yaml",
+        "compute_steps:\n  COMP_MAIN:\n    id: COMP_MAIN\n    golden_step_ref: GOLD_MAIN\n",
+    ) == []
+
+
+def test_barrier_rejects_obsolete_proposal_update_fields() -> None:
+    text = """version: 1
+op_name: DemoOp
+proposal_id: PROP_DEMO
+producer: uo-host-extraction
+canonical_updates:
+  - target: tiling/variables.yaml
+    section: variables
+    mode: by_id
+    items: []
+"""
+    problems = _proposal_contract_problems("archive/proposals/host_tiling_proposal.yaml", text)
+    assert any("producer must be a mapping" in problem for problem in problems)
+
+    text = text.replace("producer: uo-host-extraction", "producer: {agent: uo-host-extraction, phase: phase2}")
+    problems = _proposal_contract_problems("archive/proposals/host_tiling_proposal.yaml", text)
+    assert any("obsolete mode/items" in problem for problem in problems)
+    assert any("missing evidence merge target" in problem for problem in problems)
+
+
+def test_compiler_rejects_non_stable_evidence_ref(tmp_path: Path) -> None:
+    _repo_root, base = _repo(tmp_path)
+    proposal = _minimal_proposal()
+    proposal["canonical_updates"][1]["entries"][0]["evidence_refs"] = ["op_host/foo.cpp:10"]
+    path = base / "archive" / "proposals" / "bad_evidence_ref.yaml"
+    path.write_text(yaml.safe_dump(proposal, sort_keys=False), encoding="utf-8")
+
+    result = promote_kb(base, "DemoOp", phase="phase2", proposal_paths=[path], run_id="bad_evidence_ref")
+
+    assert any(issue.code == "BAD_EVIDENCE_REF_FORMAT" for issue in result.issues)
 
 
 def _minimal_proposal(**overrides: object) -> dict:
@@ -586,3 +726,107 @@ def test_tilingdata_without_proof_is_conservative(tmp_path: Path) -> None:
     assert "validation_status" in entry
     assert "dependency_hash" in entry
     assert "resolution_reason" in entry
+
+
+def test_barrier_rejects_wrong_tiling_shape_but_accepts_shared_relation_types() -> None:
+    bad_variables = yaml.safe_dump(
+        {
+            "variables": [{"id": "VAR_X"}],
+            "tiling_mechanism": {"entry": "Foo"},
+            "impact_classification": {"tiling_key": ["VAR_X"]},
+        }
+    )
+    assert any("non-empty mapping" in item for item in _semantic_contract_problems("tiling/variables.yaml", bad_variables))
+
+    constraints = yaml.safe_dump(
+        {
+            "relations": [
+                {"id": "REL_X", "type": "determines", "expr": "A determines B", "case_impact": "narrow_domain"}
+            ],
+            "tiling_key_pruning": {"performed": False},
+            "tiling_key_merging": {"performed": "unknown"},
+        }
+    )
+    assert _semantic_contract_problems("tiling/constraints.yaml", constraints) == []
+
+
+def test_quality_rejects_short_cross_layer_graph_and_constant_dispatch_conflict(tmp_path: Path) -> None:
+    _repo_root, base = _repo(tmp_path)
+    (base / "tiling" / "variables.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "variables": {
+                    "splitAxis": {"kind": "hard_dispatch"},
+                    "inputDtype": {"kind": "hard_dispatch"},
+                    "isEmptyTensor": {"kind": "constant", "value": False},
+                },
+                "tiling_mechanism": {"entry_function": "DoTiling"},
+                "impact_classification": {
+                    "dispatch": ["splitAxis", "isEmptyTensor"],
+                    "constant": ["isEmptyTensor"],
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (base / "cross_layer" / "behavior_graph.yaml").write_text(
+        yaml.safe_dump({"version": 2, "nodes": [{"id": "PIPE_EMPTY"}], "edges": []}),
+        encoding="utf-8",
+    )
+    (base / "cross_layer" / "impact_graph.yaml").write_text(
+        yaml.safe_dump({"version": 2, "nodes": [{"id": "VAR_LAYOUT"}], "edges": [], "impacts": []}),
+        encoding="utf-8",
+    )
+    warnings: list[str] = []
+    blockers: list[str] = []
+    checks = _check_cross_layer_graph_completeness(base, warnings, blockers)
+    assert checks["cross_layer_graph_schema"] == "fail"
+    assert checks["cross_layer_graph_coverage"] == "fail"
+    assert any("not generated by deterministic graph builder" in item for item in blockers)
+    assert any("constant and non-constant" in item for item in blockers)
+
+
+def test_quality_warns_on_mojibake_markers(tmp_path: Path) -> None:
+    _repo_root, base = _repo(tmp_path)
+    (base / "tiling" / "decision_tree.md").write_text("A 鈫? B\n", encoding="utf-8")
+    warnings: list[str] = []
+    checks = _check_text_encoding(base, warnings)
+    assert checks["canonical_text_encoding"] == "warn"
+    assert any("possible mojibake" in item for item in warnings)
+
+
+def test_structured_golden_and_kernel_resource_checks() -> None:
+    assert _has_compute_golden_mapping(
+        {"compute_steps": {"COV_COMPUTE_X": {"golden_step_ref": "GOLDEN_X"}}},
+        {"golden_outputs": {}},
+    )
+    assert not _has_compute_golden_mapping({"compute_steps": {"COV_COMPUTE_X": {}}}, {})
+    assert _has_resource_flow(
+        {
+            "buffers": {"BUF_X": {"producer": "PIPE_LOAD", "consumer": "PIPE_COMPUTE"}},
+            "sync_events": {"SYNC_X": {"from": "PIPE_LOAD", "to": "PIPE_COMPUTE"}},
+        }
+    )
+    assert not _has_resource_flow(
+        {"buffers": {"BUF_X": {"producer": "PIPE_LOAD"}}, "sync_events": {"SYNC_X": {}}}
+    )
+
+
+def test_entity_default_scope_separates_tiling_and_kernel_names() -> None:
+    docs = {
+        "tiling/key_space.yaml": {
+            "fields": {"KEY_BLOCK_SIZE": {"id": "KEY_BLOCK_SIZE", "canonical_name": "block_size"}}
+        },
+        "kernel/compile_model.yaml": {
+            "template_bindings": {
+                "KTPL_BLOCK_SIZE": {"id": "KTPL_BLOCK_SIZE", "canonical_name": "block_size"}
+            }
+        },
+    }
+    result = kb_compiler.CompileResult(op_name="DemoOp")
+    index = kb_compiler.collect_entity_definitions(docs, result)
+    kb_compiler.validate_entity_references(docs, index, result)
+    assert index["KEY_BLOCK_SIZE"]["scope"] == "tiling"
+    assert index["KTPL_BLOCK_SIZE"]["scope"] == "kernel"
+    assert not any(issue.code == "DUPLICATE_CANONICAL_NAME" for issue in result.issues)

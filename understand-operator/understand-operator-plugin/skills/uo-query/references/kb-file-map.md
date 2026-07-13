@@ -119,8 +119,8 @@ barrier / quality gate 会检查上述前 5 个非空且非 pending。调试宏/
 
 | 文件 | 存什么 |
 |---|---|
-| `source_index.yaml` | SPxxx source spans |
-| `fact_index.yaml` | fact ↔ evidence ↔ spans |
+| `source_index.yaml` | `SRC_*` source spans |
+| `fact_index.yaml` | facts with `EV_*` / `SRC_*` evidence refs |
 | `artifact_dependencies.yaml` | PR impact / 增量更新 |
 | `issues.yaml` | missing / conflicts / warnings / unknowns |
 

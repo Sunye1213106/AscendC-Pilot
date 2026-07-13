@@ -48,7 +48,20 @@ All cross-file joins should prefer stable ids:
 - `VAR_*` for input, derived, tiling, kernel, buffer, and sync variables.
 - `REL_*` for semantic relations.
 - `EV_*` / `SRC_*` for evidence/source spans.
+- `COMP_*` / `GOLD_*` for compute and golden semantic steps.
 - `KPATH_*`, `KTPL_*`, `KBR_*` for kernel path, template binding, and branch entities.
+
+### Hard format contract (apply before writing, not at final quality gate)
+
+Every value in an `id` or `stable_id` field must be exactly one of:
+
+```text
+SYM_|VAR_|REL_|EV_|SRC_|KEY_|FAM_|COMP_|GOLD_|KPATH_|KBR_|KTPL_|CL_|CON_|VIEW_|BUF_|SYNC_|RES_|TDF_|KVAR_|KDEC_|PIPE_|COV_|NUM_
+```
+
+followed by uppercase letters, digits, or underscores. Legacy `TF123`, `K123`, `C123`, `D123`, and `P123` are tolerated only when already present in input; do not create them in new material. Never invent shorthand namespaces such as `BFxxx`, `TPxxx`, `KDxxx`, or `SPxxx`: use the mapped canonical namespace (`KBR_*`, `KTPL_*`, `KDEC_*`, `SRC_*`) instead. Every `evidence_refs` value must be a YAML list containing only `EV_*` or `SRC_*` ids. A source path, line span, prose explanation, or a bare `SPxxx` is not an evidence ref.
+
+Before the completion manifest, audit all YAML written in the phase for these fields. The subagent barrier rejects violations immediately; do not defer them to Phase 8.
 
 Handle alias merge, same-name-different-meaning, different-name-same-meaning, dangling references, duplicate definitions, scope conflicts, and type conflicts in `registry/aliases.yaml` and compiler reports. Do not join host/tiling/kernel artifacts by natural-language string equality alone.
 
@@ -82,12 +95,15 @@ Host tiling extraction is modeled as **two ordered steps**, both first-class can
 
 `key_space.yaml` remains the pure **tiling_key encoding** truth (macro, `fields_order`, key fields). It references Step 1 variables and defers all constraints/pruning/merging/input construction to Step 2 `constraints.yaml`.
 
+`exhaustive_key_space.yaml` is the source-backed full TilingKey enumeration model when the source provides a pruned macro/template file such as `*template_tiling_key*.h`. It stores macro blocks and product counts, not generated tests and not thousands of expanded rows.
+
 ## Shared Rules
 
-- Canonical tiling output lives under `tiling/` as **nine** primary files plus optional `tiling/archive/`.
+- Canonical tiling output lives under `tiling/` as **ten** primary files plus optional `tiling/archive/`.
 - `variables.yaml` is the **Step 1 variable-model source of truth** (mechanism + variables + impact classification).
 - `constraints.yaml` is the **Step 2 constraint-model source of truth** (value/range/relation constraints + tiling_key pruning + merging + input_realization + key-level unreachable).
 - `key_space.yaml` is the **tiling_key encoding source of truth** (encoding macro, `fields_order`, key fields only; no constraints/pruning here).
+- `exhaustive_key_space.yaml` is the **full TilingKey macro-block enumeration source of truth** when a pruned template enumeration exists; do not list all expanded rows, record source-backed blocks.
 - `families.yaml` is the **structural route source of truth**.
 - `data_model.yaml` is the **tilingdata source of truth**.
 - `coverage_model.yaml` is the **TestGenerate coverage obligation source of truth** (declares what should be covered, not what is already covered).
@@ -96,6 +112,7 @@ Host tiling extraction is modeled as **two ordered steps**, both first-class can
 - `evidence_index.yaml` is the evidence traceability entry; do not read by default.
 - `families.yaml` does **not** enumerate all tiling_key values.
 - `coverage_model.yaml` `seed_cases` are representative seeds only, not full key enumeration.
+- Full exhaustive TilingKey coverage is allowed only through `exhaustive_key_space.yaml.template_blocks` expansion, not through `seed_cases`, family count, or blind cartesian over `key_space.fields`.
 - Family coverage != tiling_key coverage.
 - Branch representative samples != full key enumeration.
 - Key relation coverage != field-value coverage: TestGenerate needs typed `constraints.relations`, `constraints.input_realization`, and executable `key_relation_obligations`.
@@ -105,7 +122,7 @@ Host tiling extraction is modeled as **two ordered steps**, both first-class can
 - Unknown tiling-side kernel facts must not stay unknown after Kernel Path Agents provide direct evidence. Kernel Alignment Builder must backfill only those fields that kernel evidence resolves, preserving the original tiling evidence and recording the kernel evidence used.
 - Numeric tiling data variants do not split kernel tasks by themselves.
 - Variables like `has_varlen` that share tiling_key but differ in tilingdata numeric behavior belong in `data_model.yaml` / `coverage_model.yaml`, not as fake tiling_key bits.
-- Intermediate analysis artifacts live under `tiling/archive/`. **Five archive files are REQUIRED during `/uo-init` host extraction** (anti-laziness). uo-query / TestGenerate still default-read only the nine canonical files; archive is for depth + gate + debug.
+- Intermediate analysis artifacts live under `tiling/archive/`. **Five archive files are REQUIRED during `/uo-init` host extraction** (anti-laziness). uo-query / TestGenerate still default-read only the ten canonical files; archive is for depth + gate + debug.
 - Skipping archive intermediates and jumping straight to thin `key_space` / `families` is a **workflow failure** (barrier + quality gate).
 
 ## Canonical Tiling Folder
@@ -116,6 +133,7 @@ tiling/
 ├── index.yaml
 ├── variables.yaml                   # STEP 1: mechanism + variables + impact classification
 ├── key_space.yaml                   # tiling_key encoding truth (fields only)
+├── exhaustive_key_space.yaml        # source-backed pruned macro blocks for full key enumeration
 ├── constraints.yaml                 # STEP 2: constraints + pruning + merging + input_realization
 ├── families.yaml
 ├── data_model.yaml
@@ -130,7 +148,7 @@ tiling/
     └── kernel_evidence_backfill.yaml  # written later by alignment
 ```
 
-Step mapping: `archive/frontier.yaml` + `archive/dispatch_variables.yaml` → **Step 1** `variables.yaml`; `archive/predicate_space.yaml` + `archive/compile_time_bindings.yaml` → **Step 2** `constraints.yaml`.
+Step mapping: `archive/frontier.yaml` + `archive/dispatch_variables.yaml` -> **Step 1** `variables.yaml`; `archive/predicate_space.yaml` + `archive/compile_time_bindings.yaml` -> **Step 2** `constraints.yaml`; `archive/compile_time_bindings.yaml` + direct macro block parsing -> `exhaustive_key_space.yaml`.
 
 ## REQUIRED Intermediate Archive (anti-laziness)
 
@@ -159,7 +177,7 @@ Host extraction **must write non-placeholder** content to all five files before 
 version: 1
 status: analyzed
 frontier_nodes:
-  - id: FR001
+  - id: SYM_FRONTIER_EXAMPLE
     role: key_setter | guard | tilingdata_writer | compile_time_binding | optional_io_gate | kernel_hint | template_inst | other
     symbol: ""
     file: ""
@@ -189,17 +207,17 @@ unknown_variables: []
 version: 1
 status: analyzed
 predicate_atoms:
-  - id: P001
+  - id: CON_PREDICATE_EXAMPLE
     expr: ""
     kind: runtime_guard | compile_time | optional_io | dtype_layout | shape | deter | other
     source: {file: "", lines: [], symbol: ""}
 predicate_relations:
-  - id: PR001
+  - id: REL_PREDICATE_EXAMPLE
     type: mutex | implies | requires | compatible_set | compile_time_fixed | runtime_guard | other
     atoms: []
     expr: ""
     case_impact: exclude | force_combo | narrow_domain
-    maps_to_legal_constraint: LC001
+    maps_to_legal_constraint: CON_LEGAL_EXAMPLE
 ```
 
 ```yaml
@@ -215,7 +233,7 @@ unresolved_symbols: []
 blocking_questions: []
 ```
 
-`decision_tree.md` must label each node compile-time vs runtime and map leaves to `TFxxx`.
+`decision_tree.md` must label each node compile-time vs runtime and map leaves to `FAM_*`.
 
 ## 1. route.md Schema
 
@@ -232,6 +250,7 @@ Human-readable tiling route (100–200 lines). Must include:
 - step 1 summary: variable count + impact_classification breakdown (how many affect key / template / family / tilingdata / core_split / buffer …)
 - step 2 summary: constraint/relation counts by type, input_realization coverage, key-level vs family-level unreachable, and whether tiling_key **pruning** / **merging** were performed
 - pointers to machine files: `index.yaml`, `variables.yaml`, `key_space.yaml`, `constraints.yaml`, `families.yaml`, `data_model.yaml`, `coverage_model.yaml`, `evidence_index.yaml`
+- when exhaustive TilingKey coverage is possible, pointer to `exhaustive_key_space.yaml` and its `summary.expanded_key_count`
 
 ## 2. index.yaml Schema
 
@@ -249,6 +268,7 @@ canonical_files:
   route: route.md
   variables: variables.yaml
   key_space: key_space.yaml
+  exhaustive_key_space: exhaustive_key_space.yaml
   constraints: constraints.yaml
   families: families.yaml
   data_model: data_model.yaml
@@ -266,6 +286,8 @@ qa_routes:
     read: [variables.yaml]
   tiling_key:
     read: [key_space.yaml, families.yaml]
+  tiling_key_exhaustive:
+    read: [exhaustive_key_space.yaml, key_space.yaml, constraints.yaml]
   key_constraints_relations:
     read: [constraints.yaml, key_space.yaml]
   tiling_key_pruning_merging:
@@ -287,6 +309,7 @@ testgenerate_contract:
   required_files:
     - variables.yaml
     - key_space.yaml
+    - exhaustive_key_space.yaml
     - constraints.yaml
     - families.yaml
     - data_model.yaml
@@ -296,7 +319,9 @@ testgenerate_contract:
     - "Do not treat seed_cases as full enumeration."
     - "Use variables.yaml for the variable inventory and impact classification."
     - "Use key_space.yaml as tiling_key encoding truth."
+    - "Use exhaustive_key_space.yaml for source-backed full TilingKey macro-block enumeration."
     - "Do not blind-cartesian fields; apply constraints.relations + constraints.key_unreachable first."
+    - "For exhaustive TilingKey coverage, expand exhaustive_key_space.template_blocks, then solve inputs using reverse_realization_index."
     - "Honor constraints.tiling_key_pruning (do not generate pruned combos) and tiling_key_merging (treat merged combos as one key, differ only in overlay)."
     - "Use constraints.input_realization to construct inputs for key patterns."
     - "Treat derived_fields / independent:false as computed, not free dimensions."
@@ -322,7 +347,7 @@ tiling_mechanism:
   registry_dispatch: [] # ordered dispatch entry points, if any
 
 variables: {}
-# Vxxx:
+# VAR_EXAMPLE:
 #   name: ""
 #   meaning: ""
 #   raw_domain: [] | {min, max} | expression   # observed/declared domain before constraints
@@ -353,7 +378,7 @@ unresolved_variables: []
 
 Rules:
 
-- Every influencing factor discovered in the key setter / guards / tilingdata writers / compile-time bindings must appear as a `Vxxx` with at least one `impact_scope`.
+- Every influencing factor discovered in the key setter / guards / tilingdata writers / compile-time bindings must appear as a `VAR_*` with at least one `impact_scope`.
 - `impact_classification` is a fast index; every variable id must appear in exactly the scopes listed in its own `impact_scope`.
 - Do not resolve constraints here — Step 1 records domains and classification only; relations belong to `constraints.yaml`.
 - Unknown / unresolved variables must be listed in `unresolved_variables`, not dropped.
@@ -382,7 +407,7 @@ fields: {}
 #   affects: [key, struct, tilingdata, kernel_template]
 #   kind: hard_dispatch | optional_io_gate | performance_knob | constant | derived
 #   set_when: ""                # host predicate / guard that selects this field value
-#   variable_ref: Vxxx          # back-ref to variables.yaml
+#   variable_ref: VAR_*         # back-ref to variables.yaml
 #   source: {file, lines, symbol}
 
 constants: {}
@@ -395,7 +420,7 @@ derived_fields: {}
 #   rule_kind: bool_expr | enum_map | arithmetic | host_helper | unknown
 #   enters_key_bit: true | false
 #   affects: [key, struct, tilingdata]
-#   variable_ref: Vxxx
+#   variable_ref: VAR_*
 #   source: {file, lines, symbol}
 ```
 
@@ -419,8 +444,8 @@ scope: ""
 
 variable_constraints: []
 # Per-variable value/range refinement. Each item:
-#   id: VC001
-#   variable: Vxxx              # -> variables.yaml (or key field name)
+#   id: CON_VARIABLE_EXAMPLE
+#   variable: VAR_*             # -> variables.yaml (or key field name)
 #   legal_values: [] | {min, max} | expression
 #   boundary_values: []         # values TestGenerate should hit for boundary coverage
 #   independent: true | false   # false => bound by a relation, not a free dimension
@@ -429,7 +454,7 @@ variable_constraints: []
 
 relations: []
 # Typed cross-variable relations. Each item:
-#   id: R001
+#   id: REL_CONSTRAINT_EXAMPLE
 #   type: mutex | implies | requires | compatible_set | compile_time_fixed | runtime_guard | other
 #   variables: []               # variable ids / key field names involved
 #   expr: ""                    # machine-oriented: "A=x => B in {y,z}" / "not (A=x and B=y)"
@@ -441,7 +466,7 @@ relations: []
 tiling_key_pruning:                # 剪枝: combos the code makes impossible / folds away
   performed: true | false | unknown
   pruned_combinations: []
-  # - id: PR001
+  # - id: CON_PRUNING_EXAMPLE
   #   pattern: {}                  # field->value combo that never occurs
   #   reason: ""
   #   proof_kind: compile_time_fold | runtime_guard | encoding_gap | domain_constraint | evidence_gap
@@ -451,8 +476,8 @@ tiling_key_pruning:                # 剪枝: combos the code makes impossible / 
 tiling_key_merging:                # 合并: distinct variable combos sharing one key / family
   performed: true | false | unknown
   merged_groups: []
-  # - id: MG001
-  #   merged_into: ""              # resulting key pattern or TFxxx
+  # - id: CON_MERGING_EXAMPLE
+  #   merged_into: ""              # resulting key pattern or FAM_*
   #   source_combinations: []      # distinct variable combos that collapse together
   #   reason: ""                   # equivalent dispatch / numeric-only diff / ...
   #   differs_in: []               # e.g. tilingdata numeric fields (overlay), if any
@@ -463,7 +488,7 @@ input_realization: {}
 # Pattern id -> how TestGenerate should construct inputs for a key / field pattern.
 # Required for every hard_dispatch field value in a reachable family key_pattern,
 # and for every key_relation_obligation.must_cover combination.
-#   IR001:
+#   CON_INPUT_REALIZATION_EXAMPLE:
 #     matches: {key_pattern: {}, family_refs: []}
 #     inputs: {required: [], optional_present: [], optional_absent: []}
 #     shape_intent: ""            # e.g. "TND with S>1", not a full case
@@ -474,7 +499,7 @@ input_realization: {}
 
 key_unreachable: []
 # Key-level unreachable only (not family-level). Each item:
-#   id: KU001
+#   id: CON_KEY_UNREACHABLE_EXAMPLE
 #   level: key
 #   constraint: ""                # field pattern that cannot occur
 #   reason: ""
@@ -586,6 +611,7 @@ scope: ""
 coverage_policy:
   family_coverage: required
   key_field_value_coverage: required
+  exhaustive_key_space_coverage: optional
   key_relation_coverage: required
   tilingdata_coverage: required
   unreachable_proof: required
@@ -604,16 +630,22 @@ key_field_obligations: {}
 
 key_relation_obligations: []
 # Each obligation (required keys):
-#   id: KR001
+#   id: COV_RELATION_EXAMPLE
 #   name: ""
 #   relation_type: pairwise | implies | mutex | boundary | risk | compatible_set
 #   fields: []
 #   must_cover: []              # list of combo maps or expr strings TestGenerate must hit
-#   linked_relations: []        # R ids from constraints.yaml
-#   linked_input_realization: []  # IR ids from constraints.yaml
+#   linked_relations: []        # REL_* ids from constraints.yaml
+#   linked_input_realization: []  # CON_* ids from constraints.yaml
 #   min_cases: 1
 #   reason: ""
 #   evidence_refs: []
+
+exhaustive_key_obligations:
+  source: exhaustive_key_space.yaml
+  mode: macro_block_cartesian
+  required_when_requested: true
+  notes: "For full TilingKey enumeration, expand template_blocks; do not infer the universe from families or seed_cases."
 
 tilingdata_obligations: []
 # - {block, fields, boundary_values, families, reason}
@@ -638,6 +670,78 @@ Rules:
 - When `constraints.relations` is non-empty, each relation that affects reachable keys should appear in `linked_relations` of at least one relation obligation **or** be reflected in `constraints.tiling_key_pruning` with a proof.
 - Do not duplicate full key enumeration into `must_cover`; list relation witnesses / critical combos only.
 - `seed_cases` remain representative; relation coverage is owned by `key_relation_obligations`, not seed count.
+
+## 8b. exhaustive_key_space.yaml Schema
+
+Source-backed full TilingKey enumeration model. Use this when source contains a pruning/template enumeration file, for example `op_kernel/**/flash_attention_score_grad_template_tiling_key.h`.
+
+```yaml
+version: 1
+op_name: ""
+scope: ""
+status: analyzed
+
+enumeration_source:
+  status: analyzed
+  files: []
+  block_macro: ASCENDC_TPL_ARGS_SEL
+  domain_macros: [ASCENDC_TPL_BOOL_SEL, ASCENDC_TPL_UINT_SEL]
+  terminator_macro: ASCENDC_TPL_TILING_STRUCT_SEL
+  evidence_refs: []
+
+summary:
+  block_count: 0
+  expanded_key_count: 0
+  by_dtype: {}
+  by_source_file: {}
+
+field_order: []
+
+template_blocks:
+  - id: KTPL_TILING_KEY_BLOCK_001
+    source: {file: "", lines: [], evidence_refs: []}
+    dtype_section: ""
+    fixed_fields: {}
+    field_domains: {}
+    derived_requirements: {}
+    reverse_input_hints: []
+    tiling_struct: ""
+    product_count: 0
+    family_refs: []
+    kernel_path_refs: []
+    pruning_refs: []
+
+reverse_realization_index:
+  SplitAxis:
+    rule: ""
+    requires_shape: []
+    requires_dtype: []
+    requires_attrs: []
+    input_realization_refs: []
+    evidence_refs: []
+
+exhaustive_coverage_contract:
+  mode: macro_block_cartesian
+  total_expected_keys: 0
+  testgenerate_strategy:
+    - "expand template_blocks.field_domains"
+    - "merge fixed_fields into every expanded row"
+    - "reject rows listed by constraints.key_unreachable or pruning_refs"
+    - "solve concrete inputs through reverse_realization_index and constraints.input_realization"
+    - "audit observed tiling_key against expected expanded row"
+  audit:
+    expected_key_required: true
+    observed_key_required: true
+    mismatch_is_failure: true
+    missing_reverse_realization_is_failure: true
+```
+
+Rules:
+
+- `summary.expanded_key_count` must equal the sum of `template_blocks[].product_count`.
+- `template_blocks` are the pruned source truth; do not recompute the universe by blindly cartesianing `key_space.fields`.
+- Do not dump all expanded key rows into the KB by default. TestGenerate expands blocks on demand.
+- Fields that are hard to realize from inputs, such as `SplitAxis`, `S1TemplateNum`, `S2TemplateNum`, `DTemplateNum`, `IsNzOut`, `IsTndSwizzle`, `IsBn2MultiBlk`, `IsDNoEqual`, and `DeterType`, need entries in `reverse_realization_index`.
 
 ## 9. evidence_index.yaml Schema
 

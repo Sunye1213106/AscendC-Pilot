@@ -64,3 +64,9 @@ Phase 5 must also build cross-layer artifacts:
 - `cross_layer/impact_graph.yaml`
 
 Every promoted relation should prefer stable ids from `registry/` and include `evidence_refs`, `status`, and unresolved/conflict markers when applicable.
+
+## Canonical schema and serialization gate
+
+Do not invent alternate top-level layouts. The final compiler expects: `kernel/paths.yaml.kernel_paths`; `kernel/pipeline.yaml.pipelines`, `stages`, `resources`, and non-empty `compute_step_alignment`; `kernel/resources.yaml.buffers`, `sync_events`, `workspaces`, `resources`; `kernel/compile_model.yaml.template_bindings`, `compile_time_configs`, `compile_variables`, `compile_decisions`; `kernel/variables.yaml.runtime_variables`, `tilingdata_reads`, `path_decision_points`; and `kernel/branches.yaml.branches`, `path_semantics`, `dataflow_links`, `resource_links`.
+
+Before Phase 6, write all kernel canonical YAML as UTF-8 and parse every file with `yaml.safe_load`. Quote C++/math predicates, bracket suffixes, arrows, `:`/`#` text, and literal backslashes. Do not use broad `yaml.dump` rewrites or legacy encoding fallbacks. If raw input is malformed, resume its `uo-kernel-path` owner; do not hand-repair raw output or change compiler maturity rules.

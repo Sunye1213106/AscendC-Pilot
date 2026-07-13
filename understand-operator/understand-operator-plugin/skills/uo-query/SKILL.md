@@ -191,3 +191,15 @@ python "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" -
 
 `PROJECT_ROOT` = 已索引的算子仓库根（含 `op_host/`）。  
 未索引 → 提示用户 Index / `/uo-init --full`，**不要**用全树 Grep 或 `cbm_query.py` 代替。
+
+## KB Resolve Override
+
+This section overrides the older Step 0 search order above.
+
+1. Extract possible operator tokens from `--op-name` and from the user's question. Treat mixed Chinese/English tokens such as `fasg算子的...` as containing `fasg`.
+2. Query must only read existing KB directories. Never create `.understand-operator/<token>/` during query path resolution.
+3. Enumerate candidate KBs from `$PROJECT_ROOT/.understand-operator/*/route.md`, parent directories up to 3 levels, and finally `**/.understand-operator/*/route.md`.
+4. For every candidate, read light metadata only: KB directory name, `index.yaml.op_name`, `operator.yaml.op_name`, `registry/aliases.yaml.aliases[].alias`, and `query/terminology.yaml.aliases[].alias`.
+5. Match each user token against exact, lower-case, punctuation-stripped, and initialism aliases. Example: `flash_attention_score_grad` must derive `fasg`; `FAG_test` must derive `fag`.
+6. If one candidate matches, use it. If several candidates match, ask the user to choose. If none match but there is exactly one candidate KB, use it and state that alias matching did not hit.
+7. If no existing KB is found, go to the missing-KB gate; do not fall back to scanning source trees or making an empty KB.

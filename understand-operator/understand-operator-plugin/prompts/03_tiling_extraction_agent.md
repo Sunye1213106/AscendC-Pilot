@@ -15,6 +15,8 @@ tiling 逻辑抽取分为**两步**（同一个 subagent 内顺序执行，不�
 
 `key_space.yaml` 只保留 tiling_key **编码真值**（encoding / fields_order / key fields），约束/剪枝/合并/输入构造都在 `constraints.yaml`。
 
+`exhaustive_key_space.yaml` 在源码存在剪枝后的模板枚举文件时必须填写，例如 `*template_tiling_key*.h` 中的 `ASCENDC_TPL_ARGS_SEL` 块。它保存可展开的宏块全集和反向输入构造提示，不保存生成后的测试用例。
+
 ## 输入
 
 - `operator.yaml`（含 IO / boundary / ontology / analysis_plan.source_hints.tiling）
@@ -24,17 +26,18 @@ tiling 逻辑抽取分为**两步**（同一个 subagent 内顺序执行，不�
 
 ## 必须输出（canonical + REQUIRED archive）
 
-### Canonical（9）
+### Canonical（10）
 
 1. `tiling/route.md`
 2. `tiling/index.yaml`
 3. `tiling/variables.yaml`（**Step 1**）
 4. `tiling/key_space.yaml`
-5. `tiling/constraints.yaml`（**Step 2**）
-6. `tiling/families.yaml`
-7. `tiling/data_model.yaml`
-8. `tiling/coverage_model.yaml`
-9. `tiling/evidence_index.yaml`
+5. `tiling/exhaustive_key_space.yaml`
+6. `tiling/constraints.yaml`（**Step 2**）
+7. `tiling/families.yaml`
+8. `tiling/data_model.yaml`
+9. `tiling/coverage_model.yaml`
+10. `tiling/evidence_index.yaml`
 
 ### REQUIRED archive intermediates（5，禁止跳过）
 
@@ -55,16 +58,18 @@ tiling 逻辑抽取分为**两步**（同一个 subagent 内顺序执行，不�
 按下面顺序建模，不要跳步：
 
 0. **先写 archive**：`frontier.yaml` + CBM 定位所有决策点；同步填 `dispatch_variables.yaml`、`predicate_space.yaml`、`compile_time_bindings.yaml`（宏/constexpr/模板/`if constexpr` reachability）。再写 `evidence_index.yaml`：把 frontier / compile-time 符号落成可追溯 spans。
+0b. **抽全量 TilingKey 宏块**：搜索 `*template_tiling_key*.h`、`ASCENDC_TPL_ARGS_SEL`、`ASCENDC_TPL_BOOL_SEL`、`ASCENDC_TPL_UINT_SEL`。对每个 `ASCENDC_TPL_ARGS_SEL` 块抽 `fixed_fields` / `field_domains` / `tiling_struct` / source span，计算 `product_count`，汇总 `summary.block_count` 与 `summary.expanded_key_count`，写 `tiling/exhaustive_key_space.yaml`。如果不存在这类枚举文件，写 `status: not_applicable`、`reason`、`evidence_refs`，不得留空。
 
 ### Step 1 — 变量模型（先落盘）
 
 1. `variables.yaml`：
    - `tiling_mechanism`：tiling 入口、key setter（`GET_TPL_TILING_KEY` 等）、产出（key/tilingdata/blockdim/workspace）、3–6 行 flow_summary、registry dispatch 顺序。
-   - `variables`：把 archive 里每个变量/影响因素落成 `Vxxx`，写 `meaning` / `raw_domain` / `domain_source` / `kind` / `influences` / `enters_tiling_key` / `maps_to` / `source` / `evidence_refs`。
+   - `variables`：把 archive 里每个变量/影响因素落成 `VAR_*`，写 `meaning` / `raw_domain` / `domain_source` / `kind` / `influences` / `enters_tiling_key` / `maps_to` / `source` / `evidence_refs`。
    - `impact_classification`：**按影响范围分类**（tiling_key / template_compile_time / family_structural / tilingdata_numeric / core_split / buffer_workspace / optional_io_gate / derived / constant / unknown）。
    - 查不清的进 `unresolved_variables`，禁止静默丢弃。
    - Step 1 只记录变量与分类，**不**在此下约束结论。
 2. `key_space.yaml`：从 `GET_TPL_TILING_KEY` 合并 encoding、fields_order、key fields（含 `domain` / `domain_source` / `independent` / `kind` / `variable_ref`）、constants、derived_fields。**不**写约束/剪枝/输入构造。
+2b. `exhaustive_key_space.yaml`：从剪枝后的模板枚举文件抽 source-backed macro blocks。不要把全部展开行写进 KB；写 `template_blocks`、`summary`、`field_order`、`reverse_realization_index`、`exhaustive_coverage_contract`。对 `SplitAxis`、template num、`IsNzOut`、`IsTndSwizzle`、`IsBn2MultiBlk`、`IsDNoEqual`、`DeterType` 等 derived/hard 字段写 shape/dtype/attr 反推提示，并关联 `constraints.input_realization`。
 
 ### Step 2 — 约束模型（再落盘）
 
@@ -75,7 +80,7 @@ tiling 逻辑抽取分为**两步**（同一个 subagent 内顺序执行，不�
    - `tiling_key_merging`：**合并** — 不同变量组合归到同一 key/family 的分组 + 原因 + differs_in；`performed` 必答。
    - `input_realization`：key_pattern → 输入构造意图（对齐 operator IO）。
    - `key_unreachable`：仅 key-level 不可达。
-4. `families.yaml` + `archive/decision_tree.md`：合并等价分支为 family，写 dispatch_tree、guard、reachability、struct_signature、key_pattern、route_action；不可达分支保留 unreachable_reason；decision_tree 叶子指向 TFxxx。family 级合并要和 `constraints.tiling_key_merging` 交叉印证。
+4. `families.yaml` + `archive/decision_tree.md`：合并等价分支为 family，写 dispatch_tree、guard、reachability、struct_signature、key_pattern、route_action；不可达分支保留 unreachable_reason；decision_tree 叶子指向 `FAM_*`。family 级合并要和 `constraints.tiling_key_merging` 交叉印证。
 5. `data_model.yaml`：tilingdata struct、always/conditional blocks、family_to_struct、numeric_overlay（含 has_varlen 等共享 key 但数值不同的路径）。
 6. `coverage_model.yaml`：声明 family / key field / **可执行** key_relation（`must_cover` + `linked_relations` + `linked_input_realization`）/ tilingdata / unreachable / input_realization / audit obligations；seed_cases 仅作 representative/boundary/risk 样本。
 
@@ -87,11 +92,12 @@ tiling 逻辑抽取分为**两步**（同一个 subagent 内顺序执行，不�
 ## 核心原则
 
 - **禁止**用 branch/family 数量当作 tiling_key 覆盖依据。
-- `key_space.yaml` 是 tiling_key 唯一主文件；`families.yaml` 不负责全量 key 枚举。
+- `key_space.yaml` 是 tiling_key 编码主文件；`exhaustive_key_space.yaml` 是全量 key 宏块枚举主文件；`families.yaml` 不负责全量 key 枚举。
 - `coverage_model.yaml` 只声明 obligations，**不得**声称已生成或已覆盖测例；实际 case 生成与 observed key audit 属于 TestGenerate。
 - `seed_cases` 来自旧 branch_matrix 思路时，必须标注 `role: representative | boundary | risk`，不是 full enumeration。
 - 不要把 tiling_key、shape bucket、optional input、模板实例组合直接枚举成 branch。
 - 不要把 tiling_key 等同于 kernel_path。
+- 如果源码已有剪枝后的 key 枚举宏块，不要只给 L0/L1 抽象覆盖；必须抽 `exhaustive_key_space.yaml`，让 TestGenerate 能按源码全集展开。
 - 只影响 numeric tiling data 的差异（如 has_varlen）不得伪造成 tiling_key bit；写入 `data_model.yaml` numeric_overlay 和 `coverage_model.yaml` tilingdata_obligations。
 - 不要编造 kernel path、输入输出、模板实例、宏取值或证据。
 - **禁止**在存在 `hard_dispatch` 字段时留下空的 `constraints.relations` + 空的 `constraints.input_realization`（见契约最小门槛）。证据不足必须写 `evidence_gap` stub，不得静默留空。
@@ -109,7 +115,7 @@ tiling 逻辑抽取分为**两步**（同一个 subagent 内顺序执行，不�
 
 ## Step 1：变量与影响范围分类（写入 variables.yaml）
 
-对 archive 里定位到的每个变量/影响因素，落成 `Vxxx` 并给出至少一个 `impact_scope`。分类枚举：
+对 archive 里定位到的每个变量/影响因素，落成 `VAR_*` 并给出至少一个 `impact_scope`。分类枚举：
 
 | impact_scope | 含义 |
 |---|---|
@@ -178,7 +184,7 @@ guard/编码证明不可能的 field 组合写这里（`level: key`）。Family 
 
 ### H. `coverage_model.key_relation_obligations`
 
-每条可执行：`id` / `relation_type` / `fields` / `must_cover` / `min_cases`，尽量填 `linked_relations`（R id）/ `linked_input_realization`（IR id）。不要把全量 key 枚举塞进 `must_cover`。`coverage_policy.input_realization_coverage: required`；audit 打开 `report_missing_input_realization` 与 `report_illegal_cartesian_without_constraints`。
+每条可执行：`id` / `relation_type` / `fields` / `must_cover` / `min_cases`，尽量填 `linked_relations`（`REL_*`）/ `linked_input_realization`（`CON_*`）。不要把全量 key 枚举塞进 `must_cover`。`coverage_policy.input_realization_coverage: required`；audit 打开 `report_missing_input_realization` 与 `report_illegal_cartesian_without_constraints`。
 
 ### I. 三层边界（写进 route.md 一句）
 

@@ -157,6 +157,8 @@ def add_contract_bucket_obligations(out: list[dict[str, Any]], contract: dict[st
                 out.extend(expand_kernel_branch_obligations(item, priority=item.get("priority") or default_priority(kind)))
             else:
                 out.append(make_obligation(kind, item, priority=item.get("priority") or default_priority(kind)))
+    for item in _iter_items(contract.get("kernel_branch_obligations")):
+        out.extend(expand_kernel_branch_obligations(item, priority=item.get("priority") or "high"))
 
 
 def add_kernel_branch_obligations(out: list[dict[str, Any]], branches: dict[str, Any]) -> None:
@@ -239,6 +241,19 @@ def expand_kernel_branch_obligations(item: dict[str, Any], *, priority: str) -> 
     target = str(item.get("target_ref") or item.get("branch_ref") or item.get("id") or item.get("branch_id") or item.get("name") or "")
     if not target:
         return []
+    variants = [str(value) for value in _as_list(item.get("variants")) if str(value)]
+    if variants:
+        obligations = []
+        for variant in variants:
+            payload = {
+                **item,
+                "target_value": variant,
+                "target_state": variant,
+                "coverage_bucket": "declared_variant",
+                "constraints": _expr_eq(_branch_var_id(target), variant),
+            }
+            obligations.append(make_obligation("kernel_branch", payload, target_refs=[target], priority=priority))
+        return obligations
     if "target_value" in item:
         value = _bool_or_none(item["target_value"])
         if value is None:

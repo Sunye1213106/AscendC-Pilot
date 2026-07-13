@@ -38,12 +38,15 @@ Tiling logic extraction runs as two ordered steps inside this single subagent (n
 - **Step 1 — variable model** → `tiling/variables.yaml`: how tiling is computed (`tiling_mechanism`), every variable / influencing factor, classified by **impact scope** (`tiling_key` / `template_compile_time` / `family_structural` / `tilingdata_numeric` / `core_split` / `buffer_workspace` / `optional_io_gate` / `derived` / `constant` / `unknown`). Also fill `tiling/key_space.yaml` (tiling_key encoding: fields only).
 - **Step 2 — constraint model** → `tiling/constraints.yaml`: abstract variable relations into constraints (**value / range / relation**), record tiling_key **pruning (剪枝)** and **merging (合并)**, plus `input_realization` and key-level `key_unreachable`.
 
+If source contains a pruned template enumeration such as `*template_tiling_key*.h` with `ASCENDC_TPL_ARGS_SEL`, also fill `tiling/exhaustive_key_space.yaml` with source-backed macro blocks and product counts. Do not dump generated tests or all expanded rows.
+
 ## Scope
 
 Analyze only host-side tiling and dispatch information:
 
 - tiling mechanism + variable inventory classified by impact scope (Step 1)
 - tiling key space (encoding, fields_order, key fields only)
+- exhaustive TilingKey macro-block space when source provides one (`exhaustive_key_space.yaml`)
 - typed value/range/relation constraints, tiling_key pruning + merging, input_realization, key-level unreachable (Step 2)
 - structural families, guards, reachability
 - tilingdata structs and numeric overlays
@@ -64,9 +67,10 @@ Minimum bar when any `key_space.fields.*.kind` is `hard_dispatch`:
 2. Typed `constraints.relations` (`mutex` / `implies` / `requires` / `compatible_set` / `compile_time_fixed` / `runtime_guard` / documented independence via `other`), **or** every hard_dispatch field marked `independent: true` in `variable_constraints` with an explicit independence relation.
 3. `constraints.tiling_key_pruning.performed` and `constraints.tiling_key_merging.performed` explicitly answered (`true`/`false`/`unknown` + notes).
 4. Non-empty `constraints.input_realization` covering each reachable family `key_pattern` (or a per-family wildcard), aligned to `operator.yaml` IO names.
-5. `coverage_model.key_relation_obligations` with `must_cover` + links to R/IR ids where applicable.
+5. `coverage_model.key_relation_obligations` with `must_cover` + links to `REL_*` / `CON_*` ids where applicable.
 6. Key-level `constraints.key_unreachable` kept separate from family-level unreachable.
 7. Never leave `constraints.relations` and `constraints.input_realization` both empty silently; use `evidence_gap` stubs when proof is incomplete.
+8. When a source pruning/template key file exists, `exhaustive_key_space.yaml.template_blocks` must be non-empty and `summary.expanded_key_count` must equal the sum of block `product_count`.
 
 ## Inputs
 
@@ -90,40 +94,42 @@ The proposal must use the unified envelope. Do not write arbitrary top-level can
 version: 1
 op_name: "<OP_NAME>"
 proposal_id: "host_tiling_<stable_suffix>"
-producer: "uo-host-extraction"
-phase: "phase2"
+producer:
+  agent: "uo-host-extraction"
+  phase: "phase2"
 canonical_updates:
   - target: "registry/evidence.yaml"
     section: "evidence"
-    mode: "by_id"
-    items: []
+    merge_mode: "by_id"
+    entries: []
   - target: "tiling/variables.yaml"
     section: "variables"
-    mode: "by_id"
-    items: []
+    merge_mode: "by_id"
+    entries: []
   - target: "tiling/key_space.yaml"
-    section: "key_fields"
-    mode: "by_id"
-    items: []
+    section: "fields"
+    merge_mode: "by_id"
+    entries: []
   - target: "tiling/constraints.yaml"
     section: "relations"
-    mode: "by_id"
-    items: []
+    merge_mode: "by_id"
+    entries: []
 ```
 
 Allowed targets are only `registry/`, `tiling/`, `flow/`, `kernel/`, `cross_layer/`, `query/`, `contracts/`, and `evidence/` YAML files under `UO_ROOT`. Write proposal envelopes under `archive/proposals/<run_id>/`. Draft canonical files are compatibility artifacts only; the host must run `uo-kb-compile promote ... --phase phase2 --run-id <run_id>` and trust only promoted canonical output.
 
-### Canonical (9)
+### Canonical (10)
 
 1. `tiling/route.md`
 2. `tiling/index.yaml`
 3. `tiling/variables.yaml` (**Step 1**)
 4. `tiling/key_space.yaml`
-5. `tiling/constraints.yaml` (**Step 2**)
-6. `tiling/families.yaml`
-7. `tiling/data_model.yaml`
-8. `tiling/coverage_model.yaml`
-9. `tiling/evidence_index.yaml`
+5. `tiling/exhaustive_key_space.yaml`
+6. `tiling/constraints.yaml` (**Step 2**)
+7. `tiling/families.yaml`
+8. `tiling/data_model.yaml`
+9. `tiling/coverage_model.yaml`
+10. `tiling/evidence_index.yaml`
 
 ### REQUIRED archive intermediates (5) — write BEFORE merging thin summaries
 
@@ -138,15 +144,40 @@ Use the schemas in `prompts/00_tiling_kernel_artifact_contract.md`.
 - Write archive first, then merge into canonical files (Step 1 → `variables.yaml`; Step 2 → `constraints.yaml`). Barrier fails if archive is still placeholder.
 - `variables.yaml` is the Step 1 source of truth (mechanism + variables + impact classification).
 - `key_space.yaml` is the tiling_key encoding truth (fields only; no constraints/pruning here).
+- `exhaustive_key_space.yaml` is the source-backed full key macro-block enumeration truth when template pruning files exist.
 - `constraints.yaml` is the Step 2 source of truth (constraints + pruning + merging + input_realization + key_unreachable).
 - `families.yaml` is structural route only; do not enumerate all tiling_key values.
 - `coverage_model.yaml` declares obligations only; seed_cases are representative, not full enumeration.
 - Family coverage != tiling_key coverage; key relation coverage != field-value coverage.
 - Do not blind-cartesian fields for TestGenerate; constraints, pruning/merging, and input_realization are required outputs.
+- For exhaustive TilingKey coverage, TestGenerate expands `exhaustive_key_space.yaml.template_blocks`, then solves inputs through `reverse_realization_index` and `constraints.input_realization`.
 - Do not collapse multi-value compile-time axes (DeterType / arch / dtype) into one shallow family without archive proof.
 - Do not scatter legacy files in `tiling/` root; only `tiling/archive/` for intermediates.
 
 ## Completion Manifest
+
+## Mandatory self-check before the completion manifest
+
+Do not report completion based on a chat summary. Before writing the manifest:
+
+1. Parse every required `*.yaml` listed above with `yaml.safe_load`; each document must parse and have a mapping root.
+2. Check the required top-level collection is not silently empty. For a genuinely unavailable fact, use the documented `unresolved_*` / `evidence_gap` structure with `reason` and non-empty `evidence_refs`, never an empty file or an empty placeholder list.
+3. Every `id` / `stable_id` must use the canonical uppercase namespace (`SYM_`, `VAR_`, `REL_`, `EV_`, `SRC_`, `KEY_`, `FAM_`, `COMP_`, `GOLD_`, `KPATH_`, `KBR_`, `KTPL_`, `CL_`, `CON_`, `VIEW_`, `BUF_`, `SYNC_`, `RES_`, `TDF_`, `KVAR_`, `KDEC_`, `PIPE_`, `COV_`, or `NUM_`); never create shorthand ids such as `BFxxx`, `TPxxx`, `KDxxx`, or `SPxxx`.
+4. Load the YAML back and assert `tiling/variables.yaml.variables` is a non-empty mapping (never a list), `tiling_mechanism` is populated, and at least one `impact_classification` category is non-empty.
+5. Validate every `constraints.relations[].type` against the shared compiler `RELATION_TYPES`; do not substitute a different vocabulary just to satisfy a local prompt. Each relation must have `id`, `type`, `expr`, and `case_impact`.
+6. Assert `tiling_key_pruning.performed` and `tiling_key_merging.performed` are exactly `true`, `false`, or `unknown`. Fix schema failures before writing the completion manifest.
+4. Every `evidence_refs` value must be a YAML list of stable ids matching `EV_*` or `SRC_*`, and every referenced id must be defined in the evidence material written for this phase. Do not use prose, file paths, or an inline source span as an evidence ref.
+5. Put every required canonical and proposal output in `artifacts`, and every archive output in `archive_artifacts`. The host barrier rejects malformed YAML, omitted artifacts, invalid ids, and placeholder material.
+
+### YAML syntax rules (mandatory)
+
+Do not rely on YAML-looking text being valid YAML. Before the manifest, parse **every** YAML output with `yaml.safe_load`.
+
+- Quote any scalar containing `[` or `]`, for example write `outputs: ["blockStarts[]", "blockEnds[]"]`, never `outputs: [blockStarts[], blockEnds[]]`.
+- Do not put backslash expressions in double-quoted YAML scalars. Write `expr: 'd\\in[64,128)'` (single quotes) or `expr: "d\\\\in[64,128)"`; never `expr: "d\\in[64,128)"`.
+- Quote predicates, C++-like expressions, template syntax, colon-containing text, and `#` text unless they are deliberately structured YAML.
+- If a value is a list/mapping, write an actual YAML list/mapping; do not encode an unquoted pseudo-expression that YAML may interpret as syntax.
+- A parse failure is incomplete work: fix the owning artifact before writing `status: complete`.
 
 After writing all required artifacts, write:
 
@@ -159,10 +190,12 @@ After writing all required artifacts, write:
   "completed_at": "<ISO8601>",
   "uo_root": "<UO_ROOT>",
   "artifacts": [
+    "archive/proposals/host_tiling_proposal.yaml",
     "tiling/route.md",
     "tiling/index.yaml",
     "tiling/variables.yaml",
     "tiling/key_space.yaml",
+    "tiling/exhaustive_key_space.yaml",
     "tiling/constraints.yaml",
     "tiling/families.yaml",
     "tiling/data_model.yaml",

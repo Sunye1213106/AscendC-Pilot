@@ -22,6 +22,7 @@ CANONICAL_TILING_FILES = [
     "tiling/index.yaml",
     "tiling/variables.yaml",
     "tiling/key_space.yaml",
+    "tiling/exhaustive_key_space.yaml",
     "tiling/constraints.yaml",
     "tiling/families.yaml",
     "tiling/data_model.yaml",
@@ -109,6 +110,68 @@ def operator_root(repo_root: Path, op_name: str) -> Path:
     path = repo_root / ARTIFACT_DIR / op_name
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def existing_operator_root(repo_root: Path, op_name: str) -> Path:
+    """Return the expected KB root without creating an empty KB directory."""
+    return repo_root / ARTIFACT_DIR / op_name
+
+
+def resolve_existing_operator_root(repo_root: Path, op_name: str) -> tuple[str, Path] | None:
+    """Resolve an existing KB by exact name or generated aliases."""
+    exact = existing_operator_root(repo_root, op_name)
+    if exact.exists():
+        return op_name, exact
+
+    kb_parent = repo_root / ARTIFACT_DIR
+    if not kb_parent.exists():
+        return None
+    token = op_name.strip().lower()
+    matches: list[tuple[str, Path]] = []
+    for candidate in kb_parent.iterdir():
+        if not candidate.is_dir() or not (candidate / "route.md").exists():
+            continue
+        aliases = {alias.lower() for alias in _default_operator_aliases(candidate.name, repo_root)}
+        aliases.add(candidate.name.lower())
+        aliases.add(re.sub(r"[^A-Za-z0-9]+", "", candidate.name).lower())
+        if token in aliases:
+            matches.append((candidate.name, candidate))
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _stable_slug(text: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_").upper()
+    return slug or "UNKNOWN"
+
+
+def _default_operator_aliases(op_name: str, repo_root: Path) -> list[str]:
+    candidates = [
+        op_name,
+        op_name.lower(),
+        op_name.replace("_", ""),
+        op_name.replace("_", "").lower(),
+        repo_root.name,
+        repo_root.name.lower(),
+    ]
+    for value in (op_name, repo_root.name):
+        words = [part for part in re.split(r"[^A-Za-z0-9]+", value) if part]
+        if len(words) > 1:
+            candidates.append("".join(part[0] for part in words).lower())
+        prefix = re.sub(r"(?:[_\-.]?test|[_\-.]?op)$", "", value, flags=re.IGNORECASE).strip("._-")
+        if prefix and prefix != value:
+            candidates.append(prefix)
+            candidates.append(prefix.lower())
+    seen: set[str] = set()
+    aliases: list[str] = []
+    for item in candidates:
+        alias = item.strip()
+        key = alias.lower()
+        if alias and key not in seen:
+            aliases.append(alias)
+            seen.add(key)
+    return aliases
 
 
 def write_json(path: Path, data: Any) -> None:
@@ -302,6 +365,7 @@ export_views:
     read:
       - tiling/variables.yaml
       - tiling/key_space.yaml
+      - tiling/exhaustive_key_space.yaml
       - tiling/constraints.yaml
       - tiling/families.yaml
       - tiling/data_model.yaml
@@ -322,6 +386,7 @@ export_views:
       - operator.yaml
       - tiling/variables.yaml
       - tiling/key_space.yaml
+      - tiling/exhaustive_key_space.yaml
       - tiling/constraints.yaml
       - tiling/families.yaml
       - tiling/data_model.yaml
@@ -363,9 +428,15 @@ artifact_dependencies:
       - tiling/constraints.yaml
   tiling/key_space.yaml:
     affects:
+      - tiling/exhaustive_key_space.yaml
       - tiling/constraints.yaml
       - kernel/paths.yaml
       - test/contract.yaml
+  tiling/exhaustive_key_space.yaml:
+    affects:
+      - tiling/coverage_model.yaml
+      - test/contract.yaml
+      - contracts/testcase.yaml
   tiling/constraints.yaml:
     affects:
       - tiling/coverage_model.yaml
@@ -551,7 +622,7 @@ unknown
 - Step 2: relations / tiling_key_pruning / tiling_key_merging / input_realization (constraints.yaml).
 - Key logic for TestGenerate: constraints.relations + input_realization + coverage_model.key_relation_obligations.
 - Key-level unreachable (constraints.key_unreachable) != family-level unreachable (families.yaml).
-- Machine files: index.yaml, variables.yaml, key_space.yaml, constraints.yaml, families.yaml, data_model.yaml, coverage_model.yaml, evidence_index.yaml
+- Machine files: index.yaml, variables.yaml, key_space.yaml, exhaustive_key_space.yaml, constraints.yaml, families.yaml, data_model.yaml, coverage_model.yaml, evidence_index.yaml
 """,
         "tiling/index.yaml": f"""version: 1
 op_name: {op_name}
@@ -564,6 +635,7 @@ canonical_files:
   route: route.md
   variables: variables.yaml
   key_space: key_space.yaml
+  exhaustive_key_space: exhaustive_key_space.yaml
   constraints: constraints.yaml
   families: families.yaml
   data_model: data_model.yaml
@@ -581,6 +653,8 @@ qa_routes:
     read: [variables.yaml]
   tiling_key:
     read: [key_space.yaml, families.yaml]
+  tiling_key_exhaustive:
+    read: [exhaustive_key_space.yaml, key_space.yaml, constraints.yaml]
   key_constraints_relations:
     read: [constraints.yaml, key_space.yaml]
   tiling_key_pruning_merging:
@@ -602,6 +676,7 @@ testgenerate_contract:
   required_files:
     - variables.yaml
     - key_space.yaml
+    - exhaustive_key_space.yaml
     - constraints.yaml
     - families.yaml
     - data_model.yaml
@@ -611,7 +686,9 @@ testgenerate_contract:
     - "Do not treat seed_cases as full enumeration."
     - "Use variables.yaml for the variable inventory and impact classification."
     - "Use key_space.yaml as tiling_key encoding truth."
+    - "Use exhaustive_key_space.yaml for source-backed full TilingKey macro-block enumeration."
     - "Do not blind-cartesian fields; apply constraints.relations + key_unreachable + pruning first."
+    - "For exhaustive TilingKey coverage, expand exhaustive_key_space.template_blocks, then solve inputs using reverse_realization_index."
     - "Honor tiling_key_pruning (skip pruned combos) and tiling_key_merging (merged combos are one key)."
     - "Use constraints.input_realization to construct inputs for key patterns."
     - "Treat derived_fields / independent:false as computed, not free dimensions."
@@ -668,6 +745,72 @@ constants: {{}}
 
 derived_fields: {{}}
 # name: {{from, rule, rule_kind, enters_key_bit, affects, variable_ref, source}}
+""",
+        "tiling/exhaustive_key_space.yaml": f"""version: 1
+op_name: {op_name}
+scope: unknown
+
+# Source-backed exhaustive TilingKey model.
+# This file stores pruned macro/template blocks, not generated test cases.
+# TestGenerate may expand template_blocks cartesian products to enumerate every
+# compile-time TilingKey, then use reverse_realization_index to solve inputs.
+status: pending
+
+enumeration_source:
+  status: unknown
+  files: []
+  block_macro: ASCENDC_TPL_ARGS_SEL
+  domain_macros:
+    - ASCENDC_TPL_BOOL_SEL
+    - ASCENDC_TPL_UINT_SEL
+  terminator_macro: ASCENDC_TPL_TILING_STRUCT_SEL
+  evidence_refs: []
+
+summary:
+  block_count: 0
+  expanded_key_count: 0
+  by_dtype: {{}}
+  by_source_file: {{}}
+
+field_order: []
+
+template_blocks: []
+# - id: KTPL_TILING_KEY_BLOCK_001
+#   source: {{file: "", lines: [], evidence_refs: []}}
+#   dtype_section: ""
+#   fixed_fields: {{}}
+#   field_domains: {{}}
+#   derived_requirements: {{}}
+#   reverse_input_hints: []
+#   tiling_struct: ""
+#   product_count: 0
+#   family_refs: []
+#   kernel_path_refs: []
+#   pruning_refs: []
+
+reverse_realization_index: {{}}
+# field_name:
+#   rule: ""
+#   requires_shape: []
+#   requires_dtype: []
+#   requires_attrs: []
+#   input_realization_refs: []
+#   evidence_refs: []
+
+exhaustive_coverage_contract:
+  mode: macro_block_cartesian
+  total_expected_keys: 0
+  testgenerate_strategy:
+    - "expand template_blocks.field_domains"
+    - "merge fixed_fields into every expanded row"
+    - "reject rows listed by constraints.key_unreachable or pruning_refs"
+    - "solve concrete inputs through reverse_realization_index and constraints.input_realization"
+    - "audit observed tiling_key against expected expanded row"
+  audit:
+    expected_key_required: true
+    observed_key_required: true
+    mismatch_is_failure: true
+    missing_reverse_realization_is_failure: true
 """,
         "tiling/constraints.yaml": f"""version: 1
 op_name: {op_name}
@@ -728,6 +871,7 @@ scope: unknown
 coverage_policy:
   family_coverage: required
   key_field_value_coverage: required
+  exhaustive_key_space_coverage: optional
   key_relation_coverage: required
   tilingdata_coverage: required
   unreachable_proof: required
@@ -741,6 +885,12 @@ key_field_obligations: {{}}
 key_relation_obligations: []
 # Each: id / name / relation_type / fields / must_cover /
 #   linked_relations / linked_input_realization / min_cases / reason
+
+exhaustive_key_obligations:
+  source: exhaustive_key_space.yaml
+  mode: macro_block_cartesian
+  required_when_requested: true
+  notes: "For full TilingKey enumeration, expand template_blocks; do not infer the universe from families or seed_cases."
 
 tilingdata_obligations: []
 
@@ -1119,6 +1269,7 @@ inputs:
   operator: ../operator.yaml
   tiling_variables: ../tiling/variables.yaml
   tiling_key_space: ../tiling/key_space.yaml
+  tiling_exhaustive_key_space: ../tiling/exhaustive_key_space.yaml
   tiling_constraints: ../tiling/constraints.yaml
   tiling_families: ../tiling/families.yaml
   tiling_data_model: ../tiling/data_model.yaml
@@ -1138,6 +1289,10 @@ coverage_obligations:
   tiling_key_field_value_coverage:
     source: ../tiling/key_space.yaml
     required: true
+  exhaustive_tiling_key_coverage:
+    source: ../tiling/exhaustive_key_space.yaml
+    required_when_requested: true
+    notes: "Expand source-backed template_blocks, not raw key_space cartesian products."
   tiling_key_relation_coverage:
     source: ../tiling/coverage_model.yaml
     required: true
@@ -1172,6 +1327,8 @@ coverage_obligations:
 generation_order:
   - "Read tiling/variables.yaml for the variable inventory + impact classification."
   - "Read tiling/key_space.yaml fields + derived_fields (skip independent:false / derived as free dims)."
+  - "If full TilingKey coverage is requested, expand tiling/exhaustive_key_space.yaml template_blocks before pairwise/minimized planning."
+  - "Use exhaustive_key_space.reverse_realization_index to solve derived key fields such as SplitAxis/templates/NzOut/swizzle back to shape/dtype/attrs."
   - "Apply constraints.relations + key_unreachable + tiling_key_pruning before any cartesian product."
   - "Collapse tiling_key_merging groups to a single key (differ only in overlay)."
   - "Select must_cover combos from coverage_model.key_relation_obligations."
@@ -1194,6 +1351,7 @@ audit_requirements:
   observed_tiling_key_required: true
   mismatch_is_failure: true
   report_missing_key_field_values: true
+  report_missing_exhaustive_key_blocks: true
   report_missing_key_relations: true
   report_missing_input_realization: true
   report_illegal_cartesian_without_constraints: true
@@ -1242,6 +1400,7 @@ artifact_to_source:
   operator.yaml: []
   tiling/variables.yaml: []
   tiling/key_space.yaml: []
+  tiling/exhaustive_key_space.yaml: []
   tiling/constraints.yaml: []
   flow/compute_graph.yaml: []
   flow/golden_model.yaml: []
@@ -1446,6 +1605,13 @@ warnings:
 
 
 def _init_kb_v2_layout(base: Path, op_name: str, repo_root: Path) -> None:
+    operator_id = f"SYM_OPERATOR_{_stable_slug(op_name)}"
+    operator_aliases = _default_operator_aliases(op_name, repo_root)
+    operator_alias_list = ", ".join(json.dumps(alias) for alias in operator_aliases)
+    alias_entries = "\n".join(
+        f"  - {{alias: {json.dumps(alias)}, target_id: {operator_id}, scope: operator, evidence_refs: [], status: proposed}}"
+        for alias in operator_aliases
+    )
     write_text(
         base / "manifest.yaml",
         f"""version: 2
@@ -1487,7 +1653,14 @@ compatibility:
         f"""version: 1
 op_name: {op_name}
 purpose: stable symbol registry for source-backed facts
-symbols: []
+symbols:
+  - id: {operator_id}
+    kind: operator
+    canonical_name: {op_name}
+    scope: operator
+    aliases: [{operator_alias_list}]
+    evidence_refs: []
+    status: proposed
 schema:
   required: [id, kind, canonical_name, scope, evidence_refs]
   id_examples: [SYM_HOST_TILING_ENTRY, SYM_KERNEL_ENTRY_MAIN]
@@ -1517,7 +1690,8 @@ schema:
         base / "registry" / "aliases.yaml",
         f"""version: 1
 op_name: {op_name}
-aliases: []
+aliases:
+{alias_entries or "  []"}
 conflicts: []
 schema:
   alias_entry: {{alias: "", target_id: "", scope: "", evidence_refs: [], status: proposed}}
@@ -1628,6 +1802,9 @@ routes:
   testcase_contract:
     intents: [key_family_coverage, kernel_branch_coverage, variable_boundaries, regression_selection]
     read: [contracts/testcase.yaml, tiling/coverage_model.yaml, kernel/branches.yaml, cross_layer/impact_graph.yaml, test/contract.yaml]
+  tiling_key_exhaustive:
+    intents: [exhaustive_tiling_key_coverage, macro_block_cartesian, reverse_realization]
+    read: [tiling/exhaustive_key_space.yaml, tiling/key_space.yaml, tiling/constraints.yaml, test/contract.yaml]
   evidence:
     intents: [source_lines, confidence, unresolved, conflict]
     read: [registry/evidence.yaml, evidence/fact_index.yaml, evidence/source_index.yaml, evidence/issues.yaml, quality.yaml]
@@ -1645,7 +1822,8 @@ terms:
   fact_layer: "Directly source-confirmed files, symbols, fields, IO, calls, reads/writes, branches."
   semantic_layer: "Typed relations between facts."
   derived_view_layer: "Task-specific query, code-change, PR-review, testcase, and documentation slices."
-aliases: []
+aliases:
+{alias_entries or "  []"}
 """,
     )
 

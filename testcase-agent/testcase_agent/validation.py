@@ -104,6 +104,7 @@ def validate_intake(export_payload: dict[str, Any], final_validation: dict[str, 
     for key in ("source", "interface", "typed_constraints", "coverage_obligations", "golden_contract"):
         if key not in contract:
             report.add("MISSING_REQUIRED_FIELD", "error", f"contracts/testcase.yaml missing required field: {key}", "contracts/testcase.yaml", key)
+    validate_contract_schema(contract, report)
 
     quality_status = quality_status_from(files)
     if quality_status == "fail":
@@ -200,6 +201,33 @@ def collect_warning_states(files: dict[str, Any], report: ValidationReport) -> N
             report.add("UNDERSTAND_WARNING", "warning", f"Understand warning carried into intake: {state}", path, str(item.get("id") or ""))
         if item.get("severity") == "warning":
             report.add("UNDERSTAND_WARNING", "warning", str(item.get("message") or item.get("reason") or "warning"), path, str(item.get("id") or ""))
+
+
+def validate_contract_schema(contract: dict[str, Any], report: ValidationReport) -> None:
+    for idx, item in enumerate(_as_list(contract.get("input_realization"))):
+        if not isinstance(item, dict):
+            report.add("INPUT_REALIZATION_SCHEMA", "error", "input_realization item must be a mapping", f"contracts/testcase.yaml.input_realization[{idx}]")
+            continue
+        if not item.get("id"):
+            report.add("INPUT_REALIZATION_SCHEMA", "error", "input_realization item missing id", f"contracts/testcase.yaml.input_realization[{idx}]")
+
+    for idx, item in enumerate(_kernel_branch_items(contract)):
+        if not isinstance(item, dict):
+            report.add("KERNEL_BRANCH_SCHEMA", "error", "kernel branch obligation must be a mapping", f"contracts/testcase.yaml.kernel_branch_obligations[{idx}]")
+            continue
+        branch_id = item.get("branch_id") or item.get("id") or item.get("target_ref")
+        variants = _as_list(item.get("variants"))
+        if variants and not branch_id:
+            report.add("KERNEL_BRANCH_SCHEMA", "error", "kernel branch variants require branch id", f"contracts/testcase.yaml.kernel_branch_obligations[{idx}]")
+
+
+def _kernel_branch_items(contract: dict[str, Any]) -> list[Any]:
+    items: list[Any] = []
+    items.extend(_as_list(contract.get("kernel_branch_obligations")))
+    coverage = _as_dict(contract.get("coverage_obligations"))
+    items.extend(_as_list(coverage.get("kernel_branches")))
+    items.extend(_as_list(coverage.get("kernel_paths")))
+    return items
 
 
 def is_stable_id(value: str) -> bool:

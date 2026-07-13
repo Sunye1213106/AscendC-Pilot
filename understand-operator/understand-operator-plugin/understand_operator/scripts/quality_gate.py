@@ -22,11 +22,13 @@ from understand_operator._operator.artifacts import (
     CANONICAL_TEST_FILES,
     CANONICAL_TILING_FILES,
     REQUIRED_TILING_ARCHIVE_FILES,
-    operator_root,
+    existing_operator_root,
     read_text,
+    resolve_existing_operator_root,
     safe_op_name,
     write_text,
 )
+from understand_operator._operator.kb_compiler import RELATION_TYPES
 
 try:
     import yaml
@@ -39,6 +41,14 @@ FORBIDDEN_TEST_FIELDS = (
     "observed_coverage",
     "case_csv",
 )
+MOJIBAKE_MARKERS = ("鈥", "鈫", "锟", "\ufffd")
+KEY_CONFIDENCE_SCORES = (
+    "tiling_confidence",
+    "kernel_confidence",
+    "evidence_confidence",
+    "test_contract_confidence",
+)
+GREEN_CONFIDENCE_FLOOR = 0.6
 
 LEGACY_REQUIRED_MARKERS = [
     "summary/operator_io.yaml",
@@ -58,7 +68,13 @@ def main(argv: list[str] | None = None) -> int:
 
     repo_root = Path(args.repo).resolve()
     op_name = safe_op_name(args.op_name, repo_root)
-    base = operator_root(repo_root, op_name)
+    resolved = resolve_existing_operator_root(repo_root, op_name)
+    if resolved is None:
+        base = existing_operator_root(repo_root, op_name)
+        print(f"KB not found: {base}")
+        print("Run /uo-init first, or pass the canonical --op-name used by the existing KB.")
+        return 2
+    op_name, base = resolved
 
     blockers: list[str] = []
     warnings: list[str] = []
@@ -225,28 +241,41 @@ def main(argv: list[str] | None = None) -> int:
         blockers,
     )
     checks.update(key_logic)
+    checks.update(
+        _check_exhaustive_tiling_key_model(
+            parsed.get("tiling/exhaustive_key_space.yaml"),
+            parsed.get("tiling/key_space.yaml"),
+            parsed.get("tiling/constraints.yaml"),
+            warnings,
+            blockers,
+        )
+    )
 
     # golden / kernel alignment presence
     compute_graph = read_text(base / "flow" / "compute_graph.yaml")
-    if "golden_step_ref" in compute_graph or "golden_role" in compute_graph or "maps_to_compute_steps" in golden_text:
+    if _has_compute_golden_mapping(
+        parsed.get("flow/compute_graph.yaml"), parsed.get("flow/golden_model.yaml")
+    ):
         checks["golden_model_has_compute_mapping"] = "pass"
     else:
         checks["golden_model_has_compute_mapping"] = "fail"
-        warnings.append("compute_graph/golden_model missing compute↔golden mapping")
+        blockers.append("compute_graph/golden_model missing compute-to-golden mapping")
 
     pipeline = read_text(base / "kernel" / "pipeline.yaml")
-    if "compute_step_alignment" in pipeline and not re.search(r"compute_step_alignment:\s*\[\]", pipeline):
+    if _has_nonempty_collection(
+        _as_mapping(parsed.get("kernel/pipeline.yaml")).get("compute_step_alignment")
+    ):
         checks["kernel_pipeline_has_compute_alignment"] = "pass"
     else:
         checks["kernel_pipeline_has_compute_alignment"] = "fail"
-        warnings.append("kernel/pipeline.yaml missing compute_step_alignment entries")
+        blockers.append("kernel/pipeline.yaml missing compute_step_alignment entries")
 
     resources = read_text(base / "kernel" / "resources.yaml")
-    if ("producer" in resources.lower() or "consumer" in resources.lower()) and "sync_events" in resources:
+    if _has_resource_flow(parsed.get("kernel/resources.yaml")):
         checks["resources_have_producer_consumer"] = "pass"
     else:
         checks["resources_have_producer_consumer"] = "fail"
-        warnings.append("kernel/resources.yaml missing producer/consumer/sync relations")
+        blockers.append("kernel/resources.yaml missing producer/consumer/sync relations")
 
     # route.md length
     route_md = read_text(base / "route.md")
@@ -265,6 +294,8 @@ def main(argv: list[str] | None = None) -> int:
 
     compiler_checks = _run_kb_compiler(base, op_name, warnings, blockers)
     checks.update(compiler_checks)
+    checks.update(_check_cross_layer_graph_completeness(base, warnings, blockers))
+    checks.update(_check_text_encoding(base, warnings))
 
     scores = {
         "boundary_confidence": _score_text(read_text(base / "operator.yaml")),
@@ -276,6 +307,11 @@ def main(argv: list[str] | None = None) -> int:
         "evidence_confidence": _score_text(read_text(base / "evidence" / "fact_index.yaml")),
         "test_contract_confidence": _score_text(contract_text),
     }
+    if any(scores.get(key, 0.0) < GREEN_CONFIDENCE_FLOOR for key in KEY_CONFIDENCE_SCORES):
+        warnings.append(
+            "key confidence scores below green threshold: "
+            + ", ".join(f"{key}={scores.get(key, 0.0)}" for key in KEY_CONFIDENCE_SCORES if scores.get(key, 0.0) < GREEN_CONFIDENCE_FLOOR)
+        )
 
     if blockers:
         status = "red"
@@ -289,7 +325,7 @@ def main(argv: list[str] | None = None) -> int:
             decision = "usable_for_testgenerate_with_review"
     else:
         status = "green"
-        decision = "usable_for_testgenerate_with_review"
+        decision = "usable_for_testgenerate"
 
     body = _render_quality(
         op_name=op_name,
@@ -319,24 +355,33 @@ def _check_tiling_archive(base: Path, warnings: list[str], blockers: list[str]) 
             failed = True
             blockers.append(f"required tiling archive empty: {rel}")
             continue
-        if "status: pending" in text and rel.endswith(".yaml"):
+        data: object = None
+        if rel.endswith(".yaml") and yaml is not None:
+            try:
+                data = yaml.safe_load(text)
+            except yaml.YAMLError as exc:
+                failed = True
+                blockers.append(f"required tiling archive invalid YAML: {rel}: {exc}")
+                continue
+        mapping = data if isinstance(data, dict) else {}
+        if mapping.get("status") == "pending":
             failed = True
             warnings.append(f"{rel} still status: pending (host extraction skipped depth)")
-        if rel.endswith("frontier.yaml") and "frontier_nodes: []" in text:
+        if rel.endswith("frontier.yaml") and mapping.get("frontier_nodes") == []:
             failed = True
             warnings.append(f"{rel} frontier_nodes empty")
-        if rel.endswith("dispatch_variables.yaml") and "variables: []" in text:
+        if rel.endswith("dispatch_variables.yaml") and mapping.get("variables") == []:
             failed = True
             warnings.append(f"{rel} variables empty")
-        if rel.endswith("predicate_space.yaml") and "predicate_atoms: []" in text:
+        if rel.endswith("predicate_space.yaml") and mapping.get("predicate_atoms") == []:
             failed = True
             warnings.append(f"{rel} predicate_atoms empty")
         if rel.endswith("compile_time_bindings.yaml"):
             empty_all = (
-                "macros: []" in text
-                and "constexpr_constants: []" in text
-                and "instantiations: []" in text
-                and "unresolved_symbols: []" in text
+                mapping.get("macros") == []
+                and mapping.get("constexpr_constants") == []
+                and mapping.get("instantiations") == []
+                and mapping.get("unresolved_symbols") == []
             )
             if empty_all:
                 failed = True
@@ -378,7 +423,7 @@ def _check_evidence(
     evidence_ok = True
     locator_ok = True
     if not isinstance(fact_index, dict):
-        warnings.append("evidence/fact_index.yaml missing structure")
+        blockers.append("evidence/fact_index.yaml missing structure")
         return False, False
     facts = fact_index.get("facts") or {}
     refs = fact_index.get("evidence_refs") or {}
@@ -391,40 +436,30 @@ def _check_evidence(
             ev = meta.get("evidence_refs") or []
             if not ev:
                 evidence_ok = False
-                warnings.append(f"fact {fact_id} missing evidence_refs")
+                blockers.append(f"fact {fact_id} missing evidence_refs")
             for ref in ev if isinstance(ev, list) else []:
                 if isinstance(refs, dict) and ref not in refs:
                     evidence_ok = False
-                    warnings.append(f"evidence_ref {ref} not in fact_index.evidence_refs")
-            spans = meta.get("source_spans") or []
-            if not spans:
+                    blockers.append(f"evidence_ref {ref} not in fact_index.evidence_refs")
+            spans = meta.get("source_spans") or meta.get("source_locator") or []
+            if not spans and not meta.get("reason"):
                 locator_ok = False
+                blockers.append(f"fact {fact_id} missing source locator or explicit reason")
     else:
-        # empty facts on fresh init is expected; treat as fail for usability but not hard blocker alone
+        # Phase 8 is a final usability gate, not the fresh-layout initializer.
         evidence_ok = False
         locator_ok = False
-        warnings.append("evidence/fact_index.yaml has no facts yet")
+        blockers.append("evidence/fact_index.yaml has no facts yet")
 
     if isinstance(source_index, dict):
         spans = source_index.get("source_spans") or {}
         if facts and isinstance(spans, dict) and not spans:
             locator_ok = False
-            warnings.append("evidence/source_index.yaml has no source_spans")
+            blockers.append("evidence/source_index.yaml has no source_spans")
     else:
         locator_ok = False
-        warnings.append("evidence/source_index.yaml missing structure")
+        blockers.append("evidence/source_index.yaml missing structure")
     return evidence_ok, locator_ok
-
-
-_ALLOWED_CONSTRAINT_TYPES = {
-    "mutex",
-    "implies",
-    "requires",
-    "compatible_set",
-    "compile_time_fixed",
-    "runtime_guard",
-    "other",
-}
 
 
 def _as_mapping(value: object) -> dict:
@@ -433,6 +468,43 @@ def _as_mapping(value: object) -> dict:
 
 def _as_list(value: object) -> list:
     return value if isinstance(value, list) else []
+
+
+def _has_nonempty_collection(value: object) -> bool:
+    return isinstance(value, (list, dict)) and bool(value)
+
+
+def _iter_structured_entries(value: object) -> list[dict]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    if isinstance(value, dict):
+        return [item for item in value.values() if isinstance(item, dict)]
+    return []
+
+
+def _has_compute_golden_mapping(compute_graph: object, golden_model: object) -> bool:
+    compute = _as_mapping(compute_graph)
+    golden = _as_mapping(golden_model)
+    for step in _iter_structured_entries(compute.get("compute_steps")):
+        if step.get("golden_step_ref") or step.get("golden_role"):
+            return True
+    if _has_nonempty_collection(golden.get("maps_to_compute_steps")):
+        return True
+    for section in ("golden_steps", "golden_outputs"):
+        for item in _iter_structured_entries(golden.get(section)):
+            if _has_nonempty_collection(item.get("maps_to_compute_steps")):
+                return True
+    return False
+
+
+def _has_resource_flow(resources: object) -> bool:
+    doc = _as_mapping(resources)
+    if not _iter_structured_entries(doc.get("sync_events")):
+        return False
+    entries: list[dict] = []
+    for section in ("buffers", "workspaces", "resources"):
+        entries.extend(_iter_structured_entries(doc.get(section)))
+    return any(item.get("producer") and item.get("consumer") for item in entries)
 
 
 def _has_hard_dispatch(fields: object) -> bool:
@@ -485,7 +557,7 @@ def _check_key_logic_relations(
         for key in checks:
             checks[key] = "fail"
         checks["key_vs_family_unreachable_separated"] = "pass"
-        warnings.append(
+        blockers.append(
             "two-step tiling logic not filled yet "
             "(variables.yaml + constraints.yaml: relations / pruning / merging / input_realization)"
         )
@@ -499,12 +571,12 @@ def _check_key_logic_relations(
     classification = _as_mapping(var.get("impact_classification"))
     if not var_inventory or not (mechanism and any(mechanism.values())):
         checks["tiling_variables_present"] = "fail"
-        warnings.append(
+        blockers.append(
             "tiling/variables.yaml missing tiling_mechanism or variables inventory (Step 1)"
         )
     elif not any(_as_list(v) for v in classification.values()):
         checks["tiling_variables_present"] = "fail"
-        warnings.append("tiling/variables.yaml impact_classification is empty (Step 1)")
+        blockers.append("tiling/variables.yaml impact_classification is empty (Step 1)")
 
     # --- Step 2: constraints.yaml ---
     relations = _as_list(con.get("relations"))
@@ -534,29 +606,29 @@ def _check_key_logic_relations(
                 missing_keys.append("non-mapping relation")
                 continue
             ctype = str(item.get("type", "")).strip()
-            if ctype and ctype not in _ALLOWED_CONSTRAINT_TYPES:
+            if ctype and ctype not in RELATION_TYPES:
                 bad_types.append(ctype)
             for req in ("id", "type", "expr", "case_impact"):
                 if not item.get(req):
                     missing_keys.append(f"{item.get('id', '?')}.{req}")
         if bad_types:
             checks["key_relations_present"] = "fail"
-            warnings.append(
+            blockers.append(
                 "constraints.relations has unknown type(s): " + ", ".join(sorted(set(bad_types))[:6])
             )
         if missing_keys:
             checks["key_relations_present"] = "fail"
-            warnings.append(
+            blockers.append(
                 "constraints.relations missing required keys: " + ", ".join(missing_keys[:8])
             )
 
     # pruning / merging must be explicitly answered
     if pruning.get("performed") in (None, ""):
         checks["tiling_key_pruning_documented"] = "fail"
-        warnings.append("constraints.tiling_key_pruning.performed must be true/false/unknown")
+        blockers.append("constraints.tiling_key_pruning.performed must be true/false/unknown")
     if merging.get("performed") in (None, ""):
         checks["tiling_key_merging_documented"] = "fail"
-        warnings.append("constraints.tiling_key_merging.performed must be true/false/unknown")
+        blockers.append("constraints.tiling_key_merging.performed must be true/false/unknown")
 
     reachable_families = []
     family_map = _as_mapping(fam.get("families"))
@@ -594,13 +666,13 @@ def _check_key_logic_relations(
                 weak.append(str(ir_id))
         if weak:
             checks["input_realization_present"] = "fail"
-            warnings.append(
+            blockers.append(
                 "input_realization entries lack matches/inputs intent: " + ", ".join(weak[:6])
             )
 
     if hard and not relation_obs:
         checks["key_relation_obligations_executable"] = "fail"
-        warnings.append(
+        blockers.append(
             "coverage_model.key_relation_obligations is empty while hard_dispatch fields exist"
         )
     elif relation_obs:
@@ -616,7 +688,7 @@ def _check_key_logic_relations(
                 weak_rel.append(str(item.get("id", "?")))
         if weak_rel:
             checks["key_relation_obligations_executable"] = "fail"
-            warnings.append(
+            blockers.append(
                 "key_relation_obligations not executable (need must_cover or linked_relations): "
                 + ", ".join(weak_rel[:6])
             )
@@ -652,6 +724,128 @@ def _check_key_logic_relations(
     return checks
 
 
+def _check_exhaustive_tiling_key_model(
+    exhaustive: object,
+    key_space: object,
+    constraints: object,
+    warnings: list[str],
+    blockers: list[str],
+) -> dict[str, str]:
+    checks: dict[str, str] = {
+        "exhaustive_tiling_key_model_present": "pass",
+        "exhaustive_tiling_key_counts_consistent": "pass",
+        "exhaustive_tiling_key_reverse_hints_present": "pass",
+    }
+    ex = _as_mapping(exhaustive)
+    ks = _as_mapping(key_space)
+    con = _as_mapping(constraints)
+    fields = ks.get("fields")
+    hard = _has_hard_dispatch(fields)
+
+    if not ex:
+        checks["exhaustive_tiling_key_model_present"] = "fail"
+        blockers.append("tiling/exhaustive_key_space.yaml missing; TestGenerate cannot do full TilingKey enumeration")
+        return checks
+
+    status = str(ex.get("status") or "").strip()
+    if status == "not_applicable":
+        if not ex.get("reason") or not _as_list(ex.get("evidence_refs")):
+            checks["exhaustive_tiling_key_model_present"] = "fail"
+            blockers.append("tiling/exhaustive_key_space.yaml not_applicable requires reason and evidence_refs")
+        elif hard:
+            warnings.append("hard_dispatch fields exist but exhaustive TilingKey model is marked not_applicable")
+        return checks
+
+    source = _as_mapping(ex.get("enumeration_source"))
+    summary = _as_mapping(ex.get("summary"))
+    blocks = _as_list(ex.get("template_blocks"))
+    has_source = bool(_as_list(source.get("files")) or _as_list(source.get("evidence_refs")))
+    if hard and (not has_source or not blocks):
+        checks["exhaustive_tiling_key_model_present"] = "fail"
+        blockers.append(
+            "hard_dispatch key_space exists but tiling/exhaustive_key_space.yaml has no source-backed template_blocks"
+        )
+    elif not blocks:
+        warnings.append("tiling/exhaustive_key_space.yaml has no template_blocks; full TilingKey enumeration is unavailable")
+
+    try:
+        expected_count = int(summary.get("expanded_key_count") or 0)
+    except (TypeError, ValueError):
+        expected_count = -1
+    try:
+        expected_blocks = int(summary.get("block_count") or 0)
+    except (TypeError, ValueError):
+        expected_blocks = -1
+    product_sum = 0
+    bad_blocks: list[str] = []
+    for index, block in enumerate(blocks):
+        if not isinstance(block, dict):
+            bad_blocks.append(f"#{index}")
+            continue
+        try:
+            product = int(block.get("product_count") or 0)
+        except (TypeError, ValueError):
+            product = 0
+        if product <= 0:
+            bad_blocks.append(str(block.get("id") or f"#{index}"))
+        product_sum += product
+        if not _as_mapping(block.get("field_domains")) and not _as_mapping(block.get("fixed_fields")):
+            bad_blocks.append(str(block.get("id") or f"#{index}") + ":no_fields")
+    if bad_blocks:
+        checks["exhaustive_tiling_key_counts_consistent"] = "fail"
+        blockers.append("exhaustive template_blocks invalid: " + ", ".join(bad_blocks[:8]))
+    if blocks and expected_blocks not in (0, len(blocks)):
+        checks["exhaustive_tiling_key_counts_consistent"] = "fail"
+        blockers.append(
+            f"exhaustive summary.block_count={expected_blocks} but template_blocks={len(blocks)}"
+        )
+    if blocks and expected_count not in (0, product_sum):
+        checks["exhaustive_tiling_key_counts_consistent"] = "fail"
+        blockers.append(
+            f"exhaustive summary.expanded_key_count={expected_count} but product_count sum={product_sum}"
+        )
+    contract = _as_mapping(ex.get("exhaustive_coverage_contract"))
+    if blocks and contract.get("mode") not in ("macro_block_cartesian", "source_block_cartesian"):
+        checks["exhaustive_tiling_key_counts_consistent"] = "fail"
+        blockers.append("exhaustive_coverage_contract.mode must be macro_block_cartesian")
+
+    reverse = _as_mapping(ex.get("reverse_realization_index"))
+    known_derived = {
+        "SplitAxis",
+        "S1TemplateNum",
+        "S2TemplateNum",
+        "DTemplateNum",
+        "DTemplateType",
+        "IsNzOut",
+        "IsTndSwizzle",
+        "IsBn2MultiBlk",
+        "IsDNoEqual",
+        "DeterType",
+    }
+    used_fields: set[str] = set()
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        used_fields.update(str(name) for name in _as_mapping(block.get("fixed_fields")))
+        used_fields.update(str(name) for name in _as_mapping(block.get("field_domains")))
+    fields_needing_reverse = sorted(known_derived.intersection(used_fields))
+    missing_reverse = [name for name in fields_needing_reverse if not _as_mapping(reverse.get(name))]
+    if blocks and missing_reverse:
+        checks["exhaustive_tiling_key_reverse_hints_present"] = "fail"
+        blockers.append(
+            "exhaustive_key_space.reverse_realization_index missing derived fields: "
+            + ", ".join(missing_reverse[:8])
+        )
+    input_realization = _as_mapping(con.get("input_realization"))
+    if blocks and not input_realization:
+        checks["exhaustive_tiling_key_reverse_hints_present"] = "fail"
+        blockers.append(
+            "exhaustive TilingKey blocks exist but constraints.input_realization is empty; inputs cannot be solved"
+        )
+
+    return checks
+
+
 def _run_kb_compiler(
     base: Path,
     op_name: str,
@@ -683,9 +877,8 @@ def _run_kb_compiler(
     if result.entity_count == 0:
         checks["stable_ids_present"] = "fail"
         warnings.append("registry has no stable ids yet")
-    if result.alias_count == 0:
-        checks["registry_aliases_valid"] = "warn"
-        warnings.append("registry has no aliases yet")
+    # No aliases is a valid registry state.  Actual conflicts are emitted by
+    # the compiler and retain their warning/error severity below.
 
     for issue in result.issues:
         line = f"{issue.code}: {issue.message}"
@@ -713,6 +906,109 @@ def _run_kb_compiler(
             checks["task_contracts_present"] = "fail"
 
     return checks
+
+
+def _check_cross_layer_graph_completeness(base: Path, warnings: list[str], blockers: list[str]) -> dict[str, str]:
+    checks = {
+        "cross_layer_graph_schema": "pass",
+        "cross_layer_graph_coverage": "pass",
+    }
+    variables = _read_yaml(base / "tiling" / "variables.yaml")
+    behavior = _read_yaml(base / "cross_layer" / "behavior_graph.yaml")
+    impact = _read_yaml(base / "cross_layer" / "impact_graph.yaml")
+
+    var_inventory = _as_mapping(_as_mapping(variables).get("variables"))
+    variable_count = len(var_inventory)
+    behavior_nodes = _as_list(_as_mapping(behavior).get("nodes"))
+    impact_nodes = _as_list(_as_mapping(impact).get("nodes"))
+    behavior_edges = _as_list(_as_mapping(behavior).get("edges"))
+    impact_edges = _as_list(_as_mapping(impact).get("edges"))
+
+    for rel, graph in (
+        ("cross_layer/behavior_graph.yaml", behavior),
+        ("cross_layer/impact_graph.yaml", impact),
+    ):
+        graph_map = _as_mapping(graph)
+        if graph_map.get("version") != 1 or not str(graph_map.get("purpose", "")).startswith("deterministically"):
+            checks["cross_layer_graph_schema"] = "fail"
+            blockers.append(f"{rel} was not generated by deterministic graph builder")
+
+    if variable_count:
+        min_nodes = max(1, int(variable_count * 0.5))
+        if len(behavior_nodes) < min_nodes or len(impact_nodes) < min_nodes:
+            checks["cross_layer_graph_coverage"] = "fail"
+            blockers.append(
+                "cross-layer graphs are too small for tiling variable inventory "
+                f"(variables={variable_count}, behavior_nodes={len(behavior_nodes)}, impact_nodes={len(impact_nodes)})"
+            )
+    if variable_count > 1 and not behavior_edges:
+        checks["cross_layer_graph_coverage"] = "fail"
+        blockers.append("cross_layer/behavior_graph.yaml has no edges despite non-trivial tiling variables")
+    if variable_count > 1 and not impact_edges:
+        checks["cross_layer_graph_coverage"] = "fail"
+        blockers.append("cross_layer/impact_graph.yaml has no impact edges despite non-trivial tiling variables")
+
+    class_members: dict[str, set[str]] = {}
+    classification = _as_mapping(_as_mapping(variables).get("impact_classification"))
+    for scope, items in classification.items():
+        for name in _as_list(items):
+            class_members.setdefault(str(name), set()).add(str(scope))
+    conflicts = sorted(name for name, scopes in class_members.items() if "constant" in scopes and len(scopes) > 1)
+    if conflicts:
+        checks["cross_layer_graph_coverage"] = "fail"
+        blockers.append(
+            "tiling/variables.yaml classifies variable as constant and non-constant: "
+            + ", ".join(conflicts[:8])
+        )
+
+    if checks["cross_layer_graph_coverage"] == "pass" and variable_count and len(behavior_nodes) < variable_count:
+        warnings.append(
+            "behavior graph has fewer nodes than tiling variables "
+            f"(variables={variable_count}, behavior_nodes={len(behavior_nodes)})"
+        )
+    return checks
+
+
+def _check_text_encoding(base: Path, warnings: list[str]) -> dict[str, str]:
+    checks = {"canonical_text_encoding": "pass"}
+    roots = [
+        "operator.yaml",
+        "route.md",
+        "manifest.yaml",
+        "quality.yaml",
+        "tiling",
+        "flow",
+        "kernel",
+        "cross_layer",
+        "contracts",
+        "test",
+        "evidence",
+        "registry",
+        "query",
+    ]
+    hits: list[str] = []
+    for item in roots:
+        path = base / item
+        files = [path] if path.is_file() else list(path.rglob("*")) if path.exists() else []
+        for candidate in files:
+            if not candidate.is_file() or candidate.suffix.lower() not in {".yaml", ".yml", ".md"}:
+                continue
+            text = read_text(candidate)
+            if any(marker in text for marker in MOJIBAKE_MARKERS):
+                hits.append(str(candidate.relative_to(base)).replace("\\", "/"))
+    if hits:
+        checks["canonical_text_encoding"] = "warn"
+        warnings.append("possible mojibake markers in canonical text: " + ", ".join(hits[:8]))
+    return checks
+
+
+def _read_yaml(path: Path) -> object:
+    if yaml is None or not path.exists():
+        return {}
+    try:
+        return yaml.safe_load(read_text(path)) or {}
+    except Exception:  # noqa: BLE001
+        return {}
 
 
 def _score_text(text: str) -> float:

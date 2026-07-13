@@ -14,6 +14,7 @@ from testcase_agent.io import read_json, read_yaml, write_json, write_yaml
 from testcase_agent.planner import build_plan, tg_plan
 from testcase_agent.solve import tg_solve
 from testcase_agent.understand import UnderstandExportError, add_understand_to_path, export_testcase_contract
+from testcase_agent.validation import validate_intake
 
 
 def _repo(tmp_path: Path) -> tuple[Path, Path]:
@@ -609,6 +610,31 @@ def test_real_format_fixture_end_to_end_phase1_phase2(tmp_path: Path, monkeypatc
     assert len([item for item in plan["obligations"] if item["kind"] == "tiling_key_relation" and item.get("parent_obligation_id") == "COV_REL_COMPAT"]) == 3
     assert not list(root.rglob("*.csv"))
     assert not (root / "run" / "operator_execution.yaml").exists()
+
+
+def test_contract_schema_rejects_input_realization_without_id() -> None:
+    contract = _contract(
+        input_realization=[
+            {"IR_TND_VARLEN": {}, "matches": {"isTnd": True}},
+        ]
+    )
+    report = validate_intake(_payload(contract), _validation())
+    assert any(item["code"] == "INPUT_REALIZATION_SCHEMA" for item in report.to_dict()["blocking_issues"])
+
+
+def test_top_level_kernel_branch_variants_expand_into_plan_obligations() -> None:
+    contract = _contract(
+        kernel_branch_obligations=[
+            {"branch_id": "KPATH_POST_NZ", "variants": ["FP16 Nz", "BF16 Nz"]}
+        ]
+    )
+    plan = build_plan({"op_name": "DemoOp", "files": _payload(contract)["files"], "snapshot_hash": "s"})
+    variants = {
+        item["target_value"]
+        for item in plan["obligations"]
+        if item["kind"] == "kernel_branch" and item["target_refs"] == ["KPATH_POST_NZ"]
+    }
+    assert variants == {"FP16 Nz", "BF16 Nz"}
 
 
 def test_conflicting_hard_obligation_blocks_approval(tmp_path: Path) -> None:

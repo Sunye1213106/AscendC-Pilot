@@ -133,6 +133,9 @@ python "$SCRIPT_DIR/prepare_operator.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --
 
 - Subagents only at the two parallel points. Never background `uo-*` Tasks.
 - After parallel Tasks return, run `verify_subagent_barrier.py` before reading subagent artifacts.
+- If a barrier fails, resume or re-dispatch its owning subagent. The host must never edit a subagent's proposal, canonical slice, raw output, or completion manifest to force a pass.
+- `quality.yaml` is generated only by Phase 8 `quality_gate.py`. Never manually change its status, decision, checks, blockers, or warnings; fix the reported artifacts and rerun the gate.
+- Final-review integrity: report the actual Phase 8 exit result. A manually edited `quality.yaml` is invalid; rerun `quality_gate.py` to overwrite it before any handoff.
 - Do not invent IO / branches / kernel paths without evidence.
 - `route.md` is a map, not a long report.
 - uo does **not** generate real tests, CSV, or golden code.
@@ -205,6 +208,8 @@ python "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" -
 **禁止**：贴静态「关键确认 1/2/3」列表替代 `question`；禁止默认 `continue`；禁止 `--interactive` / `--arrows` 抢 stdin。
 
 ## Report when done
+
+**Final red rule:** Do not produce this completion report while `quality_gate.py` reports `red` / `not_usable`. Route every blocker back to the artifact owner, rerun the applicable barrier/compiler validation and the gate, and only report completion at `yellow`/`green`. If repair is genuinely blocked by a human gate, unavailable MCP evidence, or a reproducible tool defect, report `blocked` with the exact blocker instead of a successful KB handoff.
 
 - `$UO_ROOT` path
 - MCP project name / index mode

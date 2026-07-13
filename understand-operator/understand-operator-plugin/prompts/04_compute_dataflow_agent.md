@@ -40,7 +40,7 @@
 
 ### `compute_graph.yaml`
 
-- `compute_steps.Cxxx`：stable_key、type、formula、inputs/outputs、enabled_when、affected_by、numerical_sensitivity、golden_role、implemented_by.kernel_paths、evidence_refs、confidence、source_locator
+- `compute_steps.COMP_*`：stable_key、type、formula、inputs/outputs、enabled_when、affected_by、numerical_sensitivity、golden_role、implemented_by.kernel_paths、evidence_refs、confidence、source_locator
 - `compute_edges`：from/to/tensor/dependency
 - `outputs`：produced_by / postprocess_steps
 
@@ -53,7 +53,7 @@
 ### `golden_model.yaml`
 
 - `purpose: "golden generation model only; no generated golden code"`
-- `golden_inputs` / `golden_outputs` / `golden_steps.Gxxx` / `golden_variants`
+- `golden_inputs` / `golden_outputs` / `golden_steps.GOLD_*` / `golden_variants`
 - 每个 G step：`maps_to_compute_steps`、formula、pseudo_algorithm、dtype/layout/shape/mask/dropout 行为、evidence_refs
 - `golden_generation_contract`
 
@@ -67,7 +67,7 @@
 - 如果 golden 和 kernel 语义不一致，写入 risks / issues，不要假装一致。
 - fused step 不要拆成不存在的函数。
 - optional input / feature flag 控制的步骤必须写 `enabled_when`。
-- compute_step id（Cxxx）与 golden_step id（Gxxx）必须稳定，供 Kernel Path / TestGenerate 对齐。
+- compute_step id（`COMP_*`）与 golden_step id（`GOLD_*`）必须稳定，供 Kernel Path / TestGenerate 对齐；新产物不得创建 legacy `Cxxx`/`Gxxx`。
 - 每个关键 fact 必须有 fact_id、confidence、evidence_refs，以及 source_locator（或明确 reason）。
 
 When writing proposals, use the unified `canonical_updates` envelope under `archive/proposals/<run_id>/*.yaml`. Draft `flow/*` files are compatibility artifacts and are not trusted until `uo-kb-compile promote ... --phase phase2 --run-id <run_id>` succeeds.

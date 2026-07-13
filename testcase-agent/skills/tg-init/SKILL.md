@@ -1,3 +1,12 @@
+---
+name: tg-init
+description: >-
+  Initialize TestAgent phase 1 from an existing Understand Operator KB. Use when
+  the user runs /tg-init or asks to intake .understand-operator artifacts for
+  testcase generation planning.
+argument-hint: "<project_root> --op-name <op_name>"
+---
+
 # /tg-init
 
 Use this command to initialize TestAgent phase 1 from an existing Understand Operator KB.

@@ -62,25 +62,26 @@ The proposal must use the unified envelope. Do not write arbitrary top-level can
 version: 1
 op_name: "<OP_NAME>"
 proposal_id: "flow_dataflow_<stable_suffix>"
-producer: "uo-flow-extraction"
-phase: "phase2"
+producer:
+  agent: "uo-flow-extraction"
+  phase: "phase2"
 canonical_updates:
   - target: "registry/evidence.yaml"
     section: "evidence"
-    mode: "by_id"
-    items: []
+    merge_mode: "by_id"
+    entries: []
   - target: "flow/compute_graph.yaml"
     section: "compute_steps"
-    mode: "by_id"
-    items: []
+    merge_mode: "by_id"
+    entries: []
   - target: "flow/dataflow.yaml"
     section: "dataflow_edges"
-    mode: "by_id"
-    items: []
+    merge_mode: "by_id"
+    entries: []
   - target: "flow/golden_model.yaml"
     section: "golden_steps"
-    mode: "by_id"
-    items: []
+    merge_mode: "by_id"
+    entries: []
 ```
 
 Allowed targets are only `registry/`, `tiling/`, `flow/`, `kernel/`, `cross_layer/`, `query/`, `contracts/`, and `evidence/` YAML files under `UO_ROOT`. Write proposal envelopes under `archive/proposals/<run_id>/`. Draft canonical files are compatibility artifacts only; the host must run `uo-kb-compile promote ... --phase phase2 --run-id <run_id>` and trust only promoted canonical output.
@@ -101,6 +102,19 @@ Each key fact must include fact_id / confidence / evidence_refs and source_locat
 
 ## Completion Manifest
 
+## Mandatory self-check before the completion manifest
+
+Before reporting completion, parse the proposal and every required `*.yaml` with `yaml.safe_load` and ensure the root is a mapping. Do not leave a required section as an empty file/list: record an `unresolved` or `evidence_gap` item with a reason and evidence refs instead. Every `id` / `stable_id` must use a canonical uppercase namespace (`SYM_`, `VAR_`, `REL_`, `EV_`, `SRC_`, `KEY_`, `FAM_`, `COMP_`, `GOLD_`, `KPATH_`, `KBR_`, `KTPL_`, `CL_`, `CON_`, `VIEW_`, `BUF_`, `SYNC_`, `RES_`, `TDF_`, `KVAR_`, `KDEC_`, `PIPE_`, `COV_`, `NUM_`); do not create `BFxxx`, `TPxxx`, `KDxxx`, or `SPxxx`. `evidence_refs` must always be a YAML list of stable `EV_*`/`SRC_*` ids that resolve to the evidence written in this phase; source paths and prose are not evidence refs. Include the proposal as well as every required canonical output in the manifest `artifacts` list. The host barrier rejects malformed YAML, invalid IDs, and incomplete manifests.
+
+Before the completion manifest, also assert that every required compute path is linked to the golden semantic model: use `compute_steps.*.golden_step_ref` / `golden_role`, or non-empty `golden_model.maps_to_compute_steps` / `golden_outputs.*.maps_to_compute_steps`. Merely populating compute and golden files independently is incomplete. Update facts and source spans through id-based proposal entries so Phase 2 evidence from the host and flow owners is merged rather than overwritten.
+
+### YAML syntax rules (mandatory)
+
+- Parse every YAML output with `yaml.safe_load` before writing the manifest.
+- Quote pseudo-code scalars that contain brackets: `memory: ["L0C -> UB (mm1ResBuf)"]`, never `memory: [L0C -> UB (mm1ResBuf)]` when special characters make the scalar ambiguous.
+- Use single quotes for backslash expressions: `expr: 'd\\in[64,128)'`; double-quoted YAML treats `\i` as an invalid escape. To retain double quotes, escape the backslash: `"d\\\\in[64,128)"`.
+- Quote C++/math predicates, template syntax, `:`/`#` text, and other non-YAML expressions. If parsing fails, fix the file; do not finish with a completion manifest.
+
 After writing all required artifacts, write:
 
 `flow/.uo_flow_extraction_complete.json`
@@ -112,6 +126,7 @@ After writing all required artifacts, write:
   "completed_at": "<ISO8601>",
   "uo_root": "<UO_ROOT>",
   "artifacts": [
+    "archive/proposals/flow_dataflow_proposal.yaml",
     "flow/index.yaml",
     "flow/compute_graph.yaml",
     "flow/dataflow.yaml",

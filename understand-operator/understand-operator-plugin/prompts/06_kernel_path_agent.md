@@ -74,11 +74,11 @@ archive/raw_agents/kernel_paths/.uo_kernel_path_<task_id>_complete.json
 
 每条 path/branch 必须关联使用变量、predicate、template binding、TilingKey/TilingData、compute/buffer/sync/output 影响和源码 evidence。证据不足写 `unresolved` / `conflicts`，不要直接升级为 confirmed。
 
-Step 2 中每个 compute 声明必须引用 `flow/compute_graph.yaml` 里已有的 Cxxx / stable compute step id。不能映射时写入 `unresolved_compute_alignment`，不要在 kernel raw output 中发明新的 compute step。
+Step 2 中每个 compute 声明必须引用 `flow/compute_graph.yaml` 里已有的稳定 compute step id（新产物使用 `COMP_*`）。不能映射时写入 `unresolved_compute_alignment`，不要在 kernel raw output 中发明新的 compute step。
 
 ## 规则
 
-- 与 `operator.yaml` IO、`flow/compute_graph.yaml` Cxxx、`tiling/families.yaml` TFxxx 对齐。
+- 与 `operator.yaml` IO、`flow/compute_graph.yaml` 的稳定 compute id、`tiling/families.yaml` 的 `FAM_*` 对齐。
 - 不按 numeric tilingdata variant 拆 path。
 - 无证据不编造；入口不确定写 unknown。
 - 每个关键条目带 fact_id / evidence_refs / source_locator。

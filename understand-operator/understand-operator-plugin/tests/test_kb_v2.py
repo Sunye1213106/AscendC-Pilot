@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from understand_operator._operator.artifacts import init_operator_layout, operator_root
+from understand_operator._operator.artifacts import init_operator_layout, operator_root, resolve_existing_operator_root
 from understand_operator._operator import kb_compiler
 from understand_operator._operator.kb_compiler import compile_kb, promote_kb, validate_kb
 from understand_operator.scripts.kb_query_export import export_context_slice, export_view
@@ -55,6 +55,21 @@ def test_layout_creates_v2_slices_and_query_exports(tmp_path: Path) -> None:
     payload = export_view(base, "DemoOp", "code-change")
     assert payload["view"] == "code-change"
     assert "contracts/code_change.yaml" in payload["files"]
+
+
+def test_layout_seeds_operator_initialism_alias(tmp_path: Path) -> None:
+    repo = tmp_path / "FAG_test"
+    repo.mkdir()
+    base = operator_root(repo, "flash_attention_score_grad")
+    init_operator_layout(base, "flash_attention_score_grad", repo)
+
+    aliases_doc = yaml.safe_load((base / "registry" / "aliases.yaml").read_text(encoding="utf-8"))
+    aliases = {item["alias"].lower(): item for item in aliases_doc["aliases"]}
+
+    assert "fasg" in aliases
+    assert "fag" in aliases
+    assert aliases["fasg"]["target_id"] == "SYM_OPERATOR_FLASH_ATTENTION_SCORE_GRAD"
+    assert resolve_existing_operator_root(repo, "fasg") == ("flash_attention_score_grad", base)
 
 
 def test_kernel_flow_normalizes_vector_cube_datamove_sync_steps() -> None:
@@ -106,7 +121,8 @@ def test_kernel_flow_normalizes_vector_cube_datamove_sync_steps() -> None:
     assert steps[1]["source_location"]["line_start"] == 20
     assert any("CUBE API" in item for item in steps[1]["evidence"])
     assert steps[2]["depends_on"] == []
-    assert steps[2]["dependency_status"] == "unresolved"
+    assert steps[2]["dependency_status"] == "unspecified"
+    assert steps[2]["is_root"] is False
     assert "execution_transition" not in steps[2]
     assert docs["flow/compute_graph.yaml"]["cube_steps"] == [steps[1]["id"]]
     assert docs["flow/compute_graph.yaml"]["vector_steps"] == [steps[2]["id"]]
@@ -132,7 +148,8 @@ def test_vector_preprocess_then_cube_dependency_is_recorded() -> None:
     assert steps[0]["execution_unit"] == "VECTOR"
     assert steps[1]["execution_unit"] == "CUBE"
     assert steps[1]["depends_on"] == []
-    assert steps[1]["dependency_status"] == "unresolved"
+    assert steps[1]["dependency_status"] == "unspecified"
+    assert steps[1]["is_root"] is False
 
 
 def test_indirect_wrapper_cube_detection_and_matmul_name_not_enough() -> None:
@@ -237,6 +254,79 @@ def test_flow_dependencies_are_explicit_dag_not_list_adjacency() -> None:
     assert c["execution_transition"]["data_move_semantics"]["status"] == "unknown"
 
 
+def test_explicit_root_and_multi_root_dag_dependencies_are_resolved() -> None:
+    docs = _normalized_docs(
+        {
+            "flow/compute_graph.yaml": {
+                "compute_steps": [
+                    {"id": "CL_LOAD_A", "depends_on": [], "calls": ["DataCopy"], "outputs": ["a"]},
+                    {"id": "CL_LOAD_B", "depends_on": [], "calls": ["DataCopy"], "outputs": ["b"]},
+                    {"id": "CL_MERGE", "depends_on": ["CL_LOAD_A", "CL_LOAD_B"], "calls": ["AscendC::Add"], "outputs": ["merged"]},
+                ]
+            }
+        }
+    )
+    steps = docs["flow/compute_graph.yaml"]["compute_steps"]
+    load_a = _by_legacy_or_id(steps, "CL_LOAD_A")
+    load_b = _by_legacy_or_id(steps, "CL_LOAD_B")
+    merge = _by_legacy_or_id(steps, "CL_MERGE")
+
+    assert load_a["depends_on"] == []
+    assert load_a["dependency_status"] == "root"
+    assert load_a["is_root"] is True
+    assert load_b["dependency_status"] == "root"
+    assert load_b["is_root"] is True
+    assert merge["depends_on"] == [load_a["id"], load_b["id"]]
+    assert merge["dependency_status"] == "resolved"
+    assert merge["is_root"] is False
+    assert load_a["downstream_steps"] == [merge["id"]]
+    assert load_b["downstream_steps"] == [merge["id"]]
+    assert len(merge["execution_transitions"]) == 2
+
+
+def test_unspecified_dependencies_are_not_roots_or_auto_linearized() -> None:
+    docs = _normalized_docs(
+        {
+            "flow/compute_graph.yaml": {
+                "compute_steps": [
+                    {"id": "CL_A", "calls": ["AscendC::Cast"], "outputs": ["a"]},
+                    {"id": "CL_B", "calls": ["AscendC::Exp"], "outputs": ["b"]},
+                ]
+            }
+        }
+    )
+    steps = docs["flow/compute_graph.yaml"]["compute_steps"]
+    a = _by_legacy_or_id(steps, "CL_A")
+    b = _by_legacy_or_id(steps, "CL_B")
+
+    assert a["depends_on"] == []
+    assert a["dependency_status"] == "unspecified"
+    assert a["is_root"] is False
+    assert b["depends_on"] == []
+    assert b["dependency_status"] == "unspecified"
+    assert b["is_root"] is False
+    assert a["downstream_steps"] == []
+    assert b["downstream_steps"] == []
+
+
+def test_missing_dependency_marks_step_unresolved_with_missing_list() -> None:
+    result = kb_compiler.CompileResult(op_name="DemoOp")
+    docs = {
+        "flow/compute_graph.yaml": {
+            "compute_steps": [
+                {"id": "CL_A", "depends_on": ["CL_MISSING"], "calls": ["AscendC::Cast"], "outputs": ["a"]},
+            ]
+        }
+    }
+    kb_compiler._normalize_candidate(docs, result=result, op_name="DemoOp")
+    step = docs["flow/compute_graph.yaml"]["compute_steps"][0]
+
+    assert step["dependency_status"] == "unresolved"
+    assert step["is_root"] is False
+    assert step["missing_dependencies"] == ["CL_MISSING"]
+    assert any(issue.code == "FLOW_UNKNOWN_DEPENDENCY" for issue in result.issues)
+
+
 def test_ordered_sequence_is_opt_in_for_legacy_linearization() -> None:
     docs = _normalized_docs(
         {
@@ -250,8 +340,79 @@ def test_ordered_sequence_is_opt_in_for_legacy_linearization() -> None:
         }
     )
     steps = docs["flow/compute_graph.yaml"]["compute_steps"]
+    assert steps[0]["depends_on"] == []
+    assert steps[0]["dependency_status"] == "root"
+    assert steps[0]["is_root"] is True
     assert steps[1]["depends_on"] == [steps[0]["id"]]
     assert steps[1]["dependency_status"] == "resolved"
+    assert steps[1]["is_root"] is False
+
+
+def test_cycle_dependencies_mark_nodes_invalid_and_fail_validation() -> None:
+    result = kb_compiler.CompileResult(op_name="DemoOp")
+    docs = {
+        "flow/compute_graph.yaml": {
+            "compute_steps": [
+                {"id": "CL_A", "depends_on": ["CL_B"]},
+                {"id": "CL_B", "depends_on": ["CL_A"]},
+            ]
+        }
+    }
+    kb_compiler._normalize_candidate(docs, result=result, op_name="DemoOp")
+    steps = docs["flow/compute_graph.yaml"]["compute_steps"]
+    a = _by_legacy_or_id(steps, "CL_A")
+    b = _by_legacy_or_id(steps, "CL_B")
+
+    assert a["dependency_status"] == "invalid"
+    assert b["dependency_status"] == "invalid"
+    assert a["is_root"] is False
+    assert b["is_root"] is False
+    assert result.status == "fail"
+    assert any(issue.code == "FLOW_DEPENDENCY_CYCLE" for issue in result.issues)
+
+
+def test_bad_dependency_format_marks_step_invalid() -> None:
+    result = kb_compiler.CompileResult(op_name="DemoOp")
+    docs = {"flow/compute_graph.yaml": {"compute_steps": [{"id": "CL_A", "depends_on": "CL_B"}]}}
+    kb_compiler._normalize_candidate(docs, result=result, op_name="DemoOp")
+    step = docs["flow/compute_graph.yaml"]["compute_steps"][0]
+
+    assert step["depends_on"] == []
+    assert step["dependency_status"] == "invalid"
+    assert step["is_root"] is False
+    assert result.status == "fail"
+    assert any(issue.code == "FLOW_BAD_DEPENDENCY_FORMAT" for issue in result.issues)
+
+
+def test_kernel_path_dependency_status_uses_same_state_machine() -> None:
+    result = kb_compiler.CompileResult(op_name="DemoOp")
+    docs = {
+        "kernel/paths.yaml": {
+            "kernel_paths": [
+                {
+                    "id": "KPATH_A",
+                    "computation_steps": [
+                        {"id": "KSTEP_ROOT", "depends_on": [], "calls": ["DataCopy"], "outputs": ["a"]},
+                        {"id": "KSTEP_UNSPECIFIED", "calls": ["AscendC::Exp"], "outputs": ["b"]},
+                        {"id": "KSTEP_MISSING", "depends_on": ["KSTEP_NOPE"], "calls": ["Mmad"], "outputs": ["c"]},
+                    ],
+                }
+            ]
+        }
+    }
+    kb_compiler._normalize_candidate(docs, result=result, op_name="DemoOp")
+    steps = docs["kernel/paths.yaml"]["kernel_paths"][0]["computation_steps"]
+    root = _by_legacy_or_id(steps, "KSTEP_ROOT")
+    unspecified = _by_legacy_or_id(steps, "KSTEP_UNSPECIFIED")
+    missing = _by_legacy_or_id(steps, "KSTEP_MISSING")
+
+    assert root["dependency_status"] == "root"
+    assert root["is_root"] is True
+    assert unspecified["dependency_status"] == "unspecified"
+    assert unspecified["is_root"] is False
+    assert missing["dependency_status"] == "unresolved"
+    assert missing["missing_dependencies"] == ["KSTEP_NOPE"]
+    assert any(issue.code == "FLOW_UNKNOWN_DEPENDENCY" and issue.artifact == "kernel/paths.yaml" for issue in result.issues)
 
 
 def test_flow_dependency_validation_reports_unknown_and_cycle() -> None:
@@ -278,7 +439,7 @@ def test_compute_steps_is_canonical_and_export_adds_compat_alias(tmp_path: Path)
             {
                 "version": 1,
                 "op_name": "DemoOp",
-                "computation_steps": [{"id": "STEP_OLD", "calls": ["AscendC::Cast"], "outputs": ["y"]}],
+                "computation_steps": [{"id": "STEP_OLD", "depends_on": [], "calls": ["AscendC::Cast"], "outputs": ["y"]}],
             },
             sort_keys=False,
         ),
@@ -294,6 +455,9 @@ def test_compute_steps_is_canonical_and_export_adds_compat_alias(tmp_path: Path)
     payload = export_view(base, "DemoOp", "golden-gen")
     exported_flow = payload["files"]["flow/compute_graph.yaml"]
     assert exported_flow["computation_steps"] == exported_flow["compute_steps"]
+    assert exported_flow["compute_steps"][0]["dependency_status"] == "root"
+    assert exported_flow["compute_steps"][0]["is_root"] is True
+    assert exported_flow["computation_steps"][0]["dependency_status"] == "root"
     assert "computation_steps" not in yaml.safe_load(flow_path.read_text(encoding="utf-8"))
 
 

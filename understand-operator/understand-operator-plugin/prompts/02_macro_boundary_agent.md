@@ -83,7 +83,7 @@ name: ""
 confidence: high | medium | low
 evidence_refs: []
 source_locator:
-  primary: SP001   # or null
+  primary: SRC_BOUNDARY_EXAMPLE   # or null
   fallback: []
   # reason: "..."  # when primary is null
 ```
@@ -93,16 +93,50 @@ Each optional input must have `enabled_when` or `default_behavior`, and declare
 
 ## ID Rules
 
-- `OPxxx` entry / boundary
-- `IOxxx` input / output / attr
-- `SHxxx` shape / layout / dtype / feature flag
-- `SPxxx` / `EVxxx` evidence indexes
+- `SYM_*` for API, host tiling, kernel, golden, test, and other boundary symbols.
+- `VAR_*` for inputs, outputs, attrs, feature flags, and runtime-visible variables.
+- `CON_*` for shape, layout, dtype, scope, or open-question constraints.
+- `SRC_*` for source spans in `evidence/source_index.yaml`.
+- `EV_*` for fact/provenance evidence in `evidence/fact_index.yaml`.
+- Do not create new `OPxxx`, `IOxxx`, `SHxxx`, or `SPxxx` ids. Treat them as legacy-only if already present in an existing KB.
+- Every `evidence_refs` value must be a YAML list containing only resolvable `EV_*` or `SRC_*` ids. Do not put source paths, prose, or bare legacy ids such as `SP001` in `evidence_refs`.
+
+## Evidence Index Shape
+
+`evidence/source_index.yaml` must use canonical source-span ids:
+
+```yaml
+version: 1
+op_name: <op_name>
+source_spans:
+  SRC_BOUNDARY_EXAMPLE:
+    path: op_host/example.cpp
+    lines: "10-40"
+    kind: boundary_source
+    notes: "why this span matters"
+symbols: {}
+```
+
+`evidence/fact_index.yaml` must use canonical fact/provenance refs:
+
+```yaml
+version: 1
+op_name: <op_name>
+facts:
+  EV_BOUNDARY_EXAMPLE:
+    claim: "confirmed boundary fact"
+    confidence: high
+    evidence_refs: [SRC_BOUNDARY_EXAMPLE]
+evidence_refs:
+  SRC_BOUNDARY_EXAMPLE:
+    source: evidence/source_index.yaml
+```
 
 ## `analysis_plan.open_questions`
 
 Each question must be structured with:
 
-- `id` (for example `Q001`)
+- `id` (for example `CON_OPEN_QUESTION_BOUNDARY_001`)
 - `title` / `category` / `current_observation` / `why_uncertain`
 - `impact_if_wrong` / `user_confirmation_needed` / `suggested_default`
 - `evidence_refs` / `owner_phase` / `blocking_level`

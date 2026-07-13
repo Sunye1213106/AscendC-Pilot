@@ -62,7 +62,7 @@ Do the task in two ordered steps inside the raw agent output:
 
 Step 1 sections must be present before Step 2 conclusions. If evidence is insufficient, write `unresolved` or `conflicts`; do not silently infer.
 
-Every Step 2 compute claim must reference existing `flow/compute_graph.yaml` compute step ids (`Cxxx` or stable ids present in that file). If a kernel action cannot be mapped to a Flow compute step, write it under `unresolved_compute_alignment` instead of inventing a new compute step.
+Every Step 2 compute claim must reference existing `flow/compute_graph.yaml` compute step ids (new material uses `COMP_*`; preserve a legacy id only when it already exists in the input). If a kernel action cannot be mapped to a Flow compute step, write it under `unresolved_compute_alignment` instead of inventing a new compute step.
 
 ## Required Outputs (raw agent; host merges)
 
@@ -102,6 +102,20 @@ Required sections in the raw YAML:
 Raw agent output is not canonical. The host Alignment Builder and deterministic KB compiler are the only components allowed to promote raw kernel facts into `kernel/compile_model.yaml`, `kernel/variables.yaml`, `kernel/branches.yaml`, `kernel/paths.yaml`, `kernel/pipeline.yaml`, `kernel/resources.yaml`, and `cross_layer/*`.
 
 ## Completion Manifest
+
+## Mandatory self-check before the completion manifest
+
+Parse `<task_id>_kernel_path.yaml` with `yaml.safe_load` and ensure it is a mapping before writing the manifest. Required sections must not be silently empty; use `missing_items` / `unresolved_compute_alignment` entries with a reason and stable evidence refs when proof is unavailable. Every `id` / `stable_id` must use a canonical uppercase namespace (`KPATH_`, `KBR_`, `KTPL_`, `KDEC_`, `KVAR_`, `PIPE_`, `BUF_`, `SYNC_`, `RES_`, plus the shared namespaces); never use `BFxxx`, `TPxxx`, `KDxxx`, or `SPxxx`. Each `evidence_refs` field must be a YAML list of `EV_*`/`SRC_*` ids, never prose or a path. Include both the raw YAML and raw Markdown in `artifacts`; the host barrier rejects malformed YAML, invalid IDs, and incomplete manifests.
+
+Assert all required raw sections exist and `compute_step_alignment` is non-empty. `pipeline` must contain stages; `buffer_map` entries must identify producer and consumer where applicable; `sync_events` must record real ordering/synchronization or an evidence-backed unresolved item. Do not mark completion and leave these for the host to infer.
+
+### YAML and encoding rules (mandatory)
+
+- Write `<task_id>_kernel_path.yaml` as UTF-8 (without an arbitrary legacy-codepage rewrite), then parse it with `yaml.safe_load` before the manifest.
+- Quote any C++/kernel expression, template syntax, predicate, buffer name with brackets, `:`/`#` text, or arrow-containing scalar. For example: `buffers: ["mm1ResBuf[]"]` and `predicate: 'split_axis == 0 && d\\in[64,128)'`.
+- Never use an unquoted `[]` suffix inside a flow sequence, and never use `\in` inside a double-quoted YAML scalar. Use single quotes for literal backslashes or double the backslash in double quotes.
+- Do not use `yaml.dump` or a broad encoding fallback to rewrite canonical/raw artifacts. Preserve UTF-8; if the existing input cannot be decoded, report it as an unresolved artifact issue instead of writing replacement bytes.
+- A raw YAML parse or encoding failure is incomplete work. Fix it before writing the completion manifest; the host must not repair the raw kernel artifact on the subagent's behalf.
 
 After writing the required artifacts, write:
 
