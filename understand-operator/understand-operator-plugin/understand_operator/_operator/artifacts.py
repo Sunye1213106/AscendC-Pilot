@@ -2000,9 +2000,22 @@ def _extend_index_for_kb_v2(base: Path) -> None:
     read:
       - contracts/testcase.yaml
       - test/contract.yaml
+      - tiling/variables.yaml
+      - tiling/key_space.yaml
+      - tiling/exhaustive_key_space.yaml
+      - tiling/constraints.yaml
+      - tiling/families.yaml
+      - tiling/data_model.yaml
       - tiling/coverage_model.yaml
+      - kernel/compile_model.yaml
+      - kernel/variables.yaml
+      - kernel/paths.yaml
       - kernel/branches.yaml
+      - kernel/pipeline.yaml
+      - kernel/resources.yaml
       - cross_layer/impact_graph.yaml
+      - flow/golden_model.yaml
+      - flow/numerical_model.yaml
       - quality.yaml
 """
     deps_block = """  registry/variables.yaml:

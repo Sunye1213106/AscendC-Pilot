@@ -3025,7 +3025,7 @@ def _collect_id_like_values(value: Any) -> set[str]:
             found.update(_collect_id_like_values(item))
     elif isinstance(value, str):
         for token in re.findall(
-            r"\b(?:SYM|VAR|REL|EV|SRC|KEY|FAM|KPATH|KBR|KTPL|CL|CON|VIEW|BUF|SYNC|RES|TDF|KVAR|KDEC|PIPE|COV|NUM)_[A-Z0-9_]+\b",
+            r"\b(?:SYM|VAR|REL|EV|SRC|KEY|FAM|COMP|GOLD|KPATH|KBR|KTPL|CL|CON|VIEW|BUF|SYNC|RES|TDF|KVAR|KDEC|PIPE|COV|NUM)_[A-Z0-9_]+\b",
             value,
         ):
             found.add(token)

@@ -30,10 +30,12 @@ def semantic_plan_hash(
     obligations: list[dict[str, Any]],
     matrix: dict[str, Any],
     unresolved: dict[str, Any],
+    planning_context: dict[str, Any] | None = None,
 ) -> str:
     return stable_hash(
         {
             "snapshot_hash": snapshot_hash,
+            "planning_context": _without_hashes(planning_context or {}),
             "obligations": obligations,
             "matrix": _without_hashes(matrix),
             "unresolved": _without_hashes(unresolved),

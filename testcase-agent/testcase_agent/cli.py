@@ -28,9 +28,11 @@ def plan_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build TestAgent coverage obligations from frozen Understand snapshot")
     parser.add_argument("project_root", type=Path)
     parser.add_argument("--op-name", required=True)
+    parser.add_argument("--level", choices=["L0", "L1", "L2", "L3"], default="L1")
+    parser.add_argument("--focus", default="")
     args = parser.parse_args(argv)
     try:
-        result = tg_plan(args.project_root, args.op_name)
+        result = tg_plan(args.project_root, args.op_name, level=args.level, focus=args.focus)
     except TgPlanError as exc:
         print(json.dumps({"status": "fail", "message": str(exc)}, ensure_ascii=False, indent=2), file=sys.stderr)
         return 1
@@ -38,6 +40,7 @@ def plan_main(argv: list[str] | None = None) -> int:
         json.dumps(
             {
                 "status": result["unresolved"]["status"],
+                "test_level": result["test_level"],
                 "plan_hash": result["plan_hash"],
                 "obligations": len(result["obligations"]),
                 "manual_gate": ["approve", "revise", "supplement", "stop"],

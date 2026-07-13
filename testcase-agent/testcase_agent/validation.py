@@ -5,12 +5,55 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-STABLE_ID_RE = re.compile(
-    r"^(SYM|VAR|REL|EV|SRC|KEY|FAM|KPATH|KBR|KTPL|CL|CON|VIEW|BUF|SYNC|RES|TDF|KVAR|KDEC|PIPE|COV|NUM)_[A-Z0-9_]+$"
+STABLE_PREFIXES = (
+    "SYM",
+    "VAR",
+    "REL",
+    "EV",
+    "SRC",
+    "KEY",
+    "FAM",
+    "COMP",
+    "GOLD",
+    "KPATH",
+    "KBR",
+    "KTPL",
+    "CL",
+    "CON",
+    "VIEW",
+    "BUF",
+    "SYNC",
+    "RES",
+    "TDF",
+    "KVAR",
+    "KDEC",
+    "PIPE",
+    "COV",
+    "NUM",
 )
+STABLE_ID_RE = re.compile(rf"^({'|'.join(STABLE_PREFIXES)})_[A-Z0-9_]+$")
 LEGACY_ID_RE = re.compile(r"^(TF\d+|K\d+|C\d+|D\d+|P\d+|R\d+|IR\d+|KR\d+|VC\d+|KU\d+|PR\d+|MG\d+)$")
-ID_TOKEN_RE = re.compile(
-    r"\b(?:SYM|VAR|REL|EV|SRC|KEY|FAM|KPATH|KBR|KTPL|CL|CON|VIEW|BUF|SYNC|RES|TDF|KVAR|KDEC|PIPE|COV|NUM)_[A-Za-z0-9_]+\b"
+ID_TOKEN_RE = re.compile(rf"\b(?:{'|'.join(STABLE_PREFIXES)})_[A-Za-z0-9_]+\b")
+REQUIRED_TESTCASE_CONTRACT_FILES = (
+    "contracts/testcase.yaml",
+    "test/contract.yaml",
+    "tiling/variables.yaml",
+    "tiling/key_space.yaml",
+    "tiling/exhaustive_key_space.yaml",
+    "tiling/constraints.yaml",
+    "tiling/families.yaml",
+    "tiling/data_model.yaml",
+    "tiling/coverage_model.yaml",
+    "kernel/compile_model.yaml",
+    "kernel/variables.yaml",
+    "kernel/paths.yaml",
+    "kernel/branches.yaml",
+    "kernel/pipeline.yaml",
+    "kernel/resources.yaml",
+    "cross_layer/impact_graph.yaml",
+    "flow/golden_model.yaml",
+    "flow/numerical_model.yaml",
+    "quality.yaml",
 )
 HARD_WORDS = {"hard", "blocking", "blocker", "error", "fail", "failed", "conflicting", "unresolved"}
 REF_KEYS = {
@@ -87,6 +130,9 @@ def validate_intake(export_payload: dict[str, Any], final_validation: dict[str, 
     if not contract:
         report.add("MISSING_TESTCASE_CONTRACT", "error", "contracts/testcase.yaml is missing from testcase-contract export")
         return report
+    for rel in REQUIRED_TESTCASE_CONTRACT_FILES:
+        if rel not in files:
+            report.add("MISSING_CANONICAL_FILE", "error", f"testcase-contract export missing required canonical file: {rel}", rel, rel)
 
     context_contract = _as_dict(context_slice.get("testcase_contract"))
     if context_contract and context_contract != contract:
@@ -204,7 +250,7 @@ def collect_warning_states(files: dict[str, Any], report: ValidationReport) -> N
 
 
 def validate_contract_schema(contract: dict[str, Any], report: ValidationReport) -> None:
-    for idx, item in enumerate(_as_list(contract.get("input_realization"))):
+    for idx, item in enumerate(_iter_schema_items(contract.get("input_realization"))):
         if not isinstance(item, dict):
             report.add("INPUT_REALIZATION_SCHEMA", "error", "input_realization item must be a mapping", f"contracts/testcase.yaml.input_realization[{idx}]")
             continue
@@ -223,10 +269,10 @@ def validate_contract_schema(contract: dict[str, Any], report: ValidationReport)
 
 def _kernel_branch_items(contract: dict[str, Any]) -> list[Any]:
     items: list[Any] = []
-    items.extend(_as_list(contract.get("kernel_branch_obligations")))
+    items.extend(_iter_schema_items(contract.get("kernel_branch_obligations")))
     coverage = _as_dict(contract.get("coverage_obligations"))
-    items.extend(_as_list(coverage.get("kernel_branches")))
-    items.extend(_as_list(coverage.get("kernel_paths")))
+    items.extend(_iter_schema_items(coverage.get("kernel_branches")))
+    items.extend(_iter_schema_items(coverage.get("kernel_paths")))
     return items
 
 
@@ -252,7 +298,13 @@ def _iter_stable_tokens(value: Any, path: str = "$") -> list[tuple[str, str]]:
 
 
 def _stable_prefixes() -> tuple[str, ...]:
-    return ("SYM", "VAR", "REL", "EV", "SRC", "KEY", "FAM", "KPATH", "KBR", "KTPL", "CL", "CON", "VIEW", "BUF", "SYNC", "RES", "TDF", "KVAR", "KDEC", "PIPE", "COV", "NUM")
+    return STABLE_PREFIXES
+
+
+def _iter_schema_items(value: Any) -> list[Any]:
+    if isinstance(value, dict):
+        return [{**item, "id": str(key)} if isinstance(item, dict) and not item.get("id") else item for key, item in sorted(value.items())]
+    return _as_list(value)
 
 
 def _iter_dicts(value: Any, path: str = "$") -> list[tuple[dict[str, Any], str]]:

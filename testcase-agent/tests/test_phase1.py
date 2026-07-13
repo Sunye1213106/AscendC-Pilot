@@ -82,9 +82,22 @@ def _payload(contract: dict[str, Any] | None = None, quality: dict[str, Any] | N
         "files": {
             "contracts/testcase.yaml": contract or _contract(),
             "test/contract.yaml": {"input_domain": {}, "typed_constraints": [], "kernel_branch_obligations": []},
+            "tiling/variables.yaml": {"variables": []},
+            "tiling/key_space.yaml": {"fields": [], "derived_fields": [], "constants": []},
+            "tiling/exhaustive_key_space.yaml": {"enumeration_source": "not_applicable", "summary": {}, "template_blocks": []},
+            "tiling/constraints.yaml": {"relations": [], "variable_constraints": [], "input_realization": {}},
+            "tiling/families.yaml": {"families": []},
+            "tiling/data_model.yaml": {"structs": {}, "family_to_struct": {}, "numeric_overlay": []},
             "tiling/coverage_model.yaml": coverage or {"family_obligations": [], "key_field_obligations": {}, "key_relation_obligations": []},
+            "kernel/compile_model.yaml": {"template_bindings": [], "compile_time_configs": [], "compile_variables": [], "compile_decisions": []},
+            "kernel/variables.yaml": {"runtime_variables": [], "tilingdata_reads": [], "path_decision_points": []},
+            "kernel/paths.yaml": {"kernel_paths": []},
             "kernel/branches.yaml": {"branches": []},
+            "kernel/pipeline.yaml": {"pipelines": [], "stages": [], "resources": []},
+            "kernel/resources.yaml": {"buffers": [], "sync_events": [], "workspaces": [], "resources": []},
             "cross_layer/impact_graph.yaml": {"nodes": [], "edges": [], "impacts": []},
+            "flow/golden_model.yaml": {"golden_inputs": [], "golden_outputs": [], "golden_generation_contract": []},
+            "flow/numerical_model.yaml": {"dtype_policy": [], "tolerance_policy": [], "randomness_policy": "deterministic"},
             "quality.yaml": quality or {"status": "pass", "decision": "pass"},
         },
     }
@@ -125,9 +138,19 @@ def _real_uo_fixture(uo: Path, contract: dict[str, Any] | None = None) -> None:
         "kernel/branches.yaml": {"branches": [{"id": "KBR_HAS_TAIL", "priority": "high"}]},
         "cross_layer/impact_graph.yaml": {"nodes": [], "edges": [], "impacts": []},
         "quality.yaml": {"status": "pass", "decision": "pass"},
+        "tiling/variables.yaml": {"variables": [{"id": "VAR_KEY_SPLIT_AXIS", "data_type": "int"}]},
         "tiling/key_space.yaml": {"fields": [{"id": "KEY_SPLIT_AXIS", "kind": "key", "data_type": "int", "values": [0, 1, 2]}]},
+        "tiling/exhaustive_key_space.yaml": {"enumeration_source": "not_applicable", "summary": {}, "template_blocks": []},
+        "tiling/constraints.yaml": {"relations": [], "variable_constraints": [], "input_realization": {}},
         "tiling/families.yaml": {"families": [{"id": "FAM_MAIN"}]},
+        "tiling/data_model.yaml": {"structs": {}, "family_to_struct": {}, "numeric_overlay": []},
+        "kernel/compile_model.yaml": {"template_bindings": [], "compile_time_configs": [], "compile_variables": [], "compile_decisions": []},
+        "kernel/variables.yaml": {"runtime_variables": [], "tilingdata_reads": [], "path_decision_points": []},
         "kernel/paths.yaml": {"kernel_paths": [{"id": "KPATH_MAIN"}]},
+        "kernel/pipeline.yaml": {"pipelines": [], "stages": [], "resources": []},
+        "kernel/resources.yaml": {"buffers": [], "sync_events": [], "workspaces": [], "resources": []},
+        "flow/golden_model.yaml": {"golden_inputs": [], "golden_outputs": [], "golden_generation_contract": []},
+        "flow/numerical_model.yaml": {"dtype_policy": [], "tolerance_policy": [], "randomness_policy": "deterministic"},
         "registry/evidence.yaml": {"evidence": []},
     }
     for rel, data in files.items():
@@ -299,6 +322,26 @@ def test_snapshot_hash_is_deterministic(tmp_path: Path, monkeypatch: pytest.Monk
     assert first == second
     meta = read_yaml(repo / ".testcase-generator" / "DemoOp" / "snapshot" / "snapshot_meta.yaml")
     assert meta["snapshot_hash"] == first
+
+
+def test_tg_init_output_tree_is_exact_phase1_intake(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo, _uo = _repo(tmp_path)
+    _patch_intake(monkeypatch, _payload())
+
+    tg_init(repo, "DemoOp")
+
+    root = repo / ".testcase-generator" / "DemoOp"
+    files = sorted(path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file())
+    assert files == [
+        "intake/validation_report.yaml",
+        "run.yaml",
+        "snapshot/snapshot_meta.yaml",
+        "snapshot/understand_contract.json",
+    ]
+    assert not (root / "intake.yaml").exists()
+    assert not (root / "testcase_contract.yaml").exists()
+    assert not (root / "coverage_plan.yaml").exists()
+    assert not (root / "coverage_obligations.yaml").exists()
 
 
 def test_flow_metadata_does_not_create_testagent_obligations() -> None:
@@ -478,12 +521,25 @@ def test_export_view_and_context_slice_are_merged(tmp_path: Path) -> None:
 
     payload = export_testcase_contract(repo, "DemoOp", uo)
 
-    assert set(payload["files"]) >= {
+    assert set(payload["files"]) == {
         "contracts/testcase.yaml",
         "test/contract.yaml",
+        "tiling/variables.yaml",
+        "tiling/key_space.yaml",
+        "tiling/exhaustive_key_space.yaml",
+        "tiling/constraints.yaml",
+        "tiling/families.yaml",
+        "tiling/data_model.yaml",
         "tiling/coverage_model.yaml",
+        "kernel/compile_model.yaml",
+        "kernel/variables.yaml",
+        "kernel/paths.yaml",
         "kernel/branches.yaml",
+        "kernel/pipeline.yaml",
+        "kernel/resources.yaml",
         "cross_layer/impact_graph.yaml",
+        "flow/golden_model.yaml",
+        "flow/numerical_model.yaml",
         "quality.yaml",
     }
     assert payload["context_slice"]["entities"]
@@ -622,6 +678,70 @@ def test_contract_schema_rejects_input_realization_without_id() -> None:
     assert any(item["code"] == "INPUT_REALIZATION_SCHEMA" for item in report.to_dict()["blocking_issues"])
 
 
+def test_contract_schema_accepts_input_realization_mapping() -> None:
+    contract = _contract(
+        input_realization={
+            "CON_IR_TND_VARLEN": {"matches": {"isTnd": True}, "inputs": {"x": {"layout": "TND"}}}
+        }
+    )
+    report = validate_intake(_payload(contract), _validation())
+    assert not any(item["code"] == "INPUT_REALIZATION_SCHEMA" for item in report.to_dict()["blocking_issues"])
+
+
+def test_comp_and_gold_stable_ids_are_legal_and_hard_refs_resolve() -> None:
+    contract = _contract(
+        coverage_obligations={
+            "kernel_paths": [
+                {"id": "COV_COMPUTE_GOLD", "priority": "hard", "target_refs": ["COMP_MAIN", "GOLD_MAIN"]}
+            ],
+            "tiling_keys": [],
+            "tilingdata": [],
+            "numerical": [],
+            "negative": [],
+        }
+    )
+    payload = _payload(contract)
+    payload["files"]["flow/compute_graph.yaml"] = {"compute_steps": [{"id": "COMP_MAIN"}]}
+    payload["files"]["flow/golden_model.yaml"] = {"golden_steps": [{"id": "GOLD_MAIN"}]}
+
+    report = validate_intake(payload, _validation())
+
+    codes = [item["code"] for item in report.to_dict()["blocking_issues"]]
+    assert "INVALID_STABLE_ID" not in codes
+    assert "INVALID_HARD_REF_ID" not in codes
+    assert "DANGLING_HARD_REF" not in codes
+
+
+def test_dangling_comp_and_gold_hard_refs_fail() -> None:
+    contract = _contract(
+        coverage_obligations={
+            "kernel_paths": [
+                {"id": "COV_COMPUTE_GOLD", "priority": "hard", "target_refs": ["COMP_MISSING", "GOLD_MISSING"]}
+            ],
+            "tiling_keys": [],
+            "tilingdata": [],
+            "numerical": [],
+            "negative": [],
+        }
+    )
+    report = validate_intake(_payload(contract), _validation())
+
+    dangling = [item["target"] for item in report.to_dict()["blocking_issues"] if item["code"] == "DANGLING_HARD_REF"]
+    assert dangling == ["COMP_MISSING", "GOLD_MISSING"]
+
+
+def test_intake_requires_full_testcase_contract_view() -> None:
+    payload = _payload()
+    del payload["files"]["tiling/constraints.yaml"]
+
+    report = validate_intake(payload, _validation())
+
+    assert any(
+        item["code"] == "MISSING_CANONICAL_FILE" and item["target"] == "tiling/constraints.yaml"
+        for item in report.to_dict()["blocking_issues"]
+    )
+
+
 def test_top_level_kernel_branch_variants_expand_into_plan_obligations() -> None:
     contract = _contract(
         kernel_branch_obligations=[
@@ -635,6 +755,148 @@ def test_top_level_kernel_branch_variants_expand_into_plan_obligations() -> None
         if item["kind"] == "kernel_branch" and item["target_refs"] == ["KPATH_POST_NZ"]
     }
     assert variants == {"FP16 Nz", "BF16 Nz"}
+
+
+def test_l0_selects_minimal_smoke_path() -> None:
+    files = _payload(
+        contract=_contract(
+            interface={"optional_inputs": [{"name": "mask"}], "dtype_layout_domains": [{"id": "FP16_ND"}, {"id": "BF16_TND"}]},
+            coverage_obligations={
+                "families": [{"id": "COV_FAM_MAIN", "target_refs": ["FAM_MAIN"]}, {"id": "COV_FAM_ALT", "target_refs": ["FAM_ALT"]}],
+                "kernel_paths": [{"id": "COV_PATH_MAIN", "target_refs": ["KPATH_MAIN"]}, {"id": "COV_PATH_ALT", "target_refs": ["KPATH_ALT"]}],
+                "tiling_keys": [],
+                "tilingdata": [],
+                "numerical": [],
+                "negative": [],
+            },
+        )
+    )["files"]
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L0")
+
+    assert {item["test_level"] for item in plan["obligations"]} == {"L0"}
+    assert len(plan["obligations"]) <= 3
+    assert not [item for item in plan["obligations"] if item["kind"] == "kernel_branch"]
+
+
+def test_l1_covers_reachable_runtime_branch_sides_and_skips_compile_fixed() -> None:
+    files = _payload()["files"]
+    files["kernel/branches.yaml"] = {
+        "branches": [
+            {"id": "KBR_RUNTIME", "priority": "high"},
+            {"id": "KBR_COMPILE_FIXED", "compile_time_fixed": True},
+            {"id": "KBR_DERIVED", "derived": True},
+        ]
+    }
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L1")
+
+    branches = [item for item in plan["obligations"] if item["kind"] == "kernel_branch"]
+    assert {(item["target_refs"][0], item["target_value"]) for item in branches} == {("KBR_RUNTIME", True), ("KBR_RUNTIME", False)}
+    assert all(item["test_level"] == "L1" for item in branches)
+    assert all(item["coverage_origin"]["artifact"] == "kernel/branches.yaml" for item in branches)
+
+
+def test_l2_includes_boundaries_and_expected_rejects() -> None:
+    files = _payload()["files"]
+    files["tiling/constraints.yaml"] = {
+        "relations": [],
+        "variable_constraints": [{"id": "CON_M", "var": "VAR_SHAPE_M", "boundary_values": [1, 1024]}],
+        "input_realization": {},
+        "key_unreachable": [{"id": "COV_BAD_KEY", "matches": {"KEY_MODE": "bad"}, "reason": "host rejects"}],
+    }
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L2")
+
+    assert any(item["test_level"] == "L2" and item.get("target_value") == 1 for item in plan["obligations"])
+    rejects = [item for item in plan["obligations"] if item.get("expected_behavior") == "reject"]
+    assert rejects
+    assert all(item["case_expectation"]["expected_result"] == "reject" for item in rejects)
+
+
+def test_l3_expands_template_blocks_applies_pruning_and_realizes_keys() -> None:
+    files = _payload()["files"]
+    files["tiling/exhaustive_key_space.yaml"] = {
+        "field_order": ["layout", "post_nz", "axis"],
+        "template_blocks": [
+            {
+                "id": "KEY_BLOCK_MAIN",
+                "fixed_fields": {"layout": "TND"},
+                "field_domains": {"post_nz": [True, False], "axis": [0, 1]},
+                "product_count": 4,
+            }
+        ],
+        "reverse_realization_index": {},
+    }
+    files["tiling/constraints.yaml"] = {
+        "relations": [],
+        "variable_constraints": [],
+        "input_realization": {"CON_IR_TND": {"matches": {"layout": "TND"}}},
+        "tiling_key_pruning": [{"id": "PRUNE_POST_FALSE_AXIS_1", "matches": {"post_nz": False, "axis": 1}}],
+    }
+    files["registry/aliases.yaml"] = {"aliases": [{"alias": "PostNz", "target_id": "KBR_POST_NZ"}], "conflicts": []}
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L3", focus="只测试 TND 场景中 PostNz 分支的所有 TilingKey")
+
+    stats = plan["semantic_focus"]["tiling_key_coverage"]
+    assert stats["raw_expanded_count"] == 4
+    assert stats["reachable_key_count"] == 2
+    assert stats["realized_key_count"] == 2
+    assert all(item["expected_tiling_key"]["layout"] == "TND" for item in plan["obligations"])
+    assert all(item["expected_tiling_key"]["post_nz"] is True for item in plan["obligations"])
+
+
+def test_l3_blocks_when_key_has_no_realization() -> None:
+    files = _payload()["files"]
+    files["tiling/exhaustive_key_space.yaml"] = {
+        "field_order": ["axis"],
+        "template_blocks": [{"id": "KEY_BLOCK_MAIN", "field_domains": {"axis": [0, 1]}, "product_count": 2}],
+    }
+    files["tiling/constraints.yaml"] = {"relations": [], "variable_constraints": [], "input_realization": {}}
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L3")
+
+    assert plan["unresolved"]["status"] == "blocked"
+    assert plan["semantic_focus"]["tiling_key_coverage"]["unrealized_key_count"] == 2
+
+
+def test_focus_unresolved_term_blocks_without_guessing() -> None:
+    plan = build_plan({"op_name": "DemoOp", "files": _payload()["files"], "snapshot_hash": "s"}, level="L1", focus="Only MysteryBranch")
+
+    assert plan["unresolved"]["status"] == "blocked"
+    assert plan["semantic_focus"]["unresolved_terms"]
+
+
+def test_level_or_focus_changes_plan_hash() -> None:
+    snapshot = {"op_name": "DemoOp", "files": _payload()["files"], "snapshot_hash": "s"}
+    l1 = build_plan(snapshot, level="L1")
+    l2 = build_plan(snapshot, level="L2")
+    focused = build_plan(snapshot, level="L1", focus="TND")
+
+    assert l1["plan_hash"] != l2["plan_hash"]
+    assert l1["plan_hash"] != focused["plan_hash"]
+
+
+def test_changed_focus_invalidates_previous_approval(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo, _uo = _repo(tmp_path)
+    _patch_intake(monkeypatch, _payload())
+    init_result = tg_init(repo, "DemoOp")
+    first = tg_plan(repo, "DemoOp", level="L1")
+    root = repo / ".testcase-generator" / "DemoOp"
+    write_yaml(
+        root / "plan" / "human_supplement.yaml",
+        {
+            "version": 1,
+            "status": "approved",
+            "decision": "approve",
+            "approved_snapshot_hash": init_result["snapshot"]["snapshot_hash"],
+            "approved_plan_hash": first["plan_hash"],
+            "approved_at": "2026-01-01T00:00:00+00:00",
+            "supplements": [],
+            "notes": "",
+        },
+    )
+
+    second = tg_plan(repo, "DemoOp", level="L1", focus="TND")
+
+    assert second["plan_hash"] != first["plan_hash"]
+    supplement = read_yaml(root / "plan" / "human_supplement.yaml")
+    assert supplement["status"] == "reapproval_required"
 
 
 def test_conflicting_hard_obligation_blocks_approval(tmp_path: Path) -> None:

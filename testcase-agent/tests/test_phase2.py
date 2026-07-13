@@ -285,6 +285,17 @@ def test_tg_solve_requires_approval(tmp_path: Path) -> None:
         tg_solve(repo, "DemoOp")
 
 
+def test_tg_solve_rejects_legacy_coverage_plan_filename(tmp_path: Path) -> None:
+    repo = _repo_with_phase1(tmp_path, _contract(), _obligations([_pending("OB_A")]))
+    root = repo / ".testcase-generator" / "DemoOp" / "plan"
+    legacy = read_yaml(root / "coverage_obligations.yaml")
+    (root / "coverage_obligations.yaml").unlink()
+    write_yaml(root / "coverage_plan.yaml", legacy)
+
+    with pytest.raises(TgSolveError, match="coverage_obligations.yaml"):
+        tg_solve(repo, "DemoOp")
+
+
 def test_tg_solve_writes_outputs(tmp_path: Path) -> None:
     repo = _repo_with_phase1(tmp_path, _contract(), _obligations([_pending("OB_A")]))
 

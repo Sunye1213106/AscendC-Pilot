@@ -15,7 +15,7 @@ if str(ROOT) not in sys.path:
 from understand_operator._operator import kb_compiler
 from understand_operator._operator.artifacts import init_operator_layout, operator_root
 from understand_operator._operator.kb_compiler import promote_kb, validate_kb
-from understand_operator.scripts.kb_query_export import export_context_slice
+from understand_operator.scripts.kb_query_export import export_context_slice, export_view
 from understand_operator.scripts.kb_query_export import main as kb_query_export_main
 from understand_operator.scripts.macro_scope_scan import main as macro_scope_scan_main
 from understand_operator.scripts.quality_gate import main as quality_gate_main
@@ -664,6 +664,28 @@ def test_testcase_contract_v2_layout_and_query_export(tmp_path: Path) -> None:
     assert "testcase_contract" in payload
     assert payload["testcase_contract"]["version"] == 2
     assert any(item.get("stable_id") == "TDF_S_TILEN" for item in payload["entities"])
+    view = export_view(base, "DemoOp", "testcase-contract")
+    assert set(view["files"]) == {
+        "contracts/testcase.yaml",
+        "test/contract.yaml",
+        "tiling/variables.yaml",
+        "tiling/key_space.yaml",
+        "tiling/exhaustive_key_space.yaml",
+        "tiling/constraints.yaml",
+        "tiling/families.yaml",
+        "tiling/data_model.yaml",
+        "tiling/coverage_model.yaml",
+        "kernel/compile_model.yaml",
+        "kernel/variables.yaml",
+        "kernel/paths.yaml",
+        "kernel/branches.yaml",
+        "kernel/pipeline.yaml",
+        "kernel/resources.yaml",
+        "cross_layer/impact_graph.yaml",
+        "flow/golden_model.yaml",
+        "flow/numerical_model.yaml",
+        "quality.yaml",
+    }
 
 
 def test_tilingdata_numeric_only_field_level_proof(tmp_path: Path) -> None:

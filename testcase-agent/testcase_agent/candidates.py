@@ -22,6 +22,10 @@ def build_candidate(obligation: dict[str, Any], solve_result: dict[str, Any], co
         "abstract_model": abstract_candidate_model(model, obligation),
         "coverage_signature": signature,
         "covered_obligation_ids": covered,
+        "test_level": obligation.get("test_level"),
+        "expected_behavior": obligation.get("expected_behavior", "success"),
+        "case_expectation": obligation.get("case_expectation"),
+        "expected_tiling_key": obligation.get("expected_tiling_key"),
         "status": "candidate",
     }
     candidate["id"] = "CAND_" + stable_hash(signature)[:12].upper()

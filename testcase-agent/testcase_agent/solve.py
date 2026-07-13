@@ -24,6 +24,7 @@ def tg_solve(project_root: Path, op_name: str, *, timeout_ms: int = 5000) -> dic
     matrix_path = out_root / "plan" / "coverage_matrix.yaml"
     unresolved_path = out_root / "plan" / "unresolved.yaml"
     supplement_path = out_root / "plan" / "human_supplement.yaml"
+    semantic_focus_path = out_root / "plan" / "semantic_focus.yaml"
     if not snapshot_path.exists():
         raise TgSolveError(f"Missing phase-one snapshot: {snapshot_path}")
     if not obligations_path.exists():
@@ -42,7 +43,13 @@ def tg_solve(project_root: Path, op_name: str, *, timeout_ms: int = 5000) -> dic
     matrix_doc = read_yaml(matrix_path)
     unresolved_doc = read_yaml(unresolved_path)
     supplement = read_yaml(supplement_path)
-    plan_hash = semantic_plan_hash(snapshot.get("snapshot_hash"), obligations_doc.get("obligations", []), matrix_doc, unresolved_doc)
+    semantic_focus_doc = read_yaml(semantic_focus_path) if semantic_focus_path.exists() else {}
+    planning_context = semantic_focus_doc.get("planning_context") if isinstance(semantic_focus_doc, dict) else {}
+    hash_matrix_doc = dict(matrix_doc)
+    hash_unresolved_doc = dict(unresolved_doc)
+    hash_matrix_doc.pop("test_level", None)
+    hash_unresolved_doc.pop("test_level", None)
+    plan_hash = semantic_plan_hash(snapshot.get("snapshot_hash"), obligations_doc.get("obligations", []), hash_matrix_doc, hash_unresolved_doc, planning_context)
     recorded_plan_hash = obligations_doc.get("plan_hash") or matrix_doc.get("plan_hash") or unresolved_doc.get("plan_hash")
     if recorded_plan_hash != plan_hash:
         raise TgSolveError("PLAN_HASH_MISMATCH: plan_hash does not match phase-one plan contents")
