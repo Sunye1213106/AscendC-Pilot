@@ -168,9 +168,14 @@ class Z3Backend:
             if spec["type"] == "int":
                 domain = spec.get("domain") or {}
                 if isinstance(domain, dict):
-                    if domain.get("min") is not None:
+                    kind = str(domain.get("kind") or ("discrete" if "values" in domain else "range"))
+                    if kind == "discrete":
+                        values = [int(value) for value in domain.get("values") or []]
+                        if values:
+                            self._assert_tracked(solver, z3.Or([sym == value for value in values]), f"domain:{var_id}:values", labels)
+                    elif domain.get("min") is not None:
                         self._assert_tracked(solver, sym >= int(domain["min"]), f"domain:{var_id}:min", labels)
-                    if domain.get("max") is not None:
+                    if kind == "range" and domain.get("max") is not None:
                         self._assert_tracked(solver, sym <= int(domain["max"]), f"domain:{var_id}:max", labels)
                 elif isinstance(domain, list) and domain:
                     self._assert_tracked(solver, z3.Or([sym == int(value) for value in domain]), f"domain:{var_id}:values", labels)

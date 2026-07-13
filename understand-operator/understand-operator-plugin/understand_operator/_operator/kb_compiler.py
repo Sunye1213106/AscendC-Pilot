@@ -109,6 +109,86 @@ PREFIX_KIND_ALIASES = {
 }
 LEGACY_ID_RE = re.compile(r"^(TF\d+|K\d+|C\d+|D\d+|P\d+)$")
 STATUS_ENUM = {"confirmed", "proposed", "uncertain", "conflicting", "unresolved", "deprecated"}
+EXECUTION_UNITS = {"VECTOR", "CUBE", "DATA_MOVE", "SYNC", "SCALAR_CONTROL", "UNKNOWN"}
+EXECUTION_PREFIX = {
+    "VECTOR": "[Vector]",
+    "CUBE": "[Cube]",
+    "DATA_MOVE": "[DataMove]",
+    "SYNC": "[Sync]",
+    "SCALAR_CONTROL": "[Scalar]",
+    "UNKNOWN": "[Unknown]",
+}
+EXECUTION_OPERATION_DEFAULT = {
+    "VECTOR": "vector_compute",
+    "CUBE": "matmul",
+    "DATA_MOVE": "data_move",
+    "SYNC": "sync",
+    "SCALAR_CONTROL": "scalar_control",
+    "UNKNOWN": "unknown",
+}
+VECTOR_API_PATTERNS = (
+    "ascendc::add",
+    "ascendc::sub",
+    "ascendc::mul",
+    "ascendc::div",
+    "ascendc::exp",
+    "ascendc::log",
+    "ascendc::sqrt",
+    "ascendc::abs",
+    "ascendc::max",
+    "ascendc::min",
+    "ascendc::reducemax",
+    "ascendc::reducesum",
+    "ascendc::cast",
+    "ascendc::compare",
+    "ascendc::select",
+    "reduce_max",
+    "reduce_sum",
+)
+CUBE_API_PATTERNS = (
+    "matmul.iterate",
+    "matmulimpl",
+    "gettensorc",
+    "ascendc::mmad",
+    "mmadwithsparse",
+    "mmad",
+)
+DATA_MOVE_PATTERNS = (
+    "datacopy",
+    "copyin",
+    "copyout",
+    "load",
+    "store",
+    "enqueue",
+    "deque",
+    "enque",
+    "deque",
+    "workspace",
+    "gm to ub",
+    "gm->ub",
+    "gm to l1",
+    "l1 to l0",
+    "l0c to gm",
+    "ub to gm",
+)
+SYNC_PATTERNS = (
+    "pipebarrier",
+    "syncall",
+    "setflag",
+    "waitflag",
+    "event",
+    "barrier",
+    "wait",
+)
+SCALAR_PATTERNS = (
+    "blockidx",
+    "offset",
+    "index",
+    "loop bound",
+    "tile size",
+    "tail",
+    "branch",
+)
 RELATION_TYPES = {
     "derives",
     "reads",
@@ -1120,9 +1200,14 @@ def _target_allowed(target: str) -> bool:
 
 
 def _normalize_candidate(docs: dict[str, Any]) -> None:
+    function_units = _collect_function_execution_units(docs)
     for rel, doc in list(docs.items()):
         if not isinstance(doc, dict):
             continue
+        if rel == "flow/compute_graph.yaml":
+            doc = _normalize_compute_graph_doc(doc, function_units)
+        if rel == "kernel/paths.yaml":
+            doc = _normalize_kernel_paths_doc(doc, function_units)
         for section in ("relations", "links", "edges", "impacts"):
             if section in doc:
                 entries = [_normalize_relation_entry(item) for item in _iter_entries(doc.get(section))]
@@ -1131,6 +1216,224 @@ def _normalize_candidate(docs: dict[str, Any]) -> None:
             if section in doc and isinstance(doc[section], list):
                 doc[section] = sorted(doc[section], key=lambda x: str(x.get("id") or x.get("canonical_name") or "") if isinstance(x, dict) else str(x))
         docs[rel] = doc
+
+
+def _normalize_compute_graph_doc(doc: dict[str, Any], function_units: dict[str, str]) -> dict[str, Any]:
+    out = dict(doc)
+    steps = [_normalize_computation_step(item, idx, function_units) for idx, item in enumerate(_iter_entries(out.get("compute_steps")), start=1)]
+    steps = _link_computation_steps(steps)
+    out["compute_steps"] = steps
+    out["computation_steps"] = steps
+    _add_step_indexes(out, steps)
+    return out
+
+
+def _normalize_kernel_paths_doc(doc: dict[str, Any], function_units: dict[str, str]) -> dict[str, Any]:
+    out = dict(doc)
+    paths = []
+    for path in _iter_entries(out.get("kernel_paths")):
+        item = dict(path)
+        raw_steps = item.get("computation_steps") or item.get("compute_steps") or item.get("data_flow_steps") or []
+        if raw_steps:
+            steps = [_normalize_computation_step(step, idx, function_units, path_id=str(item.get("id") or item.get("stable_key") or "")) for idx, step in enumerate(_iter_entries(raw_steps), start=1)]
+            steps = _link_computation_steps(steps)
+            item["computation_steps"] = steps
+            _add_step_indexes(item, steps)
+        paths.append(item)
+    out["kernel_paths"] = sorted(paths, key=lambda item: str(item.get("id") or item.get("stable_key") or ""))
+    return out
+
+
+def _add_step_indexes(container: dict[str, Any], steps: list[dict[str, Any]]) -> None:
+    buckets = {
+        "vector_steps": "VECTOR",
+        "cube_steps": "CUBE",
+        "data_move_steps": "DATA_MOVE",
+        "sync_steps": "SYNC",
+        "scalar_control_steps": "SCALAR_CONTROL",
+        "unknown_steps": "UNKNOWN",
+    }
+    for key, unit in buckets.items():
+        container[key] = [str(step.get("id") or step.get("step_id")) for step in steps if step.get("execution_unit") == unit]
+
+
+def _link_computation_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    linked: list[dict[str, Any]] = []
+    for idx, step in enumerate(steps):
+        item = dict(step)
+        step_id = str(item.get("id") or item.get("step_id") or f"step_{idx + 1}")
+        item["id"] = step_id
+        item["step_id"] = step_id
+        if "depends_on" not in item:
+            item["depends_on"] = [str(linked[-1].get("id"))] if linked else []
+        item["downstream_steps"] = [str(steps[idx + 1].get("id") or steps[idx + 1].get("step_id") or f"step_{idx + 2}")] if idx + 1 < len(steps) else []
+        if linked:
+            prev = linked[-1]
+            prev_unit = str(prev.get("execution_unit") or "UNKNOWN")
+            unit = str(item.get("execution_unit") or "UNKNOWN")
+            if prev_unit != unit:
+                item.setdefault(
+                    "execution_transition",
+                    {
+                        "from": prev_unit,
+                        "to": unit,
+                        "requires_sync": prev_unit == "SYNC" or unit == "SYNC",
+                        "requires_data_move": prev_unit == "DATA_MOVE" or unit == "DATA_MOVE",
+                    },
+                )
+        linked.append(item)
+    return linked
+
+
+def _normalize_computation_step(raw: dict[str, Any], index: int, function_units: dict[str, str], *, path_id: str = "") -> dict[str, Any]:
+    step = dict(raw)
+    step_id = str(step.get("step_id") or step.get("id") or f"{path_id + '_' if path_id else ''}step_{index}")
+    unit, confidence, unit_evidence = _classify_execution_unit(step, function_units)
+    operation = str(step.get("operation") or _infer_operation(step, unit))
+    name = _normalize_step_name(str(step.get("name") or step.get("label") or ""), unit, operation, step)
+    evidence = [str(item) for item in _as_list(step.get("evidence")) if str(item)]
+    for item in unit_evidence:
+        if item not in evidence:
+            evidence.append(item)
+    out = {
+        **step,
+        "id": step_id,
+        "step_id": step_id,
+        "name": name,
+        "execution_unit": unit,
+        "operation": operation,
+        "inputs": [str(item) for item in _as_list(step.get("inputs"))],
+        "outputs": [str(item) for item in _as_list(step.get("outputs"))],
+        "source_location": _as_dict(step.get("source_location")),
+        "evidence": evidence,
+        "confidence": str(step.get("confidence") or confidence),
+    }
+    out.setdefault("memory_locations", [str(item) for item in _as_list(step.get("memory_locations"))])
+    return out
+
+
+def _normalize_step_name(name: str, unit: str, operation: str, step: dict[str, Any]) -> str:
+    prefix = EXECUTION_PREFIX[unit]
+    for known in EXECUTION_PREFIX.values():
+        if name.startswith(known):
+            name = name[len(known):].strip()
+            break
+    if not name or name.lower() in {"process data", "compute result", "execute kernel", "run calculation", "handle tensor"}:
+        objects = _as_list(step.get("outputs")) or _as_list(step.get("inputs"))
+        data_object = " and ".join(str(item) for item in objects[:2]) if objects else "kernel data"
+        verb = {
+            "VECTOR": "Compute",
+            "CUBE": "Compute",
+            "DATA_MOVE": "Move",
+            "SYNC": "Synchronize",
+            "SCALAR_CONTROL": "Control",
+            "UNKNOWN": "Analyze",
+        }[unit]
+        name = f"{verb} {operation.replace('_', ' ')} {data_object}".strip()
+    return f"{prefix} {name}"
+
+
+def _classify_execution_unit(step: dict[str, Any], function_units: dict[str, str]) -> tuple[str, str, list[str]]:
+    explicit = str(step.get("execution_unit") or step.get("unit") or "").upper()
+    if explicit in EXECUTION_UNITS:
+        return explicit, str(step.get("confidence") or "high"), [f"Explicit execution_unit={explicit}"]
+    text = _step_text(step)
+    calls = [str(item) for item in _as_list(step.get("calls") or step.get("callees") or step.get("apis"))]
+    for call in calls:
+        unit = function_units.get(call) or function_units.get(call.split("::")[-1]) or function_units.get(call.split(".")[-1])
+        if unit:
+            return unit, "medium", [f"Called function {call} is classified as {unit}"]
+    for unit, patterns in (
+        ("SYNC", SYNC_PATTERNS),
+        ("DATA_MOVE", DATA_MOVE_PATTERNS),
+        ("CUBE", CUBE_API_PATTERNS),
+        ("VECTOR", VECTOR_API_PATTERNS),
+    ):
+        hit = _first_pattern_hit(text, patterns)
+        if hit:
+            return unit, "high", [f"Matched {unit} API evidence: {hit}"]
+    scalar_hit = _first_pattern_hit(text, SCALAR_PATTERNS)
+    if scalar_hit:
+        return "SCALAR_CONTROL", "medium", [f"Matched scalar control evidence: {scalar_hit}"]
+    if _has_matrix_semantics(step):
+        return "CUBE", "medium", ["Matched matrix input/output semantics"]
+    if _has_vector_semantics(step):
+        return "VECTOR", "medium", ["Matched LocalTensor/vector elementwise semantics"]
+    return "UNKNOWN", "low", ["Insufficient API or data-shape evidence for execution unit"]
+
+
+def _infer_operation(step: dict[str, Any], unit: str) -> str:
+    text = _step_text(step)
+    operation_patterns = {
+        "matmul": ("matmul", "mmad", "gemm", "batchmatmul"),
+        "copy": ("datacopy", "copyin", "copyout", "load", "store"),
+        "sync": ("pipebarrier", "syncall", "setflag", "waitflag"),
+        "cast": ("cast",),
+        "reduce": ("reduce", "reducemax", "reducesum"),
+        "exp": ("exp",),
+        "add": ("add",),
+        "mul": ("mul",),
+    }
+    for op, patterns in operation_patterns.items():
+        if _first_pattern_hit(text, patterns):
+            return op
+    return EXECUTION_OPERATION_DEFAULT[unit]
+
+
+def _step_text(step: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for key in ("name", "label", "operation", "api", "function", "body", "description", "code"):
+        if step.get(key) is not None:
+            parts.append(str(step.get(key)))
+    parts.extend(str(item) for item in _as_list(step.get("calls") or step.get("callees") or step.get("apis")))
+    parts.extend(str(item) for item in _as_list(step.get("evidence")))
+    parts.extend(str(item) for item in _as_list(step.get("inputs")))
+    parts.extend(str(item) for item in _as_list(step.get("outputs")))
+    return "\n".join(parts).lower()
+
+
+def _first_pattern_hit(text: str, patterns: tuple[str, ...]) -> str:
+    compact = text.replace(" ", "").replace("_", "").lower()
+    for pattern in patterns:
+        normalized = pattern.replace(" ", "").replace("_", "").lower()
+        if normalized in compact:
+            return pattern
+    return ""
+
+
+def _has_matrix_semantics(step: dict[str, Any]) -> bool:
+    text = _step_text(step)
+    matrix_words = ("matrix", "tile a", "tile b", "l0a", "l0b", "l0c", "tensor a", "tensor b", "tensor c")
+    return sum(1 for word in matrix_words if word in text) >= 2
+
+
+def _has_vector_semantics(step: dict[str, Any]) -> bool:
+    text = _step_text(step)
+    return ("localtensor" in text or "ub" in text) and any(word in text for word in ("elementwise", "softmax", "normalize", "scale", "mask"))
+
+
+def _collect_function_execution_units(docs: dict[str, Any]) -> dict[str, str]:
+    functions: dict[str, dict[str, Any]] = {}
+    for doc in docs.values():
+        data = _as_dict(doc)
+        for section in ("functions", "kernel_functions", "function_summaries", "symbols"):
+            for item in _iter_entries(data.get(section)):
+                name = str(item.get("name") or item.get("canonical_name") or item.get("id") or "")
+                if name:
+                    functions[name] = item
+    resolved: dict[str, str] = {}
+    for _ in range(4):
+        changed = False
+        for name, item in functions.items():
+            if name in resolved:
+                continue
+            unit, _confidence, _evidence = _classify_execution_unit({**item, "name": ""}, resolved)
+            if unit != "UNKNOWN":
+                resolved[name] = unit
+                changed = True
+        if not changed:
+            break
+    return resolved
 
 
 def _normalize_relation_entry(item: dict[str, Any]) -> dict[str, Any]:

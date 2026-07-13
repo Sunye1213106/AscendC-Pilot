@@ -165,8 +165,11 @@ def _target_outside_declared_domain(expr: dict[str, Any], ir: dict[str, Any]) ->
                 value = node.get("value")
                 if variable.get("type") == "enum" and value not in domain:
                     return str(node["var"]), value, domain
-                if variable.get("type") == "int" and isinstance(domain, dict):
-                    if (domain.get("min") is not None and value < domain["min"]) or (domain.get("max") is not None and value > domain["max"]):
+                if variable.get("type") == "int":
+                    domain = _normalize_int_domain(domain, variable.get("domain_authority", "inferred"))
+                    if domain.get("kind") == "discrete" and int(value) not in [int(item) for item in domain.get("values", [])]:
+                        return str(node["var"]), value, domain
+                    if domain.get("kind") == "range" and ((domain.get("min") is not None and value < domain["min"]) or (domain.get("max") is not None and value > domain["max"])):
                         return str(node["var"]), value, domain
         for child in node.values():
             if isinstance(child, list):
@@ -344,7 +347,13 @@ def _add_variable(variables: dict[str, dict[str, Any]], spec: dict[str, Any], er
         values = spec.get("values")
         domain = spec.get("domain")
         if isinstance(domain, dict):
-            _ensure_int(variables, var_id, min_value=domain.get("min"), max_value=domain.get("max"), source=source, errors=errors)
+            if "values" in domain:
+                domain_values = domain.get("values")
+                _ensure_int(variables, var_id, [int(item) for item in _as_list(domain_values)], source=source, errors=errors)
+            else:
+                _ensure_int(variables, var_id, min_value=domain.get("min"), max_value=domain.get("max"), source=source, errors=errors)
+        elif isinstance(domain, list) and domain and all(isinstance(item, int) and not isinstance(item, bool) for item in domain):
+            _ensure_int(variables, var_id, [int(item) for item in domain], source=source, errors=errors)
         elif isinstance(values, list) and values and all(isinstance(item, int) and not isinstance(item, bool) for item in values):
             _ensure_int(variables, var_id, [int(item) for item in values], source=source, errors=errors)
         else:
@@ -364,11 +373,7 @@ def _add_variable(variables: dict[str, dict[str, Any]], spec: dict[str, Any], er
 
 def _variables_from_interface(variables: dict[str, dict[str, Any]], contract: dict[str, Any], errors: list[dict[str, Any]]) -> None:
     interface = _as_dict(contract.get("interface"))
-    _ensure_enum(variables, "VAR_FAMILY", _collect_contract_targets(contract, "families") + _collect_contract_targets(contract, "family_obligations"), source="contracts/testcase.yaml.coverage_obligations", errors=errors)
-    _ensure_enum(variables, "VAR_KERNEL_PATH", _collect_contract_targets(contract, "kernel_paths"), source="contracts/testcase.yaml.coverage_obligations", errors=errors)
-    _ensure_enum(variables, "VAR_TEMPLATE", _collect_contract_targets(contract, "compile_templates") + _collect_contract_targets(contract, "template_bindings"), source="contracts/testcase.yaml.coverage_obligations", errors=errors)
     _ensure_enum(variables, "VAR_DTYPE_LAYOUT_CLASS", [str(item.get("id") or item.get("name") or item.get("class") or item.get("dtype")) for item in _iter_items(interface.get("dtype_layout_domains")) if item], source="interface.dtype_layout_domains", errors=errors)
-    _ensure_enum(variables, "VAR_NUMERICAL_MODE", _collect_contract_targets(contract, "numerical"), source="contracts/testcase.yaml.coverage_obligations", errors=errors)
     for item in _iter_items(interface.get("optional_inputs")):
         name = str(item.get("id") or item.get("name") or item.get("input") or "")
         if name:
@@ -376,9 +381,27 @@ def _variables_from_interface(variables: dict[str, dict[str, Any]], contract: di
 
 
 def _variables_from_context_slice(variables: dict[str, dict[str, Any]], context_slice: dict[str, Any], errors: list[dict[str, Any]]) -> None:
+    bucket_members: dict[str, list[str]] = {
+        "VAR_FAMILY": [],
+        "VAR_KERNEL_PATH": [],
+        "VAR_TEMPLATE": [],
+        "VAR_NUMERICAL_MODE": [],
+    }
     for entity in _iter_items(context_slice.get("entities")):
         entity_id = str(entity.get("id") or entity.get("stable_id") or "")
         if not entity_id:
+            continue
+        if entity_id.startswith("FAM_"):
+            bucket_members["VAR_FAMILY"].append(entity_id)
+            continue
+        if entity_id.startswith("KPATH_"):
+            bucket_members["VAR_KERNEL_PATH"].append(entity_id)
+            continue
+        if entity_id.startswith("KTPL_"):
+            bucket_members["VAR_TEMPLATE"].append(entity_id)
+            continue
+        if entity_id.startswith("NUM_"):
+            bucket_members["VAR_NUMERICAL_MODE"].append(entity_id)
             continue
         var_id = _entity_var_id(entity_id)
         if not var_id:
@@ -396,14 +419,8 @@ def _variables_from_context_slice(variables: dict[str, dict[str, Any]], context_
             _ensure_enum(variables, var_id, [str(item) for item in domain], source="context_entity", errors=errors)
         elif entity_id.startswith(("KEY_", "TDF_", "KVAR_")):
             _ensure_int(variables, var_id, source="context_entity_type_only", errors=errors)
-        elif entity_id.startswith(("KPATH_", "KTPL_", "FAM_", "NUM_")):
-            bucket_var = {
-                "KPATH_": "VAR_KERNEL_PATH",
-                "KTPL_": "VAR_TEMPLATE",
-                "FAM_": "VAR_FAMILY",
-                "NUM_": "VAR_NUMERICAL_MODE",
-            }[next(prefix for prefix in ("KPATH_", "KTPL_", "FAM_", "NUM_") if entity_id.startswith(prefix))]
-            _ensure_enum(variables, bucket_var, [entity_id], source="context_entity", errors=errors)
+    for var_id, members in bucket_members.items():
+        _ensure_enum(variables, var_id, sorted(set(members)), source="context_entity_bucket", errors=errors)
 
 
 def _variables_from_obligations(variables: dict[str, dict[str, Any]], obligations: list[dict[str, Any]], obligation_errors: dict[str, list[dict[str, Any]]]) -> None:
@@ -425,10 +442,10 @@ def _variables_from_obligations(variables: dict[str, dict[str, Any]], obligation
             _ensure_enum(variables, "VAR_NUMERICAL_MODE", refs, source="obligation_target", errors=errors_for(item), obligation_id=str(item.get("id") or ""))
         elif kind == "kernel_branch":
             for ref in refs:
-                _ensure_bool(variables, _branch_var_id(ref))
+                _ensure_bool(variables, _branch_var_id(ref), source="obligation_target", errors=errors_for(item), obligation_id=str(item.get("id") or ""))
         elif kind == "optional_input_mode":
             for ref in refs:
-                _ensure_bool(variables, _optional_var_id(ref))
+                _ensure_bool(variables, _optional_var_id(ref), source="obligation_target", errors=errors_for(item), obligation_id=str(item.get("id") or ""))
         elif kind in {"tiling_key_field", "tiling_key_field_value"}:
             constraints = _as_dict(item.get("constraints"))
             field = str(constraints.get("field") or constraints.get("field_name") or (refs[0] if refs else ""))
@@ -461,13 +478,24 @@ def _register_derived_variable(variables: dict[str, dict[str, Any]], spec: dict[
         return
     var_id = str(expr.get("var"))
     existing = variables.get(var_id)
+    var_type = str(spec.get("var_type") or spec.get("type") or "int")
+    if existing and existing.get("type") != var_type:
+        errors.append(_error("VARIABLE_TYPE_CONFLICT", scope="global", variable_id=var_id, source="contracts/testcase.yaml.typed_constraints", message=f"Variable {var_id} declared as both {existing.get('type')} and {var_type}"))
+        return
     if existing and existing.get("free"):
         errors.append(_error("DERIVED_FIELD_FREE", scope="global", variable_id=var_id, message="Derived Field cannot be a free variable"))
+    if existing:
+        existing["free"] = False
+        existing["derived"] = True
+        existing["definition"] = expr["expr"]
+        existing["source"] = ",".join(sorted(set(str(existing.get("source") or "").split(",")) | {"contracts/testcase.yaml.typed_constraints"}))
+        existing["domain_sources"] = sorted(set(existing.get("domain_sources", [])) | {"contracts/testcase.yaml.typed_constraints"})
+        return
     variables[var_id] = {
         "id": var_id,
         "name": str(spec.get("name") or var_id),
-        "type": str(spec.get("var_type") or spec.get("type") or "int"),
-        "domain": normalize_domain(str(spec.get("var_type") or spec.get("type") or "int"), spec),
+        "type": var_type,
+        "domain": normalize_domain(var_type, spec),
         "stable_id": var_id,
         "free": False,
         "derived": True,
@@ -482,19 +510,21 @@ def normalize_domain(var_type: str, spec: dict[str, Any]) -> Any:
     if "domain" in spec:
         domain = spec["domain"]
         if var_type == "int" and isinstance(domain, dict):
-            return {"min": domain.get("min"), "max": domain.get("max"), "explicit": True, "sources": ["contract_variables"]}
+            return {"kind": "range", "min": domain.get("min"), "max": domain.get("max"), "explicit": True, "authority": "explicit", "sources": ["contract_variables"]}
+        if var_type == "int" and isinstance(domain, list):
+            return {"kind": "discrete", "values": sorted(dict.fromkeys(int(item) for item in domain)), "explicit": True, "authority": "explicit", "sources": ["contract_variables"]}
         return domain
     if "values" in spec:
         values = spec["values"]
         if var_type == "int" and isinstance(values, list) and values:
-            return {"min": min(values), "max": max(values), "explicit": True, "sources": ["contract_variables"]}
+            return {"kind": "discrete", "values": sorted(dict.fromkeys(int(item) for item in values)), "explicit": True, "authority": "explicit", "sources": ["contract_variables"]}
         return values
     if "enum_values" in spec:
         return spec["enum_values"]
     if var_type == "int":
         if "min" in spec or "max" in spec:
-            return {"min": spec.get("min"), "max": spec.get("max"), "explicit": True, "sources": ["contract_variables"]}
-        return {"min": None, "max": None, "explicit": False, "sources": ["contract_type_only"]}
+            return {"kind": "range", "min": spec.get("min"), "max": spec.get("max"), "explicit": True, "authority": "explicit", "sources": ["contract_variables"]}
+        return {"kind": "range", "min": None, "max": None, "explicit": False, "authority": "inferred", "sources": ["contract_type_only"]}
     return []
 
 
@@ -550,10 +580,17 @@ def _target_failure(obligation: dict[str, Any], priority: str, reason: str, *, c
     return TargetCompileResult(status="skipped", expr=None, code=code, reason=reason)
 
 
-def _ensure_bool(variables: dict[str, dict[str, Any]], var_id: str, *, source: str = "bool", errors: list[dict[str, Any]] | None = None) -> None:
+def _ensure_bool(
+    variables: dict[str, dict[str, Any]],
+    var_id: str,
+    *,
+    source: str = "bool",
+    errors: list[dict[str, Any]] | None = None,
+    obligation_id: str | None = None,
+) -> None:
     existing = variables.get(var_id)
     if existing and existing.get("type") != "bool" and errors is not None:
-        errors.append(_error("VARIABLE_TYPE_CONFLICT", scope="global", variable_id=var_id, source=source, message=f"Variable {var_id} declared as both {existing.get('type')} and bool"))
+        errors.append(_error("VARIABLE_TYPE_CONFLICT", scope="obligation" if obligation_id else "global", obligation_id=obligation_id, variable_id=var_id, source=source, message=f"Variable {var_id} declared as both {existing.get('type')} and bool"))
         return
     variables.setdefault(var_id, {"id": var_id, "name": var_id, "type": "bool", "domain": [False, True], "domain_authority": "intrinsic", "domain_sources": [source], "stable_id": var_id, "free": True, "derived": False, "definition": None, "source": source})
 
@@ -629,32 +666,40 @@ def _ensure_enum(variables: dict[str, dict[str, Any]], var_id: str, domain: list
 def _int_domain(values: list[int] | None = None, *, min_value: Any = None, max_value: Any = None, source: str, authority: str) -> dict[str, Any]:
     clean = sorted(dict.fromkeys(int(value) for value in values or []))
     if clean:
-        return {"min": min(clean), "max": max(clean), "explicit": authority == "explicit", "authority": authority, "sources": [source]}
+        return {"kind": "discrete", "values": clean, "explicit": authority == "explicit", "authority": authority, "sources": [source]}
     if min_value is not None or max_value is not None:
         return {
+            "kind": "range",
             "min": int(min_value) if min_value is not None else None,
             "max": int(max_value) if max_value is not None else None,
             "explicit": authority == "explicit",
             "authority": authority,
             "sources": [source],
         }
-    return {"min": None, "max": None, "explicit": False, "authority": authority, "sources": [source]}
+    return {"kind": "range", "min": None, "max": None, "explicit": False, "authority": authority, "sources": [source]}
 
 
 def _merge_int_domain(left: Any, right: Any, left_authority: str, right_authority: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    left = left if isinstance(left, dict) else {"min": None, "max": None, "sources": []}
-    right = right if isinstance(right, dict) else {"min": None, "max": None, "sources": []}
+    left = _normalize_int_domain(left, left_authority)
+    right = _normalize_int_domain(right, right_authority)
     errors: list[dict[str, Any]] = []
     for domain in (left, right):
+        if domain.get("kind") != "range":
+            continue
         if domain.get("min") is not None and domain.get("max") is not None and int(domain["min"]) > int(domain["max"]):
             errors.append({"code": "INVALID_INT_DOMAIN", "message": "min is greater than max"})
     def outside(value: Any, domain: dict[str, Any]) -> bool:
+        if domain.get("kind") == "discrete":
+            return int(value) not in [int(item) for item in domain.get("values", [])]
         return (domain.get("min") is not None and value < int(domain["min"])) or (domain.get("max") is not None and value > int(domain["max"]))
+    def requested_values(domain: dict[str, Any]) -> list[int]:
+        if domain.get("kind") == "discrete":
+            return [int(item) for item in domain.get("values", [])]
+        return [int(value) for value in (domain.get("min"), domain.get("max")) if value is not None]
     if left_authority == "explicit" and right_authority != "explicit":
-        requested = [value for value in (right.get("min"), right.get("max")) if value is not None]
-        for value in requested:
+        for value in requested_values(right):
             if outside(int(value), left):
-                errors.append({"code": "OBLIGATION_OUTSIDE_DECLARED_DOMAIN", "requested_value": str(value), "declared_domain": f"{left.get('min')}..{left.get('max')}"})
+                errors.append({"code": "OBLIGATION_OUTSIDE_DECLARED_DOMAIN", "requested_value": str(value), "declared_domain": _format_int_domain(left)})
         result = dict(left)
         result.update({"authority": "explicit", "explicit": True, "sources": sorted(set(_as_list(left.get("sources")) + _as_list(right.get("sources"))))})
         return result, errors
@@ -663,19 +708,82 @@ def _merge_int_domain(left: Any, right: Any, left_authority: str, right_authorit
         result.update({"authority": "explicit", "explicit": True, "sources": sorted(set(_as_list(left.get("sources")) + _as_list(right.get("sources"))))})
         return result, errors
     if left_authority == "explicit" and right_authority == "explicit":
-        mins = [value for value in (left.get("min"), right.get("min")) if value is not None]
-        maxs = [value for value in (left.get("max"), right.get("max")) if value is not None]
-        result = {"min": max(mins) if mins else None, "max": min(maxs) if maxs else None, "authority": "explicit", "explicit": True, "sources": sorted(set(_as_list(left.get("sources")) + _as_list(right.get("sources"))))}
-        if result["min"] is not None and result["max"] is not None and result["min"] > result["max"]:
+        result = _intersect_int_domains(left, right, "explicit")
+        result["sources"] = sorted(set(_as_list(left.get("sources")) + _as_list(right.get("sources"))))
+        if _int_domain_empty(result):
             errors.append({"code": "DOMAIN_CONFLICT", "message": "Explicit integer domains do not intersect"})
         return result, errors
+    result = _merge_inferred_int_domains(left, right)
+    result["sources"] = sorted(set(_as_list(left.get("sources")) + _as_list(right.get("sources"))))
+    return result, errors
+
+
+def _normalize_int_domain(domain: Any, authority: str = "inferred") -> dict[str, Any]:
+    if isinstance(domain, list):
+        return {"kind": "discrete", "values": sorted(dict.fromkeys(int(item) for item in domain)), "authority": authority, "explicit": authority == "explicit", "sources": []}
+    if not isinstance(domain, dict):
+        return {"kind": "range", "min": None, "max": None, "authority": authority, "explicit": authority == "explicit", "sources": []}
+    if domain.get("kind") == "discrete" or "values" in domain:
+        return {
+            "kind": "discrete",
+            "values": sorted(dict.fromkeys(int(item) for item in _as_list(domain.get("values")))),
+            "authority": domain.get("authority", authority),
+            "explicit": bool(domain.get("explicit", authority == "explicit")),
+            "sources": _as_list(domain.get("sources")),
+        }
+    return {
+        "kind": "range",
+        "min": int(domain["min"]) if domain.get("min") is not None else None,
+        "max": int(domain["max"]) if domain.get("max") is not None else None,
+        "authority": domain.get("authority", authority),
+        "explicit": bool(domain.get("explicit", authority == "explicit")),
+        "sources": _as_list(domain.get("sources")),
+    }
+
+
+def _intersect_int_domains(left: dict[str, Any], right: dict[str, Any], authority: str) -> dict[str, Any]:
+    if left.get("kind") == "discrete" and right.get("kind") == "discrete":
+        return {"kind": "discrete", "values": sorted(set(left.get("values", [])) & set(right.get("values", []))), "authority": authority, "explicit": authority == "explicit"}
+    if left.get("kind") == "range" and right.get("kind") == "range":
+        mins = [value for value in (left.get("min"), right.get("min")) if value is not None]
+        maxs = [value for value in (left.get("max"), right.get("max")) if value is not None]
+        return {"kind": "range", "min": max(mins) if mins else None, "max": min(maxs) if maxs else None, "authority": authority, "explicit": authority == "explicit"}
+    discrete = left if left.get("kind") == "discrete" else right
+    range_domain = right if left.get("kind") == "discrete" else left
+    values = [int(value) for value in discrete.get("values", []) if not _value_outside_range(int(value), range_domain)]
+    return {"kind": "discrete", "values": sorted(values), "authority": authority, "explicit": authority == "explicit"}
+
+
+def _merge_inferred_int_domains(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    if left.get("kind") == "discrete" or right.get("kind") == "discrete":
+        values = []
+        values.extend(int(item) for item in left.get("values", []) if left.get("kind") == "discrete")
+        values.extend(int(item) for item in right.get("values", []) if right.get("kind") == "discrete")
+        if values:
+            return {"kind": "discrete", "values": sorted(set(values)), "authority": "inferred", "explicit": False}
     mins = [value for value in (left.get("min"), right.get("min")) if value is not None]
     maxs = [value for value in (left.get("max"), right.get("max")) if value is not None]
-    return {"min": min(mins) if mins else None, "max": max(maxs) if maxs else None, "authority": "inferred", "explicit": False, "sources": sorted(set(_as_list(left.get("sources")) + _as_list(right.get("sources"))))}, errors
+    return {"kind": "range", "min": min(mins) if mins else None, "max": max(maxs) if maxs else None, "authority": "inferred", "explicit": False}
+
+
+def _value_outside_range(value: int, domain: dict[str, Any]) -> bool:
+    return (domain.get("min") is not None and value < int(domain["min"])) or (domain.get("max") is not None and value > int(domain["max"]))
+
+
+def _int_domain_empty(domain: dict[str, Any]) -> bool:
+    if domain.get("kind") == "discrete":
+        return not domain.get("values")
+    return domain.get("min") is not None and domain.get("max") is not None and int(domain["min"]) > int(domain["max"])
+
+
+def _format_int_domain(domain: dict[str, Any]) -> Any:
+    if domain.get("kind") == "discrete":
+        return list(domain.get("values", []))
+    return f"{domain.get('min')}..{domain.get('max')}"
 
 
 def _domain_authority(source: str) -> str:
-    if source in {"contracts/testcase.yaml.variables", "context_entity", "interface.dtype_layout_domains", "interface.optional_inputs"}:
+    if source in {"contracts/testcase.yaml.variables", "context_entity", "context_entity_bucket", "interface.dtype_layout_domains", "interface.optional_inputs"}:
         return "explicit"
     if source == "bool":
         return "intrinsic"
@@ -687,8 +795,10 @@ def _validate_variable_domains(variables: dict[str, dict[str, Any]], errors: lis
         domain = variable.get("domain")
         if variable.get("type") != "int" or not isinstance(domain, dict):
             continue
+        domain = _normalize_int_domain(domain, variable.get("domain_authority", "inferred"))
+        variable["domain"] = domain
         lower, upper = domain.get("min"), domain.get("max")
-        if lower is not None and upper is not None and int(lower) > int(upper):
+        if domain.get("kind") == "range" and lower is not None and upper is not None and int(lower) > int(upper):
             errors.append(_error("INVALID_INT_DOMAIN", scope="global", variable_id=var_id, message="min is greater than max"))
 
 

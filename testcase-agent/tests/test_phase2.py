@@ -603,7 +603,7 @@ def test_explicit_enum_domains_intersect_and_type_only_int_is_inferred() -> None
 
     assert variables["VAR_ENUM"]["domain"] == ["B", "C"]
     assert variables["VAR_FREE_INT"]["domain_authority"] == "inferred"
-    assert variables["VAR_FREE_INT"]["domain"] == {"min": None, "max": None, "explicit": False, "authority": "inferred", "sources": ["contracts/testcase.yaml.variables.type_only"]}
+    assert variables["VAR_FREE_INT"]["domain"] == {"kind": "range", "min": None, "max": None, "explicit": False, "authority": "inferred", "sources": ["contracts/testcase.yaml.variables.type_only"]}
 
     conflict_snapshot = _snapshot(_contract(variables=[{"id": "VAR_ENUM", "type": "enum", "domain": ["B"]}]))
     conflict_snapshot["context_slice"] = {"entities": [{"id": "VAR_ENUM", "type": "enum", "domain": ["A"]}]}
@@ -641,3 +641,145 @@ def test_branch_validation_runs_before_dedupe_and_set_cover() -> None:
         dedupe_candidates([conflicting_candidate], obligations)
     with pytest.raises(CandidateError, match="CONTRADICTORY_BRANCH_COVERAGE"):
         greedy_set_cover([conflicting_candidate], obligations)
+
+
+def test_context_bucket_entities_are_aggregated_as_explicit_enum_domains() -> None:
+    snapshot = _snapshot(_contract(variables=[]))
+    snapshot["context_slice"] = {
+        "entities": [
+            {"id": "FAM_A"},
+            {"id": "FAM_B"},
+            {"id": "KPATH_A"},
+            {"id": "KPATH_B"},
+            {"id": "KTPL_A"},
+            {"id": "KTPL_B"},
+            {"id": "NUM_FAST"},
+            {"id": "NUM_PRECISE"},
+        ]
+    }
+    result = build_constraint_ir(snapshot, _obligations([]), {"decision": "approve"})
+    variables = {item["id"]: item for item in result.ir["variables"]}
+
+    assert variables["VAR_FAMILY"]["domain"] == ["FAM_A", "FAM_B"]
+    assert variables["VAR_KERNEL_PATH"]["domain"] == ["KPATH_A", "KPATH_B"]
+    assert variables["VAR_TEMPLATE"]["domain"] == ["KTPL_A", "KTPL_B"]
+    assert variables["VAR_NUMERICAL_MODE"]["domain"] == ["NUM_FAST", "NUM_PRECISE"]
+    assert variables["VAR_FAMILY"]["domain_authority"] == "explicit"
+    assert result.global_errors == []
+
+
+def test_context_bucket_enum_intersects_with_contract_domain_and_conflicts_globally() -> None:
+    snapshot = _snapshot(_contract(variables=[{"id": "VAR_FAMILY", "type": "enum", "domain": ["FAM_A", "FAM_B"]}]))
+    snapshot["context_slice"] = {"entities": [{"id": "FAM_A"}, {"id": "FAM_B"}, {"id": "FAM_C"}]}
+    result = build_constraint_ir(snapshot, _obligations([]), {"decision": "approve"})
+    variable = next(item for item in result.ir["variables"] if item["id"] == "VAR_FAMILY")
+
+    assert variable["domain"] == ["FAM_A", "FAM_B"]
+    assert result.global_errors == []
+
+    conflict_snapshot = _snapshot(_contract(variables=[{"id": "VAR_FAMILY", "type": "enum", "domain": ["FAM_Z"]}]))
+    conflict_snapshot["context_slice"] = {"entities": [{"id": "FAM_A"}, {"id": "FAM_B"}]}
+    conflict = build_constraint_ir(conflict_snapshot, _obligations([]), {"decision": "approve"})
+
+    assert any(error["code"] == "DOMAIN_CONFLICT" and error["scope"] == "global" for error in conflict.global_errors)
+
+
+def test_family_path_template_numerical_coverage_targets_are_local_errors() -> None:
+    contract = _contract(
+        variables=[
+            {"id": "VAR_FAMILY", "type": "enum", "domain": ["FAM_A"]},
+            {"id": "VAR_KERNEL_PATH", "type": "enum", "domain": ["KPATH_A"]},
+            {"id": "VAR_TEMPLATE", "type": "enum", "domain": ["KTPL_A"]},
+            {"id": "VAR_NUMERICAL_MODE", "type": "enum", "domain": ["NUM_A"]},
+        ]
+    )
+    obligations = [
+        _pending("OB_FAM_A", kind="family", target_refs=["FAM_A"]),
+        _pending("OB_FAM_B", kind="family", target_refs=["FAM_B"]),
+        _pending("OB_PATH_B", kind="kernel_path", target_refs=["KPATH_B"]),
+        _pending("OB_TPL_B", kind="compile_template", target_refs=["KTPL_B"]),
+        _pending("OB_NUM_B", kind="numerical_mode", target_refs=["NUM_B"]),
+    ]
+    result = solve_from_docs(_snapshot(contract), _obligations(obligations), {"decision": "approve"})
+    by_id = {item["obligation_id"]: item for item in result["solve_results"]}
+
+    assert result["constraint_ir"]["compile_errors"]["global"] == []
+    assert by_id["OB_FAM_A"]["status"] == "sat"
+    for oid in ("OB_FAM_B", "OB_PATH_B", "OB_TPL_B", "OB_NUM_B"):
+        assert by_id[oid]["status"] == "error"
+        assert by_id[oid]["code"] == "OBLIGATION_OUTSIDE_DECLARED_DOMAIN"
+    assert any(candidate["source_obligation_ids"] == ["OB_FAM_A"] for candidate in result["candidates"])
+    assert all("OB_FAM_B" not in candidate["covered_obligation_ids"] for candidate in result["candidates"])
+
+
+def test_discrete_int_domain_restricts_z3_and_target_check() -> None:
+    contract = _contract(variables=[{"id": "VAR_KEY_AXIS", "type": "int", "values": [0, 2, 4]}])
+    obligations = [
+        _pending("OB_AXIS_0", constraints={"expr": {"op": "eq", "var": "VAR_KEY_AXIS", "value": 0}}),
+        _pending("OB_AXIS_2", constraints={"expr": {"op": "eq", "var": "VAR_KEY_AXIS", "value": 2}}),
+        _pending("OB_AXIS_4", constraints={"expr": {"op": "eq", "var": "VAR_KEY_AXIS", "value": 4}}),
+        _pending("OB_AXIS_1", constraints={"expr": {"op": "eq", "var": "VAR_KEY_AXIS", "value": 1}}),
+    ]
+    result = solve_from_docs(_snapshot(contract), _obligations(obligations), {"decision": "approve"})
+    variable = next(item for item in result["constraint_ir"]["variables"] if item["id"] == "VAR_KEY_AXIS")
+    by_id = {item["obligation_id"]: item for item in result["solve_results"]}
+
+    assert variable["domain"] == {"kind": "discrete", "values": [0, 2, 4], "explicit": True, "authority": "explicit", "sources": ["contracts/testcase.yaml.variables"]}
+    assert by_id["OB_AXIS_0"]["status"] == "sat"
+    assert by_id["OB_AXIS_2"]["status"] == "sat"
+    assert by_id["OB_AXIS_4"]["status"] == "sat"
+    assert by_id["OB_AXIS_1"]["status"] == "error"
+    assert by_id["OB_AXIS_1"]["code"] == "OBLIGATION_OUTSIDE_DECLARED_DOMAIN"
+    assert all(candidate["abstract_model"]["tiling_key_fields"].get("axis") in {None, 0, 2, 4} for candidate in result["candidates"])
+
+
+def test_discrete_int_domain_merge_rules_and_legacy_compatibility() -> None:
+    snapshot = _snapshot(_contract(variables=[{"id": "VAR_KEY_AXIS", "type": "int", "values": [0, 2, 4]}]))
+    snapshot["context_slice"] = {"entities": [{"id": "VAR_KEY_AXIS", "type": "int", "domain": [2, 4, 6]}]}
+    discrete = build_constraint_ir(snapshot, _obligations([]), {"decision": "approve"})
+    variable = next(item for item in discrete.ir["variables"] if item["id"] == "VAR_KEY_AXIS")
+    assert variable["domain"]["kind"] == "discrete"
+    assert variable["domain"]["values"] == [2, 4]
+
+    empty_snapshot = _snapshot(_contract(variables=[{"id": "VAR_KEY_AXIS", "type": "int", "values": [0]}]))
+    empty_snapshot["context_slice"] = {"entities": [{"id": "VAR_KEY_AXIS", "type": "int", "domain": [2]}]}
+    empty = build_constraint_ir(empty_snapshot, _obligations([]), {"decision": "approve"})
+    assert any(error["code"] == "DOMAIN_CONFLICT" for error in empty.global_errors)
+
+    range_snapshot = _snapshot(_contract(variables=[{"id": "VAR_KEY_AXIS", "type": "int", "domain": {"min": 0, "max": 4}}]))
+    range_snapshot["context_slice"] = {"entities": [{"id": "VAR_KEY_AXIS", "type": "int", "domain": [0, 2, 6]}]}
+    range_discrete = build_constraint_ir(range_snapshot, _obligations([]), {"decision": "approve"})
+    variable = next(item for item in range_discrete.ir["variables"] if item["id"] == "VAR_KEY_AXIS")
+    assert variable["domain"]["kind"] == "discrete"
+    assert variable["domain"]["values"] == [0, 2]
+
+    legacy_list = build_constraint_ir(_snapshot(_contract(variables=[{"id": "VAR_LEGACY", "type": "int", "domain": [0, 2, 4]}])), _obligations([]), {"decision": "approve"})
+    legacy_range = build_constraint_ir(_snapshot(_contract(variables=[{"id": "VAR_RANGE", "type": "int", "domain": {"min": 0, "max": 4}}])), _obligations([]), {"decision": "approve"})
+    assert next(item for item in legacy_list.ir["variables"] if item["id"] == "VAR_LEGACY")["domain"]["kind"] == "discrete"
+    assert next(item for item in legacy_range.ir["variables"] if item["id"] == "VAR_RANGE")["domain"]["kind"] == "range"
+
+
+def test_branch_and_optional_bool_type_conflicts_are_local() -> None:
+    contract = _contract(
+        variables=[
+            {"id": "VAR_KBR_HAS_TAIL", "type": "int", "domain": {"min": 0, "max": 1}},
+            {"id": "VAR_OPTIONAL_MASK", "type": "enum", "domain": ["present", "absent"]},
+            {"id": "VAR_FAMILY", "type": "enum", "domain": ["FAM_A"]},
+        ],
+        interface={**_contract()["interface"], "optional_inputs": []},
+    )
+    obligations = [
+        _pending("OB_FAM_A", kind="family", target_refs=["FAM_A"]),
+        {**_pending("OB_BRANCH", kind="kernel_branch", target_refs=["KBR_HAS_TAIL"]), "target_value": True},
+        {**_pending("OB_OPTIONAL", kind="optional_input_mode", target_refs=["MASK"]), "target_value": True},
+    ]
+    result = solve_from_docs(_snapshot(contract), _obligations(obligations), {"decision": "approve"})
+    by_id = {item["obligation_id"]: item for item in result["solve_results"]}
+
+    assert result["constraint_ir"]["compile_errors"]["global"] == []
+    assert by_id["OB_FAM_A"]["status"] == "sat"
+    for oid in ("OB_BRANCH", "OB_OPTIONAL"):
+        assert by_id[oid]["status"] == "error"
+        assert by_id[oid]["code"] == "VARIABLE_TYPE_CONFLICT"
+        assert by_id[oid]["errors"][0]["obligation_id"] == oid
+    assert all("OB_BRANCH" not in candidate["covered_obligation_ids"] for candidate in result["candidates"])

@@ -25,6 +25,12 @@ def _repo(tmp_path: Path) -> tuple[Path, Path]:
     return repo, base
 
 
+def _normalized_docs(docs: dict[str, dict]) -> dict[str, dict]:
+    payload = {key: yaml.safe_load(yaml.safe_dump(value)) for key, value in docs.items()}
+    kb_compiler._normalize_candidate(payload)
+    return payload
+
+
 def test_layout_creates_v2_slices_and_query_exports(tmp_path: Path) -> None:
     _repo_root, base = _repo(tmp_path)
 
@@ -42,6 +48,151 @@ def test_layout_creates_v2_slices_and_query_exports(tmp_path: Path) -> None:
     payload = export_view(base, "DemoOp", "code-change")
     assert payload["view"] == "code-change"
     assert "contracts/code_change.yaml" in payload["files"]
+
+
+def test_kernel_flow_normalizes_vector_cube_datamove_sync_steps() -> None:
+    docs = _normalized_docs(
+        {
+            "flow/compute_graph.yaml": {
+                "version": 1,
+                "op_name": "DemoOp",
+                "compute_steps": [
+                    {
+                        "id": "STEP_LOAD",
+                        "name": "Load query tile",
+                        "calls": ["DataCopy"],
+                        "inputs": ["query_gm"],
+                        "outputs": ["query_ub"],
+                        "source_location": {"file": "kernel.cpp", "function": "CopyIn", "line_start": 10, "line_end": 14},
+                    },
+                    {
+                        "id": "STEP_QK",
+                        "name": "Compute Q K matrix multiplication",
+                        "calls": ["matmul.Iterate"],
+                        "inputs": ["query_tile", "key_tile"],
+                        "outputs": ["score_tile"],
+                        "source_location": {"file": "kernel.cpp", "function": "Compute", "line_start": 20, "line_end": 30},
+                    },
+                    {
+                        "id": "STEP_SCALE",
+                        "name": "Scale matrix multiplication result",
+                        "calls": ["AscendC::Mul"],
+                        "inputs": ["score_tile"],
+                        "outputs": ["scaled_score_tile"],
+                        "source_location": {"file": "kernel.cpp", "function": "PostProcess", "line_start": 31, "line_end": 34},
+                    },
+                    {"id": "STEP_SYNC", "name": "Wait for vector output", "calls": ["WaitFlag"], "inputs": ["scaled_score_tile"], "outputs": ["ready_score_tile"]},
+                ],
+            }
+        }
+    )
+    steps = docs["flow/compute_graph.yaml"]["compute_steps"]
+
+    assert [step["execution_unit"] for step in steps] == ["DATA_MOVE", "CUBE", "VECTOR", "SYNC"]
+    assert [step["operation"] for step in steps] == ["copy", "matmul", "mul", "sync"]
+    assert steps[0]["name"].startswith("[DataMove]")
+    assert steps[1]["name"].startswith("[Cube]")
+    assert steps[2]["name"].startswith("[Vector]")
+    assert steps[3]["name"].startswith("[Sync]")
+    assert steps[1]["inputs"] == ["query_tile", "key_tile"]
+    assert steps[1]["outputs"] == ["score_tile"]
+    assert steps[1]["source_location"]["line_start"] == 20
+    assert any("CUBE API" in item for item in steps[1]["evidence"])
+    assert steps[2]["depends_on"] == ["STEP_QK"]
+    assert steps[2]["execution_transition"]["from"] == "CUBE"
+    assert steps[2]["execution_transition"]["to"] == "VECTOR"
+    assert docs["flow/compute_graph.yaml"]["cube_steps"] == ["STEP_QK"]
+    assert docs["flow/compute_graph.yaml"]["vector_steps"] == ["STEP_SCALE"]
+    assert docs["flow/compute_graph.yaml"]["data_move_steps"] == ["STEP_LOAD"]
+
+
+def test_vector_preprocess_then_cube_dependency_is_recorded() -> None:
+    docs = _normalized_docs(
+        {
+            "flow/compute_graph.yaml": {
+                "compute_steps": [
+                    {"id": "STEP_CAST", "calls": ["AscendC::Cast"], "inputs": ["query_fp16"], "outputs": ["query_fp32"]},
+                    {"id": "STEP_MATMUL", "calls": ["Mmad"], "inputs": ["query_fp32", "key_tile"], "outputs": ["score_tile"]},
+                ]
+            }
+        }
+    )
+    steps = docs["flow/compute_graph.yaml"]["compute_steps"]
+
+    assert steps[0]["execution_unit"] == "VECTOR"
+    assert steps[1]["execution_unit"] == "CUBE"
+    assert steps[1]["depends_on"] == ["STEP_CAST"]
+    assert steps[1]["execution_transition"]["from"] == "VECTOR"
+    assert steps[1]["execution_transition"]["to"] == "CUBE"
+
+
+def test_indirect_wrapper_cube_detection_and_matmul_name_not_enough() -> None:
+    docs = _normalized_docs(
+        {
+            "flow/compute_graph.yaml": {
+                "functions": [
+                    {"name": "ComputeScore", "calls": ["matmul.Iterate"], "evidence": ["Calls matmul.Iterate()"]},
+                    {"name": "MaybeMatmulHelper", "calls": ["UpdateOffset"], "evidence": ["updates scalar offset only"]},
+                ],
+                "compute_steps": [
+                    {"id": "STEP_WRAPPED", "name": "Run score wrapper", "calls": ["ComputeScore"], "inputs": ["q", "k"], "outputs": ["score"]},
+                    {"id": "STEP_NOT_CUBE", "name": "Matmul shaped bookkeeping", "calls": ["MaybeMatmulHelper"], "inputs": ["offset"], "outputs": ["next_offset"]},
+                ],
+            }
+        }
+    )
+    steps = {step["id"]: step for step in docs["flow/compute_graph.yaml"]["compute_steps"]}
+
+    assert steps["STEP_WRAPPED"]["execution_unit"] == "CUBE"
+    assert steps["STEP_WRAPPED"]["confidence"] == "medium"
+    assert any("ComputeScore" in item for item in steps["STEP_WRAPPED"]["evidence"])
+    assert steps["STEP_NOT_CUBE"]["execution_unit"] == "SCALAR_CONTROL"
+    assert not steps["STEP_NOT_CUBE"]["name"].startswith("[Cube]")
+
+
+def test_unknown_and_legacy_compute_steps_get_safe_defaults() -> None:
+    docs = _normalized_docs({"flow/compute_graph.yaml": {"compute_steps": {"legacy": {"name": "Handle tensor"}}}})
+    step = docs["flow/compute_graph.yaml"]["compute_steps"][0]
+
+    assert step["id"] == "legacy"
+    assert step["execution_unit"] == "UNKNOWN"
+    assert step["operation"] == "unknown"
+    assert step["name"].startswith("[Unknown]")
+    assert step["inputs"] == []
+    assert step["outputs"] == []
+    assert step["source_location"] == {}
+    assert step["evidence"] == ["Insufficient API or data-shape evidence for execution unit"]
+
+
+def test_kernel_path_computation_steps_are_classified_without_cross_path_merge() -> None:
+    docs = _normalized_docs(
+        {
+            "kernel/paths.yaml": {
+                "kernel_paths": [
+                    {
+                        "id": "KPATH_VECTOR",
+                        "tiling_keys": ["KEY_VECTOR"],
+                        "computation_steps": [{"id": "VEC_STEP", "calls": ["AscendC::Exp"], "inputs": ["x"], "outputs": ["y"]}],
+                    },
+                    {
+                        "id": "KPATH_CUBE",
+                        "tiling_keys": ["KEY_CUBE"],
+                        "computation_steps": [{"id": "CUBE_STEP", "calls": ["Mmad"], "inputs": ["a", "b"], "outputs": ["c"]}],
+                    },
+                ]
+            }
+        }
+    )
+    paths = {item["id"]: item for item in docs["kernel/paths.yaml"]["kernel_paths"]}
+
+    assert paths["KPATH_VECTOR"]["tiling_keys"] == ["KEY_VECTOR"]
+    assert paths["KPATH_CUBE"]["tiling_keys"] == ["KEY_CUBE"]
+    assert paths["KPATH_VECTOR"]["vector_steps"] == ["VEC_STEP"]
+    assert paths["KPATH_VECTOR"]["cube_steps"] == []
+    assert paths["KPATH_CUBE"]["cube_steps"] == ["CUBE_STEP"]
+    assert paths["KPATH_CUBE"]["vector_steps"] == []
+    assert paths["KPATH_VECTOR"]["computation_steps"][0]["execution_unit"] == "VECTOR"
+    assert paths["KPATH_CUBE"]["computation_steps"][0]["execution_unit"] == "CUBE"
 
 
 def test_compiler_detects_alias_conflict_and_dangling_evidence(tmp_path: Path) -> None:

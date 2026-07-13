@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from testcase_agent import init as init_mod
+from testcase_agent.constraint_ir import build_constraint_ir
 from testcase_agent.hashing import semantic_snapshot_hash
 from testcase_agent.init import TgInitError, tg_init
 from testcase_agent.io import read_json, read_yaml, write_json, write_yaml
@@ -147,11 +148,11 @@ def _mature_final_uo_fixture(repo: Path, op_name: str = "DemoOp") -> Path:
         "registry/aliases.yaml": {"aliases": [], "conflicts": []},
         "registry/evidence.yaml": {"evidence": [{"id": "EV_OPERATOR", "file": "operator.yaml", "lines": [1, 3], "kind": "manual", "source_hash": "x"}]},
         "tiling/variables.yaml": {"variables": [{"id": "VAR_KEY_SPLIT_AXIS", "data_type": "int"}], "tiling_mechanism": "key"},
-        "tiling/constraints.yaml": {"relations": [], "variable_constraints": [{"id": "CON_AXIS_DOMAIN", "var": "VAR_KEY_SPLIT_AXIS", "domain": {"min": 0, "max": 1}}], "input_realization": []},
-        "tiling/key_space.yaml": {"fields": [{"id": "KEY_SPLIT_AXIS", "kind": "key", "data_type": "int", "values": [0, 1]}], "derived_fields": [], "constants": []},
-        "tiling/families.yaml": {"families": [{"id": "FAM_MAIN", "name": "main"}], "dispatch_tree": {"root": "FAM_MAIN"}},
-        "tiling/data_model.yaml": {"structs": {"S": {"fields": {"splitAxis": {"id": "TDF_SPLIT_AXIS", "canonical_name": "splitAxis"}}}}, "family_to_struct": {"FAM_MAIN": "S"}, "numeric_overlay": []},
-        "tiling/coverage_model.yaml": {"coverage_policy": "minimal", "family_obligations": [{"id": "COV_FAM_MAIN", "family_id": "FAM_MAIN"}], "key_field_obligations": {}, "key_relation_obligations": []},
+        "tiling/constraints.yaml": {"relations": [], "variable_constraints": [{"id": "CON_AXIS_DOMAIN", "var": "VAR_KEY_SPLIT_AXIS", "domain": {"values": [0, 2, 4]}}], "input_realization": []},
+        "tiling/key_space.yaml": {"fields": [{"id": "KEY_SPLIT_AXIS", "kind": "key", "data_type": "int", "values": [0, 2, 4]}], "derived_fields": [], "constants": []},
+        "tiling/families.yaml": {"families": [{"id": "FAM_MAIN", "name": "main"}, {"id": "FAM_ALT", "name": "alt"}], "dispatch_tree": {"root": "FAM_MAIN", "children": ["FAM_ALT"]}},
+        "tiling/data_model.yaml": {"structs": {"S": {"fields": {"splitAxis": {"id": "TDF_SPLIT_AXIS", "canonical_name": "splitAxis"}}}}, "family_to_struct": {"FAM_MAIN": "S", "FAM_ALT": "S"}, "numeric_overlay": []},
+        "tiling/coverage_model.yaml": {"coverage_policy": "minimal", "family_obligations": [{"id": "COV_FAM_MAIN", "family_id": "FAM_MAIN"}, {"id": "COV_FAM_ALT", "family_id": "FAM_ALT"}], "key_field_obligations": {}, "key_relation_obligations": []},
         "tiling/evidence_index.yaml": {"symbols": [], "evidence_policy": "manual"},
         "flow/compute_graph.yaml": {"compute_steps": [{"id": "CL_STEP_MAIN", "kind": "compute"}], "outputs": ["y"]},
         "flow/dataflow.yaml": {"dataflow_edges": [{"id": "REL_DATAFLOW", "source": "x", "target": "y"}], "tensor_lifecycle": []},
@@ -164,7 +165,7 @@ def _mature_final_uo_fixture(repo: Path, op_name: str = "DemoOp") -> Path:
         "kernel/compile_model.yaml": {"template_bindings": [{"id": "KTPL_MAIN", "template": "main"}], "compile_time_configs": [], "compile_variables": [], "compile_decisions": []},
         "kernel/variables.yaml": {"runtime_variables": [{"id": "KVAR_AXIS", "data_type": "int"}], "tilingdata_reads": [{"id": "TDF_READ_SPLIT_AXIS", "field_id": "TDF_SPLIT_AXIS"}], "path_decision_points": []},
         "kernel/branches.yaml": {"branches": [{"id": "KBR_HAS_TAIL", "condition": "tail"}], "path_semantics": [], "dataflow_links": [], "resource_links": []},
-        "kernel/paths.yaml": {"kernel_paths": [{"id": "KPATH_MAIN", "template_binding_ids": ["KTPL_MAIN"], "runtime_variable_ids": ["KVAR_AXIS"], "branch_ids": ["KBR_HAS_TAIL"], "implements_compute_steps": ["CL_STEP_MAIN"]}]},
+        "kernel/paths.yaml": {"kernel_paths": [{"id": "KPATH_MAIN", "template_binding_ids": ["KTPL_MAIN"], "runtime_variable_ids": ["KVAR_AXIS"], "branch_ids": ["KBR_HAS_TAIL"], "implements_compute_steps": ["CL_STEP_MAIN"]}, {"id": "KPATH_ALT", "template_binding_ids": ["KTPL_MAIN"], "runtime_variable_ids": ["KVAR_AXIS"], "branch_ids": ["KBR_HAS_TAIL"], "implements_compute_steps": ["CL_STEP_MAIN"]}]},
         "kernel/pipeline.yaml": {"pipelines": [{"id": "PIPE_MAIN"}], "stages": [{"id": "PIPE_STAGE_MAIN"}], "resources": []},
         "kernel/resources.yaml": {"buffers": [{"id": "BUF_UB"}], "sync_events": [{"id": "SYNC_DONE"}], "workspaces": [], "resources": [{"id": "RES_CORE"}]},
         "cross_layer/input_to_tiling.yaml": {"nodes": [{"id": "VAR_KEY_SPLIT_AXIS"}], "edges": [], "relations": [], "links": []},
@@ -178,15 +179,15 @@ def _mature_final_uo_fixture(repo: Path, op_name: str = "DemoOp") -> Path:
         "contracts/code_change.yaml": {"target": op_name, "upstream": ["contracts/testcase.yaml"], "downstream": ["testcase-agent"], "recommended_checks": ["pytest"]},
         "contracts/pr_review.yaml": {"review_slices": ["testcase"], "recommended_checks": ["pytest"]},
         "contracts/testcase.yaml": _contract(
-            variables=[{"id": "VAR_KEY_SPLIT_AXIS", "type": "int", "domain": {"min": 0, "max": 1}}],
+            variables=[{"id": "VAR_KEY_SPLIT_AXIS", "type": "int", "values": [0, 2, 4]}],
             interface={"required_inputs": [], "optional_inputs": [], "outputs": [], "attrs": [], "dtype_layout_domains": [{"id": "FP16_ND"}]},
             coverage_obligations={
-                "families": [{"id": "COV_FAM_MAIN", "target_refs": ["FAM_MAIN"]}],
+                "families": [{"id": "COV_FAM_MAIN", "target_refs": ["FAM_MAIN"]}, {"id": "COV_FAM_ALT", "target_refs": ["FAM_ALT"]}],
                 "tiling_keys": [
-                    {"id": "COV_AXIS_VALID", "field": "split_axis", "values": [1]},
-                    {"id": "COV_AXIS_INVALID", "field": "split_axis", "values": [2]},
+                    {"id": "COV_AXIS_VALID", "field": "split_axis", "values": [2]},
+                    {"id": "COV_AXIS_INVALID", "field": "split_axis", "values": [1]},
                 ],
-                "kernel_paths": [{"id": "COV_PATH_MAIN", "target_refs": ["KPATH_MAIN"]}],
+                "kernel_paths": [{"id": "COV_PATH_MAIN", "target_refs": ["KPATH_MAIN"]}, {"id": "COV_PATH_ALT", "target_refs": ["KPATH_ALT"]}],
                 "tilingdata": [],
                 "numerical": [],
                 "negative": [],
@@ -697,8 +698,17 @@ def test_real_final_validation_export_and_phase2_without_mocks(tmp_path: Path) -
     assert init_result["snapshot"]["final_validation"]["status"] == "pass"
     assert "files" in snapshot and "context_slice" in snapshot
     assert snapshot["context_slice"]["entities"]
+    entity_ids = {str(item.get("id") or item.get("stable_id")) for item in snapshot["context_slice"]["entities"]}
+    assert {"FAM_MAIN", "FAM_ALT", "KPATH_MAIN", "KPATH_ALT"} <= entity_ids
     assert plan["unresolved"]["contract_gaps"] == []
-    assert any(item["status"] == "sat" and item["model"].get("VAR_KEY_SPLIT_AXIS") == 1 for item in solve["solve_results"])
+    ir_result = build_constraint_ir(snapshot, read_yaml(root / "plan" / "coverage_obligations.yaml"), {"decision": "approve"})
+    variables = {item["id"]: item for item in ir_result.ir["variables"]}
+    assert variables["VAR_FAMILY"]["domain"] == ["FAM_ALT", "FAM_MAIN"]
+    assert variables["VAR_KERNEL_PATH"]["domain"] == ["KPATH_ALT", "KPATH_MAIN"]
+    assert variables["VAR_KEY_SPLIT_AXIS"]["domain"]["kind"] == "discrete"
+    assert variables["VAR_KEY_SPLIT_AXIS"]["domain"]["values"] == [0, 2, 4]
+    assert not any(error["code"] == "DOMAIN_CONFLICT" for error in ir_result.errors)
+    assert any(item["status"] == "sat" and item["model"].get("VAR_KEY_SPLIT_AXIS") == 2 for item in solve["solve_results"])
     assert any(item["status"] == "error" and item.get("code") == "OBLIGATION_OUTSIDE_DECLARED_DOMAIN" for item in solve["solve_results"])
     assert not list(root.rglob("*.csv"))
     assert not (root / "run" / "operator_execution.yaml").exists()
