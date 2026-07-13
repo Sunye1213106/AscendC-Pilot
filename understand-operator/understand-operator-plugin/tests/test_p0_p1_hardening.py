@@ -16,6 +16,7 @@ from understand_operator._operator import kb_compiler
 from understand_operator._operator.artifacts import init_operator_layout, operator_root
 from understand_operator._operator.kb_compiler import promote_kb, validate_kb
 from understand_operator.scripts.kb_query_export import export_context_slice
+from understand_operator.scripts.macro_scope_scan import main as macro_scope_scan_main
 from understand_operator.scripts.update_operator import (
     _build_stale_artifacts,
     _build_update_plan,
@@ -60,6 +61,60 @@ def _repo(tmp_path: Path) -> tuple[Path, Path]:
         )
         path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     return repo, base
+
+
+def test_macro_scope_scan_artifact_initialized(tmp_path: Path) -> None:
+    _repo_root, base = _repo(tmp_path)
+    scan_path = base / "archive" / "runs" / "macro_scope_scan.yaml"
+    assert scan_path.exists()
+    scan = yaml.safe_load(scan_path.read_text(encoding="utf-8"))
+    assert scan["version"] == 1
+    assert scan["op_name"] == "DemoOp"
+    assert scan["scan_method"]["ignore_rules_applied"] is True
+    assert scan["large_files"] == []
+    assert "macro_scope_scan.yaml" in (base / "index.yaml").read_text(encoding="utf-8")
+
+
+def test_tool_selection_prompts_scope_scan_before_semantic_cbm() -> None:
+    rule = (ROOT / "prompts" / "00_cbm_first_rule.md").read_text(encoding="utf-8")
+    review = (ROOT / "prompts" / "01a_macro_scope_human_review.md").read_text(encoding="utf-8")
+    boundary = (ROOT / "prompts" / "02_macro_boundary_agent.md").read_text(encoding="utf-8")
+
+    assert "Repository structure, file boundaries" in rule
+    assert "CBM MCP first" in rule
+    assert "Tool Decision Table" in rule
+    assert "Phase 0.5-A: Deterministic Scope Scan" in review
+    assert "archive/runs/macro_scope_scan.yaml" in review
+    assert "Phase 1 must not rescan the whole repository from scratch" in boundary
+    assert "Never open source files " + "before" not in rule
+    assert "Never " + "Grep" not in rule
+
+
+def test_macro_scope_scan_script_generates_deterministic_candidates(tmp_path: Path) -> None:
+    repo, base = _repo(tmp_path)
+    host = repo / "op_host" / "demo_tiling.cpp"
+    kernel = repo / "op_kernel" / "arch35" / "demo_kernel.cpp"
+    host.parent.mkdir(parents=True, exist_ok=True)
+    kernel.parent.mkdir(parents=True, exist_ok=True)
+    host.write_text("REGISTER_TILING(DemoOp)\nTILING_KEY_IS(1)\n", encoding="utf-8")
+    kernel.write_text("__global__ void DemoOpKernel() {}\n// arch35\n", encoding="utf-8")
+    large = repo / "op_host" / "large.cpp"
+    large.write_text("x" * (513 * 1024), encoding="utf-8")
+
+    assert macro_scope_scan_main([str(repo), "--op-name", "DemoOp"]) == 0
+    scan = yaml.safe_load((base / "archive" / "runs" / "macro_scope_scan.yaml").read_text(encoding="utf-8"))
+
+    assert scan["files"]["host"] == ["op_host/demo_tiling.cpp", "op_host/large.cpp"]
+    assert scan["files"]["kernel"] == ["op_kernel/arch35/demo_kernel.cpp"]
+    assert scan["architecture_variants"][0]["name"] == "arch35"
+    assert {item["item"] for item in scan["entry_candidates"]} >= {
+        "REGISTER_TILING",
+        "TILING_KEY_IS",
+        "__global__",
+    }
+    assert scan["large_files"] == [
+        {"path": "op_host/large.cpp", "size_bytes": 513 * 1024, "read_policy": "line_scoped_only"}
+    ]
 
 
 def _minimal_proposal(**overrides: object) -> dict:

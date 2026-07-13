@@ -182,7 +182,7 @@ def export_view(uo_root: Path, op_name: str, view: str) -> dict[str, Any]:
 
     files: dict[str, Any] = {}
     for rel in required:
-        files[rel] = _load_file(uo_root, rel)
+        files[rel] = _export_compat_alias(rel, _load_file(uo_root, rel))
 
     return {
         "op_name": op_name,
@@ -190,6 +190,15 @@ def export_view(uo_root: Path, op_name: str, view: str) -> dict[str, Any]:
         "view": view,
         "files": files,
     }
+
+
+def _export_compat_alias(rel: str, data: Any) -> Any:
+    if rel == "flow/compute_graph.yaml" and isinstance(data, dict):
+        exported = dict(data)
+        if "compute_steps" in exported and "computation_steps" not in exported:
+            exported["computation_steps"] = exported["compute_steps"]
+        return exported
+    return data
 
 
 def export_context_slice(

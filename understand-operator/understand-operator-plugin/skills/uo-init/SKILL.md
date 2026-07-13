@@ -50,8 +50,31 @@ Test-Path "$SCRIPT_DIR/prepare_operator.py"   # 必须为 True
 
 ## Global rule
 
-Before any source-code lookup, follow `$PROMPT_DIR/00_cbm_first_rule.md`:
-**MCP `codebase-memory-mcp` first; only on MCP failure may you read source.**
+Before scope or source work, follow `$PROMPT_DIR/00_cbm_first_rule.md`:
+
+- File structure, path boundaries, architecture-marker locations, generated/test
+  classification, and Phase 0.5 candidate scope use deterministic
+  filesystem/Glob/`rg` first, bounded to `$PROJECT_ROOT`.
+- Symbol resolution, call relations, registration semantics, IO semantics, and
+  source behavior verification remain MCP `codebase-memory-mcp` first.
+
+## Phase 0.5 scope discovery rule
+
+Phase 0.5 is still one human gate (`uo-p05`) but has three mandatory internal
+substeps:
+
+1. **0.5-A deterministic scope scan**: use filesystem/Glob/`rg` inside
+   `$PROJECT_ROOT` with ignore rules applied. Write
+   `archive/runs/macro_scope_scan.yaml`.
+   Prefer:
+   `python "$SCRIPT_DIR/macro_scope_scan.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --filesystem-tool python`
+2. **0.5-B targeted MCP semantic enrichment**: query CBM only for candidate
+   files, symbols, registration macros, and architecture variants discovered by
+   0.5-A.
+3. **0.5-C human review**: show include / exclude / branch_skip /
+   uncertain_scope and STOP for the question UI.
+
+Do not add a separate gate between 0.5-A, 0.5-B, and 0.5-C.
 
 ## What this command does
 

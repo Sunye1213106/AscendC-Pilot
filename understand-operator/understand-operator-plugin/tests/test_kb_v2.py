@@ -31,6 +31,13 @@ def _normalized_docs(docs: dict[str, dict]) -> dict[str, dict]:
     return payload
 
 
+def _by_legacy_or_id(steps: list[dict], legacy_id: str) -> dict:
+    for step in steps:
+        if step.get("id") == legacy_id or legacy_id in (step.get("legacy_ids") or []) or legacy_id in (step.get("aliases") or []):
+            return step
+    raise AssertionError(f"step not found: {legacy_id}")
+
+
 def test_layout_creates_v2_slices_and_query_exports(tmp_path: Path) -> None:
     _repo_root, base = _repo(tmp_path)
 
@@ -98,12 +105,15 @@ def test_kernel_flow_normalizes_vector_cube_datamove_sync_steps() -> None:
     assert steps[1]["outputs"] == ["score_tile"]
     assert steps[1]["source_location"]["line_start"] == 20
     assert any("CUBE API" in item for item in steps[1]["evidence"])
-    assert steps[2]["depends_on"] == ["STEP_QK"]
-    assert steps[2]["execution_transition"]["from"] == "CUBE"
-    assert steps[2]["execution_transition"]["to"] == "VECTOR"
-    assert docs["flow/compute_graph.yaml"]["cube_steps"] == ["STEP_QK"]
-    assert docs["flow/compute_graph.yaml"]["vector_steps"] == ["STEP_SCALE"]
-    assert docs["flow/compute_graph.yaml"]["data_move_steps"] == ["STEP_LOAD"]
+    assert steps[2]["depends_on"] == []
+    assert steps[2]["dependency_status"] == "unresolved"
+    assert "execution_transition" not in steps[2]
+    assert docs["flow/compute_graph.yaml"]["cube_steps"] == [steps[1]["id"]]
+    assert docs["flow/compute_graph.yaml"]["vector_steps"] == [steps[2]["id"]]
+    assert docs["flow/compute_graph.yaml"]["data_move_steps"] == [steps[0]["id"]]
+    assert all(step["id"].startswith("CL_") for step in steps)
+    assert "computation_steps" not in docs["flow/compute_graph.yaml"]
+    assert "calls" not in steps[0]
 
 
 def test_vector_preprocess_then_cube_dependency_is_recorded() -> None:
@@ -121,9 +131,8 @@ def test_vector_preprocess_then_cube_dependency_is_recorded() -> None:
 
     assert steps[0]["execution_unit"] == "VECTOR"
     assert steps[1]["execution_unit"] == "CUBE"
-    assert steps[1]["depends_on"] == ["STEP_CAST"]
-    assert steps[1]["execution_transition"]["from"] == "VECTOR"
-    assert steps[1]["execution_transition"]["to"] == "CUBE"
+    assert steps[1]["depends_on"] == []
+    assert steps[1]["dependency_status"] == "unresolved"
 
 
 def test_indirect_wrapper_cube_detection_and_matmul_name_not_enough() -> None:
@@ -141,20 +150,23 @@ def test_indirect_wrapper_cube_detection_and_matmul_name_not_enough() -> None:
             }
         }
     )
-    steps = {step["id"]: step for step in docs["flow/compute_graph.yaml"]["compute_steps"]}
+    steps = docs["flow/compute_graph.yaml"]["compute_steps"]
+    wrapped = _by_legacy_or_id(steps, "STEP_WRAPPED")
+    not_cube = _by_legacy_or_id(steps, "STEP_NOT_CUBE")
 
-    assert steps["STEP_WRAPPED"]["execution_unit"] == "CUBE"
-    assert steps["STEP_WRAPPED"]["confidence"] == "medium"
-    assert any("ComputeScore" in item for item in steps["STEP_WRAPPED"]["evidence"])
-    assert steps["STEP_NOT_CUBE"]["execution_unit"] == "SCALAR_CONTROL"
-    assert not steps["STEP_NOT_CUBE"]["name"].startswith("[Cube]")
+    assert wrapped["execution_unit"] == "CUBE"
+    assert wrapped["confidence"] == "medium"
+    assert any("ComputeScore" in item for item in wrapped["evidence"])
+    assert not_cube["execution_unit"] == "UNKNOWN"
+    assert not not_cube["name"].startswith("[Cube]")
 
 
 def test_unknown_and_legacy_compute_steps_get_safe_defaults() -> None:
     docs = _normalized_docs({"flow/compute_graph.yaml": {"compute_steps": {"legacy": {"name": "Handle tensor"}}}})
     step = docs["flow/compute_graph.yaml"]["compute_steps"][0]
 
-    assert step["id"] == "legacy"
+    assert step["id"].startswith("CL_")
+    assert "legacy" in step["legacy_ids"]
     assert step["execution_unit"] == "UNKNOWN"
     assert step["operation"] == "unknown"
     assert step["name"].startswith("[Unknown]")
@@ -187,12 +199,208 @@ def test_kernel_path_computation_steps_are_classified_without_cross_path_merge()
 
     assert paths["KPATH_VECTOR"]["tiling_keys"] == ["KEY_VECTOR"]
     assert paths["KPATH_CUBE"]["tiling_keys"] == ["KEY_CUBE"]
-    assert paths["KPATH_VECTOR"]["vector_steps"] == ["VEC_STEP"]
+    assert paths["KPATH_VECTOR"]["vector_steps"] == [paths["KPATH_VECTOR"]["computation_steps"][0]["id"]]
     assert paths["KPATH_VECTOR"]["cube_steps"] == []
-    assert paths["KPATH_CUBE"]["cube_steps"] == ["CUBE_STEP"]
+    assert paths["KPATH_CUBE"]["cube_steps"] == [paths["KPATH_CUBE"]["computation_steps"][0]["id"]]
     assert paths["KPATH_CUBE"]["vector_steps"] == []
     assert paths["KPATH_VECTOR"]["computation_steps"][0]["execution_unit"] == "VECTOR"
     assert paths["KPATH_CUBE"]["computation_steps"][0]["execution_unit"] == "CUBE"
+    assert paths["KPATH_VECTOR"]["computation_steps"][0]["id"].startswith("KSTEP_")
+
+
+def test_flow_dependencies_are_explicit_dag_not_list_adjacency() -> None:
+    docs = _normalized_docs(
+        {
+            "flow/compute_graph.yaml": {
+                "compute_steps": [
+                    {"id": "STEP_A", "calls": ["AscendC::Cast"], "outputs": ["a"]},
+                    {"id": "STEP_B", "calls": ["AscendC::Exp"], "outputs": ["b"]},
+                    {"id": "STEP_C", "calls": ["Mmad"], "depends_on": ["STEP_A"], "inputs": ["a", "k"], "outputs": ["c"]},
+                ]
+            }
+        }
+    )
+    steps = docs["flow/compute_graph.yaml"]["compute_steps"]
+    a = _by_legacy_or_id(steps, "STEP_A")
+    b = _by_legacy_or_id(steps, "STEP_B")
+    c = _by_legacy_or_id(steps, "STEP_C")
+
+    assert b["depends_on"] == []
+    assert c["depends_on"] == [a["id"]]
+    assert a["downstream_steps"] == [c["id"]]
+    assert b["downstream_steps"] == []
+    assert c["execution_transitions"][0]["from_step"] == a["id"]
+    assert c["execution_transition"] == c["execution_transitions"][0]
+    assert c["execution_transition"]["from_unit"] == "VECTOR"
+    assert c["execution_transition"]["to_unit"] == "CUBE"
+    assert c["execution_transition"]["sync_semantics"]["status"] == "unknown"
+    assert c["execution_transition"]["data_move_semantics"]["status"] == "unknown"
+
+
+def test_ordered_sequence_is_opt_in_for_legacy_linearization() -> None:
+    docs = _normalized_docs(
+        {
+            "flow/compute_graph.yaml": {
+                "dependency_policy": "ordered_sequence",
+                "compute_steps": [
+                    {"id": "STEP_A", "calls": ["AscendC::Cast"], "outputs": ["a"]},
+                    {"id": "STEP_B", "calls": ["AscendC::Exp"], "outputs": ["b"]},
+                ],
+            }
+        }
+    )
+    steps = docs["flow/compute_graph.yaml"]["compute_steps"]
+    assert steps[1]["depends_on"] == [steps[0]["id"]]
+    assert steps[1]["dependency_status"] == "resolved"
+
+
+def test_flow_dependency_validation_reports_unknown_and_cycle() -> None:
+    docs = {
+        "flow/compute_graph.yaml": {
+            "compute_steps": [
+                {"id": "CL_DEMO_A", "depends_on": ["CL_DEMO_B", "CL_MISSING"]},
+                {"id": "CL_DEMO_B", "depends_on": ["CL_DEMO_A"]},
+            ]
+        }
+    }
+    result = kb_compiler.CompileResult(op_name="DemoOp")
+    kb_compiler._validate_flow_step_graph(docs, result)
+    codes = [issue.code for issue in result.issues]
+    assert "FLOW_UNKNOWN_DEPENDENCY" in codes
+    assert "FLOW_DEPENDENCY_CYCLE" in codes
+
+
+def test_compute_steps_is_canonical_and_export_adds_compat_alias(tmp_path: Path) -> None:
+    _repo_root, base = _repo(tmp_path)
+    flow_path = base / "flow" / "compute_graph.yaml"
+    flow_path.write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "op_name": "DemoOp",
+                "computation_steps": [{"id": "STEP_OLD", "calls": ["AscendC::Cast"], "outputs": ["y"]}],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    docs = _normalized_docs({"flow/compute_graph.yaml": yaml.safe_load(flow_path.read_text(encoding="utf-8"))})
+    assert "compute_steps" in docs["flow/compute_graph.yaml"]
+    assert "computation_steps" not in docs["flow/compute_graph.yaml"]
+
+    flow_path.write_text(yaml.safe_dump(docs["flow/compute_graph.yaml"], sort_keys=False), encoding="utf-8")
+    for rel in ("flow/dataflow.yaml", "flow/golden_model.yaml", "flow/numerical_model.yaml", "quality.yaml"):
+        (base / rel).write_text(yaml.safe_dump({"status": "not_applicable", "reason": "unit test", "evidence_refs": ["EV_NONE"]}), encoding="utf-8")
+    payload = export_view(base, "DemoOp", "golden-gen")
+    exported_flow = payload["files"]["flow/compute_graph.yaml"]
+    assert exported_flow["computation_steps"] == exported_flow["compute_steps"]
+    assert "computation_steps" not in yaml.safe_load(flow_path.read_text(encoding="utf-8"))
+
+
+def test_flow_alias_mismatch_and_stable_id_collision_are_reported() -> None:
+    result = kb_compiler.CompileResult(op_name="DemoOp")
+    docs = {
+        "flow/compute_graph.yaml": {
+            "compute_steps": [{"id": "CL_A"}],
+            "computation_steps": [{"id": "CL_B"}],
+        }
+    }
+    kb_compiler._normalize_candidate(docs, result=result, op_name="DemoOp")
+    assert any(issue.code == "FLOW_STEP_ALIAS_MISMATCH" for issue in result.issues)
+
+    collision = kb_compiler.CompileResult(op_name="DemoOp")
+    docs = {"flow/compute_graph.yaml": {"compute_steps": [{"id": "CL_DUP"}, {"id": "CL_DUP"}]}}
+    kb_compiler._validate_flow_step_graph(docs, collision)
+    assert any(issue.code == "FLOW_STEP_ID_COLLISION" for issue in collision.issues)
+
+
+def test_classifier_avoids_broad_substring_false_positives() -> None:
+    docs = _normalized_docs(
+        {
+            "flow/compute_graph.yaml": {
+                "compute_steps": [
+                    {"id": "STEP_RESTORE", "name": "restore_state", "outputs": ["state"]},
+                    {"id": "STEP_PAYLOAD", "name": "payload_update", "outputs": ["payload"]},
+                    {"id": "STEP_DOWNLOAD", "name": "download_metadata", "outputs": ["meta"]},
+                    {"id": "STEP_INDEX", "name": "index_map", "outputs": ["idx"]},
+                    {"id": "STEP_BRANCHLESS", "name": "branchless_compute", "outputs": ["value"]},
+                ]
+            }
+        }
+    )
+    steps = docs["flow/compute_graph.yaml"]["compute_steps"]
+    assert {step["execution_unit"] for step in steps} == {"UNKNOWN"}
+    assert all(step["confidence"] == "low" for step in steps)
+
+
+def test_function_classification_uses_qualified_identity_and_ambiguous_simple_names() -> None:
+    docs = _normalized_docs(
+        {
+            "flow/compute_graph.yaml": {
+                "functions": [
+                    {"name": "Helper", "file": "a.cpp", "class": "A", "calls": ["Mmad"]},
+                    {"name": "Helper", "file": "b.cpp", "class": "B", "calls": ["AscendC::Exp"]},
+                ],
+                "compute_steps": [
+                    {"id": "STEP_AMBIG", "calls": ["Helper"], "outputs": ["x"]},
+                    {"id": "STEP_QUAL", "calls": ["Helper"], "outputs": ["y"], "source_location": {"file": "a.cpp", "class": "A"}},
+                ],
+            }
+        }
+    )
+    steps = docs["flow/compute_graph.yaml"]["compute_steps"]
+    ambiguous = _by_legacy_or_id(steps, "STEP_AMBIG")
+    qualified = _by_legacy_or_id(steps, "STEP_QUAL")
+    assert ambiguous["execution_unit"] == "UNKNOWN"
+    assert any("AMBIGUOUS_CALLEE_CLASSIFICATION" in item for item in ambiguous["evidence"])
+    assert qualified["execution_unit"] == "CUBE"
+
+
+def test_non_flow_promotion_does_not_rewrite_flow_or_kernel_paths(tmp_path: Path) -> None:
+    _repo_root, base = _repo(tmp_path)
+    flow_path = base / "flow" / "compute_graph.yaml"
+    kernel_path = base / "kernel" / "paths.yaml"
+    for rel in kb_compiler.PHASE_FILES["phase2"]:
+        path = base / rel
+        if rel in {"flow/compute_graph.yaml", "kernel/paths.yaml", "registry/evidence.yaml"}:
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            yaml.safe_dump(
+                {"status": "not_applicable", "reason": "promotion scope regression", "evidence_refs": ["EV_PROMO"]},
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+    flow_path.write_text("version: 1\ncompute_steps:\n- id: CL_DEMO_LEGACY\n  name: Handle tensor\n", encoding="utf-8")
+    kernel_path.write_text("version: 1\nkernel_paths:\n  path_a:\n    id: KPATH_A\n", encoding="utf-8")
+    before_flow = flow_path.read_text(encoding="utf-8")
+    before_kernel = kernel_path.read_text(encoding="utf-8")
+    proposal = {
+        "version": 1,
+        "op_name": "DemoOp",
+        "proposal_id": "PROP_EVIDENCE_ONLY",
+        "producer": {"agent": "uo-host-extraction", "phase": "phase2"},
+        "canonical_updates": [
+            {
+                "target": "registry/evidence.yaml",
+                "section": "evidence",
+                "merge_mode": "by_id",
+                "entries": [{"id": "EV_PROMO", "file": "op_host/foo.cpp", "lines": [1, 1], "kind": "source_span"}],
+            }
+        ],
+    }
+    p1 = base / "archive" / "proposals" / "evidence.yaml"
+    p1.write_text(yaml.safe_dump(proposal, sort_keys=False), encoding="utf-8")
+
+    result = promote_kb(base, "DemoOp", phase="phase2", proposal_paths=[p1])
+
+    assert result.promotion_report["status"] == "promoted"
+    assert result.promotion_report["normalization"]["flow_artifacts"] == []
+    assert "flow/compute_graph.yaml" not in result.promotion_report["changed_artifacts"]
+    assert "kernel/paths.yaml" not in result.promotion_report["changed_artifacts"]
+    assert flow_path.read_text(encoding="utf-8") == before_flow
+    assert kernel_path.read_text(encoding="utf-8") == before_kernel
 
 
 def test_compiler_detects_alias_conflict_and_dangling_evidence(tmp_path: Path) -> None:

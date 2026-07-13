@@ -300,6 +300,52 @@ def test_snapshot_hash_is_deterministic(tmp_path: Path, monkeypatch: pytest.Monk
     assert meta["snapshot_hash"] == first
 
 
+def test_flow_metadata_does_not_create_testagent_obligations() -> None:
+    base_files = _payload(
+        coverage={
+            "family_obligations": [{"family_id": "FAM_A"}],
+            "key_field_obligations": {},
+            "key_relation_obligations": [],
+        }
+    )["files"]
+    with_flow = {
+        **base_files,
+        "flow/compute_graph.yaml": {
+            "compute_steps": [
+                {
+                    "id": "CL_DEMO_VECTOR_SCALE",
+                    "execution_unit": "VECTOR",
+                    "depends_on": [],
+                    "downstream_steps": [],
+                }
+            ]
+        },
+    }
+
+    base_plan = build_plan({"op_name": "DemoOp", "files": base_files, "snapshot_hash": "s"})
+    flow_plan = build_plan({"op_name": "DemoOp", "files": with_flow, "snapshot_hash": "s"})
+
+    assert flow_plan["obligations"] == base_plan["obligations"]
+    assert flow_plan["matrix"] == base_plan["matrix"]
+
+
+def test_real_flow_hash_change_updates_snapshot_hash_for_approval_invalidation() -> None:
+    files = _payload()["files"]
+    first = {
+        "version": 1,
+        "op_name": "DemoOp",
+        "view": "testcase-contract",
+        "files": files,
+        "source_artifact_hashes": {"contracts/testcase.yaml": "a" * 64, "flow/compute_graph.yaml": "1" * 64},
+    }
+    second = {
+        **first,
+        "source_artifact_hashes": {"contracts/testcase.yaml": "a" * 64, "flow/compute_graph.yaml": "2" * 64},
+    }
+
+    assert semantic_snapshot_hash(first) != semantic_snapshot_hash(second)
+
+
 def test_same_input_repeated_plan_is_deterministic(tmp_path: Path) -> None:
     repo, _uo = _repo(tmp_path)
     files = _payload(

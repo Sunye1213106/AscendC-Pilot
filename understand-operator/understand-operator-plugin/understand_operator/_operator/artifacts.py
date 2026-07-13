@@ -250,6 +250,8 @@ canonical_files:
   issues: evidence/issues.yaml
   quality: quality.yaml
   human_review: human/review.md
+  macro_scope_scan: archive/runs/macro_scope_scan.yaml
+  macro_scope_review: archive/runs/macro_scope_review.yaml
 
 qa_routes:
   overview:
@@ -292,6 +294,8 @@ qa_routes:
     read: [evidence/issues.yaml, quality.yaml]
   human_review:
     read: [human/review.md, quality.yaml]
+  macro_scope:
+    read: [archive/runs/macro_scope_scan.yaml, archive/runs/macro_scope_review.yaml, cbm/index_meta.json]
 
 export_views:
   tiling-test:
@@ -1369,6 +1373,61 @@ todos:
   - id: uo-p8
     title: 阶段 8 — 质量门禁
     status: pending
+""",
+    )
+
+    write_text(
+        base / "archive" / "runs" / "macro_scope_scan.yaml",
+        f"""version: 1
+op_name: {op_name}
+generated_at: null
+
+scan_method:
+  filesystem_tool: pending
+  cbm_project: ""
+  ignore_rules_applied: true
+
+directories:
+  included: []
+  excluded: []
+
+files:
+  host: []
+  kernel: []
+  api: []
+  proto: []
+  golden: []
+  tests: []
+  examples: []
+  generated: []
+  docs_config: []
+  unknown: []
+
+architecture_variants: []
+# - name: arch35
+#   matched_paths: []
+#   matched_lines: []
+#   semantic_status: candidate
+#   cbm_evidence: []
+
+entry_candidates: []
+# - item: ""
+#   kind: tiling_registration
+#   file: ""
+#   line: null
+#   discovery_method: rg
+#   cbm_status: pending
+#   cbm_symbol: ""
+#   evidence: []
+
+large_files: []
+# - path: ""
+#   size_bytes: 0
+#   read_policy: line_scoped_only
+
+uncertain_items: []
+warnings:
+  - Deterministic macro scope scan has not run yet.
 """,
     )
 

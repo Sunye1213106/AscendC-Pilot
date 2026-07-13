@@ -395,6 +395,7 @@ class CompileResult:
     maturity: dict[str, str] = field(default_factory=dict)
     consumability: dict[str, dict[str, Any]] = field(default_factory=dict)
     promotion_report: dict[str, Any] = field(default_factory=dict)
+    normalization: dict[str, Any] = field(default_factory=dict)
     relation_count: int = 0
     unresolved_count: int = 0
     conflict_count: int = 0
@@ -457,6 +458,7 @@ def validate_kb(
     _validate_evidence(docs, result)
     _validate_relations(docs, result)
     _validate_flow_kernel_boundary(docs, result)
+    _validate_flow_step_graph(docs, result)
     _validate_kernel_two_step(docs, result)
     _validate_cross_layer(docs, result, phase)
     _validate_contracts(docs, result, phase)
@@ -542,8 +544,14 @@ def promote_kb(
             _write_rejected_proposals(uo_root, run_id, proposals, result)
         return result
 
-    _normalize_candidate(candidate)
     candidate_result = CompileResult(op_name=op_name, phase=phase)
+    touched_artifacts = {
+        str(item.get("target") or "").replace("\\", "/")
+        for _path, proposal in proposals
+        for item in _as_list(proposal.get("canonical_updates"))
+        if isinstance(item, dict)
+    }
+    _normalize_candidate(candidate, touched_artifacts=touched_artifacts, result=candidate_result, op_name=op_name)
     _build_graphs(candidate, op_name, candidate_result)
     candidate_result.artifact_hashes = _hash_artifacts_from_docs(candidate)
     candidate_result.maturity = _check_maturity(candidate, phase, candidate_result)
@@ -551,6 +559,7 @@ def promote_kb(
     _validate_evidence(candidate, candidate_result)
     _validate_relations(candidate, candidate_result)
     _validate_flow_kernel_boundary(candidate, candidate_result)
+    _validate_flow_step_graph(candidate, candidate_result)
     _validate_kernel_two_step(candidate, candidate_result)
     _validate_cross_layer(candidate, candidate_result, phase)
     _validate_contracts(candidate, candidate_result, phase)
@@ -583,6 +592,7 @@ def promote_kb(
     result.relation_count = candidate_result.relation_count
     result.unresolved_count = candidate_result.unresolved_count
     result.conflict_count = candidate_result.conflict_count
+    result.normalization = candidate_result.normalization
 
     after_hashes = _hash_artifacts_from_docs(candidate)
     transaction: TransactionResult | None = None
@@ -1199,15 +1209,34 @@ def _target_allowed(target: str) -> bool:
     return target.startswith(PROMOTION_TARGET_PREFIXES)
 
 
-def _normalize_candidate(docs: dict[str, Any]) -> None:
-    function_units = _collect_function_execution_units(docs)
+def _normalize_candidate(
+    docs: dict[str, Any],
+    *,
+    touched_artifacts: set[str] | None = None,
+    migration_mode: bool = False,
+    result: CompileResult | None = None,
+    op_name: str = "",
+) -> None:
+    normalize_structural_compatibility(docs)
+    flow_artifacts = normalize_flow_execution_model(
+        docs,
+        touched_artifacts=touched_artifacts if touched_artifacts is not None else {"flow/compute_graph.yaml", "kernel/paths.yaml"},
+        migration_mode=migration_mode or touched_artifacts is None,
+        result=result,
+        op_name=op_name or _proposal_op_name(docs),
+    )
+    if result is not None:
+        result.normalization = {
+            "structural_artifacts": sorted(docs),
+            "flow_artifacts": sorted(flow_artifacts),
+            "migration_mode": bool(migration_mode or touched_artifacts is None),
+        }
+
+
+def normalize_structural_compatibility(docs: dict[str, Any]) -> None:
     for rel, doc in list(docs.items()):
         if not isinstance(doc, dict):
             continue
-        if rel == "flow/compute_graph.yaml":
-            doc = _normalize_compute_graph_doc(doc, function_units)
-        if rel == "kernel/paths.yaml":
-            doc = _normalize_kernel_paths_doc(doc, function_units)
         for section in ("relations", "links", "edges", "impacts"):
             if section in doc:
                 entries = [_normalize_relation_entry(item) for item in _iter_entries(doc.get(section))]
@@ -1218,25 +1247,60 @@ def _normalize_candidate(docs: dict[str, Any]) -> None:
         docs[rel] = doc
 
 
-def _normalize_compute_graph_doc(doc: dict[str, Any], function_units: dict[str, str]) -> dict[str, Any]:
+def normalize_flow_execution_model(
+    docs: dict[str, Any],
+    *,
+    touched_artifacts: set[str],
+    migration_mode: bool = False,
+    result: CompileResult | None = None,
+    op_name: str = "",
+) -> set[str]:
+    flow_artifacts: set[str] = set()
+    function_index = _collect_function_execution_units(docs)
+    if migration_mode or "flow/compute_graph.yaml" in touched_artifacts:
+        doc = _as_dict(docs.get("flow/compute_graph.yaml"))
+        if doc:
+            docs["flow/compute_graph.yaml"] = _normalize_compute_graph_doc(doc, function_index, result, op_name=op_name)
+            flow_artifacts.add("flow/compute_graph.yaml")
+    if migration_mode or "kernel/paths.yaml" in touched_artifacts:
+        doc = _as_dict(docs.get("kernel/paths.yaml"))
+        if doc:
+            docs["kernel/paths.yaml"] = _normalize_kernel_paths_doc(doc, function_index, result, op_name=op_name)
+            flow_artifacts.add("kernel/paths.yaml")
+    return flow_artifacts
+
+
+def _normalize_compute_graph_doc(doc: dict[str, Any], function_index: dict[str, Any], result: CompileResult | None, *, op_name: str = "") -> dict[str, Any]:
     out = dict(doc)
-    steps = [_normalize_computation_step(item, idx, function_units) for idx, item in enumerate(_iter_entries(out.get("compute_steps")), start=1)]
-    steps = _link_computation_steps(steps)
+    raw_steps = _canonical_step_entries(out, "flow/compute_graph.yaml", result)
+    id_map: dict[str, str] = {}
+    steps = [
+        _normalize_computation_step(item, idx, function_index, id_map=id_map, op_name=op_name, id_prefix="CL", artifact="flow/compute_graph.yaml")
+        for idx, item in enumerate(raw_steps, start=1)
+    ]
+    _rewrite_depends_on_aliases(steps, id_map)
+    steps = _link_computation_steps(steps, out, result, artifact="flow/compute_graph.yaml")
     out["compute_steps"] = steps
-    out["computation_steps"] = steps
+    out.pop("computation_steps", None)
     _add_step_indexes(out, steps)
     return out
 
 
-def _normalize_kernel_paths_doc(doc: dict[str, Any], function_units: dict[str, str]) -> dict[str, Any]:
+def _normalize_kernel_paths_doc(doc: dict[str, Any], function_index: dict[str, Any], result: CompileResult | None, *, op_name: str = "") -> dict[str, Any]:
     out = dict(doc)
     paths = []
     for path in _iter_entries(out.get("kernel_paths")):
         item = dict(path)
         raw_steps = item.get("computation_steps") or item.get("compute_steps") or item.get("data_flow_steps") or []
         if raw_steps:
-            steps = [_normalize_computation_step(step, idx, function_units, path_id=str(item.get("id") or item.get("stable_key") or "")) for idx, step in enumerate(_iter_entries(raw_steps), start=1)]
-            steps = _link_computation_steps(steps)
+            id_map: dict[str, str] = {}
+            path_id = str(item.get("id") or item.get("stable_key") or "")
+            steps = [
+                _normalize_computation_step(step, idx, function_index, path_id=path_id, id_map=id_map, op_name=op_name, id_prefix="KSTEP", artifact="kernel/paths.yaml")
+                for idx, step in enumerate(_iter_entries(raw_steps), start=1)
+            ]
+            _rewrite_depends_on_aliases(steps, id_map)
+            steps = _link_computation_steps(steps, item, result, artifact="kernel/paths.yaml", path_id=path_id)
             item["computation_steps"] = steps
             _add_step_indexes(item, steps)
         paths.append(item)
@@ -1257,38 +1321,77 @@ def _add_step_indexes(container: dict[str, Any], steps: list[dict[str, Any]]) ->
         container[key] = [str(step.get("id") or step.get("step_id")) for step in steps if step.get("execution_unit") == unit]
 
 
-def _link_computation_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _link_computation_steps(
+    steps: list[dict[str, Any]],
+    container: dict[str, Any],
+    result: CompileResult | None,
+    *,
+    artifact: str,
+    path_id: str = "",
+) -> list[dict[str, Any]]:
+    step_ids = [str(step.get("id") or step.get("step_id")) for step in steps]
+    if len(step_ids) != len(set(step_ids)) and result is not None:
+        for step_id in sorted({item for item in step_ids if step_ids.count(item) > 1}):
+            result.add("FLOW_STEP_ID_COLLISION", "error", f"duplicate flow step id {step_id}", artifact, step_id)
     linked: list[dict[str, Any]] = []
+    ordered = str(container.get("sequence_semantics") or container.get("dependency_policy") or "") in {"linear", "ordered_sequence"}
     for idx, step in enumerate(steps):
         item = dict(step)
-        step_id = str(item.get("id") or item.get("step_id") or f"step_{idx + 1}")
+        step_id = str(item.get("id") or item.get("step_id"))
         item["id"] = step_id
         item["step_id"] = step_id
         if "depends_on" not in item:
-            item["depends_on"] = [str(linked[-1].get("id"))] if linked else []
-        item["downstream_steps"] = [str(steps[idx + 1].get("id") or steps[idx + 1].get("step_id") or f"step_{idx + 2}")] if idx + 1 < len(steps) else []
-        if linked:
-            prev = linked[-1]
-            prev_unit = str(prev.get("execution_unit") or "UNKNOWN")
-            unit = str(item.get("execution_unit") or "UNKNOWN")
-            if prev_unit != unit:
-                item.setdefault(
-                    "execution_transition",
-                    {
-                        "from": prev_unit,
-                        "to": unit,
-                        "requires_sync": prev_unit == "SYNC" or unit == "SYNC",
-                        "requires_data_move": prev_unit == "DATA_MOVE" or unit == "DATA_MOVE",
-                    },
-                )
+            item["depends_on"] = [str(linked[-1].get("id"))] if ordered and linked else []
+        else:
+            item["depends_on"] = [str(dep) for dep in _as_list(item.get("depends_on"))]
+        item["dependency_status"] = "resolved" if item["depends_on"] or idx == 0 and ordered else "unresolved"
         linked.append(item)
+    step_by_id = {str(step["id"]): step for step in linked}
+    downstream_by_id = {step_id: [] for step_id in step_by_id}
+    for step in linked:
+        for dep in step.get("depends_on") or []:
+            if dep not in step_by_id:
+                if result is not None:
+                    result.add("FLOW_UNKNOWN_DEPENDENCY", "error", f"{step['id']} depends on unknown step {dep}", artifact, path_id or str(step["id"]))
+                continue
+            downstream_by_id[dep].append(str(step["id"]))
+    for step in linked:
+        step["downstream_steps"] = sorted(downstream_by_id.get(str(step["id"]), []))
+        transitions = []
+        for dep in step.get("depends_on") or []:
+            upstream = step_by_id.get(dep)
+            if not upstream:
+                continue
+            transitions.append(_execution_transition(upstream, step))
+        step["execution_transitions"] = transitions
+        if len(transitions) == 1:
+            step["execution_transition"] = transitions[0]
+        else:
+            step.pop("execution_transition", None)
+    _detect_step_cycles(linked, result, artifact=artifact, path_id=path_id)
     return linked
 
 
-def _normalize_computation_step(raw: dict[str, Any], index: int, function_units: dict[str, str], *, path_id: str = "") -> dict[str, Any]:
+def _normalize_computation_step(
+    raw: dict[str, Any],
+    index: int,
+    function_index: dict[str, Any],
+    *,
+    path_id: str = "",
+    id_map: dict[str, str],
+    op_name: str,
+    id_prefix: str,
+    artifact: str,
+) -> dict[str, Any]:
     step = dict(raw)
-    step_id = str(step.get("step_id") or step.get("id") or f"{path_id + '_' if path_id else ''}step_{index}")
-    unit, confidence, unit_evidence = _classify_execution_unit(step, function_units)
+    original_id = str(step.get("step_id") or step.get("id") or "")
+    step_id = _canonical_step_id(step, index, op_name=op_name, path_id=path_id, id_prefix=id_prefix)
+    if original_id and original_id != step_id:
+        id_map[original_id] = step_id
+        aliases = sorted(set(_as_list(step.get("aliases")) + _as_list(step.get("legacy_ids")) + [original_id]))
+        step["legacy_ids"] = aliases
+        step["aliases"] = sorted(set(_as_list(step.get("aliases")) + [original_id]))
+    unit, confidence, unit_evidence = _classify_execution_unit(step, function_index)
     operation = str(step.get("operation") or _infer_operation(step, unit))
     name = _normalize_step_name(str(step.get("name") or step.get("label") or ""), unit, operation, step)
     evidence = [str(item) for item in _as_list(step.get("evidence")) if str(item)]
@@ -1308,8 +1411,111 @@ def _normalize_computation_step(raw: dict[str, Any], index: int, function_units:
         "evidence": evidence,
         "confidence": str(step.get("confidence") or confidence),
     }
-    out.setdefault("memory_locations", [str(item) for item in _as_list(step.get("memory_locations"))])
+    if artifact == "flow/compute_graph.yaml":
+        for implementation_key in (
+            "api",
+            "apis",
+            "calls",
+            "callees",
+            "memory_locations",
+            "buffer",
+            "buffers",
+            "pipeline",
+            "pipe",
+            "queue",
+            "queues",
+            "local_tensor",
+            "global_tensor",
+        ):
+            out.pop(implementation_key, None)
+    else:
+        out.setdefault("memory_locations", [str(item) for item in _as_list(step.get("memory_locations"))])
     return out
+
+
+def _canonical_step_entries(doc: dict[str, Any], artifact: str, result: CompileResult | None) -> list[dict[str, Any]]:
+    has_compute = "compute_steps" in doc
+    has_computation = "computation_steps" in doc
+    if has_compute and has_computation and _canonical_json(doc.get("compute_steps")) != _canonical_json(doc.get("computation_steps")):
+        if result is not None:
+            result.add("FLOW_STEP_ALIAS_MISMATCH", "error", "compute_steps and computation_steps differ", artifact)
+    source = doc.get("compute_steps") if has_compute else doc.get("computation_steps")
+    return _iter_entries(source)
+
+
+def _rewrite_depends_on_aliases(steps: list[dict[str, Any]], id_map: dict[str, str]) -> None:
+    for step in steps:
+        if "depends_on" in step:
+            step["depends_on"] = [id_map.get(str(dep), str(dep)) for dep in _as_list(step.get("depends_on"))]
+
+
+def _execution_transition(upstream: dict[str, Any], step: dict[str, Any]) -> dict[str, Any]:
+    from_unit = str(upstream.get("execution_unit") or "UNKNOWN")
+    to_unit = str(step.get("execution_unit") or "UNKNOWN")
+    return {
+        "from_step": str(upstream.get("id")),
+        "from_unit": from_unit,
+        "to_step": str(step.get("id")),
+        "to_unit": to_unit,
+        "sync_semantics": _transition_semantics(upstream, step, "SYNC"),
+        "data_move_semantics": _transition_semantics(upstream, step, "DATA_MOVE"),
+    }
+
+
+def _transition_semantics(upstream: dict[str, Any], step: dict[str, Any], unit: str) -> dict[str, Any]:
+    evidence = []
+    if upstream.get("execution_unit") == unit:
+        evidence.append(f"upstream step {upstream.get('id')} is {unit}")
+    if step.get("execution_unit") == unit:
+        evidence.append(f"current step {step.get('id')} is {unit}")
+    status = "observed" if evidence else "unknown"
+    return {"status": status, "evidence": evidence}
+
+
+def _detect_step_cycles(steps: list[dict[str, Any]], result: CompileResult | None, *, artifact: str, path_id: str = "") -> None:
+    if result is None:
+        return
+    graph = {str(step.get("id")): [str(dep) for dep in _as_list(step.get("depends_on"))] for step in steps}
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(node: str, path: list[str]) -> None:
+        if node in visiting:
+            cycle = path[path.index(node):] if node in path else path + [node]
+            result.add("FLOW_DEPENDENCY_CYCLE", "error", f"cycle in flow dependencies: {', '.join(cycle)}", artifact, path_id or node)
+            return
+        if node in visited:
+            return
+        visiting.add(node)
+        for dep in graph.get(node, []):
+            if dep in graph:
+                visit(dep, path + [dep])
+        visiting.discard(node)
+        visited.add(node)
+
+    for node in sorted(graph):
+        visit(node, [node])
+
+
+def _canonical_step_id(step: dict[str, Any], index: int, *, op_name: str, path_id: str = "", id_prefix: str) -> str:
+    existing = str(step.get("id") or step.get("step_id") or "")
+    if id_prefix == "CL" and existing.startswith("CL_"):
+        return existing
+    if id_prefix == "KSTEP" and existing.startswith("KSTEP_"):
+        return existing
+    parts = [op_name or "OP"]
+    if path_id and id_prefix == "KSTEP":
+        parts.append(path_id)
+    for key in ("operation", "name", "function"):
+        value = str(step.get(key) or "")
+        if value:
+            parts.append(value)
+            break
+    outputs = _as_list(step.get("outputs"))
+    if outputs:
+        parts.append(str(outputs[0]))
+    slug = "_".join(_stable_slug(part) for part in parts if str(part))
+    return f"{id_prefix}_{slug or f'STEP_{index}'}"
 
 
 def _normalize_step_name(name: str, unit: str, operation: str, step: dict[str, Any]) -> str:
@@ -1333,50 +1539,38 @@ def _normalize_step_name(name: str, unit: str, operation: str, step: dict[str, A
     return f"{prefix} {name}"
 
 
-def _classify_execution_unit(step: dict[str, Any], function_units: dict[str, str]) -> tuple[str, str, list[str]]:
+def _classify_execution_unit(step: dict[str, Any], function_index: dict[str, Any]) -> tuple[str, str, list[str]]:
     explicit = str(step.get("execution_unit") or step.get("unit") or "").upper()
     if explicit in EXECUTION_UNITS:
         return explicit, str(step.get("confidence") or "high"), [f"Explicit execution_unit={explicit}"]
-    text = _step_text(step)
     calls = [str(item) for item in _as_list(step.get("calls") or step.get("callees") or step.get("apis"))]
     for call in calls:
-        unit = function_units.get(call) or function_units.get(call.split("::")[-1]) or function_units.get(call.split(".")[-1])
-        if unit:
-            return unit, "medium", [f"Called function {call} is classified as {unit}"]
-    for unit, patterns in (
-        ("SYNC", SYNC_PATTERNS),
-        ("DATA_MOVE", DATA_MOVE_PATTERNS),
-        ("CUBE", CUBE_API_PATTERNS),
-        ("VECTOR", VECTOR_API_PATTERNS),
-    ):
-        hit = _first_pattern_hit(text, patterns)
-        if hit:
-            return unit, "high", [f"Matched {unit} API evidence: {hit}"]
-    scalar_hit = _first_pattern_hit(text, SCALAR_PATTERNS)
-    if scalar_hit:
-        return "SCALAR_CONTROL", "medium", [f"Matched scalar control evidence: {scalar_hit}"]
+        api_unit = _unit_for_exact_api(call)
+        if api_unit:
+            return api_unit, "high", [f"Matched exact {api_unit} API evidence: {call}"]
+        lookup = _lookup_function_unit(call, step, function_index)
+        if lookup.get("status") == "matched":
+            return str(lookup["unit"]), "medium", [f"Called function {call} is classified as {lookup['unit']}"]
+        if lookup.get("status") == "ambiguous":
+            return "UNKNOWN", "low", [f"AMBIGUOUS_CALLEE_CLASSIFICATION: {call}"]
+    operation_unit = _unit_for_exact_api(str(step.get("operation") or ""))
+    if operation_unit:
+        return operation_unit, "medium", [f"Matched structured operation evidence: {step.get('operation')}"]
     if _has_matrix_semantics(step):
         return "CUBE", "medium", ["Matched matrix input/output semantics"]
     if _has_vector_semantics(step):
         return "VECTOR", "medium", ["Matched LocalTensor/vector elementwise semantics"]
+    fuzzy = _fuzzy_classification_hint(step)
+    if fuzzy:
+        return "UNKNOWN", "low", [f"classification_hint={fuzzy}; fuzzy text evidence is not sufficient"]
     return "UNKNOWN", "low", ["Insufficient API or data-shape evidence for execution unit"]
 
 
 def _infer_operation(step: dict[str, Any], unit: str) -> str:
-    text = _step_text(step)
-    operation_patterns = {
-        "matmul": ("matmul", "mmad", "gemm", "batchmatmul"),
-        "copy": ("datacopy", "copyin", "copyout", "load", "store"),
-        "sync": ("pipebarrier", "syncall", "setflag", "waitflag"),
-        "cast": ("cast",),
-        "reduce": ("reduce", "reducemax", "reducesum"),
-        "exp": ("exp",),
-        "add": ("add",),
-        "mul": ("mul",),
-    }
-    for op, patterns in operation_patterns.items():
-        if _first_pattern_hit(text, patterns):
-            return op
+    for call in _as_list(step.get("calls") or step.get("callees") or step.get("apis")):
+        normalized = _normalize_api_name(str(call))
+        if normalized:
+            return EXACT_API_OPERATIONS.get(normalized) or normalized.split("::")[-1].split(".")[-1]
     return EXECUTION_OPERATION_DEFAULT[unit]
 
 
@@ -1393,11 +1587,75 @@ def _step_text(step: dict[str, Any]) -> str:
 
 
 def _first_pattern_hit(text: str, patterns: tuple[str, ...]) -> str:
-    compact = text.replace(" ", "").replace("_", "").lower()
+    compact = text.lower()
     for pattern in patterns:
-        normalized = pattern.replace(" ", "").replace("_", "").lower()
+        normalized = pattern.lower()
         if normalized in compact:
             return pattern
+    return ""
+
+
+def _normalize_api_name(name: str) -> str:
+    text = name.strip().replace("AscendC::", "ascendc::").replace("::", "::").replace(" ", "")
+    return text.lower()
+
+
+EXACT_API_UNITS = {
+    "ascendc::datacopy": "DATA_MOVE",
+    "datacopy": "DATA_MOVE",
+    "copyin": "DATA_MOVE",
+    "copyout": "DATA_MOVE",
+    "pipebarrier": "SYNC",
+    "syncall": "SYNC",
+    "setflag": "SYNC",
+    "waitflag": "SYNC",
+    "matmul.iterate": "CUBE",
+    "matmul::iterate": "CUBE",
+    "matmulimpl": "CUBE",
+    "gettensorc": "CUBE",
+    "ascendc::mmad": "CUBE",
+    "mmad": "CUBE",
+    "mmadwithsparse": "CUBE",
+    "ascendc::add": "VECTOR",
+    "ascendc::sub": "VECTOR",
+    "ascendc::mul": "VECTOR",
+    "ascendc::div": "VECTOR",
+    "ascendc::exp": "VECTOR",
+    "ascendc::log": "VECTOR",
+    "ascendc::sqrt": "VECTOR",
+    "ascendc::abs": "VECTOR",
+    "ascendc::cast": "VECTOR",
+    "ascendc::reducemax": "VECTOR",
+    "ascendc::reducesum": "VECTOR",
+}
+EXACT_API_OPERATIONS = {
+    "ascendc::datacopy": "copy",
+    "datacopy": "copy",
+    "copyin": "copy",
+    "copyout": "copy",
+    "pipebarrier": "sync",
+    "syncall": "sync",
+    "setflag": "sync",
+    "waitflag": "sync",
+    "matmul.iterate": "matmul",
+    "matmul::iterate": "matmul",
+    "matmulimpl": "matmul",
+    "gettensorc": "matmul",
+    "ascendc::mmad": "matmul",
+    "mmad": "matmul",
+    "mmadwithsparse": "matmul",
+}
+
+
+def _unit_for_exact_api(name: str) -> str:
+    return EXACT_API_UNITS.get(_normalize_api_name(name), "")
+
+
+def _fuzzy_classification_hint(step: dict[str, Any]) -> str:
+    text = _step_text(step)
+    for unit, patterns in (("DATA_MOVE", DATA_MOVE_PATTERNS), ("SYNC", SYNC_PATTERNS), ("CUBE", CUBE_API_PATTERNS), ("VECTOR", VECTOR_API_PATTERNS), ("SCALAR_CONTROL", SCALAR_PATTERNS)):
+        if _first_pattern_hit(text, patterns):
+            return unit
     return ""
 
 
@@ -1412,28 +1670,61 @@ def _has_vector_semantics(step: dict[str, Any]) -> bool:
     return ("localtensor" in text or "ub" in text) and any(word in text for word in ("elementwise", "softmax", "normalize", "scale", "mask"))
 
 
-def _collect_function_execution_units(docs: dict[str, Any]) -> dict[str, str]:
-    functions: dict[str, dict[str, Any]] = {}
+def _collect_function_execution_units(docs: dict[str, Any]) -> dict[str, Any]:
+    functions: dict[str, list[dict[str, Any]]] = {}
     for doc in docs.values():
         data = _as_dict(doc)
         for section in ("functions", "kernel_functions", "function_summaries", "symbols"):
             for item in _iter_entries(data.get(section)):
                 name = str(item.get("name") or item.get("canonical_name") or item.get("id") or "")
                 if name:
-                    functions[name] = item
-    resolved: dict[str, str] = {}
+                    keys = {name, _qualified_function_key(item), str(item.get("id") or "")}
+                    for key in keys:
+                        if key:
+                            functions.setdefault(key, []).append(item)
+    resolved: dict[str, Any] = {}
     for _ in range(4):
         changed = False
-        for name, item in functions.items():
-            if name in resolved:
+        for name, items in functions.items():
+            if name in resolved or len(items) != 1:
                 continue
+            item = items[0]
             unit, _confidence, _evidence = _classify_execution_unit({**item, "name": ""}, resolved)
             if unit != "UNKNOWN":
                 resolved[name] = unit
                 changed = True
         if not changed:
             break
+    resolved["_functions"] = functions
     return resolved
+
+
+def _qualified_function_key(item: dict[str, Any]) -> str:
+    file_name = str(item.get("file") or item.get("path") or "")
+    scope = str(item.get("scope") or item.get("namespace") or item.get("class") or "")
+    name = str(item.get("name") or item.get("canonical_name") or item.get("function") or "")
+    return "::".join(part for part in (file_name, scope, name) if part)
+
+
+def _lookup_function_unit(call: str, step: dict[str, Any], function_index: dict[str, Any]) -> dict[str, Any]:
+    functions = function_index.get("_functions") or {}
+    source = _as_dict(step.get("source_location"))
+    file_name = str(step.get("file") or source.get("file") or step.get("path") or "")
+    scope = str(step.get("scope") or step.get("namespace") or step.get("class") or source.get("class") or source.get("scope") or "")
+    simple = str(call).split("::")[-1].split(".")[-1]
+    keys = [
+        "::".join(part for part in (file_name, scope, call) if part),
+        "::".join(part for part in (file_name, scope, simple) if part),
+        str(call),
+        simple,
+    ]
+    for key in keys:
+        if key in function_index:
+            return {"status": "matched", "unit": function_index[key]}
+        matches = functions.get(key)
+        if matches and len(matches) > 1:
+            return {"status": "ambiguous"}
+    return {"status": "missing"}
 
 
 def _normalize_relation_entry(item: dict[str, Any]) -> dict[str, Any]:
@@ -1603,6 +1894,34 @@ def _validate_flow_kernel_boundary(docs: dict[str, Any], result: CompileResult) 
             for ref in _as_list(refs):
                 if ref and ref not in compute_ids:
                     result.add("KERNEL_UNKNOWN_COMPUTE_STEP", "error", f"kernel references unknown compute step {ref}", rel, path)
+
+
+def _validate_flow_step_graph(docs: dict[str, Any], result: CompileResult) -> None:
+    flow = _as_dict(docs.get("flow/compute_graph.yaml"))
+    if "compute_steps" in flow and "computation_steps" in flow and _canonical_json(flow.get("compute_steps")) != _canonical_json(flow.get("computation_steps")):
+        result.add("FLOW_STEP_ALIAS_MISMATCH", "error", "compute_steps and computation_steps differ", "flow/compute_graph.yaml")
+    _validate_step_container(_iter_entries(flow.get("compute_steps") or flow.get("computation_steps")), result, artifact="flow/compute_graph.yaml")
+    for path in _iter_entries(_as_dict(docs.get("kernel/paths.yaml")).get("kernel_paths")):
+        _validate_step_container(
+            _iter_entries(path.get("computation_steps") or path.get("compute_steps") or path.get("data_flow_steps")),
+            result,
+            artifact="kernel/paths.yaml",
+            path_id=str(path.get("id") or path.get("stable_key") or ""),
+        )
+
+
+def _validate_step_container(steps: list[dict[str, Any]], result: CompileResult, *, artifact: str, path_id: str = "") -> None:
+    step_ids = [str(step.get("id") or step.get("step_id") or "") for step in steps if step.get("id") or step.get("step_id")]
+    step_set = set(step_ids)
+    for step_id in sorted({item for item in step_ids if step_ids.count(item) > 1}):
+        result.add("FLOW_STEP_ID_COLLISION", "error", f"duplicate flow step id {step_id}", artifact, path_id or step_id)
+    for step in steps:
+        step_id = str(step.get("id") or step.get("step_id") or "")
+        for dep in _as_list(step.get("depends_on")):
+            dep_id = str(dep)
+            if dep_id and dep_id not in step_set:
+                result.add("FLOW_UNKNOWN_DEPENDENCY", "error", f"{step_id} depends on unknown step {dep_id}", artifact, path_id or step_id)
+    _detect_step_cycles([dict(step, id=str(step.get("id") or step.get("step_id") or "")) for step in steps], result, artifact=artifact, path_id=path_id)
 
 
 def _structured_boundary_values(value: Any) -> list[str]:
@@ -2066,6 +2385,7 @@ def _promotion_report(
     proposal_ids: list[str] | None = None,
     proposal_hashes: dict[str, str] | None = None,
     skipped_proposals: list[dict[str, Any]] | None = None,
+    normalization: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     planned = transaction.planned_artifacts if transaction else sorted(path for path, digest in after_hashes.items() if before_hashes.get(path) != digest)
     return {
@@ -2079,6 +2399,7 @@ def _promotion_report(
         "proposal_ids": proposal_ids or [],
         "proposal_hashes": proposal_hashes or {},
         "skipped_proposals": skipped_proposals or [],
+        "normalization": normalization or getattr(result, "normalization", {}),
         "changed_artifacts": sorted(path for path, digest in after_hashes.items() if before_hashes.get(path) != digest),
         "transaction_id": transaction.transaction_id if transaction else None,
         "planned_artifacts": planned,

@@ -1,68 +1,229 @@
 # Macro Scope Human Review
 
-这是 Phase 0.5 人工审核闸门。目标是在 Macro Boundary Agent 开始前，让用户确认 **Phase 1 的代码探索范围**，尤其是哪些代码分支、目录、文件、符号不做探索。
+This is the Phase 0.5 human gate. Its goal is to let the user approve the
+Phase 1 exploration scope before Macro Boundary Agent starts.
 
-输入：
+Phase 0.5 has three internal substeps but only one human gate:
 
-- `cbm/index_meta.json`
-- `archive/runs/ignore_rules.md`
-- 用户请求 / extra_description
-- Phase 0 生成的 artifact skeleton（`index.yaml` / `operator.yaml` / `route.md`）
-
-必须展示给用户：
-
-1. `include_scope`
-   - Phase 1 会探索的目录、文件模式、入口符号、op_host / op_kernel / op_api / proto / golden / tests 等候选范围。
-2. `exclude_scope`
-   - 明确不探索的目录、文件模式、无关分支、legacy 路径、测试或样例路径。
-3. `branch_skip_rules`
-   - 用户希望 Macro Boundary Agent 跳过的代码分支，例如特定平台、特定 dtype、未启用 feature flag、过时实现。
-4. `uncertain_scope`
-   - 需要用户确认是否探索的候选文件、候选符号或分支。
-5. `next_phase_effect`
-   - 这些选择会如何影响 Phase 1 的 `operator.yaml`（scope / analysis_plan）和后续 subagent source_hints。
-
-## 人工确认问题展示要求
-
-`uncertain_scope` 和需要用户确认的 include/exclude/skip 事项不能只写文件名或短标签。每项必须说明：
-
-- `item`: 需要确认的目录、文件、符号、平台分支、dtype 分支或 feature flag。
-- `current_observation`: 当前已知事实，例如该路径为什么像相关路径、为什么可能是 legacy/test/sample。
-- `why_uncertain`: 为什么 Phase 0 无法自动决定是否纳入探索范围。
-- `decision_needed`: 希望用户明确选择什么，例如 include、exclude、skip branch、仅保留为 low priority。
-- `impact_if_included`: 纳入后会让 Phase 1 多探索哪些边界或 source_hints。
-- `impact_if_excluded`: 排除后可能遗漏哪些 IO、tiling、kernel、golden 或 grad 路径。
-- `suggested_default`: 保守建议和理由。
-- `evidence_refs`: 相关 `cbm/index_meta.json`、ignore rule、文件模式或用户描述。
-
-面向用户展示时，用 2-4 句话解释每个待确认项，不要只列路径。
-
-## 交互选择（必须，Plan 风格可选 UI）
-
-展示完摘要后，按 `prompts/00_review_menu.md`：
-
-1. 用 OpenCode **`question`** 工具或 Cursor **AskQuestion** 弹出选择 UI（↑/↓ 或点击）。
-2. 选项必须包含，且**最后一项支持输入**：
-   - `continue` — 按当前范围进入 Phase 1
-   - `revise` — 调整 include/exclude/skip 后重审
-   - `stop` — 停止 workflow
-   - `manual_supplement` — 手工补充（我来输入）
-3. **STOP** 等待用户在选择 UI 中确认；若选手工补充，收集其输入文本为 notes。
-4. 落盘：
-
-```powershell
-python "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --gate macro_scope --decision <choice> [--notes "..."]
+```text
+Phase 0.5-A: Deterministic Scope Scan
+Phase 0.5-B: MCP Semantic Enrichment
+Phase 0.5-C: Human Review
 ```
 
-**禁止**默认使用会抢键盘的 `--interactive` / `--arrows`。
+Do not add a new gate between A/B/C. Stop only at 0.5-C.
 
-读取 `UO_REVIEW_DECISION=...` 与 `archive/runs/macro_scope_decision.json`。
+## Inputs
 
-必须写入 `archive/runs/macro_scope_review.yaml`，并把结论摘要同步到 `human/review.md` Boundary Review：
+- `archive/runs/macro_scope_scan.yaml` from Phase 0.5-A.
+- `cbm/index_meta.json`.
+- `archive/runs/ignore_rules.md`.
+- User request / extra_description.
+- Phase 0 artifact skeleton (`index.yaml`, `operator.yaml`, `route.md`).
+
+## Phase 0.5-A: Deterministic Scope Scan
+
+Before the first CBM semantic search for scope discovery, build a deterministic
+candidate file and text-hit inventory. Prefer the bundled scanner script:
+
+```powershell
+python "$SCRIPT_DIR/macro_scope_scan.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --filesystem-tool python
+```
+
+The script performs filesystem traversal and literal text search bounded to
+`$PROJECT_ROOT`; it applies `.gitignore`, default ignore rules, and
+`.understandoperatorignore`. If the script is unavailable, use the bounded
+commands below as fallback and record a warning.
+
+Required scan work:
+
+1. Enumerate files under `$PROJECT_ROOT` with ignore rules applied.
+2. Classify paths into:
+   - `host`
+   - `kernel`
+   - `api`
+   - `proto`
+   - `golden`
+   - `tests`
+   - `examples`
+   - `generated`
+   - `docs_config`
+   - `unknown`
+3. Search architecture / implementation markers:
+   - `arch22`
+   - `arch35`
+   - `regbase`
+   - SoC names or architecture condition macros such as `ASCEND[0-9_]+`.
+4. Search entry candidate text and macros:
+   - tiling registration macros
+   - operator registration macros
+   - kernel global entries
+   - `TILING_KEY_IS`
+   - `GET_TILING_DATA`
+   - symbols identical or similar to `OP_NAME`
+5. Mark:
+   - large files
+   - same-name multiple implementations
+   - architecture-specific directories
+   - legacy/test/sample/generated files
+   - files with suspicious indirect matches that are not semantically confirmed
+
+Fallback commands:
+
+```powershell
+rg --files "$PROJECT_ROOT"
+rg -n -i "arch22|arch35|regbase|ASCEND[0-9_]+" "$PROJECT_ROOT"
+rg -n "REGISTER_TILING|REGISTER_OP|TILING_KEY_IS|GET_TILING_DATA|__global__" "$PROJECT_ROOT"
+```
+
+If `rg` is missing, use ignore-limited `Get-ChildItem` + `Select-String` on
+Windows or `find` + `grep` on POSIX. Never scan outside `$PROJECT_ROOT`.
+
+The scan only discovers candidate scope; it cannot confirm semantic facts by
+itself.
+
+Write the deterministic result to:
+
+```text
+archive/runs/macro_scope_scan.yaml
+```
+
+Minimum schema:
+
+```yaml
+version: 1
+op_name: ""
+generated_at: ""
+scan_method:
+  filesystem_tool: rg # rg | powershell | find
+  cbm_project: ""
+  ignore_rules_applied: true
+directories:
+  included: []
+  excluded: []
+files:
+  host: []
+  kernel: []
+  api: []
+  proto: []
+  golden: []
+  tests: []
+  examples: []
+  generated: []
+  docs_config: []
+  unknown: []
+architecture_variants:
+  - name: arch35
+    matched_paths: []
+    matched_lines: []
+    semantic_status: candidate # candidate | confirmed | rejected
+    cbm_evidence: []
+entry_candidates:
+  - item: ""
+    kind: tiling_registration # operator_registration | kernel_entry | macro | unknown
+    file: ""
+    line: null
+    discovery_method: rg
+    cbm_status: pending
+    cbm_symbol: ""
+    evidence: []
+large_files:
+  - path: ""
+    size_bytes: 0
+    read_policy: line_scoped_only
+uncertain_items: []
+warnings: []
+```
+
+Sort all paths deterministically and store paths relative to `$PROJECT_ROOT`.
+Warnings are acceptable; scan command failures should not abort the workflow if
+a bounded fallback produced partial results.
+
+## Phase 0.5-B: MCP Semantic Enrichment
+
+After 0.5-A has produced candidate files and text hits, use CBM MCP to enrich
+only targeted candidates:
+
+- Resolve candidate entry symbols.
+- Find registration relations.
+- Find host and kernel main entries.
+- Confirm primary call relations.
+- Semantically enrich candidate architecture paths.
+- Mark macros/templates/strings that CBM could not index or confirm.
+
+Each MCP query must be based on one of:
+
+```text
+discovered candidate file
+discovered candidate symbol
+discovered registration macro
+discovered architecture variant
+```
+
+Do not perform repeated whole-project `search_code` searches for the same
+`arch35`, `arch22`, `regbase`, or path marker after the deterministic scan has
+already found the candidate list.
+
+## Phase 0.5-C: Human Review
+
+Combine `macro_scope_scan.yaml` and MCP enrichment into the current review:
+
+```text
+include_scope
+exclude_scope
+branch_skip_rules
+uncertain_scope
+next_phase_effect
+```
+
+`macro_scope_review.yaml` may reference `macro_scope_scan.yaml` instead of
+duplicating large scan content.
+
+Must show the user:
+
+1. `include_scope`
+   - Directories, file patterns, entry symbols, and host/kernel/api/proto/golden
+     candidate groups that Phase 1 will explore.
+2. `exclude_scope`
+   - Directories, patterns, unrelated branches, legacy paths, tests/samples, and
+     generated/build outputs that Phase 1 will not explore.
+3. `branch_skip_rules`
+   - Platform, dtype, feature flag, legacy, or inactive branches that Macro
+     Boundary Agent should skip.
+4. `uncertain_scope`
+   - Candidate files, symbols, directories, or branches that still require user
+     confirmation.
+5. `next_phase_effect`
+   - How the decision affects `operator.yaml.scope`, `analysis_plan`, and later
+     subagent `source_hints`.
+
+For every uncertain item, include:
+
+- `item`
+- `current_observation`
+- `why_uncertain`
+- `decision_needed`
+- `impact_if_included`
+- `impact_if_excluded`
+- `suggested_default`
+- `evidence_refs`
+
+User-facing summaries should explain each decision item in Chinese in 2-4
+sentences; do not list only paths.
+
+## Required Review Artifact
+
+Write `archive/runs/macro_scope_review.yaml` and sync the conclusion summary to
+`human/review.md` Boundary Review:
 
 ```yaml
 phase: "0.5"
 status: pending_user_review
+scan_artifact: archive/runs/macro_scope_scan.yaml
+internal_steps:
+  scope_scan: completed
+  semantic_enrichment: completed
+  human_review: pending
 include_scope:
   files: []
   dirs: []
@@ -86,15 +247,41 @@ uncertain_scope:
     impact_if_excluded: ""
     suggested_default: ""
     evidence: []
+next_phase_effect:
+  operator_scope: []
+  analysis_plan: []
+  source_hints: []
 decision:
   value: pending # continue | revise | stop | manual_supplement | pending
   decided_at: null
   notes: ""
 ```
 
+## Interaction Choice
+
+After showing the summary, use `prompts/00_review_menu.md`:
+
+1. Use OpenCode `question` or Cursor AskQuestion choice UI.
+2. Options must include:
+   - `continue` - enter Phase 1 with current scope.
+   - `revise` - adjust include/exclude/skip and show the review again.
+   - `stop` - end workflow.
+   - `manual_supplement` - user provides extra scope notes.
+3. STOP and wait for the choice UI result.
+4. Persist the decision:
+
+```powershell
+python "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --gate macro_scope --decision <choice> [--notes "..."]
+```
+
+Read `UO_REVIEW_DECISION=...` and `archive/runs/macro_scope_decision.json`.
+
 Gate rules:
 
-- 不得在用户通过交互菜单明确选择 `continue` 前启动 Phase 1。
-- 如果用户选择 `revise`，更新 `archive/runs/macro_scope_review.yaml` 后重新展示本审阅并再次运行菜单。
-- 如果用户选择 `manual_supplement`，把补充写入 review yaml / notes，然后重新运行菜单。
-- 如果用户选择 `stop`，结束 workflow 并汇报当前 artifact。
+- Do not start Phase 1 before the user explicitly chooses `continue`.
+- If the user chooses `revise`, update `macro_scope_review.yaml`, re-display the
+  review, and run the menu again.
+- If the user chooses `manual_supplement`, add notes to review YAML, re-display
+  the review, and run the menu again.
+- If the user chooses `stop`, end the workflow and report current artifacts.
+- Do not use keyboard-grabbing `--interactive` / `--arrows`.

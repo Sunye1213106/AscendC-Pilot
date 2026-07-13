@@ -26,4 +26,6 @@ jobs:
           python -m pip install -e "./testcase-agent[solver]"
           python -m pip install pytest
       - name: Test
-        run: python -m pytest -q testcase-agent/tests
+        run: |
+          python -m pytest -q testcase-agent/tests
+          python -m pytest -q understand-operator/understand-operator-plugin/tests

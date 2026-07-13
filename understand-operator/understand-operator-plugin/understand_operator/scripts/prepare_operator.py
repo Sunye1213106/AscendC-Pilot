@@ -117,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Prepared understand-operator artifacts for {op_name}")
     print(f"Output: {base}")
     print("CBM: use MCP index_repository in /uo-init (this script does not build the graph DB by default)")
-    print("Next: MCP index_repository → Phase 0.5 Macro Scope Review")
+    print("Next: MCP index_repository -> Phase 0.5-A deterministic scope scan -> Phase 0.5-C review")
     return 0
 
 

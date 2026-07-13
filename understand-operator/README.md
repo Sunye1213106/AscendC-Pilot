@@ -19,9 +19,17 @@ Other former single-entry `/understand-operator` usage is retired; that skill on
 
 ## Underlying rule (all commands)
 
-**Source lookups are CBM MCP-first** via the `codebase-memory-mcp` MCP server (`search_graph` / `search_code` / `get_code_snippet` / `trace_path`).  
-Do **not** use `cbm_query.py` / `uo-cbm` for interactive agent lookups.  
-If MCP fails (empty/error/not connected), fall back to reading source (whole file allowed as last resort). Never open source before attempting MCP. See `prompts/00_cbm_first_rule.md` and `docs/cbm-mcp-setup.md`.
+Choose tools by question type. Repository structure, file boundaries, path
+membership, generated/test/sample classification, and raw text occurrence
+locations use deterministic filesystem/Glob/`rg` first. Symbol resolution, call
+relations, registration semantics, IO semantics, Host/Kernel correspondence, and
+source behavior validation remain CBM MCP-first via `codebase-memory-mcp`
+(`search_graph` / `search_code` / `get_code_snippet` / `trace_path`).
+
+Do **not** use `cbm_query.py` / `uo-cbm` for interactive agent lookups. If CBM
+fails for semantic source work, fall back to targeted `rg` and line-scoped
+source reads; whole-file reads are the last resort. See
+`prompts/00_cbm_first_rule.md` and `docs/cbm-mcp-setup.md`.
 
 KB artifact reads under `.understand-operator/` are always allowed and preferred for `/uo-query`.
 
@@ -76,7 +84,9 @@ Relation coverage debts live in `tiling/coverage_model.yaml` → `key_relation_o
 ```text
 Preflight full/incremental + ignore rules
   -> CBM index
-  -> Macro Scope Human Review (user approval)
+  -> Phase 0.5-A deterministic scope scan
+  -> Phase 0.5-B targeted MCP semantic enrichment
+  -> Phase 0.5-C Macro Scope Human Review (user approval)
   -> Macro Boundary Agent          # no Phase 1.5 stop
   -> Parallel: uo-host-extraction + uo-flow-extraction
   -> Kernel Path Task Builder

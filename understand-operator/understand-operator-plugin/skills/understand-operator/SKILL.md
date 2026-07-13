@@ -31,4 +31,7 @@ If they ask for diff only, load `../uo-diff/SKILL.md`.
 
 ## Global underlying rule
 
-`../../prompts/00_cbm_first_rule.md`: source lookups are **CBM first**; only on CBM failure may you read source (whole file allowed as last resort).
+`../../prompts/00_cbm_first_rule.md`: choose tools by question type. File
+structure and macro-scope discovery use deterministic filesystem/`rg` first;
+symbols, calls, registration semantics, IO semantics, and source behavior
+validation remain CBM MCP first.
