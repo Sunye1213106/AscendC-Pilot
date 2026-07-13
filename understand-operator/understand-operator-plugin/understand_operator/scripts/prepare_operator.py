@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import argparse
+import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,7 @@ if __package__ in (None, ""):
 from understand_operator._core.ignore import DEFAULT_IGNORE_PATTERNS
 from understand_operator._operator.artifacts import init_operator_layout, operator_root, safe_op_name, write_text
 from understand_operator._operator.cbm_client import write_index_meta
+from understand_operator._operator.install_check import compare_installed_skill
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -49,6 +51,18 @@ def main(argv: list[str] | None = None) -> int:
     op_name = safe_op_name(args.op_name, repo_root)
     base = operator_root(repo_root, op_name)
     init_operator_layout(base, op_name, repo_root)
+    installed_skill = Path.home() / ".config" / "opencode" / "skills" / "understand-operator"
+    if installed_skill.exists():
+        check = compare_installed_skill(Path(__file__).resolve().parents[2], installed_skill)
+    else:
+        check = {
+            "version": 1,
+            "consistent": False,
+            "error_code": "INSTALLED_SKILL_VERSION_MISMATCH",
+            "installed_skill_root": str(installed_skill),
+            "mismatches": [{"path": "skills/understand-operator", "reason": "installed skill root missing"}],
+        }
+    write_text(base / "archive" / "runs" / "installed_skill_check.yaml", _to_yaml(check))
 
     patterns = _load_operator_ignore_patterns(repo_root)
     write_text(
@@ -147,6 +161,15 @@ def _load_operator_ignore_patterns(repo_root: Path) -> list[str]:
         if stripped and not stripped.startswith("#"):
             patterns.append(stripped)
     return patterns
+
+
+def _to_yaml(data: object) -> str:
+    try:
+        import yaml
+
+        return yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+    except Exception:  # noqa: BLE001
+        return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
 
 
 if __name__ == "__main__":

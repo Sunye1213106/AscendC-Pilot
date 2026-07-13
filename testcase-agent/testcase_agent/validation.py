@@ -51,6 +51,7 @@ REQUIRED_TESTCASE_CONTRACT_FILES = (
     "kernel/pipeline.yaml",
     "kernel/resources.yaml",
     "cross_layer/impact_graph.yaml",
+    "cross_layer/tiling_to_kernel.yaml",
     "flow/golden_model.yaml",
     "flow/numerical_model.yaml",
     "quality.yaml",

@@ -72,6 +72,8 @@ python "$SKILL_DIR/quality_gate.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 - Never manually edit `quality.yaml` (including `status`, `decision`, scores, checks, blockers, or warnings).
 - Never relabel `red` as `yellow`/`green`, remove blockers, or create a replacement quality file to make the KB appear usable.
 - When the gate is red, identify the owning phase/artifact, repair that source artifact through its owner (resume/re-dispatch a subagent when applicable), then rerun `quality_gate.py`.
+- When a YAML syntax/schema/semantic issue is reported, use the artifact-owner registry and retry task from the compiler/barrier report. Do not read malformed canonical YAML and regenerate a whole file from your own interpretation.
+- Syntax-only repair is allowed only when semantic summary proves entry counts, stable ids, resource names, producer/consumer edges, conditions, evidence refs, and canonical item hashes are unchanged.
 - Report the script's actual exit result and generated `quality.yaml`; a manually modified quality file is invalid and must be overwritten by rerunning the gate.
 
 ## Red-gate remediation loop (mandatory; do not hand off red)
@@ -94,6 +96,7 @@ If `quality_gate.py` returns `red` / `not_usable`, **do not output the normal co
 - Do not rename IDs or relation types by global search-and-replace without tracing every definition and reference through the registry/compiler.
 - Do not alter `MATURITY_RULES`, `RELATION_TYPES`, evidence validation, or severity levels to fit one generated KB without a minimal reproduction and regression test.
 - Do not start a general subagent for Phase 5–8 remediation. Resume only the allowed Phase 2/4 owner subagents; otherwise the host performs the specified phase work.
+- Do not delete malformed entries, rename resources, drop `condition`, change producer/consumer, or rewrite symbols such as `::`, `*`, `-double`, template arguments, C++ names, or math expressions to make YAML parse.
 
 - `usable_for_query`
 - `usable_for_golden_with_review`

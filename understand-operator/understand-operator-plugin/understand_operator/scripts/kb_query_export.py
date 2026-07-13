@@ -107,6 +107,7 @@ EXPORT_VIEWS: dict[str, list[str]] = {
         "kernel/pipeline.yaml",
         "kernel/resources.yaml",
         "cross_layer/impact_graph.yaml",
+        "cross_layer/tiling_to_kernel.yaml",
         "flow/golden_model.yaml",
         "flow/numerical_model.yaml",
         "quality.yaml",

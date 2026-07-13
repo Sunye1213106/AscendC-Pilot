@@ -182,7 +182,7 @@ def write_json(path: Path, data: Any) -> None:
 def read_text(path: Path) -> str:
     if not path.exists():
         return ""
-    return path.read_text(encoding="utf-8", errors="ignore")
+    return path.read_text(encoding="utf-8-sig")
 
 
 def write_text(path: Path, text: str) -> None:
@@ -2014,6 +2014,7 @@ def _extend_index_for_kb_v2(base: Path) -> None:
       - kernel/pipeline.yaml
       - kernel/resources.yaml
       - cross_layer/impact_graph.yaml
+      - cross_layer/tiling_to_kernel.yaml
       - flow/golden_model.yaml
       - flow/numerical_model.yaml
       - quality.yaml

@@ -15,6 +15,15 @@ from pathlib import Path
 from typing import Any
 
 from understand_operator._operator.artifacts import operator_root, read_text, safe_op_name, write_text
+from understand_operator._operator.evidence import validate_evidence_closure
+from understand_operator._operator.yaml_gate import (
+    ORCHESTRATOR_AGENTS,
+    artifact_owner,
+    resource_semantic_errors,
+    serialize_yaml_checked,
+    validate_yaml_document,
+    yaml_text,
+)
 
 try:
     import yaml
@@ -536,9 +545,12 @@ def promote_kb(
             continue
         proposal_ids.append(proposal_id)
         proposal_hashes[proposal_id] = proposal_hash
+        producer_agent = str(_as_dict(proposal.get("producer")).get("agent") or "")
         for update in _as_list(proposal.get("canonical_updates")):
             if not isinstance(update, dict):
                 result.add("BAD_PROPOSAL_UPDATE", "error", "canonical_updates entries must be mappings", proposal_path.as_posix())
+                continue
+            if not _validate_update_owner(producer_agent, update, proposal_path, result):
                 continue
             ok = _apply_update(candidate, update, proposal_path, result)
             if ok:
@@ -933,6 +945,116 @@ def build_entity_index(docs: dict[str, Any], result: CompileResult | None = None
     return dict(sorted(index.items()))
 
 
+def migrate_stable_ids(docs: dict[str, Any], migrations: list[dict[str, Any]], result: CompileResult | None = None) -> dict[str, Any]:
+    """Apply structured stable-id migrations to canonical documents.
+
+    This intentionally updates only structured id/ref fields. It does not
+    rewrite prose, source excerpts, formulas, or arbitrary scalar text.
+    """
+    migrated = copy.deepcopy(docs)
+    mapping: dict[str, str] = {}
+    kinds: dict[str, str] = {}
+    index = collect_entity_definitions(migrated, result)
+    for item in migrations:
+        old_id = str(item.get("old_id") or "").strip()
+        new_id = str(item.get("new_id") or "").strip()
+        kind = str(item.get("kind") or "").strip()
+        if not old_id or not new_id:
+            if result:
+                result.add("BAD_ID_MIGRATION", "error", "migration requires old_id and new_id", "id_migration")
+            continue
+        if old_id not in index and not _structured_id_exists(migrated, old_id):
+            if result:
+                result.add("BAD_ID_MIGRATION", "error", f"old id not found: {old_id}", "id_migration", old_id)
+            continue
+        expected = _canonicalize_id_for_kind(old_id, kind)
+        if new_id != expected and not STABLE_ID_RE.match(new_id):
+            if result:
+                result.add("BAD_ID_MIGRATION", "error", f"new id {new_id} is invalid for kind {kind}", "id_migration", old_id)
+            continue
+        mapping[old_id] = new_id
+        kinds[old_id] = kind
+
+    if not mapping:
+        return migrated
+    _rewrite_structured_refs(migrated, mapping)
+    for rel, data in migrated.items():
+        _attach_legacy_ids(data, mapping)
+    rebuilt = build_entity_index(migrated, result)
+    for old_id in mapping:
+        if old_id in rebuilt:
+            if result:
+                result.add("ID_MIGRATION_INCOMPLETE", "error", f"old id still defines entity: {old_id}", "id_migration", old_id)
+    return migrated
+
+
+def _structured_id_exists(value: Any, item_id: str) -> bool:
+    if isinstance(value, dict):
+        if value.get("id") == item_id or value.get("stable_id") == item_id:
+            return True
+        return any(_structured_id_exists(child, item_id) for child in value.values())
+    if isinstance(value, list):
+        return any(_structured_id_exists(item, item_id) for item in value)
+    return False
+
+
+def _rewrite_structured_refs(value: Any, mapping: dict[str, str], key: str = "") -> None:
+    if isinstance(value, dict):
+        for child_key, child in list(value.items()):
+            if child_key in {"id", "stable_id"} and isinstance(child, str) and child in mapping:
+                value[child_key] = mapping[child]
+            elif _is_ref_key(child_key):
+                value[child_key] = _rewrite_ref_value(child, mapping)
+            else:
+                _rewrite_structured_refs(child, mapping, child_key)
+    elif isinstance(value, list):
+        for item in value:
+            _rewrite_structured_refs(item, mapping, key)
+
+
+def _rewrite_ref_value(value: Any, mapping: dict[str, str]) -> Any:
+    if isinstance(value, str):
+        return mapping.get(value, value)
+    if isinstance(value, list):
+        return [_rewrite_ref_value(item, mapping) for item in value]
+    if isinstance(value, dict):
+        rewritten: dict[Any, Any] = {}
+        for key, child in value.items():
+            new_key = mapping.get(key, key) if isinstance(key, str) else key
+            rewritten[new_key] = _rewrite_ref_value(child, mapping)
+        return rewritten
+    return value
+
+
+def _is_ref_key(key: str) -> bool:
+    return key.endswith(("_id", "_ids", "_ref", "_refs")) or key in {
+        "family_id",
+        "family_ids",
+        "source_family",
+        "target_family",
+        "kernel_path_refs",
+        "source_ids",
+        "target_ids",
+        "depends_on",
+        "evidence_refs",
+    }
+
+
+def _attach_legacy_ids(value: Any, mapping: dict[str, str]) -> None:
+    if isinstance(value, dict):
+        current_id = value.get("id") or value.get("stable_id")
+        if isinstance(current_id, str):
+            legacy = [old for old, new in mapping.items() if new == current_id]
+            if legacy:
+                existing = [str(item) for item in _as_list(value.get("legacy_ids"))]
+                value["legacy_ids"] = sorted(set(existing + legacy))
+        for child in value.values():
+            _attach_legacy_ids(child, mapping)
+    elif isinstance(value, list):
+        for item in value:
+            _attach_legacy_ids(item, mapping)
+
+
 def _load_phase_docs(uo_root: Path, phase: str, result: CompileResult) -> dict[str, Any]:
     rels = PHASE_FILES[_normalize_phase(phase)]
     docs: dict[str, Any] = {}
@@ -960,12 +1082,13 @@ def _read_yaml(path: Path, result: CompileResult | None = None) -> Any:
         if result:
             result.add("YAML_UNAVAILABLE", "error", "PyYAML is required for KB compilation", path.as_posix())
         return {}
-    try:
-        return yaml.safe_load(read_text(path)) or {}
-    except Exception as exc:  # noqa: BLE001
-        if result:
-            result.add("YAML_PARSE", "error", f"YAML parse failed: {exc}", path.as_posix())
-        return {}
+    rel = path.as_posix()
+    text = read_text(path)
+    data, errors = validate_yaml_document(text, rel)
+    if result:
+        for error in errors:
+            result.add(error.code, "error", error.message, rel)
+    return data if isinstance(data, dict) else {}
 
 
 def _load_proposals(
@@ -1052,6 +1175,30 @@ def _validate_proposal_hash(path: Path, proposal: dict[str, Any], computed_hash:
     return False
 
 
+def _validate_update_owner(producer_agent: str, update: dict[str, Any], proposal_path: Path, result: CompileResult) -> bool:
+    target = str(update.get("target") or "").replace("\\", "/")
+    owner = artifact_owner(target)
+    if producer_agent in ORCHESTRATOR_AGENTS and not target.startswith("archive/"):
+        result.add(
+            "CANONICAL_DIRECT_WRITE",
+            "error",
+            f"{producer_agent} must not write canonical artifact {target}; route retry to {owner}",
+            proposal_path.as_posix(),
+            target,
+        )
+        return False
+    if owner.startswith("uo-") and producer_agent and producer_agent != owner:
+        result.add(
+            "ARTIFACT_OWNER_MISMATCH",
+            "error",
+            f"{target} is owned by {owner}, not {producer_agent}",
+            proposal_path.as_posix(),
+            target,
+        )
+        return False
+    return True
+
+
 def _proposal_consumption_state(uo_root: Path, proposal_id: str, proposal_hash: str, result: CompileResult) -> str:
     if not proposal_id:
         return "new"
@@ -1132,6 +1279,10 @@ def _apply_update(candidate: dict[str, Any], update: dict[str, Any], proposal_pa
         return False
     if not entries and merge_mode != "replace_section":
         result.add("EMPTY_UPDATE", "warning", "canonical update has no entries", proposal_path.as_posix(), target)
+    if not _validate_update_evidence_refs(target, entries, proposal_path, result):
+        return False
+    if not _validate_canonical_update_ids(target, section, entries, proposal_path, result):
+        return False
 
     doc = copy.deepcopy(_as_dict(candidate.get(target)))
     if not doc:
@@ -1152,6 +1303,129 @@ def _apply_update(candidate: dict[str, Any], update: dict[str, Any], proposal_pa
     return ok
 
 
+def _validate_update_evidence_refs(target: str, entries: list[Any], proposal_path: Path, result: CompileResult) -> bool:
+    if target.startswith(("archive/", "cbm/")):
+        return True
+    ok = True
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        for ref in _as_list(entry.get("evidence_refs")):
+            ref_s = str(ref)
+            if not re.fullmatch(r"(?:EV|SRC)_[A-Z0-9_]+", ref_s):
+                result.add(
+                    "BAD_EVIDENCE_REF_FORMAT",
+                    "error",
+                    f"evidence ref must be a canonical EV_/SRC_ id: {ref_s!r}",
+                    proposal_path.as_posix(),
+                    ref_s,
+                )
+                ok = False
+    return ok
+
+
+def _validate_canonical_update_ids(
+    target: str,
+    section: str,
+    entries: list[Any],
+    proposal_path: Path,
+    result: CompileResult,
+) -> bool:
+    if target.startswith(("archive/", "cbm/")):
+        return True
+    ok = True
+    for entry in entries:
+        for entry_id in _iter_entry_ids(entry):
+            kind = _inferred_kind_for_target(target, section)
+            if _is_intermediate_id(entry_id):
+                result.add(
+                    "INTERMEDIATE_ID_IN_CANONICAL",
+                    "error",
+                    (
+                        f"intermediate id {entry_id} cannot be promoted into {target}:{section}; "
+                        f"inferred entity kind={kind}, suggested prefix={_suggested_prefix(kind)}"
+                    ),
+                    proposal_path.as_posix(),
+                    entry_id,
+                )
+                ok = False
+                continue
+            canonical_id = _canonicalize_id_for_kind(entry_id, kind)
+            if canonical_id != entry_id:
+                result.add(
+                    "BAD_STABLE_ID",
+                    "error",
+                    f"canonical update id {entry_id} must be {canonical_id}",
+                    proposal_path.as_posix(),
+                    entry_id,
+                )
+                ok = False
+            elif not (STABLE_ID_RE.match(entry_id) or LEGACY_ID_RE.match(entry_id)):
+                result.add("BAD_STABLE_ID", "error", f"bad canonical update id {entry_id}", proposal_path.as_posix(), entry_id)
+                ok = False
+    return ok
+
+
+def _iter_entry_ids(value: Any) -> list[str]:
+    ids: list[str] = []
+    if isinstance(value, dict):
+        for key in ("id", "stable_id", "target_id", "source_id"):
+            raw = value.get(key)
+            if isinstance(raw, str) and raw:
+                ids.append(raw)
+        for key in ("source_ids", "target_ids", "family_ids", "kernel_path_refs", "evidence_refs"):
+            for raw in _as_list(value.get(key)):
+                if isinstance(raw, str) and raw:
+                    ids.append(raw)
+    return ids
+
+
+def _is_intermediate_id(value: str) -> bool:
+    return bool(re.fullmatch(r"(?:FRO_[A-Za-z0-9_]+|FR\d+|P\d+|PR\d+|TI\d+|IC\d+)", value))
+
+
+def _inferred_kind_for_target(target: str, section: str) -> str:
+    if target == "registry/evidence.yaml" or section == "evidence":
+        return "evidence"
+    if "families" in target or section == "families":
+        return "family"
+    if target == "registry/variables.yaml" or section in {"variables", "runtime_variables"}:
+        return "variable"
+    if section in {"relations", "links", "edges", "impacts"}:
+        return "relation"
+    if "constraints" in target:
+        return "constraint"
+    if "coverage" in target or section == "coverage_obligations":
+        return "coverage_obligation"
+    if "paths" in target:
+        return "kernel_path"
+    return "entity"
+
+
+def _suggested_prefix(kind: str) -> str:
+    return {
+        "evidence": "EV_ or SRC_",
+        "family": "FAM_",
+        "variable": "VAR_",
+        "relation": "REL_",
+        "constraint": "CON_",
+        "coverage_obligation": "COV_",
+        "kernel_path": "KPATH_",
+    }.get(kind, "canonical namespace prefix")
+
+
+def _canonicalize_id_for_kind(value: str, kind: str) -> str:
+    if kind == "family":
+        if re.fullmatch(r"TF\d+", value):
+            return f"FAM_{value}"
+        if value.startswith("TF_"):
+            return "FAM_" + _stable_slug(value[3:])
+    if kind == "evidence" and value.startswith(("EV_", "SRC_")):
+        prefix, suffix = value.split("_", 1)
+        return f"{prefix}_{_stable_slug(suffix)}"
+    return value
+
+
 def _merge_by_id(
     doc: dict[str, Any],
     section: str,
@@ -1170,7 +1444,10 @@ def _merge_by_id(
             result.add("BAD_ENTRY", "error", "by_id entry must be mapping", proposal_path.as_posix(), target)
             ok = False
             continue
-        entry = _normalize_relation_entry(entry) if section in {"relations", "links", "edges", "impacts"} else dict(entry)
+        if target == "registry/evidence.yaml" and section == "evidence":
+            entry = _normalize_evidence_entry(entry)
+        else:
+            entry = _normalize_relation_entry(entry) if section in {"relations", "links", "edges", "impacts"} else dict(entry)
         entry_id = str(entry.get("id") or entry.get("stable_id") or "").strip()
         if not entry_id:
             result.add("ENTRY_MISSING_ID", "error", "by_id entry missing id", proposal_path.as_posix(), target)
@@ -1186,6 +1463,13 @@ def _merge_by_id(
     if ok:
         doc[section] = [mapping[key] for key in sorted(mapping)]
     return ok
+
+
+def _normalize_evidence_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    out = dict(entry)
+    if not out.get("status") and out.get("file") and out.get("lines") and out.get("symbol") and out.get("kind"):
+        out["status"] = "confirmed"
+    return out
 
 
 def _merge_mapping(
@@ -1903,52 +2187,8 @@ def _check_maturity(docs: dict[str, Any], phase: str, result: CompileResult) -> 
 
 
 def _validate_evidence(docs: dict[str, Any], result: CompileResult) -> None:
-    evidence_ids = {eid for eid in result.entity_index if eid.startswith(("EV_", "SRC_"))}
-    ev_doc = _as_dict(docs.get("registry/evidence.yaml"))
-    seen_content: dict[str, str] = {}
-    for item in _iter_entries(ev_doc.get("evidence")):
-        ev_id = str(item.get("id") or "").strip()
-        file_name = str(item.get("file") or item.get("path") or "").strip()
-        if not ev_id:
-            result.add("MISSING_EVIDENCE_ID", "error", "evidence entry missing id", "registry/evidence.yaml")
-            continue
-        if not file_name or Path(file_name).is_absolute() or ".." in Path(file_name).parts:
-            result.add("BAD_EVIDENCE_PATH", "error", f"evidence {ev_id} must use repo-relative file", "registry/evidence.yaml", ev_id)
-        if not _valid_lines(item.get("lines")):
-            result.add("BAD_EVIDENCE_LINES", "error", f"evidence {ev_id} has invalid lines", "registry/evidence.yaml", ev_id)
-        fingerprint = _canonical_json({k: item.get(k) for k in ("file", "path", "lines", "symbol", "kind", "source_hash", "excerpt_hash")})
-        prev = seen_content.get(ev_id)
-        if prev and prev != fingerprint:
-            result.add("EVIDENCE_ID_CONFLICT", "error", f"evidence {ev_id} has conflicting definitions", "registry/evidence.yaml", ev_id)
-        seen_content[ev_id] = fingerprint
-        if item.get("fallback_status") and not item.get("cbm_query"):
-            result.add("FALLBACK_WITHOUT_CBM_QUERY", "warning", f"evidence {ev_id} fallback should record cbm_query", "registry/evidence.yaml", ev_id)
-
-    for rel, doc in docs.items():
-        for refs, path in _find_keys(doc, "evidence_refs"):
-            if not isinstance(refs, (list, dict)):
-                result.add(
-                    "BAD_EVIDENCE_REFS_TYPE",
-                    "error",
-                    "evidence_refs must be a YAML list (or an id-keyed mapping for legacy input)",
-                    rel,
-                    path,
-                )
-                continue
-            ref_values = refs.keys() if isinstance(refs, dict) else refs
-            for ref in ref_values:
-                ref_s = str(ref).strip()
-                if not ref_s or not re.fullmatch(r"(?:EV|SRC)_[A-Z0-9_]+", ref_s):
-                    result.add(
-                        "BAD_EVIDENCE_REF_FORMAT",
-                        "error",
-                        f"evidence ref must be a stable EV_/SRC_ id: {ref_s!r}",
-                        rel,
-                        path,
-                    )
-                    continue
-                if ref_s and ref_s not in evidence_ids:
-                    result.add("DANGLING_EVIDENCE_REF", "error", f"unknown evidence ref {ref_s}", rel, path)
+    for issue in validate_evidence_closure(docs):
+        result.add(issue.code, issue.severity, issue.message, issue.artifact, issue.target)
 
 
 def _validate_relations(docs: dict[str, Any], result: CompileResult) -> None:
@@ -2732,6 +2972,17 @@ def _execute_promotion_transaction(
     )
     _write_transaction_state(uo_root, tx, op_name=op_name, phase=phase, run_id=run_id, proposal_hashes=proposal_hashes)
     canonical_payload = {rel: payloads[rel] for rel in canonical}
+    validation_errors: list[str] = []
+    for rel, text in canonical_payload.items():
+        data, errors = validate_yaml_document(text, rel, phase=phase, run_id=run_id or "")
+        if rel == "kernel/resources.yaml" and not errors:
+            errors.extend(resource_semantic_errors(data, rel, phase=phase, run_id=run_id or ""))
+        validation_errors.extend(f"{rel}: {error.code}: {error.message}" for error in errors)
+    if validation_errors:
+        tx.transaction_status = "rolled_back"
+        tx.failure_reason = "; ".join(validation_errors)
+        _write_transaction_state(uo_root, tx, op_name=op_name, phase=phase, run_id=run_id, proposal_hashes=proposal_hashes)
+        return tx
     canonical_previous = {rel: read_text(uo_root / rel) for rel in canonical if (uo_root / rel).exists()}
     canonical_docs = {rel: _read_yaml_from_text(canonical_payload[rel], rel) for rel in canonical}
     previous_docs = {rel: _read_yaml_from_text(canonical_previous.get(rel, ""), rel) for rel in canonical if rel in canonical_previous}
@@ -2899,10 +3150,13 @@ def _transactional_write_docs(
         for rel in changed:
             path = uo_root / rel
             path.parent.mkdir(parents=True, exist_ok=True)
+            text, errors = serialize_yaml_checked(rel, candidate[rel])
+            if errors:
+                raise ValueError("; ".join(f"{error.code}: {error.message}" for error in errors))
             fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
             temp_path = Path(tmp_name)
             with os.fdopen(fd, "w", encoding="utf-8") as tmp:
-                tmp.write(_to_yaml(candidate[rel]))
+                tmp.write(text)
                 tmp.flush()
                 os.fsync(tmp.fileno())
             temp_paths[rel] = temp_path
@@ -3099,11 +3353,7 @@ def _canonical_json(value: Any) -> str:
 
 def _to_yaml(data: Any) -> str:
     if yaml is not None:
-        class _NoAliasDumper(yaml.SafeDumper):
-            def ignore_aliases(self, data: Any) -> bool:  # type: ignore[override]
-                return True
-
-        return yaml.dump(data, Dumper=_NoAliasDumper, allow_unicode=True, sort_keys=False)
+        return yaml_text(data)
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 

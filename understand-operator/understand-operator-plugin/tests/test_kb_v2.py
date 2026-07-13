@@ -550,10 +550,10 @@ def test_non_flow_promotion_does_not_rewrite_flow_or_kernel_paths(tmp_path: Path
                 "target": "registry/evidence.yaml",
                 "section": "evidence",
                 "merge_mode": "by_id",
-                "entries": [{"id": "EV_PROMO", "file": "op_host/foo.cpp", "lines": [1, 1], "kind": "source_span"}],
-            }
-        ],
-    }
+                    "entries": [{"id": "EV_PROMO", "file": "op_host/foo.cpp", "lines": [1, 1], "symbol": "Foo", "kind": "source_span"}],
+                }
+            ],
+        }
     p1 = base / "archive" / "proposals" / "evidence.yaml"
     p1.write_text(yaml.safe_dump(proposal, sort_keys=False), encoding="utf-8")
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 if __package__ in (None, ""):
@@ -28,6 +29,8 @@ from understand_operator._operator.artifacts import (
     safe_op_name,
     write_text,
 )
+from understand_operator._operator.evidence import validate_evidence_closure
+from understand_operator._operator.yaml_gate import artifact_owner
 from understand_operator._operator.kb_compiler import RELATION_TYPES
 
 try:
@@ -167,7 +170,14 @@ def main(argv: list[str] | None = None) -> int:
     # evidence / source locator checks (lightweight)
     fact_index = parsed.get("evidence/fact_index.yaml")
     source_index = parsed.get("evidence/source_index.yaml")
-    evidence_ok, locator_ok = _check_evidence(fact_index, source_index, warnings, blockers)
+    evidence_ok, locator_ok = _check_evidence(
+        parsed.get("registry/evidence.yaml"),
+        fact_index,
+        source_index,
+        parsed,
+        warnings,
+        blockers,
+    )
     checks["evidence_refs_resolve"] = "pass" if evidence_ok else "fail"
     checks["source_locators_present_for_key_facts"] = "pass" if locator_ok else "fail"
 
@@ -337,8 +347,48 @@ def main(argv: list[str] | None = None) -> int:
         decision=decision,
     )
     write_text(base / "quality.yaml", body)
+    if status == "red":
+        _write_red_gate_repair_queue(base, blockers)
     print(f"Quality gate: {status} / {decision} -> {base / 'quality.yaml'}")
     return 0 if status != "red" else 2
+
+
+def _write_red_gate_repair_queue(base: Path, blockers: list[str]) -> None:
+    grouped: dict[str, list[dict[str, str]]] = {}
+    for blocker in blockers:
+        artifact = _artifact_from_blocker(blocker)
+        owner = artifact_owner(artifact)
+        grouped.setdefault(owner, []).append(
+            {
+                "artifact": artifact,
+                "message": blocker,
+                "repair_action": "resume owner and rerun phase barrier, final compiler, and quality gate",
+            }
+        )
+    payload = {
+        "version": 1,
+        "status": "blocked",
+        "error_code": "RED_GATE_REMEDIATION_INCOMPLETE",
+        "generated_at": datetime.now(tz=timezone.utc).isoformat(),
+        "groups": grouped,
+    }
+    if yaml is not None:
+        text = yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
+    else:
+        import json
+
+        text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    write_text(base / "archive" / "runs" / "red_gate_repair_queue.yaml", text)
+
+
+def _artifact_from_blocker(blocker: str) -> str:
+    match = re.search(r"\(([^()]+\.(?:yaml|yml|md))\)", blocker)
+    if match:
+        return match.group(1).replace("\\", "/")
+    match = re.search(r"\b((?:registry|tiling|flow|kernel|cross_layer|query|contracts|evidence|test)/[A-Za-z0-9_./-]+\.(?:yaml|yml|md))\b", blocker)
+    if match:
+        return match.group(1).replace("\\", "/")
+    return "quality.yaml"
 
 
 def _check_tiling_archive(base: Path, warnings: list[str], blockers: list[str]) -> bool:
@@ -415,13 +465,24 @@ def _check_domain_indexes(base: Path, warnings: list[str]) -> list[str]:
 
 
 def _check_evidence(
+    registry_evidence: object,
     fact_index: object,
     source_index: object,
+    parsed_docs: dict[str, object],
     warnings: list[str],
     blockers: list[str],
 ) -> tuple[bool, bool]:
     evidence_ok = True
     locator_ok = True
+    closure_docs = dict(parsed_docs)
+    closure_docs["registry/evidence.yaml"] = registry_evidence
+    closure_docs["evidence/fact_index.yaml"] = fact_index
+    closure_docs["evidence/source_index.yaml"] = source_index
+    closure_issues = validate_evidence_closure(closure_docs)
+    if closure_issues:
+        evidence_ok = False
+        for issue in closure_issues:
+            blockers.append(f"{issue.code}: {issue.message} ({issue.artifact})")
     if not isinstance(fact_index, dict):
         blockers.append("evidence/fact_index.yaml missing structure")
         return False, False
@@ -1006,7 +1067,7 @@ def _read_yaml(path: Path) -> object:
     if yaml is None or not path.exists():
         return {}
     try:
-        return yaml.safe_load(read_text(path)) or {}
+        return yaml.safe_load(path.read_text(encoding="utf-8-sig")) or {}
     except Exception:  # noqa: BLE001
         return {}
 

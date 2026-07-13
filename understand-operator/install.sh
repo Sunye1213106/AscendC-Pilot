@@ -27,12 +27,20 @@ for name in "${SKILL_NAMES[@]}"; do
     exit 1
   fi
   rm -rf "$dest"
+  if [ -e "$dest" ]; then
+    echo "Cleanup failed: $dest still exists" >&2
+    exit 1
+  fi
   ln -s "$src" "$dest"
   echo "Installed skill: $dest -> $src"
 done
 
 if [ -d "$PLUGIN_ROOT" ]; then
   rm -rf "$PLUGIN_LINK"
+  if [ -e "$PLUGIN_LINK" ]; then
+    echo "Cleanup failed: $PLUGIN_LINK still exists" >&2
+    exit 1
+  fi
   ln -s "$PLUGIN_ROOT" "$PLUGIN_LINK"
   echo "Installed plugin: $PLUGIN_LINK -> $PLUGIN_ROOT"
 fi

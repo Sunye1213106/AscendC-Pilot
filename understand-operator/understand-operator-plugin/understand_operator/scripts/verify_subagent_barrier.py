@@ -21,6 +21,12 @@ from understand_operator._operator.artifacts import (
     write_json,
 )
 from understand_operator._operator.kb_compiler import RELATION_TYPES
+from understand_operator._operator.yaml_gate import (
+    YamlGateError,
+    owner_retry_report,
+    resource_semantic_errors,
+    validate_yaml_document,
+)
 
 
 PHASE_HOST_FLOW = "host_flow"
@@ -76,17 +82,36 @@ def _yaml_problem(rel_path: str, text: str) -> str | None:
     """
     if not rel_path.endswith((".yaml", ".yml")):
         return None
-    if yaml is None:
-        return "PyYAML is unavailable; cannot validate YAML"
-    try:
-        data = yaml.safe_load(text)
-    except yaml.YAMLError as exc:
-        return f"invalid YAML: {exc}"
-    if data is None:
-        return "empty YAML document"
-    if not isinstance(data, dict):
+    _data, errors = validate_yaml_document(text, rel_path, required_sections=())
+    if not errors:
+        return None
+    first = errors[0]
+    if first.code == "YAML_SYNTAX_ERROR":
+        return f"invalid YAML: {first.message}"
+    if first.code == "YAML_ROOT_NOT_MAPPING":
         return "YAML root must be a mapping"
+    if first.code == "REQUIRED_SECTION_EMPTY":
+        return "empty YAML document"
+    return f"{first.code}: {first.message}"
     return None
+
+
+def _yaml_gate_errors(rel_path: str, text: str, *, phase: str) -> list[YamlGateError]:
+    data, errors = validate_yaml_document(text, rel_path, phase=phase)
+    if rel_path == "kernel/resources.yaml" and not errors:
+        errors.extend(resource_semantic_errors(data, rel_path, phase=phase))
+    return errors
+
+
+def _stale_error_code(item: str) -> str:
+    if "YAML root must be a mapping" in item:
+        return "YAML_ROOT_NOT_MAPPING"
+    if "invalid YAML" in item:
+        return "YAML_SYNTAX_ERROR"
+    if "empty YAML" in item:
+        return "REQUIRED_SECTION_EMPTY"
+    match = re.search(r"\(([A-Z_]+)", item)
+    return match.group(1) if match else "YAML_SCHEMA_ERROR"
 
 
 def _id_contract_problems(rel_path: str, text: str) -> list[str]:
@@ -302,6 +327,7 @@ class BarrierResult:
     missing: list[str]
     stale: list[str]
     message: str
+    errors: list[dict[str, Any]] | None = None
 
 
 def _approved_task_ids(uo_root: Path) -> list[str]:
@@ -466,6 +492,8 @@ def verify_host_flow_barrier(uo_root: Path) -> BarrierResult:
         yaml_problem = _yaml_problem(rel, text)
         if yaml_problem:
             stale.append(f"{rel} ({yaml_problem})")
+            for error in _yaml_gate_errors(rel, text, phase=PHASE_HOST_FLOW):
+                stale.append(f"{rel} ({error.code})")
             continue
         for problem in _id_contract_problems(rel, text):
             stale.append(f"{rel} ({problem})")
@@ -497,7 +525,12 @@ def verify_host_flow_barrier(uo_root: Path) -> BarrierResult:
         if stale:
             parts.append(f"still placeholder: {', '.join(stale)}")
         message = "; ".join(parts)
-    return BarrierResult(ok, PHASE_HOST_FLOW, missing, stale, message)
+    errors = []
+    for item in missing + stale:
+        rel = item.split(" ", 1)[0]
+        if rel.endswith((".yaml", ".yml")):
+            errors.append(owner_retry_report({"artifact": rel, "error_code": "MANIFEST_INCOMPLETE", "error_message": item}, phase=PHASE_HOST_FLOW))
+    return BarrierResult(ok, PHASE_HOST_FLOW, missing, stale, message, errors)
 
 
 def verify_kernel_path_barrier(uo_root: Path, task_ids: list[str]) -> BarrierResult:
@@ -518,6 +551,8 @@ def verify_kernel_path_barrier(uo_root: Path, task_ids: list[str]) -> BarrierRes
             if problem:
                 stale.append(f"{rel} ({problem})")
                 continue
+            for error in _yaml_gate_errors(rel, text, phase=PHASE_KERNEL_PATH):
+                stale.append(f"{rel} ({error.code}: {error.message})")
             for detail in _id_contract_problems(rel, text) + _semantic_contract_problems(rel, text):
                 stale.append(f"{rel} ({detail})")
         # ensure each approved task appears in paths.yaml
@@ -562,6 +597,8 @@ def verify_kernel_path_barrier(uo_root: Path, task_ids: list[str]) -> BarrierRes
                 if yaml_problem:
                     stale.append(f"{rel} ({yaml_problem})")
                     continue
+                for error in _yaml_gate_errors(rel, text, phase=PHASE_KERNEL_PATH):
+                    stale.append(f"{rel} ({error.code}: {error.message})")
                 for problem in _id_contract_problems(rel, text):
                     stale.append(f"{rel} ({problem})")
                 for problem in _semantic_contract_problems(rel, text):
@@ -591,7 +628,13 @@ def verify_kernel_path_barrier(uo_root: Path, task_ids: list[str]) -> BarrierRes
 
     ok = not missing and not stale
     message = "kernel_path barrier passed" if ok else f"missing: {', '.join(missing + stale)}"
-    return BarrierResult(ok, PHASE_KERNEL_PATH, missing, stale, message)
+    errors = []
+    for item in missing + stale:
+        rel = item.split(" ", 1)[0]
+        if rel.endswith((".yaml", ".yml")):
+            code = _stale_error_code(item)
+            errors.append(owner_retry_report({"artifact": rel, "error_code": code, "error_message": item}, phase=PHASE_KERNEL_PATH))
+    return BarrierResult(ok, PHASE_KERNEL_PATH, missing, stale, message, errors)
 
 
 def write_barrier_report(uo_root: Path, result: BarrierResult) -> Path:
@@ -601,6 +644,7 @@ def write_barrier_report(uo_root: Path, result: BarrierResult) -> Path:
         "checked_at": datetime.now(tz=timezone.utc).isoformat(),
         "missing": result.missing,
         "stale": result.stale,
+        "errors": result.errors or [],
         "message": result.message,
     }
     out_dir = uo_root / "archive" / "runs"

@@ -54,12 +54,22 @@ $PluginLinks = @{
 if ($Uninstall) {
     foreach ($name in $SkillNames) {
         $dest = Join-Path $TargetRoot $name
-        if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+        if (Test-Path -LiteralPath $dest) {
+            Remove-Item -LiteralPath $dest -Recurse -Force
+            if (Test-Path -LiteralPath $dest) {
+                throw "Cleanup failed: $dest still exists"
+            }
+        }
         Write-Host "Removed skill link: $dest"
     }
     if ($PluginLinks.ContainsKey($Platform)) {
         $pluginDest = $PluginLinks[$Platform]
-        if (Test-Path $pluginDest) { Remove-Item $pluginDest -Recurse -Force }
+        if (Test-Path -LiteralPath $pluginDest) {
+            Remove-Item -LiteralPath $pluginDest -Recurse -Force
+            if (Test-Path -LiteralPath $pluginDest) {
+                throw "Cleanup failed: $pluginDest still exists"
+            }
+        }
         Write-Host "Removed plugin link: $pluginDest"
     }
     exit 0
@@ -73,7 +83,12 @@ foreach ($name in $SkillNames) {
         Write-Error "Missing skill source: $src"
     }
     $dest = Join-Path $TargetRoot $name
-    if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+    if (Test-Path -LiteralPath $dest) {
+        Remove-Item -LiteralPath $dest -Recurse -Force
+        if (Test-Path -LiteralPath $dest) {
+            throw "Cleanup failed: $dest still exists"
+        }
+    }
     New-Item -ItemType Junction -Path $dest -Target $src | Out-Null
     Write-Host "Installed skill: $dest -> $src"
 }
@@ -81,7 +96,12 @@ foreach ($name in $SkillNames) {
 # Prompts + agents live under plugin root; agents need them for human-review UX (question UI).
 if ($PluginLinks.ContainsKey($Platform) -and (Test-Path $PluginRoot)) {
     $pluginDest = $PluginLinks[$Platform]
-    if (Test-Path $pluginDest) { Remove-Item $pluginDest -Recurse -Force }
+    if (Test-Path -LiteralPath $pluginDest) {
+        Remove-Item -LiteralPath $pluginDest -Recurse -Force
+        if (Test-Path -LiteralPath $pluginDest) {
+            throw "Cleanup failed: $pluginDest still exists"
+        }
+    }
     New-Item -ItemType Junction -Path $pluginDest -Target $PluginRoot | Out-Null
     Write-Host "Installed plugin: $pluginDest -> $PluginRoot"
 }

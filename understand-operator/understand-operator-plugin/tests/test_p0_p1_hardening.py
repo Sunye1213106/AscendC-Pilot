@@ -14,7 +14,17 @@ if str(ROOT) not in sys.path:
 
 from understand_operator._operator import kb_compiler
 from understand_operator._operator.artifacts import init_operator_layout, operator_root
+from understand_operator._operator.evidence import validate_evidence_closure
+from understand_operator._operator.install_check import compare_installed_skill
 from understand_operator._operator.kb_compiler import promote_kb, validate_kb
+from understand_operator._operator.yaml_gate import (
+    artifact_owner,
+    compare_semantic_summaries,
+    semantic_summary,
+    serialize_yaml_checked,
+    syntax_only_repair,
+    write_yaml_checked,
+)
 from understand_operator.scripts.kb_query_export import export_context_slice, export_view
 from understand_operator.scripts.kb_query_export import main as kb_query_export_main
 from understand_operator.scripts.macro_scope_scan import main as macro_scope_scan_main
@@ -30,6 +40,7 @@ from understand_operator.scripts.verify_subagent_barrier import (
     _proposal_contract_problems,
     _semantic_contract_problems,
     _yaml_problem,
+    verify_kernel_path_barrier,
 )
 from understand_operator.scripts.quality_gate import (
     _check_cross_layer_graph_completeness,
@@ -255,6 +266,270 @@ def test_compiler_rejects_non_stable_evidence_ref(tmp_path: Path) -> None:
     result = promote_kb(base, "DemoOp", phase="phase2", proposal_paths=[path], run_id="bad_evidence_ref")
 
     assert any(issue.code == "BAD_EVIDENCE_REF_FORMAT" for issue in result.issues)
+
+
+def test_syntax_only_repair_preserves_resource_scalars() -> None:
+    text = '- name: "dqGm (KP_001)", direction: out, dtype: "T"\n'
+    repaired, errors = syntax_only_repair(text, "kernel/resources.yaml", phase="kernel_path")
+
+    assert errors == []
+    after = yaml.safe_load(repaired)
+    assert after == [{"name": "dqGm (KP_001)", "direction": "out", "dtype": "T"}]
+    assert after[0]["name"] == "dqGm (KP_001)"
+    assert after[0]["dtype"] == "T"
+
+
+def test_semantic_summary_reports_condition_dropped() -> None:
+    before = {
+        "buffers": [
+            {"id": "BUF_ROPE", "name": "rope", "producer": "P", "consumer": "C", "condition": "isRope"},
+            {"id": "BUF_SINK", "name": "sink", "producer": "P", "consumer": "C", "condition": "isSink"},
+            {"id": "BUF_PRE", "name": "pre", "producer": "P", "consumer": "C", "condition": "enablePreSfmg"},
+        ]
+    }
+    after = copy.deepcopy(before)
+    after["buffers"] = after["buffers"][:2]
+
+    errors = compare_semantic_summaries(
+        semantic_summary(before),
+        semantic_summary(after),
+        "kernel/resources.yaml",
+        phase="kernel_path",
+    )
+
+    assert any(error.code in {"CONDITION_DROPPED", "SEMANTIC_DRIFT", "ENTRY_COUNT_CHANGED"} for error in errors)
+
+
+def test_checked_yaml_blocks_direct_canonical_write_and_preserves_old_file(tmp_path: Path) -> None:
+    path = tmp_path / "kernel" / "resources.yaml"
+    path.parent.mkdir()
+    path.write_text("version: 1\nresources: []\n", encoding="utf-8")
+
+    with pytest.raises(PermissionError):
+        write_yaml_checked(path, {"version": 1}, artifact="kernel/resources.yaml", writer="orchestrator")
+
+    assert path.read_text(encoding="utf-8") == "version: 1\nresources: []\n"
+
+    with pytest.raises(ValueError):
+        write_yaml_checked(path, {"version": 1, "resources": ""}, artifact="kernel/resources.yaml", writer="promoter")
+
+    assert path.read_text(encoding="utf-8") == "version: 1\nresources: []\n"
+
+
+def test_orchestrator_proposal_cannot_write_owned_canonical(tmp_path: Path) -> None:
+    _repo_root, base = _repo(tmp_path)
+    proposal = _minimal_proposal(
+        proposal_id="PROP_ORCH_WRITE",
+        producer={"agent": "orchestrator", "phase": "phase2"},
+    )
+    proposal["canonical_updates"][1]["target"] = "tiling/variables.yaml"
+    proposal["canonical_updates"][1]["section"] = "variables"
+    path = base / "archive" / "proposals" / "orchestrator.yaml"
+    path.write_text(yaml.safe_dump(proposal, sort_keys=False), encoding="utf-8")
+
+    result = promote_kb(base, "DemoOp", phase="phase2", proposal_paths=[path], run_id="run_orchestrator")
+
+    assert result.status == "fail"
+    assert any(issue.code == "CANONICAL_DIRECT_WRITE" for issue in result.issues)
+
+
+def test_malformed_kernel_resources_routes_retry_to_kernel_owner(tmp_path: Path) -> None:
+    _repo_root, base = _repo(tmp_path)
+    (base / "kernel" / "paths.yaml").write_text(
+        yaml.safe_dump({"kernel_paths": [{"id": "KPATH_MAIN", "task_id": "TASK_1"}]}, sort_keys=False),
+        encoding="utf-8",
+    )
+    (base / "kernel" / "pipeline.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "pipelines": {"KPATH_MAIN": {"stages": [{"id": "PIPE_LOAD"}]}},
+                "stages": [{"id": "PIPE_LOAD"}],
+                "resources": [],
+                "compute_step_alignment": [{"id": "CL_TO_PIPE", "compute_step_id": "COMP_MAIN", "pipeline_stage_id": "PIPE_LOAD"}],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (base / "kernel" / "resources.yaml").write_text(
+        '- name: "dqGm (KP_001)", direction: out, dtype: "T"\n',
+        encoding="utf-8",
+    )
+
+    result = verify_kernel_path_barrier(base, ["TASK_1"])
+
+    assert result.ok is False
+    assert any(error.get("owner") == "uo-kernel-path" for error in result.errors or [])
+    assert any(error.get("error_code") == "YAML_SYNTAX_ERROR" for error in result.errors or [])
+    assert artifact_owner("kernel/resources.yaml") == "uo-kernel-path"
+
+
+def test_placeholder_registry_variables_fails_then_real_proposal_clears_placeholder(tmp_path: Path) -> None:
+    _repo_root, base = _repo(tmp_path)
+    result = validate_kb(base, "DemoOp", phase="final", write_outputs=False)
+    assert any(issue.code == "PLACEHOLDER_ARTIFACT" and issue.artifact == "registry/variables.yaml" for issue in result.issues)
+
+    proposal = _minimal_proposal()
+    path = base / "archive" / "proposals" / "registry_variable.yaml"
+    path.write_text(yaml.safe_dump(proposal, sort_keys=False), encoding="utf-8")
+    promote_kb(base, "DemoOp", phase="phase2", proposal_paths=[path], run_id="registry_variable")
+
+    result_after = validate_kb(base, "DemoOp", phase="phase2", write_outputs=False)
+    assert not any(issue.code == "PLACEHOLDER_ARTIFACT" and issue.artifact == "registry/variables.yaml" for issue in result_after.issues)
+
+
+def test_evidence_registry_closure_requires_registry_entry() -> None:
+    docs = {
+        "registry/evidence.yaml": {"evidence": []},
+        "evidence/fact_index.yaml": {
+            "facts": {"FACT_TILING": {"evidence_refs": ["EV_TILING_KEY_SETTER"], "source_locator": "op_host/foo.cpp:1"}},
+            "evidence_refs": {"EV_TILING_KEY_SETTER": {"registry_ref": "EV_TILING_KEY_SETTER"}},
+        },
+        "evidence/source_index.yaml": {
+            "source_spans": {"EV_TILING_KEY_SETTER": {"registry_ref": "EV_TILING_KEY_SETTER"}}
+        },
+    }
+    issues = validate_evidence_closure(docs)
+    assert {issue.code for issue in issues} >= {"DANGLING_EVIDENCE_REF", "EVIDENCE_REGISTRY_MISSING_ENTRY", "FACT_INDEX_REGISTRY_MISMATCH", "SOURCE_INDEX_REGISTRY_MISMATCH"}
+
+    docs["registry/evidence.yaml"]["evidence"] = [
+        {
+            "id": "EV_TILING_KEY_SETTER",
+            "file": "op_host/foo.cpp",
+            "lines": [1, 3],
+            "symbol": "SetTilingKey",
+            "kind": "host_tiling",
+            "status": "confirmed",
+        }
+    ]
+    assert validate_evidence_closure(docs) == []
+
+
+def test_quality_and_compiler_both_fail_dangling_evidence(tmp_path: Path) -> None:
+    _repo_root, base = _repo(tmp_path)
+    (base / "evidence" / "fact_index.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "facts": {"FACT_BAD": {"evidence_refs": ["EV_MISSING"], "source_locator": "op_host/foo.cpp:1"}},
+                "evidence_refs": {"EV_MISSING": {"registry_ref": "EV_MISSING"}},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    result = validate_kb(base, "DemoOp", phase="final", write_outputs=False)
+    assert any(issue.code in {"DANGLING_EVIDENCE_REF", "EVIDENCE_REGISTRY_MISSING_ENTRY"} for issue in result.issues)
+
+    assert quality_gate_main([str(base.parents[1]), "--op-name", "DemoOp"]) == 2
+    quality = yaml.safe_load((base / "quality.yaml").read_text(encoding="utf-8"))
+    assert quality["checks"]["evidence_refs_resolve"] == "fail"
+    assert quality["checks"]["kb_compiler_passed"] == "fail"
+    queue = yaml.safe_load((base / "archive" / "runs" / "red_gate_repair_queue.yaml").read_text(encoding="utf-8"))
+    assert queue["error_code"] == "RED_GATE_REMEDIATION_INCOMPLETE"
+    assert queue["groups"]
+
+
+def test_canonical_proposal_rejects_bad_and_intermediate_ids(tmp_path: Path) -> None:
+    _repo_root, base = _repo(tmp_path)
+    proposal = _minimal_proposal(proposal_id="PROP_BAD_IDS")
+    proposal["canonical_updates"].append(
+        {
+            "target": "registry/evidence.yaml",
+            "section": "evidence",
+            "merge_mode": "by_id",
+            "entries": [{"id": "EV_T_host_entry", "file": "op_host/foo.cpp", "lines": [1], "symbol": "Foo", "kind": "source_span"}],
+        }
+    )
+    proposal["canonical_updates"].append(
+        {
+            "target": "tiling/families.yaml",
+            "section": "families",
+            "merge_mode": "by_id",
+            "entries": [{"id": "TF_MAIN"}],
+        }
+    )
+    proposal["canonical_updates"].append(
+        {
+            "target": "tiling/constraints.yaml",
+            "section": "relations",
+            "merge_mode": "by_id",
+            "entries": [{"id": "FRO_001", "type": "implies"}],
+        }
+    )
+    path = base / "archive" / "proposals" / "bad_ids.yaml"
+    path.write_text(yaml.safe_dump(proposal, sort_keys=False), encoding="utf-8")
+
+    result = promote_kb(base, "DemoOp", phase="phase2", proposal_paths=[path], run_id="bad_ids")
+
+    assert result.status == "fail"
+    assert any(issue.code == "BAD_STABLE_ID" and issue.target == "EV_T_host_entry" for issue in result.issues)
+    assert any(issue.code == "BAD_STABLE_ID" and issue.target == "TF_MAIN" for issue in result.issues)
+    assert any(issue.code == "INTERMEDIATE_ID_IN_CANONICAL" and issue.target == "FRO_001" for issue in result.issues)
+
+
+def test_structured_id_migration_updates_refs_without_rewriting_prose() -> None:
+    docs = {
+        "tiling/families.yaml": {
+            "families": [{"id": "TF_MAIN", "description": "Do not rewrite prose TF_MAIN"}],
+        },
+        "kernel/paths.yaml": {
+            "kernel_paths": [{"id": "KPATH_MAIN", "source_family": "TF_MAIN", "notes": "source excerpt mentions TF_MAIN"}],
+        },
+        "contracts/testcase.yaml": {
+            "coverage_obligations": {"families": [{"id": "COV_MAIN", "family_id": "TF_MAIN"}]},
+        },
+    }
+    result = kb_compiler.CompileResult(op_name="DemoOp")
+    migrated = kb_compiler.migrate_stable_ids(
+        docs,
+        [{"old_id": "TF_MAIN", "new_id": "FAM_MAIN", "kind": "family", "reason": "canonical namespace migration"}],
+        result,
+    )
+
+    assert migrated["tiling/families.yaml"]["families"][0]["id"] == "FAM_MAIN"
+    assert migrated["tiling/families.yaml"]["families"][0]["legacy_ids"] == ["TF_MAIN"]
+    assert migrated["kernel/paths.yaml"]["kernel_paths"][0]["source_family"] == "FAM_MAIN"
+    assert migrated["kernel/paths.yaml"]["kernel_paths"][0]["notes"] == "source excerpt mentions TF_MAIN"
+    assert migrated["contracts/testcase.yaml"]["coverage_obligations"]["families"][0]["family_id"] == "FAM_MAIN"
+
+
+def test_unicode_yaml_round_trip_preserves_math_symbols() -> None:
+    data = {"expression": "A → B, x ∈ [0, 10), a ≠ b, y ≥ 0"}
+    text, errors = serialize_yaml_checked("scratch.yaml", data)
+    assert errors == []
+    loaded = yaml.safe_load(text)
+    assert loaded["expression"] == data["expression"]
+    assert "->" not in text
+    assert " in " not in text
+
+
+def test_installed_skill_version_mismatch_reports(tmp_path: Path) -> None:
+    repo_plugin = tmp_path / "repo_plugin"
+    installed = tmp_path / "skills" / "understand-operator"
+    (repo_plugin / "skills" / "understand-operator").mkdir(parents=True)
+    (repo_plugin / "understand_operator" / "_operator").mkdir(parents=True)
+    (repo_plugin / "prompts").mkdir()
+    installed.mkdir(parents=True)
+    (installed.parent / "understand-operator-plugin" / "understand_operator" / "_operator").mkdir(parents=True)
+    (installed.parent / "understand-operator-plugin" / "prompts").mkdir(parents=True)
+    for rel in (
+        "skills/understand-operator/quality_gate.py",
+        "skills/understand-operator/prepare_operator.py",
+        "skills/understand-operator/verify_subagent_barrier.py",
+        "skills/understand-operator/SKILL.md",
+        "understand_operator/_operator/kb_compiler.py",
+        "prompts/08_evidence_consistency_agent.md",
+        "prompts/10_quality_gate_agent.md",
+    ):
+        repo_path = repo_plugin / rel
+        repo_path.parent.mkdir(parents=True, exist_ok=True)
+        repo_path.write_text("repo", encoding="utf-8")
+    (installed / "quality_gate.py").write_text("installed-old", encoding="utf-8")
+
+    report = compare_installed_skill(repo_plugin, installed)
+
+    assert report["consistent"] is False
+    assert report["error_code"] == "INSTALLED_SKILL_VERSION_MISMATCH"
 
 
 def _minimal_proposal(**overrides: object) -> dict:
@@ -682,6 +957,7 @@ def test_testcase_contract_v2_layout_and_query_export(tmp_path: Path) -> None:
         "kernel/pipeline.yaml",
         "kernel/resources.yaml",
         "cross_layer/impact_graph.yaml",
+        "cross_layer/tiling_to_kernel.yaml",
         "flow/golden_model.yaml",
         "flow/numerical_model.yaml",
         "quality.yaml",

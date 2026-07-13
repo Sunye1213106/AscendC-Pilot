@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from testcase_agent import init as init_mod
+from testcase_agent.cli import plan_main
 from testcase_agent.constraint_ir import build_constraint_ir
 from testcase_agent.hashing import semantic_snapshot_hash
 from testcase_agent.init import TgInitError, tg_init
@@ -96,6 +97,7 @@ def _payload(contract: dict[str, Any] | None = None, quality: dict[str, Any] | N
             "kernel/pipeline.yaml": {"pipelines": [], "stages": [], "resources": []},
             "kernel/resources.yaml": {"buffers": [], "sync_events": [], "workspaces": [], "resources": []},
             "cross_layer/impact_graph.yaml": {"nodes": [], "edges": [], "impacts": []},
+            "cross_layer/tiling_to_kernel.yaml": {"nodes": [], "edges": [], "relations": [], "links": []},
             "flow/golden_model.yaml": {"golden_inputs": [], "golden_outputs": [], "golden_generation_contract": []},
             "flow/numerical_model.yaml": {"dtype_policy": [], "tolerance_policy": [], "randomness_policy": "deterministic"},
             "quality.yaml": quality or {"status": "pass", "decision": "pass"},
@@ -151,6 +153,7 @@ def _real_uo_fixture(uo: Path, contract: dict[str, Any] | None = None) -> None:
         "kernel/resources.yaml": {"buffers": [], "sync_events": [], "workspaces": [], "resources": []},
         "flow/golden_model.yaml": {"golden_inputs": [], "golden_outputs": [], "golden_generation_contract": []},
         "flow/numerical_model.yaml": {"dtype_policy": [], "tolerance_policy": [], "randomness_policy": "deterministic"},
+        "cross_layer/tiling_to_kernel.yaml": {"nodes": [], "edges": [], "relations": [], "links": []},
         "registry/evidence.yaml": {"evidence": []},
     }
     for rel, data in files.items():
@@ -538,6 +541,7 @@ def test_export_view_and_context_slice_are_merged(tmp_path: Path) -> None:
         "kernel/pipeline.yaml",
         "kernel/resources.yaml",
         "cross_layer/impact_graph.yaml",
+        "cross_layer/tiling_to_kernel.yaml",
         "flow/golden_model.yaml",
         "flow/numerical_model.yaml",
         "quality.yaml",
@@ -795,7 +799,7 @@ def test_l1_covers_reachable_runtime_branch_sides_and_skips_compile_fixed() -> N
     assert all(item["coverage_origin"]["artifact"] == "kernel/branches.yaml" for item in branches)
 
 
-def test_l2_includes_boundaries_and_expected_rejects() -> None:
+def test_l1_includes_boundaries_and_expected_rejects() -> None:
     files = _payload()["files"]
     files["tiling/constraints.yaml"] = {
         "relations": [],
@@ -803,15 +807,15 @@ def test_l2_includes_boundaries_and_expected_rejects() -> None:
         "input_realization": {},
         "key_unreachable": [{"id": "COV_BAD_KEY", "matches": {"KEY_MODE": "bad"}, "reason": "host rejects"}],
     }
-    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L2")
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L1")
 
-    assert any(item["test_level"] == "L2" and item.get("target_value") == 1 for item in plan["obligations"])
+    assert any(item["test_level"] == "L1" and item.get("target_value") == 1 for item in plan["obligations"])
     rejects = [item for item in plan["obligations"] if item.get("expected_behavior") == "reject"]
     assert rejects
     assert all(item["case_expectation"]["expected_result"] == "reject" for item in rejects)
 
 
-def test_l3_expands_template_blocks_applies_pruning_and_realizes_keys() -> None:
+def test_l2_expands_template_blocks_applies_pruning_and_realizes_keys() -> None:
     files = _payload()["files"]
     files["tiling/exhaustive_key_space.yaml"] = {
         "field_order": ["layout", "post_nz", "axis"],
@@ -829,10 +833,14 @@ def test_l3_expands_template_blocks_applies_pruning_and_realizes_keys() -> None:
         "relations": [],
         "variable_constraints": [],
         "input_realization": {"CON_IR_TND": {"matches": {"layout": "TND"}}},
-        "tiling_key_pruning": [{"id": "PRUNE_POST_FALSE_AXIS_1", "matches": {"post_nz": False, "axis": 1}}],
+        "tiling_key_pruning": {
+            "performed": True,
+            "pruned_combinations": [{"id": "PRUNE_POST_FALSE_AXIS_1", "pattern": {"post_nz": False, "axis": 1}}],
+        },
+        "tiling_key_merging": {"performed": False, "merged_groups": []},
     }
     files["registry/aliases.yaml"] = {"aliases": [{"alias": "PostNz", "target_id": "KBR_POST_NZ"}], "conflicts": []}
-    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L3", focus="只测试 TND 场景中 PostNz 分支的所有 TilingKey")
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L2", focus="只测试 TND 场景中 PostNz 分支的所有 TilingKey")
 
     stats = plan["semantic_focus"]["tiling_key_coverage"]
     assert stats["raw_expanded_count"] == 4
@@ -842,17 +850,121 @@ def test_l3_expands_template_blocks_applies_pruning_and_realizes_keys() -> None:
     assert all(item["expected_tiling_key"]["post_nz"] is True for item in plan["obligations"])
 
 
-def test_l3_blocks_when_key_has_no_realization() -> None:
+def test_l2_blocks_when_key_has_no_realization() -> None:
     files = _payload()["files"]
     files["tiling/exhaustive_key_space.yaml"] = {
         "field_order": ["axis"],
         "template_blocks": [{"id": "KEY_BLOCK_MAIN", "field_domains": {"axis": [0, 1]}, "product_count": 2}],
     }
     files["tiling/constraints.yaml"] = {"relations": [], "variable_constraints": [], "input_realization": {}}
-    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L3")
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L2")
 
     assert plan["unresolved"]["status"] == "blocked"
     assert plan["semantic_focus"]["tiling_key_coverage"]["unrealized_key_count"] == 2
+
+
+def test_cli_rejects_l3_level() -> None:
+    with pytest.raises(SystemExit):
+        plan_main([".", "--op-name", "DemoOp", "--level", "L3"])
+
+
+def test_focus_false_literal_does_not_become_true() -> None:
+    files = _payload()["files"]
+    files["registry/aliases.yaml"] = {"aliases": [{"alias": "PostNz", "target_id": "KBR_POST_NZ"}], "conflicts": []}
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L1", focus="不走 PostNz")
+
+    assert plan["semantic_focus"]["branch_predicates"] == [{"branch_ref": "KBR_POST_NZ", "state": False}]
+
+
+def test_l2_realization_matches_each_key_independently() -> None:
+    files = _payload()["files"]
+    files["tiling/exhaustive_key_space.yaml"] = {
+        "summary": {"expanded_key_count": 2},
+        "field_order": ["layout"],
+        "template_blocks": [{"id": "B", "field_domains": {"layout": ["TND", "ND"]}, "product_count": 2}],
+    }
+    files["tiling/constraints.yaml"] = {
+        "relations": [],
+        "variable_constraints": [],
+        "input_realization": {"CON_IR_TND": {"matches": {"key_pattern": {"layout": "TND"}}}},
+        "tiling_key_pruning": {"performed": True, "pruned_combinations": []},
+        "tiling_key_merging": {"performed": False, "merged_groups": []},
+    }
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L2")
+
+    by_layout = {item["expected_tiling_key"]["layout"]: item["realization"]["status"] for item in plan["obligations"] if item.get("expected_tiling_key")}
+    assert by_layout == {"TND": "realized", "ND": "unrealized"}
+
+
+def test_l2_ambiguous_realization_blocks() -> None:
+    files = _payload()["files"]
+    files["tiling/exhaustive_key_space.yaml"] = {
+        "summary": {"expanded_key_count": 1},
+        "field_order": ["layout"],
+        "template_blocks": [{"id": "B", "field_domains": {"layout": ["TND"]}, "product_count": 1}],
+    }
+    files["tiling/constraints.yaml"] = {
+        "relations": [],
+        "variable_constraints": [],
+        "input_realization": {
+            "CON_IR_TND_A": {"matches": {"key_pattern": {"layout": "TND"}}},
+            "CON_IR_TND_B": {"matches": {"key_pattern": {"layout": "TND"}}},
+        },
+        "tiling_key_pruning": {"performed": True, "pruned_combinations": []},
+        "tiling_key_merging": {"performed": False, "merged_groups": []},
+    }
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L2")
+
+    assert plan["semantic_focus"]["tiling_key_coverage"]["ambiguous_key_count"] == 1
+    assert plan["unresolved"]["status"] == "blocked"
+
+
+def test_l2_applies_relations_and_merging_and_count_blockers() -> None:
+    files = _payload()["files"]
+    files["tiling/exhaustive_key_space.yaml"] = {
+        "summary": {"expanded_key_count": 4},
+        "field_order": ["a", "b"],
+        "template_blocks": [{"id": "B", "field_domains": {"a": [False, True], "b": [False, True]}, "product_count": 4}],
+    }
+    files["tiling/constraints.yaml"] = {
+        "relations": [{"id": "REL_MUTEX", "relation_type": "mutex", "fields": ["a", "b"]}],
+        "variable_constraints": [],
+        "input_realization": {"CON_IR_ANY": {"matches": {"key_pattern": {}}}},
+        "tiling_key_pruning": {"performed": True, "pruned_combinations": []},
+        "tiling_key_merging": {
+            "performed": True,
+            "merged_groups": [
+                {"id": "CON_MERGE_ZERO", "merged_into": {"a": False, "b": False}, "source_combinations": [{"a": False, "b": False}]}
+            ],
+        },
+    }
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L2")
+    stats = plan["semantic_focus"]["tiling_key_coverage"]
+
+    assert stats["relation_rejected_count"] == 1
+    assert stats["semantic_merge_group_count"] == 1
+    assert stats["reachable_key_count"] == 3
+
+
+def test_l2_product_and_summary_count_mismatch_block() -> None:
+    files = _payload()["files"]
+    files["tiling/exhaustive_key_space.yaml"] = {
+        "summary": {"expanded_key_count": 99},
+        "field_order": ["axis"],
+        "template_blocks": [{"id": "B", "field_domains": {"axis": [0, 1]}, "product_count": 3}],
+    }
+    files["tiling/constraints.yaml"] = {
+        "relations": [],
+        "variable_constraints": [],
+        "input_realization": {"CON_IR_ANY": {"matches": {"key_pattern": {}}}},
+        "tiling_key_pruning": {"performed": True, "pruned_combinations": []},
+        "tiling_key_merging": {"performed": False, "merged_groups": []},
+    }
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L2")
+    blocker_ids = {item["id"] for item in plan["unresolved"]["blocking_hard_obligations"]}
+
+    assert "L2_BLOCK_PRODUCT_COUNT_MISMATCH" in blocker_ids
+    assert "L2_SUMMARY_COUNT_MISMATCH" in blocker_ids
 
 
 def test_focus_unresolved_term_blocks_without_guessing() -> None:

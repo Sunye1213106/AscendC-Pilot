@@ -28,7 +28,7 @@ def plan_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build TestAgent coverage obligations from frozen Understand snapshot")
     parser.add_argument("project_root", type=Path)
     parser.add_argument("--op-name", required=True)
-    parser.add_argument("--level", choices=["L0", "L1", "L2", "L3"], default="L1")
+    parser.add_argument("--level", choices=["L0", "L1", "L2"], default="L1")
     parser.add_argument("--focus", default="")
     args = parser.parse_args(argv)
     try:

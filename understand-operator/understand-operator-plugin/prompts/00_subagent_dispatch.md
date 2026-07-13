@@ -22,7 +22,7 @@ python "$SKILL_DIR/verify_subagent_barrier.py" "$PROJECT_ROOT" --op-name "$OP_NA
 ```
 
 4. **仅当 barrier 返回 `ok: true`**：再从磁盘 `Read` subagent 写的 artifact，进入宿主 phase。
-5. **barrier 失败**：用 Task `resume` 让 subagent 补写，或重新下发；**禁止**宿主自己写 `tiling/*` / `flow/*` / `archive/raw_agents/kernel_paths/*` 冒充完成。
+5. **barrier 失败**：读取 barrier report 的 `errors[]`，按其中 `owner` / `retry_task_id` 恢复原 owner；**禁止**宿主、quality agent、evidence consistency agent 读取 malformed YAML 后整文件重写 canonical artifact。
 
 Subagent 写完产物后必须写 completion manifest（见各 `agents/uo-*.md`）。宿主以 manifest + barrier 脚本为准，不以 Task 文本摘要代替文件校验。
 
@@ -62,6 +62,7 @@ Phase 1 Macro Boundary **完成后直接、静默**进入（不再等 Boundary R
 3. 运行 `verify_subagent_barrier.py --phase host_flow`。
 4. barrier 通过后，再 Read `tiling/*` 与 `flow/*`，进入 Phase 3。
    - barrier 现已检查 `tiling/archive/` 五个强制中间文件（frontier / dispatch_variables / predicate_space / compile_time_bindings / decision_tree）。若仍 pending/空 → resume host subagent，禁止宿主手填。
+5. 运行 `uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase2 --run-id "$RUN_ID"`，再运行 `uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase2`。后续 phase 只读取 promoted canonical artifact。
 
 ## 并行点 2：多个 kernel path
 
@@ -71,7 +72,16 @@ Phase 1 Macro Boundary **完成后直接、静默**进入（不再等 Boundary R
 2. **同一条宿主消息**里为每个 `task_id` 各发一个 `Task` → `uo-kernel-path`。
 3. 等待所有 Task 返回。
 4. 运行 `verify_subagent_barrier.py --phase kernel_path`。
-5. barrier 通过后，再由宿主 Alignment Builder 合并，进入后续 phase。
+5. barrier 通过后，再由宿主 Alignment Builder 编译 proposal 并 promote canonical artifact，随后运行 `uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase4`。未 promote 前不得把 draft 当可信输入。
+
+## YAML / owner integrity hard rules
+
+- 子 Agent 原则上只提交 proposal 或 raw phase output；canonical YAML 只能由 compiler/promoter/validator 脚本原子写入。
+- 不得混用 YAML block mapping 与 flow mapping；所有 YAML 写 manifest 前必须 `yaml.safe_load` 并确认根节点为 mapping。
+- `evidence_refs` 必须是 YAML list，且只能包含 `EV_*` / `SRC_*` 稳定 id。
+- syntax-only repair 只能修正 YAML 表达形式；不得改 scalar 业务内容、资源名、producer/consumer、condition、`::`、`*`、`-double`、括号或模板参数。
+- malformed artifact 必须返回 artifact-owner registry 中的 owner，例如 `kernel/resources.yaml` → `uo-kernel-path`、`tiling/constraints.yaml` → `uo-host-extraction`、`flow/compute_graph.yaml` → `uo-flow-extraction`。
+- 禁止为了通过 quality gate 删除问题条目、合并资源、重命名字段或自然语言改写 C++ 名称/数学表达式。
 
 ## Task prompt 模板
 
@@ -112,5 +122,5 @@ Return a short summary listing files created.
 ## 失败处理
 
 - 若在并行点 1/2 发现自己正在宿主会话里写 `tiling/*`、`flow/*` 或 `archive/raw_agents/kernel_paths/*`，立即停止，改用 Task 重新下发。
-- 若 barrier 失败但 Task 摘要声称完成，以磁盘文件 + manifest 为准，resume subagent 补写。
+- 若 barrier 失败但 Task 摘要声称完成，以磁盘文件 + manifest + barrier report `errors[]` 为准，resume 对应 owner；不要由宿主重写 canonical。
 - 若在非并行 phase 误启 subagent，停止 subagent，改由宿主按 prompt 执行。
