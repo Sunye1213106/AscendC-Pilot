@@ -132,6 +132,75 @@ def _real_uo_fixture(uo: Path, contract: dict[str, Any] | None = None) -> None:
         write_yaml(uo / rel, data)
 
 
+def _mature_final_uo_fixture(repo: Path, op_name: str = "DemoOp") -> Path:
+    add_understand_to_path(repo)
+    from understand_operator._operator.artifacts import init_operator_layout, operator_root
+
+    uo = operator_root(repo, op_name)
+    init_operator_layout(uo, op_name, repo)
+    docs = {
+        "manifest.yaml": {"artifact_version": 1, "layers": ["registry", "tiling", "flow", "kernel", "cross_layer", "contracts"]},
+        "index.yaml": {"canonical_files": ["contracts/testcase.yaml"], "qa_routes": ["testcase-contract"]},
+        "operator.yaml": {"scope": "op", "entrypoints": [op_name], "io": {"inputs": ["x"], "outputs": ["y"]}},
+        "registry/symbols.yaml": {"symbols": [{"id": "SYM_DEMO", "kind": "symbol", "name": op_name}]},
+        "registry/variables.yaml": {"variables": [{"id": "VAR_KEY_SPLIT_AXIS", "kind": "variable", "canonical_name": "split_axis", "data_type": "int"}]},
+        "registry/aliases.yaml": {"aliases": [], "conflicts": []},
+        "registry/evidence.yaml": {"evidence": [{"id": "EV_OPERATOR", "file": "operator.yaml", "lines": [1, 3], "kind": "manual", "source_hash": "x"}]},
+        "tiling/variables.yaml": {"variables": [{"id": "VAR_KEY_SPLIT_AXIS", "data_type": "int"}], "tiling_mechanism": "key"},
+        "tiling/constraints.yaml": {"relations": [], "variable_constraints": [{"id": "CON_AXIS_DOMAIN", "var": "VAR_KEY_SPLIT_AXIS", "domain": {"min": 0, "max": 1}}], "input_realization": []},
+        "tiling/key_space.yaml": {"fields": [{"id": "KEY_SPLIT_AXIS", "kind": "key", "data_type": "int", "values": [0, 1]}], "derived_fields": [], "constants": []},
+        "tiling/families.yaml": {"families": [{"id": "FAM_MAIN", "name": "main"}], "dispatch_tree": {"root": "FAM_MAIN"}},
+        "tiling/data_model.yaml": {"structs": {"S": {"fields": {"splitAxis": {"id": "TDF_SPLIT_AXIS", "canonical_name": "splitAxis"}}}}, "family_to_struct": {"FAM_MAIN": "S"}, "numeric_overlay": []},
+        "tiling/coverage_model.yaml": {"coverage_policy": "minimal", "family_obligations": [{"id": "COV_FAM_MAIN", "family_id": "FAM_MAIN"}], "key_field_obligations": {}, "key_relation_obligations": []},
+        "tiling/evidence_index.yaml": {"symbols": [], "evidence_policy": "manual"},
+        "flow/compute_graph.yaml": {"compute_steps": [{"id": "CL_STEP_MAIN", "kind": "compute"}], "outputs": ["y"]},
+        "flow/dataflow.yaml": {"dataflow_edges": [{"id": "REL_DATAFLOW", "source": "x", "target": "y"}], "tensor_lifecycle": []},
+        "flow/golden_model.yaml": {"golden_inputs": ["x"], "golden_outputs": ["y"], "golden_generation_contract": [{"id": "CON_GOLDEN", "method": "reference"}]},
+        "flow/numerical_model.yaml": {"dtype_policy": ["fp16"], "tolerance_policy": [{"dtype": "fp16", "rtol": 0.001}], "randomness_policy": "deterministic"},
+        "evidence/fact_index.yaml": {"facts": [], "evidence_refs": []},
+        "evidence/source_index.yaml": {"source_spans": [], "symbols": []},
+        "evidence/artifact_dependencies.yaml": {"dependencies": [{"id": "REL_DEP_CONTRACT", "source": "contracts/testcase.yaml", "target": "tiling/coverage_model.yaml"}], "artifact_to_source": {"contracts/testcase.yaml": ["operator.yaml"]}},
+        "evidence/issues.yaml": {"missing": [], "conflicts": [], "warnings": [], "unknowns": []},
+        "kernel/compile_model.yaml": {"template_bindings": [{"id": "KTPL_MAIN", "template": "main"}], "compile_time_configs": [], "compile_variables": [], "compile_decisions": []},
+        "kernel/variables.yaml": {"runtime_variables": [{"id": "KVAR_AXIS", "data_type": "int"}], "tilingdata_reads": [{"id": "TDF_READ_SPLIT_AXIS", "field_id": "TDF_SPLIT_AXIS"}], "path_decision_points": []},
+        "kernel/branches.yaml": {"branches": [{"id": "KBR_HAS_TAIL", "condition": "tail"}], "path_semantics": [], "dataflow_links": [], "resource_links": []},
+        "kernel/paths.yaml": {"kernel_paths": [{"id": "KPATH_MAIN", "template_binding_ids": ["KTPL_MAIN"], "runtime_variable_ids": ["KVAR_AXIS"], "branch_ids": ["KBR_HAS_TAIL"], "implements_compute_steps": ["CL_STEP_MAIN"]}]},
+        "kernel/pipeline.yaml": {"pipelines": [{"id": "PIPE_MAIN"}], "stages": [{"id": "PIPE_STAGE_MAIN"}], "resources": []},
+        "kernel/resources.yaml": {"buffers": [{"id": "BUF_UB"}], "sync_events": [{"id": "SYNC_DONE"}], "workspaces": [], "resources": [{"id": "RES_CORE"}]},
+        "cross_layer/input_to_tiling.yaml": {"nodes": [{"id": "VAR_KEY_SPLIT_AXIS"}], "edges": [], "relations": [], "links": []},
+        "cross_layer/tiling_to_kernel.yaml": {"nodes": [{"id": "VAR_KEY_SPLIT_AXIS"}], "edges": [], "relations": [], "links": []},
+        "cross_layer/variable_lineage.yaml": {"variables": [{"id": "VAR_KEY_SPLIT_AXIS"}], "lineage": [], "relations": [], "edges": []},
+        "cross_layer/behavior_graph.yaml": {"nodes": [{"id": "VAR_KEY_SPLIT_AXIS"}], "edges": []},
+        "cross_layer/impact_graph.yaml": {"nodes": [{"id": "VAR_KEY_SPLIT_AXIS"}], "edges": [], "impacts": [{"id": "REL_IMPACT_AXIS", "source_id": "VAR_KEY_SPLIT_AXIS", "target_id": "KVAR_AXIS"}]},
+        "query/routes.yaml": {"routes": [{"id": "VIEW_TESTCASE", "view": "testcase-contract"}]},
+        "query/terminology.yaml": {"terms": [{"term": "split axis", "id": "KEY_SPLIT_AXIS"}], "aliases": []},
+        "contracts/query.yaml": {"required_response_fields": ["files"], "routes": ["testcase-contract"]},
+        "contracts/code_change.yaml": {"target": op_name, "upstream": ["contracts/testcase.yaml"], "downstream": ["testcase-agent"], "recommended_checks": ["pytest"]},
+        "contracts/pr_review.yaml": {"review_slices": ["testcase"], "recommended_checks": ["pytest"]},
+        "contracts/testcase.yaml": _contract(
+            variables=[{"id": "VAR_KEY_SPLIT_AXIS", "type": "int", "domain": {"min": 0, "max": 1}}],
+            interface={"required_inputs": [], "optional_inputs": [], "outputs": [], "attrs": [], "dtype_layout_domains": [{"id": "FP16_ND"}]},
+            coverage_obligations={
+                "families": [{"id": "COV_FAM_MAIN", "target_refs": ["FAM_MAIN"]}],
+                "tiling_keys": [
+                    {"id": "COV_AXIS_VALID", "field": "split_axis", "values": [1]},
+                    {"id": "COV_AXIS_INVALID", "field": "split_axis", "values": [2]},
+                ],
+                "kernel_paths": [{"id": "COV_PATH_MAIN", "target_refs": ["KPATH_MAIN"]}],
+                "tilingdata": [],
+                "numerical": [],
+                "negative": [],
+            },
+            golden_contract={"inputs": ["x"], "outputs": ["y"], "generation_policy": ["reference"], "tolerance_policy": ["fp16"]},
+        ),
+        "test/contract.yaml": {"input_domain": {"x": "any"}, "typed_constraints": [], "kernel_branch_obligations": [{"id": "KBR_HAS_TAIL"}]},
+        "quality.yaml": {"status": "pass", "checks": ["final"], "decision": "pass"},
+    }
+    for rel, data in docs.items():
+        write_yaml(uo / rel, data)
+    return uo
+
+
 def _patch_intake(monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any], validation: dict[str, Any] | None = None) -> None:
     monkeypatch.setattr(init_mod, "run_final_validation", lambda project_root, op_name, uo_root: validation or _validation())
     monkeypatch.setattr(init_mod, "export_testcase_contract", lambda project_root, op_name, uo_root: payload)
@@ -543,3 +612,93 @@ def test_export_missing_has_clear_error(tmp_path: Path, monkeypatch: pytest.Monk
     assert "testcase-contract export failed" in str(exc.value)
     report = read_yaml(repo / ".testcase-generator" / "DemoOp" / "intake" / "validation_report.yaml")
     assert "Missing canonical files" in report["blocking_issues"][0]["message"]
+
+
+def test_relation_combination_status_conflict_is_hard_blocker_and_keeps_valid_combinations() -> None:
+    files = _payload(
+        coverage={
+            "family_obligations": [],
+            "key_field_obligations": {},
+            "key_relation_obligations": [
+                {
+                    "id": "REL_CONFLICT",
+                    "relation_type": "compatible_set",
+                    "combinations": [
+                        {"KEY_A": 0, "status": "reachable"},
+                        {"KEY_A": 1, "status": "reachable"},
+                        {"KEY_A": 0, "status": "unreachable"},
+                    ],
+                }
+            ],
+        }
+    )["files"]
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"})
+    relations = [item for item in plan["obligations"] if item["kind"] == "tiling_key_relation"]
+    conflict = next(item for item in relations if item["status"] == "conflicting")
+
+    assert any(item.get("target_value") == {"KEY_A": 1} for item in relations)
+    assert conflict["priority"] == "hard"
+    assert conflict["unresolved_reason"] == "RELATION_COMBINATION_STATUS_CONFLICT"
+    assert plan["unresolved"]["status"] == "blocked"
+    assert plan["unresolved"]["blocking_hard_obligations"]
+
+
+def test_nested_relation_item_is_not_treated_as_key_field() -> None:
+    files = _payload(
+        contract=_contract(
+            coverage_obligations={
+                "tiling_keys": [
+                    {
+                        "id": "REL_NESTED",
+                        "constraints": {
+                            "relation_type": "compatible_set",
+                            "combinations": [{"KEY_A": 0}],
+                        },
+                    }
+                ],
+                "tilingdata": [],
+                "kernel_paths": [],
+                "numerical": [],
+                "negative": [],
+            }
+        ),
+        coverage={"family_obligations": [], "key_field_obligations": {}, "key_relation_obligations": []},
+    )["files"]
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"})
+
+    assert len([item for item in plan["obligations"] if item["kind"] == "tiling_key_relation"]) == 1
+    assert not [item for item in plan["obligations"] if item["kind"] == "tiling_key_field_value"]
+
+
+def test_real_final_validation_export_and_phase2_without_mocks(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _mature_final_uo_fixture(repo)
+
+    init_result = tg_init(repo, "DemoOp")
+    plan = tg_plan(repo, "DemoOp")
+    root = repo / ".testcase-generator" / "DemoOp"
+    write_yaml(
+        root / "plan" / "human_supplement.yaml",
+        {
+            "version": 1,
+            "status": "approved",
+            "decision": "approve",
+            "approved_snapshot_hash": init_result["snapshot"]["snapshot_hash"],
+            "approved_plan_hash": plan["plan_hash"],
+            "approved_at": "2026-01-01T00:00:00+00:00",
+            "supplements": [],
+            "notes": "",
+        },
+    )
+    solve = tg_solve(repo, "DemoOp")
+    snapshot = read_json(root / "snapshot" / "understand_contract.json")
+
+    assert init_result["snapshot"]["final_validation"]["status"] == "pass"
+    assert "files" in snapshot and "context_slice" in snapshot
+    assert snapshot["context_slice"]["entities"]
+    assert plan["unresolved"]["contract_gaps"] == []
+    assert any(item["status"] == "sat" and item["model"].get("VAR_KEY_SPLIT_AXIS") == 1 for item in solve["solve_results"])
+    assert any(item["status"] == "error" and item.get("code") == "OBLIGATION_OUTSIDE_DECLARED_DOMAIN" for item in solve["solve_results"])
+    assert not list(root.rglob("*.csv"))
+    assert not (root / "run" / "operator_execution.yaml").exists()

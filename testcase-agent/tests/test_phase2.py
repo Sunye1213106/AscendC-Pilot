@@ -556,3 +556,88 @@ def test_implies_witness_requires_antecedent_true() -> None:
     assert result["solve_results"][0]["status"] == "sat"
     assert result["solve_results"][0]["model"]["VAR_A"] is True
     assert result["solve_results"][0]["model"]["VAR_B"] is True
+
+
+def test_obligation_domain_error_is_local_and_does_not_skip_valid_obligation() -> None:
+    contract = _contract(variables=[{"id": "VAR_KEY_SPLIT_AXIS", "type": "int", "domain": {"min": 0, "max": 1}}])
+    valid = _pending("OB_VALID", constraints={"expr": {"op": "eq", "var": "VAR_KEY_SPLIT_AXIS", "value": 1}})
+    invalid = _pending("OB_INVALID", constraints={"expr": {"op": "eq", "var": "VAR_KEY_SPLIT_AXIS", "value": 2}})
+
+    result = solve_from_docs(_snapshot(contract), _obligations([valid, invalid]), {"decision": "approve"})
+    by_id = {item["obligation_id"]: item for item in result["solve_results"]}
+
+    assert result["constraint_ir"]["compile_errors"]["global"] == []
+    assert by_id["OB_VALID"]["status"] == "sat"
+    assert by_id["OB_INVALID"]["status"] == "error"
+    assert by_id["OB_INVALID"]["code"] == "OBLIGATION_OUTSIDE_DECLARED_DOMAIN"
+    assert any(candidate["source_obligation_ids"] == ["OB_VALID"] for candidate in result["candidates"])
+    assert all("OB_INVALID" not in candidate["covered_obligation_ids"] for candidate in result["candidates"])
+
+
+def test_explicit_int_domains_intersect_and_conflict_globally() -> None:
+    snapshot = _snapshot(
+        _contract(
+            variables=[{"id": "VAR_KEY_SPLIT_AXIS", "type": "int", "domain": {"min": 0, "max": 1}}],
+        )
+    )
+    snapshot["context_slice"] = {"entities": [{"id": "KEY_SPLIT_AXIS", "data_type": "int", "min": 0, "max": 3}]}
+    result = build_constraint_ir(snapshot, _obligations([]), {"decision": "approve"})
+    variable = next(item for item in result.ir["variables"] if item["id"] == "VAR_KEY_SPLIT_AXIS")
+
+    assert variable["domain"]["min"] == 0
+    assert variable["domain"]["max"] == 1
+    assert result.global_errors == []
+
+    conflict_snapshot = _snapshot(_contract(variables=[{"id": "VAR_KEY_SPLIT_AXIS", "type": "int", "domain": {"min": 3, "max": 5}}]))
+    conflict_snapshot["context_slice"] = {"entities": [{"id": "KEY_SPLIT_AXIS", "data_type": "int", "min": 0, "max": 1}]}
+    conflict = build_constraint_ir(conflict_snapshot, _obligations([]), {"decision": "approve"})
+
+    assert any(error["code"] == "DOMAIN_CONFLICT" and error["scope"] == "global" for error in conflict.global_errors)
+
+
+def test_explicit_enum_domains_intersect_and_type_only_int_is_inferred() -> None:
+    snapshot = _snapshot(_contract(variables=[{"id": "VAR_ENUM", "type": "enum", "domain": ["B", "C"]}, {"id": "VAR_FREE_INT", "type": "int"}]))
+    snapshot["context_slice"] = {"entities": [{"id": "VAR_ENUM", "type": "enum", "domain": ["A", "B", "C"]}]}
+    result = build_constraint_ir(snapshot, _obligations([]), {"decision": "approve"})
+    variables = {item["id"]: item for item in result.ir["variables"]}
+
+    assert variables["VAR_ENUM"]["domain"] == ["B", "C"]
+    assert variables["VAR_FREE_INT"]["domain_authority"] == "inferred"
+    assert variables["VAR_FREE_INT"]["domain"] == {"min": None, "max": None, "explicit": False, "authority": "inferred", "sources": ["contracts/testcase.yaml.variables.type_only"]}
+
+    conflict_snapshot = _snapshot(_contract(variables=[{"id": "VAR_ENUM", "type": "enum", "domain": ["B"]}]))
+    conflict_snapshot["context_slice"] = {"entities": [{"id": "VAR_ENUM", "type": "enum", "domain": ["A"]}]}
+    conflict = build_constraint_ir(conflict_snapshot, _obligations([]), {"decision": "approve"})
+
+    assert any(error["code"] == "DOMAIN_CONFLICT" for error in conflict.global_errors)
+
+
+def test_interface_dtype_domain_is_explicit_and_not_expanded_by_obligation() -> None:
+    contract = _contract(interface={**_contract()["interface"], "dtype_layout_domains": [{"id": "FP16_TND"}, {"id": "BF16_ND"}]})
+    obligation = _pending("OB_FP32", kind="dtype_layout_class", target_refs=["FP32_NHWC"])
+
+    result = build_constraint_ir(_snapshot(contract), _obligations([obligation]), {"decision": "approve"})
+    variable = next(item for item in result.ir["variables"] if item["id"] == "VAR_DTYPE_LAYOUT_CLASS")
+
+    assert variable["domain_authority"] == "explicit"
+    assert variable["domain"] == ["BF16_ND", "FP16_TND"]
+    assert result.global_errors == []
+    assert result.obligation_errors["OB_FP32"][0]["code"] == "OBLIGATION_OUTSIDE_DECLARED_DOMAIN"
+
+
+def test_branch_validation_runs_before_dedupe_and_set_cover() -> None:
+    obligations = [
+        {**_pending("OB_TRUE", kind="kernel_branch", target_refs=["KBR_HAS_TAIL"]), "target_value": True},
+        {**_pending("OB_FALSE", kind="kernel_branch", target_refs=["KBR_HAS_TAIL"]), "target_value": False},
+    ]
+    conflicting_candidate = {
+        "id": "CAND_CONFLICT",
+        "coverage_signature": coverage_signature({"VAR_KBR_HAS_TAIL": True}),
+        "source_obligation_ids": ["OB_TRUE"],
+        "covered_obligation_ids": ["OB_TRUE", "OB_FALSE"],
+    }
+
+    with pytest.raises(CandidateError, match="CONTRADICTORY_BRANCH_COVERAGE"):
+        dedupe_candidates([conflicting_candidate], obligations)
+    with pytest.raises(CandidateError, match="CONTRADICTORY_BRANCH_COVERAGE"):
+        greedy_set_cover([conflicting_candidate], obligations)

@@ -119,7 +119,7 @@ def add_key_field_obligations(out: list[dict[str, Any]], coverage: dict[str, Any
         kind = str(item.get("kind") or item.get("coverage_kind") or "").lower()
         if kind and kind != "tiling_key_field":
             continue
-        if item.get("relation_type") or item.get("linked_relations"):
+        if is_relation_item(item):
             continue
         if is_derived_or_bound(item):
             continue
@@ -132,8 +132,7 @@ def add_key_relation_obligations(out: list[dict[str, Any]], coverage: dict[str, 
         out.extend(expand_relation_obligations(item, priority=item.get("priority") or "high"))
 
     for item in _iter_items(_as_dict(contract.get("coverage_obligations")).get("tiling_keys")):
-        kind = str(item.get("kind") or item.get("coverage_kind") or "").lower()
-        if kind == "tiling_key_relation" or item.get("relation_type") or item.get("linked_relations") or item.get("must_cover"):
+        if is_relation_item(item):
             out.extend(expand_relation_obligations(item, priority=item.get("priority") or "high"))
 
 
@@ -291,7 +290,21 @@ def expand_relation_obligations(item: dict[str, Any], *, priority: str) -> list[
             signature = stable_hash(combo_values)
             state = "unreachable" if str(combo.get("reachability") or combo.get("status") or "").lower() in UNREACHABLE else "reachable"
             if signature in seen and seen[signature] != state:
-                return [make_obligation("tiling_key_relation", {**item, "status": "conflicting", "reason": "RELATION_COMBINATION_STATUS_CONFLICT", "coverage_bucket": relation_type or "must_cover"}, priority=priority)]
+                obligations.append(
+                    make_obligation(
+                        "tiling_key_relation",
+                        {
+                            **item,
+                            "status": "conflicting",
+                            "reason": "RELATION_COMBINATION_STATUS_CONFLICT",
+                            "coverage_bucket": relation_type or "must_cover",
+                            "target_refs": sorted(str(key) for key in combo_values),
+                        },
+                        target_refs=sorted(str(key) for key in combo_values),
+                        priority="hard",
+                    )
+                )
+                continue
             if signature in seen:
                 continue
             seen[signature] = state
@@ -310,6 +323,22 @@ def expand_relation_obligations(item: dict[str, Any], *, priority: str) -> list[
             obligations.append(make_obligation("tiling_key_relation", payload, target_refs=payload["target_refs"], priority=priority))
         return obligations
     return [make_obligation("tiling_key_relation", item, priority=priority)]
+
+
+def is_relation_item(item: dict[str, Any]) -> bool:
+    constraints = _as_dict(item.get("constraints"))
+    kind = str(item.get("kind") or item.get("coverage_kind") or "").lower()
+    return bool(
+        kind == "tiling_key_relation"
+        or item.get("relation_type")
+        or item.get("linked_relations")
+        or item.get("must_cover")
+        or item.get("combinations")
+        or constraints.get("relation_type")
+        or constraints.get("linked_relations")
+        or constraints.get("must_cover")
+        or constraints.get("combinations")
+    )
 
 
 def make_obligation(kind: str, item: dict[str, Any], *, target_refs: list[str] | None = None, priority: str = "normal") -> dict[str, Any]:

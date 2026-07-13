@@ -69,11 +69,28 @@ def solve_from_docs(
     solve_results: list[dict[str, Any]] = []
     unsat: list[dict[str, Any]] = []
     unknown: list[dict[str, Any]] = []
-    errors: list[dict[str, Any]] = list(ir_result.errors)
+    errors: list[dict[str, Any]] = list(ir_result.global_errors)
 
-    if not ir_result.errors:
+    if not ir_result.global_errors:
         backend = Z3Backend(ir, SolveConfig(timeout_ms=timeout_ms))
         for obligation in obligations:
+            oid = str(obligation.get("id") or "")
+            local_errors = ir_result.obligation_errors.get(oid) or []
+            if local_errors:
+                first = local_errors[0]
+                solve_results.append(
+                    {
+                        "obligation_id": obligation.get("id"),
+                        "status": "error",
+                        "code": first.get("code"),
+                        "model": {},
+                        "unsat_core": [],
+                        "reason": first.get("message") or first.get("code") or "obligation compile error",
+                        "errors": local_errors,
+                    }
+                )
+                errors.extend(local_errors)
+                continue
             if obligation.get("status") in {"proof_required", "conflicting", "unresolved"}:
                 solve_results.append({"obligation_id": obligation.get("id"), "status": "skipped", "model": {}, "reason": f"obligation status is {obligation.get('status')}"})
                 continue
@@ -105,14 +122,18 @@ def solve_from_docs(
             elif result["status"] == "error":
                 errors.append({"code": result.get("code") or "OBLIGATION_SOLVE_ERROR", "obligation_id": str(result["obligation_id"]), "message": result.get("reason", "")})
     else:
-        solve_results = [{"obligation_id": item.get("id"), "status": "skipped", "model": {}, "reason": "constraint IR has compile errors"} for item in obligations]
+        solve_results = [{"obligation_id": item.get("id"), "status": "skipped", "model": {}, "reason": "constraint IR has global compile errors"} for item in obligations]
 
     try:
         deduped = dedupe_candidates(candidates, obligations)
     except CandidateError as exc:
         errors.append({"code": "CONTRADICTORY_BRANCH_COVERAGE", "message": str(exc)})
         deduped = []
-    selected = greedy_set_cover(deduped, [item for item in obligations if item.get("status") == "pending"])
+    try:
+        selected = greedy_set_cover(deduped, [item for item in obligations if item.get("status") == "pending"])
+    except CandidateError as exc:
+        errors.append({"code": "CONTRADICTORY_BRANCH_COVERAGE", "scope": "global", "severity": "error", "message": str(exc)})
+        selected = {"selected_candidates": [], "uncovered_obligations": [{"id": item.get("id"), "kind": item.get("kind"), "priority": item.get("priority"), "reason": "candidate branch coverage conflict"} for item in obligations if item.get("status") == "pending"]}
     report = build_solver_report(obligations, solve_results, candidates, deduped, selected, unsat, unknown, errors)
     return {
         "version": 1,

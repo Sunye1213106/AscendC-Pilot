@@ -31,6 +31,10 @@ SUPPORTED_EXPR_OPS = {
 }
 
 
+def _error(code: str, *, scope: str, severity: str = "error", **fields: Any) -> dict[str, Any]:
+    return {"code": code, "scope": scope, "severity": severity, **fields}
+
+
 class ConstraintIRError(ValueError):
     pass
 
@@ -38,7 +42,9 @@ class ConstraintIRError(ValueError):
 @dataclass(frozen=True)
 class IRBuildResult:
     ir: dict[str, Any]
-    errors: list[dict[str, str]]
+    errors: list[dict[str, Any]]
+    global_errors: list[dict[str, Any]]
+    obligation_errors: dict[str, list[dict[str, Any]]]
 
 
 @dataclass(frozen=True)
@@ -54,17 +60,18 @@ def build_constraint_ir(snapshot: dict[str, Any], obligations_doc: dict[str, Any
     contract = _as_dict(files.get("contracts/testcase.yaml"))
     obligations = [item for item in obligations_doc.get("obligations", []) if isinstance(item, dict)]
     human_supplement = human_supplement if isinstance(human_supplement, dict) else {}
-    errors: list[dict[str, str]] = []
+    global_errors: list[dict[str, Any]] = []
+    obligation_errors: dict[str, list[dict[str, Any]]] = {}
     variables: dict[str, dict[str, Any]] = {}
     constraints: list[dict[str, Any]] = []
 
     context_slice = _as_dict(snapshot.get("context_slice") or files.get("context_slice") or files.get("__context_slice__"))
-    _variables_from_context_slice(variables, context_slice)
+    _variables_from_context_slice(variables, context_slice, global_errors)
     for spec in _iter_items(contract.get("variables")) + _iter_items(_as_dict(contract.get("constraint_ir")).get("variables")):
-        _add_variable(variables, spec, errors, "contracts/testcase.yaml.variables")
-    _variables_from_interface(variables, contract)
-    _variables_from_obligations(variables, obligations, errors)
-    _validate_variable_domains(variables, errors)
+        _add_variable(variables, spec, global_errors, "contracts/testcase.yaml.variables")
+    _variables_from_interface(variables, contract, global_errors)
+    _variables_from_obligations(variables, obligations, obligation_errors)
+    _validate_variable_domains(variables, global_errors)
 
     constraint_specs = []
     constraint_specs.extend(_iter_items(contract.get("typed_constraints")))
@@ -75,7 +82,7 @@ def build_constraint_ir(snapshot: dict[str, Any], obligations_doc: dict[str, Any
         cid = str(spec.get("id") or spec.get("constraint_id") or f"CONTRACT_CONSTRAINT_{idx:03d}")
         try:
             expr = normalize_expr(spec.get("expr") if "expr" in spec else spec)
-            _register_derived_variable(variables, spec, expr, errors)
+            _register_derived_variable(variables, spec, expr, global_errors)
             constraints.append(
                 {
                     "id": cid,
@@ -86,35 +93,37 @@ def build_constraint_ir(snapshot: dict[str, Any], obligations_doc: dict[str, Any
                 }
             )
         except ConstraintIRError as exc:
-            errors.append({"code": "UNSUPPORTED_EXPRESSION", "constraint_id": cid, "message": str(exc)})
+            global_errors.append(_error("UNSUPPORTED_EXPRESSION", scope="global", constraint_id=cid, message=str(exc)))
 
     for constraint in constraints:
         for var_id in sorted(collect_expr_variables(constraint["expr"])):
             if var_id not in variables:
-                errors.append(
-                    {
-                        "code": "UNKNOWN_VARIABLE_REFERENCE",
-                        "variable_id": var_id,
-                        "constraint_id": str(constraint["id"]),
-                        "message": f"Constraint references undeclared variable: {var_id}",
-                    }
+                global_errors.append(
+                    _error(
+                        "UNKNOWN_VARIABLE_REFERENCE",
+                        scope="global",
+                        variable_id=var_id,
+                        constraint_id=str(constraint["id"]),
+                        message=f"Constraint references undeclared variable: {var_id}",
+                    )
                 )
 
     for var in list(variables.values()):
         if var["type"] == "enum" and not var.get("domain"):
-            errors.append({"code": "ENUM_DOMAIN_REQUIRED", "variable_id": var["id"], "message": "Enum variables must declare an explicit domain"})
+            global_errors.append(_error("ENUM_DOMAIN_REQUIRED", scope="global", variable_id=var["id"], message="Enum variables must declare an explicit domain"))
         if var.get("derived") and not var.get("definition"):
-            errors.append({"code": "DERIVED_DEFINITION_REQUIRED", "variable_id": var["id"], "message": "Derived Field must be defined by an expression"})
+            global_errors.append(_error("DERIVED_DEFINITION_REQUIRED", scope="global", variable_id=var["id"], message="Derived Field must be defined by an expression"))
 
+    all_errors = global_errors + [error for errors in obligation_errors.values() for error in errors]
     ir = {
         "version": 1,
         "snapshot_hash": snapshot.get("snapshot_hash"),
         "variables": sorted(variables.values(), key=lambda item: item["id"]),
         "constraints": sorted(constraints, key=lambda item: item["id"]),
         "obligation_count": len(obligations),
-        "compile_errors": errors,
+        "compile_errors": {"global": global_errors, "by_obligation": obligation_errors},
     }
-    return IRBuildResult(ir=ir, errors=errors)
+    return IRBuildResult(ir=ir, errors=all_errors, global_errors=global_errors, obligation_errors=obligation_errors)
 
 
 def compile_obligation_target(obligation: dict[str, Any], ir: dict[str, Any] | set[str]) -> TargetCompileResult:
@@ -314,7 +323,7 @@ def normalize_expr(expr: Any) -> dict[str, Any]:
     return out
 
 
-def _add_variable(variables: dict[str, dict[str, Any]], spec: dict[str, Any], errors: list[dict[str, str]], source: str) -> None:
+def _add_variable(variables: dict[str, dict[str, Any]], spec: dict[str, Any], errors: list[dict[str, Any]], source: str) -> None:
     var_id = str(spec.get("id") or spec.get("stable_id") or spec.get("var") or "")
     if not var_id:
         return
@@ -322,43 +331,51 @@ def _add_variable(variables: dict[str, dict[str, Any]], spec: dict[str, Any], er
     if var_type in {"boolean"}:
         var_type = "bool"
     if var_type not in SUPPORTED_VAR_TYPES:
-        errors.append({"code": "UNSUPPORTED_VARIABLE_TYPE", "variable_id": var_id, "message": f"Unsupported variable type: {var_type}"})
+        errors.append(_error("UNSUPPORTED_VARIABLE_TYPE", scope="global", variable_id=var_id, source=source, message=f"Unsupported variable type: {var_type}"))
         return
     try:
         derived = parse_bool_literal(spec.get("derived", False))
     except ConstraintIRError as exc:
-        errors.append({"code": "INVALID_BOOL_LITERAL", "variable_id": var_id, "message": str(exc)})
+        errors.append(_error("INVALID_BOOL_LITERAL", scope="global", variable_id=var_id, source=source, message=str(exc)))
         return
-    domain = normalize_domain(var_type, spec)
-    variables[var_id] = {
-        "id": var_id,
-        "name": str(spec.get("name") or spec.get("canonical_name") or var_id),
-        "type": var_type,
-        "domain": domain,
-        "domain_authority": "intrinsic" if var_type == "bool" else "explicit",
-        "domain_sources": [source],
-        "stable_id": var_id,
-        "free": not derived,
-        "derived": derived,
-        "definition": spec.get("definition") or spec.get("expr"),
-        "source": source,
-    }
+    if var_type == "bool":
+        _ensure_bool(variables, var_id, source=source, errors=errors)
+    elif var_type == "int":
+        values = spec.get("values")
+        domain = spec.get("domain")
+        if isinstance(domain, dict):
+            _ensure_int(variables, var_id, min_value=domain.get("min"), max_value=domain.get("max"), source=source, errors=errors)
+        elif isinstance(values, list) and values and all(isinstance(item, int) and not isinstance(item, bool) for item in values):
+            _ensure_int(variables, var_id, [int(item) for item in values], source=source, errors=errors)
+        else:
+            _ensure_int(variables, var_id, min_value=spec.get("min"), max_value=spec.get("max"), source=source if has_explicit_domain(spec, var_type) else f"{source}.type_only", errors=errors)
+    else:
+        domain_values = spec.get("domain") or spec.get("values") or spec.get("enum_values") or []
+        if isinstance(domain_values, list) and domain_values:
+            _ensure_enum(variables, var_id, [str(item) for item in domain_values], source=source, errors=errors)
+        elif var_id not in variables:
+            variables[var_id] = {"id": var_id, "name": str(spec.get("name") or spec.get("canonical_name") or var_id), "type": "enum", "domain": [], "domain_authority": "inferred", "domain_sources": [f"{source}.type_only"], "stable_id": var_id, "free": True, "derived": False, "definition": None, "source": f"{source}.type_only"}
+    if var_id in variables:
+        variables[var_id]["name"] = str(spec.get("name") or spec.get("canonical_name") or variables[var_id].get("name") or var_id)
+        variables[var_id]["free"] = not derived
+        variables[var_id]["derived"] = derived
+        variables[var_id]["definition"] = spec.get("definition") or spec.get("expr")
 
 
-def _variables_from_interface(variables: dict[str, dict[str, Any]], contract: dict[str, Any]) -> None:
+def _variables_from_interface(variables: dict[str, dict[str, Any]], contract: dict[str, Any], errors: list[dict[str, Any]]) -> None:
     interface = _as_dict(contract.get("interface"))
-    _ensure_enum(variables, "VAR_FAMILY", _collect_contract_targets(contract, "families") + _collect_contract_targets(contract, "family_obligations"))
-    _ensure_enum(variables, "VAR_KERNEL_PATH", _collect_contract_targets(contract, "kernel_paths"))
-    _ensure_enum(variables, "VAR_TEMPLATE", _collect_contract_targets(contract, "compile_templates") + _collect_contract_targets(contract, "template_bindings"))
-    _ensure_enum(variables, "VAR_DTYPE_LAYOUT_CLASS", [str(item.get("id") or item.get("name") or item.get("class") or item.get("dtype")) for item in _iter_items(interface.get("dtype_layout_domains")) if item])
-    _ensure_enum(variables, "VAR_NUMERICAL_MODE", _collect_contract_targets(contract, "numerical"))
+    _ensure_enum(variables, "VAR_FAMILY", _collect_contract_targets(contract, "families") + _collect_contract_targets(contract, "family_obligations"), source="contracts/testcase.yaml.coverage_obligations", errors=errors)
+    _ensure_enum(variables, "VAR_KERNEL_PATH", _collect_contract_targets(contract, "kernel_paths"), source="contracts/testcase.yaml.coverage_obligations", errors=errors)
+    _ensure_enum(variables, "VAR_TEMPLATE", _collect_contract_targets(contract, "compile_templates") + _collect_contract_targets(contract, "template_bindings"), source="contracts/testcase.yaml.coverage_obligations", errors=errors)
+    _ensure_enum(variables, "VAR_DTYPE_LAYOUT_CLASS", [str(item.get("id") or item.get("name") or item.get("class") or item.get("dtype")) for item in _iter_items(interface.get("dtype_layout_domains")) if item], source="interface.dtype_layout_domains", errors=errors)
+    _ensure_enum(variables, "VAR_NUMERICAL_MODE", _collect_contract_targets(contract, "numerical"), source="contracts/testcase.yaml.coverage_obligations", errors=errors)
     for item in _iter_items(interface.get("optional_inputs")):
         name = str(item.get("id") or item.get("name") or item.get("input") or "")
         if name:
-            _ensure_bool(variables, _optional_var_id(name))
+            _ensure_bool(variables, _optional_var_id(name), source="interface.optional_inputs", errors=errors)
 
 
-def _variables_from_context_slice(variables: dict[str, dict[str, Any]], context_slice: dict[str, Any]) -> None:
+def _variables_from_context_slice(variables: dict[str, dict[str, Any]], context_slice: dict[str, Any], errors: list[dict[str, Any]]) -> None:
     for entity in _iter_items(context_slice.get("entities")):
         entity_id = str(entity.get("id") or entity.get("stable_id") or "")
         if not entity_id:
@@ -369,16 +386,16 @@ def _variables_from_context_slice(variables: dict[str, dict[str, Any]], context_
         data_type = str(entity.get("data_type") or entity.get("type") or entity.get("value_type") or "").lower()
         domain = entity.get("domain") or entity.get("values") or entity.get("enum_values")
         if entity_id.startswith(("KBR_", "KDEC_")) or data_type in {"bool", "boolean"}:
-            _ensure_bool(variables, var_id)
+            _ensure_bool(variables, var_id, source="context_entity", errors=errors)
         elif data_type in {"int", "integer"} or _list_is_ints(domain):
             values = [int(value) for value in domain] if isinstance(domain, list) and domain else None
             min_value = entity.get("min")
             max_value = entity.get("max")
-            _ensure_int(variables, var_id, values, min_value=min_value, max_value=max_value, source="context_entity")
+            _ensure_int(variables, var_id, values, min_value=min_value, max_value=max_value, source="context_entity" if (values or min_value is not None or max_value is not None) else "context_entity_type_only", errors=errors)
         elif isinstance(domain, list) and domain:
-            _ensure_enum(variables, var_id, [str(item) for item in domain], source="context_entity")
+            _ensure_enum(variables, var_id, [str(item) for item in domain], source="context_entity", errors=errors)
         elif entity_id.startswith(("KEY_", "TDF_", "KVAR_")):
-            _ensure_int(variables, var_id, source="context_entity_type_only")
+            _ensure_int(variables, var_id, source="context_entity_type_only", errors=errors)
         elif entity_id.startswith(("KPATH_", "KTPL_", "FAM_", "NUM_")):
             bucket_var = {
                 "KPATH_": "VAR_KERNEL_PATH",
@@ -386,24 +403,27 @@ def _variables_from_context_slice(variables: dict[str, dict[str, Any]], context_
                 "FAM_": "VAR_FAMILY",
                 "NUM_": "VAR_NUMERICAL_MODE",
             }[next(prefix for prefix in ("KPATH_", "KTPL_", "FAM_", "NUM_") if entity_id.startswith(prefix))]
-            _ensure_enum(variables, bucket_var, [entity_id])
+            _ensure_enum(variables, bucket_var, [entity_id], source="context_entity", errors=errors)
 
 
-def _variables_from_obligations(variables: dict[str, dict[str, Any]], obligations: list[dict[str, Any]], errors: list[dict[str, str]]) -> None:
-    family_domain = [ref for item in obligations if item.get("kind") == "family" for ref in item.get("target_refs") or []]
-    path_domain = [ref for item in obligations if item.get("kind") == "kernel_path" for ref in item.get("target_refs") or []]
-    template_domain = [ref for item in obligations if item.get("kind") == "compile_template" for ref in item.get("target_refs") or []]
-    dtype_domain = [ref for item in obligations if item.get("kind") == "dtype_layout_class" for ref in item.get("target_refs") or []]
-    numerical_domain = [ref for item in obligations if item.get("kind") == "numerical_mode" for ref in item.get("target_refs") or []]
-    _ensure_enum(variables, "VAR_FAMILY", family_domain, source="obligation_target", errors=errors)
-    _ensure_enum(variables, "VAR_KERNEL_PATH", path_domain, source="obligation_target", errors=errors)
-    _ensure_enum(variables, "VAR_TEMPLATE", template_domain, source="obligation_target", errors=errors)
-    _ensure_enum(variables, "VAR_DTYPE_LAYOUT_CLASS", dtype_domain, source="obligation_target", errors=errors)
-    _ensure_enum(variables, "VAR_NUMERICAL_MODE", numerical_domain, source="obligation_target", errors=errors)
+def _variables_from_obligations(variables: dict[str, dict[str, Any]], obligations: list[dict[str, Any]], obligation_errors: dict[str, list[dict[str, Any]]]) -> None:
+    def errors_for(item: dict[str, Any]) -> list[dict[str, Any]]:
+        return obligation_errors.setdefault(str(item.get("id") or ""), [])
+
     for item in obligations:
         kind = str(item.get("kind") or "")
         refs = [str(ref) for ref in item.get("target_refs") or []]
-        if kind == "kernel_branch":
+        if kind == "family":
+            _ensure_enum(variables, "VAR_FAMILY", refs, source="obligation_target", errors=errors_for(item), obligation_id=str(item.get("id") or ""))
+        elif kind == "kernel_path":
+            _ensure_enum(variables, "VAR_KERNEL_PATH", refs, source="obligation_target", errors=errors_for(item), obligation_id=str(item.get("id") or ""))
+        elif kind == "compile_template":
+            _ensure_enum(variables, "VAR_TEMPLATE", refs, source="obligation_target", errors=errors_for(item), obligation_id=str(item.get("id") or ""))
+        elif kind == "dtype_layout_class":
+            _ensure_enum(variables, "VAR_DTYPE_LAYOUT_CLASS", refs, source="obligation_target", errors=errors_for(item), obligation_id=str(item.get("id") or ""))
+        elif kind == "numerical_mode":
+            _ensure_enum(variables, "VAR_NUMERICAL_MODE", refs, source="obligation_target", errors=errors_for(item), obligation_id=str(item.get("id") or ""))
+        elif kind == "kernel_branch":
             for ref in refs:
                 _ensure_bool(variables, _branch_var_id(ref))
         elif kind == "optional_input_mode":
@@ -417,12 +437,12 @@ def _variables_from_obligations(variables: dict[str, dict[str, Any]], obligation
             if field:
                 var_id = _key_var_id(refs[0] if refs else field, field)
                 if isinstance(values, list) and all(isinstance(v, int) and not isinstance(v, bool) for v in values):
-                    _ensure_int(variables, var_id, values, source="obligation_values", errors=errors)
+                    _ensure_int(variables, var_id, values, source="obligation_values", errors=errors_for(item), obligation_id=str(item.get("id") or ""))
                 elif isinstance(target_value, int) and not isinstance(target_value, bool):
-                    _ensure_int(variables, var_id, [target_value], source="obligation_target_value", errors=errors)
+                    _ensure_int(variables, var_id, [target_value], source="obligation_target_value", errors=errors_for(item), obligation_id=str(item.get("id") or ""))
                 else:
                     enum_values = [str(v) for v in _as_list(values)] or ([str(target_value)] if target_value not in (None, "") else refs)
-                    _ensure_enum(variables, var_id, enum_values, source="obligation_target", errors=errors)
+                    _ensure_enum(variables, var_id, enum_values, source="obligation_target", errors=errors_for(item), obligation_id=str(item.get("id") or ""))
         elif kind in {"tilingdata_boundary", "core_split_boundary", "tail_boundary", "workspace_boundary", "pipeline_resource_mode"}:
             var = {
                 "tilingdata_boundary": "VAR_TILINGDATA_BUCKET",
@@ -431,16 +451,18 @@ def _variables_from_obligations(variables: dict[str, dict[str, Any]], obligation
                 "workspace_boundary": "VAR_WORKSPACE_BUCKET",
                 "pipeline_resource_mode": "VAR_PIPELINE_RESOURCE_MODE",
             }[kind]
-            _ensure_enum(variables, var, refs, source="obligation_target", errors=errors)
+            _ensure_enum(variables, var, refs, source="obligation_target", errors=errors_for(item), obligation_id=str(item.get("id") or ""))
+    for oid in [oid for oid, errors in obligation_errors.items() if not errors]:
+        obligation_errors.pop(oid, None)
 
 
-def _register_derived_variable(variables: dict[str, dict[str, Any]], spec: dict[str, Any], expr: dict[str, Any], errors: list[dict[str, str]]) -> None:
+def _register_derived_variable(variables: dict[str, dict[str, Any]], spec: dict[str, Any], expr: dict[str, Any], errors: list[dict[str, Any]]) -> None:
     if expr.get("op") != "derived":
         return
     var_id = str(expr.get("var"))
     existing = variables.get(var_id)
     if existing and existing.get("free"):
-        errors.append({"code": "DERIVED_FIELD_FREE", "variable_id": var_id, "message": "Derived Field cannot be a free variable"})
+        errors.append(_error("DERIVED_FIELD_FREE", scope="global", variable_id=var_id, message="Derived Field cannot be a free variable"))
     variables[var_id] = {
         "id": var_id,
         "name": str(spec.get("name") or var_id),
@@ -476,6 +498,18 @@ def normalize_domain(var_type: str, spec: dict[str, Any]) -> Any:
     return []
 
 
+def has_explicit_domain(spec: dict[str, Any], var_type: str) -> bool:
+    if var_type == "bool":
+        return True
+    if "domain" in spec and spec.get("domain") not in (None, [], {}):
+        return True
+    if "values" in spec and spec.get("values") not in (None, []):
+        return True
+    if "enum_values" in spec and spec.get("enum_values") not in (None, []):
+        return True
+    return "min" in spec or "max" in spec
+
+
 def parse_bool_literal(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -509,13 +543,19 @@ def collect_expr_variables(expr: Any) -> set[str]:
 
 
 def _target_failure(obligation: dict[str, Any], priority: str, reason: str, *, code: str = "OBLIGATION_TARGET_NOT_COMPILED") -> TargetCompileResult:
+    if code == "OBLIGATION_OUTSIDE_DECLARED_DOMAIN":
+        return TargetCompileResult(status="error", expr=None, code=code, reason=reason)
     if priority in {"hard", "high"}:
         return TargetCompileResult(status="error", expr=None, code=code, reason=reason)
     return TargetCompileResult(status="skipped", expr=None, code=code, reason=reason)
 
 
-def _ensure_bool(variables: dict[str, dict[str, Any]], var_id: str) -> None:
-    variables.setdefault(var_id, {"id": var_id, "name": var_id, "type": "bool", "domain": [False, True], "domain_authority": "intrinsic", "domain_sources": ["bool"], "stable_id": var_id, "free": True, "derived": False, "definition": None, "source": "derived_from_plan"})
+def _ensure_bool(variables: dict[str, dict[str, Any]], var_id: str, *, source: str = "bool", errors: list[dict[str, Any]] | None = None) -> None:
+    existing = variables.get(var_id)
+    if existing and existing.get("type") != "bool" and errors is not None:
+        errors.append(_error("VARIABLE_TYPE_CONFLICT", scope="global", variable_id=var_id, source=source, message=f"Variable {var_id} declared as both {existing.get('type')} and bool"))
+        return
+    variables.setdefault(var_id, {"id": var_id, "name": var_id, "type": "bool", "domain": [False, True], "domain_authority": "intrinsic", "domain_sources": [source], "stable_id": var_id, "free": True, "derived": False, "definition": None, "source": source})
 
 
 def _ensure_int(
@@ -526,7 +566,8 @@ def _ensure_int(
     min_value: Any = None,
     max_value: Any = None,
     source: str = "derived_from_plan",
-    errors: list[dict[str, str]] | None = None,
+    errors: list[dict[str, Any]] | None = None,
+    obligation_id: str | None = None,
 ) -> None:
     authority = _domain_authority(source)
     domain = _int_domain(values, min_value=min_value, max_value=max_value, source=source, authority=authority)
@@ -534,22 +575,32 @@ def _ensure_int(
         variables[var_id] = {"id": var_id, "name": var_id, "type": "int", "domain": domain, "domain_authority": authority, "domain_sources": [source], "stable_id": var_id, "free": True, "derived": False, "definition": None, "source": source}
         return
     existing = variables[var_id]
-    if existing.get("type") != "int" or existing.get("derived"):
+    if existing.get("type") != "int":
+        if errors is not None:
+            errors.append(_error("VARIABLE_TYPE_CONFLICT", scope="global" if not obligation_id else "obligation", variable_id=var_id, obligation_id=obligation_id, source=source, message=f"Variable {var_id} declared as both {existing.get('type')} and int"))
+        return
+    if existing.get("derived"):
         return
     merged, merge_errors = _merge_int_domain(existing.get("domain"), domain, existing.get("domain_authority", "inferred"), authority)
     existing["domain"] = merged
     existing["domain_authority"] = merged.get("authority", existing.get("domain_authority", "inferred"))
     existing["domain_sources"] = merged.get("sources", [])
     if errors is not None:
-        errors.extend({**error, "variable_id": var_id} for error in merge_errors)
+        for error in merge_errors:
+            scope = "obligation" if error["code"].startswith("OBLIGATION_") else "global"
+            errors.append(_error(error["code"], scope=scope, variable_id=var_id, obligation_id=obligation_id, source=source, **{k: v for k, v in error.items() if k != "code"}))
     existing["source"] = ",".join(sorted(set(str(existing.get("source") or "").split(",")) | {source}))
 
 
-def _ensure_enum(variables: dict[str, dict[str, Any]], var_id: str, domain: list[str], *, source: str = "derived_from_plan", errors: list[dict[str, str]] | None = None) -> None:
+def _ensure_enum(variables: dict[str, dict[str, Any]], var_id: str, domain: list[str], *, source: str = "derived_from_plan", errors: list[dict[str, Any]] | None = None, obligation_id: str | None = None) -> None:
     clean = sorted(dict.fromkeys(str(item) for item in domain if str(item)))
     if not clean:
         return
     if var_id in variables:
+        if variables[var_id]["type"] != "enum":
+            if errors is not None:
+                errors.append(_error("VARIABLE_TYPE_CONFLICT", scope="global" if not obligation_id else "obligation", variable_id=var_id, obligation_id=obligation_id, source=source, message=f"Variable {var_id} declared as both {variables[var_id].get('type')} and enum"))
+            return
         if variables[var_id]["type"] == "enum":
             existing = [str(value) for value in variables[var_id].get("domain", [])]
             existing_authority = variables[var_id].get("domain_authority", "inferred")
@@ -557,13 +608,17 @@ def _ensure_enum(variables: dict[str, dict[str, Any]], var_id: str, domain: list
             if existing_authority == "explicit" and incoming_authority != "explicit":
                 outside = sorted(set(clean) - set(existing))
                 if outside and errors is not None:
-                    errors.extend({"code": "OBLIGATION_OUTSIDE_DECLARED_DOMAIN", "variable_id": var_id, "requested_value": value, "declared_domain": str(existing)} for value in outside)
+                    errors.extend(_error("OBLIGATION_OUTSIDE_DECLARED_DOMAIN", scope="obligation", obligation_id=obligation_id, variable_id=var_id, requested_value=value, declared_domain=existing, source=source) for value in outside)
             elif existing_authority == "explicit" and incoming_authority == "explicit":
                 common = sorted(set(existing) & set(clean))
                 if not common and errors is not None:
-                    errors.append({"code": "DOMAIN_CONFLICT", "variable_id": var_id, "message": "Explicit enum domains do not intersect"})
+                    errors.append(_error("DOMAIN_CONFLICT", scope="global", variable_id=var_id, source=source, message="Explicit enum domains do not intersect"))
                 elif common:
                     variables[var_id]["domain"] = common
+                    variables[var_id]["domain_authority"] = "explicit"
+            elif existing_authority != "explicit" and incoming_authority == "explicit":
+                variables[var_id]["domain"] = clean
+                variables[var_id]["domain_authority"] = "explicit"
             else:
                 variables[var_id]["domain"] = sorted(dict.fromkeys([*existing, *clean]))
             variables[var_id]["domain_sources"] = sorted(set(variables[var_id].get("domain_sources", [])) | {source})
@@ -586,10 +641,10 @@ def _int_domain(values: list[int] | None = None, *, min_value: Any = None, max_v
     return {"min": None, "max": None, "explicit": False, "authority": authority, "sources": [source]}
 
 
-def _merge_int_domain(left: Any, right: Any, left_authority: str, right_authority: str) -> tuple[dict[str, Any], list[dict[str, str]]]:
+def _merge_int_domain(left: Any, right: Any, left_authority: str, right_authority: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     left = left if isinstance(left, dict) else {"min": None, "max": None, "sources": []}
     right = right if isinstance(right, dict) else {"min": None, "max": None, "sources": []}
-    errors: list[dict[str, str]] = []
+    errors: list[dict[str, Any]] = []
     for domain in (left, right):
         if domain.get("min") is not None and domain.get("max") is not None and int(domain["min"]) > int(domain["max"]):
             errors.append({"code": "INVALID_INT_DOMAIN", "message": "min is greater than max"})
@@ -601,6 +656,10 @@ def _merge_int_domain(left: Any, right: Any, left_authority: str, right_authorit
             if outside(int(value), left):
                 errors.append({"code": "OBLIGATION_OUTSIDE_DECLARED_DOMAIN", "requested_value": str(value), "declared_domain": f"{left.get('min')}..{left.get('max')}"})
         result = dict(left)
+        result.update({"authority": "explicit", "explicit": True, "sources": sorted(set(_as_list(left.get("sources")) + _as_list(right.get("sources"))))})
+        return result, errors
+    if left_authority != "explicit" and right_authority == "explicit":
+        result = dict(right)
         result.update({"authority": "explicit", "explicit": True, "sources": sorted(set(_as_list(left.get("sources")) + _as_list(right.get("sources"))))})
         return result, errors
     if left_authority == "explicit" and right_authority == "explicit":
@@ -616,21 +675,21 @@ def _merge_int_domain(left: Any, right: Any, left_authority: str, right_authorit
 
 
 def _domain_authority(source: str) -> str:
-    if source in {"contracts/testcase.yaml.variables", "context_entity"}:
+    if source in {"contracts/testcase.yaml.variables", "context_entity", "interface.dtype_layout_domains", "interface.optional_inputs"}:
         return "explicit"
     if source == "bool":
         return "intrinsic"
     return "inferred"
 
 
-def _validate_variable_domains(variables: dict[str, dict[str, Any]], errors: list[dict[str, str]]) -> None:
+def _validate_variable_domains(variables: dict[str, dict[str, Any]], errors: list[dict[str, Any]]) -> None:
     for var_id, variable in variables.items():
         domain = variable.get("domain")
         if variable.get("type") != "int" or not isinstance(domain, dict):
             continue
         lower, upper = domain.get("min"), domain.get("max")
         if lower is not None and upper is not None and int(lower) > int(upper):
-            errors.append({"code": "INVALID_INT_DOMAIN", "variable_id": var_id, "message": "min is greater than max"})
+            errors.append(_error("INVALID_INT_DOMAIN", scope="global", variable_id=var_id, message="min is greater than max"))
 
 
 def _key_var_id(target_ref: str, field: str) -> str:

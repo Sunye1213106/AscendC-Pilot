@@ -73,14 +73,16 @@ def coverage_signature(model: dict[str, Any]) -> dict[str, Any]:
 
 def dedupe_candidates(candidates: list[dict[str, Any]], obligations: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     by_signature: dict[str, dict[str, Any]] = {}
+    obligation_by_id = {str(item.get("id")): item for item in obligations or []}
     for candidate in sorted(candidates, key=lambda item: item["id"]):
+        validate_candidate_branch_coverage(candidate.get("covered_obligation_ids") or [], obligation_by_id)
         signature_key = stable_hash(candidate["coverage_signature"])
         if signature_key not in by_signature:
             by_signature[signature_key] = candidate
             continue
         existing = by_signature[signature_key]
         merged = sorted(set(existing["covered_obligation_ids"]) | set(candidate["covered_obligation_ids"]))
-        validate_candidate_branch_coverage(merged, {str(item.get("id")): item for item in obligations or []})
+        validate_candidate_branch_coverage(merged, obligation_by_id)
         sources = sorted(set(existing.get("source_obligation_ids") or []) | set(candidate.get("source_obligation_ids") or []))
         existing["covered_obligation_ids"] = merged
         existing["source_obligation_ids"] = sources
@@ -124,6 +126,8 @@ def validate_candidate_branch_coverage(covered_obligation_ids: list[str], obliga
 
 def greedy_set_cover(candidates: list[dict[str, Any]], obligations: list[dict[str, Any]]) -> dict[str, Any]:
     obligation_by_id = {str(item["id"]): item for item in obligations}
+    for candidate in candidates:
+        validate_candidate_branch_coverage(candidate.get("covered_obligation_ids") or [], obligation_by_id)
     uncovered = set(obligation_by_id)
     selected: list[dict[str, Any]] = []
     remaining = sorted(candidates, key=lambda item: item["id"])
