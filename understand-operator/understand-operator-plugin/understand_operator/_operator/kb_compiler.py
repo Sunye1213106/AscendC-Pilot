@@ -3522,17 +3522,17 @@ def main(argv: list[str] | None = None) -> int:
     resolve.add_argument("--run-id", required=True)
     resolve.add_argument("--artifact", action="append", default=[], help="Refreshed canonical artifact path")
 
-    parser.add_argument("repo_root", nargs="?", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("legacy_repo_root", nargs="?", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--op-name", dest="legacy_op_name", help=argparse.SUPPRESS)
     parser.add_argument("--phase", dest="legacy_phase", default="final", help=argparse.SUPPRESS)
     parser.add_argument("--check-only", dest="legacy_check_only", action="store_true", help=argparse.SUPPRESS)
 
     args = parser.parse_args(argv)
     if args.command is None:
-        if args.repo_root is None or not args.legacy_op_name:
+        if args.legacy_repo_root is None or not args.legacy_op_name:
             parser.print_help()
             return 2
-        repo_root = args.repo_root.resolve()
+        repo_root = args.legacy_repo_root.resolve()
         op_name = safe_op_name(args.legacy_op_name, repo_root)
         uo_root = operator_root(repo_root, op_name)
         result = validate_kb(uo_root, op_name, phase=args.legacy_phase, write_outputs=not args.legacy_check_only)
