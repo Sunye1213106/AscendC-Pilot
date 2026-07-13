@@ -19,6 +19,7 @@ SUPPORTED_KINDS = [
     "compile_template",
     "kernel_path",
     "kernel_branch",
+    "runtime_variable_state",
     "optional_input_mode",
     "dtype_layout_class",
     "tilingdata_boundary",
@@ -32,6 +33,20 @@ KIND_ORDER = {kind: idx for idx, kind in enumerate(SUPPORTED_KINDS)}
 REACHABLE = {"reachable", "reachable_narrow", "runtime_conditional", "conditional", "unknown", ""}
 UNREACHABLE = {"unreachable", "excluded", "not_reachable"}
 NON_SEMANTIC_COMBO_FIELDS = {"reachability", "status", "reason", "unreachable_reason", "notes", "evidence_refs", "source_refs"}
+RESERVED_MATCH_KEYS = {
+    "key_pattern",
+    "pattern",
+    "family_refs",
+    "kernel_path_refs",
+    "dtype",
+    "dtypes",
+    "layout",
+    "layouts",
+    "dtype_layout_class",
+    "dtype_layout_classes",
+    "optional_inputs",
+    "feature_flags",
+}
 TEST_LEVELS = ("L0", "L1", "L2")
 LEVEL_ORDER = {level: idx for idx, level in enumerate(TEST_LEVELS)}
 BOUNDARY_KIND_LEVELS = {
@@ -82,6 +97,7 @@ def build_plan(snapshot: dict[str, Any], *, level: str = "L1", focus: str = "") 
         add_l1_obligations(obligations, files, coverage, contract, branches, impact, semantic_focus)
     obligations = filter_obligations_by_focus(obligations, semantic_focus)
     obligations = deterministic_obligations(obligations)
+    validate_unique_obligation_ids(obligations)
     level_blockers = level_specific_blockers(level, obligations, semantic_focus)
     blockers = hard_blockers(obligations, contract) + level_blockers
     matrix = build_matrix(obligations)
@@ -99,11 +115,12 @@ def build_plan(snapshot: dict[str, Any], *, level: str = "L1", focus: str = "") 
             for key in ("realized_key_count", "unrealized_key_count", "ambiguous_key_count")
         },
     }
+    gaps = contract_gaps(level, contract, coverage, files)
     unresolved = {
-        "status": "blocked" if blockers else "ready_for_manual_review",
+        "status": "blocked" if blockers or gaps else "ready_for_manual_review",
         "blocking_hard_obligations": blockers,
         "unresolved_obligations": [item for item in obligations if item["status"] in {"unresolved", "conflicting"}],
-        "contract_gaps": contract_gaps(level, contract, coverage, files),
+        "contract_gaps": gaps,
     }
     if semantic_focus.get("unresolved_terms"):
         unresolved["status"] = "blocked"
@@ -165,11 +182,11 @@ def add_l0_obligations(out: list[dict[str, Any]], files: dict[str, Any], coverag
     families = [item for item in _iter_items(coverage.get("family_obligations")) if _reachable_item(item)]
     buckets = _as_dict(contract.get("coverage_obligations"))
     families.extend(item for item in _iter_items(buckets.get("families")) if _reachable_item(item))
-    paths = [item for item in _iter_items(buckets.get("kernel_paths")) if _reachable_item(item)]
+    paths = resolve_kernel_path_specs(files, contract)
     dtypes = [item for item in _iter_items(_as_dict(contract.get("interface")).get("dtype_layout_domains")) if _reachable_item(item)]
     input_realizations = _as_dict(_as_dict(files.get("tiling/constraints.yaml")).get("input_realization"))
 
-    selected_family, selected_path, selected_dtype, selection = select_l0_smoke(families, paths, dtypes, input_realizations)
+    selected_family, selected_path, selected_dtype, selection = select_l0_smoke(files, families, paths, dtypes, input_realizations)
     if not selection.get("compatible"):
         blocker = make_obligation(
             "family",
@@ -347,6 +364,25 @@ def add_kernel_branch_obligations(out: list[dict[str, Any]], branches: dict[str,
 
 
 def add_runtime_variable_obligations(out: list[dict[str, Any]], files: dict[str, Any], semantic_focus: dict[str, Any]) -> None:
+    variable_constraints = {
+        str(item.get("var") or item.get("id") or ""): item
+        for item in _iter_items(_as_dict(files.get("tiling/constraints.yaml")).get("variable_constraints"))
+        if str(item.get("var") or item.get("id") or "")
+    }
+    for item in _iter_items(_as_dict(files.get("registry/variables.yaml")).get("variables")):
+        var_ref = str(item.get("id") or item.get("stable_id") or "")
+        if var_ref and var_ref not in variable_constraints:
+            variable_constraints[var_ref] = item
+    for field_name, spec in _as_dict(_as_dict(files.get("tiling/coverage_model.yaml")).get("key_field_obligations")).items():
+        if not isinstance(spec, dict):
+            continue
+        for var_ref in {
+            str(spec.get("id") or ""),
+            f"VAR_{str(spec.get('id') or field_name).removeprefix('KEY_')}",
+            f"VAR_KEY_{str(field_name).upper()}",
+        }:
+            if var_ref and var_ref not in variable_constraints and (spec.get("values") or spec.get("enum_values")):
+                variable_constraints[var_ref] = {"values": spec.get("values") or spec.get("enum_values")}
     for artifact, section in (
         ("tiling/variables.yaml", "variables"),
         ("kernel/variables.yaml", "runtime_variables"),
@@ -361,14 +397,62 @@ def add_runtime_variable_obligations(out: list[dict[str, Any]], files: dict[str,
                 continue
             if item.get("branch_ref") or item.get("branch_refs"):
                 continue
-            values = _as_list(item.get("domain") if isinstance(item.get("domain"), list) else item.get("values") or item.get("buckets") or _as_dict(item.get("domain")).get("values"))
-            if not values and item.get("boundary_values"):
-                values = _as_list(item.get("boundary_values"))
-            for value in values[:8]:
-                payload = {**item, "target_value": value, "constraints": _expr_eq(_var_id(var_id), value), "coverage_bucket": "runtime_variable"}
-                obligation = make_obligation("tiling_key_field_value", payload, target_refs=[var_id], priority=item.get("priority") or "normal")
+            values, gap = runtime_variable_values({**_as_dict(variable_constraints.get(var_id)), **item})
+            if gap:
+                payload = {
+                    **item,
+                    "id": f"RUNTIME_DOMAIN_NOT_PARTITIONED_{slugify(var_id)}",
+                    "status": "unresolved",
+                    "reason": gap,
+                    "coverage_bucket": "runtime_variable",
+                    "variable_scope": runtime_variable_scope(section),
+                }
+                obligation = make_obligation("runtime_variable_state", payload, target_refs=[var_id], priority="hard")
+                decorate_obligation(obligation, "L1", {"artifact": artifact, "entity_ref": var_id, "reason": f"{section}_runtime_variable"}, "runtime variable domain needs declared partitions", semantic_focus)
+                out.append(obligation)
+                continue
+            for value in values:
+                payload = {
+                    **item,
+                    "target_value": value,
+                    "constraints": _expr_eq(_var_id(var_id), value),
+                    "coverage_bucket": "runtime_variable",
+                    "variable_scope": runtime_variable_scope(section),
+                }
+                obligation = make_obligation("runtime_variable_state", payload, target_refs=[var_id], priority=item.get("priority") or "normal")
                 decorate_obligation(obligation, "L1", {"artifact": artifact, "entity_ref": var_id, "reason": f"{section}_runtime_variable"}, "runtime variable state/domain bucket", semantic_focus)
                 out.append(obligation)
+
+
+def runtime_variable_scope(section: str) -> str:
+    return {
+        "variables": "tiling",
+        "runtime_variables": "kernel",
+        "path_decision_points": "path_decision",
+        "tilingdata_reads": "tilingdata_read",
+    }.get(section, "kernel")
+
+
+def runtime_variable_values(item: dict[str, Any]) -> tuple[list[Any], str]:
+    domain = item.get("domain")
+    var_type = str(item.get("type") or item.get("data_type") or item.get("kind") or "").lower()
+    if var_type in {"bool", "boolean"}:
+        return [True, False], ""
+    values = _as_list(domain if isinstance(domain, list) else item.get("values") or item.get("enum_values") or _as_dict(domain).get("values"))
+    if values:
+        return values, ""
+    buckets = _as_list(item.get("buckets") or item.get("equivalence_classes") or item.get("runtime_states") or item.get("branch_partitions") or item.get("boundary_values") or _as_dict(domain).get("buckets"))
+    if buckets:
+        out = []
+        for bucket in buckets:
+            if isinstance(bucket, dict):
+                out.append(bucket.get("representative", bucket.get("value", bucket.get("id", bucket.get("name")))))
+            else:
+                out.append(bucket)
+        return [value for value in out if value not in (None, "")], ""
+    if var_type in {"int", "integer"} or any(key in item for key in ("min", "max")) or any(key in _as_dict(domain) for key in ("min", "max")):
+        return [], "RUNTIME_DOMAIN_NOT_PARTITIONED"
+    return [], ""
 
 
 def add_interface_dimension_obligations(out: list[dict[str, Any]], contract: dict[str, Any]) -> None:
@@ -783,17 +867,57 @@ def add_boundary_value_obligations(out: list[dict[str, Any]], files: dict[str, A
 
 def add_negative_obligations(out: list[dict[str, Any]], files: dict[str, Any], contract: dict[str, Any], semantic_focus: dict[str, Any]) -> None:
     constraints = _as_dict(files.get("tiling/constraints.yaml"))
+    pruning = _as_dict(constraints.get("tiling_key_pruning"))
     sources = [
         ("tiling/constraints.yaml", "key_unreachable", constraints.get("key_unreachable")),
-        ("tiling/constraints.yaml", "tiling_key_pruning", constraints.get("tiling_key_pruning")),
+        ("tiling/constraints.yaml", "tiling_key_pruning", pruning.get("pruned_combinations")),
         ("contracts/testcase.yaml", "negative", _as_dict(contract.get("coverage_obligations")).get("negative")),
     ]
     for artifact, reason, values in sources:
         for item in _iter_items(values):
-            payload = {**item, "status": "pending", "coverage_bucket": reason}
+            pattern = key_pattern_from(item)
+            expr = compile_pattern_to_expr(pattern)
+            status = "pending" if expr else "unresolved"
+            payload = {
+                **item,
+                "status": status,
+                "coverage_bucket": reason,
+                "target_expr": expr or {},
+                "constraints": {"expr": expr} if expr else {},
+            }
+            if not expr:
+                payload["reason"] = "NEGATIVE_PATTERN_NOT_COMPILABLE"
             obligation = make_obligation("tiling_key_relation", payload, priority=item.get("priority") or "high")
+            if not expr:
+                obligation["priority"] = "hard"
+                obligation["status"] = "unresolved"
+                obligation["unresolved_reason"] = "NEGATIVE_PATTERN_NOT_COMPILABLE"
+            stage = reject_stage_for(item)
             decorate_obligation(obligation, "L1", {"artifact": artifact, "entity_ref": str(item.get("id") or ""), "reason": reason}, "expected reject negative scenario", semantic_focus, expected_behavior="reject")
+            expectation = _as_dict(obligation.get("case_expectation"))
+            expectation["reject_stage"] = stage
+            if stage == "unknown":
+                obligation["status"] = "unresolved"
+                obligation["priority"] = "hard"
+                obligation["unresolved_reason"] = obligation.get("unresolved_reason") or "NEGATIVE_REJECT_STAGE_UNKNOWN"
+            obligation["case_expectation"] = expectation
             out.append(obligation)
+
+
+def compile_pattern_to_expr(pattern: dict[str, Any]) -> dict[str, Any]:
+    pattern = _as_dict(pattern)
+    if not pattern:
+        return {}
+    args = [{"op": "eq", "var": _var_id(str(key)), "value": value} for key, value in sorted(pattern.items())]
+    return args[0] if len(args) == 1 else {"op": "and", "args": args}
+
+
+def reject_stage_for(item: dict[str, Any]) -> str:
+    for key in ("reject_stage", "expected_reject_stage", "validation_stage", "stage"):
+        value = str(item.get(key) or "").strip()
+        if value in {"interface", "host_validation", "tiling", "runtime"}:
+            return value
+    return "unknown"
 
 
 def expand_l2_tiling_keys(exhaustive: dict[str, Any], constraints: dict[str, Any], semantic_focus: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, int], list[dict[str, Any]]]:
@@ -829,7 +953,7 @@ def expand_l2_tiling_keys(exhaustive: dict[str, Any], constraints: dict[str, Any
         declared = int(block.get("product_count") or product_count)
         declared_sum += declared
         if declared != product_count:
-            blockers.append(_blocker("L2_BLOCK_PRODUCT_COUNT_MISMATCH", f"template block {block.get('id')} product_count={declared} actual={product_count}"))
+            blockers.append(_blocker(f"L2_BLOCK_PRODUCT_COUNT_MISMATCH_{slugify(str(block.get('id') or stable_hash(block)[:8]))}", f"template block {block.get('id')} product_count={declared} actual={product_count}"))
             continue
         raw_count += declared
         for combo_values in product(*domain_lists) if domain_lists else [()]:
@@ -846,17 +970,19 @@ def expand_l2_tiling_keys(exhaustive: dict[str, Any], constraints: dict[str, Any
                 relation_rejected_count += 1
                 continue
             if relation_result["status"] == "block":
-                blockers.append(_blocker("L2_RELATION_COMPILE_FAILED", relation_result["reason"]))
+                blockers.append(_blocker(f"L2_RELATION_COMPILE_FAILED_{slugify(relation_result['reason'])[:40]}", relation_result["reason"]))
                 continue
             merge_key, merge_info = merged_key_for(combo, constraints)
+            canonical_fields = _as_dict(merge_info.get("canonical_fields")) or combo
             if merge_key in merged:
                 duplicate_key_count += 1
-                merged_away_count += 1 if merge_info.get("semantic_merge") else 0
-                merged[merge_key].setdefault("overlay_witnesses", []).append(combo)
+                merged_away_count += 1
+                merged[merge_key].setdefault("merge", {}).setdefault("overlay_witnesses", []).append(combo)
                 continue
-            realization = match_key_realization(combo, constraints, exhaustive)
+            realization = match_key_realization(canonical_fields, constraints, exhaustive)
             merged[merge_key] = {
-                "fields": combo,
+                "fields": canonical_fields,
+                "source_fields": combo,
                 "block_id": block.get("id"),
                 "realization_source": "reverse_realization_index" if realization["matched_reverse_realization_refs"] else "constraints.input_realization",
                 "realization": realization,
@@ -865,7 +991,7 @@ def expand_l2_tiling_keys(exhaustive: dict[str, Any], constraints: dict[str, Any
     if "expanded_key_count" in summary and int(summary.get("expanded_key_count") or 0) != declared_sum:
         blockers.append(_blocker("L2_SUMMARY_COUNT_MISMATCH", f"summary.expanded_key_count={summary.get('expanded_key_count')} sum_product_count={declared_sum}"))
     for missing_ref in missing_pruning_refs(exhaustive, constraints):
-        blockers.append(_blocker("L2_PRUNING_REF_MISSING", f"template block pruning_ref not found: {missing_ref}"))
+        blockers.append(_blocker(f"L2_PRUNING_REF_MISSING_{slugify(missing_ref)}", f"template block pruning_ref not found: {missing_ref}"))
     reachable = [merged[key] for key in sorted(merged)]
     stats = {
         "raw_expanded_count": raw_count,
@@ -873,7 +999,8 @@ def expand_l2_tiling_keys(exhaustive: dict[str, Any], constraints: dict[str, Any
         "pruned_count": pruned_count,
         "relation_rejected_count": relation_rejected_count,
         "duplicate_key_count": duplicate_key_count,
-        "semantic_merge_group_count": len(_iter_items(_as_dict(constraints.get("tiling_key_merging")).get("merged_groups"))),
+        "semantic_merge_group_count": len({str(key["merge"].get("group_id")) for key in merged.values() if key["merge"].get("semantic_merge") and key["merge"].get("group_id")}),
+        "semantic_merged_source_count": len([key for key in merged.values() if key["merge"].get("semantic_merge")]),
         "merged_away_count": merged_away_count,
         "reachable_key_count": len(reachable),
         "realized_key_count": 0,
@@ -940,17 +1067,68 @@ def match_key_realization(key_fields: dict[str, Any], constraints: dict[str, Any
 
 
 def match_input_realization(key_fields: dict[str, Any], rule: dict[str, Any]) -> bool:
+    context = {
+        "family_refs": _as_list(key_fields.get("family_refs") or key_fields.get("family")),
+        "kernel_path_refs": _as_list(key_fields.get("kernel_path_refs") or key_fields.get("kernel_path")),
+        "dtype": key_fields.get("dtype"),
+        "layout": key_fields.get("layout"),
+        "dtype_layout_class": key_fields.get("dtype_layout") or key_fields.get("dtype_layout_class"),
+        "optional_inputs": key_fields.get("optional_inputs") if isinstance(key_fields.get("optional_inputs"), dict) else {"present": [], "absent": []},
+        "key_fields": {key: value for key, value in key_fields.items() if key not in {"family", "family_refs", "kernel_path", "kernel_path_refs", "optional_inputs"}},
+    }
+    return match_input_realization_context(context, rule)
+
+
+def match_input_realization_context(context: dict[str, Any], rule: dict[str, Any]) -> bool:
     matches = _as_dict(rule.get("matches"))
-    pattern = _as_dict(matches.get("key_pattern") or matches.get("pattern") or rule.get("key_pattern") or rule.get("pattern"))
-    if pattern and not pattern_matches(key_fields, pattern):
+    pattern = input_realization_key_pattern(rule)
+    if pattern and not pattern_matches(_as_dict(context.get("key_fields")), pattern):
         return False
+    family_refs = set(str(ref) for ref in _as_list(matches.get("family_refs") or rule.get("family_refs")) if ref)
+    if family_refs and not family_refs.intersection(set(str(ref) for ref in _as_list(context.get("family_refs")))):
+        return False
+    path_refs = set(str(ref) for ref in _as_list(matches.get("kernel_path_refs") or rule.get("kernel_path_refs")) if ref)
+    if path_refs and not path_refs.intersection(set(str(ref) for ref in _as_list(context.get("kernel_path_refs")))):
+        return False
+    dtypes = set(str(item).upper() for item in _as_list(matches.get("dtypes") or matches.get("dtype") or rule.get("dtypes") or rule.get("dtype")) if item)
+    if dtypes and str(context.get("dtype") or "").upper() not in dtypes:
+        return False
+    layouts = set(str(item).upper() for item in _as_list(matches.get("layouts") or matches.get("layout") or rule.get("layouts") or rule.get("layout")) if item)
+    if layouts:
+        key_fields = _as_dict(context.get("key_fields"))
+        context_layout = str(context.get("layout") or key_fields.get("layout") or "").upper()
+        if context_layout not in layouts:
+            return False
+    classes = set(str(item).upper() for item in _as_list(matches.get("dtype_layout_classes") or matches.get("dtype_layout_class") or rule.get("dtype_layout_classes") or rule.get("dtype_layout_class")) if item)
+    if classes and str(context.get("dtype_layout_class") or "").upper() not in classes:
+        return False
+    optional = _as_dict(matches.get("optional_inputs") or rule.get("optional_inputs"))
+    if optional:
+        present = set(str(item) for item in _as_list(optional.get("present")))
+        absent = set(str(item) for item in _as_list(optional.get("absent")))
+        actual = _as_dict(context.get("optional_inputs"))
+        if present and not present <= set(str(item) for item in _as_list(actual.get("present"))):
+            return False
+        if absent and not absent <= set(str(item) for item in _as_list(actual.get("absent"))):
+            return False
     dtype_layout = str(rule.get("dtype_layout_intent") or "")
     if dtype_layout:
-        blob = " ".join(str(value).upper() for value in key_fields.values())
+        blob = " ".join(str(value).upper() for value in (list(_as_dict(context.get("key_fields")).values()) + [context.get("dtype"), context.get("layout"), context.get("dtype_layout_class")]))
         tokens = [token.upper() for token in re.findall(r"[A-Za-z0-9_]+", dtype_layout)]
         if tokens and not any(token in blob for token in tokens):
             return False
-    return bool(pattern or dtype_layout or matches)
+    return bool(pattern or family_refs or path_refs or dtypes or layouts or classes or optional or dtype_layout)
+
+
+def input_realization_key_pattern(rule: dict[str, Any]) -> dict[str, Any]:
+    matches = _as_dict(rule.get("matches"))
+    pattern = _as_dict(matches.get("key_pattern") or matches.get("pattern") or rule.get("key_pattern") or rule.get("pattern"))
+    direct = {key: value for key, value in matches.items() if key not in RESERVED_MATCH_KEYS}
+    if direct:
+        merged = dict(pattern)
+        merged.update(direct)
+        return merged
+    return pattern
 
 
 def pattern_matches(combo: dict[str, Any], pattern: dict[str, Any]) -> bool:
@@ -993,18 +1171,32 @@ def relation_allows_key(combo: dict[str, Any], constraints: dict[str, Any]) -> d
         rtype = str(rel.get("type") or rel.get("relation_type") or "").lower()
         try:
             if rtype == "mutex":
-                fields = _as_list(rel.get("fields"))
-                active = [field for field in fields if bool(normalize_literal(combo.get(str(field))))]
+                predicates = _as_list(rel.get("predicates"))
+                if not predicates:
+                    fields = _as_list(rel.get("fields"))
+                    active_value = rel.get("active_value")
+                    if active_value is None:
+                        if fields and all(isinstance(combo.get(str(field)), bool) for field in fields):
+                            active_value = True
+                        else:
+                            return {"status": "block", "reason": f"mutex relation requires predicates or active_value: {rel.get('id') or 'mutex'}"}
+                    predicates = [{"field": field, "equals": active_value} for field in fields]
+                active = [pred for pred in predicates if isinstance(pred, dict) and evaluate_relation_predicate(combo, pred)]
                 if len(active) > 1:
                     return {"status": "reject", "reason": str(rel.get("id") or "mutex")}
             elif rtype in {"implies", "requires"}:
-                source = str(rel.get("source") or rel.get("if") or "")
-                target = str(rel.get("target") or rel.get("then") or rel.get("requires") or "")
-                if source and target and bool(normalize_literal(combo.get(source))) and not bool(normalize_literal(combo.get(target))):
+                source = relation_predicate_from(rel.get("source") or rel.get("if"))
+                target = relation_predicate_from(rel.get("target") or rel.get("then") or rel.get("requires"))
+                if not source or not target:
+                    return {"status": "block", "reason": f"{rtype} relation requires structured source/target predicates: {rel.get('id') or rtype}"}
+                if evaluate_relation_predicate(combo, source) and not evaluate_relation_predicate(combo, target):
                     return {"status": "reject", "reason": str(rel.get("id") or rtype)}
             elif rtype == "compatible_set":
                 combos = _as_list(rel.get("combinations") or rel.get("must_cover"))
-                if combos and not any(isinstance(item, dict) and pattern_matches(combo, item) for item in combos):
+                match_mode = str(rel.get("match_mode") or "partial").lower()
+                if match_mode not in {"partial", "exact"}:
+                    return {"status": "block", "reason": f"unsupported compatible_set match_mode: {match_mode}"}
+                if combos and not any(isinstance(item, dict) and compatible_set_matches(combo, item, match_mode) for item in combos):
                     return {"status": "reject", "reason": str(rel.get("id") or "compatible_set")}
             elif rtype == "compile_time_fixed":
                 field = str(rel.get("field") or rel.get("var") or rel.get("target") or "")
@@ -1020,14 +1212,49 @@ def relation_allows_key(combo: dict[str, Any], constraints: dict[str, Any]) -> d
     return {"status": "allow", "reason": ""}
 
 
+def relation_predicate_from(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        field = value.get("field") or value.get("var") or value.get("key")
+        if field and any(key in value for key in ("equals", "value", "is")):
+            return {"field": str(field), "equals": value.get("equals", value.get("value", value.get("is")))}
+    return {}
+
+
+def evaluate_relation_predicate(combo: dict[str, Any], predicate: dict[str, Any]) -> bool:
+    field = str(predicate.get("field") or predicate.get("var") or predicate.get("key") or "")
+    if not field:
+        raise ValueError("relation predicate missing field")
+    if "equals" in predicate or "value" in predicate or "is" in predicate:
+        expected = predicate.get("equals", predicate.get("value", predicate.get("is")))
+        return normalize_literal(combo.get(field)) == normalize_literal(expected)
+    if "in" in predicate or "values" in predicate:
+        values = [normalize_literal(value) for value in _as_list(predicate.get("in") or predicate.get("values"))]
+        return normalize_literal(combo.get(field)) in values
+    raise ValueError("relation predicate missing equals/in")
+
+
+def compatible_set_matches(combo: dict[str, Any], item: dict[str, Any], match_mode: str) -> bool:
+    pattern = {key: value for key, value in item.items() if key not in NON_SEMANTIC_COMBO_FIELDS}
+    if match_mode == "exact":
+        return {key: normalize_literal(value) for key, value in combo.items()} == {key: normalize_literal(value) for key, value in pattern.items()}
+    return pattern_matches(combo, pattern)
+
+
 def merged_key_for(combo: dict[str, Any], constraints: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     merging = _as_dict(constraints.get("tiling_key_merging"))
     for group in _iter_items(merging.get("merged_groups")):
         for source in _as_list(group.get("source_combinations")):
             if isinstance(source, dict) and pattern_matches(combo, source):
                 merged_into = _as_dict(group.get("merged_into")) or combo
-                return stable_hash(merged_into), {"semantic_merge": True, "group_id": group.get("id"), "merged_into": merged_into}
-    return stable_hash(combo), {"semantic_merge": False}
+                return stable_hash(merged_into), {
+                    "semantic_merge": True,
+                    "group_id": group.get("id"),
+                    "canonical_fields": merged_into,
+                    "source_fields": combo,
+                    "source_combinations": _as_list(group.get("source_combinations")),
+                    "overlay_witnesses": [],
+                }
+    return stable_hash(combo), {"semantic_merge": False, "canonical_fields": combo, "source_fields": combo, "overlay_witnesses": []}
 
 
 def level_specific_blockers(level: str, obligations: list[dict[str, Any]], semantic_focus: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1055,28 +1282,46 @@ def _blocker(code: str, reason: str) -> dict[str, Any]:
     return item
 
 
+def slugify(value: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", str(value)).strip("_").upper()
+    return slug or stable_hash(str(value))[:8].upper()
+
+
+def validate_unique_obligation_ids(obligations: list[dict[str, Any]]) -> None:
+    ids = [str(item.get("id") or "") for item in obligations]
+    duplicates = sorted(item for item, count in Counter(ids).items() if item and count > 1)
+    if duplicates:
+        raise TgPlanError(f"DUPLICATE_OBLIGATION_ID: {', '.join(duplicates)}")
+
+
 def select_l0_smoke(
+    files: dict[str, Any],
     families: list[dict[str, Any]],
     paths: list[dict[str, Any]],
     dtypes: list[dict[str, Any]],
     input_realizations: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None, dict[str, Any]]:
+    family_path_index = build_family_path_index(files)
     rejected: list[dict[str, Any]] = []
     candidates: list[tuple[int, str, dict[str, Any], dict[str, Any], dict[str, Any]]] = []
     for family in families:
         family_ref = str(family.get("family_id") or _first_ref(family) or family.get("id") or "")
         for path in paths or [{}]:
             path_ref = str(_first_ref(path) or path.get("id") or "")
-            if not l0_compatible_refs(family_ref, path):
+            compatibility = l0_compatible_refs(family_ref, path, family_path_index)
+            if compatibility == "incompatible":
                 rejected.append({"family": family_ref, "kernel_path": path_ref, "reason": "family/path incompatible"})
                 continue
             for dtype in dtypes or [{}]:
-                dtype_ref = str(dtype.get("id") or dtype.get("name") or dtype.get("class") or dtype.get("dtype") or "")
-                realization_refs = compatible_l0_realizations(family_ref, dtype_ref, input_realizations)
+                dtype_context = dtype_layout_context(dtype)
+                dtype_ref = dtype_context["dtype_layout_class"]
+                realization_refs = compatible_l0_realizations(family_ref, path_ref, dtype_context, input_realizations)
                 if input_realizations and not realization_refs:
                     rejected.append({"family": family_ref, "kernel_path": path_ref, "dtype_layout": dtype_ref, "reason": "no compatible input realization"})
                     continue
                 score = l0_score(family) + l0_score(path) + l0_score(dtype)
+                if compatibility == "unknown":
+                    score -= 1
                 key = "|".join((family_ref, path_ref, dtype_ref))
                 candidates.append((score, key, family, path, dtype))
     if not candidates:
@@ -1087,16 +1332,64 @@ def select_l0_smoke(
         }
     score, _key, family, path, dtype = sorted(candidates, key=lambda row: (-row[0], row[1]))[0]
     family_ref = str(family.get("family_id") or _first_ref(family) or family.get("id") or "")
-    dtype_ref = str(dtype.get("id") or dtype.get("name") or dtype.get("class") or dtype.get("dtype") or "")
+    path_ref = str(_first_ref(path) or path.get("id") or "")
+    dtype_context = dtype_layout_context(dtype)
+    dtype_ref = dtype_context["dtype_layout_class"]
     return family, path if path else None, dtype if dtype else None, {
         "compatible": True,
         "score": score,
         "selected_family": family_ref,
-        "selected_kernel_path": _first_ref(path) if path else "",
+        "selected_kernel_path": path_ref if path else "",
         "selected_dtype_layout": dtype_ref,
-        "compatible_input_realization_refs": compatible_l0_realizations(family_ref, dtype_ref, input_realizations),
+        "family_path_compatibility": l0_compatible_refs(family_ref, path, family_path_index) if path else "unknown",
+        "compatible_input_realization_refs": compatible_l0_realizations(family_ref, path_ref, dtype_context, input_realizations),
         "rejected_candidates": rejected[:20],
     }
+
+
+def resolve_kernel_path_specs(files: dict[str, Any], contract: dict[str, Any]) -> list[dict[str, Any]]:
+    by_id: dict[str, dict[str, Any]] = {}
+    for item in _iter_items(_as_dict(files.get("kernel/paths.yaml")).get("kernel_paths") or _as_dict(files.get("kernel/paths.yaml")).get("paths")):
+        ref = str(item.get("id") or item.get("stable_id") or item.get("path_ref") or "")
+        if ref and _reachable_item(item):
+            by_id[ref] = dict(item)
+    for item in _iter_items(_as_dict(contract.get("coverage_obligations")).get("kernel_paths")):
+        if not _reachable_item(item):
+            continue
+        ref = str(_first_ref(item) or item.get("id") or item.get("stable_id") or "")
+        if not ref:
+            continue
+        merged = dict(by_id.get(ref, {}))
+        merged.update(item)
+        merged.setdefault("id", ref)
+        by_id[ref] = merged
+    return [by_id[key] for key in sorted(by_id)]
+
+
+def build_family_path_index(files: dict[str, Any]) -> dict[str, set[str]]:
+    index: dict[str, set[str]] = {}
+    def add(path_ref: str, family_ref: str) -> None:
+        if path_ref and family_ref:
+            index.setdefault(str(path_ref), set()).add(str(family_ref))
+
+    for item in _iter_items(_as_dict(files.get("kernel/paths.yaml")).get("kernel_paths") or _as_dict(files.get("kernel/paths.yaml")).get("paths")):
+        path_ref = str(item.get("id") or item.get("stable_id") or item.get("path_ref") or "")
+        for family_ref in _as_list(item.get("family_refs") or item.get("families") or item.get("family_ref")):
+            add(path_ref, str(family_ref))
+    for item in _iter_items(_as_dict(files.get("tiling/families.yaml")).get("families") or _as_dict(files.get("tiling/families.yaml")).get("family_obligations")):
+        family_ref = str(item.get("id") or item.get("stable_id") or item.get("family_id") or "")
+        for path_ref in _as_list(item.get("kernel_path_refs") or item.get("path_refs") or item.get("paths")):
+            add(str(path_ref), family_ref)
+    cross = _as_dict(files.get("cross_layer/tiling_to_kernel.yaml"))
+    for item in _iter_items(cross.get("edges") or cross.get("relations") or cross.get("mappings") or cross.get("links")):
+        source = str(item.get("source") or item.get("source_ref") or item.get("family_ref") or "")
+        target = str(item.get("target") or item.get("target_ref") or item.get("kernel_path_ref") or "")
+        relation = str(item.get("relation") or item.get("type") or item.get("kind") or "").lower()
+        if source.startswith("KPATH_") and target.startswith("FAM_"):
+            source, target = target, source
+        if source.startswith("FAM_") and target.startswith("KPATH_") and (not relation or relation in {"dispatches_to", "uses_path", "maps_to", "selects", "family_to_path"}):
+            add(target, source)
+    return index
 
 
 def l0_score(item: dict[str, Any]) -> int:
@@ -1113,18 +1406,44 @@ def l0_score(item: dict[str, Any]) -> int:
     return score
 
 
-def l0_compatible_refs(family_ref: str, path: dict[str, Any]) -> bool:
-    refs = set(str(ref) for ref in _as_list(path.get("family_refs") or path.get("families") or path.get("target_refs")) if ref)
-    return not refs or not family_ref or family_ref in refs
+def l0_compatible_refs(family_ref: str, path: dict[str, Any], family_path_index: dict[str, set[str]] | None = None) -> str:
+    path_ref = str(_first_ref(path) or path.get("id") or path.get("stable_id") or "")
+    refs = set(str(ref) for ref in _as_list(path.get("family_refs") or path.get("families") or path.get("family_ref")) if ref)
+    if family_path_index and path_ref in family_path_index:
+        refs.update(family_path_index[path_ref])
+    if not refs or not family_ref:
+        return "unknown"
+    return "compatible" if family_ref in refs else "incompatible"
 
 
-def compatible_l0_realizations(family_ref: str, dtype_ref: str, input_realizations: dict[str, Any]) -> list[str]:
+def compatible_l0_realizations(family_ref: str, path_ref: str, dtype_context: dict[str, Any], input_realizations: dict[str, Any]) -> list[str]:
     refs = []
-    key = {"family": family_ref, "dtype_layout": dtype_ref, "layout": dtype_ref, "dtype": dtype_ref}
+    context = {
+        "family_refs": [family_ref] if family_ref else [],
+        "kernel_path_refs": [path_ref] if path_ref else [],
+        "dtype": dtype_context.get("dtype") or "",
+        "layout": dtype_context.get("layout") or "",
+        "dtype_layout_class": dtype_context.get("dtype_layout_class") or "",
+        "optional_inputs": {"present": [], "absent": []},
+        "key_fields": {},
+    }
     for rid, rule in sorted(input_realizations.items()):
-        if isinstance(rule, dict) and match_input_realization(key, rule):
+        if isinstance(rule, dict) and match_input_realization_context(context, rule):
             refs.append(str(rid))
     return refs
+
+
+def dtype_layout_context(item: dict[str, Any]) -> dict[str, str]:
+    ref = str(item.get("id") or item.get("name") or item.get("class") or item.get("dtype_layout_class") or item.get("dtype") or "")
+    dtype = str(item.get("dtype") or "")
+    layout = str(item.get("layout") or "")
+    if ref:
+        tokens = [token for token in re.split(r"[_:/-]+", ref) if token]
+        if not dtype:
+            dtype = next((token for token in tokens if token.upper() in {"FP16", "BF16", "FP32", "INT8", "INT32"}), "")
+        if not layout:
+            layout = next((token for token in tokens if token.upper() in {"ND", "TND", "NZ", "NCHW", "NHWC"}), "")
+    return {"dtype_layout_class": ref, "dtype": dtype.upper(), "layout": layout.upper()}
 
 
 def _reachable_item(item: dict[str, Any]) -> bool:
@@ -1442,7 +1761,7 @@ def write_plan_outputs(out_root: Path, plan: dict[str, Any], snapshot: dict[str,
 
 def normalize_constraints(item: dict[str, Any]) -> dict[str, Any]:
     base = dict(item.get("constraints")) if isinstance(item.get("constraints"), dict) else {}
-    for key in ("must_cover", "combinations", "fields", "values", "boundary_values", "relation_type", "linked_relations", "source", "target", "unreachable_values", "unreachable_combinations"):
+    for key in ("expr", "pattern", "key_pattern", "matches", "must_cover", "combinations", "fields", "values", "boundary_values", "relation_type", "linked_relations", "source", "target", "unreachable_values", "unreachable_combinations"):
         if key in item:
             base[key] = item[key]
     return base

@@ -235,18 +235,33 @@ uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase2 --run-id "$
 uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase2
 ```
 
-After Phase 4 kernel raw agents finish and host alignment writes kernel canonical files:
+After Phase 4 kernel raw agents finish:
 
 ```powershell
 uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase4 --run-id "$RUN_ID"
 uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase4
 ```
 
-After Phase 5 and Phase 7:
+After Phase 5 host alignment writes `phase5_kernel_alignment_proposal.yaml`:
 
 ```powershell
+uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase5 --run-id "$RUN_ID"
 uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase5
+```
+
+After Phase 6 evidence compiler writes `phase6_evidence_proposal.yaml`:
+
+```powershell
+uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase6 --run-id "$RUN_ID"
+uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase6
+```
+
+After Phase 7 route/contract proposal promotion:
+
+```powershell
+uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase7 --run-id "$RUN_ID"
 uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase7
+uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase final --write-outputs false
 ```
 
 Phase 8 runs `quality_gate.py` for final validation. Treat `archive/proposals/*`, `archive/raw_agents/*`, and draft canonical slices as untrusted until these commands pass.

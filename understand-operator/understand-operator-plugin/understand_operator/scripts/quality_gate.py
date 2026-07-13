@@ -31,6 +31,8 @@ from understand_operator._operator.artifacts import (
 )
 from understand_operator._operator.evidence import validate_evidence_closure
 from understand_operator._operator.yaml_gate import artifact_owner
+
+_LAST_COMPILER_ISSUES: list[object] = []
 from understand_operator._operator.kb_compiler import RELATION_TYPES
 
 try:
@@ -226,7 +228,8 @@ def main(argv: list[str] | None = None) -> int:
 
     seed_section = _top_level_section(coverage, "seed_cases")
     seed_count = len(re.findall(r"(?m)^\s*-\s+", seed_section))
-    family_count = len(set(re.findall(r"(?m)^\s*(TF\d+)\s*:", families)))
+    family_ids_for_seed = _family_ids(parsed.get("tiling/families.yaml"))
+    family_count = len(family_ids_for_seed)
     if family_count and seed_count > max(10, family_count * 5) and "role:" not in coverage.lower():
         checks["branch_matrix_not_full_enum_rule"] = "fail"
         warnings.append("seed_cases look like full enumeration instead of representative samples")
@@ -295,8 +298,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # kernel paths vs families
     paths = read_text(base / "kernel" / "paths.yaml")
-    planned = set(re.findall(r"(?m)^\s*source_family\s*:\s*(TF\d+)", paths))
-    family_ids = set(re.findall(r"(?m)^\s*(TF\d+)\s*:", families))
+    planned = _planned_family_ids(parsed.get("kernel/paths.yaml"))
+    family_ids = _family_ids(parsed.get("tiling/families.yaml"))
     if family_ids and "normal_kernel_task" in families.lower():
         missing_map = sorted(fid for fid in family_ids if fid not in planned)
         if missing_map:
@@ -355,13 +358,38 @@ def main(argv: list[str] | None = None) -> int:
 
 def _write_red_gate_repair_queue(base: Path, blockers: list[str]) -> None:
     grouped: dict[str, list[dict[str, str]]] = {}
+    for issue in _LAST_COMPILER_ISSUES:
+        if getattr(issue, "severity", "") != "error":
+            continue
+        artifact = str(getattr(issue, "artifact", "") or "archive/runs/kb_compile_report.yaml")
+        target = str(getattr(issue, "target", "") or "")
+        owner = str(getattr(issue, "owner", "") or artifact_owner(artifact))
+        grouped.setdefault(owner, []).append(
+            {
+                "phase": str(getattr(issue, "phase", "") or ""),
+                "artifact": artifact,
+                "target": target,
+                "error_code": str(getattr(issue, "code", "") or "COMPILER_ERROR"),
+                "message": str(getattr(issue, "message", "") or ""),
+                "retry_task_id": str(getattr(issue, "retry_task_id", "") or _retry_task_id(owner, artifact)),
+                "allowed_repair_scope": "owner_retry",
+            }
+        )
     for blocker in blockers:
         artifact = _artifact_from_blocker(blocker)
+        if any(item.get("message") == blocker for items in grouped.values() for item in items):
+            continue
+        if not artifact:
+            artifact = "archive/runs/kb_compile_report.yaml"
         owner = artifact_owner(artifact)
         grouped.setdefault(owner, []).append(
             {
                 "artifact": artifact,
+                "target": "",
+                "error_code": "QUALITY_BLOCKER",
                 "message": blocker,
+                "retry_task_id": _retry_task_id(owner, artifact),
+                "allowed_repair_scope": "owner_retry",
                 "repair_action": "resume owner and rerun phase barrier, final compiler, and quality gate",
             }
         )
@@ -379,6 +407,11 @@ def _write_red_gate_repair_queue(base: Path, blockers: list[str]) -> None:
 
         text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     write_text(base / "archive" / "runs" / "red_gate_repair_queue.yaml", text)
+
+
+def _retry_task_id(owner: str, artifact: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", artifact).strip("_").lower() or "artifact"
+    return f"retry_{owner}_{slug}"
 
 
 def _artifact_from_blocker(blocker: str) -> str:
@@ -541,6 +574,24 @@ def _iter_structured_entries(value: object) -> list[dict]:
     if isinstance(value, dict):
         return [item for item in value.values() if isinstance(item, dict)]
     return []
+
+
+def _family_ids(families_doc: object) -> set[str]:
+    doc = _as_mapping(families_doc)
+    return {
+        str(item.get("id"))
+        for item in _iter_structured_entries(doc.get("families"))
+        if item.get("id")
+    }
+
+
+def _planned_family_ids(paths_doc: object) -> set[str]:
+    doc = _as_mapping(paths_doc)
+    return {
+        str(item.get("source_family"))
+        for item in _iter_structured_entries(doc.get("kernel_paths"))
+        if item.get("source_family")
+    }
 
 
 def _has_compute_golden_mapping(compute_graph: object, golden_model: object) -> bool:
@@ -913,6 +964,8 @@ def _run_kb_compiler(
     warnings: list[str],
     blockers: list[str],
 ) -> dict[str, str]:
+    global _LAST_COMPILER_ISSUES
+    _LAST_COMPILER_ISSUES = []
     checks: dict[str, str] = {
         "kb_compiler_passed": "pass",
         "stable_ids_present": "pass",
@@ -934,6 +987,7 @@ def _run_kb_compiler(
         checks["kb_compiler_passed"] = "fail"
     elif result.status == "warn":
         checks["kb_compiler_passed"] = "warn"
+    _LAST_COMPILER_ISSUES = list(result.issues)
 
     if result.entity_count == 0:
         checks["stable_ids_present"] = "fail"

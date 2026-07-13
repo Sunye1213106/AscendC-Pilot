@@ -213,6 +213,8 @@ def obligation_target_expr(obligation: dict[str, Any], variable_ids: set[str]) -
         return {"op": "eq", "var": "VAR_TEMPLATE", "value": target_refs[0]}
     if kind == "kernel_branch" and target_refs:
         return {"op": "eq", "var": _branch_var_id(target_refs[0]), "value": obligation.get("target_value", True)}
+    if kind == "runtime_variable_state" and target_refs:
+        return {"op": "eq", "var": _var_id(target_refs[0]), "value": obligation.get("target_value")}
     if kind == "optional_input_mode" and target_refs:
         return {"op": "eq", "var": _optional_var_id(target_refs[0]), "value": obligation.get("target_value", True)}
     if kind == "dtype_layout_class" and target_refs:
@@ -230,7 +232,8 @@ def obligation_target_expr(obligation: dict[str, Any], variable_ids: set[str]) -
         if var and target_refs:
             return {"op": "eq", "var": var, "value": target_refs[0]}
     if kind == "tiling_key_relation":
-        return compile_relation_expr(constraints)
+        expr = compile_pattern_to_expr(constraints.get("pattern") or constraints.get("key_pattern") or constraints.get("matches"))
+        return expr or compile_relation_expr(constraints)
     field = constraints.get("field") or constraints.get("field_name")
     values = constraints.get("values")
     if field and isinstance(values, list) and values:
@@ -278,6 +281,13 @@ def compile_relation_expr(constraints: dict[str, Any]) -> dict[str, Any] | None:
     if relation_type in {"pairwise", "must_cover"}:
         raise ConstraintIRError(f"{relation_type} relation does not provide a deterministic target expression")
     raise ConstraintIRError(f"Unsupported relation_type: {relation_type}")
+
+
+def compile_pattern_to_expr(pattern: Any) -> dict[str, Any] | None:
+    if not isinstance(pattern, dict) or not pattern:
+        return None
+    args = [{"op": "eq", "var": _var_id(str(key)), "value": value} for key, value in sorted(pattern.items())]
+    return args[0] if len(args) == 1 else {"op": "and", "args": args}
 
 
 def normalize_expr(expr: Any) -> dict[str, Any]:
@@ -443,6 +453,15 @@ def _variables_from_obligations(variables: dict[str, dict[str, Any]], obligation
         elif kind == "kernel_branch":
             for ref in refs:
                 _ensure_bool(variables, _branch_var_id(ref), source="obligation_target", errors=errors_for(item), obligation_id=str(item.get("id") or ""))
+        elif kind == "runtime_variable_state":
+            target_value = item.get("target_value")
+            for ref in refs:
+                if isinstance(target_value, bool):
+                    _ensure_bool(variables, _var_id(ref), source="obligation_target", errors=errors_for(item), obligation_id=str(item.get("id") or ""))
+                elif isinstance(target_value, int):
+                    _ensure_int(variables, _var_id(ref), [target_value], source="obligation_target_value", errors=errors_for(item), obligation_id=str(item.get("id") or ""))
+                elif target_value not in (None, ""):
+                    _ensure_enum(variables, _var_id(ref), [str(target_value)], source="obligation_target", errors=errors_for(item), obligation_id=str(item.get("id") or ""))
         elif kind == "optional_input_mode":
             for ref in refs:
                 _ensure_bool(variables, _optional_var_id(ref), source="obligation_target", errors=errors_for(item), obligation_id=str(item.get("id") or ""))

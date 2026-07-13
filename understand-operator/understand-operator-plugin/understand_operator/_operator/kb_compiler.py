@@ -17,8 +17,10 @@ from typing import Any
 from understand_operator._operator.artifacts import operator_root, read_text, safe_op_name, write_text
 from understand_operator._operator.evidence import validate_evidence_closure
 from understand_operator._operator.yaml_gate import (
-    ORCHESTRATOR_AGENTS,
+    FORBIDDEN_CANONICAL_PROPOSERS,
+    PROPOSAL_PRODUCER_ROLES,
     artifact_owner,
+    allowed_canonical_writers,
     resource_semantic_errors,
     serialize_yaml_checked,
     validate_yaml_document,
@@ -285,9 +287,11 @@ EVIDENCE_FILES = (
 ROOT_FILES = ("manifest.yaml", "index.yaml", "operator.yaml")
 
 PHASE_FILES: dict[str, tuple[str, ...]] = {
+    "phase1": ROOT_FILES + REGISTRY_FILES,
     "phase2": ROOT_FILES + REGISTRY_FILES + TILING_FILES + FLOW_FILES + EVIDENCE_FILES,
     "phase4": ROOT_FILES + REGISTRY_FILES + TILING_FILES + FLOW_FILES + EVIDENCE_FILES + KERNEL_FILES,
     "phase5": ROOT_FILES + REGISTRY_FILES + TILING_FILES + FLOW_FILES + EVIDENCE_FILES + KERNEL_FILES + CROSS_LAYER_FILES,
+    "phase6": ROOT_FILES + REGISTRY_FILES + TILING_FILES + FLOW_FILES + EVIDENCE_FILES + KERNEL_FILES + CROSS_LAYER_FILES,
     "phase7": ROOT_FILES
     + REGISTRY_FILES
     + TILING_FILES
@@ -411,6 +415,12 @@ class Issue:
     message: str
     artifact: str = ""
     target: str = ""
+    phase: str = ""
+    owner: str = ""
+    expected_format: str = ""
+    repair_action: str = ""
+    retry_task_id: str = ""
+    run_id: str = ""
 
     def to_dict(self) -> dict[str, str]:
         return {
@@ -418,6 +428,12 @@ class Issue:
             "severity": self.severity,
             "artifact": self.artifact,
             "target": self.target,
+            "phase": self.phase,
+            "owner": self.owner,
+            "expected_format": self.expected_format,
+            "repair_action": self.repair_action,
+            "retry_task_id": self.retry_task_id,
+            "run_id": self.run_id,
             "message": self.message,
         }
 
@@ -450,8 +466,21 @@ class CompileResult:
     def evidence_count(self) -> int:
         return len([k for k in self.entity_index if k.startswith(("EV_", "SRC_"))])
 
-    def add(self, code: str, severity: str, message: str, artifact: str = "", target: str = "") -> None:
-        self.issues.append(Issue(code, severity, message, artifact, target))
+    def add(
+        self,
+        code: str,
+        severity: str,
+        message: str,
+        artifact: str = "",
+        target: str = "",
+        phase: str = "",
+        owner: str = "",
+        expected_format: str = "",
+        repair_action: str = "",
+        retry_task_id: str = "",
+        run_id: str = "",
+    ) -> None:
+        self.issues.append(Issue(code, severity, message, artifact, target, phase or self.phase, owner, expected_format, repair_action, retry_task_id, run_id))
         if severity == "error":
             self.status = "fail"
         elif severity == "warning" and self.status == "pass":
@@ -967,6 +996,22 @@ def migrate_stable_ids(docs: dict[str, Any], migrations: list[dict[str, Any]], r
             if result:
                 result.add("BAD_ID_MIGRATION", "error", f"old id not found: {old_id}", "id_migration", old_id)
             continue
+        new_kind = _kind_from_prefix(new_id)
+        allowed_kinds = {new_kind} if new_kind else set()
+        for prefix, aliases in PREFIX_KIND_ALIASES.items():
+            if new_id.startswith(prefix):
+                allowed_kinds.update(aliases)
+        if kind and new_kind and kind not in allowed_kinds:
+            if result:
+                result.add(
+                    "BAD_ID_MIGRATION_KIND",
+                    "error",
+                    f"new id {new_id} has kind {new_kind}, expected {kind}",
+                    "id_migration",
+                    old_id,
+                    expected_format=f"{kind} id prefix",
+                )
+            continue
         expected = _canonicalize_id_for_kind(old_id, kind)
         if new_id != expected and not STABLE_ID_RE.match(new_id):
             if result:
@@ -1001,6 +1046,12 @@ def _structured_id_exists(value: Any, item_id: str) -> bool:
 def _rewrite_structured_refs(value: Any, mapping: dict[str, str], key: str = "") -> None:
     if isinstance(value, dict):
         for child_key, child in list(value.items()):
+            if _is_id_keyed_section(child_key) and isinstance(child, dict):
+                rewritten_section: dict[Any, Any] = {}
+                for entity_key, entity_value in child.items():
+                    new_key = mapping.get(entity_key, entity_key) if isinstance(entity_key, str) else entity_key
+                    rewritten_section[new_key] = entity_value
+                value[child_key] = child = rewritten_section
             if child_key in {"id", "stable_id"} and isinstance(child, str) and child in mapping:
                 value[child_key] = mapping[child]
             elif _is_ref_key(child_key):
@@ -1037,6 +1088,19 @@ def _is_ref_key(key: str) -> bool:
         "target_ids",
         "depends_on",
         "evidence_refs",
+    }
+
+
+def _is_id_keyed_section(key: str) -> bool:
+    return key in {
+        "families",
+        "variables",
+        "symbols",
+        "evidence",
+        "facts",
+        "source_spans",
+        "entities",
+        "kernel_paths",
     }
 
 
@@ -1177,23 +1241,66 @@ def _validate_proposal_hash(path: Path, proposal: dict[str, Any], computed_hash:
 
 def _validate_update_owner(producer_agent: str, update: dict[str, Any], proposal_path: Path, result: CompileResult) -> bool:
     target = str(update.get("target") or "").replace("\\", "/")
+    if not _target_allowed(target):
+        result.add("BAD_PROMOTION_TARGET", "error", f"target not allowed: {target}", proposal_path.as_posix(), target)
+        return False
     owner = artifact_owner(target)
-    if producer_agent in ORCHESTRATOR_AGENTS and not target.startswith("archive/"):
+    if producer_agent in FORBIDDEN_CANONICAL_PROPOSERS and not target.startswith("archive/"):
         result.add(
             "CANONICAL_DIRECT_WRITE",
             "error",
-            f"{producer_agent} must not write canonical artifact {target}; route retry to {owner}",
+            f"{producer_agent} must not submit canonical proposal for {target}; route retry to {owner}",
             proposal_path.as_posix(),
             target,
+            owner=owner,
+            repair_action="rerun the source or compiler phase that owns this artifact",
         )
         return False
-    if owner.startswith("uo-") and producer_agent and producer_agent != owner:
+    if not producer_agent:
         result.add(
             "ARTIFACT_OWNER_MISMATCH",
             "error",
-            f"{target} is owned by {owner}, not {producer_agent}",
+            f"{target} proposal is missing producer.agent",
             proposal_path.as_posix(),
             target,
+            owner=owner,
+            expected_format="producer.agent must be a proposal producer role",
+        )
+        return False
+    if producer_agent not in PROPOSAL_PRODUCER_ROLES and producer_agent not in allowed_canonical_writers(target):
+        result.add(
+            "ARTIFACT_OWNER_MISMATCH",
+            "error",
+            f"{producer_agent} is not allowed to submit canonical updates for {target}",
+            proposal_path.as_posix(),
+            target,
+            owner=owner,
+            expected_format="producer.agent must be a source owner or canonical compiler role",
+        )
+        return False
+    if target in {"registry/evidence.yaml", "registry/symbols.yaml", "registry/variables.yaml", "registry/aliases.yaml"} and producer_agent in {"uo-host-extraction", "uo-flow-extraction", "uo-kernel-path", "evidence-compiler", "registry-compiler"}:
+        return True
+    if target.startswith("cross_layer/") and producer_agent in {"uo-host-extraction", "uo-flow-extraction", "uo-kernel-path", "host-compiler"}:
+        return True
+    if producer_agent.startswith("uo-") and producer_agent != owner:
+        result.add(
+            "ARTIFACT_OWNER_MISMATCH",
+            "error",
+            f"{target} source owner is {owner}, not {producer_agent}",
+            proposal_path.as_posix(),
+            target,
+            owner=owner,
+        )
+        return False
+    if producer_agent not in allowed_canonical_writers(target) and producer_agent != owner:
+        result.add(
+            "ARTIFACT_OWNER_MISMATCH",
+            "error",
+            f"{producer_agent} may provide raw/source facts for {target} but cannot produce its canonical aggregation proposal",
+            proposal_path.as_posix(),
+            target,
+            owner=owner,
+            expected_format=f"allowed proposal producers for this target: {', '.join(sorted(allowed_canonical_writers(target) | {owner}))}",
         )
         return False
     return True
@@ -3321,7 +3428,24 @@ def _required_phase_for(rel: str) -> int:
 
 def _normalize_phase(phase: str) -> str:
     phase = str(phase or "final").lower().replace("_", "")
-    aliases = {"2": "phase2", "phase2": "phase2", "phase2host": "phase2", "4": "phase4", "phase4": "phase4", "5": "phase5", "phase5": "phase5", "7": "phase7", "phase7": "phase7", "8": "final", "phase8": "final", "final": "final"}
+    aliases = {
+        "1": "phase1",
+        "phase1": "phase1",
+        "2": "phase2",
+        "phase2": "phase2",
+        "phase2host": "phase2",
+        "4": "phase4",
+        "phase4": "phase4",
+        "5": "phase5",
+        "phase5": "phase5",
+        "6": "phase6",
+        "phase6": "phase6",
+        "7": "phase7",
+        "phase7": "phase7",
+        "8": "final",
+        "phase8": "final",
+        "final": "final",
+    }
     if phase not in aliases:
         raise ValueError(f"unsupported phase: {phase}")
     return aliases[phase]

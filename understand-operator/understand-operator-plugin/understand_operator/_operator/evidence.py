@@ -7,6 +7,7 @@ from typing import Any
 
 
 EVIDENCE_ID_RE = re.compile(r"^(?:EV|SRC)_[A-Z0-9_]+$")
+SOURCE_ID_RE = re.compile(r"^SRC_[A-Z0-9_]+$")
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,13 @@ def validate_evidence_closure(docs: dict[str, Any]) -> list[EvidenceIssue]:
     fact_index = _as_dict(docs.get("evidence/fact_index.yaml"))
     source_index = _as_dict(docs.get("evidence/source_index.yaml"))
     issues: list[EvidenceIssue] = []
+    seen: set[tuple[str, str, str, str]] = set()
+
+    def add(issue: EvidenceIssue) -> None:
+        key = (issue.code, issue.artifact, issue.target, issue.message)
+        if key not in seen:
+            seen.add(key)
+            issues.append(issue)
 
     registry_ids: set[str] = set()
     fingerprints: dict[str, str] = {}
@@ -43,10 +51,10 @@ def validate_evidence_closure(docs: dict[str, Any]) -> list[EvidenceIssue]:
         ev_id = str(item.get("id") or "").strip()
         target = f"evidence[{index}]"
         if not ev_id:
-            issues.append(EvidenceIssue("MISSING_EVIDENCE_ID", "evidence entry missing id", "registry/evidence.yaml", target))
+            add(EvidenceIssue("MISSING_EVIDENCE_ID", "evidence entry missing id", "registry/evidence.yaml", target))
             continue
         if not EVIDENCE_ID_RE.fullmatch(ev_id):
-            issues.append(
+            add(
                 EvidenceIssue(
                     "BAD_EVIDENCE_REF_FORMAT",
                     f"evidence id must be canonical EV_/SRC_: {ev_id!r}",
@@ -58,12 +66,12 @@ def validate_evidence_closure(docs: dict[str, Any]) -> list[EvidenceIssue]:
         registry_ids.add(ev_id)
         file_name = str(item.get("file") or item.get("path") or "").strip()
         if not file_name or Path(file_name).is_absolute() or ".." in Path(file_name).parts:
-            issues.append(EvidenceIssue("BAD_EVIDENCE_PATH", f"evidence {ev_id} must use repo-relative file", "registry/evidence.yaml", ev_id))
+            add(EvidenceIssue("BAD_EVIDENCE_PATH", f"evidence {ev_id} must use repo-relative file", "registry/evidence.yaml", ev_id))
         if not _valid_lines(item.get("lines")):
-            issues.append(EvidenceIssue("BAD_EVIDENCE_LINES", f"evidence {ev_id} has invalid lines", "registry/evidence.yaml", ev_id))
+            add(EvidenceIssue("BAD_EVIDENCE_LINES", f"evidence {ev_id} has invalid lines", "registry/evidence.yaml", ev_id))
         for required in ("symbol", "kind", "status"):
             if not item.get(required):
-                issues.append(
+                add(
                     EvidenceIssue(
                         "EVIDENCE_SCHEMA_ERROR",
                         f"evidence {ev_id} missing required field {required}",
@@ -75,7 +83,7 @@ def validate_evidence_closure(docs: dict[str, Any]) -> list[EvidenceIssue]:
         fp = repr({key: item.get(key) for key in ("file", "path", "lines", "symbol", "kind", "source_hash", "excerpt_hash")})
         previous = fingerprints.get(ev_id)
         if previous and previous != fp:
-            issues.append(EvidenceIssue("EVIDENCE_ID_CONFLICT", f"evidence {ev_id} has conflicting definitions", "registry/evidence.yaml", ev_id))
+            add(EvidenceIssue("EVIDENCE_ID_CONFLICT", f"evidence {ev_id} has conflicting definitions", "registry/evidence.yaml", ev_id))
         fingerprints[ev_id] = fp
 
     fact_refs = set(_fact_index_refs(fact_index))
@@ -96,17 +104,19 @@ def validate_evidence_closure(docs: dict[str, Any]) -> list[EvidenceIssue]:
     ):
         artifact = "evidence/fact_index.yaml" if source_name == "fact_index" else "evidence/source_index.yaml"
         for ref in sorted(refs):
-            if not EVIDENCE_ID_RE.fullmatch(ref):
-                issues.append(EvidenceIssue("BAD_EVIDENCE_REF_FORMAT", f"{source_name} ref must be EV_/SRC_: {ref!r}", artifact, ref))
+            if source_name == "source_index" and not SOURCE_ID_RE.fullmatch(ref):
+                add(EvidenceIssue("SOURCE_INDEX_BAD_PREFIX", f"source_index source_spans ref must be SRC_*: {ref!r}", artifact, ref, expected_format="SRC_*"))
+            elif not EVIDENCE_ID_RE.fullmatch(ref):
+                add(EvidenceIssue("BAD_EVIDENCE_REF_FORMAT", f"{source_name} ref must be EV_/SRC_: {ref!r}", artifact, ref))
             elif ref not in registry_ids:
-                issues.append(EvidenceIssue(code, f"{source_name} ref {ref} is not registered", "registry/evidence.yaml", ref))
+                add(EvidenceIssue(code, f"{source_name} ref {ref} is not registered", artifact, ref))
 
     for rel, path, ref in all_refs:
         if not ref or not EVIDENCE_ID_RE.fullmatch(ref):
-            issues.append(EvidenceIssue("BAD_EVIDENCE_REF_FORMAT", f"evidence ref must be a stable EV_/SRC_ id: {ref!r}", rel, path))
+            add(EvidenceIssue("BAD_EVIDENCE_REF_FORMAT", f"evidence ref must be a stable EV_/SRC_ id: {ref!r}", rel, path))
         elif ref not in registry_ids:
-            issues.append(EvidenceIssue("DANGLING_EVIDENCE_REF", f"unknown evidence ref {ref}", rel, path))
-            issues.append(EvidenceIssue("EVIDENCE_REGISTRY_MISSING_ENTRY", f"registry/evidence.yaml missing {ref}", "registry/evidence.yaml", ref))
+            add(EvidenceIssue("DANGLING_EVIDENCE_REF", f"unknown evidence ref {ref}", rel, path))
+            add(EvidenceIssue("EVIDENCE_REGISTRY_MISSING_ENTRY", f"registry/evidence.yaml missing {ref}", "registry/evidence.yaml", ref))
     return issues
 
 

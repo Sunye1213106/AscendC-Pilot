@@ -38,12 +38,25 @@ ERROR_CODES = {
     "INSTALLED_SKILL_VERSION_MISMATCH",
     "RED_GATE_REMEDIATION_INCOMPLETE",
     "PATH_OPERATION_TARGET_MISMATCH",
+    "SOURCE_INDEX_BAD_PREFIX",
+    "BAD_ID_MIGRATION_KIND",
+    "ID_KIND_PREFIX_MISMATCH",
 }
 
-CANONICAL_WRITERS = {"compiler", "promoter", "quality_gate"}
-ORCHESTRATOR_AGENTS = {"orchestrator", "quality_agent", "evidence_consistency_agent", "host"}
+DIRECT_CANONICAL_WRITERS = {"kb-promoter", "promoter", "compiler"}
+QUALITY_CANONICAL_WRITERS = {"quality-gate", "quality_gate", "quality_gate.py"}
+PROPOSAL_PRODUCER_ROLES = {
+    "uo-host-extraction",
+    "uo-flow-extraction",
+    "uo-kernel-path",
+    "host-compiler",
+    "evidence-compiler",
+    "registry-compiler",
+    "route-compiler",
+}
+FORBIDDEN_CANONICAL_PROPOSERS = {"orchestrator", "quality-agent", "quality_agent", "quality_gate", "quality_gate.py"}
 
-ARTIFACT_OWNERS: dict[str, str] = {
+ARTIFACT_SOURCE_OWNERS: dict[str, str] = {
     "kernel/resources.yaml": "uo-kernel-path",
     "kernel/pipeline.yaml": "uo-kernel-path",
     "kernel/paths.yaml": "uo-kernel-path",
@@ -67,6 +80,34 @@ ARTIFACT_OWNERS: dict[str, str] = {
     "cross_layer/variable_lineage.yaml": "host-compiler",
     "cross_layer/behavior_graph.yaml": "host-compiler",
     "cross_layer/impact_graph.yaml": "host-compiler",
+    "registry/evidence.yaml": "evidence-source-router",
+    "registry/variables.yaml": "registry-source-router",
+    "registry/symbols.yaml": "registry-source-router",
+}
+
+ARTIFACT_CANONICAL_WRITERS: dict[str, set[str]] = {
+    "kernel/resources.yaml": {"host-compiler", "kb-promoter", "promoter", "compiler"},
+    "kernel/pipeline.yaml": {"host-compiler", "kb-promoter", "promoter", "compiler"},
+    "kernel/paths.yaml": {"host-compiler", "kb-promoter", "promoter", "compiler"},
+    "kernel/branches.yaml": {"host-compiler", "kb-promoter", "promoter", "compiler"},
+    "kernel/compile_model.yaml": {"host-compiler", "kb-promoter", "promoter", "compiler"},
+    "kernel/variables.yaml": {"host-compiler", "kb-promoter", "promoter", "compiler"},
+    "tiling/variables.yaml": {"kb-promoter", "promoter", "compiler"},
+    "tiling/key_space.yaml": {"kb-promoter", "promoter", "compiler"},
+    "tiling/exhaustive_key_space.yaml": {"kb-promoter", "promoter", "compiler"},
+    "tiling/constraints.yaml": {"kb-promoter", "promoter", "compiler"},
+    "tiling/families.yaml": {"kb-promoter", "promoter", "compiler"},
+    "tiling/data_model.yaml": {"kb-promoter", "promoter", "compiler"},
+    "tiling/coverage_model.yaml": {"kb-promoter", "promoter", "compiler"},
+    "tiling/evidence_index.yaml": {"kb-promoter", "promoter", "compiler"},
+    "flow/compute_graph.yaml": {"kb-promoter", "promoter", "compiler"},
+    "flow/dataflow.yaml": {"kb-promoter", "promoter", "compiler"},
+    "flow/golden_model.yaml": {"kb-promoter", "promoter", "compiler"},
+    "flow/numerical_model.yaml": {"kb-promoter", "promoter", "compiler"},
+    "registry/evidence.yaml": {"evidence-compiler", "kb-promoter", "promoter", "compiler"},
+    "registry/variables.yaml": {"registry-compiler", "kb-promoter", "promoter", "compiler"},
+    "registry/symbols.yaml": {"registry-compiler", "kb-promoter", "promoter", "compiler"},
+    "registry/aliases.yaml": {"registry-compiler", "kb-promoter", "promoter", "compiler"},
 }
 
 REQUIRED_SECTIONS: dict[str, tuple[str, ...]] = {
@@ -78,6 +119,26 @@ REQUIRED_SECTIONS: dict[str, tuple[str, ...]] = {
     "tiling/constraints.yaml": ("relations", "variable_constraints", "input_realization"),
     "flow/compute_graph.yaml": ("compute_steps",),
     "flow/dataflow.yaml": ("dataflow_edges",),
+}
+
+REQUIRED_SECTION_POLICIES: dict[str, str] = {
+    "kernel/paths.yaml.kernel_paths": "non_empty_collection",
+    "kernel/branches.yaml.branches": "present_collection",
+    "tiling/variables.yaml.variables": "non_empty_collection",
+    "tiling/variables.yaml.tiling_mechanism": "present",
+    "tiling/constraints.yaml.relations": "present_collection",
+    "tiling/constraints.yaml.variable_constraints": "present_collection",
+    "tiling/constraints.yaml.input_realization": "present_mapping",
+    "flow/compute_graph.yaml.compute_steps": "non_empty_collection",
+    "flow/dataflow.yaml.dataflow_edges": "present_collection",
+}
+
+NON_STABLE_ID_PATH_MARKERS = {
+    "dtype_layout_domains[",
+    "layout_dtype_domains[",
+    "dtype_domains[",
+    "layout_domains[",
+    "terms.",
 }
 
 STABLE_ID_RE = re.compile(
@@ -115,9 +176,13 @@ class YamlGateError:
 
 
 def artifact_owner(rel: str) -> str:
+    return artifact_source_owner(rel)
+
+
+def artifact_source_owner(rel: str) -> str:
     rel = rel.replace("\\", "/")
-    if rel in ARTIFACT_OWNERS:
-        return ARTIFACT_OWNERS[rel]
+    if rel in ARTIFACT_SOURCE_OWNERS:
+        return ARTIFACT_SOURCE_OWNERS[rel]
     if rel.startswith("kernel/"):
         return "uo-kernel-path"
     if rel.startswith("tiling/"):
@@ -131,6 +196,39 @@ def artifact_owner(rel: str) -> str:
     if rel == "quality.yaml":
         return "quality_gate.py"
     return "host-compiler"
+
+
+def allowed_canonical_writers(rel: str) -> set[str]:
+    rel = rel.replace("\\", "/")
+    if rel == "quality.yaml":
+        return set(QUALITY_CANONICAL_WRITERS)
+    if rel in ARTIFACT_CANONICAL_WRITERS:
+        return set(ARTIFACT_CANONICAL_WRITERS[rel])
+    if rel.startswith("cross_layer/"):
+        return {"host-compiler", "kb-promoter", "promoter", "compiler"}
+    if rel.startswith(("query/", "contracts/", "test/")):
+        return {"route-compiler", "kb-promoter", "promoter", "compiler"}
+    if rel.startswith("evidence/"):
+        return {"evidence-compiler", "kb-promoter", "promoter", "compiler"}
+    if rel.startswith("registry/"):
+        return {"registry-compiler", "kb-promoter", "promoter", "compiler"}
+    return {"kb-promoter", "promoter", "compiler"}
+
+
+def validate_canonical_writer(writer: str, rel: str) -> None:
+    rel = rel.replace("\\", "/")
+    if rel.startswith("archive/"):
+        return
+    allowed = allowed_canonical_writers(rel)
+    if writer not in allowed:
+        raise PermissionError(
+            YamlGateError(
+                "CANONICAL_DIRECT_WRITE",
+                f"{writer} is not allowed to write {rel}; allowed canonical writers: {', '.join(sorted(allowed))}",
+                rel,
+                owner=artifact_source_owner(rel),
+            ).message
+        )
 
 
 def retry_task_id(rel: str, phase: str = "") -> str:
@@ -193,10 +291,32 @@ def validate_yaml_document(
         if section not in data:
             errors.append(YamlGateError("REQUIRED_SECTION_MISSING", f"required section missing: {section}", artifact, phase, owner, run_id=run_id))
             continue
-        if data.get(section) == "":
-            errors.append(YamlGateError("REQUIRED_SECTION_EMPTY", f"required section is an empty string: {section}", artifact, phase, owner, run_id=run_id))
+        section_errors = _validate_required_section_policy(data.get(section), REQUIRED_SECTION_POLICIES.get(f"{artifact}.{section}", "present"), section)
+        for message in section_errors:
+            errors.append(YamlGateError("REQUIRED_SECTION_EMPTY", message, artifact, phase, owner, run_id=run_id))
     _append_id_errors(data, artifact, phase, owner, run_id, errors)
     return data, errors
+
+
+def _validate_required_section_policy(value: Any, policy: str, section: str) -> list[str]:
+    if value == "" or value is None:
+        return [f"required section is empty: {section}"]
+    if policy == "present":
+        return []
+    if policy == "present_collection":
+        if not isinstance(value, (list, dict)):
+            return [f"required section must be a list or mapping: {section}"]
+        return []
+    if policy == "present_mapping":
+        if not isinstance(value, dict):
+            return [f"required section must be a mapping: {section}"]
+        return []
+    if policy == "non_empty_collection":
+        if not isinstance(value, (list, dict)):
+            return [f"required section must be a list or mapping: {section}"]
+        if len(value) == 0:
+            return [f"required section must not be empty: {section}"]
+    return []
 
 
 def serialize_yaml_checked(
@@ -238,17 +358,7 @@ def write_yaml_checked(
     semantic_validator: Callable[[Any], list[YamlGateError] | list[str] | None] | None = None,
 ) -> None:
     artifact = (artifact or path.as_posix()).replace("\\", "/")
-    if writer not in CANONICAL_WRITERS and not artifact.startswith("archive/"):
-        raise PermissionError(
-            YamlGateError(
-                "CANONICAL_DIRECT_WRITE",
-                f"{writer} is not allowed to write canonical YAML; route to {artifact_owner(artifact)} via proposal promote",
-                artifact,
-                phase,
-                artifact_owner(artifact),
-                run_id=run_id,
-            ).to_dict()["error_message"]
-        )
+    validate_canonical_writer(writer, artifact)
     text, errors = serialize_yaml_checked(
         artifact,
         data,
@@ -281,10 +391,11 @@ def syntax_only_repair(text: str, artifact: str, *, phase: str = "", run_id: str
             return text, errors
         if yaml is None:
             return text, errors
-        try:
-            candidate_data = yaml.safe_load(repaired_candidate)
-        except yaml.YAMLError as exc:
-            return text, [YamlGateError("YAML_SYNTAX_ERROR", str(exc), artifact, phase, artifact_owner(artifact), run_id=run_id)]
+        candidate_data, candidate_errors = validate_yaml_document(repaired_candidate, artifact, phase=phase, run_id=run_id)
+        if artifact == "kernel/resources.yaml" and not candidate_errors:
+            candidate_errors.extend(resource_semantic_errors(candidate_data, artifact, phase=phase, run_id=run_id))
+        if candidate_errors:
+            return text, candidate_errors
         before = semantic_summary(_restricted_summary_parse_mixed_list_item_flow_mapping(text))
         after = semantic_summary(candidate_data)
         drift = compare_semantic_summaries(before, after, artifact, phase=phase, run_id=run_id)
@@ -317,7 +428,7 @@ def semantic_summary(data: Any) -> dict[str, Any]:
         if isinstance(value, dict):
             for key, child in value.items():
                 if isinstance(child, (list, dict)):
-                    sections[str(key)] = len(_entries(child))
+                    sections[f"{path}.{key}"] = len(_entries(child))
                 if key in {"id", "stable_id"} and isinstance(child, str):
                     stable_ids.add(child)
                 if key == "name" and isinstance(child, str):
@@ -332,11 +443,12 @@ def semantic_summary(data: Any) -> dict[str, Any]:
                 visit(child, f"{path}.{key}")
             item_id = value.get("id") or value.get("stable_id") or value.get("name")
             if item_id:
-                item_hashes[str(item_id)] = hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+                item_hashes[f"{path}::{item_id}"] = hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
             producer = value.get("producer")
             consumer = value.get("consumer")
             if producer or consumer:
-                producer_consumer_edges.add(f"{producer}->{consumer}")
+                item_id = value.get("id") or value.get("stable_id") or value.get("name") or ""
+                producer_consumer_edges.add(f"{path}:{item_id}:{producer}->{consumer}")
         elif isinstance(value, list):
             for index, child in enumerate(value):
                 visit(child, f"{path}[{index}]")
@@ -369,6 +481,8 @@ def compare_semantic_summaries(
         ("resource_names", "RESOURCE_NAME_CHANGED", "resource names changed"),
         ("producer_consumer_edges", "SEMANTIC_DRIFT", "producer/consumer edges changed"),
         ("conditions", "CONDITION_DROPPED", "conditions changed or dropped"),
+        ("evidence_refs", "SEMANTIC_DRIFT", "evidence refs changed"),
+        ("reference_edges", "SEMANTIC_DRIFT", "structured references changed"),
         ("item_hashes", "SEMANTIC_DRIFT", "canonical semantic hashes changed"),
     )
     errors: list[YamlGateError] = []
@@ -430,10 +544,7 @@ def _append_id_errors(data: Any, artifact: str, phase: str, owner: str, run_id: 
             for key, child in value.items():
                 child_path = f"{path}.{key}" if path else str(key)
                 if key in {"id", "stable_id"} and child:
-                    if _is_domain_value_id_path(child_path):
-                        visit(child, child_path)
-                        continue
-                    if isinstance(child, str) and not _looks_like_machine_id(child):
+                    if _is_domain_value_id_path(child_path) or ".schema" in child_path:
                         visit(child, child_path)
                         continue
                     if not isinstance(child, str) or not (STABLE_ID_RE.fullmatch(child) or LEGACY_ID_RE.fullmatch(child)):
@@ -538,12 +649,4 @@ def _looks_like_machine_id(value: str) -> bool:
 
 
 def _is_domain_value_id_path(path: str) -> bool:
-    return any(
-        marker in path
-        for marker in (
-            "dtype_layout_domains[",
-            "layout_dtype_domains[",
-            "dtype_domains[",
-            "layout_domains[",
-        )
-    )
+    return any(marker in path for marker in NON_STABLE_ID_PATH_MARKERS)

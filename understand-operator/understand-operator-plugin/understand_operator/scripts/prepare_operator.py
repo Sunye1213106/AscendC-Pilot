@@ -63,6 +63,11 @@ def main(argv: list[str] | None = None) -> int:
             "mismatches": [{"path": "skills/understand-operator", "reason": "installed skill root missing"}],
         }
     write_text(base / "archive" / "runs" / "installed_skill_check.yaml", _to_yaml(check))
+    if not check.get("consistent"):
+        print("ERROR: installed understand-operator plugin is out of sync with the repository.", file=sys.stderr)
+        print("Run: powershell -ExecutionPolicy Bypass -File understand-operator/understand-operator-plugin/install.ps1", file=sys.stderr)
+        print(f"Details: {base / 'archive' / 'runs' / 'installed_skill_check.yaml'}", file=sys.stderr)
+        return 3
 
     patterns = _load_operator_ignore_patterns(repo_root)
     write_text(

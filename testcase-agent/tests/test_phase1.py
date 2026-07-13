@@ -173,7 +173,7 @@ def _mature_final_uo_fixture(repo: Path, op_name: str = "DemoOp") -> Path:
         "registry/symbols.yaml": {"symbols": [{"id": "SYM_DEMO", "kind": "symbol", "name": op_name}]},
         "registry/variables.yaml": {"variables": [{"id": "VAR_KEY_SPLIT_AXIS", "kind": "variable", "canonical_name": "split_axis", "data_type": "int"}]},
         "registry/aliases.yaml": {"aliases": [], "conflicts": []},
-        "registry/evidence.yaml": {"evidence": [{"id": "EV_OPERATOR", "file": "operator.yaml", "lines": [1, 3], "kind": "manual", "source_hash": "x"}]},
+        "registry/evidence.yaml": {"evidence": [{"id": "EV_OPERATOR", "symbol": "DemoOp", "status": "confirmed", "file": "operator.yaml", "lines": [1, 3], "kind": "manual", "source_hash": "x"}]},
         "tiling/variables.yaml": {"variables": [{"id": "VAR_KEY_SPLIT_AXIS", "data_type": "int"}], "tiling_mechanism": "key"},
         "tiling/constraints.yaml": {"relations": [], "variable_constraints": [{"id": "CON_AXIS_DOMAIN", "var": "VAR_KEY_SPLIT_AXIS", "domain": {"values": [0, 2, 4]}}], "input_realization": []},
         "tiling/key_space.yaml": {"fields": [{"id": "KEY_SPLIT_AXIS", "kind": "key", "data_type": "int", "values": [0, 2, 4]}], "derived_fields": [], "constants": []},
@@ -190,7 +190,7 @@ def _mature_final_uo_fixture(repo: Path, op_name: str = "DemoOp") -> Path:
         "evidence/artifact_dependencies.yaml": {"dependencies": [{"id": "REL_DEP_CONTRACT", "source": "contracts/testcase.yaml", "target": "tiling/coverage_model.yaml"}], "artifact_to_source": {"contracts/testcase.yaml": ["operator.yaml"]}},
         "evidence/issues.yaml": {"missing": [], "conflicts": [], "warnings": [], "unknowns": []},
         "kernel/compile_model.yaml": {"template_bindings": [{"id": "KTPL_MAIN", "template": "main"}], "compile_time_configs": [], "compile_variables": [], "compile_decisions": []},
-        "kernel/variables.yaml": {"runtime_variables": [{"id": "KVAR_AXIS", "data_type": "int"}], "tilingdata_reads": [{"id": "TDF_READ_SPLIT_AXIS", "field_id": "TDF_SPLIT_AXIS"}], "path_decision_points": []},
+        "kernel/variables.yaml": {"runtime_variables": [{"id": "KVAR_AXIS", "data_type": "int", "values": [0, 2, 4]}], "tilingdata_reads": [{"id": "TDF_READ_SPLIT_AXIS", "field_id": "TDF_SPLIT_AXIS"}], "path_decision_points": []},
         "kernel/branches.yaml": {"branches": [{"id": "KBR_HAS_TAIL", "condition": "tail"}], "path_semantics": [], "dataflow_links": [], "resource_links": []},
         "kernel/paths.yaml": {"kernel_paths": [{"id": "KPATH_MAIN", "template_binding_ids": ["KTPL_MAIN"], "runtime_variable_ids": ["KVAR_AXIS"], "branch_ids": ["KBR_HAS_TAIL"], "implements_compute_steps": ["CL_STEP_MAIN"]}, {"id": "KPATH_ALT", "template_binding_ids": ["KTPL_MAIN"], "runtime_variable_ids": ["KVAR_AXIS"], "branch_ids": ["KBR_HAS_TAIL"], "implements_compute_steps": ["CL_STEP_MAIN"]}]},
         "kernel/pipeline.yaml": {"pipelines": [{"id": "PIPE_MAIN"}], "stages": [{"id": "PIPE_STAGE_MAIN"}], "resources": []},
@@ -782,6 +782,86 @@ def test_l0_selects_minimal_smoke_path() -> None:
     assert not [item for item in plan["obligations"] if item["kind"] == "kernel_branch"]
 
 
+def test_l0_target_refs_are_not_family_refs() -> None:
+    files = _payload(
+        contract=_contract(
+            interface={"dtype_layout_domains": [{"id": "FP16_ND", "dtype": "FP16", "layout": "ND"}]},
+            coverage_obligations={
+                "families": [{"id": "COV_FAM_MAIN", "target_refs": ["FAM_MAIN"]}],
+                "kernel_paths": [{"id": "COV_PATH_MAIN", "target_refs": ["KPATH_MAIN"]}],
+                "tiling_keys": [],
+                "tilingdata": [],
+                "numerical": [],
+                "negative": [],
+            },
+        )
+    )["files"]
+    files["tiling/constraints.yaml"]["input_realization"] = {
+        "CON_IR_MAIN": {"matches": {"family_refs": ["FAM_MAIN"], "kernel_path_refs": ["KPATH_MAIN"], "dtype": "FP16", "layout": "ND"}}
+    }
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L0")
+
+    assert plan["unresolved"]["status"] != "blocked"
+    assert not any(item["id"] == "L0_MINIMAL_INPUT_BLOCKED" for item in plan["obligations"])
+    family = next(item for item in plan["obligations"] if item["kind"] == "family")
+    path = next(item for item in plan["obligations"] if item["kind"] == "kernel_path")
+    dtype = next(item for item in plan["obligations"] if item["kind"] == "dtype_layout_class")
+    assert family["target_refs"] == ["FAM_MAIN"]
+    assert path["target_refs"] == ["KPATH_MAIN"]
+    assert dtype["target_refs"] == ["FP16_ND"]
+    assert family["selection_reason"]["family_path_compatibility"] == "unknown"
+
+
+def test_l0_uses_kernel_paths_yaml_when_contract_only_has_obligation() -> None:
+    files = _payload(
+        contract=_contract(
+            interface={"dtype_layout_domains": [{"id": "FP16_ND", "dtype": "FP16", "layout": "ND"}]},
+            coverage_obligations={
+                "families": [{"id": "COV_FAM_MAIN", "target_refs": ["FAM_MAIN"]}],
+                "kernel_paths": [{"id": "COV_PATH_MAIN", "target_refs": ["KPATH_MAIN"]}],
+                "tiling_keys": [],
+                "tilingdata": [],
+                "numerical": [],
+                "negative": [],
+            },
+        )
+    )["files"]
+    files["kernel/paths.yaml"] = {"kernel_paths": [{"id": "KPATH_MAIN", "family_refs": ["FAM_MAIN"]}]}
+    files["tiling/constraints.yaml"]["input_realization"] = {
+        "CON_IR_MAIN": {"matches": {"family_refs": ["FAM_MAIN"], "kernel_path_refs": ["KPATH_MAIN"], "dtype": "FP16", "layout": "ND"}}
+    }
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L0")
+
+    assert plan["unresolved"]["status"] != "blocked"
+    family = next(item for item in plan["obligations"] if item["kind"] == "family")
+    assert family["selection_reason"]["family_path_compatibility"] == "compatible"
+
+
+def test_l0_uses_tiling_to_kernel_relation() -> None:
+    files = _payload(
+        contract=_contract(
+            interface={"dtype_layout_domains": [{"id": "FP16_ND", "dtype": "FP16", "layout": "ND"}]},
+            coverage_obligations={
+                "families": [{"id": "COV_FAM_MAIN", "target_refs": ["FAM_MAIN"]}],
+                "kernel_paths": [{"id": "COV_PATH_MAIN", "target_refs": ["KPATH_MAIN"]}],
+                "tiling_keys": [],
+                "tilingdata": [],
+                "numerical": [],
+                "negative": [],
+            },
+        )
+    )["files"]
+    files["cross_layer/tiling_to_kernel.yaml"] = {"edges": [{"source": "FAM_MAIN", "target": "KPATH_MAIN", "relation": "dispatches_to"}]}
+    files["tiling/constraints.yaml"]["input_realization"] = {
+        "CON_IR_MAIN": {"matches": {"family_refs": ["FAM_MAIN"], "kernel_path_refs": ["KPATH_MAIN"], "dtype": "FP16", "layout": "ND"}}
+    }
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L0")
+
+    assert plan["unresolved"]["status"] != "blocked"
+    family = next(item for item in plan["obligations"] if item["kind"] == "family")
+    assert family["selection_reason"]["family_path_compatibility"] == "compatible"
+
+
 def test_l1_covers_reachable_runtime_branch_sides_and_skips_compile_fixed() -> None:
     files = _payload()["files"]
     files["kernel/branches.yaml"] = {
@@ -896,6 +976,46 @@ def test_l2_realization_matches_each_key_independently() -> None:
     assert by_layout == {"TND": "realized", "ND": "unrealized"}
 
 
+def test_direct_matches_layout_only_matches_tnd_key() -> None:
+    files = _payload()["files"]
+    files["tiling/exhaustive_key_space.yaml"] = {
+        "summary": {"expanded_key_count": 3},
+        "field_order": ["layout"],
+        "template_blocks": [{"id": "B", "field_domains": {"layout": ["TND", "ND", "NZ"]}, "product_count": 3}],
+    }
+    files["tiling/constraints.yaml"] = {
+        "relations": [],
+        "variable_constraints": [],
+        "input_realization": {"CON_IR_TND": {"matches": {"layout": "TND"}}},
+        "tiling_key_pruning": {"performed": True, "pruned_combinations": []},
+        "tiling_key_merging": {"performed": False, "merged_groups": []},
+    }
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L2")
+
+    by_layout = {item["expected_tiling_key"]["layout"]: item["realization"]["status"] for item in plan["obligations"] if item.get("expected_tiling_key")}
+    assert by_layout == {"TND": "realized", "ND": "unrealized", "NZ": "unrealized"}
+
+
+def test_empty_matches_is_not_wildcard() -> None:
+    files = _payload()["files"]
+    files["tiling/exhaustive_key_space.yaml"] = {
+        "summary": {"expanded_key_count": 2},
+        "field_order": ["layout"],
+        "template_blocks": [{"id": "B", "field_domains": {"layout": ["TND", "ND"]}, "product_count": 2}],
+    }
+    files["tiling/constraints.yaml"] = {
+        "relations": [],
+        "variable_constraints": [],
+        "input_realization": {"CON_IR_EMPTY": {"matches": {}}},
+        "tiling_key_pruning": {"performed": True, "pruned_combinations": []},
+        "tiling_key_merging": {"performed": False, "merged_groups": []},
+    }
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L2")
+
+    assert plan["semantic_focus"]["tiling_key_coverage"]["realized_key_count"] == 0
+    assert plan["semantic_focus"]["tiling_key_coverage"]["unrealized_key_count"] == 2
+
+
 def test_l2_ambiguous_realization_blocks() -> None:
     files = _payload()["files"]
     files["tiling/exhaustive_key_space.yaml"] = {
@@ -929,7 +1049,7 @@ def test_l2_applies_relations_and_merging_and_count_blockers() -> None:
     files["tiling/constraints.yaml"] = {
         "relations": [{"id": "REL_MUTEX", "relation_type": "mutex", "fields": ["a", "b"]}],
         "variable_constraints": [],
-        "input_realization": {"CON_IR_ANY": {"matches": {"key_pattern": {}}}},
+        "input_realization": {"CON_IR_BOOL": {"matches": {"key_pattern": {"a": False}}}},
         "tiling_key_pruning": {"performed": True, "pruned_combinations": []},
         "tiling_key_merging": {
             "performed": True,
@@ -956,14 +1076,14 @@ def test_l2_product_and_summary_count_mismatch_block() -> None:
     files["tiling/constraints.yaml"] = {
         "relations": [],
         "variable_constraints": [],
-        "input_realization": {"CON_IR_ANY": {"matches": {"key_pattern": {}}}},
+        "input_realization": {"CON_IR_AXIS": {"matches": {"key_pattern": {"axis": 0}}}},
         "tiling_key_pruning": {"performed": True, "pruned_combinations": []},
         "tiling_key_merging": {"performed": False, "merged_groups": []},
     }
     plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L2")
     blocker_ids = {item["id"] for item in plan["unresolved"]["blocking_hard_obligations"]}
 
-    assert "L2_BLOCK_PRODUCT_COUNT_MISMATCH" in blocker_ids
+    assert "L2_BLOCK_PRODUCT_COUNT_MISMATCH_B" in blocker_ids
     assert "L2_SUMMARY_COUNT_MISMATCH" in blocker_ids
 
 

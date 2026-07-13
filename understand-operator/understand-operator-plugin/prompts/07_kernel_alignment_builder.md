@@ -12,14 +12,27 @@
 - `kernel/paths.yaml`（Task Builder skeleton）
 - `flow/compute_graph.yaml` / `flow/dataflow.yaml`
 
-## 必须输出（canonical）
+## 必须输出（proposal-first）
 
-1. `kernel/paths.yaml`（合并后的完整 paths）
-2. `kernel/pipeline.yaml`（pipelines + compute_step_alignment）
-3. `kernel/resources.yaml`（buffers / workspaces / sync_events）
-4. `tiling/archive/kernel_evidence_backfill.yaml`（中间产物）
-5. 更新 `evidence/fact_index.yaml` / `evidence/source_index.yaml`
-6. 可选：`kernel/.uo_kernel_alignment_complete.json`
+1. `archive/proposals/<run_id>/phase5_kernel_alignment_proposal.yaml`
+2. `tiling/archive/kernel_evidence_backfill.yaml`（中间产物）
+3. 可选：`kernel/.uo_kernel_alignment_complete.json`
+
+不要直接整文件覆盖 `kernel/*.yaml`、`cross_layer/*.yaml`、`registry/*.yaml` 或 `evidence/*.yaml`。Phase 5 只生成 proposal；host/compiler 运行 `uo-kb-compile promote --phase phase5` 后，deterministic promoter 才能写 canonical。
+
+Proposal envelope 必须使用：
+
+```yaml
+version: 1
+op_name: "<OP_NAME>"
+proposal_id: "PROP_KERNEL_ALIGN_<RUN_ID>"
+producer:
+  agent: host-compiler
+  phase: phase5
+canonical_updates: []
+```
+
+允许的 canonical update target 包括 `kernel/paths.yaml`、`kernel/pipeline.yaml`、`kernel/resources.yaml`、`kernel/compile_model.yaml`、`kernel/variables.yaml`、`kernel/branches.yaml`、`cross_layer/*`、`registry/variables.yaml`、`registry/symbols.yaml`、`registry/evidence.yaml`。每个 entry 必须有真实 source-backed `evidence_refs`。
 
 不要再写 `kernel/kernel_path_matrix.yaml`、`kernel/sync_buffer_map.yaml` 作为主产物。旧文件迁入 `archive/legacy/`。
 
@@ -69,4 +82,4 @@ Every promoted relation should prefer stable ids from `registry/` and include `e
 
 Do not invent alternate top-level layouts. The final compiler expects: `kernel/paths.yaml.kernel_paths`; `kernel/pipeline.yaml.pipelines`, `stages`, `resources`, and non-empty `compute_step_alignment`; `kernel/resources.yaml.buffers`, `sync_events`, `workspaces`, `resources`; `kernel/compile_model.yaml.template_bindings`, `compile_time_configs`, `compile_variables`, `compile_decisions`; `kernel/variables.yaml.runtime_variables`, `tilingdata_reads`, `path_decision_points`; and `kernel/branches.yaml.branches`, `path_semantics`, `dataflow_links`, `resource_links`.
 
-Before Phase 6, write all kernel canonical YAML as UTF-8 and parse every file with `yaml.safe_load`. Quote C++/math predicates, bracket suffixes, arrows, `:`/`#` text, and literal backslashes. Do not use broad `yaml.dump` rewrites or legacy encoding fallbacks. If raw input is malformed, resume its `uo-kernel-path` owner; do not hand-repair raw output or change compiler maturity rules.
+Before Phase 6, run proposal schema gate, promote phase5, validate phase5, then run the kernel canonical barrier. Quote C++/math predicates, bracket suffixes, arrows, `:`/`#` text, and literal backslashes. Do not use broad `yaml.dump` rewrites or legacy encoding fallbacks. If raw input is malformed, resume its `uo-kernel-path` owner; do not hand-repair raw output or change compiler maturity rules.

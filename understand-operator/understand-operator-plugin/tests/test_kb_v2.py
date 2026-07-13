@@ -544,7 +544,7 @@ def test_non_flow_promotion_does_not_rewrite_flow_or_kernel_paths(tmp_path: Path
         "version": 1,
         "op_name": "DemoOp",
         "proposal_id": "PROP_EVIDENCE_ONLY",
-        "producer": {"agent": "uo-host-extraction", "phase": "phase2"},
+        "producer": {"agent": "kb-promoter", "phase": "phase2"},
         "canonical_updates": [
             {
                 "target": "registry/evidence.yaml",
@@ -733,7 +733,7 @@ def test_proposal_promotion_success_and_deterministic(tmp_path: Path) -> None:
         "version": 1,
         "op_name": "DemoOp",
         "proposal_id": "PROP_HOST_001",
-        "producer": {"agent": "uo-host-extraction", "phase": "phase2"},
+        "producer": {"agent": "kb-promoter", "phase": "phase2"},
         "generated_at": "2026-01-01T00:00:00Z",
         "status": "proposed",
         "canonical_updates": [

@@ -529,7 +529,7 @@ def verify_host_flow_barrier(uo_root: Path) -> BarrierResult:
     for item in missing + stale:
         rel = item.split(" ", 1)[0]
         if rel.endswith((".yaml", ".yml")):
-            errors.append(owner_retry_report({"artifact": rel, "error_code": "MANIFEST_INCOMPLETE", "error_message": item}, phase=PHASE_HOST_FLOW))
+            errors.append(owner_retry_report({"artifact": rel, "error_code": _stale_error_code(item), "error_message": item}, phase=PHASE_HOST_FLOW))
     return BarrierResult(ok, PHASE_HOST_FLOW, missing, stale, message, errors)
 
 

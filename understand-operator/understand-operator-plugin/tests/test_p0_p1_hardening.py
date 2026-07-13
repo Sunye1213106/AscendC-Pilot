@@ -19,6 +19,7 @@ from understand_operator._operator.install_check import compare_installed_skill
 from understand_operator._operator.kb_compiler import promote_kb, validate_kb
 from understand_operator._operator.yaml_gate import (
     artifact_owner,
+    allowed_canonical_writers,
     compare_semantic_summaries,
     semantic_summary,
     serialize_yaml_checked,
@@ -272,11 +273,31 @@ def test_syntax_only_repair_preserves_resource_scalars() -> None:
     text = '- name: "dqGm (KP_001)", direction: out, dtype: "T"\n'
     repaired, errors = syntax_only_repair(text, "kernel/resources.yaml", phase="kernel_path")
 
+    assert repaired == text
+    assert any(error.code == "YAML_ROOT_NOT_MAPPING" for error in errors)
+
+
+def test_syntax_only_repair_accepts_complete_resources_mapping() -> None:
+    text = """
+buffers:
+  - id: BUF_DQ_GM
+    name: dqGm
+    producer: gm
+    consumer: compute
+    condition: always
+    direction: out
+    dtype: T
+    evidence_refs: [EV_RESOURCE]
+workspaces: []
+sync_events: []
+resources: []
+"""
+    repaired, errors = syntax_only_repair(text, "kernel/resources.yaml", phase="kernel_path")
+
     assert errors == []
     after = yaml.safe_load(repaired)
-    assert after == [{"name": "dqGm (KP_001)", "direction": "out", "dtype": "T"}]
-    assert after[0]["name"] == "dqGm (KP_001)"
-    assert after[0]["dtype"] == "T"
+    assert after["buffers"][0]["name"] == "dqGm"
+    assert after["buffers"][0]["dtype"] == "T"
 
 
 def test_semantic_summary_reports_condition_dropped() -> None:
@@ -362,6 +383,8 @@ def test_malformed_kernel_resources_routes_retry_to_kernel_owner(tmp_path: Path)
     assert any(error.get("owner") == "uo-kernel-path" for error in result.errors or [])
     assert any(error.get("error_code") == "YAML_SYNTAX_ERROR" for error in result.errors or [])
     assert artifact_owner("kernel/resources.yaml") == "uo-kernel-path"
+    assert "host-compiler" in allowed_canonical_writers("kernel/resources.yaml")
+    assert "kb-promoter" in allowed_canonical_writers("kernel/resources.yaml")
 
 
 def test_placeholder_registry_variables_fails_then_real_proposal_clears_placeholder(tmp_path: Path) -> None:
@@ -386,11 +409,19 @@ def test_evidence_registry_closure_requires_registry_entry() -> None:
             "evidence_refs": {"EV_TILING_KEY_SETTER": {"registry_ref": "EV_TILING_KEY_SETTER"}},
         },
         "evidence/source_index.yaml": {
-            "source_spans": {"EV_TILING_KEY_SETTER": {"registry_ref": "EV_TILING_KEY_SETTER"}}
+            "source_spans": {"SRC_TILING_KEY_SETTER": {"registry_ref": "SRC_TILING_KEY_SETTER"}}
         },
     }
     issues = validate_evidence_closure(docs)
     assert {issue.code for issue in issues} >= {"DANGLING_EVIDENCE_REF", "EVIDENCE_REGISTRY_MISSING_ENTRY", "FACT_INDEX_REGISTRY_MISMATCH", "SOURCE_INDEX_REGISTRY_MISMATCH"}
+
+    bad_source_docs = {
+        "registry/evidence.yaml": {"evidence": []},
+        "evidence/fact_index.yaml": {"facts": {}, "evidence_refs": {}},
+        "evidence/source_index.yaml": {"source_spans": {"EV_BAD": {"registry_ref": "EV_BAD"}}},
+    }
+    bad_source_issues = validate_evidence_closure(bad_source_docs)
+    assert any(issue.code == "SOURCE_INDEX_BAD_PREFIX" and issue.target == "EV_BAD" for issue in bad_source_issues)
 
     docs["registry/evidence.yaml"]["evidence"] = [
         {
@@ -400,7 +431,15 @@ def test_evidence_registry_closure_requires_registry_entry() -> None:
             "symbol": "SetTilingKey",
             "kind": "host_tiling",
             "status": "confirmed",
-        }
+        },
+        {
+            "id": "SRC_TILING_KEY_SETTER",
+            "file": "op_host/foo.cpp",
+            "lines": [1, 3],
+            "symbol": "SetTilingKey",
+            "kind": "source_span",
+            "status": "confirmed",
+        },
     ]
     assert validate_evidence_closure(docs) == []
 
@@ -432,13 +471,15 @@ def test_quality_and_compiler_both_fail_dangling_evidence(tmp_path: Path) -> Non
 def test_canonical_proposal_rejects_bad_and_intermediate_ids(tmp_path: Path) -> None:
     _repo_root, base = _repo(tmp_path)
     proposal = _minimal_proposal(proposal_id="PROP_BAD_IDS")
-    proposal["canonical_updates"].append(
-        {
-            "target": "registry/evidence.yaml",
-            "section": "evidence",
-            "merge_mode": "by_id",
-            "entries": [{"id": "EV_T_host_entry", "file": "op_host/foo.cpp", "lines": [1], "symbol": "Foo", "kind": "source_span"}],
-        }
+    proposal["canonical_updates"].extend(
+        [
+            {
+                "target": "registry/evidence.yaml",
+                "section": "evidence",
+                "merge_mode": "by_id",
+                "entries": [{"id": "EV_T_host_entry", "file": "op_host/foo.cpp", "lines": [1], "symbol": "Foo", "kind": "source_span"}],
+            },
+        ]
     )
     proposal["canonical_updates"].append(
         {
@@ -493,6 +534,45 @@ def test_structured_id_migration_updates_refs_without_rewriting_prose() -> None:
     assert migrated["contracts/testcase.yaml"]["coverage_obligations"]["families"][0]["family_id"] == "FAM_MAIN"
 
 
+def test_structured_id_migration_renames_id_keyed_mapping_without_rewriting_prose() -> None:
+    docs = {
+        "tiling/families.yaml": {
+            "families": {
+                "TF_MAIN": {
+                    "id": "TF_MAIN",
+                    "description": "prose mentions TF_MAIN",
+                }
+            }
+        }
+    }
+    result = kb_compiler.CompileResult(op_name="DemoOp", phase="phase2")
+
+    migrated = kb_compiler.migrate_stable_ids(
+        docs,
+        [{"old_id": "TF_MAIN", "new_id": "FAM_MAIN", "kind": "family"}],
+        result,
+    )
+
+    assert "FAM_MAIN" in migrated["tiling/families.yaml"]["families"]
+    family = migrated["tiling/families.yaml"]["families"]["FAM_MAIN"]
+    assert family["id"] == "FAM_MAIN"
+    assert family["legacy_ids"] == ["TF_MAIN"]
+    assert family["description"] == "prose mentions TF_MAIN"
+
+
+def test_structured_id_migration_rejects_kind_prefix_mismatch() -> None:
+    docs = {"tiling/families.yaml": {"families": [{"id": "TF_MAIN"}]}}
+    result = kb_compiler.CompileResult(op_name="DemoOp", phase="phase2")
+
+    kb_compiler.migrate_stable_ids(
+        docs,
+        [{"old_id": "TF_MAIN", "new_id": "VAR_MAIN", "kind": "family"}],
+        result,
+    )
+
+    assert any(issue.code == "BAD_ID_MIGRATION_KIND" for issue in result.issues)
+
+
 def test_unicode_yaml_round_trip_preserves_math_symbols() -> None:
     data = {"expression": "A → B, x ∈ [0, 10), a ≠ b, y ≥ 0"}
     text, errors = serialize_yaml_checked("scratch.yaml", data)
@@ -537,7 +617,7 @@ def _minimal_proposal(**overrides: object) -> dict:
         "version": 1,
         "op_name": "DemoOp",
         "proposal_id": "PROP_HOST_001",
-        "producer": {"agent": "uo-host-extraction", "phase": "phase2"},
+        "producer": {"agent": "kb-promoter", "phase": "phase2"},
         "generated_at": "2026-01-01T00:00:00Z",
         "status": "proposed",
         "canonical_updates": [
