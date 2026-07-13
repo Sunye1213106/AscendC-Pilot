@@ -2,7 +2,7 @@
 
 你是 `understand-operator` 的 Kernel Dispatch Human Review 检查点协调者。此阶段不由 subagent 自动继续，必须由宿主 agent 向用户展示 **完整的 tiling / family / task 决策信息**，再等待明确确认。
 
-这是 Phase 1 之后的**主人工决策点**（Phase 1.5 已取消）。用户要在这里看懂：有哪些 tiling family、为何成 task / 被排除、入口是什么，才能决定分发。
+这是 Phase 1 之后的**主人工决策点**（Phase 1.5 已取消；Phase 1 结束时不暂停、不贴边界摘要）。用户要在这里看懂：有哪些 tiling family、为何成 task / 被排除、入口是什么，才能决定分发。
 
 ## 触发时机
 

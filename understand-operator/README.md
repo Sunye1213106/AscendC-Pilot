@@ -88,7 +88,7 @@ Preflight full/incremental + ignore rules
   -> Quality Gate
 ```
 
-Human gates: **0.5** (scope) and **3.5** (kernel dispatch with full family/tiling brief). Phase 1.5 is retired.
+Human gates: **0.5** (scope) and **3.5** (kernel dispatch with full family/tiling brief). Only these gates pause and show judgment briefs in chat. Phase 1.5 is retired — after Macro Boundary, continue silently into host/flow parallel (no Boundary/IO dump).
 
 `/uo-update` reuses the same phases but only re-runs areas listed in `summary/update_plan.yaml`.
 

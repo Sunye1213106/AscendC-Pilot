@@ -75,4 +75,4 @@ source_locator:
 - 不要编造不存在的文件、函数、输入或输出。
 - 关键事实不要只有自然语言描述而没有 evidence_refs。
 
-完成后 workflow 直接进入 Phase 2（host + flow 并行）。在用户明确批准继续前，不要假设后续 tiling / kernel 阶段会自动执行（仍受 Phase 0.5 / 3.5 闸门约束）。
+完成后 workflow **静默**直接进入 Phase 2（host + flow 并行）：更新 TodoWrite / `workflow_progress.yaml` 即可，**禁止**在对话输出 Boundary/IO/open_questions 审阅摘要或 STOP。给人判断的信息只在 Phase 0.5 / 3.5 闸门展示；后续 tiling / kernel 仍受这两处闸门约束。

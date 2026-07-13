@@ -71,7 +71,7 @@ def coverage_signature(model: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def dedupe_candidates(candidates: list[dict[str, Any]], obligations: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     by_signature: dict[str, dict[str, Any]] = {}
     for candidate in sorted(candidates, key=lambda item: item["id"]):
         signature_key = stable_hash(candidate["coverage_signature"])
@@ -80,7 +80,7 @@ def dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         existing = by_signature[signature_key]
         merged = sorted(set(existing["covered_obligation_ids"]) | set(candidate["covered_obligation_ids"]))
-        _ensure_no_contradictory_branch_coverage(merged)
+        validate_candidate_branch_coverage(merged, {str(item.get("id")): item for item in obligations or []})
         sources = sorted(set(existing.get("source_obligation_ids") or []) | set(candidate.get("source_obligation_ids") or []))
         existing["covered_obligation_ids"] = merged
         existing["source_obligation_ids"] = sources
@@ -103,17 +103,23 @@ def branch_truth(model: dict[str, Any]) -> dict[str, Any]:
     return {branch_stable_key(key): value for key, value in sorted(model.items()) if is_branch_variable(key)}
 
 
-def _ensure_no_contradictory_branch_coverage(obligation_ids: list[str]) -> None:
-    states: dict[str, set[str]] = {}
-    for oid in obligation_ids:
-        text = str(oid).upper()
-        if "_TRUE" in text:
-            states.setdefault(text.split("_TRUE", 1)[0], set()).add("true")
-        if "_FALSE" in text:
-            states.setdefault(text.split("_FALSE", 1)[0], set()).add("false")
-    conflicts = sorted(key for key, values in states.items() if values == {"true", "false"})
-    if conflicts:
-        raise CandidateError(f"CONTRADICTORY_BRANCH_COVERAGE: {', '.join(conflicts)}")
+def validate_candidate_branch_coverage(covered_obligation_ids: list[str], obligation_by_id: dict[str, dict[str, Any]]) -> None:
+    if not obligation_by_id:
+        return
+    states: dict[str, dict[bool, list[str]]] = {}
+    for oid in covered_obligation_ids:
+        obligation = obligation_by_id.get(str(oid), {})
+        if obligation.get("kind") != "kernel_branch":
+            continue
+        refs = obligation.get("target_refs") or []
+        if not refs or not isinstance(obligation.get("target_value"), bool):
+            continue
+        branch_ref = str(refs[0])
+        states.setdefault(branch_ref, {}).setdefault(obligation["target_value"], []).append(str(oid))
+    for branch_ref, values in states.items():
+        if set(values) == {True, False}:
+            ids = sorted(values[True] + values[False])
+            raise CandidateError(f"CONTRADICTORY_BRANCH_COVERAGE: branch_ref={branch_ref}; obligation_ids={','.join(ids)}")
 
 
 def greedy_set_cover(candidates: list[dict[str, Any]], obligations: list[dict[str, Any]]) -> dict[str, Any]:

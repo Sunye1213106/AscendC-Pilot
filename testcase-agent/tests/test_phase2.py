@@ -5,10 +5,11 @@ from typing import Any
 
 import pytest
 
-from testcase_agent.candidates import branch_stable_key, coverage_signature, dedupe_candidates, greedy_set_cover
+from testcase_agent.candidates import CandidateError, branch_stable_key, coverage_signature, dedupe_candidates, greedy_set_cover
 from testcase_agent.constraint_ir import build_constraint_ir, compile_obligation_target, parse_bool_literal
 from testcase_agent.hashing import semantic_plan_hash, semantic_snapshot_hash
 from testcase_agent.io import read_yaml, write_json, write_yaml
+from testcase_agent.planner import build_plan
 from testcase_agent.solve import TgSolveError, solve_from_docs, tg_solve
 from testcase_agent.z3_backend import Z3Backend
 
@@ -476,13 +477,62 @@ def test_unknown_int_domain_does_not_limit_to_zero_one() -> None:
     assert result["solve_results"][0]["model"]["VAR_KEY_SPLIT_AXIS"] == 2
 
 
-def test_obligation_values_expand_int_domain() -> None:
+def test_obligation_values_do_not_expand_explicit_int_domain() -> None:
     contract = _contract(variables=[{"id": "VAR_KEY_SPLIT_AXIS", "type": "int", "domain": {"min": 0, "max": 1}}])
     obligation = _pending("OB_AXIS_3", kind="tiling_key_field_value", target_refs=["KEY_SPLIT_AXIS"], constraints={"field": "split_axis", "values": [0, 1, 2, 3]})
     result = build_constraint_ir(_snapshot(contract), _obligations([obligation]), {"decision": "approve"})
     variables = {item["id"]: item for item in result.ir["variables"]}
 
-    assert variables["VAR_KEY_SPLIT_AXIS"]["domain"]["max"] == 3
+    assert variables["VAR_KEY_SPLIT_AXIS"]["domain"]["max"] == 1
+    assert any(error["code"] == "OBLIGATION_OUTSIDE_DECLARED_DOMAIN" for error in result.errors)
+
+
+def test_explicit_enum_domain_rejects_coverage_value_outside_domain() -> None:
+    contract = _contract(variables=[{"id": "VAR_KEY_MODE", "type": "enum", "domain": ["A", "B"]}])
+    obligation = _pending("OB_MODE_C", kind="tiling_key_field_value", target_refs=["KEY_MODE"], constraints={"field": "mode", "values": ["C"]})
+    result = build_constraint_ir(_snapshot(contract), _obligations([obligation]), {"decision": "approve"})
+    variable = next(item for item in result.ir["variables"] if item["id"] == "VAR_KEY_MODE")
+
+    assert variable["domain"] == ["A", "B"]
+    assert any(error["code"] == "OBLIGATION_OUTSIDE_DECLARED_DOMAIN" for error in result.errors)
+
+
+def test_target_outside_explicit_domain_does_not_solve_sat() -> None:
+    contract = _contract(variables=[{"id": "VAR_KEY_SPLIT_AXIS", "type": "int", "domain": {"min": 0, "max": 1}}])
+    obligation = _pending("OB_AXIS_2", priority="high", constraints={"expr": {"op": "eq", "var": "VAR_KEY_SPLIT_AXIS", "value": 2}})
+    result = solve_from_docs(_snapshot(contract), _obligations([obligation]), {"decision": "approve"})
+
+    assert result["solve_results"][0]["status"] == "error"
+    assert result["solve_results"][0]["code"] == "OBLIGATION_OUTSIDE_DECLARED_DOMAIN"
+
+
+def test_branch_conflict_uses_obligation_metadata_not_id_text() -> None:
+    candidate = {"id": "CAND_MERGED", "coverage_signature": {"same": True}, "source_obligation_ids": ["unrelated_one"], "covered_obligation_ids": ["unrelated_one"]}
+    duplicate = {"id": "CAND_DUP", "coverage_signature": {"same": True}, "source_obligation_ids": ["unrelated_two"], "covered_obligation_ids": ["unrelated_two"]}
+    obligations = [
+        _pending("unrelated_one", kind="kernel_branch", target_refs=["KBR_HAS_TAIL"]),
+        {**_pending("unrelated_two", kind="kernel_branch", target_refs=["KBR_HAS_TAIL"]), "target_value": False},
+    ]
+    obligations[0]["target_value"] = True
+
+    with pytest.raises(CandidateError, match="CONTRADICTORY_BRANCH_COVERAGE"):
+        dedupe_candidates([candidate, duplicate], obligations)
+
+
+def test_nested_relation_schema_and_nonsemantic_combination_deduplication() -> None:
+    files = {
+        "contracts/testcase.yaml": _contract(),
+        "tiling/coverage_model.yaml": {
+            "family_obligations": [],
+            "key_field_obligations": {},
+            "key_relation_obligations": [{"id": "REL", "constraints": {"relation_type": "compatible_set", "combinations": [{"KEY_A": 0, "notes": "first"}, {"KEY_A": 0, "notes": "second"}]}}],
+        },
+    }
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"})
+    relations = [item for item in plan["obligations"] if item["kind"] == "tiling_key_relation"]
+
+    assert len(relations) == 1
+    assert relations[0]["constraints"]["relation_type"] == "compatible_set"
 
 
 def test_compatible_set_must_be_atomic_for_target_compiler() -> None:

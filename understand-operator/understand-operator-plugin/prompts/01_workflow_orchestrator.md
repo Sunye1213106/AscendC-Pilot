@@ -8,7 +8,7 @@
 
 **路径解析（必须）**：读 `prompts/00_path_resolution.md`。`SCRIPT_DIR` 优先 `~/.config/opencode/skills/understand-operator`。**禁止** `Get-ChildItem C:\ -Recurse` 找脚本。
 
-**进度可见性（必须）**：读 `prompts/00_progress_visibility.md`。启动后先 **TodoWrite**（中文标题，不含 `uo-p15`）；每 phase 更新 todo + 中文进度块 + `archive/runs/workflow_progress.yaml`。默认连续执行到下一个人工审核点；**禁止** background subagent。
+**进度可见性（必须）**：读 `prompts/00_progress_visibility.md`。启动后先 **TodoWrite**（中文标题，不含 `uo-p15`）；每 phase 更新 todo + `archive/runs/workflow_progress.yaml`。**完整审阅摘要 + STOP 仅允许在闸门 0.5 / 3.5**；普通 phase（含 Phase 1）禁止向对话倾倒 IO/边界等审阅材料。默认连续执行到下一个人工审核点；**禁止** background subagent。
 
 **只有两处需要 subagent 并行**（见 `prompts/00_subagent_dispatch.md`）：
 
@@ -34,13 +34,14 @@
 11. Operator KB / Route Builder
 12. Quality Gate
 
-人工审阅规则（仅两处强制闸门）：
+人工审阅规则（仅两处强制闸门；**只有这两处**才暂停并附上给人判断的信息）：
 
-- **Phase 0.5**：按 `01a` + `00_review_menu.md`：用 OpenCode `question` / AskQuestion 选择（最后一项可输入），再用 `--decision` 落盘。未 `continue` 不得进 Phase 1。
-- **Phase 1.5 已取消**：Macro Boundary 完成后直接进 Phase 2。
+- **Phase 0.5**：按 `01a` + `00_review_menu.md`：展示范围审阅摘要 → OpenCode `question` / AskQuestion → `--decision` 落盘。未 `continue` 不得进 Phase 1。
+- **Phase 1.5 已取消**：Macro Boundary 完成后**静默**直接进 Phase 2——**禁止**再输出边界/IO 摘要或等人。
 - **Phase 3.5**：按 `05a`（全量 tiling/family）+ 同样的选择 UI + `--decision`。未批准不得进 Phase 4。
 - `manual_supplement` / `revise`：吸收 notes 后可再次提问，不得直接进下一阶段。
 - `stop`：结束并汇报产物。
+- **禁止**在非闸门 phase 输出「请确认 / 审阅摘要 / open_questions 列表」类对话文案。
 - **禁止**默认使用 Python `--interactive` / `--arrows`（会抢键盘）。
 - **禁止**替用户默认选择。
 - Phase 3.5 若缺少 tiling/family 全貌，不得放行。

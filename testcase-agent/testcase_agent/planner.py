@@ -30,6 +30,7 @@ SUPPORTED_KINDS = [
 KIND_ORDER = {kind: idx for idx, kind in enumerate(SUPPORTED_KINDS)}
 REACHABLE = {"reachable", "reachable_narrow", "runtime_conditional", "conditional", "unknown", ""}
 UNREACHABLE = {"unreachable", "excluded", "not_reachable"}
+NON_SEMANTIC_COMBO_FIELDS = {"reachability", "status", "reason", "unreachable_reason", "notes", "evidence_refs", "source_refs"}
 
 
 class TgPlanError(RuntimeError):
@@ -261,11 +262,11 @@ def expand_kernel_branch_obligations(item: dict[str, Any], *, priority: str) -> 
 
 
 def expand_relation_obligations(item: dict[str, Any], *, priority: str) -> list[dict[str, Any]]:
-    relation_type = str(item.get("relation_type") or "").lower()
-    combinations = item.get("combinations")
     constraints = _as_dict(item.get("constraints"))
+    relation_type = str(item.get("relation_type") or constraints.get("relation_type") or "").lower()
+    combinations = item.get("combinations") or constraints.get("combinations")
     if combinations is None:
-        combinations = item.get("must_cover", constraints.get("must_cover"))
+        combinations = item.get("must_cover") or constraints.get("must_cover")
     if relation_type in {"compatible_set", "must_cover"} or isinstance(combinations, list):
         if not combinations:
             return [
@@ -276,7 +277,7 @@ def expand_relation_obligations(item: dict[str, Any], *, priority: str) -> list[
                 )
             ]
         obligations: list[dict[str, Any]] = []
-        seen: set[str] = set()
+        seen: dict[str, str] = {}
         for combo in combinations:
             if not isinstance(combo, dict):
                 return [
@@ -286,12 +287,15 @@ def expand_relation_obligations(item: dict[str, Any], *, priority: str) -> list[
                         priority=priority,
                     )
                 ]
-            signature = stable_hash(combo)
+            combo_values = {key: value for key, value in combo.items() if key not in NON_SEMANTIC_COMBO_FIELDS}
+            signature = stable_hash(combo_values)
+            state = "unreachable" if str(combo.get("reachability") or combo.get("status") or "").lower() in UNREACHABLE else "reachable"
+            if signature in seen and seen[signature] != state:
+                return [make_obligation("tiling_key_relation", {**item, "status": "conflicting", "reason": "RELATION_COMBINATION_STATUS_CONFLICT", "coverage_bucket": relation_type or "must_cover"}, priority=priority)]
             if signature in seen:
                 continue
-            seen.add(signature)
-            unreachable = str(combo.get("reachability") or combo.get("status") or "").lower() in UNREACHABLE
-            combo_values = {key: value for key, value in combo.items() if key not in {"reachability", "status", "reason", "unreachable_reason"}}
+            seen[signature] = state
+            unreachable = state == "unreachable"
             payload = {
                 **item,
                 "parent_obligation_id": str(item.get("id") or item.get("target_ref") or ""),
@@ -525,14 +529,11 @@ def write_plan_outputs(out_root: Path, plan: dict[str, Any], snapshot: dict[str,
 
 
 def normalize_constraints(item: dict[str, Any]) -> dict[str, Any]:
-    if isinstance(item.get("constraints"), dict) and "expr" in item["constraints"]:
-        base = dict(item["constraints"])
-        for key in ("must_cover", "combinations", "fields", "values", "boundary_values", "relation_type", "linked_relations"):
-            if key in item:
-                base[key] = item[key]
-        return base
-    keys = ("constraints", "must_cover", "combinations", "fields", "values", "boundary_values", "relation_type", "linked_relations")
-    return {key: item[key] for key in keys if key in item}
+    base = dict(item.get("constraints")) if isinstance(item.get("constraints"), dict) else {}
+    for key in ("must_cover", "combinations", "fields", "values", "boundary_values", "relation_type", "linked_relations", "source", "target", "unreachable_values", "unreachable_combinations"):
+        if key in item:
+            base[key] = item[key]
+    return base
 
 
 def normalize_hints(item: dict[str, Any]) -> dict[str, Any]:

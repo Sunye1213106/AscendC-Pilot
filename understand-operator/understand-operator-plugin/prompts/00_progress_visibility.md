@@ -7,20 +7,22 @@
 **整个项目默认语言为中文。**
 
 - TodoWrite 的 `content` / title：**必须中文**（禁止英文 todo 标题）
-- 对话进度块、审阅摘要、STOP 提示、菜单选项说明：**必须中文**
+- **闸门**对话：审阅摘要、STOP 提示、菜单选项说明：**必须中文**
 - 技术标识符可保留英文（如 `uo-p0`、文件路径、`search_graph`、family_id）
 - 不要写 “when user asks for Chinese” —— 中文是默认，不是可选项
+- 非闸门 phase：**不要**为了「进度可见」而输出长中文审阅块；TodoWrite 即可
 
 ## 为什么之前会「默默跑」
 
 常见原因（必须避免）：
 
-1. 宿主连续做多个 phase 时，**不更新 TodoWrite / 不在对话里汇报阶段进度**。
+1. 宿主连续做多个 phase 时，**不更新 TodoWrite**（进度应靠 todo list，而不是每步刷审阅长文）。
 2. 用了 **background Task / background shell**，UI 只显示 “Monitored background task”，用户看不到阶段列表。
 3. **没有创建 Cursor todo list**（TodoWrite）。
-4. Phase 0 跑完直接进入 Phase 1，**没有先展示计划和更新 todo**。
+4. Phase 0 跑完直接进入 Phase 1，**没有先经过 0.5 闸门**。
 5. 把 subagent 返回摘要当成完成，**没有 barrier + 进度更新**。
 6. Todo 标题写成英文（如 `Phase 0 — Preflight`）—— **禁止**。
+7. Phase 1 结束后又贴一段 Boundary/IO「审阅」文字—— **禁止**（那不是闸门）。
 
 ## 强制规则
 
@@ -61,19 +63,29 @@ uo-p1  阶段 1 — 宏观边界分析                    pending
 
 对每个 todo item：
 
-1. **开始前**：TodoWrite → 该项 `in_progress`；在对话里用 1–3 句**中文**说明正在做什么。
-2. **完成后**：TodoWrite → 该项 `completed`；用中文汇报产出路径或等待用户的选择。
-3. **闸门 phase（仅 0.5 / 3.5）**：完成后 todo 保持 `in_progress` 或 waiting，**必须 STOP 等用户**。优先用 OpenCode `question` / Cursor AskQuestion（最后一项可输入手工补充），再用 `review_checkpoint.py --decision` 落盘。阶段 3.5 摘要必须含完整 tiling/family 信息（中文）。
+1. **开始前**：TodoWrite → 该项 `in_progress`。非闸门 phase **不要**在对话里写长说明。
+2. **完成后（非闸门）**：TodoWrite → 该项 `completed`；更新 `workflow_progress.yaml`；**立刻继续下一 phase**。对话里最多一行极简状态（可省略），**禁止**输出 IO/边界/open_questions/family 等审阅式摘要。
+3. **闸门 phase（仅 0.5 / 3.5）**：todo 保持 `in_progress` 或 waiting，**必须 STOP 等用户**。此时才展示完整、可供人判断的审阅摘要 + 选择 UI。优先用 OpenCode `question` / Cursor AskQuestion（最后一项可输入手工补充），再用 `review_checkpoint.py --decision` 落盘。阶段 3.5 摘要必须含完整 tiling/family 信息（中文）。
+
+### 2.1 对话输出分流（强制）
+
+| 场景 | 对话里允许输出 | 是否 STOP |
+|---|---|---|
+| 普通 phase（含阶段 1 宏观边界） | TodoWrite；可选一行「阶段 X 完成 → 进入 Y」 | **否** |
+| Subagent 下发 / barrier | 一句「已启动/屏障通过」 | **否** |
+| **闸门 0.5 / 3.5** | 完整审阅摘要（给人判断）+ 选择菜单 | **是** |
+
+**禁止**在非闸门处输出：Boundary/IO 摘要、open_questions 列表、family 表、请确认/请审阅类文案、假装等人的「下一步请确认」。这些内容只写进 artifact（如 `operator.yaml` / `human/review.md`），不刷聊天。
 
 ### 3. 默认连续执行到人工审核点
 
 | 类型 | 本回合允许 |
 |---|---|
-| 普通宿主 phase | 可以连续执行多个 phase，直到下一个人工审核点 |
+| 普通宿主 phase | 可以连续执行多个 phase，直到下一个人工审核点；**不**向用户倾倒审阅材料 |
 | subagent 下发 / barrier | 可以在 subagent 全部返回后继续跑 barrier；必须先 barrier 通过再读产物 |
-| 闸门 turn | 只展示审阅摘要 + 等用户 |
+| 闸门 turn | **仅此处**展示审阅摘要 + 等用户 |
 
-默认允许执行到「阶段 0.5 宏观执行范围审阅」，然后**必须 STOP**。用户 `continue` 后，默认连续执行「阶段 1 → 2 → 3 → 3.5」，在 **3.5** 再停（必须展示全量 tiling/family）。**禁止**越过 0.5 / 3.5。**禁止**再停在旧的阶段 1.5。
+默认允许执行到「阶段 0.5 宏观执行范围审阅」，然后**必须 STOP**。用户 `continue` 后，默认连续执行「阶段 1 → 2 → 3 → 3.5」，在 **3.5** 再停（必须展示全量 tiling/family）。**禁止**越过 0.5 / 3.5。**禁止**再停在旧的阶段 1.5。**禁止**阶段 1 结束后再贴一段宏观边界/IO 文字再继续。
 
 ### 4. Subagent 必须 foreground
 
@@ -104,21 +116,28 @@ notes: "<简短中文说明>"
 
 ### 6. 对话内进度块模板（中文）
 
-每完成一个 major step，在对话输出：
+**仅闸门 turn（0.5 / 3.5）**使用完整进度块；普通 phase **不要**每步贴这个模板。
+
+闸门模板：
 
 ```markdown
-## 进度 · <阶段中文名称>
-- 状态: 完成 / 进行中 / 等待用户
+## 进度 · <闸门中文名称>
+- 状态: 等待用户
 - 产物: `<相对 UO_ROOT 的路径>`
-- 下一步: <明确一句中文>
+- 下一步: <明确一句中文，说明需要用户决策什么>
 ```
+
+其后必须紧跟可供人判断的审阅正文（0.5 见 `01a`；3.5 见 `05a`）与选择 UI。
+
+普通 phase 完成后：只更新 TodoWrite + `workflow_progress.yaml`，直接开下一 phase；不要贴「进度 · …」长块。
 
 ## 阶段 0 结束后的范围审阅
 
 阶段 0 完成后必须：
 
 1. 更新 todo `uo-p0` → completed
-2. 用中文展示 workflow 计划（可引用 todo list）
-3. 汇总阶段 1 拟探索范围：include / skip / unknown
-4. 写入 `archive/runs/macro_scope_review.yaml`（结论摘要同步到 `human/review.md`）
-5. **STOP 等用户确认**。只有用户选择 `continue` 后，才进入阶段 1。
+2. 写入 `archive/runs/macro_scope_review.yaml`（结论摘要同步到 `human/review.md`）
+3. 进入阶段 0.5：**展示** include / exclude / branch_skip / uncertain_scope（给人判断）+ 选择 UI
+4. **STOP 等用户确认**。只有用户选择 `continue` 后，才进入阶段 1。
+
+阶段 1（宏观边界）完成后：**不要**再向对话输出边界/IO/open_questions 摘要；TodoWrite 标完成并**直接**进入阶段 2。

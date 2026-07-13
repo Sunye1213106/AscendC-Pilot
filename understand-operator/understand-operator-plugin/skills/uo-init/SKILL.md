@@ -114,6 +114,7 @@ python "$SCRIPT_DIR/prepare_operator.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --
 - `route.md` is a map, not a long report.
 - uo does **not** generate real tests, CSV, or golden code.
 - Do not cross human review gates (**only 0.5 and 3.5**) without explicit user approval.
+- After Phase 1 Macro Boundary: update todos and **immediately** start Phase 2 parallel Tasks. Do **not** dump Boundary/IO/open_questions text into the chat; judgment briefs belong only at gates 0.5 / 3.5.
 - **Tiling depth（防偷懒）**：Phase 2 host extraction 必须先写满 `tiling/archive/` 五个中间文件（`frontier` / `dispatch_variables` / `predicate_space` / `compile_time_bindings` / `decision_tree`），再合并进 7 个 canonical。禁止只写薄摘要、跳过宏/`constexpr`/模板分析。barrier 与 `quality_gate.py` 会检查。
 - **禁止**宿主手工填 `tiling/*` / `flow/*` 冒充 subagent 完成。
 

@@ -108,7 +108,7 @@ def solve_from_docs(
         solve_results = [{"obligation_id": item.get("id"), "status": "skipped", "model": {}, "reason": "constraint IR has compile errors"} for item in obligations]
 
     try:
-        deduped = dedupe_candidates(candidates)
+        deduped = dedupe_candidates(candidates, obligations)
     except CandidateError as exc:
         errors.append({"code": "CONTRADICTORY_BRANCH_COVERAGE", "message": str(exc)})
         deduped = []

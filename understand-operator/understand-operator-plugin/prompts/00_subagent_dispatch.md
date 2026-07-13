@@ -53,7 +53,7 @@ Subagent 写完产物后必须写 completion manifest（见各 `agents/uo-*.md`�
 
 ## 并行点 1：host + flow
 
-Phase 1 Macro Boundary **完成后直接**进入（不再等 Boundary Review）：
+Phase 1 Macro Boundary **完成后直接、静默**进入（不再等 Boundary Review，也不在对话贴边界/IO 摘要）：
 
 1. **同一条宿主消息**里发起两个 Task（foreground，不要用 background）：
    - `Task` → `uo-host-extraction`

@@ -2,6 +2,9 @@
 
 强制人工审阅闸门：**Phase 0.5 / 3.5**（以及 uo-query 缺 KB）。
 
+**只有这些闸门**才允许：暂停（STOP）+ 在对话里附上可供人判断的审阅摘要。  
+普通 phase（含 Phase 1 宏观边界完成后）**禁止**输出审阅式摘要或假装等人。
+
 目标交互与 Cursor Plan / OpenCode `question` 一致：
 
 - **↑/↓ 或点击选择**固定选项
@@ -89,14 +92,15 @@ python "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" -
 
 ## Agent 步骤（必须）
 
-1. 展示审阅摘要（3.5 必须含全量 tiling/family）
+1. **仅在闸门 turn**：展示审阅摘要（3.5 必须含全量 tiling/family）
 2. 调用原生 `question` / AskQuestion（最后一项可输入）
-3. **STOP 等待 UI 返回**
+3. **STOP** 等待 UI 返回
 4. `--decision` 写入 `*_decision.json` / review yaml
 5. 按决策继续；`manual_supplement` / `revise` 吸收 notes 后可再次提问
 
 ## 禁止
 
+- 禁止在非闸门 phase（尤其 Phase 1 结束后）向对话输出 Boundary/IO/open_questions 等「给人看的审阅材料」
 - 禁止 Python `--arrows` / `--interactive` 作为 OpenCode/Cursor 默认路径
 - 禁止替用户默认 `continue`
 - 禁止只贴静态列表却不唤起可选择 UI（有 `question`/AskQuestion 时）
