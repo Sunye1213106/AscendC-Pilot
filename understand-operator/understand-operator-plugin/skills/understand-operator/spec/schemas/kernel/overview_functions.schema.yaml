@@ -1,0 +1,4 @@
+version: 1
+artifact_type: kernel.overview.functions
+stores: [functions, definition_location, owning_class, call_role, main_function_flag, helper_flag]
+forbids: [branch_semantics_without_slice]

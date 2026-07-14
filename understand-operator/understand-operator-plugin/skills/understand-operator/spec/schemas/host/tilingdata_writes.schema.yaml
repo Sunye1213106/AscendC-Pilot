@@ -1,0 +1,4 @@
+version: 1
+artifact_type: host.tilingdata_writes
+stores: [tilingdata_struct, fields, field_type, write_site, write_expression, conditional_write, source_variable, workspace, block_dim]
+forbids: [kernel_read_inference_without_source]

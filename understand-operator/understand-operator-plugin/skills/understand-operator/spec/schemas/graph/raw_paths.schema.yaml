@@ -1,0 +1,4 @@
+version: 1
+artifact_type: graph.raw.paths
+stores: [input_shape_to_tiling_key, tilingdata_write_to_kernel_read, globaltensor_to_output, sync_happens_before_paths]
+forbids: [test_combination_graph]

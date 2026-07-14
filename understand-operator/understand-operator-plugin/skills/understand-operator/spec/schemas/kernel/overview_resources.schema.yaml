@@ -1,0 +1,4 @@
+version: 1
+artifact_type: kernel.overview.global_resources
+stores: [global_buffers, queues, workspaces, tilingdata_structs, kernel_parameters, shared_constants, compile_info]
+forbids: [path_local_buffer_lifecycle]

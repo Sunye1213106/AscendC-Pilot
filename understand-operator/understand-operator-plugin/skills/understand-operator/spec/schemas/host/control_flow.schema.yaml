@@ -1,0 +1,4 @@
+version: 1
+artifact_type: host.control_flow
+stores: [if_else, switch_case, ternary, early_return, predicate, outcome, source_block]
+forbids: [unanchored_branch_summary]

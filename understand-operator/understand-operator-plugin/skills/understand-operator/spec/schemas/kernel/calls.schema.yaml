@@ -1,0 +1,4 @@
+version: 1
+artifact_type: kernel.slice.calls
+stores: [function_call, ascendc_api_call, template_arguments, call_arguments, return_or_output_buffer, conditional_call]
+forbids: [api_call_without_site]

@@ -1,0 +1,4 @@
+version: 1
+artifact_type: kernel.slice.branches
+stores: [if_switch, predicate, control_variable, outcomes, outcome_source_range, reachability]
+forbids: [unreachable_claim_without_evidence]

@@ -1,0 +1,4 @@
+version: 1
+artifact_type: host.calls
+stores: [caller, callee, argument_binding, return_binding, template_arguments, macro_call, call_order]
+forbids: [call_graph_without_call_sites]

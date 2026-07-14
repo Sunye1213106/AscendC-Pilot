@@ -1,0 +1,4 @@
+version: 1
+artifact_type: graph.derived.edges
+stores: [semantic_edges, raw_refs, yaml_refs]
+forbids: [source_fact_mutation]

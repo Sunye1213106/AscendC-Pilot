@@ -1,0 +1,54 @@
+version: 1
+stages:
+  step1:
+    required_files:
+      - manifest.yaml
+      - facts/operator/interface.yaml
+      - facts/operator/source_files.yaml
+      - facts/operator/entrypoints.yaml
+      - checks/step1/validation.yaml
+    validation_command: python understand-operator/understand-operator-plugin/understand_operator/scripts/validate_facts.py <repo> --op-name <op> --stage step1
+    receipt: checks/step1/validation.yaml
+  step2:
+    required_files:
+      - facts/host/variables.yaml
+      - facts/host/expressions.yaml
+      - facts/host/control_flow.yaml
+      - facts/host/calls.yaml
+      - facts/host/tiling_key.yaml
+      - facts/host/tiling_key_enumeration.yaml
+      - facts/host/tiling_key_constraints.yaml
+      - facts/host/tilingdata_writes.yaml
+      - facts/compute/tensors.yaml
+      - facts/compute/operations.yaml
+      - facts/compute/dataflow.yaml
+      - facts/compute/numerical_semantics.yaml
+      - facts/kernel/overview/entries.yaml
+      - facts/kernel/overview/functions.yaml
+      - facts/kernel/overview/call_graph.yaml
+      - facts/kernel/overview/frontier.yaml
+      - facts/kernel/overview/global_resources.yaml
+      - facts/kernel/slice_manifest.yaml
+      - facts/kernel/slice_interfaces.yaml
+      - checks/step2/host_validation.yaml
+      - checks/step2/compute_validation.yaml
+      - checks/step2/kernel_overview_validation.yaml
+      - checks/step2/review.yaml
+      - checks/step2/receipt.yaml
+    validation_command: python understand-operator/understand-operator-plugin/understand_operator/scripts/validate_facts.py <repo> --op-name <op> --stage step2
+    receipt: checks/step2/receipt.yaml
+  step3:
+    required_files:
+      - checks/step3/slice_validations.yaml
+      - checks/step3/review.yaml
+      - checks/step3/receipt.yaml
+    validation_command: python understand-operator/understand-operator-plugin/understand_operator/scripts/validate_facts.py <repo> --op-name <op> --stage step3
+    receipt: checks/step3/receipt.yaml
+  compile:
+    required_receipts:
+      - checks/step1/validation.yaml
+      - checks/step2/receipt.yaml
+      - checks/step3/receipt.yaml
+    required_files:
+      - checks/compile_gate.yaml
+    validation_command: python understand-operator/understand-operator-plugin/understand_operator/scripts/validate_facts.py <repo> --op-name <op> --stage compile

@@ -1,0 +1,4 @@
+version: 1
+artifact_type: graph.derived.nodes
+stores: [semantic_nodes, raw_refs, yaml_refs]
+forbids: [source_fact_mutation]

@@ -1,0 +1,4 @@
+version: 1
+artifact_type: compute.operations
+stores: [matmul, reduce, broadcast, reshape, transpose, cast, arithmetic, mask, normalization, other_operations, formulas]
+forbids: [generated_golden_code]

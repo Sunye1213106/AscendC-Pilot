@@ -1,0 +1,4 @@
+version: 1
+schema_kind: source_anchor
+required_fields: [id, file, symbol, span, source_text, code_hash, anchor_kind]
+span_required: [start_line, end_line]

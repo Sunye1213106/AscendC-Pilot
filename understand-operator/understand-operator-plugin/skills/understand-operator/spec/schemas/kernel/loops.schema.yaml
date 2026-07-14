@@ -1,0 +1,4 @@
+version: 1
+artifact_type: kernel.slice.loops
+stores: [for_while, loop_variable, initialization, condition, step, bound_expression, body, zero_one_multiple_tail_conditions]
+forbids: [loop_count_guess]

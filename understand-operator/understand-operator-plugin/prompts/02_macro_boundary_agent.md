@@ -49,47 +49,106 @@ repository scan.
 - Optional extra_description.
 - Legacy `archive/runs/` or `summary/` scope decisions if still present.
 
-## Required Outputs (canonical)
+## Required Outputs (source facts)
 
-1. `operator.yaml` (merged manifest / IO / boundary / ontology / analysis_plan)
-2. `index.yaml` initial version (fill `op_name`, `scope`, `status=draft`)
-3. `route.md` initial version (map skeleton, about 100-200 lines)
-4. `human/review.md` Boundary Review draft
-5. `evidence/source_index.yaml` boundary source spans
-6. `evidence/fact_index.yaml` boundary facts
+Write only the Step 1 source-fact YAML owned by `uo-boundary-agent`:
+
+1. `facts/operator/interface.yaml`
+2. `facts/operator/source_files.yaml`
+3. `facts/operator/entrypoints.yaml`
+4. `checks/step1/validation.yaml` (written by `validate_facts.py --write-report`)
+
+Do not write `operator.yaml`, `index.yaml`, `route.md`, `registry/*`,
+`evidence/*`, `archive/proposals/*`, or any proposal envelope in the new facts
+layout. The deterministic compiler consumes validated `facts/**` later.
+
+After writing the three facts files, run:
+
+```powershell
+python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step1 --scope boundary --write-report
+```
+
+If validation fails, fix the owning facts YAML and rerun the validator. Do not
+claim completion until the command exits 0.
 
 Do not write `summary/operator_manifest.yaml`, `summary/operator_io.yaml`,
 `summary/operator_boundary.md`, `summary/ontology.yaml`, or
 `summary/analysis_plan.yaml` as primary artifacts. If old files exist, write a
 migration note to `archive/legacy/`; do not delete them.
 
-## `operator.yaml` Required Structure
+## Source Facts Required Structure
 
-At minimum:
+Every facts YAML must use the Skill Spec document contract:
 
-- `scope` (arch/platform/include/exclude/assumptions + confidence + evidence_refs)
-- `entrypoints` (api / host_tiling / kernel / golden / tests)
-- `source_files`
-- `io.required_inputs` / `optional_inputs` / `outputs` / `attrs`
-- `shape_ontology` / `dtype_layout_constraints` / `feature_flags`
-- `analysis_plan` (required_agents, source_hints, open_questions, review_focus)
+```yaml
+version: 1
+artifact:
+  type: operator.interface
+  schema_version: 1
+  owner: uo-boundary-agent
+snapshot:
+  run_id: UO_RUN_...
+  source_snapshot_id: SOURCE_...
+  source_revision: ...
+  spec_bundle_hash: sha256:...
+items: []
+relations: []
+unresolved: []
+```
+
+Use the matching `artifact.type` for each file:
+
+- `operator.interface`
+- `operator.source_files`
+- `operator.entrypoints`
+
+`facts/operator/interface.yaml` stores only operator IO/interface facts:
+
+- inputs, outputs, optional inputs/outputs
+- attributes
+- dtype/layout/format/rank/shape-symbol domains
+- interface constraints and source definition locations
+
+`facts/operator/source_files.yaml` stores only related source file facts:
+
+- file roles: host / tiling / kernel / registration / golden / reference
+- include relationships
+- file hash
+- include/exclude reason
+
+`facts/operator/entrypoints.yaml` stores only entrypoint candidates:
+
+- registration entry
+- Host/Tiling entry
+- TilingKey setter
+- Kernel launch entry
+- Kernel function entry candidate
+- Golden/Reference candidate
 
 Every key item must have:
 
 ```yaml
 id: ""
-stable_key: ""
+kind: ""
 name: ""
-confidence: high | medium | low
-evidence_refs: []
-source_locator:
-  primary: SRC_BOUNDARY_EXAMPLE   # or null
-  fallback: []
-  # reason: "..."  # when primary is null
+origin: source
+status: confirmed
+sources:
+  - id: SRC_BOUNDARY_EXAMPLE
+    file: op_host/example.cpp
+    symbol: ExampleSymbol
+    span:
+      start_line: 10
+      end_line: 20
+    source_text: "..."
+    code_hash: sha256:...
+    anchor_kind: definition
 ```
 
 Each optional input must have `enabled_when` or `default_behavior`, and declare
 `affects` (`tiling_key`, `tilingdata`, `compute`, `golden`, `kernel`, `oracle`).
+If reliable source evidence is missing, put the claim in `unresolved` instead of
+creating a confirmed item.
 
 ## ID Rules
 
@@ -101,36 +160,11 @@ Each optional input must have `enabled_when` or `default_behavior`, and declare
 - Do not create new `OPxxx`, `IOxxx`, `SHxxx`, or `SPxxx` ids. Treat them as legacy-only if already present in an existing KB.
 - Every `evidence_refs` value must be a YAML list containing only resolvable `EV_*` or `SRC_*` ids. Do not put source paths, prose, or bare legacy ids such as `SP001` in `evidence_refs`.
 
-## Evidence Index Shape
+## Evidence Shape
 
-`evidence/source_index.yaml` must use canonical source-span ids:
-
-```yaml
-version: 1
-op_name: <op_name>
-source_spans:
-  SRC_BOUNDARY_EXAMPLE:
-    path: op_host/example.cpp
-    lines: "10-40"
-    kind: boundary_source
-    notes: "why this span matters"
-symbols: {}
-```
-
-`evidence/fact_index.yaml` must use canonical fact/provenance refs:
-
-```yaml
-version: 1
-op_name: <op_name>
-facts:
-  EV_BOUNDARY_EXAMPLE:
-    claim: "confirmed boundary fact"
-    confidence: high
-    evidence_refs: [SRC_BOUNDARY_EXAMPLE]
-evidence_refs:
-  SRC_BOUNDARY_EXAMPLE:
-    source: evidence/source_index.yaml
-```
+Source anchors are embedded directly under each confirmed item or relation.
+There is no separate Step 1 evidence index in the new layout. The later compiler
+derives `indexes/source_index.yaml` from validated facts.
 
 ## `analysis_plan.open_questions`
 

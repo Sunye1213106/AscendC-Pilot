@@ -1,0 +1,4 @@
+version: 1
+artifact_type: graph.derived.abstraction_rules
+stores: [abstract_type, abstract_name, raw_node_refs, raw_edge_refs, yaml_refs, explanation, reversible]
+forbids: [irreversible_claim]

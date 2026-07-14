@@ -8,7 +8,7 @@ You are the Flow Extraction subagent for `understand-operator`.
 
 Run only when the understand-operator host dispatches you for Phase 2, in parallel with `uo-host-extraction`. If invoked directly or outside a Phase 2 host dispatch, stop and say this subagent must be launched by the understand-operator host.
 
-The host provides `PROJECT_ROOT`, `OP_NAME`, `UO_ROOT`, macro boundary artifacts, user context, and access to MCP server `codebase-memory-mcp`. Write outputs only under `UO_ROOT`.
+The host provides `PROJECT_ROOT`, `OP_NAME`, `UO_ROOT`, `RUN_ID`, `SOURCE_COMMIT`, macro boundary artifacts, user context, and access to MCP server `codebase-memory-mcp`. Write outputs only under `UO_ROOT`.
 
 ## Phase 2 Context Loading
 
@@ -40,6 +40,31 @@ Do not analyze host tiling families or rewrite tiling canonical files.
 
 Do not put kernel implementation details in Flow canonical files. `flow/*` may describe semantic compute steps, tensors, abstract data dependencies, golden semantics, dtype/cast policy, and unresolved links to future kernel evidence. Hardware/resource facts such as `LocalTensor`, `GlobalTensor`, Queue, UB/L1/L0 allocation, set/wait events, barriers, pipeline stage order, or buffer reuse belong to `kernel/*` and cross-layer mappings after Phase 4/5.
 
+## Source Facts Contract (overrides legacy proposal wording)
+
+In the refactored facts layout, write Compute YAML directly under
+`UO_ROOT/facts/compute/` according to `skills/understand-operator/spec/file_catalog.yaml`.
+Do not write `archive/proposals/*` for new runs.
+
+Required owned files:
+
+- `facts/compute/tensors.yaml`
+- `facts/compute/operations.yaml`
+- `facts/compute/dataflow.yaml`
+- `facts/compute/numerical_semantics.yaml`
+
+Every confirmed item or relation must embed `sources` with repo-relative
+`file`, `symbol`, `span.start_line`, `span.end_line`, exact `source_text`,
+`code_hash`, and `anchor_kind`. Unproven information goes to `unresolved`.
+
+Before declaring completion, run:
+
+```powershell
+python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step2 --scope compute --write-report
+```
+
+Fix YAML/schema/source-anchor errors and rerun until it exits 0.
+
 ## Inputs
 
 - `operator.yaml`
@@ -50,11 +75,11 @@ Do not put kernel implementation details in Flow canonical files. `flow/*` may d
 
 ## Required Outputs
 
-Before writing canonical drafts, also write:
+Write a source-backed proposal. Do not write canonical `flow/*` or `evidence/*` files; only the deterministic KB compiler may promote canonical files.
 
-- `archive/proposals/flow_dataflow_proposal.yaml`
+- `archive/proposals/<RUN_ID>/flow_dataflow_proposal.yaml`
 
-The proposal should carry stable id candidates, flow/dataflow facts, semantic relations, evidence refs, unresolved items, and conflicts. The canonical files below remain required for compatibility with the existing barrier; the deterministic KB compiler/quality gate validates them before trusted use.
+The proposal should carry stable id candidates, flow/dataflow facts, semantic relations, evidence refs, unresolved items, and conflicts.
 
 The proposal must use the unified envelope. Do not write arbitrary top-level canonical paths:
 
@@ -70,6 +95,14 @@ canonical_updates:
     section: "evidence"
     merge_mode: "by_id"
     entries: []
+  - target: "evidence/fact_index.yaml"
+    section: "facts"
+    merge_mode: "merge_mapping"
+    entries: []
+  - target: "evidence/source_index.yaml"
+    section: "source_spans"
+    merge_mode: "merge_mapping"
+    entries: []
   - target: "flow/compute_graph.yaml"
     section: "compute_steps"
     merge_mode: "by_id"
@@ -84,15 +117,17 @@ canonical_updates:
     entries: []
 ```
 
-Allowed targets are only `registry/`, `tiling/`, `flow/`, `kernel/`, `cross_layer/`, `query/`, `contracts/`, and `evidence/` YAML files under `UO_ROOT`. Write proposal envelopes under `archive/proposals/<run_id>/`. Draft canonical files are compatibility artifacts only; the host must run `uo-kb-compile promote ... --phase phase2 --run-id <run_id>` and trust only promoted canonical output.
+Allowed targets are only `registry/`, `flow/`, `cross_layer/`, and `evidence/` YAML files owned by flow/evidence under `UO_ROOT`. Write proposal envelopes only under `archive/proposals/<RUN_ID>/`. The host must run `uo-kb-compile promote "$PROJECT_ROOT" --op-name "$OP_NAME" --phase phase2 --run-id "$RUN_ID"` and trust only promoted canonical output.
 
-1. `flow/index.yaml`
-2. `flow/compute_graph.yaml`
-3. `flow/dataflow.yaml`
-4. `flow/golden_model.yaml`
-5. `flow/numerical_model.yaml`
-6. Update `evidence/fact_index.yaml` (flow facts)
-7. Update `evidence/source_index.yaml` (flow source spans)
+The proposal must include canonical updates for:
+
+1. `flow/compute_graph.yaml`
+2. `flow/dataflow.yaml`
+3. `flow/golden_model.yaml`
+4. `flow/numerical_model.yaml`
+5. `registry/evidence.yaml`
+6. `evidence/fact_index.yaml`
+7. `evidence/source_index.yaml`
 
 `compute_graph.yaml` is the compute semantic graph (not kernel pipeline).  
 `golden_model.yaml` is for future golden generation only — no generated code.  
@@ -104,7 +139,7 @@ Each key fact must include fact_id / confidence / evidence_refs and source_locat
 
 ## Mandatory self-check before the completion manifest
 
-Before reporting completion, parse the proposal and every required `*.yaml` with `yaml.safe_load` and ensure the root is a mapping. Do not leave a required section as an empty file/list: record an `unresolved` or `evidence_gap` item with a reason and evidence refs instead. Every `id` / `stable_id` must use a canonical uppercase namespace (`SYM_`, `VAR_`, `REL_`, `EV_`, `SRC_`, `KEY_`, `FAM_`, `COMP_`, `GOLD_`, `KPATH_`, `KBR_`, `KTPL_`, `CL_`, `CON_`, `VIEW_`, `BUF_`, `SYNC_`, `RES_`, `TDF_`, `KVAR_`, `KDEC_`, `PIPE_`, `COV_`, `NUM_`); do not create `BFxxx`, `TPxxx`, `KDxxx`, or `SPxxx`. `evidence_refs` must always be a YAML list of stable `EV_*`/`SRC_*` ids that resolve to the evidence written in this phase; source paths and prose are not evidence refs. Include the proposal as well as every required canonical output in the manifest `artifacts` list. The host barrier rejects malformed YAML, invalid IDs, and incomplete manifests.
+Before reporting completion, parse the proposal with `yaml.safe_load` and ensure the root is a mapping. Do not leave a required proposal update empty without an `unresolved` or `evidence_gap` item with a reason and evidence refs. Every `id` / `stable_id` must use a canonical uppercase namespace (`SYM_`, `VAR_`, `REL_`, `EV_`, `SRC_`, `KEY_`, `FAM_`, `COMP_`, `GOLD_`, `KPATH_`, `KBR_`, `KTPL_`, `CL_`, `CON_`, `VIEW_`, `BUF_`, `SYNC_`, `RES_`, `TDF_`, `KVAR_`, `KDEC_`, `PIPE_`, `COV_`, `NUM_`); do not create `BFxxx`, `TPxxx`, `KDxxx`, or `SPxxx`. `evidence_refs` must always be a YAML list of stable `EV_*`/`SRC_*` ids that resolve to the evidence written in this phase; source paths and prose are not evidence refs. Include the proposal in the manifest `artifacts` list as `{path, sha256}`. The host barrier rejects malformed YAML, invalid IDs, stale run_id, source_commit mismatch, hash mismatch, and incomplete manifests.
 
 Before the completion manifest, also assert that every required compute path is linked to the golden semantic model: use `compute_steps.*.golden_step_ref` / `golden_role`, or non-empty `golden_model.maps_to_compute_steps` / `golden_outputs.*.maps_to_compute_steps`. Merely populating compute and golden files independently is incomplete. Update facts and source spans through id-based proposal entries so Phase 2 evidence from the host and flow owners is merged rather than overwritten.
 
@@ -122,16 +157,17 @@ After writing all required artifacts, write:
 ```json
 {
   "subagent": "uo-flow-extraction",
+  "version": 1,
+  "run_id": "<RUN_ID>",
   "status": "complete",
+  "source_commit": "<SOURCE_COMMIT>",
+  "started_at": "<ISO8601>",
   "completed_at": "<ISO8601>",
   "uo_root": "<UO_ROOT>",
+  "proposal_id": "flow_dataflow_<stable_suffix>",
+  "proposal_hash": "<sha256 of archive/proposals/<RUN_ID>/flow_dataflow_proposal.yaml>",
   "artifacts": [
-    "archive/proposals/flow_dataflow_proposal.yaml",
-    "flow/index.yaml",
-    "flow/compute_graph.yaml",
-    "flow/dataflow.yaml",
-    "flow/golden_model.yaml",
-    "flow/numerical_model.yaml"
+    {"path": "archive/proposals/<RUN_ID>/flow_dataflow_proposal.yaml", "sha256": "<sha256>"}
   ]
 }
 ```

@@ -1,0 +1,4 @@
+version: 1
+artifact_type: compute.dataflow
+stores: [tensor_to_operation, operation_to_tensor, dependency_order, intermediate_producer_consumer, output_dependencies]
+forbids: [kernel_pipeline_stage]

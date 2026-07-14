@@ -1,0 +1,4 @@
+version: 1
+artifact_type: graph.raw.nodes
+stores: [id, kind, label, detail_ref, source_refs]
+forbids: [full_yaml_copy]

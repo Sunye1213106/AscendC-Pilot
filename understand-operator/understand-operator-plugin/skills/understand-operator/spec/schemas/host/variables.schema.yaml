@@ -1,0 +1,4 @@
+version: 1
+artifact_type: host.variables
+stores: [variable_name, declared_type, scope, definition, value_origin, impacts, enters_tiling_key, writes_tilingdata]
+forbids: [ai_family_abstraction]

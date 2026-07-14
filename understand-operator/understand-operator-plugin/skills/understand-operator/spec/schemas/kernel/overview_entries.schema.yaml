@@ -1,0 +1,4 @@
+version: 1
+artifact_type: kernel.overview.entries
+stores: [kernel_entries, template_instances, kernel_class, entry_parameters, launch_source]
+forbids: [slice_depth_behavior]

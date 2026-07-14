@@ -1,0 +1,4 @@
+version: 1
+artifact_type: compute.tensors
+stores: [input_tensors, output_tensors, intermediate_tensors, shape, dtype, layout, aliases, views]
+forbids: [kernel_buffer_lifecycle]

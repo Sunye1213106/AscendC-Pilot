@@ -1,0 +1,4 @@
+version: 1
+artifact_type: operator.interface
+stores: [inputs, outputs, optional_io, attributes, dtype_domain, layout_domain, rank, shape_symbols, interface_constraints]
+forbids: [host_tiling_logic, kernel_logic, generated_tests]

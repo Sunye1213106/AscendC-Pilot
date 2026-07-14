@@ -1,0 +1,4 @@
+version: 1
+artifact_type: operator.source_files
+stores: [source_files, roles, include_edges, file_hashes, include_or_exclude_reason]
+forbids: [semantic_claim_without_source]

@@ -1,0 +1,18 @@
+version: 1
+name: understand-operator
+schema_bundle_version: 1
+compatible_plugin_versions:
+  - "0.1"
+bundle_hash_inputs:
+  - manifest.yaml
+  - file_catalog.yaml
+  - ownership.yaml
+  - stage_contracts.yaml
+  - stable_ids.yaml
+  - relation_types.yaml
+  - source_anchor_rules.yaml
+  - schemas/**/*.yaml
+notes:
+  - This Skill spec is the single system contract for every operator KB.
+  - Operator KBs record only source facts, checks, graphs, indexes, runs, and cbm metadata.
+  - Do not copy schema files into .understand-operator/<op_name>/.

@@ -1,0 +1,4 @@
+version: 1
+artifact_type: host.expressions
+stores: [source_text, operators, operands, comparisons, logic, arithmetic, bit_ops, shape_reads, attribute_checks, derived_value_formula]
+forbids: [natural_language_only]

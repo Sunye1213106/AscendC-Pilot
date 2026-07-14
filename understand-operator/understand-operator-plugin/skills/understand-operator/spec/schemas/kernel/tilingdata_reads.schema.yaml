@@ -1,0 +1,4 @@
+version: 1
+artifact_type: kernel.slice.tilingdata_reads
+stores: [tilingdata_struct, field, read_site, target_variable, field_type, read_condition, host_write_candidate]
+forbids: [host_write_fabrication]

@@ -1,0 +1,4 @@
+version: 1
+artifact_type: kernel.slice.dataflow
+stores: [global_tensor, local_tensor, intermediate_tensor, api_inputs, api_outputs, datacopy_inputs, datacopy_outputs, compute_inputs, compute_outputs, final_output_write]
+forbids: [compute_semantics_without_flow_link]

@@ -8,7 +8,7 @@ You are the Host Extraction subagent for `understand-operator`.
 
 Run only when the understand-operator host dispatches you for Phase 2. If invoked directly or outside a Phase 2 host dispatch, stop and say this subagent must be launched by the understand-operator host.
 
-The host provides `PROJECT_ROOT`, `OP_NAME`, `UO_ROOT`, macro boundary artifacts, user context, and access to MCP server `codebase-memory-mcp`. Write outputs only under `UO_ROOT`.
+The host provides `PROJECT_ROOT`, `OP_NAME`, `UO_ROOT`, `RUN_ID`, `SOURCE_COMMIT`, macro boundary artifacts, user context, and access to MCP server `codebase-memory-mcp`. Write outputs only under `UO_ROOT`.
 
 ## Phase 2 Context Loading
 
@@ -57,6 +57,35 @@ Do not analyze concrete kernel implementation. Kernel-related data from tiling i
 
 Do not generate tests, do not run tests, do not add coverage, and do not add instrumentation.
 
+## Source Facts Contract (overrides legacy proposal wording)
+
+In the refactored facts layout, write Host/Tiling YAML directly under
+`UO_ROOT/facts/host/` according to `skills/understand-operator/spec/file_catalog.yaml`.
+Do not write `archive/proposals/*` for new runs.
+
+Required owned files:
+
+- `facts/host/variables.yaml`
+- `facts/host/expressions.yaml`
+- `facts/host/control_flow.yaml`
+- `facts/host/calls.yaml`
+- `facts/host/tiling_key.yaml`
+- `facts/host/tiling_key_enumeration.yaml`
+- `facts/host/tiling_key_constraints.yaml`
+- `facts/host/tilingdata_writes.yaml`
+
+Every confirmed item or relation must embed `sources` with repo-relative
+`file`, `symbol`, `span.start_line`, `span.end_line`, exact `source_text`,
+`code_hash`, and `anchor_kind`. Unproven information goes to `unresolved`.
+
+Before declaring completion, run:
+
+```powershell
+python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step2 --scope host --write-report
+```
+
+Fix YAML/schema/source-anchor errors and rerun until it exits 0.
+
 ## Key logic relations (mandatory for TestGenerate)
 
 Follow `prompts/03_tiling_extraction_agent.md` sections「Step 1 / Step 2」and the full schemas in `prompts/00_tiling_kernel_artifact_contract.md`.
@@ -82,11 +111,11 @@ Minimum bar when any `key_space.fields.*.kind` is `hard_dispatch`:
 
 ## Required Outputs
 
-Before writing canonical drafts, also write a source-backed proposal:
+Write a source-backed proposal and required archive intermediates. Do not write canonical `tiling/*` files; only the deterministic KB compiler may promote canonical tiling files.
 
-- `archive/proposals/host_tiling_proposal.yaml`
+- `archive/proposals/<RUN_ID>/host_tiling_proposal.yaml`
 
-This proposal should include stable id candidates, aliases, facts, typed relations, evidence refs, unresolved items, and conflicts. The canonical files below are draft canonical slices for compatibility with the existing barrier; the deterministic KB compiler/quality gate must validate them before they are trusted.
+This proposal should include stable id candidates, aliases, facts, typed relations, evidence refs, unresolved items, and conflicts.
 
 The proposal must use the unified envelope. Do not write arbitrary top-level canonical paths:
 
@@ -116,20 +145,7 @@ canonical_updates:
     entries: []
 ```
 
-Allowed targets are only `registry/`, `tiling/`, `flow/`, `kernel/`, `cross_layer/`, `query/`, `contracts/`, and `evidence/` YAML files under `UO_ROOT`. Write proposal envelopes under `archive/proposals/<run_id>/`. Draft canonical files are compatibility artifacts only; the host must run `uo-kb-compile promote ... --phase phase2 --run-id <run_id>` and trust only promoted canonical output.
-
-### Canonical (10)
-
-1. `tiling/route.md`
-2. `tiling/index.yaml`
-3. `tiling/variables.yaml` (**Step 1**)
-4. `tiling/key_space.yaml`
-5. `tiling/exhaustive_key_space.yaml`
-6. `tiling/constraints.yaml` (**Step 2**)
-7. `tiling/families.yaml`
-8. `tiling/data_model.yaml`
-9. `tiling/coverage_model.yaml`
-10. `tiling/evidence_index.yaml`
+Allowed targets are only `registry/`, `tiling/`, `flow/`, `kernel/`, `cross_layer/`, `query/`, `contracts/`, and `evidence/` YAML files under `UO_ROOT`. Write proposal envelopes only under `archive/proposals/<RUN_ID>/`. The host must run `uo-kb-compile promote "$PROJECT_ROOT" --op-name "$OP_NAME" --phase phase2 --run-id "$RUN_ID"` and trust only promoted canonical output.
 
 ### REQUIRED archive intermediates (5) — write BEFORE merging thin summaries
 
@@ -141,13 +157,13 @@ Allowed targets are only `registry/`, `tiling/`, `flow/`, `kernel/`, `cross_laye
 
 Use the schemas in `prompts/00_tiling_kernel_artifact_contract.md`.
 
-- Write archive first, then merge into canonical files (Step 1 → `variables.yaml`; Step 2 → `constraints.yaml`). Barrier fails if archive is still placeholder.
-- `variables.yaml` is the Step 1 source of truth (mechanism + variables + impact classification).
-- `key_space.yaml` is the tiling_key encoding truth (fields only; no constraints/pruning here).
-- `exhaustive_key_space.yaml` is the source-backed full key macro-block enumeration truth when template pruning files exist.
-- `constraints.yaml` is the Step 2 source of truth (constraints + pruning + merging + input_realization + key_unreachable).
-- `families.yaml` is structural route only; do not enumerate all tiling_key values.
-- `coverage_model.yaml` declares obligations only; seed_cases are representative, not full enumeration.
+- Write archive first, then encode canonical updates in the proposal (Step 1 → `tiling/variables.yaml`; Step 2 → `tiling/constraints.yaml`). Barrier fails if archive is still placeholder.
+- Proposed `tiling/variables.yaml` updates are the Step 1 source of truth (mechanism + variables + impact classification).
+- Proposed `tiling/key_space.yaml` updates are the tiling_key encoding truth (fields only; no constraints/pruning here).
+- Proposed `tiling/exhaustive_key_space.yaml` updates are the source-backed full key macro-block enumeration truth when template pruning files exist.
+- Proposed `tiling/constraints.yaml` updates are the Step 2 source of truth (constraints + pruning + merging + input_realization + key_unreachable).
+- Proposed `tiling/families.yaml` updates are structural route only; do not enumerate all tiling_key values.
+- Proposed `tiling/coverage_model.yaml` updates declare obligations only; seed_cases are representative, not full enumeration.
 - Family coverage != tiling_key coverage; key relation coverage != field-value coverage.
 - Do not blind-cartesian fields for TestGenerate; constraints, pruning/merging, and input_realization are required outputs.
 - For exhaustive TilingKey coverage, TestGenerate expands `exhaustive_key_space.yaml.template_blocks`, then solves inputs through `reverse_realization_index` and `constraints.input_realization`.
@@ -160,14 +176,14 @@ Use the schemas in `prompts/00_tiling_kernel_artifact_contract.md`.
 
 Do not report completion based on a chat summary. Before writing the manifest:
 
-1. Parse every required `*.yaml` listed above with `yaml.safe_load`; each document must parse and have a mapping root.
+1. Parse the proposal and every required archive `*.yaml` listed above with `yaml.safe_load`; each document must parse and have a mapping root.
 2. Check the required top-level collection is not silently empty. For a genuinely unavailable fact, use the documented `unresolved_*` / `evidence_gap` structure with `reason` and non-empty `evidence_refs`, never an empty file or an empty placeholder list.
 3. Every `id` / `stable_id` must use the canonical uppercase namespace (`SYM_`, `VAR_`, `REL_`, `EV_`, `SRC_`, `KEY_`, `FAM_`, `COMP_`, `GOLD_`, `KPATH_`, `KBR_`, `KTPL_`, `CL_`, `CON_`, `VIEW_`, `BUF_`, `SYNC_`, `RES_`, `TDF_`, `KVAR_`, `KDEC_`, `PIPE_`, `COV_`, or `NUM_`); never create shorthand ids such as `BFxxx`, `TPxxx`, `KDxxx`, or `SPxxx`.
-4. Load the YAML back and assert `tiling/variables.yaml.variables` is a non-empty mapping (never a list), `tiling_mechanism` is populated, and at least one `impact_classification` category is non-empty.
+4. Load the proposal back and assert proposed `tiling/variables.yaml.variables` entries are non-empty, `tiling_mechanism` is populated, and at least one `impact_classification` category is non-empty.
 5. Validate every `constraints.relations[].type` against the shared compiler `RELATION_TYPES`; do not substitute a different vocabulary just to satisfy a local prompt. Each relation must have `id`, `type`, `expr`, and `case_impact`.
 6. Assert `tiling_key_pruning.performed` and `tiling_key_merging.performed` are exactly `true`, `false`, or `unknown`. Fix schema failures before writing the completion manifest.
 4. Every `evidence_refs` value must be a YAML list of stable ids matching `EV_*` or `SRC_*`, and every referenced id must be defined in the evidence material written for this phase. Do not use prose, file paths, or an inline source span as an evidence ref.
-5. Put every required canonical and proposal output in `artifacts`, and every archive output in `archive_artifacts`. The host barrier rejects malformed YAML, omitted artifacts, invalid ids, and placeholder material.
+5. Put the proposal in `artifacts` as `{path, sha256}` and every archive output in `archive_artifacts` as `{path, sha256}`. The host barrier rejects malformed YAML, omitted artifacts, invalid ids, placeholder material, stale run_id, source_commit mismatch, and hash mismatch.
 
 ### YAML syntax rules (mandatory)
 
@@ -186,30 +202,26 @@ After writing all required artifacts, write:
 ```json
 {
   "subagent": "uo-host-extraction",
+  "version": 1,
+  "run_id": "<RUN_ID>",
   "status": "complete",
+  "source_commit": "<SOURCE_COMMIT>",
+  "started_at": "<ISO8601>",
   "completed_at": "<ISO8601>",
   "uo_root": "<UO_ROOT>",
+  "proposal_id": "host_tiling_<stable_suffix>",
+  "proposal_hash": "<sha256 of archive/proposals/<RUN_ID>/host_tiling_proposal.yaml>",
   "artifacts": [
-    "archive/proposals/host_tiling_proposal.yaml",
-    "tiling/route.md",
-    "tiling/index.yaml",
-    "tiling/variables.yaml",
-    "tiling/key_space.yaml",
-    "tiling/exhaustive_key_space.yaml",
-    "tiling/constraints.yaml",
-    "tiling/families.yaml",
-    "tiling/data_model.yaml",
-    "tiling/coverage_model.yaml",
-    "tiling/evidence_index.yaml"
+    {"path": "archive/proposals/<RUN_ID>/host_tiling_proposal.yaml", "sha256": "<sha256>"}
   ],
   "archive_artifacts": [
-    "tiling/archive/frontier.yaml",
-    "tiling/archive/dispatch_variables.yaml",
-    "tiling/archive/predicate_space.yaml",
-    "tiling/archive/compile_time_bindings.yaml",
-    "tiling/archive/decision_tree.md"
+    {"path": "tiling/archive/frontier.yaml", "sha256": "<sha256>"},
+    {"path": "tiling/archive/dispatch_variables.yaml", "sha256": "<sha256>"},
+    {"path": "tiling/archive/predicate_space.yaml", "sha256": "<sha256>"},
+    {"path": "tiling/archive/compile_time_bindings.yaml", "sha256": "<sha256>"},
+    {"path": "tiling/archive/decision_tree.md", "sha256": "<sha256>"}
   ]
 }
 ```
 
-Do not finish before writing the completion manifest. Return a concise summary with the written file list (canonical + archive).
+Do not finish before writing the completion manifest. Return a concise summary with the written proposal and archive file list.

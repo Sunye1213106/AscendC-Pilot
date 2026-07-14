@@ -80,9 +80,9 @@ Do not add a separate gate between 0.5-A, 0.5-B, and 0.5-C.
 
 1. **Phase 0 — layout + MCP auto-index（强制）**
 2. Phase 0.5 — Macro Scope Human Review → **STOP**
-3. Phase 1 — Macro Boundary → `operator.yaml` + `index.yaml` + `route.md` + evidence indexes
-4. Phase 2 — parallel Task: `uo-host-extraction` + `uo-flow-extraction` → barrier
-5. Phase 3 — Kernel Path Task Builder
+3. Phase 1 — Macro Boundary writes `facts/operator/*.yaml` → `validate_facts.py --stage step1`
+4. Phase 2 — parallel Task: `uo-host-extraction` + `uo-flow-extraction` + `uo-kernel-overview-agent` → Python validation → `uo-step2-fact-review-agent` → receipt
+5. Phase 3 — Kernel Slice planning (future step)
 6. Phase 3.5 — Kernel Dispatch Human Review → **STOP**
 7. Phase 4 — parallel `uo-kernel-path` × approved tasks → barrier
 8. Phase 5–7 — alignment、evidence、route + test contract
@@ -226,42 +226,44 @@ python "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" -
 - Preserve `test/contract.yaml` as a derived compatibility view; `contracts/testcase.yaml` (version 2) is the TestAgent machine source of truth and must not be independently maintained.
 - `contracts/testcase.yaml` (version 2) is the TestAgent machine SoT; `test/contract.yaml` is a derived compatibility view only.
 
-## Canonical v2 command checkpoints
+## Source Facts command checkpoints
 
-After Phase 2 subagents finish and the barrier passes:
-
-```powershell
-uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase2 --run-id "$RUN_ID"
-uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase2
-```
-
-After Phase 4 kernel raw agents finish:
+After Phase 1 Macro Boundary writes `facts/operator/interface.yaml`,
+`facts/operator/source_files.yaml`, and `facts/operator/entrypoints.yaml`:
 
 ```powershell
-uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase4 --run-id "$RUN_ID"
-uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase4
+python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step1 --write-report
 ```
 
-After Phase 5 host alignment writes `phase5_kernel_alignment_proposal.yaml`:
+After Phase 2 Host/Compute/Kernel Overview facts are written by the three
+parallel subagents:
 
 ```powershell
-uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase5 --run-id "$RUN_ID"
-uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase5
+python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step2 --scope host --write-report
+python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step2 --scope compute --write-report
+python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step2 --scope kernel-overview --write-report
 ```
 
-After Phase 6 evidence compiler writes `phase6_evidence_proposal.yaml`:
+Then run `uo-step2-fact-review-agent`. It writes only
+`checks/step2/review.yaml` and must not modify facts. If review passes, write
+the Step 2 receipt:
 
 ```powershell
-uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase6 --run-id "$RUN_ID"
-uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase6
+python "$SCRIPT_DIR/write_step2_receipt.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 ```
 
-After Phase 7 route/contract proposal promotion:
+After Phase 3 Kernel Slice facts are written:
 
 ```powershell
-uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase7 --run-id "$RUN_ID"
-uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase7
-uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase final --write-outputs false
+python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step3 --write-report
 ```
 
-Phase 8 runs `quality_gate.py` for final validation. Treat `archive/proposals/*`, `archive/raw_agents/*`, and draft canonical slices as untrusted until these commands pass.
+Before Raw Graph Compiler runs:
+
+```powershell
+python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage compile --write-report
+```
+
+Treat every Agent-written YAML as incomplete until the matching
+`validate_facts.py` command exits 0. The compiler consumes only validated
+`facts/**`, never proposal envelopes.

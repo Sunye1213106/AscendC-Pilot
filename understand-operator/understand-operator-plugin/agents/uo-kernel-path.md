@@ -8,7 +8,7 @@ You are a Kernel Path subagent for `understand-operator`.
 
 Run only when the understand-operator host dispatches you for Phase 4 with exactly one approved `task_id`. If invoked directly or outside a Phase 4 host dispatch, stop and say this subagent must be launched by the understand-operator host.
 
-The host provides `PROJECT_ROOT`, `OP_NAME`, `UO_ROOT`, one `task_id`, the matching block from `kernel/paths.yaml`, `human/kernel_dispatch_review.yaml`, IO/tiling/flow artifacts, user context, and access to MCP server `codebase-memory-mcp`. Write outputs only under `UO_ROOT`.
+The host provides `PROJECT_ROOT`, `OP_NAME`, `UO_ROOT`, `RUN_ID`, `SOURCE_COMMIT`, one `task_id`, the matching block from `human/kernel_dispatch_review.yaml`, promoted IO/tiling/flow artifacts, user context, and access to MCP server `codebase-memory-mcp`. Write outputs only under `UO_ROOT`.
 
 ## Phase 4 Context Loading
 
@@ -45,6 +45,37 @@ Align the kernel implementation with:
 - `flow/dataflow.yaml`
 
 Do not invent kernel entries, compute steps, buffer behavior, sync behavior, or evidence. Do not generate tests, do not run tests, do not add coverage, and do not add instrumentation. Do not split paths by numeric tilingdata variants.
+
+## Source Facts Contract (overrides legacy raw-agent wording)
+
+In the refactored facts layout, write Kernel Slice YAML directly under
+`UO_ROOT/facts/kernel/slices/<slice_id>/` according to
+`skills/understand-operator/spec/file_catalog.yaml`. Do not write
+`archive/raw_agents/*` for new runs.
+
+Required owned files per slice:
+
+- `facts/kernel/slices/<slice_id>/variables.yaml`
+- `facts/kernel/slices/<slice_id>/expressions.yaml`
+- `facts/kernel/slices/<slice_id>/branches.yaml`
+- `facts/kernel/slices/<slice_id>/loops.yaml`
+- `facts/kernel/slices/<slice_id>/tilingdata_reads.yaml`
+- `facts/kernel/slices/<slice_id>/calls.yaml`
+- `facts/kernel/slices/<slice_id>/dataflow.yaml`
+- `facts/kernel/slices/<slice_id>/memory.yaml`
+- `facts/kernel/slices/<slice_id>/synchronization.yaml`
+
+Every confirmed item or relation must embed `sources` with repo-relative
+`file`, `symbol`, `span.start_line`, `span.end_line`, exact `source_text`,
+`code_hash`, and `anchor_kind`. Unproven information goes to `unresolved`.
+
+Before declaring completion, run:
+
+```powershell
+python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step3 --scope kernel-slice --write-report
+```
+
+Fix YAML/schema/source-anchor errors and rerun until it exits 0.
 
 ## Two-step kernel analysis (mandatory)
 
@@ -124,13 +155,17 @@ After writing the required artifacts, write:
 ```json
 {
   "subagent": "uo-kernel-path",
+  "version": 1,
+  "run_id": "<RUN_ID>",
   "status": "complete",
   "task_id": "<task_id>",
+  "source_commit": "<SOURCE_COMMIT>",
+  "started_at": "<ISO8601>",
   "completed_at": "<ISO8601>",
   "uo_root": "<UO_ROOT>",
   "artifacts": [
-    "archive/raw_agents/kernel_paths/<task_id>_kernel_path.yaml",
-    "archive/raw_agents/kernel_paths/<task_id>_kernel_path.md"
+    {"path": "archive/raw_agents/kernel_paths/<task_id>_kernel_path.yaml", "sha256": "<sha256>"},
+    {"path": "archive/raw_agents/kernel_paths/<task_id>_kernel_path.md", "sha256": "<sha256>"}
   ]
 }
 ```

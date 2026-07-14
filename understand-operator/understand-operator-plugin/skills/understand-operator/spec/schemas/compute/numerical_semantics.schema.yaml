@@ -1,0 +1,4 @@
+version: 1
+artifact_type: compute.numerical_semantics
+stores: [accumulation_dtype, cast_rules, precision_strategy, overflow_risk, underflow_risk, stability_handling, golden_hints, tolerance_hints]
+forbids: [testcase_generation]

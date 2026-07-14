@@ -1,0 +1,4 @@
+version: 1
+artifact_type: kernel.overview.frontier
+stores: [kernel_entries, functions, call_edges, tilingdata_read_sites, branch_sites, loop_sites, api_sites, memory_sites, sync_sites, output_write_sites, unresolved_symbols]
+forbids: [slice_depth_analysis]

@@ -1,0 +1,4 @@
+version: 1
+artifact_type: kernel.slice_interfaces
+stores: [cross_slice_calls, cross_slice_tensor_flow, cross_slice_buffer_flow, cross_slice_control_dependencies, cross_slice_sync_dependencies, readonly_context]
+forbids: [deep_slice_items]

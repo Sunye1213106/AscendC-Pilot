@@ -1,0 +1,4 @@
+version: 1
+schema_kind: document
+required_top_level: [version, artifact, snapshot, items, relations, unresolved]
+forbidden_content: [schema_copy, generated_tests, golden_code]

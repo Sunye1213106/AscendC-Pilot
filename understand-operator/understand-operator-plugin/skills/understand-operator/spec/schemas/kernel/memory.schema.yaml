@@ -1,0 +1,4 @@
+version: 1
+artifact_type: kernel.slice.memory
+stores: [global_tensor, local_tensor, tque, tbuf, workspace, allocation, lifetime, producer, consumer, reuse, enqueue, dequeue]
+forbids: [resource_without_producer_consumer_unless_unresolved]

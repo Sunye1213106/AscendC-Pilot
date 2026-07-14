@@ -1,0 +1,4 @@
+version: 1
+artifact_type: kernel.overview.call_graph
+stores: [caller, callee, call_site, template_arguments, conditional_call]
+forbids: [derived_semantic_graph]

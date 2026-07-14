@@ -1,0 +1,31 @@
+version: 1
+relation_types:
+  reads: {source: symbol, target: variable}
+  writes: {source: symbol, target: variable}
+  assigned_from: {source: variable, target: expression}
+  derived_from: {source: variable, target: variable}
+  passed_to: {source: variable, target: call}
+  calls: {source: symbol, target: symbol}
+  controls: {source: expression, target: branch}
+  has_outcome: {source: branch, target: outcome}
+  loops_over: {source: loop, target: expression}
+  sets_tiling_key: {source: call, target: key}
+  writes_tilingdata: {source: symbol, target: tilingdata}
+  reads_tilingdata: {source: symbol, target: tilingdata}
+  constrains: {source: expression, target: variable}
+  prunes: {source: expression, target: key}
+  merges_into: {source: key, target: key}
+  requires: {source: any, target: any}
+  implies: {source: any, target: any}
+  mutex_with: {source: any, target: any}
+  takes_tensor: {source: operation, target: tensor}
+  produces_tensor: {source: operation, target: tensor}
+  data_depends_on: {source: tensor, target: tensor}
+  copies_from: {source: api, target: tensor}
+  copies_to: {source: api, target: tensor}
+  produces: {source: any, target: any}
+  consumes: {source: any, target: any}
+  signals: {source: symbol, target: sync}
+  waits_for: {source: symbol, target: sync}
+  happens_before: {source: any, target: any}
+  writes_output: {source: any, target: argument}

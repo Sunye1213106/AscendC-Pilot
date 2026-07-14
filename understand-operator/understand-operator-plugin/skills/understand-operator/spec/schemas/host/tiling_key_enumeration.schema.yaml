@@ -1,0 +1,4 @@
+version: 1
+artifact_type: host.tiling_key_enumeration
+stores: [template_macro_blocks, fixed_fields, field_domains, product_count, tiling_struct, reverse_realization_hints, total_size]
+forbids: [generated_test_rows]

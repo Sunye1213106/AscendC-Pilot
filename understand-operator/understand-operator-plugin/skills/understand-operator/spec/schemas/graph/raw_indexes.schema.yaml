@@ -1,0 +1,4 @@
+version: 1
+artifact_type: graph.raw.indexes
+stores: [by_kind, by_symbol, by_file, by_function, by_relation_type]
+forbids: [new_facts]

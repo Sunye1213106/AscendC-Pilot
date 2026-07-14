@@ -1,0 +1,4 @@
+version: 1
+artifact_type: graph.raw.manifest
+stores: [graph_version, compiler_version, input_facts_hash, node_count, edge_count, build_time]
+forbids: [derived_abstraction]

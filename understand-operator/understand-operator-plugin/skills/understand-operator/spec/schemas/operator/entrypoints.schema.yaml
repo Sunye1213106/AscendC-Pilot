@@ -1,0 +1,4 @@
+version: 1
+artifact_type: operator.entrypoints
+stores: [registration_entry, host_entry, tiling_key_setter, kernel_launch_entry, kernel_function_candidate, golden_candidate]
+forbids: [kernel_slice_behavior]

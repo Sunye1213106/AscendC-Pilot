@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from understand_operator._operator.spec import spec_bundle_hash
+
 ARTIFACT_DIR = ".understand-operator"
 
 CANONICAL_ROOT_FILES = [
@@ -188,6 +190,12 @@ def read_text(path: Path) -> str:
 def write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def write_text_if_missing(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text(text, encoding="utf-8")
 
 
 def init_operator_layout(base: Path, op_name: str, repo_root: Path) -> None:
@@ -1602,6 +1610,94 @@ warnings:
             "kb_layout": "canonical_v2",
         },
     )
+
+
+def init_operator_contract_layout(base: Path, op_name: str, repo_root: Path) -> None:
+    """Create the new spec-driven operator KB layout.
+
+    The Skill spec is the single source of schema/ownership truth and is not
+    copied into the per-operator KB.
+    """
+    bundle_hash = spec_bundle_hash()
+    for rel in [
+        "facts/operator",
+        "facts/host",
+        "facts/compute",
+        "facts/kernel/overview",
+        "facts/kernel/slices",
+        "checks/step1",
+        "checks/step2",
+        "checks/step3",
+        "checks",
+        "graphs/raw",
+        "graphs/derived",
+        "indexes",
+        "runs",
+        "cbm",
+    ]:
+        (base / rel).mkdir(parents=True, exist_ok=True)
+
+    for keep in [
+        "facts/host/.gitkeep",
+        "facts/compute/.gitkeep",
+        "facts/kernel/slices/.gitkeep",
+        "graphs/raw/.gitkeep",
+        "graphs/derived/.gitkeep",
+        "indexes/.gitkeep",
+        "runs/.gitkeep",
+    ]:
+        write_text_if_missing(base / keep, "")
+
+    write_text(
+        base / "manifest.yaml",
+        f"""version: 1
+op_name: {op_name}
+repo_root: {repo_root.as_posix()}
+source:
+  revision: unknown
+  snapshot_id: SOURCE_PENDING
+spec:
+  name: understand-operator
+  version: 1
+  bundle_hash: {bundle_hash}
+current_run_id: UO_RUN_PENDING
+stages:
+  step1_boundary:
+    status: pending
+  step2_host_compute_kernel_overview:
+    status: pending
+  step3_kernel_slices:
+    status: pending
+graphs:
+  raw:
+    status: pending
+  derived:
+    status: pending
+""",
+    )
+
+    for rel, artifact_type in {
+        "facts/operator/interface.yaml": "operator.interface",
+        "facts/operator/source_files.yaml": "operator.source_files",
+        "facts/operator/entrypoints.yaml": "operator.entrypoints",
+    }.items():
+        write_text_if_missing(
+            base / rel,
+            f"""version: 1
+artifact:
+  type: {artifact_type}
+  schema_version: 1
+  owner: uo-boundary-agent
+snapshot:
+  run_id: UO_RUN_PENDING
+  source_snapshot_id: SOURCE_PENDING
+  source_revision: unknown
+  spec_bundle_hash: {bundle_hash}
+items: []
+relations: []
+unresolved: []
+""",
+        )
 
 
 def _init_kb_v2_layout(base: Path, op_name: str, repo_root: Path) -> None:

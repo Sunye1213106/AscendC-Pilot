@@ -1,0 +1,4 @@
+version: 1
+artifact_type: kernel.slice.variables
+stores: [kernel_parameters, tilingdata_variables, block_index, core_index, offset, length, tail_size, loop_index, buffer_size, feature_flags, locals]
+forbids: [host_variable_without_link]

@@ -1,0 +1,4 @@
+version: 1
+artifact_type: graph.derived.indexes
+stores: [terminology_index, semantic_keyword_index, node_index]
+forbids: [new_source_fact]

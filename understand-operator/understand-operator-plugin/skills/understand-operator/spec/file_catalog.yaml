@@ -1,0 +1,437 @@
+version: 1
+description: Single source of truth for operator KB artifact paths.
+files:
+  - path: manifest.yaml
+    artifact_type: kb.manifest
+    owner: uo-orchestrator
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: init
+    allow_empty: false
+    raw_graph_input: false
+  - path: facts/operator/interface.yaml
+    artifact_type: operator.interface
+    owner: uo-boundary-agent
+    schema: schemas/operator/interface.schema.yaml
+    required_after_stage: step1
+    allow_empty: true
+    raw_graph_input: true
+  - path: facts/operator/source_files.yaml
+    artifact_type: operator.source_files
+    owner: uo-boundary-agent
+    schema: schemas/operator/source_files.schema.yaml
+    required_after_stage: step1
+    allow_empty: true
+    raw_graph_input: true
+  - path: facts/operator/entrypoints.yaml
+    artifact_type: operator.entrypoints
+    owner: uo-boundary-agent
+    schema: schemas/operator/entrypoints.schema.yaml
+    required_after_stage: step1
+    allow_empty: true
+    raw_graph_input: true
+  - path: facts/host/variables.yaml
+    artifact_type: host.variables
+    owner: uo-host-tiling-agent
+    schema: schemas/host/variables.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/host/expressions.yaml
+    artifact_type: host.expressions
+    owner: uo-host-tiling-agent
+    schema: schemas/host/expressions.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/host/control_flow.yaml
+    artifact_type: host.control_flow
+    owner: uo-host-tiling-agent
+    schema: schemas/host/control_flow.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/host/calls.yaml
+    artifact_type: host.calls
+    owner: uo-host-tiling-agent
+    schema: schemas/host/calls.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/host/tiling_key.yaml
+    artifact_type: host.tiling_key
+    owner: uo-host-tiling-agent
+    schema: schemas/host/tiling_key.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/host/tiling_key_enumeration.yaml
+    artifact_type: host.tiling_key_enumeration
+    owner: uo-host-tiling-agent
+    schema: schemas/host/tiling_key_enumeration.schema.yaml
+    required_after_stage: step2
+    allow_empty: true
+    raw_graph_input: true
+  - path: facts/host/tiling_key_constraints.yaml
+    artifact_type: host.tiling_key_constraints
+    owner: uo-host-tiling-agent
+    schema: schemas/host/tiling_key_constraints.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/host/tilingdata_writes.yaml
+    artifact_type: host.tilingdata_writes
+    owner: uo-host-tiling-agent
+    schema: schemas/host/tilingdata_writes.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/compute/tensors.yaml
+    artifact_type: compute.tensors
+    owner: uo-compute-agent
+    schema: schemas/compute/tensors.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/compute/operations.yaml
+    artifact_type: compute.operations
+    owner: uo-compute-agent
+    schema: schemas/compute/operations.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/compute/dataflow.yaml
+    artifact_type: compute.dataflow
+    owner: uo-compute-agent
+    schema: schemas/compute/dataflow.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/compute/numerical_semantics.yaml
+    artifact_type: compute.numerical_semantics
+    owner: uo-compute-agent
+    schema: schemas/compute/numerical_semantics.schema.yaml
+    required_after_stage: step2
+    allow_empty: true
+    raw_graph_input: true
+  - path: facts/kernel/overview/entries.yaml
+    artifact_type: kernel.overview.entries
+    owner: uo-kernel-overview-agent
+    schema: schemas/kernel/overview_entries.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/kernel/overview/functions.yaml
+    artifact_type: kernel.overview.functions
+    owner: uo-kernel-overview-agent
+    schema: schemas/kernel/overview_functions.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/kernel/overview/call_graph.yaml
+    artifact_type: kernel.overview.call_graph
+    owner: uo-kernel-overview-agent
+    schema: schemas/kernel/overview_call_graph.schema.yaml
+    required_after_stage: step2
+    allow_empty: true
+    raw_graph_input: true
+  - path: facts/kernel/overview/frontier.yaml
+    artifact_type: kernel.overview.frontier
+    owner: uo-kernel-overview-agent
+    schema: schemas/kernel/overview_frontier.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/kernel/overview/global_resources.yaml
+    artifact_type: kernel.overview.global_resources
+    owner: uo-kernel-overview-agent
+    schema: schemas/kernel/overview_resources.schema.yaml
+    required_after_stage: step2
+    allow_empty: true
+    raw_graph_input: true
+  - path: facts/kernel/slice_manifest.yaml
+    artifact_type: kernel.slice_manifest
+    owner: uo-kernel-overview-agent
+    schema: schemas/kernel/slice_manifest.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/kernel/slice_interfaces.yaml
+    artifact_type: kernel.slice_interfaces
+    owner: uo-kernel-overview-agent
+    schema: schemas/kernel/slice_interfaces.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/kernel/slices/*/variables.yaml
+    artifact_type: kernel.slice.variables
+    owner: uo-kernel-slice-agent
+    schema: schemas/kernel/variables.schema.yaml
+    required_after_stage: step3
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/kernel/slices/*/expressions.yaml
+    artifact_type: kernel.slice.expressions
+    owner: uo-kernel-slice-agent
+    schema: schemas/kernel/expressions.schema.yaml
+    required_after_stage: step3
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/kernel/slices/*/branches.yaml
+    artifact_type: kernel.slice.branches
+    owner: uo-kernel-slice-agent
+    schema: schemas/kernel/branches.schema.yaml
+    required_after_stage: step3
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/kernel/slices/*/loops.yaml
+    artifact_type: kernel.slice.loops
+    owner: uo-kernel-slice-agent
+    schema: schemas/kernel/loops.schema.yaml
+    required_after_stage: step3
+    allow_empty: true
+    raw_graph_input: true
+  - path: facts/kernel/slices/*/tilingdata_reads.yaml
+    artifact_type: kernel.slice.tilingdata_reads
+    owner: uo-kernel-slice-agent
+    schema: schemas/kernel/tilingdata_reads.schema.yaml
+    required_after_stage: step3
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/kernel/slices/*/calls.yaml
+    artifact_type: kernel.slice.calls
+    owner: uo-kernel-slice-agent
+    schema: schemas/kernel/calls.schema.yaml
+    required_after_stage: step3
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/kernel/slices/*/dataflow.yaml
+    artifact_type: kernel.slice.dataflow
+    owner: uo-kernel-slice-agent
+    schema: schemas/kernel/dataflow.schema.yaml
+    required_after_stage: step3
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/kernel/slices/*/memory.yaml
+    artifact_type: kernel.slice.memory
+    owner: uo-kernel-slice-agent
+    schema: schemas/kernel/memory.schema.yaml
+    required_after_stage: step3
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/kernel/slices/*/synchronization.yaml
+    artifact_type: kernel.slice.synchronization
+    owner: uo-kernel-slice-agent
+    schema: schemas/kernel/synchronization.schema.yaml
+    required_after_stage: step3
+    allow_empty: true
+    raw_graph_input: true
+  - path: checks/step1/validation.yaml
+    artifact_type: checks.step1.validation
+    owner: facts-validator
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: step1
+    allow_empty: false
+    raw_graph_input: false
+  - path: checks/step2/host_validation.yaml
+    artifact_type: checks.step2.host_validation
+    owner: facts-validator
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: false
+  - path: checks/step2/compute_validation.yaml
+    artifact_type: checks.step2.compute_validation
+    owner: facts-validator
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: false
+  - path: checks/step2/kernel_overview_validation.yaml
+    artifact_type: checks.step2.kernel_overview_validation
+    owner: facts-validator
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: false
+  - path: checks/step2/review.yaml
+    artifact_type: checks.step2.review
+    owner: uo-review-agent
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: false
+  - path: checks/step2/receipt.yaml
+    artifact_type: checks.step2.receipt
+    owner: uo-orchestrator
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: false
+  - path: checks/step3/slice_validations.yaml
+    artifact_type: checks.step3.slice_validations
+    owner: facts-validator
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: step3
+    allow_empty: false
+    raw_graph_input: false
+  - path: checks/step3/review.yaml
+    artifact_type: checks.step3.review
+    owner: uo-review-agent
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: step3
+    allow_empty: false
+    raw_graph_input: false
+  - path: checks/step3/receipt.yaml
+    artifact_type: checks.step3.receipt
+    owner: uo-orchestrator
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: step3
+    allow_empty: false
+    raw_graph_input: false
+  - path: checks/compile_gate.yaml
+    artifact_type: checks.compile_gate
+    owner: facts-validator
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: compile
+    allow_empty: false
+    raw_graph_input: false
+  - path: checks/derived_validation.yaml
+    artifact_type: checks.derived_validation
+    owner: facts-validator
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: derived
+    allow_empty: false
+    raw_graph_input: false
+  - path: graphs/raw/manifest.yaml
+    artifact_type: graph.raw.manifest
+    owner: raw-graph-compiler
+    schema: schemas/graph/raw_manifest.schema.yaml
+    required_after_stage: compile
+    allow_empty: false
+    raw_graph_input: false
+  - path: graphs/raw/nodes.yaml
+    artifact_type: graph.raw.nodes
+    owner: raw-graph-compiler
+    schema: schemas/graph/raw_nodes.schema.yaml
+    required_after_stage: compile
+    allow_empty: false
+    raw_graph_input: false
+  - path: graphs/raw/edges.yaml
+    artifact_type: graph.raw.edges
+    owner: raw-graph-compiler
+    schema: schemas/graph/raw_edges.schema.yaml
+    required_after_stage: compile
+    allow_empty: false
+    raw_graph_input: false
+  - path: graphs/raw/paths.yaml
+    artifact_type: graph.raw.paths
+    owner: raw-graph-compiler
+    schema: schemas/graph/raw_paths.schema.yaml
+    required_after_stage: compile
+    allow_empty: true
+    raw_graph_input: false
+  - path: graphs/raw/indexes.yaml
+    artifact_type: graph.raw.indexes
+    owner: raw-graph-compiler
+    schema: schemas/graph/raw_indexes.schema.yaml
+    required_after_stage: compile
+    allow_empty: false
+    raw_graph_input: false
+  - path: graphs/derived/abstraction_rules.yaml
+    artifact_type: graph.derived.abstraction_rules
+    owner: derived-graph-materializer
+    schema: schemas/graph/abstraction_rules.schema.yaml
+    required_after_stage: derived
+    allow_empty: false
+    raw_graph_input: false
+  - path: graphs/derived/nodes.yaml
+    artifact_type: graph.derived.nodes
+    owner: derived-graph-materializer
+    schema: schemas/graph/derived_nodes.schema.yaml
+    required_after_stage: derived
+    allow_empty: false
+    raw_graph_input: false
+  - path: graphs/derived/edges.yaml
+    artifact_type: graph.derived.edges
+    owner: derived-graph-materializer
+    schema: schemas/graph/derived_edges.schema.yaml
+    required_after_stage: derived
+    allow_empty: false
+    raw_graph_input: false
+  - path: graphs/derived/expansions.yaml
+    artifact_type: graph.derived.expansions
+    owner: derived-graph-materializer
+    schema: schemas/graph/expansions.schema.yaml
+    required_after_stage: derived
+    allow_empty: false
+    raw_graph_input: false
+  - path: graphs/derived/indexes.yaml
+    artifact_type: graph.derived.indexes
+    owner: derived-graph-materializer
+    schema: schemas/graph/derived_indexes.schema.yaml
+    required_after_stage: derived
+    allow_empty: false
+    raw_graph_input: false
+  - path: indexes/graph_to_yaml.yaml
+    artifact_type: indexes.graph_to_yaml
+    owner: raw-graph-compiler
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: compile
+    allow_empty: false
+    raw_graph_input: false
+  - path: indexes/yaml_to_graph.yaml
+    artifact_type: indexes.yaml_to_graph
+    owner: raw-graph-compiler
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: compile
+    allow_empty: false
+    raw_graph_input: false
+  - path: indexes/source_index.yaml
+    artifact_type: indexes.source_index
+    owner: raw-graph-compiler
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: compile
+    allow_empty: false
+    raw_graph_input: false
+  - path: indexes/symbol_index.yaml
+    artifact_type: indexes.symbol_index
+    owner: raw-graph-compiler
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: compile
+    allow_empty: false
+    raw_graph_input: false
+  - path: indexes/terminology.yaml
+    artifact_type: indexes.terminology
+    owner: raw-graph-compiler
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: compile
+    allow_empty: true
+    raw_graph_input: false
+  - path: runs/*/context.yaml
+    artifact_type: runs.context
+    owner: uo-orchestrator
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: runtime
+    allow_empty: false
+    raw_graph_input: false
+  - path: runs/*/task_status.yaml
+    artifact_type: runs.task_status
+    owner: uo-orchestrator
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: runtime
+    allow_empty: false
+    raw_graph_input: false
+  - path: runs/*/review_status.yaml
+    artifact_type: runs.review_status
+    owner: uo-orchestrator
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: runtime
+    allow_empty: false
+    raw_graph_input: false
+  - path: cbm/index_meta.json
+    artifact_type: cbm.index_meta
+    owner: uo-orchestrator
+    schema: null
+    required_after_stage: init
+    allow_empty: true
+    raw_graph_input: false

@@ -1,0 +1,4 @@
+version: 1
+artifact_type: kernel.slice.synchronization
+stores: [setflag, waitflag, pipebarrier, syncall, event_id, signal_wait_pair, happens_before, adjacent_api_or_buffer]
+forbids: [sync_pair_guess]

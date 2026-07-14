@@ -1,0 +1,29 @@
+version: 1
+path_policy:
+  file_must_be_repo_relative: true
+  forbid_absolute_paths: true
+span_policy:
+  required_fields: [start_line, end_line]
+  optional_fields: [start_column, end_column]
+  line_numbers_are_one_based: true
+source_text_policy:
+  normalization: exact_joined_lines_with_lf
+  must_match_file_span: true
+code_hash_policy:
+  algorithm: sha256
+  input: normalized_source_text
+  format: "sha256:<hex>"
+anchor_kinds:
+  - definition
+  - declaration
+  - predicate
+  - assignment
+  - call
+  - registration
+  - macro
+  - block
+  - read
+  - write
+confirmed_fact_policy:
+  require_sources: true
+  missing_or_uncertain_goes_to_unresolved: true

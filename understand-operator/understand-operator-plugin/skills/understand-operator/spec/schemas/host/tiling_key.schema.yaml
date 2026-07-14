@@ -1,0 +1,4 @@
+version: 1
+artifact_type: host.tiling_key
+stores: [fields, field_order, domains, source_variables, independent, constant_fields, derived_fields, setter_call, encoding]
+forbids: [testcase_generation]

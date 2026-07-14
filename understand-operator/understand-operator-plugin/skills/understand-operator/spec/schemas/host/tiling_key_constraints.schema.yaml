@@ -1,0 +1,4 @@
+version: 1
+artifact_type: host.tiling_key_constraints
+stores: [value_constraints, range_constraints, mutex, implies, requires, compatible_set, compile_time_fixed, runtime_guard, pruning, merging, key_unreachable, input_realization]
+forbids: [constraint_without_source_proof]

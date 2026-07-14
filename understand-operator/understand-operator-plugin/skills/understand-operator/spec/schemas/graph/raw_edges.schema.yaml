@@ -1,0 +1,4 @@
+version: 1
+artifact_type: graph.raw.edges
+stores: [source_id, target_id, relation_type, detail_ref, source_refs]
+forbids: [untyped_relation]

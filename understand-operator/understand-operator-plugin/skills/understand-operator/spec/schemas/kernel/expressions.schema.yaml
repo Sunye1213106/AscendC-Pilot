@@ -1,0 +1,4 @@
+version: 1
+artifact_type: kernel.slice.expressions
+stores: [offset_calculation, length_calculation, tail_calculation, index_calculation, branch_predicate, loop_bound, buffer_address_expression]
+forbids: [natural_language_only]

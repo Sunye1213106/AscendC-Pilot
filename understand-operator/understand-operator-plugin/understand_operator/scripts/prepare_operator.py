@@ -12,7 +12,7 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_ROOT))
 
 from understand_operator._core.ignore import DEFAULT_IGNORE_PATTERNS
-from understand_operator._operator.artifacts import init_operator_layout, operator_root, safe_op_name, write_text
+from understand_operator._operator.artifacts import init_operator_contract_layout, operator_root, safe_op_name, write_text
 from understand_operator._operator.cbm_client import write_index_meta
 from understand_operator._operator.install_check import compare_installed_skill
 
@@ -50,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     repo_root = Path(args.repo).resolve()
     op_name = safe_op_name(args.op_name, repo_root)
     base = operator_root(repo_root, op_name)
-    init_operator_layout(base, op_name, repo_root)
+    init_operator_contract_layout(base, op_name, repo_root)
     installed_skill = Path.home() / ".config" / "opencode" / "skills" / "understand-operator"
     if installed_skill.exists():
         check = compare_installed_skill(Path(__file__).resolve().parents[2], installed_skill)
@@ -62,16 +62,16 @@ def main(argv: list[str] | None = None) -> int:
             "installed_skill_root": str(installed_skill),
             "mismatches": [{"path": "skills/understand-operator", "reason": "installed skill root missing"}],
         }
-    write_text(base / "archive" / "runs" / "installed_skill_check.yaml", _to_yaml(check))
+    write_text(base / "runs" / "installed_skill_check.yaml", _to_yaml(check))
     if not check.get("consistent"):
         print("ERROR: installed understand-operator plugin is out of sync with the repository.", file=sys.stderr)
         print("Run: powershell -ExecutionPolicy Bypass -File understand-operator/understand-operator-plugin/install.ps1", file=sys.stderr)
-        print(f"Details: {base / 'archive' / 'runs' / 'installed_skill_check.yaml'}", file=sys.stderr)
+        print(f"Details: {base / 'runs' / 'installed_skill_check.yaml'}", file=sys.stderr)
         return 3
 
     patterns = _load_operator_ignore_patterns(repo_root)
     write_text(
-        base / "archive" / "runs" / "ignore_rules.md",
+        base / "runs" / "ignore_rules.md",
         "# Ignore Rules\n\n"
         "These rules are loaded before CBM-assisted operator analysis. Review them if files are missing.\n\n"
         + "\n".join(f"- `{p}`" for p in patterns)
@@ -136,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Prepared understand-operator artifacts for {op_name}")
     print(f"Output: {base}")
     print("CBM: use MCP index_repository in /uo-init (this script does not build the graph DB by default)")
-    print("Next: MCP index_repository -> Phase 0.5-A deterministic scope scan -> Phase 0.5-C review")
+    print("Next: run validate_facts.py after each agent writes its stage YAML")
     return 0
 
 

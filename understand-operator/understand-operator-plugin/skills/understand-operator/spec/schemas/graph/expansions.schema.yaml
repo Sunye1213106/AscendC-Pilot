@@ -1,0 +1,4 @@
+version: 1
+artifact_type: graph.derived.expansions
+stores: [derived_node_or_edge, raw_nodes, raw_edges, yaml_pointer]
+forbids: [untraceable_expansion]

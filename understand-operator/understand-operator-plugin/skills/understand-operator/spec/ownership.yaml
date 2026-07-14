@@ -1,0 +1,105 @@
+version: 1
+owners:
+  uo-orchestrator:
+    may_read: [manifest.yaml, facts/**, checks/**, graphs/**, indexes/**, runs/**, cbm/**]
+    may_write:
+      - manifest.yaml
+      - runs/*/context.yaml
+      - runs/*/task_status.yaml
+      - runs/*/review_status.yaml
+      - cbm/index_meta.json
+      - checks/step2/receipt.yaml
+      - checks/step3/receipt.yaml
+  uo-review-agent:
+    may_read: [manifest.yaml, facts/**, checks/**, graphs/**, indexes/**]
+    may_write:
+      - checks/step2/review.yaml
+      - checks/step3/review.yaml
+  uo-boundary-agent:
+    may_read: [manifest.yaml, facts/operator/**, runs/**, cbm/**]
+    may_write:
+      - facts/operator/interface.yaml
+      - facts/operator/source_files.yaml
+      - facts/operator/entrypoints.yaml
+      - checks/step1/validation.yaml
+  uo-host-tiling-agent:
+    may_read: [manifest.yaml, facts/operator/**, facts/host/**, runs/**, cbm/**]
+    may_write:
+      - facts/host/variables.yaml
+      - facts/host/expressions.yaml
+      - facts/host/control_flow.yaml
+      - facts/host/calls.yaml
+      - facts/host/tiling_key.yaml
+      - facts/host/tiling_key_enumeration.yaml
+      - facts/host/tiling_key_constraints.yaml
+      - facts/host/tilingdata_writes.yaml
+      - checks/step2/host_validation.yaml
+  uo-compute-agent:
+    may_read: [manifest.yaml, facts/operator/**, facts/compute/**, runs/**, cbm/**]
+    may_write:
+      - facts/compute/tensors.yaml
+      - facts/compute/operations.yaml
+      - facts/compute/dataflow.yaml
+      - facts/compute/numerical_semantics.yaml
+      - checks/step2/compute_validation.yaml
+  uo-kernel-overview-agent:
+    may_read: [manifest.yaml, facts/operator/**, facts/host/**, facts/kernel/overview/**, runs/**, cbm/**]
+    may_write:
+      - facts/kernel/overview/entries.yaml
+      - facts/kernel/overview/functions.yaml
+      - facts/kernel/overview/call_graph.yaml
+      - facts/kernel/overview/frontier.yaml
+      - facts/kernel/overview/global_resources.yaml
+      - facts/kernel/slice_manifest.yaml
+      - facts/kernel/slice_interfaces.yaml
+      - checks/step2/kernel_overview_validation.yaml
+  uo-kernel-slice-agent:
+    may_read: [manifest.yaml, facts/operator/**, facts/host/**, facts/compute/**, facts/kernel/**, runs/**, cbm/**]
+    may_write:
+      - facts/kernel/slices/*/variables.yaml
+      - facts/kernel/slices/*/expressions.yaml
+      - facts/kernel/slices/*/branches.yaml
+      - facts/kernel/slices/*/loops.yaml
+      - facts/kernel/slices/*/tilingdata_reads.yaml
+      - facts/kernel/slices/*/calls.yaml
+      - facts/kernel/slices/*/dataflow.yaml
+      - facts/kernel/slices/*/memory.yaml
+      - facts/kernel/slices/*/synchronization.yaml
+      - checks/step3/slice_validations.yaml
+  facts-validator:
+    may_read: [manifest.yaml, facts/**, checks/**, graphs/**, indexes/**, runs/**, cbm/**]
+    may_write:
+      - checks/step1/validation.yaml
+      - checks/step2/host_validation.yaml
+      - checks/step2/compute_validation.yaml
+      - checks/step2/kernel_overview_validation.yaml
+      - checks/step3/slice_validations.yaml
+      - checks/compile_gate.yaml
+      - checks/derived_validation.yaml
+  raw-graph-compiler:
+    may_read: [manifest.yaml, facts/**, checks/**]
+    may_write:
+      - graphs/raw/manifest.yaml
+      - graphs/raw/nodes.yaml
+      - graphs/raw/edges.yaml
+      - graphs/raw/paths.yaml
+      - graphs/raw/indexes.yaml
+      - indexes/graph_to_yaml.yaml
+      - indexes/yaml_to_graph.yaml
+      - indexes/source_index.yaml
+      - indexes/symbol_index.yaml
+      - indexes/terminology.yaml
+  derived-graph-materializer:
+    may_read: [manifest.yaml, facts/**, graphs/raw/**, indexes/**]
+    may_write:
+      - graphs/derived/abstraction_rules.yaml
+      - graphs/derived/nodes.yaml
+      - graphs/derived/edges.yaml
+      - graphs/derived/expansions.yaml
+      - graphs/derived/indexes.yaml
+      - checks/derived_validation.yaml
+rules:
+  - Query and TestAgent may read KB artifacts but must not write UO KB files or CBM data.
+  - Checks are validation reports, not a place for new source facts.
+  - Compiler writes only raw graphs and indexes.
+  - Derived graph materializer writes only graphs/derived and derived validation.
