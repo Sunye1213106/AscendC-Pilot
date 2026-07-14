@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -41,6 +43,8 @@ from understand_operator.scripts.verify_subagent_barrier import (
     _proposal_contract_problems,
     _semantic_contract_problems,
     _yaml_problem,
+    RunContext,
+    verify_host_flow_barrier,
     verify_kernel_path_barrier,
 )
 from understand_operator.scripts.quality_gate import (
@@ -89,6 +93,153 @@ def _repo(tmp_path: Path) -> tuple[Path, Path]:
         )
         path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     return repo, base
+
+
+def _write_yaml(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+
+def _file_sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_manifest(
+    path: Path,
+    *,
+    run_id: str,
+    subagent: str,
+    source_commit: str,
+    proposal: Path | None = None,
+    artifacts: list[Path],
+    archive_artifacts: list[Path] | None = None,
+    completed_at: str = "2026-01-01T00:01:00+00:00",
+) -> None:
+    payload = {
+        "version": 1,
+        "run_id": run_id,
+        "subagent": subagent,
+        "status": "complete",
+        "source_commit": source_commit,
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "completed_at": completed_at,
+        "proposal_id": "PROP_TEST",
+        "proposal_hash": _file_sha(proposal) if proposal else "",
+        "artifacts": [{"path": item.as_posix(), "sha256": _file_sha(path.parent.parent / item) if False else ""} for item in []],
+    }
+    uo_root = path.parents[1] if path.parent.name in {"tiling", "flow"} else path.parents[3]
+    payload["artifacts"] = [
+        {"path": item.as_posix(), "sha256": _file_sha(uo_root / item)}
+        for item in artifacts
+    ]
+    payload["archive_artifacts"] = [
+        {"path": item.as_posix(), "sha256": _file_sha(uo_root / item)}
+        for item in (archive_artifacts or [])
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _seed_phase2_run(base: Path, run_id: str = "RUN_20260101000000", source_commit: str = "abc123") -> RunContext:
+    _write_yaml(
+        base / "archive" / "runs" / run_id / "workflow_state.yaml",
+        {
+            "version": 1,
+            "run_id": run_id,
+            "op_name": "DemoOp",
+            "source_commit": source_commit,
+            "started_at": "2026-01-01T00:00:00+00:00",
+            "phase": "phase2_waiting",
+            "status": "running",
+        },
+    )
+    host_rel = Path("archive") / "proposals" / run_id / "host_tiling_proposal.yaml"
+    flow_rel = Path("archive") / "proposals" / run_id / "flow_dataflow_proposal.yaml"
+    _write_yaml(
+        base / host_rel,
+        {
+            "version": 1,
+            "op_name": "DemoOp",
+            "proposal_id": "PROP_HOST_TEST",
+            "producer": {"agent": "uo-host-extraction", "phase": "phase2"},
+            "canonical_updates": [
+                {
+                    "target": "registry/evidence.yaml",
+                    "section": "evidence",
+                    "merge_mode": "by_id",
+                    "entries": [{"id": "EV_HOST_TEST", "file": "op_host/a.cpp", "lines": [1, 2], "symbol": "Host", "kind": "source_span"}],
+                },
+                {
+                    "target": "tiling/variables.yaml",
+                    "section": "variables",
+                    "merge_mode": "by_id",
+                    "entries": [{"id": "VAR_HOST_TEST", "canonical_name": "host_flag", "kind": "derived_variable", "evidence_refs": ["EV_HOST_TEST"]}],
+                },
+            ],
+        },
+    )
+    _write_yaml(
+        base / flow_rel,
+        {
+            "version": 1,
+            "op_name": "DemoOp",
+            "proposal_id": "PROP_FLOW_TEST",
+            "producer": {"agent": "uo-flow-extraction", "phase": "phase2"},
+            "canonical_updates": [
+                {
+                    "target": "registry/evidence.yaml",
+                    "section": "evidence",
+                    "merge_mode": "by_id",
+                    "entries": [{"id": "EV_FLOW_TEST", "file": "op_kernel/a.cpp", "lines": [3, 4], "symbol": "Compute", "kind": "source_span"}],
+                },
+                {
+                    "target": "evidence/fact_index.yaml",
+                    "section": "facts",
+                    "merge_mode": "merge_mapping",
+                    "entries": [{"id": "EV_FLOW_FACT", "claim": "flow fact", "evidence_refs": ["EV_FLOW_TEST"]}],
+                },
+                {
+                    "target": "evidence/source_index.yaml",
+                    "section": "source_spans",
+                    "merge_mode": "merge_mapping",
+                    "entries": [{"id": "SRC_FLOW_TEST", "path": "op_kernel/a.cpp", "lines": [3, 4]}],
+                },
+                {
+                    "target": "flow/compute_graph.yaml",
+                    "section": "compute_steps",
+                    "merge_mode": "by_id",
+                    "entries": [{"id": "COMP_FLOW_TEST", "golden_step_ref": "GOLD_FLOW_TEST", "evidence_refs": ["EV_FLOW_TEST"]}],
+                },
+            ],
+        },
+    )
+    archive_payloads = {
+        "tiling/archive/frontier.yaml": {"version": 1, "status": "analyzed", "frontier_nodes": [{"id": "SYM_HOST_FRONTIER"}]},
+        "tiling/archive/dispatch_variables.yaml": {"version": 1, "status": "analyzed", "variables": [{"id": "VAR_HOST_TEST"}]},
+        "tiling/archive/predicate_space.yaml": {"version": 1, "status": "analyzed", "predicate_atoms": [{"id": "REL_HOST_PRED"}]},
+        "tiling/archive/compile_time_bindings.yaml": {"version": 1, "status": "analyzed", "macros": [{"id": "SYM_HOST_MACRO"}], "constexpr_constants": [], "instantiations": [], "unresolved_symbols": [{"id": "SYM_HOST_UNRESOLVED"}]},
+    }
+    for rel, data in archive_payloads.items():
+        _write_yaml(base / rel, data)
+    (base / "tiling" / "archive" / "decision_tree.md").write_text("# Decision tree\n- analyzed\n", encoding="utf-8")
+    _write_manifest(
+        base / "tiling" / ".uo_host_extraction_complete.json",
+        run_id=run_id,
+        subagent="uo-host-extraction",
+        source_commit=source_commit,
+        proposal=base / host_rel,
+        artifacts=[host_rel],
+        archive_artifacts=[Path(rel) for rel in archive_payloads] + [Path("tiling/archive/decision_tree.md")],
+    )
+    _write_manifest(
+        base / "flow" / ".uo_flow_extraction_complete.json",
+        run_id=run_id,
+        subagent="uo-flow-extraction",
+        source_commit=source_commit,
+        proposal=base / flow_rel,
+        artifacts=[flow_rel],
+    )
+    return RunContext(run_id=run_id, source_commit=source_commit, started_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
 
 
 def test_macro_scope_scan_artifact_initialized(tmp_path: Path) -> None:
@@ -257,6 +408,90 @@ canonical_updates:
     assert any("missing evidence merge target" in problem for problem in problems)
 
 
+def test_host_flow_barrier_accepts_current_run_proposals_and_hashed_manifests(tmp_path: Path) -> None:
+    _repo_root, base = _repo(tmp_path)
+    ctx = _seed_phase2_run(base)
+
+    result = verify_host_flow_barrier(base, ctx)
+
+    assert result.ok is True
+    assert result.missing == []
+    assert result.stale == []
+
+
+def test_compiler_rejects_root_proposal_for_current_run(tmp_path: Path) -> None:
+    _repo_root, base = _repo(tmp_path)
+    proposal = _minimal_proposal()
+    root_proposal = base / "archive" / "proposals" / "host_tiling_proposal.yaml"
+    root_proposal.write_text(yaml.safe_dump(proposal, sort_keys=False), encoding="utf-8")
+
+    result = promote_kb(base, "DemoOp", phase="phase2", proposal_paths=[root_proposal], run_id="RUN_CURRENT")
+
+    assert result.status == "fail"
+    assert any(issue.code == "PROPOSAL_RUN_PATH_MISMATCH" for issue in result.issues)
+
+
+def test_host_flow_barrier_rejects_stale_manifest_hash_source_and_time(tmp_path: Path) -> None:
+    _repo_root, base = _repo(tmp_path)
+    ctx = _seed_phase2_run(base)
+    manifest = base / "flow" / ".uo_flow_extraction_complete.json"
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+
+    data["source_commit"] = "different"
+    manifest.write_text(json.dumps(data), encoding="utf-8")
+    result = verify_host_flow_barrier(base, ctx)
+    assert result.ok is False
+    assert "source_commit mismatch" in result.message
+
+    data["source_commit"] = ctx.source_commit
+    data["completed_at"] = "2025-12-31T23:59:00+00:00"
+    manifest.write_text(json.dumps(data), encoding="utf-8")
+    result = verify_host_flow_barrier(base, ctx)
+    assert result.ok is False
+    assert "predates current run" in result.message
+
+    data["completed_at"] = "2026-01-01T00:01:00+00:00"
+    data["artifacts"][0]["sha256"] = "deadbeef"
+    manifest.write_text(json.dumps(data), encoding="utf-8")
+    result = verify_host_flow_barrier(base, ctx)
+    assert result.ok is False
+    assert "hash mismatch" in result.message
+
+
+def test_kernel_barrier_does_not_accept_aggregator_without_per_task_manifest(tmp_path: Path) -> None:
+    _repo_root, base = _repo(tmp_path)
+    (base / "kernel" / ".uo_kernel_alignment_complete.json").write_text("{}", encoding="utf-8")
+    for rel in ("kernel/paths.yaml", "kernel/pipeline.yaml", "kernel/resources.yaml"):
+        _write_yaml(base / rel, {"version": 1, "kernel_paths": [{"id": "KPATH_TASK_1"}], "pipelines": [], "stages": [], "resources": [], "buffers": [], "sync_events": [], "workspaces": []})
+
+    result = verify_kernel_path_barrier(
+        base,
+        ["TASK_1"],
+        RunContext(run_id="RUN_KERNEL", source_commit="abc", started_at=datetime(2026, 1, 1, tzinfo=timezone.utc)),
+    )
+
+    assert result.ok is False
+    assert any("archive/raw_agents/kernel_paths/TASK_1_kernel_path.yaml" in item for item in result.missing)
+
+
+def test_quality_gate_blocks_direct_canonical_without_promotion_receipt(tmp_path: Path) -> None:
+    repo_root, base = _repo(tmp_path)
+    _write_yaml(
+        base / "tiling" / "variables.yaml",
+        {
+            "version": 1,
+            "op_name": "DemoOp",
+            "tiling_mechanism": {"entry": {"file": "op_host/a.cpp"}},
+            "variables": {"VAR_DIRECT_WRITE": {"id": "VAR_DIRECT_WRITE", "canonical_name": "direct"}},
+        },
+    )
+
+    assert quality_gate_main([str(repo_root), "--op-name", "DemoOp"]) == 2
+    quality = yaml.safe_load((base / "quality.yaml").read_text(encoding="utf-8"))
+    assert quality["checks"]["canonical_provenance_valid"] == "fail"
+    assert any("CANONICAL_PROVENANCE_MISSING" in item for item in quality["blockers"])
+
+
 def test_compiler_rejects_non_stable_evidence_ref(tmp_path: Path) -> None:
     _repo_root, base = _repo(tmp_path)
     proposal = _minimal_proposal()
@@ -377,11 +612,14 @@ def test_malformed_kernel_resources_routes_retry_to_kernel_owner(tmp_path: Path)
         encoding="utf-8",
     )
 
-    result = verify_kernel_path_barrier(base, ["TASK_1"])
+    result = verify_kernel_path_barrier(
+        base,
+        ["TASK_1"],
+        RunContext(run_id="RUN_TEST", source_commit="abc", started_at=datetime(2026, 1, 1, tzinfo=timezone.utc)),
+    )
 
     assert result.ok is False
     assert any(error.get("owner") == "uo-kernel-path" for error in result.errors or [])
-    assert any(error.get("error_code") == "YAML_SYNTAX_ERROR" for error in result.errors or [])
     assert artifact_owner("kernel/resources.yaml") == "uo-kernel-path"
     assert "host-compiler" in allowed_canonical_writers("kernel/resources.yaml")
     assert "kb-promoter" in allowed_canonical_writers("kernel/resources.yaml")

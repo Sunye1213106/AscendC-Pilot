@@ -36,7 +36,8 @@ $Targets = @{
 }
 
 $AgentTargets = @{
-    cursor = Join-Path $HOME ".cursor\agents"
+    opencode = Join-Path $HOME ".config\opencode\agents"
+    cursor   = Join-Path $HOME ".cursor\agents"
 }
 
 if (-not $Targets.ContainsKey($Platform)) {
@@ -72,6 +73,13 @@ if ($Uninstall) {
         }
         Write-Host "Removed plugin link: $pluginDest"
     }
+    if ($AgentTargets.ContainsKey($Platform)) {
+        $AgentsDestRoot = $AgentTargets[$Platform]
+        if (Test-Path -LiteralPath $AgentsDestRoot) {
+            Get-ChildItem $AgentsDestRoot -Filter "uo-*.md" -ErrorAction SilentlyContinue | Remove-Item -Force
+            Write-Host "Removed subagents: $AgentsDestRoot\uo-*.md"
+        }
+    }
     exit 0
 }
 
@@ -106,7 +114,7 @@ if ($PluginLinks.ContainsKey($Platform) -and (Test-Path $PluginRoot)) {
     Write-Host "Installed plugin: $pluginDest -> $PluginRoot"
 }
 
-if ($Platform -eq "cursor" -and (Test-Path $AgentsSrc)) {
+if ($AgentTargets.ContainsKey($Platform) -and (Test-Path $AgentsSrc)) {
     $AgentsDestRoot = $AgentTargets[$Platform]
     New-Item -ItemType Directory -Force -Path $AgentsDestRoot | Out-Null
     Get-ChildItem $AgentsDestRoot -Filter "uo-*.md" -ErrorAction SilentlyContinue | Remove-Item -Force
@@ -115,6 +123,14 @@ if ($Platform -eq "cursor" -and (Test-Path $AgentsSrc)) {
         Copy-Item -Path $_.FullName -Destination $agentDest -Force
     }
     Write-Host "Installed subagents: $AgentsDestRoot\uo-*.md"
+    $RequiredAgents = @("uo-host-extraction", "uo-flow-extraction", "uo-kernel-path")
+    foreach ($agent in $RequiredAgents) {
+        $agentPath = Join-Path $AgentsDestRoot "$agent.md"
+        if (-not (Test-Path -LiteralPath $agentPath)) {
+            throw "REQUIRED_SUBAGENT_UNAVAILABLE: $agent was not installed at $agentPath"
+        }
+    }
+    Write-Host "Verified named subagents discoverable: $($RequiredAgents -join ', ')"
 }
 
 Write-Host ""

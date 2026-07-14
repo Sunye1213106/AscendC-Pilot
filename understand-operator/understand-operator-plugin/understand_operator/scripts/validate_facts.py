@@ -24,12 +24,13 @@ from understand_operator._operator.artifacts import existing_operator_root, safe
 from understand_operator._operator.spec import catalog_entries, load_spec, spec_bundle_hash
 
 STAGE_ORDER = {"init": 0, "step1": 1, "step2": 2, "step3": 3, "compile": 4, "derived": 5}
-VALIDATION_SCOPES = ("all", "boundary", "host", "compute", "kernel-overview", "kernel-slice")
+VALIDATION_SCOPES = ("all", "boundary", "host", "compute", "kernel-overview", "kernel-slice-planner", "kernel-slice")
 SCOPE_OWNERS = {
     "boundary": {"uo-boundary-agent"},
     "host": {"uo-host-tiling-agent"},
     "compute": {"uo-compute-agent"},
     "kernel-overview": {"uo-kernel-overview-agent"},
+    "kernel-slice-planner": {"uo-kernel-slice-planner"},
     "kernel-slice": {"uo-kernel-slice-agent"},
 }
 CHECK_DIRS = ("facts", "checks", "graphs", "indexes", "runs")
@@ -84,16 +85,20 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
 
     docs: dict[str, dict[str, Any]] = {}
     scoped_entries = _entries_for_scope(entries, scope)
+    yaml_paths = _yaml_paths(uo_root)
     for rel in _required_paths_for_stage(scoped_entries, stage):
         if "*" in rel:
-            if not any(fnmatch.fnmatch(path.relative_to(uo_root).as_posix(), rel) for path in _yaml_paths(uo_root)):
+            if not any(fnmatch.fnmatch(path.relative_to(uo_root).as_posix(), rel) for path in yaml_paths):
                 continue
+            continue
         path = uo_root / rel
         if not path.exists():
             errors.append(FactValidationError("REQUIRED_FILE_MISSING", rel, f"required after {stage}"))
+    if stage == "step3" and scope in {"all", "kernel-slice"}:
+        _validate_kernel_slice_file_sets(uo_root, yaml_paths, errors)
 
     all_docs = _load_all_yaml_docs(uo_root)
-    for path in _yaml_paths(uo_root):
+    for path in yaml_paths:
         rel = path.relative_to(uo_root).as_posix()
         doc = _load_yaml(path, rel, errors)
         if not isinstance(doc, dict):
@@ -117,6 +122,31 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
     for rel, doc in docs.items():
         _validate_references(rel, doc, known_ids, errors)
     return errors
+
+
+def _validate_kernel_slice_file_sets(uo_root: Path, yaml_paths: list[Path], errors: list[FactValidationError]) -> None:
+    required_names = {
+        "variables.yaml",
+        "expressions.yaml",
+        "branches.yaml",
+        "loops.yaml",
+        "tilingdata_reads.yaml",
+        "calls.yaml",
+        "dataflow.yaml",
+        "memory.yaml",
+        "synchronization.yaml",
+    }
+    slice_root = uo_root / "facts" / "kernel" / "slices"
+    slice_dirs = sorted(path for path in slice_root.glob("*") if path.is_dir()) if slice_root.exists() else []
+    if not slice_dirs:
+        errors.append(FactValidationError("KERNEL_SLICE_MISSING", "facts/kernel/slices/*", "Step 3 requires at least one kernel slice directory"))
+        return
+    existing_rel = {path.relative_to(uo_root).as_posix() for path in yaml_paths}
+    for slice_dir in slice_dirs:
+        rel_dir = slice_dir.relative_to(uo_root).as_posix()
+        missing = sorted(name for name in required_names if f"{rel_dir}/{name}" not in existing_rel)
+        if missing:
+            errors.append(FactValidationError("KERNEL_SLICE_FILE_SET_INCOMPLETE", rel_dir, f"missing slice YAML files: {', '.join(missing)}"))
 
 
 def _entries_for_scope(entries: list[dict[str, Any]], scope: str) -> list[dict[str, Any]]:

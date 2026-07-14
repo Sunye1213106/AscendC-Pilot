@@ -219,7 +219,7 @@ python "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" -
 ## Canonical v2 additions
 
 - Initialize and maintain `registry/`, `cross_layer/`, `query/`, and `contracts/`.
-- Phase 5 must build cross-layer alignment (`input_to_tiling`, `tiling_to_kernel`, `variable_lineage`, `behavior_graph`, `impact_graph`), not only a kernel alignment matrix.
+- Phase 5 must build cross-layer alignment (`input_to_tiling`, `tiling_to_kernel`, `variable_lineage`, `behavior_graph`), not only a kernel alignment matrix.
 - Phase 7 must refresh `query/routes.yaml` and `contracts/{query,code_change,pr_review,testcase}.yaml`.
 - Phase 8 must run `quality_gate.py`; the gate calls the deterministic KB compiler and writes `archive/runs/kb_compile_report.yaml`.
 - Only validator/compiler logic may promote proposals/intermediate artifacts into canonical v2 files.
@@ -267,3 +267,60 @@ python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --st
 Treat every Agent-written YAML as incomplete until the matching
 `validate_facts.py` command exits 0. The compiler consumes only validated
 `facts/**`, never proposal envelopes.
+
+## Step 3 Source Facts and Graph Checkpoints
+
+Step 3 starts only after Step 2 is sealed:
+
+```powershell
+python "$SCRIPT_DIR/write_step2_receipt.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+```
+
+`uo-kernel-slice-planner` writes only:
+
+- `facts/kernel/slice_manifest.yaml`
+- `facts/kernel/slice_interfaces.yaml`
+
+Validate the planner output:
+
+```powershell
+python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step3 --scope kernel-slice-planner --write-report
+```
+
+Parallel `uo-kernel-slice-agent` tasks then write only the nine YAML files under their assigned `facts/kernel/slices/<slice_id>/` directory. After all slice agents return, validate all slice facts:
+
+```powershell
+python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step3 --scope kernel-slice --write-report
+```
+
+`uo-step3-fact-review-agent` writes only `checks/step3/review.yaml`. When slice validation and review both pass, seal Step 3:
+
+```powershell
+python "$SCRIPT_DIR/write_step3_receipt.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+```
+
+Before compiling graphs, freeze the complete `facts/**` hash set. Any fact change after this gate makes the compiler refuse to run:
+
+```powershell
+python "$SCRIPT_DIR/build_compile_gate.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+python "$SCRIPT_DIR/source_graph_compiler.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+```
+
+`uo-behavior-abstraction-agent` writes only `graphs/derived/abstraction_rules.yaml`. Materialize reversible derived graph files with:
+
+```powershell
+python "$SCRIPT_DIR/materialize_derived_graph.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+```
+
+Read-only query order is fixed:
+
+1. `graphs/derived/**`
+2. `graphs/raw/**`
+3. source YAML facts
+4. source file anchors
+
+Use:
+
+```powershell
+python "$SCRIPT_DIR/uo_query_readonly.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --entity "<ID_OR_LABEL>"
+```

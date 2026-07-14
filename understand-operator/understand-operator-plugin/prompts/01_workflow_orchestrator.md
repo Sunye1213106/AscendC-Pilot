@@ -187,24 +187,26 @@ canonical v2 files. Preserve `test/contract.yaml` for compatibility;
 After the Phase 2 host/flow barrier:
 
 ```powershell
-uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase2 --run-id "$RUN_ID"
-uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase2
+uo-kb-compile promote "$PROJECT_ROOT" --op-name "$OP_NAME" --phase phase2 --run-id "$RUN_ID"
+uo-kb-compile validate "$PROJECT_ROOT" --op-name "$OP_NAME" --phase phase2 --check-only
 ```
 
 After the Phase 4 kernel path barrier:
 
 ```powershell
-uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase4 --run-id "$RUN_ID"
-uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase4
+uo-kb-compile promote "$PROJECT_ROOT" --op-name "$OP_NAME" --phase phase5 --run-id "$RUN_ID"
+uo-kb-compile validate "$PROJECT_ROOT" --op-name "$OP_NAME" --phase phase5 --check-only
 ```
 
-After Phase 5 and Phase 7:
+After Phase 6 and Phase 7:
 
 ```powershell
-uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase5
-uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase7
+uo-kb-compile promote "$PROJECT_ROOT" --op-name "$OP_NAME" --phase phase6 --run-id "$RUN_ID"
+uo-kb-compile validate "$PROJECT_ROOT" --op-name "$OP_NAME" --phase phase6 --check-only
+uo-kb-compile promote "$PROJECT_ROOT" --op-name "$OP_NAME" --phase phase7 --run-id "$RUN_ID"
+uo-kb-compile validate "$PROJECT_ROOT" --op-name "$OP_NAME" --phase phase7 --check-only
 ```
 
-Phase 8 runs `quality_gate.py` for final validation. Draft canonical slices,
-raw agent YAML, and proposal files are not trusted until the deterministic
-compiler accepts them.
+Phase 8 runs `quality_gate.py` for final validation. Raw agent YAML and proposal
+files are not trusted until the deterministic compiler accepts them and writes
+promotion receipts.

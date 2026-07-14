@@ -13,6 +13,9 @@ CHECK_FILES = (
     "understand_operator/scripts/quality_gate.py",
     "understand_operator/scripts/verify_subagent_barrier.py",
     "understand_operator/scripts/prepare_operator.py",
+    "agents/uo-host-extraction.md",
+    "agents/uo-flow-extraction.md",
+    "agents/uo-kernel-path.md",
     "prompts/00_subagent_dispatch.md",
     "prompts/08_evidence_consistency_agent.md",
     "prompts/10_quality_gate_agent.md",
@@ -47,7 +50,7 @@ def compare_installed_skill(repo_plugin_root: Path, installed_skill_root: Path) 
     mismatches: list[dict[str, str]] = []
     for rel in CHECK_FILES:
         repo_path = repo_plugin_root / rel
-        installed_path = installed_plugin_root / rel if rel.startswith(("prompts/", "understand_operator/")) else installed_skill_root.parent / rel
+        installed_path = installed_plugin_root / rel if rel.startswith(("prompts/", "understand_operator/", "agents/")) else installed_skill_root.parent / rel
         if rel.startswith("skills/understand-operator/"):
             installed_path = installed_skill_root / Path(rel).name
         repo_hash = file_hash(repo_path)

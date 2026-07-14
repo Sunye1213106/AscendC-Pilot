@@ -8,13 +8,25 @@
 
 所有已生成 canonical artifact、`evidence/issues.yaml`、`quality.yaml`（若已有草稿）。
 
-## 必须输出
+## 必须输出（proposal-first）
 
-1. `route.md`（人类地图，100～200 行）
-2. `index.yaml`（机器路由；刷新 status / qa_routes / export_views）
-3. `test/index.yaml`
-4. `test/contract.yaml`
-5. 必要时更新 `human/review.md` 的 Test Contract Review 草稿
+1. `archive/proposals/<RUN_ID>/phase7_route_contract_proposal.yaml`
+2. 必要时更新 `human/review.md` 的 Test Contract Review 草稿
+
+不要直接写 `route.md`、`index.yaml`、`query/routes.yaml`、`contracts/*.yaml`、`test/index.yaml` 或 `test/contract.yaml`。这些都必须作为 proposal 中的 canonical update，由 compiler/promoter 写入。
+
+Proposal 负责更新：
+
+- `index.yaml`
+- `query/routes.yaml`
+- `contracts/query.yaml`
+- `contracts/code_change.yaml`
+- `contracts/pr_review.yaml`
+- `contracts/testcase.yaml`
+- `test/index.yaml`
+- `test/contract.yaml`
+
+`route.md` 如果需要刷新，必须由确定性 renderer 根据 promoted canonical 生成；Route Builder 不得手写 Markdown 后绕过 promotion receipt。
 
 不要再写：
 
@@ -65,7 +77,7 @@ GoldenGenerate 消费 flow/golden_model.yaml + flow/numerical_model.yaml + opera
 ```
 ## Canonical v2 Derived Views
 
-Route Builder must keep `test/contract.yaml` as a derived compatibility view, and treat `contracts/testcase.yaml` as the frozen TestAgent machine SoT (version 2):
+Route Builder proposal must keep `test/contract.yaml` as a deterministic derived compatibility view, and treat `contracts/testcase.yaml` as the frozen TestAgent machine SoT (version 2):
 
 - `source` / `interface` / `typed_constraints`
 - `coverage_obligations` (tiling_keys / tilingdata / kernel_paths / numerical / negative)

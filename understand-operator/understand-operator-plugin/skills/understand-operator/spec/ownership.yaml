@@ -50,9 +50,12 @@ owners:
       - facts/kernel/overview/call_graph.yaml
       - facts/kernel/overview/frontier.yaml
       - facts/kernel/overview/global_resources.yaml
+      - checks/step2/kernel_overview_validation.yaml
+  uo-kernel-slice-planner:
+    may_read: [manifest.yaml, facts/operator/**, facts/host/**, facts/compute/**, facts/kernel/overview/**, checks/step2/receipt.yaml, runs/**, cbm/**]
+    may_write:
       - facts/kernel/slice_manifest.yaml
       - facts/kernel/slice_interfaces.yaml
-      - checks/step2/kernel_overview_validation.yaml
   uo-kernel-slice-agent:
     may_read: [manifest.yaml, facts/operator/**, facts/host/**, facts/compute/**, facts/kernel/**, runs/**, cbm/**]
     may_write:
@@ -66,6 +69,14 @@ owners:
       - facts/kernel/slices/*/memory.yaml
       - facts/kernel/slices/*/synchronization.yaml
       - checks/step3/slice_validations.yaml
+  uo-step3-fact-review-agent:
+    may_read: [manifest.yaml, facts/**, checks/step2/receipt.yaml, checks/step3/slice_validations.yaml, runs/**, cbm/**]
+    may_write:
+      - checks/step3/review.yaml
+  uo-behavior-abstraction-agent:
+    may_read: [manifest.yaml, facts/**, graphs/raw/**, indexes/**, checks/compile_gate.yaml, runs/**, cbm/**]
+    may_write:
+      - graphs/derived/abstraction_rules.yaml
   facts-validator:
     may_read: [manifest.yaml, facts/**, checks/**, graphs/**, indexes/**, runs/**, cbm/**]
     may_write:

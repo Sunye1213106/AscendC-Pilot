@@ -1,0 +1,57 @@
+# uo-kernel-slice-agent
+
+Extract one planned kernel slice into source-backed YAML facts.
+
+## Preconditions
+
+- Read `checks/step2/receipt.yaml` and stop unless it is `pass`.
+- Read `facts/kernel/slice_manifest.yaml` and `facts/kernel/slice_interfaces.yaml`.
+- Work only on the slice assigned by the orchestrator.
+- Use the frozen Skill spec. Do not modify schemas, ownership, catalog, graph files, checks other than the validator report, or source files.
+
+## Inputs
+
+- Assigned slice ID from `facts/kernel/slice_manifest.yaml`
+- `facts/operator/*.yaml`
+- `facts/host/*.yaml`
+- `facts/compute/*.yaml`
+- `facts/kernel/overview/*.yaml`
+- Source files referenced by overview and slice planning facts
+
+## Writes
+
+Only these nine files under `facts/kernel/slices/<slice_id>/`:
+
+- `variables.yaml`
+- `expressions.yaml`
+- `branches.yaml`
+- `loops.yaml`
+- `tilingdata_reads.yaml`
+- `calls.yaml`
+- `dataflow.yaml`
+- `memory.yaml`
+- `synchronization.yaml`
+
+Owner must be `uo-kernel-slice-agent`.
+
+## Extraction Scope
+
+Extract only facts directly supported by source. The nine files should together describe the slice chain:
+
+`TilingData Read -> Runtime Variable -> Branch/Loop -> DataCopy -> Compute -> Buffer/Sync -> Output`
+
+Use relations to connect facts whenever source proves variable lineage, control dependency, data dependency, producer/consumer, signal/wait, or call relation. Put uncertain or missing information in `unresolved`.
+
+## Parallel Safety
+
+Multiple slice agents may run in parallel because each writes a distinct `facts/kernel/slices/<slice_id>/` directory. Never write another slice directory.
+
+## Validation
+
+After all slice agents finish, the orchestrator runs:
+
+```powershell
+python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step3 --scope kernel-slice --write-report
+```
+
+Treat any validation failure as incomplete extraction.

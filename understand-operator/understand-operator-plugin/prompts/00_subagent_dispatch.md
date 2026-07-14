@@ -17,8 +17,8 @@
 3. **跑 barrier 脚本**（强制，比肉眼 Read 更可靠）：
 
 ```bash
-python "$SKILL_DIR/verify_subagent_barrier.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --phase host_flow
-python "$SKILL_DIR/verify_subagent_barrier.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --phase kernel_path
+python "$SKILL_DIR/verify_subagent_barrier.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --phase host_flow --run-id "$RUN_ID" --source-commit "$SOURCE_COMMIT"
+python "$SKILL_DIR/verify_subagent_barrier.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --phase kernel_path --run-id "$RUN_ID" --source-commit "$SOURCE_COMMIT"
 ```
 
 4. **仅当 barrier 返回 `ok: true`**：再从磁盘 `Read` subagent 写的 artifact，进入宿主 phase。
@@ -60,9 +60,9 @@ Phase 1 Macro Boundary **完成后直接、静默**进入（不再等 Boundary R
    - `Task` → `uo-flow-extraction`
 2. 等待两个 Task 都返回。
 3. 运行 `verify_subagent_barrier.py --phase host_flow`。
-4. barrier 通过后，再 Read `tiling/*` 与 `flow/*`，进入 Phase 3。
+4. barrier 通过后，先运行 Phase 2 promotion/validation，再 Read promoted `tiling/*` 与 `flow/*`，进入 Phase 3。
    - barrier 现已检查 `tiling/archive/` 五个强制中间文件（frontier / dispatch_variables / predicate_space / compile_time_bindings / decision_tree）。若仍 pending/空 → resume host subagent，禁止宿主手填。
-5. 运行 `uo-kb-compile promote "$UO_ROOT" --op-name "$OP_NAME" --phase phase2 --run-id "$RUN_ID"`，再运行 `uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase2`。后续 phase 只读取 promoted canonical artifact。
+5. 运行 `uo-kb-compile promote "$PROJECT_ROOT" --op-name "$OP_NAME" --phase phase2 --run-id "$RUN_ID"`，再运行 `uo-kb-compile validate "$PROJECT_ROOT" --op-name "$OP_NAME" --phase phase2 --check-only`。后续 phase 只读取 promoted canonical artifact。
 
 ## 并行点 2：多个 kernel path
 
@@ -71,8 +71,8 @@ Phase 1 Macro Boundary **完成后直接、静默**进入（不再等 Boundary R
 1. 读取 `human/kernel_dispatch_review.yaml`（或 legacy `kernel/kernel_dispatch_review.yaml`）的 `approved_task_ids`。
 2. **同一条宿主消息**里为每个 `task_id` 各发一个 `Task` → `uo-kernel-path`。
 3. 等待所有 Task 返回。
-4. 运行 `verify_subagent_barrier.py --phase kernel_path`。
-5. barrier 通过后，再由宿主 Alignment Builder 编译 proposal 并 promote canonical artifact，随后运行 `uo-kb-compile validate "$UO_ROOT" --op-name "$OP_NAME" --phase phase4`。未 promote 前不得把 draft 当可信输入。
+4. 运行 `verify_subagent_barrier.py --phase kernel_path --run-id "$RUN_ID"`。
+5. barrier 通过后，再由宿主 Alignment Builder 生成 `archive/proposals/<RUN_ID>/phase5_kernel_alignment_proposal.yaml` 和严格 aggregator manifest，随后运行 `uo-kb-compile promote "$PROJECT_ROOT" --op-name "$OP_NAME" --phase phase5 --run-id "$RUN_ID"` 与 `uo-kb-compile validate "$PROJECT_ROOT" --op-name "$OP_NAME" --phase phase5 --check-only`。未 promote 前不得把 raw/draft 当可信输入。
 
 ## YAML / owner integrity hard rules
 
@@ -93,6 +93,8 @@ Run understand-operator <parallel-point> for operator <OP_NAME>.
 PROJECT_ROOT: <absolute path>
 UO_ROOT: <absolute path>
 OP_NAME: <name>
+RUN_ID: <RUN_...>
+SOURCE_COMMIT: <git sha captured at workflow start>
 TASK_ID: <only for uo-kernel-path>
 
 Input artifacts:

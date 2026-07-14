@@ -150,16 +150,16 @@ files:
     raw_graph_input: true
   - path: facts/kernel/slice_manifest.yaml
     artifact_type: kernel.slice_manifest
-    owner: uo-kernel-overview-agent
+    owner: uo-kernel-slice-planner
     schema: schemas/kernel/slice_manifest.schema.yaml
-    required_after_stage: step2
+    required_after_stage: step3
     allow_empty: false
     raw_graph_input: true
   - path: facts/kernel/slice_interfaces.yaml
     artifact_type: kernel.slice_interfaces
-    owner: uo-kernel-overview-agent
+    owner: uo-kernel-slice-planner
     schema: schemas/kernel/slice_interfaces.schema.yaml
-    required_after_stage: step2
+    required_after_stage: step3
     allow_empty: false
     raw_graph_input: true
   - path: facts/kernel/slices/*/variables.yaml
@@ -276,7 +276,7 @@ files:
     raw_graph_input: false
   - path: checks/step3/review.yaml
     artifact_type: checks.step3.review
-    owner: uo-review-agent
+    owner: uo-step3-fact-review-agent
     schema: schemas/common/document.schema.yaml
     required_after_stage: step3
     allow_empty: false
@@ -297,7 +297,7 @@ files:
     raw_graph_input: false
   - path: checks/derived_validation.yaml
     artifact_type: checks.derived_validation
-    owner: facts-validator
+    owner: derived-graph-materializer
     schema: schemas/common/document.schema.yaml
     required_after_stage: derived
     allow_empty: false

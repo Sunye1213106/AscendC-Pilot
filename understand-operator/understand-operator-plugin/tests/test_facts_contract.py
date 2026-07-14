@@ -12,8 +12,13 @@ if str(ROOT) not in sys.path:
 
 from understand_operator._operator.artifacts import init_operator_contract_layout, operator_root
 from understand_operator._operator.spec import catalog_entries, load_spec, spec_bundle_hash
+from understand_operator.scripts.build_compile_gate import build_compile_gate
+from understand_operator.scripts.materialize_derived_graph import materialize_derived_graph
+from understand_operator.scripts.source_graph_compiler import compile_source_graph
+from understand_operator.scripts.uo_query_readonly import query_readonly
 from understand_operator.scripts.validate_facts import validate_facts
 from understand_operator.scripts.write_step2_receipt import write_step2_receipt
+from understand_operator.scripts.write_step3_receipt import write_step3_receipt
 
 
 def _repo(tmp_path: Path) -> tuple[Path, Path]:
@@ -131,6 +136,64 @@ def _review(status: str = "pass") -> dict:
         "relations": [],
         "unresolved": [],
     }
+
+
+def _step3_review(status: str = "pass") -> dict:
+    return {
+        "version": 1,
+        "artifact": {"type": "checks.step3.review", "schema_version": 1, "owner": "uo-step3-fact-review-agent"},
+        "snapshot": {
+            "run_id": "UO_RUN_TEST",
+            "source_snapshot_id": "SOURCE_TEST",
+            "source_revision": "abc123",
+            "spec_bundle_hash": spec_bundle_hash(),
+        },
+        "status": status,
+        "blocking_findings": [],
+        "warnings": [],
+        "items": [],
+        "relations": [],
+        "unresolved": [],
+    }
+
+
+def _seed_source(repo: Path) -> dict:
+    source_text, source_anchor = _valid_source()
+    source_path = repo / "op_host" / "demo.cpp"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_text(source_text + "\n", encoding="utf-8")
+    return source_anchor
+
+
+def _seed_step2_receipt(base: Path) -> None:
+    _write_yaml(base / "checks" / "step2" / "receipt.yaml", _report("pass", "checks.step2.receipt"))
+
+
+def _seed_step3_planner(base: Path, source: dict) -> None:
+    _write_yaml(
+        base / "facts" / "kernel" / "slice_manifest.yaml",
+        _fact_doc("kernel.slice_manifest", "uo-kernel-slice-planner", "KERNEL_SLICE_MAIN", source, kind="kernel_slice"),
+    )
+    _write_yaml(
+        base / "facts" / "kernel" / "slice_interfaces.yaml",
+        _fact_doc("kernel.slice_interfaces", "uo-kernel-slice-planner", "REL_SLICE_INTERFACE", source, kind="slice_interface"),
+    )
+
+
+def _seed_kernel_slice(base: Path, source: dict, slice_id: str = "main") -> None:
+    files = {
+        "variables.yaml": ("kernel.slice.variables", "VAR_KERNEL_SLICE_MAIN"),
+        "expressions.yaml": ("kernel.slice.expressions", "EXPR_KERNEL_SLICE_MAIN"),
+        "branches.yaml": ("kernel.slice.branches", "BRANCH_KERNEL_SLICE_MAIN"),
+        "loops.yaml": ("kernel.slice.loops", "LOOP_KERNEL_SLICE_MAIN"),
+        "tilingdata_reads.yaml": ("kernel.slice.tilingdata_reads", "TDREAD_KERNEL_SLICE_MAIN"),
+        "calls.yaml": ("kernel.slice.calls", "CALL_KERNEL_SLICE_MAIN"),
+        "dataflow.yaml": ("kernel.slice.dataflow", "REL_KERNEL_SLICE_FLOW"),
+        "memory.yaml": ("kernel.slice.memory", "BUF_KERNEL_SLICE_MAIN"),
+        "synchronization.yaml": ("kernel.slice.synchronization", "SYNC_KERNEL_SLICE_MAIN"),
+    }
+    for filename, (artifact_type, item_id) in files.items():
+        _write_yaml(base / "facts" / "kernel" / "slices" / slice_id / filename, _fact_doc(artifact_type, "uo-kernel-slice-agent", item_id, source))
 
 
 def test_spec_catalog_has_owner_and_schema_for_every_yaml_artifact() -> None:
@@ -279,8 +342,6 @@ def test_step2_scoped_validators_run_independently(tmp_path: Path) -> None:
         "facts/kernel/overview/call_graph.yaml": ("kernel.overview.call_graph", "CALL_KERNEL_X"),
         "facts/kernel/overview/frontier.yaml": ("kernel.overview.frontier", "BRANCH_KERNEL_X"),
         "facts/kernel/overview/global_resources.yaml": ("kernel.overview.global_resources", "BUF_KERNEL_X"),
-        "facts/kernel/slice_manifest.yaml": ("kernel.slice_manifest", "KERNEL_SLICE_X"),
-        "facts/kernel/slice_interfaces.yaml": ("kernel.slice_interfaces", "REL_KERNEL_IFACE_X"),
     }
     for rel, (artifact_type, item_id) in kernel_files.items():
         _write_yaml(base / rel, _fact_doc(artifact_type, "uo-kernel-overview-agent", item_id, source_anchor))
@@ -312,3 +373,136 @@ def test_step2_receipt_requires_three_python_gates_and_review(tmp_path: Path) ->
     receipt = yaml.safe_load((base / "checks" / "step2" / "receipt.yaml").read_text(encoding="utf-8"))
     assert receipt["status"] == "pass"
     assert receipt["input_hashes"]["checks/step2/review.yaml"].startswith("sha256:")
+
+
+def test_step3_planner_yaml_validates_with_planner_owner(tmp_path: Path) -> None:
+    repo, base = _repo(tmp_path)
+    source_anchor = _seed_source(repo)
+    _seed_step3_planner(base, source_anchor)
+
+    errors = validate_facts(repo, "DemoOp", stage="step3", scope="kernel-slice-planner")
+
+    assert errors == []
+
+
+def test_step3_slice_validation_requires_slice_directory(tmp_path: Path) -> None:
+    repo, base = _repo(tmp_path)
+    source_anchor = _seed_source(repo)
+    _seed_step3_planner(base, source_anchor)
+
+    errors = validate_facts(repo, "DemoOp", stage="step3", scope="kernel-slice")
+
+    assert any(error.code == "KERNEL_SLICE_MISSING" for error in errors)
+
+
+def test_step3_slice_yaml_requires_complete_nine_file_set(tmp_path: Path) -> None:
+    repo, base = _repo(tmp_path)
+    source_anchor = _seed_source(repo)
+    _seed_step3_planner(base, source_anchor)
+    _seed_kernel_slice(base, source_anchor)
+
+    errors = validate_facts(repo, "DemoOp", stage="step3", scope="kernel-slice")
+
+    assert errors == []
+
+
+def test_step3_receipt_requires_step2_receipt_slice_validation_and_review(tmp_path: Path) -> None:
+    repo, base = _repo(tmp_path)
+    _write_yaml(base / "checks" / "step3" / "slice_validations.yaml", _report("pass", "checks.step3.slice_validations"))
+    _write_yaml(base / "checks" / "step3" / "review.yaml", _step3_review("pass"))
+
+    code, messages = write_step3_receipt(repo, "DemoOp")
+
+    assert code == 2
+    assert any("step2/receipt.yaml" in message for message in messages)
+
+    _seed_step2_receipt(base)
+    _write_yaml(base / "checks" / "step3" / "review.yaml", _step3_review("fail"))
+    code, messages = write_step3_receipt(repo, "DemoOp")
+    assert code == 2
+    assert any("review.yaml status is not pass" in message for message in messages)
+
+    _write_yaml(base / "checks" / "step3" / "review.yaml", _step3_review("pass"))
+    code, messages = write_step3_receipt(repo, "DemoOp")
+    assert code == 0
+    receipt = yaml.safe_load((base / "checks" / "step3" / "receipt.yaml").read_text(encoding="utf-8"))
+    assert receipt["status"] == "pass"
+    assert receipt["input_hashes"]["checks/step2/receipt.yaml"].startswith("sha256:")
+
+
+def test_compile_gate_freezes_facts_before_raw_graph_compile(tmp_path: Path) -> None:
+    repo, base = _repo(tmp_path)
+    source_anchor = _seed_source(repo)
+    doc = _valid_interface_doc(source_anchor)
+    doc["relations"] = [
+        {
+            "id": "REL_DEMO_FLOW",
+            "type": "data_dependency",
+            "source_id": "ARG_DEMO_X",
+            "target_id": "ARG_DEMO_X",
+            "status": "confirmed",
+            "sources": [source_anchor],
+        }
+    ]
+    _write_yaml(base / "facts" / "operator" / "interface.yaml", doc)
+    _write_yaml(base / "checks" / "step3" / "receipt.yaml", _report("pass", "checks.step3.receipt"))
+
+    code, messages = build_compile_gate(repo, "DemoOp")
+    assert code == 0, messages
+    code, messages = compile_source_graph(repo, "DemoOp")
+    assert code == 0, messages
+    assert (base / "graphs" / "raw" / "nodes.yaml").exists()
+    assert (base / "indexes" / "graph_to_yaml.yaml").exists()
+
+    doc["items"][0]["name"] = "changed_after_gate"
+    _write_yaml(base / "facts" / "operator" / "interface.yaml", doc)
+    code, messages = compile_source_graph(repo, "DemoOp")
+    assert code == 2
+    assert any("facts changed after compile gate" in message for message in messages)
+
+
+def test_derived_graph_materializer_requires_reversible_rules_and_query_is_readonly(tmp_path: Path) -> None:
+    repo, base = _repo(tmp_path)
+    source_anchor = _seed_source(repo)
+    _write_yaml(base / "facts" / "operator" / "interface.yaml", _valid_interface_doc(source_anchor))
+    _write_yaml(base / "checks" / "step3" / "receipt.yaml", _report("pass", "checks.step3.receipt"))
+    assert build_compile_gate(repo, "DemoOp")[0] == 0
+    assert compile_source_graph(repo, "DemoOp")[0] == 0
+
+    _write_yaml(
+        base / "graphs" / "derived" / "abstraction_rules.yaml",
+        {
+            "version": 1,
+            "artifact": {"type": "graph.derived.abstraction_rules", "schema_version": 1, "owner": "derived-graph-materializer"},
+            "snapshot": {
+                "run_id": "UO_RUN_TEST",
+                "source_snapshot_id": "SOURCE_TEST",
+                "source_revision": "abc123",
+                "spec_bundle_hash": spec_bundle_hash(),
+            },
+            "rules": [
+                {
+                    "id": "ARULE_DEMO_ABSTRACT",
+                    "reversible": True,
+                    "node_id": "DVIEW_DEMO_INPUT",
+                    "abstract_type": "operator_input",
+                    "abstract_name": "x",
+                    "raw_node_refs": ["ARG_DEMO_X"],
+                    "raw_edge_refs": [],
+                    "yaml_refs": ["facts/operator/interface.yaml#/items/0"],
+                    "reason": "single input fact abstraction",
+                }
+            ],
+            "items": [],
+            "relations": [],
+            "unresolved": [],
+        },
+    )
+
+    code, messages = materialize_derived_graph(repo, "DemoOp")
+    assert code == 0, messages
+    result = query_readonly(repo, "DemoOp", "DVIEW_DEMO_INPUT")
+    assert result["query"]["order"] == ["derived", "raw", "yaml", "source"]
+    assert result["writes"] == []
+    assert result["cbm_writes"] == []
+    assert result["yaml_items"][0]["ref"] == "facts/operator/interface.yaml#/items/0"

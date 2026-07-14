@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import sys
 from dataclasses import dataclass
@@ -31,29 +32,6 @@ from understand_operator._operator.yaml_gate import (
 
 PHASE_HOST_FLOW = "host_flow"
 PHASE_KERNEL_PATH = "kernel_path"
-
-HOST_FLOW_ARTIFACTS = [
-    "archive/proposals/host_tiling_proposal.yaml",
-    "tiling/route.md",
-    "tiling/index.yaml",
-    "tiling/variables.yaml",
-    "tiling/key_space.yaml",
-    "tiling/exhaustive_key_space.yaml",
-    "tiling/constraints.yaml",
-    "tiling/families.yaml",
-    "tiling/data_model.yaml",
-    "tiling/coverage_model.yaml",
-    "tiling/evidence_index.yaml",
-] + list(REQUIRED_TILING_ARCHIVE_FILES)
-
-FLOW_ARTIFACTS = [
-    "archive/proposals/flow_dataflow_proposal.yaml",
-    "flow/index.yaml",
-    "flow/compute_graph.yaml",
-    "flow/dataflow.yaml",
-    "flow/golden_model.yaml",
-    "flow/numerical_model.yaml",
-]
 
 HOST_FLOW_COMPLETION = "tiling/.uo_host_extraction_complete.json"
 FLOW_COMPLETION = "flow/.uo_flow_extraction_complete.json"
@@ -157,6 +135,10 @@ def _proposal_contract_problems(rel_path: str, text: str) -> list[str]:
     """Catch proposal-envelope drift before a host reads or promotes it."""
     if not rel_path.startswith("archive/proposals/") or yaml is None:
         return []
+    parts = rel_path.replace("\\", "/").split("/")
+    problems: list[str] = []
+    if len(parts) < 4 or not parts[2]:
+        problems.append("proposal must live under archive/proposals/<run_id>/; root proposal paths are obsolete")
     try:
         proposal = yaml.safe_load(text)
     except yaml.YAMLError:
@@ -172,7 +154,6 @@ def _proposal_contract_problems(rel_path: str, text: str) -> list[str]:
     updates = proposal.get("canonical_updates")
     if not isinstance(updates, list) or not updates:
         return ["proposal canonical_updates must be a non-empty YAML list"]
-    problems: list[str] = []
     has_evidence_merge = False
     for index, update in enumerate(updates):
         if not isinstance(update, dict):
@@ -187,6 +168,23 @@ def _proposal_contract_problems(rel_path: str, text: str) -> list[str]:
             problems.append(f"canonical_updates[{index}] uses obsolete mode/items; use merge_mode/entries")
     if not has_evidence_merge:
         problems.append("missing evidence merge target: registry/evidence.yaml section evidence")
+    if rel_path.endswith("/flow_dataflow_proposal.yaml"):
+        required_updates = {
+            ("registry/evidence.yaml", "evidence"),
+            ("evidence/fact_index.yaml", "facts"),
+            ("evidence/source_index.yaml", "source_spans"),
+        }
+        actual = {
+            (str(update.get("target") or ""), str(update.get("section") or ""))
+            for update in updates
+            if isinstance(update, dict)
+        }
+        missing_updates = sorted(required_updates - actual)
+        if missing_updates:
+            problems.append(
+                "flow proposal missing evidence canonical_updates: "
+                + ", ".join(f"{target}:{section}" for target, section in missing_updates)
+            )
     return problems[:12]
 
 
@@ -196,6 +194,14 @@ def _entries(value: Any) -> list[dict[str, Any]]:
     if isinstance(value, dict):
         return [item for item in value.values() if isinstance(item, dict)]
     return []
+
+
+def _as_list(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if value in (None, "", {}, []):
+        return []
+    return [value]
 
 
 def _semantic_contract_problems(rel_path: str, text: str) -> list[str]:
@@ -303,21 +309,27 @@ def _semantic_contract_problems(rel_path: str, text: str) -> list[str]:
     return problems[:12]
 
 
-def _flow_has_golden_mapping(uo_root: Path) -> bool:
+def _flow_proposal_has_golden_mapping(uo_root: Path, rel: str) -> bool:
     if yaml is None:
         return False
     try:
-        compute = yaml.safe_load(read_text(uo_root / "flow/compute_graph.yaml")) or {}
-        golden = yaml.safe_load(read_text(uo_root / "flow/golden_model.yaml")) or {}
+        proposal = yaml.safe_load(read_text(uo_root / rel)) or {}
     except yaml.YAMLError:
         return False
-    if not isinstance(compute, dict) or not isinstance(golden, dict):
+    if not isinstance(proposal, dict):
         return False
-    if any(item.get("golden_step_ref") or item.get("golden_role") for item in _entries(compute.get("compute_steps"))):
-        return True
-    if golden.get("maps_to_compute_steps"):
-        return True
-    return any(item.get("maps_to_compute_steps") for item in _entries(golden.get("golden_outputs")))
+    for update in _as_list(proposal.get("canonical_updates")):
+        if not isinstance(update, dict):
+            continue
+        if update.get("target") == "flow/compute_graph.yaml":
+            for entry in _as_list(update.get("entries")):
+                if isinstance(entry, dict) and (entry.get("golden_step_ref") or entry.get("golden_role")):
+                    return True
+        if update.get("target") == "flow/golden_model.yaml":
+            for entry in _as_list(update.get("entries")):
+                if isinstance(entry, dict) and (entry.get("maps_to_compute_steps") or entry.get("golden_generation_contract")):
+                    return True
+    return False
 
 
 @dataclass
@@ -328,6 +340,29 @@ class BarrierResult:
     stale: list[str]
     message: str
     errors: list[dict[str, Any]] | None = None
+
+
+@dataclass(frozen=True)
+class RunContext:
+    run_id: str
+    source_commit: str = ""
+    started_at: datetime | None = None
+
+
+def host_proposal_rel(run_id: str) -> str:
+    return f"archive/proposals/{run_id}/host_tiling_proposal.yaml"
+
+
+def flow_proposal_rel(run_id: str) -> str:
+    return f"archive/proposals/{run_id}/flow_dataflow_proposal.yaml"
+
+
+def phase5_proposal_rel(run_id: str) -> str:
+    return f"archive/proposals/{run_id}/phase5_kernel_alignment_proposal.yaml"
+
+
+def _host_flow_artifacts(run_id: str) -> tuple[list[str], list[str]]:
+    return [host_proposal_rel(run_id)] + list(REQUIRED_TILING_ARCHIVE_FILES), [flow_proposal_rel(run_id)]
 
 
 def _approved_task_ids(uo_root: Path) -> list[str]:
@@ -362,6 +397,23 @@ def _load_json(path: Path) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _load_yaml_mapping(path: Path) -> dict[str, Any]:
+    if yaml is None or not path.exists():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8-sig")) or {}
+    except yaml.YAMLError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _load_run_context(uo_root: Path, run_id: str, source_commit: str = "") -> RunContext:
+    state = _load_yaml_mapping(uo_root / "archive" / "runs" / run_id / "workflow_state.yaml")
+    commit = source_commit or str(state.get("source_commit") or "")
+    started = _parse_iso8601(state.get("started_at"))
+    return RunContext(run_id=run_id, source_commit=commit, started_at=started)
 
 
 def _is_placeholder(rel_path: str, text: str) -> bool:
@@ -451,39 +503,101 @@ def _is_placeholder(rel_path: str, text: str) -> bool:
             return True
     return False
 
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _parse_iso8601(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _manifest_paths(items: Any) -> dict[str, str]:
+    if not isinstance(items, list):
+        return {}
+    paths: dict[str, str] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        rel = str(item.get("path") or "").replace("\\", "/")
+        digest = str(item.get("sha256") or "")
+        if rel:
+            paths[rel] = digest
+    return paths
+
+
 def _completion_ok(
+    uo_root: Path,
     path: Path,
     expected_subagent: str,
+    ctx: RunContext,
+    *,
     required_artifacts: list[str] | None = None,
+    archive_artifacts: list[str] | None = None,
+    proposal_rel: str | None = None,
 ) -> tuple[bool, str]:
     if not path.exists():
         return False, f"missing completion manifest: {path.as_posix()}"
     data = _load_json(path)
     if data.get("status") != "complete":
         return False, f"incomplete manifest: {path.as_posix()} status={data.get('status')!r}"
+    if data.get("run_id") != ctx.run_id:
+        return False, f"manifest run_id mismatch: {path.as_posix()} run_id={data.get('run_id')!r} expected={ctx.run_id!r}"
     if data.get("subagent") != expected_subagent:
         return False, f"unexpected subagent in {path.name}: {data.get('subagent')!r}"
-    artifacts = data.get("artifacts")
-    if not isinstance(artifacts, list) or not all(isinstance(item, str) and item.strip() for item in artifacts):
+    source_commit = str(data.get("source_commit") or "")
+    if not source_commit:
+        return False, f"manifest missing source_commit: {path.as_posix()}"
+    if ctx.source_commit and source_commit != ctx.source_commit:
+        return False, f"manifest source_commit mismatch: {path.as_posix()} source_commit={source_commit!r} expected={ctx.source_commit!r}"
+    completed_at = _parse_iso8601(data.get("completed_at"))
+    if completed_at is None:
+        return False, f"manifest missing or invalid completed_at: {path.as_posix()}"
+    if ctx.started_at and completed_at < ctx.started_at:
+        return False, f"manifest completed_at predates current run: {path.as_posix()}"
+    artifacts = _manifest_paths(data.get("artifacts"))
+    if not artifacts:
         return False, f"completion manifest has invalid artifacts list: {path.as_posix()}"
+    archive = _manifest_paths(data.get("archive_artifacts"))
     if required_artifacts:
         omitted = sorted(set(required_artifacts) - set(artifacts))
         if omitted:
             return False, f"completion manifest missing artifacts: {', '.join(omitted)}"
-    if expected_subagent == "uo-host-extraction":
-        archive = data.get("archive_artifacts") or []
-        required = set(REQUIRED_TILING_ARCHIVE_FILES)
-        if not required.issubset(set(archive)):
-            missing = sorted(required - set(archive))
-            return False, f"host completion missing archive_artifacts: {', '.join(missing)}"
+    if archive_artifacts:
+        omitted_archive = sorted(set(archive_artifacts) - set(archive))
+        if omitted_archive:
+            return False, f"completion manifest missing archive_artifacts: {', '.join(omitted_archive)}"
+    for rel, expected_hash in {**artifacts, **archive}.items():
+        target = uo_root / rel
+        if not target.exists():
+            return False, f"manifest artifact missing on disk: {rel}"
+        actual_hash = _sha256(target)
+        if expected_hash != actual_hash:
+            return False, f"manifest artifact hash mismatch: {rel}"
+    if proposal_rel:
+        proposal_hash = str(data.get("proposal_hash") or "")
+        expected = artifacts.get(proposal_rel) or archive.get(proposal_rel)
+        if not proposal_hash or proposal_hash != expected:
+            return False, f"proposal_hash mismatch in manifest: {path.as_posix()}"
     return True, ""
 
 
-def verify_host_flow_barrier(uo_root: Path) -> BarrierResult:
+def verify_host_flow_barrier(uo_root: Path, ctx: RunContext) -> BarrierResult:
     missing: list[str] = []
     stale: list[str] = []
+    host_artifacts, flow_artifacts = _host_flow_artifacts(ctx.run_id)
 
-    for rel in HOST_FLOW_ARTIFACTS + FLOW_ARTIFACTS:
+    for rel in host_artifacts + flow_artifacts:
         path = uo_root / rel
         if not path.exists():
             missing.append(rel)
@@ -504,14 +618,22 @@ def verify_host_flow_barrier(uo_root: Path) -> BarrierResult:
         if _is_placeholder(rel, text):
             stale.append(rel)
 
-    if not _flow_has_golden_mapping(uo_root):
-        stale.append("flow compute_graph/golden_model missing compute-to-golden mapping")
+    if not _flow_proposal_has_golden_mapping(uo_root, flow_proposal_rel(ctx.run_id)):
+        stale.append("flow proposal missing compute-to-golden mapping")
 
     for rel, expected, required in (
-        (HOST_FLOW_COMPLETION, "uo-host-extraction", HOST_FLOW_ARTIFACTS[:-len(REQUIRED_TILING_ARCHIVE_FILES)]),
-        (FLOW_COMPLETION, "uo-flow-extraction", FLOW_ARTIFACTS),
+        (HOST_FLOW_COMPLETION, "uo-host-extraction", [host_proposal_rel(ctx.run_id)]),
+        (FLOW_COMPLETION, "uo-flow-extraction", [flow_proposal_rel(ctx.run_id)]),
     ):
-        ok, reason = _completion_ok(uo_root / rel, expected, required)
+        ok, reason = _completion_ok(
+            uo_root,
+            uo_root / rel,
+            expected,
+            ctx,
+            required_artifacts=required,
+            archive_artifacts=list(REQUIRED_TILING_ARCHIVE_FILES) if expected == "uo-host-extraction" else None,
+            proposal_rel=required[0],
+        )
         if not ok:
             missing.append(reason)
 
@@ -529,102 +651,53 @@ def verify_host_flow_barrier(uo_root: Path) -> BarrierResult:
     for item in missing + stale:
         rel = item.split(" ", 1)[0]
         if rel.endswith((".yaml", ".yml")):
-            errors.append(owner_retry_report({"artifact": rel, "error_code": _stale_error_code(item), "error_message": item}, phase=PHASE_HOST_FLOW))
+            errors.append(owner_retry_report({"artifact": rel, "error_code": _stale_error_code(item), "error_message": item}, phase=PHASE_HOST_FLOW, run_id=ctx.run_id))
     return BarrierResult(ok, PHASE_HOST_FLOW, missing, stale, message, errors)
 
 
-def verify_kernel_path_barrier(uo_root: Path, task_ids: list[str]) -> BarrierResult:
-    """Accept either merged canonical kernel/*.yaml or per-task raw agent outputs."""
+def verify_kernel_path_barrier(uo_root: Path, task_ids: list[str], ctx: RunContext) -> BarrierResult:
+    """Verify per-task raw agent outputs for the current run.
+
+    Kernel canonical files and the host alignment aggregator are deliberately
+    ignored here. They are products of later compiler phases and must not
+    satisfy the raw subagent barrier.
+    """
     missing: list[str] = []
     stale: list[str] = []
 
-    paths_yaml = uo_root / "kernel" / "paths.yaml"
-    pipeline_yaml = uo_root / "kernel" / "pipeline.yaml"
-    resources_yaml = uo_root / "kernel" / "resources.yaml"
-    canonical_ready = all(p.exists() and not _is_placeholder(p.relative_to(uo_root).as_posix(), read_text(p)) for p in (paths_yaml, pipeline_yaml, resources_yaml))
-
-    if canonical_ready:
-        for path in (paths_yaml, pipeline_yaml, resources_yaml):
-            rel = path.relative_to(uo_root).as_posix()
-            text = read_text(path)
-            problem = _yaml_problem(rel, text)
-            if problem:
-                stale.append(f"{rel} ({problem})")
-                continue
-            for error in _yaml_gate_errors(rel, text, phase=PHASE_KERNEL_PATH):
-                stale.append(f"{rel} ({error.code}: {error.message})")
-            for detail in _id_contract_problems(rel, text) + _semantic_contract_problems(rel, text):
-                stale.append(f"{rel} ({detail})")
-        # ensure each approved task appears in paths.yaml
-        text = read_text(paths_yaml)
-        for task_id in task_ids:
-            task_id = task_id.strip()
-            if not task_id:
-                continue
-            if task_id not in text and not re.search(rf"(?m)^\s*{re.escape(task_id)}\s*:", text):
-                # also allow Kxxx ids mapped via stable_key / name
-                missing.append(f"kernel/paths.yaml missing task {task_id}")
-            completion_rel = f"archive/raw_agents/kernel_paths/.uo_kernel_path_{task_id}_complete.json"
-            legacy_completion = f"kernel/paths/.uo_kernel_path_{task_id}_complete.json"
-            expected_raw = [
-                f"archive/raw_agents/kernel_paths/{task_id}_kernel_path.yaml",
-                f"archive/raw_agents/kernel_paths/{task_id}_kernel_path.md",
-            ]
-            ok_raw, _ = _completion_ok(uo_root / completion_rel, "uo-kernel-path", expected_raw)
-            ok_legacy, reason = _completion_ok(uo_root / legacy_completion, "uo-kernel-path")
-            if not ok_raw and not ok_legacy:
-                # if host aggregator merged, allow missing per-task completion when aggregator manifest exists
-                agg = uo_root / "kernel" / ".uo_kernel_alignment_complete.json"
-                if not agg.exists():
-                    missing.append(reason if reason else f"missing completion for {task_id}")
-    else:
-        # fall back to per-task raw outputs under archive or legacy kernel/paths
-        for task_id in task_ids:
-            task_id = task_id.strip()
-            if not task_id:
-                continue
-            candidates = [
-                f"archive/raw_agents/kernel_paths/{task_id}_kernel_path.yaml",
-                f"kernel/paths/{task_id}_kernel_path.yaml",
-            ]
-            found = False
-            for rel in candidates:
-                path = uo_root / rel
-                if not path.exists():
-                    continue
-                text = read_text(path)
-                yaml_problem = _yaml_problem(rel, text)
-                if yaml_problem:
-                    stale.append(f"{rel} ({yaml_problem})")
-                    continue
-                for error in _yaml_gate_errors(rel, text, phase=PHASE_KERNEL_PATH):
-                    stale.append(f"{rel} ({error.code}: {error.message})")
-                for problem in _id_contract_problems(rel, text):
-                    stale.append(f"{rel} ({problem})")
-                for problem in _semantic_contract_problems(rel, text):
-                    stale.append(f"{rel} ({problem})")
-                if text.strip():
-                    found = True
-                    break
-            if not found:
-                missing.append(f"raw/canonical kernel path missing for {task_id}")
-            for completion_rel in (
-                f"archive/raw_agents/kernel_paths/.uo_kernel_path_{task_id}_complete.json",
-                f"kernel/paths/.uo_kernel_path_{task_id}_complete.json",
-            ):
-                expected_raw = [
-                    f"archive/raw_agents/kernel_paths/{task_id}_kernel_path.yaml",
-                    f"archive/raw_agents/kernel_paths/{task_id}_kernel_path.md",
-                ] if completion_rel.startswith("archive/") else None
-                ok, reason = _completion_ok(uo_root / completion_rel, "uo-kernel-path", expected_raw)
-                if ok:
-                    break
+    for task_id in task_ids:
+        task_id = task_id.strip()
+        if not task_id:
+            continue
+        yaml_rel = f"archive/raw_agents/kernel_paths/{task_id}_kernel_path.yaml"
+        md_rel = f"archive/raw_agents/kernel_paths/{task_id}_kernel_path.md"
+        completion_rel = f"archive/raw_agents/kernel_paths/.uo_kernel_path_{task_id}_complete.json"
+        yaml_path = uo_root / yaml_rel
+        if not yaml_path.exists():
+            missing.append(yaml_rel)
+        else:
+            text = read_text(yaml_path)
+            yaml_problem = _yaml_problem(yaml_rel, text)
+            if yaml_problem:
+                stale.append(f"{yaml_rel} ({yaml_problem})")
             else:
-                missing.append(reason)
-
-        for rel in KERNEL_CANONICAL:
-            if not (uo_root / rel).exists():
-                stale.append(f"{rel} not merged yet (raw agent outputs present)")
+                for error in _yaml_gate_errors(yaml_rel, text, phase=PHASE_KERNEL_PATH):
+                    stale.append(f"{yaml_rel} ({error.code}: {error.message})")
+                for problem in _id_contract_problems(yaml_rel, text):
+                    stale.append(f"{yaml_rel} ({problem})")
+                for problem in _semantic_contract_problems(yaml_rel, text):
+                    stale.append(f"{yaml_rel} ({problem})")
+        if not (uo_root / md_rel).exists():
+            missing.append(md_rel)
+        ok, reason = _completion_ok(
+            uo_root,
+            uo_root / completion_rel,
+            "uo-kernel-path",
+            ctx,
+            required_artifacts=[yaml_rel, md_rel],
+        )
+        if not ok:
+            missing.append(reason)
 
     ok = not missing and not stale
     message = "kernel_path barrier passed" if ok else f"missing: {', '.join(missing + stale)}"
@@ -633,13 +706,15 @@ def verify_kernel_path_barrier(uo_root: Path, task_ids: list[str]) -> BarrierRes
         rel = item.split(" ", 1)[0]
         if rel.endswith((".yaml", ".yml")):
             code = _stale_error_code(item)
-            errors.append(owner_retry_report({"artifact": rel, "error_code": code, "error_message": item}, phase=PHASE_KERNEL_PATH))
+            errors.append(owner_retry_report({"artifact": rel, "error_code": code, "error_message": item, "owner": "uo-kernel-path"}, phase=PHASE_KERNEL_PATH, run_id=ctx.run_id))
     return BarrierResult(ok, PHASE_KERNEL_PATH, missing, stale, message, errors)
 
 
-def write_barrier_report(uo_root: Path, result: BarrierResult) -> Path:
+def write_barrier_report(uo_root: Path, result: BarrierResult, ctx: RunContext) -> Path:
     report = {
         "phase": result.phase,
+        "run_id": ctx.run_id,
+        "source_commit": ctx.source_commit,
         "ok": result.ok,
         "checked_at": datetime.now(tz=timezone.utc).isoformat(),
         "missing": result.missing,
@@ -647,7 +722,7 @@ def write_barrier_report(uo_root: Path, result: BarrierResult) -> Path:
         "errors": result.errors or [],
         "message": result.message,
     }
-    out_dir = uo_root / "archive" / "runs"
+    out_dir = uo_root / "archive" / "runs" / ctx.run_id
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"barrier_{result.phase}.json"
     write_json(out, report)
@@ -661,15 +736,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("repo_root", type=Path)
     parser.add_argument("--op-name", required=True)
     parser.add_argument("--phase", choices=[PHASE_HOST_FLOW, PHASE_KERNEL_PATH], required=True)
+    parser.add_argument("--run-id", required=True, help="Current workflow run id; barrier only accepts artifacts from this run")
+    parser.add_argument("--source-commit", help="Workflow source commit; defaults to archive/runs/<run_id>/workflow_state.yaml")
     parser.add_argument("--task-ids", help="Comma-separated task ids for kernel_path phase")
     args = parser.parse_args(argv)
 
     repo_root = args.repo_root.resolve()
     op_name = safe_op_name(args.op_name, repo_root)
     uo_root = operator_root(repo_root, op_name)
+    ctx = _load_run_context(uo_root, args.run_id, args.source_commit or "")
 
     if args.phase == PHASE_HOST_FLOW:
-        result = verify_host_flow_barrier(uo_root)
+        result = verify_host_flow_barrier(uo_root, ctx)
     else:
         task_ids = [item.strip() for item in (args.task_ids or "").split(",") if item.strip()]
         if not task_ids:
@@ -677,9 +755,9 @@ def main(argv: list[str] | None = None) -> int:
         if not task_ids:
             result = BarrierResult(False, PHASE_KERNEL_PATH, ["approved_task_ids"], [], "no approved task ids")
         else:
-            result = verify_kernel_path_barrier(uo_root, task_ids)
+            result = verify_kernel_path_barrier(uo_root, task_ids, ctx)
 
-    report_path = write_barrier_report(uo_root, result)
+    report_path = write_barrier_report(uo_root, result, ctx)
     print(json.dumps({"ok": result.ok, "phase": result.phase, "message": result.message, "report": str(report_path)}, ensure_ascii=False))
     return 0 if result.ok else 1
 

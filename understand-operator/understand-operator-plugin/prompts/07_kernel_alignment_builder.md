@@ -2,7 +2,7 @@
 
 你是 Kernel Alignment Builder。
 
-任务：整合多个 Kernel Path Agent 的 raw 输出，合并为 canonical kernel 产物，并回填 tiling unknowns。
+任务：整合多个 Kernel Path Agent 的 raw 输出，生成 Phase 5 proposal，并把 tiling unknown backfill 作为 proposal update 提交。
 
 ## 输入
 
@@ -36,7 +36,7 @@ canonical_updates: []
 
 不要再写 `kernel/kernel_path_matrix.yaml`、`kernel/sync_buffer_map.yaml` 作为主产物。旧文件迁入 `archive/legacy/`。
 
-完成 backfill 记录后，必须把已确认的 backfill 应用回对应的 canonical `tiling/*.yaml`（优先 families / key_space / data_model），只允许更新原本为 unknown / hint-only / needs_alignment / unresolved 的字段。不要覆盖 tiling 源码直接证明的事实。
+完成 backfill 记录后，必须把已确认的 backfill 写入 `tiling/archive/kernel_evidence_backfill.yaml`，并作为 proposal 中的 canonical update 提交给 compiler。不得直接修改 canonical `tiling/*.yaml`。compiler 只允许更新原本为 unknown / hint-only / needs_alignment / unresolved 的字段，且必须拒绝覆盖 source-confirmed fact。
 
 ## `pipeline.yaml` 必须回答
 
@@ -82,4 +82,4 @@ Every promoted relation should prefer stable ids from `registry/` and include `e
 
 Do not invent alternate top-level layouts. The final compiler expects: `kernel/paths.yaml.kernel_paths`; `kernel/pipeline.yaml.pipelines`, `stages`, `resources`, and non-empty `compute_step_alignment`; `kernel/resources.yaml.buffers`, `sync_events`, `workspaces`, `resources`; `kernel/compile_model.yaml.template_bindings`, `compile_time_configs`, `compile_variables`, `compile_decisions`; `kernel/variables.yaml.runtime_variables`, `tilingdata_reads`, `path_decision_points`; and `kernel/branches.yaml.branches`, `path_semantics`, `dataflow_links`, `resource_links`.
 
-Before Phase 6, run proposal schema gate, promote phase5, validate phase5, then run the kernel canonical barrier. Quote C++/math predicates, bracket suffixes, arrows, `:`/`#` text, and literal backslashes. Do not use broad `yaml.dump` rewrites or legacy encoding fallbacks. If raw input is malformed, resume its `uo-kernel-path` owner; do not hand-repair raw output or change compiler maturity rules.
+Before Phase 6, run proposal schema gate, promote phase5, then validate phase5 with `uo-kb-compile validate "$PROJECT_ROOT" --op-name "$OP_NAME" --phase phase5 --check-only`. Quote C++/math predicates, bracket suffixes, arrows, `:`/`#` text, and literal backslashes. Do not use broad `yaml.dump` rewrites or legacy encoding fallbacks. If raw input is malformed, resume its `uo-kernel-path` owner; do not hand-repair raw output or change compiler maturity rules.

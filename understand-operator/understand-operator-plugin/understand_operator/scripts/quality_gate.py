@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import re
 import sys
 from datetime import datetime, timezone
@@ -135,6 +137,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             parsed[rel] = text
     checks["yaml_parse"] = "fail" if yaml_fail else "pass"
+
+    provenance_checks = _check_canonical_provenance(base, op_name, parsed, canonical, blockers)
+    checks.update(provenance_checks)
 
     # route integrity
     index = parsed.get("index.yaml")
@@ -407,6 +412,115 @@ def _write_red_gate_repair_queue(base: Path, blockers: list[str]) -> None:
 
         text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     write_text(base / "archive" / "runs" / "red_gate_repair_queue.yaml", text)
+
+
+def _check_canonical_provenance(
+    base: Path,
+    op_name: str,
+    parsed: dict[str, object],
+    canonical: list[str],
+    blockers: list[str],
+) -> dict[str, str]:
+    checks = {
+        "workflow_receipts_complete": "pass",
+        "workflow_run_id_consistent": "pass",
+        "workflow_source_commit_consistent": "pass",
+        "canonical_provenance_valid": "pass",
+        "canonical_hashes_match_receipts": "pass",
+        "subagent_owner_integrity": "pass",
+        "no_direct_canonical_write": "pass",
+        "all_approved_kernel_tasks_consumed": "pass",
+    }
+    receipts = _load_promotion_receipts(base)
+    if not receipts:
+        checks["workflow_receipts_complete"] = "fail"
+        checks["canonical_provenance_valid"] = "fail"
+        checks["no_direct_canonical_write"] = "fail"
+        blockers.append("CANONICAL_PROVENANCE_MISSING: no promotion receipts found")
+        return checks
+
+    run_ids = {str(item.get("run_id") or "") for item in receipts}
+    op_names = {str(item.get("op_name") or "") for item in receipts if item.get("op_name")}
+    source_commits = {str(item.get("source_commit") or "") for item in receipts if item.get("source_commit")}
+    if len(run_ids) != 1 or "" in run_ids:
+        checks["workflow_run_id_consistent"] = "fail"
+        blockers.append("workflow receipts must belong to exactly one non-empty run_id")
+    if op_names and op_names != {op_name}:
+        checks["workflow_receipts_complete"] = "fail"
+        blockers.append(f"workflow receipts op_name mismatch: {sorted(op_names)} != {op_name}")
+    if len(source_commits) > 1:
+        checks["workflow_source_commit_consistent"] = "fail"
+        blockers.append("workflow receipts have inconsistent source_commit values")
+
+    promoted_hashes: dict[str, str] = {}
+    promoted_owners: dict[str, str] = {}
+    approved_tasks: set[str] = set()
+    consumed_tasks: set[str] = set()
+    for receipt in receipts:
+        phase = str(receipt.get("phase") or "")
+        for rel, digest in _as_mapping(receipt.get("after_hashes")).items():
+            promoted_hashes[str(rel)] = str(digest)
+            promoted_owners[str(rel)] = phase
+        for item in _as_list(receipt.get("consumed_raw_artifacts")):
+            if isinstance(item, dict) and item.get("task_id"):
+                consumed_tasks.add(str(item["task_id"]))
+        for task_id in _as_list(receipt.get("approved_task_ids")):
+            approved_tasks.add(str(task_id))
+
+    for rel in canonical:
+        if rel == "quality.yaml" or rel.endswith(".md") or rel.endswith(".json"):
+            continue
+        if rel not in parsed:
+            continue
+        expected = promoted_hashes.get(rel)
+        if not expected:
+            checks["canonical_provenance_valid"] = "fail"
+            checks["no_direct_canonical_write"] = "fail"
+            blockers.append(f"CANONICAL_PROVENANCE_MISSING: {rel}")
+            continue
+        current = _canonical_doc_hash(parsed[rel])
+        if current != expected:
+            checks["canonical_hashes_match_receipts"] = "fail"
+            checks["canonical_provenance_valid"] = "fail"
+            checks["no_direct_canonical_write"] = "fail"
+            blockers.append(f"CANONICAL_MODIFIED_AFTER_PROMOTION: {rel}")
+
+    bad_owner = []
+    for rel, phase in promoted_owners.items():
+        if rel.startswith("tiling/") and phase not in {"phase2", "phase5", "phase7"}:
+            bad_owner.append(rel)
+        if rel.startswith("flow/") and phase != "phase2":
+            bad_owner.append(rel)
+        if rel.startswith("kernel/") and phase not in {"phase4", "phase5", "phase7"}:
+            bad_owner.append(rel)
+    if bad_owner:
+        checks["subagent_owner_integrity"] = "fail"
+        blockers.append("subagent owner integrity mismatch: " + ", ".join(sorted(set(bad_owner))[:8]))
+
+    if approved_tasks and not approved_tasks.issubset(consumed_tasks):
+        checks["all_approved_kernel_tasks_consumed"] = "fail"
+        blockers.append("approved kernel tasks not consumed by alignment receipt: " + ", ".join(sorted(approved_tasks - consumed_tasks)))
+
+    return checks
+
+
+def _load_promotion_receipts(base: Path) -> list[dict[str, object]]:
+    out: list[dict[str, object]] = []
+    if yaml is None:
+        return out
+    for path in sorted((base / "archive" / "promoted").glob("*/promotion_receipt.yaml")):
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8-sig")) or {}
+        except Exception:
+            continue
+        if isinstance(data, dict) and data.get("status") == "promoted":
+            out.append(data)
+    return out
+
+
+def _canonical_doc_hash(data: object) -> str:
+    payload = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _retry_task_id(owner: str, artifact: str) -> str:

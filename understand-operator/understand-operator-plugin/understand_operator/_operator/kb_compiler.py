@@ -321,8 +321,10 @@ PROMOTION_TARGET_PREFIXES = (
     "cross_layer/",
     "query/",
     "contracts/",
+    "test/",
     "evidence/",
 )
+PROMOTION_ROOT_TARGETS = {"manifest.yaml", "index.yaml", "operator.yaml"}
 FORBIDDEN_TARGET_PREFIXES = ("archive/", "cbm/", ".git/", "../")
 MERGE_MODES = {"by_id", "replace_section", "merge_mapping"}
 REPLACE_SECTION_ALLOWLIST = {
@@ -1169,6 +1171,36 @@ def _load_proposals(
         proposal_paths = sorted((uo_root / "archive" / "proposals" / run_id).glob("*.yaml"))
     proposals: list[tuple[Path, dict[str, Any]]] = []
     for path in proposal_paths:
+        if run_id:
+            try:
+                rel = path.resolve().relative_to(uo_root.resolve()).as_posix()
+            except ValueError:
+                rel = path.as_posix()
+            expected_prefix = f"archive/proposals/{run_id}/"
+            official_names = {
+                "host_tiling_proposal.yaml",
+                "flow_dataflow_proposal.yaml",
+                "phase1_macro_boundary_proposal.yaml",
+                "phase5_kernel_alignment_proposal.yaml",
+                "phase6_evidence_proposal.yaml",
+                "phase7_route_contract_proposal.yaml",
+            }
+            is_root_official_proposal = (
+                rel.startswith("archive/proposals/")
+                and rel.count("/") == 2
+                and Path(rel).name in official_names
+            )
+            if is_root_official_proposal or (Path(rel).name in official_names and not rel.startswith(expected_prefix)):
+                result.add(
+                    "PROPOSAL_RUN_PATH_MISMATCH",
+                    "error",
+                    f"current run proposals must live under {expected_prefix}; got {rel}",
+                    rel,
+                    expected_prefix,
+                    expected_format="archive/proposals/<run_id>/<proposal>.yaml",
+                    run_id=run_id,
+                )
+                continue
         if not path.exists():
             result.add("MISSING_PROPOSAL", "error", f"proposal not found: {path}", path.as_posix())
             continue
@@ -1634,7 +1666,7 @@ def _target_allowed(target: str) -> bool:
         return False
     if not target.endswith((".yaml", ".yml")):
         return False
-    return target.startswith(PROMOTION_TARGET_PREFIXES)
+    return target in PROMOTION_ROOT_TARGETS or target.startswith(PROMOTION_TARGET_PREFIXES)
 
 
 def _normalize_candidate(
@@ -2831,7 +2863,9 @@ def _write_promotion_receipt(
     changed = sorted(path for path, digest in after_hashes.items() if before_hashes.get(path) != digest)
     receipt = {
         "version": 1,
+        "op_name": result.op_name,
         "run_id": run_id,
+        "source_commit": "",
         "phase": result.phase,
         "proposal_ids": proposal_ids,
         "proposal_hashes": proposal_hashes,
@@ -3012,9 +3046,12 @@ def _build_promotion_payloads(
     )
     payloads["archive/runs/kb_promotion_report.yaml"] = _to_yaml(result.promotion_report)
     changed = sorted(path for path, digest in after_hashes.items() if before_hashes.get(path) != digest)
+    source_commit = _source_commit_from_docs(candidate)
     receipt = {
         "version": 1,
+        "op_name": result.op_name,
         "run_id": run_id,
+        "source_commit": source_commit,
         "phase": result.phase,
         "proposal_ids": proposal_ids,
         "proposal_hashes": proposal_hashes,
@@ -3029,6 +3066,13 @@ def _build_promotion_payloads(
     if stale_payload is not None:
         payloads["archive/runs/stale_artifacts.yaml"] = _to_yaml(stale_payload)
     return payloads
+
+
+def _source_commit_from_docs(docs: dict[str, Any]) -> str:
+    manifest = _as_dict(docs.get("manifest.yaml"))
+    source = _as_dict(manifest.get("source"))
+    commit = str(source.get("commit") or "").strip()
+    return "" if commit == "unknown" else commit
 
 
 def _transaction_dir(uo_root: Path, transaction_id: str) -> Path:
@@ -3413,7 +3457,15 @@ def _has_nonplaceholder_paths(paths: dict[str, Any]) -> bool:
 
 
 def _phase_rank(phase: str) -> int:
-    return {"phase2": 2, "phase4": 4, "phase5": 5, "phase7": 7, "final": 8}.get(_normalize_phase(phase), 8)
+    return {
+        "phase1": 1,
+        "phase2": 2,
+        "phase4": 4,
+        "phase5": 5,
+        "phase6": 6,
+        "phase7": 7,
+        "final": 8,
+    }.get(_normalize_phase(phase), 8)
 
 
 def _required_phase_for(rel: str) -> int:
