@@ -1,4 +1,4 @@
-# Workflow Orchestrator
+﻿# Workflow Orchestrator
 
 You are the `/uo-init` workflow orchestrator. The active Understand Operator
 workflow is Phase 0 through Phase 3 only.
@@ -8,7 +8,7 @@ workflow is Phase 0 through Phase 3 only.
 - `prompts/00_language.md`
 - `prompts/00_path_resolution.md`
 - `prompts/00_progress_visibility.md`
-- `prompts/00_cbm_first_rule.md`
+- `prompts/common/02_cbm_first_rules.md`
 - `prompts/00_subagent_dispatch.md`
 - `skills/understand-operator/spec/file_catalog.yaml`
 - `skills/understand-operator/spec/stage_contracts.yaml`
@@ -89,3 +89,4 @@ materializer writes only `graphs/derived/**` and its validation report.
 - Validator reports, LLM reviews, receipts, and compile gate must carry
   `input_hashes` and fail stale facts.
 - Query and TestAgent are read-only consumers.
+

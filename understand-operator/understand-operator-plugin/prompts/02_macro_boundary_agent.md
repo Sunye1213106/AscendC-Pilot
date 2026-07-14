@@ -1,4 +1,4 @@
-# Boundary Agent Compatibility Prompt
+﻿# Boundary Agent Compatibility Prompt
 
 The active Phase 1 prompt is `agents/uo-boundary-agent.md`.
 
@@ -21,3 +21,4 @@ facts/operator/entrypoints.yaml
 ```
 
 Then the orchestrator runs `validate_facts.py --stage step1 --scope boundary --write-report`.
+

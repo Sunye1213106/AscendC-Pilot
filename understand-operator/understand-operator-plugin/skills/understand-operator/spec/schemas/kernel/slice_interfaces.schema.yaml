@@ -1,15 +1,15 @@
-version: 1
+﻿version: 1
 artifact_type: kernel.slice_interfaces
 required_top_level: [version, artifact, snapshot, items, relations, unresolved]
 allowed_top_level: [version, artifact, snapshot, analysis_status, reason, sources, items, relations, unresolved]
-item_kind_enum: [slice_interface, cross_slice_call, cross_slice_dataflow, generic_fact]
+item_kind_enum: [slice_interface, cross_slice_call, cross_slice_dataflow]
 required_item_fields: [id, kind, name, status, sources]
 kind_required_fields:
   slice_interface: [source_slice_ref, target_slice_ref, interface_kind, exported_refs, imported_refs]
   cross_slice_call: [source_slice_ref, target_slice_ref, interface_kind, exported_refs, imported_refs]
   cross_slice_dataflow: [source_slice_ref, target_slice_ref, interface_kind, exported_refs, imported_refs]
-  generic_fact: [name]
 relation_required_fields: [id, type, source_id, target_id, status]
 minimum_cardinality: 1
 stores: [cross_slice_calls, cross_slice_tensor_flow, cross_slice_buffer_flow, cross_slice_control_dependencies, cross_slice_sync_dependencies, readonly_context]
 forbids: [deep_slice_items]
+

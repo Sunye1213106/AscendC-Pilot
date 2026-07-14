@@ -1,103 +1,103 @@
-# Progress Visibility Protocol
+﻿# Progress Visibility Protocol
 
-你是 `understand-operator` 的宿主 orchestrator。**用户必须在当前对话里看到进度**，但默认不要一步一确认；连续执行到人工审核点再停止。
+浣犳槸 `understand-operator` 鐨勫涓?orchestrator銆?*鐢ㄦ埛蹇呴』鍦ㄥ綋鍓嶅璇濋噷鐪嬪埌杩涘害**锛屼絾榛樿涓嶈涓€姝ヤ竴纭锛涜繛缁墽琛屽埌浜哄伐瀹℃牳鐐瑰啀鍋滄銆?
 
-## 默认语言（强制）
+## 榛樿璇█锛堝己鍒讹級
 
-**整个项目默认语言为中文。**
+**鏁翠釜椤圭洰榛樿璇█涓轰腑鏂囥€?*
 
-- TodoWrite 的 `content` / title：**必须中文**（禁止英文 todo 标题）
-- **闸门**对话：审阅摘要、STOP 提示、菜单选项说明：**必须中文**
-- 技术标识符可保留英文（如 `uo-p0`、文件路径、`search_graph`、family_id）
-- 不要写 “when user asks for Chinese” —— 中文是默认，不是可选项
-- 非闸门 phase：**不要**为了「进度可见」而输出长中文审阅块；TodoWrite 即可
+- TodoWrite 鐨?`content` / title锛?*蹇呴』涓枃**锛堢姝㈣嫳鏂?todo 鏍囬锛?
+- **闂搁棬**瀵硅瘽锛氬闃呮憳瑕併€丼TOP 鎻愮ず銆佽彍鍗曢€夐」璇存槑锛?*蹇呴』涓枃**
+- 鎶€鏈爣璇嗙鍙繚鐣欒嫳鏂囷紙濡?`uo-p0`銆佹枃浠惰矾寰勩€乣search_graph`銆乫amily_id锛?
+- 涓嶈鍐?鈥渨hen user asks for Chinese鈥?鈥斺€?涓枃鏄粯璁わ紝涓嶆槸鍙€夐」
+- 闈為椄闂?phase锛?*涓嶈**涓轰簡銆岃繘搴﹀彲瑙併€嶈€岃緭鍑洪暱涓枃瀹￠槄鍧楋紱TodoWrite 鍗冲彲
 
-## 为什么之前会「默默跑」
+## 涓轰粈涔堜箣鍓嶄細銆岄粯榛樿窇銆?
 
-常见原因（必须避免）：
+甯歌鍘熷洜锛堝繀椤婚伩鍏嶏級锛?
 
-1. 宿主连续做多个 phase 时，**不更新 TodoWrite**（进度应靠 todo list，而不是每步刷审阅长文）。
-2. 用了 **background Task / background shell**，UI 只显示 “Monitored background task”，用户看不到阶段列表。
-3. **没有创建 Cursor todo list**（TodoWrite）。
-4. Phase 0 跑完直接进入 Phase 1，**没有先经过 0.5 闸门**。
-5. 把 subagent 返回摘要当成完成，**没有 barrier + 进度更新**。
-6. Todo 标题写成英文（如 `Phase 0 — Preflight`）—— **禁止**。
-7. Phase 1 结束后又贴一段 Boundary/IO「审阅」文字—— **禁止**（那不是闸门）。
+1. 瀹夸富杩炵画鍋氬涓?phase 鏃讹紝**涓嶆洿鏂?TodoWrite**锛堣繘搴﹀簲闈?todo list锛岃€屼笉鏄瘡姝ュ埛瀹￠槄闀挎枃锛夈€?
+2. 鐢ㄤ簡 **background Task / background shell**锛孶I 鍙樉绀?鈥淢onitored background task鈥濓紝鐢ㄦ埛鐪嬩笉鍒伴樁娈靛垪琛ㄣ€?
+3. **娌℃湁鍒涘缓 Cursor todo list**锛圱odoWrite锛夈€?
+4. Phase 0 璺戝畬鐩存帴杩涘叆 Phase 1锛?*娌℃湁鍏堢粡杩?0.5 闂搁棬**銆?
+5. 鎶?subagent 杩斿洖鎽樿褰撴垚瀹屾垚锛?*娌℃湁 barrier + 杩涘害鏇存柊**銆?
+6. Todo 鏍囬鍐欐垚鑻辨枃锛堝 `Phase 0 鈥?Preflight`锛夆€斺€?**绂佹**銆?
+7. Phase 1 缁撴潫鍚庡張璐翠竴娈?Boundary/IO銆屽闃呫€嶆枃瀛椻€斺€?**绂佹**锛堥偅涓嶆槸闂搁棬锛夈€?
 
-## 强制规则
+## 寮哄埗瑙勫垯
 
-### 1. 启动后第一件事：创建中文 Todo List
+### 1. 鍚姩鍚庣涓€浠朵簨锛氬垱寤轰腑鏂?Todo List
 
-读取 skill 后、执行任何 phase 之前，**必须**调用 **TodoWrite** 创建完整任务列表（merge=false）。
+璇诲彇 skill 鍚庛€佹墽琛屼换浣?phase 涔嬪墠锛?*蹇呴』**璋冪敤 **TodoWrite** 鍒涘缓瀹屾暣浠诲姟鍒楄〃锛坢erge=false锛夈€?
 
-固定 todo id 与 **中文 content**（一字不差优先用下表）：
+鍥哄畾 todo id 涓?**涓枃 content**锛堜竴瀛椾笉宸紭鍏堢敤涓嬭〃锛夛細
 
-| id | content（TodoWrite 显示文案，必须中文） |
+| id | content锛圱odoWrite 鏄剧ず鏂囨锛屽繀椤讳腑鏂囷級 |
 |---|---|
-| `uo-p0` | 阶段 0 — 预检布局与 MCP 自动索引 |
-| `uo-p05` | 阶段 0.5 — 宏观执行范围人工审阅（闸门） |
-| `uo-p1` | 阶段 1 — 宏观边界分析 |
-| `uo-p2a` | 阶段 2a — 并行下发 host 与 flow 子代理 |
-| `uo-p2b` | 阶段 2b — 屏障校验并读取 tiling/flow |
-| `uo-p3` | 阶段 3 — Kernel 任务规划 |
-| `uo-p35` | 阶段 3.5 — Kernel 分发人工审阅（闸门，含全量 tiling/family） |
-| `uo-p4a` | 阶段 4a — 并行下发 kernel path 子代理 |
-| `uo-p4b` | 阶段 4b — 屏障校验并读取 kernel paths |
-| `uo-p5` | 阶段 5 — Kernel 对齐矩阵 |
-| `uo-p6` | 阶段 6 — 证据一致性审计 |
-| `uo-p7` | 阶段 7 — 路由与知识库地图 |
-| `uo-p8` | 阶段 8 — 质量门禁 |
+| `uo-p0` | 闃舵 0 鈥?棰勬甯冨眬涓?MCP 鑷姩绱㈠紩 |
+| `uo-p05` | 闃舵 0.5 鈥?瀹忚鎵ц鑼冨洿浜哄伐瀹￠槄锛堥椄闂級 |
+| `uo-p1` | 闃舵 1 鈥?瀹忚杈圭晫鍒嗘瀽 |
+| `uo-p2a` | 闃舵 2a 鈥?骞惰涓嬪彂 host 涓?flow 瀛愪唬鐞?|
+| `uo-p2b` | 闃舵 2b 鈥?灞忛殰鏍￠獙骞惰鍙?tiling/flow |
+| `uo-p3` | 闃舵 3 鈥?Kernel 浠诲姟瑙勫垝 |
+| `uo-p35` | 闃舵 3.5 鈥?Kernel 鍒嗗彂浜哄伐瀹￠槄锛堥椄闂紝鍚叏閲?tiling/family锛?|
+| `uo-p4a` | 闃舵 4a 鈥?骞惰涓嬪彂 kernel path 瀛愪唬鐞?|
+| `uo-p4b` | 闃舵 4b 鈥?灞忛殰鏍￠獙骞惰鍙?kernel paths |
+| `uo-p5` | 闃舵 5 鈥?Kernel 瀵归綈鐭╅樀 |
+| `uo-p6` | 闃舵 6 鈥?璇佹嵁涓€鑷存€у璁?|
+| `uo-p7` | 闃舵 7 鈥?璺敱涓庣煡璇嗗簱鍦板浘 |
+| `uo-p8` | 闃舵 8 鈥?璐ㄩ噺闂ㄧ |
 
-> **不要**创建 `uo-p15`。阶段 1.5 已取消。
+> **涓嶈**鍒涘缓 `uo-p15`銆傞樁娈?1.5 宸插彇娑堛€?
 
-TodoWrite 示例（启动时 merge=false）：
+TodoWrite 绀轰緥锛堝惎鍔ㄦ椂 merge=false锛夛細
 
 ```text
-uo-p0  阶段 0 — 预检布局与 MCP 自动索引          pending
-uo-p05 阶段 0.5 — 宏观执行范围人工审阅（闸门）    pending
-uo-p1  阶段 1 — 宏观边界分析                    pending
-...（其余同上表，全部 pending）
+uo-p0  闃舵 0 鈥?棰勬甯冨眬涓?MCP 鑷姩绱㈠紩          pending
+uo-p05 闃舵 0.5 鈥?瀹忚鎵ц鑼冨洿浜哄伐瀹￠槄锛堥椄闂級    pending
+uo-p1  闃舵 1 鈥?瀹忚杈圭晫鍒嗘瀽                    pending
+...锛堝叾浣欏悓涓婅〃锛屽叏閮?pending锛?
 ```
 
-### 2. 每个 phase 的标准节奏
+### 2. 姣忎釜 phase 鐨勬爣鍑嗚妭濂?
 
-对每个 todo item：
+瀵规瘡涓?todo item锛?
 
-1. **开始前**：TodoWrite → 该项 `in_progress`。非闸门 phase **不要**在对话里写长说明。
-2. **完成后（非闸门）**：TodoWrite → 该项 `completed`；更新 `workflow_progress.yaml`；**立刻继续下一 phase**。对话里最多一行极简状态（可省略），**禁止**输出 IO/边界/open_questions/family 等审阅式摘要。
-3. **闸门 phase（仅 0.5 / 3.5）**：todo 保持 `in_progress` 或 waiting，**必须 STOP 等用户**。此时才展示完整、可供人判断的审阅摘要 + 选择 UI。优先用 OpenCode `question` / Cursor AskQuestion（最后一项可输入手工补充），再用 `review_checkpoint.py --decision` 落盘。阶段 3.5 摘要必须含完整 tiling/family 信息（中文）。
+1. **寮€濮嬪墠**锛歍odoWrite 鈫?璇ラ」 `in_progress`銆傞潪闂搁棬 phase **涓嶈**鍦ㄥ璇濋噷鍐欓暱璇存槑銆?
+2. **瀹屾垚鍚庯紙闈為椄闂級**锛歍odoWrite 鈫?璇ラ」 `completed`锛涙洿鏂?`workflow_progress.yaml`锛?*绔嬪埢缁х画涓嬩竴 phase**銆傚璇濋噷鏈€澶氫竴琛屾瀬绠€鐘舵€侊紙鍙渷鐣ワ級锛?*绂佹**杈撳嚭 IO/杈圭晫/open_questions/family 绛夊闃呭紡鎽樿銆?
+3. **闂搁棬 phase锛堜粎 0.5 / 3.5锛?*锛歵odo 淇濇寔 `in_progress` 鎴?waiting锛?*蹇呴』 STOP 绛夌敤鎴?*銆傛鏃舵墠灞曠ず瀹屾暣銆佸彲渚涗汉鍒ゆ柇鐨勫闃呮憳瑕?+ 閫夋嫨 UI銆備紭鍏堢敤 OpenCode `question` / Cursor AskQuestion锛堟渶鍚庝竴椤瑰彲杈撳叆鎵嬪伐琛ュ厖锛夛紝鍐嶇敤 `review_checkpoint.py --decision` 钀界洏銆傞樁娈?3.5 鎽樿蹇呴』鍚畬鏁?tiling/family 淇℃伅锛堜腑鏂囷級銆?
 
-### 2.1 对话输出分流（强制）
+### 2.1 瀵硅瘽杈撳嚭鍒嗘祦锛堝己鍒讹級
 
-| 场景 | 对话里允许输出 | 是否 STOP |
+| 鍦烘櫙 | 瀵硅瘽閲屽厑璁歌緭鍑?| 鏄惁 STOP |
 |---|---|---|
-| 普通 phase（含阶段 1 宏观边界） | TodoWrite；可选一行「阶段 X 完成 → 进入 Y」 | **否** |
-| Subagent 下发 / barrier | 一句「已启动/屏障通过」 | **否** |
-| **闸门 0.5 / 3.5** | 完整审阅摘要（给人判断）+ 选择菜单 | **是** |
+| 鏅€?phase锛堝惈闃舵 1 瀹忚杈圭晫锛?| TodoWrite锛涘彲閫変竴琛屻€岄樁娈?X 瀹屾垚 鈫?杩涘叆 Y銆?| **鍚?* |
+| Subagent 涓嬪彂 / barrier | 涓€鍙ャ€屽凡鍚姩/灞忛殰閫氳繃銆?| **鍚?* |
+| **闂搁棬 0.5 / 3.5** | 瀹屾暣瀹￠槄鎽樿锛堢粰浜哄垽鏂級+ 閫夋嫨鑿滃崟 | **鏄?* |
 
-**禁止**在非闸门处输出：Boundary/IO 摘要、open_questions 列表、family 表、请确认/请审阅类文案、假装等人的「下一步请确认」。这些内容只写进 artifact（如 `operator.yaml` / `human/review.md`），不刷聊天。
+**绂佹**鍦ㄩ潪闂搁棬澶勮緭鍑猴細Boundary/IO 鎽樿銆乷pen_questions 鍒楄〃銆乫amily 琛ㄣ€佽纭/璇峰闃呯被鏂囨銆佸亣瑁呯瓑浜虹殑銆屼笅涓€姝ヨ纭銆嶃€傝繖浜涘唴瀹瑰彧鍐欒繘 artifact锛堝 `operator.yaml` / `human/review.md`锛夛紝涓嶅埛鑱婂ぉ銆?
 
-### 3. 默认连续执行到人工审核点
+### 3. 榛樿杩炵画鎵ц鍒颁汉宸ュ鏍哥偣
 
-| 类型 | 本回合允许 |
+| 绫诲瀷 | 鏈洖鍚堝厑璁?|
 |---|---|
-| 普通宿主 phase | 可以连续执行多个 phase，直到下一个人工审核点；**不**向用户倾倒审阅材料 |
-| subagent 下发 / barrier | 可以在 subagent 全部返回后继续跑 barrier；必须先 barrier 通过再读产物 |
-| 闸门 turn | **仅此处**展示审阅摘要 + 等用户 |
+| 鏅€氬涓?phase | 鍙互杩炵画鎵ц澶氫釜 phase锛岀洿鍒颁笅涓€涓汉宸ュ鏍哥偣锛?*涓?*鍚戠敤鎴峰€惧€掑闃呮潗鏂?|
+| subagent 涓嬪彂 / barrier | 鍙互鍦?subagent 鍏ㄩ儴杩斿洖鍚庣户缁窇 barrier锛涘繀椤诲厛 barrier 閫氳繃鍐嶈浜х墿 |
+| 闂搁棬 turn | **浠呮澶?*灞曠ず瀹￠槄鎽樿 + 绛夌敤鎴?|
 
-默认允许执行到「阶段 0.5 宏观执行范围审阅」，然后**必须 STOP**。用户 `continue` 后，默认连续执行「阶段 1 → 2 → 3 → 3.5」，在 **3.5** 再停（必须展示全量 tiling/family）。**禁止**越过 0.5 / 3.5。**禁止**再停在旧的阶段 1.5。**禁止**阶段 1 结束后再贴一段宏观边界/IO 文字再继续。
+榛樿鍏佽鎵ц鍒般€岄樁娈?0.5 瀹忚鎵ц鑼冨洿瀹￠槄銆嶏紝鐒跺悗**蹇呴』 STOP**銆傜敤鎴?`continue` 鍚庯紝榛樿杩炵画鎵ц銆岄樁娈?1 鈫?2 鈫?3 鈫?3.5銆嶏紝鍦?**3.5** 鍐嶅仠锛堝繀椤诲睍绀哄叏閲?tiling/family锛夈€?*绂佹**瓒婅繃 0.5 / 3.5銆?*绂佹**鍐嶅仠鍦ㄦ棫鐨勯樁娈?1.5銆?*绂佹**闃舵 1 缁撴潫鍚庡啀璐翠竴娈靛畯瑙傝竟鐣?IO 鏂囧瓧鍐嶇户缁€?
 
-### 4. Subagent 必须 foreground
+### 4. Subagent 蹇呴』 foreground
 
-对 `uo-host-extraction`、`uo-flow-extraction`、`uo-kernel-path`：
+瀵?`uo-host-extraction`銆乣uo-flow-extraction`銆乣uo-kernel-path`锛?
 
-- Task 必须 **foreground**（默认），**禁止** `run_in_background: true`。
-- 下发后在对话写明：`已启动子代理: ...，等待返回后进入屏障校验。`
-- 全部 subagent 返回后，必须先运行 barrier；barrier 通过后才能继续后续 phase。
+- Task 蹇呴』 **foreground**锛堥粯璁わ級锛?*绂佹** `run_in_background: true`銆?
+- 涓嬪彂鍚庡湪瀵硅瘽鍐欐槑锛歚宸插惎鍔ㄥ瓙浠ｇ悊: ...锛岀瓑寰呰繑鍥炲悗杩涘叆灞忛殰鏍￠獙銆俙
+- 鍏ㄩ儴 subagent 杩斿洖鍚庯紝蹇呴』鍏堣繍琛?barrier锛沚arrier 閫氳繃鍚庢墠鑳界户缁悗缁?phase銆?
 
-### 5. 持久化进度文件
+### 5. 鎸佷箙鍖栬繘搴︽枃浠?
 
-每个 phase 完成后更新 `$UO_ROOT/archive/runs/workflow_progress.yaml`：
+姣忎釜 phase 瀹屾垚鍚庢洿鏂?`$UO_ROOT/archive/runs/workflow_progress.yaml`锛?
 
 ```yaml
 op_name: <OP_NAME>
@@ -106,38 +106,39 @@ current_phase: <id>
 language: zh-CN
 todos:
   - id: uo-p0
-    title: 阶段 0 — 预检布局与 MCP 自动索引
+    title: 闃舵 0 鈥?棰勬甯冨眬涓?MCP 鑷姩绱㈠紩
     status: completed
   - id: uo-p1
-    title: 阶段 1 — 宏观边界分析
+    title: 闃舵 1 鈥?瀹忚杈圭晫鍒嗘瀽
     status: in_progress
-notes: "<简短中文说明>"
+notes: "<绠€鐭腑鏂囪鏄?"
 ```
 
-### 6. 对话内进度块模板（中文）
+### 6. 瀵硅瘽鍐呰繘搴﹀潡妯℃澘锛堜腑鏂囷級
 
-**仅闸门 turn（0.5 / 3.5）**使用完整进度块；普通 phase **不要**每步贴这个模板。
+**浠呴椄闂?turn锛?.5 / 3.5锛?*浣跨敤瀹屾暣杩涘害鍧楋紱鏅€?phase **涓嶈**姣忔璐磋繖涓ā鏉裤€?
 
-闸门模板：
+闂搁棬妯℃澘锛?
 
 ```markdown
-## 进度 · <闸门中文名称>
-- 状态: 等待用户
-- 产物: `<相对 UO_ROOT 的路径>`
-- 下一步: <明确一句中文，说明需要用户决策什么>
+## 杩涘害 路 <闂搁棬涓枃鍚嶇О>
+- 鐘舵€? 绛夊緟鐢ㄦ埛
+- 浜х墿: `<鐩稿 UO_ROOT 鐨勮矾寰?`
+- 涓嬩竴姝? <鏄庣‘涓€鍙ヤ腑鏂囷紝璇存槑闇€瑕佺敤鎴峰喅绛栦粈涔?
 ```
 
-其后必须紧跟可供人判断的审阅正文（0.5 见 `01a`；3.5 见 `05a`）与选择 UI。
+鍏跺悗蹇呴』绱ц窡鍙緵浜哄垽鏂殑瀹￠槄姝ｆ枃锛?.5 瑙?`01a`锛?.5 瑙?`05a`锛変笌閫夋嫨 UI銆?
 
-普通 phase 完成后：只更新 TodoWrite + `workflow_progress.yaml`，直接开下一 phase；不要贴「进度 · …」长块。
+鏅€?phase 瀹屾垚鍚庯細鍙洿鏂?TodoWrite + `workflow_progress.yaml`锛岀洿鎺ュ紑涓嬩竴 phase锛涗笉瑕佽创銆岃繘搴?路 鈥︺€嶉暱鍧椼€?
 
-## 阶段 0 结束后的范围审阅
+## 闃舵 0 缁撴潫鍚庣殑鑼冨洿瀹￠槄
 
-阶段 0 完成后必须：
+闃舵 0 瀹屾垚鍚庡繀椤伙細
 
-1. 更新 todo `uo-p0` → completed
-2. 写入 `runs/<current_run_id>/phase0/scope_review.yaml`
-3. 进入阶段 0.5：**展示** include / exclude / branch_skip / uncertain_scope（给人判断）+ 选择 UI
-4. **STOP 等用户确认**。只有用户选择 `continue` 后，才进入阶段 1。
+1. 鏇存柊 todo `uo-p0` 鈫?completed
+2. 鍐欏叆 `runs/<current_run_id>/phase0/scope_review.yaml`
+3. 杩涘叆闃舵 0.5锛?*灞曠ず** include / exclude / branch_skip / uncertain_scope锛堢粰浜哄垽鏂級+ 閫夋嫨 UI
+4. **STOP 绛夌敤鎴风‘璁?*銆傚彧鏈夌敤鎴烽€夋嫨 `continue` 鍚庯紝鎵嶈繘鍏ラ樁娈?1銆?
 
-阶段 1（宏观边界）完成后：**不要**再向对话输出边界/IO/open_questions 摘要；TodoWrite 标完成并**直接**进入阶段 2。
+闃舵 1锛堝畯瑙傝竟鐣岋級瀹屾垚鍚庯細**涓嶈**鍐嶅悜瀵硅瘽杈撳嚭杈圭晫/IO/open_questions 鎽樿锛汿odoWrite 鏍囧畬鎴愬苟**鐩存帴**杩涘叆闃舵 2銆?
+

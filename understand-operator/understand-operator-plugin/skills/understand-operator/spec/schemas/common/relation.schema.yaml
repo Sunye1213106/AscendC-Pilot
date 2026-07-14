@@ -1,4 +1,5 @@
-version: 1
+﻿version: 1
 schema_kind: relation
 required_when_confirmed: [id, type, source_id, target_id, status, sources]
 relation_type_source: ../../relation_types.yaml
+

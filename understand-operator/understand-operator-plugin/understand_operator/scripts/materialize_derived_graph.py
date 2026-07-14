@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import sys
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,10 @@ def materialize_derived_graph(repo_root: Path, op_name: str) -> tuple[int, list[
     if not raw_nodes_path.exists() or not raw_edges_path.exists():
         return 2, ["raw graph is missing"]
     rules_doc = _read_yaml(rules_path)
+    stale_errors = _input_hash_errors(uo_root, rules_doc)
+    if stale_errors:
+        _write_validation(uo_root, "fail", stale_errors)
+        return 2, stale_errors
     rules = rules_doc.get("rules") or rules_doc.get("items") or []
     raw_nodes = _load_list(raw_nodes_path, "nodes")
     raw_edges = _load_list(raw_edges_path, "edges")
@@ -59,10 +64,10 @@ def materialize_derived_graph(repo_root: Path, op_name: str) -> tuple[int, list[
         if isinstance(rule, dict)
     ]
     root = uo_root / "graphs" / "derived"
-    _write_yaml(root / "nodes.yaml", _doc("graph.derived.nodes", {"nodes": nodes}))
-    _write_yaml(root / "edges.yaml", _doc("graph.derived.edges", {"edges": edges}))
-    _write_yaml(root / "expansions.yaml", _doc("graph.derived.expansions", {"expansions": expansions}))
-    _write_yaml(root / "indexes.yaml", _doc("graph.derived.indexes", {"by_raw_node": _index_by(expansions, "raw_node_refs"), "by_raw_edge": _index_by(expansions, "raw_edge_refs")}))
+    _write_yaml(root / "nodes.yaml", _doc("graph.derived.nodes", {"_uo_root": uo_root, "nodes": nodes}))
+    _write_yaml(root / "edges.yaml", _doc("graph.derived.edges", {"_uo_root": uo_root, "edges": edges}))
+    _write_yaml(root / "expansions.yaml", _doc("graph.derived.expansions", {"_uo_root": uo_root, "expansions": expansions}))
+    _write_yaml(root / "indexes.yaml", _doc("graph.derived.indexes", {"_uo_root": uo_root, "by_raw_node": _index_by(expansions, "raw_node_refs"), "by_raw_edge": _index_by(expansions, "raw_edge_refs")}))
     _write_validation(uo_root, "pass", [])
     return 0, [f"materialized derived graph: nodes={len(nodes)} edges={len(edges)}"]
 
@@ -216,16 +221,53 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _input_hash_errors(uo_root: Path, rules_doc: dict[str, Any]) -> list[str]:
+    required = [
+        "checks/compile_gate.yaml",
+        "graphs/raw/manifest.yaml",
+        "graphs/raw/nodes.yaml",
+        "graphs/raw/edges.yaml",
+    ]
+    expected = rules_doc.get("input_hashes") if isinstance(rules_doc.get("input_hashes"), dict) else {}
+    if not expected:
+        return ["DERIVED_RULES_STALE: abstraction_rules.yaml missing input_hashes"]
+    errors: list[str] = []
+    for rel in required:
+        path = uo_root / rel
+        if not path.exists():
+            errors.append(f"DERIVED_RULES_STALE: {rel} missing")
+            continue
+        actual = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+        if expected.get(rel) != actual:
+            errors.append(f"DERIVED_RULES_STALE: {rel} hash changed")
+    return errors
+
+
 def _doc(artifact_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    uo_root = payload.pop("_uo_root", None)
     return {
         "version": 1,
         "artifact": {"type": artifact_type, "schema_version": 1, "owner": "derived-graph-materializer"},
-        "snapshot": {"run_id": "UO_RUN_DERIVED", "source_snapshot_id": "SOURCE_DERIVED", "source_revision": "unknown", "spec_bundle_hash": spec_bundle_hash()},
+        "snapshot": _snapshot_from_manifest(uo_root),
         **payload,
         "items": [],
         "relations": [],
         "unresolved": [],
     }
+
+
+def _snapshot_from_manifest(uo_root: Any) -> dict[str, str]:
+    if isinstance(uo_root, Path):
+        manifest = _read_yaml(uo_root / "manifest.yaml")
+        source = manifest.get("source") if isinstance(manifest.get("source"), dict) else {}
+        spec = manifest.get("spec") if isinstance(manifest.get("spec"), dict) else {}
+        return {
+            "run_id": str(manifest.get("current_run_id") or "UO_RUN_UNKNOWN"),
+            "source_snapshot_id": str(source.get("snapshot_id") or "SOURCE_UNKNOWN"),
+            "source_revision": str(source.get("revision") or "unknown"),
+            "spec_bundle_hash": str(spec.get("bundle_hash") or spec_bundle_hash()),
+        }
+    return {"run_id": "UO_RUN_UNKNOWN", "source_snapshot_id": "SOURCE_UNKNOWN", "source_revision": "unknown", "spec_bundle_hash": spec_bundle_hash()}
 
 
 def _write_yaml(path: Path, data: dict[str, Any]) -> None:
@@ -234,7 +276,18 @@ def _write_yaml(path: Path, data: dict[str, Any]) -> None:
 
 
 def _write_validation(uo_root: Path, status: str, errors: list[str]) -> None:
-    _write_yaml(uo_root / "checks" / "derived_validation.yaml", _doc("checks.derived_validation", {"status": status, "errors": errors}))
+    frozen = {
+        rel: "sha256:" + hashlib.sha256((uo_root / rel).read_bytes()).hexdigest()
+        for rel in (
+            "graphs/derived/abstraction_rules.yaml",
+            "checks/compile_gate.yaml",
+            "graphs/raw/manifest.yaml",
+            "graphs/raw/nodes.yaml",
+            "graphs/raw/edges.yaml",
+        )
+        if (uo_root / rel).exists()
+    }
+    _write_yaml(uo_root / "checks" / "derived_validation.yaml", _doc("checks.derived_validation", {"_uo_root": uo_root, "status": status, "input_hashes": frozen, "errors": errors}))
 
 
 def main(argv: list[str] | None = None) -> int:

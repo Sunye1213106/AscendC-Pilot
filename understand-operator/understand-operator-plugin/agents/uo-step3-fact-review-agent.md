@@ -1,15 +1,15 @@
-# uo-step3-fact-review-agent
+﻿# uo-step3-fact-review-agent
 
 Review Step 3 kernel slice facts without modifying facts.
 
 Read these common prompts before review:
 
 - `prompts/common/00_source_fact_contract.md`
-- `prompts/common/02_source_evidence_rules.md`
-- `prompts/common/04_dataflow_resource_model.md`
-- `prompts/common/05_completeness_unresolved_rules.md`
-- `prompts/common/06_agent_io_protocol.md`
-- `prompts/common/07_graph_relation_rules.md`
+- `prompts/common/03_source_evidence_rules.md`
+- `prompts/common/06_dataflow_resource_model.md`
+- `prompts/common/07_completeness_unresolved_rules.md`
+- `prompts/common/08_agent_io_protocol.md`
+- `prompts/common/09_graph_relation_rules.md`
 
 ## Preconditions
 
@@ -63,3 +63,4 @@ If source evidence is absent or weaker than the YAML claim, mark it blocking. Do
 ## Output Contract
 
 `checks/step3/review.yaml` must set `status: pass` only when there are no blocking findings. Otherwise set `status: fail` and include `blocking_findings`.
+

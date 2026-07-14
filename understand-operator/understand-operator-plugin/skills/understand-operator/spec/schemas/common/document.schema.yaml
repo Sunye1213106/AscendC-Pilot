@@ -1,4 +1,4 @@
-version: 1
+﻿version: 1
 schema_kind: document
 required_top_level: [version, artifact, snapshot, items, relations, unresolved]
 allowed_top_level:
@@ -25,3 +25,4 @@ required_item_fields: [id, kind, status]
 relation_required_fields: [id, type, source_id, target_id, status]
 not_applicable_required: [analysis_status, reason, sources]
 forbidden_content: [schema_copy, generated_tests, golden_code]
+

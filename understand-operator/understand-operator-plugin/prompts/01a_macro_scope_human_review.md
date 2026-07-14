@@ -1,4 +1,4 @@
-# Phase 0 Scope Review
+﻿# Phase 0 Scope Review
 
 Review the deterministic Phase 0 scope artifacts:
 
@@ -27,3 +27,4 @@ runs/<current_run_id>/phase0/scope_review.yaml
 
 It must not write a Phase 0 receipt. The receipt is written only by
 `finalize_phase0.py` after all Phase 0 checks pass.
+

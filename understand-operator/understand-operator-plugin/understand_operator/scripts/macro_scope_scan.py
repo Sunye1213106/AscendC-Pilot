@@ -69,8 +69,11 @@ def main(argv: list[str] | None = None) -> int:
     patterns = _load_ignore_patterns(repo_root)
     rel_files = _iter_files(repo_root, patterns)
     cbm_meta = _read_index_meta(base)
-    seeds = _seed_files(repo_root, rel_files, op_name)
-    dependency_result = _dependency_closure(repo_root, rel_files, seeds)
+    include_paths = _include_search_paths(repo_root, rel_files)
+    seeds_by_type = _seed_files(repo_root, rel_files, op_name)
+    seed_paths = sorted({item["path"] for values in seeds_by_type.values() for item in values})
+    operator_roots = _operator_roots(seed_paths)
+    dependency_result = _dependency_closure(repo_root, rel_files, seed_paths, operator_roots, include_paths)
 
     payload = {
         "version": 1,
@@ -91,9 +94,11 @@ def main(argv: list[str] | None = None) -> int:
             "max_dependency_depth": MAX_DEPENDENCY_DEPTH,
         },
         "directories": _directories(rel_files),
-        "seed_files": seeds,
+        "operator_roots": operator_roots,
+        "include_search_paths": include_paths,
+        "seed_files": seeds_by_type,
         "files": {
-            "initial_operator_files": [_file_item(repo_root, rel, "initial_operator_file") for rel in seeds],
+            "initial_operator_files": [_file_item(repo_root, rel, "initial_operator_file") for rel in seed_paths],
             "dependency_files": dependency_result["dependency_files"],
             "external_system_files": dependency_result["external_system_files"],
             "third_party_files": dependency_result["third_party_files"],
@@ -258,31 +263,53 @@ def _classify(rel: str) -> str:
     return "unknown"
 
 
-def _seed_files(repo_root: Path, rel_files: list[str], op_name: str) -> list[str]:
+def _seed_files(repo_root: Path, rel_files: list[str], op_name: str) -> dict[str, list[dict[str, Any]]]:
     op_tokens = _name_tokens(op_name)
-    seeds: set[str] = set()
+    seeds: dict[str, dict[str, dict[str, Any]]] = {
+        "user_seeds": {},
+        "name_matched_seeds": {},
+        "registration_seeds": {},
+        "cbm_confirmed_seeds": {},
+        "api_proto_seeds": {},
+        "golden_seeds": {},
+    }
     for rel in rel_files:
         lower = rel.lower()
         bucket = _classify(rel)
-        if bucket in {"host", "kernel", "api", "proto", "golden"}:
-            seeds.add(rel)
-            continue
         if op_tokens and all(token in lower for token in op_tokens):
-            seeds.add(rel)
-            continue
+            _add_seed(seeds["name_matched_seeds"], rel, "name_match", "+".join(op_tokens), rel, "high", "file or directory name matches operator token(s)")
         path = repo_root / rel
         if path.suffix.lower() in TEXT_EXTENSIONS and path.stat().st_size < LARGE_FILE_BYTES:
             text = path.read_text(encoding="utf-8", errors="ignore")
-            if ENTRY_PATTERN.search(text) or any(token and token in text.lower() for token in op_tokens):
-                seeds.add(rel)
-    return sorted(seeds)
+            lowered_text = text.lower()
+            entry = ENTRY_PATTERN.search(text)
+            if entry and any(token and token in lowered_text for token in op_tokens):
+                bucket_name = "api_proto_seeds" if bucket in {"api", "proto"} else "registration_seeds"
+                _add_seed(seeds[bucket_name], rel, bucket_name[:-1], entry.group(0), rel, "high", "entry macro and operator token both match")
+            elif bucket == "golden" and any(token and token in lower for token in op_tokens):
+                _add_seed(seeds["golden_seeds"], rel, "golden_name", "+".join(op_tokens), rel, "medium", "golden/reference name matches operator")
+    return {key: sorted(value.values(), key=lambda item: item["path"]) for key, value in seeds.items()}
+
+
+def _add_seed(bucket: dict[str, dict[str, Any]], path: str, seed_type: str, matched_token: str, source_location: str, confidence: str, reason: str) -> None:
+    bucket.setdefault(
+        path,
+        {
+            "path": path,
+            "seed_type": seed_type,
+            "matched_token": matched_token,
+            "source_location": source_location,
+            "confidence": confidence,
+            "reason": reason,
+        },
+    )
 
 
 def _name_tokens(op_name: str) -> list[str]:
     return [token.lower() for token in re.split(r"[^A-Za-z0-9]+", op_name) if token]
 
 
-def _dependency_closure(repo_root: Path, rel_files: list[str], seeds: list[str]) -> dict[str, list[dict[str, Any]]]:
+def _dependency_closure(repo_root: Path, rel_files: list[str], seeds: list[str], operator_roots: list[str], include_paths: list[dict[str, str]]) -> dict[str, list[dict[str, Any]]]:
     rel_set = set(rel_files)
     by_name = _index_repo_modules(rel_files)
     dependency_files: dict[str, dict[str, Any]] = {}
@@ -297,7 +324,7 @@ def _dependency_closure(repo_root: Path, rel_files: list[str], seeds: list[str])
         if (rel, depth) in visited or depth >= MAX_DEPENDENCY_DEPTH:
             continue
         visited.add((rel, depth))
-        for dep in _dependencies_for(repo_root, rel, rel_set, by_name):
+        for dep in _dependencies_for(repo_root, rel, rel_set, by_name, operator_roots, include_paths):
             target = dep["target_file"]
             edge = {
                 "source_file": rel,
@@ -308,7 +335,7 @@ def _dependency_closure(repo_root: Path, rel_files: list[str], seeds: list[str])
                 "reason": dep["reason"],
             }
             edges.append(edge)
-            if dep["resolution_status"] == "resolved" and target in rel_set:
+            if dep["resolution_status"] in {"resolved", "resolved_repository"} and target in rel_set:
                 next_chain = chain + [target]
                 if depth + 1 >= MAX_DEPENDENCY_DEPTH:
                     uncertain[target] = {
@@ -326,7 +353,7 @@ def _dependency_closure(repo_root: Path, rel_files: list[str], seeds: list[str])
                         "discovery_chain": next_chain,
                         "dependency_type": dep["dependency_type"],
                         "included_because": dep["reason"],
-                        "outside_operator_directory": not _same_top_directory(chain[0], target),
+                        "outside_operator_directory": not _inside_operator_roots(target, operator_roots),
                     },
                 )
                 queue.append((target, depth + 1, next_chain))
@@ -357,7 +384,7 @@ def _index_repo_modules(rel_files: list[str]) -> dict[str, str]:
     return result
 
 
-def _dependencies_for(repo_root: Path, rel: str, rel_set: set[str], by_name: dict[str, str]) -> list[dict[str, Any]]:
+def _dependencies_for(repo_root: Path, rel: str, rel_set: set[str], by_name: dict[str, str], operator_roots: list[str], include_paths: list[dict[str, str]]) -> list[dict[str, Any]]:
     path = repo_root / rel
     if path.suffix.lower() not in TEXT_EXTENSIONS or path.stat().st_size >= LARGE_FILE_BYTES:
         return []
@@ -370,7 +397,7 @@ def _dependencies_for(repo_root: Path, rel: str, rel_set: set[str], by_name: dic
         include = INCLUDE_PATTERN.search(line)
         if include:
             delimiter, target = include.groups()
-            resolved = _resolve_include(repo_root, rel, target, delimiter == "<", rel_set)
+            resolved = _resolve_include(repo_root, rel, target, rel_set, operator_roots, include_paths)
             deps.append({**resolved, "source_location": f"{rel}:{lineno}", "dependency_type": "include"})
             continue
         py_import = PY_IMPORT_PATTERN.search(line) or PY_FROM_PATTERN.search(line)
@@ -381,25 +408,28 @@ def _dependencies_for(repo_root: Path, rel: str, rel_set: set[str], by_name: dic
     return deps
 
 
-def _resolve_include(repo_root: Path, source_rel: str, target: str, angle: bool, rel_set: set[str]) -> dict[str, Any]:
-    if angle:
-        return {
-            "target_file": target,
-            "resolution_status": "external_system",
-            "reason": "system angle include recorded but not added to source-read scope",
-        }
+def _resolve_include(repo_root: Path, source_rel: str, target: str, rel_set: set[str], operator_roots: list[str], include_paths: list[dict[str, str]]) -> dict[str, Any]:
     candidates = [
         (repo_root / source_rel).parent / target,
-        repo_root / target,
     ]
+    candidates.extend(repo_root / root / target for root in operator_roots)
+    candidates.extend(repo_root / item["path"] / target for item in include_paths if item.get("path"))
+    candidates.append(repo_root / target)
     for candidate in candidates:
         try:
             rel = candidate.resolve().relative_to(repo_root).as_posix()
         except ValueError:
             continue
         if rel in rel_set:
-            return {"target_file": rel, "resolution_status": "resolved", "reason": f'quoted include "{target}"'}
-    return {"target_file": target, "resolution_status": "unresolved", "reason": "quoted include could not be resolved in repository"}
+            return {"target_file": rel, "resolution_status": "resolved_repository", "reason": f'include "{target}" resolved by deterministic search order'}
+    basename_matches = sorted(rel for rel in rel_set if Path(rel).name == Path(target).name)
+    if len(basename_matches) == 1:
+        return {"target_file": basename_matches[0], "resolution_status": "resolved_repository", "reason": f'include "{target}" resolved by unique repository filename'}
+    if len(basename_matches) > 1:
+        return {"target_file": target, "resolution_status": "ambiguous", "reason": "multiple repository include candidates: " + ", ".join(basename_matches[:8])}
+    if "/" not in target and "\\" not in target:
+        return {"target_file": target, "resolution_status": "unresolved", "reason": "include could not be resolved; may be system or third-party"}
+    return {"target_file": target, "resolution_status": "external_system", "reason": "include outside repository search roots"}
 
 
 def _resolve_python_import(module: str, by_name: dict[str, str]) -> dict[str, Any]:
@@ -412,8 +442,54 @@ def _resolve_python_import(module: str, by_name: dict[str, str]) -> dict[str, An
     return {"target_file": module, "resolution_status": "third_party", "reason": "python import not resolved to repo module"}
 
 
-def _same_top_directory(a: str, b: str) -> bool:
-    return a.split("/", 1)[0] == b.split("/", 1)[0]
+def _operator_roots(seed_paths: list[str]) -> list[str]:
+    roots: set[str] = set()
+    for rel in seed_paths:
+        parts = rel.split("/")
+        for marker in ("op_host", "op_kernel", "op_api"):
+            if marker in parts:
+                idx = parts.index(marker)
+                if len(parts) > idx + 1:
+                    roots.add("/".join(parts[: idx + 2]))
+    return sorted(roots)
+
+
+def _inside_operator_roots(path: str, roots: list[str]) -> bool:
+    return any(path == root or path.startswith(root.rstrip("/") + "/") for root in roots)
+
+
+def _include_search_paths(repo_root: Path, rel_files: list[str]) -> list[dict[str, str]]:
+    result: dict[str, dict[str, str]] = {}
+    pattern = re.compile(r"(?:include_directories|target_include_directories)\s*\(([^)]*)\)|(?:^|\s)-I\s*([^\s)]+)")
+    for rel in rel_files:
+        lower = rel.lower()
+        if not (lower.endswith("cmakelists.txt") or lower.endswith(".cmake") or lower.endswith("build") or lower.endswith("build.bazel") or lower.endswith(".bzl")):
+            continue
+        path = repo_root / rel
+        if path.stat().st_size >= LARGE_FILE_BYTES:
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8", errors="ignore").splitlines(), start=1):
+            for match in pattern.finditer(line):
+                raw = match.group(1) or match.group(2) or ""
+                for token in re.split(r"\s+", raw):
+                    token = token.strip().strip('"').strip("'")
+                    if not token or token.startswith(("$", "PRIVATE", "PUBLIC", "INTERFACE", "SYSTEM")):
+                        continue
+                    candidate = (path.parent / token).resolve() if not Path(token).is_absolute() else Path(token)
+                    try:
+                        inc_rel = candidate.relative_to(repo_root).as_posix()
+                    except ValueError:
+                        continue
+                    result.setdefault(
+                        inc_rel,
+                        {
+                            "path": inc_rel,
+                            "source_file": rel,
+                            "source_location": f"{rel}:{lineno}",
+                            "source_kind": "cmake_target_include_directories",
+                        },
+                    )
+    return sorted(result.values(), key=lambda item: item["path"])
 
 
 def _file_item(repo_root: Path, rel: str, role: str) -> dict[str, Any]:

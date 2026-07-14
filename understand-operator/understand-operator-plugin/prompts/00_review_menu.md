@@ -1,107 +1,91 @@
-# Human Review UX — selectable UI (Plan-style)
+﻿# Human Review UX 鈥?selectable UI (Plan-style)
 
-强制人工审阅闸门：**Phase 0.5 / 3.5**（以及 uo-query 缺 KB）。
+寮哄埗浜哄伐瀹￠槄闂搁棬锛?*Phase 0.5 / 3.5**锛堜互鍙?uo-query 缂?KB锛夈€?
+**鍙湁杩欎簺闂搁棬**鎵嶅厑璁革細鏆傚仠锛圫TOP锛? 鍦ㄥ璇濋噷闄勪笂鍙緵浜哄垽鏂殑瀹￠槄鎽樿銆? 
+鏅€?phase锛堝惈 Phase 1 瀹忚杈圭晫瀹屾垚鍚庯級**绂佹**杈撳嚭瀹￠槄寮忔憳瑕佹垨鍋囪绛変汉銆?
+鐩爣浜や簰涓?Cursor Plan / OpenCode `question` 涓€鑷达細
 
-**只有这些闸门**才允许：暂停（STOP）+ 在对话里附上可供人判断的审阅摘要。  
-普通 phase（含 Phase 1 宏观边界完成后）**禁止**输出审阅式摘要或假装等人。
+- **鈫?鈫?鎴栫偣鍑婚€夋嫨**鍥哄畾閫夐」
+- **鏈€鍚庝竴椤规敮鎸佽嚜鐢辫緭鍏?*锛堟墜宸ヨˉ鍏咃級
+- 閫夊畬鍚?agent 鐢?`--decision` 钀界洏锛屽啀缁х画
 
-目标交互与 Cursor Plan / OpenCode `question` 一致：
-
-- **↑/↓ 或点击选择**固定选项
-- **最后一项支持自由输入**（手工补充）
-- 选完后 agent 用 `--decision` 落盘，再继续
-
-**禁止**再用会抢 stdin 的 Python raw 键盘弹窗（`--arrows` / 阻塞 `input()`）。那会让聊天框无法打字。
-
-## 优先：原生选择 UI
+**绂佹**鍐嶇敤浼氭姠 stdin 鐨?Python raw 閿洏寮圭獥锛坄--arrows` / 闃诲 `input()`锛夈€傞偅浼氳鑱婂ぉ妗嗘棤娉曟墦瀛椼€?
+## 浼樺厛锛氬師鐢熼€夋嫨 UI
 
 ### OpenCode
 
-使用内置 **`question`** 工具（permission 需 allow）。用户可：
+浣跨敤鍐呯疆 **`question`** 宸ュ叿锛坧ermission 闇€ allow锛夈€傜敤鎴峰彲锛?
+- 鐢ㄩ敭鐩?榧犳爣閫夊浐瀹氶€夐」
+- 鎴栬緭鍏?custom answer锛堝搴旀墜宸ヨˉ鍏咃級
 
-- 用键盘/鼠标选固定选项
-- 或输入 custom answer（对应手工补充）
-
-示例问题结构：
-
+绀轰緥闂缁撴瀯锛?
 ```text
 header: Phase 0.5 Macro Scope
-question: 请确认 Phase 1 探索范围后如何继续？
+question: 璇风‘璁?Phase 1 鎺㈢储鑼冨洿鍚庡浣曠户缁紵
 options:
-  - continue — 按当前范围进入 Phase 1
-  - revise — 调整 include/exclude/skip 后重审
-  - stop — 停止 workflow
-  - manual_supplement — 手工补充（选此项后请输入补充内容）
+  - continue 鈥?鎸夊綋鍓嶈寖鍥磋繘鍏?Phase 1
+  - revise 鈥?璋冩暣 include/exclude/skip 鍚庨噸瀹?  - stop 鈥?鍋滄 workflow
+  - manual_supplement 鈥?鎵嬪伐琛ュ厖锛堥€夋椤瑰悗璇疯緭鍏ヨˉ鍏呭唴瀹癸級
 ```
 
-若用户选了 `manual_supplement` 或提交了 custom text：把文本当作 `notes`。
-
+鑻ョ敤鎴烽€変簡 `manual_supplement` 鎴栨彁浜や簡 custom text锛氭妸鏂囨湰褰撲綔 `notes`銆?
 ### Cursor
 
-若环境提供 **AskQuestion**（或同等选择 UI）：
+鑻ョ幆澧冩彁渚?**AskQuestion**锛堟垨鍚岀瓑閫夋嫨 UI锛夛細
 
-- 单选固定选项
-- 最后一项必须是：`手工补充（我来输入）` / `Something else (I will type it)`
-- 不要在同一题再放另一个 “Other”
-
-若 AskQuestion 不可用：在聊天里给出同样选项，并明确写「请回复选项名；选手工补充时在同一条消息写内容」。
-
-## 落盘（两种 UI 选完后都要做）
-
+- 鍗曢€夊浐瀹氶€夐」
+- 鏈€鍚庝竴椤瑰繀椤绘槸锛歚鎵嬪伐琛ュ厖锛堟垜鏉ヨ緭鍏ワ級` / `Something else (I will type it)`
+- 涓嶈鍦ㄥ悓涓€棰樺啀鏀惧彟涓€涓?鈥淥ther鈥?
+鑻?AskQuestion 涓嶅彲鐢細鍦ㄨ亰澶╅噷缁欏嚭鍚屾牱閫夐」锛屽苟鏄庣‘鍐欍€岃鍥炲閫夐」鍚嶏紱閫夋墜宸ヨˉ鍏呮椂鍦ㄥ悓涓€鏉℃秷鎭啓鍐呭銆嶃€?
+## 钀界洏锛堜袱绉?UI 閫夊畬鍚庨兘瑕佸仛锛?
 ```powershell
 python "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --gate <gate> --decision <choice> [--notes "..."] [--approved-task-ids "..."]
 ```
 
-`<gate>`：
-
+`<gate>`锛?
 | Phase | `--gate` |
 |---|---|
 | 0.5 Macro Scope | `macro_scope` |
 | 3.5 Kernel Dispatch | `kernel_dispatch` |
-| uo-query 找不到 KB | `query_missing_kb` |
+| uo-query 鎵句笉鍒?KB | `query_missing_kb` |
 
-可选：先打印菜单备忘（不阻塞）：
-
+鍙€夛細鍏堟墦鍗拌彍鍗曞蹇橈紙涓嶉樆濉烇級锛?
 ```powershell
 python "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --gate <gate>
 ```
 
-## 各闸门选项（最后一项 = 可输入）
+## 鍚勯椄闂ㄩ€夐」锛堟渶鍚庝竴椤?= 鍙緭鍏ワ級
 
 ### macro_scope
 
 1. `continue`
 2. `revise`
 3. `stop`
-4. `manual_supplement` ← **支持输入**（范围/跳过分支等）
+4. `manual_supplement` 鈫?**鏀寔杈撳叆**锛堣寖鍥?璺宠繃鍒嗘敮绛夛級
 
 ### kernel_dispatch
 
 1. `dispatch_all`
-2. `dispatch_subset` ← 选后需提供 task_id（可在 custom 输入里写）
-3. `revise`
+2. `dispatch_subset` 鈫?閫夊悗闇€鎻愪緵 task_id锛堝彲鍦?custom 杈撳叆閲屽啓锛?3. `revise`
 4. `stop`
-5. `manual_supplement` ← **支持输入**
+5. `manual_supplement` 鈫?**鏀寔杈撳叆**
 
 ### query_missing_kb
 
 1. `init`
 2. `source`
 3. `stop`
-4. `manual_supplement` ← **支持输入**（KB 路径 / op-name）
+4. `manual_supplement` 鈫?**鏀寔杈撳叆**锛圞B 璺緞 / op-name锛?
+## Agent 姝ラ锛堝繀椤伙級
 
-## Agent 步骤（必须）
+1. **浠呭湪闂搁棬 turn**锛氬睍绀哄闃呮憳瑕侊紙3.5 蹇呴』鍚叏閲?tiling/family锛?2. 璋冪敤鍘熺敓 `question` / AskQuestion锛堟渶鍚庝竴椤瑰彲杈撳叆锛?3. **STOP** 绛夊緟 UI 杩斿洖
+4. `--decision` 鍐欏叆 `*_decision.json` / review yaml
+5. 鎸夊喅绛栫户缁紱`manual_supplement` / `revise` 鍚告敹 notes 鍚庡彲鍐嶆鎻愰棶
 
-1. **仅在闸门 turn**：展示审阅摘要（3.5 必须含全量 tiling/family）
-2. 调用原生 `question` / AskQuestion（最后一项可输入）
-3. **STOP** 等待 UI 返回
-4. `--decision` 写入 `*_decision.json` / review yaml
-5. 按决策继续；`manual_supplement` / `revise` 吸收 notes 后可再次提问
+## 绂佹
 
-## 禁止
+- 绂佹鍦ㄩ潪闂搁棬 phase锛堝挨鍏?Phase 1 缁撴潫鍚庯級鍚戝璇濊緭鍑?Boundary/IO/open_questions 绛夈€岀粰浜虹湅鐨勫闃呮潗鏂欍€?- 绂佹 Python `--arrows` / `--interactive` 浣滀负 OpenCode/Cursor 榛樿璺緞
+- 绂佹鏇跨敤鎴烽粯璁?`continue`
+- 绂佹鍙创闈欐€佸垪琛ㄥ嵈涓嶅敜璧峰彲閫夋嫨 UI锛堟湁 `question`/AskQuestion 鏃讹級
+- 绂佹鍦ㄦ湭鑾峰緱鏄庣‘ `continue` 鏃惰繘鍏ヤ笅涓€闃舵
 
-- 禁止在非闸门 phase（尤其 Phase 1 结束后）向对话输出 Boundary/IO/open_questions 等「给人看的审阅材料」
-- 禁止 Python `--arrows` / `--interactive` 作为 OpenCode/Cursor 默认路径
-- 禁止替用户默认 `continue`
-- 禁止只贴静态列表却不唤起可选择 UI（有 `question`/AskQuestion 时）
-- 禁止在未获得明确 `continue` 时进入下一阶段

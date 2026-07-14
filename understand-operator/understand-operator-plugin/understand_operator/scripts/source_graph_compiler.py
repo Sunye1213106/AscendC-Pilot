@@ -76,16 +76,16 @@ def compile_source_graph(repo_root: Path, op_name: str) -> tuple[int, list[str]]
     terminology = _terminology(nodes)
     raw_root = uo_root / "graphs" / "raw"
     index_root = uo_root / "indexes"
-    _write_yaml(raw_root / "manifest.yaml", _raw_doc("graph.raw.manifest", {"compiler": "source_graph_compiler", "input_facts_hash": _combined_hash(facts_hashes_for(uo_root)), "node_count": len(nodes), "edge_count": len(edges), "built_at": datetime.now(tz=timezone.utc).isoformat()}))
-    _write_yaml(raw_root / "nodes.yaml", _raw_doc("graph.raw.nodes", {"nodes": nodes}))
-    _write_yaml(raw_root / "edges.yaml", _raw_doc("graph.raw.edges", {"edges": edges}))
-    _write_yaml(raw_root / "paths.yaml", _raw_doc("graph.raw.paths", {"paths": paths}))
-    _write_yaml(raw_root / "indexes.yaml", _raw_doc("graph.raw.indexes", {"by_kind": _by_key(nodes, "kind"), "by_relation_type": _by_key(edges, "type")}))
-    _write_yaml(index_root / "graph_to_yaml.yaml", _raw_doc("indexes.graph_to_yaml", {"graph_to_yaml": graph_to_yaml}))
-    _write_yaml(index_root / "yaml_to_graph.yaml", _raw_doc("indexes.yaml_to_graph", {"yaml_to_graph": yaml_to_graph}))
-    _write_yaml(index_root / "source_index.yaml", _raw_doc("indexes.source_index", {"source_index": source_index}))
-    _write_yaml(index_root / "symbol_index.yaml", _raw_doc("indexes.symbol_index", {"symbol_index": symbol_index}))
-    _write_yaml(index_root / "terminology.yaml", _raw_doc("indexes.terminology", {"terms": terminology}))
+    _write_yaml(raw_root / "manifest.yaml", _raw_doc("graph.raw.manifest", {"_uo_root": uo_root, "compiler": "source_graph_compiler", "input_facts_hash": _combined_hash(facts_hashes_for(uo_root)), "node_count": len(nodes), "edge_count": len(edges), "built_at": datetime.now(tz=timezone.utc).isoformat()}))
+    _write_yaml(raw_root / "nodes.yaml", _raw_doc("graph.raw.nodes", {"_uo_root": uo_root, "nodes": nodes}))
+    _write_yaml(raw_root / "edges.yaml", _raw_doc("graph.raw.edges", {"_uo_root": uo_root, "edges": edges}))
+    _write_yaml(raw_root / "paths.yaml", _raw_doc("graph.raw.paths", {"_uo_root": uo_root, "paths": paths}))
+    _write_yaml(raw_root / "indexes.yaml", _raw_doc("graph.raw.indexes", {"_uo_root": uo_root, "by_kind": _by_key(nodes, "kind"), "by_relation_type": _by_key(edges, "type")}))
+    _write_yaml(index_root / "graph_to_yaml.yaml", _raw_doc("indexes.graph_to_yaml", {"_uo_root": uo_root, "graph_to_yaml": graph_to_yaml}))
+    _write_yaml(index_root / "yaml_to_graph.yaml", _raw_doc("indexes.yaml_to_graph", {"_uo_root": uo_root, "yaml_to_graph": yaml_to_graph}))
+    _write_yaml(index_root / "source_index.yaml", _raw_doc("indexes.source_index", {"_uo_root": uo_root, "source_index": source_index}))
+    _write_yaml(index_root / "symbol_index.yaml", _raw_doc("indexes.symbol_index", {"_uo_root": uo_root, "symbol_index": symbol_index}))
+    _write_yaml(index_root / "terminology.yaml", _raw_doc("indexes.terminology", {"_uo_root": uo_root, "terms": terminology}))
     return 0, [f"compiled raw graph: nodes={len(nodes)} edges={len(edges)}"]
 
 
@@ -179,12 +179,12 @@ def _index_synthetic_edge(
 def _deterministic_cross_layer_edges(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     edges: list[dict[str, Any]] = []
     edges.extend(_match_field(nodes, "tilingdata_write", "tilingdata_read", "tilingdata_write_to_read", ("struct_ref", "field_ref")))
-    edges.extend(_match_field(nodes, "tiling_key_setter", "tiling_key_field", "tiling_key_setter_to_field", ("field_ref",)))
+    edges.extend(_match_field(nodes, "tiling_key_setter_call", "tiling_key_field", "tiling_key_setter_to_field", ("field_refs", "encoding_ref")))
     edges.extend(_match_field(nodes, "compute_operation", "compute_api_call", "compute_to_kernel", ("operation_ref",)))
     edges.extend(_match_list_ref(nodes, "compute_operation", "compute_api_call", "compute_to_kernel", "kernel_api_refs"))
-    edges.extend(_match_field(nodes, "buffer_resource", "buffer_resource", "buffer_producer_to_consumer", ("buffer_ref",)))
+    edges.extend(_buffer_edges(nodes))
     edges.extend(_match_field(nodes, "setflag_event", "waitflag_event", "signal_to_wait", ("event_identifier",)))
-    edges.extend(_match_field(nodes, "kernel_entry", "output_tensor", "kernel_entry_to_output", ("explicit_interface_ref",)))
+    edges.extend(_kernel_entry_output_edges(nodes))
     unique: dict[str, dict[str, Any]] = {}
     for edge in edges:
         unique.setdefault(str(edge.get("id")), edge)
@@ -264,15 +264,94 @@ def _match_list_ref(
     return result
 
 
+def _buffer_edges(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    by_id = {str(node.get("id")): node for node in nodes if node.get("id")}
+    for resource in nodes:
+        if str(resource.get("kind")) != "memory_resource":
+            continue
+        fields = resource.get("fields") if isinstance(resource.get("fields"), dict) else {}
+        producers = _as_list(fields.get("producer_refs"))
+        consumers = _as_list(fields.get("consumer_refs"))
+        for producer_id in producers:
+            for consumer_id in consumers:
+                producer = by_id.get(producer_id)
+                consumer = by_id.get(consumer_id)
+                if not producer or not consumer:
+                    continue
+                edge_id = "REL_AUTO_BUFFER_PRODUCER_TO_CONSUMER_" + _stable_suffix(producer_id, consumer_id)
+                result.append(
+                    {
+                        "id": edge_id,
+                        "type": "buffer_producer_to_consumer",
+                        "source_id": producer_id,
+                        "target_id": consumer_id,
+                        "detail_ref": resource["detail_ref"],
+                        "detail_refs": [producer["detail_ref"], resource["detail_ref"], consumer["detail_ref"]],
+                        "source_refs": sorted(set((producer.get("source_refs") or []) + (resource.get("source_refs") or []) + (consumer.get("source_refs") or []))),
+                        "buffer_resource_ref": resource["id"],
+                        "generated_by": "deterministic_memory_resource_refs",
+                    }
+                )
+    return result
+
+
+def _kernel_entry_output_edges(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    by_id = {str(node.get("id")): node for node in nodes if node.get("id")}
+    for interface in nodes:
+        if str(interface.get("kind")) not in {"kernel_slice", "slice_interface", "kernel_entry"}:
+            continue
+        fields = interface.get("fields") if isinstance(interface.get("fields"), dict) else {}
+        entry_ref = str(fields.get("kernel_entry_ref") or interface.get("id") or "")
+        entry = by_id.get(entry_ref)
+        if not entry:
+            continue
+        for output_id in _as_list(fields.get("output_tensor_refs")) + _as_list(fields.get("output_write_refs")):
+            target = by_id.get(output_id)
+            if not target:
+                continue
+            edge_id = "REL_AUTO_KERNEL_ENTRY_TO_OUTPUT_" + _stable_suffix(entry_ref, output_id)
+            result.append(
+                {
+                    "id": edge_id,
+                    "type": "kernel_entry_to_output",
+                    "source_id": entry_ref,
+                    "target_id": output_id,
+                    "detail_ref": interface["detail_ref"],
+                    "detail_refs": [entry["detail_ref"], interface["detail_ref"], target["detail_ref"]],
+                    "source_refs": sorted(set((entry.get("source_refs") or []) + (interface.get("source_refs") or []) + (target.get("source_refs") or []))),
+                    "generated_by": "deterministic_kernel_interface_refs",
+                }
+            )
+    return result
+
+
 def _stable_match(source: dict[str, Any], target: dict[str, Any], fields: tuple[str, ...]) -> bool:
     sfields = source.get("fields") if isinstance(source.get("fields"), dict) else {}
     tfields = target.get("fields") if isinstance(target.get("fields"), dict) else {}
     for field in fields:
         sval = sfields.get(field)
         tval = tfields.get(field)
-        if isinstance(sval, str) and sval and sval == tval:
-            return True
-    return False
+        if not _value_matches(sval, tval):
+            return False
+    return True
+
+
+def _value_matches(source_value: Any, target_value: Any) -> bool:
+    source_values = set(_as_list(source_value))
+    target_values = set(_as_list(target_value))
+    if not source_values or not target_values:
+        return False
+    return bool(source_values & target_values)
+
+
+def _as_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value if item not in (None, "")]
+    if isinstance(value, str) and value:
+        return [value]
+    return []
 
 
 def _stable_suffix(source_id: str, target_id: str) -> str:
@@ -326,6 +405,11 @@ def _derive_paths(edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "compute_to_kernel": {"compute_to_kernel"},
         "buffer_producer_to_consumer": {"buffer_producer_to_consumer"},
         "signal_to_wait": {"signal_to_wait"},
+        "vector_to_cube": {"compute_to_kernel", "condition_selects_engine", "implemented_by"},
+        "cube_to_vector": {"compute_to_kernel", "condition_selects_engine", "implemented_by"},
+        "vector_cube_vector": {"compute_to_kernel", "condition_selects_engine", "implemented_by"},
+        "conditional_engine_path": {"condition_selects_engine", "compute_to_kernel"},
+        "architecture_engine_path": {"condition_selects_engine", "compute_to_kernel"},
     }
     max_depth = 6
     max_paths_per_type = 50
@@ -440,6 +524,8 @@ def _kind_matches(actual: str, expected: str) -> bool:
         "operation": {"operation"},
         "api": {"api", "call"},
         "sync": {"sync"},
+        "source_file": {"source_file", "dependency_file"},
+        "memory_resource": {"memory_resource"},
     }
     return actual in aliases.get(expected, set())
 
@@ -451,9 +537,13 @@ def _normalize_kind(kind: str) -> str:
     for token, normalized in (
         ("tensor", "tensor"),
         ("operation", "operation"),
+        ("resource", "memory_resource"),
+        ("source_file", "source_file"),
+        ("dependency_file", "source_file"),
         ("branch", "branch"),
         ("loop", "loop"),
         ("call", "call"),
+        ("api", "api"),
         ("key", "key"),
         ("tilingdata", "tilingdata"),
         ("sync", "sync"),
@@ -469,15 +559,11 @@ def _normalize_kind(kind: str) -> str:
 
 
 def _raw_doc(artifact_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    snapshot = _snapshot_from_manifest(payload.pop("_uo_root", None))
     return {
         "version": 1,
         "artifact": {"type": artifact_type, "schema_version": 1, "owner": "raw-graph-compiler"},
-        "snapshot": {
-            "run_id": "UO_RUN_GRAPH",
-            "source_snapshot_id": "SOURCE_GRAPH",
-            "source_revision": "unknown",
-            "spec_bundle_hash": spec_bundle_hash(),
-        },
+        "snapshot": snapshot,
         **payload,
         "items": [],
         "relations": [],
@@ -485,9 +571,29 @@ def _raw_doc(artifact_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _snapshot_from_manifest(uo_root: Any) -> dict[str, str]:
+    if isinstance(uo_root, Path):
+        data = _read_yaml(uo_root / "manifest.yaml")
+        source = data.get("source") if isinstance(data.get("source"), dict) else {}
+        return {
+            "run_id": str(data.get("current_run_id") or "UO_RUN_UNKNOWN"),
+            "source_snapshot_id": str(source.get("snapshot_id") or "SOURCE_UNKNOWN"),
+            "source_revision": str(source.get("revision") or "unknown"),
+            "spec_bundle_hash": str((data.get("spec") or {}).get("bundle_hash") or spec_bundle_hash()),
+        }
+    return {"run_id": "UO_RUN_UNKNOWN", "source_snapshot_id": "SOURCE_UNKNOWN", "source_revision": "unknown", "spec_bundle_hash": spec_bundle_hash()}
+
+
 def _write_yaml(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+
+def _read_yaml(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return data if isinstance(data, dict) else {}
 
 
 def _combined_hash(values: dict[str, str]) -> str:

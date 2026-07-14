@@ -269,3 +269,4 @@ Tiling Agent 不负责最终判断真实 kernel path，只能输出：
 - 指向九个 canonical 机器文件的链接。
 
 如果宏、模板、编译期常量或 CBM 关键函数查不到，写入 `coverage_model.yaml` 的 obligations 或 `families.yaml` 的 `risks`，并说明影响哪些 family / field / relation；同时在 `constraints` 用 `evidence_gap` stub 占位，禁止静默空列表。
+

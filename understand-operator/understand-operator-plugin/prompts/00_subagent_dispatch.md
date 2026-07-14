@@ -1,4 +1,4 @@
-# Subagent Dispatch Protocol
+﻿# Subagent Dispatch Protocol
 
 Understand Operator uses subagents only where parallel extraction is useful in
 the Phase 0-3 workflow.
@@ -47,3 +47,4 @@ subagent-owned fact file to force a pass.
 
 Use MCP `codebase-memory-mcp` for symbol/call/source behavior checks. Do not use
 `cbm_query.py`, `uo-cbm`, or `codebase-memory-mcp cli` as a fallback.
+

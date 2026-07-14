@@ -36,3 +36,11 @@ relation_types:
   buffer_producer_to_consumer: {source: any, target: any}
   signal_to_wait: {source: sync, target: sync}
   kernel_entry_to_output: {source: symbol, target: argument}
+  includes: {source: source_file, target: source_file}
+  imports: {source: source_file, target: source_file}
+  build_depends_on: {source: source_file, target: source_file}
+  implemented_by: {source: operation, target: api}
+  condition_selects_engine: {source: branch, target: operation}
+  uses_buffer: {source: any, target: memory_resource}
+  produced_into: {source: any, target: memory_resource}
+  consumed_from: {source: memory_resource, target: any}

@@ -1,8 +1,8 @@
-version: 1
+﻿version: 1
 artifact_type: compute.numerical_semantics
 required_top_level: [version, artifact, snapshot, items, relations, unresolved]
 allowed_top_level: [version, artifact, snapshot, analysis_status, reason, sources, items, relations, unresolved]
-item_kind_enum: [numerical_policy, tolerance_policy, stability_policy, numeric_sensitive_operation, accumulation_policy, cast_policy, golden_kernel_diff, generic_fact]
+item_kind_enum: [numerical_policy, tolerance_policy, stability_policy, numeric_sensitive_operation, accumulation_policy, cast_policy, golden_kernel_diff]
 required_item_fields: [id, kind, name, status, sources]
 kind_required_fields:
   numerical_policy: [accumulation_dtype, cast_policy, precision_strategy, stability_strategy, oracle_or_tolerance_source, sensitive_op_refs, expected_error_model, tolerance_source_ref, golden_ref, kernel_ref]
@@ -12,8 +12,8 @@ kind_required_fields:
   accumulation_policy: [accumulation_dtype, cast_policy, precision_strategy, stability_strategy, oracle_or_tolerance_source, sensitive_op_refs, expected_error_model, tolerance_source_ref, golden_ref, kernel_ref]
   cast_policy: [accumulation_dtype, cast_policy, precision_strategy, stability_strategy, oracle_or_tolerance_source, sensitive_op_refs, expected_error_model, tolerance_source_ref, golden_ref, kernel_ref]
   golden_kernel_diff: [accumulation_dtype, cast_policy, precision_strategy, stability_strategy, oracle_or_tolerance_source, sensitive_op_refs, expected_error_model, tolerance_source_ref, golden_ref, kernel_ref]
-  generic_fact: [name]
 relation_required_fields: [id, type, source_id, target_id, status]
 minimum_cardinality: 0
 stores: [accumulation_dtype, cast_rules, precision_strategy, overflow_risk, underflow_risk, stability_handling, golden_hints, tolerance_hints, sensitive_operations, error_models, kernel_golden_differences]
 forbids: [testcase_generation]
+

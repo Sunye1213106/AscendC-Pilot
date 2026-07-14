@@ -29,6 +29,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("repo", nargs="?", default=".", help="Repository root")
     parser.add_argument("--op-name", help="Operator name. Defaults to repository name.")
+    parser.add_argument("--resume", action="store_true", help="Resume the current incomplete UO run.")
+    parser.add_argument("--force-new-run", action="store_true", help="Always create a new UO run.")
     parser.add_argument(
         "--write-index-meta",
         action="store_true",
@@ -54,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
     op_name = safe_op_name(args.op_name, repo_root)
     base = operator_root(repo_root, op_name)
     init_operator_contract_layout(base, op_name, repo_root)
-    run_id = _current_or_new_run_id(base)
+    run_id = _select_run_id(base, resume=args.resume, force_new=args.force_new_run)
     phase0 = base / "runs" / run_id / "phase0"
     _update_manifest_phase0(base, run_id, repo_root)
     installed_skill = Path.home() / ".config" / "opencode" / "skills" / "understand-operator"
@@ -171,7 +173,21 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _current_or_new_run_id(base: Path) -> str:
+def _select_run_id(base: Path, *, resume: bool, force_new: bool) -> str:
+    if resume and force_new:
+        raise SystemExit("--resume and --force-new-run are mutually exclusive")
+    if force_new or not resume:
+        return _new_run_id()
+    current = _current_run_id(base)
+    if current is None:
+        return _new_run_id()
+    receipt = base / "runs" / current / "phase0" / "receipt.yaml"
+    if _receipt_passed(receipt):
+        raise SystemExit(f"current run {current} already has a pass receipt; create a new run instead")
+    return current
+
+
+def _current_run_id(base: Path) -> str | None:
     manifest = base / "manifest.yaml"
     if manifest.exists():
         try:
@@ -183,7 +199,23 @@ def _current_or_new_run_id(base: Path) -> str:
                 return value
         except Exception:  # noqa: BLE001
             pass
-    return "UO_RUN_" + datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S")
+    return None
+
+
+def _new_run_id() -> str:
+    return "UO_RUN_" + datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S%f")
+
+
+def _receipt_passed(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        import yaml
+
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return isinstance(data, dict) and data.get("status") == "pass"
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _git_revision(repo_root: Path) -> str:

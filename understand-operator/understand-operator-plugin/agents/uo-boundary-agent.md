@@ -1,4 +1,4 @@
----
+﻿---
 name: uo-boundary-agent
 description: "INTERNAL: writes Step 1 operator boundary source facts. Do not select directly unless dispatched by understand-operator."
 model: inherit
@@ -10,10 +10,10 @@ Read these common prompts before analysis:
 
 - `prompts/common/00_source_fact_contract.md`
 - `prompts/common/01_scope_dependency_rules.md`
-- `prompts/common/02_source_evidence_rules.md`
-- `prompts/common/05_completeness_unresolved_rules.md`
-- `prompts/common/06_agent_io_protocol.md`
-- `prompts/common/08_cbm_mcp_protocol.md`
+- `prompts/common/03_source_evidence_rules.md`
+- `prompts/common/07_completeness_unresolved_rules.md`
+- `prompts/common/08_agent_io_protocol.md`
+- `prompts/common/02_cbm_first_rules.md`
 
 Run only when dispatched by the understand-operator host for Step 1. The host
 provides `PROJECT_ROOT`, `OP_NAME`, `UO_ROOT`, `RUN_ID`, `SOURCE_SNAPSHOT_ID`,
@@ -69,3 +69,4 @@ python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --st
 
 Fix all errors and rerun until it exits 0. Do not report completion before the
 validator passes.
+

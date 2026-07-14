@@ -50,6 +50,9 @@ def finalize_phase0(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
     review = docs["scope_review"]
     files = scan.get("files") if isinstance(scan.get("files"), dict) else {}
     approved = review.get("approved_scope") if isinstance(review.get("approved_scope"), dict) else {}
+    def scoped(key: str) -> Any:
+        return approved[key] if key in approved else files.get(key, [])
+
     receipt = {
         "version": 1,
         "artifact": {"type": "runs.receipt", "schema_version": 1, "owner": "uo-orchestrator"},
@@ -62,12 +65,14 @@ def finalize_phase0(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
         "status": "pass",
         "finalized_at": datetime.now(tz=timezone.utc).isoformat(),
         "frozen_scope": {
-            "approved_initial_files": approved.get("initial_operator_files") or files.get("initial_operator_files") or [],
-            "approved_dependency_files": approved.get("dependency_files") or files.get("dependency_files") or [],
+            "approved_initial_files": scoped("initial_operator_files"),
+            "approved_dependency_files": scoped("dependency_files"),
             "approved_include": approved.get("approved_include") or [],
-            "approved_exclude": approved.get("excluded_files") or files.get("excluded_files") or [],
-            "architecture_variants": approved.get("architecture_variants") or scan.get("architecture_variants") or [],
-            "unresolved_dependencies": approved.get("uncertain_files") or files.get("uncertain_files") or [],
+            "approved_exclude": scoped("excluded_files"),
+            "architecture_variants": approved["architecture_variants"] if "architecture_variants" in approved else scan.get("architecture_variants", []),
+            "unresolved_dependencies": scoped("uncertain_files"),
+            "operator_roots": approved["operator_roots"] if "operator_roots" in approved else scan.get("operator_roots", []),
+            "include_search_paths": approved["include_search_paths"] if "include_search_paths" in approved else scan.get("include_search_paths", []),
         },
         "cbm_project": cbm_meta.get("cbm_project"),
         "cbm_mode": cbm_meta.get("cbm_mode"),
@@ -83,11 +88,7 @@ def finalize_phase0(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
         "source_revision": context.get("source_revision"),
         "source_snapshot_id": context.get("source_snapshot_id"),
         "spec_bundle_hash": spec_bundle_hash(),
-        "input_hashes": {
-            "runs/%s/phase0/scope_scan.yaml" % run_id: _sha256_file(phase0 / "scope_scan.yaml"),
-            "runs/%s/phase0/semantic_enrichment.yaml" % run_id: _sha256_file(phase0 / "semantic_enrichment.yaml"),
-            "runs/%s/phase0/scope_review.yaml" % run_id: _sha256_file(phase0 / "scope_review.yaml"),
-        },
+        "input_hashes": _phase0_input_hashes(uo_root, phase0, run_id),
         "items": [
             {
                 "id": "OP_PHASE0_RECEIPT",
@@ -203,6 +204,20 @@ def _git_revision(repo_root: Path) -> str:
 
 def _sha256_file(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _phase0_input_hashes(uo_root: Path, phase0: Path, run_id: str) -> dict[str, str]:
+    candidates = {
+        "manifest.yaml": uo_root / "manifest.yaml",
+        f"runs/{run_id}/phase0/context.yaml": phase0 / "context.yaml",
+        f"runs/{run_id}/phase0/installed_skill_check.yaml": phase0 / "installed_skill_check.yaml",
+        f"runs/{run_id}/phase0/ignore_rules.yaml": phase0 / "ignore_rules.yaml",
+        f"runs/{run_id}/phase0/scope_scan.yaml": phase0 / "scope_scan.yaml",
+        f"runs/{run_id}/phase0/semantic_enrichment.yaml": phase0 / "semantic_enrichment.yaml",
+        f"runs/{run_id}/phase0/scope_review.yaml": phase0 / "scope_review.yaml",
+        "cbm/index_meta.json": uo_root / "cbm" / "index_meta.json",
+    }
+    return {rel: _sha256_file(path) for rel, path in candidates.items() if path.exists()}
 
 
 def main(argv: list[str] | None = None) -> int:

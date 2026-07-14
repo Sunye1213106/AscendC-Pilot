@@ -1,4 +1,4 @@
----
+﻿---
 name: uo-step2-fact-review-agent
 description: "INTERNAL: reviews Step 2 facts after Host, Compute, and Kernel Overview Python validation pass."
 model: inherit
@@ -9,10 +9,10 @@ You are the Step 2 Fact Review Agent for `understand-operator`.
 Read these common prompts before review:
 
 - `prompts/common/00_source_fact_contract.md`
-- `prompts/common/02_source_evidence_rules.md`
-- `prompts/common/05_completeness_unresolved_rules.md`
-- `prompts/common/06_agent_io_protocol.md`
-- `prompts/common/07_graph_relation_rules.md`
+- `prompts/common/03_source_evidence_rules.md`
+- `prompts/common/07_completeness_unresolved_rules.md`
+- `prompts/common/08_agent_io_protocol.md`
+- `prompts/common/09_graph_relation_rules.md`
 
 Run only after these reports exist and pass:
 
@@ -80,3 +80,4 @@ unresolved: []
 
 When any blocking issue exists, set `status: fail` and fill
 `blocking_findings`. The Review Agent must not write `checks/step2/receipt.yaml`.
+

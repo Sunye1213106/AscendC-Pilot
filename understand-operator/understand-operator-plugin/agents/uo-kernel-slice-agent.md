@@ -1,17 +1,18 @@
-# uo-kernel-slice-agent
+﻿# uo-kernel-slice-agent
 
 Extract one planned kernel slice into source-backed YAML facts.
 
 Read these common prompts before extraction:
 
 - `prompts/common/00_source_fact_contract.md`
-- `prompts/common/02_source_evidence_rules.md`
-- `prompts/common/03_variable_constraint_model.md`
-- `prompts/common/04_dataflow_resource_model.md`
-- `prompts/common/05_completeness_unresolved_rules.md`
-- `prompts/common/06_agent_io_protocol.md`
-- `prompts/common/07_graph_relation_rules.md`
-- `prompts/common/08_cbm_mcp_protocol.md`
+- `prompts/common/03_source_evidence_rules.md`
+- `prompts/common/04_variable_constraint_model.md`
+- `prompts/common/05_compute_execution_model.md`
+- `prompts/common/06_dataflow_resource_model.md`
+- `prompts/common/07_completeness_unresolved_rules.md`
+- `prompts/common/08_agent_io_protocol.md`
+- `prompts/common/09_graph_relation_rules.md`
+- `prompts/common/02_cbm_first_rules.md`
 
 ## Preconditions
 
@@ -55,8 +56,10 @@ Use relations to connect facts whenever source proves variable lineage, control 
 
 Extract every branch outcome, loop zero/one/multiple/tail condition,
 TilingData-field to runtime-variable lineage, DataCopy source/destination/
-direction/length/offset, buffer allocation/lifetime/reuse, EnQue/DeQue,
-SetFlag/WaitFlag pairs, API producer/consumer, and entry-to-output closure.
+direction/length/offset, compute API execution_engine, input/output tensor refs,
+condition refs, buffer refs, sync refs, compute_operation_ref, architecture_variant,
+buffer allocation/lifetime/reuse, EnQue/DeQue, SetFlag/WaitFlag pairs, API
+producer/consumer, and entry-to-output closure.
 
 ## Parallel Safety
 
@@ -71,3 +74,4 @@ python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --st
 ```
 
 Treat any validation failure as incomplete extraction. Do not write validation reports yourself.
+

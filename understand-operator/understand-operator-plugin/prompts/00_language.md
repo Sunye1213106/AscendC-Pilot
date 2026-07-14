@@ -1,28 +1,18 @@
-# 默认语言：中文（强制）
+﻿# 榛樿璇█锛氫腑鏂囷紙寮哄埗锛?
+`understand-operator` / 鍏ㄩ儴 `/uo-*` 鍛戒护鐨?*榛樿鐢ㄦ埛鍙璇█涓轰腑鏂囷紙zh-CN锛?*銆?
+## 蹇呴』鐢ㄤ腑鏂?
+- TodoWrite 浠诲姟鏍囬锛坈ontent锛?- **闂搁棬**瀵硅瘽杩涘害鍧椼€侀樁娈佃鏄庛€丼TOP / 闂搁棬鎻愮ず銆佷汉宸ュ闃呮憳瑕佷笌鑿滃崟璇存槑
+- `/uo-query` 瀵圭敤鎴风殑鍥炵瓟姝ｆ枃锛堝紩鐢ㄦ鏍囬鍙敤銆屽紩鐢?/ KB / 婧愮爜鏍稿疄 / 缃俊搴︺€嶏級
+- `workflow_progress.yaml` 鐨?`notes` 涓?todo `title` 瀛楁
+- 閿欒鎻愮ず銆佷笅涓€姝ュ缓璁?
+闈為椄闂?phase 榛樿涓嶅悜瀵硅瘽鍊惧€掑闃呭紡闀挎枃锛涢渶瑕佷腑鏂囨椂涔熷彧淇濈暀鏋佺畝鐘舵€侊紙鎴栦粎 TodoWrite锛夈€?
+## 鍏佽淇濈暀鑻辨枃
 
-`understand-operator` / 全部 `/uo-*` 命令的**默认用户可见语言为中文（zh-CN）**。
+- 鏂囦欢璺緞銆佺鍙峰悕銆丄PI銆佸畯銆乼iling_key 瀛楁鍚?- todo id锛坄uo-p0`锛夈€乫amily_id锛坄TF007`锛夈€乼ask_id
+- MCP 宸ュ叿鍚嶏紙`search_graph`锛夈€乊AML key 鍚?- 婧愮爜寮曠敤琛岋紙`file:line`锛?
+## 绂佹
 
-## 必须用中文
+- 榛樿鐢ㄨ嫳鏂囧啓 todo / 杩涘害 / 瀹￠槄鎽樿
+- 銆屼粎褰撶敤鎴疯姹備腑鏂囨椂鎵嶇敤涓枃銆嶁€斺€斾腑鏂囨槸榛樿锛屼笉鏄彲閫?- 涓嫳娣锋帓鐨勬暣鍙ヨ繘搴︽爣棰橈紙濡?`Phase 0 鈥?Preflight and CBM`锛?
+鎶€鏈枃妗ｏ紙README 鑻辨枃娈佃惤銆乻chema 瀛楁鍚嶏級鍙繚鐣欒嫳鏂囷紱**闈㈠悜鐢ㄦ埛鐨?agent 杈撳嚭涓€寰嬩腑鏂囥€?*
 
-- TodoWrite 任务标题（content）
-- **闸门**对话进度块、阶段说明、STOP / 闸门提示、人工审阅摘要与菜单说明
-- `/uo-query` 对用户的回答正文（引用段标题可用「引用 / KB / 源码核实 / 置信度」）
-- `workflow_progress.yaml` 的 `notes` 与 todo `title` 字段
-- 错误提示、下一步建议
-
-非闸门 phase 默认不向对话倾倒审阅式长文；需要中文时也只保留极简状态（或仅 TodoWrite）。
-
-## 允许保留英文
-
-- 文件路径、符号名、API、宏、tiling_key 字段名
-- todo id（`uo-p0`）、family_id（`TF007`）、task_id
-- MCP 工具名（`search_graph`）、YAML key 名
-- 源码引用行（`file:line`）
-
-## 禁止
-
-- 默认用英文写 todo / 进度 / 审阅摘要
-- 「仅当用户要求中文时才用中文」——中文是默认，不是可选
-- 中英混排的整句进度标题（如 `Phase 0 — Preflight and CBM`）
-
-技术文档（README 英文段落、schema 字段名）可保留英文；**面向用户的 agent 输出一律中文。**

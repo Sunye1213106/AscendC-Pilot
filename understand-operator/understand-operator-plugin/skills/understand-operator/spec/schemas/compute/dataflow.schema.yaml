@@ -1,8 +1,8 @@
-version: 1
+﻿version: 1
 artifact_type: compute.dataflow
 required_top_level: [version, artifact, snapshot, items, relations, unresolved]
 allowed_top_level: [version, artifact, snapshot, analysis_status, reason, sources, items, relations, unresolved]
-item_kind_enum: [dataflow_edge, tensor_dependency, operation_order, takes_tensor, produces_tensor, data_depends_on, shape_depends_on, dtype_depends_on, layout_depends_on, alias_depends_on, generic_fact]
+item_kind_enum: [dataflow_edge, tensor_dependency, operation_order, takes_tensor, produces_tensor, data_depends_on, shape_depends_on, dtype_depends_on, layout_depends_on, alias_depends_on]
 required_item_fields: [id, kind, name, status, sources]
 kind_required_fields:
   dataflow_edge: [producer_ref, consumer_ref, relation_kind, input_tensor_ref, output_tensor_ref, order_index, condition_ref, evidence_kind]
@@ -15,8 +15,8 @@ kind_required_fields:
   dtype_depends_on: [producer_ref, consumer_ref, relation_kind, input_tensor_ref, output_tensor_ref, order_index, condition_ref, evidence_kind]
   layout_depends_on: [producer_ref, consumer_ref, relation_kind, input_tensor_ref, output_tensor_ref, order_index, condition_ref, evidence_kind]
   alias_depends_on: [producer_ref, consumer_ref, relation_kind, input_tensor_ref, output_tensor_ref, order_index, condition_ref, evidence_kind]
-  generic_fact: [name]
 relation_required_fields: [id, type, source_id, target_id, status]
 minimum_cardinality: 1
 stores: [tensor_to_operation, operation_to_tensor, dependency_order, intermediate_producer_consumer, output_dependencies, shape_dependencies, dtype_dependencies, layout_dependencies, alias_dependencies, conditional_edges, evidence_kind]
 forbids: [kernel_pipeline_stage]
+

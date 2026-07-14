@@ -118,6 +118,8 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
         _validate_document_header(rel, doc, entry, errors)
         if rel != "manifest.yaml":
             _validate_machine_schema(spec["root"], rel, doc, entry, errors)
+            _validate_compute_execution_rules(rel, doc, errors)
+        _validate_generic_fact_forbidden(rel, doc, errors)
         _validate_owner(rel, doc, entry, ownership, errors)
         _validate_ids(rel, doc, id_re, allowed_prefixes, errors)
         _validate_relation_types(rel, doc, relation_types, errors)
@@ -229,6 +231,15 @@ def _validate_phase0_receipt(
     input_hashes = receipt.get("input_hashes")
     if not isinstance(input_hashes, dict) or not input_hashes:
         errors.append(FactValidationError("PHASE0_RECEIPT_INVALID", rel, "input_hashes must freeze Phase 0 artifacts"))
+    elif isinstance(input_hashes, dict):
+        for item_rel, expected_hash in sorted(input_hashes.items()):
+            item_path = uo_root / str(item_rel)
+            if not item_path.exists():
+                errors.append(FactValidationError("PHASE0_RECEIPT_STALE", rel, f"{item_rel} is missing"))
+                continue
+            actual_hash = "sha256:" + hashlib.sha256(item_path.read_bytes()).hexdigest()
+            if actual_hash != expected_hash:
+                errors.append(FactValidationError("PHASE0_RECEIPT_STALE", rel, f"{item_rel} hash changed"))
 
 
 def _git_revision(repo_root: Path) -> str:
@@ -411,6 +422,38 @@ def _validate_machine_schema(
     if isinstance(min_cardinality, int) and min_cardinality > 0:
         if len(doc.get("items") or []) + len(doc.get("relations") or []) + len(doc.get("unresolved") or []) < min_cardinality:
             errors.append(FactValidationError("SCHEMA_MIN_CARDINALITY", rel, f"requires at least {min_cardinality} item/relation/unresolved entry"))
+
+
+def _validate_generic_fact_forbidden(rel: str, doc: dict[str, Any], errors: list[FactValidationError]) -> None:
+    for section in ("items", "relations"):
+        for index, item in enumerate(doc.get(section) or []):
+            if isinstance(item, dict) and item.get("kind") == "generic_fact":
+                errors.append(FactValidationError("SCHEMA_GENERIC_FACT_FORBIDDEN", rel, f"/{section}/{index}/kind generic_fact is not allowed in core facts"))
+
+
+def _validate_compute_execution_rules(rel: str, doc: dict[str, Any], errors: list[FactValidationError]) -> None:
+    if not rel.endswith("facts/compute/operations.yaml") and rel != "facts/compute/operations.yaml":
+        return
+    for index, item in enumerate(doc.get("items") or []):
+        if not isinstance(item, dict):
+            continue
+        execution = item.get("execution") if isinstance(item.get("execution"), dict) else {}
+        classification = execution.get("classification")
+        paths = [path for path in execution.get("paths") or [] if isinstance(path, dict)]
+        engines = [str(path.get("engine") or "") for path in paths]
+        if classification not in {"cube", "vector", "scalar", "data_movement", "conditional", "mixed", "unknown"}:
+            errors.append(FactValidationError("COMPUTE_EXECUTION_CLASSIFICATION_INVALID", rel, f"/items/{index}/execution/classification is required"))
+            continue
+        if classification in {"cube", "vector"} and classification not in engines:
+            errors.append(FactValidationError("COMPUTE_EXECUTION_PATH_MISSING", rel, f"/items/{index} classification {classification} requires a {classification} path"))
+        if classification == "conditional":
+            signatures = {(str(path.get("engine") or ""), tuple(str(ref) for ref in path.get("condition_refs") or [])) for path in paths}
+            if len(signatures) < 2:
+                errors.append(FactValidationError("COMPUTE_CONDITIONAL_PATH_INSUFFICIENT", rel, f"/items/{index} conditional classification requires at least two distinct path conditions or engines"))
+        if classification == "mixed" and not {"cube", "vector"} <= set(engines):
+            errors.append(FactValidationError("COMPUTE_MIXED_PATH_INSUFFICIENT", rel, f"/items/{index} mixed classification requires cube and vector paths"))
+        if classification == "unknown" and not doc.get("unresolved"):
+            errors.append(FactValidationError("COMPUTE_UNKNOWN_REQUIRES_UNRESOLVED", rel, f"/items/{index} unknown classification requires unresolved entry"))
 
 
 def _load_schema(schema_path: Path, errors: list[FactValidationError], rel: str) -> dict[str, Any]:
@@ -656,6 +699,8 @@ def _kind_matches(actual: str, expected: str) -> bool:
         "operation": {"operation"},
         "api": {"api", "call"},
         "sync": {"sync"},
+        "source_file": {"source_file", "dependency_file"},
+        "memory_resource": {"memory_resource"},
     }
     return actual in aliases.get(expected, set())
 
@@ -668,6 +713,12 @@ def _normalize_kind(kind: str) -> str:
         return "tensor"
     if "operation" in lowered:
         return "operation"
+    if "resource" in lowered:
+        return "memory_resource"
+    if "api" in lowered:
+        return "api"
+    if lowered in {"source_file", "dependency_file"}:
+        return "source_file"
     if "branch" in lowered:
         return "branch"
     if "loop" in lowered:

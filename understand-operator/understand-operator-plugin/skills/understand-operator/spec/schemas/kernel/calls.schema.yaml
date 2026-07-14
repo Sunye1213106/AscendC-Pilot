@@ -1,17 +1,17 @@
-version: 1
+﻿version: 1
 artifact_type: kernel.slice.calls
 required_top_level: [version, artifact, snapshot, items, relations, unresolved]
 allowed_top_level: [version, artifact, snapshot, analysis_status, reason, sources, items, relations, unresolved]
-item_kind_enum: [kernel_call, ascendc_api_call, datacopy_call, compute_api_call, queue_call, generic_fact]
+item_kind_enum: [kernel_call, ascendc_api_call, datacopy_call, compute_api_call, queue_call]
 required_item_fields: [id, kind, name, status, sources]
 kind_required_fields:
   kernel_call: [caller_ref, callee_ref, argument_refs, output_refs]
   ascendc_api_call: [caller_ref, callee_ref, argument_refs, output_refs]
-  datacopy_call: [caller_ref, callee_ref, argument_refs, output_refs]
-  compute_api_call: [caller_ref, callee_ref, argument_refs, output_refs]
+  datacopy_call: [caller_ref, callee_ref, argument_refs, output_refs, source_tensor_ref, target_tensor_ref, direction, length_expression_ref, source_offset_ref, target_offset_ref, condition_refs]
+  compute_api_call: [caller_ref, callee_ref, argument_refs, output_refs, execution_engine, input_tensor_refs, output_tensor_refs, condition_refs, buffer_refs, sync_refs, compute_operation_ref, architecture_variant]
   queue_call: [caller_ref, callee_ref, argument_refs, output_refs]
-  generic_fact: [name]
 relation_required_fields: [id, type, source_id, target_id, status]
 minimum_cardinality: 1
 stores: [function_call, ascendc_api_call, template_arguments, call_arguments, return_or_output_buffer, conditional_call]
 forbids: [api_call_without_site]
+

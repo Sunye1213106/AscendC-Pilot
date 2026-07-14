@@ -1,8 +1,8 @@
-version: 1
+﻿version: 1
 artifact_type: compute.tensors
 required_top_level: [version, artifact, snapshot, items, relations, unresolved]
 allowed_top_level: [version, artifact, snapshot, analysis_status, reason, sources, items, relations, unresolved]
-item_kind_enum: [input_tensor, output_tensor, intermediate_tensor, alias_tensor, view_tensor, generic_fact]
+item_kind_enum: [input_tensor, output_tensor, intermediate_tensor, alias_tensor, view_tensor]
 required_item_fields: [id, kind, name, status, sources]
 kind_required_fields:
   input_tensor: [tensor_role, storage_scope, value_semantics, producer_ref, consumer_refs, shape_refs, shape_expression_refs, dtype, dtype_source_ref, layout, layout_source_ref, alias_or_view_ref, source_tensor_ref, in_place_group_ref]
@@ -10,8 +10,8 @@ kind_required_fields:
   intermediate_tensor: [tensor_role, storage_scope, value_semantics, producer_ref, consumer_refs, shape_refs, shape_expression_refs, dtype, dtype_source_ref, layout, layout_source_ref, alias_or_view_ref, source_tensor_ref, in_place_group_ref]
   alias_tensor: [tensor_role, storage_scope, value_semantics, producer_ref, consumer_refs, shape_refs, shape_expression_refs, dtype, dtype_source_ref, layout, layout_source_ref, alias_or_view_ref, source_tensor_ref, in_place_group_ref]
   view_tensor: [tensor_role, storage_scope, value_semantics, producer_ref, consumer_refs, shape_refs, shape_expression_refs, dtype, dtype_source_ref, layout, layout_source_ref, alias_or_view_ref, source_tensor_ref, in_place_group_ref]
-  generic_fact: [name]
 relation_required_fields: [id, type, source_id, target_id, status]
 minimum_cardinality: 1
 stores: [input_tensors, output_tensors, intermediate_tensors, shape, shape_expressions, dtype, dtype_origin, layout, layout_origin, aliases, views, value_semantics, storage_scope, in_place_groups]
 forbids: [kernel_buffer_lifecycle]
+

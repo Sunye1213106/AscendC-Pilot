@@ -1,4 +1,4 @@
----
+﻿---
 name: uo-init
 description: >-
   End-to-end AscendC operator source-fact KB build for a target repo.
@@ -182,3 +182,4 @@ python "$SCRIPT_DIR/uo_query_readonly.py" "$PROJECT_ROOT" --op-name "$OP_NAME" -
 - Query and future TestAgent are read-only consumers. They must not modify UO KB
   or CBM data.
 - User-facing language is Chinese unless the user asks otherwise.
+

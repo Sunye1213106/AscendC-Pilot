@@ -1,8 +1,8 @@
-version: 1
+﻿version: 1
 artifact_type: host.variables
 required_top_level: [version, artifact, snapshot, items, relations, unresolved]
 allowed_top_level: [version, artifact, snapshot, analysis_status, reason, sources, items, relations, unresolved]
-item_kind_enum: [input_derived_variable, attribute_derived_variable, shape_variable, compile_time_variable, runtime_variable, template_variable, feature_flag, numeric_tiling_variable, generic_fact]
+item_kind_enum: [input_derived_variable, attribute_derived_variable, shape_variable, compile_time_variable, runtime_variable, template_variable, feature_flag, numeric_tiling_variable]
 required_item_fields: [id, kind, name, status, sources]
 kind_required_fields:
   input_derived_variable: [declared_type, scope_ref, definition_kind, value_source_ref, domain, affects]
@@ -13,8 +13,8 @@ kind_required_fields:
   template_variable: [declared_type, scope_ref, definition_kind, value_source_ref, domain, affects]
   feature_flag: [declared_type, scope_ref, definition_kind, value_source_ref, domain, affects]
   numeric_tiling_variable: [declared_type, scope_ref, definition_kind, value_source_ref, domain, affects]
-  generic_fact: [name]
 relation_required_fields: [id, type, source_id, target_id, status]
 minimum_cardinality: 1
 stores: [variable_name, declared_type, scope, definition, value_origin, impacts, enters_tiling_key, writes_tilingdata]
 forbids: [ai_family_abstraction]
+

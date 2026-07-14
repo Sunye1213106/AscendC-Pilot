@@ -1,4 +1,4 @@
----
+﻿---
 name: uo-query
 description: >-
   Answer questions from an existing AscendC operator KB. Query is read-only and
@@ -60,3 +60,4 @@ Answer in Chinese by default. Include:
 - confidence and unresolved items
 
 State clearly when the KB lacks the requested fact.
+

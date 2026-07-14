@@ -39,7 +39,7 @@ def run_quality_gate(repo_root: Path, op_name: str) -> tuple[int, dict[str, Any]
     blockers: list[str] = []
     warnings: list[str] = []
 
-    _check_exists(base, checks, blockers, "phase0_receipt", _phase0_receipts(base))
+    _check_current_phase0_receipt(base, checks, blockers)
     _check_report(base, checks, blockers, "phase1_validation", "checks/step1/validation.yaml")
     _check_report(base, checks, blockers, "step2_receipt", "checks/step2/receipt.yaml")
     _check_report(base, checks, blockers, "step3_receipt", "checks/step3/receipt.yaml")
@@ -85,8 +85,40 @@ def run_quality_gate(repo_root: Path, op_name: str) -> tuple[int, dict[str, Any]
     return (2 if blockers else 0), payload
 
 
-def _phase0_receipts(base: Path) -> list[Path]:
-    return sorted((base / "runs").glob("*/phase0/receipt.yaml")) if (base / "runs").exists() else []
+def _check_current_phase0_receipt(base: Path, checks: dict[str, str], blockers: list[str]) -> None:
+    manifest = _read_yaml(base / "manifest.yaml")
+    run_id = manifest.get("current_run_id") if isinstance(manifest, dict) else None
+    if not isinstance(run_id, str) or run_id == "UO_RUN_PENDING":
+        checks["phase0_receipt"] = "fail"
+        blockers.append("phase0_receipt: manifest.current_run_id is not active")
+        return
+    rel = f"runs/{run_id}/phase0/receipt.yaml"
+    path = base / rel
+    data = _read_yaml(path)
+    if data.get("status") != "pass":
+        checks["phase0_receipt"] = "fail"
+        blockers.append(f"{rel} status is not pass")
+        return
+    snapshot = data.get("snapshot") if isinstance(data.get("snapshot"), dict) else {}
+    if snapshot.get("run_id") != run_id:
+        checks["phase0_receipt"] = "fail"
+        blockers.append(f"{rel} run_id does not match manifest.current_run_id")
+        return
+    expected = data.get("input_hashes") if isinstance(data.get("input_hashes"), dict) else {}
+    stale = []
+    for item_rel, digest in expected.items():
+        item_path = base / str(item_rel)
+        if not item_path.exists():
+            stale.append(f"{item_rel} missing")
+            continue
+        actual = "sha256:" + hashlib.sha256(item_path.read_bytes()).hexdigest()
+        if actual != digest:
+            stale.append(f"{item_rel} changed")
+    if stale:
+        checks["phase0_receipt"] = "fail"
+        blockers.extend(f"{rel} stale: {item}" for item in stale)
+        return
+    checks["phase0_receipt"] = "pass"
 
 
 def _check_exists(base: Path, checks: dict[str, str], blockers: list[str], name: str, paths: list[Path]) -> None:
@@ -148,8 +180,20 @@ def _query_smoke(repo_root: Path, op_name: str, base: Path, blockers: list[str])
     if result.get("writes") or result.get("cbm_writes"):
         blockers.append("query smoke attempted writes")
         return False
-    if result.get("query", {}).get("order") != ["derived", "raw", "yaml", "source"]:
-        blockers.append("query smoke did not use Derived -> Raw -> YAML -> Source order")
+    if result.get("query", {}).get("order") != ["terminology", "symbol_index", "derived", "raw", "yaml", "source"]:
+        blockers.append("query smoke did not use terminology -> symbol_index -> derived -> raw -> yaml -> source order")
+        return False
+    if not result.get("resolved_entities"):
+        blockers.append("query smoke resolved_entities is empty")
+        return False
+    if not (result.get("derived_entities") or result.get("raw_entities")):
+        blockers.append("query smoke did not hit a derived or raw entity")
+        return False
+    if not result.get("yaml_items"):
+        blockers.append("query smoke yaml_items is empty")
+        return False
+    if not result.get("source_refs"):
+        blockers.append("query smoke source_refs is empty")
         return False
     return True
 

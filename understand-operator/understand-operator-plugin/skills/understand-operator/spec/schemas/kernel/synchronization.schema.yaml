@@ -1,8 +1,8 @@
-version: 1
+﻿version: 1
 artifact_type: kernel.slice.synchronization
 required_top_level: [version, artifact, snapshot, items, relations, unresolved]
 allowed_top_level: [version, artifact, snapshot, analysis_status, reason, sources, items, relations, unresolved]
-item_kind_enum: [sync_event, setflag_event, waitflag_event, pipebarrier_event, syncall_event, generic_fact]
+item_kind_enum: [sync_event, setflag_event, waitflag_event, pipebarrier_event, syncall_event]
 required_item_fields: [id, kind, name, status, sources]
 kind_required_fields:
   sync_event: [sync_kind, event_identifier, signal_call_refs, wait_call_refs, before_refs, after_refs]
@@ -10,8 +10,8 @@ kind_required_fields:
   waitflag_event: [sync_kind, event_identifier, signal_call_refs, wait_call_refs, before_refs, after_refs]
   pipebarrier_event: [sync_kind, event_identifier, signal_call_refs, wait_call_refs, before_refs, after_refs]
   syncall_event: [sync_kind, event_identifier, signal_call_refs, wait_call_refs, before_refs, after_refs]
-  generic_fact: [name]
 relation_required_fields: [id, type, source_id, target_id, status]
 minimum_cardinality: 0
 stores: [setflag, waitflag, pipebarrier, syncall, event_id, signal_wait_pair, happens_before, adjacent_api_or_buffer]
 forbids: [sync_pair_guess]
+

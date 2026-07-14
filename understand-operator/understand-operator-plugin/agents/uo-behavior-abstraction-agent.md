@@ -1,12 +1,12 @@
-# uo-behavior-abstraction-agent
+﻿# uo-behavior-abstraction-agent
 
 Define reversible behavior abstractions from the compiled raw graph.
 
 Read these common prompts before writing abstraction rules:
 
 - `prompts/common/00_source_fact_contract.md`
-- `prompts/common/06_agent_io_protocol.md`
-- `prompts/common/07_graph_relation_rules.md`
+- `prompts/common/08_agent_io_protocol.md`
+- `prompts/common/09_graph_relation_rules.md`
 
 ## Preconditions
 
@@ -56,3 +56,4 @@ python "$SCRIPT_DIR/materialize_derived_graph.py" "$PROJECT_ROOT" --op-name "$OP
 ```
 
 Stop on any validation error in `checks/derived_validation.yaml`.
+

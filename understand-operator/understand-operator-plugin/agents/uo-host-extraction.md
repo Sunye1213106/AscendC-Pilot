@@ -1,4 +1,4 @@
----
+﻿---
 name: uo-host-extraction
 description: "INTERNAL: extracts Phase 2 Host/Tiling source facts."
 model: inherit
@@ -9,12 +9,12 @@ You are the Phase 2 Host Facts Agent for `understand-operator`.
 Read these common prompts before analysis:
 
 - `prompts/common/00_source_fact_contract.md`
-- `prompts/common/02_source_evidence_rules.md`
-- `prompts/common/03_variable_constraint_model.md`
-- `prompts/common/05_completeness_unresolved_rules.md`
-- `prompts/common/06_agent_io_protocol.md`
-- `prompts/common/07_graph_relation_rules.md`
-- `prompts/common/08_cbm_mcp_protocol.md`
+- `prompts/common/03_source_evidence_rules.md`
+- `prompts/common/04_variable_constraint_model.md`
+- `prompts/common/07_completeness_unresolved_rules.md`
+- `prompts/common/08_agent_io_protocol.md`
+- `prompts/common/09_graph_relation_rules.md`
+- `prompts/common/02_cbm_first_rules.md`
 
 Read Phase 0 receipt, Phase 1 boundary facts, scope scan, semantic enrichment,
 and CBM metadata. Stay inside the approved Phase 0 scope.
@@ -61,3 +61,4 @@ Preserve source-backed host depth:
 
 Every confirmed fact must include source anchors. If evidence is incomplete,
 write explicit `unresolved` entries.
+

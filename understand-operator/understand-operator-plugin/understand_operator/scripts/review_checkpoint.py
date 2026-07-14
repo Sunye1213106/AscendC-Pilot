@@ -42,6 +42,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--default", default=None)
     parser.add_argument("--decision", default=None)
     parser.add_argument("--notes", default="")
+    parser.add_argument("--include", action="append", default=[], help="Add a path to approved initial/operator scope.")
+    parser.add_argument("--exclude", action="append", default=[], help="Add a path to excluded scope.")
+    parser.add_argument("--approve-dependency", action="append", default=[], help="Approve dependency path(s).")
+    parser.add_argument("--reject-dependency", action="append", default=[], help="Reject dependency path(s).")
+    parser.add_argument("--approve-architecture", action="append", default=[], help="Approve architecture variant(s).")
+    parser.add_argument("--exclude-architecture", action="append", default=[], help="Exclude architecture variant(s).")
+    parser.add_argument("--resolve-uncertain", action="append", default=[], help="Resolve uncertain path as <path>:include or <path>:exclude.")
     parser.add_argument("--approved-task-ids", default="", help="Retained for CLI compatibility; ignored.")
     parser.add_argument("--print-menu", action="store_true")
     parser.add_argument("--interactive", action="store_true")
@@ -74,6 +81,7 @@ def main(argv: list[str] | None = None) -> int:
             op_name=op_name,
             choice=choice,
             notes=str(args.notes or "").strip(),
+            changes=_scope_changes(args),
             ui="chat_decision",
         )
 
@@ -85,10 +93,10 @@ def main(argv: list[str] | None = None) -> int:
 
     choice = _numbered_menu(options, default_idx)
     notes = _prompt_multiline("manual supplement:") if choice == "manual_supplement" else ""
-    return _commit(base, gate=args.gate, op_name=op_name, choice=choice, notes=notes, ui="numbered_menu")
+    return _commit(base, gate=args.gate, op_name=op_name, choice=choice, notes=notes, changes={}, ui="numbered_menu")
 
 
-def _commit(base: Path, *, gate: str, op_name: str, choice: str, notes: str, ui: str) -> int:
+def _commit(base: Path, *, gate: str, op_name: str, choice: str, notes: str, changes: dict[str, Any] | None = None, ui: str) -> int:
     decision = {
         "gate": gate,
         "op_name": op_name,
@@ -103,18 +111,24 @@ def _commit(base: Path, *, gate: str, op_name: str, choice: str, notes: str, ui:
         write_text(out_path, json.dumps(decision, ensure_ascii=False, indent=2) + "\n")
         print(f"Wrote {out_path}")
     else:
-        out_path = _write_scope_review(base, decision)
+        out_path = _write_scope_review(base, decision, changes or {})
         print(f"Wrote {out_path}")
     print(f"UO_REVIEW_DECISION={choice}")
     return 0
 
 
-def _write_scope_review(base: Path, decision: dict[str, Any]) -> Path:
+def _write_scope_review(base: Path, decision: dict[str, Any], changes: dict[str, Any]) -> Path:
     run_id = _current_run_id(base)
     phase0 = base / "runs" / run_id / "phase0"
     scan = _load_yaml(phase0 / "scope_scan.yaml")
     snapshot = scan.get("snapshot") if isinstance(scan.get("snapshot"), dict) else {}
     files = scan.get("files") if isinstance(scan.get("files"), dict) else {}
+    dependency_files = _remove_paths(files.get("dependency_files") or [], changes.get("rejected_dependencies") or [])
+    dependency_files = _merge_path_items(dependency_files, changes.get("approved_dependencies") or [], "manual_dependency")
+    initial_files = _merge_path_items(files.get("initial_operator_files") or [], changes.get("added_include") or [], "manual_include")
+    excluded_files = _merge_path_items(files.get("excluded_files") or [], changes.get("added_exclude") or [], "manual_exclude")
+    uncertain_files = _resolve_uncertain(files.get("uncertain_files") or [], changes.get("resolved_uncertain") or [])
+    architecture_variants = _merge_names(scan.get("architecture_variants") or [], changes.get("approved_architectures") or [], changes.get("excluded_architectures") or [])
     payload = {
         "version": 1,
         "artifact": {"type": "runs.scope_review", "schema_version": 1, "owner": "uo-orchestrator"},
@@ -130,15 +144,18 @@ def _write_scope_review(base: Path, decision: dict[str, Any]) -> Path:
         "reviewer": decision.get("reviewer") or "user",
         "notes": decision.get("notes") or "",
         "approved_scope": {
-            "initial_operator_files": files.get("initial_operator_files") or [],
-            "dependency_files": files.get("dependency_files") or [],
+            "initial_operator_files": initial_files,
+            "dependency_files": dependency_files,
             "external_system_files": files.get("external_system_files") or [],
             "third_party_files": files.get("third_party_files") or [],
             "generated_files": files.get("generated_files") or [],
-            "excluded_files": files.get("excluded_files") or [],
-            "uncertain_files": files.get("uncertain_files") or [],
-            "architecture_variants": scan.get("architecture_variants") or [],
+            "excluded_files": excluded_files,
+            "uncertain_files": uncertain_files,
+            "architecture_variants": architecture_variants,
+            "operator_roots": scan.get("operator_roots") or [],
+            "include_search_paths": scan.get("include_search_paths") or [],
         },
+        "changes": changes,
         "items": [],
         "relations": [],
         "unresolved": [],
@@ -146,6 +163,60 @@ def _write_scope_review(base: Path, decision: dict[str, Any]) -> Path:
     out_path = phase0 / "scope_review.yaml"
     write_text(out_path, _to_yaml(payload))
     return out_path
+
+
+def _scope_changes(args: argparse.Namespace) -> dict[str, Any]:
+    resolved: list[dict[str, str]] = []
+    for raw in args.resolve_uncertain or []:
+        path, sep, action = str(raw).rpartition(":")
+        if sep and action in {"include", "exclude"}:
+            resolved.append({"path": path, "action": action})
+    return {
+        "added_include": list(args.include or []),
+        "added_exclude": list(args.exclude or []),
+        "approved_dependencies": list(args.approve_dependency or []),
+        "rejected_dependencies": list(args.reject_dependency or []),
+        "approved_architectures": list(args.approve_architecture or []),
+        "excluded_architectures": list(args.exclude_architecture or []),
+        "resolved_uncertain": resolved,
+    }
+
+
+def _path_of(item: Any) -> str:
+    if isinstance(item, dict):
+        return str(item.get("path") or "")
+    return str(item)
+
+
+def _merge_path_items(items: list[Any], paths: list[str], role: str) -> list[Any]:
+    result = list(items)
+    seen = {_path_of(item) for item in result}
+    for path in paths:
+        if path and path not in seen:
+            result.append({"path": path, "role": role, "include_reason": "scope review override"})
+            seen.add(path)
+    return result
+
+
+def _remove_paths(items: list[Any], paths: list[str]) -> list[Any]:
+    rejected = set(paths)
+    return [item for item in items if _path_of(item) not in rejected]
+
+
+def _resolve_uncertain(items: list[Any], resolutions: list[dict[str, str]]) -> list[Any]:
+    resolved = {item["path"]: item["action"] for item in resolutions if item.get("path")}
+    return [item for item in items if _path_of(item) not in resolved]
+
+
+def _merge_names(items: list[Any], approved: list[str], excluded: list[str]) -> list[Any]:
+    excluded_set = set(excluded)
+    result = [item for item in items if str(item.get("name") if isinstance(item, dict) else item) not in excluded_set]
+    seen = {str(item.get("name") if isinstance(item, dict) else item) for item in result}
+    for name in approved:
+        if name and name not in seen:
+            result.append({"name": name, "semantic_status": "approved_by_review"})
+            seen.add(name)
+    return result
 
 
 def _current_run_id(base: Path) -> str:

@@ -1,19 +1,21 @@
-version: 1
+﻿version: 1
 artifact_type: compute.operations
 required_top_level: [version, artifact, snapshot, items, relations, unresolved]
 allowed_top_level: [version, artifact, snapshot, analysis_status, reason, sources, items, relations, unresolved]
-item_kind_enum: [compute_operation, cast_operation, reduce_operation, broadcast_operation, reshape_operation, transpose_operation, arithmetic_operation, generic_fact]
+item_kind_enum: [compute_operation, data_movement_operation, shape_operation, layout_operation, cast_operation, control_operation]
 required_item_fields: [id, kind, name, status, sources]
 kind_required_fields:
-  compute_operation: [operation_type, execution_order, implementation_ref, kernel_api_refs, golden_ref, input_tensor_refs, output_tensor_refs, axis_refs, formula, dtype_policy, broadcast_policy, reduction_policy, numerical_sensitivity, accumulation_dtype, tolerance_ref]
-  cast_operation: [operation_type, execution_order, implementation_ref, kernel_api_refs, golden_ref, input_tensor_refs, output_tensor_refs, axis_refs, formula, dtype_policy, broadcast_policy, reduction_policy, numerical_sensitivity, accumulation_dtype, tolerance_ref]
-  reduce_operation: [operation_type, execution_order, implementation_ref, kernel_api_refs, golden_ref, input_tensor_refs, output_tensor_refs, axis_refs, formula, dtype_policy, broadcast_policy, reduction_policy, numerical_sensitivity, accumulation_dtype, tolerance_ref]
-  broadcast_operation: [operation_type, execution_order, implementation_ref, kernel_api_refs, golden_ref, input_tensor_refs, output_tensor_refs, axis_refs, formula, dtype_policy, broadcast_policy, reduction_policy, numerical_sensitivity, accumulation_dtype, tolerance_ref]
-  reshape_operation: [operation_type, execution_order, implementation_ref, kernel_api_refs, golden_ref, input_tensor_refs, output_tensor_refs, axis_refs, formula, dtype_policy, broadcast_policy, reduction_policy, numerical_sensitivity, accumulation_dtype, tolerance_ref]
-  transpose_operation: [operation_type, execution_order, implementation_ref, kernel_api_refs, golden_ref, input_tensor_refs, output_tensor_refs, axis_refs, formula, dtype_policy, broadcast_policy, reduction_policy, numerical_sensitivity, accumulation_dtype, tolerance_ref]
-  arithmetic_operation: [operation_type, execution_order, implementation_ref, kernel_api_refs, golden_ref, input_tensor_refs, output_tensor_refs, axis_refs, formula, dtype_policy, broadcast_policy, reduction_policy, numerical_sensitivity, accumulation_dtype, tolerance_ref]
-  generic_fact: [name]
+  compute_operation: [semantic, input_tensor_refs, output_tensor_refs, execution]
+  data_movement_operation: [semantic, input_tensor_refs, output_tensor_refs, execution]
+  shape_operation: [semantic, input_tensor_refs, output_tensor_refs, execution]
+  layout_operation: [semantic, input_tensor_refs, output_tensor_refs, execution]
+  cast_operation: [semantic, input_tensor_refs, output_tensor_refs, execution]
+  control_operation: [semantic, input_tensor_refs, output_tensor_refs, execution]
+execution_classification_enum: [cube, vector, scalar, data_movement, conditional, mixed, unknown]
+execution_path_required_fields: [id, engine, condition_refs, api_refs, architecture_variants, dtype_conditions, layout_conditions, shape_conditions, tiling_key_refs]
+semantic_required_fields: [operation_type, formula]
 relation_required_fields: [id, type, source_id, target_id, status]
 minimum_cardinality: 1
 stores: [matmul, reduce, broadcast, reshape, transpose, cast, arithmetic, mask, normalization, other_operations, formulas, operation_order, implementation_refs, kernel_api_refs, golden_refs, axis_semantics, dtype_policy, numerical_sensitivity]
 forbids: [generated_golden_code]
+
