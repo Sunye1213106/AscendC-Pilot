@@ -1,242 +1,116 @@
 ---
 name: uo-init
 description: >-
-  End-to-end AscendC operator knowledge-base build for a target repo.
-  Use when the user runs /uo-init, understand_operator_init, or asks to initialize
-  / build a full operator KB in a new or existing AscendC repository.
-  Phase 0 must MCP-index the repo into codebase-memory-mcp (graph DB) automatically.
+  End-to-end AscendC operator source-fact KB build for a target repo.
+  Use when the user runs /uo-init, understand_operator_init, or asks to build
+  an operator KB. The workflow is Phase 0 through Phase 3 only.
 disable-model-invocation: true
 argument-hint: "[path] [--op-name <name>] [--full]"
 ---
 
-# uo-init — End-to-End Operator KB Build
+# uo-init - Source-Fact Operator KB Build
 
-Build a complete evidence-backed operator KB under `.understand-operator/<op_name>/` for the target AscendC repo.
-
-## Variables（先解析路径，禁止全盘搜索）
-
-**必读** `$PROMPT_DIR` 解析前先读本 skill 旁的路径规则：打开  
-`../understand-operator/SKILL.md` 同级的 prompts 可能不可达时，用下面硬规则。
-
-完整规则：与本 skill 同安装树下的  
-`understand-operator-plugin/prompts/00_path_resolution.md`  
-（OpenCode：先解析 `SCRIPT_DIR`，再 `PROMPT_DIR=$SCRIPT_DIR/../../prompts`）。
-
-| 变量 | 含义 |
-|---|---|
-| `THIS_SKILL` | 本文件所在目录（可为 `~/.config/opencode/skills/uo-init` junction） |
-| `SCRIPT_DIR` | **优先** `THIS_SKILL/../understand-operator`（必须含 `prepare_operator.py`） |
-| `PLUGIN_ROOT` | 含 `prompts/00_cbm_first_rule.md` 的 plugin 根 |
-| `PROMPT_DIR` | `$PLUGIN_ROOT/prompts` |
-| `PROJECT_ROOT` | 算子仓库根（含 `op_host/`），**不是** opencode 配置目录 |
-| `OP_NAME` | `--op-name` 或仓库名 |
-| `UO_ROOT` | `$PROJECT_ROOT/.understand-operator/$OP_NAME` |
-| `CBM_MODE` | 用户传 `--full` → `full`，否则 `fast` |
-
-OpenCode 已安装时脚本几乎总在：
+Build an evidence-backed operator KB under:
 
 ```text
-%USERPROFILE%\.config\opencode\skills\understand-operator\prepare_operator.py
+.understand-operator/<op_name>/
 ```
 
-**禁止**：`Get-ChildItem C:\ -Recurse`、全盘搜 `prepare_operator*`、因找不到脚本去扫算子 `op_kernel`。  
-找不到 → 提示 `./install.ps1 opencode` 后停止。
+The only active phases are:
 
-解析后立刻跑（验证 SCRIPT_DIR）：
-
-```powershell
-Test-Path "$SCRIPT_DIR/prepare_operator.py"   # 必须为 True
+```text
+Phase 0: bootstrap, indexing, deterministic scope confirmation
+Phase 1: operator boundary facts
+Phase 2: Host, Compute, and Kernel Overview facts in parallel
+Phase 3: Kernel slices, fact review, raw graph, derived graph, query, final gate
 ```
 
-## Global rule
+Do not execute or recreate Phase 3.5, Phase 4+, proposal promotion, canonical v2,
+tiling archive workflows, route builders, contracts/testcase generation, impact
+graphs, or an old standalone quality phase.
 
-Before scope or source work, follow `$PROMPT_DIR/00_cbm_first_rule.md`:
+## Variables
 
-- File structure, path boundaries, architecture-marker locations, generated/test
-  classification, and Phase 0.5 candidate scope use deterministic
-  filesystem/Glob/`rg` first, bounded to `$PROJECT_ROOT`.
-- Symbol resolution, call relations, registration semantics, IO semantics, and
-  source behavior verification remain MCP `codebase-memory-mcp` first.
+- `SCRIPT_DIR`: this skill's sibling `../understand-operator`, containing `prepare_operator.py`.
+- `PLUGIN_ROOT`: the installed plugin root.
+- `PROMPT_DIR`: `$PLUGIN_ROOT/prompts`.
+- `PROJECT_ROOT`: the target operator repository root.
+- `OP_NAME`: `--op-name`, otherwise a safe repository-derived name.
+- `UO_ROOT`: `$PROJECT_ROOT/.understand-operator/$OP_NAME`.
+- `CBM_MODE`: `full` only when the user passes `--full`; otherwise `fast`.
 
-## Phase 0.5 scope discovery rule
+Never search the whole disk for scripts. If `prepare_operator.py` is missing,
+ask the user to reinstall the plugin and stop.
 
-Phase 0.5 is still one human gate (`uo-p05`) but has three mandatory internal
-substeps:
+## Phase 0
 
-1. **0.5-A deterministic scope scan**: use filesystem/Glob/`rg` inside
-   `$PROJECT_ROOT` with ignore rules applied. Write
-   `archive/runs/macro_scope_scan.yaml`.
-   Prefer:
-   `python "$SCRIPT_DIR/macro_scope_scan.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --filesystem-tool python`
-2. **0.5-B targeted MCP semantic enrichment**: query CBM only for candidate
-   files, symbols, registration macros, and architecture variants discovered by
-   0.5-A.
-3. **0.5-C human review**: show include / exclude / branch_skip /
-   uncertain_scope and STOP for the question UI.
+Phase 0 is a single bootstrap/index/scope-review phase. It writes:
 
-Do not add a separate gate between 0.5-A, 0.5-B, and 0.5-C.
-
-## What this command does
-
-1. **Phase 0 — layout + MCP auto-index（强制）**
-2. Phase 0.5 — Macro Scope Human Review → **STOP**
-3. Phase 1 — Macro Boundary writes `facts/operator/*.yaml` → `validate_facts.py --stage step1`
-4. Phase 2 — parallel Task: `uo-host-extraction` + `uo-flow-extraction` + `uo-kernel-overview-agent` → Python validation → `uo-step2-fact-review-agent` → receipt
-5. Phase 3 — Kernel Slice planning (future step)
-6. Phase 3.5 — Kernel Dispatch Human Review → **STOP**
-7. Phase 4 — parallel `uo-kernel-path` × approved tasks → barrier
-8. Phase 5–7 — alignment、evidence、route + test contract
-9. Phase 8 — `quality_gate.py`
-
-## Phase 0 — Layout + MCP index（自动，不要跳过）
-
-CBM 的 graph DB **由 MCP `index_repository` 生成**（写入 MCP 本地 store，如 `~/.cache/codebase-memory-mcp/`）。  
-**不要**用 `cbm_query.py` / `prepare_operator.py --cli-cbm` / `codebase-memory-mcp cli` 做索引。
-
-### 0.1 KB 目录骨架
-
-先读同目录 `PATHS.md`。OpenCode 可直接用：
-
-```powershell
-$SCRIPT_DIR = "$env:USERPROFILE\.config\opencode\skills\understand-operator"
-if (-not (Test-Path "$SCRIPT_DIR\prepare_operator.py")) {
-  throw "缺少 prepare_operator.py。请在 understand-operator 仓库运行 ./install.ps1 opencode。禁止全盘搜索。"
-}
-python "$SCRIPT_DIR\prepare_operator.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+```text
+runs/<run_id>/phase0/context.yaml
+runs/<run_id>/phase0/installed_skill_check.yaml
+runs/<run_id>/phase0/ignore_rules.yaml
+runs/<run_id>/phase0/scope_scan.yaml
+runs/<run_id>/phase0/semantic_enrichment.yaml
+runs/<run_id>/phase0/scope_review.yaml
+runs/<run_id>/phase0/receipt.yaml
+cbm/index_meta.json
 ```
 
-只创建 `.understand-operator/<op>/` 布局，**不**建 CBM DB。
+Required order:
 
-### 0.2 MCP 自动索引（强制）
+1. Resolve `PROJECT_ROOT`, `OP_NAME`, and `SCRIPT_DIR`.
+2. Run `prepare_operator.py` to create the clean KB layout and Phase 0 metadata.
+3. Call MCP `codebase-memory-mcp.index_repository`.
+4. Confirm the indexed CBM project via MCP `list_projects` or `index_status`.
+5. Re-run `prepare_operator.py --write-index-meta --cbm-project <project>`.
+6. Run deterministic scope scanning bounded to `PROJECT_ROOT`.
+7. Use targeted MCP semantic enrichment for candidate entries, registrations,
+   host/kernel symbols, and architecture variants.
+8. Show include, exclude, architecture variants, and uncertain items. Stop.
+   Continue to Phase 1 only after explicit `continue`.
 
-调用 MCP server **`codebase-memory-mcp`**：
+Phase 0 receipt freezes source revision, source snapshot ID, approved scope,
+architecture variants, CBM project, and spec bundle hash.
 
-1. `index_repository`
-   - `repo_path`: `$PROJECT_ROOT`（算子仓库根，含 `op_host/`）
-   - `mode`: `$CBM_MODE`（用户 `--full` → `full`，否则 `fast`）
-2. `list_projects` 或 `index_status`
-   - 确认该 `repo_path` 已出现，记下 `project` / `name`
-3. 把 project 名写回 KB：
+## Phase 1
 
-```powershell
-python "$SCRIPT_DIR/prepare_operator.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --write-index-meta --cbm-project "<MCP_PROJECT_NAME>" --cbm-mode "$CBM_MODE"
+Run `uo-boundary-agent`. It reads Phase 0 receipt, scope scan, semantic
+enrichment, and `cbm/index_meta.json`. It writes only:
+
+```text
+facts/operator/interface.yaml
+facts/operator/source_files.yaml
+facts/operator/entrypoints.yaml
 ```
 
-若 MCP 未连接：
-
-- **停止** Phase 0，提示用户按 `docs/cbm-mcp-setup.md` 配置并重启 agent
-- **禁止**用 CLI 偷偷索引后假装 MCP 已就绪（除非用户明确要求 `--cli-cbm` 应急）
-
-索引成功后再进入 Phase 0.5。后续所有查代码一律 MCP，不再跑 CLI。
-
-## Hard rules
-
-- Subagents only at the two parallel points. Never background `uo-*` Tasks.
-- After parallel Tasks return, run `verify_subagent_barrier.py` before reading subagent artifacts.
-- If a barrier fails, resume or re-dispatch its owning subagent. The host must never edit a subagent's proposal, canonical slice, raw output, or completion manifest to force a pass.
-- `quality.yaml` is generated only by Phase 8 `quality_gate.py`. Never manually change its status, decision, checks, blockers, or warnings; fix the reported artifacts and rerun the gate.
-- Final-review integrity: report the actual Phase 8 exit result. A manually edited `quality.yaml` is invalid; rerun `quality_gate.py` to overwrite it before any handoff.
-- Do not invent IO / branches / kernel paths without evidence.
-- `route.md` is a map, not a long report.
-- uo does **not** generate real tests, CSV, or golden code.
-- Do not cross human review gates (**only 0.5 and 3.5**) without explicit user approval.
-- After Phase 1 Macro Boundary: update todos and **immediately** start Phase 2 parallel Tasks. Do **not** dump Boundary/IO/open_questions text into the chat; judgment briefs belong only at gates 0.5 / 3.5.
-- **Tiling depth（防偷懒）**：Phase 2 host extraction 必须先写满 `tiling/archive/` 五个中间文件（`frontier` / `dispatch_variables` / `predicate_space` / `compile_time_bindings` / `decision_tree`），再合并进 7 个 canonical。禁止只写薄摘要、跳过宏/`constexpr`/模板分析。barrier 与 `quality_gate.py` 会检查。
-- **禁止**宿主手工填 `tiling/*` / `flow/*` 冒充 subagent 完成。
-
-## 默认语言
-
-面向用户一律**中文**。见 `$PROMPT_DIR/00_language.md` 与 `$PROMPT_DIR/00_progress_visibility.md`。  
-TodoWrite 的 content **必须用中文标题**（禁止英文 Phase 标题）。
-
-## Startup checklist
-
-1. 解析路径：`SCRIPT_DIR`（先试 `../understand-operator`）→ 确认 `Test-Path prepare_operator.py`；再解析 `PROJECT_ROOT` / `OP_NAME` / `CBM_MODE`。  
-   **禁止**因找不到脚本去扫 `C:\` 或算子 `op_kernel`。
-2. **TodoWrite（merge=false）** 创建完整中文任务列表（**不要**创建 `uo-p15`），标题固定为：
-   - `uo-p0` 阶段 0 — 预检布局与 MCP 自动索引
-   - `uo-p05` 阶段 0.5 — 宏观执行范围人工审阅（闸门）
-   - `uo-p1` 阶段 1 — 宏观边界分析
-   - `uo-p2a` 阶段 2a — 并行下发 host 与 flow 子代理
-   - `uo-p2b` 阶段 2b — 屏障校验并读取 tiling/flow
-   - `uo-p3` 阶段 3 — Kernel 任务规划
-   - `uo-p35` 阶段 3.5 — Kernel 分发人工审阅（闸门，含全量 tiling/family）
-   - `uo-p4a` 阶段 4a — 并行下发 kernel path 子代理
-   - `uo-p4b` 阶段 4b — 屏障校验并读取 kernel paths
-   - `uo-p5` 阶段 5 — Kernel 对齐矩阵
-   - `uo-p6` 阶段 6 — 证据一致性审计
-   - `uo-p7` 阶段 7 — 路由与知识库地图
-   - `uo-p8` 阶段 8 — 质量门禁
-3. 阶段 0.1 布局 → 阶段 0.2 MCP `index_repository` → 写入 `cbm/index_meta.json`。
-4. **阶段 0.5 宏观范围审阅（闸门）** — 见下节，**必须**用 OpenCode `question` 按钮 UI，禁止退回纯文字输入。
-
-## Phase 0.5 — Macro Scope Human Review（闸门 · 必须 question UI）
-
-读完 `$PROMPT_DIR/01a_macro_scope_human_review.md` 与 `$PROMPT_DIR/00_review_menu.md`。
-
-流程：
-
-1. 用中文展示 include / exclude / branch_skip / uncertain_scope 摘要（不要把 3 个「关键确认」当成最终交互）。
-2. **立刻调用 OpenCode 内置 `question` 工具**（`opencode.json` 里 `permission.question: "allow"`）。**禁止**只写「请确认上述范围」然后等聊天框打字。
-3. `question` 结构示例：
-
-```json
-{
-  "questions": [{
-    "header": "Phase 0.5 Macro Scope",
-    "question": "请确认 Phase 1 探索范围后如何继续？",
-    "options": [
-      {"label": "continue", "description": "按当前范围进入 Phase 1"},
-      {"label": "revise", "description": "调整 include/exclude/skip 后重审"},
-      {"label": "stop", "description": "停止 workflow"},
-      {"label": "manual_supplement", "description": "手工补充（选后可在输入框写补充）"}
-    ],
-    "custom": true
-  }]
-}
-```
-
-4. **STOP**，等 `question` UI 返回（↑/↓ 或点击；最后一项可输入）。
-5. 落盘：
-
-```powershell
-python "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --gate macro_scope --decision <choice> [--notes "..."]
-```
-
-6. 仅当 `decision=continue` 才进入 Phase 1。`revise` / `manual_supplement` 吸收 notes 后重新展示并再次 `question`。
-
-**禁止**：贴静态「关键确认 1/2/3」列表替代 `question`；禁止默认 `continue`；禁止 `--interactive` / `--arrows` 抢 stdin。
-
-## Report when done
-
-**Final red rule:** Do not produce this completion report while `quality_gate.py` reports `red` / `not_usable`. Route every blocker back to the artifact owner, rerun the applicable barrier/compiler validation and the gate, and only report completion at `yellow`/`green`. If repair is genuinely blocked by a human gate, unavailable MCP evidence, or a reproducible tool defect, report `blocked` with the exact blocker instead of a successful KB handoff.
-
-- `$UO_ROOT` path
-- MCP project name / index mode
-- review decisions
-- `quality.yaml` decision
-- point user to `route.md` then `operator.yaml` / `index.yaml`
-## Canonical v2 additions
-
-- Initialize and maintain `registry/`, `cross_layer/`, `query/`, and `contracts/`.
-- Phase 5 must build cross-layer alignment (`input_to_tiling`, `tiling_to_kernel`, `variable_lineage`, `behavior_graph`), not only a kernel alignment matrix.
-- Phase 7 must refresh `query/routes.yaml` and `contracts/{query,code_change,pr_review,testcase}.yaml`.
-- Phase 8 must run `quality_gate.py`; the gate calls the deterministic KB compiler and writes `archive/runs/kb_compile_report.yaml`.
-- Only validator/compiler logic may promote proposals/intermediate artifacts into canonical v2 files.
-- Preserve `test/contract.yaml` as a derived compatibility view; `contracts/testcase.yaml` (version 2) is the TestAgent machine source of truth and must not be independently maintained.
-- `contracts/testcase.yaml` (version 2) is the TestAgent machine SoT; `test/contract.yaml` is a derived compatibility view only.
-
-## Source Facts command checkpoints
-
-After Phase 1 Macro Boundary writes `facts/operator/interface.yaml`,
-`facts/operator/source_files.yaml`, and `facts/operator/entrypoints.yaml`:
+Then run:
 
 ```powershell
 python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step1 --write-report
 ```
 
-After Phase 2 Host/Compute/Kernel Overview facts are written by the three
-parallel subagents:
+Empty boundary files must fail; unresolved entries must be explicit.
+
+## Phase 2
+
+After Phase 1 validation passes, run these foreground tasks in parallel:
+
+```text
+uo-host-extraction
+uo-flow-extraction
+uo-kernel-overview-agent
+```
+
+They write only:
+
+```text
+facts/host/**
+facts/compute/**
+facts/kernel/overview/**
+```
+
+Run the three scoped validators:
 
 ```powershell
 python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step2 --scope host --write-report
@@ -244,83 +118,62 @@ python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --st
 python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step2 --scope kernel-overview --write-report
 ```
 
-Then run `uo-step2-fact-review-agent`. It writes only
-`checks/step2/review.yaml` and must not modify facts. If review passes, write
-the Step 2 receipt:
+Then run `uo-step2-fact-review-agent`. It writes only:
+
+```text
+checks/step2/review.yaml
+```
+
+When all reports pass and input hashes match current facts:
 
 ```powershell
 python "$SCRIPT_DIR/write_step2_receipt.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 ```
 
-After Phase 3 Kernel Slice facts are written:
+## Phase 3
 
-```powershell
-python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step3 --write-report
-```
+Phase 3 starts only after Step 2 receipt is valid.
 
-Before Raw Graph Compiler runs:
-
-```powershell
-python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage compile --write-report
-```
-
-Treat every Agent-written YAML as incomplete until the matching
-`validate_facts.py` command exits 0. The compiler consumes only validated
-`facts/**`, never proposal envelopes.
-
-## Step 3 Source Facts and Graph Checkpoints
-
-Step 3 starts only after Step 2 is sealed:
-
-```powershell
-python "$SCRIPT_DIR/write_step2_receipt.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
-```
-
-`uo-kernel-slice-planner` writes only:
-
-- `facts/kernel/slice_manifest.yaml`
-- `facts/kernel/slice_interfaces.yaml`
-
-Validate the planner output:
-
-```powershell
-python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step3 --scope kernel-slice-planner --write-report
-```
-
-Parallel `uo-kernel-slice-agent` tasks then write only the nine YAML files under their assigned `facts/kernel/slices/<slice_id>/` directory. After all slice agents return, validate all slice facts:
-
-```powershell
-python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step3 --scope kernel-slice --write-report
-```
-
-`uo-step3-fact-review-agent` writes only `checks/step3/review.yaml`. When slice validation and review both pass, seal Step 3:
+1. `uo-kernel-slice-planner` writes `facts/kernel/slice_manifest.yaml` and
+   `facts/kernel/slice_interfaces.yaml`.
+2. Parallel `uo-kernel-slice-agent` tasks write the fixed nine YAML files under
+   `facts/kernel/slices/<slice_id>/`.
+3. Run Step 3 validation and `uo-step3-fact-review-agent`.
+4. Seal Step 3:
 
 ```powershell
 python "$SCRIPT_DIR/write_step3_receipt.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
-```
-
-Before compiling graphs, freeze the complete `facts/**` hash set. Any fact change after this gate makes the compiler refuse to run:
-
-```powershell
 python "$SCRIPT_DIR/build_compile_gate.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 python "$SCRIPT_DIR/source_graph_compiler.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 ```
 
-`uo-behavior-abstraction-agent` writes only `graphs/derived/abstraction_rules.yaml`. Materialize reversible derived graph files with:
+5. `uo-behavior-abstraction-agent` writes only
+   `graphs/derived/abstraction_rules.yaml`.
+6. Materialize derived graph and run the final Phase 3 gate:
 
 ```powershell
 python "$SCRIPT_DIR/materialize_derived_graph.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+python "$SCRIPT_DIR/quality_gate.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 ```
 
 Read-only query order is fixed:
 
-1. `graphs/derived/**`
-2. `graphs/raw/**`
-3. source YAML facts
-4. source file anchors
+```text
+indexes/terminology.yaml -> graphs/derived -> graphs/raw -> YAML facts -> source anchors
+```
 
 Use:
 
 ```powershell
 python "$SCRIPT_DIR/uo_query_readonly.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --entity "<ID_OR_LABEL>"
 ```
+
+## Hard Rules
+
+- Agents write only paths allowed by `spec/ownership.yaml`.
+- Validators and reviews must record `input_hashes`.
+- Receipts and compile gate become invalid after any fact/report/review change.
+- Raw graph compiler reads only catalog entries with `raw_graph_input: true`.
+- Query and future TestAgent are read-only consumers. They must not modify UO KB
+  or CBM data.
+- User-facing language is Chinese unless the user asks otherwise.

@@ -21,6 +21,7 @@ relation_types:
   takes_tensor: {source: operation, target: tensor}
   produces_tensor: {source: operation, target: tensor}
   data_depends_on: {source: tensor, target: tensor}
+  data_dependency: {source: any, target: any}
   copies_from: {source: api, target: tensor}
   copies_to: {source: api, target: tensor}
   produces: {source: any, target: any}

@@ -4,17 +4,20 @@ owners:
     may_read: [manifest.yaml, facts/**, checks/**, graphs/**, indexes/**, runs/**, cbm/**]
     may_write:
       - manifest.yaml
-      - runs/*/context.yaml
-      - runs/*/task_status.yaml
-      - runs/*/review_status.yaml
+      - runs/*/phase0/context.yaml
+      - runs/*/phase0/installed_skill_check.yaml
+      - runs/*/phase0/ignore_rules.yaml
+      - runs/*/phase0/scope_scan.yaml
+      - runs/*/phase0/semantic_enrichment.yaml
+      - runs/*/phase0/scope_review.yaml
+      - runs/*/phase0/receipt.yaml
       - cbm/index_meta.json
       - checks/step2/receipt.yaml
       - checks/step3/receipt.yaml
-  uo-review-agent:
-    may_read: [manifest.yaml, facts/**, checks/**, graphs/**, indexes/**]
+  uo-step2-fact-review-agent:
+    may_read: [manifest.yaml, facts/operator/**, facts/host/**, facts/compute/**, facts/kernel/overview/**, checks/step2/*validation.yaml, runs/**, cbm/**]
     may_write:
       - checks/step2/review.yaml
-      - checks/step3/review.yaml
   uo-boundary-agent:
     may_read: [manifest.yaml, facts/operator/**, runs/**, cbm/**]
     may_write:

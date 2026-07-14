@@ -34,10 +34,15 @@ def write_step3_receipt(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
     uo_root = existing_operator_root(repo_root, safe_op_name(op_name, repo_root))
     if not uo_root.exists():
         return 2, [f"operator KB root not found: {uo_root}"]
-    if not _report_passes(uo_root / "checks" / "step2" / "receipt.yaml"):
+    step2_receipt = uo_root / "checks" / "step2" / "receipt.yaml"
+    if not _report_passes(step2_receipt):
         return 2, ["checks/step2/receipt.yaml is missing or not pass"]
+    stale = _hashes_still_match(uo_root, step2_receipt)
+    if stale:
+        return 2, stale
 
     messages: list[str] = []
+    current_fact_hashes = _all_fact_hashes(uo_root)
     for rel in REQUIRED_REPORTS:
         path = uo_root / rel
         if not path.exists():
@@ -50,6 +55,11 @@ def write_step3_receipt(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
             messages.append(f"{rel} has blocking_findings")
         if doc.get("errors"):
             messages.append(f"{rel} has errors")
+        report_hashes = doc.get("input_hashes")
+        if not isinstance(report_hashes, dict):
+            messages.append(f"{rel} missing input_hashes")
+        elif report_hashes != current_fact_hashes:
+            messages.append(f"{rel} input_hashes do not match current facts")
     if messages:
         return 2, messages
 
@@ -105,6 +115,32 @@ def _hash_inputs(uo_root: Path) -> dict[str, str]:
         if path.exists() and path.is_file():
             result[rel] = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
     return result
+
+
+def _all_fact_hashes(uo_root: Path) -> dict[str, str]:
+    result: dict[str, str] = {}
+    facts = uo_root / "facts"
+    if not facts.exists():
+        return result
+    for path in sorted(facts.rglob("*.yaml")):
+        rel = path.relative_to(uo_root).as_posix()
+        result[rel] = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    return result
+
+
+def _hashes_still_match(uo_root: Path, receipt: Path) -> list[str]:
+    doc = _read_yaml(receipt)
+    expected = doc.get("input_hashes") if isinstance(doc.get("input_hashes"), dict) else {}
+    errors: list[str] = []
+    for rel, digest in expected.items():
+        path = uo_root / str(rel)
+        if not path.exists():
+            errors.append(f"{rel} recorded by Step 2 receipt is missing")
+            continue
+        actual = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+        if actual != digest:
+            errors.append(f"{rel} changed after Step 2 receipt")
+    return errors
 
 
 def main(argv: list[str] | None = None) -> int:

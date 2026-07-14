@@ -32,6 +32,12 @@ def build_compile_gate(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
     if not receipt.exists() or _read_yaml(receipt).get("status") != "pass":
         return 2, ["checks/step3/receipt.yaml is missing or not pass"]
     facts_hashes = facts_hashes_for(uo_root)
+    receipt_hashes = _read_yaml(receipt).get("input_hashes")
+    if not isinstance(receipt_hashes, dict):
+        return 2, ["checks/step3/receipt.yaml missing input_hashes"]
+    receipt_fact_hashes = {str(k): str(v) for k, v in receipt_hashes.items() if str(k).startswith("facts/")}
+    if receipt_fact_hashes != facts_hashes:
+        return 2, _hash_mismatch_messages("facts do not match Step 3 receipt", receipt_fact_hashes, facts_hashes)
     payload = {
         "version": 1,
         "artifact": {"type": "checks.compile_gate", "schema_version": 1, "owner": "facts-validator"},
@@ -81,7 +87,28 @@ def compile_gate_errors(uo_root: Path) -> list[str]:
             errors.append(f"facts added after compile gate: {', '.join(extra)}")
         if changed:
             errors.append(f"facts changed after compile gate: {', '.join(changed)}")
+    receipt = uo_root / "checks" / "step3" / "receipt.yaml"
+    if receipt.exists():
+        receipt_doc = _read_yaml(receipt)
+        receipt_hashes = receipt_doc.get("input_hashes") if isinstance(receipt_doc.get("input_hashes"), dict) else {}
+        receipt_fact_hashes = {str(k): str(v) for k, v in receipt_hashes.items() if str(k).startswith("facts/")}
+        if receipt_fact_hashes and receipt_fact_hashes != actual:
+            errors.extend(_hash_mismatch_messages("facts do not match Step 3 receipt", receipt_fact_hashes, actual))
     return errors
+
+
+def _hash_mismatch_messages(label: str, expected: dict[str, str], actual: dict[str, str]) -> list[str]:
+    messages: list[str] = []
+    missing = sorted(set(expected) - set(actual))
+    extra = sorted(set(actual) - set(expected))
+    changed = sorted(rel for rel in set(expected) & set(actual) if expected[rel] != actual[rel])
+    if missing:
+        messages.append(f"{label}: missing {', '.join(missing)}")
+    if extra:
+        messages.append(f"{label}: extra {', '.join(extra)}")
+    if changed:
+        messages.append(f"{label}: changed {', '.join(changed)}")
+    return messages
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:

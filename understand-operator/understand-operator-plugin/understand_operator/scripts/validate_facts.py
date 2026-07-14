@@ -80,13 +80,14 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
     catalog_by_path = {str(entry.get("path", "")).replace("\\", "/"): entry for entry in entries}
     ownership = _ownership_patterns(spec)
     relation_types = set(((spec.get("relation_types") or {}).get("relation_types") or {}).keys())
+    relation_type_specs = (spec.get("relation_types") or {}).get("relation_types") or {}
     id_re = re.compile(str((spec.get("stable_ids") or {}).get("pattern") or r"^[A-Z][A-Z0-9]*_[A-Z0-9_]+$"))
     allowed_prefixes = set(((spec.get("stable_ids") or {}).get("prefixes") or {}).keys())
 
     docs: dict[str, dict[str, Any]] = {}
     scoped_entries = _entries_for_scope(entries, scope)
     yaml_paths = _yaml_paths(uo_root)
-    for rel in _required_paths_for_stage(scoped_entries, stage):
+    for rel in _required_paths_for_stage(spec, scoped_entries, stage, scope):
         if "*" in rel:
             if not any(fnmatch.fnmatch(path.relative_to(uo_root).as_posix(), rel) for path in yaml_paths):
                 continue
@@ -113,14 +114,18 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
         if not _entry_in_scope(entry, scope) and rel != "manifest.yaml":
             continue
         _validate_document_header(rel, doc, entry, errors)
+        if rel != "manifest.yaml":
+            _validate_machine_schema(spec["root"], rel, doc, entry, errors)
         _validate_owner(rel, doc, entry, ownership, errors)
         _validate_ids(rel, doc, id_re, allowed_prefixes, errors)
         _validate_relation_types(rel, doc, relation_types, errors)
         _validate_sources(repo_root, rel, doc, id_re, errors)
 
     known_ids = _collect_known_ids(all_docs | docs)
+    known_kinds = _collect_known_kinds(all_docs | docs)
     for rel, doc in docs.items():
         _validate_references(rel, doc, known_ids, errors)
+        _validate_relation_endpoints(rel, doc, known_kinds, relation_type_specs, errors)
     return errors
 
 
@@ -204,7 +209,12 @@ def _ownership_patterns(spec: dict[str, Any]) -> dict[str, list[str]]:
     return result
 
 
-def _required_paths_for_stage(entries: list[dict[str, Any]], stage: str) -> list[str]:
+def _required_paths_for_stage(spec: dict[str, Any], entries: list[dict[str, Any]], stage: str, scope: str) -> list[str]:
+    if scope == "all":
+        contracts = ((spec.get("stage_contracts") or {}).get("stages") or {}).get(stage) or {}
+        required = contracts.get("required_files") or []
+        if isinstance(required, list):
+            return [str(item).replace("\\", "/") for item in required if not str(item).startswith("checks/")]
     requested = STAGE_ORDER.get(stage, STAGE_ORDER["step1"])
     result: list[str] = []
     for entry in entries:
@@ -295,6 +305,83 @@ def _validate_document_header(rel: str, doc: dict[str, Any], entry: dict[str, An
         and not (doc.get("items") or doc.get("relations") or doc.get("unresolved"))
     ):
         errors.append(FactValidationError("DOCUMENT_EMPTY_NOT_ALLOWED", rel, "catalog marks this artifact as non-empty after its stage"))
+    if (
+        not rel.startswith(("checks/", "graphs/", "indexes/", "runs/"))
+        and entry.get("allow_empty")
+        and not (doc.get("items") or doc.get("relations") or doc.get("unresolved"))
+    ):
+        if doc.get("analysis_status") != "not_applicable" or not doc.get("reason") or not doc.get("sources"):
+            errors.append(
+                FactValidationError(
+                    "EMPTY_REQUIRES_NOT_APPLICABLE",
+                    rel,
+                    "empty optional artifacts must state analysis_status: not_applicable with reason and sources",
+                )
+            )
+
+
+def _validate_machine_schema(
+    spec_root: Path,
+    rel: str,
+    doc: dict[str, Any],
+    entry: dict[str, Any],
+    errors: list[FactValidationError],
+) -> None:
+    schema_rel = entry.get("schema")
+    if not schema_rel:
+        return
+    schema_path = spec_root / str(schema_rel)
+    schema = _load_schema(schema_path, errors, rel)
+    if not schema:
+        return
+    for key in schema.get("required_top_level") or []:
+        if key not in doc:
+            errors.append(FactValidationError("SCHEMA_REQUIRED_FIELD_MISSING", rel, f"/{key} is required by {schema_rel}"))
+    allowed = schema.get("allowed_top_level")
+    if isinstance(allowed, list):
+        allowed_set = {str(item) for item in allowed}
+        for key in doc:
+            if key not in allowed_set:
+                errors.append(FactValidationError("SCHEMA_TOP_LEVEL_FIELD_FORBIDDEN", rel, f"/{key} is not allowed by {schema_rel}"))
+    item_kinds = {str(item) for item in schema.get("item_kind_enum") or []}
+    required_item_fields = [str(item) for item in schema.get("required_item_fields") or []]
+    kind_required_fields = schema.get("kind_required_fields") if isinstance(schema.get("kind_required_fields"), dict) else {}
+    for index, item in enumerate(doc.get("items") or []):
+        if not isinstance(item, dict):
+            errors.append(FactValidationError("SCHEMA_ITEM_NOT_MAPPING", rel, f"/items/{index} must be a mapping"))
+            continue
+        kind = str(item.get("kind") or "")
+        if item_kinds and kind not in item_kinds:
+            errors.append(FactValidationError("SCHEMA_ITEM_KIND_INVALID", rel, f"/items/{index}/kind {kind!r} is not allowed"))
+        needed = list(required_item_fields)
+        if isinstance(kind_required_fields.get(kind), list):
+            needed.extend(str(field) for field in kind_required_fields[kind])
+        for field in sorted(set(needed)):
+            if field not in item or item.get(field) in (None, ""):
+                errors.append(FactValidationError("SCHEMA_ITEM_FIELD_MISSING", rel, f"/items/{index}/{field} is required"))
+    relation_required_fields = [str(item) for item in schema.get("relation_required_fields") or []]
+    for index, relation in enumerate(doc.get("relations") or []):
+        if not isinstance(relation, dict):
+            continue
+        for field in relation_required_fields:
+            if field not in relation or relation.get(field) in (None, ""):
+                errors.append(FactValidationError("SCHEMA_RELATION_FIELD_MISSING", rel, f"/relations/{index}/{field} is required"))
+    min_cardinality = schema.get("minimum_cardinality")
+    if isinstance(min_cardinality, int) and min_cardinality > 0:
+        if len(doc.get("items") or []) + len(doc.get("relations") or []) + len(doc.get("unresolved") or []) < min_cardinality:
+            errors.append(FactValidationError("SCHEMA_MIN_CARDINALITY", rel, f"requires at least {min_cardinality} item/relation/unresolved entry"))
+
+
+def _load_schema(schema_path: Path, errors: list[FactValidationError], rel: str) -> dict[str, Any]:
+    try:
+        schema = yaml.safe_load(schema_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        errors.append(FactValidationError("SCHEMA_YAML_INVALID", rel, f"{schema_path}: {exc}"))
+        return {}
+    if not isinstance(schema, dict):
+        errors.append(FactValidationError("SCHEMA_ROOT_NOT_MAPPING", rel, f"{schema_path} must be a mapping"))
+        return {}
+    return schema
 
 
 def _validate_owner(
@@ -436,6 +523,18 @@ def _collect_known_ids(docs: dict[str, dict[str, Any]]) -> set[str]:
     return ids
 
 
+def _collect_known_kinds(docs: dict[str, dict[str, Any]]) -> dict[str, str]:
+    kinds: dict[str, str] = {}
+    for doc in docs.values():
+        for item in doc.get("items") or []:
+            if isinstance(item, dict) and isinstance(item.get("id"), str):
+                kinds[item["id"]] = _normalize_kind(str(item.get("kind") or "fact"))
+        for relation in doc.get("relations") or []:
+            if isinstance(relation, dict) and isinstance(relation.get("id"), str):
+                kinds[relation["id"]] = "relation"
+    return kinds
+
+
 def _validate_references(rel: str, doc: Any, known_ids: set[str], errors: list[FactValidationError]) -> None:
     def visit(value: Any, path: str, key: str = "") -> None:
         if isinstance(value, dict):
@@ -452,6 +551,101 @@ def _validate_references(rel: str, doc: Any, known_ids: set[str], errors: list[F
             errors.append(FactValidationError("REFERENCE_TARGET_MISSING", rel, f"{path} references unknown id {value}"))
 
     visit(doc, "")
+
+
+def _validate_relation_endpoints(
+    rel: str,
+    doc: dict[str, Any],
+    known_kinds: dict[str, str],
+    relation_type_specs: dict[str, Any],
+    errors: list[FactValidationError],
+) -> None:
+    for index, relation in enumerate(doc.get("relations") or []):
+        if not isinstance(relation, dict):
+            continue
+        source_id = relation.get("source_id")
+        target_id = relation.get("target_id")
+        rtype = relation.get("type")
+        for label, value in (("source_id", source_id), ("target_id", target_id)):
+            if not isinstance(value, str) or not value:
+                errors.append(FactValidationError("RELATION_ENDPOINT_MISSING", rel, f"/relations/{index}/{label} is required"))
+            elif value not in known_kinds:
+                errors.append(FactValidationError("RELATION_ENDPOINT_UNKNOWN", rel, f"/relations/{index}/{label} references unknown id {value}"))
+        spec = relation_type_specs.get(rtype) if isinstance(relation_type_specs, dict) else None
+        if not isinstance(spec, dict) or not isinstance(source_id, str) or not isinstance(target_id, str):
+            continue
+        expected_source = str(spec.get("source") or "any")
+        expected_target = str(spec.get("target") or "any")
+        actual_source = known_kinds.get(source_id)
+        actual_target = known_kinds.get(target_id)
+        if actual_source and not _kind_matches(actual_source, expected_source):
+            errors.append(
+                FactValidationError(
+                    "RELATION_ENDPOINT_KIND_INVALID",
+                    rel,
+                    f"/relations/{index}/source_id expects {expected_source}, got {actual_source} for {source_id}",
+                )
+            )
+        if actual_target and not _kind_matches(actual_target, expected_target):
+            errors.append(
+                FactValidationError(
+                    "RELATION_ENDPOINT_KIND_INVALID",
+                    rel,
+                    f"/relations/{index}/target_id expects {expected_target}, got {actual_target} for {target_id}",
+                )
+            )
+
+
+def _kind_matches(actual: str, expected: str) -> bool:
+    if expected == "any":
+        return True
+    if actual == expected:
+        return True
+    aliases = {
+        "argument": {"input_tensor", "output_tensor", "optional_input", "attribute"},
+        "variable": {"variable", "source_fact", "runtime_variable", "host_variable", "tilingdata", "key"},
+        "symbol": {"symbol", "source_fact", "host_entry", "tiling_entry", "kernel_entry", "function", "call"},
+        "expression": {"expression", "source_fact"},
+        "branch": {"branch", "source_fact"},
+        "loop": {"loop", "source_fact"},
+        "call": {"call", "source_fact"},
+        "key": {"key", "source_fact"},
+        "tilingdata": {"tilingdata", "source_fact"},
+        "tensor": {"tensor", "input_tensor", "output_tensor", "source_fact"},
+        "operation": {"operation", "source_fact"},
+        "api": {"api", "call", "source_fact"},
+        "sync": {"sync", "source_fact"},
+    }
+    return actual in aliases.get(expected, set())
+
+
+def _normalize_kind(kind: str) -> str:
+    lowered = kind.lower()
+    if lowered.startswith("input_") or lowered.startswith("output_"):
+        return lowered
+    if "tensor" in lowered:
+        return "tensor"
+    if "operation" in lowered:
+        return "operation"
+    if "branch" in lowered:
+        return "branch"
+    if "loop" in lowered:
+        return "loop"
+    if "call" in lowered:
+        return "call"
+    if "key" in lowered:
+        return "key"
+    if "tilingdata" in lowered:
+        return "tilingdata"
+    if "sync" in lowered:
+        return "sync"
+    if "entry" in lowered or "function" in lowered or "symbol" in lowered:
+        return "symbol"
+    if "expr" in lowered:
+        return "expression"
+    if "var" in lowered:
+        return "variable"
+    return lowered or "fact"
 
 
 def _write_report(uo_root: Path, stage: str, scope: str, errors: list[FactValidationError]) -> None:
@@ -483,6 +677,7 @@ def _write_report(uo_root: Path, stage: str, scope: str, errors: list[FactValida
         },
         "status": "fail" if errors else "pass",
         "checked_at": datetime.now(tz=timezone.utc).isoformat(),
+        "input_hashes": _input_hashes_for_scope(uo_root, stage, scope),
         "errors": [error.to_dict() for error in errors],
         "items": [],
         "relations": [],
@@ -490,6 +685,31 @@ def _write_report(uo_root: Path, stage: str, scope: str, errors: list[FactValida
     }
     report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+
+def _input_hashes_for_scope(uo_root: Path, stage: str, scope: str) -> dict[str, str]:
+    fact_paths: list[Path] = []
+    if stage == "step1":
+        fact_paths = sorted((uo_root / "facts" / "operator").glob("*.yaml"))
+    elif stage == "step2":
+        roots = {
+            "host": [uo_root / "facts" / "host"],
+            "compute": [uo_root / "facts" / "compute"],
+            "kernel-overview": [uo_root / "facts" / "kernel" / "overview"],
+            "all": [uo_root / "facts" / "host", uo_root / "facts" / "compute", uo_root / "facts" / "kernel" / "overview"],
+        }.get(scope, [])
+        for root in roots:
+            if root.exists():
+                fact_paths.extend(sorted(root.rglob("*.yaml")))
+    elif stage in {"step3", "compile"}:
+        if (uo_root / "facts").exists():
+            fact_paths = sorted((uo_root / "facts").rglob("*.yaml"))
+    result: dict[str, str] = {}
+    for path in fact_paths:
+        if path.is_file():
+            rel = path.relative_to(uo_root).as_posix()
+            result[rel] = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:

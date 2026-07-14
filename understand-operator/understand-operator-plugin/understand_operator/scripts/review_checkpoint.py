@@ -301,7 +301,7 @@ def _default_title(gate: str) -> str:
     return {
         "macro_scope": "Phase 0.5 · Macro Scope 人工审阅",
         "boundary": "Phase 1.5 · Boundary 人工审阅",
-        "kernel_dispatch": "Phase 3.5 · Kernel Dispatch 人工审阅",
+        "kernel_dispatch": "Retired · Kernel Dispatch",
         "query_missing_kb": "uo-query · 未找到 KB",
     }[gate]
 

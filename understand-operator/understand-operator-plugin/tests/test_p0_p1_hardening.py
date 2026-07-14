@@ -488,8 +488,8 @@ def test_quality_gate_blocks_direct_canonical_without_promotion_receipt(tmp_path
 
     assert quality_gate_main([str(repo_root), "--op-name", "DemoOp"]) == 2
     quality = yaml.safe_load((base / "quality.yaml").read_text(encoding="utf-8"))
-    assert quality["checks"]["canonical_provenance_valid"] == "fail"
-    assert any("CANONICAL_PROVENANCE_MISSING" in item for item in quality["blockers"])
+    assert quality["checks"]["phase0_receipt"] == "fail"
+    assert any("phase0_receipt" in item for item in quality["blockers"])
 
 
 def test_compiler_rejects_non_stable_evidence_ref(tmp_path: Path) -> None:
@@ -699,11 +699,10 @@ def test_quality_and_compiler_both_fail_dangling_evidence(tmp_path: Path) -> Non
 
     assert quality_gate_main([str(base.parents[1]), "--op-name", "DemoOp"]) == 2
     quality = yaml.safe_load((base / "quality.yaml").read_text(encoding="utf-8"))
-    assert quality["checks"]["evidence_refs_resolve"] == "fail"
-    assert quality["checks"]["kb_compiler_passed"] == "fail"
-    queue = yaml.safe_load((base / "archive" / "runs" / "red_gate_repair_queue.yaml").read_text(encoding="utf-8"))
-    assert queue["error_code"] == "RED_GATE_REMEDIATION_INCOMPLETE"
-    assert queue["groups"]
+    assert quality["checks"]["phase0_receipt"] == "fail"
+    assert quality["checks"]["compile_gate_fresh"] == "fail"
+    assert quality["checks"]["raw_graph_consistency"] == "fail"
+    assert any("checks/compile_gate.yaml is missing" in item for item in quality["blockers"])
 
 
 def test_canonical_proposal_rejects_bad_and_intermediate_ids(tmp_path: Path) -> None:

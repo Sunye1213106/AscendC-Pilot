@@ -38,6 +38,8 @@ def write_step2_receipt(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
         return 2, [f"operator KB root not found: {uo_root}"]
 
     messages: list[str] = []
+    current_fact_hashes = _step2_fact_hashes(uo_root)
+    validator_hashes: dict[str, str] = {}
     for rel in REQUIRED_REPORTS:
         path = uo_root / rel
         if not path.exists():
@@ -50,6 +52,16 @@ def write_step2_receipt(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
             messages.append(f"{rel} has blocking_findings")
         if doc.get("errors"):
             messages.append(f"{rel} has errors")
+        report_hashes = doc.get("input_hashes")
+        if not isinstance(report_hashes, dict):
+            messages.append(f"{rel} missing input_hashes")
+        elif rel == "checks/step2/review.yaml":
+            if report_hashes != current_fact_hashes:
+                messages.append(f"{rel} input_hashes do not match current Step 2 facts")
+        else:
+            validator_hashes.update({str(k): str(v) for k, v in report_hashes.items()})
+    if validator_hashes and validator_hashes != current_fact_hashes:
+        messages.append("Step 2 validator input_hashes do not match current Step 2 facts")
 
     if messages:
         return 2, messages
@@ -96,6 +108,18 @@ def _step2_input_hashes(uo_root: Path) -> dict[str, str]:
     for rel in sorted(set(paths)):
         path = uo_root / rel
         if path.exists() and path.is_file():
+            result[rel] = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    return result
+
+
+def _step2_fact_hashes(uo_root: Path) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for rel_root in ("facts/host", "facts/compute", "facts/kernel/overview"):
+        root = uo_root / rel_root
+        if not root.exists():
+            continue
+        for path in sorted(root.rglob("*.yaml")):
+            rel = path.relative_to(uo_root).as_posix()
             result[rel] = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
     return result
 

@@ -16,16 +16,17 @@ if __package__ in (None, ""):
     if str(_ROOT) not in sys.path:
         sys.path.insert(0, str(_ROOT))
 
-from understand_operator._operator.artifacts import existing_operator_root, safe_op_name
+from understand_operator._operator.artifacts import resolve_existing_operator_root, safe_op_name
 
 
 def query_readonly(repo_root: Path, op_name: str, entity: str) -> dict[str, Any]:
     if yaml is None:
         raise RuntimeError("PyYAML is required")
     repo_root = repo_root.resolve()
-    uo_root = existing_operator_root(repo_root, safe_op_name(op_name, repo_root))
-    if not uo_root.exists():
-        raise FileNotFoundError(f"operator KB root not found: {uo_root}")
+    resolved = resolve_existing_operator_root(repo_root, safe_op_name(op_name, repo_root))
+    if resolved is None:
+        raise FileNotFoundError(f"operator KB root not found via manifest/aliases for {op_name}")
+    _resolved_name, uo_root = resolved
     derived = _query_derived(uo_root, entity)
     raw_ids = set(derived.get("raw_node_refs") or []) | set(derived.get("raw_edge_refs") or [])
     raw = _query_raw(uo_root, entity, raw_ids)

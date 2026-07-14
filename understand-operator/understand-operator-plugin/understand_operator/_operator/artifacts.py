@@ -120,9 +120,9 @@ def existing_operator_root(repo_root: Path, op_name: str) -> Path:
 
 
 def resolve_existing_operator_root(repo_root: Path, op_name: str) -> tuple[str, Path] | None:
-    """Resolve an existing KB by exact name or generated aliases."""
+    """Resolve an existing KB by manifest metadata and terminology aliases."""
     exact = existing_operator_root(repo_root, op_name)
-    if exact.exists():
+    if (exact / "manifest.yaml").exists():
         return op_name, exact
 
     kb_parent = repo_root / ARTIFACT_DIR
@@ -131,16 +131,57 @@ def resolve_existing_operator_root(repo_root: Path, op_name: str) -> tuple[str, 
     token = op_name.strip().lower()
     matches: list[tuple[str, Path]] = []
     for candidate in kb_parent.iterdir():
-        if not candidate.is_dir() or not (candidate / "route.md").exists():
+        if not candidate.is_dir() or not (candidate / "manifest.yaml").exists():
             continue
         aliases = {alias.lower() for alias in _default_operator_aliases(candidate.name, repo_root)}
         aliases.add(candidate.name.lower())
         aliases.add(re.sub(r"[^A-Za-z0-9]+", "", candidate.name).lower())
+        aliases.update(_manifest_aliases(candidate))
         if token in aliases:
             matches.append((candidate.name, candidate))
     if len(matches) == 1:
         return matches[0]
     return None
+
+
+def _manifest_aliases(candidate: Path) -> set[str]:
+    aliases: set[str] = set()
+    for rel in ("manifest.yaml", "indexes/terminology.yaml", "query/terminology.yaml", "registry/aliases.yaml"):
+        path = candidate / rel
+        if not path.exists():
+            continue
+        try:
+            import yaml
+
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except Exception:  # noqa: BLE001
+            continue
+        if not isinstance(data, dict):
+            continue
+        op_name = data.get("op_name")
+        if isinstance(op_name, str):
+            aliases.add(op_name.lower())
+            aliases.add(re.sub(r"[^A-Za-z0-9]+", "", op_name).lower())
+        for item in _iter_alias_items(data):
+            if item:
+                aliases.add(item.lower())
+                aliases.add(re.sub(r"[^A-Za-z0-9]+", "", item).lower())
+    return aliases
+
+
+def _iter_alias_items(data: dict[str, Any]) -> list[str]:
+    result: list[str] = []
+    aliases = data.get("aliases")
+    if isinstance(aliases, list):
+        for item in aliases:
+            if isinstance(item, str):
+                result.append(item)
+            elif isinstance(item, dict) and isinstance(item.get("alias"), str):
+                result.append(item["alias"])
+    terms = data.get("terms")
+    if isinstance(terms, dict):
+        result.extend(str(key) for key in terms)
+    return result
 
 
 def _stable_slug(text: str) -> str:

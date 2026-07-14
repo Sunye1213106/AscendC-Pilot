@@ -2,6 +2,8 @@
 
 import argparse
 import json
+import hashlib
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -51,6 +53,9 @@ def main(argv: list[str] | None = None) -> int:
     op_name = safe_op_name(args.op_name, repo_root)
     base = operator_root(repo_root, op_name)
     init_operator_contract_layout(base, op_name, repo_root)
+    run_id = _current_or_new_run_id(base)
+    phase0 = base / "runs" / run_id / "phase0"
+    _update_manifest_phase0(base, run_id, repo_root)
     installed_skill = Path.home() / ".config" / "opencode" / "skills" / "understand-operator"
     if installed_skill.exists():
         check = compare_installed_skill(Path(__file__).resolve().parents[2], installed_skill)
@@ -62,21 +67,44 @@ def main(argv: list[str] | None = None) -> int:
             "installed_skill_root": str(installed_skill),
             "mismatches": [{"path": "skills/understand-operator", "reason": "installed skill root missing"}],
         }
-    write_text(base / "runs" / "installed_skill_check.yaml", _to_yaml(check))
+    _write_phase0_doc(
+        phase0 / "context.yaml",
+        "runs.context",
+        "OP_PHASE0_CONTEXT",
+        "context",
+        {
+            "project_root": str(repo_root),
+            "op_name": op_name,
+            "script_dir": str(Path(__file__).resolve().parent),
+            "run_id": run_id,
+            "source_revision": _git_revision(repo_root),
+            "source_snapshot_id": _source_snapshot_id(repo_root),
+            "spec_bundle_hash": spec_bundle_hash(),
+        },
+    )
+    _write_phase0_doc(phase0 / "installed_skill_check.yaml", "runs.installed_skill_check", "OP_PHASE0_SKILL_CHECK", "installed_skill_check", check)
     if not check.get("consistent"):
         print("ERROR: installed understand-operator plugin is out of sync with the repository.", file=sys.stderr)
         print("Run: powershell -ExecutionPolicy Bypass -File understand-operator/understand-operator-plugin/install.ps1", file=sys.stderr)
-        print(f"Details: {base / 'runs' / 'installed_skill_check.yaml'}", file=sys.stderr)
+        print(f"Details: {phase0 / 'installed_skill_check.yaml'}", file=sys.stderr)
         return 3
 
     patterns = _load_operator_ignore_patterns(repo_root)
-    write_text(
-        base / "runs" / "ignore_rules.md",
-        "# Ignore Rules\n\n"
-        "These rules are loaded before CBM-assisted operator analysis. Review them if files are missing.\n\n"
-        + "\n".join(f"- `{p}`" for p in patterns)
-        + "\n",
+    _write_phase0_doc(
+        phase0 / "ignore_rules.yaml",
+        "runs.ignore_rules",
+        "OP_PHASE0_IGNORE_RULES",
+        "ignore_rules",
+        {"patterns": patterns},
     )
+    for filename, artifact_type, item_id, kind in (
+        ("scope_scan.yaml", "runs.scope_scan", "OP_PHASE0_SCOPE_SCAN", "scope_scan"),
+        ("semantic_enrichment.yaml", "runs.semantic_enrichment", "OP_PHASE0_SEMANTIC_ENRICHMENT", "semantic_enrichment"),
+        ("scope_review.yaml", "runs.scope_review", "OP_PHASE0_SCOPE_REVIEW", "scope_review"),
+    ):
+        target = phase0 / filename
+        if not target.exists():
+            _write_phase0_doc(target, artifact_type, item_id, kind, {"status": "pending"})
 
     if args.write_index_meta or args.cbm_project:
         write_index_meta(
@@ -93,6 +121,7 @@ def main(argv: list[str] | None = None) -> int:
                 "index_summary": {},
             },
         )
+        _write_phase0_receipt(base, phase0, run_id, op_name, repo_root, args.cbm_project, args.cbm_mode)
         write_text(
             base / "cbm" / "cbm_query_log.md",
             "# CBM Index Log\n\n"
@@ -138,6 +167,120 @@ def main(argv: list[str] | None = None) -> int:
     print("CBM: use MCP index_repository in /uo-init (this script does not build the graph DB by default)")
     print("Next: run validate_facts.py after each agent writes its stage YAML")
     return 0
+
+
+def _current_or_new_run_id(base: Path) -> str:
+    manifest = base / "manifest.yaml"
+    if manifest.exists():
+        try:
+            import yaml
+
+            data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
+            value = data.get("current_run_id")
+            if isinstance(value, str) and value.startswith("UO_RUN_") and value != "UO_RUN_PENDING":
+                return value
+        except Exception:  # noqa: BLE001
+            pass
+    return "UO_RUN_" + datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S")
+
+
+def _git_revision(repo_root: Path) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip() or "unknown"
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
+def _source_snapshot_id(repo_root: Path) -> str:
+    revision = _git_revision(repo_root)
+    digest = hashlib.sha256((str(repo_root) + revision).encode("utf-8")).hexdigest()[:16].upper()
+    return f"SOURCE_{digest}"
+
+
+def _write_phase0_doc(path: Path, artifact_type: str, item_id: str, kind: str, data: object) -> None:
+    payload = {
+        "version": 1,
+        "artifact": {"type": artifact_type, "schema_version": 1, "owner": "uo-orchestrator"},
+        "snapshot": {
+            "run_id": path.parents[1].name,
+            "source_snapshot_id": "SOURCE_PHASE0",
+            "source_revision": "unknown",
+            "spec_bundle_hash": spec_bundle_hash(),
+        },
+        "items": [{"id": item_id, "kind": kind, "status": "recorded", "data": data}],
+        "relations": [],
+        "unresolved": [],
+    }
+    write_text(path, _to_yaml(payload))
+
+
+def _write_phase0_receipt(
+    base: Path,
+    phase0: Path,
+    run_id: str,
+    op_name: str,
+    repo_root: Path,
+    cbm_project: str | None,
+    cbm_mode: str,
+) -> None:
+    source_revision = _git_revision(repo_root)
+    source_snapshot_id = _source_snapshot_id(repo_root)
+    payload = {
+        "version": 1,
+        "artifact": {"type": "runs.receipt", "schema_version": 1, "owner": "uo-orchestrator"},
+        "snapshot": {
+            "run_id": run_id,
+            "source_snapshot_id": source_snapshot_id,
+            "source_revision": source_revision,
+            "spec_bundle_hash": spec_bundle_hash(),
+        },
+        "status": "pass",
+        "items": [
+            {
+                "id": "OP_PHASE0_RECEIPT",
+                "kind": "phase0_receipt",
+                "status": "recorded",
+                "source_revision": source_revision,
+                "source_snapshot_id": source_snapshot_id,
+                "approved_include": [],
+                "approved_exclude": [],
+                "architecture_variants": [],
+                "cbm_project": cbm_project,
+                "cbm_mode": cbm_mode,
+                "spec_bundle_hash": spec_bundle_hash(),
+            }
+        ],
+        "relations": [],
+        "unresolved": [],
+    }
+    write_text(phase0 / "receipt.yaml", _to_yaml(payload))
+
+
+def _update_manifest_phase0(base: Path, run_id: str, repo_root: Path) -> None:
+    path = base / "manifest.yaml"
+    if not path.exists():
+        return
+    try:
+        import yaml
+
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if not isinstance(data, dict):
+            return
+        source = data.setdefault("source", {})
+        if isinstance(source, dict):
+            source["revision"] = _git_revision(repo_root)
+            source["snapshot_id"] = _source_snapshot_id(repo_root)
+        data["current_run_id"] = run_id
+        path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        return
 
 
 def _load_operator_ignore_patterns(repo_root: Path) -> list[str]:

@@ -12,6 +12,6 @@ Phase 1（Macro Boundary）完成后应：
 人工决策（暂停 + 给人判断的信息）**只**允许在：
 
 - Phase 0.5 Macro Scope（探索范围）— 见 `01a_macro_scope_human_review.md`
-- Phase 3.5 Kernel Dispatch（必须带全量 tiling/family 信息）— 见 `05a_kernel_dispatch_human_review.md`
+- Kernel dispatch review 已退役；Phase 3 使用 slice validation 与 Step 3 review。
 
 若用户在对话里主动要求修订边界，可临时写入 `human/review.md` Boundary Review / `archive/runs/boundary_review.yaml`，但默认流水线不经过此闸门，也不主动弹出边界摘要。

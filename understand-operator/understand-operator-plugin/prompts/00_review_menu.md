@@ -104,4 +104,4 @@ python "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" -
 - 禁止 Python `--arrows` / `--interactive` 作为 OpenCode/Cursor 默认路径
 - 禁止替用户默认 `continue`
 - 禁止只贴静态列表却不唤起可选择 UI（有 `question`/AskQuestion 时）
-- 禁止 Phase 3.5 缺少 family/tiling 全貌时放行
+- 禁止在未获得明确 `continue` 时进入下一阶段

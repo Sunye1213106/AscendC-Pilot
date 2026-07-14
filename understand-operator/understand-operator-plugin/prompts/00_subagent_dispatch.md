@@ -1,128 +1,49 @@
 # Subagent Dispatch Protocol
 
-你是 `understand-operator` 的宿主 orchestrator。workflow 里**只有两处需要 subagent 并行**；其余 phase 由宿主 agent 按对应 prompt 直接执行。
+Understand Operator uses subagents only where parallel extraction is useful in
+the Phase 0-3 workflow.
 
-**CBM 按需查询**：读 `prompts/00_cbm_on_demand.md`。宿主与各 subagent 通过 **`codebase-memory-mcp` MCP 工具**查代码；**禁止** Shell 调 `cbm_query.py`。
+## Parallel Points
 
-**进度**：见 `prompts/00_progress_visibility.md`。下发 subagent 必须用 **foreground Task**，并在对话说明「已启动，等待返回」。
+1. Phase 2:
+   - `uo-host-extraction`
+   - `uo-flow-extraction`
+   - `uo-kernel-overview-agent`
+2. Phase 3:
+   - `uo-kernel-slice-agent` for each approved slice from
+     `facts/kernel/slice_manifest.yaml`
 
-## 同步屏障（解决 host/sub 冲突，必须遵守）
+All tasks are foreground tasks. Wait for every task to return before reading
+its artifacts or advancing the workflow.
 
-**问题**：宿主不等 subagent、同回合继续下一阶段，会读到占位骨架或空文件。
+## Ownership
 
-**规则**：
+Subagents write only paths allowed by `spec/ownership.yaml`.
 
-1. **下发 Task 后先等待**：同一条消息里可以并行多个 foreground Task；必须等全部 Task 返回后才能继续。
-2. **Task 全部返回后先 barrier**：确认每个 Task 已返回结果（含 subagent 摘要），未返回则继续等待，不得往下走。
-3. **跑 barrier 脚本**（强制，比肉眼 Read 更可靠）：
+- Host writes `facts/host/**`.
+- Compute writes `facts/compute/**`.
+- Kernel overview writes `facts/kernel/overview/**`.
+- Slice planner writes `facts/kernel/slice_manifest.yaml` and
+  `facts/kernel/slice_interfaces.yaml`.
+- Slice agents write the fixed files under `facts/kernel/slices/<slice_id>/`.
+- Review agents write only `checks/step2/review.yaml` or
+  `checks/step3/review.yaml`.
 
-```bash
-python "$SKILL_DIR/verify_subagent_barrier.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --phase host_flow --run-id "$RUN_ID" --source-commit "$SOURCE_COMMIT"
-python "$SKILL_DIR/verify_subagent_barrier.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --phase kernel_path --run-id "$RUN_ID" --source-commit "$SOURCE_COMMIT"
-```
+No subagent writes proposals, canonical promotion files, route files,
+contracts, tiling archive files, impact graphs, or generated tests.
 
-4. **仅当 barrier 返回 `ok: true`**：再从磁盘 `Read` subagent 写的 artifact，进入宿主 phase。
-5. **barrier 失败**：读取 barrier report 的 `errors[]`，按其中 `owner` / `retry_task_id` 恢复原 owner；**禁止**宿主、quality agent、evidence consistency agent 读取 malformed YAML 后整文件重写 canonical artifact。
+## Barrier
 
-Subagent 写完产物后必须写 completion manifest（见各 `agents/uo-*.md`）。宿主以 manifest + barrier 脚本为准，不以 Task 文本摘要代替文件校验。
+After Phase 2 tasks return, run the three scoped `validate_facts.py` commands,
+then `uo-step2-fact-review-agent`, then `write_step2_receipt.py`.
 
-## 仅两处并行（必须用 Task 工具）
+After Phase 3 slice tasks return, run Step 3 validation, then
+`uo-step3-fact-review-agent`, then `write_step3_receipt.py`.
 
-| 并行点 | Subagent | 说明 |
-|---|---|---|
-| **并行点 1** | `uo-host-extraction` + `uo-flow-extraction` | 一边提取 host 侧信息，一边提取 compute/dataflow |
-| **并行点 2** | `uo-kernel-path` × N | 每个 approved `task_id` 各起一个，并行识别不同 kernel 实现 |
+If a barrier fails, resume the owning subagent. The orchestrator must not edit a
+subagent-owned fact file to force a pass.
 
-除上述两处外，**不要**为其他 phase 启动 subagent。
+## CBM
 
-## 宿主 agent 直接执行的 phase
-
-| Phase | 执行方式 | Prompt |
-|---|---|---|
-| 0 预检 | 宿主跑脚本 | — |
-| 0.5 Macro Scope Review | 宿主协调（闸门） | `prompts/01a_macro_scope_human_review.md` |
-| 1 Macro Boundary | 宿主按 prompt 执行 | `prompts/02_macro_boundary_agent.md` |
-| 3 Kernel Task Builder | 宿主按 prompt 执行 | `prompts/05_kernel_path_task_builder.md` |
-| 3.5 Kernel Dispatch Review | 宿主协调（闸门，须含全量 tiling/family） | `prompts/05a_kernel_dispatch_human_review.md` |
-| 5 Kernel Alignment | 宿主按 prompt 执行 | `prompts/07_kernel_alignment_builder.md` |
-| 6 Evidence Consistency | 宿主按 prompt 执行 | `prompts/08_evidence_consistency_agent.md` |
-| 7 Route Builder | 宿主按 prompt 执行 | `prompts/09_route_builder.md` |
-| 8 Quality Gate | 宿主跑脚本 | — |
-
-> Phase 1.5 Boundary Review **已取消**。`02a_boundary_human_review.md` 仅作退役说明。
-
-## 并行点 1：host + flow
-
-Phase 1 Macro Boundary **完成后直接、静默**进入（不再等 Boundary Review，也不在对话贴边界/IO 摘要）：
-
-1. **同一条宿主消息**里发起两个 Task（foreground，不要用 background）：
-   - `Task` → `uo-host-extraction`
-   - `Task` → `uo-flow-extraction`
-2. 等待两个 Task 都返回。
-3. 运行 `verify_subagent_barrier.py --phase host_flow`。
-4. barrier 通过后，先运行 Phase 2 promotion/validation，再 Read promoted `tiling/*` 与 `flow/*`，进入 Phase 3。
-   - barrier 现已检查 `tiling/archive/` 五个强制中间文件（frontier / dispatch_variables / predicate_space / compile_time_bindings / decision_tree）。若仍 pending/空 → resume host subagent，禁止宿主手填。
-5. 运行 `uo-kb-compile promote "$PROJECT_ROOT" --op-name "$OP_NAME" --phase phase2 --run-id "$RUN_ID"`，再运行 `uo-kb-compile validate "$PROJECT_ROOT" --op-name "$OP_NAME" --phase phase2 --check-only`。后续 phase 只读取 promoted canonical artifact。
-
-## 并行点 2：多个 kernel path
-
-在用户批准 kernel dispatch 后：
-
-1. 读取 `human/kernel_dispatch_review.yaml`（或 legacy `kernel/kernel_dispatch_review.yaml`）的 `approved_task_ids`。
-2. **同一条宿主消息**里为每个 `task_id` 各发一个 `Task` → `uo-kernel-path`。
-3. 等待所有 Task 返回。
-4. 运行 `verify_subagent_barrier.py --phase kernel_path --run-id "$RUN_ID"`。
-5. barrier 通过后，再由宿主 Alignment Builder 生成 `archive/proposals/<RUN_ID>/phase5_kernel_alignment_proposal.yaml` 和严格 aggregator manifest，随后运行 `uo-kb-compile promote "$PROJECT_ROOT" --op-name "$OP_NAME" --phase phase5 --run-id "$RUN_ID"` 与 `uo-kb-compile validate "$PROJECT_ROOT" --op-name "$OP_NAME" --phase phase5 --check-only`。未 promote 前不得把 raw/draft 当可信输入。
-
-## YAML / owner integrity hard rules
-
-- 子 Agent 原则上只提交 proposal 或 raw phase output；canonical YAML 只能由 compiler/promoter/validator 脚本原子写入。
-- 不得混用 YAML block mapping 与 flow mapping；所有 YAML 写 manifest 前必须 `yaml.safe_load` 并确认根节点为 mapping。
-- `evidence_refs` 必须是 YAML list，且只能包含 `EV_*` / `SRC_*` 稳定 id。
-- syntax-only repair 只能修正 YAML 表达形式；不得改 scalar 业务内容、资源名、producer/consumer、condition、`::`、`*`、`-double`、括号或模板参数。
-- malformed artifact 必须返回 artifact-owner registry 中的 owner，例如 `kernel/resources.yaml` → `uo-kernel-path`、`tiling/constraints.yaml` → `uo-host-extraction`、`flow/compute_graph.yaml` → `uo-flow-extraction`。
-- 禁止为了通过 quality gate 删除问题条目、合并资源、重命名字段或自然语言改写 C++ 名称/数学表达式。
-
-## Task prompt 模板
-
-宿主**必须**写明使用 MCP，不要再填 `CBM_QUERY=python .../cbm_query.py`。
-
-```text
-Run understand-operator <parallel-point> for operator <OP_NAME>.
-
-PROJECT_ROOT: <absolute path>
-UO_ROOT: <absolute path>
-OP_NAME: <name>
-RUN_ID: <RUN_...>
-SOURCE_COMMIT: <git sha captured at workflow start>
-TASK_ID: <only for uo-kernel-path>
-
-Input artifacts:
-- <path1>
-- <path2>
-
-CBM evidence (MCP only):
-- index: <UO_ROOT>/cbm/index_meta.json
-- MCP server: codebase-memory-mcp
-- Tools: search_graph | search_code | get_code_snippet | trace_path | list_projects | index_status
-- DO NOT run cbm_query.py / uo-cbm / codebase-memory-mcp cli for lookups
-
-CBM-first（强制）：
-- 每次要查代码/找符号/看实现/跟调用链，第一个动作必须是调用 MCP 工具（上表）。
-- 禁止为了「快/稳」先把 .cpp/.h 整文件 Read。
-- 仅在以下情况才允许带行号小范围 Read：MCP 返回了 file+行号需核对 / 宏·模板·字符串 MCP 拿不全 / MCP 返回空或报错（须先说明）。
-- 若 MCP 未连接：停止并报告，不要用 Grep 顶替。
-
-Extra description:
-<user text>
-
-Write outputs only under UO_ROOT.
-Write the completion manifest JSON when done.
-Return a short summary listing files created.
-```
-
-## 失败处理
-
-- 若在并行点 1/2 发现自己正在宿主会话里写 `tiling/*`、`flow/*` 或 `archive/raw_agents/kernel_paths/*`，立即停止，改用 Task 重新下发。
-- 若 barrier 失败但 Task 摘要声称完成，以磁盘文件 + manifest + barrier report `errors[]` 为准，resume 对应 owner；不要由宿主重写 canonical。
-- 若在非并行 phase 误启 subagent，停止 subagent，改由宿主按 prompt 执行。
+Use MCP `codebase-memory-mcp` for symbol/call/source behavior checks. Do not use
+`cbm_query.py`, `uo-cbm`, or `codebase-memory-mcp cli` as a fallback.

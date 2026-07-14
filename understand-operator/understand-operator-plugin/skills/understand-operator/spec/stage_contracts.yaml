@@ -28,8 +28,6 @@ stages:
       - facts/kernel/overview/call_graph.yaml
       - facts/kernel/overview/frontier.yaml
       - facts/kernel/overview/global_resources.yaml
-      - facts/kernel/slice_manifest.yaml
-      - facts/kernel/slice_interfaces.yaml
       - checks/step2/host_validation.yaml
       - checks/step2/compute_validation.yaml
       - checks/step2/kernel_overview_validation.yaml
@@ -39,6 +37,8 @@ stages:
     receipt: checks/step2/receipt.yaml
   step3:
     required_files:
+      - facts/kernel/slice_manifest.yaml
+      - facts/kernel/slice_interfaces.yaml
       - checks/step3/slice_validations.yaml
       - checks/step3/review.yaml
       - checks/step3/receipt.yaml

@@ -35,12 +35,18 @@ def materialize_derived_graph(repo_root: Path, op_name: str) -> tuple[int, list[
         return 2, ["raw graph is missing"]
     rules_doc = _read_yaml(rules_path)
     rules = rules_doc.get("rules") or rules_doc.get("items") or []
-    errors = _rule_errors(rules)
+    raw_nodes = _load_list(raw_nodes_path, "nodes")
+    raw_edges = _load_list(raw_edges_path, "edges")
+    errors = _rule_errors(uo_root, rules, raw_nodes, raw_edges)
     if errors:
         _write_validation(uo_root, "fail", errors)
         return 2, errors
     nodes = [_derived_node(rule) for rule in rules if isinstance(rule, dict) and rule.get("node_id")]
     edges = [_derived_edge(rule) for rule in rules if isinstance(rule, dict) and rule.get("edge_id")]
+    errors = _derived_graph_errors(nodes, edges)
+    if errors:
+        _write_validation(uo_root, "fail", errors)
+        return 2, errors
     expansions = [
         {
             "id": rule.get("id"),
@@ -61,21 +67,115 @@ def materialize_derived_graph(repo_root: Path, op_name: str) -> tuple[int, list[
     return 0, [f"materialized derived graph: nodes={len(nodes)} edges={len(edges)}"]
 
 
-def _rule_errors(rules: Any) -> list[str]:
+def _rule_errors(uo_root: Path, rules: Any, raw_nodes: list[dict[str, Any]], raw_edges: list[dict[str, Any]]) -> list[str]:
     errors: list[str] = []
     if not isinstance(rules, list):
         return ["abstraction rules must be a list"]
+    raw_node_ids = {str(node.get("id")) for node in raw_nodes if node.get("id")}
+    raw_edge_by_id = {str(edge.get("id")): edge for edge in raw_edges if edge.get("id")}
     for index, rule in enumerate(rules):
         if not isinstance(rule, dict):
             errors.append(f"rules[{index}] must be a mapping")
             continue
+        rule_id = str(rule.get("id") or "")
+        node_id = str(rule.get("node_id") or "")
+        edge_id = str(rule.get("edge_id") or "")
+        if not rule_id.startswith("ARULE_"):
+            errors.append(f"rules[{index}].id must start with ARULE_")
+        if node_id and not node_id.startswith("DVIEW_"):
+            errors.append(f"rules[{index}].node_id must start with DVIEW_")
+        if edge_id and not edge_id.startswith("DVIEW_"):
+            errors.append(f"rules[{index}].edge_id must start with DVIEW_")
         if rule.get("reversible") is not True:
             errors.append(f"rules[{index}] must set reversible: true")
-        if not (rule.get("raw_node_refs") or rule.get("raw_edge_refs")):
+        raw_node_refs = [str(ref) for ref in rule.get("raw_node_refs") or []]
+        raw_edge_refs = [str(ref) for ref in rule.get("raw_edge_refs") or []]
+        yaml_refs = [str(ref) for ref in rule.get("yaml_refs") or []]
+        if not (raw_node_refs or raw_edge_refs):
             errors.append(f"rules[{index}] must reference raw nodes or edges")
-        if not rule.get("yaml_refs"):
+        if not yaml_refs:
             errors.append(f"rules[{index}] must include yaml_refs")
+        for ref in raw_node_refs:
+            if ref not in raw_node_ids:
+                errors.append(f"rules[{index}].raw_node_refs references missing raw node {ref}")
+        for ref in raw_edge_refs:
+            edge = raw_edge_by_id.get(ref)
+            if not edge:
+                errors.append(f"rules[{index}].raw_edge_refs references missing raw edge {ref}")
+                continue
+            if edge.get("source_id") not in raw_node_ids or edge.get("target_id") not in raw_node_ids:
+                errors.append(f"rules[{index}].raw_edge_refs includes edge with invalid endpoints {ref}")
+        for ref in yaml_refs:
+            if _read_yaml_ref(uo_root, ref) is None:
+                errors.append(f"rules[{index}].yaml_refs references missing YAML location {ref}")
+        if raw_edge_refs and not _raw_subgraph_connected(raw_node_refs, raw_edge_refs, raw_edge_by_id):
+            errors.append(f"rules[{index}] raw refs do not form a connected reversible subgraph")
     return errors
+
+
+def _derived_graph_errors(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> list[str]:
+    errors: list[str] = []
+    ids = [str(item.get("id")) for item in nodes + edges if item.get("id")]
+    duplicates = sorted({value for value in ids if ids.count(value) > 1})
+    if duplicates:
+        errors.append("duplicate derived id(s): " + ", ".join(duplicates))
+    node_ids = {str(node.get("id")) for node in nodes if node.get("id")}
+    for edge in edges:
+        source = edge.get("source_id")
+        target = edge.get("target_id")
+        if source not in node_ids:
+            errors.append(f"derived edge {edge.get('id')} source_id missing: {source}")
+        if target not in node_ids:
+            errors.append(f"derived edge {edge.get('id')} target_id missing: {target}")
+    return errors
+
+
+def _raw_subgraph_connected(raw_node_refs: list[str], raw_edge_refs: list[str], raw_edge_by_id: dict[str, dict[str, Any]]) -> bool:
+    nodes = set(raw_node_refs)
+    adjacency: dict[str, set[str]] = {}
+    for ref in raw_edge_refs:
+        edge = raw_edge_by_id.get(ref) or {}
+        source = str(edge.get("source_id") or "")
+        target = str(edge.get("target_id") or "")
+        if not source or not target:
+            return False
+        nodes.update({source, target})
+        adjacency.setdefault(source, set()).add(target)
+        adjacency.setdefault(target, set()).add(source)
+    if not nodes:
+        return True
+    seen: set[str] = set()
+    stack = [next(iter(nodes))]
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        stack.extend(sorted(adjacency.get(current, set()) - seen))
+    return nodes <= seen
+
+
+def _read_yaml_ref(uo_root: Path, ref: str) -> Any:
+    rel, _, pointer = ref.partition("#")
+    path = uo_root / rel
+    if not path.exists():
+        return None
+    data = _read_yaml(path)
+    value: Any = data
+    for part in [part for part in pointer.strip("/").split("/") if part]:
+        if isinstance(value, list) and part.isdigit():
+            value = value[int(part)] if int(part) < len(value) else None
+        elif isinstance(value, dict):
+            value = value.get(part)
+        else:
+            return None
+    return value
+
+
+def _load_list(path: Path, key: str) -> list[dict[str, Any]]:
+    data = _read_yaml(path)
+    values = data.get(key) if isinstance(data, dict) else []
+    return [item for item in values if isinstance(item, dict)] if isinstance(values, list) else []
 
 
 def _derived_node(rule: dict[str, Any]) -> dict[str, Any]:

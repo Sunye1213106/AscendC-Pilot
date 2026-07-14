@@ -1,4 +1,16 @@
 version: 1
 artifact_type: operator.interface
+required_top_level: [version, artifact, snapshot, items, relations, unresolved]
+allowed_top_level: [version, artifact, snapshot, items, relations, unresolved, analysis_status, reason, sources]
+item_kind_enum: [input_tensor, output_tensor, optional_input, attribute, dtype_domain, layout_domain, rank, shape_symbol, interface_constraint]
+required_item_fields: [id, kind, name, status, sources]
+kind_required_fields:
+  input_tensor: [id, kind, name, dtype, layout, rank, shape_symbols, status, sources]
+  output_tensor: [id, kind, name, dtype, layout, rank, shape_symbols, status, sources]
+  optional_input: [id, kind, name, presence_condition, status, sources]
+  attribute: [id, kind, name, dtype, status, sources]
+relation_required_fields: [id, type, source_id, target_id, status, sources]
+source_anchor: required_for_confirmed
+minimum_cardinality: 1
 stores: [inputs, outputs, optional_io, attributes, dtype_domain, layout_domain, rank, shape_symbols, interface_constraints]
 forbids: [host_tiling_logic, kernel_logic, generated_tests]

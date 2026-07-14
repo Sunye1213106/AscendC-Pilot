@@ -54,13 +54,15 @@ version: 1
 artifact:
   type: checks.step2.review
   schema_version: 1
-  owner: uo-review-agent
+  owner: uo-step2-fact-review-agent
 snapshot:
   run_id: UO_RUN_...
   source_snapshot_id: SOURCE_...
   source_revision: ...
   spec_bundle_hash: sha256:...
 status: pass
+input_hashes:
+  facts/...: sha256:...
 blocking_findings: []
 warnings: []
 items: []

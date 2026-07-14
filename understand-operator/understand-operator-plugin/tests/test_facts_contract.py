@@ -66,7 +66,63 @@ def _valid_interface_doc(source: dict) -> dict:
                 "id": "ARG_DEMO_X",
                 "kind": "input_tensor",
                 "name": "x",
+                "dtype": ["float16"],
+                "layout": ["ND"],
+                "rank": 1,
+                "shape_symbols": ["N"],
                 "origin": "source",
+                "status": "confirmed",
+                "sources": [source],
+            }
+        ],
+        "relations": [],
+        "unresolved": [],
+    }
+
+
+def _valid_source_files_doc(source: dict) -> dict:
+    return {
+        "version": 1,
+        "artifact": {"type": "operator.source_files", "schema_version": 1, "owner": "uo-boundary-agent"},
+        "snapshot": {
+            "run_id": "UO_RUN_TEST",
+            "source_snapshot_id": "SOURCE_TEST",
+            "source_revision": "abc123",
+            "spec_bundle_hash": spec_bundle_hash(),
+        },
+        "items": [
+            {
+                "id": "SYM_DEMO_SOURCE_FILE",
+                "kind": "source_file",
+                "path": "op_host/demo.cpp",
+                "role": "host",
+                "file_hash": "sha256:" + hashlib.sha256(b"void DemoOpHost() {}\n").hexdigest(),
+                "include_reason": "contains host entry",
+                "status": "confirmed",
+                "sources": [source],
+            }
+        ],
+        "relations": [],
+        "unresolved": [],
+    }
+
+
+def _valid_entrypoints_doc(source: dict) -> dict:
+    return {
+        "version": 1,
+        "artifact": {"type": "operator.entrypoints", "schema_version": 1, "owner": "uo-boundary-agent"},
+        "snapshot": {
+            "run_id": "UO_RUN_TEST",
+            "source_snapshot_id": "SOURCE_TEST",
+            "source_revision": "abc123",
+            "spec_bundle_hash": spec_bundle_hash(),
+        },
+        "items": [
+            {
+                "id": "SYM_DEMO_HOST_ENTRY",
+                "kind": "host_entry",
+                "name": "DemoOpHost",
+                "file": "op_host/demo.cpp",
                 "status": "confirmed",
                 "sources": [source],
             }
@@ -101,7 +157,7 @@ def _fact_doc(artifact_type: str, owner: str, item_id: str, source: dict, *, kin
     }
 
 
-def _report(status: str, artifact_type: str) -> dict:
+def _report(status: str, artifact_type: str, input_hashes: dict | None = None) -> dict:
     return {
         "version": 1,
         "artifact": {"type": artifact_type, "schema_version": 1, "owner": "facts-validator"},
@@ -112,6 +168,7 @@ def _report(status: str, artifact_type: str) -> dict:
             "spec_bundle_hash": spec_bundle_hash(),
         },
         "status": status,
+        "input_hashes": input_hashes or {},
         "errors": [],
         "items": [],
         "relations": [],
@@ -119,10 +176,10 @@ def _report(status: str, artifact_type: str) -> dict:
     }
 
 
-def _review(status: str = "pass") -> dict:
+def _review(status: str = "pass", input_hashes: dict | None = None) -> dict:
     return {
         "version": 1,
-        "artifact": {"type": "checks.step2.review", "schema_version": 1, "owner": "uo-review-agent"},
+        "artifact": {"type": "checks.step2.review", "schema_version": 1, "owner": "uo-step2-fact-review-agent"},
         "snapshot": {
             "run_id": "UO_RUN_TEST",
             "source_snapshot_id": "SOURCE_TEST",
@@ -130,6 +187,7 @@ def _review(status: str = "pass") -> dict:
             "spec_bundle_hash": spec_bundle_hash(),
         },
         "status": status,
+        "input_hashes": input_hashes or {},
         "blocking_findings": [],
         "warnings": [],
         "items": [],
@@ -138,7 +196,7 @@ def _review(status: str = "pass") -> dict:
     }
 
 
-def _step3_review(status: str = "pass") -> dict:
+def _step3_review(status: str = "pass", input_hashes: dict | None = None) -> dict:
     return {
         "version": 1,
         "artifact": {"type": "checks.step3.review", "schema_version": 1, "owner": "uo-step3-fact-review-agent"},
@@ -149,6 +207,7 @@ def _step3_review(status: str = "pass") -> dict:
             "spec_bundle_hash": spec_bundle_hash(),
         },
         "status": status,
+        "input_hashes": input_hashes or {},
         "blocking_findings": [],
         "warnings": [],
         "items": [],
@@ -166,7 +225,25 @@ def _seed_source(repo: Path) -> dict:
 
 
 def _seed_step2_receipt(base: Path) -> None:
-    _write_yaml(base / "checks" / "step2" / "receipt.yaml", _report("pass", "checks.step2.receipt"))
+    _write_yaml(base / "checks" / "step2" / "receipt.yaml", _report("pass", "checks.step2.receipt", _all_fact_hashes(base)))
+
+
+def _hashes_for(base: Path, roots: list[str]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for root_rel in roots:
+        root = base / root_rel
+        if root.is_file():
+            paths = [root]
+        else:
+            paths = sorted(root.rglob("*.yaml")) if root.exists() else []
+        for path in paths:
+            rel = path.relative_to(base).as_posix()
+            result[rel] = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    return result
+
+
+def _all_fact_hashes(base: Path) -> dict[str, str]:
+    return _hashes_for(base, ["facts"])
 
 
 def _seed_step3_planner(base: Path, source: dict) -> None:
@@ -232,6 +309,8 @@ def test_boundary_yaml_validates_with_source_anchor(tmp_path: Path) -> None:
     source_path.parent.mkdir()
     source_path.write_text(source_text + "\n", encoding="utf-8")
     _write_yaml(base / "facts" / "operator" / "interface.yaml", _valid_interface_doc(source_anchor))
+    _write_yaml(base / "facts" / "operator" / "source_files.yaml", _valid_source_files_doc(source_anchor))
+    _write_yaml(base / "facts" / "operator" / "entrypoints.yaml", _valid_entrypoints_doc(source_anchor))
 
     errors = validate_facts(repo, "DemoOp", stage="step1")
 
@@ -251,6 +330,28 @@ def test_missing_source_anchor_fails(tmp_path: Path) -> None:
     errors = validate_facts(repo, "DemoOp", stage="step1")
 
     assert any(error.code == "SOURCE_MISSING" for error in errors)
+
+
+def test_empty_boundary_files_do_not_pass(tmp_path: Path) -> None:
+    repo, _base = _repo(tmp_path)
+
+    errors = validate_facts(repo, "DemoOp", stage="step1")
+
+    assert any(error.code == "DOCUMENT_EMPTY_NOT_ALLOWED" for error in errors)
+
+
+def test_interface_schema_requires_kind_specific_fields(tmp_path: Path) -> None:
+    repo, base = _repo(tmp_path)
+    source_anchor = _seed_source(repo)
+    doc = _valid_interface_doc(source_anchor)
+    doc["items"][0].pop("dtype")
+    _write_yaml(base / "facts" / "operator" / "interface.yaml", doc)
+    _write_yaml(base / "facts" / "operator" / "source_files.yaml", _valid_source_files_doc(source_anchor))
+    _write_yaml(base / "facts" / "operator" / "entrypoints.yaml", _valid_entrypoints_doc(source_anchor))
+
+    errors = validate_facts(repo, "DemoOp", stage="step1")
+
+    assert any(error.code == "SCHEMA_ITEM_FIELD_MISSING" and "/dtype" in error.message for error in errors)
 
 
 def test_source_text_mismatch_fails(tmp_path: Path) -> None:
@@ -305,6 +406,39 @@ def test_invalid_relation_type_fails(tmp_path: Path) -> None:
     errors = validate_facts(repo, "DemoOp", stage="step1")
 
     assert any(error.code == "RELATION_TYPE_INVALID" for error in errors)
+
+
+def test_relation_endpoint_kind_mismatch_fails(tmp_path: Path) -> None:
+    repo, base = _repo(tmp_path)
+    source_anchor = _seed_source(repo)
+    doc = _valid_interface_doc(source_anchor)
+    doc["items"].append(
+        {
+            "id": "ATTR_DEMO_ALPHA",
+            "kind": "attribute",
+            "name": "alpha",
+            "dtype": "int",
+            "status": "confirmed",
+            "sources": [source_anchor],
+        }
+    )
+    doc["relations"] = [
+        {
+            "id": "REL_BAD_KIND",
+            "type": "takes_tensor",
+            "source_id": "ATTR_DEMO_ALPHA",
+            "target_id": "ARG_DEMO_X",
+            "status": "confirmed",
+            "sources": [source_anchor],
+        }
+    ]
+    _write_yaml(base / "facts" / "operator" / "interface.yaml", doc)
+    _write_yaml(base / "facts" / "operator" / "source_files.yaml", _valid_source_files_doc(source_anchor))
+    _write_yaml(base / "facts" / "operator" / "entrypoints.yaml", _valid_entrypoints_doc(source_anchor))
+
+    errors = validate_facts(repo, "DemoOp", stage="step1")
+
+    assert any(error.code == "RELATION_ENDPOINT_KIND_INVALID" for error in errors)
 
 
 def test_step2_scoped_validators_run_independently(tmp_path: Path) -> None:
@@ -367,12 +501,34 @@ def test_step2_receipt_requires_three_python_gates_and_review(tmp_path: Path) ->
     assert code == 2
     assert any("status is not pass" in message for message in messages)
 
-    _write_yaml(base / "checks" / "step2" / "review.yaml", _review("pass"))
+    _write_yaml(base / "checks" / "step2" / "host_validation.yaml", _report("pass", "checks.step2.host_validation", {}))
+    _write_yaml(base / "checks" / "step2" / "compute_validation.yaml", _report("pass", "checks.step2.compute_validation", {}))
+    _write_yaml(base / "checks" / "step2" / "kernel_overview_validation.yaml", _report("pass", "checks.step2.kernel_overview_validation", {}))
+    _write_yaml(base / "checks" / "step2" / "review.yaml", _review("pass", {}))
     code, messages = write_step2_receipt(repo, "DemoOp")
     assert code == 0
     receipt = yaml.safe_load((base / "checks" / "step2" / "receipt.yaml").read_text(encoding="utf-8"))
     assert receipt["status"] == "pass"
     assert receipt["input_hashes"]["checks/step2/review.yaml"].startswith("sha256:")
+
+
+def test_step2_receipt_rejects_fact_change_after_review(tmp_path: Path) -> None:
+    repo, base = _repo(tmp_path)
+    source_anchor = _seed_source(repo)
+    _write_yaml(base / "facts" / "host" / "variables.yaml", _fact_doc("host.variables", "uo-host-tiling-agent", "VAR_HOST_X", source_anchor))
+    hashes = _hashes_for(base, ["facts/host", "facts/compute", "facts/kernel/overview"])
+    _write_yaml(base / "checks" / "step2" / "host_validation.yaml", _report("pass", "checks.step2.host_validation", hashes))
+    _write_yaml(base / "checks" / "step2" / "compute_validation.yaml", _report("pass", "checks.step2.compute_validation", {}))
+    _write_yaml(base / "checks" / "step2" / "kernel_overview_validation.yaml", _report("pass", "checks.step2.kernel_overview_validation", {}))
+    _write_yaml(base / "checks" / "step2" / "review.yaml", _review("pass", hashes))
+    changed = _fact_doc("host.variables", "uo-host-tiling-agent", "VAR_HOST_X", source_anchor)
+    changed["items"][0]["name"] = "changed"
+    _write_yaml(base / "facts" / "host" / "variables.yaml", changed)
+
+    code, messages = write_step2_receipt(repo, "DemoOp")
+
+    assert code == 2
+    assert any("input_hashes" in message for message in messages)
 
 
 def test_step3_planner_yaml_validates_with_planner_owner(tmp_path: Path) -> None:
@@ -408,8 +564,8 @@ def test_step3_slice_yaml_requires_complete_nine_file_set(tmp_path: Path) -> Non
 
 def test_step3_receipt_requires_step2_receipt_slice_validation_and_review(tmp_path: Path) -> None:
     repo, base = _repo(tmp_path)
-    _write_yaml(base / "checks" / "step3" / "slice_validations.yaml", _report("pass", "checks.step3.slice_validations"))
-    _write_yaml(base / "checks" / "step3" / "review.yaml", _step3_review("pass"))
+    _write_yaml(base / "checks" / "step3" / "slice_validations.yaml", _report("pass", "checks.step3.slice_validations", _all_fact_hashes(base)))
+    _write_yaml(base / "checks" / "step3" / "review.yaml", _step3_review("pass", _all_fact_hashes(base)))
 
     code, messages = write_step3_receipt(repo, "DemoOp")
 
@@ -417,12 +573,13 @@ def test_step3_receipt_requires_step2_receipt_slice_validation_and_review(tmp_pa
     assert any("step2/receipt.yaml" in message for message in messages)
 
     _seed_step2_receipt(base)
-    _write_yaml(base / "checks" / "step3" / "review.yaml", _step3_review("fail"))
+    _write_yaml(base / "checks" / "step3" / "slice_validations.yaml", _report("pass", "checks.step3.slice_validations", _all_fact_hashes(base)))
+    _write_yaml(base / "checks" / "step3" / "review.yaml", _step3_review("fail", _all_fact_hashes(base)))
     code, messages = write_step3_receipt(repo, "DemoOp")
     assert code == 2
     assert any("review.yaml status is not pass" in message for message in messages)
 
-    _write_yaml(base / "checks" / "step3" / "review.yaml", _step3_review("pass"))
+    _write_yaml(base / "checks" / "step3" / "review.yaml", _step3_review("pass", _all_fact_hashes(base)))
     code, messages = write_step3_receipt(repo, "DemoOp")
     assert code == 0
     receipt = yaml.safe_load((base / "checks" / "step3" / "receipt.yaml").read_text(encoding="utf-8"))
@@ -445,7 +602,7 @@ def test_compile_gate_freezes_facts_before_raw_graph_compile(tmp_path: Path) -> 
         }
     ]
     _write_yaml(base / "facts" / "operator" / "interface.yaml", doc)
-    _write_yaml(base / "checks" / "step3" / "receipt.yaml", _report("pass", "checks.step3.receipt"))
+    _write_yaml(base / "checks" / "step3" / "receipt.yaml", _report("pass", "checks.step3.receipt", _all_fact_hashes(base)))
 
     code, messages = build_compile_gate(repo, "DemoOp")
     assert code == 0, messages
@@ -453,6 +610,10 @@ def test_compile_gate_freezes_facts_before_raw_graph_compile(tmp_path: Path) -> 
     assert code == 0, messages
     assert (base / "graphs" / "raw" / "nodes.yaml").exists()
     assert (base / "indexes" / "graph_to_yaml.yaml").exists()
+    nodes = yaml.safe_load((base / "graphs" / "raw" / "nodes.yaml").read_text(encoding="utf-8"))["nodes"]
+    edges = yaml.safe_load((base / "graphs" / "raw" / "edges.yaml").read_text(encoding="utf-8"))["edges"]
+    assert all(node["kind"] != "relation" for node in nodes)
+    assert [edge["id"] for edge in edges] == ["REL_DEMO_FLOW"]
 
     doc["items"][0]["name"] = "changed_after_gate"
     _write_yaml(base / "facts" / "operator" / "interface.yaml", doc)
@@ -465,7 +626,7 @@ def test_derived_graph_materializer_requires_reversible_rules_and_query_is_reado
     repo, base = _repo(tmp_path)
     source_anchor = _seed_source(repo)
     _write_yaml(base / "facts" / "operator" / "interface.yaml", _valid_interface_doc(source_anchor))
-    _write_yaml(base / "checks" / "step3" / "receipt.yaml", _report("pass", "checks.step3.receipt"))
+    _write_yaml(base / "checks" / "step3" / "receipt.yaml", _report("pass", "checks.step3.receipt", _all_fact_hashes(base)))
     assert build_compile_gate(repo, "DemoOp")[0] == 0
     assert compile_source_graph(repo, "DemoOp")[0] == 0
 
@@ -505,4 +666,63 @@ def test_derived_graph_materializer_requires_reversible_rules_and_query_is_reado
     assert result["query"]["order"] == ["derived", "raw", "yaml", "source"]
     assert result["writes"] == []
     assert result["cbm_writes"] == []
+    assert result["yaml_items"][0]["ref"] == "facts/operator/interface.yaml#/items/0"
+
+
+def test_derived_graph_rejects_missing_raw_refs(tmp_path: Path) -> None:
+    repo, base = _repo(tmp_path)
+    source_anchor = _seed_source(repo)
+    _write_yaml(base / "facts" / "operator" / "interface.yaml", _valid_interface_doc(source_anchor))
+    _write_yaml(base / "checks" / "step3" / "receipt.yaml", _report("pass", "checks.step3.receipt", _all_fact_hashes(base)))
+    assert build_compile_gate(repo, "DemoOp")[0] == 0
+    assert compile_source_graph(repo, "DemoOp")[0] == 0
+    _write_yaml(
+        base / "graphs" / "derived" / "abstraction_rules.yaml",
+        {
+            "rules": [
+                {
+                    "id": "ARULE_BAD",
+                    "reversible": True,
+                    "node_id": "DVIEW_BAD",
+                    "raw_node_refs": ["ARG_DOES_NOT_EXIST"],
+                    "yaml_refs": ["facts/operator/interface.yaml#/items/0"],
+                }
+            ]
+        },
+    )
+
+    code, messages = materialize_derived_graph(repo, "DemoOp")
+
+    assert code == 2
+    assert any("missing raw node" in message for message in messages)
+
+
+def test_query_resolves_kb_from_manifest_without_route_md(tmp_path: Path) -> None:
+    repo, base = _repo(tmp_path)
+    route = base / "route.md"
+    if route.exists():
+        route.unlink()
+    source_anchor = _seed_source(repo)
+    _write_yaml(base / "facts" / "operator" / "interface.yaml", _valid_interface_doc(source_anchor))
+    _write_yaml(base / "checks" / "step3" / "receipt.yaml", _report("pass", "checks.step3.receipt", _all_fact_hashes(base)))
+    assert build_compile_gate(repo, "DemoOp")[0] == 0
+    assert compile_source_graph(repo, "DemoOp")[0] == 0
+    _write_yaml(
+        base / "graphs" / "derived" / "abstraction_rules.yaml",
+        {
+            "rules": [
+                {
+                    "id": "ARULE_DEMO_ALIAS",
+                    "reversible": True,
+                    "node_id": "DVIEW_DEMO_ALIAS",
+                    "raw_node_refs": ["ARG_DEMO_X"],
+                    "yaml_refs": ["facts/operator/interface.yaml#/items/0"],
+                }
+            ]
+        },
+    )
+    assert materialize_derived_graph(repo, "DemoOp")[0] == 0
+
+    result = query_readonly(repo, "demoop", "DVIEW_DEMO_ALIAS")
+
     assert result["yaml_items"][0]["ref"] == "facts/operator/interface.yaml#/items/0"

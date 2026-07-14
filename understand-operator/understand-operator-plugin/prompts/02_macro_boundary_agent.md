@@ -186,6 +186,6 @@ Each question must be structured with:
   semantic conclusion.
 
 After completion, the workflow silently enters Phase 2 (host + flow parallel):
-update TodoWrite / `workflow_progress.yaml` only. Do not output Boundary/IO/open
+update TodoWrite / workflow progress only. Do not output Boundary/IO/open
 questions review summaries or STOP in chat. Human judgment material is shown
-only at Phase 0.5 and Phase 3.5 gates.
+only during Phase 0 scope review.
