@@ -9,8 +9,20 @@ from typing import Any
 from understand_operator._operator.source_reader import SourceReader
 
 
-FORBIDDEN_ITEM_FIELDS = {"id", "sources", "source_text", "code_hash", "file_hash"}
-FORBIDDEN_RELATION_FIELDS = {"id", "source_id", "target_id", "sources"}
+LEGACY_IDENTITY_FIELDS = {"fact_key", "relation_key", "source_fact_key", "target_fact_key"}
+FORBIDDEN_MODEL_FIELDS = {
+    "id",
+    "stable_id",
+    "canonical_key",
+    "source_id",
+    "target_id",
+    "source_text",
+    "code_hash",
+    "file_hash",
+    "sources",
+}
+FORBIDDEN_ITEM_FIELDS = FORBIDDEN_MODEL_FIELDS | LEGACY_IDENTITY_FIELDS
+FORBIDDEN_RELATION_FIELDS = FORBIDDEN_MODEL_FIELDS | LEGACY_IDENTITY_FIELDS
 
 
 @dataclass(frozen=True)
@@ -20,6 +32,7 @@ class CandidateError:
     target: str = ""
     fact_key: str = ""
     relation_key: str = ""
+    local_id: str = ""
     field: str = ""
     repair_scope: str = "candidate_batch"
 
@@ -43,14 +56,6 @@ def source_anchor(reader: SourceReader, location: dict[str, Any]) -> dict[str, A
         "source_text": text, "code_hash": "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest(),
         "anchor_kind": location["anchor_kind"], "encoding": source.encoding, "file_hash": source.byte_hash,
     }
-
-
-def prefix_for_kind(kind: str) -> str:
-    value = kind.lower()
-    for token, prefix in (("variable", "VAR"), ("expression", "EXPR"), ("branch", "BRANCH"), ("outcome", "OUTCOME"), ("loop", "LOOP"), ("tilingdata", "TDATA"), ("tensor", "TENSOR"), ("operation", "OPR"), ("sync", "SYNC"), ("buffer", "BUF"), ("call", "CALL"), ("key", "KEY"), ("entry", "SYM"), ("file", "SYM"), ("attribute", "ATTR"), ("shape", "SHAPE")):
-        if token in value:
-            return prefix
-    return "SYM"
 
 
 def load_json(path: Path) -> Any:

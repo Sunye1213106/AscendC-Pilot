@@ -27,12 +27,11 @@ dispatch prompt asks you to:
 - write final fact YAML directly or use whole-file Write/Edit for fact content
 - create ad hoc generator/fixer scripts in `PROJECT_ROOT` or `UO_ROOT`
 - enumerate broad source trees with `Glob "**/*"` instead of using Phase 0 scope
-- use a merge argument other than `merge_fact_entries.py --batch <file>`
 - proceed when Phase 0 receipt is missing or not `status: pass`
 
 ## Scope
 
-Write only these files:
+Write candidate batches only for:
 
 - `facts/operator/interface.yaml`
 - `facts/operator/source_files.yaml`
@@ -45,7 +44,7 @@ Extract only:
 - dtype/layout/format/rank/shape-symbol domains
 - interface constraints
 - source files with seed/dependency/shared/outside-operator flags, dependency chains, symbols, architecture variants, hashes, include/exclude reasons
-- registration/API/Proto/Host/Tiling/TilingKey setter/Kernel launch/Kernel global/Kernel class/Golden entries with called_by, calls, architecture variant, template binding, and source anchors
+- registration/API/Proto/Host/Tiling/TilingKey setter/Kernel launch/Kernel global/Kernel class/Golden entries with called_by, calls, architecture variant, template binding, and source locations
 - optional status, presence condition, dtype/layout/rank/shape domains, attr type/default/domain, format conversion, and API/Proto/Host source mapping
 
 Do not extract Host tiling internals, compute semantics, kernel slices, raw graph,
@@ -53,10 +52,19 @@ derived graph, impact graph, or tests.
 
 ## Candidate JSON Contract
 
-Output only 5–10-entry candidate JSON batches for each permitted target. Run
+Output only 5-10-entry candidate JSON batches for each permitted target. Run
 `validate_candidate_batch.py` then `compile_candidate_facts.py`; never author
-formal YAML, IDs, sources, hashes, or headers. `fact_key` and source locations
-are the only identity/evidence input supplied by the model.
+formal YAML, IDs, sources, hashes, or headers.
+
+The model supplies only `local_id`, `kind`, display `name`, structured
+`identity`, semantic `fields`, `source_locations`, local/entity/symbol
+references, relation `type`, and `unresolved`.
+
+Do not generate `fact_key`, `relation_key`, `source_fact_key`,
+`target_fact_key`, stable IDs, relation IDs, source IDs, source text, or hashes.
+Do not put guessed IDs in `*_ref` fields. Names are display labels only.
+Identity is derived by Python from structured identity fields. Never use a
+display name as a cross-fact reference.
 
 Use the exact structures defined by `skills/understand-operator/spec/file_catalog.yaml`
 and schemas under `skills/understand-operator/spec/schemas/operator/`.
@@ -73,66 +81,18 @@ Then read and follow
 as a preflight checklist and its examples as structure-only examples. Never
 copy DemoOp values into target facts.
 
-The YAML header must match the catalog exactly:
+Python fills the YAML header, stable IDs, relation IDs, source anchors, source
+text, and hashes. If source evidence is not reliable, put the claim in
+`unresolved`; do not create a confirmed item.
 
-- `artifact.type`
-- `artifact.owner: uo-boundary-agent`
-- `snapshot.run_id`
-- `snapshot.source_snapshot_id`
-- `snapshot.source_revision`
-- `snapshot.spec_bundle_hash`
+## Legacy Write Protocol
 
-Use only stable ID prefixes allowed by `spec/stable_ids.yaml`. Confirmed source
-symbols use `SYM_*`, operator arguments use `ARG_*`, attributes use `ATTR_*`,
-shape symbols use `SHAPE_*`, relations use `REL_*`, source anchors use `SRC_*`,
-and unresolved entries use `UNRESOLVED_*`. Do not invent `TENSOR_*` or
-`KERNEL_*` for Phase 1 boundary facts unless the operator schema explicitly
-allows that kind and prefix.
-
-Every confirmed item or relation must embed source anchors:
-
-- `id: SRC_*`
-- repo-relative `file`
-- `symbol`
-- `span.start_line` and `span.end_line`
-- exact `source_text`
-- `code_hash` as `sha256:<hex>` over exact `source_text`
-- `anchor_kind`
-
-If source evidence is not reliable, put the claim in `unresolved`; do not create
-a confirmed item.
-
-## Legacy Write Protocol (superseded)
-
-Do not overwrite the three YAML files by hand. For each target file:
-
-1. Run `prepare_fact_file.py` for the catalog skeleton.
-2. Merge at most 5-10 entries at a time with `merge_fact_entries.py`.
-3. Read the file back and check that YAML has no `<think>`, markdown fences, or
-   partial JSON/YAML fragments.
-4. Run the Step 1 validator.
-5. Fix the same file in the same subagent context until validation passes.
-
-The batching rule is mandatory. Do not switch to direct whole-file Write/Edit
-because the file has many items.
-
-Temporary batch files are allowed only as small YAML batches for
-`merge_fact_entries.py --batch`; do not create Python generator scripts to
-rewrite fact files.
-
-The temporary batch YAML is model-authored output and is explicitly permitted.
-Write it outside `PROJECT_ROOT` and `UO_ROOT` (for example under `$env:TEMP`).
-The final fact YAML is deterministic-writer output and must never be authored
-as a whole document by the model.
-
-Process `interface.yaml`, `source_files.yaml`, and `entrypoints.yaml` one at a
-time. Start each with one minimum-valid batch, validate, repair by stable ID,
-and only then add further batches. Do not wait until all three large files are
-populated before the first validation attempt.
+Do not overwrite the three YAML files by hand. For each target file, compile
+candidate JSON batches through `compile_candidate_facts.py`.
 
 ## Completion Gate
 
-After writing the three facts files, run:
+After compiling the candidate batches, run:
 
 ```powershell
 python -X utf8 "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step1 --scope boundary --write-report
@@ -140,4 +100,3 @@ python -X utf8 "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NA
 
 Fix all errors and rerun until it exits 0. Do not report completion before the
 validator passes.
-

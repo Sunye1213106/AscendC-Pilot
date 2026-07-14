@@ -4,18 +4,32 @@ Read the relevant Phase receipt and write only candidate JSON. Agents never
 write formal Facts YAML, document headers, stable IDs, relation IDs, SRC IDs,
 source text, or hashes. Python is the only formal-Facts writer; validators are
 the only writers of `checks/*validation.yaml`.
+
 For Phase 1 this supersedes `11_phase1_boundary_yaml_authoring.md`'s legacy
 YAML examples.
 
-For each 5–10 candidate batch: create JSON conforming to
+For each 5-10 candidate batch: create JSON conforming to
 `spec/schemas/candidate/candidate_batch.schema.json`, run
 `validate_candidate_batch.py`, then run `compile_candidate_facts.py`. The
-compiler atomically replaces same-`fact_key` entries in the catalog target.
-Candidate items use `fact_key`, `kind`, `fields`, and `source_locations` only;
-relations use semantic endpoint keys. Include unresolved information rather
-than inventing facts. Parallel agents must not modify another owner's target.
+compiler atomically replaces same-canonical-identity entries in the catalog
+target.
+
+Candidate items use only `local_id`, `kind`, display `name`, structured
+`identity`, semantic `fields`, and `source_locations`. Candidate relations use
+`type`, structured `source`/`target` reference objects, semantic `fields`, and
+`source_locations`.
+
+Do not generate `fact_key`, `relation_key`, `source_fact_key`,
+`target_fact_key`, formal stable IDs, relation IDs, source IDs, `source_text`,
+or hashes. Do not put guessed IDs in `*_ref` fields. Use local/entity/symbol
+reference objects instead.
+
+Names are display labels only. Identity is derived by Python from structured
+identity fields. Never use a display name as a cross-fact reference.
+
+Include unresolved information rather than inventing facts. Parallel agents
+must not modify another owner's target.
 
 Run `validate_fact_stage.py` only after an agent/stage completes. If local
 validation or compilation fails, repair the same candidate JSON batch; do not
 edit the formal YAML or relax schemas/ownership rules.
-

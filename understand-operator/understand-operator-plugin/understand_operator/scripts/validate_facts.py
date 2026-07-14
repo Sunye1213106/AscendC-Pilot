@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import hashlib
+import json
 import re
 import sys
 from dataclasses import dataclass
@@ -21,6 +22,8 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_ROOT))
 
 from understand_operator._operator.artifacts import existing_operator_root, safe_op_name
+from understand_operator._operator.fact_registry import build_fact_registry
+from understand_operator._operator.identity import relation_stable_id, resolve_identity
 from understand_operator._operator.spec import catalog_entries, load_spec, spec_bundle_hash
 from understand_operator._operator.source_reader import SourceReadError, SourceReader
 
@@ -134,6 +137,7 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
 
     known_ids = _collect_known_ids(all_docs | docs)
     known_kinds = _collect_known_kinds(all_docs | docs)
+    _validate_identity_integrity(repo_root, uo_root, all_docs | docs, errors)
     for rel, doc in docs.items():
         _validate_references(rel, doc, known_ids, errors)
         _validate_relation_endpoints(rel, doc, known_kinds, relation_type_specs, errors)
@@ -520,6 +524,95 @@ def _validate_generic_fact_forbidden(rel: str, doc: dict[str, Any], errors: list
         for index, item in enumerate(doc.get(section) or []):
             if isinstance(item, dict) and item.get("kind") == "generic_fact":
                 errors.append(FactValidationError("SCHEMA_GENERIC_FACT_FORBIDDEN", rel, f"/{section}/{index}/kind generic_fact is not allowed in core facts"))
+
+
+def _validate_identity_integrity(repo_root: Path, uo_root: Path, docs: dict[str, dict[str, Any]], errors: list[FactValidationError]) -> None:
+    canonical_to_id: dict[str, str] = {}
+    id_to_canonical: dict[str, str] = {}
+    for rel, doc in docs.items():
+        for section, unit in _document_units(doc):
+            unit_rel = f"{rel}#sections/{section}" if section else rel
+            for index, item in enumerate(unit.get("items") or []):
+                if not isinstance(item, dict):
+                    continue
+                _validate_candidate_reference_leak(unit_rel, f"/items/{index}", item, errors)
+                if not rel.startswith("facts/"):
+                    continue
+                item_id = item.get("id")
+                kind = item.get("kind")
+                identity = item.get("identity") if isinstance(item.get("identity"), dict) else None
+                if not isinstance(item_id, str) or not isinstance(kind, str):
+                    continue
+                if not isinstance(identity, dict):
+                    errors.append(FactValidationError("IDENTITY_MISSING", unit_rel, f"/items/{index} missing identity"))
+                    continue
+                canonical = identity.get("canonical_key")
+                normalized = identity.get("normalized")
+                if identity.get("version") is None or not isinstance(canonical, str) or not isinstance(normalized, dict):
+                    errors.append(FactValidationError("IDENTITY_MISSING", unit_rel, f"/items/{index} identity.version/canonical_key/normalized required"))
+                    continue
+                try:
+                    resolved = resolve_identity(kind, normalized, repo_root=repo_root)
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(FactValidationError("IDENTITY_CANONICAL_KEY_INVALID", unit_rel, f"/items/{index} identity cannot be resolved: {exc}"))
+                    continue
+                if canonical != resolved.canonical_key:
+                    errors.append(FactValidationError("IDENTITY_CANONICAL_KEY_INVALID", unit_rel, f"/items/{index} canonical_key does not match normalized identity"))
+                if item_id != resolved.stable_id:
+                    errors.append(FactValidationError("IDENTITY_STABLE_ID_MISMATCH", unit_rel, f"/items/{index} id {item_id} does not match canonical_key"))
+                previous = canonical_to_id.get(canonical)
+                if previous and previous != item_id:
+                    errors.append(FactValidationError("IDENTITY_DUPLICATE", unit_rel, f"/items/{index} canonical_key also maps to {previous}"))
+                canonical_to_id[canonical] = item_id
+                previous_canonical = id_to_canonical.get(item_id)
+                if previous_canonical and previous_canonical != canonical:
+                    errors.append(FactValidationError("IDENTITY_DUPLICATE", unit_rel, f"/items/{index} stable id maps to two canonical keys"))
+                id_to_canonical[item_id] = canonical
+            for index, relation in enumerate(unit.get("relations") or []):
+                if not isinstance(relation, dict):
+                    continue
+                _validate_candidate_reference_leak(unit_rel, f"/relations/{index}", relation, errors)
+                if not rel.startswith("facts/"):
+                    continue
+                relation_id = relation.get("id")
+                relation_type = relation.get("type")
+                source_id = relation.get("source_id")
+                target_id = relation.get("target_id")
+                if all(isinstance(value, str) for value in (relation_id, relation_type, source_id, target_id)):
+                    expected = relation_stable_id(str(relation_type), str(source_id), str(target_id), relation.get("qualifier"))
+                    if relation_id != expected and str(relation_id).startswith("REL_"):
+                        errors.append(FactValidationError("IDENTITY_STABLE_ID_MISMATCH", unit_rel, f"/relations/{index} relation id is not deterministic from type/source/target"))
+    _validate_registry_cache(uo_root, errors)
+
+
+def _validate_candidate_reference_leak(rel: str, path: str, value: Any, errors: list[FactValidationError]) -> None:
+    def visit(node: Any, node_path: str) -> None:
+        if isinstance(node, dict):
+            if node.get("ref_type") in {"local", "entity", "symbol"}:
+                errors.append(FactValidationError("CANDIDATE_REFERENCE_LEAKED", rel, f"{node_path} contains unresolved candidate reference object"))
+            for child_key, child in node.items():
+                if child_key == "local_id":
+                    errors.append(FactValidationError("LOCAL_REFERENCE_LEAKED", rel, f"{node_path}.{child_key} leaked into formal facts"))
+                visit(child, f"{node_path}.{child_key}")
+        elif isinstance(node, list):
+            for index, child in enumerate(node):
+                visit(child, f"{node_path}[{index}]")
+
+    visit(value, path)
+
+
+def _validate_registry_cache(uo_root: Path, errors: list[FactValidationError]) -> None:
+    cache_path = uo_root / "indexes" / "entity_registry.json"
+    if not cache_path.exists():
+        return
+    try:
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        errors.append(FactValidationError("REGISTRY_CACHE_STALE", "indexes/entity_registry.json", f"cache is not valid JSON: {exc}"))
+        return
+    rebuilt = build_fact_registry(uo_root).to_cache()
+    if cached != rebuilt:
+        errors.append(FactValidationError("REGISTRY_CACHE_STALE", "indexes/entity_registry.json", "cached registry does not match registry rebuilt from Formal Facts"))
 
 
 def _validate_compute_execution_rules(rel: str, doc: dict[str, Any], errors: list[FactValidationError]) -> None:

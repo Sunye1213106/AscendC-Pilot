@@ -66,7 +66,7 @@ def compile_source_graph(repo_root: Path, op_name: str) -> tuple[int, list[str]]
                 edges.append(edge)
                 _index_edge(rel, edge, yaml_to_graph, graph_to_yaml, source_index)
 
-    synthetic_edges = _deterministic_cross_layer_edges(nodes)
+    synthetic_edges = _deterministic_cross_layer_edges(nodes, edges)
     for edge in synthetic_edges:
         edges.append(edge)
         _index_synthetic_edge(edge, yaml_to_graph, graph_to_yaml, source_index)
@@ -214,9 +214,9 @@ def _index_synthetic_edge(
         source_index.setdefault(str(source_id), []).append(str(edge["id"]))
 
 
-def _deterministic_cross_layer_edges(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _deterministic_cross_layer_edges(nodes: list[dict[str, Any]], formal_edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
     edges: list[dict[str, Any]] = []
-    edges.extend(_match_field(nodes, "tilingdata_write", "tilingdata_read", "tilingdata_write_to_read", ("struct_ref", "field_ref")))
+    edges.extend(_tilingdata_write_read_edges(nodes, formal_edges))
     edges.extend(_match_tiling_key_setters(nodes))
     edges.extend(_compute_kernel_edges(nodes))
     edges.extend(_buffer_edges(nodes))
@@ -226,6 +226,39 @@ def _deterministic_cross_layer_edges(nodes: list[dict[str, Any]]) -> list[dict[s
     for edge in edges:
         unique.setdefault(str(edge.get("id")), edge)
     return list(unique.values())
+
+
+def _tilingdata_write_read_edges(nodes: list[dict[str, Any]], formal_edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_id = {str(node.get("id")): node for node in nodes if node.get("id")}
+    writes_by_field: dict[str, list[str]] = {}
+    reads_by_field: dict[str, list[str]] = {}
+    for edge in formal_edges:
+        edge_type = str(edge.get("type") or "")
+        source_id = str(edge.get("source_id") or "")
+        target_id = str(edge.get("target_id") or "")
+        source = by_id.get(source_id)
+        target = by_id.get(target_id)
+        if not source or not target:
+            continue
+        if edge_type in {"writes", "writes_tilingdata"} and str(source.get("kind")) == "tilingdata_write" and str(target.get("kind")) == "tilingdata_field":
+            writes_by_field.setdefault(target_id, []).append(source_id)
+        if edge_type in {"reads", "reads_tilingdata"} and str(source.get("kind")) == "tilingdata_read" and str(target.get("kind")) == "tilingdata_field":
+            reads_by_field.setdefault(target_id, []).append(source_id)
+    result: list[dict[str, Any]] = []
+    for field_id in sorted(set(writes_by_field) & set(reads_by_field)):
+        for write_id in sorted(set(writes_by_field[field_id])):
+            for read_id in sorted(set(reads_by_field[field_id])):
+                write = by_id.get(write_id)
+                read = by_id.get(read_id)
+                field = by_id.get(field_id)
+                if not write or not read or not field:
+                    continue
+                edge = _synthetic_edge("tilingdata_write_to_read", write, read, "deterministic_tilingdata_field_ref")
+                edge["field_ref"] = field_id
+                edge["detail_refs"] = [write["detail_ref"], field["detail_ref"], read["detail_ref"]]
+                edge["source_refs"] = sorted(set((write.get("source_refs") or []) + (field.get("source_refs") or []) + (read.get("source_refs") or [])))
+                result.append(edge)
+    return result
 
 
 def _match_tiling_key_setters(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:

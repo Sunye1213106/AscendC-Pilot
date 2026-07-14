@@ -1,7 +1,7 @@
 version: 1
 relation_types:
-  reads: {source: symbol, target: variable}
-  writes: {source: symbol, target: variable}
+  reads: {source: any, target: any}
+  writes: {source: any, target: any}
   assigned_from: {source: variable, target: expression}
   derived_from: {source: variable, target: variable}
   passed_to: {source: variable, target: call}

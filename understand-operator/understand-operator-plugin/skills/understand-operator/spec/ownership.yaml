@@ -27,6 +27,8 @@ owners:
   uo-host-extraction:
     may_read: [manifest.yaml, facts/operator/**, facts/host/**, runs/**, cbm/**]
     may_write:
+      - facts/host.yaml
+      - facts/host.yaml#sections/*
       - facts/host/variables.yaml
       - facts/host/expressions.yaml
       - facts/host/control_flow.yaml
@@ -38,6 +40,8 @@ owners:
   uo-flow-extraction:
     may_read: [manifest.yaml, facts/operator/**, facts/compute/**, runs/**, cbm/**]
     may_write:
+      - facts/compute.yaml
+      - facts/compute.yaml#sections/*
       - facts/compute/tensors.yaml
       - facts/compute/operations.yaml
       - facts/compute/dataflow.yaml
@@ -45,6 +49,8 @@ owners:
   uo-kernel-overview-agent:
     may_read: [manifest.yaml, facts/operator/**, facts/host/**, facts/kernel/overview/**, runs/**, cbm/**]
     may_write:
+      - facts/kernel/overview.yaml
+      - facts/kernel/overview.yaml#sections/*
       - facts/kernel/overview/entries.yaml
       - facts/kernel/overview/functions.yaml
       - facts/kernel/overview/call_graph.yaml
