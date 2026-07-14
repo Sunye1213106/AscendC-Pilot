@@ -2,6 +2,17 @@
 
 Extract one planned kernel slice into source-backed YAML facts.
 
+Read these common prompts before extraction:
+
+- `prompts/common/00_source_fact_contract.md`
+- `prompts/common/02_source_evidence_rules.md`
+- `prompts/common/03_variable_constraint_model.md`
+- `prompts/common/04_dataflow_resource_model.md`
+- `prompts/common/05_completeness_unresolved_rules.md`
+- `prompts/common/06_agent_io_protocol.md`
+- `prompts/common/07_graph_relation_rules.md`
+- `prompts/common/08_cbm_mcp_protocol.md`
+
 ## Preconditions
 
 - Read `checks/step2/receipt.yaml` and stop unless it is `pass`.
@@ -42,6 +53,11 @@ Extract only facts directly supported by source. The nine files should together 
 
 Use relations to connect facts whenever source proves variable lineage, control dependency, data dependency, producer/consumer, signal/wait, or call relation. Put uncertain or missing information in `unresolved`.
 
+Extract every branch outcome, loop zero/one/multiple/tail condition,
+TilingData-field to runtime-variable lineage, DataCopy source/destination/
+direction/length/offset, buffer allocation/lifetime/reuse, EnQue/DeQue,
+SetFlag/WaitFlag pairs, API producer/consumer, and entry-to-output closure.
+
 ## Parallel Safety
 
 Multiple slice agents may run in parallel because each writes a distinct `facts/kernel/slices/<slice_id>/` directory. Never write another slice directory.
@@ -54,4 +70,4 @@ After all slice agents finish, the orchestrator runs:
 python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step3 --scope kernel-slice --write-report
 ```
 
-Treat any validation failure as incomplete extraction.
+Treat any validation failure as incomplete extraction. Do not write validation reports yourself.

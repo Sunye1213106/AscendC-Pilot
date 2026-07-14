@@ -2,13 +2,20 @@ version: 1
 artifact_type: operator.entrypoints
 required_top_level: [version, artifact, snapshot, items, relations, unresolved]
 allowed_top_level: [version, artifact, snapshot, items, relations, unresolved, analysis_status, reason, sources]
-item_kind_enum: [registration_entry, host_entry, tiling_entry, tiling_key_setter, kernel_launch, kernel_entry, golden_candidate, unresolved_entry]
+item_kind_enum: [registration_entry, api_definition, proto_definition, host_entry, tiling_entry, tiling_key_setter, kernel_launch_site, kernel_global_entry, kernel_class_entry, golden_entry, unresolved_entry, generic_fact]
 required_item_fields: [id, kind, name, status, sources]
 kind_required_fields:
-  registration_entry: [id, kind, name, file, status, sources]
-  host_entry: [id, kind, name, file, status, sources]
-  tiling_entry: [id, kind, name, file, status, sources]
-  kernel_entry: [id, kind, name, file, status, sources]
+  registration_entry: [name, file, symbol, entry_kind]
+  api_definition: [name, file, symbol, entry_kind]
+  proto_definition: [name, file, symbol, entry_kind]
+  host_entry: [name, file, symbol, entry_kind]
+  tiling_entry: [name, file, symbol, entry_kind]
+  tiling_key_setter: [name, file, symbol, entry_kind]
+  kernel_launch_site: [name, file, symbol, entry_kind]
+  kernel_global_entry: [name, file, symbol, entry_kind]
+  kernel_class_entry: [name, file, symbol, entry_kind]
+  golden_entry: [name, file, symbol, entry_kind]
+  generic_fact: [name]
 relation_required_fields: [id, type, source_id, target_id, status, sources]
 source_anchor: required_for_confirmed
 minimum_cardinality: 1

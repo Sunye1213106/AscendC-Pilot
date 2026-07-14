@@ -1,4 +1,18 @@
 version: 1
 artifact_type: kernel.slice.variables
+required_top_level: [version, artifact, snapshot, items, relations, unresolved]
+allowed_top_level: [version, artifact, snapshot, analysis_status, reason, sources, items, relations, unresolved]
+item_kind_enum: [kernel_parameter, runtime_variable, tilingdata_variable, loop_variable, buffer_variable, feature_flag, generic_fact]
+required_item_fields: [id, kind, name, status, sources]
+kind_required_fields:
+  kernel_parameter: [declared_type, scope_ref, definition_kind, value_source_ref, domain, affects]
+  runtime_variable: [declared_type, scope_ref, definition_kind, value_source_ref, domain, affects]
+  tilingdata_variable: [declared_type, scope_ref, definition_kind, value_source_ref, domain, affects]
+  loop_variable: [declared_type, scope_ref, definition_kind, value_source_ref, domain, affects]
+  buffer_variable: [declared_type, scope_ref, definition_kind, value_source_ref, domain, affects]
+  feature_flag: [declared_type, scope_ref, definition_kind, value_source_ref, domain, affects]
+  generic_fact: [name]
+relation_required_fields: [id, type, source_id, target_id, status]
+minimum_cardinality: 1
 stores: [kernel_parameters, tilingdata_variables, block_index, core_index, offset, length, tail_size, loop_index, buffer_size, feature_flags, locals]
 forbids: [host_variable_without_link]

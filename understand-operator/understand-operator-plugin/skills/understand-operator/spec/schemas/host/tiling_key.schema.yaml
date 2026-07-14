@@ -1,4 +1,14 @@
 version: 1
 artifact_type: host.tiling_key
+required_top_level: [version, artifact, snapshot, items, relations, unresolved]
+allowed_top_level: [version, artifact, snapshot, analysis_status, reason, sources, items, relations, unresolved]
+item_kind_enum: [tiling_key_field, tiling_key_encoding, generic_fact]
+required_item_fields: [id, kind, name, status, sources]
+kind_required_fields:
+  tiling_key_field: [field_order, domain, variable_ref, encoding_call_ref, phase, independent, derived_from]
+  tiling_key_encoding: [field_order, domain, variable_ref, encoding_call_ref, phase, independent, derived_from]
+  generic_fact: [name]
+relation_required_fields: [id, type, source_id, target_id, status]
+minimum_cardinality: 1
 stores: [fields, field_order, domains, source_variables, independent, constant_fields, derived_fields, setter_call, encoding]
 forbids: [testcase_generation]

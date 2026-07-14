@@ -1,4 +1,11 @@
 version: 1
 artifact_type: graph.raw.indexes
+required_top_level: [version, artifact, snapshot, by_kind, by_relation_type, items, relations, unresolved]
+allowed_top_level: [version, artifact, snapshot, by_kind, by_relation_type, items, relations, unresolved]
+item_kind_enum: [raw_index_record]
+required_item_fields: [id, kind]
+kind_required_fields: {}
+relation_required_fields: [id, type, source_id, target_id]
+minimum_cardinality: 0
 stores: [by_kind, by_symbol, by_file, by_function, by_relation_type]
 forbids: [new_facts]

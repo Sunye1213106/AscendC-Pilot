@@ -362,8 +362,8 @@ canonical_files:
   issues: evidence/issues.yaml
   quality: quality.yaml
   human_review: human/review.md
-  macro_scope_scan: archive/runs/macro_scope_scan.yaml
-  macro_scope_review: archive/runs/macro_scope_review.yaml
+  macro_scope_scan: runs/<current_run_id>/phase0/scope_scan.yaml
+  macro_scope_review: runs/<current_run_id>/phase0/scope_review.yaml
 
 qa_routes:
   overview:
@@ -407,7 +407,7 @@ qa_routes:
   human_review:
     read: [human/review.md, quality.yaml]
   macro_scope:
-    read: [archive/runs/macro_scope_scan.yaml, archive/runs/macro_scope_review.yaml, cbm/index_meta.json]
+    read: [runs/<current_run_id>/phase0/scope_scan.yaml, runs/<current_run_id>/phase0/scope_review.yaml, cbm/index_meta.json]
 
 export_views:
   tiling-test:

@@ -136,7 +136,7 @@ notes: "<简短中文说明>"
 阶段 0 完成后必须：
 
 1. 更新 todo `uo-p0` → completed
-2. 写入 `archive/runs/macro_scope_review.yaml`（结论摘要同步到 `human/review.md`）
+2. 写入 `runs/<current_run_id>/phase0/scope_review.yaml`
 3. 进入阶段 0.5：**展示** include / exclude / branch_skip / uncertain_scope（给人判断）+ 选择 UI
 4. **STOP 等用户确认**。只有用户选择 `continue` 后，才进入阶段 1。
 

@@ -1,4 +1,14 @@
 version: 1
 artifact_type: kernel.slice.branches
+required_top_level: [version, artifact, snapshot, items, relations, unresolved]
+allowed_top_level: [version, artifact, snapshot, analysis_status, reason, sources, items, relations, unresolved]
+item_kind_enum: [kernel_branch, branch_outcome, generic_fact]
+required_item_fields: [id, kind, name, status, sources]
+kind_required_fields:
+  kernel_branch: [function_ref, predicate_ref, controlling_variable_refs, outcome_refs, reachability]
+  branch_outcome: [function_ref, predicate_ref, controlling_variable_refs, outcome_refs, reachability]
+  generic_fact: [name]
+relation_required_fields: [id, type, source_id, target_id, status]
+minimum_cardinality: 1
 stores: [if_switch, predicate, control_variable, outcomes, outcome_source_range, reachability]
 forbids: [unreachable_claim_without_evidence]

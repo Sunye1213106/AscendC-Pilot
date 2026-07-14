@@ -1,4 +1,11 @@
 version: 1
 artifact_type: graph.raw.manifest
+required_top_level: [version, artifact, snapshot, compiler, input_facts_hash, node_count, edge_count, built_at, items, relations, unresolved]
+allowed_top_level: [version, artifact, snapshot, compiler, input_facts_hash, node_count, edge_count, built_at, items, relations, unresolved]
+item_kind_enum: [raw_manifest_record]
+required_item_fields: [id, kind]
+kind_required_fields: {}
+relation_required_fields: [id, type, source_id, target_id]
+minimum_cardinality: 0
 stores: [graph_version, compiler_version, input_facts_hash, node_count, edge_count, build_time]
 forbids: [derived_abstraction]

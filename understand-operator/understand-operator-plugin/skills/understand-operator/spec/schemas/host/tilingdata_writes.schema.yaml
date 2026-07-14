@@ -1,4 +1,15 @@
 version: 1
 artifact_type: host.tilingdata_writes
+required_top_level: [version, artifact, snapshot, items, relations, unresolved]
+allowed_top_level: [version, artifact, snapshot, analysis_status, reason, sources, items, relations, unresolved]
+item_kind_enum: [tilingdata_write, workspace_write, block_dim_write, generic_fact]
+required_item_fields: [id, kind, name, status, sources]
+kind_required_fields:
+  tilingdata_write: [struct_ref, field_ref, field_type, write_site_ref, value_expression_ref, condition_ref, source_variable_refs]
+  workspace_write: [struct_ref, field_ref, field_type, write_site_ref, value_expression_ref, condition_ref, source_variable_refs]
+  block_dim_write: [struct_ref, field_ref, field_type, write_site_ref, value_expression_ref, condition_ref, source_variable_refs]
+  generic_fact: [name]
+relation_required_fields: [id, type, source_id, target_id, status]
+minimum_cardinality: 1
 stores: [tilingdata_struct, fields, field_type, write_site, write_expression, conditional_write, source_variable, workspace, block_dim]
 forbids: [kernel_read_inference_without_source]

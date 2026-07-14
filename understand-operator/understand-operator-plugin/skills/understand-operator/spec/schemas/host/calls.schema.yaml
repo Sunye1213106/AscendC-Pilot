@@ -1,4 +1,16 @@
 version: 1
 artifact_type: host.calls
+required_top_level: [version, artifact, snapshot, items, relations, unresolved]
+allowed_top_level: [version, artifact, snapshot, analysis_status, reason, sources, items, relations, unresolved]
+item_kind_enum: [host_call, macro_call, template_call, tiling_call, generic_fact]
+required_item_fields: [id, kind, name, status, sources]
+kind_required_fields:
+  host_call: [caller_ref, callee_ref, argument_refs, return_ref]
+  macro_call: [caller_ref, callee_ref, argument_refs, return_ref]
+  template_call: [caller_ref, callee_ref, argument_refs, return_ref]
+  tiling_call: [caller_ref, callee_ref, argument_refs, return_ref]
+  generic_fact: [name]
+relation_required_fields: [id, type, source_id, target_id, status]
+minimum_cardinality: 1
 stores: [caller, callee, argument_binding, return_binding, template_arguments, macro_call, call_order]
 forbids: [call_graph_without_call_sites]

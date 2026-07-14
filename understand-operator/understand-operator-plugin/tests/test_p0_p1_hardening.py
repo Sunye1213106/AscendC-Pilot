@@ -95,6 +95,30 @@ def _repo(tmp_path: Path) -> tuple[Path, Path]:
     return repo, base
 
 
+def _activate_contract_run(base: Path) -> None:
+    manifest = yaml.safe_load((base / "manifest.yaml").read_text(encoding="utf-8")) or {}
+    if isinstance(manifest, dict):
+        manifest["current_run_id"] = "UO_RUN_TEST"
+        source = manifest.setdefault("source", {})
+        if isinstance(source, dict):
+            source["revision"] = "unknown"
+            source["snapshot_id"] = "SOURCE_TEST"
+        (base / "manifest.yaml").write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+    phase0 = base / "runs" / "UO_RUN_TEST" / "phase0"
+    phase0.mkdir(parents=True, exist_ok=True)
+    _write_yaml(
+        phase0 / "context.yaml",
+        {
+            "version": 1,
+            "artifact": {"type": "runs.context", "schema_version": 1, "owner": "uo-orchestrator"},
+            "snapshot": {"run_id": "UO_RUN_TEST", "source_snapshot_id": "SOURCE_TEST", "source_revision": "unknown", "spec_bundle_hash": ""},
+            "items": [{"id": "OP_PHASE0_CONTEXT", "kind": "context", "status": "recorded", "data": {"source_revision": "unknown", "source_snapshot_id": "SOURCE_TEST"}}],
+            "relations": [],
+            "unresolved": [],
+        },
+    )
+
+
 def _write_yaml(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
@@ -251,7 +275,7 @@ def test_macro_scope_scan_artifact_initialized(tmp_path: Path) -> None:
     assert scan["op_name"] == "DemoOp"
     assert scan["scan_method"]["ignore_rules_applied"] is True
     assert scan["large_files"] == []
-    assert "macro_scope_scan.yaml" in (base / "index.yaml").read_text(encoding="utf-8")
+    assert "runs/<current_run_id>/phase0/scope_scan.yaml" in (base / "index.yaml").read_text(encoding="utf-8")
 
 
 def test_read_only_tools_do_not_create_empty_kb_for_unknown_op(tmp_path: Path) -> None:
@@ -271,9 +295,9 @@ def test_tool_selection_prompts_scope_scan_before_semantic_cbm() -> None:
     assert "Repository structure, file boundaries" in rule
     assert "CBM MCP first" in rule
     assert "Tool Decision Table" in rule
-    assert "Phase 0.5-A: Deterministic Scope Scan" in review
-    assert "archive/runs/macro_scope_scan.yaml" in review
-    assert "Phase 1 must not rescan the whole repository from scratch" in boundary
+    assert "Phase 0 Scope Review" in review
+    assert "runs/<current_run_id>/phase0/scope_scan.yaml" in review
+    assert "facts/operator/interface.yaml" in boundary
     assert "Never open source files " + "before" not in rule
     assert "Never " + "Grep" not in rule
 
@@ -288,14 +312,16 @@ def test_macro_scope_scan_script_generates_deterministic_candidates(tmp_path: Pa
     kernel.write_text("__global__ void DemoOpKernel() {}\n// arch35\n", encoding="utf-8")
     large = repo / "op_host" / "large.cpp"
     large.write_text("x" * (513 * 1024), encoding="utf-8")
+    _activate_contract_run(base)
 
     assert macro_scope_scan_main([str(repo), "--op-name", "DemoOp"]) == 0
-    scan = yaml.safe_load((base / "archive" / "runs" / "macro_scope_scan.yaml").read_text(encoding="utf-8"))
+    scan = yaml.safe_load((base / "runs" / "UO_RUN_TEST" / "phase0" / "scope_scan.yaml").read_text(encoding="utf-8"))
 
-    assert scan["files"]["host"] == ["op_host/demo_tiling.cpp", "op_host/large.cpp"]
-    assert scan["files"]["kernel"] == ["op_kernel/arch35/demo_kernel.cpp"]
+    assert [item["path"] for item in scan["files"]["initial_operator_files"] if item["path"].startswith("op_host/")] == ["op_host/demo_tiling.cpp", "op_host/large.cpp"]
+    assert any(item["path"] == "op_kernel/arch35/demo_kernel.cpp" for item in scan["files"]["initial_operator_files"])
     assert scan["architecture_variants"][0]["name"] == "arch35"
-    assert {item["item"] for item in scan["entry_candidates"]} >= {
+    candidates = scan["symbols"]["host_entry_candidates"] + scan["symbols"]["kernel_entry_candidates"]
+    assert {item["item"] for item in candidates} >= {
         "REGISTER_TILING",
         "TILING_KEY_IS",
         "__global__",

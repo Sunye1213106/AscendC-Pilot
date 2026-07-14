@@ -30,3 +30,9 @@ relation_types:
   waits_for: {source: symbol, target: sync}
   happens_before: {source: any, target: any}
   writes_output: {source: any, target: argument}
+  tilingdata_write_to_read: {source: tilingdata, target: tilingdata}
+  tiling_key_setter_to_field: {source: call, target: key}
+  compute_to_kernel: {source: operation, target: call}
+  buffer_producer_to_consumer: {source: any, target: any}
+  signal_to_wait: {source: sync, target: sync}
+  kernel_entry_to_output: {source: symbol, target: argument}

@@ -2,6 +2,15 @@
 
 Plan source-backed kernel slices after Step 2 is sealed.
 
+Read these common prompts before planning:
+
+- `prompts/common/00_source_fact_contract.md`
+- `prompts/common/02_source_evidence_rules.md`
+- `prompts/common/04_dataflow_resource_model.md`
+- `prompts/common/05_completeness_unresolved_rules.md`
+- `prompts/common/06_agent_io_protocol.md`
+- `prompts/common/07_graph_relation_rules.md`
+
 ## Preconditions
 
 - Read `checks/step2/receipt.yaml` first. Stop if it is missing or `status` is not `pass`.
@@ -28,7 +37,12 @@ Owner must be `uo-kernel-slice-planner`.
 
 ## Planning Rule
 
-Slice by executable behavior chain, not by file count or function count. Each planned slice should cover as much of this chain as the source supports:
+Slice by `kernel_entry`, `template_binding_signature`, `structural_flow_signature`,
+`tilingdata_read_signature`, and `output_signature`, not by file count or
+function count. Shared functions must have one primary owner; other slices refer
+to them through `slice_interfaces.yaml`.
+
+Each planned slice should cover as much of this chain as the source supports:
 
 `TilingData Read -> Runtime Variable -> Branch/Loop -> DataCopy -> Compute -> Buffer/Sync -> Output`
 

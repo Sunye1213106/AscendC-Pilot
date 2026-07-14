@@ -123,6 +123,8 @@ def _valid_entrypoints_doc(source: dict) -> dict:
                 "kind": "host_entry",
                 "name": "DemoOpHost",
                 "file": "op_host/demo.cpp",
+                "symbol": "DemoOpHost",
+                "entry_kind": "host_entry",
                 "status": "confirmed",
                 "sources": [source],
             }
@@ -132,7 +134,7 @@ def _valid_entrypoints_doc(source: dict) -> dict:
     }
 
 
-def _fact_doc(artifact_type: str, owner: str, item_id: str, source: dict, *, kind: str = "source_fact") -> dict:
+def _fact_doc(artifact_type: str, owner: str, item_id: str, source: dict, *, kind: str = "generic_fact") -> dict:
     return {
         "version": 1,
         "artifact": {"type": artifact_type, "schema_version": 1, "owner": owner},
@@ -247,14 +249,29 @@ def _all_fact_hashes(base: Path) -> dict[str, str]:
 
 
 def _seed_step3_planner(base: Path, source: dict) -> None:
-    _write_yaml(
-        base / "facts" / "kernel" / "slice_manifest.yaml",
-        _fact_doc("kernel.slice_manifest", "uo-kernel-slice-planner", "KERNEL_SLICE_MAIN", source, kind="kernel_slice"),
+    manifest = _fact_doc("kernel.slice_manifest", "uo-kernel-slice-planner", "KERNEL_SLICE_MAIN", source, kind="kernel_slice")
+    manifest["items"][0].update(
+        {
+            "kernel_entry": "SYM_DEMO_HOST_ENTRY",
+            "template_binding_signature": "default",
+            "structural_flow_signature": "entry_to_output",
+            "tilingdata_read_signature": "none",
+            "output_signature": "ARG_DEMO_X",
+            "primary_owner": "main",
+        }
     )
-    _write_yaml(
-        base / "facts" / "kernel" / "slice_interfaces.yaml",
-        _fact_doc("kernel.slice_interfaces", "uo-kernel-slice-planner", "REL_SLICE_INTERFACE", source, kind="slice_interface"),
+    _write_yaml(base / "facts" / "kernel" / "slice_manifest.yaml", manifest)
+    interfaces = _fact_doc("kernel.slice_interfaces", "uo-kernel-slice-planner", "REL_SLICE_INTERFACE", source, kind="slice_interface")
+    interfaces["items"][0].update(
+        {
+            "source_slice_ref": "KERNEL_SLICE_MAIN",
+            "target_slice_ref": "KERNEL_SLICE_MAIN",
+            "interface_kind": "self",
+            "exported_refs": [],
+            "imported_refs": [],
+        }
     )
+    _write_yaml(base / "facts" / "kernel" / "slice_interfaces.yaml", interfaces)
 
 
 def _seed_kernel_slice(base: Path, source: dict, slice_id: str = "main") -> None:
@@ -417,7 +434,9 @@ def test_relation_endpoint_kind_mismatch_fails(tmp_path: Path) -> None:
             "id": "ATTR_DEMO_ALPHA",
             "kind": "attribute",
             "name": "alpha",
-            "dtype": "int",
+            "attr_type": "int",
+            "default": 1,
+            "domain": [1],
             "status": "confirmed",
             "sources": [source_anchor],
         }
@@ -483,6 +502,42 @@ def test_step2_scoped_validators_run_independently(tmp_path: Path) -> None:
     assert validate_facts(repo, "DemoOp", stage="step2", scope="host") == []
     assert validate_facts(repo, "DemoOp", stage="step2", scope="compute") == []
     assert validate_facts(repo, "DemoOp", stage="step2", scope="kernel-overview") == []
+
+
+def test_compute_operation_schema_requires_fine_grained_fields(tmp_path: Path) -> None:
+    repo, base = _repo(tmp_path)
+    source_anchor = _seed_source(repo)
+    compute_files = {
+        "facts/compute/tensors.yaml": ("compute.tensors", "TENSOR_COMPUTE_X"),
+        "facts/compute/dataflow.yaml": ("compute.dataflow", "REL_COMPUTE_X"),
+        "facts/compute/numerical_semantics.yaml": ("compute.numerical_semantics", "ATTR_COMPUTE_X"),
+    }
+    for rel, (artifact_type, item_id) in compute_files.items():
+        _write_yaml(base / rel, _fact_doc(artifact_type, "uo-compute-agent", item_id, source_anchor))
+    operation_doc = _fact_doc("compute.operations", "uo-compute-agent", "OPR_COMPUTE_ADD", source_anchor, kind="compute_operation")
+    operation_doc["items"][0].update(
+        {
+            "operation_type": "add",
+            "execution_order": 1,
+            "implementation_ref": "call_add",
+            "golden_ref": "golden_add",
+            "input_tensor_refs": ["x", "y"],
+            "output_tensor_refs": ["z"],
+            "axis_refs": [],
+            "formula": "z = x + y",
+            "dtype_policy": "preserve",
+            "broadcast_policy": "none",
+            "reduction_policy": "none",
+            "numerical_sensitivity": "low",
+            "accumulation_dtype": "same_as_input",
+            "tolerance_ref": "tol_default",
+        }
+    )
+    _write_yaml(base / "facts" / "compute" / "operations.yaml", operation_doc)
+
+    errors = validate_facts(repo, "DemoOp", stage="step2", scope="compute")
+
+    assert any(error.code == "SCHEMA_ITEM_FIELD_MISSING" and "/kernel_api_refs" in error.message for error in errors)
 
 
 def test_step2_receipt_requires_three_python_gates_and_review(tmp_path: Path) -> None:
@@ -634,7 +689,7 @@ def test_derived_graph_materializer_requires_reversible_rules_and_query_is_reado
         base / "graphs" / "derived" / "abstraction_rules.yaml",
         {
             "version": 1,
-            "artifact": {"type": "graph.derived.abstraction_rules", "schema_version": 1, "owner": "derived-graph-materializer"},
+            "artifact": {"type": "graph.derived.abstraction_rules", "schema_version": 1, "owner": "uo-behavior-abstraction-agent"},
             "snapshot": {
                 "run_id": "UO_RUN_TEST",
                 "source_snapshot_id": "SOURCE_TEST",
@@ -663,7 +718,7 @@ def test_derived_graph_materializer_requires_reversible_rules_and_query_is_reado
     code, messages = materialize_derived_graph(repo, "DemoOp")
     assert code == 0, messages
     result = query_readonly(repo, "DemoOp", "DVIEW_DEMO_INPUT")
-    assert result["query"]["order"] == ["derived", "raw", "yaml", "source"]
+    assert result["query"]["order"] == ["terminology", "symbol_index", "derived", "raw", "yaml", "source"]
     assert result["writes"] == []
     assert result["cbm_writes"] == []
     assert result["yaml_items"][0]["ref"] == "facts/operator/interface.yaml#/items/0"

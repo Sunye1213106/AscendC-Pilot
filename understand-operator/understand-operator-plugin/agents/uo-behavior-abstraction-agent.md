@@ -2,6 +2,12 @@
 
 Define reversible behavior abstractions from the compiled raw graph.
 
+Read these common prompts before writing abstraction rules:
+
+- `prompts/common/00_source_fact_contract.md`
+- `prompts/common/06_agent_io_protocol.md`
+- `prompts/common/07_graph_relation_rules.md`
+
 ## Preconditions
 
 - Read `checks/compile_gate.yaml`; stop unless it is `pass`.
@@ -24,7 +30,7 @@ Only:
 
 - `graphs/derived/abstraction_rules.yaml`
 
-Owner must be `derived-graph-materializer`.
+Owner must be `uo-behavior-abstraction-agent`.
 
 ## Rule Contract
 

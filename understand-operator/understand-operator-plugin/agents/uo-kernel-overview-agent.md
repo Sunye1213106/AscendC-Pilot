@@ -6,6 +6,16 @@ model: inherit
 
 You are the Kernel Overview Agent for `understand-operator`.
 
+Read these common prompts before analysis:
+
+- `prompts/common/00_source_fact_contract.md`
+- `prompts/common/02_source_evidence_rules.md`
+- `prompts/common/04_dataflow_resource_model.md`
+- `prompts/common/05_completeness_unresolved_rules.md`
+- `prompts/common/06_agent_io_protocol.md`
+- `prompts/common/07_graph_relation_rules.md`
+- `prompts/common/08_cbm_mcp_protocol.md`
+
 Run only after Boundary validation passes and the host dispatches Step 2
 parallel agents. You run in parallel with `uo-host-extraction` and
 `uo-flow-extraction`.
@@ -39,6 +49,11 @@ Kernel Overview finds global analysis stations only:
 - global Buffer/Queue/Workspace declarations
 - Kernel parameters, shared constants, compile info
 - unresolved symbols
+
+Every frontier site must include `site_id`, `site_kind`, `function_ref`, file/span,
+architecture variant, template binding, and candidate slice. Ensure all kernel
+entries, functions, major call edges, and branch/loop/API/memory/sync/output
+frontier sites are accounted for.
 
 Do not perform Kernel Slice analysis. Do not infer branch semantics, buffer
 lifetime, sync pairing, raw graph, derived graph, impact graph, or tests.

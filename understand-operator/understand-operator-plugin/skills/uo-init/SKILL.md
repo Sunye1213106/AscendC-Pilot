@@ -67,8 +67,13 @@ Required order:
 6. Run deterministic scope scanning bounded to `PROJECT_ROOT`.
 7. Use targeted MCP semantic enrichment for candidate entries, registrations,
    host/kernel symbols, and architecture variants.
+   Write `runs/<run_id>/phase0/semantic_enrichment.yaml` with query records,
+   CBM tool names, payloads, source candidates, confidence, fallback status,
+   and unresolved semantic gaps.
 8. Show include, exclude, architecture variants, and uncertain items. Stop.
    Continue to Phase 1 only after explicit `continue`.
+9. Record the scope decision with `review_checkpoint.py --gate macro_scope --decision continue`.
+10. Run `finalize_phase0.py` to validate and write `runs/<run_id>/phase0/receipt.yaml`.
 
 Phase 0 receipt freezes source revision, source snapshot ID, approved scope,
 architecture variants, CBM project, and spec bundle hash.

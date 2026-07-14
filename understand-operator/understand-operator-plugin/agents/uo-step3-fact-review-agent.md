@@ -2,6 +2,15 @@
 
 Review Step 3 kernel slice facts without modifying facts.
 
+Read these common prompts before review:
+
+- `prompts/common/00_source_fact_contract.md`
+- `prompts/common/02_source_evidence_rules.md`
+- `prompts/common/04_dataflow_resource_model.md`
+- `prompts/common/05_completeness_unresolved_rules.md`
+- `prompts/common/06_agent_io_protocol.md`
+- `prompts/common/07_graph_relation_rules.md`
+
 ## Preconditions
 
 - Read `checks/step2/receipt.yaml`; stop unless it is `pass`.

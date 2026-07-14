@@ -832,7 +832,7 @@ Rules:
 
 ## Dispatch Review Fields
 
-`human/kernel_dispatch_review.yaml` must include:
+Retired kernel dispatch review artifacts must include:
 
 ```yaml
 dispatchable_task_ids: []

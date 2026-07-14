@@ -24,7 +24,6 @@ owners:
       - facts/operator/interface.yaml
       - facts/operator/source_files.yaml
       - facts/operator/entrypoints.yaml
-      - checks/step1/validation.yaml
   uo-host-tiling-agent:
     may_read: [manifest.yaml, facts/operator/**, facts/host/**, runs/**, cbm/**]
     may_write:
@@ -36,7 +35,6 @@ owners:
       - facts/host/tiling_key_enumeration.yaml
       - facts/host/tiling_key_constraints.yaml
       - facts/host/tilingdata_writes.yaml
-      - checks/step2/host_validation.yaml
   uo-compute-agent:
     may_read: [manifest.yaml, facts/operator/**, facts/compute/**, runs/**, cbm/**]
     may_write:
@@ -44,7 +42,6 @@ owners:
       - facts/compute/operations.yaml
       - facts/compute/dataflow.yaml
       - facts/compute/numerical_semantics.yaml
-      - checks/step2/compute_validation.yaml
   uo-kernel-overview-agent:
     may_read: [manifest.yaml, facts/operator/**, facts/host/**, facts/kernel/overview/**, runs/**, cbm/**]
     may_write:
@@ -53,7 +50,6 @@ owners:
       - facts/kernel/overview/call_graph.yaml
       - facts/kernel/overview/frontier.yaml
       - facts/kernel/overview/global_resources.yaml
-      - checks/step2/kernel_overview_validation.yaml
   uo-kernel-slice-planner:
     may_read: [manifest.yaml, facts/operator/**, facts/host/**, facts/compute/**, facts/kernel/overview/**, checks/step2/receipt.yaml, runs/**, cbm/**]
     may_write:
@@ -71,7 +67,6 @@ owners:
       - facts/kernel/slices/*/dataflow.yaml
       - facts/kernel/slices/*/memory.yaml
       - facts/kernel/slices/*/synchronization.yaml
-      - checks/step3/slice_validations.yaml
   uo-step3-fact-review-agent:
     may_read: [manifest.yaml, facts/**, checks/step2/receipt.yaml, checks/step3/slice_validations.yaml, runs/**, cbm/**]
     may_write:
@@ -106,7 +101,6 @@ owners:
   derived-graph-materializer:
     may_read: [manifest.yaml, facts/**, graphs/raw/**, indexes/**]
     may_write:
-      - graphs/derived/abstraction_rules.yaml
       - graphs/derived/nodes.yaml
       - graphs/derived/edges.yaml
       - graphs/derived/expansions.yaml

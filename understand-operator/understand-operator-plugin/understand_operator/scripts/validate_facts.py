@@ -75,6 +75,8 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
     manifest = _load_yaml(uo_root / "manifest.yaml", "manifest.yaml", errors)
     if isinstance(manifest, dict):
         _validate_manifest(manifest, errors)
+        if STAGE_ORDER.get(stage, 0) >= STAGE_ORDER["step1"]:
+            _validate_phase0_receipt(repo_root, uo_root, manifest, errors)
 
     entries = catalog_entries(spec)
     catalog_by_path = {str(entry.get("path", "")).replace("\\", "/"): entry for entry in entries}
@@ -198,6 +200,45 @@ def _validate_manifest(manifest: dict[str, Any], errors: list[FactValidationErro
     expected = spec_bundle_hash()
     if actual != expected:
         errors.append(FactValidationError("SPEC_BUNDLE_MISMATCH", "manifest.yaml", f"manifest has {actual!r}, expected {expected!r}"))
+
+
+def _validate_phase0_receipt(
+    repo_root: Path,
+    uo_root: Path,
+    manifest: dict[str, Any],
+    errors: list[FactValidationError],
+) -> None:
+    run_id = manifest.get("current_run_id")
+    if not isinstance(run_id, str) or run_id == "UO_RUN_PENDING":
+        return
+    rel = f"runs/{run_id}/phase0/receipt.yaml"
+    receipt = _load_yaml(uo_root / rel, rel, errors)
+    if not isinstance(receipt, dict):
+        return
+    if receipt.get("status") != "pass":
+        errors.append(FactValidationError("PHASE0_RECEIPT_INVALID", rel, "status must be pass"))
+    snapshot = receipt.get("snapshot") if isinstance(receipt.get("snapshot"), dict) else {}
+    if snapshot.get("run_id") != run_id:
+        errors.append(FactValidationError("PHASE0_RECEIPT_INVALID", rel, "snapshot.run_id does not match manifest.current_run_id"))
+    if snapshot.get("spec_bundle_hash") != spec_bundle_hash():
+        errors.append(FactValidationError("SPEC_BUNDLE_MISMATCH", rel, "receipt spec hash does not match current Skill spec"))
+    expected_revision = snapshot.get("source_revision") or receipt.get("source_revision")
+    current_revision = _git_revision(repo_root)
+    if expected_revision and expected_revision != "unknown" and expected_revision != current_revision:
+        errors.append(FactValidationError("PHASE0_RECEIPT_STALE", rel, f"source revision changed: {expected_revision} != {current_revision}"))
+    input_hashes = receipt.get("input_hashes")
+    if not isinstance(input_hashes, dict) or not input_hashes:
+        errors.append(FactValidationError("PHASE0_RECEIPT_INVALID", rel, "input_hashes must freeze Phase 0 artifacts"))
+
+
+def _git_revision(repo_root: Path) -> str:
+    import subprocess
+
+    try:
+        result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root, check=True, capture_output=True, text=True)
+        return result.stdout.strip() or "unknown"
+    except Exception:  # noqa: BLE001
+        return "unknown"
 
 
 def _ownership_patterns(spec: dict[str, Any]) -> dict[str, list[str]]:
@@ -603,18 +644,18 @@ def _kind_matches(actual: str, expected: str) -> bool:
         return True
     aliases = {
         "argument": {"input_tensor", "output_tensor", "optional_input", "attribute"},
-        "variable": {"variable", "source_fact", "runtime_variable", "host_variable", "tilingdata", "key"},
-        "symbol": {"symbol", "source_fact", "host_entry", "tiling_entry", "kernel_entry", "function", "call"},
-        "expression": {"expression", "source_fact"},
-        "branch": {"branch", "source_fact"},
-        "loop": {"loop", "source_fact"},
-        "call": {"call", "source_fact"},
-        "key": {"key", "source_fact"},
-        "tilingdata": {"tilingdata", "source_fact"},
-        "tensor": {"tensor", "input_tensor", "output_tensor", "source_fact"},
-        "operation": {"operation", "source_fact"},
-        "api": {"api", "call", "source_fact"},
-        "sync": {"sync", "source_fact"},
+        "variable": {"variable", "runtime_variable", "host_variable", "tilingdata", "key"},
+        "symbol": {"symbol", "host_entry", "tiling_entry", "kernel_entry", "function", "call"},
+        "expression": {"expression"},
+        "branch": {"branch"},
+        "loop": {"loop"},
+        "call": {"call"},
+        "key": {"key"},
+        "tilingdata": {"tilingdata"},
+        "tensor": {"tensor", "input_tensor", "output_tensor"},
+        "operation": {"operation"},
+        "api": {"api", "call"},
+        "sync": {"sync"},
     }
     return actual in aliases.get(expected, set())
 

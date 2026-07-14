@@ -366,7 +366,7 @@ def _host_flow_artifacts(run_id: str) -> tuple[list[str], list[str]]:
 
 
 def _approved_task_ids(uo_root: Path) -> list[str]:
-    # prefer human/kernel_dispatch_review.yaml; fall back to legacy path
+    # Retired kernel dispatch review compatibility path.
     candidates = [
         uo_root / "human" / "kernel_dispatch_review.yaml",
         uo_root / "kernel" / "kernel_dispatch_review.yaml",

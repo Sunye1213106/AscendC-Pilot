@@ -1,4 +1,17 @@
 version: 1
 artifact_type: kernel.overview.global_resources
+required_top_level: [version, artifact, snapshot, items, relations, unresolved]
+allowed_top_level: [version, artifact, snapshot, analysis_status, reason, sources, items, relations, unresolved]
+item_kind_enum: [global_resource, queue_resource, workspace_resource, tilingdata_struct, kernel_parameter, generic_fact]
+required_item_fields: [id, kind, name, status, sources]
+kind_required_fields:
+  global_resource: [resource_kind, declaration_ref, producer_refs, consumer_refs]
+  queue_resource: [resource_kind, declaration_ref, producer_refs, consumer_refs]
+  workspace_resource: [resource_kind, declaration_ref, producer_refs, consumer_refs]
+  tilingdata_struct: [resource_kind, declaration_ref, producer_refs, consumer_refs]
+  kernel_parameter: [resource_kind, declaration_ref, producer_refs, consumer_refs]
+  generic_fact: [name]
+relation_required_fields: [id, type, source_id, target_id, status]
+minimum_cardinality: 0
 stores: [global_buffers, queues, workspaces, tilingdata_structs, kernel_parameters, shared_constants, compile_info]
 forbids: [path_local_buffer_lifecycle]

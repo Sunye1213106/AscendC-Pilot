@@ -1,4 +1,16 @@
 version: 1
 artifact_type: kernel.overview.entries
+required_top_level: [version, artifact, snapshot, items, relations, unresolved]
+allowed_top_level: [version, artifact, snapshot, analysis_status, reason, sources, items, relations, unresolved]
+item_kind_enum: [kernel_entry, kernel_class_entry, kernel_global_entry, kernel_template_instance, generic_fact]
+required_item_fields: [id, kind, name, status, sources]
+kind_required_fields:
+  kernel_entry: [file, symbol, entry_kind, called_by, calls, architecture_variant, template_binding, source_anchor_ref]
+  kernel_class_entry: [file, symbol, entry_kind, called_by, calls, architecture_variant, template_binding, source_anchor_ref]
+  kernel_global_entry: [file, symbol, entry_kind, called_by, calls, architecture_variant, template_binding, source_anchor_ref]
+  kernel_template_instance: [file, symbol, entry_kind, called_by, calls, architecture_variant, template_binding, source_anchor_ref]
+  generic_fact: [name]
+relation_required_fields: [id, type, source_id, target_id, status]
+minimum_cardinality: 1
 stores: [kernel_entries, template_instances, kernel_class, entry_parameters, launch_source]
 forbids: [slice_depth_behavior]

@@ -62,11 +62,18 @@ def compile_source_graph(repo_root: Path, op_name: str) -> tuple[int, list[str]]
                 "source_refs": _source_refs(relation),
             }
             edges.append(edge)
+            _index_edge(rel, edge, yaml_to_graph, graph_to_yaml, source_index)
+
+    synthetic_edges = _deterministic_cross_layer_edges(nodes)
+    for edge in synthetic_edges:
+        edges.append(edge)
+        _index_synthetic_edge(edge, yaml_to_graph, graph_to_yaml, source_index)
 
     validation_errors = _raw_graph_errors(nodes, edges, spec)
     if validation_errors:
         return 2, validation_errors
     paths = _derive_paths(edges)
+    terminology = _terminology(nodes)
     raw_root = uo_root / "graphs" / "raw"
     index_root = uo_root / "indexes"
     _write_yaml(raw_root / "manifest.yaml", _raw_doc("graph.raw.manifest", {"compiler": "source_graph_compiler", "input_facts_hash": _combined_hash(facts_hashes_for(uo_root)), "node_count": len(nodes), "edge_count": len(edges), "built_at": datetime.now(tz=timezone.utc).isoformat()}))
@@ -78,7 +85,7 @@ def compile_source_graph(repo_root: Path, op_name: str) -> tuple[int, list[str]]
     _write_yaml(index_root / "yaml_to_graph.yaml", _raw_doc("indexes.yaml_to_graph", {"yaml_to_graph": yaml_to_graph}))
     _write_yaml(index_root / "source_index.yaml", _raw_doc("indexes.source_index", {"source_index": source_index}))
     _write_yaml(index_root / "symbol_index.yaml", _raw_doc("indexes.symbol_index", {"symbol_index": symbol_index}))
-    _write_yaml(index_root / "terminology.yaml", _raw_doc("indexes.terminology", {"terms": {}}))
+    _write_yaml(index_root / "terminology.yaml", _raw_doc("indexes.terminology", {"terms": terminology}))
     return 0, [f"compiled raw graph: nodes={len(nodes)} edges={len(edges)}"]
 
 
@@ -106,6 +113,7 @@ def _node_from_item(rel: str, pointer: str, item: dict[str, Any], *, kind: str |
         "label": item.get("name") or item.get("id"),
         "detail_ref": f"{rel}#{pointer}",
         "source_refs": _source_refs(item),
+        "fields": {key: value for key, value in item.items() if key not in {"sources"}},
     }
 
 
@@ -133,6 +141,142 @@ def _index_node(
     label = str(node.get("label") or "")
     if label:
         symbol_index.setdefault(label, {"nodes": []})["nodes"].append(str(node["id"]))
+    fields = node.get("fields") if isinstance(node.get("fields"), dict) else {}
+    for key in ("symbol", "path", "file", "field_ref", "struct_ref", "operation_ref", "buffer_ref", "event_identifier"):
+        value = fields.get(key)
+        if isinstance(value, str) and value:
+            symbol_index.setdefault(value, {"nodes": []})["nodes"].append(str(node["id"]))
+
+
+def _index_edge(
+    rel: str,
+    edge: dict[str, Any],
+    yaml_to_graph: dict[str, list[str]],
+    graph_to_yaml: dict[str, str],
+    source_index: dict[str, list[str]],
+) -> None:
+    detail_ref = str(edge["detail_ref"])
+    yaml_to_graph.setdefault(detail_ref, []).append(str(edge["id"]))
+    graph_to_yaml[str(edge["id"])] = detail_ref
+    for source_id in edge.get("source_refs") or []:
+        source_index.setdefault(source_id, []).append(str(edge["id"]))
+
+
+def _index_synthetic_edge(
+    edge: dict[str, Any],
+    yaml_to_graph: dict[str, list[str]],
+    graph_to_yaml: dict[str, str],
+    source_index: dict[str, list[str]],
+) -> None:
+    detail_refs = [str(ref) for ref in edge.get("detail_refs") or [] if ref]
+    graph_to_yaml[str(edge["id"])] = detail_refs[0] if detail_refs else str(edge.get("detail_ref") or "")
+    for ref in detail_refs:
+        yaml_to_graph.setdefault(ref, []).append(str(edge["id"]))
+    for source_id in edge.get("source_refs") or []:
+        source_index.setdefault(str(source_id), []).append(str(edge["id"]))
+
+
+def _deterministic_cross_layer_edges(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    edges: list[dict[str, Any]] = []
+    edges.extend(_match_field(nodes, "tilingdata_write", "tilingdata_read", "tilingdata_write_to_read", ("struct_ref", "field_ref")))
+    edges.extend(_match_field(nodes, "tiling_key_setter", "tiling_key_field", "tiling_key_setter_to_field", ("field_ref",)))
+    edges.extend(_match_field(nodes, "compute_operation", "compute_api_call", "compute_to_kernel", ("operation_ref",)))
+    edges.extend(_match_list_ref(nodes, "compute_operation", "compute_api_call", "compute_to_kernel", "kernel_api_refs"))
+    edges.extend(_match_field(nodes, "buffer_resource", "buffer_resource", "buffer_producer_to_consumer", ("buffer_ref",)))
+    edges.extend(_match_field(nodes, "setflag_event", "waitflag_event", "signal_to_wait", ("event_identifier",)))
+    edges.extend(_match_field(nodes, "kernel_entry", "output_tensor", "kernel_entry_to_output", ("explicit_interface_ref",)))
+    unique: dict[str, dict[str, Any]] = {}
+    for edge in edges:
+        unique.setdefault(str(edge.get("id")), edge)
+    return list(unique.values())
+
+
+def _match_field(
+    nodes: list[dict[str, Any]],
+    source_kind: str,
+    target_kind: str,
+    edge_type: str,
+    fields: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    source_nodes = [node for node in nodes if str(node.get("kind")) == source_kind]
+    target_nodes = [node for node in nodes if str(node.get("kind")) == target_kind]
+    for source in source_nodes:
+        for target in target_nodes:
+            if source["id"] == target["id"]:
+                continue
+            if not _stable_match(source, target, fields):
+                continue
+            edge_id = "REL_AUTO_" + edge_type.upper() + "_" + _stable_suffix(str(source["id"]), str(target["id"]))
+            result.append(
+                {
+                    "id": edge_id,
+                    "type": edge_type,
+                    "source_id": source["id"],
+                    "target_id": target["id"],
+                    "detail_ref": source["detail_ref"],
+                    "detail_refs": [source["detail_ref"], target["detail_ref"]],
+                    "source_refs": sorted(set((source.get("source_refs") or []) + (target.get("source_refs") or []))),
+                    "generated_by": "deterministic_cross_layer_match",
+                }
+            )
+    return result
+
+
+def _match_list_ref(
+    nodes: list[dict[str, Any]],
+    source_kind: str,
+    target_kind: str,
+    edge_type: str,
+    source_field: str,
+) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    source_nodes = [node for node in nodes if str(node.get("kind")) == source_kind]
+    target_by_id = {str(node.get("id")): node for node in nodes if str(node.get("kind")) == target_kind}
+    seen: set[tuple[str, str]] = set()
+    for source in source_nodes:
+        fields = source.get("fields") if isinstance(source.get("fields"), dict) else {}
+        refs = fields.get(source_field)
+        if isinstance(refs, str):
+            ref_values = [refs]
+        elif isinstance(refs, list):
+            ref_values = [str(ref) for ref in refs if ref]
+        else:
+            ref_values = []
+        for ref in ref_values:
+            target = target_by_id.get(ref)
+            if not target or (str(source["id"]), str(target["id"])) in seen:
+                continue
+            seen.add((str(source["id"]), str(target["id"])))
+            edge_id = "REL_AUTO_" + edge_type.upper() + "_" + _stable_suffix(str(source["id"]), str(target["id"]))
+            result.append(
+                {
+                    "id": edge_id,
+                    "type": edge_type,
+                    "source_id": source["id"],
+                    "target_id": target["id"],
+                    "detail_ref": source["detail_ref"],
+                    "detail_refs": [source["detail_ref"], target["detail_ref"]],
+                    "source_refs": sorted(set((source.get("source_refs") or []) + (target.get("source_refs") or []))),
+                    "generated_by": f"deterministic_{source_field}_match",
+                }
+            )
+    return result
+
+
+def _stable_match(source: dict[str, Any], target: dict[str, Any], fields: tuple[str, ...]) -> bool:
+    sfields = source.get("fields") if isinstance(source.get("fields"), dict) else {}
+    tfields = target.get("fields") if isinstance(target.get("fields"), dict) else {}
+    for field in fields:
+        sval = sfields.get(field)
+        tval = tfields.get(field)
+        if isinstance(sval, str) and sval and sval == tval:
+            return True
+    return False
+
+
+def _stable_suffix(source_id: str, target_id: str) -> str:
+    return hashlib.sha1(f"{source_id}->{target_id}".encode("utf-8")).hexdigest()[:12].upper()
 
 
 def _raw_graph_errors(nodes: list[dict[str, Any]], edges: list[dict[str, Any]], spec: dict[str, Any]) -> list[str]:
@@ -175,47 +319,108 @@ def _raw_graph_errors(nodes: list[dict[str, Any]], edges: list[dict[str, Any]], 
 
 
 def _derive_paths(edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    controlled_types = {
+        "input_to_tiling_key": {"sets_tiling_key", "tiling_key_setter_to_field"},
+        "tilingdata_write_to_read": {"tilingdata_write_to_read"},
+        "kernel_entry_to_output": {"kernel_entry_to_output", "writes_output"},
+        "compute_to_kernel": {"compute_to_kernel"},
+        "buffer_producer_to_consumer": {"buffer_producer_to_consumer"},
+        "signal_to_wait": {"signal_to_wait"},
+    }
+    max_depth = 6
+    max_paths_per_type = 50
     adjacency: dict[str, list[dict[str, Any]]] = {}
-    incoming: dict[str, int] = {}
-    nodes: set[str] = set()
     for edge in edges:
         source = str(edge.get("source_id") or "")
         target = str(edge.get("target_id") or "")
         if not source or not target:
             continue
         adjacency.setdefault(source, []).append(edge)
-        incoming[target] = incoming.get(target, 0) + 1
-        nodes.update({source, target})
-    starts = sorted(node for node in nodes if incoming.get(node, 0) == 0) or sorted(nodes)
     paths: list[dict[str, Any]] = []
-    for start in starts:
-        _walk_paths(start, start, adjacency, [], set(), paths)
-    return [
-        {"id": f"RAW_PATH_{index + 1:04d}", **path}
-        for index, path in enumerate(paths)
-        if path.get("edge_ids")
-    ]
+    for path_type, allowed_types in controlled_types.items():
+        starts = sorted({str(edge.get("source_id")) for edge in edges if edge.get("type") in allowed_types})
+        selected: list[dict[str, Any]] = []
+        truncated = False
+        for start in starts:
+            _walk_controlled_paths(path_type, start, start, adjacency, allowed_types, [], set(), selected, max_depth, max_paths_per_type)
+            if len(selected) >= max_paths_per_type:
+                truncated = True
+                break
+        for index, path in enumerate(selected[:max_paths_per_type], start=1):
+            paths.append(
+                {
+                    "id": f"RAW_PATH_{path_type.upper()}_{index:04d}",
+                    "path_type": path_type,
+                    "max_depth": max_depth,
+                    "max_paths_per_type": max_paths_per_type,
+                    "truncated": truncated or len(selected) > max_paths_per_type,
+                    **path,
+                }
+            )
+    return paths
 
 
-def _walk_paths(
+def _walk_controlled_paths(
+    path_type: str,
     root: str,
     current: str,
     adjacency: dict[str, list[dict[str, Any]]],
+    allowed_types: set[str],
     edge_ids: list[str],
     seen: set[str],
     paths: list[dict[str, Any]],
+    max_depth: int,
+    max_paths: int,
 ) -> None:
-    outgoing = adjacency.get(current) or []
-    if not outgoing:
+    if len(paths) >= max_paths or len(edge_ids) >= max_depth:
         if edge_ids:
-            paths.append({"source_id": root, "target_id": current, "edge_ids": list(edge_ids)})
+            paths.append({"source_id": root, "target_id": current, "edge_ids": list(edge_ids), "depth_limited": len(edge_ids) >= max_depth})
         return
     if current in seen:
         if edge_ids:
             paths.append({"source_id": root, "target_id": current, "edge_ids": list(edge_ids), "cycle": True})
         return
+    outgoing = [edge for edge in adjacency.get(current) or [] if edge.get("type") in allowed_types]
+    if not outgoing and edge_ids:
+        paths.append({"source_id": root, "target_id": current, "edge_ids": list(edge_ids)})
+        return
     for edge in outgoing:
-        _walk_paths(root, str(edge.get("target_id")), adjacency, edge_ids + [str(edge.get("id"))], seen | {current}, paths)
+        _walk_controlled_paths(path_type, root, str(edge.get("target_id")), adjacency, allowed_types, edge_ids + [str(edge.get("id"))], seen | {current}, paths, max_depth, max_paths)
+
+
+def _terminology(nodes: list[dict[str, Any]]) -> dict[str, dict[str, list[str]]]:
+    terms: dict[str, dict[str, list[str]]] = {}
+    for node in nodes:
+        node_id = str(node.get("id") or "")
+        fields = node.get("fields") if isinstance(node.get("fields"), dict) else {}
+        candidates = [node_id, str(node.get("label") or ""), str(node.get("kind") or "")]
+        for key in ("name", "symbol", "path", "file", "field_ref", "struct_ref", "operation_ref", "buffer_ref", "event_identifier"):
+            value = fields.get(key)
+            if isinstance(value, str):
+                candidates.append(value)
+        aliases = fields.get("aliases")
+        if isinstance(aliases, list):
+            candidates.extend(str(alias) for alias in aliases if alias)
+        for value in candidates:
+            for term in _term_variants(value):
+                terms.setdefault(term, {"nodes": []})["nodes"].append(node_id)
+    for value in terms.values():
+        value["nodes"] = sorted(set(value["nodes"]))
+    return dict(sorted(terms.items()))
+
+
+def _term_variants(value: str) -> list[str]:
+    text = value.strip()
+    if not text:
+        return []
+    lowered = text.lower()
+    compact = "".join(ch for ch in lowered if ch.isalnum())
+    parts = [part for part in fnmatch.re.split(r"[^A-Za-z0-9]+", text) if part] if False else []
+    variants = {lowered, compact}
+    camel = "".join(ch if ch.isalnum() else " " for ch in text).split()
+    if len(camel) > 1:
+        variants.add("".join(part[0].lower() for part in camel if part))
+    return sorted(item for item in variants if item)
 
 
 def _kind_matches(actual: str, expected: str) -> bool:
@@ -223,18 +428,18 @@ def _kind_matches(actual: str, expected: str) -> bool:
         return True
     aliases = {
         "argument": {"input_tensor", "output_tensor", "optional_input", "attribute"},
-        "variable": {"variable", "source_fact", "runtime_variable", "host_variable", "tilingdata", "key"},
-        "symbol": {"symbol", "source_fact", "host_entry", "tiling_entry", "kernel_entry", "function", "call"},
-        "expression": {"expression", "source_fact"},
-        "branch": {"branch", "source_fact"},
-        "loop": {"loop", "source_fact"},
-        "call": {"call", "source_fact"},
-        "key": {"key", "source_fact"},
-        "tilingdata": {"tilingdata", "source_fact"},
-        "tensor": {"tensor", "input_tensor", "output_tensor", "source_fact"},
-        "operation": {"operation", "source_fact"},
-        "api": {"api", "call", "source_fact"},
-        "sync": {"sync", "source_fact"},
+        "variable": {"variable", "runtime_variable", "host_variable", "tilingdata", "key"},
+        "symbol": {"symbol", "host_entry", "tiling_entry", "kernel_entry", "function", "call"},
+        "expression": {"expression"},
+        "branch": {"branch"},
+        "loop": {"loop"},
+        "call": {"call"},
+        "key": {"key"},
+        "tilingdata": {"tilingdata"},
+        "tensor": {"tensor", "input_tensor", "output_tensor"},
+        "operation": {"operation"},
+        "api": {"api", "call"},
+        "sync": {"sync"},
     }
     return actual in aliases.get(expected, set())
 

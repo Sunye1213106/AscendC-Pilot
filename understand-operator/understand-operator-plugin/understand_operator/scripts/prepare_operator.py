@@ -17,6 +17,7 @@ from understand_operator._core.ignore import DEFAULT_IGNORE_PATTERNS
 from understand_operator._operator.artifacts import init_operator_contract_layout, operator_root, safe_op_name, write_text
 from understand_operator._operator.cbm_client import write_index_meta
 from understand_operator._operator.install_check import compare_installed_skill
+from understand_operator._operator.spec import spec_bundle_hash
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -101,6 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         ("scope_scan.yaml", "runs.scope_scan", "OP_PHASE0_SCOPE_SCAN", "scope_scan"),
         ("semantic_enrichment.yaml", "runs.semantic_enrichment", "OP_PHASE0_SEMANTIC_ENRICHMENT", "semantic_enrichment"),
         ("scope_review.yaml", "runs.scope_review", "OP_PHASE0_SCOPE_REVIEW", "scope_review"),
+        ("receipt.yaml", "runs.receipt", "OP_PHASE0_RECEIPT", "phase0_receipt"),
     ):
         target = phase0 / filename
         if not target.exists():
@@ -117,11 +119,11 @@ def main(argv: list[str] | None = None) -> int:
                 "indexed_via": "mcp",
                 "cbm_mode": args.cbm_mode,
                 "indexed_at": datetime.now(tz=timezone.utc).isoformat(),
+                "project_confirmed": bool(args.cbm_project),
                 "prefetch_mode": "mcp_index_repository",
                 "index_summary": {},
             },
         )
-        _write_phase0_receipt(base, phase0, run_id, op_name, repo_root, args.cbm_project, args.cbm_mode)
         write_text(
             base / "cbm" / "cbm_query_log.md",
             "# CBM Index Log\n\n"
@@ -219,48 +221,6 @@ def _write_phase0_doc(path: Path, artifact_type: str, item_id: str, kind: str, d
         "unresolved": [],
     }
     write_text(path, _to_yaml(payload))
-
-
-def _write_phase0_receipt(
-    base: Path,
-    phase0: Path,
-    run_id: str,
-    op_name: str,
-    repo_root: Path,
-    cbm_project: str | None,
-    cbm_mode: str,
-) -> None:
-    source_revision = _git_revision(repo_root)
-    source_snapshot_id = _source_snapshot_id(repo_root)
-    payload = {
-        "version": 1,
-        "artifact": {"type": "runs.receipt", "schema_version": 1, "owner": "uo-orchestrator"},
-        "snapshot": {
-            "run_id": run_id,
-            "source_snapshot_id": source_snapshot_id,
-            "source_revision": source_revision,
-            "spec_bundle_hash": spec_bundle_hash(),
-        },
-        "status": "pass",
-        "items": [
-            {
-                "id": "OP_PHASE0_RECEIPT",
-                "kind": "phase0_receipt",
-                "status": "recorded",
-                "source_revision": source_revision,
-                "source_snapshot_id": source_snapshot_id,
-                "approved_include": [],
-                "approved_exclude": [],
-                "architecture_variants": [],
-                "cbm_project": cbm_project,
-                "cbm_mode": cbm_mode,
-                "spec_bundle_hash": spec_bundle_hash(),
-            }
-        ],
-        "relations": [],
-        "unresolved": [],
-    }
-    write_text(phase0 / "receipt.yaml", _to_yaml(payload))
 
 
 def _update_manifest_phase0(base: Path, run_id: str, repo_root: Path) -> None:
