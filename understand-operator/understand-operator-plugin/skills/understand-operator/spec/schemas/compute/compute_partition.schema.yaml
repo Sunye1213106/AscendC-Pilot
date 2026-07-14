@@ -1,0 +1,5 @@
+version: 1
+artifact_type: compute.partition
+required_top_level: [version, artifact, snapshot, sections]
+allowed_top_level: [version, artifact, snapshot, sections]
+required_sections: [tensors, operations, dataflow, numerical_semantics]

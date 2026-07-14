@@ -18,6 +18,7 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_ROOT))
 
 from understand_operator._operator.artifacts import existing_operator_root, safe_op_name
+from understand_operator._operator.document_store import DocumentStore
 from understand_operator._operator.spec import catalog_entries, load_spec, spec_bundle_hash
 from understand_operator.scripts.build_compile_gate import compile_gate_errors, facts_hashes_for
 
@@ -43,25 +44,27 @@ def compile_source_graph(repo_root: Path, op_name: str) -> tuple[int, list[str]]
     symbol_index: dict[str, dict[str, list[str]]] = {}
 
     for rel, doc in docs.items():
-        for index, item in enumerate(doc.get("items") or []):
-            if not isinstance(item, dict) or not item.get("id"):
-                continue
-            node = _node_from_item(rel, f"/items/{index}", item)
-            nodes.append(node)
-            _index_node(rel, node, yaml_to_graph, graph_to_yaml, source_index, symbol_index)
-        for index, relation in enumerate(doc.get("relations") or []):
-            if not isinstance(relation, dict) or not relation.get("id"):
-                continue
-            edge = {
-                "id": relation["id"],
-                "type": relation.get("type"),
-                "source_id": relation.get("source_id"),
-                "target_id": relation.get("target_id"),
-                "detail_ref": f"{rel}#/relations/{index}",
-                "source_refs": _source_refs(relation),
-            }
-            edges.append(edge)
-            _index_edge(rel, edge, yaml_to_graph, graph_to_yaml, source_index)
+        for section, content in _sections(doc):
+            prefix = f"/sections/{section}" if section else ""
+            for index, item in enumerate(content.get("items") or []):
+                if not isinstance(item, dict) or not item.get("id"):
+                    continue
+                node = _node_from_item(rel, f"{prefix}/items/{index}", item)
+                nodes.append(node)
+                _index_node(rel, node, yaml_to_graph, graph_to_yaml, source_index, symbol_index)
+            for index, relation in enumerate(content.get("relations") or []):
+                if not isinstance(relation, dict) or not relation.get("id"):
+                    continue
+                edge = {
+                    "id": relation["id"],
+                    "type": relation.get("type"),
+                    "source_id": relation.get("source_id"),
+                    "target_id": relation.get("target_id"),
+                    "detail_ref": f"{rel}#{prefix}/relations/{index}",
+                    "source_refs": _source_refs(relation),
+                }
+                edges.append(edge)
+                _index_edge(rel, edge, yaml_to_graph, graph_to_yaml, source_index)
 
     synthetic_edges = _deterministic_cross_layer_edges(nodes)
     for edge in synthetic_edges:
@@ -116,14 +119,29 @@ def _load_fact_docs(uo_root: Path, spec: dict[str, Any]) -> dict[str, dict[str, 
         for entry in catalog_entries(spec)
         if entry.get("raw_graph_input") is True
     ]
+    store = DocumentStore(uo_root)
+    preferred = {"facts/host.yaml", "facts/compute.yaml", "facts/kernel/overview.yaml"}
+    available = {path.relative_to(uo_root).as_posix() for path in (uo_root / "facts").rglob("*.yaml")}
     for path in sorted((uo_root / "facts").rglob("*.yaml")):
         rel = path.relative_to(uo_root).as_posix()
+        if (rel.startswith("facts/host/") and "facts/host.yaml" in available) or (rel.startswith("facts/compute/") and "facts/compute.yaml" in available) or (rel.startswith("facts/kernel/overview/") and "facts/kernel/overview.yaml" in available):
+            continue
+        # A migrated slice is facts/kernel/slices/<id>.yaml; old directories
+        # remain readable only when that partition does not exist.
+        if rel.startswith("facts/kernel/slices/") and rel.count("/") > 3:
+            partition = "facts/kernel/slices/" + rel.split("/")[3] + ".yaml"
+            if partition in available: continue
         if not any(fnmatch.fnmatch(rel, pattern) for pattern in raw_patterns):
             continue
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        if isinstance(data, dict):
-            docs[rel] = data
+        docs[rel] = store.read(rel).data
     return docs
+
+
+def _sections(doc: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    sections = doc.get("sections")
+    if isinstance(sections, dict):
+        return [(str(name), value) for name, value in sections.items() if isinstance(value, dict)]
+    return [("", doc)]
 
 
 def _node_from_item(rel: str, pointer: str, item: dict[str, Any], *, kind: str | None = None) -> dict[str, Any]:

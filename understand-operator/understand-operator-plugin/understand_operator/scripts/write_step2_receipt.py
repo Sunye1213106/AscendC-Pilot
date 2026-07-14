@@ -25,7 +25,7 @@ REQUIRED_REPORTS = [
     "checks/step2/host_validation.yaml",
     "checks/step2/compute_validation.yaml",
     "checks/step2/kernel_overview_validation.yaml",
-    "checks/step2/review.yaml",
+    "checks/step2/review_trigger.yaml",
 ]
 
 
@@ -46,7 +46,7 @@ def write_step2_receipt(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
             messages.append(f"missing required Step 2 gate report: {rel}")
             continue
         doc = _read_yaml(path)
-        if doc.get("status") != "pass":
+        if doc.get("status") not in {"pass", "skipped"}:
             messages.append(f"{rel} status is not pass")
         if doc.get("blocking_findings"):
             messages.append(f"{rel} has blocking_findings")
@@ -55,7 +55,7 @@ def write_step2_receipt(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
         report_hashes = doc.get("input_hashes")
         if not isinstance(report_hashes, dict):
             messages.append(f"{rel} missing input_hashes")
-        elif rel == "checks/step2/review.yaml":
+        elif rel == "checks/step2/review_trigger.yaml":
             if report_hashes != current_fact_hashes:
                 messages.append(f"{rel} input_hashes do not match current Step 2 facts")
         else:

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
@@ -19,7 +21,7 @@ if __package__ in (None, ""):
 from understand_operator._operator.artifacts import resolve_existing_operator_root, safe_op_name
 
 
-def query_readonly(repo_root: Path, op_name: str, entity: str) -> dict[str, Any]:
+def query_readonly(repo_root: Path, op_name: str, entity: str, *, depth: int = 1, relation_type: str | None = None, limit: int = 50) -> dict[str, Any]:
     if yaml is None:
         raise RuntimeError("PyYAML is required")
     repo_root = repo_root.resolve()
@@ -27,6 +29,11 @@ def query_readonly(repo_root: Path, op_name: str, entity: str) -> dict[str, Any]
     if resolved is None:
         raise FileNotFoundError(f"operator KB root not found via manifest/aliases for {op_name}")
     _resolved_name, uo_root = resolved
+    index = uo_root / "indexes" / "operator_kb.sqlite"
+    if index.exists():
+        if not _index_fresh(index, uo_root):
+            return {"resolved_entities": [], "direct_relations": [], "neighbors": [], "fact_details": [], "source_anchors": [], "unresolved": [], "index_status": "stale", "query_backend": "sqlite"}
+        return _query_sqlite(index, uo_root, entity, depth=depth, relation_type=relation_type, limit=limit)
     resolved_entities = _resolve_entities(uo_root, entity)
     derived = _query_derived(uo_root, entity, resolved_entities)
     raw_ids = set(derived.get("raw_node_refs") or []) | set(derived.get("raw_edge_refs") or [])
@@ -51,7 +58,46 @@ def query_readonly(repo_root: Path, op_name: str, entity: str) -> dict[str, Any]
         "source_refs": source_refs,
         "writes": [],
         "cbm_writes": [],
+        "index_status": "missing",
+        "query_backend": "yaml_fallback",
     }
+
+
+def _index_fresh(index: Path, root: Path) -> bool:
+    def digest(folder: Path) -> str:
+        h=hashlib.sha256()
+        for p in sorted(folder.rglob("*.yaml")) if folder.exists() else []: h.update(p.read_bytes())
+        return "sha256:"+h.hexdigest()
+    with sqlite3.connect(index) as db:
+        values = dict(db.execute("select key,value from metadata"))
+    return values.get("facts_hash") == digest(root / "facts") and values.get("raw_graph_hash") == digest(root / "graphs" / "raw") and values.get("derived_graph_hash") == digest(root / "graphs" / "derived")
+
+
+def _query_sqlite(index: Path, root: Path, term: str, *, depth: int, relation_type: str | None, limit: int) -> dict[str, Any]:
+    norm = _normalize_term(term); limit=max(1,min(limit,200)); depth=max(0,min(depth,2))
+    with sqlite3.connect(index) as db:
+        db.row_factory=sqlite3.Row
+        rows=db.execute("select * from entities where id=? or normalized_label=? or id in (select entity_id from aliases where normalized_alias=?) order by graph_level desc limit ?", (term,norm,norm,limit)).fetchall()
+        ids={r["id"] for r in rows}; direct=[]; neighbors=[]
+        frontier=set(ids)
+        for _ in range(depth):
+            if not frontier: break
+            marks=','.join('?' for _ in frontier); params=list(frontier)+list(frontier)
+            sql=f"select * from relations where (source_id in ({marks}) or target_id in ({marks}))" + (" and type=?" if relation_type else "") + " limit ?"
+            if relation_type: params.append(relation_type)
+            params.append(limit); rels=db.execute(sql,params).fetchall(); direct.extend(rels)
+            next_ids={r["source_id"] for r in rels}|{r["target_id"] for r in rels}; next_ids-=ids; frontier=next_ids; ids|=next_ids
+        if ids:
+            marks=','.join('?' for _ in ids); neighbors=db.execute(f"select * from entities where id in ({marks}) limit ?", [*ids,limit]).fetchall()
+    details=[_read_yaml_ref(root, str(r["detail_ref"])) for r in neighbors if r["detail_ref"]]
+    return {"resolved_entities": [_row(r) for r in rows], "direct_relations": [_row(r) for r in direct[:limit]], "neighbors": [_row(r) for r in neighbors[:limit]], "fact_details": details, "source_anchors": [], "unresolved": [], "index_status": "fresh", "query_backend": "sqlite"}
+
+
+def _row(row: sqlite3.Row) -> dict[str, Any]:
+    result=dict(row)
+    if result.get("fields_json"):
+        result["fields"] = json.loads(result.pop("fields_json"))
+    return result
 
 
 def _resolve_entities(uo_root: Path, entity: str) -> set[str]:
@@ -200,9 +246,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("repo", nargs="?", default=".", help="Repository root")
     parser.add_argument("--op-name", required=True)
     parser.add_argument("--entity", required=True)
+    parser.add_argument("--depth", type=int, default=1)
+    parser.add_argument("--relation-type")
+    parser.add_argument("--limit", type=int, default=50)
     args = parser.parse_args(argv)
     try:
-        payload = query_readonly(Path(args.repo), args.op_name, args.entity)
+        payload = query_readonly(Path(args.repo), args.op_name, args.entity, depth=args.depth, relation_type=args.relation_type, limit=args.limit)
     except Exception as exc:  # noqa: BLE001
         print(str(exc), file=sys.stderr)
         return 2

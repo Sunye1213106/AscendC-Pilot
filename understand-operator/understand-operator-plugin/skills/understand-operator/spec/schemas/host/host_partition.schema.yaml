@@ -1,0 +1,5 @@
+version: 1
+artifact_type: host.partition
+required_top_level: [version, artifact, snapshot, sections]
+allowed_top_level: [version, artifact, snapshot, sections]
+required_sections: [variables, expressions, control_flow, calls, tiling_key, tiling_key_enumeration, tiling_key_constraints, tilingdata_writes]

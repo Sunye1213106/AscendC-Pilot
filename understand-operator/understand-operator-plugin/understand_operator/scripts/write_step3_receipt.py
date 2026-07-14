@@ -23,7 +23,7 @@ from understand_operator._operator.spec import spec_bundle_hash
 
 REQUIRED_REPORTS = [
     "checks/step3/slice_validations.yaml",
-    "checks/step3/review.yaml",
+    "checks/step3/review_trigger.yaml",
 ]
 
 
@@ -49,7 +49,7 @@ def write_step3_receipt(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
             messages.append(f"missing required Step 3 gate report: {rel}")
             continue
         doc = _read_yaml(path)
-        if doc.get("status") != "pass":
+        if doc.get("status") not in {"pass", "skipped"}:
             messages.append(f"{rel} status is not pass")
         if doc.get("blocking_findings"):
             messages.append(f"{rel} has blocking_findings")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -61,6 +62,7 @@ def run_quality_gate(repo_root: Path, op_name: str) -> tuple[int, dict[str, Any]
     derived_messages = verify_derived_graph(repo_root, resolved_name)
     checks["derived_graph_fresh"] = "pass" if not derived_messages else "fail"
     blockers.extend(derived_messages)
+    _check_sqlite_index(base, checks, blockers)
 
     query_ok = _query_smoke(repo_root, resolved_name, base, blockers)
     checks["query_smoke"] = "pass" if query_ok else "fail"
@@ -139,6 +141,27 @@ def _check_report(base: Path, checks: dict[str, str], blockers: list[str], name:
         blockers.append(f"{rel} status is not pass")
         return
     checks[name] = "pass"
+
+
+def _check_sqlite_index(base: Path, checks: dict[str, str], blockers: list[str]) -> None:
+    path = base / "indexes" / "operator_kb.sqlite"
+    if not path.exists():
+        checks["sqlite_index"] = "fail"; blockers.append("indexes/operator_kb.sqlite is missing"); return
+    try:
+        with sqlite3.connect(path) as db:
+            metadata = dict(db.execute("select key,value from metadata"))
+        actual = _tree_hash(base / "facts")
+        if metadata.get("facts_hash") != actual:
+            checks["sqlite_index"] = "fail"; blockers.append("SQLite index is stale")
+        else: checks["sqlite_index"] = "pass"
+    except sqlite3.Error as exc:
+        checks["sqlite_index"] = "fail"; blockers.append(f"SQLite index invalid: {exc}")
+
+
+def _tree_hash(folder: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(folder.rglob("*.yaml")) if folder.exists() else []: digest.update(path.read_bytes())
+    return "sha256:" + digest.hexdigest()
 
 
 def _check_receipt_freshness(base: Path, rel: str, checks: dict[str, str], blockers: list[str], name: str) -> None:

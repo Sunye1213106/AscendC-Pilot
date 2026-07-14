@@ -1,4 +1,11 @@
-# Phase 1 Boundary YAML Authoring Contract
+# Phase 1 Boundary Candidate JSON Authoring Contract
+
+This document replaces the legacy YAML batch instructions below. The boundary
+agent emits only candidate JSON using `candidate_batch.schema.json`, validates
+it with `validate_candidate_batch.py`, and compiles it with
+`compile_candidate_facts.py`. It must not produce IDs, YAML headers, `sources`,
+`source_text`, `code_hash`, `file_hash`, or `SRC_*`. The remaining YAML examples
+are historical structure notes only and must not be used as output instructions.
 
 This contract is the executable authoring guide for `uo-boundary-agent`. The
 operator schemas remain the source of truth. Examples below show structure

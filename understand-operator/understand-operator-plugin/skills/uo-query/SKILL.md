@@ -61,3 +61,12 @@ Answer in Chinese by default. Include:
 
 State clearly when the KB lacks the requested fact.
 
+# Query backend
+
+`uo_query_readonly.py` uses `indexes/operator_kb.sqlite` first (aliases/FTS,
+derived entities, raw entities, then the small set of `detail_ref` documents).
+It refuses a stale index and reports `index_status: stale`; YAML graph fallback
+is used only when the SQLite index is absent and is labelled
+`query_backend: yaml_fallback`.
+
+Supported limits are `--depth 0..2`, `--relation-type`, and `--limit`.

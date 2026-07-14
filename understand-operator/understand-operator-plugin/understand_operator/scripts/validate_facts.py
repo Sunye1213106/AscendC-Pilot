@@ -22,6 +22,7 @@ if __package__ in (None, ""):
 
 from understand_operator._operator.artifacts import existing_operator_root, safe_op_name
 from understand_operator._operator.spec import catalog_entries, load_spec, spec_bundle_hash
+from understand_operator._operator.source_reader import SourceReadError, SourceReader
 
 STAGE_ORDER = {"init": 0, "step1": 1, "step2": 2, "step3": 3, "compile": 4, "derived": 5}
 VALIDATION_SCOPES = ("all", "boundary", "host", "compute", "kernel-overview", "kernel-slice-planner", "kernel-slice")
@@ -57,7 +58,7 @@ class FactValidationError:
         return f"{self.code}: {self.artifact}: {self.message}"
 
     def to_dict(self) -> dict[str, str]:
-        return {"code": self.code, "artifact": self.artifact, "message": self.message}
+        return {"code": self.code, "target": self.artifact, "message": self.message, "repair_scope": "stage"}
 
 
 def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope: str = "all") -> list[FactValidationError]:
@@ -118,13 +119,18 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
         _validate_document_header(rel, doc, entry, errors)
         if rel != "manifest.yaml":
             _validate_machine_schema(spec["root"], rel, doc, entry, errors)
-            _validate_compute_execution_rules(rel, doc, errors)
-            _validate_formal_fact_status(rel, doc, errors)
-        _validate_generic_fact_forbidden(rel, doc, errors)
-        _validate_owner(rel, doc, entry, ownership, errors)
-        _validate_ids(rel, doc, id_re, allowed_prefixes, errors)
-        _validate_relation_types(rel, doc, relation_types, errors)
-        _validate_sources(repo_root, rel, doc, id_re, errors)
+        for section, unit in _document_units(doc):
+            unit_rel = f"{rel}#sections/{section}" if section else rel
+            if rel != "manifest.yaml":
+                if section:
+                    _validate_section_schema(spec["root"], unit_rel, unit, entry, section, errors)
+                _validate_compute_execution_rules(unit_rel, unit, errors)
+                _validate_formal_fact_status(unit_rel, unit, errors)
+            _validate_generic_fact_forbidden(unit_rel, unit, errors)
+            _validate_owner(unit_rel, unit, entry, ownership, errors)
+            _validate_ids(unit_rel, unit, id_re, allowed_prefixes, errors)
+            _validate_relation_types(unit_rel, unit, relation_types, errors)
+            _validate_sources(repo_root, unit_rel, unit, id_re, errors)
 
     known_ids = _collect_known_ids(all_docs | docs)
     known_kinds = _collect_known_kinds(all_docs | docs)
@@ -132,6 +138,13 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
         _validate_references(rel, doc, known_ids, errors)
         _validate_relation_endpoints(rel, doc, known_kinds, relation_type_specs, errors)
     return errors
+
+
+def _document_units(doc: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    sections = doc.get("sections")
+    if isinstance(sections, dict):
+        return [(str(name), value) for name, value in sections.items() if isinstance(value, dict)]
+    return [("", doc)]
 
 
 def _validate_kernel_slice_file_sets(uo_root: Path, yaml_paths: list[Path], errors: list[FactValidationError]) -> None:
@@ -352,17 +365,20 @@ def _validate_document_header(rel: str, doc: dict[str, Any], entry: dict[str, An
         errors.append(FactValidationError("SOURCE_SNAPSHOT_INVALID", rel, "snapshot.source_snapshot_id must be finalized"))
     if snapshot.get("spec_bundle_hash") != spec_bundle_hash():
         errors.append(FactValidationError("SPEC_BUNDLE_MISMATCH", rel, "snapshot.spec_bundle_hash does not match current Skill spec"))
+    partition = isinstance(doc.get("sections"), dict)
     for key in ("items", "relations", "unresolved"):
         if key in doc and not isinstance(doc.get(key), list):
             errors.append(FactValidationError("DOCUMENT_SECTION_INVALID", rel, f"{key} must be a list"))
     if (
-        not rel.startswith("checks/")
+        not partition
+        and not rel.startswith("checks/")
         and not entry.get("allow_empty")
         and not (doc.get("items") or doc.get("relations") or doc.get("unresolved"))
     ):
         errors.append(FactValidationError("DOCUMENT_EMPTY_NOT_ALLOWED", rel, "catalog marks this artifact as non-empty after its stage"))
     if (
-        not rel.startswith(("checks/", "graphs/", "indexes/", "runs/"))
+        not partition
+        and not rel.startswith(("checks/", "graphs/", "indexes/", "runs/"))
         and entry.get("allow_empty")
         and not (doc.get("items") or doc.get("relations") or doc.get("unresolved"))
     ):
@@ -399,6 +415,11 @@ def _validate_machine_schema(
         for key in doc:
             if key not in allowed_set:
                 errors.append(FactValidationError("SCHEMA_TOP_LEVEL_FIELD_FORBIDDEN", rel, f"/{key} is not allowed by {schema_rel}"))
+    if isinstance(doc.get("sections"), dict):
+        for name in schema.get("required_sections") or []:
+            if name not in doc["sections"] or not isinstance(doc["sections"].get(name), dict):
+                errors.append(FactValidationError("SCHEMA_REQUIRED_SECTION_MISSING", rel, f"/sections/{name} is required"))
+        return
     item_kinds = {str(item) for item in schema.get("item_kind_enum") or []}
     required_item_fields = [str(item) for item in schema.get("required_item_fields") or []]
     kind_required_fields = schema.get("kind_required_fields") if isinstance(schema.get("kind_required_fields"), dict) else {}
@@ -430,6 +451,15 @@ def _validate_machine_schema(
     if isinstance(min_cardinality, int) and min_cardinality > 0:
         if len(doc.get("items") or []) + len(doc.get("relations") or []) + len(doc.get("unresolved") or []) < min_cardinality:
             errors.append(FactValidationError("SCHEMA_MIN_CARDINALITY", rel, f"requires at least {min_cardinality} item/relation/unresolved entry"))
+
+
+def _validate_section_schema(spec_root: Path, rel: str, doc: dict[str, Any], entry: dict[str, Any], section: str, errors: list[FactValidationError]) -> None:
+    mapping = entry.get("section_schemas") if isinstance(entry.get("section_schemas"), dict) else {}
+    schema_rel = mapping.get(section)
+    if not schema_rel:
+        errors.append(FactValidationError("SCHEMA_SECTION_UNKNOWN", rel, f"section {section!r} is not declared by partition schema")); return
+    pseudo = dict(entry); pseudo["schema"] = schema_rel
+    _validate_machine_schema(spec_root, rel, doc, pseudo, errors)
 
 
 def _validate_nested_schema_rules(rel: str, base_path: str, value: dict[str, Any], schema: dict[str, Any], errors: list[FactValidationError]) -> None:
@@ -604,6 +634,7 @@ def _validate_relation_types(rel: str, doc: dict[str, Any], relation_types: set[
 def _validate_sources(repo_root: Path, rel: str, doc: dict[str, Any], id_re: re.Pattern[str], errors: list[FactValidationError]) -> None:
     if not rel.startswith("facts/"):
         return
+    reader = SourceReader(repo_root)
     for section_name in ("items", "relations"):
         for index, item in enumerate(doc.get(section_name) or []):
             if not isinstance(item, dict):
@@ -616,11 +647,11 @@ def _validate_sources(repo_root: Path, rel: str, doc: dict[str, Any], id_re: re.
                 if not isinstance(source, dict):
                     errors.append(FactValidationError("SOURCE_NOT_MAPPING", rel, f"{section_name}[{index}].sources[{source_index}]"))
                     continue
-                _validate_one_source(repo_root, rel, f"{section_name}[{index}].sources[{source_index}]", source, id_re, errors)
+                _validate_one_source(reader, rel, f"{section_name}[{index}].sources[{source_index}]", source, id_re, errors)
 
 
 def _validate_one_source(
-    repo_root: Path,
+    reader: SourceReader,
     rel: str,
     label: str,
     source: dict[str, Any],
@@ -637,15 +668,6 @@ def _validate_one_source(
     if not isinstance(file_value, str) or Path(file_value).is_absolute():
         errors.append(FactValidationError("SOURCE_FILE_INVALID", rel, f"{label}.file must be repo-relative"))
         return
-    source_path = (repo_root / file_value).resolve()
-    try:
-        source_path.relative_to(repo_root)
-    except ValueError:
-        errors.append(FactValidationError("SOURCE_FILE_OUTSIDE_REPO", rel, f"{label}.file points outside repo"))
-        return
-    if not source_path.exists() or not source_path.is_file():
-        errors.append(FactValidationError("SOURCE_FILE_MISSING", rel, f"{label}.file not found: {file_value}"))
-        return
     span = source.get("span")
     if not isinstance(span, dict):
         errors.append(FactValidationError("SOURCE_SPAN_INVALID", rel, f"{label}.span must be a mapping"))
@@ -655,24 +677,28 @@ def _validate_one_source(
     if not isinstance(start, int) or not isinstance(end, int) or start < 1 or end < start:
         errors.append(FactValidationError("SOURCE_SPAN_INVALID", rel, f"{label}.span start_line/end_line invalid"))
         return
-    lines = source_path.read_text(encoding="utf-8", errors="replace").splitlines()
-    if end > len(lines):
-        errors.append(FactValidationError("SOURCE_SPAN_OUT_OF_RANGE", rel, f"{label}.span exceeds file length"))
+    try:
+        source_file = reader.read(file_value)
+        actual_text = source_file.span(start, end)
+    except SourceReadError as exc:
+        errors.append(FactValidationError(exc.code, rel, f"{label}: {exc.message}"))
         return
-    actual_text = "\n".join(lines[start - 1 : end])
     if source.get("source_text") != actual_text:
         errors.append(FactValidationError("SOURCE_TEXT_MISMATCH", rel, f"{label}.source_text does not match file span"))
         return
     expected_hash = "sha256:" + hashlib.sha256(actual_text.encode("utf-8")).hexdigest()
     if source.get("code_hash") != expected_hash:
         errors.append(FactValidationError("SOURCE_HASH_MISMATCH", rel, f"{label}.code_hash does not match source_text"))
+    if source.get("file_hash") is not None and source.get("file_hash") != source_file.byte_hash:
+        errors.append(FactValidationError("SOURCE_FILE_HASH_MISMATCH", rel, f"{label}.file_hash does not match current source bytes"))
 
 
 def _collect_known_ids(docs: dict[str, dict[str, Any]]) -> set[str]:
     ids: set[str] = set()
     for doc in docs.values():
-        for section in ("items", "relations", "unresolved"):
-            for item in doc.get(section) or []:
+        for _, unit in _document_units(doc):
+          for section in ("items", "relations", "unresolved"):
+            for item in unit.get(section) or []:
                 if isinstance(item, dict) and isinstance(item.get("id"), str):
                     ids.add(item["id"])
                 if isinstance(item, dict):
@@ -685,10 +711,11 @@ def _collect_known_ids(docs: dict[str, dict[str, Any]]) -> set[str]:
 def _collect_known_kinds(docs: dict[str, dict[str, Any]]) -> dict[str, str]:
     kinds: dict[str, str] = {}
     for doc in docs.values():
-        for item in doc.get("items") or []:
+      for _, unit in _document_units(doc):
+        for item in unit.get("items") or []:
             if isinstance(item, dict) and isinstance(item.get("id"), str):
                 kinds[item["id"]] = _normalize_kind(str(item.get("kind") or "fact"))
-        for relation in doc.get("relations") or []:
+        for relation in unit.get("relations") or []:
             if isinstance(relation, dict) and isinstance(relation.get("id"), str):
                 kinds[relation["id"]] = "relation"
     return kinds
@@ -719,7 +746,8 @@ def _validate_relation_endpoints(
     relation_type_specs: dict[str, Any],
     errors: list[FactValidationError],
 ) -> None:
-    for index, relation in enumerate(doc.get("relations") or []):
+    for _, unit in _document_units(doc):
+      for index, relation in enumerate(unit.get("relations") or []):
         if not isinstance(relation, dict):
             continue
         source_id = relation.get("source_id")

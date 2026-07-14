@@ -17,6 +17,7 @@ from understand_operator._core.ignore import DEFAULT_IGNORE_PATTERNS, should_ign
 from understand_operator._operator.artifacts import existing_operator_root, safe_op_name, write_text
 from understand_operator._operator.run_context import active_run_id, phase0_context
 from understand_operator._operator.spec import spec_bundle_hash
+from understand_operator._operator.source_reader import SourceReader
 
 ARCH_PATTERN = re.compile(r"arch22|arch35|regbase|ASCEND[0-9_]+", re.IGNORECASE)
 ENTRY_PATTERN = re.compile(
@@ -149,6 +150,8 @@ def main(argv: list[str] | None = None) -> int:
     _scan_contents(scan_root, scope_files, payload, target="symbols")
     out_path = base / "runs" / run_id / "phase0" / "scope_scan.yaml"
     write_text(out_path, _to_yaml(payload))
+    registry_path = base / "runs" / run_id / "phase0" / "source_encoding_registry.json"
+    registry_path.write_text(json.dumps(_encoding_registry(scan_root, scope_files), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"Wrote {out_path}")
     return 0
 
@@ -199,7 +202,7 @@ def _read_index_meta(base: Path) -> dict[str, Any]:
 
 def _read_pattern_file(path: Path) -> list[str]:
     result: list[str] = []
-    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
         if stripped and not stripped.startswith("#"):
             result.append(stripped)
@@ -299,7 +302,7 @@ def _seed_files(repo_root: Path, rel_files: list[str], op_name: str, patterns: l
             _add_seed(seeds["name_matched_seeds"], rel, "name_match", "+".join(op_tokens), rel, "high", "file or directory name matches operator token(s)")
         path = repo_root / rel
         if path.suffix.lower() in TEXT_EXTENSIONS and path.stat().st_size < LARGE_FILE_BYTES:
-            text = path.read_text(encoding="utf-8", errors="ignore")
+            text = "\n".join(_read_lines(repo_root, path))
             lowered_text = text.lower()
             entry = ENTRY_PATTERN.search(text)
             if entry and any(token and token in lowered_text for token in op_tokens):
@@ -430,7 +433,7 @@ def _dependencies_for(repo_root: Path, rel: str, rel_set: set[str], by_name: dic
     if path.suffix.lower() not in TEXT_EXTENSIONS or path.stat().st_size >= LARGE_FILE_BYTES:
         return []
     try:
-        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        lines = _read_lines(repo_root, path)
     except OSError:
         return []
     deps: list[dict[str, Any]] = []
@@ -546,7 +549,7 @@ def _include_search_paths(repo_root: Path, rel_files: list[str]) -> dict[str, li
         path = repo_root / rel
         if path.stat().st_size >= LARGE_FILE_BYTES:
             continue
-        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        lines = _read_lines(repo_root, path)
         variables: dict[str, str] = {
             "CMAKE_CURRENT_SOURCE_DIR": path.parent.as_posix(),
             "CMAKE_CURRENT_LIST_DIR": path.parent.as_posix(),
@@ -611,6 +614,20 @@ def _file_item(repo_root: Path, rel: str, role: str) -> dict[str, Any]:
     return {"path": rel, "role": role, "file_hash": digest, "include_reason": "phase0 seed"}
 
 
+def _read_lines(repo_root: Path, path: Path) -> list[str]:
+    return list(SourceReader(repo_root).read(path.relative_to(repo_root)).lines)
+
+
+def _encoding_registry(repo_root: Path, rel_files: list[str]) -> dict[str, Any]:
+    reader = SourceReader(repo_root); entries: list[dict[str, Any]] = []
+    for rel in sorted(set(rel_files)):
+        try:
+            entries.append(reader.registry_entry(rel))
+        except Exception as exc:  # record a deterministic failed decode instead of corrupting facts
+            entries.append({"path": rel, "decode_status": "failed", "error": str(exc)})
+    return {"version": 1, "files": entries}
+
+
 def _scan_contents(repo_root: Path, rel_files: list[str], payload: dict[str, Any], *, target: str) -> None:
     arch_hits: dict[str, dict[str, Any]] = {}
     for rel in rel_files:
@@ -627,7 +644,7 @@ def _scan_contents(repo_root: Path, rel_files: list[str], payload: dict[str, Any
         if path.suffix.lower() not in TEXT_EXTENSIONS or size >= LARGE_FILE_BYTES:
             continue
         try:
-            lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+            lines = _read_lines(repo_root, path)
         except OSError as exc:
             payload["warnings"].append(f"read failed for {rel}: {exc}")
             continue

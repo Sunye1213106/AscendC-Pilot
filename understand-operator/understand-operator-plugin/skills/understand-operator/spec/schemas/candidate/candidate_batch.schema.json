@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Understand Operator candidate fact batch",
+  "type": "object",
+  "required": ["version", "task", "target", "items", "relations", "unresolved"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"const": 1},
+    "task": {"type": "object", "required": ["run_id", "stage", "owner", "task_id"], "additionalProperties": false, "properties": {"run_id": {"type": "string"}, "stage": {"enum": ["step1", "step2", "step3"]}, "owner": {"type": "string"}, "task_id": {"type": "string"}}},
+    "target": {"type": "string", "pattern": "^facts/.+\\.yaml$"},
+    "items": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+    "relations": {"type": "array", "items": {"$ref": "#/$defs/relation"}},
+    "unresolved": {"type": "array", "items": {"$ref": "#/$defs/unresolved"}}
+  },
+  "$defs": {
+    "location": {"type": "object", "required": ["file", "symbol", "start_line", "end_line", "anchor_kind"], "additionalProperties": false, "properties": {"file": {"type": "string"}, "symbol": {"type": "string"}, "start_line": {"type": "integer", "minimum": 1}, "end_line": {"type": "integer", "minimum": 1}, "anchor_kind": {"type": "string"}}},
+    "item": {"type": "object", "required": ["fact_key", "kind", "fields", "source_locations"], "additionalProperties": false, "properties": {"fact_key": {"type": "string", "minLength": 1}, "kind": {"type": "string", "minLength": 1}, "name": {"type": "string"}, "fields": {"type": "object"}, "source_locations": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/location"}}}},
+    "relation": {"type": "object", "required": ["relation_key", "type", "source_fact_key", "target_fact_key", "fields", "source_locations"], "additionalProperties": false, "properties": {"relation_key": {"type": "string", "minLength": 1}, "type": {"type": "string"}, "source_fact_key": {"type": "string"}, "target_fact_key": {"type": "string"}, "fields": {"type": "object"}, "source_locations": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/location"}}}},
+    "unresolved": {"type": "object", "required": ["unresolved_key", "category", "description", "related_fact_keys", "source_locations"], "additionalProperties": false, "properties": {"unresolved_key": {"type": "string"}, "category": {"type": "string"}, "description": {"type": "string"}, "related_fact_keys": {"type": "array", "items": {"type": "string"}}, "source_locations": {"type": "array", "items": {"$ref": "#/$defs/location"}}}}
+  }
+}

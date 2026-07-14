@@ -108,8 +108,10 @@ facts/operator/entrypoints.yaml
 Then run Step 1 validation. Phase 1 must read Phase 0 receipt and must not
 rescan or expand the repository scope independently.
 
-Boundary facts must be written with `prepare_fact_file.py` plus
-`merge_fact_entries.py` batches, then read back and validated.
+Boundary agents output candidate JSON only. Validate each small candidate batch
+locally with `validate_candidate_batch.py`, then materialize formal facts with
+`compile_candidate_facts.py`; agents never author final YAML or deterministic
+identity/evidence fields.
 The dispatch must require the boundary agent to read
 `prompts/common/11_phase1_boundary_yaml_authoring.md`. The model may author
 temporary batch YAML outside `PROJECT_ROOT` and `UO_ROOT`; it may not author a

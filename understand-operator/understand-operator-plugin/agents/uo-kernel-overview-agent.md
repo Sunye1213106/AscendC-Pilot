@@ -63,6 +63,10 @@ lifetime, sync pairing, raw graph, derived graph, impact graph, or tests.
 
 ## YAML Contract
 
+This is now a candidate JSON contract: validate each small candidate batch and
+compile it deterministically. Never directly write formal YAML or provide IDs,
+SRC anchors, source text, or hashes.
+
 Use only the Step 1 frozen file catalog and schemas. Every confirmed item or
 relation must embed source anchors with exact source text and hash. Unproven
 facts go to `unresolved`.

@@ -52,6 +52,10 @@ Only these nine files under `facts/kernel/slices/<slice_id>/`:
 
 Owner must be `uo-kernel-slice-agent`.
 
+The agent emits only candidate JSON batches, checks them with the Local
+Validator, and invokes the deterministic compiler. It must never write formal
+YAML, IDs, source anchor text, or hashes.
+
 ## Extraction Scope
 
 Extract only facts directly supported by source. The nine files should together describe the slice chain:

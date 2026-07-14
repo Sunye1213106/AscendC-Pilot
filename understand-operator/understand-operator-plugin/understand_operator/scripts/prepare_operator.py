@@ -288,13 +288,13 @@ def _load_operator_ignore_patterns(repo_root: Path) -> list[str]:
         ]
         gitignore = repo_root / ".gitignore"
         if gitignore.exists():
-            for line in gitignore.read_text(encoding="utf-8", errors="ignore").splitlines():
+            for line in gitignore.read_text(encoding="utf-8").splitlines():
                 stripped = line.strip()
                 if stripped and not stripped.startswith("#"):
                     lines.append(stripped)
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     patterns = list(DEFAULT_IGNORE_PATTERNS)
-    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
         if stripped and not stripped.startswith("#"):
             patterns.append(stripped)

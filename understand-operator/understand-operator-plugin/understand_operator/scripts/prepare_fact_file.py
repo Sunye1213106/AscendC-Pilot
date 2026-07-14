@@ -89,6 +89,10 @@ def prepare_fact_file(repo_root: Path, op_name: str, rel: str, *, force: bool = 
         "relations": [],
         "unresolved": [],
     }
+    section_schemas = entry.get("section_schemas") if isinstance(entry.get("section_schemas"), dict) else {}
+    if section_schemas:
+        payload.pop("items"); payload.pop("relations"); payload.pop("unresolved")
+        payload["sections"] = {str(name): {"items": [], "relations": [], "unresolved": []} for name in section_schemas}
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
     return target

@@ -34,6 +34,10 @@ facts/compute/numerical_semantics.yaml
 Do not write proposals, flow canonical files, route files, contracts, graph
 files, generated golden code, generated tests, or validation reports.
 
+Emit candidate JSON only. Validate each small batch locally and let the
+deterministic compiler create formal Facts; never supply IDs, anchors, hashes,
+or a YAML document header.
+
 ## Analysis Scope
 
 Run three passes:

@@ -51,7 +51,12 @@ Extract only:
 Do not extract Host tiling internals, compute semantics, kernel slices, raw graph,
 derived graph, impact graph, or tests.
 
-## YAML Contract
+## Candidate JSON Contract
+
+Output only 5–10-entry candidate JSON batches for each permitted target. Run
+`validate_candidate_batch.py` then `compile_candidate_facts.py`; never author
+formal YAML, IDs, sources, hashes, or headers. `fact_key` and source locations
+are the only identity/evidence input supplied by the model.
 
 Use the exact structures defined by `skills/understand-operator/spec/file_catalog.yaml`
 and schemas under `skills/understand-operator/spec/schemas/operator/`.
@@ -97,7 +102,7 @@ Every confirmed item or relation must embed source anchors:
 If source evidence is not reliable, put the claim in `unresolved`; do not create
 a confirmed item.
 
-## Write Protocol
+## Legacy Write Protocol (superseded)
 
 Do not overwrite the three YAML files by hand. For each target file:
 

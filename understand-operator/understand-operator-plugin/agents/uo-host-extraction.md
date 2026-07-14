@@ -37,6 +37,10 @@ facts/host/tilingdata_writes.yaml
 Do not write proposals, canonical files, tiling archive files, route files,
 contracts, graph files, or validation reports.
 
+Emit candidate JSON only. For every 5–10 candidates, use the local candidate
+validator then deterministic compiler. Do not write formal YAML, IDs, source
+anchors, copied source text, or hashes.
+
 ## Analysis Scope
 
 Use two-pass extraction:

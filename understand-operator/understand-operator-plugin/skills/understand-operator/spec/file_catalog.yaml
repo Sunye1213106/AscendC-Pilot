@@ -29,6 +29,64 @@ files:
     required_after_stage: step1
     allow_empty: false
     raw_graph_input: true
+  - path: facts/host.yaml
+    artifact_type: host.partition
+    owner: uo-host-extraction
+    schema: schemas/host/host_partition.schema.yaml
+    section_schemas:
+      variables: schemas/host/variables.schema.yaml
+      expressions: schemas/host/expressions.schema.yaml
+      control_flow: schemas/host/control_flow.schema.yaml
+      calls: schemas/host/calls.schema.yaml
+      tiling_key: schemas/host/tiling_key.schema.yaml
+      tiling_key_enumeration: schemas/host/tiling_key_enumeration.schema.yaml
+      tiling_key_constraints: schemas/host/tiling_key_constraints.schema.yaml
+      tilingdata_writes: schemas/host/tilingdata_writes.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/compute.yaml
+    artifact_type: compute.partition
+    owner: uo-flow-extraction
+    schema: schemas/compute/compute_partition.schema.yaml
+    section_schemas:
+      tensors: schemas/compute/tensors.schema.yaml
+      operations: schemas/compute/operations.schema.yaml
+      dataflow: schemas/compute/dataflow.schema.yaml
+      numerical_semantics: schemas/compute/numerical_semantics.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/kernel/overview.yaml
+    artifact_type: kernel.overview.partition
+    owner: uo-kernel-overview-agent
+    schema: schemas/kernel/kernel_overview_partition.schema.yaml
+    section_schemas:
+      entries: schemas/kernel/overview_entries.schema.yaml
+      functions: schemas/kernel/overview_functions.schema.yaml
+      call_graph: schemas/kernel/overview_call_graph.schema.yaml
+      frontier: schemas/kernel/overview_frontier.schema.yaml
+      global_resources: schemas/kernel/overview_resources.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: true
+  - path: facts/kernel/slices/*.yaml
+    artifact_type: kernel.slice.partition
+    owner: uo-kernel-slice-agent
+    schema: schemas/kernel/kernel_slice_partition.schema.yaml
+    section_schemas:
+      variables: schemas/kernel/variables.schema.yaml
+      expressions: schemas/kernel/expressions.schema.yaml
+      branches: schemas/kernel/branches.schema.yaml
+      loops: schemas/kernel/loops.schema.yaml
+      tilingdata_reads: schemas/kernel/tilingdata_reads.schema.yaml
+      calls: schemas/kernel/calls.schema.yaml
+      dataflow: schemas/kernel/dataflow.schema.yaml
+      memory: schemas/kernel/memory.schema.yaml
+      synchronization: schemas/kernel/synchronization.schema.yaml
+    required_after_stage: step3
+    allow_empty: false
+    raw_graph_input: true
   - path: facts/host/variables.yaml
     artifact_type: host.variables
     owner: uo-host-extraction

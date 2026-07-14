@@ -116,15 +116,15 @@ facts/operator/source_files.yaml
 facts/operator/entrypoints.yaml
 ```
 
-Then run:
+Each agent emits only candidate JSON (never final YAML/IDs/source text/hashes), validates each 5–10-entry batch with `validate_candidate_batch.py`, and invokes `compile_candidate_facts.py` to atomically materialize its formal target. Then run the Stage Validator:
 
 ```powershell
-python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step1 --write-report
+python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step1 --write-report
 ```
 
 Empty boundary files must fail; unresolved entries must be explicit.
-Facts must be created with `prepare_fact_file.py` and merged in small batches
-with `merge_fact_entries.py`; do not overwrite large YAML files by hand.
+Formal facts are created only by `compile_candidate_facts.py`; do not overwrite
+or merge YAML batches by hand.
 Before authoring, the boundary agent must read
 `$PROMPT_DIR/common/11_phase1_boundary_yaml_authoring.md`. It may write small
 temporary YAML batch files outside `PROJECT_ROOT` and `UO_ROOT`; it must not
@@ -160,9 +160,9 @@ facts/kernel/overview/**
 Run the three scoped validators:
 
 ```powershell
-python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step2 --scope host --write-report
-python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step2 --scope compute --write-report
-python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step2 --scope kernel-overview --write-report
+python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step2 --scope host --write-report
+python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step2 --scope compute --write-report
+python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step2 --scope kernel-overview --write-report
 ```
 
 Then run `uo-step2-fact-review-agent`. It writes only:
