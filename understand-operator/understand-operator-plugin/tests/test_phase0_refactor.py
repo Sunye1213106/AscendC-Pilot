@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,6 +16,9 @@ from understand_operator._operator.artifacts import init_operator_contract_layou
 from understand_operator._operator.spec import load_spec, spec_bundle_hash
 from understand_operator.scripts.finalize_phase0 import finalize_phase0
 from understand_operator.scripts.macro_scope_scan import main as macro_scope_scan_main
+from understand_operator._operator.cbm_metadata import write_index_meta
+from understand_operator.scripts.prepare_operator import _current_scope_meta
+from understand_operator.scripts.prepare_fact_file import prepare_fact_file
 from understand_operator.scripts.review_checkpoint import main as review_checkpoint_main
 from understand_operator.scripts.source_graph_compiler import compile_source_graph
 from understand_operator.scripts.build_compile_gate import facts_hashes_for
@@ -130,6 +134,88 @@ def test_macro_scope_scan_writes_phase0_and_dependency_closure(tmp_path: Path) -
     assert "vector" not in deps
 
 
+def test_operator_dir_scope_includes_sibling_common_arch35_and_cbm_meta(tmp_path: Path) -> None:
+    workspace = tmp_path / "FAG_test"
+    op_dir = workspace / "flash_attention_score_grad"
+    common_arch = workspace / "common" / "op_kernel" / "arch35"
+    op_dir.mkdir(parents=True)
+    common_arch.mkdir(parents=True)
+    base = operator_root(op_dir, "flash_attention_score_grad")
+    init_operator_contract_layout(base, "flash_attention_score_grad", op_dir)
+    run_id = "UO_RUN_TEST"
+    manifest = yaml.safe_load((base / "manifest.yaml").read_text(encoding="utf-8"))
+    manifest["current_run_id"] = run_id
+    manifest["source"]["revision"] = "unknown"
+    manifest["source"]["snapshot_id"] = "SOURCE_TEST"
+    (base / "manifest.yaml").write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+    phase0 = base / "runs" / run_id / "phase0"
+    phase0.mkdir(parents=True)
+    _write_phase0_doc(phase0 / "context.yaml", "runs.context", {"source_revision": "unknown", "source_snapshot_id": "SOURCE_TEST", "spec_bundle_hash": spec_bundle_hash()})
+    _write_phase0_doc(phase0 / "installed_skill_check.yaml", "runs.installed_skill_check", {"consistent": True})
+    (op_dir / "op_kernel.cpp").write_text('#include "common/op_kernel/arch35/fag_arch35.h"\n__global__ void Kernel() {}\n', encoding="utf-8")
+    (common_arch / "fag_arch35.h").write_text("#pragma once\n#define ARCH35_KERNEL 1\n", encoding="utf-8")
+
+    assert macro_scope_scan_main([str(op_dir), "--op-name", "flash_attention_score_grad"]) == 0
+    scan = yaml.safe_load((phase0 / "scope_scan.yaml").read_text(encoding="utf-8"))
+    deps = {item["path"] for item in scan["files"]["dependency_files"]}
+    roots = {item["path"] for item in scan["scope_roots"]}
+    assert "common/op_kernel/arch35/fag_arch35.h" in deps
+    assert "flash_attention_score_grad" in roots
+    assert "common/op_kernel/arch35" in roots
+
+    scope_meta = _current_scope_meta(base)
+    write_index_meta(
+        base,
+        {
+            "repo_root": str(op_dir),
+            "op_name": "flash_attention_score_grad",
+            "cbm_project": "demo",
+            "indexed_via": "mcp",
+            "indexed_scope_roots": scope_meta["scope_roots"],
+            "dependency_roots": scope_meta["dependency_roots"],
+            "scope_hash": scope_meta["scope_hash"],
+            "cbm_status": {"available": True, "retry_count": 0, "fallback": "", "last_error": ""},
+        },
+    )
+    meta = json.loads((base / "cbm" / "index_meta.json").read_text(encoding="utf-8"))
+    meta_roots = {item["path"] for item in meta["indexed_scope_roots"]}
+    assert "flash_attention_score_grad" in meta_roots
+    assert "common/op_kernel/arch35" in meta_roots
+    assert meta["cbm_status"]["available"] is True
+
+
+def test_operator_dir_scope_resolves_relative_parent_common_include(tmp_path: Path) -> None:
+    workspace = tmp_path / "FAG_test"
+    op_dir = workspace / "flash_attention_score_grad"
+    kernel_dir = op_dir / "op_kernel" / "arch35"
+    common_arch = workspace / "common" / "op_kernel" / "arch35"
+    kernel_dir.mkdir(parents=True)
+    common_arch.mkdir(parents=True)
+    base = operator_root(op_dir, "flash_attention_score_grad")
+    init_operator_contract_layout(base, "flash_attention_score_grad", op_dir)
+    run_id = "UO_RUN_TEST"
+    manifest = yaml.safe_load((base / "manifest.yaml").read_text(encoding="utf-8"))
+    manifest["current_run_id"] = run_id
+    manifest["source"]["revision"] = "unknown"
+    manifest["source"]["snapshot_id"] = "SOURCE_TEST"
+    (base / "manifest.yaml").write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+    phase0 = base / "runs" / run_id / "phase0"
+    phase0.mkdir(parents=True)
+    _write_phase0_doc(phase0 / "context.yaml", "runs.context", {"source_revision": "unknown", "source_snapshot_id": "SOURCE_TEST", "spec_bundle_hash": spec_bundle_hash()})
+    _write_phase0_doc(phase0 / "installed_skill_check.yaml", "runs.installed_skill_check", {"consistent": True})
+    (kernel_dir / "fag_kernel.h").write_text('#include "../../../common/op_kernel/arch35/util_regbase.h"\n__global__ void Kernel() {}\n', encoding="utf-8")
+    (common_arch / "util_regbase.h").write_text("#pragma once\n#define UTIL_REGBASE 1\n", encoding="utf-8")
+
+    assert macro_scope_scan_main([str(op_dir), "--op-name", "flash_attention_score_grad"]) == 0
+    scan = yaml.safe_load((phase0 / "scope_scan.yaml").read_text(encoding="utf-8"))
+    deps = {item["path"] for item in scan["files"]["dependency_files"]}
+    roots = {item["path"] for item in scan["scope_roots"]}
+    assert scan["project_root"].replace("\\", "/").endswith("FAG_test")
+    assert scan["operator_path"] == "flash_attention_score_grad"
+    assert "common/op_kernel/arch35/util_regbase.h" in deps
+    assert "common/op_kernel/arch35" in roots
+
+
 def test_scope_review_continue_does_not_write_pass_receipt(tmp_path: Path) -> None:
     repo, base, run_id = _repo(tmp_path)
     (repo / "op_host").mkdir()
@@ -142,6 +228,28 @@ def test_scope_review_continue_does_not_write_pass_receipt(tmp_path: Path) -> No
     assert review["decision"] == "continue"
     receipt = base / "runs" / run_id / "phase0" / "receipt.yaml"
     assert not receipt.exists() or yaml.safe_load(receipt.read_text(encoding="utf-8")).get("status") != "pass"
+
+
+def test_prepare_fact_file_requires_finalized_phase0(tmp_path: Path) -> None:
+    repo, _base, _run_id = _repo(tmp_path)
+
+    with pytest.raises(SystemExit, match="PHASE0_NOT_FINALIZED"):
+        prepare_fact_file(repo, "DemoOp", "facts/operator/interface.yaml")
+
+
+def test_prepare_fact_file_uses_finalized_phase0_snapshot(tmp_path: Path) -> None:
+    repo, base, run_id = _repo(tmp_path)
+    (repo / "op_host").mkdir()
+    (repo / "op_host" / "demo.cpp").write_text("REGISTER_TILING(DemoOp)\n", encoding="utf-8")
+    assert macro_scope_scan_main([str(repo), "--op-name", "DemoOp"]) == 0
+    assert review_checkpoint_main([str(repo), "--op-name", "DemoOp", "--gate", "macro_scope", "--decision", "continue"]) == 0
+    assert finalize_phase0(repo, "DemoOp")[0] == 0
+
+    target = prepare_fact_file(repo, "DemoOp", "facts/operator/interface.yaml")
+
+    doc = yaml.safe_load(target.read_text(encoding="utf-8"))
+    receipt = yaml.safe_load((base / "runs" / run_id / "phase0" / "receipt.yaml").read_text(encoding="utf-8"))
+    assert doc["snapshot"] == receipt["snapshot"]
 
 
 def test_finalize_phase0_writes_receipt_and_revision_change_invalidates_validation(tmp_path: Path) -> None:
@@ -185,6 +293,27 @@ def test_finalize_phase0_requires_cbm_mcp_metadata_and_query_records(tmp_path: P
     assert any("missing cbm_queries list" in message for message in messages)
 
 
+def test_finalize_phase0_allows_semantic_query_without_confidence(tmp_path: Path) -> None:
+    repo, base, run_id = _repo(tmp_path)
+    (repo / "op_host").mkdir()
+    (repo / "op_host" / "demo.cpp").write_text("REGISTER_TILING(DemoOp)\n", encoding="utf-8")
+    assert macro_scope_scan_main([str(repo), "--op-name", "DemoOp"]) == 0
+    assert review_checkpoint_main([str(repo), "--op-name", "DemoOp", "--gate", "macro_scope", "--decision", "continue"]) == 0
+    semantic = yaml.safe_load((base / "runs" / run_id / "phase0" / "semantic_enrichment.yaml").read_text(encoding="utf-8"))
+    semantic["items"][0]["data"]["cbm_queries"] = [
+        {
+            "tool": "search_graph",
+            "query": {"name_pattern": ".*DemoOp.*"},
+            "result": {"matches_count": 1},
+        }
+    ]
+    _write_yaml(base / "runs" / run_id / "phase0" / "semantic_enrichment.yaml", semantic)
+
+    code, messages = finalize_phase0(repo, "DemoOp")
+
+    assert code == 0, messages
+
+
 def test_schema_disallows_source_fact_and_owner_split() -> None:
     spec = load_spec()
     owner = spec["ownership"]["owners"]
@@ -211,7 +340,7 @@ def test_raw_graph_indexes_cross_edges_paths_and_query_alias(tmp_path: Path) -> 
     assert finalize_phase0(repo, "DemoOp")[0] == 0
     _write_yaml(
         base / "facts" / "host" / "tilingdata_writes.yaml",
-        _fact_doc("host.tilingdata_writes", "uo-host-tiling-agent", "TDWRITE_DEMO_TILE", "tilingdata_write", source, {"struct_ref": "DemoTilingData", "field_ref": "tileN", "field_type": "uint32_t", "write_site_ref": "CALL_WRITE", "value_expression_ref": "EXPR_TILE", "condition_ref": "EXPR_TRUE", "source_variable_refs": ["VAR_N"], "aliases": ["tile count"]}),
+        _fact_doc("host.tilingdata_writes", "uo-host-extraction", "TDWRITE_DEMO_TILE", "tilingdata_write", source, {"struct_ref": "DemoTilingData", "field_ref": "tileN", "field_type": "uint32_t", "write_site_ref": "CALL_WRITE", "value_expression_ref": "EXPR_TILE", "condition_ref": "EXPR_TRUE", "source_variable_refs": ["VAR_N"], "aliases": ["tile count"]}),
     )
     _write_yaml(
         base / "facts" / "kernel" / "slices" / "main" / "tilingdata_reads.yaml",
@@ -221,7 +350,7 @@ def test_raw_graph_indexes_cross_edges_paths_and_query_alias(tmp_path: Path) -> 
         base / "facts" / "compute" / "operations.yaml",
         _fact_doc(
             "compute.operations",
-            "uo-compute-agent",
+            "uo-flow-extraction",
             "OPR_DEMO_ADD",
             "compute_operation",
             source,

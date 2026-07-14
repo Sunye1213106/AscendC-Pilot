@@ -17,10 +17,10 @@ Tell the user to use one of:
 |---|---|
 | `/uo-init` | End-to-end KB build in a target repo |
 | `/uo-query` | KB-first Q&A (CBM only when source proof needed) |
-| `/uo-update` | Incremental KB update from code changes |
+| `/uo-update` | Disabled; ask the user to rerun `/uo-init` |
 | `/uo-diff` | Reserved diff interface (unchanged / read-only) |
 
-Shared scripts remain in this directory (`prepare_operator.py`, `update_operator.py`, `quality_gate.py`, `verify_subagent_barrier.py`). Agent-side CBM lookups use MCP `codebase-memory-mcp`, not `cbm_query.py`.
+Shared scripts remain in this directory (`prepare_operator.py`, `quality_gate.py`, `verify_subagent_barrier.py`, `verify_required_subagents.py`, `prepare_fact_file.py`, `merge_fact_entries.py`). Agent-side CBM lookups use MCP `codebase-memory-mcp`; no local CBM query script is provided.
 
 Default user-facing language is Chinese (`prompts/00_language.md`); TodoWrite titles must be Chinese.
 

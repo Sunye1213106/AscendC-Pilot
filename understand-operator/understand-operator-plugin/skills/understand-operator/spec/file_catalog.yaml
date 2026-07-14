@@ -31,84 +31,84 @@ files:
     raw_graph_input: true
   - path: facts/host/variables.yaml
     artifact_type: host.variables
-    owner: uo-host-tiling-agent
+    owner: uo-host-extraction
     schema: schemas/host/variables.schema.yaml
     required_after_stage: step2
     allow_empty: false
     raw_graph_input: true
   - path: facts/host/expressions.yaml
     artifact_type: host.expressions
-    owner: uo-host-tiling-agent
+    owner: uo-host-extraction
     schema: schemas/host/expressions.schema.yaml
     required_after_stage: step2
     allow_empty: false
     raw_graph_input: true
   - path: facts/host/control_flow.yaml
     artifact_type: host.control_flow
-    owner: uo-host-tiling-agent
+    owner: uo-host-extraction
     schema: schemas/host/control_flow.schema.yaml
     required_after_stage: step2
     allow_empty: false
     raw_graph_input: true
   - path: facts/host/calls.yaml
     artifact_type: host.calls
-    owner: uo-host-tiling-agent
+    owner: uo-host-extraction
     schema: schemas/host/calls.schema.yaml
     required_after_stage: step2
     allow_empty: false
     raw_graph_input: true
   - path: facts/host/tiling_key.yaml
     artifact_type: host.tiling_key
-    owner: uo-host-tiling-agent
+    owner: uo-host-extraction
     schema: schemas/host/tiling_key.schema.yaml
     required_after_stage: step2
     allow_empty: false
     raw_graph_input: true
   - path: facts/host/tiling_key_enumeration.yaml
     artifact_type: host.tiling_key_enumeration
-    owner: uo-host-tiling-agent
+    owner: uo-host-extraction
     schema: schemas/host/tiling_key_enumeration.schema.yaml
     required_after_stage: step2
     allow_empty: true
     raw_graph_input: true
   - path: facts/host/tiling_key_constraints.yaml
     artifact_type: host.tiling_key_constraints
-    owner: uo-host-tiling-agent
+    owner: uo-host-extraction
     schema: schemas/host/tiling_key_constraints.schema.yaml
     required_after_stage: step2
     allow_empty: false
     raw_graph_input: true
   - path: facts/host/tilingdata_writes.yaml
     artifact_type: host.tilingdata_writes
-    owner: uo-host-tiling-agent
+    owner: uo-host-extraction
     schema: schemas/host/tilingdata_writes.schema.yaml
     required_after_stage: step2
     allow_empty: false
     raw_graph_input: true
   - path: facts/compute/tensors.yaml
     artifact_type: compute.tensors
-    owner: uo-compute-agent
+    owner: uo-flow-extraction
     schema: schemas/compute/tensors.schema.yaml
     required_after_stage: step2
     allow_empty: false
     raw_graph_input: true
   - path: facts/compute/operations.yaml
     artifact_type: compute.operations
-    owner: uo-compute-agent
+    owner: uo-flow-extraction
     schema: schemas/compute/operations.schema.yaml
     required_after_stage: step2
     allow_empty: false
     raw_graph_input: true
   - path: facts/compute/dataflow.yaml
     artifact_type: compute.dataflow
-    owner: uo-compute-agent
+    owner: uo-flow-extraction
     schema: schemas/compute/dataflow.schema.yaml
     required_after_stage: step2
     allow_empty: false
     raw_graph_input: true
   - path: facts/compute/numerical_semantics.yaml
     artifact_type: compute.numerical_semantics
-    owner: uo-compute-agent
+    owner: uo-flow-extraction
     schema: schemas/compute/numerical_semantics.schema.yaml
     required_after_stage: step2
     allow_empty: true

@@ -1,3 +1,9 @@
+---
+name: uo-behavior-abstraction-agent
+description: "INTERNAL: writes derived graph abstraction rules after raw graph compile."
+type: subagent
+---
+
 # uo-behavior-abstraction-agent
 
 Define reversible behavior abstractions from the compiled raw graph.

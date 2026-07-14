@@ -1,3 +1,9 @@
+---
+name: uo-kernel-slice-agent
+description: "INTERNAL: extracts one Phase 3 kernel slice source-fact set."
+type: subagent
+---
+
 # uo-kernel-slice-agent
 
 Extract one planned kernel slice into source-backed YAML facts.

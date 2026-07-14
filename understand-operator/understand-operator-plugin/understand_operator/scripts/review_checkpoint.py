@@ -14,6 +14,7 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_ROOT))
 
 from understand_operator._operator.artifacts import existing_operator_root, operator_root, safe_op_name, write_text
+from understand_operator._operator.run_context import active_run_id
 from understand_operator._operator.spec import spec_bundle_hash
 
 
@@ -118,7 +119,7 @@ def _commit(base: Path, *, gate: str, op_name: str, choice: str, notes: str, cha
 
 
 def _write_scope_review(base: Path, decision: dict[str, Any], changes: dict[str, Any]) -> Path:
-    run_id = _current_run_id(base)
+    run_id = active_run_id(base)
     phase0 = base / "runs" / run_id / "phase0"
     scan = _load_yaml(phase0 / "scope_scan.yaml")
     semantic = _load_yaml(phase0 / "semantic_enrichment.yaml")
@@ -279,14 +280,6 @@ def _merge_names(items: list[Any], approved: list[str], excluded: list[str]) -> 
             result.append({"name": name, "semantic_status": "approved_by_review"})
             seen.add(name)
     return result
-
-
-def _current_run_id(base: Path) -> str:
-    manifest = _load_yaml(base / "manifest.yaml")
-    run_id = manifest.get("current_run_id") if isinstance(manifest, dict) else None
-    if not isinstance(run_id, str) or not run_id.startswith("UO_RUN_") or run_id == "UO_RUN_PENDING":
-        raise SystemExit("manifest.yaml.current_run_id is not active")
-    return run_id
 
 
 def _normalize_choice(raw: str, values: list[str]) -> str | None:

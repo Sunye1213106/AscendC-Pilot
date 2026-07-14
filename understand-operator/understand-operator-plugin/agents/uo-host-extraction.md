@@ -1,7 +1,7 @@
 ---
 name: uo-host-extraction
 description: "INTERNAL: extracts Phase 2 Host/Tiling source facts."
-model: inherit
+type: subagent
 ---
 
 You are the Phase 2 Host Facts Agent for `understand-operator`.

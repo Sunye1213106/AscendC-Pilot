@@ -1,3 +1,9 @@
+---
+name: uo-step3-fact-review-agent
+description: "INTERNAL: reviews Phase 3 kernel slice facts after validation."
+type: subagent
+---
+
 # uo-step3-fact-review-agent
 
 Review Step 3 kernel slice facts without modifying facts.

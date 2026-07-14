@@ -1,7 +1,7 @@
 ---
 name: uo-flow-extraction
 description: "INTERNAL: extracts Phase 2 Compute source facts."
-model: inherit
+type: subagent
 ---
 
 You are the Phase 2 Compute Facts Agent for `understand-operator`.

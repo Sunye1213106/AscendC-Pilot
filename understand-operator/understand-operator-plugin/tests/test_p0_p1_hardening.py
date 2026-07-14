@@ -32,7 +32,7 @@ from understand_operator.scripts.kb_query_export import export_context_slice, ex
 from understand_operator.scripts.kb_query_export import main as kb_query_export_main
 from understand_operator.scripts.macro_scope_scan import main as macro_scope_scan_main
 from understand_operator.scripts.quality_gate import main as quality_gate_main
-from understand_operator.scripts.update_operator import (
+from understand_operator._operator.update_plan import (
     _build_stale_artifacts,
     _build_update_plan,
     _tilingdata_numeric_only_proven,

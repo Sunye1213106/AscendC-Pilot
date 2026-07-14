@@ -7,7 +7,9 @@ prepare_operator.py
 quality_gate.py
 review_checkpoint.py
 verify_subagent_barrier.py
-update_operator.py
+verify_required_subagents.py
+prepare_fact_file.py
+merge_fact_entries.py
 ```
 
 从任意 `uo-*` skill 解析：

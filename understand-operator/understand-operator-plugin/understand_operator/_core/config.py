@@ -13,7 +13,6 @@ def default_config() -> dict[str, Any]:
             "name": "project",
         },
         "scanner": {
-            "cbm_binary": "",
             "cbm_mode": "fast",
             "cbm_required": False,
         },

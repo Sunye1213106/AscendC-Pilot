@@ -15,6 +15,7 @@ if __package__ in (None, ""):
 
 from understand_operator._core.ignore import DEFAULT_IGNORE_PATTERNS, should_ignore
 from understand_operator._operator.artifacts import existing_operator_root, safe_op_name, write_text
+from understand_operator._operator.run_context import active_run_id, phase0_context
 from understand_operator._operator.spec import spec_bundle_hash
 
 ARCH_PATTERN = re.compile(r"arch22|arch35|regbase|ASCEND[0-9_]+", re.IGNORECASE)
@@ -58,24 +59,29 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", action="append", default=[], help="User-provided repo-relative seed file. May be repeated.")
     args = parser.parse_args(argv)
 
-    repo_root = Path(args.repo).resolve()
-    op_name = safe_op_name(args.op_name, repo_root)
-    base = existing_operator_root(repo_root, op_name)
+    operator_root = Path(args.repo).resolve()
+    scan_root = _scan_root_for_operator(operator_root)
+    op_name = safe_op_name(args.op_name, operator_root)
+    base = existing_operator_root(operator_root, op_name)
     if not (base / "manifest.yaml").exists():
         print(f"KB not found: {base}", file=sys.stderr)
         print("Run prepare_operator.py before macro_scope_scan.py.", file=sys.stderr)
         return 2
-    run_id = _current_run_id(base)
-    context = _phase0_context(base, run_id)
-    patterns = _load_ignore_patterns(repo_root)
-    rel_files = _iter_files(repo_root, patterns)
+    run_id = active_run_id(base)
+    context = phase0_context(base, run_id)
+    patterns = _load_ignore_patterns(scan_root)
+    rel_files = _iter_files(scan_root, patterns)
     cbm_meta = _read_index_meta(base)
-    include_result = _include_search_paths(repo_root, rel_files)
+    operator_rel = operator_root.relative_to(scan_root).as_posix()
+    if operator_rel == ".":
+        operator_rel = ""
+    include_result = _include_search_paths(scan_root, rel_files)
     include_paths = include_result["include_search_paths"]
-    seeds_by_type = _seed_files(repo_root, rel_files, op_name, patterns, args.seed)
+    seeds_by_type = _seed_files(scan_root, rel_files, op_name, patterns, args.seed, operator_rel=operator_rel)
     seed_paths = sorted({item["path"] for values in seeds_by_type.values() for item in values})
     operator_roots = _operator_roots(seed_paths)
-    dependency_result = _dependency_closure(repo_root, rel_files, seed_paths, operator_roots, include_paths)
+    dependency_result = _dependency_closure(scan_root, rel_files, seed_paths, operator_roots, include_paths)
+    scope_roots = _scope_roots(operator_rel, seed_paths, dependency_result["dependency_files"], include_paths)
 
     payload = {
         "version": 1,
@@ -88,6 +94,8 @@ def main(argv: list[str] | None = None) -> int:
         },
         "status": "complete",
         "op_name": op_name,
+        "project_root": scan_root.as_posix(),
+        "operator_path": operator_rel,
         "generated_at": datetime.now(tz=timezone.utc).isoformat(),
         "scan_method": {
             "filesystem_tool": args.filesystem_tool,
@@ -97,15 +105,17 @@ def main(argv: list[str] | None = None) -> int:
         },
         "directories": _directories(rel_files),
         "operator_roots": operator_roots,
+        "scope_roots": scope_roots,
+        "dependency_roots": [item for item in scope_roots if item["kind"] != "operator"],
         "include_search_paths": include_paths,
         "uncertain_include_paths": include_result["uncertain_include_paths"],
         "seed_files": seeds_by_type,
         "files": {
-            "initial_operator_files": [_file_item(repo_root, rel, "initial_operator_file") for rel in seed_paths],
+            "initial_operator_files": [_file_item(scan_root, rel, "initial_operator_file") for rel in seed_paths],
             "dependency_files": dependency_result["dependency_files"],
             "external_system_files": dependency_result["external_system_files"],
             "third_party_files": dependency_result["third_party_files"],
-            "generated_files": [_file_item(repo_root, rel, "generated") for rel in rel_files if _classify(rel) == "generated"],
+            "generated_files": [_file_item(scan_root, rel, "generated") for rel in rel_files if _classify(rel) == "generated"],
             "excluded_files": [],
             "uncertain_files": dependency_result["uncertain_files"],
         },
@@ -135,34 +145,22 @@ def main(argv: list[str] | None = None) -> int:
         set(seed_paths)
         | {str(item.get("path")) for item in dependency_result["dependency_files"] if item.get("path")}
     )
-    _scan_contents(repo_root, rel_files, payload, target="global_candidates")
-    _scan_contents(repo_root, scope_files, payload, target="symbols")
+    _scan_contents(scan_root, rel_files, payload, target="global_candidates")
+    _scan_contents(scan_root, scope_files, payload, target="symbols")
     out_path = base / "runs" / run_id / "phase0" / "scope_scan.yaml"
     write_text(out_path, _to_yaml(payload))
     print(f"Wrote {out_path}")
     return 0
 
 
-def _current_run_id(base: Path) -> str:
-    manifest = _load_yaml(base / "manifest.yaml")
-    run_id = manifest.get("current_run_id") if isinstance(manifest, dict) else None
-    if not isinstance(run_id, str) or not run_id.startswith("UO_RUN_") or run_id == "UO_RUN_PENDING":
-        raise SystemExit(f"manifest.yaml.current_run_id is not active in {base}")
-    return run_id
-
-
-def _phase0_context(base: Path, run_id: str) -> dict[str, Any]:
-    data = _load_yaml(base / "runs" / run_id / "phase0" / "context.yaml")
-    if isinstance(data, dict):
-        for item in data.get("items") or []:
-            if isinstance(item, dict) and isinstance(item.get("data"), dict):
-                return item["data"]
-    manifest = _load_yaml(base / "manifest.yaml")
-    source = manifest.get("source") if isinstance(manifest, dict) and isinstance(manifest.get("source"), dict) else {}
-    return {
-        "source_revision": source.get("revision") or "unknown",
-        "source_snapshot_id": source.get("snapshot_id") or "SOURCE_PHASE0",
-    }
+def _scan_root_for_operator(operator_root: Path) -> Path:
+    parent = operator_root.parent
+    if parent == operator_root:
+        return operator_root
+    sibling_markers = ("common", "CMakeLists.txt", "BUILD", "BUILD.bazel", "compile_commands.json")
+    if any((parent / marker).exists() for marker in sibling_markers):
+        return parent
+    return operator_root
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -276,10 +274,11 @@ def _classify(rel: str) -> str:
     return "unknown"
 
 
-def _seed_files(repo_root: Path, rel_files: list[str], op_name: str, patterns: list[str], user_seeds: list[str]) -> dict[str, list[dict[str, Any]]]:
+def _seed_files(repo_root: Path, rel_files: list[str], op_name: str, patterns: list[str], user_seeds: list[str], *, operator_rel: str) -> dict[str, list[dict[str, Any]]]:
     op_tokens = _name_tokens(op_name)
     seeds: dict[str, dict[str, dict[str, Any]]] = {
         "user_seeds": {},
+        "operator_root_files": {},
         "name_matched_seeds": {},
         "registration_seeds": {},
         "api_proto_seeds": {},
@@ -290,8 +289,12 @@ def _seed_files(repo_root: Path, rel_files: list[str], op_name: str, patterns: l
         rel = _validate_user_seed(repo_root, raw, rel_set, patterns)
         _add_seed(seeds["user_seeds"], rel, "user_seed", rel, rel, "user", "user-provided seed")
     for rel in rel_files:
+        if operator_rel and not (rel == operator_rel or rel.startswith(operator_rel.rstrip("/") + "/")):
+            continue
         lower = rel.lower()
         bucket = _classify(rel)
+        if _is_operator_scope_file(rel, bucket):
+            _add_seed(seeds["operator_root_files"], rel, "operator_root_file", operator_rel or ".", rel, "medium", "file is inside the operator root")
         if op_tokens and all(token in lower for token in op_tokens):
             _add_seed(seeds["name_matched_seeds"], rel, "name_match", "+".join(op_tokens), rel, "high", "file or directory name matches operator token(s)")
         path = repo_root / rel
@@ -305,6 +308,15 @@ def _seed_files(repo_root: Path, rel_files: list[str], op_name: str, patterns: l
             elif bucket == "golden" and any(token and token in lower for token in op_tokens):
                 _add_seed(seeds["golden_seeds"], rel, "golden_name", "+".join(op_tokens), rel, "medium", "golden/reference name matches operator")
     return {key: sorted(value.values(), key=lambda item: item["path"]) for key, value in seeds.items()}
+
+
+def _is_operator_scope_file(rel: str, bucket: str) -> bool:
+    suffix = Path(rel).suffix.lower()
+    if suffix not in TEXT_EXTENSIONS:
+        return False
+    if bucket in {"tests", "examples", "generated", "docs_config"}:
+        return False
+    return bucket in {"host", "kernel", "api", "proto", "golden", "unknown"} or suffix == ".py"
 
 
 def _validate_user_seed(repo_root: Path, raw: str, rel_set: set[str], patterns: list[str]) -> str:
@@ -444,6 +456,11 @@ def _resolve_include(repo_root: Path, source_rel: str, target: str, rel_set: set
     candidates.extend(repo_root / root / target for root in operator_roots)
     candidates.extend(repo_root / item["path"] / target for item in include_paths if item.get("path"))
     candidates.append(repo_root / target)
+    parts = Path(target).parts
+    if parts:
+        for index in range(len(parts)):
+            suffix = Path(*parts[index:])
+            candidates.append(repo_root / suffix)
     for candidate in candidates:
         try:
             rel = candidate.resolve().relative_to(repo_root).as_posix()
@@ -457,8 +474,38 @@ def _resolve_include(repo_root: Path, source_rel: str, target: str, rel_set: set
     if len(basename_matches) > 1:
         return {"target_file": target, "resolution_status": "ambiguous", "reason": "multiple repository include candidates: " + ", ".join(basename_matches[:8])}
     if "/" not in target and "\\" not in target:
-        return {"target_file": target, "resolution_status": "unresolved", "reason": "include could not be resolved; may be system or third-party"}
+        return {"target_file": target, "resolution_status": "external_system", "reason": "include could not be resolved in repository; treat as system or toolchain header"}
     return {"target_file": target, "resolution_status": "external_system", "reason": "include outside repository search roots"}
+
+
+def _scope_roots(operator_rel: str, seed_paths: list[str], dependency_files: list[dict[str, Any]], include_paths: list[dict[str, str]]) -> list[dict[str, str]]:
+    roots: dict[str, dict[str, str]] = {}
+    op_root = operator_rel.strip("/")
+    if op_root:
+        roots[op_root] = {"path": op_root, "kind": "operator", "reason": "input operator path"}
+    else:
+        roots["."] = {"path": ".", "kind": "operator", "reason": "input operator path"}
+    for item in dependency_files:
+        path = str(item.get("path") or "")
+        if not path:
+            continue
+        root = _dependency_root(path, op_root)
+        if root and root != op_root:
+            roots.setdefault(root, {"path": root, "kind": "dependency", "reason": "dependency closure"})
+    for item in include_paths:
+        path = str(item.get("path") or "")
+        if path and path != op_root:
+            roots.setdefault(path, {"path": path, "kind": "include_root", "reason": "build include path"})
+    return sorted(roots.values(), key=lambda item: (item["kind"], item["path"]))
+
+
+def _dependency_root(path: str, operator_rel: str) -> str:
+    parts = path.split("/")
+    if len(parts) >= 3 and parts[0] == "common" and parts[1] == "op_kernel":
+        return "/".join(parts[:3])
+    if parts:
+        return parts[0]
+    return operator_rel
 
 
 def _resolve_python_import(module: str, by_name: dict[str, str]) -> dict[str, Any]:

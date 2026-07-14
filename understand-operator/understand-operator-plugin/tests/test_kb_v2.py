@@ -14,7 +14,7 @@ from understand_operator._operator.artifacts import init_operator_layout, operat
 from understand_operator._operator import kb_compiler
 from understand_operator._operator.kb_compiler import compile_kb, promote_kb, validate_kb
 from understand_operator.scripts.kb_query_export import export_context_slice, export_view
-from understand_operator.scripts.update_operator import _build_stale_artifacts, _build_update_plan
+from understand_operator._operator.update_plan import _build_stale_artifacts, _build_update_plan
 
 
 def _repo(tmp_path: Path) -> tuple[Path, Path]:

@@ -24,7 +24,7 @@ owners:
       - facts/operator/interface.yaml
       - facts/operator/source_files.yaml
       - facts/operator/entrypoints.yaml
-  uo-host-tiling-agent:
+  uo-host-extraction:
     may_read: [manifest.yaml, facts/operator/**, facts/host/**, runs/**, cbm/**]
     may_write:
       - facts/host/variables.yaml
@@ -35,7 +35,7 @@ owners:
       - facts/host/tiling_key_enumeration.yaml
       - facts/host/tiling_key_constraints.yaml
       - facts/host/tilingdata_writes.yaml
-  uo-compute-agent:
+  uo-flow-extraction:
     may_read: [manifest.yaml, facts/operator/**, facts/compute/**, runs/**, cbm/**]
     may_write:
       - facts/compute/tensors.yaml

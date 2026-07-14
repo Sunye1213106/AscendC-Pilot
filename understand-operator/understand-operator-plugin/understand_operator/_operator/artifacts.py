@@ -189,7 +189,7 @@ def init_operator_contract_layout(base: Path, op_name: str, repo_root: Path) -> 
     ]:
         write_text_if_missing(base / keep, "")
 
-    write_text(
+    write_text_if_missing(
         base / "manifest.yaml",
         f"""version: 1
 op_name: {op_name}
@@ -216,28 +216,3 @@ graphs:
     status: pending
 """,
     )
-
-    for rel, artifact_type in {
-        "facts/operator/interface.yaml": "operator.interface",
-        "facts/operator/source_files.yaml": "operator.source_files",
-        "facts/operator/entrypoints.yaml": "operator.entrypoints",
-    }.items():
-        write_text_if_missing(
-            base / rel,
-            f"""version: 1
-artifact:
-  type: {artifact_type}
-  schema_version: 1
-  owner: uo-boundary-agent
-snapshot:
-  run_id: UO_RUN_PENDING
-  source_snapshot_id: SOURCE_PENDING
-  source_revision: unknown
-  spec_bundle_hash: {bundle_hash}
-items: []
-relations: []
-unresolved: []
-""",
-        )
-
-

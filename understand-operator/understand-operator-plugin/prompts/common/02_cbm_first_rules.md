@@ -16,7 +16,7 @@ Forbidden:
 
 - Unbounded semantic grep across the whole repository.
 - Treating a text hit as a confirmed semantic fact.
-- Using `cbm_query.py`, `uo-cbm`, or the CBM CLI instead of the connected MCP server.
+- Using local CBM CLI fallback commands instead of the connected MCP server.
 - Modifying the CBM database from an agent.
 - Automatically admitting out-of-scope files into Phase 1+.
 

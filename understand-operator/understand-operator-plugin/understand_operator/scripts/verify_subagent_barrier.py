@@ -366,27 +366,7 @@ def _host_flow_artifacts(run_id: str) -> tuple[list[str], list[str]]:
 
 
 def _approved_task_ids(uo_root: Path) -> list[str]:
-    # Retired kernel dispatch review compatibility path.
-    candidates = [
-        uo_root / "human" / "kernel_dispatch_review.yaml",
-        uo_root / "kernel" / "kernel_dispatch_review.yaml",
-    ]
-    path = next((p for p in candidates if p.exists()), None)
-    if path is None:
-        return []
-    ids: list[str] = []
-    in_block = False
-    for line in read_text(path).splitlines():
-        stripped = line.strip()
-        if stripped.startswith("approved_task_ids:"):
-            in_block = True
-            continue
-        if in_block:
-            if stripped.startswith("- "):
-                ids.append(stripped[2:].strip().strip('"').strip("'"))
-            elif stripped and not line.startswith((" ", "\t")):
-                break
-    return ids
+    return []
 
 
 def _load_json(path: Path) -> dict[str, Any]:

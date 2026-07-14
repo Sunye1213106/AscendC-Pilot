@@ -20,6 +20,7 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_ROOT))
 
 from understand_operator._operator.artifacts import existing_operator_root, safe_op_name
+from understand_operator._operator.run_context import active_run_id
 from understand_operator._operator.spec import spec_bundle_hash
 
 
@@ -28,10 +29,10 @@ def finalize_phase0(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
         return 2, ["PyYAML is required"]
     repo_root = repo_root.resolve()
     uo_root = existing_operator_root(repo_root, safe_op_name(op_name, repo_root))
-    manifest = _load_yaml(uo_root / "manifest.yaml")
-    run_id = manifest.get("current_run_id") if isinstance(manifest, dict) else None
-    if not isinstance(run_id, str) or not run_id.startswith("UO_RUN_") or run_id == "UO_RUN_PENDING":
-        return 2, ["manifest.yaml.current_run_id is not active"]
+    try:
+        run_id = active_run_id(uo_root)
+    except RuntimeError as exc:
+        return 2, [str(exc)]
     phase0 = uo_root / "runs" / run_id / "phase0"
     docs = {
         "context": _load_yaml(phase0 / "context.yaml"),
@@ -72,6 +73,8 @@ def finalize_phase0(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
             "architecture_variants": approved["architecture_variants"] if "architecture_variants" in approved else scan.get("architecture_variants", []),
             "unresolved_dependencies": scoped("uncertain_files"),
             "operator_roots": approved["operator_roots"] if "operator_roots" in approved else scan.get("operator_roots", []),
+            "scope_roots": approved["scope_roots"] if "scope_roots" in approved else scan.get("scope_roots", []),
+            "dependency_roots": approved["dependency_roots"] if "dependency_roots" in approved else scan.get("dependency_roots", []),
             "include_search_paths": approved["include_search_paths"] if "include_search_paths" in approved else scan.get("include_search_paths", []),
         },
         "cbm_project": cbm_meta.get("cbm_project"),
@@ -84,6 +87,8 @@ def finalize_phase0(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
             "cbm_mode": cbm_meta.get("cbm_mode"),
             "indexed_at": cbm_meta.get("indexed_at"),
             "project_confirmed": cbm_meta.get("project_confirmed"),
+            "indexed_scope_roots": cbm_meta.get("indexed_scope_roots") or scan.get("scope_roots") or [],
+            "cbm_status": cbm_meta.get("cbm_status") or _default_cbm_status(cbm_meta),
         },
         "source_revision": context.get("source_revision"),
         "source_snapshot_id": context.get("source_snapshot_id"),
@@ -115,21 +120,23 @@ def _validation_errors(repo_root: Path, uo_root: Path, docs: dict[str, dict[str,
     cbm_meta = _load_json(uo_root / "cbm" / "index_meta.json")
     if skill.get("consistent") is not True:
         errors.append("installed_skill_check.consistent is not true")
-    if not cbm_meta.get("cbm_project"):
-        errors.append("cbm/index_meta.json missing cbm_project")
-    if cbm_meta.get("indexed_via") != "mcp":
-        errors.append("cbm/index_meta.json indexed_via must be mcp")
-    if not cbm_meta.get("indexed_at"):
-        errors.append("cbm/index_meta.json missing indexed_at")
+    cbm_status = cbm_meta.get("cbm_status") if isinstance(cbm_meta.get("cbm_status"), dict) else _default_cbm_status(cbm_meta)
+    if cbm_status.get("available") is not False:
+        if not cbm_meta.get("cbm_project"):
+            errors.append("cbm/index_meta.json missing cbm_project")
+        if cbm_meta.get("indexed_via") != "mcp":
+            errors.append("cbm/index_meta.json indexed_via must be mcp")
+        if not cbm_meta.get("indexed_at"):
+            errors.append("cbm/index_meta.json missing indexed_at")
     if cbm_meta.get("repo_root") and Path(str(cbm_meta["repo_root"])).resolve() != repo_root:
         errors.append("cbm/index_meta.json repo_root does not match current repository")
     if cbm_meta.get("op_name") and cbm_meta.get("op_name") != (uo_root.name):
         errors.append("cbm/index_meta.json op_name does not match operator root")
-    if cbm_meta.get("project_confirmed") is False:
+    if cbm_meta.get("project_confirmed") is False and cbm_status.get("available") is not False:
         errors.append("cbm/index_meta.json project_confirmed is false")
     if _doc_status(docs["scope_scan"]) != "complete":
         errors.append("scope_scan.yaml status is not complete")
-    if _doc_status(docs["semantic_enrichment"]) != "complete":
+    if _doc_status(docs["semantic_enrichment"]) not in {"complete", "degraded"}:
         errors.append("semantic_enrichment.yaml status is not complete")
     _validate_semantic_enrichment(docs["semantic_enrichment"], errors)
     if docs["scope_review"].get("decision") != "continue":
@@ -180,9 +187,23 @@ def _validate_semantic_enrichment(doc: dict[str, Any], errors: list[str]) -> Non
         if not isinstance(record, dict):
             errors.append(f"semantic_enrichment.yaml cbm_queries[{index}] must be a mapping")
             continue
-        for key in ("tool", "payload", "candidate", "result_summary", "confidence", "fallback_used"):
+        for key in ("tool",):
             if key not in record:
                 errors.append(f"semantic_enrichment.yaml cbm_queries[{index}] missing {key}")
+        if not any(key in record for key in ("payload", "query")):
+            errors.append(f"semantic_enrichment.yaml cbm_queries[{index}] missing payload/query")
+        if not any(key in record for key in ("result_summary", "result", "error", "reason")):
+            errors.append(f"semantic_enrichment.yaml cbm_queries[{index}] missing result/error")
+
+
+def _default_cbm_status(cbm_meta: dict[str, Any]) -> dict[str, Any]:
+    available = bool(cbm_meta.get("cbm_project")) and cbm_meta.get("project_confirmed") is not False
+    return {
+        "available": available,
+        "retry_count": int(cbm_meta.get("retry_count") or 0),
+        "fallback": "" if available else "filesystem_scan",
+        "last_error": str(cbm_meta.get("last_error") or ""),
+    }
 
 
 def _doc_status(doc: dict[str, Any]) -> str:

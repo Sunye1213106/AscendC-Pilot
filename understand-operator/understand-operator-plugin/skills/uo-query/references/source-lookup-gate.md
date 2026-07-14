@@ -24,14 +24,14 @@ KB 快速起草答案
 | KB 两处结论互相矛盾 | MCP 校验两边引用的函数 |
 
 **错误示范：**  
-KB 已写出 `Caveat (置信度=medium)` 并点名 `SetSplitAxis`，却输出 `源码查找: KB-only`，或去跑 `cbm_query.py`。  
+KB 已写出 `Caveat (置信度=medium)` 并点名 `SetSplitAxis`，却输出 `源码查找: KB-only`，或去跑本地 CBM CLI。  
 **正确做法：** 立刻对 `SetSplitAxis` 等调 MCP `search_graph` / `get_code_snippet`，再给出校验后的结论。
 
 ## 禁止
 
 | 禁止动作 | 为什么 |
 |---|---|
-| Shell `cbm_query.py` / `uo-cbm` / `cli` 做交互查询 | 冷启动慢；应用 MCP 常驻 |
+| Shell 本地 CBM CLI 做交互查询 | 冷启动慢；应用 MCP 常驻 |
 | `Read` 整文件 / 大段源码（未先 MCP） | token 暴涨 |
 | `Grep` 扫源码当“校验” | 绕过 MCP |
 | 发现 medium 却不查 MCP，直接输出 caveat | 用户要校验后的答案 |

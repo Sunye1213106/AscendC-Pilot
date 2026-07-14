@@ -40,6 +40,18 @@ $AgentTargets = @{
     cursor   = Join-Path $HOME ".cursor\agents"
 }
 
+$RequiredAgents = @(
+    "uo-boundary-agent",
+    "uo-host-extraction",
+    "uo-flow-extraction",
+    "uo-kernel-overview-agent",
+    "uo-kernel-slice-planner",
+    "uo-kernel-slice-agent",
+    "uo-step2-fact-review-agent",
+    "uo-step3-fact-review-agent",
+    "uo-behavior-abstraction-agent"
+)
+
 if (-not $Targets.ContainsKey($Platform)) {
     Write-Error "Unknown platform: $Platform. Supported: $($Targets.Keys -join ', ')"
 }
@@ -123,11 +135,20 @@ if ($AgentTargets.ContainsKey($Platform) -and (Test-Path $AgentsSrc)) {
         Copy-Item -Path $_.FullName -Destination $agentDest -Force
     }
     Write-Host "Installed subagents: $AgentsDestRoot\uo-*.md"
-    $RequiredAgents = @("uo-host-extraction", "uo-flow-extraction", "uo-kernel-path")
     foreach ($agent in $RequiredAgents) {
         $agentPath = Join-Path $AgentsDestRoot "$agent.md"
         if (-not (Test-Path -LiteralPath $agentPath)) {
             throw "REQUIRED_SUBAGENT_UNAVAILABLE: $agent was not installed at $agentPath"
+        }
+        $text = Get-Content -LiteralPath $agentPath -Raw -Encoding UTF8
+        if ($text -notmatch "(?m)^name:\s*$([Regex]::Escape($agent))\s*$") {
+            throw "REQUIRED_SUBAGENT_UNAVAILABLE: $agent missing matching frontmatter name"
+        }
+        if ($text -notmatch "(?m)^type:\s*subagent\s*$") {
+            throw "REQUIRED_SUBAGENT_UNAVAILABLE: $agent missing frontmatter type: subagent"
+        }
+        if ($text -match "(?m)^model:\s*inherit\s*$") {
+            throw "REQUIRED_SUBAGENT_UNAVAILABLE: $agent must omit model: inherit"
         }
     }
     Write-Host "Verified named subagents discoverable: $($RequiredAgents -join ', ')"

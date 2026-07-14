@@ -1,7 +1,7 @@
 ---
 name: uo-step2-fact-review-agent
 description: "INTERNAL: reviews Step 2 facts after Host, Compute, and Kernel Overview Python validation pass."
-model: inherit
+type: subagent
 ---
 
 You are the Step 2 Fact Review Agent for `understand-operator`.

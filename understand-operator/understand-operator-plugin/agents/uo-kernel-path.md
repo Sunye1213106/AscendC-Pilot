@@ -1,7 +1,7 @@
 ---
 name: uo-kernel-path
 description: "RETIRED: old kernel path agent. Use uo-kernel-overview-agent plus uo-kernel-slice-agent."
-model: inherit
+type: subagent
 ---
 
 This agent is retired in the Phase 0-3 workflow.

@@ -26,6 +26,46 @@ def _repo(tmp_path: Path) -> tuple[Path, Path]:
     repo.mkdir()
     base = operator_root(repo, "DemoOp")
     init_operator_contract_layout(base, "DemoOp", repo)
+    run_id = "UO_RUN_TEST"
+    manifest = yaml.safe_load((base / "manifest.yaml").read_text(encoding="utf-8"))
+    manifest["current_run_id"] = run_id
+    manifest["source"]["revision"] = "unknown"
+    manifest["source"]["snapshot_id"] = "SOURCE_TEST"
+    (base / "manifest.yaml").write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+    phase0 = base / "runs" / run_id / "phase0"
+    context = {
+        "version": 1,
+        "artifact": {"type": "runs.context", "schema_version": 1, "owner": "uo-orchestrator"},
+        "snapshot": {
+            "run_id": run_id,
+            "source_snapshot_id": "SOURCE_TEST",
+            "source_revision": "unknown",
+            "spec_bundle_hash": spec_bundle_hash(),
+        },
+        "items": [{"id": "OP_PHASE0_CONTEXT", "kind": "context", "status": "recorded", "data": {"source_revision": "unknown", "source_snapshot_id": "SOURCE_TEST"}}],
+        "relations": [],
+        "unresolved": [],
+    }
+    _write_yaml(phase0 / "context.yaml", context)
+    context_hash = "sha256:" + hashlib.sha256((phase0 / "context.yaml").read_bytes()).hexdigest()
+    _write_yaml(
+        phase0 / "receipt.yaml",
+        {
+            "version": 1,
+            "artifact": {"type": "runs.receipt", "schema_version": 1, "owner": "uo-orchestrator"},
+            "snapshot": {
+                "run_id": run_id,
+                "source_snapshot_id": "SOURCE_TEST",
+                "source_revision": "unknown",
+                "spec_bundle_hash": spec_bundle_hash(),
+            },
+            "status": "pass",
+            "input_hashes": {f"runs/{run_id}/phase0/context.yaml": context_hash},
+            "items": [{"id": "OP_PHASE0_RECEIPT", "kind": "phase0_receipt", "status": "recorded"}],
+            "relations": [],
+            "unresolved": [],
+        },
+    )
     return repo, base
 
 
@@ -314,7 +354,8 @@ def test_contract_layout_is_idempotent_and_has_no_embedded_spec(tmp_path: Path) 
     assert before == after
     for forbidden in ("spec", "_spec", "reference", "references", "exports", "proposal", "proposals", "archive"):
         assert not (base / forbidden).exists()
-    assert (base / "facts" / "operator" / "interface.yaml").exists()
+    assert (base / "facts" / "operator").is_dir()
+    assert not (base / "facts" / "operator" / "interface.yaml").exists()
     assert (base / "graphs" / "raw").is_dir()
     assert hashlib.sha256(source.read_bytes()).hexdigest() == source_hash
 
@@ -354,7 +395,7 @@ def test_empty_boundary_files_do_not_pass(tmp_path: Path) -> None:
 
     errors = validate_facts(repo, "DemoOp", stage="step1")
 
-    assert any(error.code == "DOCUMENT_EMPTY_NOT_ALLOWED" for error in errors)
+    assert any(error.code == "REQUIRED_FILE_MISSING" for error in errors)
 
 
 def test_interface_schema_requires_kind_specific_fields(tmp_path: Path) -> None:
@@ -393,7 +434,7 @@ def test_agent_owner_cannot_write_forbidden_path(tmp_path: Path) -> None:
     source_path.parent.mkdir()
     source_path.write_text(source_text + "\n", encoding="utf-8")
     doc = _valid_interface_doc(source_anchor)
-    doc["artifact"]["owner"] = "uo-host-tiling-agent"
+    doc["artifact"]["owner"] = "uo-host-extraction"
     _write_yaml(base / "facts" / "operator" / "interface.yaml", doc)
 
     errors = validate_facts(repo, "DemoOp", stage="step1")
@@ -478,7 +519,7 @@ def test_step2_scoped_validators_run_independently(tmp_path: Path) -> None:
         "facts/host/tilingdata_writes.yaml": ("host.tilingdata_writes", "TDWRITE_HOST_X"),
     }
     for rel, (artifact_type, item_id) in host_files.items():
-        _write_yaml(base / rel, _fact_doc(artifact_type, "uo-host-tiling-agent", item_id, source_anchor))
+        _write_yaml(base / rel, _fact_doc(artifact_type, "uo-host-extraction", item_id, source_anchor))
 
     compute_files = {
         "facts/compute/tensors.yaml": ("compute.tensors", "TENSOR_COMPUTE_X"),
@@ -487,7 +528,7 @@ def test_step2_scoped_validators_run_independently(tmp_path: Path) -> None:
         "facts/compute/numerical_semantics.yaml": ("compute.numerical_semantics", "ATTR_COMPUTE_X"),
     }
     for rel, (artifact_type, item_id) in compute_files.items():
-        _write_yaml(base / rel, _fact_doc(artifact_type, "uo-compute-agent", item_id, source_anchor))
+        _write_yaml(base / rel, _fact_doc(artifact_type, "uo-flow-extraction", item_id, source_anchor))
 
     kernel_files = {
         "facts/kernel/overview/entries.yaml": ("kernel.overview.entries", "KERNEL_OVERVIEW_X"),
@@ -513,8 +554,8 @@ def test_compute_operation_schema_requires_fine_grained_fields(tmp_path: Path) -
         "facts/compute/numerical_semantics.yaml": ("compute.numerical_semantics", "ATTR_COMPUTE_X"),
     }
     for rel, (artifact_type, item_id) in compute_files.items():
-        _write_yaml(base / rel, _fact_doc(artifact_type, "uo-compute-agent", item_id, source_anchor))
-    operation_doc = _fact_doc("compute.operations", "uo-compute-agent", "OPR_COMPUTE_ADD", source_anchor, kind="compute_operation")
+        _write_yaml(base / rel, _fact_doc(artifact_type, "uo-flow-extraction", item_id, source_anchor))
+    operation_doc = _fact_doc("compute.operations", "uo-flow-extraction", "OPR_COMPUTE_ADD", source_anchor, kind="compute_operation")
     operation_doc["items"][0].update(
         {
             "operation_type": "add",
@@ -570,13 +611,13 @@ def test_step2_receipt_requires_three_python_gates_and_review(tmp_path: Path) ->
 def test_step2_receipt_rejects_fact_change_after_review(tmp_path: Path) -> None:
     repo, base = _repo(tmp_path)
     source_anchor = _seed_source(repo)
-    _write_yaml(base / "facts" / "host" / "variables.yaml", _fact_doc("host.variables", "uo-host-tiling-agent", "VAR_HOST_X", source_anchor))
+    _write_yaml(base / "facts" / "host" / "variables.yaml", _fact_doc("host.variables", "uo-host-extraction", "VAR_HOST_X", source_anchor))
     hashes = _hashes_for(base, ["facts/host", "facts/compute", "facts/kernel/overview"])
     _write_yaml(base / "checks" / "step2" / "host_validation.yaml", _report("pass", "checks.step2.host_validation", hashes))
     _write_yaml(base / "checks" / "step2" / "compute_validation.yaml", _report("pass", "checks.step2.compute_validation", {}))
     _write_yaml(base / "checks" / "step2" / "kernel_overview_validation.yaml", _report("pass", "checks.step2.kernel_overview_validation", {}))
     _write_yaml(base / "checks" / "step2" / "review.yaml", _review("pass", hashes))
-    changed = _fact_doc("host.variables", "uo-host-tiling-agent", "VAR_HOST_X", source_anchor)
+    changed = _fact_doc("host.variables", "uo-host-extraction", "VAR_HOST_X", source_anchor)
     changed["items"][0]["name"] = "changed"
     _write_yaml(base / "facts" / "host" / "variables.yaml", changed)
 

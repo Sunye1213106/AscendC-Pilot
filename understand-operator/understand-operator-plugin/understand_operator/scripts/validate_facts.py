@@ -27,8 +27,8 @@ STAGE_ORDER = {"init": 0, "step1": 1, "step2": 2, "step3": 3, "compile": 4, "der
 VALIDATION_SCOPES = ("all", "boundary", "host", "compute", "kernel-overview", "kernel-slice-planner", "kernel-slice")
 SCOPE_OWNERS = {
     "boundary": {"uo-boundary-agent"},
-    "host": {"uo-host-tiling-agent"},
-    "compute": {"uo-compute-agent"},
+    "host": {"uo-host-extraction"},
+    "compute": {"uo-flow-extraction"},
     "kernel-overview": {"uo-kernel-overview-agent"},
     "kernel-slice-planner": {"uo-kernel-slice-planner"},
     "kernel-slice": {"uo-kernel-slice-agent"},
@@ -213,6 +213,7 @@ def _validate_phase0_receipt(
 ) -> None:
     run_id = manifest.get("current_run_id")
     if not isinstance(run_id, str) or run_id == "UO_RUN_PENDING":
+        errors.append(FactValidationError("PHASE0_RECEIPT_MISSING", "manifest.yaml", "Phase 1+ validation requires a finalized Phase 0 run"))
         return
     rel = f"runs/{run_id}/phase0/receipt.yaml"
     receipt = _load_yaml(uo_root / rel, rel, errors)
@@ -343,10 +344,12 @@ def _validate_document_header(rel: str, doc: dict[str, Any], entry: dict[str, An
         errors.append(FactValidationError("ARTIFACT_TYPE_MISMATCH", rel, f"expected {entry.get('artifact_type')}, got {artifact.get('type')}"))
     if artifact.get("owner") != entry.get("owner"):
         errors.append(FactValidationError("OWNER_MISMATCH", rel, f"expected {entry.get('owner')}, got {artifact.get('owner')}"))
-    if not str(snapshot.get("run_id") or "").startswith("UO_RUN_"):
-        errors.append(FactValidationError("RUN_ID_INVALID", rel, "snapshot.run_id must start with UO_RUN_"))
-    if not str(snapshot.get("source_snapshot_id") or "").startswith("SOURCE_"):
-        errors.append(FactValidationError("SOURCE_SNAPSHOT_INVALID", rel, "snapshot.source_snapshot_id must start with SOURCE_"))
+    run_id = str(snapshot.get("run_id") or "")
+    source_snapshot_id = str(snapshot.get("source_snapshot_id") or "")
+    if not run_id.startswith("UO_RUN_") or run_id == "UO_RUN_PENDING":
+        errors.append(FactValidationError("RUN_ID_INVALID", rel, "snapshot.run_id must be a finalized UO_RUN_* value"))
+    if not source_snapshot_id.startswith("SOURCE_") or source_snapshot_id == "SOURCE_PENDING":
+        errors.append(FactValidationError("SOURCE_SNAPSHOT_INVALID", rel, "snapshot.source_snapshot_id must be finalized"))
     if snapshot.get("spec_bundle_hash") != spec_bundle_hash():
         errors.append(FactValidationError("SPEC_BUNDLE_MISMATCH", rel, "snapshot.spec_bundle_hash does not match current Skill spec"))
     for key in ("items", "relations", "unresolved"):
@@ -599,6 +602,8 @@ def _validate_relation_types(rel: str, doc: dict[str, Any], relation_types: set[
 
 
 def _validate_sources(repo_root: Path, rel: str, doc: dict[str, Any], id_re: re.Pattern[str], errors: list[FactValidationError]) -> None:
+    if not rel.startswith("facts/"):
+        return
     for section_name in ("items", "relations"):
         for index, item in enumerate(doc.get(section_name) or []):
             if not isinstance(item, dict):

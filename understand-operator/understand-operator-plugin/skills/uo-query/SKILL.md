@@ -47,7 +47,7 @@ or create an empty `.understand-operator/<token>/` directory.
 ## Source Verification
 
 Only use source anchors already present in YAML or indexes. If more source proof
-is needed, query MCP `codebase-memory-mcp`; do not run `cbm_query.py`, shell CLI
+is needed, query MCP `codebase-memory-mcp`; do not run local shell CLI
 fallbacks, or broad source grep.
 
 ## Answer Style

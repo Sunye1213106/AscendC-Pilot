@@ -28,12 +28,14 @@ Provide a **read-only** change summary for an AscendC operator relative to the e
    - Tool: `detect_changes`
    - Arg: `repo_path` = `$PROJECT_ROOT`
 
-3. If `cbm/change_set.yaml` or related detect_changes artifacts already exist (from update/prefetch), summarize that file instead of inventing diffs.
-4. Do **not** modify KB artifacts in this command (read-only). Incremental KB patching belongs to `/uo-update`.
+3. Print the MCP result as a concise summary. Do not write `cbm/change_set.yaml`
+   or any other persisted diff artifact.
+4. Do **not** modify KB artifacts in this command (read-only). Incremental KB
+   patching is disabled; rerun `/uo-init` for a new source snapshot.
 
 ## Global rule
 
-If any source lookup is needed beyond the change API, follow `prompts/00_cbm_first_rule.md` (**MCP first**, then source on failure). Do not use `cbm_query.py`.
+If any source lookup is needed beyond the change API, follow `prompts/00_cbm_first_rule.md` (**MCP first**, then source on failure). Do not use local CBM CLI fallback commands.
 
 ## Out of scope for now
 

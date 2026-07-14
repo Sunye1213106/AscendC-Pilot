@@ -14,13 +14,14 @@ dependencies = [
 
 [project.scripts]
 uo-prepare = "understand_operator.scripts.prepare_operator:main"
-uo-update = "understand_operator.scripts.update_operator:main"
 uo-review = "understand_operator.scripts.review_checkpoint:main"
 uo-quality = "understand_operator.scripts.quality_gate:main"
 uo-compile-kb = "understand_operator.scripts.compile_kb:main"
 uo-kb-compile = "understand_operator._operator.kb_compiler:main"
 uo-verify-barrier = "understand_operator.scripts.verify_subagent_barrier:main"
-uo-cbm = "understand_operator.scripts.cbm_query:main"
+uo-verify-subagents = "understand_operator.scripts.verify_required_subagents:main"
+uo-prepare-fact-file = "understand_operator.scripts.prepare_fact_file:main"
+uo-merge-fact-entries = "understand_operator.scripts.merge_fact_entries:main"
 uo-kb-export = "understand_operator.scripts.kb_query_export:main"
 
 [tool.setuptools.packages.find]

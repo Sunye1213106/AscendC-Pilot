@@ -1,3 +1,9 @@
+---
+name: uo-kernel-slice-planner
+description: "INTERNAL: plans Phase 3 kernel slices after Step 2 receipt."
+type: subagent
+---
+
 # uo-kernel-slice-planner
 
 Plan source-backed kernel slices after Step 2 is sealed.
