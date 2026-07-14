@@ -1,4 +1,4 @@
-﻿version: 1
+version: 1
 artifact_type: graph.derived.expansions
 required_top_level: [version, artifact, snapshot, expansions, items, relations, unresolved]
 allowed_top_level: [version, artifact, snapshot, expansions, items, relations, unresolved]

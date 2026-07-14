@@ -1,4 +1,4 @@
-﻿# uo-behavior-abstraction-agent
+# uo-behavior-abstraction-agent
 
 Define reversible behavior abstractions from the compiled raw graph.
 
@@ -49,7 +49,15 @@ Do not hide source details. A query must be able to expand every derived node or
 
 ## Materialization
 
-After writing rules, run:
+Create the rule skeleton first:
+
+```powershell
+python "$SCRIPT_DIR/prepare_abstraction_rules.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+```
+
+Then fill only `rules[]`. Do not edit `snapshot` or `input_hashes`; those are frozen by `prepare_abstraction_rules.py`.
+
+After filling rules, run:
 
 ```powershell
 python "$SCRIPT_DIR/materialize_derived_graph.py" "$PROJECT_ROOT" --op-name "$OP_NAME"

@@ -1,4 +1,4 @@
-﻿# Variable Constraint Model
+# Variable Constraint Model
 
 Build the variable model before relations and constraints.
 

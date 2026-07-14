@@ -119,6 +119,7 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
         if rel != "manifest.yaml":
             _validate_machine_schema(spec["root"], rel, doc, entry, errors)
             _validate_compute_execution_rules(rel, doc, errors)
+            _validate_formal_fact_status(rel, doc, errors)
         _validate_generic_fact_forbidden(rel, doc, errors)
         _validate_owner(rel, doc, entry, ownership, errors)
         _validate_ids(rel, doc, id_re, allowed_prefixes, errors)
@@ -408,9 +409,12 @@ def _validate_machine_schema(
         needed = list(required_item_fields)
         if isinstance(kind_required_fields.get(kind), list):
             needed.extend(str(field) for field in kind_required_fields[kind])
+        if _normalize_kind(kind) == "outcome" and "outcome_refs" in item:
+            errors.append(FactValidationError("SCHEMA_OUTCOME_FIELD_FORBIDDEN", rel, f"/items/{index}/outcome_refs is not allowed on branch outcome"))
         for field in sorted(set(needed)):
             if field not in item or item.get(field) in (None, ""):
                 errors.append(FactValidationError("SCHEMA_ITEM_FIELD_MISSING", rel, f"/items/{index}/{field} is required"))
+        _validate_nested_schema_rules(rel, f"/items/{index}", item, schema, errors)
     relation_required_fields = [str(item) for item in schema.get("relation_required_fields") or []]
     for index, relation in enumerate(doc.get("relations") or []):
         if not isinstance(relation, dict):
@@ -418,10 +422,64 @@ def _validate_machine_schema(
         for field in relation_required_fields:
             if field not in relation or relation.get(field) in (None, ""):
                 errors.append(FactValidationError("SCHEMA_RELATION_FIELD_MISSING", rel, f"/relations/{index}/{field} is required"))
+        _validate_nested_schema_rules(rel, f"/relations/{index}", relation, schema, errors)
     min_cardinality = schema.get("minimum_cardinality")
     if isinstance(min_cardinality, int) and min_cardinality > 0:
         if len(doc.get("items") or []) + len(doc.get("relations") or []) + len(doc.get("unresolved") or []) < min_cardinality:
             errors.append(FactValidationError("SCHEMA_MIN_CARDINALITY", rel, f"requires at least {min_cardinality} item/relation/unresolved entry"))
+
+
+def _validate_nested_schema_rules(rel: str, base_path: str, value: dict[str, Any], schema: dict[str, Any], errors: list[FactValidationError]) -> None:
+    for required_path in schema.get("required_paths") or []:
+        if _path_value(value, str(required_path)) in (None, "", []):
+            errors.append(FactValidationError("SCHEMA_REQUIRED_FIELD_MISSING", rel, f"{base_path}/{str(required_path).strip('/')} is required"))
+    enum_paths = schema.get("enum_paths") if isinstance(schema.get("enum_paths"), dict) else {}
+    for path, allowed in enum_paths.items():
+        current = _path_value(value, str(path))
+        if current is not None and isinstance(allowed, list) and current not in allowed:
+            errors.append(FactValidationError("SCHEMA_ENUM_INVALID", rel, f"{base_path}/{str(path).strip('/')} {current!r} is not one of {allowed}"))
+    list_rules = schema.get("list_item_rules") if isinstance(schema.get("list_item_rules"), dict) else {}
+    for path, rule in list_rules.items():
+        items = _path_value(value, str(path))
+        if not isinstance(items, list):
+            errors.append(FactValidationError("SCHEMA_LIST_FIELD_INVALID", rel, f"{base_path}/{str(path).strip('/')} must be a list"))
+            continue
+        rule_map = rule if isinstance(rule, dict) else {}
+        required = [str(item) for item in rule_map.get("required_fields") or []]
+        enum_fields = rule_map.get("enum_fields") if isinstance(rule_map.get("enum_fields"), dict) else {}
+        for index, item in enumerate(items):
+            item_path = f"{base_path}/{str(path).strip('/')}/{index}"
+            if not isinstance(item, dict):
+                errors.append(FactValidationError("SCHEMA_LIST_ITEM_NOT_MAPPING", rel, f"{item_path} must be a mapping"))
+                continue
+            for field in required:
+                if item.get(field) in (None, "", []):
+                    errors.append(FactValidationError("SCHEMA_ITEM_FIELD_MISSING", rel, f"{item_path}/{field} is required"))
+            for field, allowed in enum_fields.items():
+                if item.get(field) is not None and isinstance(allowed, list) and item.get(field) not in allowed:
+                    errors.append(FactValidationError("SCHEMA_ENUM_INVALID", rel, f"{item_path}/{field} {item.get(field)!r} is not one of {allowed}"))
+
+
+def _path_value(value: Any, path: str) -> Any:
+    current = value
+    for part in [item for item in path.strip("/").split("/") if item]:
+        if isinstance(current, dict):
+            current = current.get(part)
+        elif isinstance(current, list) and part.isdigit():
+            idx = int(part)
+            current = current[idx] if 0 <= idx < len(current) else None
+        else:
+            return None
+    return current
+
+
+def _validate_formal_fact_status(rel: str, doc: dict[str, Any], errors: list[FactValidationError]) -> None:
+    if not rel.startswith("facts/"):
+        return
+    for section in ("items", "relations"):
+        for index, item in enumerate(doc.get(section) or []):
+            if isinstance(item, dict) and item.get("status") != "confirmed":
+                errors.append(FactValidationError("FORMAL_FACT_STATUS_INVALID", rel, f"/{section}/{index}/status must be confirmed; put unconfirmed information in unresolved"))
 
 
 def _validate_generic_fact_forbidden(rel: str, doc: dict[str, Any], errors: list[FactValidationError]) -> None:
@@ -444,16 +502,28 @@ def _validate_compute_execution_rules(rel: str, doc: dict[str, Any], errors: lis
         if classification not in {"cube", "vector", "scalar", "data_movement", "conditional", "mixed", "unknown"}:
             errors.append(FactValidationError("COMPUTE_EXECUTION_CLASSIFICATION_INVALID", rel, f"/items/{index}/execution/classification is required"))
             continue
-        if classification in {"cube", "vector"} and classification not in engines:
+        if not isinstance(execution.get("paths"), list):
+            errors.append(FactValidationError("COMPUTE_EXECUTION_PATHS_INVALID", rel, f"/items/{index}/execution/paths must be a list"))
+        for path_index, path in enumerate(paths):
+            if path.get("engine") not in {"cube", "vector", "scalar", "data_movement", "unknown"}:
+                errors.append(FactValidationError("COMPUTE_EXECUTION_ENGINE_INVALID", rel, f"/items/{index}/execution/paths/{path_index}/engine is invalid"))
+        if classification in {"cube", "vector", "scalar", "data_movement"} and classification not in engines:
             errors.append(FactValidationError("COMPUTE_EXECUTION_PATH_MISSING", rel, f"/items/{index} classification {classification} requires a {classification} path"))
         if classification == "conditional":
             signatures = {(str(path.get("engine") or ""), tuple(str(ref) for ref in path.get("condition_refs") or [])) for path in paths}
             if len(signatures) < 2:
                 errors.append(FactValidationError("COMPUTE_CONDITIONAL_PATH_INSUFFICIENT", rel, f"/items/{index} conditional classification requires at least two distinct path conditions or engines"))
-        if classification == "mixed" and not {"cube", "vector"} <= set(engines):
-            errors.append(FactValidationError("COMPUTE_MIXED_PATH_INSUFFICIENT", rel, f"/items/{index} mixed classification requires cube and vector paths"))
-        if classification == "unknown" and not doc.get("unresolved"):
-            errors.append(FactValidationError("COMPUTE_UNKNOWN_REQUIRES_UNRESOLVED", rel, f"/items/{index} unknown classification requires unresolved entry"))
+        if classification == "mixed":
+            if not {"cube", "vector"} <= set(engines):
+                errors.append(FactValidationError("COMPUTE_MIXED_PATH_INSUFFICIENT", rel, f"/items/{index} mixed classification requires cube and vector paths"))
+            for engine in ("cube", "vector"):
+                if not any(path.get("engine") == engine and path.get("api_refs") for path in paths):
+                    errors.append(FactValidationError("COMPUTE_MIXED_API_REFS_MISSING", rel, f"/items/{index} mixed classification requires {engine} path api_refs"))
+        if classification == "unknown":
+            related_id = str(item.get("id") or "")
+            unresolved = [entry for entry in doc.get("unresolved") or [] if isinstance(entry, dict)]
+            if not any(str(entry.get("related_item_ref") or "") == related_id and str(entry.get("id") or "").startswith("OPR_") for entry in unresolved):
+                errors.append(FactValidationError("COMPUTE_UNKNOWN_REQUIRES_UNRESOLVED", rel, f"/items/{index} unknown classification requires unresolved OPR_* with related_item_ref"))
 
 
 def _load_schema(schema_path: Path, errors: list[FactValidationError], rel: str) -> dict[str, Any]:
@@ -531,11 +601,11 @@ def _validate_relation_types(rel: str, doc: dict[str, Any], relation_types: set[
 def _validate_sources(repo_root: Path, rel: str, doc: dict[str, Any], id_re: re.Pattern[str], errors: list[FactValidationError]) -> None:
     for section_name in ("items", "relations"):
         for index, item in enumerate(doc.get(section_name) or []):
-            if not isinstance(item, dict) or item.get("status") != "confirmed":
+            if not isinstance(item, dict):
                 continue
             sources = item.get("sources")
             if not isinstance(sources, list) or not sources:
-                errors.append(FactValidationError("SOURCE_MISSING", rel, f"{section_name}[{index}] confirmed entry lacks sources"))
+                errors.append(FactValidationError("SOURCE_MISSING", rel, f"{section_name}[{index}] formal entry lacks sources"))
                 continue
             for source_index, source in enumerate(sources):
                 if not isinstance(source, dict):
@@ -691,6 +761,7 @@ def _kind_matches(actual: str, expected: str) -> bool:
         "symbol": {"symbol", "host_entry", "tiling_entry", "kernel_entry", "function", "call"},
         "expression": {"expression"},
         "branch": {"branch"},
+        "outcome": {"outcome"},
         "loop": {"loop"},
         "call": {"call"},
         "key": {"key"},
@@ -709,6 +780,8 @@ def _normalize_kind(kind: str) -> str:
     lowered = kind.lower()
     if lowered.startswith("input_") or lowered.startswith("output_"):
         return lowered
+    if "outcome" in lowered:
+        return "outcome"
     if "tensor" in lowered:
         return "tensor"
     if "operation" in lowered:

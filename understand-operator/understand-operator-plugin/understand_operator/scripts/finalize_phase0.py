@@ -134,6 +134,7 @@ def _validation_errors(repo_root: Path, uo_root: Path, docs: dict[str, dict[str,
     _validate_semantic_enrichment(docs["semantic_enrichment"], errors)
     if docs["scope_review"].get("decision") != "continue":
         errors.append("scope_review.yaml decision is not continue")
+    _validate_scope_sets(docs["scope_review"], errors)
     expected_revision = context.get("source_revision") or (docs["scope_scan"].get("snapshot") or {}).get("source_revision")
     current_revision = _git_revision(repo_root)
     if expected_revision and expected_revision != "unknown" and current_revision != expected_revision:
@@ -142,6 +143,27 @@ def _validation_errors(repo_root: Path, uo_root: Path, docs: dict[str, dict[str,
     if expected_spec != spec_bundle_hash():
         errors.append("spec bundle hash changed")
     return errors
+
+
+def _validate_scope_sets(scope_review: dict[str, Any], errors: list[str]) -> None:
+    approved = scope_review.get("approved_scope") if isinstance(scope_review.get("approved_scope"), dict) else {}
+    groups = {
+        "initial_operator_files": approved.get("initial_operator_files") or [],
+        "dependency_files": approved.get("dependency_files") or [],
+        "generated_files": approved.get("generated_files") or [],
+        "excluded_files": approved.get("excluded_files") or [],
+        "uncertain_files": approved.get("uncertain_files") or [],
+    }
+    owner_by_path: dict[str, str] = {}
+    for group, items in groups.items():
+        for item in items:
+            path = str(item.get("path") if isinstance(item, dict) else item).replace("\\", "/")
+            if not path:
+                continue
+            previous = owner_by_path.get(path)
+            if previous and previous != group:
+                errors.append(f"scope_review.yaml path appears in multiple scope sets: {path} ({previous}, {group})")
+            owner_by_path[path] = group
 
 
 def _validate_semantic_enrichment(doc: dict[str, Any], errors: list[str]) -> None:

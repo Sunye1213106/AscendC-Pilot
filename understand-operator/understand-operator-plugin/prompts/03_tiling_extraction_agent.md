@@ -1,4 +1,4 @@
-﻿# Tiling Extraction Agent
+# Tiling Extraction Agent
 
 ## CBM-first（强制）
 

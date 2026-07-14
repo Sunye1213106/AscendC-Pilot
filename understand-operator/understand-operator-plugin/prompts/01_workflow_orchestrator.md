@@ -1,4 +1,4 @@
-﻿# Workflow Orchestrator
+# Workflow Orchestrator
 
 You are the `/uo-init` workflow orchestrator. The active Understand Operator
 workflow is Phase 0 through Phase 3 only.
@@ -74,7 +74,7 @@ They write only `facts/host/**`, `facts/compute/**`, and
 Run `uo-kernel-slice-planner`, then parallel `uo-kernel-slice-agent` tasks for
 the planned slices. Run Step 3 validation, `uo-step3-fact-review-agent`,
 `write_step3_receipt.py`, `build_compile_gate.py`,
-`source_graph_compiler.py`, `materialize_derived_graph.py`, and finally
+`source_graph_compiler.py`, `prepare_abstraction_rules.py`, `materialize_derived_graph.py`, and finally
 `quality_gate.py`.
 
 The compiler writes only `graphs/raw/**` and `indexes/**`. The derived graph

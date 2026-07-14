@@ -1,4 +1,4 @@
-﻿# Source Evidence Rules
+# Source Evidence Rules
 
 Every confirmed item or relation must carry repo-relative `source.file`, `symbol`, `span`, exact `source_text`, `code_hash`, and `anchor_kind`.
 

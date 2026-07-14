@@ -1,4 +1,4 @@
-﻿version: 1
+version: 1
 artifact_type: graph.raw.manifest
 required_top_level: [version, artifact, snapshot, compiler, input_facts_hash, node_count, edge_count, built_at, items, relations, unresolved]
 allowed_top_level: [version, artifact, snapshot, compiler, input_facts_hash, node_count, edge_count, built_at, items, relations, unresolved]

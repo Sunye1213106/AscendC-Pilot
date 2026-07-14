@@ -1,4 +1,4 @@
-﻿## Canonical KB v2 Layers
+## Canonical KB v2 Layers
 
 The KB is logically split into three layers:
 

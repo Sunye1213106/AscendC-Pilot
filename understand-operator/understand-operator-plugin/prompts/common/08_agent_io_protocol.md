@@ -1,4 +1,4 @@
-﻿# Agent IO Protocol
+# Agent IO Protocol
 
 Read the relevant Phase receipt before writing facts. Write only paths allowed by `spec/ownership.yaml`.
 

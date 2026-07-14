@@ -1,4 +1,4 @@
-﻿---
+---
 name: uo-flow-extraction
 description: "INTERNAL: extracts Phase 2 Compute source facts."
 model: inherit

@@ -1,4 +1,4 @@
-﻿# CBM First Rules
+# CBM First Rules
 
 Use the tool that matches the question type.
 

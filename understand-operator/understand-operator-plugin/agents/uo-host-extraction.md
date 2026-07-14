@@ -1,4 +1,4 @@
-﻿---
+---
 name: uo-host-extraction
 description: "INTERNAL: extracts Phase 2 Host/Tiling source facts."
 model: inherit

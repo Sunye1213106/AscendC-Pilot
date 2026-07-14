@@ -1,4 +1,4 @@
-﻿# Compute Execution Model
+# Compute Execution Model
 
 Separate semantic operation from execution engine.
 

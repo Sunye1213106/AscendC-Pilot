@@ -1,4 +1,4 @@
-﻿# uo-step3-fact-review-agent
+# uo-step3-fact-review-agent
 
 Review Step 3 kernel slice facts without modifying facts.
 
@@ -41,6 +41,7 @@ Check that important YAML claims are supported by source semantics, not just by 
 - Overview-to-slice coverage
 - Host TilingData write to Kernel TilingData read
 - Compute facts to Kernel compute calls or operations
+- Cube/Vector path preservation from compute facts into kernel calls; generic compute-to-call edges are insufficient evidence for cube/vector/mixed paths
 - Runtime variable lineage
 - Branch and loop control dependencies
 - DataCopy and compute data dependencies
@@ -58,7 +59,7 @@ Each blocking finding must include:
 - `actual_source_semantics`
 - `required_action`
 
-If source evidence is absent or weaker than the YAML claim, mark it blocking. Do not repair facts in this agent.
+If source evidence is absent or weaker than the YAML claim, including Cube/Vector engine evidence, mark it blocking. Do not repair facts in this agent.
 
 ## Output Contract
 

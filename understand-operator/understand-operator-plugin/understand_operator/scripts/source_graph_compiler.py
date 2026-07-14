@@ -4,7 +4,6 @@ import argparse
 import fnmatch
 import hashlib
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -69,14 +68,20 @@ def compile_source_graph(repo_root: Path, op_name: str) -> tuple[int, list[str]]
         edges.append(edge)
         _index_synthetic_edge(edge, yaml_to_graph, graph_to_yaml, source_index)
 
-    validation_errors = _raw_graph_errors(nodes, edges, spec)
+    nodes = sorted(nodes, key=lambda item: str(item.get("id") or ""))
+    edges = sorted(edges, key=lambda item: str(item.get("id") or ""))
+    for values in (yaml_to_graph, source_index):
+        for key, items in values.items():
+            values[key] = sorted(set(items))
+    graph_to_yaml = dict(sorted(graph_to_yaml.items()))
+    symbol_index = {key: {"nodes": sorted(set(value.get("nodes") or [])), "edges": sorted(set(value.get("edges") or []))} for key, value in sorted(symbol_index.items())}
+    validation_errors = _raw_graph_errors(nodes, edges, spec) + _cross_layer_reference_errors(nodes)
     if validation_errors:
         return 2, validation_errors
-    paths = _derive_paths(edges)
+    paths = _derive_paths(edges, nodes)
     terminology = _terminology(nodes)
     raw_root = uo_root / "graphs" / "raw"
     index_root = uo_root / "indexes"
-    _write_yaml(raw_root / "manifest.yaml", _raw_doc("graph.raw.manifest", {"_uo_root": uo_root, "compiler": "source_graph_compiler", "input_facts_hash": _combined_hash(facts_hashes_for(uo_root)), "node_count": len(nodes), "edge_count": len(edges), "built_at": datetime.now(tz=timezone.utc).isoformat()}))
     _write_yaml(raw_root / "nodes.yaml", _raw_doc("graph.raw.nodes", {"_uo_root": uo_root, "nodes": nodes}))
     _write_yaml(raw_root / "edges.yaml", _raw_doc("graph.raw.edges", {"_uo_root": uo_root, "edges": edges}))
     _write_yaml(raw_root / "paths.yaml", _raw_doc("graph.raw.paths", {"_uo_root": uo_root, "paths": paths}))
@@ -86,6 +91,21 @@ def compile_source_graph(repo_root: Path, op_name: str) -> tuple[int, list[str]]
     _write_yaml(index_root / "source_index.yaml", _raw_doc("indexes.source_index", {"_uo_root": uo_root, "source_index": source_index}))
     _write_yaml(index_root / "symbol_index.yaml", _raw_doc("indexes.symbol_index", {"_uo_root": uo_root, "symbol_index": symbol_index}))
     _write_yaml(index_root / "terminology.yaml", _raw_doc("indexes.terminology", {"_uo_root": uo_root, "terms": terminology}))
+    output_hashes = {
+        rel: _sha256(uo_root / rel)
+        for rel in (
+            "graphs/raw/nodes.yaml",
+            "graphs/raw/edges.yaml",
+            "graphs/raw/paths.yaml",
+            "graphs/raw/indexes.yaml",
+            "indexes/graph_to_yaml.yaml",
+            "indexes/yaml_to_graph.yaml",
+            "indexes/source_index.yaml",
+            "indexes/symbol_index.yaml",
+            "indexes/terminology.yaml",
+        )
+    }
+    _write_yaml(raw_root / "manifest.yaml", _raw_doc("graph.raw.manifest", {"_uo_root": uo_root, "compiler": "source_graph_compiler", "input_facts_hash": _combined_hash(facts_hashes_for(uo_root)), "node_count": len(nodes), "edge_count": len(edges), "output_hashes": output_hashes}))
     return 0, [f"compiled raw graph: nodes={len(nodes)} edges={len(edges)}"]
 
 
@@ -179,16 +199,74 @@ def _index_synthetic_edge(
 def _deterministic_cross_layer_edges(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     edges: list[dict[str, Any]] = []
     edges.extend(_match_field(nodes, "tilingdata_write", "tilingdata_read", "tilingdata_write_to_read", ("struct_ref", "field_ref")))
-    edges.extend(_match_field(nodes, "tiling_key_setter_call", "tiling_key_field", "tiling_key_setter_to_field", ("field_refs", "encoding_ref")))
-    edges.extend(_match_field(nodes, "compute_operation", "compute_api_call", "compute_to_kernel", ("operation_ref",)))
-    edges.extend(_match_list_ref(nodes, "compute_operation", "compute_api_call", "compute_to_kernel", "kernel_api_refs"))
+    edges.extend(_match_tiling_key_setters(nodes))
+    edges.extend(_compute_kernel_edges(nodes))
     edges.extend(_buffer_edges(nodes))
-    edges.extend(_match_field(nodes, "setflag_event", "waitflag_event", "signal_to_wait", ("event_identifier",)))
+    edges.extend(_signal_wait_edges(nodes))
     edges.extend(_kernel_entry_output_edges(nodes))
     unique: dict[str, dict[str, Any]] = {}
     for edge in edges:
         unique.setdefault(str(edge.get("id")), edge)
     return list(unique.values())
+
+
+def _match_tiling_key_setters(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    setters = [node for node in nodes if _normalize_kind(str(node.get("kind") or "")) == "call" and str(node.get("kind")) == "tiling_key_setter_call"]
+    fields = [node for node in nodes if str(node.get("kind")) == "tiling_key_field"]
+    for setter in setters:
+        sfields = setter.get("fields") if isinstance(setter.get("fields"), dict) else {}
+        field_refs = set(_as_list(sfields.get("field_refs")))
+        encoding_ref = str(sfields.get("encoding_ref") or "")
+        if not field_refs or not encoding_ref:
+            continue
+        for target in fields:
+            tfields = target.get("fields") if isinstance(target.get("fields"), dict) else {}
+            target_refs = {str(target.get("id") or ""), str(tfields.get("field_ref") or "")}
+            if not (field_refs & target_refs):
+                continue
+            if encoding_ref != str(tfields.get("encoding_call_ref") or ""):
+                continue
+            result.append(_synthetic_edge("tiling_key_setter_to_field", setter, target, "deterministic_tiling_key_refs"))
+    return result
+
+
+def _compute_kernel_edges(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    by_id = {str(node.get("id")): node for node in nodes if node.get("id")}
+    api_nodes = [node for node in nodes if str(node.get("kind")) in {"compute_api_call", "kernel_call"} or _normalize_kind(str(node.get("kind") or "")) == "api"]
+    for op in [node for node in nodes if str(node.get("kind")) == "compute_operation"]:
+        ofields = op.get("fields") if isinstance(op.get("fields"), dict) else {}
+        execution = ofields.get("execution") if isinstance(ofields.get("execution"), dict) else {}
+        api_refs: list[str] = []
+        for path in execution.get("paths") or []:
+            if isinstance(path, dict):
+                api_refs.extend(_as_list(path.get("api_refs")))
+        for ref in sorted(set(api_refs)):
+            target = by_id.get(ref)
+            if target:
+                result.append(_synthetic_edge("compute_to_kernel", op, target, "deterministic_execution_api_refs"))
+    for api in api_nodes:
+        fields = api.get("fields") if isinstance(api.get("fields"), dict) else {}
+        op_ref = str(fields.get("compute_operation_ref") or "")
+        source = by_id.get(op_ref)
+        if source:
+            result.append(_synthetic_edge("compute_to_kernel", source, api, "deterministic_compute_operation_ref"))
+    return result
+
+
+def _synthetic_edge(edge_type: str, source: dict[str, Any], target: dict[str, Any], generated_by: str) -> dict[str, Any]:
+    edge_id = "REL_AUTO_" + edge_type.upper() + "_" + _stable_suffix(str(source["id"]), str(target["id"]))
+    return {
+        "id": edge_id,
+        "type": edge_type,
+        "source_id": source["id"],
+        "target_id": target["id"],
+        "detail_ref": source["detail_ref"],
+        "detail_refs": [source["detail_ref"], target["detail_ref"]],
+        "source_refs": sorted(set((source.get("source_refs") or []) + (target.get("source_refs") or []))),
+        "generated_by": generated_by,
+    }
 
 
 def _match_field(
@@ -268,7 +346,7 @@ def _buffer_edges(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     by_id = {str(node.get("id")): node for node in nodes if node.get("id")}
     for resource in nodes:
-        if str(resource.get("kind")) != "memory_resource":
+        if _normalize_kind(str(resource.get("kind") or "")) != "memory_resource":
             continue
         fields = resource.get("fields") if isinstance(resource.get("fields"), dict) else {}
         producers = _as_list(fields.get("producer_refs"))
@@ -290,9 +368,35 @@ def _buffer_edges(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         "detail_refs": [producer["detail_ref"], resource["detail_ref"], consumer["detail_ref"]],
                         "source_refs": sorted(set((producer.get("source_refs") or []) + (resource.get("source_refs") or []) + (consumer.get("source_refs") or []))),
                         "buffer_resource_ref": resource["id"],
+                        "queue_operation_refs": sorted(set(_as_list(fields.get("queue_operation_refs")))),
                         "generated_by": "deterministic_memory_resource_refs",
                     }
                 )
+    return result
+
+
+def _signal_wait_edges(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    by_id = {str(node.get("id")): node for node in nodes if node.get("id")}
+    for event in nodes:
+        fields = event.get("fields") if isinstance(event.get("fields"), dict) else {}
+        if not fields.get("event_identifier"):
+            continue
+        signals = _as_list(fields.get("signal_call_refs"))
+        waits = _as_list(fields.get("wait_call_refs"))
+        for signal_id in signals:
+            signal = by_id.get(signal_id)
+            if not signal:
+                continue
+            for wait_id in waits:
+                wait = by_id.get(wait_id)
+                if not wait:
+                    continue
+                edge = _synthetic_edge("signal_to_wait", signal, wait, "deterministic_event_call_refs")
+                edge["event_identifier"] = fields.get("event_identifier")
+                edge["detail_refs"] = [signal["detail_ref"], event["detail_ref"], wait["detail_ref"]]
+                edge["source_refs"] = sorted(set((signal.get("source_refs") or []) + (event.get("source_refs") or []) + (wait.get("source_refs") or [])))
+                result.append(edge)
     return result
 
 
@@ -397,7 +501,40 @@ def _raw_graph_errors(nodes: list[dict[str, Any]], edges: list[dict[str, Any]], 
     return errors
 
 
-def _derive_paths(edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _cross_layer_reference_errors(nodes: list[dict[str, Any]]) -> list[str]:
+    errors: list[str] = []
+    by_id = {str(node.get("id")): node for node in nodes if node.get("id")}
+    compute_ids = {str(node.get("id")) for node in nodes if str(node.get("kind")) == "compute_operation"}
+    api_ids = {str(node.get("id")) for node in nodes if str(node.get("kind")) in {"compute_api_call", "kernel_call"} or _normalize_kind(str(node.get("kind") or "")) == "api"}
+    for op in [node for node in nodes if str(node.get("kind")) == "compute_operation"]:
+        fields = op.get("fields") if isinstance(op.get("fields"), dict) else {}
+        execution = fields.get("execution") if isinstance(fields.get("execution"), dict) else {}
+        for path_index, path in enumerate(execution.get("paths") or []):
+            if not isinstance(path, dict):
+                continue
+            for api_ref in _as_list(path.get("api_refs")):
+                target = by_id.get(api_ref)
+                if not target:
+                    errors.append(f"CROSS_LAYER_REFERENCE_MISSING: {op.get('id')} execution.paths[{path_index}].api_refs -> {api_ref}")
+                elif str(target.get("id")) not in api_ids:
+                    errors.append(f"CROSS_LAYER_REFERENCE_CONFLICT: {op.get('id')} api_refs target is not a kernel/API call: {api_ref}")
+    for api in [node for node in nodes if str(node.get("id")) in api_ids]:
+        fields = api.get("fields") if isinstance(api.get("fields"), dict) else {}
+        op_ref = fields.get("compute_operation_ref")
+        if op_ref and str(op_ref) not in compute_ids:
+            errors.append(f"CROSS_LAYER_REFERENCE_MISSING: {api.get('id')} compute_operation_ref -> {op_ref}")
+    for event in nodes:
+        fields = event.get("fields") if isinstance(event.get("fields"), dict) else {}
+        if not fields.get("event_identifier"):
+            continue
+        for key in ("signal_call_refs", "wait_call_refs"):
+            for ref in _as_list(fields.get(key)):
+                if ref not in by_id:
+                    errors.append(f"CROSS_LAYER_REFERENCE_MISSING: {event.get('id')} {key} -> {ref}")
+    return errors
+
+
+def _derive_paths(edges: list[dict[str, Any]], nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     controlled_types = {
         "input_to_tiling_key": {"sets_tiling_key", "tiling_key_setter_to_field"},
         "tilingdata_write_to_read": {"tilingdata_write_to_read"},
@@ -405,11 +542,6 @@ def _derive_paths(edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "compute_to_kernel": {"compute_to_kernel"},
         "buffer_producer_to_consumer": {"buffer_producer_to_consumer"},
         "signal_to_wait": {"signal_to_wait"},
-        "vector_to_cube": {"compute_to_kernel", "condition_selects_engine", "implemented_by"},
-        "cube_to_vector": {"compute_to_kernel", "condition_selects_engine", "implemented_by"},
-        "vector_cube_vector": {"compute_to_kernel", "condition_selects_engine", "implemented_by"},
-        "conditional_engine_path": {"condition_selects_engine", "compute_to_kernel"},
-        "architecture_engine_path": {"condition_selects_engine", "compute_to_kernel"},
     }
     max_depth = 6
     max_paths_per_type = 50
@@ -441,7 +573,30 @@ def _derive_paths(edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     **path,
                 }
             )
-    return paths
+    paths.extend(_execution_engine_paths(nodes, len(paths)))
+    return sorted(paths, key=lambda item: str(item.get("id") or ""))
+
+
+def _execution_engine_paths(nodes: list[dict[str, Any]], offset: int) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for node in nodes:
+        if str(node.get("kind")) != "compute_operation":
+            continue
+        fields = node.get("fields") if isinstance(node.get("fields"), dict) else {}
+        execution = fields.get("execution") if isinstance(fields.get("execution"), dict) else {}
+        raw_paths = [path for path in execution.get("paths") or [] if isinstance(path, dict)]
+        signatures = {(str(path.get("engine") or ""), tuple(_as_list(path.get("condition_refs")))) for path in raw_paths}
+        if len(signatures) >= 2:
+            offset += 1
+            result.append({"id": f"RAW_PATH_CONDITIONAL_ENGINE_PATH_{offset:04d}", "path_type": "conditional_engine_path", "source_id": node["id"], "target_id": node["id"], "engine_paths": sorted(str(engine) for engine, _ in signatures)})
+        if any(path.get("architecture_variants") for path in raw_paths):
+            offset += 1
+            result.append({"id": f"RAW_PATH_ARCHITECTURE_ENGINE_PATH_{offset:04d}", "path_type": "architecture_engine_path", "source_id": node["id"], "target_id": node["id"], "engine_paths": sorted(set(str(path.get("engine") or "") for path in raw_paths))})
+        engines = [str(path.get("engine") or "") for path in raw_paths]
+        if "cube" in engines and "vector" in engines and all(any(path.get("engine") == engine and path.get("api_refs") for path in raw_paths) for engine in ("cube", "vector")):
+            offset += 1
+            result.append({"id": f"RAW_PATH_MIXED_ENGINE_PATH_{offset:04d}", "path_type": "mixed_engine_path", "source_id": node["id"], "target_id": node["id"], "engine_paths": engines})
+    return result
 
 
 def _walk_controlled_paths(
@@ -516,6 +671,7 @@ def _kind_matches(actual: str, expected: str) -> bool:
         "symbol": {"symbol", "host_entry", "tiling_entry", "kernel_entry", "function", "call"},
         "expression": {"expression"},
         "branch": {"branch"},
+        "outcome": {"outcome"},
         "loop": {"loop"},
         "call": {"call"},
         "key": {"key"},
@@ -534,6 +690,8 @@ def _normalize_kind(kind: str) -> str:
     lowered = kind.lower()
     if lowered.startswith(("input_", "output_")):
         return lowered
+    if "outcome" in lowered:
+        return "outcome"
     for token, normalized in (
         ("tensor", "tensor"),
         ("operation", "operation"),
@@ -587,6 +745,10 @@ def _snapshot_from_manifest(uo_root: Any) -> dict[str, str]:
 def _write_yaml(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+
+def _sha256(path: Path) -> str:
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:

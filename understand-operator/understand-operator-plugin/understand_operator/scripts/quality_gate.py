@@ -20,9 +20,9 @@ if __package__ in (None, ""):
 
 from understand_operator._operator.artifacts import resolve_existing_operator_root, safe_op_name, write_text
 from understand_operator.scripts.build_compile_gate import compile_gate_errors, facts_hashes_for
-from understand_operator.scripts.materialize_derived_graph import materialize_derived_graph
-from understand_operator.scripts.source_graph_compiler import compile_source_graph
 from understand_operator.scripts.uo_query_readonly import query_readonly
+from understand_operator.scripts.verify_derived_graph import verify_derived_graph
+from understand_operator.scripts.verify_raw_graph import verify_raw_graph
 
 MOJIBAKE_MARKERS = ("閳?", "閿?", "鈫?", "ā†?", "\ufffd")
 
@@ -54,15 +54,13 @@ def run_quality_gate(repo_root: Path, op_name: str) -> tuple[int, dict[str, Any]
     else:
         checks["compile_gate_fresh"] = "pass"
 
-    raw_code, raw_messages = compile_source_graph(repo_root, resolved_name)
-    checks["raw_graph_consistency"] = "pass" if raw_code == 0 else "fail"
-    if raw_code:
-        blockers.extend(raw_messages)
+    raw_messages = verify_raw_graph(repo_root, resolved_name)
+    checks["raw_graph_fresh"] = "pass" if not raw_messages else "fail"
+    blockers.extend(raw_messages)
 
-    derived_code, derived_messages = materialize_derived_graph(repo_root, resolved_name)
-    checks["derived_graph_reversibility"] = "pass" if derived_code == 0 else "fail"
-    if derived_code:
-        blockers.extend(derived_messages)
+    derived_messages = verify_derived_graph(repo_root, resolved_name)
+    checks["derived_graph_fresh"] = "pass" if not derived_messages else "fail"
+    blockers.extend(derived_messages)
 
     query_ok = _query_smoke(repo_root, resolved_name, base, blockers)
     checks["query_smoke"] = "pass" if query_ok else "fail"

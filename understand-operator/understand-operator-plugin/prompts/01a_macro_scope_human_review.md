@@ -1,4 +1,4 @@
-﻿# Phase 0 Scope Review
+# Phase 0 Scope Review
 
 Review the deterministic Phase 0 scope artifacts:
 

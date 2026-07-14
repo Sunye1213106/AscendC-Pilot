@@ -1,4 +1,4 @@
-﻿# CBM On-Demand Query Protocol (MCP)
+# CBM On-Demand Query Protocol (MCP)
 
 CBM graph DB 鐢?MCP **`index_repository`** 鐢熸垚骞剁淮鎶ゃ€? 
 璇箟鏌ヨ鍦ㄥ悇 phase **鎸夐渶**璋冪敤 **`codebase-memory-mcp` MCP 宸ュ叿**銆?

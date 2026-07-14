@@ -121,14 +121,36 @@ def _write_scope_review(base: Path, decision: dict[str, Any], changes: dict[str,
     run_id = _current_run_id(base)
     phase0 = base / "runs" / run_id / "phase0"
     scan = _load_yaml(phase0 / "scope_scan.yaml")
+    semantic = _load_yaml(phase0 / "semantic_enrichment.yaml")
     snapshot = scan.get("snapshot") if isinstance(scan.get("snapshot"), dict) else {}
     files = scan.get("files") if isinstance(scan.get("files"), dict) else {}
-    dependency_files = _remove_paths(files.get("dependency_files") or [], changes.get("rejected_dependencies") or [])
-    dependency_files = _merge_path_items(dependency_files, changes.get("approved_dependencies") or [], "manual_dependency")
+    resolved_include = [item["path"] for item in changes.get("resolved_uncertain") or [] if item.get("action") == "include" and item.get("path")]
+    resolved_exclude = [item["path"] for item in changes.get("resolved_uncertain") or [] if item.get("action") == "exclude" and item.get("path")]
+    confirmed_scope = _confirmed_scope_additions(semantic)
+    excluded_paths = _unique_paths(
+        [*(_paths(files.get("excluded_files") or [])), *(changes.get("added_exclude") or []), *(changes.get("rejected_dependencies") or []), *resolved_exclude]
+    )
+    dependency_files = _merge_path_items(files.get("dependency_files") or [], changes.get("approved_dependencies") or [], "manual_dependency")
+    dependency_files = _merge_path_items(dependency_files, confirmed_scope, "semantic_enrichment")
+    dependency_files = _merge_path_items(dependency_files, resolved_include, "scope_review_resolution", include_reason="scope_review_resolution")
     initial_files = _merge_path_items(files.get("initial_operator_files") or [], changes.get("added_include") or [], "manual_include")
-    excluded_files = _merge_path_items(files.get("excluded_files") or [], changes.get("added_exclude") or [], "manual_exclude")
+    generated_files = files.get("generated_files") or []
     uncertain_files = _resolve_uncertain(files.get("uncertain_files") or [], changes.get("resolved_uncertain") or [])
+    initial_files = _remove_paths(initial_files, excluded_paths)
+    dependency_files = _remove_paths(dependency_files, excluded_paths)
+    generated_files = _remove_paths(generated_files, excluded_paths)
+    uncertain_files = _remove_paths(uncertain_files, excluded_paths + resolved_include)
+    excluded_files = _merge_path_items([], excluded_paths, "manual_exclude")
     architecture_variants = _merge_names(scan.get("architecture_variants") or [], changes.get("approved_architectures") or [], changes.get("excluded_architectures") or [])
+    conflicts = _scope_conflicts(
+        {
+            "initial_operator_files": initial_files,
+            "dependency_files": dependency_files,
+            "generated_files": generated_files,
+            "excluded_files": excluded_files,
+            "uncertain_files": uncertain_files,
+        }
+    )
     payload = {
         "version": 1,
         "artifact": {"type": "runs.scope_review", "schema_version": 1, "owner": "uo-orchestrator"},
@@ -148,7 +170,7 @@ def _write_scope_review(base: Path, decision: dict[str, Any], changes: dict[str,
             "dependency_files": dependency_files,
             "external_system_files": files.get("external_system_files") or [],
             "third_party_files": files.get("third_party_files") or [],
-            "generated_files": files.get("generated_files") or [],
+            "generated_files": generated_files,
             "excluded_files": excluded_files,
             "uncertain_files": uncertain_files,
             "architecture_variants": architecture_variants,
@@ -156,9 +178,10 @@ def _write_scope_review(base: Path, decision: dict[str, Any], changes: dict[str,
             "include_search_paths": scan.get("include_search_paths") or [],
         },
         "changes": changes,
+        "scope_conflicts": conflicts,
         "items": [],
         "relations": [],
-        "unresolved": [],
+        "unresolved": [{"id": "UNRESOLVED_SCOPE_CONFLICT", "kind": "scope_conflict", "details": conflicts}] if conflicts else [],
     }
     out_path = phase0 / "scope_review.yaml"
     write_text(out_path, _to_yaml(payload))
@@ -188,12 +211,12 @@ def _path_of(item: Any) -> str:
     return str(item)
 
 
-def _merge_path_items(items: list[Any], paths: list[str], role: str) -> list[Any]:
+def _merge_path_items(items: list[Any], paths: list[str], role: str, *, include_reason: str = "scope review override") -> list[Any]:
     result = list(items)
     seen = {_path_of(item) for item in result}
     for path in paths:
         if path and path not in seen:
-            result.append({"path": path, "role": role, "include_reason": "scope review override"})
+            result.append({"path": path, "role": role, "include_reason": include_reason})
             seen.add(path)
     return result
 
@@ -206,6 +229,45 @@ def _remove_paths(items: list[Any], paths: list[str]) -> list[Any]:
 def _resolve_uncertain(items: list[Any], resolutions: list[dict[str, str]]) -> list[Any]:
     resolved = {item["path"]: item["action"] for item in resolutions if item.get("path")}
     return [item for item in items if _path_of(item) not in resolved]
+
+
+def _paths(items: list[Any]) -> list[str]:
+    return [path for path in (_path_of(item) for item in items) if path]
+
+
+def _unique_paths(paths: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        normalized = str(path).replace("\\", "/")
+        if normalized and normalized not in seen:
+            result.append(normalized)
+            seen.add(normalized)
+    return result
+
+
+def _confirmed_scope_additions(doc: dict[str, Any]) -> list[str]:
+    candidates = doc.get("confirmed_scope_additions")
+    if not isinstance(candidates, list):
+        data = {}
+        for item in doc.get("items") or []:
+            if isinstance(item, dict) and isinstance(item.get("data"), dict):
+                data = item["data"]
+                break
+        candidates = data.get("confirmed_scope_additions") if isinstance(data.get("confirmed_scope_additions"), list) else []
+    return _unique_paths([_path_of(item) for item in candidates])
+
+
+def _scope_conflicts(groups: dict[str, list[Any]]) -> list[dict[str, str]]:
+    owner_by_path: dict[str, str] = {}
+    conflicts: list[dict[str, str]] = []
+    for group, items in groups.items():
+        for path in _paths(items):
+            previous = owner_by_path.get(path)
+            if previous and previous != group:
+                conflicts.append({"path": path, "first": previous, "second": group})
+            owner_by_path[path] = group
+    return conflicts
 
 
 def _merge_names(items: list[Any], approved: list[str], excluded: list[str]) -> list[Any]:

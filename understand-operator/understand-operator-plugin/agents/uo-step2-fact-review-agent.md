@@ -1,4 +1,4 @@
-﻿---
+---
 name: uo-step2-fact-review-agent
 description: "INTERNAL: reviews Step 2 facts after Host, Compute, and Kernel Overview Python validation pass."
 model: inherit
@@ -35,6 +35,7 @@ Check whether every important YAML claim is truly supported by source:
 - input realization
 - function/API calls and call graph edges
 - Tensor, Operation, Dataflow, Numerical Semantics
+- Cube/Vector execution classification and paths: a cube/vector/mixed claim must have source-level API or engine evidence, not just a generic compute call
 - Kernel overview entries, functions, call sites, frontier sites, global resources
 
 Do not modify facts. Report findings only.
@@ -51,7 +52,7 @@ Each blocking issue must include:
 - `actual_source_semantics`
 - `required_action`
 
-If no blocking issues exist, write `status: pass`.
+Missing, ambiguous, or overclaimed Cube/Vector evidence is a blocking finding. If no blocking issues exist, write `status: pass`.
 
 ## Output Contract
 

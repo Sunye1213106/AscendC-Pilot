@@ -1,14 +1,15 @@
-﻿version: 1
+version: 1
 artifact_type: host.control_flow
 required_top_level: [version, artifact, snapshot, items, relations, unresolved]
 allowed_top_level: [version, artifact, snapshot, analysis_status, reason, sources, items, relations, unresolved]
-item_kind_enum: [if_branch, switch_branch, ternary_branch, early_return]
+item_kind_enum: [if_branch, switch_branch, ternary_branch, early_return, branch_outcome]
 required_item_fields: [id, kind, name, status, sources]
 kind_required_fields:
   if_branch: [predicate_ref, outcome_refs, scope_ref, controlled_item_refs, reachability]
   switch_branch: [predicate_ref, outcome_refs, scope_ref, controlled_item_refs, reachability]
   ternary_branch: [predicate_ref, outcome_refs, scope_ref, controlled_item_refs, reachability]
   early_return: [predicate_ref, outcome_refs, scope_ref, controlled_item_refs, reachability]
+  branch_outcome: [parent_branch_ref, outcome_value, controlled_item_refs, reachability]
 relation_required_fields: [id, type, source_id, target_id, status]
 minimum_cardinality: 1
 stores: [if_else, switch_case, ternary, early_return, predicate, outcome, source_block]

@@ -1,4 +1,4 @@
-﻿# Source Fact Contract
+# Source Fact Contract
 
 All facts YAML files use the catalog header: `version`, `artifact`, `snapshot`, `items`, `relations`, and `unresolved`.
 

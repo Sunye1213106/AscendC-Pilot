@@ -1,4 +1,4 @@
-﻿# Retired Prompt
+# Retired Prompt
 
 The old standalone quality phase is retired.
 

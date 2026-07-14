@@ -1,4 +1,4 @@
-﻿# Retired Prompt
+# Retired Prompt
 
 This prompt belonged to the old compute/flow canonical workflow.
 

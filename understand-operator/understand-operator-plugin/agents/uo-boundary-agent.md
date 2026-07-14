@@ -1,4 +1,4 @@
-﻿---
+---
 name: uo-boundary-agent
 description: "INTERNAL: writes Step 1 operator boundary source facts. Do not select directly unless dispatched by understand-operator."
 model: inherit

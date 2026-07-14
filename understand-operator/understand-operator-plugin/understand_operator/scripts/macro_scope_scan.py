@@ -55,6 +55,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("repo", nargs="?", default=".", help="Repository root")
     parser.add_argument("--op-name", help="Operator name. Defaults to repository name.")
     parser.add_argument("--filesystem-tool", default="python", help="Recorded scan tool label")
+    parser.add_argument("--seed", action="append", default=[], help="User-provided repo-relative seed file. May be repeated.")
     args = parser.parse_args(argv)
 
     repo_root = Path(args.repo).resolve()
@@ -69,8 +70,9 @@ def main(argv: list[str] | None = None) -> int:
     patterns = _load_ignore_patterns(repo_root)
     rel_files = _iter_files(repo_root, patterns)
     cbm_meta = _read_index_meta(base)
-    include_paths = _include_search_paths(repo_root, rel_files)
-    seeds_by_type = _seed_files(repo_root, rel_files, op_name)
+    include_result = _include_search_paths(repo_root, rel_files)
+    include_paths = include_result["include_search_paths"]
+    seeds_by_type = _seed_files(repo_root, rel_files, op_name, patterns, args.seed)
     seed_paths = sorted({item["path"] for values in seeds_by_type.values() for item in values})
     operator_roots = _operator_roots(seed_paths)
     dependency_result = _dependency_closure(repo_root, rel_files, seed_paths, operator_roots, include_paths)
@@ -96,6 +98,7 @@ def main(argv: list[str] | None = None) -> int:
         "directories": _directories(rel_files),
         "operator_roots": operator_roots,
         "include_search_paths": include_paths,
+        "uncertain_include_paths": include_result["uncertain_include_paths"],
         "seed_files": seeds_by_type,
         "files": {
             "initial_operator_files": [_file_item(repo_root, rel, "initial_operator_file") for rel in seed_paths],
@@ -115,6 +118,11 @@ def main(argv: list[str] | None = None) -> int:
             "proto_candidates": [],
             "golden_candidates": [],
         },
+        "global_candidates": {
+            "registration_candidates": [],
+            "host_entry_candidates": [],
+            "kernel_entry_candidates": [],
+        },
         "architecture_variants": [],
         "large_files": [],
         "warnings": [],
@@ -123,7 +131,12 @@ def main(argv: list[str] | None = None) -> int:
         "unresolved": [],
     }
 
-    _scan_contents(repo_root, rel_files, payload)
+    scope_files = sorted(
+        set(seed_paths)
+        | {str(item.get("path")) for item in dependency_result["dependency_files"] if item.get("path")}
+    )
+    _scan_contents(repo_root, rel_files, payload, target="global_candidates")
+    _scan_contents(repo_root, scope_files, payload, target="symbols")
     out_path = base / "runs" / run_id / "phase0" / "scope_scan.yaml"
     write_text(out_path, _to_yaml(payload))
     print(f"Wrote {out_path}")
@@ -263,16 +276,19 @@ def _classify(rel: str) -> str:
     return "unknown"
 
 
-def _seed_files(repo_root: Path, rel_files: list[str], op_name: str) -> dict[str, list[dict[str, Any]]]:
+def _seed_files(repo_root: Path, rel_files: list[str], op_name: str, patterns: list[str], user_seeds: list[str]) -> dict[str, list[dict[str, Any]]]:
     op_tokens = _name_tokens(op_name)
     seeds: dict[str, dict[str, dict[str, Any]]] = {
         "user_seeds": {},
         "name_matched_seeds": {},
         "registration_seeds": {},
-        "cbm_confirmed_seeds": {},
         "api_proto_seeds": {},
         "golden_seeds": {},
     }
+    rel_set = set(rel_files)
+    for raw in user_seeds:
+        rel = _validate_user_seed(repo_root, raw, rel_set, patterns)
+        _add_seed(seeds["user_seeds"], rel, "user_seed", rel, rel, "user", "user-provided seed")
     for rel in rel_files:
         lower = rel.lower()
         bucket = _classify(rel)
@@ -289,6 +305,19 @@ def _seed_files(repo_root: Path, rel_files: list[str], op_name: str) -> dict[str
             elif bucket == "golden" and any(token and token in lower for token in op_tokens):
                 _add_seed(seeds["golden_seeds"], rel, "golden_name", "+".join(op_tokens), rel, "medium", "golden/reference name matches operator")
     return {key: sorted(value.values(), key=lambda item: item["path"]) for key, value in seeds.items()}
+
+
+def _validate_user_seed(repo_root: Path, raw: str, rel_set: set[str], patterns: list[str]) -> str:
+    path = (repo_root / raw).resolve()
+    try:
+        rel = path.relative_to(repo_root).as_posix()
+    except ValueError as exc:
+        raise SystemExit(f"--seed must be inside repository: {raw}") from exc
+    if rel not in rel_set or not path.is_file():
+        raise SystemExit(f"--seed does not exist or is ignored: {raw}")
+    if should_ignore(rel, patterns):
+        raise SystemExit(f"--seed points to ignored path: {raw}")
+    return rel
 
 
 def _add_seed(bucket: dict[str, dict[str, Any]], path: str, seed_type: str, matched_token: str, source_location: str, confidence: str, reason: str) -> None:
@@ -458,9 +487,11 @@ def _inside_operator_roots(path: str, roots: list[str]) -> bool:
     return any(path == root or path.startswith(root.rstrip("/") + "/") for root in roots)
 
 
-def _include_search_paths(repo_root: Path, rel_files: list[str]) -> list[dict[str, str]]:
+def _include_search_paths(repo_root: Path, rel_files: list[str]) -> dict[str, list[dict[str, str]]]:
     result: dict[str, dict[str, str]] = {}
+    uncertain: list[dict[str, str]] = []
     pattern = re.compile(r"(?:include_directories|target_include_directories)\s*\(([^)]*)\)|(?:^|\s)-I\s*([^\s)]+)")
+    set_pattern = re.compile(r"^\s*set\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s+([^)]*?)\s*\)")
     for rel in rel_files:
         lower = rel.lower()
         if not (lower.endswith("cmakelists.txt") or lower.endswith(".cmake") or lower.endswith("build") or lower.endswith("build.bazel") or lower.endswith(".bzl")):
@@ -468,13 +499,31 @@ def _include_search_paths(repo_root: Path, rel_files: list[str]) -> list[dict[st
         path = repo_root / rel
         if path.stat().st_size >= LARGE_FILE_BYTES:
             continue
-        for lineno, line in enumerate(path.read_text(encoding="utf-8", errors="ignore").splitlines(), start=1):
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        variables: dict[str, str] = {
+            "CMAKE_CURRENT_SOURCE_DIR": path.parent.as_posix(),
+            "CMAKE_CURRENT_LIST_DIR": path.parent.as_posix(),
+            "PROJECT_SOURCE_DIR": repo_root.as_posix(),
+            "CMAKE_SOURCE_DIR": repo_root.as_posix(),
+        }
+        for line in lines:
+            match = set_pattern.match(line)
+            if match:
+                raw_value = match.group(2).strip().strip('"').strip("'")
+                if raw_value and not any(token in raw_value for token in ("$", "<", ">", ";")):
+                    variables[match.group(1)] = raw_value
+        for lineno, line in enumerate(lines, start=1):
             for match in pattern.finditer(line):
                 raw = match.group(1) or match.group(2) or ""
                 for token in re.split(r"\s+", raw):
                     token = token.strip().strip('"').strip("'")
-                    if not token or token.startswith(("$", "PRIVATE", "PUBLIC", "INTERFACE", "SYSTEM")):
+                    if not token or token in {"PRIVATE", "PUBLIC", "INTERFACE", "SYSTEM"}:
                         continue
+                    expanded = _expand_cmake_token(token, variables)
+                    if expanded is None:
+                        uncertain.append({"path": token, "source_file": rel, "source_location": f"{rel}:{lineno}", "reason": "dynamic or generator CMake include path"})
+                        continue
+                    token = expanded
                     candidate = (path.parent / token).resolve() if not Path(token).is_absolute() else Path(token)
                     try:
                         inc_rel = candidate.relative_to(repo_root).as_posix()
@@ -489,7 +538,21 @@ def _include_search_paths(repo_root: Path, rel_files: list[str]) -> list[dict[st
                             "source_kind": "cmake_target_include_directories",
                         },
                     )
-    return sorted(result.values(), key=lambda item: item["path"])
+    return {"include_search_paths": sorted(result.values(), key=lambda item: item["path"]), "uncertain_include_paths": sorted(uncertain, key=lambda item: (item["source_file"], item["path"]))}
+
+
+def _expand_cmake_token(token: str, variables: dict[str, str]) -> str | None:
+    if "$<" in token or ">" in token:
+        return None
+
+    def replace(match: re.Match[str]) -> str:
+        name = match.group(1)
+        return variables.get(name, "")
+
+    expanded = re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", replace, token)
+    if "$" in expanded or not expanded:
+        return None
+    return expanded
 
 
 def _file_item(repo_root: Path, rel: str, role: str) -> dict[str, Any]:
@@ -501,7 +564,7 @@ def _file_item(repo_root: Path, rel: str, role: str) -> dict[str, Any]:
     return {"path": rel, "role": role, "file_hash": digest, "include_reason": "phase0 seed"}
 
 
-def _scan_contents(repo_root: Path, rel_files: list[str], payload: dict[str, Any]) -> None:
+def _scan_contents(repo_root: Path, rel_files: list[str], payload: dict[str, Any], *, target: str) -> None:
     arch_hits: dict[str, dict[str, Any]] = {}
     for rel in rel_files:
         path = repo_root / rel
@@ -541,26 +604,43 @@ def _scan_contents(repo_root: Path, rel_files: list[str], payload: dict[str, Any
             if entry_match:
                 kind = _entry_kind(entry_match.group(0))
                 bucket = _symbol_bucket(kind)
-                payload["symbols"][bucket].append(
-                    {
-                        "item": entry_match.group(0),
-                        "kind": kind,
-                        "file": rel,
-                        "line": lineno,
-                        "discovery_method": "python_regex",
-                        "cbm_status": "pending",
-                        "cbm_symbol": "",
-                        "evidence": [],
-                    }
-                )
+                item = {
+                    "item": entry_match.group(0),
+                    "kind": kind,
+                    "file": rel,
+                    "line": lineno,
+                    "discovery_method": "python_regex",
+                    "cbm_status": "pending",
+                    "cbm_symbol": "",
+                    "evidence": [],
+                }
+                if target == "global_candidates" and bucket in payload["global_candidates"]:
+                    payload["global_candidates"][bucket].append(item)
+                elif target == "symbols":
+                    payload["symbols"][bucket].append(item)
     for item in arch_hits.values():
         item["matched_paths"].sort()
         item["matched_lines"] = sorted(item["matched_lines"], key=lambda hit: (hit["file"], hit["line"]))
-    payload["architecture_variants"] = [arch_hits[key] for key in sorted(arch_hits)]
-    for bucket, values in payload["symbols"].items():
-        payload["symbols"][bucket] = sorted(values, key=lambda item: (item["file"], item["line"], item["item"]))
-    payload["large_files"] = sorted(payload["large_files"], key=lambda item: item["path"])
-    payload["warnings"] = sorted(set(payload["warnings"]))
+    if target == "symbols":
+        payload["architecture_variants"] = [arch_hits[key] for key in sorted(arch_hits)]
+        for bucket, values in payload["symbols"].items():
+            payload["symbols"][bucket] = sorted(_unique_dicts(values), key=lambda item: (item["file"], item["line"], item["item"]))
+        payload["large_files"] = sorted(_unique_dicts(payload["large_files"]), key=lambda item: item["path"])
+        payload["warnings"] = sorted(set(payload["warnings"]))
+    else:
+        for bucket, values in payload["global_candidates"].items():
+            payload["global_candidates"][bucket] = sorted(_unique_dicts(values), key=lambda item: (item["file"], item["line"], item["item"]))
+
+
+def _unique_dicts(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    result: list[dict[str, Any]] = []
+    for item in items:
+        key = json.dumps(item, sort_keys=True, ensure_ascii=False)
+        if key not in seen:
+            seen.add(key)
+            result.append(item)
+    return result
 
 
 def _entry_kind(item: str) -> str:

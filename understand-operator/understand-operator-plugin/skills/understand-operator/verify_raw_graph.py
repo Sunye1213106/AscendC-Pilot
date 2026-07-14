@@ -8,8 +8,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from understand_operator.scripts.quality_gate import main
+from understand_operator.scripts.verify_raw_graph import main
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

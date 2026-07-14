@@ -1,4 +1,4 @@
-﻿# Completeness And Unresolved Rules
+# Completeness And Unresolved Rules
 
 Empty files do not mean analysis is complete. If a category does not apply, set `analysis_status: not_applicable` with reason and sources.
 

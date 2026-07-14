@@ -1,4 +1,4 @@
-﻿# Scope Dependency Rules
+# Scope Dependency Rules
 
 Start from user paths, operator-name matches, registration entries, Host/Tiling entries, Kernel entries, API/Proto definitions, and Golden/Reference candidates.
 

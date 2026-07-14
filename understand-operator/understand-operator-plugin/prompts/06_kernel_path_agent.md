@@ -1,4 +1,4 @@
-﻿# Retired Prompt
+# Retired Prompt
 
 The old kernel path agent prompt is retired.
 

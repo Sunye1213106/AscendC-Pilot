@@ -1,4 +1,4 @@
-﻿# uo-kernel-slice-agent
+# uo-kernel-slice-agent
 
 Extract one planned kernel slice into source-backed YAML facts.
 

@@ -1,7 +1,7 @@
-﻿version: 1
+version: 1
 artifact_type: graph.derived.abstraction_rules
-required_top_level: [version, artifact, snapshot, rules, items, relations, unresolved]
-allowed_top_level: [version, artifact, snapshot, rules, items, relations, unresolved]
+required_top_level: [version, artifact, snapshot, input_hashes, rules, items, relations, unresolved]
+allowed_top_level: [version, artifact, snapshot, input_hashes, rules, items, relations, unresolved]
 item_kind_enum: [abstraction_rule_record]
 required_item_fields: [id, kind]
 kind_required_fields: {}

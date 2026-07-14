@@ -1,4 +1,4 @@
-﻿---
+---
 name: uo-init
 description: >-
   End-to-end AscendC operator source-fact KB build for a target repo.

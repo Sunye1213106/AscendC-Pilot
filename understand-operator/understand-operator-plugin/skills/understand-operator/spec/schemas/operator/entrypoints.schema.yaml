@@ -1,4 +1,4 @@
-﻿version: 1
+version: 1
 artifact_type: operator.entrypoints
 required_top_level: [version, artifact, snapshot, items, relations, unresolved]
 allowed_top_level: [version, artifact, snapshot, items, relations, unresolved, analysis_status, reason, sources]

@@ -1,4 +1,4 @@
-﻿# Retired Prompt
+# Retired Prompt
 
 The old evidence consistency phase is retired.
 

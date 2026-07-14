@@ -1,4 +1,4 @@
-﻿---
+---
 name: uo-diff
 description: >-
   Reserved read-only AscendC operator change summary against an existing KB.

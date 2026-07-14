@@ -1,4 +1,4 @@
-﻿---
+---
 name: uo-query
 description: >-
   Answer questions from an existing AscendC operator KB. Query is read-only and

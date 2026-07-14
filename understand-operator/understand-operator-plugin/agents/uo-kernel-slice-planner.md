@@ -1,4 +1,4 @@
-﻿# uo-kernel-slice-planner
+# uo-kernel-slice-planner
 
 Plan source-backed kernel slices after Step 2 is sealed.
 

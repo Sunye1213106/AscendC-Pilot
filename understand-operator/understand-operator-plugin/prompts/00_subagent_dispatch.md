@@ -1,4 +1,4 @@
-﻿# Subagent Dispatch Protocol
+# Subagent Dispatch Protocol
 
 Understand Operator uses subagents only where parallel extraction is useful in
 the Phase 0-3 workflow.

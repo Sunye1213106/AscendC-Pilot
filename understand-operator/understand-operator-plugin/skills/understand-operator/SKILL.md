@@ -1,4 +1,4 @@
-﻿---
+---
 name: understand-operator
 description: >-
   Router for AscendC operator KB commands. Prefer /uo-init, /uo-query, /uo-update,

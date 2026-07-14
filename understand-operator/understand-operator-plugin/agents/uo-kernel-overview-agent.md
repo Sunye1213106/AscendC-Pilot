@@ -1,4 +1,4 @@
-﻿---
+---
 name: uo-kernel-overview-agent
 description: "INTERNAL: writes Step 2 kernel overview facts. Do not select directly unless dispatched by understand-operator."
 model: inherit

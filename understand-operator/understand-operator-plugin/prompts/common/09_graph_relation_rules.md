@@ -1,4 +1,4 @@
-﻿# Graph Relation Rules
+# Graph Relation Rules
 
 Fact items become raw nodes. Fact relations become raw edges. Relations do not also create nodes.
 
