@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from understand_operator._operator.candidate import stable_id
+from understand_operator._operator.spec import load_spec
 
 
 IDENTITY_VERSION = 1
@@ -208,14 +209,15 @@ class ResolvedIdentity:
 
 def resolve_identity(kind: str, identity: dict[str, object], *, repo_root: Path) -> ResolvedIdentity:
     kind = _clean(kind)
-    if kind not in KIND_TO_PREFIX:
+    config = _entity_type_config(kind)
+    prefix = str(config.get("prefix") or "")
+    if not prefix:
         raise IdentityError("IDENTITY_KIND_UNSUPPORTED", f"unsupported identity kind: {kind}", "kind")
     if not isinstance(identity, dict):
         raise IdentityError("IDENTITY_MISSING", "identity must be an object")
-    resolver = _strategy_for_kind(kind)
+    resolver = _strategy_for_kind(kind, config)
     normalized, parts = resolver(identity, repo_root)
     canonical_key = ":".join([kind, *(_escape(part) for part in parts)])
-    prefix = KIND_TO_PREFIX[kind]
     return ResolvedIdentity(
         kind=kind,
         identity_version=IDENTITY_VERSION,
@@ -231,32 +233,78 @@ def relation_stable_id(relation_type: str, source_id: str, target_id: str, quali
     return stable_id("REL", material)
 
 
-def _strategy_for_kind(kind: str) -> Callable[[dict[str, object], Path], tuple[dict[str, object], list[str]]]:
-    if KIND_TO_PREFIX[kind] == "VAR":
-        return _local_variable_identity
-    if kind in {"function", "host_function", "kernel_function", "kernel_method", "helper_function"}:
-        return _function_identity
-    if KIND_TO_PREFIX[kind] in {"CALL", "API"}:
-        return _callsite_identity
-    if KIND_TO_PREFIX[kind] == "BRANCH":
-        return _branch_identity
-    if KIND_TO_PREFIX[kind] == "OUTCOME":
-        return _branch_outcome_identity
-    if KIND_TO_PREFIX[kind] == "LOOP":
-        return _loop_identity
-    if KIND_TO_PREFIX[kind] == "TDATA":
-        return _tilingdata_field_identity
-    if KIND_TO_PREFIX[kind] == "TDWRITE":
+def _strategy_for_kind(kind: str, config: dict[str, Any]) -> Callable[[dict[str, object], Path], tuple[dict[str, object], list[str]]]:
+    strategy = str(config.get("identity_strategy") or "")
+    mapping: dict[str, Callable[[dict[str, object], Path], tuple[dict[str, object], list[str]]]] = {
+        "scoped_declaration": _local_variable_identity,
+        "qualified_symbol_signature": _function_identity,
+        "scoped_callsite": _callsite_identity,
+        "scoped_predicate": _branch_identity,
+        "branch_outcome": _branch_outcome_identity,
+        "scoped_loop": _loop_identity,
+        "repo_path": _repo_path_identity,
+        "qualified_struct": _qualified_struct_identity,
+        "struct_field": _tilingdata_field_identity,
+        "operator_io": _operator_io_identity,
+        "kernel_entry": _kernel_entry_identity,
+        "kernel_slice_signature": _kernel_slice_identity,
+        "slice_interface": _slice_interface_identity,
+        "compute_operation": _compute_operation_identity,
+        "endpoint_relation_entity": _endpoint_relation_identity,
+        "scoped_policy": _source_span_identity,
+        "scoped_resource": _local_variable_identity,
+        "scoped_event": _source_span_identity,
+        "source_span": _source_span_identity,
+        "qualified_symbol": _qualified_symbol_only_identity,
+    }
+    if strategy == "scoped_field_write":
         return _tilingdata_access_identity("write_span")
-    if KIND_TO_PREFIX[kind] == "TDREAD":
+    if strategy == "scoped_field_read":
         return _tilingdata_access_identity("read_span")
+    if strategy in mapping:
+        return mapping[strategy]
+    raise IdentityError("SPEC_IDENTITY_STRATEGY_UNKNOWN", f"unknown identity strategy for {kind}: {strategy}", "kind")
+
+
+def _entity_type_config(kind: str) -> dict[str, Any]:
+    try:
+        entity_types = (load_spec().get("entity_types") or {}).get("entity_types") or {}
+    except Exception:
+        entity_types = {}
+    config = entity_types.get(kind)
+    if isinstance(config, dict):
+        return config
+    return {}
+
+
+def _legacy_strategy_for_kind(kind: str) -> str:
+    if KIND_TO_PREFIX[kind] == "VAR":
+        return "scoped_declaration"
+    if kind in {"function", "host_function", "kernel_function", "kernel_method", "helper_function"}:
+        return "qualified_symbol_signature"
+    if KIND_TO_PREFIX[kind] in {"CALL", "API"}:
+        return "scoped_callsite"
+    if KIND_TO_PREFIX[kind] == "BRANCH":
+        return "scoped_predicate"
+    if KIND_TO_PREFIX[kind] == "OUTCOME":
+        return "branch_outcome"
+    if KIND_TO_PREFIX[kind] == "LOOP":
+        return "scoped_loop"
+    if kind == "tilingdata_struct":
+        return "qualified_struct"
+    if KIND_TO_PREFIX[kind] == "TDATA":
+        return "struct_field"
+    if KIND_TO_PREFIX[kind] == "TDWRITE":
+        return "scoped_field_write"
+    if KIND_TO_PREFIX[kind] == "TDREAD":
+        return "scoped_field_read"
     if kind in {"input_tensor", "output_tensor"}:
-        return _operator_io_identity
+        return "operator_io"
     if KIND_TO_PREFIX[kind] == "KERNEL":
-        return _kernel_entry_identity
+        return "kernel_entry"
     if KIND_TO_PREFIX[kind] == "OPR":
-        return _compute_operation_identity
-    return _source_span_identity
+        return "compute_operation"
+    return "source_span"
 
 
 def _local_variable_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:
@@ -323,6 +371,11 @@ def _tilingdata_field_identity(identity: dict[str, object], repo_root: Path) -> 
     return norm, [str(norm["qualified_struct_name"]), str(norm["field_name"])]
 
 
+def _qualified_struct_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:
+    norm = {"qualified_struct_name": _symbol(identity, "qualified_struct_name", aliases=("struct_name",))}
+    return norm, [str(norm["qualified_struct_name"])]
+
+
 def _tilingdata_access_identity(span_key: str) -> Callable[[dict[str, object], Path], tuple[dict[str, object], list[str]]]:
     def resolve(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:
         norm = {
@@ -352,6 +405,29 @@ def _kernel_entry_identity(identity: dict[str, object], repo_root: Path) -> tupl
     return norm, [str(norm["qualified_entry_symbol"]), str(norm["signature"]), str(norm["discriminator"])]
 
 
+def _kernel_slice_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:
+    norm = {
+        "kernel_entry_ref": _required_str(identity, "kernel_entry_ref"),
+        "template_binding_signature": _required_str(identity, "template_binding_signature"),
+        "structural_flow_signature": _required_str(identity, "structural_flow_signature"),
+        "tilingdata_read_signature": str(identity.get("tilingdata_read_signature") or ""),
+        "output_signature": _required_str(identity, "output_signature"),
+    }
+    return norm, [str(norm[key]) for key in ("kernel_entry_ref", "template_binding_signature", "structural_flow_signature", "tilingdata_read_signature", "output_signature")]
+
+
+def _slice_interface_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:
+    norm = {
+        "source_slice_ref": _required_str(identity, "source_slice_ref"),
+        "target_slice_ref": _required_str(identity, "target_slice_ref"),
+        "interface_kind": _required_str(identity, "interface_kind"),
+        "position": str(identity.get("position") if identity.get("position") is not None else identity.get("index") if identity.get("index") is not None else ""),
+    }
+    if not norm["position"]:
+        raise IdentityError("IDENTITY_MISSING_FIELD", "position is required", "identity.position")
+    return norm, [str(norm[key]) for key in ("source_slice_ref", "target_slice_ref", "interface_kind", "position")]
+
+
 def _compute_operation_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:
     norm = {
         "compute_scope": _symbol(identity, "compute_scope", aliases=("scope_symbol",)),
@@ -362,6 +438,17 @@ def _compute_operation_identity(identity: dict[str, object], repo_root: Path) ->
     span = norm["source_span"]
     assert isinstance(span, dict)
     return norm, [str(norm["compute_scope"]), str(norm["operation_type"]), str(norm["output_identity"]), str(span["start_line"]), str(span["end_line"])]
+
+
+def _endpoint_relation_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:
+    norm = {
+        "source_ref": _required_str(identity, "source_ref"),
+        "target_ref": _required_str(identity, "target_ref"),
+        "order_index": str(identity.get("order_index") if identity.get("order_index") is not None else ""),
+        "condition_ref": str(identity.get("condition_ref") or ""),
+        "qualifier": str(identity.get("qualifier") or ""),
+    }
+    return norm, [str(norm[key]) for key in ("source_ref", "target_ref", "order_index", "condition_ref", "qualifier")]
 
 
 def _source_span_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:
@@ -376,15 +463,25 @@ def _source_span_identity(identity: dict[str, object], repo_root: Path) -> tuple
     raise IdentityError("IDENTITY_MISSING_FIELD", "identity needs structured source span or qualified symbol")
 
 
+def _repo_path_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:
+    norm = {"path": _path(identity, "path", repo_root)}
+    return norm, [str(norm["path"])]
+
+
+def _qualified_symbol_only_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:
+    norm = {"qualified_symbol": _symbol(identity, "qualified_symbol", aliases=("symbol",))}
+    return norm, [str(norm["qualified_symbol"])]
+
+
 def _path(identity: dict[str, object], key: str, repo_root: Path) -> str:
     raw = _required_str(identity, key).replace("\\", "/")
     path = Path(raw)
-    if path.is_absolute():
-        try:
-            raw = path.resolve().relative_to(repo_root.resolve()).as_posix()
-        except ValueError as exc:
-            raise IdentityError("IDENTITY_PATH_INVALID", f"{key} must be repo-relative", f"identity.{key}") from exc
-    return re.sub(r"/+", "/", raw).strip("/")
+    root = repo_root.resolve()
+    candidate = path.resolve() if path.is_absolute() else (root / path).resolve()
+    try:
+        return candidate.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise IdentityError("IDENTITY_PATH_INVALID", f"{key} must stay within repo root", f"identity.{key}") from exc
 
 
 def _symbol(identity: dict[str, object], key: str, aliases: tuple[str, ...] = ()) -> str:

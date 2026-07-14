@@ -29,11 +29,11 @@ CBM access.
 
 Write only:
 
-- `facts/kernel/overview/entries.yaml`
-- `facts/kernel/overview/functions.yaml`
-- `facts/kernel/overview/call_graph.yaml`
-- `facts/kernel/overview/frontier.yaml`
-- `facts/kernel/overview/global_resources.yaml`
+- `facts/kernel/overview.yaml#entries`
+- `facts/kernel/overview.yaml#functions`
+- `facts/kernel/overview.yaml#call_graph`
+- `facts/kernel/overview.yaml#frontier`
+- `facts/kernel/overview.yaml#global_resources`
 
 Also write no facts outside your ownership.
 

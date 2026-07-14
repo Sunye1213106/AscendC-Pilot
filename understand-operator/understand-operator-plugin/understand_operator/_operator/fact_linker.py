@@ -113,11 +113,12 @@ def resolve_entity_ref(
             return LinkResult("resolved", stable, (stable,), None)
         return LinkResult("unresolved", None, (), "ENTITY_REFERENCE_UNRESOLVED")
     if ref_type == "symbol":
+        kind = ref.get("kind")
         symbol = ref.get("qualified_symbol") or ref.get("symbol")
         signature = ref.get("signature")
-        if not isinstance(symbol, str) or not symbol.strip():
+        if not isinstance(kind, str) or not isinstance(symbol, str) or not symbol.strip():
             return LinkResult("unresolved", None, (), "ENTITY_REFERENCE_INVALID")
-        candidates = registry.find_symbol(symbol.strip(), signature.strip() if isinstance(signature, str) and signature.strip() else None)
+        candidates = registry.find_symbol_kind(kind.strip(), symbol.strip(), signature.strip() if isinstance(signature, str) and signature.strip() else None)
         if len(candidates) == 1:
             return LinkResult("resolved", candidates[0], candidates, None)
         if len(candidates) > 1:

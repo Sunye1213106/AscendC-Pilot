@@ -25,6 +25,7 @@ from understand_operator._operator.fact_linker import LinkResult, resolve_entity
 from understand_operator._operator.fact_registry import build_fact_registry, write_registry_cache
 from understand_operator._operator.identity import IdentityError, relation_stable_id, resolve_identity
 from understand_operator._operator.source_reader import SourceReader
+from understand_operator._operator.spec import load_spec
 from understand_operator.scripts.prepare_fact_file import prepare_fact_file
 from understand_operator.scripts.validate_candidate_batch import _target_parts, validate_candidate_batch
 
@@ -40,14 +41,22 @@ def compile_candidate_facts(repo_root: Path, op_name: str, batch: Any) -> list[C
     target, section = _target_parts(batch["target"])
     reader = SourceReader(repo_root)
     registry = build_fact_registry(uo_root)
+    spec = load_spec()
 
     local_symbols: dict[str, str] = {}
+    canonical_to_local: dict[str, tuple[str, str]] = {}
     materialized_items: list[dict[str, Any]] = []
     for index, item in enumerate(batch["items"]):
         try:
             resolved = resolve_identity(item["kind"], item["identity"], repo_root=repo_root)
         except IdentityError as exc:
             return [CandidateError(exc.code, exc.message, target=target, local_id=str(item.get("local_id") or ""), field=f"items[{index}].{exc.field}")]
+        previous = canonical_to_local.get(resolved.canonical_key)
+        local_id = str(item.get("local_id") or "")
+        if previous and previous[0] != local_id:
+            message = f"duplicate canonical identity first_local_id={previous[0]} second_local_id={local_id} canonical_key={resolved.canonical_key} stable_id={resolved.stable_id}"
+            return [CandidateError("CANDIDATE_IDENTITY_DUPLICATE", message, target=target, local_id=local_id, field=f"items[{index}]")]
+        canonical_to_local[resolved.canonical_key] = (local_id, resolved.stable_id)
         fact = _materialize_item(item, reader, resolved)
         local_symbols[str(item["local_id"])] = fact["id"]
         materialized_items.append(fact)
@@ -73,7 +82,11 @@ def compile_candidate_facts(repo_root: Path, op_name: str, batch: Any) -> list[C
         for failure in failures:
             resolution_errors.append(_link_error(failure, target, field=str(failure.get("path") or f"relations[{index}].fields")))
         if source.status == "resolved" and target_ref.status == "resolved":
-            materialized_relations.append(_materialize_relation(relation, reader, str(source.stable_id), str(target_ref.stable_id), resolved_fields))
+            relation_error = _relation_identity_error(spec, relation, resolved_fields, target, index)
+            if relation_error:
+                resolution_errors.append(relation_error)
+            else:
+                materialized_relations.append(_materialize_relation(spec, relation, reader, str(source.stable_id), str(target_ref.stable_id), resolved_fields))
 
     materialized_unresolved = [_materialize_unresolved(entry, reader, local_symbols, registry, repo_root, target, index, resolution_errors) for index, entry in enumerate(batch["unresolved"])]
     materialized_unresolved = [entry for entry in materialized_unresolved if entry is not None]
@@ -92,7 +105,10 @@ def compile_candidate_facts(repo_root: Path, op_name: str, batch: Any) -> list[C
     if before_hash != _file_hash(formal):
         return [CandidateError("TARGET_CHANGED_DURING_COMPILE", "target formal fact file changed during compile", target=target)]
     _atomic_yaml(formal, doc)
-    write_registry_cache(uo_root, build_fact_registry(uo_root))
+    registry_after = build_fact_registry(uo_root)
+    for item in resolved_items:
+        registry_after.add(item)
+    write_registry_cache(uo_root, registry_after)
     return []
 
 
@@ -102,7 +118,11 @@ def _materialize_item(item: dict[str, Any], reader: SourceReader, resolved: Any)
         "kind": item["kind"],
         **item.get("fields", {}),
         "status": "confirmed",
-        "identity": {"version": resolved.identity_version, "canonical_key": resolved.canonical_key, "normalized": resolved.normalized_identity},
+        "identity": {
+            "version": resolved.identity_version,
+            "canonical_key": resolved.canonical_key,
+            "normalized": resolved.normalized_identity,
+        },
         "sources": [source_anchor(reader, value) for value in item["source_locations"]],
     }
     if "name" in item:
@@ -110,8 +130,8 @@ def _materialize_item(item: dict[str, Any], reader: SourceReader, resolved: Any)
     return result
 
 
-def _materialize_relation(relation: dict[str, Any], reader: SourceReader, source_id: str, target_id: str, fields: dict[str, Any]) -> dict[str, Any]:
-    qualifier = fields.get("qualifier") if isinstance(fields, dict) else None
+def _materialize_relation(spec: dict[str, Any], relation: dict[str, Any], reader: SourceReader, source_id: str, target_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+    qualifier = _relation_identity_material(spec, str(relation["type"]), fields)
     return {
         "id": relation_stable_id(str(relation["type"]), source_id, target_id, qualifier),
         "type": relation["type"],
@@ -123,7 +143,38 @@ def _materialize_relation(relation: dict[str, Any], reader: SourceReader, source
     }
 
 
-def _materialize_unresolved(entry: dict[str, Any], reader: SourceReader, local_symbols: dict[str, str], registry: Any, repo_root: Path, target: str, index: int, errors: list[CandidateError]) -> dict[str, Any] | None:
+def _relation_identity_error(spec: dict[str, Any], relation: dict[str, Any], fields: dict[str, Any], target: str, index: int) -> CandidateError | None:
+    rtype = str(relation.get("type") or "")
+    for key in _relation_identity_fields(spec, rtype):
+        if fields.get(key) in (None, "", []):
+            return CandidateError("RELATION_IDENTITY_FIELD_MISSING", f"relation {rtype} requires identity field {key}", target=target, field=f"relations[{index}].fields.{key}")
+    return None
+
+
+def _relation_identity_material(spec: dict[str, Any], relation_type: str, fields: dict[str, Any]) -> dict[str, Any] | str:
+    keys = _relation_identity_fields(spec, relation_type)
+    if keys:
+        return {key: fields.get(key) for key in keys}
+    return fields.get("qualifier") if isinstance(fields, dict) else ""
+
+
+def _relation_identity_fields(spec: dict[str, Any], relation_type: str) -> list[str]:
+    rule = ((spec.get("relation_types") or {}).get("relation_types") or {}).get(relation_type)
+    if isinstance(rule, dict) and isinstance(rule.get("identity_fields"), list):
+        return [str(item) for item in rule["identity_fields"]]
+    return []
+
+
+def _materialize_unresolved(
+    entry: dict[str, Any],
+    reader: SourceReader,
+    local_symbols: dict[str, str],
+    registry: Any,
+    repo_root: Path,
+    target: str,
+    index: int,
+    errors: list[CandidateError],
+) -> dict[str, Any] | None:
     blocked: list[str] = []
     for ref_index, ref in enumerate(entry.get("related_refs") or []):
         result = resolve_entity_ref(ref, local_symbols=local_symbols, registry=registry, repo_root=repo_root)
@@ -133,7 +184,14 @@ def _materialize_unresolved(entry: dict[str, Any], reader: SourceReader, local_s
             errors.append(_link_result_error(result, target, f"unresolved[{index}].related_refs[{ref_index}]"))
     sources = [source_anchor(reader, value) for value in entry.get("source_locations") or []]
     material = "\0".join((str(entry.get("local_id") or index), str(entry.get("category") or ""), str(entry.get("description") or "")))
-    return {"id": stable_id("UNRESOLVED", material), "question": entry["description"], "reason": entry["category"], "owner": "candidate-compiler", "blocked_items": sorted(set(blocked)), "candidate_sources": sources}
+    return {
+        "id": stable_id("UNRESOLVED", material),
+        "question": entry["description"],
+        "reason": entry["category"],
+        "owner": "candidate-compiler",
+        "blocked_items": sorted(set(blocked)),
+        "candidate_sources": sources,
+    }
 
 
 def _target_content(doc: dict[str, Any], section: str) -> dict[str, Any] | None:

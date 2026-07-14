@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import fnmatch
 import hashlib
 import sys
 from pathlib import Path
@@ -18,8 +17,9 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_ROOT))
 
 from understand_operator._operator.artifacts import existing_operator_root, safe_op_name
+from understand_operator._operator.catalog import CatalogMatchError, match_catalog_entry
 from understand_operator._operator.document_store import DocumentStore
-from understand_operator._operator.spec import catalog_entries, load_spec, spec_bundle_hash
+from understand_operator._operator.spec import load_spec, spec_bundle_hash
 from understand_operator.scripts.build_compile_gate import compile_gate_errors, facts_hashes_for
 
 
@@ -114,24 +114,14 @@ def compile_source_graph(repo_root: Path, op_name: str) -> tuple[int, list[str]]
 
 def _load_fact_docs(uo_root: Path, spec: dict[str, Any]) -> dict[str, dict[str, Any]]:
     docs: dict[str, dict[str, Any]] = {}
-    raw_patterns = [
-        str(entry.get("path") or "").replace("\\", "/")
-        for entry in catalog_entries(spec)
-        if entry.get("raw_graph_input") is True
-    ]
     store = DocumentStore(uo_root)
-    preferred = {"facts/host.yaml", "facts/compute.yaml", "facts/kernel/overview.yaml"}
-    available = {path.relative_to(uo_root).as_posix() for path in (uo_root / "facts").rglob("*.yaml")}
     for path in sorted((uo_root / "facts").rglob("*.yaml")):
         rel = path.relative_to(uo_root).as_posix()
-        if (rel.startswith("facts/host/") and "facts/host.yaml" in available) or (rel.startswith("facts/compute/") and "facts/compute.yaml" in available) or (rel.startswith("facts/kernel/overview/") and "facts/kernel/overview.yaml" in available):
+        try:
+            match = match_catalog_entry(spec, rel)
+        except CatalogMatchError:
             continue
-        # A migrated slice is facts/kernel/slices/<id>.yaml; old directories
-        # remain readable only when that partition does not exist.
-        if rel.startswith("facts/kernel/slices/") and rel.count("/") > 3:
-            partition = "facts/kernel/slices/" + rel.split("/")[3] + ".yaml"
-            if partition in available: continue
-        if not any(fnmatch.fnmatch(rel, pattern) for pattern in raw_patterns):
+        if not match or match.entry.get("raw_graph_input") is not True:
             continue
         docs[rel] = store.read(rel).data
     return docs
@@ -240,9 +230,11 @@ def _tilingdata_write_read_edges(nodes: list[dict[str, Any]], formal_edges: list
         target = by_id.get(target_id)
         if not source or not target:
             continue
-        if edge_type in {"writes", "writes_tilingdata"} and str(source.get("kind")) == "tilingdata_write" and str(target.get("kind")) == "tilingdata_field":
+        source_kind = str(source.get("kind") or "")
+        target_kind = str(target.get("kind") or "")
+        if edge_type in {"writes", "writes_tilingdata"} and source_kind == "tilingdata_write" and target_kind == "tilingdata_field":
             writes_by_field.setdefault(target_id, []).append(source_id)
-        if edge_type in {"reads", "reads_tilingdata"} and str(source.get("kind")) == "tilingdata_read" and str(target.get("kind")) == "tilingdata_field":
+        if edge_type in {"reads", "reads_tilingdata"} and source_kind == "tilingdata_read" and target_kind == "tilingdata_field":
             reads_by_field.setdefault(target_id, []).append(source_id)
     result: list[dict[str, Any]] = []
     for field_id in sorted(set(writes_by_field) & set(reads_by_field)):

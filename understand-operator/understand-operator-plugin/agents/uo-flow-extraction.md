@@ -25,10 +25,10 @@ and CBM metadata. Stay inside the approved Phase 0 scope.
 Write only:
 
 ```text
-facts/compute/tensors.yaml
-facts/compute/operations.yaml
-facts/compute/dataflow.yaml
-facts/compute/numerical_semantics.yaml
+facts/compute.yaml#tensors
+facts/compute.yaml#operations
+facts/compute.yaml#dataflow
+facts/compute.yaml#numerical_semantics
 ```
 
 Do not write proposals, flow canonical files, route files, contracts, graph

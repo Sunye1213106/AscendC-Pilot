@@ -63,4 +63,3 @@ def load_json(path: Path) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise CandidateError("CANDIDATE_JSON_INVALID", str(exc), field="$") from exc
-

@@ -16,8 +16,9 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_ROOT))
 
 from understand_operator._operator.artifacts import existing_operator_root, safe_op_name
+from understand_operator._operator.catalog import CatalogMatchError, match_catalog_entry
 from understand_operator._operator.run_context import active_run_id, read_yaml_mapping
-from understand_operator._operator.spec import catalog_entries, load_spec, spec_bundle_hash
+from understand_operator._operator.spec import load_spec, spec_bundle_hash
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -31,10 +32,13 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 
 def _catalog_entry(rel: str) -> dict[str, Any]:
     rel = rel.replace("\\", "/")
-    for entry in catalog_entries(load_spec()):
-        if str(entry.get("path") or "").replace("\\", "/") == rel:
-            return entry
-    raise SystemExit(f"FACT_PATH_NOT_IN_CATALOG: {rel}")
+    try:
+        match = match_catalog_entry(load_spec(), rel, writable_only=True)
+    except CatalogMatchError as exc:
+        raise SystemExit(f"{exc.code}: {exc.message}") from exc
+    if not match:
+        raise SystemExit(f"FACT_PATH_NOT_IN_CATALOG: {rel}")
+    return match.entry
 
 
 def _phase0_receipt_snapshot(uo_root: Path) -> dict[str, str]:

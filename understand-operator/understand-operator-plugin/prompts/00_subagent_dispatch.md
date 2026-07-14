@@ -42,13 +42,13 @@ temporary merge-batch YAML remains allowed by the agent IO protocol.
 
 Subagents write only paths allowed by `spec/ownership.yaml`.
 
-- Host writes `facts/host/**`.
+- Host writes `facts/host.yaml` sections.
 - Boundary writes `facts/operator/**`.
-- Compute writes `facts/compute/**`.
-- Kernel overview writes `facts/kernel/overview/**`.
+- Compute writes `facts/compute.yaml` sections.
+- Kernel overview writes `facts/kernel/overview.yaml` sections.
 - Slice planner writes `facts/kernel/slice_manifest.yaml` and
   `facts/kernel/slice_interfaces.yaml`.
-- Slice agents write the fixed files under `facts/kernel/slices/<slice_id>/`.
+- Slice agents write the assigned `facts/kernel/slices/<slice_id>.yaml` partition.
 - Review agents write only `checks/step2/review.yaml` or
   `checks/step3/review.yaml`.
 

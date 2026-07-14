@@ -15,7 +15,7 @@ owners:
       - checks/step2/receipt.yaml
       - checks/step3/receipt.yaml
   uo-step2-fact-review-agent:
-    may_read: [manifest.yaml, facts/operator/**, facts/host/**, facts/compute/**, facts/kernel/overview/**, checks/step2/*validation.yaml, runs/**, cbm/**]
+    may_read: [manifest.yaml, facts/operator/**, facts/host.yaml, facts/compute.yaml, facts/kernel/overview.yaml, checks/step2/*validation.yaml, runs/**, cbm/**]
     may_write:
       - checks/step2/review.yaml
   uo-boundary-agent:
@@ -25,54 +25,30 @@ owners:
       - facts/operator/source_files.yaml
       - facts/operator/entrypoints.yaml
   uo-host-extraction:
-    may_read: [manifest.yaml, facts/operator/**, facts/host/**, runs/**, cbm/**]
+    may_read: [manifest.yaml, facts/operator/**, facts/host.yaml, runs/**, cbm/**]
     may_write:
       - facts/host.yaml
-      - facts/host.yaml#sections/*
-      - facts/host/variables.yaml
-      - facts/host/expressions.yaml
-      - facts/host/control_flow.yaml
-      - facts/host/calls.yaml
-      - facts/host/tiling_key.yaml
-      - facts/host/tiling_key_enumeration.yaml
-      - facts/host/tiling_key_constraints.yaml
-      - facts/host/tilingdata_writes.yaml
+      - facts/host.yaml#*
   uo-flow-extraction:
-    may_read: [manifest.yaml, facts/operator/**, facts/compute/**, runs/**, cbm/**]
+    may_read: [manifest.yaml, facts/operator/**, facts/compute.yaml, runs/**, cbm/**]
     may_write:
       - facts/compute.yaml
-      - facts/compute.yaml#sections/*
-      - facts/compute/tensors.yaml
-      - facts/compute/operations.yaml
-      - facts/compute/dataflow.yaml
-      - facts/compute/numerical_semantics.yaml
+      - facts/compute.yaml#*
   uo-kernel-overview-agent:
-    may_read: [manifest.yaml, facts/operator/**, facts/host/**, facts/kernel/overview/**, runs/**, cbm/**]
+    may_read: [manifest.yaml, facts/operator/**, facts/host.yaml, facts/kernel/overview.yaml, runs/**, cbm/**]
     may_write:
       - facts/kernel/overview.yaml
-      - facts/kernel/overview.yaml#sections/*
-      - facts/kernel/overview/entries.yaml
-      - facts/kernel/overview/functions.yaml
-      - facts/kernel/overview/call_graph.yaml
-      - facts/kernel/overview/frontier.yaml
-      - facts/kernel/overview/global_resources.yaml
+      - facts/kernel/overview.yaml#*
   uo-kernel-slice-planner:
-    may_read: [manifest.yaml, facts/operator/**, facts/host/**, facts/compute/**, facts/kernel/overview/**, checks/step2/receipt.yaml, runs/**, cbm/**]
+    may_read: [manifest.yaml, facts/operator/**, facts/host.yaml, facts/compute.yaml, facts/kernel/overview.yaml, checks/step2/receipt.yaml, runs/**, cbm/**]
     may_write:
       - facts/kernel/slice_manifest.yaml
       - facts/kernel/slice_interfaces.yaml
   uo-kernel-slice-agent:
-    may_read: [manifest.yaml, facts/operator/**, facts/host/**, facts/compute/**, facts/kernel/**, runs/**, cbm/**]
+    may_read: [manifest.yaml, facts/operator/**, facts/host.yaml, facts/compute.yaml, facts/kernel/**, runs/**, cbm/**]
     may_write:
-      - facts/kernel/slices/*/variables.yaml
-      - facts/kernel/slices/*/expressions.yaml
-      - facts/kernel/slices/*/branches.yaml
-      - facts/kernel/slices/*/loops.yaml
-      - facts/kernel/slices/*/tilingdata_reads.yaml
-      - facts/kernel/slices/*/calls.yaml
-      - facts/kernel/slices/*/dataflow.yaml
-      - facts/kernel/slices/*/memory.yaml
-      - facts/kernel/slices/*/synchronization.yaml
+      - facts/kernel/slices/*.yaml
+      - facts/kernel/slices/*.yaml#*
   uo-step3-fact-review-agent:
     may_read: [manifest.yaml, facts/**, checks/step2/receipt.yaml, checks/step3/slice_validations.yaml, runs/**, cbm/**]
     may_write:

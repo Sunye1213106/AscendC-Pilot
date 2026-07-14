@@ -20,8 +20,8 @@ Run only after these reports exist and pass:
 - `checks/step2/compute_validation.yaml`
 - `checks/step2/kernel_overview_validation.yaml`
 
-You may read `facts/operator/**`, `facts/host/**`, `facts/compute/**`,
-`facts/kernel/overview/**`, and source files referenced by YAML anchors. You may
+You may read `facts/operator/**`, `facts/host.yaml`, `facts/compute.yaml`,
+`facts/kernel/overview.yaml`, and source files referenced by YAML anchors. You may
 write only `checks/step2/review.yaml`.
 
 ## Review Mission

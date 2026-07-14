@@ -28,7 +28,7 @@ Read these common prompts before review:
 - All Step 2 facts
 - `facts/kernel/slice_manifest.yaml`
 - `facts/kernel/slice_interfaces.yaml`
-- `facts/kernel/slices/*/*.yaml`
+- `facts/kernel/slices/*.yaml`
 - `checks/step3/slice_validations.yaml`
 - Referenced source code
 

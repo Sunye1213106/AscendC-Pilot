@@ -89,14 +89,3 @@ text, and hashes. If source evidence is not reliable, put the claim in
 
 Do not overwrite the three YAML files by hand. For each target file, compile
 candidate JSON batches through `compile_candidate_facts.py`.
-
-## Completion Gate
-
-After compiling the candidate batches, run:
-
-```powershell
-python -X utf8 "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step1 --scope boundary --write-report
-```
-
-Fix all errors and rerun until it exits 0. Do not report completion before the
-validator passes.

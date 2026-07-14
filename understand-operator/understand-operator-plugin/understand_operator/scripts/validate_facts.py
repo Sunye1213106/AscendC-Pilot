@@ -22,6 +22,7 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_ROOT))
 
 from understand_operator._operator.artifacts import existing_operator_root, safe_op_name
+from understand_operator._operator.catalog import CatalogMatchError, match_catalog_entry
 from understand_operator._operator.fact_registry import build_fact_registry
 from understand_operator._operator.identity import relation_stable_id, resolve_identity
 from understand_operator._operator.spec import catalog_entries, load_spec, spec_bundle_hash
@@ -83,7 +84,6 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
             _validate_phase0_receipt(repo_root, uo_root, manifest, errors)
 
     entries = catalog_entries(spec)
-    catalog_by_path = {str(entry.get("path", "")).replace("\\", "/"): entry for entry in entries}
     ownership = _ownership_patterns(spec)
     relation_types = set(((spec.get("relation_types") or {}).get("relation_types") or {}).keys())
     relation_type_specs = (spec.get("relation_types") or {}).get("relation_types") or {}
@@ -113,10 +113,15 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
                 errors.append(FactValidationError("YAML_ROOT_NOT_MAPPING", rel, "YAML root must be a mapping"))
             continue
         docs[rel] = doc
-        entry = _catalog_match(catalog_by_path, rel)
-        if not entry:
+        try:
+            match = match_catalog_entry(spec, rel)
+        except CatalogMatchError as exc:
+            errors.append(FactValidationError(exc.code, exc.requested_path, exc.message))
+            continue
+        if not match:
             errors.append(FactValidationError("CATALOG_PATH_UNKNOWN", rel, "YAML file is not listed in spec/file_catalog.yaml"))
             continue
+        entry = match.entry
         if not _entry_in_scope(entry, scope) and rel != "manifest.yaml":
             continue
         _validate_document_header(rel, doc, entry, errors)
@@ -137,7 +142,7 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
 
     known_ids = _collect_known_ids(all_docs | docs)
     known_kinds = _collect_known_kinds(all_docs | docs)
-    _validate_identity_integrity(repo_root, uo_root, all_docs | docs, errors)
+    _validate_identity_integrity(repo_root, uo_root, all_docs | docs, relation_type_specs, errors)
     for rel, doc in docs.items():
         _validate_references(rel, doc, known_ids, errors)
         _validate_relation_endpoints(rel, doc, known_kinds, relation_type_specs, errors)
@@ -152,28 +157,19 @@ def _document_units(doc: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
 
 
 def _validate_kernel_slice_file_sets(uo_root: Path, yaml_paths: list[Path], errors: list[FactValidationError]) -> None:
-    required_names = {
-        "variables.yaml",
-        "expressions.yaml",
-        "branches.yaml",
-        "loops.yaml",
-        "tilingdata_reads.yaml",
-        "calls.yaml",
-        "dataflow.yaml",
-        "memory.yaml",
-        "synchronization.yaml",
-    }
+    required_sections = {"variables", "expressions", "branches", "loops", "tilingdata_reads", "calls", "dataflow", "memory", "synchronization"}
     slice_root = uo_root / "facts" / "kernel" / "slices"
-    slice_dirs = sorted(path for path in slice_root.glob("*") if path.is_dir()) if slice_root.exists() else []
-    if not slice_dirs:
-        errors.append(FactValidationError("KERNEL_SLICE_MISSING", "facts/kernel/slices/*", "Step 3 requires at least one kernel slice directory"))
+    slice_files = sorted(path for path in slice_root.glob("*.yaml") if path.is_file()) if slice_root.exists() else []
+    if not slice_files:
+        errors.append(FactValidationError("KERNEL_SLICE_MISSING", "facts/kernel/slices/*.yaml", "Step 3 requires at least one kernel slice partition file"))
         return
-    existing_rel = {path.relative_to(uo_root).as_posix() for path in yaml_paths}
-    for slice_dir in slice_dirs:
-        rel_dir = slice_dir.relative_to(uo_root).as_posix()
-        missing = sorted(name for name in required_names if f"{rel_dir}/{name}" not in existing_rel)
+    for slice_file in slice_files:
+        rel = slice_file.relative_to(uo_root).as_posix()
+        doc = _load_yaml(slice_file, rel, errors)
+        sections = doc.get("sections") if isinstance(doc, dict) else {}
+        missing = sorted(required_sections - set(sections if isinstance(sections, dict) else {}))
         if missing:
-            errors.append(FactValidationError("KERNEL_SLICE_FILE_SET_INCOMPLETE", rel_dir, f"missing slice YAML files: {', '.join(missing)}"))
+            errors.append(FactValidationError("KERNEL_SLICE_FILE_SET_INCOMPLETE", rel, f"missing slice sections: {', '.join(missing)}"))
 
 
 def _entries_for_scope(entries: list[dict[str, Any]], scope: str) -> list[dict[str, Any]]:
@@ -191,6 +187,9 @@ def _entry_in_scope(entry: dict[str, Any], scope: str) -> bool:
 def _validate_spec_catalog(spec: dict[str, Any], errors: list[FactValidationError]) -> None:
     root = spec["root"]
     seen_paths: set[str] = set()
+    entity_types = ((spec.get("entity_types") or {}).get("entity_types") or {}) if isinstance(spec.get("entity_types"), dict) else {}
+    stable_prefixes = ((spec.get("stable_ids") or {}).get("prefixes") or {}) if isinstance(spec.get("stable_ids"), dict) else {}
+    strategies = ((spec.get("entity_types") or {}).get("strategy_aliases") or {}) if isinstance(spec.get("entity_types"), dict) else {}
     for entry in catalog_entries(spec):
         rel = str(entry.get("path") or "").replace("\\", "/")
         if not rel:
@@ -205,6 +204,54 @@ def _validate_spec_catalog(spec: dict[str, Any], errors: list[FactValidationErro
         schema = entry.get("schema")
         if schema and not (root / str(schema)).exists():
             errors.append(FactValidationError("SCHEMA_FILE_MISSING", rel, f"schema not found: {schema}"))
+        schema_paths = [schema, *((entry.get("section_schemas") or {}).values() if isinstance(entry.get("section_schemas"), dict) else [])]
+        for schema_rel in schema_paths:
+            if not schema_rel:
+                continue
+            schema_doc = _load_schema(root / str(schema_rel), errors, rel)
+            for kind in schema_doc.get("item_kind_enum") or []:
+                if kind not in entity_types:
+                    errors.append(FactValidationError("ENTITY_TYPE_MISSING", rel, f"{kind} is declared by {schema_rel} but missing from spec/entity_types.yaml"))
+    for kind, config in sorted(entity_types.items()):
+        if not isinstance(config, dict):
+            errors.append(FactValidationError("ENTITY_TYPE_INVALID", "spec/entity_types.yaml", f"{kind} must be a mapping"))
+            continue
+        prefix = str(config.get("prefix") or "")
+        strategy = str(config.get("identity_strategy") or "")
+        if prefix not in stable_prefixes:
+            errors.append(FactValidationError("ENTITY_TYPE_PREFIX_INVALID", "spec/entity_types.yaml", f"{kind} uses unknown prefix {prefix!r}"))
+        if strategy not in strategies:
+            errors.append(FactValidationError("ENTITY_TYPE_STRATEGY_INVALID", "spec/entity_types.yaml", f"{kind} uses unknown identity_strategy {strategy!r}"))
+        refs = config.get("reference_fields") if isinstance(config.get("reference_fields"), dict) else {}
+        for cardinality in ("single", "multiple"):
+            declared = refs.get(cardinality) if isinstance(refs.get(cardinality), dict) else {}
+            for field_name in declared:
+                suffix = "_ref" if cardinality == "single" else "_refs"
+                if not str(field_name).endswith(suffix):
+                    errors.append(FactValidationError("ENTITY_REFERENCE_FIELD_INVALID", "spec/entity_types.yaml", f"{kind}.{field_name} must end with {suffix}"))
+    _validate_relation_type_spec(spec, errors)
+
+
+def _validate_relation_type_spec(spec: dict[str, Any], errors: list[FactValidationError]) -> None:
+    relation_root = spec.get("relation_types") if isinstance(spec.get("relation_types"), dict) else {}
+    relation_types = relation_root.get("relation_types") if isinstance(relation_root.get("relation_types"), dict) else {}
+    if relation_root.get("version") != 2:
+        errors.append(FactValidationError("RELATION_TYPES_VERSION_INVALID", "spec/relation_types.yaml", "version must be 2 for endpoint_signatures"))
+    for name, config in sorted(relation_types.items()):
+        if not isinstance(config, dict):
+            errors.append(FactValidationError("RELATION_TYPE_INVALID", "spec/relation_types.yaml", f"{name} must be a mapping"))
+            continue
+        signatures = config.get("endpoint_signatures")
+        if signatures is not None:
+            if not isinstance(signatures, list) or not signatures:
+                errors.append(FactValidationError("RELATION_ENDPOINT_SIGNATURE_INVALID", "spec/relation_types.yaml", f"{name}.endpoint_signatures must be a non-empty list"))
+            else:
+                for index, signature in enumerate(signatures):
+                    if not isinstance(signature, dict) or not isinstance(signature.get("source"), str) or not isinstance(signature.get("target"), str):
+                        errors.append(FactValidationError("RELATION_ENDPOINT_SIGNATURE_INVALID", "spec/relation_types.yaml", f"{name}.endpoint_signatures[{index}] needs source/target"))
+        identity_fields = config.get("identity_fields")
+        if identity_fields is not None and (not isinstance(identity_fields, list) or not all(isinstance(item, str) and item for item in identity_fields)):
+            errors.append(FactValidationError("RELATION_IDENTITY_FIELDS_INVALID", "spec/relation_types.yaml", f"{name}.identity_fields must be a list of field names"))
 
 
 def _validate_forbidden_kb_dirs(uo_root: Path, errors: list[FactValidationError]) -> None:
@@ -526,9 +573,10 @@ def _validate_generic_fact_forbidden(rel: str, doc: dict[str, Any], errors: list
                 errors.append(FactValidationError("SCHEMA_GENERIC_FACT_FORBIDDEN", rel, f"/{section}/{index}/kind generic_fact is not allowed in core facts"))
 
 
-def _validate_identity_integrity(repo_root: Path, uo_root: Path, docs: dict[str, dict[str, Any]], errors: list[FactValidationError]) -> None:
+def _validate_identity_integrity(repo_root: Path, uo_root: Path, docs: dict[str, dict[str, Any]], relation_type_specs: dict[str, Any], errors: list[FactValidationError]) -> None:
     canonical_to_id: dict[str, str] = {}
     id_to_canonical: dict[str, str] = {}
+    known_item_ids: set[str] = set()
     for rel, doc in docs.items():
         for section, unit in _document_units(doc):
             unit_rel = f"{rel}#sections/{section}" if section else rel
@@ -543,6 +591,7 @@ def _validate_identity_integrity(repo_root: Path, uo_root: Path, docs: dict[str,
                 identity = item.get("identity") if isinstance(item.get("identity"), dict) else None
                 if not isinstance(item_id, str) or not isinstance(kind, str):
                     continue
+                known_item_ids.add(item_id)
                 if not isinstance(identity, dict):
                     errors.append(FactValidationError("IDENTITY_MISSING", unit_rel, f"/items/{index} missing identity"))
                     continue
@@ -579,24 +628,42 @@ def _validate_identity_integrity(repo_root: Path, uo_root: Path, docs: dict[str,
                 source_id = relation.get("source_id")
                 target_id = relation.get("target_id")
                 if all(isinstance(value, str) for value in (relation_id, relation_type, source_id, target_id)):
-                    expected = relation_stable_id(str(relation_type), str(source_id), str(target_id), relation.get("qualifier"))
+                    identity_material = _relation_identity_material(relation, relation_type_specs)
+                    expected = relation_stable_id(str(relation_type), str(source_id), str(target_id), identity_material)
                     if relation_id != expected and str(relation_id).startswith("REL_"):
-                        errors.append(FactValidationError("IDENTITY_STABLE_ID_MISMATCH", unit_rel, f"/relations/{index} relation id is not deterministic from type/source/target"))
+                        errors.append(FactValidationError("IDENTITY_STABLE_ID_MISMATCH", unit_rel, f"/relations/{index} relation id is not deterministic from type/source/target/identity_fields"))
+                    for key in _relation_identity_fields(str(relation_type), relation_type_specs):
+                        if relation.get(key) in (None, "", []):
+                            errors.append(FactValidationError("RELATION_IDENTITY_FIELD_MISSING", unit_rel, f"/relations/{index}/{key} is required by relation_types.yaml"))
     _validate_registry_cache(uo_root, errors)
 
 
+def _relation_identity_fields(relation_type: str, relation_type_specs: dict[str, Any]) -> list[str]:
+    config = relation_type_specs.get(relation_type) if isinstance(relation_type_specs, dict) else None
+    if isinstance(config, dict) and isinstance(config.get("identity_fields"), list):
+        return [str(item) for item in config["identity_fields"]]
+    return []
+
+
+def _relation_identity_material(relation: dict[str, Any], relation_type_specs: dict[str, Any]) -> dict[str, Any] | str:
+    keys = _relation_identity_fields(str(relation.get("type") or ""), relation_type_specs)
+    if keys:
+        return {key: relation.get(key) for key in keys}
+    return relation.get("qualifier")
+
+
 def _validate_candidate_reference_leak(rel: str, path: str, value: Any, errors: list[FactValidationError]) -> None:
-    def visit(node: Any, node_path: str) -> None:
+    def visit(node: Any, node_path: str, key: str = "") -> None:
         if isinstance(node, dict):
             if node.get("ref_type") in {"local", "entity", "symbol"}:
                 errors.append(FactValidationError("CANDIDATE_REFERENCE_LEAKED", rel, f"{node_path} contains unresolved candidate reference object"))
             for child_key, child in node.items():
                 if child_key == "local_id":
                     errors.append(FactValidationError("LOCAL_REFERENCE_LEAKED", rel, f"{node_path}.{child_key} leaked into formal facts"))
-                visit(child, f"{node_path}.{child_key}")
+                visit(child, f"{node_path}.{child_key}", str(child_key))
         elif isinstance(node, list):
             for index, child in enumerate(node):
-                visit(child, f"{node_path}[{index}]")
+                visit(child, f"{node_path}[{index}]", key)
 
     visit(value, path)
 
@@ -611,12 +678,15 @@ def _validate_registry_cache(uo_root: Path, errors: list[FactValidationError]) -
         errors.append(FactValidationError("REGISTRY_CACHE_STALE", "indexes/entity_registry.json", f"cache is not valid JSON: {exc}"))
         return
     rebuilt = build_fact_registry(uo_root).to_cache()
+    for conflict in rebuilt.get("conflicts") or []:
+        if isinstance(conflict, dict):
+            errors.append(FactValidationError("REGISTRY_CONFLICT", "indexes/entity_registry.json", json.dumps(conflict, sort_keys=True, ensure_ascii=False)))
     if cached != rebuilt:
         errors.append(FactValidationError("REGISTRY_CACHE_STALE", "indexes/entity_registry.json", "cached registry does not match registry rebuilt from Formal Facts"))
 
 
 def _validate_compute_execution_rules(rel: str, doc: dict[str, Any], errors: list[FactValidationError]) -> None:
-    if not rel.endswith("facts/compute/operations.yaml") and rel != "facts/compute/operations.yaml":
+    if rel != "facts/compute.yaml#sections/operations":
         return
     for index, item in enumerate(doc.get("items") or []):
         if not isinstance(item, dict):
@@ -854,24 +924,23 @@ def _validate_relation_endpoints(
         spec = relation_type_specs.get(rtype) if isinstance(relation_type_specs, dict) else None
         if not isinstance(spec, dict) or not isinstance(source_id, str) or not isinstance(target_id, str):
             continue
-        expected_source = str(spec.get("source") or "any")
-        expected_target = str(spec.get("target") or "any")
         actual_source = known_kinds.get(source_id)
         actual_target = known_kinds.get(target_id)
-        if actual_source and not _kind_matches(actual_source, expected_source):
+        signatures = spec.get("endpoint_signatures") if isinstance(spec.get("endpoint_signatures"), list) else []
+        if not signatures:
+            signatures = [{"source": str(spec.get("source") or "any"), "target": str(spec.get("target") or "any")}]
+        if actual_source and actual_target and not any(
+            isinstance(signature, dict)
+            and _kind_matches(actual_source, str(signature.get("source") or "any"))
+            and _kind_matches(actual_target, str(signature.get("target") or "any"))
+            for signature in signatures
+        ):
+            expected = " or ".join(f"{item.get('source', 'any')}->{item.get('target', 'any')}" for item in signatures if isinstance(item, dict))
             errors.append(
                 FactValidationError(
                     "RELATION_ENDPOINT_KIND_INVALID",
                     rel,
-                    f"/relations/{index}/source_id expects {expected_source}, got {actual_source} for {source_id}",
-                )
-            )
-        if actual_target and not _kind_matches(actual_target, expected_target):
-            errors.append(
-                FactValidationError(
-                    "RELATION_ENDPOINT_KIND_INVALID",
-                    rel,
-                    f"/relations/{index}/target_id expects {expected_target}, got {actual_target} for {target_id}",
+                    f"/relations/{index} type {rtype} expects endpoint signature {expected}, got {actual_source}->{actual_target}",
                 )
             )
 

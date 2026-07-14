@@ -26,9 +26,9 @@ Read these common prompts before planning:
 ## Inputs
 
 - `facts/operator/*.yaml`
-- `facts/host/*.yaml`
-- `facts/compute/*.yaml`
-- `facts/kernel/overview/*.yaml`
+- `facts/host.yaml`
+- `facts/compute.yaml`
+- `facts/kernel/overview.yaml`
 - `checks/step2/receipt.yaml`
 - Source code anchors referenced by the facts
 

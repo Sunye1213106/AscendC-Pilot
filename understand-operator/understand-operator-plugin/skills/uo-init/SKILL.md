@@ -152,9 +152,9 @@ uo-kernel-overview-agent
 They write only:
 
 ```text
-facts/host/**
-facts/compute/**
-facts/kernel/overview/**
+facts/host.yaml sections
+facts/compute.yaml sections
+facts/kernel/overview.yaml sections
 ```
 
 Run the three scoped validators:
@@ -183,8 +183,8 @@ Phase 3 starts only after Step 2 receipt is valid.
 
 1. `uo-kernel-slice-planner` writes `facts/kernel/slice_manifest.yaml` and
    `facts/kernel/slice_interfaces.yaml`.
-2. Parallel `uo-kernel-slice-agent` tasks write the fixed nine YAML files under
-   `facts/kernel/slices/<slice_id>/`.
+2. Parallel `uo-kernel-slice-agent` tasks write assigned slice partitions
+   `facts/kernel/slices/<slice_id>.yaml`.
 3. Run Step 3 validation and `uo-step3-fact-review-agent`.
 4. Seal Step 3:
 

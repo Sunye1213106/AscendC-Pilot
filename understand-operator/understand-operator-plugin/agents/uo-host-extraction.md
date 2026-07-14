@@ -24,14 +24,14 @@ and CBM metadata. Stay inside the approved Phase 0 scope.
 Write only:
 
 ```text
-facts/host/variables.yaml
-facts/host/expressions.yaml
-facts/host/control_flow.yaml
-facts/host/calls.yaml
-facts/host/tiling_key.yaml
-facts/host/tiling_key_enumeration.yaml
-facts/host/tiling_key_constraints.yaml
-facts/host/tilingdata_writes.yaml
+facts/host.yaml#variables
+facts/host.yaml#expressions
+facts/host.yaml#control_flow
+facts/host.yaml#calls
+facts/host.yaml#tiling_key
+facts/host.yaml#tiling_key_enumeration
+facts/host.yaml#tiling_key_constraints
+facts/host.yaml#tilingdata_writes
 ```
 
 Do not write proposals, canonical files, tiling archive files, route files,

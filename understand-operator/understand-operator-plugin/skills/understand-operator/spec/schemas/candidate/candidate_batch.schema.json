@@ -19,7 +19,7 @@
     },
     "target": {
       "type": "object",
-      "required": ["path", "section"],
+      "required": ["path"],
       "additionalProperties": false,
       "properties": {
         "path": {"type": "string", "pattern": "^facts/.+\\.yaml$"},
@@ -31,6 +31,15 @@
     "unresolved": {"type": "array", "items": {"$ref": "#/$defs/unresolved"}}
   },
   "$defs": {
+    "span": {
+      "type": "object",
+      "required": ["start_line", "end_line"],
+      "additionalProperties": false,
+      "properties": {
+        "start_line": {"type": "integer", "minimum": 1},
+        "end_line": {"type": "integer", "minimum": 1}
+      }
+    },
     "location": {
       "type": "object",
       "required": ["file", "symbol", "start_line", "end_line", "anchor_kind"],
@@ -49,19 +58,31 @@
           "type": "object",
           "required": ["ref_type", "local_id"],
           "additionalProperties": false,
-          "properties": {"ref_type": {"const": "local"}, "local_id": {"type": "string", "minLength": 1}}
+          "properties": {
+            "ref_type": {"const": "local"},
+            "local_id": {"type": "string", "minLength": 1}
+          }
         },
         {
           "type": "object",
           "required": ["ref_type", "kind", "identity"],
           "additionalProperties": false,
-          "properties": {"ref_type": {"const": "entity"}, "kind": {"type": "string", "minLength": 1}, "identity": {"type": "object"}}
+          "properties": {
+            "ref_type": {"const": "entity"},
+            "kind": {"type": "string", "minLength": 1},
+            "identity": {"type": "object"}
+          }
         },
         {
           "type": "object",
           "required": ["ref_type", "kind", "qualified_symbol"],
           "additionalProperties": false,
-          "properties": {"ref_type": {"const": "symbol"}, "kind": {"type": "string", "minLength": 1}, "qualified_symbol": {"type": "string", "minLength": 1}, "signature": {"type": "string"}}
+          "properties": {
+            "ref_type": {"const": "symbol"},
+            "kind": {"type": "string", "minLength": 1},
+            "qualified_symbol": {"type": "string", "minLength": 1},
+            "signature": {"type": "string"}
+          }
         }
       ]
     },

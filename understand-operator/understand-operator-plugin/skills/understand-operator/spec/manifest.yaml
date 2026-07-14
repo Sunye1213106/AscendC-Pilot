@@ -10,8 +10,10 @@ bundle_hash_inputs:
   - stage_contracts.yaml
   - stable_ids.yaml
   - relation_types.yaml
+  - entity_types.yaml
   - source_anchor_rules.yaml
   - schemas/**/*.yaml
+  - schemas/**/*.json
 notes:
   - This Skill spec is the single system contract for every operator KB.
   - Operator KBs record only source facts, checks, graphs, indexes, runs, and cbm metadata.

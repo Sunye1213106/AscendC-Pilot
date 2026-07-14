@@ -11,9 +11,9 @@ terminology/symbol index -> derived graph -> raw graph -> YAML facts -> source a
 | Type | Primary evidence |
 |---|---|
 | boundary | `facts/operator/**` through graph refs |
-| host | `facts/host/**` through graph refs |
-| compute | `facts/compute/**` through graph refs |
-| kernel_overview | `facts/kernel/overview/**` through graph refs |
+| host | `facts/host.yaml` sections through graph refs |
+| compute | `facts/compute.yaml` sections through graph refs |
+| kernel_overview | `facts/kernel/overview.yaml` sections through graph refs |
 | kernel_slice | `facts/kernel/slices/**` through graph refs |
 | lineage | `graphs/raw/paths.yaml` and fact relations |
 | source_evidence | source anchors embedded in YAML facts |

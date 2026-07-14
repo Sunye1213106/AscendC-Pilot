@@ -162,9 +162,6 @@ def init_operator_contract_layout(base: Path, op_name: str, repo_root: Path) -> 
     bundle_hash = spec_bundle_hash()
     for rel in [
         "facts/operator",
-        "facts/host",
-        "facts/compute",
-        "facts/kernel/overview",
         "facts/kernel/slices",
         "checks/step1",
         "checks/step2",
@@ -179,8 +176,6 @@ def init_operator_contract_layout(base: Path, op_name: str, repo_root: Path) -> 
         (base / rel).mkdir(parents=True, exist_ok=True)
 
     for keep in [
-        "facts/host/.gitkeep",
-        "facts/compute/.gitkeep",
         "facts/kernel/slices/.gitkeep",
         "graphs/raw/.gitkeep",
         "graphs/derived/.gitkeep",

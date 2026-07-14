@@ -31,24 +31,24 @@ Read these common prompts before extraction:
 
 - Assigned slice ID from `facts/kernel/slice_manifest.yaml`
 - `facts/operator/*.yaml`
-- `facts/host/*.yaml`
-- `facts/compute/*.yaml`
-- `facts/kernel/overview/*.yaml`
+- `facts/host.yaml`
+- `facts/compute.yaml`
+- `facts/kernel/overview.yaml`
 - Source files referenced by overview and slice planning facts
 
 ## Writes
 
-Only these nine files under `facts/kernel/slices/<slice_id>/`:
+Only the assigned partition file `facts/kernel/slices/<slice_id>.yaml`, with these nine sections:
 
-- `variables.yaml`
-- `expressions.yaml`
-- `branches.yaml`
-- `loops.yaml`
-- `tilingdata_reads.yaml`
-- `calls.yaml`
-- `dataflow.yaml`
-- `memory.yaml`
-- `synchronization.yaml`
+- `variables`
+- `expressions`
+- `branches`
+- `loops`
+- `tilingdata_reads`
+- `calls`
+- `dataflow`
+- `memory`
+- `synchronization`
 
 Owner must be `uo-kernel-slice-agent`.
 
@@ -73,7 +73,7 @@ producer/consumer, and entry-to-output closure.
 
 ## Parallel Safety
 
-Multiple slice agents may run in parallel because each writes a distinct `facts/kernel/slices/<slice_id>/` directory. Never write another slice directory.
+Multiple slice agents may run in parallel because each writes a distinct `facts/kernel/slices/<slice_id>.yaml` partition. Never write another slice partition.
 
 ## Validation
 

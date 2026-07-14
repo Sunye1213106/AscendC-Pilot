@@ -138,8 +138,8 @@ uo-flow-extraction
 uo-kernel-overview-agent
 ```
 
-They write only `facts/host/**`, `facts/compute/**`, and
-`facts/kernel/overview/**`. Run the three scoped validators, then
+They write only `facts/host.yaml`, `facts/compute.yaml`, and
+`facts/kernel/overview.yaml` sections. Run the three scoped validators, then
 `uo-step2-fact-review-agent`, then `write_step2_receipt.py`.
 
 ## Phase 3

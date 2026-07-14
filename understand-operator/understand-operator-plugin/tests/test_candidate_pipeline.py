@@ -14,7 +14,7 @@ from understand_operator.scripts.validate_candidate_batch import validate_candid
 
 
 def _ready_repo(tmp_path: Path) -> tuple[Path, Path]:
-    repo = tmp_path / "repo"; repo.mkdir(); (repo / "op_host").mkdir(); (repo / "op_host" / "demo.cpp").write_text("int x = 1;\nif (x) { return; }\nbool CheckBn2();\n", encoding="utf-8")
+    repo = tmp_path / "repo"; repo.mkdir(); (repo / "op_host").mkdir(); (repo / "op_host" / "demo.cpp").write_text("int x = 1;\nif (x) { return; }\nif (!x) { return; }\nbool CheckBn2();\n", encoding="utf-8")
     root = operator_root(repo, "DemoOp"); init_operator_contract_layout(root, "DemoOp", repo)
     manifest = yaml.safe_load((root / "manifest.yaml").read_text(encoding="utf-8")); manifest["current_run_id"] = "UO_RUN_TEST"; (root / "manifest.yaml").write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
     phase0 = root / "runs" / "UO_RUN_TEST" / "phase0"; phase0.mkdir(parents=True)
@@ -23,7 +23,7 @@ def _ready_repo(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def _batch() -> dict:
-    return {"version": 2, "task": {"run_id": "UO_RUN_TEST", "stage": "step2", "owner": "uo-host-extraction", "task_id": "HOST_X"}, "target": {"path": "facts/host.yaml", "section": "variables"}, "items": [{"local_id": "var_x", "kind": "runtime_variable", "name": "x", "identity": {"source_file": "op_host/demo.cpp", "scope_symbol": "demo", "source_name": "x", "declaration_span": {"start_line": 1, "end_line": 1}}, "fields": {"declared_type": "int", "scope_ref": "demo", "definition_kind": "definition", "value_source_ref": "literal", "domain": "integer", "affects": ["dispatch"]}, "source_locations": [{"file": "op_host/demo.cpp", "symbol": "demo", "start_line": 1, "end_line": 1, "anchor_kind": "definition"}]}], "relations": [], "unresolved": []}
+    return {"version": 2, "task": {"run_id": "UO_RUN_TEST", "stage": "step2", "owner": "uo-host-extraction", "task_id": "HOST_X"}, "target": {"path": "facts/host.yaml", "section": "variables"}, "items": [{"local_id": "var_x", "kind": "runtime_variable", "name": "x", "identity": {"source_file": "op_host/demo.cpp", "scope_symbol": "demo", "source_name": "x", "declaration_span": {"start_line": 1, "end_line": 1}}, "fields": {"declared_type": "int", "scope_symbol": "demo", "definition_kind": "definition", "value_source_text": "literal", "domain": "integer", "affects": ["dispatch"]}, "source_locations": [{"file": "op_host/demo.cpp", "symbol": "demo", "start_line": 1, "end_line": 1, "anchor_kind": "definition"}]}], "relations": [], "unresolved": []}
 
 
 def test_compiler_materializes_deterministic_fact_and_replaces_same_key(tmp_path: Path) -> None:
@@ -62,8 +62,8 @@ def test_identity_ignores_display_name_and_rejects_unknown_kind(tmp_path: Path) 
 def test_local_relation_resolves_and_does_not_leak_local_id(tmp_path: Path) -> None:
     repo, root = _ready_repo(tmp_path)
     batch = {"version": 2, "task": {"run_id": "UO_RUN_TEST", "stage": "step2", "owner": "uo-host-extraction", "task_id": "HOST_CF"}, "target": {"path": "facts/host.yaml", "section": "control_flow"}, "items": [
-        {"local_id": "branch_1", "kind": "if_branch", "name": "branch A", "identity": {"source_file": "op_host/demo.cpp", "scope_symbol": "demo", "predicate_span": {"start_line": 2, "end_line": 2}}, "fields": {"predicate_ref": {"ref_type": "local", "local_id": "branch_1"}, "outcome_refs": [], "scope_ref": "demo", "controlled_item_refs": [], "reachability": "reachable"}, "source_locations": [{"file": "op_host/demo.cpp", "symbol": "demo", "start_line": 2, "end_line": 2, "anchor_kind": "control_flow"}]},
-        {"local_id": "branch_2", "kind": "if_branch", "name": "branch B", "identity": {"source_file": "op_host/demo.cpp", "scope_symbol": "demo", "predicate_span": {"start_line": 2, "end_line": 2}}, "fields": {"predicate_ref": {"ref_type": "local", "local_id": "branch_1"}, "outcome_refs": [], "scope_ref": "demo", "controlled_item_refs": [], "reachability": "reachable"}, "source_locations": [{"file": "op_host/demo.cpp", "symbol": "demo", "start_line": 2, "end_line": 2, "anchor_kind": "control_flow"}]},
+        {"local_id": "branch_1", "kind": "if_branch", "name": "branch A", "identity": {"source_file": "op_host/demo.cpp", "scope_symbol": "demo", "predicate_span": {"start_line": 2, "end_line": 2}}, "fields": {"predicate_ref": {"ref_type": "local", "local_id": "branch_1"}, "outcome_refs": [], "scope_symbol": "demo", "controlled_item_refs": [], "reachability": "reachable"}, "source_locations": [{"file": "op_host/demo.cpp", "symbol": "demo", "start_line": 2, "end_line": 2, "anchor_kind": "control_flow"}]},
+        {"local_id": "branch_2", "kind": "if_branch", "name": "branch B", "identity": {"source_file": "op_host/demo.cpp", "scope_symbol": "demo", "predicate_span": {"start_line": 3, "end_line": 3}}, "fields": {"predicate_ref": {"ref_type": "local", "local_id": "branch_1"}, "outcome_refs": [], "scope_symbol": "demo", "controlled_item_refs": [], "reachability": "reachable"}, "source_locations": [{"file": "op_host/demo.cpp", "symbol": "demo", "start_line": 3, "end_line": 3, "anchor_kind": "control_flow"}]},
     ], "relations": [{"type": "requires", "source": {"ref_type": "local", "local_id": "branch_1"}, "target": {"ref_type": "local", "local_id": "branch_2"}, "fields": {}, "source_locations": [{"file": "op_host/demo.cpp", "symbol": "demo", "start_line": 2, "end_line": 2, "anchor_kind": "control_flow"}]}], "unresolved": []}
     assert compile_candidate_facts(repo, "DemoOp", batch) == []
     unit = yaml.safe_load((root / "facts" / "host.yaml").read_text(encoding="utf-8"))["sections"]["control_flow"]

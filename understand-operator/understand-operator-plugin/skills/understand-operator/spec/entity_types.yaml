@@ -1,0 +1,436 @@
+version: 1
+identity_version: 1
+strategy_aliases:
+  scoped_declaration:
+    required_identity_fields: [source_file, scope_symbol, source_name, declaration_span]
+  qualified_symbol_signature:
+    required_identity_fields: [qualified_symbol, signature]
+  scoped_callsite:
+    required_identity_fields: [source_file, scope_symbol, callee_symbol, call_span]
+  scoped_predicate:
+    required_identity_fields: [source_file, scope_symbol, predicate_span]
+  branch_outcome:
+    required_identity_fields: [parent_branch_canonical_key, outcome]
+  scoped_loop:
+    required_identity_fields: [source_file, scope_symbol, loop_header_span]
+  repo_path:
+    required_identity_fields: [path]
+  qualified_struct:
+    required_identity_fields: [qualified_struct_name]
+  struct_field:
+    required_identity_fields: [qualified_struct_name, field_name]
+  scoped_field_write:
+    required_identity_fields: [source_file, scope_symbol, struct_name, field_name, write_span]
+  scoped_field_read:
+    required_identity_fields: [source_file, scope_symbol, struct_name, field_name, read_span]
+  operator_io:
+    required_identity_fields: [operator_name, direction, index]
+  kernel_entry:
+    required_identity_fields: [qualified_entry_symbol, signature]
+  kernel_slice_signature:
+    required_identity_fields: [kernel_entry_ref, template_binding_signature, structural_flow_signature, output_signature]
+  slice_interface:
+    required_identity_fields: [source_slice_ref, target_slice_ref, interface_kind, position]
+  compute_operation:
+    required_identity_fields: [compute_scope, operation_type, output_identity, source_span]
+  endpoint_relation_entity:
+    required_identity_fields: [source_ref, target_ref]
+  scoped_policy:
+    required_identity_fields: [source_file, scope_symbol, policy_kind, source_span]
+  scoped_resource:
+    required_identity_fields: [source_file, scope_symbol, source_name, declaration_span, resource_kind]
+  scoped_event:
+    required_identity_fields: [source_file, scope_symbol, event_kind, event_identifier, source_span]
+  source_span:
+    required_identity_fields: [source_file, scope_symbol, source_span]
+  qualified_symbol:
+    required_identity_fields: [qualified_symbol]
+kind_groups:
+  function_like: [function, host_function, kernel_function, kernel_method, helper_function]
+  call_like: [callsite, host_call, kernel_call, macro_call, template_call, tiling_call, tiling_key_setter_call, ascendc_api_call, datacopy_call, compute_api_call, queue_call]
+  branch_like: [branch, if_branch, switch_branch, ternary_branch, early_return, kernel_branch]
+  expression_like: [expression, host_expression, kernel_expression, predicate_expression, value_expression, shape_expression, offset_expression, length_expression, tail_expression, loop_bound_expression]
+  tensor_like: [tensor, input_tensor, output_tensor, intermediate_tensor, alias_tensor, view_tensor]
+  resource_like: [buffer, memory_resource, global_resource, global_tensor_resource, local_tensor_resource, queue_resource, buffer_resource, workspace_resource]
+entity_types:
+  operator:
+    prefix: OP
+    identity_strategy: qualified_symbol
+    required_identity_fields: [qualified_symbol]
+    reference_fields: {single: {}, multiple: {}}
+  runtime_variable: &var
+    prefix: VAR
+    identity_strategy: scoped_declaration
+    required_identity_fields: [source_file, scope_symbol, source_name, declaration_span]
+    reference_fields:
+      single: {scope_ref: [function_like], value_source_ref: [expression_like, call_like, runtime_variable]}
+      multiple: {affects_refs: [branch_like, expression_like, call_like]}
+  compile_time_variable: *var
+  template_parameter: *var
+  template_variable: *var
+  kernel_variable: *var
+  kernel_parameter: *var
+  tilingdata_variable: *var
+  loop_variable: *var
+  buffer_variable: *var
+  feature_flag: *var
+  input_derived_variable: *var
+  attribute_derived_variable: *var
+  shape_variable: *var
+  numeric_tiling_variable: *var
+  function: &function
+    prefix: SYM
+    identity_strategy: qualified_symbol_signature
+    required_identity_fields: [qualified_symbol, signature]
+    reference_fields: {single: {}, multiple: {}}
+  host_function: *function
+  kernel_function: *function
+  kernel_method: *function
+  helper_function: *function
+  host_call: &call
+    prefix: CALL
+    identity_strategy: scoped_callsite
+    required_identity_fields: [source_file, scope_symbol, callee_symbol, call_span]
+    reference_fields:
+      single: {caller_ref: [function_like], callee_ref: [function_like], return_ref: [any], compute_operation_ref: [compute_operation]}
+      multiple: {argument_refs: [any], output_refs: [any], condition_refs: [expression_like], field_refs: [tiling_key_field, tilingdata_field], input_tensor_refs: [tensor_like], output_tensor_refs: [tensor_like], buffer_refs: [resource_like], sync_refs: [sync_event, synchronization_event]}
+  callsite: *call
+  kernel_call: *call
+  macro_call: *call
+  template_call: *call
+  tiling_call: *call
+  tiling_key_setter_call: *call
+  queue_call: *call
+  ascendc_api_call:
+    <<: *call
+    prefix: API
+  datacopy_call:
+    <<: *call
+    prefix: API
+  compute_api_call:
+    <<: *call
+    prefix: API
+  if_branch: &branch
+    prefix: BRANCH
+    identity_strategy: scoped_predicate
+    required_identity_fields: [source_file, scope_symbol, predicate_span]
+    reference_fields:
+      single: {predicate_ref: [expression_like, runtime_variable], scope_ref: [function_like]}
+      multiple: {outcome_refs: [branch_outcome], controlled_item_refs: [any], controlling_variable_refs: [runtime_variable]}
+  branch: *branch
+  switch_branch: *branch
+  ternary_branch: *branch
+  early_return: *branch
+  kernel_branch: *branch
+  branch_outcome:
+    prefix: OUTCOME
+    identity_strategy: branch_outcome
+    required_identity_fields: [parent_branch_canonical_key, outcome]
+    reference_fields:
+      single: {parent_branch_ref: [branch_like]}
+      multiple: {controlled_item_refs: [any]}
+  kernel_loop:
+    prefix: LOOP
+    identity_strategy: scoped_loop
+    required_identity_fields: [source_file, scope_symbol, loop_header_span]
+    reference_fields:
+      single: {loop_variable_ref: [runtime_variable, loop_variable], init_expression_ref: [expression_like], condition_expression_ref: [expression_like], step_expression_ref: [expression_like]}
+      multiple: {body_refs: [any]}
+  loop:
+    prefix: LOOP
+    identity_strategy: scoped_loop
+    required_identity_fields: [source_file, scope_symbol, loop_header_span]
+    reference_fields: {single: {}, multiple: {}}
+  tilingdata_struct:
+    prefix: TDATA
+    identity_strategy: qualified_struct
+    required_identity_fields: [qualified_struct_name]
+    reference_fields: {single: {}, multiple: {}}
+  tilingdata_field:
+    prefix: TDATA
+    identity_strategy: struct_field
+    required_identity_fields: [qualified_struct_name, field_name]
+    reference_fields: {single: {}, multiple: {}}
+  tilingdata_write:
+    prefix: TDWRITE
+    identity_strategy: scoped_field_write
+    required_identity_fields: [source_file, scope_symbol, struct_name, field_name, write_span]
+    reference_fields:
+      single: {write_site_ref: [call_like, function_like], value_expression_ref: [expression_like], condition_ref: [expression_like], field_ref: [tilingdata_field]}
+      multiple: {source_variable_refs: [runtime_variable]}
+  block_dim_write:
+    prefix: TDWRITE
+    identity_strategy: scoped_field_write
+    required_identity_fields: [source_file, scope_symbol, struct_name, field_name, write_span]
+    reference_fields: {single: {field_ref: [tilingdata_field]}, multiple: {}}
+  workspace_write:
+    prefix: TDWRITE
+    identity_strategy: scoped_field_write
+    required_identity_fields: [source_file, scope_symbol, struct_name, field_name, write_span]
+    reference_fields: {single: {field_ref: [tilingdata_field]}, multiple: {}}
+  tilingdata_read:
+    prefix: TDREAD
+    identity_strategy: scoped_field_read
+    required_identity_fields: [source_file, scope_symbol, struct_name, field_name, read_span]
+    reference_fields:
+      single: {read_site_ref: [call_like, function_like], target_variable_ref: [runtime_variable], read_condition_ref: [expression_like], host_write_candidate_ref: [tilingdata_write], field_ref: [tilingdata_field]}
+      multiple: {}
+  input_tensor: &operator_io
+    prefix: ARG
+    identity_strategy: operator_io
+    required_identity_fields: [operator_name, direction, index]
+    reference_fields:
+      single: {producer_ref: [any], dtype_source_ref: [any], layout_source_ref: [any], alias_or_view_ref: [tensor_like], source_tensor_ref: [tensor_like], in_place_group_ref: [any]}
+      multiple: {consumer_refs: [any], shape_refs: [any], shape_expression_refs: [expression_like]}
+  output_tensor: *operator_io
+  optional_input: *operator_io
+  optional_output: *operator_io
+  intermediate_tensor:
+    <<: *operator_io
+    prefix: TENSOR
+  alias_tensor:
+    <<: *operator_io
+    prefix: TENSOR
+  view_tensor:
+    <<: *operator_io
+    prefix: TENSOR
+  kernel_entry: &kernel_entry
+    prefix: KERNEL
+    identity_strategy: kernel_entry
+    required_identity_fields: [qualified_entry_symbol, signature]
+    reference_fields:
+      single: {source_anchor_ref: [any]}
+      multiple: {called_by_refs: [call_like], call_refs: [call_like]}
+  kernel_global_entry: *kernel_entry
+  kernel_class_entry: *kernel_entry
+  kernel_template_instance: *kernel_entry
+  kernel_launch_site: *kernel_entry
+  tiling_key_setter: *kernel_entry
+  kernel_slice:
+    prefix: KERNEL
+    identity_strategy: kernel_slice_signature
+    required_identity_fields: [kernel_entry_ref, template_binding_signature, structural_flow_signature, output_signature]
+    reference_fields:
+      single: {kernel_entry_ref: [kernel_entry, kernel_global_entry, kernel_class_entry]}
+      multiple: {output_tensor_refs: [tensor_like], output_write_refs: [any]}
+  slice_interface:
+    prefix: KERNEL
+    identity_strategy: slice_interface
+    required_identity_fields: [source_slice_ref, target_slice_ref, interface_kind, position]
+    reference_fields:
+      single: {source_slice_ref: [kernel_slice], target_slice_ref: [kernel_slice]}
+      multiple: {exported_refs: [any], imported_refs: [any]}
+  compute_operation: &compute_operation
+    prefix: OPR
+    identity_strategy: compute_operation
+    required_identity_fields: [compute_scope, operation_type, output_identity, source_span]
+    reference_fields:
+      single: {}
+      multiple: {input_tensor_refs: [tensor_like], output_tensor_refs: [tensor_like], implementation_refs: [call_like], kernel_api_refs: [call_like], golden_refs: [any]}
+  data_movement_operation: *compute_operation
+  shape_operation: *compute_operation
+  layout_operation: *compute_operation
+  cast_operation: *compute_operation
+  control_operation: *compute_operation
+  dataflow_edge: &endpoint_relation
+    prefix: OPR
+    identity_strategy: endpoint_relation_entity
+    required_identity_fields: [source_ref, target_ref]
+    reference_fields:
+      single: {producer_ref: [any], consumer_ref: [any], input_tensor_ref: [tensor_like], output_tensor_ref: [tensor_like], condition_ref: [expression_like]}
+      multiple: {input_refs: [any], output_refs: [any]}
+  tensor_dependency: *endpoint_relation
+  operation_order: *endpoint_relation
+  takes_tensor: *endpoint_relation
+  produces_tensor: *endpoint_relation
+  data_depends_on: *endpoint_relation
+  shape_depends_on: *endpoint_relation
+  dtype_depends_on: *endpoint_relation
+  layout_depends_on: *endpoint_relation
+  alias_depends_on: *endpoint_relation
+  kernel_dataflow_edge: *endpoint_relation
+  datacopy_flow: *endpoint_relation
+  api_flow: *endpoint_relation
+  output_flow: *endpoint_relation
+  cross_slice_dataflow: *endpoint_relation
+  memory_resource: &resource
+    prefix: BUF
+    identity_strategy: scoped_resource
+    required_identity_fields: [source_file, scope_symbol, source_name, declaration_span, resource_kind]
+    reference_fields:
+      single: {allocation_site_ref: [any], lifetime_start_ref: [any], lifetime_end_ref: [any]}
+      multiple: {producer_refs: [any], consumer_refs: [any], reuse_refs: [any], queue_operation_refs: [call_like]}
+  buffer: *resource
+  global_resource: *resource
+  global_tensor_resource: *resource
+  local_tensor_resource: *resource
+  queue_resource: *resource
+  buffer_resource: *resource
+  workspace_resource: *resource
+  sync_event: &sync
+    prefix: SYNC
+    identity_strategy: scoped_event
+    required_identity_fields: [source_file, scope_symbol, event_kind, event_identifier, source_span]
+    reference_fields:
+      single: {}
+      multiple: {signal_call_refs: [call_like], wait_call_refs: [call_like], before_refs: [any], after_refs: [any]}
+  synchronization_event: *sync
+  setflag_event: *sync
+  waitflag_event: *sync
+  pipebarrier_event: *sync
+  syncall_event: *sync
+  host_expression: &expression
+    prefix: EXPR
+    identity_strategy: source_span
+    required_identity_fields: [source_file, scope_symbol, source_span]
+    reference_fields:
+      single: {scope_ref: [function_like], value_source_ref: [any]}
+      multiple: {operand_refs: [any], depends_on_refs: [any]}
+  expression: *expression
+  kernel_expression: *expression
+  predicate_expression: *expression
+  value_expression: *expression
+  shape_expression: *expression
+  offset_expression: *expression
+  length_expression: *expression
+  tail_expression: *expression
+  loop_bound_expression: *expression
+  tiling_key_field: &key
+    prefix: KEY
+    identity_strategy: source_span
+    required_identity_fields: [source_file, scope_symbol, source_span]
+    reference_fields:
+      single: {source_ref: [any]}
+      multiple: {constraint_refs: [any]}
+  tiling_key_encoding: *key
+  value_constraint: *key
+  range_constraint: *key
+  requires_constraint: *key
+  implies_constraint: *key
+  mutex_constraint: *key
+  pruning_rule: *key
+  merging_rule: *key
+  unreachable_combination: *key
+  input_realization: *key
+  tiling_key_enumeration: &keyblock
+    prefix: KEYBLOCK
+    identity_strategy: source_span
+    required_identity_fields: [source_file, scope_symbol, source_span]
+    reference_fields:
+      single: {}
+      multiple: {field_refs: [tiling_key_field], value_refs: [any]}
+  tiling_key_enumeration_block: *keyblock
+  numerical_policy: &policy
+    prefix: OPR
+    identity_strategy: source_span
+    required_identity_fields: [source_file, scope_symbol, source_span]
+    reference_fields:
+      single: {operation_ref: [compute_operation]}
+      multiple: {input_refs: [any], output_refs: [any], api_refs: [call_like]}
+  tolerance_policy: *policy
+  stability_policy: *policy
+  numeric_sensitive_operation: *policy
+  accumulation_policy: *policy
+  cast_policy: *policy
+  golden_kernel_diff: *policy
+  registration_entry: &entry_symbol
+    prefix: SYM
+    identity_strategy: qualified_symbol
+    required_identity_fields: [qualified_symbol]
+    reference_fields:
+      single: {source_file_ref: [source_file]}
+      multiple: {}
+  api_definition: *entry_symbol
+  proto_definition: *entry_symbol
+  host_entry: *entry_symbol
+  tiling_entry: *entry_symbol
+  golden_entry: *entry_symbol
+  unresolved_entry: *entry_symbol
+  source_file: &repo_file
+    prefix: SYM
+    identity_strategy: repo_path
+    required_identity_fields: [path]
+    reference_fields:
+      single: {}
+      multiple: {include_refs: [source_file], dependency_refs: [source_file]}
+  dependency_file: *repo_file
+  external_system_file: *repo_file
+  third_party_file: *repo_file
+  generated_file: *repo_file
+  excluded_file: *repo_file
+  uncertain_file: *repo_file
+  architecture_variant: *repo_file
+  include_rule: *repo_file
+  exclude_rule: *repo_file
+  branch_skip: *repo_file
+  source_hint: *repo_file
+  attribute: &operator_attr
+    prefix: ATTR
+    identity_strategy: source_span
+    required_identity_fields: [source_file, scope_symbol, source_span]
+    reference_fields:
+      single: {operator_ref: [operator]}
+      multiple: {constraint_refs: [interface_constraint], shape_refs: [shape_symbol]}
+  operator_attribute: *operator_attr
+  dtype_domain: *operator_attr
+  layout_domain: *operator_attr
+  interface_constraint: *operator_attr
+  format_conversion: *operator_attr
+  rank: &shape
+    prefix: SHAPE
+    identity_strategy: source_span
+    required_identity_fields: [source_file, scope_symbol, source_span]
+    reference_fields:
+      single: {source_ref: [any]}
+      multiple: {dimension_refs: [shape_symbol], constraint_refs: [interface_constraint]}
+  shape_symbol: *shape
+  kernel_call_edge:
+    <<: *endpoint_relation
+    prefix: CALL
+  frontier_site: *branch
+  branch_site: *branch
+  loop_site:
+    prefix: LOOP
+    identity_strategy: scoped_loop
+    required_identity_fields: [source_file, scope_symbol, loop_header_span]
+    reference_fields: {single: {}, multiple: {}}
+  api_site: *branch
+  memory_site: *branch
+  sync_site: *branch
+  output_site: *branch
+  tilingdata_read_site: *branch
+  cross_slice_call: *call
+  abstraction_rule_record: &record
+    prefix: ARULE
+    identity_strategy: source_span
+    required_identity_fields: [source_file, scope_symbol, source_span]
+    reference_fields:
+      single: {}
+      multiple: {input_refs: [any], output_refs: [any]}
+  derived_node_record:
+    <<: *record
+    prefix: DVIEW
+  derived_edge_record:
+    <<: *record
+    prefix: DVIEW
+  derived_index_record:
+    <<: *record
+    prefix: DVIEW
+  derived_expansion_record:
+    <<: *record
+    prefix: DVIEW
+  raw_node_record:
+    <<: *record
+    prefix: SYM
+  raw_edge_record:
+    <<: *record
+    prefix: SYM
+  raw_index_record:
+    <<: *record
+    prefix: SYM
+  raw_manifest_record:
+    <<: *record
+    prefix: SYM
+  raw_path_record:
+    <<: *record
+    prefix: SYM

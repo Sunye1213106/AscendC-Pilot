@@ -1,11 +1,29 @@
-version: 1
+version: 2
 relation_types:
-  reads: {source: any, target: any}
-  writes: {source: any, target: any}
-  assigned_from: {source: variable, target: expression}
-  derived_from: {source: variable, target: variable}
-  passed_to: {source: variable, target: call}
-  calls: {source: symbol, target: symbol}
+  reads:
+    source: any
+    target: any
+    endpoint_signatures:
+      - {source: symbol, target: variable}
+      - {source: symbol, target: tilingdata}
+      - {source: call, target: tensor}
+      - {source: operation, target: tensor}
+      - {source: any, target: memory_resource}
+    identity_fields: [access_path]
+  writes:
+    source: any
+    target: any
+    endpoint_signatures:
+      - {source: symbol, target: variable}
+      - {source: symbol, target: tilingdata}
+      - {source: call, target: tensor}
+      - {source: operation, target: tensor}
+      - {source: any, target: memory_resource}
+    identity_fields: [access_path]
+  assigned_from: {source: variable, target: expression, endpoint_signatures: [{source: variable, target: expression}]}
+  derived_from: {source: variable, target: variable, endpoint_signatures: [{source: variable, target: variable}]}
+  passed_to: {source: variable, target: call, endpoint_signatures: [{source: variable, target: call}]}
+  calls: {source: symbol, target: symbol, endpoint_signatures: [{source: symbol, target: symbol}], identity_fields: [call_path]}
   controls: {source: expression, target: branch}
   has_outcome: {source: branch, target: outcome}
   loops_over: {source: loop, target: expression}

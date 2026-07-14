@@ -41,13 +41,14 @@ def load_spec(root: Path | None = None) -> dict[str, Any]:
         "stage_contracts": read_yaml(spec / "stage_contracts.yaml"),
         "stable_ids": read_yaml(spec / "stable_ids.yaml"),
         "relation_types": read_yaml(spec / "relation_types.yaml"),
+        "entity_types": read_yaml(spec / "entity_types.yaml"),
         "source_anchor_rules": read_yaml(spec / "source_anchor_rules.yaml"),
     }
 
 
 def spec_files(root: Path | None = None) -> list[Path]:
     spec = spec_root(root)
-    return sorted(path for path in spec.rglob("*.yaml") if path.is_file())
+    return sorted(path for path in spec.rglob("*") if path.is_file() and path.suffix in {".yaml", ".json"})
 
 
 def spec_bundle_hash(root: Path | None = None) -> str:
@@ -66,4 +67,3 @@ def catalog_entries(spec: dict[str, Any]) -> list[dict[str, Any]]:
     catalog = spec.get("file_catalog") or {}
     entries = catalog.get("files") if isinstance(catalog, dict) else []
     return [entry for entry in entries if isinstance(entry, dict)]
-
