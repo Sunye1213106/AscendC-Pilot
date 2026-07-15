@@ -47,14 +47,11 @@ def stable_id(prefix: str, semantic_key: str) -> str:
 
 
 def source_anchor(reader: SourceReader, location: dict[str, Any]) -> dict[str, Any]:
-    source = reader.read(str(location["file"]))
-    text = source.span(int(location["start_line"]), int(location["end_line"]))
-    material = "\0".join((str(location["file"]), str(location["start_line"]), str(location["end_line"]), str(location["symbol"]), str(location["anchor_kind"]), text))
+    material = "\0".join((str(location["file"]), str(location["symbol"]), str(location["start_line"]), str(location["end_line"]), str(location["anchor_kind"])))
     return {
         "id": stable_id("SRC", material), "file": str(location["file"]), "symbol": str(location["symbol"]),
         "span": {"start_line": location["start_line"], "end_line": location["end_line"]},
-        "source_text": text, "code_hash": "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest(),
-        "anchor_kind": location["anchor_kind"], "encoding": source.encoding, "file_hash": source.byte_hash,
+        "anchor_kind": location["anchor_kind"],
     }
 
 

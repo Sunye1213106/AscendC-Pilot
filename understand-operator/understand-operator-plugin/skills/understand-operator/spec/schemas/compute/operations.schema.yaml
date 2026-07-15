@@ -12,7 +12,7 @@ kind_required_fields:
   cast_operation: [semantic, input_tensor_refs, output_tensor_refs, execution]
   control_operation: [semantic, input_tensor_refs, output_tensor_refs, execution]
 execution_classification_enum: [cube, vector, scalar, data_movement, conditional, mixed, unknown]
-execution_path_required_fields: [id, engine, condition_refs, api_refs, architecture_variants, dtype_conditions, layout_conditions, shape_conditions, tiling_key_refs]
+execution_path_required_fields: [engine, condition_refs, api_refs, architecture_variants, dtype_conditions, layout_conditions, shape_conditions, tiling_key_refs]
 required_paths:
   - execution/classification
   - execution/paths
@@ -20,7 +20,7 @@ enum_paths:
   execution/classification: [cube, vector, scalar, data_movement, conditional, mixed, unknown]
 list_item_rules:
   execution/paths:
-    required_fields: [id, engine, condition_refs, api_refs, architecture_variants, dtype_conditions, layout_conditions, shape_conditions, tiling_key_refs]
+    required_fields: [engine, condition_refs, api_refs, architecture_variants, dtype_conditions, layout_conditions, shape_conditions, tiling_key_refs]
     enum_fields:
       engine: [cube, vector, scalar, data_movement, unknown]
 semantic_required_fields: [operation_type, formula]

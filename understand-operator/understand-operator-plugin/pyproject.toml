@@ -31,6 +31,9 @@ uo-build-compile-gate = "understand_operator.scripts.build_compile_gate:main"
 uo-source-graph-compile = "understand_operator.scripts.source_graph_compiler:main"
 uo-materialize-derived-graph = "understand_operator.scripts.materialize_derived_graph:main"
 uo-query-readonly = "understand_operator.scripts.uo_query_readonly:main"
+uo-validate-semantic-completeness = "understand_operator.scripts.validate_semantic_completeness:main"
+uo-prepare-graph-review = "understand_operator.scripts.prepare_graph_review:main"
+uo-validate-graph-review = "understand_operator.scripts.validate_graph_review:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

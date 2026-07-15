@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import hashlib
@@ -141,8 +141,8 @@ def _node_from_item(rel: str, pointer: str, item: dict[str, Any], *, kind: str |
         "kind": kind or item.get("kind") or "fact",
         "label": item.get("name") or item.get("id"),
         "detail_ref": f"{rel}#{pointer}",
-        "source_refs": _source_refs(item),
-        "fields": {key: value for key, value in item.items() if key not in {"sources"}},
+        "source_location_keys": _source_refs(item),
+        "search_fields": _search_fields(item),
     }
 
 
@@ -152,6 +152,57 @@ def _source_refs(item: dict[str, Any]) -> list[str]:
         if isinstance(source, dict) and source.get("id"):
             refs.append(str(source["id"]))
     return refs
+
+
+def _search_fields(item: dict[str, Any]) -> dict[str, Any]:
+    fields = item.get("fields") if isinstance(item.get("fields"), dict) else {}
+    result: dict[str, Any] = {}
+    for key in (
+        "name",
+        "symbol",
+        "path",
+        "file",
+        "field_name",
+        "field_ref",
+        "field_refs",
+        "struct_ref",
+        "operation_ref",
+        "operation_type",
+        "event_identifier",
+        "aliases",
+        "execution",
+        "compute_operation_ref",
+        "producer_refs",
+        "consumer_refs",
+        "queue_operation_refs",
+        "signal_call_refs",
+        "wait_call_refs",
+        "kernel_entry_ref",
+        "output_tensor_refs",
+        "output_write_refs",
+        "encoding_call_ref",
+    ):
+        if key in item and item.get(key) not in (None, "", []):
+            result[key] = item[key]
+        if key in fields and fields.get(key) not in (None, "", []):
+            result[key] = fields[key]
+    identity = item.get("identity") if isinstance(item.get("identity"), dict) else {}
+    normalized = identity.get("normalized") if isinstance(identity.get("normalized"), dict) else {}
+    for key in ("source_file", "path", "scope_symbol", "qualified_symbol", "source_name", "callee_symbol", "field_name"):
+        if key in normalized and normalized.get(key) not in (None, "", []):
+            result.setdefault(key, normalized[key])
+    return result
+
+
+def _node_fields(node: dict[str, Any]) -> dict[str, Any]:
+    return node.get("search_fields") if isinstance(node.get("search_fields"), dict) else {}
+
+
+def _node_source_refs(node: dict[str, Any]) -> list[str]:
+    values = node.get("source_location_keys")
+    if not isinstance(values, list):
+        values = node.get("source_refs")
+    return [str(value) for value in values or [] if value]
 
 
 def _index_node(
@@ -165,12 +216,12 @@ def _index_node(
     detail_ref = str(node["detail_ref"])
     yaml_to_graph.setdefault(detail_ref, []).append(str(node["id"]))
     graph_to_yaml[str(node["id"])] = detail_ref
-    for source_id in node.get("source_refs") or []:
+    for source_id in node.get("source_location_keys") or []:
         source_index.setdefault(source_id, []).append(str(node["id"]))
     label = str(node.get("label") or "")
     if label:
         symbol_index.setdefault(label, {"nodes": []})["nodes"].append(str(node["id"]))
-    fields = node.get("fields") if isinstance(node.get("fields"), dict) else {}
+    fields = _node_fields(node)
     for key in ("symbol", "path", "file", "field_ref", "struct_ref", "operation_ref", "buffer_ref", "event_identifier"):
         value = fields.get(key)
         if isinstance(value, str) and value:
@@ -249,7 +300,7 @@ def _tilingdata_write_read_edges(nodes: list[dict[str, Any]], formal_edges: list
                 edge = _synthetic_edge("tilingdata_write_to_read", write, read, "deterministic_tilingdata_field_ref")
                 edge["field_ref"] = field_id
                 edge["detail_refs"] = [write["detail_ref"], field["detail_ref"], read["detail_ref"]]
-                edge["source_refs"] = sorted(set((write.get("source_refs") or []) + (field.get("source_refs") or []) + (read.get("source_refs") or [])))
+                edge["source_refs"] = sorted(set(_node_source_refs(write) + _node_source_refs(field) + _node_source_refs(read)))
                 result.append(edge)
     return result
 
@@ -259,13 +310,13 @@ def _match_tiling_key_setters(nodes: list[dict[str, Any]]) -> list[dict[str, Any
     setters = [node for node in nodes if _normalize_kind(str(node.get("kind") or "")) == "call" and str(node.get("kind")) == "tiling_key_setter_call"]
     fields = [node for node in nodes if str(node.get("kind")) == "tiling_key_field"]
     for setter in setters:
-        sfields = setter.get("fields") if isinstance(setter.get("fields"), dict) else {}
+        sfields = _node_fields(setter)
         field_refs = set(_as_list(sfields.get("field_refs")))
         encoding_ref = str(sfields.get("encoding_ref") or "")
         if not field_refs or not encoding_ref:
             continue
         for target in fields:
-            tfields = target.get("fields") if isinstance(target.get("fields"), dict) else {}
+            tfields = _node_fields(target)
             target_refs = {str(target.get("id") or ""), str(tfields.get("field_ref") or "")}
             if not (field_refs & target_refs):
                 continue
@@ -280,7 +331,7 @@ def _compute_kernel_edges(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_id = {str(node.get("id")): node for node in nodes if node.get("id")}
     api_nodes = [node for node in nodes if str(node.get("kind")) in {"compute_api_call", "kernel_call"} or _normalize_kind(str(node.get("kind") or "")) == "api"]
     for op in [node for node in nodes if str(node.get("kind")) == "compute_operation"]:
-        ofields = op.get("fields") if isinstance(op.get("fields"), dict) else {}
+        ofields = _node_fields(op)
         execution = ofields.get("execution") if isinstance(ofields.get("execution"), dict) else {}
         api_refs: list[str] = []
         for path in execution.get("paths") or []:
@@ -291,7 +342,7 @@ def _compute_kernel_edges(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if target:
                 result.append(_synthetic_edge("compute_to_kernel", op, target, "deterministic_execution_api_refs"))
     for api in api_nodes:
-        fields = api.get("fields") if isinstance(api.get("fields"), dict) else {}
+        fields = _node_fields(api)
         op_ref = str(fields.get("compute_operation_ref") or "")
         source = by_id.get(op_ref)
         if source:
@@ -308,7 +359,7 @@ def _synthetic_edge(edge_type: str, source: dict[str, Any], target: dict[str, An
         "target_id": target["id"],
         "detail_ref": source["detail_ref"],
         "detail_refs": [source["detail_ref"], target["detail_ref"]],
-        "source_refs": sorted(set((source.get("source_refs") or []) + (target.get("source_refs") or []))),
+        "source_refs": sorted(set(_node_source_refs(source) + _node_source_refs(target))),
         "generated_by": generated_by,
     }
 
@@ -338,7 +389,7 @@ def _match_field(
                     "target_id": target["id"],
                     "detail_ref": source["detail_ref"],
                     "detail_refs": [source["detail_ref"], target["detail_ref"]],
-                    "source_refs": sorted(set((source.get("source_refs") or []) + (target.get("source_refs") or []))),
+                    "source_refs": sorted(set(_node_source_refs(source) + _node_source_refs(target))),
                     "generated_by": "deterministic_cross_layer_match",
                 }
             )
@@ -357,7 +408,7 @@ def _match_list_ref(
     target_by_id = {str(node.get("id")): node for node in nodes if str(node.get("kind")) == target_kind}
     seen: set[tuple[str, str]] = set()
     for source in source_nodes:
-        fields = source.get("fields") if isinstance(source.get("fields"), dict) else {}
+        fields = _node_fields(source)
         refs = fields.get(source_field)
         if isinstance(refs, str):
             ref_values = [refs]
@@ -379,7 +430,7 @@ def _match_list_ref(
                     "target_id": target["id"],
                     "detail_ref": source["detail_ref"],
                     "detail_refs": [source["detail_ref"], target["detail_ref"]],
-                    "source_refs": sorted(set((source.get("source_refs") or []) + (target.get("source_refs") or []))),
+                    "source_refs": sorted(set(_node_source_refs(source) + _node_source_refs(target))),
                     "generated_by": f"deterministic_{source_field}_match",
                 }
             )
@@ -392,7 +443,7 @@ def _buffer_edges(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for resource in nodes:
         if _normalize_kind(str(resource.get("kind") or "")) != "memory_resource":
             continue
-        fields = resource.get("fields") if isinstance(resource.get("fields"), dict) else {}
+        fields = _node_fields(resource)
         producers = _as_list(fields.get("producer_refs"))
         consumers = _as_list(fields.get("consumer_refs"))
         for producer_id in producers:
@@ -410,7 +461,7 @@ def _buffer_edges(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         "target_id": consumer_id,
                         "detail_ref": resource["detail_ref"],
                         "detail_refs": [producer["detail_ref"], resource["detail_ref"], consumer["detail_ref"]],
-                        "source_refs": sorted(set((producer.get("source_refs") or []) + (resource.get("source_refs") or []) + (consumer.get("source_refs") or []))),
+                        "source_refs": sorted(set(_node_source_refs(producer) + _node_source_refs(resource) + _node_source_refs(consumer))),
                         "buffer_resource_ref": resource["id"],
                         "queue_operation_refs": sorted(set(_as_list(fields.get("queue_operation_refs")))),
                         "generated_by": "deterministic_memory_resource_refs",
@@ -423,7 +474,7 @@ def _signal_wait_edges(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     by_id = {str(node.get("id")): node for node in nodes if node.get("id")}
     for event in nodes:
-        fields = event.get("fields") if isinstance(event.get("fields"), dict) else {}
+        fields = _node_fields(event)
         if not fields.get("event_identifier"):
             continue
         signals = _as_list(fields.get("signal_call_refs"))
@@ -439,7 +490,7 @@ def _signal_wait_edges(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 edge = _synthetic_edge("signal_to_wait", signal, wait, "deterministic_event_call_refs")
                 edge["event_identifier"] = fields.get("event_identifier")
                 edge["detail_refs"] = [signal["detail_ref"], event["detail_ref"], wait["detail_ref"]]
-                edge["source_refs"] = sorted(set((signal.get("source_refs") or []) + (event.get("source_refs") or []) + (wait.get("source_refs") or [])))
+                edge["source_refs"] = sorted(set(_node_source_refs(signal) + _node_source_refs(event) + _node_source_refs(wait)))
                 result.append(edge)
     return result
 
@@ -450,7 +501,7 @@ def _kernel_entry_output_edges(nodes: list[dict[str, Any]]) -> list[dict[str, An
     for interface in nodes:
         if str(interface.get("kind")) not in {"kernel_slice", "slice_interface", "kernel_entry"}:
             continue
-        fields = interface.get("fields") if isinstance(interface.get("fields"), dict) else {}
+        fields = _node_fields(interface)
         entry_ref = str(fields.get("kernel_entry_ref") or interface.get("id") or "")
         entry = by_id.get(entry_ref)
         if not entry:
@@ -468,7 +519,7 @@ def _kernel_entry_output_edges(nodes: list[dict[str, Any]]) -> list[dict[str, An
                     "target_id": output_id,
                     "detail_ref": interface["detail_ref"],
                     "detail_refs": [entry["detail_ref"], interface["detail_ref"], target["detail_ref"]],
-                    "source_refs": sorted(set((entry.get("source_refs") or []) + (interface.get("source_refs") or []) + (target.get("source_refs") or []))),
+                    "source_refs": sorted(set(_node_source_refs(entry) + _node_source_refs(interface) + _node_source_refs(target))),
                     "generated_by": "deterministic_kernel_interface_refs",
                 }
             )
@@ -476,8 +527,8 @@ def _kernel_entry_output_edges(nodes: list[dict[str, Any]]) -> list[dict[str, An
 
 
 def _stable_match(source: dict[str, Any], target: dict[str, Any], fields: tuple[str, ...]) -> bool:
-    sfields = source.get("fields") if isinstance(source.get("fields"), dict) else {}
-    tfields = target.get("fields") if isinstance(target.get("fields"), dict) else {}
+    sfields = _node_fields(source)
+    tfields = _node_fields(target)
     for field in fields:
         sval = sfields.get(field)
         tval = tfields.get(field)
@@ -554,7 +605,7 @@ def _cross_layer_reference_errors(nodes: list[dict[str, Any]]) -> list[str]:
     compute_ids = {str(node.get("id")) for node in nodes if str(node.get("kind")) == "compute_operation"}
     api_ids = {str(node.get("id")) for node in nodes if str(node.get("kind")) in {"compute_api_call", "kernel_call"} or _normalize_kind(str(node.get("kind") or "")) == "api"}
     for op in [node for node in nodes if str(node.get("kind")) == "compute_operation"]:
-        fields = op.get("fields") if isinstance(op.get("fields"), dict) else {}
+        fields = _node_fields(op)
         execution = fields.get("execution") if isinstance(fields.get("execution"), dict) else {}
         for path_index, path in enumerate(execution.get("paths") or []):
             if not isinstance(path, dict):
@@ -566,12 +617,12 @@ def _cross_layer_reference_errors(nodes: list[dict[str, Any]]) -> list[str]:
                 elif str(target.get("id")) not in api_ids:
                     errors.append(f"CROSS_LAYER_REFERENCE_CONFLICT: {op.get('id')} api_refs target is not a kernel/API call: {api_ref}")
     for api in [node for node in nodes if str(node.get("id")) in api_ids]:
-        fields = api.get("fields") if isinstance(api.get("fields"), dict) else {}
+        fields = _node_fields(api)
         op_ref = fields.get("compute_operation_ref")
         if op_ref and str(op_ref) not in compute_ids:
             errors.append(f"CROSS_LAYER_REFERENCE_MISSING: {api.get('id')} compute_operation_ref -> {op_ref}")
     for event in nodes:
-        fields = event.get("fields") if isinstance(event.get("fields"), dict) else {}
+        fields = _node_fields(event)
         if not fields.get("event_identifier"):
             continue
         for key in ("signal_call_refs", "wait_call_refs"):
@@ -629,7 +680,7 @@ def _execution_engine_paths(nodes: list[dict[str, Any]], offset: int) -> list[di
     for node in nodes:
         if str(node.get("kind")) != "compute_operation":
             continue
-        fields = node.get("fields") if isinstance(node.get("fields"), dict) else {}
+        fields = _node_fields(node)
         execution = fields.get("execution") if isinstance(fields.get("execution"), dict) else {}
         raw_paths = [path for path in execution.get("paths") or [] if isinstance(path, dict)]
         signatures = {(str(path.get("engine") or ""), tuple(_as_list(path.get("condition_refs")))) for path in raw_paths}
@@ -678,7 +729,7 @@ def _terminology(nodes: list[dict[str, Any]]) -> dict[str, dict[str, list[str]]]
     terms: dict[str, dict[str, list[str]]] = {}
     for node in nodes:
         node_id = str(node.get("id") or "")
-        fields = node.get("fields") if isinstance(node.get("fields"), dict) else {}
+        fields = _node_fields(node)
         candidates = [node_id, str(node.get("label") or ""), str(node.get("kind") or "")]
         for key in ("name", "symbol", "path", "file", "field_ref", "struct_ref", "operation_ref", "buffer_ref", "event_identifier"):
             value = fields.get(key)
@@ -837,3 +888,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

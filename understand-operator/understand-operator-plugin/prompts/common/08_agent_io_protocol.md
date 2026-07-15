@@ -18,6 +18,11 @@ Candidate items use only `local_id`, `kind`, display `name`, structured
 `type`, structured `source`/`target` reference objects, semantic `fields`, and
 `source_locations`.
 
+`local_id` is batch-local only. It may reference only `items[]` in the current
+Candidate JSON batch and expires immediately after compilation. Later batches
+must reference compiled facts with `ref_type: entity` or `ref_type: symbol`, not
+with an older `local_id`.
+
 Do not generate `fact_key`, `relation_key`, `source_fact_key`,
 `target_fact_key`, formal stable IDs, relation IDs, source IDs, `source_text`,
 or hashes. Do not put guessed IDs in `*_ref` fields. Use local/entity/symbol

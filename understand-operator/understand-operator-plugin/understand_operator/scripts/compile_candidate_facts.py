@@ -24,6 +24,7 @@ from understand_operator._operator.candidate import CandidateError, load_json, s
 from understand_operator._operator.fact_linker import LinkResult, resolve_entity_ref, resolve_reference_fields, resolve_structured_identity
 from understand_operator._operator.fact_registry import build_fact_registry
 from understand_operator._operator.identity import relation_stable_id
+from understand_operator._operator.run_context import assert_candidate_run_current, source_root_for_operator
 from understand_operator._operator.source_reader import SourceReader
 from understand_operator._operator.spec import load_spec
 from understand_operator.scripts.prepare_fact_file import prepare_fact_file
@@ -39,7 +40,11 @@ def compile_candidate_facts(repo_root: Path, op_name: str, batch: Any) -> list[C
     repo_root = repo_root.resolve()
     uo_root = existing_operator_root(repo_root, op_name)
     target, section = _target_parts(batch["target"])
-    reader = SourceReader(repo_root)
+    task = batch.get("task") if isinstance(batch.get("task"), dict) else {}
+    run_check = assert_candidate_run_current(uo_root, str(task.get("run_id") or ""))
+    if not run_check.ok:
+        return [CandidateError("CANDIDATE_RUN_ID_MISMATCH", run_check.message, target=target, field="task.run_id")]
+    reader = SourceReader(source_root_for_operator(repo_root, uo_root, run_check.current_run_id))
     registry = build_fact_registry(uo_root)
     spec = load_spec()
     entity_spec = spec.get("entity_types") if isinstance(spec.get("entity_types"), dict) else {}
@@ -61,7 +66,7 @@ def compile_candidate_facts(repo_root: Path, op_name: str, batch: Any) -> list[C
                 local_symbols=local_symbols,
                 local_kinds=local_kinds,
                 registry=registry,
-                repo_root=repo_root,
+                repo_root=reader.repo_root,
                 entity_spec=entity_spec,
                 require_registered=False,
             )
@@ -115,7 +120,7 @@ def compile_candidate_facts(repo_root: Path, op_name: str, batch: Any) -> list[C
             local_symbols=local_symbols,
             local_kinds=local_kinds,
             registry=registry,
-            repo_root=repo_root,
+            repo_root=reader.repo_root,
             kind=str(item.get("kind") or ""),
             entity_spec=entity_spec,
             path=f"items[{index}]",
@@ -126,8 +131,8 @@ def compile_candidate_facts(repo_root: Path, op_name: str, batch: Any) -> list[C
 
     materialized_relations: list[dict[str, Any]] = []
     for index, relation in enumerate(batch["relations"]):
-        source = resolve_entity_ref(relation["source"], local_symbols=local_symbols, local_kinds=local_kinds, registry=registry, repo_root=repo_root, entity_spec=entity_spec)
-        target_ref = resolve_entity_ref(relation["target"], local_symbols=local_symbols, local_kinds=local_kinds, registry=registry, repo_root=repo_root, entity_spec=entity_spec)
+        source = resolve_entity_ref(relation["source"], local_symbols=local_symbols, local_kinds=local_kinds, registry=registry, repo_root=reader.repo_root, entity_spec=entity_spec)
+        target_ref = resolve_entity_ref(relation["target"], local_symbols=local_symbols, local_kinds=local_kinds, registry=registry, repo_root=reader.repo_root, entity_spec=entity_spec)
         if source.status != "resolved":
             resolution_errors.append(_link_result_error(source, target, f"relations[{index}].source"))
         if target_ref.status != "resolved":
@@ -137,7 +142,7 @@ def compile_candidate_facts(repo_root: Path, op_name: str, batch: Any) -> list[C
             local_symbols=local_symbols,
             local_kinds=local_kinds,
             registry=registry,
-            repo_root=repo_root,
+            repo_root=reader.repo_root,
             kind="",
             entity_spec=entity_spec,
             path=f"relations[{index}].fields",
@@ -151,7 +156,7 @@ def compile_candidate_facts(repo_root: Path, op_name: str, batch: Any) -> list[C
             else:
                 materialized_relations.append(_materialize_relation(spec, relation, reader, str(source.stable_id), str(target_ref.stable_id), resolved_fields))
 
-    materialized_unresolved = [_materialize_unresolved(entry, reader, local_symbols, local_kinds, registry, repo_root, entity_spec, target, index, resolution_errors) for index, entry in enumerate(batch["unresolved"])]
+    materialized_unresolved = [_materialize_unresolved(entry, reader, local_symbols, local_kinds, registry, reader.repo_root, entity_spec, target, index, resolution_errors) for index, entry in enumerate(batch["unresolved"])]
     materialized_unresolved = [entry for entry in materialized_unresolved if entry is not None]
     if resolution_errors:
         return resolution_errors
@@ -197,10 +202,6 @@ def enrich_deterministic_fields(
     source_reader: SourceReader,
 ) -> dict[str, object]:
     result = dict(fields)
-    if kind in {"source_file", "dependency_file", "generated_file"}:
-        path_value = normalized_identity.get("path") or result.get("path")
-        if isinstance(path_value, str) and path_value:
-            result["file_hash"] = source_reader.read(path_value).byte_hash
     return result
 
 

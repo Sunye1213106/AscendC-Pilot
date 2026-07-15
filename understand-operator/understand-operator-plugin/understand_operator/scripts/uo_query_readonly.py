@@ -81,29 +81,33 @@ def query_smoke(repo_root: Path, op_name: str) -> tuple[int, dict[str, Any]]:
         return 2, {"status": "fail", "errors": [f"operator KB root not found via manifest/aliases for {op_name}"]}
     resolved_name, uo_root = resolved
     before = _readonly_fingerprint(uo_root)
-    entity, source = _select_smoke_entity(uo_root)
-    if not entity:
-        return 2, {"status": "fail", "op_name": resolved_name, "entity": "", "entity_source": source, "errors": ["no queryable derived or raw graph entity"]}
-    try:
-        result = query_readonly(repo_root, resolved_name, entity)
-    except Exception as exc:  # noqa: BLE001
-        return 2, {"status": "fail", "op_name": resolved_name, "entity": entity, "entity_source": source, "errors": [str(exc)]}
+    cases = _select_smoke_cases(uo_root)
+    if not all(cases.values()):
+        return 2, {"status": "fail", "op_name": resolved_name, "cases": cases, "errors": ["missing stable_id, symbol, or terminology smoke case"]}
     errors: list[str] = []
+    results: dict[str, Any] = {}
+    for name, entity in cases.items():
+        try:
+            result = query_readonly(repo_root, resolved_name, str(entity))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{name}: {exc}")
+            continue
+        results[name] = result
+        if result.get("writes") or result.get("cbm_writes"):
+            errors.append(f"{name}: query reported write operations")
+        if result.get("query_trace") != EXPECTED_QUERY_ORDER:
+            errors.append(f"{name}: query trace is not terminology -> symbol_index -> derived -> raw -> yaml -> source")
+        if not result.get("resolved_entities"):
+            errors.append(f"{name}: resolved_entities is empty")
+        if not (result.get("derived_entities") or result.get("raw_entities")):
+            errors.append(f"{name}: query did not hit derived or raw graph")
+        if not result.get("yaml_items"):
+            errors.append(f"{name}: yaml_items is empty")
+        if not (result.get("source_refs") or result.get("source_anchors")):
+            errors.append(f"{name}: source anchors are empty")
     if before != _readonly_fingerprint(uo_root):
         errors.append("query changed KB files")
-    if result.get("writes") or result.get("cbm_writes"):
-        errors.append("query reported write operations")
-    if result.get("query_trace") != EXPECTED_QUERY_ORDER:
-        errors.append("query trace is not terminology -> symbol_index -> derived -> raw -> yaml -> source")
-    if not result.get("resolved_entities"):
-        errors.append("resolved_entities is empty")
-    if not (result.get("derived_entities") or result.get("raw_entities")):
-        errors.append("query did not hit derived or raw graph")
-    if not result.get("yaml_items"):
-        errors.append("yaml_items is empty")
-    if not (result.get("source_refs") or result.get("source_anchors")):
-        errors.append("source anchors are empty")
-    payload = {"status": "fail" if errors else "pass", "op_name": resolved_name, "entity": entity, "entity_source": source, "errors": errors, "query": result}
+    payload = {"status": "fail" if errors else "pass", "op_name": resolved_name, "cases": {key: {"entity": value, "status": "pass" if key in results else "fail"} for key, value in cases.items()}, "errors": errors, "query": results.get("stable_id") or next(iter(results.values()), {})}
     return (2 if errors else 0), payload
 
 
@@ -119,6 +123,26 @@ def _select_smoke_entity(uo_root: Path) -> tuple[str, str]:
             if entity:
                 return entity, graph_level
     return "", "none"
+
+
+def _select_smoke_cases(uo_root: Path) -> dict[str, str]:
+    stable, _source = _select_smoke_entity(uo_root)
+    symbol = ""
+    terminology = ""
+    for node in _load_list(uo_root / "graphs" / "raw" / "nodes.yaml", "nodes") + _load_list(uo_root / "graphs" / "derived" / "nodes.yaml", "nodes"):
+        fields = node.get("search_fields") if isinstance(node.get("search_fields"), dict) else node.get("fields") if isinstance(node.get("fields"), dict) else {}
+        for key in ("symbol", "qualified_symbol", "scope_symbol", "name"):
+            value = fields.get(key) or node.get("label")
+            if isinstance(value, str) and value and value != node.get("id"):
+                symbol = symbol or value
+                terminology = terminology or str(node.get("label") or value)
+                break
+        if symbol and terminology:
+            break
+    if not terminology:
+        terms = _load_mapping(uo_root / "indexes" / "terminology.yaml", "terms")
+        terminology = next(iter(terms.keys()), "") if terms else ""
+    return {"stable_id": stable, "symbol": symbol or stable, "terminology": terminology or symbol or stable}
 
 
 def _readonly_fingerprint(uo_root: Path) -> str:
@@ -345,7 +369,7 @@ def _load_mapping(path: Path, key: str) -> dict[str, Any]:
 
 
 def _fields_match(node: dict[str, Any], entity: str) -> bool:
-    fields = node.get("fields") if isinstance(node.get("fields"), dict) else {}
+    fields = node.get("search_fields") if isinstance(node.get("search_fields"), dict) else node.get("fields") if isinstance(node.get("fields"), dict) else {}
     target = _normalize_term(entity)
     for key in ("name", "symbol", "path", "file", "field_ref", "struct_ref", "operation_ref", "buffer_ref", "event_identifier"):
         value = fields.get(key)

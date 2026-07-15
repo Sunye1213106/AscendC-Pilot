@@ -21,6 +21,7 @@ allowed_top_level:
   - changes
   - scope_conflicts
   - frozen_scope
+  - source
   - cbm_project
   - cbm_mode
   - cbm

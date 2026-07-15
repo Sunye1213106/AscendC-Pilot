@@ -20,12 +20,13 @@ if __package__ in (None, ""):
     if str(_ROOT) not in sys.path:
         sys.path.insert(0, str(_ROOT))
 
-from understand_operator._operator.artifacts import safe_op_name
+from understand_operator._operator.artifacts import existing_operator_root, safe_op_name
 from understand_operator._operator.catalog import CatalogMatchError, match_catalog_entry
 from understand_operator._operator.candidate import CandidateError, FORBIDDEN_ITEM_FIELDS, FORBIDDEN_RELATION_FIELDS, LEGACY_IDENTITY_FIELDS, load_json
 from understand_operator._operator.identity import IdentityError, resolve_identity
 from understand_operator._operator.kind_match import kind_matches
 from understand_operator._operator.reference_paths import declared_reference_for_path, iter_reference_like_paths, iter_reference_values, reference_declarations
+from understand_operator._operator.run_context import assert_candidate_run_current, source_root_for_operator
 from understand_operator._operator.source_reader import SourceReadError, SourceReader
 from understand_operator._operator.spec import load_spec
 
@@ -45,6 +46,9 @@ def validate_candidate_batch(repo_root: Path, op_name: str, batch: Any) -> list[
         return errors
     target_path, target_section = _target_parts(batch["target"])
     target_label = f"{target_path}#{target_section}" if target_section else str(batch.get("target"))
+    empty_section = isinstance(batch.get("target"), dict) and batch["target"].get("section") == ""
+    if empty_section:
+        errors.append(CandidateError("CANDIDATE_TARGET_SECTION_INVALID", "target.section must be omitted or a non-empty string", target=target_path, field="target.section"))
     if batch["version"] == 1:
         errors.append(CandidateError("CANDIDATE_VERSION_LEGACY", "Candidate version 1 is no longer accepted; migrate to version 2 local_id/identity references", target=target_label))
         return errors
@@ -56,6 +60,10 @@ def validate_candidate_batch(repo_root: Path, op_name: str, batch: Any) -> list[
         return errors
     if not target_path:
         return errors + [CandidateError("CANDIDATE_TARGET_INVALID", "target must contain path")]
+    uo_root = existing_operator_root(repo_root.resolve(), op_name)
+    run_check = assert_candidate_run_current(uo_root, str(task.get("run_id") or ""))
+    if not run_check.ok:
+        errors.append(CandidateError("CANDIDATE_RUN_ID_MISMATCH", run_check.message, target=target_label, field="task.run_id"))
     try:
         match = match_catalog_entry(spec, target_path, writable_only=True)
     except CatalogMatchError as exc:
@@ -67,6 +75,9 @@ def validate_candidate_batch(repo_root: Path, op_name: str, batch: Any) -> list[
     else:
         if entry.get("owner") != task["owner"]:
             errors.append(CandidateError("CANDIDATE_OWNER_FORBIDDEN", f"{task['owner']} may not write {target_path}", target=target_path))
+        expected_stage = _expected_stage(target_path)
+        if expected_stage and task.get("stage") != expected_stage:
+            errors.append(CandidateError("CANDIDATE_STAGE_TARGET_MISMATCH", f"{target_path} belongs to {expected_stage}, not {task.get('stage')}", target=target_path, field="task.stage"))
         section_schemas = entry.get("section_schemas") if isinstance(entry.get("section_schemas"), dict) else {}
         if section_schemas and not target_section:
             errors.append(CandidateError("TARGET_SECTION_REQUIRED", "target section is required for partitioned fact files", target=target_path))
@@ -84,7 +95,7 @@ def validate_candidate_batch(repo_root: Path, op_name: str, batch: Any) -> list[
         errors.append(CandidateError("CANDIDATE_SECTION_INVALID", "items, relations, unresolved must be arrays", target=target_label))
         return errors
 
-    reader = SourceReader(repo_root)
+    reader = SourceReader(source_root_for_operator(repo_root, uo_root, run_check.current_run_id or None))
     entity_spec = spec.get("entity_types") if isinstance(spec.get("entity_types"), dict) else {}
     entity_types = (spec.get("entity_types") or {}).get("entity_types") if isinstance(spec.get("entity_types"), dict) else {}
     local_ids: set[str] = set()
@@ -112,7 +123,7 @@ def validate_candidate_batch(repo_root: Path, op_name: str, batch: Any) -> list[
                 errors.append(CandidateError("CANDIDATE_KIND_INVALID", f"kind {kind!r} is not allowed by target schema", target=target_label, local_id=local_id, field=f"{label}.kind"))
             identity_for_validation = _identity_with_reference_placeholders(spec, kind, item["identity"], errors, target_label, local_id, label, local_id_to_kind)
             try:
-                resolved = resolve_identity(kind, identity_for_validation, repo_root=repo_root)
+                resolved = resolve_identity(kind, identity_for_validation, repo_root=reader.repo_root)
             except IdentityError as exc:
                 errors.append(CandidateError(exc.code, exc.message, target=target_label, local_id=local_id, field=f"{label}.{exc.field}"))
             else:
@@ -163,6 +174,18 @@ def _target_parts(target: Any) -> tuple[str, str]:
         path, section = target.get("path"), target.get("section")
         return (str(path), str(section)) if isinstance(path, str) and isinstance(section, str) and section else (str(path), "") if isinstance(path, str) else ("", "")
     return "", ""
+
+
+def _expected_stage(target_path: str) -> str:
+    if target_path.startswith("facts/operator/"):
+        return "step1"
+    if target_path in {"facts/host.yaml", "facts/compute.yaml", "facts/kernel/overview.yaml"}:
+        return "step2"
+    if target_path in {"facts/kernel/slice_manifest.yaml", "facts/kernel/slice_interfaces.yaml"}:
+        return "step3"
+    if target_path.startswith("facts/kernel/slices/"):
+        return "step3"
+    return ""
 
 
 def _schema_errors(spec: dict[str, Any], batch: Any) -> list[CandidateError]:

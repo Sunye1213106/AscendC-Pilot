@@ -54,6 +54,9 @@ def finalize_phase0(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
     def scoped(key: str) -> Any:
         return approved[key] if key in approved else files.get(key, [])
 
+    source = _source_block(repo_root, scan)
+    _update_manifest_source(uo_root, source, context, run_id)
+
     receipt = {
         "version": 1,
         "artifact": {"type": "runs.receipt", "schema_version": 1, "owner": "uo-orchestrator"},
@@ -64,6 +67,7 @@ def finalize_phase0(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
             "spec_bundle_hash": spec_bundle_hash(),
         },
         "status": "pass",
+        "source": source,
         "finalized_at": datetime.now(tz=timezone.utc).isoformat(),
         "frozen_scope": {
             "approved_initial_files": scoped("initial_operator_files"),
@@ -206,6 +210,41 @@ def _default_cbm_status(cbm_meta: dict[str, Any]) -> dict[str, Any]:
         "fallback": "" if available else "filesystem_scan",
         "last_error": str(cbm_meta.get("last_error") or ""),
     }
+
+
+def _source_block(operator_root: Path, scan: dict[str, Any]) -> dict[str, str]:
+    raw_root = scan.get("project_root")
+    source_root = Path(str(raw_root)).resolve() if isinstance(raw_root, str) and raw_root else operator_root.resolve()
+    operator_path = scan.get("operator_path")
+    if not isinstance(operator_path, str):
+        try:
+            operator_path = operator_root.resolve().relative_to(source_root).as_posix()
+        except ValueError:
+            operator_path = ""
+    try:
+        root_relative = source_root.relative_to(operator_root.resolve()).as_posix()
+    except ValueError:
+        try:
+            root_relative = __import__("os").path.relpath(source_root, operator_root.resolve()).replace("\\", "/")
+        except ValueError:
+            root_relative = ""
+    return {
+        "root": source_root.as_posix(),
+        "operator_path": operator_path,
+        "root_relative_to_operator": root_relative,
+    }
+
+
+def _update_manifest_source(uo_root: Path, source: dict[str, str], context: dict[str, Any], run_id: str) -> None:
+    manifest_path = uo_root / "manifest.yaml"
+    manifest = _load_yaml(manifest_path)
+    source_block = manifest.get("source") if isinstance(manifest.get("source"), dict) else {}
+    source_block.update(source)
+    source_block["revision"] = context.get("source_revision") or source_block.get("revision") or "unknown"
+    source_block["snapshot_id"] = context.get("source_snapshot_id") or source_block.get("snapshot_id") or "SOURCE_PHASE0"
+    manifest["source"] = source_block
+    manifest["current_run_id"] = run_id
+    manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
 
 def _doc_status(doc: dict[str, Any]) -> str:

@@ -185,6 +185,27 @@ files:
     required_after_stage: compile
     allow_empty: false
     raw_graph_input: false
+  - path: checks/completeness.yaml
+    artifact_type: checks.completeness
+    owner: facts-validator
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: step3
+    allow_empty: false
+    raw_graph_input: false
+  - path: checks/graph_review_trigger.yaml
+    artifact_type: checks.graph_review_trigger
+    owner: facts-validator
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: derived
+    allow_empty: false
+    raw_graph_input: false
+  - path: checks/graph_review.yaml
+    artifact_type: checks.graph_review
+    owner: uo-graph-review-agent
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: derived
+    allow_empty: false
+    raw_graph_input: false
   - path: checks/derived_validation.yaml
     artifact_type: checks.derived_validation
     owner: derived-graph-materializer
@@ -349,6 +370,13 @@ files:
   - path: runs/*/phase0/receipt.yaml
     artifact_type: runs.receipt
     owner: uo-orchestrator
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: runtime
+    allow_empty: false
+    raw_graph_input: false
+  - path: runs/*/repairs/*.yaml
+    artifact_type: runs.repair_state
+    owner: repair-controller
     schema: schemas/common/document.schema.yaml
     required_after_stage: runtime
     allow_empty: false

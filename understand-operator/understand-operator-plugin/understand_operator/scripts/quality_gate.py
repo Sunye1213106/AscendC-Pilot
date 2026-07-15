@@ -23,6 +23,8 @@ from understand_operator._operator.artifacts import resolve_existing_operator_ro
 from understand_operator._operator.spec import spec_bundle_hash
 from understand_operator.scripts.build_compile_gate import compile_gate_errors, facts_hashes_for
 from understand_operator.scripts.uo_query_readonly import query_smoke
+from understand_operator.scripts.validate_graph_review import validate_graph_review
+from understand_operator.scripts.validate_semantic_completeness import validate_semantic_completeness
 from understand_operator.scripts.validate_facts import validate_facts
 from understand_operator.scripts.verify_derived_graph import verify_derived_graph
 from understand_operator.scripts.verify_raw_graph import verify_raw_graph
@@ -51,6 +53,11 @@ def run_quality_gate(repo_root: Path, op_name: str) -> tuple[int, dict[str, Any]
     _check_receipt_freshness(base, "checks/step2/receipt.yaml", checks, blockers, "step2_receipt_fresh")
     _check_receipt_freshness(base, "checks/step3/receipt.yaml", checks, blockers, "step3_receipt_fresh")
 
+    completeness_code, completeness = validate_semantic_completeness(repo_root, resolved_name)
+    checks["semantic_completeness"] = "pass" if completeness_code == 0 and completeness.get("status") == "pass" else "fail"
+    if checks["semantic_completeness"] != "pass":
+        blockers.extend(f"semantic completeness: {item.get('code')}: {item.get('target')}: {item.get('message')}" for item in completeness.get("blocking_findings") or [])
+
     compile_errors = compile_gate_errors(base)
     if compile_errors:
         checks["compile_gate_fresh"] = "fail"
@@ -65,6 +72,11 @@ def run_quality_gate(repo_root: Path, op_name: str) -> tuple[int, dict[str, Any]
     derived_messages = verify_derived_graph(repo_root, resolved_name)
     checks["derived_graph_fresh"] = "pass" if not derived_messages else "fail"
     blockers.extend(derived_messages)
+
+    graph_review_code, graph_review = validate_graph_review(repo_root, resolved_name)
+    checks["graph_review"] = "pass" if graph_review_code == 0 else "fail"
+    blockers.extend(f"graph review: {item}" for item in graph_review.get("errors") or [])
+    warnings.extend(f"graph review: {item}" for item in graph_review.get("warnings") or [])
     _check_sqlite_index(base, checks, blockers)
 
     query_ok = _query_smoke(repo_root, resolved_name, base, blockers)

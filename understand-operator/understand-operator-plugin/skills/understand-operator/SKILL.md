@@ -26,7 +26,8 @@ Shared scripts remain in this directory (`prepare_operator.py`,
 `evaluate_review_trigger.py`, `validate_spec_consistency.py`, `validate_fact_stage.py`,
 `build_fact_registry.py`, `build_query_index.py`, `verify_required_scripts.py`,
 `build_compile_gate.py`, `source_graph_compiler.py`, `materialize_derived_graph.py`,
-`uo_query_readonly.py`). Agent-side CBM lookups use MCP
+`validate_semantic_completeness.py`, `prepare_graph_review.py`,
+`validate_graph_review.py`, `uo_query_readonly.py`). Agent-side CBM lookups use MCP
 `codebase-memory-mcp`; no local CBM query script is provided.
 
 Default user-facing language is Chinese (`prompts/00_language.md`); TodoWrite titles must be Chinese.

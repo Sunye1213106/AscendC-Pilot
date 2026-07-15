@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -52,12 +51,20 @@ def _loc(file: str = "op_host/demo.cpp", line: int = 1, symbol: str = "demo") ->
 def _batch(target: str, section: str, owner: str, items: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "version": 2,
-        "task": {"run_id": "UO_RUN_TEST", "stage": "step2", "owner": owner, "task_id": "TEST"},
+        "task": {"run_id": "UO_RUN_TEST", "stage": _stage_for_target(target), "owner": owner, "task_id": "TEST"},
         "target": {"path": target, "section": section},
         "items": items,
         "relations": [],
         "unresolved": [],
     }
+
+
+def _stage_for_target(target: str) -> str:
+    if target.startswith("facts/operator/"):
+        return "step1"
+    if target.startswith("facts/kernel/slices/") or target in {"facts/kernel/slice_manifest.yaml", "facts/kernel/slice_interfaces.yaml"}:
+        return "step3"
+    return "step2"
 
 
 def _whole_file_batch(target: str, owner: str, items: list[dict[str, Any]]) -> dict[str, Any]:
@@ -154,7 +161,7 @@ def test_all_schema_required_refs_are_declared() -> None:
     assert "source_anchor_ref" not in reference_declarations(spec["entity_types"], "kernel_entry")
 
 
-def test_source_file_hash_is_compiler_generated(tmp_path: Path) -> None:
+def test_source_file_fact_and_anchor_are_location_only(tmp_path: Path) -> None:
     repo, root = _ready_repo(tmp_path)
     batch = {
         "version": 2,
@@ -174,8 +181,10 @@ def test_source_file_hash_is_compiler_generated(tmp_path: Path) -> None:
     }
     assert compile_candidate_facts(repo, "DemoOp", batch) == []
     item = yaml.safe_load((root / "facts" / "operator" / "source_files.yaml").read_text(encoding="utf-8"))["items"][0]
-    expected = "sha256:" + hashlib.sha256((repo / "op_host" / "demo.cpp").read_bytes()).hexdigest()
-    assert item["file_hash"] == expected
+    forbidden = {"source_text", "code_hash", "file_hash", "encoding", "newline", "bom"}
+    assert not (forbidden & set(item))
+    assert not (forbidden & set(item["sources"][0]))
+    assert set(item["sources"][0]) == {"id", "file", "symbol", "span", "anchor_kind"}
 
 
 def test_candidate_file_hash_is_rejected(tmp_path: Path) -> None:

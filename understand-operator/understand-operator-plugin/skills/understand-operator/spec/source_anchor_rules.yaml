@@ -7,12 +7,13 @@ span_policy:
   optional_fields: [start_column, end_column]
   line_numbers_are_one_based: true
 source_text_policy:
-  normalization: exact_joined_lines_with_lf
-  must_match_file_span: true
+  storage: forbidden
 code_hash_policy:
-  algorithm: sha256
-  input: normalized_source_text
-  format: "sha256:<hex>"
+  storage: forbidden
+file_hash_policy:
+  storage: forbidden
+encoding_policy:
+  storage: forbidden
 anchor_kinds:
   - definition
   - declaration

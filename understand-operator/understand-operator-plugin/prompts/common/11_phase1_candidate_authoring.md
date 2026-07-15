@@ -20,6 +20,8 @@ The model may write only small Candidate JSON V2 batches containing:
 }
 ```
 
+Non-partitioned files must omit `section`; never emit `section: ""`.
+
 - item `local_id`
 - item `kind`
 - display `name`
@@ -45,14 +47,15 @@ Python writes all Formal Facts material:
 - stable fact ID
 - stable relation ID
 - canonical identity
-- `sources`
-- `source_text`
-- `code_hash`
-- `file_hash`
+- location-only `sources`
 
 The compiler derives identity and evidence from structured Candidate JSON and
 source locations. If a claim cannot be proven from the approved Phase 0 scope,
 write it under `unresolved` instead of inventing a confirmed fact.
+
+Formal Facts source anchors contain only `id`, `file`, `symbol`, `span`, and
+`anchor_kind`. No Formal YAML may store `source_text`, `code_hash`,
+`file_hash`, `encoding`, `newline`, or `bom`.
 
 ## Required Commands
 
@@ -81,6 +84,7 @@ Do not create or use:
 - model-provided `source_text`
 - model-provided `code_hash`
 - model-provided `file_hash`
+- model-provided `encoding`, `newline`, or `bom`
 - model-provided stable IDs
 - model-provided canonical IDs
 - Formal YAML direct writes

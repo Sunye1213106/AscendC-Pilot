@@ -45,15 +45,15 @@ def build_query_index(repo: Path, op_name: str) -> Path:
 def _schema(db: sqlite3.Connection) -> None:
     db.executescript('''create table entities(id text primary key,graph_level text not null,kind text not null,label text,normalized_label text,detail_ref text,fields_json text);
 create table relations(id text primary key,graph_level text not null,type text not null,source_id text not null,target_id text not null,detail_ref text,fields_json text);
-create table aliases(alias text not null,normalized_alias text not null,entity_id text not null);create table source_anchors(id text primary key,file text not null,symbol text,start_line integer,end_line integer,encoding text,code_hash text,file_hash text);create table entity_sources(entity_id text not null,source_anchor_id text not null);create table expansions(derived_id text,raw_id text,raw_kind text);create table paths(path_id text primary key,start_id text,end_id text,path_json text);create table metadata(key text primary key,value text);
+create table aliases(alias text not null,normalized_alias text not null,entity_id text not null);create table source_anchors(id text primary key,file text not null,symbol text,start_line integer,end_line integer,anchor_kind text);create table entity_sources(entity_id text not null,source_anchor_id text not null);create table expansions(derived_id text,raw_id text,raw_kind text);create table paths(path_id text primary key,start_id text,end_id text,path_json text);create table metadata(key text primary key,value text);
 create index idx_entities_kind on entities(kind);create index idx_entities_label on entities(normalized_label);create index idx_relations_source on relations(source_id);create index idx_relations_target on relations(target_id);create index idx_relations_type on relations(type);create index idx_aliases_normalized on aliases(normalized_alias);create index idx_sources_file_line on source_anchors(file,start_line,end_line);''')
 
 
 def _entity(db: sqlite3.Connection, level: str, entry: dict[str, Any]) -> None:
-    fields = entry.get("fields") if isinstance(entry.get("fields"), dict) else {}; label = str(entry.get("label") or entry.get("id") or ""); entity_id = str(entry.get("id"))
+    fields = entry.get("search_fields") if isinstance(entry.get("search_fields"), dict) else entry.get("fields") if isinstance(entry.get("fields"), dict) else {}; label = str(entry.get("label") or entry.get("id") or ""); entity_id = str(entry.get("id"))
     db.execute("insert into entities values(?,?,?,?,?,?,?)", (entity_id, level, str(entry.get("kind") or "fact"), label, _norm(label), entry.get("detail_ref"), json.dumps(fields, ensure_ascii=False)))
     for alias in fields.get("aliases") or []: db.execute("insert into aliases values(?,?,?)", (str(alias), _norm(str(alias)), entity_id))
-    for source in entry.get("source_refs") or []:
+    for source in entry.get("source_location_keys") or entry.get("source_refs") or []:
         db.execute("insert into entity_sources values(?,?)", (entity_id, str(source)))
 
 

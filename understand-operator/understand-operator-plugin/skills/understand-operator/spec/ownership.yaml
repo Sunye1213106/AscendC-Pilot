@@ -57,6 +57,20 @@ owners:
     may_read: [manifest.yaml, facts/**, graphs/raw/**, indexes/**, checks/compile_gate.yaml, runs/**, cbm/**]
     may_write:
       - graphs/derived/abstraction_rules.yaml
+  uo-graph-review-agent:
+    may_read:
+      - checks/graph_review_trigger.yaml
+      - checks/completeness.yaml
+      - graphs/raw/**
+      - graphs/derived/**
+      - facts/**
+      - manifest.yaml
+    may_write:
+      - checks/graph_review.yaml
+  repair-controller:
+    may_read: [manifest.yaml, runs/**, facts/**, checks/**]
+    may_write:
+      - runs/*/repairs/*.yaml
   facts-validator:
     may_read: [manifest.yaml, facts/**, checks/**, graphs/**, indexes/**, runs/**, cbm/**]
     may_write:
@@ -68,6 +82,8 @@ owners:
       - checks/step3/slice_validations.yaml
       - checks/step3/review_trigger.yaml
       - checks/compile_gate.yaml
+      - checks/completeness.yaml
+      - checks/graph_review_trigger.yaml
       - checks/final.yaml
       - checks/derived_validation.yaml
   raw-graph-compiler:

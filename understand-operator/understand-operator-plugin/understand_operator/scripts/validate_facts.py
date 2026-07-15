@@ -28,6 +28,7 @@ from understand_operator._operator.fact_registry import build_fact_registry
 from understand_operator._operator.identity import relation_stable_id, resolve_identity
 from understand_operator._operator.kind_match import kind_matches
 from understand_operator._operator.reference_paths import iter_reference_values, reference_declarations
+from understand_operator._operator.run_context import source_root_for_operator
 from understand_operator._operator.spec import catalog_entries, load_spec, spec_bundle_hash
 from understand_operator._operator.source_reader import SourceReadError, SourceReader
 
@@ -143,7 +144,7 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
             _validate_owner(unit_rel, unit, entry, ownership, errors)
             _validate_ids(unit_rel, unit, id_re, allowed_prefixes, errors)
             _validate_relation_types(unit_rel, unit, relation_types, errors)
-            _validate_sources(repo_root, unit_rel, unit, id_re, errors)
+            _validate_sources(source_root_for_operator(repo_root, uo_root), unit_rel, unit, id_re, errors)
 
     known_ids = _collect_known_ids(all_docs | docs)
     known_kinds = _collect_known_kinds(all_docs | docs)
@@ -843,7 +844,11 @@ def _validate_one_source(
     id_re: re.Pattern[str],
     errors: list[FactValidationError],
 ) -> None:
-    for key in ("id", "file", "symbol", "span", "source_text", "code_hash", "anchor_kind"):
+    forbidden = {"source_text", "code_hash", "file_hash", "encoding", "newline", "bom"}
+    present_forbidden = sorted(key for key in forbidden if key in source)
+    if present_forbidden:
+        errors.append(FactValidationError("SOURCE_FIELD_FORBIDDEN", rel, f"{label} stores forbidden source material fields: {present_forbidden}"))
+    for key in ("id", "file", "symbol", "span", "anchor_kind"):
         if key not in source or source.get(key) in (None, ""):
             errors.append(FactValidationError("SOURCE_FIELD_MISSING", rel, f"{label}.{key} is required"))
     source_id = source.get("id")
@@ -863,19 +868,10 @@ def _validate_one_source(
         errors.append(FactValidationError("SOURCE_SPAN_INVALID", rel, f"{label}.span start_line/end_line invalid"))
         return
     try:
-        source_file = reader.read(file_value)
-        actual_text = source_file.span(start, end)
+        reader.read(file_value).span(start, end)
     except SourceReadError as exc:
         errors.append(FactValidationError(exc.code, rel, f"{label}: {exc.message}"))
         return
-    if source.get("source_text") != actual_text:
-        errors.append(FactValidationError("SOURCE_TEXT_MISMATCH", rel, f"{label}.source_text does not match file span"))
-        return
-    expected_hash = "sha256:" + hashlib.sha256(actual_text.encode("utf-8")).hexdigest()
-    if source.get("code_hash") != expected_hash:
-        errors.append(FactValidationError("SOURCE_HASH_MISMATCH", rel, f"{label}.code_hash does not match source_text"))
-    if source.get("file_hash") is not None and source.get("file_hash") != source_file.byte_hash:
-        errors.append(FactValidationError("SOURCE_FILE_HASH_MISMATCH", rel, f"{label}.file_hash does not match current source bytes"))
 
 
 def _collect_known_ids(docs: dict[str, dict[str, Any]]) -> set[str]:

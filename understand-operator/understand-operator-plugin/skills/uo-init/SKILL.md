@@ -238,6 +238,7 @@ Final starts only after Step 3 receipt is valid. Run:
 ```powershell
 python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step3 --scope all
 python "$SCRIPT_DIR/build_fact_registry.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+python "$SCRIPT_DIR/validate_semantic_completeness.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 python "$SCRIPT_DIR/build_compile_gate.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 python "$SCRIPT_DIR/source_graph_compiler.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 python "$SCRIPT_DIR/verify_raw_graph.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
@@ -254,6 +255,15 @@ the final gate:
 ```powershell
 python "$SCRIPT_DIR/materialize_derived_graph.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 python "$SCRIPT_DIR/verify_derived_graph.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+python "$SCRIPT_DIR/prepare_graph_review.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+```
+
+Then dispatch `uo-graph-review-agent` exactly once. It is read-only except for
+`checks/graph_review.yaml` and must not repair facts, graphs, rules, schemas,
+indexes, or CBM. Validate its report before query index construction:
+
+```powershell
+python "$SCRIPT_DIR/validate_graph_review.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 python "$SCRIPT_DIR/build_query_index.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 python "$SCRIPT_DIR/uo_query_readonly.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --smoke
 python "$SCRIPT_DIR/quality_gate.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
