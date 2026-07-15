@@ -22,12 +22,12 @@ required_paths:
 list_item_rules:
   cbm_queries:
     required_fields: [tool]
+    required_one_of:
+      - [payload, query]
+      - [result_summary, result, error, reason]
   architecture_variants:
     required_fields: [name]
   excluded_architectures:
     required_fields: [name]
   confirmed_scope_additions:
     required_fields: [path]
-one_of_paths:
-  - [payload, query]
-  - [result_summary, result, error, reason]

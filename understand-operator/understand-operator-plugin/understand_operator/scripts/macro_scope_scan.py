@@ -15,7 +15,7 @@ if __package__ in (None, ""):
 
 from understand_operator._core.ignore import DEFAULT_IGNORE_PATTERNS, should_ignore
 from understand_operator._operator.artifacts import existing_operator_root, safe_op_name, write_text
-from understand_operator._operator.run_context import active_run_id, phase0_context
+from understand_operator._operator.run_context import active_run_id, phase0_context, phase0_snapshot
 from understand_operator._operator.spec import spec_bundle_hash
 from understand_operator._operator.source_reader import SourceReader
 
@@ -87,12 +87,7 @@ def main(argv: list[str] | None = None) -> int:
     payload = {
         "version": 1,
         "artifact": {"type": "runs.scope_scan", "schema_version": 1, "owner": "uo-orchestrator"},
-        "snapshot": {
-            "run_id": run_id,
-            "source_snapshot_id": context.get("source_snapshot_id") or "SOURCE_PHASE0",
-            "source_revision": context.get("source_revision") or "unknown",
-            "spec_bundle_hash": spec_bundle_hash(),
-        },
+        "snapshot": phase0_snapshot(base, run_id),
         "status": "complete",
         "op_name": op_name,
         "project_root": scan_root.as_posix(),

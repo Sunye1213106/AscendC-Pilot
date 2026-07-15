@@ -519,6 +519,7 @@ def _validate_machine_schema(
         for key in doc:
             if key not in allowed_set:
                 errors.append(FactValidationError("SCHEMA_TOP_LEVEL_FIELD_FORBIDDEN", rel, f"/{key} is not allowed by {schema_rel}"))
+    _validate_nested_schema_rules(rel, "", doc, schema, errors)
     if isinstance(doc.get("sections"), dict):
         for name in schema.get("required_sections") or []:
             if name not in doc["sections"] or not isinstance(doc["sections"].get(name), dict):
@@ -574,7 +575,7 @@ def _validate_section_schema(spec_root: Path, rel: str, doc: dict[str, Any], ent
 
 def _validate_nested_schema_rules(rel: str, base_path: str, value: dict[str, Any], schema: dict[str, Any], errors: list[FactValidationError]) -> None:
     for required_path in schema.get("required_paths") or []:
-        if _path_value(value, str(required_path)) in (None, "", []):
+        if _path_value(value, str(required_path)) in (None, ""):
             errors.append(FactValidationError("SCHEMA_REQUIRED_FIELD_MISSING", rel, f"{base_path}/{str(required_path).strip('/')} is required"))
     one_of_paths = schema.get("one_of_paths") if isinstance(schema.get("one_of_paths"), list) else []
     for group in one_of_paths:
@@ -595,6 +596,11 @@ def _validate_nested_schema_rules(rel: str, base_path: str, value: dict[str, Any
             continue
         rule_map = rule if isinstance(rule, dict) else {}
         required = [str(item) for item in rule_map.get("required_fields") or []]
+        required_one_of = [
+            [str(option) for option in group]
+            for group in rule_map.get("required_one_of") or []
+            if isinstance(group, list)
+        ]
         enum_fields = rule_map.get("enum_fields") if isinstance(rule_map.get("enum_fields"), dict) else {}
         for index, item in enumerate(items):
             item_path = f"{base_path}/{str(path).strip('/')}/{index}"
@@ -604,6 +610,10 @@ def _validate_nested_schema_rules(rel: str, base_path: str, value: dict[str, Any
             for field in required:
                 if item.get(field) in (None, ""):
                     errors.append(FactValidationError("SCHEMA_ITEM_FIELD_MISSING", rel, f"{item_path}/{field} is required"))
+            for group in required_one_of:
+                if group and not any(item.get(field) not in (None, "", []) for field in group):
+                    rendered = ", ".join(f"{item_path}/{field}" for field in group)
+                    errors.append(FactValidationError("SCHEMA_REQUIRED_ONE_OF_MISSING", rel, f"one of [{rendered}] is required"))
             for field, allowed in enum_fields.items():
                 if item.get(field) is not None and isinstance(allowed, list) and item.get(field) not in allowed:
                     errors.append(FactValidationError("SCHEMA_ENUM_INVALID", rel, f"{item_path}/{field} {item.get(field)!r} is not one of {allowed}"))

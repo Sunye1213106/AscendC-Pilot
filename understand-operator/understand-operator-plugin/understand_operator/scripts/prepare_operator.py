@@ -17,7 +17,7 @@ from understand_operator._core.ignore import DEFAULT_IGNORE_PATTERNS
 from understand_operator._operator.artifacts import init_operator_contract_layout, operator_root, safe_op_name, write_text
 from understand_operator._operator.cbm_metadata import write_index_meta
 from understand_operator._operator.install_check import compare_installed_skill
-from understand_operator._operator.run_context import read_yaml_mapping
+from understand_operator._operator.run_context import phase0_snapshot, read_yaml_mapping
 from understand_operator._operator.spec import spec_bundle_hash
 
 
@@ -63,8 +63,6 @@ def main(argv: list[str] | None = None) -> int:
     _write_phase0_doc(
         phase0 / "context.yaml",
         "runs.context",
-        "OP_PHASE0_CONTEXT",
-        "context",
         {
             "project_root": str(repo_root),
             "op_name": op_name,
@@ -75,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
             "spec_bundle_hash": spec_bundle_hash(),
         },
     )
-    _write_phase0_doc(phase0 / "installed_skill_check.yaml", "runs.installed_skill_check", "OP_PHASE0_SKILL_CHECK", "installed_skill_check", check)
+    _write_phase0_doc(phase0 / "installed_skill_check.yaml", "runs.installed_skill_check", check)
     if not check.get("consistent"):
         print("ERROR: installed understand-operator plugin is out of sync with the repository.", file=sys.stderr)
         print("Run: powershell -ExecutionPolicy Bypass -File understand-operator/understand-operator-plugin/install.ps1", file=sys.stderr)
@@ -86,17 +84,15 @@ def main(argv: list[str] | None = None) -> int:
     _write_phase0_doc(
         phase0 / "ignore_rules.yaml",
         "runs.ignore_rules",
-        "OP_PHASE0_IGNORE_RULES",
-        "ignore_rules",
         {"patterns": patterns},
     )
-    for filename, artifact_type, item_id, kind in (
-        ("scope_scan.yaml", "runs.scope_scan", "OP_PHASE0_SCOPE_SCAN", "scope_scan"),
-        ("semantic_enrichment.yaml", "runs.semantic_enrichment", "OP_PHASE0_SEMANTIC_ENRICHMENT", "semantic_enrichment"),
+    for filename, artifact_type in (
+        ("scope_scan.yaml", "runs.scope_scan"),
+        ("semantic_enrichment.yaml", "runs.semantic_enrichment"),
     ):
         target = phase0 / filename
         if not target.exists():
-            _write_phase0_doc(target, artifact_type, item_id, kind, {"status": "pending"})
+            _write_phase0_doc(target, artifact_type, _phase0_pending_defaults(repo_root, op_name, artifact_type))
 
     if args.write_index_meta or args.cbm_project:
         scope = _current_scope_meta(base)
@@ -214,22 +210,71 @@ def _source_snapshot_id(repo_root: Path) -> str:
     return f"SOURCE_{digest}"
 
 
-def _write_phase0_doc(path: Path, artifact_type: str, item_id: str, kind: str, data: object) -> None:
+def _write_phase0_doc(path: Path, artifact_type: str, data: object) -> None:
+    base = path.parents[3]
+    run_id = path.parents[1].name
     payload = {
         "version": 1,
         "artifact": {"type": artifact_type, "schema_version": 1, "owner": "uo-orchestrator"},
-        "snapshot": {
-            "run_id": path.parents[1].name,
-            "source_snapshot_id": "SOURCE_PHASE0",
-            "source_revision": "unknown",
-            "spec_bundle_hash": spec_bundle_hash(),
-        },
+        "snapshot": phase0_snapshot(base, run_id),
     }
     if isinstance(data, dict):
         payload.update(data)
     else:
         payload["payload"] = data
     write_text(path, _to_yaml(payload))
+
+
+def _phase0_pending_defaults(repo_root: Path, op_name: str, artifact_type: str) -> dict[str, object]:
+    if artifact_type == "runs.scope_scan":
+        return {
+            "status": "pending",
+            "op_name": op_name,
+            "project_root": str(repo_root),
+            "operator_path": "",
+            "generated_at": datetime.now(tz=timezone.utc).isoformat(),
+            "scan_method": {
+                "filesystem_tool": "",
+                "cbm_project": "",
+                "ignore_rules_applied": False,
+                "max_dependency_depth": 0,
+            },
+            "directories": [],
+            "operator_roots": [],
+            "scope_roots": [],
+            "dependency_roots": [],
+            "include_search_paths": [],
+            "uncertain_include_paths": [],
+            "seed_files": {},
+            "files": {
+                "initial_operator_files": [],
+                "dependency_files": [],
+                "external_system_files": [],
+                "third_party_files": [],
+                "generated_files": [],
+                "excluded_files": [],
+                "uncertain_files": [],
+            },
+            "dependency_edges": [],
+            "symbols": {},
+            "global_candidates": {},
+            "architecture_variants": [],
+            "large_files": [],
+            "warnings": [],
+        }
+    if artifact_type == "runs.semantic_enrichment":
+        return {
+            "status": "pending",
+            "architecture_filter": {"included": [], "excluded": []},
+            "cbm_queries": [],
+            "architecture_variants": [],
+            "excluded_architectures": [],
+            "confirmed_scope_additions": [],
+            "unresolved": [],
+            "warnings": [],
+            "fallback": "",
+        }
+    return {}
 
 
 def _update_manifest_phase0(base: Path, run_id: str, repo_root: Path) -> None:

@@ -4,6 +4,7 @@ import argparse
 import json
 import re
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,9 +20,17 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_ROOT))
 
 from understand_operator._operator.catalog import match_catalog_entry
+from understand_operator._operator.artifacts import operator_root
 from understand_operator._operator.identity import IdentityError, resolve_identity
 from understand_operator._operator.reference_paths import reference_declarations
+from understand_operator._operator.run_context import active_run_id, phase0_snapshot, read_yaml_mapping
 from understand_operator._operator.spec import load_spec
+from understand_operator.scripts.finalize_phase0 import finalize_phase0
+from understand_operator.scripts.macro_scope_scan import main as macro_scope_scan_main
+from understand_operator.scripts.prepare_operator import main as prepare_operator_main
+from understand_operator.scripts.review_checkpoint import main as review_checkpoint_main
+from understand_operator.scripts.semantic_enrichment import main as semantic_enrichment_main
+from understand_operator.scripts.validate_facts import validate_facts
 
 
 MODEL_FORBIDDEN_FIELDS = {"id", "stable_id", "canonical_key", "source_text", "code_hash", "file_hash", "sources"}
@@ -60,6 +69,7 @@ def validate_spec_consistency(plugin_root: Path | None = None) -> list[SpecError
     _validate_identity_reference_graph(entity_types, kind_groups, errors)
     _validate_phase3_agent_protocol(plugin_root or root.parents[1], errors)
     _validate_final_order(plugin_root or root.parents[1], errors)
+    _validate_init_runtime_contracts(plugin_root or root.parents[1], errors)
     return errors
 
 
@@ -351,6 +361,154 @@ def _validate_final_order(plugin_root: Path, errors: list[SpecError]) -> None:
             cursor = index
 
 
+def _validate_init_runtime_contracts(plugin_root: Path, errors: list[SpecError]) -> None:
+    with tempfile.TemporaryDirectory(prefix="uo-init-spec-") as tmp:
+        repo = Path(tmp) / "repo"
+        repo.mkdir()
+        (repo / "op_host").mkdir()
+        (repo / "op_kernel").mkdir()
+        (repo / "op_host" / "demo.cpp").write_text(
+            "void DemoOpHost() { int x = 1; TilingData tile; tile.v = x; }\n",
+            encoding="utf-8",
+        )
+        (repo / "op_kernel" / "demo.cpp").write_text(
+            "__global__ void DemoKernel() { TilingData tile; }\n",
+            encoding="utf-8",
+        )
+        _check_phase0_prepare_outputs(plugin_root, repo, errors)
+        _check_runtime_schema_probes(plugin_root, repo, errors)
+        _check_phase0_roundtrip(plugin_root, repo, errors)
+
+
+def _check_phase0_prepare_outputs(plugin_root: Path, repo: Path, errors: list[SpecError]) -> None:
+    code = prepare_operator_main([str(repo), "--op-name", "DemoOp", "--force-new-run"])
+    if code != 0:
+        errors.append(SpecError("SPEC_INIT_PREPARE_FAILED", "prepare_operator.py", f"prepare_operator.py returned {code}"))
+        return
+    uo_root = operator_root(repo, "DemoOp")
+    run_id = active_run_id(uo_root)
+    phase0 = uo_root / "runs" / run_id / "phase0"
+    snapshot = phase0_snapshot(uo_root, run_id)
+    for rel, schema_rel in (
+        ("scope_scan.yaml", "schemas/runs/scope_scan.schema.yaml"),
+        ("semantic_enrichment.yaml", "schemas/runs/semantic_enrichment.schema.yaml"),
+    ):
+        doc = read_yaml_mapping(phase0 / rel)
+        if doc.get("snapshot") != snapshot:
+            errors.append(SpecError("SPEC_INIT_SNAPSHOT_MISMATCH", rel, "pending artifact snapshot does not match phase0_snapshot()"))
+        rendered = json.dumps(doc, ensure_ascii=False)
+        if "SOURCE_PHASE0" in rendered:
+            errors.append(SpecError("SPEC_INIT_LEGACY_SNAPSHOT", rel, "pending artifact still contains SOURCE_PHASE0"))
+        _assert_required_top_level(plugin_root, rel, schema_rel, doc, errors)
+
+
+def _check_runtime_schema_probes(plugin_root: Path, repo: Path, errors: list[SpecError]) -> None:
+    uo_root = operator_root(repo, "DemoOp")
+    run_id = active_run_id(uo_root)
+    phase0 = uo_root / "runs" / run_id / "phase0"
+    semantic_path = phase0 / "semantic_enrichment.yaml"
+    original = _read_yaml(semantic_path)
+
+    missing_path = dict(original)
+    missing_path["architecture_filter"] = {"excluded": []}
+    _write_yaml(semantic_path, missing_path)
+    path_errors = validate_facts(repo, "DemoOp", stage="init", run_id=run_id)
+    if not any(error.code == "SCHEMA_REQUIRED_FIELD_MISSING" and "architecture_filter/included" in error.message for error in path_errors):
+        errors.append(SpecError("SPEC_INIT_REQUIRED_PATH_INERT", semantic_path.relative_to(uo_root).as_posix(), "required_paths did not flag missing architecture_filter/included"))
+
+    required_one_of = dict(original)
+    required_one_of["cbm_queries"] = [{"tool": "search_graph"}]
+    _write_yaml(semantic_path, required_one_of)
+    one_of_errors = validate_facts(repo, "DemoOp", stage="init", run_id=run_id)
+    if not any(error.code == "SCHEMA_REQUIRED_ONE_OF_MISSING" and "/cbm_queries/0/" in error.message for error in one_of_errors):
+        errors.append(SpecError("SPEC_INIT_REQUIRED_ONE_OF_INERT", semantic_path.relative_to(uo_root).as_posix(), "list_item_rules.required_one_of did not flag incomplete cbm_queries[0]"))
+
+    _write_yaml(semantic_path, original)
+
+
+def _check_phase0_roundtrip(plugin_root: Path, repo: Path, errors: list[SpecError]) -> None:
+    uo_root = operator_root(repo, "DemoOp")
+    run_id = active_run_id(uo_root)
+    phase0 = uo_root / "runs" / run_id / "phase0"
+
+    scan_code = macro_scope_scan_main([str(repo), "--op-name", "DemoOp"])
+    if scan_code != 0:
+        errors.append(SpecError("SPEC_INIT_SCOPE_SCAN_FAILED", "macro_scope_scan.py", f"macro_scope_scan.py returned {scan_code}"))
+        return
+
+    (uo_root / "cbm").mkdir(exist_ok=True)
+    (uo_root / "cbm" / "index_meta.json").write_text(
+        json.dumps(
+            {
+                "repo_root": str(repo.resolve()),
+                "op_name": "DemoOp",
+                "cbm_project": "demo",
+                "indexed_via": "mcp",
+                "cbm_mode": "fast",
+                "indexed_at": "2026-01-01T00:00:00+00:00",
+                "project_confirmed": True,
+                "indexed_scope_roots": [],
+                "cbm_status": {"available": True, "retry_count": 0, "fallback": "", "last_error": ""},
+            },
+            ensure_ascii=False,
+            indent=2,
+        ) + "\n",
+        encoding="utf-8",
+    )
+    semantic_code = semantic_enrichment_main([str(repo), "--op-name", "DemoOp"])
+    if semantic_code != 0:
+        errors.append(SpecError("SPEC_INIT_SEMANTIC_ENRICHMENT_FAILED", "semantic_enrichment.py", f"semantic_enrichment.py returned {semantic_code}"))
+        return
+
+    review_code = review_checkpoint_main([str(repo), "--op-name", "DemoOp", "--gate", "macro_scope", "--decision", "continue"])
+    if review_code != 0:
+        errors.append(SpecError("SPEC_INIT_SCOPE_REVIEW_FAILED", "review_checkpoint.py", f"review_checkpoint.py returned {review_code}"))
+        return
+
+    finalize_code, finalize_messages = finalize_phase0(repo, "DemoOp")
+    if finalize_code != 0:
+        errors.append(SpecError("SPEC_INIT_FINALIZE_FAILED", "finalize_phase0.py", "; ".join(finalize_messages)))
+        return
+
+    receipt = _read_yaml(phase0 / "receipt.yaml")
+    receipt_snapshot = receipt.get("snapshot") if isinstance(receipt.get("snapshot"), dict) else {}
+    if receipt_snapshot != phase0_snapshot(uo_root, run_id):
+        errors.append(SpecError("SPEC_INIT_RECEIPT_SNAPSHOT_MISMATCH", "runs/phase0/receipt.yaml", "receipt snapshot does not match phase0 context snapshot"))
+    input_hashes = receipt.get("input_hashes")
+    if not isinstance(input_hashes, dict) or not {
+        f"runs/{run_id}/phase0/context.yaml",
+        f"runs/{run_id}/phase0/installed_skill_check.yaml",
+        f"runs/{run_id}/phase0/ignore_rules.yaml",
+        f"runs/{run_id}/phase0/scope_scan.yaml",
+        f"runs/{run_id}/phase0/semantic_enrichment.yaml",
+        f"runs/{run_id}/phase0/scope_review.yaml",
+    } <= set(input_hashes):
+        errors.append(SpecError("SPEC_INIT_RECEIPT_INPUT_HASHES_INCOMPLETE", "runs/phase0/receipt.yaml", "receipt.input_hashes does not freeze the full Phase 0 input set"))
+
+    validation_errors = validate_facts(repo, "DemoOp", stage="step1", run_id=run_id)
+    blocked = {
+        "SCHEMA_REQUIRED_FIELD_MISSING",
+        "SCHEMA_TOP_LEVEL_FIELD_FORBIDDEN",
+        "ARTIFACT_RUN_MISMATCH",
+        "ARTIFACT_SOURCE_SNAPSHOT_MISMATCH",
+        "ARTIFACT_SOURCE_REVISION_MISMATCH",
+        "SPEC_BUNDLE_MISMATCH",
+        "PHASE0_RECEIPT_INVALID",
+        "PHASE0_RECEIPT_STALE",
+    }
+    hits = [f"{error.code}:{error.artifact}" for error in validation_errors if error.code in blocked]
+    if hits:
+        errors.append(SpecError("SPEC_INIT_ROUNDTRIP_VALIDATION_FAILED", "validate_facts.py", "; ".join(hits)))
+
+
+def _assert_required_top_level(plugin_root: Path, rel: str, schema_rel: str, doc: dict[str, Any], errors: list[SpecError]) -> None:
+    schema = _read_yaml(plugin_root / "skills" / "understand-operator" / "spec" / schema_rel)
+    required = schema.get("required_top_level") if isinstance(schema.get("required_top_level"), list) else []
+    missing = [name for name in required if name not in doc]
+    if missing:
+        errors.append(SpecError("SPEC_INIT_PENDING_FIELDS_MISSING", rel, f"missing required pending fields: {missing}"))
+
+
 def _check_allowed_targets(allowed: Any, valid_targets: set[str], errors: list[SpecError], code: str, label: str) -> None:
     if not isinstance(allowed, (list, tuple)) or not allowed:
         errors.append(SpecError("SPEC_REFERENCE_KIND_UNKNOWN", "entity_types.yaml", f"{label} has no allowed targets"))
@@ -363,6 +521,11 @@ def _check_allowed_targets(allowed: Any, valid_targets: set[str], errors: list[S
 def _read_yaml(path: Path) -> dict[str, Any]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return data if isinstance(data, dict) else {}
+
+
+def _write_yaml(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
 
 def _path_matches(path: str, pattern: str) -> bool:

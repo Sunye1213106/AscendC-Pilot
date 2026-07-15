@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from understand_operator._operator.spec import spec_bundle_hash
+
 try:
     import yaml
 except ImportError:  # pragma: no cover
@@ -42,7 +44,18 @@ def phase0_context(uo_root: Path, run_id: str | None = None) -> dict[str, Any]:
     source = manifest.get("source") if isinstance(manifest.get("source"), dict) else {}
     return {
         "source_revision": source.get("revision") or "unknown",
-        "source_snapshot_id": source.get("snapshot_id") or "SOURCE_PHASE0",
+        "source_snapshot_id": source.get("snapshot_id") or "SOURCE_UNKNOWN",
+        "spec_bundle_hash": spec_bundle_hash(),
+    }
+
+
+def phase0_snapshot(uo_root: Path, run_id: str) -> dict[str, str]:
+    context = phase0_context(uo_root, run_id)
+    return {
+        "run_id": run_id,
+        "source_snapshot_id": str(context.get("source_snapshot_id") or "SOURCE_UNKNOWN"),
+        "source_revision": str(context.get("source_revision") or "unknown"),
+        "spec_bundle_hash": str(context.get("spec_bundle_hash") or spec_bundle_hash()),
     }
 
 

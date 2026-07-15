@@ -20,7 +20,7 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_ROOT))
 
 from understand_operator._operator.artifacts import existing_operator_root, safe_op_name
-from understand_operator._operator.run_context import active_run_id
+from understand_operator._operator.run_context import active_run_id, phase0_snapshot
 from understand_operator._operator.spec import spec_bundle_hash
 
 
@@ -60,12 +60,7 @@ def finalize_phase0(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
     receipt = {
         "version": 1,
         "artifact": {"type": "runs.receipt", "schema_version": 1, "owner": "uo-orchestrator"},
-        "snapshot": {
-            "run_id": run_id,
-            "source_snapshot_id": context.get("source_snapshot_id") or (scan.get("snapshot") or {}).get("source_snapshot_id") or "SOURCE_PHASE0",
-            "source_revision": context.get("source_revision") or (scan.get("snapshot") or {}).get("source_revision") or "unknown",
-            "spec_bundle_hash": spec_bundle_hash(),
-        },
+        "snapshot": phase0_snapshot(uo_root, run_id),
         "status": "pass",
         "source": source,
         "finalized_at": datetime.now(tz=timezone.utc).isoformat(),
@@ -254,7 +249,7 @@ def _update_manifest_source(uo_root: Path, source: dict[str, str], context: dict
     source_block = manifest.get("source") if isinstance(manifest.get("source"), dict) else {}
     source_block.update(source)
     source_block["revision"] = context.get("source_revision") or source_block.get("revision") or "unknown"
-    source_block["snapshot_id"] = context.get("source_snapshot_id") or source_block.get("snapshot_id") or "SOURCE_PHASE0"
+    source_block["snapshot_id"] = context.get("source_snapshot_id") or source_block.get("snapshot_id") or "SOURCE_UNKNOWN"
     manifest["source"] = source_block
     manifest["current_run_id"] = run_id
     manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True), encoding="utf-8")

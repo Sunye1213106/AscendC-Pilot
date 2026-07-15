@@ -13,13 +13,16 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from understand_operator._operator.artifacts import init_operator_contract_layout, operator_root
+from understand_operator._operator.run_context import phase0_snapshot
 from understand_operator._operator.spec import load_spec, spec_bundle_hash
 from understand_operator.scripts.finalize_phase0 import finalize_phase0
 from understand_operator.scripts.macro_scope_scan import main as macro_scope_scan_main
 from understand_operator._operator.cbm_metadata import write_index_meta
+from understand_operator.scripts.prepare_operator import main as prepare_operator_main
 from understand_operator.scripts.prepare_operator import _current_scope_meta
 from understand_operator.scripts.prepare_fact_file import prepare_fact_file
 from understand_operator.scripts.review_checkpoint import main as review_checkpoint_main
+from understand_operator.scripts.semantic_enrichment import main as semantic_enrichment_main
 from understand_operator.scripts.source_graph_compiler import compile_source_graph
 from understand_operator.scripts.build_compile_gate import facts_hashes_for
 from understand_operator.scripts.uo_query_readonly import query_readonly
@@ -235,6 +238,35 @@ def test_scope_review_continue_does_not_write_pass_receipt(tmp_path: Path) -> No
     assert not receipt.exists() or yaml.safe_load(receipt.read_text(encoding="utf-8")).get("status") != "pass"
 
 
+def test_prepare_operator_writes_complete_pending_phase0_artifacts(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    assert prepare_operator_main([str(repo), "--op-name", "DemoOp"]) == 0
+
+    base = operator_root(repo, "DemoOp")
+    manifest = yaml.safe_load((base / "manifest.yaml").read_text(encoding="utf-8"))
+    run_id = manifest["current_run_id"]
+    phase0 = base / "runs" / run_id / "phase0"
+    context = yaml.safe_load((phase0 / "context.yaml").read_text(encoding="utf-8"))
+    scope_scan = yaml.safe_load((phase0 / "scope_scan.yaml").read_text(encoding="utf-8"))
+    semantic = yaml.safe_load((phase0 / "semantic_enrichment.yaml").read_text(encoding="utf-8"))
+
+    assert scope_scan["status"] == "pending"
+    assert semantic["status"] == "pending"
+    assert context["snapshot"] == phase0_snapshot(base, run_id)
+    assert scope_scan["snapshot"] == context["snapshot"]
+    assert semantic["snapshot"] == context["snapshot"]
+    assert scope_scan["op_name"] == "DemoOp"
+    assert scope_scan["files"]["initial_operator_files"] == []
+    assert semantic["architecture_filter"] == {"included": [], "excluded": []}
+    assert semantic["cbm_queries"] == []
+    assert semantic["unresolved"] == []
+
+    errors = validate_facts(repo, "DemoOp", stage="step1")
+    assert not any(error.code in {"SCHEMA_REQUIRED_FIELD_MISSING", "SCHEMA_TOP_LEVEL_FIELD_FORBIDDEN"} for error in errors)
+
+
 def test_prepare_fact_file_requires_finalized_phase0(tmp_path: Path) -> None:
     repo, _base, _run_id = _repo(tmp_path)
 
@@ -317,6 +349,65 @@ def test_finalize_phase0_allows_semantic_query_without_confidence(tmp_path: Path
     code, messages = finalize_phase0(repo, "DemoOp")
 
     assert code == 0, messages
+
+
+def test_real_uo_init_phase0_reaches_receipt(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "op_host").mkdir()
+    (repo / "op_host" / "demo.cpp").write_text("REGISTER_TILING(DemoOp)\n", encoding="utf-8")
+
+    assert prepare_operator_main([str(repo), "--op-name", "DemoOp"]) == 0
+
+    base = operator_root(repo, "DemoOp")
+    manifest = yaml.safe_load((base / "manifest.yaml").read_text(encoding="utf-8"))
+    run_id = manifest["current_run_id"]
+    phase0 = base / "runs" / run_id / "phase0"
+
+    (base / "cbm" / "index_meta.json").write_text(
+        json.dumps(
+            {
+                "repo_root": str(repo.resolve()),
+                "op_name": "DemoOp",
+                "cbm_project": "demo",
+                "indexed_via": "mcp",
+                "cbm_mode": "fast",
+                "indexed_at": "2026-01-01T00:00:00+00:00",
+                "project_confirmed": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert macro_scope_scan_main([str(repo), "--op-name", "DemoOp"]) == 0
+
+    assert semantic_enrichment_main([str(repo), "--op-name", "DemoOp"]) == 0
+    assert review_checkpoint_main([str(repo), "--op-name", "DemoOp", "--gate", "macro_scope", "--decision", "continue"]) == 0
+
+    code, messages = finalize_phase0(repo, "DemoOp")
+    assert code == 0, messages
+
+    context = yaml.safe_load((phase0 / "context.yaml").read_text(encoding="utf-8"))
+    semantic = yaml.safe_load((phase0 / "semantic_enrichment.yaml").read_text(encoding="utf-8"))
+    receipt = yaml.safe_load((phase0 / "receipt.yaml").read_text(encoding="utf-8"))
+    assert receipt["status"] == "pass"
+    assert receipt["snapshot"]["run_id"] == manifest["current_run_id"]
+    assert receipt["snapshot"]["source_snapshot_id"] == context["source_snapshot_id"]
+    assert receipt["snapshot"]["source_revision"] == context["source_revision"]
+    assert semantic["status"] == "degraded"
+    assert semantic["unresolved"]
+
+    blocked = {
+        "SCHEMA_REQUIRED_FIELD_MISSING",
+        "SCHEMA_TOP_LEVEL_FIELD_FORBIDDEN",
+        "ARTIFACT_RUN_MISMATCH",
+        "ARTIFACT_SOURCE_SNAPSHOT_MISMATCH",
+        "ARTIFACT_SOURCE_REVISION_MISMATCH",
+        "SPEC_BUNDLE_MISMATCH",
+        "PHASE0_RECEIPT_INVALID",
+        "PHASE0_RECEIPT_STALE",
+    }
+    errors = validate_facts(repo, "DemoOp", stage="step1")
+    assert not any(error.code in blocked for error in errors)
 
 
 def test_schema_disallows_source_fact_and_owner_split() -> None:

@@ -14,7 +14,7 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_ROOT))
 
 from understand_operator._operator.artifacts import existing_operator_root, operator_root, safe_op_name, write_text
-from understand_operator._operator.run_context import active_run_id
+from understand_operator._operator.run_context import active_run_id, phase0_snapshot
 from understand_operator._operator.spec import spec_bundle_hash
 
 
@@ -123,7 +123,6 @@ def _write_scope_review(base: Path, decision: dict[str, Any], changes: dict[str,
     phase0 = base / "runs" / run_id / "phase0"
     scan = _load_yaml(phase0 / "scope_scan.yaml")
     semantic = _load_yaml(phase0 / "semantic_enrichment.yaml")
-    snapshot = scan.get("snapshot") if isinstance(scan.get("snapshot"), dict) else {}
     files = scan.get("files") if isinstance(scan.get("files"), dict) else {}
     resolved_include = [item["path"] for item in changes.get("resolved_uncertain") or [] if item.get("action") == "include" and item.get("path")]
     resolved_exclude = [item["path"] for item in changes.get("resolved_uncertain") or [] if item.get("action") == "exclude" and item.get("path")]
@@ -155,12 +154,7 @@ def _write_scope_review(base: Path, decision: dict[str, Any], changes: dict[str,
     payload = {
         "version": 1,
         "artifact": {"type": "runs.scope_review", "schema_version": 1, "owner": "uo-orchestrator"},
-        "snapshot": {
-            "run_id": run_id,
-            "source_snapshot_id": snapshot.get("source_snapshot_id") or "SOURCE_PHASE0",
-            "source_revision": snapshot.get("source_revision") or "unknown",
-            "spec_bundle_hash": spec_bundle_hash(),
-        },
+        "snapshot": phase0_snapshot(base, run_id),
         "status": "decided",
         "decision": decision["decision"],
         "reviewed_at": decision["decided_at"],
