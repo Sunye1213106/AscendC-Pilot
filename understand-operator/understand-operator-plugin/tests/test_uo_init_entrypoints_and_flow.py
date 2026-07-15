@@ -158,6 +158,62 @@ def _batch(target: dict[str, str], item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _unresolved_candidate(target: dict[str, str], owner: str, stage: str, task_id: str) -> dict[str, Any]:
+    return {
+        "version": 2,
+        "task": {"run_id": "UO_RUN_TEST", "stage": stage, "owner": owner, "task_id": task_id},
+        "target": target,
+        "items": [],
+        "relations": [],
+        "unresolved": [
+            {
+                "local_id": f"unresolved_{task_id.lower()}",
+                "category": "minimal_candidate_e2e_gap",
+                "description": f"{task_id} intentionally unresolved in candidate E2E fixture",
+                "related_refs": [],
+                "source_locations": [],
+            }
+        ],
+    }
+
+
+def _compile_candidate(repo: Path, path: Path, batch: dict[str, Any]) -> None:
+    _candidate(path, batch)
+    _run("validate_candidate_batch.py", str(repo), "--op-name", "DemoOp", "--batch", str(path))
+    _run("compile_candidate_facts.py", str(repo), "--op-name", "DemoOp", "--batch", str(path))
+
+
+def _compile_phase2_phase3_unresolved_candidates(repo: Path, batch_dir: Path) -> None:
+    phase2_targets = [
+        ("host_variables", {"path": "facts/host.yaml", "section": "variables"}, "uo-host-extraction"),
+        ("host_expressions", {"path": "facts/host.yaml", "section": "expressions"}, "uo-host-extraction"),
+        ("host_control_flow", {"path": "facts/host.yaml", "section": "control_flow"}, "uo-host-extraction"),
+        ("host_calls", {"path": "facts/host.yaml", "section": "calls"}, "uo-host-extraction"),
+        ("host_tiling_key", {"path": "facts/host.yaml", "section": "tiling_key"}, "uo-host-extraction"),
+        ("host_tiling_key_enumeration", {"path": "facts/host.yaml", "section": "tiling_key_enumeration"}, "uo-host-extraction"),
+        ("host_tiling_key_constraints", {"path": "facts/host.yaml", "section": "tiling_key_constraints"}, "uo-host-extraction"),
+        ("host_tilingdata_writes", {"path": "facts/host.yaml", "section": "tilingdata_writes"}, "uo-host-extraction"),
+        ("compute_tensors", {"path": "facts/compute.yaml", "section": "tensors"}, "uo-flow-extraction"),
+        ("compute_operations", {"path": "facts/compute.yaml", "section": "operations"}, "uo-flow-extraction"),
+        ("compute_dataflow", {"path": "facts/compute.yaml", "section": "dataflow"}, "uo-flow-extraction"),
+        ("compute_numerical", {"path": "facts/compute.yaml", "section": "numerical_semantics"}, "uo-flow-extraction"),
+        ("kernel_entries", {"path": "facts/kernel/overview.yaml", "section": "entries"}, "uo-kernel-overview-agent"),
+        ("kernel_functions", {"path": "facts/kernel/overview.yaml", "section": "functions"}, "uo-kernel-overview-agent"),
+        ("kernel_call_graph", {"path": "facts/kernel/overview.yaml", "section": "call_graph"}, "uo-kernel-overview-agent"),
+        ("kernel_frontier", {"path": "facts/kernel/overview.yaml", "section": "frontier"}, "uo-kernel-overview-agent"),
+        ("kernel_resources", {"path": "facts/kernel/overview.yaml", "section": "global_resources"}, "uo-kernel-overview-agent"),
+    ]
+    phase3_targets = [
+        ("slice_manifest", {"path": "facts/kernel/slice_manifest.yaml"}, "uo-kernel-slice-planner"),
+        ("slice_interfaces", {"path": "facts/kernel/slice_interfaces.yaml"}, "uo-kernel-slice-planner"),
+        *[(f"slice_{section}", {"path": "facts/kernel/slices/main.yaml", "section": section}, "uo-kernel-slice-agent") for section in ["variables", "expressions", "branches", "loops", "tilingdata_reads", "calls", "dataflow", "memory", "synchronization"]],
+    ]
+    for task_id, target, owner in phase2_targets:
+        _compile_candidate(repo, batch_dir / f"{task_id}.json", _unresolved_candidate(target, owner, "step2", task_id.upper()))
+    for task_id, target, owner in phase3_targets:
+        _compile_candidate(repo, batch_dir / f"{task_id}.json", _unresolved_candidate(target, owner, "step3", task_id.upper()))
+
+
 def _unresolved_doc(artifact_type: str, owner: str, *, partition_sections: list[str] | None = None) -> dict[str, Any]:
     base = {"version": 1, "artifact": {"type": artifact_type, "schema_version": 1, "owner": owner}, "snapshot": _snapshot()}
     unresolved = [{"question": "minimal fixture placeholder", "reason": "not_applicable", "owner": owner}]
@@ -340,7 +396,52 @@ def test_minimal_uo_init_entrypoint_e2e_reaches_final(tmp_path: Path) -> None:
     _run("materialize_derived_graph.py", str(repo), "--op-name", "DemoOp")
     _run("verify_derived_graph.py", str(repo), "--op-name", "DemoOp")
     _run("build_query_index.py", str(repo), "--op-name", "DemoOp")
-    _run("uo_query_readonly.py", str(repo), "--op-name", "DemoOp", "--smoke")
+    smoke = subprocess_run("uo_query_readonly.py", str(repo), "--op-name", "DemoOp", "--smoke")
+    assert smoke.returncode == 0, smoke.stderr or smoke.stdout
+    assert json.loads(smoke.stdout)["query"]["query_trace"] == ["terminology", "symbol_index", "derived", "raw", "yaml", "source"]
+    _run("quality_gate.py", str(repo), "--op-name", "DemoOp")
+    assert yaml.safe_load((root / "checks" / "final.yaml").read_text(encoding="utf-8"))["status"] == "pass"
+    assert (root / "indexes" / "operator_kb.sqlite").exists()
+    assert (root / "graphs" / "raw" / "nodes.yaml").exists()
+    assert (root / "graphs" / "derived" / "nodes.yaml").exists()
+
+
+def test_real_phase2_phase3_candidate_e2e_reaches_final(tmp_path: Path) -> None:
+    repo, root = _repo(tmp_path)
+    batch_dir = tmp_path / "candidate_e2e_batches"
+    batch_dir.mkdir()
+    for name, batch in {
+        "source.json": _batch({"path": "facts/operator/source_files.yaml"}, {"local_id": "src", "kind": "source_file", "identity": {"path": "op_host/demo.cpp"}, "fields": {"path": "op_host/demo.cpp", "role": "host", "include_reason": "minimal"}, "source_locations": [_loc()]}),
+        "interface.json": _batch({"path": "facts/operator/interface.yaml"}, {"local_id": "x", "kind": "input_tensor", "identity": {"operator_name": "DemoOp", "direction": "input", "index": 0}, "fields": {"name": "x", "dtype": ["float16"], "layout": ["ND"], "rank": 1, "shape_symbols": ["N"]}, "source_locations": [_loc()]}),
+        "entry.json": _batch({"path": "facts/operator/entrypoints.yaml"}, {"local_id": "entry", "kind": "host_entry", "identity": {"qualified_symbol": "DemoOpHost"}, "fields": {"name": "DemoOpHost", "file": "op_host/demo.cpp", "symbol": "DemoOpHost", "entry_kind": "host_entry"}, "source_locations": [_loc()]}),
+    }.items():
+        _compile_candidate(repo, batch_dir / name, batch)
+    _run("validate_fact_stage.py", str(repo), "--op-name", "DemoOp", "--stage", "step1", "--write-report")
+    _compile_phase2_phase3_unresolved_candidates(repo, batch_dir)
+    for scope in ("host", "compute", "kernel-overview"):
+        _run("validate_fact_stage.py", str(repo), "--op-name", "DemoOp", "--stage", "step2", "--scope", scope, "--write-report")
+    _run("build_fact_registry.py", str(repo), "--op-name", "DemoOp")
+    _run("evaluate_review_trigger.py", str(repo), "--op-name", "DemoOp", "--step", "step2")
+    _review_from_trigger(root, "step2")
+    _run("write_step2_receipt.py", str(repo), "--op-name", "DemoOp")
+    _run("validate_fact_stage.py", str(repo), "--op-name", "DemoOp", "--stage", "step3", "--scope", "kernel-slice-planner")
+    _run("validate_fact_stage.py", str(repo), "--op-name", "DemoOp", "--stage", "step3", "--scope", "all", "--write-report")
+    _run("build_fact_registry.py", str(repo), "--op-name", "DemoOp")
+    _run("evaluate_review_trigger.py", str(repo), "--op-name", "DemoOp", "--step", "step3")
+    _review_from_trigger(root, "step3")
+    _run("write_step3_receipt.py", str(repo), "--op-name", "DemoOp")
+    _run("build_fact_registry.py", str(repo), "--op-name", "DemoOp")
+    _run("build_compile_gate.py", str(repo), "--op-name", "DemoOp")
+    _run("source_graph_compiler.py", str(repo), "--op-name", "DemoOp")
+    _run("verify_raw_graph.py", str(repo), "--op-name", "DemoOp")
+    _run("prepare_abstraction_rules.py", str(repo), "--op-name", "DemoOp")
+    _write_abstraction_rule(root)
+    _run("materialize_derived_graph.py", str(repo), "--op-name", "DemoOp")
+    _run("verify_derived_graph.py", str(repo), "--op-name", "DemoOp")
+    _run("build_query_index.py", str(repo), "--op-name", "DemoOp")
+    smoke = subprocess_run("uo_query_readonly.py", str(repo), "--op-name", "DemoOp", "--smoke")
+    assert smoke.returncode == 0, smoke.stderr or smoke.stdout
+    assert json.loads(smoke.stdout)["query"]["query_trace"] == ["terminology", "symbol_index", "derived", "raw", "yaml", "source"]
     _run("quality_gate.py", str(repo), "--op-name", "DemoOp")
     assert yaml.safe_load((root / "checks" / "final.yaml").read_text(encoding="utf-8"))["status"] == "pass"
     assert (root / "indexes" / "operator_kb.sqlite").exists()

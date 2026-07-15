@@ -6,9 +6,13 @@ from pathlib import Path
 from typing import Any, Literal
 
 from understand_operator._operator.fact_registry import FactRegistry
-from understand_operator._operator.identity import IdentityError, resolve_identity
+from understand_operator._operator.identity import IdentityError, ResolvedIdentity, resolve_identity
 from understand_operator._operator.kind_match import kind_matches
 from understand_operator._operator.reference_paths import ReferenceDeclaration, iter_reference_values, reference_declarations
+from understand_operator._operator.spec import load_spec
+
+
+MAX_IDENTITY_REFERENCE_DEPTH = 16
 
 
 @dataclass(frozen=True)
@@ -20,12 +24,25 @@ class LinkResult:
     kind: str | None = None
 
 
+@dataclass(frozen=True)
+class ResolvedIdentityResult:
+    status: Literal["resolved", "unresolved", "ambiguous"]
+    resolved_identity: ResolvedIdentity | None
+    stable_id: str | None
+    candidates: tuple[str, ...]
+    reason: str | None
+    kind: str | None = None
+    normalized_input: dict[str, object] | None = None
+
+
 def resolve_entity_ref(
     ref: dict[str, object],
     *,
     local_symbols: dict[str, str],
+    local_kinds: dict[str, str] | None = None,
     registry: FactRegistry,
     repo_root: Path,
+    entity_spec: dict[str, Any] | None = None,
 ) -> LinkResult:
     if not isinstance(ref, dict):
         return LinkResult("unresolved", None, (), "ENTITY_REFERENCE_INVALID")
@@ -41,14 +58,18 @@ def resolve_entity_ref(
         identity = ref.get("identity")
         if not isinstance(kind, str) or not isinstance(identity, dict):
             return LinkResult("unresolved", None, (), "ENTITY_REFERENCE_INVALID", None)
-        try:
-            resolved = resolve_identity(kind, identity, repo_root=repo_root)
-        except IdentityError as exc:
-            return LinkResult("unresolved", None, (), exc.code, None)
-        stable = registry.find_canonical(resolved.canonical_key)
-        if stable:
-            return LinkResult("resolved", stable, (stable,), None, registry.kind_of(stable) or kind)
-        return LinkResult("unresolved", None, (), "ENTITY_REFERENCE_UNRESOLVED", None)
+        resolved = resolve_structured_identity(
+            kind,
+            identity,
+            local_symbols=local_symbols,
+            local_kinds=local_kinds or {},
+            registry=registry,
+            repo_root=repo_root,
+            entity_spec=entity_spec or _entity_spec(),
+        )
+        if resolved.status == "resolved" and resolved.stable_id:
+            return LinkResult("resolved", resolved.stable_id, (resolved.stable_id,), None, resolved.kind)
+        return LinkResult(resolved.status, None, resolved.candidates, resolved.reason, resolved.kind)
     if ref_type == "symbol":
         kind = ref.get("kind")
         symbol = ref.get("qualified_symbol") or ref.get("symbol")
@@ -64,6 +85,115 @@ def resolve_entity_ref(
     return LinkResult("unresolved", None, (), "ENTITY_REFERENCE_INVALID", None)
 
 
+def resolve_structured_identity(
+    kind: str,
+    identity: dict[str, object],
+    *,
+    local_symbols: dict[str, str],
+    local_kinds: dict[str, str],
+    registry: FactRegistry,
+    repo_root: Path,
+    entity_spec: dict[str, Any],
+    visited: set[str] | None = None,
+    depth: int = 0,
+    require_registered: bool = True,
+) -> ResolvedIdentityResult:
+    if depth > MAX_IDENTITY_REFERENCE_DEPTH:
+        return ResolvedIdentityResult("unresolved", None, None, (), "ENTITY_IDENTITY_REFERENCE_DEPTH_EXCEEDED", kind)
+    if not isinstance(identity, dict):
+        return ResolvedIdentityResult("unresolved", None, None, (), "IDENTITY_MISSING", kind)
+    marker = f"{kind}:{_canonical_jsonish(identity)}"
+    seen = set(visited or set())
+    if marker in seen:
+        return ResolvedIdentityResult("unresolved", None, None, (), "ENTITY_IDENTITY_REFERENCE_CYCLE", kind)
+    seen.add(marker)
+    normalized = dict(identity)
+    for field_name, allowed in _identity_reference_fields(entity_spec, kind).items():
+        value = normalized.get(field_name)
+        if not isinstance(value, dict):
+            continue
+        result = _resolve_identity_reference_value(
+            value,
+            local_symbols=local_symbols,
+            local_kinds=local_kinds,
+            registry=registry,
+            repo_root=repo_root,
+            entity_spec=entity_spec,
+            allowed=allowed,
+            visited=seen,
+            depth=depth + 1,
+        )
+        if result.status != "resolved" or not result.stable_id:
+            return ResolvedIdentityResult(result.status, None, None, result.candidates, result.reason, result.kind)
+        normalized[field_name] = result.stable_id
+    try:
+        resolved = resolve_identity(kind, normalized, repo_root=repo_root)
+    except IdentityError as exc:
+        return ResolvedIdentityResult("unresolved", None, None, (), exc.code, kind, normalized)
+    stable = registry.find_canonical(resolved.canonical_key)
+    if require_registered and not stable:
+        return ResolvedIdentityResult("unresolved", resolved, None, (), "ENTITY_IDENTITY_REFERENCE_UNRESOLVED", kind, normalized)
+    return ResolvedIdentityResult("resolved", resolved, stable or resolved.stable_id, (stable or resolved.stable_id,), None, registry.kind_of(stable) if stable else kind, normalized)
+
+
+def _resolve_identity_reference_value(
+    ref: dict[str, object],
+    *,
+    local_symbols: dict[str, str],
+    local_kinds: dict[str, str],
+    registry: FactRegistry,
+    repo_root: Path,
+    entity_spec: dict[str, Any],
+    allowed: list[str],
+    visited: set[str],
+    depth: int,
+) -> ResolvedIdentityResult:
+    ref_type = ref.get("ref_type")
+    if ref_type == "local":
+        local_id = ref.get("local_id")
+        if not isinstance(local_id, str) or local_id not in local_symbols:
+            return ResolvedIdentityResult("unresolved", None, None, (), "ENTITY_IDENTITY_REFERENCE_UNRESOLVED", None)
+        stable = local_symbols[local_id]
+        actual_kind = local_kinds.get(local_id) or registry.kind_of(stable)
+        if actual_kind and allowed and not any(kind_matches(actual_kind, expected, entity_spec) for expected in allowed):
+            return ResolvedIdentityResult("unresolved", None, None, (stable,), "IDENTITY_REFERENCE_KIND_NOT_ALLOWED", actual_kind)
+        return ResolvedIdentityResult("resolved", None, stable, (stable,), None, actual_kind)
+    if ref_type == "symbol":
+        kind = ref.get("kind")
+        symbol = ref.get("qualified_symbol") or ref.get("symbol")
+        signature = ref.get("signature")
+        if not isinstance(kind, str) or not isinstance(symbol, str) or not symbol.strip():
+            return ResolvedIdentityResult("unresolved", None, None, (), "ENTITY_REFERENCE_INVALID", None)
+        if allowed and not any(kind_matches(kind.strip(), expected, entity_spec) for expected in allowed):
+            return ResolvedIdentityResult("unresolved", None, None, (), "IDENTITY_REFERENCE_KIND_NOT_ALLOWED", kind.strip())
+        candidates = registry.find_symbol_kind(kind.strip(), symbol.strip(), signature.strip() if isinstance(signature, str) and signature.strip() else None)
+        if len(candidates) == 1:
+            return ResolvedIdentityResult("resolved", None, candidates[0], (candidates[0],), None, registry.kind_of(candidates[0]) or kind.strip())
+        if len(candidates) > 1:
+            return ResolvedIdentityResult("ambiguous", None, None, tuple(candidates), "ENTITY_IDENTITY_REFERENCE_AMBIGUOUS", kind.strip())
+        return ResolvedIdentityResult("unresolved", None, None, (), "ENTITY_IDENTITY_REFERENCE_UNRESOLVED", kind.strip())
+    if ref_type == "entity":
+        kind = ref.get("kind")
+        identity = ref.get("identity")
+        if not isinstance(kind, str) or not isinstance(identity, dict):
+            return ResolvedIdentityResult("unresolved", None, None, (), "ENTITY_REFERENCE_INVALID", None)
+        if allowed and not any(kind_matches(kind, expected, entity_spec) for expected in allowed):
+            return ResolvedIdentityResult("unresolved", None, None, (), "IDENTITY_REFERENCE_KIND_NOT_ALLOWED", kind)
+        return resolve_structured_identity(
+            kind,
+            identity,
+            local_symbols=local_symbols,
+            local_kinds=local_kinds,
+            registry=registry,
+            repo_root=repo_root,
+            entity_spec=entity_spec,
+            visited=visited,
+            depth=depth,
+            require_registered=True,
+        )
+    return ResolvedIdentityResult("unresolved", None, None, (), "ENTITY_REFERENCE_INVALID", None)
+
+
 def resolve_typed_entity_ref(
     ref: dict[str, object],
     *,
@@ -75,7 +205,7 @@ def resolve_typed_entity_ref(
     entity_spec: dict[str, Any],
     code: str,
 ) -> LinkResult:
-    result = resolve_entity_ref(ref, local_symbols=local_symbols, registry=registry, repo_root=repo_root)
+    result = resolve_entity_ref(ref, local_symbols=local_symbols, local_kinds=local_kinds, registry=registry, repo_root=repo_root, entity_spec=entity_spec)
     if result.status != "resolved":
         return result
     actual_kind = result.kind
@@ -246,3 +376,25 @@ def _set_at_actual_path(value: Any, path: str, replacement: Any) -> None:
     for part in parts[:-1]:
         node = node[part]
     node[parts[-1]] = replacement
+
+
+def _identity_reference_fields(entity_spec: dict[str, Any], kind: str) -> dict[str, list[str]]:
+    entity_types = entity_spec.get("entity_types") if isinstance(entity_spec.get("entity_types"), dict) else {}
+    config = entity_types.get(kind) if isinstance(entity_types, dict) else None
+    refs = config.get("identity_reference_fields") if isinstance(config, dict) and isinstance(config.get("identity_reference_fields"), dict) else {}
+    return {str(key): [str(item) for item in value] for key, value in refs.items() if isinstance(value, list)}
+
+
+def _entity_spec() -> dict[str, Any]:
+    spec = load_spec()
+    return spec.get("entity_types") if isinstance(spec.get("entity_types"), dict) else {}
+
+
+def _canonical_jsonish(value: Any) -> str:
+    if value in (None, {}, []):
+        return ""
+    if isinstance(value, dict):
+        return "{" + ",".join(f"{_canonical_jsonish(key)}:{_canonical_jsonish(value[key])}" for key in sorted(value)) + "}"
+    if isinstance(value, list):
+        return "[" + ",".join(_canonical_jsonish(item) for item in value) + "]"
+    return str(value)

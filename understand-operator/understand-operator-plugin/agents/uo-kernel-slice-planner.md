@@ -72,6 +72,93 @@ Candidate items may provide only `local_id`, `kind`, `name`, structured
 and `unresolved`. The model must not provide formal YAML headers, stable IDs,
 canonical keys, `sources`, source text, or source/file hashes.
 
+## Cross-File Identity References
+
+Plan in two steps:
+
+1. Generate `kernel_slice` candidates for `facts/kernel/slice_manifest.yaml`.
+2. Validate and compile the manifest candidate batch.
+3. Rebuild or refresh the fact registry.
+4. Generate `slice_interface` candidates for
+   `facts/kernel/slice_interfaces.yaml`.
+5. Reference compiled slices with `ref_type: "entity"` and the full structured
+   `kernel_slice` identity.
+
+Do not use `local_id` across candidate batches. Do not write stable IDs,
+canonical keys, or display-name matches.
+
+Example interface candidate:
+
+```json
+{
+  "version": 2,
+  "task": {
+    "run_id": "UO_RUN_...",
+    "stage": "step3",
+    "owner": "uo-kernel-slice-planner",
+    "task_id": "SLICE_INTERFACE_001"
+  },
+  "target": {
+    "path": "facts/kernel/slice_interfaces.yaml"
+  },
+  "items": [
+    {
+      "local_id": "iface_1",
+      "kind": "slice_interface",
+      "identity": {
+        "source_slice_ref": {
+          "ref_type": "entity",
+          "kind": "kernel_slice",
+          "identity": {
+            "kernel_entry_ref": {
+              "ref_type": "entity",
+              "kind": "kernel_entry",
+              "identity": {
+                "qualified_entry_symbol": "DemoKernel",
+                "signature": "void()",
+                "discriminator": "generic"
+              }
+            },
+            "template_binding_signature": "generic",
+            "structural_flow_signature": "read-compute-write",
+            "tilingdata_read_signature": "tile",
+            "output_signature": "out0"
+          }
+        },
+        "target_slice_ref": {
+          "ref_type": "entity",
+          "kind": "kernel_slice",
+          "identity": {
+            "kernel_entry_ref": {
+              "ref_type": "entity",
+              "kind": "kernel_entry",
+              "identity": {
+                "qualified_entry_symbol": "DemoKernel2",
+                "signature": "void()",
+                "discriminator": "generic"
+              }
+            },
+            "template_binding_signature": "generic",
+            "structural_flow_signature": "read-compute-write",
+            "tilingdata_read_signature": "tile",
+            "output_signature": "out0"
+          }
+        },
+        "interface_kind": "data",
+        "position": "0"
+      },
+      "fields": {
+        "exported_refs": [],
+        "imported_refs": []
+      },
+      "source_locations": []
+    }
+  ],
+  "relations": [],
+  "unresolved": []
+}
+```
+
 ## Required Content
 
 `slice_manifest.yaml` lists slice IDs, names, source entry/function coverage, chain coverage tags, and the overview/host/compute facts used to plan each slice.

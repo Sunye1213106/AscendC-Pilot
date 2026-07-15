@@ -123,7 +123,7 @@ def validate_candidate_batch(repo_root: Path, op_name: str, batch: Any) -> list[
                 canonical_to_local[resolved.canonical_key] = (local_id, resolved.stable_id)
                 _identity_evidence(item, reader, errors, target_label, local_id, label)
             _reference_objects(item.get("fields"), errors, target_label, f"{label}.fields", str(kind), entity_spec, local_id_to_kind)
-        _locations(reader, item.get("source_locations"), errors, target_label, local_id, label)
+        _locations(reader, item.get("source_locations"), errors, target_label, local_id, label, allow_empty=_allows_empty_source_locations(target_path, task["owner"]))
 
     relation_types = set((spec["relation_types"].get("relation_types") or {}).keys())
     for index, relation in enumerate(batch["relations"]):
@@ -142,7 +142,7 @@ def validate_candidate_batch(repo_root: Path, op_name: str, batch: Any) -> list[
             errors.append(CandidateError("CANDIDATE_RELATION_INVALID", "relation fields must be object", target=target_label, field=f"{label}.fields"))
         else:
             _reference_objects(relation.get("fields"), errors, target_label, f"{label}.fields", "", entity_spec, local_id_to_kind)
-        _locations(reader, relation.get("source_locations"), errors, target_label, "", label)
+        _locations(reader, relation.get("source_locations"), errors, target_label, "", label, allow_empty=_allows_empty_source_locations(target_path, task["owner"]))
 
     for index, entry in enumerate(batch["unresolved"]):
         label = f"unresolved[{index}]"
@@ -182,16 +182,22 @@ def _schema_errors(spec: dict[str, Any], batch: Any) -> list[CandidateError]:
     return errors
 
 
-def _forbidden_fields(value: Any, forbidden_fields: set[str]) -> set[str]:
+def _forbidden_fields(value: Any, forbidden_fields: set[str], seen: set[int] | None = None) -> set[str]:
+    seen = seen or set()
+    if isinstance(value, (dict, list)):
+        marker = id(value)
+        if marker in seen:
+            return set()
+        seen.add(marker)
     found: set[str] = set()
     if isinstance(value, dict):
         for key, child in value.items():
             if key in forbidden_fields:
                 found.add(key)
-            found |= _forbidden_fields(child, forbidden_fields)
+            found |= _forbidden_fields(child, forbidden_fields, seen)
     elif isinstance(value, list):
         for child in value:
-            found |= _forbidden_fields(child, forbidden_fields)
+            found |= _forbidden_fields(child, forbidden_fields, seen)
     return found
 
 
@@ -233,17 +239,60 @@ def _identity_with_reference_placeholders(
     label: str,
     local_id_to_kind: dict[str, str],
 ) -> dict[str, Any]:
-    result = dict(identity)
     entity_spec = spec.get("entity_types") if isinstance(spec.get("entity_types"), dict) else {}
+    return _identity_with_reference_placeholders_recursive(spec, kind, identity, errors, target, local_id, f"{label}.identity", local_id_to_kind, entity_spec, set(), 0)
+
+
+def _identity_with_reference_placeholders_recursive(
+    spec: dict[str, Any],
+    kind: str,
+    identity: dict[str, Any],
+    errors: list[CandidateError],
+    target: str,
+    local_id: str,
+    label: str,
+    local_id_to_kind: dict[str, str],
+    entity_spec: dict[str, Any],
+    visited: set[str],
+    depth: int,
+) -> dict[str, Any]:
+    if depth > 16:
+        errors.append(CandidateError("ENTITY_IDENTITY_REFERENCE_DEPTH_EXCEEDED", "identity reference nesting exceeds 16", target=target, local_id=local_id, field=label))
+        return dict(identity)
+    try:
+        marker = f"{kind}:{json.dumps(identity, sort_keys=True, ensure_ascii=False, default=str)}"
+    except ValueError:
+        marker = f"{kind}:object:{id(identity)}"
+    if marker in visited:
+        errors.append(CandidateError("ENTITY_IDENTITY_REFERENCE_CYCLE", "identity reference cycle detected", target=target, local_id=local_id, field=label))
+        return dict(identity)
+    next_visited = set(visited)
+    next_visited.add(marker)
+    result = dict(identity)
     entity_types = entity_spec.get("entity_types") if isinstance(entity_spec.get("entity_types"), dict) else {}
     for field_name, allowed in _identity_reference_fields(spec, kind).items():
         value = result.get(field_name)
         if not isinstance(value, dict):
             continue
-        _reference(value, errors, target, f"{label}.identity.{field_name}", set(local_id_to_kind), entity_types)
+        field_label = f"{label}.{field_name}"
+        _reference(value, errors, target, field_label, set(local_id_to_kind), entity_types)
         actual_kind = _static_reference_kind(value, local_id_to_kind)
         if actual_kind and allowed and not any(kind_matches(actual_kind, expected, entity_spec) for expected in allowed):
-            errors.append(CandidateError("IDENTITY_REFERENCE_KIND_NOT_ALLOWED", f"{field_name} target kind {actual_kind} not allowed; allowed={allowed}", target=target, local_id=local_id, field=f"{label}.identity.{field_name}"))
+            errors.append(CandidateError("IDENTITY_REFERENCE_KIND_NOT_ALLOWED", f"{field_name} target kind {actual_kind} not allowed; allowed={allowed}", target=target, local_id=local_id, field=field_label))
+        if value.get("ref_type") == "entity" and isinstance(value.get("kind"), str) and isinstance(value.get("identity"), dict):
+            _identity_with_reference_placeholders_recursive(
+                spec,
+                str(value["kind"]),
+                value["identity"],
+                errors,
+                target,
+                local_id,
+                f"{field_label}.identity",
+                local_id_to_kind,
+                entity_spec,
+                next_visited,
+                depth + 1,
+            )
         result[field_name] = _reference_placeholder(value)
     return result
 
@@ -317,6 +366,10 @@ def _locations(reader: SourceReader, locations: Any, errors: list[CandidateError
         except (SourceReadError, TypeError) as exc:
             code = exc.code if isinstance(exc, SourceReadError) else "SOURCE_LOCATION_INVALID"
             errors.append(CandidateError(code, str(exc), target=target, local_id=local_id, field=f"{field}.source_locations[{index}]"))
+
+
+def _allows_empty_source_locations(target_path: str, owner: str) -> bool:
+    return owner == "uo-kernel-slice-planner" and target_path in {"facts/kernel/slice_manifest.yaml", "facts/kernel/slice_interfaces.yaml"}
 
 
 def _identity_evidence(item: dict[str, Any], reader: SourceReader, errors: list[CandidateError], target: str, local_id: str, field: str) -> None:

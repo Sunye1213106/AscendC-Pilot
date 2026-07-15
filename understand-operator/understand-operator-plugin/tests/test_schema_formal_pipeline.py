@@ -60,6 +60,17 @@ def _batch(target: str, section: str, owner: str, items: list[dict[str, Any]]) -
     }
 
 
+def _whole_file_batch(target: str, owner: str, items: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "version": 2,
+        "task": {"run_id": "UO_RUN_TEST", "stage": "step3", "owner": owner, "task_id": "TEST"},
+        "target": {"path": target},
+        "items": items,
+        "relations": [],
+        "unresolved": [],
+    }
+
+
 def _ref(local_id: str) -> dict[str, str]:
     return {"ref_type": "local", "local_id": local_id}
 
@@ -95,10 +106,45 @@ def test_identity_strategy_normalized_fields_match_spec(tmp_path: Path) -> None:
         "compute_operation": {"compute_scope": "DemoKernel", "operation_type": "copy", "output_identity": "dst", "source_span": {"start_line": 2, "end_line": 2}},
         "memory_resource": {"source_file": "op_kernel/demo.cpp", "scope_symbol": "DemoKernel", "source_name": "tile", "declaration_span": {"start_line": 1, "end_line": 1}, "resource_kind": "buffer"},
         "sync_event": {"source_file": "op_kernel/demo.cpp", "scope_symbol": "DemoKernel", "event_kind": "setflag", "event_identifier": "flag0", "source_span": {"start_line": 1, "end_line": 1}},
+        "architecture_variant": {"variant_name": "generic", "file_set_signature": ["op_kernel/demo.cpp"], "architecture_discriminator": "generic"},
     }
     for kind, identity in samples.items():
         resolved = resolve_identity(kind, identity, repo_root=repo)
         assert set(resolved.normalized_identity) == set(spec[kind]["required_identity_fields"])
+
+
+def test_function_identity_does_not_emit_optional_source_fields(tmp_path: Path) -> None:
+    repo, _root = _ready_repo(tmp_path)
+    resolved = resolve_identity(
+        "kernel_function",
+        {
+            "qualified_symbol": "DemoKernel",
+            "signature": "void()",
+            "source_file": "op_kernel/demo.cpp",
+            "definition_span": {"start_line": 1, "end_line": 1},
+        },
+        repo_root=repo,
+    )
+    assert set(resolved.normalized_identity) == {"qualified_symbol", "signature"}
+
+
+def test_architecture_variant_identity_fields_match_spec(tmp_path: Path) -> None:
+    repo, _root = _ready_repo(tmp_path)
+    resolved = resolve_identity(
+        "architecture_variant",
+        {"variant_name": "generic", "file_set_signature": ["op_kernel/demo.cpp"], "architecture_discriminator": "generic"},
+        repo_root=repo,
+    )
+    assert set(resolved.normalized_identity) == set(load_spec()["entity_types"]["entity_types"]["architecture_variant"]["required_identity_fields"])
+
+
+def test_strategy_aliases_match_entity_type_identity_fields() -> None:
+    spec = load_spec()["entity_types"]
+    aliases = spec["strategy_aliases"]
+    for kind, config in spec["entity_types"].items():
+        alias = aliases.get(config["identity_strategy"])
+        if alias:
+            assert alias["required_identity_fields"] == config["required_identity_fields"], kind
 
 
 def test_all_schema_required_refs_are_declared() -> None:
@@ -151,6 +197,41 @@ def test_candidate_file_hash_is_rejected(tmp_path: Path) -> None:
         "unresolved": [],
     }
     assert any(error.code == "CANDIDATE_FIELD_FORBIDDEN" for error in validate_candidate_batch(repo, "DemoOp", batch))
+
+
+def test_phase1_non_partition_target_without_section_passes(tmp_path: Path) -> None:
+    repo, _root = _ready_repo(tmp_path)
+    batch = {
+        "version": 2,
+        "task": {"run_id": "UO_RUN_TEST", "stage": "step1", "owner": "uo-boundary-agent", "task_id": "SRC"},
+        "target": {"path": "facts/operator/source_files.yaml"},
+        "items": [
+            {
+                "local_id": "src",
+                "kind": "source_file",
+                "identity": {"path": "op_host/demo.cpp"},
+                "fields": {"path": "op_host/demo.cpp", "role": "host", "include_reason": "operator source"},
+                "source_locations": [_loc()],
+            }
+        ],
+        "relations": [],
+        "unresolved": [],
+    }
+    assert validate_candidate_batch(repo, "DemoOp", batch) == []
+
+
+def test_phase1_non_partition_target_empty_section_fails(tmp_path: Path) -> None:
+    repo, _root = _ready_repo(tmp_path)
+    batch = {
+        "version": 2,
+        "task": {"run_id": "UO_RUN_TEST", "stage": "step1", "owner": "uo-boundary-agent", "task_id": "SRC"},
+        "target": {"path": "facts/operator/source_files.yaml", "section": ""},
+        "items": [],
+        "relations": [],
+        "unresolved": [],
+    }
+    errors = validate_candidate_batch(repo, "DemoOp", batch)
+    assert any(error.code in {"CANDIDATE_SCHEMA_INVALID", "TARGET_SECTION_FORBIDDEN"} for error in errors)
 
 
 def test_formal_fact_without_identity_fails(tmp_path: Path) -> None:
@@ -303,6 +384,98 @@ def test_tilingdata_read_field_link_compiles(tmp_path: Path) -> None:
     assert compile_candidate_facts(repo, "DemoOp", batch) == []
     items = yaml.safe_load((root / "facts" / "kernel" / "slices" / "main.yaml").read_text(encoding="utf-8"))["sections"]["tilingdata_reads"]["items"]
     assert items[0]["field_ref"].startswith("TDATA_")
+
+
+def _kernel_entry_item(local_id: str, symbol: str) -> dict[str, Any]:
+    return {
+        "local_id": local_id,
+        "kind": "kernel_entry",
+        "identity": {"qualified_entry_symbol": symbol, "signature": "void()", "discriminator": "generic"},
+        "fields": {"file": "op_kernel/demo.cpp", "symbol": symbol, "entry_kind": "global", "called_by_refs": [], "call_refs": [], "architecture_variant": "generic", "template_binding": "generic"},
+        "source_locations": [_loc("op_kernel/demo.cpp", 1, symbol)],
+    }
+
+
+def _kernel_slice_ref(symbol: str, output: str = "out0") -> dict[str, Any]:
+    return {
+        "ref_type": "entity",
+        "kind": "kernel_slice",
+        "identity": {
+            "kernel_entry_ref": {
+                "ref_type": "entity",
+                "kind": "kernel_entry",
+                "identity": {"qualified_entry_symbol": symbol, "signature": "void()", "discriminator": "generic"},
+            },
+            "template_binding_signature": "generic",
+            "structural_flow_signature": "read-compute-write",
+            "tilingdata_read_signature": "tile",
+            "output_signature": output,
+        },
+    }
+
+
+def test_cross_batch_nested_entity_identity_ref_resolves(tmp_path: Path) -> None:
+    repo, root = _ready_repo(tmp_path)
+    assert compile_candidate_facts(repo, "DemoOp", _batch("facts/kernel/overview.yaml", "entries", "uo-kernel-overview-agent", [_kernel_entry_item("entry", "DemoKernel")])) == []
+    slice_item = {
+        "local_id": "slice_1",
+        "kind": "kernel_slice",
+        "identity": _kernel_slice_ref("DemoKernel")["identity"],
+        "fields": {"kernel_entry_ref": _entity_ref("kernel_entry", {"qualified_entry_symbol": "DemoKernel", "signature": "void()", "discriminator": "generic"}), "template_binding_signature": "generic", "structural_flow_signature": "read-compute-write", "tilingdata_read_signature": "tile", "output_signature": "out0", "output_tensor_refs": [], "output_write_refs": [], "primary_owner": "DemoKernel"},
+        "source_locations": [],
+    }
+    assert compile_candidate_facts(repo, "DemoOp", _whole_file_batch("facts/kernel/slice_manifest.yaml", "uo-kernel-slice-planner", [slice_item])) == []
+    item = yaml.safe_load((root / "facts" / "kernel" / "slice_manifest.yaml").read_text(encoding="utf-8"))["items"][0]
+    assert item["identity"]["normalized"]["kernel_entry_ref"].startswith("KERNEL_")
+
+
+def test_slice_interface_resolves_kernel_slice_entity_ref(tmp_path: Path) -> None:
+    repo, root = _ready_repo(tmp_path)
+    entries = [_kernel_entry_item("entry1", "DemoKernel"), _kernel_entry_item("entry2", "DemoKernel2")]
+    assert compile_candidate_facts(repo, "DemoOp", _batch("facts/kernel/overview.yaml", "entries", "uo-kernel-overview-agent", entries)) == []
+    slices = []
+    for local_id, symbol, output in (("slice_1", "DemoKernel", "out0"), ("slice_2", "DemoKernel2", "out1")):
+        slices.append({
+            "local_id": local_id,
+            "kind": "kernel_slice",
+            "identity": _kernel_slice_ref(symbol, output)["identity"],
+            "fields": {"kernel_entry_ref": _entity_ref("kernel_entry", {"qualified_entry_symbol": symbol, "signature": "void()", "discriminator": "generic"}), "template_binding_signature": "generic", "structural_flow_signature": "read-compute-write", "tilingdata_read_signature": "tile", "output_signature": output, "output_tensor_refs": [], "output_write_refs": [], "primary_owner": symbol},
+            "source_locations": [],
+        })
+    assert compile_candidate_facts(repo, "DemoOp", _whole_file_batch("facts/kernel/slice_manifest.yaml", "uo-kernel-slice-planner", slices)) == []
+    iface = {
+        "local_id": "iface",
+        "kind": "slice_interface",
+        "identity": {"source_slice_ref": _kernel_slice_ref("DemoKernel", "out0"), "target_slice_ref": _kernel_slice_ref("DemoKernel2", "out1"), "interface_kind": "data", "position": "0"},
+        "fields": {"exported_refs": [], "imported_refs": [], "interface_kind": "data"},
+        "source_locations": [],
+    }
+    assert compile_candidate_facts(repo, "DemoOp", _whole_file_batch("facts/kernel/slice_interfaces.yaml", "uo-kernel-slice-planner", [iface])) == []
+    item = yaml.safe_load((root / "facts" / "kernel" / "slice_interfaces.yaml").read_text(encoding="utf-8"))["items"][0]
+    assert item["identity"]["normalized"]["source_slice_ref"].startswith("KERNEL_")
+    assert item["identity"]["normalized"]["target_slice_ref"].startswith("KERNEL_")
+
+
+def _nested_dataflow_ref(depth: int) -> dict[str, Any]:
+    identity: dict[str, Any] = {"source_ref": "SRC", "target_ref": "DST"}
+    for _ in range(depth):
+        identity = {"source_ref": {"ref_type": "entity", "kind": "dataflow_edge", "identity": identity}, "target_ref": "DST"}
+    return {"ref_type": "entity", "kind": "dataflow_edge", "identity": identity}
+
+
+def test_recursive_identity_reference_cycle_fails(tmp_path: Path) -> None:
+    repo, _root = _ready_repo(tmp_path)
+    identity: dict[str, Any] = {"target_ref": "DST"}
+    identity["source_ref"] = {"ref_type": "entity", "kind": "dataflow_edge", "identity": identity}
+    batch = _batch("facts/compute.yaml", "dataflow", "uo-flow-extraction", [{"local_id": "edge", "kind": "dataflow_edge", "identity": identity, "fields": {}, "source_locations": [_loc("op_host/demo.cpp", 1)]}])
+    assert any(error.code == "ENTITY_IDENTITY_REFERENCE_CYCLE" for error in validate_candidate_batch(repo, "DemoOp", batch))
+
+
+def test_recursive_identity_reference_depth_limit(tmp_path: Path) -> None:
+    repo, _root = _ready_repo(tmp_path)
+    ref = _nested_dataflow_ref(17)
+    batch = _batch("facts/compute.yaml", "dataflow", "uo-flow-extraction", [{"local_id": "edge", "kind": "dataflow_edge", "identity": ref["identity"], "fields": {}, "source_locations": [_loc("op_host/demo.cpp", 1)]}])
+    assert any(error.code == "ENTITY_IDENTITY_REFERENCE_DEPTH_EXCEEDED" for error in validate_candidate_batch(repo, "DemoOp", batch))
 
 
 def test_formal_reference_kind_validation_rejects_wrong_kind(tmp_path: Path) -> None:

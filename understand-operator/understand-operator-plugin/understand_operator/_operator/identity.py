@@ -135,10 +135,6 @@ def _function_identity(identity: dict[str, object], repo_root: Path) -> tuple[di
         "qualified_symbol": _symbol(identity, "qualified_symbol"),
         "signature": _signature(identity, "signature"),
     }
-    if identity.get("source_file"):
-        norm["source_file"] = _path(identity, "source_file", repo_root)
-    if identity.get("definition_span"):
-        norm["definition_span"] = _span(identity, "definition_span")
     return norm, [str(norm["qualified_symbol"]), str(norm["signature"])]
 
 
@@ -311,10 +307,12 @@ def _architecture_variant_identity(identity: dict[str, object], repo_root: Path)
     if not isinstance(files, list) or not files:
         raise IdentityError("IDENTITY_MISSING_FIELD", "file_set_signature must be a non-empty list", "identity.file_set_signature")
     normalized_files = sorted(_path({"path": str(item)}, "path", repo_root) for item in files)
-    norm: dict[str, object] = {"variant_name": _required_str(identity, "variant_name"), "file_set_signature": normalized_files}
-    if identity.get("architecture_discriminator"):
-        norm["architecture_discriminator"] = _required_str(identity, "architecture_discriminator")
-    return norm, [str(norm["variant_name"]), ",".join(normalized_files), str(norm.get("architecture_discriminator") or "")]
+    norm: dict[str, object] = {
+        "variant_name": _required_str(identity, "variant_name"),
+        "file_set_signature": normalized_files,
+        "architecture_discriminator": _required_str(identity, "architecture_discriminator"),
+    }
+    return norm, [str(norm["variant_name"]), ",".join(normalized_files), str(norm["architecture_discriminator"])]
 
 
 def _source_rule_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:

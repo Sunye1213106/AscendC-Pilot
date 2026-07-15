@@ -47,3 +47,14 @@ def test_boundary_agent_requires_incremental_validation_and_repair() -> None:
     assert "compile_candidate_facts.py" in boundary
     assert "stable IDs" in boundary
     assert "temporary YAML" not in boundary
+
+
+def test_active_prompts_do_not_emit_empty_target_section() -> None:
+    active_roots = ("agents", "prompts", "skills/uo-init")
+    hits: list[str] = []
+    for root in active_roots:
+        for path in (ROOT / root).rglob("*.md"):
+            text = path.read_text(encoding="utf-8")
+            if '"section": ""' in text:
+                hits.append(path.relative_to(ROOT).as_posix())
+    assert hits == []

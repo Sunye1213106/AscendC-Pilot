@@ -26,7 +26,7 @@ strategy_aliases:
   operator_io:
     required_identity_fields: [operator_name, direction, index]
   kernel_entry:
-    required_identity_fields: [qualified_entry_symbol, signature]
+    required_identity_fields: [qualified_entry_symbol, signature, discriminator]
   kernel_slice_signature:
     required_identity_fields: [kernel_entry_ref, template_binding_signature, structural_flow_signature, tilingdata_read_signature, output_signature]
   slice_interface:
@@ -44,7 +44,7 @@ strategy_aliases:
   scoped_site:
     required_identity_fields: [source_file, scope_symbol, site_kind, site_span]
   architecture_variant:
-    required_identity_fields: [variant_name, file_set_signature]
+    required_identity_fields: [variant_name, file_set_signature, architecture_discriminator]
   source_rule:
     required_identity_fields: [source_file, rule_kind, pattern]
   source_span:
@@ -425,7 +425,7 @@ entity_types:
   architecture_variant:
     prefix: SYM
     identity_strategy: architecture_variant
-    required_identity_fields: [variant_name, file_set_signature]
+    required_identity_fields: [variant_name, file_set_signature, architecture_discriminator]
     reference_fields: {single: {}, multiple: {source_file_refs: [source_file]}}
   include_rule: &source_rule
     prefix: SYM

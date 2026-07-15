@@ -8,7 +8,8 @@ deterministic Python compiler. Agents never write Formal Facts YAML directly.
 
 The model may write only small Candidate JSON V2 batches containing:
 
-- `target` as an object with `path` and `section`, for example:
+- `target` as an object. Partitioned files use `path` plus a non-empty
+  `section`, for example:
 
 ```json
 {
@@ -85,13 +86,13 @@ Do not create or use:
 - Formal YAML direct writes
 - whole-file replacement of formal fact documents
 
-Do not express Candidate targets as fragment strings. Use the object form:
+Do not express Candidate targets as fragment strings. Non-partitioned Phase 1
+targets must use only `path`:
 
 ```json
 {
   "target": {
-    "path": "facts/operator/interface.yaml",
-    "section": ""
+    "path": "facts/operator/interface.yaml"
   }
 }
 ```

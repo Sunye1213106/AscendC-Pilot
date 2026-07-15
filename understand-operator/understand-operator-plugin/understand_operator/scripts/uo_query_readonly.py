@@ -37,13 +37,18 @@ def query_readonly(repo_root: Path, op_name: str, entity: str, *, depth: int = 1
         if not _index_fresh(index, uo_root):
             return {"resolved_entities": [], "direct_relations": [], "neighbors": [], "fact_details": [], "source_anchors": [], "unresolved": [], "index_status": "stale", "query_backend": "sqlite"}
         return _query_sqlite(index, uo_root, entity, depth=depth, relation_type=relation_type, limit=limit)
-    resolved_entities = _resolve_entities(uo_root, entity)
+    trace: list[str] = []
+    resolved_entities = _resolve_entities(uo_root, entity, trace)
     derived = _query_derived(uo_root, entity, resolved_entities)
+    trace.append("derived")
     raw_ids = set(derived.get("raw_node_refs") or []) | set(derived.get("raw_edge_refs") or [])
     raw = _query_raw(uo_root, entity, raw_ids | resolved_entities)
+    trace.append("raw")
     yaml_refs = set(derived.get("yaml_refs") or []) | set(raw.get("yaml_refs") or [])
     yaml_items = [_read_yaml_ref(uo_root, ref) for ref in sorted(yaml_refs)]
+    trace.append("yaml")
     source_refs = _source_refs_from_yaml_items(yaml_items)
+    trace.append("source")
     return {
         "query": {
             "entity": entity,
@@ -52,6 +57,7 @@ def query_readonly(repo_root: Path, op_name: str, entity: str, *, depth: int = 1
             "mode": "readonly",
             "order": EXPECTED_QUERY_ORDER,
         },
+        "query_trace": trace,
         "resolved_entities": sorted(resolved_entities),
         "derived_entities": sorted({str(item.get("id")) for item in (derived.get("nodes") or []) + (derived.get("edges") or []) if item.get("id")}),
         "raw_entities": sorted({str(item.get("id")) for item in (raw.get("nodes") or []) + (raw.get("edges") or []) if item.get("id")}),
@@ -87,8 +93,8 @@ def query_smoke(repo_root: Path, op_name: str) -> tuple[int, dict[str, Any]]:
         errors.append("query changed KB files")
     if result.get("writes") or result.get("cbm_writes"):
         errors.append("query reported write operations")
-    if result.get("query", {}).get("order") != EXPECTED_QUERY_ORDER:
-        errors.append("query order is not terminology -> symbol_index -> derived -> raw -> yaml -> source")
+    if result.get("query_trace") != EXPECTED_QUERY_ORDER:
+        errors.append("query trace is not terminology -> symbol_index -> derived -> raw -> yaml -> source")
     if not result.get("resolved_entities"):
         errors.append("resolved_entities is empty")
     if not (result.get("derived_entities") or result.get("raw_entities")):
@@ -138,9 +144,14 @@ def _index_fresh(index: Path, root: Path) -> bool:
 
 def _query_sqlite(index: Path, root: Path, term: str, *, depth: int, relation_type: str | None, limit: int) -> dict[str, Any]:
     norm = _normalize_term(term); limit=max(1,min(limit,200)); depth=max(0,min(depth,2))
+    trace: list[str] = []
+    trace_details: list[str] = []
     with sqlite3.connect(index) as db:
         db.row_factory=sqlite3.Row
+        trace.append("terminology"); trace_details.append("terminology: sqlite_alias_lookup")
+        trace.append("symbol_index"); trace_details.append("symbol_index: sqlite_entity_lookup")
         rows=db.execute("select * from entities where id=? or normalized_label=? or id in (select entity_id from aliases where normalized_alias=?) order by graph_level desc limit ?", (term,norm,norm,limit)).fetchall()
+        trace.append("derived")
         ids={r["id"] for r in rows}; direct=[]; neighbors=[]
         frontier=set(ids)
         for _ in range(depth):
@@ -155,6 +166,7 @@ def _query_sqlite(index: Path, root: Path, term: str, *, depth: int, relation_ty
         if ids:
             marks=','.join('?' for _ in ids); neighbors=db.execute(f"select * from entities where id in ({marks}) limit ?", [*ids,limit]).fetchall()
             expansion_rows = db.execute(f"select * from expansions where derived_id in ({marks}) limit ?", [*ids, limit]).fetchall()
+            trace.append("raw")
             raw_node_ids = [str(r["raw_id"]) for r in expansion_rows if r["raw_kind"] == "node" and r["raw_id"]]
             raw_edge_ids = [str(r["raw_id"]) for r in expansion_rows if r["raw_kind"] == "edge" and r["raw_id"]]
             if raw_node_ids:
@@ -165,6 +177,9 @@ def _query_sqlite(index: Path, root: Path, term: str, *, depth: int, relation_ty
                 expansion_relations = db.execute(f"select * from relations where id in ({raw_marks}) limit ?", [*raw_edge_ids, limit]).fetchall()
     detail_refs = [str(r["detail_ref"]) for r in [*neighbors, *expansion_entities, *expansion_relations] if r["detail_ref"]]
     details = [_read_yaml_ref(root, ref) for ref in sorted(set(detail_refs))]
+    trace.append("yaml")
+    source_refs = _source_refs_from_yaml_items(details)
+    trace.append("source")
     entities = [_row(r) for r in rows]
     neighbor_entities = [_row(r) for r in [*neighbors, *expansion_entities][:limit]]
     return {
@@ -175,13 +190,15 @@ def _query_sqlite(index: Path, root: Path, term: str, *, depth: int, relation_ty
             "mode": "readonly",
             "order": EXPECTED_QUERY_ORDER,
         },
+        "query_trace": trace,
+        "query_trace_details": trace_details,
         "resolved_entities": entities,
         "direct_relations": [_row(r) for r in direct[:limit]],
         "neighbors": neighbor_entities,
         "fact_details": details,
         "yaml_items": details,
-        "source_refs": _source_refs_from_yaml_items(details),
-        "source_anchors": _source_refs_from_yaml_items(details),
+        "source_refs": source_refs,
+        "source_anchors": source_refs,
         "derived_entities": [str(item.get("id")) for item in neighbor_entities if item.get("graph_level") == "derived"],
         "raw_entities": [str(item.get("id")) for item in neighbor_entities if item.get("graph_level") == "raw"],
         "unresolved": [],
@@ -199,16 +216,18 @@ def _row(row: sqlite3.Row) -> dict[str, Any]:
     return result
 
 
-def _resolve_entities(uo_root: Path, entity: str) -> set[str]:
+def _resolve_entities(uo_root: Path, entity: str, trace: list[str]) -> set[str]:
     candidates = {entity, _normalize_term(entity)}
     result: set[str] = {entity}
     terminology = _load_mapping(uo_root / "indexes" / "terminology.yaml", "terms")
+    trace.append("terminology")
     for candidate in list(candidates):
         entry = terminology.get(candidate) if isinstance(terminology, dict) else None
         if isinstance(entry, dict):
             result.update(str(item) for item in entry.get("nodes") or [])
             result.update(str(item) for item in entry.get("edges") or [])
     symbol_index = _load_mapping(uo_root / "indexes" / "symbol_index.yaml", "symbol_index")
+    trace.append("symbol_index")
     for key, entry in symbol_index.items():
         if _normalize_term(str(key)) in candidates and isinstance(entry, dict):
             result.update(str(item) for item in entry.get("nodes") or [])

@@ -55,7 +55,9 @@ def validate_spec_consistency(plugin_root: Path | None = None) -> list[SpecError
     _validate_formal_schemas(root, entity_spec, entity_types, valid_targets, errors)
     _validate_candidate_schema(root, errors)
     _validate_agent_targets(plugin_root or root.parents[1], spec, errors)
+    _validate_strategy_aliases(entity_spec, entity_types, errors)
     _validate_identity_strategy_probes(entity_types, root, errors)
+    _validate_identity_reference_graph(entity_types, kind_groups, errors)
     _validate_phase3_agent_protocol(plugin_root or root.parents[1], errors)
     _validate_final_order(plugin_root or root.parents[1], errors)
     return errors
@@ -148,14 +150,22 @@ def _validate_candidate_schema(root: Path, errors: list[SpecError]) -> None:
 
 def _validate_agent_targets(plugin_root: Path, spec: dict[str, Any], errors: list[SpecError]) -> None:
     ownership = (spec.get("ownership") or {}).get("owners") or {}
-    agents_dir = plugin_root / "agents"
-    for path in sorted(agents_dir.glob("*.md")):
+    paths = [
+        *sorted((plugin_root / "agents").glob("*.md")),
+        *sorted((plugin_root / "prompts").rglob("*.md")),
+        *sorted((plugin_root / "skills" / "uo-init").glob("*.md")),
+    ]
+    for path in paths:
         text = path.read_text(encoding="utf-8")
         owner = path.stem
-        for target_path, section in _target_objects(text):
+        for target_path, section, has_section in _target_objects(text):
+            if has_section and section == "":
+                errors.append(SpecError("SPEC_AGENT_TARGET_EMPTY_SECTION", path.relative_to(plugin_root).as_posix(), f"{target_path} uses empty target section"))
             match = match_catalog_entry(spec, target_path, writable_only=True)
             if not match:
                 errors.append(SpecError("SPEC_AGENT_TARGET_UNKNOWN", path.name, f"{target_path} is not in catalog"))
+                continue
+            if path.parts[-2:] != ("agents", path.name):
                 continue
             if match.entry.get("owner") != owner:
                 errors.append(SpecError("SPEC_AGENT_OWNER_MISMATCH", path.name, f"{owner} cannot write {target_path}"))
@@ -167,8 +177,8 @@ def _validate_agent_targets(plugin_root: Path, spec: dict[str, Any], errors: lis
                 errors.append(SpecError("SPEC_AGENT_OWNER_MISMATCH", path.name, f"ownership.yaml does not allow {owner} to write {target_path}"))
 
 
-def _target_objects(text: str) -> list[tuple[str, str]]:
-    found: list[tuple[str, str]] = []
+def _target_objects(text: str) -> list[tuple[str, str, bool]]:
+    found: list[tuple[str, str, bool]] = []
     pattern = re.compile(r'"target"\s*:\s*\{(?P<body>[^{}]*)\}', re.DOTALL)
     for match in pattern.finditer(text):
         body = match.group("body")
@@ -176,7 +186,7 @@ def _target_objects(text: str) -> list[tuple[str, str]]:
         if not path_match:
             continue
         section_match = re.search(r'"section"\s*:\s*"([^"]*)"', body)
-        found.append((path_match.group(1), section_match.group(1) if section_match else ""))
+        found.append((path_match.group(1), section_match.group(1) if section_match else "", section_match is not None))
     return found
 
 
@@ -198,6 +208,71 @@ def _validate_identity_strategy_probes(entity_types: dict[str, Any], root: Path,
         actual = set(resolved.normalized_identity)
         if actual != required:
             errors.append(SpecError("SPEC_IDENTITY_RESOLVER_FIELD_MISMATCH", "entity_types.yaml", f"{kind} normalized fields {sorted(actual)} != required {sorted(required)}"))
+        extended = _extended_identity_probe_for(str(config.get("identity_strategy") or ""), sample)
+        if extended != sample:
+            try:
+                extended_resolved = resolve_identity(kind, extended, repo_root=repo_root)
+            except IdentityError as exc:
+                errors.append(SpecError("SPEC_IDENTITY_OPTIONAL_FIELD_LEAK", "entity_types.yaml", f"{kind} extended probe failed: {exc.code}: {exc.message}"))
+                continue
+            extended_actual = set(extended_resolved.normalized_identity)
+            if extended_actual != required:
+                errors.append(SpecError("SPEC_IDENTITY_OPTIONAL_FIELD_LEAK", "entity_types.yaml", f"{kind} extended normalized fields {sorted(extended_actual)} != required {sorted(required)}"))
+
+
+def _validate_strategy_aliases(entity_spec: dict[str, Any], entity_types: dict[str, Any], errors: list[SpecError]) -> None:
+    aliases = entity_spec.get("strategy_aliases") if isinstance(entity_spec.get("strategy_aliases"), dict) else {}
+    for kind, config in sorted(entity_types.items()):
+        if not isinstance(config, dict):
+            continue
+        strategy = str(config.get("identity_strategy") or "")
+        alias = aliases.get(strategy)
+        if not isinstance(alias, dict) or "required_identity_fields" not in alias:
+            continue
+        alias_fields = [str(item) for item in alias.get("required_identity_fields") or []]
+        kind_fields = [str(item) for item in config.get("required_identity_fields") or []]
+        if alias_fields != kind_fields:
+            errors.append(SpecError("SPEC_STRATEGY_ALIAS_FIELD_MISMATCH", "entity_types.yaml", f"{kind} uses {strategy} fields {kind_fields}, alias declares {alias_fields}"))
+
+
+def _validate_identity_reference_graph(entity_types: dict[str, Any], kind_groups: dict[str, Any], errors: list[SpecError]) -> None:
+    graph: dict[str, set[str]] = {}
+    for kind, config in sorted(entity_types.items()):
+        refs = config.get("identity_reference_fields") if isinstance(config, dict) and isinstance(config.get("identity_reference_fields"), dict) else {}
+        targets: set[str] = set()
+        for field, allowed in refs.items():
+            if not isinstance(allowed, list):
+                continue
+            for target in allowed:
+                name = str(target)
+                if name == "any":
+                    continue
+                if name in entity_types:
+                    targets.add(name)
+                elif name in kind_groups:
+                    for expanded in kind_groups.get(name) or []:
+                        if str(expanded) in entity_types:
+                            targets.add(str(expanded))
+                else:
+                    errors.append(SpecError("SPEC_REFERENCE_KIND_UNKNOWN", "entity_types.yaml", f"{kind}.{field} uses unknown identity reference target {name}"))
+        graph[kind] = targets
+    for kind in sorted(graph):
+        if _has_identity_ref_cycle(kind, graph, set(), set()):
+            errors.append(SpecError("SPEC_IDENTITY_REFERENCE_CYCLE", "entity_types.yaml", f"identity_reference_fields for {kind} can form a cycle"))
+
+
+def _has_identity_ref_cycle(kind: str, graph: dict[str, set[str]], visiting: set[str], seen: set[str]) -> bool:
+    if kind in visiting:
+        return True
+    if kind in seen:
+        return False
+    visiting.add(kind)
+    for target in graph.get(kind, set()):
+        if _has_identity_ref_cycle(target, graph, visiting, seen):
+            return True
+    visiting.remove(kind)
+    seen.add(kind)
+    return False
 
 
 def _identity_probe_for(kind: str, strategy: str) -> dict[str, Any] | None:
@@ -224,13 +299,23 @@ def _identity_probe_for(kind: str, strategy: str) -> dict[str, Any] | None:
         "scoped_resource": {"source_file": "sample.cpp", "scope_symbol": "DemoScope", "source_name": "buf", "declaration_span": span, "resource_kind": "buffer"},
         "scoped_event": {"source_file": "sample.cpp", "scope_symbol": "DemoScope", "event_kind": "setflag", "event_identifier": "flag0", "source_span": span},
         "scoped_site": {"source_file": "sample.cpp", "scope_symbol": "DemoScope", "site_kind": "frontier", "site_span": span},
-        "architecture_variant": {"variant_name": "generic", "file_set_signature": ["sample.cpp"]},
+        "architecture_variant": {"variant_name": "generic", "file_set_signature": ["sample.cpp"], "architecture_discriminator": "generic"},
         "source_rule": {"source_file": "sample.cpp", "rule_kind": "include", "pattern": "*.cpp"},
         "source_span": {"source_file": "sample.cpp", "scope_symbol": "DemoScope", "source_span": span},
         "qualified_symbol": {"qualified_symbol": "DemoSymbol"},
         "external_dependency": {"logical_path": "external.hpp", "dependency_type": "third_party", "discovered_from": "include"},
     }
     return dict(by_strategy[strategy]) if strategy in by_strategy else None
+
+
+def _extended_identity_probe_for(strategy: str, sample: dict[str, Any]) -> dict[str, Any]:
+    extended = dict(sample)
+    if strategy == "qualified_symbol_signature":
+        extended["source_file"] = "sample.cpp"
+        extended["definition_span"] = {"start_line": 1, "end_line": 1}
+    if strategy == "architecture_variant":
+        extended["architecture_discriminator"] = extended.get("architecture_discriminator") or "generic"
+    return extended
 
 
 def _validate_phase3_agent_protocol(plugin_root: Path, errors: list[SpecError]) -> None:

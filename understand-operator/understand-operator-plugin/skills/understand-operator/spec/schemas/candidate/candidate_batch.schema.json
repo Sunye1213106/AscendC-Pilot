@@ -96,7 +96,7 @@
         "name": {"type": "string"},
         "identity": {"type": "object"},
         "fields": {"type": "object"},
-        "source_locations": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/location"}}
+        "source_locations": {"type": "array", "items": {"$ref": "#/$defs/location"}}
       }
     },
     "relation": {
@@ -108,7 +108,7 @@
         "source": {"$ref": "#/$defs/reference"},
         "target": {"$ref": "#/$defs/reference"},
         "fields": {"type": "object"},
-        "source_locations": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/location"}}
+        "source_locations": {"type": "array", "items": {"$ref": "#/$defs/location"}}
       }
     },
     "unresolved": {
