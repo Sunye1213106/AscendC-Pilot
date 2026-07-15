@@ -1,0 +1,20 @@
+version: 1
+schema_kind: runtime_artifact
+required_top_level: [version, artifact, snapshot, status, decision, approved_scope]
+allowed_top_level:
+  - version
+  - artifact
+  - snapshot
+  - status
+  - decision
+  - reviewed_at
+  - reviewer
+  - notes
+  - approved_scope
+  - changes
+  - scope_conflicts
+  - items
+  - relations
+  - unresolved
+required_item_fields: []
+relation_required_fields: []

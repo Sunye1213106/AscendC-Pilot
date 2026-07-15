@@ -25,6 +25,8 @@ strategy_aliases:
     required_identity_fields: [source_file, scope_symbol, struct_name, field_name, read_span]
   operator_io:
     required_identity_fields: [operator_name, direction, index]
+  operator_named_value:
+    required_identity_fields: [operator_name, name]
   kernel_entry:
     required_identity_fields: [qualified_entry_symbol, signature, discriminator]
   kernel_slice_signature:
@@ -435,18 +437,48 @@ entity_types:
   exclude_rule: *source_rule
   branch_skip: *source_rule
   source_hint: *source_rule
-  attribute: &operator_attr
+  attribute:
+    prefix: ATTR
+    identity_strategy: operator_named_value
+    required_identity_fields: [operator_name, name]
+    reference_fields:
+      single: {operator_ref: [operator]}
+      multiple: {constraint_refs: [interface_constraint], shape_refs: [shape_symbol], source_refs: [any]}
+  operator_attribute:
+    prefix: ATTR
+    identity_strategy: operator_named_value
+    required_identity_fields: [operator_name, name]
+    reference_fields:
+      single: {operator_ref: [operator]}
+      multiple: {constraint_refs: [interface_constraint], shape_refs: [shape_symbol], source_refs: [any]}
+  dtype_domain:
     prefix: ATTR
     identity_strategy: source_span
     required_identity_fields: [source_file, scope_symbol, source_span]
     reference_fields:
       single: {operator_ref: [operator]}
       multiple: {constraint_refs: [interface_constraint], shape_refs: [shape_symbol], source_refs: [any]}
-  operator_attribute: *operator_attr
-  dtype_domain: *operator_attr
-  layout_domain: *operator_attr
-  interface_constraint: *operator_attr
-  format_conversion: *operator_attr
+  layout_domain:
+    prefix: ATTR
+    identity_strategy: source_span
+    required_identity_fields: [source_file, scope_symbol, source_span]
+    reference_fields:
+      single: {operator_ref: [operator]}
+      multiple: {constraint_refs: [interface_constraint], shape_refs: [shape_symbol], source_refs: [any]}
+  interface_constraint:
+    prefix: ATTR
+    identity_strategy: source_span
+    required_identity_fields: [source_file, scope_symbol, source_span]
+    reference_fields:
+      single: {operator_ref: [operator]}
+      multiple: {constraint_refs: [interface_constraint], shape_refs: [shape_symbol], source_refs: [any]}
+  format_conversion:
+    prefix: ATTR
+    identity_strategy: source_span
+    required_identity_fields: [source_file, scope_symbol, source_span]
+    reference_fields:
+      single: {operator_ref: [operator]}
+      multiple: {constraint_refs: [interface_constraint], shape_refs: [shape_symbol], source_refs: [any]}
   rank: &shape
     prefix: SHAPE
     identity_strategy: source_span

@@ -20,6 +20,7 @@ class IdentityError(ValueError):
         *,
         actual_type: str = "",
         expected_type: str = "",
+        expected_identity_fields: list[str] | None = None,
         expected_shape: dict[str, str] | None = None,
     ) -> None:
         super().__init__(message)
@@ -28,6 +29,7 @@ class IdentityError(ValueError):
         self.field = field
         self.actual_type = actual_type
         self.expected_type = expected_type
+        self.expected_identity_fields = expected_identity_fields
         self.expected_shape = expected_shape
 
 
@@ -50,7 +52,23 @@ def resolve_identity(kind: str, identity: dict[str, object], *, repo_root: Path)
     if not isinstance(identity, dict):
         raise IdentityError("IDENTITY_MISSING", "identity must be an object")
     resolver = _strategy_for_kind(kind, config)
-    normalized, parts = resolver(identity, repo_root)
+    try:
+        normalized, parts = resolver(identity, repo_root)
+    except IdentityError as exc:
+        if exc.expected_identity_fields is None:
+            required = config.get("required_identity_fields")
+            expected_fields = [str(field) for field in required] if isinstance(required, list) else []
+            expected_shape = exc.expected_shape or _expected_identity_shape(expected_fields)
+            raise IdentityError(
+                exc.code,
+                exc.message,
+                exc.field,
+                actual_type=exc.actual_type,
+                expected_type=exc.expected_type,
+                expected_identity_fields=expected_fields or None,
+                expected_shape=expected_shape or None,
+            ) from exc
+        raise
     canonical_key = ":".join([kind, *(_escape(part) for part in parts)])
     result = ResolvedIdentity(
         kind=kind,
@@ -93,6 +111,7 @@ def _strategy_for_kind(kind: str, config: dict[str, Any]) -> Callable[[dict[str,
         "branch_outcome": _branch_outcome_identity,
         "scoped_loop": _loop_identity,
         "repo_path": _repo_path_identity,
+        "operator_named_value": _operator_named_value_identity,
         "qualified_struct": _qualified_struct_identity,
         "struct_field": _tilingdata_field_identity,
         "operator_io": _operator_io_identity,
@@ -210,6 +229,14 @@ def _tilingdata_access_identity(span_key: str) -> Callable[[dict[str, object], P
 def _operator_io_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:
     norm = {"operator_name": _symbol(identity, "operator_name"), "direction": _required_str(identity, "direction"), "index": _required_int(identity, "index")}
     return norm, [str(norm["operator_name"]), str(norm["direction"]), str(norm["index"])]
+
+
+def _operator_named_value_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:
+    norm = {
+        "operator_name": _symbol(identity, "operator_name"),
+        "name": _symbol(identity, "name"),
+    }
+    return norm, [str(norm["operator_name"]), str(norm["name"])]
 
 
 def _kernel_entry_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:
@@ -447,4 +474,18 @@ def _canonical_jsonish(value: Any) -> str:
     if isinstance(value, list):
         return "[" + ",".join(_canonical_jsonish(item) for item in value) + "]"
     return str(value)
+
+
+def _expected_identity_shape(fields: list[str]) -> dict[str, str]:
+    span_fields = {"source_span", "declaration_span", "call_span", "predicate_span", "loop_header_span", "write_span", "read_span", "site_span"}
+    integer_fields = {"index"}
+    shape: dict[str, str] = {}
+    for field in fields:
+        if field in span_fields:
+            shape[field] = '{"start_line": "integer >= 1", "end_line": "integer >= start_line"}'
+        elif field in integer_fields:
+            shape[field] = "integer"
+        else:
+            shape[field] = "non-empty string"
+    return shape
 

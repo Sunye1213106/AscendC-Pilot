@@ -33,6 +33,8 @@ def phase0_dir(uo_root: Path, run_id: str | None = None) -> Path:
 
 def phase0_context(uo_root: Path, run_id: str | None = None) -> dict[str, Any]:
     data = read_yaml_mapping(phase0_dir(uo_root, run_id) / "context.yaml")
+    if any(key in data for key in ("project_root", "op_name", "script_dir", "run_id", "source_revision", "source_snapshot_id", "spec_bundle_hash")):
+        return data
     for item in data.get("items") or []:
         if isinstance(item, dict) and isinstance(item.get("data"), dict):
             return item["data"]

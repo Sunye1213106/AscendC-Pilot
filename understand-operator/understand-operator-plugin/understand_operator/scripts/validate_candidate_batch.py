@@ -134,6 +134,7 @@ def validate_candidate_batch(repo_root: Path, op_name: str, batch: Any) -> list[
                         field=f"{label}.{exc.field}",
                         actual_type=exc.actual_type,
                         expected_type=exc.expected_type,
+                        expected_identity_fields=exc.expected_identity_fields,
                         expected_shape=exc.expected_shape,
                     )
                 )

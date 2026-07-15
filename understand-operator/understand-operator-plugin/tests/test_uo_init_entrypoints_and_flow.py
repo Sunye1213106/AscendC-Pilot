@@ -119,24 +119,42 @@ def _write_yaml(path: Path, data: dict[str, Any]) -> None:
 
 
 def _write_phase0_doc(path: Path, artifact_type: str, data: dict[str, Any]) -> None:
+    defaults: dict[str, Any] = {}
+    if artifact_type == "runs.context":
+        defaults = {
+            "project_root": "repo",
+            "op_name": "DemoOp",
+            "script_dir": "understand_operator/scripts",
+            "run_id": "UO_RUN_TEST",
+            "source_revision": "unknown",
+            "source_snapshot_id": "SOURCE_TEST",
+            "spec_bundle_hash": spec_bundle_hash(),
+        }
+    elif artifact_type == "runs.scope_scan":
+        defaults = {
+            "status": "pending",
+            "project_root": "repo",
+            "operator_path": "",
+            "scope_roots": [],
+            "dependency_roots": [],
+            "files": {},
+            "symbols": {},
+            "architecture_variants": [],
+        }
+    elif artifact_type == "runs.semantic_enrichment":
+        defaults = {"status": "pending"}
+    elif artifact_type == "runs.installed_skill_check":
+        defaults = {"consistent": True}
+    elif artifact_type == "runs.ignore_rules":
+        defaults = {"patterns": []}
     _write_yaml(
         path,
         {
             "version": 1,
             "artifact": {"type": artifact_type, "schema_version": 1, "owner": "uo-orchestrator"},
             "snapshot": _snapshot(),
-            "items": [
-                {
-                    "id": "OP_PHASE0_ITEM",
-                    "kind": "phase0_item",
-                    "status": "recorded",
-                    "identity": {"artifact": artifact_type},
-                    "sources": [{"kind": "runtime", "path": path.name}],
-                    "data": data,
-                }
-            ],
-            "relations": [],
-            "unresolved": [],
+            **defaults,
+            **data,
         },
     )
 

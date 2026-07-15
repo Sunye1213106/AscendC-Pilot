@@ -4,6 +4,7 @@ required_top_level:
   - version
   - artifact
   - snapshot
+  - repair_key
   - task_id
   - owner
   - target
@@ -12,13 +13,11 @@ required_top_level:
   - max_attempts
   - previous_errors
   - status
-  - items
-  - relations
-  - unresolved
 allowed_top_level:
   - version
   - artifact
   - snapshot
+  - repair_key
   - task_id
   - owner
   - target
@@ -27,12 +26,5 @@ allowed_top_level:
   - max_attempts
   - previous_errors
   - status
-  - run_id
-  - source_snapshot_id
-  - source_revision
-  - spec_bundle_hash
-  - items
-  - relations
-  - unresolved
 required_item_fields: []
 relation_required_fields: []

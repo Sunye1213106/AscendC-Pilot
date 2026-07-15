@@ -1,0 +1,26 @@
+version: 1
+schema_kind: runtime_artifact
+required_top_level: [version, artifact, snapshot, status, project_root, operator_path, scope_roots, dependency_roots, files, symbols, architecture_variants]
+allowed_top_level:
+  - version
+  - artifact
+  - snapshot
+  - status
+  - project_root
+  - operator_path
+  - scope_roots
+  - dependency_roots
+  - operator_roots
+  - include_search_paths
+  - ignored_patterns
+  - ignored_files
+  - directories
+  - files
+  - dependency_edges
+  - symbols
+  - global_candidates
+  - architecture_variants
+  - large_files
+  - warnings
+required_item_fields: []
+relation_required_fields: []

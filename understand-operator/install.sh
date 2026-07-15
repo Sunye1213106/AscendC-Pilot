@@ -68,7 +68,23 @@ fi
 if [ -n "$AGENTS_DEST" ]; then
   mkdir -p "$AGENTS_DEST"
   rm -f "$AGENTS_DEST"/uo-*.md
-  cp -f "$AGENTS_SRC"/uo-*.md "$AGENTS_DEST"/
+  for src_agent in "$AGENTS_SRC"/uo-*.md; do
+    dest_agent="$AGENTS_DEST/$(basename "$src_agent")"
+    cp -f "$src_agent" "$dest_agent"
+    cat >> "$dest_agent" <<EOF
+
+## Installed Path Hints
+
+For this installation, use these absolute paths when resolving plugin files:
+
+- \`PLUGIN_ROOT\`: \`$PLUGIN_LINK\`
+- \`PROMPT_DIR\`: \`$PLUGIN_LINK/prompts\`
+- \`SCRIPT_DIR\`: \`$TARGET/understand-operator\`
+
+If the host dispatch omits path variables, use the paths above. Do not resolve
+\`prompts/...\` from the target operator repository.
+EOF
+  done
   echo "Installed understand-operator subagents: $AGENTS_DEST/uo-*.md"
   for agent in "${REQUIRED_AGENTS[@]}"; do
     path="$AGENTS_DEST/$agent.md"

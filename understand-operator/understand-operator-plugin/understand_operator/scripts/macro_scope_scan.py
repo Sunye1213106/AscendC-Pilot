@@ -137,9 +137,6 @@ def main(argv: list[str] | None = None) -> int:
         "architecture_variants": [],
         "large_files": [],
         "warnings": [],
-        "items": [],
-        "relations": [],
-        "unresolved": [],
     }
 
     scope_files = sorted(

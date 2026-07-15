@@ -328,49 +328,49 @@ files:
   - path: runs/*/phase0/context.yaml
     artifact_type: runs.context
     owner: uo-orchestrator
-    schema: schemas/common/document.schema.yaml
+    schema: schemas/runs/context.schema.yaml
     required_after_stage: runtime
     allow_empty: false
     raw_graph_input: false
   - path: runs/*/phase0/installed_skill_check.yaml
     artifact_type: runs.installed_skill_check
     owner: uo-orchestrator
-    schema: schemas/common/document.schema.yaml
+    schema: schemas/runs/installed_skill_check.schema.yaml
     required_after_stage: runtime
     allow_empty: false
     raw_graph_input: false
   - path: runs/*/phase0/ignore_rules.yaml
     artifact_type: runs.ignore_rules
     owner: uo-orchestrator
-    schema: schemas/common/document.schema.yaml
+    schema: schemas/runs/ignore_rules.schema.yaml
     required_after_stage: runtime
     allow_empty: false
     raw_graph_input: false
   - path: runs/*/phase0/scope_scan.yaml
     artifact_type: runs.scope_scan
     owner: uo-orchestrator
-    schema: schemas/common/document.schema.yaml
+    schema: schemas/runs/scope_scan.schema.yaml
     required_after_stage: runtime
     allow_empty: false
     raw_graph_input: false
   - path: runs/*/phase0/semantic_enrichment.yaml
     artifact_type: runs.semantic_enrichment
     owner: uo-orchestrator
-    schema: schemas/common/document.schema.yaml
+    schema: schemas/runs/semantic_enrichment.schema.yaml
     required_after_stage: runtime
     allow_empty: false
     raw_graph_input: false
   - path: runs/*/phase0/scope_review.yaml
     artifact_type: runs.scope_review
     owner: uo-orchestrator
-    schema: schemas/common/document.schema.yaml
+    schema: schemas/runs/scope_review.schema.yaml
     required_after_stage: runtime
     allow_empty: false
     raw_graph_input: false
   - path: runs/*/phase0/receipt.yaml
     artifact_type: runs.receipt
     owner: uo-orchestrator
-    schema: schemas/common/document.schema.yaml
+    schema: schemas/runs/receipt.schema.yaml
     required_after_stage: runtime
     allow_empty: false
     raw_graph_input: false

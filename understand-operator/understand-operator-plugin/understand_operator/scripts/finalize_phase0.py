@@ -255,6 +255,13 @@ def _doc_status(doc: dict[str, Any]) -> str:
 
 
 def _item_data(doc: dict[str, Any]) -> dict[str, Any]:
+    direct = {
+        key: value
+        for key, value in doc.items()
+        if key not in {"version", "artifact", "snapshot", "items", "relations", "unresolved"}
+    }
+    if direct:
+        return direct
     for item in doc.get("items") or []:
         if isinstance(item, dict) and isinstance(item.get("data"), dict):
             return item["data"]

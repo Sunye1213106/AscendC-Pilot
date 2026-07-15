@@ -87,9 +87,7 @@ def _write_phase0_doc(path: Path, artifact_type: str, data: dict) -> None:
             "version": 1,
             "artifact": {"type": artifact_type, "schema_version": 1, "owner": "uo-orchestrator"},
             "snapshot": {"run_id": "UO_RUN_TEST", "source_snapshot_id": "SOURCE_TEST", "source_revision": "unknown", "spec_bundle_hash": spec_bundle_hash()},
-            "items": [{"id": "OP_PHASE0_ITEM", "kind": "phase0_item", "status": "recorded", "data": data}],
-            "relations": [],
-            "unresolved": [],
+            **data,
         },
     )
 
@@ -283,7 +281,7 @@ def test_finalize_phase0_requires_cbm_mcp_metadata_and_query_records(tmp_path: P
     meta["indexed_via"] = "cli"
     (base / "cbm" / "index_meta.json").write_text(json.dumps(meta), encoding="utf-8")
     semantic = yaml.safe_load((base / "runs" / run_id / "phase0" / "semantic_enrichment.yaml").read_text(encoding="utf-8"))
-    semantic["items"][0]["data"].pop("cbm_queries")
+    semantic.pop("cbm_queries")
     _write_yaml(base / "runs" / run_id / "phase0" / "semantic_enrichment.yaml", semantic)
 
     code, messages = finalize_phase0(repo, "DemoOp")
@@ -300,7 +298,7 @@ def test_finalize_phase0_allows_semantic_query_without_confidence(tmp_path: Path
     assert macro_scope_scan_main([str(repo), "--op-name", "DemoOp"]) == 0
     assert review_checkpoint_main([str(repo), "--op-name", "DemoOp", "--gate", "macro_scope", "--decision", "continue"]) == 0
     semantic = yaml.safe_load((base / "runs" / run_id / "phase0" / "semantic_enrichment.yaml").read_text(encoding="utf-8"))
-    semantic["items"][0]["data"]["cbm_queries"] = [
+    semantic["cbm_queries"] = [
         {
             "tool": "search_graph",
             "query": {"name_pattern": ".*DemoOp.*"},

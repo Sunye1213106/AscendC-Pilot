@@ -42,6 +42,7 @@ class CandidateError:
     actual_type: str = ""
     expected_type: str = ""
     expected_shape: Any = None
+    expected_identity_fields: Any = None
 
     def to_dict(self) -> dict[str, Any]:
         return {key: value for key, value in self.__dict__.items() if value}

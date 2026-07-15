@@ -42,9 +42,13 @@ def _repo(tmp_path: Path) -> tuple[Path, Path]:
             "source_revision": "unknown",
             "spec_bundle_hash": spec_bundle_hash(),
         },
-        "items": [{"id": "OP_PHASE0_CONTEXT", "kind": "context", "status": "recorded", "data": {"source_revision": "unknown", "source_snapshot_id": "SOURCE_TEST"}}],
-        "relations": [],
-        "unresolved": [],
+        "project_root": str(repo),
+        "op_name": "DemoOp",
+        "script_dir": str(ROOT / "understand_operator" / "scripts"),
+        "run_id": run_id,
+        "source_revision": "unknown",
+        "source_snapshot_id": "SOURCE_TEST",
+        "spec_bundle_hash": spec_bundle_hash(),
     }
     _write_yaml(phase0 / "context.yaml", context)
     context_hash = "sha256:" + hashlib.sha256((phase0 / "context.yaml").read_bytes()).hexdigest()
@@ -60,6 +64,10 @@ def _repo(tmp_path: Path) -> tuple[Path, Path]:
                 "spec_bundle_hash": spec_bundle_hash(),
             },
             "status": "pass",
+            "source": {"root": str(repo), "operator_path": "", "root_relative_to_operator": ""},
+            "finalized_at": "2026-01-01T00:00:00+00:00",
+            "frozen_scope": {"approved_initial_files": [], "approved_dependency_files": [], "approved_include": [], "approved_exclude": [], "architecture_variants": [], "unresolved_dependencies": [], "operator_roots": [], "scope_roots": [], "dependency_roots": [], "include_search_paths": []},
+            "cbm": {"repo_root": str(repo), "op_name": "DemoOp", "cbm_project": None, "indexed_via": "mcp", "cbm_mode": "fast", "indexed_at": "2026-01-01T00:00:00+00:00", "project_confirmed": True, "indexed_scope_roots": [], "cbm_status": {"available": False, "retry_count": 0, "fallback": "filesystem_scan", "last_error": ""}},
             "input_hashes": {f"runs/{run_id}/phase0/context.yaml": context_hash},
             "items": [{"id": "OP_PHASE0_RECEIPT", "kind": "phase0_receipt", "status": "recorded"}],
             "relations": [],
@@ -669,7 +677,7 @@ def test_source_text_mismatch_fails(tmp_path: Path) -> None:
 
     errors = validate_facts(repo, "DemoOp", stage="step1")
 
-    assert any(error.code == "SOURCE_TEXT_MISMATCH" for error in errors)
+    assert any(error.code == "SOURCE_FIELD_FORBIDDEN" for error in errors)
 
 
 def test_agent_owner_cannot_write_forbidden_path(tmp_path: Path) -> None:
@@ -744,6 +752,66 @@ def test_relation_endpoint_kind_mismatch_fails(tmp_path: Path) -> None:
     errors = validate_facts(repo, "DemoOp", stage="step1")
 
     assert any(error.code == "RELATION_ENDPOINT_KIND_INVALID" for error in errors)
+
+
+def test_stage_validator_ignores_historical_run_by_default_and_can_target_it(tmp_path: Path) -> None:
+    repo, base = _repo(tmp_path)
+    source_anchor = _seed_source(repo)
+    _write_yaml(base / "facts" / "operator" / "interface.yaml", _valid_interface_doc(source_anchor))
+    _write_yaml(base / "facts" / "operator" / "source_files.yaml", _valid_source_files_doc(source_anchor))
+    _write_yaml(base / "facts" / "operator" / "entrypoints.yaml", _valid_entrypoints_doc(source_anchor))
+
+    historical = base / "runs" / "UO_RUN_OLD" / "phase0"
+    _write_yaml(
+        historical / "scope_scan.yaml",
+        {
+            "version": 1,
+            "artifact": {"type": "runs.scope_scan", "schema_version": 1, "owner": "uo-orchestrator"},
+            "snapshot": {"run_id": "UO_RUN_OLD", "source_snapshot_id": "SOURCE_TEST", "source_revision": "unknown", "spec_bundle_hash": spec_bundle_hash()},
+            "status": "complete",
+            "project_root": str(repo),
+            "operator_path": "",
+            "scope_roots": [],
+            "dependency_roots": [],
+            "files": {},
+            "symbols": {},
+            "architecture_variants": [],
+            "unexpected_top_level": True,
+        },
+    )
+
+    default_errors = validate_facts(repo, "DemoOp", stage="step1")
+    assert not any(error.artifact.endswith("runs/UO_RUN_OLD/phase0/scope_scan.yaml") for error in default_errors)
+
+    historical_errors = validate_facts(repo, "DemoOp", stage="step1", run_id="UO_RUN_OLD")
+    assert any(error.artifact.endswith("runs/UO_RUN_OLD/phase0/scope_scan.yaml") and error.code == "SCHEMA_TOP_LEVEL_FIELD_FORBIDDEN" for error in historical_errors)
+
+
+def test_runtime_task_id_is_not_treated_as_formal_reference(tmp_path: Path) -> None:
+    repo, base = _repo(tmp_path)
+    source_anchor = _seed_source(repo)
+    _write_yaml(base / "facts" / "operator" / "interface.yaml", _valid_interface_doc(source_anchor))
+    _write_yaml(base / "facts" / "operator" / "source_files.yaml", _valid_source_files_doc(source_anchor))
+    _write_yaml(base / "facts" / "operator" / "entrypoints.yaml", _valid_entrypoints_doc(source_anchor))
+    _write_yaml(
+        base / "runs" / "UO_RUN_TEST" / "repairs" / "REPAIR_TEST.yaml",
+        {
+            "version": 1,
+            "artifact": {"type": "runs.repair_state", "schema_version": 1, "owner": "repair-controller"},
+            "snapshot": {"run_id": "UO_RUN_TEST", "source_snapshot_id": "SOURCE_TEST", "source_revision": "unknown", "spec_bundle_hash": spec_bundle_hash()},
+            "repair_key": "REPAIR_TEST",
+            "task_id": "BOUNDARY_ENTRY_BATCH1",
+            "owner": "uo-boundary-agent",
+            "target": {"path": "facts/operator/entrypoints.yaml"},
+            "candidate_path": "tmp/candidate.json",
+            "attempt": 1,
+            "max_attempts": 3,
+            "previous_errors": [],
+            "status": "retrying",
+        },
+    )
+    errors = validate_facts(repo, "DemoOp", stage="step1")
+    assert not any(error.code == "REFERENCE_TARGET_MISSING" and "task_id" in error.message for error in errors)
 
 
 def test_step2_scoped_validators_run_independently(tmp_path: Path) -> None:

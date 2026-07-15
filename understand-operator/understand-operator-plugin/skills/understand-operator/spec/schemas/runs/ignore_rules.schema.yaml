@@ -1,0 +1,10 @@
+version: 1
+schema_kind: runtime_artifact
+required_top_level: [version, artifact, snapshot, patterns]
+allowed_top_level:
+  - version
+  - artifact
+  - snapshot
+  - patterns
+required_item_fields: []
+relation_required_fields: []

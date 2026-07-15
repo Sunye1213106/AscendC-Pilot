@@ -134,6 +134,25 @@ if ($AgentTargets.ContainsKey($Platform) -and (Test-Path $AgentsSrc)) {
     Get-ChildItem $AgentsSrc -Filter "uo-*.md" | ForEach-Object {
         $agentDest = Join-Path $AgentsDestRoot $_.Name
         Copy-Item -Path $_.FullName -Destination $agentDest -Force
+        if ($PluginLinks.ContainsKey($Platform)) {
+            $pluginDest = $PluginLinks[$Platform]
+            $promptDest = Join-Path $pluginDest "prompts"
+            $scriptDest = Join-Path $TargetRoot "understand-operator"
+            $pathHint = @"
+
+## Installed Path Hints
+
+For this installation, use these absolute paths when resolving plugin files:
+
+- PLUGIN_ROOT: $pluginDest
+- PROMPT_DIR: $promptDest
+- SCRIPT_DIR: $scriptDest
+
+If the host dispatch omits path variables, use the paths above. Do not resolve
+`prompts/...` from the target operator repository.
+"@
+            Add-Content -LiteralPath $agentDest -Value $pathHint -Encoding UTF8
+        }
     }
     Write-Host "Installed subagents: $AgentsDestRoot\uo-*.md"
     foreach ($agent in $RequiredAgents) {

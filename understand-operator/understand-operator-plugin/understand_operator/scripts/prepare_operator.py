@@ -224,19 +224,11 @@ def _write_phase0_doc(path: Path, artifact_type: str, item_id: str, kind: str, d
             "source_revision": "unknown",
             "spec_bundle_hash": spec_bundle_hash(),
         },
-        "items": [
-            {
-                "id": item_id,
-                "kind": kind,
-                "status": "recorded",
-                "identity": {"run_id": path.parents[1].name, "artifact": artifact_type},
-                "sources": [{"kind": "runtime", "path": path.relative_to(path.parents[3]).as_posix()}],
-                "data": data,
-            }
-        ],
-        "relations": [],
-        "unresolved": [],
     }
+    if isinstance(data, dict):
+        payload.update(data)
+    else:
+        payload["payload"] = data
     write_text(path, _to_yaml(payload))
 
 

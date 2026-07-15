@@ -1,0 +1,23 @@
+version: 1
+schema_kind: runtime_artifact
+required_top_level: [version, artifact, snapshot, status, source, finalized_at, frozen_scope, cbm, input_hashes]
+allowed_top_level:
+  - version
+  - artifact
+  - snapshot
+  - status
+  - source
+  - finalized_at
+  - frozen_scope
+  - cbm_project
+  - cbm_mode
+  - cbm
+  - source_revision
+  - source_snapshot_id
+  - spec_bundle_hash
+  - input_hashes
+  - items
+  - relations
+  - unresolved
+required_item_fields: []
+relation_required_fields: []

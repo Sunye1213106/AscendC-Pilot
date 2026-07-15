@@ -28,7 +28,7 @@ from understand_operator._operator.fact_registry import build_fact_registry
 from understand_operator._operator.identity import relation_stable_id, resolve_identity
 from understand_operator._operator.kind_match import kind_matches
 from understand_operator._operator.reference_paths import iter_reference_values, reference_declarations
-from understand_operator._operator.run_context import source_root_for_operator
+from understand_operator._operator.run_context import active_run_id, source_root_for_operator
 from understand_operator._operator.spec import catalog_entries, load_spec, spec_bundle_hash
 from understand_operator._operator.source_reader import SourceReadError, SourceReader
 
@@ -53,6 +53,11 @@ IGNORED_REFERENCE_KEYS = {
     "source_snapshot_id",
     "spec_bundle_hash",
     "code_hash",
+    "task_id",
+    "batch_id",
+    "dispatch_id",
+    "process_id",
+    "repair_key",
 }
 
 
@@ -69,7 +74,7 @@ class FactValidationError:
         return {"code": self.code, "target": self.artifact, "message": self.message, "repair_scope": "stage"}
 
 
-def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope: str = "all") -> list[FactValidationError]:
+def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope: str = "all", run_id: str | None = None) -> list[FactValidationError]:
     if yaml is None:
         return [FactValidationError("YAML_IMPORT_ERROR", ".", "PyYAML is required")]
     repo_root = repo_root.resolve()
@@ -82,10 +87,11 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
     _validate_spec_catalog(spec, errors)
     _validate_forbidden_kb_dirs(uo_root, errors)
     manifest = _load_yaml(uo_root / "manifest.yaml", "manifest.yaml", errors)
+    selected_run_id = _validation_run_id(uo_root, manifest if isinstance(manifest, dict) else None, run_id, errors)
     if isinstance(manifest, dict):
         _validate_manifest(manifest, errors)
         if STAGE_ORDER.get(stage, 0) >= STAGE_ORDER["step1"]:
-            _validate_phase0_receipt(repo_root, uo_root, manifest, errors)
+            _validate_phase0_receipt(repo_root, uo_root, manifest, errors, selected_run_id)
 
     entries = catalog_entries(spec)
     ownership = _ownership_patterns(spec)
@@ -96,7 +102,7 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
 
     docs: dict[str, dict[str, Any]] = {}
     scoped_entries = _entries_for_scope(entries, scope)
-    yaml_paths = _yaml_paths(uo_root)
+    yaml_paths = _yaml_paths(uo_root, selected_run_id)
     for rel in _required_paths_for_stage(spec, scoped_entries, stage, scope):
         if "*" in rel:
             if not any(fnmatch.fnmatch(path.relative_to(uo_root).as_posix(), rel) for path in yaml_paths):
@@ -108,7 +114,7 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
     if stage == "step3" and scope in {"all", "kernel-slice"}:
         _validate_kernel_slice_file_sets(uo_root, yaml_paths, errors)
 
-    all_docs = _load_all_yaml_docs(uo_root)
+    all_docs = _load_all_yaml_docs(uo_root, selected_run_id)
     for path in yaml_paths:
         rel = path.relative_to(uo_root).as_posix()
         doc = _load_yaml(path, rel, errors)
@@ -289,8 +295,9 @@ def _validate_phase0_receipt(
     uo_root: Path,
     manifest: dict[str, Any],
     errors: list[FactValidationError],
+    run_id: str | None,
 ) -> None:
-    run_id = manifest.get("current_run_id")
+    run_id = run_id or manifest.get("current_run_id")
     if not isinstance(run_id, str) or run_id == "UO_RUN_PENDING":
         errors.append(FactValidationError("PHASE0_RECEIPT_MISSING", "manifest.yaml", "Phase 1+ validation requires a finalized Phase 0 run"))
         return
@@ -362,20 +369,26 @@ def _required_paths_for_stage(spec: dict[str, Any], entries: list[dict[str, Any]
     return result
 
 
-def _yaml_paths(uo_root: Path) -> list[Path]:
+def _yaml_paths(uo_root: Path, run_id: str | None) -> list[Path]:
     paths = [uo_root / "manifest.yaml"] if (uo_root / "manifest.yaml").exists() else []
     for dirname in CHECK_DIRS:
         root = uo_root / dirname
         if root.exists():
-            paths.extend(path for path in root.rglob("*.yaml") if path.is_file())
+            if dirname == "runs":
+                if run_id:
+                    run_root = root / run_id
+                    if run_root.exists():
+                        paths.extend(path for path in run_root.rglob("*.yaml") if path.is_file())
+            else:
+                paths.extend(path for path in root.rglob("*.yaml") if path.is_file())
     return sorted(set(paths))
 
 
-def _load_all_yaml_docs(uo_root: Path) -> dict[str, dict[str, Any]]:
+def _load_all_yaml_docs(uo_root: Path, run_id: str | None) -> dict[str, dict[str, Any]]:
     docs: dict[str, dict[str, Any]] = {}
     if yaml is None:
         return docs
-    for path in _yaml_paths(uo_root):
+    for path in _yaml_paths(uo_root, run_id):
         rel = path.relative_to(uo_root).as_posix()
         try:
             doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -436,15 +449,15 @@ def _validate_document_header(rel: str, doc: dict[str, Any], entry: dict[str, An
         if key in doc and not isinstance(doc.get(key), list):
             errors.append(FactValidationError("DOCUMENT_SECTION_INVALID", rel, f"{key} must be a list"))
     if (
-        not partition
-        and not rel.startswith("checks/")
+        rel.startswith("facts/")
+        and not partition
         and not entry.get("allow_empty")
         and not (doc.get("items") or doc.get("relations") or doc.get("unresolved"))
     ):
         errors.append(FactValidationError("DOCUMENT_EMPTY_NOT_ALLOWED", rel, "catalog marks this artifact as non-empty after its stage"))
     if (
-        not partition
-        and not rel.startswith(("checks/", "graphs/", "indexes/", "runs/"))
+        rel.startswith("facts/")
+        and not partition
         and entry.get("allow_empty")
         and not (doc.get("items") or doc.get("relations") or doc.get("unresolved"))
     ):
@@ -903,6 +916,8 @@ def _collect_known_kinds(docs: dict[str, dict[str, Any]]) -> dict[str, str]:
 
 
 def _validate_references(rel: str, doc: Any, known_ids: set[str], errors: list[FactValidationError]) -> None:
+    if not rel.startswith("facts/"):
+        return
     def visit(value: Any, path: str, key: str = "") -> None:
         if isinstance(value, dict):
             for child_key, child in value.items():
@@ -1076,12 +1091,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--op-name", help="Operator name. Defaults to repository name.")
     parser.add_argument("--stage", default="step1", choices=sorted(STAGE_ORDER), help="Validation stage")
     parser.add_argument("--scope", default="all", choices=VALIDATION_SCOPES, help="Artifact ownership slice to validate")
+    parser.add_argument("--run-id", help="Only validate the specified UO run under runs/<run_id>/**; defaults to manifest.current_run_id")
     parser.add_argument("--write-report", action="store_true", help="Write checks/<stage>/validation YAML")
     args = parser.parse_args(argv)
 
     repo_root = Path(args.repo).resolve()
     op_name = safe_op_name(args.op_name, repo_root)
-    errors = validate_facts(repo_root, op_name, stage=args.stage, scope=args.scope)
+    errors = validate_facts(repo_root, op_name, stage=args.stage, scope=args.scope, run_id=args.run_id)
     uo_root = existing_operator_root(repo_root, op_name)
     if args.write_report and uo_root.exists():
         _write_report(uo_root, args.stage, args.scope, errors)
@@ -1091,6 +1107,26 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     print(f"Facts validation passed for {op_name} at {args.stage}/{args.scope}")
     return 0
+
+
+def _validation_run_id(
+    uo_root: Path,
+    manifest: dict[str, Any] | None,
+    requested_run_id: str | None,
+    errors: list[FactValidationError],
+) -> str | None:
+    if requested_run_id:
+        run_root = uo_root / "runs" / requested_run_id
+        if not run_root.exists():
+            errors.append(FactValidationError("RUN_ID_UNKNOWN", f"runs/{requested_run_id}", "requested run does not exist"))
+            return None
+        return requested_run_id
+    try:
+        return active_run_id(uo_root)
+    except RuntimeError as exc:
+        if manifest is not None:
+            errors.append(FactValidationError("RUN_ID_INVALID", "manifest.yaml", str(exc)))
+        return None
 
 
 if __name__ == "__main__":

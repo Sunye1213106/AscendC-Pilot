@@ -1,0 +1,13 @@
+version: 1
+schema_kind: runtime_artifact
+required_top_level: [version, artifact, snapshot, consistent]
+allowed_top_level:
+  - version
+  - artifact
+  - snapshot
+  - consistent
+  - error_code
+  - installed_skill_root
+  - mismatches
+required_item_fields: []
+relation_required_fields: []

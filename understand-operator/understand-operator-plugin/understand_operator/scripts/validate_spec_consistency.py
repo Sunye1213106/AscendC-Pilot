@@ -290,6 +290,7 @@ def _identity_probe_for(kind: str, strategy: str) -> dict[str, Any] | None:
         "scoped_field_write": {"source_file": "sample.cpp", "scope_symbol": "DemoScope", "struct_name": "DemoStruct", "field_name": "field", "write_span": span},
         "scoped_field_read": {"source_file": "sample.cpp", "scope_symbol": "DemoScope", "struct_name": "DemoStruct", "field_name": "field", "read_span": span},
         "operator_io": {"operator_name": "DemoOp", "direction": "input", "index": 0},
+        "operator_named_value": {"operator_name": "DemoOp", "name": "seed"},
         "kernel_entry": {"qualified_entry_symbol": "DemoKernel", "signature": "void()", "discriminator": "generic"},
         "kernel_slice_signature": {"kernel_entry_ref": "KERNEL_ENTRY", "template_binding_signature": "generic", "structural_flow_signature": "read-compute-write", "tilingdata_read_signature": "none", "output_signature": "out0"},
         "slice_interface": {"source_slice_ref": "KERNEL_SLICE_A", "target_slice_ref": "KERNEL_SLICE_B", "interface_kind": "data", "position": "0"},
