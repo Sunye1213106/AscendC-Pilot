@@ -29,6 +29,6 @@ Allowed `macro_scope` decisions:
 3. `stop`
 4. `manual_supplement`
 
-There is no Phase 3.5 dispatch gate in the active workflow. Kernel slice
-planning, slice extraction, validation, and review are handled by Phase 3
-artifacts and validators.
+Kernel slice planning, slice extraction, validation, and review are handled by
+Phase 3 artifacts and validators. Final graph/query checks run after Phase 3
+receipt.

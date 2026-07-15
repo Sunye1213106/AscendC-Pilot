@@ -26,9 +26,8 @@ Phase 3: Kernel slices only
 Final: validation, raw graph, derived graph, query, final gate
 ```
 
-Do not execute or recreate Phase 3.5, Phase 4+, proposal promotion, canonical v2,
-tiling archive workflows, route builders, contracts/testcase generation, impact
-graphs, or an old standalone quality phase.
+Do not execute or recreate any workflow beyond Final. Final completion ends the
+run.
 
 ## Variables
 
@@ -125,13 +124,11 @@ python "$SCRIPT_DIR/build_fact_registry.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 
 Empty boundary files must fail; unresolved entries must be explicit.
 Formal facts are created only by `compile_candidate_facts.py`; do not overwrite
-or merge YAML batches by hand.
+formal fact files by hand.
 Before authoring, the boundary agent must read
-`$PROMPT_DIR/common/11_phase1_boundary_yaml_authoring.md`. It may write small
-temporary YAML batch files outside `PROJECT_ROOT` and `UO_ROOT`; it must not
-write complete final fact documents. Process one boundary file at a time, run
-validation after the first minimum-valid batch, and repair entries by stable ID
-before expanding the file.
+`$PROMPT_DIR/common/11_phase1_candidate_authoring.md`. It writes Candidate JSON
+V2 batches only. Process one boundary target at a time, validate each small
+batch, and compile it deterministically before expanding the target.
 Do not dispatch this subagent until `runs/<run_id>/phase0/receipt.yaml` exists
 with `status: pass`.
 If Step 1 validation fails, resume the same `uo-boundary-agent` context with the
@@ -167,21 +164,28 @@ python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 python "$SCRIPT_DIR/build_fact_registry.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 ```
 
-Then run `uo-step2-fact-review-agent`. It writes only:
+If any scoped validator fails, stop and return the report to the owning fact
+agent. Do not run `evaluate_review_trigger.py`, do not dispatch a review agent,
+and do not write the Step 2 receipt.
 
-```text
-checks/step2/review.yaml
-```
-
-First evaluate the deterministic review trigger:
+Only after all scoped validators pass, evaluate the deterministic review
+trigger:
 
 ```powershell
 python "$SCRIPT_DIR/evaluate_review_trigger.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --step step2
 ```
 
+`uo-step2-fact-review-agent` runs only when
+`checks/step2/review_trigger.yaml status: triggered`. It writes only:
+
+```text
+checks/step2/review.yaml
+```
+
 Read `checks/step2/review_trigger.yaml`. If `status: skipped`, do not dispatch
 `uo-step2-fact-review-agent`. If `status: triggered`, dispatch it and require
-`checks/step2/review.yaml status: pass`.
+`checks/step2/review.yaml status: pass`, empty `blocking_findings`, and
+`input_hashes` exactly copied from the trigger.
 
 When all reports pass and input hashes match current facts:
 
@@ -195,32 +199,60 @@ Phase 3 starts only after Step 2 receipt is valid.
 
 1. `uo-kernel-slice-planner` writes `facts/kernel/slice_manifest.yaml` and
    `facts/kernel/slice_interfaces.yaml`.
-2. Parallel `uo-kernel-slice-agent` tasks write assigned slice partitions
-   `facts/kernel/slices/<slice_id>.yaml`.
-3. Run Step 3 validation, then:
+   Run planner preflight validation without writing the final Step 3 report:
 
    ```powershell
+   python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step3 --scope kernel-slice-planner
+   ```
+
+2. Parallel `uo-kernel-slice-agent` tasks write assigned slice partitions
+   `facts/kernel/slices/<slice_id>.yaml`.
+3. Run the single final Step 3 validation report after all slice agents finish:
+
+   ```powershell
+   python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step3 --scope all --write-report
+   ```
+
+   If validation fails, stop and return the report to the owning fact agent. Do
+   not run review trigger or review agent.
+4. Build the registry and evaluate review trigger:
+
+   ```powershell
+   python "$SCRIPT_DIR/build_fact_registry.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
    python "$SCRIPT_DIR/evaluate_review_trigger.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --step step3
    ```
 
    Read `checks/step3/review_trigger.yaml`. If `status: skipped`, do not
    dispatch `uo-step3-fact-review-agent`. If `status: triggered`, dispatch it
    and require `checks/step3/review.yaml status: pass`.
-4. Seal Step 3:
+5. Seal Step 3:
 
 ```powershell
 python "$SCRIPT_DIR/write_step3_receipt.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+```
+
+## Final
+
+Final starts only after Step 3 receipt is valid. Run:
+
+```powershell
+python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step3 --scope all
 python "$SCRIPT_DIR/build_fact_registry.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 python "$SCRIPT_DIR/build_compile_gate.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 python "$SCRIPT_DIR/source_graph_compiler.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+python "$SCRIPT_DIR/verify_raw_graph.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 ```
 
-5. `uo-behavior-abstraction-agent` writes only
+Then `uo-behavior-abstraction-agent` writes only
    `graphs/derived/abstraction_rules.yaml`.
-6. Materialize derived graph and run the final Phase 3 gate:
+Materialize derived graph and run the final gate:
 
 ```powershell
+python "$SCRIPT_DIR/prepare_abstraction_rules.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 python "$SCRIPT_DIR/materialize_derived_graph.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+python "$SCRIPT_DIR/verify_derived_graph.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+python "$SCRIPT_DIR/build_query_index.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+python "$SCRIPT_DIR/uo_query_readonly.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --entity "<ID_OR_LABEL>"
 python "$SCRIPT_DIR/quality_gate.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 ```
 
@@ -235,6 +267,8 @@ Use:
 ```powershell
 python "$SCRIPT_DIR/uo_query_readonly.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --entity "<ID_OR_LABEL>"
 ```
+
+The final gate writes only `checks/final.yaml`. After the final gate passes, stop. There are no workflow stages after Final.
 
 ## Hard Rules
 

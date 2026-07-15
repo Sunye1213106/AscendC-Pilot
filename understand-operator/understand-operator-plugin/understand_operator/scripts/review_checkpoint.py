@@ -180,7 +180,16 @@ def _write_scope_review(base: Path, decision: dict[str, Any], changes: dict[str,
         },
         "changes": changes,
         "scope_conflicts": conflicts,
-        "items": [],
+        "items": [
+            {
+                "id": "OP_PHASE0_SCOPE_REVIEW",
+                "kind": "scope_review",
+                "status": "recorded",
+                "identity": {"run_id": run_id, "gate": decision["gate"]},
+                "sources": [{"kind": "runtime", "path": f"runs/{run_id}/phase0/scope_review.yaml"}],
+                "decision": decision["decision"],
+            }
+        ],
         "relations": [],
         "unresolved": [{"id": "UNRESOLVED_SCOPE_CONFLICT", "kind": "scope_conflict", "details": conflicts}] if conflicts else [],
     }

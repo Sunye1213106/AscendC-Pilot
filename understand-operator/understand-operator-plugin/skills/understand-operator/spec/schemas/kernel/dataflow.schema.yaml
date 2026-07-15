@@ -1,9 +1,9 @@
-version: 1
+﻿version: 1
 artifact_type: kernel.slice.dataflow
 required_top_level: [version, artifact, snapshot, items, relations, unresolved]
 allowed_top_level: [version, artifact, snapshot, analysis_status, reason, sources, items, relations, unresolved]
 item_kind_enum: [kernel_dataflow_edge, datacopy_flow, api_flow, output_flow]
-required_item_fields: [id, kind, name, status, sources]
+required_item_fields: [id, kind, status, identity, sources]
 kind_required_fields:
   kernel_dataflow_edge: [producer_ref, consumer_ref, input_refs, output_refs]
   datacopy_flow: [producer_ref, consumer_ref, input_refs, output_refs]
@@ -13,4 +13,5 @@ relation_required_fields: [id, type, source_id, target_id, status]
 minimum_cardinality: 1
 stores: [global_tensor, local_tensor, intermediate_tensor, api_inputs, api_outputs, datacopy_inputs, datacopy_outputs, compute_inputs, compute_outputs, final_output_write]
 forbids: [compute_semantics_without_flow_link]
+
 

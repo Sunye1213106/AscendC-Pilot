@@ -24,15 +24,17 @@ and CBM metadata. Stay inside the approved Phase 0 scope.
 
 Write only:
 
-```text
-facts/compute.yaml#tensors
-facts/compute.yaml#operations
-facts/compute.yaml#dataflow
-facts/compute.yaml#numerical_semantics
+```json
+[
+  {"target": {"path": "facts/compute.yaml", "section": "tensors"}},
+  {"target": {"path": "facts/compute.yaml", "section": "operations"}},
+  {"target": {"path": "facts/compute.yaml", "section": "dataflow"}},
+  {"target": {"path": "facts/compute.yaml", "section": "numerical_semantics"}}
+]
 ```
 
-Do not write proposals, flow canonical files, route files, contracts, graph
-files, generated golden code, generated tests, or validation reports.
+Do not write non-owned fact files, graph files, generated golden code,
+generated tests, or validation reports.
 
 Emit candidate JSON only. Validate each small batch locally and let the
 deterministic compiler create formal Facts; never supply IDs, anchors, hashes,

@@ -6,10 +6,20 @@
 prepare_operator.py
 quality_gate.py
 review_checkpoint.py
-verify_subagent_barrier.py
 verify_required_subagents.py
 prepare_fact_file.py
-merge_fact_entries.py
+validate_candidate_batch.py
+compile_candidate_facts.py
+evaluate_review_trigger.py
+validate_spec_consistency.py
+validate_fact_stage.py
+build_fact_registry.py
+build_query_index.py
+verify_required_scripts.py
+build_compile_gate.py
+source_graph_compiler.py
+materialize_derived_graph.py
+uo_query_readonly.py
 ```
 
 从任意 `uo-*` skill 解析：

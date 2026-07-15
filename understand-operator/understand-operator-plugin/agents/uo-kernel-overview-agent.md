@@ -29,11 +29,15 @@ CBM access.
 
 Write only:
 
-- `facts/kernel/overview.yaml#entries`
-- `facts/kernel/overview.yaml#functions`
-- `facts/kernel/overview.yaml#call_graph`
-- `facts/kernel/overview.yaml#frontier`
-- `facts/kernel/overview.yaml#global_resources`
+```json
+[
+  {"target": {"path": "facts/kernel/overview.yaml", "section": "entries"}},
+  {"target": {"path": "facts/kernel/overview.yaml", "section": "functions"}},
+  {"target": {"path": "facts/kernel/overview.yaml", "section": "call_graph"}},
+  {"target": {"path": "facts/kernel/overview.yaml", "section": "frontier"}},
+  {"target": {"path": "facts/kernel/overview.yaml", "section": "global_resources"}}
+]
+```
 
 Also write no facts outside your ownership.
 
@@ -59,24 +63,24 @@ entries, functions, major call edges, and branch/loop/API/memory/sync/output
 frontier sites are accounted for.
 
 Do not perform Kernel Slice analysis. Do not infer branch semantics, buffer
-lifetime, sync pairing, raw graph, derived graph, impact graph, or tests.
+lifetime, sync pairing, raw graph, derived graph, or tests.
 
 ## YAML Contract
 
-This is now a candidate JSON contract: validate each small candidate batch and
-compile it deterministically. Never directly write formal YAML or provide IDs,
-SRC anchors, source text, or hashes.
+This is a Candidate JSON contract: validate each small candidate batch and
+compile it deterministically. Never directly write formal YAML, stable IDs, SRC
+anchors, source text, or hashes.
 
 Use only the Step 1 frozen file catalog and schemas. Every confirmed item or
-relation must embed source anchors with exact source text and hash. Unproven
-facts go to `unresolved`.
+relation must provide structured `source_locations`; Python fills source
+anchors, source text, and hashes. Unproven facts go to `unresolved`.
 
 ## Completion Gate
 
-After writing your five files, run:
+After compiling all owned targets, run:
 
 ```powershell
-python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step2 --scope kernel-overview --write-report
+python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step2 --scope kernel-overview --write-report
 ```
 
 Fix all errors and rerun until it exits 0.

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 from dataclasses import dataclass
@@ -233,10 +233,15 @@ def resolve_identity(kind: str, identity: dict[str, object], *, repo_root: Path)
 def validate_resolved_identity_against_spec(kind: str, normalized: dict[str, Any], entity_config: dict[str, Any]) -> None:
     required = entity_config.get("required_identity_fields")
     if not isinstance(required, list):
-        return
-    missing = [str(field) for field in required if str(field) not in normalized or normalized.get(str(field)) in (None, "", [])]
+        raise IdentityError("SPEC_IDENTITY_REQUIRED_FIELDS_MISSING", f"{kind} must declare required_identity_fields")
+    required_set = {str(field) for field in required}
+    actual_set = set(normalized)
+    missing = [field for field in sorted(required_set) if field not in normalized or normalized.get(field) in (None, "", [])]
     if missing:
         raise IdentityError("IDENTITY_SPEC_REQUIRED_FIELD_MISSING", f"{kind} identity missing normalized fields: {', '.join(missing)}")
+    extra = sorted(actual_set - required_set)
+    if extra:
+        raise IdentityError("IDENTITY_SPEC_FIELD_MISMATCH", f"{kind} normalized identity has undeclared fields: {', '.join(extra)}")
 
 
 def relation_stable_id(relation_type: str, source_id: str, target_id: str, qualifier: Any = None) -> str:
@@ -270,6 +275,7 @@ def _strategy_for_kind(kind: str, config: dict[str, Any]) -> Callable[[dict[str,
         "source_rule": _source_rule_identity,
         "source_span": _source_span_identity,
         "qualified_symbol": _qualified_symbol_only_identity,
+        "external_dependency": _external_dependency_identity,
     }
     if strategy == "scoped_field_write":
         return _tilingdata_access_identity("write_span")
@@ -289,37 +295,6 @@ def _entity_type_config(kind: str) -> dict[str, Any]:
     if isinstance(config, dict):
         return config
     return {}
-
-
-def _legacy_strategy_for_kind(kind: str) -> str:
-    if KIND_TO_PREFIX[kind] == "VAR":
-        return "scoped_declaration"
-    if kind in {"function", "host_function", "kernel_function", "kernel_method", "helper_function"}:
-        return "qualified_symbol_signature"
-    if KIND_TO_PREFIX[kind] in {"CALL", "API"}:
-        return "scoped_callsite"
-    if KIND_TO_PREFIX[kind] == "BRANCH":
-        return "scoped_predicate"
-    if KIND_TO_PREFIX[kind] == "OUTCOME":
-        return "branch_outcome"
-    if KIND_TO_PREFIX[kind] == "LOOP":
-        return "scoped_loop"
-    if kind == "tilingdata_struct":
-        return "qualified_struct"
-    if KIND_TO_PREFIX[kind] == "TDATA":
-        return "struct_field"
-    if KIND_TO_PREFIX[kind] == "TDWRITE":
-        return "scoped_field_write"
-    if KIND_TO_PREFIX[kind] == "TDREAD":
-        return "scoped_field_read"
-    if kind in {"input_tensor", "output_tensor"}:
-        return "operator_io"
-    if KIND_TO_PREFIX[kind] == "KERNEL":
-        return "kernel_entry"
-    if KIND_TO_PREFIX[kind] == "OPR":
-        return "compute_operation"
-    return "source_span"
-
 
 def _local_variable_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:
     norm = {
@@ -552,6 +527,15 @@ def _repo_path_identity(identity: dict[str, object], repo_root: Path) -> tuple[d
     return norm, [str(norm["path"])]
 
 
+def _external_dependency_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:
+    norm = {
+        "logical_path": _required_str(identity, "logical_path"),
+        "dependency_type": _required_str(identity, "dependency_type"),
+        "discovered_from": _required_str(identity, "discovered_from"),
+    }
+    return norm, [str(norm["logical_path"]), str(norm["dependency_type"]), str(norm["discovered_from"])]
+
+
 def _qualified_symbol_only_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:
     norm = {"qualified_symbol": _symbol(identity, "qualified_symbol", aliases=("symbol",))}
     return norm, [str(norm["qualified_symbol"])]
@@ -621,3 +605,4 @@ def _canonical_jsonish(value: Any) -> str:
     if isinstance(value, list):
         return "[" + ",".join(_canonical_jsonish(item) for item in value) + "]"
     return str(value)
+

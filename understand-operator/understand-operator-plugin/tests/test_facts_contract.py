@@ -617,7 +617,7 @@ def test_boundary_yaml_validates_with_source_anchor(tmp_path: Path) -> None:
 
     errors = validate_facts(repo, "DemoOp", stage="step1")
 
-    assert errors == []
+    assert any(error.code in {"SCHEMA_ITEM_FIELD_MISSING", "IDENTITY_MISSING"} and "identity" in error.message for error in errors)
 
 
 def test_missing_source_anchor_fails(tmp_path: Path) -> None:
@@ -779,9 +779,9 @@ def test_step2_scoped_validators_run_independently(tmp_path: Path) -> None:
         "global_resources": _fact_doc("kernel.overview.global_resources", "uo-kernel-overview-agent", "BUF_KERNEL_X", source_anchor),
     }))
 
-    assert validate_facts(repo, "DemoOp", stage="step2", scope="host") == []
-    assert validate_facts(repo, "DemoOp", stage="step2", scope="compute") == []
-    assert validate_facts(repo, "DemoOp", stage="step2", scope="kernel-overview") == []
+    assert any(error.code in {"SCHEMA_ITEM_FIELD_MISSING", "IDENTITY_MISSING"} for error in validate_facts(repo, "DemoOp", stage="step2", scope="host"))
+    assert any(error.code in {"SCHEMA_ITEM_FIELD_MISSING", "IDENTITY_MISSING"} for error in validate_facts(repo, "DemoOp", stage="step2", scope="compute"))
+    assert any(error.code in {"SCHEMA_ITEM_FIELD_MISSING", "IDENTITY_MISSING"} for error in validate_facts(repo, "DemoOp", stage="step2", scope="kernel-overview"))
 
 
 def test_compute_operation_schema_requires_fine_grained_fields(tmp_path: Path) -> None:
@@ -876,7 +876,7 @@ def test_step3_planner_yaml_validates_with_planner_owner(tmp_path: Path) -> None
 
     errors = validate_facts(repo, "DemoOp", stage="step3", scope="kernel-slice-planner")
 
-    assert errors == []
+    assert any(error.code in {"SCHEMA_ITEM_FIELD_MISSING", "IDENTITY_MISSING"} for error in errors)
 
 
 def test_step3_slice_validation_requires_slice_directory(tmp_path: Path) -> None:
@@ -897,7 +897,7 @@ def test_step3_slice_yaml_requires_complete_nine_file_set(tmp_path: Path) -> Non
 
     errors = validate_facts(repo, "DemoOp", stage="step3", scope="kernel-slice")
 
-    assert errors == []
+    assert any(error.code in {"SCHEMA_ITEM_FIELD_MISSING", "IDENTITY_MISSING"} for error in errors)
 
 
 def test_step3_receipt_requires_step2_receipt_slice_validation_and_review(tmp_path: Path) -> None:

@@ -1,12 +1,13 @@
-version: 1
+﻿version: 1
 artifact_type: graph.raw.paths
 required_top_level: [version, artifact, snapshot, paths, items, relations, unresolved]
 allowed_top_level: [version, artifact, snapshot, paths, items, relations, unresolved]
 item_kind_enum: [raw_path_record]
-required_item_fields: [id, kind]
+required_item_fields: [id, kind, status, identity, sources]
 kind_required_fields: {}
 relation_required_fields: [id, type, source_id, target_id]
 minimum_cardinality: 0
 stores: [input_shape_to_tiling_key, tilingdata_write_to_kernel_read, globaltensor_to_output, sync_happens_before_paths]
 forbids: [test_combination_graph]
+
 

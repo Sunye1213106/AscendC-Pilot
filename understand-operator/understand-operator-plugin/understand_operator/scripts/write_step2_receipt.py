@@ -69,6 +69,7 @@ def write_step2_receipt(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
 
     review_trigger = _read_yaml(uo_root / "checks/step2/review_trigger.yaml")
     review_status = review_trigger.get("status")
+    trigger_hashes = review_trigger.get("input_hashes") if isinstance(review_trigger.get("input_hashes"), dict) else {}
     if review_status == "triggered":
         review_rel = "checks/step2/review.yaml"
         review_path = uo_root / review_rel
@@ -82,8 +83,8 @@ def write_step2_receipt(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
                 messages.append(f"{review_rel} has blocking_findings")
             if review_doc.get("errors"):
                 messages.append(f"{review_rel} has errors")
-            if review_doc.get("input_hashes") != current_fact_hashes:
-                messages.append(f"{review_rel} input_hashes do not match current Step 2 facts")
+            if review_doc.get("input_hashes") != trigger_hashes:
+                messages.append(f"{review_rel} input_hashes do not match review trigger")
     elif review_status != "skipped":
         messages.append("checks/step2/review_trigger.yaml status must be skipped or triggered")
     if messages:
@@ -127,6 +128,8 @@ def _step2_input_hashes(uo_root: Path) -> dict[str, str]:
             if "*" not in rel:
                 paths.append(rel)
     paths.extend(REQUIRED_REPORTS)
+    if (uo_root / "checks/step2/review.yaml").exists():
+        paths.append("checks/step2/review.yaml")
     result: dict[str, str] = {}
     for rel in sorted(set(paths)):
         path = uo_root / rel

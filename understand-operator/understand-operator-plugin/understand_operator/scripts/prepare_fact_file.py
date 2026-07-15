@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -79,7 +81,7 @@ def prepare_fact_file(repo_root: Path, op_name: str, rel: str, *, force: bool = 
         current_snapshot = current.get("snapshot") if isinstance(current.get("snapshot"), dict) else {}
         if current_snapshot == snapshot:
             return target
-        if current.get("items") or current.get("relations") or current.get("unresolved"):
+        if document_has_fact_content(current):
             raise SystemExit(f"FACT_FILE_SNAPSHOT_STALE: {rel} does not match finalized Phase 0 receipt")
     payload = {
         "version": 1,
@@ -98,8 +100,33 @@ def prepare_fact_file(repo_root: Path, op_name: str, rel: str, *, force: bool = 
         payload.pop("items"); payload.pop("relations"); payload.pop("unresolved")
         payload["sections"] = {str(name): {"items": [], "relations": [], "unresolved": []} for name in section_schemas}
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    _atomic_yaml(target, payload)
     return target
+
+
+def document_has_fact_content(doc: dict[str, object]) -> bool:
+    for key in ("items", "relations", "unresolved"):
+        value = doc.get(key)
+        if isinstance(value, list) and value:
+            return True
+    sections = doc.get("sections")
+    if isinstance(sections, dict):
+        for section in sections.values():
+            if not isinstance(section, dict):
+                continue
+            for key in ("items", "relations", "unresolved"):
+                value = section.get(key)
+                if isinstance(value, list) and value:
+                    return True
+    return False
+
+
+def _atomic_yaml(path: Path, payload: dict[str, object]) -> None:
+    text = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="\n", dir=path.parent, delete=False) as handle:
+        handle.write(text)
+        temp = Path(handle.name)
+    os.replace(temp, path)
 
 
 def main(argv: list[str] | None = None) -> int:

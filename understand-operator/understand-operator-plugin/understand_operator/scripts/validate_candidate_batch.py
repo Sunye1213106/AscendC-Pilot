@@ -25,6 +25,7 @@ from understand_operator._operator.catalog import CatalogMatchError, match_catal
 from understand_operator._operator.candidate import CandidateError, FORBIDDEN_ITEM_FIELDS, FORBIDDEN_RELATION_FIELDS, LEGACY_IDENTITY_FIELDS, load_json
 from understand_operator._operator.identity import IdentityError, resolve_identity
 from understand_operator._operator.kind_match import kind_matches
+from understand_operator._operator.reference_paths import declared_reference_for_path, iter_reference_like_paths, iter_reference_values, reference_declarations
 from understand_operator._operator.source_reader import SourceReadError, SourceReader
 from understand_operator._operator.spec import load_spec
 
@@ -84,6 +85,7 @@ def validate_candidate_batch(repo_root: Path, op_name: str, batch: Any) -> list[
         return errors
 
     reader = SourceReader(repo_root)
+    entity_spec = spec.get("entity_types") if isinstance(spec.get("entity_types"), dict) else {}
     entity_types = (spec.get("entity_types") or {}).get("entity_types") if isinstance(spec.get("entity_types"), dict) else {}
     local_ids: set[str] = set()
     local_id_to_kind = {str(item.get("local_id")): str(item.get("kind")) for item in batch["items"] if isinstance(item, dict) and item.get("local_id") and item.get("kind")}
@@ -120,7 +122,7 @@ def validate_candidate_batch(repo_root: Path, op_name: str, batch: Any) -> list[
                     errors.append(CandidateError("CANDIDATE_IDENTITY_DUPLICATE", message, target=target_label, local_id=local_id, field=label))
                 canonical_to_local[resolved.canonical_key] = (local_id, resolved.stable_id)
                 _identity_evidence(item, reader, errors, target_label, local_id, label)
-            _reference_objects(item.get("fields"), errors, target_label, f"{label}.fields", str(kind), entity_types)
+            _reference_objects(item.get("fields"), errors, target_label, f"{label}.fields", str(kind), entity_spec, local_id_to_kind)
         _locations(reader, item.get("source_locations"), errors, target_label, local_id, label)
 
     relation_types = set((spec["relation_types"].get("relation_types") or {}).keys())
@@ -139,7 +141,7 @@ def validate_candidate_batch(repo_root: Path, op_name: str, batch: Any) -> list[
         if not isinstance(relation.get("fields"), dict):
             errors.append(CandidateError("CANDIDATE_RELATION_INVALID", "relation fields must be object", target=target_label, field=f"{label}.fields"))
         else:
-            _reference_objects(relation.get("fields"), errors, target_label, f"{label}.fields", "", entity_types)
+            _reference_objects(relation.get("fields"), errors, target_label, f"{label}.fields", "", entity_spec, local_id_to_kind)
         _locations(reader, relation.get("source_locations"), errors, target_label, "", label)
 
     for index, entry in enumerate(batch["unresolved"]):
@@ -270,43 +272,36 @@ def _reference_placeholder(ref: dict[str, Any]) -> str:
     return f"entity:{ref.get('kind')}"
 
 
-def _reference_objects(value: Any, errors: list[CandidateError], target: str, field: str, kind: str, entity_types: dict[str, Any], current_key: str = "") -> None:
-    ref_decl = _reference_declaration(kind, current_key, entity_types) if current_key else None
-    if isinstance(value, dict):
-        if value.get("ref_type") in {"local", "entity", "symbol"}:
-            if ref_decl is None:
-                errors.append(CandidateError("REFERENCE_FIELD_UNDECLARED", "reference object is only allowed in entity_types reference_fields", target=target, field=field))
-            elif ref_decl == "multiple":
-                errors.append(CandidateError("REFERENCE_ARRAY_REQUIRED", "reference array field must contain a list of reference objects", target=target, field=field))
-            return
-        for key, child in value.items():
-            decl = _reference_declaration(kind, key, entity_types)
-            if (key.endswith("_ref") or key.endswith("_refs")) and decl is None:
-                errors.append(CandidateError("REFERENCE_FIELD_UNDECLARED", f"{key} must be declared in entity_types reference_fields or renamed to *_symbol/*_text", target=target, field=f"{field}.{key}"))
-            elif key.endswith("_ref") and not isinstance(child, dict):
-                errors.append(CandidateError("REFERENCE_OBJECT_REQUIRED", f"{key} must be a reference object", target=target, field=f"{field}.{key}"))
-            elif key.endswith("_refs") and not isinstance(child, list):
-                errors.append(CandidateError("REFERENCE_ARRAY_REQUIRED", f"{key} must be an array of reference objects", target=target, field=f"{field}.{key}"))
-            _reference_objects(child, errors, target, f"{field}.{key}", kind, entity_types, str(key))
-    elif isinstance(value, list):
-        for index, child in enumerate(value):
-            if current_key.endswith("_refs") and _reference_declaration(kind, current_key, entity_types) and not (isinstance(child, dict) and child.get("ref_type") in {"local", "entity", "symbol"}):
-                errors.append(CandidateError("REFERENCE_OBJECT_REQUIRED", f"{current_key} entries must be reference objects", target=target, field=f"{field}[{index}]"))
-            _reference_objects(child, errors, target, f"{field}[{index}]", kind, entity_types, current_key)
-    elif current_key.endswith("_ref") and ref_decl:
-        errors.append(CandidateError("REFERENCE_OBJECT_REQUIRED", f"{current_key} must be a reference object", target=target, field=field))
+def _reference_objects(value: Any, errors: list[CandidateError], target: str, field: str, kind: str, entity_spec: dict[str, Any], local_id_to_kind: dict[str, str]) -> None:
+    declarations = reference_declarations(entity_spec, kind) if kind else {}
+    for found in iter_reference_values(value, declarations):
+        label = f"{field}.{found.path}" if found.path else field
+        if found.declaration.cardinality == "single":
+            if not isinstance(found.value, dict):
+                errors.append(CandidateError("REFERENCE_OBJECT_REQUIRED", f"{found.declaration.path} must be a reference object", target=target, field=label))
+                continue
+            _reference(found.value, errors, target, label, set(local_id_to_kind), (entity_spec.get("entity_types") or {}))
+            _reference_kind_allowed(found.value, found.declaration.allowed, errors, target, label, local_id_to_kind, entity_spec)
+        else:
+            if not isinstance(found.value, list):
+                errors.append(CandidateError("REFERENCE_ARRAY_REQUIRED", f"{found.declaration.path} must be an array of reference objects", target=target, field=label))
+                continue
+            for index, ref in enumerate(found.value):
+                item_label = f"{label}[{index}]"
+                if not isinstance(ref, dict):
+                    errors.append(CandidateError("REFERENCE_OBJECT_REQUIRED", f"{found.declaration.path} entries must be reference objects", target=target, field=item_label))
+                    continue
+                _reference(ref, errors, target, item_label, set(local_id_to_kind), (entity_spec.get("entity_types") or {}))
+                _reference_kind_allowed(ref, found.declaration.allowed, errors, target, item_label, local_id_to_kind, entity_spec)
+    for path, key, _node in iter_reference_like_paths(value):
+        if declared_reference_for_path(declarations, path) is None:
+            errors.append(CandidateError("REFERENCE_FIELD_UNDECLARED", f"{key} must be declared in entity_types reference_fields or renamed to *_symbol/*_text", target=target, field=f"{field}.{path}"))
 
 
-def _reference_declaration(kind: str, field_name: str, entity_types: dict[str, Any]) -> str | None:
-    config = entity_types.get(kind) if isinstance(entity_types, dict) else None
-    refs = config.get("reference_fields") if isinstance(config, dict) and isinstance(config.get("reference_fields"), dict) else {}
-    singles = refs.get("single") if isinstance(refs.get("single"), dict) else {}
-    multiples = refs.get("multiple") if isinstance(refs.get("multiple"), dict) else {}
-    if field_name in singles:
-        return "single"
-    if field_name in multiples:
-        return "multiple"
-    return None
+def _reference_kind_allowed(ref: dict[str, Any], allowed: tuple[str, ...], errors: list[CandidateError], target: str, field: str, local_id_to_kind: dict[str, str], entity_spec: dict[str, Any]) -> None:
+    actual_kind = _static_reference_kind(ref, local_id_to_kind)
+    if actual_kind and allowed and not any(kind_matches(actual_kind, expected, entity_spec) for expected in allowed):
+        errors.append(CandidateError("REFERENCE_KIND_NOT_ALLOWED", f"reference target kind {actual_kind} not allowed; allowed={list(allowed)}", target=target, field=field))
 
 
 def _locations(reader: SourceReader, locations: Any, errors: list[CandidateError], target: str, local_id: str, field: str, allow_empty: bool = False) -> None:

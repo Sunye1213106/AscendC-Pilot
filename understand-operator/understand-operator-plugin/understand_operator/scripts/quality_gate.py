@@ -20,13 +20,12 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_ROOT))
 
 from understand_operator._operator.artifacts import resolve_existing_operator_root, safe_op_name, write_text
+from understand_operator._operator.spec import spec_bundle_hash
 from understand_operator.scripts.build_compile_gate import compile_gate_errors, facts_hashes_for
 from understand_operator.scripts.uo_query_readonly import query_readonly
+from understand_operator.scripts.validate_facts import validate_facts
 from understand_operator.scripts.verify_derived_graph import verify_derived_graph
 from understand_operator.scripts.verify_raw_graph import verify_raw_graph
-
-MOJIBAKE_MARKERS = ("閳?", "閿?", "鈫?", "ā†?", "\ufffd")
-
 
 def run_quality_gate(repo_root: Path, op_name: str) -> tuple[int, dict[str, Any]]:
     if yaml is None:
@@ -44,6 +43,10 @@ def run_quality_gate(repo_root: Path, op_name: str) -> tuple[int, dict[str, Any]
     _check_report(base, checks, blockers, "phase1_validation", "checks/step1/validation.yaml")
     _check_report(base, checks, blockers, "step2_receipt", "checks/step2/receipt.yaml")
     _check_report(base, checks, blockers, "step3_receipt", "checks/step3/receipt.yaml")
+
+    formal_errors = validate_facts(repo_root, resolved_name, stage="step3", scope="all")
+    checks["formal_fact_validation"] = "pass" if not formal_errors else "fail"
+    blockers.extend(f"formal validation: {error.artifact}: {error.code}: {error.message}" for error in formal_errors)
 
     _check_receipt_freshness(base, "checks/step2/receipt.yaml", checks, blockers, "step2_receipt_fresh")
     _check_receipt_freshness(base, "checks/step3/receipt.yaml", checks, blockers, "step3_receipt_fresh")
@@ -68,10 +71,12 @@ def run_quality_gate(repo_root: Path, op_name: str) -> tuple[int, dict[str, Any]
     checks["query_smoke"] = "pass" if query_ok else "fail"
     checks["no_test_generation_results"] = "pass" if _no_test_generation_results(base, blockers) else "fail"
 
-    status = "red" if blockers else "yellow" if warnings else "green"
+    status = "fail" if blockers else "pass"
     decision = "not_usable" if blockers else "usable_for_query"
     payload = {
         "version": 1,
+        "artifact": {"type": "checks.final", "schema_version": 1, "owner": "facts-validator"},
+        "snapshot": _snapshot(base),
         "op_name": resolved_name,
         "status": status,
         "decision": decision,
@@ -79,10 +84,25 @@ def run_quality_gate(repo_root: Path, op_name: str) -> tuple[int, dict[str, Any]
         "checks": checks,
         "blockers": blockers,
         "warnings": warnings,
+        "errors": [{"message": item} for item in blockers],
+        "items": [],
+        "relations": [],
+        "unresolved": [],
         "facts_hashes": facts_hashes_for(base),
     }
-    write_text(base / "quality.yaml", yaml.safe_dump(payload, sort_keys=False, allow_unicode=True))
+    write_text(base / "checks" / "final.yaml", yaml.safe_dump(payload, sort_keys=False, allow_unicode=True))
     return (2 if blockers else 0), payload
+
+
+def _snapshot(base: Path) -> dict[str, str]:
+    manifest = _read_yaml(base / "manifest.yaml")
+    source = manifest.get("source") if isinstance(manifest.get("source"), dict) else {}
+    return {
+        "run_id": str(manifest.get("current_run_id") or "UO_RUN_FINAL"),
+        "source_snapshot_id": str(source.get("snapshot_id") or "SOURCE_FINAL"),
+        "source_revision": str(source.get("revision") or "unknown"),
+        "spec_bundle_hash": spec_bundle_hash(),
+    }
 
 
 def _check_current_phase0_receipt(base: Path, checks: dict[str, str], blockers: list[str]) -> None:
@@ -247,71 +267,6 @@ def _load_list(path: Path, key: str) -> list[dict[str, Any]]:
     data = _read_yaml(path)
     values = data.get(key)
     return [item for item in values if isinstance(item, dict)] if isinstance(values, list) else []
-
-
-def _has_compute_golden_mapping(compute_graph: object, golden_model: object) -> bool:
-    graph = compute_graph if isinstance(compute_graph, dict) else {}
-    steps = graph.get("compute_steps")
-    values = steps.values() if isinstance(steps, dict) else steps if isinstance(steps, list) else []
-    return any(isinstance(item, dict) and item.get("golden_step_ref") for item in values)
-
-
-def _has_resource_flow(resources: object) -> bool:
-    data = resources if isinstance(resources, dict) else {}
-    buffers = data.get("buffers")
-    sync_events = data.get("sync_events")
-    buffer_values = buffers.values() if isinstance(buffers, dict) else buffers if isinstance(buffers, list) else []
-    sync_values = sync_events.values() if isinstance(sync_events, dict) else sync_events if isinstance(sync_events, list) else []
-    has_buffer = any(isinstance(item, dict) and item.get("producer") and item.get("consumer") for item in buffer_values)
-    has_sync = any(isinstance(item, dict) and item.get("from") and item.get("to") for item in sync_values)
-    return has_buffer and has_sync
-
-
-def _check_text_encoding(base: Path, warnings: list[str]) -> dict[str, str]:
-    hits: list[str] = []
-    for path in base.rglob("*"):
-        if path.is_file() and path.suffix.lower() in {".yaml", ".yml", ".md"}:
-            text = path.read_text(encoding="utf-8", errors="replace")
-            if any(marker in text for marker in MOJIBAKE_MARKERS):
-                hits.append(path.relative_to(base).as_posix())
-    if hits:
-        warnings.append("possible mojibake markers in canonical text: " + ", ".join(hits[:8]))
-        return {"canonical_text_encoding": "warn"}
-    return {"canonical_text_encoding": "pass"}
-
-
-def _check_cross_layer_graph_completeness(base: Path, warnings: list[str], blockers: list[str]) -> dict[str, str]:
-    variables = _read_yaml(base / "tiling" / "variables.yaml")
-    behavior = _read_yaml(base / "cross_layer" / "behavior_graph.yaml")
-    impact = _read_yaml(base / "cross_layer" / "impact_graph.yaml")
-    checks = {"cross_layer_graph_schema": "pass", "cross_layer_graph_coverage": "pass"}
-    for rel, graph in (("cross_layer/behavior_graph.yaml", behavior), ("cross_layer/impact_graph.yaml", impact)):
-        if graph.get("version") != 1:
-            checks["cross_layer_graph_schema"] = "fail"
-            blockers.append(f"{rel} was not generated by deterministic graph builder")
-    variable_inventory = variables.get("variables") if isinstance(variables.get("variables"), dict) else {}
-    variable_count = len(variable_inventory)
-    behavior_nodes = behavior.get("nodes") if isinstance(behavior.get("nodes"), list) else []
-    impact_nodes = impact.get("nodes") if isinstance(impact.get("nodes"), list) else []
-    behavior_edges = behavior.get("edges") if isinstance(behavior.get("edges"), list) else []
-    impact_edges = impact.get("edges") if isinstance(impact.get("edges"), list) else []
-    if variable_count and (len(behavior_nodes) < max(1, variable_count // 2) or len(impact_nodes) < max(1, variable_count // 2)):
-        checks["cross_layer_graph_coverage"] = "fail"
-        blockers.append("cross-layer graphs are too small for tiling variable inventory")
-    if variable_count > 1 and (not behavior_edges or not impact_edges):
-        checks["cross_layer_graph_coverage"] = "fail"
-        blockers.append("cross-layer graphs have no edges despite non-trivial tiling variables")
-    classification = variables.get("impact_classification") if isinstance(variables.get("impact_classification"), dict) else {}
-    scopes_by_name: dict[str, set[str]] = {}
-    for scope, names in classification.items():
-        if isinstance(names, list):
-            for name in names:
-                scopes_by_name.setdefault(str(name), set()).add(str(scope))
-    conflicts = sorted(name for name, scopes in scopes_by_name.items() if "constant" in scopes and len(scopes) > 1)
-    if conflicts:
-        checks["cross_layer_graph_coverage"] = "fail"
-        blockers.append("tiling/variables.yaml classifies variable as constant and non-constant: " + ", ".join(conflicts[:8]))
-    return checks
 
 
 def main(argv: list[str] | None = None) -> int:

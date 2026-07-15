@@ -23,19 +23,21 @@ and CBM metadata. Stay inside the approved Phase 0 scope.
 
 Write only:
 
-```text
-facts/host.yaml#variables
-facts/host.yaml#expressions
-facts/host.yaml#control_flow
-facts/host.yaml#calls
-facts/host.yaml#tiling_key
-facts/host.yaml#tiling_key_enumeration
-facts/host.yaml#tiling_key_constraints
-facts/host.yaml#tilingdata_writes
+```json
+[
+  {"target": {"path": "facts/host.yaml", "section": "variables"}},
+  {"target": {"path": "facts/host.yaml", "section": "expressions"}},
+  {"target": {"path": "facts/host.yaml", "section": "control_flow"}},
+  {"target": {"path": "facts/host.yaml", "section": "calls"}},
+  {"target": {"path": "facts/host.yaml", "section": "tiling_key"}},
+  {"target": {"path": "facts/host.yaml", "section": "tiling_key_enumeration"}},
+  {"target": {"path": "facts/host.yaml", "section": "tiling_key_constraints"}},
+  {"target": {"path": "facts/host.yaml", "section": "tilingdata_writes"}}
+]
 ```
 
-Do not write proposals, canonical files, tiling archive files, route files,
-contracts, graph files, or validation reports.
+Do not write non-owned fact files, graph files, validation reports, or generated
+test artifacts.
 
 Emit candidate JSON only. For every 5–10 candidates, use the local candidate
 validator then deterministic compiler. Do not write formal YAML, IDs, source

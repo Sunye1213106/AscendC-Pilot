@@ -99,6 +99,8 @@ def finalize_phase0(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
                 "id": "OP_PHASE0_RECEIPT",
                 "kind": "phase0_receipt",
                 "status": "recorded",
+                "identity": {"run_id": run_id, "artifact": "runs.receipt"},
+                "sources": [{"kind": "runtime", "path": f"runs/{run_id}/phase0/receipt.yaml"}],
                 "source_revision": context.get("source_revision"),
                 "source_snapshot_id": context.get("source_snapshot_id"),
                 "cbm_project": cbm_meta.get("cbm_project"),

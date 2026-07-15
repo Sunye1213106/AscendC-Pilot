@@ -1,13 +1,14 @@
-version: 1
+﻿version: 1
 artifact_type: kernel.slice.loops
 required_top_level: [version, artifact, snapshot, items, relations, unresolved]
 allowed_top_level: [version, artifact, snapshot, analysis_status, reason, sources, items, relations, unresolved]
 item_kind_enum: [kernel_loop]
-required_item_fields: [id, kind, name, status, sources]
+required_item_fields: [id, kind, status, identity, sources]
 kind_required_fields:
   kernel_loop: [loop_variable_ref, init_expression_ref, condition_expression_ref, step_expression_ref, body_refs, zero_iteration_condition, one_iteration_condition, multiple_iteration_condition, tail_iteration_condition]
 relation_required_fields: [id, type, source_id, target_id, status]
 minimum_cardinality: 0
 stores: [for_while, loop_variable, initialization, condition, step, bound_expression, body, zero_one_multiple_tail_conditions]
 forbids: [loop_count_guess]
+
 

@@ -13,9 +13,8 @@ and semantic enrichment must not become separate TodoWrite items.
 | `uo-p3` | Phase 3：Kernel Slice 分析 |
 | `uo-p4` | Final：验证、图生成与最终门禁 |
 
-Do not create Todo items for Phase 0 internal steps, Phase 3.5, old Phase 4+
-workflows, proposal promotion, canonical v2, impact graph, route builders,
-contract generation, or test generation.
+Do not create Todo items outside the five active milestones above. Final is the
+last milestone and completion stops there.
 
 Subagents must be foreground tasks. After every subagent batch, run the
 appropriate validator/review barrier before consuming its artifacts or advancing

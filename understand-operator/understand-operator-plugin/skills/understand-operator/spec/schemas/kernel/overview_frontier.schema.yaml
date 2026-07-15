@@ -1,9 +1,9 @@
-version: 1
+﻿version: 1
 artifact_type: kernel.overview.frontier
 required_top_level: [version, artifact, snapshot, items, relations, unresolved]
 allowed_top_level: [version, artifact, snapshot, analysis_status, reason, sources, items, relations, unresolved]
 item_kind_enum: [frontier_site, branch_site, loop_site, api_site, memory_site, sync_site, output_site, tilingdata_read_site]
-required_item_fields: [id, kind, name, status, sources]
+required_item_fields: [id, kind, status, identity, sources]
 kind_required_fields:
   frontier_site: [site_id, site_kind, function_ref, file, span, architecture_variant, template_binding, candidate_slice]
   branch_site: [site_id, site_kind, function_ref, file, span, architecture_variant, template_binding, candidate_slice]
@@ -17,4 +17,5 @@ relation_required_fields: [id, type, source_id, target_id, status]
 minimum_cardinality: 1
 stores: [kernel_entries, functions, call_edges, tilingdata_read_sites, branch_sites, loop_sites, api_sites, memory_sites, sync_sites, output_write_sites, unresolved_symbols]
 forbids: [slice_depth_analysis]
+
 

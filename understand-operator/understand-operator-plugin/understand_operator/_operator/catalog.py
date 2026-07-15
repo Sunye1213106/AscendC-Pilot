@@ -27,11 +27,7 @@ def match_catalog_entry(spec: dict[str, Any], requested_path: str, *, writable_o
     for raw_entry in entries or []:
         if not isinstance(raw_entry, dict):
             continue
-        if writable_only and (
-            raw_entry.get("legacy") is True
-            or raw_entry.get("migration_only") is True
-            or raw_entry.get("writable") is False
-        ):
+        if writable_only and raw_entry.get("writable") is False:
             continue
         pattern = _norm_path(str(raw_entry.get("path") or ""))
         if not pattern:
@@ -55,7 +51,7 @@ def match_catalog_entry(spec: dict[str, Any], requested_path: str, *, writable_o
 
 
 def is_active_catalog_entry(entry: dict[str, Any]) -> bool:
-    return not (entry.get("legacy") is True or entry.get("migration_only") is True or entry.get("writable") is False)
+    return entry.get("writable") is not False
 
 
 def _norm_path(value: str) -> str:

@@ -1,13 +1,14 @@
-version: 1
+﻿version: 1
 artifact_type: kernel.slice_manifest
 required_top_level: [version, artifact, snapshot, items, relations, unresolved]
 allowed_top_level: [version, artifact, snapshot, analysis_status, reason, sources, items, relations, unresolved]
 item_kind_enum: [kernel_slice]
-required_item_fields: [id, kind, name, status, sources]
+required_item_fields: [id, kind, status, identity, sources]
 kind_required_fields:
   kernel_slice: [kernel_entry_ref, output_tensor_refs, output_write_refs, template_binding_signature, structural_flow_signature, tilingdata_read_signature, output_signature, primary_owner]
 relation_required_fields: [id, type, source_id, target_id, status]
 minimum_cardinality: 1
 stores: [slice_id, functions, primary_owner, branch_sites, loop_sites, api_sites, memory_sites, sync_sites, entry_exit, coverage_completeness]
 forbids: [testcase_generation]
+
 

@@ -18,7 +18,7 @@ class EvidenceIssue:
     target: str = ""
     severity: str = "error"
     expected_format: str = "EV_* or SRC_* registered in registry/evidence.yaml"
-    repair_action: str = "route to the artifact owner and add source-backed registry/evidence.yaml proposal entries"
+    repair_action: str = "resume the owning agent with source-backed Candidate JSON evidence"
 
     def to_dict(self) -> dict[str, str]:
         return {

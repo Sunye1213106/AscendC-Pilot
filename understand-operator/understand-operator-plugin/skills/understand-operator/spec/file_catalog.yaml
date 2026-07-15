@@ -133,7 +133,7 @@ files:
     artifact_type: checks.step2.review
     owner: uo-step2-fact-review-agent
     schema: schemas/common/document.schema.yaml
-    required_after_stage: step2
+    required_after_stage: conditional
     allow_empty: false
     raw_graph_input: false
   - path: checks/step2/review_trigger.yaml
@@ -161,7 +161,7 @@ files:
     artifact_type: checks.step3.review
     owner: uo-step3-fact-review-agent
     schema: schemas/common/document.schema.yaml
-    required_after_stage: step3
+    required_after_stage: conditional
     allow_empty: false
     raw_graph_input: false
   - path: checks/step3/review_trigger.yaml
@@ -190,6 +190,13 @@ files:
     owner: derived-graph-materializer
     schema: schemas/common/document.schema.yaml
     required_after_stage: derived
+    allow_empty: false
+    raw_graph_input: false
+  - path: checks/final.yaml
+    artifact_type: checks.final
+    owner: facts-validator
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: final
     allow_empty: false
     raw_graph_input: false
   - path: graphs/raw/manifest.yaml

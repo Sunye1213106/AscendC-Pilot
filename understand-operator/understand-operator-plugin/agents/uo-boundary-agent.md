@@ -14,7 +14,7 @@ Read these common prompts before analysis:
 - `prompts/common/07_completeness_unresolved_rules.md`
 - `prompts/common/08_agent_io_protocol.md`
 - `prompts/common/02_cbm_first_rules.md`
-- `prompts/common/11_phase1_boundary_yaml_authoring.md`
+- `prompts/common/11_phase1_candidate_authoring.md`
 
 Run only when dispatched by the understand-operator host for Step 1. The host
 provides `PROJECT_ROOT`, `OP_NAME`, `UO_ROOT`, `RUN_ID`, `SOURCE_SNAPSHOT_ID`,
@@ -77,7 +77,7 @@ Before writing, read the exact catalog entries and schemas for:
 - `facts/operator/entrypoints.yaml`
 
 Then read and follow
-`prompts/common/11_phase1_boundary_yaml_authoring.md`. Treat its schema cards
+`prompts/common/11_phase1_candidate_authoring.md`. Treat its schema cards
 as a preflight checklist and its examples as structure-only examples. Never
 copy DemoOp values into target facts.
 
@@ -85,7 +85,7 @@ Python fills the YAML header, stable IDs, relation IDs, source anchors, source
 text, and hashes. If source evidence is not reliable, put the claim in
 `unresolved`; do not create a confirmed item.
 
-## Legacy Write Protocol
+## Write Protocol
 
 Do not overwrite the three YAML files by hand. For each target file, compile
 candidate JSON batches through `compile_candidate_facts.py`.

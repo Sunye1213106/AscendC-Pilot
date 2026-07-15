@@ -89,8 +89,32 @@ def _query_sqlite(index: Path, root: Path, term: str, *, depth: int, relation_ty
             next_ids={r["source_id"] for r in rels}|{r["target_id"] for r in rels}; next_ids-=ids; frontier=next_ids; ids|=next_ids
         if ids:
             marks=','.join('?' for _ in ids); neighbors=db.execute(f"select * from entities where id in ({marks}) limit ?", [*ids,limit]).fetchall()
-    details=[_read_yaml_ref(root, str(r["detail_ref"])) for r in neighbors if r["detail_ref"]]
-    return {"resolved_entities": [_row(r) for r in rows], "direct_relations": [_row(r) for r in direct[:limit]], "neighbors": [_row(r) for r in neighbors[:limit]], "fact_details": details, "source_anchors": [], "unresolved": [], "index_status": "fresh", "query_backend": "sqlite"}
+    details = [_read_yaml_ref(root, str(r["detail_ref"])) for r in neighbors if r["detail_ref"]]
+    entities = [_row(r) for r in rows]
+    neighbor_entities = [_row(r) for r in neighbors[:limit]]
+    return {
+        "query": {
+            "entity": term,
+            "normalized": norm,
+            "resolved_entities": [str(item.get("id")) for item in entities],
+            "mode": "readonly",
+            "order": ["terminology", "symbol_index", "derived", "raw", "yaml", "source"],
+        },
+        "resolved_entities": entities,
+        "direct_relations": [_row(r) for r in direct[:limit]],
+        "neighbors": neighbor_entities,
+        "fact_details": details,
+        "yaml_items": details,
+        "source_refs": _source_refs_from_yaml_items(details),
+        "source_anchors": _source_refs_from_yaml_items(details),
+        "derived_entities": [str(item.get("id")) for item in neighbor_entities if item.get("graph_level") == "derived"],
+        "raw_entities": [str(item.get("id")) for item in neighbor_entities if item.get("graph_level") == "raw"],
+        "unresolved": [],
+        "writes": [],
+        "cbm_writes": [],
+        "index_status": "fresh",
+        "query_backend": "sqlite",
+    }
 
 
 def _row(row: sqlite3.Row) -> dict[str, Any]:

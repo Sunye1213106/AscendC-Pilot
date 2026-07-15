@@ -27,6 +27,7 @@ from understand_operator._operator.fact_hashes import all_fact_hashes, file_hash
 from understand_operator._operator.fact_registry import build_fact_registry
 from understand_operator._operator.identity import relation_stable_id, resolve_identity
 from understand_operator._operator.kind_match import kind_matches
+from understand_operator._operator.reference_paths import iter_reference_values, reference_declarations
 from understand_operator._operator.spec import catalog_entries, load_spec, spec_bundle_hash
 from understand_operator._operator.source_reader import SourceReadError, SourceReader
 
@@ -148,6 +149,7 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
     _validate_identity_integrity(repo_root, uo_root, all_docs | docs, relation_type_specs, errors)
     for rel, doc in docs.items():
         _validate_references(rel, doc, known_ids, errors)
+        _validate_declared_reference_kinds(rel, doc, known_ids, known_kinds, entity_spec, errors)
         _validate_relation_endpoints(rel, doc, known_kinds, relation_type_specs, entity_spec, errors)
     return errors
 
@@ -596,6 +598,7 @@ def _validate_identity_integrity(repo_root: Path, uo_root: Path, docs: dict[str,
                     continue
                 known_item_ids.add(item_id)
                 if not isinstance(identity, dict):
+                    errors.append(FactValidationError("IDENTITY_MISSING", unit_rel, f"/items/{index}/identity is required"))
                     continue
                 canonical = identity.get("canonical_key")
                 normalized = identity.get("normalized")
@@ -902,6 +905,47 @@ def _validate_references(rel: str, doc: Any, known_ids: set[str], errors: list[F
             errors.append(FactValidationError("REFERENCE_TARGET_MISSING", rel, f"{path} references unknown id {value}"))
 
     visit(doc, "")
+
+
+def _validate_declared_reference_kinds(
+    rel: str,
+    doc: dict[str, Any],
+    known_ids: set[str],
+    known_kinds: dict[str, str],
+    entity_spec: dict[str, Any],
+    errors: list[FactValidationError],
+) -> None:
+    if not rel.startswith("facts/"):
+        return
+    for section, unit in _document_units(doc):
+        unit_rel = f"{rel}#sections/{section}" if section else rel
+        for index, item in enumerate(unit.get("items") or []):
+            if not isinstance(item, dict):
+                continue
+            kind = str(item.get("kind") or "")
+            declarations = reference_declarations(entity_spec, kind)
+            for found in iter_reference_values(item, declarations, base_path=f"/items/{index}"):
+                if found.declaration.cardinality == "single":
+                    values = [found.value]
+                else:
+                    values = found.value if isinstance(found.value, list) else [found.value]
+                for value_index, target_id in enumerate(values):
+                    path = found.path if found.declaration.cardinality == "single" else f"{found.path}[{value_index}]"
+                    if not isinstance(target_id, str):
+                        errors.append(FactValidationError("FORMAL_REFERENCE_INVALID", unit_rel, f"{path} must be a stable id string"))
+                        continue
+                    if target_id not in known_ids:
+                        errors.append(FactValidationError("REFERENCE_TARGET_MISSING", unit_rel, f"{path} references unknown id {target_id}"))
+                        continue
+                    actual_kind = known_kinds.get(target_id)
+                    if actual_kind and found.declaration.allowed and not any(kind_matches(actual_kind, expected, entity_spec) for expected in found.declaration.allowed):
+                        errors.append(
+                            FactValidationError(
+                                "FORMAL_REFERENCE_KIND_NOT_ALLOWED",
+                                unit_rel,
+                                f"{path} target {target_id} kind {actual_kind} not allowed; allowed={list(found.declaration.allowed)}",
+                            )
+                        )
 
 
 def _validate_relation_endpoints(

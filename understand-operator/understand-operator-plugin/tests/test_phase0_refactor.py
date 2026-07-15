@@ -339,49 +339,76 @@ def test_raw_graph_indexes_cross_edges_paths_and_query_alias(tmp_path: Path) -> 
     )
     assert finalize_phase0(repo, "DemoOp")[0] == 0
     _write_yaml(
-        base / "facts" / "host" / "tilingdata_writes.yaml",
-        _fact_doc("host.tilingdata_writes", "uo-host-extraction", "TDWRITE_DEMO_TILE", "tilingdata_write", source, {"struct_ref": "DemoTilingData", "field_ref": "tileN", "field_type": "uint32_t", "write_site_ref": "CALL_WRITE", "value_expression_ref": "EXPR_TILE", "condition_ref": "EXPR_TRUE", "source_variable_refs": ["VAR_N"], "aliases": ["tile count"]}),
-    )
-    _write_yaml(
-        base / "facts" / "kernel" / "slices" / "main" / "tilingdata_reads.yaml",
-        _fact_doc("kernel.slice.tilingdata_reads", "uo-kernel-slice-agent", "TDREAD_DEMO_TILE", "tilingdata_read", source, {"struct_ref": "DemoTilingData", "field_ref": "tileN", "field_type": "uint32_t", "read_site_ref": "CALL_READ", "target_variable_ref": "VAR_KN", "read_condition_ref": "EXPR_TRUE", "host_write_candidate_ref": "TDWRITE_DEMO_TILE"}),
-    )
-    _write_yaml(
-        base / "facts" / "compute" / "operations.yaml",
-        _fact_doc(
-            "compute.operations",
-            "uo-flow-extraction",
-            "OPR_DEMO_ADD",
-            "compute_operation",
-            source,
+        base / "facts" / "host.yaml",
+        _section_doc(
+            "facts.host",
+            "uo-host-extraction",
             {
-                "operation_type": "add",
-                "execution_order": 1,
-                "implementation_ref": "CALL_DEMO_ADD",
-                "kernel_api_refs": ["CALL_DEMO_ADD"],
-                "golden_ref": "GOLDEN_DEMO_ADD",
-                "input_tensor_refs": ["x", "y"],
-                "output_tensor_refs": ["z"],
-                "axis_refs": [],
-                "formula": "z = x + y",
-                "dtype_policy": "preserve",
-                "broadcast_policy": "none",
-                "reduction_policy": "none",
-                "numerical_sensitivity": "low",
-                "accumulation_dtype": "same_as_input",
-                "tolerance_ref": "TOL_DEMO_DEFAULT",
+                "tilingdata_writes": {
+                    "items": [
+                        _fact_item("TDATA_DEMO_TILE", "tilingdata_field", source, {"name": "tile count", "struct_ref": "DemoTilingData", "field_ref": "tileN", "field_type": "uint32_t", "aliases": ["tile count"]}),
+                        _fact_item("TDWRITE_DEMO_TILE", "tilingdata_write", source, {"struct_ref": "DemoTilingData", "field_ref": "tileN", "field_type": "uint32_t", "write_site_ref": "CALL_WRITE", "value_expression_ref": "EXPR_TILE", "condition_ref": "EXPR_TRUE", "source_variable_refs": ["VAR_N"], "aliases": ["tile count"]}),
+                    ],
+                    "relations": [{"id": "REL_WRITE_TILE", "type": "writes", "source_id": "TDWRITE_DEMO_TILE", "target_id": "TDATA_DEMO_TILE", "sources": [source]}],
+                    "unresolved": [],
+                }
             },
         ),
     )
     _write_yaml(
-        base / "facts" / "kernel" / "slices" / "main" / "calls.yaml",
-        _fact_doc(
-            "kernel.slice.calls",
+        base / "facts" / "kernel" / "slices" / "main.yaml",
+        _section_doc(
+            "facts.kernel.slice",
             "uo-kernel-slice-agent",
-            "CALL_DEMO_ADD",
-            "compute_api_call",
-            source,
-            {"caller_ref": "FUNC_DEMO_KERNEL", "callee_ref": "AscendC::Add", "argument_refs": ["x", "y"], "output_refs": ["z"]},
+            {
+                "tilingdata_reads": {
+                    "items": [_fact_item("TDREAD_DEMO_TILE", "tilingdata_read", source, {"struct_ref": "DemoTilingData", "field_ref": "tileN", "field_type": "uint32_t", "read_site_ref": "CALL_READ", "target_variable_ref": "VAR_KN", "read_condition_ref": "EXPR_TRUE", "host_write_candidate_ref": "TDWRITE_DEMO_TILE"})],
+                    "relations": [{"id": "REL_READ_TILE", "type": "reads", "source_id": "TDREAD_DEMO_TILE", "target_id": "TDATA_DEMO_TILE", "sources": [source]}],
+                    "unresolved": [],
+                },
+                "calls": {
+                    "items": [_fact_item("CALL_DEMO_ADD", "compute_api_call", source, {"caller_ref": "FUNC_DEMO_KERNEL", "callee_ref": "AscendC::Add", "argument_refs": ["x", "y"], "output_refs": ["z"], "compute_operation_ref": "OPR_DEMO_ADD"})],
+                    "relations": [],
+                    "unresolved": [],
+                },
+            },
+        ),
+    )
+    _write_yaml(
+        base / "facts" / "compute.yaml",
+        _section_doc(
+            "facts.compute",
+            "uo-flow-extraction",
+            {
+                "operations": {
+                    "items": [
+                        _fact_item(
+                            "OPR_DEMO_ADD",
+                            "compute_operation",
+                            source,
+                            {
+                                "operation_type": "add",
+                                "execution_order": 1,
+                                "implementation_ref": "CALL_DEMO_ADD",
+                                "kernel_api_refs": ["CALL_DEMO_ADD"],
+                                "golden_ref": "GOLDEN_DEMO_ADD",
+                                "input_tensor_refs": ["x", "y"],
+                                "output_tensor_refs": ["z"],
+                                "axis_refs": [],
+                                "formula": "z = x + y",
+                                "dtype_policy": "preserve",
+                                "broadcast_policy": "none",
+                                "reduction_policy": "none",
+                                "numerical_sensitivity": "low",
+                                "accumulation_dtype": "same_as_input",
+                                "tolerance_ref": "TOL_DEMO_DEFAULT",
+                            },
+                        )
+                    ],
+                    "relations": [],
+                    "unresolved": [],
+                }
+            },
         ),
     )
     _write_yaml(base / "checks" / "step3" / "receipt.yaml", {"version": 1, "artifact": {"type": "checks.step3.receipt", "schema_version": 1, "owner": "uo-orchestrator"}, "snapshot": {"run_id": "UO_RUN_TEST", "source_snapshot_id": "SOURCE_TEST", "source_revision": "unknown", "spec_bundle_hash": spec_bundle_hash()}, "status": "pass", "input_hashes": {}, "items": [], "relations": [], "unresolved": []})
@@ -410,4 +437,17 @@ def _fact_doc(artifact_type: str, owner: str, item_id: str, kind: str, source: d
         "items": [item],
         "relations": [],
         "unresolved": [],
+    }
+
+
+def _fact_item(item_id: str, kind: str, source: dict, extra: dict) -> dict:
+    return {"id": item_id, "kind": kind, "name": item_id.lower(), "status": "confirmed", "sources": [source], **extra}
+
+
+def _section_doc(artifact_type: str, owner: str, sections: dict) -> dict:
+    return {
+        "version": 1,
+        "artifact": {"type": artifact_type, "schema_version": 1, "owner": owner},
+        "snapshot": {"run_id": "UO_RUN_TEST", "source_snapshot_id": "SOURCE_TEST", "source_revision": "unknown", "spec_bundle_hash": spec_bundle_hash()},
+        "sections": sections,
     }

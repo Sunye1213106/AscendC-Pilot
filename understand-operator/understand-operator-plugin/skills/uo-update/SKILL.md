@@ -9,20 +9,7 @@ argument-hint: "[path] [--op-name <name>]"
 # uo-update
 
 当前 Facts / Raw Graph / Derived Graph 结构尚未实现可靠的增量更新。
-
-禁止执行旧 canonical v2 更新流程，禁止创建、读取或刷新：
-
-- `index.yaml`
-- `route.md`
-- `archive/runs`
-- `tiling/*`
-- `flow/*`
-- `kernel/paths.yaml`
-- `test/contract.yaml`
-- `cross_layer/*`
-- `impact_graph`
-- `contracts/*`
-- `uo-kb-compile promote`
+本技能不执行任何文件读取、写入、刷新、编译或迁移命令。
 
 当用户运行 `/uo-update` 时，只返回：
 

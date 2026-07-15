@@ -63,6 +63,7 @@ def write_step3_receipt(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
             messages.append(f"{rel} input_hashes do not match current facts")
     review_trigger = _read_yaml(uo_root / "checks/step3/review_trigger.yaml")
     review_status = review_trigger.get("status")
+    trigger_hashes = review_trigger.get("input_hashes") if isinstance(review_trigger.get("input_hashes"), dict) else {}
     if review_status == "triggered":
         review_rel = "checks/step3/review.yaml"
         review_path = uo_root / review_rel
@@ -76,8 +77,8 @@ def write_step3_receipt(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
                 messages.append(f"{review_rel} has blocking_findings")
             if review_doc.get("errors"):
                 messages.append(f"{review_rel} has errors")
-            if review_doc.get("input_hashes") != current_fact_hashes:
-                messages.append(f"{review_rel} input_hashes do not match current facts")
+            if review_doc.get("input_hashes") != trigger_hashes:
+                messages.append(f"{review_rel} input_hashes do not match review trigger")
     elif review_status != "skipped":
         messages.append("checks/step3/review_trigger.yaml status must be skipped or triggered")
     if messages:
@@ -130,6 +131,8 @@ def _snapshot(uo_root: Path) -> dict[str, str]:
 
 def _hash_inputs(uo_root: Path) -> dict[str, str]:
     paths = list(REQUIRED_REPORTS) + ["checks/step2/receipt.yaml"]
+    if (uo_root / "checks/step3/review.yaml").exists():
+        paths.append("checks/step3/review.yaml")
     paths.extend(path.relative_to(uo_root).as_posix() for path in sorted((uo_root / "facts").rglob("*.yaml")))
     result: dict[str, str] = {}
     for rel in sorted(set(paths)):

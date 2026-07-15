@@ -5,8 +5,7 @@ write formal Facts YAML, document headers, stable IDs, relation IDs, SRC IDs,
 source text, or hashes. Python is the only formal-Facts writer; validators are
 the only writers of `checks/*validation.yaml`.
 
-For Phase 1 this supersedes `11_phase1_boundary_yaml_authoring.md`'s legacy
-YAML examples.
+For Phase 1, read `11_phase1_candidate_authoring.md` as the authoring contract.
 
 For each 5-10 candidate batch: create JSON conforming to
 `spec/schemas/candidate/candidate_batch.schema.json`, run

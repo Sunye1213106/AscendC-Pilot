@@ -1,12 +1,13 @@
-version: 1
+﻿version: 1
 artifact_type: graph.derived.abstraction_rules
 required_top_level: [version, artifact, snapshot, input_hashes, rules, items, relations, unresolved]
 allowed_top_level: [version, artifact, snapshot, input_hashes, rules, items, relations, unresolved]
 item_kind_enum: [abstraction_rule_record]
-required_item_fields: [id, kind]
+required_item_fields: [id, kind, status, identity, sources]
 kind_required_fields: {}
 relation_required_fields: [id, type, source_id, target_id]
 minimum_cardinality: 0
 stores: [abstract_type, abstract_name, raw_node_refs, raw_edge_refs, yaml_refs, explanation, reversible]
 forbids: [irreversible_claim]
+
 

@@ -9,7 +9,6 @@ from typing import Any
 from understand_operator._operator.spec import spec_bundle_hash
 
 ARTIFACT_DIR = ".understand-operator"
-REQUIRED_TILING_ARCHIVE_FILES: list[str] = []
 
 def safe_op_name(name: str | None, repo_root: Path) -> str:
     raw = (name or "").strip() or repo_root.name

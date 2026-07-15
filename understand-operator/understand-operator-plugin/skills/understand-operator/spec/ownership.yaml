@@ -68,6 +68,7 @@ owners:
       - checks/step3/slice_validations.yaml
       - checks/step3/review_trigger.yaml
       - checks/compile_gate.yaml
+      - checks/final.yaml
       - checks/derived_validation.yaml
   raw-graph-compiler:
     may_read: [manifest.yaml, facts/**, checks/**]

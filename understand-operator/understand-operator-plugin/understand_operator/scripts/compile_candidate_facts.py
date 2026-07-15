@@ -42,6 +42,7 @@ def compile_candidate_facts(repo_root: Path, op_name: str, batch: Any) -> list[C
     reader = SourceReader(repo_root)
     registry = build_fact_registry(uo_root)
     spec = load_spec()
+    entity_spec = spec.get("entity_types") if isinstance(spec.get("entity_types"), dict) else {}
 
     local_symbols: dict[str, str] = {}
     local_kinds: dict[str, str] = {}
@@ -96,7 +97,16 @@ def compile_candidate_facts(repo_root: Path, op_name: str, batch: Any) -> list[C
     resolved_items: list[dict[str, Any]] = []
     resolution_errors: list[CandidateError] = []
     for index, item in enumerate(materialized_items):
-        resolved_fields, failures = resolve_reference_fields(item, local_symbols=local_symbols, registry=registry, repo_root=repo_root, path=f"items[{index}]")
+        resolved_fields, failures = resolve_reference_fields(
+            item,
+            local_symbols=local_symbols,
+            local_kinds=local_kinds,
+            registry=registry,
+            repo_root=repo_root,
+            kind=str(item.get("kind") or ""),
+            entity_spec=entity_spec,
+            path=f"items[{index}]",
+        )
         for failure in failures:
             resolution_errors.append(_link_error(failure, target, field=str(failure.get("path") or f"items[{index}]")))
         resolved_items.append(resolved_fields)
@@ -109,7 +119,14 @@ def compile_candidate_facts(repo_root: Path, op_name: str, batch: Any) -> list[C
             resolution_errors.append(_link_result_error(source, target, f"relations[{index}].source"))
         if target_ref.status != "resolved":
             resolution_errors.append(_link_result_error(target_ref, target, f"relations[{index}].target"))
-        resolved_fields, failures = resolve_reference_fields(relation.get("fields") or {}, local_symbols=local_symbols, registry=registry, repo_root=repo_root, path=f"relations[{index}].fields")
+        resolved_fields, failures = resolve_reference_fields(
+            relation.get("fields") or {},
+            local_symbols=local_symbols,
+            local_kinds=local_kinds,
+            registry=registry,
+            repo_root=repo_root,
+            path=f"relations[{index}].fields",
+        )
         for failure in failures:
             resolution_errors.append(_link_error(failure, target, field=str(failure.get("path") or f"relations[{index}].fields")))
         if source.status == "resolved" and target_ref.status == "resolved":
@@ -185,10 +202,11 @@ def _identity_reference_fields(spec: dict[str, Any], kind: str) -> dict[str, lis
 
 
 def _materialize_item(item: dict[str, Any], reader: SourceReader, resolved: Any) -> dict[str, Any]:
+    fields = enrich_deterministic_fields(str(item["kind"]), resolved.normalized_identity, item.get("fields") or {}, reader)
     result = {
         "id": resolved.stable_id,
         "kind": item["kind"],
-        **item.get("fields", {}),
+        **fields,
         "status": "confirmed",
         "identity": {
             "version": resolved.identity_version,
@@ -199,6 +217,20 @@ def _materialize_item(item: dict[str, Any], reader: SourceReader, resolved: Any)
     }
     if "name" in item:
         result["name"] = item["name"]
+    return result
+
+
+def enrich_deterministic_fields(
+    kind: str,
+    normalized_identity: dict[str, object],
+    fields: dict[str, object],
+    source_reader: SourceReader,
+) -> dict[str, object]:
+    result = dict(fields)
+    if kind in {"source_file", "dependency_file", "generated_file"}:
+        path_value = normalized_identity.get("path") or result.get("path")
+        if isinstance(path_value, str) and path_value:
+            result["file_hash"] = source_reader.read(path_value).byte_hash
     return result
 
 

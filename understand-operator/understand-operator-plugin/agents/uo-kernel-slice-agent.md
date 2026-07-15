@@ -80,7 +80,7 @@ Multiple slice agents may run in parallel because each writes a distinct `facts/
 After all slice agents finish, the orchestrator runs:
 
 ```powershell
-python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step3 --scope kernel-slice --write-report
+python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step3 --scope kernel-slice --write-report
 ```
 
 Treat any validation failure as incomplete extraction. Do not write validation reports yourself.

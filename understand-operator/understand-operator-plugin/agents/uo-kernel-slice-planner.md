@@ -67,7 +67,7 @@ Every confirmed item and relation must include `sources` with exact file, symbol
 Run:
 
 ```powershell
-python "$SCRIPT_DIR/validate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step3 --scope kernel-slice-planner --write-report
+python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step3 --scope kernel-slice-planner --write-report
 ```
 
 Stop on any validation error.

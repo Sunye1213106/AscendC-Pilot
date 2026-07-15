@@ -1,9 +1,9 @@
-version: 1
+﻿version: 1
 artifact_type: kernel.slice.expressions
 required_top_level: [version, artifact, snapshot, items, relations, unresolved]
 allowed_top_level: [version, artifact, snapshot, analysis_status, reason, sources, items, relations, unresolved]
 item_kind_enum: [kernel_expression, offset_expression, length_expression, tail_expression, predicate_expression, loop_bound_expression]
-required_item_fields: [id, kind, name, status, sources]
+required_item_fields: [id, kind, status, identity, sources]
 kind_required_fields:
   kernel_expression: [expression_text, expression_kind, operator, operand_refs, result_type, scope_ref]
   offset_expression: [expression_text, expression_kind, operator, operand_refs, result_type, scope_ref]
@@ -15,4 +15,5 @@ relation_required_fields: [id, type, source_id, target_id, status]
 minimum_cardinality: 1
 stores: [offset_calculation, length_calculation, tail_calculation, index_calculation, branch_predicate, loop_bound, buffer_address_expression]
 forbids: [natural_language_only]
+
 

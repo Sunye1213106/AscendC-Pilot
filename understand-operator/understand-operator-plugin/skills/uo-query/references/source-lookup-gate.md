@@ -55,7 +55,7 @@ KB 已写出 `Caveat (置信度=medium)` 并点名 `SetSplitAxis`，却输出 `�
 ## 引用
 
 **KB**
-- `tiling/families.yaml` TF007
+- `facts/host.yaml` `VAR_DEMO_TILE`
 - …
 
 **源码核实**

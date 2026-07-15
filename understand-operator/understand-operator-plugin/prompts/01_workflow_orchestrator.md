@@ -16,7 +16,7 @@ workflow has five user-visible milestones:
 - `prompts/00_progress_visibility.md`
 - `prompts/common/02_cbm_first_rules.md`
 - `prompts/common/10_tool_execution_rules.md`
-- `prompts/common/11_phase1_boundary_yaml_authoring.md`
+- `prompts/common/11_phase1_candidate_authoring.md`
 - `prompts/00_subagent_dispatch.md`
 - `skills/understand-operator/spec/file_catalog.yaml`
 - `skills/understand-operator/spec/stage_contracts.yaml`
@@ -29,13 +29,11 @@ workflow has five user-visible milestones:
 2. Phase 1 - boundary facts in `facts/operator/**`.
 3. Phase 2 - parallel Host, Compute, and Kernel Overview facts.
 4. Phase 3 - kernel slice planning and slice facts only.
-5. Final - review, compile gate, raw graph, derived graph, read-only query,
-   final gate.
+5. Final - compile gate, raw graph, raw verification, abstraction rules,
+   derived graph, derived verification, SQLite index, read-only query smoke,
+   final gate, then stop.
 
-No later phases exist in this workflow. Do not execute Phase 3.5, Phase 4+,
-proposal promotion, canonical v2 promotion, tiling archive workflows, route
-builder, contracts/testcase generation, impact graph generation, or a separate
-old quality phase.
+No later phases exist in this workflow. Final completion ends the run.
 
 ## Startup Preflight
 
@@ -105,18 +103,18 @@ facts/operator/source_files.yaml
 facts/operator/entrypoints.yaml
 ```
 
-Then run Step 1 validation. Phase 1 must read Phase 0 receipt and must not
-rescan or expand the repository scope independently.
+Then run Step 1 validation with `validate_fact_stage.py`. Phase 1 must read
+Phase 0 receipt and must not rescan or expand the repository scope
+independently.
 
-Boundary agents output candidate JSON only. Validate each small candidate batch
-locally with `validate_candidate_batch.py`, then materialize formal facts with
-`compile_candidate_facts.py`; agents never author final YAML or deterministic
-identity/evidence fields.
+Boundary agents output Candidate JSON V2 only. Validate each small candidate
+batch locally with `validate_candidate_batch.py`, then materialize formal facts
+with `compile_candidate_facts.py`; agents never author final YAML or
+deterministic identity/evidence fields.
 The dispatch must require the boundary agent to read
-`prompts/common/11_phase1_boundary_yaml_authoring.md`. The model may author
-temporary batch YAML outside `PROJECT_ROOT` and `UO_ROOT`; it may not author a
-whole final fact document. Require one target file at a time and a validator run
-after its first minimum-valid batch so schema and evidence errors surface early.
+`prompts/common/11_phase1_candidate_authoring.md`. Require one target file at a
+time and a candidate validator run after each small batch so schema and evidence
+errors surface early.
 If the Phase 0 receipt is missing or not `status: pass`, do not dispatch
 `uo-boundary-agent`.
 
@@ -125,8 +123,9 @@ with the validator report and current file content. Do not start a second
 boundary task window, and do not hand-compose a replacement task that restates
 source files or tells the agent to write final fact YAML directly.
 For repair, also pass the exact target schema, catalog entry, stable ID rules,
-and the Phase 1 authoring contract. The owning agent must group validator errors
-by file and code, then replace only affected entries through merge batches.
+and the Phase 1 Candidate JSON contract. The owning agent must group validator
+errors by file and code, then repair the affected Candidate JSON entries and
+compile again.
 
 ## Phase 2
 
@@ -138,21 +137,25 @@ uo-flow-extraction
 uo-kernel-overview-agent
 ```
 
-They write only `facts/host.yaml`, `facts/compute.yaml`, and
-`facts/kernel/overview.yaml` sections. Run the three scoped validators, then
-`uo-step2-fact-review-agent`, then `write_step2_receipt.py`.
+Each agent validates and compiles Candidate JSON for its owned formal fact
+sections. Run the three scoped validators, build the registry, run
+`evaluate_review_trigger.py`, dispatch `uo-step2-fact-review-agent` only when
+triggered, then run `write_step2_receipt.py`.
 
 ## Phase 3
 
 Run `uo-kernel-slice-planner`, then parallel `uo-kernel-slice-agent` tasks for
-the planned slices. Phase 3 stops after kernel slice facts are written.
+the planned slices. Each agent validates and compiles Candidate JSON for its
+owned formal fact partition. Run Step 3 validation, build the registry, evaluate
+`evaluate_review_trigger.py`, dispatch `uo-step3-fact-review-agent` only when
+triggered, then run `write_step3_receipt.py`.
 
 ## Final
 
-Run Step 3 validation, `uo-step3-fact-review-agent`, `write_step3_receipt.py`,
-`build_compile_gate.py`, `source_graph_compiler.py`,
-`prepare_abstraction_rules.py`, `materialize_derived_graph.py`, and finally
-`quality_gate.py`.
+Run `build_compile_gate.py`, `source_graph_compiler.py`, raw verification,
+`prepare_abstraction_rules.py`, `materialize_derived_graph.py`, derived
+verification, SQLite index creation, query smoke, and finally
+`quality_gate.py`. Stop immediately after the final gate.
 
 The compiler writes only `graphs/raw/**` and `indexes/**`. The derived graph
 materializer writes only `graphs/derived/**` and its validation report.

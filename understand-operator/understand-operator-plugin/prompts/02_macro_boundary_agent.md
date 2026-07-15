@@ -12,7 +12,7 @@ runs/<current_run_id>/phase0/receipt.yaml
 cbm/index_meta.json
 ```
 
-Do not use legacy boundary artifacts. Write only:
+Write only current boundary Candidate JSON targets:
 
 ```text
 facts/operator/interface.yaml
@@ -20,5 +20,5 @@ facts/operator/source_files.yaml
 facts/operator/entrypoints.yaml
 ```
 
-Then the orchestrator runs `validate_facts.py --stage step1 --scope boundary --write-report`.
+Then the orchestrator runs `validate_fact_stage.py --stage step1 --scope boundary --write-report`.
 

@@ -1,9 +1,9 @@
-version: 1
+﻿version: 1
 artifact_type: kernel.slice.calls
 required_top_level: [version, artifact, snapshot, items, relations, unresolved]
 allowed_top_level: [version, artifact, snapshot, analysis_status, reason, sources, items, relations, unresolved]
 item_kind_enum: [kernel_call, ascendc_api_call, datacopy_call, compute_api_call, queue_call]
-required_item_fields: [id, kind, name, status, sources]
+required_item_fields: [id, kind, status, identity, sources]
 kind_required_fields:
   kernel_call: [caller_ref, callee_ref, argument_refs, output_refs]
   ascendc_api_call: [caller_ref, callee_ref, argument_refs, output_refs]
@@ -14,4 +14,5 @@ relation_required_fields: [id, type, source_id, target_id, status]
 minimum_cardinality: 1
 stores: [function_call, ascendc_api_call, template_arguments, call_arguments, return_or_output_buffer, conditional_call]
 forbids: [api_call_without_site]
+
 

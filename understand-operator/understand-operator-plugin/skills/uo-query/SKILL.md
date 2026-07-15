@@ -20,8 +20,8 @@ Locate an existing KB by:
 3. aliases from `indexes/terminology.yaml`, `query/terminology.yaml`, or
    `registry/aliases.yaml`
 
-Do not require or read `route.md`, `index.yaml`, `tiling/*`, `flow/*`,
-`kernel/paths.yaml`, `test/contract.yaml`, or `contracts/*`.
+Use only the current KB manifest, terminology/indexes, raw and derived graphs,
+formal facts, and recorded source anchors.
 
 ## Read Order
 

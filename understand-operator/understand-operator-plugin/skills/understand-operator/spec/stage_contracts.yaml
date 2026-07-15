@@ -7,7 +7,7 @@ stages:
       - facts/operator/source_files.yaml
       - facts/operator/entrypoints.yaml
       - checks/step1/validation.yaml
-    validation_command: python understand-operator/understand-operator-plugin/understand_operator/scripts/validate_facts.py <repo> --op-name <op> --stage step1
+    validation_command: python understand-operator/understand-operator-plugin/understand_operator/scripts/validate_fact_stage.py <repo> --op-name <op> --stage step1
     receipt: checks/step1/validation.yaml
   step2:
     required_files:
@@ -19,7 +19,7 @@ stages:
       - checks/step2/kernel_overview_validation.yaml
       - checks/step2/review_trigger.yaml
       - checks/step2/receipt.yaml
-    validation_command: python understand-operator/understand-operator-plugin/understand_operator/scripts/validate_facts.py <repo> --op-name <op> --stage step2
+    validation_command: python understand-operator/understand-operator-plugin/understand_operator/scripts/validate_fact_stage.py <repo> --op-name <op> --stage step2
     receipt: checks/step2/receipt.yaml
   step3:
     required_files:
@@ -28,7 +28,7 @@ stages:
       - checks/step3/slice_validations.yaml
       - checks/step3/review_trigger.yaml
       - checks/step3/receipt.yaml
-    validation_command: python understand-operator/understand-operator-plugin/understand_operator/scripts/validate_facts.py <repo> --op-name <op> --stage step3
+    validation_command: python understand-operator/understand-operator-plugin/understand_operator/scripts/validate_fact_stage.py <repo> --op-name <op> --stage step3
     receipt: checks/step3/receipt.yaml
   compile:
     required_receipts:
@@ -37,4 +37,17 @@ stages:
       - checks/step3/receipt.yaml
     required_files:
       - checks/compile_gate.yaml
-    validation_command: python understand-operator/understand-operator-plugin/understand_operator/scripts/validate_facts.py <repo> --op-name <op> --stage compile
+    validation_command: python understand-operator/understand-operator-plugin/understand_operator/scripts/build_compile_gate.py <repo> --op-name <op>
+  final:
+    required_receipts:
+      - runs/*/phase0/receipt.yaml
+      - checks/step1/validation.yaml
+      - checks/step2/receipt.yaml
+      - checks/step3/receipt.yaml
+      - checks/compile_gate.yaml
+      - checks/derived_validation.yaml
+    required_files:
+      - indexes/operator_kb.sqlite
+      - checks/final.yaml
+    validation_command: python understand-operator/understand-operator-plugin/understand_operator/scripts/quality_gate.py <repo> --op-name <op>
+    receipt: checks/final.yaml
