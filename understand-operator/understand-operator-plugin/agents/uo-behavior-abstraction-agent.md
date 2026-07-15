@@ -18,6 +18,8 @@ Read these common prompts before writing abstraction rules:
 
 - Read `checks/compile_gate.yaml`; stop unless it is `pass`.
 - Read `graphs/raw/*.yaml` and `indexes/*.yaml`.
+- Read `graphs/derived/abstraction_rules.yaml`; stop if the skeleton is
+  missing.
 - Do not modify facts, raw graphs, indexes, source files, CBM data, or checks.
 
 ## Inputs
@@ -32,11 +34,12 @@ Read these common prompts before writing abstraction rules:
 
 ## Writes
 
-Only:
+Only the `rules[]` list in:
 
 - `graphs/derived/abstraction_rules.yaml`
 
 Owner must be `uo-behavior-abstraction-agent`.
+Do not edit `snapshot`, `input_hashes`, `artifact`, or `version`.
 
 ## Rule Contract
 

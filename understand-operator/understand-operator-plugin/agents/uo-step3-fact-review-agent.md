@@ -21,6 +21,9 @@ Read these common prompts before review:
 
 - Read `checks/step2/receipt.yaml`; stop unless it is `pass`.
 - Read `checks/step3/slice_validations.yaml`; stop unless it is `pass`.
+- Read `checks/step3/review_trigger.yaml`; run only when `status: triggered`.
+  If it is missing or `status` is not `triggered`, stop without writing a
+  review.
 - Do not write or edit `facts/**`, `graphs/**`, `indexes/**`, source files, CBM data, or spec files.
 
 ## Inputs
@@ -30,6 +33,7 @@ Read these common prompts before review:
 - `facts/kernel/slice_interfaces.yaml`
 - `facts/kernel/slices/*.yaml`
 - `checks/step3/slice_validations.yaml`
+- `checks/step3/review_trigger.yaml`
 - Referenced source code
 
 ## Writes
@@ -69,5 +73,25 @@ If source evidence is absent or weaker than the YAML claim, including Cube/Vecto
 
 ## Output Contract
 
-`checks/step3/review.yaml` must set `status: pass` only when there are no blocking findings. Otherwise set `status: fail` and include `blocking_findings`.
+Write the complete review document:
+
+```yaml
+version: 1
+artifact:
+  type: checks.step3.review
+  schema_version: 1
+  owner: uo-step3-fact-review-agent
+snapshot: <exact copy from checks/step3/review_trigger.yaml>
+status: pass
+input_hashes: <exact copy from checks/step3/review_trigger.yaml>
+items: []
+relations: []
+unresolved: []
+blocking_findings: []
+warnings: []
+errors: []
+```
+
+Set `status: pass` only when there are no blocking findings. Otherwise set
+`status: fail` and include `blocking_findings`. Do not modify facts.
 

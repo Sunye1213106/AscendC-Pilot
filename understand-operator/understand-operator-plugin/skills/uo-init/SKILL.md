@@ -241,18 +241,21 @@ python "$SCRIPT_DIR/build_fact_registry.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 python "$SCRIPT_DIR/build_compile_gate.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 python "$SCRIPT_DIR/source_graph_compiler.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 python "$SCRIPT_DIR/verify_raw_graph.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+python "$SCRIPT_DIR/prepare_abstraction_rules.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 ```
 
-Then `uo-behavior-abstraction-agent` writes only
-   `graphs/derived/abstraction_rules.yaml`.
-Materialize derived graph and run the final gate:
+Then dispatch `uo-behavior-abstraction-agent`. It may modify only
+`graphs/derived/abstraction_rules.yaml#/rules`; it must not edit `snapshot`,
+`input_hashes`, `artifact`, or `version`.
+
+Materialize the derived graph, build the query index, run query smoke, and run
+the final gate:
 
 ```powershell
-python "$SCRIPT_DIR/prepare_abstraction_rules.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 python "$SCRIPT_DIR/materialize_derived_graph.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 python "$SCRIPT_DIR/verify_derived_graph.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 python "$SCRIPT_DIR/build_query_index.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
-python "$SCRIPT_DIR/uo_query_readonly.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --entity "<ID_OR_LABEL>"
+python "$SCRIPT_DIR/uo_query_readonly.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --smoke
 python "$SCRIPT_DIR/quality_gate.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 ```
 
@@ -262,10 +265,10 @@ Read-only query order is fixed:
 indexes/terminology.yaml -> graphs/derived -> graphs/raw -> YAML facts -> source anchors
 ```
 
-Use:
+Use smoke mode:
 
 ```powershell
-python "$SCRIPT_DIR/uo_query_readonly.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --entity "<ID_OR_LABEL>"
+python "$SCRIPT_DIR/uo_query_readonly.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --smoke
 ```
 
 The final gate writes only `checks/final.yaml`. After the final gate passes, stop. There are no workflow stages after Final.

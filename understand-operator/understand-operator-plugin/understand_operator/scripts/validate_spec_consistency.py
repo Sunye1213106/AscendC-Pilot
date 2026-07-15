@@ -19,6 +19,7 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_ROOT))
 
 from understand_operator._operator.catalog import match_catalog_entry
+from understand_operator._operator.identity import IdentityError, resolve_identity
 from understand_operator._operator.reference_paths import reference_declarations
 from understand_operator._operator.spec import load_spec
 
@@ -54,6 +55,9 @@ def validate_spec_consistency(plugin_root: Path | None = None) -> list[SpecError
     _validate_formal_schemas(root, entity_spec, entity_types, valid_targets, errors)
     _validate_candidate_schema(root, errors)
     _validate_agent_targets(plugin_root or root.parents[1], spec, errors)
+    _validate_identity_strategy_probes(entity_types, root, errors)
+    _validate_phase3_agent_protocol(plugin_root or root.parents[1], errors)
+    _validate_final_order(plugin_root or root.parents[1], errors)
     return errors
 
 
@@ -148,7 +152,7 @@ def _validate_agent_targets(plugin_root: Path, spec: dict[str, Any], errors: lis
     for path in sorted(agents_dir.glob("*.md")):
         text = path.read_text(encoding="utf-8")
         owner = path.stem
-        for target_path, section in re.findall(r'"target"\s*:\s*\{\s*"path"\s*:\s*"([^"]+)"\s*,\s*"section"\s*:\s*"([^"]*)"', text):
+        for target_path, section in _target_objects(text):
             match = match_catalog_entry(spec, target_path, writable_only=True)
             if not match:
                 errors.append(SpecError("SPEC_AGENT_TARGET_UNKNOWN", path.name, f"{target_path} is not in catalog"))
@@ -161,6 +165,104 @@ def _validate_agent_targets(plugin_root: Path, spec: dict[str, Any], errors: lis
             allowed = ownership.get(owner, {}).get("may_write") if isinstance(ownership.get(owner), dict) else []
             if allowed and not any(_path_matches(target_path, str(pattern)) for pattern in allowed):
                 errors.append(SpecError("SPEC_AGENT_OWNER_MISMATCH", path.name, f"ownership.yaml does not allow {owner} to write {target_path}"))
+
+
+def _target_objects(text: str) -> list[tuple[str, str]]:
+    found: list[tuple[str, str]] = []
+    pattern = re.compile(r'"target"\s*:\s*\{(?P<body>[^{}]*)\}', re.DOTALL)
+    for match in pattern.finditer(text):
+        body = match.group("body")
+        path_match = re.search(r'"path"\s*:\s*"([^"]+)"', body)
+        if not path_match:
+            continue
+        section_match = re.search(r'"section"\s*:\s*"([^"]*)"', body)
+        found.append((path_match.group(1), section_match.group(1) if section_match else ""))
+    return found
+
+
+def _validate_identity_strategy_probes(entity_types: dict[str, Any], root: Path, errors: list[SpecError]) -> None:
+    repo_root = root
+    for kind, config in sorted(entity_types.items()):
+        if not isinstance(config, dict):
+            continue
+        sample = _identity_probe_for(kind, str(config.get("identity_strategy") or ""))
+        if sample is None:
+            errors.append(SpecError("SPEC_IDENTITY_PROBE_MISSING", "entity_types.yaml", f"{kind} has no identity probe"))
+            continue
+        try:
+            resolved = resolve_identity(kind, sample, repo_root=repo_root)
+        except IdentityError as exc:
+            errors.append(SpecError("SPEC_IDENTITY_RESOLVER_FIELD_MISMATCH", "entity_types.yaml", f"{kind} probe failed: {exc.code}: {exc.message}"))
+            continue
+        required = {str(item) for item in config.get("required_identity_fields") or []}
+        actual = set(resolved.normalized_identity)
+        if actual != required:
+            errors.append(SpecError("SPEC_IDENTITY_RESOLVER_FIELD_MISMATCH", "entity_types.yaml", f"{kind} normalized fields {sorted(actual)} != required {sorted(required)}"))
+
+
+def _identity_probe_for(kind: str, strategy: str) -> dict[str, Any] | None:
+    span = {"start_line": 1, "end_line": 1}
+    by_strategy: dict[str, dict[str, Any]] = {
+        "scoped_declaration": {"source_file": "sample.cpp", "scope_symbol": "DemoScope", "source_name": "value", "declaration_span": span},
+        "qualified_symbol_signature": {"qualified_symbol": "Demo::Function", "signature": "void()"},
+        "scoped_callsite": {"source_file": "sample.cpp", "scope_symbol": "DemoScope", "callee_symbol": "Call", "call_span": span},
+        "scoped_predicate": {"source_file": "sample.cpp", "scope_symbol": "DemoScope", "predicate_span": span},
+        "branch_outcome": {"parent_branch_ref": "BRANCH_PARENT", "outcome": "true"},
+        "scoped_loop": {"source_file": "sample.cpp", "scope_symbol": "DemoScope", "loop_header_span": span},
+        "repo_path": {"path": "sample.cpp"},
+        "qualified_struct": {"qualified_struct_name": "DemoStruct"},
+        "struct_field": {"qualified_struct_name": "DemoStruct", "field_name": "field"},
+        "scoped_field_write": {"source_file": "sample.cpp", "scope_symbol": "DemoScope", "struct_name": "DemoStruct", "field_name": "field", "write_span": span},
+        "scoped_field_read": {"source_file": "sample.cpp", "scope_symbol": "DemoScope", "struct_name": "DemoStruct", "field_name": "field", "read_span": span},
+        "operator_io": {"operator_name": "DemoOp", "direction": "input", "index": 0},
+        "kernel_entry": {"qualified_entry_symbol": "DemoKernel", "signature": "void()", "discriminator": "generic"},
+        "kernel_slice_signature": {"kernel_entry_ref": "KERNEL_ENTRY", "template_binding_signature": "generic", "structural_flow_signature": "read-compute-write", "tilingdata_read_signature": "none", "output_signature": "out0"},
+        "slice_interface": {"source_slice_ref": "KERNEL_SLICE_A", "target_slice_ref": "KERNEL_SLICE_B", "interface_kind": "data", "position": "0"},
+        "compute_operation": {"compute_scope": "DemoCompute", "operation_type": "add", "output_identity": "out0", "source_span": span},
+        "endpoint_relation_entity": {"source_ref": "SRC", "target_ref": "DST"},
+        "scoped_policy": {"source_file": "sample.cpp", "scope_symbol": "DemoScope", "policy_kind": "tolerance", "source_span": span},
+        "scoped_resource": {"source_file": "sample.cpp", "scope_symbol": "DemoScope", "source_name": "buf", "declaration_span": span, "resource_kind": "buffer"},
+        "scoped_event": {"source_file": "sample.cpp", "scope_symbol": "DemoScope", "event_kind": "setflag", "event_identifier": "flag0", "source_span": span},
+        "scoped_site": {"source_file": "sample.cpp", "scope_symbol": "DemoScope", "site_kind": "frontier", "site_span": span},
+        "architecture_variant": {"variant_name": "generic", "file_set_signature": ["sample.cpp"]},
+        "source_rule": {"source_file": "sample.cpp", "rule_kind": "include", "pattern": "*.cpp"},
+        "source_span": {"source_file": "sample.cpp", "scope_symbol": "DemoScope", "source_span": span},
+        "qualified_symbol": {"qualified_symbol": "DemoSymbol"},
+        "external_dependency": {"logical_path": "external.hpp", "dependency_type": "third_party", "discovered_from": "include"},
+    }
+    return dict(by_strategy[strategy]) if strategy in by_strategy else None
+
+
+def _validate_phase3_agent_protocol(plugin_root: Path, errors: list[SpecError]) -> None:
+    forbidden = ("directly write YAML", "source_text", "code_hash", "file_hash", "--write-report", "nine files")
+    for rel in ("agents/uo-kernel-slice-planner.md", "agents/uo-kernel-slice-agent.md"):
+        path = plugin_root / rel
+        if not path.exists():
+            continue
+        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            lowered = line.lower()
+            if any(term.lower() in lowered for term in forbidden) and not _is_forbidding_context(lowered):
+                errors.append(SpecError("SPEC_PHASE3_AGENT_PROTOCOL_LEGACY", rel, f"legacy instruction at line {line_no}: {line.strip()}"))
+
+
+def _is_forbidding_context(line: str) -> bool:
+    return any(marker in line for marker in ("must not", "never", "do not", "forbidden", "not provide", "orchestrator runs", "--scope all"))
+
+
+def _validate_final_order(plugin_root: Path, errors: list[SpecError]) -> None:
+    checks = {
+        "skills/uo-init/SKILL.md": ("prepare_abstraction_rules.py", "uo-behavior-abstraction-agent", "materialize_derived_graph.py", "build_query_index.py", "uo_query_readonly.py", "--smoke", "quality_gate.py"),
+        "prompts/01_workflow_orchestrator.md": ("prepare_abstraction_rules.py", "uo-behavior-abstraction-agent", "materialize_derived_graph.py", "build_query_index", "uo_query_readonly.py --smoke", "quality_gate.py"),
+    }
+    for rel, ordered_terms in checks.items():
+        text = (plugin_root / rel).read_text(encoding="utf-8") if (plugin_root / rel).exists() else ""
+        cursor = -1
+        for term in ordered_terms:
+            index = text.find(term, cursor + 1)
+            if index == -1:
+                errors.append(SpecError("SPEC_FINAL_ORDER_INVALID", rel, f"missing or out-of-order term {term}"))
+                break
+            cursor = index
 
 
 def _check_allowed_targets(allowed: Any, valid_targets: set[str], errors: list[SpecError], code: str, label: str) -> None:

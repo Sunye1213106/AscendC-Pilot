@@ -195,7 +195,7 @@ files:
   - path: checks/final.yaml
     artifact_type: checks.final
     owner: facts-validator
-    schema: schemas/common/document.schema.yaml
+    schema: schemas/checks/final.schema.yaml
     required_after_stage: final
     allow_empty: false
     raw_graph_input: false

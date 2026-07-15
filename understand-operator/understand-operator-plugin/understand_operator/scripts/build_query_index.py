@@ -23,7 +23,11 @@ def build_query_index(repo: Path, op_name: str) -> Path:
         for level, rel in (("raw", "graphs/raw/edges.yaml"), ("derived", "graphs/derived/edges.yaml")):
             for entry in _list(root / rel, "edges"): _relation(db, level, entry)
         for entry in _list(root / "graphs/derived/expansions.yaml", "expansions"):
-            db.execute("insert into expansions values(?,?,?)", (entry.get("derived_id"), entry.get("raw_id"), entry.get("raw_kind")))
+            derived_id = entry.get("derived_id")
+            for raw_id in entry.get("raw_node_refs") or []:
+                db.execute("insert into expansions values(?,?,?)", (derived_id, raw_id, "node"))
+            for raw_id in entry.get("raw_edge_refs") or []:
+                db.execute("insert into expansions values(?,?,?)", (derived_id, raw_id, "edge"))
         for entry in _list(root / "graphs/raw/paths.yaml", "paths"):
             db.execute("insert into paths values(?,?,?,?)", (entry.get("id"), entry.get("start_id"), entry.get("end_id"), json.dumps(entry, ensure_ascii=False)))
         for key, value in _metadata(root).items(): db.execute("insert into metadata values(?,?)", (key, value))

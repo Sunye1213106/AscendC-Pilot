@@ -10,7 +10,7 @@ strategy_aliases:
   scoped_predicate:
     required_identity_fields: [source_file, scope_symbol, predicate_span]
   branch_outcome:
-    required_identity_fields: [parent_branch_canonical_key, outcome]
+    required_identity_fields: [parent_branch_ref, outcome]
   scoped_loop:
     required_identity_fields: [source_file, scope_symbol, loop_header_span]
   repo_path:
@@ -28,7 +28,7 @@ strategy_aliases:
   kernel_entry:
     required_identity_fields: [qualified_entry_symbol, signature]
   kernel_slice_signature:
-    required_identity_fields: [kernel_entry_ref, template_binding_signature, structural_flow_signature, output_signature]
+    required_identity_fields: [kernel_entry_ref, template_binding_signature, structural_flow_signature, tilingdata_read_signature, output_signature]
   slice_interface:
     required_identity_fields: [source_slice_ref, target_slice_ref, interface_kind, position]
   compute_operation:
@@ -160,10 +160,12 @@ entity_types:
   branch_outcome:
     prefix: OUTCOME
     identity_strategy: branch_outcome
-    required_identity_fields: [parent_branch_canonical_key, outcome]
+    required_identity_fields: [parent_branch_ref, outcome]
     reference_fields:
       single: {parent_branch_ref: [branch_like]}
       multiple: {controlled_item_refs: [any]}
+    identity_reference_fields:
+      parent_branch_ref: [branch_like]
   kernel_loop:
     prefix: LOOP
     identity_strategy: scoped_loop
@@ -250,12 +252,12 @@ entity_types:
   kernel_slice:
     prefix: KERNEL
     identity_strategy: kernel_slice_signature
-    required_identity_fields: [kernel_entry_ref, template_binding_signature, structural_flow_signature, output_signature]
+    required_identity_fields: [kernel_entry_ref, template_binding_signature, structural_flow_signature, tilingdata_read_signature, output_signature]
     reference_fields:
-      single: {kernel_entry_ref: [kernel_entry, kernel_global_entry, kernel_class_entry]}
+      single: {kernel_entry_ref: [kernel_entry, kernel_global_entry, kernel_class_entry, kernel_template_instance]}
       multiple: {output_tensor_refs: [tensor_like], output_write_refs: [any]}
     identity_reference_fields:
-      kernel_entry_ref: [kernel_entry, kernel_global_entry, kernel_class_entry]
+      kernel_entry_ref: [kernel_entry, kernel_global_entry, kernel_class_entry, kernel_template_instance]
   slice_interface: &slice_interface
     prefix: KERNEL
     identity_strategy: slice_interface

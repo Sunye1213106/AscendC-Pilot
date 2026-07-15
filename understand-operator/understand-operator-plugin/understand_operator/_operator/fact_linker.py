@@ -99,18 +99,18 @@ def resolve_reference_fields(
     entity_spec: dict[str, Any] | None = None,
     path: str = "fields",
 ) -> tuple[Any, list[dict[str, Any]]]:
-    if kind and entity_spec:
-        return _resolve_declared_reference_fields(
-            value,
-            local_symbols=local_symbols,
-            local_kinds=local_kinds or {},
-            registry=registry,
-            repo_root=repo_root,
-            kind=kind,
-            entity_spec=entity_spec,
-            path=path,
-        )
-    return _resolve_reference_fields_legacy(value, local_symbols=local_symbols, registry=registry, repo_root=repo_root, path=path)
+    if not kind or not entity_spec:
+        return _copy(value), []
+    return _resolve_declared_reference_fields(
+        value,
+        local_symbols=local_symbols,
+        local_kinds=local_kinds or {},
+        registry=registry,
+        repo_root=repo_root,
+        kind=kind,
+        entity_spec=entity_spec,
+        path=path,
+    )
 
 
 def _resolve_declared_reference_fields(
@@ -200,57 +200,6 @@ def _resolve_declared_value(
             failures.append({"path": item_path, "status": result.status, "reason": result.reason, "actual_kind": result.kind, "allowed": list(declaration.allowed), "candidates": list(result.candidates)})
             resolved_values.append(item)
     _set_at_actual_path(output, actual_path, resolved_values)
-
-
-def _resolve_reference_fields_legacy(
-    value: Any,
-    *,
-    local_symbols: dict[str, str],
-    registry: FactRegistry,
-    repo_root: Path,
-    path: str = "fields",
-    field_name: str = "",
-) -> tuple[Any, list[dict[str, Any]]]:
-    failures: list[dict[str, Any]] = []
-    if isinstance(value, dict):
-        if value.get("ref_type") in {"local", "entity", "symbol"} and _is_reference_context(field_name):
-            result = resolve_entity_ref(value, local_symbols=local_symbols, registry=registry, repo_root=repo_root)
-            if result.status == "resolved":
-                return result.stable_id, failures
-            failures.append({"path": path, "status": result.status, "reason": result.reason, "candidates": list(result.candidates)})
-            return value, failures
-        out: dict[str, Any] = {}
-        for key, child in value.items():
-            resolved, child_failures = _resolve_reference_fields_legacy(
-                child,
-                local_symbols=local_symbols,
-                registry=registry,
-                repo_root=repo_root,
-                path=f"{path}.{key}" if path else str(key),
-                field_name=str(key),
-            )
-            out[key] = resolved
-            failures.extend(child_failures)
-        return out, failures
-    if isinstance(value, list):
-        out_list: list[Any] = []
-        for index, child in enumerate(value):
-            resolved, child_failures = _resolve_reference_fields_legacy(
-                child,
-                local_symbols=local_symbols,
-                registry=registry,
-                repo_root=repo_root,
-                path=f"{path}[{index}]",
-                field_name=field_name,
-            )
-            out_list.append(resolved)
-            failures.extend(child_failures)
-        return out_list, failures
-    return value, failures
-
-
-def _is_reference_context(field_name: str) -> bool:
-    return field_name.endswith(("_ref", "_refs"))
 
 
 def _copy(value: Any) -> Any:

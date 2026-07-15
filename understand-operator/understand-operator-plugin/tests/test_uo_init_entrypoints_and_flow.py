@@ -336,11 +336,11 @@ def test_minimal_uo_init_entrypoint_e2e_reaches_final(tmp_path: Path) -> None:
     _run("source_graph_compiler.py", str(repo), "--op-name", "DemoOp")
     _run("verify_raw_graph.py", str(repo), "--op-name", "DemoOp")
     _run("prepare_abstraction_rules.py", str(repo), "--op-name", "DemoOp")
-    query_entity = _write_abstraction_rule(root)
+    _write_abstraction_rule(root)
     _run("materialize_derived_graph.py", str(repo), "--op-name", "DemoOp")
     _run("verify_derived_graph.py", str(repo), "--op-name", "DemoOp")
     _run("build_query_index.py", str(repo), "--op-name", "DemoOp")
-    _run("uo_query_readonly.py", str(repo), "--op-name", "DemoOp", "--entity", query_entity)
+    _run("uo_query_readonly.py", str(repo), "--op-name", "DemoOp", "--smoke")
     _run("quality_gate.py", str(repo), "--op-name", "DemoOp")
     assert yaml.safe_load((root / "checks" / "final.yaml").read_text(encoding="utf-8"))["status"] == "pass"
     assert (root / "indexes" / "operator_kb.sqlite").exists()

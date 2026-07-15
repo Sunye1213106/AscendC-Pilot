@@ -20,6 +20,10 @@ Run only after these reports exist and pass:
 - `checks/step2/compute_validation.yaml`
 - `checks/step2/kernel_overview_validation.yaml`
 
+Also read `checks/step2/review_trigger.yaml`. Run only when its
+`status: triggered`; if it is missing or skipped, stop without writing a
+review.
+
 You may read `facts/operator/**`, `facts/host.yaml`, `facts/compute.yaml`,
 `facts/kernel/overview.yaml`, and source files referenced by YAML anchors. You may
 write only `checks/step2/review.yaml`.
@@ -64,16 +68,12 @@ artifact:
   type: checks.step2.review
   schema_version: 1
   owner: uo-step2-fact-review-agent
-snapshot:
-  run_id: UO_RUN_...
-  source_snapshot_id: SOURCE_...
-  source_revision: ...
-  spec_bundle_hash: sha256:...
+snapshot: <exact copy from checks/step2/review_trigger.yaml>
 status: pass
-input_hashes:
-  facts/...: sha256:...
+input_hashes: <exact copy from checks/step2/review_trigger.yaml>
 blocking_findings: []
 warnings: []
+errors: []
 items: []
 relations: []
 unresolved: []

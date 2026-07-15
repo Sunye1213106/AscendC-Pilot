@@ -29,9 +29,9 @@ workflow has five user-visible milestones:
 2. Phase 1 - boundary facts in `facts/operator/**`.
 3. Phase 2 - parallel Host, Compute, and Kernel Overview facts.
 4. Phase 3 - kernel slice planning and slice facts only.
-5. Final - compile gate, raw graph, raw verification, abstraction rules,
-   derived graph, derived verification, SQLite index, read-only query smoke,
-   final gate, then stop.
+5. Final - compile gate, raw graph, raw verification, abstraction skeleton,
+   abstraction rules, derived graph, derived verification, SQLite index,
+   read-only query smoke, final gate, then stop.
 
 No later phases exist in this workflow. Final completion ends the run.
 
@@ -152,10 +152,13 @@ triggered, then run `write_step3_receipt.py`.
 
 ## Final
 
-Run `build_compile_gate.py`, `source_graph_compiler.py`, raw verification,
-`prepare_abstraction_rules.py`, `materialize_derived_graph.py`, derived
-verification, SQLite index creation, query smoke, and finally
-`quality_gate.py`. Stop immediately after the final gate.
+Run `build_compile_gate.py`, `source_graph_compiler.py`, raw verification, then
+`prepare_abstraction_rules.py`. Dispatch `uo-behavior-abstraction-agent` only
+after the skeleton exists; it may modify only
+`graphs/derived/abstraction_rules.yaml#/rules`. Then run
+`materialize_derived_graph.py`, derived verification, `build_query_index.py`,
+`uo_query_readonly.py --smoke`, and finally `quality_gate.py`. Stop
+immediately after the final gate.
 
 The compiler writes only `graphs/raw/**` and `indexes/**`. The derived graph
 materializer writes only `graphs/derived/**` and its validation report.

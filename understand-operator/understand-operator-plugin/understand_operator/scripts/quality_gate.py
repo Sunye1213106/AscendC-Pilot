@@ -22,7 +22,7 @@ if __package__ in (None, ""):
 from understand_operator._operator.artifacts import resolve_existing_operator_root, safe_op_name, write_text
 from understand_operator._operator.spec import spec_bundle_hash
 from understand_operator.scripts.build_compile_gate import compile_gate_errors, facts_hashes_for
-from understand_operator.scripts.uo_query_readonly import query_readonly
+from understand_operator.scripts.uo_query_readonly import query_smoke
 from understand_operator.scripts.validate_facts import validate_facts
 from understand_operator.scripts.verify_derived_graph import verify_derived_graph
 from understand_operator.scripts.verify_raw_graph import verify_raw_graph
@@ -205,38 +205,11 @@ def _check_receipt_freshness(base: Path, rel: str, checks: dict[str, str], block
 
 
 def _query_smoke(repo_root: Path, op_name: str, base: Path, blockers: list[str]) -> bool:
-    derived_nodes = _load_list(base / "graphs" / "derived" / "nodes.yaml", "nodes")
-    if not derived_nodes:
-        blockers.append("query smoke has no derived graph node to query")
-        return False
-    entity = str(derived_nodes[0].get("id") or "")
-    if not entity:
-        blockers.append("query smoke derived node lacks id")
-        return False
-    try:
-        result = query_readonly(repo_root, op_name, entity)
-    except Exception as exc:  # noqa: BLE001
-        blockers.append(f"query smoke failed: {exc}")
-        return False
-    if result.get("writes") or result.get("cbm_writes"):
-        blockers.append("query smoke attempted writes")
-        return False
-    if result.get("query", {}).get("order") != ["terminology", "symbol_index", "derived", "raw", "yaml", "source"]:
-        blockers.append("query smoke did not use terminology -> symbol_index -> derived -> raw -> yaml -> source order")
-        return False
-    if not result.get("resolved_entities"):
-        blockers.append("query smoke resolved_entities is empty")
-        return False
-    if not (result.get("derived_entities") or result.get("raw_entities")):
-        blockers.append("query smoke did not hit a derived or raw entity")
-        return False
-    if not result.get("yaml_items"):
-        blockers.append("query smoke yaml_items is empty")
-        return False
-    if not result.get("source_refs"):
-        blockers.append("query smoke source_refs is empty")
-        return False
-    return True
+    code, payload = query_smoke(repo_root, op_name)
+    if code == 0:
+        return True
+    blockers.extend(f"query smoke: {error}" for error in payload.get("errors") or ["failed"])
+    return False
 
 
 def _no_test_generation_results(base: Path, blockers: list[str]) -> bool:

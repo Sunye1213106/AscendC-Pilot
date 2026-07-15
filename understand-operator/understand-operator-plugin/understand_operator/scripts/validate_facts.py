@@ -115,7 +115,6 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
             if doc is not None:
                 errors.append(FactValidationError("YAML_ROOT_NOT_MAPPING", rel, "YAML root must be a mapping"))
             continue
-        docs[rel] = doc
         try:
             match = match_catalog_entry(spec, rel)
         except CatalogMatchError as exc:
@@ -125,8 +124,11 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
             errors.append(FactValidationError("CATALOG_PATH_UNKNOWN", rel, "YAML file is not listed in spec/file_catalog.yaml"))
             continue
         entry = match.entry
+        if _entry_required_after_current_stage(entry, stage):
+            continue
         if not _entry_in_scope(entry, scope) and rel != "manifest.yaml":
             continue
+        docs[rel] = doc
         _validate_document_header(rel, doc, entry, errors)
         if rel != "manifest.yaml":
             _validate_machine_schema(spec["root"], rel, doc, entry, errors)
@@ -146,7 +148,7 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
     known_ids = _collect_known_ids(all_docs | docs)
     known_kinds = _collect_known_kinds(all_docs | docs)
     entity_spec = spec.get("entity_types") if isinstance(spec.get("entity_types"), dict) else {}
-    _validate_identity_integrity(repo_root, uo_root, all_docs | docs, relation_type_specs, errors)
+    _validate_identity_integrity(repo_root, uo_root, docs, relation_type_specs, errors)
     for rel, doc in docs.items():
         _validate_references(rel, doc, known_ids, errors)
         _validate_declared_reference_kinds(rel, doc, known_ids, known_kinds, entity_spec, errors)
@@ -179,6 +181,13 @@ def _validate_kernel_slice_file_sets(uo_root: Path, yaml_paths: list[Path], erro
 
 def _entries_for_scope(entries: list[dict[str, Any]], scope: str) -> list[dict[str, Any]]:
     return [entry for entry in entries if _entry_in_scope(entry, scope)]
+
+
+def _entry_required_after_current_stage(entry: dict[str, Any], stage: str) -> bool:
+    required = str(entry.get("required_after_stage") or "")
+    if required in {"", "runtime", "conditional"}:
+        return False
+    return STAGE_ORDER.get(required, 0) > STAGE_ORDER.get(stage, 0)
 
 
 def _entry_in_scope(entry: dict[str, Any], scope: str) -> bool:
@@ -458,8 +467,10 @@ def _validate_machine_schema(
     schema_rel = entry.get("schema")
     if not schema_rel:
         return
-    schema_path = spec_root / str(schema_rel)
-    schema = _load_schema(schema_path, errors, rel)
+    schema = entry.get("_loaded_section_schema")
+    if not isinstance(schema, dict):
+        schema_path = spec_root / str(schema_rel)
+        schema = _load_schema(schema_path, errors, rel)
     if not schema:
         return
     for key in schema.get("required_top_level") or []:
@@ -514,7 +525,13 @@ def _validate_section_schema(spec_root: Path, rel: str, doc: dict[str, Any], ent
     schema_rel = mapping.get(section)
     if not schema_rel:
         errors.append(FactValidationError("SCHEMA_SECTION_UNKNOWN", rel, f"section {section!r} is not declared by partition schema")); return
+    schema = _load_schema(spec_root / str(schema_rel), errors, rel)
+    if schema:
+        schema = dict(schema)
+        schema["required_top_level"] = [key for key in schema.get("required_top_level") or [] if key not in {"version", "artifact", "snapshot"}]
     pseudo = dict(entry); pseudo["schema"] = schema_rel
+    if schema:
+        pseudo["_loaded_section_schema"] = schema
     _validate_machine_schema(spec_root, rel, doc, pseudo, errors)
 
 

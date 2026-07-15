@@ -11,7 +11,6 @@ Plan source-backed kernel slices after Step 2 is sealed.
 Read these common prompts before planning:
 
 - `prompts/common/00_source_fact_contract.md`
-- `prompts/common/03_source_evidence_rules.md`
 - `prompts/common/06_dataflow_resource_model.md`
 - `prompts/common/07_completeness_unresolved_rules.md`
 - `prompts/common/08_agent_io_protocol.md`
@@ -54,21 +53,38 @@ Each planned slice should cover as much of this chain as the source supports:
 
 If a chain segment cannot be proven from source facts and source code, put the gap in `unresolved`; do not invent it.
 
+## Candidate Pipeline
+
+Generate only Candidate JSON V2 batches. Validate each batch with:
+
+```powershell
+python "$SCRIPT_DIR/validate_candidate_batch.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --batch "<candidate.json>"
+```
+
+Then compile it with:
+
+```powershell
+python "$SCRIPT_DIR/compile_candidate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --batch "<candidate.json>"
+```
+
+Candidate items may provide only `local_id`, `kind`, `name`, structured
+`identity`, `fields`, `source_locations`, structured references, `relations`,
+and `unresolved`. The model must not provide formal YAML headers, stable IDs,
+canonical keys, `sources`, source text, or source/file hashes.
+
 ## Required Content
 
 `slice_manifest.yaml` lists slice IDs, names, source entry/function coverage, chain coverage tags, and the overview/host/compute facts used to plan each slice.
 
 `slice_interfaces.yaml` lists cross-slice inputs/outputs, host-write to kernel-read links, compute-to-kernel links, and producer/consumer expectations.
 
-Every confirmed item and relation must include `sources` with exact file, symbol, span, `source_text`, and `code_hash`.
-
 ## Validation
 
-Run:
+After planner compilation, only the orchestrator runs this preflight:
 
 ```powershell
-python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step3 --scope kernel-slice-planner --write-report
+python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step3 --scope kernel-slice-planner
 ```
 
-Stop on any validation error.
+Do not write a Step 3 validation report.
 

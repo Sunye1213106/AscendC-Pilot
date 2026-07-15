@@ -72,6 +72,35 @@ def test_spec_consistency_passes() -> None:
     assert validate_spec_consistency(Path(__file__).resolve().parents[1]) == []
 
 
+def test_identity_has_no_hardcoded_kind_prefix_table() -> None:
+    source = (Path(__file__).resolve().parents[1] / "understand_operator" / "_operator" / "identity.py").read_text(encoding="utf-8")
+    assert "KIND_TO_PREFIX" not in source
+
+
+def test_identity_strategy_normalized_fields_match_spec(tmp_path: Path) -> None:
+    repo, _root = _ready_repo(tmp_path)
+    spec = load_spec()["entity_types"]["entity_types"]
+    samples = {
+        "kernel_slice": {
+            "kernel_entry_ref": "KERNEL_ENTRY",
+            "template_binding_signature": "generic",
+            "structural_flow_signature": "read-compute-write",
+            "tilingdata_read_signature": "tile",
+            "output_signature": "out0",
+        },
+        "dataflow_edge": {"source_ref": "SRC", "target_ref": "DST", "order_index": 1, "condition_ref": "COND", "qualifier": "ignored"},
+        "branch_outcome": {"parent_branch_ref": "BRANCH_PARENT", "outcome": "true"},
+        "slice_interface": {"source_slice_ref": "KERNEL_A", "target_slice_ref": "KERNEL_B", "interface_kind": "data", "position": "0"},
+        "kernel_entry": {"qualified_entry_symbol": "DemoKernel", "signature": "void()", "discriminator": "generic"},
+        "compute_operation": {"compute_scope": "DemoKernel", "operation_type": "copy", "output_identity": "dst", "source_span": {"start_line": 2, "end_line": 2}},
+        "memory_resource": {"source_file": "op_kernel/demo.cpp", "scope_symbol": "DemoKernel", "source_name": "tile", "declaration_span": {"start_line": 1, "end_line": 1}, "resource_kind": "buffer"},
+        "sync_event": {"source_file": "op_kernel/demo.cpp", "scope_symbol": "DemoKernel", "event_kind": "setflag", "event_identifier": "flag0", "source_span": {"start_line": 1, "end_line": 1}},
+    }
+    for kind, identity in samples.items():
+        resolved = resolve_identity(kind, identity, repo_root=repo)
+        assert set(resolved.normalized_identity) == set(spec[kind]["required_identity_fields"])
+
+
 def test_all_schema_required_refs_are_declared() -> None:
     spec = load_spec()
     errors = validate_spec_consistency(Path(__file__).resolve().parents[1])
@@ -193,6 +222,36 @@ def test_wrong_reference_kind_fails(tmp_path: Path) -> None:
         [{"local_id": "op", "kind": "compute_operation", "identity": identity, "fields": {"execution": {"paths": [{"api_refs": [_ref("op")]}]}}, "source_locations": [_loc("op_kernel/demo.cpp", 2, "DemoKernel")]}],
     )
     assert any(error.code == "REFERENCE_KIND_NOT_ALLOWED" for error in validate_candidate_batch(repo, "DemoOp", batch))
+
+
+def test_relation_fields_have_no_legacy_linker_fallback(tmp_path: Path) -> None:
+    repo, _root = _ready_repo(tmp_path)
+    batch = {
+        "version": 2,
+        "task": {"run_id": "UO_RUN_TEST", "stage": "step2", "owner": "uo-host-extraction", "task_id": "REL"},
+        "target": {"path": "facts/host.yaml", "section": "variables"},
+        "items": [
+            {
+                "local_id": "var_x",
+                "kind": "runtime_variable",
+                "identity": {"source_file": "op_host/demo.cpp", "scope_symbol": "demo", "source_name": "x", "declaration_span": {"start_line": 1, "end_line": 1}},
+                "fields": {"declared_type": "int", "scope_symbol": "demo", "definition_kind": "definition", "value_source_text": "literal", "domain": "integer", "affects": ["dispatch"]},
+                "source_locations": [_loc()],
+            }
+        ],
+        "relations": [
+            {
+                "type": "derived_from",
+                "source": _ref("var_x"),
+                "target": _ref("var_x"),
+                "fields": {"source_ref": _ref("var_x")},
+                "source_locations": [_loc()],
+            }
+        ],
+        "unresolved": [],
+    }
+    errors = validate_candidate_batch(repo, "DemoOp", batch)
+    assert any(error.code == "REFERENCE_FIELD_UNDECLARED" and "source_ref" in error.field for error in errors)
 
 
 def test_partition_snapshot_does_not_overwrite_existing_sections(tmp_path: Path) -> None:

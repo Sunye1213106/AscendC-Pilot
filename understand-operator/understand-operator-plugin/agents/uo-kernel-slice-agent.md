@@ -25,7 +25,7 @@ Read these common prompts before extraction:
 - Read `checks/step2/receipt.yaml` and stop unless it is `pass`.
 - Read `facts/kernel/slice_manifest.yaml` and `facts/kernel/slice_interfaces.yaml`.
 - Work only on the slice assigned by the orchestrator.
-- Use the frozen Skill spec. Do not modify schemas, ownership, catalog, graph files, checks other than the validator report, or source files.
+- Use the frozen Skill spec. Do not modify schemas, ownership, catalog, graph files, checks, or source files.
 
 ## Inputs
 
@@ -38,7 +38,8 @@ Read these common prompts before extraction:
 
 ## Writes
 
-Only the assigned partition file `facts/kernel/slices/<slice_id>.yaml`, with these nine sections:
+Only the assigned partition file `facts/kernel/slices/<slice_id>.yaml`.
+One slice maps to one file, and that file contains these nine sections:
 
 - `variables`
 - `expressions`
@@ -56,9 +57,22 @@ The agent emits only candidate JSON batches, checks them with the Local
 Validator, and invokes the deterministic compiler. It must never write formal
 YAML, IDs, source anchor text, or hashes.
 
+Validate each Candidate JSON V2 batch with:
+
+```powershell
+python "$SCRIPT_DIR/validate_candidate_batch.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --batch "<candidate.json>"
+```
+
+Then compile it with:
+
+```powershell
+python "$SCRIPT_DIR/compile_candidate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --batch "<candidate.json>"
+```
+
 ## Extraction Scope
 
-Extract only facts directly supported by source. The nine files should together describe the slice chain:
+Extract only facts directly supported by source. The nine sections should
+together describe the slice chain:
 
 `TilingData Read -> Runtime Variable -> Branch/Loop -> DataCopy -> Compute -> Buffer/Sync -> Output`
 
@@ -80,7 +94,7 @@ Multiple slice agents may run in parallel because each writes a distinct `facts/
 After all slice agents finish, the orchestrator runs:
 
 ```powershell
-python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step3 --scope kernel-slice --write-report
+python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step3 --scope all --write-report
 ```
 
 Treat any validation failure as incomplete extraction. Do not write validation reports yourself.
