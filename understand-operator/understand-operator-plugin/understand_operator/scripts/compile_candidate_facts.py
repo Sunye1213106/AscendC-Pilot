@@ -21,8 +21,8 @@ if __package__ in (None, ""):
 
 from understand_operator._operator.artifacts import existing_operator_root, safe_op_name
 from understand_operator._operator.candidate import CandidateError, load_json, source_anchor, stable_id
-from understand_operator._operator.fact_linker import LinkResult, resolve_entity_ref, resolve_reference_fields
-from understand_operator._operator.fact_registry import build_fact_registry, write_registry_cache
+from understand_operator._operator.fact_linker import LinkResult, resolve_entity_ref, resolve_reference_fields, resolve_typed_entity_ref
+from understand_operator._operator.fact_registry import build_fact_registry
 from understand_operator._operator.identity import IdentityError, relation_stable_id, resolve_identity
 from understand_operator._operator.source_reader import SourceReader
 from understand_operator._operator.spec import load_spec
@@ -44,23 +44,54 @@ def compile_candidate_facts(repo_root: Path, op_name: str, batch: Any) -> list[C
     spec = load_spec()
 
     local_symbols: dict[str, str] = {}
+    local_kinds: dict[str, str] = {}
     canonical_to_local: dict[str, tuple[str, str]] = {}
     materialized_items: list[dict[str, Any]] = []
-    for index, item in enumerate(batch["items"]):
-        try:
-            resolved = resolve_identity(item["kind"], item["identity"], repo_root=repo_root)
-        except IdentityError as exc:
-            return [CandidateError(exc.code, exc.message, target=target, local_id=str(item.get("local_id") or ""), field=f"items[{index}].{exc.field}")]
-        previous = canonical_to_local.get(resolved.canonical_key)
-        local_id = str(item.get("local_id") or "")
-        if previous and previous[0] != local_id:
-            message = f"duplicate canonical identity first_local_id={previous[0]} second_local_id={local_id} canonical_key={resolved.canonical_key} stable_id={resolved.stable_id}"
-            return [CandidateError("CANDIDATE_IDENTITY_DUPLICATE", message, target=target, local_id=local_id, field=f"items[{index}]")]
-        canonical_to_local[resolved.canonical_key] = (local_id, resolved.stable_id)
-        fact = _materialize_item(item, reader, resolved)
-        local_symbols[str(item["local_id"])] = fact["id"]
-        materialized_items.append(fact)
-        registry.add(fact)
+    pending = [(index, item) for index, item in enumerate(batch["items"])]
+    delayed: list[tuple[int, dict[str, Any], str]] = []
+    while pending:
+        progressed = False
+        next_pending: list[tuple[int, dict[str, Any]]] = []
+        delayed = []
+        for index, item in pending:
+            resolved_identity, identity_errors = _resolve_identity_references(spec, item, local_symbols, local_kinds, registry, repo_root, target, index)
+            if identity_errors:
+                if all(error.code in {"ENTITY_IDENTITY_REFERENCE_UNRESOLVED", "LOCAL_REFERENCE_UNKNOWN"} for error in identity_errors):
+                    next_pending.append((index, item))
+                    delayed.extend((index, item, error.message) for error in identity_errors)
+                    continue
+                return identity_errors
+            item_for_identity = {**item, "identity": resolved_identity}
+            try:
+                resolved = resolve_identity(item["kind"], item_for_identity["identity"], repo_root=repo_root)
+            except IdentityError as exc:
+                return [CandidateError(exc.code, exc.message, target=target, local_id=str(item.get("local_id") or ""), field=f"items[{index}].{exc.field}")]
+            previous = canonical_to_local.get(resolved.canonical_key)
+            local_id = str(item.get("local_id") or "")
+            if previous and previous[0] != local_id:
+                message = f"duplicate canonical identity first_local_id={previous[0]} second_local_id={local_id} canonical_key={resolved.canonical_key} stable_id={resolved.stable_id}"
+                return [CandidateError("CANDIDATE_IDENTITY_DUPLICATE", message, target=target, local_id=local_id, field=f"items[{index}]")]
+            canonical_to_local[resolved.canonical_key] = (local_id, resolved.stable_id)
+            fact = _materialize_item(item_for_identity, reader, resolved)
+            local_symbols[str(item["local_id"])] = fact["id"]
+            local_kinds[str(item["local_id"])] = str(item["kind"])
+            materialized_items.append(fact)
+            registry.add(fact)
+            progressed = True
+        if not next_pending:
+            break
+        if not progressed:
+            return [
+                CandidateError(
+                    "ENTITY_IDENTITY_REFERENCE_UNRESOLVED",
+                    f"identity references could not be resolved: {message}",
+                    target=target,
+                    local_id=str(item.get("local_id") or ""),
+                    field=f"items[{index}].identity",
+                )
+                for index, item, message in delayed
+            ]
+        pending = next_pending
 
     resolved_items: list[dict[str, Any]] = []
     resolution_errors: list[CandidateError] = []
@@ -105,11 +136,52 @@ def compile_candidate_facts(repo_root: Path, op_name: str, batch: Any) -> list[C
     if before_hash != _file_hash(formal):
         return [CandidateError("TARGET_CHANGED_DURING_COMPILE", "target formal fact file changed during compile", target=target)]
     _atomic_yaml(formal, doc)
-    registry_after = build_fact_registry(uo_root)
-    for item in resolved_items:
-        registry_after.add(item)
-    write_registry_cache(uo_root, registry_after)
     return []
+
+
+def _resolve_identity_references(
+    spec: dict[str, Any],
+    item: dict[str, Any],
+    local_symbols: dict[str, str],
+    local_kinds: dict[str, str],
+    registry: Any,
+    repo_root: Path,
+    target: str,
+    index: int,
+) -> tuple[dict[str, Any], list[CandidateError]]:
+    identity = dict(item.get("identity") or {})
+    entity_spec = spec.get("entity_types") if isinstance(spec.get("entity_types"), dict) else {}
+    errors: list[CandidateError] = []
+    for field_name, allowed in _identity_reference_fields(spec, str(item.get("kind") or "")).items():
+        value = identity.get(field_name)
+        if not isinstance(value, dict):
+            continue
+        result = resolve_typed_entity_ref(
+            value,
+            local_symbols=local_symbols,
+            local_kinds=local_kinds,
+            registry=registry,
+            repo_root=repo_root,
+            allowed=allowed,
+            entity_spec=entity_spec,
+            code="IDENTITY_REFERENCE_KIND_NOT_ALLOWED",
+        )
+        if result.status != "resolved":
+            code = result.reason or "ENTITY_IDENTITY_REFERENCE_UNRESOLVED"
+            if code in {"ENTITY_REFERENCE_UNRESOLVED", "LOCAL_REFERENCE_UNKNOWN"}:
+                code = "ENTITY_IDENTITY_REFERENCE_UNRESOLVED"
+            errors.append(CandidateError(code, f"{field_name} unresolved or invalid; allowed={allowed} actual={result.kind}", target=target, local_id=str(item.get("local_id") or ""), field=f"items[{index}].identity.{field_name}"))
+            continue
+        identity[field_name] = result.stable_id
+    return identity, errors
+
+
+def _identity_reference_fields(spec: dict[str, Any], kind: str) -> dict[str, list[str]]:
+    entity_spec = spec.get("entity_types") if isinstance(spec.get("entity_types"), dict) else {}
+    entity_types = entity_spec.get("entity_types") if isinstance(entity_spec.get("entity_types"), dict) else {}
+    config = entity_types.get(kind) if isinstance(entity_types, dict) else None
+    refs = config.get("identity_reference_fields") if isinstance(config, dict) and isinstance(config.get("identity_reference_fields"), dict) else {}
+    return {str(key): [str(item) for item in value] for key, value in refs.items() if isinstance(value, list)}
 
 
 def _materialize_item(item: dict[str, Any], reader: SourceReader, resolved: Any) -> dict[str, Any]:

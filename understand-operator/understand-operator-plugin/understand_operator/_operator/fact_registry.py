@@ -85,6 +85,11 @@ class FactRegistry:
     def find_canonical(self, canonical_key: str) -> str | None:
         return self.canonical_to_id.get(canonical_key)
 
+    def kind_of(self, fact_id: str) -> str | None:
+        fact = self.facts_by_id.get(fact_id)
+        kind = fact.get("kind") if isinstance(fact, dict) else None
+        return str(kind) if isinstance(kind, str) and kind else None
+
     def find_symbol(self, symbol: str, signature: str | None = None) -> tuple[str, ...]:
         key = f"{symbol}\0{signature}" if signature is not None else symbol
         return tuple(sorted(self.symbol_to_ids.get(key) or ()))

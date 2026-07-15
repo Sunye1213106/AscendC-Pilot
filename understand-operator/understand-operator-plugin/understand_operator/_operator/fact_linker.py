@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from understand_operator._operator.fact_registry import FactRegistry
 from understand_operator._operator.identity import IdentityError, resolve_identity
+from understand_operator._operator.kind_match import kind_matches
 
 
 @dataclass(frozen=True)
@@ -14,6 +15,7 @@ class LinkResult:
     stable_id: str | None
     candidates: tuple[str, ...]
     reason: str | None
+    kind: str | None = None
 
 
 REFERENCE_FIELD_NAMES = {
@@ -97,34 +99,59 @@ def resolve_entity_ref(
     if ref_type == "local":
         local_id = ref.get("local_id")
         if isinstance(local_id, str) and local_id in local_symbols:
-            return LinkResult("resolved", local_symbols[local_id], (local_symbols[local_id],), None)
-        return LinkResult("unresolved", None, (), "LOCAL_REFERENCE_UNKNOWN")
+            stable_id = local_symbols[local_id]
+            return LinkResult("resolved", stable_id, (stable_id,), None, registry.kind_of(stable_id))
+        return LinkResult("unresolved", None, (), "LOCAL_REFERENCE_UNKNOWN", None)
     if ref_type == "entity":
         kind = ref.get("kind")
         identity = ref.get("identity")
         if not isinstance(kind, str) or not isinstance(identity, dict):
-            return LinkResult("unresolved", None, (), "ENTITY_REFERENCE_INVALID")
+            return LinkResult("unresolved", None, (), "ENTITY_REFERENCE_INVALID", None)
         try:
             resolved = resolve_identity(kind, identity, repo_root=repo_root)
         except IdentityError as exc:
-            return LinkResult("unresolved", None, (), exc.code)
+            return LinkResult("unresolved", None, (), exc.code, None)
         stable = registry.find_canonical(resolved.canonical_key)
         if stable:
-            return LinkResult("resolved", stable, (stable,), None)
-        return LinkResult("unresolved", None, (), "ENTITY_REFERENCE_UNRESOLVED")
+            return LinkResult("resolved", stable, (stable,), None, registry.kind_of(stable) or kind)
+        return LinkResult("unresolved", None, (), "ENTITY_REFERENCE_UNRESOLVED", None)
     if ref_type == "symbol":
         kind = ref.get("kind")
         symbol = ref.get("qualified_symbol") or ref.get("symbol")
         signature = ref.get("signature")
         if not isinstance(kind, str) or not isinstance(symbol, str) or not symbol.strip():
-            return LinkResult("unresolved", None, (), "ENTITY_REFERENCE_INVALID")
+            return LinkResult("unresolved", None, (), "ENTITY_REFERENCE_INVALID", None)
         candidates = registry.find_symbol_kind(kind.strip(), symbol.strip(), signature.strip() if isinstance(signature, str) and signature.strip() else None)
         if len(candidates) == 1:
-            return LinkResult("resolved", candidates[0], candidates, None)
+            return LinkResult("resolved", candidates[0], candidates, None, registry.kind_of(candidates[0]) or kind.strip())
         if len(candidates) > 1:
-            return LinkResult("ambiguous", None, candidates, "ENTITY_REFERENCE_AMBIGUOUS")
-        return LinkResult("unresolved", None, (), "ENTITY_REFERENCE_UNRESOLVED")
-    return LinkResult("unresolved", None, (), "ENTITY_REFERENCE_INVALID")
+            return LinkResult("ambiguous", None, candidates, "ENTITY_REFERENCE_AMBIGUOUS", None)
+        return LinkResult("unresolved", None, (), "ENTITY_REFERENCE_UNRESOLVED", None)
+    return LinkResult("unresolved", None, (), "ENTITY_REFERENCE_INVALID", None)
+
+
+def resolve_typed_entity_ref(
+    ref: dict[str, object],
+    *,
+    local_symbols: dict[str, str],
+    local_kinds: dict[str, str],
+    registry: FactRegistry,
+    repo_root: Path,
+    allowed: list[str],
+    entity_spec: dict[str, Any],
+    code: str,
+) -> LinkResult:
+    result = resolve_entity_ref(ref, local_symbols=local_symbols, registry=registry, repo_root=repo_root)
+    if result.status != "resolved":
+        return result
+    actual_kind = result.kind
+    if ref.get("ref_type") == "local" and isinstance(ref.get("local_id"), str):
+        actual_kind = local_kinds.get(str(ref["local_id"])) or actual_kind
+    if not actual_kind:
+        return LinkResult("unresolved", None, (), "REFERENCE_KIND_UNKNOWN", None)
+    if allowed and not any(kind_matches(actual_kind, expected, entity_spec) for expected in allowed):
+        return LinkResult("unresolved", None, tuple(result.candidates), code, actual_kind)
+    return result
 
 
 def resolve_reference_fields(

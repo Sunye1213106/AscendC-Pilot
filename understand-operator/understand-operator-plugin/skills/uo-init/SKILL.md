@@ -120,6 +120,7 @@ Each agent emits only candidate JSON (never final YAML/IDs/source text/hashes), 
 
 ```powershell
 python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step1 --write-report
+python "$SCRIPT_DIR/build_fact_registry.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 ```
 
 Empty boundary files must fail; unresolved entries must be explicit.
@@ -163,6 +164,7 @@ Run the three scoped validators:
 python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step2 --scope host --write-report
 python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step2 --scope compute --write-report
 python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step2 --scope kernel-overview --write-report
+python "$SCRIPT_DIR/build_fact_registry.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 ```
 
 Then run `uo-step2-fact-review-agent`. It writes only:
@@ -170,6 +172,16 @@ Then run `uo-step2-fact-review-agent`. It writes only:
 ```text
 checks/step2/review.yaml
 ```
+
+First evaluate the deterministic review trigger:
+
+```powershell
+python "$SCRIPT_DIR/evaluate_review_trigger.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --step step2
+```
+
+Read `checks/step2/review_trigger.yaml`. If `status: skipped`, do not dispatch
+`uo-step2-fact-review-agent`. If `status: triggered`, dispatch it and require
+`checks/step2/review.yaml status: pass`.
 
 When all reports pass and input hashes match current facts:
 
@@ -185,11 +197,20 @@ Phase 3 starts only after Step 2 receipt is valid.
    `facts/kernel/slice_interfaces.yaml`.
 2. Parallel `uo-kernel-slice-agent` tasks write assigned slice partitions
    `facts/kernel/slices/<slice_id>.yaml`.
-3. Run Step 3 validation and `uo-step3-fact-review-agent`.
+3. Run Step 3 validation, then:
+
+   ```powershell
+   python "$SCRIPT_DIR/evaluate_review_trigger.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --step step3
+   ```
+
+   Read `checks/step3/review_trigger.yaml`. If `status: skipped`, do not
+   dispatch `uo-step3-fact-review-agent`. If `status: triggered`, dispatch it
+   and require `checks/step3/review.yaml status: pass`.
 4. Seal Step 3:
 
 ```powershell
 python "$SCRIPT_DIR/write_step3_receipt.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+python "$SCRIPT_DIR/build_fact_registry.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 python "$SCRIPT_DIR/build_compile_gate.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 python "$SCRIPT_DIR/source_graph_compiler.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 ```

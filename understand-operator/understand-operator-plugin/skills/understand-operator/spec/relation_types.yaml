@@ -4,21 +4,21 @@ relation_types:
     source: any
     target: any
     endpoint_signatures:
-      - {source: symbol, target: variable}
-      - {source: symbol, target: tilingdata}
-      - {source: call, target: tensor}
-      - {source: operation, target: tensor}
-      - {source: any, target: memory_resource}
+      - {source: tilingdata_read, target: tilingdata_field}
+      - {source: call_like, target: tensor_like}
+      - {source: compute_operation, target: tensor_like}
+      - {source: any, target: resource_like}
     identity_fields: [access_path]
   writes:
     source: any
     target: any
     endpoint_signatures:
-      - {source: symbol, target: variable}
-      - {source: symbol, target: tilingdata}
-      - {source: call, target: tensor}
-      - {source: operation, target: tensor}
-      - {source: any, target: memory_resource}
+      - {source: tilingdata_write, target: tilingdata_field}
+      - {source: block_dim_write, target: tilingdata_field}
+      - {source: workspace_write, target: tilingdata_field}
+      - {source: call_like, target: tensor_like}
+      - {source: compute_operation, target: tensor_like}
+      - {source: any, target: resource_like}
     identity_fields: [access_path]
   assigned_from: {source: variable, target: expression, endpoint_signatures: [{source: variable, target: expression}]}
   derived_from: {source: variable, target: variable, endpoint_signatures: [{source: variable, target: variable}]}
@@ -28,8 +28,6 @@ relation_types:
   has_outcome: {source: branch, target: outcome}
   loops_over: {source: loop, target: expression}
   sets_tiling_key: {source: call, target: key}
-  writes_tilingdata: {source: symbol, target: tilingdata}
-  reads_tilingdata: {source: symbol, target: tilingdata}
   constrains: {source: expression, target: variable}
   prunes: {source: expression, target: key}
   merges_into: {source: key, target: key}

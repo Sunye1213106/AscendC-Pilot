@@ -64,7 +64,9 @@ owners:
       - checks/step2/host_validation.yaml
       - checks/step2/compute_validation.yaml
       - checks/step2/kernel_overview_validation.yaml
+      - checks/step2/review_trigger.yaml
       - checks/step3/slice_validations.yaml
+      - checks/step3/review_trigger.yaml
       - checks/compile_gate.yaml
       - checks/derived_validation.yaml
   raw-graph-compiler:

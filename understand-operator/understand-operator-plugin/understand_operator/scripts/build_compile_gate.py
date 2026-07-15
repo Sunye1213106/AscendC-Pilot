@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +17,7 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_ROOT))
 
 from understand_operator._operator.artifacts import existing_operator_root, safe_op_name
+from understand_operator._operator.fact_hashes import all_fact_hashes, file_hash
 from understand_operator._operator.spec import spec_bundle_hash
 
 
@@ -44,7 +44,7 @@ def build_compile_gate(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
         "snapshot": _snapshot(uo_root),
         "status": "pass",
         "checked_at": datetime.now(tz=timezone.utc).isoformat(),
-        "step3_receipt_hash": "sha256:" + hashlib.sha256(receipt.read_bytes()).hexdigest(),
+        "step3_receipt_hash": file_hash(receipt),
         "facts_hashes": facts_hashes,
         "items": [],
         "relations": [],
@@ -57,14 +57,7 @@ def build_compile_gate(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
 
 
 def facts_hashes_for(uo_root: Path) -> dict[str, str]:
-    facts_root = uo_root / "facts"
-    result: dict[str, str] = {}
-    if not facts_root.exists():
-        return result
-    for path in sorted(facts_root.rglob("*.yaml")):
-        rel = path.relative_to(uo_root).as_posix()
-        result[rel] = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
-    return result
+    return all_fact_hashes(uo_root)
 
 
 def compile_gate_errors(uo_root: Path) -> list[str]:

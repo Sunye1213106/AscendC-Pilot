@@ -19,6 +19,7 @@ if __package__ in (None, ""):
 from understand_operator._operator.artifacts import existing_operator_root, safe_op_name
 from understand_operator._operator.catalog import CatalogMatchError, match_catalog_entry
 from understand_operator._operator.document_store import DocumentStore
+from understand_operator._operator.kind_match import kind_matches
 from understand_operator._operator.spec import load_spec, spec_bundle_hash
 from understand_operator.scripts.build_compile_gate import compile_gate_errors, facts_hashes_for
 
@@ -232,9 +233,9 @@ def _tilingdata_write_read_edges(nodes: list[dict[str, Any]], formal_edges: list
             continue
         source_kind = str(source.get("kind") or "")
         target_kind = str(target.get("kind") or "")
-        if edge_type in {"writes", "writes_tilingdata"} and source_kind == "tilingdata_write" and target_kind == "tilingdata_field":
+        if edge_type == "writes" and source_kind == "tilingdata_write" and target_kind == "tilingdata_field":
             writes_by_field.setdefault(target_id, []).append(source_id)
-        if edge_type in {"reads", "reads_tilingdata"} and source_kind == "tilingdata_read" and target_kind == "tilingdata_field":
+        if edge_type == "reads" and source_kind == "tilingdata_read" and target_kind == "tilingdata_field":
             reads_by_field.setdefault(target_id, []).append(source_id)
     result: list[dict[str, Any]] = []
     for field_id in sorted(set(writes_by_field) & set(reads_by_field)):
@@ -535,12 +536,15 @@ def _raw_graph_errors(nodes: list[dict[str, Any]], edges: list[dict[str, Any]], 
         rtype = edge.get("type")
         rule = relation_types.get(rtype) if isinstance(relation_types, dict) else None
         if isinstance(rule, dict) and source_id in node_by_id and target_id in node_by_id:
-            source_kind = _normalize_kind(str(node_by_id[source_id].get("kind") or ""))
-            target_kind = _normalize_kind(str(node_by_id[target_id].get("kind") or ""))
-            if not _kind_matches(source_kind, str(rule.get("source") or "any")):
-                errors.append(f"edge {edge_id} source kind mismatch: expected {rule.get('source')}, got {source_kind}")
-            if not _kind_matches(target_kind, str(rule.get("target") or "any")):
-                errors.append(f"edge {edge_id} target kind mismatch: expected {rule.get('target')}, got {target_kind}")
+            entity_spec = spec.get("entity_types") if isinstance(spec.get("entity_types"), dict) else {}
+            source_kind = str(node_by_id[source_id].get("kind") or "")
+            target_kind = str(node_by_id[target_id].get("kind") or "")
+            signatures = rule.get("endpoint_signatures") if isinstance(rule.get("endpoint_signatures"), list) else []
+            if not signatures:
+                signatures = [{"source": str(rule.get("source") or "any"), "target": str(rule.get("target") or "any")}]
+            if not any(isinstance(signature, dict) and kind_matches(source_kind, str(signature.get("source") or "any"), entity_spec) and kind_matches(target_kind, str(signature.get("target") or "any"), entity_spec) for signature in signatures):
+                expected = " or ".join(f"{item.get('source', 'any')}->{item.get('target', 'any')}" for item in signatures if isinstance(item, dict))
+                errors.append(f"edge {edge_id} endpoint kind mismatch: expected {expected}, got {source_kind}->{target_kind}")
     return errors
 
 

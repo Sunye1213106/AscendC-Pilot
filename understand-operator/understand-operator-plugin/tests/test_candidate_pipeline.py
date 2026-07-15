@@ -10,6 +10,7 @@ from understand_operator._operator.identity import IdentityError, resolve_identi
 from understand_operator._operator.source_reader import SourceReadError, SourceReader
 from understand_operator._operator.spec import spec_bundle_hash
 from understand_operator.scripts.compile_candidate_facts import compile_candidate_facts
+from understand_operator.scripts.build_fact_registry import build_registry_cache
 from understand_operator.scripts.validate_candidate_batch import validate_candidate_batch
 
 
@@ -35,6 +36,8 @@ def test_compiler_materializes_deterministic_fact_and_replaces_same_key(tmp_path
     assert items[0]["identity"]["canonical_key"].startswith("runtime_variable:op_host/demo.cpp:demo:x:1:1")
     assert items[0]["identity"]["normalized"]["source_name"] == "x"
     assert items[0]["sources"][0]["source_text"] == "int x = 1;"
+    assert not (root / "indexes" / "entity_registry.json").exists()
+    assert build_registry_cache(repo, "DemoOp")[0] == 0
     assert (root / "indexes" / "entity_registry.json").exists()
     assert not (root / "indexes" / "fact_keys.json").exists()
 
@@ -75,7 +78,6 @@ def test_local_relation_resolves_and_does_not_leak_local_id(tmp_path: Path) -> N
 def test_registry_rebuilds_from_formal_facts(tmp_path: Path) -> None:
     repo, root = _ready_repo(tmp_path)
     assert compile_candidate_facts(repo, "DemoOp", _batch()) == []
-    (root / "indexes" / "entity_registry.json").unlink()
     registry = build_fact_registry(root)
     assert len(registry.facts_by_id) == 1
     assert next(iter(registry.canonical_to_id)).startswith("runtime_variable:")

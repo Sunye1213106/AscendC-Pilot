@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +17,7 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_ROOT))
 
 from understand_operator._operator.artifacts import existing_operator_root, safe_op_name
+from understand_operator._operator.fact_hashes import all_fact_hashes, file_hash
 from understand_operator._operator.spec import spec_bundle_hash
 
 
@@ -49,7 +49,8 @@ def write_step3_receipt(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
             messages.append(f"missing required Step 3 gate report: {rel}")
             continue
         doc = _read_yaml(path)
-        if doc.get("status") not in {"pass", "skipped"}:
+        allowed_status = {"triggered", "skipped"} if rel.endswith("review_trigger.yaml") else {"pass"}
+        if doc.get("status") not in allowed_status:
             messages.append(f"{rel} status is not pass")
         if doc.get("blocking_findings"):
             messages.append(f"{rel} has blocking_findings")
@@ -60,6 +61,25 @@ def write_step3_receipt(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
             messages.append(f"{rel} missing input_hashes")
         elif report_hashes != current_fact_hashes:
             messages.append(f"{rel} input_hashes do not match current facts")
+    review_trigger = _read_yaml(uo_root / "checks/step3/review_trigger.yaml")
+    review_status = review_trigger.get("status")
+    if review_status == "triggered":
+        review_rel = "checks/step3/review.yaml"
+        review_path = uo_root / review_rel
+        if not review_path.exists():
+            messages.append(f"missing required Step 3 review report: {review_rel}")
+        else:
+            review_doc = _read_yaml(review_path)
+            if review_doc.get("status") != "pass":
+                messages.append(f"{review_rel} status is not pass")
+            if review_doc.get("blocking_findings"):
+                messages.append(f"{review_rel} has blocking_findings")
+            if review_doc.get("errors"):
+                messages.append(f"{review_rel} has errors")
+            if review_doc.get("input_hashes") != current_fact_hashes:
+                messages.append(f"{review_rel} input_hashes do not match current facts")
+    elif review_status != "skipped":
+        messages.append("checks/step3/review_trigger.yaml status must be skipped or triggered")
     if messages:
         return 2, messages
 
@@ -86,6 +106,8 @@ def _report_passes(path: Path) -> bool:
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return data if isinstance(data, dict) else {}
 
@@ -113,19 +135,12 @@ def _hash_inputs(uo_root: Path) -> dict[str, str]:
     for rel in sorted(set(paths)):
         path = uo_root / rel
         if path.exists() and path.is_file():
-            result[rel] = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+            result[rel] = file_hash(path)
     return result
 
 
 def _all_fact_hashes(uo_root: Path) -> dict[str, str]:
-    result: dict[str, str] = {}
-    facts = uo_root / "facts"
-    if not facts.exists():
-        return result
-    for path in sorted(facts.rglob("*.yaml")):
-        rel = path.relative_to(uo_root).as_posix()
-        result[rel] = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
-    return result
+    return all_fact_hashes(uo_root)
 
 
 def _hashes_still_match(uo_root: Path, receipt: Path) -> list[str]:
@@ -137,7 +152,7 @@ def _hashes_still_match(uo_root: Path, receipt: Path) -> list[str]:
         if not path.exists():
             errors.append(f"{rel} recorded by Step 2 receipt is missing")
             continue
-        actual = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+        actual = file_hash(path)
         if actual != digest:
             errors.append(f"{rel} changed after Step 2 receipt")
     return errors

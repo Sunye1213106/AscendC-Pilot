@@ -218,7 +218,7 @@ def resolve_identity(kind: str, identity: dict[str, object], *, repo_root: Path)
     resolver = _strategy_for_kind(kind, config)
     normalized, parts = resolver(identity, repo_root)
     canonical_key = ":".join([kind, *(_escape(part) for part in parts)])
-    return ResolvedIdentity(
+    result = ResolvedIdentity(
         kind=kind,
         identity_version=IDENTITY_VERSION,
         canonical_key=canonical_key,
@@ -226,6 +226,17 @@ def resolve_identity(kind: str, identity: dict[str, object], *, repo_root: Path)
         stable_id=stable_id(prefix, canonical_key),
         normalized_identity=normalized,
     )
+    validate_resolved_identity_against_spec(kind, result.normalized_identity, config)
+    return result
+
+
+def validate_resolved_identity_against_spec(kind: str, normalized: dict[str, Any], entity_config: dict[str, Any]) -> None:
+    required = entity_config.get("required_identity_fields")
+    if not isinstance(required, list):
+        return
+    missing = [str(field) for field in required if str(field) not in normalized or normalized.get(str(field)) in (None, "", [])]
+    if missing:
+        raise IdentityError("IDENTITY_SPEC_REQUIRED_FIELD_MISSING", f"{kind} identity missing normalized fields: {', '.join(missing)}")
 
 
 def relation_stable_id(relation_type: str, source_id: str, target_id: str, qualifier: Any = None) -> str:
@@ -251,9 +262,12 @@ def _strategy_for_kind(kind: str, config: dict[str, Any]) -> Callable[[dict[str,
         "slice_interface": _slice_interface_identity,
         "compute_operation": _compute_operation_identity,
         "endpoint_relation_entity": _endpoint_relation_identity,
-        "scoped_policy": _source_span_identity,
-        "scoped_resource": _local_variable_identity,
-        "scoped_event": _source_span_identity,
+        "scoped_policy": _scoped_policy_identity,
+        "scoped_resource": _scoped_resource_identity,
+        "scoped_event": _scoped_event_identity,
+        "scoped_site": _scoped_site_identity,
+        "architecture_variant": _architecture_variant_identity,
+        "source_rule": _source_rule_identity,
         "source_span": _source_span_identity,
         "qualified_symbol": _qualified_symbol_only_identity,
     }
@@ -449,6 +463,76 @@ def _endpoint_relation_identity(identity: dict[str, object], repo_root: Path) ->
         "qualifier": str(identity.get("qualifier") or ""),
     }
     return norm, [str(norm[key]) for key in ("source_ref", "target_ref", "order_index", "condition_ref", "qualifier")]
+
+
+def _scoped_policy_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:
+    norm = {
+        "source_file": _path(identity, "source_file", repo_root),
+        "scope_symbol": _symbol(identity, "scope_symbol"),
+        "policy_kind": _required_str(identity, "policy_kind"),
+        "source_span": _span(identity, "source_span"),
+    }
+    span = norm["source_span"]
+    assert isinstance(span, dict)
+    return norm, [str(norm["source_file"]), str(norm["scope_symbol"]), str(norm["policy_kind"]), str(span["start_line"]), str(span["end_line"])]
+
+
+def _scoped_resource_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:
+    norm = {
+        "source_file": _path(identity, "source_file", repo_root),
+        "scope_symbol": _symbol(identity, "scope_symbol"),
+        "source_name": _symbol(identity, "source_name"),
+        "declaration_span": _span(identity, "declaration_span"),
+        "resource_kind": _required_str(identity, "resource_kind"),
+    }
+    span = norm["declaration_span"]
+    assert isinstance(span, dict)
+    return norm, [str(norm["source_file"]), str(norm["scope_symbol"]), str(norm["source_name"]), str(span["start_line"]), str(span["end_line"]), str(norm["resource_kind"])]
+
+
+def _scoped_event_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:
+    norm = {
+        "source_file": _path(identity, "source_file", repo_root),
+        "scope_symbol": _symbol(identity, "scope_symbol"),
+        "event_kind": _required_str(identity, "event_kind"),
+        "event_identifier": _required_str(identity, "event_identifier"),
+        "source_span": _span(identity, "source_span"),
+    }
+    span = norm["source_span"]
+    assert isinstance(span, dict)
+    return norm, [str(norm["source_file"]), str(norm["scope_symbol"]), str(norm["event_kind"]), str(norm["event_identifier"]), str(span["start_line"]), str(span["end_line"])]
+
+
+def _scoped_site_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:
+    norm = {
+        "source_file": _path(identity, "source_file", repo_root),
+        "scope_symbol": _symbol(identity, "scope_symbol"),
+        "site_kind": _required_str(identity, "site_kind"),
+        "site_span": _span(identity, "site_span"),
+    }
+    span = norm["site_span"]
+    assert isinstance(span, dict)
+    return norm, [str(norm["source_file"]), str(norm["scope_symbol"]), str(norm["site_kind"]), str(span["start_line"]), str(span["end_line"])]
+
+
+def _architecture_variant_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:
+    files = identity.get("file_set_signature")
+    if not isinstance(files, list) or not files:
+        raise IdentityError("IDENTITY_MISSING_FIELD", "file_set_signature must be a non-empty list", "identity.file_set_signature")
+    normalized_files = sorted(_path({"path": str(item)}, "path", repo_root) for item in files)
+    norm: dict[str, object] = {"variant_name": _required_str(identity, "variant_name"), "file_set_signature": normalized_files}
+    if identity.get("architecture_discriminator"):
+        norm["architecture_discriminator"] = _required_str(identity, "architecture_discriminator")
+    return norm, [str(norm["variant_name"]), ",".join(normalized_files), str(norm.get("architecture_discriminator") or "")]
+
+
+def _source_rule_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:
+    norm = {
+        "source_file": _path(identity, "source_file", repo_root),
+        "rule_kind": _required_str(identity, "rule_kind"),
+        "pattern": _required_str(identity, "pattern"),
+    }
+    return norm, [str(norm["source_file"]), str(norm["rule_kind"]), str(norm["pattern"])]
 
 
 def _source_span_identity(identity: dict[str, object], repo_root: Path) -> tuple[dict[str, object], list[str]]:

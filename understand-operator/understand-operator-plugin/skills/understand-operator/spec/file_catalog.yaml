@@ -136,6 +136,13 @@ files:
     required_after_stage: step2
     allow_empty: false
     raw_graph_input: false
+  - path: checks/step2/review_trigger.yaml
+    artifact_type: checks.step2.review_trigger
+    owner: facts-validator
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: step2
+    allow_empty: false
+    raw_graph_input: false
   - path: checks/step2/receipt.yaml
     artifact_type: checks.step2.receipt
     owner: uo-orchestrator
@@ -153,6 +160,13 @@ files:
   - path: checks/step3/review.yaml
     artifact_type: checks.step3.review
     owner: uo-step3-fact-review-agent
+    schema: schemas/common/document.schema.yaml
+    required_after_stage: step3
+    allow_empty: false
+    raw_graph_input: false
+  - path: checks/step3/review_trigger.yaml
+    artifact_type: checks.step3.review_trigger
+    owner: facts-validator
     schema: schemas/common/document.schema.yaml
     required_after_stage: step3
     allow_empty: false

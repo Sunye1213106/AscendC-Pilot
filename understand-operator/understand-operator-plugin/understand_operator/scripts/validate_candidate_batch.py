@@ -24,6 +24,7 @@ from understand_operator._operator.artifacts import safe_op_name
 from understand_operator._operator.catalog import CatalogMatchError, match_catalog_entry
 from understand_operator._operator.candidate import CandidateError, FORBIDDEN_ITEM_FIELDS, FORBIDDEN_RELATION_FIELDS, LEGACY_IDENTITY_FIELDS, load_json
 from understand_operator._operator.identity import IdentityError, resolve_identity
+from understand_operator._operator.kind_match import kind_matches
 from understand_operator._operator.source_reader import SourceReadError, SourceReader
 from understand_operator._operator.spec import load_spec
 
@@ -85,6 +86,7 @@ def validate_candidate_batch(repo_root: Path, op_name: str, batch: Any) -> list[
     reader = SourceReader(repo_root)
     entity_types = (spec.get("entity_types") or {}).get("entity_types") if isinstance(spec.get("entity_types"), dict) else {}
     local_ids: set[str] = set()
+    local_id_to_kind = {str(item.get("local_id")): str(item.get("kind")) for item in batch["items"] if isinstance(item, dict) and item.get("local_id") and item.get("kind")}
     canonical_to_local: dict[str, tuple[str, str]] = {}
     for index, item in enumerate(batch["items"]):
         label = f"items[{index}]"
@@ -106,8 +108,9 @@ def validate_candidate_batch(repo_root: Path, op_name: str, batch: Any) -> list[
         else:
             if allowed_kinds and kind not in allowed_kinds:
                 errors.append(CandidateError("CANDIDATE_KIND_INVALID", f"kind {kind!r} is not allowed by target schema", target=target_label, local_id=local_id, field=f"{label}.kind"))
+            identity_for_validation = _identity_with_reference_placeholders(spec, kind, item["identity"], errors, target_label, local_id, label, local_id_to_kind)
             try:
-                resolved = resolve_identity(kind, item["identity"], repo_root=repo_root)
+                resolved = resolve_identity(kind, identity_for_validation, repo_root=repo_root)
             except IdentityError as exc:
                 errors.append(CandidateError(exc.code, exc.message, target=target_label, local_id=local_id, field=f"{label}.{exc.field}"))
             else:
@@ -216,6 +219,55 @@ def _reference(ref: Any, errors: list[CandidateError], target: str, field: str, 
             errors.append(CandidateError("ENTITY_REFERENCE_INVALID", "symbol reference needs kind and qualified_symbol", target=target, field=field))
     else:
         errors.append(CandidateError("ENTITY_REFERENCE_INVALID", "ref_type must be local, entity, or symbol", target=target, field=field))
+
+
+def _identity_with_reference_placeholders(
+    spec: dict[str, Any],
+    kind: str,
+    identity: dict[str, Any],
+    errors: list[CandidateError],
+    target: str,
+    local_id: str,
+    label: str,
+    local_id_to_kind: dict[str, str],
+) -> dict[str, Any]:
+    result = dict(identity)
+    entity_spec = spec.get("entity_types") if isinstance(spec.get("entity_types"), dict) else {}
+    entity_types = entity_spec.get("entity_types") if isinstance(entity_spec.get("entity_types"), dict) else {}
+    for field_name, allowed in _identity_reference_fields(spec, kind).items():
+        value = result.get(field_name)
+        if not isinstance(value, dict):
+            continue
+        _reference(value, errors, target, f"{label}.identity.{field_name}", set(local_id_to_kind), entity_types)
+        actual_kind = _static_reference_kind(value, local_id_to_kind)
+        if actual_kind and allowed and not any(kind_matches(actual_kind, expected, entity_spec) for expected in allowed):
+            errors.append(CandidateError("IDENTITY_REFERENCE_KIND_NOT_ALLOWED", f"{field_name} target kind {actual_kind} not allowed; allowed={allowed}", target=target, local_id=local_id, field=f"{label}.identity.{field_name}"))
+        result[field_name] = _reference_placeholder(value)
+    return result
+
+
+def _identity_reference_fields(spec: dict[str, Any], kind: str) -> dict[str, list[str]]:
+    entity_spec = spec.get("entity_types") if isinstance(spec.get("entity_types"), dict) else {}
+    entity_types = entity_spec.get("entity_types") if isinstance(entity_spec.get("entity_types"), dict) else {}
+    config = entity_types.get(kind) if isinstance(entity_types, dict) else None
+    refs = config.get("identity_reference_fields") if isinstance(config, dict) and isinstance(config.get("identity_reference_fields"), dict) else {}
+    return {str(key): [str(item) for item in value] for key, value in refs.items() if isinstance(value, list)}
+
+
+def _static_reference_kind(ref: dict[str, Any], local_id_to_kind: dict[str, str]) -> str | None:
+    if ref.get("ref_type") == "local" and isinstance(ref.get("local_id"), str):
+        return local_id_to_kind.get(str(ref["local_id"]))
+    if ref.get("ref_type") in {"entity", "symbol"} and isinstance(ref.get("kind"), str):
+        return str(ref["kind"])
+    return None
+
+
+def _reference_placeholder(ref: dict[str, Any]) -> str:
+    if ref.get("ref_type") == "local":
+        return f"local:{ref.get('local_id')}"
+    if ref.get("ref_type") == "symbol":
+        return f"symbol:{ref.get('kind')}:{ref.get('qualified_symbol') or ref.get('symbol')}:{ref.get('signature') or ''}"
+    return f"entity:{ref.get('kind')}"
 
 
 def _reference_objects(value: Any, errors: list[CandidateError], target: str, field: str, kind: str, entity_types: dict[str, Any], current_key: str = "") -> None:

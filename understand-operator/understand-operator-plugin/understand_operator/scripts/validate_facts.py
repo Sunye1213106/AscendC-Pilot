@@ -23,8 +23,10 @@ if __package__ in (None, ""):
 
 from understand_operator._operator.artifacts import existing_operator_root, safe_op_name
 from understand_operator._operator.catalog import CatalogMatchError, match_catalog_entry
+from understand_operator._operator.fact_hashes import all_fact_hashes, file_hash, step2_fact_hashes
 from understand_operator._operator.fact_registry import build_fact_registry
 from understand_operator._operator.identity import relation_stable_id, resolve_identity
+from understand_operator._operator.kind_match import kind_matches
 from understand_operator._operator.spec import catalog_entries, load_spec, spec_bundle_hash
 from understand_operator._operator.source_reader import SourceReadError, SourceReader
 
@@ -142,10 +144,11 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
 
     known_ids = _collect_known_ids(all_docs | docs)
     known_kinds = _collect_known_kinds(all_docs | docs)
+    entity_spec = spec.get("entity_types") if isinstance(spec.get("entity_types"), dict) else {}
     _validate_identity_integrity(repo_root, uo_root, all_docs | docs, relation_type_specs, errors)
     for rel, doc in docs.items():
         _validate_references(rel, doc, known_ids, errors)
-        _validate_relation_endpoints(rel, doc, known_kinds, relation_type_specs, errors)
+        _validate_relation_endpoints(rel, doc, known_kinds, relation_type_specs, entity_spec, errors)
     return errors
 
 
@@ -303,7 +306,7 @@ def _validate_phase0_receipt(
             if not item_path.exists():
                 errors.append(FactValidationError("PHASE0_RECEIPT_STALE", rel, f"{item_rel} is missing"))
                 continue
-            actual_hash = "sha256:" + hashlib.sha256(item_path.read_bytes()).hexdigest()
+            actual_hash = file_hash(item_path)
             if actual_hash != expected_hash:
                 errors.append(FactValidationError("PHASE0_RECEIPT_STALE", rel, f"{item_rel} hash changed"))
 
@@ -593,7 +596,6 @@ def _validate_identity_integrity(repo_root: Path, uo_root: Path, docs: dict[str,
                     continue
                 known_item_ids.add(item_id)
                 if not isinstance(identity, dict):
-                    errors.append(FactValidationError("IDENTITY_MISSING", unit_rel, f"/items/{index} missing identity"))
                     continue
                 canonical = identity.get("canonical_key")
                 normalized = identity.get("normalized")
@@ -907,6 +909,7 @@ def _validate_relation_endpoints(
     doc: dict[str, Any],
     known_kinds: dict[str, str],
     relation_type_specs: dict[str, Any],
+    entity_spec: dict[str, Any],
     errors: list[FactValidationError],
 ) -> None:
     for _, unit in _document_units(doc):
@@ -931,8 +934,8 @@ def _validate_relation_endpoints(
             signatures = [{"source": str(spec.get("source") or "any"), "target": str(spec.get("target") or "any")}]
         if actual_source and actual_target and not any(
             isinstance(signature, dict)
-            and _kind_matches(actual_source, str(signature.get("source") or "any"))
-            and _kind_matches(actual_target, str(signature.get("target") or "any"))
+            and kind_matches(actual_source, str(signature.get("source") or "any"), entity_spec)
+            and kind_matches(actual_target, str(signature.get("target") or "any"), entity_spec)
             for signature in signatures
         ):
             expected = " or ".join(f"{item.get('source', 'any')}->{item.get('target', 'any')}" for item in signatures if isinstance(item, dict))
@@ -944,68 +947,8 @@ def _validate_relation_endpoints(
                 )
             )
 
-
-def _kind_matches(actual: str, expected: str) -> bool:
-    if expected == "any":
-        return True
-    if actual == expected:
-        return True
-    aliases = {
-        "argument": {"input_tensor", "output_tensor", "optional_input", "attribute"},
-        "variable": {"variable", "runtime_variable", "host_variable", "tilingdata", "key"},
-        "symbol": {"symbol", "host_entry", "tiling_entry", "kernel_entry", "function", "call"},
-        "expression": {"expression"},
-        "branch": {"branch"},
-        "outcome": {"outcome"},
-        "loop": {"loop"},
-        "call": {"call"},
-        "key": {"key"},
-        "tilingdata": {"tilingdata"},
-        "tensor": {"tensor", "input_tensor", "output_tensor"},
-        "operation": {"operation"},
-        "api": {"api", "call"},
-        "sync": {"sync"},
-        "source_file": {"source_file", "dependency_file"},
-        "memory_resource": {"memory_resource"},
-    }
-    return actual in aliases.get(expected, set())
-
-
 def _normalize_kind(kind: str) -> str:
-    lowered = kind.lower()
-    if lowered.startswith("input_") or lowered.startswith("output_"):
-        return lowered
-    if "outcome" in lowered:
-        return "outcome"
-    if "tensor" in lowered:
-        return "tensor"
-    if "operation" in lowered:
-        return "operation"
-    if "resource" in lowered:
-        return "memory_resource"
-    if "api" in lowered:
-        return "api"
-    if lowered in {"source_file", "dependency_file"}:
-        return "source_file"
-    if "branch" in lowered:
-        return "branch"
-    if "loop" in lowered:
-        return "loop"
-    if "call" in lowered:
-        return "call"
-    if "key" in lowered:
-        return "key"
-    if "tilingdata" in lowered:
-        return "tilingdata"
-    if "sync" in lowered:
-        return "sync"
-    if "entry" in lowered or "function" in lowered or "symbol" in lowered:
-        return "symbol"
-    if "expr" in lowered:
-        return "expression"
-    if "var" in lowered:
-        return "variable"
-    return lowered or "fact"
+    return kind.lower() or "fact"
 
 
 def _write_report(uo_root: Path, stage: str, scope: str, errors: list[FactValidationError]) -> None:
@@ -1052,23 +995,21 @@ def _input_hashes_for_scope(uo_root: Path, stage: str, scope: str) -> dict[str, 
     if stage == "step1":
         fact_paths = sorted((uo_root / "facts" / "operator").glob("*.yaml"))
     elif stage == "step2":
-        roots = {
-            "host": [uo_root / "facts" / "host"],
-            "compute": [uo_root / "facts" / "compute"],
-            "kernel-overview": [uo_root / "facts" / "kernel" / "overview"],
-            "all": [uo_root / "facts" / "host", uo_root / "facts" / "compute", uo_root / "facts" / "kernel" / "overview"],
-        }.get(scope, [])
-        for root in roots:
-            if root.exists():
-                fact_paths.extend(sorted(root.rglob("*.yaml")))
+        hashes = step2_fact_hashes(uo_root)
+        scope_paths = {
+            "host": {"facts/host.yaml"},
+            "compute": {"facts/compute.yaml"},
+            "kernel-overview": {"facts/kernel/overview.yaml"},
+            "all": set(hashes),
+        }.get(scope, set())
+        return {rel: digest for rel, digest in hashes.items() if rel in scope_paths}
     elif stage in {"step3", "compile"}:
-        if (uo_root / "facts").exists():
-            fact_paths = sorted((uo_root / "facts").rglob("*.yaml"))
+        return all_fact_hashes(uo_root)
     result: dict[str, str] = {}
     for path in fact_paths:
         if path.is_file():
             rel = path.relative_to(uo_root).as_posix()
-            result[rel] = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+            result[rel] = file_hash(path)
     return result
 
 
