@@ -1,14 +1,33 @@
 version: 1
 schema_kind: runtime_artifact
-required_top_level: [version, artifact, snapshot, status]
+required_top_level: [version, artifact, snapshot, status, architecture_filter, cbm_queries, architecture_variants, excluded_architectures, confirmed_scope_additions, unresolved, warnings, fallback]
 allowed_top_level:
   - version
   - artifact
   - snapshot
   - status
+  - architecture_filter
   - cbm_queries
+  - architecture_variants
+  - excluded_architectures
+  - confirmed_scope_additions
   - unresolved
   - warnings
   - fallback
 required_item_fields: []
 relation_required_fields: []
+required_paths:
+  - architecture_filter/included
+  - architecture_filter/excluded
+list_item_rules:
+  cbm_queries:
+    required_fields: [tool]
+  architecture_variants:
+    required_fields: [name]
+  excluded_architectures:
+    required_fields: [name]
+  confirmed_scope_additions:
+    required_fields: [path]
+one_of_paths:
+  - [payload, query]
+  - [result_summary, result, error, reason]

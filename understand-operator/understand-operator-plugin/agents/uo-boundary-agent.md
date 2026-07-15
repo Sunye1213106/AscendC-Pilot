@@ -91,6 +91,8 @@ copy DemoOp values into target facts.
 Python fills the YAML header, stable IDs, relation IDs, and location-only source
 anchors. If source evidence is not reliable, put the claim in
 `unresolved`; do not create a confirmed item.
+Repair attempts are counted by the semantic candidate batch repair key in the
+same run, not by `task_id`.
 
 ## Write Protocol
 

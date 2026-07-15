@@ -92,6 +92,10 @@ runs/<run_id>/phase0/
 
 The Phase 0 receipt freezes source revision, source snapshot ID, approved
 include/exclude, architecture variants, CBM project, and spec bundle hash.
+`semantic_enrichment.yaml` uses one contract only:
+`architecture_filter`, `cbm_queries`, `architecture_variants`,
+`excluded_architectures`, `confirmed_scope_additions`, `unresolved`,
+`warnings`, and `fallback`. Do not write a legacy `queries` field.
 
 Only explicit `continue` after scope review enters Phase 1. Use the runtime
 question/AskQuestion UI for the scope review so the user sees buttons; only use

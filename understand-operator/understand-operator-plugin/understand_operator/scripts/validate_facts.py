@@ -28,7 +28,7 @@ from understand_operator._operator.fact_registry import build_fact_registry
 from understand_operator._operator.identity import relation_stable_id, resolve_identity
 from understand_operator._operator.kind_match import kind_matches
 from understand_operator._operator.reference_paths import iter_reference_values, reference_declarations
-from understand_operator._operator.run_context import active_run_id, source_root_for_operator
+from understand_operator._operator.run_context import active_run_id, phase0_receipt, source_root_for_operator
 from understand_operator._operator.spec import catalog_entries, load_spec, spec_bundle_hash
 from understand_operator._operator.source_reader import SourceReadError, SourceReader
 
@@ -88,10 +88,13 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
     _validate_forbidden_kb_dirs(uo_root, errors)
     manifest = _load_yaml(uo_root / "manifest.yaml", "manifest.yaml", errors)
     selected_run_id = _validation_run_id(uo_root, manifest if isinstance(manifest, dict) else None, run_id, errors)
+    receipt_snapshot: dict[str, Any] = {}
     if isinstance(manifest, dict):
         _validate_manifest(manifest, errors)
         if STAGE_ORDER.get(stage, 0) >= STAGE_ORDER["step1"]:
             _validate_phase0_receipt(repo_root, uo_root, manifest, errors, selected_run_id)
+            receipt = phase0_receipt(uo_root, selected_run_id)
+            receipt_snapshot = receipt.get("snapshot") if isinstance(receipt.get("snapshot"), dict) else {}
 
     entries = catalog_entries(spec)
     ownership = _ownership_patterns(spec)
@@ -136,7 +139,7 @@ def validate_facts(repo_root: Path, op_name: str, *, stage: str = "step1", scope
         if not _entry_in_scope(entry, scope) and rel != "manifest.yaml":
             continue
         docs[rel] = doc
-        _validate_document_header(rel, doc, entry, errors)
+        _validate_document_header(rel, doc, entry, errors, selected_run_id, receipt_snapshot)
         if rel != "manifest.yaml":
             _validate_machine_schema(spec["root"], rel, doc, entry, errors)
         for section, unit in _document_units(doc):
@@ -421,7 +424,14 @@ def _catalog_match(catalog_by_path: dict[str, dict[str, Any]], rel: str) -> dict
     return None
 
 
-def _validate_document_header(rel: str, doc: dict[str, Any], entry: dict[str, Any], errors: list[FactValidationError]) -> None:
+def _validate_document_header(
+    rel: str,
+    doc: dict[str, Any],
+    entry: dict[str, Any],
+    errors: list[FactValidationError],
+    selected_run_id: str | None,
+    receipt_snapshot: dict[str, Any],
+) -> None:
     if rel == "manifest.yaml":
         for key in ("version", "op_name", "repo_root", "source", "spec", "current_run_id", "stages"):
             if key not in doc:
@@ -438,10 +448,23 @@ def _validate_document_header(rel: str, doc: dict[str, Any], entry: dict[str, An
         errors.append(FactValidationError("OWNER_MISMATCH", rel, f"expected {entry.get('owner')}, got {artifact.get('owner')}"))
     run_id = str(snapshot.get("run_id") or "")
     source_snapshot_id = str(snapshot.get("source_snapshot_id") or "")
+    source_revision = str(snapshot.get("source_revision") or "")
     if not run_id.startswith("UO_RUN_") or run_id == "UO_RUN_PENDING":
         errors.append(FactValidationError("RUN_ID_INVALID", rel, "snapshot.run_id must be a finalized UO_RUN_* value"))
     if not source_snapshot_id.startswith("SOURCE_") or source_snapshot_id == "SOURCE_PENDING":
         errors.append(FactValidationError("SOURCE_SNAPSHOT_INVALID", rel, "snapshot.source_snapshot_id must be finalized"))
+    if selected_run_id and rel != f"runs/{selected_run_id}/phase0/receipt.yaml" and rel != "manifest.yaml":
+        if run_id != selected_run_id:
+            errors.append(FactValidationError("ARTIFACT_RUN_MISMATCH", rel, f"snapshot.run_id {run_id!r} does not match selected run {selected_run_id!r}"))
+        expected_source_snapshot = str(receipt_snapshot.get("source_snapshot_id") or "")
+        if expected_source_snapshot and source_snapshot_id != expected_source_snapshot:
+            errors.append(FactValidationError("ARTIFACT_SOURCE_SNAPSHOT_MISMATCH", rel, f"snapshot.source_snapshot_id {source_snapshot_id!r} does not match Phase 0 receipt"))
+        expected_source_revision = str(receipt_snapshot.get("source_revision") or "")
+        if expected_source_revision and source_revision != expected_source_revision:
+            errors.append(FactValidationError("ARTIFACT_SOURCE_REVISION_MISMATCH", rel, f"snapshot.source_revision {source_revision!r} does not match Phase 0 receipt"))
+        expected_spec_bundle = receipt_snapshot.get("spec_bundle_hash")
+        if expected_spec_bundle and snapshot.get("spec_bundle_hash") != expected_spec_bundle:
+            errors.append(FactValidationError("SPEC_BUNDLE_MISMATCH", rel, "snapshot.spec_bundle_hash does not match Phase 0 receipt"))
     if snapshot.get("spec_bundle_hash") != spec_bundle_hash():
         errors.append(FactValidationError("SPEC_BUNDLE_MISMATCH", rel, "snapshot.spec_bundle_hash does not match current Skill spec"))
     partition = isinstance(doc.get("sections"), dict)
@@ -553,6 +576,12 @@ def _validate_nested_schema_rules(rel: str, base_path: str, value: dict[str, Any
     for required_path in schema.get("required_paths") or []:
         if _path_value(value, str(required_path)) in (None, "", []):
             errors.append(FactValidationError("SCHEMA_REQUIRED_FIELD_MISSING", rel, f"{base_path}/{str(required_path).strip('/')} is required"))
+    one_of_paths = schema.get("one_of_paths") if isinstance(schema.get("one_of_paths"), list) else []
+    for group in one_of_paths:
+        options = [str(item) for item in group] if isinstance(group, list) else []
+        if options and not any(_path_value(value, option) not in (None, "", []) for option in options):
+            rendered = ", ".join(f"{base_path}/{option.strip('/')}" for option in options)
+            errors.append(FactValidationError("SCHEMA_REQUIRED_ONE_OF_MISSING", rel, f"one of [{rendered}] is required"))
     enum_paths = schema.get("enum_paths") if isinstance(schema.get("enum_paths"), dict) else {}
     for path, allowed in enum_paths.items():
         current = _path_value(value, str(path))
@@ -573,7 +602,7 @@ def _validate_nested_schema_rules(rel: str, base_path: str, value: dict[str, Any
                 errors.append(FactValidationError("SCHEMA_LIST_ITEM_NOT_MAPPING", rel, f"{item_path} must be a mapping"))
                 continue
             for field in required:
-                if item.get(field) in (None, "", []):
+                if item.get(field) in (None, ""):
                     errors.append(FactValidationError("SCHEMA_ITEM_FIELD_MISSING", rel, f"{item_path}/{field} is required"))
             for field, allowed in enum_fields.items():
                 if item.get(field) is not None and isinstance(allowed, list) and item.get(field) not in allowed:
@@ -1023,7 +1052,7 @@ def _normalize_kind(kind: str) -> str:
     return kind.lower() or "fact"
 
 
-def _write_report(uo_root: Path, stage: str, scope: str, errors: list[FactValidationError]) -> None:
+def _write_report(uo_root: Path, stage: str, scope: str, errors: list[FactValidationError], selected_run_id: str | None) -> None:
     if stage == "step1":
         report = uo_root / "checks" / "step1" / "validation.yaml"
         artifact_type = "checks.step1.validation"
@@ -1041,14 +1070,16 @@ def _write_report(uo_root: Path, stage: str, scope: str, errors: list[FactValida
     else:
         report = uo_root / "checks" / "compile_gate.yaml"
         artifact_type = "checks.compile_gate"
+    receipt = phase0_receipt(uo_root, selected_run_id) if selected_run_id else {}
+    receipt_snapshot = receipt.get("snapshot") if isinstance(receipt.get("snapshot"), dict) else {}
     payload = {
         "version": 1,
         "artifact": {"type": artifact_type, "schema_version": 1, "owner": "facts-validator"},
         "snapshot": {
-            "run_id": "UO_RUN_VALIDATOR",
-            "source_snapshot_id": "SOURCE_VALIDATOR",
-            "source_revision": "unknown",
-            "spec_bundle_hash": spec_bundle_hash(),
+            "run_id": selected_run_id or str(receipt_snapshot.get("run_id") or "UO_RUN_UNKNOWN"),
+            "source_snapshot_id": str(receipt_snapshot.get("source_snapshot_id") or "SOURCE_UNKNOWN"),
+            "source_revision": str(receipt_snapshot.get("source_revision") or "unknown"),
+            "spec_bundle_hash": str(receipt_snapshot.get("spec_bundle_hash") or spec_bundle_hash()),
         },
         "status": "fail" if errors else "pass",
         "checked_at": datetime.now(tz=timezone.utc).isoformat(),
@@ -1060,6 +1091,15 @@ def _write_report(uo_root: Path, stage: str, scope: str, errors: list[FactValida
     }
     report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+
+def active_validation_run_id(uo_root: Path, requested_run_id: str | None = None) -> str | None:
+    if requested_run_id:
+        return requested_run_id
+    try:
+        return active_run_id(uo_root)
+    except RuntimeError:
+        return None
 
 
 def _input_hashes_for_scope(uo_root: Path, stage: str, scope: str) -> dict[str, str]:
@@ -1100,7 +1140,7 @@ def main(argv: list[str] | None = None) -> int:
     errors = validate_facts(repo_root, op_name, stage=args.stage, scope=args.scope, run_id=args.run_id)
     uo_root = existing_operator_root(repo_root, op_name)
     if args.write_report and uo_root.exists():
-        _write_report(uo_root, args.stage, args.scope, errors)
+        _write_report(uo_root, args.stage, args.scope, errors, active_validation_run_id(uo_root, args.run_id))
     if errors:
         for error in errors:
             print(error.render(), file=sys.stderr)

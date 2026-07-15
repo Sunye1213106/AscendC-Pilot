@@ -105,9 +105,15 @@ Required order:
 6. Re-run `prepare_operator.py --write-index-meta --cbm-project <project>`.
 7. Use targeted MCP semantic enrichment for candidate entries, registrations,
    host/kernel symbols, and architecture variants.
-   Write `runs/<run_id>/phase0/semantic_enrichment.yaml` with query records.
-   `confidence` and `fallback` are optional; MCP failures must be recorded as
-   degraded records instead of blocking scope confirmation.
+   Write `runs/<run_id>/phase0/semantic_enrichment.yaml` with the single
+   contract fields `architecture_filter`, `cbm_queries`,
+   `architecture_variants`, `excluded_architectures`,
+   `confirmed_scope_additions`, `unresolved`, `warnings`, and `fallback`.
+   `cbm_queries` replaces any legacy `queries` field. Each query record must
+   include `tool`, one of `payload` or `query`, and one of `result_summary`,
+   `result`, `error`, or `reason`. `confidence` and `fallback_used` are
+   optional; MCP failures must be recorded as degraded records instead of
+   blocking scope confirmation.
 8. Show include, exclude, architecture variants, and uncertain items with the
    question/AskQuestion button UI. Stop.
    Continue to Phase 1 only after explicit `continue`.
@@ -157,6 +163,9 @@ validator report, current target content, exact schema, catalog entry, stable ID
 rules, and the Phase 1 authoring contract. Do not open a second boundary
 subagent window to redo the same files, and do not hand-write a task prompt that
 asks for direct final-document YAML writes or ad hoc generator scripts.
+Repair attempts are limited to three tries for the same semantic candidate
+batch repair key in the same run. Changing `task_id`, candidate filename, or
+dispatch wording does not reset the counter.
 
 ## Phase 2
 

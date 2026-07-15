@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -125,9 +126,48 @@ def _snapshot(uo_root: Path, run_id: str) -> dict[str, str]:
     }
 
 
-def repair_key_for_batch(run_id: str, owner: str, target: dict[str, Any], items: list[dict[str, Any]], relations: list[dict[str, Any]]) -> str:
-    target_path = str(target.get("path") or "")
-    item_local_ids = sorted(str(item.get("local_id")) for item in items if isinstance(item, dict) and item.get("local_id"))
-    relation_local_ids = sorted(str(rel.get("local_id")) for rel in relations if isinstance(rel, dict) and rel.get("local_id"))
-    material = "\0".join([run_id, owner, target_path, ",".join(item_local_ids), ",".join(relation_local_ids)])
-    return "REPAIR_" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:16].upper()
+def repair_key_for_batch(
+    run_id: str,
+    owner: str,
+    target: dict[str, Any],
+    items: list[dict[str, Any]],
+    relations: list[dict[str, Any]],
+    unresolved: list[dict[str, Any]],
+) -> str:
+    item_local_ids = sorted(
+        str(item.get("local_id"))
+        for item in items
+        if isinstance(item, dict) and item.get("local_id")
+    )
+    unresolved_local_ids = sorted(
+        str(item.get("local_id"))
+        for item in unresolved
+        if isinstance(item, dict) and item.get("local_id")
+    )
+    relation_material = []
+    for relation in relations:
+        if not isinstance(relation, dict):
+            continue
+        relation_material.append(
+            {
+                "type": relation.get("type"),
+                "source": relation.get("source"),
+                "target": relation.get("target"),
+            }
+        )
+    material = {
+        "run_id": run_id,
+        "owner": owner,
+        "target": {
+            "path": target.get("path"),
+            "section": target.get("section"),
+        },
+        "item_local_ids": item_local_ids,
+        "relations": sorted(
+            relation_material,
+            key=lambda value: json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")),
+        ),
+        "unresolved_local_ids": unresolved_local_ids,
+    }
+    encoded = json.dumps(material, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return "REPAIR_" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16].upper()

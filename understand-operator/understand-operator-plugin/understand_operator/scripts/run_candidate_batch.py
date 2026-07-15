@@ -32,7 +32,14 @@ def run_candidate_batch(repo_root: Path, op_name: str, batch_path: Path) -> tupl
     run_id = str(task.get("run_id") or "")
     task_id = str(task.get("task_id") or "unknown_task")
     owner = str(task.get("owner") or "unknown-owner")
-    repair_key = repair_key_for_batch(run_id, owner, target, batch.get("items") or [], batch.get("relations") or [])
+    repair_key = repair_key_for_batch(
+        run_id,
+        owner,
+        target,
+        batch.get("items") or [],
+        batch.get("relations") or [],
+        batch.get("unresolved") or [],
+    )
     lock_path = batch_path.with_suffix(batch_path.suffix + ".lock")
     lock_fd: int | None = None
     try:

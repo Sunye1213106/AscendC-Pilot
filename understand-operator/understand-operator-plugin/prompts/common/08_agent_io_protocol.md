@@ -52,5 +52,7 @@ must not modify another owner's target.
 
 Run `validate_fact_stage.py` only after an agent/stage completes. If local
 validation or compilation fails, repair only the fields reported for the same
-candidate JSON batch. Stop and report when `CANDIDATE_REPAIR_EXHAUSTED` is
-returned; do not edit the formal YAML or relax schemas/ownership rules.
+candidate JSON batch. Repair tracking is keyed by the semantic candidate batch
+repair key in the same run, not by `task_id`. Stop and report when
+`CANDIDATE_REPAIR_EXHAUSTED` is returned; do not edit the formal YAML or relax
+schemas/ownership rules.

@@ -181,7 +181,20 @@ def _validate_scope_sets(scope_review: dict[str, Any], errors: list[str]) -> Non
 
 def _validate_semantic_enrichment(doc: dict[str, Any], errors: list[str]) -> None:
     data = _item_data(doc)
+    if "queries" in doc or "queries" in data:
+        errors.append("semantic_enrichment.yaml must use cbm_queries instead of queries")
     records = data.get("cbm_queries") or doc.get("cbm_queries")
+    architecture_filter = data.get("architecture_filter") or doc.get("architecture_filter")
+    if not isinstance(architecture_filter, dict):
+        errors.append("semantic_enrichment.yaml missing architecture_filter mapping")
+    else:
+        for key in ("included", "excluded"):
+            if not isinstance(architecture_filter.get(key), list):
+                errors.append(f"semantic_enrichment.yaml architecture_filter.{key} must be a list")
+    for key in ("architecture_variants", "excluded_architectures", "confirmed_scope_additions", "warnings"):
+        value = data.get(key) if key in data else doc.get(key)
+        if not isinstance(value, list):
+            errors.append(f"semantic_enrichment.yaml missing {key} list")
     unresolved = doc.get("unresolved") if isinstance(doc.get("unresolved"), list) else []
     if not isinstance(records, list):
         errors.append("semantic_enrichment.yaml missing cbm_queries list")

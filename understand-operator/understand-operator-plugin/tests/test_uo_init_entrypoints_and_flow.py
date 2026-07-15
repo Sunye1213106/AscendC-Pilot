@@ -39,6 +39,7 @@ def _repo(tmp_path: Path) -> tuple[Path, Path]:
     init_operator_contract_layout(root, "DemoOp", repo)
     manifest = yaml.safe_load((root / "manifest.yaml").read_text(encoding="utf-8"))
     manifest["current_run_id"] = "UO_RUN_TEST"
+    manifest["source"]["root"] = str(repo.resolve())
     manifest["source"]["revision"] = "unknown"
     manifest["source"]["snapshot_id"] = "SOURCE_TEST"
     (root / "manifest.yaml").write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
@@ -47,12 +48,31 @@ def _repo(tmp_path: Path) -> tuple[Path, Path]:
     _write_phase0_doc(phase0 / "context.yaml", "runs.context", {"source_revision": "unknown", "source_snapshot_id": "SOURCE_TEST", "spec_bundle_hash": spec_bundle_hash()})
     _write_phase0_doc(phase0 / "installed_skill_check.yaml", "runs.installed_skill_check", {"consistent": True})
     _write_phase0_doc(phase0 / "ignore_rules.yaml", "runs.ignore_rules", {"patterns": []})
-    _write_phase0_doc(phase0 / "scope_scan.yaml", "runs.scope_scan", {"status": "complete"})
+    _write_phase0_doc(
+        phase0 / "scope_scan.yaml",
+        "runs.scope_scan",
+        {
+            "status": "complete",
+            "project_root": str(repo.resolve()),
+            "op_name": "DemoOp",
+            "operator_path": "",
+            "files": {
+                "initial_operator_files": [{"path": "op_host/demo.cpp"}],
+                "dependency_files": [],
+                "external_system_files": [],
+                "third_party_files": [],
+                "generated_files": [],
+                "excluded_files": [],
+                "uncertain_files": [],
+            },
+        },
+    )
     _write_phase0_doc(
         phase0 / "semantic_enrichment.yaml",
         "runs.semantic_enrichment",
         {
             "status": "complete",
+            "architecture_filter": {"included": [], "excluded": []},
             "cbm_queries": [
                 {
                     "tool": "search_graph",
@@ -60,6 +80,12 @@ def _repo(tmp_path: Path) -> tuple[Path, Path]:
                     "result_summary": {"matches_count": 1},
                 }
             ],
+            "architecture_variants": [],
+            "excluded_architectures": [],
+            "confirmed_scope_additions": [],
+            "unresolved": [],
+            "warnings": [],
+            "fallback": "",
         },
     )
     _write_yaml(
@@ -134,15 +160,37 @@ def _write_phase0_doc(path: Path, artifact_type: str, data: dict[str, Any]) -> N
         defaults = {
             "status": "pending",
             "project_root": "repo",
+            "op_name": "DemoOp",
             "operator_path": "",
+            "generated_at": "2026-01-01T00:00:00+00:00",
+            "scan_method": {"filesystem_tool": "rg", "cbm_project": "", "ignore_rules_applied": True, "max_dependency_depth": 8},
+            "directories": [],
+            "operator_roots": [],
             "scope_roots": [],
             "dependency_roots": [],
+            "include_search_paths": [],
+            "uncertain_include_paths": [],
+            "seed_files": {},
             "files": {},
+            "dependency_edges": [],
             "symbols": {},
+            "global_candidates": {},
             "architecture_variants": [],
+            "large_files": [],
+            "warnings": [],
         }
     elif artifact_type == "runs.semantic_enrichment":
-        defaults = {"status": "pending"}
+        defaults = {
+            "status": "pending",
+            "architecture_filter": {"included": [], "excluded": []},
+            "cbm_queries": [],
+            "architecture_variants": [],
+            "excluded_architectures": [],
+            "confirmed_scope_additions": [],
+            "unresolved": [],
+            "warnings": [],
+            "fallback": "",
+        }
     elif artifact_type == "runs.installed_skill_check":
         defaults = {"consistent": True}
     elif artifact_type == "runs.ignore_rules":
@@ -247,9 +295,9 @@ def _compile_minimal_phase2_phase3_candidates(repo: Path, batch_dir: Path) -> No
         "host_tiling_field.json": _candidate_batch({"path": "facts/host.yaml", "section": "tilingdata_writes"}, "uo-host-extraction", "step2", "HOST_FIELD", [
             {"local_id": "field", "kind": "tilingdata_field", "identity": field_identity, "fields": {"field_type": "uint32_t"}, "source_locations": [host_loc]},
         ]),
-        "compute_op.json": _candidate_batch({"path": "facts/compute.yaml", "section": "operations"}, "uo-flow-extraction", "step2", "COMPUTE_OP", [{"local_id": "op", "kind": "compute_operation", "identity": {"compute_scope": "DemoKernel", "operation_type": "copy", "output_identity": "dst", "source_span": {"start_line": 2, "end_line": 2}}, "fields": {"semantic": {"operation_type": "copy", "formula": "dst=src"}, "input_tensor_refs": [], "output_tensor_refs": [], "execution": {"classification": "data_movement", "paths": [{"engine": "vector", "condition_refs": [], "api_refs": [], "architecture_variants": [], "dtype_conditions": [], "layout_conditions": [], "shape_conditions": [], "tiling_key_refs": []}]}}, "source_locations": [kernel_call_loc]}]),
+        "compute_op.json": _candidate_batch({"path": "facts/compute.yaml", "section": "operations"}, "uo-flow-extraction", "step2", "COMPUTE_OP", [{"local_id": "op", "kind": "compute_operation", "identity": {"compute_scope": "DemoKernel", "operation_type": "copy", "output_identity": "dst", "source_span": {"start_line": 2, "end_line": 2}}, "fields": {"semantic": {"operation_type": "copy", "formula": "dst=src"}, "input_tensor_refs": [], "output_tensor_refs": [], "execution": {"classification": "data_movement", "paths": [{"engine": "data_movement", "condition_refs": [], "api_refs": [], "architecture_variants": [], "dtype_conditions": [], "layout_conditions": [], "shape_conditions": [], "tiling_key_refs": []}]}}, "source_locations": [kernel_call_loc]}]),
         "kernel_entry.json": _candidate_batch({"path": "facts/kernel/overview.yaml", "section": "entries"}, "uo-kernel-overview-agent", "step2", "KERNEL_ENTRY", [{"local_id": "entry", "kind": "kernel_entry", "identity": {"qualified_entry_symbol": "DemoKernel", "signature": "void()", "discriminator": "generic"}, "fields": {"name": "DemoKernel", "file": "op_kernel/demo.cpp", "symbol": "DemoKernel", "entry_kind": "kernel_entry", "called_by_refs": [], "call_refs": [], "architecture_variant": "generic", "template_binding": "none"}, "source_locations": [kernel_loc]}]),
-        "slice_manifest.json": _candidate_batch({"path": "facts/kernel/slice_manifest.yaml"}, "uo-kernel-slice-planner", "step3", "SLICE_MANIFEST", [{"local_id": "slice", "kind": "kernel_slice", "identity": {"kernel_entry_ref": "DemoKernel", "template_binding_signature": "generic", "structural_flow_signature": "read-call", "tilingdata_read_signature": "v", "output_signature": "dst"}, "fields": {"slice_id": "main", "functions": ["DemoKernel"], "primary_owner": "uo-kernel-slice-agent"}, "source_locations": []}]),
+        "slice_manifest.json": _candidate_batch({"path": "facts/kernel/slice_manifest.yaml"}, "uo-kernel-slice-planner", "step3", "SLICE_MANIFEST", [{"local_id": "slice", "kind": "kernel_slice", "identity": {"kernel_entry_ref": {"ref_type": "symbol", "kind": "kernel_entry", "qualified_symbol": "DemoKernel", "signature": "void()"}, "template_binding_signature": "generic", "structural_flow_signature": "read-call", "tilingdata_read_signature": "v", "output_signature": "dst"}, "fields": {"slice_id": "main", "functions": ["DemoKernel"], "primary_owner": "uo-kernel-slice-agent", "kernel_entry_ref": {"ref_type": "symbol", "kind": "kernel_entry", "qualified_symbol": "DemoKernel", "signature": "void()"}, "output_tensor_refs": [], "output_write_refs": [], "template_binding_signature": "generic", "structural_flow_signature": "read-call", "tilingdata_read_signature": "v", "output_signature": "dst"}, "source_locations": [kernel_loc]}]),
         "slice_memory.json": _candidate_batch({"path": "facts/kernel/slices/main.yaml", "section": "memory"}, "uo-kernel-slice-agent", "step3", "SLICE_MEMORY", [{"local_id": "mem", "kind": "memory_resource", "identity": {"source_file": "op_kernel/demo.cpp", "scope_symbol": "DemoKernel", "source_name": "tile", "declaration_span": {"start_line": 1, "end_line": 1}, "resource_kind": "local"}, "fields": {"resource_kind": "local", "allocation_site_ref": {"ref_type": "symbol", "kind": "kernel_entry", "qualified_symbol": "DemoKernel"}, "producer_refs": [], "consumer_refs": [], "lifetime_start_ref": {"ref_type": "symbol", "kind": "kernel_entry", "qualified_symbol": "DemoKernel"}, "lifetime_end_ref": {"ref_type": "symbol", "kind": "kernel_entry", "qualified_symbol": "DemoKernel"}, "reuse_refs": [], "queue_operation_refs": []}, "source_locations": [kernel_loc]}]),
     }
     for name, batch in batches.items():

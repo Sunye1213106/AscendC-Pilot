@@ -9,7 +9,7 @@ kind_required_fields:
   output_tensor: [name, dtype, layout, rank, shape_symbols]
   optional_input: [name, optional, presence_condition, dtype, layout, rank, shape_symbols]
   optional_output: [name, optional, presence_condition, dtype, layout, rank, shape_symbols]
-  attribute: [name, attr_type, default, domain]
+  attribute: [name, attr_type]
   interface_constraint: [constraint_text, source_refs]
   format_conversion: [from_format, to_format, source_refs]
 relation_required_fields: [id, type, source_id, target_id, status, sources]

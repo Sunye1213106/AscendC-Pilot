@@ -67,8 +67,10 @@ python "$SCRIPT_DIR/run_candidate_batch.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 
 After a failed run, repair only the fields identified in the structured error
 output. The repair controller permits at most three attempts for the same
-`task_id` in the same run. Stop and report `CANDIDATE_REPAIR_EXHAUSTED` after
-the third failed attempt.
+semantic candidate batch repair key in the same run. Changing `task_id`,
+candidate filename, or dispatch wording does not reset the attempt count.
+`task_id` is readable metadata, not repair identity. Stop and report
+`CANDIDATE_REPAIR_EXHAUSTED` after the third failed attempt.
 
 After all Phase 1 boundary targets compile, run:
 
@@ -170,7 +172,7 @@ Before writing a Candidate batch, read `candidate_batch.schema.json`,
   "version": 2,
   "task": {"run_id": "UO_RUN_EXAMPLE", "stage": "step1", "owner": "uo-boundary-agent", "task_id": "BOUNDARY_ENTRY"},
   "target": {"path": "facts/operator/entrypoints.yaml"},
-  "items": [{"local_id": "host_entry", "kind": "entrypoint", "identity": {"qualified_symbol": "DemoOpHost"}, "fields": {"name": "DemoOpHost", "file": "op_host/demo.cpp", "symbol": "DemoOpHost", "entry_kind": "host_entry"}, "source_locations": [{"file": "op_host/demo.cpp", "symbol": "DemoOpHost", "start_line": 130, "end_line": 130, "anchor_kind": "definition"}]}],
+  "items": [{"local_id": "host_entry", "kind": "host_entry", "identity": {"qualified_symbol": "DemoOpHost"}, "fields": {"name": "DemoOpHost", "file": "op_host/demo.cpp", "symbol": "DemoOpHost", "entry_kind": "host_entry"}, "source_locations": [{"file": "op_host/demo.cpp", "symbol": "DemoOpHost", "start_line": 130, "end_line": 130, "anchor_kind": "definition"}]}],
   "relations": [],
   "unresolved": []
 }
@@ -181,7 +183,7 @@ Before writing a Candidate batch, read `candidate_batch.schema.json`,
   "version": 2,
   "task": {"run_id": "UO_RUN_EXAMPLE", "stage": "step1", "owner": "uo-boundary-agent", "task_id": "BOUNDARY_CONSTRAINT"},
   "target": {"path": "facts/operator/interface.yaml"},
-  "items": [{"local_id": "constraint_dtype", "kind": "interface_constraint", "identity": {"source_file": "op_host/demo.cpp", "scope_symbol": "DemoOpHost", "source_span": {"start_line": 140, "end_line": 142}}, "fields": {"constraint_kind": "dtype", "description": "input x supports float16", "analysis_status": "source_backed"}, "source_locations": [{"file": "op_host/demo.cpp", "symbol": "DemoOpHost", "start_line": 140, "end_line": 142, "anchor_kind": "validation"}]}],
+  "items": [{"local_id": "constraint_dtype", "kind": "interface_constraint", "identity": {"source_file": "op_host/demo.cpp", "scope_symbol": "DemoOpHost", "source_span": {"start_line": 140, "end_line": 142}}, "fields": {"constraint_text": "input x supports float16", "source_refs": []}, "source_locations": [{"file": "op_host/demo.cpp", "symbol": "DemoOpHost", "start_line": 140, "end_line": 142, "anchor_kind": "validation"}]}],
   "relations": [],
   "unresolved": []
 }
@@ -192,7 +194,7 @@ Before writing a Candidate batch, read `candidate_batch.schema.json`,
   "version": 2,
   "task": {"run_id": "UO_RUN_EXAMPLE", "stage": "step1", "owner": "uo-boundary-agent", "task_id": "BOUNDARY_ATTR"},
   "target": {"path": "facts/operator/interface.yaml"},
-  "items": [{"local_id": "attr_seed", "kind": "attribute", "identity": {"operator_name": "DemoOp", "name": "seed"}, "fields": {"name": "seed", "attr_type": "Int", "default": 0, "analysis_status": "declared"}, "source_locations": [{"file": "op_host/demo.cpp", "symbol": "DemoOp", "start_line": 121, "end_line": 121, "anchor_kind": "declaration"}]}],
+  "items": [{"local_id": "attr_seed", "kind": "attribute", "identity": {"operator_name": "DemoOp", "name": "seed"}, "fields": {"name": "seed", "attr_type": "Int", "default": 0}, "source_locations": [{"file": "op_host/demo.cpp", "symbol": "DemoOp", "start_line": 121, "end_line": 121, "anchor_kind": "declaration"}]}],
   "relations": [],
   "unresolved": []
 }

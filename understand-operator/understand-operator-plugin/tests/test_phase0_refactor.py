@@ -51,6 +51,7 @@ def _repo(tmp_path: Path) -> tuple[Path, Path, str]:
         "runs.semantic_enrichment",
         {
             "status": "complete",
+            "architecture_filter": {"included": [], "excluded": []},
             "cbm_queries": [
                 {
                     "tool": "search_graph",
@@ -61,6 +62,12 @@ def _repo(tmp_path: Path) -> tuple[Path, Path, str]:
                     "fallback_used": False,
                 }
             ],
+            "architecture_variants": [],
+            "excluded_architectures": [],
+            "confirmed_scope_additions": [],
+            "unresolved": [],
+            "warnings": [],
+            "fallback": "",
         },
     )
     (base / "cbm" / "index_meta.json").write_text(
