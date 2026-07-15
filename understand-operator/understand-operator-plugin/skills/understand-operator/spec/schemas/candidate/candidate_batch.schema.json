@@ -31,13 +31,27 @@
     "unresolved": {"type": "array", "items": {"$ref": "#/$defs/unresolved"}}
   },
   "$defs": {
-    "span": {
+    "lineSpan": {
       "type": "object",
       "required": ["start_line", "end_line"],
       "additionalProperties": false,
       "properties": {
         "start_line": {"type": "integer", "minimum": 1},
         "end_line": {"type": "integer", "minimum": 1}
+      }
+    },
+    "identity": {
+      "type": "object",
+      "properties": {
+        "source_span": {"$ref": "#/$defs/lineSpan"},
+        "declaration_span": {"$ref": "#/$defs/lineSpan"},
+        "definition_span": {"$ref": "#/$defs/lineSpan"},
+        "call_span": {"$ref": "#/$defs/lineSpan"},
+        "predicate_span": {"$ref": "#/$defs/lineSpan"},
+        "loop_header_span": {"$ref": "#/$defs/lineSpan"},
+        "write_span": {"$ref": "#/$defs/lineSpan"},
+        "read_span": {"$ref": "#/$defs/lineSpan"},
+        "site_span": {"$ref": "#/$defs/lineSpan"}
       }
     },
     "location": {
@@ -94,7 +108,7 @@
         "local_id": {"type": "string", "minLength": 1},
         "kind": {"type": "string", "minLength": 1},
         "name": {"type": "string"},
-        "identity": {"type": "object"},
+        "identity": {"$ref": "#/$defs/identity"},
         "fields": {"type": "object"},
         "source_locations": {"type": "array", "items": {"$ref": "#/$defs/location"}}
       }

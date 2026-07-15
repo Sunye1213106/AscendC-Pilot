@@ -26,17 +26,50 @@ immediately. Do not fall back to a general agent.
 All tasks are foreground tasks. Wait for every task to return before reading
 its artifacts or advancing the workflow.
 
-Do not open a second task window for the same `(phase, owner, target files)`.
-If the runtime cannot resume the original subagent context after a validator
-failure, stop and report `SUBAGENT_RESUME_UNAVAILABLE` with the failed report
-path. Do not spawn another fresh subagent to redo the same files.
+## Dispatch Identity and Resume
+
+Each specialized task has a stable dispatch identity:
+
+```text
+<run_id>:<phase-or-step>:<owner>:<target-path-or-slice-id>
+```
+
+Before opening a subagent task, check whether a task with the same identity is
+already open or has already returned earlier in this run. Resume that same
+subagent context for continuation, repair, or follow-up instructions.
+Do not open another task window for the same identity.
+
+For single-owner stages, the target key is:
+
+- Phase 1 boundary: `facts/operator/**`
+- Phase 2 host: `facts/host.yaml`
+- Phase 2 compute: `facts/compute.yaml`
+- Phase 2 kernel overview: `facts/kernel/overview.yaml`
+- Phase 3 planner: `facts/kernel/slice_manifest.yaml+facts/kernel/slice_interfaces.yaml`
+- Final abstraction: `graphs/derived/abstraction_rules.yaml`
+- Final graph review: `checks/graph_review.yaml`
+
+For Phase 3 slice extraction, the target key is the assigned `slice_id`, so
+parallel slice agents may run once per distinct slice. A validation failure for
+slice `X` must resume the existing `uo-kernel-slice-agent` task for slice `X`,
+not create another `uo-kernel-slice-agent` task.
+
+If the runtime cannot resume the original subagent context after any validator,
+candidate, review, or graph failure, stop and report
+`SUBAGENT_RESUME_UNAVAILABLE` with the dispatch identity and failed report path.
+Do not spawn another fresh subagent to redo the same files.
 
 Dispatch prompts must not restate extraction details by hand. Pass the run
 context and require the subagent to read its installed agent file, Phase 0
-receipt, scope scan, catalog, schemas, and current validator report. A dispatch
-prompt must not tell a subagent to write final fact YAML directly, create
-generator/fixer scripts, or run broad `Glob "**/*"` scans. Subagents write
-Candidate JSON V2 batches, then run local validation and deterministic
+receipt, scope scan, catalog, schemas, and current validator report. Also pass
+`PLUGIN_ROOT`, `PROMPT_DIR`, and `SCRIPT_DIR` explicitly. If a subagent cannot
+find prompts from `PROMPT_DIR`, provide the source checkout fallback path:
+`D:\PR-review\Ascendc-PR-test-agent-upload\understand-operator\understand-operator-plugin`.
+Do not let a subagent resolve `prompts/...` relative to `PROJECT_ROOT`.
+
+A dispatch prompt must not tell a subagent to write final fact YAML directly,
+create generator/fixer scripts, or run broad `Glob "**/*"` scans. Subagents
+write Candidate JSON V2 batches, then run local validation and deterministic
 compilation.
 
 ## Ownership

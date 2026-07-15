@@ -27,6 +27,13 @@ def validate_graph_review(repo_root: Path, op_name: str) -> tuple[int, dict[str,
         errors.append("checks/graph_review_trigger.yaml is missing or not ready")
     if not report:
         errors.append("checks/graph_review.yaml is missing")
+    artifact = report.get("artifact") if isinstance(report.get("artifact"), dict) else {}
+    if artifact.get("type") != "checks.graph_review":
+        errors.append("checks/graph_review.yaml artifact.type must be checks.graph_review")
+    if artifact.get("owner") != "uo-graph-review-agent":
+        errors.append("checks/graph_review.yaml artifact.owner must be uo-graph-review-agent")
+    if report.get("snapshot") != trigger.get("snapshot"):
+        errors.append("graph review snapshot does not match trigger snapshot")
     status = str(report.get("status") or "")
     if status not in {"pass", "warn", "fail"}:
         errors.append("checks/graph_review.yaml status must be pass, warn, or fail")
@@ -36,13 +43,27 @@ def validate_graph_review(repo_root: Path, op_name: str) -> tuple[int, dict[str,
         if actual.get(key) != digest:
             errors.append(f"graph review input hash stale: {key}")
     report_hashes = report.get("input_hashes") if isinstance(report.get("input_hashes"), dict) else {}
+    if report_hashes != expected:
+        errors.append("graph review report input_hashes must exactly match trigger input_hashes")
     for key, digest in expected.items():
         if report_hashes.get(key) != digest:
             errors.append(f"graph review report did not copy trigger hash: {key}")
+    blocking = report.get("blocking_findings")
+    blocking_findings = blocking if isinstance(blocking, list) else []
+    report_warnings_raw = report.get("warnings")
+    report_warnings = report_warnings_raw if isinstance(report_warnings_raw, list) else []
     if status == "fail":
+        if not blocking_findings:
+            errors.append("graph review status fail requires blocking_findings")
         errors.append("graph review status is fail")
+    if status == "pass" and blocking_findings:
+        errors.append("graph review status pass requires empty blocking_findings")
     if status == "warn":
-        warnings.extend(str(item) for item in report.get("warnings") or ["graph review status is warn"])
+        if blocking_findings:
+            errors.append("graph review status warn requires empty blocking_findings")
+        if not report_warnings:
+            errors.append("graph review status warn requires warnings")
+        warnings.extend(str(item) for item in report_warnings or ["graph review status is warn"])
     payload = {"status": "fail" if errors else "pass", "review_status": status, "errors": errors, "warnings": warnings}
     return (2 if errors else 0), payload
 

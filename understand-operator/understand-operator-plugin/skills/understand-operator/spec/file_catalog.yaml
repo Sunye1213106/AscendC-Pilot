@@ -188,21 +188,21 @@ files:
   - path: checks/completeness.yaml
     artifact_type: checks.completeness
     owner: facts-validator
-    schema: schemas/common/document.schema.yaml
+    schema: schemas/checks/completeness.schema.yaml
     required_after_stage: step3
     allow_empty: false
     raw_graph_input: false
   - path: checks/graph_review_trigger.yaml
     artifact_type: checks.graph_review_trigger
     owner: facts-validator
-    schema: schemas/common/document.schema.yaml
+    schema: schemas/checks/graph_review_trigger.schema.yaml
     required_after_stage: derived
     allow_empty: false
     raw_graph_input: false
   - path: checks/graph_review.yaml
     artifact_type: checks.graph_review
     owner: uo-graph-review-agent
-    schema: schemas/common/document.schema.yaml
+    schema: schemas/checks/graph_review.schema.yaml
     required_after_stage: derived
     allow_empty: false
     raw_graph_input: false
@@ -377,7 +377,7 @@ files:
   - path: runs/*/repairs/*.yaml
     artifact_type: runs.repair_state
     owner: repair-controller
-    schema: schemas/common/document.schema.yaml
+    schema: schemas/runs/repair_state.schema.yaml
     required_after_stage: runtime
     allow_empty: false
     raw_graph_input: false

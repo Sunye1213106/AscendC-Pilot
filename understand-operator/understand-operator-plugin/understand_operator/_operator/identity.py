@@ -12,11 +12,23 @@ from understand_operator._operator.spec import load_spec
 IDENTITY_VERSION = 1
 
 class IdentityError(ValueError):
-    def __init__(self, code: str, message: str, field: str = "identity") -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        field: str = "identity",
+        *,
+        actual_type: str = "",
+        expected_type: str = "",
+        expected_shape: dict[str, str] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.field = field
+        self.actual_type = actual_type
+        self.expected_type = expected_type
+        self.expected_shape = expected_shape
 
 
 @dataclass(frozen=True)
@@ -379,14 +391,30 @@ def _signature(identity: dict[str, object], key: str) -> str:
 
 
 def _span(identity: dict[str, object], key: str) -> dict[str, int]:
+    if key not in identity or identity.get(key) is None:
+        raise IdentityError("IDENTITY_MISSING_FIELD", f"{key} is required", f"identity.{key}")
     value = identity.get(key)
     if not isinstance(value, dict):
-        raise IdentityError("IDENTITY_MISSING_FIELD", f"{key} is required", f"identity.{key}")
-    start = _required_int(value, "start_line", f"identity.{key}.start_line")
-    end = _required_int(value, "end_line", f"identity.{key}.end_line")
+        actual = "array" if isinstance(value, list) else type(value).__name__
+        raise IdentityError(
+            "IDENTITY_SPAN_TYPE_INVALID",
+            f"{key} must be an object containing integer start_line and end_line",
+            f"identity.{key}",
+            actual_type=actual,
+            expected_shape={"start_line": "integer >= 1", "end_line": "integer >= start_line"},
+        )
+    start = _span_int(value, "start_line", key)
+    end = _span_int(value, "end_line", key)
     if start < 1 or end < start:
-        raise IdentityError("IDENTITY_SPAN_INVALID", f"{key} start_line/end_line invalid", f"identity.{key}")
+        raise IdentityError("IDENTITY_SPAN_INVALID", f"{key} requires start_line >= 1 and end_line >= start_line", f"identity.{key}")
     return {"start_line": start, "end_line": end}
+
+
+def _span_int(identity: dict[str, object], key: str, span_key: str) -> int:
+    value = identity.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise IdentityError("IDENTITY_SPAN_INVALID", f"{span_key} requires start_line >= 1 and end_line >= start_line", f"identity.{span_key}")
+    return value
 
 
 def _required_str(identity: dict[str, object], key: str) -> str:

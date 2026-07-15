@@ -5,18 +5,32 @@ from typing import Any
 
 import yaml
 
+from understand_operator._operator.run_context import phase0_context
+from understand_operator._operator.spec import spec_bundle_hash
+
 MAX_ATTEMPTS = 3
+
+
+def read_repair_state(uo_root: Path, run_id: str, task_id: str) -> dict[str, Any]:
+    return _read(uo_root / "runs" / run_id / "repairs" / f"{_safe_task_id(task_id)}.yaml")
 
 
 def record_repair_attempt(uo_root: Path, run_id: str, task_id: str, owner: str, target: dict[str, Any], candidate_path: str, errors: list[dict[str, Any]]) -> dict[str, Any]:
     path = uo_root / "runs" / run_id / "repairs" / f"{_safe_task_id(task_id)}.yaml"
     state = _read(path)
     previous_errors = [item for item in state.get("previous_errors") or [] if isinstance(item, dict)]
-    attempt = int(state.get("attempt") or 0) + 1
+    existing_attempt = int(state.get("attempt") or 0)
+    attempt = min(existing_attempt + 1, MAX_ATTEMPTS)
     previous_errors.extend(_compact_errors(errors))
     status = "exhausted" if attempt >= MAX_ATTEMPTS else "retrying"
     payload = {
         "version": 1,
+        "artifact": {"type": "runs.repair_state", "schema_version": 1, "owner": "repair-controller"},
+        "snapshot": _snapshot(uo_root, run_id),
+        "run_id": run_id,
+        "source_snapshot_id": _snapshot(uo_root, run_id)["source_snapshot_id"],
+        "source_revision": _snapshot(uo_root, run_id)["source_revision"],
+        "spec_bundle_hash": spec_bundle_hash(),
         "task_id": task_id,
         "owner": owner,
         "target": target,
@@ -25,6 +39,9 @@ def record_repair_attempt(uo_root: Path, run_id: str, task_id: str, owner: str, 
         "max_attempts": MAX_ATTEMPTS,
         "previous_errors": previous_errors,
         "status": status,
+        "items": [],
+        "relations": [],
+        "unresolved": [],
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
@@ -43,6 +60,36 @@ def record_repair_attempt(uo_root: Path, run_id: str, task_id: str, owner: str, 
     return {}
 
 
+def mark_repair_completed(uo_root: Path, run_id: str, task_id: str, owner: str, target: dict[str, Any], candidate_path: str) -> dict[str, Any]:
+    path = uo_root / "runs" / run_id / "repairs" / f"{_safe_task_id(task_id)}.yaml"
+    state = _read(path)
+    previous_errors = [item for item in state.get("previous_errors") or [] if isinstance(item, dict)]
+    attempt = int(state.get("attempt") or 0)
+    payload = {
+        "version": 1,
+        "artifact": {"type": "runs.repair_state", "schema_version": 1, "owner": "repair-controller"},
+        "snapshot": _snapshot(uo_root, run_id),
+        "run_id": run_id,
+        "source_snapshot_id": _snapshot(uo_root, run_id)["source_snapshot_id"],
+        "source_revision": _snapshot(uo_root, run_id)["source_revision"],
+        "spec_bundle_hash": spec_bundle_hash(),
+        "task_id": task_id,
+        "owner": owner,
+        "target": target,
+        "candidate_path": candidate_path,
+        "attempt": max(attempt, 1),
+        "max_attempts": MAX_ATTEMPTS,
+        "previous_errors": previous_errors,
+        "status": "completed",
+        "items": [],
+        "relations": [],
+        "unresolved": [],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    return payload
+
+
 def _compact_errors(errors: list[dict[str, Any]]) -> list[dict[str, str]]:
     result: list[dict[str, str]] = []
     for error in errors:
@@ -59,3 +106,13 @@ def _read(path: Path) -> dict[str, Any]:
 
 def _safe_task_id(task_id: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in task_id) or "unknown_task"
+
+
+def _snapshot(uo_root: Path, run_id: str) -> dict[str, str]:
+    context = phase0_context(uo_root, run_id)
+    return {
+        "run_id": run_id,
+        "source_snapshot_id": str(context.get("source_snapshot_id") or "SOURCE_UNKNOWN"),
+        "source_revision": str(context.get("source_revision") or "unknown"),
+        "spec_bundle_hash": spec_bundle_hash(),
+    }

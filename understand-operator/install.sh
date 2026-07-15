@@ -18,6 +18,7 @@ REQUIRED_AGENTS=(
   uo-step2-fact-review-agent
   uo-step3-fact-review-agent
   uo-behavior-abstraction-agent
+  uo-graph-review-agent
 )
 
 case "$PLATFORM" in

@@ -29,9 +29,10 @@ workflow has five user-visible milestones:
 2. Phase 1 - boundary facts in `facts/operator/**`.
 3. Phase 2 - parallel Host, Compute, and Kernel Overview facts.
 4. Phase 3 - kernel slice planning and slice facts only.
-5. Final - compile gate, raw graph, raw verification, abstraction skeleton,
-   abstraction rules, derived graph, derived verification, SQLite index,
-   read-only query smoke, final gate, then stop.
+5. Final - semantic completeness, compile gate, raw graph, raw verification,
+   abstraction skeleton, abstraction rules, derived graph, derived verification,
+   graph review trigger, one-shot graph review, graph review validation,
+   SQLite index, read-only query smoke, final gate, then stop.
 
 No later phases exist in this workflow. Final completion ends the run.
 
@@ -48,6 +49,20 @@ dispatch any specialized task through a general agent fallback.
 
 Use the current PowerShell session directly. Do not nest `powershell -Command`
 inside PowerShell.
+
+Before every specialized subagent dispatch, compute and remember the stable
+dispatch identity from `prompts/00_subagent_dispatch.md`. Resume the existing
+subagent task whenever the same identity needs more work, including validator
+repairs, candidate-batch repairs, review retries, graph-review retries, and
+Phase 3 per-slice repairs. If the runtime cannot resume that task, stop with
+`SUBAGENT_RESUME_UNAVAILABLE`; do not open a replacement task with the same
+owner and target.
+
+Always pass `PLUGIN_ROOT`, `PROMPT_DIR`, and `SCRIPT_DIR` in dispatch context.
+Subagents must read prompts from `PROMPT_DIR`, not from `PROJECT_ROOT`. If the
+installed prompt directory is unavailable during local development, give the
+source checkout fallback:
+`D:\PR-review\Ascendc-PR-test-agent-upload\understand-operator\understand-operator-plugin`.
 
 ## Phase 0
 
@@ -107,10 +122,10 @@ Then run Step 1 validation with `validate_fact_stage.py`. Phase 1 must read
 Phase 0 receipt and must not rescan or expand the repository scope
 independently.
 
-Boundary agents output Candidate JSON V2 only. Validate each small candidate
-batch locally with `validate_candidate_batch.py`, then materialize formal facts
-with `compile_candidate_facts.py`; agents never author final YAML or
-deterministic identity/evidence fields.
+Boundary agents output Candidate JSON V2 only. Run each small candidate batch
+through `run_candidate_batch.py`, which performs the
+`validate_candidate_batch.py` and `compile_candidate_facts.py` steps; agents
+never author final YAML or deterministic identity/evidence fields.
 The dispatch must require the boundary agent to read
 `prompts/common/11_phase1_candidate_authoring.md`. Require one target file at a
 time and a candidate validator run after each small batch so schema and evidence
@@ -142,6 +157,11 @@ sections. Run the three scoped validators, build the registry, run
 `evaluate_review_trigger.py`, dispatch `uo-step2-fact-review-agent` only when
 triggered, then run `write_step2_receipt.py`.
 
+If a scoped validator or review validation fails, resume the existing owning
+agent identity from this phase. Do not launch a second `uo-host-extraction`,
+`uo-flow-extraction`, `uo-kernel-overview-agent`, or
+`uo-step2-fact-review-agent` for the same run and target.
+
 ## Phase 3
 
 Run `uo-kernel-slice-planner`, then parallel `uo-kernel-slice-agent` tasks for
@@ -150,15 +170,51 @@ owned formal fact partition. Run Step 3 validation, build the registry, evaluate
 `evaluate_review_trigger.py`, dispatch `uo-step3-fact-review-agent` only when
 triggered, then run `write_step3_receipt.py`.
 
+If planner validation fails, resume the existing planner task. If all-slice
+validation fails, map each failure to the owning `slice_id` and resume that
+same `uo-kernel-slice-agent` task. If Step 3 review fails, resume the existing
+`uo-step3-fact-review-agent` task. Do not open duplicate tasks for the same
+dispatch identity.
+
 ## Final
 
-Run `build_compile_gate.py`, `source_graph_compiler.py`, raw verification, then
-`prepare_abstraction_rules.py`. Dispatch `uo-behavior-abstraction-agent` only
-after the skeleton exists; it may modify only
-`graphs/derived/abstraction_rules.yaml#/rules`. Then run
-`materialize_derived_graph.py`, derived verification, `build_query_index.py`,
-`uo_query_readonly.py --smoke`, and finally `quality_gate.py`. Stop
-immediately after the final gate.
+Run these commands in this exact order:
+
+```powershell
+python "$SCRIPT_DIR/validate_semantic_completeness.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+python "$SCRIPT_DIR/build_compile_gate.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+python "$SCRIPT_DIR/source_graph_compiler.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+python "$SCRIPT_DIR/verify_raw_graph.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+python "$SCRIPT_DIR/prepare_abstraction_rules.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+```
+
+Dispatch `uo-behavior-abstraction-agent` only after the skeleton exists; it may
+modify only `graphs/derived/abstraction_rules.yaml#/rules`. Then run:
+
+```powershell
+python "$SCRIPT_DIR/materialize_derived_graph.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+python "$SCRIPT_DIR/verify_derived_graph.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+python "$SCRIPT_DIR/prepare_graph_review.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+```
+
+Dispatch `uo-graph-review-agent` exactly once. It writes only
+`checks/graph_review.yaml` and must not repair facts or graphs. Then run:
+
+```powershell
+python "$SCRIPT_DIR/validate_graph_review.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+python "$SCRIPT_DIR/build_query_index.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+python "$SCRIPT_DIR/uo_query_readonly.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --smoke
+python "$SCRIPT_DIR/quality_gate.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+```
+
+Final step order includes `build_query_index`, `uo_query_readonly.py --smoke`,
+and `quality_gate.py` without skipping graph review validation.
+
+If abstraction-rule validation fails, resume the existing
+`uo-behavior-abstraction-agent`. If graph review validation fails, resume the
+existing `uo-graph-review-agent`; do not dispatch a new graph review task.
+
+Stop immediately after the final gate.
 
 The compiler writes only `graphs/raw/**` and `indexes/**`. The derived graph
 materializer writes only `graphs/derived/**` and its validation report.

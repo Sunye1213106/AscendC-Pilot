@@ -1,10 +1,16 @@
 ---
 name: uo-graph-review-agent
 description: Read-only coarse semantic review for generated raw and derived operator graphs.
-mode: subagent
+type: subagent
 ---
 
 # uo-graph-review-agent
+
+Resolve any prompt or spec path from `PROMPT_DIR`, `PLUGIN_ROOT`, or
+`SCRIPT_DIR` provided by the host. Do not resolve plugin paths relative to
+`PROJECT_ROOT`. If the installed prompt directory is unavailable in local
+development, use the source checkout fallback
+`D:\PR-review\Ascendc-PR-test-agent-upload\understand-operator\understand-operator-plugin`.
 
 Read only:
 

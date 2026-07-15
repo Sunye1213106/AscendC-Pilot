@@ -18,8 +18,12 @@ def build_query_index(repo: Path, op_name: str) -> Path:
     with tempfile.NamedTemporaryFile(suffix=".sqlite", dir=target.parent, delete=False) as handle: temporary = Path(handle.name)
     try:
         db = sqlite3.connect(temporary); _schema(db)
+        anchors = _source_anchors(root)
+        for anchor in anchors.values():
+            span = anchor.get("span") if isinstance(anchor.get("span"), dict) else {}
+            db.execute("insert or replace into source_anchors values(?,?,?,?,?,?)", (anchor.get("id"), anchor.get("file"), anchor.get("symbol"), span.get("start_line"), span.get("end_line"), anchor.get("anchor_kind")))
         for level, rel, key in (("raw", "graphs/raw/nodes.yaml", "nodes"), ("derived", "graphs/derived/nodes.yaml", "nodes")):
-            for entry in _list(root / rel, key): _entity(db, level, entry)
+            for entry in _list(root / rel, key): _entity(db, level, entry, anchors)
         for level, rel in (("raw", "graphs/raw/edges.yaml"), ("derived", "graphs/derived/edges.yaml")):
             for entry in _list(root / rel, "edges"): _relation(db, level, entry)
         for entry in _list(root / "graphs/derived/expansions.yaml", "expansions"):
@@ -33,7 +37,19 @@ def build_query_index(repo: Path, op_name: str) -> Path:
         for key, value in _metadata(root).items(): db.execute("insert into metadata values(?,?)", (key, value))
         try:
             db.execute("create virtual table entity_fts using fts5(id, label, aliases, symbol, file, path)")
-            db.execute("insert into entity_fts(id,label,aliases,symbol,file,path) select id,label,'','','',detail_ref from entities")
+            for row in db.execute("select id,label,fields_json,detail_ref from entities").fetchall():
+                fields = json.loads(row[2] or "{}")
+                db.execute(
+                    "insert into entity_fts(id,label,aliases,symbol,file,path) values(?,?,?,?,?,?)",
+                    (
+                        row[0],
+                        row[1],
+                        _joined(fields.get("aliases")),
+                        _first(fields, ("qualified_symbol", "scope_symbol", "symbol", "name")),
+                        _first(fields, ("file",)),
+                        _first(fields, ("path",)) or row[3],
+                    ),
+                )
             db.execute("insert into metadata values(?,?)", ("fts5", "enabled"))
         except sqlite3.OperationalError:
             db.execute("insert into metadata values(?,?)", ("fts5", "unavailable"))
@@ -49,12 +65,23 @@ create table aliases(alias text not null,normalized_alias text not null,entity_i
 create index idx_entities_kind on entities(kind);create index idx_entities_label on entities(normalized_label);create index idx_relations_source on relations(source_id);create index idx_relations_target on relations(target_id);create index idx_relations_type on relations(type);create index idx_aliases_normalized on aliases(normalized_alias);create index idx_sources_file_line on source_anchors(file,start_line,end_line);''')
 
 
-def _entity(db: sqlite3.Connection, level: str, entry: dict[str, Any]) -> None:
+def _entity(db: sqlite3.Connection, level: str, entry: dict[str, Any], anchors: dict[str, dict[str, Any]]) -> None:
     fields = entry.get("search_fields") if isinstance(entry.get("search_fields"), dict) else entry.get("fields") if isinstance(entry.get("fields"), dict) else {}; label = str(entry.get("label") or entry.get("id") or ""); entity_id = str(entry.get("id"))
     db.execute("insert into entities values(?,?,?,?,?,?,?)", (entity_id, level, str(entry.get("kind") or "fact"), label, _norm(label), entry.get("detail_ref"), json.dumps(fields, ensure_ascii=False)))
-    for alias in fields.get("aliases") or []: db.execute("insert into aliases values(?,?,?)", (str(alias), _norm(str(alias)), entity_id))
+    alias_values = []
+    aliases = fields.get("aliases")
+    if isinstance(aliases, list):
+        alias_values.extend(str(alias) for alias in aliases if alias)
+    for key in ("label", "qualified_symbol", "scope_symbol", "symbol", "name", "file", "path", "field_name", "operation_type"):
+        value = label if key == "label" else fields.get(key)
+        if isinstance(value, str) and value:
+            alias_values.append(value)
+    for alias in sorted(set(alias_values)):
+        db.execute("insert into aliases values(?,?,?)", (alias, _norm(alias), entity_id))
     for source in entry.get("source_location_keys") or entry.get("source_refs") or []:
-        db.execute("insert into entity_sources values(?,?)", (entity_id, str(source)))
+        source_id = str(source)
+        if source_id in anchors:
+            db.execute("insert into entity_sources values(?,?)", (entity_id, source_id))
 
 
 def _relation(db: sqlite3.Connection, level: str, entry: dict[str, Any]) -> None:
@@ -67,6 +94,28 @@ def _list(path: Path, key: str) -> list[dict[str, Any]]:
     return [value for value in values if isinstance(value, dict)] if isinstance(values, list) else []
 
 
+def _source_anchors(root: Path) -> dict[str, dict[str, Any]]:
+    anchors: dict[str, dict[str, Any]] = {}
+    for path in sorted((root / "facts").rglob("*.yaml")) if (root / "facts").exists() else []:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        for unit in _units(data if isinstance(data, dict) else {}):
+            for section in ("items", "relations"):
+                for item in unit.get(section) or []:
+                    if not isinstance(item, dict):
+                        continue
+                    for source in item.get("sources") or []:
+                        if isinstance(source, dict) and source.get("id"):
+                            anchors[str(source["id"])] = source
+    return anchors
+
+
+def _units(doc: dict[str, Any]) -> list[dict[str, Any]]:
+    sections = doc.get("sections")
+    if isinstance(sections, dict):
+        return [value for value in sections.values() if isinstance(value, dict)]
+    return [doc]
+
+
 def _metadata(root: Path) -> dict[str, str]:
     result = {"schema_version": "1", "spec_bundle_hash": spec_bundle_hash()}
     for key, rel in (("facts_hash", "facts"), ("raw_graph_hash", "graphs/raw"), ("derived_graph_hash", "graphs/derived")):
@@ -77,6 +126,17 @@ def _metadata(root: Path) -> dict[str, str]:
 
 
 def _norm(value: str) -> str: return "".join(char for char in value.lower() if char.isalnum())
+def _joined(value: Any) -> str:
+    if isinstance(value, list): return " ".join(str(item) for item in value if item)
+    return str(value or "")
+def _first(fields: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = fields.get(key)
+        if isinstance(value, list):
+            value = next((item for item in value if item), "")
+        if value:
+            return str(value)
+    return ""
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(); parser.add_argument("repo", nargs="?", default="."); parser.add_argument("--op-name", required=True); args = parser.parse_args(argv); print(build_query_index(Path(args.repo), safe_op_name(args.op_name, Path(args.repo)))); return 0
 if __name__ == "__main__": raise SystemExit(main())

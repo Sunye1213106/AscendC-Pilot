@@ -10,6 +10,12 @@ Extract one planned kernel slice into source-backed YAML facts.
 
 Read these common prompts before extraction:
 
+Resolve every prompt path below from `PROMPT_DIR` provided by the host
+or from `$PLUGIN_ROOT/prompts`. Do not resolve `prompts/...` relative to
+`PROJECT_ROOT`. If the installed prompt directory is unavailable in local
+development, use the source checkout fallback
+`D:\PR-review\Ascendc-PR-test-agent-upload\understand-operator\understand-operator-plugin\prompts`.
+
 - `prompts/common/00_source_fact_contract.md`
 - `prompts/common/03_source_evidence_rules.md`
 - `prompts/common/04_variable_constraint_model.md`
@@ -57,16 +63,10 @@ The agent emits only candidate JSON batches, checks them with the Local
 Validator, and invokes the deterministic compiler. It must never write formal
 YAML, IDs, source anchor text, or hashes.
 
-Validate each Candidate JSON V2 batch with:
+Process each Candidate JSON V2 batch with:
 
 ```powershell
-python "$SCRIPT_DIR/validate_candidate_batch.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --batch "<candidate.json>"
-```
-
-Then compile it with:
-
-```powershell
-python "$SCRIPT_DIR/compile_candidate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --batch "<candidate.json>"
+python "$SCRIPT_DIR/run_candidate_batch.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --batch "<candidate.json>"
 ```
 
 ## Extraction Scope

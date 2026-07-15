@@ -10,6 +10,12 @@ Plan source-backed kernel slices after Step 2 is sealed.
 
 Read these common prompts before planning:
 
+Resolve every prompt path below from `PROMPT_DIR` provided by the host
+or from `$PLUGIN_ROOT/prompts`. Do not resolve `prompts/...` relative to
+`PROJECT_ROOT`. If the installed prompt directory is unavailable in local
+development, use the source checkout fallback
+`D:\PR-review\Ascendc-PR-test-agent-upload\understand-operator\understand-operator-plugin\prompts`.
+
 - `prompts/common/00_source_fact_contract.md`
 - `prompts/common/06_dataflow_resource_model.md`
 - `prompts/common/07_completeness_unresolved_rules.md`
@@ -55,22 +61,16 @@ If a chain segment cannot be proven from source facts and source code, put the g
 
 ## Candidate Pipeline
 
-Generate only Candidate JSON V2 batches. Validate each batch with:
+Generate only Candidate JSON V2 batches. Process each batch with:
 
 ```powershell
-python "$SCRIPT_DIR/validate_candidate_batch.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --batch "<candidate.json>"
-```
-
-Then compile it with:
-
-```powershell
-python "$SCRIPT_DIR/compile_candidate_facts.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --batch "<candidate.json>"
+python "$SCRIPT_DIR/run_candidate_batch.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --batch "<candidate.json>"
 ```
 
 Candidate items may provide only `local_id`, `kind`, `name`, structured
 `identity`, `fields`, `source_locations`, structured references, `relations`,
 and `unresolved`. The model must not provide formal YAML headers, stable IDs,
-canonical keys, `sources`, source text, or source/file hashes.
+canonical keys, `status`, `sources`, source text, or source/file hashes.
 
 ## Cross-File Identity References
 

@@ -90,6 +90,29 @@ def test_orchestrator_matches_uo_init() -> None:
     assert missing == []
 
 
+def test_subagent_dispatch_reuses_stable_identity() -> None:
+    dispatch = _read("prompts/00_subagent_dispatch.md")
+    orchestrator = _read("prompts/01_workflow_orchestrator.md")
+    workflow = _read("skills/uo-init/SKILL.md")
+    combined = "\n".join([dispatch, orchestrator, workflow])
+
+    assert "<run_id>:<phase-or-step>:<owner>:<target-path-or-slice-id>" in dispatch
+    assert "Resume that same\nsubagent context" in dispatch
+    assert "Do not open another task window for the same identity" in dispatch
+    assert "SUBAGENT_RESUME_UNAVAILABLE" in combined
+    assert "This applies to every phase, not only Phase 1" in workflow
+    assert "Phase 3 per-slice repairs" in orchestrator
+
+
+def test_all_subagents_resolve_prompts_from_prompt_dir() -> None:
+    missing: list[str] = []
+    for path in (ROOT / "agents").glob("uo-*.md"):
+        text = path.read_text(encoding="utf-8")
+        if "PROMPT_DIR" not in text or "Do not resolve" not in text:
+            missing.append(path.relative_to(ROOT).as_posix())
+    assert missing == []
+
+
 def test_no_phase35_or_phase4_workflow() -> None:
     text = "\n".join(_active_text().values())
     assert "Phase 3.5" not in text

@@ -8,6 +8,12 @@ You are the Phase 2 Host Facts Agent for `understand-operator`.
 
 Read these common prompts before analysis:
 
+Resolve every prompt path below from `PROMPT_DIR` provided by the host
+or from `$PLUGIN_ROOT/prompts`. Do not resolve `prompts/...` relative to
+`PROJECT_ROOT`. If the installed prompt directory is unavailable in local
+development, use the source checkout fallback
+`D:\PR-review\Ascendc-PR-test-agent-upload\understand-operator\understand-operator-plugin\prompts`.
+
 - `prompts/common/00_source_fact_contract.md`
 - `prompts/common/03_source_evidence_rules.md`
 - `prompts/common/04_variable_constraint_model.md`
@@ -39,7 +45,7 @@ Write only:
 Do not write non-owned fact files, graph files, validation reports, or generated
 test artifacts.
 
-Emit candidate JSON only. For every 5–10 candidates, use the local candidate
+Emit candidate JSON only. For every 5-10 candidates, use the local candidate
 validator then deterministic compiler. Do not write formal YAML, IDs, source
 anchors, copied source text, or hashes.
 

@@ -21,6 +21,7 @@ uo-verify-subagents = "understand_operator.scripts.verify_required_subagents:mai
 uo-prepare-fact-file = "understand_operator.scripts.prepare_fact_file:main"
 uo-validate-candidate = "understand_operator.scripts.validate_candidate_batch:main"
 uo-compile-candidate = "understand_operator.scripts.compile_candidate_facts:main"
+uo-run-candidate-batch = "understand_operator.scripts.run_candidate_batch:main"
 uo-evaluate-review-trigger = "understand_operator.scripts.evaluate_review_trigger:main"
 uo-validate-spec-consistency = "understand_operator.scripts.validate_spec_consistency:main"
 uo-validate-stage = "understand_operator.scripts.validate_fact_stage:main"

@@ -8,6 +8,12 @@ You are the Step 2 Fact Review Agent for `understand-operator`.
 
 Read these common prompts before review:
 
+Resolve every prompt path below from `PROMPT_DIR` provided by the host
+or from `$PLUGIN_ROOT/prompts`. Do not resolve `prompts/...` relative to
+`PROJECT_ROOT`. If the installed prompt directory is unavailable in local
+development, use the source checkout fallback
+`D:\PR-review\Ascendc-PR-test-agent-upload\understand-operator\understand-operator-plugin\prompts`.
+
 - `prompts/common/00_source_fact_contract.md`
 - `prompts/common/03_source_evidence_rules.md`
 - `prompts/common/07_completeness_unresolved_rules.md`

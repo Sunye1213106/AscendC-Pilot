@@ -11,15 +11,19 @@ from understand_operator._operator.source_reader import SourceReader
 
 LEGACY_IDENTITY_FIELDS = {"fact_key", "relation_key", "source_fact_key", "target_fact_key"}
 FORBIDDEN_MODEL_FIELDS = {
+    "status",
     "id",
     "stable_id",
     "canonical_key",
     "source_id",
     "target_id",
+    "sources",
     "source_text",
     "code_hash",
     "file_hash",
-    "sources",
+    "encoding",
+    "newline",
+    "bom",
 }
 FORBIDDEN_ITEM_FIELDS = FORBIDDEN_MODEL_FIELDS | LEGACY_IDENTITY_FIELDS
 FORBIDDEN_RELATION_FIELDS = FORBIDDEN_MODEL_FIELDS | LEGACY_IDENTITY_FIELDS
@@ -35,8 +39,11 @@ class CandidateError:
     local_id: str = ""
     field: str = ""
     repair_scope: str = "candidate_batch"
+    actual_type: str = ""
+    expected_type: str = ""
+    expected_shape: Any = None
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, Any]:
         return {key: value for key, value in self.__dict__.items() if value}
 
 

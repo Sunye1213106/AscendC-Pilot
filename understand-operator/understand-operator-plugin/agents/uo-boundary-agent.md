@@ -8,6 +8,12 @@ You are the Boundary Agent for `understand-operator`.
 
 Read these common prompts before analysis:
 
+Resolve every prompt path below from `PROMPT_DIR` provided by the host
+or from `$PLUGIN_ROOT/prompts`. Do not resolve `prompts/...` relative to
+`PROJECT_ROOT`. If the installed prompt directory is unavailable in local
+development, use the source checkout fallback
+`D:\PR-review\Ascendc-PR-test-agent-upload\understand-operator\understand-operator-plugin\prompts`.
+
 - `prompts/common/00_source_fact_contract.md`
 - `prompts/common/01_scope_dependency_rules.md`
 - `prompts/common/03_source_evidence_rules.md`
@@ -53,15 +59,16 @@ derived graph, impact graph, or tests.
 ## Candidate JSON Contract
 
 Output only 5-10-entry candidate JSON batches for each permitted target. Run
-`validate_candidate_batch.py` then `compile_candidate_facts.py`; never author
-formal YAML, IDs, sources, hashes, or headers.
+`run_candidate_batch.py`; never author formal YAML, IDs, status, sources,
+hashes, or headers.
 
 The model supplies only `local_id`, `kind`, display `name`, structured
 `identity`, semantic `fields`, `source_locations`, local/entity/symbol
 references, relation `type`, and `unresolved`.
 
 Do not generate `fact_key`, `relation_key`, `source_fact_key`,
-`target_fact_key`, stable IDs, relation IDs, source IDs, source text, or hashes.
+`target_fact_key`, `status`, stable IDs, relation IDs, source IDs, source text,
+or hashes.
 Do not put guessed IDs in `*_ref` fields. Names are display labels only.
 Identity is derived by Python from structured identity fields. Never use a
 display name as a cross-fact reference.
@@ -81,11 +88,12 @@ Then read and follow
 as a preflight checklist and its examples as structure-only examples. Never
 copy DemoOp values into target facts.
 
-Python fills the YAML header, stable IDs, relation IDs, source anchors, source
-text, and hashes. If source evidence is not reliable, put the claim in
+Python fills the YAML header, stable IDs, relation IDs, and location-only source
+anchors. If source evidence is not reliable, put the claim in
 `unresolved`; do not create a confirmed item.
 
 ## Write Protocol
 
 Do not overwrite the three YAML files by hand. For each target file, compile
-candidate JSON batches through `compile_candidate_facts.py`.
+candidate JSON batches through `run_candidate_batch.py`, which runs the
+`validate_candidate_batch.py` and `compile_candidate_facts.py` pipeline.

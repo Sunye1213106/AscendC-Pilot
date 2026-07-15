@@ -47,6 +47,23 @@ Before the first specialized subagent dispatch, run
 agent is missing or not declared as an OpenCode `subagent`, stop. Never route a
 UO internal task to a general fallback agent.
 
+Every specialized subagent dispatch uses a stable identity:
+
+```text
+<run_id>:<phase-or-step>:<owner>:<target-path-or-slice-id>
+```
+
+If that identity already exists in the current run, resume the same subagent
+context for all continuation and repair work.
+This applies to every phase, not only Phase 1. If the runtime cannot resume it, stop with
+`SUBAGENT_RESUME_UNAVAILABLE` and include the identity plus failed report path;
+do not open a duplicate subagent for the same owner and target.
+
+Pass `PLUGIN_ROOT`, `PROMPT_DIR`, and `SCRIPT_DIR` to every subagent. Subagents
+must read common prompts from `PROMPT_DIR`; when running from this source tree,
+the fallback plugin root is
+`D:\PR-review\Ascendc-PR-test-agent-upload\understand-operator\understand-operator-plugin`.
+
 ## Phase 0
 
 Phase 0 is a single bootstrap/index/scope-review phase. It writes:
@@ -115,7 +132,11 @@ facts/operator/source_files.yaml
 facts/operator/entrypoints.yaml
 ```
 
-Each agent emits only candidate JSON (never final YAML/IDs/source text/hashes), validates each 5–10-entry batch with `validate_candidate_batch.py`, and invokes `compile_candidate_facts.py` to atomically materialize its formal target. Then run the Stage Validator:
+Each agent emits only candidate JSON (never final YAML/IDs/source text/hashes)
+and processes each 5-10-entry batch with `run_candidate_batch.py`, which
+runs `validate_candidate_batch.py`, repair-tracks with the candidate runner, and
+atomically compiles successful batches through `compile_candidate_facts.py` into
+the formal target. Then run the Stage Validator:
 
 ```powershell
 python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step1 --write-report
@@ -123,12 +144,12 @@ python "$SCRIPT_DIR/build_fact_registry.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 ```
 
 Empty boundary files must fail; unresolved entries must be explicit.
-Formal facts are created only by `compile_candidate_facts.py`; do not overwrite
-formal fact files by hand.
+Formal facts are created only by the deterministic Candidate runner/compiler;
+do not overwrite formal fact files by hand.
 Before authoring, the boundary agent must read
 `$PROMPT_DIR/common/11_phase1_candidate_authoring.md`. It writes Candidate JSON
-V2 batches only. Process one boundary target at a time, validate each small
-batch, and compile it deterministically before expanding the target.
+V2 batches only. Process one boundary target at a time through
+`run_candidate_batch.py` before expanding the target.
 Do not dispatch this subagent until `runs/<run_id>/phase0/receipt.yaml` exists
 with `status: pass`.
 If Step 1 validation fails, resume the same `uo-boundary-agent` context with the

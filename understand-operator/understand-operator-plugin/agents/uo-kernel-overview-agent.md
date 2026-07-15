@@ -8,6 +8,12 @@ You are the Kernel Overview Agent for `understand-operator`.
 
 Read these common prompts before analysis:
 
+Resolve every prompt path below from `PROMPT_DIR` provided by the host
+or from `$PLUGIN_ROOT/prompts`. Do not resolve `prompts/...` relative to
+`PROJECT_ROOT`. If the installed prompt directory is unavailable in local
+development, use the source checkout fallback
+`D:\PR-review\Ascendc-PR-test-agent-upload\understand-operator\understand-operator-plugin\prompts`.
+
 - `prompts/common/00_source_fact_contract.md`
 - `prompts/common/03_source_evidence_rules.md`
 - `prompts/common/05_compute_execution_model.md`
@@ -72,8 +78,8 @@ compile it deterministically. Never directly write formal YAML, stable IDs, SRC
 anchors, source text, or hashes.
 
 Use only the Step 1 frozen file catalog and schemas. Every confirmed item or
-relation must provide structured `source_locations`; Python fills source
-anchors, source text, and hashes. Unproven facts go to `unresolved`.
+relation must provide structured `source_locations`; Python materializes
+location-only source anchors. Unproven facts go to `unresolved`.
 
 ## Completion Gate
 
@@ -83,5 +89,7 @@ After compiling all owned targets, run:
 python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step2 --scope kernel-overview --write-report
 ```
 
-Fix all errors and rerun until it exits 0.
+If `run_candidate_batch.py` reports errors, repair only the reported fields in
+the current Candidate JSON. Stop and report after
+`CANDIDATE_REPAIR_EXHAUSTED`.
 

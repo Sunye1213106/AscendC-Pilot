@@ -1,0 +1,38 @@
+version: 1
+schema_kind: repair_state
+required_top_level:
+  - version
+  - artifact
+  - snapshot
+  - task_id
+  - owner
+  - target
+  - candidate_path
+  - attempt
+  - max_attempts
+  - previous_errors
+  - status
+  - items
+  - relations
+  - unresolved
+allowed_top_level:
+  - version
+  - artifact
+  - snapshot
+  - task_id
+  - owner
+  - target
+  - candidate_path
+  - attempt
+  - max_attempts
+  - previous_errors
+  - status
+  - run_id
+  - source_snapshot_id
+  - source_revision
+  - spec_bundle_hash
+  - items
+  - relations
+  - unresolved
+required_item_fields: []
+relation_required_fields: []

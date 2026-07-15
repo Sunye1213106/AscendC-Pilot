@@ -16,7 +16,7 @@ kind_required_fields:
 relation_required_fields: [id, type, source_id, target_id, status, sources]
 source_anchor: required_for_confirmed
 minimum_cardinality: 1
-stores: [source_files, roles, include_edges, file_hashes, include_or_exclude_reason]
+stores: [source_files, roles, include_edges, location_only_source_anchors, include_or_exclude_reason]
 forbids: [semantic_claim_without_source]
 
 

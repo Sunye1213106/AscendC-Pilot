@@ -125,7 +125,18 @@ def validate_candidate_batch(repo_root: Path, op_name: str, batch: Any) -> list[
             try:
                 resolved = resolve_identity(kind, identity_for_validation, repo_root=reader.repo_root)
             except IdentityError as exc:
-                errors.append(CandidateError(exc.code, exc.message, target=target_label, local_id=local_id, field=f"{label}.{exc.field}"))
+                errors.append(
+                    CandidateError(
+                        exc.code,
+                        exc.message,
+                        target=target_label,
+                        local_id=local_id,
+                        field=f"{label}.{exc.field}",
+                        actual_type=exc.actual_type,
+                        expected_type=exc.expected_type,
+                        expected_shape=exc.expected_shape,
+                    )
+                )
             else:
                 previous = canonical_to_local.get(resolved.canonical_key)
                 if previous and previous[0] != local_id:
@@ -226,7 +237,11 @@ def _forbidden_fields(value: Any, forbidden_fields: set[str], seen: set[int] | N
 
 def _forbidden_error(forbidden: set[str], target: str, field: str, local_id: str = "") -> CandidateError:
     code = "CANDIDATE_LEGACY_IDENTITY_FIELD" if forbidden & LEGACY_IDENTITY_FIELDS else "CANDIDATE_FIELD_FORBIDDEN"
-    return CandidateError(code, f"model may not provide {sorted(forbidden)}", target=target, local_id=local_id, field=field)
+    if forbidden == {"status"}:
+        message = "model may not provide status"
+    else:
+        message = f"model may not provide {sorted(forbidden)}"
+    return CandidateError(code, message, target=target, local_id=local_id, field=field)
 
 
 def _reference(ref: Any, errors: list[CandidateError], target: str, field: str, local_ids: set[str], entity_types: dict[str, Any]) -> None:

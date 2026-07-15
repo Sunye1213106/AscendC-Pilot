@@ -129,20 +129,31 @@ def _select_smoke_cases(uo_root: Path) -> dict[str, str]:
     stable, _source = _select_smoke_entity(uo_root)
     symbol = ""
     terminology = ""
+    stable_norm = _normalize_term(stable)
     for node in _load_list(uo_root / "graphs" / "raw" / "nodes.yaml", "nodes") + _load_list(uo_root / "graphs" / "derived" / "nodes.yaml", "nodes"):
         fields = node.get("search_fields") if isinstance(node.get("search_fields"), dict) else node.get("fields") if isinstance(node.get("fields"), dict) else {}
-        for key in ("symbol", "qualified_symbol", "scope_symbol", "name"):
-            value = fields.get(key) or node.get("label")
-            if isinstance(value, str) and value and value != node.get("id"):
+        for key in ("qualified_symbol", "scope_symbol", "symbol", "name"):
+            value = fields.get(key)
+            if isinstance(value, str) and value and _normalize_term(value) != stable_norm:
                 symbol = symbol or value
-                terminology = terminology or str(node.get("label") or value)
                 break
-        if symbol and terminology:
+        if symbol:
             break
-    if not terminology:
-        terms = _load_mapping(uo_root / "indexes" / "terminology.yaml", "terms")
-        terminology = next(iter(terms.keys()), "") if terms else ""
-    return {"stable_id": stable, "symbol": symbol or stable, "terminology": terminology or symbol or stable}
+    terms = _load_mapping(uo_root / "indexes" / "terminology.yaml", "terms")
+    for term, entry in terms.items():
+        if not isinstance(term, str) or not term:
+            continue
+        if _normalize_term(term) in {stable_norm, _normalize_term(symbol)}:
+            continue
+        if not isinstance(entry, dict) or not (entry.get("nodes") or entry.get("edges")):
+            continue
+        terminology = term
+        break
+    cases = {"stable_id": stable, "symbol": symbol, "terminology": terminology}
+    normalized = [_normalize_term(value) for value in cases.values() if value]
+    if len(normalized) != len(set(normalized)):
+        cases["terminology"] = ""
+    return cases
 
 
 def _readonly_fingerprint(uo_root: Path) -> str:

@@ -26,6 +26,7 @@ REQUIRED_SUBAGENTS = (
     "uo-step2-fact-review-agent",
     "uo-step3-fact-review-agent",
     "uo-behavior-abstraction-agent",
+    "uo-graph-review-agent",
 )
 
 

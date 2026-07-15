@@ -1,0 +1,45 @@
+version: 1
+schema_kind: graph_review_trigger
+required_top_level:
+  - version
+  - artifact
+  - snapshot
+  - status
+  - input_hashes
+  - counts
+  - kind_counts
+  - type_counts
+  - top_degree_nodes
+  - path_summary
+  - orphan_summary
+  - cross_layer_edge_summary
+  - samples
+  - high_risk_detail_refs
+  - completeness_summary
+  - deterministic_verifier_status
+  - items
+  - relations
+  - unresolved
+allowed_top_level:
+  - version
+  - artifact
+  - snapshot
+  - status
+  - checked_at
+  - input_hashes
+  - counts
+  - kind_counts
+  - type_counts
+  - top_degree_nodes
+  - path_summary
+  - orphan_summary
+  - cross_layer_edge_summary
+  - samples
+  - high_risk_detail_refs
+  - completeness_summary
+  - deterministic_verifier_status
+  - items
+  - relations
+  - unresolved
+required_item_fields: []
+relation_required_fields: []
