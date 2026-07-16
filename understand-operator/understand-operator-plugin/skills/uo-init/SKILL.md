@@ -19,8 +19,8 @@ Build an evidence-backed operator KB under:
 The active user-visible milestones are:
 
 ```text
-Phase 0: bootstrap, indexing, deterministic scope confirmation
-Phase 1: operator boundary facts
+Phase 0: lightweight scope discovery, human confirmation, confirmed-file CBM indexing
+Phase 1: CBM-backed Host/Tiling and Kernel execution subgraphs
 Phase 2: Host, Compute, and Kernel Overview facts in parallel
 Phase 3: Kernel slices only
 Final: validation, raw graph, derived graph, query, final gate
@@ -66,19 +66,30 @@ the fallback plugin root is
 
 ## Phase 0
 
-Phase 0 is a single bootstrap/index/scope-review phase. It writes:
+Phase 0 is a lightweight scope discovery and confirmation phase. It writes:
 
 ```text
 runs/<run_id>/phase0/context.yaml
 runs/<run_id>/phase0/installed_skill_check.yaml
 runs/<run_id>/phase0/ignore_rules.yaml
+runs/<run_id>/phase0/scope_proposal.yaml
 runs/<run_id>/phase0/scope_scan.yaml
-runs/<run_id>/phase0/semantic_enrichment.yaml
-cbm/index_meta.json
 ```
 
-`scope_review.yaml` is written only after the user chooses a review decision.
-`receipt.yaml` is written only after `continue` and `finalize_phase0.py`.
+After the user explicitly confirms the proposed scope, Phase 0 writes:
+
+```text
+runs/<run_id>/phase0/scope_review.yaml
+runs/<run_id>/phase0/scope_confirmed.yaml
+cbm/index_meta.json
+runs/<run_id>/phase0/entry_points.yaml
+```
+
+`semantic_enrichment.yaml` may remain `pending`; Phase 0 no longer performs
+targeted semantic enrichment before CBM. `scope_review.yaml` and
+`scope_confirmed.yaml` are written only after the user chooses a review
+decision. `receipt.yaml` is written only after `continue`, confirmed-file CBM
+indexing, and `finalize_phase0.py`.
 No `facts/**`, `checks/**`, `graphs/**`, or `indexes/**` fact/graph artifacts
 may be created before the Phase 0 receipt is `status: pass`.
 
@@ -86,86 +97,102 @@ Required order:
 
 1. Resolve `PROJECT_ROOT`, `OP_NAME`, and `SCRIPT_DIR`.
 2. Run `prepare_operator.py` to create the clean KB layout and Phase 0 metadata.
-3. Run deterministic scope scanning and dependency closure with:
+3. Run lightweight scope discovery with:
 
    ```powershell
    python -X utf8 "$SCRIPT_DIR/macro_scope_scan.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
    ```
 
-   Then read back `runs/<run_id>/phase0/scope_scan.yaml`. Do not hand-compose
-   include/exclude scope from directory listings, CBM snippets, or model
-   memory. If `PROJECT_ROOT` is an operator directory with sibling dependencies
-   such as `../common`, or source includes resolve to paths such as
-   `../../../common/...`, keep the common parent recorded by `scope_scan.yaml`
-   as the scan root and include the sibling dependency roots.
-4. Call MCP `codebase-memory-mcp.index_repository` on the resolved scope roots,
-   not only the operator directory. Use `scope_scan.yaml` as the source of truth
-   for `project_root`, `operator_path`, `scope_roots`, and `dependency_roots`.
-5. Confirm the indexed CBM project via MCP `list_projects` or `index_status`.
-6. Re-run `prepare_operator.py --write-index-meta --cbm-project <project>`.
-7. Use targeted MCP semantic enrichment for candidate entries, registrations,
-   host/kernel symbols, and architecture variants.
-   Write `runs/<run_id>/phase0/semantic_enrichment.yaml` with the single
-   contract fields `architecture_filter`, `cbm_queries`,
-   `architecture_variants`, `excluded_architectures`,
-   `confirmed_scope_additions`, `unresolved`, `warnings`, and `fallback`.
-   `cbm_queries` replaces any legacy `queries` field. Each query record must
-   include `tool`, one of `payload` or `query`, and one of `result_summary`,
-   `result`, `error`, or `reason`. `confidence` and `fallback_used` are
-   optional; MCP failures must be recorded as degraded records instead of
-   blocking scope confirmation.
-8. Show include, exclude, architecture variants, and uncertain items with the
-   question/AskQuestion button UI. Stop.
-   Continue to Phase 1 only after explicit `continue`.
-9. Record the scope decision with `review_checkpoint.py --gate macro_scope --decision continue`.
-10. Run `finalize_phase0.py` to validate and write `runs/<run_id>/phase0/receipt.yaml`.
+   Phase0 intentionally only performs lightweight scope discovery. Deep
+   operator understanding starts after CBM indexing. The scanner may use only
+   path-level exploration (`rg`, `glob`, `find`, `ls`, `tree`) and must not do
+   source-wide reads, AST analysis, call/reference graph construction,
+   dependency closure, or all-source scanning.
+4. Read `runs/<run_id>/phase0/scope_proposal.yaml`. Show the proposed
+   `candidate_files`, excluded groups, and warnings to the user. Stop for human
+   confirmation. The user must choose one of: confirm, modify range, add files,
+   or stop.
+5. Record the scope decision with `review_checkpoint.py --gate macro_scope`.
+   Only `--decision continue` may proceed; `stop`, `revise`, or
+   `manual_supplement` stops the workflow until the user supplies a new
+   confirmed scope.
+6. After `scope_confirmed.yaml` exists, call MCP
+   `codebase-memory-mcp.index_repository` with only
+   `confirmed_file_list`. Do not pass `repository_root` for indexing and do not
+   rescan the repository. CBM input must be the human-confirmed file list.
+7. Confirm the indexed CBM project via MCP `list_projects` or `index_status`.
+8. Re-run `prepare_operator.py --write-index-meta --cbm-project <project>`.
+   `cbm/index_meta.json` must record `index_input: confirmed_file_list` and
+   `indexed_files` exactly matching `scope_confirmed.yaml`.
+9. Run `finalize_phase0.py` to validate and write
+   `runs/<run_id>/phase0/receipt.yaml` plus `entry_points.yaml`. Phase0 output
+   may record only shallow input/output/attribute/host/tiling/kernel entry
+   hints; deep code facts belong to Phase1 and later.
 
 If VCS commands fail inside `PROJECT_ROOT`, continue with the deterministic
 scope scanner instead of treating the user path as the complete source tree.
 
-Phase 0 receipt freezes source revision, source snapshot ID, approved scope,
-architecture variants, CBM project, and spec bundle hash.
+Phase 0 receipt freezes source revision, source snapshot ID, approved file
+scope, confirmed CBM project, and spec bundle hash.
 
 ## Phase 1
 
-Run `uo-boundary-agent` as a foreground specialized subagent. It reads Phase 0
-receipt, scope scan, semantic enrichment, and `cbm/index_meta.json`. It writes
-only:
+Phase 1 reads only Phase 0 outputs and CBM metadata:
 
 ```text
-facts/operator/interface.yaml
-facts/operator/source_files.yaml
-facts/operator/entrypoints.yaml
+runs/<run_id>/phase0/scope_confirmed.yaml
+runs/<run_id>/phase0/entry_points.yaml
+runs/<run_id>/phase0/receipt.yaml
+cbm/index_meta.json
 ```
 
-Each agent emits only candidate JSON (never final YAML/IDs/source text/hashes)
-and processes each 5-10-entry batch with `run_candidate_batch.py`, which
-runs `validate_candidate_batch.py`, repair-tracks with the candidate runner, and
-atomically compiles successful batches through `compile_candidate_facts.py` into
-the formal target. Then run the Stage Validator:
+It does not rediscover the repository and does not run the old broad boundary
+fact extraction flow. Use the connected `codebase-memory-mcp` project recorded
+in `cbm/index_meta.json` to obtain raw candidate graph nodes and edges around
+Phase 0 anchors. When the current runtime exposes no codebase-memory MCP graph
+tool, record the missing MCP graph in `graph/graph_issues.yaml`; do not install
+npm packages and do not scan the whole repository.
+
+Run:
 
 ```powershell
-python "$SCRIPT_DIR/validate_fact_stage.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --stage step1 --write-report
-python "$SCRIPT_DIR/build_fact_registry.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+python "$SCRIPT_DIR/phase1_graph.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --architecture arch35 --show-raw-graph --show-processed-graph
 ```
 
-Empty boundary files must fail; unresolved entries must be explicit.
-Formal facts are created only by the deterministic Candidate runner/compiler;
-do not overwrite formal fact files by hand.
-Before authoring, the boundary agent must read
-`$PROMPT_DIR/common/11_phase1_candidate_authoring.md`. It writes Candidate JSON
-V2 batches only. Process one boundary target at a time through
-`run_candidate_batch.py` before expanding the target.
-Do not dispatch this subagent until `runs/<run_id>/phase0/receipt.yaml` exists
-with `status: pass`.
-If Step 1 validation fails, resume the same `uo-boundary-agent` context with the
-validator report, current target content, exact schema, catalog entry, stable ID
-rules, and the Phase 1 authoring contract. Do not open a second boundary
-subagent window to redo the same files, and do not hand-write a task prompt that
-asks for direct final-document YAML writes or ad hoc generator scripts.
-Repair attempts are limited to three tries for the same semantic candidate
-batch repair key in the same run. Changing `task_id`, candidate filename, or
-dispatch wording does not reset the counter.
+Phase 1 writes only:
+
+```text
+graph/raw_candidate_graph.yaml
+graph/raw_candidate_nodes.yaml
+graph/raw_candidate_edges.yaml
+graph/host_tiling_graph.yaml
+graph/host_tiling_paths.yaml
+graph/kernel_execution_graph.yaml
+graph/kernel_execution_paths.yaml
+graph/removed_nodes.yaml
+graph/removed_edges.yaml
+graph/graph_comparison.yaml
+graph/graph_pruning_report.yaml
+graph/graph_issues.yaml
+```
+
+The deterministic implementation performs:
+
+```text
+Phase0 anchor loading
+CBM project metadata validation
+arch35 filtering
+BFS reachability search
+bidirectional reachability pruning
+Host/Tiling graph output
+Kernel execution graph output
+raw-to-processed node/edge mapping
+removed node/edge reporting
+```
+
+Do not dispatch `uo-boundary-agent` for Phase 1 in this workflow. Phase 2 and
+Phase 3 remain unchanged and must not be refactored as part of this Phase 1
+graph extraction.
 
 ## Phase 2
 

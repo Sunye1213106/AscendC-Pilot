@@ -40,6 +40,7 @@ def finalize_phase0(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
         "scope_scan": _load_yaml(phase0 / "scope_scan.yaml"),
         "semantic_enrichment": _load_yaml(phase0 / "semantic_enrichment.yaml"),
         "scope_review": _load_yaml(phase0 / "scope_review.yaml"),
+        "scope_confirmed": _load_yaml(phase0 / "scope_confirmed.yaml"),
     }
     errors = _validation_errors(repo_root, uo_root, docs)
     if errors:
@@ -49,6 +50,9 @@ def finalize_phase0(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
     cbm_meta = _load_json(uo_root / "cbm" / "index_meta.json")
     scan = docs["scope_scan"]
     review = docs["scope_review"]
+    confirmed = docs["scope_confirmed"] or _scope_confirmed_from_review(uo_root, run_id, review)
+    if confirmed and not docs["scope_confirmed"]:
+        (phase0 / "scope_confirmed.yaml").write_text(yaml.safe_dump(confirmed, sort_keys=False, allow_unicode=True), encoding="utf-8")
     files = scan.get("files") if isinstance(scan.get("files"), dict) else {}
     approved = review.get("approved_scope") if isinstance(review.get("approved_scope"), dict) else {}
     def scoped(key: str) -> Any:
@@ -87,6 +91,8 @@ def finalize_phase0(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
             "indexed_at": cbm_meta.get("indexed_at"),
             "project_confirmed": cbm_meta.get("project_confirmed"),
             "indexed_scope_roots": cbm_meta.get("indexed_scope_roots") or scan.get("scope_roots") or [],
+            "indexed_files": cbm_meta.get("indexed_files") or confirmed.get("confirmed_file_list") or [],
+            "index_input": cbm_meta.get("index_input") or "confirmed_file_list",
             "cbm_status": cbm_meta.get("cbm_status") or _default_cbm_status(cbm_meta),
         },
         "source_revision": context.get("source_revision"),
@@ -111,6 +117,7 @@ def finalize_phase0(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
     }
     out = phase0 / "receipt.yaml"
     out.write_text(yaml.safe_dump(receipt, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    _write_entry_points(phase0 / "entry_points.yaml", uo_root, run_id, confirmed)
     return 0, [f"wrote {out}"]
 
 
@@ -137,12 +144,23 @@ def _validation_errors(repo_root: Path, uo_root: Path, docs: dict[str, dict[str,
         errors.append("cbm/index_meta.json project_confirmed is false")
     if _doc_status(docs["scope_scan"]) != "complete":
         errors.append("scope_scan.yaml status is not complete")
-    if _doc_status(docs["semantic_enrichment"]) not in {"complete", "degraded"}:
-        errors.append("semantic_enrichment.yaml status is not complete")
-    _validate_semantic_enrichment(docs["semantic_enrichment"], errors)
+    semantic_status = _doc_status(docs["semantic_enrichment"])
+    if semantic_status in {"complete", "degraded"}:
+        _validate_semantic_enrichment(docs["semantic_enrichment"], errors)
+    elif semantic_status != "pending":
+        errors.append("semantic_enrichment.yaml status must be pending, complete, or degraded")
     if docs["scope_review"].get("decision") != "continue":
         errors.append("scope_review.yaml decision is not continue")
     _validate_scope_sets(docs["scope_review"], errors)
+    confirmed_files = _confirmed_files(docs.get("scope_confirmed") or docs["scope_review"])
+    if not confirmed_files:
+        errors.append("scope_confirmed.yaml missing confirmed_file_list")
+    indexed_files = cbm_meta.get("indexed_files")
+    if cbm_status.get("available") is not False:
+        if cbm_meta.get("index_input") != "confirmed_file_list":
+            errors.append("cbm/index_meta.json index_input must be confirmed_file_list")
+        if indexed_files is not None and sorted(_paths(indexed_files)) != sorted(_paths(confirmed_files)):
+            errors.append("cbm/index_meta.json indexed_files must match confirmed_file_list")
     expected_revision = context.get("source_revision") or (docs["scope_scan"].get("snapshot") or {}).get("source_revision")
     current_revision = _git_revision(repo_root)
     if expected_revision and expected_revision != "unknown" and current_revision != expected_revision:
@@ -208,6 +226,101 @@ def _validate_semantic_enrichment(doc: dict[str, Any], errors: list[str]) -> Non
             errors.append(f"semantic_enrichment.yaml cbm_queries[{index}] missing payload/query")
         if not any(key in record for key in ("result_summary", "result", "error", "reason")):
             errors.append(f"semantic_enrichment.yaml cbm_queries[{index}] missing result/error")
+
+
+def _scope_confirmed_from_review(uo_root: Path, run_id: str, review: dict[str, Any]) -> dict[str, Any]:
+    approved = review.get("approved_scope") if isinstance(review.get("approved_scope"), dict) else {}
+    files = _confirmed_files(review)
+    return {
+        "version": 1,
+        "artifact": {"type": "runs.scope_confirmed", "schema_version": 1, "owner": "uo-orchestrator"},
+        "snapshot": phase0_snapshot(uo_root, run_id),
+        "status": "confirmed" if files else "empty",
+        "operator": uo_root.name,
+        "confirmed_file_list": files,
+        "excluded_files": approved.get("excluded_files") or [],
+        "analysis_scope": {
+            "input_output": _paths_by_role(files, {"input_output", "api", "proto"}),
+            "host": _paths_by_role(files, {"host"}),
+            "tiling": [item["path"] for item in files if "tiling" in item.get("path", "").lower() or item.get("role") == "tiling"],
+            "kernel": _paths_by_role(files, {"kernel"}),
+            "headers": _paths_by_role(files, {"headers", "header"}),
+            "other": _paths_by_role(files, {"unknown", "other", "manual_include", "manual_dependency"}),
+        },
+        "cbm": {"indexing_allowed": bool(files), "input": "confirmed_file_list"},
+    }
+
+
+def _confirmed_files(doc: dict[str, Any]) -> list[dict[str, str]]:
+    raw = doc.get("confirmed_file_list")
+    if isinstance(raw, list):
+        return [{"path": path, "role": _role_of(item)} for item in raw if (path := _path_of(item))]
+    approved = doc.get("approved_scope") if isinstance(doc.get("approved_scope"), dict) else {}
+    result: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for key in ("initial_operator_files", "dependency_files", "generated_files"):
+        for item in approved.get(key) or []:
+            path = _path_of(item)
+            if path and path not in seen:
+                result.append({"path": path, "role": _role_of(item)})
+                seen.add(path)
+    return result
+
+
+def _path_of(item: Any) -> str:
+    if isinstance(item, dict):
+        return str(item.get("path") or "").replace("\\", "/")
+    return str(item or "").replace("\\", "/")
+
+
+def _role_of(item: Any) -> str:
+    if isinstance(item, dict) and item.get("role"):
+        return str(item["role"])
+    path = _path_of(item).lower()
+    suffix = Path(path).suffix
+    if suffix in {".h", ".hh", ".hpp", ".hxx"}:
+        return "headers"
+    if "op_kernel" in path or "kernel" in path:
+        return "kernel"
+    if "tiling" in path:
+        return "tiling"
+    if "op_host" in path or "host" in path:
+        return "host"
+    if "op_api" in path or "proto" in path or "infer" in path:
+        return "input_output"
+    return "other"
+
+
+def _paths(items: Any) -> list[str]:
+    if not isinstance(items, list):
+        return []
+    return [_path_of(item) for item in items if _path_of(item)]
+
+
+def _paths_by_role(items: list[dict[str, str]], roles: set[str]) -> list[str]:
+    return [item["path"] for item in items if item.get("role") in roles]
+
+
+def _write_entry_points(path: Path, uo_root: Path, run_id: str, confirmed: dict[str, Any]) -> None:
+    files = _confirmed_files(confirmed)
+    payload = {
+        "version": 1,
+        "artifact": {"type": "runs.entry_points", "schema_version": 1, "owner": "uo-orchestrator"},
+        "snapshot": phase0_snapshot(uo_root, run_id),
+        "status": "complete",
+        "note": "Phase0 intentionally records only shallow entry hints; deep operator understanding starts after CBM indexing.",
+        "input": {"files": _paths_by_role(files, {"input_output", "host"}), "symbols": [], "optional": []},
+        "output": {"files": _paths_by_role(files, {"input_output", "host"}), "symbols": []},
+        "attributes": {"files": _paths_by_role(files, {"input_output", "host"}), "symbols": []},
+        "host": {"file": _paths_by_role(files, {"host"}), "entry": []},
+        "tiling": {
+            "registration": {"file": [item["path"] for item in files if "tiling" in item["path"].lower()]},
+            "key": {"file": [item["path"] for item in files if "tiling" in item["path"].lower()]},
+            "data": {"file": _paths_by_role(files, {"headers"})},
+        },
+        "kernel": {"file": _paths_by_role(files, {"kernel"}), "entry": []},
+    }
+    path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
 
 def _default_cbm_status(cbm_meta: dict[str, Any]) -> dict[str, Any]:
@@ -314,6 +427,7 @@ def _phase0_input_hashes(uo_root: Path, phase0: Path, run_id: str) -> dict[str, 
         f"runs/{run_id}/phase0/scope_scan.yaml": phase0 / "scope_scan.yaml",
         f"runs/{run_id}/phase0/semantic_enrichment.yaml": phase0 / "semantic_enrichment.yaml",
         f"runs/{run_id}/phase0/scope_review.yaml": phase0 / "scope_review.yaml",
+        f"runs/{run_id}/phase0/scope_confirmed.yaml": phase0 / "scope_confirmed.yaml",
         "cbm/index_meta.json": uo_root / "cbm" / "index_meta.json",
     }
     return {rel: _sha256_file(path) for rel, path in candidates.items() if path.exists()}

@@ -189,7 +189,71 @@ def _write_scope_review(base: Path, decision: dict[str, Any], changes: dict[str,
     }
     out_path = phase0 / "scope_review.yaml"
     write_text(out_path, _to_yaml(payload))
+    if decision["decision"] == "continue":
+        _write_scope_confirmed(base, run_id, decision, payload["approved_scope"])
     return out_path
+
+
+def _write_scope_confirmed(base: Path, run_id: str, decision: dict[str, Any], approved_scope: dict[str, Any]) -> None:
+    files = _confirmed_file_items(approved_scope)
+    payload = {
+        "version": 1,
+        "artifact": {"type": "runs.scope_confirmed", "schema_version": 1, "owner": "uo-orchestrator"},
+        "snapshot": phase0_snapshot(base, run_id),
+        "status": "confirmed",
+        "operator": decision["op_name"],
+        "confirmed_file_list": files,
+        "excluded_files": approved_scope.get("excluded_files") or [],
+        "analysis_scope": {
+            "input_output": _paths_by_role(files, {"input_output", "api", "proto"}),
+            "host": _paths_by_role(files, {"host"}),
+            "tiling": _paths_by_role(files, {"tiling", "host"}),
+            "kernel": _paths_by_role(files, {"kernel"}),
+            "headers": _paths_by_role(files, {"headers", "header"}),
+            "other": _paths_by_role(files, {"unknown", "other", "manual_include", "manual_dependency"}),
+        },
+        "confirmation": {
+            "reviewed_at": decision["decided_at"],
+            "reviewer": decision.get("reviewer") or "user",
+            "notes": decision.get("notes") or "",
+        },
+        "cbm": {"indexing_allowed": True, "input": "confirmed_file_list"},
+    }
+    write_text(base / "runs" / run_id / "phase0" / "scope_confirmed.yaml", _to_yaml(payload))
+
+
+def _confirmed_file_items(approved_scope: dict[str, Any]) -> list[dict[str, str]]:
+    result: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for group in ("initial_operator_files", "dependency_files", "generated_files"):
+        for item in approved_scope.get(group) or []:
+            path = _path_of(item).replace("\\", "/")
+            if not path or path in seen:
+                continue
+            role = str(item.get("role") if isinstance(item, dict) else "") or _role_from_path(path)
+            result.append({"path": path, "role": role, "source": group})
+            seen.add(path)
+    return result
+
+
+def _paths_by_role(items: list[dict[str, str]], roles: set[str]) -> list[str]:
+    return [item["path"] for item in items if item.get("role") in roles]
+
+
+def _role_from_path(path: str) -> str:
+    lower = path.lower()
+    suffix = Path(lower).suffix
+    if suffix in {".h", ".hh", ".hpp", ".hxx"}:
+        return "headers"
+    if "op_kernel" in lower or "kernel" in lower:
+        return "kernel"
+    if "tiling" in lower:
+        return "tiling"
+    if "op_host" in lower or "host" in lower:
+        return "host"
+    if "op_api" in lower or "proto" in lower or "infer" in lower:
+        return "input_output"
+    return "other"
 
 
 def _scope_changes(args: argparse.Namespace) -> dict[str, Any]:

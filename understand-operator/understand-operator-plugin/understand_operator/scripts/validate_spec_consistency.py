@@ -436,6 +436,18 @@ def _check_phase0_roundtrip(plugin_root: Path, repo: Path, errors: list[SpecErro
         errors.append(SpecError("SPEC_INIT_SCOPE_SCAN_FAILED", "macro_scope_scan.py", f"macro_scope_scan.py returned {scan_code}"))
         return
 
+    semantic_code = semantic_enrichment_main([str(repo), "--op-name", "DemoOp"])
+    if semantic_code != 0:
+        errors.append(SpecError("SPEC_INIT_SEMANTIC_ENRICHMENT_FAILED", "semantic_enrichment.py", f"semantic_enrichment.py returned {semantic_code}"))
+        return
+
+    review_code = review_checkpoint_main([str(repo), "--op-name", "DemoOp", "--gate", "macro_scope", "--decision", "continue"])
+    if review_code != 0:
+        errors.append(SpecError("SPEC_INIT_SCOPE_REVIEW_FAILED", "review_checkpoint.py", f"review_checkpoint.py returned {review_code}"))
+        return
+
+    confirmed = _read_yaml(phase0 / "scope_confirmed.yaml")
+    confirmed_files = confirmed.get("confirmed_file_list") if isinstance(confirmed.get("confirmed_file_list"), list) else []
     (uo_root / "cbm").mkdir(exist_ok=True)
     (uo_root / "cbm" / "index_meta.json").write_text(
         json.dumps(
@@ -447,6 +459,8 @@ def _check_phase0_roundtrip(plugin_root: Path, repo: Path, errors: list[SpecErro
                 "cbm_mode": "fast",
                 "indexed_at": "2026-01-01T00:00:00+00:00",
                 "project_confirmed": True,
+                "index_input": "confirmed_file_list",
+                "indexed_files": confirmed_files,
                 "indexed_scope_roots": [],
                 "cbm_status": {"available": True, "retry_count": 0, "fallback": "", "last_error": ""},
             },
@@ -455,15 +469,6 @@ def _check_phase0_roundtrip(plugin_root: Path, repo: Path, errors: list[SpecErro
         ) + "\n",
         encoding="utf-8",
     )
-    semantic_code = semantic_enrichment_main([str(repo), "--op-name", "DemoOp"])
-    if semantic_code != 0:
-        errors.append(SpecError("SPEC_INIT_SEMANTIC_ENRICHMENT_FAILED", "semantic_enrichment.py", f"semantic_enrichment.py returned {semantic_code}"))
-        return
-
-    review_code = review_checkpoint_main([str(repo), "--op-name", "DemoOp", "--gate", "macro_scope", "--decision", "continue"])
-    if review_code != 0:
-        errors.append(SpecError("SPEC_INIT_SCOPE_REVIEW_FAILED", "review_checkpoint.py", f"review_checkpoint.py returned {review_code}"))
-        return
 
     finalize_code, finalize_messages = finalize_phase0(repo, "DemoOp")
     if finalize_code != 0:

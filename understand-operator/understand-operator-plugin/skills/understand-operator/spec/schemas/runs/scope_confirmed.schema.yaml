@@ -1,0 +1,16 @@
+version: 1
+schema_kind: runtime_artifact
+required_top_level: [version, artifact, snapshot, status, operator, confirmed_file_list, excluded_files, analysis_scope, cbm]
+allowed_top_level:
+  - version
+  - artifact
+  - snapshot
+  - status
+  - operator
+  - confirmed_file_list
+  - excluded_files
+  - analysis_scope
+  - confirmation
+  - cbm
+required_item_fields: []
+relation_required_fields: []

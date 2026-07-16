@@ -116,6 +116,20 @@ def _repo(tmp_path: Path) -> tuple[Path, Path]:
             "unresolved": [],
         },
     )
+    _write_yaml(
+        phase0 / "scope_confirmed.yaml",
+        {
+            "version": 1,
+            "artifact": {"type": "runs.scope_confirmed", "schema_version": 1, "owner": "uo-orchestrator"},
+            "snapshot": _snapshot(),
+            "status": "confirmed",
+            "operator": "DemoOp",
+            "confirmed_file_list": [{"path": "op_host/demo.cpp", "role": "host"}],
+            "excluded_files": [],
+            "analysis_scope": {"host": ["op_host/demo.cpp"]},
+            "cbm": {"indexing_allowed": True, "input": "confirmed_file_list"},
+        },
+    )
     (root / "cbm" / "index_meta.json").write_text(
         json.dumps(
             {
@@ -126,6 +140,8 @@ def _repo(tmp_path: Path) -> tuple[Path, Path]:
                 "cbm_mode": "fast",
                 "indexed_at": "2026-01-01T00:00:00+00:00",
                 "project_confirmed": True,
+                "index_input": "confirmed_file_list",
+                "indexed_files": [{"path": "op_host/demo.cpp", "role": "host"}],
             }
         ),
         encoding="utf-8",

@@ -102,6 +102,7 @@ def main(argv: list[str] | None = None) -> int:
             "fallback": "" if args.cbm_project else "filesystem_scan",
             "last_error": "",
         }
+        confirmed_files = scope.get("confirmed_file_list") or []
         write_index_meta(
             base,
             {
@@ -115,6 +116,8 @@ def main(argv: list[str] | None = None) -> int:
                 "prefetch_mode": "mcp_index_repository",
                 "index_summary": {},
                 "indexed_scope_roots": scope.get("scope_roots") or [],
+                "indexed_files": confirmed_files,
+                "index_input": "confirmed_file_list",
                 "operator_path": scope.get("operator_path") or "",
                 "dependency_roots": scope.get("dependency_roots") or [],
                 "scope_hash": scope.get("scope_hash") or "",
@@ -135,12 +138,12 @@ def main(argv: list[str] | None = None) -> int:
         write_text(
             stub,
             "# CBM Index Log\n\n"
-            "Layout prepared. Waiting for MCP `index_repository` from /uo-init.\n",
+            "Layout prepared. Waiting for Phase0 scope confirmation before MCP `index_repository`.\n",
         )
 
     print(f"Prepared understand-operator artifacts for {op_name}")
     print(f"Output: {base}")
-    print("CBM: use MCP index_repository in /uo-init (this script does not build the graph DB by default)")
+    print("CBM: use MCP index_repository only after Phase0 scope confirmation; pass only confirmed_file_list")
     print("Next: run validate_facts.py after each agent writes its stage YAML")
     return 0
 
@@ -302,7 +305,23 @@ def _current_scope_meta(base: Path) -> dict[str, Any]:
         run_id = _current_run_id(base)
     except Exception:  # noqa: BLE001
         return {}
-    scan = read_yaml_mapping(base / "runs" / run_id / "phase0" / "scope_scan.yaml")
+    phase0 = base / "runs" / run_id / "phase0"
+    confirmed = read_yaml_mapping(phase0 / "scope_confirmed.yaml")
+    if confirmed:
+        files = confirmed.get("confirmed_file_list") if isinstance(confirmed.get("confirmed_file_list"), list) else []
+        roots = _roots_for_confirmed_files(files)
+        digest = hashlib.sha256()
+        for item in files:
+            digest.update(str(item).encode("utf-8"))
+            digest.update(b"\0")
+        return {
+            "operator_path": "",
+            "scope_roots": roots,
+            "dependency_roots": [],
+            "confirmed_file_list": files,
+            "scope_hash": "sha256:" + digest.hexdigest(),
+        }
+    scan = read_yaml_mapping(phase0 / "scope_scan.yaml")
     if not scan:
         return {}
     scope_roots = scan.get("scope_roots") if isinstance(scan.get("scope_roots"), list) else []
@@ -317,6 +336,20 @@ def _current_scope_meta(base: Path) -> dict[str, Any]:
         "dependency_roots": dependency_roots,
         "scope_hash": "sha256:" + digest.hexdigest(),
     }
+
+
+def _roots_for_confirmed_files(files: list[Any]) -> list[dict[str, str]]:
+    roots: dict[str, dict[str, str]] = {}
+    for item in files:
+        raw = item.get("path") if isinstance(item, dict) else item
+        path = str(raw or "").replace("\\", "/")
+        if not path:
+            continue
+        parent = str(Path(path).parent).replace("\\", "/")
+        if parent == ".":
+            parent = "."
+        roots.setdefault(parent, {"path": parent, "kind": "confirmed_files", "reason": "human-confirmed Phase0 scope"})
+    return sorted(roots.values(), key=lambda item: item["path"])
 
 
 def _load_operator_ignore_patterns(repo_root: Path) -> list[str]:

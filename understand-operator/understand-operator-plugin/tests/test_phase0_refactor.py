@@ -119,7 +119,37 @@ def _source_anchor() -> dict:
     }
 
 
-def test_macro_scope_scan_writes_phase0_and_dependency_closure(tmp_path: Path) -> None:
+def _phase0(base: Path, run_id: str) -> Path:
+    return base / "runs" / run_id / "phase0"
+
+
+def _confirmed_files(base: Path, run_id: str) -> list[dict]:
+    confirmed = yaml.safe_load((_phase0(base, run_id) / "scope_confirmed.yaml").read_text(encoding="utf-8"))
+    return confirmed["confirmed_file_list"]
+
+
+def _write_confirmed_index_meta(repo: Path, base: Path, run_id: str, op_name: str = "DemoOp") -> None:
+    files = _confirmed_files(base, run_id)
+    (base / "cbm" / "index_meta.json").write_text(
+        json.dumps(
+            {
+                "repo_root": str(repo.resolve()),
+                "op_name": op_name,
+                "cbm_project": "demo",
+                "indexed_via": "mcp",
+                "cbm_mode": "fast",
+                "indexed_at": "2026-01-01T00:00:00+00:00",
+                "project_confirmed": True,
+                "index_input": "confirmed_file_list",
+                "indexed_files": files,
+                "cbm_status": {"available": True, "retry_count": 0, "fallback": "", "last_error": ""},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_macro_scope_scan_writes_scope_proposal_without_dependency_closure_or_cbm(tmp_path: Path) -> None:
     repo, base, run_id = _repo(tmp_path)
     (repo / "op_host").mkdir()
     (repo / "common").mkdir()
@@ -131,18 +161,37 @@ def test_macro_scope_scan_writes_phase0_and_dependency_closure(tmp_path: Path) -
 
     assert macro_scope_scan_main([str(repo), "--op-name", "DemoOp"]) == 0
 
-    new_path = base / "runs" / run_id / "phase0" / "scope_scan.yaml"
+    phase0 = _phase0(base, run_id)
+    new_path = phase0 / "scope_scan.yaml"
+    proposal_path = phase0 / "scope_proposal.yaml"
     assert new_path.exists()
+    assert proposal_path.exists()
     assert not (base / "archive" / "runs" / "macro_scope_scan.yaml").exists()
+    proposal = yaml.safe_load(proposal_path.read_text(encoding="utf-8"))
     scan = yaml.safe_load(new_path.read_text(encoding="utf-8"))
+    proposed = {path for values in proposal["candidate_files"].values() for path in values}
     deps = {item["path"] for item in scan["files"]["dependency_files"]}
-    assert "common/shared.h" in deps
-    assert "tools/shared_py.py" in deps
-    assert "vector" in {item["path"] for item in scan["files"]["external_system_files"]}
-    assert "vector" not in deps
+    assert "op_host/demo.cpp" in proposed
+    assert deps == set()
+    assert scan["dependency_edges"] == []
+    meta = json.loads((base / "cbm" / "index_meta.json").read_text(encoding="utf-8"))
+    assert "index_input" not in meta
 
 
-def test_operator_dir_scope_includes_sibling_common_arch35_and_cbm_meta(tmp_path: Path) -> None:
+def test_scope_review_stop_does_not_create_confirmed_scope_or_cbm_input(tmp_path: Path) -> None:
+    repo, base, run_id = _repo(tmp_path)
+    (repo / "op_host").mkdir()
+    (repo / "op_host" / "demo.cpp").write_text("REGISTER_TILING(DemoOp)\n", encoding="utf-8")
+
+    assert macro_scope_scan_main([str(repo), "--op-name", "DemoOp"]) == 0
+    assert review_checkpoint_main([str(repo), "--op-name", "DemoOp", "--gate", "macro_scope", "--decision", "stop"]) == 0
+
+    assert not (_phase0(base, run_id) / "scope_confirmed.yaml").exists()
+    meta = json.loads((base / "cbm" / "index_meta.json").read_text(encoding="utf-8"))
+    assert "indexed_files" not in meta
+
+
+def test_confirmed_scope_drives_cbm_file_list(tmp_path: Path) -> None:
     workspace = tmp_path / "FAG_test"
     op_dir = workspace / "flash_attention_score_grad"
     common_arch = workspace / "common" / "op_kernel" / "arch35"
@@ -164,12 +213,11 @@ def test_operator_dir_scope_includes_sibling_common_arch35_and_cbm_meta(tmp_path
     (common_arch / "fag_arch35.h").write_text("#pragma once\n#define ARCH35_KERNEL 1\n", encoding="utf-8")
 
     assert macro_scope_scan_main([str(op_dir), "--op-name", "flash_attention_score_grad"]) == 0
-    scan = yaml.safe_load((phase0 / "scope_scan.yaml").read_text(encoding="utf-8"))
-    deps = {item["path"] for item in scan["files"]["dependency_files"]}
-    roots = {item["path"] for item in scan["scope_roots"]}
-    assert "common/op_kernel/arch35/fag_arch35.h" in deps
-    assert "flash_attention_score_grad" in roots
-    assert "common/op_kernel/arch35" in roots
+    assert review_checkpoint_main([str(op_dir), "--op-name", "flash_attention_score_grad", "--gate", "macro_scope", "--decision", "continue", "--include", "op_kernel.cpp"]) == 0
+    confirmed = yaml.safe_load((phase0 / "scope_confirmed.yaml").read_text(encoding="utf-8"))
+    confirmed_paths = {item["path"] for item in confirmed["confirmed_file_list"]}
+    assert "op_kernel.cpp" in confirmed_paths
+    assert "common/op_kernel/arch35/fag_arch35.h" not in confirmed_paths
 
     scope_meta = _current_scope_meta(base)
     write_index_meta(
@@ -180,19 +228,20 @@ def test_operator_dir_scope_includes_sibling_common_arch35_and_cbm_meta(tmp_path
             "cbm_project": "demo",
             "indexed_via": "mcp",
             "indexed_scope_roots": scope_meta["scope_roots"],
+            "index_input": "confirmed_file_list",
+            "indexed_files": scope_meta["confirmed_file_list"],
             "dependency_roots": scope_meta["dependency_roots"],
             "scope_hash": scope_meta["scope_hash"],
             "cbm_status": {"available": True, "retry_count": 0, "fallback": "", "last_error": ""},
         },
     )
     meta = json.loads((base / "cbm" / "index_meta.json").read_text(encoding="utf-8"))
-    meta_roots = {item["path"] for item in meta["indexed_scope_roots"]}
-    assert "flash_attention_score_grad" in meta_roots
-    assert "common/op_kernel/arch35" in meta_roots
+    assert {item["path"] for item in meta["indexed_files"]} == confirmed_paths
+    assert meta["index_input"] == "confirmed_file_list"
     assert meta["cbm_status"]["available"] is True
 
 
-def test_operator_dir_scope_resolves_relative_parent_common_include(tmp_path: Path) -> None:
+def test_scope_proposal_does_not_expand_parent_common_include(tmp_path: Path) -> None:
     workspace = tmp_path / "FAG_test"
     op_dir = workspace / "flash_attention_score_grad"
     kernel_dir = op_dir / "op_kernel" / "arch35"
@@ -215,13 +264,13 @@ def test_operator_dir_scope_resolves_relative_parent_common_include(tmp_path: Pa
     (common_arch / "util_regbase.h").write_text("#pragma once\n#define UTIL_REGBASE 1\n", encoding="utf-8")
 
     assert macro_scope_scan_main([str(op_dir), "--op-name", "flash_attention_score_grad"]) == 0
+    proposal = yaml.safe_load((phase0 / "scope_proposal.yaml").read_text(encoding="utf-8"))
     scan = yaml.safe_load((phase0 / "scope_scan.yaml").read_text(encoding="utf-8"))
     deps = {item["path"] for item in scan["files"]["dependency_files"]}
-    roots = {item["path"] for item in scan["scope_roots"]}
-    assert scan["project_root"].replace("\\", "/").endswith("FAG_test")
-    assert scan["operator_path"] == "flash_attention_score_grad"
-    assert "common/op_kernel/arch35/util_regbase.h" in deps
-    assert "common/op_kernel/arch35" in roots
+    proposed = {path for values in proposal["candidate_files"].values() for path in values}
+    assert scan["project_root"].replace("\\", "/").endswith("flash_attention_score_grad")
+    assert "op_kernel/arch35/fag_kernel.h" in proposed
+    assert "common/op_kernel/arch35/util_regbase.h" not in deps
 
 
 def test_scope_review_continue_does_not_write_pass_receipt(tmp_path: Path) -> None:
@@ -280,6 +329,7 @@ def test_prepare_fact_file_uses_finalized_phase0_snapshot(tmp_path: Path) -> Non
     (repo / "op_host" / "demo.cpp").write_text("REGISTER_TILING(DemoOp)\n", encoding="utf-8")
     assert macro_scope_scan_main([str(repo), "--op-name", "DemoOp"]) == 0
     assert review_checkpoint_main([str(repo), "--op-name", "DemoOp", "--gate", "macro_scope", "--decision", "continue"]) == 0
+    _write_confirmed_index_meta(repo, base, run_id)
     assert finalize_phase0(repo, "DemoOp")[0] == 0
 
     target = prepare_fact_file(repo, "DemoOp", "facts/operator/interface.yaml")
@@ -295,6 +345,7 @@ def test_finalize_phase0_writes_receipt_and_revision_change_invalidates_validati
     (repo / "op_host" / "demo.cpp").write_text("REGISTER_TILING(DemoOp)\n", encoding="utf-8")
     assert macro_scope_scan_main([str(repo), "--op-name", "DemoOp"]) == 0
     assert review_checkpoint_main([str(repo), "--op-name", "DemoOp", "--gate", "macro_scope", "--decision", "continue"]) == 0
+    _write_confirmed_index_meta(repo, base, run_id)
 
     code, messages = finalize_phase0(repo, "DemoOp")
 
@@ -315,6 +366,7 @@ def test_finalize_phase0_requires_cbm_mcp_metadata_and_query_records(tmp_path: P
     (repo / "op_host" / "demo.cpp").write_text("REGISTER_TILING(DemoOp)\n", encoding="utf-8")
     assert macro_scope_scan_main([str(repo), "--op-name", "DemoOp"]) == 0
     assert review_checkpoint_main([str(repo), "--op-name", "DemoOp", "--gate", "macro_scope", "--decision", "continue"]) == 0
+    _write_confirmed_index_meta(repo, base, run_id)
 
     meta = json.loads((base / "cbm" / "index_meta.json").read_text(encoding="utf-8"))
     meta["indexed_via"] = "cli"
@@ -336,6 +388,7 @@ def test_finalize_phase0_allows_semantic_query_without_confidence(tmp_path: Path
     (repo / "op_host" / "demo.cpp").write_text("REGISTER_TILING(DemoOp)\n", encoding="utf-8")
     assert macro_scope_scan_main([str(repo), "--op-name", "DemoOp"]) == 0
     assert review_checkpoint_main([str(repo), "--op-name", "DemoOp", "--gate", "macro_scope", "--decision", "continue"]) == 0
+    _write_confirmed_index_meta(repo, base, run_id)
     semantic = yaml.safe_load((base / "runs" / run_id / "phase0" / "semantic_enrichment.yaml").read_text(encoding="utf-8"))
     semantic["cbm_queries"] = [
         {
@@ -364,24 +417,11 @@ def test_real_uo_init_phase0_reaches_receipt(tmp_path: Path) -> None:
     run_id = manifest["current_run_id"]
     phase0 = base / "runs" / run_id / "phase0"
 
-    (base / "cbm" / "index_meta.json").write_text(
-        json.dumps(
-            {
-                "repo_root": str(repo.resolve()),
-                "op_name": "DemoOp",
-                "cbm_project": "demo",
-                "indexed_via": "mcp",
-                "cbm_mode": "fast",
-                "indexed_at": "2026-01-01T00:00:00+00:00",
-                "project_confirmed": True,
-            }
-        ),
-        encoding="utf-8",
-    )
     assert macro_scope_scan_main([str(repo), "--op-name", "DemoOp"]) == 0
 
     assert semantic_enrichment_main([str(repo), "--op-name", "DemoOp"]) == 0
     assert review_checkpoint_main([str(repo), "--op-name", "DemoOp", "--gate", "macro_scope", "--decision", "continue"]) == 0
+    _write_confirmed_index_meta(repo, base, run_id)
 
     code, messages = finalize_phase0(repo, "DemoOp")
     assert code == 0, messages
@@ -431,8 +471,13 @@ def test_raw_graph_indexes_cross_edges_paths_and_query_alias(tmp_path: Path) -> 
     _write_phase0_doc(base / "runs" / run_id / "phase0" / "scope_scan.yaml", "runs.scope_scan", {"status": "complete"})
     _write_yaml(
         base / "runs" / run_id / "phase0" / "scope_review.yaml",
-        {"version": 1, "artifact": {"type": "runs.scope_review", "schema_version": 1, "owner": "uo-orchestrator"}, "snapshot": {"run_id": run_id, "source_snapshot_id": "SOURCE_TEST", "source_revision": "unknown", "spec_bundle_hash": spec_bundle_hash()}, "status": "decided", "decision": "continue", "items": [], "relations": [], "unresolved": []},
+        {"version": 1, "artifact": {"type": "runs.scope_review", "schema_version": 1, "owner": "uo-orchestrator"}, "snapshot": {"run_id": run_id, "source_snapshot_id": "SOURCE_TEST", "source_revision": "unknown", "spec_bundle_hash": spec_bundle_hash()}, "status": "decided", "decision": "continue", "approved_scope": {"initial_operator_files": [{"path": "op_host/demo.cpp", "role": "host"}], "dependency_files": [], "generated_files": [], "excluded_files": [], "uncertain_files": []}, "items": [], "relations": [], "unresolved": []},
     )
+    _write_yaml(
+        base / "runs" / run_id / "phase0" / "scope_confirmed.yaml",
+        {"version": 1, "artifact": {"type": "runs.scope_confirmed", "schema_version": 1, "owner": "uo-orchestrator"}, "snapshot": {"run_id": run_id, "source_snapshot_id": "SOURCE_TEST", "source_revision": "unknown", "spec_bundle_hash": spec_bundle_hash()}, "status": "confirmed", "operator": "DemoOp", "confirmed_file_list": [{"path": "op_host/demo.cpp", "role": "host"}], "excluded_files": [], "analysis_scope": {"host": ["op_host/demo.cpp"]}, "cbm": {"indexing_allowed": True, "input": "confirmed_file_list"}},
+    )
+    _write_confirmed_index_meta(repo, base, run_id)
     assert finalize_phase0(repo, "DemoOp")[0] == 0
     _write_yaml(
         base / "facts" / "host.yaml",

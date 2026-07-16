@@ -14,6 +14,7 @@ evaluate_review_trigger.py
 validate_spec_consistency.py
 validate_fact_stage.py
 build_fact_registry.py
+phase1_graph.py
 build_query_index.py
 verify_required_scripts.py
 build_compile_gate.py

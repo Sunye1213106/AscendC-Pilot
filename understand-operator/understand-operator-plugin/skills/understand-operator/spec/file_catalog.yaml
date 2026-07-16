@@ -353,6 +353,13 @@ files:
     required_after_stage: runtime
     allow_empty: false
     raw_graph_input: false
+  - path: runs/*/phase0/scope_proposal.yaml
+    artifact_type: runs.scope_proposal
+    owner: uo-orchestrator
+    schema: schemas/runs/scope_proposal.schema.yaml
+    required_after_stage: runtime
+    allow_empty: false
+    raw_graph_input: false
   - path: runs/*/phase0/semantic_enrichment.yaml
     artifact_type: runs.semantic_enrichment
     owner: uo-orchestrator
@@ -364,6 +371,20 @@ files:
     artifact_type: runs.scope_review
     owner: uo-orchestrator
     schema: schemas/runs/scope_review.schema.yaml
+    required_after_stage: runtime
+    allow_empty: false
+    raw_graph_input: false
+  - path: runs/*/phase0/scope_confirmed.yaml
+    artifact_type: runs.scope_confirmed
+    owner: uo-orchestrator
+    schema: schemas/runs/scope_confirmed.schema.yaml
+    required_after_stage: runtime
+    allow_empty: false
+    raw_graph_input: false
+  - path: runs/*/phase0/entry_points.yaml
+    artifact_type: runs.entry_points
+    owner: uo-orchestrator
+    schema: schemas/runs/entry_points.schema.yaml
     required_after_stage: runtime
     allow_empty: false
     raw_graph_input: false
