@@ -86,9 +86,16 @@ python -X utf8 "$SCRIPT_DIR/build_layered_kb.py" "$PROJECT_ROOT" --op-name "$OP_
 
 ## Resolve
 
-Dispatch one `uo-semantic-resolve` for residual + consistency review. Apply:
+Dispatch one `uo-semantic-resolve` for residual + consistency review using the
+**mandatory residual dispatch template** in `prompts/00_subagent_dispatch.md`.
+Do not invent alternate schemas (`residuals:`, `resolution: warning`) or ask
+for exhaustive coverage of every unresolved id.
+
+Validate then apply:
 
 ```powershell
+python -X utf8 "$SCRIPT_DIR/apply_resolution.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --patch "$UO_ROOT/ir/resolution_patch.yaml" --check
+# rejected_count>0 → resume same dispatch identity with rejected list only
 python -X utf8 "$SCRIPT_DIR/apply_resolution.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --patch "$UO_ROOT/ir/resolution_patch.yaml"
 python -X utf8 "$SCRIPT_DIR/kb_query_export.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --view testcase-contract
 ```

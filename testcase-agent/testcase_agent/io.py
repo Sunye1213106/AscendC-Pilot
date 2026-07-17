@@ -32,5 +32,5 @@ def output_root(project_root: Path, op_name: str) -> Path:
 
 
 def ensure_output_dirs(root: Path) -> None:
-    for rel in ("snapshot", "intake", "plan", "solve"):
+    for rel in ("snapshot", "intake", "plan", "solve", "extract", "cases", "topics"):
         (root / rel).mkdir(parents=True, exist_ok=True)

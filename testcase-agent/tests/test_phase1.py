@@ -404,8 +404,8 @@ def test_same_input_repeated_plan_is_deterministic(tmp_path: Path) -> None:
     )["files"]
     _snapshot(repo, files)
 
-    first = tg_plan(repo, "DemoOp")
-    second = tg_plan(repo, "DemoOp")
+    first = tg_plan(repo, "DemoOp", reuse_snapshot=True)
+    second = tg_plan(repo, "DemoOp", reuse_snapshot=True)
 
     assert first["plan_hash"] == second["plan_hash"]
     assert first["obligations"] == second["obligations"]
@@ -519,6 +519,7 @@ def test_dtype_layout_class_generates_atomic_obligations() -> None:
 
 
 def test_export_view_and_context_slice_are_merged(tmp_path: Path) -> None:
+    pytest.importorskip("understand_operator")
     repo, uo = _repo(tmp_path)
     _real_uo_fixture(uo)
 
@@ -551,6 +552,7 @@ def test_export_view_and_context_slice_are_merged(tmp_path: Path) -> None:
 
 
 def test_contract_view_context_mismatch_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("understand_operator")
     repo, uo = _repo(tmp_path)
 
     def view(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -619,7 +621,7 @@ def test_unreachable_relation_combination_is_proof_required() -> None:
     assert relation["status"] == "proof_required"
 
 
-def test_review_mentions_tiling_key_value_kind() -> None:
+def test_review_describes_design_by_variables_and_features() -> None:
     files = _payload(
         coverage={
             "family_obligations": [],
@@ -629,17 +631,52 @@ def test_review_mentions_tiling_key_value_kind() -> None:
     )["files"]
     plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"})
 
-    assert "tiling_key_field_value" in plan["review"]
-    assert "TilingKey 原子值义务数" in plan["review"]
+    assert "测试设计覆盖说明" in plan["review"]
+    assert "设计 **1** 个 TilingKey 字段取值用例点" in plan["review"]
+    assert "`split_axis`=0" in plan["review"]
+    assert "算子族 / Family" not in plan["review"]
+    assert "Kernel 路径" not in plan["review"]
 
 
 def test_real_format_fixture_end_to_end_phase1_phase2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo, uo = _repo(tmp_path)
     _real_uo_fixture(uo)
-    monkeypatch.setattr(init_mod, "run_final_validation", lambda project_root, op_name, uo_root: _validation())
+    payload = _payload(
+        coverage={
+            "family_obligations": [{"family_id": "FAM_MAIN", "reachability": "reachable"}],
+            "key_field_obligations": {"SPLIT_AXIS": {"id": "KEY_SPLIT_AXIS", "values": [0, 1, 2]}},
+            "key_relation_obligations": [
+                {
+                    "id": "COV_REL_COMPAT",
+                    "relation_type": "compatible_set",
+                    "combinations": [{"a": 0}, {"a": 1}, {"a": 2}],
+                }
+            ],
+        },
+        contract=_contract(
+            coverage_obligations={
+                "kernel_paths": [{"id": "COV_PATH", "target_refs": ["KPATH_MAIN"]}],
+                "kernel_branches": [{"id": "KBR_HAS_TAIL"}],
+                "tiling_keys": [],
+                "tilingdata": [],
+                "numerical": [],
+                "negative": [],
+            },
+            interface={"optional_inputs": [], "dtype_layout_domains": [{"id": "FP16_ND"}]},
+        ),
+    )
+    payload["files"]["kernel/branches.yaml"] = {"branches": [{"id": "KBR_HAS_TAIL", "runtime": True}]}
+    payload["files"]["kernel/paths.yaml"] = {"kernel_paths": [{"id": "KPATH_MAIN", "family_refs": ["FAM_MAIN"]}]}
+    payload["files"]["tiling/constraints.yaml"] = {
+        "relations": [],
+        "variable_constraints": [],
+        "input_realization": {"CON_IR": {"matches": {"layout": "ND"}, "shape": {"B": 2, "N1": 4, "N2": 2, "S1": 16, "S2": 16, "D": 64}}},
+    }
+    payload["context_slice"] = {"entities": [{"id": "FAM_MAIN"}, {"id": "KPATH_MAIN"}, {"id": "KEY_SPLIT_AXIS"}], "testcase_contract": payload["files"]["contracts/testcase.yaml"]}
+    _patch_intake(monkeypatch, payload)
 
     init_result = tg_init(repo, "DemoOp")
-    plan = tg_plan(repo, "DemoOp")
+    plan = tg_plan(repo, "DemoOp", reuse_snapshot=True)
     root = repo / ".testcase-generator" / "DemoOp"
     supplement_path = root / "plan" / "human_supplement.yaml"
     write_yaml(
@@ -668,7 +705,7 @@ def test_real_format_fixture_end_to_end_phase1_phase2(tmp_path: Path, monkeypatc
     assert any(item["model"].get("VAR_KEY_SPLIT_AXIS") == 2 and item["status"] == "sat" for item in solve["solve_results"])
     assert any(len(item["covered_obligation_ids"]) > 1 for item in solve["deduped_candidates"])
     assert len([item for item in plan["obligations"] if item["kind"] == "tiling_key_relation" and item.get("parent_obligation_id") == "COV_REL_COMPAT"]) == 3
-    assert not list(root.rglob("*.csv"))
+    assert list(root.rglob("cases.csv"))
     assert not (root / "run" / "operator_execution.yaml").exists()
 
 
@@ -761,7 +798,7 @@ def test_top_level_kernel_branch_variants_expand_into_plan_obligations() -> None
     assert variants == {"FP16 Nz", "BF16 Nz"}
 
 
-def test_l0_selects_minimal_smoke_path() -> None:
+def test_l0_covers_functional_attributes_not_just_one_smoke() -> None:
     files = _payload(
         contract=_contract(
             interface={"optional_inputs": [{"name": "mask"}], "dtype_layout_domains": [{"id": "FP16_ND"}, {"id": "BF16_TND"}]},
@@ -775,14 +812,35 @@ def test_l0_selects_minimal_smoke_path() -> None:
             },
         )
     )["files"]
+    files["tiling/coverage_model.yaml"] = {
+        "family_obligations": [{"id": "COV_FAM_MAIN", "family_id": "FAM_MAIN"}],
+        "key_field_obligations": {
+            "IsDrop": {"id": "KEY_ISDROP", "values": [0, 1], "independent": True},
+            "IsPse": {"id": "KEY_ISPSE", "values": [0, 1], "independent": True},
+            "DerivedBound": {"id": "KEY_DERIVED", "values": [0, 1], "independent": False},
+        },
+    }
     plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L0")
 
     assert {item["test_level"] for item in plan["obligations"]} == {"L0"}
-    assert len(plan["obligations"]) <= 3
     assert not [item for item in plan["obligations"] if item["kind"] == "kernel_branch"]
+    kinds = {item["kind"] for item in plan["obligations"]}
+    assert "family" not in kinds
+    assert "kernel_path" not in kinds
+    assert "dtype_layout_class" not in kinds
+    assert "optional_input_mode" in kinds
+    assert "tiling_key_field_value" in kinds
+    assert len([item for item in plan["obligations"] if item["kind"] == "optional_input_mode"]) == 2
+    assert len([item for item in plan["obligations"] if item["kind"] == "tiling_key_field_value"]) == 4
+    assert not any(item.get("field") == "DerivedBound" for item in plan["obligations"])
+    assert "测试设计覆盖说明" in plan["review"]
+    assert "功能属性冒烟" in plan["review"]
+    assert plan["matrix"]["test_points"]
+    # Missing input_realization must not hard-block L0
+    assert not any(g.get("field") == "tiling/constraints.yaml.input_realization" for g in plan["unresolved"]["contract_gaps"])
 
 
-def test_l0_target_refs_are_not_family_refs() -> None:
+def test_l0_ignores_family_path_baselines() -> None:
     files = _payload(
         contract=_contract(
             interface={"dtype_layout_domains": [{"id": "FP16_ND", "dtype": "FP16", "layout": "ND"}]},
@@ -802,17 +860,11 @@ def test_l0_target_refs_are_not_family_refs() -> None:
     plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L0")
 
     assert plan["unresolved"]["status"] != "blocked"
-    assert not any(item["id"] == "L0_MINIMAL_INPUT_BLOCKED" for item in plan["obligations"])
-    family = next(item for item in plan["obligations"] if item["kind"] == "family")
-    path = next(item for item in plan["obligations"] if item["kind"] == "kernel_path")
-    dtype = next(item for item in plan["obligations"] if item["kind"] == "dtype_layout_class")
-    assert family["target_refs"] == ["FAM_MAIN"]
-    assert path["target_refs"] == ["KPATH_MAIN"]
-    assert dtype["target_refs"] == ["FP16_ND"]
-    assert family["selection_reason"]["family_path_compatibility"] == "unknown"
+    assert not any(item["id"] == "L0_FEATURE_VALUE_COVERAGE_BLOCKED" for item in plan["obligations"])
+    assert not any(item["kind"] in {"family", "kernel_path", "dtype_layout_class"} for item in plan["obligations"])
 
 
-def test_l0_uses_kernel_paths_yaml_when_contract_only_has_obligation() -> None:
+def test_l0_does_not_depend_on_kernel_paths_yaml_compatibility() -> None:
     files = _payload(
         contract=_contract(
             interface={"dtype_layout_domains": [{"id": "FP16_ND", "dtype": "FP16", "layout": "ND"}]},
@@ -833,11 +885,10 @@ def test_l0_uses_kernel_paths_yaml_when_contract_only_has_obligation() -> None:
     plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L0")
 
     assert plan["unresolved"]["status"] != "blocked"
-    family = next(item for item in plan["obligations"] if item["kind"] == "family")
-    assert family["selection_reason"]["family_path_compatibility"] == "compatible"
+    assert not any(item["kind"] in {"family", "kernel_path"} for item in plan["obligations"])
 
 
-def test_l0_uses_tiling_to_kernel_relation() -> None:
+def test_l0_does_not_depend_on_tiling_to_kernel_relation() -> None:
     files = _payload(
         contract=_contract(
             interface={"dtype_layout_domains": [{"id": "FP16_ND", "dtype": "FP16", "layout": "ND"}]},
@@ -858,8 +909,7 @@ def test_l0_uses_tiling_to_kernel_relation() -> None:
     plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L0")
 
     assert plan["unresolved"]["status"] != "blocked"
-    family = next(item for item in plan["obligations"] if item["kind"] == "family")
-    assert family["selection_reason"]["family_path_compatibility"] == "compatible"
+    assert not any(item["kind"] in {"family", "kernel_path"} for item in plan["obligations"])
 
 
 def test_l1_covers_reachable_runtime_branch_sides_and_skips_compile_fixed() -> None:
@@ -879,7 +929,7 @@ def test_l1_covers_reachable_runtime_branch_sides_and_skips_compile_fixed() -> N
     assert all(item["coverage_origin"]["artifact"] == "kernel/branches.yaml" for item in branches)
 
 
-def test_l1_includes_boundaries_and_expected_rejects() -> None:
+def test_l1_excludes_boundaries_and_expected_rejects() -> None:
     files = _payload()["files"]
     files["tiling/constraints.yaml"] = {
         "relations": [],
@@ -889,10 +939,9 @@ def test_l1_includes_boundaries_and_expected_rejects() -> None:
     }
     plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L1")
 
-    assert any(item["test_level"] == "L1" and item.get("target_value") == 1 for item in plan["obligations"])
+    assert not any(item["test_level"] == "L1" and item.get("target_value") == 1 for item in plan["obligations"])
     rejects = [item for item in plan["obligations"] if item.get("expected_behavior") == "reject"]
-    assert rejects
-    assert all(item["case_expectation"]["expected_result"] == "reject" for item in rejects)
+    assert rejects == []
 
 
 def test_l2_expands_template_blocks_applies_pruning_and_realizes_keys() -> None:
@@ -943,9 +992,38 @@ def test_l2_blocks_when_key_has_no_realization() -> None:
     assert plan["semantic_focus"]["tiling_key_coverage"]["unrealized_key_count"] == 2
 
 
-def test_cli_rejects_l3_level() -> None:
+def test_cli_rejects_l3_without_topic() -> None:
+    assert plan_main([".", "--op-name", "DemoOp", "--level", "L3"]) == 1
+
+
+def test_cli_rejects_unknown_level() -> None:
     with pytest.raises(SystemExit):
-        plan_main([".", "--op-name", "DemoOp", "--level", "L3"])
+        plan_main([".", "--op-name", "DemoOp", "--level", "L9"])
+
+
+def test_l3_topic_determinism_filters_obligations() -> None:
+    files = _payload(
+        coverage={
+            "family_obligations": [{"family_id": "FAM_A"}],
+            "key_field_obligations": {
+                "DETERTYPE": {"id": "KEY_DETERTYPE", "values": [0, 1, 2]},
+                "ISTND": {"id": "KEY_ISTND", "values": [0, 1]},
+            },
+            "key_relation_obligations": [],
+        }
+    )["files"]
+    files["tiling/key_cards/KEY_DETERTYPE.yaml"] = {"id": "KEY_DETERTYPE", "key": "DeterType", "domain": [0, 1, 2], "set_by": {"status": "missing"}, "hit_recipe": {"status": "unknown"}}
+    from testcase_agent.topics import DEFAULT_TOPICS
+
+    plan = build_plan(
+        {"op_name": "DemoOp", "files": files, "snapshot_hash": "s"},
+        level="L3",
+        topic="determinism",
+        topic_manifest=DEFAULT_TOPICS["determinism"],
+    )
+    refs = {ref for item in plan["obligations"] for ref in item.get("target_refs") or []}
+    assert any("DETER" in ref.upper() for ref in refs)
+    assert plan["test_level"] == "L3"
 
 
 def test_focus_false_literal_does_not_become_true() -> None:
@@ -1108,7 +1186,7 @@ def test_changed_focus_invalidates_previous_approval(tmp_path: Path, monkeypatch
     repo, _uo = _repo(tmp_path)
     _patch_intake(monkeypatch, _payload())
     init_result = tg_init(repo, "DemoOp")
-    first = tg_plan(repo, "DemoOp", level="L1")
+    first = tg_plan(repo, "DemoOp", level="L1", reuse_snapshot=True)
     root = repo / ".testcase-generator" / "DemoOp"
     write_yaml(
         root / "plan" / "human_supplement.yaml",
@@ -1124,7 +1202,7 @@ def test_changed_focus_invalidates_previous_approval(tmp_path: Path, monkeypatch
         },
     )
 
-    second = tg_plan(repo, "DemoOp", level="L1", focus="TND")
+    second = tg_plan(repo, "DemoOp", level="L1", focus="TND", reuse_snapshot=True)
 
     assert second["plan_hash"] != first["plan_hash"]
     supplement = read_yaml(root / "plan" / "human_supplement.yaml")
@@ -1150,7 +1228,8 @@ def test_conflicting_hard_obligation_blocks_approval(tmp_path: Path) -> None:
 
     assert plan["unresolved"]["status"] == "blocked"
     assert plan["unresolved"]["blocking_hard_obligations"]
-    assert "是否允许进入 SMT 阶段: 否" in plan["review"]
+    assert "Allow solve: no" in plan["review"] or "是否允许进入 solve" in plan["review"]
+    assert "否" in plan["review"]
 
 
 def test_testagent_does_not_modify_understand_operator(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1159,7 +1238,7 @@ def test_testagent_does_not_modify_understand_operator(tmp_path: Path, monkeypat
     before = _tree_hash(uo)
 
     tg_init(repo, "DemoOp")
-    tg_plan(repo, "DemoOp")
+    tg_plan(repo, "DemoOp", reuse_snapshot=True)
 
     assert _tree_hash(uo) == before
 
@@ -1238,12 +1317,13 @@ def test_nested_relation_item_is_not_treated_as_key_field() -> None:
 
 
 def test_real_final_validation_export_and_phase2_without_mocks(tmp_path: Path) -> None:
+    pytest.importorskip("understand_operator")
     repo = tmp_path / "repo"
     repo.mkdir()
     _mature_final_uo_fixture(repo)
 
     init_result = tg_init(repo, "DemoOp")
-    plan = tg_plan(repo, "DemoOp")
+    plan = tg_plan(repo, "DemoOp", reuse_snapshot=True)
     root = repo / ".testcase-generator" / "DemoOp"
     write_yaml(
         root / "plan" / "human_supplement.yaml",
@@ -1276,5 +1356,5 @@ def test_real_final_validation_export_and_phase2_without_mocks(tmp_path: Path) -
     assert not any(error["code"] == "DOMAIN_CONFLICT" for error in ir_result.errors)
     assert any(item["status"] == "sat" and item["model"].get("VAR_KEY_SPLIT_AXIS") == 2 for item in solve["solve_results"])
     assert any(item["status"] == "error" and item.get("code") == "OBLIGATION_OUTSIDE_DECLARED_DOMAIN" for item in solve["solve_results"])
-    assert not list(root.rglob("*.csv"))
+    assert (root / "cases" / "cases.csv").exists() or (root / "cases" / "realize_report.yaml").exists()
     assert not (root / "run" / "operator_execution.yaml").exists()

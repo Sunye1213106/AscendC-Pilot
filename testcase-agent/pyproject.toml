@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "testcase-agent"
 version = "0.1.0"
-description = "TestAgent phase 1 intake and coverage planning for Understand Operator contracts"
+description = "TestAgent: tg-plan (intake+extract+L0-L3) and tg-solve (SMT+CSV)"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -18,9 +18,9 @@ solver = [
 ]
 
 [project.scripts]
-tg-init = "testcase_agent.cli:init_main"
 tg-plan = "testcase_agent.cli:plan_main"
 tg-solve = "testcase_agent.cli:solve_main"
+tg-init = "testcase_agent.cli:init_main"
 
 [tool.setuptools.packages.find]
 where = ["."]

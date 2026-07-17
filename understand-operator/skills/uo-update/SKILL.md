@@ -1,4 +1,4 @@
----
+﻿---
 name: uo-update
 description: >-
   Incremental AscendC operator KB update: git diff vs last KB revision, selective
@@ -80,7 +80,9 @@ python -X utf8 "$SCRIPT_DIR/update_operator.py" "$PROJECT_ROOT" --op-name "$OP_N
 
 ```powershell
 python -X utf8 "$SCRIPT_DIR/build_layered_kb.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --layers "<from update_plan>"
-# 若有新增 unresolved entrypoint / residual → dispatch uo-semantic-resolve，再 apply_resolution
+# 若有新增 unresolved entrypoint / residual →
+#   dispatch uo-semantic-resolve（用 prompts/00_subagent_dispatch.md 强制模板，抽样 ≤12）
+#   → apply_resolution.py --check → apply_resolution.py
 python -X utf8 "$SCRIPT_DIR/export_diff_product.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 ```
 

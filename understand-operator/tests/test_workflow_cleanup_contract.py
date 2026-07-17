@@ -119,6 +119,24 @@ def test_subagent_dispatch_reuses_stable_identity() -> None:
     assert "uo-semantic-resolve" in combined
 
 
+def test_residual_dispatch_locks_schema_and_sampling() -> None:
+    dispatch = _read("prompts/00_subagent_dispatch.md")
+    agent = _read("agents/uo-semantic-resolve.md")
+    workflow = _read("skills/uo-init/SKILL.md")
+    orchestrator = _read("prompts/01_workflow_orchestrator.md")
+    combined = "\n".join([dispatch, agent, workflow, orchestrator])
+
+    assert "mandatory residual dispatch template" in dispatch.lower() or "Residual resolve dispatch" in dispatch
+    assert "unresolved_resolutions" in agent
+    assert "At most 12" in agent or "at most 12" in agent.lower()
+    assert "residuals:" in agent  # forbidden list mentions it
+    assert "resolution: warning" in agent
+    assert "apply_resolution.py" in combined and "--check" in combined
+    assert "Do NOT hand-count" in dispatch or "hand-count" in agent
+    # Parent must not invent alternate top-level schemas in resolve prompts.
+    assert "Do not invent" in workflow or "do not invent" in workflow.lower()
+
+
 def test_all_subagents_resolve_prompts_from_prompt_dir() -> None:
     missing: list[str] = []
     for path in (ROOT / "agents").glob("uo-*.md"):

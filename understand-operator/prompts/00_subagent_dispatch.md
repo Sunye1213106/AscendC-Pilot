@@ -54,3 +54,50 @@ fallback path for the installed plugin. Do not let a subagent resolve
 
 Apply patches with `apply_resolution.py` / entrypoint confirm flags. Never let
 the subagent rewrite `contracts/`, `tiling/`, `kernel/`, or source trees.
+
+## Residual resolve dispatch (mandatory template)
+
+When dispatching residual + consistency review, the **Task prompt body must**
+include the following block verbatim (fill paths only). Do **not** invent
+alternate schemas such as `residuals:` / `resolution: warning` / `branches:`.
+
+```text
+Follow agents/uo-semantic-resolve.md exactly.
+
+Task: residual resolve + optional branch consistency review.
+- Read only: <UO_ROOT>/ir/unresolved.yaml (and snippets therein)
+- Optional skim: <UO_ROOT>/ir/kernel_subgraph.yaml branch rows (binding_time/condition/file:line)
+- Write only: <UO_ROOT>/ir/resolution_patch.yaml
+
+Schema (ONLY):
+  version: 1
+  node_patches: []
+  unresolved_resolutions:
+    - id: <id from unresolved.yaml>
+      status: resolved | accepted | false_positive | alias
+      rationale: <Chinese brief>
+      resolution: {kind, label, evidence}   # optional
+  consistency_diffs: []
+
+Hard caps:
+- At most 12 unresolved_resolutions entries (sample by pattern; leave the rest)
+- At most ~15 tool calls; prefer MCP codebase-memory-mcp for one symbol
+- Do NOT hand-count ids or require 1:1 coverage of unresolved.yaml
+- Do NOT emit residuals:/resolutions:/branches:/decision:/resolution:warning
+
+After write, stop. Parent will run apply_resolution.py --check.
+```
+
+## Apply gate (parent, not subagent)
+
+After the subagent returns, parent **must** validate before treating resolve as done:
+
+```powershell
+python -X utf8 "$SCRIPT_DIR/apply_resolution.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --patch "$UO_ROOT/ir/resolution_patch.yaml" --check
+```
+
+- If `rejected_count > 0`: resume the **same** dispatch identity with only the
+  `rejected` list; ask for a minimal fix patch. Do not reopen a fresh full resolve.
+- If check passes: apply without `--check`, then continue export/validate.
+
+Never ask the subagent to PowerShell-diff id lists against `unresolved.yaml`.

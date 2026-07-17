@@ -78,8 +78,12 @@ def build_constraint_ir(snapshot: dict[str, Any], obligations_doc: dict[str, Any
     constraint_specs.extend(_iter_items(_as_dict(contract.get("constraint_ir")).get("constraints")))
     constraint_specs.extend(_iter_items(human_supplement.get("constraints")))
 
+    seen_constraint_ids: set[str] = set()
     for idx, spec in enumerate(constraint_specs, start=1):
         cid = str(spec.get("id") or spec.get("constraint_id") or f"CONTRACT_CONSTRAINT_{idx:03d}")
+        if cid in seen_constraint_ids:
+            continue
+        seen_constraint_ids.add(cid)
         try:
             expr = normalize_expr(spec.get("expr") if "expr" in spec else spec)
             _register_derived_variable(variables, spec, expr, global_errors)
@@ -259,13 +263,14 @@ def compile_relation_expr(constraints: dict[str, Any]) -> dict[str, Any] | None:
                 source, target = fields[0], fields[1]
         if not source or not target:
             raise ConstraintIRError(f"{relation_type} relation requires source and target")
-        return {
-            "op": "and",
-            "args": [
-                {"op": "eq", "var": _relation_var_id(str(source)), "value": True},
-                {"op": "eq", "var": _relation_var_id(str(target)), "value": True},
-            ],
-        }
+        mode = str(constraints.get("compile_mode") or constraints.get("mode") or "witness").lower()
+        antecedent = {"op": "eq", "var": _relation_var_id(str(source)), "value": True}
+        consequent = {"op": "eq", "var": _relation_var_id(str(target)), "value": True}
+        if mode == "legal":
+            # True implication for GlobalLegal constraints.
+            return {"op": "implies", "antecedent": antecedent, "consequent": consequent}
+        # Coverage witness: force antecedent∧consequent so the edge is exercised.
+        return {"op": "and", "args": [antecedent, consequent]}
     if relation_type == "compatible_set":
         combinations = constraints.get("combinations") or constraints.get("must_cover")
         if isinstance(combinations, list) and len(combinations) == 1:

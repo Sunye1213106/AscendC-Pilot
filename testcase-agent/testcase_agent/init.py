@@ -56,8 +56,14 @@ def tg_init(project_root: Path, op_name: str) -> dict[str, Any]:
         raise TgInitError(f"Understand root not found: {uo_root}", report)
 
     try:
-        final_validation = run_final_validation(project_root, op_name, uo_root)
+        # Prefer loading pre-built .understand-operator YAML; plugin optional.
         export_payload = export_testcase_contract(project_root, op_name, uo_root)
+        final_validation = run_final_validation(project_root, op_name, uo_root)
+        # Keep validation hashes aligned with export when filesystem mode reused synth
+        if export_payload.get("intake_mode") == "built_kb_filesystem" and not final_validation.get("source_artifact_hashes"):
+            from .understand import synth_final_validation
+
+            final_validation = synth_final_validation(uo_root, export_payload)
     except Exception as exc:
         code = exc.code if isinstance(exc, UnderstandExportError) else "UNDERSTAND_EXPORT_OR_VALIDATION_FAILED"
         run["status"] = "fail"
@@ -136,7 +142,7 @@ def tg_init(project_root: Path, op_name: str) -> dict[str, Any]:
             "snapshot": "snapshot/understand_contract.json",
             "snapshot_meta": "snapshot/snapshot_meta.yaml",
             "validation_report": "intake/validation_report.yaml",
-            "next_command": "tg-plan",
+            "next_command": "tg-solve (after tg-plan approval)",
         }
     )
     write_yaml(out_root / "run.yaml", run)

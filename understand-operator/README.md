@@ -3,7 +3,13 @@
 面向 **Ascend C 自定义算子** 的知识库（KB）插件。  
 在算子仓库中自动抽取 Host / Kernel / Tiling / 桥接关系，生成可查询的分层 IR，并支持按 git 变更增量更新。
 
-配合 [OpenCode](https://opencode.ai) 或 [Cursor](https://cursor.com) 使用；代码理解后端为 [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp)（CBM）。
+| | |
+| --- | --- |
+| 仓库 | [Sunye1213106/Ascendc-PR-test-agent](https://github.com/Sunye1213106/Ascendc-PR-test-agent) |
+| 插件目录 | 仓库内 [`understand-operator/`](https://github.com/Sunye1213106/Ascendc-PR-test-agent/tree/refactor/uo-facts-graph-test-pipeline/understand-operator) |
+| 推荐分支 | `refactor/uo-facts-graph-test-pipeline`（当前主开发线） |
+| Agent | [OpenCode](https://opencode.ai) / [Cursor](https://cursor.com) |
+| 代码图后端 | [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp)（CBM） |
 
 ## 它解决什么问题
 
@@ -56,20 +62,23 @@ Understand Operator 把上述信息整理成算子本地的一份 KB：
 - **KB 固定在算子子目录**：即使发现父级 `common/`，也不把 KB 抬到多算子 workspace。
 - **源码证据优先走 CBM**；路径与文件结构用文件系统和 `rg`。
 - **LLM 只补抽取器补不到的洞**，不重写整库。
-- **`/uo-update` 产出两份结果**：刷新后的同构 KB + 专用 `diff/`（change_set / impact / unresolved）。下游测例应先读 `diff/`，不确定时再回查 KB。
+- **`/uo-update` 产出两份结果**：刷新后的同构 KB + 专用 `diff/`。下游测例应先读 `diff/`，不确定时再回查 KB。
 
 ## 仓库结构
 
+本插件是 monorepo 子目录，**安装与运行都以 `understand-operator/` 为根**：
+
 ```text
-understand-operator/
-├── install.ps1 / install.sh   # 安装到 OpenCode / Cursor
-├── skills/                    # /uo-init /uo-query /uo-update /uo-diff
-├── prompts/                   # 编排与规则
-├── agents/                    # 有界语义补全 subagent
-├── uo/                        # Python 实现（scripts + 库）
-├── spec/                      # 契约（ownership / kb_layout / diff schemas）
-├── docs/                      # CBM MCP 配置等
-└── tests/
+Ascendc-PR-test-agent/
+└── understand-operator/           ← 插件根（PLUGIN_ROOT）
+    ├── install.ps1 / install.sh
+    ├── skills/                    # /uo-init /uo-query /uo-update /uo-diff
+    ├── prompts/
+    ├── agents/
+    ├── uo/                        # Python 实现（scripts + 库）
+    ├── spec/
+    ├── docs/
+    └── tests/
 ```
 
 ## 安装
@@ -77,30 +86,29 @@ understand-operator/
 ### 1. Clone
 
 ```bash
-git clone <this-repo-url> understand-operator
-cd understand-operator
+git clone -b refactor/uo-facts-graph-test-pipeline \
+  https://github.com/Sunye1213106/Ascendc-PR-test-agent.git
+cd Ascendc-PR-test-agent/understand-operator
 ```
 
-依赖：Python ≥ 3.10，以及可运行的 `codebase-memory-mcp`（配置见 `docs/cbm-mcp-setup.md`）。
+依赖：Python ≥ 3.10，以及可运行的 `codebase-memory-mcp`（见 `docs/cbm-mcp-setup.md`）。
 
 ### 2. 安装到 OpenCode
+
+在 **`understand-operator/`** 目录下执行：
 
 ```powershell
 ./install.ps1 opencode
 ```
 
-会在用户目录创建 junction / symlink：
+会创建：
 
-- `~/.config/opencode/skills/uo-*` → 本仓库 `skills/`
-- `~/.config/opencode/understand-operator-plugin` → **本仓库根**
+- `~/.config/opencode/skills/uo-*` → 本目录 `skills/`
+- `~/.config/opencode/understand-operator-plugin` → **本目录（PLUGIN_ROOT）**
 
-脚本目录：
+脚本路径：`$PLUGIN_ROOT/uo/scripts`。
 
-```text
-$PLUGIN_ROOT/uo/scripts
-```
-
-在 `~/.config/opencode/opencode.json` 中允许人工确认 UI：
+在 `~/.config/opencode/opencode.json` 中允许人工确认：
 
 ```json
 {
@@ -110,18 +118,16 @@ $PLUGIN_ROOT/uo/scripts
 }
 ```
 
-并配置 MCP 服务器 `codebase-memory-mcp`（binary 路径按本机调整），详见 `docs/cbm-mcp-setup.md`。
+并配置 MCP `codebase-memory-mcp`（binary 路径按本机调整），详见 `docs/cbm-mcp-setup.md`。
 
 ### 3. 安装到 Cursor（可选）
 
-1. Settings → Plugins → Add local plugin → 选择本仓库根目录  
-2. 或执行：
+1. Settings → Plugins → Add local plugin → 选择 **`understand-operator/`**（含 `skills/` 与 `uo/`）  
+2. 或在该目录执行 `./install.ps1 cursor`
 
-```powershell
-./install.ps1 cursor
-```
+### 4. 可选：开发态
 
-### 4. 可选：开发态 Python 包
+仍在 `understand-operator/` 下：
 
 ```bash
 pip install -e .
@@ -132,9 +138,8 @@ python -m pytest tests -q
 
 在目标 **算子包目录** 上调用（例如 `flash_attention_score_grad/`），不要指向含多个算子的父目录。
 
-`--op-name` 可省略：当该路径下只有一个算子 KB / 可唯一推断算子名时，会自动推导。
-
-默认分析架构分支为 `arch35`（也可在命令中显式说明，例如「只分析 arch35」）。
+- `--op-name` 可省略：路径下可唯一推断算子名时会自动推导。
+- 默认分析架构为 `arch35`（也可在命令里写「只分析 arch35」）。
 
 ### 首次建库
 
@@ -148,14 +153,7 @@ python -m pytest tests -q
 /uo-init /path/to/flash_attention_score_grad 只分析 arch35
 ```
 
-流程摘要：
-
-1. 创建 `.understand-operator/<op_name>/`
-2. 扫描分析范围（可包含上溯到的 `common/` 子集）
-3. **停下等待人工确认范围**
-4. 窄索引 + 抽取 IR
-5. 有界语义补全
-6. 导出契约并校验
+流程：创建 KB 目录 → 扫描范围 → **人工确认** → 窄索引 + 抽 IR → 语义补全 → 导出契约。
 
 ### 提问
 
@@ -165,13 +163,13 @@ python -m pytest tests -q
 
 优先读 KB；需要源码证明时再走 CBM。
 
-### 代码变更后增量更新
+### 增量更新
 
 ```text
 /uo-update /path/to/flash_attention_score_grad
 ```
 
-相对 `manifest` 中记录的 revision 计算 git diff，按层重抽，并写出：
+相对 `manifest` 中的 revision 算 git diff，按层重抽，并写出：
 
 ```text
 .understand-operator/<op>/diff/
@@ -187,7 +185,7 @@ python -m pytest tests -q
 /uo-diff /path/to/flash_attention_score_grad
 ```
 
-### 直接跑脚本（不经过 Agent）
+### 直接跑脚本
 
 ```powershell
 python -X utf8 uo/scripts/prepare_operator.py <PROJECT_ROOT> --op-name <OP>
@@ -195,7 +193,6 @@ python -X utf8 uo/scripts/build_layered_kb.py <PROJECT_ROOT> --op-name <OP> --ar
 python -X utf8 uo/scripts/update_operator.py <PROJECT_ROOT> --op-name <OP>
 ```
 
-## 许可与反馈
+## 反馈
 
-默认遵循仓库内 `LICENSE`（若未附带，则以发布方条款为准）。  
-问题与改进建议欢迎提 Issue / PR。
+Issue / PR：https://github.com/Sunye1213106/Ascendc-PR-test-agent/issues

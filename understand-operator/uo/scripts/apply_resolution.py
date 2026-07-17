@@ -26,9 +26,16 @@ WHITELIST_NODE_FIELDS = {
     "rationale",
 }
 WHITELIST_DIAG_FIELDS = {"severity", "status", "rationale", "resolution"}
+VALID_STATUSES = frozenset({"resolved", "accepted", "false_positive", "alias"})
 
 
-def apply_resolution(repo_root: Path, op_name: str, patch: dict[str, Any] | None = None) -> dict[str, Any]:
+def apply_resolution(
+    repo_root: Path,
+    op_name: str,
+    patch: dict[str, Any] | None = None,
+    *,
+    dry_run: bool = False,
+) -> dict[str, Any]:
     uo_root = existing_operator_root(repo_root, op_name)
     graph = read_yaml(uo_root / "ir" / "operator_graph.yaml")
     unresolved = read_yaml(uo_root / "ir" / "unresolved.yaml")
@@ -62,12 +69,13 @@ def apply_resolution(repo_root: Path, op_name: str, patch: dict[str, Any] | None
         if uid not in unresolved_by_id:
             rejected.append({"id": uid, "reason": "unknown_unresolved"})
             continue
-        status = item.get("status") or item.get("resolution")
-        if status in {"resolved", "accepted", "false_positive", "alias"}:
+        status = _coerce_status(item)
+        if status in VALID_STATUSES:
             unresolved_by_id[uid]["status"] = status
             for key in WHITELIST_DIAG_FIELDS:
                 if key in item:
                     unresolved_by_id[uid][key] = item[key]
+            unresolved_by_id[uid]["status"] = status
             applied.append({"id": uid, "changes": {"status": status}})
         else:
             rejected.append({"id": uid, "reason": "invalid_resolution_status", "got": status})
@@ -86,15 +94,31 @@ def apply_resolution(repo_root: Path, op_name: str, patch: dict[str, Any] | None
         if changes:
             applied.append({"id": node_id, "changes": changes, "via": "consistency_diff"})
 
-    remaining = [item for item in unresolved_by_id.values() if item.get("status") not in {"resolved", "accepted", "false_positive", "alias"}]
-    graph["nodes"] = list(nodes_by_id.values())
-    graph["unresolved"] = remaining
-    graph["resolution"] = {
+    remaining = [
+        item
+        for item in unresolved_by_id.values()
+        if item.get("status") not in VALID_STATUSES
+    ]
+    resolution = {
         "applied_count": len(applied),
         "rejected_count": len(rejected),
         "applied": applied,
         "rejected": rejected,
+        "dry_run": dry_run,
     }
+    if dry_run:
+        # Return a projection without writing IR.
+        return {
+            "version": graph.get("version", 1),
+            "op_name": op_name,
+            "unresolved": remaining,
+            "resolution": resolution,
+            "nodes": list(nodes_by_id.values()),
+        }
+
+    graph["nodes"] = list(nodes_by_id.values())
+    graph["unresolved"] = remaining
+    graph["resolution"] = resolution
     write_yaml(uo_root / "ir" / "operator_graph.yaml", graph)
     write_yaml(uo_root / "ir" / "unresolved.yaml", {"version": 1, "op_name": op_name, "items": remaining})
     return graph
@@ -105,37 +129,56 @@ DECISION_TO_STATUS = {
     "resolved": "resolved",
     "accept_warning": "accepted",
     "accepted": "accepted",
+    "warning": "accepted",
     "false_positive": "false_positive",
     "suppress": "false_positive",
     "alias": "alias",
 }
 
 
+def _coerce_status(item: dict[str, Any]) -> str | None:
+    raw = item.get("status")
+    if isinstance(raw, str) and raw.strip():
+        return DECISION_TO_STATUS.get(raw.strip().lower(), raw.strip().lower())
+    decision = item.get("decision")
+    if isinstance(decision, str) and decision.strip():
+        return DECISION_TO_STATUS.get(decision.strip().lower())
+    # Legacy: resolution as a status string (not the optional dict evidence block).
+    resolution = item.get("resolution")
+    if isinstance(resolution, str) and resolution.strip():
+        return DECISION_TO_STATUS.get(resolution.strip().lower())
+    return None
+
+
 def _normalize_patch(patch: dict[str, Any]) -> dict[str, Any]:
-    """Accept legacy `resolutions`/`decision` shapes from freeform LLM prompts."""
+    """Accept legacy freeform LLM shapes; always emit unresolved_resolutions."""
     if not isinstance(patch, dict):
         return {}
     out = dict(patch)
     out.setdefault("node_patches", list(patch.get("node_patches") or []))
     out.setdefault("consistency_diffs", list(patch.get("consistency_diffs") or []))
-    resolutions = list(patch.get("unresolved_resolutions") or [])
-    legacy = patch.get("resolutions")
-    if isinstance(legacy, list):
-        for item in legacy:
+    resolutions: list[dict[str, Any]] = []
+    # Prefer canonical key; fall back to freeform aliases (first non-empty wins).
+    for key in ("unresolved_resolutions", "residuals", "resolutions"):
+        blob = patch.get(key)
+        if not isinstance(blob, list) or not blob:
+            continue
+        for item in blob:
             if not isinstance(item, dict):
                 continue
-            decision = str(item.get("decision") or item.get("status") or "").strip().lower()
-            status = DECISION_TO_STATUS.get(decision)
+            status = _coerce_status(item)
             if not status:
                 continue
-            normalized = {
+            normalized: dict[str, Any] = {
                 "id": item.get("id"),
                 "status": status,
                 "rationale": item.get("rationale") or "",
             }
-            if isinstance(item.get("resolution"), dict):
-                normalized["resolution"] = item["resolution"]
+            evidence = item.get("resolution")
+            if isinstance(evidence, dict):
+                normalized["resolution"] = evidence
             resolutions.append(normalized)
+        break
     out["unresolved_resolutions"] = resolutions
     return out
 
@@ -145,20 +188,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("repo", nargs="?", default=".")
     parser.add_argument("--op-name", required=True)
     parser.add_argument("--patch", help="Path to resolution_patch.yaml")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Validate patch against unresolved ids without writing IR (dry-run)",
+    )
     args = parser.parse_args(argv)
     repo_root = Path(args.repo).resolve()
     op_name = safe_op_name(args.op_name, repo_root)
     patch = read_yaml(Path(args.patch)) if args.patch else None
-    graph = apply_resolution(repo_root, op_name, patch)
+    graph = apply_resolution(repo_root, op_name, patch, dry_run=bool(args.check))
     res = graph.get("resolution") or {}
+    mode = "check" if args.check else "apply"
     print(
-        f"applied={res.get('applied_count')} rejected={res.get('rejected_count')} "
+        f"{mode} applied={res.get('applied_count')} rejected={res.get('rejected_count')} "
         f"remaining_unresolved={len(graph.get('unresolved') or [])}"
     )
     if res.get("rejected"):
-        sample = res["rejected"][:5]
+        sample = res["rejected"][:8]
         print(f"rejected_sample={sample}")
-    return 0
+    return 1 if args.check and int(res.get("rejected_count") or 0) > 0 else 0
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ def build_candidate(obligation: dict[str, Any], solve_result: dict[str, Any], co
     candidate = {
         "id": "",
         "source_obligation_ids": [str(obligation.get("id"))],
+        "model": model,
         "abstract_model": abstract_candidate_model(model, obligation),
         "coverage_signature": signature,
         "covered_obligation_ids": covered,

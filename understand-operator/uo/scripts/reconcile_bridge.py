@@ -13,6 +13,22 @@ if __package__ in (None, ""):
 from uo._operator.artifacts import existing_operator_root, safe_op_name
 from uo.scripts._ir_io import read_yaml, stable_id, write_yaml
 
+# Compile-time / runtime symbols that extractors sometimes treat as tiling fields.
+# Normalized via _norm_key (alnum + casefold).
+_NON_TILING_KEYS = frozenset(
+    {
+        "origdtypequery",
+        "gcoretype",
+        "mmidx",
+        "splitaxis",
+        "aic",
+        "aiv",
+    }
+)
+_NON_TILING_PREFIXES = (
+    "origdtype",
+)
+
 
 def reconcile_bridge(repo_root: Path, op_name: str) -> dict[str, Any]:
     uo_root = existing_operator_root(repo_root, op_name)
@@ -46,6 +62,10 @@ def reconcile_bridge(repo_root: Path, op_name: str) -> dict[str, Any]:
     for n in kernel.get("nodes") or []:
         if n.get("node_type") == "TilingDataField" and n.get("name"):
             _add_field(kernel_by_key, str(n.get("name")).split(".")[-1])
+
+    # Drop known non-tiling symbols before set-diff (reduces LLM residual noise).
+    host_by_key = {k: v for k, v in host_by_key.items() if not _is_non_tiling_key(k)}
+    kernel_by_key = {k: v for k, v in kernel_by_key.items() if not _is_non_tiling_key(k)}
 
     host_keys = set(host_by_key)
     kernel_keys = set(kernel_by_key)
@@ -123,6 +143,13 @@ def reconcile_bridge(repo_root: Path, op_name: str) -> dict[str, Any]:
 
 def _norm_key(name: str) -> str:
     return "".join(ch for ch in str(name or "") if ch.isalnum()).casefold()
+
+
+def _is_non_tiling_key(key: str) -> bool:
+    k = str(key or "")
+    if k in _NON_TILING_KEYS:
+        return True
+    return any(k.startswith(prefix) for prefix in _NON_TILING_PREFIXES)
 
 
 def _prefer_display(existing: str, candidate: str) -> str:

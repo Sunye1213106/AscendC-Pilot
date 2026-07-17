@@ -215,17 +215,23 @@ python -X utf8 "$SCRIPT_DIR/extract_key_predicates.py" "$PROJECT_ROOT" --op-name
 
 ## Resolve (bounded LLM)
 
-Dispatch **one** `uo-semantic-resolve` agent:
+Dispatch **one** `uo-semantic-resolve` agent using the **mandatory residual
+dispatch template** in `prompts/00_subagent_dispatch.md` (do not invent
+`residuals:` / `resolution: warning` / exhaustive “resolve all N items”).
 
-1. Residual resolve: read `ir/unresolved.yaml` + tiny snippets only.
-2. Batch consistency review: feed classified branch rows
-   (`binding_time`, `condition`, `file:line`) without full function bodies.
+1. Residual resolve: sample by pattern from `ir/unresolved.yaml` (≤12 ids).
+2. Optional batch consistency review: branch rows only
+   (`binding_time`, `condition`, `file:line`) — skip if already consistent.
 
-Agent writes only `ir/resolution_patch.yaml` (structured JSON/YAML patch).
+Agent writes only `ir/resolution_patch.yaml` with schema
+`unresolved_resolutions[].status ∈ {resolved,accepted,false_positive,alias}`.
+Leaving most residuals untouched is success.
 
-Apply:
+Validate then apply (parent gate — never ask the subagent to hand-count ids):
 
 ```powershell
+python -X utf8 "$SCRIPT_DIR/apply_resolution.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --patch "$UO_ROOT/ir/resolution_patch.yaml" --check
+# if rejected_count>0: resume same dispatch identity with rejected list only
 python -X utf8 "$SCRIPT_DIR/apply_resolution.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --patch "$UO_ROOT/ir/resolution_patch.yaml"
 python -X utf8 "$SCRIPT_DIR/kb_query_export.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --view testcase-contract
 ```

@@ -29,6 +29,7 @@ class Z3Backend:
         self.enum_int_to_value: dict[str, dict[int, str]] = {}
         self.variables = {item["id"]: item for item in ir.get("variables", []) if isinstance(item, dict)}
         self._declare_symbols()
+        self.base_solver, self.base_labels = self._build_base_solver()
 
     def solve_obligations(self, obligations: list[dict[str, Any]]) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
@@ -38,15 +39,10 @@ class Z3Backend:
         return results
 
     def solve_one(self, obligation: dict[str, Any], variable_ids: set[str] | None = None) -> dict[str, Any]:
-        z3 = self.z3
-        solver = z3.Solver()
-        solver.set(timeout=self.config.timeout_ms)
+        solver = self.base_solver
         solver.push()
-        labels: dict[str, str] = {}
+        labels: dict[str, str] = dict(self.base_labels)
         try:
-            self._add_base_domains(solver, labels)
-            self._add_derived_constraints(solver, labels)
-            self._add_contract_constraints(solver, labels)
             target = compile_obligation_target(obligation, self.ir)
             if target.status != "ok":
                 return {
@@ -59,7 +55,7 @@ class Z3Backend:
                 }
             self._assert_tracked(solver, self._compile_bool(target.expr), f"obligation:{obligation.get('id')}", labels)
             check = solver.check()
-            if check == z3.sat:
+            if check == self.z3.sat:
                 model = solver.model()
                 return {
                     "obligation_id": obligation.get("id"),
@@ -68,7 +64,7 @@ class Z3Backend:
                     "unsat_core": [],
                     "reason": "",
                 }
-            if check == z3.unsat:
+            if check == self.z3.unsat:
                 return {
                     "obligation_id": obligation.get("id"),
                     "status": "unsat",
@@ -94,6 +90,15 @@ class Z3Backend:
         finally:
             solver.pop()
 
+    def _build_base_solver(self) -> tuple[Any, dict[str, str]]:
+        solver = self.z3.Solver()
+        solver.set(timeout=self.config.timeout_ms)
+        labels: dict[str, str] = {}
+        self._add_base_domains(solver, labels)
+        self._add_derived_constraints(solver, labels)
+        self._add_contract_constraints(solver, labels)
+        return solver, labels
+
     def evaluate_model_coverage(self, model: dict[str, Any], obligations: list[dict[str, Any]]) -> list[str]:
         covered: list[str] = []
         for obligation in obligations:
@@ -107,6 +112,9 @@ class Z3Backend:
         return sorted(dict.fromkeys(covered))
 
     def model_satisfies(self, model: dict[str, Any], expr: dict[str, Any]) -> bool:
+        fast = self.fast_model_satisfies(model, expr)
+        if fast is not None:
+            return fast
         z3 = self.z3
         solver = z3.Solver()
         solver.set(timeout=self.config.timeout_ms)
@@ -122,6 +130,96 @@ class Z3Backend:
             return solver.check() == z3.sat
         except (ConstraintIRError, Z3BackendError, TypeError, ValueError):
             return False
+
+    def fast_model_satisfies(self, model: dict[str, Any], expr: dict[str, Any]) -> bool | None:
+        try:
+            return bool(self._eval_bool_from_model(model, expr))
+        except (KeyError, TypeError, ValueError, ConstraintIRError, Z3BackendError, ZeroDivisionError):
+            return None
+
+    def _eval_bool_from_model(self, model: dict[str, Any], expr: Any) -> bool:
+        expr = normalize_expr(expr)
+        op = expr["op"]
+        if op in {"eq", "ne", "lt", "le", "gt", "ge"}:
+            if "lhs" in expr:
+                lhs = self._eval_value_from_model(model, expr["lhs"])
+                rhs = self._eval_value_from_model(model, expr["rhs"])
+            else:
+                lhs = self._eval_value_from_model(model, {"var": expr["var"]})
+                rhs = self._eval_literal_for_var(str(expr["var"]), expr.get("value"))
+            if op == "eq":
+                return lhs == rhs
+            if op == "ne":
+                return lhs != rhs
+            if op == "lt":
+                return lhs < rhs
+            if op == "le":
+                return lhs <= rhs
+            if op == "gt":
+                return lhs > rhs
+            return lhs >= rhs
+        if op == "in":
+            lhs = self._eval_value_from_model(model, {"var": expr["var"]})
+            return lhs in [self._eval_literal_for_var(str(expr["var"]), value) for value in expr["values"]]
+        if op == "not_in":
+            lhs = self._eval_value_from_model(model, {"var": expr["var"]})
+            return lhs not in [self._eval_literal_for_var(str(expr["var"]), value) for value in expr["values"]]
+        if op == "and":
+            return all(self._eval_bool_from_model(model, arg) for arg in expr["args"])
+        if op == "or":
+            return any(self._eval_bool_from_model(model, arg) for arg in expr["args"])
+        if op == "not":
+            return not self._eval_bool_from_model(model, expr["arg"])
+        if op in {"implies", "requires"}:
+            return (not self._eval_bool_from_model(model, expr["antecedent"])) or self._eval_bool_from_model(model, expr["consequent"])
+        if op == "mutex":
+            return sum(1 for arg in expr["args"] if self._eval_bool_from_model(model, arg)) <= 1
+        if op == "aligned":
+            return int(self._eval_value_from_model(model, {"var": expr["var"]})) % int(expr["alignment"]) == 0
+        raise Z3BackendError(f"Expression op does not produce bool: {op}")
+
+    def _eval_value_from_model(self, model: dict[str, Any], expr: Any) -> Any:
+        if isinstance(expr, (bool, int, str)):
+            return expr
+        if isinstance(expr, dict) and "var" in expr and "op" not in expr:
+            var_id = str(expr["var"])
+            if var_id not in model:
+                raise KeyError(var_id)
+            return model[var_id]
+        expr = normalize_expr(expr)
+        op = expr["op"]
+        if op in {"eq", "ne", "lt", "le", "gt", "ge", "in", "not_in", "and", "or", "not", "implies", "requires", "mutex", "aligned"}:
+            return self._eval_bool_from_model(model, expr)
+        if op in {"add", "sub", "mul", "div", "mod"}:
+            args = [self._eval_value_from_model(model, arg) for arg in expr["args"]]
+            if op == "add":
+                return sum(args)
+            if op == "sub":
+                head, *tail = args
+                for item in tail:
+                    head -= item
+                return head
+            if op == "mul":
+                result = args[0]
+                for item in args[1:]:
+                    result *= item
+                return result
+            if op == "div":
+                return args[0] // args[1]
+            return args[0] % args[1]
+        if op == "if_then_else":
+            return self._eval_value_from_model(model, expr["then"] if self._eval_bool_from_model(model, expr["condition"]) else expr["else"])
+        if op == "derived":
+            return self._eval_value_from_model(model, expr["expr"])
+        raise Z3BackendError(f"Unsupported value expression op: {op}")
+
+    def _eval_literal_for_var(self, var_id: str, value: Any) -> Any:
+        spec = self.variables.get(var_id) or {}
+        if spec.get("type") == "bool":
+            return parse_bool_literal(value)
+        if spec.get("type") == "int":
+            return int(value)
+        return str(value) if spec.get("type") == "enum" else value
 
     def abstract_model(self, model: Any) -> dict[str, Any]:
         out: dict[str, Any] = {}

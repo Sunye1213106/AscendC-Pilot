@@ -6,6 +6,7 @@ import yaml
 
 from uo._operator.artifacts import init_operator_contract_layout, operator_root
 from uo.scripts.apply_resolution import apply_resolution, _normalize_patch
+from uo.scripts.reconcile_bridge import _is_non_tiling_key, _norm_key
 from uo.scripts.extract_host_subgraph import FIELD_WRITE_RE, SET_FIELD_RE, TILING_SETTER_RE, WRITES_TILING_HELPERS
 from uo.scripts.extract_kernel_subgraph import (
     KERNEL_DERIVED_READ_RE,
@@ -39,6 +40,15 @@ def test_architecture_filter_drops_other_arch() -> None:
     assert "common/op_kernel/arch22/u_old.h" not in kept
 
 
+def test_bridge_filters_non_tiling_symbols() -> None:
+    assert _is_non_tiling_key(_norm_key("ORIG_DTYPE_QUERY"))
+    assert _is_non_tiling_key(_norm_key("g_coreType"))
+    assert _is_non_tiling_key(_norm_key("MM_IDX"))
+    assert _is_non_tiling_key(_norm_key("SPLIT_AXIS"))
+    assert not _is_non_tiling_key(_norm_key("s1Inner"))
+    assert not _is_non_tiling_key(_norm_key("formerDkNum"))
+
+
 def test_normalize_legacy_resolutions_patch() -> None:
     patch = _normalize_patch(
         {
@@ -54,6 +64,74 @@ def test_normalize_legacy_resolutions_patch() -> None:
     assert items["DIAG_A"] == "resolved"
     assert items["DIAG_B"] == "accepted"
     assert items["DIAG_C"] == "false_positive"
+
+
+def test_normalize_residuals_warning_alias() -> None:
+    patch = _normalize_patch(
+        {
+            "version": 1,
+            "residuals": [
+                {"id": "DIAG_A", "resolution": "warning", "rationale": "keep"},
+                {"id": "DIAG_B", "resolution": "false_positive", "rationale": "fp"},
+                {
+                    "id": "DIAG_C",
+                    "status": "resolved",
+                    "rationale": "host writes",
+                    "resolution": {"kind": "label", "label": "host_producer", "evidence": "a.cpp:1"},
+                },
+            ],
+        }
+    )
+    items = {item["id"]: item for item in patch["unresolved_resolutions"]}
+    assert items["DIAG_A"]["status"] == "accepted"
+    assert items["DIAG_B"]["status"] == "false_positive"
+    assert items["DIAG_C"]["status"] == "resolved"
+    assert items["DIAG_C"]["resolution"]["kind"] == "label"
+
+
+def test_apply_resolution_check_rejects_unknown_without_write(tmp_path: Path) -> None:
+    repo = tmp_path / "op"
+    repo.mkdir()
+    root = operator_root(repo, "DemoOp")
+    init_operator_contract_layout(root, "DemoOp", repo)
+    ir = root / "ir"
+    ir.mkdir(parents=True, exist_ok=True)
+    unresolved_before = {
+        "version": 1,
+        "op_name": "DemoOp",
+        "items": [{"id": "DIAG_A", "kind": "unused_tiling_field"}],
+    }
+    (ir / "operator_graph.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "op_name": "DemoOp",
+                "nodes": [{"id": "N1", "name": "n"}],
+                "unresolved": list(unresolved_before["items"]),
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (ir / "unresolved.yaml").write_text(yaml.safe_dump(unresolved_before, sort_keys=False), encoding="utf-8")
+    result = apply_resolution(
+        repo,
+        "DemoOp",
+        {
+            "version": 1,
+            "unresolved_resolutions": [
+                {"id": "DIAG_A", "status": "false_positive", "rationale": "ok"},
+                {"id": "DIAG_BOGUS", "status": "accepted", "rationale": "nope"},
+            ],
+        },
+        dry_run=True,
+    )
+    assert result["resolution"]["applied_count"] == 1
+    assert result["resolution"]["rejected_count"] == 1
+    assert result["resolution"]["rejected"][0]["id"] == "DIAG_BOGUS"
+    # Dry-run must not mutate unresolved.yaml
+    remaining = yaml.safe_load((ir / "unresolved.yaml").read_text(encoding="utf-8"))
+    assert [i["id"] for i in remaining["items"]] == ["DIAG_A"]
 
 
 def test_apply_resolution_accepts_legacy_resolutions(tmp_path: Path) -> None:

@@ -133,6 +133,19 @@ def test_implies_mutex_requires() -> None:
     assert model["VAR_INT"] >= 4
 
 
+def test_duplicate_constraint_ids_are_deduped_before_solver() -> None:
+    duplicate = {"id": "CON_FORCE_A", "expr": {"op": "eq", "var": "VAR_ENUM", "value": "A"}}
+    contract = _contract(
+        typed_constraints=[duplicate],
+        constraint_ir={"constraints": [duplicate]},
+    )
+
+    result = build_constraint_ir(_snapshot(contract), _obligations([]), {"decision": "approve"})
+
+    assert not result.global_errors
+    assert [item["id"] for item in result.ir["constraints"]] == ["CON_FORCE_A"]
+
+
 def test_mod_aligned_tail_conditions() -> None:
     contract = _contract(
         typed_constraints=[
@@ -267,14 +280,34 @@ def test_single_unsat_does_not_break_other_obligations() -> None:
     assert result["candidates"]
 
 
-def test_tg_solve_does_not_generate_csv_or_execute_operator(tmp_path: Path) -> None:
-    repo = _repo_with_phase1(tmp_path, _contract(), _obligations([_pending("OB_A")]))
+def test_tg_solve_emits_csv_by_default(tmp_path: Path) -> None:
+    repo = _repo_with_phase1(
+        tmp_path,
+        _contract(),
+        _obligations([_pending("OB_A", constraints={"expr": {"op": "eq", "var": "VAR_ENUM", "value": "A"}})]),
+    )
 
-    tg_solve(repo, "DemoOp")
+    result = tg_solve(repo, "DemoOp")
 
     root = repo / ".testcase-generator" / "DemoOp"
-    assert not list(root.rglob("*.csv"))
+    assert (root / "cases" / "cases.csv").exists()
+    assert result["realize_report"]["realized_count"] >= 1
     assert not (root / "run" / "operator_execution.yaml").exists()
+    assert (root / "solve" / "constraint_ir.yaml").exists()
+
+
+def test_tg_solve_dry_run_skips_csv(tmp_path: Path) -> None:
+    repo = _repo_with_phase1(
+        tmp_path,
+        _contract(),
+        _obligations([_pending("OB_A", constraints={"expr": {"op": "eq", "var": "VAR_ENUM", "value": "A"}})]),
+    )
+
+    tg_solve(repo, "DemoOp", dry_run=True)
+
+    root = repo / ".testcase-generator" / "DemoOp"
+    assert not (root / "cases" / "cases.csv").exists()
+    assert (root / "cases" / "realize_report.yaml").exists()
     assert (root / "solve" / "constraint_ir.yaml").exists()
 
 

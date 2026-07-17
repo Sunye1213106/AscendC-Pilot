@@ -26,8 +26,10 @@ whole-file reads or broad Glob.
 - Prefer MCP `codebase-memory-mcp` for one symbol when a candidate snippet is
   insufficient. Never open whole kernel trees.
 - Never search under `.understand-operator/**/cbm/index_stage/**` (staging mirror).
-- Cap: at most ~15 tool calls for residual resolve. Sample representatives;
+- Cap: at most ~15 tool calls for residual resolve. **Sample representatives**;
   do not invent diagnostic ids that are not in `ir/unresolved.yaml`.
+- **Do not** hand-count or diff id lists against `unresolved.yaml`. Coverage is
+  not required. Parent validates the patch with `apply_resolution.py --check`.
 
 ## Allowed writes
 
@@ -70,7 +72,17 @@ is clearly wrong; in that case set `status: missing` style fields and explain.
 
 Read `ir/unresolved.yaml` items + their `snippet` fields only.
 
-**Required output schema** (must match `apply_resolution.py`):
+**Sampling (mandatory):**
+
+- Resolve **at most 12** diagnostic ids per run (hard cap).
+- Group by pattern first (e.g. nested `tilingData->subStruct.field`, EmptyTensor-only
+  fields, compile-time macro/template mistaken as tiling field). Pick **1–3
+  representatives per pattern**; apply the same `status` + short rationale to
+  those sampled ids only.
+- Leave the rest untouched — remaining items stay as warnings. That is success.
+- If parent prompt asks to resolve “all N items”, **ignore** that and still sample.
+
+**Required output schema** (only this shape; parent must not invent alternatives):
 
 ```yaml
 version: 1
@@ -86,11 +98,14 @@ unresolved_resolutions:
 consistency_diffs: []
 ```
 
-**Forbidden** (will be rejected or only partially applied via legacy shim):
+**Forbidden** (do not emit; parent must not request these):
 
-- Top-level key `resolutions:`
-- Field `decision: accept_warning|resolve` (use `status` instead)
-- Invented ids not present in `unresolved.yaml`
+- Top-level key `residuals:`
+- Top-level key `resolutions:` / `branches:`
+- Field `decision: accept_warning|resolve`
+- Field `resolution: warning` (string) — use `status: accepted` instead
+- Invented ids not present in `ir/unresolved.yaml`
+- Hand-written 1:1 coverage of every unresolved item
 
 Status mapping if you think in old terms:
 
@@ -116,6 +131,7 @@ classified branches in chunks. For each item provide only:
 
 Do **not** request full function bodies. Emit suspicious items under
 `consistency_diffs`. Prefer CBM `get_code_snippet` for a single line range.
+Skip the review when branches look consistent; empty `consistency_diffs: []` is fine.
 
 ## Hard rules
 
@@ -123,3 +139,5 @@ Do **not** request full function bodies. Emit suspicious items under
 - Never modify contracts/, tiling/, kernel/, or source trees.
 - Never call broad repository scans.
 - If unsure, leave unresolved; do not fabricate domains or entrypoints.
+- After writing the patch, report only: sampled count by `status`, patterns seen,
+  and patch path. Do **not** claim full coverage of `unresolved.yaml`.
