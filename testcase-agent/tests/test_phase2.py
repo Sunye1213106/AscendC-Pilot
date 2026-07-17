@@ -13,6 +13,8 @@ from testcase_agent.planner import build_plan
 from testcase_agent.solve import TgSolveError, solve_from_docs, tg_solve
 from testcase_agent.z3_backend import Z3Backend
 
+from conftest import write_minimal_contract_artifacts
+
 
 def _snapshot(contract: dict[str, Any] | None = None) -> dict[str, Any]:
     snapshot = {
@@ -103,6 +105,7 @@ def _repo_with_phase1(tmp_path: Path, contract: dict[str, Any], obligations: dic
             "notes": "",
         },
     )
+    write_minimal_contract_artifacts(root, snapshot_hash=snapshot["snapshot_hash"], plan_hash=plan_hash)
     return repo
 
 
@@ -339,6 +342,16 @@ def test_tg_solve_writes_outputs(tmp_path: Path) -> None:
     assert (root / "candidates.yaml").exists()
     assert (root / "selected_candidates.yaml").exists()
     assert (root / "unsat_obligations.yaml").exists()
+
+
+def test_tg_solve_requires_contract_artifacts_by_default(tmp_path: Path) -> None:
+    repo = _repo_with_phase1(tmp_path, _contract(), _obligations([]))
+    realization_root = repo / ".testcase-generator" / "DemoOp" / "realization"
+    for name in ("consumer_evidence.yaml", "consumer_schema.yaml", "realization_map.yaml"):
+        (realization_root / name).unlink()
+
+    with pytest.raises(TgSolveError, match="CSV_CONTRACT_REQUIRED"):
+        tg_solve(repo, "DemoOp")
 
 
 def test_hard_targetless_obligation_is_error() -> None:

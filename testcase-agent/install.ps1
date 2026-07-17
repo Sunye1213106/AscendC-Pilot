@@ -18,6 +18,7 @@ $ErrorActionPreference = 'Stop'
 # Repo root IS the plugin root.
 $PluginRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SkillsRoot = Join-Path $PluginRoot "skills"
+$AgentsSrc = Join-Path $PluginRoot "agents"
 $PackageDir = $PluginRoot
 
 $SkillNames = @(
@@ -31,6 +32,15 @@ $Targets = @{
     codex    = Join-Path $HOME ".agents\skills"
     cursor   = Join-Path $HOME ".cursor\skills"
 }
+
+$AgentTargets = @{
+    opencode = Join-Path $HOME ".config\opencode\agents"
+    cursor   = Join-Path $HOME ".cursor\agents"
+}
+
+$RequiredAgents = @(
+    "tg-csv-contract"
+)
 
 if (-not $Targets.ContainsKey($Platform)) {
     Write-Error "Unknown platform: $Platform. Supported: $($Targets.Keys -join ', ')"
@@ -65,6 +75,13 @@ if ($Uninstall) {
         }
         Write-Host "Removed plugin link: $pluginDest"
     }
+    if ($AgentTargets.ContainsKey($Platform)) {
+        $AgentsDestRoot = $AgentTargets[$Platform]
+        if (Test-Path -LiteralPath $AgentsDestRoot) {
+            Get-ChildItem $AgentsDestRoot -Filter "tg-*.md" -ErrorAction SilentlyContinue | Remove-Item -Force
+            Write-Host "Removed subagents: $AgentsDestRoot\tg-*.md"
+        }
+    }
     exit 0
 }
 
@@ -96,6 +113,31 @@ if ($PluginLinks.ContainsKey($Platform) -and (Test-Path $PluginRoot)) {
     }
     New-Item -ItemType Junction -Path $pluginDest -Target $PluginRoot | Out-Null
     Write-Host "Installed plugin: $pluginDest -> $PluginRoot"
+}
+
+if ($AgentTargets.ContainsKey($Platform) -and (Test-Path $AgentsSrc)) {
+    $AgentsDestRoot = $AgentTargets[$Platform]
+    New-Item -ItemType Directory -Force -Path $AgentsDestRoot | Out-Null
+    Get-ChildItem $AgentsDestRoot -Filter "tg-*.md" -ErrorAction SilentlyContinue | Remove-Item -Force
+    Get-ChildItem $AgentsSrc -Filter "tg-*.md" | ForEach-Object {
+        $agentDest = Join-Path $AgentsDestRoot $_.Name
+        Copy-Item -Path $_.FullName -Destination $agentDest -Force
+    }
+    Write-Host "Installed subagents: $AgentsDestRoot\tg-*.md"
+    foreach ($agent in $RequiredAgents) {
+        $agentPath = Join-Path $AgentsDestRoot "$agent.md"
+        if (-not (Test-Path -LiteralPath $agentPath)) {
+            throw "REQUIRED_SUBAGENT_UNAVAILABLE: $agent was not installed at $agentPath"
+        }
+        $text = Get-Content -LiteralPath $agentPath -Raw -Encoding UTF8
+        if ($text -notmatch "(?m)^name:\s*$([Regex]::Escape($agent))\s*$") {
+            throw "REQUIRED_SUBAGENT_UNAVAILABLE: $agent missing matching frontmatter name"
+        }
+        if ($text -notmatch "(?m)^type:\s*subagent\s*$") {
+            throw "REQUIRED_SUBAGENT_UNAVAILABLE: $agent missing frontmatter type: subagent"
+        }
+    }
+    Write-Host "Verified named subagents discoverable: $($RequiredAgents -join ', ')"
 }
 
 if (-not $SkipPip) {

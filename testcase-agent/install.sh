@@ -4,10 +4,12 @@ set -euo pipefail
 # Repo root IS the plugin root.
 PLUGIN_ROOT="$(cd "$(dirname "$0")" && pwd)"
 SKILLS_ROOT="$PLUGIN_ROOT/skills"
+AGENTS_SRC="$PLUGIN_ROOT/agents"
 PLATFORM="${1:-opencode}"
 SKIP_PIP="${SKIP_PIP:-0}"
 
 SKILL_NAMES=(tg-plan tg-solve tg-init)
+REQUIRED_AGENTS=(tg-csv-contract)
 
 case "$PLATFORM" in
   opencode) TARGET="$HOME/.config/opencode/skills" ;;
@@ -24,6 +26,13 @@ case "$PLATFORM" in
       rm -rf "$TARGET/$name"
       echo "Removed skill link: $TARGET/$name"
     done
+    if [ "$PLATFORM" = "opencode" ] && [ -d "$HOME/.config/opencode/agents" ]; then
+      rm -f "$HOME/.config/opencode/agents"/tg-*.md
+      echo "Removed subagents: $HOME/.config/opencode/agents/tg-*.md"
+    elif [ "$PLATFORM" = "cursor" ] && [ -d "$HOME/.cursor/agents" ]; then
+      rm -f "$HOME/.cursor/agents"/tg-*.md
+      echo "Removed subagents: $HOME/.cursor/agents/tg-*.md"
+    fi
     rm -rf "$PLUGIN_LINK"
     echo "Removed plugin link: $PLUGIN_LINK"
     exit 0
@@ -58,6 +67,41 @@ if [ -d "$PLUGIN_ROOT" ]; then
   fi
   ln -s "$PLUGIN_ROOT" "$PLUGIN_LINK"
   echo "Installed plugin: $PLUGIN_LINK -> $PLUGIN_ROOT"
+fi
+
+if [ "$PLATFORM" = "opencode" ] && [ -d "$AGENTS_SRC" ]; then
+  AGENTS_DEST="$HOME/.config/opencode/agents"
+elif [ "$PLATFORM" = "cursor" ] && [ -d "$AGENTS_SRC" ]; then
+  AGENTS_DEST="$HOME/.cursor/agents"
+else
+  AGENTS_DEST=""
+fi
+
+if [ -n "$AGENTS_DEST" ]; then
+  mkdir -p "$AGENTS_DEST"
+  rm -f "$AGENTS_DEST"/tg-*.md
+  for src_agent in "$AGENTS_SRC"/tg-*.md; do
+    [ -f "$src_agent" ] || continue
+    dest_agent="$AGENTS_DEST/$(basename "$src_agent")"
+    cp -f "$src_agent" "$dest_agent"
+  done
+  echo "Installed testcase-agent subagents: $AGENTS_DEST/tg-*.md"
+  for agent in "${REQUIRED_AGENTS[@]}"; do
+    path="$AGENTS_DEST/$agent.md"
+    if [ ! -f "$path" ]; then
+      echo "REQUIRED_SUBAGENT_UNAVAILABLE: $agent was not installed at $path" >&2
+      exit 1
+    fi
+    grep -Eq "^name:[[:space:]]*$agent[[:space:]]*$" "$path" || {
+      echo "REQUIRED_SUBAGENT_UNAVAILABLE: $agent missing matching frontmatter name" >&2
+      exit 1
+    }
+    grep -Eq "^type:[[:space:]]*subagent[[:space:]]*$" "$path" || {
+      echo "REQUIRED_SUBAGENT_UNAVAILABLE: $agent missing frontmatter type: subagent" >&2
+      exit 1
+    }
+  done
+  echo "Verified named subagents discoverable: ${REQUIRED_AGENTS[*]}"
 fi
 
 if [ "$SKIP_PIP" != "1" ]; then

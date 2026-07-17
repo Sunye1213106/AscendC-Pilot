@@ -61,16 +61,18 @@ def realize_candidates_to_csv(
     selected_candidates: list[dict[str, Any]],
     snapshot: dict[str, Any],
     *,
+    consumer_schema: dict[str, Any] | None = None,
     realization_map: dict[str, Any] | None = None,
     obligations: list[dict[str, Any]] | None = None,
     dry_run: bool = False,
     level: str = "",
     case_name: str = "",
+    allow_legacy_realization: bool = False,
 ) -> dict[str, Any]:
     files = snapshot.get("files") if isinstance(snapshot.get("files"), dict) else {}
     constraints = _as_dict(files.get("tiling/constraints.yaml"))
     input_realization = _as_dict(constraints.get("input_realization"))
-    columns = _realization_columns(realization_map)
+    columns = _realization_columns(realization_map, consumer_schema)
     rows: list[dict[str, Any]] = []
     coverage_rows: list[dict[str, Any]] = []
     blocked: list[dict[str, Any]] = []
@@ -92,21 +94,38 @@ def realize_candidates_to_csv(
                     model[mapping[key]] = sig[key]
             for branch, value in _as_dict(sig.get("branch_truth")).items():
                 model[f"VAR_{branch}" if not str(branch).startswith("VAR_") else str(branch)] = value
-        realization = match_realization(model, candidate, input_realization)
-        if realization["status"] != "ok":
-            blocked.append(
-                {
-                    "candidate_id": candidate.get("id") or f"CAND_{idx:04d}",
-                    "status": "realize_blocked",
-                    "reason": realization["reason"],
-                    "model": model,
-                }
-            )
-            continue
-        if realization_map and (realization_map.get("csv_variables") or realization_map.get("consumer")):
-            row = build_case_row_from_realization_map(candidate, model, realization_map, idx)
+        if consumer_schema and consumer_schema.get("fields"):
+            realization = {"status": "ok", "reason": "", "refs": [], "shape": {}}
+            try:
+                row = materialize_row_from_contract(candidate, model, consumer_schema, realization_map or {}, idx)
+            except ValueError as exc:
+                blocked.append(
+                    {
+                        "candidate_id": candidate.get("id") or f"CAND_{idx:04d}",
+                        "status": "realize_blocked",
+                        "reason": str(exc),
+                        "model": model,
+                    }
+                )
+                continue
         else:
-            row = build_case_row(candidate, model, realization, idx)
+            realization = match_realization(model, candidate, input_realization)
+            if realization["status"] != "ok":
+                blocked.append(
+                    {
+                        "candidate_id": candidate.get("id") or f"CAND_{idx:04d}",
+                        "status": "realize_blocked",
+                        "reason": realization["reason"],
+                        "model": model,
+                    }
+                )
+                continue
+            if realization_map and (realization_map.get("csv_variables") or realization_map.get("consumer")):
+                row = build_case_row_from_realization_map(candidate, model, realization_map, idx)
+            elif allow_legacy_realization:
+                row = build_case_row(candidate, model, realization, idx)
+            else:
+                raise ValueError("CSV_CONTRACT_REQUIRED: contract-backed materialization is required")
         rows.append(row)
         coverage_rows.append(build_case_coverage(candidate, idx, obligations or [], realization_map or {}))
 
@@ -124,6 +143,7 @@ def realize_candidates_to_csv(
         "dry_run": dry_run,
         "csv_columns": columns,
         "realization_map_enabled": bool(realization_map),
+        "legacy_mode": bool(not consumer_schema and allow_legacy_realization),
     }
     cases_dir = out_root / "cases"
     if level:
@@ -280,6 +300,41 @@ def build_case_row_from_realization_map(candidate: dict[str, Any], model: dict[s
     return row
 
 
+def materialize_row_from_contract(
+    candidate: dict[str, Any],
+    model: dict[str, Any],
+    consumer_schema: dict[str, Any],
+    realization_map: dict[str, Any],
+    idx: int,
+) -> dict[str, Any]:
+    fields = [item for item in consumer_schema.get("fields", []) if isinstance(item, dict)]
+    emit_columns = _as_dict(_as_dict(realization_map.get("emit")).get("columns"))
+    row: dict[str, Any] = {}
+    for field in sorted(fields, key=lambda item: int(item.get("order", 0))):
+        name = str(field.get("name") or "")
+        role = str(field.get("role") or "")
+        value: Any = None
+        if role in {"solver_input", "solver_derived"}:
+            var_id = _csv_var_id(name)
+            value = model.get(var_id)
+        elif role == "constant":
+            value = field.get("default")
+        elif role == "case_id":
+            template = _as_dict(emit_columns.get(name))
+            value = _eval_emit_expr(template, model, candidate, idx) if template else str(candidate.get("id") or f"case_{idx:04d}")
+        elif role == "expected_result":
+            template = _as_dict(emit_columns.get(name))
+            value = _eval_emit_expr(template, model, candidate, idx) if template else field.get("default", "")
+        elif role == "emit_derived":
+            value = _eval_emit_expr(_as_dict(emit_columns.get(name)), model, candidate, idx)
+        elif role == "metadata":
+            value = field.get("default", "")
+        if value in (None, "") and field.get("required"):
+            raise ValueError(f"REQUIRED_COLUMN_UNMAPPED: {name} is required but has no value")
+        row[name] = _serialize_field_value(value, field)
+    return row
+
+
 def build_case_coverage(candidate: dict[str, Any], row_index: int, obligations: list[dict[str, Any]], realization_map: dict[str, Any]) -> dict[str, Any]:
     obligation_by_id = {str(item.get("id")): item for item in obligations if isinstance(item, dict)}
     branch_by_ref = {str(item.get("branch_ref")): item for item in realization_map.get("branch_mappings") or [] if isinstance(item, dict)}
@@ -345,7 +400,11 @@ def _cu_from_actual(values: list[int]) -> list[int]:
     return out
 
 
-def _realization_columns(realization_map: dict[str, Any] | None) -> list[str]:
+def _realization_columns(realization_map: dict[str, Any] | None, consumer_schema: dict[str, Any] | None = None) -> list[str]:
+    if isinstance(consumer_schema, dict):
+        fields = [item for item in consumer_schema.get("fields", []) if isinstance(item, dict)]
+        if fields:
+            return [str(item.get("name") or "") for item in sorted(fields, key=lambda item: int(item.get("order", 0)))]
     if isinstance(realization_map, dict):
         columns = _as_dict(realization_map.get("consumer")).get("columns")
         if isinstance(columns, list) and columns:
@@ -357,6 +416,61 @@ def _format_csv_value(value: Any) -> Any:
     if isinstance(value, bool):
         return "true" if value else "false"
     return value
+
+
+def _serialize_field_value(value: Any, field: dict[str, Any]) -> Any:
+    if value is None:
+        return ""
+    serializer = str(field.get("serializer") or "")
+    if serializer == "bool_string":
+        return "true" if _norm(value) is True else "false"
+    if serializer == "list_string":
+        return str(list(value)) if isinstance(value, list) else str(value)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return value
+
+
+def _eval_emit_expr(expr: dict[str, Any], model: dict[str, Any], candidate: dict[str, Any], idx: int) -> Any:
+    if not expr:
+        return ""
+    op = str(expr.get("op") or "")
+    if op == "constant":
+        return expr.get("value", "")
+    if op == "model_var":
+        return model.get(str(expr.get("var") or ""))
+    if op == "bool_format":
+        value = _eval_emit_expr(_as_dict(expr.get("value")), model, candidate, idx)
+        return str(expr.get("true", "true")) if _norm(value) is True else str(expr.get("false", "false"))
+    if op == "enum_format":
+        value = _eval_emit_expr(_as_dict(expr.get("value")), model, candidate, idx)
+        mapping = _as_dict(expr.get("mapping"))
+        return mapping.get(str(value), expr.get("default", value))
+    if op == "template":
+        template = str(expr.get("template") or "{case_id}")
+        values = {
+            "case_id": str(candidate.get("id") or f"case_{idx:04d}"),
+            "index": idx,
+        }
+        for key, value in model.items():
+            values[key] = value
+        return template.format(**values)
+    if op == "balanced_partition":
+        total = int(_eval_emit_expr(_as_dict(expr.get("total")), model, candidate, idx))
+        parts = int(_eval_emit_expr(_as_dict(expr.get("parts")), model, candidate, idx))
+        return _balanced_lengths(total, parts)
+    if op == "cumulative_sum":
+        values = _eval_emit_expr(_as_dict(expr.get("values")), model, candidate, idx)
+        return _cu_from_actual([int(item) for item in values or []])
+    if op == "list_format":
+        values = _eval_emit_expr(_as_dict(expr.get("values")), model, candidate, idx)
+        return str(values if isinstance(values, list) else [values])
+    raise ValueError(f"UNSUPPORTED_EMIT_EXPRESSION: {op}")
+
+
+def _csv_var_id(column: str) -> str:
+    safe = "".join(ch if ch.isalnum() else "_" for ch in column).strip("_")
+    return f"VAR_CSV_{safe}"
 
 
 def write_cases_csv(path: Path, rows: list[dict[str, Any]], columns: list[str] | None = None) -> None:

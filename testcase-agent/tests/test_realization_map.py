@@ -4,10 +4,12 @@ import csv
 from pathlib import Path
 
 from testcase_agent.constraint_ir import build_constraint_ir, compile_obligation_target
+from testcase_agent.hashing import stable_hash
 from testcase_agent.io import read_yaml
 from testcase_agent.realization_map import build_realization_map
 from testcase_agent.realization_schema import extract_consumer_schema
 from testcase_agent.realize import realize_candidates_to_csv
+from testcase_agent.realization_validation import validate_contract_artifacts
 
 
 def _consumer_root(tmp_path: Path) -> Path:
@@ -56,6 +58,75 @@ def _snapshot() -> dict:
     }
 
 
+def _consumer_contract() -> tuple[dict, dict, dict]:
+    evidence = {
+        "version": 1,
+        "consumer_root": "",
+        "files_read": [],
+        "ordered_header_candidates": [{"path": "fixture.csv", "reason": "sample_csv", "columns": ["Testcase_Name", "Enable", "Input_Layout", "B", "rope", "seqlens_list_q"]}],
+        "field_accesses": {
+            "Enable": [{"path": "fixture.py", "line": 1, "kind": "required_read"}],
+            "Input_Layout": [{"path": "fixture.py", "line": 2, "kind": "required_read"}],
+            "B": [{"path": "fixture.py", "line": 3, "kind": "required_read"}],
+            "rope": [{"path": "fixture.py", "line": 4, "kind": "required_read"}],
+            "seqlens_list_q": [{"path": "fixture.py", "line": 5, "kind": "required_read"}],
+        },
+        "sample_values": {"Enable": ["Enable"], "Input_Layout": ["TND"]},
+        "type_conversion_evidence": {},
+        "required_optional_evidence": {"rope": [{"path": "fixture.py", "line": 4, "kind": "required_read"}]},
+        "test_requirement_refs": [],
+        "snapshot_hash": "snap",
+        "plan_hash": "plan",
+        "warnings": [],
+    }
+    evidence["evidence_hash"] = stable_hash(
+        {
+            "ordered_header_candidates": evidence["ordered_header_candidates"],
+            "field_accesses": evidence["field_accesses"],
+            "sample_values": evidence["sample_values"],
+            "snapshot_hash": "snap",
+            "plan_hash": "plan",
+        }
+    )
+    schema = {
+        "version": 1,
+        "evidence_hash": evidence["evidence_hash"],
+        "snapshot_hash": "snap",
+        "plan_hash": "plan",
+        "fields": [
+            {"name": "Testcase_Name", "order": 0, "required": True, "role": "case_id", "value_type": "string", "domain": ["*"], "default": "", "serializer": "string", "aliases": [], "source_refs": [{"path": "fixture"}], "confidence": "high", "rationale": "id"},
+            {"name": "Enable", "order": 1, "required": True, "role": "constant", "value_type": "string", "domain": ["Enable"], "default": "Enable", "serializer": "string", "aliases": [], "source_refs": [{"path": "fixture"}], "confidence": "high", "rationale": "constant"},
+            {"name": "Input_Layout", "order": 2, "required": True, "role": "solver_input", "value_type": "enum", "domain": ["TND"], "default": "TND", "serializer": "string", "aliases": [], "source_refs": [{"path": "fixture"}], "confidence": "high", "rationale": "layout"},
+            {"name": "B", "order": 3, "required": True, "role": "solver_input", "value_type": "int", "domain": {"min": 1, "max": 8}, "default": 1, "serializer": "string", "aliases": [], "source_refs": [{"path": "fixture"}], "confidence": "high", "rationale": "batch"},
+            {"name": "rope", "order": 4, "required": True, "role": "solver_input", "value_type": "int", "domain": {"values": [0, 1]}, "default": 0, "serializer": "string", "aliases": [], "source_refs": [{"path": "fixture"}], "confidence": "high", "rationale": "rope"},
+            {"name": "seqlens_list_q", "order": 5, "required": True, "role": "emit_derived", "value_type": "list_int", "domain": [], "default": [], "serializer": "list_string", "aliases": [], "source_refs": [{"path": "fixture"}], "confidence": "high", "rationale": "derived list"},
+        ],
+    }
+    realization_map = {
+        "version": 2,
+        "evidence_hash": evidence["evidence_hash"],
+        "snapshot_hash": "snap",
+        "plan_hash": "plan",
+        "consumer": {"columns": ["Testcase_Name", "Enable", "Input_Layout", "B", "rope", "seqlens_list_q"]},
+        "csv_variables": [
+            {"id": "VAR_CSV_Input_Layout", "column": "Input_Layout", "type": "enum", "domain": ["TND"], "source_refs": [{"path": "fixture"}]},
+            {"id": "VAR_CSV_B", "column": "B", "type": "int", "domain": {"min": 1, "max": 8}, "source_refs": [{"path": "fixture"}]},
+            {"id": "VAR_CSV_rope", "column": "rope", "type": "int", "domain": {"values": [0, 1]}, "source_refs": [{"path": "fixture"}]},
+        ],
+        "derived_variables": [],
+        "branch_mappings": [{"branch_ref": "KBR_TND", "var": "VAR_KBR_TND", "condition": "IS_TND", "file_path": "kernel.cpp", "start_line": 12, "source_refs": [{"path": "kernel.cpp", "line": 12}]}],
+        "abstract_branches": [],
+        "emit": {
+            "columns": {
+                "Testcase_Name": {"op": "template", "template": "{case_id}"},
+                "seqlens_list_q": {"op": "list_format", "values": {"op": "balanced_partition", "total": {"op": "constant", "value": 9}, "parts": {"op": "model_var", "var": "VAR_CSV_B"}}},
+            }
+        },
+        "warnings": [],
+    }
+    return evidence, schema, realization_map
+
+
 def test_consumer_schema_uses_sample_header_then_script_columns(tmp_path: Path) -> None:
     schema = extract_consumer_schema(_consumer_root(tmp_path))
 
@@ -100,20 +171,16 @@ def test_realization_map_registers_csv_variables_and_abstract_branches(tmp_path:
 
 
 def test_realize_writes_consumer_columns_and_case_coverage(tmp_path: Path) -> None:
-    schema = extract_consumer_schema(_consumer_root(tmp_path))
-    realization_map = build_realization_map(_snapshot(), schema)
+    evidence, schema, realization_map = _consumer_contract()
+    report = validate_contract_artifacts(evidence, schema, realization_map, snapshot_hash="snap", plan_hash="plan")
+    assert report["status"] == "pass"
     out_root = tmp_path / "out"
     candidate = {
         "id": "CAND_TND",
         "model": {
             "VAR_CSV_Input_Layout": "TND",
             "VAR_CSV_B": 3,
-            "VAR_CSV_S1": 17,
-            "VAR_CSV_S2": 19,
-            "VAR_CSV_D": 64,
-            "VAR_CSV_D_V": 128,
             "VAR_CSV_rope": 1,
-            "VAR_CSV_Atten_mask_shape": "BNSS",
         },
         "covered_obligation_ids": ["OB_TND"],
     }
@@ -123,6 +190,7 @@ def test_realize_writes_consumer_columns_and_case_coverage(tmp_path: Path) -> No
         out_root,
         [candidate],
         _snapshot(),
+        consumer_schema=schema,
         realization_map=realization_map,
         obligations=obligations,
         level="L1",
@@ -133,11 +201,9 @@ def test_realize_writes_consumer_columns_and_case_coverage(tmp_path: Path) -> No
     with csv_path.open("r", encoding="utf-8", newline="") as fh:
         row = next(csv.DictReader(fh))
     assert row["Input_Layout"] == "TND"
-    assert row["D_V"] == "128"
-    assert row["Actual_Result"] == ""
+    assert row["Enable"] == "Enable"
     assert row["rope"] == "1"
-    assert row["seqlens_list_q"] == "[6, 6, 5]"
-    assert row["cu_seqlens_q"] == "[0, 6, 12, 17]"
+    assert row["seqlens_list_q"] == "[3, 3, 3]"
     coverage = read_yaml(Path(report["coverage_path"]))
     covered = coverage["rows"][0]["covered"][0]
     assert covered["branch_ref"] == "KBR_TND"

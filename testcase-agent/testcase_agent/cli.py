@@ -111,6 +111,7 @@ def solve_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--batch-size", type=int, default=512, help="Max compatible obligations per batch solve")
     parser.add_argument("--csv-consumer-root", type=Path, default=None, help="CSV consumer project root, e.g. D:/PR-review/TEST/fag_debug_tools")
     parser.add_argument("--reuse-realization-map", action="store_true", help="Reuse existing realization/realization_map.yaml")
+    parser.add_argument("--allow-legacy-realization", action="store_true", help="Explicitly allow legacy hardcoded realization fallback")
     args = parser.parse_args(argv)
 
     try:
@@ -149,6 +150,7 @@ def solve_main(argv: list[str] | None = None) -> int:
                     batch_size=args.batch_size,
                     csv_consumer_root=args.csv_consumer_root,
                     reuse_realization_map=args.reuse_realization_map,
+                    allow_legacy_realization=args.allow_legacy_realization,
                 )
             )
     except TgSolveError as exc:

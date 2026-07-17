@@ -690,7 +690,7 @@ def test_real_format_fixture_end_to_end_phase1_phase2(tmp_path: Path, monkeypatc
             "notes": "",
         },
     )
-    solve = tg_solve(repo, "DemoOp")
+    solve = tg_solve(repo, "DemoOp", allow_legacy_realization=True)
 
     snapshot = read_json(root / "snapshot" / "understand_contract.json")
     assert "tiling/coverage_model.yaml" in snapshot["files"]
@@ -1334,7 +1334,7 @@ def test_real_final_validation_export_and_phase2_without_mocks(tmp_path: Path) -
             "notes": "",
         },
     )
-    solve = tg_solve(repo, "DemoOp")
+    solve = tg_solve(repo, "DemoOp", allow_legacy_realization=True)
     snapshot = read_json(root / "snapshot" / "understand_contract.json")
 
     assert init_result["snapshot"]["final_validation"]["status"] == "pass"

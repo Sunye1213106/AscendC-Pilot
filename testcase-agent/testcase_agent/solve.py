@@ -10,10 +10,12 @@ from .composer import compose_global_legal, merge_composed_into_ir
 from .constraint_ir import build_constraint_ir, compile_obligation_target
 from .hashing import semantic_plan_hash, semantic_snapshot_hash
 from .io import ensure_output_dirs, output_root, read_json, read_yaml, write_yaml
-from .realize import realize_candidates_to_csv
+from .realization_contract import ContractError, load_contract, prepare_contract_inputs, realization_paths
 from .realization_dsl import normalize_realization_map, realization_report
 from .realization_map import build_realization_map
 from .realization_schema import discover_consumer_root, extract_consumer_schema
+from .realization_validation import ensure_valid_contract
+from .realize import realize_candidates_to_csv
 from .z3_backend import SolveConfig, Z3Backend
 
 
@@ -37,6 +39,7 @@ def tg_solve(
     batch_size: int = 512,
     csv_consumer_root: Path | None = None,
     reuse_realization_map: bool = False,
+    allow_legacy_realization: bool = False,
 ) -> dict[str, Any]:
     project_root = project_root.resolve()
     out_root = output_root(project_root, op_name)
@@ -83,8 +86,11 @@ def tg_solve(
         out_root,
         project_root,
         snapshot,
+        plan_hash=plan_hash,
+        level=str(obligations_doc.get("test_level") or level or ""),
         csv_consumer_root=csv_consumer_root,
         reuse_realization_map=reuse_realization_map,
+        allow_legacy_realization=allow_legacy_realization,
         progress=progress,
     )
 
@@ -107,14 +113,17 @@ def tg_solve(
         out_root,
         result.get("selected_candidates") or [],
         snapshot,
+        consumer_schema=realization["schema"],
         realization_map=realization["realization_map"],
         obligations=obligations_doc.get("obligations", []),
         dry_run=dry_run,
         level=str(obligations_doc.get("test_level") or level or ""),
         case_name=case_name,
+        allow_legacy_realization=allow_legacy_realization,
     )
     result["realize_report"] = realize_report
     result["realization_report"] = realization["report"]
+    result["contract_validation"] = realization["validation"]
     solve_root = _solve_dir(out_root, str(obligations_doc.get("test_level") or level or ""), case_name)
     write_solve_outputs(solve_root, result)
     _emit_progress(progress, stage="write_outputs", status="complete", solve_dir=str(solve_root))
@@ -126,38 +135,92 @@ def load_or_build_realization(
     project_root: Path,
     snapshot: dict[str, Any],
     *,
+    plan_hash: str,
+    level: str = "",
     csv_consumer_root: Path | None,
     reuse_realization_map: bool,
+    allow_legacy_realization: bool,
     progress: ProgressCallback | None,
 ) -> dict[str, Any]:
-    realization_dir = out_root / "realization"
-    schema_path = realization_dir / "consumer_schema.yaml"
-    map_path = realization_dir / "realization_map.yaml"
-    report_path = realization_dir / "realization_report.yaml"
-    _emit_progress(progress, stage="realization_schema", status="start")
+    paths = realization_paths(out_root)
+    snapshot_path = out_root / "snapshot" / "understand_contract.json"
+    obligations_path = _plan_dir(out_root, level) / "coverage_obligations.yaml"
+    _emit_progress(progress, stage="realization_prepare", status="start")
     consumer_root = discover_consumer_root(project_root, csv_consumer_root)
-    schema = extract_consumer_schema(consumer_root)
-    write_yaml(schema_path, schema)
-    _emit_progress(progress, stage="realization_schema", status="complete", columns=len(schema.get("columns") or []), consumer_root=schema.get("consumer_root", ""))
-    if reuse_realization_map and map_path.exists():
-        realization_map = normalize_realization_map(read_yaml(map_path))
-        _emit_progress(progress, stage="realization_map", status="reuse", path=str(map_path))
+    if consumer_root is None and paths["evidence"].exists():
+        evidence = read_yaml(paths["evidence"])
+        _emit_progress(progress, stage="realization_prepare", status="reuse", reason="consumer_root_missing")
     else:
-        _emit_progress(progress, stage="realization_map", status="start")
-        realization_map = build_realization_map(snapshot, schema)
-        write_yaml(map_path, realization_map)
-        _emit_progress(
-            progress,
-            stage="realization_map",
-            status="complete",
-            csv_variables=len(realization_map.get("csv_variables") or []),
-            derived_variables=len(realization_map.get("derived_variables") or []),
-            mapped_branches=len(realization_map.get("branch_mappings") or []),
-            abstract_branches=len(realization_map.get("abstract_branches") or []),
+        evidence = prepare_contract_inputs(
+            out_root,
+            consumer_root=consumer_root,
+            snapshot_path=snapshot_path,
+            obligations_path=obligations_path,
         )
-    report = realization_report(realization_map)
-    write_yaml(report_path, report)
-    return {"schema": schema, "realization_map": realization_map, "report": report}
+    _emit_progress(
+        progress,
+        stage="realization_prepare",
+        status="complete",
+        evidence_hash=evidence.get("evidence_hash", ""),
+        scanned_files=len(evidence.get("files_read") or []),
+    )
+    try:
+        loaded_evidence, schema, realization_map = load_contract(paths)
+        realization_map = normalize_realization_map(realization_map)
+        validation = ensure_valid_contract(
+            loaded_evidence,
+            schema,
+            realization_map,
+            snapshot_hash=str(snapshot.get("snapshot_hash") or ""),
+            plan_hash=plan_hash,
+        )
+        report = realization_report(realization_map)
+        report.update(validation)
+        write_yaml(paths["report"], report)
+        _emit_progress(progress, stage="realization_validate", status="complete", contract_hash=validation["contract_hash"])
+        return {"evidence": loaded_evidence, "schema": schema, "realization_map": realization_map, "report": report, "validation": validation}
+    except ContractError as exc:
+        if not allow_legacy_realization:
+            raise TgSolveError(str(exc))
+        _emit_progress(progress, stage="realization_validate", status="legacy_fallback", reason=str(exc))
+        _emit_progress(progress, stage="realization_schema", status="start")
+        schema = extract_consumer_schema(consumer_root)
+        write_yaml(paths["schema"], schema)
+        _emit_progress(progress, stage="realization_schema", status="complete", columns=len(schema.get("columns") or []), consumer_root=schema.get("consumer_root", ""))
+        if reuse_realization_map and paths["map"].exists():
+            realization_map = normalize_realization_map(read_yaml(paths["map"]))
+            _emit_progress(progress, stage="realization_map", status="reuse", path=str(paths["map"]))
+        else:
+            _emit_progress(progress, stage="realization_map", status="start")
+            realization_map = build_realization_map(snapshot, schema)
+            write_yaml(paths["map"], realization_map)
+            _emit_progress(
+                progress,
+                stage="realization_map",
+                status="complete",
+                csv_variables=len(realization_map.get("csv_variables") or []),
+                derived_variables=len(realization_map.get("derived_variables") or []),
+                mapped_branches=len(realization_map.get("branch_mappings") or []),
+                abstract_branches=len(realization_map.get("abstract_branches") or []),
+            )
+        report = realization_report(realization_map)
+        report["legacy_mode"] = True
+        write_yaml(paths["report"], report)
+        return {
+            "evidence": evidence,
+            "schema": schema,
+            "realization_map": realization_map,
+            "report": report,
+            "validation": {
+                "status": "legacy",
+                "contract_hash": "",
+                "evidence_hash": evidence.get("evidence_hash", ""),
+                "csv_solver_variable_count": len(realization_map.get("csv_variables") or []),
+                "emit_derived_field_count": 0,
+                "unmapped_required_field_count": 0,
+                "abstract_branch_count": len(realization_map.get("abstract_branches") or []),
+            },
+        }
 
 
 def _plan_dir(out_root: Path, level: str) -> Path:
