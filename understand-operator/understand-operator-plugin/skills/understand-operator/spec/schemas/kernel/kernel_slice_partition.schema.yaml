@@ -1,5 +1,0 @@
-version: 1
-artifact_type: kernel.slice.partition
-required_top_level: [version, artifact, snapshot, sections]
-allowed_top_level: [version, artifact, snapshot, sections]
-required_sections: [variables, expressions, branches, loops, tilingdata_reads, calls, dataflow, memory, synchronization]

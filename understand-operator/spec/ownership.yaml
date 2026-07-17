@@ -1,0 +1,68 @@
+version: 1
+owners:
+  uo-orchestrator:
+    may_read:
+      - manifest.yaml
+      - ir/**
+      - contracts/**
+      - tiling/**
+      - kernel/**
+      - cross_layer/**
+      - checks/**
+      - runs/**
+      - cbm/**
+      - diff/**
+      - summary/**
+    may_write:
+      - manifest.yaml
+      - runs/*/phase0/**
+      - cbm/index_meta.json
+      - ir/**
+      - contracts/**
+      - tiling/**
+      - kernel/**
+      - cross_layer/**
+      - checks/final.yaml
+      - diff/**
+      - summary/**
+      - runs/*/update/**
+  uo-semantic-resolve:
+    may_read:
+      - manifest.yaml
+      - ir/**
+      - runs/**
+      - cbm/**
+    may_write:
+      - ir/resolution_patch.yaml
+      - ir/entrypoint_confirm.yaml
+  deterministic-extractors:
+    may_read:
+      - manifest.yaml
+      - ir/**
+      - runs/**
+      - cbm/**
+      - diff/**
+      - summary/**
+    may_write:
+      - ir/**
+      - contracts/**
+      - tiling/**
+      - kernel/**
+      - cross_layer/**
+      - diff/**
+      - summary/**
+  kb-compiler:
+    may_read:
+      - manifest.yaml
+      - ir/**
+      - contracts/**
+      - tiling/**
+      - kernel/**
+      - cross_layer/**
+      - checks/**
+    may_write:
+      - checks/final.yaml
+rules:
+  - Query / TestAgent may read KB artifacts but must not write UO KB or CBM data.
+  - uo-semantic-resolve only emits patches under ir/; apply_resolution.py merges whitelist fields.
+  - PR test generation prefers diff/**; uncertain items look up the KB via kb_refs / kb_lookup.

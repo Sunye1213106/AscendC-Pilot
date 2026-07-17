@@ -1,0 +1,17 @@
+version: 1
+schema_kind: diff_product
+required_top_level: [version, affected_layers, affected_entities, coverage_hints]
+allowed_top_level:
+  - version
+  - op_name
+  - base_revision
+  - head_revision
+  - affected_layers
+  - affected_entities
+  - coverage_hints
+  - recommended_test_level
+required_item_fields: []
+relation_required_fields: []
+notes: |
+  affected_entities keys: families, kernel_paths, branches, variables, tiling_key_fields.
+  coverage_hints[].confidence is high|medium|low. layer_only hints must include kb_lookup.

@@ -1,0 +1,19 @@
+version: 1
+schema_kind: diff_product
+required_top_level: [version, kind, op_name, base_revision, head_revision, kb_root, status, files, kb_refs]
+allowed_top_level:
+  - version
+  - kind
+  - op_name
+  - base_revision
+  - head_revision
+  - kb_root
+  - status
+  - files
+  - kb_refs
+  - update_mode
+required_item_fields: []
+relation_required_fields: []
+notes: |
+  status is ready|blocked. files must point to change_set/impact/unresolved under diff/.
+  PR consumers read this first; uncertain items use kb_refs to look up the KB.

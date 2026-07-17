@@ -1,24 +1,16 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-PLUGIN_ROOT="$REPO_ROOT/understand-operator-plugin"
+# Repo root IS the plugin root (no nested understand-operator-plugin/).
+PLUGIN_ROOT="$(cd "$(dirname "$0")" && pwd)"
 SKILLS_ROOT="$PLUGIN_ROOT/skills"
 AGENTS_SRC="$PLUGIN_ROOT/agents"
+SCRIPT_DIR="$PLUGIN_ROOT/uo/scripts"
 PLATFORM="${1:-opencode}"
 
 SKILL_NAMES=(uo-init uo-query uo-update uo-diff understand-operator)
 REQUIRED_AGENTS=(
-  uo-boundary-agent
-  uo-host-extraction
-  uo-flow-extraction
-  uo-kernel-overview-agent
-  uo-kernel-slice-planner
-  uo-kernel-slice-agent
-  uo-step2-fact-review-agent
-  uo-step3-fact-review-agent
-  uo-behavior-abstraction-agent
-  uo-graph-review-agent
+  uo-semantic-resolve
 )
 
 case "$PLATFORM" in
@@ -28,6 +20,7 @@ case "$PLATFORM" in
   *) echo "Unknown platform: $PLATFORM"; exit 1 ;;
 esac
 
+# Keep historical install link name for path stability in agent hints.
 PLUGIN_LINK="$(dirname "$TARGET")/understand-operator-plugin"
 
 mkdir -p "$TARGET"
@@ -79,7 +72,7 @@ For this installation, use these absolute paths when resolving plugin files:
 
 - \`PLUGIN_ROOT\`: \`$PLUGIN_LINK\`
 - \`PROMPT_DIR\`: \`$PLUGIN_LINK/prompts\`
-- \`SCRIPT_DIR\`: \`$TARGET/understand-operator\`
+- \`SCRIPT_DIR\`: \`$SCRIPT_DIR\`
 
 If the host dispatch omits path variables, use the paths above. Do not resolve
 \`prompts/...\` from the target operator repository.
@@ -109,4 +102,5 @@ EOF
 fi
 
 echo "Commands: /uo-init  /uo-query  /uo-update  /uo-diff"
-echo "For Cursor: add the repository root as a local plugin, or rely on the installed skill links."
+echo "Scripts: $SCRIPT_DIR"
+echo "For Cursor: add this repository root as a local plugin, or rely on the installed skill links."

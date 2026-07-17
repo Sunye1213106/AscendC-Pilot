@@ -1,0 +1,21 @@
+# Spec bundle for the active layered-KB pipeline.
+# Only paths listed under hash_inputs participate in spec_bundle_hash.
+
+version: 1
+name: understand-operator
+compatible_plugin_versions:
+  - "0.2"
+
+# Ordered list; relative to this directory (spec/).
+hash_inputs:
+  - ownership.yaml
+  - kb_layout.yaml
+  - schemas/diff/index.schema.yaml
+  - schemas/diff/change_set.schema.yaml
+  - schemas/diff/impact.schema.yaml
+  - schemas/diff/unresolved.schema.yaml
+
+notes:
+  - Do not copy these files into .understand-operator/<op_name>/.
+  - Changing any hash_inputs file (or this list via code) invalidates stored spec_bundle_hash
+    and may trigger /uo-update Phase0 review.

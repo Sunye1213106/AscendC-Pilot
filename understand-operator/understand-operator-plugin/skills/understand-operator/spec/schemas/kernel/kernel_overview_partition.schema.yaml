@@ -1,5 +1,0 @@
-version: 1
-artifact_type: kernel.overview.partition
-required_top_level: [version, artifact, snapshot, sections]
-allowed_top_level: [version, artifact, snapshot, sections]
-required_sections: [entries, functions, call_graph, frontier, global_resources]

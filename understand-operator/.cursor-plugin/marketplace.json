@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "understand-operator",
-      "source": "understand-operator-plugin"
+      "source": "."
     }
   ]
 }

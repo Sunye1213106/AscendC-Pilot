@@ -1,0 +1,39 @@
+version: 1
+description: >-
+  Active layered KB layout under <op_repo>/.understand-operator/<op_name>/.
+  This is the contract surface for /uo-init and /uo-update (not the retired facts/* tree).
+
+roots:
+  kb: .understand-operator/<op_name>/
+
+artifacts:
+  - path: manifest.yaml
+    role: revision + spec_bundle_hash + current_run
+  - path: ir/**
+    role: layered IR (host/kernel/bridge/operator_graph/entrypoints/unresolved)
+  - path: contracts/**
+    role: query/test contracts (e.g. testcase.yaml)
+  - path: tiling/**
+    role: tiling export views
+  - path: kernel/**
+    role: runtime variables / branches / conditions
+  - path: cross_layer/**
+    role: host↔kernel bridge views
+  - path: checks/**
+    role: validate_kb outputs (e.g. final.yaml)
+  - path: runs/*/phase0/**
+    role: scope proposal / review / receipt
+  - path: runs/*/update/**
+    role: incremental update receipts
+  - path: cbm/**
+    role: index_stage + index_meta (not source of truth for Q&A)
+  - path: diff/**
+    role: /uo-update PR-facing product (read first)
+  - path: summary/**
+    role: update_plan and internal summaries
+
+diff_product:
+  - diff/index.yaml
+  - diff/change_set.yaml
+  - diff/impact.yaml
+  - diff/unresolved.yaml

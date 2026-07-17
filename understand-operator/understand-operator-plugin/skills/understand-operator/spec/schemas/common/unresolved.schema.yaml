@@ -1,5 +1,0 @@
-version: 1
-schema_kind: unresolved
-required_fields: [id, question, reason, owner]
-optional_fields: [candidate_sources, blocked_items]
-

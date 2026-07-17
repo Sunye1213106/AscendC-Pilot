@@ -1,6 +1,0 @@
-version: 1
-schema_kind: fact_item
-required_when_confirmed: [id, kind, status, identity, sources]
-identity_required_fields: [version, canonical_key, normalized]
-status_values: [confirmed, proposed, unresolved, conflict]
-

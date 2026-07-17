@@ -1,9 +1,9 @@
-﻿<#
+<#
 .SYNOPSIS
   Install understand-operator skills for OpenCode / Codex / Cursor.
 
 .EXAMPLE
-  ./install.ps1 cursor
+  ./install.ps1 opencode
   ./install.ps1 -Uninstall cursor
 #>
 
@@ -14,11 +14,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$PluginRoot = Join-Path $RepoRoot "understand-operator-plugin"
+# Repo root IS the plugin root (no nested understand-operator-plugin/).
+$PluginRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SkillsRoot = Join-Path $PluginRoot "skills"
 $AgentsSrc = Join-Path $PluginRoot "agents"
-$PromptsSrc = Join-Path $PluginRoot "prompts"
+$ScriptDir = Join-Path $PluginRoot "uo\scripts"
 
 $SkillNames = @(
     "uo-init",
@@ -29,7 +29,6 @@ $SkillNames = @(
 )
 
 $Targets = @{
-    # OpenCode primary global skills dir (also discovers ~/.agents/skills)
     opencode = Join-Path $HOME ".config\opencode\skills"
     codex    = Join-Path $HOME ".agents\skills"
     cursor   = Join-Path $HOME ".cursor\skills"
@@ -41,16 +40,7 @@ $AgentTargets = @{
 }
 
 $RequiredAgents = @(
-    "uo-boundary-agent",
-    "uo-host-extraction",
-    "uo-flow-extraction",
-    "uo-kernel-overview-agent",
-    "uo-kernel-slice-planner",
-    "uo-kernel-slice-agent",
-    "uo-step2-fact-review-agent",
-    "uo-step3-fact-review-agent",
-    "uo-behavior-abstraction-agent",
-    "uo-graph-review-agent"
+    "uo-semantic-resolve"
 )
 
 if (-not $Targets.ContainsKey($Platform)) {
@@ -59,6 +49,7 @@ if (-not $Targets.ContainsKey($Platform)) {
 
 $TargetRoot = $Targets[$Platform]
 
+# Keep historical install link name for path stability in agent hints.
 $PluginLinks = @{
     opencode = Join-Path (Split-Path $TargetRoot -Parent) "understand-operator-plugin"
     codex    = Join-Path (Split-Path $TargetRoot -Parent) "understand-operator-plugin"
@@ -114,7 +105,6 @@ foreach ($name in $SkillNames) {
     Write-Host "Installed skill: $dest -> $src"
 }
 
-# Prompts + agents live under plugin root; agents need them for human-review UX (question UI).
 if ($PluginLinks.ContainsKey($Platform) -and (Test-Path $PluginRoot)) {
     $pluginDest = $PluginLinks[$Platform]
     if (Test-Path -LiteralPath $pluginDest) {
@@ -137,7 +127,6 @@ if ($AgentTargets.ContainsKey($Platform) -and (Test-Path $AgentsSrc)) {
         if ($PluginLinks.ContainsKey($Platform)) {
             $pluginDest = $PluginLinks[$Platform]
             $promptDest = Join-Path $pluginDest "prompts"
-            $scriptDest = Join-Path $TargetRoot "understand-operator"
             $pathHint = @"
 
 ## Installed Path Hints
@@ -146,7 +135,7 @@ For this installation, use these absolute paths when resolving plugin files:
 
 - PLUGIN_ROOT: $pluginDest
 - PROMPT_DIR: $promptDest
-- SCRIPT_DIR: $scriptDest
+- SCRIPT_DIR: $ScriptDir
 
 If the host dispatch omits path variables, use the paths above. Do not resolve
 `prompts/...` from the target operator repository.
@@ -176,12 +165,13 @@ If the host dispatch omits path variables, use the paths above. Do not resolve
 
 Write-Host ""
 Write-Host "Commands: /uo-init  /uo-query  /uo-update  /uo-diff"
-Write-Host "Shared scripts: $(Join-Path $TargetRoot 'understand-operator')\prepare_operator.py"
+Write-Host "Scripts: $ScriptDir"
 if ($PluginLinks.ContainsKey($Platform)) {
+    Write-Host "PLUGIN_ROOT: $($PluginLinks[$Platform])"
     Write-Host "Prompts: $(Join-Path $PluginLinks[$Platform] 'prompts')"
 }
-Write-Host "Agents must NOT search C:\ for scripts; use the path above."
+Write-Host "Agents must NOT search C:\ for scripts; use SCRIPT_DIR above."
 if ($Platform -eq "opencode") {
     Write-Host "OpenCode human review: ensure opencode.json has `"permission`": { `"question`": `"allow`" }"
 }
-Write-Host "For Cursor: add the repository root as a local plugin, or rely on the installed skill links."
+Write-Host "For Cursor: add this repository root as a local plugin, or rely on the installed skill links."
