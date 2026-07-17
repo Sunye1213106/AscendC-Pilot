@@ -107,6 +107,10 @@ def solve_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--case-name", default="", help="CSV base name. With --level, writes cases/levels/<level>/<case-name>.csv")
     parser.add_argument("--dry-run", action="store_true", help="Solve abstract candidates only; do not write CSV")
     parser.add_argument("--quiet", action="store_true", help="Suppress progress events on stderr")
+    parser.add_argument("--jobs", type=int, default=1, help="Parallel fallback workers for hard-to-batch obligations")
+    parser.add_argument("--batch-size", type=int, default=512, help="Max compatible obligations per batch solve")
+    parser.add_argument("--csv-consumer-root", type=Path, default=None, help="CSV consumer project root, e.g. D:/PR-review/TEST/fag_debug_tools")
+    parser.add_argument("--reuse-realization-map", action="store_true", help="Reuse existing realization/realization_map.yaml")
     args = parser.parse_args(argv)
 
     try:
@@ -141,6 +145,10 @@ def solve_main(argv: list[str] | None = None) -> int:
                     progress=None if args.quiet else make_progress(level),
                     level=level,
                     case_name=case_name,
+                    jobs=args.jobs,
+                    batch_size=args.batch_size,
+                    csv_consumer_root=args.csv_consumer_root,
+                    reuse_realization_map=args.reuse_realization_map,
                 )
             )
     except TgSolveError as exc:

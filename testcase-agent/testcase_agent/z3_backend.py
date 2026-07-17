@@ -39,26 +39,29 @@ class Z3Backend:
         return results
 
     def solve_one(self, obligation: dict[str, Any], variable_ids: set[str] | None = None) -> dict[str, Any]:
+        target = compile_obligation_target(obligation, self.ir)
+        if target.status != "ok":
+            return {
+                "obligation_id": obligation.get("id"),
+                "status": target.status,
+                "code": target.code,
+                "model": {},
+                "unsat_core": [],
+                "reason": target.reason,
+            }
+        return self.solve_expr(target.expr, label=f"obligation:{obligation.get('id')}", obligation_id=obligation.get("id"))
+
+    def solve_expr(self, expr: dict[str, Any], *, label: str = "expr", obligation_id: Any = "") -> dict[str, Any]:
         solver = self.base_solver
         solver.push()
         labels: dict[str, str] = dict(self.base_labels)
         try:
-            target = compile_obligation_target(obligation, self.ir)
-            if target.status != "ok":
-                return {
-                    "obligation_id": obligation.get("id"),
-                    "status": target.status,
-                    "code": target.code,
-                    "model": {},
-                    "unsat_core": [],
-                    "reason": target.reason,
-                }
-            self._assert_tracked(solver, self._compile_bool(target.expr), f"obligation:{obligation.get('id')}", labels)
+            self._assert_tracked(solver, self._compile_bool(expr), label, labels)
             check = solver.check()
             if check == self.z3.sat:
                 model = solver.model()
                 return {
-                    "obligation_id": obligation.get("id"),
+                    "obligation_id": obligation_id,
                     "status": "sat",
                     "model": self.abstract_model(model),
                     "unsat_core": [],
@@ -66,14 +69,14 @@ class Z3Backend:
                 }
             if check == self.z3.unsat:
                 return {
-                    "obligation_id": obligation.get("id"),
+                    "obligation_id": obligation_id,
                     "status": "unsat",
                     "model": {},
                     "unsat_core": [labels.get(str(label), str(label)) for label in solver.unsat_core()],
                     "reason": "unsat",
                 }
             return {
-                "obligation_id": obligation.get("id"),
+                "obligation_id": obligation_id,
                 "status": "unknown",
                 "model": {},
                 "unsat_core": [],
@@ -81,7 +84,7 @@ class Z3Backend:
             }
         except (ConstraintIRError, Z3BackendError, TypeError, ValueError) as exc:
             return {
-                "obligation_id": obligation.get("id"),
+                "obligation_id": obligation_id,
                 "status": "error",
                 "model": {},
                 "unsat_core": [],
@@ -224,7 +227,7 @@ class Z3Backend:
     def abstract_model(self, model: Any) -> dict[str, Any]:
         out: dict[str, Any] = {}
         for var_id, spec in sorted(self.variables.items()):
-            if spec.get("derived"):
+            if spec.get("derived") and not var_id.startswith(("VAR_CSV_", "VAR_KEY_", "VAR_KBR_", "VAR_KDEC_")):
                 continue
             sym = self.symbols[var_id]
             value = model.eval(sym, model_completion=True)

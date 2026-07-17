@@ -36,6 +36,7 @@ def build_candidate(obligation: dict[str, Any], solve_result: dict[str, Any], co
 def abstract_candidate_model(model: dict[str, Any], obligation: dict[str, Any]) -> dict[str, Any]:
     return {
         "shape_dimensions": {key: value for key, value in sorted(model.items()) if key.startswith("VAR_SHAPE_") or key.endswith("_DIM")},
+        "csv_fields": {key.removeprefix("VAR_CSV_"): value for key, value in sorted(model.items()) if key.startswith("VAR_CSV_")},
         "dtype_enum": model.get("VAR_DTYPE"),
         "layout_enum": model.get("VAR_LAYOUT"),
         "optional_input_presence": {key.removeprefix("VAR_OPTIONAL_").lower(): value for key, value in sorted(model.items()) if key.startswith("VAR_OPTIONAL_")},
@@ -59,6 +60,7 @@ def abstract_candidate_model(model: dict[str, Any], obligation: dict[str, Any]) 
 def coverage_signature(model: dict[str, Any]) -> dict[str, Any]:
     return {
         "key_fields": {key: value for key, value in sorted(model.items()) if key.startswith("VAR_KEY_")},
+        "csv_fields": {key: value for key, value in sorted(model.items()) if key.startswith("VAR_CSV_")},
         "family_ref": model.get("VAR_FAMILY"),
         "template_ref": model.get("VAR_TEMPLATE"),
         "path_ref": model.get("VAR_KERNEL_PATH"),

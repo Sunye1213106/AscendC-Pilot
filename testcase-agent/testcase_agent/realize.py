@@ -61,6 +61,8 @@ def realize_candidates_to_csv(
     selected_candidates: list[dict[str, Any]],
     snapshot: dict[str, Any],
     *,
+    realization_map: dict[str, Any] | None = None,
+    obligations: list[dict[str, Any]] | None = None,
     dry_run: bool = False,
     level: str = "",
     case_name: str = "",
@@ -68,7 +70,9 @@ def realize_candidates_to_csv(
     files = snapshot.get("files") if isinstance(snapshot.get("files"), dict) else {}
     constraints = _as_dict(files.get("tiling/constraints.yaml"))
     input_realization = _as_dict(constraints.get("input_realization"))
+    columns = _realization_columns(realization_map)
     rows: list[dict[str, Any]] = []
+    coverage_rows: list[dict[str, Any]] = []
     blocked: list[dict[str, Any]] = []
     for idx, candidate in enumerate(selected_candidates, start=1):
         model = _as_dict(candidate.get("model") or candidate.get("assignment"))
@@ -99,8 +103,12 @@ def realize_candidates_to_csv(
                 }
             )
             continue
-        row = build_case_row(candidate, model, realization, idx)
+        if realization_map and (realization_map.get("csv_variables") or realization_map.get("consumer")):
+            row = build_case_row_from_realization_map(candidate, model, realization_map, idx)
+        else:
+            row = build_case_row(candidate, model, realization, idx)
         rows.append(row)
+        coverage_rows.append(build_case_coverage(candidate, idx, obligations or [], realization_map or {}))
 
     report = {
         "version": 1,
@@ -114,6 +122,8 @@ def realize_candidates_to_csv(
         "csv_path": "",
         "report_path": "",
         "dry_run": dry_run,
+        "csv_columns": columns,
+        "realization_map_enabled": bool(realization_map),
     }
     cases_dir = out_root / "cases"
     if level:
@@ -122,14 +132,17 @@ def realize_candidates_to_csv(
     cases_dir.mkdir(parents=True, exist_ok=True)
     csv_stem = safe_case_name(case_name or (level if level else "cases"))
     report_path = cases_dir / ("realize_report.yaml" if not level and not case_name else f"{csv_stem}.realize_report.yaml")
+    coverage_path = cases_dir / ("case_coverage.yaml" if not level and not case_name else f"{csv_stem}.case_coverage.yaml")
     report["report_path"] = report_path.as_posix()
+    report["coverage_path"] = coverage_path.as_posix()
+    write_yaml(coverage_path, {"version": 1, "rows": coverage_rows})
     write_yaml(report_path, report)
     if dry_run:
         rows_path = cases_dir / ("realized_rows.yaml" if not level and not case_name else f"{csv_stem}.realized_rows.yaml")
         write_yaml(rows_path, {"rows": rows})
         return report
     csv_path = cases_dir / f"{csv_stem}.csv"
-    write_cases_csv(csv_path, rows)
+    write_cases_csv(csv_path, rows, columns)
     report["csv_path"] = csv_path.as_posix()
     write_yaml(report_path, report)
     return report
@@ -243,13 +256,117 @@ def build_case_row(candidate: dict[str, Any], model: dict[str, Any], realization
     return row
 
 
-def write_cases_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+def build_case_row_from_realization_map(candidate: dict[str, Any], model: dict[str, Any], realization_map: dict[str, Any], idx: int) -> dict[str, Any]:
+    columns = _realization_columns(realization_map)
+    defaults = _as_dict(_as_dict(realization_map.get("emit")).get("default_columns"))
+    row = {column: "" for column in columns}
+    for column in columns:
+        if column == "Testcase_Name":
+            row[column] = str(candidate.get("id") or f"case_{idx:04d}")
+            continue
+        if column.startswith("Actual_"):
+            row[column] = ""
+            continue
+        var_id = f"VAR_CSV_{''.join(ch if ch.isalnum() else '_' for ch in column).strip('_')}"
+        if var_id in model:
+            row[column] = _format_csv_value(model[var_id])
+        elif column in defaults:
+            row[column] = defaults[column]
+    row.setdefault("Enable", "Enable")
+    if "Enable" in row and row["Enable"] == "":
+        row["Enable"] = "Enable"
+    if str(row.get("Input_Layout", "")).upper() == "TND":
+        _fill_tnd_seqlens(row)
+    return row
+
+
+def build_case_coverage(candidate: dict[str, Any], row_index: int, obligations: list[dict[str, Any]], realization_map: dict[str, Any]) -> dict[str, Any]:
+    obligation_by_id = {str(item.get("id")): item for item in obligations if isinstance(item, dict)}
+    branch_by_ref = {str(item.get("branch_ref")): item for item in realization_map.get("branch_mappings") or [] if isinstance(item, dict)}
+    abstract_by_ref = {str(item.get("branch_ref")): item for item in realization_map.get("abstract_branches") or [] if isinstance(item, dict)}
+    entries: list[dict[str, Any]] = []
+    for oid in candidate.get("covered_obligation_ids") or []:
+        obligation = obligation_by_id.get(str(oid), {})
+        entry = {
+            "obligation_id": str(oid),
+            "kind": obligation.get("kind"),
+            "target_refs": obligation.get("target_refs") or [],
+            "target_value": obligation.get("target_value"),
+        }
+        if obligation.get("kind") == "kernel_branch":
+            refs = obligation.get("target_refs") or []
+            ref = str(refs[0]) if refs else ""
+            mapping = branch_by_ref.get(ref) or abstract_by_ref.get(ref) or {}
+            entry.update(
+                {
+                    "branch_ref": ref,
+                    "condition": mapping.get("condition", ""),
+                    "source": mapping.get("file_path", ""),
+                    "line": mapping.get("start_line"),
+                    "abstract_only": bool(mapping.get("abstract_only", False)),
+                }
+            )
+        entries.append(entry)
+    return {"row_index": row_index, "case_id": candidate.get("id"), "covered": entries}
+
+
+def _fill_tnd_seqlens(row: dict[str, Any]) -> None:
+    try:
+        b = max(1, int(row.get("B") or 1))
+        s1 = max(1, int(row.get("S1") or 1))
+        s2 = max(1, int(row.get("S2") or s1))
+    except (TypeError, ValueError):
+        return
+    q_lengths = _balanced_lengths(s1, b)
+    kv_lengths = _balanced_lengths(s2, b)
+    if not row.get("seqlens_list_q"):
+        row["seqlens_list_q"] = str(q_lengths)
+    if not row.get("seqlens_list_kv"):
+        row["seqlens_list_kv"] = str(kv_lengths)
+    if not row.get("cu_seqlens_q"):
+        row["cu_seqlens_q"] = str(_cu_from_actual(q_lengths))
+    if not row.get("cu_seqlens_kv"):
+        row["cu_seqlens_kv"] = str(_cu_from_actual(kv_lengths))
+
+
+def _balanced_lengths(total: int, parts: int) -> list[int]:
+    parts = max(1, int(parts))
+    total = max(parts, int(total))
+    base, remainder = divmod(total, parts)
+    return [base + (1 if idx < remainder else 0) for idx in range(parts)]
+
+
+def _cu_from_actual(values: list[int]) -> list[int]:
+    out = [0]
+    total = 0
+    for value in values:
+        total += int(value)
+        out.append(total)
+    return out
+
+
+def _realization_columns(realization_map: dict[str, Any] | None) -> list[str]:
+    if isinstance(realization_map, dict):
+        columns = _as_dict(realization_map.get("consumer")).get("columns")
+        if isinstance(columns, list) and columns:
+            return [str(column) for column in columns]
+    return list(CSV_COLUMNS)
+
+
+def _format_csv_value(value: Any) -> Any:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return value
+
+
+def write_cases_csv(path: Path, rows: list[dict[str, Any]], columns: list[str] | None = None) -> None:
+    columns = columns or CSV_COLUMNS
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=CSV_COLUMNS, extrasaction="ignore")
+        writer = csv.DictWriter(fh, fieldnames=columns, extrasaction="ignore")
         writer.writeheader()
         for row in rows:
-            writer.writerow({col: row.get(col, "") for col in CSV_COLUMNS})
+            writer.writerow({col: row.get(col, "") for col in columns})
 
 
 def _infer_dtype(model: dict[str, Any]) -> str:

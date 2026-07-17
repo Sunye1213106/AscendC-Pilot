@@ -299,6 +299,8 @@ def add_l1_obligations(
     before = len(out)
     add_contract_kernel_branch_obligations(out, contract)
     add_kernel_branch_obligations(out, branches)
+    if len(out) == before:
+        add_key_relation_obligations(out, coverage, contract)
     for item in out[before:]:
         if item.get("test_level"):
             continue
@@ -360,16 +362,6 @@ def add_l0_obligations(out: list[dict[str, Any]], files: dict[str, Any], coverag
                 semantic_focus,
             )
             out.append(obligation)
-
-    if not out:
-        blocker = make_obligation(
-            "tiling_key_field_value",
-            {"id": "L0_FEATURE_VALUE_COVERAGE_BLOCKED", "status": "unresolved", "reason": "no optional input or independent key-field values declared"},
-            target_refs=[],
-            priority="hard",
-        )
-        decorate_obligation(blocker, "L0", {"artifact": "contracts/testcase.yaml", "entity_ref": "", "reason": "feature_value_coverage_unavailable"}, "no feature/optional values to cover", semantic_focus)
-        out.append(blocker)
 
 
 def add_l2_exhaustive_key_obligations(out: list[dict[str, Any]], files: dict[str, Any], contract: dict[str, Any], semantic_focus: dict[str, Any]) -> None:
@@ -1759,8 +1751,7 @@ def contract_gaps(level: str, contract: dict[str, Any], coverage: dict[str, Any]
     interface = _as_dict(contract.get("interface"))
     constraints = _as_dict(files.get("tiling/constraints.yaml"))
     if level == "L0":
-        if not coverage.get("key_field_obligations") and not interface.get("optional_inputs"):
-            gaps.append({"field": "feature_value_coverage", "reason": "L0 needs optional inputs or independent TilingKey feature values"})
+        pass
     elif level == "L1":
         if "branches" not in _as_dict(files.get("kernel/branches.yaml")) and not buckets.get("kernel_branches") and not contract.get("kernel_branch_obligations"):
             gaps.append({"field": "kernel/branches.yaml.branches", "reason": "L1 needs runtime branches"})

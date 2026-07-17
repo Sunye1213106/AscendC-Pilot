@@ -422,7 +422,7 @@ def test_derived_field_is_not_free_obligation(tmp_path: Path) -> None:
             "key_relation_obligations": [],
         }
     )["files"]
-    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"})
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L0")
 
     fields = [item for item in plan["obligations"] if item["kind"] == "tiling_key_field_value"]
     assert len(fields) == 1
@@ -430,7 +430,7 @@ def test_derived_field_is_not_free_obligation(tmp_path: Path) -> None:
     assert fields[0]["target_value"] == "ND"
 
 
-def test_unreachable_and_reachable_are_distinguished(tmp_path: Path) -> None:
+def test_l0_ignores_family_reachability_baselines(tmp_path: Path) -> None:
     files = _payload(
         coverage={
             "family_obligations": [
@@ -443,10 +443,8 @@ def test_unreachable_and_reachable_are_distinguished(tmp_path: Path) -> None:
     )["files"]
     plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"})
 
-    by_target = {item["target_refs"][0]: item for item in plan["obligations"] if item["kind"] == "family"}
-    assert by_target["FAM_REACH"]["status"] == "pending"
-    assert by_target["FAM_DEAD"]["status"] == "proof_required"
-    assert by_target["FAM_DEAD"]["reachability"] == "unreachable"
+    assert not [item for item in plan["obligations"] if item["kind"] == "family"]
+    assert plan["unresolved"]["status"] == "ready_for_manual_review"
 
 
 def test_optional_input_does_not_replicate_all_families(tmp_path: Path) -> None:
@@ -459,9 +457,9 @@ def test_optional_input_does_not_replicate_all_families(tmp_path: Path) -> None:
             "key_relation_obligations": [],
         },
     )["files"]
-    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"})
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L0")
 
-    assert len([item for item in plan["obligations"] if item["kind"] == "family"]) == 2
+    assert len([item for item in plan["obligations"] if item["kind"] == "family"]) == 0
     assert len([item for item in plan["obligations"] if item["kind"] == "optional_input_mode"]) == 4
 
 
@@ -473,7 +471,7 @@ def test_key_field_values_expand_to_atomic_obligations() -> None:
             "key_relation_obligations": [],
         }
     )["files"]
-    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"})
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L0")
 
     fields = [item for item in plan["obligations"] if item["kind"] == "tiling_key_field_value"]
     assert [item["target_value"] for item in fields] == [0, 1, 2]
@@ -488,7 +486,7 @@ def test_fixed_key_field_generates_one_obligation() -> None:
             "key_relation_obligations": [],
         }
     )["files"]
-    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"})
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L0")
 
     fields = [item for item in plan["obligations"] if item["kind"] == "tiling_key_field_value"]
     assert len(fields) == 1
@@ -511,11 +509,11 @@ def test_kernel_branch_expands_true_false_and_unreachable_side() -> None:
     assert {item["target_value"]: item["status"] for item in branches}[False] == "proof_required"
 
 
-def test_dtype_layout_class_generates_atomic_obligations() -> None:
+def test_l0_ignores_dtype_layout_class_baselines() -> None:
     contract = _contract(interface={"optional_inputs": [], "dtype_layout_domains": [{"id": "FP16_TND"}, {"id": "BF16_ND"}]})
-    plan = build_plan({"op_name": "DemoOp", "files": _payload(contract)["files"], "snapshot_hash": "s"})
+    plan = build_plan({"op_name": "DemoOp", "files": _payload(contract)["files"], "snapshot_hash": "s"}, level="L0")
 
-    assert [item["target_refs"][0] for item in plan["obligations"] if item["kind"] == "dtype_layout_class"] == ["BF16_ND", "FP16_TND"]
+    assert not [item for item in plan["obligations"] if item["kind"] == "dtype_layout_class"]
 
 
 def test_export_view_and_context_slice_are_merged(tmp_path: Path) -> None:
@@ -629,7 +627,7 @@ def test_review_describes_design_by_variables_and_features() -> None:
             "key_relation_obligations": [],
         }
     )["files"]
-    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"})
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L0")
 
     assert "测试设计覆盖说明" in plan["review"]
     assert "设计 **1** 个 TilingKey 字段取值用例点" in plan["review"]
@@ -698,14 +696,13 @@ def test_real_format_fixture_end_to_end_phase1_phase2(tmp_path: Path, monkeypatc
     assert "tiling/coverage_model.yaml" in snapshot["files"]
     assert snapshot["context_slice"]["entities"]
     assert plan["unresolved"]["contract_gaps"] == []
-    assert len([item for item in plan["obligations"] if item["kind"] == "tiling_key_field_value" and item["target_refs"] == ["KEY_SPLIT_AXIS"]]) == 3
+    assert not [item for item in plan["obligations"] if item["kind"] == "tiling_key_field_value" and item["target_refs"] == ["KEY_SPLIT_AXIS"]]
     assert len([item for item in plan["obligations"] if item["kind"] == "kernel_branch" and item["target_refs"] == ["KBR_HAS_TAIL"]]) == 2
     branch_candidates = [item for item in solve["deduped_candidates"] if "KBR_HAS_TAIL" in item["coverage_signature"]["branch_truth"]]
     assert len({item["id"] for item in branch_candidates}) >= 2
-    assert any(item["model"].get("VAR_KEY_SPLIT_AXIS") == 2 and item["status"] == "sat" for item in solve["solve_results"])
-    assert any(len(item["covered_obligation_ids"]) > 1 for item in solve["deduped_candidates"])
-    assert len([item for item in plan["obligations"] if item["kind"] == "tiling_key_relation" and item.get("parent_obligation_id") == "COV_REL_COMPAT"]) == 3
-    assert list(root.rglob("cases.csv"))
+    assert solve["deduped_candidates"]
+    assert not [item for item in plan["obligations"] if item["kind"] == "tiling_key_relation" and item.get("parent_obligation_id") == "COV_REL_COMPAT"]
+    assert list(root.rglob("*.csv"))
     assert not (root / "run" / "operator_execution.yaml").exists()
 
 
@@ -997,8 +994,7 @@ def test_cli_rejects_l3_without_topic() -> None:
 
 
 def test_cli_rejects_unknown_level() -> None:
-    with pytest.raises(SystemExit):
-        plan_main([".", "--op-name", "DemoOp", "--level", "L9"])
+    assert plan_main([".", "--op-name", "DemoOp", "--level", "L9"]) == 1
 
 
 def test_l3_topic_determinism_filters_obligations() -> None:
@@ -1212,12 +1208,12 @@ def test_changed_focus_invalidates_previous_approval(tmp_path: Path, monkeypatch
 def test_conflicting_hard_obligation_blocks_approval(tmp_path: Path) -> None:
     contract = _contract(
         coverage_obligations={
-            "kernel_paths": [
+            "kernel_branches": [
                 {
-                    "id": "COV_KERNEL_PATH_CONFLICT",
+                    "id": "KBR_CONFLICT",
                     "priority": "hard",
                     "status": "conflicting",
-                    "target_refs": ["KPATH_A"],
+                    "target_refs": ["KBR_CONFLICT"],
                     "reason": "two entries disagree",
                 }
             ]

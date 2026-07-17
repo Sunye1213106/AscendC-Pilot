@@ -55,7 +55,12 @@ class TargetCompileResult:
     reason: str = ""
 
 
-def build_constraint_ir(snapshot: dict[str, Any], obligations_doc: dict[str, Any], human_supplement: dict[str, Any] | None = None) -> IRBuildResult:
+def build_constraint_ir(
+    snapshot: dict[str, Any],
+    obligations_doc: dict[str, Any],
+    human_supplement: dict[str, Any] | None = None,
+    realization_map: dict[str, Any] | None = None,
+) -> IRBuildResult:
     files = snapshot.get("files") if isinstance(snapshot.get("files"), dict) else {}
     contract = _as_dict(files.get("contracts/testcase.yaml"))
     obligations = [item for item in obligations_doc.get("obligations", []) if isinstance(item, dict)]
@@ -71,6 +76,7 @@ def build_constraint_ir(snapshot: dict[str, Any], obligations_doc: dict[str, Any
         _add_variable(variables, spec, global_errors, "contracts/testcase.yaml.variables")
     _variables_from_interface(variables, contract, global_errors)
     _variables_from_obligations(variables, obligations, obligation_errors)
+    _apply_realization_map(variables, constraints, realization_map, global_errors)
     _validate_variable_domains(variables, global_errors)
 
     constraint_specs = []
@@ -126,6 +132,7 @@ def build_constraint_ir(snapshot: dict[str, Any], obligations_doc: dict[str, Any
         "constraints": sorted(constraints, key=lambda item: item["id"]),
         "obligation_count": len(obligations),
         "compile_errors": {"global": global_errors, "by_obligation": obligation_errors},
+        "realization": _realization_ir_metadata(realization_map),
     }
     return IRBuildResult(ir=ir, errors=all_errors, global_errors=global_errors, obligation_errors=obligation_errors)
 
@@ -133,6 +140,18 @@ def build_constraint_ir(snapshot: dict[str, Any], obligations_doc: dict[str, Any
 def compile_obligation_target(obligation: dict[str, Any], ir: dict[str, Any] | set[str]) -> TargetCompileResult:
     variable_ids = set(ir) if isinstance(ir, set) else {str(item.get("id")) for item in ir.get("variables", []) if isinstance(item, dict)}
     priority = str(obligation.get("priority") or "normal").lower()
+    if isinstance(ir, dict) and str(obligation.get("kind") or "") == "kernel_branch":
+        refs = [str(ref) for ref in obligation.get("target_refs") or []]
+        if refs:
+            branch_var = _branch_var_id(refs[0])
+            abstract = set(_as_list(_as_dict(ir.get("realization")).get("abstract_branch_vars")))
+            if branch_var in abstract:
+                return TargetCompileResult(
+                    status="skipped",
+                    expr=None,
+                    code="ABSTRACT_BRANCH_NOT_REALIZABLE",
+                    reason=f"{refs[0]} is not mapped to CSV-realizable SMT variables",
+                )
     try:
         expr = obligation_target_expr(obligation, variable_ids)
     except ConstraintIRError as exc:
@@ -497,6 +516,85 @@ def _variables_from_obligations(variables: dict[str, dict[str, Any]], obligation
         obligation_errors.pop(oid, None)
 
 
+def _apply_realization_map(
+    variables: dict[str, dict[str, Any]],
+    constraints: list[dict[str, Any]],
+    realization_map: dict[str, Any] | None,
+    errors: list[dict[str, Any]],
+) -> None:
+    if not isinstance(realization_map, dict):
+        return
+    for spec in _iter_items(realization_map.get("csv_variables")):
+        _add_variable(variables, spec, errors, "realization_map.csv_variables")
+    for spec in _iter_items(realization_map.get("derived_variables")):
+        expr = spec.get("expr")
+        if not isinstance(expr, dict):
+            continue
+        try:
+            normalized = normalize_expr(expr)
+            _force_derived_variable(variables, spec, normalized, errors)
+            constraints.append(
+                {
+                    "id": str(spec.get("id") or normalized.get("var")),
+                    "kind": "realization_map",
+                    "expr": normalized,
+                    "source": "realization_map.yaml",
+                    "tags": ["realization"],
+                }
+            )
+        except ConstraintIRError as exc:
+            errors.append(_error("UNSUPPORTED_EXPRESSION", scope="global", variable_id=str(spec.get("id") or ""), source="realization_map.yaml", message=str(exc)))
+
+
+def _force_derived_variable(variables: dict[str, dict[str, Any]], spec: dict[str, Any], expr: dict[str, Any], errors: list[dict[str, Any]]) -> None:
+    if expr.get("op") != "derived":
+        return
+    var_id = str(expr.get("var"))
+    var_type = str(spec.get("var_type") or spec.get("type") or "int")
+    existing = variables.get(var_id)
+    if existing and existing.get("type") != var_type:
+        errors.append(_error("VARIABLE_TYPE_CONFLICT", scope="global", variable_id=var_id, source="realization_map.yaml", message=f"Variable {var_id} declared as both {existing.get('type')} and {var_type}"))
+        return
+    if not existing:
+        if var_type == "bool":
+            _ensure_bool(variables, var_id, source="realization_map.derived", errors=errors)
+        elif var_type == "int":
+            domain = spec.get("domain")
+            values = domain.get("values") if isinstance(domain, dict) else domain
+            _ensure_int(variables, var_id, [int(item) for item in _as_list(values)] if values else None, source="realization_map.derived", errors=errors)
+        elif var_type == "enum":
+            _ensure_enum(variables, var_id, [str(item) for item in _as_list(spec.get("domain"))], source="realization_map.derived", errors=errors)
+        existing = variables.get(var_id)
+    if not existing:
+        return
+    existing["free"] = False
+    existing["derived"] = True
+    existing["definition"] = expr["expr"]
+    existing["domain_sources"] = sorted(set(existing.get("domain_sources", [])) | {"realization_map.yaml"})
+    existing["source"] = ",".join(sorted(set(str(existing.get("source") or "").split(",")) | {"realization_map.yaml"}))
+
+
+def _realization_ir_metadata(realization_map: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(realization_map, dict):
+        return {"enabled": False, "abstract_branch_vars": [], "mapped_branch_vars": []}
+    abstract = []
+    for item in _iter_items(realization_map.get("abstract_branches")):
+        var = str(item.get("var") or "")
+        if var:
+            abstract.append(var)
+    mapped = []
+    for item in _iter_items(realization_map.get("branch_mappings")):
+        var = str(item.get("var") or "")
+        if var:
+            mapped.append(var)
+    return {
+        "enabled": True,
+        "consumer_columns": _as_list(_as_dict(realization_map.get("consumer")).get("columns")),
+        "abstract_branch_vars": sorted(set(abstract)),
+        "mapped_branch_vars": sorted(set(mapped)),
+    }
+
+
 def _register_derived_variable(variables: dict[str, dict[str, Any]], spec: dict[str, Any], expr: dict[str, Any], errors: list[dict[str, Any]]) -> None:
     if expr.get("op") != "derived":
         return
@@ -807,7 +905,7 @@ def _format_int_domain(domain: dict[str, Any]) -> Any:
 
 
 def _domain_authority(source: str) -> str:
-    if source in {"contracts/testcase.yaml.variables", "context_entity", "context_entity_bucket", "interface.dtype_layout_domains", "interface.optional_inputs"}:
+    if source in {"contracts/testcase.yaml.variables", "context_entity", "context_entity_bucket", "interface.dtype_layout_domains", "interface.optional_inputs", "realization_map.csv_variables"}:
         return "explicit"
     if source == "bool":
         return "intrinsic"
