@@ -269,6 +269,7 @@ def solve_from_docs(
             progress=progress,
             jobs=max(1, int(jobs or 1)),
             batch_size=max(1, int(batch_size or 1)),
+            one_obligation_one_candidate=not bool(dedupe),
         )
         solve_results = batch_result["solve_results"]
         candidates = batch_result["candidates"]
@@ -399,10 +400,13 @@ def solve_obligations_optimized(
     progress: ProgressCallback | None,
     jobs: int,
     batch_size: int,
+    one_obligation_one_candidate: bool = True,
 ) -> dict[str, Any]:
     backend = Z3Backend(ir, SolveConfig(timeout_ms=timeout_ms))
     if getattr(Z3Backend.solve_one, "__name__", "solve_one") != "solve_one":
         return _solve_obligations_via_solve_one(backend, obligations, obligation_errors, progress=progress)
+    # Default (no --dedupe): force batch_size=1 so each obligation gets its own SAT model/row.
+    effective_batch_size = 1 if one_obligation_one_candidate else max(1, int(batch_size or 1))
     total = len(obligations)
     result_by_id: dict[str, dict[str, Any]] = {}
     candidates: list[dict[str, Any]] = []
@@ -420,7 +424,8 @@ def solve_obligations_optimized(
         timeout_ms=timeout_ms,
         solve_mode="batch-indexed",
         jobs=jobs,
-        batch_size=batch_size,
+        batch_size=effective_batch_size,
+        one_obligation_one_candidate=bool(one_obligation_one_candidate),
     )
 
     for obligation in obligations:
@@ -467,7 +472,7 @@ def solve_obligations_optimized(
 
     batch_round = 0
     while pending_ids:
-        group = _next_compatible_batch(batchable, pending_ids, batch_size)
+        group = _next_compatible_batch(batchable, pending_ids, effective_batch_size)
         if not group:
             break
         batch_round += 1
@@ -482,6 +487,7 @@ def solve_obligations_optimized(
             unsat,
             unknown,
             errors,
+            one_obligation_one_candidate=one_obligation_one_candidate,
         )
         solved = len(result_by_id)
         if solved == total or solved - last_progress >= progress_every:
@@ -501,7 +507,16 @@ def solve_obligations_optimized(
                 covered_ids = _covered_ids_from_model(backend, result.get("model") or {}, index, prepared, pending_ids | {oid})
                 if oid not in covered_ids:
                     covered_ids.append(oid)
-                _record_sat_candidate(item, result, covered_ids, pending_ids, result_by_id, candidates, obligation_by_id)
+                _record_sat_candidate(
+                    item,
+                    result,
+                    covered_ids,
+                    pending_ids,
+                    result_by_id,
+                    candidates,
+                    obligation_by_id,
+                    one_obligation_one_candidate=one_obligation_one_candidate,
+                )
             elif result["status"] == "unsat":
                 unsat.append(_unsat_entry(item["obligation"], result))
             elif result["status"] == "unknown":
@@ -541,6 +556,8 @@ def _solve_prepared_batch(
     unsat: list[dict[str, Any]],
     unknown: list[dict[str, Any]],
     errors: list[dict[str, Any]],
+    *,
+    one_obligation_one_candidate: bool = True,
 ) -> None:
     active = [item for item in group if item["id"] in pending_ids]
     if not active:
@@ -551,12 +568,45 @@ def _solve_prepared_batch(
         covered_ids = _covered_ids_from_model(backend, result.get("model") or {}, index, prepared, pending_ids)
         if not covered_ids:
             covered_ids = [active[0]["id"]]
-        _record_sat_candidate(active[0], result, covered_ids, pending_ids, result_by_id, candidates, index["obligation_by_id"])
+        _record_sat_candidate(
+            active[0],
+            result,
+            covered_ids,
+            pending_ids,
+            result_by_id,
+            candidates,
+            index["obligation_by_id"],
+            one_obligation_one_candidate=one_obligation_one_candidate,
+        )
         return
     if len(active) > 1:
         mid = max(1, len(active) // 2)
-        _solve_prepared_batch(backend, active[:mid], index, prepared, pending_ids, result_by_id, candidates, unsat, unknown, errors)
-        _solve_prepared_batch(backend, active[mid:], index, prepared, pending_ids, result_by_id, candidates, unsat, unknown, errors)
+        _solve_prepared_batch(
+            backend,
+            active[:mid],
+            index,
+            prepared,
+            pending_ids,
+            result_by_id,
+            candidates,
+            unsat,
+            unknown,
+            errors,
+            one_obligation_one_candidate=one_obligation_one_candidate,
+        )
+        _solve_prepared_batch(
+            backend,
+            active[mid:],
+            index,
+            prepared,
+            pending_ids,
+            result_by_id,
+            candidates,
+            unsat,
+            unknown,
+            errors,
+            one_obligation_one_candidate=one_obligation_one_candidate,
+        )
         return
     item = active[0]
     oid = item["id"]
@@ -592,10 +642,8 @@ def _solve_obligations_via_solve_one(
             result = backend.solve_one(obligation)
         solve_results.append(result)
         if result.get("status") == "sat":
-            covered = backend.evaluate_model_coverage(result.get("model") or {}, obligations)
-            if oid not in covered:
-                covered.append(oid)
-            candidates.append(build_candidate(obligation, result, sorted(dict.fromkeys(covered))))
+            # Keep source-only coverage so each obligation yields its own candidate row.
+            candidates.append(build_candidate(obligation, result, [oid]))
         elif result.get("status") == "unsat":
             unsat.append(_unsat_entry(obligation, result))
         elif result.get("status") == "unknown":
@@ -631,41 +679,46 @@ def _record_sat_candidate(
     result_by_id: dict[str, dict[str, Any]],
     candidates: list[dict[str, Any]],
     obligation_by_id: dict[str, dict[str, Any]],
+    *,
+    one_obligation_one_candidate: bool = True,
 ) -> None:
     covered = sorted(dict.fromkeys(oid for oid in covered_ids if oid in pending_ids or oid == source_item["id"]))
-    # Anti-collapse: each csv_domain_cover target value keeps its own candidate —
-    # do not discard sibling cover points for the same column with different values.
-    filtered: list[str] = []
-    source_obl = obligation_by_id.get(source_item["id"], source_item.get("obligation") or {})
-    source_kind = str(source_obl.get("kind") or "")
-    source_col = str(source_obl.get("field") or "")
-    source_val = source_obl.get("target_value")
-    for oid in covered:
-        obl = obligation_by_id.get(oid, {})
-        if (
-            str(obl.get("kind") or "") == "csv_domain_cover"
-            and source_kind == "csv_domain_cover"
-            and str(obl.get("field") or "") == source_col
-            and obl.get("target_value") != source_val
-            and oid != source_item["id"]
-        ):
-            continue
-        # Also: when covering from a non-cover obligation, still discard matching cover points;
-        # but when a cover point is hit, only clear that exact value (and other non-conflicting covers).
-        if (
-            str(obl.get("kind") or "") == "csv_domain_cover"
-            and source_kind != "csv_domain_cover"
-            and oid != source_item["id"]
-        ):
-            # Keep other csv_domain_cover pending so each value gets its own solve pass.
-            model = result.get("model") or {}
-            var_refs = obl.get("target_refs") or []
-            var_id = str(var_refs[0]) if var_refs else ""
-            if var_id and model.get(var_id) == obl.get("target_value"):
-                filtered.append(oid)
-            continue
-        filtered.append(oid)
-    covered = filtered
+    # Default (no --dedupe): keep only the source obligation so each cover point
+    # gets its own candidate/row instead of one model clearing many pending items.
+    if one_obligation_one_candidate:
+        covered = [source_item["id"]]
+    else:
+        # Anti-collapse: each csv_domain_cover target value keeps its own candidate —
+        # do not discard sibling cover points for the same column with different values.
+        filtered: list[str] = []
+        source_obl = obligation_by_id.get(source_item["id"], source_item.get("obligation") or {})
+        source_kind = str(source_obl.get("kind") or "")
+        source_col = str(source_obl.get("field") or "")
+        source_val = source_obl.get("target_value")
+        for oid in covered:
+            obl = obligation_by_id.get(oid, {})
+            if (
+                str(obl.get("kind") or "") == "csv_domain_cover"
+                and source_kind == "csv_domain_cover"
+                and str(obl.get("field") or "") == source_col
+                and obl.get("target_value") != source_val
+                and oid != source_item["id"]
+            ):
+                continue
+            if (
+                str(obl.get("kind") or "") == "csv_domain_cover"
+                and source_kind != "csv_domain_cover"
+                and oid != source_item["id"]
+            ):
+                # Keep other csv_domain_cover pending so each value gets its own solve pass.
+                model = result.get("model") or {}
+                var_refs = obl.get("target_refs") or []
+                var_id = str(var_refs[0]) if var_refs else ""
+                if var_id and model.get(var_id) == obl.get("target_value"):
+                    filtered.append(oid)
+                continue
+            filtered.append(oid)
+        covered = filtered
     if not covered:
         return
     candidate = build_candidate(source_item["obligation"], result, covered)

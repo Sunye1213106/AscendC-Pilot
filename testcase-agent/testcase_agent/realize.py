@@ -251,14 +251,21 @@ def materialize_row_from_contract(
             value = _eval_emit_expr(template, model, candidate, idx) if template else field.get("default", "")
         elif role == "emit_derived":
             value = _eval_emit_expr(_as_dict(emit_columns.get(name)), model, candidate, idx)
+        elif role == "tensor_placeholder":
+            # Blob/tensor columns: prefer emit constant (e.g. "_"), else schema default.
+            template = _as_dict(emit_columns.get(name))
+            if template:
+                value = _eval_emit_expr(template, model, candidate, idx)
+            else:
+                value = field.get("default", "_")
         elif role == "metadata":
             value = field.get("default", "")
         if value in (None, "") and field.get("required"):
             # Explicit empty default is allowed for metadata/constant/emit placeholders.
             if "default" in field and field.get("default") in ("", None, []):
                 value = field.get("default", "")
-            elif role in {"metadata", "constant", "expected_result"}:
-                value = field.get("default", "")
+            elif role in {"metadata", "constant", "expected_result", "tensor_placeholder"}:
+                value = field.get("default", "_" if role == "tensor_placeholder" else "")
             else:
                 raise ValueError(f"REQUIRED_COLUMN_UNMAPPED: {name} is required but has no value")
         row[name] = _serialize_field_value(value, field)

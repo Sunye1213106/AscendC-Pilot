@@ -443,6 +443,46 @@ def test_default_solve_keeps_all_sat_candidates_without_dedupe() -> None:
     assert len(result["candidates"]) >= 2
     assert len(result["selected_candidates"]) == len(result["candidates"])
     assert len(result["selected_candidates"]) >= 2
+    # Each SAT obligation should own its own candidate (no incidental batch merge).
+    assert all(len(item.get("source_obligation_ids") or []) == 1 for item in result["selected_candidates"])
+
+
+def test_materialize_tensor_placeholder_uses_emit_constant() -> None:
+    from testcase_agent.realize import materialize_row_from_contract
+
+    schema = {
+        "fields": [
+            {
+                "name": "attrs",
+                "order": 0,
+                "required": True,
+                "role": "tensor_placeholder",
+                "value_type": "enum",
+                "domain": ["_"],
+                "default": "_",
+                "serializer": "string",
+            },
+            {
+                "name": "B",
+                "order": 1,
+                "required": True,
+                "role": "solver_input",
+                "value_type": "int",
+                "domain": {"kind": "range", "min": 1, "max": 8},
+                "serializer": "string",
+            },
+        ]
+    }
+    realization_map = {"emit": {"columns": {"attrs": {"op": "constant", "value": "_"}}}}
+    row = materialize_row_from_contract(
+        {"id": "CAND_1"},
+        {"VAR_CSV_B": 2},
+        schema,
+        realization_map,
+        0,
+    )
+    assert row["attrs"] == "_"
+    assert row["B"] == 2
 
 
 def test_unknown_variable_reference_fails_in_ir() -> None:
