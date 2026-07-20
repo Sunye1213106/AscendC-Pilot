@@ -1,34 +1,23 @@
 ---
 name: tg-solve
 description: >-
-  Solve an approved TestAgent plan with SMT/set-cover and emit CSV cases.
-  Use when the user runs /tg-solve.
-argument-hint: "<project_root> --op-name <op_name> [--dry-run]"
+  Solve an approved TestAgent plan with SMT (VAR_CSV_* free) and emit CSV rows
+  by projecting the model. Use when the user runs /tg-solve.
+argument-hint: "<project_root> --op-name <op_name> [--level L0|L1] [--dry-run]"
 ---
 
 # /tg-solve
 
-Resolve install paths from `skills/PATHS.md` (or `~/.config/opencode/testcase-agent-plugin` after install).
-
-Prerequisites:
-
-- Run `tg-plan` first, then AskQuestion `approve` (writes `plan/human_supplement.yaml` with current Snapshot/Plan Hash).
-- Or call this skill directly after an approved `human_supplement.yaml`.
-- `plan/unresolved.yaml` must be `ready_for_manual_review` with no hard blockers and no contract gaps.
+Prerequisites: `tg-contract` + approved `tg-plan`.
 
 ```powershell
-tg-solve <project_root> --op-name <op_name>
-tg-solve <project_root> --op-name <op_name> --dry-run
+tg-solve <project_root> --op-name <op_name> --level L0
 ```
 
 Rules:
 
-- Run deterministic prepare first to refresh `realization/consumer_evidence.yaml`.
-- Reuse `consumer_schema.yaml` and `realization_map.yaml` only when their hashes match the latest evidence, snapshot, and plan.
-- If contract files are missing or stale, dispatch `/tg-csv-contract`, then run deterministic validation before invoking Python `tg-solve`.
-- Stop on validation failure. Do not continue to CSV emission with stale or partial contract files.
-- Compose GlobalLegal ∧ obligation Target via scripts; SMT via Z3.
-- Write abstract candidates under `solve/` for audit.
-- By default write `cases/cases.csv` (fag_debug_tools compatible). `--dry-run` skips CSV.
-- Do not call LLM to invent case rows.
+- Load existing `realization/` contract (version 2). Do not invent CSV headers.
+- SMT free variables are `VAR_CSV_*`; KEY/mapped branches are derived.
+- Emit CSV by projecting `VAR_CSV_*` (+ emit_derived templates). No DEFAULT_SHAPE guessing unless `--allow-legacy-realization`.
+- Solver report must include skipped counts.
 - Do not modify `.understand-operator/`.

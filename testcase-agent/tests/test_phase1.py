@@ -235,7 +235,10 @@ def _patch_intake(monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any], vali
 
 
 def _snapshot(repo: Path, files: dict[str, Any]) -> None:
-    root = repo / ".testcase-generator" / "DemoOp" / "snapshot"
+    from conftest import write_minimal_contract_artifacts
+
+    out_root = repo / ".testcase-generator" / "DemoOp"
+    root = out_root / "snapshot"
     root.mkdir(parents=True)
     snapshot = {
         "version": 1,
@@ -246,6 +249,7 @@ def _snapshot(repo: Path, files: dict[str, Any]) -> None:
     }
     snapshot["snapshot_hash"] = semantic_snapshot_hash(snapshot)
     write_json(root / "understand_contract.json", snapshot)
+    write_minimal_contract_artifacts(out_root, snapshot_hash=snapshot["snapshot_hash"], plan_hash="")
 
 
 def _tree_hash(root: Path) -> dict[str, str]:
@@ -674,6 +678,13 @@ def test_real_format_fixture_end_to_end_phase1_phase2(tmp_path: Path, monkeypatc
     _patch_intake(monkeypatch, payload)
 
     init_result = tg_init(repo, "DemoOp")
+    from conftest import write_minimal_contract_artifacts
+
+    write_minimal_contract_artifacts(
+        repo / ".testcase-generator" / "DemoOp",
+        snapshot_hash=init_result["snapshot"]["snapshot_hash"],
+        plan_hash="",
+    )
     plan = tg_plan(repo, "DemoOp", reuse_snapshot=True)
     root = repo / ".testcase-generator" / "DemoOp"
     supplement_path = root / "plan" / "human_supplement.yaml"
@@ -1182,6 +1193,13 @@ def test_changed_focus_invalidates_previous_approval(tmp_path: Path, monkeypatch
     repo, _uo = _repo(tmp_path)
     _patch_intake(monkeypatch, _payload())
     init_result = tg_init(repo, "DemoOp")
+    from conftest import write_minimal_contract_artifacts
+
+    write_minimal_contract_artifacts(
+        repo / ".testcase-generator" / "DemoOp",
+        snapshot_hash=init_result["snapshot"]["snapshot_hash"],
+        plan_hash="",
+    )
     first = tg_plan(repo, "DemoOp", level="L1", reuse_snapshot=True)
     root = repo / ".testcase-generator" / "DemoOp"
     write_yaml(
@@ -1233,7 +1251,14 @@ def test_testagent_does_not_modify_understand_operator(tmp_path: Path, monkeypat
     _patch_intake(monkeypatch, _payload())
     before = _tree_hash(uo)
 
-    tg_init(repo, "DemoOp")
+    init_result = tg_init(repo, "DemoOp")
+    from conftest import write_minimal_contract_artifacts
+
+    write_minimal_contract_artifacts(
+        repo / ".testcase-generator" / "DemoOp",
+        snapshot_hash=init_result["snapshot"]["snapshot_hash"],
+        plan_hash="",
+    )
     tg_plan(repo, "DemoOp", reuse_snapshot=True)
 
     assert _tree_hash(uo) == before
@@ -1319,6 +1344,13 @@ def test_real_final_validation_export_and_phase2_without_mocks(tmp_path: Path) -
     _mature_final_uo_fixture(repo)
 
     init_result = tg_init(repo, "DemoOp")
+    from conftest import write_minimal_contract_artifacts
+
+    write_minimal_contract_artifacts(
+        repo / ".testcase-generator" / "DemoOp",
+        snapshot_hash=init_result["snapshot"]["snapshot_hash"],
+        plan_hash="",
+    )
     plan = tg_plan(repo, "DemoOp", reuse_snapshot=True)
     root = repo / ".testcase-generator" / "DemoOp"
     write_yaml(

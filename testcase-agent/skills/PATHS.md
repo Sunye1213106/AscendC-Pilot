@@ -2,23 +2,16 @@
 
 `PLUGIN_ROOT` = repository root of `testcase-agent/` (contains `skills/`, `testcase_agent/`, `install.ps1`).
 
-After `./install.ps1 opencode`, the same tree is also linked as:
-
-```text
-~/.config/opencode/testcase-agent-plugin  →  PLUGIN_ROOT
-~/.config/opencode/skills/tg-plan         →  PLUGIN_ROOT/skills/tg-plan
-~/.config/opencode/skills/tg-solve        →  PLUGIN_ROOT/skills/tg-solve
-~/.config/opencode/skills/tg-init         →  PLUGIN_ROOT/skills/tg-init   (deprecated)
-```
-
 ## Commands
 
 | Skill | CLI |
 |-------|-----|
-| `/tg-plan` | `tg-plan <project_root> --op-name <op> [--level L0\|L1\|L2\|L3] [--topic …]` |
-| `/tg-solve` | `tg-solve <project_root> --op-name <op> [--dry-run]` |
+| `/tg-contract` | `tg-contract <project_root> --op-name <op> --csv-consumer-root <test_script_root>` |
+| `/tg-plan` | `tg-plan <project_root> --op-name <op> --csv-consumer-root <root> [--level L0\|L1\|L2\|L3]` |
+| `/tg-solve` | `tg-solve <project_root> --op-name <op> [--level …] [--dry-run]` |
 
 `project_root` must contain `.understand-operator/<op_name>/` (pre-built KB).  
+`--csv-consumer-root` is the test script / CSV consumer tree (e.g. `TEST/fag_debug_tools`).  
 Outputs go to `.testcase-generator/<op_name>/`.
 
 ## Windows PowerShell

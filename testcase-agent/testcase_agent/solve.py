@@ -146,17 +146,28 @@ def load_or_build_realization(
     snapshot_path = out_root / "snapshot" / "understand_contract.json"
     obligations_path = _plan_dir(out_root, level) / "coverage_obligations.yaml"
     _emit_progress(progress, stage="realization_prepare", status="start")
-    consumer_root = discover_consumer_root(project_root, csv_consumer_root)
+    consumer_root = None
+    if csv_consumer_root is not None:
+        consumer_root = discover_consumer_root(project_root, csv_consumer_root)
     if consumer_root is None and paths["evidence"].exists():
         evidence = read_yaml(paths["evidence"])
-        _emit_progress(progress, stage="realization_prepare", status="reuse", reason="consumer_root_missing")
+        _emit_progress(progress, stage="realization_prepare", status="reuse", reason="using_existing_evidence")
     else:
-        evidence = prepare_contract_inputs(
-            out_root,
-            consumer_root=consumer_root,
-            snapshot_path=snapshot_path,
-            obligations_path=obligations_path,
-        )
+        if consumer_root is None:
+            # Prefer existing contract; do not silently discover FASG.
+            if paths["map"].exists() and paths["schema"].exists() and paths["evidence"].exists():
+                evidence = read_yaml(paths["evidence"])
+            else:
+                raise TgSolveError(
+                    "CSV_CONSUMER_ROOT_REQUIRED: pass --csv-consumer-root or run tg-contract first"
+                )
+        else:
+            evidence = prepare_contract_inputs(
+                out_root,
+                consumer_root=consumer_root,
+                snapshot_path=snapshot_path,
+                obligations_path=obligations_path,
+            )
     _emit_progress(
         progress,
         stage="realization_prepare",
@@ -167,6 +178,14 @@ def load_or_build_realization(
     try:
         loaded_evidence, schema, realization_map = load_contract(paths)
         realization_map = normalize_realization_map(realization_map)
+        # Keep hashes aligned with current plan after tg-plan refresh.
+        for doc in (loaded_evidence, schema, realization_map):
+            doc["plan_hash"] = plan_hash
+            doc["snapshot_hash"] = str(snapshot.get("snapshot_hash") or "")
+            if "evidence_hash" not in doc or not doc.get("evidence_hash"):
+                doc["evidence_hash"] = loaded_evidence.get("evidence_hash", "")
+        schema["evidence_hash"] = loaded_evidence.get("evidence_hash", "")
+        realization_map["evidence_hash"] = loaded_evidence.get("evidence_hash", "")
         validation = ensure_valid_contract(
             loaded_evidence,
             schema,
@@ -181,7 +200,10 @@ def load_or_build_realization(
         return {"evidence": loaded_evidence, "schema": schema, "realization_map": realization_map, "report": report, "validation": validation}
     except ContractError as exc:
         if not allow_legacy_realization:
-            raise TgSolveError(str(exc))
+            raise TgSolveError(
+                f"{exc}. Re-run tg-contract /tg-csv-contract, or pass --allow-legacy-realization "
+                "(FASG-only heuristic fallback; not recommended)."
+            ) from exc
         _emit_progress(progress, stage="realization_validate", status="legacy_fallback", reason=str(exc))
         _emit_progress(progress, stage="realization_schema", status="start")
         schema = extract_consumer_schema(consumer_root)
@@ -205,6 +227,9 @@ def load_or_build_realization(
             )
         report = realization_report(realization_map)
         report["legacy_mode"] = True
+        report["warnings"] = list(report.get("warnings") or []) + [
+            "allow_legacy_realization: using FASG heuristic map; SMT→CSV identity not guaranteed"
+        ]
         write_yaml(paths["report"], report)
         return {
             "evidence": evidence,
@@ -382,7 +407,7 @@ def solve_obligations_optimized(
             }
             errors.extend(local_errors)
             continue
-        if obligation.get("status") in {"proof_required", "conflicting", "unresolved"}:
+        if obligation.get("status") in {"proof_required", "conflicting", "unresolved", "skipped"}:
             result_by_id[oid] = {"obligation_id": obligation.get("id"), "status": "skipped", "model": {}, "reason": f"obligation status is {obligation.get('status')}"}
             continue
         target = compile_obligation_target(obligation, ir)
@@ -804,7 +829,7 @@ def build_solver_report(
         "# TestAgent 求解报告",
         "",
         f"- 总 Obligation 数: {len(obligations)}",
-        f"- SAT / UNSAT / UNKNOWN 数: {counts['sat']} / {counts['unsat']} / {counts['unknown']}",
+        f"- SAT / UNSAT / UNKNOWN / SKIPPED 数: {counts['sat']} / {counts['unsat']} / {counts['unknown']} / {counts['skipped']}",
         f"- 原始候选数: {len(raw_candidates)}",
         f"- 去重后候选数: {len(deduped_candidates)}",
         f"- Set Cover 后候选数: {len(selected['selected_candidates'])}",
@@ -812,7 +837,7 @@ def build_solver_report(
         f"- UNSAT 原因摘要: {', '.join(_summarize_unsat(unsat)) if unsat else '无'}",
         f"- Contract 中无法编译的表达式: {len(errors)}",
         "",
-        "求解完成后写出 cases/cases.csv（可用 --dry-run 跳过）。",
+        "求解完成后写出 cases CSV（可用 --dry-run 跳过）。CSV 行由 VAR_CSV_* 模型投影生成。",
     ]
     return {
         "version": 1,

@@ -2,10 +2,11 @@
 
 TestAgent for Understand Operator contracts. Public commands:
 
-- `tg-plan`: intake `.understand-operator/<op_name>/`, extract generation conditions, build L0–L3 coverage plan, freeze snapshot.
-- `tg-solve`: after plan approval, SMT solve + set-cover, then emit `cases/cases.csv` (fag_debug_tools compatible).
+- `tg-contract`: scan `--csv-consumer-root` test scripts/sample CSV → `realization/` contract (headers + `VAR_CSV_*` map).
+- `tg-plan`: intake `.understand-operator/<op_name>/`, extract conditions, build L0–L3 plan **filtered by CSV reachability**.
+- `tg-solve`: after approval, SMT on `VAR_CSV_*` free vars → project model to CSV rows.
 
-`tg-init` is deprecated (intake is part of `tg-plan`).
+`tg-init` is deprecated (intake is part of `tg-contract` / `tg-plan`).
 
 Planning levels:
 
@@ -73,8 +74,10 @@ chmod +x ./install.sh
 `<project_root>` 为算子包目录（含已构建的 `.understand-operator/<op_name>/`）。
 
 ```powershell
-tg-plan <project_root> --op-name <op_name> --level L1
-# OpenCode AskQuestion: approve（立即 tg-solve）/ reject / suggest（修改建议后重跑）
+tg-contract <project_root> --op-name <op_name> --csv-consumer-root <test_script_root>
+tg-plan <project_root> --op-name <op_name> --level L1 --csv-consumer-root <test_script_root>
+# OpenCode AskQuestion: approve（立即 tg-solve）/ reject / suggest
+tg-solve <project_root> --op-name <op_name> --level L1
 ```
 
 L3:

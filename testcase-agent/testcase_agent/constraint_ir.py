@@ -28,6 +28,7 @@ SUPPORTED_EXPR_OPS = {
     "aligned",
     "derived",
     "if_then_else",
+    "lit",
 }
 
 
@@ -347,6 +348,8 @@ def normalize_expr(expr: Any) -> dict[str, Any]:
         out["args"] = [normalize_expr(arg) for arg in _require_args(expr)]
     elif op in {"add", "sub", "mul", "div", "mod"}:
         out["args"] = [_normalize_arith_arg(arg) for arg in _require_args(expr)]
+    elif op == "lit":
+        out["value"] = expr.get("value")
     elif op == "aligned":
         out["var"] = _require_var(expr)
         out["alignment"] = int(expr.get("alignment") or expr.get("value") or 1)
@@ -400,7 +403,17 @@ def _add_variable(variables: dict[str, dict[str, Any]], spec: dict[str, Any], er
             variables[var_id] = {"id": var_id, "name": str(spec.get("name") or spec.get("canonical_name") or var_id), "type": "enum", "domain": [], "domain_authority": "inferred", "domain_sources": [f"{source}.type_only"], "stable_id": var_id, "free": True, "derived": False, "definition": None, "source": f"{source}.type_only"}
     if var_id in variables:
         variables[var_id]["name"] = str(spec.get("name") or spec.get("canonical_name") or variables[var_id].get("name") or var_id)
-        variables[var_id]["free"] = not derived
+        free = not derived
+        if source == "realization_map.csv_variables" or str(var_id).startswith("VAR_CSV_"):
+            free = True
+            derived = False
+        if source == "realization_map.free_variables":
+            free = True
+            derived = False
+        if spec.get("free") is True:
+            free = True
+            derived = False
+        variables[var_id]["free"] = free
         variables[var_id]["derived"] = derived
         variables[var_id]["definition"] = spec.get("definition") or spec.get("expr")
 
@@ -526,6 +539,11 @@ def _apply_realization_map(
         return
     for spec in _iter_items(realization_map.get("csv_variables")):
         _add_variable(variables, spec, errors, "realization_map.csv_variables")
+    for spec in _iter_items(realization_map.get("free_variables")):
+        # UO-rooted SMT free ints (no CSV projection).
+        patched = dict(spec)
+        patched["free"] = True
+        _add_variable(variables, patched, errors, "realization_map.free_variables")
     for spec in _iter_items(realization_map.get("derived_variables")):
         expr = spec.get("expr")
         if not isinstance(expr, dict):
@@ -988,7 +1006,11 @@ def _require_args(expr: dict[str, Any]) -> list[Any]:
 
 def _normalize_arith_arg(arg: Any) -> Any:
     if isinstance(arg, dict):
-        return normalize_expr(arg) if "op" in arg else {"var": _require_var(arg)}
+        if arg.get("op") == "lit":
+            return arg.get("value")
+        if "op" in arg:
+            return normalize_expr(arg)
+        return {"var": _require_var(arg)}
     return arg
 
 

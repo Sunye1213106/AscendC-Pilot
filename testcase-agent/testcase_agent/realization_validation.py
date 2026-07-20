@@ -35,6 +35,7 @@ def validate_contract_artifacts(
     *,
     snapshot_hash: str,
     plan_hash: str,
+    allow_bootstrap: bool = False,
 ) -> dict[str, Any]:
     errors: list[dict[str, Any]] = []
     if consumer_schema.get("version") != CONSUMER_SCHEMA_VERSION:
@@ -54,7 +55,16 @@ def validate_contract_artifacts(
     if [str(item.get("name") or "") for item in sorted(fields, key=lambda item: int(item.get("order", 0)))] != names:
         errors.append(_error("CONSUMER_SCHEMA_AMBIGUOUS", "field order does not match serialized order"))
 
-    evidence_columns = set((evidence.get("field_accesses") or {}).keys()) | set((evidence.get("sample_values") or {}).keys())
+    evidence_columns = (
+        set((evidence.get("field_accesses") or {}).keys())
+        | set((evidence.get("sample_values") or {}).keys())
+        | {
+            str(column)
+            for item in evidence.get("ordered_header_candidates") or []
+            if isinstance(item, dict)
+            for column in item.get("columns") or []
+        }
+    )
     csv_var_ids = set()
     declared_ids = set()
     field_by_name = {str(item.get("name")): item for item in fields}
@@ -68,7 +78,9 @@ def validate_contract_artifacts(
             errors.append(_error("CONSUMER_SCHEMA_AMBIGUOUS", f"unsupported value_type for {name}"))
         if field.get("required") and not field.get("source_refs"):
             errors.append(_error("CSV_CONTRACT_REQUIRED", f"required field {name} missing source_refs"))
-        if name not in evidence_columns and role not in {"case_id", "expected_result", "metadata"}:
+        if name not in evidence_columns and role not in {"case_id", "expected_result", "metadata", "constant", "emit_derived"}:
+            if allow_bootstrap:
+                continue
             errors.append(_error("CONSUMER_SCHEMA_AMBIGUOUS", f"field {name} is absent from evidence"))
 
     for spec in realization_map.get("csv_variables", []) or []:
@@ -89,23 +101,39 @@ def validate_contract_artifacts(
         if spec.get("type") == "int" and not _int_domain_present(spec.get("domain")):
             errors.append(_error("EMPTY_VARIABLE_DOMAIN", f"{var_id} has empty int domain"))
 
+    for spec in realization_map.get("free_variables", []) or []:
+        if not isinstance(spec, dict):
+            continue
+        var_id = str(spec.get("id") or "")
+        if not var_id:
+            continue
+        declared_ids.add(var_id)
+        if spec.get("type") == "int" and not _int_domain_present(spec.get("domain")):
+            errors.append(_error("EMPTY_VARIABLE_DOMAIN", f"{var_id} has empty int domain"))
+
     derived_graph: dict[str, set[str]] = {}
-    for section in ("derived_variables",):
-        for spec in realization_map.get(section, []) or []:
-            if not isinstance(spec, dict):
+    # Pass 1: register all derived ids before dependency checks (branch exprs may reference KEY vars).
+    for spec in realization_map.get("derived_variables", []) or []:
+        if isinstance(spec, dict) and spec.get("id"):
+            declared_ids.add(str(spec.get("id")))
+    # Pass 2: validate exprs / deps.
+    for spec in realization_map.get("derived_variables", []) or []:
+        if not isinstance(spec, dict):
+            continue
+        var_id = str(spec.get("id") or "")
+        expr = spec.get("expr")
+        if not isinstance(expr, dict):
+            errors.append(_error("UNKNOWN_SOLVER_VARIABLE", f"{var_id} missing expr"))
+            continue
+        inner = expr.get("expr") if expr.get("op") == "derived" else expr
+        deps = collect_expr_variables(inner)
+        derived_graph[var_id] = set(deps)
+        unknown = deps - declared_ids - csv_var_ids
+        if unknown:
+            if allow_bootstrap:
+                # Bootstrap maps may reference KEY flags not yet wired to CSV; demote later via plan filter.
                 continue
-            var_id = str(spec.get("id") or "")
-            declared_ids.add(var_id)
-            expr = spec.get("expr")
-            if not isinstance(expr, dict):
-                errors.append(_error("UNKNOWN_SOLVER_VARIABLE", f"{var_id} missing expr"))
-                continue
-            inner = expr.get("expr") if expr.get("op") == "derived" else expr
-            deps = collect_expr_variables(inner)
-            derived_graph[var_id] = set(deps)
-            unknown = deps - declared_ids - csv_var_ids
-            if unknown:
-                errors.append(_error("UNKNOWN_SOLVER_VARIABLE", f"{var_id} references unknown variables: {sorted(unknown)}"))
+            errors.append(_error("UNKNOWN_SOLVER_VARIABLE", f"{var_id} references unknown variables: {sorted(unknown)}"))
 
     cycle = _find_cycle(derived_graph)
     if cycle:
@@ -157,6 +185,16 @@ def validate_contract_artifacts(
         ),
         "unmapped_required_field_count": len([item for item in errors if item["code"] == "REQUIRED_COLUMN_UNMAPPED"]),
         "abstract_branch_count": len(realization_map.get("abstract_branches") or []),
+        "unreachable_derived_value_count": len(
+            [
+                item
+                for item in realization_map.get("derived_variables") or []
+                if isinstance(item, dict)
+                and item.get("declared_domain")
+                and item.get("reachable_values") is not None
+                and set(map(str, item.get("declared_domain") or [])) - set(map(str, item.get("reachable_values") or []))
+            ]
+        ),
     }
 
 

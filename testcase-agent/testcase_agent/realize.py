@@ -8,52 +8,9 @@ from .io import write_yaml
 from .hashing import stable_hash
 
 
-# Columns aligned with fag_debug_tools data/FASG_PSE_cases.csv
-CSV_COLUMNS = [
-    "Testcase_Name",
-    "Enable",
-    "Dtype",
-    "out_dtype",
-    "Input_Layout",
-    "B",
-    "N1",
-    "N2",
-    "S1",
-    "S2",
-    "D",
-    "D_V",
-    "Drop_Out_Possibility",
-    "Pre_Tockens",
-    "Next_Tockens",
-    "Atten_mask_dtype",
-    "Atten_mask_shape",
-    "sparse_mode",
-    "PSE_type",
-    "PSE_shape",
-    "seqlens_list_q",
-    "seqlens_list_kv",
-    "cu_seqlens_q",
-    "cu_seqlens_kv",
-    "eod",
-    "same_as_input",
-    "seed",
-    "offset",
-    "is_deter",
-    "rope",
-    "inner_drop",
-    "is_sink",
-    "prefix",
-]
-
-DEFAULT_SHAPE = {
-    "B": 2,
-    "N1": 4,
-    "N2": 2,
-    "S1": 16,
-    "S2": 16,
-    "D": 64,
-    "D_V": 64,
-}
+# Deprecated empty shims — legacy FAG column tables removed. Emit only via consumer_schema / realization_map.
+CSV_COLUMNS: list[str] = []
+DEFAULT_SHAPE: dict[str, Any] = {}
 
 
 def realize_candidates_to_csv(
@@ -108,24 +65,24 @@ def realize_candidates_to_csv(
                     }
                 )
                 continue
+        elif realization_map and realization_map.get("csv_variables"):
+            # Project VAR_CSV_* from model using map columns (identity emit).
+            row = build_case_row_from_realization_map(candidate, model, realization_map, idx)
+            realization = {"status": "ok", "reason": "csv_projection", "refs": [], "shape": {}}
         else:
-            realization = match_realization(model, candidate, input_realization)
-            if realization["status"] != "ok":
-                blocked.append(
-                    {
-                        "candidate_id": candidate.get("id") or f"CAND_{idx:04d}",
-                        "status": "realize_blocked",
-                        "reason": realization["reason"],
-                        "model": model,
-                    }
-                )
-                continue
-            if realization_map and (realization_map.get("csv_variables") or realization_map.get("consumer")):
-                row = build_case_row_from_realization_map(candidate, model, realization_map, idx)
-            elif allow_legacy_realization:
-                row = build_case_row(candidate, model, realization, idx)
-            else:
-                raise ValueError("CSV_CONTRACT_REQUIRED: contract-backed materialization is required")
+            _ = allow_legacy_realization  # flag removed; hardcoded FAG emit is no longer supported
+            blocked.append(
+                {
+                    "candidate_id": candidate.get("id") or f"CAND_{idx:04d}",
+                    "status": "realize_blocked",
+                    "reason": (
+                        "CONTRACT_REQUIRED: provide consumer_schema/realization_map from tg-contract "
+                        "(hardcoded CSV_COLUMNS / DEFAULT_SHAPE emit removed)"
+                    ),
+                    "model": model,
+                }
+            )
+            continue
         rows.append(row)
         coverage_rows.append(build_case_coverage(candidate, idx, obligations or [], realization_map or {}))
 
@@ -143,7 +100,7 @@ def realize_candidates_to_csv(
         "dry_run": dry_run,
         "csv_columns": columns,
         "realization_map_enabled": bool(realization_map),
-        "legacy_mode": bool(not consumer_schema and allow_legacy_realization),
+        "legacy_mode": False,
     }
     cases_dir = out_root / "cases"
     if level:
@@ -193,14 +150,24 @@ def match_realization(model: dict[str, Any], candidate: dict[str, Any], input_re
         shape = shapes[0]
         if isinstance(shape, dict):
             return {"status": "ok", "reason": "", "refs": matched_refs, "shape": shape, "source": "input_realization"}
-        # Non-dict shape intent: use defaults tagged by layout tokens
-        return {"status": "ok", "reason": "", "refs": matched_refs, "shape": dict(DEFAULT_SHAPE), "source": "input_realization_default", "shape_intent": shape}
+        return {
+            "status": "blocked",
+            "reason": "input_realization matched but shape is not a dict (DEFAULT_SHAPE fallback removed)",
+            "refs": matched_refs,
+            "shape_intent": shape,
+        }
     if matched_refs and not shapes:
-        # Matched rule but no shape — allow default smoke shape when model is otherwise complete
-        return {"status": "ok", "reason": "", "refs": matched_refs, "shape": dict(DEFAULT_SHAPE), "source": "default_shape_with_realization_ref"}
+        return {
+            "status": "blocked",
+            "reason": "input_realization matched but no shape (DEFAULT_SHAPE fallback removed)",
+            "refs": matched_refs,
+        }
     if not input_realization:
-        # No realization catalog: emit defaults only for L0-like minimal models
-        return {"status": "ok", "reason": "", "refs": [], "shape": dict(DEFAULT_SHAPE), "source": "default_shape_no_catalog"}
+        return {
+            "status": "blocked",
+            "reason": "no input_realization catalog; use tg-contract consumer_schema emit (DEFAULT_SHAPE removed)",
+            "refs": [],
+        }
     return {"status": "blocked", "reason": "no matching input_realization / shape rule", "refs": []}
 
 
@@ -219,61 +186,17 @@ def realization_matches_model(model: dict[str, Any], expected_key: dict[str, Any
     layouts = [str(item).upper() for item in _as_list(matches.get("layouts") or matches.get("layout") or rule.get("layouts") or rule.get("layout"))]
     if layouts:
         layout = str(model.get("VAR_LAYOUT") or model.get("Input_Layout") or key_fields.get("layout") or "").upper()
-        # Also infer from ISTND
-        if not layout and model.get("VAR_KEY_ISTND") in (1, True, "1"):
-            layout = "TND"
         if layout and layout not in layouts:
             return False
     return bool(pattern or layouts or matches.get("family_refs") or rule.get("dtype_layout_intent"))
 
 
 def build_case_row(candidate: dict[str, Any], model: dict[str, Any], realization: dict[str, Any], idx: int) -> dict[str, Any]:
-    shape = _as_dict(realization.get("shape"))
-    dtype = _infer_dtype(model)
-    layout = _infer_layout(model)
-    is_deter = _infer_deter(model)
-    name = str(candidate.get("id") or f"case_{idx:04d}")
-    row = {col: "" for col in CSV_COLUMNS}
-    row.update(
-        {
-            "Testcase_Name": name,
-            "Enable": "Enable",
-            "Dtype": dtype,
-            "out_dtype": dtype,
-            "Input_Layout": layout,
-            "B": shape.get("B", DEFAULT_SHAPE["B"]),
-            "N1": shape.get("N1", DEFAULT_SHAPE["N1"]),
-            "N2": shape.get("N2", DEFAULT_SHAPE["N2"]),
-            "S1": shape.get("S1", DEFAULT_SHAPE["S1"]),
-            "S2": shape.get("S2", DEFAULT_SHAPE["S2"]),
-            "D": shape.get("D", DEFAULT_SHAPE["D"]),
-            "D_V": shape.get("D_V", shape.get("D", DEFAULT_SHAPE["D_V"])),
-            "Drop_Out_Possibility": shape.get("Drop_Out_Possibility", 1),
-            "Pre_Tockens": shape.get("Pre_Tockens", 65536),
-            "Next_Tockens": shape.get("Next_Tockens", 65536),
-            "Atten_mask_dtype": "bool",
-            "Atten_mask_shape": shape.get("Atten_mask_shape", "NONE"),
-            "sparse_mode": shape.get("sparse_mode", 0),
-            "PSE_type": shape.get("PSE_type", 0),
-            "PSE_shape": shape.get("PSE_shape", "NONE"),
-            "eod": 0,
-            "same_as_input": 0,
-            "seed": 2,
-            "offset": 0,
-            "is_deter": "true" if is_deter else "false",
-            "rope": int(model.get("VAR_KEY_ISROPE") in (1, True, "1")),
-            "inner_drop": 0,
-            "is_sink": 0,
-            "prefix": "",
-        }
+    """Removed: hardcoded FAG CSV emit. Use materialize_row_from_contract / map projection."""
+    raise RuntimeError(
+        "LEGACY_BUILD_CASE_ROW_REMOVED: hardcoded CSV_COLUMNS/DEFAULT_SHAPE emit is gone; "
+        "run tg-contract and use materialize_row_from_contract / build_case_row_from_realization_map"
     )
-    if layout == "TND":
-        b = int(row["B"])
-        s1 = int(row["S1"])
-        # cumulative-style simple seqlens
-        row["seqlens_list_q"] = str([s1 // b * (i + 1) for i in range(b)])
-        row["seqlens_list_kv"] = row["seqlens_list_q"]
-    return row
 
 
 def build_case_row_from_realization_map(candidate: dict[str, Any], model: dict[str, Any], realization_map: dict[str, Any], idx: int) -> dict[str, Any]:
@@ -330,7 +253,13 @@ def materialize_row_from_contract(
         elif role == "metadata":
             value = field.get("default", "")
         if value in (None, "") and field.get("required"):
-            raise ValueError(f"REQUIRED_COLUMN_UNMAPPED: {name} is required but has no value")
+            # Explicit empty default is allowed for metadata/constant/emit placeholders.
+            if "default" in field and field.get("default") in ("", None, []):
+                value = field.get("default", "")
+            elif role in {"metadata", "constant", "expected_result"}:
+                value = field.get("default", "")
+            else:
+                raise ValueError(f"REQUIRED_COLUMN_UNMAPPED: {name} is required but has no value")
         row[name] = _serialize_field_value(value, field)
     return row
 
@@ -405,10 +334,14 @@ def _realization_columns(realization_map: dict[str, Any] | None, consumer_schema
         fields = [item for item in consumer_schema.get("fields", []) if isinstance(item, dict)]
         if fields:
             return [str(item.get("name") or "") for item in sorted(fields, key=lambda item: int(item.get("order", 0)))]
+        columns = consumer_schema.get("columns")
+        if isinstance(columns, list) and columns:
+            return [str(column) for column in columns]
     if isinstance(realization_map, dict):
         columns = _as_dict(realization_map.get("consumer")).get("columns")
         if isinstance(columns, list) and columns:
             return [str(column) for column in columns]
+    # Legacy fallback only — prefer contract columns from tg-contract.
     return list(CSV_COLUMNS)
 
 
@@ -481,40 +414,6 @@ def write_cases_csv(path: Path, rows: list[dict[str, Any]], columns: list[str] |
         writer.writeheader()
         for row in rows:
             writer.writerow({col: row.get(col, "") for col in columns})
-
-
-def _infer_dtype(model: dict[str, Any]) -> str:
-    raw = model.get("VAR_DTYPE_LAYOUT_CLASS") or model.get("VAR_KEY_INPUTDTYPE") or model.get("Dtype")
-    text = str(raw or "fp16").upper()
-    tokens = set(text.replace("-", "_").split("_"))
-    if "BF16" in tokens or "BF16" in text:
-        return "bf16"
-    if "FP32" in tokens or "FP32" in text:
-        return "fp32"
-    if "FP16" in tokens or "FP16" in text:
-        return "fp16"
-    if str(raw) in {"0", "1", "2", "3"}:
-        return {"0": "fp16", "1": "bf16", "2": "fp32"}.get(str(raw), "fp16")
-    return "fp16"
-
-
-def _infer_layout(model: dict[str, Any]) -> str:
-    if model.get("VAR_KEY_ISTND") in (1, True, "1"):
-        return "TND"
-    raw = str(model.get("VAR_DTYPE_LAYOUT_CLASS") or model.get("Input_Layout") or "BNSD").upper()
-    for layout in ("TND", "BNSD", "BSND", "BSH", "SBH", "ND", "NZ"):
-        if layout in raw:
-            return "BNSD" if layout == "ND" else layout
-    return "BNSD"
-
-
-def _infer_deter(model: dict[str, Any]) -> bool:
-    if model.get("VAR_KEY_DETERTYPE") not in (None, 0, "0", False):
-        try:
-            return int(model.get("VAR_KEY_DETERTYPE")) > 0
-        except (TypeError, ValueError):
-            return True
-    return model.get("VAR_KVAR_IS_DETER_OLD") in (1, True, "1") or model.get("VAR_KVAR_IS_DETER_NEW") in (1, True, "1")
 
 
 def _norm(value: Any) -> Any:

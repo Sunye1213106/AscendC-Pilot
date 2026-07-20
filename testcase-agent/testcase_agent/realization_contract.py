@@ -23,6 +23,8 @@ def realization_paths(out_root: Path) -> dict[str, Path]:
         "schema": realization_dir / "consumer_schema.yaml",
         "map": realization_dir / "realization_map.yaml",
         "report": realization_dir / "realization_report.yaml",
+        "alignment_report": realization_dir / "alignment_report.yaml",
+        "binding_lexicon": realization_dir / "binding_lexicon.yaml",
         "unresolved": realization_dir / "unresolved.yaml",
         "agent_report": realization_dir / "agent_report.yaml",
     }

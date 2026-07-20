@@ -1,117 +1,144 @@
 from __future__ import annotations
 
-import re
 from typing import Any
 
+from .atom_bind import CSV_PREFIX, DTYPE_VALUES, csv_var
+from .binding_lexicon import apply_lexicon_key_derivations, empty_lexicon, lexicon_from_key_space, merge_lexicons, normalize_lexicon
+from .branch_align import align_branches
+from .realization_contract import REALIZATION_MAP_VERSION
 from .realization_dsl import normalize_realization_map
 
+# Re-export for tests / callers that imported these from realization_map.
+__all__ = [
+    "BOOTSTRAP_DOMAINS",
+    "CSV_PREFIX",
+    "DEFAULT_DOMAINS",
+    "DTYPE_VALUES",
+    "INT_COLUMNS",
+    "MODEL_COLUMNS",
+    "TOKEN_KEY_VALUE",
+    "build_realization_map",
+    "csv_var",
+]
 
-CSV_PREFIX = "VAR_CSV_"
+# Deprecated empty — kept for import compat. Domains come from consumer evidence / schema.
+TOKEN_KEY_VALUE: dict[str, tuple[str, int]] = {}
 
-
-DEFAULT_DOMAINS: dict[str, list[Any]] = {
-    "Enable": ["Enable"],
-    "Dtype": ["fp16", "bf16", "fp32"],
-    "out_dtype": ["fp16", "bf16", "fp32"],
-    "Input_Layout": ["BNSD", "BSND", "TND", "SBH", "BSH"],
-    "B": [1, 2, 4, 8, 9],
-    "N1": [1, 2, 4, 8, 16],
-    "N2": [1, 2, 4, 8, 16],
-    "S1": [16, 24, 32, 64, 80, 128, 256, 512],
-    "S2": [16, 24, 32, 64, 80, 128, 256, 512],
-    "D": [64, 128, 177, 192, 256],
-    "D_V": [64, 128, 177, 192, 256],
-    "Drop_Out_Possibility": [0, 1],
-    "Pre_Tockens": [65536],
-    "Next_Tockens": [0, 65536],
-    "Atten_mask_dtype": ["NONE", "bool", "BOOL", "uint8"],
-    "Atten_mask_shape": ["NONE", "SS", "B1SS", "BNSS", "1SS", "B11S"],
-    "sparse_mode": [0, 1, 2, 3],
-    "PSE_type": [0, 1, 2, 3],
-    "PSE_shape": ["NONE", "SS", "1NSS", "BNSS", "BN1S", "1NHS"],
-    "eod": [0],
-    "same_as_input": [0, 1],
-    "seed": [2],
-    "offset": [0],
-    "is_deter": ["false", "true", "FALSE", "TRUE"],
-    "rope": [0, 1],
-    "inner_drop": [0, 1],
-    "is_sink": [0, 1],
-    "prefix": [""],
-}
-
-INT_COLUMNS = {
-    "B",
-    "N1",
-    "N2",
-    "S1",
-    "S2",
-    "D",
-    "D_V",
-    "Pre_Tockens",
-    "Next_Tockens",
-    "sparse_mode",
-    "PSE_type",
-    "eod",
-    "same_as_input",
-    "seed",
-    "offset",
-    "rope",
-    "inner_drop",
-    "is_sink",
-}
-
-FLOAT_AS_INT_COLUMNS = {"Drop_Out_Possibility"}
+# Soft type hints only when sample evidence is empty. Prefer evidence / field.value_type.
+# Intentionally empty — do not reintroduce per-op domain tables here.
+BOOTSTRAP_DOMAINS: dict[str, list[Any]] = {}
+DEFAULT_DOMAINS = BOOTSTRAP_DOMAINS
+# Common Ascend shape-ish ints used only as last-resort type hint when field.value_type missing.
+INT_COLUMNS: set[str] = {"B", "N", "N1", "N2", "S", "S1", "S2", "D", "D_V"}
+FLOAT_AS_INT_COLUMNS: set[str] = set()
 RESULT_PREFIX = "Actual_"
-MODEL_COLUMNS = {
-    "Dtype",
-    "out_dtype",
-    "Input_Layout",
-    "B",
-    "N1",
-    "N2",
-    "S1",
-    "S2",
-    "D",
-    "D_V",
-    "Drop_Out_Possibility",
-    "Atten_mask_dtype",
-    "Atten_mask_shape",
-    "sparse_mode",
-    "PSE_type",
-    "PSE_shape",
-    "rope",
-    "inner_drop",
-    "is_sink",
-}
+MODEL_COLUMNS: set[str] = set()
 
 
-def build_realization_map(snapshot: dict[str, Any], consumer_schema: dict[str, Any]) -> dict[str, Any]:
+def build_realization_map(
+    snapshot: dict[str, Any],
+    consumer_schema: dict[str, Any],
+    *,
+    lexicon: dict[str, Any] | None = None,
+    op_name: str = "",
+) -> dict[str, Any]:
     files = snapshot.get("files") if isinstance(snapshot.get("files"), dict) else {}
     key_space = _as_dict(files.get("tiling/key_space.yaml"))
     branches_doc = _as_dict(files.get("kernel/branches.yaml"))
+    fields = [item for item in consumer_schema.get("fields") or [] if isinstance(item, dict)]
     columns = [str(column) for column in consumer_schema.get("columns") or []]
+    if not columns and fields:
+        columns = [str(item.get("name") or "") for item in sorted(fields, key=lambda item: int(item.get("order", 0)))]
+    merged_lexicon = normalize_lexicon(merge_lexicons(lexicon_from_key_space(key_space), lexicon))
     if not columns:
         return normalize_realization_map(
             {
-                "version": 1,
+                "version": REALIZATION_MAP_VERSION,
                 "status": "fallback",
                 "snapshot_hash": snapshot.get("snapshot_hash"),
                 "consumer": {"kind": "csv_sheet", "root": consumer_schema.get("consumer_root", ""), "columns": []},
                 "csv_variables": [],
+                "free_variables": [],
                 "derived_variables": [],
                 "branch_mappings": [],
                 "abstract_branches": [],
-                "emit": {"csv_from_model_prefix": CSV_PREFIX, "sidecar_coverage": "case_coverage.yaml", "default_columns": _default_column_values()},
+                "binding_lexicon_source": merged_lexicon.get("source"),
+                "emit": {
+                    "csv_from_model_prefix": CSV_PREFIX,
+                    "sidecar_coverage": "case_coverage.yaml",
+                    "default_columns": _default_column_values(),
+                    "columns": {},
+                },
                 "warnings": consumer_schema.get("warnings") or ["consumer schema has no columns"],
             }
         )
-    csv_variables = [_csv_variable(column, consumer_schema) for column in columns if not column.startswith(RESULT_PREFIX)]
-    csv_variables = [item for item in csv_variables if item]
-    derived_variables = _key_derivations(key_space)
-    branch_mappings, abstract_branches = _branch_derivations(branches_doc)
+    field_by_name = {str(item.get("name") or ""): item for item in fields}
+    csv_variables = []
+    emit_columns: dict[str, Any] = {}
+    for column in columns:
+        if column.startswith(RESULT_PREFIX):
+            continue
+        field = field_by_name.get(column) or {}
+        role = str(field.get("role") or "")
+        if role == "case_id" or column in {"Testcase_Name", "testcase_name", "Case_Name"}:
+            emit_columns[column] = {"op": "template", "template": "{case_id}"}
+            continue
+        if role in {"constant", "metadata", "expected_result"} or column == "Enable":
+            continue
+        if role == "emit_derived" or "seqlens" in column.lower() or column.startswith("cu_"):
+            emit_columns[column] = _default_emit_for_column(column)
+            continue
+        if role and role != "solver_input":
+            continue
+        if fields:
+            csv_var_item = _csv_variable_from_field(column, field, consumer_schema)
+        else:
+            csv_var_item = _csv_variable(column, consumer_schema)
+        if csv_var_item:
+            csv_variables.append(csv_var_item)
+    derived_variables = apply_lexicon_key_derivations([], merged_lexicon)
+    # Drop constant-0 stubs that reference missing CSV vars (e.g. VAR_CSV_B) when column absent.
+    derived_variables = _filter_derivations_for_columns(derived_variables, columns)
+    aligned = align_branches(
+        branches_doc,
+        snapshot,
+        csv_columns=columns,
+        lexicon=merged_lexicon,
+        op_name=op_name or str(consumer_schema.get("op_name") or ""),
+    )
+    branch_mappings = aligned.get("branch_mappings") or []
+    abstract_branches = aligned.get("abstract_branches") or []
+    stub_derived = aligned.get("stub_derived_variables") or []
+    free_csv_extra = aligned.get("free_csv_variables") or []
+    free_vars_extra = aligned.get("free_variables") or []
+    # Deduplicate stubs against existing key derivations.
+    existing_ids = {str(item.get("id") or "") for item in derived_variables}
+    for item in stub_derived:
+        vid = str(item.get("id") or "")
+        if vid and vid not in existing_ids:
+            derived_variables.append(item)
+            existing_ids.add(vid)
+    existing_csv = {str(item.get("id") or "") for item in csv_variables}
+    for item in free_csv_extra:
+        vid = str(item.get("id") or "")
+        column = str(item.get("column") or "")
+        # Never invent CSV columns absent from consumer schema.
+        if column and column not in columns:
+            continue
+        if vid and vid not in existing_csv:
+            csv_variables.append(item)
+            existing_csv.add(vid)
+    free_variables: list[dict[str, Any]] = []
+    existing_free = set(existing_csv) | existing_ids
+    for item in free_vars_extra:
+        vid = str(item.get("id") or "")
+        if vid and vid not in existing_free:
+            free_variables.append(item)
+            existing_free.add(vid)
+    for item in branch_mappings:
+        item.setdefault("source_refs", [{"path": item.get("file_path") or "kernel/branches.yaml", "line": item.get("start_line")}])
     realization_map = {
-        "version": 1,
+        "version": REALIZATION_MAP_VERSION,
         "status": "ok" if columns else "fallback",
         "snapshot_hash": snapshot.get("snapshot_hash"),
         "consumer": {
@@ -122,27 +149,80 @@ def build_realization_map(snapshot: dict[str, Any], consumer_schema: dict[str, A
             "schema_source": consumer_schema.get("schema_source") or [],
         },
         "csv_variables": csv_variables,
+        "free_variables": free_variables,
         "derived_variables": derived_variables + [item["derived_variable"] for item in branch_mappings],
         "branch_mappings": [{k: v for k, v in item.items() if k != "derived_variable"} for item in branch_mappings],
         "abstract_branches": abstract_branches,
+        "alignment_report": aligned.get("alignment_report") or {},
+        "binding_lexicon_source": merged_lexicon.get("source"),
         "emit": {
-            "csv_from_model_prefix": CSV_PREFIX,
+            "csv_from_model_prefix": "VAR_CSV_",
             "sidecar_coverage": "case_coverage.yaml",
             "default_columns": _default_column_values(),
+            "columns": emit_columns,
         },
-        "warnings": consumer_schema.get("warnings") or [],
+        "warnings": list(consumer_schema.get("warnings") or [])
+        + list(merged_lexicon.get("warnings") or [])
+        + [
+            "binding_lexicon: per-op KEY/CSV maps come from /tg-csv-contract → realization/binding_lexicon.yaml; "
+            "deterministic TG only applies UO set_by + key_space token heuristics"
+        ],
     }
     return normalize_realization_map(realization_map)
 
 
-def _csv_variable(column: str, schema: dict[str, Any]) -> dict[str, Any] | None:
-    if column not in MODEL_COLUMNS:
-        return None
+def _csv_variable_from_field(column: str, field: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any] | None:
     sample_values = _as_dict(schema.get("sample_values")).get(column) or []
-    values = _merge_domain(DEFAULT_DOMAINS.get(column, []), sample_values)
+    value_type = str(field.get("value_type") or "")
+    domain = field.get("domain")
+    source_refs = field.get("source_refs") or [{"path": "consumer_schema", "column": column}]
+    if value_type == "int" or column in INT_COLUMNS or column in FLOAT_AS_INT_COLUMNS:
+        if isinstance(domain, dict) and domain.get("values") is not None:
+            ints = [int(item) for item in domain.get("values") or []]
+        elif isinstance(domain, list):
+            ints = [item for item in (_parse_int(value) for value in domain) if item is not None]
+        else:
+            values = _merge_domain(BOOTSTRAP_DOMAINS.get(column, []), sample_values)
+            ints = [item for item in (_parse_int(value) for value in values) if item is not None]
+        if column in FLOAT_AS_INT_COLUMNS:
+            ints = [0, 1]
+        if not ints:
+            ints = [0]
+        return {
+            "id": csv_var(column),
+            "column": column,
+            "type": "int",
+            "domain": sorted(dict.fromkeys(ints)),
+            "default": field.get("default", ints[0]),
+            "free": True,
+            "source_refs": source_refs,
+        }
+    if isinstance(domain, list) and domain:
+        clean = [str(value) for value in domain if str(value) != ""]
+    else:
+        clean = []
+    # Always merge bootstrap + samples so derived exprs (e.g. fp32) stay in-domain.
+    merged = _merge_domain(BOOTSTRAP_DOMAINS.get(column, []), [*clean, *sample_values])
+    clean = [str(value) for value in merged if str(value) != ""]
+    if not clean:
+        clean = ["_"]
+    return {
+        "id": csv_var(column),
+        "column": column,
+        "type": "enum",
+        "domain": sorted(dict.fromkeys(clean)),
+        "default": field.get("default", clean[0]),
+        "free": True,
+        "source_refs": source_refs,
+    }
+
+
+def _csv_variable(column: str, schema: dict[str, Any]) -> dict[str, Any] | None:
+    """Legacy helper used by older tests."""
+    sample_values = _as_dict(schema.get("sample_values")).get(column) or []
+    values = _merge_domain(BOOTSTRAP_DOMAINS.get(column, []), sample_values)
     if column in FLOAT_AS_INT_COLUMNS:
-        # The current IR has int/bool/enum only. Model dropout as 0/1 for branch coverage.
-        return {"id": csv_var(column), "column": column, "type": "int", "domain": [0, 1], "default": 1}
+        return {"id": csv_var(column), "column": column, "type": "int", "domain": [0, 1], "default": 1, "free": True}
     if column in INT_COLUMNS:
         ints = []
         for value in values:
@@ -151,131 +231,81 @@ def _csv_variable(column: str, schema: dict[str, Any]) -> dict[str, Any] | None:
                 ints.append(parsed)
         if not ints:
             ints = [0]
-        return {"id": csv_var(column), "column": column, "type": "int", "domain": sorted(dict.fromkeys(ints)), "default": ints[0]}
+        return {"id": csv_var(column), "column": column, "type": "int", "domain": sorted(dict.fromkeys(ints)), "default": ints[0], "free": True}
     if column in {"Testcase_Name"}:
         return None
     clean = [str(value) for value in values if str(value) != ""]
     if not clean:
-        clean = [""]
-    return {"id": csv_var(column), "column": column, "type": "enum", "domain": sorted(dict.fromkeys(clean)), "default": clean[0]}
+        # No sample evidence: treat as free int flag/knob rather than empty enum.
+        return {"id": csv_var(column), "column": column, "type": "int", "domain": [0, 1], "default": 0, "free": True}
+    return {"id": csv_var(column), "column": column, "type": "enum", "domain": sorted(dict.fromkeys(clean)), "default": clean[0], "free": True}
 
 
-def _key_derivations(key_space: dict[str, Any]) -> list[dict[str, Any]]:
-    key_domains = {str(item.get("id")): item.get("values") for item in _iter_items(key_space.get("fields"))}
-    derived: list[dict[str, Any]] = []
-    add = derived.append
-    add(_derived("VAR_KEY_ISTND", "int", key_domains.get("KEY_ISTND", [0, 1]), _ite(_eq_csv("Input_Layout", "TND"), 1, 0), "Input_Layout == TND"))
-    add(_derived("VAR_KEY_ISROPE", "int", key_domains.get("KEY_ISROPE", [0, 1]), _ite(_eq_csv("rope", 1), 1, 0), "rope == 1"))
-    add(_derived("VAR_KEY_ISATTENMASK", "int", key_domains.get("KEY_ISATTENMASK", [0, 1]), _ite(_ne_csv("Atten_mask_shape", "NONE"), 1, 0), "Atten_mask_shape != NONE"))
-    add(
-        _derived(
-            "VAR_KEY_ISPSE",
-            "int",
-            key_domains.get("KEY_ISPSE", [0, 1]),
-            _ite({"op": "or", "args": [_ne_csv("PSE_shape", "NONE"), _ne_csv("PSE_type", 0)]}, 1, 0),
-            "PSE_shape != NONE or PSE_type != 0",
-        )
-    )
-    add(
-        _derived(
-            "VAR_KEY_ISDROP",
-            "int",
-            key_domains.get("KEY_ISDROP", [0, 1]),
-            _ite({"op": "or", "args": [_ne_csv("Drop_Out_Possibility", 1), _eq_csv("inner_drop", 1)]}, 1, 0),
-            "Drop_Out_Possibility != 1 or inner_drop == 1",
-        )
-    )
-    add(_derived("VAR_KEY_ISNEQUAL", "int", key_domains.get("KEY_ISNEQUAL", [0, 1]), _ite(_ne_csv_vars("N1", "N2"), 1, 0), "N1 != N2"))
-    add(_derived("VAR_KEY_ISDNOEQUAL", "int", key_domains.get("KEY_ISDNOEQUAL", [0, 1]), _ite(_ne_csv_vars("D", "D_V"), 1, 0), "D != D_V"))
-    add(_derived("VAR_KEY_INPUTDTYPE", "int", key_domains.get("KEY_INPUTDTYPE", [0, 1, 2]), _dtype_expr("Dtype"), "Dtype bucket"))
-    add(_derived("VAR_KEY_OUTDTYPE", "int", key_domains.get("KEY_OUTDTYPE", [0, 1, 2]), _dtype_expr("out_dtype"), "out_dtype bucket"))
-    add(_derived("VAR_KEY_S1TEMPLATENUM", "int", key_domains.get("KEY_S1TEMPLATENUM", [0, 64, 128, 512]), _bucket_expr("S1", [512, 128, 64], [512, 128, 64], 0), "S1 template bucket"))
-    add(_derived("VAR_KEY_S2TEMPLATENUM", "int", key_domains.get("KEY_S2TEMPLATENUM", [0, 128, 256, 512]), _bucket_expr("S2", [512, 256, 128], [512, 256, 128], 0), "S2 template bucket"))
-    add(_derived("VAR_KEY_DTEMPLATENUM", "int", key_domains.get("KEY_DTEMPLATENUM", [0, 64, 128, 192, 256]), _bucket_expr("D", [256, 192, 128, 64], [256, 192, 128, 64], 0), "D template bucket"))
-    return derived
-
-
-def _branch_derivations(branches_doc: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    mappings: list[dict[str, Any]] = []
-    abstract: list[dict[str, Any]] = []
-    for branch in _iter_items(branches_doc.get("branches")):
-        branch_id = str(branch.get("id") or "")
-        if not branch_id:
-            continue
-        var_id = _var_id(branch_id)
-        condition = str(branch.get("condition") or "")
-        expr = _parse_branch_condition(condition)
-        base = {
-            "branch_ref": branch_id,
-            "var": var_id,
-            "condition": condition,
-            "determinant_source": branch.get("determinant_source", ""),
-            "file_path": branch.get("file_path", ""),
-            "start_line": branch.get("start_line"),
+def _default_emit_for_column(column: str) -> dict[str, Any]:
+    # Generic emit heuristics by column name pattern (not product-specific tables).
+    lower = column.lower()
+    if "seqlens_list" in lower:
+        total_col = "S1" if "q" in lower or lower.endswith("_q") else "S1"
+        return {
+            "op": "list_format",
+            "values": {
+                "op": "balanced_partition",
+                "total": {"op": "model_var", "var": csv_var(total_col)},
+                "parts": {"op": "model_var", "var": csv_var("B")},
+            },
         }
-        if expr:
-            mappings.append(
-                {
-                    **base,
-                    "abstract_only": False,
-                    "derived_variable": _derived(var_id, "bool", [False, True], expr, "parsed kernel branch condition"),
-                }
-            )
-        else:
-            abstract.append({**base, "abstract_only": True, "reason": "condition is not mapped to CSV/KEY variables"})
-    return mappings, abstract
+    if lower.startswith("cu_seqlens"):
+        return {
+            "op": "list_format",
+            "values": {
+                "op": "cumulative_sum",
+                "values": {
+                    "op": "balanced_partition",
+                    "total": {"op": "model_var", "var": csv_var("S1")},
+                    "parts": {"op": "model_var", "var": csv_var("B")},
+                },
+            },
+        }
+    return {"op": "constant", "value": ""}
 
 
-TOKEN_KEY_VALUE: dict[str, tuple[str, int]] = {
-    "IS_TND": ("VAR_KEY_ISTND", 1),
-    "IS_ROPE": ("VAR_KEY_ISROPE", 1),
-    "IS_DROP": ("VAR_KEY_ISDROP", 1),
-    "IS_ATTEN_MASK": ("VAR_KEY_ISATTENMASK", 1),
-    "IS_PSE": ("VAR_KEY_ISPSE", 1),
-    "IS_NZ_OUT": ("VAR_KEY_ISNZOUT", 1),
-    "IS_TND_SWIZZLE": ("VAR_KEY_ISTNDSWIZZLE", 1),
-    "IS_BN2_MULTIBLK": ("VAR_KEY_ISBN2MULTIBLK", 1),
-    "IS_D_NO_EQUAL": ("VAR_KEY_ISDNOEQUAL", 1),
-    "IS_N_EQUAL": ("VAR_KEY_ISNEQUAL", 0),
-}
-
-DTYPE_VALUES = {
-    "DT_FLOAT16": 0,
-    "DT_BF16": 1,
-    "DT_FLOAT": 2,
-    "DT_FLOAT32": 2,
-}
+def _filter_derivations_for_columns(derived: list[dict[str, Any]], columns: list[str]) -> list[dict[str, Any]]:
+    """Drop lexicon derivations that reference VAR_CSV_* columns not in consumer schema."""
+    allowed = {csv_var(c) for c in columns}
+    out: list[dict[str, Any]] = []
+    for item in derived:
+        expr = item.get("expr") if isinstance(item, dict) else None
+        inner = expr.get("expr") if isinstance(expr, dict) and expr.get("op") == "derived" else expr
+        refs = _collect_csv_refs(inner)
+        if refs and not refs.issubset(allowed):
+            continue
+        out.append(item)
+    return out
 
 
-def _parse_branch_condition(condition: str) -> dict[str, Any] | None:
-    text = _strip_outer_parens(condition.strip())
-    if not text or any(op in text for op in ["&&", "||", "?", ":", "<", ">"]):
-        return None
-    if text.startswith("!"):
-        inner = _parse_branch_condition(text[1:].strip())
-        return {"op": "not", "arg": inner} if inner else None
-    if text in TOKEN_KEY_VALUE:
-        var_id, value = TOKEN_KEY_VALUE[text]
-        return {"op": "eq", "var": var_id, "value": value}
-    match = re.fullmatch(r"\(?\s*ORIG_DTYPE_QUERY\s*==\s*(DT_[A-Z0-9_]+)\s*\)?", text)
-    if match and match.group(1) in DTYPE_VALUES:
-        return {"op": "eq", "var": "VAR_KEY_INPUTDTYPE", "value": DTYPE_VALUES[match.group(1)]}
-    match = re.fullmatch(r"\(?\s*(IS_[A-Z0-9_]+)\s*==\s*(true|false|0|1)\s*\)?", text, flags=re.IGNORECASE)
-    if match and match.group(1).upper() in TOKEN_KEY_VALUE:
-        var_id, true_value = TOKEN_KEY_VALUE[match.group(1).upper()]
-        raw = match.group(2).lower()
-        wants_true = raw in {"true", "1"}
-        return {"op": "eq", "var": var_id, "value": true_value if wants_true else 1 - true_value}
-    return None
-
-
-def csv_var(column: str) -> str:
-    safe = "".join(ch if ch.isalnum() else "_" for ch in str(column)).strip("_")
-    return f"{CSV_PREFIX}{safe}"
+def _collect_csv_refs(expr: Any) -> set[str]:
+    out: set[str] = set()
+    if isinstance(expr, dict):
+        var = expr.get("var")
+        if isinstance(var, str) and var.startswith(CSV_PREFIX):
+            out.add(var)
+        for key in ("arg", "lhs", "rhs", "condition", "then", "else", "expr"):
+            if key in expr:
+                out |= _collect_csv_refs(expr[key])
+        for child in expr.get("args") or []:
+            out |= _collect_csv_refs(child)
+    return out
 
 
 def _derived(var_id: str, var_type: str, domain: Any, expr: dict[str, Any], description: str) -> dict[str, Any]:
-    return {"id": var_id, "type": var_type, "domain": domain, "expr": {"op": "derived", "var": var_id, "expr": expr}, "description": description}
+    return {
+        "id": var_id,
+        "type": var_type,
+        "domain": domain,
+        "expr": {"op": "derived", "var": var_id, "expr": expr},
+        "description": description,
+        "source_refs": [{"path": "realization_map.bootstrap", "rationale": description}],
+    }
 
 
 def _eq_csv(column: str, value: Any) -> dict[str, Any]:
@@ -314,17 +344,7 @@ def _merge_domain(defaults: list[Any], sample_values: list[Any]) -> list[Any]:
 
 
 def _default_column_values() -> dict[str, Any]:
-    return {column: values[0] for column, values in DEFAULT_DOMAINS.items() if values}
-
-
-def _strip_outer_parens(text: str) -> str:
-    text = text.strip()
-    while text.startswith("(") and text.endswith(")"):
-        inner = text[1:-1].strip()
-        if inner.count("(") != inner.count(")"):
-            break
-        text = inner
-    return text
+    return {column: values[0] for column, values in BOOTSTRAP_DOMAINS.items() if values}
 
 
 def _parse_int(value: Any) -> int | None:
@@ -336,11 +356,6 @@ def _parse_int(value: Any) -> int | None:
         return int(float(str(value)))
     except (TypeError, ValueError):
         return None
-
-
-def _var_id(name: str) -> str:
-    text = "".join(ch if ch.isalnum() else "_" for ch in str(name)).strip("_").upper()
-    return text if text.startswith("VAR_") else f"VAR_{text or 'UNKNOWN'}"
 
 
 def _iter_items(value: Any) -> list[dict[str, Any]]:

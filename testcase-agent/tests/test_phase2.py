@@ -350,7 +350,7 @@ def test_tg_solve_requires_contract_artifacts_by_default(tmp_path: Path) -> None
     for name in ("consumer_evidence.yaml", "consumer_schema.yaml", "realization_map.yaml"):
         (realization_root / name).unlink()
 
-    with pytest.raises(TgSolveError, match="CSV_CONTRACT_REQUIRED"):
+    with pytest.raises(TgSolveError, match="CSV_CONSUMER_ROOT_REQUIRED|CSV_CONTRACT_REQUIRED"):
         tg_solve(repo, "DemoOp")
 
 

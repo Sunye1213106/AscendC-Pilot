@@ -387,6 +387,8 @@ class Z3Backend:
                 return args[0] / args[1]
             if op == "mod":
                 return args[0] % args[1]
+        if op == "lit":
+            return self._literal_or_expr(expr.get("value"))
         if op == "if_then_else":
             return z3.If(self._compile_bool(expr["condition"]), self._literal_or_expr(expr["then"]), self._literal_or_expr(expr["else"]))
         if op == "derived":

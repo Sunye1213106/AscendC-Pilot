@@ -13,6 +13,9 @@ from .init import TgInitError, tg_init
 from .io import ensure_output_dirs, output_root, read_json, read_yaml, write_yaml
 from .llm_complete import apply_llm_completion, build_llm_prompt_bundle, load_llm_patches
 from .topics import filter_obligations_for_topic, load_topic_manifest
+from .contract import TgContractError, load_realization_for_plan, refresh_contract_plan_hash, tg_contract
+from .reachability import abstract_branch_ids, is_value_reachable, mapped_branch_ids
+from .atom_bind import is_out_of_scope_runtime_entity
 
 
 SUPPORTED_KINDS = [
@@ -74,6 +77,7 @@ def tg_plan(
     focus: str = "",
     topic: str = "",
     reuse_snapshot: bool = False,
+    csv_consumer_root: Path | None = None,
 ) -> dict[str, Any]:
     project_root = project_root.resolve()
     out_root = output_root(project_root, op_name)
@@ -100,6 +104,14 @@ def tg_plan(
             run["next_command"] = "tg-solve"
             write_yaml(run_path, run)
 
+    # Realization contract must exist before planning so obligations are CSV-realizable.
+    try:
+        if csv_consumer_root is not None:
+            tg_contract(project_root, op_name, csv_consumer_root=csv_consumer_root, reuse_snapshot=True)
+        realization_map = load_realization_for_plan(out_root)
+    except TgContractError as exc:
+        raise TgPlanError(str(exc)) from exc
+
     extract_doc = extract_generation_conditions(snapshot, level=normalize_level(level), topic=topic)
     declared_vars = {
         str(item.get("id"))
@@ -124,8 +136,17 @@ def tg_plan(
     if normalize_level(level) == "L3":
         topic_manifest = load_topic_manifest(out_root, topic or focus, project_root=project_root)
 
-    plan = build_plan(snapshot, level=level, focus=focus, topic=topic, topic_manifest=topic_manifest, extract_doc=extract_doc)
+    plan = build_plan(
+        snapshot,
+        level=level,
+        focus=focus,
+        topic=topic,
+        topic_manifest=topic_manifest,
+        extract_doc=extract_doc,
+        realization_map=realization_map,
+    )
     write_plan_outputs(out_root, plan, snapshot)
+    refresh_contract_plan_hash(out_root, str(plan.get("plan_hash") or ""), str(snapshot.get("snapshot_hash") or ""))
     return plan
 
 
@@ -137,6 +158,7 @@ def build_plan(
     topic: str = "",
     topic_manifest: dict[str, Any] | None = None,
     extract_doc: dict[str, Any] | None = None,
+    realization_map: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     level = normalize_level(level)
     files = snapshot.get("files") if isinstance(snapshot.get("files"), dict) else {}
@@ -171,8 +193,13 @@ def build_plan(
             )
             decorate_obligation(blocker, "L3", {"artifact": "topics", "entity_ref": str(topic_manifest.get("topic_id") or ""), "reason": "topic_empty"}, "topic produced zero obligations", semantic_focus)
             obligations.append(blocker)
+    if realization_map:
+        obligations = apply_realization_filters(obligations, realization_map)
     obligations = deterministic_obligations(obligations)
     validate_unique_obligation_ids(obligations)
+    if realization_map:
+        semantic_focus["csv_realization"] = realization_filter_summary(obligations, realization_map)
+        semantic_focus["csv_unreachability_report"] = build_csv_unreachability_report(obligations, realization_map)
     level_blockers = level_specific_blockers(level, obligations, semantic_focus)
     blockers = hard_blockers(obligations, contract) + level_blockers
     matrix = build_matrix(obligations)
@@ -192,6 +219,7 @@ def build_plan(
             key: _as_dict(semantic_focus.get("tiling_key_coverage")).get(key)
             for key in ("realized_key_count", "unrealized_key_count", "ambiguous_key_count")
         },
+        "csv_realization": semantic_focus.get("csv_realization"),
     }
     gaps = contract_gaps(level, contract, coverage, files, topic=topic)
     unresolved = {
@@ -222,6 +250,10 @@ def build_plan(
         "topic": topic or "",
         "semantic_focus": semantic_focus,
         "planning_context": planning_context,
+        "realization_map_ref": {
+            "mapped_branch_count": len(mapped_branch_ids(realization_map)) if realization_map else 0,
+            "abstract_branch_count": len(abstract_branch_ids(realization_map)) if realization_map else 0,
+        },
         "extract": {
             "extract_hash": _as_dict(extract_doc).get("extract_hash"),
             "condition_count": len(_as_dict(extract_doc).get("conditions") or []),
@@ -233,6 +265,7 @@ def build_plan(
         "unresolved": unresolved,
         "review": review,
         "plan_hash": plan_hash,
+        "_realization_map": realization_map,
     }
 
 
@@ -299,12 +332,14 @@ def add_l1_obligations(
     before = len(out)
     add_contract_kernel_branch_obligations(out, contract)
     add_kernel_branch_obligations(out, branches)
+    # Runtime-variable domain coverage (CSV-reachable only; loop/platform vars dropped at source).
+    add_runtime_variable_obligations(out, files, semantic_focus)
     if len(out) == before:
         add_key_relation_obligations(out, coverage, contract)
     for item in out[before:]:
         if item.get("test_level"):
             continue
-        reason = "runtime branch coverage"
+        reason = "runtime branch coverage" if item.get("kind") == "kernel_branch" else "runtime variable coverage"
         decorate_obligation(item, "L1", default_origin_for(item, files), reason, semantic_focus)
 
 
@@ -500,14 +535,33 @@ def add_contract_bucket_obligations(out: list[dict[str, Any]], contract: dict[st
 def add_contract_kernel_branch_obligations(out: list[dict[str, Any]], contract: dict[str, Any]) -> None:
     buckets = _as_dict(contract.get("coverage_obligations"))
     for item in _iter_items(buckets.get("kernel_branches")):
+        if is_out_of_scope_runtime_entity(
+            name=str(item.get("id") or item.get("name") or ""),
+            condition=str(item.get("condition") or ""),
+            determinant_source=str(item.get("determinant_source") or ""),
+        ):
+            continue
         out.extend(expand_kernel_branch_obligations(item, priority=item.get("priority") or default_priority("kernel_branch")))
     for item in _iter_items(contract.get("kernel_branch_obligations")):
+        if is_out_of_scope_runtime_entity(
+            name=str(item.get("id") or item.get("name") or ""),
+            condition=str(item.get("condition") or ""),
+            determinant_source=str(item.get("determinant_source") or ""),
+        ):
+            continue
         out.extend(expand_kernel_branch_obligations(item, priority=item.get("priority") or "high"))
 
 
 def add_kernel_branch_obligations(out: list[dict[str, Any]], branches: dict[str, Any]) -> None:
     for item in _iter_items(branches.get("branches")):
         if is_derived_or_bound(item) or item.get("compile_time_fixed") is True or item.get("runtime") is False:
+            continue
+        # Drop loop-local / platform branches at generation time (never enter L1 set).
+        if is_out_of_scope_runtime_entity(
+            name=str(item.get("id") or item.get("name") or ""),
+            condition=str(item.get("condition") or ""),
+            determinant_source=str(item.get("determinant_source") or ""),
+        ):
             continue
         out.extend(expand_kernel_branch_obligations(item, priority=item.get("priority") or "high"))
 
@@ -545,6 +599,13 @@ def add_runtime_variable_obligations(out: list[dict[str, Any]], files: dict[str,
             if not var_id:
                 continue
             if item.get("branch_ref") or item.get("branch_refs"):
+                continue
+            # Never generate CSV coverage for loop-local / platform runtime entities.
+            if is_out_of_scope_runtime_entity(
+                name=var_id,
+                condition=str(item.get("name") or ""),
+                determinant_source=str(item.get("binding_time") or ""),
+            ):
                 continue
             values, gap = runtime_variable_values({**_as_dict(variable_constraints.get(var_id)), **item})
             if gap:
@@ -1605,6 +1666,295 @@ def _first_ref(item: dict[str, Any]) -> str:
     return str(refs[0]) if refs else ""
 
 
+# Abstract reasons that must never become CSV free vars / L1 pending cases.
+OUT_OF_SCOPE_CSV_REASONS = {
+    "LOOP_LOCAL": "核内循环/运行态变量（如 taskId、isLastLoop），禁止做成 CSV 自由列假覆盖",
+    "PLATFORM_MACRO": "平台/头文件守卫宏，无法由 CSV 控制",
+}
+
+# LLM+/tg-csv-contract + 源码能否补齐绑定（相对 CSV 全覆盖目标）
+LLM_RESOLVABILITY = {
+    "UNBOUND_ATOM": {
+        "llm_plus_source": "likely",
+        "note": "可查源码别名/KEY 定义，补 atom_bindings；禁止发明无证据 CSV 列",
+    },
+    "UNBOUND_CMP": {
+        "llm_plus_source": "likely",
+        "note": "可从 Host/tiling 赋值链证明 lhs→CSV/KEY；证不出则保持 abstract",
+    },
+    "UNBOUND_DTYPE": {
+        "llm_plus_source": "likely",
+        "note": "可把 ORIG_DTYPE/IsSameType 等绑到 Dtype/INPUTDTYPE",
+    },
+    "UNBOUND_CALL": {
+        "llm_plus_source": "likely",
+        "note": "可剥壳或映射 IS_DETER_* 等到已有 KEY/KVAR derived",
+    },
+    "SUBSTITUTE_FAIL": {
+        "llm_plus_source": "likely",
+        "note": "解析/绑定管线缺陷，修 binder 或补丁后可进 mapped",
+    },
+    "PARSE_FAIL": {
+        "llm_plus_source": "partial",
+        "note": "KB 截断需回源码补全条件；复杂 C++（模板/算术）只能部分支持，不能靠 LLM 硬编解析器",
+    },
+    "UNBOUND_TEMPLATE": {
+        "llm_plus_source": "partial",
+        "note": "若模板参数由 KEY/CSV 决定可补；纯编译期常量则不可 CSV 覆盖",
+    },
+    "UNBOUND_KVAR": {
+        "llm_plus_source": "partial",
+        "note": "有 Host/set_by 证据可绑 derived；仅核内赋值则不可解",
+    },
+    "NO_HOST_PRODUCER": {
+        "llm_plus_source": "unlikely",
+        "note": "KB 已诊断缺 Host producer；除非改算子 Host，否则 CSV 写不进",
+    },
+    "BRANCH_SIDE_NOT_IN_IMAGE": {
+        "llm_plus_source": "partial",
+        "note": "可扩大 CSV domain/修正 KEY derived；若数学上不可达则保持过滤",
+    },
+    "LOOP_LOCAL": {
+        "llm_plus_source": "impossible",
+        "note": "核内循环态，禁止假覆盖；生成时直接去除",
+    },
+    "PLATFORM_MACRO": {
+        "llm_plus_source": "impossible",
+        "note": "平台/头文件守卫，禁止假覆盖；生成时直接去除",
+    },
+}
+
+ABSTRACT_REASON_HINTS = {
+    "PARSE_FAIL": "条件字符串无法解析（KB 截断或不支持的 C++ 语法）",
+    "NO_HOST_PRODUCER": "TilingData 字段无 Host producer，CSV 无法写入",
+    "UNBOUND_KVAR": "KernelVariable 无法溯源到 CSV/KEY/tiling",
+    "UNBOUND_TEMPLATE": "模板常量/枚举（如 SPLIT_AXIS、HEAD_DIM_ALIGN）无 CSV 根",
+    "UNBOUND_CMP": "比较原子左侧无法绑定到 CSV/KEY",
+    "UNBOUND_ATOM": "布尔原子无法绑定到 CSV/KEY",
+    "UNBOUND_DTYPE": "dtype 相关原子缺少可证映射",
+    "UNBOUND_CALL": "函数调用原子无法绑定",
+    "SUBSTITUTE_FAIL": "原子均已标记但规范表达式替换失败",
+    "PLATFORM_MACRO": OUT_OF_SCOPE_CSV_REASONS["PLATFORM_MACRO"],
+    "LOOP_LOCAL": OUT_OF_SCOPE_CSV_REASONS["LOOP_LOCAL"],
+}
+
+
+def apply_realization_filters(obligations: list[dict[str, Any]], realization_map: dict[str, Any]) -> list[dict[str, Any]]:
+    """Mark or drop obligations that cannot be realized via CSV consumer."""
+    abstract = abstract_branch_ids(realization_map)
+    mapped = mapped_branch_ids(realization_map)
+    abstract_by_ref = {
+        str(item.get("branch_ref") or ""): item
+        for item in realization_map.get("abstract_branches") or []
+        if isinstance(item, dict) and item.get("branch_ref")
+    }
+    branch_var_by_ref = {
+        str(item.get("branch_ref") or ""): str(item.get("var") or "")
+        for item in realization_map.get("branch_mappings") or []
+        if isinstance(item, dict) and item.get("branch_ref")
+    }
+    out: list[dict[str, Any]] = []
+    dropped_out_of_scope: list[dict[str, Any]] = []
+    for item in obligations:
+        obligation = dict(item)
+        kind = str(obligation.get("kind") or "")
+        if kind == "tiling_key_field_value":
+            var_id = _key_var_from_obligation(obligation)
+            target = obligation.get("target_value")
+            reachable = is_value_reachable(realization_map, var_id, target) if var_id else None
+            if reachable is False:
+                obligation["reachability"] = "unreachable"
+                obligation["status"] = "proof_required"
+                obligation["csv_unreachability_code"] = "KEY_VALUE_NOT_IN_IMAGE"
+                obligation["unresolved_reason"] = (
+                    f"NOT_CSV_REALIZABLE[KEY_VALUE_NOT_IN_IMAGE]: {var_id}={target} not in derived image over CSV domains"
+                )
+                obligation["reason"] = obligation["unresolved_reason"]
+        elif kind in {"kernel_branch", "runtime_variable_state"}:
+            refs = [str(ref) for ref in obligation.get("target_refs") or []]
+            branch_ref = refs[0] if refs else ""
+            # Drop loop/platform runtime vars even if they slipped into the list.
+            if kind == "runtime_variable_state":
+                scope = is_out_of_scope_runtime_entity(name=branch_ref, condition=str(obligation.get("name") or ""))
+                if scope:
+                    dropped_out_of_scope.append(
+                        {
+                            "id": obligation.get("id"),
+                            "target_ref": branch_ref,
+                            "code": scope,
+                            "reason": OUT_OF_SCOPE_CSV_REASONS.get(scope, scope),
+                        }
+                    )
+                    continue
+            if kind == "kernel_branch" and branch_ref and branch_ref in abstract:
+                abs_item = abstract_by_ref.get(branch_ref) or {}
+                code = str(abs_item.get("reason") or "ABSTRACT_UNMAPPED")
+                hint = ABSTRACT_REASON_HINTS.get(code, "分支无法经 CSV/KEY 追溯，不进入 L1 pending")
+                if code in OUT_OF_SCOPE_CSV_REASONS:
+                    dropped_out_of_scope.append(
+                        {
+                            "id": obligation.get("id"),
+                            "branch_ref": branch_ref,
+                            "condition": abs_item.get("condition") or obligation.get("condition"),
+                            "code": code,
+                            "reason": hint,
+                        }
+                    )
+                    continue
+                obligation["csv_unreachability_code"] = code
+                obligation["abstract_reasons"] = abs_item.get("reasons") or [code]
+                obligation["condition"] = abs_item.get("condition") or obligation.get("condition")
+                obligation["reachability"] = "unreachable"
+                obligation["status"] = "proof_required"
+                obligation["unresolved_reason"] = f"NOT_CSV_REALIZABLE[{code}]: {hint} (branch {branch_ref})"
+                obligation["reason"] = obligation["unresolved_reason"]
+            elif kind == "kernel_branch" and branch_ref and mapped and branch_ref not in mapped:
+                obligation["reachability"] = "unreachable"
+                obligation["status"] = "proof_required"
+                obligation["csv_unreachability_code"] = "NO_CSV_MAPPING"
+                obligation["unresolved_reason"] = f"NOT_CSV_REALIZABLE[NO_CSV_MAPPING]: branch {branch_ref} has no CSV mapping"
+                obligation["reason"] = obligation["unresolved_reason"]
+            elif kind == "kernel_branch":
+                var_id = branch_var_by_ref.get(branch_ref) or ""
+                target = obligation.get("target_value")
+                if var_id:
+                    side_ok = is_value_reachable(realization_map, var_id, target)
+                    if side_ok is False:
+                        obligation["reachability"] = "unreachable"
+                        obligation["status"] = "proof_required"
+                        obligation["csv_unreachability_code"] = "BRANCH_SIDE_NOT_IN_IMAGE"
+                        obligation["unresolved_reason"] = (
+                            f"NOT_CSV_REALIZABLE[BRANCH_SIDE_NOT_IN_IMAGE]: branch {branch_ref} side {target} "
+                            f"not reachable by any CSV assignment"
+                        )
+                        obligation["reason"] = obligation["unresolved_reason"]
+        out.append(obligation)
+    # Stash drop list on first obligation's carrier via closure — attach to map summary later.
+    apply_realization_filters.last_dropped = dropped_out_of_scope  # type: ignore[attr-defined]
+    return out
+
+
+def realization_filter_summary(obligations: list[dict[str, Any]], realization_map: dict[str, Any]) -> dict[str, Any]:
+    pending = [item for item in obligations if item.get("status") == "pending"]
+    unreachable = [item for item in obligations if str(item.get("reachability") or "") in UNREACHABLE]
+    not_csv = [
+        item
+        for item in obligations
+        if "NOT_CSV_REALIZABLE" in str(item.get("unresolved_reason") or item.get("reason") or "")
+    ]
+    by_code: dict[str, int] = {}
+    seen_ids: set[str] = set()
+    for item in obligations:
+        oid = str(item.get("id") or "")
+        code = str(item.get("csv_unreachability_code") or "")
+        if not code or oid in seen_ids:
+            continue
+        seen_ids.add(oid)
+        by_code[code] = by_code.get(code, 0) + 1
+    dropped = list(getattr(apply_realization_filters, "last_dropped", []) or [])
+    dropped_by_code: dict[str, int] = {}
+    for item in dropped:
+        code = str(item.get("code") or "UNKNOWN")
+        dropped_by_code[code] = dropped_by_code.get(code, 0) + 1
+    alignment = realization_map.get("alignment_report") if isinstance(realization_map.get("alignment_report"), dict) else {}
+    out_of_scope_in_map = sum(
+        1
+        for item in realization_map.get("abstract_branches") or []
+        if isinstance(item, dict) and str(item.get("reason") or "") in OUT_OF_SCOPE_CSV_REASONS
+    )
+    return {
+        "mapped_branch_count": len(mapped_branch_ids(realization_map)),
+        "abstract_branch_count": len(abstract_branch_ids(realization_map)),
+        "pending_count": len(pending),
+        "dropped_out_of_scope_count": len(dropped),
+        "dropped_out_of_scope_by_code": dropped_by_code,
+        "out_of_scope_abstract_branches_in_map": out_of_scope_in_map,
+        "unreachable_count": len(unreachable),
+        "not_csv_realizable_count": len(not_csv),
+        "by_unreachability_code": dict(sorted(by_code.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "code_hints": {code: ABSTRACT_REASON_HINTS.get(code, "") for code in by_code},
+        "llm_resolvability": LLM_RESOLVABILITY,
+        "alignment_totals": alignment.get("totals") or {},
+        "alignment_by_source": alignment.get("by_determinant_source") or {},
+    }
+
+
+def build_csv_unreachability_report(obligations: list[dict[str, Any]], realization_map: dict[str, Any]) -> dict[str, Any]:
+    """Human-auditable breakdown of why L1 obligations are not CSV-pending."""
+    summary = realization_filter_summary(obligations, realization_map)
+    examples: dict[str, list[dict[str, Any]]] = {}
+    for item in obligations:
+        code = str(item.get("csv_unreachability_code") or "")
+        if not code:
+            continue
+        bucket = examples.setdefault(code, [])
+        if len(bucket) >= 5:
+            continue
+        bucket.append(
+            {
+                "id": item.get("id"),
+                "branch_ref": (item.get("target_refs") or [None])[0],
+                "condition": item.get("condition"),
+                "target_value": item.get("target_value"),
+                "status": item.get("status"),
+                "reason": item.get("unresolved_reason") or item.get("reason"),
+                "llm_plus_source": (LLM_RESOLVABILITY.get(code) or {}).get("llm_plus_source"),
+            }
+        )
+    dropped = list(getattr(apply_realization_filters, "last_dropped", []) or [])
+    dropped_catalog = []
+    for abs_item in realization_map.get("abstract_branches") or []:
+        if not isinstance(abs_item, dict):
+            continue
+        code = str(abs_item.get("reason") or "")
+        if code not in OUT_OF_SCOPE_CSV_REASONS:
+            continue
+        dropped_catalog.append(
+            {
+                "branch_ref": abs_item.get("branch_ref"),
+                "condition": abs_item.get("condition"),
+                "code": code,
+                "reason": OUT_OF_SCOPE_CSV_REASONS[code],
+                "llm_plus_source": "impossible",
+            }
+        )
+    return {
+        "version": 1,
+        "policy": {
+            "no_fake_csv_loop_locals": True,
+            "drop_out_of_scope_at_generation": True,
+            "out_of_scope_codes": sorted(OUT_OF_SCOPE_CSV_REASONS),
+            "notes": (
+                "LOOP_LOCAL / PLATFORM_MACRO 在生成运行期全覆盖时直接去除，不进入义务表；"
+                "其余 abstract 原因进入 proof_required，可审计但不进 pending。"
+            ),
+        },
+        "llm_resolvability": LLM_RESOLVABILITY,
+        "summary": summary,
+        "examples_by_code": examples,
+        "dropped_out_of_scope_examples": (dropped or dropped_catalog)[:20],
+        "dropped_out_of_scope_catalog_count": len(dropped_catalog),
+    }
+
+
+def _key_var_from_obligation(obligation: dict[str, Any]) -> str:
+    refs = [str(ref) for ref in obligation.get("target_refs") or [] if str(ref)]
+    field = str(obligation.get("field") or "")
+    if refs:
+        ref = refs[0]
+        if ref.startswith("VAR_"):
+            return ref
+        if ref.startswith("KEY_"):
+            return f"VAR_{ref}"
+        return f"VAR_KEY_{ref.upper()}"
+    if field:
+        text = field.upper() if not field.upper().startswith("KEY_") else field.upper()
+        if text.startswith("KEY_"):
+            return f"VAR_{text}"
+        return f"VAR_KEY_{text}"
+    return ""
+
+
 def make_obligation(kind: str, item: dict[str, Any], *, target_refs: list[str] | None = None, priority: str = "normal") -> dict[str, Any]:
     reachability = str(item.get("reachability") or item.get("reachable") or "").lower()
     if str(item.get("status") or "").lower() in UNREACHABLE:
@@ -1707,6 +2057,7 @@ def build_matrix(obligations: list[dict[str, Any]]) -> dict[str, Any]:
             "unreachable": len([item for item in items if item["reachability"] in UNREACHABLE]),
             "pending": len([item for item in items if item["status"] == "pending"]),
             "proof_required": len([item for item in items if item["status"] == "proof_required"]),
+            "skipped": len([item for item in items if item["status"] == "skipped"]),
         }
         for item in items:
             priority_counts[item["priority"]] = priority_counts.get(item["priority"], 0) + 1
@@ -2213,9 +2564,33 @@ def build_review(
         f"- 优先级 Hard / High / Normal: {counts.get('hard', 0)} / {counts.get('high', 0)} / {counts.get('normal', 0)}",
         f"- Contract gaps: {len(unresolved['contract_gaps'])}",
         f"- 是否允许进入 solve / Allow solve: {'yes' if allow_smt else 'no'}（{allow_smt_text_cn}）",
+    ]
+    csv_stats = _as_dict(semantic_focus.get("csv_realization"))
+    if csv_stats:
+        lines.extend(
+            [
+                f"- CSV realizable pending: **{csv_stats.get('pending_count', 0)}**",
+                f"- Out-of-scope dropped (LOOP_LOCAL/PLATFORM_MACRO，生成时直接去除): **{csv_stats.get('dropped_out_of_scope_count', csv_stats.get('skipped_out_of_scope_count', 0))}**",
+                f"- Not CSV-realizable (blocked): **{csv_stats.get('not_csv_realizable_count', 0)}** "
+                f"(mapped branches={csv_stats.get('mapped_branch_count', 0)}, abstract={csv_stats.get('abstract_branch_count', 0)})",
+            ]
+        )
+        by_code = _as_dict(csv_stats.get("by_unreachability_code"))
+        hints = _as_dict(csv_stats.get("code_hints"))
+        resolvability = _as_dict(csv_stats.get("llm_resolvability"))
+        if by_code:
+            lines.append("- 不可达原因码分布（及 LLM+源码是否可解）:")
+            for code, count in by_code.items():
+                hint = hints.get(code) or ABSTRACT_REASON_HINTS.get(code) or ""
+                llm = (_as_dict(resolvability.get(code)).get("llm_plus_source") if resolvability else "") or ""
+                extra = f" [{llm}]" if llm else ""
+                lines.append(f"  - `{code}` × {count}{extra}" + (f" — {hint}" if hint else ""))
+    lines.extend(
+        [
         "",
         "## 级别设计说明（本计划如何设计）",
     ]
+    )
     lines.extend(f"- {bullet}" for bullet in design_bullets)
     lines.extend(
         [
@@ -2324,8 +2699,14 @@ def write_plan_outputs(out_root: Path, plan: dict[str, Any], snapshot: dict[str,
             "obligation_count": len(plan["obligations"]),
             "priority_counts": plan["matrix"].get("priority_counts"),
             "test_points": plan["matrix"].get("test_points"),
+            "csv_realization": plan.get("semantic_focus", {}).get("csv_realization"),
         },
     )
+    csv_report = plan.get("semantic_focus", {}).get("csv_unreachability_report")
+    if not isinstance(csv_report, dict):
+        csv_report = build_csv_unreachability_report(plan["obligations"], plan.get("_realization_map") or {})
+    write_yaml(level_dir / "csv_unreachability_report.yaml", csv_report)
+    write_yaml(out_root / "plan" / "csv_unreachability_report.yaml", csv_report)
     _ensure_supplement(level_dir / "human_supplement.yaml", snapshot, plan)
 
     supplement = out_root / "plan" / "human_supplement.yaml"

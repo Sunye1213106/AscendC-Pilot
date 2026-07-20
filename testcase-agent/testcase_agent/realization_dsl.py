@@ -2,18 +2,21 @@ from __future__ import annotations
 
 from typing import Any
 
+from .realization_contract import REALIZATION_MAP_VERSION
+
 
 def normalize_realization_map(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return empty_realization_map("realization map is not a mapping")
     out = dict(value)
-    out.setdefault("version", 1)
+    out["version"] = REALIZATION_MAP_VERSION
     out.setdefault("consumer", {})
     out.setdefault("csv_variables", [])
     out.setdefault("derived_variables", [])
     out.setdefault("branch_mappings", [])
     out.setdefault("abstract_branches", [])
     out.setdefault("emit", {})
+    out.setdefault("alignment_report", {})
     out["csv_variables"] = [item for item in out["csv_variables"] if isinstance(item, dict)]
     out["derived_variables"] = [item for item in out["derived_variables"] if isinstance(item, dict)]
     out["branch_mappings"] = [item for item in out["branch_mappings"] if isinstance(item, dict)]
@@ -23,13 +26,14 @@ def normalize_realization_map(value: Any) -> dict[str, Any]:
 
 def empty_realization_map(reason: str = "") -> dict[str, Any]:
     return {
-        "version": 1,
+        "version": REALIZATION_MAP_VERSION,
         "status": "fallback",
         "consumer": {"columns": []},
         "csv_variables": [],
         "derived_variables": [],
         "branch_mappings": [],
         "abstract_branches": [],
+        "alignment_report": {},
         "emit": {},
         "warnings": [reason] if reason else [],
     }
@@ -40,6 +44,7 @@ def realization_report(realization_map: dict[str, Any]) -> dict[str, Any]:
     abstract = realization_map.get("abstract_branches") or []
     derived = realization_map.get("derived_variables") or []
     csv_vars = realization_map.get("csv_variables") or []
+    alignment = realization_map.get("alignment_report") if isinstance(realization_map.get("alignment_report"), dict) else {}
     return {
         "version": 1,
         "status": realization_map.get("status", "ok"),
@@ -51,5 +56,6 @@ def realization_report(realization_map: dict[str, Any]) -> dict[str, Any]:
         "abstract_branch_count": len(abstract),
         "mapped_branch_examples": branch_mappings[:20],
         "abstract_branch_examples": abstract[:20],
+        "alignment_report": alignment,
         "warnings": realization_map.get("warnings") or [],
     }
