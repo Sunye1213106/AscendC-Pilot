@@ -40,7 +40,7 @@ Build an evidence-backed operator KB under:
 | 2 扫描并提案分析范围 | `macro_scope_scan.py` |
 | 3 等待确认分析范围 | AskQuestion + `review_checkpoint.py` |
 | 4 窄索引代码图并完成范围收尾 | `stage_cbm_scope.py` → MCP 索引 `index_stage` → `--write-index-meta` → `finalize_phase0.py` |
-| 5 抽取 Host/Kernel/桥接 IR | `resolve_entrypoints.py` → `build_layered_kb.py` |
+| 5 抽取 Host/Kernel/桥接 IR | `resolve_entrypoints` → `propose_extract_plan` → LLM extract_plan → `build_layered_kb` |
 | 6 有界语义补全 | `uo-semantic-resolve` → `apply_resolution.py` |
 | 7 导出测试契约并校验 | `kb_query_export.py` + `validate_kb` |
 
@@ -158,7 +158,7 @@ Read `ir/entrypoint_candidates.yaml`.
 version: 1
 roles:
   kernel_entry:
-    name: FlashAttentionScoreGradKernel   # or best candidate name
+    name: <best candidate name>
     file_path: op_kernel/arch35/...
     confirmed_by: llm
     rationale: ...
@@ -170,7 +170,24 @@ roles:
 python -X utf8 "$SCRIPT_DIR/resolve_entrypoints.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --architecture arch35 --write --confirm-patch "$UO_ROOT/ir/entrypoint_confirm.yaml"
 ```
 
-Build the layered IR:
+### Extract plan (LLM confirm → plan-driven host/kernel)
+
+After entrypoints are confirmed:
+
+```powershell
+python -X utf8 "$SCRIPT_DIR/propose_extract_plan.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --architecture arch35 --write
+```
+
+Dispatch `uo-semantic-resolve` **extract plan confirmation** using the mandatory
+template in `prompts/00_subagent_dispatch.md` (task C). Subagent writes only
+`ir/extract_plan.yaml` from `ir/extract_plan_candidates.yaml` (no invented names).
+
+```powershell
+python -X utf8 "$SCRIPT_DIR/apply_extract_plan.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --check
+python -X utf8 "$SCRIPT_DIR/apply_extract_plan.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --write
+```
+
+Build the layered IR (requires `ir/extract_plan.yaml` for host/kernel):
 
 ```powershell
 python -X utf8 "$SCRIPT_DIR/build_layered_kb.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --architecture arch35
@@ -181,6 +198,8 @@ This writes:
 ```text
 ir/entrypoint_candidates.yaml
 ir/entrypoints.yaml
+ir/extract_plan_candidates.yaml
+ir/extract_plan.yaml
 ir/tilingkey_space.yaml
 ir/host_subgraph.yaml
 ir/kernel_subgraph.yaml
@@ -203,8 +222,10 @@ cross_layer/impact_graph.yaml
 `build_layered_kb` also runs code-only `extract_key_predicates` (non-fatal) to materialize
 `tiling/key_cards` skeletons (`set_by.expr_raw` + file:line; `host_reachable`/`hit_recipe` stay unknown).
 
-Host graph spans Input/Attr/Platform -> Predicate/HostBranch -> TilingKey/TilingData/BlockDim/Workspace/Dispatch.
-Kernel graph classifies branches as `compile_time` vs `runtime` (e.g. `sparseMode`).
+Host graph spans Input/Attr/Platform -> Predicate/HostBranch -> TilingKey/TilingData/BlockDim/Workspace/Dispatch
+using **confirmed extract_plan writers/receivers** (no closed helper-name whitelist).
+Kernel graph classifies branches as `compile_time` vs `runtime`, merging plan aliases
+into TDF determinant normalization.
 Bridge reconcile emits `unused_tiling_field` / `missing_tiling_field_producer`.
 
 Optional rebuild of key cards only:

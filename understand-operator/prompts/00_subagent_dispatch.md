@@ -4,7 +4,8 @@ Understand Operator uses subagents sparingly in the layered KB pipeline.
 
 The only specialized subagent required by `/uo-init` is:
 
-- `uo-semantic-resolve` — entrypoint confirmation, residual resolve, consistency review
+- `uo-semantic-resolve` — entrypoint confirmation, extract plan confirmation,
+  residual resolve, consistency review
 
 Do **not** dispatch retired extractors (`uo-boundary-agent`, `uo-host-extraction`,
 `uo-flow-extraction`, kernel-slice / fact-review / graph-review agents).
@@ -29,6 +30,7 @@ Each specialized task has a stable dispatch identity:
 Examples:
 
 - Entrypoint confirm: `<run_id>:extract:uo-semantic-resolve:ir/entrypoint_confirm.yaml`
+- Extract plan confirm: `<run_id>:extract:uo-semantic-resolve:ir/extract_plan.yaml`
 - Residual resolve: `<run_id>:resolve:uo-semantic-resolve:ir/resolution_patch.yaml`
 
 Before opening a subagent task, check whether a task with the same identity is
@@ -50,10 +52,56 @@ fallback path for the installed plugin. Do not let a subagent resolve
 `uo-semantic-resolve` may write only:
 
 - `ir/entrypoint_confirm.yaml`
+- `ir/extract_plan.yaml`
 - `ir/resolution_patch.yaml`
 
-Apply patches with `apply_resolution.py` / entrypoint confirm flags. Never let
-the subagent rewrite `contracts/`, `tiling/`, `kernel/`, or source trees.
+Apply patches with `apply_resolution.py` / `apply_extract_plan.py` / entrypoint
+confirm flags. Never let the subagent rewrite `contracts/`, `tiling/`,
+`kernel/`, or source trees.
+
+## Extract plan dispatch (mandatory template)
+
+After `propose_extract_plan.py --write`, dispatch extract-plan confirmation.
+The **Task prompt body must** include the following block verbatim (fill paths
+only):
+
+```text
+Follow agents/uo-semantic-resolve.md exactly.
+
+Task: extract plan confirmation (task C).
+- Read only: <UO_ROOT>/ir/extract_plan_candidates.yaml
+- Optional: one MCP get_code_snippet for a thin candidate
+- Write only: <UO_ROOT>/ir/extract_plan.yaml
+
+Schema (ONLY):
+  version: 1
+  confirmed_by: llm
+  writers: [{name, file_path, start_line, role}]
+  receivers: [{name, is_tiling_sink}]
+  aliases: [{local, tdf_leaf}]
+  non_sink_roots: []
+  extra_host_entries: []
+  derived_roots: []
+
+Hard rules:
+- Do NOT invent names absent from candidate lists
+- role ∈ tiling_writer | key_writer | workspace_writer | provenance_helper | ignore
+- Prefer Chinese brief notes only if you add rationale fields; schema above is enough
+- Cap ~12 tool calls
+
+After write, stop. Parent will run apply_extract_plan.py --check.
+```
+
+Parent gate:
+
+```powershell
+python -X utf8 "$SCRIPT_DIR/apply_extract_plan.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --check
+```
+
+- If rejected: resume the **same** dispatch identity with only the `rejected`
+  list; ask for a minimal fix. Do not reopen a fresh full confirm.
+- If check passes: `apply_extract_plan.py --write` (or keep the written plan),
+  then continue host/kernel extract.
 
 ## Residual resolve dispatch (mandatory template)
 

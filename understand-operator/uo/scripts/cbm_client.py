@@ -202,8 +202,10 @@ def _row_to_symbol(row: sqlite3.Row) -> CbmSymbol:
 
 
 def read_source_snippet(repo_root: Path, file_path: str, start_line: int, end_line: int, *, pad: int = 2) -> str:
-    path = repo_root / file_path
-    if not path.exists():
+    from uo.scripts.source_path import resolve_repo_source_path
+
+    path = resolve_repo_source_path(repo_root, file_path)
+    if path is None:
         return ""
     lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
     lo = max(1, start_line - pad) - 1

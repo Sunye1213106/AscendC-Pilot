@@ -409,7 +409,7 @@ def test_one_model_can_cover_multiple_obligations() -> None:
         typed_constraints=[{"id": "CON_BRANCH_TRUE", "expr": {"op": "eq", "var": "VAR_KBR_HAS_TAIL", "value": True}}],
     )
 
-    result = solve_from_docs(_snapshot(contract), obligations, {"decision": "approve"})
+    result = solve_from_docs(_snapshot(contract), obligations, {"decision": "approve"}, dedupe=True)
 
     assert any(set(candidate["covered_obligation_ids"]) == {"OB_BRANCH", "OB_FAMILY", "OB_PATH"} for candidate in result["deduped_candidates"])
     assert len(result["selected_candidates"]) == 1
@@ -422,12 +422,27 @@ def test_coverage_signature_excludes_obligation_ids_after_dedupe() -> None:
             _pending("OB_A2", constraints={"expr": {"op": "eq", "var": "VAR_ENUM", "value": "A"}}),
         ]
     )
-    result = solve_from_docs(_snapshot(), obligations, {"decision": "approve"})
+    result = solve_from_docs(_snapshot(), obligations, {"decision": "approve"}, dedupe=True)
 
     assert len(result["deduped_candidates"]) == 1
     candidate = result["deduped_candidates"][0]
     assert "covered_obligation_ids" not in candidate["coverage_signature"]
     assert candidate["source_obligation_ids"] == ["OB_A", "OB_A2"]
+
+
+def test_default_solve_keeps_all_sat_candidates_without_dedupe() -> None:
+    obligations = _obligations(
+        [
+            _pending("OB_A", constraints={"expr": {"op": "eq", "var": "VAR_ENUM", "value": "A"}}),
+            _pending("OB_B", constraints={"expr": {"op": "eq", "var": "VAR_ENUM", "value": "B"}}),
+        ]
+    )
+    result = solve_from_docs(_snapshot(), obligations, {"decision": "approve"})
+
+    assert result["dedupe_enabled"] is False
+    assert len(result["candidates"]) >= 2
+    assert len(result["selected_candidates"]) == len(result["candidates"])
+    assert len(result["selected_candidates"]) >= 2
 
 
 def test_unknown_variable_reference_fails_in_ir() -> None:

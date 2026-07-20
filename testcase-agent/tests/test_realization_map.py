@@ -216,3 +216,62 @@ def test_realize_writes_consumer_columns_and_case_coverage(tmp_path: Path) -> No
     assert covered["branch_ref"] == "KBR_TND"
     assert covered["condition"] == "IS_TND"
     assert covered["source"] == "kernel.cpp"
+
+
+def test_tensor_placeholder_role_is_allowed() -> None:
+    evidence = {
+        "evidence_hash": "e",
+        "field_accesses": {"attrs": [{"path": "run.py"}], "B": [{"path": "run.py"}]},
+        "sample_values": {},
+        "ordered_header_candidates": [{"columns": ["attrs", "B"]}],
+    }
+    schema = {
+        "version": 1,
+        "evidence_hash": "e",
+        "snapshot_hash": "snap",
+        "plan_hash": "plan",
+        "fields": [
+            {
+                "name": "attrs",
+                "order": 0,
+                "role": "tensor_placeholder",
+                "value_type": "enum",
+                "domain": ["_"],
+                "default": "_",
+                "required": False,
+                "source_refs": [{"path": "run.py"}],
+            },
+            {
+                "name": "B",
+                "order": 1,
+                "role": "solver_input",
+                "value_type": "int",
+                "domain": {"kind": "range", "min": 1, "max": 8},
+                "default": 1,
+                "required": True,
+                "source_refs": [{"path": "run.py"}],
+            },
+        ],
+    }
+    rmap = {
+        "version": 2,
+        "evidence_hash": "e",
+        "snapshot_hash": "snap",
+        "plan_hash": "plan",
+        "csv_variables": [
+            {"id": "VAR_CSV_B", "column": "B", "type": "int", "domain": {"kind": "range", "min": 1, "max": 8}, "free": True}
+        ],
+        "derived_variables": [],
+        "branch_mappings": [],
+        "abstract_branches": [],
+        "emit": {"columns": {"attrs": {"op": "constant", "value": "_"}}},
+        "consumer": {"columns": ["attrs", "B"]},
+    }
+    # Align schema version with contract if needed
+    from testcase_agent.realization_contract import CONSUMER_SCHEMA_VERSION, REALIZATION_MAP_VERSION
+
+    schema["version"] = CONSUMER_SCHEMA_VERSION
+    rmap["version"] = REALIZATION_MAP_VERSION
+    report = validate_contract_artifacts(evidence, schema, rmap, snapshot_hash="snap", plan_hash="plan")
+    assert report["status"] == "pass", report.get("errors")
+    assert not any("unsupported role" in (e.get("message") or "") for e in report.get("errors") or [])

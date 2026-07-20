@@ -14,16 +14,42 @@ if __package__ in (None, ""):
 
 from uo._operator.artifacts import existing_operator_root, safe_op_name
 from uo.scripts._ir_io import read_yaml, snippet, stable_id, write_yaml
+from uo.scripts.extract_plan_io import load_extract_plan, plan_aliases, plan_derived_roots
+from uo.scripts.macro_regions import (
+    analyze_macros,
+    classify_macro_condition,
+    merge_defines,
+    valued_seed_defines,
+)
+from uo.scripts.provenance import (
+    classify_compile_determinant,
+    is_key_symbol,
+    load_key_dimension_index,
+    load_tilingkey_space,
+)
 
 IF_CONSTEXPR_RE = re.compile(r"\bif\s*constexpr\s*\((.+?)\)", re.DOTALL)
 IF_RUNTIME_RE = re.compile(r"\bif\s*\((.+?)\)", re.DOTALL)
+# Kept for tests / callers; extraction now uses macro_regions.analyze_macros.
 MACRO_IF_RE = re.compile(r"^\s*#\s*if(?:n?def)?\s+(.+)$", re.MULTILINE)
 TILING_DATA_READ_RE = re.compile(
     r"tilingData(?:->|\.)([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*)"
 )
-KERNEL_DERIVED_READ_RE = re.compile(
-    r"(?:constInfo|commonConstInfo|deterConstInfo|runInfo)(?:->|\.)([A-Za-z0-9_\.]+)"
-)
+# Generic defaults; plan.derived_roots may extend roots at runtime.
+_DEFAULT_DERIVED_ROOTS = ("constInfo", "commonConstInfo", "deterConstInfo", "runInfo")
+
+
+def _derived_read_re(extra_roots: set[str] | None = None) -> re.Pattern[str]:
+    roots = set(_DEFAULT_DERIVED_ROOTS) | (extra_roots or set())
+    # Only accept identifier-like roots (no FAG-specific hardcoding).
+    safe = sorted({r for r in roots if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", r)})
+    if not safe:
+        safe = list(_DEFAULT_DERIVED_ROOTS)
+    alt = "|".join(re.escape(r) for r in safe)
+    return re.compile(rf"(?:{alt})(?:->|\.)([A-Za-z0-9_\.]+)")
+
+
+KERNEL_DERIVED_READ_RE = _derived_read_re()
 # field == ENUM / field == Type::ENUM / field == static_cast<T>(Type::ENUM)
 FIELD_EQ_ENUM_RE = re.compile(
     r"(?:(?:this\s*->\s*)?(?:[A-Za-z_]\w*\s*(?:\.|->)\s*)*)"
@@ -31,6 +57,16 @@ FIELD_EQ_ENUM_RE = re.compile(
     r"(?:static_cast\s*<[^>]+>\s*\(\s*)?"
     r"(?:([A-Za-z_]\w*)\s*::\s*)?"
     r"([A-Z][A-Z0-9_]{1,})\s*\)?"
+)
+FIELD_EQ_INT_RE = re.compile(
+    r"(?:(?:this\s*->\s*)?(?:[A-Za-z_]\w*\s*(?:\.|->)\s*)*)"
+    r"([A-Za-z_]\w*)\s*==\s*([0-9]+)\b"
+)
+# Keep this linear-time: no nested optional quantifiers (prior form catastrophic-backtracked
+# on large kernel headers and hung build_layered_kb).
+TDF_ASSIGN_RE = re.compile(
+    r"(?<![.\w])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*){0,6})\s*=\s*"
+    r"tilingData(?:->|\.)([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+){0,8})\s*;"
 )
 ENUM_CLASS_RE = re.compile(
     r"enum\s+class\s+([A-Za-z_]\w*)\s*(?::\s*[^{]+)?\{([^}]*)\}",
@@ -44,7 +80,6 @@ CONSTEXPR_INT_RE = re.compile(
     r"([A-Z][A-Z0-9_]*)\s*=\s*([0-9]+)\s*;",
     re.MULTILINE,
 )
-TEMPLATE_PARAM_RE = re.compile(r"\b(IS_[A-Z0-9_]+|is[A-Z][A-Za-z0-9_]*|has[A-Z][A-Za-z0-9_]*)\b")
 LOOP_RE = re.compile(r"\bfor\s*\((.+?)\)", re.DOTALL)
 OP_MARKERS = {
     "CopyIn": re.compile(r"\bCopyIn\b|\bDataCopy\b.*(?:GM|gm).*?(?:UB|L1|l1|ub)", re.IGNORECASE),
@@ -86,6 +121,12 @@ class FieldEnumUsage:
     declared: DeclaredDomain | None = None
 
 
+@dataclass
+class FieldIntUsage:
+    field: str
+    branch_values: set[int] = field(default_factory=set)
+
+
 def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str = "arch35") -> dict[str, Any]:
     uo_root = existing_operator_root(repo_root, op_name)
     entrypoints = read_yaml(uo_root / "ir" / "entrypoints.yaml")
@@ -94,6 +135,9 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
     branches: list[dict[str, Any]] = []
+
+    tilingkey_space = load_tilingkey_space(uo_root, repo_root, op_name, architecture=architecture)
+    key_index = load_key_dimension_index(tilingkey_space)
 
     kernel_files = _kernel_files(repo_root, op_name, architecture, selected)
     if not kernel_files:
@@ -124,113 +168,224 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
     edges.append({"id": "E_KEY_SELECTS_KPATH", "type": "selects", "source": "KEY_TILINGKEY", "target": entry_id})
 
     loaded_fields: set[str] = set()
+    bool_tdf_fields: set[str] = set()
     field_usage: dict[str, FieldEnumUsage] = {}
+    int_usage: dict[str, FieldIntUsage] = {}
+    local_to_tdf: dict[str, str] = {}
+    plan = load_extract_plan(uo_root)
+    if plan:
+        local_to_tdf.update(plan_aliases(plan))
+        for leaf in local_to_tdf.values():
+            loaded_fields.add(leaf)
+    derived_re = _derived_read_re(plan_derived_roots(plan) if plan else set())
     declared_domains = collect_declared_domains(
         _enum_declaration_files(repo_root, op_name, architecture) + kernel_files
     )
 
+    # Seed only valued feature macros across kernel files for #if evaluation.
+    # Do NOT seed include-guard #define FOO_H — that kills #ifndef FOO_H bodies.
+    seed_defines: dict[str, str | None] = {}
+    for path in kernel_files:
+        try:
+            seed_defines = merge_defines(
+                seed_defines,
+                valued_seed_defines(
+                    analyze_macros(path.read_text(encoding="utf-8", errors="ignore")).defines
+                ),
+            )
+        except OSError:
+            continue
+    # Tiling-key symbols are compile-injected; do not treat #ifdef KEY as dead.
+    soft_undefined = {str(k) for k in (key_index or {})}
+
     for path in kernel_files:
         rel = path.relative_to(repo_root).as_posix()
         text = path.read_text(encoding="utf-8", errors="ignore")
-        # compile-time macros
-        for match in MACRO_IF_RE.finditer(text):
-            cond = match.group(1).strip()
+        macro_info = analyze_macros(text, seed_defines=seed_defines, soft_undefined=soft_undefined)
+
+        def _active(line: int) -> bool:
+            return macro_info.is_active_line(line)
+
+        for match in TDF_ASSIGN_RE.finditer(text):
             line = text.count("\n", 0, match.start()) + 1
+            if not _active(line):
+                continue
+            lhs = re.sub(r"\s+", "", match.group(1))
+            local = lhs.split(".")[-1]
+            tdf_path = match.group(2)
+            tdf_leaf = tdf_path.split(".")[-1]
+            local_to_tdf[local] = tdf_leaf
+            loaded_fields.add(tdf_leaf)
+        for match in TILING_DATA_READ_RE.finditer(text):
+            line = text.count("\n", 0, match.start()) + 1
+            if not _active(line):
+                continue
+            loaded_fields.add(match.group(1).split(".")[-1])
+
+        # compile-time macros (#if/#ifdef/#elif) with KEY provenance when possible
+        for directive in macro_info.directives:
+            if directive.kind not in {"if", "ifdef", "ifndef", "elif"}:
+                continue
+            cond = directive.condition or directive.name or ""
+            source, ref, domain = classify_macro_condition(cond, key_index=key_index)
             branch = _make_branch(
-                name=f"macro_{line}",
+                name=f"macro_{directive.line}",
                 rel=rel,
-                line=line,
+                line=directive.line,
                 condition=cond,
                 binding_time="compile_time",
-                determinant_source="CompileMacro",
-                determinant_ref=cond.split()[0],
+                determinant_source=source,
+                determinant_ref=ref,
+                domain=domain,
             )
+            if directive.eval_result is not None:
+                branch["node"]["macro_eval"] = bool(directive.eval_result)
             branches.append(branch)
             nodes.append(branch["node"])
-            edges.append({"id": stable_id("E_", entry_id, branch["node"]["id"]), "type": "contains", "source": entry_id, "target": branch["node"]["id"]})
+            edges.append(
+                {
+                    "id": stable_id("E_", entry_id, branch["node"]["id"]),
+                    "type": "contains",
+                    "source": entry_id,
+                    "target": branch["node"]["id"],
+                }
+            )
 
-        # if constexpr
+        # if constexpr — provenance: bind to TilingKey or leave unbound
         for idx, match in enumerate(IF_CONSTEXPR_RE.finditer(text)):
-            cond = " ".join(match.group(1).split())
             line = text.count("\n", 0, match.start()) + 1
-            refs = TEMPLATE_PARAM_RE.findall(cond)
+            if not _active(line):
+                continue
+            cond = " ".join(match.group(1).split())
+            source, ref, domain = classify_compile_determinant(cond, key_index)
             branch = _make_branch(
                 name=f"constexpr_{idx}",
                 rel=rel,
                 line=line,
                 condition=cond,
                 binding_time="compile_time",
-                determinant_source="TemplateArg",
-                determinant_ref=refs[0] if refs else cond,
-                domain=_bool_domain_from_cond(cond),
+                determinant_source=source,
+                determinant_ref=ref,
+                domain=domain,
             )
             branches.append(branch)
             nodes.append(branch["node"])
             edges.append({"id": stable_id("E_", entry_id, branch["node"]["id"]), "type": "contains", "source": entry_id, "target": branch["node"]["id"]})
 
-        # runtime if (exclude constexpr already matched by requiring no constexpr keyword nearby)
+        # runtime if (exclude constexpr; skip preprocessor-dead regions)
         for idx, match in enumerate(IF_RUNTIME_RE.finditer(text)):
-            # skip constexpr matches
             window_start = max(0, match.start() - 12)
             if "constexpr" in text[window_start:match.start()]:
+                continue
+            line = text.count("\n", 0, match.start()) + 1
+            if not _active(line):
                 continue
             cond = " ".join(match.group(1).split())
             if len(cond) > 240:
                 continue
-            line = text.count("\n", 0, match.start()) + 1
             tiling_hits = list(TILING_DATA_READ_RE.findall(cond))
-            derived_hits = list(KERNEL_DERIVED_READ_RE.findall(cond))
-            eq_hits = extract_field_enum_comparisons(cond)
+            derived_hits = list(derived_re.findall(cond))
+            eq_hits = extract_field_enum_comparisons(cond, key_index=key_index)
+            int_hits = extract_field_int_comparisons(cond, key_index=key_index)
             branch_literals = sorted({lit for _, lit in eq_hits})
             for fld, lit in eq_hits:
-                usage = field_usage.setdefault(fld, FieldEnumUsage(field=fld))
+                canon = local_to_tdf.get(fld, fld)
+                usage = field_usage.setdefault(canon, FieldEnumUsage(field=canon))
                 usage.branch_literals.add(lit)
+            for fld, val in int_hits:
+                canon = local_to_tdf.get(fld, fld)
+                usage_i = int_usage.setdefault(canon, FieldIntUsage(field=canon))
+                usage_i.branch_values.add(val)
 
+            domain: list[Any] | None = branch_literals or None
             if tiling_hits:
                 source = "TilingDataField"
                 ref = tiling_hits[0]
-                loaded_fields.add(tiling_hits[0].split(".")[-1])
-                kvar_id = stable_id("KVAR_", tiling_hits[0].split(".")[-1])
-                nodes.append(
-                    {
-                        "id": kvar_id,
-                        "layer": "kernel",
-                        "node_type": "KernelVariable",
-                        "name": tiling_hits[0].split(".")[-1],
-                        "qualified_name": tiling_hits[0],
-                        "file_path": rel,
-                        "start_line": line,
-                        "end_line": line,
-                        "domain": branch_literals or None,
-                    }
-                )
-                tdf_id = stable_id("TDF_", tiling_hits[0].split(".")[-1])
-                nodes.append(
-                    {
-                        "id": tdf_id,
-                        "layer": "bridge",
-                        "node_type": "TilingDataField",
-                        "name": tiling_hits[0].split(".")[-1],
-                        "qualified_name": tiling_hits[0],
-                        "file_path": rel,
-                        "start_line": line,
-                        "end_line": line,
-                    }
-                )
-                edges.append({"id": stable_id("E_", tdf_id, kvar_id), "type": "loads_into", "source": tdf_id, "target": kvar_id})
+                leaf = tiling_hits[0].split(".")[-1]
+                leaf = local_to_tdf.get(leaf, leaf)
+                loaded_fields.add(leaf)
+                if domain is None and _looks_like_bool_truth_cond(cond, leaf):
+                    domain = [0, 1]
+                    bool_tdf_fields.add(leaf)
+                if domain is None and int_hits:
+                    domain = sorted({v for f, v in int_hits if local_to_tdf.get(f, f) == leaf})
+                _append_tdf_kvar_stub(nodes, edges, leaf, tiling_hits[0], rel, line, domain)
             elif derived_hits:
-                # Kernel-local derived state (FagConstInfo etc.) — not serialized tiling members.
                 source = "KernelDerivedField"
                 ref = derived_hits[0]
+                leaf = derived_hits[0].split(".")[-1]
+                # Local / constInfo field assigned from tilingData (alias / plan)
+                if leaf in local_to_tdf:
+                    source = "TilingDataField"
+                    tdf_leaf = local_to_tdf[leaf]
+                    ref = tdf_leaf
+                    loaded_fields.add(tdf_leaf)
+                    if domain is None and _looks_like_bool_truth_cond(cond, leaf):
+                        domain = [0, 1]
+                        bool_tdf_fields.add(tdf_leaf)
+                    if domain is None and eq_hits:
+                        domain = branch_literals or None
+                    if domain is None and int_hits:
+                        domain = sorted({v for f, v in int_hits if local_to_tdf.get(f, f) == tdf_leaf})
+                    _append_tdf_kvar_stub(nodes, edges, tdf_leaf, tdf_leaf, rel, line, domain)
             else:
                 source = "KernelVariable"
                 ref = cond
-            # Prefer field name as determinant when enum compare is present.
+                # Bare local that aliases a TDF member
+                bare = _bare_bool_local(cond)
+                if bare and bare in local_to_tdf:
+                    source = "TilingDataField"
+                    tdf_leaf = local_to_tdf[bare]
+                    ref = tdf_leaf
+                    loaded_fields.add(tdf_leaf)
+                    domain = [0, 1]
+                    bool_tdf_fields.add(tdf_leaf)
+                    _append_tdf_kvar_stub(nodes, edges, tdf_leaf, tdf_leaf, rel, line, domain)
+
+            # Prefer field name as determinant when enum/int compare is present.
+            # Always normalize through local_to_tdf (plan aliases + assign scan).
             if eq_hits and source == "KernelVariable":
-                source = "KernelDerivedField" if derived_hits else "TilingDataField"
-                ref = eq_hits[0][0]
+                raw = eq_hits[0][0]
+                canon = local_to_tdf.get(raw, raw)
+                source = "TilingDataField" if (raw in local_to_tdf or canon in loaded_fields) else (
+                    "KernelDerivedField" if derived_hits else "TilingDataField"
+                )
+                ref = canon
+                if source == "TilingDataField":
+                    loaded_fields.add(ref)
             elif eq_hits and source == "KernelDerivedField":
-                ref = eq_hits[0][0]
+                raw = eq_hits[0][0]
+                canon = local_to_tdf.get(raw, raw)
+                if raw in local_to_tdf:
+                    source = "TilingDataField"
+                    loaded_fields.add(canon)
+                ref = canon
+            elif eq_hits and source == "TilingDataField":
+                raw = eq_hits[0][0]
+                ref = local_to_tdf.get(raw, local_to_tdf.get(str(ref).split(".")[-1], ref))
+                if isinstance(ref, str):
+                    loaded_fields.add(ref.split(".")[-1])
+            elif int_hits and source in {"KernelVariable", "KernelDerivedField"}:
+                fld = int_hits[0][0]
+                canon = local_to_tdf.get(fld, fld)
+                if (
+                    fld in local_to_tdf
+                    or canon in loaded_fields
+                    or any(h.endswith(fld) or h.split(".")[-1] == fld for h in tiling_hits)
+                ):
+                    source = "TilingDataField"
+                    ref = canon
+                    loaded_fields.add(canon)
+                    domain = sorted({v for f, v in int_hits if local_to_tdf.get(f, f) == canon})
+                    _append_tdf_kvar_stub(nodes, edges, canon, canon, rel, line, domain)
+                elif source == "KernelVariable":
+                    # Keep as derived/local; do not invent TDF without evidence.
+                    source = "KernelDerivedField"
+                    ref = canon
+
+            if domain is None and int_hits and source == "TilingDataField":
+                leaf = local_to_tdf.get(str(ref).split(".")[-1], str(ref).split(".")[-1])
+                domain = sorted({v for f, v in int_hits if local_to_tdf.get(f, f) == leaf})
 
             branch = _make_branch(
                 name=f"runtime_{idx}",
@@ -240,9 +395,9 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
                 binding_time="runtime",
                 determinant_source=source,
                 determinant_ref=ref,
-                domain=branch_literals or None,
+                domain=domain,
             )
-            if _looks_like_enum_field_compare(cond) and not eq_hits:
+            if _looks_like_enum_field_compare(cond) and not eq_hits and not int_hits:
                 unresolved.append(
                     {
                         "id": stable_id("UNRES_ENUM_", str(line), rel),
@@ -299,12 +454,16 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
             edges.append({"id": stable_id("E_", entry_id, node_id), "type": "contains", "source": entry_id, "target": node_id})
 
     # Resolve full declared domains against kernel branch hits; emit/merge KVAR nodes.
+    # Only promote to runtime_variables when provenance is TilingDataField.
     enum_fields_resolved: set[str] = set()
     for fld, usage in sorted(field_usage.items()):
         declared = resolve_declared_domain(usage.branch_literals, declared_domains)
         usage.declared = declared
         payload = build_field_domain_payload(usage)
         if not payload["domain"]:
+            continue
+        if fld not in loaded_fields:
+            # Pure KernelDerivedField / local enum compares are not CSV-controllable vars.
             continue
         enum_fields_resolved.add(fld)
         kvar_id = stable_id("KVAR_", fld)
@@ -319,32 +478,119 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
                 "start_line": (declared.start_line if declared else 0),
                 "end_line": (declared.start_line if declared else 0),
                 "binding_time": "runtime",
-                "determinant_source": "TilingDataField" if fld in loaded_fields else "KernelDerivedField",
+                "determinant_source": "TilingDataField",
                 **payload,
             }
         )
-        if fld in loaded_fields or declared is not None:
-            tdf_id = stable_id("TDF_", fld)
-            nodes.append(
-                {
-                    "id": tdf_id,
-                    "layer": "bridge",
-                    "node_type": "TilingDataField",
-                    "name": fld,
-                    "qualified_name": fld,
-                    "file_path": "",
-                    "start_line": 0,
-                    "end_line": 0,
-                }
-            )
-            edges.append(
-                {
-                    "id": stable_id("E_", tdf_id, kvar_id),
-                    "type": "loads_into",
-                    "source": tdf_id,
-                    "target": kvar_id,
-                }
-            )
+        tdf_id = stable_id("TDF_", fld)
+        nodes.append(
+            {
+                "id": tdf_id,
+                "layer": "bridge",
+                "node_type": "TilingDataField",
+                "name": fld,
+                "qualified_name": fld,
+                "file_path": "",
+                "start_line": 0,
+                "end_line": 0,
+            }
+        )
+        edges.append(
+            {
+                "id": stable_id("E_", tdf_id, kvar_id),
+                "type": "loads_into",
+                "source": tdf_id,
+                "target": kvar_id,
+            }
+        )
+
+    # Bool / int TDF fields with domains (enablePreSfmg, sinkOptional, pseType, ...)
+    for fld in sorted(bool_tdf_fields):
+        if fld in enum_fields_resolved:
+            continue
+        kvar_id = stable_id("KVAR_", fld)
+        nodes.append(
+            {
+                "id": kvar_id,
+                "layer": "kernel",
+                "node_type": "KernelVariable",
+                "name": fld,
+                "qualified_name": fld,
+                "file_path": "",
+                "start_line": 0,
+                "end_line": 0,
+                "binding_time": "runtime",
+                "determinant_source": "TilingDataField",
+                "domain": [0, 1],
+                "domain_with_kernel_branch": [0, 1],
+                "domain_without_kernel_branch": [],
+                "domain_entries": [
+                    {"name": "0", "value": 0, "has_kernel_branch": True},
+                    {"name": "1", "value": 1, "has_kernel_branch": True},
+                ],
+                "domain_source": "bool_truth_cond",
+                "domain_type_name": None,
+            }
+        )
+        tdf_id = stable_id("TDF_", fld)
+        nodes.append(
+            {
+                "id": tdf_id,
+                "layer": "bridge",
+                "node_type": "TilingDataField",
+                "name": fld,
+                "qualified_name": fld,
+                "file_path": "",
+                "start_line": 0,
+                "end_line": 0,
+            }
+        )
+        edges.append({"id": stable_id("E_", tdf_id, kvar_id), "type": "loads_into", "source": tdf_id, "target": kvar_id})
+
+    for fld, usage in sorted(int_usage.items()):
+        if fld in enum_fields_resolved or fld in bool_tdf_fields:
+            continue
+        if fld not in loaded_fields:
+            # Only promote int domains with TilingData evidence.
+            continue
+        values = sorted(usage.branch_values)
+        if not values:
+            continue
+        kvar_id = stable_id("KVAR_", fld)
+        nodes.append(
+            {
+                "id": kvar_id,
+                "layer": "kernel",
+                "node_type": "KernelVariable",
+                "name": fld,
+                "qualified_name": fld,
+                "file_path": "",
+                "start_line": 0,
+                "end_line": 0,
+                "binding_time": "runtime",
+                "determinant_source": "TilingDataField",
+                "domain": values,
+                "domain_with_kernel_branch": values,
+                "domain_without_kernel_branch": [],
+                "domain_entries": [{"name": str(v), "value": v, "has_kernel_branch": True} for v in values],
+                "domain_source": "branch_int_literals",
+                "domain_type_name": None,
+            }
+        )
+        tdf_id = stable_id("TDF_", fld)
+        nodes.append(
+            {
+                "id": tdf_id,
+                "layer": "bridge",
+                "node_type": "TilingDataField",
+                "name": fld,
+                "qualified_name": fld,
+                "file_path": "",
+                "start_line": 0,
+                "end_line": 0,
+            }
+        )
+        edges.append({"id": stable_id("E_", tdf_id, kvar_id), "type": "loads_into", "source": tdf_id, "target": kvar_id})
 
     # Enrich earlier per-line KVAR stubs that share the same field id.
     enriched = {stable_id("KVAR_", f): f for f in enum_fields_resolved}
@@ -354,6 +600,8 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
             continue
         usage = field_usage[fld]
         node.update(build_field_domain_payload(usage))
+        if fld in loaded_fields:
+            node["determinant_source"] = "TilingDataField"
 
     nodes.append({"id": "KOUT_OUTPUT", "layer": "kernel", "node_type": "Output", "name": "Output", "qualified_name": "Output", "file_path": "", "start_line": 0, "end_line": 0})
     edges.append({"id": "E_ENTRY_TO_OUTPUT", "type": "writes_output", "source": entry_id, "target": "KOUT_OUTPUT"})
@@ -481,17 +729,38 @@ def parse_constexpr_block_domains(text: str, file_path: str = "") -> list[Declar
     return out
 
 
-def extract_field_enum_comparisons(cond: str) -> list[tuple[str, str]]:
+def extract_field_enum_comparisons(
+    cond: str,
+    *,
+    key_index: dict[str, Any] | None = None,
+) -> list[tuple[str, str]]:
     hits: list[tuple[str, str]] = []
     for match in FIELD_EQ_ENUM_RE.finditer(cond):
         fld = match.group(1)
         lit = match.group(3)
         if not _is_screaming_snake(lit):
             continue
-        # Skip template/bool style identifiers used as fields.
-        if fld.startswith("IS_") or fld.startswith("HAS_"):
+        # Skip symbols that are known TilingKey dimensions (not enum fields).
+        if key_index is not None and is_key_symbol(fld, key_index):
             continue
         hits.append((fld, lit))
+    return hits
+
+
+def extract_field_int_comparisons(
+    cond: str,
+    *,
+    key_index: dict[str, Any] | None = None,
+) -> list[tuple[str, int]]:
+    hits: list[tuple[str, int]] = []
+    for match in FIELD_EQ_INT_RE.finditer(cond):
+        fld = match.group(1)
+        if key_index is not None and is_key_symbol(fld, key_index):
+            continue
+        if _is_screaming_snake(fld):
+            # Likely enum/template token, not a field.
+            continue
+        hits.append((fld, int(match.group(2))))
     return hits
 
 
@@ -574,10 +843,67 @@ def _make_branch(*, name: str, rel: str, line: int, condition: str, binding_time
     }
 
 
-def _bool_domain_from_cond(cond: str) -> list[Any]:
-    if any(tok in cond for tok in ("true", "false", "ENABLE", "DISABLE", "IS_")):
-        return [False, True]
-    return None  # type: ignore[return-value]
+def _append_tdf_kvar_stub(
+    nodes: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    leaf: str,
+    qualified: str,
+    rel: str,
+    line: int,
+    domain: list[Any] | None,
+) -> None:
+    kvar_id = stable_id("KVAR_", leaf)
+    nodes.append(
+        {
+            "id": kvar_id,
+            "layer": "kernel",
+            "node_type": "KernelVariable",
+            "name": leaf,
+            "qualified_name": qualified,
+            "file_path": rel,
+            "start_line": line,
+            "end_line": line,
+            "domain": domain,
+            "binding_time": "runtime",
+            "determinant_source": "TilingDataField",
+        }
+    )
+    tdf_id = stable_id("TDF_", leaf)
+    nodes.append(
+        {
+            "id": tdf_id,
+            "layer": "bridge",
+            "node_type": "TilingDataField",
+            "name": leaf,
+            "qualified_name": qualified,
+            "file_path": rel,
+            "start_line": line,
+            "end_line": line,
+        }
+    )
+    edges.append({"id": stable_id("E_", tdf_id, kvar_id), "type": "loads_into", "source": tdf_id, "target": kvar_id})
+
+
+def _looks_like_bool_truth_cond(cond: str, field: str) -> bool:
+    """True when condition is a truthiness test on field (no == / !=)."""
+    if not field or field not in cond:
+        return False
+    if re.search(rf"\b{re.escape(field)}\s*(==|!=)", cond):
+        return False
+    # Strip wrappers like unlikely(...), !field, field alone.
+    stripped = re.sub(r"\bunlikely\s*\(|\blikely\s*\(", "", cond)
+    stripped = stripped.replace(")", " ").replace("!", " ")
+    tokens = re.findall(r"[A-Za-z_]\w*", stripped)
+    return field in tokens
+
+
+def _bare_bool_local(cond: str) -> str | None:
+    """Return single identifier if cond is a simple truthiness test on one local."""
+    stripped = re.sub(r"\bunlikely\s*\(|\blikely\s*\(", "", cond)
+    stripped = stripped.replace(")", "").replace("!", "").strip()
+    if re.fullmatch(r"[A-Za-z_]\w*", stripped):
+        return stripped
+    return None
 
 
 def _is_screaming_snake(name: str) -> bool:
@@ -660,16 +986,24 @@ def _kernel_files(repo_root: Path, op_name: str, architecture: str, selected: di
         f"op_kernel/{architecture}/**/*kernel*.cpp",
         f"op_kernel/{architecture}/**/*entry*.h",
         f"op_kernel/{architecture}/**/*common*.h",
+        f"op_kernel/{architecture}/**/*block*.h",
+        f"op_kernel/{architecture}/**/*block*.cpp",
+        f"op_kernel/{architecture}/**/vector_api/**/*.h",
+        f"op_kernel/{architecture}/**/vector_api/**/*.cpp",
         f"op_kernel/{architecture}/*.h",
         f"{op_name}/op_kernel/{architecture}/**/*kernel*.h",
         f"{op_name}/op_kernel/{architecture}/**/*kernel*.cpp",
         f"{op_name}/op_kernel/{architecture}/**/*entry*.h",
         f"{op_name}/op_kernel/{architecture}/**/*common*.h",
+        f"{op_name}/op_kernel/{architecture}/**/*block*.h",
+        f"{op_name}/op_kernel/{architecture}/**/*block*.cpp",
+        f"{op_name}/op_kernel/{architecture}/**/vector_api/**/*.h",
+        f"{op_name}/op_kernel/{architecture}/**/vector_api/**/*.cpp",
         f"{op_name}/op_kernel/{architecture}/*.h",
     ]
     for pattern in patterns:
         files.extend(repo_root.glob(pattern))
-    # unique; prefer entry/kernel_base/kernel headers, skip pure utils noise last
+    # unique; prefer entry/kernel_base/kernel headers, then block/vector_api
     uniq: dict[str, Path] = {}
     for path in files:
         if not path.is_file():
@@ -678,6 +1012,7 @@ def _kernel_files(repo_root: Path, op_name: str, architecture: str, selected: di
 
     def rank(p: Path) -> tuple[int, int, str]:
         name = p.name.lower()
+        posix = p.as_posix().replace("\\", "/").lower()
         if "entry" in name:
             return (0, 0, p.as_posix())
         if name.endswith("kernel.h") or name.endswith("kernel_base.h"):
@@ -686,11 +1021,15 @@ def _kernel_files(repo_root: Path, op_name: str, architecture: str, selected: di
             return (1, 0, p.as_posix())
         if "common" in name:
             return (2, 0, p.as_posix())
-        return (3, 0, p.as_posix())
+        if "block" in name:
+            return (3, 0, p.as_posix())
+        if "/vector_api/" in posix:
+            return (4, 0, p.as_posix())
+        return (5, 0, p.as_posix())
 
     ranked = sorted(uniq.values(), key=rank)
-    # Allow enough headers for branch extraction (entry + base + a few modules).
-    return ranked[:40]
+    # Enough headers for branch extraction including vector_api layout/pse paths.
+    return ranked[:120]
 
 
 def _dedupe_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:

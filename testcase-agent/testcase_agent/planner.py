@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 from collections import Counter
@@ -27,6 +27,7 @@ SUPPORTED_KINDS = [
     "kernel_path",
     "kernel_branch",
     "runtime_variable_state",
+    "csv_domain_cover",
     "optional_input_mode",
     "dtype_layout_class",
     "tilingdata_boundary",
@@ -78,6 +79,7 @@ def tg_plan(
     topic: str = "",
     reuse_snapshot: bool = False,
     csv_consumer_root: Path | None = None,
+    lexicon_seed: Path | None = None,
 ) -> dict[str, Any]:
     project_root = project_root.resolve()
     out_root = output_root(project_root, op_name)
@@ -105,9 +107,18 @@ def tg_plan(
             write_yaml(run_path, run)
 
     # Realization contract must exist before planning so obligations are CSV-realizable.
+    # When csv_consumer_root is provided, tg-plan embeds tg-contract (rebuild).
+    contract_embedded = False
     try:
         if csv_consumer_root is not None:
-            tg_contract(project_root, op_name, csv_consumer_root=csv_consumer_root, reuse_snapshot=True)
+            tg_contract(
+                project_root,
+                op_name,
+                csv_consumer_root=csv_consumer_root,
+                reuse_snapshot=True,
+                lexicon_seed=lexicon_seed,
+            )
+            contract_embedded = True
         realization_map = load_realization_for_plan(out_root)
     except TgContractError as exc:
         raise TgPlanError(str(exc)) from exc
@@ -147,6 +158,11 @@ def tg_plan(
     )
     write_plan_outputs(out_root, plan, snapshot)
     refresh_contract_plan_hash(out_root, str(plan.get("plan_hash") or ""), str(snapshot.get("snapshot_hash") or ""))
+    plan["contract_embedded"] = contract_embedded
+    plan["csv_consumer_root"] = (
+        Path(csv_consumer_root).resolve().as_posix() if csv_consumer_root is not None else ""
+    )
+    plan["realization_root"] = (out_root / "realization").as_posix()
     return plan
 
 
@@ -180,7 +196,7 @@ def build_plan(
     elif level == "L3":
         add_l3_topic_obligations(obligations, files, coverage, contract, branches, impact, semantic_focus, topic_manifest or {})
     else:
-        add_l1_obligations(obligations, files, coverage, contract, branches, impact, semantic_focus)
+        add_l1_obligations(obligations, files, coverage, contract, branches, impact, semantic_focus, realization_map)
     obligations = filter_obligations_by_focus(obligations, semantic_focus)
     if level == "L3" and topic_manifest:
         obligations = filter_obligations_for_topic(obligations, topic_manifest, files)
@@ -241,6 +257,7 @@ def build_plan(
             }
         )
     review = build_review(snapshot, obligations, matrix, unresolved, level=level, semantic_focus=semantic_focus)
+    coverage_inventory = build_coverage_inventory(obligations)
     plan_hash = semantic_plan_hash(snapshot.get("snapshot_hash"), obligations, matrix, unresolved, planning_context)
     return {
         "version": 1,
@@ -263,6 +280,7 @@ def build_plan(
         "obligations": obligations,
         "matrix": matrix,
         "unresolved": unresolved,
+        "coverage_inventory": coverage_inventory,
         "review": review,
         "plan_hash": plan_hash,
         "_realization_map": realization_map,
@@ -328,18 +346,29 @@ def add_l1_obligations(
     branches: dict[str, Any],
     impact: dict[str, Any],
     semantic_focus: dict[str, Any],
+    realization_map: dict[str, Any] | None = None,
 ) -> None:
     before = len(out)
     add_contract_kernel_branch_obligations(out, contract)
     add_kernel_branch_obligations(out, branches)
     # Runtime-variable domain coverage (CSV-reachable only; loop/platform vars dropped at source).
     add_runtime_variable_obligations(out, files, semantic_focus)
+    if realization_map:
+        from .csv_domain_cover import add_csv_domain_cover_obligations
+
+        add_csv_domain_cover_obligations(out, realization_map, files=files)
     if len(out) == before:
         add_key_relation_obligations(out, coverage, contract)
     for item in out[before:]:
         if item.get("test_level"):
             continue
-        reason = "runtime branch coverage" if item.get("kind") == "kernel_branch" else "runtime variable coverage"
+        kind = str(item.get("kind") or "")
+        if kind == "kernel_branch":
+            reason = "runtime branch coverage"
+        elif kind == "csv_domain_cover":
+            reason = "csv domain value coverage"
+        else:
+            reason = "runtime variable coverage"
         decorate_obligation(item, "L1", default_origin_for(item, files), reason, semantic_focus)
 
 
@@ -1775,6 +1804,40 @@ def apply_realization_filters(obligations: list[dict[str, Any]], realization_map
                     f"NOT_CSV_REALIZABLE[KEY_VALUE_NOT_IN_IMAGE]: {var_id}={target} not in derived image over CSV domains"
                 )
                 obligation["reason"] = obligation["unresolved_reason"]
+        elif kind == "csv_domain_cover":
+            var_refs = obligation.get("target_refs") or []
+            var_id = str(var_refs[0]) if var_refs else ""
+            target = obligation.get("target_value")
+            if var_id:
+                # Outside declared CSV domain → skip.
+                csv_specs = {
+                    str(item.get("id") or ""): item
+                    for item in realization_map.get("csv_variables") or []
+                    if isinstance(item, dict)
+                }
+                spec = csv_specs.get(var_id)
+                if spec is not None:
+                    domain = spec.get("domain")
+                    ok = True
+                    if isinstance(domain, list):
+                        ok = target in domain or str(target) in [str(x) for x in domain]
+                    elif isinstance(domain, dict) and domain.get("values") is not None:
+                        vals = domain.get("values") or []
+                        ok = target in vals or str(target) in [str(x) for x in vals]
+                    elif isinstance(domain, dict) and domain.get("min") is not None:
+                        try:
+                            tv = int(target)
+                            ok = int(domain["min"]) <= tv <= int(domain.get("max", tv))
+                        except (TypeError, ValueError):
+                            ok = False
+                    if not ok:
+                        obligation["reachability"] = "unreachable"
+                        obligation["status"] = "proof_required"
+                        obligation["csv_unreachability_code"] = "CSV_VALUE_OUTSIDE_DOMAIN"
+                        obligation["unresolved_reason"] = (
+                            f"NOT_CSV_REALIZABLE[CSV_VALUE_OUTSIDE_DOMAIN]: {var_id}={target} outside domain"
+                        )
+                        obligation["reason"] = obligation["unresolved_reason"]
         elif kind in {"kernel_branch", "runtime_variable_state"}:
             refs = [str(ref) for ref in obligation.get("target_refs") or []]
             branch_ref = refs[0] if refs else ""
@@ -2174,6 +2237,7 @@ KIND_LABELS_CN = {
     "kernel_path": "执行路径基线",
     "kernel_branch": "运行时分支/功能判断",
     "runtime_variable_state": "运行时变量状态",
+    "csv_domain_cover": "CSV 求解变量取值覆盖",
     "optional_input_mode": "可选输入 present/absent",
     "dtype_layout_class": "dtype/layout 类",
     "tilingdata_boundary": "TilingData 边界",
@@ -2182,6 +2246,17 @@ KIND_LABELS_CN = {
     "workspace_boundary": "Workspace 边界",
     "pipeline_resource_mode": "流水/资源模式",
     "numerical_mode": "数值模式",
+}
+
+# Obligation kinds that map to explicit variable → value coverage points.
+VALUE_COVER_KINDS = {
+    "csv_domain_cover",
+    "tiling_key_field_value",
+    "optional_input_mode",
+    "runtime_variable_state",
+    "dtype_layout_class",
+    "numerical_mode",
+    "pipeline_resource_mode",
 }
 
 
@@ -2196,8 +2271,20 @@ def build_test_points(obligations: list[dict[str, Any]]) -> list[dict[str, Any]]
         items = [item for item in obligations if item.get("kind") == kind]
         sample_refs = sorted({ref for item in items for ref in (item.get("target_refs") or []) if ref})[:8]
         field_names: list[str] = []
-        if kind == "tiling_key_field_value":
+        value_summary: dict[str, list[str]] = {}
+        if kind in {"tiling_key_field_value", "csv_domain_cover", "optional_input_mode"}:
             field_names = sorted({_obligation_field_name(item) for item in items if _obligation_field_name(item) != "unknown"})
+            for item in items:
+                field = _obligation_field_name(item)
+                value = item.get("target_value")
+                if value is None:
+                    value = item.get("target_state")
+                if value is None:
+                    continue
+                value_summary.setdefault(field, [])
+                text = str(value)
+                if text not in value_summary[field]:
+                    value_summary[field].append(text)
         points.append(
             {
                 "kind": kind,
@@ -2205,6 +2292,7 @@ def build_test_points(obligations: list[dict[str, Any]]) -> list[dict[str, Any]]
                 "count": total,
                 "sample_refs": sample_refs,
                 "fields": field_names,
+                "values_by_field": {name: value_summary[name] for name in sorted(value_summary)} if value_summary else {},
                 "priority_breakdown": dict(Counter(str(item.get("priority") or "normal") for item in items)),
             }
         )
@@ -2220,7 +2308,88 @@ def build_test_points(obligations: list[dict[str, Any]]) -> list[dict[str, Any]]
                 "by_field": dict(sorted(by_field.items())),
             }
         )
+    inventory = build_coverage_inventory(obligations)
+    if inventory.get("variables"):
+        points.append(
+            {
+                "kind": "coverage_inventory",
+                "label": "变量取值覆盖清单",
+                "count": inventory.get("value_point_count", 0),
+                "variable_count": inventory.get("variable_count", 0),
+                "variables": inventory.get("variables"),
+            }
+        )
     return points
+
+
+def build_coverage_inventory(obligations: list[dict[str, Any]]) -> dict[str, Any]:
+    """Structured inventory: which variables cover which values (for plan review / YAML)."""
+    buckets: dict[tuple[str, str], dict[str, Any]] = {}
+    for item in obligations:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "")
+        if kind not in VALUE_COVER_KINDS and kind != "kernel_branch":
+            continue
+        variable = _coverage_variable_name(item)
+        value = item.get("target_value")
+        if value is None:
+            value = item.get("target_state")
+        if value is None and kind == "kernel_branch":
+            continue
+        key = (kind, variable)
+        bucket = buckets.setdefault(
+            key,
+            {
+                "kind": kind,
+                "label": KIND_LABELS_CN.get(kind, kind),
+                "variable": variable,
+                "csv_var": _coverage_csv_var(item),
+                "values": [],
+                "obligation_ids": [],
+            },
+        )
+        text = str(value) if value is not None else "unspecified"
+        if text not in bucket["values"]:
+            bucket["values"].append(text)
+        oid = str(item.get("id") or "")
+        if oid and oid not in bucket["obligation_ids"]:
+            bucket["obligation_ids"].append(oid)
+
+    variables = sorted(buckets.values(), key=lambda row: (str(row.get("kind") or ""), str(row.get("variable") or "")))
+    for row in variables:
+        row["values"] = sorted(row["values"], key=lambda x: str(x))
+        row["value_count"] = len(row["values"])
+        row["obligation_count"] = len(row["obligation_ids"])
+
+    by_kind = Counter(str(row.get("kind") or "") for row in variables)
+    return {
+        "version": 1,
+        "variable_count": len(variables),
+        "value_point_count": sum(int(row.get("value_count") or 0) for row in variables),
+        "by_kind": dict(sorted(by_kind.items())),
+        "variables": variables,
+        "note": "默认 tg-solve 不去重：每个取值点尽量各留一解；传 --dedupe 才合并/set-cover。",
+    }
+
+
+def _coverage_variable_name(item: dict[str, Any]) -> str:
+    field = _obligation_field_name(item)
+    if field and field != "unknown":
+        return field
+    refs = item.get("target_refs") or []
+    if refs:
+        return str(refs[0])
+    return "unknown"
+
+
+def _coverage_csv_var(item: dict[str, Any]) -> str:
+    refs = item.get("target_refs") or []
+    for ref in refs:
+        text = str(ref or "")
+        if text.startswith("VAR_CSV_") or text.startswith("VAR_"):
+            return text
+    return ""
 
 
 def _obligation_field_name(item: dict[str, Any]) -> str:
@@ -2265,6 +2434,19 @@ def build_review_design_lines(obligations: list[dict[str, Any]]) -> list[str]:
             by_field.setdefault(_obligation_field_name(item), []).append(item.get("target_value"))
         lines.append(
             f"- 设计 **{len(key_items)}** 个 TilingKey 字段取值用例点，覆盖 **{len(by_field)}** 个变量：{_format_field_values(by_field)}。"
+        )
+
+    csv_cover_items = [item for item in obligations if item.get("kind") == "csv_domain_cover"]
+    if csv_cover_items:
+        by_field: dict[str, list[Any]] = {}
+        for item in csv_cover_items:
+            by_field.setdefault(_obligation_field_name(item), []).append(item.get("target_value"))
+        lines.append(
+            f"- 设计 **{len(csv_cover_items)}** 个 CSV 变量取值覆盖点，覆盖 **{len(by_field)}** 个列/变量的取值："
+            f"{_format_field_values(by_field, max_fields=24, max_values=12)}。"
+        )
+        lines.append(
+            "- 求解默认**不去重**：每个取值点尽量各生成一解；若需要合并重复签名/做 set-cover，请在 `tg-solve` 传 `--dedupe`。"
         )
 
     runtime_items = [item for item in obligations if item.get("kind") == "runtime_variable_state"]
@@ -2312,13 +2494,42 @@ def build_review_design_lines(obligations: list[dict[str, Any]]) -> list[str]:
 
 def build_review_coverage_index(obligations: list[dict[str, Any]], *, level: str, files: dict[str, Any] | None = None) -> list[str]:
     """Add a human-readable index so review can trace counts back to obligations."""
+    lines: list[str] = []
     if level == "L1":
-        return _build_l1_branch_coverage_index(obligations, files=files or {})
-    if level == "L0":
-        return _build_l0_value_coverage_index(obligations)
-    if level == "L2":
-        return _build_l2_key_coverage_index(obligations)
-    return []
+        lines.extend(_build_l1_branch_coverage_index(obligations, files=files or {}))
+    elif level == "L0":
+        lines.extend(_build_l0_value_coverage_index(obligations))
+    elif level == "L2":
+        lines.extend(_build_l2_key_coverage_index(obligations))
+    lines.extend(_build_variable_value_coverage_index(obligations))
+    return lines
+
+
+def _build_variable_value_coverage_index(obligations: list[dict[str, Any]]) -> list[str]:
+    inventory = build_coverage_inventory(obligations)
+    variables = inventory.get("variables") or []
+    if not variables:
+        return []
+    lines = [
+        "",
+        "## 变量取值覆盖清单（覆盖了哪些变量的什么取值）",
+        f"- 共 **{inventory.get('variable_count', 0)}** 个变量/列，**{inventory.get('value_point_count', 0)}** 个取值点。",
+        f"- 按 kind：{_format_counter_for_review(Counter(inventory.get('by_kind') or {}), max_items=12)}。",
+        f"- {inventory.get('note') or ''}",
+        "",
+        "| 变量/列 | 类型 | 取值 | 义务数 |",
+        "|---|---|---|---:|",
+    ]
+    for row in variables[:80]:
+        values = row.get("values") or []
+        lines.append(
+            f"| `{row.get('variable')}` | {row.get('label') or row.get('kind')} | "
+            f"{_compact_list(values, max_items=16)} | {row.get('obligation_count', 0)} |"
+        )
+    remaining = max(0, len(variables) - 80)
+    if remaining:
+        lines.append(f"| ... | ... | 另 {remaining} 个变量见 `coverage_inventory.yaml` | ... |")
+    return lines
 
 
 def _obligation_first_ref(item: dict[str, Any], fallback: str = "unknown") -> str:
@@ -2482,7 +2693,7 @@ def _build_l0_value_coverage_index(obligations: list[dict[str, Any]]) -> list[st
     value_items = [
         item
         for item in obligations
-        if item.get("kind") in {"optional_input_mode", "tiling_key_field_value"}
+        if item.get("kind") in {"optional_input_mode", "tiling_key_field_value", "csv_domain_cover"}
     ]
     if not value_items:
         return []
@@ -2492,8 +2703,8 @@ def _build_l0_value_coverage_index(obligations: list[dict[str, Any]]) -> list[st
     lines = [
         "",
         "## 覆盖索引（数字从哪里来）",
-        f"- L0 统计可选输入状态和关键字段取值，本次共有 **{len(value_items)}** 条覆盖义务，覆盖 **{len(by_field)}** 个变量/输入。",
-        f"- 变量取值摘要：{_format_field_values({name: [item.get('target_value') or item.get('target_state') for item in items] for name, items in by_field.items()}, max_fields=20, max_values=8)}。",
+        f"- L0 统计可选输入状态、关键字段取值与 CSV 域覆盖，本次共有 **{len(value_items)}** 条覆盖义务，覆盖 **{len(by_field)}** 个变量/输入。",
+        f"- 变量取值摘要：{_format_field_values({name: [item.get('target_value') or item.get('target_state') for item in items] for name, items in by_field.items()}, max_fields=24, max_values=12)}。",
     ]
     return lines
 
@@ -2683,6 +2894,14 @@ def write_plan_outputs(out_root: Path, plan: dict[str, Any], snapshot: dict[str,
     write_yaml(out_root / "plan" / "coverage_matrix.yaml", matrix_payload)
     write_yaml(out_root / "plan" / "unresolved.yaml", unresolved_payload)
     write_yaml(out_root / "plan" / "semantic_focus.yaml", focus_payload)
+    inventory_payload = {
+        "version": 1,
+        "snapshot_hash": snapshot.get("snapshot_hash"),
+        "test_level": level,
+        "plan_hash": plan["plan_hash"],
+        **(plan.get("coverage_inventory") or build_coverage_inventory(plan["obligations"])),
+    }
+    write_yaml(out_root / "plan" / "coverage_inventory.yaml", inventory_payload)
     (out_root / "plan" / "review.md").write_text(plan["review"], encoding="utf-8")
 
     # Per-level archive so L0/L1 runs do not overwrite each other for human review.
@@ -2692,6 +2911,7 @@ def write_plan_outputs(out_root: Path, plan: dict[str, Any], snapshot: dict[str,
     write_yaml(level_dir / "coverage_matrix.yaml", matrix_payload)
     write_yaml(level_dir / "unresolved.yaml", unresolved_payload)
     write_yaml(level_dir / "semantic_focus.yaml", focus_payload)
+    write_yaml(level_dir / "coverage_inventory.yaml", inventory_payload)
     (level_dir / "review.md").write_text(plan["review"], encoding="utf-8")
     write_yaml(
         level_dir / "summary.yaml",
@@ -2704,6 +2924,11 @@ def write_plan_outputs(out_root: Path, plan: dict[str, Any], snapshot: dict[str,
             "obligation_count": len(plan["obligations"]),
             "priority_counts": plan["matrix"].get("priority_counts"),
             "test_points": plan["matrix"].get("test_points"),
+            "coverage_inventory": {
+                "variable_count": inventory_payload.get("variable_count", 0),
+                "value_point_count": inventory_payload.get("value_point_count", 0),
+                "by_kind": inventory_payload.get("by_kind") or {},
+            },
             "csv_realization": plan.get("semantic_focus", {}).get("csv_realization"),
         },
     )

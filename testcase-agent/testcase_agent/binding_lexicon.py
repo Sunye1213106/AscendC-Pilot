@@ -65,6 +65,7 @@ def merge_lexicons(*docs: dict[str, Any] | None) -> dict[str, Any]:
     out = empty_lexicon(source="merged")
     sources: list[str] = []
     seen_deriv: set[str] = set()
+    locked_deriv: set[str] = set()
     for doc in docs:
         if not doc:
             continue
@@ -75,17 +76,36 @@ def merge_lexicons(*docs: dict[str, Any] | None) -> dict[str, Any]:
         out["arith_constants"].update(norm["arith_constants"])
         for item in norm["key_derivations"]:
             vid = str(item.get("id") or "")
-            if not vid or vid in seen_deriv:
-                # override existing derivation with same id
-                if vid in seen_deriv:
-                    out["key_derivations"] = [d for d in out["key_derivations"] if str(d.get("id")) != vid]
-                else:
-                    seen_deriv.add(vid)
+            if not vid:
+                continue
+            if is_locked_derivation(item):
+                locked_deriv.add(vid)
+            if vid in seen_deriv:
+                prev = next((d for d in out["key_derivations"] if str(d.get("id")) == vid), None)
+                if prev and is_locked_derivation(prev) and not is_locked_derivation(item):
+                    continue
+                out["key_derivations"] = [d for d in out["key_derivations"] if str(d.get("id")) != vid]
             seen_deriv.add(vid)
             out["key_derivations"].append(item)
         out["warnings"].extend(norm.get("warnings") or [])
     out["source"] = "+".join(s for s in sources if s) or "merged"
+    out["locked_derivation_ids"] = sorted(locked_deriv)
     return out
+
+
+def is_locked_derivation(item: dict[str, Any]) -> bool:
+    if item.get("locked") is True:
+        return True
+    for ref in item.get("source_refs") or []:
+        if not isinstance(ref, dict):
+            continue
+        path = str(ref.get("path") or "")
+        reason = str(ref.get("reason") or "")
+        if path.endswith("binding_lexicon.yaml") or path == "binding_lexicon.yaml":
+            return True
+        if reason.startswith("migrated_from"):
+            return True
+    return False
 
 
 def lexicon_from_key_space(key_space: dict[str, Any] | None) -> dict[str, Any]:
@@ -93,16 +113,23 @@ def lexicon_from_key_space(key_space: dict[str, Any] | None) -> dict[str, Any]:
     out = empty_lexicon(source="key_space_heuristic")
     if not isinstance(key_space, dict):
         return out
-    for field in key_space.get("fields") or []:
+    entries = list(key_space.get("fields") or []) + list(key_space.get("dimensions") or [])
+    for field in entries:
         if not isinstance(field, dict):
             continue
         key_id = str(field.get("id") or "").strip()
-        if not key_id.upper().startswith("KEY_"):
+        name = str(field.get("name") or "").strip()
+        if key_id.upper().startswith("KEY_"):
+            bare = key_id[4:]
+        elif name:
+            # tilingkey_space dimensions use bare names like IsTnd
+            bare = name
+            key_id = f"KEY_{name.upper()}" if not name.upper().startswith("KEY_") else name
+        else:
             continue
-        bare = key_id[4:]
-        var_id = f"VAR_{key_id}" if not key_id.startswith("VAR_") else key_id
+        var_id = f"VAR_KEY_{bare.upper()}" if not bare.upper().startswith("KEY_") else f"VAR_{bare}"
         if not var_id.startswith("VAR_KEY_"):
-            var_id = f"VAR_KEY_{bare}"
+            var_id = f"VAR_KEY_{bare.upper()}"
         true_value = 1
         values = field.get("values")
         if isinstance(values, list) and values and all(isinstance(v, int) and not isinstance(v, bool) for v in values):

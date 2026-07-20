@@ -90,7 +90,14 @@ def materialize_testcase_contract_files(uo_root: Path, graph: dict[str, Any]) ->
 
     key_nodes = [n for n in nodes if n.get("node_type") == "TilingKey"]
     tdf_nodes = [n for n in nodes if n.get("node_type") == "TilingDataField"]
-    kvar_nodes = [n for n in nodes if n.get("node_type") == "KernelVariable" and n.get("domain")]
+    # Runtime variables must be TilingData-backed KernelVariables with a domain.
+    kvar_nodes = [
+        n
+        for n in nodes
+        if n.get("node_type") == "KernelVariable"
+        and n.get("domain")
+        and str(n.get("determinant_source") or "TilingDataField") == "TilingDataField"
+    ]
     ktpl_nodes = [n for n in nodes if n.get("node_type") == "KernelTemplateArgument"]
 
     key_fields = []
@@ -99,6 +106,7 @@ def materialize_testcase_contract_files(uo_root: Path, graph: dict[str, Any]) ->
         name = str(dim.get("name") or "")
         key_id = stable_id("KEY_", name)
         values = dim.get("values") or []
+        role_meta = _infer_key_field_role(name)
         key_fields.append(
             {
                 "id": key_id,
@@ -106,6 +114,10 @@ def materialize_testcase_contract_files(uo_root: Path, graph: dict[str, Any]) ->
                 "name": name,
                 "data_type": "int",
                 "values": values,
+                "role": role_meta.get("role"),
+                "semantic_role": role_meta.get("role"),
+                "csv_determinants": role_meta.get("csv_determinants") or [],
+                "primary_layout_field": role_meta.get("primary_layout_field"),
             }
         )
         tiling_variables.append(
@@ -115,6 +127,7 @@ def materialize_testcase_contract_files(uo_root: Path, graph: dict[str, Any]) ->
                 "canonical_name": name,
                 "data_type": "int",
                 "domain": {"kind": "discrete", "values": values} if values else {"kind": "int"},
+                "semantic_role": role_meta.get("role"),
             }
         )
 
@@ -191,10 +204,14 @@ def materialize_testcase_contract_files(uo_root: Path, graph: dict[str, Any]) ->
                 "domain": n.get("domain"),
                 "domain_with_kernel_branch": n.get("domain_with_kernel_branch"),
                 "domain_without_kernel_branch": n.get("domain_without_kernel_branch"),
-                "domain_entries": n.get("domain_entries"),
+                "domain_entries": _enrich_domain_entries(n.get("domain_entries")),
                 "domain_source": n.get("domain_source"),
                 "domain_type_name": n.get("domain_type_name"),
                 "binding_time": n.get("binding_time") or "runtime",
+                "determinant_source": n.get("determinant_source") or "TilingDataField",
+                "semantic_role": _infer_kvar_semantic_role(n),
+                "binding_surface": "tiling_data",
+                "csv_column": n.get("csv_column"),
             }
             for n in kvar_nodes
         ],
@@ -243,6 +260,7 @@ def materialize_testcase_contract_files(uo_root: Path, graph: dict[str, Any]) ->
         ],
     }
 
+    path_summary_limit = 80
     kernel_vars = {
         "version": 1,
         "op_name": op_name,
@@ -256,8 +274,20 @@ def materialize_testcase_contract_files(uo_root: Path, graph: dict[str, Any]) ->
             for n in tdf_nodes
         ],
         "path_decision_points": [
-            {"id": b["id"], "condition": b.get("condition"), "binding_time": b.get("binding_time")} for b in branch_rows[:80]
+            {
+                "id": b["id"],
+                "condition": b.get("condition"),
+                "binding_time": b.get("binding_time"),
+                "determinant_source": b.get("determinant_source"),
+            }
+            for b in branch_rows[:path_summary_limit]
         ],
+        "path_decision_summary": {
+            "total_count": len(branch_rows),
+            "preview_count": min(path_summary_limit, len(branch_rows)),
+            "truncated": len(branch_rows) > path_summary_limit,
+            "full_list": "kernel/branches.yaml",
+        },
     }
 
     kernel_paths = {
@@ -401,13 +431,22 @@ def materialize_testcase_contract_files(uo_root: Path, graph: dict[str, Any]) ->
         branch_rows=branch_rows,
         template_blocks=template_blocks,
         golden=golden,
+        kvar_nodes=kvar_nodes,
     )
+    runtime_branch_ids = [b["id"] for b in branch_rows if b.get("binding_time") == "runtime"]
+    branch_obl_limit = 80
     test_contract = {
         "version": 1,
         "op_name": op_name,
         "input_domain": {k: "any" for k in golden_inputs[:30]},
         "typed_constraints": contract.get("typed_constraints") or [],
-        "kernel_branch_obligations": [{"id": b["id"]} for b in branch_rows if b.get("binding_time") == "runtime"][:80],
+        "kernel_branch_obligations": [{"id": bid} for bid in runtime_branch_ids[:branch_obl_limit]],
+        "kernel_branch_obligations_meta": {
+            "total_runtime_branches": len(runtime_branch_ids),
+            "listed_count": min(branch_obl_limit, len(runtime_branch_ids)),
+            "truncated": len(runtime_branch_ids) > branch_obl_limit,
+            "full_list": "kernel/branches.yaml",
+        },
     }
 
     files: dict[str, Any] = {
@@ -543,6 +582,7 @@ def _build_testcase_contract(
     branch_rows: list[dict[str, Any]],
     template_blocks: list[dict[str, Any]],
     golden: dict[str, Any],
+    kvar_nodes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     nodes = graph.get("nodes") or []
     optional_inputs = []
@@ -569,19 +609,52 @@ def _build_testcase_contract(
         name = str(node.get("name") or nid)
         if ntype == "OptionalInputPresence" or nid.startswith("VAR_OPTIONAL_"):
             opt_id = nid if nid.startswith("VAR_OPTIONAL_") else stable_id("VAR_OPTIONAL_", name)
-            optional_inputs.append({"id": opt_id, "name": name})
+            optional_inputs.append(
+                {
+                    "id": opt_id,
+                    "name": name,
+                    "role": "optional_presence",
+                    "semantic_role": "optional_presence",
+                    "presence_columns": _optional_presence_columns(name),
+                }
+            )
             coverage_obligations["optional_input_mode"].append({"id": stable_id("COV_OPT_", name), "target_refs": [opt_id]})
             variables.append({"id": opt_id, "type": "bool", "domain": [False, True]})
         if ntype in {"InputDType", "InputLayout"}:
             class_id = stable_id("NUM_", name)
-            dtype_layout.append({"id": class_id, "name": name, "class": name})
+            layout_kind = "primary" if ntype == "InputLayout" and "mask" not in name.lower() and "pse" not in name.lower() else (
+                "secondary" if ntype == "InputLayout" else None
+            )
+            dtype_layout.append(
+                {
+                    "id": class_id,
+                    "name": name,
+                    "class": name,
+                    "layout_kind": layout_kind,
+                    "semantic_role": "layout_primary" if layout_kind == "primary" else ("layout_secondary" if layout_kind == "secondary" else "dtype"),
+                }
+            )
 
     for field in key_fields:
         key_id = str(field["id"])
         values = field.get("values") or []
+        if not field.get("role") and not field.get("csv_determinants"):
+            role_meta = _infer_key_field_role(str(field.get("name") or key_id))
+            field["role"] = role_meta.get("role")
+            field["semantic_role"] = role_meta.get("role")
+            field["csv_determinants"] = role_meta.get("csv_determinants") or []
+            field["primary_layout_field"] = role_meta.get("primary_layout_field")
         var_id = f"VAR_{key_id}"
         if values:
-            variables.append({"id": var_id, "type": "int", "domain": {"kind": "discrete", "values": values}})
+            variables.append(
+                {
+                    "id": var_id,
+                    "type": "int",
+                    "domain": {"kind": "discrete", "values": values},
+                    "role": field.get("role"),
+                    "semantic_role": field.get("semantic_role"),
+                }
+            )
             coverage_obligations["tiling_keys"].append(
                 {"id": stable_id("COV_", key_id), "field": field.get("name"), "values": values, "target_refs": [key_id]}
             )
@@ -603,27 +676,35 @@ def _build_testcase_contract(
             }
         )
         variables.append({"id": f"VAR_{bid}", "type": "bool", "domain": [False, True]})
-        if branch.get("determinant_ref") and branch.get("domain"):
-            ref = str(branch.get("determinant_ref")).split(".")[-1]
-            var_id = stable_id("VAR_KVAR_", ref)
-            if not any(v.get("id") == var_id for v in variables):
-                domain = branch.get("domain")
-                is_int = all(isinstance(v, int) and not isinstance(v, bool) for v in domain)
-                variables.append(
-                    {
-                        "id": var_id,
-                        "type": "int" if is_int else "enum",
-                        "domain": domain if is_int else [str(v) for v in domain],
-                    }
-                )
-                coverage_obligations["runtime_variable_state"].append(
-                    {
-                        "id": stable_id("COV_STATE_", ref),
-                        "kind": "runtime_variable_state",
-                        "target_refs": [stable_id("KVAR_", ref)],
-                        "target_value": domain[0] if domain else None,
-                    }
-                )
+        # TilingKey-backed compile branches stay on KEY obligations only — never synthesize ghost KVAR_IS_*.
+
+    # RVS exclusively from true TilingData-backed KernelVariables.
+    for kvar in kvar_nodes or []:
+        name = str(kvar.get("name") or "")
+        if not name or not kvar.get("domain"):
+            continue
+        kvar_id = _ensure_prefix(kvar.get("id"), "KVAR_", name)
+        var_id = stable_id("VAR_KVAR_", name)
+        domain = kvar.get("domain")
+        is_int = isinstance(domain, list) and all(isinstance(v, int) and not isinstance(v, bool) for v in domain)
+        if not any(v.get("id") == var_id for v in variables):
+            variables.append(
+                {
+                    "id": var_id,
+                    "type": "int" if is_int else "enum",
+                    "domain": domain if is_int else [str(v) for v in (domain or [])],
+                    "semantic_role": _infer_kvar_semantic_role(kvar),
+                    "binding_surface": "tiling_data",
+                }
+            )
+        coverage_obligations["runtime_variable_state"].append(
+            {
+                "id": stable_id("COV_STATE_", name),
+                "kind": "runtime_variable_state",
+                "target_refs": [kvar_id],
+                "target_value": domain[0] if isinstance(domain, list) and domain else None,
+            }
+        )
 
     if not dtype_layout:
         dtype_layout = [
@@ -652,6 +733,18 @@ def _build_testcase_contract(
         dedup[str(item["id"])] = item
     variables = list(dedup.values())
 
+    key_determinants = {
+        str(field["id"]): {
+            "role": field.get("role"),
+            "semantic_role": field.get("semantic_role"),
+            "csv_determinants": field.get("csv_determinants") or [],
+            "primary_layout_field": field.get("primary_layout_field"),
+        }
+        for field in key_fields
+        if field.get("csv_determinants") or field.get("role")
+    }
+    producible_fields = _producible_fields_from_golden(golden)
+
     return {
         "version": 2,
         "op_name": graph.get("op_name"),
@@ -666,11 +759,14 @@ def _build_testcase_contract(
             "outputs": [],
             "attrs": [],
             "dtype_layout_domains": dtype_layout,
+            "primary_layout_field": "input_layout",
+            "producible_fields": producible_fields,
         },
         "variables": variables,
         "typed_constraints": typed_constraints,
         "constraint_ir": {"variables": variables, "constraints": typed_constraints},
         "coverage_obligations": coverage_obligations,
+        "key_determinants": key_determinants,
         "golden_contract": {
             "inputs": list(golden.get("input_case_keys") or []),
             "outputs": list(golden.get("outputs") or ["dq", "dk", "dv"]),
@@ -686,11 +782,150 @@ def _build_testcase_contract(
             "ctx_tensor_writes": golden.get("ctx_tensor_writes") or [],
             "input_case_defaults": golden.get("input_case_defaults") or {},
         },
-        "kernel_branch_obligations": [{"id": b["id"]} for b in branch_rows if b.get("binding_time") == "runtime"][:80],
+        "kernel_branch_obligations": [
+            {"id": b["id"]} for b in branch_rows if b.get("binding_time") == "runtime"
+        ][:80],
+        "kernel_branch_obligations_meta": {
+            "total_runtime_branches": len([b for b in branch_rows if b.get("binding_time") == "runtime"]),
+            "listed_count": min(80, len([b for b in branch_rows if b.get("binding_time") == "runtime"])),
+            "truncated": len([b for b in branch_rows if b.get("binding_time") == "runtime"]) > 80,
+            "full_list": "kernel/branches.yaml",
+        },
         "unresolved": [],
         "conflicts": [],
         "evidence_refs": [],
     }
+
+
+def _infer_key_field_role(name: str) -> dict[str, Any]:
+    """Generic KEY role + csv_determinants from naming (not per-operator tables)."""
+    bare = str(name or "").strip()
+    upper = bare.upper().replace("_", "")
+    out: dict[str, Any] = {"role": "enum_knob", "csv_determinants": [], "primary_layout_field": None}
+
+    if upper.startswith("IS") and len(upper) > 2:
+        stem = upper[2:]
+        # Layout flags: IsTnd / IsBnsd / ... → primary input_layout equality.
+        layout_labels = {"TND", "BNSD", "BSND", "BSH", "SBH", "ND", "NZ", "BNGSD", "BSNGD", "SBNGD"}
+        if stem in layout_labels:
+            out["role"] = "layout_flag"
+            out["primary_layout_field"] = "input_layout"
+            out["csv_determinants"] = [{"column": "input_layout", "op": "eq", "value": stem}]
+            return out
+        # Optional presence: IsPse / IsAttenMask / IsDrop / ...
+        if stem in {"PSE", "ATTENMASK", "ATTENTIONMASK", "DROP", "DROPOUT", "ROPE", "SINK"}:
+            out["role"] = "optional_presence"
+            col_stem = {
+                "PSE": "pse",
+                "ATTENMASK": "atten_mask",
+                "ATTENTIONMASK": "atten_mask",
+                "DROP": "drop",
+                "DROPOUT": "drop",
+                "ROPE": "rope",
+                "SINK": "is_sink",
+            }.get(stem, stem.lower())
+            if stem == "ROPE":
+                out["role"] = "switch"
+                out["csv_determinants"] = [{"column": "rope", "op": "eq", "value": 1}]
+            elif stem == "SINK":
+                out["role"] = "switch"
+                out["csv_determinants"] = [{"column": "is_sink", "op": "eq", "value": 1}]
+            else:
+                out["csv_determinants"] = [
+                    {"combine": "or"},
+                    {"column": f"{col_stem}_shape", "op": "ne", "value": "NONE"},
+                    {"column": f"{col_stem}_type", "op": "ne", "value": 0},
+                ]
+            return out
+        out["role"] = "switch"
+        return out
+
+    if "TEMPLATE" in upper or bare.endswith("Num") or bare.endswith("TemplateNum"):
+        out["role"] = "shape"
+        return out
+    if "DTYPE" in upper or bare.lower().endswith("dtype"):
+        out["role"] = "enum_knob"
+        return out
+    return out
+
+
+def _infer_kvar_semantic_role(node: dict[str, Any]) -> str:
+    name = str(node.get("name") or node.get("id") or "")
+    domain = node.get("domain")
+    lower = name.lower()
+    if lower in {"b", "n", "n1", "n2", "s", "s1", "s2", "d", "d_v"} or lower.endswith("size") or lower.endswith("num"):
+        # Short names that collide with shape columns stay as switch/bool when domain is 0/1.
+        if isinstance(domain, list) and set(domain) <= {0, 1} and len(domain) <= 2:
+            return "switch"
+        return "shape"
+    if isinstance(domain, list) and set(v for v in domain if not isinstance(v, bool)) <= {0, 1} and domain:
+        ints = [v for v in domain if isinstance(v, int) and not isinstance(v, bool)]
+        if ints and set(ints) <= {0, 1}:
+            return "switch"
+    if "layout" in lower:
+        return "layout_secondary" if any(x in lower for x in ("mask", "pse", "atten")) else "layout_primary"
+    if "mode" in lower or "type" in lower:
+        return "enum_knob"
+    return "runtime"
+
+
+def _enrich_domain_entries(entries: Any) -> list[dict[str, Any]]:
+    if not isinstance(entries, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        item = dict(entry)
+        if item.get("csv_value") is None and item.get("value") is not None:
+            item["csv_value"] = item.get("value")
+        out.append(item)
+    return out
+
+
+def _optional_presence_columns(name: str) -> list[str]:
+    stem = str(name or "").strip().lower().replace("optional", "").strip("_")
+    if not stem:
+        return []
+    return [f"{stem}_shape", f"{stem}_type", f"{stem}_dtype"]
+
+
+def _producible_fields_from_golden(golden: dict[str, Any]) -> list[dict[str, Any]]:
+    fields: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for key in list(golden.get("input_case_keys") or []) + list((golden.get("input_case_defaults") or {}).keys()):
+        name = str(key or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        lower = name.lower()
+        role = "enum_knob"
+        if lower in {"b", "n", "n1", "n2", "s", "s1", "s2", "d", "d_v"} or "token" in lower:
+            role = "shape"
+        elif "layout" in lower:
+            role = "layout_primary" if "mask" not in lower and "pse" not in lower else "layout_secondary"
+        elif "dtype" in lower:
+            role = "dtype"
+        elif lower.endswith("_shape") or lower.endswith("_type"):
+            role = "optional_presence"
+        elif lower in {"rope", "is_sink", "keep_prob"}:
+            role = "switch"
+        fields.append({"name": name, "role": role, "producible": True})
+    literals = golden.get("dtype_layout_literals") or {}
+    if isinstance(literals, dict):
+        for name, values in literals.items():
+            if name in seen:
+                continue
+            seen.add(str(name))
+            fields.append(
+                {
+                    "name": str(name),
+                    "role": "layout_primary" if "layout" in str(name).lower() else "dtype",
+                    "producible": True,
+                    "values": list(values or []),
+                }
+            )
+    return fields
 
 
 def _entities_from_graph(graph: dict[str, Any]) -> list[dict[str, Any]]:

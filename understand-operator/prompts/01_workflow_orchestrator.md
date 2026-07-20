@@ -78,9 +78,18 @@ python -X utf8 "$SCRIPT_DIR/resolve_entrypoints.py" "$PROJECT_ROOT" --op-name "$
 ```
 
 If roles need LLM confirmation, dispatch `uo-semantic-resolve` (entrypoint task),
-apply `ir/entrypoint_confirm.yaml`, then:
+apply `ir/entrypoint_confirm.yaml`, then propose + confirm extract plan:
 
 ```powershell
+python -X utf8 "$SCRIPT_DIR/propose_extract_plan.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --architecture arch35 --write
+```
+
+Dispatch `uo-semantic-resolve` extract-plan confirmation (mandatory template in
+`prompts/00_subagent_dispatch.md`), then:
+
+```powershell
+python -X utf8 "$SCRIPT_DIR/apply_extract_plan.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --check
+python -X utf8 "$SCRIPT_DIR/apply_extract_plan.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --write
 python -X utf8 "$SCRIPT_DIR/build_layered_kb.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --architecture arch35
 ```
 

@@ -41,6 +41,7 @@ Hash 只覆盖 `bundle.yaml` → `hash_inputs` 列表中的文件（见仓库 RE
 - `resolve_entrypoints.py`
 - `build_layered_kb.py`
 - `extract_host_subgraph.py` / `extract_kernel_subgraph.py` / `extract_tilingkey_space.py` / `extract_golden.py`
+- `macro_regions.py`  # `#if`/`#ifdef` region eval + KEY soft-undefined
 - `reconcile_bridge.py`
 - `extract_key_predicates.py`
 - `apply_resolution.py`

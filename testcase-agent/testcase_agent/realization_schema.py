@@ -7,6 +7,18 @@ from pathlib import Path
 from typing import Any
 
 from .realization_contract import CONSUMER_SCHEMA_VERSION
+from .domain_policy import (
+    classify_column_role,
+    expand_enum_domain,
+    is_discrete_int_column,
+    is_shape_int_column,
+    is_switch_int_column,
+    is_tensor_placeholder_domain,
+    merge_discrete_int_domain,
+    parse_int,
+    shape_range_domain,
+)
+from .csv_domain_cover import extract_uo_domain_entries_by_column, normalize_column_name
 
 
 # Metadata / identity columns that are not free SMT variables by default.
@@ -84,16 +96,47 @@ def extract_consumer_schema(consumer_root: Path | None) -> dict[str, Any]:
     }
 
 
-def build_consumer_schema_from_evidence(evidence: dict[str, Any], consumer_root: Path) -> dict[str, Any]:
-    """Build versioned consumer_schema with fields from script/sample evidence (no hardcoded header list)."""
-    columns = _ordered_columns_from_evidence(evidence)
+def build_consumer_schema_from_evidence(
+    evidence: dict[str, Any],
+    consumer_root: Path,
+    *,
+    key_space: dict[str, Any] | None = None,
+    snapshot_files: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build consumer_schema from scripts + UO/domain_hints (not sample csv/xls)."""
+    columns = [normalize_column_name(c) for c in _ordered_columns_from_evidence(evidence)]
+    columns = list(dict.fromkeys(columns))
     sample_values = dict(evidence.get("sample_values") or {})
+    sample_int_ranges = dict(evidence.get("sample_int_ranges") or {})
+    domain_hints = dict((evidence.get("domain_hints") or {}).get("columns") or {})
     field_accesses = evidence.get("field_accesses") or {}
     required_optional = evidence.get("required_optional_evidence") or {}
     type_evidence = evidence.get("type_conversion_evidence") or {}
+    evidence_tokens = [
+        str(item.get("token") or "")
+        for item in (evidence.get("test_requirement_refs") or [])
+        if isinstance(item, dict) and item.get("token")
+    ]
+    uo_entries = extract_uo_domain_entries_by_column(snapshot_files or {}, columns)
+    optional_names = {
+        str(item.get("name") or "")
+        for item in ((snapshot_files or {}).get("contracts/testcase.yaml", {}) or {}).get("interface", {}).get("optional_inputs", [])
+        if isinstance(item, dict) and item.get("name")
+    }
     fields: list[dict[str, Any]] = []
     for order, column in enumerate(columns):
-        role, value_type, domain, default, serializer = _infer_field(column, sample_values, type_evidence)
+        hint = domain_hints.get(column) if isinstance(domain_hints.get(column), dict) else {}
+        role, value_type, domain, default, serializer = _infer_field(
+            column,
+            sample_values,
+            type_evidence,
+            int_range=sample_int_ranges.get(column),
+            key_space=key_space,
+            evidence_tokens=evidence_tokens,
+            uo_values=uo_entries.get(column),
+            hint=hint,
+            optional_names=optional_names,
+        )
         required = _is_required(column, role, required_optional, field_accesses)
         source_refs = _source_refs_for_column(column, evidence)
         fields.append(
@@ -108,8 +151,8 @@ def build_consumer_schema_from_evidence(evidence: dict[str, Any], consumer_root:
                 "serializer": serializer,
                 "aliases": [],
                 "source_refs": source_refs,
-                "confidence": "high" if source_refs else "medium",
-                "rationale": f"bootstrap from evidence for column {column}",
+                "confidence": "high" if source_refs or uo_entries.get(column) or hint else "medium",
+                "rationale": f"domain from UO/hints/SAFE_CAPS for column {column}",
             }
         )
     result_columns = [column for column in columns if column.startswith(RESULT_PREFIX)]
@@ -117,10 +160,12 @@ def build_consumer_schema_from_evidence(evidence: dict[str, Any], consumer_root:
         "version": CONSUMER_SCHEMA_VERSION,
         "status": "bootstrap",
         "consumer_root": consumer_root.as_posix(),
-        "schema_source": ["consumer_evidence"],
+        "schema_source": ["consumer_evidence", "uo_domain_entries", "domain_hints"],
         "columns": columns,
         "result_columns": result_columns,
         "sample_values": sample_values,
+        "sample_int_ranges": sample_int_ranges,
+        "uo_domain_entries": uo_entries,
         "fields": fields,
         "warnings": list(evidence.get("warnings") or []),
     }
@@ -148,6 +193,13 @@ def _infer_field(
     column: str,
     sample_values: dict[str, list[Any]],
     type_evidence: dict[str, list[dict[str, Any]]],
+    *,
+    int_range: dict[str, Any] | None = None,
+    key_space: dict[str, Any] | None = None,
+    evidence_tokens: list[str] | None = None,
+    uo_values: list[Any] | None = None,
+    hint: dict[str, Any] | None = None,
+    optional_names: set[str] | None = None,
 ) -> tuple[str, str, Any, Any, str]:
     if column in CASE_ID_COLUMNS:
         return "case_id", "string", ["*"], "", "string"
@@ -157,36 +209,109 @@ def _infer_field(
         return "constant", "string", [CONSTANT_DEFAULTS[column]], CONSTANT_DEFAULTS[column], "string"
 
     samples = list(sample_values.get(column) or [])
+    hint = hint or {}
+    hint_values = list(hint.get("values") or [])
+    role_hint = classify_column_role(column, samples=samples, uo_values=uo_values, optional_names=optional_names)
     casts = {str(item.get("kind") or "") for item in type_evidence.get(column) or []}
     if "cast:bool" in casts or column.lower() in {"is_deter"}:
         domain = ["true", "false"]
         return "solver_input", "enum", domain, domain[0], "string"
-    if "cast:int" in casts or _samples_look_int(samples):
-        ints = [_parse_int(value) for value in samples]
-        ints = [value for value in ints if value is not None]
-        if not ints:
-            ints = [0, 1]
-        domain_vals = sorted(dict.fromkeys(ints))
-        return "solver_input", "int", {"values": domain_vals}, domain_vals[0], "string"
 
-    # list-like columns → emit_derived (filled from model / emit templates)
     if "seqlens" in column.lower() or column.startswith("cu_"):
         return "emit_derived", "list_int", [], [], "list_string"
     if column in {"prefix"}:
         return "constant", "string", [""], "", "string"
 
-    clean = [str(value) for value in samples if str(value) != ""]
+    looks_int = (
+        "cast:int" in casts
+        or _samples_look_int(samples)
+        or _samples_look_int(hint_values)
+        or _samples_look_int(uo_values or [])
+        or is_shape_int_column(column)
+        or is_discrete_int_column(column)
+    )
+    if is_switch_int_column(column):
+        return "solver_input", "int", {"values": [0, 1]}, 0, "string"
+    if role_hint == "tensor_placeholder":
+        return "tensor_placeholder", "enum", ["_"], "_", "string"
+    if role_hint == "optional_presence":
+        clean = expand_enum_domain(
+            column,
+            samples,
+            evidence_tokens=evidence_tokens,
+            hint_values=[*(uo_values or []), *hint_values],
+            hint=hint,
+        )
+        if not clean:
+            clean = ["NONE", "_"]
+        return "solver_input", "enum", clean, clean[0], "string"
+    # Shape ranges take precedence over any accidental UO discrete match.
+    if is_shape_int_column(column):
+        ints = [v for v in (parse_int(value) for value in [*samples, *hint_values]) if v is not None]
+        domain = shape_range_domain(
+            column,
+            sample_ints=ints,
+            int_range=int_range,
+            key_space=key_space,
+            hint_domain=hint if hint.get("min") is not None or hint.get("max") is not None else None,
+        )
+        return "solver_input", "int", domain, int(domain["min"]), "string"
+    if is_discrete_int_column(column) or (uo_values and all(parse_int(v) is not None for v in uo_values)):
+        domain_vals = merge_discrete_int_domain(samples, uo_values, hint_values, hint=hint)
+        return "solver_input", "int", {"values": domain_vals}, domain_vals[0], "string"
+    if looks_int and _prefer_range(samples, int_range, hint):
+        ints = [v for v in (parse_int(value) for value in [*samples, *hint_values]) if v is not None]
+        domain = shape_range_domain(
+            column,
+            sample_ints=ints,
+            int_range=int_range,
+            key_space=key_space,
+            hint_domain=hint if hint.get("min") is not None or hint.get("max") is not None else None,
+        )
+        return "solver_input", "int", domain, int(domain["min"]), "string"
+    if looks_int:
+        ints = merge_discrete_int_domain(samples, uo_values, hint_values, hint=hint)
+        return "solver_input", "int", {"values": ints}, ints[0], "string"
+
+    clean = expand_enum_domain(
+        column,
+        samples,
+        evidence_tokens=evidence_tokens,
+        hint_values=[*(uo_values or []), *hint_values],
+        hint=hint,
+    )
+    if role_hint == "tensor_placeholder" and is_tensor_placeholder_domain(clean):
+        clean = ["_"]
     if not clean:
-        # Still a free solver input so SMT can choose; domain is a placeholder until LLM/samples refine.
         clean = ["_"]
         return "solver_input", "enum", clean, clean[0], "string"
-    return "solver_input", "enum", sorted(dict.fromkeys(clean)), clean[0], "string"
+    return "solver_input", "enum", clean, clean[0], "string"
+
+
+def _prefer_range(
+    samples: list[Any],
+    int_range: dict[str, Any] | None,
+    hint: dict[str, Any] | None = None,
+) -> bool:
+    """Use range for shape-like spans; hints with min/max also force range."""
+    if isinstance(hint, dict) and hint.get("min") is not None and hint.get("max") is not None:
+        return True
+    ints = [v for v in (parse_int(value) for value in samples) if v is not None]
+    if int_range:
+        lo = parse_int(int_range.get("min"))
+        hi = parse_int(int_range.get("max"))
+        if lo is not None and hi is not None and hi - lo >= 2:
+            return True
+    if not ints:
+        # Shape columns without samples still get SAFE_CAPS ranges.
+        return True
+    return max(ints) - min(ints) >= 2 or max(ints) >= 8
 
 
 def _samples_look_int(samples: list[Any]) -> bool:
     if not samples:
         return False
-    parsed = [_parse_int(value) for value in samples]
+    parsed = [parse_int(value) for value in samples]
     return all(value is not None for value in parsed)
 
 
@@ -279,11 +404,4 @@ def _read_sample_csv(path: Path) -> tuple[list[str], dict[str, list[Any]]]:
 
 
 def _parse_int(value: Any) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    try:
-        return int(float(str(value)))
-    except (TypeError, ValueError):
-        return None
+    return parse_int(value)

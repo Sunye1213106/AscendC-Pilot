@@ -7,7 +7,7 @@ import yaml
 from uo._operator.artifacts import init_operator_contract_layout, operator_root
 from uo.scripts.apply_resolution import apply_resolution, _normalize_patch
 from uo.scripts.reconcile_bridge import _is_non_tiling_key, _norm_key
-from uo.scripts.extract_host_subgraph import FIELD_WRITE_RE, SET_FIELD_RE, TILING_SETTER_RE, WRITES_TILING_HELPERS
+from uo.scripts.extract_host_subgraph import FIELD_WRITE_RE, RECV_SETTER_RE, SET_FIELD_RE
 from uo.scripts.extract_kernel_subgraph import (
     KERNEL_DERIVED_READ_RE,
     TILING_DATA_READ_RE,
@@ -189,17 +189,18 @@ def test_apply_resolution_accepts_legacy_resolutions(tmp_path: Path) -> None:
 
 def test_host_write_patterns_prefer_setters() -> None:
     body = """
-    void SaveToTilingData() {
-      s1s2BNGS1S2BaseParams_->set_coreNum(8);
-      fBaseParams.enableSwizzle = true;
+    void SaveStuff() {
+      blob_->set_coreNum(8);
+      mid_.enableSwizzle = true;
       tilingData->s1Inner = 1;
     }
     """
-    assert "savetotilingdata" in WRITES_TILING_HELPERS
-    setters = TILING_SETTER_RE.findall(body) + SET_FIELD_RE.findall(body)
+    recv_fields = [f for _, f in RECV_SETTER_RE.findall(body)]
+    setters = recv_fields + SET_FIELD_RE.findall(body)
     assert "coreNum" in setters
-    # Broad intermediate assignment should not match narrowed FIELD_WRITE_RE
+    # Intermediate assignment should not match tilingData-only FIELD_WRITE_RE
     assert "enableSwizzle" not in FIELD_WRITE_RE.findall(body)
+    assert "s1Inner" in FIELD_WRITE_RE.findall(body)
 
 
 def test_kernel_derived_not_tiling_data() -> None:

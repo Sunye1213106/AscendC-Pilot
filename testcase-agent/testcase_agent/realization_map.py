@@ -85,6 +85,9 @@ def build_realization_map(
             continue
         if role in {"constant", "metadata", "expected_result"} or column == "Enable":
             continue
+        if role == "tensor_placeholder":
+            emit_columns[column] = {"op": "constant", "value": "_"}
+            continue
         if role == "emit_derived" or "seqlens" in column.lower() or column.startswith("cu_"):
             emit_columns[column] = _default_emit_for_column(column)
             continue
@@ -168,7 +171,71 @@ def build_realization_map(
             "deterministic TG only applies UO set_by + key_space token heuristics"
         ],
     }
+    extend_csv_enum_domains_from_exprs(realization_map)
     return normalize_realization_map(realization_map)
+
+
+def extend_csv_enum_domains_from_exprs(realization_map: dict[str, Any]) -> dict[str, Any]:
+    """Union string literals from derived/branch exprs into CSV enum domains (UO evidence)."""
+    by_id = {
+        str(item.get("id") or ""): item
+        for item in realization_map.get("csv_variables") or []
+        if isinstance(item, dict) and item.get("id") and str(item.get("type") or "") == "enum"
+    }
+    if not by_id:
+        return realization_map
+    extras: dict[str, list[str]] = {vid: [] for vid in by_id}
+    for item in list(realization_map.get("derived_variables") or []) + list(
+        realization_map.get("branch_mappings") or []
+    ):
+        if not isinstance(item, dict):
+            continue
+        expr = item.get("expr")
+        if isinstance(expr, dict) and expr.get("op") == "derived":
+            expr = expr.get("expr")
+        for var_id, value in _collect_enum_literals(expr):
+            if var_id in extras and value not in extras[var_id]:
+                extras[var_id].append(value)
+        # Also scan nested target bindings on branch mappings.
+        for binding in item.get("atom_bindings") or []:
+            if not isinstance(binding, dict):
+                continue
+            target = binding.get("target")
+            for var_id, value in _collect_enum_literals(target):
+                if var_id in extras and value not in extras[var_id]:
+                    extras[var_id].append(value)
+    for var_id, values in extras.items():
+        if not values:
+            continue
+        spec = by_id[var_id]
+        domain = [str(v) for v in (spec.get("domain") or [])]
+        merged = list(dict.fromkeys([*domain, *values]))
+        if merged != domain:
+            spec["domain"] = merged
+    return realization_map
+
+
+def _collect_enum_literals(expr: Any) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    if not isinstance(expr, dict):
+        return out
+    op = str(expr.get("op") or "")
+    if op in {"eq", "ne"} and "var" in expr and "value" in expr:
+        value = expr.get("value")
+        if isinstance(value, str) and value and not isinstance(value, bool):
+            # Skip numeric-looking strings — those belong to int domains.
+            try:
+                float(value)
+            except (TypeError, ValueError):
+                out.append((str(expr["var"]), value))
+    for key in ("arg", "lhs", "rhs", "condition", "then", "else", "antecedent", "consequent", "expr"):
+        child = expr.get(key)
+        if child is not None:
+            out.extend(_collect_enum_literals(child))
+    for key in ("args", "items"):
+        for child in expr.get(key) or []:
+            out.extend(_collect_enum_literals(child))
+    return out
 
 
 def _csv_variable_from_field(column: str, field: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any] | None:
@@ -177,6 +244,27 @@ def _csv_variable_from_field(column: str, field: dict[str, Any], schema: dict[st
     domain = field.get("domain")
     source_refs = field.get("source_refs") or [{"path": "consumer_schema", "column": column}]
     if value_type == "int" or column in INT_COLUMNS or column in FLOAT_AS_INT_COLUMNS:
+        # Preserve generalized range domains from schema inference.
+        if isinstance(domain, dict) and (
+            domain.get("kind") == "range" or domain.get("min") is not None or domain.get("max") is not None
+        ):
+            lo = _parse_int(domain.get("min"))
+            hi = _parse_int(domain.get("max"))
+            if lo is None:
+                lo = 1
+            if hi is None:
+                hi = lo
+            if hi < lo:
+                hi = lo
+            return {
+                "id": csv_var(column),
+                "column": column,
+                "type": "int",
+                "domain": {"kind": "range", "min": int(lo), "max": int(hi)},
+                "default": field.get("default", int(lo)),
+                "free": True,
+                "source_refs": source_refs,
+            }
         if isinstance(domain, dict) and domain.get("values") is not None:
             ints = [int(item) for item in domain.get("values") or []]
         elif isinstance(domain, list):

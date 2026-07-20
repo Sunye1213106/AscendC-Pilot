@@ -6,6 +6,9 @@ from .hashing import stable_hash
 
 
 PRIORITY_WEIGHT = {"hard": 100, "high": 10, "normal": 1}
+# Soft cap: after coverage is satisfied, prefer candidates that do not further skew
+# already-frequent discrete csv_domain_cover values (generic diversity, not per-op).
+MAX_FREQ_RATIO = 3.0
 
 
 class CandidateError(RuntimeError):
@@ -138,6 +141,8 @@ def greedy_set_cover(candidates: list[dict[str, Any]], obligations: list[dict[st
     uncovered = set(obligation_by_id)
     selected: list[dict[str, Any]] = []
     remaining = sorted(candidates, key=lambda item: item["id"])
+    # Track discrete cover value frequencies for soft diversity rebalance.
+    value_freq: dict[tuple[str, str], int] = {}
 
     while uncovered:
         scored = []
@@ -146,13 +151,15 @@ def greedy_set_cover(candidates: list[dict[str, Any]], obligations: list[dict[st
             if not covers:
                 continue
             score = sum(PRIORITY_WEIGHT.get(obligation_by_id[cid].get("priority"), 1) for cid in covers)
-            scored.append((score, len(covers), candidate["id"], candidate, covers))
+            diversity_penalty = _diversity_penalty(candidate, obligation_by_id, value_freq)
+            scored.append((score - diversity_penalty, len(covers), candidate["id"], candidate, covers))
         if not scored:
             break
         scored.sort(key=lambda row: (-row[0], -row[1], row[2]))
         _score, _count, _cid, chosen, covers = scored[0]
         selected.append(chosen)
         uncovered -= set(covers)
+        _update_value_freq(chosen, obligation_by_id, value_freq)
         remaining = [item for item in remaining if item["id"] != chosen["id"]]
 
     uncovered_items = [
@@ -165,3 +172,48 @@ def greedy_set_cover(candidates: list[dict[str, Any]], obligations: list[dict[st
         for oid in sorted(uncovered)
     ]
     return {"selected_candidates": selected, "uncovered_obligations": uncovered_items}
+
+
+def _csv_cover_keys(candidate: dict[str, Any], obligation_by_id: dict[str, dict[str, Any]]) -> list[tuple[str, str]]:
+    keys: list[tuple[str, str]] = []
+    for oid in candidate.get("covered_obligation_ids") or []:
+        obl = obligation_by_id.get(str(oid), {})
+        if str(obl.get("kind") or "") != "csv_domain_cover":
+            continue
+        field = str(obl.get("field") or "")
+        if not field:
+            continue
+        keys.append((field, str(obl.get("target_value"))))
+    return keys
+
+
+def _update_value_freq(
+    candidate: dict[str, Any],
+    obligation_by_id: dict[str, dict[str, Any]],
+    value_freq: dict[tuple[str, str], int],
+) -> None:
+    for key in _csv_cover_keys(candidate, obligation_by_id):
+        value_freq[key] = value_freq.get(key, 0) + 1
+
+
+def _diversity_penalty(
+    candidate: dict[str, Any],
+    obligation_by_id: dict[str, dict[str, Any]],
+    value_freq: dict[tuple[str, str], int],
+) -> float:
+    """Penalize candidates that further inflate already-dominant discrete cover values."""
+    if not value_freq:
+        return 0.0
+    penalty = 0.0
+    for field, value in _csv_cover_keys(candidate, obligation_by_id):
+        field_freqs = [freq for (f, _), freq in value_freq.items() if f == field]
+        if not field_freqs:
+            continue
+        min_freq = min(field_freqs)
+        cur = value_freq.get((field, value), 0)
+        # If this value already appears much more than the rarest value, soft-penalize.
+        if min_freq > 0 and cur >= max(1, int(min_freq * MAX_FREQ_RATIO)):
+            penalty += 5.0
+        elif cur > min_freq:
+            penalty += 1.0
+    return penalty

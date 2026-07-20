@@ -100,3 +100,28 @@ ASCENDC_TPL_ARGS_SEL(
     assert payload["status"] == "ok"
     assert payload["template_aliases"][0]["flags"] == {"isDeter": False, "isTnd": False}
     assert any(d["name"] == "IsDeter" for d in payload["dimensions"])
+
+
+def test_host_extract_has_no_fag_closed_gates() -> None:
+    """Host extractor must not use FAG-specific closed name sets as logic gates."""
+    src = Path(__file__).resolve().parents[1] / "uo" / "scripts" / "extract_host_subgraph.py"
+    text = src.read_text(encoding="utf-8").casefold()
+    for banned in (
+        "fbaseparams",
+        "dopretiling",
+        "pretilingdata",
+        "writes_tiling_helpers",
+        "keep_helpers",
+        "host_intermediate_roots",
+        "savetotilingdata",
+    ):
+        # Identifier-style gates only; comments mentioning history are ok if not as constants.
+        assert f"{banned} =" not in text
+        assert f"{banned} = " not in text
+        assert f'"{banned}"' not in text
+        assert f"'{banned}'" not in text
+        assert f"{{{banned}" not in text
+    # Closed frozenset/set name gates removed
+    assert "writes_tiling_helpers" not in text
+    assert "keep_helpers" not in text
+    assert "host_intermediate_roots" not in text

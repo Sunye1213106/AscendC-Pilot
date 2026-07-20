@@ -2,8 +2,8 @@
 
 TestAgent for Understand Operator contracts. Public commands:
 
-- `tg-contract`: scan `--csv-consumer-root` test scripts/sample CSV → `realization/` contract (headers + `VAR_CSV_*` map).
-- `tg-plan`: intake `.understand-operator/<op_name>/`, extract conditions, build L0–L3 plan **filtered by CSV reachability**.
+- `tg-contract`: scan `--test-script-root` → `realization/` contract (headers + `VAR_CSV_*` map).
+- `tg-plan`: requires 算子仓 + (**测试工具** auto-contract | **`--contract-root`** reuse); then L0–L3 plan filtered by CSV reachability.
 - `tg-solve`: after approval, SMT on `VAR_CSV_*` free vars → project model to CSV rows.
 
 `tg-init` is deprecated (intake is part of `tg-contract` / `tg-plan`).
@@ -72,19 +72,25 @@ chmod +x ./install.sh
 ## 使用
 
 `<project_root>` 为算子包目录（含已构建的 `.understand-operator/<op_name>/`）。
+也可传 KB 路径；`--test-script-root` 为测试工程（CSV consumer）。
+
+`tg-plan` 输入：**算子仓 +（测试工具 | contract 产物）**。缺了就失败并要求补齐。
 
 ```powershell
-tg-contract <project_root> --op-name <op_name> --csv-consumer-root <test_script_root>
-tg-plan <project_root> --op-name <op_name> --level L1 --csv-consumer-root <test_script_root>
+# 测试工具 → 自动 contract + plan
+tg-plan <project_root> --op-name <op_name> --level L0,L1 --test-script-root <test_tool_root>
+
+# 或复用已有 contract 产物
+tg-plan <project_root> --op-name <op_name> --level L0,L1 --contract-root <realization_dir>
+
 # OpenCode AskQuestion: approve（立即 tg-solve）/ reject / suggest
 tg-solve <project_root> --op-name <op_name> --level L1
 ```
 
-L3:
+仅刷新 contract（不要 plan）时：
 
 ```powershell
-tg-plan <project_root> --op-name <op_name> --level L3 --topic determinism
-tg-solve <project_root> --op-name <op_name>
+tg-contract <project_root> --op-name <op_name> --test-script-root <test_tool_root>
 ```
 
 LLM 仅补全低置信 extract gaps（`extract/llm_patches.yaml`）。高置信路径零 LLM。

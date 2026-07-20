@@ -291,6 +291,51 @@ def _eval(expr: Any, assignment: dict[str, Any]) -> Any:
     raise ReachabilityError(f"unsupported op for reachability: {op}")
 
 
+# Full expand for tiny ranges; larger ranges are sampled for image analysis only.
+# Z3 still uses the real {min,max} bounds — this list is NOT the solver domain.
+_MAX_RANGE_EXPAND = 256
+_RANGE_SAMPLE_ANCHORS = (
+    0,
+    1,
+    2,
+    4,
+    8,
+    16,
+    32,
+    64,
+    128,
+    192,
+    256,
+    512,
+    768,
+    1024,
+    2048,
+    4096,
+    8192,
+    16384,
+    32768,
+    65536,
+)
+
+
+def _sample_int_range(lower: int, upper: int) -> list[int]:
+    """Representative points covering min/max and common shape/template thresholds."""
+    if upper < lower:
+        lower, upper = upper, lower
+    span = upper - lower
+    if span + 1 <= _MAX_RANGE_EXPAND:
+        return list(range(lower, upper + 1))
+    points = {lower, upper}
+    for anchor in _RANGE_SAMPLE_ANCHORS:
+        if lower <= anchor <= upper:
+            points.add(anchor)
+    # A few evenly spaced interiors so ge/le bucket thresholds can fire.
+    steps = 16
+    for i in range(1, steps):
+        points.add(lower + (span * i) // steps)
+    return sorted(points)
+
+
 def _normalize_domain_values(domain: Any, var_type: Any = None) -> list[Any]:
     if isinstance(domain, list):
         values = list(domain)
@@ -299,9 +344,7 @@ def _normalize_domain_values(domain: Any, var_type: Any = None) -> list[Any]:
             values = list(domain.get("values") or [])
         elif domain.get("min") is not None and domain.get("max") is not None:
             lower, upper = int(domain["min"]), int(domain["max"])
-            if upper - lower > 10_000:
-                raise ReachabilityError("int range domain too large")
-            values = list(range(lower, upper + 1))
+            values = _sample_int_range(lower, upper)
         else:
             values = []
     else:

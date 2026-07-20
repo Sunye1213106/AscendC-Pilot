@@ -1,7 +1,10 @@
+"""Consumer evidence from scripts/docs — NOT from sample csv/xls data files.
+
+Value domains come from UO domain_entries, SAFE_CAPS, and LLM/human domain_hints.
+"""
 from __future__ import annotations
 
 import ast
-import csv
 import hashlib
 import re
 from pathlib import Path
@@ -9,11 +12,11 @@ from typing import Any
 
 from .hashing import stable_hash
 from .io import read_json, read_yaml, write_yaml
+from .csv_domain_cover import normalize_column_name
 
 MAX_SCAN_FILES = 64
 MAX_FILE_BYTES = 256 * 1024
 MAX_SAMPLE_ROWS = 32
-CSV_EXTENSIONS = {".csv"}
 TEXT_EXTENSIONS = {".py", ".md", ".markdown", ".yaml", ".yml", ".json", ".txt"}
 
 
@@ -32,6 +35,7 @@ def prepare_consumer_evidence(
         consumer_root,
         snapshot=snapshot,
         obligations_doc=obligations_doc,
+        out_root=out_root,
     )
     evidence["snapshot_hash"] = snapshot_hash
     evidence["plan_hash"] = plan_hash
@@ -42,6 +46,8 @@ def prepare_consumer_evidence(
             "ordered_header_candidates": evidence.get("ordered_header_candidates"),
             "field_accesses": evidence.get("field_accesses"),
             "sample_values": evidence.get("sample_values"),
+            "sample_int_ranges": evidence.get("sample_int_ranges"),
+            "domain_hints": evidence.get("domain_hints"),
             "type_conversion_evidence": evidence.get("type_conversion_evidence"),
             "required_optional_evidence": evidence.get("required_optional_evidence"),
             "test_requirement_refs": evidence.get("test_requirement_refs"),
@@ -58,12 +64,15 @@ def build_consumer_evidence(
     *,
     snapshot: dict[str, Any],
     obligations_doc: dict[str, Any],
+    out_root: Path | None = None,
 ) -> dict[str, Any]:
     root = consumer_root.resolve() if consumer_root and consumer_root.exists() else None
     files_read: list[dict[str, Any]] = []
     ordered_header_candidates: list[dict[str, Any]] = []
     field_accesses: dict[str, list[dict[str, Any]]] = {}
+    # Intentionally empty — do not scrape sample csv/xls for domains.
     sample_values: dict[str, list[Any]] = {}
+    sample_int_ranges: dict[str, dict[str, int]] = {}
     type_conversion_evidence: dict[str, list[dict[str, Any]]] = {}
     required_optional_evidence: dict[str, list[dict[str, Any]]] = {}
     test_requirement_refs: list[dict[str, Any]] = []
@@ -82,31 +91,18 @@ def build_consumer_evidence(
                     "size": path.stat().st_size,
                 }
             )
-            if path.suffix.lower() in CSV_EXTENSIONS:
-                header, samples = _read_sample_csv(path)
-                if header:
-                    ordered_header_candidates.append(
-                        {
-                            "path": rel,
-                            "reason": "sample_csv",
-                            "columns": header,
-                        }
-                    )
-                    for column, values in samples.items():
-                        bucket = sample_values.setdefault(column, [])
-                        for value in values:
-                            if value not in bucket:
-                                bucket.append(value)
-            elif path.suffix.lower() == ".py":
+            if path.suffix.lower() == ".py":
                 script_info = _scan_python_columns(text, rel)
                 for item in script_info["ordered_header_candidates"]:
-                    ordered_header_candidates.append(item)
+                    # Normalize Layout → Input_Layout in discovered headers.
+                    cols = [normalize_column_name(str(c)) for c in (item.get("columns") or [])]
+                    ordered_header_candidates.append({**item, "columns": cols})
                 for column, refs in script_info["field_accesses"].items():
-                    field_accesses.setdefault(column, []).extend(refs)
+                    field_accesses.setdefault(normalize_column_name(column), []).extend(refs)
                 for column, refs in script_info["required_optional_evidence"].items():
-                    required_optional_evidence.setdefault(column, []).extend(refs)
+                    required_optional_evidence.setdefault(normalize_column_name(column), []).extend(refs)
                 for column, refs in script_info["type_conversion_evidence"].items():
-                    type_conversion_evidence.setdefault(column, []).extend(refs)
+                    type_conversion_evidence.setdefault(normalize_column_name(column), []).extend(refs)
             elif path.suffix.lower() in {".md", ".markdown", ".yaml", ".yml", ".json"}:
                 refs = _scan_requirement_refs(text, rel)
                 test_requirement_refs.extend(refs)
@@ -125,17 +121,123 @@ def build_consumer_evidence(
                 }
             )
 
+    domain_hints = load_domain_hints(out_root) if out_root else {}
+    if domain_hints:
+        warnings.append(
+            f"domain_hints loaded: {len(domain_hints.get('columns') or {})} columns "
+            f"(source={domain_hints.get('source') or 'unknown'})"
+        )
+    else:
+        warnings.append(
+            "domain_hints_missing: write realization/domain_hints.yaml (LLM estimate or human confirm) "
+            "when UO domain_entries / SAFE_CAPS are insufficient — sample csv/xls are NOT scanned"
+        )
+
+    # Apply human/LLM hint values into sample_values for downstream schema merge.
+    for column, hint in (domain_hints.get("columns") or {}).items():
+        if not isinstance(hint, dict):
+            continue
+        canon = normalize_column_name(str(column))
+        values = hint.get("values") or hint.get("domain") or []
+        if isinstance(values, dict):
+            if values.get("values") is not None:
+                values = values.get("values") or []
+            elif values.get("min") is not None and values.get("max") is not None:
+                sample_int_ranges[canon] = {
+                    "min": int(values["min"]),
+                    "max": int(values["max"]),
+                }
+                continue
+        if isinstance(values, list) and values:
+            bucket = sample_values.setdefault(canon, [])
+            for value in values:
+                if value not in bucket:
+                    bucket.append(value)
+        if hint.get("min") is not None and hint.get("max") is not None:
+            sample_int_ranges[canon] = {"min": int(hint["min"]), "max": int(hint["max"])}
+
     return {
         "version": 1,
         "consumer_root": root.as_posix() if root else "",
         "files_read": files_read,
         "ordered_header_candidates": _dedupe_headers(ordered_header_candidates),
         "field_accesses": {key: value for key, value in sorted(field_accesses.items())},
-        "sample_values": {key: value[:MAX_SAMPLE_ROWS] for key, value in sorted(sample_values.items())},
+        "sample_values": {key: value for key, value in sorted(sample_values.items())},
+        "sample_values_preview": {key: value[:32] for key, value in sorted(sample_values.items())},
+        "sample_int_ranges": {key: sample_int_ranges[key] for key in sorted(sample_int_ranges)},
+        "domain_hints": domain_hints,
         "type_conversion_evidence": {key: value for key, value in sorted(type_conversion_evidence.items())},
         "required_optional_evidence": {key: value for key, value in sorted(required_optional_evidence.items())},
         "test_requirement_refs": test_requirement_refs[:MAX_SCAN_FILES],
         "warnings": warnings,
+    }
+
+
+def load_domain_hints(out_root: Path | None) -> dict[str, Any]:
+    """Load LLM/human domain hints from realization/domain_hints.yaml or plan/human_supplement.yaml."""
+    if out_root is None:
+        return {}
+    from .io import read_yaml
+
+    for rel in (
+        Path("realization") / "domain_hints.yaml",
+        Path("plan") / "domain_hints.yaml",
+        Path("plan") / "human_supplement.yaml",
+    ):
+        path = out_root / rel
+        if not path.is_file():
+            continue
+        doc = read_yaml(path)
+        if not isinstance(doc, dict):
+            continue
+        # human_supplement may nest under domain_hints
+        if "columns" in doc:
+            return {
+                "source": str(doc.get("source") or rel.as_posix()),
+                "columns": dict(doc.get("columns") or {}),
+                "path": path.as_posix(),
+            }
+        nested = doc.get("domain_hints")
+        if isinstance(nested, dict) and nested.get("columns"):
+            return {
+                "source": str(nested.get("source") or f"{rel.as_posix()}#domain_hints"),
+                "columns": dict(nested.get("columns") or {}),
+                "path": path.as_posix(),
+            }
+    return {}
+
+
+def propose_domain_hints_stub(
+    columns: list[str],
+    *,
+    uo_entries: dict[str, list[Any]] | None = None,
+) -> dict[str, Any]:
+    """Stub for LLM/human: pre-fill known UO entries; leave gaps for confirm."""
+    columns_doc: dict[str, Any] = {}
+    for col in columns:
+        entries = (uo_entries or {}).get(col)
+        if entries:
+            columns_doc[col] = {
+                "values": list(entries),
+                "source": "uo_domain_entries",
+                "status": "proposed",
+            }
+        else:
+            columns_doc[col] = {
+                "values": [],
+                "min": None,
+                "max": None,
+                "source": "needs_llm_or_human",
+                "status": "pending",
+            }
+    return {
+        "version": 1,
+        "source": "domain_hints_stub",
+        "columns": columns_doc,
+        "hint": (
+            "Fill values/min/max via LLM estimate or human confirm, then re-run tg-contract. "
+            "Sample csv/xls are intentionally not scanned."
+        ),
     }
 
 
@@ -146,7 +248,7 @@ def _bounded_scan(root: Path) -> list[Path]:
             break
         if not path.is_file():
             continue
-        if path.suffix.lower() not in CSV_EXTENSIONS | TEXT_EXTENSIONS:
+        if path.suffix.lower() not in TEXT_EXTENSIONS:
             continue
         if path.stat().st_size > MAX_FILE_BYTES:
             continue
@@ -213,24 +315,6 @@ def _scan_requirement_refs(text: str, rel: str) -> list[dict[str, Any]]:
         if len(refs) >= MAX_SAMPLE_ROWS:
             break
     return refs
-
-
-def _read_sample_csv(path: Path) -> tuple[list[str], dict[str, list[Any]]]:
-    with path.open("r", encoding="utf-8-sig", newline="") as fh:
-        reader = csv.DictReader(fh)
-        columns = list(reader.fieldnames or [])
-        samples: dict[str, list[Any]] = {column: [] for column in columns}
-        for idx, row in enumerate(reader):
-            if idx >= MAX_SAMPLE_ROWS:
-                break
-            for column in columns:
-                value = row.get(column)
-                if value in ("", None):
-                    continue
-                bucket = samples.setdefault(column, [])
-                if value not in bucket:
-                    bucket.append(value)
-        return columns, samples
 
 
 def _safe_read_text(path: Path) -> str:

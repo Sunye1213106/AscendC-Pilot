@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from .candidates import CandidateError, build_candidate, dedupe_candidates, greedy_set_cover
+from .candidates import CandidateError, build_candidate, dedupe_candidates, greedy_set_cover, validate_candidate_branch_coverage
 from .composer import compose_global_legal, merge_composed_into_ir
 from .constraint_ir import build_constraint_ir, compile_obligation_target
 from .hashing import semantic_plan_hash, semantic_snapshot_hash
@@ -39,6 +39,7 @@ def tg_solve(
     csv_consumer_root: Path | None = None,
     reuse_realization_map: bool = False,
     allow_legacy_realization: bool = False,
+    dedupe: bool = False,
 ) -> dict[str, Any]:
     project_root = project_root.resolve()
     out_root = output_root(project_root, op_name)
@@ -105,6 +106,7 @@ def tg_solve(
         jobs=jobs,
         batch_size=batch_size,
         realization_map=realization["realization_map"],
+        dedupe=dedupe,
     )
     result["test_level"] = str(obligations_doc.get("test_level") or level or "")
     _emit_progress(progress, stage="realize", status="start", selected_candidates=len(result.get("selected_candidates") or []), dry_run=dry_run)
@@ -243,6 +245,7 @@ def solve_from_docs(
     jobs: int = 1,
     batch_size: int = 512,
     realization_map: dict[str, Any] | None = None,
+    dedupe: bool = False,
 ) -> dict[str, Any]:
     obligations = [item for item in obligations_doc.get("obligations", []) if isinstance(item, dict)]
     _emit_progress(progress, stage="constraint_ir", status="start", total_obligations=len(obligations))
@@ -275,19 +278,52 @@ def solve_from_docs(
     else:
         solve_results = [{"obligation_id": item.get("id"), "status": "skipped", "model": {}, "reason": "constraint IR has global compile errors"} for item in obligations]
 
-    _emit_progress(progress, stage="dedupe", status="start", raw_candidates=len(candidates))
+    _emit_progress(
+        progress,
+        stage="dedupe",
+        status="start",
+        raw_candidates=len(candidates),
+        dedupe_enabled=bool(dedupe),
+    )
     try:
-        deduped = dedupe_candidates(candidates, obligations)
+        deduped, selected = _select_candidates(candidates, obligations, dedupe=dedupe)
     except CandidateError as exc:
         errors.append({"code": "CONTRADICTORY_BRANCH_COVERAGE", "message": str(exc)})
         deduped = []
-    try:
+        selected = {
+            "selected_candidates": [],
+            "uncovered_obligations": [
+                {
+                    "id": item.get("id"),
+                    "kind": item.get("kind"),
+                    "priority": item.get("priority"),
+                    "reason": "candidate branch coverage conflict",
+                }
+                for item in obligations
+                if item.get("status") == "pending"
+            ],
+        }
+    if dedupe:
         _emit_progress(progress, stage="set_cover", status="start", deduped_candidates=len(deduped))
-        selected = greedy_set_cover(deduped, [item for item in obligations if item.get("status") == "pending"])
-    except CandidateError as exc:
-        errors.append({"code": "CONTRADICTORY_BRANCH_COVERAGE", "scope": "global", "severity": "error", "message": str(exc)})
-        selected = {"selected_candidates": [], "uncovered_obligations": [{"id": item.get("id"), "kind": item.get("kind"), "priority": item.get("priority"), "reason": "candidate branch coverage conflict"} for item in obligations if item.get("status") == "pending"]}
-    report = build_solver_report(obligations, solve_results, candidates, deduped, selected, unsat, unknown, errors)
+    else:
+        _emit_progress(
+            progress,
+            stage="set_cover",
+            status="skipped",
+            reason="dedupe_disabled_keep_all_sat",
+            selected_candidates=len(selected["selected_candidates"]),
+        )
+    report = build_solver_report(
+        obligations,
+        solve_results,
+        candidates,
+        deduped,
+        selected,
+        unsat,
+        unknown,
+        errors,
+        dedupe=dedupe,
+    )
     _emit_progress(
         progress,
         stage="solve",
@@ -298,11 +334,13 @@ def solve_from_docs(
         raw_candidates=len(candidates),
         deduped_candidates=len(deduped),
         selected_candidates=len(selected["selected_candidates"]),
+        dedupe_enabled=bool(dedupe),
     )
     return {
         "version": 1,
         "created_at": _now(),
         "snapshot_hash": snapshot.get("snapshot_hash"),
+        "dedupe_enabled": bool(dedupe),
         "constraint_ir": ir,
         "composed_legal_count": len(composed),
         "solve_results": solve_results,
@@ -315,6 +353,41 @@ def solve_from_docs(
         "errors": errors,
         "solver_report": report,
     }
+
+
+def _select_candidates(
+    candidates: list[dict[str, Any]],
+    obligations: list[dict[str, Any]],
+    *,
+    dedupe: bool,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Default: keep every SAT candidate. With dedupe=True: signature merge + greedy set-cover."""
+    pending = [item for item in obligations if item.get("status") == "pending"]
+    obligation_by_id = {str(item.get("id")): item for item in obligations}
+    # Always validate each candidate in isolation before selection.
+    for candidate in candidates:
+        validate_candidate_branch_coverage(candidate.get("covered_obligation_ids") or [], obligation_by_id)
+
+    if dedupe:
+        deduped = dedupe_candidates(candidates, obligations)
+        selected = greedy_set_cover(deduped, pending)
+        return deduped, selected
+
+    selected_candidates = sorted(candidates, key=lambda item: item["id"])
+    covered: set[str] = set()
+    for candidate in selected_candidates:
+        covered |= {str(oid) for oid in (candidate.get("covered_obligation_ids") or [])}
+    uncovered = [
+        {
+            "id": str(item.get("id")),
+            "kind": item.get("kind"),
+            "priority": item.get("priority"),
+            "reason": "no SAT candidate covers this obligation",
+        }
+        for item in pending
+        if str(item.get("id") or "") and str(item.get("id")) not in covered
+    ]
+    return selected_candidates, {"selected_candidates": selected_candidates, "uncovered_obligations": uncovered}
 
 
 def solve_obligations_optimized(
@@ -560,6 +633,39 @@ def _record_sat_candidate(
     obligation_by_id: dict[str, dict[str, Any]],
 ) -> None:
     covered = sorted(dict.fromkeys(oid for oid in covered_ids if oid in pending_ids or oid == source_item["id"]))
+    # Anti-collapse: each csv_domain_cover target value keeps its own candidate —
+    # do not discard sibling cover points for the same column with different values.
+    filtered: list[str] = []
+    source_obl = obligation_by_id.get(source_item["id"], source_item.get("obligation") or {})
+    source_kind = str(source_obl.get("kind") or "")
+    source_col = str(source_obl.get("field") or "")
+    source_val = source_obl.get("target_value")
+    for oid in covered:
+        obl = obligation_by_id.get(oid, {})
+        if (
+            str(obl.get("kind") or "") == "csv_domain_cover"
+            and source_kind == "csv_domain_cover"
+            and str(obl.get("field") or "") == source_col
+            and obl.get("target_value") != source_val
+            and oid != source_item["id"]
+        ):
+            continue
+        # Also: when covering from a non-cover obligation, still discard matching cover points;
+        # but when a cover point is hit, only clear that exact value (and other non-conflicting covers).
+        if (
+            str(obl.get("kind") or "") == "csv_domain_cover"
+            and source_kind != "csv_domain_cover"
+            and oid != source_item["id"]
+        ):
+            # Keep other csv_domain_cover pending so each value gets its own solve pass.
+            model = result.get("model") or {}
+            var_refs = obl.get("target_refs") or []
+            var_id = str(var_refs[0]) if var_refs else ""
+            if var_id and model.get(var_id) == obl.get("target_value"):
+                filtered.append(oid)
+            continue
+        filtered.append(oid)
+    covered = filtered
     if not covered:
         return
     candidate = build_candidate(source_item["obligation"], result, covered)
@@ -728,6 +834,7 @@ def write_solve_outputs(solve_root: Path, result: dict[str, Any]) -> None:
         {
             "version": 1,
             "snapshot_hash": result["snapshot_hash"],
+            "dedupe_enabled": bool(result.get("dedupe_enabled")),
             "raw_count": len(result["candidates"]),
             "deduped_count": len(result["deduped_candidates"]),
             "candidates": result["deduped_candidates"],
@@ -738,6 +845,7 @@ def write_solve_outputs(solve_root: Path, result: dict[str, Any]) -> None:
         {
             "version": 1,
             "snapshot_hash": result["snapshot_hash"],
+            "dedupe_enabled": bool(result.get("dedupe_enabled")),
             "selected_count": len(result["selected_candidates"]),
             "selected_candidates": result["selected_candidates"],
             "uncovered_obligations": result["uncovered_obligations"],
@@ -770,6 +878,8 @@ def build_solver_report(
     unsat: list[dict[str, Any]],
     unknown: list[dict[str, Any]],
     errors: list[dict[str, Any]],
+    *,
+    dedupe: bool = False,
 ) -> dict[str, Any]:
     counts = {
         "sat": len([item for item in solve_results if item.get("status") == "sat"]),
@@ -784,6 +894,11 @@ def build_solver_report(
         for item in selected["uncovered_obligations"]
         if obligation_by_id.get(str(item.get("id")), {}).get("priority") == "hard"
     ]
+    mode_line = (
+        "- 候选折叠：已启用 `--dedupe`（签名合并 + set-cover）"
+        if dedupe
+        else "- 候选折叠：默认**不去重**（每个 SAT 义务尽量各留一解；需要合并时传 `--dedupe`）"
+    )
     lines = [
         "# TestAgent 求解报告",
         "",
@@ -791,7 +906,8 @@ def build_solver_report(
         f"- SAT / UNSAT / UNKNOWN / SKIPPED 数: {counts['sat']} / {counts['unsat']} / {counts['unknown']} / {counts['skipped']}",
         f"- 原始候选数: {len(raw_candidates)}",
         f"- 去重后候选数: {len(deduped_candidates)}",
-        f"- Set Cover 后候选数: {len(selected['selected_candidates'])}",
+        f"- 最终选出候选数: {len(selected['selected_candidates'])}",
+        mode_line,
         f"- 未覆盖 Hard Obligation: {len(uncovered_hard)}",
         f"- UNSAT 原因摘要: {', '.join(_summarize_unsat(unsat)) if unsat else '无'}",
         f"- Contract 中无法编译的表达式: {len(errors)}",
@@ -800,6 +916,7 @@ def build_solver_report(
     ]
     return {
         "version": 1,
+        "dedupe_enabled": bool(dedupe),
         "status_counts": counts,
         "total_obligations": len(obligations),
         "raw_candidate_count": len(raw_candidates),

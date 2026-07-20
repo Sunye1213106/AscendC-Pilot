@@ -81,6 +81,8 @@ def test_orchestrator_matches_uo_init() -> None:
         "review_checkpoint.py",
         "finalize_phase0.py",
         "resolve_entrypoints.py",
+        "propose_extract_plan.py",
+        "apply_extract_plan.py",
         "build_layered_kb.py",
         "uo-semantic-resolve",
         "apply_resolution.py",

@@ -14,6 +14,8 @@ ALLOWED_FIELD_ROLES = {
     "case_id",
     "expected_result",
     "metadata",
+    # Tensor/blob columns that are not free SMT variables (emitted as placeholders).
+    "tensor_placeholder",
 }
 ALLOWED_VALUE_TYPES = {"bool", "int", "enum", "string", "list_int"}
 ALLOWED_EMIT_OPS = {
@@ -78,7 +80,14 @@ def validate_contract_artifacts(
             errors.append(_error("CONSUMER_SCHEMA_AMBIGUOUS", f"unsupported value_type for {name}"))
         if field.get("required") and not field.get("source_refs"):
             errors.append(_error("CSV_CONTRACT_REQUIRED", f"required field {name} missing source_refs"))
-        if name not in evidence_columns and role not in {"case_id", "expected_result", "metadata", "constant", "emit_derived"}:
+        if name not in evidence_columns and role not in {
+            "case_id",
+            "expected_result",
+            "metadata",
+            "constant",
+            "emit_derived",
+            "tensor_placeholder",
+        }:
             if allow_bootstrap:
                 continue
             errors.append(_error("CONSUMER_SCHEMA_AMBIGUOUS", f"field {name} is absent from evidence"))

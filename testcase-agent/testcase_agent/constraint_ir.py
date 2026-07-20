@@ -239,6 +239,8 @@ def obligation_target_expr(obligation: dict[str, Any], variable_ids: set[str]) -
         return {"op": "eq", "var": _branch_var_id(target_refs[0]), "value": obligation.get("target_value", True)}
     if kind == "runtime_variable_state" and target_refs:
         return {"op": "eq", "var": _var_id(target_refs[0]), "value": obligation.get("target_value")}
+    if kind == "csv_domain_cover" and target_refs:
+        return {"op": "eq", "var": _var_id(target_refs[0]), "value": obligation.get("target_value")}
     if kind == "optional_input_mode" and target_refs:
         return {"op": "eq", "var": _optional_var_id(target_refs[0]), "value": obligation.get("target_value", True)}
     if kind == "dtype_layout_class" and target_refs:

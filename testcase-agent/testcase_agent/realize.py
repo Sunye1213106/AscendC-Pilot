@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import re
 from pathlib import Path
 from typing import Any
 
@@ -295,14 +296,18 @@ def build_case_coverage(candidate: dict[str, Any], row_index: int, obligations: 
 
 
 def _fill_tnd_seqlens(row: dict[str, Any]) -> None:
+    layout = str(row.get("Input_Layout") or row.get("Layout") or "")
+    if layout.upper() != "TND":
+        return
     try:
         b = max(1, int(row.get("B") or 1))
         s1 = max(1, int(row.get("S1") or 1))
         s2 = max(1, int(row.get("S2") or s1))
     except (TypeError, ValueError):
         return
-    q_lengths = _balanced_lengths(s1, b)
-    kv_lengths = _balanced_lengths(s2, b)
+    # Prefer unequal partitions when B>1 (varlen-like), still summing to S1/S2.
+    q_lengths = _varied_lengths(s1, b) if b > 1 else _balanced_lengths(s1, b)
+    kv_lengths = _varied_lengths(s2, b) if b > 1 else _balanced_lengths(s2, b)
     if not row.get("seqlens_list_q"):
         row["seqlens_list_q"] = str(q_lengths)
     if not row.get("seqlens_list_kv"):
@@ -311,6 +316,32 @@ def _fill_tnd_seqlens(row: dict[str, Any]) -> None:
         row["cu_seqlens_q"] = str(_cu_from_actual(q_lengths))
     if not row.get("cu_seqlens_kv"):
         row["cu_seqlens_kv"] = str(_cu_from_actual(kv_lengths))
+
+
+def _varied_lengths(total: int, parts: int) -> list[int]:
+    """Non-uniform partition of total into `parts` positive ints (TND-style)."""
+    parts = max(1, int(parts))
+    total = max(parts, int(total))
+    if parts == 1:
+        return [total]
+    # Geometric-ish: give later parts more mass, then fix remainder on first.
+    weights = [i + 1 for i in range(parts)]
+    wsum = sum(weights)
+    lengths = [max(1, (total * w) // wsum) for w in weights]
+    diff = total - sum(lengths)
+    idx = 0
+    while diff != 0 and parts > 0:
+        if diff > 0:
+            lengths[idx % parts] += 1
+            diff -= 1
+        else:
+            if lengths[idx % parts] > 1:
+                lengths[idx % parts] -= 1
+                diff += 1
+        idx += 1
+        if idx > parts * abs(diff) + parts:
+            break
+    return lengths
 
 
 def _balanced_lengths(total: int, parts: int) -> list[int]:
@@ -330,18 +361,63 @@ def _cu_from_actual(values: list[int]) -> list[int]:
 
 
 def _realization_columns(realization_map: dict[str, Any] | None, consumer_schema: dict[str, Any] | None = None) -> list[str]:
+    columns: list[str] = []
     if isinstance(consumer_schema, dict):
         fields = [item for item in consumer_schema.get("fields", []) if isinstance(item, dict)]
         if fields:
-            return [str(item.get("name") or "") for item in sorted(fields, key=lambda item: int(item.get("order", 0)))]
-        columns = consumer_schema.get("columns")
-        if isinstance(columns, list) and columns:
-            return [str(column) for column in columns]
-    if isinstance(realization_map, dict):
-        columns = _as_dict(realization_map.get("consumer")).get("columns")
-        if isinstance(columns, list) and columns:
-            return [str(column) for column in columns]
-    return []
+            columns = [str(item.get("name") or "") for item in sorted(fields, key=lambda item: int(item.get("order", 0)))]
+        else:
+            raw = consumer_schema.get("columns")
+            if isinstance(raw, list) and raw:
+                columns = [str(column) for column in raw]
+    if not columns and isinstance(realization_map, dict):
+        raw = _as_dict(realization_map.get("consumer")).get("columns")
+        if isinstance(raw, list) and raw:
+            columns = [str(column) for column in raw]
+    return order_csv_columns_for_readability(columns)
+
+
+def order_csv_columns_for_readability(columns: list[str]) -> list[str]:
+    """Reorder CSV headers for human scanning: identity → Enable → key knobs → rest.
+
+    Generic name-pattern ranking (no per-operator column tables).
+    """
+    seen: set[str] = set()
+    ordered: list[str] = []
+
+    def take(predicate) -> None:
+        for col in columns:
+            if col in seen or not col:
+                continue
+            if predicate(col):
+                ordered.append(col)
+                seen.add(col)
+
+    # 1) Case identity / enable — always first when present.
+    take(lambda c: c.lower() in {"testcase_name", "case_name", "name"})
+    take(lambda c: c.lower() == "enable")
+
+    # 2) Primary layout / dtype — what the case "is".
+    take(lambda c: c.lower() in {"input_layout", "layout"})
+    take(lambda c: c.lower() in {"dtype", "out_dtype"} or (c.lower().endswith("dtype") and "mask" not in c.lower()))
+
+    # 3) Core shape / counters.
+    take(lambda c: bool(re.fullmatch(r"(?i)B|N\d*|S\d*|D(_V)?", c)))
+    take(lambda c: bool(re.fullmatch(r"(?i)Pre_Tockens|Next_Tockens|pre_tockens|next_tockens|seed|offset", c)))
+
+    # 4) Discrete / switch knobs that drive branching.
+    take(lambda c: bool(re.fullmatch(r"(?i)sparse_mode|PSE_type|rope|is_sink|inner_drop|keep_prob|Drop_Out_Possibility|is_deter|eod", c)))
+
+    # 5) Optional presence descriptors (shape/type), then secondary layouts.
+    take(lambda c: c.lower().endswith("_shape") or c.lower().endswith("_type"))
+    take(lambda c: "layout" in c.lower() and c not in seen)
+
+    # 6) Derived sequence lists (TND helpers) — still useful, before blobs.
+    take(lambda c: "seqlens" in c.lower() or c.lower().startswith("cu_") or c.lower().startswith("actual_seq"))
+
+    # 7) Everything else (tensor placeholders, metadata, Actual_*, etc.).
+    take(lambda _c: True)
+    return ordered
 
 
 def _format_csv_value(value: Any) -> Any:

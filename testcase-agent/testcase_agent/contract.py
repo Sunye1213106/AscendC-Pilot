@@ -28,6 +28,7 @@ def tg_contract(
     csv_consumer_root: Path,
     reuse_snapshot: bool = False,
     plan_hash: str = "",
+    lexicon_seed: Path | None = None,
 ) -> dict[str, Any]:
     project_root = project_root.resolve()
     consumer_root = require_consumer_root(csv_consumer_root)
@@ -79,6 +80,8 @@ def tg_contract(
             "ordered_header_candidates": evidence.get("ordered_header_candidates"),
             "field_accesses": evidence.get("field_accesses"),
             "sample_values": evidence.get("sample_values"),
+            "sample_int_ranges": evidence.get("sample_int_ranges"),
+            "domain_hints": evidence.get("domain_hints"),
             "type_conversion_evidence": evidence.get("type_conversion_evidence"),
             "required_optional_evidence": evidence.get("required_optional_evidence"),
             "test_requirement_refs": evidence.get("test_requirement_refs"),
@@ -88,21 +91,64 @@ def tg_contract(
     )
     write_yaml(paths["evidence"], evidence)
 
-    schema = build_consumer_schema_from_evidence(evidence, consumer_root)
+    files = snapshot.get("files") if isinstance(snapshot.get("files"), dict) else {}
+    key_space = files.get("tiling/key_space.yaml") if isinstance(files.get("tiling/key_space.yaml"), dict) else {}
+    # Prefer ir/tilingkey_space dimensions when key_space fields empty.
+    if not (key_space.get("fields") or key_space.get("dimensions")):
+        alt = files.get("ir/tilingkey_space.yaml")
+        if isinstance(alt, dict):
+            key_space = alt
+
+    schema = build_consumer_schema_from_evidence(
+        evidence,
+        consumer_root,
+        key_space=key_space,
+        snapshot_files=files,
+    )
     schema["snapshot_hash"] = snapshot_hash
     schema["plan_hash"] = evidence["plan_hash"]
     schema["evidence_hash"] = evidence.get("evidence_hash", "")
     schema["op_name"] = op_name
     write_yaml(paths["schema"], schema)
 
+    # Stub domain_hints for LLM/human when missing (do not scrape sample csv/xls).
+    from .consumer_evidence import propose_domain_hints_stub
+    from .csv_domain_cover import extract_uo_domain_entries_by_column
+
+    hints_path = paths["dir"] / "domain_hints.yaml"
+    if not hints_path.exists():
+        stub = propose_domain_hints_stub(
+            list(schema.get("columns") or []),
+            uo_entries=extract_uo_domain_entries_by_column(files, list(schema.get("columns") or [])),
+        )
+        write_yaml(hints_path, stub)
+
     from .binding_lexicon import lexicon_from_key_space, merge_lexicons, normalize_lexicon
+    from .lexicon_propose import load_lexicon_seed, propose_key_derivations_from_evidence
 
     lexicon_path = paths["dir"] / "binding_lexicon.yaml"
     existing_lexicon = read_yaml(lexicon_path) if lexicon_path.exists() else {}
-    files = snapshot.get("files") if isinstance(snapshot.get("files"), dict) else {}
-    key_space = files.get("tiling/key_space.yaml") if isinstance(files.get("tiling/key_space.yaml"), dict) else {}
     boot = lexicon_from_key_space(key_space)
-    merged_lexicon = normalize_lexicon(merge_lexicons(boot, existing_lexicon if isinstance(existing_lexicon, dict) else {}))
+    seed_doc = load_lexicon_seed(lexicon_seed) if lexicon_seed else {}
+    seed_usable = bool(
+        seed_doc.get("key_derivations")
+        or seed_doc.get("key_tokens")
+        or seed_doc.get("csv_field_aliases")
+        or seed_doc.get("arith_constants")
+    )
+    merged_lexicon = normalize_lexicon(
+        merge_lexicons(
+            boot,
+            existing_lexicon if isinstance(existing_lexicon, dict) else {},
+            seed_doc if seed_usable else None,
+        )
+    )
+    merged_lexicon = propose_key_derivations_from_evidence(
+        lexicon=merged_lexicon,
+        csv_columns=list(schema.get("columns") or []),
+        sample_values=dict(evidence.get("sample_values") or {}),
+        snapshot_files=files,
+    )
     write_yaml(lexicon_path, merged_lexicon)
 
     realization_map = build_realization_map(snapshot, schema, lexicon=merged_lexicon, op_name=op_name)
@@ -114,11 +160,12 @@ def tg_contract(
     realization_map["evidence_hash"] = evidence.get("evidence_hash", "")
     realization_map["status"] = "bootstrap"
     realization_map.setdefault("warnings", [])
-    if "binding_lexicon_required" not in realization_map["warnings"]:
-        realization_map["warnings"].append(
-            "binding_lexicon_required: run /tg-csv-contract to fill realization/binding_lexicon.yaml "
-            "(key_tokens, csv_field_aliases, key_derivations) from script/KB evidence — TG no longer ships per-op hard tables"
-        )
+    if not (merged_lexicon.get("key_derivations") or []):
+        if "binding_lexicon_required" not in realization_map["warnings"]:
+            realization_map["warnings"].append(
+                "binding_lexicon_required: run /tg-csv-contract to fill realization/binding_lexicon.yaml "
+                "(key_tokens, csv_field_aliases, key_derivations) from script/KB evidence — TG no longer ships per-op hard tables"
+            )
     write_yaml(paths["map"], realization_map)
 
     alignment_report = realization_map.get("alignment_report") or {}

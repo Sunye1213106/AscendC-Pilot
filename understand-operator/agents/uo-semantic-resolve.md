@@ -3,8 +3,9 @@ name: uo-semantic-resolve
 type: subagent
 description: >-
   Bounded LLM resolver for understand-operator. Confirms uncertain entrypoints,
-  labels residual unresolved items, and batch-reviews branch binding_time
-  classifications. Writes only structured patches under ir/.
+  confirms extract_plan candidates, labels residual unresolved items, and
+  batch-reviews branch binding_time classifications. Writes only structured
+  patches under ir/.
 ---
 
 # uo-semantic-resolve
@@ -22,7 +23,8 @@ whole-file reads or broad Glob.
 ## Hard token rules
 
 - Do **not** read plugin scripts (`resolve_entrypoints.py`, `apply_resolution.py`,
-  etc.) to reverse-engineer formats. Use the schemas below only.
+  `propose_extract_plan.py`, etc.) to reverse-engineer formats. Use the schemas
+  below only.
 - Prefer MCP `codebase-memory-mcp` for one symbol when a candidate snippet is
   insufficient. Never open whole kernel trees.
 - Never search under `.understand-operator/**/cbm/index_stage/**` (staging mirror).
@@ -30,10 +32,13 @@ whole-file reads or broad Glob.
   do not invent diagnostic ids that are not in `ir/unresolved.yaml`.
 - **Do not** hand-count or diff id lists against `unresolved.yaml`. Coverage is
   not required. Parent validates the patch with `apply_resolution.py --check`.
+- For extract plan: at most ~12 tool calls; only inspect candidate snippets /
+  one MCP symbol lookup when evidence is thin.
 
 ## Allowed writes
 
 - `ir/entrypoint_confirm.yaml`
+- `ir/extract_plan.yaml`
 - `ir/resolution_patch.yaml`
 
 Nothing else.
@@ -118,7 +123,57 @@ Status mapping if you think in old terms:
 
 Only whitelist fields are applied by `apply_resolution.py`.
 
-### C) Batch consistency review
+### C) Extract plan confirmation
+
+Read `ir/extract_plan_candidates.yaml` only (plus optional single MCP snippet).
+
+Confirm which candidates are real tiling writers / sinks / aliases. **Do not
+invent** helper names, receivers, aliases, or extra entries that are absent
+from the candidate lists (same closure rule as entrypoint confirmation).
+
+Write `ir/extract_plan.yaml`:
+
+```yaml
+version: 1
+confirmed_by: llm
+writers:
+  - name: ...
+    file_path: ...
+    start_line: ...
+    role: tiling_writer   # tiling_writer | key_writer | workspace_writer | provenance_helper | ignore
+receivers:
+  - name: ...
+    is_tiling_sink: true   # false = host intermediate, skip as TDF write target
+aliases:
+  - local: ...
+    tdf_leaf: ...
+non_sink_roots: []         # intermediate roots; extractor skips these
+extra_host_entries: []     # optional; must come from extra_entry_candidates
+derived_roots: []          # optional; kernel xxxInfo-style roots if in evidence
+```
+
+Role guidance (generic, not operator-specific):
+
+- `tiling_writer`: body clearly writes tiling blob via `set_*` / `tilingData->...=`
+  (**must** use when candidate `evidence` includes `has_set_field` / `recv_set_call`
+  / `sink_set_writer`, even if the name looks like Pre/Post/Init/Workspace)
+- `key_writer`: primarily sets tiling key / block dim routing
+- `workspace_writer`: primarily workspace size; host also scans TDF writes on sinks
+  for this role (offsets often land on the same tiling blob)
+- `provenance_helper`: on call chain (often one-hop), has `GetAttr*` / intermediate
+  state but does **not** write tiling sinks; keep for attr→helper edges only.
+  Do **not** use this role when the candidate has `has_set_field` / `recv_set_call`
+  / `sink_set_writer`.
+- `ignore`: on chain but not needed for TDF/KEY/workspace/attr provenance
+
+Mark `is_tiling_sink: true` only for receivers that land on the host→device
+tiling blob (not temporary host structs). Put temporary roots in
+`non_sink_roots` when listed under `non_sink_root_candidates` (or as receivers
+with `is_tiling_sink: false`).
+
+Parent validates with `apply_extract_plan.py --check` before host/kernel extract.
+
+### D) Batch consistency review
 
 From `ir/operator_graph.yaml` / `ir/kernel_subgraph.yaml`, review already
 classified branches in chunks. For each item provide only:
@@ -138,6 +193,7 @@ Skip the review when branches look consistent; empty `consistency_diffs: []` is 
 - Prefer Chinese rationales in `rationale` fields.
 - Never modify contracts/, tiling/, kernel/, or source trees.
 - Never call broad repository scans.
-- If unsure, leave unresolved; do not fabricate domains or entrypoints.
+- If unsure, leave unresolved; do not fabricate domains, entrypoints, or
+  extract_plan symbols outside candidates.
 - After writing the patch, report only: sampled count by `status`, patterns seen,
   and patch path. Do **not** claim full coverage of `unresolved.yaml`.

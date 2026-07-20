@@ -390,7 +390,12 @@ class Z3Backend:
         if op == "lit":
             return self._literal_or_expr(expr.get("value"))
         if op == "if_then_else":
-            return z3.If(self._compile_bool(expr["condition"]), self._literal_or_expr(expr["then"]), self._literal_or_expr(expr["else"]))
+            cond_z3 = self._compile_bool(expr["condition"])
+            t_val = expr.get("then")
+            e_val = expr.get("else")
+            t_z3 = self._coerce_branch(t_val)
+            e_z3 = self._coerce_branch(e_val)
+            return z3.If(cond_z3, t_z3, e_z3)
         if op == "derived":
             return self._compile_value(expr["expr"])
         raise Z3BackendError(f"Unsupported value expression op: {op}")
@@ -411,6 +416,23 @@ class Z3Backend:
             return self.z3.BoolVal(value)
         if isinstance(value, int):
             return self.z3.IntVal(value)
+        return value
+
+    def _coerce_branch(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            return self._compile_value(value)
+        if isinstance(value, bool):
+            return self.z3.BoolVal(value)
+        if isinstance(value, int):
+            return self.z3.IntVal(value)
+        if isinstance(value, str):
+            for var_id, mapping in self.enum_value_to_int.items():
+                if str(value) in mapping:
+                    return self.z3.IntVal(mapping[str(value)])
+            try:
+                return self.z3.IntVal(int(value))
+            except ValueError:
+                return value
         return value
 
     def _binary_values(self, lhs: Any, rhs: Any) -> tuple[Any, Any]:

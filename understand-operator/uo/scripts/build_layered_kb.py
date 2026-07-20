@@ -15,6 +15,7 @@ from uo.scripts._ir_io import read_yaml, write_yaml
 from uo.scripts.extract_golden import extract_golden
 from uo.scripts.extract_host_subgraph import extract_host_subgraph
 from uo.scripts.extract_kernel_subgraph import extract_kernel_subgraph
+from uo.scripts.extract_plan_io import load_extract_plan
 from uo.scripts.extract_tilingkey_space import extract_tilingkey_space
 from uo.scripts.reconcile_bridge import reconcile_bridge
 from uo.scripts.resolve_entrypoints import apply_entrypoint_confirmation, collect_entrypoint_candidates
@@ -31,6 +32,7 @@ def build_layered_kb(
     confirmation_patch: dict[str, Any] | None = None,
     auto_confirm: bool = True,
     layers: set[str] | list[str] | None = None,
+    allow_empty_plan: bool = False,
 ) -> dict[str, Any]:
     uo_root = existing_operator_root(repo_root, op_name)
     ir_dir = uo_root / "ir"
@@ -73,8 +75,22 @@ def build_layered_kb(
     else:
         tilingkey = read_yaml(ir_dir / "tilingkey_space.yaml") or {"nodes": [], "edges": [], "unresolved": [], "dimensions": [], "template_blocks": []}
 
+    # Host/kernel require extract_plan (LLM-confirmed) unless explicitly allowed empty.
+    if selected & {"host", "kernel"}:
+        plan = load_extract_plan(uo_root)
+        if plan is None and not allow_empty_plan:
+            raise FileNotFoundError(
+                "ir/extract_plan.yaml missing; run propose_extract_plan.py then "
+                "uo-semantic-resolve extract-plan confirm, or pass --allow-empty-plan for tests"
+            )
+
     if "host" in selected:
-        host = extract_host_subgraph(repo_root, op_name, architecture=architecture)
+        host = extract_host_subgraph(
+            repo_root,
+            op_name,
+            architecture=architecture,
+            allow_empty_plan=allow_empty_plan,
+        )
         write_yaml(ir_dir / "host_subgraph.yaml", host)
     else:
         host = read_yaml(ir_dir / "host_subgraph.yaml") or {"nodes": [], "edges": [], "unresolved": []}
@@ -198,6 +214,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Comma-separated layers to rebuild (default: all). "
         "Allowed: entrypoints,host,kernel,tilingkey,golden,bridge",
     )
+    parser.add_argument(
+        "--allow-empty-plan",
+        action="store_true",
+        help="Allow missing ir/extract_plan.yaml (tests / fail-soft only)",
+    )
     args = parser.parse_args(argv)
     repo_root = Path(args.repo).resolve()
     op_name = safe_op_name(args.op_name, repo_root)
@@ -209,6 +230,7 @@ def main(argv: list[str] | None = None) -> int:
         architecture=args.architecture,
         confirmation_patch=patch,
         layers=layer_set,
+        allow_empty_plan=bool(args.allow_empty_plan),
     )
     print(
         f"layered KB nodes={graph['stats']['node_count']} edges={graph['stats']['edge_count']} "
