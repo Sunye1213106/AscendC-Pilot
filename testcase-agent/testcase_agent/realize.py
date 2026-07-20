@@ -341,8 +341,7 @@ def _realization_columns(realization_map: dict[str, Any] | None, consumer_schema
         columns = _as_dict(realization_map.get("consumer")).get("columns")
         if isinstance(columns, list) and columns:
             return [str(column) for column in columns]
-    # Legacy fallback only — prefer contract columns from tg-contract.
-    return list(CSV_COLUMNS)
+    return []
 
 
 def _format_csv_value(value: Any) -> Any:
@@ -407,7 +406,9 @@ def _csv_var_id(column: str) -> str:
 
 
 def write_cases_csv(path: Path, rows: list[dict[str, Any]], columns: list[str] | None = None) -> None:
-    columns = columns or CSV_COLUMNS
+    columns = list(columns or [])
+    if not columns:
+        raise RuntimeError("CSV_COLUMNS_REQUIRED: pass consumer_schema/realization_map columns (hardcoded CSV_COLUMNS removed)")
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=columns, extrasaction="ignore")

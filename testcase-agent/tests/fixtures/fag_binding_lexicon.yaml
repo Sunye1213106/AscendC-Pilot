@@ -1,0 +1,344 @@
+version: 1
+source: fag_csv_contract_seed
+key_tokens:
+  IS_TND:
+    var: VAR_KEY_ISTND
+    true_value: 1
+  IS_ROPE:
+    var: VAR_KEY_ISROPE
+    true_value: 1
+  IS_ATTEN_MASK:
+    var: VAR_KEY_ISATTENMASK
+    true_value: 1
+  IS_PSE:
+    var: VAR_KEY_ISPSE
+    true_value: 1
+  IS_DROP:
+    var: VAR_KEY_ISDROP
+    true_value: 1
+  IS_N_EQUAL:
+    var: VAR_KEY_ISNEQUAL
+    true_value: 0
+  IS_DN_EQUAL:
+    var: VAR_KEY_ISDNOEQUAL
+    true_value: 0
+  IS_NZ_OUT:
+    var: VAR_KEY_ISNZOUT
+    true_value: 1
+  ENABLE_UNITFLAG:
+    var: VAR_KEY_ENABLEUNITFLAG
+    true_value: 1
+csv_field_aliases:
+  issink:
+    column: is_sink
+    value: 1
+  is_sink:
+    column: is_sink
+    value: 1
+  rope:
+    column: rope
+    value: 1
+  keep_prob:
+    column: Drop_Out_Possibility
+  Layout:
+    column: Input_Layout
+  Atten_mask_layout:
+    column: Atten_mask_shape
+  PSE_layout:
+    column: PSE_shape
+arith_constants: {}
+key_derivations:
+- id: VAR_KEY_ISTND
+  type: int
+  domain:
+  - 0
+  - 1
+  expr:
+    op: if_then_else
+    condition:
+      op: eq
+      var: VAR_CSV_Input_Layout
+      value: TND
+    then: 1
+    else: 0
+  rationale: Input_Layout == TND
+  source_refs:
+  - path: binding_lexicon.yaml
+    reason: migrated_from_prior_FAG_bootstrap
+- id: VAR_KEY_ISROPE
+  type: int
+  domain:
+  - 0
+  - 1
+  expr:
+    op: if_then_else
+    condition:
+      op: eq
+      var: VAR_CSV_rope
+      value: 1
+    then: 1
+    else: 0
+  rationale: rope == 1
+  source_refs:
+  - path: binding_lexicon.yaml
+    reason: migrated_from_prior_FAG_bootstrap
+- id: VAR_KEY_ISATTENMASK
+  type: int
+  domain:
+  - 0
+  - 1
+  expr:
+    op: if_then_else
+    condition:
+      op: ne
+      var: VAR_CSV_Atten_mask_shape
+      value: NONE
+    then: 1
+    else: 0
+  rationale: Atten_mask_shape != NONE
+  source_refs:
+  - path: binding_lexicon.yaml
+    reason: migrated_from_prior_FAG_bootstrap
+- id: VAR_KEY_ISPSE
+  type: int
+  domain:
+  - 0
+  - 1
+  expr:
+    op: if_then_else
+    condition:
+      op: or
+      args:
+      - op: ne
+        var: VAR_CSV_PSE_shape
+        value: NONE
+      - op: ne
+        var: VAR_CSV_PSE_type
+        value: 0
+    then: 1
+    else: 0
+  rationale: PSE_shape != NONE or PSE_type != 0
+  source_refs:
+  - path: binding_lexicon.yaml
+    reason: migrated_from_prior_FAG_bootstrap
+- id: VAR_KEY_ISDROP
+  type: int
+  domain:
+  - 0
+  - 1
+  expr:
+    op: if_then_else
+    condition:
+      op: or
+      args:
+      - op: ne
+        var: VAR_CSV_Drop_Out_Possibility
+        value: 1
+      - op: eq
+        var: VAR_CSV_inner_drop
+        value: 1
+    then: 1
+    else: 0
+  rationale: Drop_Out_Possibility != 1 or inner_drop == 1
+  source_refs:
+  - path: binding_lexicon.yaml
+    reason: migrated_from_prior_FAG_bootstrap
+- id: VAR_KEY_ISNEQUAL
+  type: int
+  domain:
+  - 0
+  - 1
+  expr:
+    op: if_then_else
+    condition:
+      op: ne
+      lhs:
+        var: VAR_CSV_N1
+      rhs:
+        var: VAR_CSV_N2
+    then: 1
+    else: 0
+  rationale: N1 != N2
+  source_refs:
+  - path: binding_lexicon.yaml
+    reason: migrated_from_prior_FAG_bootstrap
+- id: VAR_KEY_ISDNOEQUAL
+  type: int
+  domain:
+  - 0
+  - 1
+  expr:
+    op: if_then_else
+    condition:
+      op: ne
+      lhs:
+        var: VAR_CSV_D
+      rhs:
+        var: VAR_CSV_D_V
+    then: 1
+    else: 0
+  rationale: D != D_V
+  source_refs:
+  - path: binding_lexicon.yaml
+    reason: migrated_from_prior_FAG_bootstrap
+- id: VAR_KEY_INPUTDTYPE
+  type: int
+  domain:
+  - 0
+  - 1
+  - 2
+  expr:
+    op: if_then_else
+    condition:
+      op: eq
+      var: VAR_CSV_Dtype
+      value: bf16
+    then: 1
+    else:
+      op: if_then_else
+      condition:
+        op: eq
+        var: VAR_CSV_Dtype
+        value: fp32
+      then: 2
+      else: 0
+  rationale: Dtype bucket
+  source_refs:
+  - path: binding_lexicon.yaml
+    reason: migrated_from_prior_FAG_bootstrap
+- id: VAR_KEY_OUTDTYPE
+  type: int
+  domain:
+  - 0
+  - 1
+  - 2
+  expr:
+    op: if_then_else
+    condition:
+      op: eq
+      var: VAR_CSV_out_dtype
+      value: bf16
+    then: 1
+    else:
+      op: if_then_else
+      condition:
+        op: eq
+        var: VAR_CSV_out_dtype
+        value: fp32
+      then: 2
+      else: 0
+  rationale: out_dtype bucket
+  source_refs:
+  - path: binding_lexicon.yaml
+    reason: migrated_from_prior_FAG_bootstrap
+- id: VAR_KEY_S1TEMPLATENUM
+  type: int
+  domain:
+  - 0
+  - 64
+  - 128
+  - 512
+  expr:
+    op: if_then_else
+    condition:
+      op: ge
+      var: VAR_CSV_S1
+      value: 512
+    then: 512
+    else:
+      op: if_then_else
+      condition:
+        op: ge
+        var: VAR_CSV_S1
+        value: 128
+      then: 128
+      else:
+        op: if_then_else
+        condition:
+          op: ge
+          var: VAR_CSV_S1
+          value: 64
+        then: 64
+        else: 0
+  rationale: S1 template bucket
+  source_refs:
+  - path: binding_lexicon.yaml
+    reason: migrated_from_prior_FAG_bootstrap
+- id: VAR_KEY_S2TEMPLATENUM
+  type: int
+  domain:
+  - 0
+  - 128
+  - 256
+  - 512
+  expr:
+    op: if_then_else
+    condition:
+      op: ge
+      var: VAR_CSV_S2
+      value: 512
+    then: 512
+    else:
+      op: if_then_else
+      condition:
+        op: ge
+        var: VAR_CSV_S2
+        value: 256
+      then: 256
+      else:
+        op: if_then_else
+        condition:
+          op: ge
+          var: VAR_CSV_S2
+          value: 128
+        then: 128
+        else: 0
+  rationale: S2 template bucket
+  source_refs:
+  - path: binding_lexicon.yaml
+    reason: migrated_from_prior_FAG_bootstrap
+- id: VAR_KEY_DTEMPLATENUM
+  type: int
+  domain:
+  - 0
+  - 64
+  - 128
+  - 192
+  - 256
+  expr:
+    op: if_then_else
+    condition:
+      op: ge
+      var: VAR_CSV_D
+      value: 256
+    then: 256
+    else:
+      op: if_then_else
+      condition:
+        op: ge
+        var: VAR_CSV_D
+        value: 192
+      then: 192
+      else:
+        op: if_then_else
+        condition:
+          op: ge
+          var: VAR_CSV_D
+          value: 128
+        then: 128
+        else:
+          op: if_then_else
+          condition:
+            op: ge
+            var: VAR_CSV_D
+            value: 64
+          then: 64
+          else: 0
+  rationale: D template bucket
+  source_refs:
+  - path: binding_lexicon.yaml
+    reason: migrated_from_prior_FAG_bootstrap
+warnings:
+- Seed lexicon migrated from former TG FAG bootstrap; refine via /tg-csv-contract
+  against script/KB evidence.
+- IS_NZ_OUT / ENABLE_UNITFLAG lack CSV evidence — add key_derivations or leave KEY_DERIVATION_MISSING.

@@ -19,9 +19,19 @@ UINT_DECL_RE = re.compile(
     r"ASCENDC_TPL_UINT_DECL\s*\(\s*([A-Za-z0-9_]+)\s*,\s*([^,]+)\s*,\s*[^,]+,\s*([^)]+)\)"
 )
 SEL_RE = re.compile(r"ASCENDC_TPL_ARGS_SEL\s*\(")
+# Generic: using Alias = Qual::ClassName<true/false, ...>;
 TEMPLATE_ALIAS_RE = re.compile(
-    r"using\s+(FagTilingWithTemplate[A-Z]+)\s*=\s*[^;]*<(true|false)\s*,\s*(true|false)\s*,\s*(true|false)\s*,\s*(true|false)\s*>"
+    r"using\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
+    r"((?:[A-Za-z_][A-Za-z0-9_:]*::)*[A-Za-z_][A-Za-z0-9_]*)"
+    r"\s*<\s*((?:true|false)(?:\s*,\s*(?:true|false))*)\s*>\s*;",
+    re.MULTILINE,
 )
+TEMPLATE_BOOL_CLASS_RE = re.compile(
+    r"template\s*<([^>]+)>\s*(?:class|struct)\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+    re.MULTILINE,
+)
+BOOL_PARAM_NAME_RE = re.compile(r"(?:const\s+)?bool\s+([A-Za-z_][A-Za-z0-9_]*)")
+INCLUDE_LOCAL_RE = re.compile(r'#\s*include\s+"([^"]+)"')
 GET_KEY_BIT_RE = re.compile(
     r"(?:\(\s*([A-Za-z0-9_]+)\s*>>\s*(\d+)\s*\)\s*&\s*(0x[0-9A-Fa-f]+|\d+))|([A-Za-z0-9_]+)\s*=\s*\(\s*(?:key|tilingKey|k)\s*>>\s*(\d+)\s*\)\s*&\s*(0x[0-9A-Fa-f]+|\d+)",
     re.IGNORECASE,
@@ -45,7 +55,7 @@ def extract_tilingkey_space(repo_root: Path, op_name: str, *, architecture: str 
     text = header.read_text(encoding="utf-8", errors="ignore")
     rel = header.relative_to(repo_root).as_posix()
     dimensions = _parse_dimensions(text, rel)
-    template_aliases = _parse_template_aliases(text, rel)
+    template_aliases = _parse_template_aliases(text, rel, header=header)
     args_sel_count = len(SEL_RE.findall(text))
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
@@ -184,28 +194,76 @@ def _parse_dimensions(text: str, rel: str) -> list[dict[str, Any]]:
     return dims
 
 
-def _parse_template_aliases(text: str, rel: str) -> list[dict[str, Any]]:
-    out = []
+def _parse_template_aliases(text: str, rel: str, *, header: Path | None = None) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    param_cache: dict[str, list[str]] = {}
     for match in TEMPLATE_ALIAS_RE.finditer(text):
-        flags = {
-            "isDeter": match.group(2) == "true",
-            "isNewDeter": match.group(3) == "true",
-            "isTnd": match.group(4) == "true",
-            "isTndSwizzle": match.group(5) == "true",
-        }
+        alias_name = match.group(1)
+        qualified = match.group(2)
+        class_name = qualified.rsplit("::", 1)[-1]
+        bool_tokens = [tok.strip() for tok in match.group(3).split(",")]
+        bool_values = [tok == "true" for tok in bool_tokens]
+        param_names = param_cache.get(class_name)
+        if param_names is None:
+            param_names = _resolve_bool_template_params(text, class_name, header=header)
+            param_cache[class_name] = param_names
+        flags = _zip_bool_flags(param_names, bool_values)
+        condition = ", ".join(f"{key}={value}" for key, value in flags.items())
         out.append(
             {
-                "name": match.group(1),
+                "name": alias_name,
+                "class_name": class_name,
                 "flags": flags,
-                "condition": (
-                    f"isDeter={flags['isDeter']}, isNewDeter={flags['isNewDeter']}, "
-                    f"isTnd={flags['isTnd']}, isTndSwizzle={flags['isTndSwizzle']}"
-                ),
+                "condition": condition,
                 "line": text.count("\n", 0, match.start()) + 1,
                 "file_path": rel,
             }
         )
     return out
+
+
+def _zip_bool_flags(param_names: list[str], bool_values: list[bool]) -> dict[str, bool]:
+    if param_names and len(param_names) == len(bool_values):
+        keys = param_names
+    else:
+        keys = [f"arg{i}" for i in range(len(bool_values))]
+    return {key: value for key, value in zip(keys, bool_values)}
+
+
+def _resolve_bool_template_params(text: str, class_name: str, *, header: Path | None = None) -> list[str]:
+    names = _bool_params_for_class(text, class_name)
+    if names or header is None:
+        return names
+    seen: set[Path] = {header.resolve()}
+    # Prefer local includes first (where tiling-data template classes usually live).
+    for include in INCLUDE_LOCAL_RE.findall(text):
+        path = (header.parent / include).resolve()
+        if path in seen or not path.exists() or path.suffix not in {".h", ".hpp", ".inc"}:
+            continue
+        seen.add(path)
+        names = _bool_params_for_class(path.read_text(encoding="utf-8", errors="ignore"), class_name)
+        if names:
+            return names
+    # Fallback: sibling tiling-data headers in the same directory.
+    for path in sorted(header.parent.glob("*tiling_data*.h")):
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        names = _bool_params_for_class(path.read_text(encoding="utf-8", errors="ignore"), class_name)
+        if names:
+            return names
+    return []
+
+
+def _bool_params_for_class(text: str, class_name: str) -> list[str]:
+    for match in TEMPLATE_BOOL_CLASS_RE.finditer(text):
+        if match.group(2) != class_name:
+            continue
+        names = BOOL_PARAM_NAME_RE.findall(match.group(1))
+        if names:
+            return names
+    return []
 
 
 def _width_from_token(token: str) -> int | None:

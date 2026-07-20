@@ -21,16 +21,38 @@ ROLE_PATTERNS: dict[str, tuple[str, ...]] = {
     "get_tiling_key": ("GetTilingKey",),
     "save_tiling_data": ("SaveToTilingData",),
     "init_tiling_data": ("InitTilingData",),
-    # Kernel entry: prefer launch/entry symbols over generic Process helpers.
-    "kernel_entry": ("KernelEntry", "Invoke", "FlashAttentionScoreGradKernel", "FlashAttentionScoreGrad", "RegbaseFAG"),
+    # Kernel entry: generic launch/entry tokens; op-derived names merged at runtime.
+    "kernel_entry": ("KernelEntry", "Invoke"),
 }
 EXACT_PREFERRED = {
     "host_tiling_entry": ("DoOpTiling",),
     "get_tiling_key": ("GetTilingKey",),
     "save_tiling_data": ("SaveToTilingData",),
     "init_tiling_data": ("InitTilingData",),
-    "kernel_entry": ("FlashAttentionScoreGradKernel", "RegbaseFAG", "KernelEntry"),
+    "kernel_entry": ("KernelEntry",),
 }
+
+
+def _snake_to_pascal(name: str) -> str:
+    parts = [p for p in str(name or "").replace("-", "_").split("_") if p]
+    return "".join(p[:1].upper() + p[1:] for p in parts)
+
+
+def _role_patterns_for_op(op_name: str) -> dict[str, tuple[str, ...]]:
+    patterns = {role: tuple(pats) for role, pats in ROLE_PATTERNS.items()}
+    pascal = _snake_to_pascal(op_name)
+    if pascal:
+        # Prefer `{Op}Kernel` / `{Op}` derived from package name (cross-op, no hardcode).
+        patterns["kernel_entry"] = patterns["kernel_entry"] + (f"{pascal}Kernel", pascal)
+    return patterns
+
+
+def _exact_preferred_for_op(op_name: str) -> dict[str, tuple[str, ...]]:
+    preferred = {role: tuple(pats) for role, pats in EXACT_PREFERRED.items()}
+    pascal = _snake_to_pascal(op_name)
+    if pascal:
+        preferred["kernel_entry"] = (f"{pascal}Kernel", pascal) + preferred["kernel_entry"]
+    return preferred
 
 REGISTER_RE = re.compile(
     r"REGISTER_TILING_TEMPLATE(?:_WITH_ARCH)?\s*\(\s*([^,]+)\s*,\s*([^,\)]+)",
@@ -48,8 +70,10 @@ def collect_entrypoint_candidates(
     uo_root = existing_operator_root(repo_root, op_name)
     client = CbmClient(uo_root)
     confirmed_files = _confirmed_files(uo_root)
+    role_patterns = _role_patterns_for_op(op_name)
+    exact_preferred = _exact_preferred_for_op(op_name)
     roles: dict[str, Any] = {}
-    for role, patterns in ROLE_PATTERNS.items():
+    for role, patterns in role_patterns.items():
         candidates = []
         for pattern in patterns:
             if client.available:
@@ -63,7 +87,10 @@ def collect_entrypoint_candidates(
                                 "init_tiling_data",
                             }:
                                 continue
-                        conf = _confidence(role, hit.name, hit.file_path, op_name, architecture)
+                        conf = _confidence(
+                            role, hit.name, hit.file_path, op_name, architecture,
+                            role_patterns=role_patterns, exact_preferred=exact_preferred,
+                        )
                         if conf < 0.45:
                             continue
                         candidates.append(
@@ -85,7 +112,10 @@ def collect_entrypoint_candidates(
                     rel = path.relative_to(repo_root).as_posix()
                     if architecture and architecture not in rel:
                         continue
-                    conf = _confidence(role, name, rel, op_name, architecture)
+                    conf = _confidence(
+                        role, name, rel, op_name, architecture,
+                        role_patterns=role_patterns, exact_preferred=exact_preferred,
+                    )
                     if conf < 0.45:
                         continue
                     line = text.count("\n", 0, match.start()) + 1
@@ -106,11 +136,16 @@ def collect_entrypoint_candidates(
                     )
         # kernel entry special: scan __global__ in arch kernel files
         if role == "kernel_entry":
-            candidates.extend(_scan_global_kernels(repo_root, confirmed_files, op_name, architecture))
+            candidates.extend(
+                _scan_global_kernels(
+                    repo_root, confirmed_files, op_name, architecture,
+                    role_patterns=role_patterns, exact_preferred=exact_preferred,
+                )
+            )
         candidates = _dedupe_candidates(candidates)
         selected = None
         if auto_confirm_high_confidence:
-            preferred = EXACT_PREFERRED.get(role) or ()
+            preferred = exact_preferred.get(role) or ()
             exact = [c for c in candidates if c.get("name") in preferred and c.get("confidence", 0) >= 0.8]
             if len(exact) == 1:
                 selected = {**exact[0], "confirmed_by": "deterministic_exact_name"}
@@ -133,10 +168,11 @@ def collect_entrypoint_candidates(
                 high = [c for c in candidates if c["confidence"] >= 0.9]
                 if role == "kernel_entry":
                     # Prefer real kernel class/entry over macro/field noise.
+                    kernel_preferred = exact_preferred.get("kernel_entry") or ()
                     ranked = sorted(
                         candidates,
                         key=lambda c: (
-                            0 if str(c.get("name") or "") in (EXACT_PREFERRED.get("kernel_entry") or ()) else 1,
+                            0 if str(c.get("name") or "") in kernel_preferred else 1,
                             0 if str(c.get("label") or "").lower() in {"class", "method", "function", "global_kernel", "entry_symbol"} else 1,
                             0 if str(c.get("name") or "").endswith("Kernel") else 1,
                             0 if "entry" in str(c.get("file_path") or "").lower() else 1,
@@ -151,7 +187,7 @@ def collect_entrypoint_candidates(
                     top_conf = float((top or {}).get("confidence") or 0)
                     # Auto-pick when the best hit is a clear kernel class / preferred name.
                     if top and (
-                        top_name in (EXACT_PREFERRED.get("kernel_entry") or ())
+                        top_name in kernel_preferred
                         or (top_name.endswith("Kernel") and top_conf >= 0.65)
                         or top_conf >= 0.75
                     ):
@@ -256,7 +292,18 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _confidence(role: str, name: str, file_path: str, op_name: str, architecture: str) -> float:
+def _confidence(
+    role: str,
+    name: str,
+    file_path: str,
+    op_name: str,
+    architecture: str,
+    *,
+    role_patterns: dict[str, tuple[str, ...]] | None = None,
+    exact_preferred: dict[str, tuple[str, ...]] | None = None,
+) -> float:
+    patterns = role_patterns or _role_patterns_for_op(op_name)
+    preferred_map = exact_preferred or _exact_preferred_for_op(op_name)
     score = 0.2
     file_path = file_path.replace("\\", "/")
     if op_name and op_name in file_path:
@@ -265,12 +312,12 @@ def _confidence(role: str, name: str, file_path: str, op_name: str, architecture
         score += 0.25
     elif architecture and f"/arch" in file_path and architecture not in file_path:
         score -= 0.35
-    preferred = EXACT_PREFERRED.get(role) or ()
+    preferred = preferred_map.get(role) or ()
     if name in preferred:
         score += 0.45
-    elif any(name == pat for pat in ROLE_PATTERNS.get(role, ())):
+    elif any(name == pat for pat in patterns.get(role, ())):
         score += 0.3
-    elif any(name.endswith(pat) for pat in ROLE_PATTERNS.get(role, ())):
+    elif any(name.endswith(pat) for pat in patterns.get(role, ())):
         score += 0.15
     else:
         score -= 0.1
@@ -347,7 +394,15 @@ def _scan_paths(repo_root: Path, confirmed_files: list[str], architecture: str, 
     return list(repo_root.glob(f"**/{architecture}/**/*tiling*.cpp"))[:40] + list(repo_root.glob(f"**/{architecture}/**/*tiling*.h"))[:40]
 
 
-def _scan_global_kernels(repo_root: Path, confirmed_files: list[str], op_name: str, architecture: str) -> list[dict[str, Any]]:
+def _scan_global_kernels(
+    repo_root: Path,
+    confirmed_files: list[str],
+    op_name: str,
+    architecture: str,
+    *,
+    role_patterns: dict[str, tuple[str, ...]] | None = None,
+    exact_preferred: dict[str, tuple[str, ...]] | None = None,
+) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     global_re = re.compile(r"__global__\s+[^=;{]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
     for rel in confirmed_files:
@@ -363,7 +418,13 @@ def _scan_global_kernels(repo_root: Path, confirmed_files: list[str], op_name: s
         for match in global_re.finditer(text):
             name = match.group(1)
             line = text.count("\n", 0, match.start()) + 1
-            conf = _confidence("kernel_entry", name, rel_n, op_name, architecture) + 0.1
+            conf = (
+                _confidence(
+                    "kernel_entry", name, rel_n, op_name, architecture,
+                    role_patterns=role_patterns, exact_preferred=exact_preferred,
+                )
+                + 0.1
+            )
             out.append(
                 {
                     "node_id": 0,
@@ -393,7 +454,13 @@ def _scan_global_kernels(repo_root: Path, confirmed_files: list[str], op_name: s
         for match in re.finditer(r"\b([A-Za-z_][A-Za-z0-9_]*Entry[A-Za-z0-9_]*)\b", text):
             name = match.group(1)
             line = text.count("\n", 0, match.start()) + 1
-            conf = _confidence("kernel_entry", name, rel_n, op_name, architecture) + 0.2
+            conf = (
+                _confidence(
+                    "kernel_entry", name, rel_n, op_name, architecture,
+                    role_patterns=role_patterns, exact_preferred=exact_preferred,
+                )
+                + 0.2
+            )
             out.append(
                 {
                     "node_id": 0,

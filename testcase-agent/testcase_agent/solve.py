@@ -12,8 +12,7 @@ from .hashing import semantic_plan_hash, semantic_snapshot_hash
 from .io import ensure_output_dirs, output_root, read_json, read_yaml, write_yaml
 from .realization_contract import ContractError, load_contract, prepare_contract_inputs, realization_paths
 from .realization_dsl import normalize_realization_map, realization_report
-from .realization_map import build_realization_map
-from .realization_schema import discover_consumer_root, extract_consumer_schema
+from .realization_schema import discover_consumer_root
 from .realization_validation import ensure_valid_contract
 from .realize import realize_candidates_to_csv
 from .z3_backend import SolveConfig, Z3Backend
@@ -199,53 +198,13 @@ def load_or_build_realization(
         _emit_progress(progress, stage="realization_validate", status="complete", contract_hash=validation["contract_hash"])
         return {"evidence": loaded_evidence, "schema": schema, "realization_map": realization_map, "report": report, "validation": validation}
     except ContractError as exc:
-        if not allow_legacy_realization:
-            raise TgSolveError(
-                f"{exc}. Re-run tg-contract /tg-csv-contract, or pass --allow-legacy-realization "
-                "(FASG-only heuristic fallback; not recommended)."
-            ) from exc
-        _emit_progress(progress, stage="realization_validate", status="legacy_fallback", reason=str(exc))
-        _emit_progress(progress, stage="realization_schema", status="start")
-        schema = extract_consumer_schema(consumer_root)
-        write_yaml(paths["schema"], schema)
-        _emit_progress(progress, stage="realization_schema", status="complete", columns=len(schema.get("columns") or []), consumer_root=schema.get("consumer_root", ""))
-        if reuse_realization_map and paths["map"].exists():
-            realization_map = normalize_realization_map(read_yaml(paths["map"]))
-            _emit_progress(progress, stage="realization_map", status="reuse", path=str(paths["map"]))
-        else:
-            _emit_progress(progress, stage="realization_map", status="start")
-            realization_map = build_realization_map(snapshot, schema)
-            write_yaml(paths["map"], realization_map)
-            _emit_progress(
-                progress,
-                stage="realization_map",
-                status="complete",
-                csv_variables=len(realization_map.get("csv_variables") or []),
-                derived_variables=len(realization_map.get("derived_variables") or []),
-                mapped_branches=len(realization_map.get("branch_mappings") or []),
-                abstract_branches=len(realization_map.get("abstract_branches") or []),
-            )
-        report = realization_report(realization_map)
-        report["legacy_mode"] = True
-        report["warnings"] = list(report.get("warnings") or []) + [
-            "allow_legacy_realization: using FASG heuristic map; SMT→CSV identity not guaranteed"
-        ]
-        write_yaml(paths["report"], report)
-        return {
-            "evidence": evidence,
-            "schema": schema,
-            "realization_map": realization_map,
-            "report": report,
-            "validation": {
-                "status": "legacy",
-                "contract_hash": "",
-                "evidence_hash": evidence.get("evidence_hash", ""),
-                "csv_solver_variable_count": len(realization_map.get("csv_variables") or []),
-                "emit_derived_field_count": 0,
-                "unmapped_required_field_count": 0,
-                "abstract_branch_count": len(realization_map.get("abstract_branches") or []),
-            },
-        }
+        _ = allow_legacy_realization  # flag removed: FASG heuristic fallback no longer supported
+        _ = reuse_realization_map
+        _ = consumer_root
+        raise TgSolveError(
+            f"{exc}. Re-run tg-contract /tg-csv-contract with a valid consumer_schema + realization_map "
+            "(--allow-legacy-realization FASG fallback has been removed)."
+        ) from exc
 
 
 def _plan_dir(out_root: Path, level: str) -> Path:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from testcase_agent.composer import compose_global_legal, merge_composed_into_ir
 from testcase_agent.constraint_ir import compile_obligation_target
 from testcase_agent.extract import extract_generation_conditions, merge_llm_patches
@@ -74,11 +76,10 @@ def test_implies_legal_mode_compiles_to_implies() -> None:
     assert result.expr["op"] == "implies"
 
 
-def test_realize_builds_csv_row() -> None:
+def test_realize_legacy_build_case_row_removed() -> None:
     model = {"VAR_KEY_DETERTYPE": 1, "VAR_KEY_ISTND": 0, "VAR_DTYPE_LAYOUT_CLASS": "FP16_BNSD"}
     realization = match_realization(model, {"id": "C1"}, {})
-    assert realization["status"] == "ok"
-    row = build_case_row({"id": "C1"}, model, realization, 1)
-    assert row["Testcase_Name"] == "C1"
-    assert row["is_deter"] == "true"
-    assert row["Dtype"] == "fp16"
+    assert realization["status"] == "blocked"
+    assert "DEFAULT_SHAPE" in realization["reason"] or "input_realization" in realization["reason"]
+    with pytest.raises(RuntimeError, match="LEGACY_BUILD_CASE_ROW_REMOVED"):
+        build_case_row({"id": "C1"}, model, {"status": "ok", "shape": {}}, 1)

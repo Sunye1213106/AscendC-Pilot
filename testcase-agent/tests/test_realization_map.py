@@ -3,6 +3,9 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
+import yaml
+
+from testcase_agent.binding_lexicon import normalize_lexicon
 from testcase_agent.constraint_ir import build_constraint_ir, compile_obligation_target
 from testcase_agent.hashing import stable_hash
 from testcase_agent.io import read_yaml
@@ -10,6 +13,10 @@ from testcase_agent.realization_map import build_realization_map
 from testcase_agent.realization_schema import extract_consumer_schema
 from testcase_agent.realize import realize_candidates_to_csv
 from testcase_agent.realization_validation import validate_contract_artifacts
+
+_FIXTURE_LEXICON = normalize_lexicon(
+    yaml.safe_load((Path(__file__).parent / "fixtures" / "sample_binding_lexicon.yaml").read_text(encoding="utf-8"))
+)
 
 
 def _consumer_root(tmp_path: Path) -> Path:
@@ -152,7 +159,7 @@ def test_consumer_schema_uses_sample_header_then_script_columns(tmp_path: Path) 
 
 def test_realization_map_registers_csv_variables_and_abstract_branches(tmp_path: Path) -> None:
     schema = extract_consumer_schema(_consumer_root(tmp_path))
-    realization_map = build_realization_map(_snapshot(), schema)
+    realization_map = build_realization_map(_snapshot(), schema, lexicon=_FIXTURE_LEXICON)
     ir_result = build_constraint_ir(_snapshot(), {"obligations": []}, {"decision": "approve"}, realization_map=realization_map)
 
     variables = {item["id"]: item for item in ir_result.ir["variables"]}

@@ -1694,6 +1694,10 @@ LLM_RESOLVABILITY = {
         "llm_plus_source": "likely",
         "note": "解析/绑定管线缺陷，修 binder 或补丁后可进 mapped",
     },
+    "KEY_DERIVATION_MISSING": {
+        "llm_plus_source": "likely",
+        "note": "分支已绑到 VAR_KEY_*，但 binding_lexicon.yaml 缺 key_derivations；补 CSV→KEY 表达式后可 mapped",
+    },
     "PARSE_FAIL": {
         "llm_plus_source": "partial",
         "note": "KB 截断需回源码补全条件；复杂 C++（模板/算术）只能部分支持，不能靠 LLM 硬编解析器",
@@ -1734,6 +1738,7 @@ ABSTRACT_REASON_HINTS = {
     "UNBOUND_DTYPE": "dtype 相关原子缺少可证映射",
     "UNBOUND_CALL": "函数调用原子无法绑定",
     "SUBSTITUTE_FAIL": "原子均已标记但规范表达式替换失败",
+    "KEY_DERIVATION_MISSING": "缺少 binding_lexicon.key_derivations，禁止用 constant-0 KEY stub 假覆盖",
     "PLATFORM_MACRO": OUT_OF_SCOPE_CSV_REASONS["PLATFORM_MACRO"],
     "LOOP_LOCAL": OUT_OF_SCOPE_CSV_REASONS["LOOP_LOCAL"],
 }

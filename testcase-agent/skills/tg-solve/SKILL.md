@@ -18,6 +18,7 @@ Rules:
 
 - Load existing `realization/` contract (version 2). Do not invent CSV headers.
 - SMT free variables are `VAR_CSV_*`; KEY/mapped branches are derived.
-- Emit CSV by projecting `VAR_CSV_*` (+ emit_derived templates). No DEFAULT_SHAPE guessing unless `--allow-legacy-realization`.
+- Emit CSV by projecting `VAR_CSV_*` (+ emit_derived templates). Hardcoded `DEFAULT_SHAPE` / FASG legacy emit is removed; contract required.
+- Bound `VAR_KEY_*` without `binding_lexicon.key_derivations` → `KEY_DERIVATION_MISSING` (no constant-0 stub).
 - Solver report must include skipped counts.
 - Do not modify `.understand-operator/`.

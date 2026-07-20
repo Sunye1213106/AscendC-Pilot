@@ -175,7 +175,7 @@ def solve_main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--allow-legacy-realization",
         action="store_true",
-        help="FASG-only: allow hardcoded CSV_COLUMNS / heuristic map fallback (not recommended)",
+        help="Deprecated/no-op: FASG hardcoded emit and heuristic map fallback were removed",
     )
     args = parser.parse_args(argv)
 

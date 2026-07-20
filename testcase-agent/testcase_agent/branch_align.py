@@ -126,7 +126,33 @@ def align_branches(
             source_stats[source or "Unknown"]["abstract"] += 1
             continue
 
-        # Collect stub KEY/KVAR vars referenced so SMT has domains (default 0).
+        lexicon_key_ids = {
+            str(item.get("id") or "")
+            for item in (ctx.lexicon.get("key_derivations") or [])
+            if isinstance(item, dict) and item.get("id") and isinstance(item.get("expr"), dict)
+        }
+        missing_keys = sorted(
+            vid for vid in collect_var_ids_from_expr(expr) if vid.startswith("VAR_KEY_") and vid not in lexicon_key_ids
+        )
+        if missing_keys:
+            reason = "KEY_DERIVATION_MISSING"
+            abstract.append(
+                {
+                    **base,
+                    "abstract_only": True,
+                    "reason": reason,
+                    "missing_key_vars": missing_keys,
+                    "atom_bindings": bindings,
+                    "norm_expr": parsed.get("norm_expr"),
+                    "hint": "add key_derivations for these VAR_KEY_* in realization/binding_lexicon.yaml",
+                }
+            )
+            reason_counts[reason] += 1
+            source_stats[source or "Unknown"]["abstract"] += 1
+            source_stats[source or "Unknown"][reason] += 1
+            continue
+
+        # Collect KVAR stubs only (KEY must come from lexicon.key_derivations — never constant-0).
         for binding in bindings:
             target = binding.get("target") or {}
             _collect_stub_vars(target, stub_vars, free_kvar_ids=set(ctx.free_kvar_specs))
@@ -228,15 +254,7 @@ def _collect_stub_vars(expr: Any, stub_vars: dict[str, dict[str, Any]], *, free_
         return
     free_kvar_ids = free_kvar_ids or set()
     var = expr.get("var")
-    if isinstance(var, str) and var.startswith("VAR_KEY_") and var not in stub_vars:
-        # Constant-0 placeholder; /tg-csv-contract replaces via binding_lexicon.key_derivations.
-        stub_vars[var] = _derived(
-            var,
-            "int",
-            [0, 1],
-            {"op": "add", "args": [0, 0]},
-            f"stub for aligned branch ref {var} (default 0; refine via /tg-csv-contract binding_lexicon)",
-        )
+    # VAR_KEY_* stubs removed: without lexicon.key_derivations the branch is KEY_DERIVATION_MISSING.
     if isinstance(var, str) and var.startswith("VAR_KVAR_") and var not in stub_vars and var not in free_kvar_ids:
         stub_vars[var] = _derived(
             var,

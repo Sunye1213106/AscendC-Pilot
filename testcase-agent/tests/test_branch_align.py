@@ -73,9 +73,25 @@ def test_baseclass_not_substitute_fail() -> None:
         lexicon=_FIXTURE_LEXICON,
     )
     mapped = {item["branch_ref"] for item in result["branch_mappings"]}
+    abstract = {item["branch_ref"]: item for item in result["abstract_branches"]}
     assert "KBR_NOT" in mapped
-    assert "KBR_UF" in mapped
+    # Token binds, but fixture lexicon has no key_derivations for ENABLEUNITFLAG → no constant-0 fake coverage.
+    assert abstract["KBR_UF"]["reason"] == "KEY_DERIVATION_MISSING"
     assert result["alignment_report"]["reason_counts"].get("SUBSTITUTE_FAIL", 0) == 0
+
+
+def test_key_derivation_missing_without_lexicon_expr() -> None:
+    result = align_branches(
+        {"branches": [{"id": "KBR_TND", "condition": "IS_TND", "determinant_source": "TemplateArg"}]},
+        {
+            "files": {
+                "tiling/key_space.yaml": {"fields": [{"id": "KEY_ISTND", "values": [0, 1]}]},
+            }
+        },
+    )
+    abstract = {item["branch_ref"]: item for item in result["abstract_branches"]}
+    assert abstract["KBR_TND"]["reason"] == "KEY_DERIVATION_MISSING"
+    assert "VAR_KEY_ISTND" in abstract["KBR_TND"]["missing_key_vars"]
 
 
 def test_parse_orig_dtype_and_unlikely() -> None:

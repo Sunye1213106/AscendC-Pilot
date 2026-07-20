@@ -9,35 +9,10 @@ from typing import Any
 from .realization_contract import CONSUMER_SCHEMA_VERSION
 
 
-DEFAULT_SAMPLE_CSV = Path("data") / "FASG_PSE_cases.csv"
-
 # Metadata / identity columns that are not free SMT variables by default.
 CASE_ID_COLUMNS = {"Testcase_Name", "testcase_name", "Case_Name"}
 CONSTANT_DEFAULTS = {"Enable": "Enable"}
 RESULT_PREFIX = "Actual_"
-
-# Soft type hints when sample evidence lacks casts. Not an exclusive allow-list.
-INT_HINT_COLUMNS = {
-    "B",
-    "N1",
-    "N2",
-    "S1",
-    "S2",
-    "D",
-    "D_V",
-    "Pre_Tockens",
-    "Next_Tockens",
-    "sparse_mode",
-    "PSE_type",
-    "eod",
-    "same_as_input",
-    "seed",
-    "offset",
-    "rope",
-    "inner_drop",
-    "is_sink",
-}
-FLOAT_AS_INT_HINTS = {"Drop_Out_Possibility"}
 
 
 class ConsumerRootError(RuntimeError):
@@ -57,11 +32,12 @@ def require_consumer_root(explicit_root: Path | None) -> Path:
 
 
 def discover_consumer_root(project_root: Path, explicit_root: Path | None = None) -> Path | None:
-    """Legacy helper. Prefer require_consumer_root for new paths."""
+    """Resolve consumer root. Only explicit path or TG_CSV_CONSUMER_ROOT (no silent FAG discovery)."""
+    _ = project_root
     if explicit_root:
         root = explicit_root.resolve()
         return root if root.exists() else None
-    env = os.environ.get("FAG_DEBUG_TOOLS_ROOT") or os.environ.get("TG_CSV_CONSUMER_ROOT")
+    env = os.environ.get("TG_CSV_CONSUMER_ROOT")
     if env:
         root = Path(env).resolve()
         if root.exists():
@@ -70,7 +46,7 @@ def discover_consumer_root(project_root: Path, explicit_root: Path | None = None
 
 
 def extract_consumer_schema(consumer_root: Path | None) -> dict[str, Any]:
-    """Legacy column scan used by tests and legacy fallback."""
+    """Legacy column scan used by tests. No hardcoded column aliases or FASG filenames."""
     if consumer_root is None or not consumer_root.exists():
         return {
             "version": CONSUMER_SCHEMA_VERSION,
@@ -87,18 +63,8 @@ def extract_consumer_schema(consumer_root: Path | None) -> dict[str, Any]:
     script_columns, locations = _extract_get_column_index_columns(consumer_root)
     sample_path = _find_sample_csv(consumer_root)
     sample_columns, sample_values = _read_sample_csv(sample_path) if sample_path else ([], {})
-    aliases = {
-        "Drop_Out_Possibility": ["keep_prob"],
-        "Input_Layout": ["Layout"],
-        "Atten_mask_shape": ["Atten_mask_layout"],
-        "PSE_shape": ["PSE_layout"],
-    }
-    alias_to_canonical = {alias: canonical for canonical, values in aliases.items() for alias in values}
     columns = list(sample_columns)
     for column in script_columns:
-        canonical = alias_to_canonical.get(column)
-        if canonical and canonical in columns:
-            continue
         if column not in columns:
             columns.append(column)
     result_columns = [column for column in columns if column.startswith(RESULT_PREFIX)]
@@ -113,7 +79,7 @@ def extract_consumer_schema(consumer_root: Path | None) -> dict[str, Any]:
         "result_columns": result_columns,
         "column_locations": locations,
         "sample_values": sample_values,
-        "aliases": aliases,
+        "aliases": {},
         "warnings": [],
     }
 
@@ -192,18 +158,16 @@ def _infer_field(
 
     samples = list(sample_values.get(column) or [])
     casts = {str(item.get("kind") or "") for item in type_evidence.get(column) or []}
-    if column in FLOAT_AS_INT_HINTS or "cast:int" in casts and column in FLOAT_AS_INT_HINTS:
-        return "solver_input", "int", {"values": [0, 1]}, 1, "string"
-    if column in INT_HINT_COLUMNS or "cast:int" in casts:
+    if "cast:bool" in casts or column.lower() in {"is_deter"}:
+        domain = ["true", "false"]
+        return "solver_input", "enum", domain, domain[0], "string"
+    if "cast:int" in casts or _samples_look_int(samples):
         ints = [_parse_int(value) for value in samples]
         ints = [value for value in ints if value is not None]
         if not ints:
-            ints = [0, 1, 2, 4, 8, 16, 32, 64, 128, 256]
+            ints = [0, 1]
         domain_vals = sorted(dict.fromkeys(ints))
         return "solver_input", "int", {"values": domain_vals}, domain_vals[0], "string"
-    if "cast:bool" in casts or column in {"is_deter"}:
-        domain = ["true", "false"]
-        return "solver_input", "enum", domain, domain[0], "string"
 
     # list-like columns → emit_derived (filled from model / emit templates)
     if "seqlens" in column.lower() or column.startswith("cu_"):
@@ -217,6 +181,13 @@ def _infer_field(
         clean = ["_"]
         return "solver_input", "enum", clean, clean[0], "string"
     return "solver_input", "enum", sorted(dict.fromkeys(clean)), clean[0], "string"
+
+
+def _samples_look_int(samples: list[Any]) -> bool:
+    if not samples:
+        return False
+    parsed = [_parse_int(value) for value in samples]
+    return all(value is not None for value in parsed)
 
 
 def _is_required(column: str, role: str, required_optional: dict[str, Any], field_accesses: dict[str, Any]) -> bool:
@@ -246,9 +217,12 @@ def _source_refs_for_column(column: str, evidence: dict[str, Any]) -> list[dict[
 
 
 def _find_sample_csv(root: Path) -> Path | None:
-    preferred = root / DEFAULT_SAMPLE_CSV
-    if preferred.exists():
-        return preferred
+    """Prefer any CSV under data/, else first CSV under consumer root (no FASG filename hardcode)."""
+    data_dir = root / "data"
+    if data_dir.is_dir():
+        data_csvs = sorted(data_dir.glob("*.csv"))
+        if data_csvs:
+            return data_csvs[0]
     csv_files = sorted(root.rglob("*.csv"))
     return csv_files[0] if csv_files else None
 
@@ -256,39 +230,31 @@ def _find_sample_csv(root: Path) -> Path | None:
 def _extract_get_column_index_columns(root: Path) -> tuple[list[str], list[dict[str, Any]]]:
     columns: list[str] = []
     locations: list[dict[str, Any]] = []
-    search_roots = [root / "fag_test", root]
-    seen_files: set[Path] = set()
-    for base in search_roots:
-        if not base.exists():
+    for path in sorted(root.rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        except SyntaxError:
             continue
-        for path in sorted(base.rglob("*.py")):
-            if path in seen_files:
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
                 continue
-            seen_files.add(path)
-            try:
-                tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
-            except SyntaxError:
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+            if name != "get_column_index" or len(node.args) < 2:
                 continue
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Call):
-                    continue
-                func = node.func
-                name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
-                if name != "get_column_index" or len(node.args) < 2:
-                    continue
-                arg = node.args[1]
-                if not isinstance(arg, ast.Constant) or not isinstance(arg.value, str):
-                    continue
-                column = arg.value
-                if column not in columns:
-                    columns.append(column)
-                locations.append(
-                    {
-                        "column": column,
-                        "file": path.relative_to(root).as_posix() if path.is_relative_to(root) else path.as_posix(),
-                        "line": node.lineno,
-                    }
-                )
+            arg = node.args[1]
+            if not isinstance(arg, ast.Constant) or not isinstance(arg.value, str):
+                continue
+            column = arg.value
+            if column not in columns:
+                columns.append(column)
+            locations.append(
+                {
+                    "column": column,
+                    "file": path.relative_to(root).as_posix() if path.is_relative_to(root) else path.as_posix(),
+                    "line": node.lineno,
+                }
+            )
     return columns, locations
 
 
