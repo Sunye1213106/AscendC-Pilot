@@ -108,9 +108,22 @@ def main(argv: list[str] | None = None) -> int:
         print(f"WORKSPACE_ROOT={workspace_root} (common discovery only; do NOT move KB here)")
     if common_rel:
         print(f"Detected AscendC common library: {common_rel} (workspace={workspace_root})")
+        common_count = sum(1 for p in candidate_paths if p.replace("\\", "/").startswith("common/"))
+        op_count = len(candidate_paths) - common_count
+        print(
+            f"Scope proposal summary: operator_files≈{op_count} common_files≈{common_count} "
+            f"op_rel_prefix={op_rel_prefix or '(none)'}"
+        )
+        samples = [p for p in candidate_paths if p.replace("\\", "/").startswith("common/")][:5]
+        if samples:
+            print("Sample common paths: " + ", ".join(samples))
     if architecture:
         print(f"Architecture filter: {architecture}")
-    print("Phase 0 scope proposal is ready. Stop here until the user confirms the scope.")
+    print(
+        "Phase 0 scope proposal is ready. NEXT: AskQuestion for human confirm — "
+        "do NOT dump/read full scope_scan.yaml. Use counts above; narrow with "
+        "review_checkpoint.py --replace-initial (not hand-edit)."
+    )
     return 0
 
 
@@ -178,22 +191,20 @@ def _candidate_paths(
         stem = Path(rel).stem.lower()
         if Path(rel).suffix.lower() not in SOURCE_EXTENSIONS:
             continue
-        # When workspace was expanded for sibling common/, keep operator package files only
-        # in the primary match pass (common files are added via include pruning).
-        if prefix and not (rel == prefix or rel.startswith(prefix + "/") or rel.startswith("common/")):
-            # still allow loose name matches under workspace
-            if not any(token in lower or token in stem for token in tokens):
+        # Hard bound: when workspace expanded for sibling common/, only collect
+        # files under op_rel_prefix. Common is added later via include pruning —
+        # never via token matches that pull sibling operators (e.g. "attention").
+        if prefix:
+            if not (rel == prefix or rel.startswith(prefix + "/")):
                 continue
+        elif rel.startswith("common/"):
+            continue
         parts = set(lower.split("/"))
         if parts & {"op_host", "op_kernel", "op_api", "op_graph"}:
-            # Skip foreign common dumps in this pass; common handled separately.
-            if rel.startswith("common/"):
-                continue
             matched.add(rel)
             continue
         if any(token in lower or token in stem for token in tokens):
-            if not rel.startswith("common/"):
-                matched.add(rel)
+            matched.add(rel)
     for seed in user_seeds:
         rel_path = (repo_root / seed).resolve()
         try:
@@ -201,6 +212,8 @@ def _candidate_paths(
         except ValueError:
             continue
         if seed_rel in all_files:
+            if prefix and not (seed_rel == prefix or seed_rel.startswith(prefix + "/") or seed_rel.startswith("common/")):
+                continue
             matched.add(seed_rel)
     return sorted(matched)
 
@@ -253,6 +266,74 @@ def _common_library_files(all_files: list[str], common_rel: str) -> list[str]:
 _INCLUDE_RE = re.compile(r'^\s*#\s*include\s*["<]([^">]+)[">]', re.MULTILINE)
 
 
+def _normalize_include_for_common(inc: str) -> list[str]:
+    """Return candidate common-relative keys for an #include path.
+
+    Handles forms like ``../../../common/op_kernel/arch35/x.h`` by stripping
+    ``../`` / ``./`` segments and slicing from ``common/`` when present.
+    """
+    raw = inc.replace("\\", "/").strip()
+    if not raw:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def _add(key: str) -> None:
+        key = key.replace("\\", "/").strip().lstrip("/")
+        if key and key not in seen:
+            seen.add(key)
+            out.append(key)
+
+    _add(raw)
+    parts = [p for p in raw.split("/") if p and p != "."]
+    while parts and parts[0] == "..":
+        parts.pop(0)
+    collapsed = "/".join(parts)
+    _add(collapsed)
+    for candidate in (raw, collapsed):
+        idx = candidate.find("common/")
+        if idx >= 0:
+            _add(candidate[idx:])
+    return out
+
+
+def _match_common_include(
+    inc: str,
+    *,
+    src_rel: str,
+    workspace_root: Path,
+    by_rel: dict[str, str],
+    by_name: dict[str, list[str]],
+) -> str | None:
+    """Resolve an include string to a common/ relative path, or None."""
+    for key in _normalize_include_for_common(inc):
+        if key in by_rel:
+            return by_rel[key]
+    # Resolve relative to the including source file → workspace-relative.
+    try:
+        resolved = (workspace_root / src_rel).resolve().parent / Path(inc.replace("\\", "/"))
+        rel = resolved.resolve().relative_to(workspace_root.resolve()).as_posix()
+        if rel in by_rel:
+            return by_rel[rel]
+        for key in _normalize_include_for_common(rel):
+            if key in by_rel:
+                return by_rel[key]
+    except (OSError, ValueError):
+        pass
+    # Suffix / trailing-path match only when the include has a directory
+    # component. Never match on unique basename alone.
+    normalized_keys = _normalize_include_for_common(inc)
+    for key in normalized_keys:
+        if "/" not in key:
+            continue
+        name = Path(key).name.lower()
+        for cand in by_name.get(name) or []:
+            norm = cand.replace("\\", "/")
+            if norm.endswith("/" + key) or norm == key:
+                return cand
+    return None
+
+
 def _prune_common_by_includes(workspace_root: Path, op_files: list[str], common_files: list[str]) -> list[str]:
     """Keep only common files referenced (directly/indirectly) via #include from operator files."""
     if not common_files:
@@ -284,24 +365,13 @@ def _prune_common_by_includes(workspace_root: Path, op_files: list[str], common_
             inc = match.group(1).replace("\\", "/").strip()
             if not inc:
                 continue
-            hit = None
-            if inc in by_rel:
-                hit = by_rel[inc]
-            elif inc.startswith("common/") and inc in by_rel:
-                hit = by_rel[inc]
-            else:
-                # Suffix / trailing-path match only when the include has a directory
-                # component. Never match on unique basename alone (shared names like
-                # pse.h across sibling libs cause false hits).
-                if "/" not in inc:
-                    continue
-                name = Path(inc).name.lower()
-                cands = by_name.get(name) or []
-                for cand in cands:
-                    norm = cand.replace("\\", "/")
-                    if norm.endswith("/" + inc) or norm == inc:
-                        hit = cand
-                        break
+            hit = _match_common_include(
+                inc,
+                src_rel=src_rel,
+                workspace_root=workspace_root,
+                by_rel=by_rel,
+                by_name=by_name,
+            )
             if hit and hit not in selected:
                 selected.add(hit)
                 frontier.append(hit)

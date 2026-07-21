@@ -60,10 +60,12 @@ class Z3Backend:
             check = solver.check()
             if check == self.z3.sat:
                 model = solver.model()
+                abstract = self.abstract_model(model)
+                abstract = self._generalize_away_all_ones(solver, labels, expr, abstract)
                 return {
                     "obligation_id": obligation_id,
                     "status": "sat",
-                    "model": self.abstract_model(model),
+                    "model": abstract,
                     "unsat_core": [],
                     "reason": "",
                 }
@@ -466,3 +468,42 @@ class Z3Backend:
         marker = self.z3.Bool(safe)
         labels[safe] = label
         solver.assert_and_track(expr, marker)
+
+    def _generalize_away_all_ones(
+        self,
+        solver: Any,
+        labels: dict[str, str],
+        expr: dict[str, Any],
+        abstract: dict[str, Any],
+    ) -> dict[str, Any]:
+        """If many free shape/csv ints are 1, try one more SAT model that breaks the all-1 cube."""
+        del expr  # target already on solver stack from solve_expr
+        shape_like = [
+            key
+            for key, value in abstract.items()
+            if isinstance(value, int)
+            and value == 1
+            and (
+                key.startswith("VAR_SHAPE_")
+                or key.startswith("VAR_CSV_")
+                or key.endswith("_DIM")
+                or key.endswith("_LEN")
+            )
+            and key in self.variables
+            and not self.variables[key].get("derived")
+        ]
+        if len(shape_like) < 2:
+            return abstract
+        solver.push()
+        try:
+            ors = [self.symbols[var] > 1 for var in shape_like if var in self.symbols]
+            if not ors:
+                return abstract
+            self._assert_tracked(solver, self.z3.Or(ors), "generalize:not_all_ones", labels)
+            if solver.check() == self.z3.sat:
+                return self.abstract_model(solver.model())
+        except (ConstraintIRError, Z3BackendError, TypeError, ValueError):
+            return abstract
+        finally:
+            solver.pop()
+        return abstract

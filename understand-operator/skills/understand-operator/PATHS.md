@@ -12,9 +12,12 @@ After `./install.ps1 opencode`, the same tree is also linked as:
 uo/scripts/
 ```
 
-Prefer absolute: `$PLUGIN_ROOT/uo/scripts`.
+Prefer absolute: `$PLUGIN_ROOT/uo/scripts` (e.g. after install:
+`~/.config/opencode/understand-operator-plugin/uo/scripts`).
 
-Do **not** look for `.py` wrappers under `skills/understand-operator/` (removed).
+Do **not** treat `skills/uo-query/scripts/` as primary SCRIPT_DIR (that folder only
+has a forwarder to `uo/scripts/uo_kb_query.py`). Do **not** look for `.py`
+wrappers under `skills/understand-operator/` (removed).
 
 ## Spec
 
@@ -45,7 +48,9 @@ Hash 只覆盖 `bundle.yaml` → `hash_inputs` 列表中的文件（见仓库 RE
 - `reconcile_bridge.py`
 - `extract_key_predicates.py`
 - `apply_resolution.py`
-- `kb_query_export.py`
+- `kb_query_export.py`  # default --profile lean
+- `export_kb_graph.py`
+- `export_human_views.py`
 - `verify_required_subagents.py`
 
 ### uo-update
@@ -56,7 +61,7 @@ Hash 只覆盖 `bundle.yaml` → `hash_inputs` 列表中的文件（见仓库 RE
 - (+ Phase0 / `build_layered_kb` as needed)
 
 ### uo-query
-- `uo_query_readonly.py` (optional; primary path is KB + CBM MCP)
+- `uo_query_readonly.py` / `uo_kb_query.py` (prefer kb_graph; never dump operator_graph)
 
 ## PROMPT_DIR
 

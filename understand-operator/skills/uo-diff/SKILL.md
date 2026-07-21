@@ -22,21 +22,20 @@ Provide a **read-only** change summary for an AscendC operator relative to the e
 ## Current behavior (preserve)
 
 1. If `$UO_ROOT` is missing, report that and suggest `/uo-init`.
-2. Run CBM change detection via MCP and print a concise summary:
+2. Produce a concise change summary **without** depending on CRG or a CBM `detect_changes` tool (may be absent):
 
-   - MCP server: `codebase-memory-mcp`
-   - Tool: `detect_changes`
-   - Arg: `repo_path` = `$PROJECT_ROOT`
+```powershell
+python -X utf8 "$SCRIPT_DIR/detect_kb_changes.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+```
 
-3. Print the MCP result as a concise summary. Do not write `cbm/change_set.yaml`
-   or any other persisted diff artifact. For the durable PR-oriented `diff/`
-   product, use `/uo-update` instead.
-4. Do **not** modify KB artifacts in this command (read-only). Incremental KB
-   patching lives in `/uo-update`.
+   Prefer printing `diff/change_set.yaml` if `/uo-update` already ran; otherwise the detect script output is enough for a read-only summary.
+
+3. Do not write durable review products here. For PR-oriented `diff/` product use `/uo-update`; for dual-path review use `/uo-code-review`.
+4. Do **not** modify KB artifacts in this command (read-only). Incremental KB patching lives in `/uo-update`.
 
 ## Global rule
 
-If any source lookup is needed beyond the change API, follow `prompts/00_cbm_first_rule.md` (**MCP first**, then source on failure). Do not use local CBM CLI fallback commands.
+If any source lookup is needed beyond the change API, follow `prompts/00_cbm_first_rule.md` (**MCP first**, then source on failure). Do not use local CBM CLI fallback commands. Do not install code-review-graph.
 
 ## Out of scope for now
 

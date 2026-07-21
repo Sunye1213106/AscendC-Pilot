@@ -9,14 +9,16 @@
 | `uo-2-scope` | 扫描并提案分析范围（含向上发现 common） |
 | `uo-3-review` | 等待确认分析范围（硬门禁） |
 | `uo-4-index` | 窄索引代码图并完成范围收尾 |
-| `uo-5-extract` | 抽取 Host/Kernel/桥接 IR |
-| `uo-6-resolve` | 有界语义补全（入口确认 + 残留项） |
-| `uo-7-export` | 导出测试契约并校验 |
+| `uo-5-extract` | 抽取 Host/Kernel/桥接（含入口确认 + extract_plan） |
+| `uo-6-resolve` | 有界语义补全（残留 unresolved）+ 入账 + 导出 + integrity |
+| `uo-7-kb-review` | KB 产物审查（uo-kb-review） |
 
 细则：
 
 - 路径解析、子代理预检、CBM 状态检查等内部动作**不要**单独占一条 Todo。
 - 第 3 条是硬门禁：未确认前不得进入第 4 条。
+- 入口确认在第 5 条；第 6 条只做残留 resolve / ledger / 导出 / integrity。
+- 第 7 条 `uo-kb-review` verdict=pass 才结束；fail 按 rework_stage 回环（最多 2 次）。
 - 完成后停在第 7 条；不要再追加旧的 Phase1–3 Todo。
 
 子代理任务以前台方式等待返回；失败时保持当前步骤 in_progress，带着校验结果续跑，

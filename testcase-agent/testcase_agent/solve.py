@@ -9,7 +9,7 @@ from .candidates import CandidateError, build_candidate, dedupe_candidates, gree
 from .composer import compose_global_legal, merge_composed_into_ir
 from .constraint_ir import build_constraint_ir, compile_obligation_target
 from .hashing import semantic_plan_hash, semantic_snapshot_hash
-from .io import ensure_output_dirs, output_root, read_json, read_yaml, write_yaml
+from .io import ensure_output_dirs, output_root, read_json, read_yaml, resolve_plan_dir, write_yaml
 from .realization_contract import ContractError, load_contract, prepare_contract_inputs, realization_paths
 from .realization_dsl import normalize_realization_map, realization_report
 from .realization_schema import discover_consumer_root
@@ -45,7 +45,10 @@ def tg_solve(
     out_root = output_root(project_root, op_name)
     ensure_output_dirs(out_root)
     snapshot_path = out_root / "snapshot" / "understand_contract.json"
-    plan_dir = _plan_dir(out_root, level)
+    try:
+        plan_dir = resolve_plan_dir(out_root, level)
+    except FileNotFoundError as exc:
+        raise TgSolveError(str(exc)) from exc
     obligations_path = plan_dir / "coverage_obligations.yaml"
     matrix_path = plan_dir / "coverage_matrix.yaml"
     unresolved_path = plan_dir / "unresolved.yaml"
@@ -54,14 +57,12 @@ def tg_solve(
     extract_path = out_root / "extract" / "generation_conditions.yaml"
     if not snapshot_path.exists():
         raise TgSolveError(f"Missing snapshot. Run tg-plan first: {snapshot_path}")
-    if not obligations_path.exists():
-        raise TgSolveError(f"Missing coverage plan. Run tg-plan first: {obligations_path}")
     if not matrix_path.exists():
-        raise TgSolveError(f"Missing coverage matrix: {matrix_path}")
+        raise TgSolveError(f"Missing coverage matrix: {matrix_path}. Re-run tg-plan for this level.")
     if not unresolved_path.exists():
-        raise TgSolveError(f"Missing unresolved report: {unresolved_path}")
+        raise TgSolveError(f"Missing unresolved report: {unresolved_path}. Re-run tg-plan for this level.")
     if not supplement_path.exists():
-        raise TgSolveError(f"Missing approval file: {supplement_path}")
+        raise TgSolveError(f"Missing approval file: {supplement_path}. Approve via review_checkpoint --level <L>.")
 
     snapshot = read_json(snapshot_path)
     if snapshot.get("snapshot_hash") != semantic_snapshot_hash(snapshot):
@@ -83,6 +84,12 @@ def tg_solve(
         raise TgSolveError("PLAN_HASH_MISMATCH: plan_hash does not match phase-one plan contents")
     _require_approval(supplement, snapshot.get("snapshot_hash"), plan_hash, unresolved_doc)
     _require_domain_review(out_root)
+    try:
+        from .uo_resolve_merge import UoMergeError, require_domain_symmetry
+
+        require_domain_symmetry(out_root)
+    except UoMergeError as exc:
+        raise TgSolveError(f"{exc.ask}: {exc}") from exc
     realization = load_or_build_realization(
         out_root,
         project_root,
@@ -147,7 +154,10 @@ def load_or_build_realization(
 ) -> dict[str, Any]:
     paths = realization_paths(out_root)
     snapshot_path = out_root / "snapshot" / "understand_contract.json"
-    obligations_path = _plan_dir(out_root, level) / "coverage_obligations.yaml"
+    try:
+        obligations_path = resolve_plan_dir(out_root, level) / "coverage_obligations.yaml"
+    except FileNotFoundError as exc:
+        raise TgSolveError(str(exc)) from exc
     _emit_progress(progress, stage="realization_prepare", status="start")
     consumer_root = None
     if csv_consumer_root is not None:
@@ -211,13 +221,6 @@ def load_or_build_realization(
         ) from exc
 
 
-def _plan_dir(out_root: Path, level: str) -> Path:
-    level = str(level or "").strip().upper()
-    if not level:
-        return out_root / "plan"
-    return out_root / "plan" / "levels" / level
-
-
 def _solve_dir(out_root: Path, level: str, case_name: str) -> Path:
     level = str(level or "").strip().upper()
     case = _safe_name(case_name) if case_name else ""
@@ -253,7 +256,7 @@ def solve_from_docs(
     _emit_progress(progress, stage="constraint_ir", status="start", total_obligations=len(obligations))
     ir_result = build_constraint_ir(snapshot, obligations_doc, supplement, realization_map=realization_map)
     ir = ir_result.ir
-    composed = compose_global_legal(extract_doc, supplement)
+    composed = compose_global_legal(extract_doc, supplement, realization_map=realization_map)
     ir = merge_composed_into_ir(ir, composed)
     _emit_progress(progress, stage="constraint_ir", status="complete", variables=len(ir.get("variables") or []), constraints=len(ir.get("constraints") or []), errors=len(ir_result.global_errors))
     candidates: list[dict[str, Any]] = []
@@ -882,19 +885,34 @@ def _emit_solve_running(
     )
 
 
-def write_solve_outputs(solve_root: Path, result: dict[str, Any]) -> None:
-    write_yaml(solve_root / "constraint_ir.yaml", result["constraint_ir"])
-    write_yaml(
-        solve_root / "candidates.yaml",
-        {
-            "version": 1,
-            "snapshot_hash": result["snapshot_hash"],
-            "dedupe_enabled": bool(result.get("dedupe_enabled")),
-            "raw_count": len(result["candidates"]),
-            "deduped_count": len(result["deduped_candidates"]),
-            "candidates": result["deduped_candidates"],
-        },
-    )
+def write_solve_outputs(solve_root: Path, result: dict[str, Any], *, debug_artifacts: bool = False) -> None:
+    import os
+
+    debug = debug_artifacts or os.environ.get("TG_DEBUG_ARTIFACTS", "").strip() in {"1", "true", "yes"}
+    ir = result.get("constraint_ir") or {}
+    if debug:
+        write_yaml(solve_root / "constraint_ir.yaml", ir)
+        write_yaml(
+            solve_root / "candidates.yaml",
+            {
+                "version": 1,
+                "snapshot_hash": result["snapshot_hash"],
+                "dedupe_enabled": bool(result.get("dedupe_enabled")),
+                "raw_count": len(result["candidates"]),
+                "deduped_count": len(result["deduped_candidates"]),
+                "candidates": result["deduped_candidates"],
+            },
+        )
+    else:
+        write_yaml(
+            solve_root / "constraint_ir_summary.yaml",
+            {
+                "version": 1,
+                "variable_count": len(ir.get("variables") or []),
+                "constraint_count": len(ir.get("constraints") or []),
+                "note": "Full constraint_ir.yaml omitted; set TG_DEBUG_ARTIFACTS=1 to write it",
+            },
+        )
     write_yaml(
         solve_root / "selected_candidates.yaml",
         {
@@ -920,8 +938,7 @@ def write_solve_outputs(solve_root: Path, result: dict[str, Any]) -> None:
     (solve_root / "solver_report.md").write_text(result["solver_report"]["chinese_report"], encoding="utf-8")
     if result.get("realize_report"):
         write_yaml(solve_root / "realize_report.yaml", result["realize_report"])
-    if result.get("realization_report"):
-        write_yaml(solve_root / "realization_report.yaml", result["realization_report"])
+    # Skip duplicate realization_report under solve/ (already under realization/)
 
 
 def build_solver_report(
@@ -1004,6 +1021,11 @@ def _require_approval(supplement: dict[str, Any], snapshot_hash: str | None, pla
         raise TgSolveError("PLAN_BLOCKED: unresolved hard blockers must be cleared before tg-solve")
     if gaps:
         raise TgSolveError("CONTRACT_GAPS_PRESENT: contract gaps must be resolved before tg-solve")
+    if unresolved.get("allow_solve") is False:
+        raise TgSolveError(
+            f"ALLOW_SOLVE_NO: {unresolved.get('allow_solve_reason') or 'plan forbids solve'}. "
+            "Re-run tg-init --merge-uo-resolve / tg-plan; do not hand-edit lexicon."
+        )
 
 
 def _require_nonempty_realize(realize_report: dict[str, Any]) -> None:

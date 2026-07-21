@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ if __package__ in (None, ""):
 from uo._operator.artifacts import existing_operator_root, safe_op_name
 from uo.scripts._ir_io import read_yaml, stable_id, write_yaml
 
+# TG intake still requires these paths on disk (see testcase_agent.validation).
 REQUIRED_REL_PATHS = (
     "contracts/testcase.yaml",
     "test/contract.yaml",
@@ -37,16 +39,33 @@ REQUIRED_REL_PATHS = (
     "quality.yaml",
 )
 
+ARTIFACT_HASHES_REL = "checks/artifact_hashes.yaml"
+RUNTIME_SAMPLE_LIMIT_LEAN = 3
+RUNTIME_SAMPLE_LIMIT_FULL = 8
 
-def export_view(uo_root: Path | str, op_name: str, view: str) -> dict[str, Any]:
+
+def resolve_export_profile(explicit: str | None = None) -> str:
+    raw = (explicit or os.environ.get("UO_KB_EXPORT_PROFILE") or "lean").strip().lower()
+    if raw not in {"lean", "full"}:
+        raise ValueError(f"unsupported export profile: {raw!r} (expected lean|full)")
+    return raw
+
+
+def export_view(
+    uo_root: Path | str,
+    op_name: str,
+    view: str,
+    *,
+    profile: str | None = None,
+) -> dict[str, Any]:
     uo_root = Path(uo_root)
     if view != "testcase-contract":
         raise ValueError(f"unsupported view: {view}")
     graph = read_yaml(uo_root / "ir" / "operator_graph.yaml")
     if not graph:
         raise FileNotFoundError(f"missing operator graph under {uo_root}")
-    files = materialize_testcase_contract_files(uo_root, graph)
-    return {"op_name": op_name, "view": view, "files": files}
+    files = materialize_testcase_contract_files(uo_root, graph, profile=profile)
+    return {"op_name": op_name, "view": view, "files": files, "export_profile": resolve_export_profile(profile)}
 
 
 def export_context_slice(
@@ -74,7 +93,15 @@ def export_context_slice(
     }
 
 
-def materialize_testcase_contract_files(uo_root: Path, graph: dict[str, Any]) -> dict[str, Any]:
+def materialize_testcase_contract_files(
+    uo_root: Path,
+    graph: dict[str, Any],
+    *,
+    profile: str | None = None,
+) -> dict[str, Any]:
+    profile = resolve_export_profile(profile)
+    lean = profile == "lean"
+    sample_limit = RUNTIME_SAMPLE_LIMIT_LEAN if lean else RUNTIME_SAMPLE_LIMIT_FULL
     op_name = str(graph.get("op_name") or "")
     tilingkey = graph.get("tilingkey") or {}
     dimensions = tilingkey.get("dimensions") or []
@@ -162,7 +189,7 @@ def materialize_testcase_contract_files(uo_root: Path, graph: dict[str, Any]) ->
             dim_product = 0
             break
     args_sel_count = int(tilingkey.get("args_sel_count") or 0)
-    exhaustive = {
+    exhaustive_full = {
         "version": 1,
         "op_name": op_name,
         "enumeration_source": "template_blocks",
@@ -183,6 +210,24 @@ def materialize_testcase_contract_files(uo_root: Path, graph: dict[str, Any]) ->
         },
         "reverse_realization_index": reverse_realization_index,
     }
+    if lean:
+        exhaustive = {
+            "version": 1,
+            "op_name": op_name,
+            "enumeration_source": "template_blocks",
+            "field_order": exhaustive_full["field_order"],
+            "template_blocks": [],
+            "dimensions": [],
+            "args_sel_count": args_sel_count,
+            "summary": exhaustive_full["summary"],
+            "combination_summary": exhaustive_full["combination_summary"],
+            "reverse_realization_index": {},
+            "lean_truncated": True,
+            "full_list_profile": "full",
+            "note": "Re-export with --profile full for template_blocks / reverse_realization_index",
+        }
+    else:
+        exhaustive = exhaustive_full
 
     families = [{"id": "FAM_DEFAULT", "name": "default"}]
     for block in template_blocks:
@@ -437,19 +482,37 @@ def materialize_testcase_contract_files(uo_root: Path, graph: dict[str, Any]) ->
     contract = _merge_human_facts_supplements(uo_root, contract)
     runtime_branch_ids = [b["id"] for b in branch_rows if b.get("binding_time") == "runtime"]
     branch_obl_limit = 80
-    test_contract = {
-        "version": 1,
-        "op_name": op_name,
-        "input_domain": {k: "any" for k in golden_inputs[:30]},
-        "typed_constraints": contract.get("typed_constraints") or [],
-        "kernel_branch_obligations": [{"id": bid} for bid in runtime_branch_ids[:branch_obl_limit]],
-        "kernel_branch_obligations_meta": {
-            "total_runtime_branches": len(runtime_branch_ids),
-            "listed_count": min(branch_obl_limit, len(runtime_branch_ids)),
-            "truncated": len(runtime_branch_ids) > branch_obl_limit,
-            "full_list": "kernel/branches.yaml",
-        },
-    }
+    if lean:
+        # Avoid dual-writing a near-copy of contracts/testcase.yaml; keep TG-required stub.
+        test_contract = {
+            "version": 1,
+            "op_name": op_name,
+            "canonical_ref": "contracts/testcase.yaml",
+            "input_domain": {},
+            "typed_constraints": [],
+            "kernel_branch_obligations": [],
+            "kernel_branch_obligations_meta": {
+                "total_runtime_branches": len(runtime_branch_ids),
+                "listed_count": 0,
+                "truncated": True,
+                "full_list": "kernel/branches.yaml",
+                "contract_ref": "contracts/testcase.yaml",
+            },
+        }
+    else:
+        test_contract = {
+            "version": 1,
+            "op_name": op_name,
+            "input_domain": {k: "any" for k in golden_inputs[:30]},
+            "typed_constraints": contract.get("typed_constraints") or [],
+            "kernel_branch_obligations": [{"id": bid} for bid in runtime_branch_ids[:branch_obl_limit]],
+            "kernel_branch_obligations_meta": {
+                "total_runtime_branches": len(runtime_branch_ids),
+                "listed_count": min(branch_obl_limit, len(runtime_branch_ids)),
+                "truncated": len(runtime_branch_ids) > branch_obl_limit,
+                "full_list": "kernel/branches.yaml",
+            },
+        }
 
     files: dict[str, Any] = {
         "contracts/testcase.yaml": contract,
@@ -488,7 +551,9 @@ def materialize_testcase_contract_files(uo_root: Path, graph: dict[str, Any]) ->
         "kernel/variables.yaml": kernel_vars,
         "kernel/paths.yaml": kernel_paths,
         "kernel/branches.yaml": branches_doc,
-        "kernel/runtime_conditions.yaml": _build_runtime_conditions(op_name, branch_rows),
+        "kernel/runtime_conditions.yaml": _build_runtime_conditions(
+            op_name, branch_rows, sample_limit=sample_limit
+        ),
         "kernel/pipeline.yaml": {
             "version": 1,
             "op_name": op_name,
@@ -510,40 +575,87 @@ def materialize_testcase_contract_files(uo_root: Path, graph: dict[str, Any]) ->
         "flow/numerical_model.yaml": numerical,
         "query/routes.yaml": _build_query_routes(op_name),
         "query/terminology.yaml": _build_query_terminology(op_name, dimensions, key_fields),
-        "quality.yaml": {"status": "pass", "decision": "pass", "checks": ["layered_ir", "final"]},
+        "quality.yaml": {
+            "status": "pass",
+            "decision": "pass",
+            "checks": ["layered_ir", "final"],
+            "export_profile": profile,
+        },
     }
 
-    # Write first without hashes, then stamp hashes into contract.source.
+    _write_materialized_files(uo_root, files, profile=profile)
+    return files
+
+
+def _sha256_file(path: Path) -> str:
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _collect_artifact_hashes(uo_root: Path, *, include_contract: bool = False) -> dict[str, str]:
+    hashes: dict[str, str] = {}
+    for rel in REQUIRED_REL_PATHS:
+        if rel == "contracts/testcase.yaml" and not include_contract:
+            continue
+        path = uo_root / rel
+        if path.exists():
+            hashes[rel] = _sha256_file(path)
+    graph_path = uo_root / "ir" / "operator_graph.yaml"
+    if graph_path.exists():
+        hashes["ir/operator_graph.yaml"] = _sha256_file(graph_path)
+    runtime_path = uo_root / "kernel" / "runtime_conditions.yaml"
+    if runtime_path.exists():
+        hashes["kernel/runtime_conditions.yaml"] = _sha256_file(runtime_path)
+    return hashes
+
+
+def _write_artifact_hashes(uo_root: Path, hashes: dict[str, str], *, profile: str) -> None:
+    payload = {
+        "version": 1,
+        "export_profile": profile,
+        "hashes": dict(sorted(hashes.items())),
+    }
+    write_yaml(uo_root / ARTIFACT_HASHES_REL, payload)
+
+
+def _write_materialized_files(uo_root: Path, files: dict[str, Any], *, profile: str) -> None:
+    lean = profile == "lean"
     for rel, payload in files.items():
         if rel == "contracts/testcase.yaml":
             continue
         write_yaml(uo_root / rel, payload)
 
-    hashes = {}
-    for rel in REQUIRED_REL_PATHS:
-        if rel == "contracts/testcase.yaml":
-            continue
-        path = uo_root / rel
-        if path.exists():
-            hashes[rel] = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
-    graph_path = uo_root / "ir" / "operator_graph.yaml"
-    if graph_path.exists():
-        hashes["ir/operator_graph.yaml"] = "sha256:" + hashlib.sha256(graph_path.read_bytes()).hexdigest()
-
+    hashes = _collect_artifact_hashes(uo_root, include_contract=False)
     contract = dict(files["contracts/testcase.yaml"])
     source = dict(contract.get("source") or {})
-    source["canonical_hashes"] = hashes
     source["quality_status"] = "pass"
     source["understand_phase"] = "layered_ir"
+    source["export_profile"] = profile
+    source["hashes_ref"] = ARTIFACT_HASHES_REL
+    if lean:
+        # Keep contract human/AI-readable; hashes live in checks/artifact_hashes.yaml.
+        source["canonical_hashes"] = {}
+    else:
+        source["canonical_hashes"] = dict(hashes)
     contract["source"] = source
     files["contracts/testcase.yaml"] = contract
     write_yaml(uo_root / "contracts" / "testcase.yaml", contract)
-    hashes["contracts/testcase.yaml"] = "sha256:" + hashlib.sha256((uo_root / "contracts" / "testcase.yaml").read_bytes()).hexdigest()
-    contract["source"]["canonical_hashes"] = hashes
-    files["contracts/testcase.yaml"] = contract
-    write_yaml(uo_root / "contracts" / "testcase.yaml", contract)
 
-    return files
+    hashes["contracts/testcase.yaml"] = _sha256_file(uo_root / "contracts" / "testcase.yaml")
+    if not lean:
+        # Preserve historical full behavior: stamp final hashes back into the contract once.
+        source = dict(contract.get("source") or {})
+        source["canonical_hashes"] = dict(hashes)
+        contract["source"] = source
+        files["contracts/testcase.yaml"] = contract
+        write_yaml(uo_root / "contracts" / "testcase.yaml", contract)
+        hashes["contracts/testcase.yaml"] = _sha256_file(uo_root / "contracts" / "testcase.yaml")
+
+    _write_artifact_hashes(uo_root, hashes, profile=profile)
+    files[ARTIFACT_HASHES_REL] = {
+        "version": 1,
+        "export_profile": profile,
+        "hashes": dict(sorted(hashes.items())),
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -551,16 +663,29 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("repo", nargs="?", default=".")
     parser.add_argument("--op-name", required=True)
     parser.add_argument("--view", default="testcase-contract")
+    parser.add_argument(
+        "--profile",
+        default=None,
+        choices=["lean", "full"],
+        help="Export profile (default: lean, or UO_KB_EXPORT_PROFILE)",
+    )
     args = parser.parse_args(argv)
     repo_root = Path(args.repo).resolve()
     op_name = safe_op_name(args.op_name, repo_root)
     uo_root = existing_operator_root(repo_root, op_name)
-    result = export_view(uo_root, op_name, args.view)
-    print(f"exported view={args.view} files={len(result['files'])}")
+    result = export_view(uo_root, op_name, args.view, profile=args.profile)
+    print(
+        f"exported view={args.view} profile={result.get('export_profile')} files={len(result['files'])}"
+    )
     return 0
 
 
-def _load_or_materialize(uo_root: Path, graph: dict[str, Any]) -> dict[str, Any]:
+def _load_or_materialize(
+    uo_root: Path,
+    graph: dict[str, Any],
+    *,
+    profile: str | None = None,
+) -> dict[str, Any]:
     contract = read_yaml(uo_root / "contracts" / "testcase.yaml")
     if contract and int(contract.get("version") or 0) == 2:
         files: dict[str, Any] = {}
@@ -574,7 +699,7 @@ def _load_or_materialize(uo_root: Path, graph: dict[str, Any]) -> dict[str, Any]
         if not missing and len(files) == len(REQUIRED_REL_PATHS):
             files["contracts/testcase.yaml"] = contract
             return files
-    return materialize_testcase_contract_files(uo_root, graph)
+    return materialize_testcase_contract_files(uo_root, graph, profile=profile)
 
 
 def _build_testcase_contract(
@@ -753,6 +878,7 @@ def _build_testcase_contract(
     return {
         "version": 2,
         "op_name": graph.get("op_name"),
+        "architecture": graph.get("architecture") or graph.get("arch") or "",
         "source": {
             "understand_phase": "layered_ir",
             "quality_status": "pass",
@@ -1023,7 +1149,12 @@ def _condition_bucket(condition: str) -> str:
     return "other"
 
 
-def _build_runtime_conditions(op_name: str, branch_rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _build_runtime_conditions(
+    op_name: str,
+    branch_rows: list[dict[str, Any]],
+    *,
+    sample_limit: int = RUNTIME_SAMPLE_LIMIT_LEAN,
+) -> dict[str, Any]:
     groups: dict[str, dict[str, Any]] = {}
     for branch in branch_rows:
         if branch.get("binding_time") != "runtime":
@@ -1047,10 +1178,10 @@ def _build_runtime_conditions(op_name: str, branch_rows: list[dict[str, Any]]) -
             groups[norm] = entry
         entry["count"] += 1
         bid = str(branch.get("id") or "")
-        if bid and bid not in entry["sample_branch_ids"] and len(entry["sample_branch_ids"]) < 8:
+        if bid and bid not in entry["sample_branch_ids"] and len(entry["sample_branch_ids"]) < sample_limit:
             entry["sample_branch_ids"].append(bid)
         det = str(branch.get("determinant_ref") or "")
-        if det and det not in entry["determinant_refs"] and len(entry["determinant_refs"]) < 8:
+        if det and det not in entry["determinant_refs"] and len(entry["determinant_refs"]) < sample_limit:
             entry["determinant_refs"].append(det)
 
     conditions = sorted(groups.values(), key=lambda g: (-int(g["count"]), str(g["bucket"]), str(g["id"])))
@@ -1062,6 +1193,7 @@ def _build_runtime_conditions(op_name: str, branch_rows: list[dict[str, Any]]) -
         "op_name": op_name,
         "condition_count": len(conditions),
         "branch_count": sum(int(c["count"]) for c in conditions),
+        "sample_limit": sample_limit,
         "buckets": buckets,
         "conditions": conditions,
     }
@@ -1071,9 +1203,28 @@ def _build_query_routes(op_name: str) -> dict[str, Any]:
     return {
         "version": 1,
         "op_name": op_name,
-        "default_cold": ["ir/unresolved.yaml", "quality.yaml"],
-        "never_default": ["ir/operator_graph.yaml", "facts/**", "graphs/**"],
+        "default_hot": [
+            "summary/human_overview.md",
+            "summary/keys_table.yaml",
+            "query/routes.yaml",
+            "query/terminology.yaml",
+            "tiling/key_cards/index.yaml",
+            "tiling/key_space.yaml",
+            "kernel/runtime_conditions.yaml",
+        ],
+        "default_cold": ["ir/unresolved.yaml", "quality.yaml", "checks/final.yaml"],
+        "never_default": [
+            "ir/operator_graph.yaml",
+            "contracts/testcase.yaml",
+            "cross_layer/impact_graph.yaml",
+            "tiling/exhaustive_key_space.yaml",
+            "facts/**",
+            "graphs/**",
+        ],
         "routes": {
+            "overview": {
+                "files": ["summary/human_overview.md", "summary/keys_table.yaml"],
+            },
             "tiling_key_what": {
                 "files": ["tiling/key_space.yaml", "tiling/key_predicates.yaml", "tiling/key_cards/index.yaml"],
                 "card_glob": "tiling/key_cards/KEY_*.yaml",
@@ -1084,18 +1235,18 @@ def _build_query_routes(op_name: str) -> dict[str, Any]:
             },
             "tiling_combinations": {
                 "files": ["tiling/exhaustive_key_space.yaml"],
-                "focus": ["combination_summary"],
+                "focus": ["combination_summary", "summary"],
             },
             "entrypoint": {"files": ["ir/entrypoints.yaml"]},
             "host_pipeline": {"files": ["ir/host_subgraph.yaml", "ir/entrypoints.yaml"]},
             "runtime_branch": {"files": ["kernel/runtime_conditions.yaml", "kernel/branches.yaml"]},
-            "runtime_cover": {"files": ["kernel/runtime_conditions.yaml", "contracts/testcase.yaml"]},
+            "runtime_cover": {"files": ["kernel/runtime_conditions.yaml"]},
             "compile_template": {"files": ["tiling/exhaustive_key_space.yaml", "kernel/compile_model.yaml"]},
-            "impact": {"files": ["cross_layer/impact_graph.yaml", "cross_layer/tiling_to_kernel.yaml"]},
+            "impact": {"files": ["cross_layer/tiling_to_kernel.yaml"]},
             "golden": {"files": ["ir/golden.yaml", "flow/golden_model.yaml"]},
-            "contract": {"files": ["contracts/testcase.yaml", "tiling/coverage_model.yaml"]},
+            "contract": {"files": ["tiling/coverage_model.yaml", "tiling/key_space.yaml"]},
             "unresolved": {"files": ["ir/unresolved.yaml", "checks/final.yaml"]},
-            "quality": {"files": ["quality.yaml", "checks/final.yaml"]},
+            "quality": {"files": ["quality.yaml", "checks/final.yaml", "checks/artifact_hashes.yaml"]},
         },
     }
 

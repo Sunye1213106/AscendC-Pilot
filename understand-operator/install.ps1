@@ -25,6 +25,7 @@ $SkillNames = @(
     "uo-query",
     "uo-update",
     "uo-diff",
+    "uo-code-review",
     "understand-operator"
 )
 
@@ -40,7 +41,9 @@ $AgentTargets = @{
 }
 
 $RequiredAgents = @(
-    "uo-semantic-resolve"
+    "uo-semantic-resolve",
+    "uo-code-reviewer",
+    "uo-kb-review"
 )
 
 if (-not $Targets.ContainsKey($Platform)) {

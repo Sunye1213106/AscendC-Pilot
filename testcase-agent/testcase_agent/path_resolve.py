@@ -22,7 +22,7 @@ class PlanPathBundle:
     op_name: str
     test_tool_root: Path | None
     contract_root: Path | None
-    mode: str  # "build_contract" | "reuse_contract"
+    mode: str  # "build_contract" | "reuse_contract" | "reuse_init"
 
 
 def resolve_operator_project_root(path: Path) -> Path:
@@ -182,10 +182,21 @@ def resolve_plan_paths(
             mode="reuse_contract",
         )
 
+    # After tg-init: realization already under .testcase-generator/<op>/
+    local_realization = resolved_project / ".testcase-generator" / name / "realization"
+    if (local_realization / "realization_map.yaml").is_file():
+        return PlanPathBundle(
+            project_root=resolved_project,
+            op_name=name,
+            test_tool_root=None,
+            contract_root=local_realization.resolve(),
+            mode="reuse_init",
+        )
+
     raise ValueError(
-        "PLAN_INPUTS_REQUIRED: tg-plan needs 算子仓 + (测试工具 OR contract产物). "
-        "Pass --test-script-root <测试工具> to auto-run contract, "
-        "or --contract-root <realization目录> to reuse existing contract artifacts."
+        "PLAN_INPUTS_REQUIRED: tg-plan needs init-confirmed realization (run tg-init), "
+        "or pass --test-script-root / --contract-root. "
+        "Preferred: tg-init <算子仓> --op-name <op> --test-script-root <测试工具> → confirm → tg-plan."
     )
 
 

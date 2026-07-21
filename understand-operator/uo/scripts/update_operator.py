@@ -108,6 +108,8 @@ def update_operator(
             }
 
     diff_product = export_diff_product(repo_root, op_name, change_set=change_set, update_plan=plan, status="ready", write=True)
+    kb_graph_export = _safe_export_kb_graph(repo_root, op_name)
+    human_views = _safe_export_human_views(uo_root)
     receipt = _receipt(
         run_id,
         change_set,
@@ -117,6 +119,8 @@ def update_operator(
         validate_status=(validate_result.status if validate_result else "skipped"),
         rebuild_layers=graph.get("rebuild_layers"),
     )
+    receipt["kb_graph"] = kb_graph_export
+    receipt["human_views"] = human_views
     write_yaml(update_dir / "receipt.yaml", receipt)
     return {
         "status": "pass",
@@ -126,7 +130,27 @@ def update_operator(
         "diff": diff_product["index"],
         "receipt": receipt,
         "graph_stats": graph.get("stats"),
+        "kb_graph": kb_graph_export,
+        "human_views": human_views,
     }
+
+
+def _safe_export_kb_graph(repo_root: Path, op_name: str) -> dict[str, Any]:
+    try:
+        from uo.scripts.export_kb_graph import export_kb_graph
+
+        return export_kb_graph(repo_root, op_name, write=True)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "error", "error": str(exc)}
+
+
+def _safe_export_human_views(uo_root: Path) -> dict[str, Any]:
+    try:
+        from uo.scripts.export_human_views import export_human_views
+
+        return export_human_views(uo_root, write=True)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "error", "error": str(exc)}
 
 
 def _new_run_id() -> str:

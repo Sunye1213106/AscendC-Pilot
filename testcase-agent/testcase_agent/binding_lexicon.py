@@ -96,6 +96,9 @@ def merge_lexicons(*docs: dict[str, Any] | None) -> dict[str, Any]:
 def is_locked_derivation(item: dict[str, Any]) -> bool:
     if item.get("locked") is True:
         return True
+    status = str(item.get("status") or "").lower()
+    if status in {"locked", "confirmed", "human", "llm_confirmed"}:
+        return True
     for ref in item.get("source_refs") or []:
         if not isinstance(ref, dict):
             continue

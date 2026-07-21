@@ -1,30 +1,18 @@
 ---
 name: tg-solve
 description: >-
-  Solve an approved TestAgent plan with SMT (VAR_CSV_* free) and emit CSV rows.
-  Blocks when domain_review/binding gaps are unconfirmed or realize yields zero rows.
-argument-hint: "<project_root> --op-name <op_name> [--level L0|L1] [--dry-run]"
+  SMT+CSV for approved level with Allow solve:yes. Domain-symmetry gate at
+  start; never hand-edit lexicon to unblock Z3.
+argument-hint: "<project_root> --op-name <op> --level L0|L1-BRANCH|L1-REJECT|L2"
 ---
 
 # /tg-solve
 
-Prerequisites: thin `tg-contract` + **LLM/human confirmed** lexicon & domain_review + approved `tg-plan`.
-
 ```powershell
-tg-solve <project_root> --op-name <op_name> --level L0
+tg-solve <project_root> --op-name <op> --level L0
 ```
 
-## Hard gates
+启动前校验：approval + domain_review + **domain_symmetry**（lexicon 字面量 ∈ CSV 域）。  
+失败 → `ask=domain_asymmetry` → `tg-init --merge-uo-resolve`，**禁止**会话 Edit YAML。
 
-- `DOMAIN_REVIEW_REQUIRED` — `domain_review.yaml` still `pending` / unreviewed columns.
-- `BINDING_REVIEW_REQUIRED` — `MISSING_CSV_REF` / `UNBOUND_KEY` gaps without locked lexicon entries.
-- `REALIZE_EMPTY` — `selected_count>0` but `realized_count==0` (treat as fail, not success).
-- Plan approval / plan_hash / contract gap checks unchanged.
-
-## Rules
-
-- Load existing `realization/` contract (version 2). Do not invent CSV headers.
-- SMT free variables are `VAR_CSV_*`; KEY/mapped branches are derived.
-- Bound `VAR_KEY_*` without confirmed `binding_lexicon.key_derivations` → `KEY_DERIVATION_MISSING`.
-- Do **not** add AST specializations to “fix” empty CSV — go back to LLM bind/review.
-- Do not modify `.understand-operator/` unless writing confirmed supplements when asked.
+语义失败 → Task Follow uo-query → merge → replan 一次。

@@ -43,7 +43,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--default", default=None)
     parser.add_argument("--decision", default=None)
     parser.add_argument("--notes", default="")
-    parser.add_argument("--include", action="append", default=[], help="Add a path to approved initial/operator scope.")
+    parser.add_argument("--include", action="append", default=[], help="Append a path to approved initial/operator scope.")
+    parser.add_argument(
+        "--replace-initial",
+        action="append",
+        default=[],
+        help="Replace initial_operator_files with these paths (repeatable). Narrowing must use this, not --include.",
+    )
     parser.add_argument("--exclude", action="append", default=[], help="Add a path to excluded scope.")
     parser.add_argument("--approve-dependency", action="append", default=[], help="Approve dependency path(s).")
     parser.add_argument("--reject-dependency", action="append", default=[], help="Reject dependency path(s).")
@@ -133,7 +139,16 @@ def _write_scope_review(base: Path, decision: dict[str, Any], changes: dict[str,
     dependency_files = _merge_path_items(files.get("dependency_files") or [], changes.get("approved_dependencies") or [], "manual_dependency")
     dependency_files = _merge_path_items(dependency_files, confirmed_scope, "semantic_enrichment")
     dependency_files = _merge_path_items(dependency_files, resolved_include, "scope_review_resolution", include_reason="scope_review_resolution")
-    initial_files = _merge_path_items(files.get("initial_operator_files") or [], changes.get("added_include") or [], "manual_include")
+    replaced = [str(p).replace("\\", "/") for p in (changes.get("replaced_initial") or []) if str(p).strip()]
+    if replaced:
+        if changes.get("added_include"):
+            print(
+                "WARN: --replace-initial takes precedence over --include; appended includes ignored.",
+                file=sys.stderr,
+            )
+        initial_files = _merge_path_items([], replaced, "manual_replace_initial", include_reason="manual_replace_initial")
+    else:
+        initial_files = _merge_path_items(files.get("initial_operator_files") or [], changes.get("added_include") or [], "manual_include")
     generated_files = files.get("generated_files") or []
     uncertain_files = _resolve_uncertain(files.get("uncertain_files") or [], changes.get("resolved_uncertain") or [])
     excluded_architectures = [str(x).strip() for x in (changes.get("excluded_architectures") or []) if str(x).strip()]
@@ -315,6 +330,7 @@ def _scope_changes(args: argparse.Namespace) -> dict[str, Any]:
             resolved.append({"path": path, "action": action})
     return {
         "added_include": list(args.include or []),
+        "replaced_initial": list(getattr(args, "replace_initial", None) or []),
         "added_exclude": list(args.exclude or []),
         "approved_dependencies": list(args.approve_dependency or []),
         "rejected_dependencies": list(args.reject_dependency or []),

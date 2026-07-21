@@ -164,9 +164,21 @@ def validate_intake(export_payload: dict[str, Any], final_validation: dict[str, 
     elif final_validation.get("status") == "warn":
         report.add("FINAL_VALIDATION_WARN", "warning", "Understand final validation returned warnings", target="final_validation")
 
-    source_hashes = _as_dict(final_validation.get("source_artifact_hashes")) or _as_dict(_as_dict(contract.get("source")).get("canonical_hashes"))
+    source_hashes = _as_dict(final_validation.get("source_artifact_hashes")) or _as_dict(
+        _as_dict(contract.get("source")).get("canonical_hashes")
+    )
     if not source_hashes:
-        report.add("SOURCE_HASHES_MISSING", "error", "Snapshot source artifact hashes are required", "contracts/testcase.yaml", "source.canonical_hashes")
+        # lean export stores hashes outside the contract
+        artifact = _as_dict(files.get("checks/artifact_hashes.yaml"))
+        source_hashes = _as_dict(artifact.get("hashes"))
+    if not source_hashes:
+        report.add(
+            "SOURCE_HASHES_MISSING",
+            "error",
+            "Snapshot source artifact hashes are required",
+            "checks/artifact_hashes.yaml",
+            "hashes",
+        )
 
     known_ids = collect_known_ids({"files": files, "context_slice": context_slice})
     validate_stable_ids({"files": files, "context_slice": context_slice}, report)

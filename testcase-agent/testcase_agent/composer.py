@@ -6,7 +6,12 @@ from .constraint_ir import normalize_expr, ConstraintIRError
 from .extract import legal_exprs
 
 
-def compose_global_legal(extract_doc: dict[str, Any] | None, human_supplement: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+def compose_global_legal(
+    extract_doc: dict[str, Any] | None,
+    human_supplement: dict[str, Any] | None = None,
+    *,
+    realization_map: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """Build GlobalLegal constraint list: AND of role=legal conditions + human supplements.
 
     implies/requires are preserved as true implication (not rewritten to AND).
@@ -40,6 +45,29 @@ def compose_global_legal(extract_doc: dict[str, Any] | None, human_supplement: d
                 "tags": ["global_legal", "human"],
             }
         )
+    # Head-group: query heads must be an integer multiple of kv heads when both free.
+    csv_cols = [
+        str(item.get("column") or "")
+        for item in ((realization_map or {}).get("csv_variables") or [])
+        if isinstance(item, dict) and item.get("free") is not False and item.get("column")
+    ]
+    from .domain_policy import find_head_group_pair, head_group_global_constraint
+
+    pair = find_head_group_pair(csv_cols)
+    if pair:
+        gqa = head_group_global_constraint(pair[0], pair[1])
+        try:
+            constraints.append(
+                {
+                    "id": gqa["id"],
+                    "kind": "host_head_group",
+                    "expr": _ensure_true_implication(normalize_expr(gqa["expr"])),
+                    "source": "host_tiling_head_group",
+                    "tags": ["global_legal", "head_group"],
+                }
+            )
+        except ConstraintIRError:
+            pass
     return constraints
 
 

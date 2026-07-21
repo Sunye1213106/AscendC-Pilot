@@ -10,12 +10,19 @@ from .realization_contract import CONSUMER_SCHEMA_VERSION
 from .domain_policy import (
     classify_column_role,
     expand_enum_domain,
+    fold_shape_layout_columns,
+    hint_values_take_priority,
     is_discrete_int_column,
+    is_drop_rate_column,
+    is_probability_column,
     is_shape_int_column,
     is_switch_int_column,
     is_tensor_placeholder_domain,
     merge_discrete_int_domain,
+    OPTIONAL_ABSENT,
     parse_int,
+    probability_domain_values,
+    sanitize_domain_values,
     shape_range_domain,
 )
 from .csv_domain_cover import extract_uo_domain_entries_by_column, normalize_column_name
@@ -104,8 +111,9 @@ def build_consumer_schema_from_evidence(
     snapshot_files: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build consumer_schema from scripts + UO/domain_hints (not sample csv/xls)."""
-    columns = [normalize_column_name(c) for c in _ordered_columns_from_evidence(evidence)]
-    columns = list(dict.fromkeys(columns))
+    raw_columns = [normalize_column_name(c) for c in _ordered_columns_from_evidence(evidence)]
+    raw_columns = list(dict.fromkeys(raw_columns))
+    columns, layout_aliases = fold_shape_layout_columns(raw_columns)
     sample_values = dict(evidence.get("sample_values") or {})
     sample_int_ranges = dict(evidence.get("sample_int_ranges") or {})
     domain_hints = dict((evidence.get("domain_hints") or {}).get("columns") or {})
@@ -149,7 +157,7 @@ def build_consumer_schema_from_evidence(
                 "domain": domain,
                 "default": default,
                 "serializer": serializer,
-                "aliases": [],
+                "aliases": [alias for alias, canon in layout_aliases.items() if canon == column],
                 "source_refs": source_refs,
                 "confidence": "high" if source_refs or uo_entries.get(column) or hint else "medium",
                 "rationale": f"domain from UO/hints/SAFE_CAPS for column {column}",
@@ -162,6 +170,7 @@ def build_consumer_schema_from_evidence(
         "consumer_root": consumer_root.as_posix(),
         "schema_source": ["consumer_evidence", "uo_domain_entries", "domain_hints"],
         "columns": columns,
+        "layout_aliases": layout_aliases,
         "result_columns": result_columns,
         "sample_values": sample_values,
         "sample_int_ranges": sample_int_ranges,
@@ -211,6 +220,9 @@ def _infer_field(
     samples = list(sample_values.get(column) or [])
     hint = hint or {}
     hint_values = list(hint.get("values") or [])
+    # Confirmed/locked hints win over CaseConfig/sample inference on contract rebuild.
+    if hint_values_take_priority(hint):
+        return _field_from_confirmed_hint(column, hint, hint_values)
     role_hint = classify_column_role(column, samples=samples, uo_values=uo_values, optional_names=optional_names)
     casts = {str(item.get("kind") or "") for item in type_evidence.get(column) or []}
     if "cast:bool" in casts or column.lower() in {"is_deter"}:
@@ -232,8 +244,11 @@ def _infer_field(
     )
     if is_switch_int_column(column):
         return "solver_input", "int", {"values": [0, 1]}, 0, "string"
+    if is_probability_column(column) or role_hint == "probability":
+        vals = probability_domain_values(samples, hint_values, column=column)
+        return "solver_input", "enum", {"values": vals}, vals[0], "string"
     if role_hint == "tensor_placeholder":
-        return "tensor_placeholder", "enum", ["_"], "_", "string"
+        return "tensor_placeholder", "string", [""], "", "string"
     if role_hint == "optional_presence":
         clean = expand_enum_domain(
             column,
@@ -242,8 +257,9 @@ def _infer_field(
             hint_values=[*(uo_values or []), *hint_values],
             hint=hint,
         )
+        clean = sanitize_domain_values(clean, allow_none=True)
         if not clean:
-            clean = ["NONE", "_"]
+            clean = [OPTIONAL_ABSENT]
         return "solver_input", "enum", clean, clean[0], "string"
     # Shape ranges take precedence over any accidental UO discrete match.
     if is_shape_int_column(column):
@@ -255,7 +271,7 @@ def _infer_field(
             key_space=key_space,
             hint_domain=hint if hint.get("min") is not None or hint.get("max") is not None else None,
         )
-        return "solver_input", "int", domain, int(domain["min"]), "string"
+        return "solver_input", "int", domain, _shape_default(domain), "string"
     if is_discrete_int_column(column) or (uo_values and all(parse_int(v) is not None for v in uo_values)):
         domain_vals = merge_discrete_int_domain(samples, uo_values, hint_values, hint=hint)
         return "solver_input", "int", {"values": domain_vals}, domain_vals[0], "string"
@@ -268,7 +284,7 @@ def _infer_field(
             key_space=key_space,
             hint_domain=hint if hint.get("min") is not None or hint.get("max") is not None else None,
         )
-        return "solver_input", "int", domain, int(domain["min"]), "string"
+        return "solver_input", "int", domain, _shape_default(domain), "string"
     if looks_int:
         ints = merge_discrete_int_domain(samples, uo_values, hint_values, hint=hint)
         return "solver_input", "int", {"values": ints}, ints[0], "string"
@@ -280,12 +296,55 @@ def _infer_field(
         hint_values=[*(uo_values or []), *hint_values],
         hint=hint,
     )
-    if role_hint == "tensor_placeholder" and is_tensor_placeholder_domain(clean):
-        clean = ["_"]
+    clean = sanitize_domain_values(clean, allow_none=True)
+    if role_hint == "layout_secondary" and not clean:
+        # Thin secondary layout should have been folded; if not, leave NONE for review.
+        clean = [OPTIONAL_ABSENT]
+        return "solver_input", "enum", clean, clean[0], "string"
     if not clean:
-        clean = ["_"]
+        clean = [OPTIONAL_ABSENT]
         return "solver_input", "enum", clean, clean[0], "string"
     return "solver_input", "enum", clean, clean[0], "string"
+
+
+def _field_from_confirmed_hint(
+    column: str,
+    hint: dict[str, Any],
+    hint_values: list[Any],
+) -> tuple[str, str, Any, Any, str]:
+    """Exclusive domain from locked/confirmed domain_hints — do not re-infer float/_."""
+    if hint.get("min") is not None or hint.get("max") is not None:
+        lo = int(hint["min"]) if hint.get("min") is not None else 0
+        hi = int(hint["max"]) if hint.get("max") is not None else lo
+        if hi < lo:
+            hi = lo
+        domain = {"kind": "range", "min": lo, "max": hi}
+        return "solver_input", "int", domain, _shape_default(domain), "string"
+    if is_probability_column(column):
+        vals = probability_domain_values(None, hint_values, column=column) or (
+            [0.0, 0.1, 0.2, 1.0] if is_drop_rate_column(column) else [0.5, 0.8, 0.9, 1.0]
+        )
+        return "solver_input", "enum", {"values": vals}, vals[0], "string"
+    ints = [parse_int(v) for v in hint_values]
+    if hint_values and all(v is not None for v in ints):
+        domain_vals = list(dict.fromkeys(int(v) for v in ints if v is not None))
+        return "solver_input", "int", {"values": domain_vals}, domain_vals[0], "string"
+    clean = sanitize_domain_values([str(v) for v in hint_values if str(v) != ""], allow_none=True)
+    if not clean:
+        clean = [OPTIONAL_ABSENT]
+    return "solver_input", "enum", clean, clean[0], "string"
+
+
+def _shape_default(domain: dict[str, Any]) -> int:
+    """Prefer a mid/safe anchor over min=1 so free solves do not collapse to all-ones."""
+    lo = int(domain.get("min", 1))
+    hi = int(domain.get("max", lo))
+    for anchor in (16, 32, 64, 8, 4, 2):
+        if lo <= anchor <= hi:
+            return anchor
+    if hi > lo:
+        return lo + max(1, (hi - lo) // 4)
+    return lo
 
 
 def _prefer_range(

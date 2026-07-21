@@ -10,17 +10,19 @@ artifacts:
   - path: manifest.yaml
     role: revision + spec_bundle_hash + current_run
   - path: ir/**
-    role: layered IR (host/kernel/bridge/operator_graph/entrypoints/unresolved)
+    role: layered IR (host/kernel/bridge/operator_graph/entrypoints/unresolved); cold for Q&A
   - path: contracts/**
-    role: query/test contracts (e.g. testcase.yaml)
+    role: query/test contracts (e.g. testcase.yaml); never_default whole-file Read
   - path: tiling/**
-    role: tiling export views
+    role: tiling export views (lean: exhaustive is summary-only by default)
   - path: kernel/**
     role: runtime variables / branches / conditions
   - path: cross_layer/**
-    role: host↔kernel bridge views
+    role: host↔kernel bridge views (impact_graph is never_default)
   - path: checks/**
-    role: validate_kb outputs (e.g. final.yaml)
+    role: validate_kb outputs (final.yaml) + artifact_hashes.yaml
+  - path: checks/artifact_hashes.yaml
+    role: lean export stores canonical hashes here (not inside contracts/testcase.yaml)
   - path: runs/*/phase0/**
     role: scope proposal / review / receipt
   - path: runs/*/update/**
@@ -30,10 +32,52 @@ artifacts:
   - path: diff/**
     role: /uo-update PR-facing product (read first)
   - path: summary/**
-    role: update_plan and internal summaries
+    role: update_plan + human_overview.md + keys_table.yaml
+  - path: summary/human_overview.md
+    role: human/AI orientation; preferred first read
+  - path: indexes/kb_graph.sqlite
+    role: >-
+      Derived read-only semantic graph (entities/relations/aliases).
+      Rebuild via export_kb_graph.py after /uo-init or /uo-update. Not YAML source of truth.
+  - path: review/**
+    role: /uo-code-review reports (functional + bug); must not overwrite diff/**
+  - path: query/**
+    role: routes.yaml + terminology.yaml for uo-query (includes never_default)
+  - path: runs/*/review/**
+    role: review context_pack and run receipts
+
+export_profiles:
+  lean:
+    default: true
+    notes: >-
+      Hashes externalized; runtime sample_branch_ids≤3; exhaustive without full
+      template_blocks; test/contract.yaml stub; still writes TG-required paths.
+  full:
+    default: false
+    notes: Historical bulky materialization for L2 / debugging (--profile full).
 
 diff_product:
   - diff/index.yaml
   - diff/change_set.yaml
   - diff/impact.yaml
   - diff/unresolved.yaml
+
+review_product:
+  - review/index.yaml
+  - review/summary.md
+  - review/functional_report.yaml
+  - review/functional_report.md
+  - review/bug_report.yaml
+  - review/bug_report.md
+
+kb_graph:
+  path: indexes/kb_graph.sqlite
+  tables: [entities, relations, aliases, metadata]
+  relation_types:
+    - constrains
+    - enables_branch
+    - belongs_to_key
+    - covers
+    - maps_to_file
+    - anchors_to_symbol
+    - graph_edge

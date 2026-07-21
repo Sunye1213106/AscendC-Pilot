@@ -8,9 +8,11 @@ AGENTS_SRC="$PLUGIN_ROOT/agents"
 SCRIPT_DIR="$PLUGIN_ROOT/uo/scripts"
 PLATFORM="${1:-opencode}"
 
-SKILL_NAMES=(uo-init uo-query uo-update uo-diff understand-operator)
+SKILL_NAMES=(uo-init uo-query uo-update uo-diff uo-code-review understand-operator)
 REQUIRED_AGENTS=(
   uo-semantic-resolve
+  uo-code-reviewer
+  uo-kb-review
 )
 
 case "$PLATFORM" in

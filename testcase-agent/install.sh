@@ -8,8 +8,8 @@ AGENTS_SRC="$PLUGIN_ROOT/agents"
 PLATFORM="${1:-opencode}"
 SKIP_PIP="${SKIP_PIP:-0}"
 
-SKILL_NAMES=(tg-plan tg-solve tg-init)
-REQUIRED_AGENTS=(tg-csv-contract)
+SKILL_NAMES=(tg-plan tg-solve tg-init tg-contract tg-domain-review)
+REQUIRED_AGENTS=(tg-csv-contract tg-init-audit)
 
 case "$PLATFORM" in
   opencode) TARGET="$HOME/.config/opencode/skills" ;;
@@ -110,9 +110,9 @@ if [ "$SKIP_PIP" != "1" ]; then
     echo "solver extra failed; falling back to base install..."
     python -m pip install -e "$PLUGIN_ROOT" -q
   fi
-  echo "Python entrypoints: tg-plan, tg-solve (tg-init deprecated)"
+  echo "Python entrypoints: tg-init, tg-plan, tg-solve, tg-contract"
 fi
 
-echo "Commands: /tg-plan  /tg-solve  (/tg-init deprecated)"
+echo "Commands: /tg-init  /tg-plan  /tg-solve  (/tg-contract,/tg-domain-review → init)"
 echo "PLUGIN_ROOT: $PLUGIN_LINK"
 echo "For Cursor: add this repository root as a local plugin, or rely on the installed skill links."

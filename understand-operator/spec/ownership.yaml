@@ -13,6 +13,9 @@ owners:
       - cbm/**
       - diff/**
       - summary/**
+      - indexes/**
+      - review/**
+      - query/**
     may_write:
       - manifest.yaml
       - runs/*/phase0/**
@@ -23,9 +26,31 @@ owners:
       - kernel/**
       - cross_layer/**
       - checks/final.yaml
+      - checks/artifact_hashes.yaml
       - diff/**
       - summary/**
       - runs/*/update/**
+      - indexes/kb_graph.sqlite
+      - query/**
+  uo-code-review:
+    may_read:
+      - manifest.yaml
+      - ir/**
+      - contracts/**
+      - tiling/**
+      - kernel/**
+      - cross_layer/**
+      - checks/**
+      - runs/**
+      - cbm/**
+      - diff/**
+      - summary/**
+      - indexes/**
+      - query/**
+      - review/**
+    may_write:
+      - review/**
+      - runs/*/review/**
   uo-semantic-resolve:
     may_read:
       - manifest.yaml
@@ -51,6 +76,7 @@ owners:
       - cross_layer/**
       - diff/**
       - summary/**
+      - checks/artifact_hashes.yaml
   kb-compiler:
     may_read:
       - manifest.yaml
@@ -60,9 +86,15 @@ owners:
       - kernel/**
       - cross_layer/**
       - checks/**
+      - indexes/**
     may_write:
       - checks/final.yaml
+      - checks/artifact_hashes.yaml
+      - indexes/kb_graph.sqlite
 rules:
   - Query / TestAgent may read KB artifacts but must not write UO KB or CBM data.
   - uo-semantic-resolve only emits patches under ir/; apply_resolution.py merges whitelist fields.
   - PR test generation prefers diff/**; uncertain items look up the KB via kb_refs / kb_lookup.
+  - indexes/kb_graph.sqlite is derived and may be rebuilt; YAML under ir/contracts/tiling/kernel remains source of truth.
+  - /uo-code-review writes only review/** and runs/*/review/**; never overwrite diff/**.
+  - Default export profile is lean; prefer summary/human_overview.md then kb_graph before opening large YAML.

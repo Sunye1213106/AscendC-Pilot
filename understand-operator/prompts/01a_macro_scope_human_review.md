@@ -24,6 +24,16 @@ Before the user confirms:
 Use AskQuestion / question UI with: `continue` | `revise` | `stop` |
 `manual_supplement`. Never invent a silent `continue`.
 
+Do **not** dump/read the full `scope_scan.yaml` into chat. Use scan summary
+counts + AskQuestion. To **narrow** the proposal, use `--replace-initial`
+(repeatable) — `--include` only appends and cannot shrink the list:
+
+```powershell
+python -X utf8 "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" `
+  --gate macro_scope --decision continue `
+  --replace-initial "DemoOp/op_host/a.cpp" --replace-initial "common/op_kernel/x.h"
+```
+
 Record decisions only through:
 
 ```powershell

@@ -16,6 +16,7 @@ ALLOWED_FIELD_ROLES = {
     "metadata",
     # Tensor/blob columns that are not free SMT variables (emitted as placeholders).
     "tensor_placeholder",
+    "emit_skip",
 }
 ALLOWED_VALUE_TYPES = {"bool", "int", "enum", "string", "list_int"}
 ALLOWED_EMIT_OPS = {
@@ -27,7 +28,14 @@ ALLOWED_EMIT_OPS = {
     "balanced_partition",
     "cumulative_sum",
     "list_format",
+    "if_then_else",
 }
+
+# Platform KEY tokens that may be constant-fixed when architecture declares them.
+# Kept in sync with domain_policy.ARCHITECTURE_PLATFORM_KEY_TOKENS values.
+PLATFORM_FIXED_KEY_TOKENS = frozenset({"ISREGBASE", "REGBASE"})
+
+ALLOWED_EMIT_CONDITION_OPS = frozenset({"eq", "in", "or", "and", "ne"})
 
 
 def validate_contract_artifacts(
@@ -143,6 +151,17 @@ def validate_contract_artifacts(
                 # Bootstrap maps may reference KEY flags not yet wired to CSV; demote later via plan filter.
                 continue
             errors.append(_error("UNKNOWN_SOLVER_VARIABLE", f"{var_id} references unknown variables: {sorted(unknown)}"))
+        if _is_constant_fixed_expr(inner) and not _is_platform_fixed_key(var_id):
+            if allow_bootstrap:
+                continue
+            errors.append(
+                _error(
+                    "KEY_FIXED_WITHOUT_ARCHITECTURE",
+                    f"{var_id} is a constant fixed derivation (then==else). "
+                    "Only architecture-declared platform KEYs may be fixed; "
+                    "infer from host/KEY card or leave binding_gaps.",
+                )
+            )
 
     cycle = _find_cycle(derived_graph)
     if cycle:
@@ -229,12 +248,14 @@ def ensure_valid_contract(
 
 
 def _validate_emit_expr(expr: Any) -> str:
+    if expr in ("", None) or isinstance(expr, (str, int, float, bool)):
+        return ""
     if not isinstance(expr, dict):
         return "emit expr must be a mapping"
     op = str(expr.get("op") or "")
     if op not in ALLOWED_EMIT_OPS:
         return f"unsupported op {op}"
-    for key in ("arg", "value", "items", "args", "template", "lengths", "values", "count", "parts"):
+    for key in ("arg", "value", "items", "args", "template", "lengths", "values", "count", "parts", "then", "else", "total"):
         child = expr.get(key)
         if isinstance(child, dict):
             bad = _validate_emit_expr(child)
@@ -244,6 +265,33 @@ def _validate_emit_expr(expr: Any) -> str:
             for item in child:
                 if isinstance(item, dict):
                     bad = _validate_emit_expr(item)
+                    if bad:
+                        return bad
+    if "condition" in expr:
+        bad = _validate_emit_condition(expr.get("condition"))
+        if bad:
+            return bad
+    return ""
+
+
+def _validate_emit_condition(cond: Any) -> str:
+    if cond in ("", None) or isinstance(cond, (str, int, float, bool)):
+        return ""
+    if not isinstance(cond, dict):
+        return "emit condition must be a mapping"
+    op = str(cond.get("op") or "")
+    if op not in ALLOWED_EMIT_CONDITION_OPS:
+        return f"unsupported condition op {op}"
+    for key in ("args", "condition"):
+        child = cond.get(key)
+        if isinstance(child, dict):
+            bad = _validate_emit_condition(child)
+            if bad:
+                return bad
+        elif isinstance(child, list):
+            for item in child:
+                if isinstance(item, dict):
+                    bad = _validate_emit_condition(item)
                     if bad:
                         return bad
     return ""
@@ -280,6 +328,30 @@ def _int_domain_present(domain: Any) -> bool:
         return bool(domain)
     if isinstance(domain, dict):
         return bool(domain.get("values")) or domain.get("min") is not None or domain.get("max") is not None
+    return False
+
+
+def _is_platform_fixed_key(var_id: str) -> bool:
+    from .domain_policy import is_architecture_platform_key
+
+    return is_architecture_platform_key(var_id)
+
+
+def _is_constant_fixed_expr(expr: Any) -> bool:
+    """True when derived expr is a no-op constant (typical LLM then==else fixed KEY)."""
+    if not isinstance(expr, dict):
+        return isinstance(expr, (int, float, bool, str)) and str(expr) != ""
+    op = str(expr.get("op") or "")
+    if op == "if_then_else":
+        then_v = expr.get("then")
+        else_v = expr.get("else")
+        if then_v == else_v and then_v in (0, 1, True, False, "0", "1"):
+            return True
+        # Nested constant both sides
+        if _is_constant_fixed_expr(then_v) and then_v == else_v:
+            return True
+    if op in {"", "lit", "const", "constant"} and expr.get("value") in (0, 1, True, False):
+        return True
     return False
 
 

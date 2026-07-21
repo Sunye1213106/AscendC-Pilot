@@ -92,7 +92,7 @@ python -X utf8 "$SCRIPT_DIR/export_diff_product.py" "$PROJECT_ROOT" --op-name "$
 
 ### KB（同构）
 
-`manifest.yaml`、`ir/**`、`contracts/testcase.yaml`、`tiling/`、`kernel/`、`cross_layer/`、`checks/final.yaml` 等与 init 一致。
+`manifest.yaml`、`ir/**`、`contracts/testcase.yaml`（lean：hashes 在 `checks/artifact_hashes.yaml`）、`tiling/`、`kernel/`、`cross_layer/`、`checks/`、`summary/human_overview.md` 等与 init 一致（默认 lean）。
 
 ### 专用 diff（PR 主入口）
 
@@ -105,6 +105,15 @@ diff/unresolved.yaml
 
 PR 测试生成：**先读 `diff/`**；`confidence=low` / `layer_only` / `unresolved` → 按 `kb_refs` / `kb_lookup` 回查 KB。
 
+成功更新后脚本会导出 `indexes/kb_graph.sqlite` 与 `summary/human_overview.md`。
+Bug 审查复用已有 CBM 索引（`/uo-init` Phase0），**不**需要 code-review-graph。
+
+旧库仅补导 overview（不删文件）：
+
+```powershell
+python -X utf8 "$SCRIPT_DIR/export_human_views.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+```
+
 内部编排（非 PR 主入口）：`summary/update_plan.yaml`、`runs/<id>/update/receipt.yaml`。
 
 ## Integrity
@@ -112,3 +121,4 @@ PR 测试生成：**先读 `diff/`**；`confidence=low` / `layer_only` / `unreso
 - 语法解析为主；仅入口/残留用 `uo-semantic-resolve`（只写 `ir/entrypoint_confirm.yaml` / `ir/resolution_patch.yaml`）
 - 不得静默吞入 scope 外源文件
 - 用户可见语言默认中文
+- 代码审查请用 `/uo-code-review`（不要占用本 skill）

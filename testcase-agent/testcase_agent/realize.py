@@ -251,24 +251,26 @@ def materialize_row_from_contract(
             value = _eval_emit_expr(template, model, candidate, idx) if template else field.get("default", "")
         elif role == "emit_derived":
             value = _eval_emit_expr(_as_dict(emit_columns.get(name)), model, candidate, idx)
-        elif role == "tensor_placeholder":
-            # Blob/tensor columns: prefer emit constant (e.g. "_"), else schema default.
+        elif role in {"tensor_placeholder", "emit_skip"}:
             template = _as_dict(emit_columns.get(name))
             if template:
                 value = _eval_emit_expr(template, model, candidate, idx)
             else:
-                value = field.get("default", "_")
+                value = field.get("default", "")
         elif role == "metadata":
             value = field.get("default", "")
         if value in (None, "") and field.get("required"):
             # Explicit empty default is allowed for metadata/constant/emit placeholders.
             if "default" in field and field.get("default") in ("", None, []):
                 value = field.get("default", "")
-            elif role in {"metadata", "constant", "expected_result", "tensor_placeholder"}:
-                value = field.get("default", "_" if role == "tensor_placeholder" else "")
+            elif role in {"metadata", "constant", "expected_result", "tensor_placeholder", "emit_skip"}:
+                value = field.get("default", "")
             else:
                 raise ValueError(f"REQUIRED_COLUMN_UNMAPPED: {name} is required but has no value")
-        row[name] = _serialize_field_value(value, field)
+        from .domain_policy import sanitize_cell_value
+
+        row[name] = _serialize_field_value(sanitize_cell_value(value, role=role), field)
+    apply_layout_column_mutex(row)
     return row
 
 
@@ -369,10 +371,16 @@ def _cu_from_actual(values: list[int]) -> list[int]:
 
 def _realization_columns(realization_map: dict[str, Any] | None, consumer_schema: dict[str, Any] | None = None) -> list[str]:
     columns: list[str] = []
+    skip_roles = {"tensor_placeholder", "emit_skip"}
     if isinstance(consumer_schema, dict):
         fields = [item for item in consumer_schema.get("fields", []) if isinstance(item, dict)]
         if fields:
-            columns = [str(item.get("name") or "") for item in sorted(fields, key=lambda item: int(item.get("order", 0)))]
+            for item in sorted(fields, key=lambda item: int(item.get("order", 0))):
+                name = str(item.get("name") or "")
+                role = str(item.get("role") or "")
+                if role in skip_roles or not name:
+                    continue
+                columns.append(name)
         else:
             raw = consumer_schema.get("columns")
             if isinstance(raw, list) and raw:
@@ -381,7 +389,15 @@ def _realization_columns(realization_map: dict[str, Any] | None, consumer_schema
         raw = _as_dict(realization_map.get("consumer")).get("columns")
         if isinstance(raw, list) and raw:
             columns = [str(column) for column in raw]
-    return order_csv_columns_for_readability(columns)
+    slim: list[str] = []
+    for col in columns:
+        lower = col.lower()
+        if lower in {"q", "k", "v", "dy", "dq", "dk", "dv", "inputs", "outputs"}:
+            continue
+        if lower.endswith("_format") and lower not in {"input_format"}:
+            continue
+        slim.append(col)
+    return order_csv_columns_for_readability(slim)
 
 
 def order_csv_columns_for_readability(columns: list[str]) -> list[str]:
@@ -412,8 +428,16 @@ def order_csv_columns_for_readability(columns: list[str]) -> list[str]:
     take(lambda c: bool(re.fullmatch(r"(?i)B|N\d*|S\d*|D(_V)?", c)))
     take(lambda c: bool(re.fullmatch(r"(?i)Pre_Tockens|Next_Tockens|pre_tockens|next_tockens|seed|offset", c)))
 
-    # 4) Discrete / switch knobs that drive branching.
-    take(lambda c: bool(re.fullmatch(r"(?i)sparse_mode|PSE_type|rope|is_sink|inner_drop|keep_prob|Drop_Out_Possibility|is_deter|eod", c)))
+    # 4) Discrete / switch / probability knobs that drive branching.
+    take(
+        lambda c: bool(
+            re.fullmatch(r"(?i)sparse_mode|PSE_type|rope|is_sink|inner_drop|is_deter|eod", c)
+        )
+        or "keep_prob" in c.lower()
+        or "dropout" in c.lower()
+        or "drop_prob" in c.lower()
+        or ("possibility" in c.lower() and "drop" in c.lower())
+    )
 
     # 5) Optional presence descriptors (shape/type), then secondary layouts.
     take(lambda c: c.lower().endswith("_shape") or c.lower().endswith("_type"))
@@ -480,7 +504,64 @@ def _eval_emit_expr(expr: dict[str, Any], model: dict[str, Any], candidate: dict
     if op == "list_format":
         values = _eval_emit_expr(_as_dict(expr.get("values")), model, candidate, idx)
         return str(values if isinstance(values, list) else [values])
+    if op == "if_then_else":
+        cond = _as_dict(expr.get("condition"))
+        ok = _eval_emit_condition(cond, model)
+        branch = expr.get("then") if ok else expr.get("else")
+        if isinstance(branch, dict):
+            return _eval_emit_expr(branch, model, candidate, idx)
+        return "" if branch is None else branch
     raise ValueError(f"UNSUPPORTED_EMIT_EXPRESSION: {op}")
+
+
+def _eval_emit_condition(cond: dict[str, Any], model: dict[str, Any]) -> bool:
+    if not cond:
+        return False
+    op = str(cond.get("op") or "")
+    if op == "eq":
+        var = str(cond.get("var") or "")
+        left = model.get(var)
+        return str(left) == str(cond.get("value"))
+    if op == "in":
+        var = str(cond.get("var") or "")
+        left = model.get(var)
+        values = {str(v).strip().upper() for v in (cond.get("values") or [])}
+        return str(left or "").strip().upper() in values
+    if op == "or":
+        return any(
+            _eval_emit_condition(child, model)
+            for child in (cond.get("args") or [])
+            if isinstance(child, dict)
+        )
+    if op == "and":
+        args = [child for child in (cond.get("args") or []) if isinstance(child, dict)]
+        return bool(args) and all(_eval_emit_condition(child, model) for child in args)
+    return False
+
+
+def apply_layout_column_mutex(row: dict[str, Any]) -> None:
+    """Packed/varlen layouts keep sequence lists; fixed layouts clear sequence lists."""
+    from .domain_policy import (
+        is_fixed_seq_dim_column,
+        is_packed_or_varlen_layout,
+        is_varlen_sequence_column,
+        primary_layout_column_name,
+    )
+
+    layout_col = primary_layout_column_name(list(row.keys()))
+    layout = ""
+    if layout_col:
+        layout = str(row.get(layout_col) or "").strip().upper()
+    if not layout:
+        layout = str(row.get("Input_Layout") or row.get("Layout") or "").strip().upper()
+    seq_keys = [key for key in row if is_varlen_sequence_column(key)]
+    if is_packed_or_varlen_layout(layout):
+        for key in list(row.keys()):
+            if is_fixed_seq_dim_column(key):
+                row[key] = ""
+        return
+    for key in seq_keys:
+        row[key] = ""
 
 
 def _csv_var_id(column: str) -> str:

@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from .contract import TgContractError, tg_contract
-from .init import TgInitError, tg_init
+from .init import TgInitError, tg_init_full
+from .init_status import InitGateError, require_init_confirmed, require_kb
 from .path_resolve import (
     infer_op_name,
     install_contract_into_project,
@@ -19,28 +20,126 @@ from .solve import TgSolveError, tg_solve
 
 
 def init_main(argv: list[str] | None = None) -> int:
-    """Deprecated: tg-init is folded into tg-plan. Kept as thin wrapper for compatibility."""
-    parser = argparse.ArgumentParser(description="DEPRECATED: use tg-plan (intake is included). Thin wrapper around legacy intake.")
-    parser.add_argument("project_root", type=Path)
-    parser.add_argument("--op-name", required=True)
-    args = parser.parse_args(argv)
-    print(
-        json.dumps(
-            {
-                "status": "deprecated",
-                "message": "tg-init is deprecated; use tg-contract then tg-plan. Running legacy intake only.",
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        file=sys.stderr,
+    """tg-init: KB check + intake + contract + bind scaffolds; optional --confirm."""
+    parser = argparse.ArgumentParser(
+        description=(
+            "tg-init: intake + CSV contract + binding scaffolds. "
+            "KB defaults to <算子仓>/.understand-operator/<op>. Missing KB → uo_init_required."
+        )
     )
+    parser.add_argument("project_root", type=Path, nargs="?", default=None, help="算子仓")
+    parser.add_argument("--op-name", default="", help="Optional if uniquely inferable")
+    parser.add_argument(
+        "--test-script-root",
+        type=Path,
+        default=None,
+        help="测试工具 / CSV consumer root（绑定所需）",
+    )
+    parser.add_argument(
+        "--csv-consumer-root",
+        type=Path,
+        default=None,
+        help="--test-script-root 别名",
+    )
+    parser.add_argument("--kb-root", type=Path, default=None, help="Optional KB override (not required)")
+    parser.add_argument("--lexicon-seed", type=Path, default=None)
+    parser.add_argument(
+        "--confirm",
+        action="store_true",
+        help="After merge passes domain symmetry, set init.status=confirmed",
+    )
+    parser.add_argument(
+        "--merge-uo-resolve",
+        action="store_true",
+        help="Merge realization/uo_query_resolve/*.yaml into binding_lexicon + domain align",
+    )
+    parser.add_argument(
+        "--verify-csv-closure",
+        action="store_true",
+        help="Strong gate: every closable mid-symbol must close to VAR_CSV_* (before audit/confirm)",
+    )
+    parser.add_argument(
+        "--list-open-mids",
+        action="store_true",
+        help="Write/print realization/mid_symbol_queue.yaml for nested uo-query Tasks",
+    )
+    parser.add_argument("--notes", default="", help="Optional confirm notes")
+    args = parser.parse_args(argv)
+
     try:
-        result = tg_init(args.project_root, args.op_name)
-    except TgInitError as exc:
-        print(json.dumps({"status": "fail", "message": str(exc), "report": exc.report}, ensure_ascii=False, indent=2), file=sys.stderr)
+        raw_project = args.project_root or args.kb_root
+        if raw_project is None:
+            raise ValueError("OPERATOR_ROOT_REQUIRED: pass project_root (算子仓) or --kb-root")
+        project_root = resolve_operator_project_root(raw_project)
+        kb_hint = args.kb_root
+        if kb_hint is None and (
+            raw_project.expanduser().resolve().name == ".understand-operator"
+            or raw_project.expanduser().resolve().parent.name == ".understand-operator"
+        ):
+            kb_hint = raw_project
+        op_name = infer_op_name(project_root, explicit=args.op_name or None, kb_hint=kb_hint)
+
+        if args.merge_uo_resolve:
+            from .io import output_root
+            from .uo_resolve_merge import UoMergeError, merge_uo_resolve
+
+            out_root = output_root(project_root, op_name)
+            try:
+                report = merge_uo_resolve(out_root)
+            except UoMergeError as exc:
+                print(
+                    json.dumps(
+                        {"status": "fail", "ask": exc.ask, "message": str(exc), "report": exc.report},
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                    file=sys.stderr,
+                )
+                return 1
+            print(json.dumps({"status": "ok", "op_name": op_name, "merge": report}, ensure_ascii=False, indent=2))
+            return 0
+
+        if args.verify_csv_closure or args.list_open_mids:
+            from .io import output_root
+            from .resolve_policy import require_full_csv_closure, write_mid_symbol_queue
+
+            out_root = output_root(project_root, op_name)
+            if args.list_open_mids and not args.verify_csv_closure:
+                queue = write_mid_symbol_queue(out_root)
+                print(json.dumps({"status": "ok", "op_name": op_name, "mid_symbol_queue": queue}, ensure_ascii=False, indent=2))
+                return 0
+            result = require_full_csv_closure(out_root)
+            write_mid_symbol_queue(out_root)
+            print(json.dumps({"status": result.get("status"), "op_name": op_name, "verify": result}, ensure_ascii=False, indent=2))
+            return 0 if result.get("status") == "pass" else 1
+
+        consumer = args.test_script_root or args.csv_consumer_root
+        result = tg_init_full(
+            project_root,
+            op_name,
+            test_script_root=consumer,
+            kb_root=args.kb_root,
+            lexicon_seed=args.lexicon_seed,
+            confirm=bool(args.confirm),
+            notes=args.notes or "",
+        )
+    except ValueError as exc:
+        print(json.dumps({"status": "fail", "message": str(exc)}, ensure_ascii=False, indent=2), file=sys.stderr)
         return 1
-    print(json.dumps({"status": result["run"]["status"], "snapshot_hash": result["snapshot"]["snapshot_hash"]}, ensure_ascii=False, indent=2))
+    except InitGateError as exc:
+        print(
+            json.dumps({"status": "fail", "ask": exc.ask, "message": str(exc), **exc.payload}, ensure_ascii=False, indent=2),
+            file=sys.stderr,
+        )
+        return 1
+    except TgInitError as exc:
+        payload: dict[str, Any] = {"status": "fail", "message": str(exc), "report": exc.report}
+        if exc.ask:
+            payload["ask"] = exc.ask
+        print(json.dumps(payload, ensure_ascii=False, indent=2), file=sys.stderr)
+        return 1
+
+    print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -122,8 +221,8 @@ def contract_main(argv: list[str] | None = None) -> int:
 def plan_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Build L0–L3 coverage plan. Requires 算子仓 + (测试工具 OR contract产物). "
-            "测试工具 → 自动 tg-contract；contract产物 → 直接复用。"
+            "Build L0 / L1-branch / L1-reject / L2 coverage plans. "
+            "Requires tg-init confirmed (binding done). --level L1 expands to both L1 suites."
         )
     )
     parser.add_argument(
@@ -134,27 +233,31 @@ def plan_main(argv: list[str] | None = None) -> int:
         help="算子仓（含 .understand-operator/）。也可传 KB 路径。",
     )
     parser.add_argument("--op-name", default="", help="Optional if uniquely inferable from KB / .understand-operator/")
-    parser.add_argument("--level", default="L1", help="Level or comma-separated levels, e.g. L0,L1,L2")
+    parser.add_argument(
+        "--level",
+        default="L1",
+        help="Level(s): L0,L1-branch,L1-reject,L2 (L1→both branch+reject; all→all four). Legacy L3 needs --topic.",
+    )
     parser.add_argument("--focus", default="")
-    parser.add_argument("--topic", default="", help="Required for L3 (e.g. determinism)")
+    parser.add_argument("--topic", default="", help="Optional topic filter for L1 suites / L2 (and required for legacy L3)")
     parser.add_argument("--reuse-snapshot", action="store_true", help="Skip intake when snapshot hash still matches")
     parser.add_argument(
         "--csv-consumer-root",
         type=Path,
         default=None,
-        help="测试工具 / CSV consumer root。传入后自动执行 contract。",
+        help="可选：仅在未走 tg-init 的兼容路径下重建 contract（优先用 init 产物）。",
     )
     parser.add_argument(
         "--test-script-root",
         type=Path,
         default=None,
-        help="--csv-consumer-root 别名（对话里的「测试工具/测试脚本」）。",
+        help="--csv-consumer-root 别名。",
     )
     parser.add_argument(
         "--contract-root",
         type=Path,
         default=None,
-        help="已有 contract 产物目录（realization/ 或含 realization_map.yaml 的目录）。与测试工具二选一。",
+        help="已有 contract 产物目录。init 完成后通常不需要。",
     )
     parser.add_argument(
         "--kb-root",
@@ -166,7 +269,7 @@ def plan_main(argv: list[str] | None = None) -> int:
         "--lexicon-seed",
         type=Path,
         default=None,
-        help="Optional binding_lexicon.yaml seed passed through to embedded tg-contract",
+        help="Optional binding_lexicon.yaml seed (compat path only)",
     )
     args = parser.parse_args(argv)
     try:
@@ -190,30 +293,43 @@ def plan_main(argv: list[str] | None = None) -> int:
             kb_root=args.kb_root,
             contract_root=args.contract_root,
         )
+        require_kb(paths.project_root, paths.op_name, kb_root=args.kb_root)
+        require_init_confirmed(paths.project_root, paths.op_name)
         if paths.mode == "reuse_contract":
             assert paths.contract_root is not None
             install_contract_into_project(paths.project_root, paths.op_name, paths.contract_root)
+    except InitGateError as exc:
+        payload = {
+            "status": "fail",
+            "message": str(exc),
+            "ask": exc.ask,
+            **exc.payload,
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2), file=sys.stderr)
+        return 1
     except ValueError as exc:
         msg = str(exc)
-        payload: dict[str, Any] = {
+        payload = {
             "status": "fail",
             "message": msg,
             "required": {
-                "operator_root": "算子仓 project_root 或 --kb-root",
-                "one_of": [
-                    "--test-script-root / --csv-consumer-root  (测试工具 → 自动 contract)",
-                    "--contract-root  (已有 realization 产物)",
-                ],
+                "operator_root": "算子仓 project_root",
+                "preferred": "tg-init confirmed → realization under .testcase-generator/<op>/",
+                "compat": ["--test-script-root", "--contract-root"],
             },
             "examples": [
-                'tg-plan "<算子仓>" --op-name <op> --level L0,L1 --test-script-root "<测试工具>"',
-                'tg-plan "<算子仓>" --op-name <op> --level L0,L1 --contract-root "<.../realization>"',
+                'tg-init "<算子仓>" --op-name <op> --test-script-root "<测试工具>"',
+                'tg-init "<算子仓>" --op-name <op> --confirm',
+                'tg-plan "<算子仓>" --op-name <op> --level L0,L1,L2',
             ],
         }
         if "PLAN_INPUTS_REQUIRED" in msg or "OPERATOR_ROOT_REQUIRED" in msg:
-            payload["ask"] = "missing_plan_inputs"
+            payload["ask"] = "init_required"
         print(json.dumps(payload, ensure_ascii=False, indent=2), file=sys.stderr)
         return 1
+
+    # Prefer init realization; only rebuild contract when explicitly asked via test-script on compat path.
+    rebuild_consumer = paths.test_tool_root if paths.mode == "build_contract" else None
 
     results: list[dict[str, Any]] = []
     try:
@@ -226,7 +342,7 @@ def plan_main(argv: list[str] | None = None) -> int:
                     focus=args.focus,
                     topic=args.topic or "",
                     reuse_snapshot=args.reuse_snapshot or idx > 0,
-                    csv_consumer_root=paths.test_tool_root,
+                    csv_consumer_root=rebuild_consumer,
                     lexicon_seed=args.lexicon_seed,
                 )
             )
@@ -250,7 +366,7 @@ def plan_main(argv: list[str] | None = None) -> int:
                     **common,
                     "status": "ready_for_manual_review",
                     "levels": [_plan_summary(item) for item in results],
-                    "next": "Approve each requested level, then run tg-solve --level <levels>",
+                    "next": "Approve each requested level, then run tg-solve --level <L0|L1-BRANCH|L1-REJECT|L2>",
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -265,7 +381,7 @@ def plan_main(argv: list[str] | None = None) -> int:
                 **common,
                 "csv_consumer_root": result.get("csv_consumer_root") or common["test_tool_root"],
                 "realization_root": result.get("realization_root") or "",
-                "next": "AskQuestion approve|reject|suggest; approve then immediately tg-solve",
+                "next": "AskQuestion approve|reject|suggest; approve only when Allow solve:yes then tg-solve",
             },
             ensure_ascii=False,
             indent=2,
@@ -279,7 +395,7 @@ def solve_main(argv: list[str] | None = None) -> int:
     parser.add_argument("project_root", type=Path)
     parser.add_argument("--op-name", required=True)
     parser.add_argument("--timeout-ms", type=int, default=5000)
-    parser.add_argument("--level", default="", help="Level or comma-separated levels to solve from plan/levels/<level>.")
+    parser.add_argument("--level", default="", help="Level or comma-separated: L0,L1-BRANCH,L1-REJECT,L2 (L1→both)")
     parser.add_argument("--case-name", default="", help="CSV base name.")
     parser.add_argument("--dry-run", action="store_true", help="Solve abstract candidates only; do not write CSV")
     parser.add_argument("--quiet", action="store_true", help="Suppress progress events on stderr")
@@ -367,18 +483,32 @@ def solve_main(argv: list[str] | None = None) -> int:
 
 
 def _parse_levels(raw: str) -> list[str]:
-    allowed = {"L0", "L1", "L2", "L3"}
+    """Parse --level. L1 expands to L1-BRANCH + L1-REJECT. Canonical names are uppercase."""
+    allowed = {"L0", "L1", "L1-BRANCH", "L1-REJECT", "L2", "L3"}
     if str(raw or "").strip().lower() == "all":
-        return ["L0", "L1", "L2", "L3"]
+        return ["L0", "L1-BRANCH", "L1-REJECT", "L2"]
     levels: list[str] = []
     for part in str(raw or "").replace(";", ",").split(","):
-        level = part.strip().upper()
-        if not level:
+        token = part.strip().upper().replace("_", "-")
+        if not token:
             continue
-        if level not in allowed:
-            raise ValueError(f"Invalid --level {level!r}. Allowed: L0,L1,L2,L3,all")
-        if level not in levels:
-            levels.append(level)
+        # Accept L1BRANCH / L1REJECT spellings
+        if token in {"L1BRANCH", "L1-BRANCH"}:
+            token = "L1-BRANCH"
+        elif token in {"L1REJECT", "L1-REJECT"}:
+            token = "L1-REJECT"
+        if token not in allowed:
+            raise ValueError(
+                f"Invalid --level {part!r}. Allowed: L0,L1,L1-branch,L1-reject,L2,L3,all "
+                "(L1 expands to L1-branch + L1-reject)"
+            )
+        if token == "L1":
+            for expanded in ("L1-BRANCH", "L1-REJECT"):
+                if expanded not in levels:
+                    levels.append(expanded)
+            continue
+        if token not in levels:
+            levels.append(token)
     return levels
 
 

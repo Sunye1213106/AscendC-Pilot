@@ -76,7 +76,9 @@ def load_built_kb(uo_root: Path, op_name: str) -> dict[str, Any]:
         "query/terminology.yaml",
         "tiling/key_predicates.yaml",
         "checks/final.yaml",
+        "checks/artifact_hashes.yaml",
         "ir/operator_graph.yaml",
+        "summary/keys_table.yaml",
     ):
         path = uo_root / Path(optional)
         if path.is_file():
@@ -105,7 +107,7 @@ def synth_final_validation(uo_root: Path, export_payload: dict[str, Any]) -> dic
     files = export_payload.get("files") if isinstance(export_payload.get("files"), dict) else {}
     contract = files.get("contracts/testcase.yaml") if isinstance(files.get("contracts/testcase.yaml"), dict) else {}
     quality = files.get("quality.yaml") if isinstance(files.get("quality.yaml"), dict) else {}
-    hashes = _as_dict(_as_dict(contract.get("source")).get("canonical_hashes"))
+    hashes = _load_source_hashes(uo_root, contract, files)
     if not hashes:
         hashes = {rel: _file_sha256(uo_root / Path(rel)) for rel in files if (uo_root / Path(rel)).is_file()}
     status = str(quality.get("status") or quality.get("quality_status") or contract.get("source", {}).get("quality_status") or "pass")
@@ -121,6 +123,26 @@ def synth_final_validation(uo_root: Path, export_payload: dict[str, Any]) -> dic
         "conflict_count": len(contract.get("conflicts") or []),
         "intake_mode": "built_kb_filesystem",
     }
+
+
+def _load_source_hashes(uo_root: Path, contract: dict[str, Any], files: dict[str, Any]) -> dict[str, str]:
+    """Prefer checks/artifact_hashes.yaml (lean), then contract.source.canonical_hashes."""
+    source = _as_dict(contract.get("source"))
+    embedded = _as_dict(source.get("canonical_hashes"))
+    if embedded:
+        return {str(k): str(v) for k, v in embedded.items()}
+
+    artifact = files.get("checks/artifact_hashes.yaml")
+    if isinstance(artifact, dict) and isinstance(artifact.get("hashes"), dict):
+        return {str(k): str(v) for k, v in artifact["hashes"].items()}
+
+    hashes_ref = str(source.get("hashes_ref") or "checks/artifact_hashes.yaml")
+    path = uo_root / Path(hashes_ref)
+    if path.is_file():
+        payload = read_yaml(path)
+        if isinstance(payload, dict) and isinstance(payload.get("hashes"), dict):
+            return {str(k): str(v) for k, v in payload["hashes"].items()}
+    return {}
 
 
 def run_final_validation(project_root: Path, op_name: str, uo_root: Path) -> dict[str, Any]:

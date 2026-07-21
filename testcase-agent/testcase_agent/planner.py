@@ -55,8 +55,12 @@ RESERVED_MATCH_KEYS = {
     "optional_inputs",
     "feature_flags",
 }
-TEST_LEVELS = ("L0", "L1", "L2", "L3")
+TEST_LEVELS = ("L0", "L1", "L1-BRANCH", "L1-REJECT", "L2", "L3")
 LEVEL_ORDER = {level: idx for idx, level in enumerate(TEST_LEVELS)}
+# L1 and L1-BRANCH share positive branch coverage; L1 kept for legacy artifacts/tests.
+L1_BRANCH_LEVELS = frozenset({"L1", "L1-BRANCH"})
+L1_REJECT_LEVELS = frozenset({"L1-REJECT"})
+L1_FAMILY_LEVELS = L1_BRANCH_LEVELS | L1_REJECT_LEVELS
 BOUNDARY_KIND_LEVELS = {
     "tilingdata_boundary",
     "core_split_boundary",
@@ -144,8 +148,10 @@ def tg_plan(
         )
 
     topic_manifest = None
-    if normalize_level(level) == "L3":
-        topic_manifest = load_topic_manifest(out_root, topic or focus, project_root=project_root)
+    normalized = normalize_level(level)
+    if normalized == "L3" or (topic and normalized in L1_FAMILY_LEVELS | {"L2"}):
+        if topic or focus:
+            topic_manifest = load_topic_manifest(out_root, topic or focus, project_root=project_root)
 
     plan = build_plan(
         snapshot,
@@ -155,6 +161,7 @@ def tg_plan(
         topic_manifest=topic_manifest,
         extract_doc=extract_doc,
         realization_map=realization_map,
+        out_root=out_root,
     )
     write_plan_outputs(out_root, plan, snapshot)
     refresh_contract_plan_hash(out_root, str(plan.get("plan_hash") or ""), str(snapshot.get("snapshot_hash") or ""))
@@ -175,6 +182,7 @@ def build_plan(
     topic_manifest: dict[str, Any] | None = None,
     extract_doc: dict[str, Any] | None = None,
     realization_map: dict[str, Any] | None = None,
+    out_root: Path | None = None,
 ) -> dict[str, Any]:
     level = normalize_level(level)
     files = snapshot.get("files") if isinstance(snapshot.get("files"), dict) else {}
@@ -195,12 +203,26 @@ def build_plan(
         add_l2_exhaustive_key_obligations(obligations, files, contract, semantic_focus)
     elif level == "L3":
         add_l3_topic_obligations(obligations, files, coverage, contract, branches, impact, semantic_focus, topic_manifest or {})
+    elif level in L1_REJECT_LEVELS:
+        add_l1_reject_obligations(obligations, files, contract, semantic_focus, decorate_level=level)
     else:
-        add_l1_obligations(obligations, files, coverage, contract, branches, impact, semantic_focus, realization_map)
+        # L1 (legacy) and L1-BRANCH
+        add_l1_branch_obligations(
+            obligations,
+            files,
+            coverage,
+            contract,
+            branches,
+            impact,
+            semantic_focus,
+            realization_map,
+            out_root=out_root,
+            decorate_level=level if level in L1_BRANCH_LEVELS else "L1-BRANCH",
+        )
     obligations = filter_obligations_by_focus(obligations, semantic_focus)
-    if level == "L3" and topic_manifest:
+    if topic_manifest and level in {"L3"} | L1_FAMILY_LEVELS | {"L2"}:
         obligations = filter_obligations_for_topic(obligations, topic_manifest, files)
-        if not obligations:
+        if not obligations and level == "L3":
             blocker = make_obligation(
                 "tiling_key_field_value",
                 {"id": "L3_TOPIC_EMPTY", "status": "unresolved", "reason": f"no obligations matched topic {topic_manifest.get('topic_id')}"},
@@ -211,6 +233,7 @@ def build_plan(
             obligations.append(blocker)
     if realization_map:
         obligations = apply_realization_filters(obligations, realization_map)
+    obligations = apply_shape_determined_filter(obligations, out_root)
     obligations = deterministic_obligations(obligations)
     validate_unique_obligation_ids(obligations)
     if realization_map:
@@ -256,6 +279,7 @@ def build_plan(
                 "reason": "focus contains unresolved terms",
             }
         )
+    apply_realization_review_gates(out_root, unresolved)
     review = build_review(snapshot, obligations, matrix, unresolved, level=level, semantic_focus=semantic_focus)
     coverage_inventory = build_coverage_inventory(obligations)
     plan_hash = semantic_plan_hash(snapshot.get("snapshot_hash"), obligations, matrix, unresolved, planning_context)
@@ -338,6 +362,73 @@ def add_l3_topic_obligations(
             decorate_obligation(item, "L3", default_origin_for(item, files), "L3 topic-related coverage", semantic_focus)
 
 
+def add_l1_branch_obligations(
+    out: list[dict[str, Any]],
+    files: dict[str, Any],
+    coverage: dict[str, Any],
+    contract: dict[str, Any],
+    branches: dict[str, Any],
+    impact: dict[str, Any],
+    semantic_focus: dict[str, Any],
+    realization_map: dict[str, Any] | None = None,
+    out_root: Path | None = None,
+    *,
+    decorate_level: str = "L1-BRANCH",
+) -> None:
+    """Positive L1: reachable runtime branches, runtime domains, legal boundaries, CSV domain cover."""
+    del impact  # reserved for future branch impact pruning
+    before = len(out)
+    add_contract_kernel_branch_obligations(out, contract)
+    add_kernel_branch_obligations(out, branches)
+    add_runtime_variable_obligations(out, files, semantic_focus)
+    add_boundary_value_obligations(out, files, semantic_focus)
+    if realization_map:
+        from .csv_domain_cover import add_csv_domain_cover_obligations
+
+        schema_for_cover: dict[str, Any] | None = None
+        if out_root is not None:
+            hints_path = Path(out_root) / "realization" / "domain_hints.yaml"
+            if hints_path.is_file():
+                hints = read_yaml(hints_path)
+                if isinstance(hints, dict):
+                    schema_for_cover = {"domain_hints": hints}
+        add_csv_domain_cover_obligations(out, realization_map, files=files, consumer_schema=schema_for_cover)
+    if len(out) == before:
+        add_key_relation_obligations(out, coverage, contract)
+    for item in out[before:]:
+        if item.get("test_level"):
+            # Re-tag legacy L1 decorations from helpers.
+            item["test_level"] = decorate_level
+            continue
+        kind = str(item.get("kind") or "")
+        if kind == "kernel_branch":
+            reason = "runtime branch coverage"
+        elif kind == "csv_domain_cover":
+            reason = "csv domain value coverage"
+        elif item.get("coverage_bucket") == "boundary_value":
+            reason = "declared legal boundary value"
+        else:
+            reason = "runtime variable coverage"
+        decorate_obligation(item, decorate_level, default_origin_for(item, files), reason, semantic_focus)
+
+
+def add_l1_reject_obligations(
+    out: list[dict[str, Any]],
+    files: dict[str, Any],
+    contract: dict[str, Any],
+    semantic_focus: dict[str, Any],
+    *,
+    decorate_level: str = "L1-REJECT",
+) -> None:
+    """Negative L1: KB/init declared illegal / should-reject combinations."""
+    before = len(out)
+    add_negative_obligations(out, files, contract, semantic_focus)
+    for item in out[before:]:
+        item["test_level"] = decorate_level
+        if not item.get("expected_behavior"):
+            item["expected_behavior"] = "reject"
+
+
 def add_l1_obligations(
     out: list[dict[str, Any]],
     files: dict[str, Any],
@@ -347,29 +438,54 @@ def add_l1_obligations(
     impact: dict[str, Any],
     semantic_focus: dict[str, Any],
     realization_map: dict[str, Any] | None = None,
+    out_root: Path | None = None,
 ) -> None:
-    before = len(out)
-    add_contract_kernel_branch_obligations(out, contract)
-    add_kernel_branch_obligations(out, branches)
-    # Runtime-variable domain coverage (CSV-reachable only; loop/platform vars dropped at source).
-    add_runtime_variable_obligations(out, files, semantic_focus)
-    if realization_map:
-        from .csv_domain_cover import add_csv_domain_cover_obligations
+    """Legacy combined L1 (branch only). Prefer add_l1_branch / add_l1_reject."""
+    add_l1_branch_obligations(
+        out,
+        files,
+        coverage,
+        contract,
+        branches,
+        impact,
+        semantic_focus,
+        realization_map,
+        out_root=out_root,
+        decorate_level="L1",
+    )
 
-        add_csv_domain_cover_obligations(out, realization_map, files=files)
-    if len(out) == before:
-        add_key_relation_obligations(out, coverage, contract)
-    for item in out[before:]:
-        if item.get("test_level"):
+
+def apply_shape_determined_filter(obligations: list[dict[str, Any]], out_root: Path | None) -> list[dict[str, Any]]:
+    """Drop csv_domain_cover for variables marked shape_determined during tg-init bind."""
+    if out_root is None:
+        return obligations
+    path = Path(out_root) / "bind" / "shape_determined.yaml"
+    if not path.is_file():
+        return obligations
+    doc = read_yaml(path)
+    if not isinstance(doc, dict):
+        return obligations
+    determined: set[str] = set()
+    for item in doc.get("variables") or []:
+        if isinstance(item, str):
+            determined.add(item.upper())
+        elif isinstance(item, dict):
+            vid = str(item.get("id") or item.get("name") or "").upper()
+            if vid:
+                determined.add(vid)
+    if not determined:
+        return obligations
+    kept: list[dict[str, Any]] = []
+    for item in obligations:
+        if str(item.get("kind") or "") != "csv_domain_cover":
+            kept.append(item)
             continue
-        kind = str(item.get("kind") or "")
-        if kind == "kernel_branch":
-            reason = "runtime branch coverage"
-        elif kind == "csv_domain_cover":
-            reason = "csv domain value coverage"
-        else:
-            reason = "runtime variable coverage"
-        decorate_obligation(item, "L1", default_origin_for(item, files), reason, semantic_focus)
+        field = str(item.get("field") or item.get("id") or "").upper()
+        aliases = {field, field.removeprefix("VAR_CSV_"), f"VAR_CSV_{field.removeprefix('VAR_CSV_')}"}
+        if aliases & determined:
+            continue
+        kept.append(item)
+    return kept
 
 
 def add_l0_obligations(out: list[dict[str, Any]], files: dict[str, Any], coverage: dict[str, Any], contract: dict[str, Any], semantic_focus: dict[str, Any]) -> None:
@@ -885,7 +1001,11 @@ def is_relation_item(item: dict[str, Any]) -> bool:
 
 
 def normalize_level(level: str) -> str:
-    normalized = str(level or "L1").strip().upper()
+    normalized = str(level or "L1").strip().upper().replace("_", "-")
+    if normalized in {"L1BRANCH"}:
+        normalized = "L1-BRANCH"
+    elif normalized in {"L1REJECT"}:
+        normalized = "L1-REJECT"
     if normalized not in TEST_LEVELS:
         raise TgPlanError(f"Unsupported test level: {level}")
     return normalized
@@ -1508,11 +1628,11 @@ def level_specific_blockers(level: str, obligations: list[dict[str, Any]], seman
 
 
 def boundary_policy(level: str) -> dict[str, Any]:
-    return {"enabled": level == "L1", "source": "KB declared boundary values only"}
+    return {"enabled": level in L1_BRANCH_LEVELS, "source": "KB declared boundary values only"}
 
 
 def negative_case_policy(level: str) -> dict[str, Any]:
-    return {"enabled": level == "L1", "expectation_schema": "case_expectation"}
+    return {"enabled": level in L1_REJECT_LEVELS, "expectation_schema": "case_expectation"}
 
 
 def _blocker(code: str, reason: str) -> dict[str, Any]:
@@ -2171,9 +2291,11 @@ def contract_gaps(level: str, contract: dict[str, Any], coverage: dict[str, Any]
     constraints = _as_dict(files.get("tiling/constraints.yaml"))
     if level == "L0":
         pass
-    elif level == "L1":
+    elif level in L1_BRANCH_LEVELS:
         if "branches" not in _as_dict(files.get("kernel/branches.yaml")) and not buckets.get("kernel_branches") and not contract.get("kernel_branch_obligations"):
-            gaps.append({"field": "kernel/branches.yaml.branches", "reason": "L1 needs runtime branches"})
+            gaps.append({"field": "kernel/branches.yaml.branches", "reason": "L1-branch needs runtime branches"})
+    elif level in L1_REJECT_LEVELS:
+        pass
     elif level == "L2":
         exhaustive = _as_dict(files.get("tiling/exhaustive_key_space.yaml"))
         if not exhaustive.get("template_blocks"):
@@ -2200,30 +2322,42 @@ LEVEL_DESIGN = {
         [
             "目标：覆盖功能开关和可选输入的声明取值，例如 Rope 是否开启、Mask 是否存在、Mask 类型等。",
             "覆盖范围：可选输入 present/absent、全部独立 TilingKey 功能字段离散取值。",
-            "不覆盖：family/kernel_path 基线、运行时分支、边界/拒绝用例、穷尽 TilingKey 组合（分别属于其他层级）。",
-            "设计意图：用较少义务把功能开关面铺满，作为后续 L1/L2 扩展前的属性取值基线。",
+            "不覆盖：运行时分支笛卡尔、拦截负例、穷尽 TilingKey。",
+            "设计意图：用较少检查点把功能开关面铺满，作为后续 L1/L2 扩展前的属性取值基线。",
         ],
     ),
     "L1": (
-        "运行时功能与分支覆盖（Runtime functional / branch coverage）",
+        "运行时分支覆盖（legacy 合并标签；等同 L1-BRANCH 正例）",
         [
-            "目标：覆盖可达 kernel 运行时分支的各可达侧。",
-            "覆盖范围：kernel_branch true/false 或声明变体。",
-            "不覆盖：L0 功能字段取值、L2 穷尽 TilingKey 空间、主题定制套件（L3）。",
-            "设计意图：在 L0 功能取值基线之上，只展开运行时控制流覆盖面。",
+            "目标：覆盖可达 kernel 运行时分支（期望跑通）。",
+            "新流程请用 L1-BRANCH + L1-REJECT 分套件。",
+        ],
+    ),
+    "L1-BRANCH": (
+        "分支测试（正例，期望跑通）",
+        [
+            "覆盖：可达运行时分支、运行时变量域点、合法边界、CSV 域 cover。",
+            "不覆盖：故意失败的拦截场景；KEY 穷尽（L2）。",
+        ],
+    ),
+    "L1-REJECT": (
+        "拦截用例（负例，期望 reject）",
+        [
+            "覆盖：KB/init 声明的非法/应拦截组合。",
+            "不覆盖：正例分支覆盖。",
         ],
     ),
     "L2": (
         "穷尽可达 TilingKey（Exhaustive reachable TilingKey）",
         [
             "目标：对 exhaustive_key_space 中可达且可反向实现的 TilingKey 做穷尽覆盖。",
-            "不覆盖：不可达/未实现 key、主题定制（L3）。",
+            "不替代 L1-branch / L1-reject。",
         ],
     ),
     "L3": (
-        "主题定制套件（Topic-scoped suite）",
+        "主题定制套件（legacy；优先用 --topic 过滤 L1/L2）",
         [
-            "目标：仅生成与 --topic 相关的义务（如 determinism），不扩展无关分支。",
+            "目标：仅生成与 --topic 相关的检查点。",
         ],
     ),
 }
@@ -2495,8 +2629,11 @@ def build_review_design_lines(obligations: list[dict[str, Any]]) -> list[str]:
 def build_review_coverage_index(obligations: list[dict[str, Any]], *, level: str, files: dict[str, Any] | None = None) -> list[str]:
     """Add a human-readable index so review can trace counts back to obligations."""
     lines: list[str] = []
-    if level == "L1":
+    if level in L1_BRANCH_LEVELS:
         lines.extend(_build_l1_branch_coverage_index(obligations, files=files or {}))
+    elif level in L1_REJECT_LEVELS:
+        neg = [item for item in obligations if item.get("expected_behavior") == "reject"]
+        lines.extend(["", "## L1-REJECT 拦截用例", f"- 共 **{len(neg)}** 条期望 reject 的义务。"])
     elif level == "L0":
         lines.extend(_build_l0_value_coverage_index(obligations))
     elif level == "L2":
@@ -2750,6 +2887,89 @@ def _compact_list(values: list[Any], *, max_items: int = 8) -> str:
     return ", ".join(text[:max_items]) + f", ...另 {len(text) - max_items} 项"
 
 
+def apply_realization_review_gates(out_root: Path | None, unresolved: dict[str, Any]) -> None:
+    """Block plan approval when domain_review / KEY↔CSV binding still needs LLM+human confirm."""
+    if out_root is None:
+        return
+    realization = Path(out_root) / "realization"
+    gaps: list[dict[str, Any]] = list(unresolved.get("contract_gaps") or [])
+
+    review_path = realization / "domain_review.yaml"
+    if review_path.is_file():
+        review = read_yaml(review_path)
+        pending = list(review.get("pending_columns") or [])
+        status = str(review.get("status") or "").lower()
+        if status not in {"confirmed", "human", "llm_confirmed"} and pending:
+            gaps.append(
+                {
+                    "field": "realization/domain_review.yaml",
+                    "reason": (
+                        f"DOMAIN_REVIEW_REQUIRED: {len(pending)} columns unreviewed "
+                        f"(e.g. {', '.join(str(c) for c in pending[:6])}). "
+                        "Run tg-domain-review / AskQuestion before approve→solve."
+                    ),
+                }
+            )
+
+    unresolved_path = realization / "unresolved.yaml"
+    if unresolved_path.is_file():
+        doc = read_yaml(unresolved_path)
+        binding_gaps = [g for g in (doc.get("binding_gaps") or []) if isinstance(g, dict)]
+        hard = [g for g in binding_gaps if str(g.get("code") or "") in {"MISSING_CSV_REF", "UNBOUND_KEY"}]
+        if hard:
+            lexicon_path = realization / "binding_lexicon.yaml"
+            lexicon = read_yaml(lexicon_path) if lexicon_path.is_file() else {}
+            locked = {
+                str(item.get("id") or "")
+                for item in (lexicon.get("key_derivations") or [])
+                if isinstance(item, dict) and item.get("locked")
+            }
+            still = [g for g in hard if str(g.get("variable_id") or "") not in locked]
+            if still:
+                gaps.append(
+                    {
+                        "field": "realization/binding_lexicon.yaml",
+                        "reason": (
+                            f"BINDING_REVIEW_REQUIRED: {len(still)} KEY↔CSV gaps unbound. "
+                            "Run /tg-csv-contract, lock derivations, confirm domain_review."
+                        ),
+                    }
+                )
+
+    unresolved["contract_gaps"] = gaps
+    if gaps or unresolved.get("blocking_hard_obligations"):
+        unresolved["status"] = "blocked"
+    elif unresolved.get("status") != "blocked":
+        unresolved["status"] = "ready_for_manual_review"
+
+
+def compute_allow_solve(
+    *,
+    level: str,
+    obligations: list[dict[str, Any]],
+    unresolved: dict[str, Any],
+    semantic_focus: dict[str, Any],
+) -> tuple[bool, str]:
+    """Return (allow_solve, reason). Empty L1-REJECT / open KEY gaps → False."""
+    if unresolved.get("blocking_hard_obligations") or unresolved.get("contract_gaps"):
+        return False, "hard_blockers_or_contract_gaps"
+    if level in {"L1-REJECT"} and not obligations:
+        return False, "empty_l1_reject"
+    csv_stats = _as_dict(semantic_focus.get("csv_realization"))
+    by_code = _as_dict(csv_stats.get("by_unreachability_code"))
+    if level in {"L1", "L1-BRANCH"} and int(by_code.get("KEY_DERIVATION_MISSING") or 0) > 0:
+        return False, "key_derivation_missing"
+    pending = int(csv_stats.get("pending_count") or 0) if csv_stats else len(obligations)
+    not_csv = int(csv_stats.get("not_csv_realizable_count") or 0)
+    if level in {"L1", "L1-BRANCH"} and pending > 0 and not_csv > 0:
+        ratio = not_csv / max(1, pending + not_csv)
+        if ratio >= 0.75:
+            return False, "not_csv_realizable_ratio_high"
+    if level == "L2" and (unresolved.get("status") == "blocked" or semantic_focus.get("level_status") == "blocked"):
+        return False, "l2_blocked"
+    return True, "ok"
+
+
 def build_review(
     snapshot: dict[str, Any],
     obligations: list[dict[str, Any]],
@@ -2760,12 +2980,18 @@ def build_review(
     semantic_focus: dict[str, Any],
 ) -> str:
     counts = matrix["priority_counts"]
-    allow_smt = not unresolved["blocking_hard_obligations"] and not unresolved["contract_gaps"]
+    allow_smt, allow_reason = compute_allow_solve(
+        level=level, obligations=obligations, unresolved=unresolved, semantic_focus=semantic_focus
+    )
+    unresolved["allow_solve"] = allow_smt
+    unresolved["allow_solve_reason"] = allow_reason
     allow_smt_text_cn = "是" if allow_smt else "否"
     key_stats = _as_dict(semantic_focus.get("tiling_key_coverage"))
     design_title, design_bullets = LEVEL_DESIGN.get(level, ("未定义级别", []))
     test_points = matrix.get("test_points") or build_test_points(obligations)
     l0_warning = semantic_focus.get("l0_warning")
+    csv_stats = _as_dict(semantic_focus.get("csv_realization"))
+    csv_pending = int(csv_stats.get("pending_count") or 0) if csv_stats else len(obligations)
 
     lines = [
         "# TestAgent Coverage Plan Review",
@@ -2776,16 +3002,19 @@ def build_review(
         f"- Focus: {semantic_focus.get('original_query') or '<none>'}",
         f"- Topic: {semantic_focus.get('topic') or '<none>'}",
         f"- Snapshot Hash: `{snapshot.get('snapshot_hash')}`",
-        f"- 义务总数 / Total obligations: **{len(obligations)}**",
-        f"- 优先级 Hard / High / Normal: {counts.get('hard', 0)} / {counts.get('high', 0)} / {counts.get('normal', 0)}",
+        f"- **覆盖检查点数量**: **{len(obligations)}**",
+        "  - 含义：本级别要求命中的独立约束目标条数（每个检查点 = 求解时要命中的一条取值/分支约束）。",
+        "  - **不等于**最终 CSV 行数；行数看下方「可写成 CSV 的检查点数 / 求解成功行数」。",
+        f"- 约束强度（求解器内部，非测试优先级）：必须满足 {counts.get('hard', 0)} / 尽量覆盖 {counts.get('high', 0)} / 可选 {counts.get('normal', 0)}",
         f"- Contract gaps: {len(unresolved['contract_gaps'])}",
         f"- 是否允许进入 solve / Allow solve: {'yes' if allow_smt else 'no'}（{allow_smt_text_cn}）",
     ]
-    csv_stats = _as_dict(semantic_focus.get("csv_realization"))
+    if not allow_smt:
+        lines.append(f"- Allow solve 否原因: `{allow_reason}`（回 tg-init --merge-uo-resolve 或补 KB，禁止空批 approve）")
     if csv_stats:
         lines.extend(
             [
-                f"- CSV realizable pending: **{csv_stats.get('pending_count', 0)}**",
+                f"- 可写成 CSV 的检查点数: **{csv_pending}**",
                 f"- Out-of-scope dropped (LOOP_LOCAL/PLATFORM_MACRO，生成时直接去除): **{csv_stats.get('dropped_out_of_scope_count', csv_stats.get('skipped_out_of_scope_count', 0))}**",
                 f"- Not CSV-realizable (blocked): **{csv_stats.get('not_csv_realizable_count', 0)}** "
                 f"(mapped branches={csv_stats.get('mapped_branch_count', 0)}, abstract={csv_stats.get('abstract_branch_count', 0)})",
@@ -2864,8 +3093,19 @@ def build_review(
     lines.append("")
     lines.append("## Manual Review")
     lines.append("- 请核对：级别设计是否符合预期、测试点条数是否合理、样例 refs 是否落在正确功能属性上、有无 blockers。")
-    lines.append("- OpenCode AskQuestion 按钮：`approve`（批准并立即 tg-solve）/ `reject`（拒绝）/ `suggest`（给出修改建议）。")
-    lines.append("- 同级别归档副本：`plan/levels/<L0|L1|...>/`（避免 L0/L1 互相覆盖）。")
+    if allow_smt:
+        lines.append(
+            "- OpenCode AskQuestion：`approve`（批准并立即 tg-solve）/ `reject` / `suggest`。"
+        )
+    else:
+        lines.append(
+            "- OpenCode AskQuestion：`confirm_domain`（先 tg-domain-review）/ `suggest` / `reject`。"
+            " Allow solve: no 时禁止 approve→solve。"
+        )
+    lines.append(
+        f"- 本级全量归档：`plan/levels/{level}/`"
+        "（obligations/matrix/inventory/supplement；根 plan/ 不是 solve 真源）。"
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -2880,7 +3120,14 @@ def write_plan_outputs(out_root: Path, plan: dict[str, Any], snapshot: dict[str,
         "plan_hash": plan["plan_hash"],
     }
     matrix_payload = {"version": 1, "snapshot_hash": snapshot.get("snapshot_hash"), "test_level": level, **plan["matrix"], "plan_hash": plan["plan_hash"]}
-    unresolved_payload = {"version": 1, "snapshot_hash": snapshot.get("snapshot_hash"), "test_level": level, **plan["unresolved"], "plan_hash": plan["plan_hash"]}
+    unresolved_payload = {
+        "version": 1,
+        "snapshot_hash": snapshot.get("snapshot_hash"),
+        "test_level": level,
+        **plan["unresolved"],
+        "plan_hash": plan["plan_hash"],
+    }
+    unresolved_payload["test_level"] = level
     focus_payload = {
         "version": 1,
         "snapshot_hash": snapshot.get("snapshot_hash"),
@@ -2889,11 +3136,6 @@ def write_plan_outputs(out_root: Path, plan: dict[str, Any], snapshot: dict[str,
         "planning_context": plan["planning_context"],
         "plan_hash": plan["plan_hash"],
     }
-
-    write_yaml(out_root / "plan" / "coverage_obligations.yaml", plan_payload)
-    write_yaml(out_root / "plan" / "coverage_matrix.yaml", matrix_payload)
-    write_yaml(out_root / "plan" / "unresolved.yaml", unresolved_payload)
-    write_yaml(out_root / "plan" / "semantic_focus.yaml", focus_payload)
     inventory_payload = {
         "version": 1,
         "snapshot_hash": snapshot.get("snapshot_hash"),
@@ -2901,10 +3143,11 @@ def write_plan_outputs(out_root: Path, plan: dict[str, Any], snapshot: dict[str,
         "plan_hash": plan["plan_hash"],
         **(plan.get("coverage_inventory") or build_coverage_inventory(plan["obligations"])),
     }
-    write_yaml(out_root / "plan" / "coverage_inventory.yaml", inventory_payload)
-    (out_root / "plan" / "review.md").write_text(plan["review"], encoding="utf-8")
+    csv_report = plan.get("semantic_focus", {}).get("csv_unreachability_report")
+    if not isinstance(csv_report, dict):
+        csv_report = build_csv_unreachability_report(plan["obligations"], plan.get("_realization_map") or {})
 
-    # Per-level archive so L0/L1 runs do not overwrite each other for human review.
+    # Full per-level archive — sole source of truth for approve/solve for this level.
     level_dir = out_root / "plan" / "levels" / level
     level_dir.mkdir(parents=True, exist_ok=True)
     write_yaml(level_dir / "coverage_obligations.yaml", plan_payload)
@@ -2912,6 +3155,7 @@ def write_plan_outputs(out_root: Path, plan: dict[str, Any], snapshot: dict[str,
     write_yaml(level_dir / "unresolved.yaml", unresolved_payload)
     write_yaml(level_dir / "semantic_focus.yaml", focus_payload)
     write_yaml(level_dir / "coverage_inventory.yaml", inventory_payload)
+    write_yaml(level_dir / "csv_unreachability_report.yaml", csv_report)
     (level_dir / "review.md").write_text(plan["review"], encoding="utf-8")
     write_yaml(
         level_dir / "summary.yaml",
@@ -2921,8 +3165,9 @@ def write_plan_outputs(out_root: Path, plan: dict[str, Any], snapshot: dict[str,
             "status": plan.get("status") or unresolved_payload.get("status"),
             "plan_hash": plan["plan_hash"],
             "snapshot_hash": snapshot.get("snapshot_hash"),
-            "obligation_count": len(plan["obligations"]),
-            "priority_counts": plan["matrix"].get("priority_counts"),
+            "checkpoint_count": len(plan["obligations"]),
+            "csv_realizable_checkpoints": (plan.get("semantic_focus") or {}).get("csv_realization", {}).get("pending_count"),
+            "constraint_strength_counts": plan["matrix"].get("priority_counts"),
             "test_points": plan["matrix"].get("test_points"),
             "coverage_inventory": {
                 "variable_count": inventory_payload.get("variable_count", 0),
@@ -2930,17 +3175,29 @@ def write_plan_outputs(out_root: Path, plan: dict[str, Any], snapshot: dict[str,
                 "by_kind": inventory_payload.get("by_kind") or {},
             },
             "csv_realization": plan.get("semantic_focus", {}).get("csv_realization"),
+            "human_read_hint": (
+                f"优先阅读 review.md 与 cases/.../{level}.csv；"
+                f"完整义务表见 plan/levels/{level}/coverage_obligations.yaml"
+            ),
         },
     )
-    csv_report = plan.get("semantic_focus", {}).get("csv_unreachability_report")
-    if not isinstance(csv_report, dict):
-        csv_report = build_csv_unreachability_report(plan["obligations"], plan.get("_realization_map") or {})
-    write_yaml(level_dir / "csv_unreachability_report.yaml", csv_report)
-    write_yaml(out_root / "plan" / "csv_unreachability_report.yaml", csv_report)
     _ensure_supplement(level_dir / "human_supplement.yaml", snapshot, plan)
 
-    supplement = out_root / "plan" / "human_supplement.yaml"
-    _ensure_supplement(supplement, snapshot, plan)
+    # Root index only — not used as obligations truth for solve/approve.
+    write_yaml(
+        out_root / "plan" / "latest_level.yaml",
+        {
+            "version": 1,
+            "level": level,
+            "plan_hash": plan["plan_hash"],
+            "snapshot_hash": snapshot.get("snapshot_hash"),
+            "archive": f"plan/levels/{level}",
+            "note": (
+                "Solve/approve must read plan/levels/<L>/. "
+                "Root plan/ is an index only; never Copy root obligations into levels."
+            ),
+        },
+    )
 
 
 def _ensure_supplement(path: Path, snapshot: dict[str, Any], plan: dict[str, Any]) -> None:

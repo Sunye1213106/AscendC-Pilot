@@ -3,6 +3,8 @@
 ```text
 PLUGIN_ROOT = .../understand-operator          （仓库根 = 插件根）
 SCRIPT_DIR  = $PLUGIN_ROOT/uo/scripts
+# Query CLI (uo-query): $SCRIPT_DIR/uo_kb_query.py
+# Do not use skills/uo-query/scripts/ as primary (forwarder only).
 PROMPT_DIR  = $PLUGIN_ROOT/prompts
 ```
 

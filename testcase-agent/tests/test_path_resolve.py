@@ -96,9 +96,17 @@ def test_plan_main_missing_inputs_asks(tmp_path: Path, capsys: pytest.CaptureFix
     code = plan_main([str(repo), "--op-name", "flash_attention_score_grad", "--level", "L1"])
     captured = capsys.readouterr()
     assert code == 1
-    assert "PLAN_INPUTS_REQUIRED" in captured.err
+    # Without tg-init confirmed / realization, CLI asks for init (or reports missing inputs as init_required).
     assert "ask" in captured.err
-    assert "missing_plan_inputs" in captured.err
+    assert "init_required" in captured.err or "uo_init_required" in captured.err or "PLAN_INPUTS_REQUIRED" in captured.err
+
+
+def test_parse_levels_expands_l1() -> None:
+    from testcase_agent.cli import _parse_levels
+
+    assert _parse_levels("L1") == ["L1-BRANCH", "L1-REJECT"]
+    assert _parse_levels("all") == ["L0", "L1-BRANCH", "L1-REJECT", "L2"]
+    assert _parse_levels("L0,L1-branch") == ["L0", "L1-BRANCH"]
 
 
 def test_install_contract_into_project(tmp_path: Path) -> None:

@@ -19,11 +19,14 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_ROOT))
 
 from uo._operator.artifacts import resolve_existing_operator_root, safe_op_name
+from uo.scripts.kb_graph_query import index_status as kb_graph_index_status
+from uo.scripts.kb_graph_query import query_kb_graph
 
 
 EXPECTED_QUERY_ORDER = ["terminology", "symbol_index", "derived", "raw", "yaml", "source"]
 IR_QUERY_ORDER = ["operator_graph", "contracts", "tiling_kernel_cross", "unresolved", "source"]
 ROUTES_QUERY_ORDER = ["terminology", "routes", "hot_files", "key_cards", "source"]
+KB_GRAPH_QUERY_ORDER = ["kb_graph", "detail_ref", "source"]
 
 
 def _query_routes(
@@ -254,6 +257,10 @@ def query_readonly(
     if resolved is None:
         raise FileNotFoundError(f"operator KB root not found via manifest/aliases for {op_name}")
     _resolved_name, uo_root = resolved
+    # Prefer derived kb_graph when fresh (fast entity/neighbor lookup).
+    graph_hit = _query_kb_graph(uo_root, entity, depth=depth, relation_type=relation_type, limit=limit)
+    if graph_hit is not None:
+        return graph_hit
     # Prefer query routes / key cards when present (avoid full operator_graph scan).
     routes_hit = _query_routes(uo_root, entity, question_type=question_type, limit=limit)
     if routes_hit is not None:
@@ -262,11 +269,7 @@ def query_readonly(
     ir_hit = _query_layered_ir(uo_root, entity, depth=depth, relation_type=relation_type, limit=limit)
     if ir_hit is not None:
         return ir_hit
-    index = uo_root / "indexes" / "operator_kb.sqlite"
-    if index.exists():
-        if not _index_fresh(index, uo_root):
-            return {"resolved_entities": [], "direct_relations": [], "neighbors": [], "fact_details": [], "source_anchors": [], "unresolved": [], "index_status": "stale", "query_backend": "sqlite"}
-        return _query_sqlite(index, uo_root, entity, depth=depth, relation_type=relation_type, limit=limit)
+    # Legacy indexes/operator_kb.sqlite is obsolete; do not prefer it over yaml fallback.
     trace: list[str] = []
     resolved_entities = _resolve_entities(uo_root, entity, trace)
     derived = _query_derived(uo_root, entity, resolved_entities)
@@ -299,6 +302,77 @@ def query_readonly(
         "cbm_writes": [],
         "index_status": "missing",
         "query_backend": "yaml_fallback",
+        "hint": "indexes/kb_graph.sqlite missing or stale; run export_kb_graph.py after /uo-init or /uo-update",
+    }
+
+
+def _query_kb_graph(
+    uo_root: Path,
+    entity: str,
+    *,
+    depth: int,
+    relation_type: str | None,
+    limit: int,
+) -> dict[str, Any] | None:
+    status = kb_graph_index_status(uo_root)
+    if status.get("index_status") != "fresh":
+        return None
+    try:
+        result = query_kb_graph(
+            uo_root,
+            pattern="neighbors_of",
+            target=entity,
+            depth=max(depth, 1),
+            limit=limit,
+            relation_type=relation_type,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    if result.get("index_status") != "fresh":
+        return None
+    if not result.get("resolved_entities") and not result.get("neighbors"):
+        # Fall through to routes / YAML for better recall on fuzzy questions.
+        return None
+
+    detail_refs: list[str] = []
+    for item in (result.get("resolved_entities") or []) + (result.get("neighbors") or []):
+        ref = item.get("detail_ref") if isinstance(item, dict) else None
+        if ref and ref not in detail_refs:
+            detail_refs.append(str(ref))
+    yaml_items = [_read_yaml_ref(uo_root, ref) for ref in detail_refs[:12]]
+    source_refs = _source_refs_from_yaml_items(yaml_items)
+    for item in result.get("resolved_entities") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("file_path"):
+            source_refs.append(
+                {
+                    "file_path": item.get("file_path"),
+                    "start_line": item.get("start_line"),
+                    "entity_id": item.get("id"),
+                }
+            )
+
+    return {
+        "query": {
+            "entity": entity,
+            "normalized": _normalize_term(entity),
+            "resolved_entities": [e.get("id") for e in (result.get("resolved_entities") or []) if isinstance(e, dict)],
+            "mode": "readonly",
+            "order": KB_GRAPH_QUERY_ORDER,
+        },
+        "query_trace": list(KB_GRAPH_QUERY_ORDER),
+        "resolved_entities": result.get("resolved_entities") or [],
+        "direct_relations": result.get("direct_relations") or [],
+        "neighbors": result.get("neighbors") or [],
+        "yaml_items": yaml_items,
+        "source_refs": source_refs,
+        "source_anchors": source_refs,
+        "writes": [],
+        "cbm_writes": [],
+        "index_status": "fresh",
+        "query_backend": "kb_graph",
+        "kb_graph_status": status,
     }
 
 
@@ -325,19 +399,31 @@ def query_smoke(repo_root: Path, op_name: str) -> tuple[int, dict[str, Any]]:
         results[name] = result
         if result.get("writes") or result.get("cbm_writes"):
             errors.append(f"{name}: query reported write operations")
-        if result.get("query_backend") == "layered_ir":
+        backend = result.get("query_backend")
+        if backend == "kb_graph":
+            if result.get("query_trace") != KB_GRAPH_QUERY_ORDER:
+                errors.append(f"{name}: kb_graph query trace mismatch")
+            if not result.get("resolved_entities"):
+                errors.append(f"{name}: resolved_entities is empty")
+        elif backend == "layered_ir":
             if result.get("query_trace") != IR_QUERY_ORDER:
                 errors.append(f"{name}: layered IR query trace mismatch")
-        elif result.get("query_trace") != EXPECTED_QUERY_ORDER:
-            errors.append(f"{name}: query trace is not terminology -> symbol_index -> derived -> raw -> yaml -> source")
-        if not result.get("resolved_entities"):
-            errors.append(f"{name}: resolved_entities is empty")
-        if result.get("query_backend") != "layered_ir" and not (result.get("derived_entities") or result.get("raw_entities")):
-            errors.append(f"{name}: query did not hit derived or raw graph")
-        if not result.get("yaml_items") and result.get("query_backend") != "layered_ir":
-            errors.append(f"{name}: yaml_items is empty")
-        if not (result.get("source_refs") or result.get("source_anchors") or result.get("nodes")):
-            errors.append(f"{name}: source anchors are empty")
+            if not result.get("resolved_entities"):
+                errors.append(f"{name}: resolved_entities is empty")
+        elif backend == "routes":
+            if not result.get("resolved_entities") and not result.get("yaml_items"):
+                errors.append(f"{name}: routes backend returned empty payload")
+        else:
+            if result.get("query_trace") != EXPECTED_QUERY_ORDER:
+                errors.append(f"{name}: query trace is not terminology -> symbol_index -> derived -> raw -> yaml -> source")
+            if not result.get("resolved_entities"):
+                errors.append(f"{name}: resolved_entities is empty")
+            if not (result.get("derived_entities") or result.get("raw_entities")):
+                errors.append(f"{name}: query did not hit derived or raw graph")
+            if not result.get("yaml_items"):
+                errors.append(f"{name}: yaml_items is empty")
+            if not (result.get("source_refs") or result.get("source_anchors") or result.get("nodes")):
+                errors.append(f"{name}: source anchors are empty")
     if before != _readonly_fingerprint(uo_root):
         errors.append("query changed KB files")
     payload = {"status": "fail" if errors else "pass", "op_name": resolved_name, "cases": {key: {"entity": value, "status": "pass" if key in results else "fail"} for key, value in cases.items()}, "errors": errors, "query": results.get("stable_id") or next(iter(results.values()), {})}

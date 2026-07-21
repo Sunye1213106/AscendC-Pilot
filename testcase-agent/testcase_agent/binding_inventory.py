@@ -89,9 +89,12 @@ def build_binding_inventory(
     if isinstance(contract, dict):
         for key_id, spec in (contract.get("key_determinants") or {}).items():
             key_ids.append(str(key_id))
-            if isinstance(spec, dict) and (spec.get("needs_binding") or not (spec.get("csv_determinants") or [])):
-                if str(spec.get("role") or "") in {"optional_presence", "switch", "layout_flag"} or spec.get("needs_binding"):
-                    needs_binding.append(str(key_id))
+            if not isinstance(spec, dict):
+                continue
+            # Any KEY lacking csv_determinants, or explicitly needs_binding, must Task uo-query.
+            # Do not skip enum_knob/shape — those were falsely treated as "already bound".
+            if spec.get("needs_binding") or not (spec.get("csv_determinants") or []):
+                needs_binding.append(str(key_id))
 
     fingerprint = fingerprint_consumer(consumer_root) if consumer_root else {"consumer_kind": "unknown", "api_call_sites": []}
     doc_candidates = _find_doc_candidates(consumer_root) if consumer_root else []
@@ -185,6 +188,7 @@ def build_domain_review(
 
 
 def build_llm_bind_prompt_bundle(inventory: dict[str, Any], unresolved: dict[str, Any]) -> dict[str, Any]:
+    key_ids = list(inventory.get("needs_binding_keys") or [])[:20]
     return {
         "version": 1,
         "purpose": "LLM KEY↔CSV binding + domain review (do not add AST rules)",
@@ -194,10 +198,16 @@ def build_llm_bind_prompt_bundle(inventory: dict[str, Any], unresolved: dict[str
         "binding_gaps": inventory.get("binding_gaps"),
         "api_call_sites_sample": (inventory.get("api_call_sites") or [])[:40],
         "interface_doc_candidates": inventory.get("interface_doc_candidates"),
+        "cbm_query_hints": [
+            {"kind": "symbol", "query": kid.replace("KEY_", "").replace("VAR_", "")}
+            for kid in key_ids
+        ],
         "unresolved": unresolved,
         "instructions": [
             "Bind unbound KEY/KVAR to real CSV columns using script/KB evidence only",
-            "Propose domain_hints for thin/unreviewed columns",
+            "Propose domain_hints for thin/unreviewed columns; never confirm '_' as a legal cell value",
+            "For operator host/kernel semantics: use CBM search_graph / get_code_snippet (Phase0 index), not full-file dumps",
+            "Prefer summary/human_overview.md + uo_kb_query before opening large YAML",
             "Output binding_lexicon key_derivations with locked:true only after human confirm",
             "Do not invent per-op AST heuristics in plugin Python",
         ],

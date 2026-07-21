@@ -41,6 +41,8 @@ def build_realization_map(
     *,
     lexicon: dict[str, Any] | None = None,
     op_name: str = "",
+    shape_closure: set[str] | None = None,
+    out_root: Any = None,
 ) -> dict[str, Any]:
     files = snapshot.get("files") if isinstance(snapshot.get("files"), dict) else {}
     key_space = _as_dict(files.get("tiling/key_space.yaml"))
@@ -50,6 +52,11 @@ def build_realization_map(
     if not columns and fields:
         columns = [str(item.get("name") or "") for item in sorted(fields, key=lambda item: int(item.get("order", 0)))]
     merged_lexicon = normalize_lexicon(merge_lexicons(lexicon_from_key_space(key_space), lexicon))
+    closure = set(shape_closure or [])
+    if not closure and out_root is not None:
+        from .shape_derivation import load_shape_closure
+
+        closure = load_shape_closure(out_root)
     if not columns:
         return normalize_realization_map(
             {
@@ -86,12 +93,36 @@ def build_realization_map(
         if role in {"constant", "metadata", "expected_result"} or column == "Enable":
             continue
         if role == "tensor_placeholder":
-            emit_columns[column] = {"op": "constant", "value": "_"}
+            # Slim CSV: do not emit blob/tensor placeholders (historical sheets omit them).
+            continue
+        if role == "emit_skip":
             continue
         if role == "emit_derived" or "seqlens" in column.lower() or column.startswith("cu_"):
-            emit_columns[column] = _default_emit_for_column(column)
+            emit_columns[column] = _default_emit_for_column(column, columns=columns)
             continue
         if role and role != "solver_input":
+            continue
+        # LLM may mark importance=low → constant emit, not free cover.
+        hint_meta = {}
+        domain_hints = (consumer_schema.get("domain_hints") or {}).get("columns") or {}
+        if isinstance(domain_hints, dict) and isinstance(domain_hints.get(column), dict):
+            hint_meta = domain_hints[column]
+        from .domain_policy import hint_importance_is_low
+
+        if hint_importance_is_low(hint_meta) or str(field.get("importance") or "").lower() in {
+            "low",
+            "noise",
+            "optional",
+            "skip",
+        }:
+            default = field.get("default")
+            if default in (None, ""):
+                default = 0 if column.lower() in {"seed", "offset"} else (2 if column.lower() == "seed" else "")
+            if column.lower() == "seed" and default in (None, ""):
+                default = 2
+            if column.lower() == "offset" and default in (None, ""):
+                default = 0
+            emit_columns[column] = {"op": "constant", "value": default}
             continue
         if fields:
             csv_var_item = _csv_variable_from_field(column, field, consumer_schema)
@@ -108,6 +139,7 @@ def build_realization_map(
         csv_columns=columns,
         lexicon=merged_lexicon,
         op_name=op_name or str(consumer_schema.get("op_name") or ""),
+        shape_closure=closure,
     )
     branch_mappings = aligned.get("branch_mappings") or []
     abstract_branches = aligned.get("abstract_branches") or []
@@ -172,7 +204,61 @@ def build_realization_map(
         ],
     }
     extend_csv_enum_domains_from_exprs(realization_map)
+    realization_map = apply_architecture_platform_fixes(realization_map, snapshot)
     return normalize_realization_map(realization_map)
+
+
+def apply_architecture_platform_fixes(
+    realization_map: dict[str, Any],
+    snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Fix architecture-declared platform KEYs already present; never invent new KEY ids."""
+    from .domain_policy import platform_key_tokens_for_architecture
+
+    arch = _snapshot_architecture(snapshot)
+    tokens = platform_key_tokens_for_architecture(arch)
+    if not tokens:
+        return realization_map
+    derived = list(realization_map.get("derived_variables") or [])
+    fixed_ids: list[str] = []
+    for item in derived:
+        if not isinstance(item, dict):
+            continue
+        vid = str(item.get("id") or "").upper().replace("-", "_")
+        if not any(tok in vid for tok in tokens):
+            continue
+        item["domain"] = [1]
+        item["expr"] = {
+            "op": "derived",
+            "var": item.get("id"),
+            "expr": 1,
+        }
+        item["description"] = (
+            str(item.get("description") or "")
+            + f" [architecture={arch}: platform KEY fixed to 1]"
+        ).strip()
+        item["architecture_fixed"] = True
+        fixed_ids.append(str(item.get("id")))
+    if not fixed_ids:
+        return realization_map
+    realization_map["derived_variables"] = derived
+    realization_map.setdefault("warnings", [])
+    warning = f"architecture_fixed:platform_keys={','.join(fixed_ids)} arch={arch}"
+    if warning not in realization_map["warnings"]:
+        realization_map["warnings"].append(warning)
+    return realization_map
+
+
+def _snapshot_architecture(snapshot: dict[str, Any] | None) -> str:
+    if not isinstance(snapshot, dict):
+        return ""
+    files = snapshot.get("files") if isinstance(snapshot.get("files"), dict) else {}
+    contract = files.get("contracts/testcase.yaml") if isinstance(files.get("contracts/testcase.yaml"), dict) else {}
+    arch = str(contract.get("architecture") or "").strip()
+    if arch:
+        return arch
+    graph = files.get("ir/operator_graph.yaml") if isinstance(files.get("ir/operator_graph.yaml"), dict) else {}
+    return str(graph.get("architecture") or graph.get("arch") or "").strip()
 
 
 def extend_csv_enum_domains_from_exprs(realization_map: dict[str, Any]) -> dict[str, Any]:
@@ -291,15 +377,15 @@ def _csv_variable_from_field(column: str, field: dict[str, Any], schema: dict[st
         clean = []
     # Always merge bootstrap + samples so derived exprs (e.g. fp32) stay in-domain.
     merged = _merge_domain(BOOTSTRAP_DOMAINS.get(column, []), [*clean, *sample_values])
-    clean = [str(value) for value in merged if str(value) != ""]
+    clean = [str(value) for value in merged if str(value) != "" and str(value) != "_"]
     if not clean:
-        clean = ["_"]
+        clean = ["NONE"]
     return {
         "id": csv_var(column),
         "column": column,
         "type": "enum",
         "domain": sorted(dict.fromkeys(clean)),
-        "default": field.get("default", clean[0]),
+        "default": field.get("default", clean[0]) if str(field.get("default") or "") != "_" else clean[0],
         "free": True,
         "source_refs": source_refs,
     }
@@ -329,30 +415,42 @@ def _csv_variable(column: str, schema: dict[str, Any]) -> dict[str, Any] | None:
     return {"id": csv_var(column), "column": column, "type": "enum", "domain": sorted(dict.fromkeys(clean)), "default": clean[0], "free": True}
 
 
-def _default_emit_for_column(column: str) -> dict[str, Any]:
-    # Generic emit heuristics by column name pattern (not product-specific tables).
+def _default_emit_for_column(column: str, *, columns: list[str] | None = None) -> dict[str, Any]:
+    """Emit heuristics by column-name pattern (packed/varlen layouts vs fixed-seq dims)."""
+    from .domain_policy import (
+        PACKED_OR_VARLEN_LAYOUTS,
+        is_varlen_sequence_column,
+        primary_layout_column_name,
+    )
+
     lower = column.lower()
-    if "seqlens_list" in lower:
-        total_col = "S1" if "q" in lower or lower.endswith("_q") else "S1"
-        return {
-            "op": "list_format",
-            "values": {
-                "op": "balanced_partition",
-                "total": {"op": "model_var", "var": csv_var(total_col)},
-                "parts": {"op": "model_var", "var": csv_var("B")},
-            },
+    layout_col = primary_layout_column_name(columns) or "Input_Layout"
+    packed_cond = {
+        "op": "in",
+        "var": csv_var(layout_col),
+        "values": sorted(PACKED_OR_VARLEN_LAYOUTS),
+    }
+    if is_varlen_sequence_column(column) or "seqlens_list" in lower or lower.startswith("cu_seqlens"):
+        # Prefer S1 for query-side totals, S2 for kv-side when names hint so.
+        total_col = "S1"
+        if "kv" in lower or lower.endswith("_kv") or lower.endswith("_k"):
+            total_col = "S2"
+        partition = {
+            "op": "balanced_partition",
+            "total": {"op": "model_var", "var": csv_var(total_col)},
+            "parts": {"op": "model_var", "var": csv_var("B")},
         }
-    if lower.startswith("cu_seqlens"):
+        then_expr: dict[str, Any] = {"op": "list_format", "values": partition}
+        if lower.startswith("cu_seqlens") or "cu_seq" in lower:
+            then_expr = {
+                "op": "list_format",
+                "values": {"op": "cumulative_sum", "values": partition},
+            }
         return {
-            "op": "list_format",
-            "values": {
-                "op": "cumulative_sum",
-                "values": {
-                    "op": "balanced_partition",
-                    "total": {"op": "model_var", "var": csv_var("S1")},
-                    "parts": {"op": "model_var", "var": csv_var("B")},
-                },
-            },
+            "op": "if_then_else",
+            "condition": packed_cond,
+            "then": then_expr,
+            "else": "",
         }
     return {"op": "constant", "value": ""}
 

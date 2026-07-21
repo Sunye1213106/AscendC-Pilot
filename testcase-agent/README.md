@@ -98,5 +98,8 @@ LLM 仅补全低置信 extract gaps（`extract/llm_patches.yaml`）。高置信�
 手动开发态安装：
 
 ```powershell
+pip install -r requirements.txt
 pip install -e ".[solver]"
 ```
+
+仓库根目录统一依赖见上级 [requirements.txt](../requirements.txt) / [README](../README.md)。

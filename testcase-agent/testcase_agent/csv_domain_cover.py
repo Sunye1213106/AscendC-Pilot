@@ -5,39 +5,40 @@ import re
 from typing import Any
 
 from .atom_bind import csv_var
-from .domain_policy import parse_int
+from .domain_policy import (
+    find_head_group_pair,
+    head_group_cover_pairs,
+    head_group_global_constraint,
+    hint_importance_is_low,
+    is_varlen_sequence_column,
+    key_template_buckets,
+    parse_int,
+)
 
-# Columns merged into canonical consumer names during evidence ingest.
+# Columns merged into canonical consumer names during evidence ingest (layout→shape only).
 COLUMN_ALIASES: dict[str, str] = {
     "Layout": "Input_Layout",
     "layout": "Input_Layout",
-    "Atten_mask_Shape": "Atten_mask_shape",
-    "Atten_mask_Dtype": "Atten_mask_dtype",
 }
 
 MAX_COVER_POINTS = 32
 MAX_DISCRETE_EXPAND = 32
-RANGE_GRID_STEPS = 8
+RANGE_GRID_STEPS = 6
+# Prefer KEY buckets; keep a short mid/high list as fallback only.
 RANGE_ANCHORS = (
     1,
     2,
     4,
     8,
     16,
-    24,
     32,
-    48,
     64,
-    72,
-    80,
-    96,
     128,
     192,
     256,
     512,
     768,
     1024,
-    1280,
     2048,
     4096,
 )
@@ -157,8 +158,9 @@ def cover_points_for_domain(
     *,
     sample_values: list[Any] | None = None,
     column: str = "",
+    key_space: dict[str, Any] | None = None,
 ) -> list[Any]:
-    """Cover points for csv_domain_cover obligations."""
+    """Cover points for csv_domain_cover obligations. KEY template buckets preferred."""
     samples = list(sample_values or [])
     discrete = domain_values_list(domain)
     if discrete is not None:
@@ -173,19 +175,40 @@ def cover_points_for_domain(
         hi = int(domain.get("max", lo))
         if hi < lo:
             lo, hi = hi, lo
-        points: set[int] = {lo, hi}
+        points: list[int] = []
+        buckets = [b for b in key_template_buckets(column, key_space) if lo <= b <= hi]
+        # Prefer KEY buckets first (half quota), then endpoints / sparse anchors / grid.
+        for b in buckets:
+            if b not in points:
+                points.append(b)
+        for endpoint in (lo, hi):
+            if endpoint not in points:
+                points.append(endpoint)
         for s in samples:
             p = parse_int(s)
-            if p is not None:
-                points.add(p)
+            if p is not None and lo <= p <= hi and p not in points:
+                points.append(p)
+        # Avoid over-weighting arbitrary mid anchors (e.g. 96) when KEY buckets exist.
+        anchor_budget = max(2, MAX_COVER_POINTS // 4) if buckets else MAX_COVER_POINTS
+        added_anchors = 0
         for anchor in RANGE_ANCHORS:
-            if lo <= anchor <= hi:
-                points.add(anchor)
+            if added_anchors >= anchor_budget:
+                break
+            if lo <= anchor <= hi and anchor not in points:
+                points.append(anchor)
+                added_anchors += 1
         span = hi - lo
-        if span > 0:
+        if span > 0 and len(points) < MAX_COVER_POINTS:
             for i in range(1, RANGE_GRID_STEPS):
-                points.add(lo + (span * i) // RANGE_GRID_STEPS)
-        return sorted(points)[:MAX_COVER_POINTS]
+                cand = lo + (span * i) // RANGE_GRID_STEPS
+                if cand not in points:
+                    points.append(cand)
+                if len(points) >= MAX_COVER_POINTS:
+                    break
+        # L0-friendly: ensure at least one non-min when range > min
+        if hi > lo and points == [lo]:
+            points.append(hi if not buckets else buckets[min(1, len(buckets) - 1)])
+        return sorted(dict.fromkeys(points))[:MAX_COVER_POINTS]
 
     if samples:
         return list(dict.fromkeys(samples))[:MAX_COVER_POINTS]
@@ -203,22 +226,39 @@ def add_csv_domain_cover_obligations(
     columns = list((realization_map.get("consumer") or {}).get("columns") or [])
     uo_entries = extract_uo_domain_entries_by_column(files or {}, columns) if files else {}
     sample_by_col: dict[str, list[Any]] = {}
+    hints_by_col: dict[str, Any] = {}
     if isinstance(consumer_schema, dict):
         sample_by_col = dict(consumer_schema.get("sample_values") or {})
+        hints_doc = consumer_schema.get("domain_hints") or {}
+        if isinstance(hints_doc, dict):
+            hints_by_col = dict(hints_doc.get("columns") or {})
+    # Also load realization/domain_hints via files if stamped on schema path elsewhere — optional.
+    key_space = {}
+    if isinstance(files, dict):
+        key_space = files.get("tiling/key_space.yaml") or files.get("ir/tilingkey_space.yaml") or {}
     emit_skip = {"Testcase_Name", "Enable", "prefix"}
-    for spec in realization_map.get("csv_variables") or []:
-        if not isinstance(spec, dict):
-            continue
+    csv_specs = [s for s in (realization_map.get("csv_variables") or []) if isinstance(s, dict)]
+    col_ids = {str(s.get("column") or ""): str(s.get("id") or csv_var(s.get("column"))) for s in csv_specs}
+    head_pair = find_head_group_pair(list(col_ids.keys()))
+    head_cols = set(head_pair) if head_pair else set()
+    domain_by_col = {str(s.get("column") or ""): s.get("domain") for s in csv_specs}
+
+    for spec in csv_specs:
         if spec.get("free") is False:
             continue
         column = str(spec.get("column") or "")
         var_id = str(spec.get("id") or csv_var(column))
         if not column or column.startswith("Actual_") or column in emit_skip:
             continue
-        if "seqlens" in column.lower() or column.startswith("cu_"):
+        if is_varlen_sequence_column(column) or column.lower().startswith("cu_"):
+            continue
+        hint = hints_by_col.get(column) if isinstance(hints_by_col.get(column), dict) else {}
+        if hint_importance_is_low(hint):
+            continue
+        # Head-group pair: cover via legal multiples, not independent illegal grids.
+        if column in head_cols:
             continue
         domain = spec.get("domain")
-        # Merge UO domain_entries into discrete lists when applicable.
         uo_vals = uo_entries.get(column) or uo_entries.get(normalize_column_name(column))
         if uo_vals and isinstance(domain, dict) and domain.get("values") is not None:
             merged = list(dict.fromkeys([*(domain.get("values") or []), *uo_vals]))
@@ -234,10 +274,14 @@ def add_csv_domain_cover_obligations(
                     domain["max"] = max(hi, p)
 
         sample_vals = list(sample_by_col.get(column) or sample_by_col.get(normalize_column_name(column)) or [])
-        points = cover_points_for_domain(domain, sample_values=sample_vals, column=column)
+        points = cover_points_for_domain(
+            domain, sample_values=sample_vals, column=column, key_space=key_space if isinstance(key_space, dict) else None
+        )
         if not points:
             continue
         for value in points:
+            if not _value_fits_domain(value, domain):
+                continue
             payload = {
                 "column": column,
                 "csv_var": var_id,
@@ -247,6 +291,36 @@ def add_csv_domain_cover_obligations(
             }
             out.append(_make_csv_cover_obligation(payload, var_id=var_id, value=value))
 
+    if head_pair:
+        hi_col, lo_col = head_pair
+        hi_id = col_ids[hi_col]
+        lo_id = col_ids[lo_col]
+        for hi_v, lo_v in head_group_cover_pairs(domain_by_col.get(hi_col), domain_by_col.get(lo_col)):
+            payload = {
+                "column": hi_col,
+                "csv_var": hi_id,
+                "target_value": hi_v,
+                "constraints": {
+                    "expr": {
+                        "op": "and",
+                        "args": [
+                            {"op": "eq", "var": hi_id, "value": hi_v},
+                            {"op": "eq", "var": lo_id, "value": lo_v},
+                        ],
+                    }
+                },
+                "coverage_origin": {
+                    "artifact": "host_tiling_head_group",
+                    "column": f"{hi_col}/{lo_col}",
+                    "reason": "head_group_multiple",
+                },
+            }
+            out.append(_make_csv_cover_obligation(payload, var_id=hi_id, value=hi_v))
+
+
+# Back-compat alias for older call sites / tests.
+def gqa_global_constraint(hi_col: str = "N1", lo_col: str = "N2") -> dict[str, Any]:
+    return head_group_global_constraint(hi_col, lo_col)
 
 def _make_csv_cover_obligation(payload: dict[str, Any], *, var_id: str, value: Any) -> dict[str, Any]:
     return {
@@ -265,3 +339,38 @@ def _make_csv_cover_obligation(payload: dict[str, Any], *, var_id: str, value: A
         "field": payload.get("column"),
         "coverage_origin": payload.get("coverage_origin"),
     }
+
+
+def _value_fits_domain(value: Any, domain: Any) -> bool:
+    """Drop sample pollution (e.g. '106x1', stray NONE) that is outside the declared domain."""
+    if value is None:
+        return False
+    if isinstance(value, str) and ("x" in value.lower() or "*" in value):
+        # Compound head-group labels must not become scalar CSV covers.
+        return False
+    if isinstance(domain, list):
+        if not domain:
+            return True
+        if value in domain:
+            return True
+        try:
+            fv = float(value)
+            return any(abs(fv - float(v)) < 1e-9 for v in domain)
+        except (TypeError, ValueError):
+            return str(value) in {str(v) for v in domain}
+    if isinstance(domain, dict):
+        if "values" in domain:
+            return _value_fits_domain(value, list(domain.get("values") or []))
+        if domain.get("kind") == "range" or ("min" in domain and "max" in domain):
+            try:
+                num = float(value)
+            except (TypeError, ValueError):
+                return False
+            lo = domain.get("min")
+            hi = domain.get("max")
+            if lo is not None and num < float(lo):
+                return False
+            if hi is not None and num > float(hi):
+                return False
+            return True
+    return True

@@ -77,15 +77,28 @@ is clearly wrong; in that case set `status: missing` style fields and explain.
 
 Read `ir/unresolved.yaml` items + their `snippet` fields only.
 
-**Sampling (mandatory):**
+**Sampling (for simple patterns only):**
 
-- Resolve **at most 12** diagnostic ids per run (hard cap).
+- Resolve **at most 12** diagnostic ids per run for clear false_positive /
+  host-only intermediate patterns (hard cap on *sample* entries).
 - Group by pattern first (e.g. nested `tilingData->subStruct.field`, EmptyTensor-only
   fields, compile-time macro/template mistaken as tiling field). Pick **1–3
   representatives per pattern**; apply the same `status` + short rationale to
   those sampled ids only.
-- Leave the rest untouched — remaining items stay as warnings. That is success.
-- If parent prompt asks to resolve “all N items”, **ignore** that and still sample.
+- Leave *simple* siblings untouched **in the patch** — parent will **propagate**
+  same-pattern siblings via `apply_resolution.py`.
+
+**Complex KEY / shape gaps (mandatory escalate, do not “unsolve and return”):**
+
+- If an item is KEY-related, shape-conditioned, or needs a real host predicate /
+  `set_by` expression: **do not** mark it resolved with a vague label and stop.
+- Put the KEY id(s) into top-level `escalate_keys: [KEY_..., ...]` in
+  `resolution_patch.yaml` and leave those DIAG ids for the parent’s **per-KEY
+  uo-query** parallel dispatch (see
+  `skills/uo-query/references/complex-unresolved-escalation.md` and
+  `prompts/00_subagent_dispatch.md`).
+- Prefer one MCP symbol check to decide “simple FP” vs “needs KEY shape query”;
+  when unsure that it is a simple FP → escalate.
 
 **Required output schema** (only this shape; parent must not invent alternatives):
 
@@ -101,6 +114,7 @@ unresolved_resolutions:
       label: ...
       evidence: "path:line"
 consistency_diffs: []
+escalate_keys: []                # KEY ids needing per-KEY uo-query shape resolve
 ```
 
 **Forbidden** (do not emit; parent must not request these):
@@ -111,6 +125,7 @@ consistency_diffs: []
 - Field `resolution: warning` (string) — use `status: accepted` instead
 - Invented ids not present in `ir/unresolved.yaml`
 - Hand-written 1:1 coverage of every unresolved item
+- Returning complex KEY/shape items as silent unsolved with empty `escalate_keys`
 
 Status mapping if you think in old terms:
 
@@ -193,7 +208,9 @@ Skip the review when branches look consistent; empty `consistency_diffs: []` is 
 - Prefer Chinese rationales in `rationale` fields.
 - Never modify contracts/, tiling/, kernel/, or source trees.
 - Never call broad repository scans.
-- If unsure, leave unresolved; do not fabricate domains, entrypoints, or
-  extract_plan symbols outside candidates.
+- If a gap is a **simple** analyzer FP / host-only intermediate: sample + label.
+- If a gap is **complex KEY / shape**: list `escalate_keys` and stop that item for
+  parent per-KEY `uo-query` — **do not** invent domains/entrypoints, and **do not**
+  return bare unsolved without escalation.
 - After writing the patch, report only: sampled count by `status`, patterns seen,
-  and patch path. Do **not** claim full coverage of `unresolved.yaml`.
+  `escalate_keys`, and patch path. Do **not** claim full coverage of `unresolved.yaml`.

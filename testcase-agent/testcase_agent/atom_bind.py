@@ -120,6 +120,7 @@ class BindContext:
         csv_columns: list[str] | None = None,
         lexicon: dict[str, Any] | None = None,
         op_name: str = "",
+        shape_closure: set[str] | None = None,
     ) -> None:
         files = (snapshot or {}).get("files") if isinstance((snapshot or {}).get("files"), dict) else {}
         self.csv_columns = {str(c) for c in (csv_columns or [])}
@@ -131,6 +132,8 @@ class BindContext:
         self.csv_field_aliases: dict[str, tuple[str, Any]] = {}
         self.arith_constants: dict[str, int] = dict(ARITH_CONSTANTS)
         self.key_tokens: dict[str, tuple[str, int]] = {}
+        self.shape_closure: set[str] = {str(x) for x in (shape_closure or []) if x}
+        self.shape_alias_to_var: dict[str, str] = {}
 
         key_space = _as_dict(files.get("tiling/key_space.yaml"))
         boot = lexicon_from_key_space(key_space)
@@ -152,6 +155,36 @@ class BindContext:
         self._index_tiling_links(_as_dict(files.get("cross_layer/tiling_to_kernel.yaml")))
         self._index_kernel_variables(_as_dict(files.get("kernel/variables.yaml")))
         self._index_compile_macros(_as_dict(files.get("kernel/compile_macros.yaml")))
+        self._index_shape_closure()
+
+    def _index_shape_closure(self) -> None:
+        """Map short names / tokens onto VAR_* ids present in shape_closure."""
+        for vid in self.shape_closure:
+            self.shape_alias_to_var[vid] = vid
+            self.shape_alias_to_var[vid.upper()] = vid
+            short = vid
+            for prefix in ("VAR_KEY_", "VAR_KVAR_", "VAR_CSV_", "VAR_", "KEY_", "KVAR_"):
+                if short.upper().startswith(prefix):
+                    short = short[len(prefix) :]
+                    break
+            if short:
+                self.shape_alias_to_var[short] = vid
+                self.shape_alias_to_var[short.upper()] = vid
+                self.shape_alias_to_var[short.lower()] = vid
+        for item in self.lexicon.get("key_derivations") or []:
+            if not isinstance(item, dict):
+                continue
+            vid = str(item.get("id") or "")
+            if not vid or vid not in self.shape_closure:
+                continue
+            leaf = vid
+            for prefix in ("VAR_KEY_", "VAR_KVAR_", "VAR_", "KEY_"):
+                if leaf.upper().startswith(prefix):
+                    leaf = leaf[len(prefix) :]
+                    break
+            if leaf:
+                self.shape_alias_to_var[leaf] = vid
+                self.shape_alias_to_var[leaf.upper()] = vid
 
     def _index_tiling_links(self, doc: dict[str, Any]) -> None:
         for link in doc.get("links") or []:
@@ -295,10 +328,55 @@ def bind_atom(atom: dict[str, Any], ctx: BindContext) -> dict[str, Any]:
             return _bound(atom, {"op": "eq", "var": var_id, "value": true_value}, "template_arg_to_key", negated=negated)
         if _is_loop_local(call_name):
             return _unbound(atom, "LOOP_LOCAL")
+        shape_hit = _try_shape_closure(call_name, atom, ctx, negated)
+        if shape_hit:
+            return shape_hit
         return _unbound(atom, "UNBOUND_CALL")
 
+    shape_hit = _try_shape_closure(base_name or name or raw, atom, ctx, negated)
+    if shape_hit:
+        return shape_hit
     return _unbound(atom, "UNBOUND_ATOM")
 
+
+def _try_shape_closure(name: str, atom: dict[str, Any], ctx: BindContext, negated: bool) -> dict[str, Any] | None:
+    """Bind symbol if it maps to a VAR_* already in the shape-determined closure."""
+    if not ctx.shape_closure:
+        return None
+    leaf = _strip_qualifiers(str(name or ""))
+    if "::" in leaf:
+        leaf = leaf.split("::")[-1]
+    if "." in leaf:
+        leaf = leaf.split(".")[-1]
+    if _is_loop_local(leaf) or _is_platform(leaf, ctx):
+        return None
+    candidates = [
+        leaf,
+        leaf.upper(),
+        _normalize_member(leaf),
+        str(atom.get("name") or ""),
+        str(atom.get("raw") or "").lstrip("!"),
+    ]
+    var_id = ""
+    for cand in candidates:
+        if not cand:
+            continue
+        hit = ctx.shape_alias_to_var.get(cand) or ctx.shape_alias_to_var.get(cand.upper())
+        if hit and hit in ctx.shape_closure:
+            var_id = hit
+            break
+    if not var_id:
+        return None
+    kind = str(atom.get("kind") or "")
+    cmp_op = atom.get("cmp")
+    rhs = atom.get("rhs")
+    if kind == "cmp" and cmp_op in {"eq", "ne"}:
+        wants_true = _truthy_rhs(rhs)
+        if cmp_op == "ne":
+            wants_true = not wants_true
+        value = 1 if wants_true else 0
+        return _bound(atom, {"op": "eq", "var": var_id, "value": value}, "shape_closure", negated=negated)
+    return _bound(atom, {"op": "eq", "var": var_id, "value": 1}, "shape_closure", negated=negated)
 
 def bind_atoms(atoms: list[dict[str, Any]], ctx: BindContext) -> list[dict[str, Any]]:
     return [bind_atom(atom, ctx) for atom in atoms]

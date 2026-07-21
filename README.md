@@ -1,86 +1,128 @@
 # Ascend C PR Test Agent
 
-面向 **Ascend C 自定义算子** 的 PR / 测例 Agent 套件：先把算子理解成可查询的知识库（KB），再基于 KB 与测试工程契约规划并生成测例。
+面向 **Ascend C 自定义算子** 的 PR Agent 套件：先把算子理解成可查询知识库（KB），再做 **代码审查** 与 **测例规划/求解**。
 
 | 组件 | 作用 |
 | --- | --- |
-| [understand-operator](./understand-operator/) | 从算子源码抽取 Host / Kernel / Tiling / Bridge，生成 `.understand-operator/<op>/` KB |
-| [testcase-agent](./testcase-agent/) | 扫描测试工具契约，按 L0–L3 规划测例并用 SMT 求解 CSV 行 |
+| [understand-operator](./understand-operator/) | 建 KB、图查询、增量更新、`diff/` 影响面、**双路 code review** |
+| [testcase-agent](./testcase-agent/) | 扫描测试工具契约，L0–L3 规划测例，Z3/SMT 求解 CSV |
 
 支持安装到 **OpenCode / Codex / Cursor**。
 
-## 仓库结构
+---
 
-```text
-Ascendc-PR-test-agent-upload/
-├── install.ps1 / install.sh          ← 一键安装两个 Agent
-├── understand-operator/              ← UO：建库 / 查询 / 增量更新
-│   ├── install.ps1 / install.sh
-│   ├── skills/   prompts/   agents/
-│   └── uo/                           # Python 脚本与实现
-└── testcase-agent/                   ← TG：契约 / 规划 / 求解
-    ├── install.ps1 / install.sh
-    ├── skills/   agents/
-    └── testcase_agent/               # Python 包
-```
+## 功能一览
+
+### Understand Operator（UO）
+
+| 命令 / Skill | 功能 |
+| --- | --- |
+| `/uo-init` | Phase0 人工确认范围 → CBM 窄索引 → 抽取 Host/Kernel/Tiling/Bridge → **lean** 导出契约 + `kb_graph` + `human_overview` |
+| `/uo-query` | 只读问答；硬门禁：overview / kb_graph → Grep 热文件 → 小窗 Read → CBM |
+| `/uo-update` | 按 git 变更增量刷新 KB，写出 `diff/`（测例优先消费） |
+| `/uo-diff` | 只读变更摘要（不写 durable 产品） |
+| `/uo-code-review` | 默认 `both`：**Bug（CBM 主）** + **功能/语义（kb_graph 主）** |
+
+**两图（物理分开，审查时混用）**
+
+| 图 | 来源 | 用途 |
+| --- | --- | --- |
+| **CBM** | MCP `codebase-memory-mcp`（`/uo-init` Phase0 已索引） | Bug 冲击面、调用关系、源码 snippet |
+| **kb_graph** | YAML KB 派生 `indexes/kb_graph.sqlite` | 语义实体、shape、约束、义务 |
+
+不需要安装 `code-review-graph`。
+
+### Testcase Agent（TG）
+
+| 命令 | 功能 |
+| --- | --- |
+| `tg-contract` | 扫描测试工具 → `.testcase-generator/<op>/realization/` |
+| `tg-plan` | 读 UO KB + 契约 → L0–L3 `plan/`（含人工审阅） |
+| `tg-solve` | 人工 approve 后 **Z3** 求解 → CSV 测例行 |
+
+| Level | 含义 |
+| --- | --- |
+| L0 | 功能属性冒烟 |
+| L1 | 可达运行时分支 / 覆盖 / 边界 / reject |
+| L2 | 可达 TilingKey 穷尽 |
+| L3 | 主题定制套件（如 determinism） |
+
+---
 
 ## 环境要求
 
-- **Windows**：PowerShell（推荐）；Linux / macOS 用 `install.sh`
-- **Python** ≥ 3.10，且 `python` / `pip` 可用（testcase-agent 默认会 `pip install -e`）
-- 已安装目标平台之一：OpenCode / Codex / Cursor
-- understand-operator 完整流程还需要 [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp)（CBM），见 [understand-operator/docs/cbm-mcp-setup.md](./understand-operator/docs/cbm-mcp-setup.md)
+| 类别 | 要求 |
+| --- | --- |
+| OS | Windows（PowerShell）或 Linux / macOS |
+| Python | **≥ 3.10**，`python` / `pip` 可用 |
+| Git | 算子仓为 git 仓库（变更检测 / revision） |
+| Agent 平台 | OpenCode / Codex / Cursor **之一** |
+| MCP | **codebase-memory-mcp（CBM）**— UO 建库与审查必需 |
+| SMT | **z3-solver** — 仅 `tg-solve` 需要 |
 
-## 安装
+### 需要安装什么（清单）
 
-把本目录完整拷到目标机器后，在**本仓库根目录**执行：
+1. **Python 包**（见下方 `requirements.txt` / editable install）
+2. **Agent skills**（根目录 `install.ps1` / `install.sh`）
+3. **MCP：codebase-memory-mcp**（二进制 + 写入 Cursor/OpenCode MCP 配置）  
+   说明：[understand-operator/docs/cbm-mcp-setup.md](./understand-operator/docs/cbm-mcp-setup.md)  
+   仓库内也可参考 `understand-operator/thirdparty/codebase-memory-mcp.exe`（若已随包分发）
+4. **不要**再装 code-review-graph（已用 CBM + kb_graph 替代）
 
-### Windows
+---
+
+## Python 依赖安装
+
+在仓库根目录：
 
 ```powershell
-# 默认安装到 OpenCode
-./install.ps1 opencode
+# 方式 A：纯依赖列表
+pip install -r requirements.txt
 
-# 或 Cursor / Codex
-./install.ps1 cursor
-./install.ps1 codex
-
-# 只装其中一个
-./install.ps1 cursor -Only understand-operator
-./install.ps1 cursor -Only testcase-agent
-
-# 跳过 testcase-agent 的 pip 安装
-./install.ps1 opencode -SkipPip
-
-# 卸载
-./install.ps1 -Uninstall opencode
-./install.ps1 -Uninstall cursor
+# 方式 B（推荐）：可编辑安装，带 CLI 入口（uo-* / tg-*）
+pip install -e "./understand-operator"
+pip install -e "./testcase-agent[solver]"
 ```
 
-### Linux / macOS
+或一条命令：
 
-```bash
-chmod +x ./install.sh
-./install.sh opencode
-./install.sh cursor
-
-ONLY=understand-operator ./install.sh cursor
-ONLY=testcase-agent ./install.sh opencode
-SKIP_PIP=1 ./install.sh opencode
-
-./install.sh uninstall-opencode
-./install.sh uninstall-cursor
+```powershell
+pip install -r requirements.txt -e "./understand-operator" -e "./testcase-agent[solver]"
 ```
 
-安装后会在用户目录下创建 skill / plugin 的 **Junction（Windows）或符号链接**，指向本仓库源码。**源码目录不要随意移动或删除**，否则链接失效，需重新安装。
+验证：
 
-| 平台 | Skills 目录 | Plugin 链接 |
-| --- | --- | --- |
-| OpenCode | `~/.config/opencode/skills/` | `~/.config/opencode/{understand-operator,testcase-agent}-plugin` |
-| Codex | `~/.agents/skills/` | `~/.agents/{...}-plugin` |
-| Cursor | `~/.cursor/skills/` | `~/.cursor/{...}-plugin` |
+```powershell
+python -c "import yaml, jsonschema, z3; print('ok', z3.get_version_string())"
+# 若已 editable 安装：
+uo-kb-query --help
+tg-solve --help
+```
 
-OpenCode 建议在 `opencode.json` 中允许人工确认：
+`requirements.txt` 内容概要：`PyYAML`、`jsonschema`、`z3-solver`。
+
+---
+
+## MCP 配置（CBM）
+
+### Cursor
+
+`~/.cursor/mcp.json`（或项目 `.cursor/mcp.json`）示例：
+
+```json
+{
+  "mcpServers": {
+    "codebase-memory-mcp": {
+      "command": "C:/Users/<you>/bin/codebase-memory-mcp.cmd",
+      "args": []
+    }
+  }
+}
+```
+
+### OpenCode
+
+在 `opencode.json` 的 `mcp` 中增加本地 command（指向同一 binary）。建议同时：
 
 ```json
 {
@@ -90,73 +132,138 @@ OpenCode 建议在 `opencode.json` 中允许人工确认：
 }
 ```
 
-也可分别进入子目录单独安装，详见各子项目 README。
+重启 IDE 后确认 MCP 工具含：`index_repository`、`search_graph`、`get_code_snippet`、`trace_path`、`query_graph` 等。
 
-## 推荐工作流
+---
 
-```text
-算子仓 ──/uo-init──► .understand-operator/<op>/（KB）
-                          │
-                          ├── /uo-query   自然语言查 KB
-                          ├── /uo-update  按 git 变更增量刷新 + diff/
-                          └── /uo-diff    只看变更摘要
-                                │
-测试工具 ──tg-contract──► realization/ 契约
-                                │
-              tg-plan（算子仓 + 测试工具|契约）──► plan/（L0–L3）
-                                │ 人工 approve
-                                ▼
-                           tg-solve ──► CSV 测例行
+## Agent 安装（Skills）
+
+把本目录完整拷到目标机器后，在**本仓库根目录**执行：
+
+### Windows
+
+```powershell
+./install.ps1 cursor          # 或 opencode / codex
+./install.ps1 cursor -Only understand-operator
+./install.ps1 cursor -Only testcase-agent
+./install.ps1 opencode -SkipPip
+./install.ps1 -Uninstall cursor
 ```
 
-### 1. Understand Operator（建库）
+### Linux / macOS
 
-在**单个算子包目录**上调用（不要指向含多个算子的父目录）：
-
-```text
-/uo-init /path/to/flash_attention_score_grad --op-name flash_attention_score_grad
-/uo-query /path/to/flash_attention_score_grad sparseMode 的取值域是什么？
-/uo-update /path/to/flash_attention_score_grad
-/uo-diff /path/to/flash_attention_score_grad
+```bash
+chmod +x ./install.sh
+./install.sh cursor
+ONLY=understand-operator ./install.sh cursor
+SKIP_PIP=1 ./install.sh opencode
+./install.sh uninstall-cursor
 ```
 
-更多说明：[understand-operator/README.md](./understand-operator/README.md)
+安装后会在用户目录创建 skill / plugin 的 **Junction（Windows）或符号链接**，指向本仓库源码。**源码目录不要移动或删除**。
 
-### 2. Testcase Agent（规划与求解）
+| 平台 | Skills | Plugin |
+| --- | --- | --- |
+| OpenCode | `~/.config/opencode/skills/` | `~/.config/opencode/{understand-operator,testcase-agent}-plugin` |
+| Codex | `~/.agents/skills/` | `~/.agents/...-plugin` |
+| Cursor | `~/.cursor/skills/` | `~/.cursor/...-plugin` |
+
+---
+
+## 当前端到端流程
+
+```text
+                    ┌─────────────────────────────────────┐
+                    │  算子包目录（单个算子，非多算子父仓）   │
+                    └─────────────────┬───────────────────┘
+                                      │
+                         /uo-init（人工确认范围）
+                                      │
+              ┌───────────────────────┼───────────────────────┐
+              ▼                       ▼                       ▼
+     CBM 窄索引（MCP）         YAML KB + contracts      indexes/kb_graph.sqlite
+              │                       │                       │
+              └───────────┬───────────┴───────────┬───────────┘
+                          │                       │
+               /uo-query（读图优先）      /uo-update → diff/
+                          │                       │
+                          └───────────┬───────────┘
+                                      │
+                         /uo-code-review（默认 both）
+                    Bug: CBM 主 + KB 补
+                    语义: KB 主 + CBM 补
+                                      │
+                                      ▼
+                         review/** 报告（不改 diff/**）
+                                      │
+         （可选测例）tg-contract → tg-plan → 人工 approve → tg-solve(Z3) → CSV
+```
+
+### 1. 建库与审查（UO）
+
+在**单个算子包目录**上调用：
+
+```text
+/uo-init   <op_path> --op-name <op>
+/uo-query  <op_path> sparseMode 的取值域是什么？
+/uo-update <op_path>
+/uo-diff   <op_path>
+/uo-code-review <op_path> --mode both
+# 可选：--requirements DESIGN.md
+```
+
+脚本辅助示例：
+
+```powershell
+python -X utf8 understand-operator/uo/scripts/kb_query_export.py <op_path> --op-name <op> --profile lean
+python -X utf8 understand-operator/uo/scripts/export_kb_graph.py <op_path> --op-name <op>
+python -X utf8 understand-operator/uo/scripts/export_human_views.py <op_path> --op-name <op>
+python -X utf8 understand-operator/uo/scripts/prepare_review_context.py <op_path> --op-name <op> --mode both
+```
+
+KB 阅读顺序：`summary/human_overview.md` → `kb_graph` → Grep 热文件 → 小窗 Read（勿整读 testcase / operator_graph / impact_graph）。
+
+更多：[understand-operator/README.md](./understand-operator/README.md)
+
+### 2. 测例规划与求解（TG）
 
 前提：算子仓已有 `.understand-operator/<op_name>/`。
 
 ```powershell
-# 测试工具 → 自动 contract + plan
-tg-plan <project_root> --op-name <op_name> --level L0,L1 --test-script-root <test_tool_root>
-
-# 或复用已有 contract
-tg-plan <project_root> --op-name <op_name> --level L0,L1 --contract-root <realization_dir>
-
-# 人工 approve 后求解
-tg-solve <project_root> --op-name <op_name> --level L1
-
-# 只刷新契约
-tg-contract <project_root> --op-name <op_name> --test-script-root <test_tool_root>
+tg-plan <project_root> --op-name <op> --level L0,L1 --test-script-root <test_tool_root>
+tg-solve <project_root> --op-name <op> --level L1
+tg-contract <project_root> --op-name <op> --test-script-root <test_tool_root>
 ```
 
-规划级别简要：
+更多：[testcase-agent/README.md](./testcase-agent/README.md)
 
-| Level | 含义 |
-| --- | --- |
-| L0 | 功能属性冒烟：每个独立特征至少一条见证用例 |
-| L1 | 可达运行时分支 / 功能覆盖 / 边界 / reject |
-| L2 | 可达 TilingKey 穷尽覆盖 |
-| L3 | 按主题定制套件（如 `--topic determinism`） |
+---
 
-更多说明：[testcase-agent/README.md](./testcase-agent/README.md)
+## 仓库结构
 
-## 换机 / 分发说明
+```text
+Ascendc-PR-test-agent-upload/
+├── requirements.txt                 ← pip 依赖（含 z3-solver）
+├── install.ps1 / install.sh         ← 一键装两个 Agent
+├── understand-operator/
+│   ├── docs/cbm-mcp-setup.md        ← CBM MCP 安装
+│   ├── skills/  prompts/  agents/
+│   └── uo/scripts/                  ← Python 实现
+└── testcase-agent/
+    ├── skills/  agents/
+    └── testcase_agent/              ← tg-contract / plan / solve
+```
 
-- 拷贝**整个**本目录（至少包含两个子项目及其 `install.*`）
-- 在目标机重新执行根目录 `install.ps1` / `install.sh`
-- 无写死盘符或用户名；安装目标始终落在当前用户的 `$HOME`
-- testcase-agent 若目标机暂不装 Python 依赖，使用 `-SkipPip` / `SKIP_PIP=1`
+---
+
+## 换机 / 分发
+
+- 拷贝**整个**本目录（含两个子项目与 `install.*`、`requirements.txt`）
+- 目标机：`pip install -r requirements.txt`（或 editable）→ 配置 CBM MCP → 根目录 `install.ps1` / `install.sh`
+- 无写死盘符或用户名；安装目标落在当前用户 `$HOME`
+- 暂不装 Python 依赖时可用 `-SkipPip` / `SKIP_PIP=1`（`tg-solve` 仍需本机有 z3）
+
+---
 
 ## 反馈
 

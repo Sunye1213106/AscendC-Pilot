@@ -687,7 +687,8 @@ def test_real_format_fixture_end_to_end_phase1_phase2(tmp_path: Path, monkeypatc
     )
     plan = tg_plan(repo, "DemoOp", reuse_snapshot=True)
     root = repo / ".testcase-generator" / "DemoOp"
-    supplement_path = root / "plan" / "human_supplement.yaml"
+    level = str(plan.get("test_level") or "L1")
+    supplement_path = root / "plan" / "levels" / level / "human_supplement.yaml"
     write_yaml(
         supplement_path,
         {
@@ -699,9 +700,10 @@ def test_real_format_fixture_end_to_end_phase1_phase2(tmp_path: Path, monkeypatc
             "approved_at": "2026-01-01T00:00:00+00:00",
             "supplements": [],
             "notes": "",
+            "test_level": level,
         },
     )
-    solve = tg_solve(repo, "DemoOp")
+    solve = tg_solve(repo, "DemoOp", level=level)
 
     snapshot = read_json(root / "snapshot" / "understand_contract.json")
     assert "tiling/coverage_model.yaml" in snapshot["files"]
@@ -937,19 +939,23 @@ def test_l1_covers_reachable_runtime_branch_sides_and_skips_compile_fixed() -> N
     assert all(item["coverage_origin"]["artifact"] == "kernel/branches.yaml" for item in branches)
 
 
-def test_l1_excludes_boundaries_and_expected_rejects() -> None:
+def test_l1_branch_includes_boundaries_excludes_rejects() -> None:
     files = _payload()["files"]
     files["tiling/constraints.yaml"] = {
         "relations": [],
         "variable_constraints": [{"id": "CON_M", "var": "VAR_SHAPE_M", "boundary_values": [1, 1024]}],
         "input_realization": {},
-        "key_unreachable": [{"id": "COV_BAD_KEY", "matches": {"KEY_MODE": "bad"}, "reason": "host rejects"}],
+        "key_unreachable": [{"id": "COV_BAD_KEY", "matches": {"KEY_MODE": "bad"}, "reason": "host rejects", "reject_stage": "host_validation"}],
     }
-    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L1")
-
-    assert not any(item["test_level"] == "L1" and item.get("target_value") == 1 for item in plan["obligations"])
-    rejects = [item for item in plan["obligations"] if item.get("expected_behavior") == "reject"]
+    branch_plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L1")
+    rejects = [item for item in branch_plan["obligations"] if item.get("expected_behavior") == "reject"]
     assert rejects == []
+    boundaries = [item for item in branch_plan["obligations"] if item.get("coverage_bucket") == "boundary_value"]
+    assert boundaries  # L1-branch includes declared legal boundaries
+
+    reject_plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L1-REJECT")
+    assert all(item.get("test_level") == "L1-REJECT" for item in reject_plan["obligations"])
+    assert any(item.get("expected_behavior") == "reject" for item in reject_plan["obligations"])
 
 
 def test_l2_expands_template_blocks_applies_pruning_and_realizes_keys() -> None:
@@ -1203,7 +1209,7 @@ def test_changed_focus_invalidates_previous_approval(tmp_path: Path, monkeypatch
     first = tg_plan(repo, "DemoOp", level="L1", reuse_snapshot=True)
     root = repo / ".testcase-generator" / "DemoOp"
     write_yaml(
-        root / "plan" / "human_supplement.yaml",
+        root / "plan" / "levels" / "L1" / "human_supplement.yaml",
         {
             "version": 1,
             "status": "approved",
@@ -1213,13 +1219,14 @@ def test_changed_focus_invalidates_previous_approval(tmp_path: Path, monkeypatch
             "approved_at": "2026-01-01T00:00:00+00:00",
             "supplements": [],
             "notes": "",
+            "test_level": "L1",
         },
     )
 
     second = tg_plan(repo, "DemoOp", level="L1", focus="TND", reuse_snapshot=True)
 
     assert second["plan_hash"] != first["plan_hash"]
-    supplement = read_yaml(root / "plan" / "human_supplement.yaml")
+    supplement = read_yaml(root / "plan" / "levels" / "L1" / "human_supplement.yaml")
     assert supplement["status"] == "reapproval_required"
 
 
@@ -1353,8 +1360,9 @@ def test_real_final_validation_export_and_phase2_without_mocks(tmp_path: Path) -
     )
     plan = tg_plan(repo, "DemoOp", reuse_snapshot=True)
     root = repo / ".testcase-generator" / "DemoOp"
+    level = str(plan.get("test_level") or "L1")
     write_yaml(
-        root / "plan" / "human_supplement.yaml",
+        root / "plan" / "levels" / level / "human_supplement.yaml",
         {
             "version": 1,
             "status": "approved",
@@ -1364,9 +1372,10 @@ def test_real_final_validation_export_and_phase2_without_mocks(tmp_path: Path) -
             "approved_at": "2026-01-01T00:00:00+00:00",
             "supplements": [],
             "notes": "",
+            "test_level": level,
         },
     )
-    solve = tg_solve(repo, "DemoOp")
+    solve = tg_solve(repo, "DemoOp", level=level)
     snapshot = read_json(root / "snapshot" / "understand_contract.json")
 
     assert init_result["snapshot"]["final_validation"]["status"] == "pass"
@@ -1375,7 +1384,11 @@ def test_real_final_validation_export_and_phase2_without_mocks(tmp_path: Path) -
     entity_ids = {str(item.get("id") or item.get("stable_id")) for item in snapshot["context_slice"]["entities"]}
     assert {"FAM_MAIN", "FAM_ALT", "KPATH_MAIN", "KPATH_ALT"} <= entity_ids
     assert plan["unresolved"]["contract_gaps"] == []
-    ir_result = build_constraint_ir(snapshot, read_yaml(root / "plan" / "coverage_obligations.yaml"), {"decision": "approve"})
+    ir_result = build_constraint_ir(
+        snapshot,
+        read_yaml(root / "plan" / "levels" / level / "coverage_obligations.yaml"),
+        {"decision": "approve"},
+    )
     variables = {item["id"]: item for item in ir_result.ir["variables"]}
     assert variables["VAR_FAMILY"]["domain"] == ["FAM_ALT", "FAM_MAIN"]
     assert variables["VAR_KERNEL_PATH"]["domain"] == ["KPATH_ALT", "KPATH_MAIN"]

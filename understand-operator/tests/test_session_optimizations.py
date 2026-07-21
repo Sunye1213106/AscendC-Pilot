@@ -378,3 +378,342 @@ def test_stage_resolve_prefers_workspace(tmp_path: Path) -> None:
     assert _workspace_root(op, scan) == workspace.resolve()
     assert _resolve_source(workspace, op, "common/x.h") == common.resolve()
     assert _resolve_source(workspace, op, "DemoOp/op_host/a.cpp") == host.resolve()
+
+def test_prune_common_normalizes_relative_common_include(tmp_path: Path) -> None:
+    from uo.scripts.macro_scope_scan import _prune_common_by_includes
+
+    workspace = tmp_path / "ws"
+    op = workspace / "DemoOp" / "op_kernel" / "arch35"
+    common = workspace / "common" / "op_kernel" / "arch35"
+    op.mkdir(parents=True)
+    common.mkdir(parents=True)
+    (op / "k.cpp").write_text('#include "../../../../common/op_kernel/arch35/pse.h"\n', encoding="utf-8")
+    (common / "pse.h").write_text("// ok\n", encoding="utf-8")
+    selected = _prune_common_by_includes(
+        workspace,
+        ["DemoOp/op_kernel/arch35/k.cpp"],
+        ["common/op_kernel/arch35/pse.h"],
+    )
+    assert selected == ["common/op_kernel/arch35/pse.h"]
+
+
+def test_candidate_paths_hard_bound_op_prefix() -> None:
+    from uo.scripts.macro_scope_scan import _candidate_paths
+
+    all_files = [
+        "DemoOp/op_host/a.cpp",
+        "DemoOp/op_kernel/k.cpp",
+        "SiblingOp/op_host/b.cpp",
+        "SiblingOp/op_kernel/attention_helper.cpp",
+        "common/op_kernel/x.h",
+    ]
+    matched = _candidate_paths(Path("."), "flash_attention_score_grad", all_files, [], op_rel_prefix="DemoOp")
+    assert "DemoOp/op_host/a.cpp" in matched
+    assert "DemoOp/op_kernel/k.cpp" in matched
+    assert "SiblingOp/op_host/b.cpp" not in matched
+    assert "SiblingOp/op_kernel/attention_helper.cpp" not in matched
+    assert "common/op_kernel/x.h" not in matched  # common via prune only
+
+
+def test_replace_initial_scope_changes() -> None:
+    from uo.scripts.review_checkpoint import _scope_changes
+    import argparse
+
+    ns = argparse.Namespace(
+        include=["old/a.cpp"],
+        replace_initial=["DemoOp/a.cpp", "common/x.h"],
+        exclude=[],
+        approve_dependency=[],
+        reject_dependency=[],
+        approve_architecture=[],
+        exclude_architecture=[],
+        resolve_uncertain=[],
+    )
+    changes = _scope_changes(ns)
+    assert changes["replaced_initial"] == ["DemoOp/a.cpp", "common/x.h"]
+
+
+def test_propagate_empty_tensor_siblings(tmp_path: Path) -> None:
+    repo = tmp_path / "op"
+    repo.mkdir()
+    root = operator_root(repo, "DemoOp")
+    init_operator_contract_layout(root, "DemoOp", repo)
+    ir = root / "ir"
+    ir.mkdir(parents=True, exist_ok=True)
+    items = [
+        {
+            "id": "DIAG_MISSING_FORMERDKNUM",
+            "kind": "missing_tiling_field_producer",
+            "snippet": "formerDkNum",
+        },
+        {
+            "id": "DIAG_MISSING_FORMERDQNUM",
+            "kind": "missing_tiling_field_producer",
+            "snippet": "formerDqNum",
+        },
+        {
+            "id": "DIAG_UNUSED_S1TAIL",
+            "kind": "unused_tiling_field",
+            "snippet": "s1Tail",
+        },
+        {
+            "id": "DIAG_UNUSED_S2INNER",
+            "kind": "unused_tiling_field",
+            "snippet": "s2Inner",
+        },
+    ]
+    (ir / "operator_graph.yaml").write_text(
+        yaml.safe_dump({"version": 1, "op_name": "DemoOp", "nodes": [{"id": "N1"}], "unresolved": items}, sort_keys=False),
+        encoding="utf-8",
+    )
+    (ir / "unresolved.yaml").write_text(
+        yaml.safe_dump({"version": 1, "op_name": "DemoOp", "items": items}, sort_keys=False),
+        encoding="utf-8",
+    )
+    graph = apply_resolution(
+        repo,
+        "DemoOp",
+        {
+            "version": 1,
+            "unresolved_resolutions": [
+                {
+                    "id": "DIAG_MISSING_FORMERDKNUM",
+                    "status": "resolved",
+                    "rationale": "EmptyTensor path",
+                    "resolution": {"kind": "label", "label": "empty_tensor_tiling_producer", "evidence": "t.cpp:1"},
+                },
+                {
+                    "id": "DIAG_UNUSED_S1TAIL",
+                    "status": "accepted",
+                    "rationale": "host reserved",
+                },
+            ],
+        },
+        propagate=True,
+    )
+    assert graph["unresolved"] == []
+    assert int(graph["resolution"]["propagated_count"]) >= 2
+    ledger = yaml.safe_load((ir / "resolution_ledger.yaml").read_text(encoding="utf-8"))
+    ids = {row["id"] for row in ledger["items"]}
+    assert ids == {i["id"] for i in items}
+    assert ledger["open_unresolved_count"] == 0
+
+
+def test_export_kb_graph_materializes_symbol_stubs(tmp_path: Path) -> None:
+    from uo.scripts.export_kb_graph import _collect_relations
+
+    uo = tmp_path / ".understand-operator" / "Demo"
+    uo.mkdir(parents=True)
+    entities = [
+        {
+            "id": "N1",
+            "kind": "Node",
+            "label": "DoOpTiling",
+            "layer": "host",
+            "detail_ref": "",
+            "file_path": "op_host/a.cpp",
+            "start_line": 1,
+            "fields": {},
+        }
+    ]
+    graph = {"edges": []}
+    rels = _collect_relations(uo, graph, entities)
+    ids = {e["id"] for e in entities}
+    assert "SYM::DoOpTiling" in ids
+    assert "FILE::op_host/a.cpp" in ids
+    assert any(r["type"] == "anchors_to_symbol" for r in rels)
+    for r in rels:
+        assert r["source_id"] in ids
+        assert r["target_id"] in ids
+
+
+def test_integrity_fails_on_open_unresolved(tmp_path: Path) -> None:
+    from uo.scripts.check_kb_integrity import check_kb_integrity, map_rework_stage
+
+    repo = tmp_path / "op"
+    repo.mkdir()
+    root = operator_root(repo, "DemoOp")
+    init_operator_contract_layout(root, "DemoOp", repo)
+    ir = root / "ir"
+    ir.mkdir(parents=True, exist_ok=True)
+    (ir / "operator_graph.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "op_name": "DemoOp",
+                "nodes": [
+                    {"id": "H1", "layer": "host", "node_type": "Host"},
+                    {"id": "K1", "layer": "kernel", "node_type": "Kernel"},
+                    {"id": "TK1", "layer": "bridge", "node_type": "TilingKey"},
+                ],
+                "edges": [],
+                "unresolved": [{"id": "DIAG_X", "kind": "unused_tiling_field"}],
+                "tilingkey": {"args_sel_count": 1},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (ir / "unresolved.yaml").write_text(
+        yaml.safe_dump({"version": 1, "op_name": "DemoOp", "items": [{"id": "DIAG_X", "kind": "unused_tiling_field"}]}, sort_keys=False),
+        encoding="utf-8",
+    )
+    (ir / "entrypoints.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "roles": {
+                    "host_tiling_entry": {"status": "confirmed", "selected": {"name": "DoOpTiling"}},
+                    "kernel_entry": {"status": "confirmed", "selected": {"name": "Kernel"}},
+                }
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    # minimal required exports for validate_kb
+    for rel in (
+        "contracts/testcase.yaml",
+        "tiling/exhaustive_key_space.yaml",
+        "tiling/coverage_model.yaml",
+        "kernel/branches.yaml",
+        "cross_layer/impact_graph.yaml",
+    ):
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("version: 1\n", encoding="utf-8")
+
+    result = check_kb_integrity(repo, "DemoOp", write_outputs=True)
+    assert result["status"] == "fail"
+    assert result["open_unresolved_count"] == 1
+    codes = {i["code"] for i in result["issues"]}
+    assert "OPEN_UNRESOLVED" in codes
+    assert map_rework_stage({"rework_stage": "residual_resolve"}) == "residual_resolve"
+    assert (root / "checks" / "integrity.yaml").is_file()
+
+
+def test_uo_kb_query_status_only_without_pattern(tmp_path: Path) -> None:
+    from uo.scripts.uo_kb_query import main as kb_query_main
+
+    repo = tmp_path / "op"
+    repo.mkdir()
+    root = operator_root(repo, "DemoOp")
+    init_operator_contract_layout(root, "DemoOp", repo)
+    (root / "indexes").mkdir(parents=True, exist_ok=True)
+    # Missing sqlite → status missing, but CLI must accept --status-only alone
+    rc = kb_query_main([str(repo), "--op-name", "DemoOp", "--status-only"])
+    assert rc == 0
+
+
+def test_strip_cbm_stage_path() -> None:
+    from uo.scripts.export_kb_graph import _strip_cbm_stage_path
+
+    raw = (
+        ".understand-operator/Demo/cbm/index_stage/Demo/"
+        "op_kernel/arch35/kernel.h"
+    )
+    assert _strip_cbm_stage_path(raw) == "op_kernel/arch35/kernel.h"
+    assert _strip_cbm_stage_path("op_host/a.cpp") == "op_host/a.cpp"
+
+
+def test_export_adds_entrypoint_entities(tmp_path: Path) -> None:
+    from uo.scripts.export_kb_graph import _collect_entities
+    from uo.scripts._ir_io import write_yaml
+
+    uo = tmp_path / ".understand-operator" / "Demo"
+    (uo / "ir").mkdir(parents=True)
+    write_yaml(
+        uo / "ir" / "operator_graph.yaml",
+        {"version": 1, "op_name": "Demo", "nodes": [], "edges": []},
+    )
+    write_yaml(
+        uo / "ir" / "entrypoints.yaml",
+        {
+            "roles": {
+                "kernel_entry": {
+                    "status": "confirmed",
+                    "selected": {
+                        "name": "FlashAttentionScoreGradKernel",
+                        "file_path": (
+                            ".understand-operator/Demo/cbm/index_stage/Demo/"
+                            "op_kernel/arch35/flash_attention_score_grad_kernel.h"
+                        ),
+                        "start_line": 28,
+                    },
+                },
+                "host_tiling_entry": {
+                    "status": "confirmed",
+                    "selected": {"name": "DoOpTiling", "file_path": "op_host/a.cpp", "start_line": 1},
+                },
+            }
+        },
+    )
+    ents = _collect_entities(uo, {"nodes": [], "edges": []})
+    by_id = {e["id"]: e for e in ents}
+    assert "ENTRY::kernel_entry" in by_id
+    assert by_id["ENTRY::kernel_entry"]["label"] == "FlashAttentionScoreGradKernel"
+    assert by_id["ENTRY::kernel_entry"]["file_path"] == "op_kernel/arch35/flash_attention_score_grad_kernel.h"
+    assert by_id["ENTRY::host_tiling_entry"]["label"] == "DoOpTiling"
+
+
+def test_uo_kb_query_status_only_without_pattern(tmp_path: Path) -> None:
+    from uo.scripts.uo_kb_query import main as kb_query_main
+
+    repo = tmp_path / "op"
+    repo.mkdir()
+    root = operator_root(repo, "DemoOp")
+    init_operator_contract_layout(root, "DemoOp", repo)
+    (root / "indexes").mkdir(parents=True, exist_ok=True)
+    # Missing sqlite → status missing, but CLI must accept --status-only alone
+    rc = kb_query_main([str(repo), "--op-name", "DemoOp", "--status-only"])
+    assert rc == 0
+
+
+def test_strip_cbm_stage_path() -> None:
+    from uo.scripts.export_kb_graph import _strip_cbm_stage_path
+
+    raw = (
+        ".understand-operator/Demo/cbm/index_stage/Demo/"
+        "op_kernel/arch35/kernel.h"
+    )
+    assert _strip_cbm_stage_path(raw) == "op_kernel/arch35/kernel.h"
+    assert _strip_cbm_stage_path("op_host/a.cpp") == "op_host/a.cpp"
+
+
+def test_export_adds_entrypoint_entities(tmp_path: Path) -> None:
+    from uo.scripts.export_kb_graph import _collect_entities
+    from uo.scripts._ir_io import write_yaml
+
+    uo = tmp_path / ".understand-operator" / "Demo"
+    (uo / "ir").mkdir(parents=True)
+    write_yaml(
+        uo / "ir" / "operator_graph.yaml",
+        {"version": 1, "op_name": "Demo", "nodes": [], "edges": []},
+    )
+    write_yaml(
+        uo / "ir" / "entrypoints.yaml",
+        {
+            "roles": {
+                "kernel_entry": {
+                    "status": "confirmed",
+                    "selected": {
+                        "name": "FlashAttentionScoreGradKernel",
+                        "file_path": (
+                            ".understand-operator/Demo/cbm/index_stage/Demo/"
+                            "op_kernel/arch35/flash_attention_score_grad_kernel.h"
+                        ),
+                        "start_line": 28,
+                    },
+                },
+                "host_tiling_entry": {
+                    "status": "confirmed",
+                    "selected": {"name": "DoOpTiling", "file_path": "op_host/a.cpp", "start_line": 1},
+                },
+            }
+        },
+    )
+    ents = _collect_entities(uo, {"nodes": [], "edges": []})
+    by_id = {e["id"]: e for e in ents}
+    assert "ENTRY::kernel_entry" in by_id
+    assert by_id["ENTRY::kernel_entry"]["label"] == "FlashAttentionScoreGradKernel"
+    assert by_id["ENTRY::kernel_entry"]["file_path"] == "op_kernel/arch35/flash_attention_score_grad_kernel.h"
+    assert by_id["ENTRY::host_tiling_entry"]["label"] == "DoOpTiling"

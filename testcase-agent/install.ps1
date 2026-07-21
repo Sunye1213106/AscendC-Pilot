@@ -24,7 +24,9 @@ $PackageDir = $PluginRoot
 $SkillNames = @(
     "tg-plan",
     "tg-solve",
-    "tg-init"
+    "tg-init",
+    "tg-contract",
+    "tg-domain-review"
 )
 
 $Targets = @{
@@ -39,7 +41,8 @@ $AgentTargets = @{
 }
 
 $RequiredAgents = @(
-    "tg-csv-contract"
+    "tg-csv-contract",
+    "tg-init-audit"
 )
 
 if (-not $Targets.ContainsKey($Platform)) {
@@ -150,11 +153,11 @@ if (-not $SkipPip) {
             throw "pip install -e . failed"
         }
     }
-    Write-Host "Python entrypoints: tg-plan, tg-solve (tg-init deprecated)"
+    Write-Host "Python entrypoints: tg-init, tg-plan, tg-solve, tg-contract"
 }
 
 Write-Host ""
-Write-Host "Commands: /tg-plan  /tg-solve  (/tg-init deprecated)"
+Write-Host "Commands: /tg-init  /tg-plan  /tg-solve  (/tg-contract,/tg-domain-review → init)"
 if ($PluginLinks.ContainsKey($Platform)) {
     Write-Host "PLUGIN_ROOT: $($PluginLinks[$Platform])"
     Write-Host "Package: $(Join-Path $PluginLinks[$Platform] 'testcase_agent')"

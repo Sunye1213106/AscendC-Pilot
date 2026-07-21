@@ -9,9 +9,9 @@ pipeline.
 2. 扫描并提案分析范围
 3. 等待确认分析范围
 4. 窄索引代码图并完成范围收尾
-5. 抽取 Host/Kernel/桥接 IR
-6. 有界语义补全（入口确认 + 残留项）
-7. 导出测试契约并校验
+5. 抽取 Host/Kernel/桥接（含入口确认 + extract_plan）
+6. 有界语义补全（残留 unresolved）+ 入账 + 导出 + integrity
+7. KB 产物审查（uo-kb-review）
 
 Do **not** run the retired Phase1 global BFS, Phase2/3 fact agents, or old
 fact-review / graph-review receipt gates.
@@ -100,19 +100,35 @@ Dispatch one `uo-semantic-resolve` for residual + consistency review using the
 Do not invent alternate schemas (`residuals:`, `resolution: warning`) or ask
 for exhaustive coverage of every unresolved id.
 
-Validate then apply:
+Validate then apply (propagation on by default):
 
 ```powershell
 python -X utf8 "$SCRIPT_DIR/apply_resolution.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --patch "$UO_ROOT/ir/resolution_patch.yaml" --check
 # rejected_count>0 → resume same dispatch identity with rejected list only
 python -X utf8 "$SCRIPT_DIR/apply_resolution.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --patch "$UO_ROOT/ir/resolution_patch.yaml"
-python -X utf8 "$SCRIPT_DIR/kb_query_export.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --view testcase-contract
+# open unresolved remain → second residual round, then apply again
+python -X utf8 "$SCRIPT_DIR/kb_query_export.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --view testcase-contract --profile lean
+python -X utf8 "$SCRIPT_DIR/export_kb_graph.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+python -X utf8 "$SCRIPT_DIR/check_kb_integrity.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 ```
 
-## Validate
+## KB product review + Validate
 
-Run `validate_kb(..., phase="final", write_outputs=True)`. On blocking failure,
-stop and show `checks/final.yaml`. Then stop the run.
+After integrity `status=pass`, dispatch `uo-kb-review` (mandatory template in
+`00_subagent_dispatch.md`). On `verdict=pass`, **re-run**:
+
+```powershell
+python -X utf8 "$SCRIPT_DIR/export_human_views.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+```
+
+so overview shows `kb_review` (not stuck at `pending`). `fail` reworks by
+`rework_stage` (max 2 loops).
+
+On blocking integrity/final failure, stop and show `checks/integrity.yaml` /
+`checks/final.yaml`.
+
+For `/uo-code-review`, reuse Phase0 CBM index (`docs/cbm-mcp-setup.md`) plus
+`indexes/kb_graph.sqlite`. Do **not** install code-review-graph.
 
 ## Integrity Rules
 
@@ -120,8 +136,13 @@ stop and show `checks/final.yaml`. Then stop the run.
 - Write permissions come from `ownership.yaml`.
 - Query and TestAgent are read-only consumers.
 - User-facing language is Chinese unless the user asks otherwise.
-- KB is a **variable map** for fast lookup; prefer MCP CBM
-  (`search_graph` / `get_code_snippet` / `search_code`) when reading source
-  proof. Avoid dumping whole files into context.
+- KB is a **variable map** for fast lookup; prefer `summary/human_overview.md` +
+  `indexes/kb_graph.sqlite`, then Grep hot cards, then small-window Read / MCP CBM.
+  Never dump `ir/operator_graph.yaml`, full `contracts/testcase.yaml`, or
+  `cross_layer/impact_graph.yaml` into context.
+- Default export profile is **lean** (`UO_KB_EXPORT_PROFILE=lean`); use `--profile full`
+  only when L2 needs exhaustive template blocks.
 - For incremental refresh after code changes, follow `prompts/01b_update_orchestrator.md`
   and `skills/uo-update/SKILL.md` (isomorphic KB + dedicated `diff/` product).
+- For Ascend C code review, follow `prompts/01c_code_review_orchestrator.md`
+  and `skills/uo-code-review/SKILL.md` (CBM primary for bugs, kb_graph primary for semantics).

@@ -241,6 +241,57 @@ def propose_domain_hints_stub(
     }
 
 
+def _hint_is_confirmed(hint: dict[str, Any] | None) -> bool:
+    if not isinstance(hint, dict):
+        return False
+    status = str(hint.get("status") or "").lower()
+    source = str(hint.get("source") or "").lower()
+    return (
+        hint.get("locked") is True
+        or status in {"confirmed", "human", "final", "locked", "llm_confirmed"}
+        or source in {"human", "llm_confirmed"}
+    )
+
+
+def merge_domain_hints_preserving_confirmed(
+    existing: dict[str, Any] | None,
+    stub: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Merge stub columns into existing hints without overwriting locked/confirmed entries."""
+    existing = existing if isinstance(existing, dict) else {}
+    stub = stub if isinstance(stub, dict) else {}
+    out_cols: dict[str, Any] = {}
+    stub_cols = dict(stub.get("columns") or {}) if isinstance(stub.get("columns"), dict) else {}
+    existing_cols = dict(existing.get("columns") or {}) if isinstance(existing.get("columns"), dict) else {}
+
+    for name, hint in stub_cols.items():
+        prev = existing_cols.get(name)
+        if isinstance(prev, dict) and _hint_is_confirmed(prev):
+            out_cols[name] = dict(prev)
+        elif isinstance(prev, dict) and prev.get("values"):
+            # Keep non-empty prior proposals; fill only brand-new columns from stub.
+            merged = dict(hint) if isinstance(hint, dict) else {}
+            merged.update({k: v for k, v in prev.items() if v not in (None, "", [], {})})
+            if _hint_is_confirmed(prev):
+                merged["status"] = prev.get("status")
+                if prev.get("locked") is True:
+                    merged["locked"] = True
+            out_cols[name] = merged
+        else:
+            out_cols[name] = dict(hint) if isinstance(hint, dict) else hint
+
+    for name, hint in existing_cols.items():
+        if name not in out_cols:
+            out_cols[name] = dict(hint) if isinstance(hint, dict) else hint
+
+    return {
+        "version": int(existing.get("version") or stub.get("version") or 1),
+        "source": str(existing.get("source") or stub.get("source") or "merged_domain_hints"),
+        "columns": out_cols,
+        "hint": existing.get("hint") or stub.get("hint") or "",
+    }
+
+
 def _bounded_scan(root: Path) -> list[Path]:
     paths: list[Path] = []
     for path in sorted(root.rglob("*")):

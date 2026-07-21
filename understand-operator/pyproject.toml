@@ -26,11 +26,15 @@ uo-extract-golden = "uo.scripts.extract_golden:main"
 uo-reconcile-bridge = "uo.scripts.reconcile_bridge:main"
 uo-apply-resolution = "uo.scripts.apply_resolution:main"
 uo-kb-export = "uo.scripts.kb_query_export:main"
+uo-export-kb-graph = "uo.scripts.export_kb_graph:main"
+uo-kb-query = "uo.scripts.uo_kb_query:main"
 uo-query-readonly = "uo.scripts.uo_query_readonly:main"
 uo-detect-changes = "uo.scripts.detect_kb_changes:main"
 uo-plan-update = "uo.scripts.plan_kb_update:main"
 uo-export-diff = "uo.scripts.export_diff_product:main"
 uo-update = "uo.scripts.update_operator:main"
+uo-prepare-review-context = "uo.scripts.prepare_review_context:main"
+uo-cbm-impact = "uo.scripts.cbm_impact:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

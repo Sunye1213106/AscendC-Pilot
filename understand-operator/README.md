@@ -9,7 +9,9 @@
 | 插件目录 | 仓库内 [`understand-operator/`](https://github.com/Sunye1213106/Ascendc-PR-test-agent/tree/refactor/uo-facts-graph-test-pipeline/understand-operator) |
 | 推荐分支 | `refactor/uo-facts-graph-test-pipeline`（当前主开发线） |
 | Agent | [OpenCode](https://opencode.ai) / [Cursor](https://cursor.com) |
-| 代码图后端 | [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp)（CBM） |
+| 代码图后端 | [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp)（CBM 证据） |
+| 语义图 | `indexes/kb_graph.sqlite`（YAML KB 派生） |
+| 审查结构图 | 已有 [codebase-memory-mcp](./docs/cbm-mcp-setup.md)（CBM，Bug 主图；复用 Phase0 索引） |
 
 ## 它解决什么问题
 
@@ -42,12 +44,13 @@ Understand Operator 把上述信息整理成算子本地的一份 KB：
    ├─ 3) 窄索引：只把确认文件 stage 进 CBM
    ├─ 4) 语法/规则抽取 Host · Kernel · TilingKey · Bridge IR
    ├─ 5) 有界语义补全（仅入口确认 / 残留 unresolved）
-   └─ 6) 导出 contracts + validate
+   └─ 6) 导出 contracts + validate + kb_graph
           │
           ▼
-   .understand-operator/<op>/   ← 同构 KB
+   .understand-operator/<op>/   ← 同构 KB + indexes/kb_graph.sqlite
           │
-          └─ /uo-update 时另写 diff/  ← PR 优先读
+          ├─ /uo-update 时另写 diff/  ← PR 测例优先读
+          └─ /uo-code-review         ← Bug(CBM主)+语义(KB主)
 ```
 
 | 层级 | 职责 | 工具 |
@@ -72,12 +75,12 @@ Understand Operator 把上述信息整理成算子本地的一份 KB：
 Ascendc-PR-test-agent/
 └── understand-operator/           ← 插件根（PLUGIN_ROOT）
     ├── install.ps1 / install.sh
-    ├── skills/                    # /uo-init /uo-query /uo-update /uo-diff
+    ├── skills/                    # /uo-init /uo-query /uo-update /uo-diff /uo-code-review
     ├── prompts/
     ├── agents/
     ├── uo/                        # Python 实现（scripts + 库）
     ├── spec/
-    ├── docs/
+    ├── docs/                      # cbm-mcp-setup.md
     └── tests/
 ```
 
@@ -130,9 +133,12 @@ cd Ascendc-PR-test-agent/understand-operator
 仍在 `understand-operator/` 下：
 
 ```bash
+pip install -r requirements.txt
 pip install -e .
 python -m pytest tests -q
 ```
+
+仓库根目录也可：`pip install -r ../requirements.txt`（见上级 [README](../README.md)）。
 
 ## 使用
 
@@ -190,8 +196,18 @@ python -m pytest tests -q
 ```powershell
 python -X utf8 uo/scripts/prepare_operator.py <PROJECT_ROOT> --op-name <OP>
 python -X utf8 uo/scripts/build_layered_kb.py <PROJECT_ROOT> --op-name <OP> --architecture arch35
+# 默认 lean；调试 L2 穷举时：
+# python -X utf8 uo/scripts/kb_query_export.py <PROJECT_ROOT> --op-name <OP> --profile full
+python -X utf8 uo/scripts/export_human_views.py <PROJECT_ROOT> --op-name <OP>
 python -X utf8 uo/scripts/update_operator.py <PROJECT_ROOT> --op-name <OP>
 ```
+
+### 怎么读 KB（人 / AI）
+
+1. `summary/human_overview.md`
+2. `indexes/kb_graph.sqlite`（`uo-kb-query`）
+3. Grep 热文件（`tiling/key_cards/*`、`kernel/runtime_conditions.yaml`）
+4. 小窗 Read；**不要**整读 `ir/operator_graph.yaml` / `contracts/testcase.yaml` / `impact_graph`
 
 ## 反馈
 

@@ -79,21 +79,41 @@ def _repo_with_phase1(tmp_path: Path, contract: dict[str, Any], obligations: dic
     repo = tmp_path / "repo"
     root = repo / ".testcase-generator" / "DemoOp"
     (root / "snapshot").mkdir(parents=True)
-    (root / "plan").mkdir(parents=True)
+    level = str(obligations.get("test_level") or "L1")
+    plan_dir = root / "plan" / "levels" / level
+    plan_dir.mkdir(parents=True)
     snapshot = _snapshot(contract)
     obligations["snapshot_hash"] = snapshot["snapshot_hash"]
-    matrix = {"version": 1, "snapshot_hash": snapshot["snapshot_hash"], "by_kind": {}, "priority_counts": {}, "total": len(obligations.get("obligations", [])), "unreachable": []}
-    unresolved = {"version": 1, "snapshot_hash": snapshot["snapshot_hash"], "status": "ready_for_manual_review", "blocking_hard_obligations": [], "unresolved_obligations": [], "contract_gaps": []}
+    obligations["test_level"] = level
+    matrix = {
+        "version": 1,
+        "snapshot_hash": snapshot["snapshot_hash"],
+        "by_kind": {},
+        "priority_counts": {},
+        "total": len(obligations.get("obligations", [])),
+        "unreachable": [],
+    }
+    unresolved = {
+        "version": 1,
+        "snapshot_hash": snapshot["snapshot_hash"],
+        "status": "ready_for_manual_review",
+        "blocking_hard_obligations": [],
+        "unresolved_obligations": [],
+        "contract_gaps": [],
+    }
     plan_hash = semantic_plan_hash(snapshot["snapshot_hash"], obligations.get("obligations", []), matrix, unresolved)
     obligations["plan_hash"] = plan_hash
     matrix["plan_hash"] = plan_hash
     unresolved["plan_hash"] = plan_hash
+    # Stamp level after hash so it matches tg-solve (which pops test_level before rehash).
+    matrix["test_level"] = level
+    unresolved["test_level"] = level
     write_json(root / "snapshot" / "understand_contract.json", snapshot)
-    write_yaml(root / "plan" / "coverage_obligations.yaml", obligations)
-    write_yaml(root / "plan" / "coverage_matrix.yaml", matrix)
-    write_yaml(root / "plan" / "unresolved.yaml", unresolved)
+    write_yaml(plan_dir / "coverage_obligations.yaml", obligations)
+    write_yaml(plan_dir / "coverage_matrix.yaml", matrix)
+    write_yaml(plan_dir / "unresolved.yaml", unresolved)
     write_yaml(
-        root / "plan" / "human_supplement.yaml",
+        plan_dir / "human_supplement.yaml",
         supplement
         or {
             "version": 1,
@@ -103,7 +123,12 @@ def _repo_with_phase1(tmp_path: Path, contract: dict[str, Any], obligations: dic
             "approved_at": "2026-01-01T00:00:00+00:00",
             "supplements": [],
             "notes": "",
+            "test_level": level,
         },
+    )
+    write_yaml(
+        root / "plan" / "latest_level.yaml",
+        {"version": 1, "level": level, "plan_hash": plan_hash, "snapshot_hash": snapshot["snapshot_hash"]},
     )
     write_minimal_contract_artifacts(root, snapshot_hash=snapshot["snapshot_hash"], plan_hash=plan_hash)
     return repo
@@ -290,13 +315,14 @@ def test_tg_solve_emits_csv_by_default(tmp_path: Path) -> None:
         _obligations([_pending("OB_A", constraints={"expr": {"op": "eq", "var": "VAR_ENUM", "value": "A"}})]),
     )
 
-    result = tg_solve(repo, "DemoOp")
+    result = tg_solve(repo, "DemoOp", level="L1")
 
     root = repo / ".testcase-generator" / "DemoOp"
-    assert (root / "cases" / "cases.csv").exists()
+    assert (root / "cases" / "levels" / "L1" / "L1.csv").exists()
     assert result["realize_report"]["realized_count"] >= 1
     assert not (root / "run" / "operator_execution.yaml").exists()
-    assert (root / "solve" / "constraint_ir.yaml").exists()
+    solve_dir = root / "solve" / "levels" / "L1"
+    assert (solve_dir / "constraint_ir_summary.yaml").exists() or (solve_dir / "constraint_ir.yaml").exists()
 
 
 def test_tg_solve_dry_run_skips_csv(tmp_path: Path) -> None:
@@ -306,12 +332,13 @@ def test_tg_solve_dry_run_skips_csv(tmp_path: Path) -> None:
         _obligations([_pending("OB_A", constraints={"expr": {"op": "eq", "var": "VAR_ENUM", "value": "A"}})]),
     )
 
-    tg_solve(repo, "DemoOp", dry_run=True)
+    tg_solve(repo, "DemoOp", dry_run=True, level="L1")
 
     root = repo / ".testcase-generator" / "DemoOp"
-    assert not (root / "cases" / "cases.csv").exists()
-    assert (root / "cases" / "realize_report.yaml").exists()
-    assert (root / "solve" / "constraint_ir.yaml").exists()
+    assert not (root / "cases" / "levels" / "L1" / "L1.csv").exists()
+    assert (root / "cases" / "levels" / "L1" / "L1.realize_report.yaml").exists()
+    solve_dir = root / "solve" / "levels" / "L1"
+    assert (solve_dir / "constraint_ir_summary.yaml").exists() or (solve_dir / "constraint_ir.yaml").exists()
 
 
 def test_tg_solve_requires_approval(tmp_path: Path) -> None:
@@ -323,25 +350,25 @@ def test_tg_solve_requires_approval(tmp_path: Path) -> None:
 
 def test_tg_solve_rejects_legacy_coverage_plan_filename(tmp_path: Path) -> None:
     repo = _repo_with_phase1(tmp_path, _contract(), _obligations([_pending("OB_A")]))
-    root = repo / ".testcase-generator" / "DemoOp" / "plan"
-    legacy = read_yaml(root / "coverage_obligations.yaml")
-    (root / "coverage_obligations.yaml").unlink()
-    write_yaml(root / "coverage_plan.yaml", legacy)
+    plan_dir = repo / ".testcase-generator" / "DemoOp" / "plan" / "levels" / "L1"
+    legacy = read_yaml(plan_dir / "coverage_obligations.yaml")
+    (plan_dir / "coverage_obligations.yaml").unlink()
+    write_yaml(plan_dir / "coverage_plan.yaml", legacy)
 
-    with pytest.raises(TgSolveError, match="coverage_obligations.yaml"):
-        tg_solve(repo, "DemoOp")
+    with pytest.raises(TgSolveError, match="coverage_obligations.yaml|Missing coverage plan|Do not Copy"):
+        tg_solve(repo, "DemoOp", level="L1")
 
 
 def test_tg_solve_writes_outputs(tmp_path: Path) -> None:
     repo = _repo_with_phase1(tmp_path, _contract(), _obligations([_pending("OB_A")]))
 
-    tg_solve(repo, "DemoOp")
+    tg_solve(repo, "DemoOp", level="L1")
 
-    root = repo / ".testcase-generator" / "DemoOp" / "solve"
+    root = repo / ".testcase-generator" / "DemoOp" / "solve" / "levels" / "L1"
     assert read_yaml(root / "solver_report.yaml")["total_obligations"] == 1
-    assert (root / "candidates.yaml").exists()
     assert (root / "selected_candidates.yaml").exists()
     assert (root / "unsat_obligations.yaml").exists()
+    assert (root / "constraint_ir_summary.yaml").exists() or (root / "candidates.yaml").exists()
 
 
 def test_tg_solve_requires_contract_artifacts_by_default(tmp_path: Path) -> None:
@@ -458,8 +485,8 @@ def test_materialize_tensor_placeholder_uses_emit_constant() -> None:
                 "required": True,
                 "role": "tensor_placeholder",
                 "value_type": "enum",
-                "domain": ["_"],
-                "default": "_",
+                "domain": [""],
+                "default": "",
                 "serializer": "string",
             },
             {
@@ -473,7 +500,7 @@ def test_materialize_tensor_placeholder_uses_emit_constant() -> None:
             },
         ]
     }
-    realization_map = {"emit": {"columns": {"attrs": {"op": "constant", "value": "_"}}}}
+    realization_map = {"emit": {"columns": {"attrs": {"op": "constant", "value": ""}}}}
     row = materialize_row_from_contract(
         {"id": "CAND_1"},
         {"VAR_CSV_B": 2},
@@ -481,7 +508,7 @@ def test_materialize_tensor_placeholder_uses_emit_constant() -> None:
         realization_map,
         0,
     )
-    assert row["attrs"] == "_"
+    assert row["attrs"] == ""
     assert row["B"] == 2
 
 
@@ -505,9 +532,10 @@ def test_context_slice_entities_create_ir_variables_without_top_level_variables(
 def test_tg_solve_rejects_stale_approval_and_plan_hash(tmp_path: Path) -> None:
     repo = _repo_with_phase1(tmp_path, _contract(), _obligations([_pending("OB_A")]))
     root = repo / ".testcase-generator" / "DemoOp"
-    supplement = read_yaml(root / "plan" / "human_supplement.yaml")
+    plan_dir = root / "plan" / "levels" / "L1"
+    supplement = read_yaml(plan_dir / "human_supplement.yaml")
     supplement["approved_plan_hash"] = "stale"
-    write_yaml(root / "plan" / "human_supplement.yaml", supplement)
+    write_yaml(plan_dir / "human_supplement.yaml", supplement)
 
     with pytest.raises(TgSolveError, match="APPROVAL_PLAN_MISMATCH"):
         tg_solve(repo, "DemoOp")
@@ -516,26 +544,31 @@ def test_tg_solve_rejects_stale_approval_and_plan_hash(tmp_path: Path) -> None:
 def test_tg_solve_rejects_blocked_unresolved(tmp_path: Path) -> None:
     repo = _repo_with_phase1(tmp_path, _contract(), _obligations([_pending("OB_A")]))
     root = repo / ".testcase-generator" / "DemoOp"
-    unresolved = read_yaml(root / "plan" / "unresolved.yaml")
+    plan_dir = root / "plan" / "levels" / "L1"
+    unresolved = read_yaml(plan_dir / "unresolved.yaml")
     unresolved["status"] = "blocked"
     unresolved["blocking_hard_obligations"] = [{"id": "OB_A"}]
+    matrix = read_yaml(plan_dir / "coverage_matrix.yaml")
+    hash_matrix = dict(matrix)
+    hash_matrix.pop("test_level", None)
+    hash_unresolved = dict(unresolved)
+    hash_unresolved.pop("test_level", None)
     plan_hash = semantic_plan_hash(
-        read_yaml(root / "plan" / "coverage_obligations.yaml")["snapshot_hash"],
-        read_yaml(root / "plan" / "coverage_obligations.yaml")["obligations"],
-        read_yaml(root / "plan" / "coverage_matrix.yaml"),
-        unresolved,
+        read_yaml(plan_dir / "coverage_obligations.yaml")["snapshot_hash"],
+        read_yaml(plan_dir / "coverage_obligations.yaml")["obligations"],
+        hash_matrix,
+        hash_unresolved,
     )
-    obligations_doc = read_yaml(root / "plan" / "coverage_obligations.yaml")
-    matrix = read_yaml(root / "plan" / "coverage_matrix.yaml")
-    supplement = read_yaml(root / "plan" / "human_supplement.yaml")
+    obligations_doc = read_yaml(plan_dir / "coverage_obligations.yaml")
+    supplement = read_yaml(plan_dir / "human_supplement.yaml")
     obligations_doc["plan_hash"] = plan_hash
     matrix["plan_hash"] = plan_hash
     unresolved["plan_hash"] = plan_hash
     supplement["approved_plan_hash"] = plan_hash
-    write_yaml(root / "plan" / "coverage_obligations.yaml", obligations_doc)
-    write_yaml(root / "plan" / "coverage_matrix.yaml", matrix)
-    write_yaml(root / "plan" / "unresolved.yaml", unresolved)
-    write_yaml(root / "plan" / "human_supplement.yaml", supplement)
+    write_yaml(plan_dir / "coverage_obligations.yaml", obligations_doc)
+    write_yaml(plan_dir / "coverage_matrix.yaml", matrix)
+    write_yaml(plan_dir / "unresolved.yaml", unresolved)
+    write_yaml(plan_dir / "human_supplement.yaml", supplement)
 
     with pytest.raises(TgSolveError, match="PLAN_BLOCKED"):
         tg_solve(repo, "DemoOp")

@@ -62,14 +62,18 @@ def test_layered_milestones_exist() -> None:
         "扫描并提案分析范围",
         "等待确认分析范围",
         "窄索引代码图并完成范围收尾",
-        "抽取 Host/Kernel/桥接 IR",
-        "有界语义补全",
-        "导出测试契约并校验",
+        "抽取 Host/Kernel/桥接（含入口确认 + extract_plan）",
+        "有界语义补全（残留 unresolved）",
+        "KB 产物审查（uo-kb-review）",
     ):
         assert title in workflow
     assert "macro_scope" in workflow or "review_checkpoint.py" in workflow
-    assert "validate_kb" in workflow
+    assert "check_kb_integrity" in workflow
+    assert "uo-kb-review" in workflow
     assert "HARD STOP" in workflow or "硬门禁" in workflow
+    assert "export_human_views.py" in workflow
+    assert "--profile lean" in workflow
+    assert "--replace-initial" in workflow
 
 
 def test_orchestrator_matches_uo_init() -> None:
@@ -87,7 +91,8 @@ def test_orchestrator_matches_uo_init() -> None:
         "uo-semantic-resolve",
         "apply_resolution.py",
         "kb_query_export.py",
-        "validate_kb",
+        "check_kb_integrity",
+        "uo-kb-review",
     )
     missing = [item for item in required if item not in source or item not in orchestrator]
     assert missing == []
@@ -167,6 +172,14 @@ def test_retired_phase_agents_absent() -> None:
     assert [rel for rel in retired if (ROOT / rel).exists()] == []
 
 
-def test_active_agent_is_semantic_resolve_only() -> None:
+def test_active_agents_include_kb_review() -> None:
     agents = sorted(p.name for p in (ROOT / "agents").glob("uo-*.md"))
-    assert agents == ["uo-semantic-resolve.md"]
+    assert agents == ["uo-code-reviewer.md", "uo-kb-review.md", "uo-semantic-resolve.md"]
+
+
+def test_kb_review_dispatch_template_exists() -> None:
+    dispatch = _read("prompts/00_subagent_dispatch.md")
+    assert "KB product review dispatch" in dispatch
+    assert "uo-kb-review" in dispatch
+    assert "rework_stage" in dispatch
+    assert "kb_product_review.yaml" in dispatch

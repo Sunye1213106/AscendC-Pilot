@@ -41,9 +41,16 @@ def align_branches(
     csv_columns: list[str] | None = None,
     lexicon: dict[str, Any] | None = None,
     op_name: str = "",
+    shape_closure: set[str] | None = None,
 ) -> dict[str, Any]:
     """Return branch_mappings, abstract_branches, alignment_report, extra stub derived vars."""
-    ctx = BindContext(snapshot, csv_columns=csv_columns or [], lexicon=lexicon, op_name=op_name)
+    ctx = BindContext(
+        snapshot,
+        csv_columns=csv_columns or [],
+        lexicon=lexicon,
+        op_name=op_name,
+        shape_closure=shape_closure,
+    )
     mappings: list[dict[str, Any]] = []
     abstract: list[dict[str, Any]] = []
     reason_counts: Counter[str] = Counter()

@@ -1,0 +1,24 @@
+version: 1
+schema_kind: review_product
+required_top_level:
+  - version
+  - kind
+  - op_name
+  - mode
+  - status
+  - files
+allowed_top_level:
+  - version
+  - kind
+  - op_name
+  - mode
+  - status
+  - base_revision
+  - head_revision
+  - files
+  - totals
+  - notes
+notes: |
+  kind=code_review_index. mode is both|functional|bug.
+  status is ready|blocked|partial.
+  files points at functional_report / bug_report under review/.

@@ -32,5 +32,37 @@ def output_root(project_root: Path, op_name: str) -> Path:
 
 
 def ensure_output_dirs(root: Path) -> None:
-    for rel in ("snapshot", "intake", "plan", "solve", "extract", "cases", "topics", "realization"):
+    for rel in ("snapshot", "intake", "plan", "solve", "extract", "cases", "topics", "realization", "init", "bind"):
         (root / rel).mkdir(parents=True, exist_ok=True)
+
+
+def resolve_plan_dir(out_root: Path, level: str = "") -> Path:
+    """Resolve plan/levels/<L> for solve/approve. Root plan/ is not the obligations source of truth."""
+    level = str(level or "").strip().upper()
+    if not level:
+        latest_path = out_root / "plan" / "latest_level.yaml"
+        if latest_path.is_file():
+            latest = read_yaml(latest_path)
+            if isinstance(latest, dict):
+                level = str(latest.get("level") or "").strip().upper()
+    if not level:
+        raise FileNotFoundError(
+            "PLAN_LEVEL_REQUIRED: pass --level L0|L1-BRANCH|L1-REJECT|L2 (or L1→both L1) "
+            "(expected plan/levels/<L>/coverage_obligations.yaml). "
+            "Do not Copy-Item root plan/*.yaml into levels/."
+        )
+    # Compat: legacy L1 dir if new split dirs absent
+    plan_dir = out_root / "plan" / "levels" / level
+    if level in {"L1-BRANCH", "L1-REJECT"} and not (plan_dir / "coverage_obligations.yaml").is_file():
+        legacy = out_root / "plan" / "levels" / "L1"
+        if (legacy / "coverage_obligations.yaml").is_file() and level == "L1-BRANCH":
+            plan_dir = legacy
+            level = "L1"
+    obligations = plan_dir / "coverage_obligations.yaml"
+    if not obligations.is_file():
+        raise FileNotFoundError(
+            f"Missing coverage plan for {level}: {obligations}. "
+            f"Re-run tg-plan --level {level}. "
+            "Do not Copy-Item root plan/coverage_obligations.yaml into levels/."
+        )
+    return plan_dir

@@ -27,9 +27,9 @@ Build an evidence-backed operator KB under:
 2. 扫描并提案分析范围（含向上发现 common）
 3. 等待确认分析范围（硬门禁）
 4. 窄索引代码图并完成范围收尾
-5. 抽取 Host/Kernel/桥接 IR
-6. 有界语义补全（入口确认 + 残留项）
-7. 导出测试契约并校验
+5. 抽取 Host/Kernel/桥接（含入口确认 + extract_plan）
+6. 有界语义补全（残留 unresolved）+ 入账 + 导出 + integrity
+7. KB 产物审查（uo-kb-review）
 ```
 
 含义对照（给执行者，不要写进 Todo 标题）：
@@ -38,11 +38,11 @@ Build an evidence-backed operator KB under:
 |---|---|
 | 1 创建知识库目录 | `prepare_operator.py` |
 | 2 扫描并提案分析范围 | `macro_scope_scan.py` |
-| 3 等待确认分析范围 | AskQuestion + `review_checkpoint.py` |
+| 3 等待确认分析范围 | AskQuestion + `review_checkpoint.py`（收窄用 `--replace-initial`） |
 | 4 窄索引代码图并完成范围收尾 | `stage_cbm_scope.py` → MCP 索引 `index_stage` → `--write-index-meta` → `finalize_phase0.py` |
-| 5 抽取 Host/Kernel/桥接 IR | `resolve_entrypoints` → `propose_extract_plan` → LLM extract_plan → `build_layered_kb` |
-| 6 有界语义补全 | `uo-semantic-resolve` → `apply_resolution.py` |
-| 7 导出测试契约并校验 | `kb_query_export.py` + `validate_kb` |
+| 5 抽取 Host/Kernel/桥接（含入口确认） | `resolve_entrypoints` → `propose_extract_plan` → LLM extract_plan → `build_layered_kb` |
+| 6 残留补全 + 入账 + 导出 | `uo-semantic-resolve` → `apply_resolution.py`（默认传播）→ ledger → `kb_query_export` + `export_kb_graph` + `check_kb_integrity`（脚本内刷新 overview） |
+| 7 KB 产物审查 | 派发 `uo-kb-review`；`verdict=pass` 后**再** `export_human_views.py` 写入 kb_review；fail 按 `rework_stage` 回环（最多 2 次） |
 
 Do **not** run Phase1 global BFS/sink pruning, Phase2/3 fact agents, or old
 fact-review / graph-review receipt gates (`uo-boundary-agent`,
@@ -53,6 +53,8 @@ fact-review / graph-review receipt gates (`uo-boundary-agent`,
 若 scan 发现 sibling/parent `common/`：**确认范围必须保留 include 裁剪后的非空 `common/` 子集**。
 `review_checkpoint continue` 与 `stage_cbm_scope` 在 confirmed 无 `common/` 路径时失败（`COMMON_SCOPE_REQUIRED`）。
 include 裁剪只用完整/后缀路径匹配，**不用唯一 basename**（避免同名头文件串库）。
+
+LLM 取源码：优先 CBM `search_graph` / `get_code_snippet`；禁止整读 `operator_graph` / `testcase` 全文 / `exhaustive`。
 
 ## Variables
 
@@ -244,13 +246,30 @@ Dispatch **one** `uo-semantic-resolve` agent using the **mandatory residual
 dispatch template** in `prompts/00_subagent_dispatch.md` (do not invent
 `residuals:` / `resolution: warning` / exhaustive “resolve all N items”).
 
-1. Residual resolve: sample by pattern from `ir/unresolved.yaml` (≤12 ids).
-2. Optional batch consistency review: branch rows only
+1. Residual resolve: sample by pattern from `ir/unresolved.yaml` (≤12 ids) for
+   **simple** false_positive / host-only patterns.
+2. Collect `escalate_keys` (and any remaining KEY/shape-complex open items).
+3. Optional batch consistency review: branch rows only
    (`binding_time`, `condition`, `file:line`) — skip if already consistent.
 
 Agent writes only `ir/resolution_patch.yaml` with schema
-`unresolved_resolutions[].status ∈ {resolved,accepted,false_positive,alias}`.
-Leaving most residuals untouched is success.
+`unresolved_resolutions[].status ∈ {resolved,accepted,false_positive,alias}`
+plus optional `escalate_keys`.
+Parent **propagates** same-pattern siblings and writes `ir/resolution_ledger.yaml`.
+
+### Complex KEY → parallel uo-query (required)
+
+If `escalate_keys` is non-empty **or** open unresolved still look KEY/shape-complex
+after propagate: follow `skills/uo-query/references/complex-unresolved-escalation.md`
+and the per-KEY template in `prompts/00_subagent_dispatch.md`.
+
+- Launch **one subagent per KEY in parallel** (cap 8).
+- Each writes `ir/key_shape_resolve/<KEY_ID>.yaml` with a real `shape_expr`.
+- Parent merges → resolution_patch → apply. **Do not** finish with bare unsolved
+  KEY gaps.
+
+Open unresolved must become empty (or only `needs_human` with AskQuestion) —
+do not treat “left untouched” as success.
 
 Validate then apply (parent gate — never ask the subagent to hand-count ids):
 
@@ -258,31 +277,42 @@ Validate then apply (parent gate — never ask the subagent to hand-count ids):
 python -X utf8 "$SCRIPT_DIR/apply_resolution.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --patch "$UO_ROOT/ir/resolution_patch.yaml" --check
 # if rejected_count>0: resume same dispatch identity with rejected list only
 python -X utf8 "$SCRIPT_DIR/apply_resolution.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --patch "$UO_ROOT/ir/resolution_patch.yaml"
-python -X utf8 "$SCRIPT_DIR/kb_query_export.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --view testcase-contract
+# if escalate_keys / complex KEY remain: parallel per-KEY uo-query, merge, apply again
+# if open unresolved remain: second residual round on remaining *simple* ids only, then apply again
+python -X utf8 "$SCRIPT_DIR/kb_query_export.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --view testcase-contract --profile lean
+python -X utf8 "$SCRIPT_DIR/export_kb_graph.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+python -X utf8 "$SCRIPT_DIR/check_kb_integrity.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+# check_kb_integrity 会刷新 summary/human_overview.md（写入 integrity 状态）
 ```
 
-Validate (check-only API used by testcase-agent):
+If integrity fails, stop and show `checks/integrity.yaml` / `checks/final.yaml`.
+Do not invent facts; second residual round only for still-open **simple** ids;
+complex KEY gaps go through per-KEY uo-query, not another thin sample.
+
+## KB product review (required before finish)
+
+After integrity pass, dispatch **one** `uo-kb-review` using the mandatory
+template in `prompts/00_subagent_dispatch.md`.
+
+- `verdict=pass` → **must** re-export overview so `kb_review` is not stuck at `pending`:
 
 ```powershell
-python - <<'PY'
-from pathlib import Path
-from uo._operator.kb_compiler import validate_kb
-from uo._operator.artifacts import existing_operator_root, safe_op_name
-repo = Path(r"$PROJECT_ROOT")
-op = safe_op_name("$OP_NAME", repo)
-result = validate_kb(existing_operator_root(repo, op), op, phase="final", write_outputs=True)
-print(result.status, result.entity_count, result.unresolved_count)
-raise SystemExit(0 if result.status == "pass" else 2)
-PY
+python -X utf8 "$SCRIPT_DIR/export_human_views.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
 ```
 
-If validation fails with blocking errors, stop and show `checks/final.yaml`.
-Unresolved residuals may remain as warnings; do not invent facts.
+  then mark Todo7 complete and end `/uo-init`
+- `verdict=fail` → rework by `rework_stage` (max **2** loops), re-run affected
+  steps + integrity, then review again
+- Third fail → stop and present `review/kb_product_review.yaml`
 
 ## Hard Rules
 
 - Phase 0 `macro_scope` human review is mandatory; never auto-`continue`.
+- Narrowing scope: use `review_checkpoint.py --replace-initial` (not hand-edit YAML).
 - Do not invent legacy scripts outside `uo/scripts` (see `skills/understand-operator/PATHS.md`).
 - Do not dispatch host/flow/kernel-slice/review/abstraction/graph-review agents.
+- Allowed subagents: `uo-semantic-resolve`, `uo-kb-review`, and **per-KEY
+  `uo-query` escalate** tasks (one KEY per subagent, parallel).
+  Entrypoint/extract-plan tasks of semantic-resolve remain allowed.
 - Query and TestAgent are read-only consumers of `.understand-operator/`.
 - User-facing language is Chinese unless the user asks otherwise.

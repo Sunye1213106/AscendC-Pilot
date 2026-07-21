@@ -1,0 +1,12 @@
+version: 1
+schema_kind: kb_graph_metadata
+required_keys:
+  - schema_version
+  - built_at
+  - op_name
+  - source_hashes
+notes: |
+  Stored in indexes/kb_graph.sqlite table metadata (key/value).
+  source_hashes must include ir/operator_graph.yaml and preferably
+  contracts/testcase.yaml + query/terminology.yaml.
+  Query returns index_status=stale when hashes diverge from on-disk YAML.

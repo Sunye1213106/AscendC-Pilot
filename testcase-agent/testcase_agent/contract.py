@@ -99,6 +99,37 @@ def tg_contract(
         if isinstance(alt, dict):
             key_space = alt
 
+    # Preserve locked/confirmed domain_hints across embedded contract rebuilds before schema inference.
+    from .consumer_evidence import merge_domain_hints_preserving_confirmed, propose_domain_hints_stub
+    from .csv_domain_cover import extract_uo_domain_entries_by_column
+
+    # Provisional columns for stub merge (header candidates already in evidence).
+    provisional_columns = []
+    for item in evidence.get("ordered_header_candidates") or []:
+        if isinstance(item, dict):
+            provisional_columns.extend(str(c) for c in (item.get("columns") or []) if c)
+    provisional_columns = list(dict.fromkeys(provisional_columns))
+    hints_path = paths["dir"] / "domain_hints.yaml"
+    stub = propose_domain_hints_stub(
+        provisional_columns,
+        uo_entries=extract_uo_domain_entries_by_column(files, provisional_columns),
+    )
+    if hints_path.exists():
+        existing_hints = read_yaml(hints_path)
+        merged_hints = merge_domain_hints_preserving_confirmed(
+            existing_hints if isinstance(existing_hints, dict) else {},
+            stub,
+        )
+    else:
+        merged_hints = stub
+    write_yaml(hints_path, merged_hints)
+    evidence["domain_hints"] = {
+        "source": str(merged_hints.get("source") or "domain_hints"),
+        "columns": dict(merged_hints.get("columns") or {}),
+        "path": hints_path.as_posix(),
+    }
+    write_yaml(paths["evidence"], evidence)
+
     schema = build_consumer_schema_from_evidence(
         evidence,
         consumer_root,
@@ -109,19 +140,11 @@ def tg_contract(
     schema["plan_hash"] = evidence["plan_hash"]
     schema["evidence_hash"] = evidence.get("evidence_hash", "")
     schema["op_name"] = op_name
+    schema["domain_hints"] = evidence.get("domain_hints") or {
+        "source": str(merged_hints.get("source") or "domain_hints"),
+        "columns": dict(merged_hints.get("columns") or {}),
+    }
     write_yaml(paths["schema"], schema)
-
-    # Stub domain_hints for LLM/human when missing (do not scrape sample csv/xls).
-    from .consumer_evidence import propose_domain_hints_stub
-    from .csv_domain_cover import extract_uo_domain_entries_by_column
-
-    hints_path = paths["dir"] / "domain_hints.yaml"
-    if not hints_path.exists():
-        stub = propose_domain_hints_stub(
-            list(schema.get("columns") or []),
-            uo_entries=extract_uo_domain_entries_by_column(files, list(schema.get("columns") or [])),
-        )
-        write_yaml(hints_path, stub)
 
     from .binding_lexicon import lexicon_from_key_space, merge_lexicons, normalize_lexicon
     from .lexicon_propose import load_lexicon_seed, propose_key_derivations_from_evidence
@@ -156,7 +179,13 @@ def tg_contract(
     )
     write_yaml(lexicon_path, merged_lexicon)
 
-    realization_map = build_realization_map(snapshot, schema, lexicon=merged_lexicon, op_name=op_name)
+    realization_map = build_realization_map(
+        snapshot,
+        schema,
+        lexicon=merged_lexicon,
+        op_name=op_name,
+        out_root=out_root,
+    )
     realization_map = annotate_reachable_values(realization_map)
     realization_map = normalize_realization_map(realization_map)
     realization_map["version"] = 2
@@ -270,7 +299,15 @@ def load_realization_for_plan(out_root: Path) -> dict[str, Any]:
             "CSV_CONTRACT_REQUIRED: missing realization/realization_map.yaml. "
             "Run tg-contract --csv-consumer-root <test_script_root> first."
         )
-    return normalize_realization_map(read_yaml(paths["map"]))
+    from .io import read_json
+    from .realization_map import apply_architecture_platform_fixes
+
+    realization_map = normalize_realization_map(read_yaml(paths["map"]))
+    snapshot_path = out_root / "snapshot" / "understand_contract.json"
+    snapshot = read_json(snapshot_path) if snapshot_path.exists() else {}
+    realization_map = apply_architecture_platform_fixes(realization_map, snapshot)
+    write_yaml(paths["map"], realization_map)
+    return realization_map
 
 
 def refresh_contract_plan_hash(out_root: Path, plan_hash: str, snapshot_hash: str) -> None:

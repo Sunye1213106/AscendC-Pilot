@@ -27,11 +27,21 @@ evidence, then **AskQuestion** before locking.
 
 Do **not** rewrite the condition parser / AST / simplify pipeline / plugin Python.
 
+### Source evidence (CBM-first)
+
+```text
+1. inventory / unresolved / llm_bind_prompt_bundle (+ cbm_query_hints)
+2. Operator semantics → human_overview / uo_kb_query / CBM search_graph|get_code_snippet
+3. Scripts → small-window Read only
+禁止整读 testcase.yaml / operator_graph / exhaustive / 算子仓全文
+禁止确认 '_' 为合法单元格；*_layout 与 *_shape 同语义时只绑 shape
+```
+
 Read only:
 
 - Inventory / unresolved / prompt bundle
 - Evidence, alignment_report, unbound_atoms
-- Snapshot slices: KEY space, tiling_to_kernel, kernel variables
+- Snapshot slices via graph/CBM, not full dumps
 - Script / interface-doc slices referenced by the bundle
 
 Write only:
