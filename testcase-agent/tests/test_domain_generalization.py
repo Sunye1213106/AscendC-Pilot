@@ -84,11 +84,19 @@ def test_domain_hints_stub_and_load(tmp_path: Path) -> None:
 
 def test_evidence_proposes_istnd_and_sparse_map() -> None:
     lex = lexicon_from_key_space({"dimensions": [{"name": "IsTnd", "values": [0, 1]}]})
-    proposed = propose_key_derivations_from_evidence(
+    proposed, gaps = propose_key_derivations_from_evidence(
         lexicon=lex,
         csv_columns=["Input_Layout", "B", "rope", "sparse_mode"],
         sample_values={"Input_Layout": ["BNSD", "TND"]},
         snapshot_files={
+            "contracts/testcase.yaml": {
+                "key_determinants": {
+                    "KEY_ISTND": {
+                        "role": "layout_flag",
+                        "csv_determinants": [{"column": "Input_Layout", "op": "eq", "value": "TND"}],
+                    }
+                }
+            },
             "kernel/variables.yaml": {
                 "runtime_variables": [
                     {
@@ -100,12 +108,15 @@ def test_evidence_proposes_istnd_and_sparse_map() -> None:
                         ],
                     }
                 ]
-            }
+            },
         },
     )
     ids = {item["id"] for item in proposed["key_derivations"]}
     assert any("ISTND" in i for i in ids)
     assert any("SPARSE" in i.upper() for i in ids)
+    istnd = next(item for item in proposed["key_derivations"] if "ISTND" in item["id"])
+    assert istnd.get("locked") is not True
+    assert not any(g.get("code") == "MISSING_CSV_REF" and "ISTND" in str(g.get("variable_id")) for g in gaps)
 
 
 def test_lexicon_seed_loads_fixture() -> None:
@@ -216,7 +227,7 @@ def test_realization_map_with_hints(tmp_path: Path) -> None:
     schema = build_consumer_schema_from_evidence(evidence, root, key_space=files["tiling/key_space.yaml"], snapshot_files=files)
     by_name = {f["name"]: f for f in schema["fields"]}
     assert 6 in (by_name["sparse_mode"]["domain"].get("values") or by_name["sparse_mode"]["domain"])
-    lex = propose_key_derivations_from_evidence(
+    lex, _gaps = propose_key_derivations_from_evidence(
         lexicon=lexicon_from_key_space(files["tiling/key_space.yaml"]),
         csv_columns=schema["columns"],
         sample_values=evidence["sample_values"],
@@ -230,7 +241,7 @@ def test_realization_map_with_hints(tmp_path: Path) -> None:
 
 def test_layout_flag_prefers_primary_input_layout() -> None:
     lex = lexicon_from_key_space({"dimensions": [{"name": "IsTnd", "values": [0, 1]}]})
-    proposed = propose_key_derivations_from_evidence(
+    proposed, gaps = propose_key_derivations_from_evidence(
         lexicon=lex,
         csv_columns=["Atten_mask_layout", "Input_Layout", "B"],
         sample_values={
@@ -238,27 +249,39 @@ def test_layout_flag_prefers_primary_input_layout() -> None:
             "Input_Layout": ["BNSD", "TND"],
         },
     )
-    istnd = next(item for item in proposed["key_derivations"] if "ISTND" in item["id"])
-    assert "VAR_CSV_Input_Layout" in str(istnd["expr"])
-    assert "Atten_mask_layout" not in str(istnd["expr"])
+    # Name heuristics no longer auto-bind; clues prefer primary layout for LLM.
+    unbound = [g for g in gaps if g.get("code") == "UNBOUND_KEY" and "ISTND" in str(g.get("variable_id"))]
+    assert unbound
+    clues = " ".join(str(c) for c in (unbound[0].get("candidate_columns") or []))
+    assert "Input_Layout" in clues
+    assert "Atten_mask_layout" not in clues or clues.index("Input_Layout") <= clues.find("Atten")
+    assert not any("ISTND" in str(item.get("id")) for item in proposed["key_derivations"])
 
 
 def test_presence_flag_not_bound_to_tensor_blob() -> None:
     lex = lexicon_from_key_space({"dimensions": [{"name": "IsPse", "values": [0, 1]}]})
-    proposed = propose_key_derivations_from_evidence(
+    proposed, gaps = propose_key_derivations_from_evidence(
         lexicon=lex,
         csv_columns=["pse", "PSE_shape", "PSE_type", "B"],
         sample_values={"pse": ["_"], "PSE_shape": ["NONE", "BN"], "PSE_type": [0, 1]},
         snapshot_files={
             "contracts/testcase.yaml": {
-                "interface": {"optional_inputs": [{"id": "VAR_OPTIONAL_PSE", "name": "pse"}]}
+                "interface": {"optional_inputs": [{"id": "VAR_OPTIONAL_PSE", "name": "pse"}]},
+                "key_determinants": {
+                    "KEY_ISPSE": {"role": "optional_presence", "csv_determinants": [], "needs_binding": True}
+                },
             }
         },
     )
-    ispse = next(item for item in proposed["key_derivations"] if "ISPSE" in item["id"])
-    expr = str(ispse["expr"])
-    assert "VAR_CSV_pse" not in expr or "PSE_shape" in expr or "PSE_type" in expr
-    assert "PSE_shape" in expr or "PSE_type" in expr
+    # Must not auto-lock to tensor blob; leave UNBOUND_KEY with shape/type clues.
+    assert not any("ISPSE" in str(item.get("id")) and item.get("locked") for item in proposed["key_derivations"])
+    unbound = [g for g in gaps if "ISPSE" in str(g.get("variable_id") or "")]
+    assert unbound
+    clue_blob = str(unbound)
+    assert "PSE_shape" in clue_blob or "PSE_type" in clue_blob or unbound[0].get("code") in {
+        "UNBOUND_KEY",
+        "MISSING_CSV_REF",
+    }
 
 
 def test_locked_seed_derivation_not_overwritten() -> None:
@@ -283,7 +306,7 @@ def test_locked_seed_derivation_not_overwritten() -> None:
         "key_tokens": {"IS_TND": {"var": "VAR_KEY_ISTND", "true_value": 1}},
     }
     merged = normalize_lexicon(merge_lexicons(lexicon_from_key_space({"dimensions": [{"name": "IsTnd", "values": [0, 1]}]}), seed))
-    proposed = propose_key_derivations_from_evidence(
+    proposed, _gaps = propose_key_derivations_from_evidence(
         lexicon=merged,
         csv_columns=["Atten_mask_layout", "Input_Layout"],
         sample_values={"Atten_mask_layout": ["TND"], "Input_Layout": ["BNSD"]},
@@ -331,7 +354,7 @@ def test_coverage_inventory_lists_variable_values() -> None:
 
 
 def test_uo_determinants_drive_key_derivation() -> None:
-    proposed = propose_key_derivations_from_evidence(
+    proposed, _gaps = propose_key_derivations_from_evidence(
         lexicon={"key_tokens": {}, "key_derivations": []},
         csv_columns=["Input_Layout", "B"],
         sample_values={},
@@ -348,5 +371,6 @@ def test_uo_determinants_drive_key_derivation() -> None:
         },
     )
     istnd = next(item for item in proposed["key_derivations"] if item["id"] == "VAR_KEY_ISTND")
-    assert istnd.get("locked") is True
+    assert istnd.get("locked") is not True
+    assert istnd.get("status") == "proposed"
     assert istnd["expr"]["condition"]["value"] == "TND"

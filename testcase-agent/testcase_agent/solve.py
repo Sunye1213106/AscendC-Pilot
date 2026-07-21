@@ -82,6 +82,7 @@ def tg_solve(
     if recorded_plan_hash != plan_hash:
         raise TgSolveError("PLAN_HASH_MISMATCH: plan_hash does not match phase-one plan contents")
     _require_approval(supplement, snapshot.get("snapshot_hash"), plan_hash, unresolved_doc)
+    _require_domain_review(out_root)
     realization = load_or_build_realization(
         out_root,
         project_root,
@@ -125,6 +126,7 @@ def tg_solve(
     result["realize_report"] = realize_report
     result["realization_report"] = realization["report"]
     result["contract_validation"] = realization["validation"]
+    _require_nonempty_realize(realize_report)
     solve_root = _solve_dir(out_root, str(obligations_doc.get("test_level") or level or ""), case_name)
     write_solve_outputs(solve_root, result)
     _emit_progress(progress, stage="write_outputs", status="complete", solve_dir=str(solve_root))
@@ -1002,6 +1004,49 @@ def _require_approval(supplement: dict[str, Any], snapshot_hash: str | None, pla
         raise TgSolveError("PLAN_BLOCKED: unresolved hard blockers must be cleared before tg-solve")
     if gaps:
         raise TgSolveError("CONTRACT_GAPS_PRESENT: contract gaps must be resolved before tg-solve")
+
+
+def _require_nonempty_realize(realize_report: dict[str, Any]) -> None:
+    if int(realize_report.get("realized_count") or 0) == 0 and int(realize_report.get("selected_count") or 0) > 0:
+        raise TgSolveError(
+            f"REALIZE_EMPTY: selected {realize_report.get('selected_count')} candidates but realized_count=0 "
+            f"(blocked={realize_report.get('blocked_count')}). Fix consumer_schema/emit/domain_review before claiming CSV cases."
+        )
+
+
+def _require_domain_review(out_root: Path) -> None:
+    """Block solve when domain_review / binding gaps are still pending LLM+human confirm."""
+    paths = realization_paths(out_root)
+    review_path = paths["dir"] / "domain_review.yaml"
+    if review_path.exists():
+        review = read_yaml(review_path)
+        pending = list(review.get("pending_columns") or [])
+        status = str(review.get("status") or "").lower()
+        if status not in {"confirmed", "human", "llm_confirmed"} and pending:
+            sample = ", ".join(str(c) for c in pending[:8])
+            raise TgSolveError(
+                f"DOMAIN_REVIEW_REQUIRED: {len(pending)} columns unreviewed (e.g. {sample}). "
+                "Run tg-domain-review / AskQuestion confirm_domains first."
+            )
+    unresolved_path = paths["unresolved"]
+    if unresolved_path.exists():
+        doc = read_yaml(unresolved_path)
+        gaps = [g for g in (doc.get("binding_gaps") or []) if isinstance(g, dict)]
+        hard = [g for g in gaps if str(g.get("code") or "") in {"MISSING_CSV_REF", "UNBOUND_KEY"}]
+        if hard:
+            lexicon_path = paths["dir"] / "binding_lexicon.yaml"
+            lexicon = read_yaml(lexicon_path) if lexicon_path.exists() else {}
+            locked = {
+                str(item.get("id") or "")
+                for item in (lexicon.get("key_derivations") or [])
+                if isinstance(item, dict) and item.get("locked")
+            }
+            still = [g for g in hard if str(g.get("variable_id") or "") not in locked]
+            if still:
+                raise TgSolveError(
+                    f"BINDING_REVIEW_REQUIRED: {len(still)} KEY↔CSV gaps unbound. "
+                    "Run /tg-csv-contract, lock derivations, then confirm domain_review."
+                )
 
 
 def _summarize_unsat(unsat: list[dict[str, Any]]) -> list[str]:

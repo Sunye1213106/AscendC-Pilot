@@ -118,6 +118,7 @@ def materialize_testcase_contract_files(uo_root: Path, graph: dict[str, Any]) ->
                 "semantic_role": role_meta.get("role"),
                 "csv_determinants": role_meta.get("csv_determinants") or [],
                 "primary_layout_field": role_meta.get("primary_layout_field"),
+                "needs_binding": bool(role_meta.get("needs_binding")),
             }
         )
         tiling_variables.append(
@@ -433,6 +434,7 @@ def materialize_testcase_contract_files(uo_root: Path, graph: dict[str, Any]) ->
         golden=golden,
         kvar_nodes=kvar_nodes,
     )
+    contract = _merge_human_facts_supplements(uo_root, contract)
     runtime_branch_ids = [b["id"] for b in branch_rows if b.get("binding_time") == "runtime"]
     branch_obl_limit = 80
     test_contract = {
@@ -644,6 +646,8 @@ def _build_testcase_contract(
             field["semantic_role"] = role_meta.get("role")
             field["csv_determinants"] = role_meta.get("csv_determinants") or []
             field["primary_layout_field"] = role_meta.get("primary_layout_field")
+            if role_meta.get("needs_binding"):
+                field["needs_binding"] = True
         var_id = f"VAR_{key_id}"
         if values:
             variables.append(
@@ -739,9 +743,10 @@ def _build_testcase_contract(
             "semantic_role": field.get("semantic_role"),
             "csv_determinants": field.get("csv_determinants") or [],
             "primary_layout_field": field.get("primary_layout_field"),
+            "needs_binding": bool(field.get("needs_binding")),
         }
         for field in key_fields
-        if field.get("csv_determinants") or field.get("role")
+        if field.get("csv_determinants") or field.get("role") or field.get("needs_binding")
     }
     producible_fields = _producible_fields_from_golden(golden)
 
@@ -797,6 +802,37 @@ def _build_testcase_contract(
     }
 
 
+def _merge_human_facts_supplements(uo_root: Path, contract: dict[str, Any]) -> dict[str, Any]:
+    """Merge optional supplements/human_facts.yaml into key_determinants (generic overlay)."""
+    path = Path(uo_root) / "supplements" / "human_facts.yaml"
+    if not path.is_file():
+        return contract
+    try:
+        from uo.scripts._ir_io import read_yaml
+    except Exception:
+        return contract
+    doc = read_yaml(path)
+    if not isinstance(doc, dict):
+        return contract
+    out = dict(contract)
+    dets = dict(out.get("key_determinants") or {})
+    for key_id, spec in (doc.get("key_determinants") or {}).items():
+        if not isinstance(spec, dict):
+            continue
+        kid = str(key_id)
+        base = dict(dets.get(kid) or {})
+        base.update({k: v for k, v in spec.items() if v is not None})
+        base["needs_binding"] = False if base.get("csv_determinants") else base.get("needs_binding", False)
+        dets[kid] = base
+    out["key_determinants"] = dets
+    if doc.get("notes"):
+        out.setdefault("supplement_notes", [])
+        notes = out["supplement_notes"]
+        if isinstance(notes, list):
+            notes.append(str(doc.get("notes")))
+    return out
+
+
 def _infer_key_field_role(name: str) -> dict[str, Any]:
     """Generic KEY role + csv_determinants from naming (not per-operator tables)."""
     bare = str(name or "").strip()
@@ -812,32 +848,19 @@ def _infer_key_field_role(name: str) -> dict[str, Any]:
             out["primary_layout_field"] = "input_layout"
             out["csv_determinants"] = [{"column": "input_layout", "op": "eq", "value": stem}]
             return out
-        # Optional presence: IsPse / IsAttenMask / IsDrop / ...
+        # Optional / switch IS* keys: do not invent CSV columns from names.
+        # Leave csv_determinants empty + needs_binding for TG LLM to bind
+        # (e.g. IsDrop ↔ keep_prob) after seeing the real consumer schema.
         if stem in {"PSE", "ATTENMASK", "ATTENTIONMASK", "DROP", "DROPOUT", "ROPE", "SINK"}:
-            out["role"] = "optional_presence"
-            col_stem = {
-                "PSE": "pse",
-                "ATTENMASK": "atten_mask",
-                "ATTENTIONMASK": "atten_mask",
-                "DROP": "drop",
-                "DROPOUT": "drop",
-                "ROPE": "rope",
-                "SINK": "is_sink",
-            }.get(stem, stem.lower())
-            if stem == "ROPE":
+            if stem in {"ROPE", "SINK"}:
                 out["role"] = "switch"
-                out["csv_determinants"] = [{"column": "rope", "op": "eq", "value": 1}]
-            elif stem == "SINK":
-                out["role"] = "switch"
-                out["csv_determinants"] = [{"column": "is_sink", "op": "eq", "value": 1}]
             else:
-                out["csv_determinants"] = [
-                    {"combine": "or"},
-                    {"column": f"{col_stem}_shape", "op": "ne", "value": "NONE"},
-                    {"column": f"{col_stem}_type", "op": "ne", "value": 0},
-                ]
+                out["role"] = "optional_presence"
+            out["csv_determinants"] = []
+            out["needs_binding"] = True
             return out
         out["role"] = "switch"
+        out["needs_binding"] = True
         return out
 
     if "TEMPLATE" in upper or bare.endswith("Num") or bare.endswith("TemplateNum"):

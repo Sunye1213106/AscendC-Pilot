@@ -125,6 +125,11 @@ def tg_contract(
 
     from .binding_lexicon import lexicon_from_key_space, merge_lexicons, normalize_lexicon
     from .lexicon_propose import load_lexicon_seed, propose_key_derivations_from_evidence
+    from .binding_inventory import (
+        build_binding_inventory,
+        build_domain_review,
+        build_llm_bind_prompt_bundle,
+    )
 
     lexicon_path = paths["dir"] / "binding_lexicon.yaml"
     existing_lexicon = read_yaml(lexicon_path) if lexicon_path.exists() else {}
@@ -143,7 +148,7 @@ def tg_contract(
             seed_doc if seed_usable else None,
         )
     )
-    merged_lexicon = propose_key_derivations_from_evidence(
+    merged_lexicon, binding_gaps = propose_key_derivations_from_evidence(
         lexicon=merged_lexicon,
         csv_columns=list(schema.get("columns") or []),
         sample_values=dict(evidence.get("sample_values") or {}),
@@ -184,16 +189,41 @@ def tg_contract(
     report.update(validation)
     write_yaml(paths["report"], report)
 
+    inventory = build_binding_inventory(
+        schema=schema,
+        lexicon=merged_lexicon,
+        snapshot_files=files,
+        consumer_root=consumer_root,
+        binding_gaps=binding_gaps,
+    )
+    write_yaml(paths["dir"] / "binding_inventory.yaml", inventory)
+    evidence["consumer_kind"] = inventory.get("consumer_kind")
+    write_yaml(paths["evidence"], evidence)
+
+    domain_review_path = paths["dir"] / "domain_review.yaml"
+    existing_review = read_yaml(domain_review_path) if domain_review_path.exists() else {}
+    domain_review = build_domain_review(
+        schema=schema,
+        inventory=inventory,
+        existing=existing_review if isinstance(existing_review, dict) else None,
+    )
+    write_yaml(domain_review_path, domain_review)
+
+    needs_llm = bool(binding_gaps or inventory.get("needs_binding_keys") or domain_review.get("status") == "pending")
     unresolved = {
         "version": 1,
-        "status": "ready_for_llm" if validation["status"] == "pass" else "blocked",
+        "status": "ready_for_llm" if needs_llm or validation["status"] == "pass" else "blocked",
         "validation_status": validation["status"],
         "errors": validation.get("errors") or [],
         "warnings": realization_map.get("warnings") or [],
-        "hint": "Optionally run /tg-csv-contract to refine realization_map with evidence-backed mappings, then re-run tg-contract or tg-plan.",
-        "next": "tg-plan",
+        "binding_gaps": binding_gaps,
+        "needs_binding_keys": inventory.get("needs_binding_keys") or [],
+        "domain_review_status": domain_review.get("status"),
+        "hint": "Run /tg-csv-contract or tg-domain-review (LLM) to bind KEY↔CSV and confirm domains; AskQuestion confirm before tg-solve.",
+        "next": "tg-csv-contract|tg-domain-review",
     }
     write_yaml(paths["unresolved"], unresolved)
+    write_yaml(paths["dir"] / "llm_bind_prompt_bundle.yaml", build_llm_bind_prompt_bundle(inventory, unresolved))
 
     run_path = out_root / "run.yaml"
     run = read_yaml(run_path) if run_path.exists() else {}
@@ -202,9 +232,11 @@ def tg_contract(
             "command": "tg-contract",
             "phase": "csv_contract",
             "status": validation["status"],
-            "next_command": "tg-plan",
+            "next_command": "tg-csv-contract|tg-domain-review then tg-plan",
             "consumer_root": consumer_root.as_posix(),
             "snapshot_hash": snapshot_hash,
+            "consumer_kind": inventory.get("consumer_kind"),
+            "domain_review_status": domain_review.get("status"),
         }
     )
     write_yaml(run_path, run)
@@ -219,6 +251,9 @@ def tg_contract(
         "evidence_hash": evidence.get("evidence_hash", ""),
         "contract_hash": validation.get("contract_hash", ""),
         "consumer_root": consumer_root.as_posix(),
+        "consumer_kind": inventory.get("consumer_kind"),
+        "domain_review_status": domain_review.get("status"),
+        "binding_gaps": len(binding_gaps),
         "schema": schema,
         "realization_map": realization_map,
         "validation": validation,

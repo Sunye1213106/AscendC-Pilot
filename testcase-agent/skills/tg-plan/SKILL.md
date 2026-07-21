@@ -1,8 +1,8 @@
 ---
 name: tg-plan
 description: >-
-  Build L0–L3 coverage plan from 算子仓 + (测试工具|contract产物). Test tools
-  auto-run contract. Use when the user runs /tg-plan or asks to plan cases.
+  Build L0–L3 coverage plan after contract + LLM binding review are ready.
+  Test tools auto-run thin contract; plan still requires confirmed domains/lexicon for solve.
 argument-hint: "<算子仓|kb> --op-name <op> (--test-script-root <测试工具> | --contract-root <realization>) [--level L0|L1]"
 ---
 
@@ -14,47 +14,28 @@ argument-hint: "<算子仓|kb> --op-name <op> (--test-script-root <测试工具>
 
 1. **算子仓**（含 `.understand-operator/<op>/`；也可传 KB 路径）
 2. **二选一**：
-   - **测试工具** `--test-script-root` / `--csv-consumer-root` → **自动执行 contract**，再 plan
-   - **contract 产物** `--contract-root` → 复用已有 `realization/`，不再扫测试工具
+   - **测试工具** `--test-script-root` → **自动执行 thin contract**，再 plan
+   - **contract 产物** `--contract-root` → 复用已有 `realization/`
 
-若用户只说了「做 plan」而缺少上述任一输入：**Stop，用 AskQuestion 索要**，禁止脑补路径、禁止手写 plan。
+若用户只说了「做 plan」而缺少上述任一输入：**Stop，用 AskQuestion 索要**。
 
-AskQuestion 选项示例：
+## Contract → LLM 绑定（嵌入路径）
 
-- `provide_test_tool` — 用户将给出测试工具路径（自动 contract）
-- `provide_contract` — 用户将给出 realization / contract 产物路径
-- `cancel`
+若刚跑完 contract 且存在：
+
+- `realization/unresolved.yaml` 含 `binding_gaps` / `needs_binding_keys`，或
+- `domain_review.status=pending`
+
+则 **Stop**：先跑 `/tg-csv-contract` 或 `tg-domain-review`，AskQuestion 确认后再继续 plan。
+**禁止**为单个算子往 AST 插件里加特化规则。
 
 ## MUST — 调真实 CLI
 
-禁止手写 `plan/*.yaml`、`solved_testcases.csv`、自造 `solve.py`。
-
 ```powershell
-# A) 算子仓 + 测试工具 → 自动 contract + plan
 tg-plan "<算子仓>" --op-name <op> --level L0,L1 --test-script-root "<测试工具>"
-
-# B) 算子仓 + 已有 contract 产物
+# 或
 tg-plan "<算子仓>" --op-name <op> --level L0,L1 --contract-root "<.../realization>"
 ```
-
-完成证明：
-
-| 模式 | JSON 字段 |
-|------|-----------|
-| 测试工具 | `"input_mode":"build_contract"`, `"contract_embedded":true` |
-| contract 产物 | `"input_mode":"reuse_contract"`, `"contract_embedded":false` |
-| 共用 | `realization_root` 存在且含 `realization_map.yaml` |
-
-## 对话路径映射
-
-| 用户说法 | CLI |
-|---------|-----|
-| 算子仓 / 算子包 | positional `project_root` |
-| KB / `.understand-operator[/op]` | positional 或 `--kb-root` |
-| 测试工具 / 测试脚本 / fag_debug_tools | `--test-script-root` |
-| contract / realization 产物 | `--contract-root` |
-
-两者都给时：**优先测试工具**（重建 contract）。
 
 ## HARD STOP — human review
 
@@ -63,5 +44,5 @@ CLI 成功后 **stop**。AskQuestion：`approve` / `reject` / `suggest`。
 
 ## Notes
 
-- 产物在 `<算子仓>/.testcase-generator/<op>/`，不在测试工具目录下。
-- 不要修改 `.understand-operator/`。
+- 产物在 `<算子仓>/.testcase-generator/<op>/`。
+- 不要修改 `.understand-operator/`（除非用户确认写回 `supplements/human_facts.yaml`）。

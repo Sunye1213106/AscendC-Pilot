@@ -50,6 +50,10 @@ fact-review / graph-review receipt gates (`uo-boundary-agent`,
 
 **硬门禁：第 3 步「等待确认分析范围」不可跳过、不可自动 continue。**
 
+若 scan 发现 sibling/parent `common/`：**确认范围必须保留 include 裁剪后的非空 `common/` 子集**。
+`review_checkpoint continue` 与 `stage_cbm_scope` 在 confirmed 无 `common/` 路径时失败（`COMMON_SCOPE_REQUIRED`）。
+include 裁剪只用完整/后缀路径匹配，**不用唯一 basename**（避免同名头文件串库）。
+
 ## Variables
 
 - `SCRIPT_DIR`: `$PLUGIN_ROOT/uo/scripts` (only canonical location).

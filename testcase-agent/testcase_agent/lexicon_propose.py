@@ -38,11 +38,14 @@ def propose_key_derivations_from_evidence(
     csv_columns: list[str],
     sample_values: dict[str, list[Any]],
     snapshot_files: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Propose KEY/KVAR←CSV derivations from naming + UO domain_entries."""
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Propose KEY/KVAR←CSV derivations; return (lexicon, unresolved_gaps).
+
+    Heuristic proposals are never locked. Missing CSV refs / needs_binding keys
+    become unresolved for LLM binding — do not invent presence columns.
+    """
     base = normalize_lexicon(lexicon)
     columns = [str(c) for c in csv_columns if str(c)]
-    col_set = {c: c for c in columns}
     col_lower = {c.lower(): c for c in columns}
     locked = {
         str(item.get("id") or "")
@@ -55,6 +58,7 @@ def propose_key_derivations_from_evidence(
         if isinstance(item, dict) and item.get("id")
     }
     proposals: list[dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
 
     contract = (snapshot_files or {}).get("contracts/testcase.yaml")
     optional_inputs_lower: set[str] = set()
@@ -65,138 +69,156 @@ def propose_key_derivations_from_evidence(
 
     uo_entries_by_col = extract_uo_domain_entries_by_column(snapshot_files or {}, columns)
 
-    for item in _propose_from_uo_determinants(snapshot_files or {}, columns, existing | locked):
-        proposals.append(item)
+    uo_props, uo_unresolved = _propose_from_uo_determinants(snapshot_files or {}, columns, existing | locked)
+    proposals.extend(uo_props)
+    unresolved.extend(uo_unresolved)
+    for item in uo_props:
         existing.add(str(item.get("id") or ""))
 
+    # Presence / name heuristics: record as unresolved clues only (no auto bind).
     for token, spec in (base.get("key_tokens") or {}).items():
         if not isinstance(spec, dict):
             continue
         var_id = str(spec.get("var") or "")
         if not var_id or var_id in existing or var_id in locked:
             continue
-        true_value = int(spec.get("true_value", 1))
         bare = _token_bare(str(token))
         if not bare:
             continue
-
-        presence = _propose_presence_predicate(
-            var_id,
-            bare,
-            columns,
-            col_lower,
-            sample_values,
-            uo_entries_by_col,
-            true_value,
-            token=str(token),
-        )
-        if presence is not None:
-            proposals.append(presence)
-            existing.add(var_id)
-            continue
-
+        clues: list[str] = []
+        shape_col = _find_affixed_column(bare.lower().replace("_", ""), "shape", columns, col_lower)
+        type_col = _find_affixed_column(bare.lower().replace("_", ""), "type", columns, col_lower)
+        if shape_col:
+            clues.append(shape_col)
+        if type_col:
+            clues.append(type_col)
         col = col_lower.get(bare.lower()) or col_lower.get(f"is_{bare.lower()}")
-        if col and not _is_tensor_column(col, sample_values, uo_entries_by_col):
-            # Optional tensor blob columns (q/k/v/pse/...) must not be used for IS* presence flags.
-            if bare.lower() in optional_inputs_lower and col.lower() == bare.lower():
-                continue
-            if is_switch_domain(sample_values.get(col)) or parse_int((sample_values.get(col) or [None])[0]) in (0, 1):
-                proposals.append(
-                    _flag_derivation(var_id, col, true_value, rationale=f"{col} == {true_value} (token {token})")
-                )
-                existing.add(var_id)
-                continue
-
+        if col:
+            clues.append(col)
         layout_hit = _match_layout_enum(bare, columns, sample_values)
         if layout_hit is not None:
-            col_name, label = layout_hit
-            proposals.append(
-                _enum_derivation(
-                    var_id,
-                    col_name,
-                    label,
-                    true_value,
-                    rationale=f"{col_name} == {label} (token {token})",
-                )
-            )
-            existing.add(var_id)
-            continue
-
-        if bare.upper() in {"ATTENMASK", "ATTEN_MASK", "ATTENTIONMASK"}:
-            for candidate in ("Atten_mask_shape", "atten_mask_shape", "AttenMaskShape"):
-                if candidate in col_set or candidate.lower() in col_lower:
-                    real = col_set.get(candidate) or col_lower[candidate.lower()]
-                    proposals.append(
-                        {
-                            "id": var_id,
-                            "type": "int",
-                            "domain": [0, 1],
-                            "expr": {
-                                "op": "if_then_else",
-                                "condition": {"op": "ne", "var": csv_var(real), "value": "NONE"},
-                                "then": true_value,
-                                "else": 0 if true_value != 0 else 1,
-                            },
-                            "rationale": f"{real} != NONE (token {token})",
-                            "source_refs": [{"path": "evidence_key_derivation", "token": token}],
-                        }
-                    )
-                    existing.add(var_id)
-                    break
+            clues.append(f"{layout_hit[0]}=={layout_hit[1]}")
+        unresolved.append(
+            {
+                "code": "UNBOUND_KEY",
+                "variable_id": var_id,
+                "token": str(token),
+                "candidate_columns": clues,
+                "message": f"{var_id} unbound; candidate CSV clues={clues or 'none'} — LLM must bind",
+            }
+        )
 
     for item in _propose_domain_entry_maps(snapshot_files or {}, columns, existing | locked):
+        item["locked"] = False
+        item["status"] = "proposed"
         proposals.append(item)
         existing.add(str(item.get("id") or ""))
 
-    if not proposals:
-        return base
+    if not proposals and not unresolved:
+        return base, unresolved
+
     patched = dict(base)
-    patched["key_derivations"] = list(base.get("key_derivations") or []) + proposals
-    patched["source"] = str(base.get("source") or "") + "+evidence_derivations"
-    patched.setdefault("warnings", [])
-    patched["warnings"] = list(patched["warnings"]) + [
-        f"evidence_key_derivation: proposed {len(proposals)} key_derivations from CSV/UO evidence"
-    ]
-    return normalize_lexicon(patched)
+    derivations = [item for item in (patched.get("key_derivations") or []) if isinstance(item, dict)]
+    seen = {str(item.get("id") or "") for item in derivations}
+    for item in proposals:
+        vid = str(item.get("id") or "")
+        if not vid or vid in seen or vid in locked:
+            continue
+        derivations.append(item)
+        seen.add(vid)
+    patched["key_derivations"] = derivations
+    patched["source"] = str(patched.get("source") or "") + "+evidence_derivations"
+    return normalize_lexicon(patched), unresolved
 
 
 def _propose_from_uo_determinants(
     files: dict[str, Any],
     csv_columns: list[str],
     existing: set[str],
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return (proposals, unresolved). Never lock when referenced CSV columns are missing."""
     contract = files.get("contracts/testcase.yaml")
     if not isinstance(contract, dict):
-        return []
+        return [], []
     determinants = contract.get("key_determinants") or {}
     if not isinstance(determinants, dict):
-        return []
+        return [], []
     col_lower = {c.lower(): c for c in csv_columns}
+    col_set = set(col_lower)
     out: list[dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
     for key_id, spec in determinants.items():
         if not isinstance(spec, dict):
             continue
         var_id = f"VAR_{key_id}" if not str(key_id).startswith("VAR_") else str(key_id)
         if var_id in existing:
             continue
+        if spec.get("needs_binding") and not (spec.get("csv_determinants") or []):
+            unresolved.append(
+                {
+                    "code": "UNBOUND_KEY",
+                    "variable_id": var_id,
+                    "key": key_id,
+                    "message": f"{var_id} needs LLM/human binding to CSV columns",
+                }
+            )
+            continue
         preds = spec.get("csv_determinants") or []
         if not isinstance(preds, list) or not preds:
+            if spec.get("role") in {"optional_presence", "switch"}:
+                unresolved.append(
+                    {
+                        "code": "UNBOUND_KEY",
+                        "variable_id": var_id,
+                        "key": key_id,
+                        "message": f"{var_id} has no csv_determinants; leave for LLM binding",
+                    }
+                )
+            continue
+        missing = _missing_csv_columns(preds, col_set)
+        if missing:
+            unresolved.append(
+                {
+                    "code": "MISSING_CSV_REF",
+                    "variable_id": var_id,
+                    "key": key_id,
+                    "missing_columns": missing,
+                    "message": f"{var_id} references missing CSV columns {missing}; not auto-locked",
+                }
+            )
             continue
         expr = _expr_from_csv_determinants(preds, col_lower)
         if expr is None:
             continue
+        # Bootstrap proposal only — LLM/human must confirm (locked) before solve gate.
         out.append(
             {
                 "id": var_id,
                 "type": "int",
                 "domain": [0, 1],
                 "expr": expr,
-                "rationale": f"{var_id} from UO key_determinants",
+                "rationale": f"{var_id} from UO key_determinants (unconfirmed)",
                 "source_refs": [{"path": "contracts/testcase.yaml", "key": key_id}],
-                "locked": True,
+                "locked": False,
+                "status": "proposed",
             }
         )
-    return out
+    return out, unresolved
+
+
+def _missing_csv_columns(preds: list[dict[str, Any]], col_set: set[str]) -> list[str]:
+    missing: list[str] = []
+    for pred in preds:
+        if not isinstance(pred, dict):
+            continue
+        if pred.get("combine") in {"and", "or"} and not pred.get("column"):
+            continue
+        column = str(pred.get("column") or "").strip()
+        if not column:
+            continue
+        if column.lower() not in col_set:
+            missing.append(column)
+    return missing
 
 
 def _expr_from_csv_determinants(preds: list[dict[str, Any]], col_lower: dict[str, str]) -> dict[str, Any] | None:

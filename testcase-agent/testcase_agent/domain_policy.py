@@ -214,17 +214,31 @@ def shape_range_domain(
 
     lo = min(observed) if observed else 1
     hi = max(observed) if observed else 1
+    # Do not clamp Pre/Next (and similar) to >=1 — may be negative; mark via wide range
+    # and force domain review. Shape dims B/N/S/D still stay positive.
     if column.upper() in {"B", "N", "N1", "N2", "S", "S1", "S2", "D", "D_V"}:
-        lo = max(1, min(lo, 1) if lo > 0 else 1)
+        lo = max(1, lo) if lo > 0 else 1
+    elif column.upper() in {"PRE_TOCKENS", "NEXT_TOCKENS"} or column in {"Pre_Tockens", "Next_Tockens"}:
+        safe = SAFE_CAPS.get(column) or SAFE_CAPS.get(column.upper()) or 65536
+        if not observed:
+            lo, hi = -int(safe), int(safe)
+        else:
+            lo = min(lo, -1) if lo >= 0 else lo
+            hi = max(hi, 1)
 
     key_hi = _key_template_upper(column, key_space)
     safe = SAFE_CAPS.get(column) or SAFE_CAPS.get(column.upper()) or SAFE_CAPS.get(_canonical_shape(column) or "")
     candidates = [hi]
     if key_hi is not None:
         candidates.append(key_hi)
-    if safe is not None:
+    if safe is not None and column.upper() not in {"PRE_TOCKENS", "NEXT_TOCKENS"} and column not in {"Pre_Tockens", "Next_Tockens"}:
         candidates.append(safe)
+    elif safe is not None:
+        candidates.append(int(safe))
+        candidates.append(-int(safe))
     hi = max(candidates)
+    if column.upper() in {"PRE_TOCKENS", "NEXT_TOCKENS"} or column in {"Pre_Tockens", "Next_Tockens"}:
+        lo = min(lo, min(candidates))
     if hi < lo:
         hi = lo
     return {"kind": "range", "min": int(lo), "max": int(hi)}
@@ -280,7 +294,7 @@ def expand_enum_domain(
     clean = [str(v) for v in list(samples or []) + list(hint_values or []) if str(v) != ""]
     out = list(dict.fromkeys(clean))
     if evidence_tokens:
-        if is_layout_column(column):
+        if is_primary_layout_column(column):
             for token in evidence_tokens:
                 t = str(token).strip()
                 if t and t.upper() in LAYOUT_EVIDENCE_LABELS and t not in out:
@@ -290,8 +304,10 @@ def expand_enum_domain(
                 t = str(token).strip()
                 if t and t.lower() in DTYPE_EVIDENCE_LABELS and t not in out:
                     out.append(t.lower())
-    # Always union baseline layout/dtype labels so domains are not token-pinched.
-    if is_layout_column(column):
+    # Always union baseline labels only for *primary* layout / dtype columns.
+    # Secondary *layout* columns (mask/pse/atten) must not copy Input_Layout enums —
+    # leave thin/empty for LLM domain review.
+    if is_primary_layout_column(column):
         for label in ("BNSD", "TND", "BSND", "BSH", "SBH"):
             if label not in out:
                 out.append(label)
@@ -299,7 +315,7 @@ def expand_enum_domain(
         for label in ("fp16", "bf16", "fp32"):
             if label not in out:
                 out.append(label)
-    if not out and is_layout_column(column):
+    if not out and is_primary_layout_column(column):
         out = ["BNSD", "TND", "BSND", "BSH", "SBH"]
     if not out and is_dtype_column(column):
         out = ["fp16", "bf16", "fp32"]

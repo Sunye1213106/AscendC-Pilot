@@ -44,6 +44,26 @@ def stage_cbm_scope(repo_root: Path, op_name: str, *, stage_root: Path | None = 
     if not rels:
         raise FileNotFoundError(f"no confirmed_file_list under runs/{run_id}/phase0/scope_confirmed.yaml")
 
+    # Hard gate: if scan discovered common/, staging must include at least one common/ path.
+    scan_wants_common = bool(
+        scan.get("common_rel")
+        or scan.get("common_library")
+        or any(
+            "common library" in str(n) or "ascendc_common" in str(n)
+            for n in (scan.get("warnings") or scan.get("notes") or [])
+        )
+        or any(
+            str((item.get("path") if isinstance(item, dict) else item) or "").replace("\\", "/").startswith("common/")
+            for group in ("initial_operator_files", "dependency_files")
+            for item in ((scan.get("files") or {}).get(group) or [])
+        )
+    )
+    if scan_wants_common and not any(r.startswith("common/") for r in rels):
+        raise RuntimeError(
+            "COMMON_SCOPE_REQUIRED: scope_scan discovered common/, but confirmed_file_list has no common/ paths. "
+            "Fix Phase0 scope review before indexing."
+        )
+
     workspace_root = _workspace_root(repo_root, scan)
     stage = (stage_root or (uo_root / "cbm" / "index_stage")).resolve()
     if stage.exists():

@@ -208,8 +208,45 @@ def _write_scope_review(base: Path, decision: dict[str, Any], changes: dict[str,
     return out_path
 
 
+def _scan_discovered_common(scan: dict[str, Any]) -> bool:
+    """True when Phase0 scan reported an AscendC common library to index."""
+    if not isinstance(scan, dict):
+        return False
+    if scan.get("common_rel") or scan.get("common_library"):
+        return True
+    notes = scan.get("warnings") or scan.get("notes") or []
+    if isinstance(notes, list) and any("common library" in str(n) or "ascendc_common" in str(n) for n in notes):
+        return True
+    # Fallback: any initial/dependency path under common/
+    files = scan.get("files") if isinstance(scan.get("files"), dict) else {}
+    for group in ("initial_operator_files", "dependency_files"):
+        for item in files.get(group) or []:
+            path = _path_of(item).replace("\\", "/")
+            if path.startswith("common/") or "/common/" in path:
+                return True
+    return False
+
+
+def _confirmed_has_common(files: list[dict[str, str]]) -> bool:
+    return any(str(item.get("path") or "").replace("\\", "/").startswith("common/") for item in files)
+
+
+def _require_common_in_confirmed(scan: dict[str, Any], files: list[dict[str, str]]) -> None:
+    if not _scan_discovered_common(scan):
+        return
+    if _confirmed_has_common(files):
+        return
+    raise SystemExit(
+        "COMMON_SCOPE_REQUIRED: Phase0 scan discovered common/, but confirmed_file_list has no common/ paths. "
+        "Re-run review with continue only after include-pruned common files remain in approved scope."
+    )
+
+
 def _write_scope_confirmed(base: Path, run_id: str, decision: dict[str, Any], approved_scope: dict[str, Any]) -> None:
+    phase0 = base / "runs" / run_id / "phase0"
+    scan = _load_yaml(phase0 / "scope_scan.yaml")
     files = _confirmed_file_items(approved_scope)
+    _require_common_in_confirmed(scan, files)
     payload = {
         "version": 1,
         "artifact": {"type": "runs.scope_confirmed", "schema_version": 1, "owner": "uo-orchestrator"},

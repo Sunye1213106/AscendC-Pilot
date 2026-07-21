@@ -292,6 +292,9 @@ def _scan_python_columns(text: str, rel: str) -> dict[str, Any]:
                     _add_ref(field_accesses, column, rel, node.lineno, "optional_get")
                     _add_ref(required_optional_evidence, column, rel, node.lineno, "optional_read")
         elif isinstance(node, ast.Subscript):
+            # Skip load_dict[...] Store targets — structural dict keys, not CSV columns.
+            if isinstance(getattr(node, "ctx", None), ast.Store) and _is_load_dict_base(node.value):
+                continue
             column = _subscript_column(node)
             if column:
                 _add_ref(field_accesses, column, rel, node.lineno, "subscript")
@@ -331,6 +334,12 @@ def _dedupe_headers(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         seen.add(key)
         out.append(item)
     return out
+
+
+def _is_load_dict_base(node: ast.AST) -> bool:
+    """True for load_dict / *.load_dict bases used as structural bags (not CSV)."""
+    name = _call_name(node).lower()
+    return name == "load_dict" or name.endswith(".load_dict") or name.endswith("load_dict")
 
 
 def _call_name(node: ast.AST) -> str:

@@ -22,7 +22,105 @@ from uo.scripts.macro_scope_scan import _filter_architecture
 from uo.scripts.stage_cbm_scope import _resolve_source, _workspace_root
 
 
-def test_architecture_filter_drops_other_arch() -> None:
+def test_prune_common_rejects_unique_basename_only(tmp_path: Path) -> None:
+    from uo.scripts.macro_scope_scan import _prune_common_by_includes
+
+    workspace = tmp_path / "ws"
+    op = workspace / "DemoOp"
+    common = workspace / "common" / "op_kernel"
+    op.mkdir(parents=True)
+    common.mkdir(parents=True)
+    (op / "k.cpp").write_text('#include "pse.h"\n', encoding="utf-8")
+    # Only basename match available — must NOT select (would false-hit sibling libs).
+    (common / "pse.h").write_text("// other lib\n", encoding="utf-8")
+    selected = _prune_common_by_includes(
+        workspace,
+        ["DemoOp/k.cpp"],
+        ["common/op_kernel/pse.h"],
+    )
+    assert selected == []
+
+
+def test_prune_common_accepts_suffix_path(tmp_path: Path) -> None:
+    from uo.scripts.macro_scope_scan import _prune_common_by_includes
+
+    workspace = tmp_path / "ws"
+    op = workspace / "DemoOp"
+    common = workspace / "common" / "op_kernel" / "arch35"
+    op.mkdir(parents=True)
+    common.mkdir(parents=True)
+    (op / "k.cpp").write_text('#include "common/op_kernel/arch35/pse.h"\n', encoding="utf-8")
+    (common / "pse.h").write_text("// ok\n", encoding="utf-8")
+    selected = _prune_common_by_includes(
+        workspace,
+        ["DemoOp/k.cpp"],
+        ["common/op_kernel/arch35/pse.h"],
+    )
+    assert selected == ["common/op_kernel/arch35/pse.h"]
+
+
+def test_common_scope_gate_requires_common_paths() -> None:
+    from uo.scripts.review_checkpoint import _require_common_in_confirmed
+
+    scan = {"common_rel": "common", "files": {}}
+    try:
+        _require_common_in_confirmed(scan, [{"path": "DemoOp/a.cpp"}])
+        assert False, "expected SystemExit"
+    except SystemExit as exc:
+        assert "COMMON_SCOPE_REQUIRED" in str(exc)
+
+    _require_common_in_confirmed(scan, [{"path": "common/op_kernel/x.h"}, {"path": "DemoOp/a.cpp"}])
+
+
+def test_infer_key_field_role_needs_binding_without_invented_columns() -> None:
+    from uo.scripts.kb_query_export import _infer_key_field_role
+
+    drop = _infer_key_field_role("IsDrop")
+    assert drop["role"] == "optional_presence"
+    assert drop["csv_determinants"] == []
+    assert drop.get("needs_binding") is True
+
+    pse = _infer_key_field_role("IsPse")
+    assert pse["csv_determinants"] == []
+    assert pse.get("needs_binding") is True
+
+    tnd = _infer_key_field_role("IsTnd")
+    assert tnd["role"] == "layout_flag"
+    assert tnd["csv_determinants"][0]["column"] == "input_layout"
+
+
+def test_merge_human_facts_supplements(tmp_path: Path) -> None:
+    from uo.scripts.kb_query_export import _merge_human_facts_supplements
+    from uo.scripts._ir_io import write_yaml
+
+    uo = tmp_path / ".understand-operator" / "Demo"
+    (uo / "supplements").mkdir(parents=True)
+    write_yaml(
+        uo / "supplements" / "human_facts.yaml",
+        {
+            "notes": "confirmed binding",
+            "key_determinants": {
+                "KEY_ISDROP": {
+                    "role": "optional_presence",
+                    "csv_determinants": [{"column": "keep_prob", "op": "ne", "value": 1}],
+                    "needs_binding": False,
+                }
+            },
+        },
+    )
+    contract = {
+        "key_determinants": {
+            "KEY_ISDROP": {"role": "optional_presence", "csv_determinants": [], "needs_binding": True}
+        }
+    }
+    merged = _merge_human_facts_supplements(uo, contract)
+    dets = merged["key_determinants"]["KEY_ISDROP"]
+    assert dets["csv_determinants"][0]["column"] == "keep_prob"
+    assert dets.get("needs_binding") is False
+    assert merged.get("supplement_notes")
+
+
+def test_arch_filter_keeps_common_arch_match() -> None:
     paths = [
         "op_host/arch35/a.cpp",
         "op_host/arch22/b.cpp",

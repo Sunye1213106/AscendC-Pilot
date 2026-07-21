@@ -98,6 +98,7 @@ def main(argv: list[str] | None = None) -> int:
                 proposal,
                 workspace_root=workspace_root,
                 operator_path=op_rel_prefix,
+                common_rel=common_rel,
             )
         ),
     )
@@ -289,16 +290,18 @@ def _prune_common_by_includes(workspace_root: Path, op_files: list[str], common_
             elif inc.startswith("common/") and inc in by_rel:
                 hit = by_rel[inc]
             else:
-                # match by basename or suffix path
+                # Suffix / trailing-path match only when the include has a directory
+                # component. Never match on unique basename alone (shared names like
+                # pse.h across sibling libs cause false hits).
+                if "/" not in inc:
+                    continue
                 name = Path(inc).name.lower()
                 cands = by_name.get(name) or []
-                if len(cands) == 1:
-                    hit = cands[0]
-                else:
-                    for cand in cands:
-                        if cand.endswith("/" + inc) or cand.endswith(inc):
-                            hit = cand
-                            break
+                for cand in cands:
+                    norm = cand.replace("\\", "/")
+                    if norm.endswith("/" + inc) or norm == inc:
+                        hit = cand
+                        break
             if hit and hit not in selected:
                 selected.add(hit)
                 frontier.append(hit)
@@ -427,6 +430,7 @@ def _compat_scope_scan(
     *,
     workspace_root: Path | None = None,
     operator_path: str = "",
+    common_rel: str = "",
 ) -> dict[str, Any]:
     candidate_files = proposal["candidate_files"]
     initial = [
@@ -444,6 +448,7 @@ def _compat_scope_scan(
         "project_root": repo_root.as_posix(),
         "workspace_root": ws.as_posix(),
         "operator_path": operator_path or str(proposal.get("operator_path") or ""),
+        "common_rel": common_rel or "",
         "generated_at": proposal["generated_at"],
         "scan_method": {
             "filesystem_tool": "rg/glob",
