@@ -95,11 +95,6 @@ def tg_init(project_root: Path, op_name: str) -> dict[str, Any]:
 
     files = export_payload.get("files") if isinstance(export_payload.get("files"), dict) else {}
     source_hashes = final_validation.get("source_artifact_hashes") or {}
-    contract_source_hashes = {}
-    if isinstance(files, dict) and isinstance(files.get("contracts/testcase.yaml"), dict):
-        contract_source_hashes = files["contracts/testcase.yaml"].get("source", {}).get("canonical_hashes") or {}
-    if not source_hashes:
-        source_hashes = contract_source_hashes
     if not source_hashes and isinstance(files.get("checks/artifact_hashes.yaml"), dict):
         source_hashes = files["checks/artifact_hashes.yaml"].get("hashes") or {}
     if not source_hashes:
@@ -108,19 +103,6 @@ def tg_init(project_root: Path, op_name: str) -> dict[str, Any]:
             payload = read_yaml(artifact_path)
             if isinstance(payload, dict):
                 source_hashes = payload.get("hashes") or {}
-
-    snapshot = {
-        "version": 1,
-        "op_name": op_name,
-        "view": "testcase-contract",
-        "understand_root": uo_root.as_posix(),
-        "contract_view": files,
-        "context_slice": export_payload.get("context_slice"),
-        "files": files,
-        "source_artifact_hashes": dict(sorted(source_hashes.items())),
-        "final_validation": final_validation,
-    }
-    snapshot["snapshot_hash"] = semantic_snapshot_hash(snapshot)
 
     report_obj = validate_intake(export_payload, final_validation)
     report = report_obj.to_dict()
@@ -133,13 +115,31 @@ def tg_init(project_root: Path, op_name: str) -> dict[str, Any]:
         write_yaml(out_root / "run.yaml", run)
         raise TgInitError("tg-init failed intake validation", report)
 
+    # Drop retired UO contracts from snapshot authority after intake warning.
+    if isinstance(files, dict):
+        files.pop("contracts/testcase.yaml", None)
+
+    snapshot = {
+        "version": 1,
+        "op_name": op_name,
+        "view": "kb-export",
+        "understand_root": uo_root.as_posix(),
+        "contract_view": files,
+        "context_slice": export_payload.get("context_slice"),
+        "files": files,
+        "source_artifact_hashes": dict(sorted(source_hashes.items())),
+        "final_validation": final_validation,
+    }
+    snapshot["snapshot_hash"] = semantic_snapshot_hash(snapshot)
+
     quality_status = quality_status_from(files)
     meta = {
         "version": 1,
         "op_name": op_name,
         "created_at": _now(),
         "understand_root": uo_root.as_posix(),
-        "understand_contract_version": files["contracts/testcase.yaml"].get("version"),
+        "understand_contract_version": None,
+        "tg_contract_path": "contract/testcase.yaml",
         "source_artifact_hashes": dict(sorted(source_hashes.items())),
         "quality_status": quality_status,
         "snapshot_hash": snapshot["snapshot_hash"],
@@ -196,7 +196,7 @@ def tg_init_full(
                 "project_root": project_root.as_posix(),
                 "output_root": out_root.as_posix(),
                 "init": status,
-                "next": "tg-plan <算子仓> --op-name <op> --level L0,L1,L2",
+                "next": "tg-plan <算子仓> --op-name <op>  # default L0,L1 whole-operator; optional --level L2 --topic <scope>",
             }
 
     try:
@@ -273,9 +273,8 @@ def tg_init_full(
             "tg-plan …"
             if status_doc.get("status") == "confirmed"
             else [
-                "LLM: fill bind/*.yaml + realization/binding_lexicon (uo-query when uncertain)",
-                "Human AskQuestion confirm → tg-init --confirm",
-                "Then tg-plan",
+                "PARENT: Task Follow uo-query per needs_binding_keys → --merge-uo-resolve → --verify-csv-closure",
+                "AskQuestion 仅域锁定 → tg-init-audit → tg-init --confirm → tg-plan",
             ]
         ),
     }

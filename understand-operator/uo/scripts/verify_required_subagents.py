@@ -19,6 +19,7 @@ if __package__ in (None, ""):
 REQUIRED_SUBAGENTS = (
     "uo-semantic-resolve",
     "uo-kb-review",
+    "uo-code-reviewer",
 )
 
 

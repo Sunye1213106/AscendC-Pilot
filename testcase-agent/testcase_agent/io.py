@@ -7,6 +7,13 @@ from typing import Any
 import yaml
 
 
+def assert_tg_write_path(path: Path | str, *, out_root: Path | None = None) -> Path:
+    """Delegate to isolation module (avoid circular import at package load)."""
+    from .isolation import assert_tg_write_path as _assert
+
+    return _assert(path, out_root=out_root)
+
+
 def read_yaml(path: Path) -> Any:
     text = path.read_text(encoding="utf-8")
     data = yaml.safe_load(text)
@@ -14,11 +21,13 @@ def read_yaml(path: Path) -> Any:
 
 
 def write_yaml(path: Path, data: Any) -> None:
+    assert_tg_write_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
 
 def write_json(path: Path, data: Any) -> None:
+    assert_tg_write_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -32,7 +41,19 @@ def output_root(project_root: Path, op_name: str) -> Path:
 
 
 def ensure_output_dirs(root: Path) -> None:
-    for rel in ("snapshot", "intake", "plan", "solve", "extract", "cases", "topics", "realization", "init", "bind"):
+    for rel in (
+        "snapshot",
+        "intake",
+        "plan",
+        "solve",
+        "extract",
+        "cases",
+        "topics",
+        "realization",
+        "contract",
+        "init",
+        "bind",
+    ):
         (root / rel).mkdir(parents=True, exist_ok=True)
 
 
@@ -47,15 +68,15 @@ def resolve_plan_dir(out_root: Path, level: str = "") -> Path:
                 level = str(latest.get("level") or "").strip().upper()
     if not level:
         raise FileNotFoundError(
-            "PLAN_LEVEL_REQUIRED: pass --level L0|L1-BRANCH|L1-REJECT|L2 (or L1→both L1) "
+            "PLAN_LEVEL_REQUIRED: pass --level L0|L1|L2 "
             "(expected plan/levels/<L>/coverage_obligations.yaml). "
             "Do not Copy-Item root plan/*.yaml into levels/."
         )
-    # Compat: legacy L1 dir if new split dirs absent
+    # Compat: legacy L1-BRANCH dir → L1
     plan_dir = out_root / "plan" / "levels" / level
-    if level in {"L1-BRANCH", "L1-REJECT"} and not (plan_dir / "coverage_obligations.yaml").is_file():
+    if level == "L1-BRANCH" and not (plan_dir / "coverage_obligations.yaml").is_file():
         legacy = out_root / "plan" / "levels" / "L1"
-        if (legacy / "coverage_obligations.yaml").is_file() and level == "L1-BRANCH":
+        if (legacy / "coverage_obligations.yaml").is_file():
             plan_dir = legacy
             level = "L1"
     obligations = plan_dir / "coverage_obligations.yaml"

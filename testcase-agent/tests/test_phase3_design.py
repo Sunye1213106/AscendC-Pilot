@@ -25,7 +25,7 @@ def test_extract_marks_key_card_gaps() -> None:
             },
         },
     }
-    doc = extract_generation_conditions(snapshot, level="L3", topic="determinism")
+    doc = extract_generation_conditions(snapshot, level="L1", topic="determinism")
     assert doc["needs_llm_completion"]
     assert any(item["code"] == "EXTRACT_GAP" for item in doc["gaps"])
     assert any(item["id"].startswith("GC_KEYCARD_DOMAIN_") for item in doc["conditions"])

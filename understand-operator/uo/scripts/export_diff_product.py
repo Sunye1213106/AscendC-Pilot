@@ -14,7 +14,7 @@ from uo._operator.artifacts import existing_operator_root, safe_op_name
 from uo.scripts._ir_io import read_yaml, write_yaml, stable_id
 
 KB_REFS = {
-    "testcase_contract": "contracts/testcase.yaml",
+    "testcase_contract": "tiling/coverage_model.yaml",
     "operator_graph": "ir/operator_graph.yaml",
     "tiling_constraints": "tiling/constraints.yaml",
     "kernel_branches": "kernel/branches.yaml",
@@ -308,14 +308,14 @@ def _hint_layers(hint: dict[str, Any]) -> set[str]:
 
 def _kb_lookup_for_layer(layer: str) -> list[str]:
     mapping = {
-        "host": ["contracts/testcase.yaml#coverage_obligations", "ir/host_subgraph.yaml", "ir/operator_graph.yaml"],
-        "kernel": ["kernel/branches.yaml", "ir/kernel_subgraph.yaml", "contracts/testcase.yaml"],
-        "tilingkey": ["tiling/constraints.yaml", "ir/tilingkey_space.yaml", "contracts/testcase.yaml"],
+        "host": ["tiling/coverage_model.yaml", "ir/host_subgraph.yaml", "ir/operator_graph.yaml"],
+        "kernel": ["kernel/branches.yaml", "ir/kernel_subgraph.yaml", "tiling/key_space.yaml"],
+        "tilingkey": ["tiling/constraints.yaml", "ir/tilingkey_space.yaml", "tiling/key_space.yaml"],
         "golden": ["flow/golden_model.yaml", "ir/golden.yaml"],
-        "bridge": ["ir/bridge.yaml", "cross_layer/impact_graph.yaml", "contracts/testcase.yaml"],
+        "bridge": ["ir/bridge.yaml", "cross_layer/impact_graph.yaml", "tiling/key_space.yaml"],
         "entrypoints": ["ir/entrypoints.yaml", "ir/operator_graph.yaml"],
     }
-    return mapping.get(layer, ["ir/operator_graph.yaml", "contracts/testcase.yaml"])
+    return mapping.get(layer, ["ir/operator_graph.yaml", "tiling/key_space.yaml"])
 
 
 def main(argv: list[str] | None = None) -> int:

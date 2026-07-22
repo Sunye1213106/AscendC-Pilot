@@ -1,11 +1,11 @@
-"""TG intake of UO lean export (external artifact hashes)."""
+"""TG intake of UO lean export (external artifact hashes; no UO contracts)."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from testcase_agent.understand import _load_source_hashes
-from testcase_agent.validation import REQUIRED_TESTCASE_CONTRACT_FILES, validate_intake
+from testcase_agent.validation import REQUIRED_KB_EXPORT_FILES, validate_intake
 
 
 def test_load_source_hashes_prefers_artifact_file(tmp_path: Path) -> None:
@@ -13,31 +13,38 @@ def test_load_source_hashes_prefers_artifact_file(tmp_path: Path) -> None:
 
     uo = tmp_path / ".understand-operator" / "Demo"
     (uo / "checks").mkdir(parents=True)
-    write_yaml(uo / "checks" / "artifact_hashes.yaml", {"hashes": {"contracts/testcase.yaml": "a" * 64}})
-    contract = {"source": {"canonical_hashes": {}, "hashes_ref": "checks/artifact_hashes.yaml"}}
-    hashes = _load_source_hashes(uo, contract, {})
-    assert hashes["contracts/testcase.yaml"] == "a" * 64
+    write_yaml(uo / "checks" / "artifact_hashes.yaml", {"hashes": {"tiling/key_space.yaml": "a" * 64}})
+    hashes = _load_source_hashes(uo, {}, {})
+    assert hashes["tiling/key_space.yaml"] == "a" * 64
 
 
 def test_validate_intake_accepts_lean_external_hashes() -> None:
     files: dict = {
-        "contracts/testcase.yaml": {
-            "version": 2,
-            "op_name": "Demo",
-            "source": {"canonical_hashes": {}, "hashes_ref": "checks/artifact_hashes.yaml", "quality_status": "pass"},
-            "interface": {},
-            "variables": [],
-            "input_realization": [],
-            "kernel_branch_obligations": [],
-            "coverage_obligations": {},
-        },
-        "checks/artifact_hashes.yaml": {"hashes": {"contracts/testcase.yaml": "b" * 64}},
+        "checks/artifact_hashes.yaml": {"hashes": {"tiling/key_space.yaml": "b" * 64}},
         "quality.yaml": {"status": "pass"},
     }
-    for rel in REQUIRED_TESTCASE_CONTRACT_FILES:
-        files.setdefault(rel, {})
-    export = {"files": files, "context_slice": {"testcase_contract": files["contracts/testcase.yaml"]}}
-    final = {"status": "pass", "source_artifact_hashes": {"contracts/testcase.yaml": "b" * 64}}
+    for rel in REQUIRED_KB_EXPORT_FILES:
+        files.setdefault(rel, {"version": 1})
+    export = {"files": files, "context_slice": {"entities": [], "testcase_contract": None}}
+    final = {"status": "pass", "source_artifact_hashes": {"tiling/key_space.yaml": "b" * 64}}
     report = validate_intake(export, final)
     codes = [i.code for i in report.blocking_issues]
     assert "SOURCE_HASHES_MISSING" not in codes
+    assert "MISSING_TESTCASE_CONTRACT" not in codes
+
+
+def test_validate_intake_ignores_legacy_uo_contract() -> None:
+    files: dict = {
+        "contracts/testcase.yaml": {"version": 2, "source": {}, "interface": {}},
+        "checks/artifact_hashes.yaml": {"hashes": {"tiling/key_space.yaml": "c" * 64}},
+        "quality.yaml": {"status": "pass"},
+    }
+    for rel in REQUIRED_KB_EXPORT_FILES:
+        files.setdefault(rel, {"version": 1})
+    report = validate_intake(
+        {"files": files, "context_slice": {}},
+        {"status": "pass", "source_artifact_hashes": {"tiling/key_space.yaml": "c" * 64}},
+    )
+    warn_codes = [i.code for i in report.warnings]
+    assert "LEGACY_UO_CONTRACT_IGNORED" in warn_codes
+    assert report.status != "fail"

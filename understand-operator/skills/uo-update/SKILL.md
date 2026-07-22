@@ -1,124 +1,131 @@
 ﻿---
 name: uo-update
 description: >-
-  Incremental AscendC operator KB update: git diff vs last KB revision, selective
-  layered IR rebuild (syntax-first + bounded LLM), emit isomorphic KB plus
-  dedicated diff/ product for PR test generation.
+  增量刷新 AscendC 算子 KB：相对上次 revision 重建同构 KB，并写出专用 diff/ 供 PR 测消费。
 disable-model-invocation: true
 argument-hint: "[path] [--op-name <name>] [--base <rev>] [--head <rev>]"
 ---
 
-# uo-update — 新 KB + 专用 diff 产物
+# Skill: uo-update
 
-在已有 `.understand-operator/<op_name>/` 上增量刷新：
+## Purpose
 
-1. **新 KB**：与 `/uo-init` **同构**的完整知识库（当前 HEAD 快照）
-2. **专用 `diff/` 产物**：给后续 PR 测试例生成优先消费；不确定再回查 KB
+已有 KB + 代码变更 → **同构新 KB** + 可消费的 `diff/**`（PR 测优先读 diff）。
 
-本期**不实现** testcase-agent / Z3 / 真实用例生成。
+## Trigger
 
-## 进度 Todo（必须用中文，且只用下面这 7 条）
+- 适用：代码变更后刷新 KB；需要 `diff/**`
+- 不适用：首次建库（`/uo-init`）；只要口头摘要（`/uo-diff`）；缺陷/需求审查（`/uo-code-review`）
 
-```text
-1. 校验已有 KB 与 revision
-2. 计算 git diff → diff/change_set.yaml
-3. 生成 update_plan 并展示影响面
-4. 必要时 Phase0 复审 / CBM 重索引
-5. 按层重抽并写出新 KB
-6. 有界语义补全
-7. 写出专用 diff 产物并校验 KB
-```
+人读 Step 明细：`docs/uo-update-workflow.md`。  
+阶段合同：`prompts/update/workflow.md`。
 
-## Variables
+## Inputs
 
-- `SCRIPT_DIR`: `$PLUGIN_ROOT/uo/scripts`
-- `PLUGIN_ROOT` / `PROMPT_DIR`: 同 uo-init
-- `PROJECT_ROOT`: 算子仓库根
-- `OP_NAME` / `UO_ROOT`: `$PROJECT_ROOT/.understand-operator/$OP_NAME`
+| 权威 | 说明 |
+|---|---|
+| `$UO_ROOT/manifest.yaml` | 须存在且 `source.revision` ≠ `unknown` |
+| 曾 extract 的 IR | 至少跑过分层抽取 |
+| 可选 `--base` / `--head` | PR 对比修订 |
 
-Always pass `PLUGIN_ROOT`, `PROMPT_DIR`, `SCRIPT_DIR` in dispatch context.
-Read `$PROMPT_DIR/01b_update_orchestrator.md` and `$PROMPT_DIR/00_language.md`.
+辅助：`skills/uo-init/references/{phase0,extract,resolve}.md`、`prompts/init/dispatch.md`、`tpl_*.md`。
 
-## Preconditions
+## Outputs
 
-- `$UO_ROOT/manifest.yaml` 存在且 `source.revision` ≠ `unknown`
-- `$UO_ROOT/ir/operator_graph.yaml` 存在（曾跑过 extract）
+**正式：** 与 init 同构的新 KB + `diff/{index,change_set,impact,unresolved}.yaml`。  
+**中间：** `summary/update_plan.yaml`、`runs/<id>/update/receipt.yaml`。  
+**禁止：** 改写已批准 TG plan；写测试 CSV；静默吞 scope 外文件。
 
-否则停止并提示用户先跑 `/uo-init`。
+## Invariants
 
-## Pipeline
+- 新 KB 与 `/uo-init` 同构；下游优先读 `diff/`，不确定再回查 KB
+- `needs_phase0_review` 时必须人确认，禁自动 continue
+- 未定稿边禁止改派 `/uo-query`（除非 integrity 已过）
+- 幂等：同 base/head 重跑应语义等价覆盖未锁定产物
 
-### 1–3 Detect + plan
+## Tool Policy
 
-```powershell
-python -X utf8 "$SCRIPT_DIR/detect_kb_changes.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
-python -X utf8 "$SCRIPT_DIR/plan_kb_update.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
-```
+### MUST use
 
-向用户展示 `summary/update_plan.yaml` 的 `mode` / `affected_layers` / `needs_phase0_review`。
+- `detect_kb_changes.py` → `plan_kb_update.py` →（条件）Phase0 确认 → `update_operator.py`
+- 门禁：`classify` → `check_final_confidence` → `check_kb_integrity` → `export_diff_product`
 
-### 4 Phase0 gate
+### MAY use
 
-若 `needs_phase0_review`（scope 外疑似算子源码，或 spec hash 变化）：
+- 分步 `build_layered_kb.py --layers …`
+- 新增不确定项：`uo-semantic-resolve` 任务 A/B/C/E（同 init）
 
-- **停止**，用 AskQuestion / review 菜单：`continue` | `revise` | `stop`
-- 仅 `continue` 后可带 `--confirm-phase0` 继续；必要时先重跑 scope 确认与 CBM 窄索引（同 uo-init Phase0 后半段）
+### MUST NOT
 
-scope 不变则不要打断。
+- 无 manifest / unknown revision 时继续
+- 跳过 Phase0 门禁；静默扩大 scope
+- 占用本 skill 做代码审查
 
-### 5–7 Rebuild + diff product + validate
+## Workflow
 
-优先一键编排：
+变量：`SCRIPT_DIR=$PLUGIN_ROOT/uo/scripts`；`UO_ROOT=$PROJECT_ROOT/.understand-operator/$OP_NAME`。
 
-```powershell
-python -X utf8 "$SCRIPT_DIR/update_operator.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
-```
+### Phase 1: 校验已有 KB
 
-可选：`--base` / `--head`（PR）、`--confirm-phase0`、`--architecture arch35`。
+- **Entry：** 用户触发 `/uo-update`
+- **Exit：** manifest 合法且曾 extract
+- **Failure：** `NO_EXISTING_KB` / `UNKNOWN_REVISION` → **STOP**，提示 `/uo-init`
 
-或分步：
+### Phase 2: 检测变更
 
-```powershell
-python -X utf8 "$SCRIPT_DIR/build_layered_kb.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --layers "<from update_plan>"
-# 若有新增 unresolved entrypoint / residual →
-#   dispatch uo-semantic-resolve（用 prompts/00_subagent_dispatch.md 强制模板，抽样 ≤12）
-#   → apply_resolution.py --check → apply_resolution.py
-python -X utf8 "$SCRIPT_DIR/export_diff_product.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
-```
+- **Actions：** `detect_kb_changes.py`
+- **Artifacts：** `diff/change_set.yaml`
+- **Exit：** change_set 已写
 
-最终校验用 `validate_kb(..., phase="final", write_outputs=True)`。
+### Phase 3: 生成并展示 update_plan
 
-## 产物
+- **Actions：** `plan_kb_update.py`；向用户展示 `mode` / `affected_layers` / `needs_phase0_review`
+- **Artifacts：** `summary/update_plan.yaml`
+- **Exit：** plan 已展示
 
-### KB（同构）
+### Phase 4: 条件 Phase0 复审
 
-`manifest.yaml`、`ir/**`、`contracts/testcase.yaml`（lean：hashes 在 `checks/artifact_hashes.yaml`）、`tiling/`、`kernel/`、`cross_layer/`、`checks/`、`summary/human_overview.md` 等与 init 一致（默认 lean）。
+- **Entry：** `needs_phase0_review=true`
+- **Actions：** AskQuestion `continue|revise|stop`；扩 scope 同 init Phase0；重建带 `--confirm-phase0`
+- **Exit：** 用户 continue 且 scope/索引就绪；或本 phase 跳过（无需复审）
+- **Failure：** `stop` → **STOP**
 
-### 专用 diff（PR 主入口）
+### Phase 5: 按层重建 KB
 
-```text
-diff/index.yaml
-diff/change_set.yaml
-diff/impact.yaml
-diff/unresolved.yaml
-```
+- **Actions：** `update_operator.py`（或分步 rebuild）；入口/plan 变更复用 init Extract
+- **Exit：** 同构新 KB 写出
 
-PR 测试生成：**先读 `diff/`**；`confidence=low` / `layer_only` / `unresolved` → 按 `kb_refs` / `kb_lookup` 回查 KB。
+### Phase 6: 有界语义补全（按需）
 
-成功更新后脚本会导出 `indexes/kb_graph.sqlite` 与 `summary/human_overview.md`。
-Bug 审查复用已有 CBM 索引（`/uo-init` Phase0），**不**需要 code-review-graph。
+- **Actions：** 仅新增不确定项派任务 A/B/C/E → 对应回流脚本
+- **Exit：** 开放语义项已处理或记入 reported
 
-旧库仅补导 overview（不删文件）：
+### Phase 7: 门禁 + diff 产物
 
-```powershell
-python -X utf8 "$SCRIPT_DIR/export_human_views.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
-```
+- **Actions：** classify → confidence → integrity → `export_diff_product`
+- **Artifacts：** `diff/**`、receipt
+- **Exit：** integrity pass；diff index 可读
+- **Failure：** `VALIDATION_FAILURE`
 
-内部编排（非 PR 主入口）：`summary/update_plan.yaml`、`runs/<id>/update/receipt.yaml`。
+## Semantic Escalation
 
-## Integrity
+与 init 相同划分：脚本做 diff/plan/rebuild/门禁；LLM 仅 A/B/C/E。  
+未定稿禁止 `/uo-query`。
 
-- 语法解析为主；仅入口/残留用 `uo-semantic-resolve`（只写 `ir/entrypoint_confirm.yaml` / `ir/resolution_patch.yaml`）
-- 不得静默吞入 scope 外源文件
-- 用户可见语言默认中文
-- 代码审查请用 `/uo-code-review`（不要占用本 skill）
+## Failure Taxonomy
+
+`NO_EXISTING_KB` · `UNKNOWN_REVISION` · `PHASE0_STOPPED` · `TOOL_FAILURE` ·
+`UNRESOLVED_SEMANTICS` · `CONFIDENCE_REPORTED` · `VALIDATION_FAILURE`
+
+## Quality Gate
+
+- [ ] update_plan 已展示；scope 外文件未静默吞入
+- [ ] 需要时 Phase0 有确认记录
+- [ ] integrity pass；`diff/index.yaml` 存在
+- [ ] sqlite / overview 已刷新
+
+## Stop Conditions
+
+- 无合法 KB / revision → **STOP**
+- Phase0 `stop` → **STOP**
+- integrity fail → **STOP**（展示 checks，禁止猜闭合）

@@ -1,114 +1,73 @@
 ---
 name: tg-csv-contract
 type: subagent
-description: Bounded agent that fills binding_lexicon from inventory/unresolved evidence (LLM path; no hardcoded op tables in TG).
+description: >-
+  Bounded LLM bind after thin tg-init contract scaffolds. Fill lexicon gaps from
+  inventory evidence only; no hardcoded op tables; no Z3/CSV.
 ---
 
-You are a bounded subagent for `testcase-agent`.
+# Agent: tg-csv-contract
 
-Run **after** deterministic `tg-contract` has written:
+## Task
 
-- `realization/binding_inventory.yaml` + `llm_bind_prompt_bundle.yaml`
-- `realization/consumer_evidence.yaml`
-- `realization/realization_map.yaml` (bootstrap + `alignment_report`)
-- `realization/binding_lexicon.yaml` (weak / unlocked)
-- `realization/unresolved.yaml` (`binding_gaps`, `needs_binding_keys`)
-- `realization/domain_review.yaml`
+在 **thin contract 脚手架已存在** 后，于 inventory/unresolved 证据内补全
+`binding_lexicon` 与 domain 提案，达到可交 uo-query / merge 的状态。
 
-Also use `agents/tg-domain-review.md` for full domain pass when thin domains / pending review remain.
+成功：gaps 有证据绑定或显式 unresolved；**未**生成 CSV / 未调用 Z3。
 
-## Why this agent exists
+## Target
 
-TG **must not** embed operator-specific AST tables. Deterministic contract only
-**discovers** columns and lists gaps. You bind KEY↔CSV and propose domains from
-evidence, then **AskQuestion** before locking.
+仅处理父代理列出的 `binding_gaps` / `needs_binding_keys` / `unbound_atoms` 子集。  
+禁止顺便扫全库或改 AST/插件 Python。
 
-## Scope (strict)
+## Context
 
-Do **not** rewrite the condition parser / AST / simplify pipeline / plugin Python.
+`OUT_ROOT=.testcase-generator/<op>/realization/`  
+前置：`binding_inventory.yaml`、`llm_bind_prompt_bundle.yaml`、`consumer_evidence.yaml`、
+弱 `realization_map` / `binding_lexicon`、`unresolved.yaml`、`domain_review.yaml`。
 
-### Source evidence (CBM-first)
+语义主路径仍走 uo-query（见 `prompts/init/dispatch.md`）；本 agent 不替代之。
 
-```text
-1. inventory / unresolved / llm_bind_prompt_bundle (+ cbm_query_hints)
-2. Operator semantics → human_overview / uo_kb_query / CBM search_graph|get_code_snippet
-3. Scripts → small-window Read only
-禁止整读 testcase.yaml / operator_graph / exhaustive / 算子仓全文
-禁止确认 '_' 为合法单元格；*_layout 与 *_shape 同语义时只绑 shape
-```
+## Authoritative Sources
 
-Read only:
+- inventory / unresolved / prompt bundle（+ cbm_query_hints）
+- UO 图查询结果与 CBM snippet（经 uo-query 或受控 MCP）
+- 脚本小窗 Read（bundle 引用行）
 
-- Inventory / unresolved / prompt bundle
-- Evidence, alignment_report, unbound_atoms
-- Snapshot slices via graph/CBM, not full dumps
-- Script / interface-doc slices referenced by the bundle
+**Non-authoritative：** 记忆、命名直觉、裸 Grep 全仓、其他算子硬编码表。
 
-Write only:
+## Required Procedure
 
-- `realization/binding_lexicon.yaml` (**primary**)
-- `realization/domain_hints.yaml` / `domain_review.yaml`
-- `realization/consumer_schema.yaml` (version must match CONSUMER_SCHEMA_VERSION)
-- `realization/realization_map.yaml` (**version 2** — apply lexicon + atom_bindings)
-- `realization/unresolved.yaml`
-- `realization/agent_report.yaml`
-- Optional: UO `supplements/human_facts.yaml` after human confirm
+1. 分类 gap（KEY / atom / domain）
+2. 查证 inventory + 受控源码证据
+3. 写 lexicon expr（叶子 → `VAR_CSV_*`）；记 `source_refs` + rationale
+4. 证据不足 → 保留 unresolved；禁止猜列名
+5. AskQuestion **仅**用于域/lexicon **锁定**（`confirm`/`revise`/`stop`）——**禁止**问「是否继续下一轮绑定」；WHILE 环由父代理自动驱动
+Atom schema：`$PLUGIN_ROOT/agents/references/csv-contract-schema.md`。
 
-## Primary deliverable: `binding_lexicon.yaml`
+## Hard Constraints
 
-```yaml
-version: 1
-source: llm
-key_tokens:
-  IS_FOO: {var: VAR_KEY_FOO, true_value: 1}
-csv_field_aliases:
-  this.constinfo.bar: {column: bar, value: 1}
-arith_constants:
-  NUM_TWO: 2
-key_derivations:
-  - id: VAR_KEY_FOO
-    type: int
-    domain: [0, 1]
-    expr:
-      op: if_then_else
-      condition: {op: eq, var: VAR_CSV_SomeColumn, value: "X"}
-      then: 1
-      else: 0
-    rationale: ...
-    confidence: high|medium
-    locked: false   # true only after AskQuestion confirm
-    status: proposed # confirmed after human
-    source_refs: [{path: ..., line: ...}]
-warnings: []
-```
+### MUST
 
-Rules:
+- KEY 由 CSV **派生**（非 free）；每条绑定有 `source_refs`
+- `LOOP_LOCAL` / `PLATFORM_MACRO`：永不绑定
+- `status: proposed` 允许 `confidence: medium`；进 merge / resolved 候选 **仅** `high`
 
-- Every token / alias / derivation needs `source_refs` + `rationale` (+ `confidence`).
-- Prefer UO `set_by` / existing `csv_determinants` when columns exist; if missing → propose equivalent column from inventory (do not invent names).
-- `MISSING_CSV_REF` / `UNBOUND_KEY` gaps are your main work queue.
-- KEY targets stay **derived** from CSV (never free).
-- `LOOP_LOCAL` / `PLATFORM_MACRO`: never bind.
+### MUST NOT
 
-## Secondary: atom_bindings patches
+- 硬编码第二算子名进 TG；发明 inventory 无证据的 CSV 列
+- 改 condition parser / AST / 插件逻辑；生成 CSV；调用 Z3
+- 确认 `_` 为合法单元格；`*_layout` 与 `*_shape` 同语义时只绑 shape
+- 把 AskQuestion 当成绑定 WHILE 的「继续？」闸门
 
-For each `abstract_branches[]` with `unbound_atoms`, when `llm_resolvability[code].llm_plus_source` is `likely` or `partial`, bind with evidence. When all atoms of a branch are `bound`, move into `branch_mappings`.
+### ONLY 可写
 
-| llm_plus_source | 原因码 | 动作 |
-|-----------------|--------|------|
-| likely | UNBOUND_ATOM / UNBOUND_CMP / UNBOUND_DTYPE / UNBOUND_CALL / SUBSTITUTE_FAIL | 查源码补 lexicon + atom_bindings |
-| partial | PARSE_FAIL / UNBOUND_TEMPLATE / UNBOUND_KVAR / BRANCH_SIDE_NOT_IN_IMAGE | 有证据才补 |
-| unlikely | NO_HOST_PRODUCER | 通常不补 |
-| impossible | LOOP_LOCAL / PLATFORM_MACRO | **禁止绑定** |
+`binding_lexicon.yaml`、`domain_hints.yaml` / `domain_review.yaml`、
+`consumer_schema.yaml`、`realization_map.yaml`（v2）、`unresolved.yaml`、
+`agent_report.yaml`；可选 UO `supplements/human_facts.yaml`（人确认后）
 
-## AskQuestion (required)
+## Output Schema + Acceptance + Failure Handling
 
-`confirm` / `revise` / `stop`. Confirm → `locked: true` + domain_review confirmed. Then plan/solve may proceed.
-
-## Hard prohibitions
-
-- Do not hardcode a second operator’s names into TG Python.
-- Do not invent CSV columns without inventory/script evidence.
-- Do not bind loop-local / platform macros as free solver vars.
-- Do not generate CSV rows or call Z3.
-- Do not add new AST heuristic rules to close gaps — fix via lexicon/domain patches only.
+见 `$PLUGIN_ROOT/agents/references/csv-contract-schema.md`。  
+Acceptance：无发明列；impossible 类未绑；confirm 路径清晰。  
+Failure：证据不足 → unresolved + 原因码；禁止伪 resolved。

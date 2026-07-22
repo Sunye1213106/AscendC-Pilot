@@ -133,7 +133,7 @@ def test_approve_blocked_when_allow_solve_no(tmp_path: Path) -> None:
         "contract_gaps": [
             {
                 "field": "realization/domain_review.yaml",
-                "reason": "DOMAIN_REVIEW_REQUIRED: 2 columns unreviewed (e.g. Drop_Out). Run tg-domain-review.",
+                "reason": "DOMAIN_REVIEW_REQUIRED: 2 columns unreviewed (e.g. Drop_Out). Continue /tg-init binding/domain phase.",
             }
         ],
     }

@@ -145,7 +145,10 @@ def init_main(argv: list[str] | None = None) -> int:
 
 def contract_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Build CSV consumer evidence + realization map from test script root (before tg-plan)"
+        description=(
+            "COMPAT CLI only: thin CSV contract. Prefer /tg-init (embeds contract + binding). "
+            "Not a user-facing skill."
+        )
     )
     parser.add_argument("project_root", type=Path, nargs="?", default=None, help="Operator package or KB path")
     parser.add_argument("--op-name", default="", help="Optional if uniquely inferable")
@@ -209,7 +212,7 @@ def contract_main(argv: list[str] | None = None) -> int:
                 "csv_variables": len((result.get("realization_map") or {}).get("csv_variables") or []),
                 "mapped_branches": len((result.get("realization_map") or {}).get("branch_mappings") or []),
                 "abstract_branches": len((result.get("realization_map") or {}).get("abstract_branches") or []),
-                "next": "tg-plan <算子仓> --op-name <op> --contract-root <realization> 或再带 --test-script-root",
+                "next": "继续 /tg-init 绑定环（uo-query → --merge-uo-resolve → audit → --confirm），再 tg-plan",
             },
             ensure_ascii=False,
             indent=2,
@@ -221,8 +224,9 @@ def contract_main(argv: list[str] | None = None) -> int:
 def plan_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Build L0 / L1-branch / L1-reject / L2 coverage plans. "
-            "Requires tg-init confirmed (binding done). --level L1 expands to both L1 suites."
+            "Build L0 / L1 / L2 coverage plans. Requires tg-init confirmed. "
+            "Default --level L0,L1; L2 optional. "
+            "Empty --focus = all input-reachable; --focus selects KEY/VAR/branch (LLM from human input)."
         )
     )
     parser.add_argument(
@@ -235,11 +239,19 @@ def plan_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--op-name", default="", help="Optional if uniquely inferable from KB / .understand-operator/")
     parser.add_argument(
         "--level",
-        default="L1",
-        help="Level(s): L0,L1-branch,L1-reject,L2 (L1→both branch+reject; all→all four). Legacy L3 needs --topic.",
+        default="L0,L1",
+        help="Level(s): L0,L1,L2 (default L0,L1; all→L0,L1,L2). L1=affected kernel branches; L2=all tiling keys.",
     )
-    parser.add_argument("--focus", default="")
-    parser.add_argument("--topic", default="", help="Optional topic filter for L1 suites / L2 (and required for legacy L3)")
+    parser.add_argument(
+        "--focus",
+        default="",
+        help="Human/LLM scope: KEY_/VAR_/KBR_ ids to cover. Empty = all input-reachable obligations.",
+    )
+    parser.add_argument(
+        "--topic",
+        default="",
+        help="Topic filter (optional; may stack with --focus). Empty without focus = whole input-reachable surface.",
+    )
     parser.add_argument("--reuse-snapshot", action="store_true", help="Skip intake when snapshot hash still matches")
     parser.add_argument(
         "--csv-consumer-root",
@@ -280,9 +292,6 @@ def plan_main(argv: list[str] | None = None) -> int:
     if not levels:
         print(json.dumps({"status": "fail", "message": "No valid levels requested"}, ensure_ascii=False, indent=2), file=sys.stderr)
         return 1
-    if "L3" in levels and not str(args.topic or args.focus).strip():
-        print(json.dumps({"status": "fail", "message": "L3 requires --topic"}, ensure_ascii=False, indent=2), file=sys.stderr)
-        return 1
 
     try:
         paths = resolve_plan_paths(
@@ -320,7 +329,9 @@ def plan_main(argv: list[str] | None = None) -> int:
             "examples": [
                 'tg-init "<算子仓>" --op-name <op> --test-script-root "<测试工具>"',
                 'tg-init "<算子仓>" --op-name <op> --confirm',
-                'tg-plan "<算子仓>" --op-name <op> --level L0,L1,L2',
+                'tg-plan "<算子仓>" --op-name <op>                  # 默认 L0,L1 整仓',
+                'tg-plan "<算子仓>" --op-name <op> --level L0,L1,L2  # 可选 L2',
+                'tg-plan "<算子仓>" --op-name <op> --topic determinism',
             ],
         }
         if "PLAN_INPUTS_REQUIRED" in msg or "OPERATOR_ROOT_REQUIRED" in msg:
@@ -366,7 +377,8 @@ def plan_main(argv: list[str] | None = None) -> int:
                     **common,
                     "status": "ready_for_manual_review",
                     "levels": [_plan_summary(item) for item in results],
-                    "next": "Approve each requested level, then run tg-solve --level <L0|L1-BRANCH|L1-REJECT|L2>",
+                    "topic": args.topic or "",
+                    "next": "Approve each requested level, then run tg-solve --level <L0|L1|L2>",
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -379,6 +391,7 @@ def plan_main(argv: list[str] | None = None) -> int:
             {
                 **_plan_summary(result),
                 **common,
+                "topic": args.topic or result.get("topic") or "",
                 "csv_consumer_root": result.get("csv_consumer_root") or common["test_tool_root"],
                 "realization_root": result.get("realization_root") or "",
                 "next": "AskQuestion approve|reject|suggest; approve only when Allow solve:yes then tg-solve",
@@ -395,7 +408,7 @@ def solve_main(argv: list[str] | None = None) -> int:
     parser.add_argument("project_root", type=Path)
     parser.add_argument("--op-name", required=True)
     parser.add_argument("--timeout-ms", type=int, default=5000)
-    parser.add_argument("--level", default="", help="Level or comma-separated: L0,L1-BRANCH,L1-REJECT,L2 (L1→both)")
+    parser.add_argument("--level", default="", help="Level or comma-separated: L0,L1,L2 (default: all approved levels via empty)")
     parser.add_argument("--case-name", default="", help="CSV base name.")
     parser.add_argument("--dry-run", action="store_true", help="Solve abstract candidates only; do not write CSV")
     parser.add_argument("--quiet", action="store_true", help="Suppress progress events on stderr")
@@ -405,7 +418,7 @@ def solve_main(argv: list[str] | None = None) -> int:
         "--csv-consumer-root",
         type=Path,
         default=None,
-        help="CSV consumer / test script root (optional if tg-contract already wrote realization/)",
+        help="CSV consumer / test script root (optional if tg-init already wrote realization/)",
     )
     parser.add_argument("--reuse-realization-map", action="store_true", help="Reuse existing realization/realization_map.yaml")
     parser.add_argument(
@@ -440,6 +453,8 @@ def solve_main(argv: list[str] | None = None) -> int:
 
     results: list[dict[str, Any]] = []
     try:
+        require_kb(args.project_root, args.op_name)
+        require_init_confirmed(args.project_root, args.op_name)
         for level in levels:
             case_name = args.case_name
             if len(levels) > 1 and level:
@@ -461,6 +476,16 @@ def solve_main(argv: list[str] | None = None) -> int:
                     dedupe=bool(args.dedupe),
                 )
             )
+    except InitGateError as exc:
+        print(
+            json.dumps(
+                {"status": "fail", "ask": exc.ask, "message": str(exc), **exc.payload},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            file=sys.stderr,
+        )
+        return 1
     except TgSolveError as exc:
         print(json.dumps({"status": "fail", "message": str(exc)}, ensure_ascii=False, indent=2), file=sys.stderr)
         return 1
@@ -483,30 +508,32 @@ def solve_main(argv: list[str] | None = None) -> int:
 
 
 def _parse_levels(raw: str) -> list[str]:
-    """Parse --level. L1 expands to L1-BRANCH + L1-REJECT. Canonical names are uppercase."""
-    allowed = {"L0", "L1", "L1-BRANCH", "L1-REJECT", "L2", "L3"}
-    if str(raw or "").strip().lower() == "all":
-        return ["L0", "L1-BRANCH", "L1-REJECT", "L2"]
+    """Parse --level into canonical L0/L1/L2. Default empty → L0,L1. No L3 / L1-REJECT expansion."""
+    allowed = {"L0", "L1", "L2"}
+    text = str(raw or "").strip()
+    if not text:
+        return ["L0", "L1"]
+    if text.lower() == "all":
+        return ["L0", "L1", "L2"]
     levels: list[str] = []
-    for part in str(raw or "").replace(";", ",").split(","):
+    for part in text.replace(";", ",").split(","):
         token = part.strip().upper().replace("_", "-")
         if not token:
             continue
-        # Accept L1BRANCH / L1REJECT spellings
+        # Compat aliases → L1 (affected kernel branches)
         if token in {"L1BRANCH", "L1-BRANCH"}:
-            token = "L1-BRANCH"
-        elif token in {"L1REJECT", "L1-REJECT"}:
-            token = "L1-REJECT"
+            token = "L1"
+        if token in {"L1REJECT", "L1-REJECT", "L3"}:
+            raise ValueError(
+                f"Unsupported --level {part!r}. Use L0,L1,L2 "
+                "(default L0,L1; L2 optional). Scope via --topic (omit = whole operator). "
+                "L3 / L1-REJECT were removed."
+            )
         if token not in allowed:
             raise ValueError(
-                f"Invalid --level {part!r}. Allowed: L0,L1,L1-branch,L1-reject,L2,L3,all "
-                "(L1 expands to L1-branch + L1-reject)"
+                f"Invalid --level {part!r}. Allowed: L0,L1,L2,all "
+                "(default L0,L1; L0=功能冒烟, L1=受影响 kernel branch, L2=全部 TilingKey)"
             )
-        if token == "L1":
-            for expanded in ("L1-BRANCH", "L1-REJECT"):
-                if expanded not in levels:
-                    levels.append(expanded)
-            continue
         if token not in levels:
             levels.append(token)
     return levels

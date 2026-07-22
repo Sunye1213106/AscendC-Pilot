@@ -19,9 +19,15 @@ def _op_tree(tmp_path: Path) -> tuple[Path, Path]:
     return repo, kb
 
 
-def test_parse_levels_l1_expands() -> None:
-    assert _parse_levels("L1") == ["L1-BRANCH", "L1-REJECT"]
-    assert "L1-BRANCH" in _parse_levels("all")
+def test_parse_levels_default_l0_l1() -> None:
+    assert _parse_levels("L1") == ["L1"]
+    assert _parse_levels("") == ["L0", "L1"]
+    assert _parse_levels("all") == ["L0", "L1", "L2"]
+    assert _parse_levels("L0,L1-branch") == ["L0", "L1"]
+    with pytest.raises(ValueError, match="L3"):
+        _parse_levels("L3")
+    with pytest.raises(ValueError, match="L1-REJECT"):
+        _parse_levels("L1-REJECT")
 
 
 def test_init_main_uo_init_required(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -46,18 +52,20 @@ def test_plan_main_init_required(tmp_path: Path, capsys: pytest.CaptureFixture[s
     assert "init_required" in err
 
 
-def test_l1_reject_level_tags() -> None:
+def test_l1_tags_kernel_branches() -> None:
     files = {
         "contracts/testcase.yaml": {"version": 1, "variables": [], "coverage_obligations": {}},
         "tiling/coverage_model.yaml": {},
-        "kernel/branches.yaml": {"branches": []},
-        "tiling/constraints.yaml": {
-            "key_unreachable": [
-                {"id": "BAD", "matches": {"KEY_X": 1}, "reject_stage": "host_validation"},
+        "kernel/branches.yaml": {
+            "branches": [
+                {"id": "BR_A", "condition": "x", "then": "a", "else": "b"},
             ]
         },
+        "tiling/constraints.yaml": {},
         "cross_layer/impact_graph.yaml": {},
     }
-    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L1-REJECT")
-    assert plan["test_level"] == "L1-REJECT"
-    assert all(item.get("test_level") == "L1-REJECT" for item in plan["obligations"])
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L1")
+    assert plan["test_level"] == "L1"
+    assert all(item.get("test_level") == "L1" for item in plan["obligations"])
+    with pytest.raises(Exception, match="L1-REJECT|Unsupported"):
+        build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L1-REJECT")

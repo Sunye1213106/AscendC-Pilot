@@ -1,318 +1,146 @@
 ---
 name: uo-init
 description: >-
-  End-to-end AscendC operator layered KB build for a target repo.
-  Use when the user runs /uo-init, uo_init, or asks to build
-  an operator KB. Pipeline: Phase0 (human scope review) -> entrypoint confirm ->
-  directed trace -> bounded LLM resolve -> contract export.
+  端到端构建 AscendC 算子分层 KB。/uo-init 或要求建库时用。
+  Phase0 人工确认 → 入口/plan（脚本+有界 LLM）→ 分层抽取 → resolve → 门禁 → 导出。
 disable-model-invocation: true
 argument-hint: "[path] [--op-name <name>] [--full]"
 ---
 
-# uo-init - Layered Operator KB Build
+# Skill: uo-init
 
-Build an evidence-backed operator KB under:
+## Purpose
 
-```text
-.understand-operator/<op_name>/
-```
+空仓库 / 未建库 → **定稿** `$PROJECT_ROOT/.understand-operator/$OP_NAME/`（integrity + kb-review 通过）。
 
-## 进度 Todo（必须用中文，且只用下面这 7 条）
+## Trigger
 
-开跑时立刻创建 Todo，**标题只用中文业务语**，不要反复写 `Phase 0`，不要堆脚本名当标题。
-脚本名可写在补充说明里，但 Todo 正文保持简短：
+- 适用：`/uo-init`、明确要求「建库 / 初始化 KB」
+- 不适用：已有 fresh KB 的问答（`/uo-query`）、增量（`/uo-update`）、代码审查（`/uo-code-review`）
 
-```text
-1. 创建知识库目录
-2. 扫描并提案分析范围（含向上发现 common）
-3. 等待确认分析范围（硬门禁）
-4. 窄索引代码图并完成范围收尾
-5. 抽取 Host/Kernel/桥接（含入口确认 + extract_plan）
-6. 有界语义补全（残留 unresolved）+ 入账 + 导出 + integrity
-7. KB 产物审查（uo-kb-review）
-```
+## Inputs
 
-含义对照（给执行者，不要写进 Todo 标题）：
-
-| Todo | 主要动作 |
+| 权威 | 说明 |
 |---|---|
-| 1 创建知识库目录 | `prepare_operator.py` |
-| 2 扫描并提案分析范围 | `macro_scope_scan.py` |
-| 3 等待确认分析范围 | AskQuestion + `review_checkpoint.py`（收窄用 `--replace-initial`） |
-| 4 窄索引代码图并完成范围收尾 | `stage_cbm_scope.py` → MCP 索引 `index_stage` → `--write-index-meta` → `finalize_phase0.py` |
-| 5 抽取 Host/Kernel/桥接（含入口确认） | `resolve_entrypoints` → `propose_extract_plan` → LLM extract_plan → `build_layered_kb` |
-| 6 残留补全 + 入账 + 导出 | `uo-semantic-resolve` → `apply_resolution.py`（默认传播）→ ledger → `kb_query_export` + `export_kb_graph` + `check_kb_integrity`（脚本内刷新 overview） |
-| 7 KB 产物审查 | 派发 `uo-kb-review`；`verdict=pass` 后**再** `export_human_views.py` 写入 kb_review；fail 按 `rework_stage` 回环（最多 2 次） |
+| `PROJECT_ROOT` | 算子包根（含 `op_host`/`op_kernel`；禁改到多算子父仓） |
+| `OP_NAME` | 算子名 |
+| 用户 Phase0 确认 | `continue \| revise \| stop \| manual_supplement` |
 
-Do **not** run Phase1 global BFS/sink pruning, Phase2/3 fact agents, or old
-fact-review / graph-review receipt gates (`uo-boundary-agent`,
-`uo-host-extraction`, `evaluate_review_trigger`, etc.).
+辅助只读：`spec/ownership.yaml`、`prompts/common/*`、`prompts/init/*`。  
+人读长叙事：`docs/uo-init-workflow.md`（Step 明细）。  
+命令块权威：`prompts/init/workflow.md`。
 
-**硬门禁：第 3 步「等待确认分析范围」不可跳过、不可自动 continue。**
+## Outputs
 
-若 scan 发现 sibling/parent `common/`：**确认范围必须保留 include 裁剪后的非空 `common/` 子集**。
-`review_checkpoint continue` 与 `stage_cbm_scope` 在 confirmed 无 `common/` 路径时失败（`COMMON_SCOPE_REQUIRED`）。
-include 裁剪只用完整/后缀路径匹配，**不用唯一 basename**（避免同名头文件串库）。
+**正式：** `manifest.yaml`、`ir/**`、`tiling/**`、`kernel/**`、`indexes/kb_graph.sqlite`、
+`checks/{integrity,confidence_gate,final}.yaml`、`summary/human_overview.md`、
+可选 `summary/confidence_report.md`、`review/kb_product_review.yaml`。
 
-LLM 取源码：优先 CBM `search_graph` / `get_code_snippet`；禁止整读 `operator_graph` / `testcase` 全文 / `exhaustive`。
+**中间：** `runs/<id>/phase0/**`、`ir/*_patch.yaml`、`ir/input_derivable_gaps.yaml`、
+`ir/entrypoint_candidates.yaml`、`ir/extract_plan_candidates.yaml`。
 
-## Variables
+**禁止生成：** `contracts/**`（测项合同只在 TG）、伪造 high 闭合、完整 `host_derivation_chain` dump、父仓级 CBM 索引。
 
-- `SCRIPT_DIR`: `$PLUGIN_ROOT/uo/scripts` (only canonical location).
-- `PLUGIN_ROOT`: plugin repository root (also linked as
-  `~/.config/opencode/understand-operator-plugin` after install).
-- `PROMPT_DIR`: `$PLUGIN_ROOT/prompts`.
-- `PROJECT_ROOT`: **operator package directory** (e.g. `.../flash_attention_score_grad`).
-  KB always lives at `$PROJECT_ROOT/.understand-operator/$OP_NAME`.
-  **Never** move `$PROJECT_ROOT` to the parent workspace even when `common/` is found
-  (parent often contains many other operators).
-- `OP_NAME`: `--op-name`, otherwise repository-derived name.
-- `UO_ROOT`: `$PROJECT_ROOT/.understand-operator/$OP_NAME`.
-- Architecture default: `arch35` (v1 scope).
+## Invariants
 
-Never search the whole disk for scripts.
+- sibling `common/` 存在 → confirmed 必须含裁剪后非空 `common/`
+- MCP 仅索引 `$UO_ROOT/cbm/index_stage`；`indexed_via: mcp`
+- 建库期子代理 **仅** `uo-semantic-resolve`、`uo-kb-review`；**禁** `/uo-query`
+- 闭合 KEY 必须 `confidence: high`；否则继续任务 E 或写满 `confidence_report.md`
+- 抽取机制：CBM + **花括号定界函数体 + 定向正则**（非完整 C++ AST）
+- 幂等：同 scope 重跑可覆盖未人工锁定产物；禁静默改用户已确认 scope
+- 语言：`prompts/common/language.md`
 
-## Phase 0 (scope discovery + human review hard gate)
+## Tool Policy
 
-Read before acting:
+### MUST use
 
-- `$PROMPT_DIR/01a_macro_scope_human_review.md`
-- `$PROMPT_DIR/00_review_menu.md`
+- Phase0：`prepare_operator` → `macro_scope_scan` → AskQuestion → `review_checkpoint`
+- 确认后：`stage_cbm_scope` → MCP `index_repository` → `--write-index-meta` → `finalize_phase0`
+- Extract：脚本入口 →（低置信）LLM 任务 A → 脚本扩 plan → LLM 任务 C → `build_layered_kb`
+- Gaps open / confidence≠high → 任务 E → `classify_input_derivable` → `check_final_confidence`
+- 源码证据：`prompts/common/cbm.md`
 
-### Steps
+### MAY use
 
-1. Resolve `PROJECT_ROOT`, `OP_NAME`, `SCRIPT_DIR`.
-2. `prepare_operator.py` create KB layout (creates `current_run_id`).
-3. Run scope proposal:
+- `revise` / `manual_supplement` 后重扫 scope
+- kb-review fail 后按 `rework_stage` 局部返工（≤2）
 
-```powershell
-python -X utf8 "$SCRIPT_DIR/macro_scope_scan.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --architecture arch35
-```
+### MUST NOT
 
-   AscendC note: the scanner may **walk upward** for a sibling/parent `common/`
-   library and record `workspace_root` plus include-pruned `common/...` paths.
-   **`$PROJECT_ROOT` and the KB stay on the operator subdirectory.** Do **not**
-   re-point `$PROJECT_ROOT` to the parent workspace. Stage + MCP index only
-   `$UO_ROOT/cbm/index_stage` (operator files + common subset in one tree).
+- 自动 `continue` Phase0；建库期派 `/uo-query`；整盘搜脚本
+- 写 `contracts/**`；dump `operator_graph` / 完整 `exhaustive`；本地 CBM CLI
+- 低置信伪标 `true`/`high`；跳过 `--write` / `--confirm-patch` 空跑 LLM
 
-4. Read `runs/<current_run_id>/phase0/scope_proposal.yaml` (and `scope_scan.yaml`).
-5. **HARD STOP — human review.** Present the proposal to the user (candidate
-   files by category, directories, excludes, warnings). Use the runtime
-   AskQuestion / question UI with these exact choices:
+## Workflow
 
-   - `continue`
-   - `revise`
-   - `stop`
-   - `manual_supplement`
+变量：`SCRIPT_DIR=$PLUGIN_ROOT/uo/scripts`；`UO_ROOT=$PROJECT_ROOT/.understand-operator/$OP_NAME`。  
+派发：`prompts/init/dispatch.md` · Todo：`prompts/init/progress.md`。
 
-   Do **not** call CBM `index_repository`, do **not** read source at scale, and
-   do **not** start Extract until the user decides.
+### Phase 0: 范围确认 + 窄索引
 
-6. After the user chooses, record the decision:
+- **Entry：** 用户触发 `/uo-init`
+- **Actions：** 见 `references/phase0.md`；命令块见 `prompts/init/workflow.md`
+- **Artifacts：** `scope_confirmed.yaml`、`cbm/index_meta.json`
+- **Exit：** `scope_confirmed` 存在且 `indexed_via: mcp`
+- **Failure：** 用户 `stop` → `PHASE0_STOPPED`；缺脚本 → `INVALID_INPUT`
 
-```powershell
-python -X utf8 "$SCRIPT_DIR/review_checkpoint.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --gate macro_scope --decision <continue|revise|stop|manual_supplement>
-```
+### Phase 1: Extract
 
-   - `continue` → writes `scope_review.yaml` + `scope_confirmed.yaml`; proceed.
-   - `revise` / `manual_supplement` → adjust includes/excludes (via
-     `review_checkpoint` flags or a new scan), then **review again**.
-   - `stop` → end `/uo-init`.
+- **Entry：** Phase0 Exit 满足
+- **Actions：** 见 `references/extract.md`（脚本找入口 → 有界 LLM → plan → `build_layered_kb`）
+- **Artifacts：** `ir/entrypoints.yaml`、`ir/extract_plan.yaml`、layered IR、`ir/input_derivable*.yaml`、`ir/unresolved.yaml`
+- **Exit：** `build_layered_kb` 成功
+- **Failure：** 入口/plan 无法确认 → `UNRESOLVED_SEMANTICS`；脚本失败 → `TOOL_FAILURE`
 
-7. Only after `scope_confirmed.yaml` exists: stage confirmed files, then MCP index.
-   Current `codebase-memory-mcp.index_repository` **only** accepts `repo_path`
-   (no file-list argument). **Never** pass the whole parent workspace
-   (e.g. `FAG_test`) as `repo_path` — that indexes thousands of nodes and can
-   pin CPU for minutes.
+### Phase 2: Resolve + 门禁 + 导出
 
-```powershell
-python -X utf8 "$SCRIPT_DIR/stage_cbm_scope.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
-# then MCP index_repository:
-#   repo_path = <UO_ROOT>/cbm/index_stage
-#   mode = fast
-#   name = <op>-phase0-scope
-```
+- **Entry：** Phase1 Exit 满足
+- **Actions：** 见 `references/resolve.md`（任务 B/E → classify → confidence → export → integrity）
+- **Artifacts：** `checks/confidence_gate.yaml`、`indexes/kb_graph.sqlite`、`checks/integrity.yaml`
+- **Exit：** unresolved 无开放项；`confidence_gate` ∈ {pass, reported}；integrity pass
+- **Failure：** 无法 high → `CONFIDENCE_REPORTED`（须写原因，禁伪闭合）；integrity fail → `VALIDATION_FAILURE`
 
-   If staging fails, stop and ask the user; do **not** fall back to whole-repo
-   indexing and do **not** skip writing accurate index meta.
+### Phase 3: KB 产物审查
 
-8. `prepare_operator.py --write-index-meta --cbm-project <project>`.
-   - **Must reuse the incomplete current run** (plugin default). Do **not** pass
-     `--force-new-run` here; that forks a second run and breaks `finalize_phase0`
-     (`scope_scan` / `scope_review` / `scope_confirmed` look missing).
-9. `finalize_phase0.py` write receipt + shallow entry hints.
+- **Entry：** Phase2 Exit 满足
+- **Actions：** 派 `uo-kb-review`（`tpl_kb_review.md`）→ pass 则 `export_human_views.py`
+- **Artifacts：** `review/kb_product_review.yaml`、`summary/human_overview.md`
+- **Exit：** `verdict=pass` 且 human_views 已写
+- **Failure：** fail 且返工耗尽 → 停并展示 findings
 
-No `facts/**` / old `graphs/**` Phase1-3 artifacts are required after this.
+## Semantic Escalation
 
-## Extract (deterministic directed trace)
+| 适合脚本 | 适合 LLM（`uo-semantic-resolve`） |
+|---|---|
+| 范围扫描、入口候选、plan 扩面、分层抽取、classify、export、integrity | 入口消歧（A）、plan 角色（C）、FP 抽样（B）、断边（E） |
 
-```powershell
-python -X utf8 "$SCRIPT_DIR/resolve_entrypoints.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --architecture arch35 --write
-```
+- 每批断边 cap 8；约 ≤12 tools/批
+- 证据最低要求：CBM snippet + `path:line`
+- **禁**用 `/uo-query` 替代任务 E
 
-Read `ir/entrypoint_candidates.yaml`.
+## Failure Taxonomy
 
-- High-confidence unique roles may already be selected.
-- For roles in `llm_required_roles` (low confidence / multi-candidate / missing),
-  dispatch `uo-semantic-resolve` **entrypoint confirmation** only.
-  Feed **only** `ir/entrypoint_candidates.yaml` role slices + signature snippets.
-  Do **not** ask the subagent to read plugin Python sources.
-  Prefer MCP codebase-memory for one ambiguous symbol.
-  Expected confirm patch shape:
+`INVALID_INPUT` · `PHASE0_STOPPED` · `TOOL_FAILURE` · `UNRESOLVED_SEMANTICS` ·
+`NOT_INPUT_DERIVABLE` · `CONFIDENCE_REPORTED` · `VALIDATION_FAILURE` · `SUBAGENT_RESUME_UNAVAILABLE`
 
-```yaml
-version: 1
-roles:
-  kernel_entry:
-    name: <best candidate name>
-    file_path: op_kernel/arch35/...
-    confirmed_by: llm
-    rationale: ...
-```
+## Quality Gate
 
-  Then:
+- [ ] Phase0 有人工确认记录
+- [ ] `ir/entrypoints.yaml` 已确认；`ir/extract_plan.yaml` 已 apply
+- [ ] `ir/unresolved.yaml` 无开放项
+- [ ] `checks/confidence_gate.yaml` ∈ {pass, reported}；reported 则原因非 TODO
+- [ ] `check_kb_integrity` pass；`uo-kb-review` verdict=pass
+- [ ] sqlite fresh；无伪造 high；无 `contracts/**`
 
-```powershell
-python -X utf8 "$SCRIPT_DIR/resolve_entrypoints.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --architecture arch35 --write --confirm-patch "$UO_ROOT/ir/entrypoint_confirm.yaml"
-```
+## Stop Conditions
 
-### Extract plan (LLM confirm → plan-driven host/kernel)
+- 用户 `stop` / Phase0 未确认 → **STOP**
+- `SCRIPT_DIR` / `prompts` 缺失 → **STOP**（提示 `install.ps1`）
+- integrity / review fail 且返工耗尽 → **STOP**（展示 findings，禁止猜测闭合）
 
-After entrypoints are confirmed:
+## Examples
 
-```powershell
-python -X utf8 "$SCRIPT_DIR/propose_extract_plan.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --architecture arch35 --write
-```
-
-Dispatch `uo-semantic-resolve` **extract plan confirmation** using the mandatory
-template in `prompts/00_subagent_dispatch.md` (task C). Subagent writes only
-`ir/extract_plan.yaml` from `ir/extract_plan_candidates.yaml` (no invented names).
-
-```powershell
-python -X utf8 "$SCRIPT_DIR/apply_extract_plan.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --check
-python -X utf8 "$SCRIPT_DIR/apply_extract_plan.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --write
-```
-
-Build the layered IR (requires `ir/extract_plan.yaml` for host/kernel):
-
-```powershell
-python -X utf8 "$SCRIPT_DIR/build_layered_kb.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --architecture arch35
-```
-
-This writes:
-
-```text
-ir/entrypoint_candidates.yaml
-ir/entrypoints.yaml
-ir/extract_plan_candidates.yaml
-ir/extract_plan.yaml
-ir/tilingkey_space.yaml
-ir/host_subgraph.yaml
-ir/kernel_subgraph.yaml
-ir/golden.yaml
-ir/bridge.yaml
-ir/operator_graph.yaml
-ir/unresolved.yaml
-contracts/testcase.yaml
-tiling/exhaustive_key_space.yaml
-tiling/coverage_model.yaml
-tiling/key_predicates.yaml
-tiling/key_cards/KEY_*.yaml
-kernel/branches.yaml
-kernel/runtime_conditions.yaml
-query/routes.yaml
-query/terminology.yaml
-cross_layer/impact_graph.yaml
-```
-
-`build_layered_kb` also runs code-only `extract_key_predicates` (non-fatal) to materialize
-`tiling/key_cards` skeletons (`set_by.expr_raw` + file:line; `host_reachable`/`hit_recipe` stay unknown).
-
-Host graph spans Input/Attr/Platform -> Predicate/HostBranch -> TilingKey/TilingData/BlockDim/Workspace/Dispatch
-using **confirmed extract_plan writers/receivers** (no closed helper-name whitelist).
-Kernel graph classifies branches as `compile_time` vs `runtime`, merging plan aliases
-into TDF determinant normalization.
-Bridge reconcile emits `unused_tiling_field` / `missing_tiling_field_producer`.
-
-Optional rebuild of key cards only:
-
-```powershell
-python -X utf8 "$SCRIPT_DIR/extract_key_predicates.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --architecture arch35 --write
-```
-
-## Resolve (bounded LLM)
-
-Dispatch **one** `uo-semantic-resolve` agent using the **mandatory residual
-dispatch template** in `prompts/00_subagent_dispatch.md` (do not invent
-`residuals:` / `resolution: warning` / exhaustive “resolve all N items”).
-
-1. Residual resolve: sample by pattern from `ir/unresolved.yaml` (≤12 ids) for
-   **simple** false_positive / host-only patterns.
-2. Collect `escalate_keys` (and any remaining KEY/shape-complex open items).
-3. Optional batch consistency review: branch rows only
-   (`binding_time`, `condition`, `file:line`) — skip if already consistent.
-
-Agent writes only `ir/resolution_patch.yaml` with schema
-`unresolved_resolutions[].status ∈ {resolved,accepted,false_positive,alias}`
-plus optional `escalate_keys`.
-Parent **propagates** same-pattern siblings and writes `ir/resolution_ledger.yaml`.
-
-### Complex KEY → parallel uo-query (required)
-
-If `escalate_keys` is non-empty **or** open unresolved still look KEY/shape-complex
-after propagate: follow `skills/uo-query/references/complex-unresolved-escalation.md`
-and the per-KEY template in `prompts/00_subagent_dispatch.md`.
-
-- Launch **one subagent per KEY in parallel** (cap 8).
-- Each writes `ir/key_shape_resolve/<KEY_ID>.yaml` with a real `shape_expr`.
-- Parent merges → resolution_patch → apply. **Do not** finish with bare unsolved
-  KEY gaps.
-
-Open unresolved must become empty (or only `needs_human` with AskQuestion) —
-do not treat “left untouched” as success.
-
-Validate then apply (parent gate — never ask the subagent to hand-count ids):
-
-```powershell
-python -X utf8 "$SCRIPT_DIR/apply_resolution.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --patch "$UO_ROOT/ir/resolution_patch.yaml" --check
-# if rejected_count>0: resume same dispatch identity with rejected list only
-python -X utf8 "$SCRIPT_DIR/apply_resolution.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --patch "$UO_ROOT/ir/resolution_patch.yaml"
-# if escalate_keys / complex KEY remain: parallel per-KEY uo-query, merge, apply again
-# if open unresolved remain: second residual round on remaining *simple* ids only, then apply again
-python -X utf8 "$SCRIPT_DIR/kb_query_export.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --view testcase-contract --profile lean
-python -X utf8 "$SCRIPT_DIR/export_kb_graph.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
-python -X utf8 "$SCRIPT_DIR/check_kb_integrity.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
-# check_kb_integrity 会刷新 summary/human_overview.md（写入 integrity 状态）
-```
-
-If integrity fails, stop and show `checks/integrity.yaml` / `checks/final.yaml`.
-Do not invent facts; second residual round only for still-open **simple** ids;
-complex KEY gaps go through per-KEY uo-query, not another thin sample.
-
-## KB product review (required before finish)
-
-After integrity pass, dispatch **one** `uo-kb-review` using the mandatory
-template in `prompts/00_subagent_dispatch.md`.
-
-- `verdict=pass` → **must** re-export overview so `kb_review` is not stuck at `pending`:
-
-```powershell
-python -X utf8 "$SCRIPT_DIR/export_human_views.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
-```
-
-  then mark Todo7 complete and end `/uo-init`
-- `verdict=fail` → rework by `rework_stage` (max **2** loops), re-run affected
-  steps + integrity, then review again
-- Third fail → stop and present `review/kb_product_review.yaml`
-
-## Hard Rules
-
-- Phase 0 `macro_scope` human review is mandatory; never auto-`continue`.
-- Narrowing scope: use `review_checkpoint.py --replace-initial` (not hand-edit YAML).
-- Do not invent legacy scripts outside `uo/scripts` (see `skills/understand-operator/PATHS.md`).
-- Do not dispatch host/flow/kernel-slice/review/abstraction/graph-review agents.
-- Allowed subagents: `uo-semantic-resolve`, `uo-kb-review`, and **per-KEY
-  `uo-query` escalate** tasks (one KEY per subagent, parallel).
-  Entrypoint/extract-plan tasks of semantic-resolve remain allowed.
-- Query and TestAgent are read-only consumers of `.understand-operator/`.
-- User-facing language is Chinese unless the user asks otherwise.
+- 正常：scope continue → 高置信入口自动确认 → plan apply → gates pass → review pass
+- 低置信入口：任务 A 从候选选一 → `--confirm-patch` 回流
+- 无法 high：写 `confidence_report.md`，`confidence_gate=reported`，不伪标 high

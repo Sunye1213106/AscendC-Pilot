@@ -5,7 +5,7 @@
 ```text
 先跑 uo_kb_query.py（--status-only + 至少一个 --pattern）
   → sqlite fresh：用 graph JSON 起草，query_backend=kb_graph
-  → 再按需读 YAML / key_cards（detail_ref），不要用 Grep 代替 graph
+  → 再按需读 detail_ref YAML（禁止先 Grep key_cards），不要用 Grep 代替 graph
   → 若答案已 high-confidence 且无冲突：可直接输出
   → 否则（medium / low / needs_alignment / conflict / unknown / 用户要源码证明）：
       默认模式（非 fast）：循环调用 codebase-memory-mcp（search_graph /
@@ -18,10 +18,13 @@
         标明置信度与未校验项；仍建议至少一次 MCP，但不必循环到 high
 ```
 
-**TestAgent (tg-init) 例外覆盖 fast：** TG 交付 `uo_query_resolve` 时 **禁止** `confidence: medium|low` 标 `resolved`；未达 high 必须继续 CBM/源码或标 `unresolved`（empty 白名单除外）。`derivation_chain` 叶子必须到 `VAR_CSV_*`。  
-撞上 Host 中间量（`bnSparseLimit`、`deterSparseType`、`splitAxis`…）→ **开嵌套 Task**（见 testcase-agent `tg-mid-symbol-nesting.md`），禁止停在「depends on X」或写 `already_bound_in_kb`。
+**TestAgent (tg-init) 例外覆盖 fast：** TG 交付 `$OUT_ROOT/realization/uo_query_resolve` 时 **禁止** `confidence: medium|low` 标 `resolved`；未达 high 必须继续 CBM/源码或标 `unresolved`（empty 白名单除外）。  
+CSV↔HOST / `VAR_CSV_*` 叶子与 mid 套娃：**权威在** testcase-agent  
+`skills/tg-init/references/tg-uo-query-escalation.md` 与 `tg-mid-symbol-nesting.md`（只写 OUT_ROOT，不改 UO 图）。  
+撞上 Host 中间量 → 开嵌套 Task（见上述 TG 引用），禁止停在「depends on X」或写 `already_bound_in_kb`。
 
-**禁止：** `--status-only` 成功后直接 Grep `key_cards/` / `views/` 而不跑 `--pattern`。
+**禁止：** `--status-only` 成功后直接 Grep `tiling/key_cards/` / `ir/**` 而不跑 `--pattern`。  
+**禁止：** TG 绑定任务写入 `$UO_ROOT/**` 或 `key_shape_resolve/`。
 
 ## 必须触发 MCP 校验的信号（任一即触发）
 

@@ -8,5 +8,5 @@ required_keys:
 notes: |
   Stored in indexes/kb_graph.sqlite table metadata (key/value).
   source_hashes must include ir/operator_graph.yaml and preferably
-  contracts/testcase.yaml + query/terminology.yaml.
+  tiling/key_space.yaml + query/terminology.yaml (contracts/** is retired).
   Query returns index_status=stale when hashes diverge from on-disk YAML.

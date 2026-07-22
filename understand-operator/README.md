@@ -196,8 +196,8 @@ python -m pytest tests -q
 ```powershell
 python -X utf8 uo/scripts/prepare_operator.py <PROJECT_ROOT> --op-name <OP>
 python -X utf8 uo/scripts/build_layered_kb.py <PROJECT_ROOT> --op-name <OP> --architecture arch35
-# 默认 lean；调试 L2 穷举时：
-# python -X utf8 uo/scripts/kb_query_export.py <PROJECT_ROOT> --op-name <OP> --profile full
+python -X utf8 uo/scripts/kb_query_export.py <PROJECT_ROOT> --op-name <OP> --view testcase-contract
+python -X utf8 uo/scripts/export_kb_graph.py <PROJECT_ROOT> --op-name <OP>
 python -X utf8 uo/scripts/export_human_views.py <PROJECT_ROOT> --op-name <OP>
 python -X utf8 uo/scripts/update_operator.py <PROJECT_ROOT> --op-name <OP>
 ```
@@ -205,9 +205,9 @@ python -X utf8 uo/scripts/update_operator.py <PROJECT_ROOT> --op-name <OP>
 ### 怎么读 KB（人 / AI）
 
 1. `summary/human_overview.md`
-2. `indexes/kb_graph.sqlite`（`uo-kb-query`）
-3. Grep 热文件（`tiling/key_cards/*`、`kernel/runtime_conditions.yaml`）
-4. 小窗 Read；**不要**整读 `ir/operator_graph.yaml` / `contracts/testcase.yaml` / `impact_graph`
+2. `indexes/kb_graph.sqlite`（`uo_kb_query.py`：`list_templates` / `neighbors_of` / …）
+3. 仅打开 graph 返回的 `detail_ref`（`tiling/key_space.yaml`、`ir/tilingkey_space.yaml` 等）
+4. 勿依赖 `tiling/key_cards/**`；**不要**整读 `ir/operator_graph.yaml` / `contracts/**` / `impact_graph`
 
 ## 反馈
 

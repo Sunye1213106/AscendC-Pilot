@@ -268,7 +268,7 @@ def _collect_stub_vars(expr: Any, stub_vars: dict[str, dict[str, Any]], *, free_
             "int",
             [0, 1],
             _ite({"op": "ge", "var": csv_var("B"), "value": 0}, 0, 0),
-            f"stub kvar {var} (default 0; refine via /tg-csv-contract)",
+            f"stub kvar {var} (default 0; refine via uo-query merge / thin tg-csv-contract)",
         )
     for key in ("arg", "lhs", "rhs", "condition", "then", "else", "expr"):
         child = expr.get(key)

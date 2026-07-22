@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -15,9 +14,9 @@ if __package__ in (None, ""):
 from uo._operator.artifacts import existing_operator_root, safe_op_name
 from uo.scripts._ir_io import read_yaml, stable_id, write_yaml
 
-# TG intake still requires these paths on disk (see testcase_agent.validation).
+# Layered KB export paths (TG intake). Testcase contracts live only under TG
+# `.testcase-generator/<op>/contract/` — UO must not write contracts/**.
 REQUIRED_REL_PATHS = (
-    "contracts/testcase.yaml",
     "test/contract.yaml",
     "tiling/variables.yaml",
     "tiling/key_space.yaml",
@@ -39,33 +38,27 @@ REQUIRED_REL_PATHS = (
     "quality.yaml",
 )
 
+# Alias kept for CLI/compat; semantics = layered KB export (not a testcase contract).
+SUPPORTED_EXPORT_VIEWS = frozenset({"testcase-contract", "kb-export"})
+
 ARTIFACT_HASHES_REL = "checks/artifact_hashes.yaml"
-RUNTIME_SAMPLE_LIMIT_LEAN = 3
-RUNTIME_SAMPLE_LIMIT_FULL = 8
-
-
-def resolve_export_profile(explicit: str | None = None) -> str:
-    raw = (explicit or os.environ.get("UO_KB_EXPORT_PROFILE") or "lean").strip().lower()
-    if raw not in {"lean", "full"}:
-        raise ValueError(f"unsupported export profile: {raw!r} (expected lean|full)")
-    return raw
+RUNTIME_SAMPLE_LIMIT = 8
 
 
 def export_view(
     uo_root: Path | str,
     op_name: str,
     view: str,
-    *,
-    profile: str | None = None,
+    **_ignored: Any,
 ) -> dict[str, Any]:
     uo_root = Path(uo_root)
-    if view != "testcase-contract":
+    if view not in SUPPORTED_EXPORT_VIEWS:
         raise ValueError(f"unsupported view: {view}")
     graph = read_yaml(uo_root / "ir" / "operator_graph.yaml")
     if not graph:
         raise FileNotFoundError(f"missing operator graph under {uo_root}")
-    files = materialize_testcase_contract_files(uo_root, graph, profile=profile)
-    return {"op_name": op_name, "view": view, "files": files, "export_profile": resolve_export_profile(profile)}
+    files = materialize_testcase_contract_files(uo_root, graph)
+    return {"op_name": op_name, "view": view, "files": files}
 
 
 def export_context_slice(
@@ -76,7 +69,7 @@ def export_context_slice(
     detail_level: str = "full",
 ) -> dict[str, Any]:
     uo_root = Path(uo_root)
-    if view != "testcase-contract":
+    if view not in SUPPORTED_EXPORT_VIEWS:
         raise ValueError(f"unsupported view: {view}")
     graph = read_yaml(uo_root / "ir" / "operator_graph.yaml")
     if not graph:
@@ -88,7 +81,8 @@ def export_context_slice(
         "view": view,
         "detail_level": detail_level,
         "entities": entities,
-        "testcase_contract": files.get("contracts/testcase.yaml"),
+        # Testcase contract is TG-owned; KB context carries entities + layered refs only.
+        "testcase_contract": None,
         "relations": graph.get("edges") or [],
     }
 
@@ -96,12 +90,9 @@ def export_context_slice(
 def materialize_testcase_contract_files(
     uo_root: Path,
     graph: dict[str, Any],
-    *,
-    profile: str | None = None,
+    **_ignored: Any,
 ) -> dict[str, Any]:
-    profile = resolve_export_profile(profile)
-    lean = profile == "lean"
-    sample_limit = RUNTIME_SAMPLE_LIMIT_LEAN if lean else RUNTIME_SAMPLE_LIMIT_FULL
+    sample_limit = RUNTIME_SAMPLE_LIMIT
     op_name = str(graph.get("op_name") or "")
     tilingkey = graph.get("tilingkey") or {}
     dimensions = tilingkey.get("dimensions") or []
@@ -134,6 +125,8 @@ def materialize_testcase_contract_files(
         key_id = stable_id("KEY_", name)
         values = dim.get("values") or []
         role_meta = _infer_key_field_role(name)
+        # Naming heuristic only fills weak role / layout CSV hints.
+        # needs_binding is owned by classify_input_derivable (applied below).
         key_fields.append(
             {
                 "id": key_id,
@@ -145,7 +138,7 @@ def materialize_testcase_contract_files(
                 "semantic_role": role_meta.get("role"),
                 "csv_determinants": role_meta.get("csv_determinants") or [],
                 "primary_layout_field": role_meta.get("primary_layout_field"),
-                "needs_binding": bool(role_meta.get("needs_binding")),
+                "needs_binding": False,
             }
         )
         tiling_variables.append(
@@ -160,7 +153,6 @@ def materialize_testcase_contract_files(
         )
 
     template_blocks = []
-    reverse_realization_index: dict[str, Any] = {}
     for block in template_blocks_raw:
         flags = block.get("flags") or {}
         fixed = {str(k): (1 if v else 0) for k, v in flags.items()}
@@ -170,64 +162,32 @@ def materialize_testcase_contract_files(
                 "id": block_id,
                 "name": block.get("name"),
                 "fixed_fields": fixed,
-                "field_domains": {},
-                "product_count": 1,
                 "condition": block.get("condition"),
                 "source": block.get("source"),
             }
         )
-        # Exactly one reverse witness per template block (avoid ambiguous dual matches).
-        rid = stable_id("CON_IR_", str(block.get("name") or block_id))
-        reverse_realization_index[rid] = {"key_pattern": dict(fixed)}
 
-    dim_product = 1
-    for dim in dimensions:
-        values = dim.get("values") or []
-        if isinstance(values, list) and values:
-            dim_product *= max(1, len(values))
-        else:
-            dim_product = 0
-            break
     args_sel_count = int(tilingkey.get("args_sel_count") or 0)
-    exhaustive_full = {
+    # No cartesian / L2 combination product here — legal instances live as KTPL_* in kb_graph.
+    exhaustive = {
         "version": 1,
         "op_name": op_name,
-        "enumeration_source": "template_blocks",
+        "enumeration_source": "kb_graph_ktpl",
         "field_order": [str(d.get("name")) for d in dimensions if d.get("name")],
-        "template_blocks": template_blocks,
+        "template_blocks": [],
         "dimensions": dimensions,
         "args_sel_count": args_sel_count,
-        "summary": {"expanded_key_count": len(template_blocks), "template_block_count": len(template_blocks)},
-        "combination_summary": {
+        "ktpl_instance_count": len(template_blocks),
+        "summary": {
+            "ktpl_instance_count": len(template_blocks),
             "template_block_count": len(template_blocks),
-            "args_sel_count": args_sel_count,
-            "declared_dim_product": dim_product,
-            "enumeration_policy": (
-                "template_blocks_are_legal_compile_keys; "
-                "args_sel_count_is_host_selection_space; "
-                "declared_dim_product_is_independent_cartesian"
-            ),
+            "key_dimension_count": len(dimensions),
         },
-        "reverse_realization_index": reverse_realization_index,
+        "note": (
+            "Legal compile-time template instances are KTPL_* entities in indexes/kb_graph.sqlite "
+            "(fixes_flag → KEY_*). Downstream owns any further combination expansion."
+        ),
     }
-    if lean:
-        exhaustive = {
-            "version": 1,
-            "op_name": op_name,
-            "enumeration_source": "template_blocks",
-            "field_order": exhaustive_full["field_order"],
-            "template_blocks": [],
-            "dimensions": [],
-            "args_sel_count": args_sel_count,
-            "summary": exhaustive_full["summary"],
-            "combination_summary": exhaustive_full["combination_summary"],
-            "reverse_realization_index": {},
-            "lean_truncated": True,
-            "full_list_profile": "full",
-            "note": "Re-export with --profile full for template_blocks / reverse_realization_index",
-        }
-    else:
-        exhaustive = exhaustive_full
 
     families = [{"id": "FAM_DEFAULT", "name": "default"}]
     for block in template_blocks:
@@ -471,7 +431,10 @@ def materialize_testcase_contract_files(
         "randomness_policy": "deterministic",
     }
 
-    contract = _build_testcase_contract(
+    _apply_input_derivable_overlay(uo_root, key_fields)
+
+    # In-memory inventory for KB stub only — never written to contracts/**.
+    inventory = _build_testcase_contract(
         graph,
         key_fields=key_fields,
         branch_rows=branch_rows,
@@ -479,43 +442,27 @@ def materialize_testcase_contract_files(
         golden=golden,
         kvar_nodes=kvar_nodes,
     )
-    contract = _merge_human_facts_supplements(uo_root, contract)
+    inventory = _merge_human_facts_supplements(uo_root, inventory)
     runtime_branch_ids = [b["id"] for b in branch_rows if b.get("binding_time") == "runtime"]
     branch_obl_limit = 80
-    if lean:
-        # Avoid dual-writing a near-copy of contracts/testcase.yaml; keep TG-required stub.
-        test_contract = {
-            "version": 1,
-            "op_name": op_name,
-            "canonical_ref": "contracts/testcase.yaml",
-            "input_domain": {},
-            "typed_constraints": [],
-            "kernel_branch_obligations": [],
-            "kernel_branch_obligations_meta": {
-                "total_runtime_branches": len(runtime_branch_ids),
-                "listed_count": 0,
-                "truncated": True,
-                "full_list": "kernel/branches.yaml",
-                "contract_ref": "contracts/testcase.yaml",
-            },
-        }
-    else:
-        test_contract = {
-            "version": 1,
-            "op_name": op_name,
-            "input_domain": {k: "any" for k in golden_inputs[:30]},
-            "typed_constraints": contract.get("typed_constraints") or [],
-            "kernel_branch_obligations": [{"id": bid} for bid in runtime_branch_ids[:branch_obl_limit]],
-            "kernel_branch_obligations_meta": {
-                "total_runtime_branches": len(runtime_branch_ids),
-                "listed_count": min(branch_obl_limit, len(runtime_branch_ids)),
-                "truncated": len(runtime_branch_ids) > branch_obl_limit,
-                "full_list": "kernel/branches.yaml",
-            },
-        }
+    test_contract = {
+        "version": 1,
+        "op_name": op_name,
+        "role": "kb_export_stub",
+        "canonical_ref": "tiling/key_space.yaml",
+        "input_domain": {k: "any" for k in golden_inputs[:30]},
+        "typed_constraints": inventory.get("typed_constraints") or [],
+        "kernel_branch_obligations": [{"id": bid} for bid in runtime_branch_ids[:branch_obl_limit]],
+        "kernel_branch_obligations_meta": {
+            "total_runtime_branches": len(runtime_branch_ids),
+            "listed_count": min(branch_obl_limit, len(runtime_branch_ids)),
+            "truncated": len(runtime_branch_ids) > branch_obl_limit,
+            "full_list": "kernel/branches.yaml",
+            "kb_ref": "kernel/branches.yaml",
+        },
+    }
 
     files: dict[str, Any] = {
-        "contracts/testcase.yaml": contract,
         "test/contract.yaml": test_contract,
         "tiling/variables.yaml": {"version": 1, "op_name": op_name, "variables": tiling_variables, "tiling_mechanism": "key"},
         "tiling/key_space.yaml": {
@@ -579,11 +526,10 @@ def materialize_testcase_contract_files(
             "status": "pass",
             "decision": "pass",
             "checks": ["layered_ir", "final"],
-            "export_profile": profile,
         },
     }
 
-    _write_materialized_files(uo_root, files, profile=profile)
+    _write_materialized_files(uo_root, files)
     return files
 
 
@@ -591,11 +537,9 @@ def _sha256_file(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _collect_artifact_hashes(uo_root: Path, *, include_contract: bool = False) -> dict[str, str]:
+def _collect_artifact_hashes(uo_root: Path) -> dict[str, str]:
     hashes: dict[str, str] = {}
     for rel in REQUIRED_REL_PATHS:
-        if rel == "contracts/testcase.yaml" and not include_contract:
-            continue
         path = uo_root / rel
         if path.exists():
             hashes[rel] = _sha256_file(path)
@@ -605,55 +549,31 @@ def _collect_artifact_hashes(uo_root: Path, *, include_contract: bool = False) -
     runtime_path = uo_root / "kernel" / "runtime_conditions.yaml"
     if runtime_path.exists():
         hashes["kernel/runtime_conditions.yaml"] = _sha256_file(runtime_path)
+    id_path = uo_root / "ir" / "input_derivable.yaml"
+    if id_path.exists():
+        hashes["ir/input_derivable.yaml"] = _sha256_file(id_path)
     return hashes
 
 
-def _write_artifact_hashes(uo_root: Path, hashes: dict[str, str], *, profile: str) -> None:
+def _write_artifact_hashes(uo_root: Path, hashes: dict[str, str]) -> None:
     payload = {
         "version": 1,
-        "export_profile": profile,
         "hashes": dict(sorted(hashes.items())),
     }
     write_yaml(uo_root / ARTIFACT_HASHES_REL, payload)
 
 
-def _write_materialized_files(uo_root: Path, files: dict[str, Any], *, profile: str) -> None:
-    lean = profile == "lean"
+def _write_materialized_files(uo_root: Path, files: dict[str, Any]) -> None:
     for rel, payload in files.items():
-        if rel == "contracts/testcase.yaml":
+        # Hard rule: never write UO contracts/** (retired; TG owns testcase contracts).
+        if str(rel).startswith("contracts/"):
             continue
         write_yaml(uo_root / rel, payload)
 
-    hashes = _collect_artifact_hashes(uo_root, include_contract=False)
-    contract = dict(files["contracts/testcase.yaml"])
-    source = dict(contract.get("source") or {})
-    source["quality_status"] = "pass"
-    source["understand_phase"] = "layered_ir"
-    source["export_profile"] = profile
-    source["hashes_ref"] = ARTIFACT_HASHES_REL
-    if lean:
-        # Keep contract human/AI-readable; hashes live in checks/artifact_hashes.yaml.
-        source["canonical_hashes"] = {}
-    else:
-        source["canonical_hashes"] = dict(hashes)
-    contract["source"] = source
-    files["contracts/testcase.yaml"] = contract
-    write_yaml(uo_root / "contracts" / "testcase.yaml", contract)
-
-    hashes["contracts/testcase.yaml"] = _sha256_file(uo_root / "contracts" / "testcase.yaml")
-    if not lean:
-        # Preserve historical full behavior: stamp final hashes back into the contract once.
-        source = dict(contract.get("source") or {})
-        source["canonical_hashes"] = dict(hashes)
-        contract["source"] = source
-        files["contracts/testcase.yaml"] = contract
-        write_yaml(uo_root / "contracts" / "testcase.yaml", contract)
-        hashes["contracts/testcase.yaml"] = _sha256_file(uo_root / "contracts" / "testcase.yaml")
-
-    _write_artifact_hashes(uo_root, hashes, profile=profile)
+    hashes = _collect_artifact_hashes(uo_root)
+    _write_artifact_hashes(uo_root, hashes)
     files[ARTIFACT_HASHES_REL] = {
         "version": 1,
-        "export_profile": profile,
         "hashes": dict(sorted(hashes.items())),
     }
 
@@ -663,43 +583,32 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("repo", nargs="?", default=".")
     parser.add_argument("--op-name", required=True)
     parser.add_argument("--view", default="testcase-contract")
-    parser.add_argument(
-        "--profile",
-        default=None,
-        choices=["lean", "full"],
-        help="Export profile (default: lean, or UO_KB_EXPORT_PROFILE)",
-    )
     args = parser.parse_args(argv)
     repo_root = Path(args.repo).resolve()
     op_name = safe_op_name(args.op_name, repo_root)
     uo_root = existing_operator_root(repo_root, op_name)
-    result = export_view(uo_root, op_name, args.view, profile=args.profile)
-    print(
-        f"exported view={args.view} profile={result.get('export_profile')} files={len(result['files'])}"
-    )
+    result = export_view(uo_root, op_name, args.view)
+    print(f"exported view={args.view} files={len(result['files'])}")
     return 0
 
 
 def _load_or_materialize(
     uo_root: Path,
     graph: dict[str, Any],
-    *,
-    profile: str | None = None,
+    **_ignored: Any,
 ) -> dict[str, Any]:
-    contract = read_yaml(uo_root / "contracts" / "testcase.yaml")
-    if contract and int(contract.get("version") or 0) == 2:
-        files: dict[str, Any] = {}
-        missing = False
-        for rel in REQUIRED_REL_PATHS:
-            data = read_yaml(uo_root / rel) if rel != "contracts/testcase.yaml" else contract
-            if not data and rel != "contracts/testcase.yaml":
-                missing = True
-                break
-            files[rel] = data if rel != "contracts/testcase.yaml" else contract
-        if not missing and len(files) == len(REQUIRED_REL_PATHS):
-            files["contracts/testcase.yaml"] = contract
-            return files
-    return materialize_testcase_contract_files(uo_root, graph, profile=profile)
+    # Ignore historical $UO_ROOT/contracts/**; only layered REQUIRED_REL_PATHS count.
+    files: dict[str, Any] = {}
+    missing = False
+    for rel in REQUIRED_REL_PATHS:
+        data = read_yaml(uo_root / rel)
+        if not data:
+            missing = True
+            break
+        files[rel] = data
+    if not missing and len(files) == len(REQUIRED_REL_PATHS):
+        return files
+    return materialize_testcase_contract_files(uo_root, graph)
 
 
 def _build_testcase_contract(
@@ -771,8 +680,7 @@ def _build_testcase_contract(
             field["semantic_role"] = role_meta.get("role")
             field["csv_determinants"] = role_meta.get("csv_determinants") or []
             field["primary_layout_field"] = role_meta.get("primary_layout_field")
-            if role_meta.get("needs_binding"):
-                field["needs_binding"] = True
+            # Do not let naming heuristic own needs_binding; classify overlay does.
         var_id = f"VAR_{key_id}"
         if values:
             variables.append(
@@ -862,17 +770,26 @@ def _build_testcase_contract(
         dedup[str(item["id"])] = item
     variables = list(dedup.values())
 
-    key_determinants = {
-        str(field["id"]): {
+    key_determinants = {}
+    for field in key_fields:
+        if not (field.get("csv_determinants") or field.get("role") or field.get("needs_binding") or "input_derivable" in field):
+            continue
+        det: dict[str, Any] = {
             "role": field.get("role"),
             "semantic_role": field.get("semantic_role"),
             "csv_determinants": field.get("csv_determinants") or [],
             "primary_layout_field": field.get("primary_layout_field"),
             "needs_binding": bool(field.get("needs_binding")),
         }
-        for field in key_fields
-        if field.get("csv_determinants") or field.get("role") or field.get("needs_binding")
-    }
+        if "input_derivable" in field:
+            det["input_derivable"] = field.get("input_derivable")
+            det["not_input_derivable"] = bool(field.get("not_input_derivable"))
+            det["host_parent"] = field.get("host_parent")
+            det["host_parent_evidence"] = field.get("host_parent_evidence") or ""
+            det["derivation_roots"] = list(field.get("derivation_roots") or [])[:16]
+            if field.get("gap_ref"):
+                det["gap_ref"] = field.get("gap_ref")
+        key_determinants[str(field["id"])] = det
     producible_fields = _producible_fields_from_golden(golden)
 
     return {
@@ -959,8 +876,36 @@ def _merge_human_facts_supplements(uo_root: Path, contract: dict[str, Any]) -> d
     return out
 
 
+def _apply_input_derivable_overlay(uo_root: Path, key_fields: list[dict[str, Any]]) -> None:
+    """Merge compact classify markers into key_fields (parent + roots, no full chain)."""
+    id_doc = read_yaml(Path(uo_root) / "ir" / "input_derivable.yaml")
+    by_key = (id_doc.get("keys") or {}) if isinstance(id_doc, dict) else {}
+    for field in key_fields:
+        kid = str(field.get("id") or "")
+        entry = by_key.get(kid) if isinstance(by_key.get(kid), dict) else None
+        if entry:
+            idv = entry.get("input_derivable")
+            field["input_derivable"] = idv
+            field["not_input_derivable"] = bool(entry.get("not_input_derivable"))
+            field["host_parent"] = entry.get("host_parent")
+            field["host_parent_evidence"] = entry.get("host_parent_evidence") or ""
+            field["derivation_roots"] = list(entry.get("derivation_roots") or [])[:16]
+            if entry.get("gap_ref"):
+                field["gap_ref"] = entry.get("gap_ref")
+            if idv is True:
+                field["needs_binding"] = True
+            elif idv is False or entry.get("not_input_derivable"):
+                field["needs_binding"] = False
+            else:  # unsolved
+                field["needs_binding"] = True
+            continue
+        # Fallback when classify missing: empty csv → still needs TG bind.
+        if not (field.get("csv_determinants") or []):
+            field["needs_binding"] = True
+
+
 def _infer_key_field_role(name: str) -> dict[str, Any]:
-    """Generic KEY role + csv_determinants from naming (not per-operator tables)."""
+    """Generic KEY role + weak csv hints from naming. Does not own needs_binding."""
     bare = str(name or "").strip()
     upper = bare.upper().replace("_", "")
     out: dict[str, Any] = {"role": "enum_knob", "csv_determinants": [], "primary_layout_field": None}
@@ -975,18 +920,14 @@ def _infer_key_field_role(name: str) -> dict[str, Any]:
             out["csv_determinants"] = [{"column": "input_layout", "op": "eq", "value": stem}]
             return out
         # Optional / switch IS* keys: do not invent CSV columns from names.
-        # Leave csv_determinants empty + needs_binding for TG LLM to bind
-        # (e.g. IsDrop ↔ keep_prob) after seeing the real consumer schema.
         if stem in {"PSE", "ATTENMASK", "ATTENTIONMASK", "DROP", "DROPOUT", "ROPE", "SINK"}:
             if stem in {"ROPE", "SINK"}:
                 out["role"] = "switch"
             else:
                 out["role"] = "optional_presence"
             out["csv_determinants"] = []
-            out["needs_binding"] = True
             return out
         out["role"] = "switch"
-        out["needs_binding"] = True
         return out
 
     if "TEMPLATE" in upper or bare.endswith("Num") or bare.endswith("TemplateNum"):
@@ -1112,6 +1053,8 @@ def _entities_from_graph(graph: dict[str, Any]) -> list[dict[str, Any]]:
                 "layer": node.get("layer"),
                 "file_path": node.get("file_path"),
                 "start_line": node.get("start_line"),
+                "template_flags": node.get("template_flags"),
+                "condition": node.get("condition"),
             }
         )
     entities.append({"id": "FAM_DEFAULT", "stable_id": "FAM_DEFAULT", "name": "default", "type": "family"})
@@ -1153,7 +1096,7 @@ def _build_runtime_conditions(
     op_name: str,
     branch_rows: list[dict[str, Any]],
     *,
-    sample_limit: int = RUNTIME_SAMPLE_LIMIT_LEAN,
+    sample_limit: int = RUNTIME_SAMPLE_LIMIT,
 ) -> dict[str, Any]:
     groups: dict[str, dict[str, Any]] = {}
     for branch in branch_rows:
@@ -1208,16 +1151,17 @@ def _build_query_routes(op_name: str) -> dict[str, Any]:
             "summary/keys_table.yaml",
             "query/routes.yaml",
             "query/terminology.yaml",
-            "tiling/key_cards/index.yaml",
             "tiling/key_space.yaml",
             "kernel/runtime_conditions.yaml",
+            "ir/tilingkey_space.yaml",
         ],
         "default_cold": ["ir/unresolved.yaml", "quality.yaml", "checks/final.yaml"],
         "never_default": [
             "ir/operator_graph.yaml",
-            "contracts/testcase.yaml",
+            "contracts/**",  # retired historical residue; TG owns contracts
             "cross_layer/impact_graph.yaml",
             "tiling/exhaustive_key_space.yaml",
+            "tiling/key_cards/**",  # not a default product; use kb_graph KTPL/KEY edges
             "facts/**",
             "graphs/**",
         ],
@@ -1226,22 +1170,27 @@ def _build_query_routes(op_name: str) -> dict[str, Any]:
                 "files": ["summary/human_overview.md", "summary/keys_table.yaml"],
             },
             "tiling_key_what": {
-                "files": ["tiling/key_space.yaml", "tiling/key_predicates.yaml", "tiling/key_cards/index.yaml"],
-                "card_glob": "tiling/key_cards/KEY_*.yaml",
+                "files": ["tiling/key_space.yaml", "tiling/key_predicates.yaml"],
+                "graph_patterns": ["entity_of", "neighbors_of", "templates_for_key"],
             },
             "tiling_key_hit": {
-                "files": ["tiling/key_predicates.yaml", "tiling/key_cards/index.yaml"],
-                "card_glob": "tiling/key_cards/KEY_*.yaml",
+                "files": ["tiling/key_space.yaml", "ir/host_subgraph.yaml"],
+                "graph_patterns": ["neighbors_of", "entity_of"],
+                "note": "Follow writes/derives/determined_by to Host SYM + file_path; do not rely on key_cards",
             },
             "tiling_combinations": {
-                "files": ["tiling/exhaustive_key_space.yaml"],
-                "focus": ["combination_summary", "summary"],
+                "files": ["tiling/exhaustive_key_space.yaml", "ir/tilingkey_space.yaml"],
+                "focus": ["combination_summary", "summary", "ktpl_instance_count"],
+                "graph_patterns": ["list_templates", "templates_for_key"],
             },
             "entrypoint": {"files": ["ir/entrypoints.yaml"]},
             "host_pipeline": {"files": ["ir/host_subgraph.yaml", "ir/entrypoints.yaml"]},
             "runtime_branch": {"files": ["kernel/runtime_conditions.yaml", "kernel/branches.yaml"]},
             "runtime_cover": {"files": ["kernel/runtime_conditions.yaml"]},
-            "compile_template": {"files": ["tiling/exhaustive_key_space.yaml", "kernel/compile_model.yaml"]},
+            "compile_template": {
+                "files": ["ir/tilingkey_space.yaml", "kernel/compile_model.yaml"],
+                "graph_patterns": ["list_templates", "templates_for_key"],
+            },
             "impact": {"files": ["cross_layer/tiling_to_kernel.yaml"]},
             "golden": {"files": ["ir/golden.yaml", "flow/golden_model.yaml"]},
             "contract": {"files": ["tiling/coverage_model.yaml", "tiling/key_space.yaml"]},

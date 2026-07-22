@@ -216,7 +216,7 @@ def load_or_build_realization(
         _ = reuse_realization_map
         _ = consumer_root
         raise TgSolveError(
-            f"{exc}. Re-run tg-contract /tg-csv-contract with a valid consumer_schema + realization_map "
+            f"{exc}. Re-run /tg-init (thin contract + uo-query merge) with a valid consumer_schema + realization_map "
             "(--allow-legacy-realization FASG fallback has been removed)."
         ) from exc
 
@@ -1048,7 +1048,7 @@ def _require_domain_review(out_root: Path) -> None:
             sample = ", ".join(str(c) for c in pending[:8])
             raise TgSolveError(
                 f"DOMAIN_REVIEW_REQUIRED: {len(pending)} columns unreviewed (e.g. {sample}). "
-                "Run tg-domain-review / AskQuestion confirm_domains first."
+                "Continue /tg-init binding/domain phase / AskQuestion confirm_domains first."
             )
     unresolved_path = paths["unresolved"]
     if unresolved_path.exists():
@@ -1058,16 +1058,22 @@ def _require_domain_review(out_root: Path) -> None:
         if hard:
             lexicon_path = paths["dir"] / "binding_lexicon.yaml"
             lexicon = read_yaml(lexicon_path) if lexicon_path.exists() else {}
-            locked = {
-                str(item.get("id") or "")
-                for item in (lexicon.get("key_derivations") or [])
-                if isinstance(item, dict) and item.get("locked")
-            }
-            still = [g for g in hard if str(g.get("variable_id") or "") not in locked]
+            bound = set()
+            for item in lexicon.get("key_derivations") or []:
+                if not isinstance(item, dict) or item.get("expr") is None:
+                    continue
+                status = str(item.get("status") or "").lower()
+                conf = str(item.get("confidence") or "").lower()
+                if item.get("locked") or status in {"reviewed", "confirmed", "locked"} or conf == "high":
+                    vid = str(item.get("id") or "")
+                    if vid:
+                        bound.add(vid)
+            still = [g for g in hard if str(g.get("variable_id") or "") not in bound]
             if still:
                 raise TgSolveError(
                     f"BINDING_REVIEW_REQUIRED: {len(still)} KEY↔CSV gaps unbound. "
-                    "Run /tg-csv-contract, lock derivations, then confirm domain_review."
+                    "Continue /tg-init: Task Follow uo-query → --merge-uo-resolve → "
+                    "tg-init-audit → --confirm (AskQuestion only for domain lock)."
                 )
 
 

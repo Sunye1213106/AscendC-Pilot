@@ -197,7 +197,7 @@ def tg_contract(
     if not (merged_lexicon.get("key_derivations") or []):
         if "binding_lexicon_required" not in realization_map["warnings"]:
             realization_map["warnings"].append(
-                "binding_lexicon_required: run /tg-csv-contract to fill realization/binding_lexicon.yaml "
+                "binding_lexicon_required: Task Follow uo-query → --merge-uo-resolve to fill realization/binding_lexicon.yaml "
                 "(key_tokens, csv_field_aliases, key_derivations) from script/KB evidence — TG no longer ships per-op hard tables"
             )
     write_yaml(paths["map"], realization_map)
@@ -248,11 +248,22 @@ def tg_contract(
         "binding_gaps": binding_gaps,
         "needs_binding_keys": inventory.get("needs_binding_keys") or [],
         "domain_review_status": domain_review.get("status"),
-        "hint": "Run /tg-csv-contract or tg-domain-review (LLM) to bind KEY↔CSV and confirm domains; AskQuestion confirm before tg-solve.",
-        "next": "tg-csv-contract|tg-domain-review",
+        "hint": "Continue /tg-init: Task Follow uo-query → --merge-uo-resolve → --verify-csv-closure → tg-init-audit; AskQuestion only for domain lock before --confirm / tg-plan.",
+        "next": "tg-init binding loop",
     }
     write_yaml(paths["unresolved"], unresolved)
     write_yaml(paths["dir"] / "llm_bind_prompt_bundle.yaml", build_llm_bind_prompt_bundle(inventory, unresolved))
+
+    from .build_tg_contract import build_tg_contract
+
+    tg_owned = build_tg_contract(
+        out_root,
+        op_name=op_name,
+        consumer_schema=schema,
+        snapshot=snapshot,
+        realization_map=realization_map,
+        lexicon=merged_lexicon,
+    )
 
     run_path = out_root / "run.yaml"
     run = read_yaml(run_path) if run_path.exists() else {}
@@ -261,7 +272,7 @@ def tg_contract(
             "command": "tg-contract",
             "phase": "csv_contract",
             "status": validation["status"],
-            "next_command": "tg-csv-contract|tg-domain-review then tg-plan",
+            "next_command": "tg-init binding loop then tg-plan",
             "consumer_root": consumer_root.as_posix(),
             "snapshot_hash": snapshot_hash,
             "consumer_kind": inventory.get("consumer_kind"),
@@ -285,6 +296,7 @@ def tg_contract(
         "binding_gaps": len(binding_gaps),
         "schema": schema,
         "realization_map": realization_map,
+        "tg_contract": tg_owned,
         "validation": validation,
         "report": report,
         "unresolved": unresolved,
@@ -297,7 +309,7 @@ def load_realization_for_plan(out_root: Path) -> dict[str, Any]:
     if not paths["map"].exists():
         raise TgContractError(
             "CSV_CONTRACT_REQUIRED: missing realization/realization_map.yaml. "
-            "Run tg-contract --csv-consumer-root <test_script_root> first."
+            "Run tg-init --test-script-root <test_script_root> first (compat: tg-contract)."
         )
     from .io import read_json
     from .realization_map import apply_architecture_platform_fixes

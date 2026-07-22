@@ -3,7 +3,7 @@
 Per-operator token/alias tables are NOT hardcoded here. They come from:
   1. UO `kernel/variables.yaml` set_by / classification
   2. Weak KEY_id heuristics from `tiling/key_space.yaml`
-  3. `/tg-csv-contract` → `realization/binding_lexicon.yaml` (LLM + evidence)
+  3. uo-query merge → `realization/binding_lexicon.yaml` (LLM + evidence; tg-csv-contract 仅 thin inventory 补洞)
 """
 
 from __future__ import annotations
@@ -47,6 +47,10 @@ LOOP_LOCAL_PATTERNS = (
     re.compile(r"(?i)\bneedsync"),
     re.compile(r"(?i)\bactual[mn]\b"),
     re.compile(r"(?i)\bloop\b"),
+    re.compile(r"(?i)\bloopid\b"),
+    re.compile(r"(?i)\bloop_id\b"),
+    re.compile(r"(?i)\bblockid\b"),
+    re.compile(r"(?i)\bblock_id\b"),
     re.compile(r"(?i)\bblockidx\b"),
     re.compile(r"(?i)\bcblockidx\b"),
     re.compile(r"(?i)\bcoreidx\b"),

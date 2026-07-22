@@ -83,18 +83,40 @@ def build_binding_inventory(
         if thin and name:
             thin_domains.append({"column": name, "role": role, "domain": domain, "code": "THIN_DOMAIN"})
 
-    contract = (snapshot_files or {}).get("contracts/testcase.yaml") if isinstance(snapshot_files, dict) else {}
+    from .kb_semantics import assemble_key_determinants
+
+    # Prefer TG-assembled determinants from KB layers; ignore retired UO contracts.
+    key_determinants = assemble_key_determinants(snapshot_files if isinstance(snapshot_files, dict) else {})
+    legacy = (snapshot_files or {}).get("contracts/testcase.yaml") if isinstance(snapshot_files, dict) else {}
+    if not key_determinants and isinstance(legacy, dict):
+        key_determinants = legacy.get("key_determinants") or {}
     key_ids: list[str] = []
     needs_binding: list[str] = []
-    if isinstance(contract, dict):
-        for key_id, spec in (contract.get("key_determinants") or {}).items():
-            key_ids.append(str(key_id))
-            if not isinstance(spec, dict):
-                continue
-            # Any KEY lacking csv_determinants, or explicitly needs_binding, must Task uo-query.
-            # Do not skip enum_knob/shape — those were falsely treated as "already bound".
-            if spec.get("needs_binding") or not (spec.get("csv_determinants") or []):
-                needs_binding.append(str(key_id))
+    not_input_derivable: list[str] = []
+    unsolved_input: list[str] = []
+    host_hints: dict[str, Any] = {}
+    for key_id, spec in (key_determinants or {}).items():
+        key_ids.append(str(key_id))
+        if not isinstance(spec, dict):
+            continue
+        idv = spec.get("input_derivable")
+        # Kernel-local / no host input ancestor → never Task bind.
+        if spec.get("not_input_derivable") is True or idv is False:
+            not_input_derivable.append(str(key_id))
+            continue
+        if idv == "unsolved":
+            unsolved_input.append(str(key_id))
+        # input_derivable true / unsolved / needs_binding / empty csv → Task uo-query.
+        if spec.get("needs_binding") or idv is True or idv == "unsolved" or not (spec.get("csv_determinants") or []):
+            needs_binding.append(str(key_id))
+            if spec.get("host_parent") or spec.get("derivation_roots"):
+                host_hints[str(key_id)] = {
+                    "host_parent": spec.get("host_parent"),
+                    "host_parent_evidence": spec.get("host_parent_evidence") or "",
+                    "derivation_roots": list(spec.get("derivation_roots") or [])[:16],
+                    "gap_ref": spec.get("gap_ref"),
+                    "input_derivable": idv,
+                }
 
     fingerprint = fingerprint_consumer(consumer_root) if consumer_root else {"consumer_kind": "unknown", "api_call_sites": []}
     doc_candidates = _find_doc_candidates(consumer_root) if consumer_root else []
@@ -125,6 +147,9 @@ def build_binding_inventory(
         "csv_columns": columns,
         "key_ids": key_ids,
         "needs_binding_keys": needs_binding,
+        "not_input_derivable_keys": not_input_derivable,
+        "unsolved_input_derivable_keys": unsolved_input,
+        "host_parent_hints": host_hints,
         "lexicon_locked_ids": locked,
         "lexicon_proposed_ids": proposed,
         "thin_domains": thin_domains,
@@ -183,18 +208,24 @@ def build_domain_review(
         "status": "confirmed" if not pending else "pending",
         "columns": columns_out,
         "pending_columns": pending,
-        "hint": "Run tg-domain-review / AskQuestion to confirm domains before tg-solve",
+        "hint": "Continue /tg-init: uo-query → merge → verify → audit; AskQuestion only for domain lock before --confirm / tg-solve",
     }
 
 
 def build_llm_bind_prompt_bundle(inventory: dict[str, Any], unresolved: dict[str, Any]) -> dict[str, Any]:
     key_ids = list(inventory.get("needs_binding_keys") or [])[:20]
+    hints = inventory.get("host_parent_hints") or {}
+    compact_hints = {kid: hints[kid] for kid in key_ids if kid in hints}
     return {
         "version": 1,
         "purpose": "LLM KEY↔CSV binding + domain review (do not add AST rules)",
         "consumer_kind": inventory.get("consumer_kind"),
         "csv_columns": inventory.get("csv_columns"),
         "needs_binding_keys": inventory.get("needs_binding_keys"),
+        "not_input_derivable_keys": inventory.get("not_input_derivable_keys") or [],
+        "unsolved_input_derivable_keys": inventory.get("unsolved_input_derivable_keys") or [],
+        # Compact Host context: one-hop parent + roots (no full chain dump).
+        "host_parent_hints": compact_hints,
         "binding_gaps": inventory.get("binding_gaps"),
         "api_call_sites_sample": (inventory.get("api_call_sites") or [])[:40],
         "interface_doc_candidates": inventory.get("interface_doc_candidates"),
@@ -205,6 +236,8 @@ def build_llm_bind_prompt_bundle(inventory: dict[str, Any], unresolved: dict[str
         "unresolved": unresolved,
         "instructions": [
             "Bind unbound KEY/KVAR to real CSV columns using script/KB evidence only",
+            "Use host_parent_hints (one-hop parent + derivation_roots); walk KB determined_by/reaches_input — do not expect full host_derivation_chain dumps",
+            "Skip not_input_derivable_keys (legitimate kernel-local); for unsolved_input_derivable_keys read UO ir/input_derivable_gaps.yaml as evidence then Task uo-query → OUT_ROOT uo_query_resolve (never Edit $UO_ROOT)",
             "Propose domain_hints for thin/unreviewed columns; never confirm '_' as a legal cell value",
             "For operator host/kernel semantics: use CBM search_graph / get_code_snippet (Phase0 index), not full-file dumps",
             "Prefer summary/human_overview.md + uo_kb_query before opening large YAML",

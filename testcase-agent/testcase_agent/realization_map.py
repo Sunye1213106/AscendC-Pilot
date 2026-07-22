@@ -199,7 +199,7 @@ def build_realization_map(
         "warnings": list(consumer_schema.get("warnings") or [])
         + list(merged_lexicon.get("warnings") or [])
         + [
-            "binding_lexicon: per-op KEY/CSV maps come from /tg-csv-contract → realization/binding_lexicon.yaml; "
+            "binding_lexicon: per-op KEY/CSV maps come from uo-query → --merge-uo-resolve → realization/binding_lexicon.yaml; "
             "deterministic TG only applies UO set_by + key_space token heuristics"
         ],
     }

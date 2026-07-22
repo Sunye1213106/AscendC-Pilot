@@ -1,105 +1,61 @@
 # Testcase Agent
 
-TestAgent for Understand Operator contracts. Public commands:
+OpenCode / Cursor 上的 **Ascend C 测例生成插件**。消费 Understand Operator 定稿 KB + 测试工具 CSV 契约，规划覆盖义务并用 Z3 求解 CSV。
 
-- `tg-contract`: scan `--test-script-root` → `realization/` contract (headers + `VAR_CSV_*` map).
-- `tg-plan`: requires 算子仓 + (**测试工具** auto-contract | **`--contract-root`** reuse); then L0–L3 plan filtered by CSV reachability.
-- `tg-solve`: after approval, SMT on `VAR_CSV_*` free vars → project model to CSV rows.
+| | |
+| --- | --- |
+| Agent | [OpenCode](https://opencode.ai)（推荐）/ [Cursor](https://cursor.com) |
+| 上游 | [understand-operator](../understand-operator/)（须先 `/uo-init`） |
+| 产物根 | `<算子包>/.testcase-generator/<op_name>/`（`$OUT_ROOT`） |
 
-`tg-init` is deprecated (intake is part of `tg-contract` / `tg-plan`).
+详细工作流见 [`docs/`](./docs/)。
 
-Planning levels:
+## 做什么
 
-- `L0`: functional-attribute smoke — every independent feature attribute (families, paths, dtype/layout, optional inputs, tiling-key field values) gets at least one witness. Not a single minimal case.
-- `L1`: reachable runtime branches / functional coverage / boundaries / rejects.
-- `L2`: exhaustive reachable TilingKey coverage.
-- `L3`: topic-scoped custom suite (e.g. `--topic determinism`).
+用户只接触三个命令：`/tg-init` → `/tg-plan` → `/tg-solve`。
 
-Plan outputs:
+UO 把语义追到**算子接口面**（`HOST_ATTR_*` 等）。本插件再映射到 **`VAR_CSV_*`**，形成可 SMT 执行的 lexicon，并按 level 求 CSV。
 
-- `plan/review.md` — human review with level design, test-point counts (覆盖什么/多少条)
-- `plan/levels/<L0|L1|...>/` — per-level archive so L0/L1 do not overwrite each other
-- `plan/human_supplement.yaml` — approve binding snapshot_hash + plan_hash
+| 命令 | 用途 |
+| --- | --- |
+| `/tg-init` | 摄入测试工具 + KEY 绑定 → `init.status=confirmed` |
+| `/tg-plan` | 人输入 → LLM 定 KEY/变量（空=全部输入可达）；默认 **L0+L1**；可选 **L2** |
+| `/tg-solve` | 已批准 level → Z3 → CSV（禁改 approved plan） |
 
-## 安装到 OpenCode（与 understand 相同方式）
+| Level | 含义 | 默认 |
+| --- | --- | --- |
+| L0 | 功能冒烟 | ✅ |
+| L1 | 范围内的 kernel branch | ✅ |
+| L2 | 全部可达 TilingKey | 可选 |
 
-在 **`testcase-agent/`** 目录下执行：
+无人工范围 = 全部输入可达（默认剔除 loopId/blockId 等核内不可控）。
 
-```powershell
-./install.ps1 opencode
-```
-
-会创建：
-
-- `~/.config/opencode/skills/tg-plan` / `tg-solve` / `tg-init` → 本目录 `skills/`
-- `~/.config/opencode/testcase-agent-plugin` → **本目录（PLUGIN_ROOT）**
-- 并 `pip install -e ".[solver]"`（可用 `-SkipPip` 跳过）
-
-卸载：
+## 安装
 
 ```powershell
-./install.ps1 -Uninstall opencode
+./install.ps1 opencode   # 或 cursor；默认 pip install -e ".[solver]"
 ```
 
-Linux / macOS：
-
-```bash
-chmod +x ./install.sh
-./install.sh opencode
-# SKIP_PIP=1 ./install.sh opencode
-```
-
-在 `~/.config/opencode/opencode.json` 中允许人工确认：
-
-```json
-{
-  "permission": {
-    "question": "allow"
-  }
-}
-```
-
-路径说明见 [`skills/PATHS.md`](skills/PATHS.md)。
-
-### 安装到 Cursor（可选）
-
-```powershell
-./install.ps1 cursor
-```
-
-或 Settings → Plugins → Add local plugin → 选择本目录。
+须同时装好 [understand-operator](../understand-operator/README.md) 与 [CBM](../understand-operator/docs/cbm-mcp-setup.md)。
 
 ## 使用
 
-`<project_root>` 为算子包目录（含已构建的 `.understand-operator/<op_name>/`）。
-也可传 KB 路径；`--test-script-root` 为测试工程（CSV consumer）。
-
-`tg-plan` 输入：**算子仓 +（测试工具 | contract 产物）**。缺了就失败并要求补齐。
-
 ```powershell
-# 测试工具 → 自动 contract + plan
-tg-plan <project_root> --op-name <op_name> --level L0,L1 --test-script-root <test_tool_root>
+tg-init "<算子仓>" --op-name <op> --test-script-root "<测试工具>"
+tg-init "<算子仓>" --op-name <op> --confirm
 
-# 或复用已有 contract 产物
-tg-plan <project_root> --op-name <op_name> --level L0,L1 --contract-root <realization_dir>
+tg-plan "<算子仓>" --op-name <op>                         # 默认：全部输入可达 L0,L1
+tg-plan "<算子仓>" --op-name <op> --focus "KEY_A KEY_B"  # 人/LLM 指定 KEY
+tg-plan "<算子仓>" --op-name <op> --level L0,L1,L2        # 加 L2
 
-# OpenCode AskQuestion: approve（立即 tg-solve）/ reject / suggest
-tg-solve <project_root> --op-name <op_name> --level L1
+tg-solve "<算子仓>" --op-name <op> --level L0
 ```
 
-仅刷新 contract（不要 plan）时：
+## 文档
 
-```powershell
-tg-contract <project_root> --op-name <op_name> --test-script-root <test_tool_root>
-```
-
-LLM 仅补全低置信 extract gaps（`extract/llm_patches.yaml`）。高置信路径零 LLM。
-
-手动开发态安装：
-
-```powershell
-pip install -r requirements.txt
-pip install -e ".[solver]"
-```
-
-仓库根目录统一依赖见上级 [requirements.txt](../requirements.txt) / [README](../README.md)。
+| 文档 | 内容 |
+| --- | --- |
+| [docs/tg-init-workflow.md](./docs/tg-init-workflow.md) | `/tg-init` |
+| [docs/tg-plan-workflow.md](./docs/tg-plan-workflow.md) | `/tg-plan` |
+| [docs/tg-solve-workflow.md](./docs/tg-solve-workflow.md) | `/tg-solve` |
+| [skills/PATHS.md](./skills/PATHS.md) | 路径与状态机 |

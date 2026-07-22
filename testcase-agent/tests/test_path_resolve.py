@@ -101,12 +101,13 @@ def test_plan_main_missing_inputs_asks(tmp_path: Path, capsys: pytest.CaptureFix
     assert "init_required" in captured.err or "uo_init_required" in captured.err or "PLAN_INPUTS_REQUIRED" in captured.err
 
 
-def test_parse_levels_expands_l1() -> None:
+def test_parse_levels_l0_l1_default() -> None:
     from testcase_agent.cli import _parse_levels
 
-    assert _parse_levels("L1") == ["L1-BRANCH", "L1-REJECT"]
-    assert _parse_levels("all") == ["L0", "L1-BRANCH", "L1-REJECT", "L2"]
-    assert _parse_levels("L0,L1-branch") == ["L0", "L1-BRANCH"]
+    assert _parse_levels("L1") == ["L1"]
+    assert _parse_levels("") == ["L0", "L1"]
+    assert _parse_levels("all") == ["L0", "L1", "L2"]
+    assert _parse_levels("L0,L1-branch") == ["L0", "L1"]
 
 
 def test_install_contract_into_project(tmp_path: Path) -> None:

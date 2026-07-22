@@ -41,7 +41,6 @@ def validate_kb(uo_root: Path, op_name: str, phase: str = "final", write_outputs
     uo_root = Path(uo_root)
     issues: list[Issue] = []
     graph_path = uo_root / "ir" / "operator_graph.yaml"
-    contract_path = uo_root / "contracts" / "testcase.yaml"
     if not graph_path.exists():
         issues.append(Issue("OPERATOR_GRAPH_MISSING", "error", "ir/operator_graph.yaml missing", graph_path.as_posix()))
     graph = _read(graph_path)
@@ -64,14 +63,15 @@ def validate_kb(uo_root: Path, op_name: str, phase: str = "final", write_outputs
     if int(tiling.get("args_sel_count") or 0) <= 0:
         issues.append(Issue("TILINGKEY_SEL_EMPTY", "warning", "args_sel_count is 0"))
 
-    if not contract_path.exists():
-        issues.append(Issue("TESTCASE_CONTRACT_MISSING", "error", "contracts/testcase.yaml missing", contract_path.as_posix()))
+    # contracts/testcase.yaml is retired (TG-owned). Historical residue is ignored.
 
     required_exports = [
+        uo_root / "tiling" / "key_space.yaml",
         uo_root / "tiling" / "exhaustive_key_space.yaml",
         uo_root / "tiling" / "coverage_model.yaml",
         uo_root / "kernel" / "branches.yaml",
         uo_root / "cross_layer" / "impact_graph.yaml",
+        uo_root / "quality.yaml",
     ]
     for path in required_exports:
         if not path.exists():
@@ -81,11 +81,13 @@ def validate_kb(uo_root: Path, op_name: str, phase: str = "final", write_outputs
     hashes = {}
     for rel in (
         "ir/operator_graph.yaml",
-        "contracts/testcase.yaml",
+        "ir/input_derivable.yaml",
+        "tiling/key_space.yaml",
         "tiling/exhaustive_key_space.yaml",
         "tiling/coverage_model.yaml",
         "kernel/branches.yaml",
         "cross_layer/impact_graph.yaml",
+        "quality.yaml",
     ):
         path = uo_root / rel
         if path.exists():

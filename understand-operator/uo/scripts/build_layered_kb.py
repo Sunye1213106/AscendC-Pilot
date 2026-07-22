@@ -174,6 +174,15 @@ def build_layered_kb(
     write_yaml(ir_dir / "operator_graph.yaml", graph)
     write_yaml(ir_dir / "unresolved.yaml", {"version": 1, "op_name": op_name, "items": unresolved})
 
+    # Classify input_derivable from graph markers (no key_cards product).
+    try:
+        from uo.scripts.classify_input_derivable import classify_and_write
+
+        id_payload = classify_and_write(uo_root, graph)
+        graph.setdefault("stats", {})["input_derivable"] = id_payload.get("stats") or {}
+    except Exception as exc:  # noqa: BLE001
+        graph.setdefault("stats", {})["input_derivable"] = {"status": "error", "error": str(exc)}
+
     from uo.scripts.kb_query_export import materialize_testcase_contract_files
 
     materialize_testcase_contract_files(uo_root, graph)
@@ -190,34 +199,13 @@ def build_layered_kb(
     except Exception as exc:  # noqa: BLE001
         graph.setdefault("stats", {})["kb_graph"] = {"status": "error", "error": str(exc)}
 
-    if selected & {"host", "tilingkey"}:
-        try:
-            from uo.scripts.extract_key_predicates import extract_key_predicates, write_key_cards
-
-            key_payload = extract_key_predicates(repo_root, op_name, architecture=architecture)
-            write_key_cards(uo_root, key_payload)
-            graph.setdefault("stats", {})["key_cards"] = key_payload.get("index") or {}
-        except Exception as exc:  # noqa: BLE001
-            unresolved.append(
-                {
-                    "id": "UNRES_KEY_PREDICATES",
-                    "kind": "key_predicates_extract_failed",
-                    "message": str(exc),
-                    "file_path": "",
-                    "snippet": "",
-                }
-            )
-            write_yaml(ir_dir / "unresolved.yaml", {"version": 1, "op_name": op_name, "items": unresolved})
-            graph["unresolved"] = unresolved
-            graph.setdefault("stats", {})["unresolved_count"] = len(unresolved)
-
     try:
         from uo.scripts.export_human_views import export_human_views
 
         human_stats = export_human_views(uo_root, write=True)
         graph.setdefault("stats", {})["human_views"] = {
             "key_count": (human_stats.get("keys_table") or {}).get("key_count"),
-            "export_profile": human_stats.get("export_profile"),
+            "ktpl_count": human_stats.get("ktpl_count"),
             "status": "ok",
         }
     except Exception as exc:  # noqa: BLE001
@@ -286,9 +274,17 @@ def _merge_edges(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for group in groups:
         for edge in group:
+            if not isinstance(edge, dict):
+                continue
             eid = str(edge.get("id") or "")
+            if not eid:
+                src = str(edge.get("source_id") or edge.get("source") or "")
+                tgt = str(edge.get("target_id") or edge.get("target") or "")
+                etype = str(edge.get("edge_type") or edge.get("type") or "edge")
+                flag = str(edge.get("flag") or "")
+                eid = f"{etype}:{src}->{tgt}" + (f":{flag}" if flag else "")
             if eid:
-                out[eid] = edge
+                out[eid] = {**edge, "id": eid}
     return list(out.values())
 
 

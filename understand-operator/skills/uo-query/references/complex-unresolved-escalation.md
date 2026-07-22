@@ -16,6 +16,10 @@ Any unresolved / bind gap that is **KEY- or shape-conditioned**, including:
 Simple analyzer false positives (nested `set_*` already proven) may stay on the
 sample-and-propagate path. **KEY shape expr must escalate.**
 
+**Build-time note:** `/uo-init` must **not** dispatch uo-query for
+`input_derivable` gaps (use `uo-semantic-resolve` task E). This file is for
+**post-KB** escalation only.
+
 ## Forbidden
 
 | Forbidden | Why |
@@ -24,6 +28,7 @@ sample-and-propagate path. **KEY shape expr must escalate.**
 | One subagent owns **all** KEYs | Context dilution; slow and shallow |
 | Invent `then==else` / fake domain to clear the gap | Gate bypass |
 | Skip `uo_kb_query.py` and Grep-only for KEY hit conditions | Violates uo-query gate |
+| TG Task writes `$UO_ROOT/**` or `key_shape_resolve/` | Hard isolation: TG → OUT_ROOT only |
 
 ## Parent orchestration (required)
 
@@ -40,29 +45,41 @@ python -X utf8 "$QUERY_CLI" "$PROJECT_ROOT" --op-name "$OP_NAME" --pattern affec
 python -X utf8 "$QUERY_CLI" "$PROJECT_ROOT" --op-name "$OP_NAME" --pattern neighbors_of --target "<KEY_ID_or_SYM>"
 ```
 
-4. Follow `source-lookup-gate.md`: default mode loops MCP until **high**
-   confidence on the KEY’s shape / set condition. **TG: `confidence` must be
-   `high` for resolved; never `medium`/`low` resolved. Intermediate Host symbols
-   must be unfolded in `derivation_chain` until `VAR_CSV_*` (or compile-time lit).
-   If a mid-symbol blocks (e.g. `bnSparseLimit`), spawn a **nested Task** for that
-   symbol (call-stack style) — do not stop at “depends on X”.**
-5. Each KEY subagent writes **only** its own file (avoid write races):
+4. Follow `source-lookup-gate.md`: default mode loops MCP until **high**.
+5. Each KEY subagent writes **only** its own file (avoid write races) — **pick one mode**:
+
+### Mode A — TG bind (testcase-agent parent)
+
+```text
+<OUT_ROOT>/realization/uo_query_resolve/<KEY_ID>.yaml
+```
+
+- `confidence: high` only when `status: resolved`
+- CSV↔HOST / `VAR_CSV_*` / mid nesting: follow
+  `testcase-agent/skills/tg-init/references/tg-uo-query-escalation.md`
+- Parent merges with **`tg-init --merge-uo-resolve` only**
+- **Never** read or write `$UO_ROOT/ir/key_shape_resolve/**`
+
+### Mode B — UO staging (understand-operator parent, non-TG)
 
 ```text
 <UO_ROOT>/ir/key_shape_resolve/<KEY_ID>.yaml
-# TG also: <OUT_ROOT>/realization/uo_query_resolve/<KEY_ID>.yaml
 ```
 
-Schema:
+- Leaves stay on operator interface / compile-time / `not_input_derivable`
+- **Do not** put `VAR_CSV_*` in UO graph staging
+- Parent merges into `ir/resolution_patch.yaml` via `apply_resolution.py --check` then apply
+
+Schema (shared fields; TG fills CSV leaves per TG skill):
 
 ```yaml
 version: 1
 key_id: KEY_EXAMPLE
 status: resolved | unresolved | needs_human
 shape_expr: "<normalized predicate / shape condition>"
-shape_determined: [VAR_CSV_...]
+shape_determined: [...]
 derivation_chain:
-  - {id: VAR_KEY_EXAMPLE, deps: [VAR_CSV_B], via: set_by}
+  - {id: ..., deps: [...], via: set_by}
 set_by:
   symbol: ...
   file_path: ...
@@ -75,14 +92,11 @@ resolutions:
     rationale: <Chinese>
     resolution: {kind: shape_expr, label: ..., evidence: "path:line"}
 query_backend: kb_graph
-confidence: high   # TG: high only when resolved; never medium/low resolved
+confidence: high
 mcp_checked: [SYM::..., ...]
 ```
 
-6. Parent **merges** all `ir/key_shape_resolve/*.yaml` into
-   `ir/resolution_patch.yaml` (and/or TestAgent lexicon via `--merge-uo-resolve`), then
-   `apply_resolution.py --check` / bind confirm.
-7. Only if a KEY subagent returns `needs_human` / `unresolved` **with** MCP evidence + missing
+6. Only if a KEY subagent returns `needs_human` / `unresolved` **with** MCP evidence + missing
    symbols listed may the parent keep that KEY open — still not
    a silent unsolved return. Non-empty TG keys that stay unresolved block confirm
    (empty-tensor allowlist excepted).
@@ -103,15 +117,12 @@ same KEY while one is open.
 | Pattern sample ≤12 + propagate | Clear false_positive / host-only intermediate with shared evidence |
 | **Per-KEY uo-query parallel** | Complex KEY / shape expression / bind expr still missing |
 
-Open unresolved → 0 remains the parent success criterion; escalation is how
-complex KEY gaps get closed without inventing facts.
-
 ## TestAgent (TG) consumers
 
 When gaps surface on the TestAgent side (`binding_gaps`, abstract `UNBOUND_*`,
 `KEY_DERIVATION_MISSING`, `RUNTIME_DOMAIN_NOT_PARTITIONED`, KEY-related
-`REALIZE_EMPTY`), follow the TG companion table:
+`REALIZE_EMPTY`), follow:
 
-`testcase-agent/skills/tg-domain-review/references/tg-uo-query-escalation.md`
+`testcase-agent/skills/tg-init/references/tg-uo-query-escalation.md`
 
-Same rule: parallel **one KEY per subagent**, `uo-query` first, no bare unsolved.
+Same rule: parallel **one KEY per subagent**, `uo-query` first, write **OUT_ROOT only**, no bare unsolved.

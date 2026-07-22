@@ -55,12 +55,12 @@ RESERVED_MATCH_KEYS = {
     "optional_inputs",
     "feature_flags",
 }
-TEST_LEVELS = ("L0", "L1", "L1-BRANCH", "L1-REJECT", "L2", "L3")
+TEST_LEVELS = ("L0", "L1", "L2")
 LEVEL_ORDER = {level: idx for idx, level in enumerate(TEST_LEVELS)}
-# L1 and L1-BRANCH share positive branch coverage; L1 kept for legacy artifacts/tests.
+# Compat: historical L1-BRANCH artifacts map to L1 (affected kernel branches).
 L1_BRANCH_LEVELS = frozenset({"L1", "L1-BRANCH"})
-L1_REJECT_LEVELS = frozenset({"L1-REJECT"})
-L1_FAMILY_LEVELS = L1_BRANCH_LEVELS | L1_REJECT_LEVELS
+L1_FAMILY_LEVELS = L1_BRANCH_LEVELS
+L1_REJECT_LEVELS = frozenset()  # removed: reject suite no longer a user level
 BOUNDARY_KIND_LEVELS = {
     "tilingdata_boundary",
     "core_split_boundary",
@@ -78,7 +78,7 @@ def tg_plan(
     project_root: Path,
     op_name: str,
     *,
-    level: str = "L1",
+    level: str = "L0",
     focus: str = "",
     topic: str = "",
     reuse_snapshot: bool = False,
@@ -127,10 +127,13 @@ def tg_plan(
     except TgContractError as exc:
         raise TgPlanError(str(exc)) from exc
 
+    from .build_tg_contract import resolve_plan_contract, stamp_tg_contract_level
+
+    plan_contract, contract_source = resolve_plan_contract(snapshot, out_root=out_root)
     extract_doc = extract_generation_conditions(snapshot, level=normalize_level(level), topic=topic)
     declared_vars = {
         str(item.get("id"))
-        for item in _iter_items(_as_dict(snapshot.get("files", {}).get("contracts/testcase.yaml")).get("variables"))
+        for item in _iter_items(plan_contract.get("variables"))
         if item.get("id")
     }
     patches = load_llm_patches(out_root)
@@ -149,9 +152,9 @@ def tg_plan(
 
     topic_manifest = None
     normalized = normalize_level(level)
-    if normalized == "L3" or (topic and normalized in L1_FAMILY_LEVELS | {"L2"}):
-        if topic or focus:
-            topic_manifest = load_topic_manifest(out_root, topic or focus, project_root=project_root)
+    # --topic scopes the plan; empty topic = whole-operator (no manifest filter).
+    if topic:
+        topic_manifest = load_topic_manifest(out_root, topic, project_root=project_root)
 
     plan = build_plan(
         snapshot,
@@ -162,31 +165,42 @@ def tg_plan(
         extract_doc=extract_doc,
         realization_map=realization_map,
         out_root=out_root,
+        contract_override=plan_contract if plan_contract else None,
     )
     write_plan_outputs(out_root, plan, snapshot)
     refresh_contract_plan_hash(out_root, str(plan.get("plan_hash") or ""), str(snapshot.get("snapshot_hash") or ""))
+    stamp_tg_contract_level(out_root, normalize_level(level), plan_hash=str(plan.get("plan_hash") or ""))
     plan["contract_embedded"] = contract_embedded
+    plan["contract_source"] = contract_source
     plan["csv_consumer_root"] = (
         Path(csv_consumer_root).resolve().as_posix() if csv_consumer_root is not None else ""
     )
     plan["realization_root"] = (out_root / "realization").as_posix()
+    plan["tg_contract_path"] = (out_root / "contract" / "testcase.yaml").as_posix()
     return plan
 
 
 def build_plan(
     snapshot: dict[str, Any],
     *,
-    level: str = "L1",
+    level: str = "L0",
     focus: str = "",
     topic: str = "",
     topic_manifest: dict[str, Any] | None = None,
     extract_doc: dict[str, Any] | None = None,
     realization_map: dict[str, Any] | None = None,
     out_root: Path | None = None,
+    contract_override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     level = normalize_level(level)
     files = snapshot.get("files") if isinstance(snapshot.get("files"), dict) else {}
-    contract = _as_dict(files.get("contracts/testcase.yaml"))
+    from .build_tg_contract import resolve_plan_contract
+
+    if contract_override is not None:
+        contract = _as_dict(contract_override)
+    else:
+        contract, _src = resolve_plan_contract(snapshot, out_root=out_root)
+        contract = _as_dict(contract)
     coverage = _as_dict(files.get("tiling/coverage_model.yaml"))
     branches = _as_dict(files.get("kernel/branches.yaml"))
     impact = _as_dict(files.get("cross_layer/impact_graph.yaml"))
@@ -201,12 +215,8 @@ def build_plan(
         add_l0_obligations(obligations, files, coverage, contract, semantic_focus)
     elif level == "L2":
         add_l2_exhaustive_key_obligations(obligations, files, contract, semantic_focus)
-    elif level == "L3":
-        add_l3_topic_obligations(obligations, files, coverage, contract, branches, impact, semantic_focus, topic_manifest or {})
-    elif level in L1_REJECT_LEVELS:
-        add_l1_reject_obligations(obligations, files, contract, semantic_focus, decorate_level=level)
-    else:
-        # L1 (legacy) and L1-BRANCH
+    elif level in L1_FAMILY_LEVELS:
+        # L1: affected / in-scope kernel branches (topic or impact scopes; else whole operator)
         add_l1_branch_obligations(
             obligations,
             files,
@@ -217,23 +227,37 @@ def build_plan(
             semantic_focus,
             realization_map,
             out_root=out_root,
-            decorate_level=level if level in L1_BRANCH_LEVELS else "L1-BRANCH",
+            decorate_level="L1",
         )
+    else:
+        raise TgPlanError(f"Unsupported test level: {level}. Allowed: L0, L1, L2")
     obligations = filter_obligations_by_focus(obligations, semantic_focus)
-    if topic_manifest and level in {"L3"} | L1_FAMILY_LEVELS | {"L2"}:
+    if topic_manifest and level in {"L0", "L1", "L2"} | L1_FAMILY_LEVELS:
         obligations = filter_obligations_for_topic(obligations, topic_manifest, files)
-        if not obligations and level == "L3":
+        if not obligations:
             blocker = make_obligation(
-                "tiling_key_field_value",
-                {"id": "L3_TOPIC_EMPTY", "status": "unresolved", "reason": f"no obligations matched topic {topic_manifest.get('topic_id')}"},
+                "kernel_branch",
+                {
+                    "id": "TOPIC_SCOPE_EMPTY",
+                    "status": "unresolved",
+                    "reason": f"no obligations matched topic {topic_manifest.get('topic_id')}",
+                },
                 target_refs=[],
                 priority="hard",
             )
-            decorate_obligation(blocker, "L3", {"artifact": "topics", "entity_ref": str(topic_manifest.get("topic_id") or ""), "reason": "topic_empty"}, "topic produced zero obligations", semantic_focus)
+            decorate_obligation(
+                blocker,
+                level if level in TEST_LEVELS else "L1",
+                {"artifact": "topics", "entity_ref": str(topic_manifest.get("topic_id") or ""), "reason": "topic_empty"},
+                "topic produced zero obligations",
+                semantic_focus,
+            )
             obligations.append(blocker)
     if realization_map:
         obligations = apply_realization_filters(obligations, realization_map)
     obligations = apply_shape_determined_filter(obligations, out_root)
+    obligations, input_reachable_stats = apply_input_reachable_filter(obligations, files)
+    semantic_focus["input_reachable_filter"] = input_reachable_stats
     obligations = deterministic_obligations(obligations)
     validate_unique_obligation_ids(obligations)
     if realization_map:
@@ -362,6 +386,38 @@ def add_l3_topic_obligations(
             decorate_obligation(item, "L3", default_origin_for(item, files), "L3 topic-related coverage", semantic_focus)
 
 
+def _collect_impact_refs(impact: dict[str, Any]) -> set[str]:
+    """Collect entity/branch refs from UO impact_graph (empty → whole-operator L1)."""
+    refs: set[str] = set()
+    if not isinstance(impact, dict) or not impact:
+        return refs
+    buckets: list[Any] = []
+    for key in ("nodes", "impacts", "edges", "changed_symbols", "impacted_branches", "items", "branches"):
+        buckets.extend(list(_iter_items(impact.get(key))))
+    for item in buckets:
+        if not isinstance(item, dict):
+            if item:
+                refs.add(str(item))
+            continue
+        for key in (
+            "branch_ref",
+            "id",
+            "kernel_branch",
+            "entity_ref",
+            "ref",
+            "symbol",
+            "name",
+            "qualified_name",
+        ):
+            val = item.get(key)
+            if val:
+                refs.add(str(val))
+        for ref in item.get("target_refs") or []:
+            if ref:
+                refs.add(str(ref))
+    return {ref for ref in refs if ref}
+
+
 def add_l1_branch_obligations(
     out: list[dict[str, Any]],
     files: dict[str, Any],
@@ -373,10 +429,15 @@ def add_l1_branch_obligations(
     realization_map: dict[str, Any] | None = None,
     out_root: Path | None = None,
     *,
-    decorate_level: str = "L1-BRANCH",
+    decorate_level: str = "L1",
 ) -> None:
-    """Positive L1: reachable runtime branches, runtime domains, legal boundaries, CSV domain cover."""
-    del impact  # reserved for future branch impact pruning
+    """L1: affected / in-scope kernel branches (+ supporting runtime cover).
+
+    Scope:
+    - If impact_graph has branch/entity refs → keep kernel_branch obligations that hit them
+      (whole-operator when impact empty).
+    - Topic filter is applied by caller when --topic is set.
+    """
     before = len(out)
     add_contract_kernel_branch_obligations(out, contract)
     add_kernel_branch_obligations(out, branches)
@@ -395,14 +456,48 @@ def add_l1_branch_obligations(
         add_csv_domain_cover_obligations(out, realization_map, files=files, consumer_schema=schema_for_cover)
     if len(out) == before:
         add_key_relation_obligations(out, coverage, contract)
+
+    impact_refs = _collect_impact_refs(impact)
+    if impact_refs:
+        pruned: list[dict[str, Any]] = []
+        for item in out[before:]:
+            kind = str(item.get("kind") or "")
+            if kind != "kernel_branch":
+                pruned.append(item)
+                continue
+            constraints = item.get("constraints") if isinstance(item.get("constraints"), dict) else {}
+            blob = " ".join(
+                str(x)
+                for x in [
+                    item.get("id"),
+                    *(item.get("target_refs") or []),
+                    constraints.get("branch_ref") or "",
+                    constraints.get("branch_id") or "",
+                ]
+                if x
+            )
+            if any(ref and ref in blob for ref in impact_refs):
+                pruned.append(item)
+        if any(str(item.get("kind") or "") == "kernel_branch" for item in pruned):
+            del out[before:]
+            out.extend(pruned)
+        semantic_focus["impact_scope"] = {
+            "enabled": True,
+            "ref_count": len(impact_refs),
+            "kernel_branch_kept": sum(
+                1 for item in out[before:] if str(item.get("kind") or "") == "kernel_branch"
+            ),
+        }
+    else:
+        semantic_focus["impact_scope"] = {"enabled": False, "ref_count": 0}
+
     for item in out[before:]:
         if item.get("test_level"):
-            # Re-tag legacy L1 decorations from helpers.
             item["test_level"] = decorate_level
             continue
         kind = str(item.get("kind") or "")
         if kind == "kernel_branch":
-            reason = "runtime branch coverage"
+            reason = "affected kernel branch coverage"
         elif kind == "csv_domain_cover":
             reason = "csv domain value coverage"
         elif item.get("coverage_bucket") == "boundary_value":
@@ -486,6 +581,76 @@ def apply_shape_determined_filter(obligations: list[dict[str, Any]], out_root: P
             continue
         kept.append(item)
     return kept
+
+
+def _not_input_derivable_key_aliases(files: dict[str, Any]) -> set[str]:
+    """KEY ids marked not_input_derivable / input_derivable:false in UO KB."""
+    from .kb_semantics import assemble_key_determinants
+
+    aliases: set[str] = set()
+    for key_id, det in assemble_key_determinants(files).items():
+        if not isinstance(det, dict):
+            continue
+        if det.get("not_input_derivable") is True or det.get("input_derivable") is False:
+            raw = str(key_id or "").upper()
+            if not raw:
+                continue
+            bare = raw.removeprefix("KEY_")
+            aliases.update({raw, bare, f"KEY_{bare}", f"VAR_KEY_{bare}", f"VAR_{bare}"})
+    return aliases
+
+
+def _obligation_key_aliases(item: dict[str, Any]) -> set[str]:
+    aliases: set[str] = set()
+    for ref in item.get("target_refs") or []:
+        text = str(ref or "").upper()
+        if not text:
+            continue
+        bare = text.removeprefix("KEY_").removeprefix("VAR_KEY_").removeprefix("VAR_")
+        aliases.update({text, bare, f"KEY_{bare}", f"VAR_KEY_{bare}"})
+    field = str(item.get("field") or item.get("id") or "").upper()
+    if field:
+        bare = field.removeprefix("KEY_").removeprefix("VAR_KEY_").removeprefix("L2_KEY_")
+        aliases.update({field, bare, f"KEY_{bare}", f"VAR_KEY_{bare}"})
+    return {a for a in aliases if a}
+
+
+def apply_input_reachable_filter(
+    obligations: list[dict[str, Any]], files: dict[str, Any]
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Keep only host-input-reachable coverage; drop kernel-local / not_input_derivable.
+
+    Default policy (always on):
+    - Drop KEY obligations for keys with not_input_derivable / input_derivable:false
+    - Drop kernel_branch / runtime_variable_state controlled by loopId/blockId/… (LOOP_LOCAL)
+    """
+    blocked_keys = _not_input_derivable_key_aliases(files)
+    kept: list[dict[str, Any]] = []
+    dropped_not_input = 0
+    dropped_loop_local = 0
+    for item in obligations:
+        kind = str(item.get("kind") or "")
+        if kind in {"tiling_key_field_value", "tiling_key_field", "tiling_key_relation"}:
+            if _obligation_key_aliases(item) & blocked_keys:
+                dropped_not_input += 1
+                continue
+        if kind in {"kernel_branch", "runtime_variable_state"}:
+            scope = is_out_of_scope_runtime_entity(
+                name=str(item.get("id") or item.get("name") or _first_ref(item) or ""),
+                condition=str(item.get("condition") or item.get("name") or ""),
+                determinant_source=str(item.get("determinant_source") or ""),
+            )
+            if scope in {"LOOP_LOCAL", "PLATFORM_MACRO"}:
+                dropped_loop_local += 1
+                continue
+        kept.append(item)
+    stats = {
+        "dropped_not_input_derivable": dropped_not_input,
+        "dropped_loop_local_or_platform": dropped_loop_local,
+        "kept": len(kept),
+        "blocked_key_count": len({a for a in blocked_keys if a.startswith("KEY_")}),
+    }
+    return kept, stats
 
 
 def add_l0_obligations(out: list[dict[str, Any]], files: dict[str, Any], coverage: dict[str, Any], contract: dict[str, Any], semantic_focus: dict[str, Any]) -> None:
@@ -1001,13 +1166,17 @@ def is_relation_item(item: dict[str, Any]) -> bool:
 
 
 def normalize_level(level: str) -> str:
-    normalized = str(level or "L1").strip().upper().replace("_", "-")
-    if normalized in {"L1BRANCH"}:
-        normalized = "L1-BRANCH"
-    elif normalized in {"L1REJECT"}:
-        normalized = "L1-REJECT"
+    normalized = str(level or "L0").strip().upper().replace("_", "-")
+    if normalized in {"L1BRANCH", "L1-BRANCH"}:
+        normalized = "L1"
+    if normalized in {"L1REJECT", "L1-REJECT", "L3"}:
+        raise TgPlanError(
+            f"Unsupported test level: {level}. Use L0,L1,L2 "
+            "(L0=功能冒烟, L1=受影响 kernel branch, L2=全部 TilingKey). "
+            "Scope via --topic (omit = whole operator)."
+        )
     if normalized not in TEST_LEVELS:
-        raise TgPlanError(f"Unsupported test level: {level}")
+        raise TgPlanError(f"Unsupported test level: {level}. Allowed: L0, L1, L2")
     return normalized
 
 
@@ -1087,6 +1256,35 @@ def known_entity_index(files: dict[str, Any]) -> dict[str, str]:
             name = str(item.get("name") or item.get("canonical_name") or "")
             if name and ref:
                 found[name.upper()] = ref
+    # KEY / VAR so human/LLM --focus can select variables & tiling keys.
+    key_space = _as_dict(files.get("tiling/key_space.yaml"))
+    fields = key_space.get("fields") or key_space.get("dimensions") or []
+    if isinstance(fields, dict):
+        field_iter = [{"id": str(k), **(v if isinstance(v, dict) else {})} for k, v in fields.items()]
+    elif isinstance(fields, list):
+        field_iter = [item for item in fields if isinstance(item, dict)]
+    else:
+        field_iter = []
+    for item in field_iter:
+        kid = str(item.get("id") or "")
+        if not kid:
+            continue
+        ref = kid if kid.upper().startswith("KEY_") else f"KEY_{kid}"
+        found[ref.upper()] = ref
+        found[kid.upper()] = ref
+        bare = kid.upper().removeprefix("KEY_")
+        found[bare] = ref
+        found[f"VAR_KEY_{bare}"] = ref
+    id_doc = _as_dict(files.get("ir/input_derivable.yaml"))
+    by_key = id_doc.get("keys") if isinstance(id_doc.get("keys"), dict) else {}
+    for kid in by_key:
+        ref = str(kid) if str(kid).upper().startswith("KEY_") else f"KEY_{kid}"
+        found[ref.upper()] = ref
+        found[str(kid).upper()] = ref
+    for item in _iter_items(_as_dict(files.get("registry/variables.yaml")).get("variables")):
+        vid = str(item.get("id") or item.get("stable_id") or "")
+        if vid:
+            found[vid.upper()] = vid
     return found
 
 
@@ -1126,31 +1324,66 @@ def _resolved(term: str, ref: str, confidence: str, source: str) -> dict[str, st
     return {"query_term": term, "resolved_ref": ref, "confidence": confidence, "resolution_source": source}
 
 
+def _focus_scope_aliases(semantic_focus: dict[str, Any]) -> set[str]:
+    """Expanded stable-id aliases from human/LLM focus (empty = no narrowing)."""
+    aliases: set[str] = set()
+    for ref in semantic_focus.get("family_refs") or []:
+        aliases.add(str(ref))
+    for ref in semantic_focus.get("kernel_path_refs") or []:
+        aliases.add(str(ref))
+    for item in semantic_focus.get("branch_predicates") or []:
+        ref = str(item.get("branch_ref") or "")
+        if ref:
+            aliases.add(ref)
+    for item in semantic_focus.get("tiling_key_predicates") or []:
+        ref = str(item.get("field_ref") or "").upper()
+        if not ref:
+            continue
+        bare = ref.removeprefix("KEY_")
+        aliases.update({ref, bare, f"KEY_{bare}", f"VAR_KEY_{bare}", f"VAR_{bare}"})
+    for item in semantic_focus.get("variable_predicates") or []:
+        ref = str(item.get("var_ref") or "")
+        if ref:
+            aliases.add(ref)
+            aliases.add(ref.upper())
+    return {a for a in aliases if a}
+
+
 def filter_obligations_by_focus(obligations: list[dict[str, Any]], semantic_focus: dict[str, Any]) -> list[dict[str, Any]]:
+    """When --focus resolves to entities, keep only matching obligations; empty focus = all."""
     if not semantic_focus.get("original_query"):
         return obligations
     if semantic_focus.get("unresolved_terms"):
         return obligations
-    family_refs = set(semantic_focus.get("family_refs") or [])
-    path_refs = set(semantic_focus.get("kernel_path_refs") or [])
-    branch_refs = {item.get("branch_ref") for item in semantic_focus.get("branch_predicates") or []}
-    if not any((family_refs, path_refs, branch_refs)):
+    scope = _focus_scope_aliases(semantic_focus)
+    if not scope:
         return obligations
+    key_refs = {str(item.get("field_ref") or "") for item in semantic_focus.get("tiling_key_predicates") or [] if item.get("field_ref")}
+    var_refs = {str(item.get("var_ref") or "") for item in semantic_focus.get("variable_predicates") or [] if item.get("var_ref")}
+    branch_refs = {item.get("branch_ref") for item in semantic_focus.get("branch_predicates") or [] if item.get("branch_ref")}
+    pinned = bool(key_refs or var_refs or branch_refs)
     kept: list[dict[str, Any]] = []
     for item in obligations:
+        kind = str(item.get("kind") or "")
         refs = set(str(ref) for ref in item.get("target_refs") or [])
-        if family_refs and item.get("kind") == "family" and not refs.intersection(family_refs):
+        aliases = refs | _obligation_key_aliases(item)
+        if item.get("priority") == "hard" and item.get("status") == "unresolved":
+            kept.append(item)
             continue
-        if path_refs and item.get("kind") == "kernel_path" and not refs.intersection(path_refs):
-            continue
-        if branch_refs and item.get("kind") == "kernel_branch" and not refs.intersection(branch_refs):
-            continue
-        if branch_refs and item.get("kind") == "kernel_branch":
+        if kind == "kernel_branch" and branch_refs:
+            if not refs.intersection(branch_refs):
+                continue
             pred = next((pred for pred in semantic_focus.get("branch_predicates") or [] if pred.get("branch_ref") in refs), {})
             state = pred.get("state")
             if state != "unspecified" and "target_value" in item and normalize_literal(item.get("target_value")) != normalize_literal(state):
                 continue
-        item["semantic_scope_refs"] = sorted(set(item.get("semantic_scope_refs") or []) | family_refs | path_refs | branch_refs)
+        elif not (aliases & scope):
+            # Unpinned optional smoke may stay when focus is family/path-only.
+            if kind == "optional_input_mode" and not pinned:
+                pass
+            else:
+                continue
+        item["semantic_scope_refs"] = sorted(set(item.get("semantic_scope_refs") or []) | scope)
         item["focus_decision"] = {"action": "include", "reason": "matches semantic focus", "path_refs": sorted(refs)}
         kept.append(item)
     return kept
@@ -1821,7 +2054,7 @@ OUT_OF_SCOPE_CSV_REASONS = {
     "PLATFORM_MACRO": "平台/头文件守卫宏，无法由 CSV 控制",
 }
 
-# LLM+/tg-csv-contract + 源码能否补齐绑定（相对 CSV 全覆盖目标）
+# LLM+/uo-query bind + 源码能否补齐绑定（相对 CSV 全覆盖目标）
 LLM_RESOLVABILITY = {
     "UNBOUND_ATOM": {
         "llm_plus_source": "likely",
@@ -2299,7 +2532,17 @@ def contract_gaps(level: str, contract: dict[str, Any], coverage: dict[str, Any]
     elif level == "L2":
         exhaustive = _as_dict(files.get("tiling/exhaustive_key_space.yaml"))
         if not exhaustive.get("template_blocks"):
-            gaps.append({"field": "tiling/exhaustive_key_space.yaml.template_blocks", "reason": "L2 needs exhaustive template blocks"})
+            gaps.append(
+                {
+                    "field": "tiling/exhaustive_key_space.yaml.template_blocks",
+                    "reason": (
+                        "L2 needs template instances; query UO kb_graph KTPL_* "
+                        "(list_templates / templates_for_key / fixes_flag) or build "
+                        "downstream expansion — UO no longer materializes cartesian "
+                        "template_blocks YAML"
+                    ),
+                }
+            )
         if "relations" not in constraints:
             gaps.append({"field": "tiling/constraints.yaml.relations", "reason": "L2 needs constraints"})
         pruning = _as_dict(constraints.get("tiling_key_pruning"))
@@ -2310,9 +2553,6 @@ def contract_gaps(level: str, contract: dict[str, Any], coverage: dict[str, Any]
             gaps.append({"field": "tiling/constraints.yaml.tiling_key_merging.performed", "reason": "L2 needs merging status"})
         if not _as_dict(constraints.get("input_realization")) and not _as_dict(exhaustive.get("reverse_realization_index")):
             gaps.append({"field": "input_realization", "reason": "L2 needs reverse realization or input realization"})
-    elif level == "L3":
-        if not str(topic or "").strip():
-            gaps.append({"field": "topic", "reason": "L3 requires --topic"})
     return gaps
 
 
@@ -2321,43 +2561,25 @@ LEVEL_DESIGN = {
         "功能属性冒烟（Functional-attribute smoke）",
         [
             "目标：覆盖功能开关和可选输入的声明取值，例如 Rope 是否开启、Mask 是否存在、Mask 类型等。",
-            "覆盖范围：可选输入 present/absent、全部独立 TilingKey 功能字段离散取值。",
-            "不覆盖：运行时分支笛卡尔、拦截负例、穷尽 TilingKey。",
-            "设计意图：用较少检查点把功能开关面铺满，作为后续 L1/L2 扩展前的属性取值基线。",
+            "覆盖范围：可选输入 present/absent、独立功能字段离散取值。",
+            "不覆盖：kernel 分支面、穷尽 TilingKey。",
+            "默认与 L1 一起生成；可用 --topic 裁剪范围（省略 = 整仓）。",
         ],
     ),
     "L1": (
-        "运行时分支覆盖（legacy 合并标签；等同 L1-BRANCH 正例）",
+        "受影响的 Kernel 分支（Affected kernel branches）",
         [
-            "目标：覆盖可达 kernel 运行时分支（期望跑通）。",
-            "新流程请用 L1-BRANCH + L1-REJECT 分套件。",
-        ],
-    ),
-    "L1-BRANCH": (
-        "分支测试（正例，期望跑通）",
-        [
-            "覆盖：可达运行时分支、运行时变量域点、合法边界、CSV 域 cover。",
-            "不覆盖：故意失败的拦截场景；KEY 穷尽（L2）。",
-        ],
-    ),
-    "L1-REJECT": (
-        "拦截用例（负例，期望 reject）",
-        [
-            "覆盖：KB/init 声明的非法/应拦截组合。",
-            "不覆盖：正例分支覆盖。",
+            "目标：覆盖受影响 / 范围内的 kernel 运行时分支（期望跑通）。",
+            "范围：有 impact_graph 时按冲击面裁剪；有 --topic 时按 topic 裁剪；否则整仓可达分支。",
+            "不覆盖：全部 TilingKey 穷尽（那是 L2）。",
         ],
     ),
     "L2": (
-        "穷尽可达 TilingKey（Exhaustive reachable TilingKey）",
+        "全部 TilingKey（Exhaustive tiling keys）",
         [
             "目标：对 exhaustive_key_space 中可达且可反向实现的 TilingKey 做穷尽覆盖。",
-            "不替代 L1-branch / L1-reject。",
-        ],
-    ),
-    "L3": (
-        "主题定制套件（legacy；优先用 --topic 过滤 L1/L2）",
-        [
-            "目标：仅生成与 --topic 相关的检查点。",
+            "可选：默认不生成；`--level L0,L1,L2` 或 `all` 时加入。",
+            "可用 --topic 裁剪；省略 topic = 整仓 KEY 空间。",
         ],
     ),
 }
@@ -2906,7 +3128,7 @@ def apply_realization_review_gates(out_root: Path | None, unresolved: dict[str, 
                     "reason": (
                         f"DOMAIN_REVIEW_REQUIRED: {len(pending)} columns unreviewed "
                         f"(e.g. {', '.join(str(c) for c in pending[:6])}). "
-                        "Run tg-domain-review / AskQuestion before approve→solve."
+                        "Continue /tg-init binding/domain phase / AskQuestion before approve→solve."
                     ),
                 }
             )
@@ -2919,19 +3141,25 @@ def apply_realization_review_gates(out_root: Path | None, unresolved: dict[str, 
         if hard:
             lexicon_path = realization / "binding_lexicon.yaml"
             lexicon = read_yaml(lexicon_path) if lexicon_path.is_file() else {}
-            locked = {
-                str(item.get("id") or "")
-                for item in (lexicon.get("key_derivations") or [])
-                if isinstance(item, dict) and item.get("locked")
-            }
-            still = [g for g in hard if str(g.get("variable_id") or "") not in locked]
+            bound = set()
+            for item in lexicon.get("key_derivations") or []:
+                if not isinstance(item, dict) or item.get("expr") is None:
+                    continue
+                status = str(item.get("status") or "").lower()
+                conf = str(item.get("confidence") or "").lower()
+                if item.get("locked") or status in {"reviewed", "confirmed", "locked"} or conf == "high":
+                    vid = str(item.get("id") or "")
+                    if vid:
+                        bound.add(vid)
+            still = [g for g in hard if str(g.get("variable_id") or "") not in bound]
             if still:
                 gaps.append(
                     {
                         "field": "realization/binding_lexicon.yaml",
                         "reason": (
                             f"BINDING_REVIEW_REQUIRED: {len(still)} KEY↔CSV gaps unbound. "
-                            "Run /tg-csv-contract, lock derivations, confirm domain_review."
+                            "Continue /tg-init: Task Follow uo-query → --merge-uo-resolve → "
+                            "--verify-csv-closure → tg-init-audit → --confirm."
                         ),
                     }
                 )
@@ -2950,18 +3178,16 @@ def compute_allow_solve(
     unresolved: dict[str, Any],
     semantic_focus: dict[str, Any],
 ) -> tuple[bool, str]:
-    """Return (allow_solve, reason). Empty L1-REJECT / open KEY gaps → False."""
+    """Return (allow_solve, reason). Open KEY gaps on L1 → False."""
     if unresolved.get("blocking_hard_obligations") or unresolved.get("contract_gaps"):
         return False, "hard_blockers_or_contract_gaps"
-    if level in {"L1-REJECT"} and not obligations:
-        return False, "empty_l1_reject"
     csv_stats = _as_dict(semantic_focus.get("csv_realization"))
     by_code = _as_dict(csv_stats.get("by_unreachability_code"))
-    if level in {"L1", "L1-BRANCH"} and int(by_code.get("KEY_DERIVATION_MISSING") or 0) > 0:
+    if level == "L1" and int(by_code.get("KEY_DERIVATION_MISSING") or 0) > 0:
         return False, "key_derivation_missing"
     pending = int(csv_stats.get("pending_count") or 0) if csv_stats else len(obligations)
     not_csv = int(csv_stats.get("not_csv_realizable_count") or 0)
-    if level in {"L1", "L1-BRANCH"} and pending > 0 and not_csv > 0:
+    if level == "L1" and pending > 0 and not_csv > 0:
         ratio = not_csv / max(1, pending + not_csv)
         if ratio >= 0.75:
             return False, "not_csv_realizable_ratio_high"
@@ -3041,10 +3267,10 @@ def build_review(
         [
             "",
             "### 级别对照（本仓库约定）",
-            "- **L0**：功能开关/可选输入取值 — 例如 Rope、Mask、Mask 类型等字段值覆盖。",
-            "- **L1**：运行时分支 — kernel_branch true/false 或声明变体覆盖。",
-            "- **L2**：穷尽可达 TilingKey。",
-            "- **L3**：按 `--topic` 裁剪的主题套件。",
+            "- **L0**：功能冒烟 — 功能开关/可选输入取值。",
+            "- **L1**：受影响的 kernel branch（`--topic` 或 impact 裁剪；省略 = 整仓）。",
+            "- **L2**：全部可达 TilingKey（可选，默认不生成）。",
+            "- 范围：`--topic`；省略 = 整仓。无 L3。",
             "",
             "## 测试设计覆盖说明（覆盖什么 / 为什么这样设计）",
         ]
@@ -3099,7 +3325,7 @@ def build_review(
         )
     else:
         lines.append(
-            "- OpenCode AskQuestion：`confirm_domain`（先 tg-domain-review）/ `suggest` / `reject`。"
+            "- OpenCode AskQuestion：`confirm_domain`（先回 /tg-init 绑定/域阶段）/ `suggest` / `reject`。"
             " Allow solve: no 时禁止 approve→solve。"
         )
     lines.append(

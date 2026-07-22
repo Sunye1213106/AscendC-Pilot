@@ -17,6 +17,8 @@ def write_minimal_contract_artifacts(
     snapshot_hash: str,
     plan_hash: str,
     columns: list[str] | None = None,
+    snapshot: dict | None = None,
+    tg_contract_updates: dict | None = None,
 ) -> dict[str, object]:
     columns = columns or ["Testcase_Name", "Enable"]
     evidence = {
@@ -103,8 +105,33 @@ def write_minimal_contract_artifacts(
     write_yaml(realization_dir / "consumer_evidence.yaml", evidence)
     write_yaml(realization_dir / "consumer_schema.yaml", consumer_schema)
     write_yaml(realization_dir / "realization_map.yaml", realization_map)
+
+    from testcase_agent.build_tg_contract import build_tg_contract, load_tg_contract, tg_contract_path
+    from testcase_agent.io import read_json
+
+    snap = snapshot
+    if snap is None:
+        snap_path = out_root / "snapshot" / "understand_contract.json"
+        if snap_path.is_file():
+            snap = read_json(snap_path)
+    if not isinstance(snap, dict):
+        snap = {"op_name": out_root.name, "snapshot_hash": snapshot_hash, "files": {}}
+    snap.setdefault("snapshot_hash", snapshot_hash)
+    tg_contract = build_tg_contract(
+        out_root,
+        op_name=str(snap.get("op_name") or out_root.name),
+        consumer_schema=consumer_schema,
+        snapshot=snap,
+    )
+    if tg_contract_updates:
+        merged = dict(load_tg_contract(out_root) or tg_contract)
+        merged.update(tg_contract_updates)
+        write_yaml(tg_contract_path(out_root), merged)
+        tg_contract = merged
+
     return {
         "evidence": evidence,
         "consumer_schema": consumer_schema,
         "realization_map": realization_map,
+        "tg_contract": tg_contract,
     }

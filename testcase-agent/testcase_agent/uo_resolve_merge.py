@@ -11,6 +11,8 @@ from .io import read_yaml, write_yaml
 from .realization_validation import _is_constant_fixed_expr
 from .resolve_policy import (
     is_empty_allowlisted,
+    is_fake_not_csv_excuse,
+    is_legitimate_skip,
     require_chains_terminate_at_csv,
     require_high_only,
     require_no_nonempty_unresolved,
@@ -84,16 +86,30 @@ def merge_uo_resolve(out_root: Path, *, auto_fix_heuristics: bool = True) -> dic
             var_id = f"VAR_{var_id}"
 
         if status in {"unresolved", "needs_human", "not_csv_realizable"} or doc.get("not_csv_realizable") is True:
+            legit = is_legitimate_skip(key_id, doc)
+            fake = is_fake_not_csv_excuse({**doc, "key_id": key_id})
             entry = {
                 "key_id": key_id,
                 "var_id": var_id,
                 "file": path.name,
                 "status": status or "unresolved",
                 "empty_allowlisted": is_empty_allowlisted(key_id, doc),
+                "legitimate_skip": legit,
+                "fake_not_csv_excuse": fake,
                 "skip_reason": doc.get("skip_reason") or "",
                 "unresolved_reason": doc.get("unresolved_reason") or "",
             }
             unresolved.append(entry)
+            if fake:
+                rejected.append(
+                    {
+                        "key_id": key_id,
+                        "var_id": var_id,
+                        "file": path.name,
+                        "reason": f"fake_not_csv_excuse:{entry['skip_reason'] or entry['unresolved_reason'] or 'not_csv_realizable'}",
+                        "ask": "fake_not_csv_excuse",
+                    }
+                )
             # Keep null expr entry so inventory knows it's intentionally open.
             merged_derivs.append(
                 {
@@ -105,7 +121,7 @@ def merge_uo_resolve(out_root: Path, *, auto_fix_heuristics: bool = True) -> dic
                     "source_refs": [{"path": f"uo_query_resolve/{path.name}", "kind": "uo_query"}],
                     "locked": False,
                     "status": "unresolved",
-                    "not_csv_realizable": True,
+                    "not_csv_realizable": bool(legit),
                 }
             )
             continue
@@ -143,7 +159,8 @@ def merge_uo_resolve(out_root: Path, *, auto_fix_heuristics: bool = True) -> dic
             "expr": expr,
             "rationale": doc.get("rationale") or kd.get("rationale") or f"merged from {path.name}",
             "source_refs": [{"path": f"uo_query_resolve/{path.name}", "kind": "uo_query", "confidence": doc.get("confidence")}],
-            "locked": False,
+            # High-confidence uo-query merge is SMT-ready; plan gates treat locked|reviewed+high as bound.
+            "locked": True,
             "status": "reviewed",
             "shape_expr": doc.get("shape_expr") or "",
             "shape_determined": doc.get("shape_determined") or [],
@@ -197,6 +214,9 @@ def merge_uo_resolve(out_root: Path, *, auto_fix_heuristics: bool = True) -> dic
     merged["source"] = "uo_query_resolve_merge+" + str(lexicon.get("source") or "")
     write_yaml(lexicon_path, merged)
 
+    # Clear hard KEY↔CSV gaps that now have locked/reviewed+high lexicon entries.
+    _sync_binding_gaps_after_merge(out_root, merged)
+
     # Sync bind key_shape_conditions; shape_determined comes from derivation closure.
     _write_bind_from_resolve(out_root, resolved_files)
 
@@ -213,11 +233,15 @@ def merge_uo_resolve(out_root: Path, *, auto_fix_heuristics: bool = True) -> dic
     hard_asymmetry = [a for a in asymmetry if "nulled" not in str(a.get("reason") or "")]
     # Fail when resolved files were rejected OR nonempty KEY left unresolved
     key_rejects = [r for r in rejected if r.get("file")]
-    nonempty_unresolved = [u for u in unresolved if not u.get("empty_allowlisted")]
+    nonempty_unresolved = [
+        u for u in unresolved if not u.get("empty_allowlisted") and not u.get("legitimate_skip")
+    ]
     gate_ask = ""
     if key_rejects:
         asks = {str(r.get("ask") or "") for r in key_rejects if r.get("ask")}
-        if "confidence_not_high" in asks:
+        if "fake_not_csv_excuse" in asks:
+            gate_ask = "fake_not_csv_excuse"
+        elif "confidence_not_high" in asks:
             gate_ask = "confidence_not_high"
         elif "opaque_fn_leaf" in asks:
             gate_ask = "opaque_fn_leaf"
@@ -230,7 +254,10 @@ def merge_uo_resolve(out_root: Path, *, auto_fix_heuristics: bool = True) -> dic
         else:
             gate_ask = "uo_merge_required"
     elif nonempty_unresolved:
-        gate_ask = "key_unresolved"
+        if any(u.get("fake_not_csv_excuse") for u in nonempty_unresolved):
+            gate_ask = "fake_not_csv_excuse"
+        else:
+            gate_ask = "key_unresolved"
 
     passed = len(key_rejects) == 0 and len(nonempty_unresolved) == 0
 
@@ -293,7 +320,12 @@ def merge_uo_resolve(out_root: Path, *, auto_fix_heuristics: bool = True) -> dic
                 else "PARENT: --verify-csv-closure → tg-init-audit → --confirm"
             )
             if passed
-            else "PARENT: fix KEY resolve (high + chain→CSV + nested mid Tasks); do not ask user"
+            else (
+                "PARENT: fake not_csv excuses banned — write LogicExpr (cross-var ok) + nested mid Tasks; "
+                "do NOT ask user / do NOT mark cross_variable_comparison_not_csv_realizable"
+                if gate_ask == "fake_not_csv_excuse"
+                else "PARENT: fix KEY resolve (high + chain→CSV + nested mid Tasks); do not ask user"
+            )
         ),
     }
     write_yaml(realization / "uo_merge_report.yaml", report)
@@ -321,6 +353,49 @@ def require_merge_pass(out_root: Path) -> dict[str, Any]:
             report=report if isinstance(report, dict) else {},
         )
     return report
+
+
+def _sync_binding_gaps_after_merge(out_root: Path, lexicon: dict[str, Any]) -> None:
+    """Drop hard binding_gaps whose variable_id is now bound (locked or reviewed+high)."""
+    unresolved_path = Path(out_root) / "realization" / "unresolved.yaml"
+    if not unresolved_path.is_file():
+        return
+    doc = read_yaml(unresolved_path)
+    if not isinstance(doc, dict):
+        return
+    bound = _bound_lexicon_ids(lexicon)
+    gaps = [g for g in (doc.get("binding_gaps") or []) if isinstance(g, dict)]
+    if not gaps:
+        return
+    kept: list[dict[str, Any]] = []
+    cleared = 0
+    for gap in gaps:
+        code = str(gap.get("code") or "")
+        vid = str(gap.get("variable_id") or gap.get("id") or "")
+        if code in {"MISSING_CSV_REF", "UNBOUND_KEY"} and vid and vid in bound:
+            cleared += 1
+            continue
+        kept.append(gap)
+    if cleared:
+        doc["binding_gaps"] = kept
+        doc["binding_gaps_cleared_by_merge"] = cleared
+        write_yaml(unresolved_path, doc)
+
+
+def _bound_lexicon_ids(lexicon: dict[str, Any]) -> set[str]:
+    bound: set[str] = set()
+    for item in lexicon.get("key_derivations") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("expr") is None:
+            continue
+        status = str(item.get("status") or "").lower()
+        conf = str(item.get("confidence") or "").lower()
+        if item.get("locked") or status in {"reviewed", "confirmed", "locked"} or conf == "high":
+            vid = str(item.get("id") or "")
+            if vid:
+                bound.add(vid)
+    return bound
 
 
 def require_domain_symmetry(out_root: Path) -> dict[str, Any]:

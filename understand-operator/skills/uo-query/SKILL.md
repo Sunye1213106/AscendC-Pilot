@@ -1,145 +1,160 @@
 ---
 name: uo-query
 description: >-
-  Query AscendC operator KB (.understand-operator). Use for /uo-query, KB Q&A,
-  entrypoint/tiling/ir/coverage lookup. Prefer uo_kb_query.py graph patterns
-  over Grep. Do not invent SCRIPT_DIR under skills/*/scripts for the real CLI
-  (that path only has a forwarder).
+  基于定稿算子 KB 做语义问答或 TG 绑定。/uo-query 或 Task 内 Follow 本 skill。
+  主路径 uo_kb_query.py 查 kb_graph.sqlite；未达 high 再 MCP 举证。
 ---
 
-# /uo-query
+# Skill: uo-query
 
-Read-only KB Q&A for AscendC operators. **Invocation = agent follows this skill**
-(often inside a **Task/subagent**). The PowerShell blocks below are **tools the
-skill uses**, not “skip the skill and only run CLI in the parent terminal.”
+## Purpose
 
-## How to call (preferred)
+定稿 KB → **可消费的语义答案 / TG resolve YAML**（`confidence: high` 或显式 unresolved）。
 
-```text
-Parent (tg-init / tg-solve / uo-init escalate)
-  → Task/subagent  (one KEY, or a small batch of related keys)
-       → Read & follow this SKILL.md (+ source-lookup-gate.md)
-            → Shell: uo_kb_query.py   ← KB graph lookup (you will see a terminal)
-            → MCP: codebase-memory     ← source proof to high confidence
-            → Write: key_shape_resolve / TG realization/uo_query_resolve/<KEY>.yaml
-```
+## Trigger
 
-### TG batch note
+- 适用：`/uo-query`、KB Q&A、TG bind、建库**完成后**的复杂 KEY 升级
+- 不适用：`/uo-init` **建库期**断边（用 `uo-semantic-resolve` 任务 E）；无 KB / stale KB（先 init/update）
 
-When called from TestAgent (`tg-init` / `tg-solve`):
+人读 Step 明细：`docs/uo-query-workflow.md`。
 
-- For **every** `needs_binding_keys` KEY (not optional): Follow this skill in a Task.
-- Parent may pack **related keys** (same shape family / same Host entry) into one Task; still Follow this skill.
-- Parallel Task cap ~8. **Parent must not** loop `uo_kb_query` as the main path.
-- Prefer YAML + MCP conclusions; CLI runs **inside** the skill-following subagent.
-- **TG 交付契约**（写入 `realization/uo_query_resolve/<KEY_ID>.yaml`）必须含：
-  - `key_id`, `status: resolved|unresolved`, **`confidence: high` only**（禁止 `medium`/`low` 标 resolved）
-  - `shape_expr`（可读；禁止留下未展开的 `Get*` / Host API 函数叶）
-  - **`key_derivation.expr`**：机器可读 LogicExpr（仅 `if_then_else` / `eq` / `ne` / `lt` / `and` / `or` / …）；**禁止 `op: call` 与未展开函数**
-  - **`shape_determined`**：本 KEY 直接依赖的 CSV/shape 根（如 `VAR_CSV_B`）
-  - **`derivation_chain`**：`[{id, deps, via}]`，套娃展开中间量；**叶子 deps 必须 ⊆ `VAR_CSV_*` 或 compile-time lit**
-  - 字面量必须落在目标 CSV 变量有效域内（禁止 `eq(VAR_CSV_keep_prob, 0)` 当域是 `{1.0,0.9,0.8}`）
-  - 禁止 `then`/`else` 为 `deter_branch` 等占位字符串；禁止 `then==else` 恒 KEY
-  - 达不到 high → 继续 MCP codebase-memory + 读 Host；仍不行则 `status: unresolved` **并写明原因**（不得 medium resolved）
-  - empty 族（如 `KEY_ISEMPTYTENSOR`）可暂 `unresolved` + `skip_reason: empty_tensor`
-- Parent **不**直接改 lexicon / `shape_determined`；只跑 `tg-init --merge-uo-resolve`（自动建派生图闭包）。
-- 依赖什么就解什么：停在 `deterSparseType`/`bnSparseLimit` 等中间量 → 继续 chain / 再开 Task，直到 CSV/shape。
+## Inputs
 
-| Layer | What it is |
+| 权威 | 说明 |
 |---|---|
-| **Skill `/uo-query`** | Procedure the *agent* must follow (taxonomy, gates, answer contract) |
-| **Subagent** | Isolated worker parent launches (parallel / batched); prompt: `Follow skills/uo-query/SKILL.md` |
-| **`uo_kb_query.py`** | Deterministic graph CLI — *data fetch inside the skill*, like Read/Grep |
+| `$UO_ROOT` | 定稿算子 KB（含 `indexes/kb_graph.sqlite`） |
+| 用户问题 / 父代理 target | KEY、实体、约束、shape 等 |
+| `question-taxonomy.md` | 问题类型 → `--pattern` |
 
-Seeing terminal output is normal: the subagent is executing the skill’s query gate.
-Wrong pattern: parent alone dumps `python uo_kb_query.py` for every KEY and never
-opens a skill-following subagent / never does MCP→high reasoning.
+辅助：`source-lookup-gate.md`、`kb-file-map.md`、`complex-unresolved-escalation.md`、`prompts/common/cbm.md`。
 
-## Variables (resolve once, never invent)
+变量（禁止发明）：
 
-| Name | Canonical value |
-|------|-----------------|
-| `PLUGIN_ROOT` | `~/.config/opencode/understand-operator-plugin` (junction to plugin repo) |
-| `SCRIPT_DIR` | `$PLUGIN_ROOT/uo/scripts` |
-| `QUERY_CLI` | `$SCRIPT_DIR/uo_kb_query.py` |
-| `PROJECT_ROOT` | operator package directory (contains `.understand-operator/`) |
-| `OP_NAME` | operator name (e.g. `flash_attention_score_grad`) |
-| `UO_ROOT` | `$PROJECT_ROOT/.understand-operator/$OP_NAME` |
+| Name | Canonical |
+|---|---|
+| `PLUGIN_ROOT` | `~/.config/opencode/understand-operator-plugin` |
+| `QUERY_CLI` | `$PLUGIN_ROOT/uo/scripts/uo_kb_query.py` |
+| `PROJECT_ROOT` / `OP_NAME` / `UO_ROOT` | 算子包与 KB 根 |
 
-PowerShell (copy exactly):
+## Outputs
+
+| 形态 | 路径 / 内容 |
+|---|---|
+| 人读短答 | 结论 + `query_backend` + 引用 |
+| TG 绑定（MUST，只写 OUT_ROOT） | `$OUT_ROOT/realization/uo_query_resolve/<KEY_ID>.yaml` |
+| UO staging（可选，非 TG） | `$UO_ROOT/ir/key_shape_resolve/<KEY_ID>.yaml` → 父代理 `apply_resolution` |
+
+**禁止生成：** 改 TG lexicon；把 `VAR_CSV_*` 写入 UO 图 / `key_shape_resolve`；`medium\|low` 标 resolved；TG Task 写入 `$UO_ROOT/**`。
+
+## Invariants
+
+- 主事实源：`indexes/kb_graph.sqlite` + CLI JSON；YAML 仅经 `detail_ref` 小窗展开
+- resolved **仅** `confidence: high`（TG 交付覆盖 fast）
+- **人读 / UO staging：** 叶子 ⊆ 算子接口面（`HOST_ATTR_*` 等）或 compile-time / `not_input_derivable`
+- **TG Task：** CSV↔HOST 映射与 `VAR_CSV_*` 叶子细则见 testcase-agent  
+  `skills/tg-init/references/tg-uo-query-escalation.md`（只写 `$OUT_ROOT`，不改 UO 定稿图）
+- TG YAML 须含：`key_id`、`status`、`shape_expr`、`key_derivation.expr`、`shape_determined`、`derivation_chain`
+- 幂等：同 KB 同问题应语义等价；TG 模式不改 `$UO_ROOT` 定稿文件
+
+## Tool Policy
+
+### MUST use
+
+- 先 `--status-only`，再至少一次 `--pattern …`
+- 未达 high（默认/TG）：按 `source-lookup-gate.md` 走 MCP
+- TG：只写 `$OUT_ROOT/realization/uo_query_resolve/<KEY>.yaml`
+
+### MAY use
+
+- `detail_ref` 指向的 YAML 片段 Read
+- 用户明确 `fast`（非 TG）时 medium 收尾并列出未校验项
+- 非 TG 的 UO 复杂 KEY 升级：可选写 `key_shape_resolve/`
+
+### MUST NOT
+
+- 未跑 `--pattern` 就 Grep/Read `ir/**` 或历史 `tiling/key_cards/**`（非默认产物）
+- 用 Grep / 本地 CBM CLI 代替图查询
+- 父代理对每个 KEY 直接循环 CLI、不 Follow 本 skill
+- stale 时硬查；发明 `SCRIPT_DIR` / `--entity` / `--uo-root`
+- TG 绑定任务写 `$UO_ROOT/**` 或把 `VAR_CSV_*` 塞进 UO staging/图叶子
+- `/uo-init` 建库期派本 skill 修 `input_derivable`（用 sen 任务 E）
+
+## Workflow
 
 ```powershell
 $PLUGIN_ROOT = Join-Path $env:USERPROFILE ".config\opencode\understand-operator-plugin"
-$SCRIPT_DIR  = Join-Path $PLUGIN_ROOT "uo\scripts"
-$QUERY_CLI   = Join-Path $SCRIPT_DIR "uo_kb_query.py"
-# sanity: Test-Path $QUERY_CLI must be True before any query
+$QUERY_CLI   = Join-Path $PLUGIN_ROOT "uo\scripts\uo_kb_query.py"
 ```
 
-**Forbidden as primary SCRIPT_DIR**
+### Phase 1: 映射问题类型
 
-- `skills/uo-query/scripts/` (may contain a forwarder only; still prefer `$PLUGIN_ROOT/uo/scripts`)
-- Searching `C:\` or the whole disk for `uo_kb_query.py`
-- Inventing `--entity` or `--uo-root` (CLI uses positional `repo` + `--op-name` + `--target`)
+- **Entry：** 收到问题 / KEY 任务
+- **Actions：** 读 `references/question-taxonomy.md` → 选定 `pattern` + `target`
+- **Exit：** pattern/target 明确
+- **Failure：** 无法分类 → 停并澄清
 
-If `Test-Path $QUERY_CLI` is False → STOP and report path error. Do **not** fall back to Grep/key_cards and claim the script is missing.
+### Phase 2: 检查 sqlite
 
-## Hard gate (must pass before any Grep/Read of key_cards)
+- **Actions：** `uo_kb_query.py … --status-only`
+- **Exit：** `sqlite_ready=true` 且 `freshness=fresh`（否则见 Failure）
+- **Failure：** stale → **STOP** 提示 `/uo-update`；missing 才允许 `yaml_fallback` 并声明
 
-1. Run status:
+### Phase 3: 图查询（主路径）
 
-```powershell
-python -X utf8 "$QUERY_CLI" "$PROJECT_ROOT" --op-name "$OP_NAME" --status-only
-```
+- **Actions：** ≥1 次 `--pattern`（`entity_of` / `neighbors_of` / `constraints_for` / `branches_for_key` / `affected_shapes` …）
+- **Artifacts：** graph JSON
+- **Exit：** 有可引用的实体/邻接/约束
+- **Failure：** CLI 路径错误 → 用 `$PLUGIN_ROOT/uo/scripts` 重试一次；仍失败 → `TOOL_FAILURE`（禁静默 Grep）
 
-2. If `freshness=fresh` and `sqlite_ready=true`: run **at least one** graph pattern
-   before any Grep/Read of `key_cards/` or `views/`:
+### Phase 4: 展开 YAML（次级）
 
-```powershell
-# patterns: entity_of | neighbors_of | constraints_for | branches_for_key |
-#           entities_in_files | affected_shapes
-python -X utf8 "$QUERY_CLI" "$PROJECT_ROOT" --op-name "$OP_NAME" --pattern neighbors_of --target "ENTRY::host_tiling"
-python -X utf8 "$QUERY_CLI" "$PROJECT_ROOT" --op-name "$OP_NAME" --pattern entity_of --target "TND_BASIC_SWIZZLE"
-python -X utf8 "$QUERY_CLI" "$PROJECT_ROOT" --op-name "$OP_NAME" --pattern neighbors_of --target "SYM::GetDeterministicMode"
-```
+- **Entry：** JSON 含 `detail_ref` 或需展开 `set_by`
+- **Actions：** 小窗 Read；遵守 `kb-file-map.md`
+- **Exit：** 所需字段已展开
 
-3. Final answer **must** include:
+### Phase 5: MCP 举证抬到 high
 
-```text
-query_backend: kb_graph   # or yaml_fallback / source_lookup with reason
-```
+- **Entry：** 默认模式且结论未 high
+- **Actions：** `cbm/index_meta` → `search_graph` / `get_code_snippet` / 需要时 `trace_path`
+- **Exit：** high 或显式 unresolved + reason
+- **Failure：** 证据不足 → `status: unresolved` + reason（禁 medium resolved）
 
-If step 2 was skipped → answer is invalid even if Grep found text.
+### Phase 6: 落盘 / 作答
 
-`freshness=stale` → tell user to run `/uo-update`. Do not Grep around it.
-`sqlite_ready=false` → yaml/views fallback is allowed; still say so in `query_backend`.
+- **Actions：** 人读短答；**TG MUST** 只写 `$OUT_ROOT/.../uo_query_resolve/`；非 TG 的 UO staging 可选 `key_shape_resolve/`
+- **Exit：** 答案含 `query_backend`；TG schema 完整
 
-## Taxonomy
+### 复杂 KEY 升级（定稿后）
 
-Read `references/question-taxonomy.md`. Map the question first.
-Primary for `entrypoint` / `tiling_key_hit` / `symbol_hit` = **graph CLI**, then
-`detail_ref` / key card only to expand text.
+父代理按 KEY 并行 Task（cap≈8），每个 Follow 本 skill Phase 2–6。  
+**合并路径分叉（勿混用）：**
+- TG bind → 只写 `uo_query_resolve/` → 父代理 `tg-init --merge-uo-resolve`（**不读** `key_shape_resolve`）
+- UO staging → `key_shape_resolve/` → `apply_resolution`  
+详见 `references/complex-unresolved-escalation.md`。
 
-## Complex unresolved / per-KEY shape expr
+## Semantic Escalation
 
-When residual resolve or TestAgent bind leaves **complex** KEY/shape gaps:
+- 语义结论未 high → **必须** MCP（非 Grep）
+- 合法 skip 仅：`empty_tensor` / `phantom_key*` / compile-time platform / `not_input_derivable`
+- 依赖链停在中间量 → 继续 chain / 再开 Task（TG：细则见 TG mid-symbol nesting）
+- 定稿后 TG 可读 `input_derivable_gaps` 作证据，闭合写 OUT_ROOT；**建库期** gaps 不得改派本 skill（用 sen 任务 E）
 
-1. Read `references/complex-unresolved-escalation.md`.
-2. Parent launches **one subagent per KEY** (parallel, cap 8) — each runs this
-   skill’s gate + `branches_for_key` / `affected_shapes` / `neighbors_of`.
-3. Output `shape_expr` + evidence to `ir/key_shape_resolve/<KEY_ID>.yaml`.
-4. **Forbidden:** return bare unsolved / empty bind without `uo-query` + MCP.
+## Failure Taxonomy
 
-This mode is for escalated KEY resolve, not for replacing `/uo-init` residual
-sample of simple false positives.
+`INVALID_INPUT` · `KB_STALE` · `TOOL_FAILURE` · `UNRESOLVED_SEMANTICS` ·
+`NOT_INPUT_DERIVABLE` · `VALIDATION_FAILURE`
 
-## Answer contract
+## Quality Gate
 
-- Prefer IDs/paths/line ranges from CLI JSON (`entity_id`, `file`, `start_line`).
-- Do not invent symbols or line numbers.
-- Source open only via `source-lookup-gate.md` after graph miss or explicit source need.
-- Keep answers short; include `query_backend`.
+- [ ] 至少一次 `--pattern`（除非 status 已判定不可查）
+- [ ] 答案含 `query_backend`
+- [ ] resolved ⇒ `confidence: high` + 证据
+- [ ] TG YAML schema 完整；无 `op: call` / 未展开 Host API 叶
+- [ ] TG 模式未写入 `$UO_ROOT/**`；未伪造行号
+- [ ] 人读/UO staging 未把 `VAR_CSV_*` 当 UO 图叶子
 
-## Failure
+## Stop Conditions
 
-If CLI fails with FileNotFound on a wrong path, retry once with `$PLUGIN_ROOT/uo/scripts/uo_kb_query.py`.
-If still failing, report the absolute path tried — do not silently switch to Grep-only.
+- `Test-Path $QUERY_CLI` 为 False → **STOP**
+- stale → **STOP**（`/uo-update`）
+- 允许查询次数内仍无 producer path → unresolved + 稳定 reason，禁止猜测闭合

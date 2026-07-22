@@ -92,6 +92,18 @@ def extract_tilingkey_space(repo_root: Path, op_name: str, *, architecture: str 
                 "condition": alias["condition"],
             }
         )
+        # Legal template instance → fixed KEY domain values (pruned set; not cartesian product).
+        for flag_name, flag_val in (alias.get("flags") or {}).items():
+            key_id = stable_id("KEY_", str(flag_name))
+            edges.append(
+                {
+                    "source_id": node_id,
+                    "target_id": key_id,
+                    "edge_type": "fixes_flag",
+                    "value": bool(flag_val) if isinstance(flag_val, bool) else flag_val,
+                    "flag": str(flag_name),
+                }
+            )
     template_blocks = [
         {
             "id": stable_id("KTPL_", item["name"]),

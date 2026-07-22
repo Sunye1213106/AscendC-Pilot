@@ -26,11 +26,10 @@ def export_human_views(uo_root: Path | str, *, write: bool = True) -> dict[str, 
     runtime = read_yaml(uo_root / "kernel" / "runtime_conditions.yaml") or {}
     quality = read_yaml(uo_root / "quality.yaml") or {}
     unresolved = read_yaml(uo_root / "ir" / "unresolved.yaml") or {}
-    contract = read_yaml(uo_root / "contracts" / "testcase.yaml") or {}
-    key_index = read_yaml(uo_root / "tiling" / "key_cards" / "index.yaml") or {}
     entrypoints = read_yaml(uo_root / "ir" / "entrypoints.yaml") or {}
     ledger = read_yaml(uo_root / "ir" / "resolution_ledger.yaml") or {}
     integrity = read_yaml(uo_root / "checks" / "integrity.yaml") or {}
+    tilingkey = read_yaml(uo_root / "ir" / "tilingkey_space.yaml") or {}
     kb_review = read_yaml(uo_root / "review" / "kb_product_review.yaml") or {}
     if not kb_review:
         kb_review = read_yaml(uo_root / "checks" / "kb_review.yaml") or {}
@@ -53,65 +52,57 @@ def export_human_views(uo_root: Path | str, *, write: bool = True) -> dict[str, 
             }
         )
 
-    if not keys_rows and isinstance(key_index.get("keys"), list):
-        for item in key_index["keys"]:
-            if not isinstance(item, dict):
-                continue
-            keys_rows.append(
-                {
-                    "id": str(item.get("id") or ""),
-                    "name": str(item.get("key") or item.get("name") or ""),
-                    "role": "",
-                    "values": item.get("domain") or [],
-                    "value_count": len(item.get("domain") or []) if isinstance(item.get("domain"), list) else 0,
-                }
-            )
-
-    combo = exhaustive.get("combination_summary") if isinstance(exhaustive.get("combination_summary"), dict) else {}
+    aliases = tilingkey.get("template_aliases") if isinstance(tilingkey.get("template_aliases"), list) else []
+    blocks = tilingkey.get("template_blocks") if isinstance(tilingkey.get("template_blocks"), list) else []
+    ktpl_count = len(aliases) if aliases else len(blocks)
     summary = exhaustive.get("summary") if isinstance(exhaustive.get("summary"), dict) else {}
+    if not ktpl_count:
+        ktpl_count = int(
+            summary.get("ktpl_instance_count")
+            or exhaustive.get("ktpl_instance_count")
+            or summary.get("template_block_count")
+            or 0
+        )
+
     buckets = runtime.get("buckets") if isinstance(runtime.get("buckets"), dict) else {}
     unresolved_items = unresolved.get("items") if isinstance(unresolved.get("items"), list) else []
     ledger_items = ledger.get("items") if isinstance(ledger.get("items"), list) else []
     ledger_counts = ledger.get("counts") if isinstance(ledger.get("counts"), dict) else {}
     op_name = str(
-        contract.get("op_name")
-        or key_space.get("op_name")
+        key_space.get("op_name")
         or quality.get("op_name")
+        or tilingkey.get("op_name")
         or uo_root.name
-    )
-    profile = str(
-        (contract.get("source") or {}).get("export_profile")
-        or quality.get("export_profile")
-        or "unknown"
     )
 
     keys_table = {
         "version": 1,
         "op_name": op_name,
-        "export_profile": profile,
         "key_count": len(keys_rows),
+        "ktpl_count": ktpl_count,
         "keys": keys_rows,
     }
 
     lines = [
         f"# {op_name} — human overview",
         "",
-        f"- export_profile: `{profile}`",
         f"- quality: `{quality.get('status') or quality.get('decision') or 'unknown'}`",
         f"- integrity: `{integrity.get('status') or 'unknown'}`",
         f"- kb_review: `{kb_review.get('verdict') or 'pending'}`",
         f"- tiling keys: **{len(keys_rows)}**",
-        f"- template_blocks (summary): **{summary.get('template_block_count', combo.get('template_block_count', '?'))}**",
-        f"- args_sel_count: **{exhaustive.get('args_sel_count', combo.get('args_sel_count', '?'))}**",
+        f"- KTPL instances (legal templates): **{ktpl_count}**",
+        f"- args_sel_count: **{tilingkey.get('args_sel_count', exhaustive.get('args_sel_count', '?'))}**",
         f"- runtime conditions: **{runtime.get('condition_count', 0)}** (branches≈{runtime.get('branch_count', 0)})",
         f"- open unresolved: **{len(unresolved_items)}**",
         f"- resolution ledger: **{len(ledger_items)}** ({', '.join(f'{k}={v}' for k, v in sorted(ledger_counts.items())) or 'empty'})",
         "",
         "## How to read this KB",
         "",
-        "1. Prefer `indexes/kb_graph.sqlite` via `uo-kb-query` / `uo_query_readonly`.",
-        "2. Then Grep hot files (`tiling/key_cards/KEY_*.yaml`, `kernel/runtime_conditions.yaml`).",
-        "3. Only then small-window Read. Never dump `ir/operator_graph.yaml`, full `contracts/testcase.yaml`, or `cross_layer/impact_graph.yaml`.",
+        "1. `uo_kb_query.py --status-only` — confirm `indexes/kb_graph.sqlite` is fresh/ready.",
+        "2. `uo_kb_query.py --pattern <entity_of|neighbors_of|list_templates|templates_for_key|…> --target …` — **at least one** graph query.",
+        "3. Open only paths returned as `detail_ref` (small-window Read). Follow `writes`/`derives`/`determined_by`/`fixes_flag` edges for KEY↔Host / KTPL.",
+        "4. If `sqlite_ready=false` only: yaml_fallback via routes + `tiling/key_space.yaml` / `ir/tilingkey_space.yaml`.",
+        "5. Never dump `ir/operator_graph.yaml`, historical `contracts/**`, `tiling/key_cards/**`, or `cross_layer/impact_graph.yaml`.",
         "",
         "## Tiling keys",
         "",
@@ -157,7 +148,6 @@ def export_human_views(uo_root: Path | str, *, write: bool = True) -> dict[str, 
         ]
     )
     if ledger_items:
-        # One example rationale per status
         by_status: dict[str, dict[str, Any]] = {}
         for row in ledger_items:
             if not isinstance(row, dict):
@@ -203,10 +193,11 @@ def export_human_views(uo_root: Path | str, *, write: bool = True) -> dict[str, 
 
     lines.extend(
         [
-            "## Lean notes",
+            "## Notes",
             "",
-            "- Hashes: `checks/artifact_hashes.yaml` (not embedded in `contracts/testcase.yaml` when profile=lean).",
-            "- Exhaustive template blocks: re-export with `--profile full` if L2 needs full enumeration.",
+            "- Hashes: `checks/artifact_hashes.yaml`. Testcase contracts live under TG, not UO `contracts/`.",
+            "- Legal compile-time templates: query `list_templates` / `templates_for_key` on `indexes/kb_graph.sqlite` (KTPL_* + `fixes_flag`).",
+            "- UO does not materialize cartesian `template_blocks` or per-KEY `key_cards`.",
             "",
         ]
     )
@@ -214,7 +205,7 @@ def export_human_views(uo_root: Path | str, *, write: bool = True) -> dict[str, 
 
     payload = {
         "op_name": op_name,
-        "export_profile": profile,
+        "ktpl_count": ktpl_count,
         "keys_table": keys_table,
         "overview_path": "summary/human_overview.md",
         "keys_table_path": "summary/keys_table.yaml",
@@ -265,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
     uo_root = existing_operator_root(repo_root, op_name)
     result = export_human_views(uo_root, write=not args.dry_run)
     print(
-        f"human views op={result['op_name']} profile={result['export_profile']} "
+        f"human views op={result['op_name']} ktpl={result['ktpl_count']} "
         f"keys={result['keys_table'].get('key_count')}"
     )
     return 0

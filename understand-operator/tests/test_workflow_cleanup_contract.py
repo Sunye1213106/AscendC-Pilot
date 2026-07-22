@@ -20,6 +20,22 @@ def _active_text() -> dict[str, str]:
     return result
 
 
+def _init_corpus() -> str:
+    parts = [
+        _read("skills/uo-init/SKILL.md"),
+        _read("prompts/init/workflow.md"),
+        _read("prompts/init/dispatch.md"),
+        _read("prompts/init/progress.md"),
+        _read("prompts/init/scope_menu.md"),
+        _read("prompts/init/macro_scope.md"),
+    ]
+    for path in sorted((ROOT / "skills/uo-init/references").glob("*.md")):
+        parts.append(path.read_text(encoding="utf-8"))
+    for path in sorted((ROOT / "prompts/init/references").glob("*.md")):
+        parts.append(path.read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
 def test_no_active_prompt_mentions_yaml_batch() -> None:
     forbidden = ("write YAML batch", "temporary YAML", "YAML batch")
     hits = [
@@ -56,99 +72,85 @@ def test_no_active_prompt_tells_model_to_write_ids_or_hashes() -> None:
 
 
 def test_layered_milestones_exist() -> None:
-    workflow = _read("skills/uo-init/SKILL.md")
+    corpus = _init_corpus()
     for title in (
         "创建知识库目录",
         "扫描并提案分析范围",
         "等待确认分析范围",
-        "窄索引代码图并完成范围收尾",
-        "抽取 Host/Kernel/桥接（含入口确认 + extract_plan）",
-        "有界语义补全（残留 unresolved）",
-        "KB 产物审查（uo-kb-review）",
+        "索引代码图并完成范围收尾",
+        "分层抽取",
+        "Resolve：按",
+        "KB 产物审查",
     ):
-        assert title in workflow
-    assert "macro_scope" in workflow or "review_checkpoint.py" in workflow
-    assert "check_kb_integrity" in workflow
-    assert "uo-kb-review" in workflow
-    assert "HARD STOP" in workflow or "硬门禁" in workflow
-    assert "export_human_views.py" in workflow
-    assert "--profile lean" in workflow
-    assert "--replace-initial" in workflow
+        assert title in corpus
+    assert "macro_scope" in corpus or "review_checkpoint.py" in corpus
+    assert "check_kb_integrity" in corpus
+    assert "uo-kb-review" in corpus
+    assert "硬门禁" in corpus
+    assert "export_human_views" in corpus or "export_human_views.py" in corpus
+    assert "kb_query_export" in corpus
+    assert "--profile lean" not in corpus
+    assert "--replace-initial" in corpus
 
 
 def test_orchestrator_matches_uo_init() -> None:
-    source = _read("skills/uo-init/SKILL.md")
-    orchestrator = _read("prompts/01_workflow_orchestrator.md")
+    corpus = _init_corpus()
     required = (
-        "prepare_operator.py",
-        "macro_scope_scan.py",
-        "review_checkpoint.py",
-        "finalize_phase0.py",
-        "resolve_entrypoints.py",
-        "propose_extract_plan.py",
-        "apply_extract_plan.py",
-        "build_layered_kb.py",
+        "prepare_operator",
+        "macro_scope_scan",
+        "review_checkpoint",
+        "finalize_phase0",
+        "resolve_entrypoints",
+        "propose_extract_plan",
+        "apply_extract_plan",
+        "build_layered_kb",
         "uo-semantic-resolve",
-        "apply_resolution.py",
-        "kb_query_export.py",
+        "apply_resolution",
+        "kb_query_export",
         "check_kb_integrity",
         "uo-kb-review",
     )
-    missing = [item for item in required if item not in source or item not in orchestrator]
+    missing = [item for item in required if item not in corpus]
     assert missing == []
 
 
 def test_phase0_human_review_is_hard_gate() -> None:
-    combined = "\n".join(
-        [
-            _read("skills/uo-init/SKILL.md"),
-            _read("prompts/01_workflow_orchestrator.md"),
-            _read("prompts/00_review_menu.md"),
-            _read("prompts/01a_macro_scope_human_review.md"),
-        ]
-    )
+    combined = _init_corpus()
     assert "macro_scope" in combined
-    assert "AskQuestion" in combined or "question UI" in combined
+    assert "AskQuestion" in combined or "question UI" in combined or "AskQuestion" in _read(
+        "prompts/init/scope_menu.md"
+    )
     assert "continue" in combined and "revise" in combined and "stop" in combined
-    assert "never auto" in combined.lower() or "must not be skipped" in combined.lower() or "Never invent a silent" in combined
+    assert "禁止自动" in combined or "禁自动" in combined
 
 
 def test_subagent_dispatch_reuses_stable_identity() -> None:
-    dispatch = _read("prompts/00_subagent_dispatch.md")
-    orchestrator = _read("prompts/01_workflow_orchestrator.md")
-    workflow = _read("skills/uo-init/SKILL.md")
-    combined = "\n".join([dispatch, orchestrator, workflow])
-
+    dispatch = _read("prompts/init/dispatch.md")
+    combined = _init_corpus()
     assert "<run_id>:<phase-or-step>:<owner>:<target-path-or-slice-id>" in dispatch
-    assert "Resume that same\nsubagent context" in dispatch
-    assert "Do not open another task window for the same identity" in dispatch
-    assert "SUBAGENT_RESUME_UNAVAILABLE" in combined
+    assert "续跑" in dispatch
+    assert "SUBAGENT_RESUME_UNAVAILABLE" in dispatch
     assert "uo-semantic-resolve" in combined
 
 
 def test_residual_dispatch_locks_schema_and_sampling() -> None:
-    dispatch = _read("prompts/00_subagent_dispatch.md")
+    residual = _read("prompts/init/references/tpl_residual.md")
     agent = _read("agents/uo-semantic-resolve.md")
-    workflow = _read("skills/uo-init/SKILL.md")
-    orchestrator = _read("prompts/01_workflow_orchestrator.md")
-    combined = "\n".join([dispatch, agent, workflow, orchestrator])
-
-    assert "mandatory residual dispatch template" in dispatch.lower() or "Residual resolve dispatch" in dispatch
-    assert "unresolved_resolutions" in agent
-    assert "At most 12" in agent or "at most 12" in agent.lower()
-    assert "residuals:" in agent  # forbidden list mentions it
-    assert "resolution: warning" in agent
-    assert "apply_resolution.py" in combined and "--check" in combined
-    assert "Do NOT hand-count" in dispatch or "hand-count" in agent
-    # Parent must not invent alternate top-level schemas in resolve prompts.
-    assert "Do not invent" in workflow or "do not invent" in workflow.lower()
+    tasks = _read("agents/references/semantic-resolve-tasks.md")
+    combined = "\n".join([residual, agent, tasks, _init_corpus()])
+    assert "unresolved_resolutions" in residual or "unresolved_resolutions" in tasks
+    assert "At most 12" in residual or "at most 12" in agent.lower() or "≤12" in combined
+    assert "residuals:" in agent or "residuals:" in tasks
+    assert "resolution: warning" in agent or "resolution: warning" in tasks
+    assert "apply_resolution" in combined and "--check" in combined
+    assert "hand-count" in residual.lower() or "hand-count" in agent.lower()
 
 
 def test_all_subagents_resolve_prompts_from_prompt_dir() -> None:
     missing: list[str] = []
     for path in (ROOT / "agents").glob("uo-*.md"):
         text = path.read_text(encoding="utf-8")
-        if "PROMPT_DIR" not in text or "Do not resolve" not in text:
+        if "PROMPT_DIR" not in text or ("Do not resolve" not in text and "禁止" not in text):
             missing.append(path.relative_to(ROOT).as_posix())
     assert missing == []
 
@@ -178,8 +180,50 @@ def test_active_agents_include_kb_review() -> None:
 
 
 def test_kb_review_dispatch_template_exists() -> None:
-    dispatch = _read("prompts/00_subagent_dispatch.md")
-    assert "KB product review dispatch" in dispatch
-    assert "uo-kb-review" in dispatch
-    assert "rework_stage" in dispatch
-    assert "kb_product_review.yaml" in dispatch
+    tpl = _read("prompts/init/references/tpl_kb_review.md")
+    assert "uo-kb-review" in tpl
+    assert "rework_stage" in tpl
+    assert "kb_product_review.yaml" in tpl
+
+
+def test_prompt_layout_matches_skills() -> None:
+    for rel in (
+        "prompts/common/language.md",
+        "prompts/init/workflow.md",
+        "prompts/update/workflow.md",
+        "prompts/query/README.md",
+        "prompts/review/workflow.md",
+    ):
+        assert (ROOT / rel).is_file(), rel
+
+
+def test_uo_query_skill_tg_isolation_and_csv_pointer() -> None:
+    text = _read("skills/uo-query/SKILL.md")
+    assert "OUT_ROOT" in text
+    assert "tg-uo-query-escalation" in text or "testcase-agent" in text
+    assert "建库期" in text or "uo-init" in text
+    assert "key_shape_resolve" in text
+    ownership = _read("spec/ownership.yaml")
+    assert "must never write any file under `$UO_ROOT/**`" in ownership or "must never write any file under $UO_ROOT" in ownership
+    assert "CSV↔HOST" in ownership or "CSV" in ownership
+    esc = _read("skills/uo-query/references/complex-unresolved-escalation.md")
+    assert "Mode A" in esc and "Mode B" in esc
+    assert "tg-init --merge-uo-resolve" in esc
+    assert "Never" in esc or "never" in esc
+
+    over = []
+    for path in (ROOT / "skills").rglob("SKILL.md"):
+        n = len(path.read_text(encoding="utf-8").splitlines())
+        if n > 200:
+            over.append(f"{path.relative_to(ROOT).as_posix()}:{n}")
+    assert over == []
+
+
+def test_agent_prompt_files_under_200_lines() -> None:
+    over = []
+    for base in ("agents", "prompts"):
+        for path in (ROOT / base).rglob("*.md"):
+            n = len(path.read_text(encoding="utf-8").splitlines())
+            if n > 200:
+                over.append(f"{path.relative_to(ROOT).as_posix()}:{n}")
+    assert over == []

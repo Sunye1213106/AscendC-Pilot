@@ -60,6 +60,80 @@ def test_align_keep_prob_from_domain_review() -> None:
     assert rmap["csv_variables"][0]["domain"] == [1.0, 0.9, 0.8]
 
 
+def test_merge_locks_high_resolve_and_clears_binding_gaps(tmp_path: Path) -> None:
+    out = tmp_path / "op"
+    realization = out / "realization"
+    resolve = realization / "uo_query_resolve"
+    resolve.mkdir(parents=True)
+    write_yaml(
+        realization / "realization_map.yaml",
+        {
+            "csv_variables": [
+                {"id": "VAR_CSV_keep_prob", "column": "keep_prob", "domain": [1.0, 0.9, 0.8]},
+            ]
+        },
+    )
+    write_yaml(realization / "binding_lexicon.yaml", {"version": 1, "key_derivations": []})
+    write_yaml(
+        realization / "unresolved.yaml",
+        {
+            "binding_gaps": [
+                {"code": "UNBOUND_KEY", "variable_id": "VAR_KEY_ISDROP", "key_id": "KEY_ISDROP"},
+            ]
+        },
+    )
+    write_yaml(
+        resolve / "KEY_ISDROP.yaml",
+        {
+            "key_id": "KEY_ISDROP",
+            "status": "resolved",
+            "confidence": "high",
+            "shape_expr": "keepProb < 1.0",
+            "shape_determined": ["VAR_CSV_keep_prob"],
+            "derivation_chain": [
+                {"id": "VAR_KEY_ISDROP", "deps": ["VAR_CSV_keep_prob"], "via": "set_by"},
+            ],
+            "key_derivation": {
+                "id": "VAR_KEY_ISDROP",
+                "expr": {
+                    "op": "if_then_else",
+                    "condition": {"op": "eq", "var": "VAR_CSV_keep_prob", "value": 1.0},
+                    "then": 0,
+                    "else": 1,
+                },
+            },
+        },
+    )
+    report = merge_uo_resolve(out)
+    assert report["status"] == "pass"
+    from testcase_agent.io import read_yaml
+
+    lexicon = read_yaml(realization / "binding_lexicon.yaml")
+    item = next(x for x in lexicon["key_derivations"] if x["id"] == "VAR_KEY_ISDROP")
+    assert item["locked"] is True
+    assert item["status"] == "reviewed"
+    unresolved = read_yaml(realization / "unresolved.yaml")
+    assert unresolved.get("binding_gaps") == []
+
+
+def test_binding_resolve_coverage_requires_files(tmp_path: Path) -> None:
+    from testcase_agent.resolve_policy import require_binding_resolve_coverage
+
+    out = tmp_path / "op"
+    realization = out / "realization"
+    realization.mkdir(parents=True)
+    write_yaml(
+        realization / "binding_inventory.yaml",
+        {"needs_binding_keys": ["KEY_FOO"], "not_input_derivable_keys": []},
+    )
+    cov = require_binding_resolve_coverage(out)
+    assert cov["status"] == "fail"
+    assert "KEY_FOO" in cov["missing"]
+    (realization / "uo_query_resolve").mkdir()
+    write_yaml(realization / "uo_query_resolve" / "KEY_FOO.yaml", {"key_id": "KEY_FOO", "status": "resolved"})
+    assert require_binding_resolve_coverage(out)["status"] == "pass"
+
+
 def test_merge_uo_resolve_and_confirm_gate(tmp_path: Path) -> None:
     out = tmp_path / "op"
     realization = out / "realization"
@@ -158,15 +232,21 @@ def test_merge_rejects_placeholder_expr(tmp_path: Path) -> None:
     assert exc.value.ask in {"uo_merge_required", "domain_asymmetry", "confidence_not_high"}
 
 
-def test_allow_solve_empty_l1_reject() -> None:
+def test_allow_solve_l1_key_derivation_missing() -> None:
     ok, reason = compute_allow_solve(
-        level="L1-REJECT",
-        obligations=[],
+        level="L1",
+        obligations=[{"id": "x", "status": "pending"}],
         unresolved={"blocking_hard_obligations": [], "contract_gaps": []},
-        semantic_focus={},
+        semantic_focus={
+            "csv_realization": {
+                "pending_count": 1,
+                "not_csv_realizable_count": 0,
+                "by_unreachability_code": {"KEY_DERIVATION_MISSING": 1},
+            }
+        },
     )
     assert ok is False
-    assert reason == "empty_l1_reject"
+    assert reason == "key_derivation_missing"
 
 
 def test_confirm_requires_audit_report(tmp_path: Path) -> None:
@@ -198,6 +278,38 @@ def test_confirm_requires_audit_report(tmp_path: Path) -> None:
         mark_init_confirmed(out, notes="x")
     assert exc2.value.ask == "audit_failed"
 
-    write_yaml(out / "init" / "audit_report.yaml", {"version": 1, "status": "pass", "blockers": []})
+    from testcase_agent.resolve_policy import AUDIT_CHECKLIST_IDS
+
+    write_yaml(
+        out / "init" / "audit_report.yaml",
+        {
+            "version": 1,
+            "status": "pass",
+            "blockers": [],
+            "checks": [{"id": cid, "status": "pass", "detail": "ok"} for cid in AUDIT_CHECKLIST_IDS],
+        },
+    )
     doc = mark_init_confirmed(out, notes="ok")
     assert doc["status"] == "confirmed"
+
+
+def test_confirm_rejects_incomplete_audit_checklist(tmp_path: Path) -> None:
+    from testcase_agent.init_status import InitGateError, mark_init_confirmed, write_init_status
+    from testcase_agent.io import write_yaml
+
+    out = tmp_path / "gen"
+    (out / "init").mkdir(parents=True)
+    (out / "realization").mkdir(parents=True)
+    (out / "bind").mkdir(parents=True)
+    write_init_status(out, {"version": 1, "status": "pending_confirm"})
+    write_yaml(out / "realization" / "uo_merge_report.yaml", {"status": "pass"})
+    write_yaml(out / "realization" / "binding_lexicon.yaml", {"key_derivations": []})
+    write_yaml(out / "realization" / "realization_map.yaml", {"csv_variables": [], "abstract_branches": []})
+    write_yaml(
+        out / "bind" / "shape_derivation_graph.yaml",
+        {"status": "built", "roots": [], "closure": [], "edges": [], "nodes": []},
+    )
+    write_yaml(out / "init" / "audit_report.yaml", {"version": 1, "status": "pass", "blockers": [], "checks": []})
+    with pytest.raises(InitGateError) as exc:
+        mark_init_confirmed(out, notes="x")
+    assert exc.value.ask == "audit_incomplete"

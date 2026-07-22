@@ -108,6 +108,55 @@ def extract_key_predicates(repo_root: Path, op_name: str, *, architecture: str =
     return {"version": 1, "op_name": op_name, "architecture": architecture, "index": index, "cards": cards}
 
 
+def apply_host_reachable_from_classify(uo_root: Path) -> int:
+    """Overlay compact input-derivable markers onto key_cards (no full chains)."""
+    uo_root = Path(uo_root)
+    id_doc = read_yaml(uo_root / "ir" / "input_derivable.yaml")
+    if not isinstance(id_doc, dict):
+        return 0
+    updated = 0
+    cards_dir = uo_root / "tiling" / "key_cards"
+    for key_id, entry in (id_doc.get("keys") or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        path = cards_dir / f"{key_id}.yaml"
+        if not path.is_file():
+            continue
+        card = read_yaml(path)
+        if not isinstance(card, dict):
+            continue
+        idv = entry.get("input_derivable")
+        if idv is True:
+            host = {
+                "status": "reachable",
+                "host_parent": entry.get("host_parent"),
+                "host_parent_evidence": entry.get("host_parent_evidence") or "",
+                "derivation_roots": list(entry.get("derivation_roots") or [])[:16],
+                "note": "compact: one-hop parent + roots; walk KB determined_by/reaches_input",
+            }
+        elif idv is False or entry.get("not_input_derivable"):
+            host = {
+                "status": "not_input_derivable",
+                "host_parent": entry.get("host_parent"),
+                "note": entry.get("reason") or "kernel-local / no host input ancestor",
+            }
+        else:
+            host = {
+                "status": "unsolved",
+                "host_parent": entry.get("host_parent"),
+                "gap_ref": entry.get("gap_ref"),
+                "gap_kind": entry.get("gap_kind"),
+                "note": entry.get("reason") or "graph gap; escalate via uo-input-derivable-escalation",
+            }
+        card["host_reachable"] = host
+        card["input_derivable"] = idv
+        card["needs_binding"] = bool(entry.get("needs_binding"))
+        card["not_input_derivable"] = bool(entry.get("not_input_derivable"))
+        write_yaml(path, card)
+        updated += 1
+    return updated
+
+
 def write_key_cards(uo_root: Path, payload: dict[str, Any]) -> None:
     cards_dir = uo_root / "tiling" / "key_cards"
     cards_dir.mkdir(parents=True, exist_ok=True)

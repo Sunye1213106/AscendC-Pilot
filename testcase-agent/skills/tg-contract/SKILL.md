@@ -1,17 +1,16 @@
 ---
 name: tg-contract
 description: >-
-  Thin CSV consumer AST scan. Prefer /tg-init which embeds contract + binding.
-  Does not invent operator semantics.
-argument-hint: "<算子仓> --op-name <op> --test-script-root <测试工具>"
+  RETIRED user skill. Thin CSV contract is Phase 1 of /tg-init.
+  Do not install; use /tg-init. Compat CLI tg-contract remains for scripts.
+argument-hint: "use /tg-init instead"
+disable-model-invocation: true
 ---
 
-# /tg-contract（兼容；优先 /tg-init）
+# /tg-contract → 用 /tg-init
 
-Thin AST：发现 CSV 列与 gaps，**不算子语义**。完整流程请用 `/tg-init`。
+本 Skill **已退役**（不再安装）。Thin AST contract 内嵌于 `/tg-init` Phase 1。
 
-```powershell
-tg-contract "<算子仓>" --op-name <op> --test-script-root "<测试工具>"
-```
+权威：`skills/tg-init/SKILL.md` · `skills/tg-init/references/tg-contract-phase.md`
 
-语义绑定 / uo-query / 人确认 → `/tg-init`。
+兼容：Python 入口 `tg-contract` 仍可用，但用户主路径是 `/tg-init`。

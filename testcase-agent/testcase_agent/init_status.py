@@ -75,15 +75,61 @@ def is_init_confirmed(out_root: Path) -> bool:
 def require_init_confirmed(project_root: Path, op_name: str) -> dict[str, Any]:
     out_root = output_root(project_root, op_name)
     doc = read_init_status(out_root)
-    if str(doc.get("status") or "").strip().lower() == "confirmed":
-        return doc
+    if str(doc.get("status") or "").strip().lower() != "confirmed":
+        raise InitGateError(
+            f"tg-init not confirmed for {op_name}. Run tg-init then human-confirm before tg-plan.",
+            ask="init_required",
+            payload={
+                "output_root": out_root.as_posix(),
+                "init_status": doc.get("status") or "missing",
+                "next": f"tg-init <算子仓> --op-name {op_name} --test-script-root <测试工具>",
+            },
+        )
+    require_kb_fingerprint_fresh(project_root, op_name, out_root=out_root, status_doc=doc)
+    return doc
+
+
+def require_kb_fingerprint_fresh(
+    project_root: Path,
+    op_name: str,
+    *,
+    out_root: Path | None = None,
+    status_doc: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Block plan/solve when UO KB changed since tg-init --confirm."""
+    from .isolation import kb_fingerprint_matches, read_kb_fingerprint
+
+    root = out_root or output_root(project_root, op_name)
+    doc = status_doc if isinstance(status_doc, dict) else read_init_status(root)
+    uo_path = Path(str(doc.get("understand_root") or "")).expanduser() if doc.get("understand_root") else understand_root(
+        project_root, op_name
+    )
+    if not uo_path.is_dir():
+        uo_path = understand_root(project_root, op_name)
+    stored = read_kb_fingerprint(root)
+    if not stored.get("digest"):
+        # Legacy confirms without fingerprint: require re-confirm once.
+        raise InitGateError(
+            "Missing init/kb_fingerprint.yaml. Re-run tg-init --confirm after current gates.",
+            ask="kb_stale_reinit",
+            payload={
+                "output_root": root.as_posix(),
+                "understand_root": uo_path.as_posix(),
+                "next": f"tg-init <算子仓> --op-name {op_name} --confirm",
+            },
+        )
+    ok, detail = kb_fingerprint_matches(root, uo_path)
+    if ok:
+        return detail
     raise InitGateError(
-        f"tg-init not confirmed for {op_name}. Run tg-init then human-confirm before tg-plan.",
-        ask="init_required",
+        "UO KB fingerprint changed since tg-init confirm. Re-run /tg-init (do not edit $UO_ROOT from TG).",
+        ask="kb_stale_reinit",
         payload={
-            "output_root": out_root.as_posix(),
-            "init_status": doc.get("status") or "missing",
-            "next": f"tg-init <算子仓> --op-name {op_name} --test-script-root <测试工具>",
+            "output_root": root.as_posix(),
+            "understand_root": uo_path.as_posix(),
+            "stored_digest": (detail.get("stored") or {}).get("digest"),
+            "current_digest": (detail.get("current") or {}).get("digest"),
+            "next": f"tg-init <算子仓> --op-name {op_name} --test-script-root <测试工具> then --confirm",
         },
     )
 
@@ -141,19 +187,44 @@ def mark_init_confirmed(out_root: Path, *, notes: str = "", require_merge: bool 
     doc["confirmed_at"] = _now()
     if notes:
         doc["notes"] = notes
+
+    # Fingerprint UO KB into OUT_ROOT only (hard isolation).
+    from .isolation import write_kb_fingerprint
+
+    uo_path = Path(str(doc.get("understand_root") or "")).expanduser()
+    if not uo_path.is_dir():
+        project = Path(str(doc.get("project_root") or ".")).expanduser()
+        op = str(doc.get("op_name") or out_root.name)
+        uo_path = understand_root(project, op)
+    if uo_path.is_dir():
+        fp = write_kb_fingerprint(out_root, uo_path)
+        doc["kb_fingerprint_digest"] = fp.get("digest")
+        doc["kb_fingerprint"] = "init/kb_fingerprint.yaml"
+
     write_init_status(out_root, doc)
-    # Keep domain_review aligned when present.
+    # Align domain_review only when no pending columns (never forge confirmed over open review).
     review_path = out_root / "realization" / "domain_review.yaml"
     if review_path.is_file():
         review = read_yaml(review_path)
         if isinstance(review, dict):
-            review["status"] = "confirmed"
-            review["confirmed_at"] = doc["confirmed_at"]
-            write_yaml(review_path, review)
+            pending = [c for c in (review.get("pending_columns") or []) if c]
+            status = str(review.get("status") or "").lower()
+            if pending and status not in {"confirmed", "human", "llm_confirmed"}:
+                raise InitGateError(
+                    f"domain_review still has {len(pending)} pending_columns; "
+                    "AskQuestion lock domains before --confirm (do not forge confirmed).",
+                    ask="domain_review_required",
+                    payload={"pending_columns": pending[:20]},
+                )
+            if status not in {"confirmed", "human", "llm_confirmed"}:
+                review["status"] = "confirmed"
+                review["confirmed_at"] = doc["confirmed_at"]
+                write_yaml(review_path, review)
     lexicon_path = out_root / "realization" / "binding_lexicon.yaml"
     if lexicon_path.is_file():
         lexicon = read_yaml(lexicon_path)
         if isinstance(lexicon, dict):
+            # Document-level lock only after item-level binds exist; do not fake item locks.
             lexicon["locked"] = True
             write_yaml(lexicon_path, lexicon)
     return doc
@@ -161,6 +232,8 @@ def mark_init_confirmed(out_root: Path, *, notes: str = "", require_merge: bool 
 
 def _require_audit_pass(out_root: Path) -> dict[str, Any]:
     """Require init/audit_report.yaml from tg-init-audit subagent before confirm."""
+    from .resolve_policy import AUDIT_CHECKLIST_IDS
+
     path = Path(out_root) / "init" / "audit_report.yaml"
     if not path.is_file():
         raise InitGateError(
@@ -177,6 +250,31 @@ def _require_audit_pass(out_root: Path) -> dict[str, Any]:
             f"init audit status={doc.get('status')!r}; blockers={blockers}. Fix then re-audit; do not --confirm.",
             ask="audit_failed",
             payload={"audit_report": path.as_posix(), "blockers": blockers},
+        )
+    checks = doc.get("checks") if isinstance(doc.get("checks"), list) else []
+    seen = {
+        str(c.get("id") or "")
+        for c in checks
+        if isinstance(c, dict) and c.get("id")
+    }
+    missing_ids = [cid for cid in AUDIT_CHECKLIST_IDS if cid not in seen]
+    if missing_ids:
+        raise InitGateError(
+            f"init/audit_report.yaml missing checklist ids: {missing_ids[:12]}. "
+            "tg-init-audit MUST cover AUDIT_CHECKLIST_IDS.",
+            ask="audit_incomplete",
+            payload={"missing_ids": missing_ids},
+        )
+    failed_checks = [
+        str(c.get("id"))
+        for c in checks
+        if isinstance(c, dict) and str(c.get("status") or "").lower() == "fail"
+    ]
+    if failed_checks:
+        raise InitGateError(
+            f"init audit has failing checks: {failed_checks}. Fix then re-audit; do not --confirm.",
+            ask="audit_failed",
+            payload={"failed_checks": failed_checks},
         )
     return doc
 

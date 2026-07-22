@@ -10,6 +10,10 @@ from testcase_agent.io import write_yaml
 from testcase_agent.resolve_policy import (
     collect_kernel_unbound_symbols,
     collect_open_mid_symbols,
+    is_chaseable_mid_symbol,
+    is_empty_allowlisted,
+    is_fake_not_csv_excuse,
+    is_legitimate_skip,
     require_chains_terminate_at_csv,
     require_full_csv_closure,
     require_high_only,
@@ -362,3 +366,157 @@ def test_enum_knob_without_csv_determinants_needs_binding() -> None:
         binding_gaps=[],
     )
     assert "KEY_SPLITAXIS" in inv["needs_binding_keys"]
+
+
+def test_not_input_derivable_skipped_from_needs_binding() -> None:
+    from testcase_agent.binding_inventory import build_binding_inventory, build_llm_bind_prompt_bundle
+
+    inv = build_binding_inventory(
+        schema={"columns": ["B"], "fields": []},
+        lexicon={"key_derivations": []},
+        snapshot_files={
+            "contracts/testcase.yaml": {
+                "key_determinants": {
+                    "KEY_BLOCKID": {
+                        "role": "switch",
+                        "input_derivable": False,
+                        "not_input_derivable": True,
+                        "needs_binding": False,
+                        "csv_determinants": [],
+                    },
+                    "KEY_ISNZOUT": {
+                        "role": "switch",
+                        "input_derivable": True,
+                        "needs_binding": True,
+                        "csv_determinants": [],
+                        "host_parent": "HELPER_ENABLE",
+                        "derivation_roots": ["HOST_ATTR_SPARSEMODE"],
+                    },
+                }
+            }
+        },
+        consumer_root=None,
+        binding_gaps=[],
+    )
+    assert "KEY_BLOCKID" not in inv["needs_binding_keys"]
+    assert "KEY_BLOCKID" in inv["not_input_derivable_keys"]
+    assert "KEY_ISNZOUT" in inv["needs_binding_keys"]
+    assert inv["host_parent_hints"]["KEY_ISNZOUT"]["host_parent"] == "HELPER_ENABLE"
+    bundle = build_llm_bind_prompt_bundle(inv, {})
+    assert "host_parent_hints" in bundle
+    assert "KEY_ISNZOUT" in bundle["host_parent_hints"]
+    assert is_legitimate_skip("KEY_BLOCKID", {"not_input_derivable": True}) is True
+
+
+def test_forged_empty_allowlisted_ignored() -> None:
+    assert is_empty_allowlisted("KEY_ISNEQUAL", {"empty_allowlisted": True, "skip_reason": "empty_tensor"}) is False
+    assert is_empty_allowlisted("KEY_ISEMPTYTENSOR", {"skip_reason": "anything"}) is True
+
+
+def test_fake_not_csv_excuse_detected() -> None:
+    doc = {
+        "key_id": "KEY_ISNEQUAL",
+        "status": "unresolved",
+        "not_csv_realizable": True,
+        "skip_reason": "cross_variable_comparison_not_csv_realizable",
+    }
+    assert is_fake_not_csv_excuse(doc) is True
+    assert is_legitimate_skip("KEY_ISNEQUAL", doc) is False
+
+
+def test_phantom_key_is_legitimate_skip() -> None:
+    doc = {"skip_reason": "phantom_key_not_in_tiling_key_space"}
+    assert is_legitimate_skip("KEY_INDEX", doc) is True
+    assert is_fake_not_csv_excuse({**doc, "key_id": "KEY_INDEX", "not_csv_realizable": True}) is False
+
+
+def test_chaseable_mid_filters_arithmetic_noise() -> None:
+    assert is_chaseable_mid_symbol("IS_ATTEN_MASK") is True
+    assert is_chaseable_mid_symbol("IS_DETER_OLD(DETER_SPARSE_TYPE)") is True
+    assert is_chaseable_mid_symbol("BaseClass::IS_N_EQUAL") is True
+    assert is_chaseable_mid_symbol("bnSparseLimit") is True
+    assert is_chaseable_mid_symbol("((x-p)+1) le y") is False
+    assert is_chaseable_mid_symbol("HEAD_DIM_ALIGN gt 512") is False
+    assert is_chaseable_mid_symbol("ENABLE_UNITFLAG") is False
+
+
+def test_kernel_unbound_skips_arith_keeps_is_flags(tmp_path: Path) -> None:
+    out = tmp_path / "op"
+    (out / "realization").mkdir(parents=True)
+    write_yaml(
+        out / "realization" / "realization_map.yaml",
+        {
+            "abstract_branches": [
+                {
+                    "branch_ref": "KBR_1",
+                    "determinant_source": "KernelVariable",
+                    "reason": "UNBOUND_ATOM",
+                    "unbound_atoms": [
+                        {"name": "((x-p)+1) le y", "reason": "UNBOUND_ATOM"},
+                        {"name": "IS_ATTEN_MASK", "reason": "UNBOUND_ATOM"},
+                        {"name": "ENABLE_UNITFLAG", "reason": "UNBOUND_ATOM"},
+                    ],
+                }
+            ]
+        },
+    )
+    result = collect_kernel_unbound_symbols(out)
+    names = {s["name"] for s in result["symbols"]}
+    assert "IS_ATTEN_MASK" in names
+    assert "((x-p)+1) le y" not in names
+    assert "ENABLE_UNITFLAG" not in names
+    assert result["skipped_noise"] >= 2
+
+
+def test_merge_rejects_fake_not_csv_excuse(tmp_path: Path) -> None:
+    out, resolve = _base_out(tmp_path)
+    write_yaml(
+        resolve / "KEY_ISNEQUAL.yaml",
+        {
+            "key_id": "KEY_ISNEQUAL",
+            "status": "unresolved",
+            "not_csv_realizable": True,
+            "empty_allowlisted": True,
+            "skip_reason": "cross_variable_comparison_not_csv_realizable",
+            "key_derivation": {"expr": None},
+        },
+    )
+    with pytest.raises(UoMergeError) as exc:
+        merge_uo_resolve(out)
+    assert exc.value.ask == "fake_not_csv_excuse"
+
+
+def test_merge_allows_phantom_key_skip(tmp_path: Path) -> None:
+    out, resolve = _base_out(tmp_path)
+    write_yaml(
+        resolve / "KEY_INDEX.yaml",
+        {
+            "key_id": "KEY_INDEX",
+            "status": "unresolved",
+            "skip_reason": "phantom_key_not_in_tiling_key_space",
+            "key_derivation": {"expr": None},
+        },
+    )
+    write_yaml(
+        resolve / "KEY_FOO.yaml",
+        {
+            "key_id": "KEY_FOO",
+            "status": "resolved",
+            "confidence": "high",
+            "shape_expr": "B==1",
+            "shape_determined": ["VAR_CSV_B"],
+            "derivation_chain": [{"id": "VAR_KEY_FOO", "deps": ["VAR_CSV_B"], "via": "set_by"}],
+            "key_derivation": {
+                "id": "VAR_KEY_FOO",
+                "expr": {
+                    "op": "if_then_else",
+                    "condition": {"op": "eq", "var": "VAR_CSV_B", "value": 1},
+                    "then": 1,
+                    "else": 0,
+                },
+            },
+        },
+    )
+    report = merge_uo_resolve(out)
+    assert report["status"] == "pass"
+    assert require_no_nonempty_unresolved(out)["status"] == "pass"

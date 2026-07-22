@@ -78,11 +78,12 @@ def test_infer_key_field_role_needs_binding_without_invented_columns() -> None:
     drop = _infer_key_field_role("IsDrop")
     assert drop["role"] == "optional_presence"
     assert drop["csv_determinants"] == []
-    assert drop.get("needs_binding") is True
+    # needs_binding is owned by classify_input_derivable overlay, not naming heuristic
+    assert "needs_binding" not in drop
 
     pse = _infer_key_field_role("IsPse")
     assert pse["csv_determinants"] == []
-    assert pse.get("needs_binding") is True
+    assert "needs_binding" not in pse
 
     tnd = _infer_key_field_role("IsTnd")
     assert tnd["role"] == "layout_flag"
@@ -572,15 +573,16 @@ def test_integrity_fails_on_open_unresolved(tmp_path: Path) -> None:
     )
     # minimal required exports for validate_kb
     for rel in (
-        "contracts/testcase.yaml",
+        "tiling/key_space.yaml",
         "tiling/exhaustive_key_space.yaml",
         "tiling/coverage_model.yaml",
         "kernel/branches.yaml",
         "cross_layer/impact_graph.yaml",
+        "quality.yaml",
     ):
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("version: 1\n", encoding="utf-8")
+        path.write_text("version: 1\nstatus: pass\n", encoding="utf-8")
 
     result = check_kb_integrity(repo, "DemoOp", write_outputs=True)
     assert result["status"] == "fail"

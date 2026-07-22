@@ -48,7 +48,7 @@ Hash 只覆盖 `bundle.yaml` → `hash_inputs` 列表中的文件（见仓库 RE
 - `reconcile_bridge.py`
 - `extract_key_predicates.py`
 - `apply_resolution.py`
-- `kb_query_export.py`  # default --profile lean
+- `kb_query_export.py`  # single export path (no lean/full profile)
 - `export_kb_graph.py`
 - `export_human_views.py`
 - `verify_required_subagents.py`

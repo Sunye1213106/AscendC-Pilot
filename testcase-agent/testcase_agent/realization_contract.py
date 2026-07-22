@@ -17,6 +17,7 @@ class ContractError(RuntimeError):
 
 def realization_paths(out_root: Path) -> dict[str, Path]:
     realization_dir = out_root / "realization"
+    contract_dir = out_root / "contract"
     return {
         "dir": realization_dir,
         "evidence": realization_dir / "consumer_evidence.yaml",
@@ -27,6 +28,8 @@ def realization_paths(out_root: Path) -> dict[str, Path]:
         "binding_lexicon": realization_dir / "binding_lexicon.yaml",
         "unresolved": realization_dir / "unresolved.yaml",
         "agent_report": realization_dir / "agent_report.yaml",
+        "contract_dir": contract_dir,
+        "testcase_contract": contract_dir / "testcase.yaml",
     }
 
 

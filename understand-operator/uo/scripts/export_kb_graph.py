@@ -23,7 +23,8 @@ from uo.scripts.kb_query_export import _entities_from_graph
 SCHEMA_VERSION = "1"
 HASH_PATHS = (
     "ir/operator_graph.yaml",
-    "contracts/testcase.yaml",
+    "ir/input_derivable.yaml",
+    "tiling/key_space.yaml",
     "query/terminology.yaml",
     "kernel/branches.yaml",
     "tiling/constraints.yaml",
@@ -137,6 +138,8 @@ def _collect_entities(uo_root: Path, graph: dict[str, Any]) -> list[dict[str, An
                 "domain": ent.get("domain"),
                 "binding_time": ent.get("binding_time"),
                 "data_type": ent.get("data_type"),
+                "template_flags": ent.get("template_flags"),
+                "condition": ent.get("condition"),
             },
         }
 
@@ -157,31 +160,112 @@ def _collect_entities(uo_root: Path, graph: dict[str, Any]) -> list[dict[str, An
             "fields": {"from": "operator_graph_node"},
         }
 
-    contract = read_yaml(uo_root / "contracts" / "testcase.yaml")
-    for var in (contract.get("variables") or []) if isinstance(contract, dict) else []:
-        if not isinstance(var, dict):
+    # Variables come from tiling/key_space + kernel/variables (TG owns contracts).
+    key_space = read_yaml(uo_root / "tiling" / "key_space.yaml")
+    for field in (key_space.get("fields") or []) if isinstance(key_space, dict) else []:
+        if not isinstance(field, dict):
             continue
-        vid = str(var.get("id") or "")
+        vid = str(field.get("id") or "")
         if not vid:
             continue
         by_id.setdefault(
             vid,
             {
                 "id": vid,
-                "kind": str(var.get("type") or "variable"),
-                "label": str(var.get("name") or vid),
-                "layer": "contract",
-                "detail_ref": "contracts/testcase.yaml",
+                "kind": "key_field",
+                "label": str(field.get("name") or vid),
+                "layer": "tiling",
+                "detail_ref": "tiling/key_space.yaml",
                 "file_path": "",
                 "start_line": None,
-                "fields": {"domain": var.get("domain"), "shape": var.get("shape")},
+                "fields": {"domain": field.get("values") or field.get("domain"), "role": field.get("role")},
             },
         )
-        if var.get("shape") is not None:
-            by_id[vid]["fields"]["shape"] = var.get("shape")
 
     _add_entrypoint_entities(uo_root, by_id)
+    _add_tilingkey_entities(uo_root, by_id)
     return list(by_id.values())
+
+
+def _add_tilingkey_entities(uo_root: Path, by_id: dict[str, dict[str, Any]]) -> None:
+    """Ensure every legal template alias is a KTPL_* entity (full KEY assignment in fields)."""
+    from uo.scripts._ir_io import stable_id
+
+    tk = read_yaml(uo_root / "ir" / "tilingkey_space.yaml")
+    if not isinstance(tk, dict):
+        return
+    for node in tk.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        ntype = str(node.get("node_type") or "")
+        nid = str(node.get("id") or "")
+        if ntype == "KernelTemplateArgument" or nid.startswith("KTPL_"):
+            eid = nid if nid.startswith("KTPL_") else stable_id("KTPL_", str(node.get("name") or nid))
+            fields = {
+                "template_flags": node.get("template_flags") or {},
+                "condition": node.get("condition"),
+            }
+            if eid in by_id:
+                merged = dict(by_id[eid].get("fields") or {})
+                merged.update({k: v for k, v in fields.items() if v is not None})
+                by_id[eid]["fields"] = merged
+                by_id[eid]["detail_ref"] = "ir/tilingkey_space.yaml"
+                if node.get("file_path"):
+                    by_id[eid]["file_path"] = str(node.get("file_path") or by_id[eid].get("file_path") or "")
+                if node.get("start_line") is not None:
+                    by_id[eid]["start_line"] = node.get("start_line")
+            else:
+                by_id[eid] = {
+                    "id": eid,
+                    "kind": "KernelTemplateArgument",
+                    "label": str(node.get("name") or eid),
+                    "layer": str(node.get("layer") or "bridge"),
+                    "detail_ref": "ir/tilingkey_space.yaml",
+                    "file_path": str(node.get("file_path") or ""),
+                    "start_line": node.get("start_line"),
+                    "fields": fields,
+                }
+        elif ntype == "TilingKey" or nid.startswith("KEY_"):
+            eid = nid if nid.startswith("KEY_") else stable_id("KEY_", str(node.get("name") or nid))
+            by_id.setdefault(
+                eid,
+                {
+                    "id": eid,
+                    "kind": "TilingKey",
+                    "label": str(node.get("name") or eid),
+                    "layer": str(node.get("layer") or "bridge"),
+                    "detail_ref": "tiling/key_space.yaml",
+                    "file_path": str(node.get("file_path") or ""),
+                    "start_line": node.get("start_line"),
+                    "fields": {"domain": node.get("domain")},
+                },
+            )
+    for alias in tk.get("template_aliases") or []:
+        if not isinstance(alias, dict):
+            continue
+        eid = stable_id("KTPL_", str(alias.get("name") or ""))
+        if not eid or eid == "KTPL_":
+            continue
+        fields = {
+            "template_flags": alias.get("flags") or {},
+            "condition": alias.get("condition"),
+        }
+        if eid in by_id:
+            merged = dict(by_id[eid].get("fields") or {})
+            merged.update({k: v for k, v in fields.items() if v is not None})
+            by_id[eid]["fields"] = merged
+            by_id[eid]["detail_ref"] = "ir/tilingkey_space.yaml"
+        else:
+            by_id[eid] = {
+                "id": eid,
+                "kind": "KernelTemplateArgument",
+                "label": str(alias.get("name") or eid),
+                "layer": "bridge",
+                "detail_ref": "ir/tilingkey_space.yaml",
+                "file_path": str(alias.get("file_path") or ""),
+                "start_line": alias.get("line") or alias.get("start_line"),
+                "fields": fields,
+            }
 
 
 def _add_entrypoint_entities(uo_root: Path, by_id: dict[str, dict[str, Any]]) -> None:
@@ -237,9 +321,10 @@ def _strip_cbm_stage_path(fpath: str) -> str:
 def _detail_ref_for(ent: dict[str, Any]) -> str:
     eid = str(ent.get("id") or "")
     ntype = str(ent.get("type") or "")
+    if eid.startswith("KTPL_") or ntype == "KernelTemplateArgument":
+        return "ir/tilingkey_space.yaml"
     if eid.startswith("KEY_") or ntype == "TilingKey":
-        card = f"tiling/key_cards/{eid}.yaml"
-        return card
+        return "tiling/key_space.yaml"
     if ntype in {"KernelBranch", "KernelVariable"} or eid.startswith(("KBR_", "KVAR_", "VAR_")):
         return "kernel/branches.yaml" if eid.startswith("KBR_") else "kernel/variables.yaml"
     if ntype in {"TilingDataField"} or eid.startswith("TDF_"):
@@ -329,7 +414,68 @@ def _collect_relations(
         tgt = str(edge.get("target_id") or edge.get("target") or "")
         etype = str(edge.get("edge_type") or edge.get("type") or "graph_edge")
         mapped = _map_edge_type(etype)
-        add(src, tgt, mapped, original_type=etype)
+        extra: dict[str, Any] = {"original_type": etype}
+        if "value" in edge:
+            extra["value"] = edge.get("value")
+        if edge.get("flag"):
+            extra["flag"] = edge.get("flag")
+        add(src, tgt, mapped, **extra)
+
+    # Also materialize KTPL→KEY from ir/tilingkey_space when graph edges missing.
+    tk = read_yaml(uo_root / "ir" / "tilingkey_space.yaml")
+    if isinstance(tk, dict):
+        for edge in tk.get("edges") or []:
+            if not isinstance(edge, dict):
+                continue
+            src = str(edge.get("source_id") or edge.get("source") or "")
+            tgt = str(edge.get("target_id") or edge.get("target") or "")
+            etype = str(edge.get("edge_type") or edge.get("type") or "fixes_flag")
+            extra = {}
+            if "value" in edge:
+                extra["value"] = edge.get("value")
+            if edge.get("flag"):
+                extra["flag"] = edge.get("flag")
+            add(src, tgt, _map_edge_type(etype), **extra)
+        for alias in tk.get("template_aliases") or []:
+            if not isinstance(alias, dict):
+                continue
+            from uo.scripts._ir_io import stable_id
+
+            kid = stable_id("KTPL_", str(alias.get("name") or ""))
+            if kid in by_id:
+                fields = dict(by_id[kid].get("fields") or {})
+                fields["template_flags"] = alias.get("flags") or fields.get("template_flags")
+                fields["condition"] = alias.get("condition") or fields.get("condition")
+                by_id[kid]["fields"] = fields
+                by_id[kid]["detail_ref"] = "ir/tilingkey_space.yaml"
+
+    # Overlay compact input-derivable markers (one-hop parent + reaches_input).
+    id_doc = read_yaml(uo_root / "ir" / "input_derivable.yaml")
+    if isinstance(id_doc, dict):
+        for marker in id_doc.get("graph_markers") or []:
+            if not isinstance(marker, dict):
+                continue
+            src = str(marker.get("source") or "")
+            tgt = str(marker.get("target") or "")
+            mtype = str(marker.get("type") or "determined_by")
+            add(
+                src,
+                tgt,
+                _map_edge_type(mtype),
+                evidence=marker.get("evidence") or "",
+                from_input_derivable=True,
+            )
+        for key_id, entry in (id_doc.get("keys") or {}).items():
+            if not isinstance(entry, dict) or key_id not in by_id:
+                continue
+            fields = dict(by_id[key_id].get("fields") or {})
+            fields["input_derivable"] = entry.get("input_derivable")
+            fields["host_parent"] = entry.get("host_parent")
+            fields["not_input_derivable"] = entry.get("not_input_derivable")
+            fields["needs_binding"] = entry.get("needs_binding")
+            if entry.get("derivation_roots"):
+                fields["derivation_roots"] = list(entry.get("derivation_roots") or [])[:16]
+            by_id[key_id]["fields"] = fields
 
     for ent in list(by_id.values()):
         eid = ent["id"]
@@ -340,26 +486,7 @@ def _collect_relations(
             sym = ent.get("label") or eid
             add(eid, f"SYM::{sym}", "anchors_to_symbol", symbol=sym)
 
-    contract = read_yaml(uo_root / "contracts" / "testcase.yaml")
-    if isinstance(contract, dict):
-        for con in contract.get("typed_constraints") or []:
-            if not isinstance(con, dict):
-                continue
-            cid = str(con.get("id") or "")
-            var = str(con.get("var") or "")
-            if cid and var:
-                add(cid, var, "constrains")
-        obligations = contract.get("coverage_obligations") or {}
-        if isinstance(obligations, dict):
-            for _bucket, items in obligations.items():
-                if not isinstance(items, list):
-                    continue
-                for item in items:
-                    if not isinstance(item, dict):
-                        continue
-                    oid = str(item.get("id") or "")
-                    for ref in item.get("target_refs") or []:
-                        add(oid, str(ref), "covers")
+    # contracts/testcase.yaml is retired — do not build constrains/covers from it.
 
     constraints = read_yaml(uo_root / "tiling" / "constraints.yaml")
     for item in (constraints.get("items") or constraints.get("constraints") or []) if isinstance(constraints, dict) else []:
@@ -388,7 +515,24 @@ def _collect_relations(
 
 
 def _map_edge_type(etype: str) -> str:
-    low = etype.lower()
+    low = etype.lower().strip()
+    # Preserve Host dataflow semantics for input-derivable walks / TG.
+    if low in {"writes", "write"}:
+        return "writes"
+    if low in {"derives", "derive"}:
+        return "derives"
+    if low in {"determined_by", "reaches_input"}:
+        return low
+    if low in {"fixes_flag", "fixes", "template_fixes"}:
+        return "fixes_flag"
+    if low in {"selects", "select"}:
+        return "selects"
+    if low in {"calls", "call"}:
+        return "calls"
+    if low in {"dispatches", "dispatch"}:
+        return "dispatches"
+    if low in {"loads_into", "load"}:
+        return "loads_into"
     if "constrain" in low:
         return "constrains"
     if "branch" in low or "enable" in low:

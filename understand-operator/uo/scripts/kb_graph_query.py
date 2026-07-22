@@ -23,6 +23,8 @@ PATTERNS = (
     "branches_for_key",
     "entities_in_files",
     "affected_shapes",
+    "list_templates",
+    "templates_for_key",
 )
 
 
@@ -127,7 +129,93 @@ def query_kb_graph(
             }
         if pattern == "affected_shapes":
             return _affected_shapes(db, target or "", depth=depth, limit=limit, base=base)
+        if pattern == "list_templates":
+            return _list_templates(db, limit=limit, base=base)
+        if pattern == "templates_for_key":
+            return _templates_for_key(db, target or "", limit=limit, base=base)
     return base
+
+
+def _list_templates(db: sqlite3.Connection, *, limit: int, base: dict[str, Any]) -> dict[str, Any]:
+    rows = db.execute(
+        """
+        SELECT * FROM entities
+        WHERE id LIKE 'KTPL_%'
+           OR kind = 'KernelTemplateArgument'
+        ORDER BY id
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    entities = [_row(r) for r in rows]
+    return {
+        **base,
+        "resolved_entities": entities,
+        "direct_relations": [],
+        "neighbors": [],
+        "ktpl_count": len(entities),
+    }
+
+
+def _templates_for_key(
+    db: sqlite3.Connection,
+    target: str,
+    *,
+    limit: int,
+    base: dict[str, Any],
+) -> dict[str, Any]:
+    seeds = _resolve_entities(db, target, limit=limit)
+    key_ids = {r["id"] for r in seeds if str(r["id"]).startswith("KEY_")}
+    if not key_ids and seeds:
+        # Allow bare flag names → KEY_* via alias resolution already in seeds.
+        key_ids = {r["id"] for r in seeds}
+    if not key_ids:
+        return {
+            **base,
+            "resolved_entities": [],
+            "direct_relations": [],
+            "neighbors": [],
+            "templates": [],
+            "error": "no KEY entity resolved for target",
+        }
+    marks = ",".join("?" for _ in key_ids)
+    rels = db.execute(
+        f"""
+        SELECT * FROM relations
+        WHERE type = 'fixes_flag' AND target_id IN ({marks})
+        LIMIT ?
+        """,
+        [*key_ids, limit],
+    ).fetchall()
+    tpl_ids = {r["source_id"] for r in rels}
+    neighbors: list[sqlite3.Row] = []
+    if tpl_ids:
+        tmarks = ",".join("?" for _ in tpl_ids)
+        neighbors = db.execute(
+            f"SELECT * FROM entities WHERE id IN ({tmarks}) LIMIT ?",
+            [*tpl_ids, limit],
+        ).fetchall()
+    templates = []
+    for row in neighbors:
+        item = _row(row)
+        flags = (item.get("fields") or {}).get("template_flags") or {}
+        templates.append(
+            {
+                "id": item.get("id"),
+                "label": item.get("label"),
+                "template_flags": flags,
+                "condition": (item.get("fields") or {}).get("condition"),
+                "file_path": item.get("file_path"),
+                "start_line": item.get("start_line"),
+            }
+        )
+    return {
+        **base,
+        "resolved_entities": [_row(r) for r in seeds],
+        "direct_relations": [_row(r) for r in rels],
+        "neighbors": [_row(r) for r in neighbors],
+        "templates": templates[:limit],
+    }
 
 
 def _affected_shapes(

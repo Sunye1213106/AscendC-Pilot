@@ -36,7 +36,7 @@ DEFAULT_TOPICS: dict[str, dict[str, Any]] = {
 def load_topic_manifest(out_root: Path, topic: str, *, project_root: Path | None = None) -> dict[str, Any]:
     topic = str(topic or "").strip()
     if not topic:
-        raise ValueError("L3 requires --topic")
+        raise ValueError("topic is empty; omit --topic for whole-operator scope")
     candidates = [
         out_root / "topics" / f"{topic}.yaml",
     ]

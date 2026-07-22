@@ -226,7 +226,8 @@ def test_export_key_determinants_and_roles() -> None:
     assert dets["KEY_ISTND"]["csv_determinants"][0]["column"] == "input_layout"
     assert dets["KEY_ISPSE"]["role"] == "optional_presence"
     assert dets["KEY_ISPSE"]["csv_determinants"] == []
-    assert dets["KEY_ISPSE"].get("needs_binding") is True
+    # needs_binding comes from classify overlay (materialize path), not naming heuristic
+    assert dets["KEY_ISPSE"].get("needs_binding") is False
     assert dets["KEY_S1TEMPLATENUM"]["role"] == "shape"
     assert contract["interface"]["primary_layout_field"] == "input_layout"
     assert any(f["name"] == "input_layout" for f in contract["interface"]["producible_fields"])

@@ -8,7 +8,8 @@ AGENTS_SRC="$PLUGIN_ROOT/agents"
 PLATFORM="${1:-opencode}"
 SKIP_PIP="${SKIP_PIP:-0}"
 
-SKILL_NAMES=(tg-plan tg-solve tg-init tg-contract tg-domain-review)
+SKILL_NAMES=(tg-init tg-plan tg-solve)
+RETIRED_SKILL_NAMES=(tg-contract tg-domain-review)
 REQUIRED_AGENTS=(tg-csv-contract tg-init-audit)
 
 case "$PLATFORM" in
@@ -22,7 +23,7 @@ case "$PLATFORM" in
       uninstall-cursor) TARGET="$HOME/.cursor/skills"; PLATFORM=cursor ;;
     esac
     PLUGIN_LINK="$(dirname "$TARGET")/testcase-agent-plugin"
-    for name in "${SKILL_NAMES[@]}"; do
+    for name in "${SKILL_NAMES[@]}" "${RETIRED_SKILL_NAMES[@]}"; do
       rm -rf "$TARGET/$name"
       echo "Removed skill link: $TARGET/$name"
     done
@@ -43,6 +44,13 @@ esac
 PLUGIN_LINK="$(dirname "$TARGET")/testcase-agent-plugin"
 
 mkdir -p "$TARGET"
+for name in "${RETIRED_SKILL_NAMES[@]}"; do
+  dest="$TARGET/$name"
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
+    rm -rf "$dest"
+    echo "Removed retired skill link: $dest"
+  fi
+done
 for name in "${SKILL_NAMES[@]}"; do
   src="$SKILLS_ROOT/$name"
   dest="$TARGET/$name"
@@ -80,12 +88,15 @@ fi
 if [ -n "$AGENTS_DEST" ]; then
   mkdir -p "$AGENTS_DEST"
   rm -f "$AGENTS_DEST"/tg-*.md
-  for src_agent in "$AGENTS_SRC"/tg-*.md; do
-    [ -f "$src_agent" ] || continue
-    dest_agent="$AGENTS_DEST/$(basename "$src_agent")"
-    cp -f "$src_agent" "$dest_agent"
+  for agent in "${REQUIRED_AGENTS[@]}"; do
+    src_agent="$AGENTS_SRC/$agent.md"
+    if [ ! -f "$src_agent" ]; then
+      echo "REQUIRED_SUBAGENT_UNAVAILABLE: missing source $src_agent" >&2
+      exit 1
+    fi
+    cp -f "$src_agent" "$AGENTS_DEST/$agent.md"
   done
-  echo "Installed testcase-agent subagents: $AGENTS_DEST/tg-*.md"
+  echo "Installed testcase-agent subagents (required only): ${REQUIRED_AGENTS[*]}"
   for agent in "${REQUIRED_AGENTS[@]}"; do
     path="$AGENTS_DEST/$agent.md"
     if [ ! -f "$path" ]; then
@@ -110,9 +121,9 @@ if [ "$SKIP_PIP" != "1" ]; then
     echo "solver extra failed; falling back to base install..."
     python -m pip install -e "$PLUGIN_ROOT" -q
   fi
-  echo "Python entrypoints: tg-init, tg-plan, tg-solve, tg-contract"
+  echo "Python entrypoints: tg-init, tg-plan, tg-solve (tg-contract=compat CLI only)"
 fi
 
-echo "Commands: /tg-init  /tg-plan  /tg-solve  (/tg-contract,/tg-domain-review → init)"
+echo "Commands: /tg-init  /tg-plan  /tg-solve"
 echo "PLUGIN_ROOT: $PLUGIN_LINK"
 echo "For Cursor: add this repository root as a local plugin, or rely on the installed skill links."

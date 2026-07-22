@@ -10,6 +10,7 @@ from .expr_bind import collect_var_ids_from_expr
 from .io import read_yaml, write_yaml
 
 # Empty-tensor family may stay unresolved without blocking merge/confirm.
+# ONLY key_id membership counts — never trust forged empty_allowlisted / skip_reason.
 EMPTY_KEY_ALLOWLIST = frozenset(
     {
         "KEY_ISEMPTYTENSOR",
@@ -19,12 +20,90 @@ EMPTY_KEY_ALLOWLIST = frozenset(
     }
 )
 
+# Legitimate non-empty skips (do not block merge). Everything else must resolve or stay key_unresolved.
+# Doc mirror: skills/tg-init/references/legitimate-skips.md (MUST stay isomorphic).
+LEGITIMATE_SKIP_REASONS = frozenset(
+    {
+        "empty_tensor",
+        "phantom_key_not_in_tiling_key_space",
+        "phantom_key",
+        "compile_time_constant",
+        "platform_macro_only",
+        "not_input_derivable",
+        "kernel_local",
+        "kernel_local_batch_or_loop_index",
+    }
+)
+
+# Canonical audit check ids — skills/tg-init/references/tg-init-audit.md
+AUDIT_CHECKLIST_IDS: tuple[str, ...] = (
+    "lexicon_resolve_sync",
+    "confidence_high_only",
+    "chain_to_csv",
+    "no_opaque_fn_leaf",
+    "nonempty_keys_resolved",
+    "binding_resolve_coverage",
+    "unresolved_honesty",
+    "domain_symmetry",
+    "domain_align",
+    "tiling_domain_ok",
+    "no_placeholders",
+    "merge_report",
+    "merge_artifacts",
+    "full_csv_closure",
+    "mid_symbol_drained",
+    "shape_graph_built",
+    "shape_chain_consistent",
+    "unbound_reducible",
+    "kernel_shape_progress",
+)
+
+# Subset enforced by --verify-csv-closure (same names as checklist ids).
+VERIFY_GATE_IDS: tuple[str, ...] = (
+    "merge_report",
+    "merge_artifacts",
+    "confidence_high_only",
+    "chain_to_csv",
+    "no_placeholders",
+    "nonempty_keys_resolved",
+    "binding_resolve_coverage",
+    "mid_symbol_drained",
+    "full_csv_closure",
+    "shape_graph_built",
+    "unbound_reducible",
+    "domain_symmetry",
+)
+
+# ses_07b1: agents marked closable KEYs as not_csv via these excuses — reject.
+FAKE_NOT_CSV_EXCUSE_RE = re.compile(
+    r"(?i)("
+    r"cross_variable|not_csv_realizable|runtime_derived|runtime_shape|"
+    r"template_selection|depends_on_.*chain|cannot_be_expressed|"
+    r"not_directly_controllable|cannot_csv|smt.?constraint|binning_not_csv|"
+    r"optimization_flag_depends|kernel_dispatch_flag"
+    r")"
+)
+
 FORBIDDEN_CONFIDENCE = frozenset({"medium", "low", "unknown", ""})
 
 # Fake / non-executable lexicon leaves (ses_07b3 style).
 PLACEHOLDER_EXPR_RE = re.compile(
     r"(?i)^(already_bound(_in_kb)?|deter_branch|needs_alignment|todo|tbd|"
     r"placeholder|not_implemented|n/?a|unknown|see_kb|pre.?bound)$"
+)
+
+# Chaseable mid / kernel atom: identifier or IS_FOO(BAR); reject arithmetic cmp fragments.
+CHASEABLE_MID_RE = re.compile(
+    r"^(?:"
+    r"[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)?"  # Foo / Base::IS_N_EQUAL
+    r"|IS_[A-Za-z0-9_]+(?:\([A-Za-z0-9_]+\))?"  # IS_DETER_OLD(DETER_SPARSE_TYPE)
+    r"|KEY_[A-Za-z0-9_]+"
+    r"|VAR_[A-Za-z0-9_]+"
+    r")$"
+)
+ARITH_EXPR_MID_RE = re.compile(
+    r"[\s]|[()+\-*/]|\b(le|lt|ge|gt|eq|ne)\b",
+    re.IGNORECASE,
 )
 
 OPAQUE_FN_RE = re.compile(
@@ -63,14 +142,77 @@ ALLOWED_EXPR_OPS = frozenset(
 
 
 def is_empty_allowlisted(key_id: str, doc: dict[str, Any] | None = None) -> bool:
+    """True only for known empty-tensor KEY ids. Ignores forged YAML flags."""
+    del doc  # never trust empty_allowlisted / skip_reason forgeries
     kid = str(key_id or "").upper()
-    if kid in EMPTY_KEY_ALLOWLIST or kid.removeprefix("KEY_") in {x.removeprefix("KEY_") for x in EMPTY_KEY_ALLOWLIST}:
+    bare = {x.removeprefix("KEY_") for x in EMPTY_KEY_ALLOWLIST}
+    return kid in EMPTY_KEY_ALLOWLIST or kid.removeprefix("KEY_") in bare
+
+
+def skip_reason_text(doc: dict[str, Any] | None) -> str:
+    if not isinstance(doc, dict):
+        return ""
+    return str(doc.get("skip_reason") or doc.get("unresolved_reason") or doc.get("rationale") or "").strip()
+
+
+def is_legitimate_skip(key_id: str, doc: dict[str, Any] | None = None) -> bool:
+    """Non-blocking unresolved: empty family or explicit phantom/compile-time skip."""
+    if is_empty_allowlisted(key_id, doc):
         return True
     if isinstance(doc, dict):
-        skip = str(doc.get("skip_reason") or "").lower()
-        if "empty" in skip:
+        if doc.get("not_input_derivable") is True or doc.get("input_derivable") is False:
             return True
+    skip = skip_reason_text(doc).lower().replace(" ", "_")
+    if not skip:
+        return False
+    if skip in LEGITIMATE_SKIP_REASONS:
+        return True
+    if skip.startswith("phantom_key"):
+        return True
+    if skip.startswith("not_input_derivable") or skip.startswith("kernel_local"):
+        return True
+    if skip.startswith("empty_tensor"):
+        return is_empty_allowlisted(key_id, doc)
     return False
+
+
+def is_fake_not_csv_excuse(doc: dict[str, Any] | None) -> bool:
+    """ses_07b1: cross_variable / runtime_derived / template_selection excuses are fake."""
+    if not isinstance(doc, dict):
+        return False
+    if doc.get("not_csv_realizable") is True:
+        # Allow only when paired with legitimate skip
+        if is_legitimate_skip(str(doc.get("key_id") or ""), doc):
+            return False
+        skip = skip_reason_text(doc)
+        if skip and FAKE_NOT_CSV_EXCUSE_RE.search(skip):
+            return True
+        if not skip or skip.lower() not in LEGITIMATE_SKIP_REASONS:
+            # bare not_csv_realizable without legitimate skip
+            return not is_legitimate_skip(str(doc.get("key_id") or ""), doc)
+    skip = skip_reason_text(doc)
+    if skip and FAKE_NOT_CSV_EXCUSE_RE.search(skip) and not is_legitimate_skip(str(doc.get("key_id") or ""), doc):
+        return True
+    return False
+
+
+def is_chaseable_mid_symbol(name: str) -> bool:
+    """Filter LOOP_LOCAL arithmetic / cmp fragments; keep KEY/IS_/Host identifiers."""
+    text = str(name or "").strip()
+    if not text or "empty" in text.lower():
+        return False
+    if is_csv_terminal(text) or is_compile_time_terminal(text):
+        return False
+    # Reject expression fragments: "(p+q) gt m", "HEAD_DIM_ALIGN le CUBE_BASEN"
+    if ARITH_EXPR_MID_RE.search(text) and not CHASEABLE_MID_RE.match(text):
+        return False
+    if not CHASEABLE_MID_RE.match(text):
+        return False
+    # Platform / unit-test macros — not CSV chase targets
+    upper = text.upper()
+    if upper.startswith("ENABLE_") or upper.startswith("CUBE_") or upper.endswith("_BASEN"):
+        return False
+    return True
 
 
 def is_compile_time_terminal(node_id: str, step: dict[str, Any] | None = None) -> bool:
@@ -274,7 +416,16 @@ def validate_resolved_doc(doc: dict[str, Any], *, key_id: str, key_var: str) -> 
 def require_high_only(out_root: Path) -> dict[str, Any]:
     issues: list[dict[str, Any]] = []
     resolve_dir = Path(out_root) / "realization" / "uo_query_resolve"
+    coverage = require_binding_resolve_coverage(out_root)
     if not resolve_dir.is_dir():
+        # Empty dir is only OK when inventory has no needs_binding_keys.
+        if str(coverage.get("status") or "") == "fail":
+            return {
+                "status": "fail",
+                "detail": "no uo_query_resolve dir but needs_binding_keys present",
+                "issues": coverage.get("issues") or [],
+                "ask": "uo_query_resolve_required",
+            }
         return {"status": "pass", "detail": "no uo_query_resolve dir", "issues": []}
     for path in sorted(resolve_dir.glob("KEY_*.yaml")):
         doc = read_yaml(path)
@@ -287,6 +438,46 @@ def require_high_only(out_root: Path) -> dict[str, Any]:
         if conf != "high":
             issues.append({"file": path.name, "confidence": conf or "missing"})
     return {"status": "fail" if issues else "pass", "issues": issues}
+
+
+def require_binding_resolve_coverage(out_root: Path) -> dict[str, Any]:
+    """Each needs_binding_keys entry must have realization/uo_query_resolve/<KEY>.yaml."""
+    root = Path(out_root)
+    inv_path = root / "realization" / "binding_inventory.yaml"
+    if not inv_path.is_file():
+        return {"status": "pass", "detail": "no binding_inventory", "issues": [], "missing": []}
+    inv = read_yaml(inv_path)
+    if not isinstance(inv, dict):
+        return {"status": "pass", "detail": "invalid inventory", "issues": [], "missing": []}
+    needed = [str(k) for k in (inv.get("needs_binding_keys") or []) if k]
+    # Exclude keys already marked not_input_derivable in inventory if present
+    skip = {str(k) for k in (inv.get("not_input_derivable_keys") or []) if k}
+    resolve_dir = root / "realization" / "uo_query_resolve"
+    missing: list[str] = []
+    for key_id in needed:
+        if key_id in skip:
+            continue
+        stem = key_id if key_id.startswith("KEY_") else f"KEY_{key_id}"
+        path = resolve_dir / f"{stem}.yaml"
+        alt = resolve_dir / f"{key_id}.yaml"
+        if path.is_file() or alt.is_file():
+            continue
+        # allow legitimate skip stubs only when file exists with skip; missing file = fail
+        missing.append(stem)
+    issues = [{"key_id": k, "reason": "missing_uo_query_resolve"} for k in missing]
+    return {
+        "status": "fail" if missing else "pass",
+        "missing": missing,
+        "issues": issues,
+        "needed_count": len(needed),
+        "ask": "uo_query_resolve_required" if missing else "",
+        "next": (
+            "PARENT: Task Follow uo-query for each missing KEY → write "
+            "realization/uo_query_resolve/<KEY_ID>.yaml → --merge-uo-resolve"
+            if missing
+            else ""
+        ),
+    }
 
 
 def require_chains_terminate_at_csv(out_root: Path) -> dict[str, Any]:
@@ -313,8 +504,9 @@ def require_chains_terminate_at_csv(out_root: Path) -> dict[str, Any]:
 
 
 def require_no_nonempty_unresolved(out_root: Path, empty_allowlist: frozenset[str] | None = None) -> dict[str, Any]:
-    allow = empty_allowlist or EMPTY_KEY_ALLOWLIST
+    del empty_allowlist  # use EMPTY_KEY_ALLOWLIST + legitimate skips only
     issues: list[dict[str, Any]] = []
+    fake_excuses: list[dict[str, Any]] = []
     resolve_dir = Path(out_root) / "realization" / "uo_query_resolve"
     if not resolve_dir.is_dir():
         return {"status": "pass", "detail": "no uo_query_resolve dir", "issues": [], "ask": ""}
@@ -326,26 +518,38 @@ def require_no_nonempty_unresolved(out_root: Path, empty_allowlist: frozenset[st
         status = str(doc.get("status") or "").lower()
         if status not in {"unresolved", "needs_human", "not_csv_realizable"} and doc.get("not_csv_realizable") is not True:
             continue
-        if is_empty_allowlisted(key_id, doc) or key_id.upper() in allow:
+        if is_legitimate_skip(key_id, doc):
             continue
-        issues.append(
-            {
-                "file": path.name,
-                "key_id": key_id,
-                "status": status or "unresolved",
-                "reason": doc.get("unresolved_reason") or doc.get("rationale") or "nonempty_unresolved",
-            }
-        )
-    return {"status": "fail" if issues else "pass", "issues": issues, "ask": "key_unresolved" if issues else ""}
+        item = {
+            "file": path.name,
+            "key_id": key_id,
+            "status": status or "unresolved",
+            "reason": skip_reason_text(doc) or "nonempty_unresolved",
+        }
+        if is_fake_not_csv_excuse({**doc, "key_id": key_id}):
+            item["fake_not_csv_excuse"] = True
+            fake_excuses.append(item)
+        issues.append(item)
+    ask = ""
+    if fake_excuses:
+        ask = "fake_not_csv_excuse"
+    elif issues:
+        ask = "key_unresolved"
+    return {
+        "status": "fail" if issues else "pass",
+        "issues": issues,
+        "fake_excuses": fake_excuses,
+        "ask": ask,
+    }
 
 
 def collect_kernel_unbound_symbols(out_root: Path, *, limit: int = 64) -> dict[str, Any]:
-    """Aggregate abstract branch unbound symbols for tg-init kernel pass Tasks."""
+    """Aggregate chaseable abstract-branch symbols (filter LOOP_LOCAL arithmetic junk)."""
     map_path = Path(out_root) / "realization" / "realization_map.yaml"
     rmap = read_yaml(map_path) if map_path.is_file() else {}
     if not isinstance(rmap, dict):
         rmap = {}
-    ignore_reasons = {"LOOP_LOCAL", "PLATFORM_MACRO", "PARSE_FAIL"}
+    ignore_reasons = {"LOOP_LOCAL", "PLATFORM_MACRO", "PARSE_FAIL", "COMPILE_MACRO"}
     keep_sources = {
         "TilingKey",
         "KernelVariable",
@@ -362,6 +566,7 @@ def collect_kernel_unbound_symbols(out_root: Path, *, limit: int = 64) -> dict[s
         "NO_HOST_PRODUCER",
     }
     symbols: dict[str, dict[str, Any]] = {}
+    skipped_noise = 0
     for branch in rmap.get("abstract_branches") or []:
         if not isinstance(branch, dict):
             continue
@@ -380,7 +585,10 @@ def collect_kernel_unbound_symbols(out_root: Path, *, limit: int = 64) -> dict[s
             if atom_reason in ignore_reasons:
                 continue
             name = str(atom.get("name") or atom.get("raw") or "").strip()
-            if not name or "empty" in name.lower():
+            if not name:
+                continue
+            if not is_chaseable_mid_symbol(name):
+                skipped_noise += 1
                 continue
             entry = symbols.setdefault(
                 name,
@@ -398,7 +606,12 @@ def collect_kernel_unbound_symbols(out_root: Path, *, limit: int = 64) -> dict[s
     for item in ranked:
         item["reasons"] = sorted(item["reasons"])
         item["sources"] = sorted(item["sources"])
-    return {"status": "ok", "symbols": ranked, "total_unique": len(symbols)}
+    return {
+        "status": "ok",
+        "symbols": ranked,
+        "total_unique": len(symbols),
+        "skipped_noise": skipped_noise,
+    }
 
 
 def require_no_placeholders(out_root: Path) -> dict[str, Any]:
@@ -500,13 +713,15 @@ def collect_open_mid_symbols(out_root: Path, *, limit: int = 32) -> dict[str, An
     root = Path(out_root)
     open_syms: dict[str, dict[str, Any]] = {}
 
-    def _add(name: str, *, source: str, reason: str) -> None:
+    def _add(name: str, *, source: str, reason: str, require_chaseable: bool = True) -> None:
         nid = str(name or "").strip()
         if not nid:
             return
         if is_csv_terminal(nid) or is_compile_time_terminal(nid):
             return
-        if "empty" in nid.lower():
+        if "empty" in nid.lower() and reason != "key_unresolved":
+            return
+        if require_chaseable and not is_chaseable_mid_symbol(nid):
             return
         entry = open_syms.setdefault(
             nid,
@@ -530,7 +745,6 @@ def collect_open_mid_symbols(out_root: Path, *, limit: int = 32) -> dict[str, An
             if status == "resolved":
                 ok, reason = validate_chain_terminates_at_csv(doc, key_var=key_var)
                 if not ok and "leaves=" in reason:
-                    # extract leaves from reason: shape_closure_incomplete:leaves=[...]
                     m = re.search(r"leaves=\[([^\]]*)\]", reason)
                     if m:
                         raw = m.group(1)
@@ -542,16 +756,16 @@ def collect_open_mid_symbols(out_root: Path, *, limit: int = 32) -> dict[str, An
                 for leaf in leaves:
                     if not is_csv_terminal(leaf) and not is_compile_time_terminal(leaf):
                         _add(leaf, source=path.name, reason="chain_leaf")
-            elif status in {"unresolved", "needs_human"} and not is_empty_allowlisted(key_id, doc):
-                # unresolved KEY itself is an open obligation
-                _add(key_id, source=path.name, reason="key_unresolved")
+            elif status in {"unresolved", "needs_human", "not_csv_realizable"} or doc.get("not_csv_realizable") is True:
+                if is_legitimate_skip(key_id, doc):
+                    continue
+                # Closable / fake-excuse KEYs stay as open obligations (parent MUST Task)
+                _add(key_id, source=path.name, reason="key_unresolved", require_chaseable=False)
 
-    # Kernel abstract unbound
     kern = collect_kernel_unbound_symbols(root, limit=limit * 2)
     for item in kern.get("symbols") or []:
         _add(str(item.get("name") or ""), source="abstract_branches", reason="kernel_unbound")
 
-    # Shape graph nodes not in closure
     graph_path = root / "bind" / "shape_derivation_graph.yaml"
     if graph_path.is_file():
         graph = read_yaml(graph_path)
@@ -579,7 +793,7 @@ def collect_open_mid_symbols(out_root: Path, *, limit: int = 32) -> dict[str, An
         "total_unique": len(open_syms),
         "ask": "mid_symbol_tasks" if ranked else "",
         "next": (
-            "Spawn Task Follow uo-query per open mid-symbol (CBM) → append derivation_chain → --merge-uo-resolve"
+            "PARENT: auto Task Follow uo-query per open mid → --merge-uo-resolve (do NOT ask user)"
             if ranked
             else "no open mid-symbols"
         ),
@@ -599,24 +813,39 @@ def write_mid_symbol_queue(out_root: Path, *, limit: int = 32) -> dict[str, Any]
 def require_full_csv_closure(out_root: Path) -> dict[str, Any]:
     """
     Strong verification: every closable variable must close to VAR_CSV_*.
-    Combines chain gates, placeholders, merge artifacts, and open mid-symbol queue.
+    Gate keys MUST match VERIFY_GATE_IDS / tg-init-audit checklist ids.
     """
+    from .shape_derivation import check_shape_graph_built, check_unbound_reducible
+
     root = Path(out_root)
-    gates = {
-        "merge_artifacts": require_merge_artifacts(root),
-        "high_only": require_high_only(root),
+    merge_art = require_merge_artifacts(root)
+    merge_checks = merge_art.get("checks") if isinstance(merge_art.get("checks"), dict) else {}
+    missing = list(merge_art.get("missing") or [])
+    merge_report_ok = (
+        (root / "realization" / "uo_merge_report.yaml").is_file()
+        and "uo_merge_report.status!=pass" not in missing
+        and str(merge_checks.get("uo_merge_report") or "").lower() == "pass"
+    )
+
+    gates: dict[str, Any] = {
+        "merge_report": {
+            "status": "pass" if merge_report_ok else "fail",
+            "detail": merge_checks.get("uo_merge_report") or missing,
+        },
+        "merge_artifacts": merge_art,
+        "confidence_high_only": require_high_only(root),
         "chain_to_csv": require_chains_terminate_at_csv(root),
         "no_placeholders": require_no_placeholders(root),
-        "nonempty_unresolved": require_no_nonempty_unresolved(root),
+        "nonempty_keys_resolved": require_no_nonempty_unresolved(root),
+        "binding_resolve_coverage": require_binding_resolve_coverage(root),
     }
     open_mids = collect_open_mid_symbols(root)
-    gates["open_mid_symbols"] = {
+    gates["mid_symbol_drained"] = {
         "status": "fail" if open_mids.get("symbols") else "pass",
         "count": len(open_mids.get("symbols") or []),
         "symbols": [s.get("name") for s in (open_mids.get("symbols") or [])[:20]],
     }
 
-    # Lexicon expr vars must be CSV or appear in shape closure
     lex_issues: list[dict[str, Any]] = []
     closure: set[str] = set()
     graph_path = root / "bind" / "shape_derivation_graph.yaml"
@@ -642,25 +871,54 @@ def require_full_csv_closure(out_root: Path) -> dict[str, Any]:
                     if closure and vid not in closure:
                         lex_issues.append({"id": item.get("id"), "var": vid, "reason": "expr_var_not_in_shape_closure"})
                     elif not closure and not is_csv_terminal(vid):
-                        # no graph yet — still flag non-CSV leaves
                         lex_issues.append({"id": item.get("id"), "var": vid, "reason": "expr_non_csv_without_closure"})
-    gates["lexicon_csv_closure"] = {
+    gates["full_csv_closure"] = {
         "status": "fail" if lex_issues else "pass",
         "issues": lex_issues[:50],
     }
+    gates["shape_graph_built"] = check_shape_graph_built(root)
+    gates["unbound_reducible"] = check_unbound_reducible(root)
+
+    try:
+        from .uo_resolve_merge import require_domain_symmetry as _domain_sym
+
+        sym = _domain_sym(root)
+        gates["domain_symmetry"] = {"status": str(sym.get("status") or "pass"), "issues": sym.get("issues") or []}
+    except Exception as exc:  # UoMergeError or import/IO
+        ask_code = getattr(exc, "ask", "") or "domain_asymmetry"
+        gates["domain_symmetry"] = {
+            "status": "fail",
+            "ask": ask_code,
+            "detail": str(exc),
+            "issues": list((getattr(exc, "report", None) or {}).get("issues") or [])[:50],
+        }
+
+    for gid in VERIFY_GATE_IDS:
+        gates.setdefault(gid, {"status": "fail", "detail": "gate_not_computed"})
 
     failed = [k for k, v in gates.items() if str(v.get("status") or "").lower() == "fail"]
     ask = ""
-    if "merge_artifacts" in failed:
+    if "merge_report" in failed or "merge_artifacts" in failed:
         ask = "uo_merge_required"
-    elif "open_mid_symbols" in failed or "chain_to_csv" in failed or "lexicon_csv_closure" in failed:
+    elif "domain_symmetry" in failed:
+        ask = str((gates.get("domain_symmetry") or {}).get("ask") or "domain_asymmetry")
+    elif (
+        "mid_symbol_drained" in failed
+        or "chain_to_csv" in failed
+        or "full_csv_closure" in failed
+        or "shape_graph_built" in failed
+        or "unbound_reducible" in failed
+    ):
         ask = "shape_closure_incomplete"
     elif "no_placeholders" in failed:
         ask = "placeholder_expr"
-    elif "high_only" in failed:
+    elif "confidence_high_only" in failed:
         ask = "confidence_not_high"
-    elif "nonempty_unresolved" in failed:
-        ask = "key_unresolved"
+    elif "binding_resolve_coverage" in failed:
+        ask = str((gates.get("binding_resolve_coverage") or {}).get("ask") or "uo_query_resolve_required")
+    elif "nonempty_keys_resolved" in failed:
+        nu = gates.get("nonempty_keys_resolved") or {}
+        ask = str(nu.get("ask") or "key_unresolved")
 
     return {
         "status": "fail" if failed else "pass",
@@ -671,6 +929,10 @@ def require_full_csv_closure(out_root: Path) -> dict[str, Any]:
         "next": (
             "PARENT: tg-init-audit → --confirm"
             if not failed
-            else "PARENT: auto Task Follow uo-query on open mid-symbols → --merge-uo-resolve → --verify-csv-closure (do NOT ask user)"
+            else (
+                "PARENT: ban fake not_csv — resolve with LogicExpr + auto mid Tasks → re-merge → --verify-csv-closure"
+                if ask == "fake_not_csv_excuse"
+                else "PARENT: auto Task Follow uo-query on open mids → --merge-uo-resolve → --verify-csv-closure (do NOT ask user)"
+            )
         ),
     }

@@ -1,97 +1,130 @@
 ---
 name: uo-code-review
 description: >-
-  Ascend C dual-path code review on an operator KB: bug path (CBM primary, KB
-  supplement) and functional/semantic path (KB primary, CBM supplement). Default
-  mode=both runs both complete analyses. No code-review-graph dependency.
+  已有 KB 上双路审查：Bug（CBM 主、KB 补）与 Functional（KB 主、CBM 补）。
+  写出 review/**；不改 diff/**；不装 code-review-graph。
 disable-model-invocation: true
 argument-hint: "[path] [--op-name <name>] [--mode both|functional|bug] [--requirements <path>] [--base <rev>]"
 ---
 
-# uo-code-review — Ascend C 双路审查
+# Skill: uo-code-review
 
-在已有 `.understand-operator/<op_name>/` 上做代码审查。**两图混用，不装 CRG**：
+## Purpose
 
-| 审查路 | 主图 | 补充 |
-|--------|------|------|
-| Bug / 缺陷 | **CBM**（Phase0 已索引） | **kb_graph** |
-| 需求 / 语义完整性 | **kb_graph** | **CBM**（调用冲击 / hotspot） |
+定稿 KB → **双路审查报告**（`review/**`）：缺陷证据链 + 功能/语义完整性。
 
-默认 `--mode both`：两路都完整跑完。不修改 `diff/**`；报告只写 `review/**`。
+## Trigger
 
-## 进度 Todo（必须用中文，且只用下面这 6 条）
+- 适用：`/uo-code-review`、缺陷 / 需求完整性审查
+- 不适用：建库（`/uo-init`）、KB 问答（`/uo-query`）、只生成 `diff/`（`/uo-update`）
 
-```text
-1. 校验 KB / kb_graph / CBM 就绪
-2. 打包双图审查上下文
-3. Bug 审查（CBM 主 / KB 补）
-4. 功能或语义完整性审查（KB 主 / CBM 补）
-5. 写 review 报告
-6. 汇总 index 与 summary
-```
+人读 Step 明细：`docs/uo-code-review-workflow.md`。  
+阶段合同：`prompts/review/workflow.md`。
 
-## Variables
+## Inputs
 
-- `SCRIPT_DIR`: `$PLUGIN_ROOT/uo/scripts`
-- `PROMPT_DIR`: `$PLUGIN_ROOT/prompts`
-- `PROJECT_ROOT`: 算子包目录
-- `OP_NAME` / `UO_ROOT`: `$PROJECT_ROOT/.understand-operator/$OP_NAME`
+| 权威 | 说明 |
+|---|---|
+| `$UO_ROOT/manifest.yaml` | 须存在 |
+| fresh `indexes/kb_graph.sqlite` | Functional 主图 |
+| `cbm/index_meta.json`（`indexed_via: mcp`） | Bug 主图 |
+| 可选 `--requirements` / `--base` | 需求矩阵 / 对比修订 |
+| 建议已有 `diff/` | 变更聚焦 |
 
-Read `$PROMPT_DIR/01c_code_review_orchestrator.md` and `$PROMPT_DIR/00_language.md`.
+辅助：`prompts/review/bug_review.md`、`functional_review.md`、`clauses/ascendc_redlines.md`、
+`agents/uo-code-reviewer.md`。
 
-## Preconditions
+## Outputs
 
-- `$UO_ROOT/manifest.yaml` 存在
-- 建议已跑 `/uo-update`（有 `diff/`）；否则用 `--base` 对比
-- **复用已有 CBM**（`/uo-init` Phase0 `index_repository` + `cbm/index_meta.json`）；见 `docs/cbm-mcp-setup.md`
-- 缺 kb_graph fresh 或 CBM：**停止**并提示建图/索引（不静默单图降级；**不要**安装 code-review-graph）
+**正式：** `review/bug_report.{yaml,md}`、`review/functional_report.{yaml,md}`、
+`review/index.yaml`、`review/summary.md`（随 `--mode`）。  
+**禁止：** 覆盖 `diff/**`；安装/依赖 code-review-graph；静默单图降级。
 
-## Pipeline
+## Invariants
 
-### 1–2 上下文
+| 路 | 主图 | 补图 |
+|---|---|---|
+| Bug | CBM | `kb_graph` |
+| Functional | `kb_graph` | CBM |
+
+- Bug 结论不得只靠 KB；功能/语义结论不得只靠 CBM 调用图
+- 证据须可定位到 `file:line`（优先 CBM MCP）
+- 读门禁：overview / 热文件 Grep → 小窗 Read → CBM；禁整读 operator_graph / exhaustive 全文
+
+## Tool Policy
+
+### MUST use
+
+- `prepare_review_context.py`；`ready=false` 则停
+- Bug 路：`bug_review.md` + CBM MCP；Functional 路：`functional_review.md` + kb_graph
+
+### MAY use
+
+- 有界派发 `uo-code-reviewer` subagent
+- `--mode bug|functional` 单路
+
+### MUST NOT
+
+- 装 CRG；覆盖 `diff/**`；`ready=false` 时硬跑；无证据下发 finding
+
+## Workflow
+
+变量：`SCRIPT_DIR=$PLUGIN_ROOT/uo/scripts`；`UO_ROOT=$PROJECT_ROOT/.understand-operator/$OP_NAME`。
+
+### Phase 1: 就绪校验
+
+- **Entry：** 用户触发 `/uo-code-review`
+- **Actions：** 检查 manifest、fresh sqlite、CBM meta；建议 diff/`--base`
+- **Exit：** 双图就绪（或 mode 所需图就绪）
+- **Failure：** `ready=false` → **STOP**（提示 export_kb_graph / Phase0 索引）
+
+### Phase 2: 打包上下文
+
+- **Actions：**
 
 ```powershell
 python -X utf8 "$SCRIPT_DIR/prepare_review_context.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --mode both
-# 可选：--requirements <DESIGN.md|issue-url> --base <rev>
 ```
 
-若 `ready=false`：展示 errors，指导 `export_kb_graph` / `/uo-init` CBM 索引，然后停止。
+- **Artifacts：** context pack（含 cbm.impact 等）
+- **Exit：** pack 可读
 
-### 读门禁（两路共用）
+### Phase 3: Bug 路（mode=both|bug）
 
-```text
-1. summary/human_overview.md 或 kb_graph 查询
-2. Grep 热文件（key_cards / runtime_conditions / coverage）
-3. 小窗 Read
-4. CBM 源码
-禁止整读：operator_graph / impact_graph 全文 / testcase 全文 / exhaustive 全文
-```
+- **Actions：** 按 `bug_review.md`：CBM impact / `trace_path` / `search_graph` 为主；kb_graph 旁证；条例 `clauses/`
+- **Artifacts：** `review/bug_report.yaml` + `.md`
+- **Exit：** 每条 finding 有证据或显式 skip reason
 
-### 3 Bug 路（mode=both|bug）
+### Phase 4: Functional 路（mode=both|functional）
 
-Read `$PROMPT_DIR/review/bug_review.md`。
+- **Actions：** 按 `functional_review.md`：有 requirements 做需求矩阵；否则做语义完整性
+- **Artifacts：** `review/functional_report.yaml` + `.md`
+- **Exit：** 覆盖项均有终端状态
 
-- 主：context_pack.cbm.impact（变更符号、callers、priority）+ MCP `trace_path` / `search_graph` / `get_architecture`
-- 补：kb_graph `entities_in_files`、侧别、约束旁证
-- Ascend 精简条例：`$PROMPT_DIR/review/clauses/`
-- 可派发 `uo-code-reviewer` subagent（有界）
-- 写出 `$UO_ROOT/review/bug_report.yaml` + `bug_report.md`
+### Phase 5: 汇总
 
-### 4 功能 / 语义路（mode=both|functional）
+- **Actions：** 写 `review/index.yaml` + `summary.md`
+- **Exit：** index 指向两路报告
 
-Read `$PROMPT_DIR/review/functional_review.md`。
+## Semantic Escalation
 
-- 有 `--requirements`：需求矩阵（KB 主 + CBM 补）
-- 无 requirements：基于 KB 义务 / `affected_shapes` / 变更实体做**语义完整性**完整检查
-- 写出 `$UO_ROOT/review/functional_report.yaml` + `functional_report.md`
+- 需理解 Host/Kernel/KEY 语义 → 经 kb_graph / CBM 证据，必要时有界 subagent
+- MUST NOT：凭记忆或纯命名直觉下缺陷结论
 
-### 5–6 汇总
+## Failure Taxonomy
 
-写 `$UO_ROOT/review/index.yaml` + `summary.md`。
+`NO_EXISTING_KB` · `GRAPH_NOT_READY` · `TOOL_FAILURE` · `INSUFFICIENT_EVIDENCE` · `VALIDATION_FAILURE`
 
-## Hard rules
+## Quality Gate
 
-- 禁止覆盖 `diff/**`
-- 禁止安装或依赖 code-review-graph
-- Bug 结论不得只靠 KB；功能/语义结论不得只靠 CBM 调用图
-- 证据需可定位到 file:line（优先 CBM MCP）
+- [ ] `prepare_review_context` ready
+- [ ] 按 mode 写出对应 report
+- [ ] Bug/Functional 主补图未对调
+- [ ] 未改 `diff/**`；未装 CRG
+- [ ] index + summary 存在
+
+## Stop Conditions
+
+- 缺 KB / 缺所需图 → **STOP**
+- context `ready=false` → **STOP**
+- 证据不足的候选 finding → 记 `INSUFFICIENT_EVIDENCE`，禁止编造 file:line

@@ -85,6 +85,8 @@ def update_operator(
     _bump_manifest(uo_root, repo_root, run_id, change_set.get("head_revision"))
 
     validate_result = None
+    confidence_result: dict[str, Any] | None = None
+    integrity_result: dict[str, Any] | None = None
     if not skip_validate:
         validate_result = validate_kb(uo_root, op_name, phase="final", write_outputs=True)
         if validate_result.status == "fail":
@@ -106,6 +108,79 @@ def update_operator(
                 "receipt": receipt,
                 "validate": validate_result,
             }
+        # Init-parity gates: classify → confidence → integrity (kb-review remains agent-owned).
+        try:
+            from uo.scripts.classify_input_derivable import classify_and_write
+
+            classify_and_write(uo_root)
+        except Exception as exc:  # noqa: BLE001
+            export_diff_product(repo_root, op_name, change_set=change_set, update_plan=plan, status="blocked", write=True)
+            receipt = _receipt(
+                run_id,
+                change_set,
+                plan,
+                status="fail",
+                message=f"classify_input_derivable failed: {exc}",
+                validate_status=validate_result.status if validate_result else "skipped",
+            )
+            write_yaml(update_dir / "receipt.yaml", receipt)
+            return {
+                "status": "fail",
+                "run_id": run_id,
+                "plan": plan,
+                "change_set": change_set,
+                "receipt": receipt,
+                "validate": validate_result,
+            }
+        from uo.scripts.check_final_confidence import check_final_confidence
+        from uo.scripts.check_kb_integrity import check_kb_integrity
+
+        confidence_result = check_final_confidence(uo_root, write_skeleton=True)
+        if str(confidence_result.get("status") or "").lower() == "fail":
+            export_diff_product(repo_root, op_name, change_set=change_set, update_plan=plan, status="blocked", write=True)
+            receipt = _receipt(
+                run_id,
+                change_set,
+                plan,
+                status="fail",
+                message="confidence_gate failed",
+                validate_status=validate_result.status if validate_result else "skipped",
+            )
+            receipt["confidence_gate"] = confidence_result.get("status")
+            write_yaml(update_dir / "receipt.yaml", receipt)
+            return {
+                "status": "fail",
+                "run_id": run_id,
+                "plan": plan,
+                "change_set": change_set,
+                "receipt": receipt,
+                "validate": validate_result,
+                "confidence": confidence_result,
+            }
+        integrity_result = check_kb_integrity(repo_root, op_name, write_outputs=True)
+        if str(integrity_result.get("status") or "").lower() == "fail":
+            export_diff_product(repo_root, op_name, change_set=change_set, update_plan=plan, status="blocked", write=True)
+            receipt = _receipt(
+                run_id,
+                change_set,
+                plan,
+                status="fail",
+                message="integrity failed",
+                validate_status=validate_result.status if validate_result else "skipped",
+            )
+            receipt["confidence_gate"] = (confidence_result or {}).get("status")
+            receipt["integrity"] = integrity_result.get("status")
+            write_yaml(update_dir / "receipt.yaml", receipt)
+            return {
+                "status": "fail",
+                "run_id": run_id,
+                "plan": plan,
+                "change_set": change_set,
+                "receipt": receipt,
+                "validate": validate_result,
+                "confidence": confidence_result,
+                "integrity": integrity_result,
+            }
 
     diff_product = export_diff_product(repo_root, op_name, change_set=change_set, update_plan=plan, status="ready", write=True)
     kb_graph_export = _safe_export_kb_graph(repo_root, op_name)
@@ -121,6 +196,10 @@ def update_operator(
     )
     receipt["kb_graph"] = kb_graph_export
     receipt["human_views"] = human_views
+    if confidence_result is not None:
+        receipt["confidence_gate"] = confidence_result.get("status")
+    if integrity_result is not None:
+        receipt["integrity"] = integrity_result.get("status")
     write_yaml(update_dir / "receipt.yaml", receipt)
     return {
         "status": "pass",
@@ -132,6 +211,8 @@ def update_operator(
         "graph_stats": graph.get("stats"),
         "kb_graph": kb_graph_export,
         "human_views": human_views,
+        "confidence": confidence_result,
+        "integrity": integrity_result,
     }
 
 

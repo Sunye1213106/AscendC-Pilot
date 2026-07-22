@@ -169,33 +169,19 @@ def _seed_kb(repo: Path, revision: str) -> Path:
     _write_yaml(ir / "unresolved.yaml", {"version": 1, "op_name": "DemoOp", "items": []})
 
     for rel in [
-        "contracts/testcase.yaml",
+        "tiling/key_space.yaml",
         "tiling/exhaustive_key_space.yaml",
         "tiling/coverage_model.yaml",
         "kernel/branches.yaml",
         "cross_layer/impact_graph.yaml",
+        "quality.yaml",
     ]:
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        if rel.endswith("testcase.yaml"):
-            _write_yaml(
-                path,
-                {
-                    "version": 2,
-                    "op_name": "DemoOp",
-                    "source": {"understand_phase": "layered_ir", "quality_status": "pass", "canonical_hashes": {}},
-                    "interface": {
-                        "required_inputs": [],
-                        "optional_inputs": [],
-                        "outputs": [],
-                        "attrs": [],
-                        "dtype_layout_domains": [],
-                    },
-                    "typed_constraints": [],
-                    "coverage_obligations": {},
-                    "golden_contract": {},
-                },
-            )
+        if rel == "quality.yaml":
+            _write_yaml(path, {"version": 1, "op_name": "DemoOp", "status": "pass"})
+        elif rel == "tiling/key_space.yaml":
+            _write_yaml(path, {"version": 1, "op_name": "DemoOp", "fields": []})
         else:
             _write_yaml(path, {"version": 1, "op_name": "DemoOp", "items": []})
 

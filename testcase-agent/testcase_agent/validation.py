@@ -34,8 +34,8 @@ STABLE_PREFIXES = (
 STABLE_ID_RE = re.compile(rf"^({'|'.join(STABLE_PREFIXES)})_[A-Z0-9_]+$")
 LEGACY_ID_RE = re.compile(r"^(TF\d+|K\d+|C\d+|D\d+|P\d+|R\d+|IR\d+|KR\d+|VC\d+|KU\d+|PR\d+|MG\d+)$")
 ID_TOKEN_RE = re.compile(rf"\b(?:{'|'.join(STABLE_PREFIXES)})_[A-Za-z0-9_]+\b")
-REQUIRED_TESTCASE_CONTRACT_FILES = (
-    "contracts/testcase.yaml",
+# Layered KB export required for TG intake (UO no longer ships contracts/testcase.yaml).
+REQUIRED_KB_EXPORT_FILES = (
     "test/contract.yaml",
     "tiling/variables.yaml",
     "tiling/key_space.yaml",
@@ -56,6 +56,8 @@ REQUIRED_TESTCASE_CONTRACT_FILES = (
     "flow/numerical_model.yaml",
     "quality.yaml",
 )
+# Backward-compatible alias (tests / older callers).
+REQUIRED_TESTCASE_CONTRACT_FILES = REQUIRED_KB_EXPORT_FILES
 HARD_WORDS = {"hard", "blocking", "blocker", "error", "fail", "failed", "conflicting", "unresolved"}
 REF_KEYS = {
     "target_ref",
@@ -122,36 +124,29 @@ class ValidationReport:
 
 
 def validate_intake(export_payload: dict[str, Any], final_validation: dict[str, Any]) -> ValidationReport:
+    """Validate UO KB readiness for TG intake. Does not require UO contracts/testcase.yaml."""
     report = ValidationReport()
     files = _as_dict(export_payload.get("files"))
     context_slice = _as_dict(export_payload.get("context_slice"))
-    contract = _as_dict(files.get("contracts/testcase.yaml"))
-    quality = _as_dict(files.get("quality.yaml"))
 
-    if not contract:
-        report.add("MISSING_TESTCASE_CONTRACT", "error", "contracts/testcase.yaml is missing from testcase-contract export")
-        return report
-    for rel in REQUIRED_TESTCASE_CONTRACT_FILES:
+    for rel in REQUIRED_KB_EXPORT_FILES:
         if rel not in files:
-            report.add("MISSING_CANONICAL_FILE", "error", f"testcase-contract export missing required canonical file: {rel}", rel, rel)
+            report.add(
+                "MISSING_CANONICAL_FILE",
+                "error",
+                f"kb-export missing required layered file: {rel}",
+                rel,
+                rel,
+            )
 
-    context_contract = _as_dict(context_slice.get("testcase_contract"))
-    if context_contract and context_contract != contract:
-        report.add("CONTRACT_CONTEXT_MISMATCH", "error", "contracts/testcase.yaml differs from context_slice.testcase_contract", "context_slice.testcase_contract")
-
-    if int(contract.get("version") or 0) != 2:
+    # Soft signals: manifest / sqlite / integrity when present in files or via final_validation.
+    if "manifest.yaml" not in files and not _as_dict(final_validation).get("manifest_ok"):
         report.add(
-            "TESTCASE_CONTRACT_VERSION",
-            "error",
-            "contracts/testcase.yaml version must be exactly 2",
-            "contracts/testcase.yaml",
-            str(contract.get("version")),
+            "MANIFEST_MISSING",
+            "warning",
+            "manifest.yaml not present in export payload (filesystem intake may still load it)",
+            "manifest.yaml",
         )
-
-    for key in ("source", "interface", "typed_constraints", "coverage_obligations", "golden_contract"):
-        if key not in contract:
-            report.add("MISSING_REQUIRED_FIELD", "error", f"contracts/testcase.yaml missing required field: {key}", "contracts/testcase.yaml", key)
-    validate_contract_schema(contract, report)
 
     quality_status = quality_status_from(files)
     if quality_status == "fail":
@@ -164,11 +159,8 @@ def validate_intake(export_payload: dict[str, Any], final_validation: dict[str, 
     elif final_validation.get("status") == "warn":
         report.add("FINAL_VALIDATION_WARN", "warning", "Understand final validation returned warnings", target="final_validation")
 
-    source_hashes = _as_dict(final_validation.get("source_artifact_hashes")) or _as_dict(
-        _as_dict(contract.get("source")).get("canonical_hashes")
-    )
+    source_hashes = _as_dict(final_validation.get("source_artifact_hashes"))
     if not source_hashes:
-        # lean export stores hashes outside the contract
         artifact = _as_dict(files.get("checks/artifact_hashes.yaml"))
         source_hashes = _as_dict(artifact.get("hashes"))
     if not source_hashes:
@@ -180,9 +172,19 @@ def validate_intake(export_payload: dict[str, Any], final_validation: dict[str, 
             "hashes",
         )
 
+    # Historical UO contract in payload: ignore (compat warning only).
+    if files.get("contracts/testcase.yaml"):
+        report.add(
+            "LEGACY_UO_CONTRACT_IGNORED",
+            "warning",
+            "UO contracts/testcase.yaml is retired; TG owns .testcase-generator/<op>/contract/",
+            "contracts/testcase.yaml",
+        )
+
     known_ids = collect_known_ids({"files": files, "context_slice": context_slice})
     validate_stable_ids({"files": files, "context_slice": context_slice}, report)
-    validate_hard_refs(contract, known_ids, report)
+    # Hard-ref checks apply to TG contract after tg-contract writes it — not UO intake.
+    del known_ids
     validate_blocking_states(files, report)
     collect_warning_states(files, report)
     return report
@@ -190,13 +192,10 @@ def validate_intake(export_payload: dict[str, Any], final_validation: dict[str, 
 
 def quality_status_from(files: dict[str, Any]) -> str:
     quality = _as_dict(files.get("quality.yaml"))
-    contract = _as_dict(files.get("contracts/testcase.yaml"))
-    source = _as_dict(contract.get("source"))
     candidates = [
         quality.get("status"),
         quality.get("decision"),
         quality.get("quality_status"),
-        source.get("quality_status"),
     ]
     for candidate in candidates:
         text = str(candidate or "").strip().lower()

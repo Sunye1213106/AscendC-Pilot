@@ -6,7 +6,7 @@ Deterministic TG never embeds per-operator name tables. Bootstrap only:
   - UO kernel/variables.yaml set_by
 
 Per-operator maps (IS_TND→VAR_KEY_*, issink→is_sink, KEY exprs from CSV) MUST come from
-`realization/binding_lexicon.yaml` written by `/tg-csv-contract` (LLM + evidence).
+`realization/binding_lexicon.yaml` written by uo-query → `--merge-uo-resolve` (LLM + evidence).
 """
 
 from __future__ import annotations
@@ -143,9 +143,9 @@ def lexicon_from_key_space(key_space: dict[str, Any] | None) -> dict[str, Any]:
                 true_value = next(v for v in values if v != 0)
         for token in _heuristic_tokens_from_key(bare):
             out["key_tokens"].setdefault(token.upper(), {"var": var_id, "true_value": true_value})
-        # Domain-only placeholders are filled by /tg-csv-contract key_derivations (no CSV coupling here).
+        # Domain-only placeholders are filled by uo-query merge key_derivations (no CSV coupling here).
     out["warnings"].append(
-        "key_space_heuristic: KEY→token names are best-effort; /tg-csv-contract must write binding_lexicon.yaml"
+        "key_space_heuristic: KEY→token names are best-effort; uo-query → --merge-uo-resolve must write binding_lexicon.yaml"
     )
     return out
 

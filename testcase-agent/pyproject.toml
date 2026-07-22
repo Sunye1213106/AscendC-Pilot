@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "testcase-agent"
 version = "0.1.0"
-description = "TestAgent: tg-init (intake+bind) → tg-plan (L0/L1-branch/L1-reject/L2) → tg-solve"
+description = "TestAgent: /tg-init → /tg-plan → /tg-solve (contract+domain embedded in init)"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

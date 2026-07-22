@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .io import read_yaml
-from .validation import REQUIRED_TESTCASE_CONTRACT_FILES
+from .validation import REQUIRED_KB_EXPORT_FILES
 
 
 class UnderstandExportError(RuntimeError):
@@ -44,7 +44,31 @@ def understand_root(project_root: Path, op_name: str) -> Path:
 
 
 def built_kb_ready(uo_root: Path) -> bool:
-    return (uo_root / "contracts" / "testcase.yaml").is_file()
+    """KB ready when layered export + quality exist. Does not require UO contracts/**.
+
+    When checks/integrity.yaml is present it must not be fail (定稿门禁).
+    confidence_gate=reported is allowed (documented leftovers).
+    """
+    required = (
+        uo_root / "manifest.yaml",
+        uo_root / "quality.yaml",
+        uo_root / "tiling" / "key_space.yaml",
+        uo_root / "kernel" / "branches.yaml",
+    )
+    if not all(path.is_file() for path in required):
+        return False
+    integrity_path = uo_root / "checks" / "integrity.yaml"
+    if integrity_path.is_file():
+        integrity = read_yaml(integrity_path)
+        if isinstance(integrity, dict) and str(integrity.get("status") or "").lower() == "fail":
+            return False
+    # Prefer hashes or sqlite as freshness signals when present.
+    if (uo_root / "checks" / "artifact_hashes.yaml").is_file():
+        return True
+    if (uo_root / "indexes" / "kb_graph.sqlite").is_file():
+        return True
+    # Still accept when layered REQUIRED files are all present.
+    return all((uo_root / Path(rel)).is_file() for rel in REQUIRED_KB_EXPORT_FILES)
 
 
 def load_built_kb(uo_root: Path, op_name: str) -> dict[str, Any]:
@@ -52,32 +76,35 @@ def load_built_kb(uo_root: Path, op_name: str) -> dict[str, Any]:
     if not built_kb_ready(uo_root):
         raise UnderstandExportError(
             "BUILT_KB_MISSING",
-            f"Pre-built KB missing contracts/testcase.yaml under {uo_root}",
+            f"Pre-built KB incomplete under {uo_root} (need manifest/quality/tiling/kernel; not UO contracts)",
         )
 
     files: dict[str, Any] = {}
     missing: list[str] = []
-    for rel in REQUIRED_TESTCASE_CONTRACT_FILES:
+    for rel in REQUIRED_KB_EXPORT_FILES:
         path = uo_root / Path(rel)
         if not path.is_file():
             missing.append(rel)
             continue
         files[rel] = read_yaml(path)
 
-    # Optional but useful for extract / L3
+    # Optional legacy residue (UO no longer writes key_cards by default).
     key_cards_dir = uo_root / "tiling" / "key_cards"
     if key_cards_dir.is_dir():
         for path in sorted(key_cards_dir.glob("*.yaml")):
             files[f"tiling/key_cards/{path.name}"] = read_yaml(path)
 
     for optional in (
+        "manifest.yaml",
         "registry/aliases.yaml",
         "registry/variables.yaml",
         "query/terminology.yaml",
         "tiling/key_predicates.yaml",
         "checks/final.yaml",
         "checks/artifact_hashes.yaml",
+        "checks/integrity.yaml",
         "ir/operator_graph.yaml",
+        "ir/input_derivable.yaml",
         "summary/keys_table.yaml",
     ):
         path = uo_root / Path(optional)
@@ -90,12 +117,12 @@ def load_built_kb(uo_root: Path, op_name: str) -> dict[str, Any]:
             "Pre-built KB missing required files: " + ", ".join(missing),
         )
 
-    contract = files.get("contracts/testcase.yaml") if isinstance(files.get("contracts/testcase.yaml"), dict) else {}
-    context_slice = _context_slice_from_files(files, contract)
+    # Never load historical UO contracts into intake authority.
+    context_slice = _context_slice_from_files(files, {})
     return {
         "op_name": op_name,
         "uo_root": uo_root.as_posix(),
-        "view": "testcase-contract",
+        "view": "kb-export",
         "files": files,
         "context_slice": context_slice,
         "intake_mode": "built_kb_filesystem",
@@ -105,13 +132,15 @@ def load_built_kb(uo_root: Path, op_name: str) -> dict[str, Any]:
 def synth_final_validation(uo_root: Path, export_payload: dict[str, Any]) -> dict[str, Any]:
     """Synthesize final-validation report from built KB artifacts (no plugin)."""
     files = export_payload.get("files") if isinstance(export_payload.get("files"), dict) else {}
-    contract = files.get("contracts/testcase.yaml") if isinstance(files.get("contracts/testcase.yaml"), dict) else {}
     quality = files.get("quality.yaml") if isinstance(files.get("quality.yaml"), dict) else {}
-    hashes = _load_source_hashes(uo_root, contract, files)
+    hashes = _load_source_hashes(uo_root, {}, files)
     if not hashes:
         hashes = {rel: _file_sha256(uo_root / Path(rel)) for rel in files if (uo_root / Path(rel)).is_file()}
-    status = str(quality.get("status") or quality.get("quality_status") or contract.get("source", {}).get("quality_status") or "pass")
+    status = str(quality.get("status") or quality.get("quality_status") or "pass")
     entities = export_payload.get("context_slice", {}).get("entities") if isinstance(export_payload.get("context_slice"), dict) else []
+    final_doc = files.get("checks/final.yaml") if isinstance(files.get("checks/final.yaml"), dict) else {}
+    if final_doc.get("status") in {"pass", "warn", "fail"}:
+        status = str(final_doc.get("status"))
     return {
         "status": status if status in {"pass", "warn", "fail"} else "pass",
         "phase": "final",
@@ -119,25 +148,21 @@ def synth_final_validation(uo_root: Path, export_payload: dict[str, Any]) -> dic
         "source_artifact_hashes": dict(sorted(hashes.items())),
         "entity_count": len(entities or []),
         "relation_count": 0,
-        "unresolved_count": len(contract.get("unresolved") or []),
-        "conflict_count": len(contract.get("conflicts") or []),
+        "unresolved_count": 0,
+        "conflict_count": 0,
         "intake_mode": "built_kb_filesystem",
+        "manifest_ok": (uo_root / "manifest.yaml").is_file(),
     }
 
 
 def _load_source_hashes(uo_root: Path, contract: dict[str, Any], files: dict[str, Any]) -> dict[str, str]:
-    """Prefer checks/artifact_hashes.yaml (lean), then contract.source.canonical_hashes."""
-    source = _as_dict(contract.get("source"))
-    embedded = _as_dict(source.get("canonical_hashes"))
-    if embedded:
-        return {str(k): str(v) for k, v in embedded.items()}
-
+    """Prefer checks/artifact_hashes.yaml. Legacy contract hashes ignored."""
+    del contract  # retired UO contract path
     artifact = files.get("checks/artifact_hashes.yaml")
     if isinstance(artifact, dict) and isinstance(artifact.get("hashes"), dict):
         return {str(k): str(v) for k, v in artifact["hashes"].items()}
 
-    hashes_ref = str(source.get("hashes_ref") or "checks/artifact_hashes.yaml")
-    path = uo_root / Path(hashes_ref)
+    path = uo_root / "checks" / "artifact_hashes.yaml"
     if path.is_file():
         payload = read_yaml(path)
         if isinstance(payload, dict) and isinstance(payload.get("hashes"), dict):
@@ -198,15 +223,12 @@ def export_testcase_contract(project_root: Path, op_name: str, uo_root: Path) ->
         raise UnderstandExportError("CONTEXT_EXPORT_FAILED", str(exc)) from exc
 
     files = contract_view.get("files") if isinstance(contract_view.get("files"), dict) else {}
-    view_contract = files.get("contracts/testcase.yaml")
-    context_contract = context_slice.get("testcase_contract") if isinstance(context_slice, dict) else None
-    if isinstance(context_contract, dict) and isinstance(view_contract, dict) and context_contract != view_contract:
-        raise UnderstandExportError("CONTRACT_CONTEXT_MISMATCH", "contracts/testcase.yaml differs from context_slice.testcase_contract")
+    files.pop("contracts/testcase.yaml", None)
 
     return {
         "op_name": op_name,
         "uo_root": uo_root.as_posix(),
-        "view": "testcase-contract",
+        "view": "kb-export",
         "files": files,
         "context_slice": context_slice if isinstance(context_slice, dict) else {},
         "intake_mode": "plugin_export",
@@ -214,6 +236,7 @@ def export_testcase_contract(project_root: Path, op_name: str, uo_root: Path) ->
 
 
 def _context_slice_from_files(files: dict[str, Any], contract: dict[str, Any]) -> dict[str, Any]:
+    del contract  # TG owns testcase contract; context slice is KB entities only
     entities: list[dict[str, Any]] = []
     seen: set[str] = set()
 
@@ -243,9 +266,9 @@ def _context_slice_from_files(files: dict[str, Any], contract: dict[str, Any]) -
         add(str(item.get("family_id") or item.get("id") or ""), kind="family")
 
     return {
-        "view": "testcase-contract",
+        "view": "kb-export",
         "entities": entities,
-        "testcase_contract": contract,
+        "testcase_contract": None,
         "intake_mode": "built_kb_filesystem",
     }
 

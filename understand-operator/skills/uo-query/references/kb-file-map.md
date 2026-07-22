@@ -1,70 +1,79 @@
-# uo-query KB File Map (layered IR)
+# uo-query KB 文件地图（分层 IR）
 
-Read-only. Prefer small routed files. Do **not** default-read the full `ir/operator_graph.yaml`.
+只读。**查询入口是 sqlite 图，不是本表 YAML。**
 
-## Resolve KB
+```text
+uo_kb_query.py --status-only
+  → uo_kb_query.py --pattern …   # indexes/kb_graph.sqlite
+  → 仅打开返回的 detail_ref 热文件
+```
+
+**禁止**默认整读 `ir/operator_graph.yaml`；**禁止**未跑 `--pattern` 就 Grep/Read `tiling/key_cards/**`（非默认产物）。
+
+## 定位 KB
 
 1. `$PROJECT_ROOT/.understand-operator/<op_name>/manifest.yaml`
-2. Prefer `summary/human_overview.md` + `indexes/kb_graph.sqlite` via `uo-kb-query` / `uo_query_readonly` when fresh
-3. Else `query/routes.yaml` + `query/terminology.yaml`
-4. Fallback: this map + `question-taxonomy.md`
+2. **主路径**：`indexes/kb_graph.sqlite`（经 `uo_kb_query.py`）
+3. 回退（仅 `sqlite_ready=false`）：`query/routes.yaml` + `query/terminology.yaml`
+4. 再回退：按 `question-taxonomy.md` 的冷文件表
 
-## Graph index (preferred)
+## 图索引（主路径 · MUST）
 
-| Path | Use |
+| 路径 | 用途 |
 |---|---|
-| `indexes/kb_graph.sqlite` | Derived semantic graph; rebuild with `export_kb_graph.py` |
-| CLI `uo-kb-query` | `entity_of` / `neighbors_of` / `constraints_for` / `branches_for_key` / `entities_in_files` / `affected_shapes` |
+| `indexes/kb_graph.sqlite` | 派生语义图；用 `export_kb_graph.py` 重建 |
+| CLI `uo_kb_query.py` | `entity_of` / `neighbors_of` / `list_templates` / `templates_for_key` / `constraints_for` / `branches_for_key` / `entities_in_files` / `affected_shapes` |
 
-Only open `detail_ref` hot YAML returned by the graph. Do **not** dump `ir/operator_graph.yaml`.
+仅打开 graph 返回的 `detail_ref` 热 YAML。**禁止** dump `ir/operator_graph.yaml`。
 
-## Hot files (default reads when graph misses)
+合法编译期模板实例数 = `KTPL_*` 实体数（`list_templates`）；KEY 赋值经 `fixes_flag`。
 
-| Path | Use |
+## 热文件（仅 detail_ref / sqlite 不可用时）
+
+| 路径 | 用途 |
 |---|---|
-| `summary/human_overview.md` | Human/AI orientation + keys table |
-| `summary/keys_table.yaml` | Compact tiling-key list |
-| `query/routes.yaml` | Question type → files (`never_default` hard gate) |
-| `query/terminology.yaml` | Alias → stable id |
-| `ir/entrypoints.yaml` | Host/Kernel role entry |
-| `tiling/key_predicates.yaml` | All key cards summary |
-| `tiling/key_cards/KEY_*.yaml` | One tiling-key set_by card |
-| `tiling/key_space.yaml` | Key domains |
-| `kernel/runtime_conditions.yaml` | Deduped runtime conditions (samples truncated in lean) |
-| `flow/golden_model.yaml` / `ir/golden.yaml` | Numeric oracle |
-| `tiling/coverage_model.yaml` | Coverage obligations |
-| `ir/unresolved.yaml` | Known gaps |
-| `checks/final.yaml` / `quality.yaml` | Trust / validation |
-| `checks/artifact_hashes.yaml` | Canonical artifact hashes (lean; not in testcase.yaml) |
+| `summary/human_overview.md` | 人机导向 + keys 表 |
+| `summary/keys_table.yaml` | 紧凑 tiling-key 列表 |
+| `query/routes.yaml` | 问题类型 → 文件（`never_default` 硬门禁） |
+| `query/terminology.yaml` | 别名 → 稳定 id |
+| `ir/entrypoints.yaml` | Host/Kernel 角色入口 |
+| `tiling/key_space.yaml` | Key 取值域 |
+| `tiling/key_predicates.yaml` | key 谓词摘要（若有） |
+| `kernel/runtime_conditions.yaml` | 去重运行时条件（sample 截断） |
+| `ir/tilingkey_space.yaml` | template_aliases / KEY dims（KTPL 源） |
+| `flow/golden_model.yaml` / `ir/golden.yaml` | 数值 oracle |
+| `tiling/coverage_model.yaml` | Coverage 义务 |
+| `ir/unresolved.yaml` | 已知缺口 |
+| `checks/final.yaml` / `quality.yaml` | 信任 / 校验 |
+| `checks/artifact_hashes.yaml` | 规范 artifact 哈希 |
 
-## Cold files (only when hot files miss)
+## 冷文件（热文件未命中时才读）
 
-| Path | Use |
+| 路径 | 用途 |
 |---|---|
-| `kernel/branches.yaml` | Full branch list |
-| `tiling/exhaustive_key_space.yaml` | Combination **summary** in lean; full blocks only with `--profile full` |
-| `cross_layer/tiling_to_kernel.yaml` | Host↔Kernel links (prefer over raw impact) |
-| `ir/host_subgraph.yaml` | Host helpers / predicates |
-| `ir/kernel_subgraph.yaml` | Kernel nodes |
-| `ir/bridge.yaml` | Bridge diagnostics |
-| `ir/tilingkey_space.yaml` | Raw SEL / dimensions |
+| `kernel/branches.yaml` | 完整分支列表 |
+| `tiling/exhaustive_key_space.yaml` | 仅 **summary** / `ktpl_instance_count`；无笛卡尔 `template_blocks` |
+| `cross_layer/tiling_to_kernel.yaml` | Host↔Kernel 链接（优先于 raw impact） |
+| `ir/host_subgraph.yaml` | Host helper / predicate |
+| `ir/kernel_subgraph.yaml` | Kernel 节点 |
+| `ir/bridge.yaml` | Bridge 诊断 |
 
-## Never default (整读禁止)
+## 禁止默认整读
 
-| Path | Why |
+| 路径 | 原因 |
 |---|---|
-| `ir/operator_graph.yaml` | Full merge; last resort only |
-| `contracts/testcase.yaml` | Large TG contract; use kb_graph / coverage / key_space |
-| `cross_layer/impact_graph.yaml` | Machine IDs; use kb_graph / tiling_to_kernel |
-| `tiling/exhaustive_key_space.yaml` (full dump) | Use `summary` / `combination_summary` fields only |
-| `facts/**`, `graphs/**` | Obsolete layouts |
+| `ir/operator_graph.yaml` | 全量 merge；仅最后手段 |
+| `contracts/**`（retired） | 历史残留；测项合同在 TG |
+| `cross_layer/impact_graph.yaml` | 机器 ID；用 kb_graph / tiling_to_kernel |
+| `tiling/key_cards/**` | 非默认产物；用 graph 边 + 源码 `file_path` |
+| `tiling/exhaustive_key_space.yaml`（全量 dump） | 仅用 summary；模板实例查 sqlite KTPL |
 
-## Lean vs full export
+## 单态导出
 
-- Default `/uo-init` export profile is **lean** (`--profile lean` / `UO_KB_EXPORT_PROFILE=lean`).
-- Lean: hashes in `checks/artifact_hashes.yaml`; runtime `sample_branch_ids` ≤3; exhaustive without full `template_blocks`.
-- Full: historical bulky materialization for L2 / debugging (`--profile full`).
+- `/uo-init` 只有一条导出路径（无 lean/full profile）。
+- 哈希在 `checks/artifact_hashes.yaml`；不写 `contracts/**` / `key_cards/**`。
+- 合法模板 = sqlite `KTPL_*` + `fixes_flag`；下游自行组合展开。
 
-## Removed / obsolete (ignore)
+## 忽略
 
-`facts/**`, `graphs/**`, old Phase1–3 `indexes/**` layouts (except `indexes/kb_graph.sqlite`).
+勿依赖不在本表中的路径。sqlite 图仅为 `indexes/kb_graph.sqlite`。

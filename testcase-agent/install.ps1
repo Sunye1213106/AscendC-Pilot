@@ -22,9 +22,12 @@ $AgentsSrc = Join-Path $PluginRoot "agents"
 $PackageDir = $PluginRoot
 
 $SkillNames = @(
-    "tg-plan",
-    "tg-solve",
     "tg-init",
+    "tg-plan",
+    "tg-solve"
+)
+# Retired user skills: remove stale links on install/uninstall
+$RetiredSkillNames = @(
     "tg-contract",
     "tg-domain-review"
 )
@@ -58,7 +61,7 @@ $PluginLinks = @{
 }
 
 if ($Uninstall) {
-    foreach ($name in $SkillNames) {
+    foreach ($name in ($SkillNames + $RetiredSkillNames)) {
         $dest = Join-Path $TargetRoot $name
         if (Test-Path -LiteralPath $dest) {
             Remove-Item -LiteralPath $dest -Recurse -Force
@@ -89,6 +92,17 @@ if ($Uninstall) {
 }
 
 New-Item -ItemType Directory -Force -Path $TargetRoot | Out-Null
+
+foreach ($name in $RetiredSkillNames) {
+    $dest = Join-Path $TargetRoot $name
+    if (Test-Path -LiteralPath $dest) {
+        Remove-Item -LiteralPath $dest -Recurse -Force
+        if (Test-Path -LiteralPath $dest) {
+            throw "Cleanup failed: $dest still exists"
+        }
+        Write-Host "Removed retired skill link: $dest"
+    }
+}
 
 foreach ($name in $SkillNames) {
     $src = Join-Path $SkillsRoot $name
@@ -122,11 +136,15 @@ if ($AgentTargets.ContainsKey($Platform) -and (Test-Path $AgentsSrc)) {
     $AgentsDestRoot = $AgentTargets[$Platform]
     New-Item -ItemType Directory -Force -Path $AgentsDestRoot | Out-Null
     Get-ChildItem $AgentsDestRoot -Filter "tg-*.md" -ErrorAction SilentlyContinue | Remove-Item -Force
-    Get-ChildItem $AgentsSrc -Filter "tg-*.md" | ForEach-Object {
-        $agentDest = Join-Path $AgentsDestRoot $_.Name
-        Copy-Item -Path $_.FullName -Destination $agentDest -Force
+    foreach ($agent in $RequiredAgents) {
+        $srcAgent = Join-Path $AgentsSrc "$agent.md"
+        if (-not (Test-Path -LiteralPath $srcAgent)) {
+            throw "REQUIRED_SUBAGENT_UNAVAILABLE: missing source $srcAgent"
+        }
+        $agentDest = Join-Path $AgentsDestRoot "$agent.md"
+        Copy-Item -Path $srcAgent -Destination $agentDest -Force
     }
-    Write-Host "Installed subagents: $AgentsDestRoot\tg-*.md"
+    Write-Host "Installed subagents (required only): $($RequiredAgents -join ', ')"
     foreach ($agent in $RequiredAgents) {
         $agentPath = Join-Path $AgentsDestRoot "$agent.md"
         if (-not (Test-Path -LiteralPath $agentPath)) {
@@ -153,11 +171,11 @@ if (-not $SkipPip) {
             throw "pip install -e . failed"
         }
     }
-    Write-Host "Python entrypoints: tg-init, tg-plan, tg-solve, tg-contract"
+    Write-Host "Python entrypoints: tg-init, tg-plan, tg-solve (tg-contract=compat CLI only)"
 }
 
 Write-Host ""
-Write-Host "Commands: /tg-init  /tg-plan  /tg-solve  (/tg-contract,/tg-domain-review → init)"
+Write-Host "Commands: /tg-init  /tg-plan  /tg-solve"
 if ($PluginLinks.ContainsKey($Platform)) {
     Write-Host "PLUGIN_ROOT: $($PluginLinks[$Platform])"
     Write-Host "Package: $(Join-Path $PluginLinks[$Platform] 'testcase_agent')"

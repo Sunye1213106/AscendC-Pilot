@@ -45,8 +45,7 @@ NOISE_CALLS = frozenset(
         "GetInputDesc",
         "GetInputShape",
         "GetInputDtype",
-        "GetOptionalInputDesc",
-        "GetOptionalInputShape",
+        # Optional input APIs are instantiated below (not noise).
         "OP_LOGI",
         "OP_LOGD",
         "OP_LOGW",
@@ -60,6 +59,11 @@ NOISE_CALLS = frozenset(
     }
 )
 ATTR_RE = re.compile(r"GetAttr(?:Optional)?\s*<[^>]*>\s*\(\s*\"([^\"]+)\"")
+# GetOptionalInputDesc(3) / GetOptionalInputShape("pse") / GetOptionalInputDesc(IDX_PSE)
+OPTIONAL_INPUT_RE = re.compile(
+    r"\bGetOptionalInput(?:Desc|Shape|Dtype)\s*(?:<[^>]*>)?\s*\(\s*"
+    r"(?:\"([^\"]+)\"|([A-Za-z_][A-Za-z0-9_]*))\s*\)"
+)
 PLATFORM_RE = re.compile(r"\b(ubSize|l1Size|l0[abc]Size|coreNum|aicNum|aivNum|socVersion|l2CacheSize)\b")
 BRIDGE_ROLE_HINTS = frozenset({"get_tiling_key", "save_tiling_data", "init_tiling_data"})
 
@@ -355,6 +359,42 @@ def extract_host_subgraph(
                     "type": "derives",
                     "source": attr_id,
                     "target": helper_id,
+                }
+            )
+
+        for opt_match in OPTIONAL_INPUT_RE.finditer(scan_body):
+            opt_name = (opt_match.group(1) or opt_match.group(2) or "").strip()
+            if not opt_name:
+                continue
+            opt_id = stable_id("HOST_OPT_", opt_name)
+            nodes.append(
+                {
+                    "id": opt_id,
+                    "layer": "host",
+                    "node_type": "OptionalInput",
+                    "name": opt_name,
+                    "qualified_name": opt_name,
+                    "file_path": file_path,
+                    "start_line": start,
+                    "end_line": end,
+                }
+            )
+            edges.append(
+                {
+                    "id": stable_id("E_", opt_id, helper_id),
+                    "type": "derives",
+                    "source": opt_id,
+                    "target": helper_id,
+                }
+            )
+            # Link category stub → instance for walk roots
+            opt_start = stable_id("HOST_START_", "OptionalInputPresence")
+            edges.append(
+                {
+                    "id": stable_id("E_", opt_start, opt_id),
+                    "type": "derives",
+                    "source": opt_start,
+                    "target": opt_id,
                 }
             )
 
