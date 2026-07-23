@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -13,7 +15,7 @@ try:
 except ImportError:  # pragma: no cover
     yaml = None  # type: ignore[assignment]
 
-from ascendc_harness.paths import ensure_agent_layout, runs_root
+from ascendc_harness.paths import ensure_agent_layout, runs_root, state_root
 
 
 def _now() -> str:
@@ -38,6 +40,43 @@ def _load_state(project_root: Path) -> dict[str, Any]:
     from ascendc_harness.state import load_state
 
     return load_state(project_root)
+
+
+def hmac_key_path(project_root: Path) -> Path:
+    return state_root(project_root) / "harness_hmac.key"
+
+
+def get_or_create_hmac_key(project_root: Path) -> bytes:
+    """Load or create per-project HMAC key under private harness state."""
+    ensure_agent_layout(project_root)
+    path = hmac_key_path(project_root)
+    if path.is_file():
+        return path.read_bytes()
+    key = secrets.token_bytes(32)
+    path.write_bytes(key)
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+    return key
+
+
+def _canonical_receipt_bytes(payload: dict[str, Any]) -> bytes:
+    body = {k: v for k, v in payload.items() if k not in {"signature", "_path"}}
+    return json.dumps(body, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+
+
+def sign_receipt_payload(project_root: Path, payload: dict[str, Any]) -> str:
+    key = get_or_create_hmac_key(project_root)
+    return hmac.new(key, _canonical_receipt_bytes(payload), hashlib.sha256).hexdigest()
+
+
+def verify_receipt_signature(project_root: Path, payload: dict[str, Any]) -> bool:
+    sig = str(payload.get("signature") or "")
+    if not sig:
+        return False
+    expected = sign_receipt_payload(project_root, payload)
+    return hmac.compare_digest(sig, expected)
 
 
 def run_dir(project_root: Path, run_id: str | None = None) -> Path:
@@ -76,13 +115,23 @@ def issue_receipt(
     checker_result: dict[str, Any] | None = None,
     identity: str = "",
     artifact: str = "",
+    nonce: str = "",
+    _internal: bool = False,
 ) -> Path:
-    """Harness-issued receipt only — agents must not forge this file."""
+    """Issue an HMAC-signed receipt. Only callable from harness run-action finalize.
+
+    External callers must finalize through the action runtime; receipts are private.
+    """
+    if not _internal:
+        raise RuntimeError(
+            "issue_receipt is private; use `harness run-action <action_id> --finalize`"
+        )
     state = _load_state(project_root)
     run_id = str(state.get("run_id") or "NO_RUN")
     identity = identity or f"{run_id}:{action_id}:{actor_id}"
     safe = identity.replace(":", "_").replace("/", "_")
     path = run_dir(project_root, run_id) / "subagents" / f"{safe}.yaml"
+    checker = dict(checker_result or {})
     payload = {
         "identity": identity,
         "run_id": run_id,
@@ -90,16 +139,17 @@ def issue_receipt(
         "phase": state.get("phase"),
         "actor_type": actor_type,
         "actor_id": actor_id,
-        "agent": actor_id,  # compat with older has_subagent_receipt
         "action_id": action_id,
         "workflow_spec_hash": workflow_spec_hash,
         "input_hashes": dict(input_hashes or {}),
         "output_hashes": dict(output_hashes or {}),
-        "checker_result": dict(checker_result or {}),
+        "checker_result": checker,
+        "nonce": nonce or "",
         "artifact": artifact,
         "issued_by": "harness",
         "recorded_at": _now(),
     }
+    payload["signature"] = sign_receipt_payload(project_root, payload)
     _dump(path, payload)
     append_event(
         project_root,
@@ -107,52 +157,6 @@ def issue_receipt(
         run_id=run_id,
     )
     return path
-
-
-def write_subagent_receipt(
-    project_root: Path,
-    *,
-    identity: str,
-    agent: str,
-    artifact: str,
-    actor_type: str = "producer",
-    action_id: str = "",
-    input_hashes: dict[str, str] | None = None,
-    output_hashes: dict[str, str] | None = None,
-    checker_result: dict[str, Any] | None = None,
-) -> Path:
-    """Compat wrapper — always routes through issue_receipt."""
-    return issue_receipt(
-        project_root,
-        actor_type=actor_type,
-        actor_id=agent,
-        action_id=action_id or "subagent",
-        input_hashes=input_hashes,
-        output_hashes=output_hashes,
-        checker_result=checker_result,
-        identity=identity,
-        artifact=artifact,
-    )
-
-
-def has_subagent_receipt(
-    project_root: Path,
-    *,
-    agent: str | None = None,
-    identity_prefix: str = "",
-    require_harness_issued: bool = True,
-) -> bool:
-    """Legacy existence check — prefer verify_receipt for gate consumption."""
-    result = verify_receipt(
-        project_root,
-        actor_id=agent or "",
-        identity_prefix=identity_prefix,
-        require_harness_issued=require_harness_issued,
-        require_hashes=False,
-        require_action_id=False,
-        require_spec_hash=False,
-    )
-    return bool(result.get("ok"))
 
 
 def verify_receipt(
@@ -169,11 +173,14 @@ def verify_receipt(
     require_action_id: bool = True,
     require_spec_hash: bool = True,
     require_checker_result: bool = False,
+    require_signature: bool = True,
+    require_checker_ok: bool = False,
 ) -> dict[str, Any]:
     """Strictly verify a Harness-issued receipt for the current run.
 
-    Checks: run_id, actor, action_id, input/output hashes, checker_result,
-    workflow_spec_hash, issued_by=harness. File existence alone is not enough.
+    Checks: HMAC signature, run_id, actor, action_id, input/output hashes,
+    checker_result, workflow_spec_hash, issued_by=harness.
+    File existence alone is not enough.
     """
     state = _load_state(project_root)
     run_id = str(state.get("run_id") or "")
@@ -209,6 +216,9 @@ def verify_receipt(
     for data in candidates:
         if require_harness_issued and str(data.get("issued_by") or "") != "harness":
             errors.append(f"{data.get('_path')}: issued_by!=harness")
+            continue
+        if require_signature and not verify_receipt_signature(project_root, data):
+            errors.append(f"{data.get('_path')}: invalid or missing HMAC signature")
             continue
         if str(data.get("run_id") or "") != run_id:
             errors.append(f"{data.get('_path')}: run_id mismatch")
@@ -264,6 +274,10 @@ def verify_receipt(
         if require_checker_result:
             if not isinstance(checker, dict) or not checker:
                 errors.append(f"{data.get('_path')}: checker_result missing")
+                continue
+        if require_checker_ok:
+            if not isinstance(checker, dict) or not checker.get("ok"):
+                errors.append(f"{data.get('_path')}: checker_result.ok != true")
                 continue
 
         return {
@@ -337,11 +351,12 @@ __all__ = [
     "append_event",
     "file_sha256",
     "fingerprint_improved",
-    "has_subagent_receipt",
+    "get_or_create_hmac_key",
     "issue_receipt",
     "no_progress_exceeded",
     "run_dir",
     "semantic_progress_fingerprint",
+    "sign_receipt_payload",
     "verify_receipt",
-    "write_subagent_receipt",
+    "verify_receipt_signature",
 ]

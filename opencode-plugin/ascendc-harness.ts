@@ -9,8 +9,7 @@
  * Soft control plane only — not OS-level security.
  *
  * Platform limits: OpenCode may not expose subagent identity on every hook;
- * receipt issuance after successful formal writes is best-effort via
- * `harness issue-receipt` when ASCENDC_ACTION / env are set.
+ * receipts are issued only by `harness run-action <action_id> --finalize`.
  */
 
 import { spawnSync } from "node:child_process"
@@ -109,36 +108,6 @@ function runAuthorize(args: {
   }
 }
 
-function maybeIssueReceipt(args: {
-  project: string
-  agent: string
-  action: string
-  path: string
-}): void {
-  // Best-effort: only when action is known. Formal Producer/Referee writes should
-  // also be receipted by harness CLI wrappers; this is a secondary hook.
-  if (!args.action || !args.path) return
-  const protectedHint =
-    /\/(ir|summary|checks|review|realization|solve)\//.test(args.path.replace(/\\/g, "/")) ||
-    /audit_report/.test(args.path)
-  if (!protectedHint) return
-  spawnSync(
-    "harness",
-    [
-      "issue-receipt",
-      "--project",
-      args.project,
-      "--actor",
-      args.agent,
-      "--action",
-      args.action,
-      "--artifact",
-      args.path,
-    ],
-    { encoding: "utf-8", shell: true, windowsHide: true, cwd: args.project },
-  )
-}
-
 export const AscendCHarnessPlugin = async () => {
   return {
     "tool.execute.before": async (
@@ -213,21 +182,7 @@ export const AscendCHarnessPlugin = async () => {
         }
       }
     },
-
-    "tool.execute.after": async (
-      input: { tool?: string; agent?: string; sessionAgent?: string },
-      output: { args?: Record<string, unknown>; error?: unknown },
-    ) => {
-      if (output?.error) return
-      const tool = String(input.tool || "").toLowerCase()
-      if (!["write", "edit", "apply_patch", "strreplace", "patch"].includes(tool)) return
-      const args = output.args || {}
-      const path = String(args.filePath || args.path || args.file || "")
-      const agent = resolveAgent(input)
-      const action = resolveAction(args)
-      const project = detectProjectRoot()
-      maybeIssueReceipt({ project, agent, action, path })
-    },
+    "tool.execute.after": async () => {},
   }
 }
 

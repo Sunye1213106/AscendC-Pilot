@@ -32,7 +32,37 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _require_skill_frontmatter(text: str, *, path: Path | None = None) -> tuple[dict[str, Any], str]:
+    """Parse skill frontmatter. BOMs stripped; leading spaces are NOT stripped.
+
+    Cursor/Composer only recognize frontmatter when the first character is ``---``.
+    """
+    text = text.lstrip("\ufeff")
+    label = path.as_posix() if path else "<skill>"
+    if not text.startswith("---\n") and not text.startswith("---\r\n"):
+        raise ValueError(f"invalid skill frontmatter (must start with ---): {label}")
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        raise ValueError(f"invalid skill frontmatter (unclosed fence): {label}")
+    meta: dict[str, Any] = {}
+    if yaml is not None:
+        loaded = yaml.safe_load(parts[1]) or {}
+        if isinstance(loaded, dict):
+            meta = loaded
+    if not meta.get("name"):
+        raise ValueError(f"skill frontmatter missing name: {label}")
+    if not meta.get("description"):
+        raise ValueError(f"skill frontmatter missing description: {label}")
+    body = parts[2].lstrip("\n")
+    # Body must not re-introduce a YAML frontmatter fence at the start of a line.
+    if re.search(r"(?m)^---\s*$", body):
+        raise ValueError(f"skill body must not contain frontmatter fence: {label}")
+    return meta, body
+
+
 def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+    """Best-effort split for non-skill markdown; skills should use _require_skill_frontmatter."""
+    text = text.lstrip("\ufeff")
     if not text.startswith("---"):
         return {}, text
     parts = text.split("---", 2)
@@ -44,6 +74,24 @@ def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
         if isinstance(loaded, dict):
             meta = loaded
     return meta, parts[2].lstrip("\n")
+
+
+def _assert_generated_skill(path: Path, *, expected_actions: int | None = None) -> None:
+    text = path.read_text(encoding="utf-8")
+    meta, body = _require_skill_frontmatter(text, path=path)
+    if expected_actions is not None:
+        if "## Composition index" not in body:
+            raise ValueError(f"generated skill missing Composition index: {path}")
+        section = body.split("## Composition index", 1)[1]
+        # Stop at next H2 so Action runtime index is not double-counted.
+        section = re.split(r"\n##\s+", section, maxsplit=1)[0]
+        found = len(re.findall(r"^\|\s*`([a-z0-9_]+)`\s*\|", section, flags=re.M))
+        if found != expected_actions:
+            raise ValueError(
+                f"generated skill action count mismatch for {path}: "
+                f"expected {expected_actions}, found {found}"
+            )
+    _ = meta  # name/description already validated
 
 
 def _dump_frontmatter(meta: dict[str, Any]) -> str:
@@ -95,6 +143,43 @@ def _scan_forbidden(path: Path, text: str, errors: list[str]) -> None:
                 errors.append(f"forbidden pattern {pat.pattern!r} in {path.as_posix()}:{i}")
 
 
+def _glob_prefix(pattern: str) -> str:
+    """Return the literal directory prefix before the first glob metachar."""
+    norm = pattern.replace("\\", "/").strip("/")
+    parts: list[str] = []
+    for part in norm.split("/"):
+        if any(ch in part for ch in "*?["):
+            break
+        parts.append(part)
+    return "/".join(parts)
+
+
+def _scopes_conflict(a: str, b: str) -> bool:
+    """True if two write_scopes may overlap (exact, equal, or prefix containment)."""
+    if a == b:
+        return True
+    pa, pb = _glob_prefix(a), _glob_prefix(b)
+    if not pa or not pb:
+        # Broad globs like ``**`` or ``*`` — treat as conflicting unless both are runs scratch.
+        return not (a.startswith("runs") and b.startswith("runs"))
+    if pa == pb:
+        return True
+    return pa.startswith(pb + "/") or pb.startswith(pa + "/")
+
+
+def _scope_overlap_errors(producer_writes: set[str], referee_writes: set[str]) -> list[str]:
+    errors: list[str] = []
+    for p in sorted(producer_writes):
+        if str(p).startswith("runs"):
+            continue
+        for r in sorted(referee_writes):
+            if str(r).startswith("runs"):
+                continue
+            if _scopes_conflict(str(p), str(r)):
+                errors.append(f"producer/referee write_scopes overlap: {p!r} vs {r!r}")
+    return errors
+
+
 def validate(repo: Path) -> list[str]:
     """Static validation; returns list of error strings."""
     paths = _repo_paths(repo)
@@ -106,7 +191,7 @@ def validate(repo: Path) -> list[str]:
     sys.path.insert(0, str(repo / "harness"))
     from ascendc_harness.workflows.specs import WORKFLOWS  # noqa: WPS433
 
-    # Collect write scopes by role for overlap check
+    # Collect write scopes by role for overlap / containment check
     producer_writes: set[str] = set()
     referee_writes: set[str] = set()
     for ag_path in agents.glob("*.yaml"):
@@ -117,11 +202,8 @@ def validate(repo: Path) -> list[str]:
             producer_writes |= scopes
         elif role == "referee":
             referee_writes |= scopes
-    overlap = producer_writes & referee_writes
-    # Allow shared runs/** scratch if both declare it — still flag exact same product globs excluding runs
-    bad = {x for x in overlap if not str(x).startswith("runs")}
-    if bad:
-        errors.append(f"producer/referee write_scopes overlap: {sorted(bad)}")
+    bad = _scope_overlap_errors(producer_writes, referee_writes)
+    errors.extend(bad)
 
     for wid, meta in WORKFLOWS.items():
         if meta.get("reserved") or not meta.get("slash"):
@@ -129,6 +211,11 @@ def validate(repo: Path) -> list[str]:
         skill_md = skills / "workflows" / wid / "SKILL.md"
         if not skill_md.is_file():
             errors.append(f"missing workflow skill: {skill_md}")
+        else:
+            try:
+                _require_skill_frontmatter(skill_md.read_text(encoding="utf-8"), path=skill_md)
+            except ValueError as exc:
+                errors.append(str(exc))
         for action in meta.get("actions") or []:
             if not isinstance(action, dict):
                 continue
@@ -177,14 +264,23 @@ def validate(repo: Path) -> list[str]:
 
 def _compose_skill_body(skills: Path, wid: str, meta: dict[str, Any]) -> str:
     src = skills / "workflows" / wid / "SKILL.md"
-    raw = src.read_text(encoding="utf-8") if src.is_file() else f"# {wid}\n"
-    _, body = _split_frontmatter(raw)
+    raw = src.read_text(encoding="utf-8") if src.is_file() else f"---\nname: {wid}\ndescription: {wid}\n---\n\n# {wid}\n"
+    _, body = _require_skill_frontmatter(raw, path=src if src.is_file() else None)
     # Inject harness-control policy summary once
     hc = _read_policy(skills, "harness-control")
     if "## Composed: harness-control" not in body and hc:
         body = body.rstrip() + "\n\n## Composed: harness-control\n\n" + hc + "\n"
-    # Index composed refs
-    lines = ["\n## Composition index\n", "| action_id | policies | capabilities | method | prompt | agent |", "|---|---|---|---|---|---|"]
+    # Index composed refs + runtime bundle paths
+    lines = [
+        "\n## Composition index\n",
+        "| action_id | policies | capabilities | method | prompt | agent |",
+        "|---|---|---|---|---|---|",
+    ]
+    runtime_lines = [
+        "\n## Action runtime index\n",
+        "| action_id | method_path | prompt_path | output_contract | role |",
+        "|---|---|---|---|---|",
+    ]
     for a in meta.get("actions") or []:
         lines.append(
             "| `{id}` | {pols} | {caps} | `{method}` | `{prompt}` | `{agent}` |".format(
@@ -196,7 +292,25 @@ def _compose_skill_body(skills: Path, wid: str, meta: dict[str, Any]) -> str:
                 agent=a.get("agent_id") or "human",
             )
         )
-    return body.rstrip() + "\n" + "\n".join(lines) + "\n"
+        mid = str(a.get("action_method_id") or "")
+        folder = mid.split("/", 1)[-1] if mid else "-"
+        tpid = str(a.get("task_prompt_id") or "")
+        prompt_path = f"prompts/tasks/{tpid}.md" if tpid and "/" not in tpid else (
+            f"prompts/tasks/{tpid}.md" if tpid else "-"
+        )
+        if tpid and "/" in tpid:
+            dom, name = tpid.split("/", 1)
+            prompt_path = f"prompts/tasks/{dom}/{name}.md"
+        runtime_lines.append(
+            "| `{id}` | `actions/{folder}/METHOD.md` | `{prompt}` | `{contract}` | `{role}` |".format(
+                id=a.get("id"),
+                folder=folder,
+                prompt=prompt_path,
+                contract=a.get("output_contract_id") or "-",
+                role=a.get("role_id") or "-",
+            )
+        )
+    return body.rstrip() + "\n" + "\n".join(lines) + "\n" + "\n".join(runtime_lines) + "\n"
 
 
 def _compose_agent_md(repo: Path, agent_meta: dict[str, Any]) -> str:
@@ -296,39 +410,80 @@ def compose_host(repo: Path, host: str) -> dict[str, Any]:
         src = skills / "workflows" / wid
         if not (src / "SKILL.md").is_file():
             continue
-        meta, _ = _split_frontmatter((src / "SKILL.md").read_text(encoding="utf-8"))
+        meta, src_body = _require_skill_frontmatter(
+            (src / "SKILL.md").read_text(encoding="utf-8"), path=src / "SKILL.md"
+        )
         overrides = dict(host_meta.get("skill_defaults") or {})
         per_skill = (host_meta.get("skills") or {}).get(wid) or {}
         if isinstance(per_skill, dict):
             overrides.update(per_skill)
         meta = {**meta, **overrides}
         wf_meta = WORKFLOWS.get(wid) or {}
-        body = _compose_skill_body(skills, wid, wf_meta) if wid != "operator" else _split_frontmatter((src / "SKILL.md").read_text(encoding="utf-8"))[1]
+        body = _compose_skill_body(skills, wid, wf_meta) if wid != "operator" else src_body
         if wid == "operator":
             hc = _read_policy(skills, "harness-control")
             body = body.rstrip() + "\n\n## Composed: harness-control\n\n" + hc + "\n"
         dest = out_skills / wid
         dest.mkdir(parents=True, exist_ok=True)
-        (dest / "SKILL.md").write_text(_dump_frontmatter(meta) + "\n" + body.lstrip("\n"), encoding="utf-8")
-        # Copy action methods referenced by this workflow as sidecars
+        skill_out = dest / "SKILL.md"
+        # Ensure composed frontmatter keeps name/description; do not indent.
+        out_text = _dump_frontmatter(meta) + "\n" + body.lstrip("\n")
+        if not out_text.startswith("---\n"):
+            raise ValueError(f"composed skill must start with ---: {skill_out}")
+        skill_out.write_text(out_text, encoding="utf-8")
+        expected_n = len(wf_meta.get("actions") or []) if wid != "operator" else None
+        _assert_generated_skill(skill_out, expected_actions=expected_n)
+        # Copy action methods referenced by this workflow as sidecars;
+        # cross-check action.yaml against Workflow Spec (single runtime authority).
         for a in wf_meta.get("actions") or []:
             mid = a.get("action_method_id")
             if not mid:
                 continue
-            _, method = _read_action(skills, str(mid))
+            ayaml, method = _read_action(skills, str(mid))
             if not method:
                 continue
             folder = str(mid).split("/", 1)[-1]
             adir = dest / "actions" / folder
             adir.mkdir(parents=True, exist_ok=True)
             (adir / "METHOD.md").write_text(method, encoding="utf-8")
-            ayaml, _ = _read_action(skills, str(mid))
-            if ayaml:
-                if yaml is not None:
-                    (adir / "action.yaml").write_text(
-                        yaml.safe_dump(ayaml, allow_unicode=True, sort_keys=False),
-                        encoding="utf-8",
-                    )
+            # Spec wins for identity fields; keep method-local extras.
+            merged = dict(ayaml or {})
+            for key in (
+                "id",
+                "workflow_id",
+                "role_id",
+                "agent_id",
+                "capabilities",
+                "policies",
+                "task_prompt_id",
+                "context_profile_id",
+                "output_contract_id",
+            ):
+                if key == "id" and a.get("id"):
+                    merged["id"] = a["id"]
+                elif key == "workflow_id":
+                    merged["workflow_id"] = wid
+                elif key == "role_id" and a.get("role_id"):
+                    merged["role_id"] = a["role_id"]
+                elif key == "agent_id" and a.get("agent_id"):
+                    merged["agent_id"] = a["agent_id"]
+                elif key == "capabilities" and a.get("capability_ids"):
+                    merged["capabilities"] = list(a["capability_ids"])
+                elif key == "policies" and a.get("policy_ids"):
+                    merged["policies"] = list(a["policy_ids"])
+                elif key == "task_prompt_id" and a.get("task_prompt_id"):
+                    merged["task_prompt_id"] = a["task_prompt_id"]
+                elif key == "context_profile_id" and a.get("context_profile_id"):
+                    merged["context_profile_id"] = a["context_profile_id"]
+                elif key == "output_contract_id" and a.get("output_contract_id"):
+                    merged["output_contract_id"] = a["output_contract_id"]
+            merged["checker"] = {"required": bool(a.get("checker_required", True))}
+            merged["referee"] = {"required": bool(a.get("referee_required", False))}
+            if yaml is not None:
+                (adir / "action.yaml").write_text(
+                    yaml.safe_dump(merged, allow_unicode=True, sort_keys=False),
+                    encoding="utf-8",
+                )
         # Copy capabilities used
         caps_needed: set[str] = set()
         for a in wf_meta.get("actions") or []:

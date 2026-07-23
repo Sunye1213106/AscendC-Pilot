@@ -1,7 +1,7 @@
 # Harness 迭代说明：控制面收口
 
 > **历史决策记录**（非运行时状态机）。Agent / Skill 执行请以 `harness next`、`workflows/specs.py`、`docs/overview/workflows.md` 为准。  
-> 本文整理自两轮「Harness 控制面收口」计划；文中出现的旧名（Phase0、uo-diff Skill、uo-orchestrator 等）仅表示已退役对象。
+> 本文整理 Harness 控制面收口计划；只记录当前有效入口和运行边界。
 
 **不在本轮范围**：代码自动改仓、编译上板、性能优化、重写 UO/TG 抽取/Z3、重型记忆平台。
 
@@ -27,7 +27,6 @@
 | OpenCode 安装 | **只装** `~/.config/opencode/agents/ascendc-agent.md`；**默认不**合并用户 `opencode.json`；仅当用户显式要求才设 `default_agent` |
 | Plugin 位置 | 仓内唯一源：`opencode-plugin/` → 安装到 `~/.config/opencode/plugins/`；`templates/` 不放 Plugin 实现 |
 | Skill | **组合式编译**：`skills-src/{policies,capabilities,actions,roles,workflows}` + `prompts-src` + `agents-src` → `generated/<host>/{skills,agents,prompts}`；install 只装 generated |
-| `/uo-diff` | 并入 `uo-update`；删除独立用户 Skill；Router `/uo-diff` → `uo-update` |
 | `/operator` | 仅为 `harness route` 别名；路由规则只存在于 Harness，禁止 Python Router / Skill / Prompt 各维护一份 |
 | Gate 失败 | **不**立即 `blocked`；进入 `rework_required` / `human_required`，保持当前 phase，由 `harness next` 返回返工动作 |
 | Referee | 按 Action 的 `referee_required` **可选**，非全局必经 |
@@ -231,7 +230,7 @@ Harness Adapter 把领域产物归一为 obligation；Workflow Spec 不写死所
 | **保留** | `engines/uo`、`engines/tg` 核心算法与现有确定性校验函数 |
 | **升格为权威** | `harness/ascendc_harness/workflows/` → 完整 Workflow Spec |
 | **瘦身** | `skills/*/SKILL.md`、`prompts/**/workflow.md`、`docs/*-workflow.md` — 删除独立状态机，改为读 harness status/next |
-| **删除/退役** | Skill 内「管流程/状态/权限」表述；`contracts/` 初始化；tg-csv-contract 可选写 UO；独立 `uo-diff` 用户 Skill；`uo-orchestrator` 宽写角色名 |
+| **删除** | Skill 内「管流程/状态/权限」表述；`contracts/` 初始化；tg-csv-contract 可选写 UO |
 
 ### TG：复用引擎真校验
 
@@ -316,7 +315,7 @@ bash:
 每个用户 Skill 循环：
 
 ```text
-1. harness start/resume
+1. harness start
 2. harness next
 3. 按 action_id 加载领域方法
 4. 执行一个动作
@@ -354,7 +353,7 @@ opencode-plugin/
 |---|---|---|---|
 | 1. 控制面 CLI 闭环 | Workflow Spec、State、Transitions、next/rework/complete、六态、obligations、receipts、语义熵减 | 不接 OpenCode；Gate fail → `rework_required` | completed |
 | 2. UO/TG 契约接入 | TG engine gate adapters、UO 门禁收紧、confidence 三层、写权隔离、四类 Spec Hash、contracts 删除 | 七个 workflow 均可经 Harness CLI 走完（固件/桩） | completed |
-| 3. Skill 单一来源 | skills-src、compiler、generated、/operator 别名、文档去双控制面、uo-diff 并入 update | install 只部署 generated；Skill 无独立状态机 | in_progress |
+| 3. Skill 单一来源 | skills-src、compiler、generated、/operator 别名、文档去双控制面 | install 只部署 generated；Skill 无独立状态机 | in_progress |
 | 4. OpenCode 模式 | `ascendc-agent.md` primary、harness-only bash、plugin authorize、可选 compaction | Tab 可见；非法直调被拦；不改用户 opencode.json | pending |
 | 5. E2E 与旧控制面删除 | Tab 路由、UO/TG 全流程、非法调用、会话恢复、无进展→blocked、删旧 Phase 叙事 | E2E + 威胁模型文档 | pending |
 

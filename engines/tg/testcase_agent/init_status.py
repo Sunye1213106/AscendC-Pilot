@@ -27,12 +27,6 @@ def kb_exists(project_root: Path, op_name: str, kb_root: Path | None = None) -> 
         if root.name == ".ascendc-agent":
             candidate = root / "uo"
             return candidate if candidate.is_dir() else None
-        # Legacy
-        if root.name == ".understand-operator":
-            candidate = root / op_name
-            return candidate if candidate.is_dir() else (root if root.is_dir() else None)
-        if root.parent.name == ".understand-operator":
-            return root if root.is_dir() else None
         if root.is_dir():
             return root
         return None
@@ -50,8 +44,7 @@ def require_kb(project_root: Path, op_name: str, kb_root: Path | None = None) ->
         ask="uo_init_required",
         payload={
             "expected_kb": expected.as_posix(),
-            "hint": "tg-init defaults to <算子仓>/.ascendc-agent/uo; optional --kb-root only overrides. "
-            "Legacy .ascendc-agent/uo → harness migrate-legacy.",
+            "hint": "tg-init defaults to <算子仓>/.ascendc-agent/uo; optional --kb-root only overrides.",
             "next": f"uo-init <算子仓> --op-name {op_name}",
         },
     )

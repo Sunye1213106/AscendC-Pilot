@@ -56,10 +56,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--approve-architecture", action="append", default=[], help="Approve architecture variant(s).")
     parser.add_argument("--exclude-architecture", action="append", default=[], help="Exclude architecture variant(s).")
     parser.add_argument("--resolve-uncertain", action="append", default=[], help="Resolve uncertain path as <path>:include or <path>:exclude.")
-    parser.add_argument("--approved-task-ids", default="", help="Retained for CLI compatibility; ignored.")
     parser.add_argument("--print-menu", action="store_true")
     parser.add_argument("--interactive", action="store_true")
-    parser.add_argument("--arrows", action="store_true", help="Retained for CLI compatibility; uses numbered mode.")
     args = parser.parse_args(argv)
 
     repo_root = Path(args.repo).resolve()

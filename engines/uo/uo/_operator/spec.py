@@ -61,14 +61,14 @@ def hash_input_rels(root: Path | None = None) -> list[str]:
 
 
 def load_spec(root: Path | None = None) -> dict[str, Any]:
-    """Load active spec documents. Missing optional legacy files return {}."""
+    """Load active spec documents."""
     spec = spec_root(root)
     return {
         "root": spec,
         "bundle": load_bundle(root),
         "ownership": _read_optional_yaml(spec / "ownership.yaml"),
         "kb_layout": _read_optional_yaml(spec / "kb_layout.yaml"),
-        # Legacy keys kept empty so old helper modules do not crash on import.
+        # Optional keys stay empty when no active spec file declares them.
         "manifest": {},
         "file_catalog": {},
         "stage_contracts": {},

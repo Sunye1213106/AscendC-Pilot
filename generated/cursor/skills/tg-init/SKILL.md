@@ -1,31 +1,26 @@
 ---
+name: tg-init
+description: 构建测项合同与绑定。 Harness 管阶段；本 Skill 只索引 Action。
 disable-model-invocation: true
 ---
 
-                ---
-                name: tg-init
-                description: >-
-                  构建测项合同与绑定。 Harness 管阶段；本 Skill 只索引 Action。
-                disable-model-invocation: true
-                ---
+# tg-init
 
-                # tg-init
+构建测项合同与绑定。
 
-                构建测项合同与绑定。
+本 Skill 不定义工作流阶段。执行时：
 
-                本 Skill 不定义工作流阶段。执行时：
+1. 调用 `harness start`（同 workflow 活动 run 则复用）；
+2. 调用 `harness next`；
+3. 对返回的 action_id 调用 `harness run-action <action_id>`（prepare；确定性 Action 会自动 finalize）；
+4. 语义 Action：按 Runtime Bundle 派发声明 actor，产出后调用 `harness run-action <action_id> --finalize`；
+5. 调用 `harness advance`（仅消费 run-action 签发的可信收据）。
 
-                1. 调用 `harness start/resume`；
-                2. 调用 `harness next`；
-                3. 加载返回 Action 对应的组合能力（Policy / Capability / Action Method / Prompt / Role）；
-                4. 执行一个 Action；
-                5. 将结果交回 Harness。
+## Actions
 
-                ## Actions
-
-                | action_id | 名称 | method | agent |
-                |---|---|---|---|
-                | `kb_check` | 校验定稿 KB | `tg-init/kb-check` | `deterministic-tg-engine` |
+| action_id | 名称 | method | agent |
+|---|---|---|---|
+| `kb_check` | 校验定稿 KB | `tg-init/kb-check` | `deterministic-tg-engine` |
 | `contract_build` | 构建合同骨架 | `tg-init/contract-build` | `tg-csv-contract` |
 | `semantic_bind` | 语义绑定 | `tg-init/semantic-bind` | `deterministic-tg-engine` |
 | `bind_merge` | 绑定合并 | `tg-init/bind-merge` | `deterministic-tg-engine` |
@@ -70,3 +65,16 @@ Harness 独占状态、合法边、门禁与完成态。
 | `integrity_gate` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `tg-init/integrity-gate` | `-` | `deterministic-tg-engine` |
 | `init_audit` | source-authority,code-access,evidence,language,harness-control,output-quality | structured-review,kb-query | `tg-init/init-audit` | `tg/init-audit` | `tg-init-audit` |
 | `human_confirm` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `tg-init/human-confirm` | `tg/human-confirm` | `human` |
+
+## Action runtime index
+
+| action_id | method_path | prompt_path | output_contract | role |
+|---|---|---|---|---|
+| `kb_check` | `actions/kb-check/METHOD.md` | `-` | `uo-ready-v1` | `deterministic_engine` |
+| `contract_build` | `actions/contract-build/METHOD.md` | `prompts/tasks/tg/contract-build.md` | `csv-contract-v1` | `producer` |
+| `semantic_bind` | `actions/semantic-bind/METHOD.md` | `-` | `semantic-bind-v1` | `deterministic_engine` |
+| `bind_merge` | `actions/bind-merge/METHOD.md` | `-` | `bind-merge-v1` | `deterministic_engine` |
+| `mid_nest` | `actions/mid-nest/METHOD.md` | `-` | `mid-nest-v1` | `deterministic_engine` |
+| `integrity_gate` | `actions/integrity-gate/METHOD.md` | `-` | `tg-integrity-v1` | `deterministic_engine` |
+| `init_audit` | `actions/init-audit/METHOD.md` | `prompts/tasks/tg/init-audit.md` | `init-audit-v1` | `referee` |
+| `human_confirm` | `actions/human-confirm/METHOD.md` | `prompts/tasks/tg/human-confirm.md` | `init-confirmed-v1` | `-` |

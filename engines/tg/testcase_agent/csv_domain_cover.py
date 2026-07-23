@@ -318,10 +318,6 @@ def add_csv_domain_cover_obligations(
             out.append(_make_csv_cover_obligation(payload, var_id=hi_id, value=hi_v))
 
 
-# Back-compat alias for older call sites / tests.
-def gqa_global_constraint(hi_col: str = "N1", lo_col: str = "N2") -> dict[str, Any]:
-    return head_group_global_constraint(hi_col, lo_col)
-
 def _make_csv_cover_obligation(payload: dict[str, Any], *, var_id: str, value: Any) -> dict[str, Any]:
     return {
         "id": "",

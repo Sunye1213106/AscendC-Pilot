@@ -1,31 +1,26 @@
 ---
+name: uo-update
+description: 增量更新 UO KB；含 diff_only。 Harness 管阶段；本 Skill 只索引 Action。
 disable-model-invocation: true
 ---
 
-                ---
-                name: uo-update
-                description: >-
-                  增量更新 UO KB；含 diff_only。 Harness 管阶段；本 Skill 只索引 Action。
-                disable-model-invocation: true
-                ---
+# uo-update
 
-                # uo-update
+增量更新 UO KB；含 diff_only。
 
-                增量更新 UO KB；含 diff_only。
+本 Skill 不定义工作流阶段。执行时：
 
-                本 Skill 不定义工作流阶段。执行时：
+1. 调用 `harness start`（同 workflow 活动 run 则复用）；
+2. 调用 `harness next`；
+3. 对返回的 action_id 调用 `harness run-action <action_id>`（prepare；确定性 Action 会自动 finalize）；
+4. 语义 Action：按 Runtime Bundle 派发声明 actor，产出后调用 `harness run-action <action_id> --finalize`；
+5. 调用 `harness advance`（仅消费 run-action 签发的可信收据）。
 
-                1. 调用 `harness start/resume`；
-                2. 调用 `harness next`；
-                3. 加载返回 Action 对应的组合能力（Policy / Capability / Action Method / Prompt / Role）；
-                4. 执行一个 Action；
-                5. 将结果交回 Harness。
+## Actions
 
-                ## Actions
-
-                | action_id | 名称 | method | agent |
-                |---|---|---|---|
-                | `detect_changes` | 检测源码变更 | `uo-update/detect-changes` | `deterministic-uo-engine` |
+| action_id | 名称 | method | agent |
+|---|---|---|---|
+| `detect_changes` | 检测源码变更 | `uo-update/detect-changes` | `deterministic-uo-engine` |
 | `plan_update` | 制定更新计划 | `uo-update/plan-update` | `uo-semantic-resolve` |
 | `apply_update` | 应用变更 | `uo-update/apply-update` | `uo-semantic-resolve` |
 | `key_resolution` | KEY 语义闭合 | `uo-update/key-resolution` | `uo-key-resolve` |
@@ -72,3 +67,17 @@ Harness 独占状态、合法边、门禁与完成态。
 | `export_integrity` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `uo-update/export-integrity` | `-` | `deterministic-uo-engine` |
 | `diff_summary` | source-authority,code-access,evidence,language,harness-control,output-quality | kb-query | `uo-update/diff-summary` | `-` | `deterministic-uo-engine` |
 | `diff_only` | source-authority,code-access,evidence,language,harness-control,output-quality | kb-query | `uo-update/diff-only` | `-` | `deterministic-uo-engine` |
+
+## Action runtime index
+
+| action_id | method_path | prompt_path | output_contract | role |
+|---|---|---|---|---|
+| `detect_changes` | `actions/detect-changes/METHOD.md` | `-` | `change-detect-v1` | `deterministic_engine` |
+| `plan_update` | `actions/plan-update/METHOD.md` | `prompts/tasks/uo/plan-update.md` | `update-plan-v1` | `producer` |
+| `apply_update` | `actions/apply-update/METHOD.md` | `prompts/tasks/uo/apply-update.md` | `update-apply-v1` | `producer` |
+| `key_resolution` | `actions/key-resolution/METHOD.md` | `prompts/tasks/uo/key-resolution.md` | `input-derivable-patch-v1` | `producer` |
+| `confidence_report` | `actions/confidence-report/METHOD.md` | `-` | `confidence-report-v1` | `deterministic_engine` |
+| `confidence_review` | `actions/confidence-review/METHOD.md` | `prompts/tasks/uo/confidence-review.md` | `confidence-reason-review-v1` | `referee` |
+| `export_integrity` | `actions/export-integrity/METHOD.md` | `-` | `integrity-v1` | `deterministic_engine` |
+| `diff_summary` | `actions/diff-summary/METHOD.md` | `-` | `diff-summary-v1` | `deterministic_engine` |
+| `diff_only` | `actions/diff-only/METHOD.md` | `-` | `diff-summary-v1` | `deterministic_engine` |

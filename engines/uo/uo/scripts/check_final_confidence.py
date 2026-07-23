@@ -335,7 +335,7 @@ def _write_deterministic_report(
     path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
-# Back-compat alias — must not write TODO placeholders
+# Public helper: must not write TODO placeholders.
 def _write_skeleton_report(uo_root: Path, need_llm: list[dict[str, Any]], *, existing: str = "") -> None:
     del existing
     _write_deterministic_report(uo_root, need_llm)

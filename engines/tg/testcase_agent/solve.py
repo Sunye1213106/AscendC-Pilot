@@ -38,7 +38,6 @@ def tg_solve(
     batch_size: int = 512,
     csv_consumer_root: Path | None = None,
     reuse_realization_map: bool = False,
-    allow_legacy_realization: bool = False,
     dedupe: bool = False,
 ) -> dict[str, Any]:
     project_root = project_root.resolve()
@@ -98,7 +97,6 @@ def tg_solve(
         level=str(obligations_doc.get("test_level") or level or ""),
         csv_consumer_root=csv_consumer_root,
         reuse_realization_map=reuse_realization_map,
-        allow_legacy_realization=allow_legacy_realization,
         progress=progress,
     )
 
@@ -128,7 +126,6 @@ def tg_solve(
         dry_run=dry_run,
         level=str(obligations_doc.get("test_level") or level or ""),
         case_name=case_name,
-        allow_legacy_realization=allow_legacy_realization,
     )
     result["realize_report"] = realize_report
     result["realization_report"] = realization["report"]
@@ -149,7 +146,6 @@ def load_or_build_realization(
     level: str = "",
     csv_consumer_root: Path | None,
     reuse_realization_map: bool,
-    allow_legacy_realization: bool,
     progress: ProgressCallback | None,
 ) -> dict[str, Any]:
     paths = realization_paths(out_root)
@@ -172,7 +168,7 @@ def load_or_build_realization(
                 evidence = read_yaml(paths["evidence"])
             else:
                 raise TgSolveError(
-                    "CSV_CONSUMER_ROOT_REQUIRED: pass --csv-consumer-root or run tg-contract first"
+                    "CSV_CONSUMER_ROOT_REQUIRED: pass --csv-consumer-root or run `harness run-action contract_build` first"
                 )
         else:
             evidence = prepare_contract_inputs(
@@ -212,12 +208,11 @@ def load_or_build_realization(
         _emit_progress(progress, stage="realization_validate", status="complete", contract_hash=validation["contract_hash"])
         return {"evidence": loaded_evidence, "schema": schema, "realization_map": realization_map, "report": report, "validation": validation}
     except ContractError as exc:
-        _ = allow_legacy_realization  # flag removed: FASG heuristic fallback no longer supported
         _ = reuse_realization_map
         _ = consumer_root
         raise TgSolveError(
             f"{exc}. Re-run /tg-init (thin contract + uo-query merge) with a valid consumer_schema + realization_map "
-            "(--allow-legacy-realization FASG fallback has been removed)."
+            "via harness run-action contract_build."
         ) from exc
 
 

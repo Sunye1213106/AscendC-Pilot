@@ -1,1 +1,1 @@
-"""Legacy deterministic core modules retained for compatibility."""
+"""Deterministic core modules."""

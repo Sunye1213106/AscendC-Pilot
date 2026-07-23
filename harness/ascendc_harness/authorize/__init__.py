@@ -10,14 +10,18 @@ import re
 from pathlib import Path
 from typing import Any
 
-# Direct domain CLIs that must go through Harness wrappers
+# Direct domain CLIs that must go through Harness run-action
 _DENY_BASH = [
     re.compile(r"\bpython(?:3)?\b.*\bbuild_layered_kb\.py\b", re.I),
     re.compile(r"\bpython(?:3)?\b.*\bcheck_final_confidence\.py\b", re.I),
     re.compile(r"\bpython(?:3)?\b.*\bprepare_operator\.py\b", re.I),
+    re.compile(r"\bpython(?:3)?\b.*\bexport_kb_graph\.py\b", re.I),
+    re.compile(r"\bpython(?:3)?\b.*\bcheck_kb_integrity\.py\b", re.I),
+    re.compile(r"\bpython(?:3)?\b.*\bclassify_input_derivable\.py\b", re.I),
     re.compile(r"\btg-solve\b", re.I),
     re.compile(r"\btg-plan\b", re.I),
     re.compile(r"\btg-init\b", re.I),
+    re.compile(r"\btg-contract\b", re.I),
     re.compile(r"\buo-init\b", re.I),
 ]
 
@@ -95,27 +99,57 @@ def _action_by_id(actions: list[dict[str, Any]], action_id: str) -> dict[str, An
     return None
 
 
-def _path_in_write_roots(norm: str, write_roots: list[str], project_marker: str = ".ascendc-agent") -> bool:
-    """True if path is under an allowed write root (relative to agent layout)."""
+def _path_in_write_roots(
+    path: str | Path,
+    write_roots: list[str],
+    project_root: Path | None = None,
+    project_marker: str = ".ascendc-agent",
+) -> bool:
+    """True if path is under an allowed write root (canonical path containment)."""
     if not write_roots:
         return True
-    # Normalize to look for .ascendc-agent/<root>/...
-    for root in write_roots:
-        root_s = str(root).replace("\\", "/").strip("/")
-        markers = [
-            f"/{project_marker}/{root_s}/",
-            f"/{project_marker}/{root_s}",
-            f"/{root_s}/",
-        ]
-        # Also allow bare root segment after agent dir
-        if any(m in norm or norm.endswith(m.rstrip("/")) for m in markers):
-            return True
-        # uo/review style nested roots
-        if "/" in root_s and f"/{root_s}/" in norm:
-            return True
+    try:
+        resolved = Path(path).expanduser().resolve()
+    except OSError:
+        resolved = Path(str(path).replace("\\", "/"))
+
     # Always allow runs/state under agent dir for harness itself
+    norm = str(resolved).replace("\\", "/")
     if f"/{project_marker}/runs/" in norm or f"/{project_marker}/state/" in norm:
         return True
+    if norm.rstrip("/").endswith(f"/{project_marker}/runs") or norm.rstrip("/").endswith(f"/{project_marker}/state"):
+        return True
+
+    agent_base: Path | None = None
+    if project_root is not None:
+        try:
+            from ascendc_harness.paths import agent_root
+
+            agent_base = agent_root(project_root)
+        except Exception:  # noqa: BLE001
+            agent_base = Path(project_root).resolve() / project_marker
+    else:
+        # Infer agent root from path markers
+        parts = norm.split(f"/{project_marker}/")
+        if len(parts) >= 2:
+            agent_base = Path(parts[0]) / project_marker
+
+    if agent_base is None:
+        # Fallback: substring markers (legacy)
+        for root in write_roots:
+            root_s = str(root).replace("\\", "/").strip("/")
+            if f"/{project_marker}/{root_s}/" in norm or norm.endswith(f"/{project_marker}/{root_s}"):
+                return True
+        return False
+
+    for root in write_roots:
+        root_s = str(root).replace("\\", "/").strip("/")
+        allowed = (agent_base / root_s).resolve()
+        try:
+            resolved.relative_to(allowed)
+            return True
+        except ValueError:
+            continue
     return False
 
 
@@ -129,6 +163,21 @@ def _is_review_path(norm: str) -> bool:
 
 def _is_checks_path(norm: str) -> bool:
     return "/checks/" in norm
+
+
+def _declared_phase_actors(allowed: list[dict[str, Any]], meta: dict[str, Any]) -> set[str]:
+    """Actors declared on current-phase actions only (not all workflow agents)."""
+    declared: set[str] = set()
+    for a in allowed:
+        aid = a.get("agent_id")
+        if aid:
+            declared.add(str(aid).lower())
+        for act in a.get("actors") or []:
+            declared.add(str(act).lower())
+    # Primary may always be named
+    declared.add("ascendc-agent")
+    declared.add("human")
+    return declared
 
 
 def authorize(
@@ -173,7 +222,7 @@ def authorize(
                 return _ok(
                     "deny",
                     "DOMAIN_CLI_BYPASS",
-                    "禁止直调领域脚本/CLI；请经 harness 包装执行",
+                    "禁止直调领域脚本/CLI；请经 harness run-action 执行",
                     command=cmd[:200],
                 )
         if agent_l in _PRIMARY_AGENTS:
@@ -183,41 +232,38 @@ def authorize(
                 "AscendC Agent 默认仅允许 harness *；其他 bash 需人工确认",
                 command=cmd[:200],
             )
-        # Subagent producers may run harness-wrapped flows; still deny domain CLIs (above)
-        return _ok("allow", "NON_PRIMARY", "非 primary 代理放行（仍禁止领域 CLI 直调）")
+        # Non-primary: still deny domain CLIs (above); other bash ask (not open allow)
+        return _ok(
+            "ask",
+            "NON_PRIMARY_BASH",
+            "非 primary 代理 bash 需确认；领域执行请用 harness run-action",
+            command=cmd[:200],
+        )
 
     # --- task / subagent spawn ---
     if tool_l in {"task", "subagent", "task_tool"}:
         if agent_l in _PRIMARY_AGENTS:
-            # Primary may spawn Task for declared actors of current phase actions
             target = path_s or cmd  # plugin may pass agent name in path/command
-            declared_actors: set[str] = set()
-            for a in allowed:
-                aid = a.get("agent_id")
-                if aid:
-                    declared_actors.add(str(aid).lower())
-                for act in a.get("actors") or []:
-                    declared_actors.add(str(act).lower())
-            for row in meta.get("agents") or []:
-                if isinstance(row, dict) and row.get("id"):
-                    declared_actors.add(str(row["id"]).lower())
+            declared_actors = _declared_phase_actors(allowed, meta)
             target_l = target.strip().lower()
-            if target_l and declared_actors and target_l not in declared_actors and not target_l.startswith("uo-") and not target_l.startswith("tg-"):
+            # No uo-/tg- prefix bypass — must be an explicitly declared phase actor.
+            if target_l and declared_actors and target_l not in declared_actors:
                 return _ok(
                     "deny",
                     "TASK_AGENT_UNKNOWN",
                     f"当前阶段未声明子代理 {target!r}",
                     agent=target,
                     phase=ctx.get("phase"),
+                    declared_actors=sorted(declared_actors),
                 )
             return _ok(
                 "allow",
                 "TASK_OK",
-                "允许启动当前工作流声明的子代理任务",
+                "允许启动当前阶段声明的子代理任务",
                 phase=ctx.get("phase"),
                 workflow_id=ctx.get("workflow_id"),
             )
-        return _ok("allow", "TASK_NON_PRIMARY", "非 primary 任务放行")
+        return _ok("deny", "TASK_NON_PRIMARY", "非 primary 不得再派发 Task")
 
     # --- write / edit / apply_patch ---
     if tool_l in {"write", "edit", "apply_patch", "strreplace", "patch"}:
@@ -259,9 +305,10 @@ def authorize(
                 action=action_id,
             )
 
-        # Write roots from workflow spec
-        if write_roots and norm and state and not _path_in_write_roots(norm, write_roots):
-            # Allow only if not under .ascendc-agent at all (scratch) — still deny protected
+        # Write roots from workflow spec (canonical containment)
+        if write_roots and norm and state and not _path_in_write_roots(
+            path_s or norm, write_roots, project_root=project_root
+        ):
             if ".ascendc-agent" in norm or "/uo/" in norm or "/tg/" in norm:
                 return _ok(
                     "deny",

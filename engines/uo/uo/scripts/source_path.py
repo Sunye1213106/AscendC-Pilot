@@ -43,18 +43,6 @@ def resolve_repo_source_path(repo_root: Path, file_path: str) -> Path | None:
                 for staged_op in stage.iterdir():
                     if staged_op.is_dir():
                         candidates.append(staged_op / rest)
-        # Legacy staging
-        uo_legacy = repo_root / ".understand-operator"
-        if uo_legacy.is_dir():
-            for op_dir in uo_legacy.iterdir():
-                if not op_dir.is_dir():
-                    continue
-                stage = op_dir / "cbm" / "index_stage"
-                if not stage.is_dir():
-                    continue
-                for staged_op in stage.iterdir():
-                    if staged_op.is_dir():
-                        candidates.append(staged_op / rest)
 
     name = Path(raw).name
     if name and ("/" in raw or "\\" in file_path):

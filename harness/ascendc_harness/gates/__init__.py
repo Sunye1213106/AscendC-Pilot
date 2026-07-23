@@ -525,7 +525,6 @@ def gate_kb_review_file(uo: Path) -> dict[str, Any]:
 def gate_scope_receipt(uo: Path) -> dict[str, Any]:
     """Scope confirmation for current run: scope_confirmed + indexed_via=mcp preferred."""
     confirmed_paths = list(uo.glob("runs/*/scope/scope_confirmed.yaml")) + list(
-        uo.glob("runs/*/phase0/scope_confirmed.yaml")  # legacy tree read-compat
     )
     # Prefer newest by mtime
     confirmed_paths = sorted(confirmed_paths, key=lambda p: p.stat().st_mtime if p.is_file() else 0, reverse=True)

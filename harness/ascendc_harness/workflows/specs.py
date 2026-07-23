@@ -313,6 +313,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             "resolve": [
                 "key_triage_required",
                 "key_resolve_receipt",
+                "empty_only_producer",
                 "confidence_gate",
                 "confidence_reason_review",
             ],
@@ -320,6 +321,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         },
         "complete_gates": [
             "key_triage_required",
+            "empty_only_producer",
             "confidence_gate",
             "confidence_reason_review",
             "integrity",

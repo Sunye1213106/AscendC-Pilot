@@ -235,7 +235,7 @@ def propose_domain_hints_stub(
         "source": "domain_hints_stub",
         "columns": columns_doc,
         "hint": (
-            "Fill values/min/max via LLM estimate or human confirm, then re-run tg-contract. "
+            "Fill values/min/max via LLM estimate or human confirm, then re-run harness contract_build. "
             "Sample csv/xls are intentionally not scanned."
         ),
     }

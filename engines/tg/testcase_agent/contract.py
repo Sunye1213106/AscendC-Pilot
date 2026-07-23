@@ -1,4 +1,4 @@
-"""tg-contract: script evidence + bootstrap/LLM realization map before planning."""
+"""TG contract builder: script evidence + bootstrap/LLM realization map before planning."""
 
 from __future__ import annotations
 
@@ -269,7 +269,7 @@ def tg_contract(
     run = read_yaml(run_path) if run_path.exists() else {}
     run.update(
         {
-            "command": "tg-contract",
+            "command": "harness run-action contract_build",
             "phase": "csv_contract",
             "status": validation["status"],
             "next_command": "tg-init binding loop then tg-plan",
@@ -309,7 +309,7 @@ def load_realization_for_plan(out_root: Path) -> dict[str, Any]:
     if not paths["map"].exists():
         raise TgContractError(
             "CSV_CONTRACT_REQUIRED: missing realization/realization_map.yaml. "
-            "Run tg-init --test-script-root <test_script_root> first (compat: tg-contract)."
+            "Run harness run-action contract_build after tg-init --test-script-root <test_script_root>."
         )
     from .io import read_json
     from .realization_map import apply_architecture_platform_fixes

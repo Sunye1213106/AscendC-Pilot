@@ -14,6 +14,10 @@ hash_inputs:
   - schemas/diff/change_set.schema.yaml
   - schemas/diff/impact.schema.yaml
   - schemas/diff/unresolved.schema.yaml
+  - schemas/kb_graph/metadata.schema.yaml
+  - schemas/review/index.schema.yaml
+  - schemas/review/functional_report.schema.yaml
+  - schemas/review/bug_report.schema.yaml
 
 notes:
   - Do not copy these files into .ascendc-agent/uo/.

@@ -72,11 +72,6 @@ def init_main(argv: list[str] | None = None) -> int:
             raise ValueError("OPERATOR_ROOT_REQUIRED: pass project_root (算子仓) or --kb-root")
         project_root = resolve_operator_project_root(raw_project)
         kb_hint = args.kb_root
-        if kb_hint is None and (
-            raw_project.expanduser().resolve().name == ".understand-operator"
-            or raw_project.expanduser().resolve().parent.name == ".understand-operator"
-        ):
-            kb_hint = raw_project
         op_name = infer_op_name(project_root, explicit=args.op_name or None, kb_hint=kb_hint)
 
         if args.merge_uo_resolve:
@@ -182,11 +177,6 @@ def contract_main(argv: list[str] | None = None) -> int:
             raise ValueError("OPERATOR_ROOT_REQUIRED: pass project_root (算子仓) or --kb-root")
         project_root = resolve_operator_project_root(raw_project)
         kb_hint = args.kb_root
-        if kb_hint is None and (
-            raw_project.expanduser().resolve().name == ".understand-operator"
-            or raw_project.expanduser().resolve().parent.name == ".understand-operator"
-        ):
-            kb_hint = raw_project
         op_name = infer_op_name(project_root, explicit=args.op_name or None, kb_hint=kb_hint)
         result = tg_contract(
             project_root,
@@ -275,13 +265,13 @@ def plan_main(argv: list[str] | None = None) -> int:
         "--kb-root",
         type=Path,
         default=None,
-        help="Optional .understand-operator or .ascendc-agent/uo. Used to resolve project_root/op-name.",
+        help="Optional .ascendc-agent/uo. Used to resolve project_root/op-name.",
     )
     parser.add_argument(
         "--lexicon-seed",
         type=Path,
         default=None,
-        help="Optional binding_lexicon.yaml seed (compat path only)",
+        help="Optional binding_lexicon.yaml seed",
     )
     args = parser.parse_args(argv)
     try:
@@ -324,7 +314,7 @@ def plan_main(argv: list[str] | None = None) -> int:
             "required": {
                 "operator_root": "算子仓 project_root",
                 "preferred": "tg-init confirmed → realization under .ascendc-agent/tg/",
-                "compat": ["--test-script-root", "--contract-root"],
+                "contract_inputs": ["--test-script-root", "--contract-root"],
             },
             "examples": [
                 'tg-init "<算子仓>" --op-name <op> --test-script-root "<测试工具>"',
@@ -339,7 +329,7 @@ def plan_main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, ensure_ascii=False, indent=2), file=sys.stderr)
         return 1
 
-    # Prefer init realization; only rebuild contract when explicitly asked via test-script on compat path.
+    # Prefer init realization; rebuild contract only when explicitly asked via test-script.
     rebuild_consumer = paths.test_tool_root if paths.mode == "build_contract" else None
 
     results: list[dict[str, Any]] = []
@@ -422,11 +412,6 @@ def solve_main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--reuse-realization-map", action="store_true", help="Reuse existing realization/realization_map.yaml")
     parser.add_argument(
-        "--allow-legacy-realization",
-        action="store_true",
-        help="Deprecated/no-op: FASG hardcoded emit and heuristic map fallback were removed",
-    )
-    parser.add_argument(
         "--dedupe",
         action="store_true",
         help="Merge duplicate coverage signatures and run greedy set-cover. Default is no dedupe (keep one solution per SAT obligation).",
@@ -472,7 +457,6 @@ def solve_main(argv: list[str] | None = None) -> int:
                     batch_size=args.batch_size,
                     csv_consumer_root=args.csv_consumer_root,
                     reuse_realization_map=args.reuse_realization_map,
-                    allow_legacy_realization=args.allow_legacy_realization,
                     dedupe=bool(args.dedupe),
                 )
             )

@@ -20,7 +20,7 @@
 | --- | --- |
 | `/uo-init` | 建 KB（环境准备 → 范围确认 → 结构抽取 → 语义闭合 → 导出与校验 → 产物审查） |
 | `/uo-query` | 定稿后只读问答 |
-| `/uo-update` | 增量刷新 KB；`/uo-diff` 兼容为 `diff_only` |
+| `/uo-update` | 增量刷新 KB |
 | `/uo-code-review` | 基于 KB 的缺陷/功能审查 |
 | `/tg-init` | 测项合同与绑定 → 人工确认 |
 | `/tg-plan` | 覆盖规划与人工批准 |
@@ -32,12 +32,6 @@
 
 ```text
 <算子仓>/.ascendc-agent/{uo,tg,memory,runs,context,state}/
-```
-
-Legacy `.understand-operator/<op>/` / `.testcase-generator/<op>/` →
-
-```powershell
-harness migrate-legacy <算子仓> --op-name <op>
 ```
 
 ---

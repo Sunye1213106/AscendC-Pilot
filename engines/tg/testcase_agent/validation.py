@@ -56,7 +56,6 @@ REQUIRED_KB_EXPORT_FILES = (
     "flow/numerical_model.yaml",
     "quality.yaml",
 )
-# Backward-compatible alias (tests / older callers).
 REQUIRED_TESTCASE_CONTRACT_FILES = REQUIRED_KB_EXPORT_FILES
 HARD_WORDS = {"hard", "blocking", "blocker", "error", "fail", "failed", "conflicting", "unresolved"}
 REF_KEYS = {
@@ -172,18 +171,17 @@ def validate_intake(export_payload: dict[str, Any], final_validation: dict[str, 
             "hashes",
         )
 
-    # Historical UO contract in payload: ignore (compat warning only).
     if files.get("contracts/testcase.yaml"):
         report.add(
-            "LEGACY_UO_CONTRACT_IGNORED",
-            "warning",
-            "UO contracts/testcase.yaml is retired; TG owns .ascendc-agent/tg/contract/",
+            "UO_CONTRACT_FORBIDDEN",
+            "error",
+            "UO contracts/testcase.yaml is not a valid TG input; run harness run-action contract_build",
             "contracts/testcase.yaml",
         )
 
     known_ids = collect_known_ids({"files": files, "context_slice": context_slice})
     validate_stable_ids({"files": files, "context_slice": context_slice}, report)
-    # Hard-ref checks apply to TG contract after tg-contract writes it — not UO intake.
+    # Hard-ref checks apply after harness contract_build writes the TG contract.
     del known_ids
     validate_blocking_states(files, report)
     collect_warning_states(files, report)

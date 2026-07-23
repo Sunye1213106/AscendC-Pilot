@@ -28,7 +28,7 @@ class PlanPathBundle:
 
 
 def resolve_operator_project_root(path: Path) -> Path:
-    """Accept op package, `.ascendc-agent`, `.ascendc-agent/uo`, or legacy `.understand-operator`."""
+    """Accept op package, `.ascendc-agent`, `.ascendc-agent/uo`, or `.ascendc-agent/tg`."""
     root = path.expanduser().resolve(strict=False)
     # Structural markers can be resolved even if the marker dir was not created yet
     if root.name == "uo" and root.parent.name == ".ascendc-agent":
@@ -37,11 +37,7 @@ def resolve_operator_project_root(path: Path) -> Path:
         return root.parent.parent
     if root.name == ".ascendc-agent":
         return root.parent
-    if root.name == ".understand-operator":
-        return root.parent
-    if root.parent.name == ".understand-operator":
-        return root.parent.parent
-    if root.exists() and ((root / ".ascendc-agent").is_dir() or (root / ".understand-operator").is_dir()):
+    if root.exists() and (root / ".ascendc-agent").is_dir():
         return root
     if not root.exists():
         raise ValueError(f"Path does not exist: {root}")
@@ -54,13 +50,6 @@ def infer_op_name(project_root: Path, explicit: str | None = None, kb_hint: Path
 
     if kb_hint is not None:
         hint = kb_hint.expanduser().resolve()
-        if hint.parent.name == ".understand-operator":
-            return hint.name
-        if hint.name == ".understand-operator":
-            children = [p.name for p in hint.iterdir() if p.is_dir() and not p.name.startswith(".")]
-            if len(children) == 1:
-                return children[0]
-        # New layout: read manifest
         manifest = hint / "manifest.yaml" if hint.name == "uo" else hint / "uo" / "manifest.yaml"
         if manifest.is_file():
             try:
@@ -83,13 +72,6 @@ def infer_op_name(project_root: Path, explicit: str | None = None, kb_hint: Path
         except Exception:  # noqa: BLE001
             pass
 
-    legacy = project_root / ".understand-operator"
-    if legacy.is_dir():
-        children = [p.name for p in legacy.iterdir() if p.is_dir() and not p.name.startswith(".")]
-        if len(children) == 1:
-            return children[0]
-        if children:
-            raise ValueError(f"Multiple ops under {legacy}: {children}. Pass --op-name explicitly.")
     raise ValueError(f"Cannot infer --op-name from {project_root}. Pass --op-name.")
 
 
@@ -177,8 +159,8 @@ def resolve_plan_paths(
     resolved_project = resolve_operator_project_root(raw_project)
     raw_resolved = raw_project.expanduser().resolve()
     if kb_hint is None and (
-        raw_resolved.name in {".understand-operator", ".ascendc-agent"}
-        or raw_resolved.parent.name in {".understand-operator", ".ascendc-agent"}
+        raw_resolved.name == ".ascendc-agent"
+        or raw_resolved.parent.name == ".ascendc-agent"
         or (raw_resolved.name == "uo" and raw_resolved.parent.name == ".ascendc-agent")
     ):
         kb_hint = raw_resolved

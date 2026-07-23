@@ -50,7 +50,7 @@ uninstall() {
   agents="$(agents_dest "$plat")"
   plugins="$(plugins_dest "$plat")"
   rm -rf "$plug"
-  for name in uo-init uo-update uo-query uo-code-review tg-init tg-plan tg-solve operator _policies uo-diff understand-operator tg-domain-review tg-contract; do
+  for name in uo-init uo-update uo-query uo-code-review tg-init tg-plan tg-solve operator _policies; do
     rm -rf "$skills/$name"
   done
   for name in ascendc-agent uo-semantic-resolve uo-key-resolve uo-confidence-review uo-kb-review uo-code-reviewer uo-query tg-csv-contract tg-init-audit deterministic-uo-engine deterministic-tg-engine; do

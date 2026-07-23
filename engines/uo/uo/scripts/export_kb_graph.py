@@ -23,6 +23,7 @@ from uo.scripts.kb_query_export import _entities_from_graph
 SCHEMA_VERSION = "1"
 HASH_PATHS = (
     "ir/operator_graph.yaml",
+    "ir/tilingkey_space.yaml",
     "ir/input_derivable.yaml",
     "tiling/key_space.yaml",
     "query/terminology.yaml",

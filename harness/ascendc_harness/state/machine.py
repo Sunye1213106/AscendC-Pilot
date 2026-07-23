@@ -170,9 +170,9 @@ def advance_phase(
         }
 
     state = load_state(project_root)
-    from ascendc_harness.obligations import collect_obligations
+    from ascendc_harness.obligations import collect_obligations, open_obligations
 
-    state["open_items"] = collect_obligations(project_root, wid)
+    state["open_items"] = open_obligations(collect_obligations(project_root, wid))
     state["phase"] = next_phase
     state["phase_label_zh"] = label_zh_for(wid, next_phase)
     state["status"] = "running"

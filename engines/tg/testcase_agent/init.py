@@ -318,7 +318,7 @@ def write_bind_scaffolds(
             {
                 "version": 1,
                 "status": "seed",
-                "source": "tg-contract realization_map",
+                "source": "harness contract_build realization_map",
                 "variables": csv_vars,
                 "hint": "LLM: refine domains / aliases / importance; consumer-side only without uo-query",
             },

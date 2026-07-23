@@ -36,14 +36,8 @@ def scope_dir(uo_root: Path, run_id: str | None = None) -> Path:
 
 
 def resolve_scope_dir(uo_root: Path, run_id: str | None = None) -> Path:
-    """Read path: prefer scope/, fall back to legacy phase0/ if only that exists."""
+    """Read current run scope path."""
     modern = scope_dir(uo_root, run_id)
-    if modern.is_dir() or (modern / "scope_confirmed.yaml").is_file() or (modern / "receipt.yaml").is_file():
-        return modern
-    rid = run_id or active_run_id(uo_root)
-    legacy = uo_root / "runs" / rid / "phase0"
-    if legacy.is_dir():
-        return legacy
     return modern
 
 

@@ -171,8 +171,6 @@ def _is_kb_artifact_path(path: str) -> bool:
     return (
         norm.startswith(".ascendc-agent/")
         or "/.ascendc-agent/" in f"/{norm}"
-        or norm.startswith(".understand-operator/")
-        or "/.understand-operator/" in f"/{norm}"
     )
 
 

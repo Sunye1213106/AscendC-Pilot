@@ -49,7 +49,7 @@ if ($Platform -like "uninstall-*") {
   $agents = Get-AgentsDest $plat
   $plugins = Get-PluginsDest $plat
   if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
-  foreach ($name in @("uo-init","uo-update","uo-query","uo-code-review","tg-init","tg-plan","tg-solve","operator","_policies","uo-diff","understand-operator","tg-domain-review","tg-contract")) {
+  foreach ($name in @("uo-init","uo-update","uo-query","uo-code-review","tg-init","tg-plan","tg-solve","operator","_policies")) {
     $p = Join-Path $skills $name
     if (Test-Path $p) { Remove-Item -Recurse -Force $p }
   }

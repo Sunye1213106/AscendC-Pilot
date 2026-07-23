@@ -101,7 +101,7 @@ def tg_contract_hash(repo_root: Path | None = None) -> str:
         path = root / rel
         if path.is_file():
             parts.append(f"{rel}:{_sha256_bytes(path.read_bytes())}")
-    return _sha256_text("\n".join(parts) if parts else "empty-tg-contract")
+    return _sha256_text("\n".join(parts) if parts else "empty-tg-spec")
 
 
 def kb_schema_hash(repo_root: Path | None = None) -> str:

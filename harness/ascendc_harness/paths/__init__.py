@@ -12,17 +12,11 @@ RUNS_SUBDIR = "runs"
 CONTEXT_SUBDIR = "context"
 STATE_SUBDIR = "state"
 
-# Legacy roots (migrate-legacy only; engines must not write here)
-LEGACY_UO_DIR = ".understand-operator"
-LEGACY_TG_DIR = ".testcase-generator"
-
-
 def agent_root(project_root: Path) -> Path:
     return Path(project_root).expanduser().resolve() / AGENT_DIR
 
 
 def uo_root(project_root: Path, op_name: str | None = None) -> Path:
-    """KB root. op_name kept for API compat; products are not nested by op name."""
     del op_name
     return agent_root(project_root) / UO_SUBDIR
 
@@ -61,14 +55,6 @@ def ensure_agent_layout(project_root: Path) -> Path:
     ):
         (root / rel).mkdir(parents=True, exist_ok=True)
     return root
-
-
-def legacy_uo_root(project_root: Path, op_name: str) -> Path:
-    return Path(project_root).expanduser().resolve() / LEGACY_UO_DIR / op_name
-
-
-def legacy_tg_root(project_root: Path, op_name: str) -> Path:
-    return Path(project_root).expanduser().resolve() / LEGACY_TG_DIR / op_name
 
 
 def global_memory_root() -> Path:

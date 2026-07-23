@@ -1,27 +1,27 @@
-                ---
-                name: tg-plan
-                description: >-
-                  生成覆盖义务并人工批准。 Harness 管阶段；本 Skill 只索引 Action。
-                disable-model-invocation: true
-                ---
+---
+name: tg-plan
+description: >-
+  生成覆盖义务并人工批准。 Harness 管阶段；本 Skill 只索引 Action。
+disable-model-invocation: true
+---
 
-                # tg-plan
+# tg-plan
 
-                生成覆盖义务并人工批准。
+生成覆盖义务并人工批准。
 
-                本 Skill 不定义工作流阶段。执行时：
+本 Skill 不定义工作流阶段。执行时：
 
-                1. 调用 `harness start/resume`；
-                2. 调用 `harness next`；
-                3. 加载返回 Action 对应的组合能力（Policy / Capability / Action Method / Prompt / Role）；
-                4. 执行一个 Action；
-                5. 将结果交回 Harness。
+1. 调用 `harness start`（同 workflow 活动 run 则复用）；
+2. 调用 `harness next`；
+3. 对返回的 action_id 调用 `harness run-action <action_id>`（prepare；确定性 Action 会自动 finalize）；
+4. 语义 Action：按 Runtime Bundle 派发声明 actor，产出后调用 `harness run-action <action_id> --finalize`；
+5. 调用 `harness advance`（仅消费 run-action 签发的可信收据）。
 
-                ## Actions
+## Actions
 
-                | action_id | 名称 | method | agent |
-                |---|---|---|---|
-                | `plan_scope` | 确定规划范围 | `tg-plan/plan-scope` | `deterministic-tg-engine` |
+| action_id | 名称 | method | agent |
+|---|---|---|---|
+| `plan_scope` | 确定规划范围 | `tg-plan/plan-scope` | `deterministic-tg-engine` |
 | `plan_precheck` | 规划前置门禁 | `tg-plan/plan-precheck` | `deterministic-tg-engine` |
 | `plan_build` | 生成覆盖义务 | `tg-plan/plan-build` | `deterministic-tg-engine` |
 | `plan_approve` | 批准规划 | `tg-plan/plan-approve` | `human` |

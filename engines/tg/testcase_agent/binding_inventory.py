@@ -85,11 +85,8 @@ def build_binding_inventory(
 
     from .kb_semantics import assemble_key_determinants
 
-    # Prefer TG-assembled determinants from KB layers; ignore retired UO contracts.
+    # Assemble determinants from current KB layers only.
     key_determinants = assemble_key_determinants(snapshot_files if isinstance(snapshot_files, dict) else {})
-    legacy = (snapshot_files or {}).get("contracts/testcase.yaml") if isinstance(snapshot_files, dict) else {}
-    if not key_determinants and isinstance(legacy, dict):
-        key_determinants = legacy.get("key_determinants") or {}
     key_ids: list[str] = []
     needs_binding: list[str] = []
     not_input_derivable: list[str] = []

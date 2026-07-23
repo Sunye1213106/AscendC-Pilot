@@ -33,14 +33,10 @@ def resolve_plan_contract(
     *,
     out_root: Path | None = None,
 ) -> tuple[dict[str, Any], str]:
-    """Prefer TG contract; legacy UO snapshot contract is warn-only fallback."""
+    """Load TG-owned contract."""
     tg = load_tg_contract(out_root)
     if tg and int(tg.get("version") or 0) == 2:
         return tg, "tg_contract"
-    files = snapshot.get("files") if isinstance(snapshot.get("files"), dict) else {}
-    legacy = files.get("contracts/testcase.yaml") if isinstance(files.get("contracts/testcase.yaml"), dict) else {}
-    if legacy and int(legacy.get("version") or 0) == 2:
-        return legacy, "legacy_uo_snapshot_warn"
     return tg or {}, "missing"
 
 
@@ -141,10 +137,6 @@ def build_tg_contract(
     graph = files.get("ir/operator_graph.yaml") if isinstance(files.get("ir/operator_graph.yaml"), dict) else {}
     if graph:
         arch = str(graph.get("architecture") or graph.get("arch") or "")
-    legacy = files.get("contracts/testcase.yaml") if isinstance(files.get("contracts/testcase.yaml"), dict) else {}
-    if not arch and isinstance(legacy, dict):
-        arch = str(legacy.get("architecture") or "")
-
     contract: dict[str, Any] = {
         "version": 2,
         "op_name": op_name,
@@ -164,7 +156,6 @@ def build_tg_contract(
             ],
             "snapshot_hash": snapshot.get("snapshot_hash") or "",
             "level": level or "",
-            "legacy_uo_contract_ignored": bool(legacy),
         },
         "interface": {
             "required_inputs": [],

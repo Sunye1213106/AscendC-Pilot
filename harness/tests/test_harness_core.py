@@ -18,7 +18,6 @@ from ascendc_harness.gates import (
     run_key_gates,
 )
 from ascendc_harness.memory import add_candidate, promote_stable, propose_global_promote, search_local
-from ascendc_harness.migrate import migrate_legacy
 from ascendc_harness.paths import tg_root, uo_root
 from ascendc_harness.router import route
 from ascendc_harness.state import (
@@ -44,7 +43,7 @@ def test_router_slash_and_keyword():
     assert route("帮我建库初始化知识库").get("workflow_id") == "uo-init"
     assert route("/tg-plan").get("workflow_id") == "tg-plan"
     assert route("完全无关的话").get("ok") is False
-    assert route("/uo-diff").get("workflow_id") == "uo-update"
+    assert route("/uo-diff").get("ok") is False
     op = route("/operator 帮我建库")
     assert op.get("ok") is True and op.get("workflow_id") == "uo-init" and op.get("via") == "operator"
     assert route("/operator").get("ok") is False
@@ -97,18 +96,6 @@ def test_advance_gate_fail_keeps_phase_rework(tmp_path: Path):
     st = load_state(tmp_path)
     assert st["phase"] == "scope"
     assert st["status"] in {"human_required", "rework_required"}
-
-
-def test_migrate_legacy(tmp_path: Path):
-    legacy_uo = tmp_path / ".understand-operator" / "DemoOp"
-    _write(legacy_uo / "manifest.yaml", {"op_name": "DemoOp", "version": 1})
-    _write(legacy_uo / "ir" / "x.yaml", {"ok": True})
-    legacy_tg = tmp_path / ".testcase-generator" / "DemoOp"
-    _write(legacy_tg / "init" / "status.yaml", {"status": "confirmed"})
-    result = migrate_legacy(tmp_path, op_name="DemoOp")
-    assert result["ok"]
-    assert (uo_root(tmp_path) / "manifest.yaml").is_file()
-    assert (tg_root(tmp_path) / "init" / "status.yaml").is_file()
 
 
 def test_key_triage_required_fails_without_triage(tmp_path: Path):
@@ -492,6 +479,7 @@ def test_verify_receipt_strict(tmp_path: Path):
         input_hashes={"triage": "abc"},
         output_hashes={"patch": "def"},
         checker_result={"ok": True},
+        _internal=True,
     )
     ok = verify_receipt(
         tmp_path,
@@ -521,10 +509,10 @@ def test_spec_hashes_not_empty():
     assert "empty" not in hashes["tg_contract_hash"]
 
 
-def test_uo_diff_route_intent():
+def test_uo_diff_route_removed():
     r = route("/uo-diff")
-    assert r.get("workflow_id") == "uo-update"
-    assert r.get("intent") == "diff_only"
+    assert r.get("ok") is False
+    assert r.get("workflow_id") is None
 
 
 def test_tg_kb_ready_no_fingerprint_gate():
@@ -540,9 +528,11 @@ def test_install_skill_lists_symmetric():
     repo = Path(__file__).resolve().parents[2]
     ps1 = (repo / "install.ps1").read_text(encoding="utf-8")
     sh = (repo / "install.sh").read_text(encoding="utf-8")
-    # Install loops must not link uo-diff; uninstall may still remove retired name
     assert 'foreach ($name in @("uo-init","uo-update","uo-query","uo-code-review","tg-init","tg-plan","tg-solve","operator"))' in ps1
     assert "for name in uo-init uo-update uo-query uo-code-review tg-init tg-plan tg-solve operator; do" in sh
+    for retired in ("uo-diff", "tg-domain-review", "tg-contract"):
+        assert retired not in ps1
+        assert retired not in sh
     assert "ascendc-agent" in ps1
     assert "ascendc-harness.ts" in ps1
     assert "ascendc-harness.ts" in sh

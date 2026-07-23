@@ -8,9 +8,7 @@ DEFAULT_IGNORE_PATTERNS = [
     "venv/",
     "node_modules/",
     ".understand/",
-    ".understand-operator/",
     ".ascendc-agent/",
-    ".testcase-generator/",
     "__pycache__/",
     ".pytest_cache/",
     "dist/",
@@ -44,4 +42,3 @@ def should_ignore(rel_path: str, patterns: list[str]) -> bool:
         elif rel.endswith("/" + p) or rel == p:
             ignored = True
     return ignored
-

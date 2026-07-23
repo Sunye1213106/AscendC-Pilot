@@ -18,7 +18,6 @@ RUNNING_LIKE = frozenset({"running", "rework_required", "human_required"})
 TERMINAL = frozenset({"blocked", "failed", "passed"})
 ALL_STATUSES = RUNNING_LIKE | TERMINAL
 
-# Compat aliases for older callers / CLI
 _STATUS_ALIASES = {
     "pass": "passed",
     "human": "human_required",
@@ -267,19 +266,6 @@ def mark_terminal(
     return load_state(project_root)
 
 
-# Compat re-exports — receipts live in runs
-def has_subagent_receipt(*args: Any, **kwargs: Any) -> bool:
-    from ascendc_harness.runs import has_subagent_receipt as _h
-
-    return _h(*args, **kwargs)
-
-
-def write_subagent_receipt(*args: Any, **kwargs: Any):
-    from ascendc_harness.runs import write_subagent_receipt as _w
-
-    return _w(*args, **kwargs)
-
-
 # Advance / rework / complete / next
 from ascendc_harness.state.machine import (  # noqa: E402
     advance_phase,
@@ -295,7 +281,6 @@ __all__ = [
     "advance_phase",
     "complete_workflow",
     "describe_next",
-    "has_subagent_receipt",
     "load_state",
     "mark_terminal",
     "new_run_id",
@@ -306,5 +291,4 @@ __all__ = [
     "save_state",
     "start_workflow",
     "workflow_state_path",
-    "write_subagent_receipt",
 ]

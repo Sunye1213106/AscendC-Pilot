@@ -1,31 +1,26 @@
 ---
+name: tg-plan
+description: 生成覆盖义务并人工批准。 Harness 管阶段；本 Skill 只索引 Action。
 disable-model-invocation: true
 ---
 
-                ---
-                name: tg-plan
-                description: >-
-                  生成覆盖义务并人工批准。 Harness 管阶段；本 Skill 只索引 Action。
-                disable-model-invocation: true
-                ---
+# tg-plan
 
-                # tg-plan
+生成覆盖义务并人工批准。
 
-                生成覆盖义务并人工批准。
+本 Skill 不定义工作流阶段。执行时：
 
-                本 Skill 不定义工作流阶段。执行时：
+1. 调用 `harness start`（同 workflow 活动 run 则复用）；
+2. 调用 `harness next`；
+3. 对返回的 action_id 调用 `harness run-action <action_id>`（prepare；确定性 Action 会自动 finalize）；
+4. 语义 Action：按 Runtime Bundle 派发声明 actor，产出后调用 `harness run-action <action_id> --finalize`；
+5. 调用 `harness advance`（仅消费 run-action 签发的可信收据）。
 
-                1. 调用 `harness start/resume`；
-                2. 调用 `harness next`；
-                3. 加载返回 Action 对应的组合能力（Policy / Capability / Action Method / Prompt / Role）；
-                4. 执行一个 Action；
-                5. 将结果交回 Harness。
+## Actions
 
-                ## Actions
-
-                | action_id | 名称 | method | agent |
-                |---|---|---|---|
-                | `plan_scope` | 确定规划范围 | `tg-plan/plan-scope` | `deterministic-tg-engine` |
+| action_id | 名称 | method | agent |
+|---|---|---|---|
+| `plan_scope` | 确定规划范围 | `tg-plan/plan-scope` | `deterministic-tg-engine` |
 | `plan_precheck` | 规划前置门禁 | `tg-plan/plan-precheck` | `deterministic-tg-engine` |
 | `plan_build` | 生成覆盖义务 | `tg-plan/plan-build` | `deterministic-tg-engine` |
 | `plan_approve` | 批准规划 | `tg-plan/plan-approve` | `human` |
@@ -62,3 +57,12 @@ Harness 独占状态、合法边、门禁与完成态。
 | `plan_precheck` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `tg-plan/plan-precheck` | `-` | `deterministic-tg-engine` |
 | `plan_build` | source-authority,code-access,evidence,language,harness-control,output-quality | obligation-analysis,kb-query | `tg-plan/plan-build` | `-` | `deterministic-tg-engine` |
 | `plan_approve` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `tg-plan/plan-approve` | `tg/plan-approve` | `human` |
+
+## Action runtime index
+
+| action_id | method_path | prompt_path | output_contract | role |
+|---|---|---|---|---|
+| `plan_scope` | `actions/plan-scope/METHOD.md` | `-` | `plan-scope-v1` | `deterministic_engine` |
+| `plan_precheck` | `actions/plan-precheck/METHOD.md` | `-` | `plan-precheck-v1` | `deterministic_engine` |
+| `plan_build` | `actions/plan-build/METHOD.md` | `-` | `plan-build-v1` | `deterministic_engine` |
+| `plan_approve` | `actions/plan-approve/METHOD.md` | `prompts/tasks/tg/plan-approve.md` | `plan-approved-v1` | `-` |

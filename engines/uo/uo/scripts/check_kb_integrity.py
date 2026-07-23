@@ -29,7 +29,6 @@ REWORK_STAGES = frozenset(
 # Parent action alias: input_derivable → residual_resolve + classify/escalate.
 REWORK_STAGE_ALIASES = {
     "input_derivable": "residual_resolve",
-    "phase0_scope": "scope",
 }
 
 
@@ -240,7 +239,6 @@ def _collect_input_derivable_issues(uo_root: Path, issues: list[dict[str, Any]])
         "false": 0,
         "unsolved": 0,
         "open_gaps": 0,
-        "contract_checked": 0,
     }
     if not id_path.is_file():
         issues.append(
@@ -350,7 +348,7 @@ def _collect_input_derivable_issues(uo_root: Path, issues: list[dict[str, Any]])
             if isinstance(it, dict) and (it.get("id") or it.get("key_id"))
         }
     mismatch: list[str] = []
-    for kid, entry in list(keys.items())[:40]:
+    for kid, entry in keys.items():
         if not isinstance(entry, dict):
             continue
         idv = entry.get("input_derivable")
@@ -373,8 +371,6 @@ def _collect_input_derivable_issues(uo_root: Path, issues: list[dict[str, Any]])
         if idv is True and not (entry.get("host_parent") or entry.get("derivation_roots")):
             # already covered by INPUT_DERIVABLE_TRUE_NO_PARENT; skip duplicate
             pass
-    # legacy alias for stats consumers
-    stats["contract_checked"] = int(stats.get("key_space_checked") or 0)
     if mismatch:
         issues.append(
             {

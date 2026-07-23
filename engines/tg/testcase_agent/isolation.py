@@ -10,7 +10,6 @@ from typing import Any
 from .io import read_yaml, write_yaml
 
 UO_MARKERS = (".ascendc-agent", "uo")  # refuse writes under .../.ascendc-agent/uo/...
-LEGACY_UO_MARKER = ".understand-operator"
 
 
 class IsolationError(PermissionError):
@@ -19,8 +18,6 @@ class IsolationError(PermissionError):
 
 def _is_uo_tree(resolved: Path) -> bool:
     parts = resolved.parts
-    if LEGACY_UO_MARKER in parts:
-        return True
     if ".ascendc-agent" in parts:
         try:
             idx = parts.index(".ascendc-agent")

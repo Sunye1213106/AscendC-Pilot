@@ -111,7 +111,7 @@ def tg_plan(
             write_yaml(run_path, run)
 
     # Realization contract must exist before planning so obligations are CSV-realizable.
-    # When csv_consumer_root is provided, tg-plan embeds tg-contract (rebuild).
+    # When csv_consumer_root is provided, tg-plan rebuilds the TG contract.
     contract_embedded = False
     try:
         if csv_consumer_root is not None:

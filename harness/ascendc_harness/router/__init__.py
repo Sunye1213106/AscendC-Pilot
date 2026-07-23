@@ -13,7 +13,6 @@ SLASH_MAP = {
     "/uo-update": "uo-update",
     "/uo-query": "uo-query",
     "/uo-code-review": "uo-code-review",
-    "/uo-diff": "uo-update",  # merged into update
     "/tg-init": "tg-init",
     "/tg-plan": "tg-plan",
     "/tg-solve": "tg-solve",
@@ -62,10 +61,6 @@ def route(text: str) -> dict[str, Any]:
             "slash": WORKFLOWS[wid].get("slash"),
             "method": "slash",
         }
-        if first == "/uo-diff":
-            out["intent"] = "diff_only"
-            out["action_hint"] = "diff_only"
-            out["message_zh"] = "已并入 uo-update：仅差异摘要，不进入完整更新"
         return out
 
     hits: list[str] = []

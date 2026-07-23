@@ -1,31 +1,26 @@
 ---
+name: uo-init
+description: 首次建立 UO KB。 Harness 管阶段；本 Skill 只索引 Action。
 disable-model-invocation: true
 ---
 
-                ---
-                name: uo-init
-                description: >-
-                  首次建立 UO KB。 Harness 管阶段；本 Skill 只索引 Action。
-                disable-model-invocation: true
-                ---
+# uo-init
 
-                # uo-init
+首次建立 UO KB。
 
-                首次建立 UO KB。
+本 Skill 不定义工作流阶段。执行时：
 
-                本 Skill 不定义工作流阶段。执行时：
+1. 调用 `harness start`（同 workflow 活动 run 则复用）；
+2. 调用 `harness next`；
+3. 对返回的 action_id 调用 `harness run-action <action_id>`（prepare；确定性 Action 会自动 finalize）；
+4. 语义 Action：按 Runtime Bundle 派发声明 actor，产出后调用 `harness run-action <action_id> --finalize`；
+5. 调用 `harness advance`（仅消费 run-action 签发的可信收据）。
 
-                1. 调用 `harness start/resume`；
-                2. 调用 `harness next`；
-                3. 加载返回 Action 对应的组合能力（Policy / Capability / Action Method / Prompt / Role）；
-                4. 执行一个 Action；
-                5. 将结果交回 Harness。
+## Actions
 
-                ## Actions
-
-                | action_id | 名称 | method | agent |
-                |---|---|---|---|
-                | `prepare_layout` | 创建知识库目录 | `uo-init/prepare-layout` | `deterministic-uo-engine` |
+| action_id | 名称 | method | agent |
+|---|---|---|---|
+| `prepare_layout` | 创建知识库目录 | `uo-init/prepare-layout` | `deterministic-uo-engine` |
 | `scope_confirmation` | 确认分析范围 | `uo-init/scope-confirmation` | `ascendc-agent` |
 | `extract_plan` | 抽取计划与分层 IR | `uo-init/extract-plan` | `uo-semantic-resolve` |
 | `key_triage` | KEY 粗分 | `uo-init/key-triage` | `uo-key-resolve` |
@@ -72,3 +67,17 @@ Harness 独占状态、合法边、门禁与完成态。
 | `confidence_review` | source-authority,code-access,evidence,language,harness-control,output-quality | structured-review,kb-query | `uo-init/confidence-review` | `uo/confidence-review` | `uo-confidence-review` |
 | `export_integrity` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `uo-init/export-integrity` | `-` | `deterministic-uo-engine` |
 | `kb_review` | source-authority,code-access,evidence,language,harness-control,output-quality | structured-review,kb-query | `uo-init/kb-review` | `uo/kb-review` | `uo-kb-review` |
+
+## Action runtime index
+
+| action_id | method_path | prompt_path | output_contract | role |
+|---|---|---|---|---|
+| `prepare_layout` | `actions/prepare-layout/METHOD.md` | `-` | `kb-layout-v1` | `deterministic_engine` |
+| `scope_confirmation` | `actions/scope-confirmation/METHOD.md` | `prompts/tasks/uo/scope-confirmation.md` | `scope-confirmed-v1` | `producer` |
+| `extract_plan` | `actions/extract-plan/METHOD.md` | `prompts/tasks/uo/extract-plan.md` | `extract-plan-v1` | `producer` |
+| `key_triage` | `actions/key-triage/METHOD.md` | `prompts/tasks/uo/key-triage.md` | `key-triage-v1` | `producer` |
+| `key_resolution` | `actions/key-resolution/METHOD.md` | `prompts/tasks/uo/key-resolution.md` | `input-derivable-patch-v1` | `producer` |
+| `confidence_report` | `actions/confidence-report/METHOD.md` | `-` | `confidence-report-v1` | `deterministic_engine` |
+| `confidence_review` | `actions/confidence-review/METHOD.md` | `prompts/tasks/uo/confidence-review.md` | `confidence-reason-review-v1` | `referee` |
+| `export_integrity` | `actions/export-integrity/METHOD.md` | `-` | `integrity-v1` | `deterministic_engine` |
+| `kb_review` | `actions/kb-review/METHOD.md` | `prompts/tasks/uo/kb-review.md` | `kb-review-v1` | `referee` |

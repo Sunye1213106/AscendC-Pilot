@@ -1,4 +1,4 @@
-"""Harness CLI: doctor / migrate-legacy / validate / start / next / advance / rework / complete / route / status."""
+"""Harness CLI: doctor / validate / start / next / advance / run-action / ..."""
 
 from __future__ import annotations
 
@@ -14,11 +14,6 @@ def main(argv: list[str] | None = None) -> int:
 
     p_doctor = sub.add_parser("doctor", help="Environment precheck")
     p_doctor.add_argument("--project", type=Path, default=Path.cwd())
-
-    p_mig = sub.add_parser("migrate-legacy", help="Copy legacy KB/TG trees into .ascendc-agent")
-    p_mig.add_argument("project", type=Path)
-    p_mig.add_argument("--op-name", default="")
-    p_mig.add_argument("--dry-run", action="store_true")
 
     p_gates = sub.add_parser("validate-key-gates", help="Run KEY hard gates (ses_076d)")
     p_gates.add_argument("project", type=Path)
@@ -41,10 +36,20 @@ def main(argv: list[str] | None = None) -> int:
     p_ctx.add_argument("--intent", required=True)
     p_ctx.add_argument("--topic", default="")
 
-    p_start = sub.add_parser("start", help="Start workflow at entry_state")
+    p_start = sub.add_parser("start", help="Start workflow at entry_state (idempotent if same workflow active)")
     p_start.add_argument("workflow_id")
     p_start.add_argument("--project", type=Path, default=Path.cwd())
     p_start.add_argument("--intent", default="", help="e.g. diff_only for uo-update")
+    p_start.add_argument("--force-new", action="store_true", help="Force a new run even if same workflow is active")
+
+    p_run = sub.add_parser("run-action", help="Prepare or finalize a workflow Action (sole execution entry)")
+    p_run.add_argument("action_id")
+    p_run.add_argument("--project", type=Path, default=Path.cwd())
+    p_run.add_argument(
+        "--finalize",
+        action="store_true",
+        help="Finalize prepared action: check contract/gates and issue signed receipt",
+    )
 
     p_adv = sub.add_parser("advance", help="Advance phase only if phase_gates pass")
     p_adv.add_argument("next_phase")
@@ -85,25 +90,10 @@ def main(argv: list[str] | None = None) -> int:
     p_auth.add_argument("--agent", default="")
     p_auth.add_argument("--action", default="")
 
-    p_receipt = sub.add_parser("issue-receipt", help="Issue Harness-signed run receipt for an action")
-    p_receipt.add_argument("--project", type=Path, default=Path.cwd())
-    p_receipt.add_argument("--actor", required=True, help="actor_id (agent or engine id)")
-    p_receipt.add_argument("--action", required=True, help="action_id")
-    p_receipt.add_argument("--actor-type", default="producer")
-    p_receipt.add_argument("--artifact", default="")
-    p_receipt.add_argument("--input", action="append", default=[], help="name=path for input hash")
-    p_receipt.add_argument("--output", action="append", default=[], help="name=path for output hash")
-
     args = parser.parse_args(argv)
 
     if args.cmd == "doctor":
         return _doctor(args.project)
-    if args.cmd == "migrate-legacy":
-        from ascendc_harness.migrate import migrate_legacy
-
-        result = migrate_legacy(args.project, op_name=args.op_name or None, dry_run=args.dry_run)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 0 if result.get("ok") else 2
     if args.cmd == "validate-key-gates":
         from ascendc_harness.gates import run_key_gates
 
@@ -142,13 +132,35 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(pack, ensure_ascii=False, indent=2))
         return 0
     if args.cmd == "start":
-        from ascendc_harness.state import start_workflow
+        from ascendc_harness.state import load_state, start_workflow
         from ascendc_harness.workflows import get_workflow
 
         get_workflow(args.workflow_id)  # validate
+        if not args.force_new:
+            existing = load_state(args.project)
+            if (
+                existing
+                and str(existing.get("workflow_id") or "") == args.workflow_id
+                and str(existing.get("status") or "")
+                in {"running", "rework_required", "human_required"}
+            ):
+                print(
+                    json.dumps(
+                        {**existing, "resumed": True, "message_zh": "复用同 workflow 活动 run"},
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+                return 0
         state = start_workflow(args.project, args.workflow_id, intent=getattr(args, "intent", "") or "")
         print(json.dumps(state, ensure_ascii=False, indent=2))
         return 0
+    if args.cmd == "run-action":
+        from ascendc_harness.actions import run_action
+
+        result = run_action(args.project, args.action_id, finalize=bool(args.finalize))
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0 if result.get("ok") else 1
     if args.cmd == "advance":
         from ascendc_harness.state import advance_phase
 
@@ -192,8 +204,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "emit-confidence-report":
         from ascendc_harness.paths import uo_root
-        from ascendc_harness.runs import issue_receipt
-        from ascendc_harness.spec_hashes import workflow_spec_hash
 
         uo = uo_root(args.project, args.op_name or None)
         from uo.scripts.check_final_confidence import check_final_confidence
@@ -203,21 +213,7 @@ def main(argv: list[str] | None = None) -> int:
             write_report=not (args.no_write_report or args.no_skeleton),
             write_skeleton=False,
         )
-        try:
-            issue_receipt(
-                args.project,
-                actor_type="deterministic_engine",
-                actor_id="deterministic-uo-engine",
-                action_id="emit_confidence_report",
-                workflow_spec_hash=workflow_spec_hash("uo-init"),
-                output_hashes={
-                    "confidence_gate": str((uo / "checks" / "confidence_gate.yaml")),
-                    "confidence_report": str((uo / "summary" / "confidence_report.md")),
-                },
-                checker_result={"status": payload.get("status"), "ok": payload.get("ok")},
-            )
-        except Exception:
-            pass
+        # Receipts are issued only via `harness run-action … --finalize`.
         print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
         return 0 if payload.get("ok") or str(payload.get("status") or "") in {"pass", "reported"} else 1
     if args.cmd == "authorize":
@@ -237,41 +233,6 @@ def main(argv: list[str] | None = None) -> int:
         if verdict.get("decision") == "ask":
             return 2
         return 1
-    if args.cmd == "issue-receipt":
-        from ascendc_harness.runs import file_sha256, issue_receipt
-        from ascendc_harness.spec_hashes import workflow_spec_hash
-        from ascendc_harness.state import load_state
-
-        state = load_state(args.project)
-        wid = str((state or {}).get("workflow_id") or "")
-        in_hashes: dict[str, str] = {}
-        out_hashes: dict[str, str] = {}
-        for item in args.input or []:
-            if "=" in item:
-                name, rel = item.split("=", 1)
-                in_hashes[name] = file_sha256(Path(rel))
-        for item in args.output or []:
-            if "=" in item:
-                name, rel = item.split("=", 1)
-                out_hashes[name] = file_sha256(Path(rel))
-        if args.artifact and "artifact" not in out_hashes:
-            art = Path(args.artifact)
-            if art.is_file():
-                out_hashes["artifact"] = file_sha256(art)
-            else:
-                out_hashes["artifact_path"] = args.artifact
-        path = issue_receipt(
-            args.project,
-            actor_type=args.actor_type,
-            actor_id=args.actor,
-            action_id=args.action,
-            workflow_spec_hash=workflow_spec_hash(wid) if wid else workflow_spec_hash(),
-            input_hashes=in_hashes,
-            output_hashes=out_hashes or {"artifact": args.artifact or "none"},
-            artifact=args.artifact,
-        )
-        print(json.dumps({"ok": True, "receipt": str(path)}, ensure_ascii=False, indent=2))
-        return 0
     return 2
 
 
@@ -298,7 +259,7 @@ def _doctor(project: Path) -> int:
 
     root = ensure_agent_layout(project)
     print(f"agent_root={root}")
-    print(f"legacy_dirs_ignored_for_writes=yes; canonical={AGENT_DIR}")
+    print(f"canonical={AGENT_DIR}")
     if issues:
         print("ISSUES:")
         for item in issues:

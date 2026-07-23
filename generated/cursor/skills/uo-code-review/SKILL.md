@@ -10,11 +10,11 @@ disable-model-invocation: true
 
 本 Skill 不定义工作流阶段。执行时：
 
-1. 调用 `harness start/resume`；
+1. 调用 `harness start`（同 workflow 活动 run 则复用）；
 2. 调用 `harness next`；
-3. 加载返回 Action 对应的组合能力（Policy / Capability / Action Method / Prompt / Role）；
-4. 执行一个 Action；
-5. 将结果交回 Harness。
+3. 对返回的 action_id 调用 `harness run-action <action_id>`（prepare；确定性 Action 会自动 finalize）；
+4. 语义 Action：按 Runtime Bundle 派发声明 actor，产出后调用 `harness run-action <action_id> --finalize`；
+5. 调用 `harness advance`（仅消费 run-action 签发的可信收据）。
 
 ## Actions
 
@@ -51,3 +51,9 @@ Harness 独占状态、合法边、门禁与完成态。
 | action_id | policies | capabilities | method | prompt | agent |
 |---|---|---|---|---|---|
 | `code_review` | source-authority,code-access,evidence,language,harness-control,output-quality | structured-review,kb-query,cbm-navigation,source-reading | `uo-code-review/code-review` | `uo/code-review` | `uo-code-reviewer` |
+
+## Action runtime index
+
+| action_id | method_path | prompt_path | output_contract | role |
+|---|---|---|---|---|
+| `code_review` | `actions/code-review/METHOD.md` | `prompts/tasks/uo/code-review.md` | `code-review-v1` | `readonly_analyst` |

@@ -17,7 +17,7 @@ solver = [
 ]
 
 [project.scripts]
-tg-contract = "testcase_agent.cli:contract_main"
+# tg-contract removed from public CLI — invoke via harness run-action contract_build
 tg-plan = "testcase_agent.cli:plan_main"
 tg-solve = "testcase_agent.cli:solve_main"
 tg-init = "testcase_agent.cli:init_main"

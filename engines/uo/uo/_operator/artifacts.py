@@ -11,8 +11,6 @@ from uo._operator.spec import spec_bundle_hash
 # Canonical KB root: <repo>/.ascendc-agent/uo/ (no per-op nesting).
 ARTIFACT_DIR = ".ascendc-agent"
 UO_SUBDIR = "uo"
-# Legacy (read via migrate-legacy only)
-LEGACY_ARTIFACT_DIR = ".understand-operator"
 
 
 def safe_op_name(name: str | None, repo_root: Path) -> str:
@@ -57,23 +55,6 @@ def resolve_existing_operator_root(repo_root: Path, op_name: str) -> tuple[str, 
         # Soft bind: one KB tree — return it with manifest name rather than invent a second root
         return (manifest_op or op_name), exact
 
-    # Legacy fallback for pre-migration trees
-    kb_parent = repo_root / LEGACY_ARTIFACT_DIR
-    if not kb_parent.exists():
-        return None
-    token = op_name.strip().lower()
-    matches: list[tuple[str, Path]] = []
-    for candidate in kb_parent.iterdir():
-        if not candidate.is_dir() or not (candidate / "manifest.yaml").exists():
-            continue
-        aliases = {alias.lower() for alias in _default_operator_aliases(candidate.name, repo_root)}
-        aliases.add(candidate.name.lower())
-        aliases.add(re.sub(r"[^A-Za-z0-9]+", "", candidate.name).lower())
-        aliases.update(_manifest_aliases(candidate))
-        if token in aliases:
-            matches.append((candidate.name, candidate))
-    if len(matches) == 1:
-        return matches[0]
     return None
 
 
@@ -178,7 +159,7 @@ def init_operator_layout(base: Path, op_name: str, repo_root: Path) -> None:
 
 
 def init_operator_contract_layout(base: Path, op_name: str, repo_root: Path) -> None:
-    """Create the layered-IR operator KB layout (no legacy facts/graphs/contracts shells)."""
+    """Create the layered-IR operator KB layout."""
     bundle_hash = spec_bundle_hash()
     for rel in [
         "ir",
@@ -197,7 +178,7 @@ def init_operator_contract_layout(base: Path, op_name: str, repo_root: Path) -> 
     ]:
         (base / rel).mkdir(parents=True, exist_ok=True)
 
-    # Remove obsolete Phase1-3 empty shells if present from older plugin versions.
+    # Remove obsolete empty shells if present.
     _prune_obsolete_layout_dirs(base)
 
     write_text_if_missing(
@@ -238,7 +219,7 @@ artifacts:
 
 
 def _prune_obsolete_layout_dirs(base: Path) -> None:
-    """Drop legacy empty shells that confuse operators after the layered-IR refactor."""
+    """Drop obsolete empty shells that confuse operators."""
     obsolete_dirs = (
         "facts",
         "graphs",

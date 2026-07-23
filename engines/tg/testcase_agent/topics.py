@@ -42,7 +42,6 @@ def load_topic_manifest(out_root: Path, topic: str, *, project_root: Path | None
     ]
     if project_root is not None:
         candidates.append(project_root / ".ascendc-agent" / "tg" / "topics" / f"{topic}.yaml")
-        candidates.append(project_root / ".testcase-generator" / "topics" / f"{topic}.yaml")
         candidates.append(Path(__file__).resolve().parent / "topics" / f"{topic}.yaml")
     for path in candidates:
         if path.exists():

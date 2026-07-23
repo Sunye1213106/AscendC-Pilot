@@ -9,7 +9,6 @@ from .io import write_yaml
 from .hashing import stable_hash
 
 
-# Deprecated empty shims — legacy FAG column tables removed. Emit only via consumer_schema / realization_map.
 CSV_COLUMNS: list[str] = []
 DEFAULT_SHAPE: dict[str, Any] = {}
 
@@ -25,7 +24,6 @@ def realize_candidates_to_csv(
     dry_run: bool = False,
     level: str = "",
     case_name: str = "",
-    allow_legacy_realization: bool = False,
 ) -> dict[str, Any]:
     files = snapshot.get("files") if isinstance(snapshot.get("files"), dict) else {}
     constraints = _as_dict(files.get("tiling/constraints.yaml"))
@@ -71,14 +69,12 @@ def realize_candidates_to_csv(
             row = build_case_row_from_realization_map(candidate, model, realization_map, idx)
             realization = {"status": "ok", "reason": "csv_projection", "refs": [], "shape": {}}
         else:
-            _ = allow_legacy_realization  # flag removed; hardcoded FAG emit is no longer supported
             blocked.append(
                 {
                     "candidate_id": candidate.get("id") or f"CAND_{idx:04d}",
                     "status": "realize_blocked",
                     "reason": (
-                        "CONTRACT_REQUIRED: provide consumer_schema/realization_map from tg-contract "
-                        "(hardcoded CSV_COLUMNS / DEFAULT_SHAPE emit removed)"
+                        "CONTRACT_REQUIRED: provide consumer_schema/realization_map from harness contract_build"
                     ),
                     "model": model,
                 }
@@ -101,7 +97,6 @@ def realize_candidates_to_csv(
         "dry_run": dry_run,
         "csv_columns": columns,
         "realization_map_enabled": bool(realization_map),
-        "legacy_mode": False,
     }
     cases_dir = out_root / "cases"
     if level:
@@ -166,7 +161,7 @@ def match_realization(model: dict[str, Any], candidate: dict[str, Any], input_re
     if not input_realization:
         return {
             "status": "blocked",
-            "reason": "no input_realization catalog; use tg-contract consumer_schema emit (DEFAULT_SHAPE removed)",
+            "reason": "no input_realization catalog; use harness contract_build consumer_schema emit",
             "refs": [],
         }
     return {"status": "blocked", "reason": "no matching input_realization / shape rule", "refs": []}
@@ -193,10 +188,10 @@ def realization_matches_model(model: dict[str, Any], expected_key: dict[str, Any
 
 
 def build_case_row(candidate: dict[str, Any], model: dict[str, Any], realization: dict[str, Any], idx: int) -> dict[str, Any]:
-    """Removed: hardcoded FAG CSV emit. Use materialize_row_from_contract / map projection."""
+    """Use materialize_row_from_contract / map projection."""
     raise RuntimeError(
-        "LEGACY_BUILD_CASE_ROW_REMOVED: hardcoded CSV_COLUMNS/DEFAULT_SHAPE emit is gone; "
-        "run tg-contract and use materialize_row_from_contract / build_case_row_from_realization_map"
+        "CSV_CONTRACT_REQUIRED: run harness run-action contract_build and use "
+        "materialize_row_from_contract / build_case_row_from_realization_map"
     )
 
 
