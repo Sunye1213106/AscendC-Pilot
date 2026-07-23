@@ -3,7 +3,7 @@ workflow_id: uo-init
 version: 1
 name_zh: 确认分析范围
 role_id: producer
-agent_id: ascendc-agent
+agent_id: ascendc-pilot
 capabilities:
 - cbm-navigation
 - source-reading
@@ -12,7 +12,7 @@ policies:
 - code-access
 - evidence
 - language
-- harness-control
+- pilot-control
 - output-quality
 task_prompt_id: uo/scope-confirmation
 context_profile_id: uo-init-scope-confirmation

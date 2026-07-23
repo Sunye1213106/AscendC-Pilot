@@ -1,0 +1,19 @@
+id: uo-key-resolve
+version: 1
+name_zh: KEY triage/resolve producer
+role: producer
+mode: subagent
+description: KEY triage/resolve producer
+read_scopes:
+  - "uo/**"
+  - "runs/**"
+write_scopes:
+  - uo/ir/key_triage.yaml
+  - uo/ir/input_derivable_patch.yaml
+  - "uo/ir/key_shape_resolve/**"
+forbidden:
+  - modify_pilot_state
+  - declare_workflow_passed
+  - write_outside_declared_scope
+tool_budget:
+  max_calls: 12

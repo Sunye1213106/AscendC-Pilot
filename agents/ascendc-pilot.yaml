@@ -1,0 +1,18 @@
+id: ascendc-pilot
+version: 1
+name_zh: AscendC-Pilot
+role: producer
+mode: primary
+description: >-
+  AscendC-Pilot primary control agent. Tab-select this agent before /uo-init|/tg-init|/ce-review;
+  default Build agent will skip pilot.
+read_scopes:
+  - "*"
+write_scopes:
+  []
+forbidden:
+  - modify_pilot_state
+  - declare_workflow_passed
+  - write_outside_declared_scope
+tool_budget:
+  max_calls: 12

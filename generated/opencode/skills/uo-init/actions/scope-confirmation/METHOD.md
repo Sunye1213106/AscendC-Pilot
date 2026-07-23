@@ -1,7 +1,7 @@
-# scope_confirmation — 范围确认（Harness 托管）
+# scope_confirmation — 范围确认（Pilot 托管）
 
-> 勿在本文件推进 Harness 阶段；只执行 `harness next` 给出的 `scope_confirmation`。  
-> **`harness` / `harness uo-scope` 是真实 CLI。禁止把本 METHOD 当成手工清单去 Glob 源码。**
+> 勿在本文件推进 Pilot 阶段；只执行 `acp next` 给出的 `scope_confirmation`。  
+> **`acp` / `acp uo-scope` 是真实 CLI。禁止把本 METHOD 当成手工清单去 Glob 源码。**
 
 ## Purpose
 
@@ -9,10 +9,10 @@
 
 ## 前置（不得跳过）
 
-若 `harness next` 仍返回 `prepare_layout`，或 `.ascendc-agent/uo/manifest.yaml` 不存在：
+若 `acp next` 仍返回 `prepare_layout`，或 `.ascendc-pilot/uo/manifest.yaml` 不存在：
 
 ```text
-harness run-action prepare_layout --project <算子目录>
+acp run-action prepare_layout --project <算子目录>
 ```
 
 **禁止**在未 prepare 时直接 scope / 读 arch35 源码“建库”。
@@ -22,11 +22,14 @@ harness run-action prepare_layout --project <算子目录>
 | 步骤 | 谁 | 命令 | 产物 |
 |---|---|---|---|
 | 0 | Engine | `prepare_layout`（上表） | `$UO_ROOT/` + manifest |
-| 1 | Harness | `harness uo-scope scan --architecture <arch>` | **唯一合法计数表**（含 sibling/parent `common/`） |
-| 2 | 人+Agent | **原样粘贴** scan 输出 → AskQuestion → `harness uo-scope checkpoint --decision …` | `scope_confirmed.yaml` |
-| 3–5 | Harness | `build-evidence` → `closure` → `stage` | build 证据 / confirmed / `index_stage` |
-| 6 | MCP | `index_repository`(仅 `index_stage`) | CBM |
-| 7–8 | Harness | `finalize` → `run-action scope_confirmation --finalize` | receipt |
+| 1 | Pilot | `acp uo-scope scan --architecture <arch>` | **唯一合法计数表**（含 sibling/parent `common/`） |
+| 2 | 人+Agent | **原样粘贴** scan 输出 → AskQuestion → `acp uo-scope checkpoint --decision …` | `scope_confirmed.yaml` |
+| 3–5 | Pilot | `build-evidence` → `closure` → `stage` | build 证据 / confirmed / `index_stage` |
+| 6 | MCP | `index_repository`(仅 `index_stage`，mode=fast) → 写出 `uo/cbm/index_meta.json` | CBM |
+| 7–8 | Pilot | `finalize` → `run-action scope_confirmation --finalize` | `runs/*/scope/receipt.yaml` |
+
+**跳过步骤 6 时 `uo-scope finalize` 与 Action finalize 均硬失败**（缺 `index_meta.json` / `indexed_via!=mcp`）。  
+正式产物路径为 `uo/runs/<run>/scope/scope_confirmed.yaml`（**不是** `uo/summary/`）。
 
 `--project` = 算子目录（如 `…/flash_attention_score_grad`），不是 `ops-transformer` 父仓。
 

@@ -6,7 +6,7 @@
 
                 ## Input Interpretation
 
-                仅处理 `harness next` 提供的当前 unresolved / target 子集与上下文包。
+                仅处理 `acp next` 提供的当前 unresolved / target 子集与上下文包。
 
                 ## Domain Procedure
 
@@ -30,4 +30,4 @@
                 - 证据不足 → unresolved / needs_human
                 - 缺工具或 gate 前置 → 停止并回报 blocking reason
 
-                本文件不得描述 Harness advance、complete 或其他阶段。
+                本文件不得描述 Pilot advance、complete 或其他阶段。

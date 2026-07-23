@@ -10,7 +10,7 @@ policies:
 - code-access
 - evidence
 - language
-- harness-control
+- pilot-control
 - output-quality
 task_prompt_id: tg/human-confirm
 context_profile_id: tg-init-human-confirm

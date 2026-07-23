@@ -1,6 +1,6 @@
 # plan_approve (migrated domain method)
 
-> Domain content migrated from skills-src/tg-plan/references/approval-gate.md. Do not advance Harness state from this file.
+> Domain content migrated from skills/tg-plan/references/approval-gate.md. Do not advance Pilot state from this file.
 
 # Approve 门禁（tg-plan）
 

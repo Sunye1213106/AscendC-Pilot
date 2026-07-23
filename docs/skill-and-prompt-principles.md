@@ -4,7 +4,7 @@
 
 | 层 | 负责 | 不负责 |
 |---|---|---|
-| Harness Workflow | 阶段、状态、合法边、Action、门禁、完成条件 | 领域分析细节 |
+| Pilot Workflow | 阶段、状态、合法边、Action、门禁、完成条件 | 领域分析细节 |
 | Policy | 全局稳定规则 | 具体任务步骤 |
 | Capability | 可复用原子工程能力 | 工作流推进 |
 | Action Method | 当前 Action 的领域方法 | 其他阶段 / advance |
@@ -16,13 +16,13 @@
 
 | 路径 | 内容 |
 |---|---|
-| `skills-src/policies/` | 全局 Policy |
-| `skills-src/capabilities/` | 原子 Capability |
-| `skills-src/actions/` | Action Method |
-| `skills-src/roles/` | Role 合同 |
-| `skills-src/workflows/` | 薄入口 Skill |
-| `prompts-src/tasks/` | 有界 task prompt |
-| `agents-src/` | Agent YAML |
+| `skills/policies/` | 全局 Policy |
+| `skills/capabilities/` | 原子 Capability |
+| `skills/actions/` | Action Method |
+| `skills/roles/` | Role 合同 |
+| `skills/workflows/` | 薄入口 Skill |
+| `prompts/tasks/` | 有界 task prompt |
+| `agents/` | Agent YAML |
 | `generated/` | Composer 产物（可丢弃） |
 
 ## Composer
@@ -38,4 +38,4 @@ python scripts/compile_skills.py --repo .
 ## 八问（落在 Capability / Action Method）
 
 Capability / Action Method 应回答：何时用、输入、方法、输出、硬限制、停止条件。  
-**不得**描述 Harness advance / complete / 完整 phase WHILE。
+**不得**描述 Pilot advance / complete / 完整 phase WHILE。

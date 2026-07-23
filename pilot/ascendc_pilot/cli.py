@@ -1,0 +1,535 @@
+"""Pilot CLI (acp): doctor / validate / start / next / advance / run-action / ..."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+from ascendc_pilot.io import configure_stdio, print_json
+
+
+def main(argv: list[str] | None = None) -> int:
+    configure_stdio()
+    parser = argparse.ArgumentParser(prog="acp", description="AscendC-Pilot")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_doctor = sub.add_parser("doctor", help="Environment precheck")
+    p_doctor.add_argument("--project", type=Path, default=Path.cwd())
+
+    p_gates = sub.add_parser("validate-key-gates", help="Run KEY hard gates (ses_076d)")
+    p_gates.add_argument("project", type=Path)
+    p_gates.add_argument("--op-name", default="")
+
+    p_validate = sub.add_parser("validate", help="Run all gates for the active workflow")
+    p_validate.add_argument("--project", type=Path, default=Path.cwd())
+
+    p_route = sub.add_parser("route", help="Route natural language / slash to workflow")
+    p_route.add_argument("text", nargs="+")
+
+    p_status = sub.add_parser("status", help="Show workflow state")
+    p_status.add_argument("--project", type=Path, default=Path.cwd())
+
+    p_next = sub.add_parser("next", help="Show next allowed actions / obligations")
+    p_next.add_argument("--project", type=Path, default=Path.cwd())
+
+    p_ctx = sub.add_parser("context", help="Build context pack")
+    p_ctx.add_argument("--project", type=Path, default=Path.cwd())
+    p_ctx.add_argument("--intent", required=True)
+    p_ctx.add_argument("--topic", default="")
+
+    p_start = sub.add_parser("start", help="Start workflow at entry_state (idempotent if same workflow active)")
+    p_start.add_argument("workflow_id")
+    p_start.add_argument("--project", type=Path, default=Path.cwd())
+    p_start.add_argument("--intent", default="", help="e.g. diff_only for uo-update")
+    p_start.add_argument("--force-new", action="store_true", help="Force a new run even if same workflow is active")
+    p_start.add_argument("--op-name", default="", help="Operator name for UO/TG engines")
+    p_start.add_argument("--architecture", default="", help="Target architecture (default arch35)")
+    p_start.add_argument("--test-script-root", type=Path, default=None, help="CSV consumer / test script root")
+    p_start.add_argument("--csv-consumer-root", type=Path, default=None, help="Alias of --test-script-root")
+    p_start.add_argument("--level", default="", help="TG plan/solve level (default L0)")
+    p_start.add_argument("--focus", default="", help="TG plan focus")
+
+    p_run = sub.add_parser("run-action", help="Prepare or finalize a workflow Action (sole execution entry)")
+    p_run.add_argument("action_id")
+    p_run.add_argument("--project", type=Path, default=Path.cwd())
+    p_run.add_argument(
+        "--finalize",
+        action="store_true",
+        help="Finalize prepared action: check contract/gates and issue signed receipt",
+    )
+
+    p_adv = sub.add_parser("advance", help="Advance phase only if phase_gates pass")
+    p_adv.add_argument("next_phase")
+    p_adv.add_argument("--project", type=Path, default=Path.cwd())
+
+    p_rework = sub.add_parser("rework", help="Follow an explicit rework edge")
+    p_rework.add_argument("--project", type=Path, default=Path.cwd())
+    p_rework.add_argument("--reason", default="", help="reason_code for selecting rework edge")
+    p_rework.add_argument("--to", default="", help="optional explicit destination phase")
+
+    p_done = sub.add_parser("complete", help="Mark workflow passed only if all gates succeed")
+    p_done.add_argument("--project", type=Path, default=Path.cwd())
+    p_done.add_argument("--reason", default="")
+
+    p_block = sub.add_parser("block", help="Mark workflow blocked/failed/human_required")
+    p_block.add_argument("status", choices=["blocked", "failed", "human_required", "human"])
+    p_block.add_argument("--project", type=Path, default=Path.cwd())
+    p_block.add_argument("--reason", default="")
+
+    p_inspect = sub.add_parser("inspect-failure", help="Show structured last_failure / failure card")
+    p_inspect.add_argument("--project", type=Path, default=Path.cwd())
+
+    p_retry_env = sub.add_parser(
+        "retry-after-environment-fix",
+        help="After human_required environment fix, restore rework_required for failed action",
+    )
+    p_retry_env.add_argument("--project", type=Path, default=Path.cwd())
+
+    p_abort = sub.add_parser("abort", help="Abort current run (mark failed)")
+    p_abort.add_argument("--project", type=Path, default=Path.cwd())
+    p_abort.add_argument("--reason", default="aborted_by_operator")
+
+    p_hashes = sub.add_parser("spec-hashes", help="Print four Spec Hash digests")
+    p_hashes.add_argument("--project", type=Path, default=Path.cwd())
+    p_hashes.add_argument("--workflow", default="")
+
+    p_conf = sub.add_parser(
+        "emit-confidence-report",
+        help="Deterministic engine: assemble confidence_report + confidence_gate from KB",
+    )
+    p_conf.add_argument("--project", type=Path, default=Path.cwd())
+    p_conf.add_argument("--op-name", default="")
+    p_conf.add_argument("--no-write-report", action="store_true", help="do not rewrite confidence_report.md")
+    p_conf.add_argument("--no-skeleton", action="store_true", help="deprecated alias for --no-write-report")
+
+    p_auth = sub.add_parser("authorize", help="Authorize tool call (OpenCode plugin hook)")
+    p_auth.add_argument("--project", type=Path, default=Path.cwd())
+    p_auth.add_argument("--tool", required=True)
+    p_auth.add_argument("--command", default="")
+    p_auth.add_argument("--path", default="")
+    p_auth.add_argument("--agent", default="")
+    p_auth.add_argument("--action", default="")
+    p_auth.add_argument("--lease-id", default="", help="Optional lease id (LEASE_REVOKED if stale)")
+
+    p_scope = sub.add_parser(
+        "uo-scope",
+        help="Run UO scope_confirmation deterministic steps (scan/checkpoint/stage/…)",
+    )
+    p_scope.add_argument(
+        "step",
+        choices=["scan", "checkpoint", "build-evidence", "closure", "stage", "finalize"],
+        help="Deterministic scope step",
+    )
+    p_scope.add_argument("--project", type=Path, default=Path.cwd())
+    p_scope.add_argument("--op-name", default="")
+    p_scope.add_argument("--architecture", default="arch35")
+    p_scope.add_argument(
+        "--decision",
+        default="",
+        help="For checkpoint: continue|revise|stop|manual_supplement",
+    )
+    p_scope.add_argument("--notes", default="")
+
+    p_uq = sub.add_parser("uo-query", help="Query UO KB graph (wraps uo_kb_query; no direct .py)")
+    p_uq.add_argument("--project", type=Path, default=Path.cwd())
+    p_uq.add_argument("--op-name", default="")
+    p_uq.add_argument("--pattern", default="")
+    p_uq.add_argument("--target", default="")
+    p_uq.add_argument("--depth", type=int, default=1)
+    p_uq.add_argument("--limit", type=int, default=50)
+    p_uq.add_argument("--relation-type", default="")
+    p_uq.add_argument("--status-only", action="store_true")
+
+    args = parser.parse_args(argv)
+
+    if args.cmd == "doctor":
+        return _doctor(args.project)
+    if args.cmd == "validate-key-gates":
+        from ascendc_pilot.gates import run_key_gates
+
+        payload = run_key_gates(args.project, op_name=args.op_name or None)
+        print_json(payload)
+        return 0 if payload.get("ok") else 1
+    if args.cmd == "validate":
+        from ascendc_pilot.gates import run_key_gates, run_workflow_gates
+
+        key_payload = run_key_gates(args.project)
+        wf = run_workflow_gates(args.project)
+        out = {"key_gates": key_payload, "workflow_gates": wf, "ok": bool(key_payload.get("ok") and wf.get("ok"))}
+        print_json(out)
+        return 0 if out["ok"] else 1
+    if args.cmd == "route":
+        from ascendc_pilot.router import route
+
+        result = route(" ".join(args.text))
+        print_json(result)
+        return 0 if result.get("ok") else 2
+    if args.cmd == "status":
+        from ascendc_pilot.state import load_state
+        from ascendc_pilot.todo import attach_todo
+
+        st = load_state(args.project)
+        print_json(attach_todo(st or {}, args.project, state=st or None))
+        return 0
+    if args.cmd == "next":
+        from ascendc_pilot.state import describe_next
+
+        result = describe_next(args.project)
+        print_json(result)
+        return 0 if result.get("ok") else 1
+    if args.cmd == "context":
+        from ascendc_pilot.context import build_context_pack
+
+        pack = build_context_pack(args.project, intent=args.intent, topic=args.topic)
+        print_json(pack)
+        return 0
+    if args.cmd == "start":
+        from ascendc_pilot.state import load_state, start_workflow
+        from ascendc_pilot.todo import attach_todo
+        from ascendc_pilot.workflows import get_workflow
+
+        get_workflow(args.workflow_id)  # validate
+        if not args.force_new:
+            existing = load_state(args.project)
+            if (
+                existing
+                and str(existing.get("workflow_id") or "") == args.workflow_id
+                and str(existing.get("status") or "")
+                in {"running", "rework_required", "human_required"}
+            ):
+                payload = attach_todo(
+                    {**existing, "resumed": True, "message_zh": "复用同 workflow 活动 run"},
+                    args.project,
+                    state=existing,
+                )
+                print_json(payload)
+                return 0
+        state = start_workflow(
+            args.project,
+            args.workflow_id,
+            intent=getattr(args, "intent", "") or "",
+            op_name=getattr(args, "op_name", "") or "",
+            architecture=getattr(args, "architecture", "") or "",
+            test_script_root=(
+                str(args.test_script_root.resolve())
+                if getattr(args, "test_script_root", None)
+                else ""
+            ),
+            csv_consumer_root=(
+                str(args.csv_consumer_root.resolve())
+                if getattr(args, "csv_consumer_root", None)
+                else ""
+            ),
+            level=getattr(args, "level", "") or "",
+            focus=getattr(args, "focus", "") or "",
+        )
+        # Persist acp params for subsequent context packs / engines.
+        try:
+            from ascendc_pilot.paths import context_root
+            import yaml
+
+            params = {
+                "op_name": state.get("op_name") or "",
+                "architecture": state.get("architecture") or "arch35",
+                "test_script_root": state.get("test_script_root") or "",
+                "csv_consumer_root": state.get("csv_consumer_root") or "",
+                "level": state.get("level") or "L0",
+                "focus": state.get("focus") or "",
+            }
+            out = context_root(args.project) / "pilot_params.yaml"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(yaml.safe_dump(params, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
+        print_json(state)
+        return 0
+    if args.cmd == "run-action":
+        from ascendc_pilot.actions import run_action
+
+        result = run_action(args.project, args.action_id, finalize=bool(args.finalize))
+        print_json(result, default=str)
+        return 0 if result.get("ok") else 1
+    if args.cmd == "advance":
+        from ascendc_pilot.state import advance_phase
+
+        result = advance_phase(args.project, args.next_phase)
+        print_json(result)
+        return 0 if result.get("ok") else 1
+    if args.cmd == "rework":
+        from ascendc_pilot.state import rework_phase
+
+        result = rework_phase(args.project, to=args.to or None, reason_code=args.reason)
+        print_json(result)
+        return 0 if result.get("ok") else 1
+    if args.cmd == "complete":
+        from ascendc_pilot.state import complete_workflow
+
+        result = complete_workflow(args.project, reason=args.reason)
+        print_json(result)
+        return 0 if result.get("ok") else 1
+    if args.cmd == "block":
+        from ascendc_pilot.state import mark_terminal
+
+        state = mark_terminal(args.project, args.status, reason=args.reason)
+        print_json(state)
+        return 0
+    if args.cmd == "inspect-failure":
+        from ascendc_pilot.observation import render_failure_card
+        from ascendc_pilot.state import load_state
+
+        st = load_state(args.project) or {}
+        lf = st.get("last_failure")
+        card = st.get("failure_card") or (render_failure_card(st) if lf else "")
+        payload = {
+            "ok": True,
+            "status": st.get("status"),
+            "phase": st.get("phase"),
+            "last_failure": lf,
+            "last_observation_id": st.get("last_observation_id"),
+            "failure_card": card,
+            "legal_actions": (lf or {}).get("legal_recovery_actions")
+            if isinstance(lf, dict)
+            else [],
+        }
+        print_json(payload)
+        return 0
+    if args.cmd == "retry-after-environment-fix":
+        from ascendc_pilot.authorize.lease import issue_lease_for_status
+        from ascendc_pilot.runs import append_event
+        from ascendc_pilot.state import load_state, save_state
+
+        st = load_state(args.project)
+        if not st:
+            print_json({"ok": False, "error": "no_active_workflow"})
+            return 1
+        if st.get("status") not in {"human_required", "blocked"}:
+            print_json(
+                {
+                    "ok": False,
+                    "error": "not_human_required",
+                    "status": st.get("status"),
+                    "message_zh": "仅 human_required/blocked 可在环境修复后重试；rework_required 请直接按 acp next 的 retry_command 重试",
+                }
+            )
+            return 1
+        lf = dict(st.get("last_failure") or {})
+        action_id = str(lf.get("action_id") or "")
+        st["status"] = "rework_required"
+        st["retry_budget"] = max(1, int(st.get("retry_budget") or 0))
+        save_state(args.project, st)
+        issue_lease_for_status(args.project, state=st, action_id=action_id)
+        append_event(
+            args.project,
+            {
+                "type": "StateTransitioned",
+                "from_status": "human_required",
+                "to_status": "rework_required",
+                "reason": "retry_after_environment_fix",
+            },
+        )
+        print_json(
+            {
+                "ok": True,
+                "status": "rework_required",
+                "action_id": action_id,
+                "message_zh": "已恢复为 rework_required；请按 acp next 的 rework_targets 重试",
+            }
+        )
+        return 0
+    if args.cmd == "abort":
+        from ascendc_pilot.authorize.lease import issue_lease_for_status, revoke_active_lease
+        from ascendc_pilot.state import load_state, mark_terminal
+
+        revoke_active_lease(args.project, reason="abort")
+        st = mark_terminal(args.project, "failed", reason=args.reason or "aborted_by_operator")
+        issue_lease_for_status(args.project, state=st, action_id=str((st.get("last_failure") or {}).get("action_id") or ""))
+        print_json(
+            {
+                "ok": True,
+                "status": st.get("status"),
+                "state": st,
+                "message_zh": "已 abort；可用 acp start --force-new 开启新 run",
+            }
+        )
+        return 0
+    if args.cmd == "spec-hashes":
+        from ascendc_pilot.spec_hashes import all_spec_hashes
+
+        # Resolve repo root: prefer cwd containing engines/, else parents of acp package
+        repo = args.project
+        if not (repo / "engines" / "understand-operator").is_dir():
+            here = Path(__file__).resolve().parents[2]
+            if (here / "engines" / "understand-operator").is_dir():
+                repo = here
+        print_json(all_spec_hashes(repo, workflow_id=args.workflow or None))
+        return 0
+    if args.cmd == "emit-confidence-report":
+        from ascendc_pilot.paths import uo_root
+
+        uo = uo_root(args.project, args.op_name or None)
+        from uo.scripts.check_final_confidence import check_final_confidence
+
+        payload = check_final_confidence(
+            uo,
+            write_report=not (args.no_write_report or args.no_skeleton),
+            write_skeleton=False,
+        )
+        # Receipts are issued only via `acp run-action … --finalize`.
+        print_json(payload, default=str)
+        return 0 if payload.get("ok") or str(payload.get("status") or "") in {"pass", "reported"} else 1
+    if args.cmd == "authorize":
+        from ascendc_pilot.authorize import authorize
+
+        verdict = authorize(
+            args.project,
+            tool=args.tool,
+            command=args.command,
+            path=args.path,
+            agent=args.agent,
+            action=args.action,
+            lease_id=getattr(args, "lease_id", "") or "",
+        )
+        print_json(verdict)
+        if verdict.get("decision") == "allow" or verdict.get("ok"):
+            return 0
+        if verdict.get("decision") == "ask":
+            return 2
+        return 1
+    if args.cmd == "uo-scope":
+        from ascendc_pilot.uo_scope import print_result, run_uo_scope
+
+        payload = run_uo_scope(
+            args.project,
+            args.step,
+            op_name=args.op_name or "",
+            architecture=args.architecture or "arch35",
+            decision=args.decision or "",
+            notes=args.notes or "",
+        )
+        return print_result(payload)
+    if args.cmd == "uo-query":
+        from uo.scripts.uo_kb_query import main as query_main
+
+        project = Path(args.project).resolve()
+        op = str(args.op_name or "").strip() or project.name
+        argv = [str(project), "--op-name", op]
+        if args.status_only:
+            argv.append("--status-only")
+        else:
+            if not args.pattern:
+                print_json(
+                    {"ok": False, "error": "pattern_required", "message_zh": "非 --status-only 时需要 --pattern"}
+                )
+                return 2
+            argv.extend(["--pattern", args.pattern])
+            if args.target:
+                argv.extend(["--target", args.target])
+            argv.extend(["--depth", str(args.depth), "--limit", str(args.limit)])
+            if args.relation_type:
+                argv.extend(["--relation-type", args.relation_type])
+        return int(query_main(argv) or 0)
+    return 2
+
+
+def _doctor(project: Path) -> int:
+    issues: list[str] = []
+    warnings: list[str] = []
+    try:
+        import yaml  # noqa: F401
+    except ImportError:
+        issues.append("PyYAML missing")
+    try:
+        import ascendc_pilot  # noqa: F401
+    except ImportError:
+        issues.append("ascendc_pilot not installed (pip install -e ./pilot)")
+    try:
+        import uo  # noqa: F401
+    except ImportError:
+        issues.append("uo engine not installed (pip install -e ./engines/understand-operator)")
+    try:
+        import testcase_agent  # noqa: F401
+    except ImportError:
+        issues.append("testcase_agent not installed (pip install -e ./engines/testcase-generation)")
+
+    from ascendc_pilot.paths import AGENT_DIR, ensure_agent_layout
+
+    root = ensure_agent_layout(project)
+    print(f"agent_root={root}")
+    print(f"canonical={AGENT_DIR}")
+
+    # Composer / agent wiring (same success bar as install)
+    try:
+        import sys
+        from pathlib import Path as _P
+
+        repo = _P(__file__).resolve().parents[2]
+        scripts = repo / "scripts"
+        if scripts.is_dir() and str(scripts) not in sys.path:
+            sys.path.insert(0, str(scripts))
+        from compose_runtime import validate, validate_generated
+
+        src_errors = validate(repo)
+        for err in src_errors:
+            issues.append(f"compose: {err}")
+        gen_errors = validate_generated(repo, host="opencode")
+        for err in gen_errors:
+            issues.append(f"generated: {err}")
+    except Exception as exc:  # noqa: BLE001
+        warnings.append(f"compose validation skipped: {exc}")
+
+    # Z3 solver (tg-solve)
+    try:
+        import z3  # noqa: F401
+    except ImportError:
+        warnings.append("z3 not installed (pip install -e ./engines/testcase-generation[solver]) — /tg-solve will fail")
+
+    # CBM MCP: plugin install ≠ MCP configured
+    try:
+        import json
+        from pathlib import Path as _P
+
+        oc = _P.home() / ".config" / "opencode" / "opencode.json"
+        if oc.is_file():
+            cfg = json.loads(oc.read_text(encoding="utf-8"))
+            mcp = cfg.get("mcp") or cfg.get("mcpServers") or {}
+            names = {str(k).lower() for k in (mcp.keys() if isinstance(mcp, dict) else [])}
+            if not any("codebase-memory" in n or n == "cbm" for n in names):
+                warnings.append(
+                    "OpenCode opencode.json has no codebase-memory-mcp — "
+                    "see docs/cbm-mcp-setup.md (UO source lookup degraded)"
+                )
+        else:
+            warnings.append("OpenCode opencode.json missing — CBM MCP not configured")
+    except Exception as exc:  # noqa: BLE001
+        warnings.append(f"CBM MCP check skipped: {exc}")
+
+    # TG consumer root hint
+    import os
+
+    if not (
+        os.environ.get("ASCENDC_TEST_SCRIPT_ROOT")
+        or os.environ.get("ASCENDC_CSV_CONSUMER_ROOT")
+    ):
+        warnings.append(
+            "ASCENDC_TEST_SCRIPT_ROOT / ASCENDC_CSV_CONSUMER_ROOT unset — "
+            "/tg-init contract_build requires --test-script-root"
+        )
+
+    if warnings:
+        print("WARNINGS:")
+        for item in warnings:
+            print(f"  - {item}")
+    if issues:
+        print("ISSUES:")
+        for item in issues:
+            print(f"  - {item}")
+        return 1
+    print("doctor_ok")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

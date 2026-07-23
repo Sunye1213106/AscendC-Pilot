@@ -1,11 +1,11 @@
 # confidence_review (migrated domain method)
 
-> Domain content migrated from skills-src/uo-init/references/confidence-gate.md. Do not advance Harness state from this file.
+> Domain content migrated from skills/uo-init/references/confidence-gate.md. Do not advance Pilot state from this file.
 
-# 最终置信度门禁（强制 high）— Harness 权威
+# 最终置信度门禁（强制 high）— Pilot 权威
 
 `/uo-init` 收工前：凡已闭合交付的 KEY 必须 `confidence: high`。  
-完成判定**只认** Harness：`harness run-action confidence_report` + `harness validate-key-gates` / `harness complete`。  
+完成判定**只认** Pilot：`acp run-action confidence_report` + `acp validate-key-gates` / `acp complete`。  
 **禁止**直调 `check_final_confidence.py` / `classify_input_derivable.py`。  
 Skill/Agent **不得**自行宣布 done。
 
@@ -14,7 +14,7 @@ Skill/Agent **不得**自行宣布 done。
 | 角色 | Agent | 职责 |
 |---|---|---|
 | 运动员 | `uo-key-resolve` | triage/resolve、写 patch 原因字段（非 high KEY） |
-| 确定性引擎 | `deterministic-uo-engine` / `harness emit-confidence-report` | 组装 `summary/confidence_report.md` + `checks/confidence_gate.yaml` |
+| 确定性引擎 | `deterministic-uo-engine` / `acp emit-confidence-report` | 组装 `summary/confidence_report.md` + `checks/confidence_gate.yaml` |
 | 裁判 | `uo-confidence-review` | 只审报告与门禁；写 `review/confidence_reason_review.yaml` |
 
 | 裁判 | `uo-confidence-review` | **只审**原因质量；写 `review/confidence_reason_review.yaml`（`agent: uo-confidence-review`） |
@@ -36,16 +36,16 @@ Skill/Agent **不得**自行宣布 done。
 
 ## 父代理步骤
 
-1. 按 `harness next` 完成 `key_triage` / `key_resolution`（写 patch；勿直调 .py）。
-2. `harness run-action confidence_report`（确定性 classify + confidence gate）。
+1. 按 `acp next` 完成 `key_triage` / `key_resolution`（写 patch；勿直调 .py）。
+2. `acp run-action confidence_report`（确定性 classify + confidence gate）。
 3. 若 `need_llm_count>0` 或 status=reported → 派 **`uo-confidence-review`**。
 4. 门禁与状态：
 
 ```powershell
-harness validate-key-gates "$PROJECT_ROOT"
-harness advance export --project "$PROJECT_ROOT"   # resolve→export 需 phase_gates
+acp validate-key-gates "$PROJECT_ROOT"
+acp advance export --project "$PROJECT_ROOT"   # resolve→export 需 phase_gates
 # … export_integrity / kb-review …
-harness complete --project "$PROJECT_ROOT"        # 唯一合法 pass
+acp complete --project "$PROJECT_ROOT"        # 唯一合法 pass
 ```
 
 6. `status=fail` → 继续 KEY resolve / 补非同文原因 / 再派裁判。
@@ -55,5 +55,5 @@ harness complete --project "$PROJECT_ROOT"        # 唯一合法 pass
 - `summary/confidence_report.md` — 运动员
 - `review/confidence_reason_review.yaml` — 裁判
 - `checks/confidence_gate.yaml` — 脚本
-- `checks/harness_key_gates.yaml` — Harness
-- `.ascendc-agent/state/workflow.yaml` — 唯一完成态权威
+- `checks/pilot_key_gates.yaml` — Pilot
+- `.ascendc-pilot/state/workflow.yaml` — 唯一完成态权威

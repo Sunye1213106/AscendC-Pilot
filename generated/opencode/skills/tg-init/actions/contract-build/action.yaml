@@ -13,7 +13,7 @@ policies:
 - code-access
 - evidence
 - language
-- harness-control
+- pilot-control
 - output-quality
 context_profile_id: tg-init-contract-build
 output_contract_id: csv-contract-v1

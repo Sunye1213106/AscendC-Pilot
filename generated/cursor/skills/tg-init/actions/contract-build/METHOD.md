@@ -1,6 +1,6 @@
-# contract_build — 确定性合同骨架（Harness 托管）
+# contract_build — 确定性合同骨架（Pilot 托管）
 
-> 勿在本文件推进 Harness 阶段；只执行 `harness next` 给出的 `contract_build`。
+> 勿在本文件推进 Pilot 阶段；只执行 `acp next` 给出的 `contract_build`。
 
 ## Purpose
 
@@ -14,7 +14,7 @@
 
 ## Procedure
 
-1. Harness `run-action contract_build` 自动调用确定性 Engine。
+1. Pilot `run-action contract_build` 自动调用确定性 Engine。
 2. Engine 解析消费端脚本表头、读写逻辑、默认值与枚举。
 3. 写出 `tg/snapshot/`、`tg/realization/realization_map.yaml`、`binding_inventory.yaml`、
    `llm_bind_prompt_bundle.yaml`、`binding_gaps.yaml` / `unresolved.yaml`。

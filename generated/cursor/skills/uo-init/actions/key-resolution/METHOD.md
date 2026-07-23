@@ -1,6 +1,6 @@
 # key_resolution (migrated domain method)
 
-> Domain content migrated from skills-src/uo-init/references/uo-input-derivable-resolve.md. Do not advance Harness state from this file.
+> Domain content migrated from skills/uo-init/references/uo-input-derivable-resolve.md. Do not advance Pilot state from this file.
 
 # input_derivable / KEY 语义补全（建库期 · uo-key-resolve）
 
@@ -35,17 +35,16 @@
    - 并行 Tasks cap 建议 **8**（禁止默认「每个 KEY 一个 subagent」）
 4. 子代理写 `ir/input_derivable_patch.yaml`（及可选 `ir/key_shape_resolve/<KEY>.yaml`）。
 5. **仅 `confidence: high`** 可把 KEY 标为 `true` 或 `not_input_derivable`。
-6. 父代理重跑 classify + **`check_final_confidence.py`** + **`harness validate-key-gates`** + contract/sqlite 导出。
-7. 仍无法 high → 写 `summary/confidence_report.md`（中文原因，禁止多 KEY 同文 bit-pack）；**禁止伪标 high**。
+6. 确定性收口（**禁止**直调 `.py`）：`acp run-action confidence_report`（或下一批 resolve 动作）+ **`acp validate-key-gates`**；导出/建图由后续 `export_integrity` 引擎完成，勿手跑 `kb_query_export.py` / `export_kb_graph.py`。
+7. 仍无法 high → 写 patch 内中文原因（禁止多 KEY 同文 bit-pack）；**禁止伪标 high**。
    missing_producer 仅 empty 路径 → 不得最终 accepted；须 escalate 并查主 tiling（GetTilingKey / SaveToTilingData）。
    详见 `confidence-gate.md`。
 
 ```powershell
-python -X utf8 "$SCRIPT_DIR/classify_input_derivable.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
-python -X utf8 "$SCRIPT_DIR/check_final_confidence.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
-harness validate-key-gates "$PROJECT_ROOT"
-python -X utf8 "$SCRIPT_DIR/kb_query_export.py" "$PROJECT_ROOT" --op-name "$OP_NAME" --view testcase-contract
-python -X utf8 "$SCRIPT_DIR/export_kb_graph.py" "$PROJECT_ROOT" --op-name "$OP_NAME"
+# 仅允许 acp（Plugin 会拦截 python …/classify_*.py 等直调）
+acp run-action key_resolution --finalize --project "$PROJECT_ROOT"
+acp validate-key-gates "$PROJECT_ROOT"
+# 下一阶段由 acp next 给出 confidence_report / export_integrity
 ```
 
 ## 子代理要做什么

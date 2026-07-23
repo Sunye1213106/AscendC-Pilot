@@ -1,10 +1,10 @@
 # /uo-update 人类说明（非可执行状态机）
 
-**控制面权威**：Harness。`/uo-update` 是唯一更新入口。
+**控制面权威**：Pilot。`/uo-update` 是唯一更新入口。
 
 ## 循环
 
-`harness start uo-update` → `harness next` → Action → `advance` / `complete`。
+`acp start uo-update` → `acp next` → Action → `advance` / `complete`。
 
 ## 中文阶段
 

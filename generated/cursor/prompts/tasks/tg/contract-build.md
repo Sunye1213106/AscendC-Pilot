@@ -1,6 +1,6 @@
 ## Task
 
-Perform `contract_build` for the targets provided by the Harness action.
+Perform `contract_build` for the targets provided by the Pilot action.
 
 Follow the assigned role contract and loaded capabilities.
 Do not manage workflow state or declare completion.
@@ -38,7 +38,7 @@ Only process the listed targets. Do not expand scope unless the Action Method ex
 
 ## Hard Constraints
 
-- MUST NOT: modify Harness state.
+- MUST NOT: modify Pilot state.
 - MUST NOT: process IDs outside the supplied target set.
 - MUST NOT: invent evidence or confidence.
 - MUST NOT: write referee verdicts when acting as producer.

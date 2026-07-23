@@ -1,0 +1,18 @@
+id: deterministic-uo-engine
+version: 1
+name_zh: UO deterministic engine
+role: deterministic_engine
+mode: subagent
+description: UO deterministic engine
+read_scopes:
+  - "uo/**"
+  - "runs/**"
+write_scopes:
+  - "uo/**"
+  - "runs/**"
+forbidden:
+  - modify_pilot_state
+  - declare_workflow_passed
+  - write_outside_declared_scope
+tool_budget:
+  max_calls: 12

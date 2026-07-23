@@ -1,0 +1,374 @@
+"""Failure containment: Observation → state → next → authorize hard deny."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import patch
+
+import yaml
+
+from ascendc_pilot.authorize import authorize
+from ascendc_pilot.authorize.lease import (
+    issue_action_lease,
+    load_lease,
+    revoke_active_lease,
+)
+from ascendc_pilot.observation import (
+    ENVIRONMENT_INVARIANT,
+    apply_observation,
+    build_observation,
+    classify_failure,
+    record_pilot_result,
+)
+from ascendc_pilot.state import describe_next, load_state, save_state, start_workflow
+
+
+def _write(path: Path, data: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(data, str):
+        path.write_text(data, encoding="utf-8")
+    else:
+        path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
+def test_classify_uo_scope_finalize_is_environment_invariant():
+    c = classify_failure(
+        step_id="uo_scope_finalize",
+        action_id="scope_confirmation",
+        source="uo_scope",
+        messages=[
+            "installed_skill_check.consistent is not true",
+            "semantic_enrichment.yaml status must be pending, complete, or degraded",
+        ],
+    )
+    assert c["failure_class"] == ENVIRONMENT_INVARIANT
+    assert c["retryable"] is False
+    assert c["recommended_transition"] == "human_required"
+
+
+def test_finalize_failure_updates_state(tmp_path: Path):
+    start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
+    issue_action_lease(tmp_path, action_id="scope_confirmation", mode="normal")
+    old_lease = load_lease(tmp_path)
+    assert old_lease.get("status") == "active"
+
+    with patch(
+        "uo.scripts.finalize_scope.finalize_scope",
+        return_value=(
+            2,
+            [
+                "installed_skill_check.consistent is not true",
+                "semantic_enrichment.yaml status must be pending, complete, or degraded",
+            ],
+        ),
+    ):
+        from ascendc_pilot.uo_scope import run_uo_scope
+
+        result = run_uo_scope(tmp_path, "finalize", op_name=tmp_path.name)
+
+    assert result.get("ok") is False
+    st = load_state(tmp_path)
+    assert st.get("last_failure") is not None
+    assert st["status"] == "human_required"
+    assert st["last_failure"]["failure_class"] == ENVIRONMENT_INVARIANT
+    assert st["last_failure"]["retryable"] is False
+    assert st["last_failure"]["error_code"] == "UO_SCOPE_FINALIZE_INVARIANT_FAILED"
+    assert st.get("last_observation_id")
+    assert st.get("failure_card")
+    obs = result.get("observation") or {}
+    assert obs.get("outcome") == "failed"
+    # Old authorization revoked; containment lease active
+    lease = load_lease(tmp_path)
+    assert lease.get("mode") == "containment"
+    assert lease.get("status") == "active"
+    assert old_lease.get("lease_id") != lease.get("lease_id")
+
+
+def test_next_after_failure_no_normal_actions(tmp_path: Path):
+    start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
+    record_pilot_result(
+        tmp_path,
+        ok=False,
+        action_id="scope_confirmation",
+        step_id="uo_scope_finalize",
+        messages=[
+            "installed_skill_check.consistent is not true",
+            "semantic_enrichment.yaml status must be pending, complete, or degraded",
+        ],
+        source="uo_scope",
+    )
+    nxt = describe_next(tmp_path)
+    assert nxt["status"] == "human_required"
+    assert nxt["allowed_actions"] == []
+    assert nxt["rework_targets"] == []
+    assert "scope_confirmation" not in str(nxt.get("allowed_actions"))
+    assert nxt.get("human_required", {}).get("required_actor") == "maintainer"
+    legal = nxt["human_required"]["legal_actions"]
+    assert "inspect_failure" in legal
+    assert "abort_run" in legal
+    lf = nxt.get("last_failure") or {}
+    assert lf.get("failure_class") == ENVIRONMENT_INVARIANT
+
+
+def test_glob_read_denied_after_human_required(tmp_path: Path):
+    start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
+    record_pilot_result(
+        tmp_path,
+        ok=False,
+        action_id="scope_confirmation",
+        step_id="uo_scope_finalize",
+        messages=["installed_skill_check.consistent is not true"],
+        source="uo_scope",
+    )
+    for tool, path in [
+        ("glob", str(tmp_path / ".ascendc-pilot" / "uo" / "**")),
+        ("read", str(tmp_path / "engines" / "understand-operator" / "prepare_operator.py")),
+        ("read", str(tmp_path / ".ascendc-pilot" / "uo" / "runs" / "x" / "installed_skill_check.yaml")),
+        ("grep", "finalize_scope"),
+    ]:
+        verdict = authorize(tmp_path, tool=tool, path=path, agent="ascendc-pilot")
+        assert verdict.get("ok") is False
+        assert verdict.get("error_code") == "HARNESS_ACTION_NOT_AUTHORIZED"
+        assert verdict.get("decision") == "deny"
+
+
+def test_write_formal_artifact_denied_after_failure(tmp_path: Path):
+    start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
+    record_pilot_result(
+        tmp_path,
+        ok=False,
+        action_id="scope_confirmation",
+        step_id="uo_scope_finalize",
+        messages=["semantic_enrichment.yaml status must be pending, complete, or degraded"],
+        source="uo_scope",
+    )
+    targets = [
+        tmp_path / ".ascendc-pilot" / "uo" / "runs" / "r" / "scope" / "installed_skill_check.yaml",
+        tmp_path / ".ascendc-pilot" / "uo" / "runs" / "r" / "scope" / "semantic_enrichment.yaml",
+        tmp_path / ".ascendc-pilot" / "uo" / "manifest.yaml",
+        tmp_path / ".ascendc-pilot" / "uo" / "runs" / "r" / "scope" / "scope_confirmed.yaml",
+    ]
+    for path in targets:
+        before = path.exists()
+        content_before = path.read_text(encoding="utf-8") if before else None
+        verdict = authorize(
+            tmp_path,
+            tool="write",
+            path=str(path),
+            agent="ascendc-pilot",
+            action="scope_confirmation",
+        )
+        assert verdict.get("ok") is False
+        assert verdict.get("error_code") == "HARNESS_ACTION_NOT_AUTHORIZED"
+        # authorize does not execute writes — file unchanged
+        if before:
+            assert path.read_text(encoding="utf-8") == content_before
+        else:
+            assert not path.exists()
+
+
+def test_direct_domain_script_denied_after_failure(tmp_path: Path):
+    start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
+    record_pilot_result(
+        tmp_path,
+        ok=False,
+        action_id="scope_confirmation",
+        step_id="uo_scope_finalize",
+        messages=["installed_skill_check.consistent is not true"],
+        source="uo_scope",
+    )
+    for cmd in [
+        "python prepare_operator.py",
+        "python macro_scope_scan.py --project .",
+        "python3 review_checkpoint.py",
+        "python engines/understand-operator/uo/scripts/finalize_scope.py",
+    ]:
+        verdict = authorize(tmp_path, tool="bash", command=cmd, agent="ascendc-pilot")
+        assert verdict.get("ok") is False
+        assert verdict.get("error_code") == "HARNESS_ACTION_NOT_AUTHORIZED"
+
+
+def test_repeated_retryable_failure_upgrades(tmp_path: Path):
+    start_workflow(tmp_path, "uo-init", phase="resolve", force_phase=True)
+    st = load_state(tmp_path)
+    st["retry_budget"] = 2
+    save_state(tmp_path, st)
+
+    def _fail_once():
+        return record_pilot_result(
+            tmp_path,
+            ok=False,
+            action_id="key_resolution",
+            step_id="action_finalize",
+            error_code="ACTION_FINALIZE_FAILED_KEY_RESOLUTION",
+            messages=["output_contract_failed"],
+            source="finalize_action",
+            explicit_class="checker_gate",
+        )
+
+    r1 = _fail_once()
+    assert r1["status"] == "rework_required"
+    assert load_state(tmp_path)["no_progress_streak"] == 1
+
+    r2 = _fail_once()
+    # streak 2 >= budget 2 → human_required / retry_exhausted
+    assert r2["status"] == "human_required"
+    assert load_state(tmp_path)["no_progress_streak"] >= 2
+    assert load_state(tmp_path)["last_failure"]["failure_class"] in {
+        "retry_exhausted",
+        ENVIRONMENT_INVARIANT,
+        "checker_gate",
+    }
+    # After upgrade, last_failure should be retry_exhausted
+    assert load_state(tmp_path)["last_failure"]["failure_class"] == "retry_exhausted"
+
+
+def test_old_lease_not_reusable(tmp_path: Path):
+    start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
+    lease = issue_action_lease(tmp_path, action_id="scope_confirmation", mode="normal")
+    lid = str(lease["lease_id"])
+    revoke_active_lease(tmp_path, reason="test")
+    issue_action_lease(tmp_path, action_id="_containment", mode="containment")
+
+    verdict = authorize(
+        tmp_path,
+        tool="bash",
+        command="acp uo-scope scan",
+        agent="ascendc-pilot",
+        lease_id=lid,
+    )
+    assert verdict.get("ok") is False
+    assert "LEASE_REVOKED" in str(verdict.get("reason") or "") or verdict.get(
+        "error_code"
+    ) == "HARNESS_ACTION_NOT_AUTHORIZED"
+
+
+def test_normal_flow_not_blocked(tmp_path: Path):
+    start_workflow(tmp_path, "uo-init")
+    nxt = describe_next(tmp_path)
+    assert nxt["status"] == "running"
+    assert any(a.get("id") == "prepare_layout" for a in nxt["allowed_actions"])
+
+    # Normal acp CLI allowed
+    assert authorize(tmp_path, tool="bash", command="acp next --project .").get("ok") is True
+    # Normal project read allowed
+    src = tmp_path / "op.cpp"
+    _write(src, "int main() { return 0; }\n")
+    assert authorize(tmp_path, tool="read", path=str(src), agent="ascendc-pilot").get("ok") is True
+
+    # Prepare issues normal lease
+    issue_action_lease(tmp_path, action_id="prepare_layout", mode="normal")
+    assert load_lease(tmp_path).get("mode") == "normal"
+    assert authorize(
+        tmp_path,
+        tool="bash",
+        command="acp run-action prepare_layout --project .",
+        agent="ascendc-pilot",
+    ).get("ok") is True
+
+
+def test_ses_0711_replay_finalize_containment(tmp_path: Path):
+    """Replay the ses_0711 failure shape: finalize fails → only recovery commands legal."""
+    start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
+    issue_action_lease(tmp_path, action_id="scope_confirmation", mode="normal")
+
+    # Simulate earlier successful domain steps having run (state still running).
+    assert load_state(tmp_path)["status"] == "running"
+
+    with patch(
+        "uo.scripts.finalize_scope.finalize_scope",
+        return_value=(
+            2,
+            [
+                "installed_skill_check.consistent is not true",
+                "semantic_enrichment.yaml status must be pending, complete, or degraded",
+            ],
+        ),
+    ):
+        from ascendc_pilot.uo_scope import run_uo_scope
+
+        fin = run_uo_scope(tmp_path, "finalize", op_name=tmp_path.name)
+
+    assert fin.get("ok") is False
+    st = load_state(tmp_path)
+    assert st["status"] == "human_required"
+    assert st["phase"] == "scope"
+
+    nxt = describe_next(tmp_path)
+    assert nxt["allowed_actions"] == []
+    assert nxt["status"] == "human_required"
+
+    # Legal recovery bash
+    for cmd in [
+        "acp next --project .",
+        "acp inspect-failure --project .",
+        "acp retry-after-environment-fix --project .",
+        "acp abort --project .",
+        "acp status --project .",
+    ]:
+        v = authorize(tmp_path, tool="bash", command=cmd, agent="ascendc-pilot")
+        assert v.get("ok") is True, cmd
+
+    # Illegal after failure
+    illegal = [
+        ("glob", str(tmp_path / ".ascendc-pilot" / "uo" / "**"), ""),
+        ("grep", "prepare_operator", ""),
+        ("read", str(tmp_path / "engines" / "understand-operator" / "uo" / "scripts" / "prepare_operator.py"), ""),
+        ("write", str(tmp_path / ".ascendc-pilot" / "uo" / "manifest.yaml"), ""),
+        ("bash", "", "python prepare_operator.py"),
+        ("bash", "", "acp uo-scope scan --project ."),
+        ("bash", "", "acp run-action scope_confirmation --project ."),
+        ("bash", "", "acp advance extract --project ."),
+    ]
+    for tool, path, cmd in illegal:
+        v = authorize(
+            tmp_path,
+            tool=tool,
+            path=path,
+            command=cmd,
+            agent="ascendc-pilot",
+            action="scope_confirmation",
+        )
+        assert v.get("ok") is False, (tool, path, cmd)
+        assert v.get("error_code") == "HARNESS_ACTION_NOT_AUTHORIZED"
+
+
+def test_rework_required_next_returns_targets_only(tmp_path: Path):
+    start_workflow(tmp_path, "uo-init", phase="resolve", force_phase=True)
+    record_pilot_result(
+        tmp_path,
+        ok=False,
+        action_id="key_resolution",
+        step_id="action_finalize",
+        messages=["output_contract_failed"],
+        source="finalize_action",
+        explicit_class="checker_gate",
+    )
+    nxt = describe_next(tmp_path)
+    assert nxt["status"] == "rework_required"
+    assert nxt["allowed_actions"] == []
+    assert nxt["rework_targets"]
+    assert nxt["rework_targets"][0]["action_id"] == "key_resolution"
+
+
+def test_observation_persisted_to_run_dir(tmp_path: Path):
+    start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
+    obs = build_observation(
+        tmp_path,
+        outcome="failed",
+        action_id="scope_confirmation",
+        step_id="uo_scope_finalize",
+        messages=["semantic_enrichment.yaml status must be pending, complete, or degraded"],
+        source="uo_scope",
+    )
+    applied = apply_observation(tmp_path, obs)
+    assert applied.get("ok") is False
+    run_id = load_state(tmp_path)["run_id"]
+    obs_dir = tmp_path / ".ascendc-pilot" / "runs" / run_id / "observations"
+    assert obs_dir.is_dir()
+    assert list(obs_dir.glob("OBS_*.yaml"))
+    events = (tmp_path / ".ascendc-pilot" / "runs" / run_id / "events.jsonl").read_text(
+        encoding="utf-8"
+    )
+    assert "ObservationRecorded" in events
+    assert "HumanRequired" in events

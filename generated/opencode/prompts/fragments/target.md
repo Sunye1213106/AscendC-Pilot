@@ -1,3 +1,3 @@
 ## Target
 
-Only process Harness-supplied targets.
+Only process Pilot-supplied targets.

@@ -6,11 +6,11 @@
 
 [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp)（简称 **CBM**）是一个本地 MCP 服务：把代码库索引成可查询的知识图（函数 / 类 / 调用链 / 片段），供 Agent 用结构化工具取证，而不是整文件 dump。
 
-本插件 **understand-operator** 面向 Ascend C 自定义算子，在 `/uo-init`、`/uo-query`、`/uo-code-review` 等流程里需要**源码级证据**（符号定位、调用冲击、snippet）。分工如下：
+本插件 **understand-operator** 面向 Ascend C 自定义算子，在 `/uo-init`、`/uo-query`、`/ce-review` 等流程里需要**源码级证据**（符号定位、调用冲击、snippet）。分工如下：
 
 | 层级 | 职责 | 载体 |
 | --- | --- | --- |
-| 算子 KB / IR | Host·Kernel·Tiling·Bridge 抽取结果 | `.ascendc-agent/uo/` |
+| 算子 KB / IR | Host·Kernel·Tiling·Bridge 抽取结果 | `.ascendc-pilot/uo/` |
 | 代码图（证据） | 符号 / 调用 / 片段检索 | **CBM MCP** |
 | 语义图 | YAML KB 派生查询 | `indexes/kb_graph.sqlite` |
 
@@ -149,7 +149,7 @@ Get-Content "$env:USERPROFILE\.config\opencode\opencode.json" -Raw |
 
 ```powershell
 # 在算子仓根下
-Get-Content .ascendc-agent\uo\cbm\index_meta.json
+Get-Content .ascendc-pilot\uo\cbm\index_meta.json
 ```
 
 期望：`indexed_via` 为 `mcp`，且 `cbm_project` 非空。

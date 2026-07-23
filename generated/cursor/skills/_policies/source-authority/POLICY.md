@@ -7,7 +7,7 @@
 ## Priority (high → low)
 
 1. 当前源码（定向 `path:line` 阅读）
-2. 当前确定性产物（Harness 签发收据、Checker 报告、引擎输出）
+2. 当前确定性产物（Pilot 签发收据、Checker 报告、引擎输出）
 3. 当前 UO / TG KB（定稿或本 run 内 IR）
 4. 本地稳定记忆（已验证）
 5. 候选记忆 / 未验证笔记

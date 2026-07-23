@@ -6,7 +6,7 @@
 
 ## Domain Procedure
 
-1. Harness `run-action detect_score_post`。
+1. Pilot `run-action detect_score_post`。
 2. 若缺 plan/host 产物则失败（禁止与 pre_semantic 循环依赖）。
 3. 不得递增 semantic attempts。
 

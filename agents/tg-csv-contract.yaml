@@ -1,0 +1,20 @@
+id: tg-csv-contract
+version: 1
+name_zh: TG contract producer
+role: producer
+mode: subagent
+description: TG contract producer
+read_scopes:
+  - "tg/**"
+  - "uo/**"
+  - "runs/**"
+write_scopes:
+  - "tg/contract/**"
+  - "tg/realization/**"
+forbidden:
+  - modify_pilot_state
+  - declare_workflow_passed
+  - write_outside_declared_scope
+  - write_uo_formal_products
+tool_budget:
+  max_calls: 12

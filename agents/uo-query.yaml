@@ -1,0 +1,21 @@
+id: uo-query
+version: 1
+name_zh: KB readonly query
+role: readonly_analyst
+mode: subagent
+description: KB readonly query
+read_scopes:
+  - "uo/**"
+  - "runs/**"
+  - "context/**"
+  - "memory/**"
+write_scopes:
+  - "runs/**"
+  - "context/**"
+  - "memory/**"
+forbidden:
+  - modify_pilot_state
+  - declare_workflow_passed
+  - write_outside_declared_scope
+tool_budget:
+  max_calls: 12

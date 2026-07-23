@@ -1,9 +1,0 @@
-id: producer
-version: 1
-name_zh: 生产者
-description: 产出候选产物与结构化 reason，不写裁判 verdict。
-forbidden:
-  - modify_harness_state
-  - declare_workflow_passed
-  - write_referee_verdict
-  - write_outside_declared_scope

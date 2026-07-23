@@ -13,4 +13,4 @@
 ## Hard Constraints
 
 - MUST NOT：修改 UO KB。
-- MUST NOT：直调领域 CLI；经 Harness 包装动作执行。
+- MUST NOT：直调领域 CLI；经 Pilot 包装动作执行。

@@ -1,6 +1,6 @@
 # kb_lookup (migrated domain method)
 
-> Domain content migrated from skills-src/uo-query/references/question-taxonomy.md. Do not advance Harness state from this file.
+> Domain content migrated from skills/uo-query/references/question-taxonomy.md. Do not advance Pilot state from this file.
 
 # uo-query 问题分类（分层 IR）
 
@@ -8,7 +8,7 @@
 始终从：
 
 ```powershell
-python -X utf8 "$QUERY_CLI" "$PROJECT_ROOT" --op-name "$OP_NAME" --status-only
+acp uo-query --project "$PROJECT_ROOT" --op-name "$OP_NAME" --status-only
 ```
 
 开始，然后在 Grep/Read YAML **之前**至少跑一个 `--pattern`（`neighbors_of` / `entity_of` /
@@ -16,9 +16,9 @@ python -X utf8 "$QUERY_CLI" "$PROJECT_ROOT" --op-name "$OP_NAME" --status-only
 `entities_in_files` / `affected_shapes`）。YAML 用于在 graph 给出 entity ID /
 `detail_ref` 之后展开正文。
 
-`$QUERY_CLI` = `$PLUGIN_ROOT/engines/uo/uo/scripts/uo_kb_query.py`  
-（勿以 `skills/uo-query/scripts/` 为主路径；该处仅有 forwarder）。
-CLI：positional `repo`=`$PROJECT_ROOT`，标志 `--op-name` + `--target`（禁止 `--uo-root` / `--entity`）。
+**禁止**直调 `python …/uo_kb_query.py`（Plugin 会拦截）；一律 `acp uo-query …`。  
+（内部仍调用同一 query 引擎。）  
+CLI：`--project`=`$PROJECT_ROOT`，标志 `--op-name` + `--target`（禁止 `--uo-root` / `--entity`）。
 
 **YAML 何时可读：**
 - `overview`：`--status-only` 后可读 `summary/human_overview.md` / `keys_table.yaml`

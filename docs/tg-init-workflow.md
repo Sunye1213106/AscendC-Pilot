@@ -1,10 +1,10 @@
 # /tg-init 人类说明（非可执行状态机）
 
-**控制面权威**：Harness。测项合同真源：`.ascendc-agent/tg/`（非 UO `contracts/**`）。
+**控制面权威**：Pilot。测项合同真源：`.ascendc-pilot/tg/`（非 UO `contracts/**`）。
 
 ## 循环
 
-`harness start tg-init` → `harness next` → Action → `complete`。
+`acp start tg-init` → `acp next` → Action → `complete`。
 
 ## 前置条件
 

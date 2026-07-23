@@ -1,10 +1,10 @@
 # init_audit (migrated domain method)
 
-> Domain content migrated from skills-src/tg-init/references/tg-init-audit.md. Do not advance Harness state from this file.
+> Domain content migrated from skills/tg-init/references/tg-init-audit.md. Do not advance Pilot state from this file.
 
 # tg-init 终审清单（tg-init-audit subagent）
 
-在 `--merge-uo-resolve` 之后、`--confirm` 之前执行。产物根：`.ascendc-agent/tg/`。
+在 `--merge-uo-resolve` 之后、`--confirm` 之前执行。产物根：`.ascendc-pilot/tg/`。
 
 **真值源**：本表 `id` 列 = `init/audit_report.yaml` checks[].id =（子集）`--verify-csv-closure` 的 `gates` 键。  
 合法 skip：`legitimate-skips.md`。
@@ -45,8 +45,8 @@
 ## CLI
 
 禁止直调 `tg-init … --verify-csv-closure`（Plugin 拦截）。  
-verify 层由 `harness run-action integrity_gate` 完成；本 Action 只写 `init/audit_report.yaml` 审查结论，然后：
+verify 层由 `acp run-action integrity_gate` 完成；本 Action 只写 `init/audit_report.yaml` 审查结论，然后：
 
 ```powershell
-harness run-action init_audit --finalize --project "<算子仓>"
+acp run-action init_audit --finalize --project "<算子仓>"
 ```

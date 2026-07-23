@@ -1,10 +1,10 @@
 # /uo-query 人类说明（非可执行状态机）
 
-**控制面权威**：Harness。角色：`uo-query` = readonly_analyst。
+**控制面权威**：Pilot。角色：`uo-query` = readonly_analyst。
 
 ## 循环
 
-`harness start uo-query` → `kb_lookup` → `harness complete`（门禁仅 `kb_ready`）。
+`acp start uo-query` → `kb_lookup` → `acp complete`（门禁仅 `kb_ready`）。
 
 ## 中文阶段
 

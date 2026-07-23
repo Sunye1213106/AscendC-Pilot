@@ -1,4 +1,4 @@
-"""Compile/compose entry: skills-src + prompts-src + agents-src → generated/<host>/."""
+"""Compile/compose entry: skills + prompts + agents → generated/<host>/."""
 
 from __future__ import annotations
 

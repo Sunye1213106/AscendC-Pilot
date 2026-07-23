@@ -13,7 +13,7 @@ policies:
 - code-access
 - evidence
 - language
-- harness-control
+- pilot-control
 - output-quality
 task_prompt_id: uo/kb-lookup
 context_profile_id: uo-query-kb-lookup

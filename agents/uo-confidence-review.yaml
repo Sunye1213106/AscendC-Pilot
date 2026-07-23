@@ -1,0 +1,17 @@
+id: uo-confidence-review
+version: 1
+name_zh: Confidence reason referee
+role: referee
+mode: subagent
+description: Confidence reason referee
+read_scopes:
+  - "uo/**"
+  - "runs/**"
+write_scopes:
+  - "uo/review/confidence_reason_review.yaml"
+forbidden:
+  - modify_pilot_state
+  - declare_workflow_passed
+  - write_outside_declared_scope
+tool_budget:
+  max_calls: 12

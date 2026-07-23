@@ -1,0 +1,25 @@
+id: code_review
+workflow_id: ce-review
+version: 1
+name_zh: 代码审查
+role_id: readonly_analyst
+agent_id: ce-reviewer
+capabilities:
+- structured-review
+- kb-query
+- cbm-navigation
+- source-reading
+policies:
+- source-authority
+- code-access
+- evidence
+- language
+- pilot-control
+- output-quality
+task_prompt_id: ce/code-review
+context_profile_id: ce-review-code-review
+output_contract_id: code-review-v1
+checker:
+  required: true
+referee:
+  required: false

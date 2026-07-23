@@ -1,4 +1,4 @@
-# AscendC Agent unified installer (Windows)
+# AscendC-Pilot unified installer (Windows)
 #
 # Usage:
 #   .\install.ps1 opencode|cursor|codex
@@ -15,9 +15,9 @@ $SkipPip = $env:SKIP_PIP
 
 function Get-PluginDest([string]$plat) {
   switch ($plat) {
-    "opencode" { Join-Path $HOME ".config\opencode\ascendc-agent-plugin" }
-    "cursor" { Join-Path $HOME ".cursor\ascendc-agent-plugin" }
-    "codex" { Join-Path $HOME ".agents\ascendc-agent-plugin" }
+    "opencode" { Join-Path $HOME ".config\opencode\ascendc-pilot-plugin" }
+    "cursor" { Join-Path $HOME ".cursor\ascendc-pilot-plugin" }
+    "codex" { Join-Path $HOME ".agents\ascendc-pilot-plugin" }
     default { throw "Unknown platform $plat" }
   }
 }
@@ -49,16 +49,16 @@ if ($Platform -like "uninstall-*") {
   $agents = Get-AgentsDest $plat
   $plugins = Get-PluginsDest $plat
   if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
-  foreach ($name in @("uo-init","uo-update","uo-query","uo-code-review","tg-init","tg-plan","tg-solve","operator","_policies","understand-operator","uo-diff")) {
+  foreach ($name in @("uo-init","uo-update","uo-query","ce-review","tg-init","tg-plan","tg-solve","operator","_policies","understand-operator","uo-diff")) {
     $p = Join-Path $skills $name
     if (Test-Path $p) { Remove-Item -Recurse -Force $p }
   }
-  foreach ($name in @("ascendc-agent","uo-semantic-resolve","uo-key-resolve","uo-confidence-review","uo-kb-review","uo-code-reviewer","uo-query","tg-csv-contract","tg-semantic-bind","tg-init-audit","deterministic-uo-engine","deterministic-tg-engine")) {
+  foreach ($name in @("ascendc-pilot","uo-semantic-resolve","uo-key-resolve","uo-confidence-review","uo-kb-review","ce-reviewer","uo-query","tg-csv-contract","tg-semantic-bind","tg-init-audit","deterministic-uo-engine","deterministic-tg-engine")) {
     $p = Join-Path $agents "$name.md"
     if (Test-Path $p) { Remove-Item -Force $p }
   }
   if ($plat -eq "opencode" -and $plugins) {
-    $pluginFile = Join-Path $plugins "ascendc-harness.ts"
+    $pluginFile = Join-Path $plugins "ascendc-pilot.ts"
     if (Test-Path $pluginFile) { Remove-Item -Force $pluginFile }
   }
   Write-Host "Uninstalled $plat"
@@ -66,7 +66,7 @@ if ($Platform -like "uninstall-*") {
 }
 
 if ($SkipPip -ne "1") {
-  python -m pip install -e "$BundleRoot\harness" -e "$BundleRoot\engines\uo" -e "$BundleRoot\engines\tg[solver]"
+  python -m pip install -e "$BundleRoot\pilot" -e "$BundleRoot\engines\understand-operator" -e "$BundleRoot\engines\testcase-generation[solver]"
 }
 
 # Compose sources → generated/<platform>/{skills,agents,prompts}
@@ -81,7 +81,7 @@ if (Test-Path $Dest) { Remove-Item -Recurse -Force $Dest }
 New-Item -ItemType Directory -Force -Path $Dest | Out-Null
 
 # Bundle sources for offline reference (not runtime authority)
-foreach ($name in @("skills-src","prompts-src","agents-src","docs","engines","harness","templates","scripts","opencode-plugin")) {
+foreach ($name in @("skills","prompts","agents","docs","engines","pilot","templates","scripts","opencode-plugin")) {
   $src = Join-Path $BundleRoot $name
   if (Test-Path $src) {
     Copy-Item -Recurse -Force $src (Join-Path $Dest $name)
@@ -96,7 +96,7 @@ if (Test-Path (Join-Path $genRoot "prompts")) {
   Copy-Item -Recurse -Force (Join-Path $genRoot "prompts") (Join-Path $Dest "prompts")
 }
 
-# Purge pre-harness legacy skills that teach free-form LLM KB builds (breaks Tab→ascendc-agent flow).
+# Purge pre-pilot legacy skills that teach free-form LLM KB builds (breaks Tab→ascendc-pilot flow).
 foreach ($legacy in @("understand-operator", "uo-diff")) {
   $legacyLink = Join-Path $Skills $legacy
   if (Test-Path $legacyLink) {
@@ -105,7 +105,7 @@ foreach ($legacy in @("understand-operator", "uo-diff")) {
   }
 }
 
-foreach ($name in @("uo-init","uo-update","uo-query","uo-code-review","tg-init","tg-plan","tg-solve","operator")) {
+foreach ($name in @("uo-init","uo-update","uo-query","ce-review","tg-init","tg-plan","tg-solve","operator")) {
   $target = Join-Path $Dest "skills\$name"
   if (-not (Test-Path $target)) { continue }
   $link = Join-Path $Skills $name
@@ -143,16 +143,16 @@ foreach ($agentFile in $agentFiles) {
 if ($Platform -eq "opencode") {
   $plugins = Get-PluginsDest "opencode"
   New-Item -ItemType Directory -Force -Path $plugins | Out-Null
-  $pluginSrc = Join-Path $BundleRoot "opencode-plugin\ascendc-harness.ts"
+  $pluginSrc = Join-Path $BundleRoot "opencode-plugin\ascendc-pilot.ts"
   if (Test-Path $pluginSrc) {
-    Copy-Item -Force $pluginSrc (Join-Path $plugins "ascendc-harness.ts")
-    Write-Host "Installed plugin → $plugins\ascendc-harness.ts"
+    Copy-Item -Force $pluginSrc (Join-Path $plugins "ascendc-pilot.ts")
+    Write-Host "Installed plugin → $plugins\ascendc-pilot.ts"
   }
-  Write-Host "Primary agent → $Agents\ascendc-agent.md (Tab 切换；未改 opencode.json)"
+  Write-Host "Primary agent → $Agents\ascendc-pilot.md (Tab 切换；未改 opencode.json)"
 }
 
 $stampDir = Join-Path $Dest "templates\$Platform"
 New-Item -ItemType Directory -Force -Path $stampDir | Out-Null
 Set-Content -Path (Join-Path $stampDir "install_stamp.txt") -Value "plugin_root=$Dest"
-Write-Host "Installed AscendC Agent Harness → $Dest"
-Write-Host "Run: harness doctor"
+Write-Host "Installed AscendC-Pilot → $Dest"
+Write-Host "Run: acp doctor"

@@ -1,8 +1,0 @@
-id: deterministic_engine
-version: 1
-name_zh: 确定性引擎
-description: 经 Harness 包装执行确定性脚本与校验，不自写「我执行过」的 Receipt。
-forbidden:
-  - modify_harness_state_directly
-  - declare_workflow_passed
-  - invent_receipt

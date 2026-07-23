@@ -1,6 +1,6 @@
 # plan_build (migrated domain method)
 
-> Domain content migrated from skills-src/tg-plan/references/levels.md. Do not advance Harness state from this file.
+> Domain content migrated from skills/tg-plan/references/levels.md. Do not advance Pilot state from this file.
 
 # 覆盖级别（tg-plan）
 
@@ -21,10 +21,10 @@
 | `--topic` | 主题再裁剪；可与 focus 叠加 |
 
 ```powershell
-# 禁止 tg-plan CLI（Plugin 会拦截）；经 Harness：
-harness start tg-plan --project <算子仓> --op-name <op> --level L0
-harness run-action plan_build --project <算子仓>
-# focus / topic / level 经 harness start 或 context/harness_params.yaml 传入
+# 禁止 tg-plan CLI（Plugin 会拦截）；经 Pilot：
+acp start tg-plan --project <算子仓> --op-name <op> --level L0
+acp run-action plan_build --project <算子仓>
+# focus / topic / level 经 acp start 或 context/pilot_params.yaml 传入
 ```
 
 产物目录：`plan/levels/<L0|L1|L2>/`，互不覆盖。

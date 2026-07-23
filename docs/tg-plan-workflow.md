@@ -1,10 +1,10 @@
 # /tg-plan 人类说明（非可执行状态机）
 
-**控制面权威**：Harness。人工批准不是 Referee Agent。
+**控制面权威**：Pilot。人工批准不是 Referee Agent。
 
 ## 循环
 
-`harness start tg-plan` → plan_build / plan_approve → `complete`。
+`acp start tg-plan` → plan_build / plan_approve → `complete`。
 
 ## 中文阶段
 

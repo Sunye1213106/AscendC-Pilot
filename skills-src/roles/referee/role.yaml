@@ -1,9 +1,0 @@
-id: referee
-version: 1
-name_zh: 裁判
-description: 独立审查产物并写 review YAML，不改被审正文。
-forbidden:
-  - modify_harness_state
-  - declare_workflow_passed
-  - modify_reviewed_artifact
-  - write_outside_declared_scope

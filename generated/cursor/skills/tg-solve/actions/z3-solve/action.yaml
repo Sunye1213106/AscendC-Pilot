@@ -11,7 +11,7 @@ policies:
 - code-access
 - evidence
 - language
-- harness-control
+- pilot-control
 - output-quality
 task_prompt_id: null
 context_profile_id: tg-solve-z3-solve

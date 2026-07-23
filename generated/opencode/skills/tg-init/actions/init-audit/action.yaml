@@ -12,7 +12,7 @@ policies:
 - code-access
 - evidence
 - language
-- harness-control
+- pilot-control
 - output-quality
 task_prompt_id: tg/init-audit
 context_profile_id: tg-init-init-audit

@@ -12,7 +12,7 @@ policies:
 - code-access
 - evidence
 - language
-- harness-control
+- pilot-control
 - output-quality
 task_prompt_id: uo/confidence-review
 context_profile_id: uo-update-confidence-review

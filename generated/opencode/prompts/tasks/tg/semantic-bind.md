@@ -4,10 +4,10 @@
 
 ## 允许读取
 
-- `.ascendc-agent/tg/realization/llm_bind_prompt_bundle.yaml`
-- `.ascendc-agent/tg/realization/binding_inventory.yaml`
-- `.ascendc-agent/tg/realization/binding_gaps.yaml`
-- `.ascendc-agent/tg/realization/unresolved.yaml`
+- `.ascendc-pilot/tg/realization/llm_bind_prompt_bundle.yaml`
+- `.ascendc-pilot/tg/realization/binding_inventory.yaml`
+- `.ascendc-pilot/tg/realization/binding_gaps.yaml`
+- `.ascendc-pilot/tg/realization/unresolved.yaml`
 - bundle 内给出的源码窗口路径（仅这些文件）
 
 ## 禁止
@@ -16,15 +16,15 @@
 - 发明 CSV 列名 / KEY id / 表达式
 - 空 accept、无 candidate_id 的批量升级
 - 直接修改 `binding_lexicon.yaml`（由 finalize 确定性应用）
-- 调用 `harness advance` / `complete` / 跳阶段
+- 调用 `acp advance` / `complete` / 跳阶段
 
 ## 输出
 
-写 `.ascendc-agent/tg/realization/semantic_bind_patch.yaml`（必须带本次 prepare 的 nonce）：
+写 `.ascendc-pilot/tg/realization/semantic_bind_patch.yaml`（必须带本次 prepare 的 nonce）：
 
 ```yaml
 action: bind
-prepare_nonce: <from Runtime Bundle / binding_inventory.harness_prepare.nonce>
+prepare_nonce: <from Runtime Bundle / binding_inventory.pilot_prepare.nonce>
 bindings:
   - candidate_id: <from bundle>
     key_id: KEY_...
@@ -34,7 +34,7 @@ bindings:
         line: ...
 ```
 
-然后执行：`harness run-action semantic_bind --finalize`
+然后执行：`acp run-action semantic_bind --finalize`
 
 Finalize 会调用 `apply_semantic_bind_patch`、校验 fingerprint / Output Contract / `bind_progress`。
 若仍有 unresolved gaps，保持 `ready_for_llm`，不得宣称完成。

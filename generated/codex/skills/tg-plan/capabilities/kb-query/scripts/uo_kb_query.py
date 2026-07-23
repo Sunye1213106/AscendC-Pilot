@@ -2,7 +2,7 @@
 """Compatibility forwarder for uo_kb_query.
 
 Agents sometimes invent SCRIPT_DIR as skills/uo-query/scripts/. The real CLI
-lives at $PLUGIN_ROOT/engines/uo/uo/scripts/uo_kb_query.py. This stub keeps both paths
+lives at $PLUGIN_ROOT/engines/understand-operator/uo/scripts/uo_kb_query.py. This stub keeps both paths
 working when the skill tree is junctioned from the plugin repo.
 """
 
@@ -14,23 +14,22 @@ from pathlib import Path
 
 
 def _resolve_real_script() -> Path:
-    # .../skills/uo-query/scripts/uo_kb_query.py -> plugin root is parents[3]
+    # .../skills/<wf>/capabilities/kb-query/scripts/uo_kb_query.py
+    # or .../skills/<wf>/scripts/uo_kb_query.py → plugin root varies by depth.
     here = Path(__file__).resolve()
+    home_plugin = Path.home() / ".config" / "opencode" / "ascendc-pilot-plugin"
     candidates = [
+        here.parents[3] / "engines" / "understand-operator" / "uo" / "scripts" / "uo_kb_query.py",
         here.parents[3] / "uo" / "scripts" / "uo_kb_query.py",
-        Path.home()
-        / ".config"
-        / "opencode"
-        / "understand-operator-plugin"
-        / "uo"
-        / "scripts"
-        / "uo_kb_query.py",
+        here.parents[4] / "engines" / "understand-operator" / "uo" / "scripts" / "uo_kb_query.py",
+        home_plugin / "engines" / "understand-operator" / "uo" / "scripts" / "uo_kb_query.py",
+        home_plugin / "uo" / "scripts" / "uo_kb_query.py",
     ]
     for path in candidates:
         if path.is_file():
             return path
     raise FileNotFoundError(
-        "uo_kb_query.py not found. Expected under PLUGIN_ROOT/engines/uo/uo/scripts/. "
+        "uo_kb_query.py not found. Expected under PLUGIN_ROOT/engines/understand-operator/uo/scripts/. "
         f"Tried: {[str(p) for p in candidates]}"
     )
 

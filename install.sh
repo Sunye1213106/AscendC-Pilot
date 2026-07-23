@@ -1,4 +1,4 @@
-# AscendC Agent unified installer
+# AscendC-Pilot unified installer
 #
 # Usage:
 #   ./install.sh opencode|cursor|codex
@@ -12,9 +12,9 @@ SKIP_PIP="${SKIP_PIP:-0}"
 
 plugin_dest() {
   case "$1" in
-    opencode) echo "$HOME/.config/opencode/ascendc-agent-plugin" ;;
-    cursor) echo "$HOME/.cursor/ascendc-agent-plugin" ;;
-    codex) echo "$HOME/.agents/ascendc-agent-plugin" ;;
+    opencode) echo "$HOME/.config/opencode/ascendc-pilot-plugin" ;;
+    cursor) echo "$HOME/.cursor/ascendc-pilot-plugin" ;;
+    codex) echo "$HOME/.agents/ascendc-pilot-plugin" ;;
     *) return 1 ;;
   esac
 }
@@ -50,16 +50,16 @@ uninstall() {
   agents="$(agents_dest "$plat")"
   plugins="$(plugins_dest "$plat")"
   rm -rf "$plug"
-  for name in uo-init uo-update uo-query uo-code-review tg-init tg-plan tg-solve operator _policies; do
+  for name in uo-init uo-update uo-query ce-review tg-init tg-plan tg-solve operator _policies; do
     rm -rf "$skills/$name"
   done
-  for name in ascendc-agent uo-semantic-resolve uo-key-resolve uo-confidence-review uo-kb-review uo-code-reviewer uo-query tg-csv-contract tg-semantic-bind tg-init-audit deterministic-uo-engine deterministic-tg-engine; do
+  for name in ascendc-pilot uo-semantic-resolve uo-key-resolve uo-confidence-review uo-kb-review ce-reviewer uo-query tg-csv-contract tg-semantic-bind tg-init-audit deterministic-uo-engine deterministic-tg-engine; do
     rm -f "$agents/$name.md"
   done
   if [[ "$plat" == "opencode" && -n "$plugins" ]]; then
-    rm -f "$plugins/ascendc-harness.ts"
+    rm -f "$plugins/ascendc-pilot.ts"
   fi
-  echo "Uninstalled $plat ascendc-agent plugin"
+  echo "Uninstalled $plat ascendc-pilot plugin"
 }
 
 case "$PLATFORM" in
@@ -74,7 +74,7 @@ case "$PLATFORM" in
 esac
 
 if [[ "$SKIP_PIP" != "1" ]]; then
-  python -m pip install -e "$BUNDLE_ROOT/harness" -e "$BUNDLE_ROOT/engines/uo" -e "$BUNDLE_ROOT/engines/tg[solver]"
+  python -m pip install -e "$BUNDLE_ROOT/pilot" -e "$BUNDLE_ROOT/engines/understand-operator" -e "$BUNDLE_ROOT/engines/testcase-generation[solver]"
 fi
 
 python "$BUNDLE_ROOT/scripts/compose_runtime.py" --repo "$BUNDLE_ROOT" --host "$PLATFORM"
@@ -86,7 +86,7 @@ mkdir -p "$DEST" "$SKILLS" "$AGENTS"
 rm -rf "$DEST"
 mkdir -p "$DEST"
 
-for name in skills-src prompts-src agents-src docs engines harness templates scripts opencode-plugin; do
+for name in skills prompts agents docs engines acp templates scripts opencode-plugin; do
   if [[ -d "$BUNDLE_ROOT/$name" ]]; then
     cp -R "$BUNDLE_ROOT/$name" "$DEST/"
   fi
@@ -99,7 +99,7 @@ if [[ -d "$GEN/prompts" ]]; then
   cp -R "$GEN/prompts" "$DEST/prompts"
 fi
 
-# Purge pre-harness legacy skills (free-form LLM KB builds; not Tab→ascendc-agent).
+# Purge pre-pilot legacy skills (free-form LLM KB builds; not Tab→ascendc-pilot).
 for legacy in understand-operator uo-diff; do
   if [[ -e "$SKILLS/$legacy" || -L "$SKILLS/$legacy" ]]; then
     rm -rf "$SKILLS/$legacy"
@@ -107,7 +107,7 @@ for legacy in understand-operator uo-diff; do
   fi
 done
 
-for name in uo-init uo-update uo-query uo-code-review tg-init tg-plan tg-solve operator; do
+for name in uo-init uo-update uo-query ce-review tg-init tg-plan tg-solve operator; do
   [[ -d "$DEST/skills/$name" ]] || continue
   rm -rf "$SKILLS/$name"
   ln -sfn "$DEST/skills/$name" "$SKILLS/$name" 2>/dev/null || cp -R "$DEST/skills/$name" "$SKILLS/$name"
@@ -122,14 +122,14 @@ done
 if [[ "$PLATFORM" == "opencode" ]]; then
   PLUGINS="$(plugins_dest opencode)"
   mkdir -p "$PLUGINS"
-  if [[ -f "$BUNDLE_ROOT/opencode-plugin/ascendc-harness.ts" ]]; then
-    cp "$BUNDLE_ROOT/opencode-plugin/ascendc-harness.ts" "$PLUGINS/ascendc-harness.ts"
-    echo "Installed plugin → $PLUGINS/ascendc-harness.ts"
+  if [[ -f "$BUNDLE_ROOT/opencode-plugin/ascendc-pilot.ts" ]]; then
+    cp "$BUNDLE_ROOT/opencode-plugin/ascendc-pilot.ts" "$PLUGINS/ascendc-pilot.ts"
+    echo "Installed plugin → $PLUGINS/ascendc-pilot.ts"
   fi
-  echo "Primary agent → $AGENTS/ascendc-agent.md (Tab switch; opencode.json untouched)"
+  echo "Primary agent → $AGENTS/ascendc-pilot.md (Tab switch; opencode.json untouched)"
 fi
 
 mkdir -p "$DEST/templates/$PLATFORM"
 echo "plugin_root=$DEST" > "$DEST/templates/$PLATFORM/install_stamp.txt"
-echo "Installed AscendC Agent Harness → $DEST"
-echo "Run: harness doctor"
+echo "Installed AscendC-Pilot → $DEST"
+echo "Run: acp doctor"

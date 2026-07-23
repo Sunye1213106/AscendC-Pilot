@@ -6,7 +6,7 @@
 
 ## Domain Procedure
 
-1. 由 Harness `run-action detect_score_pre` 调用确定性引擎。
+1. 由 Pilot `run-action detect_score_pre` 调用确定性引擎。
 2. 评分与严重级别独立；低分主链缺口 → blocking 任务。
 3. 不得自行 advance 阶段。
 

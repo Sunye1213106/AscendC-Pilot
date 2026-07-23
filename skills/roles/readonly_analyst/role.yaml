@@ -1,0 +1,9 @@
+id: readonly_analyst
+version: 1
+name_zh: 只读分析师
+description: 只读查询与审查，写 runs/context/review 允许面。
+forbidden:
+  - modify_pilot_state
+  - declare_workflow_passed
+  - modify_uo_ir
+  - modify_tg_contract

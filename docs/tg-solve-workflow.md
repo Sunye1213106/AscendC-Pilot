@@ -1,10 +1,10 @@
 # /tg-solve 人类说明（非可执行状态机）
 
-**控制面权威**：Harness。终态看真实 solver / realization / obligation 产物，不依赖可伪造 status 文件。
+**控制面权威**：Pilot。终态看真实 solver / realization / obligation 产物，不依赖可伪造 status 文件。
 
 ## 循环
 
-`harness start tg-solve` → z3_solve / cover_confirm → `complete`。
+`acp start tg-solve` → z3_solve / cover_confirm → `complete`。
 
 ## 中文阶段
 

@@ -107,9 +107,9 @@ def _dump_frontmatter(meta: dict[str, Any]) -> str:
 
 def _repo_paths(repo: Path) -> dict[str, Path]:
     return {
-        "skills": repo / "skills-src",
-        "prompts": repo / "prompts-src",
-        "agents": repo / "agents-src",
+        "skills": repo / "skills",
+        "prompts": repo / "prompts",
+        "agents": repo / "agents",
         "out": repo / "generated",
     }
 
@@ -188,8 +188,8 @@ def validate(repo: Path) -> list[str]:
     agents = paths["agents"]
     errors: list[str] = []
 
-    sys.path.insert(0, str(repo / "harness"))
-    from ascendc_harness.workflows.specs import WORKFLOWS  # noqa: WPS433
+    sys.path.insert(0, str(repo / "pilot"))
+    from ascendc_pilot.workflows.specs import WORKFLOWS  # noqa: WPS433
 
     # Collect write scopes by role for overlap / containment check
     producer_writes: set[str] = set()
@@ -208,7 +208,7 @@ def validate(repo: Path) -> list[str]:
             )
         if role in {"producer", "referee", "readonly_analyst", "deterministic_engine"} and not mode:
             # Defaulted to subagent at compose time; warn as error to keep sources explicit.
-            if aid != "ascendc-agent":
+            if aid != "ascendc-pilot":
                 errors.append(f"agent {aid}: missing mode (use mode: subagent)")
         if role == "producer":
             producer_writes |= scopes
@@ -266,7 +266,7 @@ def validate(repo: Path) -> list[str]:
                 if not action.get("output_contract_id"):
                     errors.append(f"{wid}/{aid}: missing output_contract_id")
             agent_id = action.get("agent_id")
-            if agent_id and agent_id != "ascendc-agent":
+            if agent_id and agent_id != "ascendc-pilot":
                 if not (agents / f"{agent_id}.yaml").is_file():
                     errors.append(f"{wid}/{aid}: missing agent {agent_id}")
 
@@ -312,10 +312,10 @@ def _compose_skill_body(skills: Path, wid: str, meta: dict[str, Any]) -> str:
     raw = src.read_text(encoding="utf-8") if src.is_file() else f"---\nname: {wid}\ndescription: {wid}\n---\n\n# {wid}\n"
     _, body = _require_skill_frontmatter(raw, path=src if src.is_file() else None)
     body = _replace_actions_table(body, meta)
-    # Inject harness-control policy summary once
-    hc = _read_policy(skills, "harness-control")
-    if "## Composed: harness-control" not in body and hc:
-        body = body.rstrip() + "\n\n## Composed: harness-control\n\n" + hc + "\n"
+    # Inject pilot-control policy summary once
+    hc = _read_policy(skills, "pilot-control")
+    if "## Composed: pilot-control" not in body and hc:
+        body = body.rstrip() + "\n\n## Composed: pilot-control\n\n" + hc + "\n"
     # Index composed refs + runtime bundle paths
     lines = [
         "\n## Composition index\n",
@@ -376,13 +376,13 @@ _OPENCODE_AGENT_ALLOWED_KEYS = frozenset(
 
 
 def _compose_agent_md(repo: Path, agent_meta: dict[str, Any]) -> str:
-    skills = repo / "skills-src"
+    skills = repo / "skills"
     aid = agent_meta.get("id", "agent")
     role = agent_meta.get("role", "")
     reads = "\n".join(f"- `{x}`" for x in (agent_meta.get("read_scopes") or [])) or "- (none)"
     writes = "\n".join(f"- `{x}`" for x in (agent_meta.get("write_scopes") or [])) or "- (none)"
     forbidden = "\n".join(f"- {x}" for x in (agent_meta.get("forbidden") or []))
-    hc = _read_policy(skills, "harness-control")
+    hc = _read_policy(skills, "pilot-control")
     lang = _read_policy(skills, "language")
     front: dict[str, Any] = {
         "name": aid,
@@ -391,7 +391,7 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any]) -> str:
     if agent_meta.get("mode") == "primary":
         front["mode"] = "primary"
         front["permission"] = {
-            "bash": {"*": "deny", "harness *": "allow"},
+            "bash": {"*": "deny", "acp *": "allow"},
             "edit": {"*": "ask"},
             "write": {"*": "ask"},
         }
@@ -403,7 +403,7 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any]) -> str:
 
 ## Role
 
-You are a `{role}` for AscendC Agent Harness.
+You are a `{role}` for AscendC-Pilot.
 
 {agent_meta.get('description') or ''}
 
@@ -425,15 +425,15 @@ You must not:
 
 At runtime, follow:
 
-1. the current Harness Action;
+1. the current Pilot Action;
 2. the composed Policies;
 3. the composed Capabilities;
 4. the task Prompt;
 5. the declared Output Contract.
 
-When these sources conflict, follow the Harness Action and source-authority Policy.
+When these sources conflict, follow the Pilot Action and source-authority Policy.
 
-## Composed: harness-control
+## Composed: pilot-control
 
 {hc}
 
@@ -452,8 +452,8 @@ def compose_host(repo: Path, host: str) -> dict[str, Any]:
     out_root = paths["out"] / host
     host_meta = _load_yaml(skills / "hosts" / f"{host}.yaml")
 
-    sys.path.insert(0, str(repo / "harness"))
-    from ascendc_harness.workflows.specs import WORKFLOWS  # noqa: WPS433
+    sys.path.insert(0, str(repo / "pilot"))
+    from ascendc_pilot.workflows.specs import WORKFLOWS  # noqa: WPS433
 
     if out_root.exists():
         shutil.rmtree(out_root)
@@ -488,8 +488,8 @@ def compose_host(repo: Path, host: str) -> dict[str, Any]:
         wf_meta = WORKFLOWS.get(wid) or {}
         body = _compose_skill_body(skills, wid, wf_meta) if wid != "operator" else src_body
         if wid == "operator":
-            hc = _read_policy(skills, "harness-control")
-            body = body.rstrip() + "\n\n## Composed: harness-control\n\n" + hc + "\n"
+            hc = _read_policy(skills, "pilot-control")
+            body = body.rstrip() + "\n\n## Composed: pilot-control\n\n" + hc + "\n"
         dest = out_skills / wid
         dest.mkdir(parents=True, exist_ok=True)
         skill_out = dest / "SKILL.md"
@@ -611,8 +611,8 @@ def validate_generated(repo: Path, *, host: str = "opencode") -> list[str]:
         errors.append(f"missing generated/{host}/agents")
         return errors
 
-    sys.path.insert(0, str(repo / "harness"))
-    from ascendc_harness.workflows.specs import WORKFLOWS  # noqa: WPS433
+    sys.path.insert(0, str(repo / "pilot"))
+    from ascendc_pilot.workflows.specs import WORKFLOWS  # noqa: WPS433
 
     # Every referenced non-primary agent must have a generated md
     needed: set[str] = set()
@@ -623,7 +623,7 @@ def validate_generated(repo: Path, *, host: str = "opencode") -> list[str]:
             if not isinstance(action, dict):
                 continue
             agent_id = action.get("agent_id")
-            if agent_id and agent_id != "ascendc-agent":
+            if agent_id and agent_id != "ascendc-pilot":
                 needed.add(str(agent_id))
             role = action.get("role_id")
             if role in {"producer", "referee", "readonly_analyst"} and not agent_id:
@@ -684,7 +684,7 @@ def validate_generated(repo: Path, *, host: str = "opencode") -> list[str]:
 
 
 def compose_all(repo: Path, *, hosts: list[str] | None = None) -> dict[str, Any]:
-    skills = repo / "skills-src"
+    skills = repo / "skills"
     hosts_dir = skills / "hosts"
     host_names = hosts or [p.stem for p in hosts_dir.glob("*.yaml")]
     errors = validate(repo)

@@ -12,7 +12,7 @@
 
 ## Method
 
-1. 确认 `kb_ready` / `uo_ready`（由 Harness gate 判定）。
+1. 确认 `kb_ready` / `uo_ready`（由 Pilot gate 判定）。
 2. 按问题类型选择 graph / YAML 查询面（先 graph，再按需展开 YAML）。
 3. 记录每个命中的 KB reference。
 4. 缺口显式列出，不猜测填补。

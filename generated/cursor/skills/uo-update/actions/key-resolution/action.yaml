@@ -14,7 +14,7 @@ policies:
 - code-access
 - evidence
 - language
-- harness-control
+- pilot-control
 - output-quality
 task_prompt_id: uo/key-resolution
 context_profile_id: uo-update-key-resolution

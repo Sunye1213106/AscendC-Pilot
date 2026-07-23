@@ -1,15 +1,15 @@
 # /uo-init 人类说明（非可执行状态机）
 
-**控制面权威**：`harness` + `workflows/specs.py`。  
-**运行时方法**：`skills-src/actions/uo-init/**`（经 Composer 写入 `generated/`）。
+**控制面权威**：`acp` + `workflows/specs.py`。  
+**运行时方法**：`skills/actions/uo-init/**`（经 Composer 写入 `generated/`）。
 
 ## 循环
 
 ```text
-harness start uo-init
-harness next → phase_label_zh + allowed_actions
+acp start uo-init
+acp next → phase_label_zh + allowed_actions
 执行当前 Action 领域方法
-harness advance | rework | complete
+acp advance | rework | complete
 ```
 
 ## 中文阶段
@@ -37,6 +37,6 @@ harness advance | rework | complete
 
 ## 边界
 
-- 测项合同属 TG（`.ascendc-agent/tg/`），UO 不写 `contracts/**`
-- 完成态仅 `harness complete`
+- 测项合同属 TG（`.ascendc-pilot/tg/`），UO 不写 `contracts/**`
+- 完成态仅 `acp complete`
 - 详见 [overview/workflows.md](./overview/workflows.md)
