@@ -11,9 +11,12 @@ description: >-
 ## Task
 
 在 **thin contract 脚手架已存在** 后，于 inventory/unresolved 证据内补全
-`binding_lexicon` 与 domain 提案，达到可交 uo-query / merge 的状态。
+`binding_lexicon` 与 domain **提案**，达到可交 uo-query / merge 的状态。
 
 成功：gaps 有证据绑定或显式 unresolved；**未**生成 CSV / 未调用 Z3。
+
+**写权：** 仅 `$OUT_ROOT`（`.ascendc-agent/tg/**`）提案文件；**禁止**写入 `$UO_ROOT/**`
+（含历史 `contracts/**`）。测项合同真源在 TG `contract/`，不在 UO。
 
 ## Target
 

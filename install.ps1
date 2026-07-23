@@ -35,6 +35,12 @@ function Get-AgentsDest([string]$plat) {
     "codex" { Join-Path $HOME ".agents\agents" }
   }
 }
+function Get-PluginsDest([string]$plat) {
+  switch ($plat) {
+    "opencode" { Join-Path $HOME ".config\opencode\plugins" }
+    default { $null }
+  }
+}
 
 if ($Platform -like "uninstall-*") {
   $plat = $Platform.Substring("uninstall-".Length)
@@ -42,7 +48,7 @@ if ($Platform -like "uninstall-*") {
   $skills = Get-SkillsDest $plat
   $agents = Get-AgentsDest $plat
   if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
-  foreach ($name in @("uo-init","uo-update","uo-query","uo-code-review","uo-diff","tg-init","tg-plan","tg-solve","understand-operator")) {
+  foreach ($name in @("uo-init","uo-update","uo-query","uo-code-review","uo-diff","tg-init","tg-plan","tg-solve","understand-operator","operator")) {
     $p = Join-Path $skills $name
     if (Test-Path $p) { Remove-Item -Recurse -Force $p }
   }
@@ -58,6 +64,9 @@ if ($SkipPip -ne "1") {
   python -m pip install -e "$BundleRoot\harness" -e "$BundleRoot\engines\uo" -e "$BundleRoot\engines\tg[solver]"
 }
 
+# Compile skills-src → generated/<platform>/skills
+python "$BundleRoot\scripts\compile_skills.py" --repo "$BundleRoot" --host $Platform
+
 $Dest = Get-PluginDest $Platform
 $Skills = Get-SkillsDest $Platform
 $Agents = Get-AgentsDest $Platform
@@ -65,12 +74,19 @@ New-Item -ItemType Directory -Force -Path $Dest, $Skills, $Agents | Out-Null
 if (Test-Path $Dest) { Remove-Item -Recurse -Force $Dest }
 New-Item -ItemType Directory -Force -Path $Dest | Out-Null
 
-foreach ($name in @("skills","prompts","agents","docs","engines","harness","templates")) {
-  Copy-Item -Recurse -Force (Join-Path $BundleRoot $name) (Join-Path $Dest $name)
+foreach ($name in @("skills-src","prompts","agents","docs","engines","harness","templates","scripts","opencode-plugin")) {
+  $src = Join-Path $BundleRoot $name
+  if (Test-Path $src) {
+    Copy-Item -Recurse -Force $src (Join-Path $Dest $name)
+  }
 }
+# Install compiled skills (not raw skills/)
+$genSkills = Join-Path $BundleRoot "generated\$Platform\skills"
+Copy-Item -Recurse -Force $genSkills (Join-Path $Dest "skills")
 
-foreach ($name in @("uo-init","uo-update","uo-query","uo-code-review","tg-init","tg-plan","tg-solve")) {
+foreach ($name in @("uo-init","uo-update","uo-query","uo-code-review","tg-init","tg-plan","tg-solve","operator","uo-diff")) {
   $target = Join-Path $Dest "skills\$name"
+  if (-not (Test-Path $target)) { continue }
   $link = Join-Path $Skills $name
   if (Test-Path $link) { Remove-Item -Recurse -Force $link }
   try {
@@ -89,6 +105,18 @@ Get-ChildItem (Join-Path $Dest "agents\*.md") | ForEach-Object {
   } catch {
     Copy-Item -Force $_.FullName $link
   }
+}
+
+# OpenCode plugin only — never merge opencode.json
+if ($Platform -eq "opencode") {
+  $plugins = Get-PluginsDest "opencode"
+  New-Item -ItemType Directory -Force -Path $plugins | Out-Null
+  $pluginSrc = Join-Path $BundleRoot "opencode-plugin\ascendc-harness.ts"
+  if (Test-Path $pluginSrc) {
+    Copy-Item -Force $pluginSrc (Join-Path $plugins "ascendc-harness.ts")
+    Write-Host "Installed plugin → $plugins\ascendc-harness.ts"
+  }
+  Write-Host "Primary agent → $Agents\ascendc-agent.md (Tab 切换；未改 opencode.json)"
 }
 
 $stampDir = Join-Path $Dest "templates\$Platform"

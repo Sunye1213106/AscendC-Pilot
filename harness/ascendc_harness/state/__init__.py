@@ -1,4 +1,4 @@
-"""Workflow state machine and open_items tracking."""
+﻿"""Workflow state machine — sole authority for status transitions."""
 
 from __future__ import annotations
 
@@ -14,8 +14,15 @@ except ImportError:  # pragma: no cover
 
 from ascendc_harness.paths import ensure_agent_layout, runs_root, state_root
 
+RUNNING_LIKE = frozenset({"running", "rework_required", "human_required"})
+TERMINAL = frozenset({"blocked", "failed", "passed"})
+ALL_STATUSES = RUNNING_LIKE | TERMINAL
 
-TERMINAL = frozenset({"pass", "blocked", "human", "failed"})
+# Compat aliases for older callers / CLI
+_STATUS_ALIASES = {
+    "pass": "passed",
+    "human": "human_required",
+}
 
 
 def _now() -> str:
@@ -33,7 +40,9 @@ def _dump(path: Path, data: dict[str, Any]) -> None:
     if yaml is None:
         raise RuntimeError("PyYAML required")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    tmp.replace(path)
 
 
 def workflow_state_path(project_root: Path) -> Path:
@@ -48,36 +57,6 @@ def new_run_id(prefix: str = "RUN") -> str:
     return f"{prefix}_{datetime.now(tz=timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
 
-def start_workflow(
-    project_root: Path,
-    workflow_id: str,
-    *,
-    phase: str,
-    open_items: list[dict[str, Any]] | None = None,
-    meta: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    ensure_agent_layout(project_root)
-    run_id = new_run_id(workflow_id.replace("-", "_").upper())
-    state = {
-        "version": 1,
-        "workflow_id": workflow_id,
-        "run_id": run_id,
-        "phase": phase,
-        "status": "running",
-        "open_items": list(open_items or []),
-        "completed_gates": [],
-        "failed_gates": [],
-        "no_progress_streak": 0,
-        "updated_at": _now(),
-        "meta": dict(meta or {}),
-    }
-    _dump(workflow_state_path(project_root), state)
-    run_dir = runs_root(project_root) / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
-    _dump(run_dir / "receipt.yaml", {"run_id": run_id, "workflow_id": workflow_id, "started_at": _now()})
-    return state
-
-
 def load_state(project_root: Path) -> dict[str, Any]:
     return _load(workflow_state_path(project_root))
 
@@ -89,14 +68,61 @@ def save_state(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
     return state
 
 
-def set_phase(project_root: Path, phase: str) -> dict[str, Any]:
+def _normalize_status(status: str) -> str:
+    s = str(status or "").strip().lower()
+    return _STATUS_ALIASES.get(s, s)
+
+
+def _status_message_zh(status: str, state: dict[str, Any]) -> str:
+    st = _normalize_status(status)
+    lf = state.get("last_failure") or {}
+    msg = str(lf.get("message_zh") or "") if isinstance(lf, dict) else ""
+    labels = {
+        "running": "工作流运行中",
+        "rework_required": "门禁未通过，需要返工",
+        "human_required": "需要人工确认或补充",
+        "blocked": "自动流程无法继续",
+        "failed": "不可恢复的执行错误",
+        "passed": "工作流已通过全部完成门禁",
+    }
+    base = labels.get(st, st)
+    return f"{base}：{msg}" if msg else base
+
+
+def _retry_budget(state: dict[str, Any]) -> int:
+    budget = state.get("retry_budget")
+    if isinstance(budget, int) and budget >= 0:
+        return budget
+    return 3
+
+
+def _apply_progress(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
+    from ascendc_harness.runs import semantic_progress_fingerprint
+
+    fp = semantic_progress_fingerprint(state)
+    state["progress_fingerprint"] = fp
+    return state
+
+
+def _bump_no_progress(state: dict[str, Any]) -> dict[str, Any]:
+    streak = int(state.get("no_progress_streak") or 0) + 1
+    state["no_progress_streak"] = streak
+    budget = _retry_budget(state)
+    if streak >= budget and state.get("status") in {"rework_required", "running"}:
+        state["status"] = "blocked"
+        lf = dict(state.get("last_failure") or {})
+        lf.setdefault("reason_code", "NO_PROGRESS_BUDGET_EXCEEDED")
+        lf.setdefault(
+            "message_zh",
+            f"连续 {streak} 次无有效进展，重试预算（{budget}）已耗尽",
+        )
+        state["last_failure"] = lf
+    return state
+
+
+def no_progress_exceeded(project_root: Path, *, limit: int = 3) -> bool:
     state = load_state(project_root)
-    if not state:
-        raise RuntimeError("No active workflow state")
-    if state.get("status") in TERMINAL:
-        raise RuntimeError(f"Workflow already terminal: {state.get('status')}")
-    state["phase"] = phase
-    return save_state(project_root, state)
+    return int(state.get("no_progress_streak") or 0) >= limit
 
 
 def record_gate(
@@ -105,191 +131,163 @@ def record_gate(
     *,
     ok: bool,
     detail: dict[str, Any] | None = None,
+    bump: bool = True,
 ) -> dict[str, Any]:
+    """Record a gate result; failed gates optionally bump no-progress streak."""
+    from ascendc_harness.runs import append_event
+
     state = load_state(project_root)
     if not state:
         raise RuntimeError("No active workflow state")
-    entry = {"id": gate_id, "ok": ok, "at": _now(), "detail": detail or {}}
-    if ok:
-        completed = list(state.get("completed_gates") or [])
-        completed.append(entry)
-        state["completed_gates"] = completed
-        state["no_progress_streak"] = 0
-    else:
-        failed = list(state.get("failed_gates") or [])
+    failed = list(state.get("failed_gates") or [])
+    entry = {"id": gate_id, "gate": gate_id, "ok": ok, "at": _now()}
+    if detail:
+        entry["detail"] = {k: detail[k] for k in ("message", "gate", "ok", "reason") if k in detail}
+    # Keep latest per gate id
+    failed = [g for g in failed if str(g.get("id") or g.get("gate") or "") != gate_id]
+    if not ok:
         failed.append(entry)
         state["failed_gates"] = failed
-        state["no_progress_streak"] = int(state.get("no_progress_streak") or 0) + 1
-    return save_state(project_root, state)
+        if bump:
+            state = _bump_no_progress(state)
+    else:
+        state["failed_gates"] = failed
+        before = dict(state.get("progress_fingerprint") or {})
+        state = _apply_progress(project_root, state)
+        from ascendc_harness.runs import fingerprint_improved
 
-
-def reduce_open_items(project_root: Path, item_ids: list[str]) -> dict[str, Any]:
-    state = load_state(project_root)
-    if not state:
-        raise RuntimeError("No active workflow state")
-    drop = set(item_ids)
-    before = list(state.get("open_items") or [])
-    after = [it for it in before if str(it.get("id") or "") not in drop]
-    if len(after) < len(before):
-        state["no_progress_streak"] = 0
-    state["open_items"] = after
-    return save_state(project_root, state)
-
-
-def mark_terminal(project_root: Path, status: str, *, reason: str = "", force: bool = False) -> dict[str, Any]:
-    if status not in TERMINAL:
-        raise ValueError(f"status must be one of {sorted(TERMINAL)}")
-    state = load_state(project_root)
-    if not state:
-        raise RuntimeError("No active workflow state")
-    if status == "pass" and not force:
-        raise RuntimeError(
-            "Refuse mark_terminal(pass) without harness.complete_workflow — "
-            "state authority lives in harness (use force=True only for tests)"
-        )
-    state["status"] = status
-    state["terminal_reason"] = reason
-    return save_state(project_root, state)
-
-
-def advance_phase(
-    project_root: Path,
-    next_phase: str,
-    *,
-    required_gates: list[str] | None = None,
-) -> dict[str, Any]:
-    """Advance phase only when required gates pass (Harness authority)."""
-    from ascendc_harness.gates import run_named_gate
-    from ascendc_harness.workflows import get_workflow
-
-    state = load_state(project_root)
-    if not state:
-        raise RuntimeError("No active workflow state")
-    if state.get("status") in TERMINAL:
-        raise RuntimeError(f"Workflow already terminal: {state.get('status')}")
-
-    wid = str(state.get("workflow_id") or "")
-    meta = get_workflow(wid) if wid else {}
-    phases = list(meta.get("phases") or [])
-    current = str(state.get("phase") or "")
-    if phases and next_phase in phases and current in phases:
-        if phases.index(next_phase) > phases.index(current) + 1:
-            raise RuntimeError(f"Illegal phase jump {current!r} → {next_phase!r}")
-
-    gate_ids = list(required_gates or [])
-    if not gate_ids:
-        # Default: all gates listed before the target phase index (resolve+)
-        # For simplicity, require key-related gates when entering export/review
-        phase_gates = dict(meta.get("phase_gates") or {})
-        gate_ids = list(phase_gates.get(current) or [])
-
-    results = [run_named_gate(project_root, gid) for gid in gate_ids]
-    failed = [r for r in results if not r.get("ok")]
-    for r in results:
-        record_gate(project_root, str(r.get("gate") or "gate"), ok=bool(r.get("ok")), detail=r)
-    if failed:
-        state = load_state(project_root)
-        state["status"] = "blocked" if no_progress_exceeded(project_root) else state.get("status") or "running"
-        state["last_advance_failure"] = {
-            "from": current,
-            "to": next_phase,
-            "failed_gates": [f.get("gate") for f in failed],
-            "messages": [f.get("message") for f in failed],
-        }
-        save_state(project_root, state)
-        return {
-            "ok": False,
-            "advanced": False,
-            "from": current,
-            "to": next_phase,
-            "failed_gates": failed,
-            "state": load_state(project_root),
-        }
-    state = set_phase(project_root, next_phase)
-    return {"ok": True, "advanced": True, "from": current, "to": next_phase, "state": state}
-
-
-def complete_workflow(project_root: Path, *, reason: str = "") -> dict[str, Any]:
-    """Only path to status=pass: all workflow gates must succeed."""
-    from ascendc_harness.gates import run_key_gates, run_workflow_gates
-
-    state = load_state(project_root)
-    if not state:
-        raise RuntimeError("No active workflow state")
-    if state.get("status") in TERMINAL:
-        raise RuntimeError(f"Workflow already terminal: {state.get('status')}")
-
-    wid = str(state.get("workflow_id") or "")
-    # Always run KEY hard gates for UO workflows
-    key_payload = None
-    if wid.startswith("uo-") or wid in {"uo-init", "uo-update"}:
-        key_payload = run_key_gates(project_root)
-        if not key_payload.get("ok"):
-            record_gate(project_root, "key_gates", ok=False, detail=key_payload)
-            state = load_state(project_root)
-            state["status"] = "blocked"
-            state["terminal_reason"] = "key_gates_failed"
-            save_state(project_root, state)
-            return {"ok": False, "status": "blocked", "key_gates": key_payload, "state": load_state(project_root)}
-
-    wf = run_workflow_gates(project_root)
-    for r in wf.get("gates") or []:
-        record_gate(project_root, str(r.get("gate") or "gate"), ok=bool(r.get("ok")), detail=r)
-    if not wf.get("ok"):
-        state = load_state(project_root)
-        state["status"] = "blocked"
-        state["terminal_reason"] = "workflow_gates_failed"
-        save_state(project_root, state)
-        return {"ok": False, "status": "blocked", "workflow_gates": wf, "key_gates": key_payload, "state": load_state(project_root)}
-
-    state = load_state(project_root)
-    state["status"] = "pass"
-    state["terminal_reason"] = reason or "all_gates_passed"
+        if fingerprint_improved(before, state.get("progress_fingerprint") or {}):
+            state["no_progress_streak"] = 0
     save_state(project_root, state)
-    return {"ok": True, "status": "pass", "workflow_gates": wf, "key_gates": key_payload, "state": load_state(project_root)}
-
-
-def no_progress_exceeded(project_root: Path, *, limit: int = 3) -> bool:
-    state = load_state(project_root)
-    return int(state.get("no_progress_streak") or 0) >= limit
-
-
-def write_subagent_receipt(
-    project_root: Path,
-    *,
-    identity: str,
-    agent: str,
-    artifact: str,
-) -> Path:
-    state = load_state(project_root)
-    run_id = str(state.get("run_id") or "NO_RUN")
-    path = runs_root(project_root) / run_id / "subagents" / f"{identity.replace(':', '_')}.yaml"
-    _dump(
-        path,
-        {
-            "identity": identity,
-            "agent": agent,
-            "artifact": artifact,
-            "recorded_at": _now(),
-            "run_id": run_id,
-        },
+    append_event(
+        project_root,
+        {"type": "gate_recorded", "gate": gate_id, "ok": ok},
     )
-    return path
+    return load_state(project_root)
 
 
-def has_subagent_receipt(project_root: Path, *, agent: str | None = None, identity_prefix: str = "") -> bool:
+def start_workflow(
+    project_root: Path,
+    workflow_id: str,
+    *,
+    phase: str | None = None,
+    force_phase: bool = False,
+) -> dict[str, Any]:
+    """Start at entry_state. Arbitrary phase only when force_phase=True (tests)."""
+    from ascendc_harness.obligations import collect_obligations
+    from ascendc_harness.runs import append_event
+    from ascendc_harness.workflows import entry_state, get_workflow, label_zh_for, state_ids
+
+    meta = get_workflow(workflow_id)
+    ensure_agent_layout(project_root)
+    entry = entry_state(workflow_id)
+    if phase and phase != entry and not force_phase:
+        raise RuntimeError(
+            f"Production start must use entry_state={entry!r}; "
+            f"got phase={phase!r} (pass force_phase=True in tests only)"
+        )
+    start_phase = phase if (force_phase and phase) else entry
+    if start_phase not in state_ids(workflow_id):
+        raise RuntimeError(f"Unknown phase {start_phase!r} for {workflow_id}")
+
+    run_id = new_run_id("RUN")
+    try:
+        from ascendc_harness.spec_hashes import all_spec_hashes
+
+        hashes = all_spec_hashes(workflow_id=workflow_id)
+    except Exception:  # noqa: BLE001
+        hashes = {}
+    state: dict[str, Any] = {
+        "workflow_id": workflow_id,
+        "run_id": run_id,
+        "phase": start_phase,
+        "phase_label_zh": label_zh_for(workflow_id, start_phase),
+        "status": "running",
+        "retry_budget": int(meta.get("retry_budget") or 3),
+        "no_progress_streak": 0,
+        "failed_gates": [],
+        "open_items": collect_obligations(project_root, workflow_id),
+        "last_failure": None,
+        "created_at": _now(),
+        "meta": {},
+        **{k: v for k, v in hashes.items()},
+    }
+    state = _apply_progress(project_root, state)
+    save_state(project_root, state)
+    (runs_root(project_root) / run_id).mkdir(parents=True, exist_ok=True)
+    append_event(project_root, {"type": "workflow_started", "workflow_id": workflow_id, "phase": start_phase}, run_id=run_id)
+    return load_state(project_root)
+
+
+def mark_terminal(
+    project_root: Path,
+    status: str,
+    *,
+    reason: str = "",
+) -> dict[str, Any]:
+    """Mark human_required / blocked / failed. Refuse passed — use complete_workflow."""
+    from ascendc_harness.runs import append_event
+
     state = load_state(project_root)
-    run_id = str(state.get("run_id") or "")
-    if not run_id:
-        return False
-    base = runs_root(project_root) / run_id / "subagents"
-    if not base.is_dir():
-        return False
-    for path in base.glob("*.yaml"):
-        data = _load(path)
-        if agent and str(data.get("agent") or "") != agent:
-            continue
-        if identity_prefix and not str(data.get("identity") or "").startswith(identity_prefix):
-            continue
-        return True
-    return False
+    if not state:
+        raise RuntimeError("No active workflow state")
+    normalized = _normalize_status(status)
+    if normalized == "passed":
+        raise RuntimeError("Refuse mark_terminal(passed/pass); use complete_workflow")
+    if normalized not in {"blocked", "failed", "human_required"}:
+        raise RuntimeError(f"Unsupported terminal status: {status!r}")
+    if state.get("status") == "passed":
+        raise RuntimeError("Workflow already passed")
+    state["status"] = normalized
+    state["terminal_reason"] = reason
+    if reason:
+        state["last_failure"] = {
+            "reason_code": "MARK_TERMINAL",
+            "message_zh": reason,
+        }
+    save_state(project_root, state)
+    append_event(project_root, {"type": "mark_terminal", "status": normalized, "reason": reason})
+    return load_state(project_root)
+
+
+# Compat re-exports — receipts live in runs
+def has_subagent_receipt(*args: Any, **kwargs: Any) -> bool:
+    from ascendc_harness.runs import has_subagent_receipt as _h
+
+    return _h(*args, **kwargs)
+
+
+def write_subagent_receipt(*args: Any, **kwargs: Any):
+    from ascendc_harness.runs import write_subagent_receipt as _w
+
+    return _w(*args, **kwargs)
+
+
+# Advance / rework / complete / next
+from ascendc_harness.state.machine import (  # noqa: E402
+    advance_phase,
+    complete_workflow,
+    describe_next,
+    rework_phase,
+)
+
+__all__ = [
+    "ALL_STATUSES",
+    "RUNNING_LIKE",
+    "TERMINAL",
+    "advance_phase",
+    "complete_workflow",
+    "describe_next",
+    "has_subagent_receipt",
+    "load_state",
+    "mark_terminal",
+    "new_run_id",
+    "no_progress_exceeded",
+    "record_gate",
+    "resume_path",
+    "rework_phase",
+    "save_state",
+    "start_workflow",
+    "workflow_state_path",
+    "write_subagent_receipt",
+]

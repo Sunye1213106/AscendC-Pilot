@@ -5,14 +5,15 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ascendc_harness.workflows import WORKFLOWS, list_user_workflows
+from ascendc_harness.workflows.specs import WORKFLOWS
+from ascendc_harness.workflows import list_user_workflows
 
 SLASH_MAP = {
     "/uo-init": "uo-init",
     "/uo-update": "uo-update",
     "/uo-query": "uo-query",
     "/uo-code-review": "uo-code-review",
-    "/uo-diff": "uo-update",  # diff is update-facing read; route to update skill family
+    "/uo-diff": "uo-update",  # merged into update
     "/tg-init": "tg-init",
     "/tg-plan": "tg-plan",
     "/tg-solve": "tg-solve",
@@ -34,8 +35,25 @@ def route(text: str) -> dict[str, Any]:
     if not raw:
         return {"ok": False, "workflow_id": None, "error": "empty_input", "candidates": list_user_workflows()}
 
-    # Exact slash (first token)
+    # /operator is an alias for harness route — strip and re-route (no separate rule table)
     first = raw.split()[0]
+    if first in {"/operator", "operator"}:
+        rest = raw[len(first) :].strip()
+        if not rest:
+            return {
+                "ok": False,
+                "workflow_id": None,
+                "error": "operator_needs_intent",
+                "message_zh": "请在 /operator 后给出意图或 slash（例如 /operator 帮我建库）",
+                "candidates": list_user_workflows(),
+            }
+        inner = route(rest)
+        if inner.get("ok"):
+            inner = dict(inner)
+            inner["via"] = "operator"
+        return inner
+
+    # Exact slash (first token)
     if first in SLASH_MAP:
         wid = SLASH_MAP[first]
         return {"ok": True, "workflow_id": wid, "slash": WORKFLOWS[wid].get("slash"), "method": "slash"}

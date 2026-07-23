@@ -35,6 +35,13 @@ agents_dest() {
   esac
 }
 
+plugins_dest() {
+  case "$1" in
+    opencode) echo "$HOME/.config/opencode/plugins" ;;
+    *) echo "" ;;
+  esac
+}
+
 uninstall() {
   local plat="$1"
   local plug skills agents
@@ -42,7 +49,7 @@ uninstall() {
   skills="$(skills_dest "$plat")"
   agents="$(agents_dest "$plat")"
   rm -rf "$plug"
-  for name in uo-init uo-update uo-query uo-code-review uo-diff tg-init tg-plan tg-solve understand-operator; do
+  for name in uo-init uo-update uo-query uo-code-review uo-diff tg-init tg-plan tg-solve understand-operator operator; do
     rm -rf "$skills/$name"
   done
   for name in uo-semantic-resolve uo-key-resolve uo-confidence-review uo-kb-review uo-code-reviewer tg-csv-contract tg-init-audit; do
@@ -66,25 +73,25 @@ if [[ "$SKIP_PIP" != "1" ]]; then
   python -m pip install -e "$BUNDLE_ROOT/harness" -e "$BUNDLE_ROOT/engines/uo" -e "$BUNDLE_ROOT/engines/tg[solver]"
 fi
 
+python "$BUNDLE_ROOT/scripts/compile_skills.py" --repo "$BUNDLE_ROOT" --host "$PLATFORM"
+
 DEST="$(plugin_dest "$PLATFORM")"
 SKILLS="$(skills_dest "$PLATFORM")"
 AGENTS="$(agents_dest "$PLATFORM")"
 mkdir -p "$DEST" "$SKILLS" "$AGENTS"
+rm -rf "$DEST"
+mkdir -p "$DEST"
 
-rsync -a --delete \
-  --exclude '.pytest_cache' --exclude '__pycache__' --exclude '*.egg-info' \
-  "$BUNDLE_ROOT/skills" "$BUNDLE_ROOT/prompts" "$BUNDLE_ROOT/agents" "$BUNDLE_ROOT/docs" \
-  "$BUNDLE_ROOT/engines" "$BUNDLE_ROOT/harness" "$BUNDLE_ROOT/templates" \
-  "$DEST/" 2>/dev/null || {
-  # Fallback without rsync
-  rm -rf "$DEST"
-  mkdir -p "$DEST"
-  cp -R "$BUNDLE_ROOT/skills" "$BUNDLE_ROOT/prompts" "$BUNDLE_ROOT/agents" "$BUNDLE_ROOT/docs" \
-    "$BUNDLE_ROOT/engines" "$BUNDLE_ROOT/harness" "$BUNDLE_ROOT/templates" "$DEST/"
-}
+for name in skills-src prompts agents docs engines harness templates scripts opencode-plugin; do
+  if [[ -d "$BUNDLE_ROOT/$name" ]]; then
+    cp -R "$BUNDLE_ROOT/$name" "$DEST/"
+  fi
+done
+cp -R "$BUNDLE_ROOT/generated/$PLATFORM/skills" "$DEST/skills"
 
-# Symlink/copy user skills
-for name in uo-init uo-update uo-query uo-code-review tg-init tg-plan tg-solve; do
+# Symlink/copy user skills from compiled tree
+for name in uo-init uo-update uo-query uo-code-review tg-init tg-plan tg-solve operator uo-diff; do
+  [[ -d "$DEST/skills/$name" ]] || continue
   rm -rf "$SKILLS/$name"
   ln -sfn "$DEST/skills/$name" "$SKILLS/$name" 2>/dev/null || cp -R "$DEST/skills/$name" "$SKILLS/$name"
 done
@@ -97,6 +104,17 @@ for f in "$DEST/agents"/*.md; do
   esac
   ln -sfn "$f" "$AGENTS/$base" 2>/dev/null || cp "$f" "$AGENTS/$base"
 done
+
+# OpenCode plugin only — never merge opencode.json
+if [[ "$PLATFORM" == "opencode" ]]; then
+  PLUGINS="$(plugins_dest opencode)"
+  mkdir -p "$PLUGINS"
+  if [[ -f "$BUNDLE_ROOT/opencode-plugin/ascendc-harness.ts" ]]; then
+    cp "$BUNDLE_ROOT/opencode-plugin/ascendc-harness.ts" "$PLUGINS/ascendc-harness.ts"
+    echo "Installed plugin → $PLUGINS/ascendc-harness.ts"
+  fi
+  echo "Primary agent → $AGENTS/ascendc-agent.md (Tab switch; opencode.json untouched)"
+fi
 
 # Host template stamp
 mkdir -p "$DEST/templates/$PLATFORM"

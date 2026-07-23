@@ -1,0 +1,6 @@
+# OpenCode host defaults for compiled skills
+skill_defaults:
+  disable-model-invocation: true
+skills:
+  operator:
+    disable-model-invocation: false

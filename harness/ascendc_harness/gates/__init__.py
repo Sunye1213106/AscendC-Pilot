@@ -119,26 +119,26 @@ def gate_key_triage_required(uo: Path) -> dict[str, Any]:
 
 
 def gate_key_resolve_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
-    """When triage required, require key-resolve subagent receipt under runs/."""
+    """When triage required, require Harness-issued uo-key-resolve receipt (not patch alone)."""
     triage = gate_key_triage_required(uo)
     if not triage.get("needs_triage"):
         return {"gate": "key_resolve_receipt", "ok": True, "skipped": True, "message": "no triage needed"}
 
-    # Prefer harness run receipts; also accept UO runs/*/resolve markers
-    from ascendc_harness.state import has_subagent_receipt, load_state
+    from ascendc_harness.runs import has_subagent_receipt
+    from ascendc_harness.state import load_state
 
     state = load_state(project_root)
-    has_receipt = has_subagent_receipt(project_root, agent="uo-key-resolve")
-    # Fallback: any key_triage.yaml + key_shape_resolve or input_derivable_patch with provenance
+    has_receipt = has_subagent_receipt(
+        project_root,
+        agent="uo-key-resolve",
+        require_harness_issued=True,
+    )
     patch = uo / "ir" / "input_derivable_patch.yaml"
     shape_dir = uo / "ir" / "key_shape_resolve"
     has_artifacts = patch.is_file() or (shape_dir.is_dir() and any(shape_dir.glob("*.yaml")))
-    # Hard fail if parent skipped entirely: needs triage but no triage file was the other gate;
-    # here we require either receipt OR shape/patch produced by key-resolve
-    ok = has_receipt or (bool(triage.get("triage_key_count")) and has_artifacts)
-    # ses_076d: triage missing already fails other gate; if triage exists but no resolve work → fail
-    if triage.get("triage_key_count") and not has_artifacts and not has_receipt:
-        ok = False
+    # Hard rule: Harness-issued receipt is mandatory when triage is needed.
+    # Artifacts alone are insufficient (parent must not forge closures).
+    ok = bool(has_receipt) and bool(triage.get("triage_key_count")) and has_artifacts
     if not triage.get("triage_key_count"):
         ok = False
     return {
@@ -150,7 +150,7 @@ def gate_key_resolve_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
         "message": (
             "ok"
             if ok
-            else "KEY triage required but no uo-key-resolve receipt/artifacts — parent must not accept patches directly"
+            else "KEY triage required but missing Harness-issued uo-key-resolve receipt + resolve artifacts"
         ),
     }
 
@@ -509,27 +509,115 @@ def gate_kb_review_file(uo: Path) -> dict[str, Any]:
 
 
 def gate_phase0_receipt(uo: Path) -> dict[str, Any]:
-    scope = uo / "runs"
-    # Accept either scope_confirmed under current run or cbm index_meta
+    """Scope confirmation for current run: scope_confirmed + indexed_via=mcp preferred."""
+    confirmed_paths = list(uo.glob("runs/*/phase0/scope_confirmed.yaml")) + list(
+        uo.glob("runs/*/scope/scope_confirmed.yaml")
+    )
+    # Prefer newest by mtime
+    confirmed_paths = sorted(confirmed_paths, key=lambda p: p.stat().st_mtime if p.is_file() else 0, reverse=True)
     meta = uo / "cbm" / "index_meta.json"
-    confirmed = list(uo.glob("runs/*/phase0/scope_confirmed.yaml")) + list(uo.glob("**/scope_confirmed.yaml"))
-    ok = meta.is_file() or bool(confirmed)
+    indexed_via = ""
+    if meta.is_file():
+        try:
+            import json
+
+            meta_doc = json.loads(meta.read_text(encoding="utf-8"))
+            if isinstance(meta_doc, dict):
+                indexed_via = str(meta_doc.get("indexed_via") or meta_doc.get("via") or "")
+        except Exception:  # noqa: BLE001
+            indexed_via = ""
+
+    scope_ok = False
+    scope_doc: dict[str, Any] = {}
+    if confirmed_paths:
+        raw = _load(confirmed_paths[0])
+        if isinstance(raw, dict):
+            scope_doc = raw
+            status = str(raw.get("status") or raw.get("confirmed") or "").lower()
+            scope_ok = status in {"confirmed", "pass", "ok", "true", "1"} or raw.get("confirmed") is True
+            if not status and raw.get("files") is not None:
+                scope_ok = True
+
+    # Require explicit scope_confirmed; index_meta alone is not enough (plan: scope + mcp)
+    mcp_ok = indexed_via.lower() in {"mcp", "codebase-memory", "cbm"} or not meta.is_file()
+    ok = scope_ok and (mcp_ok or bool(indexed_via))
+    if scope_ok and meta.is_file() and indexed_via and indexed_via.lower() not in {"mcp", "codebase-memory", "cbm"}:
+        ok = False
+    if scope_ok and not meta.is_file():
+        # Allow confirmed scope without index yet (prepare→scope); extract will need index
+        ok = True
     return {
         "gate": "phase0_receipt",
         "ok": ok,
-        "message": "ok" if ok else "Phase0 receipt missing (cbm/index_meta.json or scope_confirmed.yaml)",
+        "indexed_via": indexed_via,
+        "scope_path": confirmed_paths[0].as_posix() if confirmed_paths else "",
+        "message": (
+            "ok"
+            if ok
+            else "scope_confirmed missing or indexed_via!=mcp (need runs/*/phase0/scope_confirmed.yaml)"
+        ),
     }
 
 
-def gate_extract_plan_subagent(uo: Path) -> dict[str, Any]:
+def gate_extract_plan_subagent(project_root: Path, uo: Path) -> dict[str, Any]:
+    """Require Task C receipt + extract_plan + candidates hash consistency — not mere file existence."""
+    from ascendc_harness.runs import file_sha256, has_subagent_receipt
+
     plan = uo / "ir" / "extract_plan.yaml"
     candidates = uo / "ir" / "extract_plan_candidates.yaml"
-    ok = plan.is_file()
+    has_receipt = has_subagent_receipt(
+        project_root,
+        agent="uo-semantic-resolve",
+        require_harness_issued=True,
+    )
+    if not has_receipt:
+        from ascendc_harness.paths import runs_root
+        from ascendc_harness.state import load_state
+
+        state = load_state(project_root)
+        run_id = str(state.get("run_id") or "")
+        base = runs_root(project_root) / run_id / "subagents"
+        if base.is_dir():
+            for path in base.glob("*.yaml"):
+                doc = _load(path)
+                if not isinstance(doc, dict):
+                    continue
+                if str(doc.get("issued_by") or "") != "harness":
+                    continue
+                actor = str(doc.get("actor_id") or doc.get("agent") or "")
+                action = str(doc.get("action_id") or "")
+                if actor in {"uo-semantic-resolve", "deterministic-uo-engine"} or "extract" in action:
+                    has_receipt = True
+                    break
+
+    plan_ok = plan.is_file()
+    cand_ok = candidates.is_file()
+    hash_ok = True
+    if plan_ok and cand_ok:
+        plan_doc = _load(plan) or {}
+        expected = ""
+        if isinstance(plan_doc, dict):
+            expected = str(
+                plan_doc.get("candidates_sha256")
+                or (plan_doc.get("meta") or {}).get("candidates_sha256")
+                or ""
+            )
+        actual = file_sha256(candidates)
+        if expected and actual and expected != actual:
+            hash_ok = False
+    ok = bool(has_receipt and plan_ok and cand_ok and hash_ok)
     return {
         "gate": "extract_plan_subagent",
         "ok": ok,
-        "has_candidates": candidates.is_file(),
-        "message": "ok" if ok else "ir/extract_plan.yaml missing (Task C / apply_extract_plan required)",
+        "has_receipt": has_receipt,
+        "has_plan": plan_ok,
+        "has_candidates": cand_ok,
+        "hash_ok": hash_ok,
+        "message": (
+            "ok"
+            if ok
+            else "extract requires Harness receipt + ir/extract_plan.yaml + candidates (+ hash match)"
+        ),
     }
 
 
@@ -574,6 +662,8 @@ def run_key_gates(project_root: Path, *, op_name: str | None = None) -> dict[str
 
 def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = None) -> dict[str, Any]:
     """Dispatch a workflow registry gate id to a concrete checker."""
+    from ascendc_harness.gates import tg_adapters
+
     uo = uo_root(project_root, op_name)
     mapping = {
         "key_triage_required": lambda: gate_key_triage_required(uo),
@@ -587,17 +677,28 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
         "kb_review": lambda: gate_kb_review_file(uo),
         "kb_review_consistency": lambda: gate_kb_review_consistency(uo),
         "phase0_receipt": lambda: gate_phase0_receipt(uo),
-        "extract_plan_subagent": lambda: gate_extract_plan_subagent(uo),
+        "extract_plan_subagent": lambda: gate_extract_plan_subagent(project_root, uo),
         "uo_ready": lambda: gate_uo_ready(uo),
         "kb_ready": lambda: gate_uo_ready(uo),
-        "kb_fingerprint": lambda: gate_uo_ready(uo),
         "context_pack": lambda: {
             "gate": "context_pack",
             "ok": (project_root / ".ascendc-agent" / "context" / "context_pack.yaml").is_file(),
-            "message": "ok" if (project_root / ".ascendc-agent" / "context" / "context_pack.yaml").is_file() else "context pack missing",
+            "message": "ok"
+            if (project_root / ".ascendc-agent" / "context" / "context_pack.yaml").is_file()
+            else "context pack missing",
         },
-        "tg_init_confirmed": lambda: _gate_tg_status(project_root, want="confirmed"),
-        "plan_approved": lambda: _gate_tg_plan_approved(project_root),
+        # TG — real engine adapters (kb_fingerprint is NOT an alias of uo_ready)
+        "tg_init_confirmed": lambda: tg_adapters.gate_init_confirmed(project_root, op_name=op_name),
+        "init_confirmed": lambda: tg_adapters.gate_init_confirmed(project_root, op_name=op_name),
+        "plan_approved": lambda: tg_adapters.gate_plan_approved(project_root),
+        "kb_fingerprint": lambda: tg_adapters.gate_kb_fingerprint_matches(project_root),
+        "kb_fingerprint_fresh": lambda: tg_adapters.gate_kb_fingerprint_fresh(project_root, op_name=op_name),
+        "merge_pass": lambda: tg_adapters.gate_merge_pass(project_root),
+        "domain_symmetry": lambda: tg_adapters.gate_domain_symmetry(project_root),
+        "csv_closure": lambda: tg_adapters.gate_csv_closure(project_root),
+        "audit_pass": lambda: tg_adapters.gate_audit_pass(project_root),
+        "allow_solve": lambda: tg_adapters.gate_allow_solve(project_root),
+        "solve_terminal": lambda: tg_adapters.gate_solve_terminal(project_root),
     }
     fn = mapping.get(gate_id)
     if fn is None:
@@ -606,33 +707,18 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
 
 
 def _gate_tg_status(project_root: Path, *, want: str) -> dict[str, Any]:
-    from ascendc_harness.paths import tg_root
-
-    tg = tg_root(project_root)
-    doc = _load(tg / "init" / "status.yaml") or _load(tg / "realization" / "status.yaml") or {}
-    status = str(doc.get("status") or "").lower() if isinstance(doc, dict) else ""
-    ok = status == want
+    """Deprecated shallow helper — prefer tg_adapters.gate_init_confirmed."""
     return {
         "gate": "tg_init_confirmed",
-        "ok": ok,
-        "status": status,
-        "message": "ok" if ok else f"tg init status={status!r}, want {want!r}",
+        "ok": False,
+        "message": f"use tg_adapters; legacy want={want!r}",
     }
 
 
 def _gate_tg_plan_approved(project_root: Path) -> dict[str, Any]:
-    from ascendc_harness.paths import tg_root
+    from ascendc_harness.gates import tg_adapters
 
-    tg = tg_root(project_root)
-    doc = _load(tg / "plan" / "status.yaml") or _load(tg / "plan" / "approval.yaml") or {}
-    status = str(doc.get("status") or doc.get("approval") or "").lower() if isinstance(doc, dict) else ""
-    ok = status in {"approved", "pass", "ok", "confirmed"}
-    return {
-        "gate": "plan_approved",
-        "ok": ok,
-        "status": status,
-        "message": "ok" if ok else f"tg plan not approved (status={status!r})",
-    }
+    return tg_adapters.gate_plan_approved(project_root)
 
 
 def run_workflow_gates(project_root: Path, *, gate_ids: list[str] | None = None) -> dict[str, Any]:

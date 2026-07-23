@@ -1,6 +1,6 @@
 version: 1
 owners:
-  uo-orchestrator:
+  harness-uo-adapter:
     may_read:
       - manifest.yaml
       - ir/**
@@ -19,6 +19,7 @@ owners:
     may_write:
       - manifest.yaml
       - runs/*/phase0/**
+      - runs/*/scope/**
       - cbm/index_meta.json
       - ir/**
       - tiling/**
@@ -26,13 +27,35 @@ owners:
       - cross_layer/**
       - checks/final.yaml
       - checks/artifact_hashes.yaml
-      - checks/integrity.yaml
-      - checks/confidence_gate.yaml
       - diff/**
-      - summary/**
       - runs/*/update/**
       - indexes/kb_graph.sqlite
       - query/**
+  deterministic-uo-engine:
+    may_read:
+      - manifest.yaml
+      - ir/**
+      - tiling/**
+      - kernel/**
+      - cross_layer/**
+      - checks/**
+      - runs/**
+      - cbm/**
+      - diff/**
+      - summary/**
+      - indexes/**
+    may_write:
+      - checks/confidence_gate.yaml
+      - checks/integrity.yaml
+      - checks/artifact_hashes.yaml
+      - checks/final.yaml
+      - summary/confidence_report.md  # assembled from patch reasons only
+      - indexes/kb_graph.sqlite
+      - ir/**  # classify / apply merges
+      - tiling/**
+      - kernel/**
+      - cross_layer/**
+      - diff/**
   uo-code-review:
     may_read:
       - manifest.yaml
@@ -66,6 +89,15 @@ owners:
       - review/**
     may_write:
       - review/kb_product_review.yaml
+  uo-confidence-review:
+    may_read:
+      - summary/confidence_report.md
+      - checks/confidence_gate.yaml
+      - ir/input_derivable.yaml
+      - ir/input_derivable_gaps.yaml
+      - review/**
+    may_write:
+      - review/confidence_reason_review.yaml
   uo-semantic-resolve:
     may_read:
       - manifest.yaml
@@ -77,6 +109,7 @@ owners:
       - ir/resolution_patch.yaml
       - ir/entrypoint_confirm.yaml
       - ir/extract_plan.yaml
+      - ir/extract_plan_candidates.yaml
   uo-key-resolve:
     may_read:
       - manifest.yaml
@@ -89,6 +122,7 @@ owners:
       - ir/key_triage.yaml
       - ir/input_derivable_patch.yaml
       - ir/key_shape_resolve/**
+      # Reasons live in patch; report is assembled by deterministic-uo-engine
   uo-query:
     may_read:
       - manifest.yaml
@@ -103,7 +137,7 @@ owners:
       - query/**
       - cbm/index_meta.json
     may_write:
-      # Staging only (post-KB); parent/orchestrator merges — not free-form KB edits
+      # Staging only (post-KB); parent/adapter merges — not free-form KB edits
       - ir/key_shape_resolve/**
       - query/**
   deterministic-extractors:
@@ -122,8 +156,6 @@ owners:
       - diff/**
       - summary/**
       - checks/artifact_hashes.yaml
-      - checks/confidence_gate.yaml
-      - checks/integrity.yaml
   kb-compiler:
     may_read:
       - manifest.yaml
@@ -148,8 +180,12 @@ rules:
   - After KB is finalized, TG may read input_derivable_gaps as evidence and close KEY→CSV in OUT_ROOT via uo-key-resolve / uo-query patterns; that must not rewrite UO input_derivable classification files.
   - uo-semantic-resolve only emits entrypoint_confirm / extract_plan / resolution_patch; uo-key-resolve emits key_triage / input_derivable_patch / key_shape_resolve/**; apply_* / classify scripts merge whitelist fields.
   - uo-kb-review writes only review/kb_product_review.yaml; never modifies ir/**.
-  - checks/confidence_gate.yaml and checks/integrity.yaml are written by orchestrator-invoked scripts (check_final_confidence / check_kb_integrity), not by LLM free-form.
+  - uo-confidence-review writes only review/confidence_reason_review.yaml; must not rewrite summary/confidence_report.md.
+  - Confidence chain: uo-key-resolve writes patch reasons → deterministic-uo-engine (check_final_confidence) assembles summary/confidence_report.md + checks/confidence_gate.yaml → uo-confidence-review referees.
+  - checks/confidence_gate.yaml and checks/integrity.yaml are written by deterministic-uo-engine scripts, not by LLM free-form.
+  - harness-uo-adapter replaces legacy uo-orchestrator for layout/orchestration writes; it must not forge confidence_gate or referee verdicts.
   - PR test generation prefers diff/**; uncertain items look up the KB via kb_refs / kb_lookup.
   - indexes/kb_graph.sqlite is derived and may be rebuilt; YAML under ir/tiling/kernel remains source of truth.
   - /uo-code-review writes only review/** and runs/*/review/**; never overwrite diff/**.
   - Prefer summary/human_overview.md then kb_graph (list_templates / neighbors_of) before opening large YAML; do not rely on key_cards/**.
+  - tg-csv-contract writes TG proposals under OUT_ROOT only; never UO contracts/**.
