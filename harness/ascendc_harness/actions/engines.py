@@ -141,9 +141,130 @@ def _run_tg_plan_or_solve(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
     return {"ok": True, "artifact": marker.as_posix()}
 
 
+def _uo_op_ctx(project_root: Path, ctx: dict[str, Any]) -> tuple[Path, str, str]:
+    uo = _uo(project_root)
+    op_name = str(ctx.get("op_name") or "").strip()
+    if not op_name:
+        try:
+            from uo.scripts._ir_io import read_yaml
+
+            man = read_yaml(uo / "manifest.yaml") or {}
+            op_name = str(man.get("op_name") or "").strip()
+        except Exception:  # noqa: BLE001
+            op_name = ""
+    architecture = str(ctx.get("architecture") or "arch35")
+    return uo, op_name, architecture
+
+
+def _run_detect_score_pre(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """extract.pre_semantic — entrypoint/registration/boundary scoring only (①)."""
+    uo, _op, architecture = _uo_op_ctx(project_root, ctx)
+    try:
+        from uo.scripts.evidence_score import detect_score_pre
+
+        result = detect_score_pre(
+            uo,
+            architecture=architecture,
+            run_id=str(ctx.get("run_id") or ""),
+        )
+        return {"ok": bool(result.get("ok", True)), "engine": "detect_score_pre", **result}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "detect_score_pre", "error": str(exc)[:300]}
+
+
+def _run_detect_score_post(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """extract.post_semantic — bridge/key/provenance after plan_and_graph (①)."""
+    uo, _op, architecture = _uo_op_ctx(project_root, ctx)
+    try:
+        from uo.scripts.evidence_score import detect_score_post
+
+        result = detect_score_post(
+            uo,
+            architecture=architecture,
+            run_id=str(ctx.get("run_id") or ""),
+        )
+        return {"ok": bool(result.get("ok", True)), "engine": "detect_score_post", **result}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "detect_score_post", "error": str(exc)[:300]}
+
+
+def _run_apply_semantic_patch(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Write patch to semantic_resolution_ledger only (⑦); bump attempts (⑥)."""
+    uo, _op, _arch = _uo_op_ctx(project_root, ctx)
+    try:
+        from uo.scripts.evidence_score import _source_snapshot_hash
+        from uo.scripts.llm_tasks import apply_task_patch
+
+        patch = ctx.get("patch") if isinstance(ctx.get("patch"), dict) else {}
+        if not patch and ctx.get("patch_path"):
+            from uo.scripts._ir_io import read_yaml
+
+            patch = read_yaml(Path(str(ctx["patch_path"]))) or {}
+        result = apply_task_patch(
+            uo,
+            patch,
+            current_source_hash=_source_snapshot_hash(uo),
+        )
+        return {"ok": bool(result.get("ok")), "engine": "apply_semantic_patch", **result}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "apply_semantic_patch", "error": str(exc)[:300]}
+
+
+def _run_rebuild_from_ledger(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    uo, op_name, architecture = _uo_op_ctx(project_root, ctx)
+    if not op_name:
+        return {"ok": False, "engine": "rebuild_from_ledger", "error": "op_name required"}
+    try:
+        from uo.scripts.semantic_resolution_ledger import rebuild_derived_graphs
+
+        result = rebuild_derived_graphs(project_root, op_name, architecture=architecture)
+        return {"ok": bool(result.get("ok")), "engine": "rebuild_from_ledger", **result}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "rebuild_from_ledger", "error": str(exc)[:300]}
+
+
+def _run_recheck_closure(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Recheck closure/integrity WITHOUT incrementing attempts (⑥)."""
+    uo, op_name, _arch = _uo_op_ctx(project_root, ctx)
+    try:
+        from uo.scripts.llm_tasks import recheck_does_not_increment
+        from uo.scripts._ir_io import read_yaml
+
+        budget = recheck_does_not_increment(uo)
+        ep = read_yaml(uo / "ir" / "entrypoint_graph.yaml") or {}
+        closure = ep.get("closure") or {}
+        open_blocking = budget.get("open_blocking") or []
+        ok = not open_blocking and closure.get("host_main_chain") == "closed"
+        # Optional integrity subset
+        integrity = {}
+        if op_name:
+            try:
+                from uo.scripts.check_kb_integrity import check_kb_integrity
+
+                integrity = check_kb_integrity(project_root, op_name, write_outputs=False)
+            except Exception as exc:  # noqa: BLE001
+                integrity = {"error": str(exc)[:200]}
+        return {
+            "ok": ok,
+            "engine": "recheck_closure",
+            "closure": closure,
+            "open_blocking_count": len(open_blocking),
+            "total_semantic_batches": budget.get("total_semantic_batches"),
+            "integrity_status": integrity.get("status") if isinstance(integrity, dict) else None,
+            "attempts_unchanged": True,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "recheck_closure", "error": str(exc)[:300]}
+
+
 # (workflow_id, action_id) → engine
 ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("uo-init", "prepare_layout"): _run_prepare_layout,
+    ("uo-init", "detect_score_pre"): _run_detect_score_pre,
+    ("uo-init", "detect_score_post"): _run_detect_score_post,
+    ("uo-init", "apply_semantic_patch"): _run_apply_semantic_patch,
+    ("uo-init", "rebuild_from_ledger"): _run_rebuild_from_ledger,
+    ("uo-init", "recheck_closure"): _run_recheck_closure,
     ("uo-init", "confidence_report"): _run_confidence_report,
     ("uo-init", "export_integrity"): _run_export_integrity,
     ("uo-update", "detect_changes"): _run_detect_changes,
@@ -170,6 +291,11 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
 OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "kb-layout-v1": ["uo"],
     "scope-confirmed-v1": ["uo/summary/scope_confirmed.yaml", "runs"],
+    "detect-score-pre-v1": ["uo/ir/score_report_pre.yaml", "uo/ir/llm_tasks.yaml"],
+    "detect-score-post-v1": ["uo/ir/score_report_post.yaml", "uo/ir/llm_tasks.yaml"],
+    "semantic-patch-v1": ["uo/ir/semantic_resolution_ledger.yaml"],
+    "rebuild-ledger-v1": ["uo/ir/operator_graph.yaml"],
+    "recheck-closure-v1": ["uo/ir/entrypoint_graph.yaml"],
     "extract-plan-v1": ["uo/summary"],
     "key-triage-v1": ["uo/ir/key_triage.yaml"],
     "input-derivable-patch-v1": ["uo/ir/input_derivable_patch.yaml", "uo/ir/key_shape_resolve"],

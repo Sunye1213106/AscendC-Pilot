@@ -60,7 +60,12 @@ Harness 独占状态、合法边、门禁与完成态。
 |---|---|---|---|---|---|
 | `prepare_layout` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `uo-init/prepare-layout` | `-` | `deterministic-uo-engine` |
 | `scope_confirmation` | source-authority,code-access,evidence,language,harness-control,output-quality | cbm-navigation,source-reading | `uo-init/scope-confirmation` | `uo/scope-confirmation` | `ascendc-agent` |
+| `detect_score_pre` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `uo-init/detect-score-pre` | `-` | `deterministic-uo-engine` |
 | `extract_plan` | source-authority,code-access,evidence,language,harness-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution | `uo-init/extract-plan` | `uo/extract-plan` | `uo-semantic-resolve` |
+| `apply_semantic_patch` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `uo-init/apply-semantic-patch` | `-` | `deterministic-uo-engine` |
+| `rebuild_from_ledger` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `uo-init/rebuild-from-ledger` | `-` | `deterministic-uo-engine` |
+| `detect_score_post` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `uo-init/detect-score-post` | `-` | `deterministic-uo-engine` |
+| `recheck_closure` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `uo-init/recheck-closure` | `-` | `deterministic-uo-engine` |
 | `key_triage` | source-authority,code-access,evidence,language,harness-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution | `uo-init/key-triage` | `uo/key-triage` | `uo-key-resolve` |
 | `key_resolution` | source-authority,code-access,evidence,language,harness-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution | `uo-init/key-resolution` | `uo/key-resolution` | `uo-key-resolve` |
 | `confidence_report` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `uo-init/confidence-report` | `-` | `deterministic-uo-engine` |
@@ -74,7 +79,12 @@ Harness 独占状态、合法边、门禁与完成态。
 |---|---|---|---|---|
 | `prepare_layout` | `actions/prepare-layout/METHOD.md` | `-` | `kb-layout-v1` | `deterministic_engine` |
 | `scope_confirmation` | `actions/scope-confirmation/METHOD.md` | `prompts/tasks/uo/scope-confirmation.md` | `scope-confirmed-v1` | `producer` |
+| `detect_score_pre` | `actions/detect-score-pre/METHOD.md` | `-` | `detect-score-pre-v1` | `deterministic_engine` |
 | `extract_plan` | `actions/extract-plan/METHOD.md` | `prompts/tasks/uo/extract-plan.md` | `extract-plan-v1` | `producer` |
+| `apply_semantic_patch` | `actions/apply-semantic-patch/METHOD.md` | `-` | `semantic-patch-v1` | `deterministic_engine` |
+| `rebuild_from_ledger` | `actions/rebuild-from-ledger/METHOD.md` | `-` | `rebuild-ledger-v1` | `deterministic_engine` |
+| `detect_score_post` | `actions/detect-score-post/METHOD.md` | `-` | `detect-score-post-v1` | `deterministic_engine` |
+| `recheck_closure` | `actions/recheck-closure/METHOD.md` | `-` | `recheck-closure-v1` | `deterministic_engine` |
 | `key_triage` | `actions/key-triage/METHOD.md` | `prompts/tasks/uo/key-triage.md` | `key-triage-v1` | `producer` |
 | `key_resolution` | `actions/key-resolution/METHOD.md` | `prompts/tasks/uo/key-resolution.md` | `input-derivable-patch-v1` | `producer` |
 | `confidence_report` | `actions/confidence-report/METHOD.md` | `-` | `confidence-report-v1` | `deterministic_engine` |

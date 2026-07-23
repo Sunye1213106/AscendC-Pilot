@@ -34,8 +34,8 @@ CLI：positional `repo`=`$PROJECT_ROOT`，标志 `--op-name` + `--target`（禁�
 | `tiling_key_hit` | 何时置 1 / 什么 shape 易命中 | `neighbors_of` on KEY / Host `SYM::*`（`writes`/`derives`/`determined_by`） | 源码 `file_path`/`start_line` via `detail_ref` |
 | `key_shape_expr` | 复杂 unresolved / bind：要 shape 表达式 | `branches_for_key` + `affected_shapes` + `neighbors_of`（必跑） | 沿边到 Host 源码 + MCP→high；TG 写 `realization/uo_query_resolve/<KEY>.yaml` |
 | `tiling_combinations` | 一共多少种合法模板 | `list_templates` / `templates_for_key` | `ir/tilingkey_space.yaml`；exhaustive 仅 summary |
-| `entrypoint` | Host/Kernel 入口是谁 | `neighbors_of --target ENTRY::*` | `ir/entrypoints.yaml` |
-| `host_pipeline` | DoOpTiling 链路 | `neighbors_of` from `ENTRY::*` / `SYM::*` | `ir/host_subgraph.yaml`, `ir/entrypoints.yaml` |
+| `entrypoint` | Host/Kernel 入口是谁 | `neighbors_of --target EP_*` / entrypoint_graph nodes | `ir/entrypoint_graph.yaml` |
+| `host_pipeline` | DoOpTiling 链路 | `neighbors_of` from `EP_*` / identity-stable `SYM_*` | `ir/host_subgraph.yaml`, `ir/entrypoint_graph.yaml` |
 | `runtime_branch` | 运行时分支 / sparseMode | graph on condition / branch symbols | `kernel/runtime_conditions.yaml`, then `kernel/branches.yaml` |
 | `runtime_cover` | 覆盖要多少用例 | graph coverage entities if present | `kernel/runtime_conditions.yaml` |
 | `compile_template` | 模板族 / KTPL | `list_templates` / `templates_for_key` | `ir/tilingkey_space.yaml`, `kernel/compile_model.yaml` |

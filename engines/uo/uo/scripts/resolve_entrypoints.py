@@ -66,8 +66,22 @@ REGISTER_TILING_RE = re.compile(
 )
 REG_OP_RE = re.compile(r"\bREG_OP\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)")
 IMPL_OP_RE = re.compile(r"\bIMPL_OP_OPTILING\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)")
+# Fluent: IMPL_OP_OPTILING(Op).Tiling(Class) / chained same-statement .Tiling(...)
+IMPL_OP_TILING_FLUENT_RE = re.compile(
+    r"\bIMPL_OP_OPTILING\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*"
+    r"(?:\.\s*[A-Za-z_][A-Za-z0-9_]*\s*\([^;]*?\))*?"
+    r"\.\s*Tiling\s*\(\s*([A-Za-z_][A-Za-z0-9_:]*)\s*\)",
+    re.MULTILINE | re.DOTALL,
+)
 GET_TPL_RE = re.compile(r"\bGET_TPL_TILING_KEY\s*\(")
 CLASS_RE = re.compile(r"\b(?:class|struct)\s+([A-Za-z_][A-Za-z0-9_]*)")
+
+# Verification tiers (④) — closure only accepts source_verified | semantic_verified | verified
+_VERIFIED_EDGE = frozenset({"verified", "source_verified", "semantic_verified"})
+
+
+def _edge_is_verified(edge: dict[str, Any]) -> bool:
+    return str(edge.get("confidence") or "").strip().casefold() in _VERIFIED_EDGE
 
 
 def _snake_to_pascal(name: str) -> str:
@@ -135,12 +149,16 @@ def collect_entrypoint_candidates(
         for pattern in patterns:
             if client.available:
                 for name_pat in (pattern, f"%{pattern}", f"%{pattern}%"):
+                    # ⑩ confirmed scope is the hard boundary; op_name ranks only (no hard filter).
                     for hit in client.search_symbols(
                         name_pattern=name_pat,
-                        file_contains=op_name or architecture,
+                        file_contains=None,
+                        prefer_file_contains=op_name or None,
                         architecture=architecture,
-                        limit=30,
+                        limit=40,
                     ):
+                        if confirmed_files and not _path_in_confirmed(hit.file_path, confirmed_files):
+                            continue
                         if not arch_compatible(hit.file_path, architecture):
                             continue
                         conf = _confidence(
@@ -528,6 +546,7 @@ def _scan_registration_graph(
                 "symbol_ref": ident.as_dict(),
                 "locator": make_locator(rel, start_line=line, end_line=line, text=match.group(0)).as_dict(),
                 "macro": "IMPL_OP_OPTILING",
+                "verification_source": "source",
             }
             nodes[node["id"]] = node
             # Link registration → public host when both present
@@ -540,9 +559,78 @@ def _scan_registration_graph(
                             "source": reg["id"],
                             "target": node["id"],
                             "evidence": [{"file_path": rel, "line": line, "macro": "IMPL_OP_OPTILING"}],
-                            "confidence": "verified",
+                            "confidence": "source_verified",
+                            "verification_source": "source",
                         }
                     )
+            # Fluent .Tiling(Class) on same statement / chain → source_verified dispatch
+            window = text[match.start() : match.start() + 400]
+            fluent = IMPL_OP_TILING_FLUENT_RE.search(window) or IMPL_OP_TILING_FLUENT_RE.search(text[match.start() :])
+            if fluent and fluent.group(1) == name:
+                tiling_cls = fluent.group(2).split("::")[-1]
+                tiling_line = text.count("\n", 0, match.start() + fluent.start()) + 1
+                cls_ident = mint_symbol_identity(
+                    kind="tiling_class",
+                    name=tiling_cls,
+                    file_path=rel,
+                    qualified_name=f"IMPL_OP_OPTILING.Tiling::{tiling_cls}",
+                    class_or_namespace=tiling_cls,
+                    architecture=architecture_of_path(rel),
+                    path_family=path_family_of(rel),
+                    prefix="EP",
+                )
+                cls_node = {
+                    "id": cls_ident.stable_id,
+                    "role": "template_registration",
+                    "architecture": cls_ident.architecture,
+                    "path_family": cls_ident.path_family,
+                    "template_family": path_family_of(rel),
+                    "status": "verified",
+                    "name": tiling_cls,
+                    "symbol_ref": cls_ident.as_dict(),
+                    "locator": make_locator(
+                        rel, start_line=tiling_line, end_line=tiling_line, text=fluent.group(0)[:120]
+                    ).as_dict(),
+                    "macro": "IMPL_OP_OPTILING.Tiling",
+                    "verification_source": "source",
+                }
+                nodes[cls_node["id"]] = cls_node
+                edges.append(
+                    {
+                        "id": mint_edge_id("dispatches_to", node["id"], cls_node["id"], tiling_cls),
+                        "type": "dispatches_to",
+                        "source": node["id"],
+                        "target": cls_node["id"],
+                        "evidence": [
+                            {
+                                "file_path": rel,
+                                "line": tiling_line,
+                                "macro": "IMPL_OP_OPTILING.Tiling",
+                                "reason": "fluent_tiling",
+                            }
+                        ],
+                        "confidence": "source_verified",
+                        "verification_source": "source",
+                    }
+                )
+                edges.append(
+                    {
+                        "id": mint_edge_id("registers", node["id"], cls_node["id"], tiling_cls),
+                        "type": "registers",
+                        "source": node["id"],
+                        "target": cls_node["id"],
+                        "evidence": [
+                            {
+                                "file_path": rel,
+                                "line": tiling_line,
+                                "macro": "IMPL_OP_OPTILING.Tiling",
+                                "reason": "fluent_tiling",
+                            }
+                        ],
+                        "confidence": "source_verified",
+                        "verification_source": "source",
+                    }
+                )
         for match in REGISTER_TILING_RE.finditer(text):
             op_type = match.group(1).strip()
             cls = match.group(2).strip()
@@ -624,13 +712,23 @@ def _scan_registration_graph(
                     "source": reg_node["id"],
                     "target": node["id"],
                     "evidence": [{"file_path": rel, "line": line, "macro": "REGISTER_TILING_TEMPLATE"}],
-                    "confidence": "verified",
+                    "confidence": "source_verified",
+                    "verification_source": "source",
                 }
             )
         if GET_TPL_RE.search(text):
             # mark file as having host key writer site (occurrence only)
             pass
     return nodes, edges, templates
+
+
+def _path_in_confirmed(file_path: str, confirmed_files: list[str]) -> bool:
+    fp = file_path.replace("\\", "/")
+    for rel in confirmed_files:
+        r = rel.replace("\\", "/")
+        if fp == r or fp.endswith("/" + r) or r.endswith("/" + fp) or fp.endswith(r) or r.endswith(fp):
+            return True
+    return False
 
 
 def _link_host_to_templates(
@@ -683,7 +781,8 @@ def _link_host_to_templates(
                     "source": pub["id"],
                     "target": nid,
                     "evidence": [{"file_path": tpl.get("file_path"), "line": tpl.get("line")}],
-                    "confidence": "verified",
+                    "confidence": "source_verified",
+                    "verification_source": "source",
                 }
             )
     return edges
@@ -739,15 +838,21 @@ def _apply_link_status(nodes: dict[str, dict[str, Any]], edges: list[dict[str, A
 
 
 def _evaluate_closure(nodes: dict[str, dict[str, Any]], edges: list[dict[str, Any]], architecture: str) -> dict[str, Any]:
+    """Closure requires verified edges only — candidate edges never close main chains."""
     by_role: dict[str, list[dict[str, Any]]] = {}
     for n in nodes.values():
         by_role.setdefault(str(n.get("role")), []).append(n)
 
-    def has_edge(types: set[str], src_roles: set[str], dst_roles: set[str]) -> bool:
+    def has_verified_edge(types: set[str], src_roles: set[str], dst_roles: set[str]) -> bool:
         src_ids = {n["id"] for r in src_roles for n in by_role.get(r, [])}
         dst_ids = {n["id"] for r in dst_roles for n in by_role.get(r, [])}
         for e in edges:
-            if e.get("type") in types and e.get("source") in src_ids and e.get("target") in dst_ids:
+            if (
+                e.get("type") in types
+                and e.get("source") in src_ids
+                and e.get("target") in dst_ids
+                and _edge_is_verified(e)
+            ):
                 return True
         return False
 
@@ -762,11 +867,21 @@ def _evaluate_closure(nodes: dict[str, dict[str, Any]], edges: list[dict[str, An
             host_ok = False
             blocking.append(_block("entrypoint_host_impl_missing", "no tiling registry/template implementation"))
         elif not (
-            has_edge({"registers", "dispatches_to", "selects", "instantiates"}, {"operator_registration", "public_host_entry"}, impl_roles | {"tiling_registry"})
-            or has_edge({"registers"}, {"tiling_registry"}, impl_roles)
+            has_verified_edge(
+                {"registers", "dispatches_to", "selects", "instantiates"},
+                {"operator_registration", "public_host_entry"},
+                impl_roles | {"tiling_registry"},
+            )
+            or has_verified_edge({"registers"}, {"tiling_registry"}, impl_roles)
         ):
             host_ok = False
-            blocking.append(_block("entrypoint_host_dispatch_missing", "public host not linked to registry/impl"))
+            blocking.append(
+                _block(
+                    "entrypoint_host_dispatch_missing",
+                    "public host not linked to registry/impl via verified edge "
+                    "(candidate dispatches_to/selects cannot close)",
+                )
+            )
 
     kernel_ok = True
     kern = by_role.get("public_kernel_entry") or by_role.get("concrete_kernel_impl") or by_role.get("kernel_family") or []
@@ -774,12 +889,10 @@ def _evaluate_closure(nodes: dict[str, dict[str, Any]], edges: list[dict[str, An
         kernel_ok = False
         blocking.append(_block("entrypoint_kernel_missing", "no public/concrete kernel entry"))
     else:
-        # Need at least one target-arch kernel node
         if not any(n.get("architecture") in {architecture, "neutral"} for n in kern):
             kernel_ok = False
             blocking.append(_block("entrypoint_kernel_arch_missing", f"no kernel entry compatible with {architecture}"))
 
-    # Mark closed nodes on successful chains
     if host_ok:
         for role in ("operator_registration", "public_host_entry", "tiling_registry", "normal_impl", "varlen_impl", "empty_impl", "template_registration"):
             for n in by_role.get(role, []):

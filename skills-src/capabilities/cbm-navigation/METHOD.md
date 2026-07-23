@@ -35,6 +35,9 @@ CBM **不负责**：宏展开、注册语义、CMake/构建条件、模板参数
 - MUST NOT：无边界扫描；索引父仓；猜 `qualified_name`；把 CMake 送进 CBM 源码索引。
 - MUST NOT：把 CBM 空结果当作不存在的证据。
 - MUST NOT：仅用短函数名作为符号身份；身份见 `semantic_identity` / `entrypoint_graph` 节点 id。
+- MUST NOT：用 `file_contains=op_name` / architecture 对 confirmed-scope 文件做硬过滤；`op_name` 只做排序加分。
+- MUST NOT：让 `confidence=candidate` 边满足 host/kernel 主链闭合。
+- MUST：查询硬边界 = confirmed source scope；复杂宏优先 LLM 任务而非堆正则。
 - MUST：每个关键结论记录路径、行号或 CBM symbol reference；缺口写结构化 unresolved。
 
 ## Result
