@@ -27,6 +27,15 @@ CHAIN_ROLES = frozenset(
 )
 
 
+def _cand_identity(item: dict[str, Any]) -> str:
+    if item.get("identity_key"):
+        return str(item["identity_key"]).casefold()
+    fp = str(item.get("file_path") or "").replace("\\", "/")
+    qn = str(item.get("qualified_name") or item.get("name") or "")
+    cls = str(item.get("class_or_namespace") or "")
+    return f"{fp}|{qn}|{cls}".casefold()
+
+
 def load_extract_plan(uo_root: Path) -> dict[str, Any] | None:
     path = uo_root / "ir" / "extract_plan.yaml"
     if not path.is_file():
@@ -133,7 +142,6 @@ def validate_extract_plan_against_candidates(
         for c in (candidates.get("extra_entry_candidates") or [])
         if isinstance(c, dict) and str(c.get("name") or "").strip()
     }
-    # Also allow writers/receivers/aliases by casefold match
     writer_cf = {n.casefold() for n in writer_names}
     recv_cf = {n.casefold() for n in recv_names}
 
@@ -147,6 +155,16 @@ def validate_extract_plan_against_candidates(
             errors.append("writer missing name")
         elif name not in writer_names and name.casefold() not in writer_cf:
             errors.append(f"writer not in candidates: {name}")
+        # Require identity fields — ban short-name-only hits.
+        if not (item.get("file_path") or item.get("qualified_name") or item.get("identity_key")):
+            # Ban short-name-only when multiple candidates share the name.
+            matches = [
+                c
+                for c in (candidates.get("writer_candidates") or [])
+                if isinstance(c, dict) and str(c.get("name") or "").casefold() == name.casefold()
+            ]
+            if len(matches) > 1:
+                errors.append(f"writer {name} ambiguous without identity fields (file_path|qualified_name|identity_key)")
         if role not in WRITER_ROLES:
             errors.append(f"invalid writer role: {role!r}")
 
@@ -159,6 +177,14 @@ def validate_extract_plan_against_candidates(
             errors.append("receiver missing name")
         elif name not in recv_names and name.casefold() not in recv_cf:
             errors.append(f"receiver not in candidates: {name}")
+        if not (item.get("file_path") or item.get("qualified_name") or item.get("identity_key")):
+            matches = [
+                c
+                for c in (candidates.get("receiver_candidates") or [])
+                if isinstance(c, dict) and str(c.get("name") or "").casefold() == name.casefold()
+            ]
+            if len(matches) > 1:
+                errors.append(f"receiver {name} ambiguous without identity fields (file_path|qualified_name|identity_key)")
         if "is_tiling_sink" not in item:
             errors.append(f"receiver {name} missing is_tiling_sink")
 

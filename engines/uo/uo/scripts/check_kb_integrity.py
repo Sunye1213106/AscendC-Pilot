@@ -29,7 +29,15 @@ REWORK_STAGES = frozenset(
 # Parent action alias: input_derivable → residual_resolve + classify/escalate.
 REWORK_STAGE_ALIASES = {
     "input_derivable": "residual_resolve",
+    "entrypoints": "EXTRACT_REWORK",
+    "extract_plan": "EXTRACT_REWORK",
 }
+
+
+def map_rework_stage(stage: str) -> str:
+    """Map integrity rework_stage to harness reason codes / aliases."""
+    text = str(stage or "").strip()
+    return str(REWORK_STAGE_ALIASES.get(text) or text)
 
 
 def check_kb_integrity(repo_root: Path, op_name: str, *, write_outputs: bool = True) -> dict[str, Any]:
@@ -153,6 +161,7 @@ def check_kb_integrity(repo_root: Path, op_name: str, *, write_outputs: bool = T
         )
 
     id_stats = _collect_input_derivable_issues(uo_root, issues)
+    coverage_stats = _collect_layered_coverage_issues(uo_root, issues)
 
     # Harness KEY hard gates — script authority (cannot be skipped by soft prompts)
     try:
@@ -208,6 +217,7 @@ def check_kb_integrity(repo_root: Path, op_name: str, *, write_outputs: bool = T
         "sqlite_orphan_src": orphan_src,
         "sqlite_orphan_dst": orphan_dst,
         "input_derivable": id_stats,
+        "layered_coverage": coverage_stats,
         "issues": issues,
     }
 
@@ -437,6 +447,135 @@ def _collect_input_derivable_issues(uo_root: Path, issues: list[dict[str, Any]])
             }
         )
 
+    return stats
+
+
+def _collect_layered_coverage_issues(uo_root: Path, issues: list[dict[str, Any]]) -> dict[str, Any]:
+    """⑧ Layered integrity: KEY / TilingData / CSV / main unit — not 'at least one chain'."""
+    from uo.scripts.evidence_score import is_verified_confidence
+
+    caps = read_yaml(uo_root / "ir" / "operator_capabilities.yaml") or {}
+    graph = read_yaml(uo_root / "ir" / "operator_graph.yaml") or {}
+    bridge = read_yaml(uo_root / "ir" / "bridge.yaml") or {}
+    tilingkey = read_yaml(uo_root / "ir" / "tilingkey_space.yaml") or {}
+    id_doc = read_yaml(uo_root / "ir" / "input_derivable.yaml") or {}
+    edges = [e for e in (graph.get("edges") or []) if isinstance(e, dict)]
+    verified_edges = [e for e in edges if is_verified_confidence(e.get("confidence"))]
+
+    stats: dict[str, Any] = {
+        "has_tilingkey": caps.get("has_tilingkey"),
+        "has_tilingdata": caps.get("has_tilingdata"),
+        "verified_edge_count": len(verified_edges),
+        "key_coverage_gaps": [],
+        "tilingdata_gaps": [],
+        "csv_gaps": [],
+    }
+
+    # 1) Each input_derivable=true KEY dimension needs a verified path.
+    if caps.get("has_tilingkey") is True or caps.get("has_tilingkey") is None:
+        keys = id_doc.get("keys") if isinstance(id_doc.get("keys"), dict) else {}
+        for key_name, entry in keys.items():
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("input_derivable") is True:
+                has_path = bool(entry.get("host_parent") or entry.get("derivation_roots") or entry.get("graph_markers"))
+                # Prefer verified-only markers when present.
+                markers = entry.get("graph_markers") or []
+                if markers and not any(
+                    is_verified_confidence(m.get("confidence")) for m in markers if isinstance(m, dict)
+                ):
+                    # markers without confidence still accepted if host_parent exists
+                    if not entry.get("host_parent"):
+                        has_path = False
+                if not has_path:
+                    stats["key_coverage_gaps"].append(key_name)
+        if stats["key_coverage_gaps"]:
+            issues.append(
+                {
+                    "code": "KEY_COVERAGE_INCOMPLETE",
+                    "severity": "error",
+                    "rework_stage": "input_derivable",
+                    "message": (
+                        f"input_derivable KEY 缺完整 verified 路径: {stats['key_coverage_gaps'][:12]} "
+                        f"（禁止仅靠一条弱链验收）"
+                    ),
+                }
+            )
+    elif caps.get("has_tilingkey") is False:
+        stats["key_coverage_skipped"] = "capability_has_tilingkey_false"
+
+    # 2) Each verified TilingData bridge needs host writer + kernel reader.
+    if caps.get("has_tilingdata") is not False:
+        for b in bridge.get("tilingdata_bridges") or bridge.get("bridge_edges") or []:
+            if not isinstance(b, dict):
+                continue
+            if not is_verified_confidence(b.get("confidence")):
+                continue
+            has_host = bool(b.get("host_writer") or b.get("host_symbol") or b.get("writer"))
+            has_kern = bool(b.get("kernel_reader") or b.get("kernel_symbol") or b.get("reader"))
+            if not (has_host and has_kern):
+                gap = b.get("field_path") or b.get("id") or "unknown_bridge"
+                stats["tilingdata_gaps"].append(gap)
+        if stats["tilingdata_gaps"]:
+            issues.append(
+                {
+                    "code": "TILINGDATA_BRIDGE_INCOMPLETE",
+                    "severity": "error",
+                    "rework_stage": "extract_plan",
+                    "message": f"verified TilingData bridge 缺 Host writer 或 Kernel reader: {stats['tilingdata_gaps'][:12]}",
+                }
+            )
+
+    # 3) CSV-controllable determinants must trace to Input/Attr via verified edges.
+    for det in tilingkey.get("csv_controllable_determinants") or graph.get("csv_controllable_determinants") or []:
+        if not isinstance(det, dict):
+            continue
+        if det.get("traced_to_input"):
+            continue
+        # Look for verified reaches_input / determined_by
+        name = str(det.get("name") or det.get("id") or "")
+        linked = any(
+            e.get("type") in {"reaches_input", "determined_by", "derives"}
+            and name
+            and name in str(e.get("source") or "") + str(e.get("target") or "")
+            for e in verified_edges
+        )
+        if not linked:
+            stats["csv_gaps"].append(name or "unnamed")
+    if stats["csv_gaps"]:
+        issues.append(
+            {
+                "code": "CSV_DETERMINANT_UNREACHABLE",
+                "severity": "error",
+                "rework_stage": "input_derivable",
+                "message": f"CSV-controllable determinant 无法经 verified 边回溯 Input/Attr: {stats['csv_gaps'][:12]}",
+            }
+        )
+
+    # 4) Main extraction unit needs at least one verified main chain (already gated via entrypoint closure).
+    # 5) Open critical gaps must appear in blocking/degraded ledger — surface informational silence.
+    llm = read_yaml(uo_root / "ir" / "llm_tasks.yaml") or {}
+    open_blocking = [
+        t for t in (llm.get("tasks") or []) if isinstance(t, dict) and t.get("status") == "open" and t.get("severity") == "blocking"
+    ]
+    if open_blocking:
+        issues.append(
+            {
+                "code": "OPEN_BLOCKING_LLM_TASKS",
+                "severity": "error",
+                "rework_stage": "extract_plan",
+                "message": f"存在未解决 blocking LLM tasks={len(open_blocking)}",
+            }
+        )
+
+    # Candidate-only provenance must not satisfy reachability claims.
+    candidate_provenance = [
+        e
+        for e in edges
+        if e.get("type") in {"derives", "writes", "reaches_input"}
+        and str(e.get("confidence") or "").casefold() in {"candidate", "structurally_inferred"}
+    ]
+    stats["candidate_provenance_edges"] = len(candidate_provenance)
     return stats
 
 

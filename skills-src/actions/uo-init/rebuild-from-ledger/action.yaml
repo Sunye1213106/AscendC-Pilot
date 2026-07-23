@@ -1,0 +1,21 @@
+id: rebuild_from_ledger
+workflow_id: uo-init
+version: 1
+name_zh: 由账本重建派生图
+role_id: deterministic_engine
+agent_id: deterministic-uo-engine
+capabilities: []
+policies:
+- source-authority
+- code-access
+- evidence
+- language
+- harness-control
+- output-quality
+task_prompt_id: null
+context_profile_id: uo-init-rebuild-from-ledger
+output_contract_id: rebuild-ledger-v1
+checker:
+  required: true
+referee:
+  required: false

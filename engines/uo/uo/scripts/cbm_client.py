@@ -68,10 +68,17 @@ class CbmClient:
         *,
         name_pattern: str | None = None,
         file_contains: str | None = None,
+        prefer_file_contains: str | None = None,
         qualified_contains: str | None = None,
         architecture: str | None = None,
         limit: int = 50,
     ) -> list[CbmSymbol]:
+        """Search symbols.
+
+        ``file_contains`` remains an optional hard SQL filter for callers that
+        intentionally narrow. Prefer ``prefer_file_contains`` for ranking only
+        (⑩) so confirmed-scope common files stay visible.
+        """
         con = self.connect()
         clauses = ["project = ?"]
         params: list[Any] = [self.project]
@@ -85,25 +92,29 @@ class CbmClient:
             clauses.append("qualified_name LIKE ?")
             params.append(f"%{qualified_contains}%")
         arch = (architecture or "").strip().replace("\\", "/").strip("/")
-        # Prefer target architecture when provided; never hardcode arch35.
-        # Neutral (no archNN) paths stay eligible — ranking only, not a hard filter.
+        prefer = (prefer_file_contains or "").replace("\\", "/").strip()
+        order_parts: list[str] = []
+        if prefer:
+            order_parts.append(
+                f"CASE WHEN file_path LIKE '%{prefer.replace(chr(39), '')}%' THEN 0 ELSE 1 END"
+            )
         if arch:
-            order = f"""
-            ORDER BY
-              CASE
+            order_parts.append(
+                f"""CASE
                 WHEN file_path LIKE '%/{arch}/%' THEN 0
                 WHEN file_path NOT LIKE '%/arch%' THEN 1
                 ELSE 2
-              END,
-              length(COALESCE(qualified_name, name)),
-              file_path, start_line, id
-            """
-        else:
-            order = """
-            ORDER BY
-              length(COALESCE(qualified_name, name)),
-              file_path, start_line, id
-            """
+              END"""
+            )
+        order_parts.extend(
+            [
+                "length(COALESCE(qualified_name, name))",
+                "file_path",
+                "start_line",
+                "id",
+            ]
+        )
+        order = "ORDER BY " + ", ".join(order_parts)
         sql = f"""
             SELECT id, label, name, qualified_name, file_path, start_line, end_line
             FROM nodes

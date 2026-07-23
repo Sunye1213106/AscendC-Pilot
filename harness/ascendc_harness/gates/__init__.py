@@ -669,6 +669,79 @@ def run_key_gates(project_root: Path, *, op_name: str | None = None) -> dict[str
     return payload
 
 
+def gate_detect_score_pre(uo: Path) -> dict[str, Any]:
+    """Pass when entrypoint graph exists for pre-semantic scoring (①)."""
+    report = uo / "ir" / "score_report_pre.yaml"
+    ep = uo / "ir" / "entrypoint_graph.yaml"
+    if not ep.is_file():
+        return {
+            "gate": "detect_score_pre",
+            "ok": False,
+            "message": "entrypoint_graph missing before detect_score_pre",
+        }
+    return {
+        "gate": "detect_score_pre",
+        "ok": True,
+        "has_score_report": report.is_file(),
+        "message": "ok",
+    }
+
+
+def gate_detect_score_post(uo: Path) -> dict[str, Any]:
+    """Post-semantic scoring must not exist without plan/host (① cycle guard)."""
+    plan = uo / "ir" / "extract_plan.yaml"
+    host = uo / "ir" / "host_subgraph.yaml"
+    post = uo / "ir" / "score_report_post.yaml"
+    if post.is_file() and not plan.is_file() and not host.is_file():
+        return {
+            "gate": "detect_score_post",
+            "ok": False,
+            "message": "score_report_post present without extract_plan/host (checkpoint cycle)",
+        }
+    return {
+        "gate": "detect_score_post",
+        "ok": True,
+        "has_post_report": post.is_file(),
+        "has_plan_or_host": plan.is_file() or host.is_file(),
+        "message": "ok",
+    }
+
+
+def gate_semantic_closure(uo: Path) -> dict[str, Any]:
+    """Blocking LLM tasks uncleared → cannot advance; recheck does not bump attempts (⑥)."""
+    tasks_doc = _load(uo / "ir" / "llm_tasks.yaml") or {}
+    tasks = tasks_doc.get("tasks") if isinstance(tasks_doc, dict) else []
+    open_blocking = [
+        t
+        for t in (tasks or [])
+        if isinstance(t, dict) and t.get("status") == "open" and t.get("severity") == "blocking"
+    ]
+    batches = int((tasks_doc or {}).get("total_semantic_batches") or 0) if isinstance(tasks_doc, dict) else 0
+    max_batches = 8
+    if open_blocking and batches < max_batches:
+        return {
+            "gate": "semantic_closure",
+            "ok": False,
+            "open_blocking": len(open_blocking),
+            "total_semantic_batches": batches,
+            "message": f"blocking llm_tasks={len(open_blocking)}; resolve before advance",
+        }
+    if open_blocking and batches >= max_batches:
+        return {
+            "gate": "semantic_closure",
+            "ok": False,
+            "open_blocking": len(open_blocking),
+            "total_semantic_batches": batches,
+            "message": "semantic batch budget exhausted with blocking tasks remaining",
+        }
+    return {
+        "gate": "semantic_closure",
+        "ok": True,
+        "total_semantic_batches": batches,
+        "message": "ok",
+    }
+
+
 def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = None) -> dict[str, Any]:
     """Dispatch a workflow registry gate id to a concrete checker."""
     from ascendc_harness.gates import tg_adapters
@@ -687,6 +760,9 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
         "kb_review_consistency": lambda: gate_kb_review_consistency(uo),
         "scope_receipt": lambda: gate_scope_receipt(uo),
         "extract_plan_subagent": lambda: gate_extract_plan_subagent(project_root, uo),
+        "detect_score_pre": lambda: gate_detect_score_pre(uo),
+        "detect_score_post": lambda: gate_detect_score_post(uo),
+        "semantic_closure": lambda: gate_semantic_closure(uo),
         "uo_ready": lambda: gate_uo_ready(uo),
         "kb_ready": lambda: gate_uo_ready(uo),
         "context_pack": lambda: {

@@ -23,31 +23,42 @@ from uo.scripts.arch_path import arch_compatible
 from uo.scripts.resolve_entrypoints import load_entrypoint_graph
 from uo.scripts.semantic_identity import mint_edge_id
 
-OP_ADD_INPUT_RE = re.compile(
-    r"""\.Input\s*\(\s*["']([^"']+)["']\s*\)""",
-    re.MULTILINE,
+# OpDef grammar adapters (⑪) — multiple framework registration styles.
+_OPDEF_SLOT_SPECS: tuple[tuple[str, str, bool], ...] = (
+    # (regex pattern with name group, kind, optional)
+    (r"""\.(?:INPUT|Input)\s*\(\s*["']([^"']+)["']\s*\)""", "input", False),
+    (r"""\.(?:OPTIONAL_INPUT|OptionalInput)\s*\(\s*["']([^"']+)["']\s*\)""", "input", True),
+    (r"""\.(?:OUTPUT|Output)\s*\(\s*["']([^"']+)["']\s*\)""", "output", False),
+    (r"""\.(?:ATTR|Attr|REQUIRED_ATTR|RequiredAttr)\s*\(\s*["']([^"']+)["']\s*\)""", "attr", False),
 )
+OPDEF_SLOT_RES = tuple(
+    (re.compile(pat, re.MULTILINE), kind, optional) for pat, kind, optional in _OPDEF_SLOT_SPECS
+)
+OP_ADD_INPUT_RE = re.compile(r"""\.(?:INPUT|Input)\s*\(\s*["']([^"']+)["']\s*\)""", re.MULTILINE)
 OP_ADD_OPTIONAL_RE = re.compile(
-    r"""\.OptionalInput\s*\(\s*["']([^"']+)["']\s*\)""",
+    r"""\.(?:OPTIONAL_INPUT|OptionalInput)\s*\(\s*["']([^"']+)["']\s*\)""",
     re.MULTILINE,
 )
 OP_ADD_ATTR_RE = re.compile(
-    r"""\.Attr\s*\(\s*["']([^"']+)["']\s*\)""",
+    r"""\.(?:ATTR|Attr|REQUIRED_ATTR|RequiredAttr)\s*\(\s*["']([^"']+)["']\s*\)""",
     re.MULTILINE,
 )
-OP_ADD_OUTPUT_RE = re.compile(
-    r"""\.Output\s*\(\s*["']([^"']+)["']\s*\)""",
-    re.MULTILINE,
-)
+OP_ADD_OUTPUT_RE = re.compile(r"""\.(?:OUTPUT|Output)\s*\(\s*["']([^"']+)["']\s*\)""", re.MULTILINE)
+OP_DTYPE_RE = re.compile(r"""\.(?:DataType|DATATYPE)\s*\(\s*([^)]*)\)""")
+OP_FORMAT_RE = re.compile(r"""\.(?:Format|FORMAT)\s*\(\s*([^)]*)\)""")
 GET_INPUT_SHAPE_RE = re.compile(r"Get(?:Optional)?InputShape\s*\(\s*(\d+)\s*\)")
 GET_INPUT_DESC_RE = re.compile(r"Get(?:Optional)?InputDesc\s*\(\s*(\d+)\s*\)")
 GET_ATTR_RE = re.compile(
     r"""GetAttr(?:Pointer)?\s*\(\s*(?:["']([^"']+)["']|(\d+))\s*\)"""
 )
+GET_ATTR_TEMPLATE_RE = re.compile(
+    r"""GetAttr\s*<[^>]+>\s*\(\s*(?:["']([^"']+)["']|(\d+))\s*\)"""
+)
 ATTR_DEFAULT_RE = re.compile(
-    r"""\.Attr\s*\(\s*["']([^"']+)["']\s*\)[^;]*?\.AttrDefault\s*\(([^\)]*)\)""",
+    r"""\.(?:ATTR|Attr)\s*\(\s*["']([^"']+)["']\s*\)[^;]*?\.(?:AttrDefault|ATTR_DEFAULT)\s*\(([^\)]*)\)""",
     re.DOTALL,
 )
+REG_OP_SCOPE_RE = re.compile(r"\bREG_OP\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)")
 
 
 def extract_operator_boundary(repo_root: Path, op_name: str, *, architecture: str = "arch35") -> dict[str, Any]:
@@ -57,71 +68,25 @@ def extract_operator_boundary(repo_root: Path, op_name: str, *, architecture: st
     outputs: list[dict[str, Any]] = []
     attributes: list[dict[str, Any]] = []
     unresolved: list[dict[str, Any]] = []
+    llm_hints: list[dict[str, Any]] = []
     optional_states: dict[str, str] = {}
 
-    slot = 0
     for rel in files:
         if not arch_compatible(rel, architecture) and "/op_host/" not in rel and "reg" not in rel.lower():
-            # Still scan registration files even if arch-neutral.
             if "reg" not in Path(rel).name.lower() and "op_host" not in rel:
                 continue
         path = repo_root / rel
         if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
-        for match in OP_ADD_INPUT_RE.finditer(text):
-            name = match.group(1)
-            inputs.append(
-                {
-                    "slot": slot,
-                    "name": name,
-                    "optional": False,
-                    "dtype_constraints": [],
-                    "format_constraints": [],
-                    "host_accessors": [],
-                    "binding_status": "verified",
-                    "evidence": [{"file_path": rel, "line": text.count("\n", 0, match.start()) + 1, "macro": "Input"}],
-                }
-            )
-            slot += 1
-        for match in OP_ADD_OPTIONAL_RE.finditer(text):
-            name = match.group(1)
-            inputs.append(
-                {
-                    "slot": slot,
-                    "name": name,
-                    "optional": True,
-                    "dtype_constraints": [],
-                    "format_constraints": [],
-                    "host_accessors": [],
-                    "binding_status": "verified",
-                    "evidence": [{"file_path": rel, "line": text.count("\n", 0, match.start()) + 1, "macro": "OptionalInput"}],
-                }
-            )
-            optional_states[name] = "unknown"
-            slot += 1
-        for match in OP_ADD_OUTPUT_RE.finditer(text):
-            outputs.append(
-                {
-                    "name": match.group(1),
-                    "evidence": [{"file_path": rel, "line": text.count("\n", 0, match.start()) + 1}],
-                }
-            )
-        defaults = {m.group(1): m.group(2).strip() for m in ATTR_DEFAULT_RE.finditer(text)}
-        for match in OP_ADD_ATTR_RE.finditer(text):
-            name = match.group(1)
-            attributes.append(
-                {
-                    "slot_or_name": name,
-                    "type": "",
-                    "default": defaults.get(name),
-                    "host_accessors": [],
-                    "binding_status": "verified",
-                    "evidence": [{"file_path": rel, "line": text.count("\n", 0, match.start()) + 1, "macro": "Attr"}],
-                }
-            )
+        # Reset slot counters per REG_OP / file scope (⑪).
+        for _inputs, _outputs, _attrs, _unres in _parse_opdef_scopes(text, rel):
+            inputs.extend(_inputs)
+            outputs.extend(_outputs)
+            attributes.extend(_attrs)
+            unresolved.extend(_unres)
 
-    by_slot = {int(i["slot"]): i for i in inputs}
+    by_slot = {int(i["slot"]): i for i in inputs if i.get("slot") is not None}
     by_attr = {str(a["slot_or_name"]): a for a in attributes}
 
     # Bind Host accessors by index / name — never rename from locals.
@@ -137,7 +102,6 @@ def extract_operator_boundary(repo_root: Path, op_name: str, *, architecture: st
             if idx in by_slot:
                 by_slot[idx]["host_accessors"].append({"api": api, "index": idx, "file_path": rel, "line": line})
             else:
-                # Keep positional slot without guessing a name.
                 placeholder = {
                     "slot": idx,
                     "name": None,
@@ -187,8 +151,24 @@ def extract_operator_boundary(repo_root: Path, op_name: str, *, architecture: st
                         "reason": f"attribute accessor {key} lacks registration evidence",
                     }
                 )
+        # Template GetAttr<T> / unconventional wrappers → io_slot_bind LLM hint (⑪).
+        for match in GET_ATTR_TEMPLATE_RE.finditer(text):
+            name, idx = match.group(1), match.group(2)
+            line = text.count("\n", 0, match.start()) + 1
+            key = name if name else f"attr_slot[{idx}]"
+            if not (name and name in by_attr):
+                llm_hints.append(
+                    {
+                        "type": "io_slot_bind",
+                        "severity": "blocking",
+                        "target": key,
+                        "file_path": rel,
+                        "line": line,
+                        "snippet": match.group(0)[:120],
+                        "reason": "template_getattr_needs_llm",
+                    }
+                )
 
-    # Optional input state vocabulary (values filled later by provenance when evidence exists).
     for item in inputs:
         if item.get("optional") and item.get("name"):
             optional_states.setdefault(str(item["name"]), "unknown")
@@ -202,12 +182,103 @@ def extract_operator_boundary(repo_root: Path, op_name: str, *, architecture: st
         "attributes": attributes,
         "optional_input_states": optional_states,
         "unresolved": unresolved,
+        "llm_task_hints": llm_hints,
     }
     write_yaml(uo_root / "ir" / "operator_boundary.yaml", payload)
     if unresolved:
         _merge_unresolved(uo_root, unresolved)
     return payload
 
+
+def _parse_opdef_scopes(
+    text: str, rel: str
+) -> list[tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]]:
+    """Parse OpDef slots with per-REG_OP scope reset and DataType/Format attachment."""
+    scopes: list[tuple[int, str]] = [(0, "")]
+    for m in REG_OP_SCOPE_RE.finditer(text):
+        scopes.append((m.start(), m.group(1)))
+    scopes.append((len(text), ""))
+    results: list[tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]] = []
+    for i in range(len(scopes) - 1):
+        start, _op = scopes[i]
+        end = scopes[i + 1][0]
+        chunk = text[start:end]
+        results.append(_parse_opdef_chunk(chunk, rel, line_base=text.count("\n", 0, start)))
+    return results
+
+
+def _parse_opdef_chunk(
+    chunk: str, rel: str, *, line_base: int = 0
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    inputs: list[dict[str, Any]] = []
+    outputs: list[dict[str, Any]] = []
+    attributes: list[dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
+    slot = 0
+    # Collect events in source order for nearest-slot DataType/Format.
+    events: list[tuple[int, str, Any]] = []
+    for match in OP_ADD_INPUT_RE.finditer(chunk):
+        events.append((match.start(), "input", (match.group(1), False, match.group(0))))
+    for match in OP_ADD_OPTIONAL_RE.finditer(chunk):
+        events.append((match.start(), "input", (match.group(1), True, match.group(0))))
+    for match in OP_ADD_OUTPUT_RE.finditer(chunk):
+        events.append((match.start(), "output", (match.group(1), match.group(0))))
+    for match in OP_ADD_ATTR_RE.finditer(chunk):
+        events.append((match.start(), "attr", (match.group(1), match.group(0))))
+    for match in OP_DTYPE_RE.finditer(chunk):
+        events.append((match.start(), "dtype", match.group(1).strip()))
+    for match in OP_FORMAT_RE.finditer(chunk):
+        events.append((match.start(), "format", match.group(1).strip()))
+    events.sort(key=lambda x: x[0])
+    last_slot_ref: dict[str, Any] | None = None
+    defaults = {m.group(1): m.group(2).strip() for m in ATTR_DEFAULT_RE.finditer(chunk)}
+    for pos, kind, payload in events:
+        line = line_base + chunk.count("\n", 0, pos) + 1
+        if kind == "input":
+            name, optional, macro = payload
+            item = {
+                "slot": slot,
+                "name": name,
+                "optional": optional,
+                "dtype_constraints": [],
+                "format_constraints": [],
+                "host_accessors": [],
+                "binding_status": "verified",
+                "verification_source": "source",
+                "evidence": [
+                    {
+                        "file_path": rel,
+                        "line": line,
+                        "macro": "OptionalInput" if optional else "Input",
+                    }
+                ],
+            }
+            inputs.append(item)
+            last_slot_ref = item
+            slot += 1
+        elif kind == "output":
+            name, _macro = payload
+            outputs.append({"name": name, "evidence": [{"file_path": rel, "line": line}]})
+        elif kind == "attr":
+            name, _macro = payload
+            item = {
+                "slot_or_name": name,
+                "type": "",
+                "default": defaults.get(name),
+                "host_accessors": [],
+                "binding_status": "verified",
+                "verification_source": "source",
+                "dtype_constraints": [],
+                "format_constraints": [],
+                "evidence": [{"file_path": rel, "line": line, "macro": "Attr"}],
+            }
+            attributes.append(item)
+            last_slot_ref = item
+        elif kind == "dtype" and last_slot_ref is not None:
+            last_slot_ref.setdefault("dtype_constraints", []).append(payload)
+        elif kind == "format" and last_slot_ref is not None:
+            last_slot_ref.setdefault("format_constraints", []).append(payload)
+    return inputs, outputs, attributes, unresolved
 
 def optional_state_label(*, absent: bool = False, empty: bool = False, nonempty: bool = False) -> str:
     if absent:

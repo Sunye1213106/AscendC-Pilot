@@ -87,6 +87,13 @@ def extract_def_use_from_text(
             )
             definitions.append(rec)
             for src in sources:
+                # ⑫ Heuristic RHS sources are candidate; simple identifiers may be structurally_inferred.
+                if src.startswith("unresolved:"):
+                    conf = "candidate"
+                elif "." in src or "->" in src:
+                    conf = "structurally_inferred"
+                else:
+                    conf = "source_verified"
                 flows.append(
                     {
                         "id": mint_edge_id("derives", src, def_id, guard),
@@ -94,10 +101,11 @@ def extract_def_use_from_text(
                         "from": src,
                         "to": def_id,
                         "guard": guard,
-                        "confidence": "verified" if not src.startswith("unresolved:") else "candidate",
+                        "confidence": conf,
+                        "verification_source": "source" if conf == "source_verified" else "heuristic",
                     }
                 )
-            # Field write flow
+            # Field write flow — structural unless lhs is a simple local.
             if obj:
                 flows.append(
                     {
@@ -106,7 +114,8 @@ def extract_def_use_from_text(
                         "from": def_id,
                         "to": f"{obj}.{field}",
                         "guard": guard,
-                        "confidence": "verified",
+                        "confidence": "structurally_inferred",
+                        "verification_source": "heuristic",
                     }
                 )
 
@@ -130,6 +139,13 @@ def extract_def_use_from_text(
         "flows": flows,
         "unresolved": unresolved,
     }
+
+
+def verified_provenance_flows(flows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """⑫ Only source_verified / semantic_verified flows prove reachability."""
+    from uo.scripts.evidence_score import is_verified_confidence
+
+    return [f for f in flows if is_verified_confidence(f.get("confidence"))]
 
 
 def bind_argument_parameter(

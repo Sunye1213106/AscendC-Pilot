@@ -24,3 +24,6 @@
 - MUST NOT：把 CBM 空结果当作「不可解」的唯一证据。
 - MUST NOT：把 BuildConfig / CompileMacro / PlatformInfo 伪装成 CSV 可控输入。
 - MUST NOT：恢复 `roles.*.selected` 单入口契约。
+- MUST NOT：candidate 边假闭合主链；patch 直接改写派生图。
+- MUST NOT：因评分低自动把主链必需缺口降为 informational。
+- MUST：LLM 消歧仅在候选窗内；过期 snapshot/candidate hash 的 patch 必须拒绝。

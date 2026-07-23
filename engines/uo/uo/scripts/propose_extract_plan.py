@@ -505,19 +505,21 @@ def _collect_receivers_aliases(
     file_path = str(item.get("file_path") or "").replace("\\", "/")
     for recv, field in RECV_SET_RE.findall(body):
         set_recv_roots.add(recv)
-        key = recv.casefold()
+        item_recv = {
+            "name": recv,
+            "file_path": file_path,
+            "qualified_name": f"{file_path}::{recv}",
+            "class_or_namespace": item.get("class_or_namespace") or "",
+            "start_line": start,
+            "snippet": snippet(f"{recv}->set_{field}(...)"),
+            "score": 0.7,
+            "evidence": [f"set_{field}"],
+        }
+        key = _writer_identity_key(item_recv)
         prev = receivers.get(key)
         score = 0.7
-        evidence = [f"set_{field}"]
         if prev is None or score > float(prev.get("score") or 0):
-            receivers[key] = {
-                "name": recv,
-                "file_path": file_path,
-                "start_line": start,
-                "snippet": snippet(f"{recv}->set_{field}(...)"),
-                "score": score,
-                "evidence": evidence,
-            }
+            receivers[key] = item_recv
     for m in TDF_ASSIGN_RE.finditer(body):
         local = m.group(1)
         path = m.group(2)

@@ -138,6 +138,8 @@ def build_layered_kb(
         bridge = read_yaml(ir_dir / "bridge.yaml") or {"bridge_nodes": [], "bridge_edges": [], "unresolved": [], "diagnostics": []}
 
     nodes = _merge_nodes(
+        _entrypoint_nodes_as_graph(entrypoint_graph),
+        _boundary_nodes(ir_dir),
         host.get("nodes") or [],
         kernel.get("nodes") or [],
         tilingkey.get("nodes") or [],
@@ -145,11 +147,23 @@ def build_layered_kb(
         bridge.get("bridge_nodes") or [],
     )
     edges = _merge_edges(
+        _entrypoint_edges_as_graph(entrypoint_graph),
+        _boundary_edges(ir_dir),
+        _def_use_edges(host),
         host.get("edges") or [],
         kernel.get("edges") or [],
         tilingkey.get("edges") or [],
         bridge.get("bridge_edges") or [],
     )
+    # Attach operator capabilities if declared (⑧); never infer from absence.
+    caps = read_yaml(ir_dir / "operator_capabilities.yaml") or {}
+    if not caps:
+        caps = {
+            "has_tilingkey": None,
+            "has_tilingdata": None,
+            "note": "must be declared explicitly; absence of KEY does not imply simple op",
+        }
+        write_yaml(ir_dir / "operator_capabilities.yaml", caps)
     unresolved: list[dict[str, Any]] = []
     if llm_needed:
         for block in closure.get("blocking_unresolved") or []:
@@ -202,6 +216,7 @@ def build_layered_kb(
         "kernel_branches": kernel.get("branches") or [],
         "golden": golden.get("golden"),
         "bridge_diagnostics": bridge.get("diagnostics") or [],
+        "operator_capabilities": caps,
         "unresolved": unresolved,
         "stats": {
             "node_count": len(nodes),
@@ -214,6 +229,15 @@ def build_layered_kb(
             "template_count": len(tilingkey.get("template_blocks") or []),
             "host_main_chain": closure.get("host_main_chain"),
             "kernel_main_chain": closure.get("kernel_main_chain"),
+            "verified_edge_count": sum(
+                1
+                for e in edges
+                if str(e.get("confidence") or "").casefold()
+                in {"verified", "source_verified", "semantic_verified"}
+            ),
+            "candidate_edge_count": sum(
+                1 for e in edges if str(e.get("confidence") or "").casefold() in {"candidate", "structurally_inferred"}
+            ),
         },
     }
     write_yaml(ir_dir / "operator_graph.yaml", graph)
@@ -323,14 +347,138 @@ def _merge_edges(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 continue
             eid = str(edge.get("id") or "")
             if not eid:
-                src = str(edge.get("source_id") or edge.get("source") or "")
-                tgt = str(edge.get("target_id") or edge.get("target") or "")
+                src = str(edge.get("source_id") or edge.get("source") or edge.get("from") or "")
+                tgt = str(edge.get("target_id") or edge.get("target") or edge.get("to") or "")
                 etype = str(edge.get("edge_type") or edge.get("type") or "edge")
                 flag = str(edge.get("flag") or "")
                 eid = f"{etype}:{src}->{tgt}" + (f":{flag}" if flag else "")
             if eid:
                 out[eid] = {**edge, "id": eid}
     return list(out.values())
+
+
+def _entrypoint_nodes_as_graph(entrypoint_graph: dict[str, Any]) -> list[dict[str, Any]]:
+    nodes = []
+    for n in entrypoint_graph.get("nodes") or []:
+        if not isinstance(n, dict) or not n.get("id"):
+            continue
+        nodes.append(
+            {
+                **n,
+                "layer": "entrypoint",
+                "kind": n.get("kind") or f"EP::{n.get('role')}",
+            }
+        )
+    return nodes
+
+
+def _entrypoint_edges_as_graph(entrypoint_graph: dict[str, Any]) -> list[dict[str, Any]]:
+    edges = []
+    for e in entrypoint_graph.get("edges") or []:
+        if not isinstance(e, dict):
+            continue
+        edges.append(
+            {
+                **e,
+                "source": e.get("source") or e.get("source_id"),
+                "target": e.get("target") or e.get("target_id"),
+                "layer": "entrypoint",
+            }
+        )
+    return edges
+
+
+def _boundary_nodes(ir_dir: Path) -> list[dict[str, Any]]:
+    boundary = read_yaml(ir_dir / "operator_boundary.yaml") or {}
+    nodes: list[dict[str, Any]] = []
+    for inp in boundary.get("inputs") or []:
+        if not isinstance(inp, dict):
+            continue
+        name = inp.get("name") or f"input_slot[{inp.get('slot')}]"
+        nodes.append(
+            {
+                "id": f"INPUT_{name}",
+                "kind": "INPUT",
+                "name": name,
+                "slot": inp.get("slot"),
+                "layer": "boundary",
+                "binding_status": inp.get("binding_status"),
+                "confidence": "source_verified" if inp.get("binding_status") == "verified" else "candidate",
+            }
+        )
+    for attr in boundary.get("attributes") or []:
+        if not isinstance(attr, dict):
+            continue
+        name = attr.get("slot_or_name") or "attr"
+        nodes.append(
+            {
+                "id": f"ATTR_{name}",
+                "kind": "ATTR",
+                "name": name,
+                "layer": "boundary",
+                "binding_status": attr.get("binding_status"),
+                "confidence": "source_verified" if attr.get("binding_status") == "verified" else "candidate",
+            }
+        )
+    return nodes
+
+
+def _boundary_edges(ir_dir: Path) -> list[dict[str, Any]]:
+    boundary = read_yaml(ir_dir / "operator_boundary.yaml") or {}
+    edges: list[dict[str, Any]] = []
+    for inp in boundary.get("inputs") or []:
+        if not isinstance(inp, dict):
+            continue
+        name = inp.get("name") or f"input_slot[{inp.get('slot')}]"
+        for acc in inp.get("host_accessors") or []:
+            edges.append(
+                {
+                    "id": f"reaches_input:INPUT_{name}->{acc.get('api')}:{acc.get('line')}",
+                    "type": "reaches_input",
+                    "source": f"INPUT_{name}",
+                    "target": f"ACCESSOR_{acc.get('api')}_{acc.get('line')}",
+                    "confidence": "source_verified",
+                    "verification_source": "source",
+                    "layer": "boundary",
+                }
+            )
+    for attr in boundary.get("attributes") or []:
+        if not isinstance(attr, dict):
+            continue
+        name = attr.get("slot_or_name")
+        for acc in attr.get("host_accessors") or []:
+            edges.append(
+                {
+                    "id": f"determined_by:ATTR_{name}->{acc.get('api')}:{acc.get('line')}",
+                    "type": "determined_by",
+                    "source": f"ATTR_{name}",
+                    "target": f"ACCESSOR_{acc.get('api')}_{acc.get('line')}",
+                    "confidence": "source_verified",
+                    "verification_source": "source",
+                    "layer": "boundary",
+                }
+            )
+    return edges
+
+
+def _def_use_edges(host: dict[str, Any]) -> list[dict[str, Any]]:
+    """Merge host def-use flows; preserve confidence tiers (⑫)."""
+    flows = host.get("def_use_flows") or host.get("flows") or []
+    edges: list[dict[str, Any]] = []
+    for flow in flows:
+        if not isinstance(flow, dict):
+            continue
+        edges.append(
+            {
+                **flow,
+                "source": flow.get("source") or flow.get("from"),
+                "target": flow.get("target") or flow.get("to"),
+                "type": flow.get("type") or "derives",
+                "layer": "def_use",
+                "confidence": flow.get("confidence") or "candidate",
+            }
+        )
+    return edges
 
 
 if __name__ == "__main__":
