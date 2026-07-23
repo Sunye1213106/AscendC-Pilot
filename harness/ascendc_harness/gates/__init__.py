@@ -1,0 +1,759 @@
+"""Hard quality gates — script authority (not prompt soft constraints)."""
+
+from __future__ import annotations
+
+import re
+from collections import Counter
+from pathlib import Path
+from typing import Any
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover
+    yaml = None  # type: ignore[assignment]
+
+from ascendc_harness.paths import runs_root, uo_root
+
+EMPTY_PATH_MARKERS = (
+    "runemptytiling",
+    "emptytensor",
+    "empty_tensor",
+    "isemptytensor",
+)
+MAIN_TILING_ANCHORS = (
+    "gettilingkey",
+    "savetotilingdata",
+    "normal_regbase",
+    "dooptiling",
+    "tilingkey",
+)
+BITPACK_EXCUSE_MARKERS = (
+    "bit-pack",
+    "bitpack",
+    "跨编译边界",
+    "无法回溯",
+    "编译边界",
+)
+
+
+def _load(path: Path) -> Any:
+    if yaml is None or not path.is_file():
+        return None
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip().lower())
+
+
+def _reason_fingerprint(text: str) -> str:
+    t = _norm(text)
+    # Drop KEY ids so identical boilerplate collapses
+    t = re.sub(r"key_[a-z0-9_]+", "KEY", t, flags=re.I)
+    return t[:240]
+
+
+def gate_key_triage_required(uo: Path) -> dict[str, Any]:
+    """escalate/gaps open → must have non-empty ir/key_triage.yaml."""
+    gaps_path = uo / "ir" / "input_derivable_gaps.yaml"
+    unresolved_path = uo / "ir" / "unresolved.yaml"
+    triage_path = uo / "ir" / "key_triage.yaml"
+
+    gaps = _load(gaps_path) or {}
+    unresolved = _load(unresolved_path) or {}
+
+    open_gaps: list[str] = []
+    if isinstance(gaps, dict):
+        items = gaps.get("gaps") or gaps.get("items") or gaps.get("open") or []
+        if isinstance(items, list):
+            for it in items:
+                if isinstance(it, dict):
+                    kid = str(it.get("id") or it.get("key") or "")
+                    status = str(it.get("status") or it.get("state") or "open").lower()
+                    if kid and status in {"", "open", "unsolved", "escalate"}:
+                        open_gaps.append(kid)
+                elif isinstance(it, str):
+                    open_gaps.append(it)
+        keys = gaps.get("keys")
+        if isinstance(keys, dict):
+            open_gaps.extend(str(k) for k in keys)
+
+    escalate_keys: list[str] = []
+    if isinstance(unresolved, dict):
+        raw = unresolved.get("escalate_keys") or []
+        if isinstance(raw, list):
+            for item in raw:
+                if isinstance(item, str):
+                    escalate_keys.append(item)
+                elif isinstance(item, dict):
+                    escalate_keys.append(str(item.get("id") or item.get("key") or ""))
+
+    needs_triage = bool(open_gaps or escalate_keys)
+    triage = _load(triage_path)
+    triage_keys: list[str] = []
+    if isinstance(triage, dict):
+        keys = triage.get("keys") or triage.get("items") or []
+        if isinstance(keys, list):
+            for it in keys:
+                if isinstance(it, dict):
+                    triage_keys.append(str(it.get("id") or it.get("key") or ""))
+                elif isinstance(it, str):
+                    triage_keys.append(it)
+        elif isinstance(keys, dict):
+            triage_keys = [str(k) for k in keys]
+
+    ok = (not needs_triage) or bool(triage_keys)
+    return {
+        "gate": "key_triage_required",
+        "ok": ok,
+        "needs_triage": needs_triage,
+        "open_gaps": open_gaps,
+        "escalate_keys": escalate_keys,
+        "triage_key_count": len(triage_keys),
+        "message": (
+            "ok"
+            if ok
+            else "escalate_keys or input_derivable_gaps open but ir/key_triage.yaml missing/empty — must run uo-key-resolve triage"
+        ),
+    }
+
+
+def gate_key_resolve_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
+    """When triage required, require key-resolve subagent receipt under runs/."""
+    triage = gate_key_triage_required(uo)
+    if not triage.get("needs_triage"):
+        return {"gate": "key_resolve_receipt", "ok": True, "skipped": True, "message": "no triage needed"}
+
+    # Prefer harness run receipts; also accept UO runs/*/resolve markers
+    from ascendc_harness.state import has_subagent_receipt, load_state
+
+    state = load_state(project_root)
+    has_receipt = has_subagent_receipt(project_root, agent="uo-key-resolve")
+    # Fallback: any key_triage.yaml + key_shape_resolve or input_derivable_patch with provenance
+    patch = uo / "ir" / "input_derivable_patch.yaml"
+    shape_dir = uo / "ir" / "key_shape_resolve"
+    has_artifacts = patch.is_file() or (shape_dir.is_dir() and any(shape_dir.glob("*.yaml")))
+    # Hard fail if parent skipped entirely: needs triage but no triage file was the other gate;
+    # here we require either receipt OR shape/patch produced by key-resolve
+    ok = has_receipt or (bool(triage.get("triage_key_count")) and has_artifacts)
+    # ses_076d: triage missing already fails other gate; if triage exists but no resolve work → fail
+    if triage.get("triage_key_count") and not has_artifacts and not has_receipt:
+        ok = False
+    if not triage.get("triage_key_count"):
+        ok = False
+    return {
+        "gate": "key_resolve_receipt",
+        "ok": ok,
+        "has_receipt": has_receipt,
+        "has_artifacts": has_artifacts,
+        "run_id": state.get("run_id"),
+        "message": (
+            "ok"
+            if ok
+            else "KEY triage required but no uo-key-resolve receipt/artifacts — parent must not accept patches directly"
+        ),
+    }
+
+
+def gate_empty_only_producer(uo: Path) -> dict[str, Any]:
+    """Reject final accepted/resolved when producer evidence is empty-path only."""
+    offenders: list[dict[str, str]] = []
+    for rel in (
+        "ir/resolution_patch.yaml",
+        "ir/input_derivable_patch.yaml",
+        "ir/input_derivable.yaml",
+    ):
+        doc = _load(uo / rel)
+        if not isinstance(doc, dict):
+            continue
+        items = doc.get("items") or doc.get("accepted") or doc.get("resolved") or []
+        if isinstance(doc.get("keys"), dict):
+            items = list(items) if isinstance(items, list) else []
+            for kid, entry in doc["keys"].items():
+                if isinstance(entry, dict):
+                    row = dict(entry)
+                    row["id"] = kid
+                    items.append(row)
+        if not isinstance(items, list):
+            continue
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            status = str(it.get("status") or it.get("disposition") or "").lower()
+            if status and status not in {"accepted", "resolved", "closed"}:
+                continue
+            blob = " ".join(
+                str(it.get(k) or "")
+                for k in ("producer", "producers", "evidence", "file_path", "path", "reason", "host_parent", "notes")
+            ).lower()
+            # also scan nested lists
+            for key in ("producers", "evidence_paths", "paths"):
+                val = it.get(key)
+                if isinstance(val, list):
+                    blob += " " + " ".join(str(x).lower() for x in val)
+            has_empty = any(m in blob for m in EMPTY_PATH_MARKERS)
+            has_main = any(m in blob for m in MAIN_TILING_ANCHORS)
+            if has_empty and not has_main and (status in {"accepted", "resolved", "closed"} or it.get("input_derivable") in (True, False)):
+                # Only flag when explicitly claiming closure via empty-only
+                if status in {"accepted", "resolved", "closed"} or str(it.get("confidence") or "").lower() == "high":
+                    offenders.append(
+                        {
+                            "id": str(it.get("id") or it.get("key") or "?"),
+                            "file": rel,
+                            "reason": "missing_producer evidence only on empty tiling path",
+                        }
+                    )
+
+    # Also scan residual escalate that was wrongly accepted in resolution_patch
+    res = _load(uo / "ir" / "resolution_patch.yaml")
+    if isinstance(res, dict):
+        for it in res.get("items") or []:
+            if not isinstance(it, dict):
+                continue
+            if str(it.get("status") or "").lower() not in {"accepted", "resolved"}:
+                continue
+            blob = str(it.get("evidence") or it.get("reason") or it.get("producer") or "").lower()
+            if any(m in blob for m in EMPTY_PATH_MARKERS) and not any(m in blob for m in MAIN_TILING_ANCHORS):
+                offenders.append(
+                    {
+                        "id": str(it.get("id") or "?"),
+                        "file": "ir/resolution_patch.yaml",
+                        "reason": "empty-only producer accepted; must escalate to key-resolve on main tiling path",
+                    }
+                )
+
+    # Dedupe
+    seen: set[str] = set()
+    uniq: list[dict[str, str]] = []
+    for row in offenders:
+        key = f"{row['id']}:{row['file']}"
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(row)
+
+    return {
+        "gate": "empty_only_producer",
+        "ok": not uniq,
+        "offenders": uniq,
+        "message": "ok" if not uniq else f"{len(uniq)} KEY(s) closed with empty-path-only producer evidence",
+    }
+
+
+def gate_confidence_report_quality(uo: Path, *, min_dup: int = 5) -> dict[str, Any]:
+    """Reject boilerplate identical bit-pack excuses across many KEYs."""
+    report_path = uo / "summary" / "confidence_report.md"
+    if not report_path.is_file():
+        return {"gate": "key_report_quality", "ok": True, "skipped": True, "message": "no report"}
+
+    text = report_path.read_text(encoding="utf-8")
+    sections = re.split(r"^###\s+(KEY_\S+|KVAR_\S+)\s*$", text, flags=re.MULTILINE)
+    # parts: preamble, id1, body1, id2, body2, ...
+    reasons: list[tuple[str, str]] = []
+    i = 1
+    while i + 1 < len(sections):
+        kid = sections[i]
+        body = sections[i + 1]
+        m = re.search(r"^\s*-\s*原因\s*[：:]\s*(.+)$", body, re.MULTILINE)
+        reason = m.group(1).strip() if m else ""
+        reasons.append((kid, reason))
+        i += 2
+
+    fps = [_reason_fingerprint(r) for _, r in reasons if r and not r.startswith("TODO")]
+    counts = Counter(fps)
+    dup_clusters = {fp: n for fp, n in counts.items() if fp and n >= min_dup}
+    bitpack_hits = [kid for kid, r in reasons if any(m in r.lower() or m in r for m in BITPACK_EXCUSE_MARKERS)]
+
+    # Host predicates available?
+    predicates_path = uo / "ir" / "key_predicates.yaml"
+    host_preds = _load(predicates_path)
+    host_readable = isinstance(host_preds, dict) and bool(host_preds.get("keys") or host_preds.get("predicates"))
+
+    ok = not dup_clusters
+    if host_readable and len(bitpack_hits) >= min_dup and dup_clusters:
+        ok = False
+
+    return {
+        "gate": "key_report_quality",
+        "ok": ok,
+        "duplicate_clusters": {k[:80]: v for k, v in list(dup_clusters.items())[:5]},
+        "bitpack_key_count": len(bitpack_hits),
+        "host_predicates_present": host_readable,
+        "section_count": len(reasons),
+        "message": (
+            "ok"
+            if ok
+            else "confidence_report uses duplicated boilerplate (e.g. bit-pack) across KEYs; Host predicates should yield shape_expr/input_derivable"
+        ),
+    }
+
+
+def gate_confidence_closed_high(uo: Path, *, allow_reported_with_human: bool = False) -> dict[str, Any]:
+    """closed_high_count=0 with KEY list → fail unless human accepted (any status)."""
+    conf = _load(uo / "checks" / "confidence_gate.yaml") or {}
+    id_doc = _load(uo / "ir" / "input_derivable.yaml") or {}
+    keys = (id_doc.get("keys") or {}) if isinstance(id_doc, dict) else {}
+    key_count = len(keys) if isinstance(keys, dict) else 0
+    closed_high = int(conf.get("closed_high_count") or 0) if isinstance(conf, dict) else 0
+    need_llm = int(conf.get("need_llm_count") or 0) if isinstance(conf, dict) else 0
+    status = str(conf.get("status") or "") if isinstance(conf, dict) else ""
+
+    # Prefer live counts from input_derivable when confidence_gate is missing/stale/forged
+    if isinstance(keys, dict) and keys:
+        live_closed = 0
+        live_need = 0
+        for entry in keys.values():
+            if not isinstance(entry, dict):
+                continue
+            idv = entry.get("input_derivable")
+            conf_v = str(entry.get("confidence") or "").lower()
+            if idv is True or idv is False or entry.get("not_input_derivable") is True:
+                if conf_v == "high":
+                    live_closed += 1
+                else:
+                    live_need += 1
+            else:
+                live_need += 1
+        closed_high = live_closed
+        need_llm = max(need_llm, live_need)
+
+    human_accept = uo / "checks" / "human_accept_reported.yaml"
+    human_ok = False
+    if human_accept.is_file():
+        doc = _load(human_accept) or {}
+        human_ok = isinstance(doc, dict) and bool(doc.get("accepted"))
+
+    ok = True
+    reasons: list[str] = []
+    # Hard rule: KEY non-empty + closed_high=0 → fail unless human accept
+    # (covers forged status=pass bypass of the old status==reported-only check)
+    if key_count > 0 and closed_high == 0:
+        if human_ok or allow_reported_with_human:
+            ok = True
+        else:
+            ok = False
+            reasons.append(
+                "closed_high_count=0 with non-empty KEY list "
+                "(default fail for any confidence_gate status; write checks/human_accept_reported.yaml to override)"
+            )
+    if need_llm > 0:
+        triage = gate_key_triage_required(uo)
+        if triage.get("needs_triage") and not triage.get("ok"):
+            ok = False
+            reasons.append("need_llm_count>0 but key_triage missing")
+
+    return {
+        "gate": "confidence_closed_high",
+        "ok": ok,
+        "closed_high_count": closed_high,
+        "need_llm_count": need_llm,
+        "key_count": key_count,
+        "status": status,
+        "human_accepted_reported": human_ok,
+        "message": "ok" if ok else "; ".join(reasons),
+    }
+
+
+def gate_confidence_reason_review(uo: Path) -> dict[str, Any]:
+    """Non-high KEYs must have filled reasons + independent referee subagent pass."""
+    conf = _load(uo / "checks" / "confidence_gate.yaml") or {}
+    id_doc = _load(uo / "ir" / "input_derivable.yaml") or {}
+    keys = (id_doc.get("keys") or {}) if isinstance(id_doc, dict) else {}
+    need_ids: list[str] = []
+    if isinstance(keys, dict):
+        for kid, entry in keys.items():
+            if not isinstance(entry, dict):
+                continue
+            idv = entry.get("input_derivable")
+            conf_v = str(entry.get("confidence") or "").lower()
+            closed = idv is True or idv is False or entry.get("not_input_derivable") is True
+            if closed and conf_v == "high":
+                continue
+            need_ids.append(str(kid))
+    need_llm = int(conf.get("need_llm_count") or 0) if isinstance(conf, dict) else 0
+    status = str(conf.get("status") or "").lower() if isinstance(conf, dict) else ""
+    requires = bool(need_ids) or need_llm > 0 or status == "reported"
+    if not requires:
+        return {
+            "gate": "confidence_reason_review",
+            "ok": True,
+            "skipped": True,
+            "message": "all KEY closed high — no reason review required",
+        }
+
+    report_path = uo / "summary" / "confidence_report.md"
+    if not report_path.is_file():
+        return {
+            "gate": "confidence_reason_review",
+            "ok": False,
+            "need_ids": need_ids,
+            "message": "non-high KEY present but summary/confidence_report.md missing",
+        }
+
+    text = report_path.read_text(encoding="utf-8")
+    missing_reason: list[str] = []
+    for kid in need_ids:
+        m = re.search(rf"^###\s+{re.escape(kid)}\s*$", text, re.MULTILINE)
+        if not m:
+            missing_reason.append(kid)
+            continue
+        start = m.end()
+        nxt = re.search(r"^###\s+\S+", text[start:], re.MULTILINE)
+        body = text[start : start + nxt.start()] if nxt else text[start:]
+        rm = re.search(r"^\s*-\s*原因\s*[：:]\s*(.+)$", body, re.MULTILINE)
+        if not rm:
+            missing_reason.append(kid)
+            continue
+        reason = rm.group(1).strip()
+        if not reason or reason.startswith("TODO") or reason.startswith("（待"):
+            missing_reason.append(kid)
+
+    review = _load(uo / "review" / "confidence_reason_review.yaml") or {}
+    verdict = str(review.get("verdict") or review.get("status") or "").lower() if isinstance(review, dict) else ""
+    agent = str(review.get("agent") or review.get("reviewed_by") or "") if isinstance(review, dict) else ""
+    # Referee must be the dedicated subagent (athlete/referee separation) — no empty agent self-pass
+    referee_ok = verdict in {"pass", "passed", "ok"} and agent in {
+        "uo-confidence-review",
+        "confidence-review",
+    }
+
+    ok = (not missing_reason) and referee_ok
+    reasons: list[str] = []
+    if missing_reason:
+        reasons.append(f"confidence_report missing/placeholder 原因 for: {missing_reason[:8]}")
+    if not referee_ok:
+        reasons.append(
+            "review/confidence_reason_review.yaml missing or verdict≠pass "
+            "(must be written by uo-confidence-review referee subagent)"
+        )
+    return {
+        "gate": "confidence_reason_review",
+        "ok": ok,
+        "need_ids": need_ids,
+        "missing_reason_ids": missing_reason,
+        "referee_verdict": verdict,
+        "referee_agent": agent,
+        "message": "ok" if ok else "; ".join(reasons),
+    }
+
+
+def gate_kb_review_consistency(uo: Path) -> dict[str, Any]:
+    """kb-review must not pass when key gates fail."""
+    review = _load(uo / "review" / "kb_product_review.yaml") or {}
+    verdict = str(review.get("verdict") or review.get("status") or "").lower() if isinstance(review, dict) else ""
+    if verdict not in {"pass", "passed", "ok"}:
+        return {"gate": "kb_review_consistency", "ok": True, "skipped": True, "verdict": verdict}
+
+    checks = [
+        gate_key_triage_required(uo),
+        gate_empty_only_producer(uo),
+        gate_confidence_report_quality(uo),
+        gate_confidence_closed_high(uo),
+        gate_confidence_reason_review(uo),
+    ]
+    failed = [c for c in checks if not c.get("ok")]
+    return {
+        "gate": "kb_review_consistency",
+        "ok": not failed,
+        "verdict": verdict,
+        "failed_gates": [c.get("gate") for c in failed],
+        "message": "ok" if not failed else f"kb-review verdict=pass but gates failed: {[c.get('gate') for c in failed]}",
+    }
+
+
+def gate_confidence_gate_file(uo: Path) -> dict[str, Any]:
+    """checks/confidence_gate.yaml must exist and status ∈ {pass, reported} after script run."""
+    conf = _load(uo / "checks" / "confidence_gate.yaml")
+    if not isinstance(conf, dict):
+        return {
+            "gate": "confidence_gate",
+            "ok": False,
+            "message": "checks/confidence_gate.yaml missing — run check_final_confidence.py",
+        }
+    status = str(conf.get("status") or "").lower()
+    ok = status in {"pass", "reported"}
+    return {
+        "gate": "confidence_gate",
+        "ok": ok,
+        "status": status,
+        "message": "ok" if ok else f"confidence_gate status={status!r} not in {{pass, reported}}",
+    }
+
+
+def gate_integrity_file(uo: Path) -> dict[str, Any]:
+    doc = _load(uo / "checks" / "integrity.yaml")
+    if not isinstance(doc, dict):
+        return {"gate": "integrity", "ok": False, "message": "checks/integrity.yaml missing"}
+    status = str(doc.get("status") or "").lower()
+    ok = status == "pass"
+    return {
+        "gate": "integrity",
+        "ok": ok,
+        "status": status,
+        "message": "ok" if ok else f"integrity status={status!r}",
+    }
+
+
+def gate_kb_review_file(uo: Path) -> dict[str, Any]:
+    doc = _load(uo / "review" / "kb_product_review.yaml")
+    if not isinstance(doc, dict):
+        return {"gate": "kb_review", "ok": False, "message": "review/kb_product_review.yaml missing"}
+    verdict = str(doc.get("verdict") or doc.get("status") or "").lower()
+    ok = verdict in {"pass", "passed", "ok"}
+    return {
+        "gate": "kb_review",
+        "ok": ok,
+        "verdict": verdict,
+        "message": "ok" if ok else f"kb-review verdict={verdict!r}",
+    }
+
+
+def gate_phase0_receipt(uo: Path) -> dict[str, Any]:
+    scope = uo / "runs"
+    # Accept either scope_confirmed under current run or cbm index_meta
+    meta = uo / "cbm" / "index_meta.json"
+    confirmed = list(uo.glob("runs/*/phase0/scope_confirmed.yaml")) + list(uo.glob("**/scope_confirmed.yaml"))
+    ok = meta.is_file() or bool(confirmed)
+    return {
+        "gate": "phase0_receipt",
+        "ok": ok,
+        "message": "ok" if ok else "Phase0 receipt missing (cbm/index_meta.json or scope_confirmed.yaml)",
+    }
+
+
+def gate_extract_plan_subagent(uo: Path) -> dict[str, Any]:
+    plan = uo / "ir" / "extract_plan.yaml"
+    candidates = uo / "ir" / "extract_plan_candidates.yaml"
+    ok = plan.is_file()
+    return {
+        "gate": "extract_plan_subagent",
+        "ok": ok,
+        "has_candidates": candidates.is_file(),
+        "message": "ok" if ok else "ir/extract_plan.yaml missing (Task C / apply_extract_plan required)",
+    }
+
+
+def gate_uo_ready(uo: Path) -> dict[str, Any]:
+    ok = (uo / "manifest.yaml").is_file() and (uo / "checks" / "integrity.yaml").is_file()
+    integrity = _load(uo / "checks" / "integrity.yaml") or {}
+    status = str(integrity.get("status") or "") if isinstance(integrity, dict) else ""
+    if ok and status and status != "pass":
+        ok = False
+    return {
+        "gate": "uo_ready",
+        "ok": ok,
+        "integrity_status": status,
+        "message": "ok" if ok else "UO KB not ready (manifest/integrity pass required)",
+    }
+
+
+def run_key_gates(project_root: Path, *, op_name: str | None = None) -> dict[str, Any]:
+    uo = uo_root(project_root, op_name)
+    results = [
+        gate_key_triage_required(uo),
+        gate_key_resolve_receipt(project_root, uo),
+        gate_empty_only_producer(uo),
+        gate_confidence_report_quality(uo),
+        gate_confidence_closed_high(uo),
+        gate_confidence_reason_review(uo),
+        gate_kb_review_consistency(uo),
+    ]
+    ok = all(r.get("ok") for r in results)
+    payload = {
+        "version": 1,
+        "ok": ok,
+        "uo_root": uo.as_posix(),
+        "gates": results,
+    }
+    out = uo / "checks" / "harness_key_gates.yaml"
+    if yaml is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return payload
+
+
+def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = None) -> dict[str, Any]:
+    """Dispatch a workflow registry gate id to a concrete checker."""
+    uo = uo_root(project_root, op_name)
+    mapping = {
+        "key_triage_required": lambda: gate_key_triage_required(uo),
+        "key_resolve_receipt": lambda: gate_key_resolve_receipt(project_root, uo),
+        "empty_only_producer": lambda: gate_empty_only_producer(uo),
+        "key_report_quality": lambda: gate_confidence_report_quality(uo),
+        "confidence_closed_high": lambda: gate_confidence_closed_high(uo),
+        "confidence_reason_review": lambda: gate_confidence_reason_review(uo),
+        "confidence_gate": lambda: gate_confidence_gate_file(uo),
+        "integrity": lambda: gate_integrity_file(uo),
+        "kb_review": lambda: gate_kb_review_file(uo),
+        "kb_review_consistency": lambda: gate_kb_review_consistency(uo),
+        "phase0_receipt": lambda: gate_phase0_receipt(uo),
+        "extract_plan_subagent": lambda: gate_extract_plan_subagent(uo),
+        "uo_ready": lambda: gate_uo_ready(uo),
+        "kb_ready": lambda: gate_uo_ready(uo),
+        "kb_fingerprint": lambda: gate_uo_ready(uo),
+        "context_pack": lambda: {
+            "gate": "context_pack",
+            "ok": (project_root / ".ascendc-agent" / "context" / "context_pack.yaml").is_file(),
+            "message": "ok" if (project_root / ".ascendc-agent" / "context" / "context_pack.yaml").is_file() else "context pack missing",
+        },
+        "tg_init_confirmed": lambda: _gate_tg_status(project_root, want="confirmed"),
+        "plan_approved": lambda: _gate_tg_plan_approved(project_root),
+    }
+    fn = mapping.get(gate_id)
+    if fn is None:
+        return {"gate": gate_id, "ok": False, "message": f"unknown gate id: {gate_id}"}
+    return fn()
+
+
+def _gate_tg_status(project_root: Path, *, want: str) -> dict[str, Any]:
+    from ascendc_harness.paths import tg_root
+
+    tg = tg_root(project_root)
+    doc = _load(tg / "init" / "status.yaml") or _load(tg / "realization" / "status.yaml") or {}
+    status = str(doc.get("status") or "").lower() if isinstance(doc, dict) else ""
+    ok = status == want
+    return {
+        "gate": "tg_init_confirmed",
+        "ok": ok,
+        "status": status,
+        "message": "ok" if ok else f"tg init status={status!r}, want {want!r}",
+    }
+
+
+def _gate_tg_plan_approved(project_root: Path) -> dict[str, Any]:
+    from ascendc_harness.paths import tg_root
+
+    tg = tg_root(project_root)
+    doc = _load(tg / "plan" / "status.yaml") or _load(tg / "plan" / "approval.yaml") or {}
+    status = str(doc.get("status") or doc.get("approval") or "").lower() if isinstance(doc, dict) else ""
+    ok = status in {"approved", "pass", "ok", "confirmed"}
+    return {
+        "gate": "plan_approved",
+        "ok": ok,
+        "status": status,
+        "message": "ok" if ok else f"tg plan not approved (status={status!r})",
+    }
+
+
+def run_workflow_gates(project_root: Path, *, gate_ids: list[str] | None = None) -> dict[str, Any]:
+    from ascendc_harness.state import load_state
+    from ascendc_harness.workflows import get_workflow
+
+    state = load_state(project_root)
+    wid = str(state.get("workflow_id") or "")
+    if not wid:
+        return {"ok": False, "error": "no_active_workflow", "gates": []}
+    meta = get_workflow(wid)
+    ids = list(gate_ids if gate_ids is not None else (meta.get("gates") or []))
+    results = [run_named_gate(project_root, gid) for gid in ids]
+    ok = all(r.get("ok") for r in results)
+    return {
+        "version": 1,
+        "ok": ok,
+        "workflow_id": wid,
+        "phase": state.get("phase"),
+        "gates": results,
+    }
+
+
+# --- KEY patch rejection helpers (apply / classify) ---
+
+def evidence_blob(item: dict[str, Any]) -> str:
+    parts = [
+        str(item.get(k) or "")
+        for k in ("producer", "producers", "evidence", "file_path", "path", "reason", "host_parent", "notes", "rationale", "host_parent_evidence")
+    ]
+    for key in ("producers", "evidence_paths", "paths"):
+        val = item.get(key)
+        if isinstance(val, list):
+            parts.extend(str(x) for x in val)
+    resolution = item.get("resolution")
+    if isinstance(resolution, dict):
+        parts.append(str(resolution))
+    return " ".join(parts).lower()
+
+
+def is_empty_only_producer(item: dict[str, Any]) -> bool:
+    blob = evidence_blob(item)
+    has_empty = any(m in blob for m in EMPTY_PATH_MARKERS)
+    has_main = any(m in blob for m in MAIN_TILING_ANCHORS)
+    return has_empty and not has_main
+
+
+def reject_key_closure_item(item: dict[str, Any], *, require_receipt_context: bool = False) -> str | None:
+    """Return rejection reason for a KEY closure patch item, or None if allowed."""
+    kid = str(item.get("id") or item.get("key") or item.get("key_id") or item.get("target") or "")
+    status = str(item.get("status") or item.get("disposition") or item.get("input_derivable") or "").lower()
+    conf = str(item.get("confidence") or "").lower()
+    closing = status in {"accepted", "resolved", "closed", "true", "false", "not_input_derivable", "input_derivable"}
+    closing = closing or item.get("input_derivable") is True or item.get("input_derivable") is False
+    closing = closing or item.get("not_input_derivable") is True
+    if conf == "high":
+        closing = True
+    if not closing:
+        return None
+    if is_empty_only_producer(item):
+        return "empty_only_producer: missing_producer evidence only on empty tiling path; escalate to main GetTilingKey/SaveToTilingData path"
+    if require_receipt_context and kid.upper().startswith("KEY_"):
+        # Caller should also check triage/receipt at batch level; per-item flag for clarity
+        return None
+    return None
+
+
+def reject_key_patch_batch(
+    project_root: Path,
+    uo: Path,
+    items: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    """Reject KEY closures when empty-only or triage/receipt missing."""
+    rejected: list[dict[str, str]] = []
+    closing_keys: list[str] = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        kid = str(it.get("id") or it.get("key") or it.get("key_id") or it.get("target") or "")
+        reason = reject_key_closure_item(it)
+        if reason:
+            rejected.append({"id": kid or "?", "reason": reason})
+            continue
+        status = str(it.get("status") or it.get("input_derivable") or "").lower()
+        conf = str(it.get("confidence") or "").lower()
+        is_close = (
+            status in {"accepted", "resolved", "closed", "true", "false", "not_input_derivable", "input_derivable"}
+            or it.get("input_derivable") in (True, False)
+            or it.get("not_input_derivable") is True
+            or conf == "high"
+        )
+        if is_close and kid.upper().startswith(("KEY_", "KVAR_")):
+            closing_keys.append(kid)
+
+    if closing_keys:
+        triage = gate_key_triage_required(uo)
+        receipt = gate_key_resolve_receipt(project_root, uo)
+        # If gaps/escalate need triage, refuse parent-written closures without resolve work
+        if triage.get("needs_triage") and not receipt.get("ok"):
+            for kid in closing_keys:
+                rejected.append(
+                    {
+                        "id": kid,
+                        "reason": "key_resolve_receipt_missing: parent must not accept KEY patches without uo-key-resolve triage/artifacts",
+                    }
+                )
+        elif triage.get("needs_triage") and not triage.get("ok"):
+            for kid in closing_keys:
+                rejected.append(
+                    {
+                        "id": kid,
+                        "reason": "key_triage_missing: ir/key_triage.yaml required before accepting KEY closures",
+                    }
+                )
+    # Dedupe
+    seen: set[str] = set()
+    uniq: list[dict[str, str]] = []
+    for row in rejected:
+        key = f"{row['id']}:{row['reason']}"
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(row)
+    return uniq

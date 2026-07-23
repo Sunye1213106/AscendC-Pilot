@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "testcase-agent"
+version = "0.2.0"
+description = "AscendC testcase engine (TG) under AscendC Agent Harness"
+requires-python = ">=3.10"
+dependencies = [
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+solver = [
+  "z3-solver>=4.12",
+]
+
+[project.scripts]
+tg-contract = "testcase_agent.cli:contract_main"
+tg-plan = "testcase_agent.cli:plan_main"
+tg-solve = "testcase_agent.cli:solve_main"
+tg-init = "testcase_agent.cli:init_main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["testcase_agent*"]

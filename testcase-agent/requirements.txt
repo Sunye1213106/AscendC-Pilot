@@ -1,3 +1,0 @@
-# testcase-agent Python dependencies (includes SMT solver for tg-solve)
-PyYAML>=6.0
-z3-solver>=4.12

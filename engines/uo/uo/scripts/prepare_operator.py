@@ -1,0 +1,417 @@
+from __future__ import annotations
+
+import argparse
+import json
+import hashlib
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+if __package__ in (None, ""):
+    _ROOT = Path(__file__).resolve().parents[2]
+    if str(_ROOT) not in sys.path:
+        sys.path.insert(0, str(_ROOT))
+
+from uo._core.ignore import DEFAULT_IGNORE_PATTERNS
+from uo._operator.artifacts import init_operator_contract_layout, operator_root, safe_op_name, write_text
+from uo._operator.cbm_metadata import write_index_meta
+from uo._operator.install_check import compare_installed_skill
+from uo._operator.run_context import phase0_snapshot, read_yaml_mapping
+from uo._operator.spec import spec_bundle_hash
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Prepare understand-operator KB layout. "
+            "CBM graph DB indexing is done by MCP index_repository during /uo-init, not by this script."
+        )
+    )
+    parser.add_argument("repo", nargs="?", default=".", help="Repository root")
+    parser.add_argument("--op-name", help="Operator name. Defaults to repository name.")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume the current incomplete UO run (default already reuses incomplete current_run_id).",
+    )
+    parser.add_argument(
+        "--force-new-run",
+        action="store_true",
+        help="Always create a new UO run (do not use with --write-index-meta mid-Phase0).",
+    )
+    parser.add_argument(
+        "--write-index-meta",
+        action="store_true",
+        help=(
+            "Write/update cbm/index_meta.json after MCP index_repository "
+            "(reuses unfinished current_run_id; pass --cbm-project from MCP result)"
+        ),
+    )
+    parser.add_argument("--cbm-project", help="CBM project name returned by MCP list_projects / index_repository")
+    parser.add_argument("--cbm-mode", default="fast", help="Recorded MCP index mode label (default: fast)")
+    parser.add_argument("--full", action="store_true", help="Record full MCP index mode")
+    args = parser.parse_args(argv)
+
+    repo_root = Path(args.repo).resolve()
+    op_name = safe_op_name(args.op_name, repo_root)
+    base = operator_root(repo_root, op_name)
+    init_operator_contract_layout(base, op_name, repo_root)
+    run_id = _select_run_id(base, resume=args.resume, force_new=args.force_new_run)
+    phase0 = base / "runs" / run_id / "phase0"
+    _update_manifest_phase0(base, run_id, repo_root)
+    installed_skill = Path.home() / ".config" / "opencode" / "skills" / "understand-operator"
+    if installed_skill.exists():
+        check = compare_installed_skill(Path(__file__).resolve().parents[2], installed_skill)
+    else:
+        check = {
+            "version": 1,
+            "consistent": False,
+            "error_code": "INSTALLED_SKILL_VERSION_MISMATCH",
+            "installed_skill_root": str(installed_skill),
+            "mismatches": [{"path": "skills/understand-operator", "reason": "installed skill root missing"}],
+        }
+    _write_phase0_doc(
+        phase0 / "context.yaml",
+        "runs.context",
+        {
+            "project_root": str(repo_root),
+            "op_name": op_name,
+            "script_dir": str(Path(__file__).resolve().parent),
+            "run_id": run_id,
+            "source_revision": _git_revision(repo_root),
+            "source_snapshot_id": _source_snapshot_id(repo_root),
+            "spec_bundle_hash": spec_bundle_hash(),
+        },
+    )
+    _write_phase0_doc(phase0 / "installed_skill_check.yaml", "runs.installed_skill_check", check)
+    if not check.get("consistent"):
+        print("ERROR: installed understand-operator plugin is out of sync with the repository.", file=sys.stderr)
+        print("Run: powershell -ExecutionPolicy Bypass -File install.ps1 opencode", file=sys.stderr)
+        print(f"Details: {phase0 / 'installed_skill_check.yaml'}", file=sys.stderr)
+        return 3
+
+    patterns = _load_operator_ignore_patterns(repo_root)
+    _write_phase0_doc(
+        phase0 / "ignore_rules.yaml",
+        "runs.ignore_rules",
+        {"patterns": patterns},
+    )
+    for filename, artifact_type in (
+        ("scope_scan.yaml", "runs.scope_scan"),
+        ("semantic_enrichment.yaml", "runs.semantic_enrichment"),
+    ):
+        target = phase0 / filename
+        if not target.exists():
+            _write_phase0_doc(target, artifact_type, _phase0_pending_defaults(repo_root, op_name, artifact_type))
+
+    if args.write_index_meta or args.cbm_project:
+        scope = _current_scope_meta(base)
+        status = {
+            "available": bool(args.cbm_project),
+            "retry_count": 0,
+            "fallback": "" if args.cbm_project else "filesystem_scan",
+            "last_error": "",
+        }
+        confirmed_files = scope.get("confirmed_file_list") or []
+        write_index_meta(
+            base,
+            {
+                "repo_root": str(repo_root),
+                "op_name": op_name,
+                "cbm_project": args.cbm_project,
+                "indexed_via": "mcp",
+                "cbm_mode": "full" if args.full else args.cbm_mode,
+                "indexed_at": datetime.now(tz=timezone.utc).isoformat(),
+                "project_confirmed": bool(args.cbm_project),
+                "prefetch_mode": "mcp_index_repository",
+                "index_summary": {},
+                "indexed_scope_roots": scope.get("scope_roots") or [],
+                "indexed_files": confirmed_files,
+                "index_input": "confirmed_file_list",
+                "operator_path": scope.get("operator_path") or "",
+                "dependency_roots": scope.get("dependency_roots") or [],
+                "scope_hash": scope.get("scope_hash") or "",
+                "cbm_status": status,
+            },
+        )
+        write_text(
+            base / "cbm" / "cbm_query_log.md",
+            "# CBM Index Log\n\n"
+            f"- indexed_via: mcp\n"
+            f"- cbm_project: {args.cbm_project or 'pending'}\n"
+            f"- indexed_at: {datetime.now(tz=timezone.utc).isoformat()}\n"
+            "- agent queries: MCP codebase-memory-mcp tools only\n",
+        )
+
+    stub = base / "cbm" / "cbm_query_log.md"
+    if not stub.exists():
+        write_text(
+            stub,
+            "# CBM Index Log\n\n"
+            "Layout prepared. Waiting for Phase0 scope confirmation before MCP `index_repository`.\n",
+        )
+
+    print(f"Prepared understand-operator artifacts for {op_name}")
+    print(f"Output: {base}")
+    print(f"Run: {run_id}")
+    print("CBM: use MCP index_repository only after Phase0 scope confirmation; pass only confirmed_file_list")
+    print("Next: macro_scope_scan -> review_checkpoint -> index_repository -> --write-index-meta -> finalize_phase0")
+    return 0
+
+
+def _select_run_id(base: Path, *, resume: bool, force_new: bool) -> str:
+    """Pick the Phase0 run directory to write into.
+
+    Incomplete ``current_run_id`` is reused by default so later Phase0 steps
+    (especially ``--write-index-meta``) do not accidentally fork a new run and
+    orphan ``scope_scan`` / ``scope_review`` / ``scope_confirmed`` artifacts.
+    """
+    if resume and force_new:
+        raise SystemExit("--resume and --force-new-run are mutually exclusive")
+    if force_new:
+        return _new_run_id()
+
+    current = _current_run_id(base)
+    if current is not None:
+        receipt = base / "runs" / current / "phase0" / "receipt.yaml"
+        if not _receipt_passed(receipt):
+            # Default + --resume: keep writing into the unfinished run.
+            return current
+        if resume:
+            raise SystemExit(f"current run {current} already has a pass receipt; create a new run instead")
+        # Current run already finalized; start a fresh run for a new /uo-init.
+        return _new_run_id()
+
+    return _new_run_id()
+
+
+def _current_run_id(base: Path) -> str | None:
+    manifest = base / "manifest.yaml"
+    if manifest.exists():
+        try:
+            import yaml
+
+            data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
+            value = data.get("current_run_id")
+            if isinstance(value, str) and value.startswith("UO_RUN_") and value != "UO_RUN_PENDING":
+                return value
+        except Exception:  # noqa: BLE001
+            pass
+    return None
+
+
+def _new_run_id() -> str:
+    return "UO_RUN_" + datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S%f")
+
+
+def _receipt_passed(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        import yaml
+
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return isinstance(data, dict) and data.get("status") == "pass"
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _git_revision(repo_root: Path) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip() or "unknown"
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
+def _source_snapshot_id(repo_root: Path) -> str:
+    revision = _git_revision(repo_root)
+    digest = hashlib.sha256((str(repo_root) + revision).encode("utf-8")).hexdigest()[:16].upper()
+    return f"SOURCE_{digest}"
+
+
+def _write_phase0_doc(path: Path, artifact_type: str, data: object) -> None:
+    base = path.parents[3]
+    run_id = path.parents[1].name
+    payload = {
+        "version": 1,
+        "artifact": {"type": artifact_type, "schema_version": 1, "owner": "uo-orchestrator"},
+        "snapshot": phase0_snapshot(base, run_id),
+    }
+    if isinstance(data, dict):
+        payload.update(data)
+    else:
+        payload["payload"] = data
+    write_text(path, _to_yaml(payload))
+
+
+def _phase0_pending_defaults(repo_root: Path, op_name: str, artifact_type: str) -> dict[str, object]:
+    if artifact_type == "runs.scope_scan":
+        return {
+            "status": "pending",
+            "op_name": op_name,
+            "project_root": str(repo_root),
+            "operator_path": "",
+            "generated_at": datetime.now(tz=timezone.utc).isoformat(),
+            "scan_method": {
+                "filesystem_tool": "",
+                "cbm_project": "",
+                "ignore_rules_applied": False,
+                "max_dependency_depth": 0,
+            },
+            "directories": [],
+            "operator_roots": [],
+            "scope_roots": [],
+            "dependency_roots": [],
+            "include_search_paths": [],
+            "uncertain_include_paths": [],
+            "seed_files": {},
+            "files": {
+                "initial_operator_files": [],
+                "dependency_files": [],
+                "external_system_files": [],
+                "third_party_files": [],
+                "generated_files": [],
+                "excluded_files": [],
+                "uncertain_files": [],
+            },
+            "dependency_edges": [],
+            "symbols": {},
+            "global_candidates": {},
+            "architecture_variants": [],
+            "large_files": [],
+            "warnings": [],
+        }
+    if artifact_type == "runs.semantic_enrichment":
+        return {
+            "status": "pending",
+            "architecture_filter": {"included": [], "excluded": []},
+            "cbm_queries": [],
+            "architecture_variants": [],
+            "excluded_architectures": [],
+            "confirmed_scope_additions": [],
+            "unresolved": [],
+            "warnings": [],
+            "fallback": "",
+        }
+    return {}
+
+
+def _update_manifest_phase0(base: Path, run_id: str, repo_root: Path) -> None:
+    path = base / "manifest.yaml"
+    if not path.exists():
+        return
+    try:
+        import yaml
+
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if not isinstance(data, dict):
+            return
+        source = data.setdefault("source", {})
+        if isinstance(source, dict):
+            source["revision"] = _git_revision(repo_root)
+            source["snapshot_id"] = _source_snapshot_id(repo_root)
+        data["current_run_id"] = run_id
+        path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        return
+
+
+def _current_scope_meta(base: Path) -> dict[str, Any]:
+    try:
+        run_id = _current_run_id(base)
+    except Exception:  # noqa: BLE001
+        return {}
+    phase0 = base / "runs" / run_id / "phase0"
+    confirmed = read_yaml_mapping(phase0 / "scope_confirmed.yaml")
+    if confirmed:
+        files = confirmed.get("confirmed_file_list") if isinstance(confirmed.get("confirmed_file_list"), list) else []
+        roots = _roots_for_confirmed_files(files)
+        digest = hashlib.sha256()
+        for item in files:
+            digest.update(str(item).encode("utf-8"))
+            digest.update(b"\0")
+        return {
+            "operator_path": "",
+            "scope_roots": roots,
+            "dependency_roots": [],
+            "confirmed_file_list": files,
+            "scope_hash": "sha256:" + digest.hexdigest(),
+        }
+    scan = read_yaml_mapping(phase0 / "scope_scan.yaml")
+    if not scan:
+        return {}
+    scope_roots = scan.get("scope_roots") if isinstance(scan.get("scope_roots"), list) else []
+    dependency_roots = scan.get("dependency_roots") if isinstance(scan.get("dependency_roots"), list) else []
+    digest = hashlib.sha256()
+    for item in scope_roots:
+        digest.update(str(item).encode("utf-8"))
+        digest.update(b"\0")
+    return {
+        "operator_path": scan.get("operator_path") or "",
+        "scope_roots": scope_roots,
+        "dependency_roots": dependency_roots,
+        "scope_hash": "sha256:" + digest.hexdigest(),
+    }
+
+
+def _roots_for_confirmed_files(files: list[Any]) -> list[dict[str, str]]:
+    roots: dict[str, dict[str, str]] = {}
+    for item in files:
+        raw = item.get("path") if isinstance(item, dict) else item
+        path = str(raw or "").replace("\\", "/")
+        if not path:
+            continue
+        parent = str(Path(path).parent).replace("\\", "/")
+        if parent == ".":
+            parent = "."
+        roots.setdefault(parent, {"path": parent, "kind": "confirmed_files", "reason": "human-confirmed Phase0 scope"})
+    return sorted(roots.values(), key=lambda item: item["path"])
+
+
+def _load_operator_ignore_patterns(repo_root: Path) -> list[str]:
+    base = repo_root / ".ascendc-agent"
+    base.mkdir(parents=True, exist_ok=True)
+    path = base / ".ascendcagentignore"
+    if not path.exists():
+        lines = [
+            "# ascendc-agent ignore rules",
+            "",
+            "# Default ignored paths:",
+            *[f"# {p}" for p in DEFAULT_IGNORE_PATTERNS],
+            "",
+            "# From .gitignore:",
+        ]
+        gitignore = repo_root / ".gitignore"
+        if gitignore.exists():
+            for line in gitignore.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#"):
+                    lines.append(stripped)
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    patterns = list(DEFAULT_IGNORE_PATTERNS)
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            patterns.append(stripped)
+    return patterns
+
+
+def _to_yaml(data: object) -> str:
+    try:
+        import yaml
+
+        return yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+    except Exception:  # noqa: BLE001
+        return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

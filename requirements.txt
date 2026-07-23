@@ -1,17 +1,10 @@
 # Ascend C PR Test Agent — Python dependencies
 #
 #   pip install -r requirements.txt
-#   # editable install from this repo root (recommended after clone/copy):
-#   pip install -e "./understand-operator" -e "./testcase-agent[solver]"
+#   pip install -e "./harness" -e "./engines/uo" -e "./engines/tg[solver]"
 #
 # Requires: Python >= 3.10
 
-# --- understand-operator ---
 PyYAML>=6.0
 jsonschema>=4.0
-
-# --- testcase-agent (core) ---
-# PyYAML already listed
-
-# --- testcase-agent solver (tg-solve / SMT) ---
 z3-solver>=4.12

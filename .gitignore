@@ -17,6 +17,11 @@ dist/
 venv/
 env/
 
+# Operator-local agent products
+.ascendc-agent/
+.understand-operator/
+.testcase-generator/
+
 # Editor/system files
 .idea/
 .vscode/

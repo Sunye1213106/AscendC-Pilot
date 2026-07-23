@@ -1,111 +1,98 @@
-<#
-.SYNOPSIS
-  Install both understand-operator and testcase-agent for OpenCode / Codex / Cursor.
-
-.DESCRIPTION
-  Thin wrapper that runs each agent's install.ps1 in order:
-    1) understand-operator
-    2) testcase-agent
-
-.EXAMPLE
-  ./install.ps1 opencode
-  ./install.ps1 cursor -SkipPip
-  ./install.ps1 -Uninstall opencode
-  ./install.ps1 opencode -Only understand-operator
-  ./install.ps1 opencode -Only testcase-agent
-#>
-
+# AscendC Agent unified installer (Windows)
+#
+# Usage:
+#   .\install.ps1 opencode|cursor|codex
+#   .\install.ps1 uninstall-opencode
+#   $env:SKIP_PIP=1; .\install.ps1 cursor
 param(
-    [Parameter(Position = 0)]
-    [ValidateSet("opencode", "codex", "cursor")]
-    [string]$Platform = "opencode",
-
-    [ValidateSet("opencode", "codex", "cursor")]
-    [string]$Uninstall,
-
-    [ValidateSet("all", "understand-operator", "testcase-agent")]
-    [string]$Only = "all",
-
-    [switch]$SkipPip
+  [Parameter(Position = 0)]
+  [string]$Platform = "opencode"
 )
 
 $ErrorActionPreference = "Stop"
 $BundleRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$UoRoot = Join-Path $BundleRoot "understand-operator"
-$TgRoot = Join-Path $BundleRoot "testcase-agent"
+$SkipPip = $env:SKIP_PIP
 
-function Assert-AgentRoot {
-    param([string]$Name, [string]$Root)
-    $script = Join-Path $Root "install.ps1"
-    if (-not (Test-Path -LiteralPath $script)) {
-        throw "Missing $Name installer: $script"
-    }
+function Get-PluginDest([string]$plat) {
+  switch ($plat) {
+    "opencode" { Join-Path $HOME ".config\opencode\ascendc-agent-plugin" }
+    "cursor" { Join-Path $HOME ".cursor\ascendc-agent-plugin" }
+    "codex" { Join-Path $HOME ".agents\ascendc-agent-plugin" }
+    default { throw "Unknown platform $plat" }
+  }
+}
+function Get-SkillsDest([string]$plat) {
+  switch ($plat) {
+    "opencode" { Join-Path $HOME ".config\opencode\skills" }
+    "cursor" { Join-Path $HOME ".cursor\skills" }
+    "codex" { Join-Path $HOME ".agents\skills" }
+  }
+}
+function Get-AgentsDest([string]$plat) {
+  switch ($plat) {
+    "opencode" { Join-Path $HOME ".config\opencode\agents" }
+    "cursor" { Join-Path $HOME ".cursor\agents" }
+    "codex" { Join-Path $HOME ".agents\agents" }
+  }
 }
 
-function Invoke-AgentInstall {
-    param(
-        [string]$Name,
-        [string]$Root,
-        [string]$PlatformArg,
-        [switch]$DoUninstall,
-        [switch]$NoPip
-    )
-    $script = Join-Path $Root "install.ps1"
-    Write-Host ""
-    Write-Host "======== $Name ========"
-    $argsList = @()
-    if ($DoUninstall) {
-        $argsList += @("-Uninstall", $PlatformArg)
-    } else {
-        $argsList += $PlatformArg
-        if ($NoPip -and $Name -eq "testcase-agent") {
-            $argsList += "-SkipPip"
-        }
-    }
-    & $script @argsList
-    if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) {
-        throw "$Name install failed with exit code $LASTEXITCODE"
-    }
+if ($Platform -like "uninstall-*") {
+  $plat = $Platform.Substring("uninstall-".Length)
+  $dest = Get-PluginDest $plat
+  $skills = Get-SkillsDest $plat
+  $agents = Get-AgentsDest $plat
+  if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
+  foreach ($name in @("uo-init","uo-update","uo-query","uo-code-review","uo-diff","tg-init","tg-plan","tg-solve","understand-operator")) {
+    $p = Join-Path $skills $name
+    if (Test-Path $p) { Remove-Item -Recurse -Force $p }
+  }
+  foreach ($name in @("uo-semantic-resolve","uo-key-resolve","uo-confidence-review","uo-kb-review","uo-code-reviewer","tg-csv-contract","tg-init-audit")) {
+    $p = Join-Path $agents "$name.md"
+    if (Test-Path $p) { Remove-Item -Force $p }
+  }
+  Write-Host "Uninstalled $plat"
+  exit 0
 }
 
-Assert-AgentRoot "understand-operator" $UoRoot
-Assert-AgentRoot "testcase-agent" $TgRoot
-
-$targetPlatform = if ($Uninstall) { $Uninstall } else { $Platform }
-$doUninstall = [bool]$Uninstall
-
-$agents = @()
-if ($Only -in @("all", "understand-operator")) {
-    $agents += @{ Name = "understand-operator"; Root = $UoRoot }
-}
-if ($Only -in @("all", "testcase-agent")) {
-    $agents += @{ Name = "testcase-agent"; Root = $TgRoot }
+if ($SkipPip -ne "1") {
+  python -m pip install -e "$BundleRoot\harness" -e "$BundleRoot\engines\uo" -e "$BundleRoot\engines\tg[solver]"
 }
 
-Write-Host "Ascendc PR agents bundle install"
-Write-Host "  Bundle:   $BundleRoot"
-Write-Host "  Platform: $targetPlatform"
-Write-Host "  Mode:     $(if ($doUninstall) { 'uninstall' } else { 'install' })"
-Write-Host "  Agents:   $($agents.Name -join ', ')"
+$Dest = Get-PluginDest $Platform
+$Skills = Get-SkillsDest $Platform
+$Agents = Get-AgentsDest $Platform
+New-Item -ItemType Directory -Force -Path $Dest, $Skills, $Agents | Out-Null
+if (Test-Path $Dest) { Remove-Item -Recurse -Force $Dest }
+New-Item -ItemType Directory -Force -Path $Dest | Out-Null
 
-foreach ($agent in $agents) {
-    Invoke-AgentInstall `
-        -Name $agent.Name `
-        -Root $agent.Root `
-        -PlatformArg $targetPlatform `
-        -DoUninstall:$doUninstall `
-        -NoPip:$SkipPip
+foreach ($name in @("skills","prompts","agents","docs","engines","harness","templates")) {
+  Copy-Item -Recurse -Force (Join-Path $BundleRoot $name) (Join-Path $Dest $name)
 }
 
-Write-Host ""
-Write-Host "======== Done ========"
-if ($doUninstall) {
-    Write-Host "Uninstalled: $($agents.Name -join ', ') ($targetPlatform)"
-} else {
-    Write-Host "Installed: $($agents.Name -join ', ') ($targetPlatform)"
-    Write-Host "UO commands: /uo-init  /uo-query  /uo-update  /uo-diff"
-    Write-Host "TG commands: /tg-contract  /tg-plan  /tg-solve"
-    if ($targetPlatform -eq "opencode") {
-        Write-Host 'OpenCode: ensure opencode.json has "permission": { "question": "allow" }'
-    }
+foreach ($name in @("uo-init","uo-update","uo-query","uo-code-review","tg-init","tg-plan","tg-solve")) {
+  $target = Join-Path $Dest "skills\$name"
+  $link = Join-Path $Skills $name
+  if (Test-Path $link) { Remove-Item -Recurse -Force $link }
+  try {
+    New-Item -ItemType Junction -Path $link -Target $target | Out-Null
+  } catch {
+    Copy-Item -Recurse -Force $target $link
+  }
 }
+
+Get-ChildItem (Join-Path $Dest "agents\*.md") | ForEach-Object {
+  if ($_.Name -eq "tg-domain-review.md") { return }
+  $link = Join-Path $Agents $_.Name
+  if (Test-Path $link) { Remove-Item -Force $link }
+  try {
+    New-Item -ItemType SymbolicLink -Path $link -Target $_.FullName | Out-Null
+  } catch {
+    Copy-Item -Force $_.FullName $link
+  }
+}
+
+$stampDir = Join-Path $Dest "templates\$Platform"
+New-Item -ItemType Directory -Force -Path $stampDir | Out-Null
+Set-Content -Path (Join-Path $stampDir "install_stamp.txt") -Value "plugin_root=$Dest"
+Write-Host "Installed AscendC Agent Harness → $Dest"
+Write-Host "Run: harness doctor"
