@@ -129,8 +129,11 @@ class FieldIntUsage:
 
 def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str = "arch35") -> dict[str, Any]:
     uo_root = existing_operator_root(repo_root, op_name)
-    entrypoints = read_yaml(uo_root / "ir" / "entrypoints.yaml")
-    selected = ((entrypoints.get("roles") or {}).get("kernel_entry") or {}).get("selected")
+    from uo.scripts.resolve_entrypoints import load_entrypoint_graph
+
+    graph = load_entrypoint_graph(uo_root)
+    kernel_nodes = _prefer_kernel_nodes(graph, architecture)
+    primary = kernel_nodes[0] if kernel_nodes else {}
     unresolved: list[dict[str, Any]] = []
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
@@ -139,7 +142,7 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
     tilingkey_space = load_tilingkey_space(uo_root, repo_root, op_name, architecture=architecture)
     key_index = load_key_dimension_index(tilingkey_space)
 
-    kernel_files = _kernel_files(repo_root, op_name, architecture, selected)
+    kernel_files = _kernel_files(repo_root, op_name, architecture, primary if primary else None, kernel_nodes)
     if not kernel_files:
         unresolved.append(
             {
@@ -151,17 +154,21 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
             }
         )
 
+    loc = primary.get("locator") if isinstance(primary.get("locator"), dict) else {}
+    sym = primary.get("symbol_ref") if isinstance(primary.get("symbol_ref"), dict) else {}
     entry_id = "KPATH_ENTRY"
     nodes.append(
         {
             "id": entry_id,
             "layer": "kernel",
             "node_type": "KernelEntry",
-            "name": (selected or {}).get("name") or "KernelEntry",
-            "qualified_name": (selected or {}).get("qualified_name") or "KernelEntry",
-            "file_path": (selected or {}).get("file_path") or "",
-            "start_line": int((selected or {}).get("start_line") or 0),
-            "end_line": int((selected or {}).get("end_line") or 0),
+            "name": primary.get("name") or "KernelEntry",
+            "qualified_name": sym.get("qualified_name") or primary.get("name") or "KernelEntry",
+            "file_path": loc.get("file_path") or sym.get("repo_relative_path") or "",
+            "start_line": int(loc.get("start_line") or 0),
+            "end_line": int(loc.get("end_line") or 0),
+            "entrypoint_id": primary.get("id"),
+            "role": primary.get("role"),
         }
     )
     nodes.append({"id": "KEY_TILINGKEY", "layer": "bridge", "node_type": "TilingKey", "name": "TilingKey", "qualified_name": "TilingKey", "file_path": "", "start_line": 0, "end_line": 0})
@@ -970,10 +977,71 @@ def _enum_declaration_files(repo_root: Path, op_name: str, architecture: str) ->
     return sorted(uniq.values(), key=lambda p: p.as_posix())[:120]
 
 
-def _kernel_files(repo_root: Path, op_name: str, architecture: str, selected: dict[str, Any] | None) -> list[Path]:
+def _prefer_kernel_nodes(graph: dict[str, Any], architecture: str) -> list[dict[str, Any]]:
+    """Prefer arch-compatible then neutral public_kernel_entry / concrete_kernel_impl."""
+    from uo.scripts.arch_path import arch_compatible, architecture_of_path
+    from uo.scripts.resolve_entrypoints import nodes_for_role
+
+    raw = list(nodes_for_role(graph, "public_kernel_entry")) + list(
+        nodes_for_role(graph, "concrete_kernel_impl")
+    )
+    scored: list[tuple[int, dict[str, Any]]] = []
+    seen: set[str] = set()
+    for node in raw:
+        if not isinstance(node, dict):
+            continue
+        nid = str(node.get("id") or "")
+        if nid and nid in seen:
+            continue
+        if nid:
+            seen.add(nid)
+        loc = node.get("locator") if isinstance(node.get("locator"), dict) else {}
+        sym = node.get("symbol_ref") if isinstance(node.get("symbol_ref"), dict) else {}
+        fp = str(loc.get("file_path") or sym.get("repo_relative_path") or "")
+        arch = str(node.get("architecture") or architecture_of_path(fp) or "neutral")
+        if fp and not arch_compatible(fp, architecture):
+            continue
+        if arch == architecture:
+            rank = 0
+        elif arch == "neutral":
+            rank = 1
+        else:
+            rank = 2
+        scored.append((rank, node))
+    scored.sort(key=lambda x: (x[0], str(x[1].get("id") or "")))
+    return [n for _, n in scored]
+
+
+def _kernel_files(
+    repo_root: Path,
+    op_name: str,
+    architecture: str,
+    primary: dict[str, Any] | None,
+    kernel_nodes: list[dict[str, Any]] | None = None,
+) -> list[Path]:
     files: list[Path] = []
-    if selected and selected.get("file_path"):
-        rel = str(selected["file_path"]).replace("\\", "/").lstrip("./")
+    seed_paths: list[str] = []
+    for node in kernel_nodes or []:
+        if not isinstance(node, dict):
+            continue
+        loc = node.get("locator") if isinstance(node.get("locator"), dict) else {}
+        sym = node.get("symbol_ref") if isinstance(node.get("symbol_ref"), dict) else {}
+        fp = str(loc.get("file_path") or sym.get("repo_relative_path") or "").replace("\\", "/")
+        if fp:
+            seed_paths.append(fp)
+    if primary:
+        loc = primary.get("locator") if isinstance(primary.get("locator"), dict) else {}
+        sym = primary.get("symbol_ref") if isinstance(primary.get("symbol_ref"), dict) else {}
+        fp = str(
+            loc.get("file_path")
+            or sym.get("repo_relative_path")
+            or primary.get("file_path")
+            or ""
+        ).replace("\\", "/")
+        if fp:
+            seed_paths.insert(0, fp)
+    for rel in seed_paths:
+        rel = rel.lstrip("./")
         for cand in (repo_root / rel, repo_root / op_name / rel):
             if cand.is_file():
                 files.append(cand)

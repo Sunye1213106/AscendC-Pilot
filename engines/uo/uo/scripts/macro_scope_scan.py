@@ -19,6 +19,9 @@ from uo._operator.artifacts import existing_operator_root, safe_op_name, write_t
 from uo._operator.run_context import active_run_id, scope_snapshot
 
 SOURCE_EXTENSIONS = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".py", ".proto"}
+# CMake/build files are discovered separately and must NOT enter CBM source indexes.
+BUILD_FILE_NAMES = {"cmakelists.txt"}
+BUILD_EXTENSIONS = {".cmake"}
 CPP_EXTENSIONS = {".c", ".cc", ".cpp", ".cxx"}
 HEADER_EXTENSIONS = {".h", ".hh", ".hpp", ".hxx"}
 HOST_HINTS = ("op_host", "host", "tiling")
@@ -74,6 +77,11 @@ def main(argv: list[str] | None = None) -> int:
             f"common library at {common_rel}: discovered={len(common_files)} referenced_by_includes={len(referenced)}"
         )
 
+    build_candidate_paths = _build_candidate_paths(
+        all_files, candidate_paths, op_rel_prefix=op_rel_prefix, common_rel=common_rel
+    )
+    common_notes.append(f"build_files_discovered={len(build_candidate_paths)} (not for CBM indexing)")
+
     proposal = _scope_proposal(
         base,
         run_id,
@@ -86,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
         workspace_root=workspace_root,
         operator_path=op_rel_prefix,
         architecture=architecture,
+        build_candidates=build_candidate_paths,
     )
 
     write_text(phase0 / "scope_proposal.yaml", _to_yaml(proposal))
@@ -413,6 +422,50 @@ def _filter_architecture(paths: list[str], architecture: str, *, op_rel_prefix: 
     return out
 
 
+def _is_build_file(rel: str) -> bool:
+    name = Path(rel).name.lower()
+    suffix = Path(rel).suffix.lower()
+    return name in BUILD_FILE_NAMES or suffix in BUILD_EXTENSIONS
+
+
+def _build_candidate_paths(
+    all_files: list[str],
+    source_candidates: list[str],
+    *,
+    op_rel_prefix: str = "",
+    common_rel: str = "",
+) -> list[str]:
+    """Collect CMake/build files near operator/common sources (never mixed into CBM sources)."""
+    parents: set[str] = set()
+    prefix = op_rel_prefix.replace("\\", "/").strip("/")
+    for rel in source_candidates:
+        parent = Path(rel).parent.as_posix()
+        while parent not in {"", "."}:
+            parents.add(parent)
+            if prefix and (parent == prefix or not parent.startswith(prefix + "/")):
+                break
+            nxt = Path(parent).parent.as_posix()
+            if nxt == parent:
+                break
+            parent = nxt
+        parents.add(parent if parent not in {"", "."} else (prefix or "."))
+    if common_rel:
+        parents.add(common_rel.replace("\\", "/").strip("/"))
+    out: set[str] = set()
+    for rel in all_files:
+        if _is_excluded(rel) or not _is_build_file(rel):
+            continue
+        parent = Path(rel).parent.as_posix()
+        if parent in {"", "."}:
+            parent = "."
+        if parent in parents or (prefix and (rel == prefix or rel.startswith(prefix + "/"))):
+            out.add(rel)
+            continue
+        if common_rel and rel.startswith(common_rel.replace("\\", "/").rstrip("/") + "/"):
+            out.add(rel)
+    return sorted(out)
+
+
 def _scope_proposal(
     base: Path,
     run_id: str,
@@ -426,6 +479,7 @@ def _scope_proposal(
     workspace_root: Path | None = None,
     operator_path: str = "",
     architecture: str = "",
+    build_candidates: list[str] | None = None,
 ) -> dict[str, Any]:
     excluded = sorted({rel for rel in all_files if _is_excluded(rel)})
     candidate_files = {
@@ -435,12 +489,16 @@ def _scope_proposal(
         "kernel": [],
         "headers": [],
         "other": [],
+        "build": [],
     }
     for rel in candidates:
         bucket = _bucket(rel)
         candidate_files[bucket].append(rel)
         if bucket == "host" and "tiling" in rel.lower() and rel not in candidate_files["tiling"]:
             candidate_files["tiling"].append(rel)
+    for rel in build_candidates or []:
+        if rel not in candidate_files["build"]:
+            candidate_files["build"].append(rel)
 
     warnings = list(extra_warnings or [])
     if not candidates:
@@ -465,11 +523,15 @@ def _scope_proposal(
             "used_tools": [tool_label],
             "source_read_policy": "path_names_and_include_lines_for_common_prune",
             "cbm_indexing": "blocked_until_human_confirmation",
+            "cbm_indexes_sources_only": True,
+            "build_files_via_extract_build_evidence": True,
             "ascendc_common_upscan": True,
             "kb_location": "operator_subdirectory_only",
             "default_exclude_tests_examples": True,
         },
         "candidate_files": candidate_files,
+        "candidate_source_files": list(candidates),
+        "candidate_build_files": list(build_candidates or []),
         "summary": summary,
         "candidate_directories": _candidate_dirs(candidates),
         "excluded": _excluded_labels(excluded),

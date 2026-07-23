@@ -1,0 +1,20 @@
+{
+  "symbol_or_macro": "GET_TPL_TILING_KEY",
+  "document_title": "AscendC TilingKey template helpers",
+  "document_url": "https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/latest/index/index.html",
+  "cann_version": "offline_fixture",
+  "semantic_summary": "Packs Host-side TilingKey arguments in declaration order.",
+  "parameter_order": [
+    "dim0",
+    "dim1",
+    "..."
+  ],
+  "return_semantics": "uint64 tiling key",
+  "nullability": "n/a",
+  "constraints": [
+    "argument order must match ASCENDC_TPL_ARGS_DECL"
+  ],
+  "applicable_architecture": "all",
+  "evidence_excerpt": "GET_TPL_TILING_KEY(args...) binds by position to ARGS_DECL",
+  "confidence": 0.7
+}

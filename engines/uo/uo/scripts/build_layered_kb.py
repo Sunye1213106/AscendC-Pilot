@@ -42,31 +42,55 @@ def build_layered_kb(
     if selected & {"host", "kernel", "tilingkey"}:
         selected.add("bridge")
 
-    # entrypoints
+    # entrypoints → ir/entrypoint_graph.yaml (unique confirmation fact source)
     if "entrypoints" in selected:
         candidates = collect_entrypoint_candidates(
             repo_root, op_name, architecture=architecture, auto_confirm_high_confidence=auto_confirm
         )
-        write_yaml(ir_dir / "entrypoint_candidates.yaml", candidates)
+        write_yaml(
+            ir_dir / "entrypoint_candidates.yaml",
+            {k: v for k, v in candidates.items() if k != "entrypoint_graph"},
+        )
         if confirmation_patch:
-            entrypoints = apply_entrypoint_confirmation(candidates, confirmation_patch)
+            entrypoint_graph = apply_entrypoint_confirmation(candidates, confirmation_patch)
         else:
-            entrypoints = apply_entrypoint_confirmation(candidates, {"roles": {}})
-            for role, body in candidates.get("roles", {}).items():
-                entrypoints["roles"][role] = {
-                    "selected": body.get("selected"),
-                    "status": body.get("status"),
-                    "candidate_count": len(body.get("candidates") or []),
-                }
-        write_yaml(ir_dir / "entrypoints.yaml", entrypoints)
-    else:
-        candidates = read_yaml(ir_dir / "entrypoint_candidates.yaml")
-        entrypoints = read_yaml(ir_dir / "entrypoints.yaml")
-        if not entrypoints:
-            raise FileNotFoundError("ir/entrypoints.yaml missing; include entrypoints layer or run full build")
+            entrypoint_graph = dict(candidates.get("entrypoint_graph") or {})
+        write_yaml(ir_dir / "entrypoint_graph.yaml", entrypoint_graph)
+        legacy = ir_dir / "entrypoints.yaml"
+        if legacy.exists():
+            legacy.unlink()
+        # Optional supporting evidence extracts (best-effort).
+        try:
+            from uo.scripts.extract_operator_boundary import extract_operator_boundary
 
-    llm_roles = [role for role, body in (entrypoints.get("roles") or {}).items() if not body.get("selected")]
-    if llm_roles and not confirmation_patch:
+            extract_operator_boundary(repo_root, op_name, architecture=architecture)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from uo.scripts.extract_build_evidence import extract_build_evidence
+
+            extract_build_evidence(repo_root, op_name)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from uo.scripts.cann_doc_evidence import collect_doc_evidence_bundle
+
+            collect_doc_evidence_bundle(repo_root, op_name)
+        except Exception:  # noqa: BLE001
+            pass
+    else:
+        candidates = read_yaml(ir_dir / "entrypoint_candidates.yaml") or {}
+        entrypoint_graph = read_yaml(ir_dir / "entrypoint_graph.yaml")
+        if not entrypoint_graph:
+            raise FileNotFoundError(
+                "ir/entrypoint_graph.yaml missing; include entrypoints layer or run full build"
+            )
+
+    closure = entrypoint_graph.get("closure") or {}
+    llm_needed = (
+        closure.get("host_main_chain") != "closed" or closure.get("kernel_main_chain") != "closed"
+    )
+    if llm_needed and not confirmation_patch:
         pass
 
     if "tilingkey" in selected:
@@ -126,19 +150,38 @@ def build_layered_kb(
         tilingkey.get("edges") or [],
         bridge.get("bridge_edges") or [],
     )
-    unresolved = []
-    for role in llm_roles:
-        unresolved.append(
-            {
-                "id": f"UNRES_ENTRY_{role.upper()}",
-                "kind": "entrypoint_needs_llm",
-                "message": f"Entrypoint role {role} needs LLM confirmation",
-                "file_path": "",
-                "snippet": "",
-                "role": role,
-                "candidates": (candidates.get("roles") or {}).get(role, {}).get("candidates") or [],
-            }
-        )
+    unresolved: list[dict[str, Any]] = []
+    if llm_needed:
+        for block in closure.get("blocking_unresolved") or []:
+            if not isinstance(block, dict):
+                continue
+            unresolved.append(
+                {
+                    "id": f"UNRES_ENTRY_{str(block.get('code') or 'closure').upper()}",
+                    "kind": "entrypoint_needs_llm",
+                    "severity": block.get("severity") or "blocking",
+                    "message": block.get("reason") or "Entrypoint graph closure incomplete",
+                    "file_path": "",
+                    "snippet": "",
+                    "code": block.get("code"),
+                    "candidates": (candidates.get("role_candidates") or {}),
+                }
+            )
+        if not (closure.get("blocking_unresolved") or []):
+            unresolved.append(
+                {
+                    "id": "UNRES_ENTRY_CLOSURE",
+                    "kind": "entrypoint_needs_llm",
+                    "severity": "blocking",
+                    "message": (
+                        f"Entrypoint closure incomplete "
+                        f"(host={closure.get('host_main_chain')}, "
+                        f"kernel={closure.get('kernel_main_chain')})"
+                    ),
+                    "file_path": "",
+                    "snippet": "",
+                }
+            )
     for block in (host, kernel, tilingkey, golden, bridge):
         unresolved.extend(block.get("unresolved") or [])
 
@@ -148,7 +191,7 @@ def build_layered_kb(
         "architecture": architecture,
         "layers": ["host", "bridge", "kernel"],
         "rebuild_layers": sorted(selected),
-        "entrypoints": entrypoints,
+        "entrypoint_graph": entrypoint_graph,
         "nodes": nodes,
         "edges": edges,
         "tilingkey": {
@@ -169,6 +212,8 @@ def build_layered_kb(
             "bridge_nodes": len(bridge.get("bridge_nodes") or []),
             "args_sel_count": tilingkey.get("args_sel_count") or 0,
             "template_count": len(tilingkey.get("template_blocks") or []),
+            "host_main_chain": closure.get("host_main_chain"),
+            "kernel_main_chain": closure.get("kernel_main_chain"),
         },
     }
     write_yaml(ir_dir / "operator_graph.yaml", graph)

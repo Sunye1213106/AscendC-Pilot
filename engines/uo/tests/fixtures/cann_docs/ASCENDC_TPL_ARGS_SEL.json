@@ -1,0 +1,18 @@
+{
+  "symbol_or_macro": "ASCENDC_TPL_ARGS_SEL",
+  "document_title": "AscendC TilingKey ARGS_SEL",
+  "document_url": "https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/latest/index/index.html",
+  "cann_version": "offline_fixture",
+  "semantic_summary": "Compile-time selection space (subset of declaration_space).",
+  "parameter_order": [
+    "SEL entries"
+  ],
+  "return_semantics": "compile selection",
+  "nullability": "n/a",
+  "constraints": [
+    "must not be merged with declaration_space"
+  ],
+  "applicable_architecture": "all",
+  "evidence_excerpt": "ARGS_SEL defines compile_selection_space",
+  "confidence": 0.7
+}

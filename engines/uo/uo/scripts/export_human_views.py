@@ -26,7 +26,7 @@ def export_human_views(uo_root: Path | str, *, write: bool = True) -> dict[str, 
     runtime = read_yaml(uo_root / "kernel" / "runtime_conditions.yaml") or {}
     quality = read_yaml(uo_root / "quality.yaml") or {}
     unresolved = read_yaml(uo_root / "ir" / "unresolved.yaml") or {}
-    entrypoints = read_yaml(uo_root / "ir" / "entrypoints.yaml") or {}
+    entrypoint_graph = read_yaml(uo_root / "ir" / "entrypoint_graph.yaml") or {}
     ledger = read_yaml(uo_root / "ir" / "resolution_ledger.yaml") or {}
     integrity = read_yaml(uo_root / "checks" / "integrity.yaml") or {}
     tilingkey = read_yaml(uo_root / "ir" / "tilingkey_space.yaml") or {}
@@ -134,7 +134,7 @@ def export_human_views(uo_root: Path | str, *, write: bool = True) -> dict[str, 
     else:
         lines.append("- (none)")
 
-    host_name, kernel_name = _entrypoint_labels(entrypoints)
+    host_name, kernel_name = _entrypoint_labels(entrypoint_graph)
     lines.extend(
         [
             "",
@@ -217,31 +217,31 @@ def export_human_views(uo_root: Path | str, *, write: bool = True) -> dict[str, 
     return payload
 
 
-def _entrypoint_labels(entrypoints: dict[str, Any]) -> tuple[str, str]:
-    roles = entrypoints.get("roles") if isinstance(entrypoints.get("roles"), dict) else {}
+def _entrypoint_labels(graph: dict[str, Any]) -> tuple[str, str]:
+    """Labels from entrypoint_graph nodes (public_host_entry / public_kernel_entry)."""
 
-    def _one(role: str) -> str:
-        body = roles.get(role) if isinstance(roles.get(role), dict) else {}
-        if not body and isinstance(entrypoints.get(role), dict):
-            body = entrypoints[role]
-        selected = body.get("selected") if isinstance(body.get("selected"), dict) else {}
-        return str(
-            selected.get("name")
-            or selected.get("qualified_name")
-            or body.get("name")
-            or body.get("file_path")
-            or body.get("symbol")
-            or "unknown"
-        )
+    def _label_for(roles: tuple[str, ...]) -> str:
+        for node in graph.get("nodes") or []:
+            if not isinstance(node, dict):
+                continue
+            role = str(node.get("role") or "")
+            # Legacy aliases already normalized in graph, but accept both.
+            if role not in roles and role not in {
+                "host_tiling_entry" if "public_host_entry" in roles else "",
+                "kernel_entry" if "public_kernel_entry" in roles else "",
+            }:
+                continue
+            sym = node.get("symbol_ref") if isinstance(node.get("symbol_ref"), dict) else {}
+            name = node.get("name") or sym.get("qualified_name")
+            if name:
+                return str(name)
+            loc = node.get("locator") if isinstance(node.get("locator"), dict) else {}
+            if loc.get("file_path"):
+                return str(loc.get("file_path"))
+        return "unknown"
 
-    host = entrypoints.get("host") if isinstance(entrypoints.get("host"), dict) else {}
-    kernel = entrypoints.get("kernel") if isinstance(entrypoints.get("kernel"), dict) else {}
-    host_name = _one("host_tiling_entry")
-    if host_name == "unknown":
-        host_name = str(host.get("file_path") or host.get("symbol") or "unknown")
-    kernel_name = _one("kernel_entry")
-    if kernel_name == "unknown":
-        kernel_name = str(kernel.get("file_path") or kernel.get("symbol") or "unknown")
+    host_name = _label_for(("public_host_entry", "normal_impl", "varlen_impl", "empty_impl", "host_tiling_entry"))
+    kernel_name = _label_for(("public_kernel_entry", "concrete_kernel_impl", "kernel_entry"))
     return host_name, kernel_name
 
 

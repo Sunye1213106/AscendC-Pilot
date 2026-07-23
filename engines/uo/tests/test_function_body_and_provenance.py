@@ -10,6 +10,7 @@ from uo.scripts.apply_extract_plan import apply_extract_plan
 from uo.scripts.extract_host_subgraph import extract_host_subgraph
 from uo.scripts.function_body import find_function_body, resolve_helper_body
 from uo.scripts.propose_extract_plan import propose_extract_plan
+from tests._entrypoint_fixtures import write_entrypoint_graph
 
 
 def _write_host_chain(repo: Path) -> None:
@@ -70,23 +71,14 @@ def _setup(tmp_path: Path) -> tuple[Path, str]:
     init_operator_contract_layout(root, op, repo)
     ir = root / "ir"
     ir.mkdir(parents=True, exist_ok=True)
-    write_yaml(
-        ir / "entrypoints.yaml",
-        {
-            "version": 1,
-            "roles": {
-                "host_tiling_entry": {
-                    "selected": {
-                        "name": "FooTiling",
-                        "qualified_name": "FooTiling",
-                        "file_path": "op_host/arch35/foo_tiling.cpp",
-                        "start_line": 2,
-                        "end_line": 4,
-                    },
-                    "status": "confirmed",
-                }
-            },
-        },
+    write_entrypoint_graph(
+        ir,
+        op_name=op,
+        host_name="FooTiling",
+        host_file="op_host/arch35/foo_tiling.cpp",
+        host_line=2,
+        kernel_name="FooKernel",
+        kernel_file="op_kernel/arch35/foo_kernel.h",
     )
     return repo, op
 

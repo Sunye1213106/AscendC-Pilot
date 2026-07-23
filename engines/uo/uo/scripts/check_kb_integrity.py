@@ -39,14 +39,25 @@ def check_kb_integrity(repo_root: Path, op_name: str, *, write_outputs: bool = T
     unresolved = read_yaml(uo_root / "ir" / "unresolved.yaml") or {}
     open_items = unresolved.get("items") if isinstance(unresolved.get("items"), list) else []
     open_count = len(open_items)
-    if open_count > 0:
-        sample = [str(i.get("id")) for i in open_items[:8]]
+    blocking_unresolved = []
+    degraded_unresolved = []
+    for item in open_items:
+        if not isinstance(item, dict):
+            continue
+        sev = str(item.get("severity") or "").lower()
+        if sev in {"blocking", "error"} or sev == "":
+            # Empty severity treated as blocking (legacy unresolved items).
+            blocking_unresolved.append(item)
+        elif sev == "degraded":
+            degraded_unresolved.append(item)
+    if blocking_unresolved:
+        sample = [str(i.get("id")) for i in blocking_unresolved[:8]]
         issues.append(
             {
                 "code": "OPEN_UNRESOLVED",
                 "severity": "error",
                 "rework_stage": "residual_resolve",
-                "message": f"开放 unresolved={open_count}，须 disposition 入账后清零。样例: {sample}",
+                "message": f"blocking unresolved={len(blocking_unresolved)}，须 disposition 入账后清零。样例: {sample}",
             }
         )
 
@@ -63,26 +74,49 @@ def check_kb_integrity(repo_root: Path, op_name: str, *, write_outputs: bool = T
             }
         )
 
-    entrypoints = read_yaml(uo_root / "ir" / "entrypoints.yaml") or {}
-    roles = entrypoints.get("roles") if isinstance(entrypoints.get("roles"), dict) else {}
-    for role in ("host_tiling_entry", "kernel_entry"):
-        body = roles.get(role) if isinstance(roles.get(role), dict) else {}
-        if not body and isinstance(entrypoints.get(role), dict):
-            body = entrypoints[role]
-        status = str(body.get("status") or "").lower()
-        selected = body.get("selected") if isinstance(body.get("selected"), dict) else {}
-        name = selected.get("name") or selected.get("qualified_name") or body.get("name") or body.get("qualified_name")
-        confirmed = status == "confirmed" or bool(body.get("confirmed_by") or selected.get("confirmed_by"))
-        if not confirmed or not name or str(name).lower() == "unknown":
+    ep_graph = read_yaml(uo_root / "ir" / "entrypoint_graph.yaml") or {}
+    closure = ep_graph.get("closure") if isinstance(ep_graph.get("closure"), dict) else {}
+    host_chain = str(closure.get("host_main_chain") or "")
+    kernel_chain = str(closure.get("kernel_main_chain") or "")
+    if not ep_graph:
+        issues.append(
+            {
+                "code": "ENTRYPOINT_GRAPH_MISSING",
+                "severity": "error",
+                "rework_stage": "entrypoints",
+                "message": "缺失 ir/entrypoint_graph.yaml；须先 resolve_entrypoints / build entrypoints 层",
+            }
+        )
+    else:
+        if host_chain != "closed":
             issues.append(
                 {
-                    "code": "ENTRYPOINT_UNCONFIRMED",
+                    "code": "ENTRYPOINT_HOST_CHAIN_OPEN",
                     "severity": "error",
                     "rework_stage": "entrypoints",
-                    "message": f"入口角色 {role} 未确认（status={status or 'empty'}, name={name!r}）",
+                    "message": f"entrypoint_graph.host_main_chain={host_chain or 'empty'}（须 closed）",
                 }
             )
-
+        if kernel_chain != "closed":
+            issues.append(
+                {
+                    "code": "ENTRYPOINT_KERNEL_CHAIN_OPEN",
+                    "severity": "error",
+                    "rework_stage": "entrypoints",
+                    "message": f"entrypoint_graph.kernel_main_chain={kernel_chain or 'empty'}（须 closed）",
+                }
+            )
+        for block in closure.get("blocking_unresolved") or []:
+            if not isinstance(block, dict):
+                continue
+            issues.append(
+                {
+                    "code": str(block.get("code") or "ENTRYPOINT_BLOCKING"),
+                    "severity": "error",
+                    "rework_stage": "entrypoints",
+                    "message": str(block.get("reason") or "entrypoint blocking unresolved"),
+                }
+            )
     db_path = uo_root / "indexes" / "kb_graph.sqlite"
     orphan_src = orphan_dst = 0
     if db_path.is_file():
@@ -153,12 +187,23 @@ def check_kb_integrity(repo_root: Path, op_name: str, *, write_outputs: bool = T
         )
 
     error_count = sum(1 for i in issues if i.get("severity") == "error")
-    status = "pass" if error_count == 0 else "fail"
+    if error_count > 0:
+        status = "fail"
+    elif degraded_unresolved:
+        status = "pass_with_degradation"
+    else:
+        status = "pass"
     payload = {
         "version": 1,
         "status": status,
         "op_name": op_name,
         "open_unresolved_count": open_count,
+        "blocking_unresolved_count": len(blocking_unresolved),
+        "degraded_unresolved_count": len(degraded_unresolved),
+        "entrypoint_closure": {
+            "host_main_chain": host_chain,
+            "kernel_main_chain": kernel_chain,
+        },
         "ledger_count": len(ledger_items),
         "sqlite_orphan_src": orphan_src,
         "sqlite_orphan_dst": orphan_dst,
@@ -423,7 +468,7 @@ def main(argv: list[str] | None = None) -> int:
         f"orphan_src={result['sqlite_orphan_src']} orphan_dst={result['sqlite_orphan_dst']} "
         f"issues={len(result.get('issues') or [])}"
     )
-    return 0 if result["status"] == "pass" else 2
+    return 0 if result["status"] in {"pass", "pass_with_degradation"} else 2
 
 
 if __name__ == "__main__":

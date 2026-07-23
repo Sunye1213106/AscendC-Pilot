@@ -6,14 +6,19 @@ from pathlib import Path
 _SOURCE_MARKERS = ("op_host/", "op_kernel/", "op_api/", "op_tiling/")
 
 
-def resolve_repo_source_path(repo_root: Path, file_path: str) -> Path | None:
+def resolve_repo_source_path(
+    repo_root: Path,
+    file_path: str,
+    *,
+    architecture: str = "arch35",
+) -> Path | None:
     """Map a possibly-prefixed relative path to an existing file under ``repo_root``.
 
     Handles common CBM / staging shapes without operator-specific names:
     - ``{op_name}/op_host/...`` (extra leading folder)
     - ``.ascendc-agent/uo/.../cbm/index_stage/.../op_host/...``
     - bare ``op_host/...`` / ``op_kernel/...``
-    - unique basename under ``op_host`` / ``op_kernel`` (prefer ``arch35``)
+    - unique basename under ``op_host`` / ``op_kernel`` (prefer target architecture, then neutral)
     """
     raw = (file_path or "").replace("\\", "/").strip()
     if not raw:
@@ -45,6 +50,7 @@ def resolve_repo_source_path(repo_root: Path, file_path: str) -> Path | None:
                         candidates.append(staged_op / rest)
 
     name = Path(raw).name
+    arch = (architecture or "").strip()
     if name and ("/" in raw or "\\" in file_path):
         for sub in ("op_host", "op_kernel", "op_api"):
             root = repo_root / sub
@@ -56,13 +62,17 @@ def resolve_repo_source_path(repo_root: Path, file_path: str) -> Path | None:
             if len(hits) == 1:
                 candidates.append(hits[0])
             else:
-                arch35 = [h for h in hits if "/arch35/" in h.as_posix().replace("\\", "/")]
-                if len(arch35) == 1:
-                    candidates.append(arch35[0])
-                elif arch35:
-                    candidates.extend(arch35[:3])
+                preferred = []
+                if arch:
+                    preferred = [h for h in hits if f"/{arch}/" in h.as_posix().replace("\\", "/")]
+                if len(preferred) == 1:
+                    candidates.append(preferred[0])
+                elif preferred:
+                    candidates.extend(preferred[:3])
                 else:
-                    candidates.extend(hits[:3])
+                    # Prefer architecture-neutral paths over other arches.
+                    neutral = [h for h in hits if "/arch" not in h.as_posix().replace("\\", "/")]
+                    candidates.extend((neutral or hits)[:3])
 
     seen: set[Path] = set()
     for cand in candidates:

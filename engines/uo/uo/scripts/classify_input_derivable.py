@@ -38,8 +38,26 @@ INPUT_ROOT_TYPES = frozenset(
         "InputLayout",
     }
 )
-# Platform / compile-time: terminal but not "CSV-facing" roots alone.
-COMPILE_ROOT_TYPES = frozenset({"PlatformInfo", "CompileTimeConfig"})
+# Platform / compile-time / build: terminal but not "CSV-facing" roots alone.
+COMPILE_ROOT_TYPES = frozenset(
+    {
+        "PlatformInfo",
+        "CompileTimeConfig",
+        "BuildConfig",
+        "CompileMacro",
+        "SourceSelection",
+        "KernelRuntimeVariable",
+    }
+)
+CSV_EXCLUDED_DETERMINANT_SOURCES = frozenset(
+    {
+        "BuildConfig",
+        "CompileMacro",
+        "PlatformInfo",
+        "SourceSelection",
+        "KernelRuntimeVariable",
+    }
+)
 
 KERNEL_LOCAL_RE = re.compile(
     r"(?i)^(blockId|taskId|coreIdx|coreId|loopIdx|innerIdx|outerIdx|"

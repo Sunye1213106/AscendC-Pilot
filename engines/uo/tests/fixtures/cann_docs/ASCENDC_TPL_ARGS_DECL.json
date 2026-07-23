@@ -1,0 +1,19 @@
+{
+  "symbol_or_macro": "ASCENDC_TPL_ARGS_DECL",
+  "document_title": "AscendC TilingKey ARGS_DECL",
+  "document_url": "https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/latest/index/index.html",
+  "cann_version": "offline_fixture",
+  "semantic_summary": "Declares TilingKey dimensions (declaration_space).",
+  "parameter_order": [
+    "op_name",
+    "BOOL/UINT_DECL..."
+  ],
+  "return_semantics": "declaration only",
+  "nullability": "n/a",
+  "constraints": [
+    "order defines Host/Kernel positional binding"
+  ],
+  "applicable_architecture": "all",
+  "evidence_excerpt": "ASCENDC_TPL_ARGS_DECL defines declaration_space",
+  "confidence": 0.7
+}

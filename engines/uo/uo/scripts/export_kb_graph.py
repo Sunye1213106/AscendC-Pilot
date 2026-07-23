@@ -23,6 +23,7 @@ from uo.scripts.kb_query_export import _entities_from_graph
 SCHEMA_VERSION = "1"
 HASH_PATHS = (
     "ir/operator_graph.yaml",
+    "ir/entrypoint_graph.yaml",
     "ir/tilingkey_space.yaml",
     "ir/input_derivable.yaml",
     "tiling/key_space.yaml",
@@ -270,36 +271,40 @@ def _add_tilingkey_entities(uo_root: Path, by_id: dict[str, dict[str, Any]]) -> 
 
 
 def _add_entrypoint_entities(uo_root: Path, by_id: dict[str, dict[str, Any]]) -> None:
-    """Materialize confirmed entrypoints so entity_of(name) works for host/kernel."""
-    entrypoints = read_yaml(uo_root / "ir" / "entrypoints.yaml") or {}
-    roles = entrypoints.get("roles") if isinstance(entrypoints.get("roles"), dict) else {}
-    if not roles:
-        for role in ("host_tiling_entry", "kernel_entry", "get_tiling_key", "save_tiling_data", "init_tiling_data"):
-            if isinstance(entrypoints.get(role), dict):
-                roles[role] = entrypoints[role]
-    for role, body in roles.items():
-        if not isinstance(body, dict):
+    """Materialize EP_* identity nodes from entrypoint_graph (not ENTRY::{role})."""
+    from uo.scripts.resolve_entrypoints import load_entrypoint_graph
+
+    graph = load_entrypoint_graph(uo_root)
+    for node in graph.get("nodes") or []:
+        if not isinstance(node, dict):
             continue
-        selected = body.get("selected") if isinstance(body.get("selected"), dict) else {}
-        name = selected.get("name") or body.get("name")
-        qn = selected.get("qualified_name") or body.get("qualified_name")
-        if not name and not qn:
+        nid = str(node.get("id") or "")
+        if not nid:
             continue
-        eid = f"ENTRY::{role}"
-        fpath = _strip_cbm_stage_path(str(selected.get("file_path") or body.get("file_path") or ""))
-        by_id[eid] = {
-            "id": eid,
+        loc = node.get("locator") if isinstance(node.get("locator"), dict) else {}
+        sym = node.get("symbol_ref") if isinstance(node.get("symbol_ref"), dict) else {}
+        name = node.get("name") or sym.get("qualified_name")
+        if not name and not sym.get("qualified_name"):
+            continue
+        fpath = _strip_cbm_stage_path(
+            str(loc.get("file_path") or sym.get("repo_relative_path") or "")
+        )
+        by_id[nid] = {
+            "id": nid,
             "kind": "Entrypoint",
-            "label": str(name or qn),
+            "label": str(name or sym.get("qualified_name") or nid),
             "layer": "entry",
-            "detail_ref": "ir/entrypoints.yaml",
+            "detail_ref": "ir/entrypoint_graph.yaml",
             "file_path": fpath,
-            "start_line": selected.get("start_line") or body.get("start_line"),
+            "start_line": loc.get("start_line"),
             "fields": {
-                "role": role,
-                "status": body.get("status"),
-                "qualified_name": qn,
-                "confirmed_by": selected.get("confirmed_by") or body.get("confirmed_by"),
+                "role": node.get("role"),
+                "status": node.get("status"),
+                "qualified_name": sym.get("qualified_name"),
+                "identity_key": sym.get("identity_key"),
+                "architecture": node.get("architecture"),
+                "path_family": node.get("path_family"),
+                "class_or_namespace": sym.get("class_or_namespace"),
             },
         }
 
@@ -317,6 +322,26 @@ def _strip_cbm_stage_path(fpath: str) -> str:
         if seg in {"op_host", "op_kernel", "op_api", "op_graph"}:
             return "/".join(segs[i:])
     return rest
+
+
+def _symbol_stub_key(ent: dict[str, Any]) -> str:
+    """Unique symbol stub key via identity_key (not bare short name)."""
+    fields = ent.get("fields") if isinstance(ent.get("fields"), dict) else {}
+    ikey = fields.get("identity_key") or ent.get("identity_key")
+    if ikey:
+        return str(ikey)
+    from uo.scripts.semantic_identity import mint_symbol_identity
+
+    ident = mint_symbol_identity(
+        kind=str(ent.get("kind") or "symbol"),
+        name=str(ent.get("label") or ent.get("id") or "sym"),
+        file_path=str(ent.get("file_path") or ""),
+        qualified_name=str(fields.get("qualified_name") or ent.get("label") or ""),
+        class_or_namespace=str(fields.get("class_or_namespace") or ""),
+        architecture=str(fields.get("architecture") or ""),
+        path_family=str(fields.get("path_family") or ""),
+    )
+    return ident.identity_key
 
 
 def _detail_ref_for(ent: dict[str, Any]) -> str:
@@ -484,8 +509,8 @@ def _collect_relations(
         if fpath and not str(eid).startswith("FILE::"):
             file_node = ensure_file_entity(str(fpath))
             add(eid, file_node, "maps_to_file")
-            sym = ent.get("label") or eid
-            add(eid, f"SYM::{sym}", "anchors_to_symbol", symbol=sym)
+            sym_key = _symbol_stub_key(ent)
+            add(eid, f"SYM::{sym_key}", "anchors_to_symbol", symbol=ent.get("label") or eid, identity_key=sym_key)
 
     # contracts/testcase.yaml is retired — do not build constrains/covers from it.
 

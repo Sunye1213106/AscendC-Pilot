@@ -32,15 +32,28 @@ def stage_cbm_scope(repo_root: Path, op_name: str, *, stage_root: Path | None = 
     run_id = active_run_id(uo_root)
     confirmed = read_yaml(uo_root / "runs" / run_id / "scope" / "scope_confirmed.yaml")
     scan = read_yaml(uo_root / "runs" / run_id / "scope" / "scope_scan.yaml")
-    files = confirmed.get("confirmed_file_list") or []
+    # CBM indexes sources only — never confirmed_build_files / documentation.
+    files = (
+        confirmed.get("confirmed_source_files")
+        or confirmed.get("confirmed_file_list")
+        or []
+    )
     rels: list[str] = []
     for item in files:
         if isinstance(item, dict):
             path = str(item.get("path") or "").replace("\\", "/").strip()
+            # Skip any build files accidentally left in the source list.
+            kind = str(item.get("kind") or item.get("file_kind") or "").lower()
+            if kind in {"build", "cmake", "documentation", "doc"}:
+                continue
         else:
             path = str(item or "").replace("\\", "/").strip()
-        if path:
-            rels.append(path)
+        if not path:
+            continue
+        name = Path(path).name.lower()
+        if name == "cmakelists.txt" or path.endswith(".cmake"):
+            continue
+        rels.append(path)
     if not rels:
         raise FileNotFoundError(f"no confirmed_file_list under runs/{run_id}/scope/scope_confirmed.yaml")
 

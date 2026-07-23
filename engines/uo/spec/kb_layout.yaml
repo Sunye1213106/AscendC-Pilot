@@ -10,7 +10,21 @@ artifacts:
   - path: manifest.yaml
     role: revision + spec_bundle_hash + current_run
   - path: ir/**
-    role: layered IR (host/kernel/bridge/operator_graph/entrypoints/unresolved); cold for Q&A
+    role: layered IR (host/kernel/bridge/operator_graph/entrypoint_graph/unresolved); cold for Q&A
+  - path: ir/entrypoint_graph.yaml
+    role: >-
+      Unique entrypoint fact source (typed nodes/edges/extraction_units/closure).
+      Replaces retired ir/entrypoints.yaml roles.*.selected single-entry contract.
+  - path: ir/operator_boundary.yaml
+    role: registered input/attr slots ↔ Host accessors; optional input states
+  - path: ir/build_evidence.yaml
+    role: CMake/build determinants (BuildConfig/CompileMacro/PlatformInfo/SourceSelection); not CBM-indexed
+  - path: ir/cmake_evidence.yaml
+    role: alias of build_evidence.yaml
+  - path: ir/doc_evidence.yaml
+    role: CANN official macro/interface contracts (offline cache preferred)
+  - path: docs_cache/**
+    role: offline CANN doc contract cache; not source index
   - path: contracts/**
     role: >-
       retired (historical residue). UO must not write or rebuild this tree;
@@ -101,6 +115,8 @@ kb_graph:
   entity_kinds:
     - KernelTemplateArgument  # KTPL_*; one per legal template_alias
     - TilingKey               # KEY_*
+    - Entrypoint              # EP_* from entrypoint_graph (identity-stable)
+    - Symbol                  # SYM_* with identity_key (never short-name unique key)
   relation_types:
     - constrains
     - enables_branch
@@ -115,6 +131,12 @@ kb_graph:
     - determined_by
     - reaches_input
     - selects
+    - registers
+    - dispatches_to
+    - instantiates
+    - invokes
+    - maps_tilingdata
+    - binds_arg
   query_patterns:
     - entity_of
     - neighbors_of

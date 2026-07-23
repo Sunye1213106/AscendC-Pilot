@@ -10,6 +10,7 @@ from uo.scripts.extract_host_subgraph import extract_host_subgraph
 from uo.scripts.extract_kernel_subgraph import extract_kernel_subgraph
 from uo.scripts.propose_extract_plan import propose_extract_plan
 from uo.scripts._ir_io import write_yaml
+from tests._entrypoint_fixtures import write_entrypoint_graph
 
 
 def _setup_foo_tiling(tmp_path: Path) -> tuple[Path, str]:
@@ -55,33 +56,15 @@ class FooKernel {
     init_operator_contract_layout(root, op, repo)
     ir = root / "ir"
     ir.mkdir(parents=True, exist_ok=True)
-    write_yaml(
-        ir / "entrypoints.yaml",
-        {
-            "version": 1,
-            "roles": {
-                "host_tiling_entry": {
-                    "selected": {
-                        "name": "FooTiling",
-                        "qualified_name": "FooTiling",
-                        "file_path": "op_host/arch35/foo_tiling.cpp",
-                        "start_line": 2,
-                        "end_line": 6,
-                    },
-                    "status": "confirmed",
-                },
-                "kernel_entry": {
-                    "selected": {
-                        "name": "FooKernel",
-                        "qualified_name": "FooKernel",
-                        "file_path": "op_kernel/arch35/foo_kernel.h",
-                        "start_line": 2,
-                        "end_line": 10,
-                    },
-                    "status": "confirmed",
-                },
-            },
-        },
+    write_entrypoint_graph(
+        ir,
+        op_name=op,
+        host_name="FooTiling",
+        host_file="op_host/arch35/foo_tiling.cpp",
+        host_line=2,
+        kernel_name="FooKernel",
+        kernel_file="op_kernel/arch35/foo_kernel.h",
+        kernel_line=2,
     )
     return repo, op
 

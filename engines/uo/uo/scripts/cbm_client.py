@@ -69,6 +69,7 @@ class CbmClient:
         name_pattern: str | None = None,
         file_contains: str | None = None,
         qualified_contains: str | None = None,
+        architecture: str | None = None,
         limit: int = 50,
     ) -> list[CbmSymbol]:
         con = self.connect()
@@ -83,14 +84,31 @@ class CbmClient:
         if qualified_contains:
             clauses.append("qualified_name LIKE ?")
             params.append(f"%{qualified_contains}%")
+        arch = (architecture or "").strip().replace("\\", "/").strip("/")
+        # Prefer target architecture when provided; never hardcode arch35.
+        # Neutral (no archNN) paths stay eligible — ranking only, not a hard filter.
+        if arch:
+            order = f"""
+            ORDER BY
+              CASE
+                WHEN file_path LIKE '%/{arch}/%' THEN 0
+                WHEN file_path NOT LIKE '%/arch%' THEN 1
+                ELSE 2
+              END,
+              length(COALESCE(qualified_name, name)),
+              file_path, start_line, id
+            """
+        else:
+            order = """
+            ORDER BY
+              length(COALESCE(qualified_name, name)),
+              file_path, start_line, id
+            """
         sql = f"""
             SELECT id, label, name, qualified_name, file_path, start_line, end_line
             FROM nodes
             WHERE {' AND '.join(clauses)}
-            ORDER BY
-              CASE WHEN file_path LIKE '%/arch35/%' THEN 0 ELSE 1 END,
-              length(COALESCE(qualified_name, name)),
-              file_path, start_line, id
+            {order}
             LIMIT ?
         """
         params.append(limit)

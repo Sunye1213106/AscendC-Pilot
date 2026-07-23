@@ -1,3 +1,9 @@
+"""Resolve operator entrypoint graph (replaces single-role ``selected``).
+
+Unique fact source: ``ir/entrypoint_graph.yaml``.
+Statuses: located → verified → linked → closed | unresolved.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -13,16 +19,25 @@ if __package__ in (None, ""):
 
 from uo._operator.artifacts import existing_operator_root, safe_op_name
 from uo.scripts._ir_io import read_yaml, snippet, write_yaml
+from uo.scripts.arch_path import arch_compatible, architecture_of_path, path_family_of
 from uo.scripts.cbm_client import CbmClient, read_source_snippet
+from uo.scripts.semantic_identity import make_locator, mint_edge_id, mint_symbol_identity
 
 ROLE_PATTERNS: dict[str, tuple[str, ...]] = {
-    # Prefer exact AscendC host tiling entry names; avoid bare "Tiling" (too noisy).
+    # Public API keys kept for no-hardcode tests / op-derived pattern checks.
     "host_tiling_entry": ("DoOpTiling", "DoTiling"),
     "get_tiling_key": ("GetTilingKey",),
     "save_tiling_data": ("SaveToTilingData",),
     "init_tiling_data": ("InitTilingData",),
-    # Kernel entry: generic launch/entry tokens; op-derived names merged at runtime.
     "kernel_entry": ("KernelEntry", "Invoke"),
+}
+# Internal graph roles (used when materializing entrypoint_graph nodes).
+GRAPH_ROLE_PATTERNS: dict[str, tuple[str, ...]] = {
+    "public_host_entry": ROLE_PATTERNS["host_tiling_entry"],
+    "get_tiling_key": ROLE_PATTERNS["get_tiling_key"],
+    "save_tiling_data": ROLE_PATTERNS["save_tiling_data"],
+    "init_tiling_data": ROLE_PATTERNS["init_tiling_data"],
+    "public_kernel_entry": ROLE_PATTERNS["kernel_entry"],
 }
 EXACT_PREFERRED = {
     "host_tiling_entry": ("DoOpTiling",),
@@ -31,6 +46,28 @@ EXACT_PREFERRED = {
     "init_tiling_data": ("InitTilingData",),
     "kernel_entry": ("KernelEntry",),
 }
+GRAPH_EXACT_PREFERRED = {
+    "public_host_entry": EXACT_PREFERRED["host_tiling_entry"],
+    "get_tiling_key": EXACT_PREFERRED["get_tiling_key"],
+    "save_tiling_data": EXACT_PREFERRED["save_tiling_data"],
+    "init_tiling_data": EXACT_PREFERRED["init_tiling_data"],
+    "public_kernel_entry": EXACT_PREFERRED["kernel_entry"],
+}
+
+# Legacy role aliases used by older fixtures/tests — mapped into graph roles.
+_LEGACY_ROLE_MAP = {
+    "host_tiling_entry": "public_host_entry",
+    "kernel_entry": "public_kernel_entry",
+}
+
+REGISTER_TILING_RE = re.compile(
+    r"REGISTER_TILING_TEMPLATE(?:_WITH_ARCH)?\s*\(\s*([^,]+)\s*,\s*([^,\)]+)",
+    re.MULTILINE,
+)
+REG_OP_RE = re.compile(r"\bREG_OP\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)")
+IMPL_OP_RE = re.compile(r"\bIMPL_OP_OPTILING\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)")
+GET_TPL_RE = re.compile(r"\bGET_TPL_TILING_KEY\s*\(")
+CLASS_RE = re.compile(r"\b(?:class|struct)\s+([A-Za-z_][A-Za-z0-9_]*)")
 
 
 def _snake_to_pascal(name: str) -> str:
@@ -42,7 +79,6 @@ def _role_patterns_for_op(op_name: str) -> dict[str, tuple[str, ...]]:
     patterns = {role: tuple(pats) for role, pats in ROLE_PATTERNS.items()}
     pascal = _snake_to_pascal(op_name)
     if pascal:
-        # Prefer `{Op}Kernel` / `{Op}` derived from package name (cross-op, no hardcode).
         patterns["kernel_entry"] = patterns["kernel_entry"] + (f"{pascal}Kernel", pascal)
     return patterns
 
@@ -54,10 +90,27 @@ def _exact_preferred_for_op(op_name: str) -> dict[str, tuple[str, ...]]:
         preferred["kernel_entry"] = (f"{pascal}Kernel", pascal) + preferred["kernel_entry"]
     return preferred
 
-REGISTER_RE = re.compile(
-    r"REGISTER_TILING_TEMPLATE(?:_WITH_ARCH)?\s*\(\s*([^,]+)\s*,\s*([^,\)]+)",
-    re.MULTILINE,
-)
+
+def _graph_role_patterns_for_op(op_name: str) -> dict[str, tuple[str, ...]]:
+    legacy = _role_patterns_for_op(op_name)
+    return {
+        "public_host_entry": legacy["host_tiling_entry"],
+        "get_tiling_key": legacy["get_tiling_key"],
+        "save_tiling_data": legacy["save_tiling_data"],
+        "init_tiling_data": legacy["init_tiling_data"],
+        "public_kernel_entry": legacy["kernel_entry"],
+    }
+
+
+def _graph_exact_preferred_for_op(op_name: str) -> dict[str, tuple[str, ...]]:
+    legacy = _exact_preferred_for_op(op_name)
+    return {
+        "public_host_entry": legacy["host_tiling_entry"],
+        "get_tiling_key": legacy["get_tiling_key"],
+        "save_tiling_data": legacy["save_tiling_data"],
+        "init_tiling_data": legacy["init_tiling_data"],
+        "public_kernel_entry": legacy["kernel_entry"],
+    }
 
 
 def collect_entrypoint_candidates(
@@ -67,229 +120,734 @@ def collect_entrypoint_candidates(
     architecture: str = "arch35",
     auto_confirm_high_confidence: bool = True,
 ) -> dict[str, Any]:
+    """Build entrypoint_graph (+ intermediate candidate listing for LLM patches)."""
     uo_root = existing_operator_root(repo_root, op_name)
     client = CbmClient(uo_root)
-    confirmed_files = _confirmed_files(uo_root)
-    role_patterns = _role_patterns_for_op(op_name)
-    exact_preferred = _exact_preferred_for_op(op_name)
-    roles: dict[str, Any] = {}
+    confirmed_files = _confirmed_source_files(uo_root)
+    role_patterns = _graph_role_patterns_for_op(op_name)
+    exact_preferred = _graph_exact_preferred_for_op(op_name)
+
+    nodes: dict[str, dict[str, Any]] = {}
+    edges: list[dict[str, Any]] = []
+    role_candidates: dict[str, list[dict[str, Any]]] = {role: [] for role in role_patterns}
+
     for role, patterns in role_patterns.items():
-        candidates = []
         for pattern in patterns:
             if client.available:
-                # exact-ish name search first, then suffix/contains
                 for name_pat in (pattern, f"%{pattern}", f"%{pattern}%"):
-                    for hit in client.search_symbols(name_pattern=name_pat, file_contains=op_name or architecture, limit=30):
-                        if architecture and architecture not in hit.file_path.replace("\\", "/"):
-                            if role == "kernel_entry" or role.startswith("host") or role in {
-                                "get_tiling_key",
-                                "save_tiling_data",
-                                "init_tiling_data",
-                            }:
-                                continue
+                    for hit in client.search_symbols(
+                        name_pattern=name_pat,
+                        file_contains=op_name or architecture,
+                        architecture=architecture,
+                        limit=30,
+                    ):
+                        if not arch_compatible(hit.file_path, architecture):
+                            continue
                         conf = _confidence(
-                            role, hit.name, hit.file_path, op_name, architecture,
-                            role_patterns=role_patterns, exact_preferred=exact_preferred,
+                            role,
+                            hit.name,
+                            hit.file_path,
+                            op_name,
+                            architecture,
+                            role_patterns=role_patterns,
+                            exact_preferred=exact_preferred,
                         )
                         if conf < 0.45:
                             continue
-                        candidates.append(
-                            {
-                                **hit.as_dict(),
-                                "pattern": pattern,
-                                "confidence": conf,
-                                "signature_snippet": snippet(
-                                    read_source_snippet(repo_root, hit.file_path, hit.start_line, hit.start_line + 8)
-                                ),
-                                "needs_llm": conf < 0.85,
-                            }
-                        )
-            # filesystem fallback: exact token match only
+                        cand = {
+                            **hit.as_dict(),
+                            "role": role,
+                            "pattern": pattern,
+                            "confidence": conf,
+                            "signature_snippet": snippet(
+                                read_source_snippet(repo_root, hit.file_path, hit.start_line, hit.start_line + 8)
+                            ),
+                        }
+                        role_candidates[role].append(cand)
             for path in _scan_paths(repo_root, confirmed_files, architecture, role):
                 text = path.read_text(encoding="utf-8", errors="ignore")
                 for match in re.finditer(rf"\b({re.escape(pattern)})\b", text):
                     name = match.group(1)
                     rel = path.relative_to(repo_root).as_posix()
-                    if architecture and architecture not in rel:
+                    if not arch_compatible(rel, architecture):
                         continue
                     conf = _confidence(
-                        role, name, rel, op_name, architecture,
-                        role_patterns=role_patterns, exact_preferred=exact_preferred,
+                        role,
+                        name,
+                        rel,
+                        op_name,
+                        architecture,
+                        role_patterns=role_patterns,
+                        exact_preferred=exact_preferred,
                     )
                     if conf < 0.45:
                         continue
                     line = text.count("\n", 0, match.start()) + 1
-                    candidates.append(
+                    cls = _enclosing_class(text, match.start())
+                    role_candidates[role].append(
                         {
                             "node_id": 0,
                             "name": name,
-                            "qualified_name": f"{rel}::{name}",
+                            "qualified_name": f"{cls + '::' if cls else ''}{name}" if cls else f"{rel}::{name}",
                             "file_path": rel,
                             "start_line": line,
                             "end_line": line,
                             "label": "filesystem",
+                            "role": role,
                             "pattern": pattern,
+                            "class_or_namespace": cls,
                             "confidence": conf,
                             "signature_snippet": snippet("\n".join(text.splitlines()[max(0, line - 1) : line + 6])),
-                            "needs_llm": conf < 0.85,
                         }
                     )
-        # kernel entry special: scan __global__ in arch kernel files
-        if role == "kernel_entry":
-            candidates.extend(
+        if role == "public_kernel_entry":
+            role_candidates[role].extend(
                 _scan_global_kernels(
-                    repo_root, confirmed_files, op_name, architecture,
-                    role_patterns=role_patterns, exact_preferred=exact_preferred,
+                    repo_root,
+                    confirmed_files,
+                    op_name,
+                    architecture,
+                    role_patterns=role_patterns,
+                    exact_preferred=exact_preferred,
                 )
             )
-        candidates = _dedupe_candidates(candidates)
-        selected = None
-        if auto_confirm_high_confidence:
-            preferred = exact_preferred.get(role) or ()
-            exact = [c for c in candidates if c.get("name") in preferred and c.get("confidence", 0) >= 0.8]
-            if len(exact) == 1:
-                selected = {**exact[0], "confirmed_by": "deterministic_exact_name"}
-            elif len(exact) > 1:
-                ranked = sorted(
-                    exact,
-                    key=lambda c: (
-                        -float(c.get("confidence") or 0),
-                        0 if architecture in str(c.get("file_path") or "") else 1,
-                        0 if op_name in str(c.get("file_path") or "") else 1,
-                        0 if "normal" in str(c.get("file_path") or "").lower() else 1,
-                        0 if "entry" in str(c.get("file_path") or "").lower() else 1,
-                        c.get("file_path") or "",
-                    ),
-                )
-                # Exact preferred names in-scope: pick best-ranked deterministically.
-                if architecture in str(ranked[0].get("file_path") or ""):
-                    selected = {**ranked[0], "confirmed_by": "deterministic_exact_ranked"}
-            if selected is None:
-                high = [c for c in candidates if c["confidence"] >= 0.9]
-                if role == "kernel_entry":
-                    # Prefer real kernel class/entry over macro/field noise.
-                    kernel_preferred = exact_preferred.get("kernel_entry") or ()
-                    ranked = sorted(
-                        candidates,
-                        key=lambda c: (
-                            0 if str(c.get("name") or "") in kernel_preferred else 1,
-                            0 if str(c.get("label") or "").lower() in {"class", "method", "function", "global_kernel", "entry_symbol"} else 1,
-                            0 if str(c.get("name") or "").endswith("Kernel") else 1,
-                            0 if "entry" in str(c.get("file_path") or "").lower() else 1,
-                            0 if "kernel" in str(c.get("name") or "").lower() else 1,
-                            0 if architecture in str(c.get("file_path") or "") else 1,
-                            -float(c.get("confidence") or 0),
-                            c.get("file_path") or "",
-                        ),
-                    )
-                    top = ranked[0] if ranked else None
-                    top_name = str((top or {}).get("name") or "")
-                    top_conf = float((top or {}).get("confidence") or 0)
-                    # Auto-pick when the best hit is a clear kernel class / preferred name.
-                    if top and (
-                        top_name in kernel_preferred
-                        or (top_name.endswith("Kernel") and top_conf >= 0.65)
-                        or top_conf >= 0.75
-                    ):
-                        selected = {**top, "confirmed_by": "deterministic_kernel_ranked"}
-                elif len(high) == 1:
-                    selected = {**high[0], "confirmed_by": "deterministic_high_confidence"}
-                elif len(high) > 1:
-                    ranked = sorted(high, key=lambda c: (-c["confidence"], 0 if op_name in c["file_path"] else 1, c["file_path"]))
-                    if ranked[0]["confidence"] > ranked[1]["confidence"] + 0.05:
-                        selected = {**ranked[0], "confirmed_by": "deterministic_ranked"}
-        roles[role] = {
-            "candidates": candidates,
-            "selected": selected,
-            "status": "confirmed" if selected else ("missing" if not candidates else "needs_llm"),
-        }
+        role_candidates[role] = _dedupe_candidates(role_candidates[role])
 
-    registry = _scan_register_macros(repo_root, confirmed_files, architecture)
-    payload = {
-        "version": 1,
+    # Materialize verified nodes from high-confidence candidates (multi-keep).
+    for role, cands in role_candidates.items():
+        preferred = exact_preferred.get(role) or ()
+        kept = [
+            c
+            for c in cands
+            if float(c.get("confidence") or 0) >= 0.8 and (c.get("name") in preferred or role == "public_kernel_entry")
+        ]
+        if not kept:
+            kept = [c for c in cands if float(c.get("confidence") or 0) >= 0.9]
+        # Keep ALL exact preferred hits (Normal/Varlen/Empty) — no single-winner ranking.
+        if any(c.get("name") in preferred for c in cands):
+            kept = [c for c in cands if c.get("name") in preferred and float(c.get("confidence") or 0) >= 0.7] or kept
+        for cand in kept:
+            node = _node_from_candidate(cand, role=role, status="verified" if float(cand.get("confidence") or 0) >= 0.85 else "located")
+            nodes[node["id"]] = node
+
+    # Registration / dispatch macros → typed edges
+    macro_nodes, macro_edges, templates = _scan_registration_graph(
+        repo_root, confirmed_files, architecture, nodes
+    )
+    nodes.update(macro_nodes)
+    edges.extend(macro_edges)
+
+    # Link public host entries to matching template implementations by class/name proximity
+    edges.extend(_link_host_to_templates(nodes, templates, architecture))
+    edges.extend(_link_kernel_dispatch(nodes, architecture))
+
+    # Advance status: linked / closed / unresolved
+    _apply_link_status(nodes, edges)
+    closure = _evaluate_closure(nodes, edges, architecture)
+    extraction_units = _build_extraction_units(nodes, edges, architecture)
+    roots = [n["id"] for n in nodes.values() if n.get("role") in {"operator_registration", "public_host_entry", "public_kernel_entry"}]
+
+    graph = {
+        "version": 2,
         "op_name": op_name,
         "architecture": architecture,
+        "nodes": sorted(nodes.values(), key=lambda n: (n.get("role") or "", n.get("id") or "")),
+        "edges": edges,
+        "roots": roots,
+        "extraction_units": extraction_units,
+        "closure": closure,
+        "tiling_templates": templates,
         "cbm_available": client.available,
         "cbm_project": client.project,
-        "roles": roles,
-        "tiling_templates": registry,
-        "llm_required_roles": [role for role, body in roles.items() if body["status"] == "needs_llm"],
     }
     client.close()
-    return payload
+
+    # Intermediate candidate listing (not a confirmation fact source).
+    candidates_doc = {
+        "version": 2,
+        "op_name": op_name,
+        "architecture": architecture,
+        "cbm_available": graph["cbm_available"],
+        "role_candidates": {
+            role: [{"name": c.get("name"), "qualified_name": c.get("qualified_name"), "file_path": c.get("file_path"),
+                    "start_line": c.get("start_line"), "confidence": c.get("confidence"), "class_or_namespace": c.get("class_or_namespace")}
+                   for c in items]
+            for role, items in role_candidates.items()
+        },
+        "entrypoint_graph_ref": "ir/entrypoint_graph.yaml",
+        "llm_required": closure.get("host_main_chain") != "closed" or closure.get("kernel_main_chain") != "closed",
+        "auto_confirm_high_confidence": auto_confirm_high_confidence,
+    }
+    # Attach graph for callers that only invoke collect_*
+    candidates_doc["entrypoint_graph"] = graph
+    return candidates_doc
+
+
+def build_entrypoint_graph(
+    repo_root: Path,
+    op_name: str,
+    *,
+    architecture: str = "arch35",
+    confirmation_patch: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    doc = collect_entrypoint_candidates(repo_root, op_name, architecture=architecture)
+    graph = doc.get("entrypoint_graph") or {}
+    if confirmation_patch:
+        graph = apply_entrypoint_confirmation(doc, confirmation_patch)
+    return graph
 
 
 def apply_entrypoint_confirmation(candidates_doc: dict[str, Any], confirmation: dict[str, Any]) -> dict[str, Any]:
-    """Merge LLM/human confirmation into entrypoints.yaml shape."""
-    roles_out: dict[str, Any] = {}
-    for role, body in (candidates_doc.get("roles") or {}).items():
-        selected = body.get("selected")
-        conf_item = (confirmation.get("roles") or {}).get(role) or {}
-        if conf_item.get("qualified_name") or conf_item.get("name"):
-            chosen = None
-            for cand in body.get("candidates") or []:
-                if cand.get("qualified_name") == conf_item.get("qualified_name") or cand.get("name") == conf_item.get("name"):
-                    chosen = {**cand, "confirmed_by": conf_item.get("confirmed_by") or "llm", "rationale": conf_item.get("rationale")}
-                    break
-            if chosen is None:
-                chosen = {
-                    "name": conf_item.get("name"),
-                    "qualified_name": conf_item.get("qualified_name"),
-                    "file_path": conf_item.get("file_path"),
-                    "start_line": conf_item.get("start_line") or 0,
-                    "end_line": conf_item.get("end_line") or 0,
-                    "confidence": conf_item.get("confidence") or 0.5,
-                    "confirmed_by": conf_item.get("confirmed_by") or "llm",
-                    "rationale": conf_item.get("rationale"),
-                }
-            selected = chosen
-        roles_out[role] = {
-            "selected": selected,
-            "status": "confirmed" if selected else body.get("status"),
-            "candidate_count": len(body.get("candidates") or []),
-        }
+    """Merge human/LLM patch into entrypoint_graph (add/verify nodes & edges)."""
+    graph = dict(candidates_doc.get("entrypoint_graph") or {})
+    nodes = {n["id"]: dict(n) for n in graph.get("nodes") or []}
+    edges = [dict(e) for e in graph.get("edges") or []]
+
+    # Patch may supply nodes/edges directly (preferred).
+    for node in confirmation.get("nodes") or []:
+        nid = node.get("id")
+        if not nid:
+            role = _normalize_role(str(node.get("role") or "public_host_entry"))
+            built = _node_from_candidate(node, role=role, status=str(node.get("status") or "verified"))
+            nid = built["id"]
+            node = {**built, **node, "id": nid}
+        nodes[nid] = {**nodes.get(nid, {}), **node}
+    for edge in confirmation.get("edges") or []:
+        edges.append(
+            {
+                "id": edge.get("id")
+                or mint_edge_id(str(edge.get("type") or "dispatches_to"), str(edge.get("source")), str(edge.get("target"))),
+                "type": edge.get("type") or "dispatches_to",
+                "source": edge.get("source"),
+                "target": edge.get("target"),
+                "evidence": edge.get("evidence") or [],
+                "confidence": edge.get("confidence") or "candidate",
+            }
+        )
+
+    # Legacy confirmation shape roles.<role>.{qualified_name,name} — promote to graph nodes only.
+    for role, conf_item in (confirmation.get("roles") or {}).items():
+        if not isinstance(conf_item, dict):
+            continue
+        if not (conf_item.get("qualified_name") or conf_item.get("name")):
+            continue
+        role_n = _normalize_role(role)
+        built = _node_from_candidate({**conf_item, "role": role_n}, role=role_n, status="verified")
+        nodes[built["id"]] = built
+
+    _apply_link_status(nodes, edges)
+    architecture = str(graph.get("architecture") or candidates_doc.get("architecture") or "arch35")
+    closure = _evaluate_closure(nodes, edges, architecture)
+    extraction_units = _build_extraction_units(nodes, edges, architecture)
+    roots = [n["id"] for n in nodes.values() if n.get("role") in {"operator_registration", "public_host_entry", "public_kernel_entry"}]
     return {
-        "version": 1,
-        "op_name": candidates_doc.get("op_name"),
-        "architecture": candidates_doc.get("architecture"),
-        "roles": roles_out,
-        "tiling_templates": candidates_doc.get("tiling_templates") or [],
+        "version": 2,
+        "op_name": graph.get("op_name") or candidates_doc.get("op_name"),
+        "architecture": architecture,
+        "nodes": sorted(nodes.values(), key=lambda n: (n.get("role") or "", n.get("id") or "")),
+        "edges": edges,
+        "roots": roots,
+        "extraction_units": extraction_units,
+        "closure": closure,
+        "tiling_templates": graph.get("tiling_templates") or [],
         "source": "entrypoint_confirmation",
     }
 
 
+def entrypoint_units(graph: dict[str, Any]) -> list[dict[str, Any]]:
+    return list(graph.get("extraction_units") or [])
+
+
+def nodes_for_role(graph: dict[str, Any], role: str) -> list[dict[str, Any]]:
+    role_n = _normalize_role(role)
+    return [n for n in graph.get("nodes") or [] if _normalize_role(str(n.get("role") or "")) == role_n]
+
+
+def load_entrypoint_graph(uo_root: Path) -> dict[str, Any]:
+    graph = read_yaml(uo_root / "ir" / "entrypoint_graph.yaml")
+    if graph:
+        return graph
+    # No silent selected fallback — empty graph forces rebuild.
+    return {}
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Collect host/kernel entrypoint candidates with confidence scores")
+    parser = argparse.ArgumentParser(description="Build typed entrypoint_graph (no single selected entry)")
     parser.add_argument("repo", nargs="?", default=".")
     parser.add_argument("--op-name", required=True)
     parser.add_argument("--architecture", default="arch35")
-    parser.add_argument("--write", action="store_true", help="Write ir/entrypoint_candidates.yaml")
-    parser.add_argument("--confirm-patch", help="Optional LLM confirmation YAML to produce ir/entrypoints.yaml")
+    parser.add_argument("--write", action="store_true", help="Write ir/entrypoint_graph.yaml (+ candidates listing)")
+    parser.add_argument("--confirm-patch", help="Optional confirmation YAML merged into entrypoint_graph")
     args = parser.parse_args(argv)
 
     repo_root = Path(args.repo).resolve()
     op_name = safe_op_name(args.op_name, repo_root)
     uo_root = existing_operator_root(repo_root, op_name)
     candidates = collect_entrypoint_candidates(repo_root, op_name, architecture=args.architecture)
-    if args.write:
-        write_yaml(uo_root / "ir" / "entrypoint_candidates.yaml", candidates)
-        # if all roles already confirmed, also write entrypoints.yaml
-        if not candidates.get("llm_required_roles"):
-            confirmed = apply_entrypoint_confirmation(candidates, {"roles": {}})
-            # fill from selected already present
-            for role, body in candidates["roles"].items():
-                confirmed["roles"][role] = {
-                    "selected": body.get("selected"),
-                    "status": body.get("status"),
-                    "candidate_count": len(body.get("candidates") or []),
-                }
-            write_yaml(uo_root / "ir" / "entrypoints.yaml", confirmed)
+    graph = candidates.get("entrypoint_graph") or {}
     if args.confirm_patch:
         patch = read_yaml(Path(args.confirm_patch))
-        entrypoints = apply_entrypoint_confirmation(candidates, patch)
-        write_yaml(uo_root / "ir" / "entrypoints.yaml", entrypoints)
-    print(f"entrypoint roles={list(candidates['roles'])} llm_required={candidates.get('llm_required_roles')}")
+        graph = apply_entrypoint_confirmation(candidates, patch)
+    if args.write:
+        write_yaml(uo_root / "ir" / "entrypoint_candidates.yaml", {k: v for k, v in candidates.items() if k != "entrypoint_graph"})
+        write_yaml(uo_root / "ir" / "entrypoint_graph.yaml", graph)
+        # Remove obsolete single-entry artifact if present.
+        legacy = uo_root / "ir" / "entrypoints.yaml"
+        if legacy.exists():
+            legacy.unlink()
+    closure = graph.get("closure") or {}
+    print(
+        f"entrypoint_nodes={len(graph.get('nodes') or [])} "
+        f"edges={len(graph.get('edges') or [])} "
+        f"host_chain={closure.get('host_main_chain')} "
+        f"kernel_chain={closure.get('kernel_main_chain')}"
+    )
     return 0
+
+
+def _normalize_role(role: str) -> str:
+    return _LEGACY_ROLE_MAP.get(role, role)
+
+
+def _node_from_candidate(cand: dict[str, Any], *, role: str, status: str) -> dict[str, Any]:
+    rel = str(cand.get("file_path") or "").replace("\\", "/")
+    name = str(cand.get("name") or "")
+    qn = str(cand.get("qualified_name") or f"{rel}::{name}")
+    cls = str(cand.get("class_or_namespace") or "")
+    if not cls and "::" in qn:
+        cls = qn.rsplit("::", 1)[0]
+        if "/" in cls:
+            cls = ""
+    path_family = path_family_of(rel)
+    # Infer impl role from path family when this is a DoOpTiling-like host method.
+    role_n = role
+    if role in {"public_host_entry", "host_tiling_entry"} and path_family in {"normal", "varlen", "empty"}:
+        role_n = f"{path_family}_impl"
+    elif role in {"public_host_entry", "host_tiling_entry"} and architecture_of_path(rel) == "neutral":
+        role_n = "public_host_entry"
+    ident = mint_symbol_identity(
+        kind="entrypoint",
+        name=name,
+        file_path=rel,
+        qualified_name=qn,
+        signature=str(cand.get("signature_snippet") or "")[:120],
+        class_or_namespace=cls,
+        architecture=architecture_of_path(rel),
+        template_family=str(cand.get("template_family") or path_family),
+        path_family=path_family,
+        prefix="EP",
+    )
+    locator = make_locator(
+        rel,
+        start_line=int(cand.get("start_line") or 0),
+        end_line=int(cand.get("end_line") or cand.get("start_line") or 0),
+        text=str(cand.get("signature_snippet") or ""),
+    )
+    return {
+        "id": ident.stable_id,
+        "role": role_n,
+        "architecture": ident.architecture,
+        "path_family": ident.path_family,
+        "template_family": ident.template_family,
+        "status": status,
+        "name": name,
+        "symbol_ref": ident.as_dict(),
+        "locator": locator.as_dict(),
+        "confidence": float(cand.get("confidence") or 0),
+    }
+
+
+def _enclosing_class(text: str, pos: int) -> str:
+    # Heuristic: nearest preceding class/struct declaration.
+    window = text[max(0, pos - 4000) : pos]
+    matches = list(CLASS_RE.finditer(window))
+    return matches[-1].group(1) if matches else ""
+
+
+def _scan_registration_graph(
+    repo_root: Path,
+    confirmed_files: list[str],
+    architecture: str,
+    existing_nodes: dict[str, dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    nodes: dict[str, dict[str, Any]] = {}
+    edges: list[dict[str, Any]] = []
+    templates: list[dict[str, Any]] = []
+    for rel in confirmed_files:
+        if not arch_compatible(rel, architecture):
+            continue
+        path = repo_root / rel
+        if not path.exists() or path.suffix not in {".h", ".hpp", ".cpp", ".cc", ".c"}:
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for match in REG_OP_RE.finditer(text):
+            op_type = match.group(1)
+            line = text.count("\n", 0, match.start()) + 1
+            ident = mint_symbol_identity(
+                kind="registration",
+                name=op_type,
+                file_path=rel,
+                qualified_name=f"REG_OP::{op_type}",
+                architecture=architecture_of_path(rel),
+                path_family=path_family_of(rel),
+                prefix="EP",
+            )
+            node = {
+                "id": ident.stable_id,
+                "role": "operator_registration",
+                "architecture": ident.architecture,
+                "path_family": ident.path_family,
+                "template_family": "shared",
+                "status": "verified",
+                "name": op_type,
+                "symbol_ref": ident.as_dict(),
+                "locator": make_locator(rel, start_line=line, end_line=line, text=match.group(0)).as_dict(),
+                "macro": "REG_OP",
+            }
+            nodes[node["id"]] = node
+        for match in IMPL_OP_RE.finditer(text):
+            name = match.group(1)
+            line = text.count("\n", 0, match.start()) + 1
+            ident = mint_symbol_identity(
+                kind="registration",
+                name=name,
+                file_path=rel,
+                qualified_name=f"IMPL_OP_OPTILING::{name}",
+                architecture=architecture_of_path(rel),
+                path_family=path_family_of(rel),
+                prefix="EP",
+            )
+            node = {
+                "id": ident.stable_id,
+                "role": "public_host_entry",
+                "architecture": ident.architecture,
+                "path_family": ident.path_family,
+                "template_family": "shared",
+                "status": "verified",
+                "name": name,
+                "symbol_ref": ident.as_dict(),
+                "locator": make_locator(rel, start_line=line, end_line=line, text=match.group(0)).as_dict(),
+                "macro": "IMPL_OP_OPTILING",
+            }
+            nodes[node["id"]] = node
+            # Link registration → public host when both present
+            for reg in list(nodes.values()) + list(existing_nodes.values()):
+                if reg.get("role") == "operator_registration":
+                    edges.append(
+                        {
+                            "id": mint_edge_id("registers", reg["id"], node["id"]),
+                            "type": "registers",
+                            "source": reg["id"],
+                            "target": node["id"],
+                            "evidence": [{"file_path": rel, "line": line, "macro": "IMPL_OP_OPTILING"}],
+                            "confidence": "verified",
+                        }
+                    )
+        for match in REGISTER_TILING_RE.finditer(text):
+            op_type = match.group(1).strip()
+            cls = match.group(2).strip()
+            line = text.count("\n", 0, match.start()) + 1
+            family = path_family_of(rel)
+            if "varlen" in cls.lower():
+                family = "varlen"
+            elif "empty" in cls.lower():
+                family = "empty"
+            elif "normal" in cls.lower():
+                family = "normal"
+            ident = mint_symbol_identity(
+                kind="tiling_template",
+                name=cls,
+                file_path=rel,
+                qualified_name=f"REGISTER_TILING_TEMPLATE::{cls}",
+                class_or_namespace=cls,
+                architecture=architecture_of_path(rel),
+                template_family=family,
+                path_family=family,
+                prefix="EP",
+            )
+            role = {
+                "normal": "normal_impl",
+                "varlen": "varlen_impl",
+                "empty": "empty_impl",
+            }.get(family, "template_registration")
+            node = {
+                "id": ident.stable_id,
+                "role": role,
+                "architecture": ident.architecture if ident.architecture != "neutral" else architecture,
+                "path_family": family,
+                "template_family": family,
+                "status": "verified",
+                "name": cls,
+                "symbol_ref": ident.as_dict(),
+                "locator": make_locator(rel, start_line=line, end_line=line, text=match.group(0)).as_dict(),
+                "macro": "REGISTER_TILING_TEMPLATE",
+                "op_type": op_type,
+            }
+            nodes[node["id"]] = node
+            templates.append(
+                {
+                    "op_type": op_type,
+                    "template_class": cls,
+                    "file_path": rel,
+                    "line": line,
+                    "architecture_hint": architecture if architecture in rel else architecture_of_path(rel),
+                    "path_family": family,
+                    "node_id": node["id"],
+                }
+            )
+            # registry node (file-level)
+            reg_ident = mint_symbol_identity(
+                kind="tiling_registry",
+                name=f"registry_{Path(rel).stem}",
+                file_path=rel,
+                qualified_name=f"{rel}::tiling_registry",
+                architecture=architecture_of_path(rel),
+                path_family=family,
+                prefix="EP",
+            )
+            reg_node = {
+                "id": reg_ident.stable_id,
+                "role": "tiling_registry",
+                "architecture": reg_ident.architecture,
+                "path_family": family,
+                "template_family": family,
+                "status": "verified",
+                "name": Path(rel).stem,
+                "symbol_ref": reg_ident.as_dict(),
+                "locator": make_locator(rel, start_line=line, end_line=line).as_dict(),
+            }
+            nodes[reg_node["id"]] = reg_node
+            edges.append(
+                {
+                    "id": mint_edge_id("registers", reg_node["id"], node["id"], cls),
+                    "type": "registers",
+                    "source": reg_node["id"],
+                    "target": node["id"],
+                    "evidence": [{"file_path": rel, "line": line, "macro": "REGISTER_TILING_TEMPLATE"}],
+                    "confidence": "verified",
+                }
+            )
+        if GET_TPL_RE.search(text):
+            # mark file as having host key writer site (occurrence only)
+            pass
+    return nodes, edges, templates
+
+
+def _link_host_to_templates(
+    nodes: dict[str, dict[str, Any]],
+    templates: list[dict[str, Any]],
+    architecture: str,
+) -> list[dict[str, Any]]:
+    edges: list[dict[str, Any]] = []
+    publics = [n for n in nodes.values() if n.get("role") == "public_host_entry"]
+    impls = [n for n in nodes.values() if n.get("role") in {"normal_impl", "varlen_impl", "empty_impl", "template_registration"}]
+    registries = [n for n in nodes.values() if n.get("role") == "tiling_registry"]
+    for pub in publics:
+        for reg in registries:
+            # Neutral public entry dispatches via registry when arch evidence exists on registry/impl
+            edges.append(
+                {
+                    "id": mint_edge_id("dispatches_to", pub["id"], reg["id"]),
+                    "type": "dispatches_to",
+                    "source": pub["id"],
+                    "target": reg["id"],
+                    "evidence": [{"reason": "public_host_to_registry"}],
+                    "confidence": "candidate",
+                }
+            )
+        for impl in impls:
+            if impl.get("architecture") not in {"neutral", architecture} and architecture_of_path(
+                str((impl.get("locator") or {}).get("file_path") or "")
+            ) not in {"neutral", architecture}:
+                continue
+            edges.append(
+                {
+                    "id": mint_edge_id("selects", pub["id"], impl["id"]),
+                    "type": "selects",
+                    "source": pub["id"],
+                    "target": impl["id"],
+                    "evidence": [{"reason": "host_to_impl_candidate", "path_family": impl.get("path_family")}],
+                    "confidence": "candidate",
+                }
+            )
+    # template list also drives edges
+    for tpl in templates:
+        nid = tpl.get("node_id")
+        if not nid or nid not in nodes:
+            continue
+        for pub in publics:
+            edges.append(
+                {
+                    "id": mint_edge_id("instantiates", pub["id"], nid, tpl.get("template_class") or ""),
+                    "type": "instantiates",
+                    "source": pub["id"],
+                    "target": nid,
+                    "evidence": [{"file_path": tpl.get("file_path"), "line": tpl.get("line")}],
+                    "confidence": "verified",
+                }
+            )
+    return edges
+
+
+def _link_kernel_dispatch(nodes: dict[str, dict[str, Any]], architecture: str) -> list[dict[str, Any]]:
+    edges: list[dict[str, Any]] = []
+    publics = [n for n in nodes.values() if n.get("role") == "public_kernel_entry"]
+    concretes = [
+        n
+        for n in nodes.values()
+        if n.get("role") in {"concrete_kernel_impl", "kernel_family", "template_dispatcher", "public_kernel_entry"}
+        and n.get("architecture") in {architecture, "neutral"}
+    ]
+    for pub in publics:
+        if pub.get("architecture") == "neutral":
+            for other in concretes:
+                if other["id"] == pub["id"]:
+                    continue
+                if other.get("architecture") == architecture:
+                    edges.append(
+                        {
+                            "id": mint_edge_id("dispatches_to", pub["id"], other["id"]),
+                            "type": "dispatches_to",
+                            "source": pub["id"],
+                            "target": other["id"],
+                            "evidence": [{"reason": "neutral_kernel_to_arch_impl"}],
+                            "confidence": "candidate",
+                        }
+                    )
+        # Promote arch-local kernel entries to concrete_kernel_impl role marker via edge to self family
+        if pub.get("architecture") == architecture:
+            pub["role"] = "concrete_kernel_impl" if pub.get("role") == "public_kernel_entry" and "entry" not in str(pub.get("name") or "").lower() else pub["role"]
+    return edges
+
+
+def _apply_link_status(nodes: dict[str, dict[str, Any]], edges: list[dict[str, Any]]) -> None:
+    incoming = {n: 0 for n in nodes}
+    outgoing = {n: 0 for n in nodes}
+    for e in edges:
+        s, t = e.get("source"), e.get("target")
+        if s in outgoing:
+            outgoing[s] += 1
+        if t in incoming:
+            incoming[t] += 1
+    for nid, node in nodes.items():
+        status = str(node.get("status") or "located")
+        if status in {"located"} and node.get("symbol_ref"):
+            status = "verified"
+        if status == "verified" and (incoming.get(nid, 0) + outgoing.get(nid, 0)) > 0:
+            status = "linked"
+        node["status"] = status
+
+
+def _evaluate_closure(nodes: dict[str, dict[str, Any]], edges: list[dict[str, Any]], architecture: str) -> dict[str, Any]:
+    by_role: dict[str, list[dict[str, Any]]] = {}
+    for n in nodes.values():
+        by_role.setdefault(str(n.get("role")), []).append(n)
+
+    def has_edge(types: set[str], src_roles: set[str], dst_roles: set[str]) -> bool:
+        src_ids = {n["id"] for r in src_roles for n in by_role.get(r, [])}
+        dst_ids = {n["id"] for r in dst_roles for n in by_role.get(r, [])}
+        for e in edges:
+            if e.get("type") in types and e.get("source") in src_ids and e.get("target") in dst_ids:
+                return True
+        return False
+
+    blocking: list[dict[str, Any]] = []
+    host_ok = True
+    if not by_role.get("operator_registration") and not by_role.get("public_host_entry"):
+        host_ok = False
+        blocking.append(_block("entrypoint_host_registration_or_public_missing", "missing REG_OP / public host entry"))
+    if by_role.get("public_host_entry") or by_role.get("operator_registration"):
+        impl_roles = {"normal_impl", "varlen_impl", "empty_impl", "template_registration"}
+        if not any(by_role.get(r) for r in impl_roles) and not by_role.get("tiling_registry"):
+            host_ok = False
+            blocking.append(_block("entrypoint_host_impl_missing", "no tiling registry/template implementation"))
+        elif not (
+            has_edge({"registers", "dispatches_to", "selects", "instantiates"}, {"operator_registration", "public_host_entry"}, impl_roles | {"tiling_registry"})
+            or has_edge({"registers"}, {"tiling_registry"}, impl_roles)
+        ):
+            host_ok = False
+            blocking.append(_block("entrypoint_host_dispatch_missing", "public host not linked to registry/impl"))
+
+    kernel_ok = True
+    kern = by_role.get("public_kernel_entry") or by_role.get("concrete_kernel_impl") or by_role.get("kernel_family") or []
+    if not kern:
+        kernel_ok = False
+        blocking.append(_block("entrypoint_kernel_missing", "no public/concrete kernel entry"))
+    else:
+        # Need at least one target-arch kernel node
+        if not any(n.get("architecture") in {architecture, "neutral"} for n in kern):
+            kernel_ok = False
+            blocking.append(_block("entrypoint_kernel_arch_missing", f"no kernel entry compatible with {architecture}"))
+
+    # Mark closed nodes on successful chains
+    if host_ok:
+        for role in ("operator_registration", "public_host_entry", "tiling_registry", "normal_impl", "varlen_impl", "empty_impl", "template_registration"):
+            for n in by_role.get(role, []):
+                if n.get("status") == "linked":
+                    n["status"] = "closed"
+    if kernel_ok:
+        for role in ("public_kernel_entry", "template_dispatcher", "kernel_family", "concrete_kernel_impl"):
+            for n in by_role.get(role, []):
+                if n.get("status") in {"linked", "verified"}:
+                    n["status"] = "closed"
+
+    return {
+        "host_main_chain": "closed" if host_ok else "unresolved",
+        "kernel_main_chain": "closed" if kernel_ok else "unresolved",
+        "blocking_unresolved": blocking,
+    }
+
+
+def _block(code: str, reason: str) -> dict[str, Any]:
+    return {
+        "severity": "blocking",
+        "code": code,
+        "related_symbols": [],
+        "candidate_files": [],
+        "evidence_present": [],
+        "evidence_missing": ["dispatch_or_registration_evidence"],
+        "reason": reason,
+    }
+
+
+def _build_extraction_units(
+    nodes: dict[str, dict[str, Any]],
+    edges: list[dict[str, Any]],
+    architecture: str,
+) -> list[dict[str, Any]]:
+    units: list[dict[str, Any]] = []
+    impls = [
+        n
+        for n in nodes.values()
+        if n.get("role") in {"normal_impl", "varlen_impl", "empty_impl", "concrete_kernel_impl", "public_host_entry", "public_kernel_entry"}
+    ]
+    seen: set[str] = set()
+    for node in impls:
+        arch = node.get("architecture") or architecture
+        if arch not in {architecture, "neutral"}:
+            continue
+        # Neutral public entries become shared units; arch impls are separate.
+        key = f"{architecture}|{node.get('path_family')}|{node.get('template_family')}|{node['id']}"
+        if key in seen:
+            continue
+        seen.add(key)
+        members = {node["id"]}
+        for e in edges:
+            if e.get("source") == node["id"]:
+                members.add(str(e.get("target")))
+            if e.get("target") == node["id"]:
+                members.add(str(e.get("source")))
+        units.append(
+            {
+                "id": "UNIT_" + mint_edge_id("unit", architecture, str(node.get("path_family")), node["id"])[-16:],
+                "architecture": architecture if arch == "neutral" else arch,
+                "path_family": node.get("path_family") or "unknown",
+                "template_family": node.get("template_family") or "unknown",
+                "entry_root": node["id"],
+                "member_nodes": sorted(members),
+            }
+        )
+    return units
 
 
 def _confidence(
@@ -308,10 +866,12 @@ def _confidence(
     file_path = file_path.replace("\\", "/")
     if op_name and op_name in file_path:
         score += 0.2
-    if architecture and architecture in file_path:
-        score += 0.25
-    elif architecture and f"/arch" in file_path and architecture not in file_path:
-        score -= 0.35
+    # Boost target-arch *implementations*, but do NOT penalize neutral public entries.
+    arch_of = architecture_of_path(file_path)
+    if arch_of == architecture:
+        score += 0.15
+    elif arch_of != "neutral" and architecture and arch_of != architecture:
+        score -= 0.5
     preferred = preferred_map.get(role) or ()
     if name in preferred:
         score += 0.45
@@ -321,12 +881,12 @@ def _confidence(
         score += 0.15
     else:
         score -= 0.1
-    if role.startswith("host") or role in {"get_tiling_key", "save_tiling_data", "init_tiling_data"}:
+    if role in {"public_host_entry", "get_tiling_key", "save_tiling_data", "init_tiling_data"}:
         if "/op_host/" in file_path:
             score += 0.15
         if "/op_kernel/" in file_path:
             score -= 0.4
-    if role == "kernel_entry":
+    if role == "public_kernel_entry":
         if "/op_kernel/" in file_path:
             score += 0.2
         if "/op_host/" in file_path:
@@ -339,7 +899,6 @@ def _confidence(
             score += 0.15
         if "template_tiling_key" in file_path or "tiling_data" in file_path:
             score -= 0.5
-        # Drop field/member noise (short lowercase / obvious non-types).
         if name[:1].islower() or name in {"pipe", "dqGm", "Init", "Process"}:
             score -= 0.45
     return max(0.0, min(1.0, score))
@@ -348,19 +907,23 @@ def _confidence(
 def _dedupe_candidates(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     best: dict[str, dict[str, Any]] = {}
     for item in items:
-        key = f"{item.get('qualified_name')}|{item.get('file_path')}|{item.get('start_line')}"
+        cls = item.get("class_or_namespace") or ""
+        key = f"{item.get('qualified_name')}|{item.get('file_path')}|{cls}|{item.get('name')}"
         prev = best.get(key)
         if prev is None or item.get("confidence", 0) > prev.get("confidence", 0):
             best[key] = item
-    return sorted(best.values(), key=lambda x: (-float(x.get("confidence") or 0), x.get("file_path") or "", x.get("name") or ""))
+    return sorted(
+        best.values(),
+        key=lambda x: (-float(x.get("confidence") or 0), x.get("file_path") or "", x.get("name") or ""),
+    )
 
 
-def _confirmed_files(uo_root: Path) -> list[str]:
+def _confirmed_source_files(uo_root: Path) -> list[str]:
     import json
 
     for path in sorted((uo_root / "runs").glob("*/scope/scope_confirmed.yaml"), reverse=True):
         data = read_yaml(path)
-        files = data.get("confirmed_file_list")
+        files = data.get("confirmed_source_files") or data.get("confirmed_file_list")
         if isinstance(files, list) and files:
             return [str(item.get("path") if isinstance(item, dict) else item).replace("\\", "/") for item in files]
     meta_path = uo_root / "cbm" / "index_meta.json"
@@ -377,21 +940,25 @@ def _confirmed_files(uo_root: Path) -> list[str]:
 def _scan_paths(repo_root: Path, confirmed_files: list[str], architecture: str, role: str) -> list[Path]:
     paths: list[Path] = []
     for rel in confirmed_files:
-        if architecture and architecture not in rel and "/op_host/" not in rel and "/op_kernel/" not in rel:
+        if not arch_compatible(rel, architecture):
             continue
-        if role == "kernel_entry" and "/op_kernel/" not in rel:
+        if role == "public_kernel_entry" and "/op_kernel/" not in rel:
             continue
-        if role != "kernel_entry" and "/op_host/" not in rel and "template_tiling_key" not in rel:
+        if role != "public_kernel_entry" and "/op_host/" not in rel and "template_tiling_key" not in rel:
             continue
         path = repo_root / rel
-        if path.exists() and path.suffix in {".h", ".cpp", ".cc", ".c"}:
+        if path.exists() and path.suffix in {".h", ".hpp", ".cpp", ".cc", ".c"}:
             paths.append(path)
     if paths:
         return paths
-    # fallback glob
-    if role == "kernel_entry":
-        return list(repo_root.glob(f"**/{architecture}/**/*kernel*.h"))[:40]
-    return list(repo_root.glob(f"**/{architecture}/**/*tiling*.cpp"))[:40] + list(repo_root.glob(f"**/{architecture}/**/*tiling*.h"))[:40]
+    if role == "public_kernel_entry":
+        # Include neutral kernel wrappers plus target arch.
+        return list(repo_root.glob("**/op_kernel/**/*.h"))[:40] + list(repo_root.glob(f"**/{architecture}/**/*kernel*.h"))[:40]
+    return (
+        list(repo_root.glob("**/op_host/**/*tiling*.cpp"))[:40]
+        + list(repo_root.glob(f"**/{architecture}/**/*tiling*.cpp"))[:40]
+        + list(repo_root.glob(f"**/{architecture}/**/*tiling*.h"))[:40]
+    )
 
 
 def _scan_global_kernels(
@@ -409,10 +976,10 @@ def _scan_global_kernels(
         rel_n = rel.replace("\\", "/")
         if "/op_kernel/" not in rel_n:
             continue
-        if architecture and architecture not in rel_n:
+        if not arch_compatible(rel_n, architecture):
             continue
         path = repo_root / rel
-        if not path.exists() or path.suffix not in {".h", ".cpp", ".cc", ".c"}:
+        if not path.exists() or path.suffix not in {".h", ".hpp", ".cpp", ".cc", ".c"}:
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         for match in global_re.finditer(text):
@@ -420,8 +987,13 @@ def _scan_global_kernels(
             line = text.count("\n", 0, match.start()) + 1
             conf = (
                 _confidence(
-                    "kernel_entry", name, rel_n, op_name, architecture,
-                    role_patterns=role_patterns, exact_preferred=exact_preferred,
+                    "public_kernel_entry",
+                    name,
+                    rel_n,
+                    op_name,
+                    architecture,
+                    role_patterns=role_patterns,
+                    exact_preferred=exact_preferred,
                 )
                 + 0.1
             )
@@ -434,16 +1006,15 @@ def _scan_global_kernels(
                     "start_line": line,
                     "end_line": line,
                     "label": "global_kernel",
+                    "role": "public_kernel_entry",
                     "pattern": "__global__",
                     "confidence": min(1.0, conf),
                     "signature_snippet": snippet("\n".join(text.splitlines()[max(0, line - 1) : line + 5])),
-                    "needs_llm": conf < 0.85,
                 }
             )
-    # also prefer *entry* headers as kernel entry candidates
     for rel in confirmed_files:
         rel_n = rel.replace("\\", "/")
-        if architecture not in rel_n or "entry" not in Path(rel_n).name.lower():
+        if not arch_compatible(rel_n, architecture) or "entry" not in Path(rel_n).name.lower():
             continue
         if "/op_kernel/" not in rel_n:
             continue
@@ -456,8 +1027,13 @@ def _scan_global_kernels(
             line = text.count("\n", 0, match.start()) + 1
             conf = (
                 _confidence(
-                    "kernel_entry", name, rel_n, op_name, architecture,
-                    role_patterns=role_patterns, exact_preferred=exact_preferred,
+                    "public_kernel_entry",
+                    name,
+                    rel_n,
+                    op_name,
+                    architecture,
+                    role_patterns=role_patterns,
+                    exact_preferred=exact_preferred,
                 )
                 + 0.2
             )
@@ -470,35 +1046,16 @@ def _scan_global_kernels(
                     "start_line": line,
                     "end_line": line,
                     "label": "entry_symbol",
+                    "role": "public_kernel_entry",
                     "pattern": "Entry",
                     "confidence": min(1.0, conf),
                     "signature_snippet": snippet("\n".join(text.splitlines()[max(0, line - 1) : line + 5])),
-                    "needs_llm": conf < 0.85,
                 }
             )
     return out
 
 
-def _scan_register_macros(repo_root: Path, confirmed_files: list[str], architecture: str) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for rel in confirmed_files:
-        if "/op_host/" not in rel:
-            continue
-        path = repo_root / rel
-        if not path.exists():
-            continue
-        text = path.read_text(encoding="utf-8", errors="ignore")
-        for match in REGISTER_RE.finditer(text):
-            out.append(
-                {
-                    "op_type": match.group(1).strip(),
-                    "template_class": match.group(2).strip(),
-                    "file_path": rel,
-                    "line": text.count("\n", 0, match.start()) + 1,
-                    "architecture_hint": architecture if architecture in rel else "",
-                }
-            )
-    return out
+# ROLE_PATTERNS already uses host_tiling_entry / kernel_entry keys for tests.
 
 
 if __name__ == "__main__":
