@@ -23,7 +23,8 @@ from uo.scripts._ir_io import read_yaml, snippet, write_yaml
 from uo.scripts.cbm_client import CbmClient
 from uo.scripts.extract_kernel_subgraph import TDF_ASSIGN_RE
 from uo.scripts.function_body import extract_callee_names, iter_function_defs, resolve_helper_body
-from uo.scripts.source_path import resolve_repo_source_path, to_repo_relative
+from uo.scripts.resolve_entrypoints import entrypoint_units, load_entrypoint_graph, nodes_for_role
+from uo.scripts.source_path import to_repo_relative
 
 # Generic: any identifier that receives set_field
 RECV_SET_RE = re.compile(
@@ -85,9 +86,8 @@ def propose_extract_plan(
     architecture: str = "arch35",
 ) -> dict[str, Any]:
     uo_root = existing_operator_root(repo_root, op_name)
-    entrypoints = read_yaml(uo_root / "ir" / "entrypoints.yaml")
-    roles = entrypoints.get("roles") or {}
-    selected = (roles.get("host_tiling_entry") or {}).get("selected") or {}
+    graph = load_entrypoint_graph(uo_root)
+    seed_nodes = _seed_entrypoint_nodes(graph)
 
     writers: dict[str, dict[str, Any]] = {}
     receivers: dict[str, dict[str, Any]] = {}
@@ -97,27 +97,45 @@ def propose_extract_plan(
 
     client = CbmClient(uo_root)
     chain_items: list[dict[str, Any]] = []
+    # Prefer a callable host entry over registration-only nodes for body seeding.
+    primary_node = next(
+        (n for n in seed_nodes if str(n.get("role") or "") in {
+            "public_host_entry", "normal_impl", "varlen_impl", "empty_impl", "host_tiling_entry",
+        }),
+        seed_nodes[0] if seed_nodes else {},
+    )
+    primary = _item_from_ep_node(primary_node) if primary_node else {}
 
-    if selected:
-        chain_items.append(dict(selected))
-        entry_body, _, _ = resolve_helper_body(repo_root, selected, prefer_definition=True)
+    for node in seed_nodes:
+        item = _item_from_ep_node(node)
+        if not item.get("name"):
+            continue
+        role = str(item.get("role") or node.get("role") or "")
+        if role in {
+            "operator_registration",
+            "public_kernel_entry",
+            "concrete_kernel_impl",
+            "kernel_family",
+        }:
+            continue
+        if not any(_writer_identity_key(x) == _writer_identity_key(item) for x in chain_items):
+            chain_items.append(item)
+
+    if primary.get("name"):
+        entry_body, _, _ = resolve_helper_body(repo_root, primary, prefer_definition=True)
         for helper_name in extract_callee_names(entry_body, noise=NOISE_CALLS):
-            _append_chain_item(chain_items, helper_name, selected, client, architecture)
-        if client.available and selected.get("qualified_name"):
-            root = client.resolve_qn(str(selected["qualified_name"]), file_contains=architecture)
-            if root is None and selected.get("name"):
-                root = client.resolve_qn(str(selected["name"]), file_contains=architecture)
+            _append_chain_item(chain_items, helper_name, primary, client, architecture)
+        if client.available and primary.get("qualified_name"):
+            root = client.resolve_qn(str(primary["qualified_name"]), file_contains=architecture)
+            if root is None and primary.get("name"):
+                root = client.resolve_qn(str(primary["name"]), file_contains=architecture)
             if root is not None:
                 keep = {str(x.get("name") or "").casefold() for x in chain_items if x.get("name")}
                 traced = client.bounded_trace(root, keep_names=keep or None, max_depth=4, max_nodes=40)
                 for sym in traced:
-                    if not any(item.get("qualified_name") == sym.qualified_name for item in chain_items):
-                        chain_items.append(sym.as_dict())
-
-    for role in ("get_tiling_key", "save_tiling_data", "init_tiling_data"):
-        sel = (roles.get(role) or {}).get("selected")
-        if sel and not any(item.get("qualified_name") == sel.get("qualified_name") for item in chain_items):
-            chain_items.append(sel)
+                    child = sym.as_dict()
+                    if not any(_writer_identity_key(item) == _writer_identity_key(child) for item in chain_items):
+                        chain_items.append(child)
 
     body_by_key: dict[str, tuple[str, int, int, dict[str, Any]]] = {}
     for item in chain_items:
@@ -149,7 +167,8 @@ def propose_extract_plan(
                 break
             if callee.casefold() == parent_name.casefold():
                 continue
-            if callee.casefold() in writers:
+            writer_names = {str(w.get("name") or "").casefold() for w in writers.values()}
+            if callee.casefold() in writer_names:
                 continue
             child = _resolve_item(callee, parent_item, client, architecture)
             _ingest_writer(
@@ -202,22 +221,34 @@ def propose_extract_plan(
     cand_path = uo_root / "ir" / "entrypoint_candidates.yaml"
     if cand_path.is_file():
         cands = read_yaml(cand_path)
-        host_role = ((cands.get("roles") or {}).get("host_tiling_entry") or {})
-        selected_name = str(selected.get("name") or "")
-        selected_file = str(selected.get("file_path") or "").replace("\\", "/")
-        for c in host_role.get("candidates") or []:
+        role_cands = cands.get("role_candidates") if isinstance(cands.get("role_candidates"), dict) else {}
+        host_cands = list(role_cands.get("public_host_entry") or []) + list(
+            role_cands.get("host_tiling_entry") or []
+        )
+        # Legacy candidates shape (roles.*.candidates) — ignore selected.
+        legacy_host = ((cands.get("roles") or {}).get("host_tiling_entry") or {}).get("candidates") or []
+        host_cands.extend(legacy_host if isinstance(legacy_host, list) else [])
+        primary_name = str(primary.get("name") or "")
+        primary_file = str(primary.get("file_path") or "").replace("\\", "/")
+        for c in host_cands:
             if not isinstance(c, dict):
                 continue
             n = str(c.get("name") or "").strip()
-            if not n or n == selected_name:
+            if not n or n == primary_name:
                 continue
             conf = float(c.get("confidence") or 0)
             fp = str(c.get("file_path") or "").replace("\\", "/")
-            # Prefer diversity: keep same-name once; allow lower confidence if different file
-            key = n.casefold()
+            key = _writer_identity_key(
+                {
+                    "name": n,
+                    "qualified_name": c.get("qualified_name") or n,
+                    "file_path": fp,
+                    "class_or_namespace": c.get("class_or_namespace") or "",
+                }
+            )
             if key in seen_extra:
                 continue
-            if conf < 0.7 and (not fp or fp == selected_file):
+            if conf < 0.7 and (not fp or fp == primary_file):
                 continue
             if conf < 0.55:
                 continue
@@ -281,16 +312,103 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _seed_entrypoint_nodes(graph: dict[str, Any]) -> list[dict[str, Any]]:
+    """Seed from extraction_units + public_host_entry / impl nodes (not selected)."""
+    by_id = {str(n.get("id")): n for n in (graph.get("nodes") or []) if isinstance(n, dict) and n.get("id")}
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _add(node: dict[str, Any] | None) -> None:
+        if not isinstance(node, dict):
+            return
+        nid = str(node.get("id") or "")
+        if nid and nid in seen:
+            return
+        if nid:
+            seen.add(nid)
+        out.append(node)
+
+    for unit in entrypoint_units(graph):
+        if not isinstance(unit, dict):
+            continue
+        root = by_id.get(str(unit.get("entry_root") or ""))
+        role = str((root or {}).get("role") or "")
+        # Skip pure kernel units for host extract-plan seeding.
+        if role in {"public_kernel_entry", "concrete_kernel_impl", "kernel_family"}:
+            continue
+        _add(root)
+        for mid in unit.get("member_nodes") or []:
+            member = by_id.get(str(mid))
+            mrole = str((member or {}).get("role") or "")
+            if mrole in {
+                "operator_registration",
+                "public_kernel_entry",
+                "concrete_kernel_impl",
+                "kernel_family",
+            }:
+                continue
+            _add(member)
+
+    for role in (
+        "public_host_entry",
+        "normal_impl",
+        "varlen_impl",
+        "empty_impl",
+        "get_tiling_key",
+        "save_tiling_data",
+        "init_tiling_data",
+    ):
+        for node in nodes_for_role(graph, role):
+            _add(node)
+    return out
+
+
+def _item_from_ep_node(node: dict[str, Any]) -> dict[str, Any]:
+    loc = node.get("locator") if isinstance(node.get("locator"), dict) else {}
+    sym = node.get("symbol_ref") if isinstance(node.get("symbol_ref"), dict) else {}
+    name = str(node.get("name") or "")
+    qn = str(sym.get("qualified_name") or node.get("qualified_name") or name)
+    cls = str(sym.get("class_or_namespace") or node.get("class_or_namespace") or "")
+    if not cls and "::" in qn:
+        prefix = qn.rsplit("::", 1)[0]
+        if "/" not in prefix:
+            cls = prefix
+    return {
+        "id": node.get("id"),
+        "name": name or (qn.rsplit("::", 1)[-1] if qn else ""),
+        "qualified_name": qn,
+        "file_path": str(loc.get("file_path") or sym.get("repo_relative_path") or node.get("file_path") or "").replace(
+            "\\", "/"
+        ),
+        "start_line": int(loc.get("start_line") or node.get("start_line") or 0),
+        "end_line": int(loc.get("end_line") or node.get("end_line") or 0),
+        "class_or_namespace": cls,
+        "role": node.get("role"),
+    }
+
+
+def _writer_identity_key(item: dict[str, Any]) -> str:
+    """Identity key: file_path + qualified_name + class (not bare name.casefold)."""
+    fp = str(item.get("file_path") or "").replace("\\", "/").strip()
+    qn = str(item.get("qualified_name") or item.get("name") or "").strip()
+    cls = str(item.get("class_or_namespace") or "").strip()
+    if not cls and "::" in qn:
+        prefix = qn.rsplit("::", 1)[0]
+        if "/" not in prefix:
+            cls = prefix
+    return f"{fp}|{qn}|{cls}".casefold()
+
+
 def _append_chain_item(
     chain_items: list[dict[str, Any]],
     helper_name: str,
-    selected: dict[str, Any],
+    parent: dict[str, Any],
     client: CbmClient,
     architecture: str,
 ) -> None:
     if any(str(x.get("name") or "") == helper_name for x in chain_items):
         return
-    chain_items.append(_resolve_item(helper_name, selected, client, architecture))
+    chain_items.append(_resolve_item(helper_name, parent, client, architecture))
 
 
 def _resolve_item(
@@ -310,6 +428,7 @@ def _resolve_item(
         "file_path": parent.get("file_path") or "",
         "start_line": parent.get("start_line") or 0,
         "end_line": parent.get("end_line") or 0,
+        "class_or_namespace": parent.get("class_or_namespace") or "",
     }
 
 
@@ -336,11 +455,13 @@ def _ingest_writer(
             score = min(score + 0.05, 1.0)
         if "sink_set_writer" in evidence_extra:
             score = min(score + 0.25, 1.0)
-    key = name.casefold()
+    key = _writer_identity_key(item)
     prev = writers.get(key)
     if prev is None or score > float(prev.get("score") or 0):
         writers[key] = {
             "name": name,
+            "qualified_name": str(item.get("qualified_name") or name),
+            "class_or_namespace": str(item.get("class_or_namespace") or ""),
             "file_path": str(item.get("file_path") or "").replace("\\", "/"),
             "start_line": start,
             "snippet": snippet(body[:240]),
@@ -441,9 +562,10 @@ def _discover_writers_by_sink_sets(
         if len(files) >= MAX_SINK_SCAN_FILES:
             break
 
+    writer_names = {str(w.get("name") or "").casefold() for w in writers.values()}
     for fp in files:
         for name, start, end, body, rel in iter_function_defs(repo_root, fp):
-            if name.casefold() in writers:
+            if name.casefold() in writer_names:
                 continue
             hits = [recv for recv, _field in RECV_SET_RE.findall(body) if recv in recv_names]
             if not hits:
@@ -462,6 +584,7 @@ def _discover_writers_by_sink_sets(
                     item["file_path"] = rel
                     item["start_line"] = start
                     item["end_line"] = end
+            writer_names.add(name.casefold())
             _ingest_writer(
                 repo_root,
                 item,

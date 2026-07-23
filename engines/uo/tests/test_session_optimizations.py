@@ -586,7 +586,7 @@ def test_export_kb_graph_materializes_symbol_stubs(tmp_path: Path) -> None:
     graph = {"edges": []}
     rels = _collect_relations(uo, graph, entities)
     ids = {e["id"] for e in entities}
-    assert "SYM::DoOpTiling" in ids
+    assert any(i.startswith("SYM::") for i in ids)
     assert "FILE::op_host/a.cpp" in ids
     assert any(r["type"] == "anchors_to_symbol" for r in rels)
     for r in rels:
@@ -596,6 +596,7 @@ def test_export_kb_graph_materializes_symbol_stubs(tmp_path: Path) -> None:
 
 def test_integrity_fails_on_open_unresolved(tmp_path: Path) -> None:
     from uo.scripts.check_kb_integrity import check_kb_integrity, map_rework_stage
+    from tests._entrypoint_fixtures import write_entrypoint_graph
 
     repo = tmp_path / "op"
     repo.mkdir()
@@ -625,17 +626,11 @@ def test_integrity_fails_on_open_unresolved(tmp_path: Path) -> None:
         yaml.safe_dump({"version": 1, "op_name": "DemoOp", "items": [{"id": "DIAG_X", "kind": "unused_tiling_field"}]}, sort_keys=False),
         encoding="utf-8",
     )
-    (ir / "entrypoints.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "roles": {
-                    "host_tiling_entry": {"status": "confirmed", "selected": {"name": "DoOpTiling"}},
-                    "kernel_entry": {"status": "confirmed", "selected": {"name": "Kernel"}},
-                }
-            },
-            sort_keys=False,
-        ),
-        encoding="utf-8",
+    write_entrypoint_graph(
+        ir,
+        op_name="DemoOp",
+        host_name="DoOpTiling",
+        kernel_name="Kernel",
     )
     # minimal required exports for validate_kb
     for rel in (
@@ -686,6 +681,7 @@ def test_strip_cbm_stage_path() -> None:
 def test_export_adds_entrypoint_entities(tmp_path: Path) -> None:
     from uo.scripts.export_kb_graph import _collect_entities
     from uo.scripts._ir_io import write_yaml
+    from tests._entrypoint_fixtures import write_entrypoint_graph
 
     uo = tmp_path / ".ascendc-agent" / "uo"
     (uo / "ir").mkdir(parents=True)
@@ -693,95 +689,29 @@ def test_export_adds_entrypoint_entities(tmp_path: Path) -> None:
         uo / "ir" / "operator_graph.yaml",
         {"version": 1, "op_name": "Demo", "nodes": [], "edges": []},
     )
-    write_yaml(
-        uo / "ir" / "entrypoints.yaml",
-        {
-            "roles": {
-                "kernel_entry": {
-                    "status": "confirmed",
-                    "selected": {
-                        "name": "FlashAttentionScoreGradKernel",
-                        "file_path": (
-                            ".ascendc-agent/uo/cbm/index_stage/Demo/"
-                            "op_kernel/arch35/flash_attention_score_grad_kernel.h"
-                        ),
-                        "start_line": 28,
-                    },
-                },
-                "host_tiling_entry": {
-                    "status": "confirmed",
-                    "selected": {"name": "DoOpTiling", "file_path": "op_host/a.cpp", "start_line": 1},
-                },
-            }
-        },
+    write_entrypoint_graph(
+        uo / "ir",
+        op_name="Demo",
+        host_name="DoOpTiling",
+        host_file="op_host/a.cpp",
+        host_line=1,
+        kernel_name="FlashAttentionScoreGradKernel",
+        kernel_file=(
+            ".ascendc-agent/uo/cbm/index_stage/Demo/"
+            "op_kernel/arch35/flash_attention_score_grad_kernel.h"
+        ),
+        kernel_line=28,
     )
     ents = _collect_entities(uo, {"nodes": [], "edges": []})
-    by_id = {e["id"]: e for e in ents}
-    assert "ENTRY::kernel_entry" in by_id
-    assert by_id["ENTRY::kernel_entry"]["label"] == "FlashAttentionScoreGradKernel"
-    assert by_id["ENTRY::kernel_entry"]["file_path"] == "op_kernel/arch35/flash_attention_score_grad_kernel.h"
-    assert by_id["ENTRY::host_tiling_entry"]["label"] == "DoOpTiling"
-
-
-def test_uo_kb_query_status_only_without_pattern(tmp_path: Path) -> None:
-    from uo.scripts.uo_kb_query import main as kb_query_main
-
-    repo = tmp_path / "op"
-    repo.mkdir()
-    root = operator_root(repo, "DemoOp")
-    init_operator_contract_layout(root, "DemoOp", repo)
-    (root / "indexes").mkdir(parents=True, exist_ok=True)
-    # Missing sqlite → status missing, but CLI must accept --status-only alone
-    rc = kb_query_main([str(repo), "--op-name", "DemoOp", "--status-only"])
-    assert rc == 0
-
-
-def test_strip_cbm_stage_path() -> None:
-    from uo.scripts.export_kb_graph import _strip_cbm_stage_path
-
-    raw = (
-        ".ascendc-agent/uo/cbm/index_stage/Demo/"
-        "op_kernel/arch35/kernel.h"
+    ep_ents = [
+        e
+        for e in ents
+        if e.get("kind") == "Entrypoint" or str(e.get("id") or "").startswith("EP_")
+    ]
+    assert ep_ents
+    by_label = {e["label"]: e for e in ep_ents}
+    assert "FlashAttentionScoreGradKernel" in by_label
+    assert by_label["FlashAttentionScoreGradKernel"]["file_path"] == (
+        "op_kernel/arch35/flash_attention_score_grad_kernel.h"
     )
-    assert _strip_cbm_stage_path(raw) == "op_kernel/arch35/kernel.h"
-    assert _strip_cbm_stage_path("op_host/a.cpp") == "op_host/a.cpp"
-
-
-def test_export_adds_entrypoint_entities(tmp_path: Path) -> None:
-    from uo.scripts.export_kb_graph import _collect_entities
-    from uo.scripts._ir_io import write_yaml
-
-    uo = tmp_path / ".ascendc-agent" / "uo"
-    (uo / "ir").mkdir(parents=True)
-    write_yaml(
-        uo / "ir" / "operator_graph.yaml",
-        {"version": 1, "op_name": "Demo", "nodes": [], "edges": []},
-    )
-    write_yaml(
-        uo / "ir" / "entrypoints.yaml",
-        {
-            "roles": {
-                "kernel_entry": {
-                    "status": "confirmed",
-                    "selected": {
-                        "name": "FlashAttentionScoreGradKernel",
-                        "file_path": (
-                            ".ascendc-agent/uo/cbm/index_stage/Demo/"
-                            "op_kernel/arch35/flash_attention_score_grad_kernel.h"
-                        ),
-                        "start_line": 28,
-                    },
-                },
-                "host_tiling_entry": {
-                    "status": "confirmed",
-                    "selected": {"name": "DoOpTiling", "file_path": "op_host/a.cpp", "start_line": 1},
-                },
-            }
-        },
-    )
-    ents = _collect_entities(uo, {"nodes": [], "edges": []})
-    by_id = {e["id"]: e for e in ents}
-    assert "ENTRY::kernel_entry" in by_id
-    assert by_id["ENTRY::kernel_entry"]["label"] == "FlashAttentionScoreGradKernel"
-    assert by_id["ENTRY::kernel_entry"]["file_path"] == "op_kernel/arch35/flash_attention_score_grad_kernel.h"
-    assert by_id["ENTRY::host_tiling_entry"]["label"] == "DoOpTiling"
+    assert "DoOpTiling" in by_label

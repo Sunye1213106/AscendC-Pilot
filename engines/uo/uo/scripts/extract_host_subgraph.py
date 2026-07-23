@@ -12,8 +12,9 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_ROOT))
 
 from uo._operator.artifacts import existing_operator_root, safe_op_name
-from uo.scripts._ir_io import read_yaml, snippet, stable_id, write_yaml
+from uo.scripts._ir_io import snippet, stable_id, write_yaml
 from uo.scripts.cbm_client import CbmClient
+from uo.scripts.def_use import extract_def_use_from_text
 from uo.scripts.extract_plan_io import (
     load_extract_plan,
     plan_chain_names,
@@ -23,6 +24,8 @@ from uo.scripts.extract_plan_io import (
 )
 from uo.scripts.function_body import extract_callee_names, resolve_helper_body
 from uo.scripts.macro_regions import analyze_macros, classify_macro_condition
+from uo.scripts.resolve_entrypoints import entrypoint_units, load_entrypoint_graph, nodes_for_role
+from uo.scripts.semantic_identity import mint_symbol_identity
 from uo.scripts.source_path import resolve_repo_source_path
 
 IF_RE = re.compile(r"\bif\s*(?:constexpr\s*)?\((.+?)\)\s*\{", re.DOTALL)
@@ -68,6 +71,14 @@ PLATFORM_RE = re.compile(r"\b(ubSize|l1Size|l0[abc]Size|coreNum|aicNum|aivNum|so
 BRIDGE_ROLE_HINTS = frozenset({"get_tiling_key", "save_tiling_data", "init_tiling_data"})
 
 
+PLATFORM_RE = re.compile(r"\b(ubSize|l1Size|l0[abc]Size|coreNum|aicNum|aivNum|socVersion|l2CacheSize)\b")
+BRIDGE_ROLE_HINTS = frozenset({"get_tiling_key", "save_tiling_data", "init_tiling_data"})
+TILING_TYPE_DECL_RE = re.compile(
+    r"\b([A-Za-z_][A-Za-z0-9_:]*)\s*\*?\s*(?:tilingData|tiling_data)\b"
+)
+GET_TILING_DATA_RE = re.compile(r"GetTilingData\s*<\s*([A-Za-z_][A-Za-z0-9_:]*)\s*>")
+
+
 def extract_host_subgraph(
     repo_root: Path,
     op_name: str,
@@ -76,13 +87,12 @@ def extract_host_subgraph(
     allow_empty_plan: bool = False,
 ) -> dict[str, Any]:
     uo_root = existing_operator_root(repo_root, op_name)
-    entrypoints = read_yaml(uo_root / "ir" / "entrypoints.yaml")
-    roles = entrypoints.get("roles") or {}
-    root_role = roles.get("host_tiling_entry") or {}
-    selected = root_role.get("selected")
+    graph = load_entrypoint_graph(uo_root)
+    seed_nodes = _seed_host_nodes(graph)
     unresolved: list[dict[str, Any]] = []
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
+    def_use_blocks: list[dict[str, Any]] = []
 
     for name in (
         "Input",
@@ -107,18 +117,35 @@ def extract_host_subgraph(
             }
         )
 
-    if not selected:
+    if not seed_nodes:
         unresolved.append(
             {
                 "id": "UNRES_HOST_ENTRY",
                 "kind": "entrypoint_missing",
-                "message": "host_tiling_entry not confirmed",
+                "message": "entrypoint_graph has no public_host_entry / impl units",
                 "file_path": "",
                 "snippet": "",
             }
         )
-        return _payload(op_name, architecture, nodes, edges, unresolved)
+        return _payload(op_name, architecture, nodes, edges, unresolved, def_use_blocks)
 
+    # Prefer a callable host entry over registration-only nodes for body seeding.
+    primary_node = next(
+        (
+            n
+            for n in seed_nodes
+            if str(n.get("role") or "")
+            in {
+                "public_host_entry",
+                "normal_impl",
+                "varlen_impl",
+                "empty_impl",
+                "host_tiling_entry",
+            }
+        ),
+        seed_nodes[0] if seed_nodes else {},
+    )
+    primary = _item_from_ep_node(primary_node) if primary_node else {}
     plan = load_extract_plan(uo_root)
     if plan is None and not allow_empty_plan:
         unresolved.append(
@@ -152,15 +179,21 @@ def extract_host_subgraph(
 
     client = CbmClient(uo_root)
     root_sym = None
-    if client.available and selected.get("qualified_name"):
-        root_sym = client.resolve_qn(selected["qualified_name"], file_contains=architecture)
-        if root_sym is None and selected.get("name"):
-            root_sym = client.resolve_qn(selected["name"], file_contains=architecture)
+    if client.available and primary.get("qualified_name"):
+        root_sym = client.resolve_qn(primary["qualified_name"], file_contains=architecture)
+        if root_sym is None and primary.get("name"):
+            root_sym = client.resolve_qn(primary["name"], file_contains=architecture)
 
     chain: list[dict[str, Any]] = []
-    keep_for_trace = {n for n in writer_keep if n} | {
-        str(selected.get("name") or "").casefold()
-    }
+    for node in seed_nodes:
+        item = _item_from_ep_node(node)
+        if not any(
+            (x.get("qualified_name") == item.get("qualified_name") and x.get("file_path") == item.get("file_path"))
+            for x in chain
+        ):
+            chain.append(item)
+
+    keep_for_trace = {n for n in writer_keep if n} | {str(primary.get("name") or "").casefold()}
     if root_sym is not None:
         traced = client.bounded_trace(
             root_sym,
@@ -169,17 +202,18 @@ def extract_host_subgraph(
             max_nodes=60,
         )
         for sym in traced:
-            chain.append(sym.as_dict())
-    else:
-        chain.append(selected)
+            d = sym.as_dict()
+            if not any(item.get("qualified_name") == d.get("qualified_name") for item in chain):
+                chain.append(d)
 
     for role in BRIDGE_ROLE_HINTS:
-        sel = (roles.get(role) or {}).get("selected")
-        if sel and not any(item.get("qualified_name") == sel.get("qualified_name") for item in chain):
-            chain.append(sel)
+        for node in nodes_for_role(graph, role):
+            item = _item_from_ep_node(node)
+            if not any(x.get("qualified_name") == item.get("qualified_name") for x in chain):
+                chain.append(item)
 
     # Seed helpers named in plan chain roles + entry-body CamelCase calls
-    entry_body, _, _ = resolve_helper_body(repo_root, selected, prefer_definition=True)
+    entry_body, _, _ = resolve_helper_body(repo_root, primary, prefer_definition=True)
     seed_names: list[str] = []
     for item in (plan or {}).get("writers") or []:
         if isinstance(item, dict) and str(item.get("role") or "") in {
@@ -207,9 +241,10 @@ def extract_host_subgraph(
                 {
                     "name": helper_name,
                     "qualified_name": helper_name,
-                    "file_path": selected.get("file_path") or "",
-                    "start_line": selected.get("start_line") or 0,
-                    "end_line": selected.get("end_line") or 0,
+                    "file_path": primary.get("file_path") or "",
+                    "start_line": primary.get("start_line") or 0,
+                    "end_line": primary.get("end_line") or 0,
+                    "class_or_namespace": primary.get("class_or_namespace") or "",
                     "label": "helper_call_seed",
                 }
             )
@@ -254,6 +289,20 @@ def extract_host_subgraph(
         body, start, end = resolve_helper_body(repo_root, item, prefer_definition=prefer_def)
         file_path = str(item.get("file_path") or file_path)
 
+        if body:
+            scope = str(item.get("qualified_name") or item.get("name") or "helper")
+            try:
+                def_use_blocks.append(
+                    extract_def_use_from_text(
+                        body,
+                        file_path=file_path,
+                        scope_symbol=scope,
+                        start_line=int(start or 1) or 1,
+                    )
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
         macro_info = file_macro_cache.get(file_path)
         if macro_info is None:
             resolved = resolve_repo_source_path(repo_root, file_path)
@@ -280,7 +329,16 @@ def extract_host_subgraph(
                 scan_lines.append("")
         scan_body = "\n".join(scan_lines)
 
-        helper_id = stable_id("HOST_HELPER_", item.get("name") or "fn")
+        helper_ident = mint_symbol_identity(
+            kind="helper",
+            name=str(item.get("name") or "fn"),
+            file_path=file_path,
+            qualified_name=str(item.get("qualified_name") or item.get("name") or "fn"),
+            class_or_namespace=str(item.get("class_or_namespace") or ""),
+            architecture=architecture,
+            prefix="HOST",
+        )
+        helper_id = helper_ident.stable_id
         nodes.append(
             {
                 "id": helper_id,
@@ -291,6 +349,8 @@ def extract_host_subgraph(
                 "file_path": file_path,
                 "start_line": start,
                 "end_line": end,
+                "identity_key": helper_ident.identity_key,
+                "class_or_namespace": item.get("class_or_namespace") or "",
             }
         )
         if prev_branch_id:
@@ -302,6 +362,8 @@ def extract_host_subgraph(
                     "target": helper_id,
                 }
             )
+
+        owning_type = _detect_owning_type(scan_body, item)
 
         # Host preprocessor branches overlapping this helper
         for directive in macro_info.directives:
@@ -513,18 +575,19 @@ def extract_host_subgraph(
                     continue
                 seen_fields.add(key)
                 tdf_id = stable_id("TDF_", field_name)
-                nodes.append(
-                    {
-                        "id": tdf_id,
-                        "layer": "bridge",
-                        "node_type": "TilingDataField",
-                        "name": field_name,
-                        "qualified_name": field_name,
-                        "file_path": file_path,
-                        "start_line": start,
-                        "end_line": end,
-                    }
-                )
+                tdf_node: dict[str, Any] = {
+                    "id": tdf_id,
+                    "layer": "bridge",
+                    "node_type": "TilingDataField",
+                    "name": field_name,
+                    "qualified_name": field_name,
+                    "file_path": file_path,
+                    "start_line": start,
+                    "end_line": end,
+                }
+                if owning_type:
+                    tdf_node["owning_type"] = owning_type
+                nodes.append(tdf_node)
                 src = prev_branch_id or helper_id
                 edges.append({"id": stable_id("E_", src, tdf_id), "type": "writes", "source": src, "target": tdf_id})
 
@@ -596,7 +659,89 @@ def extract_host_subgraph(
         )
 
     client.close()
-    return _payload(op_name, architecture, _dedupe_nodes(nodes), _dedupe_edges(edges), unresolved)
+    return _payload(op_name, architecture, _dedupe_nodes(nodes), _dedupe_edges(edges), unresolved, def_use_blocks)
+
+
+def _seed_host_nodes(graph: dict[str, Any]) -> list[dict[str, Any]]:
+    by_id = {str(n.get("id")): n for n in (graph.get("nodes") or []) if isinstance(n, dict) and n.get("id")}
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _add(node: dict[str, Any] | None) -> None:
+        if not isinstance(node, dict):
+            return
+        nid = str(node.get("id") or "")
+        if nid and nid in seen:
+            return
+        if nid:
+            seen.add(nid)
+        out.append(node)
+
+    for unit in entrypoint_units(graph):
+        if not isinstance(unit, dict):
+            continue
+        # Prefer host-side units (skip pure kernel units).
+        root = by_id.get(str(unit.get("entry_root") or ""))
+        role = str((root or {}).get("role") or "")
+        if role in {"public_kernel_entry", "concrete_kernel_impl", "kernel_family"}:
+            continue
+        _add(root)
+        for mid in unit.get("member_nodes") or []:
+            member = by_id.get(str(mid))
+            mrole = str((member or {}).get("role") or "")
+            if mrole in {
+                "operator_registration",
+                "public_kernel_entry",
+                "concrete_kernel_impl",
+                "kernel_family",
+            }:
+                continue
+            _add(member)
+
+    for role in ("public_host_entry", "normal_impl", "varlen_impl", "empty_impl"):
+        for node in nodes_for_role(graph, role):
+            _add(node)
+    return out
+
+
+def _item_from_ep_node(node: dict[str, Any]) -> dict[str, Any]:
+    loc = node.get("locator") if isinstance(node.get("locator"), dict) else {}
+    sym = node.get("symbol_ref") if isinstance(node.get("symbol_ref"), dict) else {}
+    name = str(node.get("name") or "")
+    qn = str(sym.get("qualified_name") or node.get("qualified_name") or name)
+    cls = str(sym.get("class_or_namespace") or node.get("class_or_namespace") or "")
+    if not cls and "::" in qn:
+        prefix = qn.rsplit("::", 1)[0]
+        if "/" not in prefix:
+            cls = prefix
+    return {
+        "id": node.get("id"),
+        "name": name or (qn.rsplit("::", 1)[-1] if qn else ""),
+        "qualified_name": qn,
+        "file_path": str(loc.get("file_path") or sym.get("repo_relative_path") or node.get("file_path") or "").replace(
+            "\\", "/"
+        ),
+        "start_line": int(loc.get("start_line") or node.get("start_line") or 0),
+        "end_line": int(loc.get("end_line") or node.get("end_line") or 0),
+        "class_or_namespace": cls,
+        "role": node.get("role"),
+    }
+
+
+def _detect_owning_type(body: str, item: dict[str, Any]) -> str:
+    """Best-effort owning type for TilingDataField (GetTilingData<T> / decl / class)."""
+    for match in GET_TILING_DATA_RE.finditer(body or ""):
+        typ = match.group(1).strip()
+        if typ:
+            return typ.split("::")[-1]
+    for match in TILING_TYPE_DECL_RE.finditer(body or ""):
+        typ = match.group(1).strip()
+        if typ and typ not in {"auto", "const", "static", "constexpr"}:
+            return typ.split("::")[-1]
+    cls = str(item.get("class_or_namespace") or "").strip()
+    if cls and "tiling" in cls.casefold():
+        return cls.split("::")[-1]
+    return ""
 
 
 def _collect_tdf_fields(body: str, sink_recvs: set[str], non_sink_roots: set[str]) -> list[str]:
@@ -662,6 +807,7 @@ def _payload(
     nodes: list[dict[str, Any]],
     edges: list[dict[str, Any]],
     unresolved: list[dict[str, Any]],
+    def_use: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "version": 1,
@@ -671,6 +817,7 @@ def _payload(
         "nodes": nodes,
         "edges": edges,
         "unresolved": unresolved,
+        "def_use": def_use or [],
     }
 
 

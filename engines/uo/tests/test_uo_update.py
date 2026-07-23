@@ -14,6 +14,7 @@ from uo.scripts.detect_kb_changes import detect_kb_changes
 from uo.scripts.export_diff_product import export_diff_product
 from uo.scripts.plan_kb_update import plan_kb_update
 from uo.scripts.update_operator import update_operator
+from tests._entrypoint_fixtures import write_entrypoint_graph
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -87,19 +88,16 @@ def _seed_kb(repo: Path, revision: str) -> Path:
 
     ir = root / "ir"
     ir.mkdir(parents=True, exist_ok=True)
-    entrypoints = {
-        "version": 1,
-        "roles": {
-            "host_entry": {
-                "selected": {"qualified_name": "DemoOpHost", "file_path": "op_host/demo.cpp"},
-                "status": "confirmed",
-            },
-            "kernel_entry": {
-                "selected": {"qualified_name": "DemoKernel", "file_path": "op_kernel/demo.cpp"},
-                "status": "confirmed",
-            },
-        },
-    }
+    entrypoint_graph = write_entrypoint_graph(
+        ir,
+        op_name="DemoOp",
+        host_name="DemoOpHost",
+        host_file="op_host/demo.cpp",
+        host_line=1,
+        kernel_name="DemoKernel",
+        kernel_file="op_kernel/demo.cpp",
+        kernel_line=1,
+    )
     host_nodes = [
         {
             "id": "VAR_HOST_X",
@@ -127,7 +125,6 @@ def _seed_kb(repo: Path, revision: str) -> Path:
         {"id": "BRIDGE_TILING_KEY", "layer": "bridge", "node_type": "TilingKey", "name": "TilingKey", "file_path": ""}
     ]
 
-    _write_yaml(ir / "entrypoints.yaml", entrypoints)
     _write_yaml(ir / "entrypoint_candidates.yaml", {"version": 1, "roles": {}})
     _write_yaml(ir / "host_subgraph.yaml", {"nodes": host_nodes, "edges": [], "unresolved": []})
     _write_yaml(
@@ -155,7 +152,7 @@ def _seed_kb(repo: Path, revision: str) -> Path:
         "op_name": "DemoOp",
         "architecture": "arch35",
         "layers": ["host", "bridge", "kernel"],
-        "entrypoints": entrypoints,
+        "entrypoint_graph": entrypoint_graph,
         "nodes": [*host_nodes, *kernel_nodes, *bridge_nodes],
         "edges": [],
         "tilingkey": {"args_sel_count": 1, "dimensions": [], "template_blocks": []},

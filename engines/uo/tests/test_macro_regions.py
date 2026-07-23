@@ -15,6 +15,7 @@ from uo.scripts.macro_regions import (
     valued_seed_defines,
 )
 from uo.scripts.provenance import load_key_dimension_index
+from tests._entrypoint_fixtures import write_entrypoint_graph
 
 
 def test_eval_if_zero_and_defined() -> None:
@@ -133,21 +134,12 @@ class DemoKernel {
     init_operator_contract_layout(root, "demo_op", repo)
     ir = root / "ir"
     ir.mkdir(parents=True, exist_ok=True)
-    write_yaml(
-        ir / "entrypoints.yaml",
-        {
-            "version": 1,
-            "roles": {
-                "kernel_entry": {
-                    "selected": {
-                        "name": "DemoKernel",
-                        "file_path": "op_kernel/arch35/demo_op_kernel.h",
-                        "start_line": 2,
-                        "end_line": 20,
-                    }
-                }
-            },
-        },
+    write_entrypoint_graph(
+        ir,
+        op_name="demo_op",
+        kernel_name="DemoKernel",
+        kernel_file="op_kernel/arch35/demo_op_kernel.h",
+        kernel_line=2,
     )
     write_yaml(ir / "tilingkey_space.yaml", {"dimensions": [{"name": "IsFoo", "values": [0, 1]}]})
     write_yaml(ir / "extract_plan.yaml", {"version": 1, "writers": [], "receivers": [], "aliases": []})
@@ -193,21 +185,12 @@ void SaveStuff() {
     init_operator_contract_layout(root, op, repo)
     ir = root / "ir"
     ir.mkdir(parents=True, exist_ok=True)
-    write_yaml(
-        ir / "entrypoints.yaml",
-        {
-            "version": 1,
-            "roles": {
-                "host_tiling_entry": {
-                    "selected": {
-                        "name": "FooTiling",
-                        "file_path": "op_host/arch35/tiling.cpp",
-                        "start_line": 2,
-                        "end_line": 4,
-                    }
-                }
-            },
-        },
+    write_entrypoint_graph(
+        ir,
+        op_name=op,
+        host_name="FooTiling",
+        host_file="op_host/arch35/tiling.cpp",
+        host_line=2,
     )
     write_yaml(
         ir / "extract_plan.yaml",

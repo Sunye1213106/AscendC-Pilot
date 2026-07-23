@@ -15,6 +15,7 @@ from uo.scripts.provenance import (
     load_key_dimension_index,
     norm_symbol,
 )
+from tests._entrypoint_fixtures import write_entrypoint_graph
 
 
 def test_norm_and_bind_is_drop_alias() -> None:
@@ -73,24 +74,12 @@ class DemoKernel {
     init_operator_contract_layout(root, "demo_op", repo)
     ir = root / "ir"
     ir.mkdir(parents=True, exist_ok=True)
-    (ir / "entrypoints.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "version": 1,
-                "roles": {
-                    "kernel_entry": {
-                        "selected": {
-                            "name": "DemoKernel",
-                            "file_path": "op_kernel/arch35/demo_op_kernel.h",
-                            "start_line": 1,
-                            "end_line": 20,
-                        }
-                    }
-                },
-            },
-            sort_keys=False,
-        ),
-        encoding="utf-8",
+    write_entrypoint_graph(
+        ir,
+        op_name="demo_op",
+        kernel_name="DemoKernel",
+        kernel_file="op_kernel/arch35/demo_op_kernel.h",
+        kernel_line=1,
     )
     (ir / "tilingkey_space.yaml").write_text(
         yaml.safe_dump(
