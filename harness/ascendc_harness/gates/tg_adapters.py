@@ -36,25 +36,30 @@ def _op_name(project_root: Path) -> str:
 def _wrap_exc(gate: str, fn: Any) -> dict[str, Any]:
     try:
         payload = fn()
-        if isinstance(payload, dict) and "status" in payload and "ok" not in payload:
-            ok = str(payload.get("status") or "").lower() in {"pass", "passed", "ok", "confirmed"}
-            return {
-                "gate": gate,
-                "ok": ok,
-                "detail": payload,
-                "message": "ok" if ok else f"{gate} status={payload.get('status')!r}",
-            }
         if isinstance(payload, dict) and "ok" in payload:
             return {"gate": gate, **payload} if payload.get("gate") else {
                 "gate": gate,
                 "ok": bool(payload.get("ok")),
                 "detail": payload,
             }
+        if isinstance(payload, dict) and "status" in payload:
+            status = str(payload.get("status") or "").lower()
+            ok = status in {"pass", "passed", "ok", "confirmed", "approved", "closed", "resolved"}
+            fail_statuses = {"pending", "blocked", "ready_for_llm", "unresolved", "fail", "failed", "error"}
+            if status in fail_statuses:
+                ok = False
+            return {
+                "gate": gate,
+                "ok": ok,
+                "detail": payload,
+                "message": "ok" if ok else f"{gate} status={payload.get('status')!r}",
+            }
+        # Non-dict / no status / no ok → fail closed (do not invent success)
         return {
             "gate": gate,
-            "ok": True,
+            "ok": False,
             "detail": payload if isinstance(payload, dict) else {"result": payload},
-            "message": "ok",
+            "message": f"{gate}: domain payload missing ok/status",
         }
     except Exception as exc:  # noqa: BLE001 — domain engines raise typed errors
         ask = getattr(exc, "ask", "") or ""
@@ -77,6 +82,52 @@ def gate_merge_pass(project_root: Path) -> dict[str, Any]:
         return require_merge_pass(out)
 
     return _wrap_exc("merge_pass", _run)
+
+
+def gate_bind_progress(project_root: Path) -> dict[str, Any]:
+    """Bind phase: lexicon must exist; ready_for_llm with zero applied progress fails."""
+    out = tg_root(project_root)
+    lex = out / "realization" / "binding_lexicon.yaml"
+    unresolved = _load(out / "realization" / "unresolved.yaml")
+    gaps_doc = _load(out / "realization" / "binding_gaps.yaml")
+    if not lex.is_file():
+        return {
+            "gate": "bind_progress",
+            "ok": False,
+            "message": "realization/binding_lexicon.yaml missing",
+        }
+    status = ""
+    gaps: list[Any] = []
+    if isinstance(unresolved, dict):
+        status = str(unresolved.get("status") or "").lower()
+        gaps = list(unresolved.get("binding_gaps") or [])
+    if isinstance(gaps_doc, dict) and gaps_doc.get("gaps") is not None:
+        gaps = list(gaps_doc.get("gaps") or gaps)
+        status = str(gaps_doc.get("status") or status).lower()
+    # blocked / ready_for_llm with remaining gaps → not yet closed for advance
+    if status in {"blocked", "pending", "unresolved"}:
+        return {"gate": "bind_progress", "ok": False, "status": status, "message": f"bind status={status}"}
+    if status == "ready_for_llm" and gaps:
+        return {
+            "gate": "bind_progress",
+            "ok": False,
+            "status": status,
+            "remaining_gaps": len(gaps),
+            "message": f"binding gaps remain ({len(gaps)}); apply semantic_bind_patch against llm_bind_prompt_bundle",
+        }
+    # ready / pass / no gaps
+    lex_doc = _load(lex) if lex.is_file() else {}
+    has_deriv = bool(isinstance(lex_doc, dict) and (lex_doc.get("key_derivations") or lex_doc.get("key_tokens")))
+    if status in {"ready", "pass", "resolved", "ok", ""} and (not gaps or has_deriv or status in {"ready", "pass"}):
+        return {"gate": "bind_progress", "ok": True, "status": status or "ready", "message": "ok"}
+    if not gaps:
+        return {"gate": "bind_progress", "ok": True, "status": status or "ready", "message": "ok"}
+    return {
+        "gate": "bind_progress",
+        "ok": False,
+        "status": status,
+        "message": "bind progress insufficient",
+    }
 
 
 def gate_domain_symmetry(project_root: Path) -> dict[str, Any]:
@@ -257,7 +308,7 @@ def _latest_solve_root(out: Path) -> Path | None:
 
 
 def _uncovered_terminal(items: list[Any]) -> tuple[bool, list[str]]:
-    """Return (ok, open_ids). Terminal = resolved|verified|not_applicable|human_required|blocked|rejected."""
+    """Return (ok, open_ids). Terminal = resolved|verified|not_applicable|human_required|rejected (not blocked)."""
     from ascendc_harness.workflows.specs import CLOSED_OBLIGATION_STATUSES
 
     open_ids: list[str] = []
@@ -270,10 +321,11 @@ def _uncovered_terminal(items: list[Any]) -> tuple[bool, list[str]]:
         status = str(it.get("status") or it.get("state") or "open").lower()
         if status in CLOSED_OBLIGATION_STATUSES or status in {"closed", "done", "pass", "passed"}:
             continue
+        # blocked remains open for solve terminal — needs human/rework, not success
         kid = str(it.get("id") or it.get("obligation_id") or it.get("key") or "")
         if kid:
             open_ids.append(kid)
-        elif status in {"open", "unresolved", "pending", ""}:
+        elif status in {"open", "unresolved", "pending", "blocked", ""}:
             open_ids.append(str(it)[:80])
     return (not open_ids), open_ids
 

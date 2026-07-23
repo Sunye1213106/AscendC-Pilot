@@ -336,12 +336,45 @@ def build_entrypoint_graph(
 
 
 def apply_entrypoint_confirmation(candidates_doc: dict[str, Any], confirmation: dict[str, Any]) -> dict[str, Any]:
-    """Merge human/LLM patch into entrypoint_graph (add/verify nodes & edges)."""
-    graph = dict(candidates_doc.get("entrypoint_graph") or {})
-    nodes = {n["id"]: dict(n) for n in graph.get("nodes") or []}
-    edges = [dict(e) for e in graph.get("edges") or []]
+    """Merge human/LLM patch into entrypoint_graph (add/verify nodes & edges).
 
-    # Patch may supply nodes/edges directly (preferred).
+    Graph-mutating actions must cite candidate node/edge ids. Empty accept/select
+    that would mark closure without changing the graph is rejected.
+    """
+    graph = dict(candidates_doc.get("entrypoint_graph") or {})
+    nodes = {n["id"]: dict(n) for n in graph.get("nodes") or [] if n.get("id")}
+    edges = [dict(e) for e in graph.get("edges") or []]
+    cand_nodes = {n["id"] for n in (candidates_doc.get("entrypoint_graph") or {}).get("nodes") or [] if n.get("id")}
+    cand_nodes |= set(nodes)
+    # Candidate listings may also expose role buckets
+    for key, val in candidates_doc.items():
+        if key in {"entrypoint_graph", "architecture", "op_name", "version"}:
+            continue
+        if isinstance(val, list):
+            for item in val:
+                if isinstance(item, dict) and item.get("id"):
+                    cand_nodes.add(str(item["id"]))
+                elif isinstance(item, dict) and (item.get("qualified_name") or item.get("name")):
+                    # Allow promoting known candidate rows to nodes
+                    pass
+    cand_edge_ids = {
+        str(e.get("id") or mint_edge_id(str(e.get("type") or "dispatches_to"), str(e.get("source")), str(e.get("target"))))
+        for e in (candidates_doc.get("entrypoint_graph") or {}).get("edges") or []
+    }
+    rejected: list[dict[str, Any]] = []
+    applied_edges = 0
+    applied_nodes = 0
+
+    action = str(confirmation.get("action") or confirmation.get("action_type") or "").lower()
+    if action in {"accept", "select", "accept_edge", "select_edge"}:
+        # Must cite at least one candidate edge or explicit edges list
+        cited = list(confirmation.get("candidate_ids") or confirmation.get("edge_ids") or [])
+        if not cited and not (confirmation.get("edges") or confirmation.get("nodes")):
+            raise ValueError(
+                "entrypoint confirmation action "
+                f"{action!r} requires candidate_ids/edge_ids or explicit nodes/edges; empty accept forbidden"
+            )
+
     for node in confirmation.get("nodes") or []:
         nid = node.get("id")
         if not nid:
@@ -349,19 +382,63 @@ def apply_entrypoint_confirmation(candidates_doc: dict[str, Any], confirmation: 
             built = _node_from_candidate(node, role=role, status=str(node.get("status") or "verified"))
             nid = built["id"]
             node = {**built, **node, "id": nid}
+        # New nodes must either already be candidates or carry file evidence
+        if nid not in cand_nodes and not (node.get("evidence") or (node.get("locator") or {}).get("file_path")):
+            rejected.append({"id": nid, "reason": "node_not_in_candidates_and_no_evidence"})
+            continue
         nodes[nid] = {**nodes.get(nid, {}), **node}
+        cand_nodes.add(str(nid))
+        applied_nodes += 1
+
+    existing_edge_keys = {
+        (str(e.get("type")), str(e.get("source")), str(e.get("target"))) for e in edges
+    }
     for edge in confirmation.get("edges") or []:
+        src = str(edge.get("source") or "")
+        tgt = str(edge.get("target") or "")
+        etype = str(edge.get("type") or "dispatches_to")
+        eid = str(
+            edge.get("id")
+            or mint_edge_id(etype, src, tgt)
+        )
+        # Must cite candidate endpoints (or newly confirmed nodes in this patch)
+        if src not in cand_nodes or tgt not in cand_nodes:
+            if eid not in cand_edge_ids:
+                rejected.append(
+                    {
+                        "id": eid,
+                        "reason": "edge_endpoints_not_in_candidates",
+                        "source": src,
+                        "target": tgt,
+                    }
+                )
+                continue
+        if not src or not tgt:
+            rejected.append({"id": eid, "reason": "edge_missing_endpoints"})
+            continue
+        key = (etype, src, tgt)
+        if key in existing_edge_keys:
+            # Upgrade confidence/evidence on existing edge
+            for e in edges:
+                if (str(e.get("type")), str(e.get("source")), str(e.get("target"))) == key:
+                    if edge.get("evidence"):
+                        e["evidence"] = list(e.get("evidence") or []) + list(edge.get("evidence") or [])
+                    e["confidence"] = edge.get("confidence") or e.get("confidence") or "confirmed"
+                    applied_edges += 1
+                    break
+            continue
         edges.append(
             {
-                "id": edge.get("id")
-                or mint_edge_id(str(edge.get("type") or "dispatches_to"), str(edge.get("source")), str(edge.get("target"))),
-                "type": edge.get("type") or "dispatches_to",
-                "source": edge.get("source"),
-                "target": edge.get("target"),
+                "id": eid,
+                "type": etype,
+                "source": src,
+                "target": tgt,
                 "evidence": edge.get("evidence") or [],
-                "confidence": edge.get("confidence") or "candidate",
+                "confidence": edge.get("confidence") or "confirmed",
             }
         )
+        existing_edge_keys.add(key)
+        applied_edges += 1
 
     # Legacy confirmation shape roles.<role>.{qualified_name,name} — promote to graph nodes only.
     for role, conf_item in (confirmation.get("roles") or {}).items():
@@ -372,6 +449,16 @@ def apply_entrypoint_confirmation(candidates_doc: dict[str, Any], confirmation: 
         role_n = _normalize_role(role)
         built = _node_from_candidate({**conf_item, "role": role_n}, role=role_n, status="verified")
         nodes[built["id"]] = built
+        cand_nodes.add(built["id"])
+        applied_nodes += 1
+
+    if action in {"accept", "select", "accept_edge", "select_edge"} and applied_edges == 0 and applied_nodes == 0:
+        raise ValueError(
+            f"entrypoint confirmation action {action!r} produced no graph changes; "
+            "refusing to mark resolved without candidate-backed mutations"
+        )
+    if rejected and applied_edges == 0 and applied_nodes == 0:
+        raise ValueError(f"entrypoint confirmation rejected all mutations: {rejected[:5]}")
 
     _apply_link_status(nodes, edges)
     architecture = str(graph.get("architecture") or candidates_doc.get("architecture") or "arch35")
@@ -389,7 +476,88 @@ def apply_entrypoint_confirmation(candidates_doc: dict[str, Any], confirmation: 
         "closure": closure,
         "tiling_templates": graph.get("tiling_templates") or [],
         "source": "entrypoint_confirmation",
+        "confirmation_rejected": rejected,
+        "confirmation_applied": {"nodes": applied_nodes, "edges": applied_edges},
     }
+
+
+CONFIRMATION_LEDGER_NAME = "entrypoint_confirmation_ledger.yaml"
+
+
+def confirmation_ledger_path(uo_root: Path) -> Path:
+    return uo_root / "ir" / CONFIRMATION_LEDGER_NAME
+
+
+def _fingerprint_sources(repo_root: Path, file_paths: list[str]) -> dict[str, str]:
+    import hashlib
+
+    out: dict[str, str] = {}
+    for rel in file_paths:
+        path = repo_root / rel
+        if path.is_file():
+            out[rel.replace("\\", "/")] = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+        else:
+            out[rel.replace("\\", "/")] = "missing"
+    return out
+
+
+def load_valid_confirmation_ledger(uo_root: Path, repo_root: Path) -> dict[str, Any] | None:
+    """Return confirmation patch from ledger if source fingerprints still match."""
+    path = confirmation_ledger_path(uo_root)
+    doc = read_yaml(path)
+    if not doc or not isinstance(doc, dict):
+        return None
+    if str(doc.get("status") or "") == "invalidated":
+        return None
+    stored = doc.get("source_fingerprints") or {}
+    files = list(stored.keys()) or list(doc.get("source_files") or [])
+    if not files:
+        # No fingerprint protection — still allow merge but mark fragile
+        patch = doc.get("confirmation") or doc.get("patch")
+        return patch if isinstance(patch, dict) else None
+    current = _fingerprint_sources(repo_root, files)
+    for rel, digest in stored.items():
+        if current.get(rel) != digest:
+            # Invalidate ledger on source change
+            doc["status"] = "invalidated"
+            doc["invalidated_reason"] = f"source_changed:{rel}"
+            write_yaml(path, doc)
+            return None
+    patch = doc.get("confirmation") or doc.get("patch")
+    return patch if isinstance(patch, dict) else None
+
+
+def write_confirmation_ledger(
+    uo_root: Path,
+    repo_root: Path,
+    confirmation: dict[str, Any],
+    *,
+    source_files: list[str] | None = None,
+) -> Path:
+    """Persist LLM/human confirmation as the sole additive fact source across rebuilds."""
+    files = list(source_files or [])
+    if not files:
+        for edge in confirmation.get("edges") or []:
+            for ev in edge.get("evidence") or []:
+                if isinstance(ev, dict) and ev.get("file_path"):
+                    files.append(str(ev["file_path"]))
+                elif isinstance(ev, str) and "/" in ev:
+                    files.append(ev)
+        for node in confirmation.get("nodes") or []:
+            fp = str((node.get("locator") or {}).get("file_path") or node.get("file_path") or "")
+            if fp:
+                files.append(fp)
+    files = sorted({f.replace("\\", "/") for f in files if f})
+    payload = {
+        "version": 1,
+        "status": "active",
+        "source_files": files,
+        "source_fingerprints": _fingerprint_sources(repo_root, files),
+        "confirmation": confirmation,
+    }
+    path = confirmation_ledger_path(uo_root)
+    write_yaml(path, payload)
+    return path
 
 
 def entrypoint_units(graph: dict[str, Any]) -> list[dict[str, Any]]:
@@ -426,6 +594,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.confirm_patch:
         patch = read_yaml(Path(args.confirm_patch))
         graph = apply_entrypoint_confirmation(candidates, patch)
+        write_confirmation_ledger(uo_root, repo_root, patch)
     if args.write:
         write_yaml(uo_root / "ir" / "entrypoint_candidates.yaml", {k: v for k, v in candidates.items() if k != "entrypoint_graph"})
         write_yaml(uo_root / "ir" / "entrypoint_graph.yaml", graph)
@@ -925,7 +1094,9 @@ def _evaluate_closure(nodes: dict[str, dict[str, Any]], edges: list[dict[str, An
             )
 
     kernel_ok = True
-    kern = by_role.get("public_kernel_entry") or by_role.get("concrete_kernel_impl") or by_role.get("kernel_family") or []
+    kern_public = by_role.get("public_kernel_entry") or []
+    kern_impl = by_role.get("concrete_kernel_impl") or by_role.get("kernel_family") or []
+    kern = kern_public or kern_impl or by_role.get("template_dispatcher") or []
     if not kern:
         kernel_ok = False
         blocking.append(_block("entrypoint_kernel_missing", "no public/concrete kernel entry"))
@@ -933,6 +1104,26 @@ def _evaluate_closure(nodes: dict[str, dict[str, Any]], edges: list[dict[str, An
         if not any(n.get("architecture") in {architecture, "neutral"} for n in kern):
             kernel_ok = False
             blocking.append(_block("entrypoint_kernel_arch_missing", f"no kernel entry compatible with {architecture}"))
+        # Kernel main chain: public kernel → dispatch/select → family/impl (METHOD contract)
+        impl_or_family = {"concrete_kernel_impl", "kernel_family", "template_dispatcher"}
+        has_impl_side = any(by_role.get(r) for r in impl_or_family)
+        if kern_public and has_impl_side:
+            if not has_edge(
+                {"dispatches_to", "selects", "instantiates", "registers"},
+                {"public_kernel_entry", "template_dispatcher"},
+                impl_or_family,
+            ):
+                kernel_ok = False
+                blocking.append(
+                    _block(
+                        "entrypoint_kernel_dispatch_missing",
+                        "public kernel not linked to family/impl via dispatch/select",
+                    )
+                )
+        elif kern_public and not has_impl_side:
+            # Public-only without family/impl is incomplete for arch-specific operators
+            kernel_ok = False
+            blocking.append(_block("entrypoint_kernel_impl_missing", "public kernel present but no family/impl nodes"))
 
     if host_ok:
         for role in ("operator_registration", "public_host_entry", "tiling_registry", "normal_impl", "varlen_impl", "empty_impl", "template_registration"):
@@ -949,6 +1140,7 @@ def _evaluate_closure(nodes: dict[str, dict[str, Any]], edges: list[dict[str, An
         "host_main_chain": "closed" if host_ok else "unresolved",
         "kernel_main_chain": "closed" if kernel_ok else "unresolved",
         "blocking_unresolved": blocking,
+        "closed": bool(host_ok and kernel_ok and not blocking),
     }
 
 

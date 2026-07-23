@@ -96,7 +96,39 @@ def apply_resolution(
             rejected.append({"id": uid, "reason": "unknown_unresolved"})
             continue
         status = _coerce_status(item)
+        action = str(item.get("action") or item.get("action_type") or "").lower()
+        # Graph-mutating / accept actions must cite a candidate or produce field changes.
+        if action in {"accept", "select", "accept_edge", "select_edge", "resolve_edge"}:
+            cited = item.get("candidate_id") or item.get("candidate_ids") or item.get("edge_id")
+            has_graph_change = bool(
+                item.get("edge")
+                or item.get("edges")
+                or item.get("node_patch")
+                or item.get("set")
+                or any(k in item for k in WHITELIST_NODE_FIELDS)
+            )
+            if not cited and not has_graph_change:
+                rejected.append(
+                    {
+                        "id": uid,
+                        "reason": "empty_accept_without_candidate",
+                        "action": action,
+                    }
+                )
+                continue
         if status in VALID_STATUSES:
+            # Status-only accept without rationale / resolution detail is a no-op fake resolve.
+            if status in {"resolved", "accepted"} and not (
+                item.get("rationale")
+                or item.get("resolution")
+                or item.get("candidate_id")
+                or item.get("candidate_ids")
+                or item.get("edge")
+                or item.get("edges")
+                or any(k in item for k in WHITELIST_DIAG_FIELDS if k not in {"status"})
+            ):
+                rejected.append({"id": uid, "reason": "status_only_without_evidence", "status": status})
+                continue
             unresolved_by_id[uid]["status"] = status
             for key in WHITELIST_DIAG_FIELDS:
                 if key in item:

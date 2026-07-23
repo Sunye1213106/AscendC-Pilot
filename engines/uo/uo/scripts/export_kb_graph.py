@@ -42,6 +42,21 @@ def export_kb_graph(repo_root: Path, op_name: str, *, write: bool = True) -> dic
 
     entities = _collect_entities(uo_root, graph)
     relations = _collect_relations(uo_root, graph, entities)
+    # Final endpoint integrity: every relation endpoint must exist in entities.
+    entity_ids = {str(e.get("id") or "") for e in entities}
+    orphans = [
+        r
+        for r in relations
+        if str(r.get("source_id") or "") not in entity_ids or str(r.get("target_id") or "") not in entity_ids
+    ]
+    if orphans:
+        sample = [
+            f"{o.get('type')}:{o.get('source_id')}->{o.get('target_id')}" for o in orphans[:8]
+        ]
+        raise RuntimeError(
+            f"export_kb_graph: {len(orphans)} relations have missing endpoints after stub materialization; "
+            f"sample={sample}"
+        )
     aliases = _collect_aliases(uo_root, entities)
     source_hashes = _source_hashes(uo_root)
     db_path = uo_root / "indexes" / "kb_graph.sqlite"

@@ -26,11 +26,22 @@ REWORK_STAGES = frozenset(
         "none",
     }
 )
-# Parent action alias: input_derivable → residual_resolve + classify/escalate.
+# Normalize finding stages before Harness reason bridging.
 REWORK_STAGE_ALIASES = {
     "input_derivable": "residual_resolve",
     "entrypoints": "EXTRACT_REWORK",
     "extract_plan": "EXTRACT_REWORK",
+}
+
+# Domain rework_stage → Harness transition reason_code (single bridge; no parallel FSM).
+REWORK_STAGE_TO_REASON: dict[str, str] = {
+    "scope": "SCOPE_REWORK",
+    "entrypoints": "EXTRACT_REWORK",
+    "extract_plan": "EXTRACT_REWORK",
+    "residual_resolve": "INTEGRITY_REWORK",
+    "input_derivable": "INTEGRITY_REWORK",
+    "export_graph": "export_graph",
+    "none": "none",
 }
 
 
@@ -205,6 +216,7 @@ def check_kb_integrity(repo_root: Path, op_name: str, *, write_outputs: bool = T
     payload = {
         "version": 1,
         "status": status,
+        "ok": status == "pass",
         "op_name": op_name,
         "open_unresolved_count": open_count,
         "blocking_unresolved_count": len(blocking_unresolved),
@@ -212,6 +224,8 @@ def check_kb_integrity(repo_root: Path, op_name: str, *, write_outputs: bool = T
         "entrypoint_closure": {
             "host_main_chain": host_chain,
             "kernel_main_chain": kernel_chain,
+            "blocking_unresolved": list(closure.get("blocking_unresolved") or []),
+            "closed": bool(host_chain == "closed" and kernel_chain == "closed" and not (closure.get("blocking_unresolved") or [])),
         },
         "ledger_count": len(ledger_items),
         "sqlite_orphan_src": orphan_src,
@@ -219,6 +233,7 @@ def check_kb_integrity(repo_root: Path, op_name: str, *, write_outputs: bool = T
         "input_derivable": id_stats,
         "layered_coverage": coverage_stats,
         "issues": issues,
+        "rework_reason": primary_rework_reason({"issues": issues}) if status != "pass" else "none",
     }
 
     # Fold into validate_kb / final
@@ -273,15 +288,42 @@ def check_kb_integrity(repo_root: Path, op_name: str, *, write_outputs: bool = T
 
 
 def map_rework_stage(finding: dict[str, Any]) -> str:
-    """Parent routing helper for kb-review findings.
-
-    `input_derivable` is a first-class finding stage; parents may alias it to
-    residual_resolve via REWORK_STAGE_ALIASES when reusing the resolve loop.
-    """
+    """Normalize finding.rework_stage (applies REWORK_STAGE_ALIASES)."""
     stage = str(finding.get("rework_stage") or "none")
+    stage = REWORK_STAGE_ALIASES.get(stage, stage)
     if stage not in REWORK_STAGES:
         return "none"
     return stage
+
+
+def to_harness_reason_code(finding: dict[str, Any] | str) -> str:
+    """Map a domain finding (or stage string) to a Harness transition reason_code."""
+    if isinstance(finding, str):
+        stage = REWORK_STAGE_ALIASES.get(finding, finding)
+    else:
+        stage = map_rework_stage(finding)
+    return REWORK_STAGE_TO_REASON.get(stage, "INTEGRITY_REWORK")
+
+
+def primary_rework_reason(integrity_payload: dict[str, Any]) -> str:
+    """Pick the highest-priority harness reason from integrity issues."""
+    priority = [
+        "EXTRACT_REWORK",
+        "SCOPE_REWORK",
+        "INTEGRITY_REWORK",
+        "export_graph",
+    ]
+    reasons: list[str] = []
+    for issue in integrity_payload.get("issues") or []:
+        if not isinstance(issue, dict):
+            continue
+        if str(issue.get("severity") or "").lower() not in {"error", "blocking"}:
+            continue
+        reasons.append(to_harness_reason_code(issue))
+    for code in priority:
+        if code in reasons:
+            return code
+    return reasons[0] if reasons else "INTEGRITY_REWORK"
 
 
 def _collect_input_derivable_issues(uo_root: Path, issues: list[dict[str, Any]]) -> dict[str, Any]:

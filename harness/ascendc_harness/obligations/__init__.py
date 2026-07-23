@@ -23,6 +23,8 @@ _OPEN_STATUSES = frozenset(
         "in_progress",
         "failed",
         "error",
+        "ready_for_llm",
+        "blocked",
         "",
     }
 )

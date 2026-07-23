@@ -87,7 +87,61 @@ def propose_extract_plan(
 ) -> dict[str, Any]:
     uo_root = existing_operator_root(repo_root, op_name)
     graph = load_entrypoint_graph(uo_root)
+    if not graph or not (graph.get("nodes") or graph.get("extraction_units")):
+        return {
+            "version": 1,
+            "op_name": op_name,
+            "architecture": architecture,
+            "status": "blocked",
+            "ok": False,
+            "reason": "entrypoint_graph_missing_or_empty",
+            "message": (
+                "ir/entrypoint_graph.yaml missing or has no nodes/extraction_units; "
+                "run resolve_entrypoints / boundary extract before propose_extract_plan"
+            ),
+            "writer_candidates": [],
+            "receiver_candidates": [],
+            "alias_candidates": [],
+            "non_sink_root_candidates": [],
+            "extra_entry_candidates": [],
+            "counts": {"writers": 0, "receivers": 0, "aliases": 0, "non_sink_roots": 0, "extra_entries": 0},
+        }
+    boundary_path = uo_root / "ir" / "operator_boundary.yaml"
+    if not boundary_path.is_file():
+        return {
+            "version": 1,
+            "op_name": op_name,
+            "architecture": architecture,
+            "status": "blocked",
+            "ok": False,
+            "reason": "operator_boundary_missing",
+            "message": (
+                "ir/operator_boundary.yaml missing; run extract_operator_boundary before scoring extract plan"
+            ),
+            "writer_candidates": [],
+            "receiver_candidates": [],
+            "alias_candidates": [],
+            "non_sink_root_candidates": [],
+            "extra_entry_candidates": [],
+            "counts": {"writers": 0, "receivers": 0, "aliases": 0, "non_sink_roots": 0, "extra_entries": 0},
+        }
     seed_nodes = _seed_entrypoint_nodes(graph)
+    if not seed_nodes:
+        return {
+            "version": 1,
+            "op_name": op_name,
+            "architecture": architecture,
+            "status": "blocked",
+            "ok": False,
+            "reason": "entrypoint_seeds_empty",
+            "message": "entrypoint_graph has no seed host nodes for extract scoring",
+            "writer_candidates": [],
+            "receiver_candidates": [],
+            "alias_candidates": [],
+            "non_sink_root_candidates": [],
+            "extra_entry_candidates": [],
+            "counts": {"writers": 0, "receivers": 0, "aliases": 0, "non_sink_roots": 0, "extra_entries": 0},
+        }
 
     writers: dict[str, dict[str, Any]] = {}
     receivers: dict[str, dict[str, Any]] = {}
@@ -274,6 +328,7 @@ def propose_extract_plan(
         "op_name": op_name,
         "architecture": architecture,
         "status": "candidates",
+        "ok": True,
         "writer_candidates": writer_list,
         "receiver_candidates": receiver_list,
         "alias_candidates": alias_list,
@@ -304,11 +359,14 @@ def main(argv: list[str] | None = None) -> int:
             existing_operator_root(repo_root, op_name) / "ir" / "extract_plan_candidates.yaml",
             payload,
         )
-    c = payload["counts"]
+    c = payload.get("counts") or {}
     print(
-        f"extract_plan candidates writers={c['writers']} receivers={c['receivers']} "
-        f"aliases={c['aliases']} non_sink={c['non_sink_roots']} extra={c['extra_entries']}"
+        f"extract_plan status={payload.get('status')} writers={c.get('writers', 0)} "
+        f"receivers={c.get('receivers', 0)} aliases={c.get('aliases', 0)} "
+        f"non_sink={c.get('non_sink_roots', 0)} extra={c.get('extra_entries', 0)}"
     )
+    if payload.get("ok") is False or str(payload.get("status") or "") == "blocked":
+        return 2
     return 0
 
 

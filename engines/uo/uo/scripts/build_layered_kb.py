@@ -18,7 +18,12 @@ from uo.scripts.extract_kernel_subgraph import extract_kernel_subgraph
 from uo.scripts.extract_plan_io import load_extract_plan
 from uo.scripts.extract_tilingkey_space import extract_tilingkey_space
 from uo.scripts.reconcile_bridge import reconcile_bridge
-from uo.scripts.resolve_entrypoints import apply_entrypoint_confirmation, collect_entrypoint_candidates
+from uo.scripts.resolve_entrypoints import (
+    apply_entrypoint_confirmation,
+    collect_entrypoint_candidates,
+    load_valid_confirmation_ledger,
+    write_confirmation_ledger,
+)
 
 
 ALL_EXTRACT_LAYERS = ("entrypoints", "host", "kernel", "tilingkey", "golden", "bridge")
@@ -51,8 +56,14 @@ def build_layered_kb(
             ir_dir / "entrypoint_candidates.yaml",
             {k: v for k, v in candidates.items() if k != "entrypoint_graph"},
         )
-        if confirmation_patch:
-            entrypoint_graph = apply_entrypoint_confirmation(candidates, confirmation_patch)
+        patch = confirmation_patch
+        if patch is None:
+            # Rebuild must not overwrite LLM-confirmed edges: re-apply valid ledger.
+            patch = load_valid_confirmation_ledger(uo_root, repo_root)
+        if patch:
+            entrypoint_graph = apply_entrypoint_confirmation(candidates, patch)
+            if confirmation_patch is not None:
+                write_confirmation_ledger(uo_root, repo_root, confirmation_patch)
         else:
             entrypoint_graph = dict(candidates.get("entrypoint_graph") or {})
         write_yaml(ir_dir / "entrypoint_graph.yaml", entrypoint_graph)

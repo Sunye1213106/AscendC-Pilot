@@ -2,6 +2,10 @@
 
 Never guess input names from local variable identifiers. Without registration
 evidence, keep ``input_slot[N]`` / ``attr_slot[N]`` and emit unresolved.
+
+Supports generic AscendC / GE OpDef registration syntax:
+multi-arg Input/OptionalInput/Output/Attr/RequiredAttr, templated accessors,
+literal / named / constexpr indices — only with explicit source evidence.
 """
 
 from __future__ import annotations
@@ -21,72 +25,40 @@ from uo._operator.artifacts import existing_operator_root, safe_op_name
 from uo.scripts._ir_io import read_yaml, write_yaml
 from uo.scripts.arch_path import arch_compatible
 from uo.scripts.resolve_entrypoints import load_entrypoint_graph
-from uo.scripts.semantic_identity import mint_edge_id
 
-# OpDef grammar adapters — quoted OR bare identifier names.
-_NAME = r"""(?:["']([^"']+)["']|([A-Za-z_][A-Za-z0-9_]*))"""
-_OPDEF_SLOT_SPECS: tuple[tuple[str, str, bool], ...] = (
-    (rf"""\.(?:INPUT|Input)\s*\(\s*{_NAME}\s*\)""", "input", False),
-    (rf"""\.(?:OPTIONAL_INPUT|OptionalInput)\s*\(\s*{_NAME}\s*\)""", "input", True),
-    (rf"""\.(?:OUTPUT|Output)\s*\(\s*{_NAME}\s*\)""", "output", False),
-    (rf"""\.(?:ATTR|Attr|REQUIRED_ATTR|RequiredAttr)\s*\(\s*{_NAME}\s*\)""", "attr", False),
+# First string literal in a multi-arg OpDef call is the registered name.
+_OP_CALL_RE = re.compile(
+    r"""\.(?P<macro>Input|OptionalInput|Output|Attr|RequiredAttr)\s*\((?P<args>[^;]*?)\)""",
+    re.MULTILINE | re.DOTALL,
 )
-OPDEF_SLOT_RES = tuple(
-    (re.compile(pat, re.MULTILINE), kind, optional) for pat, kind, optional in _OPDEF_SLOT_SPECS
-)
-OP_ADD_INPUT_RE = re.compile(rf"""\.(?:INPUT|Input)\s*\(\s*{_NAME}\s*\)""", re.MULTILINE)
-OP_ADD_OPTIONAL_RE = re.compile(
-    rf"""\.(?:OPTIONAL_INPUT|OptionalInput)\s*\(\s*{_NAME}\s*\)""",
-    re.MULTILINE,
-)
-OP_ADD_ATTR_RE = re.compile(
-    rf"""\.(?:ATTR|Attr|REQUIRED_ATTR|RequiredAttr)\s*\(\s*{_NAME}\s*\)""",
-    re.MULTILINE,
-)
-OP_ADD_OUTPUT_RE = re.compile(rf"""\.(?:OUTPUT|Output)\s*\(\s*{_NAME}\s*\)""", re.MULTILINE)
-OP_DTYPE_RE = re.compile(r"""\.(?:DataType|DATATYPE)\s*\(\s*([^)]*)\)""")
-OP_FORMAT_RE = re.compile(r"""\.(?:Format|FORMAT)\s*\(\s*([^)]*)\)""")
-_IDX = r"""(\d+|[A-Za-z_][A-Za-z0-9_]*)"""
-GET_INPUT_SHAPE_RE = re.compile(rf"Get(?:Optional)?InputShape\s*\(\s*{_IDX}\s*\)")
-GET_INPUT_DESC_RE = re.compile(rf"Get(?:Optional)?InputDesc\s*\(\s*{_IDX}\s*\)")
-GET_ATTR_RE = re.compile(
-    r"""GetAttr(?:Pointer)?\s*\(\s*(?:["']([^"']+)["']|(\d+)|([A-Za-z_][A-Za-z0-9_]*))\s*\)"""
-)
-GET_ATTR_TEMPLATE_RE = re.compile(
-    r"""GetAttr\s*<[^>]+>\s*\(\s*(?:["']([^"']+)["']|(\d+)|([A-Za-z_][A-Za-z0-9_]*))\s*\)"""
-)
-ATTR_DEFAULT_RE = re.compile(
-    rf"""\.(?:ATTR|Attr)\s*\(\s*{_NAME}\s*\)[^;]*?\.(?:AttrDefault|ATTR_DEFAULT)\s*\(([^\)]*)\)""",
+_FIRST_STRING_RE = re.compile(r"""["']([^"']+)["']""")
+_ATTR_DEFAULT_RE = re.compile(
+    r"""\.Attr\s*\(\s*["']([^"']+)["']\s*(?:,[^)]*)?\)[^;]*?\.AttrDefault\s*\(([^\)]*)\)""",
     re.DOTALL,
 )
-REG_OP_SCOPE_RE = re.compile(r"\bREG_OP\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)")
 
-
-def _opdef_name(*groups: str | None) -> str:
-    for g in groups:
-        if g:
-            return str(g)
-    return ""
-
-
-def _resolve_index_token(token: str, const_map: dict[str, int]) -> int | None:
-    if token.isdigit():
-        return int(token)
-    if token in const_map:
-        return const_map[token]
-    return None
-
-
-def _collect_const_index_map(text: str) -> dict[str, int]:
-    out: dict[str, int] = {}
-    for m in re.finditer(r"#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\d+)\b", text):
-        out[m.group(1)] = int(m.group(2))
-    for m in re.finditer(r"\b(?:constexpr\s+)?(?:int|size_t|uint32_t)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(\d+)\s*;", text):
-        out[m.group(1)] = int(m.group(2))
-    for m in re.finditer(r"\benum\b[^{]*\{([^}]*)\}", text, re.DOTALL):
-        for em in re.finditer(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(\d+)", m.group(1)):
-            out[em.group(1)] = int(em.group(2))
-    return out
+# Templated / plain GetInput{Shape,Desc,Dtype}(index) — index may be int, string, or identifier.
+_GET_INPUT_RE = re.compile(
+    r"""\b(?P<api>Get(?:Optional)?Input(?:Shape|Desc|Dtype))\s*(?:<[^>]*>)?\s*\(\s*"""
+    r"""(?P<arg>["'][^"']+["']|\d+|[A-Za-z_][A-Za-z0-9_]*)\s*\)"""
+)
+_GET_ATTR_RE = re.compile(
+    r"""\b(?P<api>GetAttr(?:Pointer|Optional)?)\s*(?:<[^>]*>)?\s*\(\s*"""
+    r"""(?P<arg>["'][^"']+["']|\d+|[A-Za-z_][A-Za-z0-9_]*)\s*\)"""
+)
+# constexpr / enum / #define index binders: IDX_FOO = 3 or constexpr int IDX_FOO = 3
+_CONST_INDEX_RE = re.compile(
+    r"""(?:constexpr\s+(?:static\s+)?(?:const\s+)?(?:int|size_t|uint32_t|int32_t)\s+|"""
+    r"""#\s*define\s+|enum(?:\s+class)?\s+\w+\s*\{[^}]*?)"""
+    r"""(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:=\s*(?P<val>\d+)\s*[,;}]|\s+(?P<val2>\d+)\b)""",
+    re.MULTILINE,
+)
+_ENUM_MEMBER_RE = re.compile(
+    r"""\b(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?P<val>\d+)\s*[,}]"""
+)
+_UNPARSEABLE_ACCESSOR_RE = re.compile(
+    r"""\bGet(?:Optional)?(?:Input(?:Shape|Desc|Dtype)|Attr(?:Pointer)?)\s*(?:<[^>]*>)?\s*\("""
+)
 
 
 def extract_operator_boundary(repo_root: Path, op_name: str, *, architecture: str = "arch35") -> dict[str, Any]:
@@ -96,9 +68,10 @@ def extract_operator_boundary(repo_root: Path, op_name: str, *, architecture: st
     outputs: list[dict[str, Any]] = []
     attributes: list[dict[str, Any]] = []
     unresolved: list[dict[str, Any]] = []
-    llm_hints: list[dict[str, Any]] = []
     optional_states: dict[str, str] = {}
+    const_index: dict[str, int] = {}
 
+    slot = 0
     for rel in files:
         if not arch_compatible(rel, architecture) and "/op_host/" not in rel and "reg" not in rel.lower():
             if "reg" not in Path(rel).name.lower() and "op_host" not in rel:
@@ -107,177 +80,191 @@ def extract_operator_boundary(repo_root: Path, op_name: str, *, architecture: st
         if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
-        # Reset slot counters per REG_OP / file scope (⑪).
-        for _inputs, _outputs, _attrs, _unres in _parse_opdef_scopes(text, rel):
-            inputs.extend(_inputs)
-            outputs.extend(_outputs)
-            attributes.extend(_attrs)
-            unresolved.extend(_unres)
+        const_index.update(_collect_const_indices(text))
 
-    by_slot = {int(i["slot"]): i for i in inputs if i.get("slot") is not None}
+        for match in _OP_CALL_RE.finditer(text):
+            macro = match.group("macro")
+            args = match.group("args") or ""
+            name_m = _FIRST_STRING_RE.search(args)
+            line = text.count("\n", 0, match.start()) + 1
+            if not name_m:
+                unresolved.append(
+                    {
+                        "severity": "degraded",
+                        "code": "opdef_call_unparseable",
+                        "related_symbols": [macro],
+                        "candidate_files": [rel],
+                        "evidence_present": [match.group(0)[:120]],
+                        "evidence_missing": ["string_literal_slot_name"],
+                        "reason": f".{macro}(...) lacks a string-literal slot name; cannot bind without evidence",
+                        "semantic_task": "opdef_slot_disambiguation",
+                    }
+                )
+                continue
+            name = name_m.group(1)
+            if macro == "Input":
+                inputs.append(_input_row(slot, name, False, rel, line, "Input"))
+                slot += 1
+            elif macro == "OptionalInput":
+                inputs.append(_input_row(slot, name, True, rel, line, "OptionalInput"))
+                optional_states[name] = "unknown"
+                slot += 1
+            elif macro == "Output":
+                outputs.append(
+                    {
+                        "name": name,
+                        "evidence": [{"file_path": rel, "line": line, "macro": "Output"}],
+                    }
+                )
+            elif macro in {"Attr", "RequiredAttr"}:
+                attributes.append(
+                    {
+                        "slot_or_name": name,
+                        "type": "",
+                        "required": macro == "RequiredAttr",
+                        "default": None,
+                        "host_accessors": [],
+                        "binding_status": "verified",
+                        "evidence": [{"file_path": rel, "line": line, "macro": macro}],
+                    }
+                )
+
+        defaults = {m.group(1): m.group(2).strip() for m in _ATTR_DEFAULT_RE.finditer(text)}
+        for attr in attributes:
+            if attr.get("slot_or_name") in defaults and attr.get("default") is None:
+                attr["default"] = defaults[attr["slot_or_name"]]
+
+    by_slot = {int(i["slot"]): i for i in inputs}
+    by_name = {str(i["name"]): i for i in inputs if i.get("name")}
     by_attr = {str(a["slot_or_name"]): a for a in attributes}
-    by_name = {str(i.get("name")): i for i in inputs if i.get("name")}
 
-    # Bind Host accessors by index / name — never rename from locals.
+    # Bind Host accessors by index / name / constexpr — never rename from locals.
     for rel in files:
         path = repo_root / rel
         if not path.is_file() or "op_host/" not in rel.replace("\\", "/"):
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
-        const_map = _collect_const_index_map(text)
-        for match in GET_INPUT_SHAPE_RE.finditer(text):
-            token = match.group(1)
-            api = "GetOptionalInputShape" if "Optional" in match.group(0) else "GetInputShape"
+        const_index.update(_collect_const_indices(text))
+        covered_spans: set[tuple[int, int]] = set()
+
+        for match in _GET_INPUT_RE.finditer(text):
+            covered_spans.add((match.start(), match.end()))
+            api = match.group("api")
+            raw = match.group("arg")
             line = text.count("\n", 0, match.start()) + 1
-            idx = _resolve_index_token(token, const_map)
+            idx, name_key, bind_kind = _resolve_index_arg(raw, const_index)
+            if bind_kind == "unresolved":
+                unresolved.append(
+                    {
+                        "severity": "blocking",
+                        "code": "input_accessor_index_unresolved",
+                        "related_symbols": [raw],
+                        "candidate_files": [rel],
+                        "evidence_present": [match.group(0)[:100]],
+                        "evidence_missing": ["constexpr_or_literal_index"],
+                        "reason": f"{api}({raw}) index cannot be resolved from source evidence",
+                        "semantic_task": "accessor_index_binding",
+                    }
+                )
+                continue
+            target = None
             if idx is not None and idx in by_slot:
-                by_slot[idx]["host_accessors"].append(
-                    {"api": api, "index": idx, "index_token": token, "file_path": rel, "line": line}
-                )
-            elif token in by_name:
-                by_name[token]["host_accessors"].append(
-                    {"api": api, "name": token, "file_path": rel, "line": line}
-                )
+                target = by_slot[idx]
+            elif name_key and name_key in by_name:
+                target = by_name[name_key]
+                idx = int(target["slot"])
+            accessor = {
+                "api": api,
+                "index": idx,
+                "name": name_key or (target.get("name") if target else None),
+                "file_path": rel,
+                "line": line,
+                "bind_kind": bind_kind,
+            }
+            if target is not None:
+                target["host_accessors"].append(accessor)
             else:
                 placeholder = {
                     "slot": idx if idx is not None else -1,
-                    "name": None,
+                    "name": name_key,
                     "optional": "Optional" in api,
                     "dtype_constraints": [],
                     "format_constraints": [],
-                    "host_accessors": [{"api": api, "index_token": token, "file_path": rel, "line": line}],
+                    "host_accessors": [accessor],
                     "binding_status": "unresolved",
                     "evidence": [],
                 }
+                inputs.append(placeholder)
                 if idx is not None:
-                    inputs.append(placeholder)
                     by_slot[idx] = placeholder
                 unresolved.append(
                     {
                         "severity": "blocking",
                         "code": "input_slot_unbound",
-                        "related_symbols": [f"input_slot[{token}]"],
+                        "related_symbols": [f"input_slot[{idx}]" if idx is not None else str(name_key)],
                         "candidate_files": [rel],
-                        "evidence_present": [f"{api}({token})"],
+                        "evidence_present": [f"{api}({raw})"],
                         "evidence_missing": ["OpDef_Input_registration"],
-                        "reason": f"{api}({token}) has no registered input name",
+                        "reason": f"{api}({raw}) has no registered input name",
+                        "semantic_task": "opdef_slot_binding",
                     }
                 )
-                if idx is None:
-                    llm_hints.append(
-                        {
-                            "type": "io_slot_bind",
-                            "severity": "blocking",
-                            "target": f"input_slot[{token}]",
-                            "file_path": rel,
-                            "line": line,
-                            "snippet": match.group(0)[:120],
-                            "reason": "named_index_unresolved",
-                            "candidates": [
-                                {
-                                    "id": f"cand_{token}_{line}",
-                                    "file_path": rel,
-                                    "symbol_ref": token,
-                                    "snippet": match.group(0)[:120],
-                                    "score": 0.4,
-                                }
-                            ],
-                        }
-                    )
-        for match in GET_INPUT_DESC_RE.finditer(text):
-            token = match.group(1)
-            api = "GetOptionalInputDesc" if "Optional" in match.group(0) else "GetInputDesc"
+
+        for match in _GET_ATTR_RE.finditer(text):
+            covered_spans.add((match.start(), match.end()))
+            api = match.group("api")
+            raw = match.group("arg")
             line = text.count("\n", 0, match.start()) + 1
-            idx = _resolve_index_token(token, const_map)
-            if idx is not None and idx in by_slot:
-                by_slot[idx]["host_accessors"].append(
-                    {"api": api, "index": idx, "index_token": token, "file_path": rel, "line": line}
-                )
-            elif token in by_name:
-                by_name[token]["host_accessors"].append(
-                    {"api": api, "name": token, "file_path": rel, "line": line}
-                )
-            else:
-                unresolved.append(
+            idx, name_key, bind_kind = _resolve_index_arg(raw, const_index)
+            key = name_key or (f"attr_slot[{idx}]" if idx is not None else raw)
+            if name_key and name_key in by_attr:
+                by_attr[name_key]["host_accessors"].append(
                     {
-                        "severity": "blocking",
-                        "code": "input_desc_unbound",
-                        "related_symbols": [f"input_slot[{token}]"],
-                        "candidate_files": [rel],
-                        "evidence_present": [f"{api}({token})"],
-                        "evidence_missing": ["OpDef_Input_registration"],
-                        "reason": f"{api}({token}) has no registered input name",
-                    }
-                )
-                llm_hints.append(
-                    {
-                        "type": "io_slot_bind",
-                        "severity": "blocking",
-                        "target": f"input_slot[{token}]",
+                        "api": api,
+                        "name": name_key,
+                        "index": idx,
                         "file_path": rel,
                         "line": line,
-                        "snippet": match.group(0)[:120],
-                        "reason": "input_desc_unresolved",
-                        "candidates": [
-                            {
-                                "id": f"cand_desc_{token}_{line}",
-                                "file_path": rel,
-                                "symbol_ref": token,
-                                "snippet": match.group(0)[:120],
-                                "score": 0.4,
-                            }
-                        ],
+                        "bind_kind": bind_kind,
                     }
-                )
-        for match in list(GET_ATTR_RE.finditer(text)) + list(GET_ATTR_TEMPLATE_RE.finditer(text)):
-            name = match.group(1)
-            idx = match.group(2)
-            bare = match.group(3) if match.lastindex and match.lastindex >= 3 else None
-            line = text.count("\n", 0, match.start()) + 1
-            key = name or bare or (f"attr_slot[{idx}]" if idx else "attr_unknown")
-            is_template = "<" in match.group(0)
-            api = "GetAttrPointer" if "Pointer" in match.group(0) else "GetAttr"
-            if name and name in by_attr:
-                by_attr[name]["host_accessors"].append(
-                    {"api": api, "name": name, "file_path": rel, "line": line, "template": is_template}
-                )
-            elif bare and bare in by_attr:
-                by_attr[bare]["host_accessors"].append(
-                    {"api": api, "name": bare, "file_path": rel, "line": line, "template": is_template}
                 )
             else:
                 unresolved.append(
                     {
-                        "severity": "blocking" if (name or bare) else "degraded",
+                        "severity": "blocking" if name_key else "degraded",
                         "code": "attr_slot_unbound",
                         "related_symbols": [key],
                         "candidate_files": [rel],
                         "evidence_present": [match.group(0)[:80]],
                         "evidence_missing": ["OpDef_Attr_registration"],
                         "reason": f"attribute accessor {key} lacks registration evidence",
+                        "semantic_task": "attr_slot_binding",
                     }
                 )
-                if is_template or bare:
-                    llm_hints.append(
-                        {
-                            "type": "io_slot_bind",
-                            "severity": "blocking",
-                            "target": key,
-                            "file_path": rel,
-                            "line": line,
-                            "snippet": match.group(0)[:120],
-                            "reason": "template_getattr_needs_llm" if is_template else "named_attr_unresolved",
-                            "candidates": [
-                                {
-                                    "id": f"cand_{key}_{line}",
-                                    "file_path": rel,
-                                    "symbol_ref": key,
-                                    "snippet": match.group(0)[:120],
-                                    "score": 0.4,
-                                }
-                            ],
-                        }
-                    )
+
+        # Catch wrapper expressions the structured regexes cannot parse.
+        for match in _UNPARSEABLE_ACCESSOR_RE.finditer(text):
+            span = (match.start(), match.end())
+            if any(s[0] <= span[0] < s[1] for s in covered_spans):
+                continue
+            # Look ahead for closing paren; if arg body is complex, flag it.
+            rest = text[match.end() : match.end() + 120]
+            if re.match(r"""\s*(?:["'][^"']+["']|\d+|[A-Za-z_][A-Za-z0-9_]*)\s*\)""", rest):
+                continue
+            line = text.count("\n", 0, match.start()) + 1
+            unresolved.append(
+                {
+                    "severity": "degraded",
+                    "code": "accessor_expression_unparseable",
+                    "related_symbols": [match.group(0)[:40]],
+                    "candidate_files": [rel],
+                    "evidence_present": [(match.group(0) + rest)[:120]],
+                    "evidence_missing": ["literal_or_named_index"],
+                    "reason": "complex accessor expression; emit semantic task instead of guessing",
+                    "semantic_task": "accessor_expression_binding",
+                    "line": line,
+                }
+            )
 
     for item in inputs:
         if item.get("optional") and item.get("name"):
@@ -287,112 +274,18 @@ def extract_operator_boundary(repo_root: Path, op_name: str, *, architecture: st
         "version": 1,
         "op_name": op_name,
         "architecture": architecture,
-        "inputs": sorted(inputs, key=lambda x: int(x.get("slot") or 0)),
+        "inputs": sorted(inputs, key=lambda x: int(x.get("slot") if x.get("slot") is not None else 10**9)),
         "outputs": outputs,
         "attributes": attributes,
         "optional_input_states": optional_states,
+        "const_index_map": {k: v for k, v in sorted(const_index.items())},
         "unresolved": unresolved,
-        "llm_task_hints": llm_hints,
     }
     write_yaml(uo_root / "ir" / "operator_boundary.yaml", payload)
     if unresolved:
         _merge_unresolved(uo_root, unresolved)
     return payload
 
-
-def _parse_opdef_scopes(
-    text: str, rel: str
-) -> list[tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]]:
-    """Parse OpDef slots with per-REG_OP scope reset and DataType/Format attachment."""
-    scopes: list[tuple[int, str]] = [(0, "")]
-    for m in REG_OP_SCOPE_RE.finditer(text):
-        scopes.append((m.start(), m.group(1)))
-    scopes.append((len(text), ""))
-    results: list[tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]] = []
-    for i in range(len(scopes) - 1):
-        start, _op = scopes[i]
-        end = scopes[i + 1][0]
-        chunk = text[start:end]
-        results.append(_parse_opdef_chunk(chunk, rel, line_base=text.count("\n", 0, start)))
-    return results
-
-
-def _parse_opdef_chunk(
-    chunk: str, rel: str, *, line_base: int = 0
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-    inputs: list[dict[str, Any]] = []
-    outputs: list[dict[str, Any]] = []
-    attributes: list[dict[str, Any]] = []
-    unresolved: list[dict[str, Any]] = []
-    slot = 0
-    # Collect events in source order for nearest-slot DataType/Format.
-    events: list[tuple[int, str, Any]] = []
-    for match in OP_ADD_INPUT_RE.finditer(chunk):
-        events.append((match.start(), "input", (_opdef_name(match.group(1), match.group(2)), False, match.group(0))))
-    for match in OP_ADD_OPTIONAL_RE.finditer(chunk):
-        events.append((match.start(), "input", (_opdef_name(match.group(1), match.group(2)), True, match.group(0))))
-    for match in OP_ADD_OUTPUT_RE.finditer(chunk):
-        events.append((match.start(), "output", (_opdef_name(match.group(1), match.group(2)), match.group(0))))
-    for match in OP_ADD_ATTR_RE.finditer(chunk):
-        events.append((match.start(), "attr", (_opdef_name(match.group(1), match.group(2)), match.group(0))))
-    for match in OP_DTYPE_RE.finditer(chunk):
-        events.append((match.start(), "dtype", match.group(1).strip()))
-    for match in OP_FORMAT_RE.finditer(chunk):
-        events.append((match.start(), "format", match.group(1).strip()))
-    events.sort(key=lambda x: x[0])
-    last_slot_ref: dict[str, Any] | None = None
-    defaults: dict[str, str] = {}
-    for m in ATTR_DEFAULT_RE.finditer(chunk):
-        dname = _opdef_name(m.group(1), m.group(2))
-        # last group is default value
-        defaults[dname] = (m.group(m.lastindex) or "").strip() if m.lastindex else ""
-    for pos, kind, payload in events:
-        line = line_base + chunk.count("\n", 0, pos) + 1
-        if kind == "input":
-            name, optional, macro = payload
-            item = {
-                "slot": slot,
-                "name": name,
-                "optional": optional,
-                "dtype_constraints": [],
-                "format_constraints": [],
-                "host_accessors": [],
-                "binding_status": "verified",
-                "verification_source": "source",
-                "evidence": [
-                    {
-                        "file_path": rel,
-                        "line": line,
-                        "macro": "OptionalInput" if optional else "Input",
-                    }
-                ],
-            }
-            inputs.append(item)
-            last_slot_ref = item
-            slot += 1
-        elif kind == "output":
-            name, _macro = payload
-            outputs.append({"name": name, "evidence": [{"file_path": rel, "line": line}]})
-        elif kind == "attr":
-            name, _macro = payload
-            item = {
-                "slot_or_name": name,
-                "type": "",
-                "default": defaults.get(name),
-                "host_accessors": [],
-                "binding_status": "verified",
-                "verification_source": "source",
-                "dtype_constraints": [],
-                "format_constraints": [],
-                "evidence": [{"file_path": rel, "line": line, "macro": "Attr"}],
-            }
-            attributes.append(item)
-            last_slot_ref = item
-        elif kind == "dtype" and last_slot_ref is not None:
-            last_slot_ref.setdefault("dtype_constraints", []).append(payload)
-        elif kind == "format" and last_slot_ref is not None:
-            last_slot_ref.setdefault("format_constraints", []).append(payload)
-    return inputs, outputs, attributes, unresolved
 
 def optional_state_label(*, absent: bool = False, empty: bool = False, nonempty: bool = False) -> str:
     if absent:
@@ -402,6 +295,45 @@ def optional_state_label(*, absent: bool = False, empty: bool = False, nonempty:
     if nonempty:
         return "present_and_nonempty"
     return "unknown"
+
+
+def _input_row(slot: int, name: str, optional: bool, rel: str, line: int, macro: str) -> dict[str, Any]:
+    return {
+        "slot": slot,
+        "name": name,
+        "optional": optional,
+        "dtype_constraints": [],
+        "format_constraints": [],
+        "host_accessors": [],
+        "binding_status": "verified",
+        "evidence": [{"file_path": rel, "line": line, "macro": macro}],
+    }
+
+
+def _resolve_index_arg(raw: str, const_index: dict[str, int]) -> tuple[int | None, str | None, str]:
+    s = (raw or "").strip()
+    if len(s) >= 2 and s[0] in {"'", '"'} and s[-1] == s[0]:
+        return None, s[1:-1], "string_name"
+    if s.isdigit():
+        return int(s), None, "literal"
+    if s in const_index:
+        return const_index[s], s, "constexpr"
+    return None, s if re.match(r"^[A-Za-z_]", s) else None, "unresolved"
+
+
+def _collect_const_indices(text: str) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for m in _CONST_INDEX_RE.finditer(text):
+        name = m.group("name")
+        val = m.group("val") or m.group("val2")
+        if name and val is not None and name.startswith("IDX_"):
+            out[name] = int(val)
+    # Broader enum members that look like index constants
+    for m in _ENUM_MEMBER_RE.finditer(text):
+        name = m.group("name")
+        if name.startswith("IDX_") or name.startswith("INPUT_") or name.startswith("ATTR_"):
+            out[name] = int(m.group("val"))
+    return out
 
 
 def _confirmed_sources(uo_root: Path) -> list[str]:

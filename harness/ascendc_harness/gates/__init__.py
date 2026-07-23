@@ -578,6 +578,8 @@ def gate_extract_plan_subagent(project_root: Path, uo: Path) -> dict[str, Any]:
 
     plan = uo / "ir" / "extract_plan.yaml"
     candidates = uo / "ir" / "extract_plan_candidates.yaml"
+    entrypoints = uo / "ir" / "entrypoint_graph.yaml"
+    boundary = uo / "ir" / "operator_boundary.yaml"
     verified = verify_receipt(
         project_root,
         actor_id="uo-semantic-resolve",
@@ -600,7 +602,10 @@ def gate_extract_plan_subagent(project_root: Path, uo: Path) -> dict[str, Any]:
 
     plan_ok = plan.is_file()
     cand_ok = candidates.is_file()
+    ep_ok = entrypoints.is_file()
+    boundary_ok = boundary.is_file()
     hash_ok = True
+    cand_status_ok = True
     if plan_ok and cand_ok:
         plan_doc = _load(plan) or {}
         expected = ""
@@ -613,7 +618,12 @@ def gate_extract_plan_subagent(project_root: Path, uo: Path) -> dict[str, Any]:
         actual = file_sha256(candidates)
         if expected and actual and expected != actual:
             hash_ok = False
-    ok = bool(has_receipt and plan_ok and cand_ok and hash_ok)
+        cand_doc = _load(candidates) or {}
+        if isinstance(cand_doc, dict):
+            st = str(cand_doc.get("status") or "").lower()
+            if st in {"blocked", "fail", "failed"} or cand_doc.get("ok") is False:
+                cand_status_ok = False
+    ok = bool(has_receipt and plan_ok and cand_ok and hash_ok and ep_ok and boundary_ok and cand_status_ok)
     return {
         "gate": "extract_plan_subagent",
         "ok": ok,
@@ -621,11 +631,17 @@ def gate_extract_plan_subagent(project_root: Path, uo: Path) -> dict[str, Any]:
         "receipt_verify": verified,
         "has_plan": plan_ok,
         "has_candidates": cand_ok,
+        "has_entrypoint_graph": ep_ok,
+        "has_operator_boundary": boundary_ok,
+        "candidates_status_ok": cand_status_ok,
         "hash_ok": hash_ok,
         "message": (
             "ok"
             if ok
-            else "extract requires verified Harness receipt + ir/extract_plan.yaml + candidates (+ hash match)"
+            else (
+                "extract requires entrypoint_graph + operator_boundary + verified receipt "
+                "+ ir/extract_plan.yaml + non-blocked candidates (+ hash match)"
+            )
         ),
     }
 
@@ -779,6 +795,7 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
         "kb_fingerprint": lambda: tg_adapters.gate_kb_fingerprint_matches(project_root),
         "kb_fingerprint_fresh": lambda: tg_adapters.gate_kb_fingerprint_fresh(project_root, op_name=op_name),
         "merge_pass": lambda: tg_adapters.gate_merge_pass(project_root),
+        "bind_progress": lambda: tg_adapters.gate_bind_progress(project_root),
         "domain_symmetry": lambda: tg_adapters.gate_domain_symmetry(project_root),
         "csv_closure": lambda: tg_adapters.gate_csv_closure(project_root),
         "audit_pass": lambda: tg_adapters.gate_audit_pass(project_root),

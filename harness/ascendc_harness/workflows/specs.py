@@ -98,7 +98,6 @@ CLOSED_OBLIGATION_STATUSES = frozenset(
         "verified",
         "not_applicable",
         "human_required",
-        "blocked",
         "rejected",
     }
 )
@@ -131,12 +130,19 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             _tr("resolve", "export"),
             _tr("export", "review"),
             _tr("extract", "scope", kind="rework", reason_codes=["SCOPE_REWORK", "SCOPE_FAILED"]),
-            _tr("resolve", "extract", kind="rework", reason_codes=["EXTRACT_REWORK"]),
+            _tr("resolve", "extract", kind="rework", reason_codes=["EXTRACT_REWORK", "entrypoints", "extract_plan"]),
             _tr("resolve", "resolve", kind="rework", reason_codes=["KEY_REWORK", "CONFIDENCE_REWORK"]),
-            _tr("export", "resolve", kind="rework", reason_codes=["INTEGRITY_REWORK"]),
-            _tr("review", "resolve", kind="rework", reason_codes=["KB_REVIEW_REWORK", "input_derivable"]),
+            _tr("export", "resolve", kind="rework", reason_codes=["INTEGRITY_REWORK", "residual_resolve", "input_derivable"]),
+            _tr(
+                "export",
+                "extract",
+                kind="rework",
+                reason_codes=["EXTRACT_REWORK", "entrypoints", "extract_plan"],
+            ),
+            _tr("review", "resolve", kind="rework", reason_codes=["KB_REVIEW_REWORK", "input_derivable", "INTEGRITY_REWORK"]),
             _tr("review", "export", kind="rework", reason_codes=["export_graph"]),
             _tr("review", "scope", kind="rework", reason_codes=["scope", "SCOPE_REWORK"]),
+            _tr("review", "extract", kind="rework", reason_codes=["EXTRACT_REWORK", "entrypoints", "extract_plan"]),
         ],
         "phase_gates": {
             "prepare": [],
@@ -370,7 +376,13 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             _tr("resolve", "export"),
             _tr("export", "diff"),
             _tr("resolve", "resolve", kind="rework", reason_codes=["KEY_REWORK", "CONFIDENCE_REWORK"]),
-            _tr("export", "resolve", kind="rework", reason_codes=["INTEGRITY_REWORK"]),
+            _tr("export", "resolve", kind="rework", reason_codes=["INTEGRITY_REWORK", "residual_resolve", "input_derivable"]),
+            _tr(
+                "export",
+                "apply",
+                kind="rework",
+                reason_codes=["EXTRACT_REWORK", "entrypoints", "extract_plan"],
+            ),
             _tr("detect", "diff", kind="forward", reason_codes=["DIFF_ONLY"]),
         ],
         "phase_gates": {
@@ -620,6 +632,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         ],
         "phase_gates": {
             "kb_ready": ["uo_ready"],
+            "bind": ["bind_progress"],
             "merge": ["merge_pass"],
             "gate": ["domain_symmetry", "csv_closure", "audit_pass"],
             "confirm": ["init_confirmed", "kb_fingerprint_fresh"],
@@ -660,9 +673,11 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 label_zh="语义绑定",
                 phases=["bind"],
                 workflow_id="tg-init",
-                agent_id="deterministic-tg-engine",
-                role_id="deterministic_engine",
+                agent_id="tg-semantic-bind",
+                role_id="producer",
+                gates=["bind_progress"],
                 capability_ids=["kb-query", "semantic-resolution"],
+                task_prompt_id="tg/semantic-bind",
                 output_contract_id="semantic-bind-v1",
             ),
             _act(
@@ -725,6 +740,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         ],
         "agents": [
             {"id": "tg-csv-contract", "role": "producer"},
+            {"id": "tg-semantic-bind", "role": "producer"},
             {"id": "tg-init-audit", "role": "referee"},
             {"id": "deterministic-tg-engine", "role": "deterministic_engine"},
         ],
@@ -742,6 +758,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         "gates": [
             "uo_ready",
             "kb_fingerprint_fresh",
+            "bind_progress",
             "merge_pass",
             "domain_symmetry",
             "csv_closure",

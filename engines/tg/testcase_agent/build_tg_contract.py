@@ -11,7 +11,6 @@ from .kb_semantics import (
     assemble_key_determinants,
     assemble_optional_inputs,
 )
-from .realization_contract import realization_paths
 
 
 def tg_contract_path(out_root: Path) -> Path:
@@ -121,7 +120,6 @@ def build_tg_contract(
     lexicon: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Write TG-owned version=2 contract (CSV domain × KB refs × optional level tag)."""
-    del realization_map, lexicon  # reserved for future merge of uo-query binding results
     files = snapshot.get("files") if isinstance(snapshot.get("files"), dict) else {}
     key_determinants = assemble_key_determinants(files)
     optional_inputs = assemble_optional_inputs(files)
@@ -133,10 +131,25 @@ def build_tg_contract(
             {"id": f"COV_OPT_{opt.get('name') or opt.get('id')}", "target_refs": [opt.get("id")]}
         )
 
+    lex = lexicon if isinstance(lexicon, dict) else {}
+    # Prefer lexicon key_derivations as binding evidence when present.
+    lex_derivs = [d for d in (lex.get("key_derivations") or []) if isinstance(d, dict)]
+    if lex_derivs and not key_determinants:
+        key_determinants = [
+            {
+                "id": d.get("key_id") or d.get("id"),
+                "expr": d.get("expr") or d.get("expression"),
+                "source": "binding_lexicon",
+            }
+            for d in lex_derivs
+            if d.get("key_id") or d.get("id")
+        ]
+
     arch = ""
     graph = files.get("ir/operator_graph.yaml") if isinstance(files.get("ir/operator_graph.yaml"), dict) else {}
     if graph:
         arch = str(graph.get("architecture") or graph.get("arch") or "")
+    rmap = realization_map if isinstance(realization_map, dict) else {}
     contract: dict[str, Any] = {
         "version": 2,
         "op_name": op_name,
@@ -156,6 +169,8 @@ def build_tg_contract(
             ],
             "snapshot_hash": snapshot.get("snapshot_hash") or "",
             "level": level or "",
+            "binding_lexicon_source": lex.get("source") or rmap.get("binding_lexicon_source") or "",
+            "lexicon_key_derivations": len(lex_derivs),
         },
         "interface": {
             "required_inputs": [],
@@ -177,15 +192,16 @@ def build_tg_contract(
         ][:80],
         "unresolved": [],
         "conflicts": [],
-        "evidence_refs": ["realization/consumer_schema.yaml", "realization/realization_map.yaml"],
+        "evidence_refs": [
+            "realization/consumer_schema.yaml",
+            "realization/realization_map.yaml",
+            "realization/binding_lexicon.yaml",
+        ],
+        "binding_lexicon_ref": "realization/binding_lexicon.yaml",
     }
 
     path = tg_contract_path(out_root)
     write_yaml(path, contract)
-    # Keep realization_paths index in sync when callers expect it.
-    paths = realization_paths(out_root)
-    if "testcase_contract" in paths:
-        pass
     return contract
 
 

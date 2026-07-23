@@ -239,19 +239,30 @@ def tg_contract(
     write_yaml(domain_review_path, domain_review)
 
     needs_llm = bool(binding_gaps or inventory.get("needs_binding_keys") or domain_review.get("status") == "pending")
+    if validation["status"] != "pass":
+        unresolved_status = "blocked"
+    elif needs_llm:
+        unresolved_status = "ready_for_llm"
+    else:
+        unresolved_status = "ready"
     unresolved = {
         "version": 1,
-        "status": "ready_for_llm" if needs_llm or validation["status"] == "pass" else "blocked",
+        "status": unresolved_status,
+        "ok": unresolved_status in {"ready", "pass", "resolved"},
         "validation_status": validation["status"],
         "errors": validation.get("errors") or [],
         "warnings": realization_map.get("warnings") or [],
         "binding_gaps": binding_gaps,
         "needs_binding_keys": inventory.get("needs_binding_keys") or [],
         "domain_review_status": domain_review.get("status"),
-        "hint": "Continue /tg-init: Task Follow uo-query → --merge-uo-resolve → --verify-csv-closure → tg-init-audit; AskQuestion only for domain lock before --confirm / tg-plan.",
-        "next": "tg-init binding loop",
+        "hint": (
+            "Harness: run-action semantic_bind (bounded LLM on llm_bind_prompt_bundle) "
+            "then bind_merge → mid_nest → integrity_gate → init_audit → human_confirm."
+        ),
+        "next": "harness run-action semantic_bind" if needs_llm else "harness advance to merge",
     }
     write_yaml(paths["unresolved"], unresolved)
+    write_yaml(paths["dir"] / "binding_gaps.yaml", {"version": 1, "gaps": binding_gaps, "status": unresolved_status})
     write_yaml(paths["dir"] / "llm_bind_prompt_bundle.yaml", build_llm_bind_prompt_bundle(inventory, unresolved))
 
     from .build_tg_contract import build_tg_contract
