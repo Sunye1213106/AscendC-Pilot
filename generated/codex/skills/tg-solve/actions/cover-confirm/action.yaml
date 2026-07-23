@@ -1,0 +1,22 @@
+id: cover_confirm
+workflow_id: tg-solve
+version: 1
+name_zh: 覆盖确认
+role_id: deterministic_engine
+agent_id: deterministic-tg-engine
+capabilities:
+- obligation-analysis
+policies:
+- source-authority
+- code-access
+- evidence
+- language
+- harness-control
+- output-quality
+task_prompt_id: null
+context_profile_id: tg-solve-cover-confirm
+output_contract_id: cover-confirm-v1
+checker:
+  required: true
+referee:
+  required: false

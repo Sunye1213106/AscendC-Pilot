@@ -1,0 +1,21 @@
+id: solve_precheck
+workflow_id: tg-solve
+version: 1
+name_zh: 求解前置校验
+role_id: deterministic_engine
+agent_id: deterministic-tg-engine
+capabilities: []
+policies:
+- source-authority
+- code-access
+- evidence
+- language
+- harness-control
+- output-quality
+task_prompt_id: null
+context_profile_id: tg-solve-solve-precheck
+output_contract_id: solve-precheck-v1
+checker:
+  required: true
+referee:
+  required: false

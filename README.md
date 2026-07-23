@@ -7,7 +7,8 @@
 | [harness/](./harness/) | 唯一控制面：状态、门禁、路由、Context、记忆 |
 | [engines/uo/](./engines/uo/) | Understand Operator 领域引擎 |
 | [engines/tg/](./engines/tg/) | Testcase Agent 领域引擎 |
-| [skills/](./skills/) · [prompts/](./prompts/) · [agents/](./agents/) | 领域 Skill / Prompt / Subagent |
+| [skills-src/](./skills-src/) · [prompts-src/](./prompts-src/) · [agents-src/](./agents-src/) | 组合式业务源（Policy/Capability/Action/Prompt/Agent） |
+| [generated/](./generated/) | Composer 宿主产物（可丢弃，安装前重生成） |
 
 支持安装到 **OpenCode / Codex / Cursor**。
 
@@ -17,13 +18,15 @@
 
 | 命令 | 功能 |
 | --- | --- |
-| `/uo-init` | 建 KB（Phase0 → Extract → Resolve → Export → Review） |
-| `/uo-query` | 定稿后问答 |
-| `/uo-update` | 增量刷新 KB + `diff/` |
-| `/uo-code-review` | Bug（CBM）+ 语义（KB） |
-| `/tg-init` | 测试工具 + 定稿 KB → confirmed realization |
-| `/tg-plan` | 覆盖规划（默认 L0+L1，可选 L2） |
-| `/tg-solve` | Z3 → CSV |
+| `/uo-init` | 建 KB（环境准备 → 范围确认 → 结构抽取 → 语义闭合 → 导出与校验 → 产物审查） |
+| `/uo-query` | 定稿后只读问答 |
+| `/uo-update` | 增量刷新 KB；`/uo-diff` 兼容为 `diff_only` |
+| `/uo-code-review` | 基于 KB 的缺陷/功能审查 |
+| `/tg-init` | 测项合同与绑定 → 人工确认 |
+| `/tg-plan` | 覆盖规划与人工批准 |
+| `/tg-solve` | Z3 求解 → CSV 投影 |
+
+用户可见阶段名使用中文；禁止「Phase 0」表述。控制面说明见 [docs/overview/workflows.md](./docs/overview/workflows.md)。
 
 本地统一产物：
 

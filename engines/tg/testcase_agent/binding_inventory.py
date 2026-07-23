@@ -239,7 +239,7 @@ def build_llm_bind_prompt_bundle(inventory: dict[str, Any], unresolved: dict[str
             "Use host_parent_hints (one-hop parent + derivation_roots); walk KB determined_by/reaches_input — do not expect full host_derivation_chain dumps",
             "Skip not_input_derivable_keys (legitimate kernel-local); for unsolved_input_derivable_keys read UO ir/input_derivable_gaps.yaml as evidence then Task uo-query → OUT_ROOT uo_query_resolve (never Edit $UO_ROOT)",
             "Propose domain_hints for thin/unreviewed columns; never confirm '_' as a legal cell value",
-            "For operator host/kernel semantics: use CBM search_graph / get_code_snippet (Phase0 index), not full-file dumps",
+            "For operator host/kernel semantics: use CBM search_graph / get_code_snippet (scope index), not full-file dumps",
             "Prefer summary/human_overview.md + uo_kb_query before opening large YAML",
             "Output binding_lexicon key_derivations with locked:true only after human confirm",
             "Do not invent per-op AST heuristics in plugin Python",

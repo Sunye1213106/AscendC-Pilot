@@ -53,7 +53,7 @@ def prepare_review_context(
     if not cbm.get("available"):
         errors.append(
             f"CBM unavailable: {cbm.get('hint') or 'missing index'}; "
-            "run /uo-init Phase0 (MCP index_repository) — do not install code-review-graph"
+            "run /uo-init scope confirmation (MCP index_repository) — do not install code-review-graph"
         )
 
     diff_index = read_yaml(uo_root / "diff" / "index.yaml")
@@ -127,7 +127,7 @@ def prepare_review_context(
         },
         "source_graph": {
             "backend": "cbm",
-            "note": "Bug primary graph is CBM (Phase0 index); code-review-graph is not required",
+            "note": "Bug primary graph is CBM (scope confirmation index); code-review-graph is not required",
         },
         "requirements": req_meta,
         "graph_roles": {

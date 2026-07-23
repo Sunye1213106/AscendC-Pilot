@@ -16,7 +16,7 @@ if __package__ in (None, ""):
 
 from uo._core.ignore import DEFAULT_IGNORE_PATTERNS, should_ignore
 from uo._operator.artifacts import existing_operator_root, safe_op_name, write_text
-from uo._operator.run_context import active_run_id, phase0_snapshot
+from uo._operator.run_context import active_run_id, scope_snapshot
 
 SOURCE_EXTENSIONS = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".py", ".proto"}
 CPP_EXTENSIONS = {".c", ".cc", ".cpp", ".cxx"}
@@ -28,7 +28,7 @@ EXCLUDED_HINTS = ("test", "tests", "ut", "st", "example", "examples", "third_par
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Phase 0 lightweight operator scope discovery.")
+    parser = argparse.ArgumentParser(description="Scope confirmation lightweight operator scope discovery.")
     parser.add_argument("repo", nargs="?", default=".", help="Operator package root (KB always stays here)")
     parser.add_argument("--op-name", help="Operator name. Defaults to repository name.")
     parser.add_argument("--seed", action="append", default=[], help="User-provided repo-relative candidate file. May be repeated.")
@@ -49,7 +49,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     run_id = active_run_id(base)
-    phase0 = base / "runs" / run_id / "phase0"
+    phase0 = base / "runs" / run_id / "scope"
     patterns = _load_ignore_patterns(repo_root)
 
     # AscendC: discover sibling/parent common for indexing, but KB stays under operator subdir.
@@ -123,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Architecture filter: {architecture}")
     _print_scope_tables(proposal.get("summary") or {})
     print(
-        "Phase 0 scope proposal is ready. NEXT: AskQuestion for human confirm — "
+        "Scope proposal is ready. NEXT: AskQuestion for human confirm — "
         "MUST paste the include/exclude count tables above (do NOT invent op_host counts "
         "from headers bucket). Do NOT dump/read full scope_scan.yaml. Narrow with "
         "review_checkpoint.py --replace-initial (not hand-edit)."
@@ -144,7 +144,7 @@ def _load_ignore_patterns(repo_root: Path) -> list[str]:
 
 
 def _discover_file_names(repo_root: Path, patterns: list[str]) -> list[str]:
-    """Phase0 intentionally only performs lightweight scope discovery.
+    """Scope confirmation intentionally only performs lightweight scope discovery.
 
     Deep operator understanding starts after CBM indexing. This function records
     path names only, using rg --files when available and a glob-style fallback.
@@ -450,8 +450,8 @@ def _scope_proposal(
     summary = _build_summary_counts(candidates, operator_path=operator_path, architecture=architecture)
     return {
         "version": 1,
-        "artifact": {"type": "runs.scope_proposal", "schema_version": 1, "owner": "uo-orchestrator"},
-        "snapshot": phase0_snapshot(base, run_id),
+        "artifact": {"type": "runs.scope_proposal", "schema_version": 1, "owner": "deterministic-uo-engine"},
+        "snapshot": scope_snapshot(base, run_id),
         "operator": op_name,
         "status": "proposed",
         # KB anchor: always the operator package (CLI repo), never parent workspace.
@@ -719,15 +719,15 @@ def _compat_scope_scan(
 ) -> dict[str, Any]:
     candidate_files = proposal["candidate_files"]
     initial = [
-        {"path": path, "role": _role_for_path(path), "include_reason": "phase0 scope proposal"}
+        {"path": path, "role": _role_for_path(path), "include_reason": "scope proposal"}
         for path in _flatten_candidate_files(candidate_files)
     ]
     scope_roots = proposal["candidate_directories"] or [{"path": ".", "kind": "operator", "reason": "repository root fallback"}]
     ws = (workspace_root or repo_root).resolve()
     return {
         "version": 1,
-        "artifact": {"type": "runs.scope_scan", "schema_version": 1, "owner": "uo-orchestrator"},
-        "snapshot": phase0_snapshot(base, run_id),
+        "artifact": {"type": "runs.scope_scan", "schema_version": 1, "owner": "deterministic-uo-engine"},
+        "snapshot": scope_snapshot(base, run_id),
         "status": "complete",
         "op_name": op_name,
         "project_root": repo_root.as_posix(),
@@ -756,7 +756,7 @@ def _compat_scope_scan(
             "external_system_files": [],
             "third_party_files": [],
             "generated_files": [],
-            "excluded_files": [{"path": path, "role": "excluded_by_phase0"} for path in proposal["excluded_files_sample"]],
+            "excluded_files": [{"path": path, "role": "excluded_by_scope"} for path in proposal["excluded_files_sample"]],
             "uncertain_files": [],
         },
         "dependency_edges": [],

@@ -44,6 +44,7 @@ def main(argv: list[str] | None = None) -> int:
     p_start = sub.add_parser("start", help="Start workflow at entry_state")
     p_start.add_argument("workflow_id")
     p_start.add_argument("--project", type=Path, default=Path.cwd())
+    p_start.add_argument("--intent", default="", help="e.g. diff_only for uo-update")
 
     p_adv = sub.add_parser("advance", help="Advance phase only if phase_gates pass")
     p_adv.add_argument("next_phase")
@@ -73,7 +74,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_conf.add_argument("--project", type=Path, default=Path.cwd())
     p_conf.add_argument("--op-name", default="")
-    p_conf.add_argument("--no-skeleton", action="store_true")
+    p_conf.add_argument("--no-write-report", action="store_true", help="do not rewrite confidence_report.md")
+    p_conf.add_argument("--no-skeleton", action="store_true", help="deprecated alias for --no-write-report")
 
     p_auth = sub.add_parser("authorize", help="Authorize tool call (OpenCode plugin hook)")
     p_auth.add_argument("--project", type=Path, default=Path.cwd())
@@ -82,6 +84,15 @@ def main(argv: list[str] | None = None) -> int:
     p_auth.add_argument("--path", default="")
     p_auth.add_argument("--agent", default="")
     p_auth.add_argument("--action", default="")
+
+    p_receipt = sub.add_parser("issue-receipt", help="Issue Harness-signed run receipt for an action")
+    p_receipt.add_argument("--project", type=Path, default=Path.cwd())
+    p_receipt.add_argument("--actor", required=True, help="actor_id (agent or engine id)")
+    p_receipt.add_argument("--action", required=True, help="action_id")
+    p_receipt.add_argument("--actor-type", default="producer")
+    p_receipt.add_argument("--artifact", default="")
+    p_receipt.add_argument("--input", action="append", default=[], help="name=path for input hash")
+    p_receipt.add_argument("--output", action="append", default=[], help="name=path for output hash")
 
     args = parser.parse_args(argv)
 
@@ -135,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
         from ascendc_harness.workflows import get_workflow
 
         get_workflow(args.workflow_id)  # validate
-        state = start_workflow(args.project, args.workflow_id)
+        state = start_workflow(args.project, args.workflow_id, intent=getattr(args, "intent", "") or "")
         print(json.dumps(state, ensure_ascii=False, indent=2))
         return 0
     if args.cmd == "advance":
@@ -187,7 +198,11 @@ def main(argv: list[str] | None = None) -> int:
         uo = uo_root(args.project, args.op_name or None)
         from uo.scripts.check_final_confidence import check_final_confidence
 
-        payload = check_final_confidence(uo, write_skeleton=not args.no_skeleton)
+        payload = check_final_confidence(
+            uo,
+            write_report=not (args.no_write_report or args.no_skeleton),
+            write_skeleton=False,
+        )
         try:
             issue_receipt(
                 args.project,
@@ -222,6 +237,41 @@ def main(argv: list[str] | None = None) -> int:
         if verdict.get("decision") == "ask":
             return 2
         return 1
+    if args.cmd == "issue-receipt":
+        from ascendc_harness.runs import file_sha256, issue_receipt
+        from ascendc_harness.spec_hashes import workflow_spec_hash
+        from ascendc_harness.state import load_state
+
+        state = load_state(args.project)
+        wid = str((state or {}).get("workflow_id") or "")
+        in_hashes: dict[str, str] = {}
+        out_hashes: dict[str, str] = {}
+        for item in args.input or []:
+            if "=" in item:
+                name, rel = item.split("=", 1)
+                in_hashes[name] = file_sha256(Path(rel))
+        for item in args.output or []:
+            if "=" in item:
+                name, rel = item.split("=", 1)
+                out_hashes[name] = file_sha256(Path(rel))
+        if args.artifact and "artifact" not in out_hashes:
+            art = Path(args.artifact)
+            if art.is_file():
+                out_hashes["artifact"] = file_sha256(art)
+            else:
+                out_hashes["artifact_path"] = args.artifact
+        path = issue_receipt(
+            args.project,
+            actor_type=args.actor_type,
+            actor_id=args.actor,
+            action_id=args.action,
+            workflow_spec_hash=workflow_spec_hash(wid) if wid else workflow_spec_hash(),
+            input_hashes=in_hashes,
+            output_hashes=out_hashes or {"artifact": args.artifact or "none"},
+            artifact=args.artifact,
+        )
+        print(json.dumps({"ok": True, "receipt": str(path)}, ensure_ascii=False, indent=2))
+        return 0
     return 2
 
 

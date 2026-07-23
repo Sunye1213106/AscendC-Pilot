@@ -65,7 +65,7 @@ def _seed_kb(repo: Path, revision: str) -> Path:
     manifest["spec"]["bundle_hash"] = spec_bundle_hash()
     _write_yaml(root / "manifest.yaml", manifest)
 
-    phase0 = root / "runs" / "UO_RUN_BASE" / "phase0"
+    phase0 = root / "runs" / "UO_RUN_BASE" / "scope"
     phase0.mkdir(parents=True)
     confirmed = {
         "version": 1,
@@ -208,7 +208,7 @@ def test_detect_and_plan_host_change(tmp_path: Path) -> None:
     assert change_set["scoped_change_count"] == 1
     assert change_set["files"][0]["path"] == "op_host/demo.cpp"
     assert change_set["files"][0]["role"] == "host"
-    assert change_set["needs_phase0_review"] is False
+    assert change_set["needs_scope_review"] is False
 
     plan = plan_kb_update(repo, "DemoOp", change_set=change_set, write=True)
     assert plan["mode"] in {"selective", "full_extract"}
@@ -228,7 +228,7 @@ def test_export_diff_binds_host_entity(tmp_path: Path) -> None:
         "op_name": "DemoOp",
         "base_revision": base,
         "head_revision": base,
-        "needs_phase0_review": False,
+        "needs_scope_review": False,
         "files": [{"path": "op_host/demo.cpp", "status": "M", "in_scope": True, "role": "host", "suspicious_out_of_scope": False}],
     }
     plan = {
@@ -237,7 +237,7 @@ def test_export_diff_binds_host_entity(tmp_path: Path) -> None:
         "mode": "selective",
         "affected_layers": ["host", "bridge", "entrypoints"],
         "scoped_changed_files": ["op_host/demo.cpp"],
-        "needs_phase0_review": False,
+        "needs_scope_review": False,
     }
     result = export_diff_product(repo, "DemoOp", change_set=change_set, update_plan=plan, write=True)
     assert (root / "diff" / "index.yaml").exists()
@@ -267,9 +267,9 @@ def test_out_of_scope_source_blocks(tmp_path: Path) -> None:
     _git(repo, "commit", "-m", "add out of scope host file")
 
     change_set = detect_kb_changes(repo, "DemoOp", write=True)
-    assert change_set["needs_phase0_review"] is True
+    assert change_set["needs_scope_review"] is True
     plan = plan_kb_update(repo, "DemoOp", change_set=change_set, write=True)
-    assert plan["needs_phase0_review"] is True
+    assert plan["needs_scope_review"] is True
 
     result = update_operator(repo, "DemoOp", skip_validate=True)
     assert result["status"] == "blocked"

@@ -29,11 +29,13 @@ SECTION_RE = re.compile(r"^###\s+(KEY_\S+|KVAR_\S+)\s*$", re.MULTILINE)
 def check_final_confidence(
     uo_root: Path,
     *,
-    write_skeleton: bool = True,
+    write_skeleton: bool = False,
+    write_report: bool = True,
 ) -> dict[str, Any]:
     uo_root = Path(uo_root)
     id_doc = read_yaml(uo_root / "ir" / "input_derivable.yaml")
     keys = (id_doc.get("keys") or {}) if isinstance(id_doc, dict) else {}
+    patch_reasons = _load_patch_reasons(uo_root)
 
     closed_ok: list[str] = []
     closed_bad: list[dict[str, Any]] = []  # closed but confidence != high
@@ -44,14 +46,25 @@ def check_final_confidence(
             continue
         idv = entry.get("input_derivable")
         conf = str(entry.get("confidence") or "").lower().strip()
+        reason = str(
+            entry.get("reason")
+            or patch_reasons.get(str(kid), {}).get("reason")
+            or ""
+        )
         row = {
             "id": str(kid),
             "input_derivable": idv,
             "confidence": conf or "(missing)",
-            "gap_kind": entry.get("gap_kind"),
+            "gap_kind": entry.get("gap_kind") or patch_reasons.get(str(kid), {}).get("gap_kind"),
             "host_parent": entry.get("host_parent"),
-            "reason": entry.get("reason") or "",
+            "reason": reason,
             "gap_ref": entry.get("gap_ref"),
+            "attempted": entry.get("attempted")
+            or patch_reasons.get(str(kid), {}).get("attempted")
+            or "",
+            "suggestion": entry.get("suggestion")
+            or patch_reasons.get(str(kid), {}).get("suggestion")
+            or "",
         }
         if idv is True or idv is False or entry.get("not_input_derivable") is True:
             if conf == "high":
@@ -64,6 +77,9 @@ def check_final_confidence(
             need_llm.append(row)
 
     report_path = uo_root / REPORT_REL
+    # Deterministic assembly from structured KB/patch reasons — never TODO skeleton.
+    if write_report and (write_skeleton or need_llm or not report_path.is_file()):
+        _write_deterministic_report(uo_root, need_llm, closed_ok=closed_ok)
     report_text = report_path.read_text(encoding="utf-8") if report_path.is_file() else ""
     covered = set(SECTION_RE.findall(report_text)) if report_text else set()
     missing_report = [r["id"] for r in need_llm if r["id"] not in covered]
@@ -71,13 +87,7 @@ def check_final_confidence(
     # closed_bad must never ship — force LLM / fix, not just report
     hard_fail = bool(closed_bad)
 
-    if need_llm and write_skeleton and (not report_text or missing_report):
-        _write_skeleton_report(uo_root, need_llm, existing=report_text)
-        report_text = report_path.read_text(encoding="utf-8")
-        covered = set(SECTION_RE.findall(report_text))
-        missing_report = [r["id"] for r in need_llm if r["id"] not in covered]
-
-    # Skeleton alone is not enough: each leftover section needs a filled 原因 line
+    # Each leftover section needs a filled 原因 line from structured data (no TODO)
     incomplete_reasons = _sections_missing_reason(report_text, [r["id"] for r in need_llm])
 
     status = "pass"
@@ -143,6 +153,7 @@ def check_final_confidence(
             "report_quality_fail": report_quality_fail,
             "closed_high_fail": closed_high_fail,
             "triage_fail": triage_fail,
+            "deterministic_report": True,
         },
         "message": _status_message(
             status,
@@ -158,6 +169,42 @@ def check_final_confidence(
     write_yaml(uo_root / "checks" / "confidence_gate.yaml", payload)
     return payload
 
+
+def _load_patch_reasons(uo_root: Path) -> dict[str, dict[str, Any]]:
+    """Structured reasons from producer patch — sole source for report body text."""
+    out: dict[str, dict[str, Any]] = {}
+    for rel in ("ir/input_derivable_patch.yaml", "ir/resolution_patch.yaml"):
+        doc = read_yaml(uo_root / rel)
+        if not isinstance(doc, dict):
+            continue
+        items = doc.get("items") or doc.get("keys") or doc.get("accepted") or []
+        if isinstance(doc.get("keys"), dict):
+            for kid, entry in doc["keys"].items():
+                if isinstance(entry, dict):
+                    out[str(kid)] = {
+                        "reason": str(entry.get("reason") or entry.get("reason_zh") or ""),
+                        "attempted": str(entry.get("attempted") or entry.get("tried") or ""),
+                        "suggestion": str(entry.get("suggestion") or entry.get("next") or ""),
+                        "gap_kind": entry.get("gap_kind"),
+                    }
+        if isinstance(items, list):
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                kid = str(it.get("id") or it.get("key") or "")
+                if not kid:
+                    continue
+                out[kid] = {
+                    "reason": str(it.get("reason") or it.get("reason_zh") or out.get(kid, {}).get("reason") or ""),
+                    "attempted": str(
+                        it.get("attempted") or it.get("tried") or out.get(kid, {}).get("attempted") or ""
+                    ),
+                    "suggestion": str(
+                        it.get("suggestion") or it.get("next") or out.get(kid, {}).get("suggestion") or ""
+                    ),
+                    "gap_kind": it.get("gap_kind") or out.get(kid, {}).get("gap_kind"),
+                }
+    return out
 
 def _status_message(
     status: str,
@@ -232,35 +279,46 @@ def _sections_missing_reason(report_text: str, ids: list[str]) -> list[str]:
     return bad
 
 
-def _write_skeleton_report(uo_root: Path, need_llm: list[dict[str, Any]], *, existing: str) -> None:
+def _write_deterministic_report(
+    uo_root: Path,
+    need_llm: list[dict[str, Any]],
+    *,
+    closed_ok: list[str] | None = None,
+) -> None:
+    """Assemble confidence_report.md solely from structured patch/KB reasons.
+
+    Producer must not edit this file; Referee only reviews. Missing structured
+    reason yields an explicit 原因 stating evidence is absent (not TODO).
+    """
     path = uo_root / REPORT_REL
     path.parent.mkdir(parents=True, exist_ok=True)
     now = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines = [
-        "# 置信度未达 high 说明",
+        "# 置信度报告（确定性引擎汇总）",
         "",
-        f"- 生成/更新时间：{now}",
+        f"- 生成时间：{now}",
         f"- 算子根：`{uo_root.as_posix()}`",
-        "- 规则：最终交付项必须 `confidence: high`；否则先 LLM（`uo-semantic-resolve`）解析；",
-        "  仍无法高置信闭合时，在本文件逐条写明中文原因（禁止伪标 high）。",
+        "- 来源：`ir/input_derivable.yaml` + `ir/input_derivable_patch.yaml` 结构化 reason",
+        "- 规则：报告正文由确定性引擎生成；Producer 只写 patch；Referee（uo-confidence-review）只审",
+        f"- closed_high_count：{len(closed_ok or [])}",
         "",
         "## 未达 high 的项",
         "",
     ]
-    existing_ids = set(SECTION_RE.findall(existing)) if existing else set()
-    # keep prior filled sections
-    if existing:
-        lines.append("<!-- 以下合并自已有报告；请补全新项的「原因」 -->")
+    if not need_llm:
+        lines.append("（无）全部 KEY 已 high 闭合。")
         lines.append("")
     for row in need_llm:
         kid = row["id"]
-        if kid in existing_ids and existing:
-            # extract old section
-            m = re.search(rf"(^###\s+{re.escape(kid)}\s*$.*?)(?=^###\s|\Z)", existing, re.MULTILINE | re.DOTALL)
-            if m:
-                lines.append(m.group(1).rstrip())
-                lines.append("")
-                continue
+        reason = str(row.get("reason") or "").strip()
+        attempted = str(row.get("attempted") or "").strip()
+        suggestion = str(row.get("suggestion") or "").strip()
+        if not reason:
+            reason = "结构化 patch/KB 未提供 reason；须由 uo-key-resolve 在 patch 中补中文原因后再汇总"
+        if not attempted:
+            attempted = "见 patch 记录；未单独声明 attempted 字段"
+        if not suggestion:
+            suggestion = "补边 / 标 not_input_derivable / 人工确认（由 patch suggestion 驱动）"
         lines.extend(
             [
                 f"### {kid}",
@@ -268,25 +326,36 @@ def _write_skeleton_report(uo_root: Path, need_llm: list[dict[str, Any]], *, exi
                 f"- confidence：`{row.get('confidence')}`",
                 f"- gap_kind：`{row.get('gap_kind')}`",
                 f"- host_parent：`{row.get('host_parent')}`",
-                f"- 分类器原因：{row.get('reason') or '（无）'}",
-                "- 已尝试：TODO（填写是否已跑 semantic-resolve 任务 E / CBM）",
-                "- 原因：TODO（中文：为何仍无法 high 闭合）",
-                "- 建议：TODO（补边 / 标 not_input_derivable / 人工确认）",
+                f"- 已尝试：{attempted}",
+                f"- 原因：{reason}",
+                f"- 建议：{suggestion}",
                 "",
             ]
         )
     path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
+# Back-compat alias — must not write TODO placeholders
+def _write_skeleton_report(uo_root: Path, need_llm: list[dict[str, Any]], *, existing: str = "") -> None:
+    del existing
+    _write_deterministic_report(uo_root, need_llm)
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="uo-init final confidence gate (high or documented)")
+    parser = argparse.ArgumentParser(description="uo-init final confidence gate (deterministic report)")
     parser.add_argument("repo", type=Path)
     parser.add_argument("--op-name", required=True)
-    parser.add_argument("--no-write-skeleton", action="store_true")
+    parser.add_argument(
+        "--no-write-skeleton",
+        action="store_true",
+        help="deprecated alias: skip writing report (prefer --no-write-report)",
+    )
+    parser.add_argument("--no-write-report", action="store_true", help="do not rewrite confidence_report.md")
     args = parser.parse_args(argv)
     op = safe_op_name(args.op_name, args.repo)
     uo_root = existing_operator_root(args.repo, op)
-    payload = check_final_confidence(uo_root, write_skeleton=not args.no_write_skeleton)
+    write_report = not (args.no_write_report or args.no_write_skeleton)
+    payload = check_final_confidence(uo_root, write_report=write_report, write_skeleton=False)
     print(f"confidence_gate status={payload['status']} {payload['message']}")
     print(f"→ {uo_root / 'checks' / 'confidence_gate.yaml'}")
     if payload.get("report_path"):

@@ -187,7 +187,7 @@ def mark_init_confirmed(out_root: Path, *, notes: str = "", require_merge: bool 
                 ask=str(closure.get("ask") or "shape_closure_incomplete"),
                 payload=closure,
             )
-        _require_audit_pass(out_root)
+        require_audit_pass(out_root)
     doc = read_init_status(out_root)
     if not doc:
         doc = {"version": 1}
@@ -238,14 +238,14 @@ def mark_init_confirmed(out_root: Path, *, notes: str = "", require_merge: bool 
     return doc
 
 
-def _require_audit_pass(out_root: Path) -> dict[str, Any]:
+def require_audit_pass(out_root: Path) -> dict[str, Any]:
     """Require init/audit_report.yaml from tg-init-audit subagent before confirm."""
     from .resolve_policy import AUDIT_CHECKLIST_IDS
 
     path = Path(out_root) / "init" / "audit_report.yaml"
     if not path.is_file():
         raise InitGateError(
-            "Missing init/audit_report.yaml. Open Task Follow agents/tg-init-audit.md before --confirm.",
+            "Missing init/audit_report.yaml. Open Task Follow agents-src/tg-init-audit (composed) before --confirm.",
             ask="audit_required",
             payload={"expected": path.as_posix(), "next": "Task tg-init-audit → write init/audit_report.yaml"},
         )

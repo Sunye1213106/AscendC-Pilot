@@ -1,16 +1,13 @@
-# skills-src
+# skills-src（组合式）
 
-Skill **单一来源**。安装前由 `scripts/compile_skills.py` 编译到 `generated/<host>/skills/`。
+业务规则只在本树、`prompts-src/`、`agents-src/` 维护。
 
 ```text
-python scripts/compile_skills.py --repo .
-# → generated/opencode|cursor|codex/skills/
+python scripts/compose_runtime.py --repo .
+# → generated/<host>/{skills,agents,prompts}/
 ```
 
-- 领域方法与 references 写在本树
-- 宿主差异（frontmatter）在 `hosts/*.yaml`
-- 编译器注入「Harness control plane」循环；禁止在 Skill 内另起状态机
-- `/operator` 只调用 `harness route`，不维护第二路由表
-- `/uo-diff` 已并入 `uo-update`（本树保留重定向 Skill）
-
-遗留根目录 `skills/` 仅作对照，**install 部署 generated/**。
+- Policy / Capability / Action Method / Role / Workflow Skill 分层
+- Harness Workflow Spec（`harness/.../specs.py`）声明 Action 组合引用
+- Composer 组装运行时指令；禁止手改 `generated/`
+- `/operator` 只调用 `harness route`

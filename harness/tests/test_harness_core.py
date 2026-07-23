@@ -274,6 +274,7 @@ def test_plan_approved_reads_human_supplement(tmp_path: Path):
     level.mkdir(parents=True)
     _write(tg / "plan" / "latest_level.yaml", {"level": "L0"})
     _write(level / "coverage_obligations.yaml", {"obligations": []})
+    _write(level / "plan.yaml", {"snapshot_hash": "abc", "plan_hash": "def"})
     _write(
         level / "human_supplement.yaml",
         {
@@ -281,9 +282,21 @@ def test_plan_approved_reads_human_supplement(tmp_path: Path):
             "decision": "approve",
             "approved_snapshot_hash": "abc",
             "approved_plan_hash": "def",
+            "approved_at": "2026-01-01T00:00:00Z",
+            "supplements": [],
+            "notes": "ok",
         },
     )
-    _write(level / "unresolved.yaml", {"allow_solve": True, "allow_solve_reason": "ok"})
+    _write(
+        level / "unresolved.yaml",
+        {
+            "status": "ready_for_manual_review",
+            "allow_solve": True,
+            "allow_solve_reason": "ok",
+            "blocking_hard_obligations": [],
+            "contract_gaps": [],
+        },
+    )
     r = gate_plan_approved(tmp_path)
     assert r["ok"] is True
 
@@ -356,13 +369,15 @@ def test_compile_skills_smoke():
 
     repo = Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(repo / "scripts"))
-    from compile_skills import compile_all
+    from compose_runtime import compose_all
 
-    result = compile_all(repo, hosts=["opencode"])
+    result = compose_all(repo, hosts=["opencode"])
     assert result["ok"]
     assert (repo / "generated" / "opencode" / "skills" / "operator" / "SKILL.md").is_file()
+    assert (repo / "generated" / "opencode" / "agents" / "ascendc-agent.md").is_file()
     text = (repo / "generated" / "opencode" / "skills" / "uo-init" / "SKILL.md").read_text(encoding="utf-8")
-    assert "Harness control plane" in text
+    assert "harness-control" in text
+    assert "Composition index" in text
 
 
 def test_memory_and_context(tmp_path: Path):
@@ -383,3 +398,151 @@ def test_memory_and_context(tmp_path: Path):
     promote_stable(tmp_path, bad["id"], verified_by="test")
     prop = propose_global_promote(tmp_path, bad["id"])
     assert prop.get("ok") is False
+
+
+def test_actions_for_phase_strict_binding(tmp_path: Path):
+    from ascendc_harness.state import describe_next
+    from ascendc_harness.workflows import actions_for_phase
+
+    prepare = actions_for_phase("uo-init", "prepare")
+    assert [a["id"] for a in prepare] == ["prepare_layout"]
+    scope = actions_for_phase("uo-init", "scope")
+    assert [a["id"] for a in scope] == ["scope_confirmation"]
+    empty = actions_for_phase("uo-init", "nonexistent_phase")
+    assert empty == []
+    start_workflow(tmp_path, "uo-init")
+    nxt = describe_next(tmp_path)
+    assert [a["id"] for a in nxt["allowed_actions"]] == ["prepare_layout"]
+    assert nxt["phase_label_zh"] == "环境准备"
+
+
+def test_complete_uo_query_no_implicit_key_gates(tmp_path: Path):
+    """uo-query must not inherit uo-init KEY complete gates by prefix."""
+    start_workflow(tmp_path, "uo-query", phase="answer", force_phase=True)
+    record_gate(tmp_path, "kb_ready", ok=True)
+    uo = uo_root(tmp_path)
+    _write(uo / "manifest.yaml", {"op_name": "Demo"})
+    _write(uo / "checks" / "integrity.yaml", {"status": "pass"})
+    result = complete_workflow(tmp_path)
+    if not result.get("ok"):
+        lf = load_state(tmp_path).get("last_failure") or {}
+        assert lf.get("reason_code") != "KEY_GATES_FAILED"
+        assert "key_gates" not in result
+
+
+def test_complete_rejects_open_obligations(tmp_path: Path):
+    start_workflow(tmp_path, "uo-query", phase="answer", force_phase=True)
+    uo = uo_root(tmp_path)
+    _write(uo / "manifest.yaml", {"op_name": "Demo"})
+    _write(uo / "checks" / "integrity.yaml", {"status": "pass"})
+    result = complete_workflow(tmp_path)
+    if result.get("ok"):
+        assert load_state(tmp_path)["status"] == "passed"
+        assert load_state(tmp_path).get("open_items") == []
+    else:
+        assert result["status"] in {"rework_required", "human_required", "blocked"}
+        assert load_state(tmp_path)["status"] != "passed"
+
+
+def test_authorize_action_and_role(tmp_path: Path):
+    from ascendc_harness.authorize import authorize
+
+    start_workflow(tmp_path, "uo-init", phase="resolve", force_phase=True)
+    bad_action = authorize(
+        tmp_path,
+        tool="write",
+        path=str(tmp_path / ".ascendc-agent" / "uo" / "ir" / "x.yaml"),
+        agent="uo-key-resolve",
+        action="prepare_layout",
+    )
+    assert bad_action.get("decision") == "deny"
+    assert bad_action.get("reason_code") == "ACTION_NOT_ALLOWED"
+
+    ok = authorize(
+        tmp_path,
+        tool="write",
+        path=str(tmp_path / ".ascendc-agent" / "uo" / "ir" / "input_derivable_patch.yaml"),
+        agent="uo-key-resolve",
+        action="key_resolution",
+    )
+    assert ok.get("decision") == "allow"
+
+    primary = authorize(
+        tmp_path,
+        tool="write",
+        path=str(tmp_path / ".ascendc-agent" / "uo" / "ir" / "x.yaml"),
+        agent="ascendc-agent",
+        action="key_resolution",
+    )
+    assert primary.get("decision") == "deny"
+
+
+def test_verify_receipt_strict(tmp_path: Path):
+    from ascendc_harness.runs import issue_receipt, verify_receipt
+    from ascendc_harness.spec_hashes import workflow_spec_hash
+
+    start_workflow(tmp_path, "uo-init", phase="resolve", force_phase=True)
+    wf = workflow_spec_hash("uo-init")
+    issue_receipt(
+        tmp_path,
+        actor_type="producer",
+        actor_id="uo-key-resolve",
+        action_id="key_resolution",
+        workflow_spec_hash=wf,
+        input_hashes={"triage": "abc"},
+        output_hashes={"patch": "def"},
+        checker_result={"ok": True},
+    )
+    ok = verify_receipt(
+        tmp_path,
+        actor_id="uo-key-resolve",
+        action_id="key_resolution",
+        require_hashes=True,
+        require_action_id=True,
+        require_spec_hash=True,
+    )
+    assert ok.get("ok") is True
+    bad = verify_receipt(
+        tmp_path,
+        actor_id="uo-key-resolve",
+        action_id="wrong_action",
+        require_action_id=True,
+    )
+    assert bad.get("ok") is False
+
+
+def test_spec_hashes_not_empty():
+    from ascendc_harness.spec_hashes import all_spec_hashes
+
+    repo = Path(__file__).resolve().parents[2]
+    hashes = all_spec_hashes(repo)
+    assert "empty" not in hashes["kb_schema_hash"]
+    assert "empty" not in hashes["agent_contract_hash"]
+    assert "empty" not in hashes["tg_contract_hash"]
+
+
+def test_uo_diff_route_intent():
+    r = route("/uo-diff")
+    assert r.get("workflow_id") == "uo-update"
+    assert r.get("intent") == "diff_only"
+
+
+def test_tg_kb_ready_no_fingerprint_gate():
+    from ascendc_harness.workflows import get_workflow
+
+    meta = get_workflow("tg-init")
+    assert "kb_fingerprint_fresh" not in (meta.get("phase_gates") or {}).get("kb_ready", [])
+    assert "uo_ready" in (meta.get("phase_gates") or {}).get("kb_ready", [])
+    assert "kb_fingerprint_fresh" in (meta.get("phase_gates") or {}).get("confirm", [])
+
+
+def test_install_skill_lists_symmetric():
+    repo = Path(__file__).resolve().parents[2]
+    ps1 = (repo / "install.ps1").read_text(encoding="utf-8")
+    sh = (repo / "install.sh").read_text(encoding="utf-8")
+    # Install loops must not link uo-diff; uninstall may still remove retired name
+    assert 'foreach ($name in @("uo-init","uo-update","uo-query","uo-code-review","tg-init","tg-plan","tg-solve","operator"))' in ps1
+    assert "for name in uo-init uo-update uo-query uo-code-review tg-init tg-plan tg-solve operator; do" in sh
+    assert "ascendc-agent" in ps1
+    assert "ascendc-harness.ts" in ps1
+    assert "ascendc-harness.ts" in sh

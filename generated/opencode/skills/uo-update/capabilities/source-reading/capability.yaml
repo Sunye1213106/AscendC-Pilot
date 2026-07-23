@@ -1,0 +1,16 @@
+id: source-reading
+version: 1
+name_zh: 定向源码阅读
+description: 在已知 file_path 上读取最小必要源码窗口。
+applies_when:
+  - 已有明确 file_path
+  - 宏/注册/谓词必须以 Read 为主路径
+  - CBM 不足需回退
+requires:
+  inputs: [file_paths, line_hints]
+  tools: [source_open, read]
+  context: [project_root, scope]
+produces: [code_evidence]
+compatible_roles: [producer, readonly_analyst, referee]
+policies: [source-authority, code-access, evidence]
+method_file: METHOD.md

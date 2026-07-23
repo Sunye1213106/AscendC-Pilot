@@ -152,9 +152,9 @@ def export_diff_product(
             )
 
     plan_mode = str(update_plan.get("mode") or "")
-    blocked = plan_mode == "blocked_phase0" or bool(update_plan.get("needs_phase0_review") and not changed_paths)
+    blocked = plan_mode == "blocked_scope" or bool(update_plan.get("needs_scope_review") and not changed_paths)
     if status is None:
-        status = "blocked" if blocked or plan_mode == "blocked_phase0" else "ready"
+        status = "blocked" if blocked or plan_mode == "blocked_scope" else "ready"
 
     impact = {
         "version": 1,

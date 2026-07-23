@@ -71,10 +71,10 @@ def rework_targets(workflow_id: str, frm: str, *, reason_code: str = "") -> list
 
 
 def actions_for_phase(workflow_id: str, phase: str) -> list[dict[str, Any]]:
+    """Return actions explicitly bound to ``phase`` via action.phases.
+
+    No fallback to the full action list — empty means nothing is allowed now.
+    """
     meta = get_workflow(workflow_id)
-    phase_gates = set((meta.get("phase_gates") or {}).get(phase) or [])
     actions = [a for a in (meta.get("actions") or []) if isinstance(a, dict)]
-    if not phase_gates:
-        return actions
-    matched = [a for a in actions if phase_gates.intersection(set(a.get("gates") or []))]
-    return matched or actions
+    return [a for a in actions if phase in set(a.get("phases") or [])]

@@ -17,7 +17,7 @@ from uo._core.ignore import DEFAULT_IGNORE_PATTERNS
 from uo._operator.artifacts import init_operator_contract_layout, operator_root, safe_op_name, write_text
 from uo._operator.cbm_metadata import write_index_meta
 from uo._operator.install_check import compare_installed_skill
-from uo._operator.run_context import phase0_snapshot, read_yaml_mapping
+from uo._operator.run_context import scope_snapshot, read_yaml_mapping
 from uo._operator.spec import spec_bundle_hash
 
 
@@ -38,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--force-new-run",
         action="store_true",
-        help="Always create a new UO run (do not use with --write-index-meta mid-Phase0).",
+        help="Always create a new UO run (do not use with --write-index-meta mid-scope-confirmation).",
     )
     parser.add_argument(
         "--write-index-meta",
@@ -58,8 +58,8 @@ def main(argv: list[str] | None = None) -> int:
     base = operator_root(repo_root, op_name)
     init_operator_contract_layout(base, op_name, repo_root)
     run_id = _select_run_id(base, resume=args.resume, force_new=args.force_new_run)
-    phase0 = base / "runs" / run_id / "phase0"
-    _update_manifest_phase0(base, run_id, repo_root)
+    phase0 = base / "runs" / run_id / "scope"
+    _update_manifest_scope(base, run_id, repo_root)
     installed_skill = Path.home() / ".config" / "opencode" / "skills" / "understand-operator"
     if installed_skill.exists():
         check = compare_installed_skill(Path(__file__).resolve().parents[2], installed_skill)
@@ -71,7 +71,7 @@ def main(argv: list[str] | None = None) -> int:
             "installed_skill_root": str(installed_skill),
             "mismatches": [{"path": "skills/understand-operator", "reason": "installed skill root missing"}],
         }
-    _write_phase0_doc(
+    _write_scope_doc(
         phase0 / "context.yaml",
         "runs.context",
         {
@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
             "spec_bundle_hash": spec_bundle_hash(),
         },
     )
-    _write_phase0_doc(phase0 / "installed_skill_check.yaml", "runs.installed_skill_check", check)
+    _write_scope_doc(phase0 / "installed_skill_check.yaml", "runs.installed_skill_check", check)
     if not check.get("consistent"):
         print("ERROR: installed understand-operator plugin is out of sync with the repository.", file=sys.stderr)
         print("Run: powershell -ExecutionPolicy Bypass -File install.ps1 opencode", file=sys.stderr)
@@ -92,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
         return 3
 
     patterns = _load_operator_ignore_patterns(repo_root)
-    _write_phase0_doc(
+    _write_scope_doc(
         phase0 / "ignore_rules.yaml",
         "runs.ignore_rules",
         {"patterns": patterns},
@@ -103,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
     ):
         target = phase0 / filename
         if not target.exists():
-            _write_phase0_doc(target, artifact_type, _phase0_pending_defaults(repo_root, op_name, artifact_type))
+            _write_scope_doc(target, artifact_type, _scope_pending_defaults(repo_root, op_name, artifact_type))
 
     if args.write_index_meta or args.cbm_project:
         scope = _current_scope_meta(base)
@@ -136,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
             },
         )
         write_text(
-            base / "cbm" / "cbm_query_log.md",
+            base / "cbm" / "cbm_mcp_log.md",
             "# CBM Index Log\n\n"
             f"- indexed_via: mcp\n"
             f"- cbm_project: {args.cbm_project or 'pending'}\n"
@@ -144,26 +144,26 @@ def main(argv: list[str] | None = None) -> int:
             "- agent queries: MCP codebase-memory-mcp tools only\n",
         )
 
-    stub = base / "cbm" / "cbm_query_log.md"
+    stub = base / "cbm" / "cbm_mcp_log.md"
     if not stub.exists():
         write_text(
             stub,
             "# CBM Index Log\n\n"
-            "Layout prepared. Waiting for Phase0 scope confirmation before MCP `index_repository`.\n",
+            "Layout prepared. Waiting for scope confirmation before MCP `index_repository`.\n",
         )
 
     print(f"Prepared understand-operator artifacts for {op_name}")
     print(f"Output: {base}")
     print(f"Run: {run_id}")
-    print("CBM: use MCP index_repository only after Phase0 scope confirmation; pass only confirmed_file_list")
-    print("Next: macro_scope_scan -> review_checkpoint -> index_repository -> --write-index-meta -> finalize_phase0")
+    print("CBM: use MCP index_repository only after scope confirmation; pass only confirmed_file_list")
+    print("Next: macro_scope_scan -> review_checkpoint -> index_repository -> --write-index-meta -> finalize_scope")
     return 0
 
 
 def _select_run_id(base: Path, *, resume: bool, force_new: bool) -> str:
-    """Pick the Phase0 run directory to write into.
+    """Pick the scope confirmation run directory to write into.
 
-    Incomplete ``current_run_id`` is reused by default so later Phase0 steps
+    Incomplete ``current_run_id`` is reused by default so later scope confirmation steps
     (especially ``--write-index-meta``) do not accidentally fork a new run and
     orphan ``scope_scan`` / ``scope_review`` / ``scope_confirmed`` artifacts.
     """
@@ -174,7 +174,7 @@ def _select_run_id(base: Path, *, resume: bool, force_new: bool) -> str:
 
     current = _current_run_id(base)
     if current is not None:
-        receipt = base / "runs" / current / "phase0" / "receipt.yaml"
+        receipt = base / "runs" / current / "scope" / "receipt.yaml"
         if not _receipt_passed(receipt):
             # Default + --resume: keep writing into the unfinished run.
             return current
@@ -237,13 +237,13 @@ def _source_snapshot_id(repo_root: Path) -> str:
     return f"SOURCE_{digest}"
 
 
-def _write_phase0_doc(path: Path, artifact_type: str, data: object) -> None:
+def _write_scope_doc(path: Path, artifact_type: str, data: object) -> None:
     base = path.parents[3]
     run_id = path.parents[1].name
     payload = {
         "version": 1,
-        "artifact": {"type": artifact_type, "schema_version": 1, "owner": "uo-orchestrator"},
-        "snapshot": phase0_snapshot(base, run_id),
+        "artifact": {"type": artifact_type, "schema_version": 1, "owner": "deterministic-uo-engine"},
+        "snapshot": scope_snapshot(base, run_id),
     }
     if isinstance(data, dict):
         payload.update(data)
@@ -252,7 +252,7 @@ def _write_phase0_doc(path: Path, artifact_type: str, data: object) -> None:
     write_text(path, _to_yaml(payload))
 
 
-def _phase0_pending_defaults(repo_root: Path, op_name: str, artifact_type: str) -> dict[str, object]:
+def _scope_pending_defaults(repo_root: Path, op_name: str, artifact_type: str) -> dict[str, object]:
     if artifact_type == "runs.scope_scan":
         return {
             "status": "pending",
@@ -304,7 +304,7 @@ def _phase0_pending_defaults(repo_root: Path, op_name: str, artifact_type: str) 
     return {}
 
 
-def _update_manifest_phase0(base: Path, run_id: str, repo_root: Path) -> None:
+def _update_manifest_scope(base: Path, run_id: str, repo_root: Path) -> None:
     path = base / "manifest.yaml"
     if not path.exists():
         return
@@ -329,7 +329,7 @@ def _current_scope_meta(base: Path) -> dict[str, Any]:
         run_id = _current_run_id(base)
     except Exception:  # noqa: BLE001
         return {}
-    phase0 = base / "runs" / run_id / "phase0"
+    phase0 = base / "runs" / run_id / "scope"
     confirmed = read_yaml_mapping(phase0 / "scope_confirmed.yaml")
     if confirmed:
         files = confirmed.get("confirmed_file_list") if isinstance(confirmed.get("confirmed_file_list"), list) else []
@@ -372,7 +372,7 @@ def _roots_for_confirmed_files(files: list[Any]) -> list[dict[str, str]]:
         parent = str(Path(path).parent).replace("\\", "/")
         if parent == ".":
             parent = "."
-        roots.setdefault(parent, {"path": parent, "kind": "confirmed_files", "reason": "human-confirmed Phase0 scope"})
+        roots.setdefault(parent, {"path": parent, "kind": "confirmed_files", "reason": "human-confirmed scope"})
     return sorted(roots.values(), key=lambda item: item["path"])
 
 

@@ -30,8 +30,8 @@ def stage_cbm_scope(repo_root: Path, op_name: str, *, stage_root: Path | None = 
     op_name = safe_op_name(op_name, repo_root)
     uo_root = existing_operator_root(repo_root, op_name)
     run_id = active_run_id(uo_root)
-    confirmed = read_yaml(uo_root / "runs" / run_id / "phase0" / "scope_confirmed.yaml")
-    scan = read_yaml(uo_root / "runs" / run_id / "phase0" / "scope_scan.yaml")
+    confirmed = read_yaml(uo_root / "runs" / run_id / "scope" / "scope_confirmed.yaml")
+    scan = read_yaml(uo_root / "runs" / run_id / "scope" / "scope_scan.yaml")
     files = confirmed.get("confirmed_file_list") or []
     rels: list[str] = []
     for item in files:
@@ -42,7 +42,7 @@ def stage_cbm_scope(repo_root: Path, op_name: str, *, stage_root: Path | None = 
         if path:
             rels.append(path)
     if not rels:
-        raise FileNotFoundError(f"no confirmed_file_list under runs/{run_id}/phase0/scope_confirmed.yaml")
+        raise FileNotFoundError(f"no confirmed_file_list under runs/{run_id}/scope/scope_confirmed.yaml")
 
     # Hard gate: if scan discovered common/, staging must include at least one common/ path.
     scan_wants_common = bool(
@@ -61,7 +61,7 @@ def stage_cbm_scope(repo_root: Path, op_name: str, *, stage_root: Path | None = 
     if scan_wants_common and not any(r.startswith("common/") for r in rels):
         raise RuntimeError(
             "COMMON_SCOPE_REQUIRED: scope_scan discovered common/, but confirmed_file_list has no common/ paths. "
-            "Fix Phase0 scope review before indexing."
+            "Fix scope confirmation before indexing."
         )
 
     workspace_root = _workspace_root(repo_root, scan)
@@ -102,7 +102,7 @@ def stage_cbm_scope(repo_root: Path, op_name: str, *, stage_root: Path | None = 
         "mcp_index_hint": {
             "repo_path": str(stage),
             "mode": "fast",
-            "name": f"{op_name}-phase0-scope",
+            "name": f"{op_name}-scope",
         },
     }
     (uo_root / "cbm").mkdir(parents=True, exist_ok=True)
@@ -141,7 +141,7 @@ def _resolve_source(workspace_root: Path, repo_root: Path, rel: str) -> Path | N
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Stage confirmed Phase0 files for narrow CBM indexing")
+    parser = argparse.ArgumentParser(description="Stage confirmed scope files for narrow CBM indexing")
     parser.add_argument("repo", nargs="?", default=".", help="Operator package root (KB location)")
     parser.add_argument("--op-name", required=True)
     parser.add_argument("--stage-root", default="", help="Optional override stage directory")

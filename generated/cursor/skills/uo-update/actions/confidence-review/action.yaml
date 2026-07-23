@@ -1,0 +1,23 @@
+id: confidence_review
+workflow_id: uo-update
+version: 1
+name_zh: 置信度原因审查
+role_id: referee
+agent_id: uo-confidence-review
+capabilities:
+- structured-review
+- kb-query
+policies:
+- source-authority
+- code-access
+- evidence
+- language
+- harness-control
+- output-quality
+task_prompt_id: uo/confidence-review
+context_profile_id: uo-update-confidence-review
+output_contract_id: confidence-reason-review-v1
+checker:
+  required: true
+referee:
+  required: true

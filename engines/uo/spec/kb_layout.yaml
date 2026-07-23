@@ -50,7 +50,7 @@ artifacts:
     role: template_aliases + KEY dims; source of KTPL_* entities and fixes_flag edges
   - path: review/kb_product_review.yaml
     role: uo-kb-review verdict (init final gate)
-  - path: runs/*/phase0/**
+  - path: runs/*/scope/**
     role: scope proposal / review / receipt
   - path: runs/*/update/**
     role: incremental update receipts

@@ -1,119 +1,62 @@
 ---
-name: tg-solve
-description: 'TG stage-3: SMT+CSV for approved level with Allow solve:yes. MUST NOT
-  modify approved plan or lexicon; domain-symmetry gate at start.'
-argument-hint: <project_root> --op-name <op> --level L0|L1|L2
 disable-model-invocation: true
 ---
 
-# Skill: tg-solve
+                ---
+                name: tg-solve
+                description: >-
+                  Z3 求解与 CSV 投影。 Harness 管阶段；本 Skill 只索引 Action。
+                disable-model-invocation: true
+                ---
 
-## Harness control plane（唯一权威）
+                # tg-solve
 
-本 Skill **不**拥有阶段/门禁/完成态。每一轮只做：
+                Z3 求解与 CSV 投影。
 
-1. `harness start <workflow_id> --project $PROJECT_ROOT`（若无活动 run）或读 `harness status`
-2. `harness next --project $PROJECT_ROOT` → 取 `phase_label_zh`、`allowed_actions`、`open_items`
-3. 按返回的 **一个** `action_id` 执行对应领域方法（见 references / prompts）
-4. 需要时 `harness advance <next_phase>` / `harness rework --reason <code>`
-5. 终态仅 `harness complete`；禁止自行宣布 done / `passed`
+                本 Skill 不定义工作流阶段。执行时：
 
-Gate 失败 → 保持 phase，status=`rework_required` 或 `human_required`；勿当作立即 blocked。
+                1. 调用 `harness start/resume`；
+                2. 调用 `harness next`；
+                3. 加载返回 Action 对应的组合能力（Policy / Capability / Action Method / Prompt / Role）；
+                4. 执行一个 Action；
+                5. 将结果交回 Harness。
 
+                ## Actions
+
+                | action_id | 名称 | method | agent |
+                |---|---|---|---|
+                | `solve_precheck` | 求解前置校验 | `tg-solve/solve-precheck` | `deterministic-tg-engine` |
+| `z3_solve` | 求解并投影 | `tg-solve/z3-solve` | `deterministic-tg-engine` |
+| `cover_confirm` | 覆盖确认 | `tg-solve/cover-confirm` | `deterministic-tg-engine` |
+
+## Composed: harness-control
+
+# Policy: harness-control
 
 ## Purpose
 
-**已批准** coverage plan → realizable CSV rows + uncover 原因码报告。
+Harness 独占状态、合法边、门禁与完成态。
 
-## Trigger
+## Rules
 
-- 用户 `/tg-solve`；某 level 已 approve 且 `Allow solve:yes`
-- **不适用**：未批准 plan（回 `/tg-plan`）；未 confirm init / 域不对称（回 `/tg-init`）；
-  建库或改 KB（UO 侧）
+1. 只能执行 `harness next` 返回的 Action。
+2. Skill、Prompt、Agent、Capability、Action Method **不得**推进工作流状态。
+3. 终态只认 `harness complete`；禁止自行宣布 `done` / `passed`。
+4. Gate fail ≠ 立即 `blocked`；保持 phase，进入 `rework_required` / `human_required`。
+5. 禁止直调领域 CLI（`build_layered_kb.py`、`tg-init`、`tg-plan`、`tg-solve` 等）；须经 harness 包装。
+6. 正式产物须 Harness 签发收据。
 
-## Inputs
+## Runtime loop (primary only)
 
-| 权威 | 说明 |
-|---|---|
-| `plan/human_supplement.yaml` + 对应 level 批准快照 | **只读**；本 Skill 禁改 |
-| confirmed `binding_lexicon.yaml` | SMT 真值；禁会话手改 |
-| `contracts` / consumer schema / realization_map | 投影 CSV 列 |
+1. `harness route` / `harness start`（若无活动 run）
+2. `harness next` → 取 Action
+3. 执行一个 Action 的领域方法
+4. 交回 Harness（advance / rework / complete 由控制面决定）
 
-冲突优先：approved plan 义务集 > solve 内部候选；lexicon merge 真值 > 未 merge resolve。  
-**禁止生成**：改写 approved plan、临时 lexicon 补丁当主路径。
+## Composition index
 
-## Outputs
-
-正式：求解 CSV、`solve_report` / uncovered obligations（含稳定 reason_code）。
-
-中间：Z3 模型、投影调试产物（若脚本写出）。
-
-**禁止产物**：修改 `plan/**` 批准快照；Edit lexicon 绕过域对称；伪 `resolved` 无高置信证据。
-
-## Invariants
-
-- **MUST NOT** 修改 approved plan（含 obligations / review 已批准内容）
-- 启动前：approval + domain_review + **domain_symmetry**（字面量 ∈ CSV 域）
-- 语义失败 → Task Follow uo-query → 只写 `$OUT_ROOT` → `tg-init --merge-uo-resolve` → **replan 一次**；禁手改 YAML / 禁改 `$UO_ROOT`
-- 覆盖闭合由脚本校验；禁止手算覆盖率
-- 语言：简体中文（`prompts/common/language.md`）
-
-## Tool Policy
-
-### MUST
-
-```powershell
-tg-solve "<算子仓>" --op-name <op> --level L0
-```
-
-- 域对称失败 → `ask=domain_asymmetry` → 回 init merge；禁止会话 Edit
-- 命令块：`prompts/solve/workflow.md`；原因码：`references/uncover-codes.md`
-
-### MAY
-
-- 一次语义返工：uo-query Tasks（cap=8）→ merge → `tg-plan` 同 level 再批准 → 再 solve
-
-### MUST NOT
-
-- 改 approved plan / lexicon / `$UO_ROOT/**` / 测试脚本
-- 父循环 `uo_kb_query` 当主路径
-- 用伪 skip / 假 not_csv 消定义务
-- 把 `tg-contract` / `tg-domain-review` 当用户必经命令
-
-## Workflow
-
-| Phase | Entry | Actions | Exit | Fail |
-|---|---|---|---|---|
-| 1 Gate | 用户触发 | 校验 approval + domain_symmetry | 门禁 pass | `APPROVE_*` / `domain_asymmetry` |
-| 2 Encode | gate pass | 脚本编码义务→SMT | 约束集 | `ENCODE_FAIL` |
-| 3 Solve | encode ok | Z3 / 后端求解 | 模型或 unsat | `UNSAT` / `SOLVER_FAIL` |
-| 4 Project | 有模型 | 投影 `VAR_CSV_*`→CSV 行 | CSV + report | `PROJECT_FAIL` |
-| 5 Cover | CSV 齐 | 脚本核对义务终态 | cover/uncover 报告 | 未举证 → uncover+code |
-
-细节：`references/domain-symmetry.md`。
-
-## Semantic Escalation
-
-| 适合脚本 | 适合 LLM / uo-query |
-|---|---|
-| Z3、投影、覆盖核对、域对称 | 求解前语义缺口（须回 init merge，不在 solve 内猜） |
-
-证据不足义务 → uncover + 稳定 reason_code，禁止伪 high 闭合。
-
-## Failure Taxonomy
-
-`APPROVE_BLOCKED` · `DOMAIN_REVIEW_REQUIRED` · `domain_asymmetry` · `ENCODE_FAIL` ·
-`UNSAT` · `SOLVER_FAIL` · `PROJECT_FAIL` · `UNCOVERED` · `INVALID_LEVEL`
-
-## Quality Gate
-
-- [ ] 未修改 approved plan / lexicon
-- [ ] 每条义务有终态：covered | uncovered+reason_code
-- [ ] CSV 符合 consumer schema；无空 binding 行冒充成功
-- [ ] 域对称门禁曾 pass
-
-## Stop Conditions
-
-- 无批准 / Allow solve:no → 停并回 `/tg-plan`
-- `domain_asymmetry` → 停并回 `/tg-init --merge-uo-resolve`
-- 语义返工超过一次仍失败 → 停并报告，禁止无限手改
+| action_id | policies | capabilities | method | prompt | agent |
+|---|---|---|---|---|---|
+| `solve_precheck` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `tg-solve/solve-precheck` | `-` | `deterministic-tg-engine` |
+| `z3_solve` | source-authority,code-access,evidence,language,harness-control,output-quality | obligation-analysis | `tg-solve/z3-solve` | `-` | `deterministic-tg-engine` |
+| `cover_confirm` | source-authority,code-access,evidence,language,harness-control,output-quality | obligation-analysis | `tg-solve/cover-confirm` | `-` | `deterministic-tg-engine` |

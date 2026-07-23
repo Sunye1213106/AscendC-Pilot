@@ -159,7 +159,7 @@ def classify_and_write(
                     "status": "unresolved",
                     "confidence": "low",
                     "reason": entry.get("reason")
-                    or "图回溯未接到 Host 输入根；需 uo-semantic-resolve 任务 E / CBM 补边或确认 not_input_derivable",
+                    or "图回溯未接到 Host 输入根；需 uo-key-resolve / CBM 补边或确认 not_input_derivable",
                     "evidence": [entry.get("host_parent_evidence")] if entry.get("host_parent_evidence") else [],
                     "host_parent": parent,
                     "tried_frontier": entry.get("tried_frontier") or [],

@@ -142,25 +142,147 @@ def has_subagent_receipt(
     identity_prefix: str = "",
     require_harness_issued: bool = True,
 ) -> bool:
+    """Legacy existence check — prefer verify_receipt for gate consumption."""
+    result = verify_receipt(
+        project_root,
+        actor_id=agent or "",
+        identity_prefix=identity_prefix,
+        require_harness_issued=require_harness_issued,
+        require_hashes=False,
+        require_action_id=False,
+        require_spec_hash=False,
+    )
+    return bool(result.get("ok"))
+
+
+def verify_receipt(
+    project_root: Path,
+    *,
+    actor_id: str = "",
+    actor_type: str = "",
+    action_id: str = "",
+    identity_prefix: str = "",
+    expected_input_hashes: dict[str, str] | None = None,
+    expected_output_hashes: dict[str, str] | None = None,
+    require_harness_issued: bool = True,
+    require_hashes: bool = True,
+    require_action_id: bool = True,
+    require_spec_hash: bool = True,
+    require_checker_result: bool = False,
+) -> dict[str, Any]:
+    """Strictly verify a Harness-issued receipt for the current run.
+
+    Checks: run_id, actor, action_id, input/output hashes, checker_result,
+    workflow_spec_hash, issued_by=harness. File existence alone is not enough.
+    """
     state = _load_state(project_root)
     run_id = str(state.get("run_id") or "")
     if not run_id:
-        return False
+        return {"ok": False, "reason_code": "NO_RUN", "message": "no active run_id"}
+
     base = runs_root(project_root) / run_id / "subagents"
     if not base.is_dir():
-        return False
-    for path in base.glob("*.yaml"):
+        return {"ok": False, "reason_code": "NO_RECEIPTS_DIR", "message": "subagents receipt dir missing"}
+
+    expected_wf_hash = ""
+    if require_spec_hash:
+        try:
+            from ascendc_harness.spec_hashes import workflow_spec_hash
+
+            wid = str(state.get("workflow_id") or "")
+            expected_wf_hash = workflow_spec_hash(wid) if wid else workflow_spec_hash()
+        except Exception:  # noqa: BLE001
+            expected_wf_hash = ""
+
+    candidates: list[dict[str, Any]] = []
+    for path in sorted(base.glob("*.yaml")):
         data = _load(path)
+        if not data:
+            continue
+        data["_path"] = path.as_posix()
+        candidates.append(data)
+
+    if not candidates:
+        return {"ok": False, "reason_code": "NO_RECEIPT", "message": "no receipt files"}
+
+    errors: list[str] = []
+    for data in candidates:
         if require_harness_issued and str(data.get("issued_by") or "") != "harness":
-            # Accept legacy receipts that lack issued_by only when hashes present
-            if not data.get("output_hashes") and not data.get("input_hashes"):
-                continue
-        if agent and str(data.get("agent") or data.get("actor_id") or "") != agent:
+            errors.append(f"{data.get('_path')}: issued_by!=harness")
+            continue
+        if str(data.get("run_id") or "") != run_id:
+            errors.append(f"{data.get('_path')}: run_id mismatch")
+            continue
+        rid_actor = str(data.get("actor_id") or data.get("agent") or "")
+        if actor_id and rid_actor != actor_id:
+            continue
+        if actor_type and str(data.get("actor_type") or "") != actor_type:
             continue
         if identity_prefix and not str(data.get("identity") or "").startswith(identity_prefix):
             continue
-        return True
-    return False
+        rid_action = str(data.get("action_id") or "")
+        if action_id and rid_action != action_id:
+            continue
+        if require_action_id and not rid_action:
+            errors.append(f"{data.get('_path')}: action_id missing")
+            continue
+
+        in_h = data.get("input_hashes") if isinstance(data.get("input_hashes"), dict) else {}
+        out_h = data.get("output_hashes") if isinstance(data.get("output_hashes"), dict) else {}
+        if require_hashes and not in_h and not out_h:
+            errors.append(f"{data.get('_path')}: input_hashes/output_hashes empty")
+            continue
+        if expected_input_hashes:
+            mismatch = False
+            for k, v in expected_input_hashes.items():
+                if str(in_h.get(k) or "") != str(v):
+                    errors.append(f"{data.get('_path')}: input_hash {k} mismatch")
+                    mismatch = True
+                    break
+            if mismatch:
+                continue
+        if expected_output_hashes:
+            mismatch = False
+            for k, v in expected_output_hashes.items():
+                if str(out_h.get(k) or "") != str(v):
+                    errors.append(f"{data.get('_path')}: output_hash {k} mismatch")
+                    mismatch = True
+                    break
+            if mismatch:
+                continue
+
+        if require_spec_hash:
+            got = str(data.get("workflow_spec_hash") or "")
+            if not got:
+                errors.append(f"{data.get('_path')}: workflow_spec_hash missing")
+                continue
+            if expected_wf_hash and got != expected_wf_hash:
+                errors.append(f"{data.get('_path')}: workflow_spec_hash mismatch")
+                continue
+
+        checker = data.get("checker_result")
+        if require_checker_result:
+            if not isinstance(checker, dict) or not checker:
+                errors.append(f"{data.get('_path')}: checker_result missing")
+                continue
+
+        return {
+            "ok": True,
+            "receipt": {k: v for k, v in data.items() if k != "_path"},
+            "path": data.get("_path"),
+            "run_id": run_id,
+            "actor_id": rid_actor,
+            "action_id": rid_action,
+            "workflow_spec_hash": data.get("workflow_spec_hash"),
+        }
+
+    return {
+        "ok": False,
+        "reason_code": "RECEIPT_VERIFY_FAILED",
+        "message": "no receipt passed strict verification",
+        "errors": errors[:12],
+        "run_id": run_id,
+    }
 
 
 def semantic_progress_fingerprint(state: dict[str, Any]) -> dict[str, Any]:
@@ -220,5 +342,6 @@ __all__ = [
     "no_progress_exceeded",
     "run_dir",
     "semantic_progress_fingerprint",
+    "verify_receipt",
     "write_subagent_receipt",
 ]

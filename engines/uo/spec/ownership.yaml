@@ -18,7 +18,7 @@ owners:
       - query/**
     may_write:
       - manifest.yaml
-      - runs/*/phase0/**
+      - runs/*/scope/**
       - runs/*/scope/**
       - cbm/index_meta.json
       - ir/**
@@ -183,7 +183,7 @@ rules:
   - uo-confidence-review writes only review/confidence_reason_review.yaml; must not rewrite summary/confidence_report.md.
   - Confidence chain: uo-key-resolve writes patch reasons → deterministic-uo-engine (check_final_confidence) assembles summary/confidence_report.md + checks/confidence_gate.yaml → uo-confidence-review referees.
   - checks/confidence_gate.yaml and checks/integrity.yaml are written by deterministic-uo-engine scripts, not by LLM free-form.
-  - harness-uo-adapter replaces legacy uo-orchestrator for layout/orchestration writes; it must not forge confidence_gate or referee verdicts.
+  - harness-uo-adapter / deterministic-uo-engine own layout and orchestration writes; they must not forge confidence_gate or referee verdicts.
   - PR test generation prefers diff/**; uncertain items look up the KB via kb_refs / kb_lookup.
   - indexes/kb_graph.sqlite is derived and may be rebuilt; YAML under ir/tiling/kernel remains source of truth.
   - /uo-code-review writes only review/** and runs/*/review/**; never overwrite diff/**.

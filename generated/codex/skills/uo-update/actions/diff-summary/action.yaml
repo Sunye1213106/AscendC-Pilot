@@ -1,0 +1,22 @@
+id: diff_summary
+workflow_id: uo-update
+version: 1
+name_zh: 只读差异摘要
+role_id: deterministic_engine
+agent_id: deterministic-uo-engine
+capabilities:
+- kb-query
+policies:
+- source-authority
+- code-access
+- evidence
+- language
+- harness-control
+- output-quality
+task_prompt_id: null
+context_profile_id: uo-update-diff-summary
+output_contract_id: diff-summary-v1
+checker:
+  required: false
+referee:
+  required: false

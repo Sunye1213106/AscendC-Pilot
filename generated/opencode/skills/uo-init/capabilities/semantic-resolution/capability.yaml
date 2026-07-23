@@ -1,0 +1,16 @@
+id: semantic-resolution
+version: 1
+name_zh: 语义闭合
+description: 将 KEY / 绑定缺口在证据充分时闭合为结构化结论。
+applies_when:
+  - KEY triage / resolution
+  - extract plan 语义候选
+  - TG 语义绑定缺口
+requires:
+  inputs: [target_ids, gaps]
+  tools: []
+  context: [ir_paths]
+produces: [resolution_patch, unresolved]
+compatible_roles: [producer]
+policies: [source-authority, evidence, output-quality]
+method_file: METHOD.md

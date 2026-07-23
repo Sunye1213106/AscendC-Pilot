@@ -1,0 +1,21 @@
+id: prepare_layout
+workflow_id: uo-init
+version: 1
+name_zh: 创建知识库目录
+role_id: deterministic_engine
+agent_id: deterministic-uo-engine
+capabilities: []
+policies:
+- source-authority
+- code-access
+- evidence
+- language
+- harness-control
+- output-quality
+task_prompt_id: null
+context_profile_id: uo-init-prepare-layout
+output_contract_id: kb-layout-v1
+checker:
+  required: true
+referee:
+  required: false

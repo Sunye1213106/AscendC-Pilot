@@ -1,0 +1,23 @@
+id: semantic_bind
+workflow_id: tg-init
+version: 1
+name_zh: 语义绑定
+role_id: deterministic_engine
+agent_id: deterministic-tg-engine
+capabilities:
+- kb-query
+- semantic-resolution
+policies:
+- source-authority
+- code-access
+- evidence
+- language
+- harness-control
+- output-quality
+task_prompt_id: null
+context_profile_id: tg-init-semantic-bind
+output_contract_id: semantic-bind-v1
+checker:
+  required: true
+referee:
+  required: false

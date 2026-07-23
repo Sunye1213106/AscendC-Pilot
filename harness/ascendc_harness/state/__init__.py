@@ -140,18 +140,23 @@ def record_gate(
     if not state:
         raise RuntimeError("No active workflow state")
     failed = list(state.get("failed_gates") or [])
+    passed = list(state.get("passed_gates") or [])
     entry = {"id": gate_id, "gate": gate_id, "ok": ok, "at": _now()}
     if detail:
         entry["detail"] = {k: detail[k] for k in ("message", "gate", "ok", "reason") if k in detail}
     # Keep latest per gate id
     failed = [g for g in failed if str(g.get("id") or g.get("gate") or "") != gate_id]
+    passed = [g for g in passed if str(g) != gate_id]
     if not ok:
         failed.append(entry)
         state["failed_gates"] = failed
+        state["passed_gates"] = passed
         if bump:
             state = _bump_no_progress(state)
     else:
+        passed.append(gate_id)
         state["failed_gates"] = failed
+        state["passed_gates"] = passed
         before = dict(state.get("progress_fingerprint") or {})
         state = _apply_progress(project_root, state)
         from ascendc_harness.runs import fingerprint_improved
@@ -172,9 +177,10 @@ def start_workflow(
     *,
     phase: str | None = None,
     force_phase: bool = False,
+    intent: str = "",
 ) -> dict[str, Any]:
     """Start at entry_state. Arbitrary phase only when force_phase=True (tests)."""
-    from ascendc_harness.obligations import collect_obligations
+    from ascendc_harness.obligations import collect_obligations, open_obligations
     from ascendc_harness.runs import append_event
     from ascendc_harness.workflows import entry_state, get_workflow, label_zh_for, state_ids
 
@@ -187,6 +193,9 @@ def start_workflow(
             f"got phase={phase!r} (pass force_phase=True in tests only)"
         )
     start_phase = phase if (force_phase and phase) else entry
+    if intent == "diff_only" and workflow_id == "uo-update" and not force_phase:
+        # Jump to diff terminal-ready path without full update chain
+        start_phase = "diff" if "diff" in state_ids(workflow_id) else entry
     if start_phase not in state_ids(workflow_id):
         raise RuntimeError(f"Unknown phase {start_phase!r} for {workflow_id}")
 
@@ -197,16 +206,20 @@ def start_workflow(
         hashes = all_spec_hashes(workflow_id=workflow_id)
     except Exception:  # noqa: BLE001
         hashes = {}
+    all_obl = collect_obligations(project_root, workflow_id)
     state: dict[str, Any] = {
         "workflow_id": workflow_id,
         "run_id": run_id,
         "phase": start_phase,
         "phase_label_zh": label_zh_for(workflow_id, start_phase),
         "status": "running",
+        "intent": intent or "",
         "retry_budget": int(meta.get("retry_budget") or 3),
         "no_progress_streak": 0,
         "failed_gates": [],
-        "open_items": collect_obligations(project_root, workflow_id),
+        "passed_gates": [],
+        "open_items": open_obligations(all_obl),
+        "all_obligations": all_obl,
         "last_failure": None,
         "created_at": _now(),
         "meta": {},
@@ -215,7 +228,11 @@ def start_workflow(
     state = _apply_progress(project_root, state)
     save_state(project_root, state)
     (runs_root(project_root) / run_id).mkdir(parents=True, exist_ok=True)
-    append_event(project_root, {"type": "workflow_started", "workflow_id": workflow_id, "phase": start_phase}, run_id=run_id)
+    append_event(
+        project_root,
+        {"type": "workflow_started", "workflow_id": workflow_id, "phase": start_phase, "intent": intent},
+        run_id=run_id,
+    )
     return load_state(project_root)
 
 

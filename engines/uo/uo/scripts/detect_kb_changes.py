@@ -43,7 +43,7 @@ def detect_kb_changes(
     name_status = _git_name_status(repo_root, base_revision, head_revision)
 
     files: list[dict[str, Any]] = []
-    needs_phase0_review = False
+    needs_scope_review = False
     for status, path in name_status:
         norm = path.replace("\\", "/")
         if _is_kb_artifact_path(norm):
@@ -52,7 +52,7 @@ def detect_kb_changes(
         in_scope = norm in scope_index
         suspicious = (not in_scope) and _looks_like_operator_source(norm)
         if suspicious:
-            needs_phase0_review = True
+            needs_scope_review = True
         files.append(
             {
                 "path": norm,
@@ -68,7 +68,7 @@ def detect_kb_changes(
         "op_name": op_name,
         "base_revision": base_revision,
         "head_revision": head_revision,
-        "needs_phase0_review": needs_phase0_review,
+        "needs_scope_review": needs_scope_review,
         "scoped_change_count": sum(1 for item in files if item["in_scope"]),
         "files": files,
     }
@@ -85,12 +85,12 @@ def _load_scope_index(uo_root: Path) -> dict[str, str]:
     run_id = str(read_yaml(uo_root / "manifest.yaml").get("current_run_id") or "")
     candidates = []
     if run_id:
-        candidates.append(uo_root / "runs" / run_id / "phase0" / "receipt.yaml")
-        candidates.append(uo_root / "runs" / run_id / "phase0" / "scope_confirmed.yaml")
+        candidates.append(uo_root / "runs" / run_id / "scope" / "receipt.yaml")
+        candidates.append(uo_root / "runs" / run_id / "scope" / "scope_confirmed.yaml")
     # Fall back to any latest receipt / confirmed under runs/
-    for path in sorted((uo_root / "runs").glob("*/phase0/receipt.yaml"), reverse=True):
+    for path in sorted((uo_root / "runs").glob("*/scope/receipt.yaml"), reverse=True):
         candidates.append(path)
-    for path in sorted((uo_root / "runs").glob("*/phase0/scope_confirmed.yaml"), reverse=True):
+    for path in sorted((uo_root / "runs").glob("*/scope/scope_confirmed.yaml"), reverse=True):
         candidates.append(path)
 
     for path in candidates:
@@ -223,7 +223,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(
         f"change_set files={len(payload['files'])} scoped={payload['scoped_change_count']} "
-        f"phase0_review={payload['needs_phase0_review']} {payload['base_revision'][:8]}..{payload['head_revision'][:8]}"
+        f"scope_review={payload['needs_scope_review']} {payload['base_revision'][:8]}..{payload['head_revision'][:8]}"
     )
     return 0
 

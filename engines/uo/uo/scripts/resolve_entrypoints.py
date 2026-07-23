@@ -358,7 +358,7 @@ def _dedupe_candidates(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _confirmed_files(uo_root: Path) -> list[str]:
     import json
 
-    for path in sorted((uo_root / "runs").glob("*/phase0/scope_confirmed.yaml"), reverse=True):
+    for path in sorted((uo_root / "runs").glob("*/scope/scope_confirmed.yaml"), reverse=True):
         data = read_yaml(path)
         files = data.get("confirmed_file_list")
         if isinstance(files, list) and files:

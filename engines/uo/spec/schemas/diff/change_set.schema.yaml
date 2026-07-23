@@ -6,7 +6,7 @@ allowed_top_level:
   - op_name
   - base_revision
   - head_revision
-  - needs_phase0_review
+  - needs_scope_review
   - scoped_change_count
   - files
 required_item_fields: []

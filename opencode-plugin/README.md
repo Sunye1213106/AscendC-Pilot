@@ -8,6 +8,6 @@ copy opencode-plugin\ascendc-harness.ts %USERPROFILE%\.config\opencode\plugins\
 ```
 
 - **不**修改用户 `opencode.json`
-- Primary Agent：`agents/ascendc-agent.md` → `~/.config/opencode/agents/`
+- Primary Agent：`agents-src/ascendc-agent.yaml` → `generated/<host>/agents/ascendc-agent.md` → `~/.config/opencode/agents/`
 - Hook：`tool.execute.before` → `harness authorize`
 - 威胁模型：模式内软拦截；不能阻止用户切 Tab / 终端直改

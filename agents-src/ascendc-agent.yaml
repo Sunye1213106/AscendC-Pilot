@@ -1,0 +1,16 @@
+id: ascendc-agent
+version: 1
+name_zh: AscendC primary control agent
+role: producer
+mode: primary
+description: AscendC primary control agent
+read_scopes:
+  - "*"
+write_scopes:
+  []
+forbidden:
+  - modify_harness_state
+  - declare_workflow_passed
+  - write_outside_declared_scope
+tool_budget:
+  max_calls: 12

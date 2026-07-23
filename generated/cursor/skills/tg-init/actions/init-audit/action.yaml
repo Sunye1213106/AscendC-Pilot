@@ -1,0 +1,23 @@
+id: init_audit
+workflow_id: tg-init
+version: 1
+name_zh: Init 审计
+role_id: referee
+agent_id: tg-init-audit
+capabilities:
+- structured-review
+- kb-query
+policies:
+- source-authority
+- code-access
+- evidence
+- language
+- harness-control
+- output-quality
+task_prompt_id: tg/init-audit
+context_profile_id: tg-init-init-audit
+output_contract_id: init-audit-v1
+checker:
+  required: true
+referee:
+  required: true

@@ -7,7 +7,7 @@ from typing import Any
 
 import yaml
 
-from uo._operator.run_context import phase0_context
+from uo._operator.run_context import scope_context
 from uo._operator.spec import spec_bundle_hash
 
 MAX_ATTEMPTS = 3
@@ -117,7 +117,7 @@ def _safe_key(value: str) -> str:
 
 
 def _snapshot(uo_root: Path, run_id: str) -> dict[str, str]:
-    context = phase0_context(uo_root, run_id)
+    context = scope_context(uo_root, run_id)
     return {
         "run_id": run_id,
         "source_snapshot_id": str(context.get("source_snapshot_id") or "SOURCE_UNKNOWN"),

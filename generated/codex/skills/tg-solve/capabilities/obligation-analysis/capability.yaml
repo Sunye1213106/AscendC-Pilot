@@ -1,0 +1,14 @@
+id: obligation-analysis
+version: 1
+name_zh: 覆盖义务分析
+description: 生成、过滤与核对测项覆盖义务。
+applies_when:
+  - tg-plan / tg-solve / mid_nest
+requires:
+  inputs: [plan_scope, levels]
+  tools: []
+  context: [tg_root]
+produces: [obligations, uncovered]
+compatible_roles: [deterministic_engine, producer]
+policies: [evidence, output-quality]
+method_file: METHOD.md

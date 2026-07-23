@@ -31,8 +31,8 @@ def default_agents_dir(platform: str) -> Path:
         return home / ".config" / "opencode" / "agents"
     if platform == "cursor":
         return home / ".cursor" / "agents"
-    # plugin / source checkout: bundle root agents/
-    return Path(__file__).resolve().parents[4] / "agents"
+    # source checkout: composed agents
+    return Path(__file__).resolve().parents[4] / "generated" / "opencode" / "agents"
 
 
 def parse_frontmatter(path: Path) -> dict[str, Any]:
@@ -54,13 +54,13 @@ def parse_frontmatter(path: Path) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Verify required understand-operator subagents are installed.")
+    parser = argparse.ArgumentParser(description="Verify required AscendC subagents are installed.")
     parser.add_argument("--platform", choices=("cursor", "opencode", "plugin"), default="plugin")
     parser.add_argument("--agents-dir", default="")
     args = parser.parse_args(argv)
     agents_dir = Path(args.agents_dir) if args.agents_dir else default_agents_dir(args.platform)
-    # Prefer plugin-bundled / repo-root agents when checking source checkout.
-    bundle_agents = Path(__file__).resolve().parents[4] / "agents"
+    repo = Path(__file__).resolve().parents[4]
+    bundle_agents = repo / "generated" / "opencode" / "agents"
     plugin_agents = Path(__file__).resolve().parents[2] / "agents"
     search_dirs = [agents_dir]
     for extra in (bundle_agents, plugin_agents):
@@ -74,8 +74,7 @@ def main(argv: list[str] | None = None) -> int:
             path = directory / f"{name}.md"
             if not path.exists():
                 continue
-            meta = parse_frontmatter(path)
-            # Accept missing mode field; layered resolver is a specialized agent file.
+            parse_frontmatter(path)
             found = True
             break
         if not found:

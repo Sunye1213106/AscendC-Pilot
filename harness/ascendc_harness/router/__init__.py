@@ -56,7 +56,17 @@ def route(text: str) -> dict[str, Any]:
     # Exact slash (first token)
     if first in SLASH_MAP:
         wid = SLASH_MAP[first]
-        return {"ok": True, "workflow_id": wid, "slash": WORKFLOWS[wid].get("slash"), "method": "slash"}
+        out: dict[str, Any] = {
+            "ok": True,
+            "workflow_id": wid,
+            "slash": WORKFLOWS[wid].get("slash"),
+            "method": "slash",
+        }
+        if first == "/uo-diff":
+            out["intent"] = "diff_only"
+            out["action_hint"] = "diff_only"
+            out["message_zh"] = "已并入 uo-update：仅差异摘要，不进入完整更新"
+        return out
 
     hits: list[str] = []
     for pattern, wid in KEYWORD_RULES:

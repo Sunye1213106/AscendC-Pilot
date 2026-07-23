@@ -19,7 +19,7 @@ def test_write_index_meta_reuses_incomplete_run(tmp_path: Path) -> None:
     base = tmp_path / ".ascendc-agent" / "uo"
     run_id = "UO_RUN_20260716103317855654"
     _write_manifest(base, run_id)
-    phase0 = base / "runs" / run_id / "phase0"
+    phase0 = base / "runs" / run_id / "scope"
     phase0.mkdir(parents=True)
     (phase0 / "scope_scan.yaml").write_text("status: complete\n", encoding="utf-8")
 
@@ -32,7 +32,7 @@ def test_force_new_run_always_forks(tmp_path: Path) -> None:
     base = tmp_path / ".ascendc-agent" / "uo"
     run_id = "UO_RUN_20260716103317855654"
     _write_manifest(base, run_id)
-    (base / "runs" / run_id / "phase0").mkdir(parents=True)
+    (base / "runs" / run_id / "scope").mkdir(parents=True)
 
     new_id = _select_run_id(base, resume=False, force_new=True)
     assert new_id != run_id
@@ -43,7 +43,7 @@ def test_passed_receipt_starts_new_run(tmp_path: Path) -> None:
     base = tmp_path / ".ascendc-agent" / "uo"
     run_id = "UO_RUN_20260716103317855654"
     _write_manifest(base, run_id)
-    phase0 = base / "runs" / run_id / "phase0"
+    phase0 = base / "runs" / run_id / "scope"
     phase0.mkdir(parents=True)
     (phase0 / "receipt.yaml").write_text("status: pass\n", encoding="utf-8")
 

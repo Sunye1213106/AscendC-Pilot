@@ -178,11 +178,10 @@ def init_operator_layout(base: Path, op_name: str, repo_root: Path) -> None:
 
 
 def init_operator_contract_layout(base: Path, op_name: str, repo_root: Path) -> None:
-    """Create the layered-IR operator KB layout (no legacy facts/graphs shells)."""
+    """Create the layered-IR operator KB layout (no legacy facts/graphs/contracts shells)."""
     bundle_hash = spec_bundle_hash()
     for rel in [
         "ir",
-        "contracts",
         "tiling",
         "kernel",
         "cross_layer",
@@ -194,6 +193,7 @@ def init_operator_contract_layout(base: Path, op_name: str, repo_root: Path) -> 
         "analysis",
         "diff",
         "summary",
+        "review",
     ]:
         (base / rel).mkdir(parents=True, exist_ok=True)
 
@@ -215,18 +215,23 @@ spec:
 current_run_id: UO_RUN_PENDING
 pipeline: layered_ir
 stages:
-  phase0_scope:
+  scope:
     status: pending
-  extract_layered_ir:
+    label_zh: 范围确认
+  extract:
     status: pending
-  semantic_resolve:
+    label_zh: 结构抽取
+  resolve:
     status: pending
-  contract_export:
+    label_zh: 语义闭合
+  export:
     status: pending
+    label_zh: 导出与校验
+  review:
+    status: pending
+    label_zh: 产物审查
 artifacts:
   ir:
-    status: pending
-  testcase_contract:
     status: pending
 """,
     )
@@ -238,6 +243,7 @@ def _prune_obsolete_layout_dirs(base: Path) -> None:
         "facts",
         "graphs",
         "indexes",
+        "contracts",
         "checks/step1",
         "checks/step2",
         "checks/step3",

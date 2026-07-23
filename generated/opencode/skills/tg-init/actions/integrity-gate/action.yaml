@@ -1,0 +1,21 @@
+id: integrity_gate
+workflow_id: tg-init
+version: 1
+name_zh: 完整性校验
+role_id: deterministic_engine
+agent_id: deterministic-tg-engine
+capabilities: []
+policies:
+- source-authority
+- code-access
+- evidence
+- language
+- harness-control
+- output-quality
+task_prompt_id: null
+context_profile_id: tg-init-integrity-gate
+output_contract_id: tg-integrity-v1
+checker:
+  required: true
+referee:
+  required: false

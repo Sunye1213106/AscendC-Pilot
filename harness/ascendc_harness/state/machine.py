@@ -17,7 +17,7 @@ from ascendc_harness.state import (
 
 
 def describe_next(project_root: Path) -> dict[str, Any]:
-    from ascendc_harness.obligations import collect_obligations
+    from ascendc_harness.obligations import collect_obligations, open_obligations
     from ascendc_harness.workflows import actions_for_phase, get_workflow, label_zh_for, rework_targets
 
     state = load_state(project_root)
@@ -27,7 +27,8 @@ def describe_next(project_root: Path) -> dict[str, Any]:
     phase = str(state.get("phase") or "")
     meta = get_workflow(wid)
     fresh = collect_obligations(project_root, wid)
-    state["open_items"] = fresh
+    state["open_items"] = open_obligations(fresh)
+    state["all_obligations"] = fresh
     save_state(project_root, state)
 
     status = str(state.get("status") or "running")
@@ -44,7 +45,7 @@ def describe_next(project_root: Path) -> dict[str, Any]:
         "phase": phase,
         "phase_label_zh": label_zh_for(wid, phase),
         "status": status,
-        "open_items": fresh,
+        "open_items": state["open_items"],
         "allowed_actions": actions,
         "rework_targets": rework,
         "last_failure": state.get("last_failure"),
@@ -62,11 +63,13 @@ def _apply_gate_failure(
     preferred_status: str = "rework_required",
 ) -> dict[str, Any]:
     """Keep phase; set rework/human; preserve blocked if budget already exhausted."""
-    from ascendc_harness.obligations import collect_obligations
+    from ascendc_harness.obligations import collect_obligations, open_obligations
 
     state = load_state(project_root)
     already_blocked = state.get("status") == "blocked"
-    state["open_items"] = collect_obligations(project_root, wid)
+    all_obl = collect_obligations(project_root, wid)
+    state["open_items"] = open_obligations(all_obl)
+    state["all_obligations"] = all_obl
     state["last_failure"] = last_failure
     if already_blocked:
         state["status"] = "blocked"
@@ -141,7 +144,7 @@ def advance_phase(
             "from": current,
             "to": next_phase,
         }
-        if any(g.get("gate") == "phase0_receipt" for g in failed):
+        if any(g.get("gate") == "scope_receipt" for g in failed):
             preferred = "human_required"
             lf["reason_code"] = "SCOPE_CONFIRMATION_REQUIRED"
             lf["message_zh"] = "请确认本次算子源码范围"
@@ -222,7 +225,8 @@ def rework_phase(
 
 
 def complete_workflow(project_root: Path, *, reason: str = "") -> dict[str, Any]:
-    from ascendc_harness.gates import run_key_gates, run_named_gate
+    from ascendc_harness.gates import run_named_gate
+    from ascendc_harness.obligations import all_obligations_closed, collect_obligations, open_obligations
     from ascendc_harness.runs import append_event
     from ascendc_harness.workflows import get_workflow, state_ids
 
@@ -247,30 +251,12 @@ def complete_workflow(project_root: Path, *, reason: str = "") -> dict[str, Any]
         save_state(project_root, state)
         return {"ok": False, "status": "rework_required", "state": load_state(project_root)}
 
-    key_payload = None
-    if wid.startswith("uo-"):
-        key_payload = run_key_gates(project_root)
-        if not key_payload.get("ok"):
-            record_gate(project_root, "key_gates", ok=False, detail=key_payload)
-            state = _apply_gate_failure(
-                project_root,
-                wid=wid,
-                last_failure={
-                    "reason_code": "KEY_GATES_FAILED",
-                    "message_zh": "KEY 硬门禁未通过，请返工后重试",
-                    "failed_gates": [
-                        g.get("gate") for g in (key_payload.get("gates") or []) if not g.get("ok")
-                    ],
-                },
-            )
-            return {
-                "ok": False,
-                "status": state.get("status"),
-                "key_gates": key_payload,
-                "state": state,
-            }
-
-    gate_ids = list(meta.get("complete_gates") or meta.get("gates") or [])
+    # Complete gates come only from Workflow Spec — no implicit prefix attachment.
+    intent = str(state.get("intent") or "")
+    if intent == "diff_only" and meta.get("complete_gates_diff_only") is not None:
+        gate_ids = list(meta.get("complete_gates_diff_only") or [])
+    else:
+        gate_ids = list(meta.get("complete_gates") or meta.get("gates") or [])
     results = [run_named_gate(project_root, gid) for gid in gate_ids]
     failed = [r for r in results if not r.get("ok")]
     for r in results:
@@ -299,7 +285,31 @@ def complete_workflow(project_root: Path, *, reason: str = "") -> dict[str, Any]
             "ok": False,
             "status": state.get("status"),
             "failed_gates": failed,
-            "key_gates": key_payload,
+            "state": state,
+        }
+
+    # Obligations must all be in a closed terminal status before passed.
+    items = collect_obligations(project_root, wid)
+    state = load_state(project_root)
+    state["open_items"] = open_obligations(items)
+    state["all_obligations"] = items
+    save_state(project_root, state)
+    if not all_obligations_closed(items):
+        open_ids = [str(it.get("id")) for it in open_obligations(items)]
+        state = _apply_gate_failure(
+            project_root,
+            wid=wid,
+            last_failure={
+                "reason_code": "OPEN_OBLIGATIONS",
+                "message_zh": "仍有未闭合义务，不能进入 passed："
+                + "、".join(open_ids[:8]),
+                "open_obligation_ids": open_ids,
+            },
+        )
+        return {
+            "ok": False,
+            "status": state.get("status"),
+            "open_obligations": open_obligations(items),
             "state": state,
         }
 
@@ -307,6 +317,7 @@ def complete_workflow(project_root: Path, *, reason: str = "") -> dict[str, Any]
     state["status"] = "passed"
     state["terminal_reason"] = reason or "all_gates_passed"
     state["no_progress_streak"] = 0
+    state["open_items"] = []
     save_state(project_root, state)
     append_event(project_root, {"type": "workflow_passed"})
-    return {"ok": True, "status": "passed", "key_gates": key_payload, "state": load_state(project_root)}
+    return {"ok": True, "status": "passed", "state": load_state(project_root)}

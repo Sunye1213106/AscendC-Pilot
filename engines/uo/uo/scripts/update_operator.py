@@ -29,7 +29,7 @@ def update_operator(
     architecture: str = "arch35",
     base: str | None = None,
     head: str | None = None,
-    confirm_phase0: bool = False,
+    confirm_scope: bool = False,
     skip_validate: bool = False,
 ) -> dict[str, Any]:
     uo_root = existing_operator_root(repo_root, op_name)
@@ -47,13 +47,13 @@ def update_operator(
     write_yaml(update_dir / "change_set.yaml", change_set)
     write_yaml(update_dir / "update_plan.yaml", plan)
 
-    if plan.get("mode") == "blocked_phase0" or (plan.get("needs_phase0_review") and not confirm_phase0 and not plan.get("scoped_changed_files")):
+    if plan.get("mode") == "blocked_scope" or (plan.get("needs_scope_review") and not confirm_scope and not plan.get("scoped_changed_files")):
         export_diff_product(repo_root, op_name, change_set=change_set, update_plan=plan, status="blocked", write=True)
-        receipt = _receipt(run_id, change_set, plan, status="blocked", message="needs Phase0 scope review before update")
+        receipt = _receipt(run_id, change_set, plan, status="blocked", message="needs scope confirmation review before update")
         write_yaml(update_dir / "receipt.yaml", receipt)
         return {"status": "blocked", "run_id": run_id, "plan": plan, "change_set": change_set, "receipt": receipt}
 
-    if plan.get("needs_phase0_review") and not confirm_phase0:
+    if plan.get("needs_scope_review") and not confirm_scope:
         # Scoped changes exist but also suspicious out-of-scope files: block unless confirmed.
         suspicious = [f for f in (change_set.get("files") or []) if f.get("suspicious_out_of_scope")]
         if suspicious:
@@ -63,7 +63,7 @@ def update_operator(
                 change_set,
                 plan,
                 status="blocked",
-                message="out-of-scope operator sources detected; re-run Phase0 or pass --confirm-phase0",
+                message="out-of-scope operator sources detected; re-run scope confirmation or pass --confirm-scope",
             )
             write_yaml(update_dir / "receipt.yaml", receipt)
             return {"status": "blocked", "run_id": run_id, "plan": plan, "change_set": change_set, "receipt": receipt}
@@ -301,9 +301,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--base", default=None, help="Override base revision (default: manifest.source.revision)")
     parser.add_argument("--head", default=None, help="Override head revision (default: git HEAD)")
     parser.add_argument(
-        "--confirm-phase0",
+        "--confirm-scope",
         action="store_true",
-        help="Continue despite out-of-scope suspicious sources (after human Phase0 decision)",
+        help="Continue despite out-of-scope suspicious sources (after human scope confirmation decision)",
     )
     parser.add_argument("--skip-validate", action="store_true")
     args = parser.parse_args(argv)
@@ -316,7 +316,7 @@ def main(argv: list[str] | None = None) -> int:
             architecture=args.architecture,
             base=args.base,
             head=args.head,
-            confirm_phase0=args.confirm_phase0,
+            confirm_scope=args.confirm_scope,
             skip_validate=args.skip_validate,
         )
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
@@ -330,7 +330,7 @@ def main(argv: list[str] | None = None) -> int:
         f"run={result.get('run_id')}"
     )
     if status == "blocked":
-        print("Action required: Phase0 scope review (or --confirm-phase0). Diff product written with status=blocked.")
+        print("Action required: scope confirmation review (or --confirm-scope). Diff product written with status=blocked.")
         return 1
     if status == "fail":
         return 2

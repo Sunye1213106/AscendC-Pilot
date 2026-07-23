@@ -18,4 +18,4 @@ hash_inputs:
 notes:
   - Do not copy these files into .ascendc-agent/uo/.
   - Changing any hash_inputs file (or this list via code) invalidates stored spec_bundle_hash
-    and may trigger /uo-update Phase0 review.
+    and may trigger /uo-update scope reconfirmation (field needs_scope_review is an internal alias).

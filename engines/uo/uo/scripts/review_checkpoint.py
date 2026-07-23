@@ -14,13 +14,13 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_ROOT))
 
 from uo._operator.artifacts import existing_operator_root, operator_root, safe_op_name, write_text
-from uo._operator.run_context import active_run_id, phase0_snapshot
+from uo._operator.run_context import active_run_id, scope_snapshot
 from uo._operator.spec import spec_bundle_hash
 
 
 GATE_OPTIONS: dict[str, list[tuple[str, str]]] = {
     "macro_scope": [
-        ("continue", "approve Phase 0 scope and allow finalize_phase0.py"),
+        ("continue", "approve scope confirmation and allow finalize_scope.py"),
         ("revise", "revise include/exclude/uncertain scope and review again"),
         ("stop", "stop workflow"),
         ("manual_supplement", "record manual scope notes for the orchestrator"),
@@ -126,7 +126,7 @@ def _commit(base: Path, *, gate: str, op_name: str, choice: str, notes: str, cha
 
 def _write_scope_review(base: Path, decision: dict[str, Any], changes: dict[str, Any]) -> Path:
     run_id = active_run_id(base)
-    phase0 = base / "runs" / run_id / "phase0"
+    phase0 = base / "runs" / run_id / "scope"
     scan = _load_yaml(phase0 / "scope_scan.yaml")
     semantic = _load_yaml(phase0 / "semantic_enrichment.yaml")
     files = scan.get("files") if isinstance(scan.get("files"), dict) else {}
@@ -182,8 +182,8 @@ def _write_scope_review(base: Path, decision: dict[str, Any], changes: dict[str,
     )
     payload = {
         "version": 1,
-        "artifact": {"type": "runs.scope_review", "schema_version": 1, "owner": "uo-orchestrator"},
-        "snapshot": phase0_snapshot(base, run_id),
+        "artifact": {"type": "runs.scope_review", "schema_version": 1, "owner": "deterministic-uo-engine"},
+        "snapshot": scope_snapshot(base, run_id),
         "status": "decided",
         "decision": decision["decision"],
         "reviewed_at": decision["decided_at"],
@@ -205,11 +205,11 @@ def _write_scope_review(base: Path, decision: dict[str, Any], changes: dict[str,
         "scope_conflicts": conflicts,
         "items": [
             {
-                "id": "OP_PHASE0_SCOPE_REVIEW",
+                "id": "OP_SCOPE_REVIEW",
                 "kind": "scope_review",
                 "status": "recorded",
                 "identity": {"run_id": run_id, "gate": decision["gate"]},
-                "sources": [{"kind": "runtime", "path": f"runs/{run_id}/phase0/scope_review.yaml"}],
+                "sources": [{"kind": "runtime", "path": f"runs/{run_id}/scope/scope_review.yaml"}],
                 "decision": decision["decision"],
             }
         ],
@@ -224,7 +224,7 @@ def _write_scope_review(base: Path, decision: dict[str, Any], changes: dict[str,
 
 
 def _scan_discovered_common(scan: dict[str, Any]) -> bool:
-    """True when Phase0 scan reported an AscendC common library to index."""
+    """True when scope scan reported an AscendC common library to index."""
     if not isinstance(scan, dict):
         return False
     if scan.get("common_rel") or scan.get("common_library"):
@@ -252,20 +252,20 @@ def _require_common_in_confirmed(scan: dict[str, Any], files: list[dict[str, str
     if _confirmed_has_common(files):
         return
     raise SystemExit(
-        "COMMON_SCOPE_REQUIRED: Phase0 scan discovered common/, but confirmed_file_list has no common/ paths. "
+        "COMMON_SCOPE_REQUIRED: Scope scan discovered common/, but confirmed_file_list has no common/ paths. "
         "Re-run review with continue only after include-pruned common files remain in approved scope."
     )
 
 
 def _write_scope_confirmed(base: Path, run_id: str, decision: dict[str, Any], approved_scope: dict[str, Any]) -> None:
-    phase0 = base / "runs" / run_id / "phase0"
+    phase0 = base / "runs" / run_id / "scope"
     scan = _load_yaml(phase0 / "scope_scan.yaml")
     files = _confirmed_file_items(approved_scope)
     _require_common_in_confirmed(scan, files)
     payload = {
         "version": 1,
-        "artifact": {"type": "runs.scope_confirmed", "schema_version": 1, "owner": "uo-orchestrator"},
-        "snapshot": phase0_snapshot(base, run_id),
+        "artifact": {"type": "runs.scope_confirmed", "schema_version": 1, "owner": "deterministic-uo-engine"},
+        "snapshot": scope_snapshot(base, run_id),
         "status": "confirmed",
         "operator": decision["op_name"],
         "confirmed_file_list": files,
@@ -285,7 +285,7 @@ def _write_scope_confirmed(base: Path, run_id: str, decision: dict[str, Any], ap
         },
         "cbm": {"indexing_allowed": True, "input": "confirmed_file_list"},
     }
-    write_text(base / "runs" / run_id / "phase0" / "scope_confirmed.yaml", _to_yaml(payload))
+    write_text(base / "runs" / run_id / "scope" / "scope_confirmed.yaml", _to_yaml(payload))
 
 
 def _confirmed_file_items(approved_scope: dict[str, Any]) -> list[dict[str, str]]:
@@ -489,7 +489,7 @@ def _prompt_multiline(header: str) -> str:
 
 
 def _default_title(gate: str) -> str:
-    return {"macro_scope": "Phase 0 Scope Review", "query_missing_kb": "uo-query Missing KB"}[gate]
+    return {"macro_scope": "范围确认", "query_missing_kb": "uo-query Missing KB"}[gate]
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:

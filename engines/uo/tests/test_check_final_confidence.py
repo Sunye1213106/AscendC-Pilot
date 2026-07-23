@@ -27,58 +27,83 @@ def test_all_high_passes(tmp_path: Path) -> None:
             }
         },
     )
-    payload = check_final_confidence(uo, write_skeleton=False)
+    payload = check_final_confidence(uo, write_report=False)
     assert payload["status"] == "pass"
     assert payload["need_llm_count"] == 0
 
 
-def test_unsolved_without_report_fails_and_writes_skeleton(tmp_path: Path) -> None:
+def test_unsolved_deterministic_report_no_todo(tmp_path: Path) -> None:
     uo = _uo(tmp_path)
     write_yaml(
         uo / "ir" / "input_derivable.yaml",
-        {"keys": {"KEY_X": {"input_derivable": "unsolved", "confidence": "low", "reason": "缺边"}}},
-    )
-    payload = check_final_confidence(uo, write_skeleton=True)
-    assert payload["status"] == "fail"
-    report = uo / "summary" / "confidence_report.md"
-    assert report.is_file()
-    assert "KEY_X" in report.read_text(encoding="utf-8")
-    assert "TODO" in report.read_text(encoding="utf-8")
-
-
-def test_filled_report_allows_reported(tmp_path: Path) -> None:
-    uo = _uo(tmp_path)
-    write_yaml(
-        uo / "ir" / "input_derivable.yaml",
-        {"keys": {"KEY_X": {"input_derivable": "unsolved", "confidence": "low"}}},
+        {
+            "keys": {
+                "KEY_X": {
+                    "input_derivable": "unsolved",
+                    "confidence": "low",
+                    "reason": "宿主边缺失，无法接到 Host 输入根",
+                    "attempted": "已跑 classify_input_derivable",
+                    "suggestion": "补边或标 not_input_derivable",
+                }
+            }
+        },
     )
     write_yaml(
         uo / "ir" / "key_triage.yaml",
         {"keys": [{"id": "KEY_X", "complexity": "simple"}]},
     )
     write_yaml(uo / "checks" / "human_accept_reported.yaml", {"accepted": True})
-    (uo / "summary").mkdir(parents=True, exist_ok=True)
-    (uo / "summary" / "confidence_report.md").write_text(
-        "# 置信度未达 high 说明\n\n## 未达 high 的项\n\n"
-        "### KEY_X\n- 状态：unsolved\n- 原因：证据不足，optional 未实例化，暂无法 high 闭合\n"
-        "- 建议：人工确认后再补边\n",
-        encoding="utf-8",
-    )
-    payload = check_final_confidence(uo, write_skeleton=False)
+    payload = check_final_confidence(uo, write_report=True)
+    report = uo / "summary" / "confidence_report.md"
+    assert report.is_file()
+    text = report.read_text(encoding="utf-8")
+    assert "KEY_X" in text
+    assert "TODO" not in text
+    assert "宿主边缺失" in text
+    assert payload.get("harness", {}).get("deterministic_report") is True
     assert payload["status"] == "reported"
+
+
+def test_filled_report_allows_reported(tmp_path: Path) -> None:
+    uo = _uo(tmp_path)
+    write_yaml(
+        uo / "ir" / "input_derivable.yaml",
+        {
+            "keys": {
+                "KEY_X": {
+                    "input_derivable": "unsolved",
+                    "confidence": "low",
+                    "reason": "证据不足，optional 未实例化，暂无法 high 闭合",
+                    "suggestion": "人工确认后再补边",
+                }
+            }
+        },
+    )
+    write_yaml(
+        uo / "ir" / "key_triage.yaml",
+        {"keys": [{"id": "KEY_X", "complexity": "simple"}]},
+    )
+    write_yaml(uo / "checks" / "human_accept_reported.yaml", {"accepted": True})
+    payload = check_final_confidence(uo, write_report=True)
+    assert payload["status"] == "reported"
+    assert "TODO" not in (uo / "summary" / "confidence_report.md").read_text(encoding="utf-8")
 
 
 def test_reported_without_triage_fails(tmp_path: Path) -> None:
     uo = _uo(tmp_path)
     write_yaml(
         uo / "ir" / "input_derivable.yaml",
-        {"keys": {"KEY_X": {"input_derivable": "unsolved", "confidence": "low"}}},
+        {
+            "keys": {
+                "KEY_X": {
+                    "input_derivable": "unsolved",
+                    "confidence": "low",
+                    "reason": "故意缺 triage",
+                }
+            }
+        },
     )
-    (uo / "summary" / "confidence_report.md").write_text(
-        "### KEY_X\n- 原因：故意缺 triage\n",
-        encoding="utf-8",
-    )
-    payload = check_final_confidence(uo, write_skeleton=False)
+    payload = check_final_confidence(uo, write_report=True)
     assert payload["status"] == "fail"
     assert payload.get("harness", {}).get("triage_fail") is True
 
@@ -87,8 +112,9 @@ def test_closed_without_high_hard_fails(tmp_path: Path) -> None:
     uo = _uo(tmp_path)
     write_yaml(
         uo / "ir" / "input_derivable.yaml",
-        {"keys": {"KEY_Y": {"input_derivable": True, "confidence": "medium"}}},
+        {"keys": {"KEY_Y": {"input_derivable": True, "confidence": "medium", "reason": "置信度不够"}}},
     )
-    payload = check_final_confidence(uo, write_skeleton=True)
+    payload = check_final_confidence(uo, write_report=True)
     assert payload["status"] == "fail"
     assert payload["closed_without_high"]
+    assert "TODO" not in (uo / "summary" / "confidence_report.md").read_text(encoding="utf-8")

@@ -44,9 +44,16 @@ def workflow_spec_hash(workflow_id: str | None = None) -> str:
             "actions": [
                 {
                     "id": a.get("id"),
+                    "phases": a.get("phases"),
                     "checker_required": a.get("checker_required"),
                     "referee_required": a.get("referee_required"),
                     "gates": a.get("gates"),
+                    "agent_id": a.get("agent_id"),
+                    "role_id": a.get("role_id"),
+                    "policy_ids": a.get("policy_ids"),
+                    "capability_ids": a.get("capability_ids"),
+                    "action_method_id": a.get("action_method_id"),
+                    "task_prompt_id": a.get("task_prompt_id"),
                     "actors": a.get("actors"),
                 }
                 for a in (meta.get("actions") or [])
@@ -60,16 +67,21 @@ def workflow_spec_hash(workflow_id: str | None = None) -> str:
     )
 
 
+def _repo_root() -> Path:
+    """ascendc_harness lives at <repo>/harness/ascendc_harness/ — repo is parents[3]."""
+    return Path(__file__).resolve().parents[3]
+
+
 def agent_contract_hash(repo_root: Path | None = None) -> str:
     """Agent writable surfaces / referee output schemas (file presence + frontmatter-ish)."""
-    root = repo_root or Path(__file__).resolve().parents[2]
+    root = repo_root or _repo_root()
     parts: list[str] = []
     for rel in (
         "engines/uo/spec/ownership.yaml",
-        "agents/uo-confidence-review.md",
-        "agents/uo-key-resolve.md",
-        "agents/references/init-audit-schema.md",
-        "agents/references/csv-contract-schema.md",
+        "agents-src/uo-confidence-review.yaml",
+        "agents-src/uo-key-resolve.yaml",
+        "agents-src/references/init-audit-schema.md",
+        "agents-src/references/csv-contract-schema.md",
     ):
         path = root / rel
         if path.is_file():
@@ -78,13 +90,13 @@ def agent_contract_hash(repo_root: Path | None = None) -> str:
 
 
 def tg_contract_hash(repo_root: Path | None = None) -> str:
-    root = repo_root or Path(__file__).resolve().parents[2]
+    root = repo_root or _repo_root()
     parts: list[str] = []
     for rel in (
         "engines/tg/testcase_agent/contract.py",
         "engines/tg/testcase_agent/realization_contract.py",
         "engines/tg/testcase_agent/resolve_policy.py",
-        "agents/references/csv-contract-schema.md",
+        "agents-src/references/csv-contract-schema.md",
     ):
         path = root / rel
         if path.is_file():
@@ -94,7 +106,7 @@ def tg_contract_hash(repo_root: Path | None = None) -> str:
 
 def kb_schema_hash(repo_root: Path | None = None) -> str:
     """KB layout / IR schema / ownership product surfaces — NOT Chinese labels or Agent prompts."""
-    root = repo_root or Path(__file__).resolve().parents[2]
+    root = repo_root or _repo_root()
     parts: list[str] = []
     ownership = root / "engines" / "uo" / "spec" / "ownership.yaml"
     if ownership.is_file():
@@ -117,7 +129,7 @@ def kb_schema_hash(repo_root: Path | None = None) -> str:
 
 
 def all_spec_hashes(repo_root: Path | None = None, *, workflow_id: str | None = None) -> dict[str, str]:
-    root = repo_root or Path(__file__).resolve().parents[2]
+    root = repo_root or _repo_root()
     return {
         "kb_schema_hash": kb_schema_hash(root),
         "workflow_spec_hash": workflow_spec_hash(workflow_id),

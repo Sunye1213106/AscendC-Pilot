@@ -16,8 +16,8 @@
 
 约定：
 
-- Agent **只通过 MCP** 调用 CBM（见 `prompts/common/cbm.md`），禁止本地 `cbm_query.py` / CLI index 顶替。
-- Phase0 只索引 `$UO_ROOT/cbm/index_stage`（已确认范围），**禁止**索引多算子父仓。
+- Agent **只通过 MCP** 调用 CBM（`index_repository` / `search_graph` / `get_code_snippet` 等）；禁止用本地脚本或 CLI 顶替 MCP。
+- **范围确认**阶段只索引 `$UO_ROOT/cbm/index_stage`（已确认范围），**禁止**索引多算子父仓。
 - `project` 参数只读 `cbm/index_meta.json` 的 `cbm_project`。
 
 因此：装好 OpenCode 插件后，还必须把 CBM MCP 配通，否则 init / query / review 的源码举证链路不可用。
@@ -142,7 +142,7 @@ Get-Content "$env:USERPROFILE\.config\opencode\opencode.json" -Raw |
 ### 3.4 与 understand-operator 联通（推荐）
 
 1. 已执行 `./install.ps1 opencode`（插件 skills / PLUGIN_ROOT 已链接）。
-2. 在算子仓库跑 `/uo-init`，Phase0 确认 scope 后应自动：
+2. 在算子仓库跑 `/uo-init`，**范围确认**通过后应自动：
    - `stage_cbm_scope` → MCP `index_repository(repo_path=$UO_ROOT/cbm/index_stage, ...)`
    - `prepare_operator.py --write-index-meta --cbm-project <name>`
 3. 检查：
@@ -158,17 +158,17 @@ Get-Content .ascendc-agent\uo\cbm\index_meta.json
 
 ## 4. 首次索引（由 `/uo-init` 完成）
 
-**正常路径：跑 `/uo-init`。** Phase0 在人工确认范围后会：
+**正常路径：跑 `/uo-init`。** 范围确认（人工确认后）会：
 
 1. `stage_cbm_scope` — 把确认文件 stage 到 `$UO_ROOT/cbm/index_stage`
-2. MCP `index_repository(repo_path=.../cbm/index_stage, mode=fast, name=<op>-phase0-scope)`
+2. MCP `index_repository(repo_path=.../cbm/index_stage, mode=fast, name=<op>-scope)`
 3. `prepare_operator.py --write-index-meta --cbm-project <name>` → `cbm/index_meta.json`
 
 图数据落在 CBM 本地 cache（如 `~/.cache/codebase-memory-mcp/`），不是仓库内 SQLite 手写库。
 
 也可对目录说 **Index this project**，但 `/uo-init` **不应**依赖你再手工索引一遍父仓。
 
-工具用法与参数正误见 `prompts/common/cbm.md`。
+工具用法与参数正误见当前宿主 `generated/<host>/` 中的 CBM 相关 Policy / Prompt。
 
 ---
 
@@ -176,7 +176,7 @@ Get-Content .ascendc-agent\uo\cbm\index_meta.json
 
 | Tool | 用途 |
 | --- | --- |
-| `index_repository` | Phase0 建/刷新窄索引 |
+| `index_repository` | 范围确认后建/刷新窄索引 |
 | `search_graph` | 按名字 / label 找 Function / Class |
 | `search_code` | 在已索引文件中搜字符串 |
 | `get_code_snippet` | 按 qualified name 取函数片段 |
@@ -192,7 +192,7 @@ Get-Content .ascendc-agent\uo\cbm\index_meta.json
 | `opencode mcp list` 无此项 | 检查 `opencode.json` 的 `mcp` 段；`command` 必须是数组；重启 OpenCode |
 | 配置报 invalid | 常见错误：`"command": "..."` 字符串；缺 `"type": "local"` / `"enabled": true` |
 | MCP 无工具 / 超时 | 增大 `timeout`（如 60000）；确认 `command` 指向真实 exe/cmd |
-| agent 仍跑 `cbm_query.py` | 更新 skills；新开会话；确认 MCP 已连接 |
+| agent 不走 MCP、直调本地索引 | 更新安装并新开会话；确认 `opencode mcp list` 已连接 |
 | `project not found` | 对 `cbm/index_stage` 跑 `index_repository`，或 `/uo-init --full` |
 | 查询空结果 | 先 `search_graph` 拿精确符号名，再 `get_code_snippet` / `trace_path` |
 | binary 不在 PATH | `install.ps1` 默认目录加入 PATH，或配置里写绝对路径 |

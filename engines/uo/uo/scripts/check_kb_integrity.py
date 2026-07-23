@@ -17,7 +17,7 @@ from uo.scripts._ir_io import read_yaml, write_yaml
 
 REWORK_STAGES = frozenset(
     {
-        "phase0_scope",
+        "scope",
         "entrypoints",
         "extract_plan",
         "residual_resolve",
@@ -29,6 +29,7 @@ REWORK_STAGES = frozenset(
 # Parent action alias: input_derivable → residual_resolve + classify/escalate.
 REWORK_STAGE_ALIASES = {
     "input_derivable": "residual_resolve",
+    "phase0_scope": "scope",
 }
 
 
@@ -300,7 +301,7 @@ def _collect_input_derivable_issues(uo_root: Path, issues: list[dict[str, Any]])
                 "rework_stage": "input_derivable",
                 "message": (
                     f"input_derivable 开放缺口={len(open_gap_ids)}，须 "
-                    f"uo-semantic-resolve 任务 E / CBM 高置信补丁或标 not_input_derivable"
+                    f"uo-key-resolve / CBM 高置信补丁或标 not_input_derivable"
                     f"{'（confidence_gate=reported：已写报告，降为 warning）' if severity == 'warning' else ''}。"
                     f"样例: {sample}"
                 ),

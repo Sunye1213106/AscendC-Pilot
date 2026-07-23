@@ -1,0 +1,16 @@
+id: cbm-navigation
+version: 1
+name_zh: CBM 代码图导航
+description: 使用 CBM MCP 查询符号、调用边与最小代码片段。
+applies_when:
+  - 需要理解函数、变量、分支或调用关系
+  - KB 只能定位但不能回答具体实现
+  - 需要为语义结论补充源码证据
+requires:
+  inputs: [target_symbols, topic]
+  tools: [cbm.search_graph, cbm.get_code_snippet, cbm.trace_path, cbm.search_code]
+  context: [source_revision, cbm_project, known_file_paths]
+produces: [code_evidence, relevant_symbols, unresolved_questions]
+compatible_roles: [producer, readonly_analyst, referee]
+policies: [source-authority, code-access, evidence, language]
+method_file: METHOD.md

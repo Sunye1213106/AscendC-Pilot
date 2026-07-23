@@ -32,7 +32,7 @@ def plan_kb_update(
     layers: set[str] = set()
     scripts: list[str] = []
     reasons: list[str] = []
-    needs_phase0 = bool(change_set.get("needs_phase0_review"))
+    needs_scope = bool(change_set.get("needs_scope_review"))
     scoped_files = [f for f in (change_set.get("files") or []) if isinstance(f, dict) and f.get("in_scope")]
 
     for item in scoped_files:
@@ -64,26 +64,26 @@ def plan_kb_update(
     current_hash = spec_bundle_hash()
     if expected_hash and expected_hash != current_hash:
         layers.update(ALL_LAYERS)
-        needs_phase0 = True
-        reasons.append("spec_bundle_hash mismatch -> full extract + phase0 review")
+        needs_scope = True
+        reasons.append("spec_bundle_hash mismatch -> full extract + scope review")
 
     mode = "selective"
-    if needs_phase0 or not scoped_files and change_set.get("files"):
+    if needs_scope or not scoped_files and change_set.get("files"):
         # out-of-scope-only changes with suspicious files still block
-        if needs_phase0 and not scoped_files:
-            mode = "blocked_phase0"
+        if needs_scope and not scoped_files:
+            mode = "blocked_scope"
         elif len(layers) >= len(ALL_LAYERS) - 1:
             mode = "full_extract"
             layers.update(ALL_LAYERS)
     if len(layers) >= len(ALL_LAYERS) - 1:
-        mode = "full_extract" if mode != "blocked_phase0" else mode
+        mode = "full_extract" if mode != "blocked_scope" else mode
         layers.update(ALL_LAYERS)
 
-    if not layers and not needs_phase0:
+    if not layers and not needs_scope:
         mode = "noop"
 
     scripts = _scripts_for_layers(layers)
-    needs_cbm_reindex = bool(scoped_files) or needs_phase0
+    needs_cbm_reindex = bool(scoped_files) or needs_scope
 
     plan = {
         "version": 1,
@@ -93,7 +93,7 @@ def plan_kb_update(
         "mode": mode,
         "affected_layers": sorted(layers),
         "scripts": scripts,
-        "needs_phase0_review": needs_phase0,
+        "needs_scope_review": needs_scope,
         "needs_cbm_reindex": needs_cbm_reindex,
         "needs_llm_resolve": "entrypoints" in layers,
         "scoped_changed_files": [str(f.get("path")) for f in scoped_files],
@@ -159,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
     plan = plan_kb_update(repo_root, op_name, write=not args.no_write)
     print(
         f"update_plan mode={plan['mode']} layers={plan['affected_layers']} "
-        f"phase0={plan['needs_phase0_review']} cbm={plan['needs_cbm_reindex']}"
+        f"scope={plan['needs_scope_review']} cbm={plan['needs_cbm_reindex']}"
     )
     return 0
 

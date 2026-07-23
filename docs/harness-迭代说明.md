@@ -1,7 +1,7 @@
 # Harness 迭代说明：控制面收口
 
-> 本文整理自两轮「Harness 控制面收口」计划（初版 → 修订版），作为 AscendC Agent 将 **Harness 收口为唯一控制面** 的迭代记录与权威决策说明。  
-> 冲突处以**修订版**为准；初版中仍有效的实现细节予以保留。
+> **历史决策记录**（非运行时状态机）。Agent / Skill 执行请以 `harness next`、`workflows/specs.py`、`docs/overview/workflows.md` 为准。  
+> 本文整理自两轮「Harness 控制面收口」计划；文中出现的旧名（Phase0、uo-diff Skill、uo-orchestrator 等）仅表示已退役对象。
 
 **不在本轮范围**：代码自动改仓、编译上板、性能优化、重写 UO/TG 抽取/Z3、重型记忆平台。
 
@@ -26,7 +26,7 @@
 | OpenCode 形态 | 同级 Tab：`mode: primary` 的 AscendC Agent；与 Plan/Build 并列，Tab 切换 |
 | OpenCode 安装 | **只装** `~/.config/opencode/agents/ascendc-agent.md`；**默认不**合并用户 `opencode.json`；仅当用户显式要求才设 `default_agent` |
 | Plugin 位置 | 仓内唯一源：`opencode-plugin/` → 安装到 `~/.config/opencode/plugins/`；`templates/` 不放 Plugin 实现 |
-| Skill | 最小模板编译：`skills-src/` + `hosts/` → `generated/<host>/`；install 只装 generated |
+| Skill | **组合式编译**：`skills-src/{policies,capabilities,actions,roles,workflows}` + `prompts-src` + `agents-src` → `generated/<host>/{skills,agents,prompts}`；install 只装 generated |
 | `/uo-diff` | 并入 `uo-update`；删除独立用户 Skill；Router `/uo-diff` → `uo-update` |
 | `/operator` | 仅为 `harness route` 别名；路由规则只存在于 Harness，禁止 Python Router / Skill / Prompt 各维护一份 |
 | Gate 失败 | **不**立即 `blocked`；进入 `rework_required` / `human_required`，保持当前 phase，由 `harness next` 返回返工动作 |
