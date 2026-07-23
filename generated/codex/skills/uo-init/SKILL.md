@@ -18,17 +18,22 @@ disable-model-invocation: true
 
 ## Actions
 
-| action_id | 名称 | method | agent |
-|---|---|---|---|
-| `prepare_layout` | 创建知识库目录 | `uo-init/prepare-layout` | `deterministic-uo-engine` |
-| `scope_confirmation` | 确认分析范围 | `uo-init/scope-confirmation` | `ascendc-agent` |
-| `extract_plan` | 抽取计划与分层 IR | `uo-init/extract-plan` | `uo-semantic-resolve` |
-| `key_triage` | KEY 粗分 | `uo-init/key-triage` | `uo-key-resolve` |
-| `key_resolution` | KEY 语义闭合 | `uo-init/key-resolution` | `uo-key-resolve` |
-| `confidence_report` | 生成置信度报告 | `uo-init/confidence-report` | `deterministic-uo-engine` |
-| `confidence_review` | 置信度原因审查 | `uo-init/confidence-review` | `uo-confidence-review` |
-| `export_integrity` | 导出与完整性校验 | `uo-init/export-integrity` | `deterministic-uo-engine` |
-| `kb_review` | KB 产物审查 | `uo-init/kb-review` | `uo-kb-review` |
+| action_id | 名称 | method | agent | role |
+|---|---|---|---|---|
+| `prepare_layout` | 创建知识库目录 | `uo-init/prepare-layout` | `deterministic-uo-engine` | `deterministic_engine` |
+| `scope_confirmation` | 确认分析范围 | `uo-init/scope-confirmation` | `ascendc-agent` | `producer` |
+| `detect_score_pre` | 抽取前评分(pre_semantic) | `uo-init/detect-score-pre` | `deterministic-uo-engine` | `deterministic_engine` |
+| `extract_plan` | 抽取计划与分层 IR | `uo-init/extract-plan` | `uo-semantic-resolve` | `producer` |
+| `apply_semantic_patch` | 应用语义补丁(ledger) | `uo-init/apply-semantic-patch` | `deterministic-uo-engine` | `deterministic_engine` |
+| `rebuild_from_ledger` | 由账本重建派生图 | `uo-init/rebuild-from-ledger` | `deterministic-uo-engine` | `deterministic_engine` |
+| `detect_score_post` | 抽取后评分(post_semantic) | `uo-init/detect-score-post` | `deterministic-uo-engine` | `deterministic_engine` |
+| `recheck_closure` | 复核闭合(不增 attempts) | `uo-init/recheck-closure` | `deterministic-uo-engine` | `deterministic_engine` |
+| `key_triage` | KEY 粗分 | `uo-init/key-triage` | `uo-key-resolve` | `producer` |
+| `key_resolution` | KEY 语义闭合 | `uo-init/key-resolution` | `uo-key-resolve` | `producer` |
+| `confidence_report` | 生成置信度报告 | `uo-init/confidence-report` | `deterministic-uo-engine` | `deterministic_engine` |
+| `confidence_review` | 置信度原因审查 | `uo-init/confidence-review` | `uo-confidence-review` | `referee` |
+| `export_integrity` | 导出与完整性校验 | `uo-init/export-integrity` | `deterministic-uo-engine` | `deterministic_engine` |
+| `kb_review` | KB 产物审查 | `uo-init/kb-review` | `uo-kb-review` | `referee` |
 
 ## Composed: harness-control
 
@@ -60,7 +65,12 @@ Harness 独占状态、合法边、门禁与完成态。
 |---|---|---|---|---|---|
 | `prepare_layout` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `uo-init/prepare-layout` | `-` | `deterministic-uo-engine` |
 | `scope_confirmation` | source-authority,code-access,evidence,language,harness-control,output-quality | cbm-navigation,source-reading | `uo-init/scope-confirmation` | `uo/scope-confirmation` | `ascendc-agent` |
+| `detect_score_pre` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `uo-init/detect-score-pre` | `-` | `deterministic-uo-engine` |
 | `extract_plan` | source-authority,code-access,evidence,language,harness-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution | `uo-init/extract-plan` | `uo/extract-plan` | `uo-semantic-resolve` |
+| `apply_semantic_patch` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `uo-init/apply-semantic-patch` | `-` | `deterministic-uo-engine` |
+| `rebuild_from_ledger` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `uo-init/rebuild-from-ledger` | `-` | `deterministic-uo-engine` |
+| `detect_score_post` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `uo-init/detect-score-post` | `-` | `deterministic-uo-engine` |
+| `recheck_closure` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `uo-init/recheck-closure` | `-` | `deterministic-uo-engine` |
 | `key_triage` | source-authority,code-access,evidence,language,harness-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution | `uo-init/key-triage` | `uo/key-triage` | `uo-key-resolve` |
 | `key_resolution` | source-authority,code-access,evidence,language,harness-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution | `uo-init/key-resolution` | `uo/key-resolution` | `uo-key-resolve` |
 | `confidence_report` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `uo-init/confidence-report` | `-` | `deterministic-uo-engine` |
@@ -74,7 +84,12 @@ Harness 独占状态、合法边、门禁与完成态。
 |---|---|---|---|---|
 | `prepare_layout` | `actions/prepare-layout/METHOD.md` | `-` | `kb-layout-v1` | `deterministic_engine` |
 | `scope_confirmation` | `actions/scope-confirmation/METHOD.md` | `prompts/tasks/uo/scope-confirmation.md` | `scope-confirmed-v1` | `producer` |
+| `detect_score_pre` | `actions/detect-score-pre/METHOD.md` | `-` | `detect-score-pre-v1` | `deterministic_engine` |
 | `extract_plan` | `actions/extract-plan/METHOD.md` | `prompts/tasks/uo/extract-plan.md` | `extract-plan-v1` | `producer` |
+| `apply_semantic_patch` | `actions/apply-semantic-patch/METHOD.md` | `-` | `semantic-patch-v1` | `deterministic_engine` |
+| `rebuild_from_ledger` | `actions/rebuild-from-ledger/METHOD.md` | `-` | `rebuild-ledger-v1` | `deterministic_engine` |
+| `detect_score_post` | `actions/detect-score-post/METHOD.md` | `-` | `detect-score-post-v1` | `deterministic_engine` |
+| `recheck_closure` | `actions/recheck-closure/METHOD.md` | `-` | `recheck-closure-v1` | `deterministic_engine` |
 | `key_triage` | `actions/key-triage/METHOD.md` | `prompts/tasks/uo/key-triage.md` | `key-triage-v1` | `producer` |
 | `key_resolution` | `actions/key-resolution/METHOD.md` | `prompts/tasks/uo/key-resolution.md` | `input-derivable-patch-v1` | `producer` |
 | `confidence_report` | `actions/confidence-report/METHOD.md` | `-` | `confidence-report-v1` | `deterministic_engine` |

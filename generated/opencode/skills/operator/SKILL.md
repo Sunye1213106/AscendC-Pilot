@@ -1,7 +1,6 @@
 ---
 name: operator
 description: harness route 别名。不维护第二路由表。
-disable-model-invocation: false
 ---
 
 # operator

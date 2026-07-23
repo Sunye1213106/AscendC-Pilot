@@ -68,3 +68,24 @@ harness complete --project <算子仓>
 ```text
 /uo-init → /tg-init → --confirm → /tg-plan → approve → /tg-solve
 ```
+
+### `/tg-init` 前置条件
+
+合同构建需要**测试脚本 / CSV 消费端目录**（用于动态抽取表头与读取逻辑），任选其一：
+
+```powershell
+# 环境变量
+$env:ASCENDC_TEST_SCRIPT_ROOT = "<算子仓>/tests"
+# 或 harness 上下文
+# context/harness_params.yaml → test_script_root / csv_consumer_root
+```
+
+缺失时 `contract_build` 会明确失败：`TEST_SCRIPT_ROOT_REQUIRED`。
+
+完整运行环境 ≠ Plugin 安装成功：
+
+| 检查项 | 说明 |
+| --- | --- |
+| `harness doctor` | Composer/Agent、Z3、CBM MCP、consumer root 提示 |
+| CBM MCP | 见 [docs/cbm-mcp-setup.md](./docs/cbm-mcp-setup.md)；未配置时 UO 源码证据能力降级 |
+| Z3 | `pip install -e "./engines/tg[solver]"`；否则 `/tg-solve` 不可用 |

@@ -1,33 +1,44 @@
-                # 语义绑定
+# semantic_bind — 有界语义绑定（Harness 托管）
 
-                ## Goal
+> 勿在本文件推进 Harness 阶段；只执行 `harness next` 给出的 `semantic_bind`。
 
-                执行语义绑定（确定性引擎）。
+## Purpose
 
-                ## Input Interpretation
+消化 `contract_build` 产出的 binding gaps。确定性 prepare 已给出候选与源码窗；
+LLM 只在允许的候选内写补丁；Harness finalize 确定性应用补丁。
 
-                仅处理 `harness next` 提供的当前 unresolved / target 子集与上下文包。
+## 职责划分
 
-                ## Domain Procedure
+| 阶段 | 执行者 | 产物 |
+|---|---|---|
+| prepare | deterministic engine（自动） | inventory / bundle / fingerprint / session |
+| produce | `tg-semantic-bind` | `semantic_bind_patch.yaml` |
+| finalize apply | deterministic (`apply_semantic_bind_patch`) | lexicon / unresolved / apply receipt |
+| gate | `bind_progress` | 无假闭合 |
 
-                1. 使用 capability `kb-query`。
-2. 使用 capability `semantic-resolution`。
-                3. 只处理当前 Action 指定的 ID 或文件。
-                4. 按输出合同生成候选产物；证据不足保留 unresolved。
+## Inputs（只读）
 
-                ## Domain Decisions
+- `tg/realization/llm_bind_prompt_bundle.yaml`
+- `tg/realization/binding_inventory.yaml`
+- `tg/realization/binding_gaps.yaml` / `unresolved.yaml`
+- bundle 内源码窗口
 
-                - 遵循已加载 Policy 与 Capability 硬限制。
-                - 本 Action 特有分类/闭合规则见关联 task prompt（若有）。
+## Procedure（Producer）
 
-                ## Output
+1. 读取 prompt bundle 中的当前 gap / candidate 子集。
+2. 对每个可确认 gap：选择 `candidate_id`，给出 `key_id` + `expr`（或 token / csv alias）。
+3. **只**写入 `tg/realization/semantic_bind_patch.yaml`。
+4. 执行 `harness run-action semantic_bind --finalize`（finalize 会应用补丁并校验）。
 
-                - 合同 id：`semantic-bind-v1`
-                - 不得写声明外路径。
+## Hard Constraints
 
-                ## Cannot Decide
+- MUST NOT：全仓自由搜索；发明未在候选或源码窗中的字段/表达式
+- MUST NOT：空 `accept` / `select` 却标记 resolved
+- MUST NOT：直接改 `binding_lexicon.yaml` / Harness state / 调用 advance
+- MUST：证据不足 → 保留 gap，回报 blocking reason
 
-                - 证据不足 → unresolved / needs_human
-                - 缺工具或 gate 前置 → 停止并回报 blocking reason
+## Output
 
-                本文件不得描述 Harness advance、complete 或其他阶段。
+- 合同 id：`semantic-bind-v1`
+- Producer 写出：`semantic_bind_patch.yaml`
+- Finalize 更新：`binding_lexicon.yaml`、`unresolved.yaml`、`binding_gaps.yaml`、`semantic_bind_apply.yaml`

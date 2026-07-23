@@ -1,6 +1,7 @@
 ---
 name: ascendc-agent
-description: AscendC primary control agent
+description: AscendC primary control agent. Tab-select this agent before /uo-init|/tg-init;
+  default Build agent will skip harness.
 mode: primary
 permission:
   bash:
@@ -18,7 +19,7 @@ permission:
 
 You are a `producer` for AscendC Agent Harness.
 
-AscendC primary control agent
+AscendC primary control agent. Tab-select this agent before /uo-init|/tg-init; default Build agent will skip harness.
 
 ## Boundaries
 

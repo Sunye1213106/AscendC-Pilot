@@ -120,7 +120,7 @@ def build_shape_derivation_graph(
         if src not in nodes[dst]["deps"]:
             nodes[dst]["deps"].append(src)
 
-    # --- roots from CSV ---
+    # --- roots from CSV (only shape-like columns become free shape roots) ---
     for item in rmap.get("csv_variables") or []:
         if not isinstance(item, dict):
             continue
@@ -128,10 +128,23 @@ def build_shape_derivation_graph(
         col = str(item.get("column") or item.get("name") or "")
         if not vid:
             continue
-        if vid.startswith("VAR_CSV_") or _is_shapeish_column(col) or _looks_like_csv_root(item):
+        role = str(item.get("role") or item.get("kind") or "").lower()
+        is_shape_root = (
+            role in {"shape", "solver_input"}
+            or _is_shapeish_column(col)
+            or _looks_like_csv_root(item)
+        )
+        # Do NOT treat every VAR_CSV_* as a shape root — attributes/control stay non-root
+        # unless evidence marks them shape-related.
+        if is_shape_root:
             roots.add(vid)
-            add_node(vid, kind="csv", via="csv_variables")
-
+            add_node(vid, kind="csv", via="csv_variables_shape")
+        elif vid.startswith("VAR_CSV_"):
+            add_node(
+                vid,
+                kind="csv",
+                via=f"csv_variables_non_shape:{role or 'unknown'}",
+            )
     # --- resolve docs ---
     for path in resolve_files:
         doc = read_yaml(path) if path.is_file() else {}

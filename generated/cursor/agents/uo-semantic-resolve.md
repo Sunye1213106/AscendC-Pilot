@@ -1,7 +1,7 @@
 ---
 name: uo-semantic-resolve
 description: Extract plan producer
-type: subagent
+mode: subagent
 ---
 
 # Agent: uo-semantic-resolve

@@ -22,19 +22,42 @@ def _tg(project_root: Path):
 
 
 def _run_prepare_layout(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    del ctx
+    project_root = Path(project_root).expanduser().resolve()
     uo = _uo(project_root)
+    raw_op = str((ctx or {}).get("op_name") or "").strip()
+    op_name = raw_op or project_root.name
     try:
-        from uo.scripts.prepare_operator import prepare_operator  # type: ignore[import-not-found]
+        from uo.scripts.prepare_operator import main as prepare_main
 
-        result = prepare_operator(project_root, uo_root=uo)
-        return {"ok": True, "engine": "prepare_operator", "result": result if isinstance(result, dict) else {}}
+        argv = [str(project_root), "--op-name", op_name]
+        code = int(prepare_main(argv) or 0)
+        manifest = uo / "manifest.yaml"
+        # prepare_operator returns 3 when installed-skill version check mismatches,
+        # but layout/manifest may already be written — treat as soft warning.
+        if not manifest.is_file():
+            return {
+                "ok": False,
+                "engine": "prepare_operator",
+                "exit_code": code,
+                "error": "manifest.yaml missing after prepare_operator",
+                "op_name": op_name,
+            }
+        return {
+            "ok": True,
+            "engine": "prepare_operator",
+            "exit_code": code,
+            "op_name": op_name,
+            "manifest": manifest.as_posix(),
+            "warning": "installed_skill_version_mismatch" if code == 3 else "",
+        }
     except Exception as exc:  # noqa: BLE001
-        # Minimal layout so gates/tests can proceed when engine package APIs differ.
-        for rel in ("ir", "summary", "checks", "review", "tiling", "kernel", "query", "indexes"):
-            (uo / rel).mkdir(parents=True, exist_ok=True)
-        return {"ok": True, "engine": "prepare_layout_fallback", "warning": str(exc)[:200]}
-
+        return {
+            "ok": False,
+            "engine": "prepare_layout",
+            "error": str(exc)[:400],
+            "op_name": op_name,
+            "message_zh": "prepare_layout 失败；禁止空目录 fallback 假通过",
+        }
 
 def _run_confidence_report(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     del ctx
@@ -621,7 +644,7 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
 
 # Output contract id → relative paths under .ascendc-agent (existence + nonempty where applicable)
 OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
-    "kb-layout-v1": ["uo"],
+    "kb-layout-v1": ["uo/manifest.yaml"],
     "scope-confirmed-v1": ["uo/summary/scope_confirmed.yaml", "runs"],
     "detect-score-pre-v1": ["uo/ir/score_report_pre.yaml", "uo/ir/llm_tasks.yaml"],
     "detect-score-post-v1": ["uo/ir/score_report_post.yaml", "uo/ir/llm_tasks.yaml"],
@@ -646,6 +669,9 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     ],
     "semantic-bind-v1": [
         "tg/realization/binding_inventory.yaml",
+        "tg/realization/semantic_bind_apply.yaml",
+        "tg/realization/binding_lexicon.yaml",
+        "tg/realization/unresolved.yaml",
     ],
     "bind-merge-v1": [
         "tg/realization/uo_merge_report.yaml",
@@ -683,6 +709,10 @@ OUTPUT_CONTRACT_NONEMPTY_GLOBS: dict[str, list[str]] = {
     ],
     "csv-contract-v1": [
         "tg/realization/realization_map.yaml",
+    ],
+    "semantic-bind-v1": [
+        "tg/realization/semantic_bind_apply.yaml",
+        "tg/realization/binding_inventory.yaml",
     ],
 }
 

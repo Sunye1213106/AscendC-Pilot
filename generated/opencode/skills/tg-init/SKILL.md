@@ -1,7 +1,6 @@
 ---
 name: tg-init
 description: 构建测项合同与绑定。 Harness 管阶段；本 Skill 只索引 Action。
-disable-model-invocation: true
 ---
 
 # tg-init
@@ -16,18 +15,23 @@ disable-model-invocation: true
 4. 语义 Action：按 Runtime Bundle 派发声明 actor，产出后调用 `harness run-action <action_id> --finalize`；
 5. 调用 `harness advance`（仅消费 run-action 签发的可信收据）。
 
+前置条件：
+
+- 定稿 UO KB（`uo_ready`）
+- 测试脚本 / CSV 消费端目录：`--test-script-root` / `csv_consumer_root` / `ASCENDC_TEST_SCRIPT_ROOT`
+
 ## Actions
 
-| action_id | 名称 | method | agent |
-|---|---|---|---|
-| `kb_check` | 校验定稿 KB | `tg-init/kb-check` | `deterministic-tg-engine` |
-| `contract_build` | 构建合同骨架 | `tg-init/contract-build` | `tg-csv-contract` |
-| `semantic_bind` | 语义绑定 | `tg-init/semantic-bind` | `deterministic-tg-engine` |
-| `bind_merge` | 绑定合并 | `tg-init/bind-merge` | `deterministic-tg-engine` |
-| `mid_nest` | 中间量闭合 | `tg-init/mid-nest` | `deterministic-tg-engine` |
-| `integrity_gate` | 完整性校验 | `tg-init/integrity-gate` | `deterministic-tg-engine` |
-| `init_audit` | Init 审计 | `tg-init/init-audit` | `tg-init-audit` |
-| `human_confirm` | 人工确认 | `tg-init/human-confirm` | `human` |
+| action_id | 名称 | method | agent | role |
+|---|---|---|---|---|
+| `kb_check` | 校验定稿 KB | `tg-init/kb-check` | `deterministic-tg-engine` | `deterministic_engine` |
+| `contract_build` | 构建合同骨架 | `tg-init/contract-build` | `deterministic-tg-engine` | `deterministic_engine` |
+| `semantic_bind` | 语义绑定 | `tg-init/semantic-bind` | `tg-semantic-bind` | `producer` |
+| `bind_merge` | 绑定合并 | `tg-init/bind-merge` | `deterministic-tg-engine` | `deterministic_engine` |
+| `mid_nest` | 中间量闭合 | `tg-init/mid-nest` | `deterministic-tg-engine` | `deterministic_engine` |
+| `integrity_gate` | 完整性校验 | `tg-init/integrity-gate` | `deterministic-tg-engine` | `deterministic_engine` |
+| `init_audit` | Init 审计 | `tg-init/init-audit` | `tg-init-audit` | `referee` |
+| `human_confirm` | 人工确认 | `tg-init/human-confirm` | `human` | `-` |
 
 ## Composed: harness-control
 
@@ -59,7 +63,7 @@ Harness 独占状态、合法边、门禁与完成态。
 |---|---|---|---|---|---|
 | `kb_check` | source-authority,code-access,evidence,language,harness-control,output-quality | kb-query | `tg-init/kb-check` | `-` | `deterministic-tg-engine` |
 | `contract_build` | source-authority,code-access,evidence,language,harness-control,output-quality | contract-building,kb-query,obligation-analysis | `tg-init/contract-build` | `-` | `deterministic-tg-engine` |
-| `semantic_bind` | source-authority,code-access,evidence,language,harness-control,output-quality | kb-query,semantic-resolution | `tg-init/semantic-bind` | `-` | `deterministic-tg-engine` |
+| `semantic_bind` | source-authority,code-access,evidence,language,harness-control,output-quality | kb-query,semantic-resolution | `tg-init/semantic-bind` | `tg/semantic-bind` | `tg-semantic-bind` |
 | `bind_merge` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `tg-init/bind-merge` | `-` | `deterministic-tg-engine` |
 | `mid_nest` | source-authority,code-access,evidence,language,harness-control,output-quality | obligation-analysis | `tg-init/mid-nest` | `-` | `deterministic-tg-engine` |
 | `integrity_gate` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `tg-init/integrity-gate` | `-` | `deterministic-tg-engine` |
@@ -72,7 +76,7 @@ Harness 独占状态、合法边、门禁与完成态。
 |---|---|---|---|---|
 | `kb_check` | `actions/kb-check/METHOD.md` | `-` | `uo-ready-v1` | `deterministic_engine` |
 | `contract_build` | `actions/contract-build/METHOD.md` | `-` | `csv-contract-v1` | `deterministic_engine` |
-| `semantic_bind` | `actions/semantic-bind/METHOD.md` | `-` | `semantic-bind-v1` | `deterministic_engine` |
+| `semantic_bind` | `actions/semantic-bind/METHOD.md` | `prompts/tasks/tg/semantic-bind.md` | `semantic-bind-v1` | `producer` |
 | `bind_merge` | `actions/bind-merge/METHOD.md` | `-` | `bind-merge-v1` | `deterministic_engine` |
 | `mid_nest` | `actions/mid-nest/METHOD.md` | `-` | `mid-nest-v1` | `deterministic_engine` |
 | `integrity_gate` | `actions/integrity-gate/METHOD.md` | `-` | `tg-integrity-v1` | `deterministic_engine` |

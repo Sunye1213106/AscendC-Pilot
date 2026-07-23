@@ -18,17 +18,17 @@ disable-model-invocation: true
 
 ## Actions
 
-| action_id | 名称 | method | agent |
-|---|---|---|---|
-| `detect_changes` | 检测源码变更 | `uo-update/detect-changes` | `deterministic-uo-engine` |
-| `plan_update` | 制定更新计划 | `uo-update/plan-update` | `uo-semantic-resolve` |
-| `apply_update` | 应用变更 | `uo-update/apply-update` | `uo-semantic-resolve` |
-| `key_resolution` | KEY 语义闭合 | `uo-update/key-resolution` | `uo-key-resolve` |
-| `confidence_report` | 生成置信度报告 | `uo-update/confidence-report` | `deterministic-uo-engine` |
-| `confidence_review` | 置信度原因审查 | `uo-update/confidence-review` | `uo-confidence-review` |
-| `export_integrity` | 导出与完整性校验 | `uo-update/export-integrity` | `deterministic-uo-engine` |
-| `diff_summary` | 只读差异摘要 | `uo-update/diff-summary` | `deterministic-uo-engine` |
-| `diff_only` | 仅差异摘要（跳过完整更新） | `uo-update/diff-only` | `deterministic-uo-engine` |
+| action_id | 名称 | method | agent | role |
+|---|---|---|---|---|
+| `detect_changes` | 检测源码变更 | `uo-update/detect-changes` | `deterministic-uo-engine` | `deterministic_engine` |
+| `plan_update` | 制定更新计划 | `uo-update/plan-update` | `uo-semantic-resolve` | `producer` |
+| `apply_update` | 应用变更 | `uo-update/apply-update` | `uo-semantic-resolve` | `producer` |
+| `key_resolution` | KEY 语义闭合 | `uo-update/key-resolution` | `uo-key-resolve` | `producer` |
+| `confidence_report` | 生成置信度报告 | `uo-update/confidence-report` | `deterministic-uo-engine` | `deterministic_engine` |
+| `confidence_review` | 置信度原因审查 | `uo-update/confidence-review` | `uo-confidence-review` | `referee` |
+| `export_integrity` | 导出与完整性校验 | `uo-update/export-integrity` | `deterministic-uo-engine` | `deterministic_engine` |
+| `diff_summary` | 只读差异摘要 | `uo-update/diff-summary` | `deterministic-uo-engine` | `deterministic_engine` |
+| `diff_only` | 仅差异摘要（跳过完整更新） | `uo-update/diff-only` | `deterministic-uo-engine` | `deterministic_engine` |
 
 ## Composed: harness-control
 

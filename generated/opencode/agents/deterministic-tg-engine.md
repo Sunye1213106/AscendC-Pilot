@@ -1,7 +1,7 @@
 ---
 name: deterministic-tg-engine
 description: TG deterministic engine
-type: subagent
+mode: subagent
 ---
 
 # Agent: deterministic-tg-engine

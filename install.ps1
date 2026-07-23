@@ -49,11 +49,11 @@ if ($Platform -like "uninstall-*") {
   $agents = Get-AgentsDest $plat
   $plugins = Get-PluginsDest $plat
   if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
-  foreach ($name in @("uo-init","uo-update","uo-query","uo-code-review","tg-init","tg-plan","tg-solve","operator","_policies")) {
+  foreach ($name in @("uo-init","uo-update","uo-query","uo-code-review","tg-init","tg-plan","tg-solve","operator","_policies","understand-operator","uo-diff")) {
     $p = Join-Path $skills $name
     if (Test-Path $p) { Remove-Item -Recurse -Force $p }
   }
-  foreach ($name in @("ascendc-agent","uo-semantic-resolve","uo-key-resolve","uo-confidence-review","uo-kb-review","uo-code-reviewer","uo-query","tg-csv-contract","tg-init-audit","deterministic-uo-engine","deterministic-tg-engine")) {
+  foreach ($name in @("ascendc-agent","uo-semantic-resolve","uo-key-resolve","uo-confidence-review","uo-kb-review","uo-code-reviewer","uo-query","tg-csv-contract","tg-semantic-bind","tg-init-audit","deterministic-uo-engine","deterministic-tg-engine")) {
     $p = Join-Path $agents "$name.md"
     if (Test-Path $p) { Remove-Item -Force $p }
   }
@@ -96,6 +96,15 @@ if (Test-Path (Join-Path $genRoot "prompts")) {
   Copy-Item -Recurse -Force (Join-Path $genRoot "prompts") (Join-Path $Dest "prompts")
 }
 
+# Purge pre-harness legacy skills that teach free-form LLM KB builds (breaks Tab→ascendc-agent flow).
+foreach ($legacy in @("understand-operator", "uo-diff")) {
+  $legacyLink = Join-Path $Skills $legacy
+  if (Test-Path $legacyLink) {
+    Remove-Item -Recurse -Force $legacyLink
+    Write-Host "Removed legacy skill → $legacyLink"
+  }
+}
+
 foreach ($name in @("uo-init","uo-update","uo-query","uo-code-review","tg-init","tg-plan","tg-solve","operator")) {
   $target = Join-Path $Dest "skills\$name"
   if (-not (Test-Path $target)) { continue }
@@ -108,13 +117,26 @@ foreach ($name in @("uo-init","uo-update","uo-query","uo-code-review","tg-init",
   }
 }
 
-Get-ChildItem (Join-Path $Dest "agents\*.md") | ForEach-Object {
-  $link = Join-Path $Agents $_.Name
-  if (Test-Path $link) { Remove-Item -Force $link }
+$agentDir = Join-Path $Dest "agents"
+if (-not (Test-Path $agentDir)) {
+  throw "generated agents missing under $agentDir (compose may have failed)"
+}
+$agentFiles = @(Get-ChildItem -Path $agentDir -Filter "*.md" -File)
+if ($agentFiles.Count -eq 0) {
+  throw "no agent .md files under $agentDir"
+}
+foreach ($agentFile in $agentFiles) {
+  $link = Join-Path $Agents $agentFile.Name
+  if (-not $link) { throw "Agents dest unresolved: Agents=$Agents" }
+  if (Test-Path -LiteralPath $link) { Remove-Item -Force -LiteralPath $link }
   try {
-    New-Item -ItemType SymbolicLink -Path $link -Target $_.FullName | Out-Null
+    New-Item -ItemType SymbolicLink -Path $link -Target $agentFile.FullName -ErrorAction Stop | Out-Null
   } catch {
-    Copy-Item -Force $_.FullName $link
+    # NOTE: inside catch, $_ is the ErrorRecord — must use $agentFile, not $_.FullName
+    Copy-Item -Force -LiteralPath $agentFile.FullName -Destination $link
+  }
+  if (-not (Test-Path -LiteralPath $link)) {
+    throw "failed to install agent $($agentFile.Name) → $link"
   }
 }
 

@@ -17,10 +17,171 @@ from ascendc_harness.actions.engines import (
     OUTPUT_CONTRACT_PATHS,
     invoke_engine,
 )
-from ascendc_harness.paths import agent_root, ensure_agent_layout, runs_root
+from ascendc_harness.paths import agent_root, ensure_agent_layout, runs_root, tg_root
 from ascendc_harness.runs import append_event, file_sha256, issue_receipt, run_dir
 from ascendc_harness.state import load_state
 from ascendc_harness.workflows import actions_for_phase, get_workflow
+
+
+def _write_active_action(project_root: Path, payload: dict[str, Any]) -> Path:
+    """Persist current action context for OpenCode plugin / subagent writes."""
+    path = agent_root(project_root) / "state" / "active_action.yaml"
+    _dump(path, payload)
+    return path
+
+
+def _eng_ctx_from_pack(pack: dict[str, Any], state: dict[str, Any], run_id: str) -> dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "op_name": pack.get("op_name") or state.get("op_name") or "",
+        "architecture": pack.get("architecture") or state.get("architecture") or "arch35",
+        "test_script_root": pack.get("test_script_root") or state.get("test_script_root") or "",
+        "csv_consumer_root": pack.get("csv_consumer_root")
+        or state.get("csv_consumer_root")
+        or pack.get("test_script_root")
+        or state.get("test_script_root")
+        or "",
+        "level": pack.get("level") or state.get("level") or "L0",
+        "focus": pack.get("focus") or state.get("focus") or "",
+    }
+
+
+def _stamp_semantic_bind_prepare(
+    project_root: Path,
+    *,
+    nonce: str,
+    run_id: str,
+    action_id: str,
+    prepare_result: dict[str, Any],
+) -> dict[str, Any]:
+    """Annotate inventory with session nonce so finalize can reject stale leftovers."""
+    inv_path = tg_root(project_root) / "realization" / "binding_inventory.yaml"
+    inv = _load(inv_path)
+    stamp = {
+        "nonce": nonce,
+        "prepare_nonce": nonce,
+        "prepare_run_id": run_id,
+        "prepare_action_id": action_id,
+        "inventory_sha256": file_sha256(inv_path) or "",
+        "consumer_fingerprint": inv.get("consumer_fingerprint") if isinstance(inv, dict) else "",
+        "engine_ok": bool(prepare_result.get("ok")),
+    }
+    if isinstance(inv, dict):
+        inv["harness_prepare"] = {
+            "nonce": nonce,
+            "run_id": run_id,
+            "action_id": action_id,
+        }
+        _dump(inv_path, inv)
+        stamp["inventory_sha256"] = file_sha256(inv_path) or ""
+    return stamp
+
+
+def _apply_semantic_bind_on_finalize(
+    project_root: Path,
+    *,
+    session: dict[str, Any],
+) -> dict[str, Any]:
+    """Deterministically apply producer patch; reject empty/stale progress."""
+    tg = tg_root(project_root)
+    realization = tg / "realization"
+    patch_path = realization / "semantic_bind_patch.yaml"
+    unresolved = _load(realization / "unresolved.yaml")
+    gaps_doc = _load(realization / "binding_gaps.yaml")
+    gaps: list[Any] = []
+    status = ""
+    if isinstance(unresolved, dict):
+        status = str(unresolved.get("status") or "").lower()
+        gaps = list(unresolved.get("binding_gaps") or [])
+    if isinstance(gaps_doc, dict) and gaps_doc.get("gaps") is not None:
+        gaps = list(gaps_doc.get("gaps") or gaps)
+        status = str(gaps_doc.get("status") or status).lower()
+
+    inv = _load(realization / "binding_inventory.yaml")
+    prepare = session.get("prepare_stamp") or {}
+    if isinstance(inv, dict):
+        hp = inv.get("harness_prepare") or {}
+        if prepare.get("nonce") and hp.get("nonce") and str(hp.get("nonce")) != str(prepare.get("nonce")):
+            return {
+                "ok": False,
+                "error": "STALE_INVENTORY",
+                "message": "binding_inventory prepare nonce mismatch; re-run prepare",
+            }
+
+    # No gaps and already ready → allow finalize without patch (deterministic skip).
+    if not gaps and status in {"ready", "pass", "resolved", "ok", ""}:
+        receipt = {
+            "version": 1,
+            "status": "skipped_no_gaps",
+            "ok": True,
+            "prepare_nonce": prepare.get("nonce"),
+            "action_id": session.get("action_id"),
+            "run_id": session.get("run_id"),
+            "inventory_sha256": prepare.get("inventory_sha256") or file_sha256(realization / "binding_inventory.yaml"),
+        }
+        _dump(realization / "semantic_bind_apply.yaml", receipt)
+        return {"ok": True, "applied": False, "skipped": True, "receipt": receipt}
+
+    if not patch_path.is_file() or patch_path.stat().st_size == 0:
+        return {
+            "ok": False,
+            "error": "PATCH_REQUIRED",
+            "message": "semantic_bind_patch.yaml missing/empty while binding gaps remain",
+            "remaining_gaps": len(gaps),
+        }
+
+    patch_doc = _load(patch_path)
+    expected_nonce = str(prepare.get("nonce") or session.get("nonce") or "")
+    patch_nonce = str(patch_doc.get("prepare_nonce") or "") if isinstance(patch_doc, dict) else ""
+    # Require prepare_nonce match when gaps remain — defeats leftover patches from prior runs.
+    if expected_nonce and patch_nonce != expected_nonce:
+        return {
+            "ok": False,
+            "error": "STALE_PATCH",
+            "message": "semantic_bind_patch.yaml prepare_nonce mismatch or missing (stale leftover)",
+            "expected_nonce": expected_nonce[:12],
+            "patch_nonce": patch_nonce[:12] if patch_nonce else "",
+        }
+
+    # Secondary mtime guard
+    session_path = _session_dir(
+        project_root,
+        str(session.get("run_id") or ""),
+        str(session.get("action_id") or ""),
+    ) / "session.yaml"
+    if session_path.is_file() and patch_path.stat().st_mtime < session_path.stat().st_mtime - 0.5:
+        return {
+            "ok": False,
+            "error": "STALE_PATCH",
+            "message": "semantic_bind_patch.yaml appears older than prepare session (stale leftover)",
+        }
+
+    try:
+        from testcase_agent.semantic_bind import apply_semantic_bind_patch
+
+        applied = apply_semantic_bind_patch(tg)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": "APPLY_FAILED", "message": str(exc)[:400]}
+
+    receipt = {
+        "version": 1,
+        "status": "applied",
+        "ok": bool(applied.get("ok")),
+        "prepare_nonce": prepare.get("nonce"),
+        "action_id": session.get("action_id"),
+        "run_id": session.get("run_id"),
+        "inventory_sha256": prepare.get("inventory_sha256"),
+        "consumer_fingerprint": prepare.get("consumer_fingerprint"),
+        "apply_result": {
+            "applied_count": applied.get("applied_count"),
+            "rejected_count": applied.get("rejected_count"),
+            "remaining_gaps": applied.get("remaining_gaps"),
+            "status": applied.get("status"),
+        },
+        "patch_sha256": file_sha256(patch_path) or "",
+    }
+    _dump(realization / "semantic_bind_apply.yaml", receipt)
+    return {"ok": bool(applied.get("ok")), "applied": True, "result": applied, "receipt": receipt}
 
 
 def _dump(path: Path, data: dict[str, Any]) -> None:
@@ -234,10 +395,51 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         "context_pack_path": pack.get("path"),
         "status": "prepared",
     }
+
+    eng_ctx = _eng_ctx_from_pack(pack, state, run_id)
+    prepare_engine: dict[str, Any] | None = None
+    # Producer semantic_bind: deterministic materials must exist before LLM dispatch.
+    if wid == "tg-init" and action_id == "semantic_bind" and role_id == "producer":
+        prepare_engine = invoke_engine(project_root, wid, action_id, ctx=eng_ctx)
+        if not prepare_engine.get("ok"):
+            return {
+                "ok": False,
+                "error": "SEMANTIC_BIND_PREPARE_FAILED",
+                "engine": prepare_engine,
+                "message_zh": str(prepare_engine.get("error") or "semantic_bind prepare failed"),
+            }
+        stamp = _stamp_semantic_bind_prepare(
+            project_root,
+            nonce=nonce,
+            run_id=run_id,
+            action_id=action_id,
+            prepare_result=prepare_engine,
+        )
+        bundle["prepare_stamp"] = stamp
+        bundle["prepare_engine"] = {
+            "ok": True,
+            "inventory_path": prepare_engine.get("inventory_path"),
+            "csv_consumer_root": prepare_engine.get("csv_consumer_root"),
+        }
+
     _dump(sdir / "session.yaml", bundle)
     (sdir / "method.md").write_text(method_r, encoding="utf-8")
     (sdir / "prompt.md").write_text(prompt_r, encoding="utf-8")
     _dump(sdir / "bundle.yaml", {k: v for k, v in bundle.items() if k != "nonce"})
+    _write_active_action(
+        project_root,
+        {
+            "version": 1,
+            "run_id": run_id,
+            "workflow_id": wid,
+            "phase": phase,
+            "action_id": action_id,
+            "actor_id": actor_id,
+            "role_id": role_id,
+            "session_dir": sdir.as_posix(),
+            "status": "prepared",
+        },
+    )
 
     append_event(
         project_root,
@@ -258,21 +460,10 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         "method_path": (sdir / "method.md").as_posix(),
         "auto_finalize": False,
     }
+    if prepare_engine is not None:
+        result["prepare_engine"] = prepare_engine
 
     if role_id == "deterministic_engine":
-        eng_ctx = {
-            "run_id": run_id,
-            "op_name": pack.get("op_name") or state.get("op_name") or "",
-            "architecture": pack.get("architecture") or state.get("architecture") or "arch35",
-            "test_script_root": pack.get("test_script_root") or state.get("test_script_root") or "",
-            "csv_consumer_root": pack.get("csv_consumer_root")
-            or state.get("csv_consumer_root")
-            or pack.get("test_script_root")
-            or state.get("test_script_root")
-            or "",
-            "level": pack.get("level") or state.get("level") or "L0",
-            "focus": pack.get("focus") or state.get("focus") or "",
-        }
         eng = invoke_engine(project_root, wid, action_id, ctx=eng_ctx)
         result["engine"] = eng
         fin = finalize_action(project_root, action_id, engine_result=eng)
@@ -282,7 +473,8 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         return result
 
     result["message_zh"] = (
-        f"已准备 Action Runtime Bundle；请派发 actor `{actor_id}`，"
+        f"已准备 Action Runtime Bundle；请派发 actor `{actor_id}` "
+        f"（写入时需携带 action_id={action_id} / ASCENDC_ACTION），"
         f"完成后执行 harness run-action {action_id} --finalize"
     )
     return result
@@ -318,6 +510,23 @@ def finalize_action(
 
     actor_id = str(session.get("actor_id") or action.get("agent_id") or "")
     contract_id = str(session.get("output_contract_id") or action.get("output_contract_id") or "")
+
+    apply_result: dict[str, Any] | None = None
+    if wid == "tg-init" and action_id == "semantic_bind" and engine_result is None:
+        apply_result = _apply_semantic_bind_on_finalize(project_root, session=session)
+        if not apply_result.get("ok"):
+            session["status"] = "finalize_failed"
+            session["apply_result"] = apply_result
+            _dump(sdir / "session.yaml", session)
+            return {
+                "ok": False,
+                "phase_runtime": "finalize",
+                "action_id": action_id,
+                "error": apply_result.get("error") or "APPLY_FAILED",
+                "apply_result": apply_result,
+                "message_zh": str(apply_result.get("message") or "semantic_bind 补丁应用失败"),
+            }
+
     contract = _check_output_contract(project_root, contract_id)
 
     from ascendc_harness.gates import run_named_gate
@@ -343,6 +552,7 @@ def finalize_action(
         "gates": gate_results,
         "output_contract": contract,
         "engine": engine_result or {},
+        "apply": apply_result or {},
     }
 
     out_hashes = _collect_output_hashes(project_root, contract_id)
@@ -353,6 +563,9 @@ def finalize_action(
         "context_pack": file_sha256(Path(str(session.get("context_pack_path") or ""))) or "",
         "prompt": file_sha256(sdir / "prompt.md") or "",
     }
+    if isinstance(session.get("prepare_stamp"), dict):
+        in_hashes["prepare_nonce"] = str(session["prepare_stamp"].get("nonce") or "")
+        in_hashes["inventory_sha256"] = str(session["prepare_stamp"].get("inventory_sha256") or "")
 
     receipt_path = None
     if overall_ok:
@@ -371,6 +584,20 @@ def finalize_action(
         session["status"] = "finalized"
         session["receipt"] = str(receipt_path)
         _dump(sdir / "session.yaml", session)
+        _write_active_action(
+            project_root,
+            {
+                "version": 1,
+                "run_id": run_id,
+                "workflow_id": wid,
+                "phase": phase,
+                "action_id": action_id,
+                "actor_id": actor_id,
+                "role_id": session.get("role_id"),
+                "status": "finalized",
+                "receipt": str(receipt_path),
+            },
+        )
         append_event(
             project_root,
             {"type": "action_finalized", "action_id": action_id, "actor_id": actor_id, "ok": True},

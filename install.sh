@@ -53,7 +53,7 @@ uninstall() {
   for name in uo-init uo-update uo-query uo-code-review tg-init tg-plan tg-solve operator _policies; do
     rm -rf "$skills/$name"
   done
-  for name in ascendc-agent uo-semantic-resolve uo-key-resolve uo-confidence-review uo-kb-review uo-code-reviewer uo-query tg-csv-contract tg-init-audit deterministic-uo-engine deterministic-tg-engine; do
+  for name in ascendc-agent uo-semantic-resolve uo-key-resolve uo-confidence-review uo-kb-review uo-code-reviewer uo-query tg-csv-contract tg-semantic-bind tg-init-audit deterministic-uo-engine deterministic-tg-engine; do
     rm -f "$agents/$name.md"
   done
   if [[ "$plat" == "opencode" && -n "$plugins" ]]; then
@@ -98,6 +98,14 @@ cp -R "$GEN/agents" "$DEST/agents"
 if [[ -d "$GEN/prompts" ]]; then
   cp -R "$GEN/prompts" "$DEST/prompts"
 fi
+
+# Purge pre-harness legacy skills (free-form LLM KB builds; not Tab→ascendc-agent).
+for legacy in understand-operator uo-diff; do
+  if [[ -e "$SKILLS/$legacy" || -L "$SKILLS/$legacy" ]]; then
+    rm -rf "$SKILLS/$legacy"
+    echo "Removed legacy skill → $SKILLS/$legacy"
+  fi
+done
 
 for name in uo-init uo-update uo-query uo-code-review tg-init tg-plan tg-solve operator; do
   [[ -d "$DEST/skills/$name" ]] || continue

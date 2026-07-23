@@ -1,7 +1,7 @@
 ---
 name: uo-code-reviewer
 description: Code review analyst
-type: subagent
+mode: subagent
 ---
 
 # Agent: uo-code-reviewer

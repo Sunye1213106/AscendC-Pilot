@@ -356,6 +356,42 @@ def authorize(
                 phase=ctx.get("phase"),
             )
 
+        # Agent write_scopes (from agents-src) — real runtime boundary
+        if agent_l and agent_l not in _PRIMARY_AGENTS and _is_protected_write(norm):
+            from ascendc_harness.agents_registry import (
+                agent_write_scopes,
+                path_matches_scope,
+                rel_under_agent_dir,
+            )
+
+            scopes = agent_write_scopes(agent_l, project_root)
+            if scopes:
+                rel = rel_under_agent_dir(path_s or norm, project_root)
+                # Also accept bare tg/... style paths
+                if rel is None:
+                    rel_try = norm
+                    marker = "/.ascendc-agent/"
+                    if marker in rel_try:
+                        rel = rel_try.split(marker, 1)[1]
+                    elif "tg/" in rel_try or rel_try.startswith("tg/"):
+                        idx = rel_try.find("tg/")
+                        rel = rel_try[idx:]
+                    elif "uo/" in rel_try or rel_try.startswith("uo/"):
+                        idx = rel_try.find("uo/")
+                        rel = rel_try[idx:]
+                    else:
+                        rel = rel_try.lstrip("/")
+                if rel is not None and not path_matches_scope(rel, scopes):
+                    return _ok(
+                        "deny",
+                        "AGENT_WRITE_SCOPE",
+                        f"代理 {agent_l} 不得写入声明 write_scopes 之外的路径",
+                        path=path_s,
+                        agent=agent_l,
+                        write_scopes=scopes,
+                        rel=rel,
+                    )
+
         return _ok(
             "allow",
             "WRITE_OK",

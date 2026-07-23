@@ -18,9 +18,9 @@ disable-model-invocation: true
 
 ## Actions
 
-| action_id | 名称 | method | agent |
-|---|---|---|---|
-| `code_review` | 代码审查 | `uo-code-review/code-review` | `uo-code-reviewer` |
+| action_id | 名称 | method | agent | role |
+|---|---|---|---|---|
+| `code_review` | 代码审查 | `uo-code-review/code-review` | `uo-code-reviewer` | `readonly_analyst` |
 
 ## Composed: harness-control
 

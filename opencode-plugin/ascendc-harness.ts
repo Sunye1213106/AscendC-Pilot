@@ -10,10 +10,16 @@
  *
  * Platform limits: OpenCode may not expose subagent identity on every hook;
  * receipts are issued only by `harness run-action <action_id> --finalize`.
+ *
+ * Action context propagation:
+ * 1. ASCENDC_ACTION env
+ * 2. tool args action / action_id / actionId
+ * 3. `.ascendc-agent/state/active_action.yaml` written by harness prepare
+ * On Task dispatch, injects action into args so child writes inherit it.
  */
 
 import { spawnSync } from "node:child_process"
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { resolve } from "node:path"
 
 type AuthorizeResult = {
@@ -53,14 +59,31 @@ function resolveAgent(input: { agent?: string; sessionAgent?: string }): string 
   return String(fromEnv || fromInput || "ascendc-agent").trim()
 }
 
-function resolveAction(args: Record<string, unknown>): string {
-  return String(
-    process.env.ASCENDC_ACTION ||
-      args.action ||
-      args.action_id ||
-      args.actionId ||
-      "",
+function readActiveAction(project: string): { action_id?: string; actor_id?: string } {
+  const path = resolve(project, ".ascendc-agent", "state", "active_action.yaml")
+  if (!existsSync(path)) return {}
+  try {
+    const text = readFileSync(path, "utf-8")
+    const actionMatch = text.match(/^\s*action_id:\s*["']?([^\s"'#]+)/m)
+    const actorMatch = text.match(/^\s*actor_id:\s*["']?([^\s"'#]+)/m)
+    return {
+      action_id: actionMatch?.[1]?.trim() || "",
+      actor_id: actorMatch?.[1]?.trim() || "",
+    }
+  } catch {
+    return {}
+  }
+}
+
+function resolveAction(args: Record<string, unknown>, project: string): string {
+  const fromArgs = String(
+    args.action || args.action_id || args.actionId || "",
   ).trim()
+  if (fromArgs) return fromArgs
+  const fromEnv = String(process.env.ASCENDC_ACTION || "").trim()
+  if (fromEnv) return fromEnv
+  const active = readActiveAction(project)
+  return String(active.action_id || "").trim()
 }
 
 function runAuthorize(args: {
@@ -84,14 +107,23 @@ function runAuthorize(args: {
     args.path ?? "",
     "--agent",
     args.agent ?? "ascendc-agent",
-    "--action",
-    args.action ?? "",
   ]
+  // Windows shell drops empty args; never pass bare `--action` without a value.
+  const action = String(args.action || "").trim()
+  if (action) {
+    argv.push("--action", action)
+  }
   const result = spawnSync("harness", argv, {
     encoding: "utf-8",
     shell: true,
     windowsHide: true,
     cwd: project,
+    env: {
+      ...process.env,
+      ASCENDC_ACTION: action || process.env.ASCENDC_ACTION || "",
+      ASCENDC_AGENT: args.agent || process.env.ASCENDC_AGENT || "",
+      ASCENDC_PROJECT_ROOT: project,
+    },
   })
   if (result.error || result.status === 127) {
     return { ok: false, decision: "ask", reason_code: "HARNESS_MISSING", reason_zh: "未找到 harness CLI" }
@@ -108,6 +140,48 @@ function runAuthorize(args: {
   }
 }
 
+function isHarnessCli(command: string): boolean {
+  // Allow harness and python -m ascendc_harness; ignore trailing redirections.
+  const cleaned = String(command || "")
+    .replace(/[|&><].*$/, "")
+    .trim()
+  return /^\s*harness(\s|$)/i.test(cleaned) || /^\s*python(?:3)?\s+-m\s+ascendc_harness(\s|$)/i.test(cleaned)
+}
+
+function injectActionContext(
+  args: Record<string, unknown>,
+  action: string,
+  actor?: string,
+): void {
+  if (!action) return
+  // Ensure subsequent authorize/resolvers see action without relying on LLM memory.
+  if (!args.action && !args.action_id && !args.actionId) {
+    args.action = action
+    args.action_id = action
+  }
+  const prompt = String(args.prompt || args.description || args.task || "")
+  if (prompt && !/ASCENDC_ACTION|action_id\s*=/.test(prompt)) {
+    const prefix =
+      `[ASCENDC_ACTION=${action}` +
+      (actor ? `; ASCENDC_AGENT=${actor}` : "") +
+      `] 正式写入必须携带 action_id=${action}。\n\n`
+    if (args.prompt != null) args.prompt = prefix + String(args.prompt)
+    else if (args.description != null) args.description = prefix + String(args.description)
+    else if (args.task != null) args.task = prefix + String(args.task)
+  }
+  // Common OpenCode task env bags
+  const envBag = (args.env || args.environment || args.envVars) as Record<string, string> | undefined
+  if (envBag && typeof envBag === "object") {
+    envBag.ASCENDC_ACTION = action
+    if (actor) envBag.ASCENDC_AGENT = actor
+  } else {
+    args.env = {
+      ASCENDC_ACTION: action,
+      ...(actor ? { ASCENDC_AGENT: actor } : {}),
+    }
+  }
+}
+
 export const AscendCHarnessPlugin = async () => {
   return {
     "tool.execute.before": async (
@@ -120,12 +194,28 @@ export const AscendCHarnessPlugin = async () => {
       const path = String(
         args.filePath || args.path || args.file || args.filepath || args.target || "",
       )
-      const agent = resolveAgent(input)
-      const action = resolveAction(args)
       const project = detectProjectRoot()
+      const active = readActiveAction(project)
+      let agent = resolveAgent(input)
+      // When subagent hooks omit identity, fall back to prepared actor.
+      if (
+        (!agent || agent === "ascendc-agent") &&
+        active.actor_id &&
+        tool !== "task" &&
+        tool !== "subagent" &&
+        tool !== "task_tool"
+      ) {
+        agent = active.actor_id
+      }
+      const action = resolveAction(args, project)
       const taskAgent = String(args.agent || args.subagent || args.name || path || "")
 
       if (tool === "bash" || tool === "shell" || tool === "terminal") {
+        // harness CLI is always allowed (control plane). Do not depend on authorize
+        // succeeding first — empty --action used to break authorize on Windows.
+        if (isHarnessCli(command)) {
+          return
+        }
         const verdict = runAuthorize({
           tool: "bash",
           command,
@@ -139,11 +229,9 @@ export const AscendCHarnessPlugin = async () => {
           )
         }
         if (verdict.decision === "ask") {
-          if (!/^\s*harness(\s|$)/i.test(command)) {
-            throw new Error(
-              `[ascendc-harness] bash 仅允许 harness *：${verdict.reason_zh || ""}`.trim(),
-            )
-          }
+          throw new Error(
+            `[ascendc-harness] bash 仅允许 harness *：${verdict.reason_zh || ""}`.trim(),
+          )
         }
       }
 
@@ -154,6 +242,11 @@ export const AscendCHarnessPlugin = async () => {
         tool === "strreplace" ||
         tool === "patch"
       ) {
+        // Propagate action onto write args for receipt/audit trail
+        if (action && !args.action && !args.action_id) {
+          args.action = action
+          args.action_id = action
+        }
         const verdict = runAuthorize({
           tool: tool === "apply_patch" || tool === "patch" ? "apply_patch" : "write",
           path,
@@ -167,12 +260,15 @@ export const AscendCHarnessPlugin = async () => {
       }
 
       if (tool === "task" || tool === "subagent" || tool === "task_tool") {
+        const dispatchAction = action || String(active.action_id || "")
+        const dispatchActor = taskAgent || String(active.actor_id || "")
+        injectActionContext(args, dispatchAction, dispatchActor)
         const verdict = runAuthorize({
           tool: "task",
           path: taskAgent,
           command: taskAgent,
           agent,
-          action,
+          action: dispatchAction,
           project,
         })
         if (verdict.decision === "deny" || verdict.ok === false) {

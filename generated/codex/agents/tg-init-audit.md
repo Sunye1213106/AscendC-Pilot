@@ -1,7 +1,7 @@
 ---
 name: tg-init-audit
 description: TG init audit referee
-type: subagent
+mode: subagent
 ---
 
 # Agent: tg-init-audit

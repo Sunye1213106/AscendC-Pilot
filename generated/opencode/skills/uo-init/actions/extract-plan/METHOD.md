@@ -28,10 +28,8 @@ blocking LLM 未清且预算未尽 → 不可 advance。
 
 ### 1. pre_semantic：入口图 + 评分
 
-- `resolve_entrypoints`：CBM（confirmed scope 硬边界；`op_name` 仅排序）+ 注册宏
-- fluent：`IMPL_OP_OPTILING(Op).Tiling(Class)` → `source_verified`
-- 启发式 `_link_*` → `candidate`，**不得**单独满足 closure
-- engine：`detect_score_pre` → `ir/score_report_pre.yaml` + `ir/llm_tasks.yaml`
+- engine：`harness run-action detect_score_pre` → `ir/score_report_pre.yaml` + `ir/llm_tasks.yaml`
+- **禁止**直调 `resolve_entrypoints.py` / `build_layered_kb.py`
 
 ### 2. 评分 ≠ 严重级别
 
@@ -44,12 +42,12 @@ blocking LLM 未清且预算未尽 → 不可 advance。
 
 - 仅裁决候选；禁 `invent_symbol` / `repo_wide_search`
 - Patch 必须引用 `task_id` + candidate id；校验 snapshot / candidate hash
-- 写入 `ir/semantic_resolution_ledger.yaml` → `rebuild_from_ledger`
-- 验证来源：`source_verified` | `semantic_verified` | `candidate` | `rejected`
+- 写入有界 plan/patch → `harness run-action extract_plan --finalize`
+- 后续确定性：`apply_semantic_patch` → `rebuild_from_ledger`
 
 ### 4. plan_and_graph + post_semantic
 
-- `propose_extract_plan` / LLM plan / `apply_extract_plan` / `build_layered_kb`
+- 由 Harness 引擎编排（`detect_score_post` / `apply_semantic_patch` / `rebuild_from_ledger`）
 - Writer/receiver 身份：`file_path|qn|class`（禁止短名唯一键）
 - **仅 plan/host 存在后**才 `detect_score_post`（评 Bridge/KEY）
 
@@ -61,10 +59,12 @@ blocking LLM 未清且预算未尽 → 不可 advance。
 
 ## Hard Constraints
 
+- MUST NOT：直调 `python …/build_layered_kb.py` / `propose_extract_plan.py` / `apply_extract_plan.py`
 - MUST NOT：恢复 `selected`；candidate 边闭合主链；patch 直改派生图
 - MUST NOT：recheck/detect/gate 递增 attempts；算子特化正则
-- MUST NOT：以 multi-schema 本身触发 LLM（仅绑定歧义）；以 `file_contains=op_name` 硬过滤闭包文件
+- MUST NOT：以 multi-schema 本身触发 LLM；以 `file_contains=op_name` 硬过滤闭包文件
 - MUST：证据不足保留分级 unresolved；Agent 不得推进 Harness 完成态
+- MUST：只经 `harness run-action …`
 
 ## Stop Conditions
 

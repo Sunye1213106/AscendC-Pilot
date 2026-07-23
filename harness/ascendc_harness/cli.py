@@ -96,6 +96,35 @@ def main(argv: list[str] | None = None) -> int:
     p_auth.add_argument("--agent", default="")
     p_auth.add_argument("--action", default="")
 
+    p_scope = sub.add_parser(
+        "uo-scope",
+        help="Run UO scope_confirmation deterministic steps (scan/checkpoint/stage/…)",
+    )
+    p_scope.add_argument(
+        "step",
+        choices=["scan", "checkpoint", "build-evidence", "closure", "stage", "finalize"],
+        help="Deterministic scope step",
+    )
+    p_scope.add_argument("--project", type=Path, default=Path.cwd())
+    p_scope.add_argument("--op-name", default="")
+    p_scope.add_argument("--architecture", default="arch35")
+    p_scope.add_argument(
+        "--decision",
+        default="",
+        help="For checkpoint: continue|revise|stop|manual_supplement",
+    )
+    p_scope.add_argument("--notes", default="")
+
+    p_uq = sub.add_parser("uo-query", help="Query UO KB graph (wraps uo_kb_query; no direct .py)")
+    p_uq.add_argument("--project", type=Path, default=Path.cwd())
+    p_uq.add_argument("--op-name", default="")
+    p_uq.add_argument("--pattern", default="")
+    p_uq.add_argument("--target", default="")
+    p_uq.add_argument("--depth", type=int, default=1)
+    p_uq.add_argument("--limit", type=int, default=50)
+    p_uq.add_argument("--relation-type", default="")
+    p_uq.add_argument("--status-only", action="store_true")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "doctor":
@@ -275,11 +304,48 @@ def main(argv: list[str] | None = None) -> int:
         if verdict.get("decision") == "ask":
             return 2
         return 1
+    if args.cmd == "uo-scope":
+        from ascendc_harness.uo_scope import print_result, run_uo_scope
+
+        payload = run_uo_scope(
+            args.project,
+            args.step,
+            op_name=args.op_name or "",
+            architecture=args.architecture or "arch35",
+            decision=args.decision or "",
+            notes=args.notes or "",
+        )
+        return print_result(payload)
+    if args.cmd == "uo-query":
+        from uo.scripts.uo_kb_query import main as query_main
+
+        project = Path(args.project).resolve()
+        op = str(args.op_name or "").strip() or project.name
+        argv = [str(project), "--op-name", op]
+        if args.status_only:
+            argv.append("--status-only")
+        else:
+            if not args.pattern:
+                print(
+                    json.dumps(
+                        {"ok": False, "error": "pattern_required", "message_zh": "非 --status-only 时需要 --pattern"},
+                        ensure_ascii=False,
+                    )
+                )
+                return 2
+            argv.extend(["--pattern", args.pattern])
+            if args.target:
+                argv.extend(["--target", args.target])
+            argv.extend(["--depth", str(args.depth), "--limit", str(args.limit)])
+            if args.relation_type:
+                argv.extend(["--relation-type", args.relation_type])
+        return int(query_main(argv) or 0)
     return 2
 
 
 def _doctor(project: Path) -> int:
     issues: list[str] = []
+    warnings: list[str] = []
     try:
         import yaml  # noqa: F401
     except ImportError:
@@ -302,6 +368,69 @@ def _doctor(project: Path) -> int:
     root = ensure_agent_layout(project)
     print(f"agent_root={root}")
     print(f"canonical={AGENT_DIR}")
+
+    # Composer / agent wiring (same success bar as install)
+    try:
+        import sys
+        from pathlib import Path as _P
+
+        repo = _P(__file__).resolve().parents[2]
+        scripts = repo / "scripts"
+        if scripts.is_dir() and str(scripts) not in sys.path:
+            sys.path.insert(0, str(scripts))
+        from compose_runtime import validate, validate_generated
+
+        src_errors = validate(repo)
+        for err in src_errors:
+            issues.append(f"compose: {err}")
+        gen_errors = validate_generated(repo, host="opencode")
+        for err in gen_errors:
+            issues.append(f"generated: {err}")
+    except Exception as exc:  # noqa: BLE001
+        warnings.append(f"compose validation skipped: {exc}")
+
+    # Z3 solver (tg-solve)
+    try:
+        import z3  # noqa: F401
+    except ImportError:
+        warnings.append("z3 not installed (pip install -e ./engines/tg[solver]) — /tg-solve will fail")
+
+    # CBM MCP: plugin install ≠ MCP configured
+    try:
+        import json
+        from pathlib import Path as _P
+
+        oc = _P.home() / ".config" / "opencode" / "opencode.json"
+        if oc.is_file():
+            cfg = json.loads(oc.read_text(encoding="utf-8"))
+            mcp = cfg.get("mcp") or cfg.get("mcpServers") or {}
+            names = {str(k).lower() for k in (mcp.keys() if isinstance(mcp, dict) else [])}
+            if not any("codebase-memory" in n or n == "cbm" for n in names):
+                warnings.append(
+                    "OpenCode opencode.json has no codebase-memory-mcp — "
+                    "see docs/cbm-mcp-setup.md (UO source lookup degraded)"
+                )
+        else:
+            warnings.append("OpenCode opencode.json missing — CBM MCP not configured")
+    except Exception as exc:  # noqa: BLE001
+        warnings.append(f"CBM MCP check skipped: {exc}")
+
+    # TG consumer root hint
+    import os
+
+    if not (
+        os.environ.get("ASCENDC_TEST_SCRIPT_ROOT")
+        or os.environ.get("ASCENDC_CSV_CONSUMER_ROOT")
+    ):
+        warnings.append(
+            "ASCENDC_TEST_SCRIPT_ROOT / ASCENDC_CSV_CONSUMER_ROOT unset — "
+            "/tg-init contract_build requires --test-script-root"
+        )
+
+    if warnings:
+        print("WARNINGS:")
+        for item in warnings:
+            print(f"  - {item}")
     if issues:
         print("ISSUES:")
         for item in issues:

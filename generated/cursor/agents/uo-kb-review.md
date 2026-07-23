@@ -1,7 +1,7 @@
 ---
 name: uo-kb-review
 description: KB product referee
-type: subagent
+mode: subagent
 ---
 
 # Agent: uo-kb-review

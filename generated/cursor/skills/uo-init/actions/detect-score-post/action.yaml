@@ -1,0 +1,21 @@
+id: detect_score_post
+workflow_id: uo-init
+version: 1
+name_zh: 抽取后评分
+role_id: deterministic_engine
+agent_id: deterministic-uo-engine
+capabilities: []
+policies:
+- source-authority
+- code-access
+- evidence
+- language
+- harness-control
+- output-quality
+task_prompt_id: null
+context_profile_id: uo-init-detect-score-post
+output_contract_id: detect-score-post-v1
+checker:
+  required: true
+referee:
+  required: false

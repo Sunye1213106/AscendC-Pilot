@@ -1,7 +1,6 @@
 ---
 name: uo-code-review
 description: 基于 KB 的代码审查。 Harness 管阶段；本 Skill 只索引 Action。
-disable-model-invocation: true
 ---
 
 # uo-code-review
@@ -18,9 +17,9 @@ disable-model-invocation: true
 
 ## Actions
 
-| action_id | 名称 | method | agent |
-|---|---|---|---|
-| `code_review` | 代码审查 | `uo-code-review/code-review` | `uo-code-reviewer` |
+| action_id | 名称 | method | agent | role |
+|---|---|---|---|---|
+| `code_review` | 代码审查 | `uo-code-review/code-review` | `uo-code-reviewer` | `readonly_analyst` |
 
 ## Composed: harness-control
 

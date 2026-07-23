@@ -198,12 +198,27 @@ def validate(repo: Path) -> list[str]:
         meta = _load_yaml(ag_path)
         role = str(meta.get("role") or "")
         scopes = {str(x) for x in (meta.get("write_scopes") or [])}
+        aid = str(meta.get("id") or ag_path.stem)
+        mode = str(meta.get("mode") or "").strip().lower()
+        if mode and mode not in {"primary", "subagent", "all"}:
+            errors.append(f"agent {aid}: invalid mode {mode!r} (expected primary|subagent)")
+        if meta.get("type") is not None:
+            errors.append(
+                f"agent {aid}: OpenCode uses mode not type; remove type={meta.get('type')!r}"
+            )
+        if role in {"producer", "referee", "readonly_analyst", "deterministic_engine"} and not mode:
+            # Defaulted to subagent at compose time; warn as error to keep sources explicit.
+            if aid != "ascendc-agent":
+                errors.append(f"agent {aid}: missing mode (use mode: subagent)")
         if role == "producer":
             producer_writes |= scopes
         elif role == "referee":
             referee_writes |= scopes
     bad = _scope_overlap_errors(producer_writes, referee_writes)
     errors.extend(bad)
+
+    # Note: generated/ OpenCode frontmatter is validated after compose (see validate_generated).
+    # Pre-compose validate only checks sources so install can regenerate stale trees.
 
     for wid, meta in WORKFLOWS.items():
         if meta.get("reserved") or not meta.get("slash"):
@@ -262,10 +277,41 @@ def validate(repo: Path) -> list[str]:
     return errors
 
 
+def _replace_actions_table(body: str, meta: dict[str, Any]) -> str:
+    """Replace human Actions table with Workflow Spec authority (single source)."""
+    rows = [
+        "| action_id | 名称 | method | agent | role |",
+        "|---|---|---|---|---|",
+    ]
+    for a in meta.get("actions") or []:
+        if not isinstance(a, dict):
+            continue
+        rows.append(
+            "| `{id}` | {label} | `{method}` | `{agent}` | `{role}` |".format(
+                id=a.get("id"),
+                label=a.get("label_zh") or a.get("id") or "",
+                method=a.get("action_method_id") or "-",
+                agent=a.get("agent_id") or "human",
+                role=a.get("role_id") or "-",
+            )
+        )
+    table = "## Actions\n\n" + "\n".join(rows) + "\n"
+    # Replace existing ## Actions section through next H2, or append.
+    if re.search(r"(?m)^## Actions\s*$", body):
+        return re.sub(
+            r"(?ms)^## Actions\s*\n.*?(?=^## |\Z)",
+            table + "\n",
+            body,
+            count=1,
+        )
+    return body.rstrip() + "\n\n" + table
+
+
 def _compose_skill_body(skills: Path, wid: str, meta: dict[str, Any]) -> str:
     src = skills / "workflows" / wid / "SKILL.md"
     raw = src.read_text(encoding="utf-8") if src.is_file() else f"---\nname: {wid}\ndescription: {wid}\n---\n\n# {wid}\n"
     _, body = _require_skill_frontmatter(raw, path=src if src.is_file() else None)
+    body = _replace_actions_table(body, meta)
     # Inject harness-control policy summary once
     hc = _read_policy(skills, "harness-control")
     if "## Composed: harness-control" not in body and hc:
@@ -313,6 +359,22 @@ def _compose_skill_body(skills: Path, wid: str, meta: dict[str, Any]) -> str:
     return body.rstrip() + "\n" + "\n".join(lines) + "\n" + "\n".join(runtime_lines) + "\n"
 
 
+# OpenCode agent frontmatter: use ``mode``, never legacy ``type: subagent``.
+_OPENCODE_AGENT_ALLOWED_KEYS = frozenset(
+    {
+        "name",
+        "description",
+        "mode",
+        "permission",
+        "tools",
+        "model",
+        "temperature",
+        "color",
+        "hidden",
+    }
+)
+
+
 def _compose_agent_md(repo: Path, agent_meta: dict[str, Any]) -> str:
     skills = repo / "skills-src"
     aid = agent_meta.get("id", "agent")
@@ -334,7 +396,8 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any]) -> str:
             "write": {"*": "ask"},
         }
     else:
-        front["type"] = "subagent"
+        # OpenCode recognizes mode=subagent (not type=subagent).
+        front["mode"] = "subagent"
 
     body = f"""# Agent: {aid}
 
@@ -418,6 +481,10 @@ def compose_host(repo: Path, host: str) -> dict[str, Any]:
         if isinstance(per_skill, dict):
             overrides.update(per_skill)
         meta = {**meta, **overrides}
+        # OpenCode Skill frontmatter does not honor Cursor-only keys.
+        if host == "opencode":
+            meta.pop("disable-model-invocation", None)
+            meta.pop("disable_model_invocation", None)
         wf_meta = WORKFLOWS.get(wid) or {}
         body = _compose_skill_body(skills, wid, wf_meta) if wid != "operator" else src_body
         if wid == "operator":
@@ -536,6 +603,86 @@ def compose_host(repo: Path, host: str) -> dict[str, Any]:
     return {"ok": True, "compiled": compiled, "out_root": out_root.as_posix()}
 
 
+def validate_generated(repo: Path, *, host: str = "opencode") -> list[str]:
+    """Validate composed OpenCode/host artifacts against current sources."""
+    errors: list[str] = []
+    out_agents = repo / "generated" / host / "agents"
+    if not out_agents.is_dir():
+        errors.append(f"missing generated/{host}/agents")
+        return errors
+
+    sys.path.insert(0, str(repo / "harness"))
+    from ascendc_harness.workflows.specs import WORKFLOWS  # noqa: WPS433
+
+    # Every referenced non-primary agent must have a generated md
+    needed: set[str] = set()
+    for wid, meta in WORKFLOWS.items():
+        if meta.get("reserved") or not meta.get("slash"):
+            continue
+        for action in meta.get("actions") or []:
+            if not isinstance(action, dict):
+                continue
+            agent_id = action.get("agent_id")
+            if agent_id and agent_id != "ascendc-agent":
+                needed.add(str(agent_id))
+            role = action.get("role_id")
+            if role in {"producer", "referee", "readonly_analyst"} and not agent_id:
+                errors.append(f"{wid}/{action.get('id')}: semantic role missing agent_id")
+        # Skill action table must match workflow agents
+        skill = repo / "generated" / host / "skills" / wid / "SKILL.md"
+        if skill.is_file():
+            text = skill.read_text(encoding="utf-8")
+            for action in meta.get("actions") or []:
+                if not isinstance(action, dict):
+                    continue
+                aid = str(action.get("id") or "")
+                agent = str(action.get("agent_id") or "human")
+                role = str(action.get("role_id") or "-")
+                # Composition index row must list the workflow agent
+                if aid and f"| `{aid}` |" in text:
+                    # Prefer Action runtime index role column
+                    if f"| `{aid}` |" in text and role != "-" and f"| `{role}` |" not in text.split(f"| `{aid}` |", 1)[-1][:200]:
+                        # Soft: check composition index agent cell
+                        pass
+                if aid and agent and agent != "human":
+                    # Fail if skill still maps this action to a different agent in the Actions table
+                    m = re.search(
+                        rf"\|\s*`{re.escape(aid)}`\s*\|\s*[^|]+\|\s*`[^`]+`\s*\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|",
+                        text,
+                    )
+                    if m:
+                        table_agent, table_role = m.group(1), m.group(2)
+                        if table_agent != agent:
+                            errors.append(
+                                f"generated/{host}/skills/{wid}: action {aid} agent "
+                                f"{table_agent!r} != workflow {agent!r}"
+                            )
+                        if table_role != role and role != "-":
+                            errors.append(
+                                f"generated/{host}/skills/{wid}: action {aid} role "
+                                f"{table_role!r} != workflow {role!r}"
+                            )
+
+    for agent_id in sorted(needed):
+        md = out_agents / f"{agent_id}.md"
+        if not md.is_file():
+            errors.append(f"generated/{host}/agents missing {agent_id}.md")
+            continue
+        front, _ = _split_frontmatter(md.read_text(encoding="utf-8"))
+        if front.get("type") is not None:
+            errors.append(f"generated/{host}/agents/{agent_id}.md: illegal type=; use mode")
+        if front.get("mode") not in {"subagent", "primary", "all"}:
+            errors.append(
+                f"generated/{host}/agents/{agent_id}.md: missing/invalid mode={front.get('mode')!r}"
+            )
+        unknown = sorted(set(front) - _OPENCODE_AGENT_ALLOWED_KEYS)
+        if unknown:
+            errors.append(
+                f"generated/{host}/agents/{agent_id}.md: unknown OpenCode keys {unknown}"
+            )
+    return errors
+
+
 def compose_all(repo: Path, *, hosts: list[str] | None = None) -> dict[str, Any]:
     skills = repo / "skills-src"
     hosts_dir = skills / "hosts"
@@ -547,6 +694,11 @@ def compose_all(repo: Path, *, hosts: list[str] | None = None) -> dict[str, Any]
     for host in host_names:
         result = compose_host(repo, host)
         all_compiled.extend(result.get("compiled") or [])
+    gen_errors: list[str] = []
+    for host in host_names:
+        gen_errors.extend(validate_generated(repo, host=host))
+    if gen_errors:
+        return {"ok": False, "errors": gen_errors, "compiled": all_compiled}
     return {"ok": True, "compiled": all_compiled, "out_root": (repo / "generated").as_posix()}
 
 
@@ -555,10 +707,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", type=Path, default=None)
     parser.add_argument("--host", action="append", default=[])
     parser.add_argument("--validate-only", action="store_true")
+    parser.add_argument("--validate-generated", action="store_true")
     args = parser.parse_args(argv)
     repo = args.repo or Path(__file__).resolve().parents[1]
     if args.validate_only:
         errors = validate(repo)
+        if args.validate_generated:
+            for host in (args.host or ["opencode", "cursor", "codex"]):
+                errors.extend(validate_generated(repo, host=host))
         if errors:
             print({"ok": False, "errors": errors})
             return 1

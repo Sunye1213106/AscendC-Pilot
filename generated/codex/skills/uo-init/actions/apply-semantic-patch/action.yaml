@@ -1,0 +1,21 @@
+id: apply_semantic_patch
+workflow_id: uo-init
+version: 1
+name_zh: 应用语义补丁
+role_id: deterministic_engine
+agent_id: deterministic-uo-engine
+capabilities: []
+policies:
+- source-authority
+- code-access
+- evidence
+- language
+- harness-control
+- output-quality
+task_prompt_id: null
+context_profile_id: uo-init-apply-semantic-patch
+output_contract_id: semantic-patch-v1
+checker:
+  required: true
+referee:
+  required: false

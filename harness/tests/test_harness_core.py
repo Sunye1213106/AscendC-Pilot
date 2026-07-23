@@ -536,3 +536,5 @@ def test_install_skill_lists_symmetric():
     assert "ascendc-agent" in ps1
     assert "ascendc-harness.ts" in ps1
     assert "ascendc-harness.ts" in sh
+    assert "tg-semantic-bind" in ps1
+    assert "tg-semantic-bind" in sh

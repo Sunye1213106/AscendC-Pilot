@@ -44,6 +44,9 @@
 
 ## CLI
 
+禁止直调 `tg-init … --verify-csv-closure`（Plugin 拦截）。  
+verify 层由 `harness run-action integrity_gate` 完成；本 Action 只写 `init/audit_report.yaml` 审查结论，然后：
+
 ```powershell
-tg-init "<算子仓>" --op-name <op> --verify-csv-closure
+harness run-action init_audit --finalize --project "<算子仓>"
 ```

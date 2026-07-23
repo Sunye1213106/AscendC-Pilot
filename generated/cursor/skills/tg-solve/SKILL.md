@@ -18,11 +18,11 @@ Z3 求解与 CSV 投影。
 
 ## Actions
 
-| action_id | 名称 | method | agent |
-|---|---|---|---|
-| `solve_precheck` | 求解前置校验 | `tg-solve/solve-precheck` | `deterministic-tg-engine` |
-| `z3_solve` | 求解并投影 | `tg-solve/z3-solve` | `deterministic-tg-engine` |
-| `cover_confirm` | 覆盖确认 | `tg-solve/cover-confirm` | `deterministic-tg-engine` |
+| action_id | 名称 | method | agent | role |
+|---|---|---|---|---|
+| `solve_precheck` | 求解前置校验 | `tg-solve/solve-precheck` | `deterministic-tg-engine` | `deterministic_engine` |
+| `z3_solve` | 求解并投影 | `tg-solve/z3-solve` | `deterministic-tg-engine` | `deterministic_engine` |
+| `cover_confirm` | 覆盖确认 | `tg-solve/cover-confirm` | `deterministic-tg-engine` | `deterministic_engine` |
 
 ## Composed: harness-control
 

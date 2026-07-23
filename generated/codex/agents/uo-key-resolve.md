@@ -1,7 +1,7 @@
 ---
 name: uo-key-resolve
 description: KEY triage/resolve producer
-type: subagent
+mode: subagent
 ---
 
 # Agent: uo-key-resolve

@@ -265,6 +265,32 @@ def tg_contract(
     write_yaml(paths["dir"] / "binding_gaps.yaml", {"version": 1, "gaps": binding_gaps, "status": unresolved_status})
     write_yaml(paths["dir"] / "llm_bind_prompt_bundle.yaml", build_llm_bind_prompt_bundle(inventory, unresolved))
 
+    from .field_provenance import build_field_provenance, write_field_provenance
+
+    uo_summary = {}
+    try:
+        uo_ir = out_root.parent / "uo" / "summary"
+        # Prefer compact summary if present; never invent
+        for name in ("operator_summary.yaml", "scope_confirmed.yaml"):
+            p = uo_ir / name
+            if p.is_file():
+                doc = read_yaml(p)
+                if isinstance(doc, dict):
+                    uo_summary.update(doc)
+    except Exception:  # noqa: BLE001
+        uo_summary = {}
+    provenance = build_field_provenance(
+        schema=schema if isinstance(schema, dict) else {},
+        realization_map=realization_map if isinstance(realization_map, dict) else {},
+        uo_summary=uo_summary,
+        lexicon=merged_lexicon if isinstance(merged_lexicon, dict) else {},
+    )
+    write_field_provenance(out_root, provenance)
+    # Surface open provenance gaps without auto-closing them
+    if provenance.get("unresolved"):
+        unresolved.setdefault("field_provenance_gaps", provenance.get("unresolved"))
+        write_yaml(paths["unresolved"], unresolved)
+
     from .build_tg_contract import build_tg_contract
 
     tg_owned = build_tg_contract(

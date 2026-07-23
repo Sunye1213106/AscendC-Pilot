@@ -5,7 +5,8 @@
 # 最终置信度门禁（强制 high）— Harness 权威
 
 `/uo-init` 收工前：凡已闭合交付的 KEY 必须 `confidence: high`。  
-完成判定**只认**脚本：`check_final_confidence.py` + `harness validate-key-gates` / `harness complete`。  
+完成判定**只认** Harness：`harness run-action confidence_report` + `harness validate-key-gates` / `harness complete`。  
+**禁止**直调 `check_final_confidence.py` / `classify_input_derivable.py`。  
 Skill/Agent **不得**自行宣布 done。
 
 ## 运动员 / 裁判分离
@@ -35,16 +36,15 @@ Skill/Agent **不得**自行宣布 done。
 
 ## 父代理步骤
 
-1. `tpl_key_triage` → `tpl_key_resolve`；记录 subagent 收据（`.ascendc-agent/runs/<run_id>/subagents/`）。
-2. `classify_input_derivable.py`（缺收据 / empty-only 的 KEY patch **被拒收**）。
-3. `check_final_confidence.py`。
-4. 若 `need_llm_count>0` 或 status=reported → 派 **`uo-confidence-review`**（`tpl_confidence_reason_review.md`）。
-5. 门禁与状态：
+1. 按 `harness next` 完成 `key_triage` / `key_resolution`（写 patch；勿直调 .py）。
+2. `harness run-action confidence_report`（确定性 classify + confidence gate）。
+3. 若 `need_llm_count>0` 或 status=reported → 派 **`uo-confidence-review`**。
+4. 门禁与状态：
 
 ```powershell
 harness validate-key-gates "$PROJECT_ROOT"
 harness advance export --project "$PROJECT_ROOT"   # resolve→export 需 phase_gates
-# … integrity / kb-review …
+# … export_integrity / kb-review …
 harness complete --project "$PROJECT_ROOT"        # 唯一合法 pass
 ```
 

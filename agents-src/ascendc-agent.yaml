@@ -3,7 +3,9 @@ version: 1
 name_zh: AscendC primary control agent
 role: producer
 mode: primary
-description: AscendC primary control agent
+description: >-
+  AscendC primary control agent. Tab-select this agent before /uo-init|/tg-init;
+  default Build agent will skip harness.
 read_scopes:
   - "*"
 write_scopes:

@@ -1,7 +1,7 @@
 ---
 name: deterministic-uo-engine
 description: UO deterministic engine
-type: subagent
+mode: subagent
 ---
 
 # Agent: deterministic-uo-engine

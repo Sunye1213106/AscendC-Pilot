@@ -18,9 +18,9 @@ disable-model-invocation: true
 
 ## Actions
 
-| action_id | 名称 | method | agent |
-|---|---|---|---|
-| `kb_lookup` | KB 查询 | `uo-query/kb-lookup` | `uo-query` |
+| action_id | 名称 | method | agent | role |
+|---|---|---|---|---|
+| `kb_lookup` | KB 查询 | `uo-query/kb-lookup` | `uo-query` | `readonly_analyst` |
 
 ## Composed: harness-control
 

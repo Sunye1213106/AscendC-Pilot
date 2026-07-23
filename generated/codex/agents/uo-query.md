@@ -1,7 +1,7 @@
 ---
 name: uo-query
 description: KB readonly query
-type: subagent
+mode: subagent
 ---
 
 # Agent: uo-query

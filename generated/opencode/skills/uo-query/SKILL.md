@@ -1,7 +1,6 @@
 ---
 name: uo-query
 description: 只读查询 UO KB。 Harness 管阶段；本 Skill 只索引 Action。
-disable-model-invocation: true
 ---
 
 # uo-query
@@ -18,9 +17,9 @@ disable-model-invocation: true
 
 ## Actions
 
-| action_id | 名称 | method | agent |
-|---|---|---|---|
-| `kb_lookup` | KB 查询 | `uo-query/kb-lookup` | `uo-query` |
+| action_id | 名称 | method | agent | role |
+|---|---|---|---|---|
+| `kb_lookup` | KB 查询 | `uo-query/kb-lookup` | `uo-query` | `readonly_analyst` |
 
 ## Composed: harness-control
 

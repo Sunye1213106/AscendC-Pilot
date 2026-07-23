@@ -1,32 +1,24 @@
 # 创建知识库目录
 
+> **`harness` 是真实 CLI。** 本 Action 是确定性的：只允许 `harness run-action prepare_layout`。  
+> 禁止手工 `mkdir`、禁止直调 `prepare_operator.py`、禁止跳过本步去做 scope。
+
 ## Goal
 
-经 Harness 包装创建 UO KB 目录布局。
-
-## Input Interpretation
-
-仅处理 `harness next` 提供的当前 unresolved / target 子集与上下文包。
+经 Harness 包装创建 UO KB 目录布局（含 `manifest.yaml`）。
 
 ## Domain Procedure
 
-1. 按确定性引擎 / Harness 包装命令执行。
-1. 只处理当前 Action 指定的 ID 或文件。
-2. 按输出合同生成候选产物；证据不足保留 unresolved。
+```text
+harness run-action prepare_layout --project <算子目录>
+```
 
-## Domain Decisions
-
-- 遵循已加载 Policy 与 Capability 硬限制。
-- 本 Action 特有分类/闭合规则见关联 task prompt（若有）。
+成功标志：`.ascendc-agent/uo/manifest.yaml` 存在且 finalize `ok: true`。  
+若缺失 → 不得进入 `scope_confirmation`。
 
 ## Output
 
-- 合同 id：`kb-layout-v1`
+- 合同 id：`kb-layout-v1`（要求 `uo/manifest.yaml`）
 - 不得写声明外路径。
-
-## Cannot Decide
-
-- 证据不足 → unresolved / needs_human
-- 缺工具或 gate 前置 → 停止并回报 blocking reason
 
 本文件不得描述 Harness advance、complete 或其他阶段。

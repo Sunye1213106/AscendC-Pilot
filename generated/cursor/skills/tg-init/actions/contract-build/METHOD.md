@@ -1,34 +1,26 @@
-                # 构建合同骨架
+# contract_build — 确定性合同骨架（Harness 托管）
 
-                ## Goal
+> 勿在本文件推进 Harness 阶段；只执行 `harness next` 给出的 `contract_build`。
 
-                构建 TG CSV/合同骨架。
+## Purpose
 
-                ## Input Interpretation
+从测试脚本 / CSV 消费端目录动态抽取 CSV 合同、realization map、binding inventory 与
+`llm_bind_prompt_bundle`。本 Action 由 `deterministic-tg-engine` 执行，不经 LLM。
 
-                仅处理 `harness next` 提供的当前 unresolved / target 子集与上下文包。
+## Inputs
 
-                ## Domain Procedure
+- 定稿 UO KB
+- `test_script_root` / `csv_consumer_root`（缺失则 `TEST_SCRIPT_ROOT_REQUIRED`）
 
-                1. 使用 capability `contract-building`。
-2. 使用 capability `kb-query`。
-3. 使用 capability `obligation-analysis`。
-                4. 只处理当前 Action 指定的 ID 或文件。
-                5. 按输出合同生成候选产物；证据不足保留 unresolved。
+## Procedure
 
-                ## Domain Decisions
+1. Harness `run-action contract_build` 自动调用确定性 Engine。
+2. Engine 解析消费端脚本表头、读写逻辑、默认值与枚举。
+3. 写出 `tg/snapshot/`、`tg/realization/realization_map.yaml`、`binding_inventory.yaml`、
+   `llm_bind_prompt_bundle.yaml`、`binding_gaps.yaml` / `unresolved.yaml`。
+4. 证据不足处保留 gap，不得发明列名或 KEY。
 
-                - 遵循已加载 Policy 与 Capability 硬限制。
-                - 本 Action 特有分类/闭合规则见关联 task prompt（若有）。
+## Output
 
-                ## Output
-
-                - 合同 id：`csv-contract-v1`
-                - 不得写声明外路径。
-
-                ## Cannot Decide
-
-                - 证据不足 → unresolved / needs_human
-                - 缺工具或 gate 前置 → 停止并回报 blocking reason
-
-                本文件不得描述 Harness advance、complete 或其他阶段。
+- 合同 id：`csv-contract-v1`
+- 下一步：若 `unresolved.status=ready_for_llm` → `semantic_bind`；否则可进入 merge。

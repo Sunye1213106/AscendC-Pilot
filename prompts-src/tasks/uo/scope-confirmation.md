@@ -1,62 +1,40 @@
 ## Task
 
-Perform `scope_confirmation` for the targets provided by the Harness action.
+执行 `scope_confirmation`。架构过滤只通过 scan 参数，不靠手工读目录。
 
-Follow the assigned role contract and loaded capabilities.
-Do not manage workflow state or declare completion.
+## 严禁（违反即失败）
 
-## Mode
+- 认为 harness「只是概念」而手工按 Actions 表执行
+- 跳过 `prepare_layout`
+- 用 Glob / Read / 心算制作「arch35 文件计数表」
+- 只扫算子目录、漏掉 sibling/parent `common/`
+- 直调 `python …/macro_scope_scan.py` 等
 
-- mode: `task`
-- task_id: `scope-confirmation`
-- workflow_id: `uo-init`
-- action_id: `scope_confirmation`
-- run_id: `<RUN_ID>`
+## 必须执行的命令顺序
 
-## Target
+工作目录 = 算子根（`flash_attention_score_grad`）：
 
-`<TARGET_IDS_OR_FILES>`
+```text
+harness next --project .
+# 若 next 是 prepare_layout：
+harness run-action prepare_layout --project .
 
-Only process the listed targets. Do not expand scope unless the Action Method explicitly permits it.
+harness run-action scope_confirmation --project .
+harness uo-scope scan --project . --architecture arch35
+# ↑ 把完整 stdout（含 common 检测行与计数表）原样给用户确认
+# AskQuestion: continue | revise | stop | manual_supplement
 
-## Context
+harness uo-scope checkpoint --project . --decision continue
+harness uo-scope build-evidence --project .
+harness uo-scope closure --project .
+harness uo-scope stage --project .
+# MCP index_repository → …/.ascendc-agent/uo/cbm/index_stage  (mode=fast)
+harness uo-scope finalize --project .
+harness run-action scope_confirmation --finalize --project .
+```
 
-- Project root: `<PROJECT_ROOT>`
-- UO root: `<UO_ROOT>`
-- TG root: `<TG_ROOT>`
-- Topic: `<TOPIC>`
-- Context pack: `<CONTEXT_PACK_PATH>`
-
-## Required Procedure
-
-1. Apply loaded capabilities in order.
-2. Evaluate each listed target independently.
-3. Record evidence for every accepted conclusion.
-4. Preserve unresolved items when evidence is insufficient.
-5. Write only the declared output artifact.
-6. Stop after producing the artifact and concise task result.
-
-## Hard Constraints
-
-- MUST NOT: modify Harness state.
-- MUST NOT: process IDs outside the supplied target set.
-- MUST NOT: invent evidence or confidence.
-- MUST NOT: write referee verdicts when acting as producer.
-- MUST NOT: modify reviewed artifacts when acting as referee.
+若 scan 输出没有 `Detected AscendC common library` / `common_files`，而仓库存在 `../common`，停止并报告，不要手补。
 
 ## Output Contract
 
-Contract id: `scope-confirmed-v1`
-
-## Acceptance Criteria
-
-- Every target was attempted.
-- Every closed conclusion has required evidence.
-- Output conforms to the declared schema.
-- No undeclared file was modified.
-- Unresolved items are explicit and honest.
-
-## Failure Handling
-
-When evidence is insufficient: retain unresolved or needs_human;
-include the missing evidence type; do not guess; stop and return the blocking reason.
+`scope-confirmed-v1`

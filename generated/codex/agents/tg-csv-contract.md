@@ -1,7 +1,7 @@
 ---
 name: tg-csv-contract
 description: TG contract producer
-type: subagent
+mode: subagent
 ---
 
 # Agent: tg-csv-contract

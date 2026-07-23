@@ -1,7 +1,6 @@
 ---
 name: tg-plan
 description: 生成覆盖义务并人工批准。 Harness 管阶段；本 Skill 只索引 Action。
-disable-model-invocation: true
 ---
 
 # tg-plan
@@ -18,12 +17,12 @@ disable-model-invocation: true
 
 ## Actions
 
-| action_id | 名称 | method | agent |
-|---|---|---|---|
-| `plan_scope` | 确定规划范围 | `tg-plan/plan-scope` | `deterministic-tg-engine` |
-| `plan_precheck` | 规划前置门禁 | `tg-plan/plan-precheck` | `deterministic-tg-engine` |
-| `plan_build` | 生成覆盖义务 | `tg-plan/plan-build` | `deterministic-tg-engine` |
-| `plan_approve` | 批准规划 | `tg-plan/plan-approve` | `human` |
+| action_id | 名称 | method | agent | role |
+|---|---|---|---|---|
+| `plan_scope` | 确定规划范围 | `tg-plan/plan-scope` | `deterministic-tg-engine` | `deterministic_engine` |
+| `plan_precheck` | 规划前置门禁 | `tg-plan/plan-precheck` | `deterministic-tg-engine` | `deterministic_engine` |
+| `plan_build` | 生成覆盖义务 | `tg-plan/plan-build` | `deterministic-tg-engine` | `deterministic_engine` |
+| `plan_approve` | 批准规划 | `tg-plan/plan-approve` | `human` | `-` |
 
 ## Composed: harness-control
 

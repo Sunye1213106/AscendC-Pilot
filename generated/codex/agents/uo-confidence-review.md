@@ -1,7 +1,7 @@
 ---
 name: uo-confidence-review
 description: Confidence reason referee
-type: subagent
+mode: subagent
 ---
 
 # Agent: uo-confidence-review
