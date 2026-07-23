@@ -177,6 +177,12 @@ def start_workflow(
     phase: str | None = None,
     force_phase: bool = False,
     intent: str = "",
+    op_name: str = "",
+    architecture: str = "",
+    test_script_root: str = "",
+    csv_consumer_root: str = "",
+    level: str = "",
+    focus: str = "",
 ) -> dict[str, Any]:
     """Start at entry_state. Arbitrary phase only when force_phase=True (tests)."""
     from ascendc_harness.obligations import collect_obligations, open_obligations
@@ -206,6 +212,7 @@ def start_workflow(
     except Exception:  # noqa: BLE001
         hashes = {}
     all_obl = collect_obligations(project_root, workflow_id)
+    consumer = (csv_consumer_root or test_script_root or "").strip()
     state: dict[str, Any] = {
         "workflow_id": workflow_id,
         "run_id": run_id,
@@ -213,6 +220,12 @@ def start_workflow(
         "phase_label_zh": label_zh_for(workflow_id, start_phase),
         "status": "running",
         "intent": intent or "",
+        "op_name": (op_name or "").strip(),
+        "architecture": (architecture or "").strip() or "arch35",
+        "test_script_root": consumer,
+        "csv_consumer_root": consumer,
+        "level": (level or "").strip() or "L0",
+        "focus": (focus or "").strip(),
         "retry_budget": int(meta.get("retry_budget") or 3),
         "no_progress_streak": 0,
         "failed_gates": [],

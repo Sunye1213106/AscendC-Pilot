@@ -23,42 +23,70 @@ from uo.scripts.arch_path import arch_compatible
 from uo.scripts.resolve_entrypoints import load_entrypoint_graph
 from uo.scripts.semantic_identity import mint_edge_id
 
-# OpDef grammar adapters (⑪) — multiple framework registration styles.
+# OpDef grammar adapters — quoted OR bare identifier names.
+_NAME = r"""(?:["']([^"']+)["']|([A-Za-z_][A-Za-z0-9_]*))"""
 _OPDEF_SLOT_SPECS: tuple[tuple[str, str, bool], ...] = (
-    # (regex pattern with name group, kind, optional)
-    (r"""\.(?:INPUT|Input)\s*\(\s*["']([^"']+)["']\s*\)""", "input", False),
-    (r"""\.(?:OPTIONAL_INPUT|OptionalInput)\s*\(\s*["']([^"']+)["']\s*\)""", "input", True),
-    (r"""\.(?:OUTPUT|Output)\s*\(\s*["']([^"']+)["']\s*\)""", "output", False),
-    (r"""\.(?:ATTR|Attr|REQUIRED_ATTR|RequiredAttr)\s*\(\s*["']([^"']+)["']\s*\)""", "attr", False),
+    (rf"""\.(?:INPUT|Input)\s*\(\s*{_NAME}\s*\)""", "input", False),
+    (rf"""\.(?:OPTIONAL_INPUT|OptionalInput)\s*\(\s*{_NAME}\s*\)""", "input", True),
+    (rf"""\.(?:OUTPUT|Output)\s*\(\s*{_NAME}\s*\)""", "output", False),
+    (rf"""\.(?:ATTR|Attr|REQUIRED_ATTR|RequiredAttr)\s*\(\s*{_NAME}\s*\)""", "attr", False),
 )
 OPDEF_SLOT_RES = tuple(
     (re.compile(pat, re.MULTILINE), kind, optional) for pat, kind, optional in _OPDEF_SLOT_SPECS
 )
-OP_ADD_INPUT_RE = re.compile(r"""\.(?:INPUT|Input)\s*\(\s*["']([^"']+)["']\s*\)""", re.MULTILINE)
+OP_ADD_INPUT_RE = re.compile(rf"""\.(?:INPUT|Input)\s*\(\s*{_NAME}\s*\)""", re.MULTILINE)
 OP_ADD_OPTIONAL_RE = re.compile(
-    r"""\.(?:OPTIONAL_INPUT|OptionalInput)\s*\(\s*["']([^"']+)["']\s*\)""",
+    rf"""\.(?:OPTIONAL_INPUT|OptionalInput)\s*\(\s*{_NAME}\s*\)""",
     re.MULTILINE,
 )
 OP_ADD_ATTR_RE = re.compile(
-    r"""\.(?:ATTR|Attr|REQUIRED_ATTR|RequiredAttr)\s*\(\s*["']([^"']+)["']\s*\)""",
+    rf"""\.(?:ATTR|Attr|REQUIRED_ATTR|RequiredAttr)\s*\(\s*{_NAME}\s*\)""",
     re.MULTILINE,
 )
-OP_ADD_OUTPUT_RE = re.compile(r"""\.(?:OUTPUT|Output)\s*\(\s*["']([^"']+)["']\s*\)""", re.MULTILINE)
+OP_ADD_OUTPUT_RE = re.compile(rf"""\.(?:OUTPUT|Output)\s*\(\s*{_NAME}\s*\)""", re.MULTILINE)
 OP_DTYPE_RE = re.compile(r"""\.(?:DataType|DATATYPE)\s*\(\s*([^)]*)\)""")
 OP_FORMAT_RE = re.compile(r"""\.(?:Format|FORMAT)\s*\(\s*([^)]*)\)""")
-GET_INPUT_SHAPE_RE = re.compile(r"Get(?:Optional)?InputShape\s*\(\s*(\d+)\s*\)")
-GET_INPUT_DESC_RE = re.compile(r"Get(?:Optional)?InputDesc\s*\(\s*(\d+)\s*\)")
+_IDX = r"""(\d+|[A-Za-z_][A-Za-z0-9_]*)"""
+GET_INPUT_SHAPE_RE = re.compile(rf"Get(?:Optional)?InputShape\s*\(\s*{_IDX}\s*\)")
+GET_INPUT_DESC_RE = re.compile(rf"Get(?:Optional)?InputDesc\s*\(\s*{_IDX}\s*\)")
 GET_ATTR_RE = re.compile(
-    r"""GetAttr(?:Pointer)?\s*\(\s*(?:["']([^"']+)["']|(\d+))\s*\)"""
+    r"""GetAttr(?:Pointer)?\s*\(\s*(?:["']([^"']+)["']|(\d+)|([A-Za-z_][A-Za-z0-9_]*))\s*\)"""
 )
 GET_ATTR_TEMPLATE_RE = re.compile(
-    r"""GetAttr\s*<[^>]+>\s*\(\s*(?:["']([^"']+)["']|(\d+))\s*\)"""
+    r"""GetAttr\s*<[^>]+>\s*\(\s*(?:["']([^"']+)["']|(\d+)|([A-Za-z_][A-Za-z0-9_]*))\s*\)"""
 )
 ATTR_DEFAULT_RE = re.compile(
-    r"""\.(?:ATTR|Attr)\s*\(\s*["']([^"']+)["']\s*\)[^;]*?\.(?:AttrDefault|ATTR_DEFAULT)\s*\(([^\)]*)\)""",
+    rf"""\.(?:ATTR|Attr)\s*\(\s*{_NAME}\s*\)[^;]*?\.(?:AttrDefault|ATTR_DEFAULT)\s*\(([^\)]*)\)""",
     re.DOTALL,
 )
 REG_OP_SCOPE_RE = re.compile(r"\bREG_OP\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)")
+
+
+def _opdef_name(*groups: str | None) -> str:
+    for g in groups:
+        if g:
+            return str(g)
+    return ""
+
+
+def _resolve_index_token(token: str, const_map: dict[str, int]) -> int | None:
+    if token.isdigit():
+        return int(token)
+    if token in const_map:
+        return const_map[token]
+    return None
+
+
+def _collect_const_index_map(text: str) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for m in re.finditer(r"#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\d+)\b", text):
+        out[m.group(1)] = int(m.group(2))
+    for m in re.finditer(r"\b(?:constexpr\s+)?(?:int|size_t|uint32_t)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(\d+)\s*;", text):
+        out[m.group(1)] = int(m.group(2))
+    for m in re.finditer(r"\benum\b[^{]*\{([^}]*)\}", text, re.DOTALL):
+        for em in re.finditer(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(\d+)", m.group(1)):
+            out[em.group(1)] = int(em.group(2))
+    return out
 
 
 def extract_operator_boundary(repo_root: Path, op_name: str, *, architecture: str = "arch35") -> dict[str, Any]:
@@ -88,6 +116,7 @@ def extract_operator_boundary(repo_root: Path, op_name: str, *, architecture: st
 
     by_slot = {int(i["slot"]): i for i in inputs if i.get("slot") is not None}
     by_attr = {str(a["slot_or_name"]): a for a in attributes}
+    by_name = {str(i.get("name")): i for i in inputs if i.get("name")}
 
     # Bind Host accessors by index / name — never rename from locals.
     for rel in files:
@@ -95,54 +124,131 @@ def extract_operator_boundary(repo_root: Path, op_name: str, *, architecture: st
         if not path.is_file() or "op_host/" not in rel.replace("\\", "/"):
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
+        const_map = _collect_const_index_map(text)
         for match in GET_INPUT_SHAPE_RE.finditer(text):
-            idx = int(match.group(1))
+            token = match.group(1)
             api = "GetOptionalInputShape" if "Optional" in match.group(0) else "GetInputShape"
             line = text.count("\n", 0, match.start()) + 1
-            if idx in by_slot:
-                by_slot[idx]["host_accessors"].append({"api": api, "index": idx, "file_path": rel, "line": line})
+            idx = _resolve_index_token(token, const_map)
+            if idx is not None and idx in by_slot:
+                by_slot[idx]["host_accessors"].append(
+                    {"api": api, "index": idx, "index_token": token, "file_path": rel, "line": line}
+                )
+            elif token in by_name:
+                by_name[token]["host_accessors"].append(
+                    {"api": api, "name": token, "file_path": rel, "line": line}
+                )
             else:
                 placeholder = {
-                    "slot": idx,
+                    "slot": idx if idx is not None else -1,
                     "name": None,
                     "optional": "Optional" in api,
                     "dtype_constraints": [],
                     "format_constraints": [],
-                    "host_accessors": [{"api": api, "index": idx, "file_path": rel, "line": line}],
+                    "host_accessors": [{"api": api, "index_token": token, "file_path": rel, "line": line}],
                     "binding_status": "unresolved",
                     "evidence": [],
                 }
-                inputs.append(placeholder)
-                by_slot[idx] = placeholder
+                if idx is not None:
+                    inputs.append(placeholder)
+                    by_slot[idx] = placeholder
                 unresolved.append(
                     {
                         "severity": "blocking",
                         "code": "input_slot_unbound",
-                        "related_symbols": [f"input_slot[{idx}]"],
+                        "related_symbols": [f"input_slot[{token}]"],
                         "candidate_files": [rel],
-                        "evidence_present": [f"{api}({idx})"],
+                        "evidence_present": [f"{api}({token})"],
                         "evidence_missing": ["OpDef_Input_registration"],
-                        "reason": f"{api}({idx}) has no registered input name",
+                        "reason": f"{api}({token}) has no registered input name",
                     }
                 )
+                if idx is None:
+                    llm_hints.append(
+                        {
+                            "type": "io_slot_bind",
+                            "severity": "blocking",
+                            "target": f"input_slot[{token}]",
+                            "file_path": rel,
+                            "line": line,
+                            "snippet": match.group(0)[:120],
+                            "reason": "named_index_unresolved",
+                            "candidates": [
+                                {
+                                    "id": f"cand_{token}_{line}",
+                                    "file_path": rel,
+                                    "symbol_ref": token,
+                                    "snippet": match.group(0)[:120],
+                                    "score": 0.4,
+                                }
+                            ],
+                        }
+                    )
         for match in GET_INPUT_DESC_RE.finditer(text):
-            idx = int(match.group(1))
+            token = match.group(1)
             api = "GetOptionalInputDesc" if "Optional" in match.group(0) else "GetInputDesc"
             line = text.count("\n", 0, match.start()) + 1
-            if idx in by_slot:
-                by_slot[idx]["host_accessors"].append({"api": api, "index": idx, "file_path": rel, "line": line})
-        for match in GET_ATTR_RE.finditer(text):
-            name, idx = match.group(1), match.group(2)
-            line = text.count("\n", 0, match.start()) + 1
-            key = name if name else f"attr_slot[{idx}]"
-            if name and name in by_attr:
-                by_attr[name]["host_accessors"].append(
-                    {"api": "GetAttrPointer" if "Pointer" in match.group(0) else "GetAttr", "name": name, "file_path": rel, "line": line}
+            idx = _resolve_index_token(token, const_map)
+            if idx is not None and idx in by_slot:
+                by_slot[idx]["host_accessors"].append(
+                    {"api": api, "index": idx, "index_token": token, "file_path": rel, "line": line}
+                )
+            elif token in by_name:
+                by_name[token]["host_accessors"].append(
+                    {"api": api, "name": token, "file_path": rel, "line": line}
                 )
             else:
                 unresolved.append(
                     {
-                        "severity": "blocking" if name else "degraded",
+                        "severity": "blocking",
+                        "code": "input_desc_unbound",
+                        "related_symbols": [f"input_slot[{token}]"],
+                        "candidate_files": [rel],
+                        "evidence_present": [f"{api}({token})"],
+                        "evidence_missing": ["OpDef_Input_registration"],
+                        "reason": f"{api}({token}) has no registered input name",
+                    }
+                )
+                llm_hints.append(
+                    {
+                        "type": "io_slot_bind",
+                        "severity": "blocking",
+                        "target": f"input_slot[{token}]",
+                        "file_path": rel,
+                        "line": line,
+                        "snippet": match.group(0)[:120],
+                        "reason": "input_desc_unresolved",
+                        "candidates": [
+                            {
+                                "id": f"cand_desc_{token}_{line}",
+                                "file_path": rel,
+                                "symbol_ref": token,
+                                "snippet": match.group(0)[:120],
+                                "score": 0.4,
+                            }
+                        ],
+                    }
+                )
+        for match in list(GET_ATTR_RE.finditer(text)) + list(GET_ATTR_TEMPLATE_RE.finditer(text)):
+            name = match.group(1)
+            idx = match.group(2)
+            bare = match.group(3) if match.lastindex and match.lastindex >= 3 else None
+            line = text.count("\n", 0, match.start()) + 1
+            key = name or bare or (f"attr_slot[{idx}]" if idx else "attr_unknown")
+            is_template = "<" in match.group(0)
+            api = "GetAttrPointer" if "Pointer" in match.group(0) else "GetAttr"
+            if name and name in by_attr:
+                by_attr[name]["host_accessors"].append(
+                    {"api": api, "name": name, "file_path": rel, "line": line, "template": is_template}
+                )
+            elif bare and bare in by_attr:
+                by_attr[bare]["host_accessors"].append(
+                    {"api": api, "name": bare, "file_path": rel, "line": line, "template": is_template}
+                )
+            else:
+                unresolved.append(
+                    {
+                        "severity": "blocking" if (name or bare) else "degraded",
                         "code": "attr_slot_unbound",
                         "related_symbols": [key],
                         "candidate_files": [rel],
@@ -151,23 +257,27 @@ def extract_operator_boundary(repo_root: Path, op_name: str, *, architecture: st
                         "reason": f"attribute accessor {key} lacks registration evidence",
                     }
                 )
-        # Template GetAttr<T> / unconventional wrappers → io_slot_bind LLM hint (⑪).
-        for match in GET_ATTR_TEMPLATE_RE.finditer(text):
-            name, idx = match.group(1), match.group(2)
-            line = text.count("\n", 0, match.start()) + 1
-            key = name if name else f"attr_slot[{idx}]"
-            if not (name and name in by_attr):
-                llm_hints.append(
-                    {
-                        "type": "io_slot_bind",
-                        "severity": "blocking",
-                        "target": key,
-                        "file_path": rel,
-                        "line": line,
-                        "snippet": match.group(0)[:120],
-                        "reason": "template_getattr_needs_llm",
-                    }
-                )
+                if is_template or bare:
+                    llm_hints.append(
+                        {
+                            "type": "io_slot_bind",
+                            "severity": "blocking",
+                            "target": key,
+                            "file_path": rel,
+                            "line": line,
+                            "snippet": match.group(0)[:120],
+                            "reason": "template_getattr_needs_llm" if is_template else "named_attr_unresolved",
+                            "candidates": [
+                                {
+                                    "id": f"cand_{key}_{line}",
+                                    "file_path": rel,
+                                    "symbol_ref": key,
+                                    "snippet": match.group(0)[:120],
+                                    "score": 0.4,
+                                }
+                            ],
+                        }
+                    )
 
     for item in inputs:
         if item.get("optional") and item.get("name"):
@@ -218,20 +328,24 @@ def _parse_opdef_chunk(
     # Collect events in source order for nearest-slot DataType/Format.
     events: list[tuple[int, str, Any]] = []
     for match in OP_ADD_INPUT_RE.finditer(chunk):
-        events.append((match.start(), "input", (match.group(1), False, match.group(0))))
+        events.append((match.start(), "input", (_opdef_name(match.group(1), match.group(2)), False, match.group(0))))
     for match in OP_ADD_OPTIONAL_RE.finditer(chunk):
-        events.append((match.start(), "input", (match.group(1), True, match.group(0))))
+        events.append((match.start(), "input", (_opdef_name(match.group(1), match.group(2)), True, match.group(0))))
     for match in OP_ADD_OUTPUT_RE.finditer(chunk):
-        events.append((match.start(), "output", (match.group(1), match.group(0))))
+        events.append((match.start(), "output", (_opdef_name(match.group(1), match.group(2)), match.group(0))))
     for match in OP_ADD_ATTR_RE.finditer(chunk):
-        events.append((match.start(), "attr", (match.group(1), match.group(0))))
+        events.append((match.start(), "attr", (_opdef_name(match.group(1), match.group(2)), match.group(0))))
     for match in OP_DTYPE_RE.finditer(chunk):
         events.append((match.start(), "dtype", match.group(1).strip()))
     for match in OP_FORMAT_RE.finditer(chunk):
         events.append((match.start(), "format", match.group(1).strip()))
     events.sort(key=lambda x: x[0])
     last_slot_ref: dict[str, Any] | None = None
-    defaults = {m.group(1): m.group(2).strip() for m in ATTR_DEFAULT_RE.finditer(chunk)}
+    defaults: dict[str, str] = {}
+    for m in ATTR_DEFAULT_RE.finditer(chunk):
+        dname = _opdef_name(m.group(1), m.group(2))
+        # last group is default value
+        defaults[dname] = (m.group(m.lastindex) or "").strip() if m.lastindex else ""
     for pos, kind, payload in events:
         line = line_base + chunk.count("\n", 0, pos) + 1
         if kind == "input":

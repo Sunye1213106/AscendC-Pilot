@@ -436,8 +436,8 @@ def _collect_relations(
     for edge in graph.get("edges") or []:
         if not isinstance(edge, dict):
             continue
-        src = str(edge.get("source_id") or edge.get("source") or "")
-        tgt = str(edge.get("target_id") or edge.get("target") or "")
+        src = str(edge.get("source_id") or edge.get("source") or edge.get("from") or "")
+        tgt = str(edge.get("target_id") or edge.get("target") or edge.get("to") or "")
         etype = str(edge.get("edge_type") or edge.get("type") or "graph_edge")
         mapped = _map_edge_type(etype)
         extra: dict[str, Any] = {"original_type": etype}
@@ -445,6 +445,8 @@ def _collect_relations(
             extra["value"] = edge.get("value")
         if edge.get("flag"):
             extra["flag"] = edge.get("flag")
+        if edge.get("confidence"):
+            extra["confidence"] = edge.get("confidence")
         add(src, tgt, mapped, **extra)
 
     # Also materialize KTPL→KEY from ir/tilingkey_space when graph edges missing.
@@ -547,16 +549,18 @@ def _map_edge_type(etype: str) -> str:
         return "writes"
     if low in {"derives", "derive"}:
         return "derives"
-    if low in {"determined_by", "reaches_input"}:
+    if low in {"determined_by", "reaches_input", "binds_arg", "maps_tilingdata"}:
         return low
+    if low in {"registers", "dispatches_to", "instantiates", "selects", "calls"}:
+        return low if low != "calls" else "calls"
     if low in {"fixes_flag", "fixes", "template_fixes"}:
         return "fixes_flag"
-    if low in {"selects", "select"}:
+    if low in {"select", "selects"}:
         return "selects"
-    if low in {"calls", "call"}:
+    if low in {"call"}:
         return "calls"
     if low in {"dispatches", "dispatch"}:
-        return "dispatches"
+        return "dispatches_to"
     if low in {"loads_into", "load"}:
         return "loads_into"
     if "constrain" in low:

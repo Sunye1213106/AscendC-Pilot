@@ -12,7 +12,11 @@ try:
 except ImportError:  # pragma: no cover
     yaml = None  # type: ignore[assignment]
 
-from ascendc_harness.actions.engines import OUTPUT_CONTRACT_PATHS, invoke_engine
+from ascendc_harness.actions.engines import (
+    OUTPUT_CONTRACT_NONEMPTY_GLOBS,
+    OUTPUT_CONTRACT_PATHS,
+    invoke_engine,
+)
 from ascendc_harness.paths import agent_root, ensure_agent_layout, runs_root
 from ascendc_harness.runs import append_event, file_sha256, issue_receipt, run_dir
 from ascendc_harness.state import load_state
@@ -124,15 +128,49 @@ def _check_output_contract(project_root: Path, contract_id: str) -> dict[str, An
     if paths is None:
         return {"ok": True, "skipped": True, "message": f"no path map for {contract_id}"}
     missing = []
+    empty = []
     for rel in paths:
         path = root / rel
         if not path.exists():
             missing.append(rel)
+            continue
+        if path.is_file() and path.stat().st_size == 0:
+            empty.append(rel)
+        elif path.is_dir() and not any(path.rglob("*")):
+            empty.append(rel)
+
+    # Stronger nonempty globs for TG plan/solve contracts
+    glob_miss: list[str] = []
+    for pattern in OUTPUT_CONTRACT_NONEMPTY_GLOBS.get(contract_id, []):
+        matches = [p for p in root.glob(pattern) if p.is_file() and p.stat().st_size > 0]
+        if not matches:
+            # Also try rglob-style ** manually
+            if "**" in pattern:
+                prefix, _, suffix = pattern.partition("**/")
+                base = root / prefix.rstrip("/")
+                matches = [
+                    p
+                    for p in (base.rglob(suffix) if base.exists() else [])
+                    if p.is_file() and p.stat().st_size > 0
+                ]
+            if not matches:
+                glob_miss.append(pattern)
+
+    ok = not missing and not empty and not glob_miss
+    parts = []
+    if missing:
+        parts.append(f"missing outputs: {missing}")
+    if empty:
+        parts.append(f"empty outputs: {empty}")
+    if glob_miss:
+        parts.append(f"missing nonempty artifacts: {glob_miss}")
     return {
-        "ok": not missing,
+        "ok": ok,
         "contract_id": contract_id,
         "missing": missing,
-        "message": "ok" if not missing else f"missing outputs: {missing}",
+        "empty": empty,
+        "missing_globs": glob_miss,
+        "message": "ok" if ok else "; ".join(parts),
     }
 
 
@@ -222,7 +260,20 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     }
 
     if role_id == "deterministic_engine":
-        eng = invoke_engine(project_root, wid, action_id, ctx={"run_id": run_id})
+        eng_ctx = {
+            "run_id": run_id,
+            "op_name": pack.get("op_name") or state.get("op_name") or "",
+            "architecture": pack.get("architecture") or state.get("architecture") or "arch35",
+            "test_script_root": pack.get("test_script_root") or state.get("test_script_root") or "",
+            "csv_consumer_root": pack.get("csv_consumer_root")
+            or state.get("csv_consumer_root")
+            or pack.get("test_script_root")
+            or state.get("test_script_root")
+            or "",
+            "level": pack.get("level") or state.get("level") or "L0",
+            "focus": pack.get("focus") or state.get("focus") or "",
+        }
+        eng = invoke_engine(project_root, wid, action_id, ctx=eng_ctx)
         result["engine"] = eng
         fin = finalize_action(project_root, action_id, engine_result=eng)
         result["auto_finalize"] = True

@@ -650,10 +650,9 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 label_zh="构建合同骨架",
                 phases=["contract"],
                 workflow_id="tg-init",
-                agent_id="tg-csv-contract",
-                role_id="producer",
+                agent_id="deterministic-tg-engine",
+                role_id="deterministic_engine",
                 capability_ids=_CAPS_CONTRACT,
-                task_prompt_id="tg/contract-build",
                 output_contract_id="csv-contract-v1",
             ),
             _act(

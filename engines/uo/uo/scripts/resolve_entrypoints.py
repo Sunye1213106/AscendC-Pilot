@@ -23,6 +23,13 @@ from uo.scripts.arch_path import arch_compatible, architecture_of_path, path_fam
 from uo.scripts.cbm_client import CbmClient, read_source_snippet
 from uo.scripts.semantic_identity import make_locator, mint_edge_id, mint_symbol_identity
 
+
+def _path_has_dir(rel: str, dirname: str) -> bool:
+    """True when *dirname* is a path segment (works for repo-relative roots)."""
+    parts = rel.replace("\\", "/").strip("/").split("/")
+    return dirname in parts
+
+
 ROLE_PATTERNS: dict[str, tuple[str, ...]] = {
     # Public API keys kept for no-hardcode tests / op-derived pattern checks.
     "host_tiling_entry": ("DoOpTiling", "DoTiling"),
@@ -287,9 +294,22 @@ def collect_entrypoint_candidates(
         "architecture": architecture,
         "cbm_available": graph["cbm_available"],
         "role_candidates": {
-            role: [{"name": c.get("name"), "qualified_name": c.get("qualified_name"), "file_path": c.get("file_path"),
-                    "start_line": c.get("start_line"), "confidence": c.get("confidence"), "class_or_namespace": c.get("class_or_namespace")}
-                   for c in items]
+            role: [
+                {
+                    "name": c.get("name"),
+                    "qualified_name": c.get("qualified_name"),
+                    "file_path": c.get("file_path"),
+                    "start_line": c.get("start_line"),
+                    "end_line": c.get("end_line"),
+                    "confidence": c.get("confidence"),
+                    "class_or_namespace": c.get("class_or_namespace"),
+                    "signature_snippet": c.get("signature_snippet") or "",
+                    "label": c.get("label"),
+                    "pattern": c.get("pattern"),
+                    "evidence_classes": c.get("evidence_classes") or [],
+                }
+                for c in items
+            ]
             for role, items in role_candidates.items()
         },
         "entrypoint_graph_ref": "ir/entrypoint_graph.yaml",
@@ -563,50 +583,70 @@ def _scan_registration_graph(
                             "verification_source": "source",
                         }
                     )
-            # Fluent .Tiling(Class) on same statement / chain → source_verified dispatch
+            # Fluent .Tiling(X) — X may be class, free function, or other callable.
+            # Start as neutral callable; specialize only when source evidence exists.
             window = text[match.start() : match.start() + 400]
             fluent = IMPL_OP_TILING_FLUENT_RE.search(window) or IMPL_OP_TILING_FLUENT_RE.search(text[match.start() :])
             if fluent and fluent.group(1) == name:
-                tiling_cls = fluent.group(2).split("::")[-1]
+                tiling_target = fluent.group(2).split("::")[-1]
                 tiling_line = text.count("\n", 0, match.start() + fluent.start()) + 1
-                cls_ident = mint_symbol_identity(
-                    kind="tiling_class",
-                    name=tiling_cls,
+                # Neutral callable first; specialize from source evidence in this file.
+                if re.search(rf"\b(?:class|struct)\s+{re.escape(tiling_target)}\b", text):
+                    kind, role = "tiling_class", "template_registration"
+                    evidence_reason = "class_or_struct_decl"
+                elif re.search(
+                    rf"\b(?:ge::graphStatus|graphStatus|Status|void|bool|auto)\s+(?:\w+::)*{re.escape(tiling_target)}\s*\(",
+                    text,
+                ) or re.search(
+                    rf"\b{re.escape(tiling_target)}\s*\([^;{{]*\)\s*(?:const)?\s*\{{",
+                    text,
+                ):
+                    kind, role = "tiling_fn", "public_host_entry"
+                    evidence_reason = "function_decl"
+                else:
+                    kind, role = "tiling_callable", "tiling_callable"
+                    evidence_reason = "fluent_tiling_untyped"
+                tgt_ident = mint_symbol_identity(
+                    kind=kind,
+                    name=tiling_target,
                     file_path=rel,
-                    qualified_name=f"IMPL_OP_OPTILING.Tiling::{tiling_cls}",
-                    class_or_namespace=tiling_cls,
+                    qualified_name=f"IMPL_OP_OPTILING.Tiling::{tiling_target}",
+                    class_or_namespace=tiling_target if kind == "tiling_class" else "",
                     architecture=architecture_of_path(rel),
                     path_family=path_family_of(rel),
                     prefix="EP",
                 )
-                cls_node = {
-                    "id": cls_ident.stable_id,
-                    "role": "template_registration",
-                    "architecture": cls_ident.architecture,
-                    "path_family": cls_ident.path_family,
+                tgt_node = {
+                    "id": tgt_ident.stable_id,
+                    "role": role,
+                    "architecture": tgt_ident.architecture,
+                    "path_family": tgt_ident.path_family,
                     "template_family": path_family_of(rel),
-                    "status": "verified",
-                    "name": tiling_cls,
-                    "symbol_ref": cls_ident.as_dict(),
+                    "status": "verified" if kind != "tiling_callable" else "located",
+                    "name": tiling_target,
+                    "symbol_ref": tgt_ident.as_dict(),
                     "locator": make_locator(
                         rel, start_line=tiling_line, end_line=tiling_line, text=fluent.group(0)[:120]
                     ).as_dict(),
                     "macro": "IMPL_OP_OPTILING.Tiling",
                     "verification_source": "source",
+                    "callable_kind": kind,
                 }
-                nodes[cls_node["id"]] = cls_node
+                nodes[tgt_node["id"]] = tgt_node
                 edges.append(
                     {
-                        "id": mint_edge_id("dispatches_to", node["id"], cls_node["id"], tiling_cls),
+                        "id": mint_edge_id("dispatches_to", node["id"], tgt_node["id"], tiling_target),
                         "type": "dispatches_to",
                         "source": node["id"],
-                        "target": cls_node["id"],
+                        "target": tgt_node["id"],
                         "evidence": [
                             {
                                 "file_path": rel,
                                 "line": tiling_line,
                                 "macro": "IMPL_OP_OPTILING.Tiling",
                                 "reason": "fluent_tiling",
+                                "callable_kind": kind,
+                                "evidence_reason": evidence_reason,
                             }
                         ],
                         "confidence": "source_verified",
@@ -615,16 +655,17 @@ def _scan_registration_graph(
                 )
                 edges.append(
                     {
-                        "id": mint_edge_id("registers", node["id"], cls_node["id"], tiling_cls),
+                        "id": mint_edge_id("registers", node["id"], tgt_node["id"], tiling_target),
                         "type": "registers",
                         "source": node["id"],
-                        "target": cls_node["id"],
+                        "target": tgt_node["id"],
                         "evidence": [
                             {
                                 "file_path": rel,
                                 "line": tiling_line,
                                 "macro": "IMPL_OP_OPTILING.Tiling",
                                 "reason": "fluent_tiling",
+                                "callable_kind": kind,
                             }
                         ],
                         "confidence": "source_verified",
@@ -862,7 +903,7 @@ def _evaluate_closure(nodes: dict[str, dict[str, Any]], edges: list[dict[str, An
         host_ok = False
         blocking.append(_block("entrypoint_host_registration_or_public_missing", "missing REG_OP / public host entry"))
     if by_role.get("public_host_entry") or by_role.get("operator_registration"):
-        impl_roles = {"normal_impl", "varlen_impl", "empty_impl", "template_registration"}
+        impl_roles = {"normal_impl", "varlen_impl", "empty_impl", "template_registration", "tiling_callable"}
         if not any(by_role.get(r) for r in impl_roles) and not by_role.get("tiling_registry"):
             host_ok = False
             blocking.append(_block("entrypoint_host_impl_missing", "no tiling registry/template implementation"))
@@ -995,14 +1036,14 @@ def _confidence(
     else:
         score -= 0.1
     if role in {"public_host_entry", "get_tiling_key", "save_tiling_data", "init_tiling_data"}:
-        if "/op_host/" in file_path:
+        if _path_has_dir(file_path, "op_host"):
             score += 0.15
-        if "/op_kernel/" in file_path:
+        if _path_has_dir(file_path, "op_kernel"):
             score -= 0.4
     if role == "public_kernel_entry":
-        if "/op_kernel/" in file_path:
+        if _path_has_dir(file_path, "op_kernel"):
             score += 0.2
-        if "/op_host/" in file_path:
+        if _path_has_dir(file_path, "op_host"):
             score -= 0.4
         if name.endswith("Kernel"):
             score += 0.25
@@ -1012,8 +1053,14 @@ def _confidence(
             score += 0.15
         if "template_tiling_key" in file_path or "tiling_data" in file_path:
             score -= 0.5
-        if name[:1].islower() or name in {"pipe", "dqGm", "Init", "Process"}:
+        # Naming style is ranking-only: do NOT exclude legitimate snake_case
+        # __global__ entries. Soft demotion for known non-entry helpers only.
+        if name in {"pipe", "dqGm", "Init", "Process"}:
             score -= 0.45
+        elif name[:1].islower() and not name.endswith(("_entry", "_kernel", "kernel", "entry")):
+            # Soft ranking only — keep above materialization floor when other
+            # kernel evidence (op_kernel path / global_kernel) is present.
+            score -= 0.05
     return max(0.0, min(1.0, score))
 
 
@@ -1055,9 +1102,9 @@ def _scan_paths(repo_root: Path, confirmed_files: list[str], architecture: str, 
     for rel in confirmed_files:
         if not arch_compatible(rel, architecture):
             continue
-        if role == "public_kernel_entry" and "/op_kernel/" not in rel:
+        if role == "public_kernel_entry" and not _path_has_dir(rel, "op_kernel"):
             continue
-        if role != "public_kernel_entry" and "/op_host/" not in rel and "template_tiling_key" not in rel:
+        if role != "public_kernel_entry" and not _path_has_dir(rel, "op_host") and "template_tiling_key" not in rel:
             continue
         path = repo_root / rel
         if path.exists() and path.suffix in {".h", ".hpp", ".cpp", ".cc", ".c"}:
@@ -1087,7 +1134,7 @@ def _scan_global_kernels(
     global_re = re.compile(r"__global__\s+[^=;{]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
     for rel in confirmed_files:
         rel_n = rel.replace("\\", "/")
-        if "/op_kernel/" not in rel_n:
+        if not _path_has_dir(rel_n, "op_kernel"):
             continue
         if not arch_compatible(rel_n, architecture):
             continue
@@ -1110,6 +1157,8 @@ def _scan_global_kernels(
                 )
                 + 0.1
             )
+            # __global__ is strong evidence — naming style must not exclude it.
+            conf = max(float(conf), 0.85)
             out.append(
                 {
                     "node_id": 0,
@@ -1123,13 +1172,14 @@ def _scan_global_kernels(
                     "pattern": "__global__",
                     "confidence": min(1.0, conf),
                     "signature_snippet": snippet("\n".join(text.splitlines()[max(0, line - 1) : line + 5])),
+                    "evidence_classes": ["global_kernel_declaration", "confirmed_kernel_file"],
                 }
             )
     for rel in confirmed_files:
         rel_n = rel.replace("\\", "/")
         if not arch_compatible(rel_n, architecture) or "entry" not in Path(rel_n).name.lower():
             continue
-        if "/op_kernel/" not in rel_n:
+        if not _path_has_dir(rel_n, "op_kernel"):
             continue
         path = repo_root / rel
         if not path.exists():

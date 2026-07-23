@@ -94,6 +94,10 @@ def upsert_tasks_from_score_items(
 
         target = str(item.get("target_id") or item.get("role") or item.get("edge_type") or "unknown")
         candidates = item.get("candidates") or _default_candidates(item)
+        if hint == "choose_edge" and not candidates:
+            # Critical but ungrounded → mark_missing with empty candidate set forbidden for choose.
+            task_type = "mark_missing"
+            hint = "mark_missing"
         cand_hash = candidate_set_hash(candidates)
         tid = stable_task_id(
             task_type=task_type,
@@ -153,13 +157,48 @@ def upsert_tasks_from_score_items(
 
 
 def _default_candidates(item: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build grounded candidates; refuse empty placeholders for choose_edge."""
+    existing = item.get("candidates")
+    if isinstance(existing, list) and existing:
+        grounded = []
+        for c in existing:
+            if not isinstance(c, dict):
+                continue
+            if not (c.get("file_path") or c.get("snippet") or c.get("signature_snippet")):
+                continue
+            grounded.append(
+                {
+                    "id": str(c.get("id") or f"cand_{c.get('symbol_ref') or c.get('name') or 'x'}"),
+                    "file_path": c.get("file_path") or "",
+                    "symbol_ref": c.get("symbol_ref") or c.get("qualified_name") or c.get("name") or "",
+                    "snippet": c.get("snippet") or c.get("signature_snippet") or "",
+                    "start_line": c.get("start_line"),
+                    "score": c.get("score") or item.get("score"),
+                }
+            )
+        if grounded:
+            return grounded
+    # Fall back to locator / evidence on the scored item itself.
+    loc = item.get("locator") or {}
+    evidence = item.get("evidence") or []
+    file_path = loc.get("file_path") or item.get("file_path") or ""
+    snippet = item.get("snippet") or item.get("signature_snippet") or ""
+    start_line = loc.get("start_line") or item.get("start_line")
+    if not file_path and evidence and isinstance(evidence[0], dict):
+        file_path = evidence[0].get("file_path") or ""
+        start_line = evidence[0].get("line") or start_line
+        snippet = snippet or str(evidence[0].get("macro") or evidence[0].get("reason") or "")
     tid = str(item.get("target_id") or "unknown")
+    if not file_path and not snippet:
+        # No grounded window — caller should use mark_missing, not choose_edge.
+        return []
     return [
         {
             "id": f"cand_{tid}",
-            "file_path": "",
+            "file_path": file_path,
             "symbol_ref": tid,
-            "snippet": "",
+            "snippet": snippet,
+            "start_line": start_line,
             "score": item.get("score"),
         }
     ]

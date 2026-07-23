@@ -41,6 +41,12 @@ def main(argv: list[str] | None = None) -> int:
     p_start.add_argument("--project", type=Path, default=Path.cwd())
     p_start.add_argument("--intent", default="", help="e.g. diff_only for uo-update")
     p_start.add_argument("--force-new", action="store_true", help="Force a new run even if same workflow is active")
+    p_start.add_argument("--op-name", default="", help="Operator name for UO/TG engines")
+    p_start.add_argument("--architecture", default="", help="Target architecture (default arch35)")
+    p_start.add_argument("--test-script-root", type=Path, default=None, help="CSV consumer / test script root")
+    p_start.add_argument("--csv-consumer-root", type=Path, default=None, help="Alias of --test-script-root")
+    p_start.add_argument("--level", default="", help="TG plan/solve level (default L0)")
+    p_start.add_argument("--focus", default="", help="TG plan focus")
 
     p_run = sub.add_parser("run-action", help="Prepare or finalize a workflow Action (sole execution entry)")
     p_run.add_argument("action_id")
@@ -152,7 +158,43 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 )
                 return 0
-        state = start_workflow(args.project, args.workflow_id, intent=getattr(args, "intent", "") or "")
+        state = start_workflow(
+            args.project,
+            args.workflow_id,
+            intent=getattr(args, "intent", "") or "",
+            op_name=getattr(args, "op_name", "") or "",
+            architecture=getattr(args, "architecture", "") or "",
+            test_script_root=(
+                str(args.test_script_root.resolve())
+                if getattr(args, "test_script_root", None)
+                else ""
+            ),
+            csv_consumer_root=(
+                str(args.csv_consumer_root.resolve())
+                if getattr(args, "csv_consumer_root", None)
+                else ""
+            ),
+            level=getattr(args, "level", "") or "",
+            focus=getattr(args, "focus", "") or "",
+        )
+        # Persist harness params for subsequent context packs / engines.
+        try:
+            from ascendc_harness.paths import context_root
+            import yaml
+
+            params = {
+                "op_name": state.get("op_name") or "",
+                "architecture": state.get("architecture") or "arch35",
+                "test_script_root": state.get("test_script_root") or "",
+                "csv_consumer_root": state.get("csv_consumer_root") or "",
+                "level": state.get("level") or "L0",
+                "focus": state.get("focus") or "",
+            }
+            out = context_root(args.project) / "harness_params.yaml"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(yaml.safe_dump(params, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
         print(json.dumps(state, ensure_ascii=False, indent=2))
         return 0
     if args.cmd == "run-action":

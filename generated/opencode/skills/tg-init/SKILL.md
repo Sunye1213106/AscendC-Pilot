@@ -58,7 +58,7 @@ Harness 独占状态、合法边、门禁与完成态。
 | action_id | policies | capabilities | method | prompt | agent |
 |---|---|---|---|---|---|
 | `kb_check` | source-authority,code-access,evidence,language,harness-control,output-quality | kb-query | `tg-init/kb-check` | `-` | `deterministic-tg-engine` |
-| `contract_build` | source-authority,code-access,evidence,language,harness-control,output-quality | contract-building,kb-query,obligation-analysis | `tg-init/contract-build` | `tg/contract-build` | `tg-csv-contract` |
+| `contract_build` | source-authority,code-access,evidence,language,harness-control,output-quality | contract-building,kb-query,obligation-analysis | `tg-init/contract-build` | `-` | `deterministic-tg-engine` |
 | `semantic_bind` | source-authority,code-access,evidence,language,harness-control,output-quality | kb-query,semantic-resolution | `tg-init/semantic-bind` | `-` | `deterministic-tg-engine` |
 | `bind_merge` | source-authority,code-access,evidence,language,harness-control,output-quality | - | `tg-init/bind-merge` | `-` | `deterministic-tg-engine` |
 | `mid_nest` | source-authority,code-access,evidence,language,harness-control,output-quality | obligation-analysis | `tg-init/mid-nest` | `-` | `deterministic-tg-engine` |
@@ -71,7 +71,7 @@ Harness 独占状态、合法边、门禁与完成态。
 | action_id | method_path | prompt_path | output_contract | role |
 |---|---|---|---|---|
 | `kb_check` | `actions/kb-check/METHOD.md` | `-` | `uo-ready-v1` | `deterministic_engine` |
-| `contract_build` | `actions/contract-build/METHOD.md` | `prompts/tasks/tg/contract-build.md` | `csv-contract-v1` | `producer` |
+| `contract_build` | `actions/contract-build/METHOD.md` | `-` | `csv-contract-v1` | `deterministic_engine` |
 | `semantic_bind` | `actions/semantic-bind/METHOD.md` | `-` | `semantic-bind-v1` | `deterministic_engine` |
 | `bind_merge` | `actions/bind-merge/METHOD.md` | `-` | `bind-merge-v1` | `deterministic_engine` |
 | `mid_nest` | `actions/mid-nest/METHOD.md` | `-` | `mid-nest-v1` | `deterministic_engine` |

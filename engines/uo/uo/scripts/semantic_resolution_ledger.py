@@ -54,7 +54,11 @@ def invalidate_stale_patches(uo_root: Path, *, current_source_hash: str) -> list
 
 
 def apply_ledger_to_entrypoint_graph(graph: dict[str, Any], ledger: dict[str, Any] | None) -> dict[str, Any]:
-    """Deterministically rebuild edge confidence from active ledger patches."""
+    """Deterministically rebuild edge confidence from active ledger patches.
+
+    Only upgrades edges explicitly referenced by ``edge_id`` or exact
+    ``accepted_candidate_ids``. Never batch-upgrades by relation alone.
+    """
     if not ledger:
         return graph
     out = dict(graph)
@@ -65,24 +69,23 @@ def apply_ledger_to_entrypoint_graph(graph: dict[str, Any], ledger: dict[str, An
             continue
         if patch.get("action") == "mark_missing":
             continue
-        relation = patch.get("relation")
-        # Accept edges referenced by candidate ids or explicit edge id.
         edge_id = patch.get("edge_id")
-        if edge_id and edge_id in by_id:
-            by_id[edge_id]["confidence"] = SEMANTIC_VERIFIED
-            by_id[edge_id]["verification_source"] = "llm"
-            by_id[edge_id]["ledger_task_id"] = patch.get("task_id")
+        accepted = [str(x) for x in (patch.get("accepted_candidate_ids") or [])]
+        targets: set[str] = set()
+        if edge_id:
+            targets.add(str(edge_id))
+        for cid in accepted:
+            if cid in by_id:
+                targets.add(cid)
+        if not targets:
+            # Refuse relation-wide upgrades — patch must name concrete candidates.
             continue
-        for e in edges:
-            if relation and e.get("type") == relation:
-                # Only upgrade when patch accepted candidates mention this edge.
-                accepted = set(patch.get("accepted_candidate_ids") or [])
-                if not accepted or str(e.get("id")) in accepted or any(
-                    str(c) in str(e.get("id")) for c in accepted
-                ):
-                    e["confidence"] = SEMANTIC_VERIFIED
-                    e["verification_source"] = "llm"
-                    e["ledger_task_id"] = patch.get("task_id")
+        for tid in targets:
+            if tid not in by_id:
+                continue
+            by_id[tid]["confidence"] = SEMANTIC_VERIFIED
+            by_id[tid]["verification_source"] = "llm"
+            by_id[tid]["ledger_task_id"] = patch.get("task_id")
     out["edges"] = edges
     return out
 

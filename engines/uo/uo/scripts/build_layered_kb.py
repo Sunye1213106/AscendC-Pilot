@@ -391,6 +391,7 @@ def _entrypoint_edges_as_graph(entrypoint_graph: dict[str, Any]) -> list[dict[st
 def _boundary_nodes(ir_dir: Path) -> list[dict[str, Any]]:
     boundary = read_yaml(ir_dir / "operator_boundary.yaml") or {}
     nodes: list[dict[str, Any]] = []
+    seen_accessors: set[str] = set()
     for inp in boundary.get("inputs") or []:
         if not isinstance(inp, dict):
             continue
@@ -406,6 +407,22 @@ def _boundary_nodes(ir_dir: Path) -> list[dict[str, Any]]:
                 "confidence": "source_verified" if inp.get("binding_status") == "verified" else "candidate",
             }
         )
+        for acc in inp.get("host_accessors") or []:
+            aid = f"ACCESSOR_{acc.get('api')}_{acc.get('line')}"
+            if aid in seen_accessors:
+                continue
+            seen_accessors.add(aid)
+            nodes.append(
+                {
+                    "id": aid,
+                    "kind": "ACCESSOR",
+                    "name": acc.get("api"),
+                    "layer": "boundary",
+                    "file_path": acc.get("file_path"),
+                    "line": acc.get("line"),
+                    "confidence": "source_verified",
+                }
+            )
     for attr in boundary.get("attributes") or []:
         if not isinstance(attr, dict):
             continue
@@ -420,6 +437,22 @@ def _boundary_nodes(ir_dir: Path) -> list[dict[str, Any]]:
                 "confidence": "source_verified" if attr.get("binding_status") == "verified" else "candidate",
             }
         )
+        for acc in attr.get("host_accessors") or []:
+            aid = f"ACCESSOR_{acc.get('api')}_{acc.get('line')}"
+            if aid in seen_accessors:
+                continue
+            seen_accessors.add(aid)
+            nodes.append(
+                {
+                    "id": aid,
+                    "kind": "ACCESSOR",
+                    "name": acc.get("api"),
+                    "layer": "boundary",
+                    "file_path": acc.get("file_path"),
+                    "line": acc.get("line"),
+                    "confidence": "source_verified",
+                }
+            )
     return nodes
 
 
@@ -463,7 +496,13 @@ def _boundary_edges(ir_dir: Path) -> list[dict[str, Any]]:
 
 def _def_use_edges(host: dict[str, Any]) -> list[dict[str, Any]]:
     """Merge host def-use flows; preserve confidence tiers (⑫)."""
-    flows = host.get("def_use_flows") or host.get("flows") or []
+    flows: list[dict[str, Any]] = []
+    flows.extend(host.get("def_use_flows") or [])
+    flows.extend(host.get("flows") or [])
+    # Host subgraph nests flows under def_use: [{definitions, flows, ...}, ...]
+    for block in host.get("def_use") or []:
+        if isinstance(block, dict):
+            flows.extend(block.get("flows") or [])
     edges: list[dict[str, Any]] = []
     for flow in flows:
         if not isinstance(flow, dict):

@@ -95,50 +95,382 @@ def _run_diff_summary(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
 
 
 def _run_tg_kb_check(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    del ctx
     from ascendc_harness.gates import run_named_gate
 
-    result = run_named_gate(project_root, "uo_ready")
-    return {"ok": bool(result.get("ok")), "gate": result}
+    result = run_named_gate(project_root, "uo_ready", op_name=str(ctx.get("op_name") or "") or None)
+    return {"ok": bool(result.get("ok")), "gate": result, "engine": "kb_check"}
+
+
+def _load_yaml(path: Path) -> Any:
+    try:
+        import yaml
+    except ImportError:  # pragma: no cover
+        return None
+    if not path.is_file():
+        return None
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def _resolve_tg_ctx(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Resolve op_name / architecture / consumer root / level / focus for TG engines."""
+    import os
+
+    from ascendc_harness.state import load_state
+
+    state = load_state(project_root) or {}
+    params = _load_yaml(project_root / ".ascendc-agent" / "context" / "harness_params.yaml") or {}
+    if not isinstance(params, dict):
+        params = {}
+    pack = _load_yaml(project_root / ".ascendc-agent" / "context" / "context_pack.yaml") or {}
+    if not isinstance(pack, dict):
+        pack = {}
+    run_ctx = _load_yaml(project_root / ".ascendc-agent" / "tg" / "init" / "run_context.yaml") or {}
+    if not isinstance(run_ctx, dict):
+        run_ctx = {}
+    man = _load_yaml(project_root / ".ascendc-agent" / "uo" / "manifest.yaml") or {}
+    if not isinstance(man, dict):
+        man = {}
+
+    def _pick(*vals: Any, default: str = "") -> str:
+        for v in vals:
+            if v is None:
+                continue
+            s = str(v).strip()
+            if s:
+                return s
+        return default
+
+    op_name = _pick(
+        ctx.get("op_name"),
+        state.get("op_name"),
+        params.get("op_name"),
+        pack.get("op_name"),
+        run_ctx.get("op_name"),
+        man.get("op_name"),
+        project_root.name,
+    )
+    architecture = _pick(
+        ctx.get("architecture"),
+        state.get("architecture"),
+        params.get("architecture"),
+        pack.get("architecture"),
+        man.get("architecture"),
+        default="arch35",
+    )
+    level = _pick(ctx.get("level"), state.get("level"), params.get("level"), pack.get("level"), default="L0")
+    focus = _pick(ctx.get("focus"), state.get("focus"), params.get("focus"), pack.get("focus"))
+    consumer = _pick(
+        ctx.get("csv_consumer_root"),
+        ctx.get("test_script_root"),
+        state.get("csv_consumer_root"),
+        state.get("test_script_root"),
+        params.get("csv_consumer_root"),
+        params.get("test_script_root"),
+        pack.get("csv_consumer_root"),
+        pack.get("test_script_root"),
+        run_ctx.get("test_script_root"),
+        os.environ.get("ASCENDC_CSV_CONSUMER_ROOT"),
+        os.environ.get("ASCENDC_TEST_SCRIPT_ROOT"),
+    )
+    return {
+        "op_name": op_name,
+        "architecture": architecture,
+        "level": level,
+        "focus": focus,
+        "test_script_root": consumer,
+        "csv_consumer_root": consumer,
+    }
+
+
+def _require_consumer_root(tg_ctx: dict[str, Any]) -> Path:
+    raw = str(tg_ctx.get("csv_consumer_root") or tg_ctx.get("test_script_root") or "").strip()
+    if not raw:
+        raise RuntimeError(
+            "TEST_SCRIPT_ROOT_REQUIRED: set harness context test_script_root/csv_consumer_root "
+            "(context/harness_params.yaml, workflow state, or ASCENDC_TEST_SCRIPT_ROOT)"
+        )
+    path = Path(raw).expanduser().resolve()
+    if not path.is_dir():
+        raise RuntimeError(f"TEST_SCRIPT_ROOT_INVALID: not a directory: {path}")
+    return path
 
 
 def _run_tg_contract_build(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """Invoke TG contract builder via internal Python API (not public CLI)."""
+    tg_ctx = _resolve_tg_ctx(project_root, ctx)
+    op_name = tg_ctx["op_name"]
+    if not op_name:
+        return {"ok": False, "engine": "contract_build", "error": "op_name required"}
+    try:
+        consumer = _require_consumer_root(tg_ctx)
+        from testcase_agent.contract import tg_contract
+
+        payload = tg_contract(project_root, op_name, csv_consumer_root=consumer)
+        # Persist resolved params for subsequent TG actions.
+        params_path = project_root / ".ascendc-agent" / "context" / "harness_params.yaml"
+        params_path.parent.mkdir(parents=True, exist_ok=True)
+        existing = _load_yaml(params_path) or {}
+        if not isinstance(existing, dict):
+            existing = {}
+        existing.update(
+            {
+                "op_name": op_name,
+                "architecture": tg_ctx["architecture"],
+                "test_script_root": consumer.as_posix(),
+                "csv_consumer_root": consumer.as_posix(),
+                "level": tg_ctx["level"],
+                "focus": tg_ctx["focus"],
+            }
+        )
+        try:
+            import yaml
+
+            params_path.write_text(yaml.safe_dump(existing, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
+        return {
+            "ok": str(payload.get("status") or "").lower() in {"pass", "ok", "passed", ""} or bool(payload),
+            "engine": "contract_build",
+            "op_name": op_name,
+            "csv_consumer_root": consumer.as_posix(),
+            "payload": payload if isinstance(payload, dict) else {},
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "contract_build", "error": str(exc)[:400]}
+
+
+def _run_tg_semantic_bind(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    tg_ctx = _resolve_tg_ctx(project_root, ctx)
+    tg = _tg(project_root)
+    try:
+        consumer = _require_consumer_root(tg_ctx)
+        from testcase_agent.binding_inventory import build_binding_inventory, fingerprint_consumer
+        from testcase_agent.init import write_bind_scaffolds
+        from testcase_agent.io import read_json, read_yaml
+
+        snapshot_path = tg / "snapshot" / "understand_contract.json"
+        if not snapshot_path.is_file():
+            return {"ok": False, "engine": "semantic_bind", "error": "missing snapshot; run contract_build first"}
+        snapshot = read_json(snapshot_path)
+        rmap = read_yaml(tg / "realization" / "realization_map.yaml") or {}
+        schema = read_yaml(tg / "realization" / "consumer_schema.yaml") or {}
+        if not schema:
+            schema = read_yaml(tg / "contract" / "consumer_schema.yaml") or {}
+        lexicon = read_yaml(tg / "realization" / "lexicon.yaml") or {}
+        gaps = list((rmap.get("binding_gaps") if isinstance(rmap, dict) else None) or [])
+        contract_result = {
+            "realization_map": rmap if isinstance(rmap, dict) else {},
+            "binding_gaps": gaps,
+        }
+        artifacts = write_bind_scaffolds(tg, snapshot if isinstance(snapshot, dict) else {}, contract_result)
+        inv = build_binding_inventory(
+            schema=schema if isinstance(schema, dict) else {},
+            lexicon=lexicon if isinstance(lexicon, dict) else {},
+            snapshot_files=(snapshot.get("files") if isinstance(snapshot, dict) else {}) or {},
+            consumer_root=consumer,
+            binding_gaps=gaps,
+        )
+        inv["consumer_fingerprint"] = fingerprint_consumer(consumer)
+        inv_path = tg / "realization" / "binding_inventory.yaml"
+        try:
+            from testcase_agent.io import write_yaml
+
+            write_yaml(inv_path, inv)
+        except Exception:  # noqa: BLE001
+            import yaml
+
+            inv_path.parent.mkdir(parents=True, exist_ok=True)
+            inv_path.write_text(yaml.safe_dump(inv, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        return {
+            "ok": True,
+            "engine": "semantic_bind",
+            "artifacts": artifacts,
+            "inventory_path": inv_path.as_posix(),
+            "csv_consumer_root": consumer.as_posix(),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "semantic_bind", "error": str(exc)[:400]}
+
+
+def _run_tg_bind_merge(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     del ctx
     tg = _tg(project_root)
     try:
-        from testcase_agent import contract as contract_mod  # type: ignore[import-not-found]
+        from testcase_agent.uo_resolve_merge import merge_uo_resolve
 
-        if hasattr(contract_mod, "build_contract"):
-            payload = contract_mod.build_contract(project_root)
-            return {"ok": True, "payload": payload if isinstance(payload, dict) else {}}
+        payload = merge_uo_resolve(tg, auto_fix_heuristics=True)
+        ok = True
+        if isinstance(payload, dict):
+            status = str(payload.get("status") or "").lower()
+            if status and status not in {"pass", "passed", "ok", "merged"}:
+                ok = bool(payload.get("ok", False))
+            elif "ok" in payload:
+                ok = bool(payload.get("ok"))
+        return {"ok": ok, "engine": "bind_merge", "payload": payload if isinstance(payload, dict) else {}}
     except Exception as exc:  # noqa: BLE001
-        marker = tg / "realization" / "contract_build_via_harness.yaml"
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(
-            f"status: pending_engine\nwarning: {str(exc)[:200]}\n",
-            encoding="utf-8",
-        )
-        return {"ok": True, "engine": "contract_build_stub", "artifact": marker.as_posix()}
-    return {"ok": True, "engine": "contract_build_noop"}
+        return {"ok": False, "engine": "bind_merge", "error": str(exc)[:400]}
+
+
+def _run_tg_mid_nest(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    del ctx
+    tg = _tg(project_root)
+    try:
+        from testcase_agent.resolve_policy import write_mid_symbol_queue
+
+        queue = write_mid_symbol_queue(tg)
+        return {"ok": True, "engine": "mid_nest", "queue": queue if isinstance(queue, dict) else {}}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "mid_nest", "error": str(exc)[:400]}
 
 
 def _run_tg_integrity(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    del ctx
     from ascendc_harness.gates import run_named_gate
 
-    result = run_named_gate(project_root, "integrity_gate")
-    return {"ok": bool(result.get("ok")), "gate": result}
+    op = str(ctx.get("op_name") or "") or None
+    domain = run_named_gate(project_root, "domain_symmetry", op_name=op)
+    closure = run_named_gate(project_root, "csv_closure", op_name=op)
+    ok = bool(domain.get("ok")) and bool(closure.get("ok"))
+    return {
+        "ok": ok,
+        "engine": "integrity_gate",
+        "gates": {"domain_symmetry": domain, "csv_closure": closure},
+    }
 
 
-def _run_tg_plan_or_solve(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """Generic TG deterministic step — record harness invocation marker."""
-    action_id = str(ctx.get("action_id") or "tg_action")
+def _run_tg_plan_scope(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    tg_ctx = _resolve_tg_ctx(project_root, ctx)
+    try:
+        consumer = _require_consumer_root(tg_ctx)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "plan_scope", "error": str(exc)[:400]}
     tg = _tg(project_root)
-    marker = tg / "realization" / f"harness_{action_id}.yaml"
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(f"action_id: {action_id}\nstatus: executed_via_harness\n", encoding="utf-8")
-    return {"ok": True, "artifact": marker.as_posix()}
+    level = tg_ctx["level"] or "L0"
+    scope = {
+        "version": 1,
+        "op_name": tg_ctx["op_name"],
+        "level": level,
+        "focus": tg_ctx["focus"],
+        "csv_consumer_root": consumer.as_posix(),
+        "architecture": tg_ctx["architecture"],
+    }
+    out = tg / "plan" / "levels" / level / "plan_scope.yaml"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        import yaml
+
+        out.write_text(yaml.safe_dump(scope, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "plan_scope", "error": str(exc)[:200]}
+    return {"ok": True, "engine": "plan_scope", "artifact": out.as_posix(), **scope}
+
+
+def _run_tg_plan_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from ascendc_harness.gates import run_named_gate
+
+    op = str((_resolve_tg_ctx(project_root, ctx)).get("op_name") or "") or None
+    g1 = run_named_gate(project_root, "tg_init_confirmed", op_name=op)
+    g2 = run_named_gate(project_root, "kb_fingerprint_fresh", op_name=op)
+    ok = bool(g1.get("ok")) and bool(g2.get("ok"))
+    return {"ok": ok, "engine": "plan_precheck", "gates": {"tg_init_confirmed": g1, "kb_fingerprint_fresh": g2}}
+
+
+def _run_tg_plan_build(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    tg_ctx = _resolve_tg_ctx(project_root, ctx)
+    op_name = tg_ctx["op_name"]
+    if not op_name:
+        return {"ok": False, "engine": "plan_build", "error": "op_name required"}
+    try:
+        consumer = _require_consumer_root(tg_ctx)
+        from testcase_agent.planner import tg_plan
+
+        payload = tg_plan(
+            project_root,
+            op_name,
+            level=tg_ctx["level"] or "L0",
+            focus=tg_ctx["focus"] or "",
+            csv_consumer_root=consumer,
+            reuse_snapshot=True,
+        )
+        level = tg_ctx["level"] or "L0"
+        obl = _tg(project_root) / "plan" / "levels" / level / "coverage_obligations.yaml"
+        if not obl.is_file() or obl.stat().st_size == 0:
+            # Some planners write under plan/coverage_obligations.yaml
+            alt = _tg(project_root) / "plan" / "coverage_obligations.yaml"
+            if not alt.is_file() or alt.stat().st_size == 0:
+                return {
+                    "ok": False,
+                    "engine": "plan_build",
+                    "error": "coverage_obligations.yaml missing or empty after tg_plan",
+                    "payload": payload if isinstance(payload, dict) else {},
+                }
+        return {
+            "ok": True,
+            "engine": "plan_build",
+            "op_name": op_name,
+            "level": level,
+            "payload": payload if isinstance(payload, dict) else {},
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "plan_build", "error": str(exc)[:400]}
+
+
+def _run_tg_solve_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from ascendc_harness.gates import run_named_gate
+
+    tg_ctx = _resolve_tg_ctx(project_root, ctx)
+    try:
+        _require_consumer_root(tg_ctx)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "solve_precheck", "error": str(exc)[:400]}
+    op = tg_ctx.get("op_name") or None
+    g1 = run_named_gate(project_root, "plan_approved", op_name=op)
+    g2 = run_named_gate(project_root, "kb_fingerprint_fresh", op_name=op)
+    ok = bool(g1.get("ok")) and bool(g2.get("ok"))
+    return {"ok": ok, "engine": "solve_precheck", "gates": {"plan_approved": g1, "kb_fingerprint_fresh": g2}}
+
+
+def _run_tg_z3_solve(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    tg_ctx = _resolve_tg_ctx(project_root, ctx)
+    op_name = tg_ctx["op_name"]
+    if not op_name:
+        return {"ok": False, "engine": "z3_solve", "error": "op_name required"}
+    try:
+        consumer = _require_consumer_root(tg_ctx)
+        from testcase_agent.solve import tg_solve
+
+        payload = tg_solve(
+            project_root,
+            op_name,
+            level=tg_ctx["level"] or "",
+            csv_consumer_root=consumer,
+        )
+        # Require nonempty solver report artifact.
+        from ascendc_harness.gates.tg_adapters import _latest_solve_root
+
+        solve_root = _latest_solve_root(_tg(project_root))
+        if solve_root is None or not (solve_root / "solver_report.yaml").is_file():
+            return {
+                "ok": False,
+                "engine": "z3_solve",
+                "error": "solver_report.yaml missing after tg_solve",
+                "payload": payload if isinstance(payload, dict) else {},
+            }
+        return {
+            "ok": True,
+            "engine": "z3_solve",
+            "op_name": op_name,
+            "solve_root": solve_root.as_posix(),
+            "payload": payload if isinstance(payload, dict) else {},
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "z3_solve", "error": str(exc)[:400]}
+
+
+def _run_tg_cover_confirm(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from ascendc_harness.gates import run_named_gate
+
+    op = str((_resolve_tg_ctx(project_root, ctx)).get("op_name") or "") or None
+    result = run_named_gate(project_root, "solve_terminal", op_name=op)
+    return {"ok": bool(result.get("ok")), "engine": "cover_confirm", "gate": result}
 
 
 def _uo_op_ctx(project_root: Path, ctx: dict[str, Any]) -> tuple[Path, str, str]:
@@ -274,20 +606,20 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("uo-update", "diff_only"): _run_diff_summary,
     ("tg-init", "kb_check"): _run_tg_kb_check,
     ("tg-init", "contract_build"): _run_tg_contract_build,
-    ("tg-init", "semantic_bind"): _run_tg_plan_or_solve,
-    ("tg-init", "bind_merge"): _run_tg_plan_or_solve,
-    ("tg-init", "mid_nest"): _run_tg_plan_or_solve,
+    ("tg-init", "semantic_bind"): _run_tg_semantic_bind,
+    ("tg-init", "bind_merge"): _run_tg_bind_merge,
+    ("tg-init", "mid_nest"): _run_tg_mid_nest,
     ("tg-init", "integrity_gate"): _run_tg_integrity,
-    ("tg-plan", "plan_scope"): _run_tg_plan_or_solve,
-    ("tg-plan", "plan_precheck"): _run_tg_plan_or_solve,
-    ("tg-plan", "plan_build"): _run_tg_plan_or_solve,
-    ("tg-solve", "solve_precheck"): _run_tg_plan_or_solve,
-    ("tg-solve", "z3_solve"): _run_tg_plan_or_solve,
-    ("tg-solve", "cover_confirm"): _run_tg_plan_or_solve,
+    ("tg-plan", "plan_scope"): _run_tg_plan_scope,
+    ("tg-plan", "plan_precheck"): _run_tg_plan_precheck,
+    ("tg-plan", "plan_build"): _run_tg_plan_build,
+    ("tg-solve", "solve_precheck"): _run_tg_solve_precheck,
+    ("tg-solve", "z3_solve"): _run_tg_z3_solve,
+    ("tg-solve", "cover_confirm"): _run_tg_cover_confirm,
 }
 
 
-# Output contract id → relative paths under .ascendc-agent (best-effort existence check)
+# Output contract id → relative paths under .ascendc-agent (existence + nonempty where applicable)
 OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "kb-layout-v1": ["uo"],
     "scope-confirmed-v1": ["uo/summary/scope_confirmed.yaml", "runs"],
@@ -308,13 +640,50 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "kb-answer-v1": ["runs"],
     "code-review-v1": ["runs"],
     "uo-ready-v1": ["uo"],
-    "csv-contract-v1": ["tg"],
-    "semantic-bind-v1": ["tg"],
-    "bind-merge-v1": ["tg"],
-    "mid-nest-v1": ["tg"],
-    "tg-integrity-v1": ["tg"],
-    "init-audit-v1": ["tg"],
-    "init-confirmed-v1": ["tg"],
+    "csv-contract-v1": [
+        "tg/realization/realization_map.yaml",
+        "tg/snapshot/understand_contract.json",
+    ],
+    "semantic-bind-v1": [
+        "tg/realization/binding_inventory.yaml",
+    ],
+    "bind-merge-v1": [
+        "tg/realization/uo_merge_report.yaml",
+    ],
+    "mid-nest-v1": [
+        "tg/realization/mid_symbol_queue.yaml",
+    ],
+    "tg-integrity-v1": [
+        "tg/realization/uo_merge_report.yaml",
+    ],
+    "init-audit-v1": ["tg/init"],
+    "init-confirmed-v1": ["tg/init/status.yaml"],
+    "plan-scope-v1": ["tg/plan"],
+    "plan-precheck-v1": ["tg/init/status.yaml"],
+    "plan-build-v1": ["tg/plan"],
+    "plan-approved-v1": ["tg/plan"],
+    "solve-precheck-v1": ["tg/plan"],
+    "z3-solve-v1": ["tg/solve"],
+    "cover-confirm-v1": ["tg/solve"],
+}
+
+# Contracts that must contain at least one nonempty concrete artifact (not empty dir / empty file)
+OUTPUT_CONTRACT_NONEMPTY_GLOBS: dict[str, list[str]] = {
+    "plan-build-v1": [
+        "tg/plan/levels/*/coverage_obligations.yaml",
+        "tg/plan/coverage_obligations.yaml",
+    ],
+    "z3-solve-v1": [
+        "tg/solve/**/solver_report.yaml",
+        "tg/solve/solver_report.yaml",
+    ],
+    "cover-confirm-v1": [
+        "tg/solve/**/realize_report.yaml",
+        "tg/solve/**/solver_report.yaml",
+    ],
+    "csv-contract-v1": [
+        "tg/realization/realization_map.yaml",
+    ],
 }
 
 

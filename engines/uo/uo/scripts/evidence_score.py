@@ -184,6 +184,23 @@ def score_entrypoint_node(node: dict[str, Any], *, architecture: str = "arch35")
     )
     result["target_id"] = node.get("id")
     result["role"] = role
+    loc = node.get("locator") or {}
+    if loc.get("file_path") or node.get("signature_snippet"):
+        result["candidates"] = [
+            {
+                "id": f"cand_{node.get('id')}",
+                "file_path": loc.get("file_path") or "",
+                "symbol_ref": (node.get("symbol_ref") or {}).get("qualified_name")
+                or node.get("name")
+                or "",
+                "snippet": node.get("signature_snippet") or loc.get("text") or "",
+                "start_line": loc.get("start_line"),
+                "score": score,
+            }
+        ]
+    result["locator"] = loc
+    result["file_path"] = loc.get("file_path")
+    result["signature_snippet"] = node.get("signature_snippet")
     return result
 
 
@@ -232,6 +249,29 @@ def score_edge(edge: dict[str, Any], *, object_type: str | None = None) -> dict[
     result["verification_source"] = edge.get("verification_source") or (
         "source" if result["confidence"] == SOURCE_VERIFIED else None
     )
+    # Ground LLM tasks with real evidence windows when disposition needs review.
+    candidates: list[dict[str, Any]] = []
+    for i, ev in enumerate(evs):
+        if not isinstance(ev, dict):
+            continue
+        fp = ev.get("file_path")
+        if not fp:
+            continue
+        snippet = str(ev.get("snippet") or ev.get("macro") or ev.get("text") or "")[:200]
+        candidates.append(
+            {
+                "id": f"{edge.get('id') or 'edge'}_ev{i}",
+                "file_path": fp,
+                "symbol_ref": edge.get("target") or edge.get("source") or edge.get("id"),
+                "snippet": snippet,
+                "line": ev.get("line") or ev.get("start_line"),
+                "score": float(ev.get("score") or score),
+            }
+        )
+    if candidates:
+        result["candidates"] = candidates
+        result["file_path"] = candidates[0].get("file_path")
+        result["signature_snippet"] = candidates[0].get("snippet")
     return result
 
 
@@ -258,6 +298,43 @@ def score_io_slot(slot: dict[str, Any]) -> dict[str, Any]:
         necessity=necessity,
     )
     result["target_id"] = slot.get("name") or f"slot[{slot.get('slot')}]"
+    candidates: list[dict[str, Any]] = []
+    for i, acc in enumerate(slot.get("host_accessors") or []):
+        if not isinstance(acc, dict):
+            continue
+        fp = acc.get("file_path")
+        if not fp:
+            continue
+        candidates.append(
+            {
+                "id": f"acc_{slot.get('name') or slot.get('slot')}_{i}",
+                "file_path": fp,
+                "symbol_ref": slot.get("name") or acc.get("api"),
+                "snippet": str(acc.get("snippet") or acc.get("api") or "")[:120],
+                "line": acc.get("line"),
+                "score": score,
+            }
+        )
+    for i, ev in enumerate(slot.get("evidence") or []):
+        if not isinstance(ev, dict):
+            continue
+        fp = ev.get("file_path")
+        if not fp:
+            continue
+        candidates.append(
+            {
+                "id": f"slot_ev_{slot.get('name') or slot.get('slot')}_{i}",
+                "file_path": fp,
+                "symbol_ref": slot.get("name"),
+                "snippet": str(ev.get("snippet") or ev.get("text") or "")[:120],
+                "line": ev.get("line") or ev.get("start_line"),
+                "score": score,
+            }
+        )
+    if candidates:
+        result["candidates"] = candidates
+        result["file_path"] = candidates[0].get("file_path")
+        result["signature_snippet"] = candidates[0].get("snippet")
     return result
 
 
@@ -338,6 +415,35 @@ def detect_score_pre(uo_root: Path, *, architecture: str = "arch35", run_id: str
     for slot in (boundary.get("inputs") or []) + (boundary.get("attributes") or []):
         if isinstance(slot, dict):
             items.append(score_io_slot(slot))
+    # Boundary extractor may emit grounded io_slot_bind hints when script binding is incomplete.
+    for hint in boundary.get("llm_task_hints") or []:
+        if not isinstance(hint, dict):
+            continue
+        hint_item = {
+            "object_type": str(hint.get("type") or "io_slot_bind"),
+            "disposition": "llm_task",
+            "severity": str(hint.get("severity") or "blocking"),
+            "task_hint": str(hint.get("type") or "io_slot_bind"),
+            "target_id": hint.get("target"),
+            "file_path": hint.get("file_path"),
+            "signature_snippet": hint.get("snippet"),
+            "candidates": list(hint.get("candidates") or []),
+            "reason": hint.get("reason"),
+            "score": 0.4,
+            "confidence": "candidate",
+        }
+        if not hint_item["candidates"] and hint.get("file_path"):
+            hint_item["candidates"] = [
+                {
+                    "id": f"hint_{hint.get('target')}_{hint.get('line')}",
+                    "file_path": hint.get("file_path"),
+                    "symbol_ref": hint.get("target"),
+                    "snippet": hint.get("snippet") or "",
+                    "line": hint.get("line"),
+                    "score": 0.4,
+                }
+            ]
+        items.append(hint_item)
 
     report = {
         "version": 1,
