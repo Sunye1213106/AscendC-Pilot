@@ -225,6 +225,8 @@ def sync_action_yaml_mirrors(repo: Path) -> list[str]:
                     "output_contract_id",
                     "allowed_write_paths",
                     "forbidden_write_paths",
+                    "allowed_read_paths",
+                    "forbidden_read_paths",
                     "checker",
                     "referee",
                     "generated_from",
@@ -278,15 +280,51 @@ def sync_skill_action_markers(repo: Path) -> list[str]:
     return errors
 
 
+def check_skill_action_markers(repo: Path) -> list[str]:
+    """Read-only: verify source Skill GENERATED ACTIONS markers match Workflow Spec."""
+    errors: list[str] = []
+    sys.path.insert(0, str(repo / "pilot"))
+    from ascendc_pilot.workflows.specs import WORKFLOWS  # noqa: WPS433
+
+    skills = repo / "skills"
+    begin = "<!-- BEGIN GENERATED ACTIONS -->"
+    end = "<!-- END GENERATED ACTIONS -->"
+    for wid, meta in WORKFLOWS.items():
+        if meta.get("reserved") or not meta.get("slash"):
+            continue
+        skill_path = skills / "workflows" / wid / "SKILL.md"
+        if not skill_path.is_file():
+            continue
+        text = skill_path.read_text(encoding="utf-8")
+        if begin not in text or end not in text:
+            errors.append(f"SKILL_ACTION_SET_DRIFT {wid}: missing GENERATED ACTIONS markers")
+            continue
+        block = text.split(begin, 1)[1].split(end, 1)[0]
+        found = set(re.findall(r"(?m)^\|\s*`([a-z0-9_]+)`\s*\|", block))
+        expected = {str(a.get("id")) for a in (meta.get("actions") or []) if isinstance(a, dict)}
+        if found != expected:
+            errors.append(
+                f"SKILL_ACTION_SET_DRIFT {wid}: generated={sorted(found)} spec={sorted(expected)}"
+            )
+    return errors
+
+
+def sync_sources(repo: Path) -> list[str]:
+    """Write path: refresh action.yaml mirrors and Skill action markers from Spec."""
+    errors: list[str] = []
+    errors.extend(sync_action_yaml_mirrors(repo))
+    errors.extend(sync_skill_action_markers(repo))
+    return errors
+
+
 def validate(repo: Path) -> list[str]:
-    """Static validation; returns list of error strings."""
+    """Static validation (read-only); returns list of error strings. Does not write files."""
     paths = _repo_paths(repo)
     skills = paths["skills"]
     prompts = paths["prompts"]
     agents = paths["agents"]
     errors: list[str] = []
-    errors.extend(sync_action_yaml_mirrors(repo))
-    errors.extend(sync_skill_action_markers(repo))
+    errors.extend(check_skill_action_markers(repo))
 
     sys.path.insert(0, str(repo / "pilot"))
     from ascendc_pilot.workflows.specs import WORKFLOWS  # noqa: WPS433
@@ -461,6 +499,8 @@ def _spec_action_yaml(wid: str, action: dict[str, Any], extras: dict[str, Any] |
             "output_contract_id": action.get("output_contract_id"),
             "allowed_write_paths": list(action.get("allowed_write_paths") or []),
             "forbidden_write_paths": list(action.get("forbidden_write_paths") or []),
+            "allowed_read_paths": list(action.get("allowed_read_paths") or []),
+            "forbidden_read_paths": list(action.get("forbidden_read_paths") or []),
             "checker": {"required": bool(action.get("checker_required", True))},
             "referee": {"required": bool(action.get("referee_required", False))},
             "generated_from": "workflow_spec",
@@ -651,6 +691,9 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
     skills = paths["skills"]
     prompts_src = paths["prompts"]
     agents_src = paths["agents"]
+    # Only the default compose target may rewrite source action.yaml mirrors.
+    # Drift checks compose into a temp out_root and must stay read-only on sources.
+    update_source_mirrors = out_root is None
     if out_root is None:
         out_root = paths["out"] / host
     else:
@@ -716,14 +759,20 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
                 continue
             folder = str(mid).split("/", 1)[-1]
             parts = str(mid).split("/", 1)
-            # Overwrite source action.yaml only when this workflow owns the method path.
-            if len(parts) == 2 and parts[0] == wid and yaml is not None:
+            # Overwrite source action.yaml only on real compose (not drift temp trees).
+            if (
+                update_source_mirrors
+                and len(parts) == 2
+                and parts[0] == wid
+                and yaml is not None
+            ):
                 src_adir = skills / "actions" / parts[0] / parts[1]
                 src_adir.mkdir(parents=True, exist_ok=True)
                 mirrored = _spec_action_yaml(wid, a, extras={k: v for k, v in (ayaml or {}).items() if k not in {
                     "id", "workflow_id", "role_id", "agent_id", "execution_mode",
                     "capabilities", "policies", "task_prompt_id", "context_profile_id",
                     "output_contract_id", "allowed_write_paths", "forbidden_write_paths",
+                    "allowed_read_paths", "forbidden_read_paths",
                     "checker", "referee", "generated_from",
                 }})
                 (src_adir / "action.yaml").write_text(
@@ -964,10 +1013,19 @@ def check_generated_drift(repo: Path, *, hosts: list[str] | None = None) -> list
     return errors
 
 
-def compose_all(repo: Path, *, hosts: list[str] | None = None) -> dict[str, Any]:
+def compose_all(
+    repo: Path,
+    *,
+    hosts: list[str] | None = None,
+    sync: bool = True,
+) -> dict[str, Any]:
     skills = repo / "skills"
     hosts_dir = skills / "hosts"
     host_names = hosts or [p.stem for p in hosts_dir.glob("*.yaml")]
+    if sync:
+        sync_errs = sync_sources(repo)
+        if sync_errs:
+            return {"ok": False, "errors": sync_errs}
     errors = validate(repo)
     if errors:
         return {"ok": False, "errors": errors}
@@ -989,8 +1047,34 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", action="append", default=[])
     parser.add_argument("--validate-only", action="store_true")
     parser.add_argument("--validate-generated", action="store_true")
+    parser.add_argument(
+        "--sync",
+        action="store_true",
+        help="Write action.yaml mirrors + Skill markers (and compose generated/ unless --validate-only)",
+    )
+    parser.add_argument(
+        "--sync-only",
+        action="store_true",
+        help="Only sync action.yaml + Skill markers (no compose)",
+    )
     args = parser.parse_args(argv)
     repo = args.repo or Path(__file__).resolve().parents[1]
+    if args.sync_only or (args.sync and args.validate_only):
+        errors = sync_sources(repo)
+        if errors:
+            print({"ok": False, "errors": errors})
+            return 1
+        # After sync, optionally re-validate sources (read-only).
+        if args.validate_only:
+            errors = validate(repo)
+            if args.validate_generated:
+                for host in (args.host or ["opencode", "cursor", "codex"]):
+                    errors.extend(validate_generated(repo, host=host))
+            if errors:
+                print({"ok": False, "errors": errors})
+                return 1
+        print({"ok": True, "synced": True, "errors": []})
+        return 0
     if args.validate_only:
         errors = validate(repo)
         if args.validate_generated:
@@ -1001,7 +1085,8 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print({"ok": True, "errors": []})
         return 0
-    result = compose_all(repo, hosts=args.host or None)
+    # Default compose and --sync both refresh mirrors then regenerate generated/.
+    result = compose_all(repo, hosts=args.host or None, sync=True)
     print(result)
     return 0 if result.get("ok") else 1
 

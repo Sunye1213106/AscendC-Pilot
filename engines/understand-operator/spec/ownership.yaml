@@ -19,7 +19,6 @@ owners:
     may_write:
       - manifest.yaml
       - runs/*/scope/**
-      - runs/*/scope/**
       - cbm/index_meta.json
       - ir/**
       - tiling/**

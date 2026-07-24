@@ -5,13 +5,29 @@ from pathlib import Path
 import pytest
 import yaml
 
-from uo.scripts.prepare_operator import _select_run_id
+from uo.scripts.prepare_operator import _select_run_id, main as prepare_main
 
 
 def _write_manifest(base: Path, run_id: str) -> None:
     base.mkdir(parents=True, exist_ok=True)
     (base / "manifest.yaml").write_text(
         yaml.safe_dump({"current_run_id": run_id}, sort_keys=False),
+        encoding="utf-8",
+    )
+
+
+def _write_pilot_state(repo: Path, run_id: str = "RUN_20260724_091453_aa063141") -> None:
+    state = repo / ".ascendc-pilot" / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "workflow.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "run_id": run_id,
+                "workflow_id": "uo-init",
+                "status": "running",
+            },
+            sort_keys=False,
+        ),
         encoding="utf-8",
     )
 
@@ -81,3 +97,80 @@ def test_reuses_incomplete_pilot_run_id(tmp_path: Path) -> None:
     phase0.mkdir(parents=True)
     (phase0 / "scope_scan.yaml").write_text("status: complete\n", encoding="utf-8")
     assert _select_run_id(base, resume=False, force_new=False) == run_id
+
+
+def test_standalone_forbidden_during_active_pilot_even_with_matching_run(tmp_path: Path) -> None:
+    repo = tmp_path / "op"
+    repo.mkdir()
+    run_id = "RUN_20260724_091453_aa063141"
+    _write_pilot_state(repo, run_id)
+
+    with pytest.raises(SystemExit, match="STANDALONE_FORBIDDEN_DURING_ACTIVE_PILOT"):
+        prepare_main([str(repo), "--op-name", "op", "--standalone", "--run-id", run_id])
+
+
+def test_standalone_forbidden_when_pilot_active(tmp_path: Path) -> None:
+    repo = tmp_path / "op"
+    repo.mkdir()
+    _write_pilot_state(repo, "RUN_20260724_091453_aa063141")
+
+    with pytest.raises(SystemExit, match="STANDALONE_FORBIDDEN_DURING_ACTIVE_PILOT"):
+        prepare_main(
+            [
+                str(repo),
+                "--op-name",
+                "op",
+                "--standalone",
+                "--run-id",
+                "RUN_20260724_091453_aa063141",
+            ]
+        )
+
+
+def test_active_pilot_requires_bound_run_id(tmp_path: Path) -> None:
+    repo = tmp_path / "op"
+    repo.mkdir()
+    _write_pilot_state(repo)
+
+    with pytest.raises(SystemExit, match="PILOT_RUN_ID_REQUIRED"):
+        prepare_main([str(repo), "--op-name", "op"])
+
+
+def test_active_pilot_rejects_mismatched_bound_run_id(tmp_path: Path) -> None:
+    repo = tmp_path / "op"
+    repo.mkdir()
+    _write_pilot_state(repo, "RUN_20260724_091453_aa063141")
+
+    with pytest.raises(SystemExit, match="PILOT_RUN_ID_MISMATCH"):
+        prepare_main([str(repo), "--op-name", "op", "--run-id", "RUN_20260724_999999_bad"])
+
+
+def test_standalone_without_run_id_cannot_mint_uo_run_during_pilot(tmp_path: Path) -> None:
+    repo = tmp_path / "op"
+    repo.mkdir()
+    _write_pilot_state(repo, "RUN_20260724_091453_aa063141")
+
+    with pytest.raises(SystemExit, match="PILOT_RUN_ID_REQUIRED"):
+        prepare_main([str(repo), "--op-name", "op"])
+
+
+def test_standalone_allowed_without_active_pilot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import uo.scripts.prepare_operator as po
+
+    repo = tmp_path / "op"
+    repo.mkdir()
+    monkeypatch.setattr(
+        po,
+        "_resolve_installed_skill_check",
+        lambda *_a, **_k: {
+            "version": 2,
+            "consistent": True,
+            "skill_present": True,
+            "primary_skill": "uo-init",
+            "mismatches": [],
+        },
+    )
+
+    assert po.main([str(repo), "--op-name", "op", "--standalone"]) == 0
+    manifest = yaml.safe_load((repo / ".ascendc-pilot" / "uo" / "manifest.yaml").read_text(encoding="utf-8")) or {}
+    assert str(manifest.get("current_run_id") or "").startswith("UO_RUN_")

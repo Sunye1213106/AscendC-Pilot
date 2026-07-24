@@ -184,12 +184,126 @@ def audit_stats_from_tool_events(events: list[dict[str, Any]]) -> dict[str, int]
     return stats
 
 
+def get_session_relationship(
+    project_root: Path | None,
+    session_id: str,
+) -> dict[str, Any] | None:
+    """Return child→parent relationship when ``session_id`` is a registered child.
+
+    Shape: ``{parent_session_id, registration_id, dispatch_nonce, run_id, action_id}``.
+    """
+    row = get_child_registration(project_root, session_id)
+    if not row:
+        return None
+    return {
+        "parent_session_id": normalize_session_id(str(row.get("parent_session_id") or "")),
+        "registration_id": str(row.get("registration_id") or ""),
+        "dispatch_nonce": str(row.get("dispatch_nonce") or ""),
+        "run_id": str(row.get("run_id") or ""),
+        "action_id": str(row.get("action_id") or ""),
+        "child_session_id": normalize_session_id(session_id),
+    }
+
+
+def resolve_event_session_ownership(
+    project_root: Path | None,
+    event_session_id: str,
+) -> dict[str, Any]:
+    """Resolve parent/child for a tool-hook session id via the relationship registry.
+
+    - Registered child → ``child_session_id=current``, ``parent`` from registry.
+    - Otherwise → ``parent_session_id=current``, ``child_session_id=""``.
+    """
+    sid = normalize_session_id(event_session_id)
+    if not sid:
+        return {
+            "parent_session_id": "",
+            "child_session_id": "",
+            "relationship": None,
+            "is_child": False,
+        }
+    rel = get_session_relationship(project_root, sid)
+    if rel:
+        return {
+            "parent_session_id": str(rel.get("parent_session_id") or ""),
+            "child_session_id": sid,
+            "relationship": rel,
+            "is_child": True,
+        }
+    return {
+        "parent_session_id": sid,
+        "child_session_id": "",
+        "relationship": None,
+        "is_child": False,
+    }
+
+
+def backfill_tool_events_by_session(
+    project_root: Path | None,
+    *,
+    child_session_id: str,
+    parent_session_id: str,
+    registration_id: str = "",
+    dispatch_nonce: str = "",
+    action_id: str = "",
+) -> dict[str, Any]:
+    """Backfill tool events by exact ``event_session_id`` match (never by action/time).
+
+    Events recorded while the child id was not yet registered carry
+    ``event_session_id=<child>`` with empty ``child_session_id``. After Task
+    returns and the relationship is known, rewrite those rows deterministically.
+    """
+    root = resolve_project_root(project_root)
+    child = normalize_session_id(child_session_id)
+    parent = normalize_session_id(parent_session_id)
+    if not child:
+        return {"ok": False, "error": "missing_child_session_id", "updated": 0}
+    path = _tool_events_path(root)
+    if not path.is_file():
+        return {"ok": True, "updated": 0, "child_session_id": child}
+    lines = path.read_text(encoding="utf-8").splitlines()
+    updated = 0
+    out_lines: list[str] = []
+    for line in lines:
+        raw = line.strip()
+        if not raw:
+            continue
+        try:
+            row = json.loads(raw)
+        except Exception:  # noqa: BLE001
+            out_lines.append(line)
+            continue
+        if not isinstance(row, dict):
+            out_lines.append(line)
+            continue
+        ev_sid = normalize_session_id(str(row.get("event_session_id") or ""))
+        if ev_sid != child:
+            out_lines.append(json.dumps(row, ensure_ascii=False, default=str))
+            continue
+        # Exact session id match only.
+        row["child_session_id"] = child
+        if parent:
+            row["parent_session_id"] = parent
+        if registration_id and not row.get("registration_id"):
+            row["registration_id"] = registration_id
+        if dispatch_nonce and not row.get("dispatch_nonce"):
+            row["dispatch_nonce"] = dispatch_nonce
+        if action_id and not row.get("action_id"):
+            row["action_id"] = action_id
+        row["backfilled_at"] = _now()
+        updated += 1
+        out_lines.append(json.dumps(row, ensure_ascii=False, default=str))
+    path.write_text("\n".join(out_lines) + ("\n" if out_lines else ""), encoding="utf-8")
+    return {"ok": True, "updated": updated, "child_session_id": child, "parent_session_id": parent}
+
+
 def record_tool_event(
     project_root: Path | None,
     *,
     tool: str,
     parent_session_id: str = "",
     child_session_id: str = "",
+    event_session_id: str = "",
     action_id: str = "",
     actor_id: str = "",
     path: str = "",
@@ -202,11 +316,44 @@ def record_tool_event(
     if not is_enabled(root):
         return {"ok": False, "skipped": True, "reason": "debug_disabled"}
     ds = load_debug_session(root)
+    event_sid = (
+        normalize_session_id(event_session_id)
+        or normalize_session_id(child_session_id)
+        or normalize_session_id(parent_session_id)
+    )
+    explicit_child = normalize_session_id(child_session_id)
+    explicit_parent = normalize_session_id(parent_session_id)
+
+    # Prefer relationship registry when the executing session is a known child.
+    ownership = resolve_event_session_ownership(root, event_sid) if event_sid else None
+    if ownership and ownership.get("is_child"):
+        parent = str(ownership.get("parent_session_id") or explicit_parent or "")
+        child = str(ownership.get("child_session_id") or "")
+    elif explicit_child:
+        # Caller already knows child ownership (e.g. post-backfill tests).
+        parent = explicit_parent or str(ds.get("parent_session_id") or "")
+        child = explicit_child
+    else:
+        # Host, or not-yet-registered child (backfill by exact event_session_id later).
+        ds_parent = normalize_session_id(str(ds.get("parent_session_id") or ""))
+        if event_sid and ds_parent and event_sid != ds_parent:
+            # Executing session ≠ known host → likely child tools mid-Task.
+            # Keep child empty; prefer real host as parent (TS may have echoed event_sid).
+            if explicit_parent and explicit_parent != event_sid:
+                parent = explicit_parent
+            else:
+                parent = ds_parent
+            child = ""
+        else:
+            parent = explicit_parent or event_sid or ds_parent
+            child = ""
+
     entry = {
         "at": _now(),
         "tool": tool,
-        "parent_session_id": normalize_session_id(parent_session_id) or ds.get("parent_session_id") or "",
-        "child_session_id": normalize_session_id(child_session_id),
+        "event_session_id": event_sid,
+        "parent_session_id": parent,
+        "child_session_id": child,
         "action_id": action_id,
         "actor_id": actor_id,
         "path": path[:500],
@@ -309,6 +456,9 @@ def patch_child_session_id(
                 target = row
                 break
     if target is None:
+        # Never use "latest pending by parent+action". Only bind when exactly one
+        # unmatched registration exists (non-concurrent). Concurrent same action
+        # requires registration_id or dispatch_nonce.
         candidates = [
             r
             for r in reg["children"]
@@ -333,7 +483,21 @@ def patch_child_session_id(
     if task_result_text:
         target["task_result_text"] = str(task_result_text)[:50_000]
     _save_children_registry(root, reg)
-    return {"ok": True, "registration": target}
+    bound_parent = normalize_session_id(str(target.get("parent_session_id") or "")) or parent
+    backfill = backfill_tool_events_by_session(
+        root,
+        child_session_id=child,
+        parent_session_id=bound_parent,
+        registration_id=str(target.get("registration_id") or ""),
+        dispatch_nonce=str(target.get("dispatch_nonce") or ""),
+        action_id=str(target.get("action_id") or action_id or ""),
+    )
+    return {
+        "ok": True,
+        "registration": target,
+        "relationship": get_session_relationship(root, child),
+        "backfill": backfill,
+    }
 
 
 def get_child_registration(project_root: Path | None, child_session_id: str) -> dict[str, Any] | None:

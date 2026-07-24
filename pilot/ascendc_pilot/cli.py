@@ -246,6 +246,11 @@ def main(argv: list[str] | None = None) -> int:
     p_dbg_ev.add_argument("--tool", required=True)
     p_dbg_ev.add_argument("--parent-session-id", default="")
     p_dbg_ev.add_argument("--child-session-id", default="")
+    p_dbg_ev.add_argument(
+        "--event-session-id",
+        default="",
+        help="Executing session id from the hook (used for ownership + backfill)",
+    )
     p_dbg_ev.add_argument("--action-id", default="")
     p_dbg_ev.add_argument("--actor-id", default="")
     p_dbg_ev.add_argument("--path", default="")
@@ -725,6 +730,7 @@ def _cmd_debug(args: Any) -> int:
             tool=str(args.tool),
             parent_session_id=str(getattr(args, "parent_session_id", "") or ""),
             child_session_id=str(getattr(args, "child_session_id", "") or ""),
+            event_session_id=str(getattr(args, "event_session_id", "") or ""),
             action_id=str(getattr(args, "action_id", "") or ""),
             actor_id=str(getattr(args, "actor_id", "") or ""),
             path=str(getattr(args, "path", "") or ""),

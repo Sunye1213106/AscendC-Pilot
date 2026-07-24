@@ -74,6 +74,33 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     },
 }
 
+# Action-precise read paths (lease allow-list). Empty → no Action-level allow filter.
+# Agent read_scopes are ceilings; lease must be a subset when non-empty.
+ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
+    "uo-init": {
+        "extract_plan": [
+            "uo/ir/extract_plan_candidates.yaml",
+            "uo/ir/entrypoint_graph.yaml",
+        ],
+        "adjudicate_llm_tasks": [
+            "uo/ir/llm_tasks.yaml",
+            "uo/ir/score_report_pre.yaml",
+            "uo/ir/score_report_post.yaml",
+        ],
+    },
+}
+
+# Action-precise forbidden reads (deny first, before allow-list).
+ACTION_FORBIDDEN_READ_PATHS: dict[str, dict[str, list[str]]] = {
+    "uo-init": {
+        "extract_plan": [
+            "uo/ir/llm_tasks.yaml",
+            "uo/ir/semantic_patches.yaml",
+            "uo/ir/semantic_resolution_ledger.yaml",
+        ],
+    },
+}
+
 # Canonical producer staging relative to action session dir.
 STAGING_OUTPUT_NAME = "staging/output.yaml"
 
@@ -101,6 +128,16 @@ def infer_execution_mode(
 
 def action_write_paths(workflow_id: str, action_id: str, *, run_id: str = "") -> list[str]:
     rows = (ACTION_WRITE_PATHS.get(workflow_id) or {}).get(action_id) or []
+    return [expand_path_template(p, run_id=run_id) for p in rows]
+
+
+def action_read_paths(workflow_id: str, action_id: str, *, run_id: str = "") -> list[str]:
+    rows = (ACTION_READ_PATHS.get(workflow_id) or {}).get(action_id) or []
+    return [expand_path_template(p, run_id=run_id) for p in rows]
+
+
+def action_forbidden_read_paths(workflow_id: str, action_id: str, *, run_id: str = "") -> list[str]:
+    rows = (ACTION_FORBIDDEN_READ_PATHS.get(workflow_id) or {}).get(action_id) or []
     return [expand_path_template(p, run_id=run_id) for p in rows]
 
 
@@ -230,6 +267,67 @@ def path_matches_patterns(rel_posix: str, patterns: list[str]) -> bool:
     return False
 
 
+def _pattern_prefix(pattern: str) -> str:
+    """Literal directory prefix of a path pattern (before first glob metachar)."""
+    norm = str(pattern or "").replace("\\", "/").lstrip("/")
+    parts: list[str] = []
+    for part in norm.split("/"):
+        if any(ch in part for ch in "*?["):
+            break
+        parts.append(part)
+    return "/".join(parts)
+
+
+def path_within_scopes(path_or_pattern: str, scopes: list[str], *, run_id: str = "_RUN_") -> bool:
+    """True if a concrete path or glob pattern is covered by ceiling scopes.
+
+    Used for Action ⊆ Agent ⊆ Workflow ownership audits.
+    """
+    if not scopes:
+        return False
+    raw = expand_path_template(str(path_or_pattern or ""), run_id=run_id or "_RUN_")
+    rel = raw.replace("\\", "/").lstrip("/")
+    ceilings = [
+        expand_path_template(str(s or ""), run_id=run_id or "_RUN_").replace("\\", "/").lstrip("/")
+        for s in scopes
+        if str(s or "").strip()
+    ]
+    if not ceilings:
+        return False
+    # Concrete file / already-expanded path.
+    if "*" not in rel and "?" not in rel and "[" not in rel:
+        return path_matches_patterns(rel, ceilings)
+    # Pattern ⊆ ceiling: prefix of the narrower pattern must match a ceiling.
+    prefix = _pattern_prefix(rel)
+    if prefix and path_matches_patterns(prefix, ceilings):
+        return True
+    for c in ceilings:
+        c_prefix = _pattern_prefix(c)
+        if not c_prefix:
+            # Broad ``**`` / ``*`` ceiling.
+            if c in {"**", "*", "**/**"}:
+                return True
+            continue
+        if prefix == c_prefix or (prefix and prefix.startswith(c_prefix + "/")):
+            return True
+        if c.endswith("/**") and prefix and (prefix == c[:-3] or prefix.startswith(c[:-3] + "/")):
+            return True
+    return False
+
+
+def write_roots_as_scopes(write_roots: list[str]) -> list[str]:
+    """Expand workflow write_roots into patterns usable by ``path_within_scopes``."""
+    out: list[str] = []
+    for root in write_roots or []:
+        r = str(root or "").replace("\\", "/").strip("/")
+        if not r:
+            continue
+        out.append(r)
+        if not r.endswith("/**"):
+            out.append(f"{r}/**")
+    return out
+
+
 def action_session_id(run_id: str, action_id: str, prepare_nonce: str) -> str:
     raw = f"{run_id}:{action_id}:{prepare_nonce}"
     return f"ACTION_SESSION_{hashlib.sha256(raw.encode('utf-8')).hexdigest()[:16]}"
@@ -244,6 +342,8 @@ def staging_output_path(session_dir: Path) -> Path:
 
 
 __all__ = [
+    "ACTION_FORBIDDEN_READ_PATHS",
+    "ACTION_READ_PATHS",
     "ACTION_WRITE_PATHS",
     "EXECUTION_DETERMINISTIC",
     "EXECUTION_MODES",
@@ -251,6 +351,8 @@ __all__ = [
     "EXECUTION_SUBAGENT",
     "PRIMARY_AGENT_ID",
     "STAGING_OUTPUT_NAME",
+    "action_forbidden_read_paths",
+    "action_read_paths",
     "action_session_id",
     "action_write_paths",
     "artifact_identity_from_session",
@@ -260,8 +362,10 @@ __all__ = [
     "infer_execution_mode",
     "inject_trusted_identity",
     "path_matches_patterns",
+    "path_within_scopes",
     "prompt_has_unresolved",
     "staging_dir",
     "staging_output_path",
     "unresolved_placeholders",
+    "write_roots_as_scopes",
 ]

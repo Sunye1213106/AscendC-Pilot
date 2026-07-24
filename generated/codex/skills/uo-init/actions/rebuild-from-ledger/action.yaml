@@ -20,6 +20,8 @@ output_contract_id: rebuild-ledger-v1
 allowed_write_paths:
 - uo/ir/**
 forbidden_write_paths: []
+allowed_read_paths: []
+forbidden_read_paths: []
 checker:
   required: true
 referee:

@@ -18,6 +18,12 @@ SEMANTIC_PATCH_UNCONSUMED = "SEMANTIC_PATCH_UNCONSUMED"
 SEMANTIC_PATCH_AMBIGUOUS = "SEMANTIC_PATCH_AMBIGUOUS"
 SEMANTIC_PATCH_INVALID = "SEMANTIC_PATCH_INVALID"
 LEDGER_TARGET_TYPE_MISMATCH = "LEDGER_TARGET_TYPE_MISMATCH"
+TYPED_PATCH_PAYLOAD_INCOMPLETE = "TYPED_PATCH_PAYLOAD_INCOMPLETE"
+TYPED_PATCH_ENTRYPOINT_NODE_INCOMPLETE = "TYPED_PATCH_ENTRYPOINT_NODE_INCOMPLETE"
+TYPED_PATCH_ENTRYPOINT_DISPATCH_INCOMPLETE = "TYPED_PATCH_ENTRYPOINT_DISPATCH_INCOMPLETE"
+TYPED_PATCH_CALL_EDGE_INCOMPLETE = "TYPED_PATCH_CALL_EDGE_INCOMPLETE"
+TYPED_PATCH_TILINGDATA_BRIDGE_INCOMPLETE = "TYPED_PATCH_TILINGDATA_BRIDGE_INCOMPLETE"
+TYPED_PATCH_TEMPLATE_INSTANCE_INCOMPLETE = "TYPED_PATCH_TEMPLATE_INSTANCE_INCOMPLETE"
 
 TYPED_PATCH_TYPES = frozenset(
     {
@@ -98,16 +104,22 @@ def validate_typed_patch(patch: dict[str, Any], *, patch_type: str) -> dict[str,
     payload = extract_typed_payload(patch, ptype)
     required = TYPED_PAYLOAD_FIELDS.get(ptype) or ()
 
+    def _incomplete(code: str, detail: str) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "error": code,
+            "code": code,
+            "detail": detail,
+        }
+
     if ptype == "entrypoint_node_resolution":
         node_id = payload.get("node_id") or patch.get("edge_id")
         cand = payload.get("candidate_id")
         if not _nonempty(node_id) and not _nonempty(cand):
-            return {
-                "ok": False,
-                "error": SEMANTIC_PATCH_INVALID,
-                "code": SEMANTIC_PATCH_INVALID,
-                "detail": "entrypoint_node_resolution requires node_id or candidate_id",
-            }
+            return _incomplete(
+                TYPED_PATCH_ENTRYPOINT_NODE_INCOMPLETE,
+                "entrypoint_node_resolution requires node_id or candidate_id",
+            )
         if node_id:
             payload["node_id"] = str(node_id)
         if cand:
@@ -119,12 +131,10 @@ def validate_typed_patch(patch: dict[str, Any], *, patch_type: str) -> dict[str,
         src = payload.get("source_node_id")
         tgt = payload.get("target_node_id")
         if not _nonempty(src) or not _nonempty(tgt):
-            return {
-                "ok": False,
-                "error": SEMANTIC_PATCH_INVALID,
-                "code": SEMANTIC_PATCH_INVALID,
-                "detail": "entrypoint_dispatch_resolution requires source_node_id and target_node_id",
-            }
+            return _incomplete(
+                TYPED_PATCH_ENTRYPOINT_DISPATCH_INCOMPLETE,
+                "entrypoint_dispatch_resolution requires source_node_id and target_node_id",
+            )
         if _is_candidate_node_id(src) or _is_candidate_node_id(tgt):
             # Allowed only as references to candidate window identities that map to graph nodes.
             pass
@@ -138,19 +148,15 @@ def validate_typed_patch(patch: dict[str, Any], *, patch_type: str) -> dict[str,
         callee = payload.get("callee_function_id")
         callsite = payload.get("callsite") if isinstance(payload.get("callsite"), dict) else {}
         if not _nonempty(caller) or not _nonempty(callee):
-            return {
-                "ok": False,
-                "error": SEMANTIC_PATCH_INVALID,
-                "code": SEMANTIC_PATCH_INVALID,
-                "detail": "call_edge_resolution requires caller_function_id and callee_function_id",
-            }
+            return _incomplete(
+                TYPED_PATCH_CALL_EDGE_INCOMPLETE,
+                "call_edge_resolution requires caller_function_id and callee_function_id",
+            )
         if not _nonempty(callsite.get("file_path")) or not callsite.get("line"):
-            return {
-                "ok": False,
-                "error": SEMANTIC_PATCH_INVALID,
-                "code": SEMANTIC_PATCH_INVALID,
-                "detail": "call_edge_resolution requires callsite.file_path and callsite.line",
-            }
+            return _incomplete(
+                TYPED_PATCH_CALL_EDGE_INCOMPLETE,
+                "call_edge_resolution requires callsite.file_path and callsite.line",
+            )
         payload["caller_function_id"] = str(caller)
         payload["callee_function_id"] = str(callee)
         payload["callsite"] = {
@@ -164,23 +170,19 @@ def validate_typed_patch(patch: dict[str, Any], *, patch_type: str) -> dict[str,
         host = payload.get("host_field_id")
         kern = payload.get("kernel_field_id")
         if not _nonempty(host) or not _nonempty(kern):
-            return {
-                "ok": False,
-                "error": SEMANTIC_PATCH_INVALID,
-                "code": SEMANTIC_PATCH_INVALID,
-                "detail": "tilingdata_bridge_resolution requires host_field_id and kernel_field_id",
-            }
+            return _incomplete(
+                TYPED_PATCH_TILINGDATA_BRIDGE_INCOMPLETE,
+                "tilingdata_bridge_resolution requires host_field_id and kernel_field_id",
+            )
         if not (
             _nonempty(payload.get("owning_type"))
             and _nonempty(payload.get("field_path"))
             and _nonempty(payload.get("unit_id"))
         ):
-            return {
-                "ok": False,
-                "error": SEMANTIC_PATCH_INVALID,
-                "code": SEMANTIC_PATCH_INVALID,
-                "detail": "tilingdata_bridge_resolution requires owning_type, field_path, unit_id",
-            }
+            return _incomplete(
+                TYPED_PATCH_TILINGDATA_BRIDGE_INCOMPLETE,
+                "tilingdata_bridge_resolution requires owning_type, field_path, unit_id",
+            )
         payload["host_field_id"] = str(host)
         payload["kernel_field_id"] = str(kern)
         payload.setdefault("relation", "maps_tilingdata")
@@ -189,24 +191,17 @@ def validate_typed_patch(patch: dict[str, Any], *, patch_type: str) -> dict[str,
     if ptype == "template_instance_resolution":
         for key in ("tilingkey_value_id", "template_instance_id", "kernel_entry_id"):
             if not _nonempty(payload.get(key)):
-                return {
-                    "ok": False,
-                    "error": SEMANTIC_PATCH_INVALID,
-                    "code": SEMANTIC_PATCH_INVALID,
-                    "detail": f"template_instance_resolution requires {key}",
-                }
+                return _incomplete(
+                    TYPED_PATCH_TEMPLATE_INSTANCE_INCOMPLETE,
+                    f"template_instance_resolution requires {key}",
+                )
             payload[key] = str(payload[key])
         return {"ok": True, "payload": payload}
 
     # Fallback: ensure required keys present when declared.
     missing = [k for k in required if not _nonempty(payload.get(k))]
     if missing:
-        return {
-            "ok": False,
-            "error": SEMANTIC_PATCH_INVALID,
-            "code": SEMANTIC_PATCH_INVALID,
-            "detail": f"missing fields: {missing}",
-        }
+        return _incomplete(TYPED_PATCH_PAYLOAD_INCOMPLETE, f"missing fields: {missing}")
     return {"ok": True, "payload": payload}
 
 

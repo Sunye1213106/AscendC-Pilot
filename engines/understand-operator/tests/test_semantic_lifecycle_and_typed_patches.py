@@ -25,6 +25,8 @@ from uo.scripts.semantic_resolution_ledger import (
     load_ledger,
 )
 
+RUN_TEST = "RUN_TEST"
+
 
 def _uo(tmp_path: Path) -> Path:
     uo = tmp_path / "uo"
@@ -32,9 +34,21 @@ def _uo(tmp_path: Path) -> Path:
     return uo
 
 
+def _tasks_doc(tasks: list[dict[str, Any]], *, total_semantic_batches: int = 0) -> dict[str, Any]:
+    return {
+        "version": 1,
+        "artifact_identity": {"run_id": RUN_TEST, "workflow_id": "uo-init"},
+        "active_run_id": RUN_TEST,
+        "total_semantic_batches": total_semantic_batches,
+        "tasks": tasks,
+    }
+
+
 def _open_task(tid: str = "TASK_life", **extra: Any) -> dict[str, Any]:
     row = {
         "task_id": tid,
+        "run_id": RUN_TEST,
+        "workflow_id": "uo-init",
         "status": "open",
         "task_status": "open",
         "severity": "blocking",
@@ -57,7 +71,7 @@ def test_apply_sets_pending_materialization_not_closed(tmp_path: Path) -> None:
     uo = _uo(tmp_path)
     write_yaml(
         uo / "ir" / "llm_tasks.yaml",
-        {"version": 1, "total_semantic_batches": 0, "tasks": [_open_task()]},
+        _tasks_doc([_open_task()]),
     )
     ok = apply_task_patch(
         uo,
@@ -74,6 +88,7 @@ def test_apply_sets_pending_materialization_not_closed(tmp_path: Path) -> None:
             "target_node_id": "n_tgt",
             "relation": "dispatches_to",
         },
+        current_run_id=RUN_TEST,
         current_source_hash="snap1",
     )
     assert ok["ok"] is True
@@ -82,7 +97,7 @@ def test_apply_sets_pending_materialization_not_closed(tmp_path: Path) -> None:
     assert task["semantic_status"] == "pending_materialization"
     assert task["blocking"] is True
     assert task["semantic_status"] != "closed"
-    assert len(blocking_gap_tasks(uo)) == 1
+    assert len(blocking_gap_tasks(uo, current_run_id=RUN_TEST)) == 1
     ledger = load_ledger(uo)
     assert ledger["semantic_patches"][0]["apply_status"] == "pending"
     assert ledger["semantic_patches"][0]["source_node_id"] == "n_src"
@@ -93,9 +108,8 @@ def test_materialized_closes_task(tmp_path: Path) -> None:
     uo = _uo(tmp_path)
     write_yaml(
         uo / "ir" / "llm_tasks.yaml",
-        {
-            "version": 1,
-            "tasks": [
+        _tasks_doc(
+            [
                 {
                     **_open_task(),
                     "status": "pending_materialization",
@@ -103,13 +117,16 @@ def test_materialized_closes_task(tmp_path: Path) -> None:
                     "semantic_status": "pending_materialization",
                 }
             ],
-        },
+        ),
     )
     ledger = {
         "version": 1,
         "semantic_patches": [
             {
                 "task_id": "TASK_life",
+                "run_id": RUN_TEST,
+                "control_action_id": "adjudicate_llm_tasks",
+                "actor_id": "uo-semantic-resolve",
                 "status": "active",
                 "action": "accept_edge",
                 "patch_type": "edge_resolution",
@@ -118,7 +135,7 @@ def test_materialized_closes_task(tmp_path: Path) -> None:
             }
         ],
     }
-    sync = sync_tasks_from_materialization(uo, ledger)
+    sync = sync_tasks_from_materialization(uo, ledger, current_run_id=RUN_TEST)
     task = sync["doc"]["tasks"][0]
     assert task["task_status"] == "resolved"
     assert task["semantic_status"] == "closed"
@@ -129,9 +146,8 @@ def test_unconsumed_reopens_blocking(tmp_path: Path) -> None:
     uo = _uo(tmp_path)
     write_yaml(
         uo / "ir" / "llm_tasks.yaml",
-        {
-            "version": 1,
-            "tasks": [
+        _tasks_doc(
+            [
                 {
                     **_open_task(),
                     "status": "pending_materialization",
@@ -139,13 +155,16 @@ def test_unconsumed_reopens_blocking(tmp_path: Path) -> None:
                     "semantic_status": "pending_materialization",
                 }
             ],
-        },
+        ),
     )
     ledger = {
         "version": 1,
         "semantic_patches": [
             {
                 "task_id": "TASK_life",
+                "run_id": RUN_TEST,
+                "control_action_id": "adjudicate_llm_tasks",
+                "actor_id": "uo-semantic-resolve",
                 "status": "active",
                 "action": "accept_edge",
                 "patch_type": "edge_resolution",
@@ -155,24 +174,22 @@ def test_unconsumed_reopens_blocking(tmp_path: Path) -> None:
             }
         ],
     }
-    sync = sync_tasks_from_materialization(uo, ledger)
+    sync = sync_tasks_from_materialization(uo, ledger, current_run_id=RUN_TEST)
     write_yaml(uo / "ir" / "llm_tasks.yaml", sync["doc"])
     task = load_llm_tasks(uo)["tasks"][0]
     assert task["task_status"] == "rework_required"
     assert task["semantic_status"] == "unresolved"
     assert task["blocking"] is True
     assert task["failure_code"] == "SEMANTIC_PATCH_UNCONSUMED"
-    assert len(blocking_gap_tasks(uo)) == 1
+    assert len(blocking_gap_tasks(uo, current_run_id=RUN_TEST)) == 1
 
 
 def test_mark_missing_never_closes_gap(tmp_path: Path) -> None:
     uo = _uo(tmp_path)
     write_yaml(
         uo / "ir" / "llm_tasks.yaml",
-        {
-            "version": 1,
-            "total_semantic_batches": 0,
-            "tasks": [
+        _tasks_doc(
+            [
                 {
                     **_open_task("TASK_mm"),
                     "type": "mark_missing",
@@ -181,7 +198,7 @@ def test_mark_missing_never_closes_gap(tmp_path: Path) -> None:
                     "candidate_set_hash": "empty",
                 }
             ],
-        },
+        ),
     )
     ok = apply_task_patch(
         uo,
@@ -191,6 +208,7 @@ def test_mark_missing_never_closes_gap(tmp_path: Path) -> None:
             "source_snapshot_hash": "snap1",
             "candidate_set_hash": "empty",
         },
+        current_run_id=RUN_TEST,
         current_source_hash="snap1",
     )
     assert ok["ok"] is True
@@ -198,7 +216,7 @@ def test_mark_missing_never_closes_gap(tmp_path: Path) -> None:
     assert task["task_status"] == "adjudicated"
     assert task["semantic_status"] == "unresolved"
     assert task["blocking"] is True
-    assert len(blocking_gap_tasks(uo)) == 1
+    assert len(blocking_gap_tasks(uo, current_run_id=RUN_TEST)) == 1
 
 
 def test_typed_entrypoint_dispatch_materializes_edge() -> None:
@@ -211,6 +229,7 @@ def test_typed_entrypoint_dispatch_materializes_edge() -> None:
     }
     patch = {
         "task_id": "T1",
+        "run_id": RUN_TEST,
         "patch_type": "entrypoint_dispatch_resolution",
         "action": "accept_edge",
         "source_node_id": "n_src",
@@ -243,6 +262,7 @@ def test_typed_tilingdata_bridge_creates_maps_edge() -> None:
     }
     patch = {
         "task_id": "T_bridge",
+        "run_id": RUN_TEST,
         "patch_type": "tilingdata_bridge_resolution",
         "action": "accept_edge",
         "host_field_id": "HF_fieldA",
@@ -291,6 +311,7 @@ def test_typed_call_edge_and_template_and_node() -> None:
     }
     call_patch = {
         "task_id": "T_call",
+        "run_id": RUN_TEST,
         "patch_type": "call_edge_resolution",
         "caller_function_id": "fn_caller",
         "callee_function_id": "fn_callee",
@@ -303,6 +324,7 @@ def test_typed_call_edge_and_template_and_node() -> None:
 
     tpl_patch = {
         "task_id": "T_tpl",
+        "run_id": RUN_TEST,
         "patch_type": "template_instance_resolution",
         "tilingkey_value_id": "tk_v",
         "template_instance_id": "tpl_i",
@@ -315,6 +337,7 @@ def test_typed_call_edge_and_template_and_node() -> None:
 
     node_patch = {
         "task_id": "T_node",
+        "run_id": RUN_TEST,
         "patch_type": "entrypoint_node_resolution",
         "node_id": "node_ep",
         "status": "active",
@@ -326,8 +349,11 @@ def test_typed_call_edge_and_template_and_node() -> None:
 
 def test_semantic_tx_rolls_back_when_second_write_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     uo = _uo(tmp_path)
-    write_yaml(uo / "ir" / "llm_tasks.yaml", {"version": 1, "tasks": [_open_task()], "total_semantic_batches": 0})
-    write_yaml(uo / "ir" / "semantic_resolution_ledger.yaml", {"version": 1, "semantic_patches": []})
+    write_yaml(uo / "ir" / "llm_tasks.yaml", _tasks_doc([_open_task()]))
+    write_yaml(
+        uo / "ir" / "semantic_resolution_ledger.yaml",
+        {"version": 1, "artifact_identity": {"run_id": RUN_TEST, "workflow_id": "uo-init"}, "semantic_patches": []},
+    )
     before_tasks = (uo / "ir" / "llm_tasks.yaml").read_text(encoding="utf-8")
     before_ledger = (uo / "ir" / "semantic_resolution_ledger.yaml").read_text(encoding="utf-8")
 
@@ -346,8 +372,19 @@ def test_semantic_tx_rolls_back_when_second_write_fails(tmp_path: Path, monkeypa
     with pytest.raises(OSError):
         commit_semantic_artifacts(
             uo,
-            llm_tasks={"version": 1, "tasks": [{"task_id": "CHANGED"}], "total_semantic_batches": 9},
-            ledger={"version": 1, "semantic_patches": [{"task_id": "CHANGED"}]},
+            llm_tasks=_tasks_doc([{"task_id": "CHANGED", "run_id": RUN_TEST}], total_semantic_batches=9),
+            ledger={
+                "version": 1,
+                "artifact_identity": {"run_id": RUN_TEST, "workflow_id": "uo-init"},
+                "semantic_patches": [
+                    {
+                        "task_id": "CHANGED",
+                        "run_id": RUN_TEST,
+                        "control_action_id": "adjudicate_llm_tasks",
+                        "actor_id": "uo-semantic-resolve",
+                    }
+                ],
+            },
             apply_report={"patches": [{"task_id": "CHANGED"}]},
         )
 
@@ -369,6 +406,9 @@ def test_apply_ledger_to_layers_does_not_only_upgrade_confidence() -> None:
         "semantic_patches": [
             {
                 "task_id": "T",
+                "run_id": RUN_TEST,
+                "control_action_id": "adjudicate_llm_tasks",
+                "actor_id": "uo-semantic-resolve",
                 "status": "active",
                 "action": "accept_edge",
                 "patch_type": "entrypoint_dispatch_resolution",

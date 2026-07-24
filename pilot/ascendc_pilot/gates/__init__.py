@@ -968,7 +968,31 @@ def gate_detect_score_post(uo: Path) -> dict[str, Any]:
     }
 
 
-def gate_adjudicate_llm_tasks(uo: Path) -> dict[str, Any]:
+
+def _current_run_id_for_uo(uo: Path, project_root: Path | None = None) -> str:
+    """Resolve current run id: Pilot state first, then UO manifest."""
+    if project_root is not None:
+        try:
+            from ascendc_pilot.state import load_state
+
+            st = load_state(project_root) or {}
+            rid = str(st.get("run_id") or "").strip()
+            if rid:
+                return rid
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        import yaml
+
+        raw = yaml.safe_load((uo / "manifest.yaml").read_text(encoding="utf-8")) or {}
+        if isinstance(raw, dict):
+            return str(raw.get("current_run_id") or "").strip()
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
+def gate_adjudicate_llm_tasks(uo: Path, *, current_run_id: str = "", project_root: Path | None = None) -> dict[str, Any]:
     """Producer patches required when open blocking tasks need LLM (not auto mark_missing).
 
     Uses the same validate_semantic_patch_set core as Apply (validate-only, no mutate).
@@ -976,7 +1000,15 @@ def gate_adjudicate_llm_tasks(uo: Path) -> dict[str, Any]:
     from uo.scripts.evidence_score import _source_snapshot_hash
     from uo.scripts.llm_tasks import can_auto_mark_missing, open_blocking_tasks, validate_semantic_patch_set
 
-    open_blocking = open_blocking_tasks(uo)
+    run_id = str(current_run_id or "").strip() or _current_run_id_for_uo(uo, project_root)
+    if not run_id:
+        return {
+            "gate": "adjudicate_llm_tasks",
+            "ok": False,
+            "message": "SEMANTIC_DOCUMENT_RUN_ID_MISSING",
+            "error": "SEMANTIC_DOCUMENT_RUN_ID_MISSING",
+        }
+    open_blocking = open_blocking_tasks(uo, current_run_id=run_id)
     if not open_blocking:
         return {
             "gate": "adjudicate_llm_tasks",
@@ -1008,7 +1040,8 @@ def gate_adjudicate_llm_tasks(uo: Path) -> dict[str, Any]:
     checked = validate_semantic_patch_set(
         uo,
         [p for p in raw if isinstance(p, dict)],
-        _source_snapshot_hash(uo),
+        _source_snapshot_hash(uo, run_id=run_id),
+        current_run_id=run_id,
         require_full_coverage=True,
         mutate=False,
     )
@@ -1031,7 +1064,7 @@ def gate_adjudicate_llm_tasks(uo: Path) -> dict[str, Any]:
     }
 
 
-def gate_apply_semantic_patch(uo: Path) -> dict[str, Any]:
+def gate_apply_semantic_patch(uo: Path, *, current_run_id: str = "", project_root: Path | None = None) -> dict[str, Any]:
     """Post-apply: blocking tasks cleared, or pending patches still valid to apply."""
     from uo.scripts.evidence_score import _source_snapshot_hash
     from uo.scripts.llm_tasks import (
@@ -1040,7 +1073,15 @@ def gate_apply_semantic_patch(uo: Path) -> dict[str, Any]:
         validate_semantic_patch_set,
     )
 
-    open_blocking = open_blocking_tasks(uo)
+    run_id = str(current_run_id or "").strip() or _current_run_id_for_uo(uo, project_root)
+    if not run_id:
+        return {
+            "gate": "apply_semantic_patch",
+            "ok": False,
+            "message": "SEMANTIC_DOCUMENT_RUN_ID_MISSING",
+            "error": "SEMANTIC_DOCUMENT_RUN_ID_MISSING",
+        }
+    open_blocking = open_blocking_tasks(uo, current_run_id=run_id)
     if not open_blocking:
         return {
             "gate": "apply_semantic_patch",
@@ -1052,7 +1093,9 @@ def gate_apply_semantic_patch(uo: Path) -> dict[str, Any]:
     patches_path = uo / "ir" / "semantic_patches.yaml"
     patches_doc = _load(patches_path) if patches_path.is_file() else None
     resolved = resolve_patches_for_apply(
-        uo, patches_doc=patches_doc if isinstance(patches_doc, dict) else None
+        uo,
+        current_run_id=run_id,
+        patches_doc=patches_doc if isinstance(patches_doc, dict) else None,
     )
     if not resolved.get("ok"):
         return {
@@ -1074,7 +1117,8 @@ def gate_apply_semantic_patch(uo: Path) -> dict[str, Any]:
     checked = validate_semantic_patch_set(
         uo,
         patches,
-        _source_snapshot_hash(uo),
+        _source_snapshot_hash(uo, run_id=run_id),
+        current_run_id=run_id,
         require_full_coverage=True,
         mutate=False,
     )
@@ -1095,12 +1139,20 @@ def gate_apply_semantic_patch(uo: Path) -> dict[str, Any]:
     }
 
 
-def gate_semantic_closure(uo: Path) -> dict[str, Any]:
+def gate_semantic_closure(uo: Path, *, current_run_id: str = "", project_root: Path | None = None) -> dict[str, Any]:
     """Blocking semantic gaps uncleared → cannot advance; recheck does not bump attempts (⑥)."""
     from uo.scripts.llm_tasks import MAX_SEMANTIC_BATCHES, blocking_gap_tasks, compute_semantic_stats
 
-    stats = compute_semantic_stats(uo)
-    gaps = blocking_gap_tasks(uo)
+    run_id = str(current_run_id or "").strip() or _current_run_id_for_uo(uo, project_root)
+    if not run_id:
+        return {
+            "gate": "semantic_closure",
+            "ok": False,
+            "message": "SEMANTIC_DOCUMENT_RUN_ID_MISSING",
+            "error": "SEMANTIC_DOCUMENT_RUN_ID_MISSING",
+        }
+    stats = compute_semantic_stats(uo, current_run_id=run_id)
+    gaps = blocking_gap_tasks(uo, current_run_id=run_id)
     batches = int((_load(uo / "ir" / "llm_tasks.yaml") or {}).get("total_semantic_batches") or 0)
     max_batches = MAX_SEMANTIC_BATCHES
     if gaps and batches < max_batches:
@@ -1159,9 +1211,9 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
         "extract_plan_subagent": lambda: gate_extract_plan_subagent(project_root, uo),
         "detect_score_pre": lambda: gate_detect_score_pre(uo),
         "detect_score_post": lambda: gate_detect_score_post(uo),
-        "adjudicate_llm_tasks": lambda: gate_adjudicate_llm_tasks(uo),
-        "apply_semantic_patch": lambda: gate_apply_semantic_patch(uo),
-        "semantic_closure": lambda: gate_semantic_closure(uo),
+        "adjudicate_llm_tasks": lambda: gate_adjudicate_llm_tasks(uo, project_root=project_root),
+        "apply_semantic_patch": lambda: gate_apply_semantic_patch(uo, project_root=project_root),
+        "semantic_closure": lambda: gate_semantic_closure(uo, project_root=project_root),
         "uo_ready": lambda: gate_uo_ready(uo),
         "kb_ready": lambda: gate_uo_ready(uo),
         "context_pack": lambda: {

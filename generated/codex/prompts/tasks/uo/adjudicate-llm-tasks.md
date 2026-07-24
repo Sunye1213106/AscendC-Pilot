@@ -38,10 +38,17 @@ Write **only** `ir/semantic_patches.yaml` for the deterministic `apply_semantic_
 3. Emit one patch per task into `ir/semantic_patches.yaml`:
    ```yaml
    version: 1
-   actor_id: <ACTOR_ID>
-   action_id: <ACTION_ID>
+   artifact_identity:
+     run_id: <RUN_ID>
+     workflow_id: <WORKFLOW_ID>
+     phase: extract
+     action_id: <ACTION_ID>
+     actor_id: <ACTOR_ID>
+     role_id: <ROLE_ID>
+     action_session_id: <ACTION_SESSION_ID>
    patches:
-     - task_id: <exact task_id>
+     - run_id: <RUN_ID>
+       task_id: <exact task_id>
        action: mark_missing   # or accept_edge / choose_one when candidates exist
        accepted_candidate_ids: []
        rejected_candidate_ids: []

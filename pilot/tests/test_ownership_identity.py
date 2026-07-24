@@ -318,6 +318,172 @@ def test_old_run_scope_does_not_satisfy_current_contract(tmp_path: Path):
     assert "RUN_NEW" in str(check.get("missing") or [])
 
 
+def test_finalize_rejects_conflicting_producer_declared_identity(tmp_path: Path):
+    from ascendc_pilot.actions.runtime import _validate_producer_declared_identity
+    from ascendc_pilot.paths import agent_root
+
+    project = tmp_path / "op"
+    ir = agent_root(project) / "uo" / "ir"
+    ir.mkdir(parents=True)
+    (ir / "semantic_patches.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "artifact_identity": {
+                    "run_id": "RUN_A",
+                    "workflow_id": "uo-init",
+                    "phase": "extract",
+                    "action_id": "adjudicate_llm_tasks",
+                    "actor_id": "uo-semantic-adjudicator",
+                    "role_id": "producer",
+                    "action_session_id": "AS_conflicting",
+                },
+                "patches": [],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    check = _validate_producer_declared_identity(
+        project,
+        session={
+            "run_id": "RUN_A",
+            "workflow_id": "uo-init",
+            "phase": "extract",
+            "action_id": "adjudicate_llm_tasks",
+            "actor_id": "uo-semantic-adjudicator",
+            "role_id": "producer",
+            "action_session_id": "AS_expected",
+            "lease_id": "LEASE_A",
+            "prepare_nonce": "nonce-a",
+        },
+        action_id="adjudicate_llm_tasks",
+    )
+    assert check.get("ok") is False
+    assert check.get("error") == "PRODUCER_DECLARED_IDENTITY_MISMATCH"
+    assert (check.get("identity_error") or {}).get("error") == "ARTIFACT_SESSION_MISMATCH"
+
+
+def test_pre_inject_contract_allows_missing_finalizer_stamp(tmp_path: Path):
+    from ascendc_pilot.actions.runtime import _contract_identity_ok
+
+    path = tmp_path / "semantic_patches.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "artifact_identity": {
+                    "run_id": "RUN_A",
+                    "workflow_id": "uo-init",
+                    "phase": "extract",
+                    "action_id": "adjudicate_llm_tasks",
+                    "actor_id": "uo-semantic-adjudicator",
+                    "role_id": "producer",
+                    "action_session_id": "AS_expected",
+                },
+                "patches": [],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    pre = _contract_identity_ok(
+        path,
+        run_id="RUN_A",
+        workflow_id="uo-init",
+        phase="extract",
+        action_id="adjudicate_llm_tasks",
+        actor_id="uo-semantic-adjudicator",
+        role_id="producer",
+        action_session_id="AS_expected",
+        lease_id="LEASE_A",
+        prepare_nonce="nonce-a",
+        require_finalizer_stamp=False,
+    )
+    post = _contract_identity_ok(
+        path,
+        run_id="RUN_A",
+        workflow_id="uo-init",
+        phase="extract",
+        action_id="adjudicate_llm_tasks",
+        actor_id="uo-semantic-adjudicator",
+        role_id="producer",
+        action_session_id="AS_expected",
+        lease_id="LEASE_A",
+        prepare_nonce="nonce-a",
+        require_finalizer_stamp=True,
+    )
+    assert pre.get("ok") is True, pre
+    assert post.get("ok") is False
+    assert post.get("error") == "ARTIFACT_IDENTITY_MISSING"
+
+
+def test_finalize_failure_does_not_stamp_canonical_identity(tmp_path: Path, monkeypatch):
+    from ascendc_pilot.actions import runtime as rt
+    from ascendc_pilot.paths import uo_root
+    from ascendc_pilot.state import start_workflow
+
+    state = start_workflow(tmp_path, "uo-init", phase="extract", force_phase=True)
+    monkeypatch.setattr(
+        "ascendc_pilot.workflows.pipeline.recommend_next_action",
+        lambda *a, **k: {"id": "adjudicate_llm_tasks", "reason": "test"},
+    )
+    prep = rt.prepare_action(tmp_path, "adjudicate_llm_tasks")
+    assert prep.get("ok") is True, prep
+
+    path = uo_root(tmp_path) / "ir" / "semantic_patches.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "artifact_identity": {
+                    "run_id": state["run_id"],
+                    "workflow_id": "uo-init",
+                    "phase": "extract",
+                    "action_id": "adjudicate_llm_tasks",
+                    "actor_id": prep["actor_id"],
+                    "role_id": prep["role_id"],
+                    "action_session_id": prep["action_session_id"],
+                    "lease_id": prep["lease_id"],
+                    "prepare_nonce_hash": prep["identity"]["prepare_nonce_hash"],
+                },
+                "patches": [],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    fin = rt.finalize_action(
+        tmp_path,
+        "adjudicate_llm_tasks",
+        engine_result={"ok": False, "error": "simulated_checker_failure"},
+    )
+    assert fin.get("ok") is False
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    identity = data.get("artifact_identity") or {}
+    assert identity.get("produced_by") != "pilot-finalizer"
+
+    post = rt._contract_identity_ok(
+        path,
+        run_id=state["run_id"],
+        workflow_id="uo-init",
+        phase="extract",
+        action_id="adjudicate_llm_tasks",
+        actor_id=prep["actor_id"],
+        role_id=prep["role_id"],
+        action_session_id=prep["action_session_id"],
+        lease_id=prep["lease_id"],
+        prepare_nonce_hash=prep["identity"]["prepare_nonce_hash"],
+        require_finalizer_stamp=True,
+    )
+    assert post.get("ok") is False
+    assert post.get("error") == "ARTIFACT_IDENTITY_MISSING"
+
+
 def test_old_run_semantic_tasks_are_ignored_or_rejected(tmp_path: Path):
     import sys
 
@@ -330,6 +496,8 @@ def test_old_run_semantic_tasks_are_ignored_or_rejected(tmp_path: Path):
         uo,
         {
             "version": 1,
+            "artifact_identity": {"run_id": "RUN_A", "workflow_id": "uo-init"},
+            "active_run_id": "RUN_A",
             "tasks": [
                 {
                     "task_id": "T_OLD",
@@ -347,6 +515,7 @@ def test_old_run_semantic_tasks_are_ignored_or_rejected(tmp_path: Path):
             ],
         },
     )
+    # Document identity is RUN_A → RUN_B fails closed at document level.
     assert open_blocking_tasks(uo, current_run_id="RUN_B") == []
     assert len(open_blocking_tasks(uo, current_run_id="RUN_A")) == 1
 
@@ -378,7 +547,7 @@ def test_patch_run_mismatch_is_rejected():
         current_run_id="RUN_A",
     )
     assert out["ok"] is False
-    assert out["error"] == "SEMANTIC_TASK_RUN_MISMATCH"
+    assert out["error"] == "SEMANTIC_PATCH_RUN_MISMATCH"
 
 
 def test_ledger_run_mismatch_is_rejected(tmp_path: Path):
@@ -454,6 +623,410 @@ def test_new_workflow_run_creates_new_debug_session(tmp_path: Path):
     assert ds2.get("run_id") == st2.get("run_id")
     assert ds2.get("debug_session_id") != ds1.get("debug_session_id")
     assert first.get("debug_session_id") != ds2.get("debug_session_id")
+
+
+def test_ownership_audit_is_read_only(repo_root: Path):
+    import hashlib
+    import sys
+
+    sys.path.insert(0, str(repo_root / "scripts"))
+    from check_ownership_contracts import audit
+
+    watch = [
+        repo_root / "skills" / "actions" / "uo-init" / "extract-plan" / "action.yaml",
+        repo_root / "skills" / "workflows" / "uo-init" / "SKILL.md",
+        repo_root / "generated" / "opencode" / "skills" / "uo-init" / "SKILL.md",
+    ]
+    before = {}
+    for p in watch:
+        if p.is_file():
+            before[p.as_posix()] = hashlib.sha256(p.read_bytes()).hexdigest()
+    errs = audit(repo_root)
+    after = {}
+    for p in watch:
+        if p.is_file():
+            after[p.as_posix()] = hashlib.sha256(p.read_bytes()).hexdigest()
+    assert before == after, "ownership audit must not rewrite watched files"
+    # Audit may report unrelated pre-existing drift; read-only is the contract under test.
+    _ = errs
+
+
+def test_action_yaml_drift_is_detected_not_fixed(repo_root: Path):
+    import sys
+
+    sys.path.insert(0, str(repo_root / "scripts"))
+    from check_ownership_contracts import audit
+
+    src = repo_root / "skills" / "actions" / "uo-init" / "extract-plan" / "action.yaml"
+    assert src.is_file()
+    original = src.read_text(encoding="utf-8")
+    try:
+        data = yaml.safe_load(original) or {}
+        data["agent_id"] = "drifted-agent-should-not-exist"
+        src.write_text(
+            "# GENERATED from Workflow Spec — do not hand-edit identity fields\n"
+            + yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        drifted = src.read_text(encoding="utf-8")
+        errs = audit(repo_root)
+        assert any("ACTION_METADATA_DRIFT" in e and "extract_plan" in e for e in errs), errs
+        assert src.read_text(encoding="utf-8") == drifted, "audit must not auto-fix action.yaml"
+    finally:
+        src.write_text(original, encoding="utf-8")
+
+
+def test_extract_plan_cannot_read_llm_tasks(tmp_path: Path):
+    from ascendc_pilot.authorize.lease import issue_action_lease, lease_allows_read_path
+    from ascendc_pilot.ownership import action_forbidden_read_paths, action_read_paths
+    from ascendc_pilot.state import start_workflow
+
+    project = tmp_path / "op"
+    project.mkdir()
+    st = start_workflow(project, "uo-init", force_phase=True, phase="extract")
+    lease = issue_action_lease(
+        project,
+        state=st,
+        action_id="extract_plan",
+        actor_id="uo-semantic-resolve",
+        allowed_read_paths=action_read_paths("uo-init", "extract_plan"),
+        forbidden_read_paths=action_forbidden_read_paths("uo-init", "extract_plan"),
+    )
+    denied = lease_allows_read_path(lease, "uo/ir/llm_tasks.yaml")
+    assert denied["ok"] is False
+    assert denied["error"] == "ACTION_FORBIDDEN_READ_PATH"
+
+
+def test_extract_plan_can_read_candidates(tmp_path: Path):
+    from ascendc_pilot.authorize.lease import issue_action_lease, lease_allows_read_path
+    from ascendc_pilot.ownership import action_forbidden_read_paths, action_read_paths
+    from ascendc_pilot.state import start_workflow
+
+    project = tmp_path / "op"
+    project.mkdir()
+    st = start_workflow(project, "uo-init", force_phase=True, phase="extract")
+    lease = issue_action_lease(
+        project,
+        state=st,
+        action_id="extract_plan",
+        actor_id="uo-semantic-resolve",
+        allowed_read_paths=action_read_paths("uo-init", "extract_plan"),
+        forbidden_read_paths=action_forbidden_read_paths("uo-init", "extract_plan"),
+    )
+    allowed = lease_allows_read_path(lease, "uo/ir/extract_plan_candidates.yaml")
+    assert allowed["ok"] is True
+
+
+def test_adjudicate_can_read_llm_tasks(tmp_path: Path):
+    from ascendc_pilot.authorize.lease import issue_action_lease, lease_allows_read_path
+    from ascendc_pilot.ownership import action_read_paths
+    from ascendc_pilot.state import start_workflow
+
+    project = tmp_path / "op"
+    project.mkdir()
+    st = start_workflow(project, "uo-init", force_phase=True, phase="extract")
+    lease = issue_action_lease(
+        project,
+        state=st,
+        action_id="adjudicate_llm_tasks",
+        actor_id="uo-semantic-resolve",
+        allowed_read_paths=action_read_paths("uo-init", "adjudicate_llm_tasks"),
+    )
+    assert lease_allows_read_path(lease, "uo/ir/llm_tasks.yaml")["ok"] is True
+    assert lease_allows_read_path(lease, "uo/ir/score_report_pre.yaml")["ok"] is True
+    assert lease_allows_read_path(lease, "uo/ir/score_report_post.yaml")["ok"] is True
+
+
+def test_forbidden_read_takes_precedence(tmp_path: Path):
+    from ascendc_pilot.authorize.lease import issue_action_lease, lease_allows_read_path
+    from ascendc_pilot.state import start_workflow
+
+    project = tmp_path / "op"
+    project.mkdir()
+    st = start_workflow(project, "uo-init", force_phase=True, phase="extract")
+    lease = issue_action_lease(
+        project,
+        state=st,
+        action_id="extract_plan",
+        actor_id="uo-semantic-resolve",
+        allowed_read_paths=["uo/ir/llm_tasks.yaml", "uo/ir/extract_plan_candidates.yaml"],
+        forbidden_read_paths=["uo/ir/llm_tasks.yaml"],
+    )
+    denied = lease_allows_read_path(lease, "uo/ir/llm_tasks.yaml")
+    assert denied["ok"] is False
+    assert denied["error"] == "ACTION_FORBIDDEN_READ_PATH"
+    assert lease_allows_read_path(lease, "uo/ir/extract_plan_candidates.yaml")["ok"] is True
+
+
+def test_action_write_scope_must_fit_agent_ceiling(repo_root: Path):
+    import sys
+
+    sys.path.insert(0, str(repo_root / "scripts"))
+    from ascendc_pilot.ownership import path_within_scopes, write_roots_as_scopes
+    from ascendc_pilot.workflows.specs import WORKFLOWS
+    from check_ownership_contracts import audit
+
+    # Spec-level invariant: Action writes ⊆ Agent write_scopes ⊆ Workflow write_roots.
+    agents = {}
+    for p in (repo_root / "agents").glob("*.yaml"):
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        if data.get("id"):
+            agents[str(data["id"])] = data
+    for wid in ("uo-init", "uo-update", "uo-query", "tg-init", "tg-plan", "tg-solve", "ce-review"):
+        meta = WORKFLOWS.get(wid) or {}
+        if not meta or meta.get("reserved"):
+            continue
+        root_scopes = write_roots_as_scopes(list(meta.get("write_roots") or []))
+        for action in meta.get("actions") or []:
+            agent_id = action.get("agent_id")
+            if not agent_id or agent_id == "ascendc-pilot":
+                continue
+            ag = agents.get(str(agent_id)) or {}
+            scopes = [str(x) for x in (ag.get("write_scopes") or [])]
+            if not scopes:
+                continue
+            for wp in action.get("allowed_write_paths") or []:
+                assert path_within_scopes(str(wp), scopes), (
+                    f"{wid}/{action.get('id')}: write {wp!r} exceeds agent {agent_id} scopes {scopes}"
+                )
+            for scope in scopes:
+                if str(scope).startswith("runs"):
+                    continue
+                assert path_within_scopes(scope, root_scopes), (
+                    f"{wid}/{action.get('id')}: agent scope {scope!r} exceeds write_roots"
+                )
+
+    # Auditor reports ACTION_WRITE_SCOPE_EXCEEDS_* (not soft-pass) when violated.
+    # Inject a bogus in-memory check via path_within_scopes behavior already covered above.
+    errs = audit(repo_root)
+    assert not any(e.startswith("ACTION_WRITE_SCOPE_EXCEEDS_") for e in errs), errs
+
+
+def _prepare_adjudicate_patch(project: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[dict, Path]:
+    from ascendc_pilot.actions import runtime as rt
+    from ascendc_pilot.paths import uo_root
+    from ascendc_pilot.state import start_workflow
+
+    project.mkdir(parents=True, exist_ok=True)
+    start_workflow(project, "uo-init", force_phase=True, phase="extract")
+    monkeypatch.setattr(
+        "ascendc_pilot.workflows.pipeline.recommend_next_action",
+        lambda *a, **k: {"id": "adjudicate_llm_tasks", "reason": "test"},
+    )
+    prep = rt.prepare_action(project, "adjudicate_llm_tasks")
+    assert prep.get("ok") is True, prep
+    path = uo_root(project) / "ir" / "semantic_patches.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump({"version": 1, "patches": []}, sort_keys=False), encoding="utf-8")
+    return prep, path
+
+
+def test_identity_injected_only_after_all_checks_pass(tmp_path: Path, monkeypatch):
+    from ascendc_pilot.actions import runtime as rt
+
+    failed_prep, failed_path = _prepare_adjudicate_patch(tmp_path / "failed", monkeypatch)
+    failed = rt.finalize_action(
+        tmp_path / "failed",
+        "adjudicate_llm_tasks",
+        engine_result={"ok": False, "error": "simulated_checker_failure"},
+    )
+    assert failed.get("ok") is False
+    failed_doc = yaml.safe_load(failed_path.read_text(encoding="utf-8")) or {}
+    assert (failed_doc.get("artifact_identity") or {}).get("produced_by") != "pilot-finalizer"
+    assert failed_prep.get("lease_id")
+
+    passed_prep, passed_path = _prepare_adjudicate_patch(tmp_path / "passed", monkeypatch)
+    passed = rt.finalize_action(
+        tmp_path / "passed",
+        "adjudicate_llm_tasks",
+        engine_result={"ok": True},
+    )
+    assert passed.get("ok") is True, passed
+    identity = (yaml.safe_load(passed_path.read_text(encoding="utf-8")) or {}).get("artifact_identity") or {}
+    assert identity.get("produced_by") == "pilot-finalizer"
+    assert identity.get("lease_id") == passed_prep["lease_id"]
+    assert identity.get("action_session_id") == passed_prep["action_session_id"]
+
+
+def test_stale_session_artifact_fails_identity_check(tmp_path: Path):
+    from ascendc_pilot.actions import runtime as rt
+
+    path = tmp_path / "runs" / "RUN_OLD" / "scope" / "scope_confirmed.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("ok: true\n", encoding="utf-8")
+    check = rt._contract_identity_ok(
+        path,
+        run_id="RUN_NEW",
+        workflow_id="uo-init",
+        phase="scope",
+        action_id="scope_confirmation",
+        actor_id="ascendc-pilot",
+        role_id="controller",
+        action_session_id="ACTION_SESSION_NEW",
+        lease_id="LEASE_NEW",
+        prepare_nonce="nonce-new",
+        require_finalizer_stamp=True,
+    )
+    assert check.get("ok") is False
+    assert check.get("error") in {"ARTIFACT_SESSION_MISMATCH", "ARTIFACT_IDENTITY_MISSING"}
+
+
+def test_wrong_lease_artifact_fails(tmp_path: Path):
+    from ascendc_pilot.actions import runtime as rt
+
+    path = tmp_path / "semantic_patches.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "artifact_identity": {
+                    "run_id": "RUN_A",
+                    "workflow_id": "uo-init",
+                    "phase": "extract",
+                    "action_id": "adjudicate_llm_tasks",
+                    "actor_id": "uo-semantic-resolve",
+                    "role_id": "producer",
+                    "action_session_id": "ACTION_SESSION_A",
+                    "lease_id": "LEASE_OLD",
+                    "prepare_nonce_hash": rt._hash_prepare_nonce("nonce-a"),
+                    "produced_by": "pilot-finalizer",
+                },
+                "patches": [],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    check = rt._contract_identity_ok(
+        path,
+        run_id="RUN_A",
+        workflow_id="uo-init",
+        phase="extract",
+        action_id="adjudicate_llm_tasks",
+        actor_id="uo-semantic-resolve",
+        role_id="producer",
+        action_session_id="ACTION_SESSION_A",
+        lease_id="LEASE_NEW",
+        prepare_nonce="nonce-a",
+        require_finalizer_stamp=True,
+    )
+    assert check.get("ok") is False
+    assert check.get("error") == "ARTIFACT_LEASE_MISMATCH"
+
+
+def test_wrong_action_session_artifact_fails(tmp_path: Path):
+    from ascendc_pilot.actions import runtime as rt
+
+    path = tmp_path / "semantic_patches.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "artifact_identity": {
+                    "run_id": "RUN_A",
+                    "workflow_id": "uo-init",
+                    "phase": "extract",
+                    "action_id": "adjudicate_llm_tasks",
+                    "actor_id": "uo-semantic-resolve",
+                    "role_id": "producer",
+                    "action_session_id": "ACTION_SESSION_OLD",
+                    "lease_id": "LEASE_A",
+                    "prepare_nonce_hash": rt._hash_prepare_nonce("nonce-a"),
+                    "produced_by": "pilot-finalizer",
+                },
+                "patches": [],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    check = rt._contract_identity_ok(
+        path,
+        run_id="RUN_A",
+        workflow_id="uo-init",
+        phase="extract",
+        action_id="adjudicate_llm_tasks",
+        actor_id="uo-semantic-resolve",
+        role_id="producer",
+        action_session_id="ACTION_SESSION_NEW",
+        lease_id="LEASE_A",
+        prepare_nonce="nonce-a",
+        require_finalizer_stamp=True,
+    )
+    assert check.get("ok") is False
+    assert check.get("error") == "ARTIFACT_SESSION_MISMATCH"
+
+
+def test_read_lease_run_mismatch_denied(tmp_path: Path):
+    from ascendc_pilot.state import start_workflow
+
+    project = tmp_path / "op"
+    project.mkdir()
+    st = start_workflow(project, "uo-init", force_phase=True, phase="extract")
+    issue_action_lease(
+        project,
+        state={**st, "run_id": "RUN_STALE"},
+        action_id="extract_plan",
+        actor_id="uo-semantic-resolve",
+        allowed_read_paths=["uo/ir/extract_plan_candidates.yaml"],
+    )
+    res = authorize(
+        project,
+        tool="read",
+        path=str(project / ".ascendc-pilot" / "uo" / "ir" / "extract_plan_candidates.yaml"),
+        agent="uo-semantic-resolve",
+        action="extract_plan",
+    )
+    assert res.get("decision") == "deny"
+    assert res.get("reason_code") == "ACTION_READ_OWNER_MISMATCH"
+    assert res.get("lease_run_id") == "RUN_STALE"
+    assert res.get("run_id") == st["run_id"]
+
+
+def test_skill_drift_is_detected_not_fixed(repo_root: Path):
+    import sys
+
+    sys.path.insert(0, str(repo_root / "scripts"))
+    from check_ownership_contracts import audit
+
+    skill = repo_root / "skills" / "workflows" / "uo-init" / "SKILL.md"
+    original = skill.read_text(encoding="utf-8")
+    begin = "<!-- BEGIN GENERATED ACTIONS -->"
+    end = "<!-- END GENERATED ACTIONS -->"
+    before, rest = original.split(begin, 1)
+    block, after = rest.split(end, 1)
+    drifted_block = block.replace("`extract_plan`", "`extract_plan_drifted`", 1)
+    assert drifted_block != block
+    drifted = before + begin + drifted_block + end + after
+    try:
+        skill.write_text(drifted, encoding="utf-8")
+        errs = audit(repo_root)
+        assert any("SKILL_ACTION_SET_DRIFT uo-init" in e for e in errs), errs
+        assert skill.read_text(encoding="utf-8") == drifted
+    finally:
+        skill.write_text(original, encoding="utf-8")
+
+
+def test_action_write_scope_must_fit_workflow_root(repo_root: Path):
+    import sys
+
+    sys.path.insert(0, str(repo_root / "scripts"))
+    from check_ownership_contracts import audit
+
+    agent = repo_root / "agents" / "uo-semantic-resolve.yaml"
+    original = agent.read_text(encoding="utf-8")
+    try:
+        data = yaml.safe_load(original) or {}
+        scopes = list(data.get("write_scopes") or [])
+        scopes.append("outside-workflow/**")
+        data["write_scopes"] = scopes
+        agent.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        drifted = agent.read_text(encoding="utf-8")
+        errs = audit(repo_root)
+        assert any(e.startswith("ACTION_WRITE_SCOPE_EXCEEDS_WORKFLOW") for e in errs), errs
+        assert agent.read_text(encoding="utf-8") == drifted
+    finally:
+        agent.write_text(original, encoding="utf-8")
 
 
 @pytest.fixture

@@ -776,6 +776,21 @@ def _run_apply_semantic_patch(project_root: Path, ctx: dict[str, Any]) -> dict[s
         from uo.scripts.evidence_score import _source_snapshot_hash
         from uo.scripts.llm_tasks import apply_patches_batch, resolve_patches_for_apply
 
+        run_id = str(ctx.get("run_id") or "").strip()
+        if not run_id:
+            return {
+                "ok": False,
+                "engine": "apply_semantic_patch",
+                "error": "SEMANTIC_DOCUMENT_RUN_ID_MISSING",
+                "message": "ctx.run_id required",
+            }
+        workflow_id = str(ctx.get("workflow_id") or "uo-init")
+        phase = str(ctx.get("phase") or "")
+        actor_id = str(ctx.get("actor_id") or "uo-semantic-resolve")
+        role_id = str(ctx.get("role_id") or "producer")
+        action_session_id = str(ctx.get("action_session_id") or "")
+        lease_id = str(ctx.get("lease_id") or "")
+
         # Prefer explicit ctx.patch / patch_path; else ir/semantic_patches.yaml; else auto.
         patches_doc: dict[str, Any] | None = None
         single = ctx.get("patch") if isinstance(ctx.get("patch"), dict) else None
@@ -788,7 +803,12 @@ def _run_apply_semantic_patch(project_root: Path, ctx: dict[str, Any]) -> dict[s
             if patches_path.is_file():
                 patches_doc = read_yaml(patches_path) or {}
 
-        resolved = resolve_patches_for_apply(uo, patches_doc=patches_doc)
+        resolved = resolve_patches_for_apply(
+            uo,
+            current_run_id=run_id,
+            patches_doc=patches_doc,
+            workflow_id=workflow_id,
+        )
         if not resolved.get("ok"):
             out = {"ok": False, "engine": "apply_semantic_patch", **resolved}
             if resolved.get("error") == "SEMANTIC_PATCHES_REQUIRED":
@@ -801,7 +821,15 @@ def _run_apply_semantic_patch(project_root: Path, ctx: dict[str, Any]) -> dict[s
             if not ledger.is_file():
                 from uo.scripts.semantic_resolution_ledger import save_ledger
 
-                save_ledger(uo, {"version": 1, "semantic_patches": [], "note": "empty_skip"})
+                save_ledger(
+                    uo,
+                    {
+                        "version": 1,
+                        "artifact_identity": {"run_id": run_id, "workflow_id": workflow_id},
+                        "semantic_patches": [],
+                        "note": "empty_skip",
+                    },
+                )
             return {
                 "ok": True,
                 "engine": "apply_semantic_patch",
@@ -812,11 +840,19 @@ def _run_apply_semantic_patch(project_root: Path, ctx: dict[str, Any]) -> dict[s
         result = apply_patches_batch(
             uo,
             patches,
-            current_source_hash=_source_snapshot_hash(uo, run_id=str(ctx.get("run_id") or "") or None),
+            current_run_id=run_id,
+            current_source_hash=_source_snapshot_hash(uo, run_id=run_id),
+            workflow_id=workflow_id,
+            phase=phase,
+            control_action_id=str(ctx.get("action_id") or "apply_semantic_patch"),
+            actor_id=actor_id,
+            role_id=role_id,
+            action_session_id=action_session_id,
+            lease_id=lease_id,
         )
         from uo.scripts.llm_tasks import compute_semantic_stats
 
-        stats = compute_semantic_stats(uo)
+        stats = compute_semantic_stats(uo, current_run_id=run_id)
         return {
             "ok": bool(result.get("ok")),
             "engine": "apply_semantic_patch",
@@ -835,15 +871,16 @@ def _run_rebuild_from_ledger(project_root: Path, ctx: dict[str, Any]) -> dict[st
     try:
         from uo.scripts.semantic_resolution_ledger import rebuild_derived_graphs
 
+        run_id = str(ctx.get("run_id") or "").strip()
         result = rebuild_derived_graphs(
             project_root,
             op_name,
             architecture=architecture,
-            run_id=str(ctx.get("run_id") or ""),
+            run_id=run_id,
         )
         from uo.scripts.llm_tasks import compute_semantic_stats
 
-        stats = compute_semantic_stats(uo) if uo else {}
+        stats = compute_semantic_stats(uo, current_run_id=run_id) if uo and run_id else {}
         return {"ok": bool(result.get("ok")), "engine": "rebuild_from_ledger", **result, **stats}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "rebuild_from_ledger", "error": str(exc)[:300]}
@@ -862,21 +899,42 @@ def _run_recheck_closure(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
         from uo.scripts._ir_io import read_yaml, write_yaml
         from uo.scripts.semantic_resolution_ledger import load_ledger
 
-        budget = recheck_does_not_increment(uo)
+        run_id = str(ctx.get("run_id") or "").strip()
+        if not run_id:
+            return {
+                "ok": False,
+                "engine": "recheck_closure",
+                "error": "SEMANTIC_DOCUMENT_RUN_ID_MISSING",
+            }
+        budget = recheck_does_not_increment(uo, current_run_id=run_id)
         ep = read_yaml(uo / "ir" / "entrypoint_graph.yaml") or {}
         closure = ep.get("closure") or {}
-        stats = compute_semantic_stats(uo)
+        stats = compute_semantic_stats(uo, current_run_id=run_id)
         blocking_gap_count = int(stats.get("blocking_gap_count") or budget.get("blocking_gap_count") or 0)
         unconsumed = int(stats.get("unconsumed_patch_count") or 0)
         host_closed = closure.get("host_main_chain") == "closed"
         kernel_closed = closure.get("kernel_main_chain") == "closed"
         ok = blocking_gap_count == 0 and unconsumed == 0 and host_closed and kernel_closed
 
-        snap = _source_snapshot_hash(uo, run_id=str(ctx.get("run_id") or "") or None)
+        snap = _source_snapshot_hash(uo, run_id=run_id)
+        ledger_doc = load_ledger(uo)
+        current_ledger_ids = [
+            str(p.get("task_id") or "")
+            for p in (ledger_doc.get("semantic_patches") or [])
+            if isinstance(p, dict) and str(p.get("run_id") or "") == run_id
+        ]
+        current_task_ids = [
+            str(t.get("task_id") or "")
+            for t in (budget.get("tasks") or [])
+            if isinstance(t, dict)
+        ]
         fp_payload = {
+            "run_id": run_id,
             "source_snapshot_hash": snap,
-            "entrypoint_graph": ep.get("closure"),
-            "ledger_len": len((load_ledger(uo).get("semantic_patches") or [])),
+            "current_run_task_ids": sorted(current_task_ids),
+            "current_run_ledger_ids": sorted(current_ledger_ids),
+            "host_closure": closure.get("host_main_chain"),
+            "kernel_closure": closure.get("kernel_main_chain"),
             "blocking_gap_count": blocking_gap_count,
             "unconsumed_patch_count": unconsumed,
         }

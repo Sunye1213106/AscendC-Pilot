@@ -24,6 +24,8 @@ allowed_write_paths:
 - uo/cbm/**
 - uo/summary/scope_confirmed.yaml
 forbidden_write_paths: []
+allowed_read_paths: []
+forbidden_read_paths: []
 checker:
   required: true
 referee:

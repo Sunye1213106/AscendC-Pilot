@@ -50,13 +50,19 @@ def _act(
     allowed_write_paths: list[str] | None = None,
     allowed_read_paths: list[str] | None = None,
     forbidden_write_paths: list[str] | None = None,
+    forbidden_read_paths: list[str] | None = None,
 ) -> dict[str, Any]:
     """Declare a Pilot Action with compositional references.
 
     ``actors`` is derived from ``agent_id`` for authorize / spawn checks.
     Workflow Spec is the sole editable authority for identity fields.
     """
-    from ascendc_pilot.ownership import ACTION_WRITE_PATHS, infer_execution_mode
+    from ascendc_pilot.ownership import (
+        ACTION_FORBIDDEN_READ_PATHS,
+        ACTION_READ_PATHS,
+        ACTION_WRITE_PATHS,
+        infer_execution_mode,
+    )
 
     method_id = action_method_id or f"{workflow_id}/{action_id.replace('_', '-')}"
     actors = [agent_id] if agent_id else []
@@ -68,6 +74,12 @@ def _act(
     writes = allowed_write_paths
     if writes is None:
         writes = list((ACTION_WRITE_PATHS.get(workflow_id) or {}).get(action_id) or [])
+    reads = allowed_read_paths
+    if reads is None:
+        reads = list((ACTION_READ_PATHS.get(workflow_id) or {}).get(action_id) or [])
+    forbid_reads = forbidden_read_paths
+    if forbid_reads is None:
+        forbid_reads = list((ACTION_FORBIDDEN_READ_PATHS.get(workflow_id) or {}).get(action_id) or [])
     row: dict[str, Any] = {
         "id": action_id,
         "label_zh": label_zh,
@@ -85,8 +97,9 @@ def _act(
         "context_profile_id": context_profile_id or f"{workflow_id}-{action_id.replace('_', '-')}",
         "output_contract_id": output_contract_id,
         "allowed_write_paths": list(writes or []),
-        "allowed_read_paths": list(allowed_read_paths or []),
+        "allowed_read_paths": list(reads or []),
         "forbidden_write_paths": list(forbidden_write_paths or []),
+        "forbidden_read_paths": list(forbid_reads or []),
         # Derived for authorize / Task spawn (single primary actor).
         "actors": actors,
     }

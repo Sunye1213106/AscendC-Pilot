@@ -36,6 +36,8 @@ from uo.scripts.semantic_resolution_ledger import (
     load_ledger,
 )
 
+RUN_TEST = "UO_RUN_TEST1"
+
 
 def _prep_op(tmp_path: Path, op_name: str) -> Path:
     op_root = tmp_path / op_name
@@ -190,7 +192,7 @@ def test_stale_patch_rejected(tmp_path: Path) -> None:
         }
     ]
     upsert_tasks_from_score_items(
-        uo, items, checkpoint="extract.pre_semantic", run_id="r1", source_snapshot_hash="hashA"
+        uo, items, checkpoint="extract.pre_semantic", run_id=RUN_TEST, source_snapshot_hash="hashA"
     )
     doc = load_llm_tasks(uo)
     task = next(t for t in doc["tasks"] if t["status"] == "open")
@@ -201,6 +203,7 @@ def test_stale_patch_rejected(tmp_path: Path) -> None:
             "accepted_candidate_ids": ["cand_OUTSIDE"],
             "action": "accept_edge",
         },
+        current_run_id=RUN_TEST,
         current_source_hash="hashA",
     )
     assert bad["ok"] is False
@@ -212,6 +215,7 @@ def test_stale_patch_rejected(tmp_path: Path) -> None:
             "accepted_candidate_ids": ["cand_1"],
             "action": "accept_edge",
         },
+        current_run_id=RUN_TEST,
         current_source_hash="hashB",
     )
     assert stale["ok"] is False
@@ -236,7 +240,7 @@ def test_mark_missing_rejects_accept_edge_false_closure(tmp_path: Path) -> None:
         }
     ]
     upsert_tasks_from_score_items(
-        uo, items, checkpoint="extract.pre_semantic", run_id="r1", source_snapshot_hash="hashA"
+        uo, items, checkpoint="extract.pre_semantic", run_id=RUN_TEST, source_snapshot_hash="hashA"
     )
     doc = load_llm_tasks(uo)
     task = next(t for t in doc["tasks"] if t["status"] == "open")
@@ -250,6 +254,7 @@ def test_mark_missing_rejects_accept_edge_false_closure(tmp_path: Path) -> None:
             "action": "accept_edge",
             "accepted_candidate_ids": ["some_edge_id_in_graph"],
         },
+        current_run_id=RUN_TEST,
         current_source_hash="hashA",
     )
     assert bad["ok"] is False
@@ -262,6 +267,7 @@ def test_mark_missing_rejects_accept_edge_false_closure(tmp_path: Path) -> None:
             "action": "mark_missing",
             "accepted_candidate_ids": ["some_edge_id_in_graph"],
         },
+        current_run_id=RUN_TEST,
         current_source_hash="hashA",
     )
     assert smuggle["ok"] is False
@@ -270,6 +276,7 @@ def test_mark_missing_rejects_accept_edge_false_closure(tmp_path: Path) -> None:
     ok = apply_task_patch(
         uo,
         {"task_id": task["task_id"], "action": "mark_missing"},
+        current_run_id=RUN_TEST,
         current_source_hash="hashA",
     )
     assert ok["ok"] is True
@@ -293,11 +300,11 @@ def test_attempts_only_on_resolve_apply(tmp_path: Path) -> None:
         }
     ]
     upsert_tasks_from_score_items(
-        uo, items, checkpoint="extract.pre_semantic", run_id="r1", source_snapshot_hash="snap1"
+        uo, items, checkpoint="extract.pre_semantic", run_id=RUN_TEST, source_snapshot_hash="snap1"
     )
     before = load_llm_tasks(uo)
     batches0 = int(before.get("total_semantic_batches") or 0)
-    recheck_does_not_increment(uo)
+    recheck_does_not_increment(uo, current_run_id=RUN_TEST)
     mid = load_llm_tasks(uo)
     assert int(mid.get("total_semantic_batches") or 0) == batches0
     task = next(t for t in mid["tasks"] if t["status"] == "open")
@@ -309,6 +316,7 @@ def test_attempts_only_on_resolve_apply(tmp_path: Path) -> None:
             "action": "accept_edge",
             "relation": "dispatches_to",
         },
+        current_run_id=RUN_TEST,
         current_source_hash="snap1",
     )
     assert ok["ok"] is True
@@ -508,6 +516,7 @@ def test_detect_score_pre_writes_report(tmp_path: Path) -> None:
     op = "synth_op_h"
     root = _prep_op(tmp_path, op)
     uo = root / ".ascendc-pilot" / "uo"
+    _scope(uo, ["op_host/a.cpp"])
     write_yaml(
         uo / "ir" / "entrypoint_graph.yaml",
         {
@@ -533,7 +542,7 @@ def test_detect_score_pre_writes_report(tmp_path: Path) -> None:
         },
     )
     write_yaml(uo / "ir" / "operator_boundary.yaml", {"inputs": [], "attributes": []})
-    result = detect_score_pre(uo, architecture="arch35", run_id="r1")
+    result = detect_score_pre(uo, architecture="arch35", run_id=RUN_TEST)
     assert result["ok"] is True
     assert (uo / "ir" / "score_report_pre.yaml").is_file()
     assert (uo / "ir" / "llm_tasks.yaml").is_file()

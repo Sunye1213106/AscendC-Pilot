@@ -26,6 +26,13 @@ allowed_write_paths:
 forbidden_write_paths:
 - uo/ir/semantic_patches.yaml
 - uo/ir/llm_tasks.yaml
+allowed_read_paths:
+- uo/ir/extract_plan_candidates.yaml
+- uo/ir/entrypoint_graph.yaml
+forbidden_read_paths:
+- uo/ir/llm_tasks.yaml
+- uo/ir/semantic_patches.yaml
+- uo/ir/semantic_resolution_ledger.yaml
 checker:
   required: true
 referee:

@@ -20,6 +20,8 @@ context_profile_id: uo-update-diff-summary
 output_contract_id: diff-summary-v1
 allowed_write_paths: []
 forbidden_write_paths: []
+allowed_read_paths: []
+forbidden_read_paths: []
 checker:
   required: false
 referee:

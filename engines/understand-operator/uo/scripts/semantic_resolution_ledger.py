@@ -221,19 +221,90 @@ def rebuild_derived_graphs(
     snap = str(snap_res.get("hash") or "")
     stale = invalidate_stale_patches(uo_root, current_source_hash=snap)
     ledger = load_ledger(uo_root)
-    # Default: only consume current-run ledger records (or explicitly reusable ones).
-    records = []
-    for rec in ledger.get("records") or []:
+    current_run_id = str(run_id or "").strip()
+    if not current_run_id:
+        return {
+            "ok": False,
+            "error": "LEDGER_RUN_ID_MISSING",
+            "message": "rebuild_derived_graphs requires current run_id",
+            "stale_patches": stale,
+        }
+
+    # Stamp / validate ledger document identity.
+    ledger = dict(ledger)
+    ledger.setdefault("version", 1)
+    identity = ledger.get("artifact_identity") if isinstance(ledger.get("artifact_identity"), dict) else {}
+    ledger["artifact_identity"] = {
+        **dict(identity),
+        "run_id": current_run_id,
+        "workflow_id": str(identity.get("workflow_id") or "uo-init"),
+    }
+    workflow_id = str(ledger["artifact_identity"].get("workflow_id") or "uo-init")
+
+    # Default: only consume current-run semantic_patches (never legacy records[]).
+    # Cross-run reuse requires ALL of: allow_cross_run_reuse, same source_snapshot_hash,
+    # same workflow_id, and an allowed stable patch_type — then create a derived
+    # reference for the current run (do not silently treat old records as current).
+    _CROSS_RUN_REUSE_TYPES = frozenset(
+        {
+            "tilingdata_bridge_resolution",
+            "entrypoint_dispatch_resolution",
+            "call_edge_resolution",
+            "template_instance_resolution",
+            "entrypoint_node_resolution",
+        }
+    )
+    filtered: list[dict[str, Any]] = []
+    derived_refs: list[dict[str, Any]] = []
+    preserved: list[dict[str, Any]] = []
+    for rec in ledger.get("semantic_patches") or []:
         if not isinstance(rec, dict):
             continue
+        preserved.append(rec)
         rec_run = str(rec.get("run_id") or "").strip()
-        if rec_run and run_id and rec_run != str(run_id):
-            reusable = bool(rec.get("allow_cross_run_reuse")) and str(rec.get("source_snapshot_hash") or "") == snap
-            if not reusable:
-                continue
-        records.append(rec)
-    ledger = dict(ledger)
-    ledger["records"] = records
+        if not rec_run:
+            return {
+                "ok": False,
+                "error": "LEDGER_RUN_ID_MISSING",
+                "task_id": rec.get("task_id"),
+                "stale_patches": stale,
+            }
+        if rec_run == current_run_id:
+            if not str(rec.get("control_action_id") or "").strip() and not str(rec.get("actor_id") or "").strip():
+                return {
+                    "ok": False,
+                    "error": "LEDGER_CONTROL_OWNER_MISSING",
+                    "task_id": rec.get("task_id"),
+                    "stale_patches": stale,
+                }
+            filtered.append(rec)
+            continue
+        # Cross-run: never consume unless explicit reuse is allowed.
+        if not bool(rec.get("allow_cross_run_reuse")):
+            continue
+        if str(rec.get("source_snapshot_hash") or "") != snap:
+            continue
+        rec_wf = str(rec.get("workflow_id") or "").strip()
+        if not rec_wf or rec_wf != workflow_id:
+            continue
+        ptype = str(rec.get("patch_type") or "").strip()
+        if ptype not in _CROSS_RUN_REUSE_TYPES:
+            continue
+        # Create a derived reference owned by the current run (do not mutate old record).
+        derived = dict(rec)
+        derived["run_id"] = current_run_id
+        derived["workflow_id"] = workflow_id
+        derived["reused_from_run_id"] = rec_run
+        derived["reused_from_task_id"] = rec.get("task_id")
+        derived["status"] = rec.get("status") or "active"
+        derived_refs.append(derived)
+        filtered.append(derived)
+
+    # Persist: keep all historical patches + newly derived current-run refs.
+    ledger["semantic_patches"] = preserved + derived_refs
+    # Working ledger for apply/verify uses only filtered current-run (+ derived) patches.
+    working_ledger = dict(ledger)
+    working_ledger["semantic_patches"] = filtered
 
     # 1. Base entrypoint graph from source facts (no ledger yet).
     candidates = collect_entrypoint_candidates(repo_root, op_name, architecture=architecture)
@@ -267,9 +338,9 @@ def rebuild_derived_graphs(
         "operator_graph": operator_graph if isinstance(operator_graph, dict) else {},
     }
 
-    # 3. Apply ledger patches onto corresponding layers.
+    # 3. Apply ledger patches onto corresponding layers (current-run filtered only).
     try:
-        apply_ledger_to_layers(layers, ledger, strict=True)
+        apply_ledger_to_layers(layers, working_ledger, strict=True)
     except LedgerTargetTypeMismatch as exc:
         return {
             "ok": False,
@@ -310,11 +381,45 @@ def rebuild_derived_graphs(
     layers["operator_graph"] = op
 
     # 6. Final materialization verification (ONLY after all layers ready).
-    apply_report, materialized, unconsumed = _verify_all_patches(layers, ledger)
+    apply_report, materialized, unconsumed = _verify_all_patches(layers, working_ledger)
+
+    # Merge apply_status updates from working_ledger back into the full persisted ledger.
+    by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for rec in working_ledger.get("semantic_patches") or []:
+        if isinstance(rec, dict):
+            by_key[(str(rec.get("run_id") or ""), str(rec.get("task_id") or ""))] = rec
+    merged_patches: list[dict[str, Any]] = []
+    seen_derived: set[tuple[str, str]] = set()
+    for rec in ledger.get("semantic_patches") or []:
+        if not isinstance(rec, dict):
+            continue
+        key = (str(rec.get("run_id") or ""), str(rec.get("task_id") or ""))
+        updated = by_key.get(key)
+        if updated is not None:
+            merged_patches.append(updated)
+            seen_derived.add(key)
+        else:
+            merged_patches.append(rec)
+    for rec in working_ledger.get("semantic_patches") or []:
+        if not isinstance(rec, dict):
+            continue
+        key = (str(rec.get("run_id") or ""), str(rec.get("task_id") or ""))
+        if key not in seen_derived and rec.get("reused_from_run_id"):
+            merged_patches.append(rec)
+    ledger["semantic_patches"] = merged_patches
 
     # 8. Sync llm_tasks from materialization results (in-memory).
     tasks_doc = load_llm_tasks(uo_root)
-    sync = sync_tasks_from_materialization(uo_root, ledger, mutate_doc=tasks_doc)
+    sync = sync_tasks_from_materialization(
+        uo_root, working_ledger, current_run_id=current_run_id, mutate_doc=tasks_doc
+    )
+    if not sync.get("ok", True):
+        return {
+            "ok": False,
+            "error": sync.get("error") or "LEDGER_RUN_ID_MISSING",
+            "detail": sync,
+            "stale_patches": stale,
+        }
 
     # 9. Transactional write of ledger + tasks + apply_report, then graph YAMLs.
     try:

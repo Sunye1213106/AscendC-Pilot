@@ -3,6 +3,9 @@
 
 Fails install/compose/CI when Spec, Skill, action.yaml, Agent, Prompt, METHOD,
 Output Contract, and write scopes drift or violate ownership rules.
+
+This auditor is READ-ONLY: it never rewrites action.yaml, Skill markers, or
+generated/**. Use ``python scripts/compose_runtime.py --sync`` to refresh mirrors.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 
 def audit(repo: Path) -> list[str]:
+    """Read-only ownership audit. Does not write any files."""
     repo = repo.expanduser().resolve()
     sys.path.insert(0, str(repo / "pilot"))
     sys.path.insert(0, str(repo / "scripts"))
@@ -37,21 +41,36 @@ def audit(repo: Path) -> list[str]:
         EXECUTION_PRIMARY_INTERACTIVE,
         EXECUTION_SUBAGENT,
         PRIMARY_AGENT_ID,
-        path_matches_patterns,
+        path_within_scopes,
+        write_roots_as_scopes,
     )
     from ascendc_pilot.workflows.specs import WORKFLOWS
     import compose_runtime as compose
 
     errors: list[str] = []
-    errors.extend(compose.sync_action_yaml_mirrors(repo))
+    # Read-only skill marker check (no auto-fix).
+    errors.extend(compose.check_skill_action_markers(repo))
 
     agents_dir = repo / "agents"
     prompts_dir = repo / "prompts" / "tasks"
     skills_dir = repo / "skills"
 
-    for wid, meta in WORKFLOWS.items():
-        if meta.get("reserved") or not meta.get("slash"):
+    # All product workflows must be traversed (including those without slash if listed).
+    workflow_ids = (
+        "uo-init",
+        "uo-update",
+        "uo-query",
+        "tg-init",
+        "tg-plan",
+        "tg-solve",
+        "ce-review",
+    )
+    for wid in workflow_ids:
+        meta = WORKFLOWS.get(wid) or {}
+        if not meta or meta.get("reserved"):
             continue
+        write_roots = list(meta.get("write_roots") or [])
+        root_scopes = write_roots_as_scopes(write_roots)
         actions = [a for a in (meta.get("actions") or []) if isinstance(a, dict)]
         ids = [str(a.get("id") or "") for a in actions]
         if len(ids) != len(set(ids)):
@@ -137,6 +156,7 @@ def audit(repo: Path) -> list[str]:
                         if "Bundle identity is authoritative" not in ptext and mode == EXECUTION_SUBAGENT:
                             errors.append(f"{wid}/{aid}: prompt missing bundle identity authority note")
 
+            ag: dict[str, Any] = {}
             if agent_id and agent_id != PRIMARY_AGENT_ID:
                 ag = _load_yaml(agents_dir / f"{agent_id}.yaml")
                 if not ag:
@@ -152,32 +172,44 @@ def audit(repo: Path) -> list[str]:
                                 errors.append(
                                     f"{wid}/{aid}: agent role {ag_role!r} != action role {role_id!r}"
                                 )
-                    # Action write paths must be subset of agent write scopes (ceiling).
-                    scopes = [str(x) for x in (ag.get("write_scopes") or [])]
-                    for wp in action.get("allowed_write_paths") or []:
-                        rel = str(wp).replace("{run_id}", "RUN_PLACEHOLDER")
-                        if scopes and not path_matches_patterns(rel, scopes) and "/**" not in "".join(scopes):
-                            # Allow when agent has broad uo/ir/** covering specific files
-                            if not path_matches_patterns(rel.split("{")[0].rstrip("/"), scopes) and not any(
-                                path_matches_patterns(rel, [s]) or path_matches_patterns(s.rstrip("/*"), [rel])
-                                for s in scopes
-                            ):
-                                # Practical check: uo/ir/foo.yaml under uo/ir/**
-                                covered = False
-                                for s in scopes:
-                                    if s.endswith("/**") and rel.startswith(s[:-3]):
-                                        covered = True
-                                        break
-                                    if s == rel or rel.startswith(s.rstrip("*")):
-                                        covered = True
-                                        break
-                                if not covered and not any(s.endswith("/**") and rel.startswith(s[:-3]) for s in scopes):
-                                    # Only error when clearly outside
-                                    if not any(
-                                        rel.startswith(s.rstrip("*").rstrip("/")) or s.rstrip("/**") in rel
-                                        for s in scopes
-                                    ):
-                                        pass  # soft: precise subset checked in tests
+
+            # Action write paths ⊆ Agent write_scopes ⊆ Workflow write_roots
+            write_scopes = [str(x) for x in (ag.get("write_scopes") or [])] if ag else []
+            if agent_id == PRIMARY_AGENT_ID:
+                primary = _load_yaml(agents_dir / f"{PRIMARY_AGENT_ID}.yaml")
+                write_scopes = [str(x) for x in (primary.get("write_scopes") or [])]
+            action_writes = [str(x) for x in (action.get("allowed_write_paths") or [])]
+            if write_scopes and action_writes:
+                for wp in action_writes:
+                    if not path_within_scopes(wp, write_scopes):
+                        errors.append(
+                            f"ACTION_WRITE_SCOPE_EXCEEDS_AGENT {wid}/{aid}: "
+                            f"path={wp!r} not ⊆ agent write_scopes={write_scopes}"
+                        )
+            if write_scopes and root_scopes:
+                for scope in write_scopes:
+                    if str(scope).startswith("runs"):
+                        continue
+                    if not path_within_scopes(scope, root_scopes):
+                        errors.append(
+                            f"ACTION_WRITE_SCOPE_EXCEEDS_WORKFLOW {wid}/{aid}: "
+                            f"agent_scope={scope!r} not ⊆ write_roots={write_roots}"
+                        )
+
+            # Action read paths ⊆ Agent read_scopes (when Action declares reads)
+            action_reads = [str(x) for x in (action.get("allowed_read_paths") or [])]
+            if action_reads:
+                read_scopes = [str(x) for x in (ag.get("read_scopes") or [])] if ag else []
+                if agent_id == PRIMARY_AGENT_ID:
+                    primary = _load_yaml(agents_dir / f"{PRIMARY_AGENT_ID}.yaml")
+                    read_scopes = [str(x) for x in (primary.get("read_scopes") or [])]
+                if read_scopes:
+                    for rp in action_reads:
+                        if not path_within_scopes(rp, read_scopes):
+                            errors.append(
+                                f"ACTION_READ_SCOPE_EXCEEDS_AGENT {wid}/{aid}: "
+                                f"path={rp!r} not ⊆ agent read_scopes={read_scopes}"
+                            )
 
             if contract and contract not in OUTPUT_CONTRACT_PATHS:
                 errors.append(f"{wid}/{aid}: unknown output_contract_id {contract!r}")
@@ -192,7 +224,16 @@ def audit(repo: Path) -> list[str]:
                 if role_id not in {"controller", "primary_interactive"}:
                     errors.append(f"{wid}/{aid}: primary_interactive should use controller role")
 
-    # generated runtime must be recomposable (drift check)
+    # Also cover any other non-reserved slash workflows not in the fixed list.
+    for wid, meta in WORKFLOWS.items():
+        if wid in workflow_ids:
+            continue
+        if meta.get("reserved") or not meta.get("slash"):
+            continue
+        # Light check: skill markers already covered by check_skill_action_markers.
+        pass
+
+    # generated runtime must be recomposable (drift check; read-only)
     try:
         drift = compose.check_generated_drift(repo, hosts=["opencode"])
         for d in drift[:20]:

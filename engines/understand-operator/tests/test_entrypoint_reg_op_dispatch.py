@@ -10,6 +10,8 @@ from uo.scripts.llm_tasks import upsert_tasks_from_score_items, load_llm_tasks
 from uo.scripts.resolve_entrypoints import collect_entrypoint_candidates
 from uo.scripts.source_path import resolve_repo_source_path
 
+RUN_TEST = "RUN_TEST"
+
 
 def _prep_op(tmp_path: Path, op_name: str) -> Path:
     root = tmp_path / op_name
@@ -164,7 +166,7 @@ def test_empty_dispatch_candidates_route_to_enrichment(tmp_path: Path) -> None:
             "candidates": [],
         }
     ]
-    upsert_tasks_from_score_items(uo, items, checkpoint="pre", source_snapshot_hash="s1")
+    upsert_tasks_from_score_items(uo, items, checkpoint="pre", run_id=RUN_TEST, source_snapshot_hash="s1")
     task = load_llm_tasks(uo)["tasks"][0]
     assert task["type"] in {"evidence_enrichment", "candidate_generation", "mark_missing"}
     assert task["type"] != "choose_edge"

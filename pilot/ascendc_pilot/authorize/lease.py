@@ -277,6 +277,20 @@ def lease_allows_write_path(lease: dict[str, Any], rel_posix: str) -> dict[str, 
     return {"ok": True}
 
 
+def lease_allows_read_path(lease: dict[str, Any], rel_posix: str) -> dict[str, Any]:
+    """Check Action-precise read paths (forbidden deny-first, then allow-list)."""
+    from ascendc_pilot.ownership import path_matches_patterns
+
+    rel = str(rel_posix or "").replace("\\", "/").lstrip("/")
+    forbid = list(lease.get("forbidden_read_paths") or [])
+    if forbid and path_matches_patterns(rel, [str(x) for x in forbid]):
+        return {"ok": False, "error": "ACTION_FORBIDDEN_READ_PATH", "path": rel}
+    precise = list(lease.get("allowed_read_paths") or [])
+    if precise and not path_matches_patterns(rel, [str(x) for x in precise]):
+        return {"ok": False, "error": "ACTION_READ_SCOPE_DENIED", "path": rel, "allowed": precise}
+    return {"ok": True}
+
+
 def issue_lease_for_status(
     project_root: Path,
     *,
@@ -512,6 +526,7 @@ __all__ = [
     "issue_lease_for_status",
     "issue_rework_lease",
     "lease_allows_command",
+    "lease_allows_read_path",
     "lease_allows_tool",
     "lease_allows_write_path",
     "lease_path",

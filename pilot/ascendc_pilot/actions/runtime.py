@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import secrets
 from pathlib import Path
@@ -437,15 +438,64 @@ def _resolve_contract_paths(root: Path, rel: str) -> list[Path]:
     return [path] if path.exists() else []
 
 
+_PRODUCER_OWNED_ARTIFACT_NAMES = {
+    "extract_plan.yaml",
+    "semantic_patches.yaml",
+    "key_triage.yaml",
+    "input_derivable_patch.yaml",
+}
+_ACTION_OWNED_ARTIFACT_NAMES = _PRODUCER_OWNED_ARTIFACT_NAMES | {
+    "scope_confirmed.yaml",
+    "receipt.yaml",
+}
+
+
+def _hash_prepare_nonce(prepare_nonce: str = "", prepare_nonce_hash: str = "") -> str:
+    if prepare_nonce_hash:
+        return str(prepare_nonce_hash).strip()
+    if not prepare_nonce:
+        return ""
+    return hashlib.sha256(str(prepare_nonce).encode("utf-8")).hexdigest()
+
+
+def _declared_artifact_identity(data: dict[str, Any]) -> dict[str, str]:
+    identity = data.get("artifact_identity") if isinstance(data.get("artifact_identity"), dict) else {}
+    checks: dict[str, str] = {}
+    for field in (
+        "run_id",
+        "workflow_id",
+        "phase",
+        "action_id",
+        "actor_id",
+        "role_id",
+        "action_session_id",
+        "lease_id",
+        "prepare_nonce_hash",
+        "produced_by",
+    ):
+        checks[field] = str(identity.get(field) or data.get(field) or "").strip()
+    declared_nonce = str(identity.get("prepare_nonce") or data.get("prepare_nonce") or "").strip()
+    if declared_nonce and not checks["prepare_nonce_hash"]:
+        checks["prepare_nonce_hash"] = _hash_prepare_nonce(declared_nonce)
+    return checks
+
+
 def _contract_identity_ok(
     path: Path,
     *,
     run_id: str,
     workflow_id: str,
-    action_id: str,
-    actor_id: str,
+    phase: str = "",
+    action_id: str = "",
+    actor_id: str = "",
+    role_id: str = "",
+    action_session_id: str = "",
+    lease_id: str = "",
+    prepare_nonce_hash: str = "",
+    prepare_nonce: str = "",
+    require_finalizer_stamp: bool = False,
 ) -> dict[str, Any]:
-    """Validate optional artifact identity against the current Action session."""
+    """Validate declared artifact identity against the current Action session."""
     if yaml is None or not path.is_file() or path.suffix.lower() not in {".yaml", ".yml"}:
         return {"ok": True, "skipped": True}
     try:
@@ -454,16 +504,23 @@ def _contract_identity_ok(
         return {"ok": True, "skipped": True}
     if not isinstance(data, dict):
         return {"ok": True, "skipped": True}
-    identity = data.get("artifact_identity") if isinstance(data.get("artifact_identity"), dict) else {}
-    # Prefer nested identity; fall back to top-level mirrors.
-    checks = {
-        "run_id": str(identity.get("run_id") or data.get("run_id") or "").strip(),
-        "workflow_id": str(identity.get("workflow_id") or data.get("workflow_id") or "").strip(),
-        "action_id": str(identity.get("action_id") or data.get("action_id") or "").strip(),
-        "actor_id": str(identity.get("actor_id") or data.get("actor_id") or "").strip(),
+    checks = _declared_artifact_identity(data)
+    expected = {
+        "run_id": str(run_id or "").strip(),
+        "workflow_id": str(workflow_id or "").strip(),
+        "phase": str(phase or "").strip(),
+        "action_id": str(action_id or "").strip(),
+        "actor_id": str(actor_id or "").strip(),
+        "role_id": str(role_id or "").strip(),
+        "action_session_id": str(action_session_id or "").strip(),
+        "lease_id": str(lease_id or "").strip(),
+        "prepare_nonce_hash": _hash_prepare_nonce(prepare_nonce, prepare_nonce_hash),
     }
+    posix = path.as_posix()
+    action_owned = path.name in _ACTION_OWNED_ARTIFACT_NAMES or "/runs/" in posix
+
     # Missing identity on older artifacts is a migration error for run-scoped contracts.
-    if any(ch in path.as_posix() for ch in ("/runs/", "scope_confirmed", "receipt.yaml")):
+    if any(ch in posix for ch in ("/runs/", "scope_confirmed", "receipt.yaml")):
         if not checks["run_id"]:
             return {
                 "ok": False,
@@ -471,73 +528,70 @@ def _contract_identity_ok(
                 "path": path.as_posix(),
                 "message": "run-scoped artifact missing identity; re-prepare / re-finalize",
             }
-        if run_id and checks["run_id"] != run_id:
+
+    if action_owned and (require_finalizer_stamp or checks["produced_by"] == "pilot-finalizer"):
+        for field in (
+            "run_id",
+            "workflow_id",
+            "phase",
+            "action_id",
+            "actor_id",
+            "role_id",
+            "action_session_id",
+            "lease_id",
+            "prepare_nonce_hash",
+        ):
+            if expected[field] and not checks[field]:
+                return {
+                    "ok": False,
+                    "error": "ARTIFACT_IDENTITY_MISSING",
+                    "field": field,
+                    "path": path.as_posix(),
+                    "message": "finalized artifact missing trusted identity field",
+                }
+        if not checks["produced_by"]:
             return {
                 "ok": False,
-                "error": "ACTION_RUN_MISMATCH",
+                "error": "ARTIFACT_IDENTITY_MISSING",
+                "field": "produced_by",
                 "path": path.as_posix(),
-                "expected": run_id,
-                "actual": checks["run_id"],
+                "message": "finalized artifact missing pilot-finalizer stamp",
             }
-    if run_id and checks["run_id"] and checks["run_id"] != run_id:
+
+    if action_owned and checks["produced_by"] and checks["produced_by"] != "pilot-finalizer":
         return {
             "ok": False,
-            "error": "ACTION_RUN_MISMATCH",
+            "error": "ARTIFACT_OWNER_MISMATCH",
+            "field": "produced_by",
             "path": path.as_posix(),
-            "expected": run_id,
-            "actual": checks["run_id"],
+            "expected": "pilot-finalizer",
+            "actual": checks["produced_by"],
         }
-    if workflow_id and checks["workflow_id"] and checks["workflow_id"] != workflow_id:
+
+    error_by_field = {
+        "action_session_id": "ARTIFACT_SESSION_MISMATCH",
+        "lease_id": "ARTIFACT_LEASE_MISMATCH",
+        "prepare_nonce_hash": "ARTIFACT_NONCE_MISMATCH",
+    }
+    for field, actual in checks.items():
+        if field == "produced_by":
+            continue
+        expected_value = expected.get(field, "")
+        if not expected_value or not actual or actual == expected_value:
+            continue
+        # Canonical IR may be shared across actions; only enforce action-owned
+        # producer/session fields where the artifact is owned by this action.
+        if field not in {"run_id", "workflow_id"} and not action_owned:
+            continue
         return {
             "ok": False,
-            "error": "ACTION_OWNER_MISMATCH",
-            "field": "workflow_id",
+            "error": error_by_field.get(field, "ARTIFACT_OWNER_MISMATCH"),
+            "field": field,
             "path": path.as_posix(),
-            "expected": workflow_id,
-            "actual": checks["workflow_id"],
+            "expected": expected_value,
+            "actual": actual,
         }
-    if action_id and checks["action_id"] and checks["action_id"] != action_id:
-        # Canonical IR may be shared across actions; only enforce when present and conflicting
-        # for action-owned producer artifacts.
-        owned = any(
-            name in path.name
-            for name in (
-                "extract_plan.yaml",
-                "semantic_patches.yaml",
-                "key_triage.yaml",
-                "input_derivable_patch.yaml",
-                "scope_confirmed.yaml",
-                "receipt.yaml",
-            )
-        )
-        if owned:
-            return {
-                "ok": False,
-                "error": "ACTION_OWNER_MISMATCH",
-                "field": "action_id",
-                "path": path.as_posix(),
-                "expected": action_id,
-                "actual": checks["action_id"],
-            }
-    if actor_id and checks["actor_id"] and checks["actor_id"] != actor_id:
-        owned = any(
-            name in path.name
-            for name in (
-                "extract_plan.yaml",
-                "semantic_patches.yaml",
-                "key_triage.yaml",
-                "input_derivable_patch.yaml",
-            )
-        )
-        if owned:
-            return {
-                "ok": False,
-                "error": "ACTION_OWNER_MISMATCH",
-                "field": "actor_id",
-                "path": path.as_posix(),
-                "expected": actor_id,
-                "actual": checks["actor_id"],
-            }
+
     return {"ok": True}
 
 
@@ -547,9 +601,14 @@ def _collect_output_hashes(
     *,
     run_id: str = "",
     workflow_id: str = "",
+    phase: str = "",
     action_id: str = "",
     actor_id: str = "",
+    role_id: str = "",
     action_session_id: str = "",
+    lease_id: str = "",
+    prepare_nonce_hash: str = "",
+    prepare_nonce: str = "",
 ) -> dict[str, str]:
     from ascendc_pilot.ownership import expand_contract_paths
 
@@ -589,9 +648,15 @@ def _check_output_contract(
     *,
     run_id: str = "",
     workflow_id: str = "",
+    phase: str = "",
     action_id: str = "",
     actor_id: str = "",
+    role_id: str = "",
     action_session_id: str = "",
+    lease_id: str = "",
+    prepare_nonce_hash: str = "",
+    prepare_nonce: str = "",
+    require_finalizer_stamp: bool = False,
 ) -> dict[str, Any]:
     """Fail-closed: missing or unregistered contracts never pass."""
     from ascendc_pilot.ownership import expand_contract_paths
@@ -646,8 +711,15 @@ def _check_output_contract(
                     path,
                     run_id=run_id,
                     workflow_id=workflow_id,
+                    phase=phase,
                     action_id=action_id,
                     actor_id=actor_id,
+                    role_id=role_id,
+                    action_session_id=action_session_id,
+                    lease_id=lease_id,
+                    prepare_nonce_hash=prepare_nonce_hash,
+                    prepare_nonce=prepare_nonce,
+                    require_finalizer_stamp=require_finalizer_stamp,
                 )
                 if not id_check.get("ok"):
                     identity_errors.append(id_check)
@@ -956,9 +1028,16 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         )
         prompt_r = _render_placeholders(prompt, **{**ph_kwargs, "target": target_line})
         bundle["dispatch_targets"] = {
-            "read": ["uo/ir/extract_plan_candidates.yaml"],
+            "read": [
+                "uo/ir/extract_plan_candidates.yaml",
+                "uo/ir/entrypoint_graph.yaml",
+            ],
             "write": ["uo/ir/extract_plan.yaml"],
-            "forbid_read": ["uo/ir/llm_tasks.yaml"],
+            "forbid_read": [
+                "uo/ir/llm_tasks.yaml",
+                "uo/ir/semantic_patches.yaml",
+                "uo/ir/semantic_resolution_ledger.yaml",
+            ],
             "forbid_write_fields": list(_EXTRACT_PLAN_FORBID_FIELDS),
         }
 
@@ -1100,6 +1179,21 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         expand_path_template(p, run_id=run_id)
         for p in list(action.get("forbidden_write_paths") or [])
     ]
+    read_paths = list(action.get("allowed_read_paths") or [])
+    if not read_paths:
+        from ascendc_pilot.ownership import action_read_paths
+
+        read_paths = action_read_paths(wid, action_id, run_id=run_id)
+    else:
+        read_paths = [expand_path_template(p, run_id=run_id) for p in read_paths]
+    forbid_read = [
+        expand_path_template(p, run_id=run_id)
+        for p in list(action.get("forbidden_read_paths") or [])
+    ]
+    if not forbid_read:
+        from ascendc_pilot.ownership import action_forbidden_read_paths
+
+        forbid_read = action_forbidden_read_paths(wid, action_id, run_id=run_id)
     # Dispatch targets may further narrow write paths for producers.
     dt = bundle.get("dispatch_targets") if isinstance(bundle.get("dispatch_targets"), dict) else {}
     if dt.get("write"):
@@ -1108,6 +1202,29 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         forbid_write = [
             expand_path_template(str(p), run_id=run_id) for p in dt["forbid_write"]
         ] + forbid_write
+    if dt.get("read"):
+        read_paths = [expand_path_template(str(p), run_id=run_id) for p in dt["read"]]
+    if dt.get("forbid_read"):
+        forbid_read = [
+            expand_path_template(str(p), run_id=run_id) for p in dt["forbid_read"]
+        ] + forbid_read
+    # De-dupe while preserving order.
+    if forbid_read:
+        seen_fr: set[str] = set()
+        deduped_fr: list[str] = []
+        for p in forbid_read:
+            if p not in seen_fr:
+                seen_fr.add(p)
+                deduped_fr.append(p)
+        forbid_read = deduped_fr
+    if read_paths:
+        seen_rp: set[str] = set()
+        deduped_rp: list[str] = []
+        for p in read_paths:
+            if p not in seen_rp:
+                seen_rp.add(p)
+                deduped_rp.append(p)
+        read_paths = deduped_rp
     allowed_targets = [str(x) for x in (dt.get("target_ids") or []) if str(x).strip()]
     # Outer containment: workflow write_roots; precise paths are Action lease.
     wf_roots = list((get_workflow(wid) or {}).get("write_roots") or [])
@@ -1120,8 +1237,9 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         allowed_read_roots=[sdir.as_posix()],
         allowed_write_roots=wf_roots,
         allowed_write_paths=write_paths,
-        allowed_read_paths=list(action.get("allowed_read_paths") or []),
+        allowed_read_paths=read_paths,
         forbidden_write_paths=forbid_write,
+        forbidden_read_paths=forbid_read,
         allowed_target_ids=allowed_targets,
     )
     lease_id = str(lease.get("lease_id") or "")
@@ -1142,6 +1260,8 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     )
     bundle["allowed_write_paths"] = write_paths
     bundle["forbidden_write_paths"] = forbid_write
+    bundle["allowed_read_paths"] = read_paths
+    bundle["forbidden_read_paths"] = forbid_read
     bundle["allowed_target_ids"] = allowed_targets
     bundle["staging_dir"] = staging_dir(sdir).as_posix()
 
@@ -1172,6 +1292,8 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             "status": "prepared",
             "allowed_write_paths": write_paths,
             "forbidden_write_paths": forbid_write,
+            "allowed_read_paths": read_paths,
+            "forbidden_read_paths": forbid_read,
         },
     )
 
@@ -1277,18 +1399,14 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     return result
 
 
-def _finalize_inject_artifact_identity(
+def _finalize_owned_artifact_path(
     project_root: Path,
     *,
     session: dict[str, Any],
     action_id: str,
-    contract_id: str,
-) -> None:
-    """Overwrite LLM-declared identity with session-trusted artifact_identity."""
-    from ascendc_pilot.ownership import artifact_identity_from_session, inject_trusted_identity
+) -> Path | None:
     from ascendc_pilot.paths import uo_root as _uo_root
 
-    identity = artifact_identity_from_session(session)
     owned: dict[str, Path] = {
         "extract_plan": _uo_root(project_root) / "ir" / "extract_plan.yaml",
         "adjudicate_llm_tasks": _uo_root(project_root) / "ir" / "semantic_patches.yaml",
@@ -1302,31 +1420,131 @@ def _finalize_inject_artifact_identity(
         / "scope"
         / "scope_confirmed.yaml",
     }
-    path = owned.get(action_id)
-    if path is None or not path.is_file() or yaml is None:
-        return
+    return owned.get(action_id)
+
+
+def _validate_producer_declared_identity(
+    project_root: Path,
+    *,
+    session: dict[str, Any],
+    action_id: str,
+) -> dict[str, Any]:
+    """Reject producer-declared identity that conflicts with the prepared session."""
+    if action_id not in {"extract_plan", "adjudicate_llm_tasks", "key_triage", "key_resolution"}:
+        return {"ok": True, "skipped": True}
+    path = _finalize_owned_artifact_path(project_root, session=session, action_id=action_id)
+    if path is None or not path.is_file():
+        return {"ok": True, "skipped": True, "path": path.as_posix() if path else ""}
+    check = _contract_identity_ok(
+        path,
+        run_id=str(session.get("run_id") or ""),
+        workflow_id=str(session.get("workflow_id") or ""),
+        phase=str(session.get("phase") or ""),
+        action_id=str(session.get("action_id") or action_id or ""),
+        actor_id=str(session.get("actor_id") or ""),
+        role_id=str(session.get("role_id") or ""),
+        action_session_id=str(session.get("action_session_id") or ""),
+        lease_id=str(session.get("lease_id") or ""),
+        prepare_nonce=str(session.get("prepare_nonce") or ""),
+        require_finalizer_stamp=False,
+    )
+    if check.get("ok"):
+        return {"ok": True, "path": path.as_posix()}
+    return {
+        "ok": False,
+        "error": "PRODUCER_DECLARED_IDENTITY_MISMATCH",
+        "path": path.as_posix(),
+        "identity_error": check,
+        "message": "producer-declared artifact identity conflicts with prepared Action session",
+    }
+
+
+def _finalize_inject_artifact_identity(
+    project_root: Path,
+    *,
+    session: dict[str, Any],
+    action_id: str,
+    contract_id: str,
+) -> dict[str, Any]:
+    """Overwrite LLM-declared identity with session-trusted artifact_identity."""
+    from ascendc_pilot.ownership import artifact_identity_from_session, inject_trusted_identity
+
+    identity = artifact_identity_from_session(session)
+    path = _finalize_owned_artifact_path(project_root, session=session, action_id=action_id)
+    if path is None:
+        return {"ok": True, "skipped": True, "reason": "no_owned_artifact", "contract_id": contract_id}
+    if not path.is_file():
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "artifact_missing",
+            "path": path.as_posix(),
+            "contract_id": contract_id,
+        }
+    if yaml is None:
+        return {
+            "ok": False,
+            "error": "IDENTITY_INJECTION_UNAVAILABLE",
+            "path": path.as_posix(),
+            "message": "PyYAML is required to stamp artifact identity",
+        }
     try:
         doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:  # noqa: BLE001
-        return
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "error": "IDENTITY_INJECTION_READ_FAILED",
+            "path": path.as_posix(),
+            "message": str(exc),
+        }
     if not isinstance(doc, dict):
-        return
+        return {
+            "ok": False,
+            "error": "IDENTITY_INJECTION_INVALID_ARTIFACT",
+            "path": path.as_posix(),
+            "message": "artifact must be a YAML mapping to stamp identity",
+        }
     trusted = inject_trusted_identity(doc, identity)
-    # Reject missing identity on producer artifacts prior to overwrite (migration).
-    if action_id in {"extract_plan", "adjudicate_llm_tasks", "key_triage", "key_resolution"}:
-        # Always overwrite; LLM values are not trusted.
-        pass
-    _dump(path, trusted)
+    try:
+        _dump(path, trusted)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "error": "IDENTITY_INJECTION_WRITE_FAILED",
+            "path": path.as_posix(),
+            "message": str(exc),
+        }
     # Also stamp scope receipt when present.
     if action_id == "scope_confirmation":
         receipt = path.parent / "receipt.yaml"
         if receipt.is_file():
             try:
                 rdoc = yaml.safe_load(receipt.read_text(encoding="utf-8")) or {}
-            except Exception:  # noqa: BLE001
-                rdoc = {}
+            except Exception as exc:  # noqa: BLE001
+                return {
+                    "ok": False,
+                    "error": "IDENTITY_INJECTION_READ_FAILED",
+                    "path": receipt.as_posix(),
+                    "message": str(exc),
+                }
             if isinstance(rdoc, dict):
-                _dump(receipt, inject_trusted_identity(rdoc, identity))
+                try:
+                    _dump(receipt, inject_trusted_identity(rdoc, identity))
+                except Exception as exc:  # noqa: BLE001
+                    return {
+                        "ok": False,
+                        "error": "IDENTITY_INJECTION_WRITE_FAILED",
+                        "path": receipt.as_posix(),
+                        "message": str(exc),
+                    }
+            else:
+                return {
+                    "ok": False,
+                    "error": "IDENTITY_INJECTION_INVALID_ARTIFACT",
+                    "path": receipt.as_posix(),
+                    "message": "receipt must be a YAML mapping to stamp identity",
+                }
+    return {"ok": True, "path": path.as_posix(), "contract_id": contract_id}
 
 
 def _revoke_lease_after_finalize(
@@ -1542,19 +1760,26 @@ def finalize_action(
         return bind_err
 
     actor_id = str(session.get("actor_id") or action.get("agent_id") or "")
+    role_id = str(session.get("role_id") or action.get("role_id") or "")
     contract_id = str(session.get("output_contract_id") or action.get("output_contract_id") or "")
     action_sid = str(session.get("action_session_id") or "")
+    lease_id = str(session.get("lease_id") or "")
+    prepare_nonce = str(session.get("prepare_nonce") or "")
 
-    # Inject trusted identity into producer/canonical artifacts before contract checks.
-    _finalize_inject_artifact_identity(
+    producer_identity = _validate_producer_declared_identity(
         project_root,
         session=session,
         action_id=action_id,
-        contract_id=contract_id,
     )
+    producer_identity_ok = bool(producer_identity.get("ok"))
 
     apply_result: dict[str, Any] | None = None
-    if wid == "tg-init" and action_id == "semantic_bind" and engine_result is None:
+    if (
+        producer_identity_ok
+        and wid == "tg-init"
+        and action_id == "semantic_bind"
+        and engine_result is None
+    ):
         apply_result = _apply_semantic_bind_on_finalize(project_root, session=session)
         if not apply_result.get("ok"):
             session["status"] = "finalize_failed"
@@ -1579,7 +1804,12 @@ def finalize_action(
             )
 
     # extract_plan finalize: validate plan + build host/kernel/tilingkey/bridge layers.
-    if wid == "uo-init" and action_id == "extract_plan" and engine_result is None:
+    if (
+        producer_identity_ok
+        and wid == "uo-init"
+        and action_id == "extract_plan"
+        and engine_result is None
+    ):
         fin_ctx = {
             "op_name": state.get("op_name") or "",
             "architecture": state.get("architecture") or "arch35",
@@ -1609,19 +1839,35 @@ def finalize_action(
                 ],
             )
 
-    contract = _check_output_contract(
-        project_root,
-        contract_id,
-        run_id=run_id,
-        workflow_id=wid,
-        action_id=action_id,
-        actor_id=actor_id,
-        action_session_id=action_sid,
-    )
+    if producer_identity_ok:
+        contract = _check_output_contract(
+            project_root,
+            contract_id,
+            run_id=run_id,
+            workflow_id=wid,
+            phase=phase,
+            action_id=action_id,
+            actor_id=actor_id,
+            role_id=role_id,
+            action_session_id=action_sid,
+            lease_id=lease_id,
+            prepare_nonce=prepare_nonce,
+        )
+    else:
+        contract = {
+            "ok": False,
+            "skipped": False,
+            "error": "PRODUCER_DECLARED_IDENTITY_MISMATCH",
+            "producer_identity": producer_identity,
+            "message": str(
+                producer_identity.get("message")
+                or "producer-declared artifact identity conflicts with prepared Action session"
+            ),
+        }
 
     # KEY resolution: reject patches that expand beyond prepare target_ids.
     target_violation: dict[str, Any] | None = None
-    if action_id == "key_resolution":
+    if producer_identity_ok and action_id == "key_resolution":
         allowed = []
         dt = session.get("dispatch_targets") if isinstance(session.get("dispatch_targets"), dict) else {}
         allowed = [str(x) for x in (dt.get("target_ids") or []) if str(x).strip()]
@@ -1653,8 +1899,9 @@ def finalize_action(
     from ascendc_pilot.spec_hashes import workflow_spec_hash
 
     gate_results = []
-    for gid in session.get("gates") or action.get("gates") or []:
-        gate_results.append(run_named_gate(project_root, str(gid)))
+    if producer_identity_ok:
+        for gid in session.get("gates") or action.get("gates") or []:
+            gate_results.append(run_named_gate(project_root, str(gid)))
 
     checker_required = bool(session.get("checker_required", action.get("checker_required", True)))
     gates_ok = all(g.get("ok") for g in gate_results) if gate_results else True
@@ -1670,10 +1917,22 @@ def finalize_action(
 
     engine_ok = True if engine_result is None else bool(engine_result.get("ok", True))
     targets_ok = target_violation is None
-    overall_ok = bool(gates_ok and contract_ok and engine_ok and targets_ok)
+    overall_ok = bool(producer_identity_ok and gates_ok and contract_ok and engine_ok and targets_ok)
+
+    identity_injection = {"ok": True, "skipped": True}
+    if overall_ok:
+        identity_injection = _finalize_inject_artifact_identity(
+            project_root,
+            session=session,
+            action_id=action_id,
+            contract_id=contract_id,
+        )
+        overall_ok = bool(identity_injection.get("ok"))
 
     checker_result = {
         "ok": overall_ok,
+        "producer_identity": producer_identity,
+        "identity_injection": identity_injection,
         "gates": gate_results,
         "output_contract": contract,
         "engine": engine_result or {},
@@ -1686,9 +1945,13 @@ def finalize_action(
         contract_id,
         run_id=run_id,
         workflow_id=wid,
+        phase=phase,
         action_id=action_id,
         actor_id=actor_id,
+        role_id=role_id,
         action_session_id=action_sid,
+        lease_id=lease_id,
+        prepare_nonce=prepare_nonce,
     )
     if not out_hashes:
         out_hashes = {"session": file_sha256(sdir / "session.yaml") or "none"}
@@ -1707,7 +1970,7 @@ def finalize_action(
     if overall_ok:
         receipt_path = issue_receipt(
             project_root,
-            actor_type=str(session.get("role_id") or action.get("role_id") or "producer"),
+            actor_type=role_id or "producer",
             actor_id=actor_id,
             action_id=action_id,
             workflow_spec_hash=workflow_spec_hash(wid) if wid else workflow_spec_hash(),
@@ -1771,6 +2034,10 @@ def finalize_action(
             else "Finalize 失败：Checker/Output Contract 未通过"
         ),
     }
+    if not overall_ok and not producer_identity_ok:
+        result["error"] = "PRODUCER_DECLARED_IDENTITY_MISMATCH"
+    elif not overall_ok and not identity_injection.get("ok"):
+        result["error"] = str(identity_injection.get("error") or "IDENTITY_INJECTION_FAILED")
     if overall_ok:
         from ascendc_pilot.observation import record_pilot_result
 
@@ -1785,6 +2052,10 @@ def finalize_action(
         return result
 
     msgs = ["Finalize 失败：Checker/Output Contract 未通过"]
+    if not producer_identity_ok:
+        msgs.append(str(producer_identity.get("error") or "PRODUCER_DECLARED_IDENTITY_MISMATCH"))
+    if not identity_injection.get("ok"):
+        msgs.append(str(identity_injection.get("error") or "IDENTITY_INJECTION_FAILED"))
     for g in gate_results:
         if not g.get("ok"):
             msgs.append(str(g.get("message") or g.get("gate") or "gate_failed"))
