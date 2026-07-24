@@ -743,23 +743,57 @@ def _run_detect_score_post(project_root: Path, ctx: dict[str, Any]) -> dict[str,
 
 
 def _run_apply_semantic_patch(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """Write patch to semantic_resolution_ledger only (⑦); bump attempts (⑥)."""
+    """Apply producer patches (or auto mark_missing) into ledger; bump attempts (⑥)."""
     uo, _op, _arch = _uo_op_ctx(project_root, ctx)
     try:
+        from uo.scripts._ir_io import read_yaml
         from uo.scripts.evidence_score import _source_snapshot_hash
-        from uo.scripts.llm_tasks import apply_task_patch
+        from uo.scripts.llm_tasks import apply_patches_batch, resolve_patches_for_apply
 
-        patch = ctx.get("patch") if isinstance(ctx.get("patch"), dict) else {}
-        if not patch and ctx.get("patch_path"):
-            from uo.scripts._ir_io import read_yaml
+        # Prefer explicit ctx.patch / patch_path; else ir/semantic_patches.yaml; else auto.
+        patches_doc: dict[str, Any] | None = None
+        single = ctx.get("patch") if isinstance(ctx.get("patch"), dict) else None
+        if single and single.get("task_id"):
+            patches_doc = {"patches": [single]}
+        elif ctx.get("patch_path"):
+            patches_doc = read_yaml(Path(str(ctx["patch_path"]))) or {}
+        else:
+            patches_path = uo / "ir" / "semantic_patches.yaml"
+            if patches_path.is_file():
+                patches_doc = read_yaml(patches_path) or {}
 
-            patch = read_yaml(Path(str(ctx["patch_path"]))) or {}
-        result = apply_task_patch(
+        resolved = resolve_patches_for_apply(uo, patches_doc=patches_doc)
+        if not resolved.get("ok"):
+            out = {"ok": False, "engine": "apply_semantic_patch", **resolved}
+            if resolved.get("error") == "SEMANTIC_PATCHES_REQUIRED":
+                out["recovery_actions"] = ["adjudicate_llm_tasks", "apply_semantic_patch"]
+            return out
+        patches = list(resolved.get("patches") or [])
+        if resolved.get("skipped") or not patches:
+            # Ensure ledger artifact exists for output contract even when nothing to apply.
+            ledger = uo / "ir" / "semantic_resolution_ledger.yaml"
+            if not ledger.is_file():
+                from uo.scripts.semantic_resolution_ledger import save_ledger
+
+                save_ledger(uo, {"version": 1, "semantic_patches": [], "note": "empty_skip"})
+            return {
+                "ok": True,
+                "engine": "apply_semantic_patch",
+                "skipped": True,
+                "reason": resolved.get("reason") or "no_patches",
+                "source": resolved.get("source"),
+            }
+        result = apply_patches_batch(
             uo,
-            patch,
+            patches,
             current_source_hash=_source_snapshot_hash(uo),
         )
-        return {"ok": bool(result.get("ok")), "engine": "apply_semantic_patch", **result}
+        return {
+            "ok": bool(result.get("ok")),
+            "engine": "apply_semantic_patch",
+            "source": resolved.get("source"),
+            **result,
+        }
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "apply_semantic_patch", "error": str(exc)[:300]}
 
@@ -860,6 +894,7 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "uo/ir/llm_tasks.yaml",
     ],
     "detect-score-post-v1": ["uo/ir/score_report_post.yaml", "uo/ir/llm_tasks.yaml"],
+    "semantic-patches-v1": ["uo/ir/semantic_patches.yaml"],
     "semantic-patch-v1": ["uo/ir/semantic_resolution_ledger.yaml"],
     "rebuild-ledger-v1": ["uo/ir/entrypoint_graph.yaml", "uo/ir/operator_graph.yaml"],
     # Recheck is validation-only; required state under inspection

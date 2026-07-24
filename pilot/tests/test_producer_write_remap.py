@@ -74,6 +74,58 @@ def test_primary_mislabeled_write_allowed_via_active_action(tmp_path: Path) -> N
     assert verdict.get("ok") is not False
 
 
+def test_primary_task_dispatch_not_remapped(tmp_path: Path) -> None:
+    """Primary must stay primary when spawning Task; active producer must be allowed."""
+    op = tmp_path / "DemoOp"
+    op.mkdir()
+    ensure_agent_layout(op)
+    start_workflow(op, "uo-init", phase="extract", force_phase=True)
+    _write_active_action(
+        op,
+        {
+            "action_id": "extract_plan",
+            "actor_id": "uo-semantic-resolve",
+            "workflow_id": "uo-init",
+            "phase": "extract",
+            "status": "prepared",
+        },
+    )
+    verdict = authorize(
+        op,
+        tool="task",
+        path="uo-semantic-resolve",
+        agent="ascendc-pilot",
+        action="extract_plan",
+    )
+    assert verdict.get("decision") == "allow", verdict
+    assert verdict.get("reason_code") == "TASK_OK"
+
+
+def test_task_path_agent_name_does_not_break_project_root(tmp_path: Path) -> None:
+    op = tmp_path / "DemoOp"
+    op.mkdir()
+    ensure_agent_layout(op)
+    start_workflow(op, "uo-init", phase="extract", force_phase=True)
+    _write_active_action(
+        op,
+        {
+            "action_id": "extract_plan",
+            "actor_id": "uo-semantic-resolve",
+            "status": "prepared",
+        },
+    )
+    # Simulate plugin passing subagent name as --path (not a filesystem path).
+    verdict = authorize(
+        op,
+        tool="task",
+        path="uo-semantic-resolve",
+        command="uo-semantic-resolve",
+        agent="ascendc-pilot",
+        action="",
+    )
+    assert verdict.get("decision") == "allow", verdict
+
+
 def test_primary_still_blocked_without_active_producer(tmp_path: Path) -> None:
     op = tmp_path / "DemoOp"
     op.mkdir()

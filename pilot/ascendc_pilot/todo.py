@@ -15,6 +15,13 @@ _NATIVE_STATUS = {
     "pending": "pending",
 }
 
+# OpenCode todowrite requires ``priority`` on every item (SchemaError if missing).
+_NATIVE_PRIORITY = {
+    "in_progress": "high",
+    "pending": "medium",
+    "completed": "low",
+}
+
 
 def todo_path(project_root: Path) -> Path:
     """Legacy path kept for tests; chat must not render this file."""
@@ -86,11 +93,13 @@ def build_todo(
         mark = row["status"]
         label = label_zh_for(wid, pid)
         phases.append({"id": pid, "label_zh": label, "status": mark})
+        status_native = _NATIVE_STATUS.get(mark, "pending")
         native_items.append(
             {
                 "id": pid,
                 "content": label,
-                "status": _NATIVE_STATUS.get(mark, "pending"),
+                "status": status_native,
+                "priority": _NATIVE_PRIORITY.get(status_native, "medium"),
             }
         )
 
@@ -161,7 +170,8 @@ def _todo_sync_block(
         "instruction_zh": (
             f"有变化才 todowrite（merge={merge_lit}）；"
             "items 与上次同步完全相同则跳过；"
-            "一旦调用必须全量等于 todo.todo_sync.items（含全部 id/content/status）；"
+            "一旦调用必须全量等于 todo.todo_sync.items"
+            "（含全部 id/content/status/priority）；"
             "禁止子集；禁止在回复里讨论要不要同步；与下一步 acp 同轮并行。"
         ),
     }

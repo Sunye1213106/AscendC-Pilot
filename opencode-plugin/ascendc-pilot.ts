@@ -19,7 +19,8 @@
  */
 
 import { spawnSync } from "node:child_process"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { homedir } from "node:os"
 import { resolve } from "node:path"
 
 type AuthorizeResult = {
@@ -52,6 +53,36 @@ function projectRootFromPath(pathHint: string): string {
   return ""
 }
 
+function lastProjectCachePath(): string {
+  return resolve(homedir(), ".config", "opencode", "ascendc-last-project")
+}
+
+function rememberProjectRoot(project: string): void {
+  const root = String(project || "").trim()
+  if (!root || !existsSync(root)) return
+  try {
+    const cache = lastProjectCachePath()
+    mkdirSync(resolve(homedir(), ".config", "opencode"), { recursive: true })
+    writeFileSync(cache, root, "utf-8")
+  } catch {
+    // best-effort
+  }
+}
+
+function readRememberedProjectRoot(): string {
+  try {
+    const cache = lastProjectCachePath()
+    if (!existsSync(cache)) return ""
+    const root = readFileSync(cache, "utf-8").trim()
+    if (root && existsSync(resolve(root, ".ascendc-pilot", "state", "workflow.yaml"))) {
+      return root
+    }
+  } catch {
+    // ignore
+  }
+  return ""
+}
+
 function detectProjectRoot(pathHint?: string): string {
   const fromPath = projectRootFromPath(String(pathHint || ""))
   if (fromPath) return fromPath
@@ -67,6 +98,9 @@ function detectProjectRoot(pathHint?: string): string {
   // creates `.ascendc-pilot`. Walking up to a parent `.ascendc-pilot` would otherwise
   // authorize against the wrong leftover run (e.g. ops-transformer vs op dir).
   const cwd = process.cwd()
+  if (existsSync(resolve(cwd, ".ascendc-pilot", "state", "workflow.yaml"))) {
+    return cwd
+  }
   if (
     existsSync(resolve(cwd, "CMakeLists.txt")) ||
     existsSync(resolve(cwd, "op_kernel")) ||
@@ -75,21 +109,48 @@ function detectProjectRoot(pathHint?: string): string {
     return cwd
   }
 
-  // Walk up from cwd looking for .ascendc-pilot or repo markers
+  // Walk up: prefer active Pilot workflow over bare .git / pilot repo root.
   let cur = cwd
+  let foundGit = ""
+  let foundPilotRepo = ""
   for (let i = 0; i < 8; i++) {
-    if (
-      existsSync(resolve(cur, ".ascendc-pilot")) ||
-      existsSync(resolve(cur, "pilot")) ||
-      existsSync(resolve(cur, ".git"))
-    ) {
+    if (existsSync(resolve(cur, ".ascendc-pilot", "state", "workflow.yaml"))) {
       return cur
+    }
+    if (!foundPilotRepo && existsSync(resolve(cur, "pilot")) && existsSync(resolve(cur, "engines"))) {
+      foundPilotRepo = cur
+    }
+    if (!foundGit && existsSync(resolve(cur, ".git"))) {
+      foundGit = cur
     }
     const parent = resolve(cur, "..")
     if (parent === cur) break
     cur = parent
   }
-  return process.cwd()
+
+  const remembered = readRememberedProjectRoot()
+  if (remembered) return remembered
+
+  return foundPilotRepo || foundGit || process.cwd()
+}
+
+function detectProjectRootForTask(): string {
+  // Task args often carry subagent names, not file paths — ignore path hints.
+  const fromEnv =
+    process.env.ASCENDC_PROJECT_ROOT ||
+    process.env.OPENCODE_PROJECT_ROOT ||
+    process.env.PROJECT_ROOT ||
+    ""
+  if (fromEnv && existsSync(resolve(fromEnv, ".ascendc-pilot", "state", "workflow.yaml"))) {
+    return fromEnv
+  }
+  const cwd = process.cwd()
+  if (existsSync(resolve(cwd, ".ascendc-pilot", "state", "workflow.yaml"))) {
+    return cwd
+  }
+  const remembered = readRememberedProjectRoot()
+  if (remembered) return remembered
+  return detectProjectRoot()
 }
 
 function resolveAgent(input: { agent?: string; sessionAgent?: string }): string {
@@ -251,6 +312,7 @@ function runAuthorize(args: {
       ASCENDC_PROJECT_ROOT: project,
     },
   })
+  rememberProjectRoot(project)
   if (result.error || result.status === 127) {
     return {
       ok: false,
@@ -283,6 +345,117 @@ function denyMessage(verdict: AuthorizeResult, kind: string, detail: string): st
   const allowed = (verdict.allowed_actions || []).slice(0, 6).join(" | ")
   const base = `[ascendc-pilot] blocked ${kind}: ${verdict.reason_zh || verdict.reason || code || detail}`
   return allowed ? `${base} (allowed: ${allowed})` : base
+}
+
+/** Best-effort debug capture via `acp debug` (never throws). */
+function runDebug(argvExtra: string[], project?: string): void {
+  try {
+    const root = project || detectProjectRoot() || readRememberedProjectRoot() || process.cwd()
+    const acpBin = resolveAcpBin()
+    spawnSync(acpBin, ["debug", ...argvExtra, "--project", root], {
+      encoding: "utf-8",
+      shell: false,
+      windowsHide: true,
+      cwd: root,
+      env: { ...process.env, ASCENDC_PROJECT_ROOT: root },
+      timeout: 45_000,
+    })
+  } catch {
+    // fail-open
+  }
+}
+
+function extractToolError(
+  output: Record<string, unknown> | undefined,
+  tool?: string,
+): string {
+  if (!output || typeof output !== "object") return ""
+  const toolL = String(tool || "").toLowerCase()
+
+  const exitRaw =
+    output.exit ??
+    output.exitCode ??
+    output.code ??
+    (output.metadata && typeof output.metadata === "object"
+      ? (output.metadata as Record<string, unknown>).exit ??
+        (output.metadata as Record<string, unknown>).exitCode ??
+        (output.metadata as Record<string, unknown>).code
+      : undefined)
+  const exitCode = typeof exitRaw === "number" ? exitRaw : Number.NaN
+
+  const chunks: string[] = []
+  for (const k of ["error", "message", "stderr", "output", "content", "title"] as const) {
+    const v = output[k]
+    if (typeof v === "string" && v.trim()) chunks.push(v)
+  }
+  const meta = output.metadata
+  if (meta && typeof meta === "object") {
+    const err = (meta as Record<string, unknown>).error
+    if (typeof err === "string" && err.trim()) chunks.push(err)
+  }
+  const text = chunks.join("\n")
+
+  // Successful Read dumps must never be treated as failures.
+  if (
+    (toolL === "read" || /<path>[\s\S]*<\/path>\s*<type>\s*file\s*<\/type>/i.test(text)) &&
+    !/"ok"\s*:\s*false/i.test(text) &&
+    !/SchemaError|invalid arguments/i.test(text)
+  ) {
+    return ""
+  }
+
+  if (!Number.isNaN(exitCode) && exitCode !== 0) {
+    return (text || `exit_code=${exitCode}`).slice(0, 2000)
+  }
+  if (/SchemaError|invalid arguments|Missing key/i.test(text)) {
+    return text.slice(0, 2000)
+  }
+  if (
+    /\[ascendc-pilot\]\s*blocked|HARNESS_ACTION_NOT_AUTHORIZED|PRIMARY_PROTECTED_WRITE/i.test(
+      text,
+    )
+  ) {
+    return text.slice(0, 2000)
+  }
+
+  // Structured acp failure: first ok:false before any ok:true
+  const falseIdx = (() => {
+    const a = text.indexOf('"ok": false')
+    const b = text.indexOf('"ok":false')
+    if (a < 0) return b
+    if (b < 0) return a
+    return Math.min(a, b)
+  })()
+  const trueIdx = (() => {
+    const a = text.indexOf('"ok": true')
+    const b = text.indexOf('"ok":true')
+    if (a < 0) return b
+    if (b < 0) return a
+    return Math.min(a, b)
+  })()
+  if (falseIdx >= 0 && (trueIdx < 0 || falseIdx < trueIdx)) {
+    return text.slice(0, 2000)
+  }
+
+  // Bare Error:/Exception envelopes (not file content)
+  if (/^(Error|ERROR|Exception|Traceback)\b/m.test(text.trim())) {
+    return text.slice(0, 2000)
+  }
+
+  return ""
+}
+
+/** OpenCode todowrite requires priority; inject when Host forgot. */
+function ensureTodowritePriority(args: Record<string, unknown>): void {
+  const todos = args.todos
+  if (!Array.isArray(todos)) return
+  for (const item of todos) {
+    if (!item || typeof item !== "object") continue
+    const row = item as Record<string, unknown>
+    if (row.priority != null && String(row.priority).trim()) continue
+    const st = String(row.status || "pending").toLowerCase()
+    row.priority = st === "in_progress" ? "high" : st === "completed" ? "low" : "medium"
+  }
 }
 
 function injectActionContext(
@@ -338,9 +511,16 @@ export const AscendCHarnessPlugin = async () => {
           args.glob ||
           "",
       )
-      const project = detectProjectRoot(path)
+      const isTaskTool = tool === "task" || tool === "subagent" || tool === "task_tool"
+      const project = isTaskTool ? detectProjectRootForTask() : detectProjectRoot(path)
+      if (project) rememberProjectRoot(project)
       const active = readActiveAction(project)
       let agent = resolveEffectiveAgent(input, active, tool)
+
+      // OpenCode todowrite schema requires priority — inject when Host omitted it.
+      if (tool === "todowrite" || tool === "todo_write" || (tool.includes("todo") && tool.includes("write"))) {
+        ensureTodowritePriority(args)
+      }
 
       // Build / Plan / other non-Pilot tabs: behave like stock OpenCode.
       if (!shouldEnforceHarness(agent)) {
@@ -354,7 +534,6 @@ export const AscendCHarnessPlugin = async () => {
           args.subagent_type ||
           args.subagentType ||
           args.name ||
-          path ||
           "",
       )
 
@@ -432,7 +611,57 @@ export const AscendCHarnessPlugin = async () => {
         }
       }
     },
-    "tool.execute.after": async () => {},
+    "tool.execute.after": async (
+      input: { tool?: string; agent?: string; sessionAgent?: string },
+      output: Record<string, unknown> | undefined,
+    ) => {
+      try {
+        const tool = String(input.tool || "").toLowerCase()
+        const args = (output && typeof output.args === "object" ? output.args : {}) as Record<
+          string,
+          unknown
+        >
+        const path = String(
+          args.filePath || args.path || args.file || args.filepath || args.target || "",
+        )
+        const isTaskTool = tool === "task" || tool === "subagent" || tool === "task_tool"
+        const project = isTaskTool ? detectProjectRootForTask() : detectProjectRoot(path)
+        if (project) rememberProjectRoot(project)
+
+        const err = extractToolError(output, tool)
+        if (err) {
+          runDebug(
+            [
+              "record-tool-failure",
+              "--tool",
+              tool || "unknown",
+              "--error",
+              err.slice(0, 1500),
+            ],
+            project,
+          )
+        }
+
+        // Subagent (Task) finished → auto export session bundle when debug enabled.
+        if (isTaskTool) {
+          const sub =
+            String(
+              args.agent ||
+                args.subagent ||
+                args.subagent_type ||
+                args.subagentType ||
+                args.name ||
+                "",
+            ) || "task"
+          runDebug(
+            ["export-session", "--if-enabled", "--reason", "subagent_stop", "--subagent", sub],
+            project,
+          )
+        }
+      } catch {
+        // fail-open
+      }
+    },
   }
 }
 

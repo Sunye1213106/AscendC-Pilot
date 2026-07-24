@@ -125,6 +125,77 @@ FORBIDDEN_EXTRACT_PLAN_KEYS = frozenset(
 )
 
 
+def _match_candidate(
+    item: dict[str, Any],
+    candidates: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    name = str(item.get("name") or "").strip()
+    if not name:
+        return None
+    fp = str(item.get("file_path") or "").replace("\\", "/").strip()
+    qn = str(item.get("qualified_name") or "").strip()
+    exact: list[dict[str, Any]] = []
+    by_name: list[dict[str, Any]] = []
+    for c in candidates:
+        if not isinstance(c, dict):
+            continue
+        cn = str(c.get("name") or "").strip()
+        if cn.casefold() != name.casefold():
+            continue
+        by_name.append(c)
+        cfp = str(c.get("file_path") or "").replace("\\", "/").strip()
+        cqn = str(c.get("qualified_name") or "").strip()
+        if (fp and cfp and fp == cfp) or (qn and cqn and qn == cqn):
+            exact.append(c)
+    if exact:
+        return exact[0]
+    if len(by_name) == 1:
+        return by_name[0]
+    return by_name[0] if by_name else None
+
+
+def normalize_plan_from_candidates(
+    plan: dict[str, Any],
+    candidates: dict[str, Any],
+) -> dict[str, Any]:
+    """Fill missing role / is_tiling_sink from candidate suggestions before validate.
+
+    Does not invent writers/receivers; only completes confirmation labels.
+    """
+    out = dict(plan)
+    writers = []
+    for item in out.get("writers") or []:
+        if not isinstance(item, dict):
+            writers.append(item)
+            continue
+        row = dict(item)
+        role = str(row.get("role") or "").strip()
+        if role not in WRITER_ROLES:
+            cand = _match_candidate(row, list(candidates.get("writer_candidates") or []))
+            suggested = str((cand or {}).get("role_suggested") or "").strip()
+            if suggested in WRITER_ROLES:
+                row["role"] = suggested
+        writers.append(row)
+    out["writers"] = writers
+
+    receivers = []
+    for item in out.get("receivers") or []:
+        if not isinstance(item, dict):
+            receivers.append(item)
+            continue
+        row = dict(item)
+        if "is_tiling_sink" not in row:
+            cand = _match_candidate(row, list(candidates.get("receiver_candidates") or []))
+            if cand is not None and "is_tiling_sink_suggested" in cand:
+                row["is_tiling_sink"] = bool(cand.get("is_tiling_sink_suggested"))
+            else:
+                # Receivers that made it into candidates via set_* are sinks by default.
+                row["is_tiling_sink"] = True
+        receivers.append(row)
+    out["receivers"] = receivers
+    return out
+
+
 def validate_extract_plan_against_candidates(
     plan: dict[str, Any],
     candidates: dict[str, Any],
@@ -190,7 +261,11 @@ def validate_extract_plan_against_candidates(
             if len(matches) > 1:
                 errors.append(f"writer {name} ambiguous without identity fields (file_path|qualified_name|identity_key)")
         if role not in WRITER_ROLES:
-            errors.append(f"invalid writer role: {role!r}")
+            errors.append(
+                f"writer {name or '?'} missing/invalid role {role!r} "
+                f"(copy role_suggested from extract_plan_candidates.yaml; "
+                f"allowed: {sorted(WRITER_ROLES)})"
+            )
 
     for item in plan.get("receivers") or []:
         if not isinstance(item, dict):
@@ -210,7 +285,10 @@ def validate_extract_plan_against_candidates(
             if len(matches) > 1:
                 errors.append(f"receiver {name} ambiguous without identity fields (file_path|qualified_name|identity_key)")
         if "is_tiling_sink" not in item:
-            errors.append(f"receiver {name} missing is_tiling_sink")
+            errors.append(
+                f"receiver {name} missing is_tiling_sink "
+                "(copy is_tiling_sink_suggested from extract_plan_candidates.yaml)"
+            )
 
     for item in plan.get("aliases") or []:
         if not isinstance(item, dict):

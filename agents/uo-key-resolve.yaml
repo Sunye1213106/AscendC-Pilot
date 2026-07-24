@@ -3,7 +3,7 @@ version: 1
 name_zh: KEY triage/resolve producer
 role: producer
 mode: subagent
-description: KEY triage/resolve producer
+description: KEY triage/resolve producer. On start, read session prompt.md first.
 read_scopes:
   - "uo/**"
   - "runs/**"

@@ -3,7 +3,9 @@ version: 1
 name_zh: TG semantic bind producer
 role: producer
 mode: subagent
-description: Bounded semantic-bind producer; writes candidate-cited patches only
+description: >-
+  Bounded semantic-bind producer; writes candidate-cited patches only.
+  On start, read session prompt.md first.
 read_scopes:
   - "tg/realization/**"
   - "tg/snapshot/**"

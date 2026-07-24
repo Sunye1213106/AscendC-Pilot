@@ -3,7 +3,7 @@ version: 1
 name_zh: KB product referee
 role: referee
 mode: subagent
-description: KB product referee
+description: KB product referee. On start, read session prompt.md first.
 read_scopes:
   - "uo/**"
   - "runs/**"

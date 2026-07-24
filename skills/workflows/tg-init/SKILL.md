@@ -22,6 +22,8 @@ description: >-
 - 定稿 UO KB（`uo_ready`）
 - 测试脚本 / CSV 消费端目录：`--test-script-root` / `csv_consumer_root` / `ASCENDC_TEST_SCRIPT_ROOT`
 
+**测试脚本路径不明确 → 立刻 AskQuestion**：未给出 `--test-script-root` 且环境变量也未设时，**同一轮** `question` 请用户粘贴测试脚本根目录；禁止 Glob 全盘猜路径、长篇纠结。已明确则直接 `acp start tg-init --test-script-root <路径>`。
+
 ## Actions
 
 | action_id | 名称 | method | agent | role |

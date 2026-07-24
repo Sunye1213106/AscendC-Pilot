@@ -135,7 +135,10 @@ def _remap_primary_actor(
     agent_l: str,
     action_id: str,
 ) -> tuple[str, str]:
-    """When hooks mislabel producer writes as primary, trust prepared active_action."""
+    """When hooks mislabel producer writes as primary, trust prepared active_action.
+
+    Only for write tools — Task dispatch must keep agent=primary.
+    """
     if agent_l not in _PRIMARY_AGENTS:
         return agent_l, action_id
     active = _load_active_action(project_root)
@@ -147,6 +150,13 @@ def _remap_primary_actor(
     if action_id and act and action_id != act:
         return agent_l, action_id
     return actor, action_id or act
+
+
+def _fill_action_from_active(project_root: Path | None, action_id: str) -> str:
+    if action_id:
+        return action_id
+    active = _load_active_action(project_root)
+    return str(active.get("action_id") or "").strip()
 
 
 def _is_pilot_family_agent(agent_l: str, meta: dict[str, Any] | None = None) -> bool:
@@ -345,7 +355,11 @@ def _is_engine_source(norm: str) -> bool:
     return any(m.lower() in n for m in _ENGINE_SOURCE_MARKERS)
 
 
-def _declared_phase_actors(allowed: list[dict[str, Any]], meta: dict[str, Any]) -> set[str]:
+def _declared_phase_actors(
+    allowed: list[dict[str, Any]],
+    meta: dict[str, Any],
+    project_root: Path | None = None,
+) -> set[str]:
     """Actors declared on current-phase actions only (not all workflow agents)."""
     declared: set[str] = set()
     for a in allowed:
@@ -356,6 +370,11 @@ def _declared_phase_actors(allowed: list[dict[str, Any]], meta: dict[str, Any]) 
             declared.add(str(act).lower())
     declared.add("ascendc-pilot")
     declared.add("human")
+    # Prepared producer is always dispatchable even if phase listing is incomplete.
+    active = _load_active_action(project_root)
+    actor = str(active.get("actor_id") or "").strip().lower()
+    if actor:
+        declared.add(actor)
     return declared
 
 
@@ -374,20 +393,32 @@ def _is_containment_pilot_command(command: str) -> bool:
     return command_matches_prefixes(command, CONTAINMENT_COMMAND_PREFIXES)
 
 
-def _is_rework_pilot_command(command: str, *, failed_action: str = "") -> bool:
+def _is_rework_pilot_command(
+    command: str,
+    *,
+    failed_action: str = "",
+    recovery_actions: list[str] | None = None,
+) -> bool:
     """True if command is a legal rework recovery / retry command."""
-    if command_matches_prefixes(command, REWORK_COMMAND_PREFIXES):
-        cmd_l = _normalize_cmd(command).lower()
-        # Narrow run-action to the failed action when known
-        if " run-action " in f" {cmd_l} " or cmd_l.endswith(" run-action"):
-            if failed_action:
-                return f"run-action {failed_action.lower()}" in cmd_l
+    if not command_matches_prefixes(command, REWORK_COMMAND_PREFIXES):
+        return False
+    cmd_l = _normalize_cmd(command).lower()
+    # advance / complete never legal in rework
+    if " advance" in f" {cmd_l}" or " complete" in f" {cmd_l}":
+        return False
+    if " run-action " in f" {cmd_l} " or cmd_l.endswith(" run-action"):
+        allowed_ids: list[str] = []
+        if failed_action:
+            allowed_ids.append(failed_action.lower())
+        for rid in recovery_actions or []:
+            if rid:
+                allowed_ids.append(str(rid).lower())
+        if failed_action == "apply_semantic_patch" and "adjudicate_llm_tasks" not in allowed_ids:
+            allowed_ids.append("adjudicate_llm_tasks")
+        if not allowed_ids:
             return True
-        # advance / complete never legal in rework even if somehow listed
-        if " advance" in f" {cmd_l}" or " complete" in f" {cmd_l}":
-            return False
-        return True
-    return False
+        return any(f"run-action {aid}" in cmd_l for aid in allowed_ids)
+    return True
 
 
 def _is_acp_cli(command: str) -> bool:
@@ -433,8 +464,17 @@ def authorize(
 
     # Write path under <op>/.ascendc-pilot/… may arrive with a wrong project_root
     # (workspace parent). Prefer the operator package that owns the artifact.
-    project_root = _project_root_for_path(project_root, path_s)
-    agent_l, action_id = _remap_primary_actor(project_root, agent_l, action_id)
+    # Task path is usually the subagent name — never treat it as a filesystem path.
+    if tool_l in _TASK_TOOLS:
+        project_root = Path(project_root).resolve() if project_root is not None else None
+    else:
+        project_root = _project_root_for_path(project_root, path_s)
+
+    # Remap primary→producer only for writes (hook mislabel). Task must stay primary.
+    if tool_l in _WRITE_TOOLS:
+        agent_l, action_id = _remap_primary_actor(project_root, agent_l, action_id)
+    else:
+        action_id = _fill_action_from_active(project_root, action_id)
 
     ctx = _load_context(project_root)
     meta = ctx.get("meta") or {}
@@ -481,6 +521,9 @@ def authorize(
 
     lf = state.get("last_failure") if isinstance(state.get("last_failure"), dict) else {}
     failed_action = str(lf.get("action_id") or lease.get("action_id") or "")
+    recovery_actions = [str(x) for x in (lf.get("recovery_actions") or []) if str(x).strip()]
+    if failed_action == "apply_semantic_patch" and "adjudicate_llm_tasks" not in recovery_actions:
+        recovery_actions = list(recovery_actions) + ["adjudicate_llm_tasks"]
 
     # ========== STATUS-AUTHORITATIVE GATES ==========
     # Mode comes from status. Lease mode must not escalate rework → containment.
@@ -527,7 +570,9 @@ def authorize(
 
     if auth_mode == MODE_REWORK:
         if tool_l in _BASH_TOOLS:
-            if _is_rework_pilot_command(cmd, failed_action=failed_action):
+            if _is_rework_pilot_command(
+                cmd, failed_action=failed_action, recovery_actions=recovery_actions
+            ):
                 return _ok(
                     "allow",
                     "REWORK_HARNESS",
@@ -535,6 +580,7 @@ def authorize(
                     + (f"（action={failed_action}）" if failed_action else ""),
                     status=status,
                     action=failed_action or None,
+                    recovery_actions=recovery_actions,
                     command=cmd[:200],
                 )
             if _is_acp_cli(cmd):
@@ -547,6 +593,7 @@ def authorize(
                         "acp status",
                         "acp inspect-failure",
                         f"acp run-action {failed_action}" if failed_action else "acp run-action <failed>",
+                        *[f"acp run-action {r}" for r in recovery_actions[:3]],
                         "acp uo-scope …",
                         "acp abort",
                         "acp start",
@@ -575,7 +622,11 @@ def authorize(
 
         if tool_l in _WRITE_TOOLS and _is_formal_artifact(path_s.replace("\\", "/")):
             # Allow writes only when declaring the failed action (producer rework)
-            if not action_id or (failed_action and action_id != failed_action):
+            if not action_id or (
+                failed_action
+                and action_id != failed_action
+                and action_id not in recovery_actions
+            ):
                 return _deny_not_authorized(
                     "rework_required: formal artifact writes require failed action_id",
                     status=status,
@@ -692,7 +743,7 @@ def authorize(
     if tool_l in _TASK_TOOLS:
         if agent_l in _PRIMARY_AGENTS:
             target = path_s or cmd
-            declared_actors = _declared_phase_actors(allowed, meta)
+            declared_actors = _declared_phase_actors(allowed, meta, project_root)
             target_l = target.strip().lower()
             if target_l and declared_actors and target_l not in declared_actors:
                 return _ok(
@@ -728,8 +779,10 @@ def authorize(
         if action_id:
             action_row = _action_by_id(allowed, action_id)
             # In rework, allow the failed action even if describe_next emptied allowed_actions
-            if action_row is None and auth_mode == MODE_REWORK and failed_action and action_id == failed_action:
-                action_row = {"id": failed_action}
+            if action_row is None and auth_mode == MODE_REWORK and failed_action and (
+                action_id == failed_action or action_id in recovery_actions
+            ):
+                action_row = {"id": action_id}
             if action_row is None and state and auth_mode != MODE_REWORK:
                 return _ok(
                     "deny",

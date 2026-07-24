@@ -3,7 +3,7 @@ version: 1
 name_zh: Extract plan producer
 role: producer
 mode: subagent
-description: Extract plan producer
+description: Extract plan producer. On start, read session prompt.md first.
 read_scopes:
   - "uo/**"
   - "runs/**"

@@ -3,7 +3,7 @@ version: 1
 name_zh: Confidence reason referee
 role: referee
 mode: subagent
-description: Confidence reason referee
+description: Confidence reason referee. On start, read session prompt.md first.
 read_scopes:
   - "uo/**"
   - "runs/**"

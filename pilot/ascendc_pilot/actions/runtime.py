@@ -239,15 +239,33 @@ def _session_dir(project_root: Path, run_id: str, action_id: str) -> Path:
     return run_dir(project_root, run_id) / "actions" / action_id
 
 
-def _render_placeholders(text: str, *, run_id: str, action_id: str, workflow_id: str, actor_id: str) -> str:
+def _render_placeholders(
+    text: str,
+    *,
+    run_id: str,
+    action_id: str,
+    workflow_id: str,
+    actor_id: str,
+    project_root: str = "",
+    uo_root: str = "",
+    tg_root_path: str = "",
+    topic: str = "",
+    context_pack_path: str = "",
+    op_name: str = "",
+    target: str = "",
+) -> str:
     repl = {
         "<RUN_ID>": run_id,
         "<ACTION_ID>": action_id,
         "<WORKFLOW_ID>": workflow_id,
         "<ACTOR_ID>": actor_id,
-        "<TARGET_IDS_OR_FILES>": "(see context pack / human input)",
-        "<OP_NAME>": "",
-        "<PROJECT_ROOT>": "",
+        "<TARGET_IDS_OR_FILES>": target or "(see context pack / human input)",
+        "<OP_NAME>": op_name,
+        "<PROJECT_ROOT>": project_root,
+        "<UO_ROOT>": uo_root,
+        "<TG_ROOT>": tg_root_path,
+        "<TOPIC>": topic,
+        "<CONTEXT_PACK_PATH>": context_pack_path,
     }
     out = text
     for k, v in repl.items():
@@ -255,6 +273,46 @@ def _render_placeholders(text: str, *, run_id: str, action_id: str, workflow_id:
     # Angle-bracket leftovers that look like template tokens → mark unresolved
     out = re.sub(r"<([A-Z][A-Z0-9_]{2,})>", r"[UNRESOLVED:\1]", out)
     return out
+
+
+def _build_task_prompt_stub(
+    *,
+    actor_id: str,
+    action_id: str,
+    run_id: str,
+    session_dir: str,
+    prompt_path: str,
+    method_path: str,
+    bundle_path: str,
+    dispatch_targets: dict[str, Any] | None = None,
+) -> str:
+    """Minimal Host→subagent Task body: pointers only, no METHOD paraphrase."""
+    lines = [
+        f"action_id={action_id}",
+        f"actor_id={actor_id}",
+        f"run_id={run_id}",
+        "Follow ONLY these session files (read them first; do not invent extra goals):",
+        f"  prompt: {prompt_path}",
+        f"  method: {method_path}",
+        f"  bundle: {bundle_path}",
+        f"session_dir: {session_dir}",
+    ]
+    dt = dispatch_targets or {}
+    if dt.get("read"):
+        lines.append("read: " + ", ".join(str(x) for x in dt["read"]))
+    if dt.get("write"):
+        lines.append("write: " + ", ".join(str(x) for x in dt["write"]))
+    if dt.get("forbid_read"):
+        lines.append("forbid_read: " + ", ".join(str(x) for x in dt["forbid_read"]))
+    lines.extend(
+        [
+            "Return a short summary when done.",
+            "Do NOT finalize; primary runs `acp run-action "
+            + action_id
+            + " --finalize`.",
+        ]
+    )
+    return "\n".join(lines) + "\n"
 
 
 def _load_method_and_prompt(repo: Path, action: dict[str, Any]) -> tuple[str, str]:
@@ -395,6 +453,49 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             "allowed": [a.get("id") for a in actions_for_phase(wid, phase)],
         }
 
+    # Prefer pipeline order: block Host skip (e.g. apply before detect_score_post / adjudicate).
+    status = str(state.get("status") or "running")
+    if status == "running":
+        from ascendc_pilot.workflows.pipeline import recommend_next_action
+
+        recommended = recommend_next_action(
+            project_root,
+            workflow_id=wid,
+            phase=phase,
+            allowed_actions=actions_for_phase(wid, phase),
+        )
+        rec_id = (recommended or {}).get("id")
+        if rec_id and rec_id != action_id:
+            return {
+                "ok": False,
+                "error": "PIPELINE_SKIP_DENIED",
+                "message_zh": (
+                    f"禁止跳步：当前 recommended_next_action=`{rec_id}`，"
+                    f"不可直接跑 `{action_id}`。请先 `acp next` 再执行推荐 Action。"
+                ),
+                "recommended_next_action": recommended,
+                "requested_action": action_id,
+                "phase": phase,
+            }
+    elif status == "rework_required":
+        lf = state.get("last_failure") if isinstance(state.get("last_failure"), dict) else {}
+        failed = str(lf.get("action_id") or "")
+        recovery = [str(x) for x in (lf.get("recovery_actions") or []) if str(x).strip()]
+        # Default recovery: producer that feeds apply_semantic_patch
+        if failed == "apply_semantic_patch" and "adjudicate_llm_tasks" not in recovery:
+            recovery = ["adjudicate_llm_tasks", "apply_semantic_patch"]
+        if failed and action_id != failed and action_id not in recovery:
+            return {
+                "ok": False,
+                "error": "rework_action_not_allowed",
+                "message_zh": (
+                    f"rework_required：仅可重试 `{failed}`"
+                    + (f" 或恢复动作 {recovery}" if recovery else "")
+                ),
+                "failed_action": failed,
+                "recovery_actions": recovery,
+            }
+
     actor_id = str(action.get("agent_id") or (action.get("actors") or ["unknown"])[0])
     role_id = str(action.get("role_id") or "")
     nonce = secrets.token_hex(16)
@@ -402,12 +503,30 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     sdir.mkdir(parents=True, exist_ok=True)
 
     from ascendc_pilot.context import build_context_pack
+    from ascendc_pilot.paths import tg_root, uo_root
 
     pack = build_context_pack(project_root, intent=f"run-action:{action_id}", topic=action_id)
     repo = _repo_root(project_root)
     method, prompt = _load_method_and_prompt(repo, action)
-    method_r = _render_placeholders(method, run_id=run_id, action_id=action_id, workflow_id=wid, actor_id=actor_id)
-    prompt_r = _render_placeholders(prompt, run_id=run_id, action_id=action_id, workflow_id=wid, actor_id=actor_id)
+    root_s = Path(project_root).expanduser().resolve().as_posix()
+    uo_s = uo_root(project_root).as_posix()
+    tg_s = tg_root(project_root).as_posix()
+    pack_path = str(pack.get("path") or "")
+    op_name = str(state.get("op_name") or Path(project_root).name or "")
+    ph_kwargs = {
+        "run_id": run_id,
+        "action_id": action_id,
+        "workflow_id": wid,
+        "actor_id": actor_id,
+        "project_root": root_s,
+        "uo_root": uo_s,
+        "tg_root_path": tg_s,
+        "topic": action_id,
+        "context_pack_path": pack_path,
+        "op_name": op_name,
+    }
+    method_r = _render_placeholders(method, **ph_kwargs)
+    prompt_r = _render_placeholders(prompt, **ph_kwargs)
 
     bundle = {
         "version": 1,
@@ -427,7 +546,11 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         "checker_required": bool(action.get("checker_required", True)),
         "referee_required": bool(action.get("referee_required", False)),
         "gates": list(action.get("gates") or []),
-        "context_pack_path": pack.get("path"),
+        "context_pack_path": pack_path,
+        "project_root": root_s,
+        "uo_root": uo_s,
+        "tg_root": tg_s,
+        "op_name": op_name,
         "status": "prepared",
     }
 
@@ -478,11 +601,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             f"{cand_path} → confirm writers/receivers/aliases only; "
             "DO NOT read or adjudicate ir/llm_tasks.yaml"
         )
-        prompt_r = prompt_r.replace("<TARGET_IDS_OR_FILES>", target_line)
-        prompt_r = prompt_r.replace(
-            "(see context pack / human input)",
-            target_line,
-        )
+        prompt_r = _render_placeholders(prompt, **{**ph_kwargs, "target": target_line})
         bundle["dispatch_targets"] = {
             "read": ["uo/ir/extract_plan_candidates.yaml"],
             "write": ["uo/ir/extract_plan.yaml"],
@@ -490,9 +609,46 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             "forbid_write_fields": list(_EXTRACT_PLAN_FORBID_FIELDS),
         }
 
+    # adjudicate_llm_tasks: producer writes patches for deterministic apply.
+    if wid == "uo-init" and action_id == "adjudicate_llm_tasks" and role_id == "producer":
+        target_line = (
+            "uo/ir/llm_tasks.yaml (open+blocking only) → write uo/ir/semantic_patches.yaml; "
+            "DO NOT write ledger or derived graphs"
+        )
+        prompt_r = _render_placeholders(prompt, **{**ph_kwargs, "target": target_line})
+        bundle["dispatch_targets"] = {
+            "read": ["uo/ir/llm_tasks.yaml", "uo/ir/score_report_post.yaml", "uo/ir/score_report_pre.yaml"],
+            "write": ["uo/ir/semantic_patches.yaml"],
+            "forbid_write": [
+                "uo/ir/semantic_resolution_ledger.yaml",
+                "uo/ir/extract_plan.yaml",
+                "uo/ir/entrypoint_graph.yaml",
+                "uo/ir/host_subgraph.yaml",
+                "uo/ir/kernel_subgraph.yaml",
+            ],
+        }
+
+    prompt_path = (sdir / "prompt.md").as_posix()
+    method_path = (sdir / "method.md").as_posix()
+    bundle_path = (sdir / "bundle.yaml").as_posix()
+    stub = _build_task_prompt_stub(
+        actor_id=actor_id,
+        action_id=action_id,
+        run_id=run_id,
+        session_dir=sdir.as_posix(),
+        prompt_path=prompt_path,
+        method_path=method_path,
+        bundle_path=bundle_path,
+        dispatch_targets=bundle.get("dispatch_targets")
+        if isinstance(bundle.get("dispatch_targets"), dict)
+        else None,
+    )
+    bundle["task_prompt_stub"] = stub
+
     _dump(sdir / "session.yaml", bundle)
     (sdir / "method.md").write_text(method_r, encoding="utf-8")
     (sdir / "prompt.md").write_text(prompt_r, encoding="utf-8")
+    (sdir / "task_prompt_stub.md").write_text(stub, encoding="utf-8")
     _dump(sdir / "bundle.yaml", {k: v for k, v in bundle.items() if k != "nonce"})
     _write_active_action(
         project_root,
@@ -559,22 +715,32 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         return result
 
     result["message_zh"] = (
-        f"已准备 Action Runtime Bundle；请派发 actor `{actor_id}` "
-        f"（Task 的 subagent_type/agent 必须是 `{actor_id}`；"
-        f"写入时需携带 action_id={action_id} / ASCENDC_ACTION；"
-        f"Primary 禁止代写正式 IR），"
-        f"完成后执行 acp run-action {action_id} --finalize"
+        f"已准备 Action Runtime Bundle；派发 actor `{actor_id}` 时 "
+        f"Task 正文只用返回的 `task_prompt_stub`（或 session 下 task_prompt_stub.md）；"
+        f"禁止复述 METHOD / 禁止塞额外目标 / 禁止整包粘贴大文件。"
+        f"subagent_type/agent=`{actor_id}`，action_id={action_id}。"
+        f"Primary 禁止代写正式 IR。完成后 "
+        f"acp run-action {action_id} --finalize"
     )
+    result["task_prompt_stub"] = stub
+    result["task_prompt_stub_path"] = (sdir / "task_prompt_stub.md").as_posix()
     if wid == "uo-init" and action_id == "extract_plan":
         result["message_zh"] = (
-            f"已准备 extract_plan；派发 `{actor_id}` 只确认 "
-            f"`extract_plan_candidates.yaml` → `ir/extract_plan.yaml`"
-            f"（writers/receivers/aliases）。禁止把 llm_tasks/mark_missing 塞进 Task；"
-            f"边裁决留给 apply_semantic_patch。完成后 "
-            f"acp run-action extract_plan --finalize"
+            f"已准备 extract_plan；派发 `{actor_id}` 时原样使用 `task_prompt_stub`："
+            f"只确认 candidates→extract_plan.yaml。"
+            f"禁止塞 llm_tasks/mark_missing。完成后 "
+            f"acp run-action extract_plan --finalize，然后必须 `acp next`。"
         )
         if prepare_engine is not None:
             result["dispatch_targets"] = bundle.get("dispatch_targets")
+    if wid == "uo-init" and action_id == "adjudicate_llm_tasks":
+        result["message_zh"] = (
+            f"已准备 adjudicate_llm_tasks；派发 `{actor_id}` 时原样使用 `task_prompt_stub`："
+            f"只裁决 open blocking llm_tasks→semantic_patches.yaml。"
+            f"禁止写 ledger/派生图。完成后 "
+            f"acp run-action adjudicate_llm_tasks --finalize，然后必须 `acp next` → apply_semantic_patch。"
+        )
+        result["dispatch_targets"] = bundle.get("dispatch_targets")
     return result
 
 
@@ -760,7 +926,8 @@ def finalize_action(
         "receipt": str(receipt_path) if receipt_path else None,
         "checker_result": checker_result,
         "message_zh": (
-            "Action 已 finalize 并签发可信收据；可 acp advance"
+            "Action 已 finalize 并签发可信收据；下一步必须 `acp next`（取 recommended_next_action），"
+            "禁止跳步；仅 phase 门禁齐备时才 `acp advance`"
             if overall_ok
             else "Finalize 失败：Checker/Output Contract 未通过"
         ),
@@ -797,6 +964,7 @@ def _attach_finalize_observation(
     messages: list[str],
 ) -> dict[str, Any]:
     from ascendc_pilot.observation import record_pilot_result
+    from ascendc_pilot.state import load_state, save_state
 
     recorded = record_pilot_result(
         project_root,
@@ -811,6 +979,22 @@ def _attach_finalize_observation(
     out["status"] = recorded.get("status")
     out["last_failure"] = recorded.get("last_failure")
     out["failure_card"] = recorded.get("failure_card")
+
+    # Propagate engine recovery_actions into last_failure for rework authorize.
+    eng = payload.get("engine") if isinstance(payload.get("engine"), dict) else {}
+    checker = payload.get("checker_result") if isinstance(payload.get("checker_result"), dict) else {}
+    eng2 = checker.get("engine") if isinstance(checker.get("engine"), dict) else {}
+    recovery = list(eng.get("recovery_actions") or eng2.get("recovery_actions") or [])
+    if recovery:
+        lf = dict(out.get("last_failure") or {})
+        lf["recovery_actions"] = recovery
+        out["last_failure"] = lf
+        st = load_state(project_root)
+        if st:
+            st_lf = dict(st.get("last_failure") or {})
+            st_lf["recovery_actions"] = recovery
+            st["last_failure"] = st_lf
+            save_state(project_root, st)
     return out
 
 

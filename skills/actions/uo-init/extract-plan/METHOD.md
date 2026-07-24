@@ -16,7 +16,8 @@
 detect_score_pre          # extract.pre_semantic：入口/注册/boundary → llm_tasks
 → extract_plan / build    # extract.plan_and_graph：仅 writers/receivers/aliases
 → detect_score_post       # extract.post_semantic：bridge/KEY/provenance（禁止提前跑）
-→ apply_semantic_patch    # 消化 llm_tasks / mark_missing → ledger；仅此时 attempts += 1
+→ adjudicate_llm_tasks    # producer: open blocking -> ir/semantic_patches.yaml
+→ apply_semantic_patch    # deterministic: patches / auto mark_missing -> ledger
 → rebuild_from_ledger     # 重建派生图
 → recheck_closure         # 不递增 attempts
 ```
@@ -47,7 +48,7 @@ blocking LLM 未清且预算未尽 → 不可 advance。
   （字段：`writers` / `receivers` / `aliases` / `non_sink_roots` / `extra_host_entries`）
 - **禁止**：裁决 `ir/llm_tasks.yaml` 里的 `mark_missing` / `dispatches_to` / `entrypoint_dispatch_bind`
 - **禁止**：把 call_edge 裁决写进 `extract_plan.yaml`（那是假闭合）
-- 空候选 / 证据不足的边 → **留给**后续 `apply_semantic_patch`（写 ledger），本步不要 ACCEPT
+- 空候选 / 证据不足的边 → **留给**后续 `adjudicate_llm_tasks` → `apply_semantic_patch`（写 ledger），本步不要 ACCEPT
 
 流程：
 1. prepare：确定性 `propose_extract_plan` → `ir/extract_plan_candidates.yaml`
@@ -61,7 +62,7 @@ Writer/receiver 身份：`file_path|qn|class`（禁止短名唯一键）。
 
 - `detect_score_pre` 产出的 blocking `llm_tasks`（含 7×`mark_missing` 等）**不属于 extract_plan**
 - Primary 派发 extract_plan 时 **禁止**把整份 `llm_tasks.yaml` 塞进子代理 prompt
-- 边裁决 / patch：等 plan+分层 IR 就绪后，经 `apply_semantic_patch` → `rebuild_from_ledger`
+- 边裁决 / patch：等 plan+分层 IR 就绪后，经 `adjudicate_llm_tasks` → `apply_semantic_patch` → `rebuild_from_ledger`
 - 空候选不得假 ACCEPT；证据不足保留 unresolved
 
 ### 5. 分层完整性

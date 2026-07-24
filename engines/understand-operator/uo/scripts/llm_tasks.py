@@ -220,6 +220,18 @@ def open_blocking_tasks(uo_root: Path) -> list[dict[str, Any]]:
     return [t for t in doc.get("tasks") or [] if t.get("status") == "open" and t.get("severity") == "blocking"]
 
 
+def _can_auto_mark_missing(task: dict[str, Any]) -> bool:
+    """Empty-candidate / mark_missing tasks may be closed without LLM inventing edges."""
+    ttype = str(task.get("type") or "")
+    cands = list(task.get("candidates") or [])
+    allowed = {str(a) for a in (task.get("allowed_actions") or [])}
+    if ttype == "mark_missing" and not cands:
+        return True
+    if not cands and "mark_missing" in allowed and "accept_edge" not in allowed and "choose_one" not in allowed:
+        return True
+    return False
+
+
 def apply_task_patch(
     uo_root: Path,
     patch: dict[str, Any],
@@ -337,6 +349,88 @@ def apply_task_patch(
         "total_semantic_batches": batches,
         "ledger_entry": ledger_entry,
     }
+
+
+def apply_patches_batch(
+    uo_root: Path,
+    patches: list[dict[str, Any]],
+    *,
+    current_source_hash: str | None = None,
+) -> dict[str, Any]:
+    """Apply many patches sequentially into the ledger."""
+    applied: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for patch in patches:
+        if not isinstance(patch, dict):
+            errors.append({"ok": False, "error": "invalid_patch_entry"})
+            continue
+        result = apply_task_patch(uo_root, patch, current_source_hash=current_source_hash)
+        if result.get("ok"):
+            applied.append(result)
+        else:
+            errors.append(result)
+    return {
+        "ok": not errors,
+        "applied_count": len(applied),
+        "error_count": len(errors),
+        "applied": applied,
+        "errors": errors,
+    }
+
+
+def resolve_patches_for_apply(
+    uo_root: Path,
+    *,
+    patches_doc: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Resolve patch list for deterministic apply.
+
+    Prefers ``ir/semantic_patches.yaml``. If absent, auto-builds honest
+    ``mark_missing`` patches for empty-candidate tasks. Tasks that still need
+    LLM adjudication surface as ``SEMANTIC_PATCHES_REQUIRED``.
+    """
+    open_blocking = open_blocking_tasks(uo_root)
+    if not open_blocking:
+        return {"ok": True, "patches": [], "skipped": True, "reason": "no_open_blocking"}
+
+    patches: list[dict[str, Any]] = []
+    if isinstance(patches_doc, dict):
+        raw = patches_doc.get("patches")
+        if isinstance(raw, list):
+            patches = [p for p in raw if isinstance(p, dict)]
+
+    if patches:
+        return {"ok": True, "patches": patches, "source": "semantic_patches.yaml"}
+
+    auto: list[dict[str, Any]] = []
+    needs_llm: list[str] = []
+    for task in open_blocking:
+        tid = str(task.get("task_id") or "")
+        if _can_auto_mark_missing(task):
+            auto.append(
+                {
+                    "task_id": tid,
+                    "action": "mark_missing",
+                    "accepted_candidate_ids": [],
+                    "rejected_candidate_ids": [],
+                    "evidence": ["auto:empty_candidate_mark_missing"],
+                }
+            )
+        else:
+            needs_llm.append(tid)
+
+    if needs_llm:
+        return {
+            "ok": False,
+            "error": "SEMANTIC_PATCHES_REQUIRED",
+            "message": (
+                "open blocking llm_tasks need producer adjudication; "
+                "run `acp run-action adjudicate_llm_tasks` then re-run apply_semantic_patch"
+            ),
+            "needs_llm_task_ids": needs_llm,
+            "auto_mark_missing_count": len(auto),
+        }
+    return {"ok": True, "patches": auto, "source": "auto_mark_missing"}
 
 
 def recheck_does_not_increment(uo_root: Path) -> dict[str, Any]:

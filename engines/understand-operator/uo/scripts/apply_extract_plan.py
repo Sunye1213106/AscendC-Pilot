@@ -14,7 +14,10 @@ if __package__ in (None, ""):
 
 from uo._operator.artifacts import existing_operator_root, safe_op_name
 from uo.scripts._ir_io import read_yaml, write_yaml
-from uo.scripts.extract_plan_io import validate_extract_plan_against_candidates
+from uo.scripts.extract_plan_io import (
+    normalize_plan_from_candidates,
+    validate_extract_plan_against_candidates,
+)
 
 
 def apply_extract_plan(
@@ -56,7 +59,10 @@ def apply_extract_plan(
     plan.setdefault("extra_host_entries", [])
     plan.setdefault("derived_roots", [])
 
-    errors = validate_extract_plan_against_candidates(plan, candidates if isinstance(candidates, dict) else {})
+    cand_doc = candidates if isinstance(candidates, dict) else {}
+    plan = normalize_plan_from_candidates(plan, cand_doc)
+
+    errors = validate_extract_plan_against_candidates(plan, cand_doc)
     if errors:
         return {
             "ok": False,

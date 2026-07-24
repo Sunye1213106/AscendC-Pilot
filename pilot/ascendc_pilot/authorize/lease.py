@@ -100,8 +100,11 @@ _RECOVERY_CORE = (
 
 CONTAINMENT_COMMAND_PREFIXES = _RECOVERY_CORE + (
     "acp retry-after-environment-fix",
+    "acp debug",
     "python -m ascendc_pilot retry-after-environment-fix",
+    "python -m ascendc_pilot debug",
     "python3 -m ascendc_pilot retry-after-environment-fix",
+    "python3 -m ascendc_pilot debug",
 )
 
 REWORK_COMMAND_PREFIXES = _RECOVERY_CORE + (
@@ -109,12 +112,15 @@ REWORK_COMMAND_PREFIXES = _RECOVERY_CORE + (
     "acp uo-scope",
     "acp context",
     "acp authorize",
+    "acp debug",
     "python -m ascendc_pilot run-action",
     "python -m ascendc_pilot uo-scope",
     "python -m ascendc_pilot context",
+    "python -m ascendc_pilot debug",
     "python3 -m ascendc_pilot run-action",
     "python3 -m ascendc_pilot uo-scope",
     "python3 -m ascendc_pilot context",
+    "python3 -m ascendc_pilot debug",
 )
 
 NORMAL_COMMAND_PREFIXES = (

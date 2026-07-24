@@ -66,6 +66,8 @@ class FooKernel {
         kernel_file="op_kernel/arch35/foo_kernel.h",
         kernel_line=2,
     )
+    # propose_extract_plan requires boundary present (even empty slots).
+    write_yaml(ir / "operator_boundary.yaml", {"inputs": [], "attributes": [], "outputs": []})
     return repo, op
 
 
@@ -80,6 +82,51 @@ def test_propose_finds_generic_receiver(tmp_path: Path) -> None:
     assert "blob_" in recv_names
     writer_names = {c["name"] for c in cands["writer_candidates"]}
     assert "SaveStuff" in writer_names
+    save = next(c for c in cands["writer_candidates"] if c["name"] == "SaveStuff")
+    assert save.get("role_suggested") == "tiling_writer"
+    blob = next(c for c in cands["receiver_candidates"] if c["name"] == "blob_")
+    assert blob.get("is_tiling_sink_suggested") is True
+
+
+def test_normalize_fills_role_and_sink_from_candidates(tmp_path: Path) -> None:
+    from uo.scripts.extract_plan_io import normalize_plan_from_candidates
+
+    repo, op = _setup_foo_tiling(tmp_path)
+    cands = propose_extract_plan(repo, op, architecture="arch35")
+    write_yaml(operator_root(repo, op) / "ir" / "extract_plan_candidates.yaml", cands)
+    plan = {
+        "version": 1,
+        "confirmed_by": "llm",
+        "writers": [
+            {
+                "name": "SaveStuff",
+                "file_path": "op_host/arch35/foo_tiling.cpp",
+                # role omitted on purpose
+            }
+        ],
+        "receivers": [
+            {
+                "name": "blob_",
+                "file_path": "op_host/arch35/foo_tiling.cpp",
+                # is_tiling_sink omitted on purpose
+            }
+        ],
+        "aliases": [],
+        "non_sink_roots": [],
+        "extra_host_entries": [],
+    }
+    # Drop writers/receivers not in candidates
+    cw = {c["name"] for c in cands["writer_candidates"]}
+    cr = {c["name"] for c in cands["receiver_candidates"]}
+    plan["writers"] = [w for w in plan["writers"] if w["name"] in cw]
+    plan["receivers"] = [r for r in plan["receivers"] if r["name"] in cr]
+
+    filled = normalize_plan_from_candidates(plan, cands)
+    assert filled["writers"][0]["role"] == "tiling_writer"
+    assert filled["receivers"][0]["is_tiling_sink"] is True
+
+    result = apply_extract_plan(repo, op, plan=plan, check_only=True)
+    assert result["ok"], result
 
 
 def test_host_no_tdf_without_plan(tmp_path: Path) -> None:

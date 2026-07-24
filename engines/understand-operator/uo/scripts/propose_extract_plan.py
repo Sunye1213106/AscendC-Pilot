@@ -267,6 +267,7 @@ def propose_extract_plan(
                 "snippet": f"{root} = ... (assign LHS only)",
                 "score": 0.4,
                 "evidence": ["assign_lhs_only"],
+                "is_tiling_sink_suggested": False,
             }
         )
 
@@ -525,6 +526,7 @@ def _ingest_writer(
             "snippet": snippet(body[:240]),
             "score": score,
             "evidence": evidence,
+            "role_suggested": _suggest_writer_role(name, evidence),
         }
         body_by_key[key] = (body, start, end, item)
     _collect_receivers_aliases(body, item, receivers, aliases, set_recv_roots, assign_lhs_roots, start)
@@ -551,6 +553,25 @@ def _score_writer(name: str, body: str) -> tuple[float, list[str]]:
     return min(score, 1.0), evidence
 
 
+def _suggest_writer_role(name: str, evidence: list[str]) -> str:
+    """Heuristic role for LLM confirm; plan.writers[].role may override."""
+    ev = {str(x) for x in evidence}
+    n = (name or "").casefold()
+    if "has_set_field" in ev or "recv_set_call" in ev or "sink_set_writer" in ev:
+        if "key" in n or "tilingkey" in n or "blockdim" in n:
+            return "key_writer"
+        if "workspace" in n or "worksize" in n:
+            return "workspace_writer"
+        return "tiling_writer"
+    if "key" in n or "tilingkey" in n:
+        return "key_writer"
+    if "workspace" in n:
+        return "workspace_writer"
+    if "tilingdata_assign" in ev or "has_getattr" in ev:
+        return "provenance_helper"
+    return "ignore"
+
+
 def _collect_receivers_aliases(
     body: str,
     item: dict[str, Any],
@@ -572,6 +593,8 @@ def _collect_receivers_aliases(
             "snippet": snippet(f"{recv}->set_{field}(...)"),
             "score": 0.7,
             "evidence": [f"set_{field}"],
+            # Discovered via recv->set_* ⇒ tiling sink by default; LLM may override.
+            "is_tiling_sink_suggested": True,
         }
         key = _writer_identity_key(item_recv)
         prev = receivers.get(key)

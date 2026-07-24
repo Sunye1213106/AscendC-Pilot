@@ -24,13 +24,17 @@ def test_start_attaches_native_items_not_todo_md(tmp_path: Path) -> None:
     ]
     assert items[0]["status"] == "in_progress"
     assert items[0]["id"] == "prepare"
+    assert items[0]["priority"] == "high"
     assert all(it["status"] == "pending" for it in items[1:])
+    assert all(it.get("priority") == "medium" for it in items[1:])
     assert sum(1 for it in items if it["status"] == "in_progress") == 1
     sync = todo.get("todo_sync") or {}
     assert sync.get("merge") is False
     assert sync.get("require_full_list") is True
     assert sync.get("require_ids") is True
     assert sync.get("items") == items
+    assert all("priority" in it for it in sync["items"])
+    assert "priority" in str(sync.get("instruction_zh") or "")
     assert "禁止子集" in str(sync.get("instruction_zh") or "")
     assert "跳过" in str(sync.get("instruction_zh") or "")
     # Must not leave a chat Markdown board for the agent to paste
@@ -50,6 +54,9 @@ def test_todo_marks_current_phase_native(tmp_path: Path) -> None:
     native = {it["id"]: it["status"] for it in board["native_items"]}
     assert native["prepare"] == "completed"
     assert native["scope"] == "in_progress"
+    pri = {it["id"]: it["priority"] for it in board["native_items"]}
+    assert pri["prepare"] == "low"
+    assert pri["scope"] == "high"
     assert build_todo(tmp_path, st)["phase"] == "scope"
     from ascendc_pilot.todo import attach_todo
 

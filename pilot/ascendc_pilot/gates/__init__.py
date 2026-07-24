@@ -575,13 +575,20 @@ def gate_scope_receipt(uo: Path) -> dict[str, Any]:
 
 
 def gate_extract_plan_subagent(project_root: Path, uo: Path) -> dict[str, Any]:
-    """Require Task C receipt + extract_plan + candidates hash consistency — not mere file existence."""
+    """Require extract_plan artifacts + candidates hash consistency.
+
+    Do **not** require a Pilot-issued receipt here: receipts are written by
+    ``acp run-action extract_plan --finalize`` only after this gate passes.
+    Requiring the receipt first caused a chicken-and-egg failure (producer can
+    write a valid plan but finalize never issues the receipt).
+    """
     from ascendc_pilot.runs import file_sha256, verify_receipt
 
     plan = uo / "ir" / "extract_plan.yaml"
     candidates = uo / "ir" / "extract_plan_candidates.yaml"
     entrypoints = uo / "ir" / "entrypoint_graph.yaml"
     boundary = uo / "ir" / "operator_boundary.yaml"
+    # Diagnostic only — present after a successful prior finalize / re-check.
     verified = verify_receipt(
         project_root,
         actor_id="uo-semantic-resolve",
@@ -608,6 +615,14 @@ def gate_extract_plan_subagent(project_root: Path, uo: Path) -> dict[str, Any]:
     boundary_ok = boundary.is_file()
     hash_ok = True
     cand_status_ok = True
+    producer_ok = True
+    if plan_ok:
+        plan_doc = _load(plan) or {}
+        if isinstance(plan_doc, dict):
+            actor = str(plan_doc.get("actor_id") or "").strip()
+            # Soft signal: plan should be attributed to the producer actor when present.
+            if actor and actor != "uo-semantic-resolve":
+                producer_ok = False
     if plan_ok and cand_ok:
         plan_doc = _load(plan) or {}
         expected = ""
@@ -625,11 +640,14 @@ def gate_extract_plan_subagent(project_root: Path, uo: Path) -> dict[str, Any]:
             st = str(cand_doc.get("status") or "").lower()
             if st in {"blocked", "fail", "failed"} or cand_doc.get("ok") is False:
                 cand_status_ok = False
-    ok = bool(has_receipt and plan_ok and cand_ok and hash_ok and ep_ok and boundary_ok and cand_status_ok)
+    ok = bool(
+        plan_ok and cand_ok and hash_ok and ep_ok and boundary_ok and cand_status_ok and producer_ok
+    )
     return {
         "gate": "extract_plan_subagent",
         "ok": ok,
         "has_receipt": has_receipt,
+        "receipt_required": False,
         "receipt_verify": verified,
         "has_plan": plan_ok,
         "has_candidates": cand_ok,
@@ -637,12 +655,14 @@ def gate_extract_plan_subagent(project_root: Path, uo: Path) -> dict[str, Any]:
         "has_operator_boundary": boundary_ok,
         "candidates_status_ok": cand_status_ok,
         "hash_ok": hash_ok,
+        "producer_actor_ok": producer_ok,
         "message": (
             "ok"
             if ok
             else (
-                "extract requires entrypoint_graph + operator_boundary + verified receipt "
-                "+ ir/extract_plan.yaml + non-blocked candidates (+ hash match)"
+                "extract requires entrypoint_graph + operator_boundary "
+                "+ ir/extract_plan.yaml + non-blocked candidates (+ hash match); "
+                "receipt is issued by finalize after this gate passes"
             )
         ),
     }
@@ -688,39 +708,121 @@ def run_key_gates(project_root: Path, *, op_name: str | None = None) -> dict[str
 
 
 def gate_detect_score_pre(uo: Path) -> dict[str, Any]:
-    """Pass when entrypoint graph exists for pre-semantic scoring (①)."""
+    """Pass when pre-semantic score artifacts exist (①)."""
     report = uo / "ir" / "score_report_pre.yaml"
     ep = uo / "ir" / "entrypoint_graph.yaml"
+    tasks = uo / "ir" / "llm_tasks.yaml"
     if not ep.is_file():
         return {
             "gate": "detect_score_pre",
             "ok": False,
             "message": "entrypoint_graph missing before detect_score_pre",
         }
+    if not report.is_file() or not tasks.is_file():
+        return {
+            "gate": "detect_score_pre",
+            "ok": False,
+            "message": "score_report_pre / llm_tasks missing (run detect_score_pre)",
+        }
     return {
         "gate": "detect_score_pre",
         "ok": True,
-        "has_score_report": report.is_file(),
+        "has_score_report": True,
         "message": "ok",
     }
 
 
 def gate_detect_score_post(uo: Path) -> dict[str, Any]:
-    """Post-semantic scoring must not exist without plan/host (① cycle guard)."""
+    """Post-semantic scoring requires plan/host and must write score_report_post (①)."""
     plan = uo / "ir" / "extract_plan.yaml"
     host = uo / "ir" / "host_subgraph.yaml"
     post = uo / "ir" / "score_report_post.yaml"
+    if not plan.is_file() and not host.is_file():
+        return {
+            "gate": "detect_score_post",
+            "ok": False,
+            "message": "extract_plan/host missing before detect_score_post",
+        }
     if post.is_file() and not plan.is_file() and not host.is_file():
         return {
             "gate": "detect_score_post",
             "ok": False,
             "message": "score_report_post present without extract_plan/host (checkpoint cycle)",
         }
+    if not post.is_file():
+        return {
+            "gate": "detect_score_post",
+            "ok": False,
+            "message": "score_report_post missing (run detect_score_post after extract_plan)",
+        }
     return {
         "gate": "detect_score_post",
         "ok": True,
-        "has_post_report": post.is_file(),
-        "has_plan_or_host": plan.is_file() or host.is_file(),
+        "has_post_report": True,
+        "has_plan_or_host": True,
+        "message": "ok",
+    }
+
+
+def gate_adjudicate_llm_tasks(uo: Path) -> dict[str, Any]:
+    """Producer patches required when open blocking tasks need LLM (not auto mark_missing)."""
+    tasks_doc = _load(uo / "ir" / "llm_tasks.yaml") or {}
+    tasks = tasks_doc.get("tasks") if isinstance(tasks_doc, dict) else []
+    open_blocking = [
+        t
+        for t in (tasks or [])
+        if isinstance(t, dict) and t.get("status") == "open" and t.get("severity") == "blocking"
+    ]
+    if not open_blocking:
+        return {
+            "gate": "adjudicate_llm_tasks",
+            "ok": True,
+            "skipped": True,
+            "message": "no open blocking llm_tasks",
+        }
+
+    def _auto(t: dict[str, Any]) -> bool:
+        ttype = str(t.get("type") or "")
+        cands = list(t.get("candidates") or [])
+        allowed = {str(a) for a in (t.get("allowed_actions") or [])}
+        if ttype == "mark_missing" and not cands:
+            return True
+        if not cands and "mark_missing" in allowed and "accept_edge" not in allowed and "choose_one" not in allowed:
+            return True
+        return False
+
+    needs_llm = [t for t in open_blocking if not _auto(t)]
+    if not needs_llm:
+        return {
+            "gate": "adjudicate_llm_tasks",
+            "ok": True,
+            "skipped": True,
+            "message": "all open blocking are auto mark_missing",
+        }
+    patches_path = uo / "ir" / "semantic_patches.yaml"
+    patches_doc = _load(patches_path) or {}
+    raw = patches_doc.get("patches") if isinstance(patches_doc, dict) else None
+    if not patches_path.is_file() or not isinstance(raw, list) or not raw:
+        return {
+            "gate": "adjudicate_llm_tasks",
+            "ok": False,
+            "message": "semantic_patches.yaml missing; producer must adjudicate open llm_tasks",
+            "needs_llm_count": len(needs_llm),
+        }
+    covered = {str(p.get("task_id") or "") for p in raw if isinstance(p, dict)}
+    needed = {str(t.get("task_id") or "") for t in needs_llm}
+    missing = sorted(needed - covered)
+    if missing:
+        return {
+            "gate": "adjudicate_llm_tasks",
+            "ok": False,
+            "message": f"semantic_patches missing task_ids: {missing[:8]}",
+            "missing_task_ids": missing,
+        }
+    return {
+        "gate": "adjudicate_llm_tasks",
+        "ok": True,
+        "needs_llm_count": len(needs_llm),
         "message": "ok",
     }
 
@@ -780,6 +882,7 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
         "extract_plan_subagent": lambda: gate_extract_plan_subagent(project_root, uo),
         "detect_score_pre": lambda: gate_detect_score_pre(uo),
         "detect_score_post": lambda: gate_detect_score_post(uo),
+        "adjudicate_llm_tasks": lambda: gate_adjudicate_llm_tasks(uo),
         "semantic_closure": lambda: gate_semantic_closure(uo),
         "uo_ready": lambda: gate_uo_ready(uo),
         "kb_ready": lambda: gate_uo_ready(uo),

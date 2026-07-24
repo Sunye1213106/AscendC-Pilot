@@ -7,13 +7,15 @@ from pathlib import Path
 from typing import Any
 
 from ascendc_pilot.paths import context_root, runs_root, state_root, uo_root
-from ascendc_pilot.state import RUNNING_LIKE, load_state
+from ascendc_pilot.state import RUNNING_LIKE, load_state, save_state
 
 # OpenCode `question` UI options (label → decision value).
 ASK_OPTIONS: list[dict[str, str]] = [
     {
         "label": "继续上次 (Recommended)",
-        "description": "保留已有产物，从最近完整正确步骤之后继续执行",
+        "description": (
+            "先清理中断步骤的残缺/失败产物，回退到最近完整正确状态，再继续执行"
+        ),
         "value": "continue",
     },
     {
@@ -22,6 +24,33 @@ ASK_OPTIONS: list[dict[str, str]] = [
         "value": "reinit",
     },
 ]
+
+# Finalize-owned outputs per action. Present without a successful receipt ⇒ dirty.
+# Prepare inputs (e.g. extract_plan_candidates.yaml) are intentionally kept.
+_ACTION_OWNED_ARTIFACTS: dict[str, tuple[str, ...]] = {
+    "extract_plan": (
+        "ir/extract_plan.yaml",
+        "ir/host_subgraph.yaml",
+        "ir/kernel_subgraph.yaml",
+        "ir/tilingkey_space.yaml",
+        "ir/bridge.yaml",
+    ),
+    "detect_score_post": ("ir/score_report_post.yaml",),
+    "adjudicate_llm_tasks": ("ir/semantic_patches.yaml",),
+    "key_triage": ("ir/key_triage.yaml",),
+    "input_derivable": ("ir/input_derivable_patch.yaml",),
+    "confidence_report": (
+        "checks/confidence_gate.yaml",
+        "summary/confidence_report.md",
+        "summary/confidence_report.yaml",
+    ),
+    "export_integrity": ("checks/integrity.yaml",),
+    "kb_review": ("review/kb_product_review.yaml",),
+}
+
+_INCOMPLETE_SESSION_STATUSES = frozenset(
+    {"prepared", "finalize_failed", "revoked", "actor_running", "failed"}
+)
 
 _DECISION_ALIASES = {
     "continue": "continue",
@@ -79,8 +108,9 @@ def _artifact_checklist(uo: Path) -> list[dict[str, Any]]:
         ("extract_plan", "ir/extract_plan_candidates.yaml", "抽取计划候选"),
         ("extract_plan", "ir/extract_plan.yaml", "抽取计划（确认后）"),
         ("extract_plan", "ir/host_subgraph.yaml", "Host 分层 IR"),
-        ("apply_semantic_patch", "ir/semantic_resolution_ledger.yaml", "语义账本"),
         ("detect_score_post", "ir/score_report_post.yaml", "抽取后评分"),
+        ("adjudicate_llm_tasks", "ir/semantic_patches.yaml", "语义补丁(裁决)"),
+        ("apply_semantic_patch", "ir/semantic_resolution_ledger.yaml", "语义账本"),
         ("confidence_report", "summary/confidence_report.yaml", "置信度报告"),
         ("export_integrity", "checks/integrity.yaml", "完整性检查"),
         ("kb_review", "review/kb_product_review.yaml", "KB 审查"),
@@ -121,6 +151,141 @@ def _receipt_actions(project_root: Path, run_id: str) -> list[str]:
 
 def _active_action(project_root: Path) -> dict[str, Any]:
     return _load_yaml(state_root(project_root) / "active_action.yaml")
+
+
+def _action_session(project_root: Path, run_id: str, action_id: str) -> dict[str, Any]:
+    if not run_id or not action_id:
+        return {}
+    return _load_yaml(runs_root(project_root) / run_id / "actions" / action_id / "session.yaml")
+
+
+def _unlink_rel(uo: Path, rel: str) -> str | None:
+    path = uo / rel
+    if path.is_file():
+        path.unlink()
+        return rel
+    return None
+
+
+def _detect_dirty_actions(project_root: Path, run_id: str) -> list[str]:
+    """Actions that left incomplete / failed products and must be scrubbed on continue."""
+    root = Path(project_root).expanduser().resolve()
+    finalized = set(_receipt_actions(root, run_id)) if run_id else set()
+    dirty: list[str] = []
+    seen: set[str] = set()
+
+    def _mark(aid: str) -> None:
+        aid = str(aid or "").strip()
+        if not aid or aid in finalized or aid in seen:
+            return
+        seen.add(aid)
+        dirty.append(aid)
+
+    active = _active_action(root)
+    active_id = str(active.get("action_id") or "").strip()
+    active_status = str(active.get("status") or "").strip()
+    if active_id and active_status in _INCOMPLETE_SESSION_STATUSES:
+        _mark(active_id)
+
+    uo = uo_root(root)
+    for aid, rels in _ACTION_OWNED_ARTIFACTS.items():
+        if aid in finalized:
+            continue
+        session = _action_session(root, run_id, aid)
+        sess_status = str(session.get("status") or "").strip()
+        if sess_status in _INCOMPLETE_SESSION_STATUSES:
+            _mark(aid)
+            continue
+        if any((uo / rel).is_file() for rel in rels):
+            # Owned finalize product without a receipt ⇒ partial / failed scene.
+            _mark(aid)
+
+    return dirty
+
+
+def scrub_incomplete_on_continue(project_root: Path) -> dict[str, Any]:
+    """Remove failed/partial products of interrupted actions; keep last complete state.
+
+    Keeps upstream finalized artifacts (e.g. extract_plan_candidates after detect_score_pre).
+    Clears lease / active_action / failed sessions for dirty actions so prepare can re-run.
+    """
+    root = Path(project_root).expanduser().resolve()
+    state = load_state(root)
+    run_id = str((state or {}).get("run_id") or "")
+    dirty = _detect_dirty_actions(root, run_id)
+    removed: list[str] = []
+    sessions_cleared: list[str] = []
+    uo = uo_root(root)
+
+    for aid in dirty:
+        for rel in _ACTION_OWNED_ARTIFACTS.get(aid, ()):
+            gone = _unlink_rel(uo, rel)
+            if gone:
+                removed.append(gone)
+        if run_id:
+            sdir = runs_root(root) / run_id / "actions" / aid
+            if sdir.is_dir():
+                shutil.rmtree(sdir, ignore_errors=True)
+                sessions_cleared.append(aid)
+
+    lease_revoked = False
+    active = _active_action(root)
+    active_id = str(active.get("action_id") or "").strip()
+    if active_id and active_id in dirty:
+        try:
+            from ascendc_pilot.authorize.lease import clear_lease, revoke_active_lease
+
+            revoke_active_lease(root, reason="continue_scrub_incomplete")
+            clear_lease(root)
+            lease_revoked = True
+        except Exception:  # noqa: BLE001
+            pass
+        active_path = state_root(root) / "active_action.yaml"
+        if active_path.is_file():
+            active_path.unlink()
+            removed.append("state/active_action.yaml")
+
+    state_updates: dict[str, Any] = {}
+    if state and dirty:
+        # Drop stale failed gates so continue does not carry a dead finalize failure.
+        failed = list(state.get("failed_gates") or [])
+        if failed:
+            state["failed_gates"] = []
+            state_updates["cleared_failed_gates"] = len(failed)
+        if str(state.get("status") or "") in {"rework_required", "human_required"}:
+            state["status"] = "running"
+            state_updates["status"] = "running"
+        if state.get("last_failure"):
+            state["last_failure"] = {}
+            state_updates["cleared_last_failure"] = True
+        save_state(root, state)
+
+    resume_next = dirty[0] if dirty else ""
+    if not resume_next:
+        # Fall back to checklist-based hint after scrub.
+        summary_probe = _artifact_checklist(uo) if uo.is_dir() else []
+        for a in summary_probe:
+            if not a.get("complete"):
+                resume_next = str(a.get("action_id") or "")
+                break
+
+    return {
+        "ok": True,
+        "scrubbed_actions": dirty,
+        "removed_artifacts": removed,
+        "sessions_cleared": sessions_cleared,
+        "lease_revoked": lease_revoked,
+        "state_updates": state_updates,
+        "resume_next_action": resume_next,
+        "message_zh": (
+            (
+                f"已清理残缺步骤 {', '.join(dirty)}（删除 {len(removed)} 项产物），"
+                f"回退到最近完整状态；下一步：{resume_next or 'acp next'}"
+            )
+            if dirty
+            else "无残缺产物，可直接从最近完整状态继续"
+        ),
+    }
 
 
 def build_run_resume_summary(project_root: Path, *, workflow_id: str = "uo-init") -> dict[str, Any]:
@@ -345,20 +510,32 @@ def apply_resume_decision(
                 "message_zh": f"当前状态为 {state.get('status')}，无法 continue；请选删除重开",
                 "run_summary": summary,
             }
+        # Clean incomplete / failed products of the interrupted step before resume.
+        scrub = scrub_incomplete_on_continue(root)
+        state = load_state(root) or state
+        summary = build_run_resume_summary(root, workflow_id=workflow_id)
+        next_action = (
+            scrub.get("resume_next_action")
+            or summary.get("resume_next_action")
+            or ""
+        )
         payload = attach_todo(
             {
                 **state,
                 "resumed": True,
                 "decision": "continue",
-                "resume_next_action": summary.get("resume_next_action"),
+                "resume_scrub": scrub,
+                "resume_next_action": next_action,
                 "run_summary": {
                     "last_complete": summary.get("last_complete"),
                     "interrupted_at": summary.get("interrupted_at"),
                     "summary_text_zh": summary.get("summary_text_zh"),
+                    "scrub": scrub,
                 },
                 "message_zh": (
                     f"已复用 run {state.get('run_id')}；"
-                    f"从最近完整状态之后继续（下一步建议：{summary.get('resume_next_action') or 'acp next'}）"
+                    f"{scrub.get('message_zh') or '从最近完整状态之后继续'}"
+                    f"（下一步建议：{next_action or 'acp next'}）"
                 ),
             },
             root,

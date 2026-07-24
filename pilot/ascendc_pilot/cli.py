@@ -165,6 +165,52 @@ def main(argv: list[str] | None = None) -> int:
     p_uq.add_argument("--relation-type", default="")
     p_uq.add_argument("--status-only", action="store_true")
 
+    p_dbg = sub.add_parser(
+        "debug",
+        help="Debug mode: capture tool failures / long thoughts; export session bundles",
+    )
+    p_dbg_sub = p_dbg.add_subparsers(dest="debug_cmd", required=True)
+    p_dbg_on = p_dbg_sub.add_parser("enable", help="Enable debug capture")
+    p_dbg_on.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_on.add_argument("--global", dest="global_scope", action="store_true")
+    p_dbg_on.add_argument("--thought-char-limit", type=int, default=2500)
+    p_dbg_off = p_dbg_sub.add_parser("disable", help="Disable debug capture")
+    p_dbg_off.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_off.add_argument("--global", dest="global_scope", action="store_true")
+    p_dbg_st = p_dbg_sub.add_parser("status", help="Show debug config + recent anomalies")
+    p_dbg_st.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_st.add_argument("--limit", type=int, default=20)
+    p_dbg_exp = p_dbg_sub.add_parser("export-session", help="Export run + anomalies (+ transcript if found)")
+    p_dbg_exp.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_exp.add_argument("--reason", default="manual")
+    p_dbg_exp.add_argument("--subagent", default="")
+    p_dbg_exp.add_argument("--session-id", default="")
+    p_dbg_exp.add_argument("--transcript", default="")
+    p_dbg_exp.add_argument(
+        "--if-enabled",
+        action="store_true",
+        help="No-op unless debug mode is enabled (used by OpenCode plugin hooks)",
+    )
+    p_dbg_hook = p_dbg_sub.add_parser("hook", help="Hook stdin JSON handler (Cursor/OpenCode)")
+    p_dbg_hook.add_argument("event", help="postToolUseFailure | afterAgentThought | subagentStop | …")
+    p_dbg_rec = p_dbg_sub.add_parser("record-tool-failure", help="Manually record a tool failure")
+    p_dbg_rec.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_rec.add_argument("--tool", required=True)
+    p_dbg_rec.add_argument("--error", required=True)
+    p_dbg_rec.add_argument("--agent", default="")
+    p_dbg_rec.add_argument("--action", default="")
+    p_dbg_rec.add_argument("--exit-code", type=int, default=None)
+    p_dbg_rec.add_argument(
+        "--force",
+        action="store_true",
+        help="Record even if classifier says this is not a real failure",
+    )
+    p_dbg_th = p_dbg_sub.add_parser("record-thought", help="Analyze/record a thought blob")
+    p_dbg_th.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_th.add_argument("--agent", default="")
+    p_dbg_th.add_argument("--text", default="")
+    p_dbg_th.add_argument("--stdin", action="store_true")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "doctor":
@@ -501,6 +547,83 @@ def main(argv: list[str] | None = None) -> int:
             if args.relation_type:
                 argv.extend(["--relation-type", args.relation_type])
         return int(query_main(argv) or 0)
+    if args.cmd == "debug":
+        return _cmd_debug(args)
+    return 2
+
+
+def _cmd_debug(args: Any) -> int:
+    from ascendc_pilot import debug as dbg
+
+    sub = str(getattr(args, "debug_cmd", "") or "")
+    if sub == "enable":
+        payload = dbg.set_enabled(
+            args.project,
+            True,
+            scope="global" if getattr(args, "global_scope", False) else "project",
+            thought_char_limit=int(getattr(args, "thought_char_limit", 2500) or 2500),
+        )
+        print_json(payload)
+        return 0
+    if sub == "disable":
+        payload = dbg.set_enabled(
+            args.project,
+            False,
+            scope="global" if getattr(args, "global_scope", False) else "project",
+        )
+        print_json(payload)
+        return 0
+    if sub == "status":
+        cfg = dbg.load_config(args.project)
+        anomalies = dbg.list_anomalies(args.project, limit=int(args.limit or 20))
+        print_json({"ok": True, "config": cfg, "anomalies": anomalies, "count": len(anomalies)})
+        return 0
+    if sub == "export-session":
+        if getattr(args, "if_enabled", False) and not dbg.is_enabled(args.project):
+            print_json({"ok": True, "skipped": True, "reason": "debug_disabled"})
+            return 0
+        payload = dbg.export_session_bundle(
+            args.project,
+            reason=str(args.reason or "manual"),
+            subagent=str(args.subagent or ""),
+            session_id=str(args.session_id or ""),
+            transcript_hint=str(args.transcript or ""),
+        )
+        print_json(payload)
+        return 0 if payload.get("ok") else 1
+    if sub == "hook":
+        raw = sys.stdin.read()
+        try:
+            payload = json.loads(raw) if raw.strip() else {}
+        except Exception:  # noqa: BLE001
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        if "project_root" not in payload and getattr(args, "project", None):
+            payload.setdefault("cwd", str(Path.cwd()))
+        out = dbg.hook_handle(str(args.event), payload)
+        print_json(out)
+        return 0
+    if sub == "record-tool-failure":
+        payload = dbg.record_tool_failure(
+            args.project,
+            tool=str(args.tool),
+            error=str(args.error),
+            agent=str(args.agent or ""),
+            action_id=str(args.action or ""),
+            exit_code=getattr(args, "exit_code", None),
+            require_real_failure=not bool(getattr(args, "force", False)),
+        )
+        print_json(payload)
+        return 0 if payload.get("ok") or payload.get("skipped") else 1
+    if sub == "record-thought":
+        text = str(args.text or "")
+        if getattr(args, "stdin", False):
+            text = sys.stdin.read()
+        payload = dbg.record_long_thought(args.project, text, agent=str(args.agent or ""))
+        print_json(payload)
+        return 0
+    print_json({"ok": False, "error": "unknown_debug_cmd", "debug_cmd": sub})
     return 2
 
 

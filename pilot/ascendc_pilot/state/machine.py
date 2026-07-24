@@ -19,6 +19,7 @@ from ascendc_pilot.state import (
 def describe_next(project_root: Path) -> dict[str, Any]:
     from ascendc_pilot.obligations import collect_obligations, open_obligations
     from ascendc_pilot.workflows import actions_for_phase, get_workflow, label_zh_for, rework_targets
+    from ascendc_pilot.workflows.pipeline import recommend_next_action
 
     state = load_state(project_root)
     if not state:
@@ -101,6 +102,15 @@ def describe_next(project_root: Path) -> dict[str, Any]:
                 "message_zh": f"工作流状态为 {status}，自动执行已停止。",
             }
 
+    recommended = None
+    if status == "running":
+        recommended = recommend_next_action(
+            project_root,
+            workflow_id=wid,
+            phase=phase,
+            allowed_actions=allowed,
+        )
+
     payload: dict[str, Any] = {
         "ok": True,
         "workflow_id": wid,
@@ -110,12 +120,20 @@ def describe_next(project_root: Path) -> dict[str, Any]:
         "status": status,
         "open_items": state["open_items"],
         "allowed_actions": allowed,
+        "recommended_next_action": recommended,
         "rework_targets": rework,
         "last_failure": state.get("last_failure"),
         "no_progress_streak": state.get("no_progress_streak"),
         "retry_budget": state.get("retry_budget") or meta.get("retry_budget") or 3,
         "message_zh": _status_message_zh(status, state),
     }
+    if recommended and recommended.get("id"):
+        payload["message_zh"] = (
+            f"下一步必须执行 recommended_next_action=`{recommended['id']}`；"
+            "禁止从 allowed_actions 任意跳步；完成后再次 `acp next`。"
+        )
+    elif recommended and recommended.get("reason") == "pipeline_complete":
+        payload["message_zh"] = str(recommended.get("hint_zh") or payload["message_zh"])
     if human_required is not None:
         payload["human_required"] = human_required
     if state.get("failure_card"):

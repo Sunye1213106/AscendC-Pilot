@@ -425,13 +425,14 @@ You must not:
 
 At runtime, follow:
 
-1. the current Pilot Action;
-2. the composed Policies;
-3. the composed Capabilities;
-4. the task Prompt;
+1. **First**: Read the session `prompt.md` from the prepared Action Bundle (path given by Host `task_prompt_stub` / `session_dir`). Treat it as the sole task body.
+2. Then the current Pilot Action / METHOD only as referenced by that prompt;
+3. the composed Policies;
+4. the composed Capabilities;
 5. the declared Output Contract.
 
-When these sources conflict, follow the Pilot Action and source-authority Policy.
+When these sources conflict, follow the session `prompt.md` and Pilot Action / source-authority Policy.
+Do **not** invent extra goals beyond the session prompt. Do **not** finalize the Action (primary runs `--finalize`).
 
 ## Composed: pilot-control
 
