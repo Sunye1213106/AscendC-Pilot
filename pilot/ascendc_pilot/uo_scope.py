@@ -426,6 +426,20 @@ def run_uo_scope(
 
         ]
 
+        try:
+
+            from ascendc_pilot.state import load_state
+
+            bound = str((load_state(project) or {}).get("run_id") or "").strip()
+
+            if bound:
+
+                argv.extend(["--run-id", bound])
+
+        except Exception:  # noqa: BLE001
+
+            pass
+
         code = int(prepare_main(argv) or 0)
 
         meta_path = project / ".ascendc-pilot" / "uo" / "cbm" / "index_meta.json"

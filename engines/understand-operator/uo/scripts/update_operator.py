@@ -31,6 +31,7 @@ def update_operator(
     head: str | None = None,
     confirm_scope: bool = False,
     skip_validate: bool = False,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     uo_root = existing_operator_root(repo_root, op_name)
     if not (uo_root / "manifest.yaml").exists():
@@ -41,7 +42,15 @@ def update_operator(
     change_set = detect_kb_changes(repo_root, op_name, base=base, head=head, write=True)
     plan = plan_kb_update(repo_root, op_name, change_set=change_set, write=True)
 
-    run_id = _new_run_id()
+    bound = str(run_id or "").strip()
+    if bound:
+        from uo._operator.run_context import is_active_run_id
+
+        if not is_active_run_id(bound):
+            raise ValueError(f"invalid run_id: {bound!r}")
+        run_id = bound
+    else:
+        run_id = _new_run_id()
     update_dir = uo_root / "runs" / run_id / "update"
     update_dir.mkdir(parents=True, exist_ok=True)
     write_yaml(update_dir / "change_set.yaml", change_set)
@@ -306,6 +315,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Continue despite out-of-scope suspicious sources (after human scope confirmation decision)",
     )
     parser.add_argument("--skip-validate", action="store_true")
+    parser.add_argument(
+        "--run-id",
+        default="",
+        help="Bind Pilot state.run_id (one session → one run id). Omit only for standalone/legacy.",
+    )
     args = parser.parse_args(argv)
     repo_root = Path(args.repo).resolve()
     op_name = safe_op_name(args.op_name, repo_root)
@@ -318,6 +332,7 @@ def main(argv: list[str] | None = None) -> int:
             head=args.head,
             confirm_scope=args.confirm_scope,
             skip_validate=args.skip_validate,
+            run_id=str(args.run_id or "").strip() or None,
         )
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
         print(f"uo-update failed: {exc}", file=sys.stderr)

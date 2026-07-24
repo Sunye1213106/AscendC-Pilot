@@ -21,12 +21,26 @@ def read_yaml_mapping(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def is_active_run_id(run_id: Any) -> bool:
+    """True for a real session run id (Pilot ``RUN_*`` or legacy ``UO_RUN_*``).
+
+    Pending placeholders (``*_PENDING``) are never active. One ACP session/task
+    uses exactly one run id; Pilot state.run_id is the authority when bound.
+    """
+    if not isinstance(run_id, str):
+        return False
+    value = run_id.strip()
+    if not value or value.endswith("_PENDING"):
+        return False
+    return value.startswith("RUN_") or value.startswith("UO_RUN_")
+
+
 def active_run_id(uo_root: Path) -> str:
     manifest = read_yaml_mapping(uo_root / "manifest.yaml")
     run_id = manifest.get("current_run_id")
-    if not isinstance(run_id, str) or not run_id.startswith("UO_RUN_") or run_id == "UO_RUN_PENDING":
+    if not is_active_run_id(run_id):
         raise RuntimeError(f"manifest.yaml.current_run_id is not active in {uo_root}")
-    return run_id
+    return str(run_id).strip()
 
 
 def scope_dir(uo_root: Path, run_id: str | None = None) -> Path:

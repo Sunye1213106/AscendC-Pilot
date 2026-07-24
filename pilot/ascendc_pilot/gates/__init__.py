@@ -558,6 +558,9 @@ def gate_scope_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
 
     Fail-closed: never scan other runs or pick newest-by-mtime. Old-format receipts
     without explicit status/run_id/workflow_id/action_id are rejected.
+
+    One ACP session uses one run id: Pilot state.run_id == manifest.current_run_id
+    == runs/<run_id>/scope/scope_confirmed.yaml.
     """
     from ascendc_pilot.state import load_state
 
@@ -586,6 +589,28 @@ def gate_scope_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
             indexed_via = ""
 
     if not confirmed_path.is_file():
+        manifest_run = ""
+        try:
+            import yaml
+
+            raw_m = yaml.safe_load((uo / "manifest.yaml").read_text(encoding="utf-8")) or {}
+            if isinstance(raw_m, dict):
+                manifest_run = str(raw_m.get("current_run_id") or "").strip()
+        except Exception:  # noqa: BLE001
+            manifest_run = ""
+        if manifest_run and manifest_run != run_id:
+            return {
+                "gate": "scope_receipt",
+                "ok": False,
+                "error": "SCOPE_RECEIPT_RUN_MISMATCH",
+                "scope_path": confirmed_path.as_posix(),
+                "manifest_run_id": manifest_run,
+                "message": (
+                    f"run id 未对齐：Pilot state.run_id={run_id!r} "
+                    f"但 manifest.current_run_id={manifest_run!r}；"
+                    "一次会话必须共用同一个 run id（prepare_layout 须传 --run-id）"
+                ),
+            }
         return {
             "gate": "scope_receipt",
             "ok": False,

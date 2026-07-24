@@ -17,7 +17,7 @@ from uo._core.ignore import DEFAULT_IGNORE_PATTERNS
 from uo._operator.artifacts import init_operator_contract_layout, operator_root, safe_op_name, write_text
 from uo._operator.cbm_metadata import write_index_meta
 from uo._operator.install_check import compare_installed_skill
-from uo._operator.run_context import scope_snapshot, read_yaml_mapping
+from uo._operator.run_context import is_active_run_id, scope_snapshot, read_yaml_mapping
 from uo._operator.spec import spec_bundle_hash
 
 
@@ -75,6 +75,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Always create a new UO run (do not use with --write-index-meta mid-scope-confirmation).",
     )
     parser.add_argument(
+        "--run-id",
+        default="",
+        help=(
+            "Bind this session's single run id (Pilot state.run_id). "
+            "When set, UO writes under runs/<run-id>/ and does not mint a second UO_RUN_* id."
+        ),
+    )
+    parser.add_argument(
         "--write-index-meta",
         action="store_true",
         help=(
@@ -91,7 +99,12 @@ def main(argv: list[str] | None = None) -> int:
     op_name = safe_op_name(args.op_name, repo_root)
     base = operator_root(repo_root, op_name)
     init_operator_contract_layout(base, op_name, repo_root)
-    run_id = _select_run_id(base, resume=args.resume, force_new=args.force_new_run)
+    run_id = _select_run_id(
+        base,
+        resume=args.resume,
+        force_new=args.force_new_run,
+        bound_run_id=str(args.run_id or "").strip() or None,
+    )
     phase0 = base / "runs" / run_id / "scope"
     _update_manifest_scope(base, run_id, repo_root)
     check = _resolve_installed_skill_check(Path(__file__).resolve().parents[2])
@@ -200,15 +213,33 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _select_run_id(base: Path, *, resume: bool, force_new: bool) -> str:
+def _select_run_id(
+    base: Path,
+    *,
+    resume: bool,
+    force_new: bool,
+    bound_run_id: str | None = None,
+) -> str:
     """Pick the scope confirmation run directory to write into.
 
-    Incomplete ``current_run_id`` is reused by default so later scope confirmation steps
-    (especially ``--write-index-meta``) do not accidentally fork a new run and
-    orphan ``scope_scan`` / ``scope_review`` / ``scope_confirmed`` artifacts.
+    ACP / Pilot binds **one** run id per session via ``--run-id`` (state.run_id).
+    When bound, that id is authoritative — never mint a second ``UO_RUN_*``.
+
+    Without ``--run-id`` (standalone/tests): incomplete ``current_run_id`` is reused
+    by default so later scope steps (especially ``--write-index-meta``) do not fork
+    a new run and orphan ``scope_scan`` / ``scope_review`` / ``scope_confirmed``.
     """
     if resume and force_new:
         raise SystemExit("--resume and --force-new-run are mutually exclusive")
+    if bound_run_id:
+        if force_new:
+            raise SystemExit(
+                "--force-new-run is incompatible with --run-id "
+                "(one ACP session uses one run id; start a new workflow for a new id)"
+            )
+        if not is_active_run_id(bound_run_id):
+            raise SystemExit(f"invalid --run-id: {bound_run_id!r}")
+        return bound_run_id.strip()
     if force_new:
         return _new_run_id()
 
@@ -234,14 +265,15 @@ def _current_run_id(base: Path) -> str | None:
 
             data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
             value = data.get("current_run_id")
-            if isinstance(value, str) and value.startswith("UO_RUN_") and value != "UO_RUN_PENDING":
-                return value
+            if is_active_run_id(value):
+                return str(value).strip()
         except Exception:  # noqa: BLE001
             pass
     return None
 
 
 def _new_run_id() -> str:
+    # Standalone/legacy only. ACP paths must pass --run-id (Pilot state.run_id).
     return "UO_RUN_" + datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S%f")
 
 

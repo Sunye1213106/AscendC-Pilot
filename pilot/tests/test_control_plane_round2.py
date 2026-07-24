@@ -138,6 +138,23 @@ def test_scope_gate_accepts_current_run_confirmed(tmp_path: Path) -> None:
     assert result["ok"] is True
 
 
+def test_scope_gate_reports_manifest_run_id_mismatch(tmp_path: Path) -> None:
+    state = start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
+    run_id = str(state["run_id"])
+    uo = uo_root(tmp_path)
+    uo.mkdir(parents=True, exist_ok=True)
+    _write(uo / "manifest.yaml", {"current_run_id": "UO_RUN_orphaned"})
+    orphan = uo / "runs" / "UO_RUN_orphaned" / "scope"
+    orphan.mkdir(parents=True)
+    _write(orphan / "scope_confirmed.yaml", _scope_doc("UO_RUN_orphaned"))
+    _mcp(uo)
+    result = gate_scope_receipt(tmp_path, uo)
+    assert result["ok"] is False
+    assert result.get("error") == "SCOPE_RECEIPT_RUN_MISMATCH"
+    assert run_id in str(result.get("message") or "")
+    assert result.get("manifest_run_id") == "UO_RUN_orphaned"
+
+
 # --- UO ready ---
 
 

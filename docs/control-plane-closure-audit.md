@@ -61,6 +61,19 @@ python -m pytest pilot/tests engines/understand-operator/tests/test_semantic_bat
 
 Hook authorize not OS isolation; extract_plan gate still receipt-optional by design; same-action staged merge convention; working tree may include unrelated prior edits.
 
+## 7.1 本轮追加：单会话单 run_id（2026-07-24）
+
+**问题**：Pilot `state.run_id`（`RUN_*`）与 UO `manifest.current_run_id`（自造 `UO_RUN_*`）双轨，gate fail-closed 后 scope finalize 必挂。
+
+**收紧**：
+- `prepare_layout` / `uo-scope record-index` 强制传 `--run-id <Pilot state.run_id>`
+- UO 写入 `uo/runs/<同一 run_id>/`，不再 ACP 路径另铸 `UO_RUN_*`
+- `active_run_id` 接受 `RUN_*`（兼容遗留 `UO_RUN_*`）
+- `gate_scope_receipt` 在路径缺失且 manifest 另一 id 时回 `SCOPE_RECEIPT_RUN_MISMATCH`
+- `apply_update` 同样绑定 Pilot run_id
+
+**规则**：一次 ACP 会话 / 一个 workflow run = 一个 run_id。新会话靠 `acp start` 换新 id，禁止领域侧旁路造第二个。
+
 ## 8. git diff --stat
 
 98 files changed, 1640 insertions(+), 367 deletions(-)

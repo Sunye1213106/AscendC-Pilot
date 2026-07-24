@@ -26,10 +26,19 @@ def _run_prepare_layout(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
     uo = _uo(project_root)
     raw_op = str((ctx or {}).get("op_name") or "").strip()
     op_name = raw_op or project_root.name
+    run_id = str((ctx or {}).get("run_id") or "").strip()
+    if not run_id:
+        return {
+            "ok": False,
+            "engine": "prepare_layout",
+            "error": "run_id_required",
+            "op_name": op_name,
+            "message_zh": "prepare_layout 需要 Pilot state.run_id（一次会话一个 run id）",
+        }
     try:
         from uo.scripts.prepare_operator import main as prepare_main
 
-        argv = [str(project_root), "--op-name", op_name]
+        argv = [str(project_root), "--op-name", op_name, "--run-id", run_id]
         code = int(prepare_main(argv) or 0)
         manifest = uo / "manifest.yaml"
         # prepare_operator exit codes:
@@ -43,6 +52,7 @@ def _run_prepare_layout(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
                 "exit_code": code,
                 "error": "uo-init skill missing — reinstall with install.ps1/install.sh",
                 "op_name": op_name,
+                "run_id": run_id,
                 "message_zh": "缺少已安装的 uo-init skill，请重新执行 install",
             }
         if not manifest.is_file():
@@ -52,12 +62,25 @@ def _run_prepare_layout(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
                 "exit_code": code,
                 "error": "manifest.yaml missing after prepare_operator",
                 "op_name": op_name,
+                "run_id": run_id,
+            }
+        scope_dir = uo / "runs" / run_id / "scope"
+        if not scope_dir.is_dir():
+            return {
+                "ok": False,
+                "engine": "prepare_operator",
+                "exit_code": code,
+                "error": "run_id_layout_mismatch",
+                "op_name": op_name,
+                "run_id": run_id,
+                "message_zh": f"UO 未写入 runs/{run_id}/scope（run id 未与 Pilot 对齐）",
             }
         return {
             "ok": True,
             "engine": "prepare_operator",
             "exit_code": code,
             "op_name": op_name,
+            "run_id": run_id,
             "manifest": manifest.as_posix(),
             "warning": "installed_skill_version_mismatch" if code == 3 else "",
         }
@@ -67,6 +90,7 @@ def _run_prepare_layout(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
             "engine": "prepare_layout",
             "error": str(exc)[:400],
             "op_name": op_name,
+            "run_id": run_id,
             "message_zh": "prepare_layout 失败；禁止空目录 fallback 假通过",
         }
 
@@ -151,10 +175,11 @@ def _run_apply_update(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
     uo, op_name, _arch = _uo_op_ctx(project_root, ctx)
     if not op_name:
         return {"ok": False, "engine": "apply_update", "error": "op_name required"}
+    run_id = str((ctx or {}).get("run_id") or "").strip()
     try:
         from uo.scripts.update_operator import update_operator
 
-        result = update_operator(project_root, op_name)
+        result = update_operator(project_root, op_name, run_id=run_id or None)
         receipt_ok = any((uo / "runs").glob("*/update/receipt.yaml")) if (uo / "runs").is_dir() else False
         diff_ok = (uo / "diff" / "index.yaml").is_file() and (uo / "diff" / "change_set.yaml").is_file()
         eng_ok = True
@@ -165,6 +190,7 @@ def _run_apply_update(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
             "engine": "apply_update",
             "receipt_present": receipt_ok,
             "diff_present": diff_ok,
+            "run_id": (result.get("run_id") if isinstance(result, dict) else None) or run_id,
             "result_keys": list(result.keys())[:12] if isinstance(result, dict) else [],
         }
     except Exception as exc:  # noqa: BLE001
