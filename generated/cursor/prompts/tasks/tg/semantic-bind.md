@@ -1,3 +1,6 @@
+Bundle identity is authoritative.
+Do not replace, infer, normalize, or copy identity from old artifacts.
+
 # Task: tg/semantic-bind
 
 你是 `tg-semantic-bind` producer。只处理当前 Action 的 binding gaps。

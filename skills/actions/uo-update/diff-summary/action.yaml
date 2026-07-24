@@ -1,9 +1,11 @@
-id: diff_summary
-workflow_id: uo-update
+# GENERATED from Workflow Spec — do not hand-edit identity fields
 version: 1
 name_zh: 只读差异摘要
+id: diff_summary
+workflow_id: uo-update
 role_id: deterministic_engine
 agent_id: deterministic-uo-engine
+execution_mode: deterministic
 capabilities:
 - kb-query
 policies:
@@ -16,7 +18,10 @@ policies:
 task_prompt_id: null
 context_profile_id: uo-update-diff-summary
 output_contract_id: diff-summary-v1
+allowed_write_paths: []
+forbidden_write_paths: []
 checker:
   required: false
 referee:
   required: false
+generated_from: workflow_spec

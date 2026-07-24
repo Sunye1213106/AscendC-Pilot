@@ -20,8 +20,9 @@ def test_scope_confirmed_contract_is_run_scoped_not_summary() -> None:
     assert "uo/summary/scope_confirmed.yaml" not in paths
     assert "runs" not in paths  # bare dir check removed
     joined = ",".join(paths)
-    assert "uo/runs/*/scope/scope_confirmed.yaml" in joined
-    assert "uo/runs/*/scope/receipt.yaml" in joined
+    assert "uo/runs/{run_id}/scope/scope_confirmed.yaml" in joined
+    assert "uo/runs/{run_id}/scope/receipt.yaml" in joined
+    assert "uo/runs/*/" not in joined
     assert "uo/cbm/index_meta.json" in joined
     assert "scope-confirmed-v1" in OUTPUT_CONTRACT_NONEMPTY_GLOBS
 
@@ -31,17 +32,25 @@ def test_output_contract_accepts_run_scoped_scope(tmp_path: Path) -> None:
     run = tmp_path / ".ascendc-pilot" / "uo" / "runs" / "UO_RUN_T" / "scope"
     run.mkdir(parents=True)
     (run / "scope_confirmed.yaml").write_text(
-        "status: confirmed\nconfirmed_file_list: [{path: a.cpp}]\n",
+        "status: confirmed\nrun_id: UO_RUN_T\nworkflow_id: uo-init\n"
+        "action_id: scope_confirmation\nconfirmed_file_list: [{path: a.cpp}]\n",
         encoding="utf-8",
     )
-    (run / "receipt.yaml").write_text("status: pass\n", encoding="utf-8")
+    (run / "receipt.yaml").write_text("status: pass\nrun_id: UO_RUN_T\n", encoding="utf-8")
     cbm = tmp_path / ".ascendc-pilot" / "uo" / "cbm"
     cbm.mkdir(parents=True)
     (cbm / "index_meta.json").write_text(
         json.dumps({"indexed_via": "mcp", "cbm_project": "p", "indexed_at": "t"}),
         encoding="utf-8",
     )
-    checked = _check_output_contract(tmp_path, "scope-confirmed-v1")
+    checked = _check_output_contract(
+        tmp_path,
+        "scope-confirmed-v1",
+        run_id="UO_RUN_T",
+        workflow_id="uo-init",
+        action_id="scope_confirmation",
+        actor_id="ascendc-pilot",
+    )
     assert checked.get("ok") is True, checked
 
 
@@ -50,10 +59,17 @@ def test_output_contract_rejects_summary_only_legacy(tmp_path: Path) -> None:
     summary = tmp_path / ".ascendc-pilot" / "uo" / "summary"
     summary.mkdir(parents=True)
     (summary / "scope_confirmed.yaml").write_text("status: confirmed\n", encoding="utf-8")
-    checked = _check_output_contract(tmp_path, "scope-confirmed-v1")
+    checked = _check_output_contract(
+        tmp_path,
+        "scope-confirmed-v1",
+        run_id="RUN_CURRENT",
+        workflow_id="uo-init",
+        action_id="scope_confirmation",
+        actor_id="ascendc-pilot",
+    )
     assert checked.get("ok") is False
     missing = checked.get("missing") or []
-    assert any("runs/*/scope/scope_confirmed.yaml" in m for m in missing)
+    assert any("runs/{run_id}/scope/scope_confirmed.yaml" in m or "RUN_CURRENT" in m for m in missing)
 
 
 def test_gate_scope_receipt_requires_mcp(tmp_path: Path) -> None:

@@ -83,6 +83,14 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--standalone",
+        action="store_true",
+        help=(
+            "Allow minting UO_RUN_* without an active Pilot workflow. "
+            "Forbidden when .ascendc-pilot/state/workflow.yaml is active unless --run-id matches."
+        ),
+    )
+    parser.add_argument(
         "--write-index-meta",
         action="store_true",
         help=(
@@ -99,11 +107,28 @@ def main(argv: list[str] | None = None) -> int:
     op_name = safe_op_name(args.op_name, repo_root)
     base = operator_root(repo_root, op_name)
     init_operator_contract_layout(base, op_name, repo_root)
+    pilot_state = _load_active_pilot_state(repo_root)
+    bound = str(args.run_id or "").strip() or None
+    if pilot_state and not args.standalone:
+        pilot_run = str(pilot_state.get("run_id") or "").strip()
+        if not bound:
+            raise SystemExit("PILOT_RUN_ID_REQUIRED: active Pilot workflow requires --run-id")
+        if pilot_run and bound != pilot_run:
+            raise SystemExit(
+                f"PILOT_RUN_ID_MISMATCH: --run-id={bound!r} != Pilot state.run_id={pilot_run!r}"
+            )
+    elif pilot_state and args.standalone and bound and pilot_state.get("run_id"):
+        # Even with --standalone, refuse silently overwriting an active Pilot run id.
+        if bound != str(pilot_state.get("run_id")):
+            raise SystemExit(
+                "PILOT_RUN_ID_MISMATCH: --standalone cannot bind a different run while Pilot is active"
+            )
     run_id = _select_run_id(
         base,
         resume=args.resume,
         force_new=args.force_new_run,
-        bound_run_id=str(args.run_id or "").strip() or None,
+        bound_run_id=bound,
+        allow_uo_run=bool(args.standalone) or not pilot_state,
     )
     phase0 = base / "runs" / run_id / "scope"
     _update_manifest_scope(base, run_id, repo_root)
@@ -219,6 +244,7 @@ def _select_run_id(
     resume: bool,
     force_new: bool,
     bound_run_id: str | None = None,
+    allow_uo_run: bool = True,
 ) -> str:
     """Pick the scope confirmation run directory to write into.
 
@@ -240,6 +266,8 @@ def _select_run_id(
         if not is_active_run_id(bound_run_id):
             raise SystemExit(f"invalid --run-id: {bound_run_id!r}")
         return bound_run_id.strip()
+    if not allow_uo_run:
+        raise SystemExit("PILOT_RUN_ID_REQUIRED: refuse to mint UO_RUN_* under active Pilot workflow")
     if force_new:
         return _new_run_id()
 
@@ -255,6 +283,31 @@ def _select_run_id(
         return _new_run_id()
 
     return _new_run_id()
+
+
+def _load_active_pilot_state(repo_root: Path) -> dict[str, object] | None:
+    """Return Pilot workflow.yaml when an active run is present."""
+    candidates = [
+        repo_root / ".ascendc-pilot" / "state" / "workflow.yaml",
+        repo_root.parent / ".ascendc-pilot" / "state" / "workflow.yaml",
+    ]
+    # Also check if operator_root nests under project .ascendc-pilot/uo
+    for parent in [repo_root, *repo_root.parents]:
+        candidates.append(parent / ".ascendc-pilot" / "state" / "workflow.yaml")
+    seen: set[str] = set()
+    for path in candidates:
+        key = path.as_posix()
+        if key in seen:
+            continue
+        seen.add(key)
+        if not path.is_file():
+            continue
+        data = read_yaml_mapping(path)
+        if isinstance(data, dict) and data.get("run_id") and data.get("workflow_id"):
+            status = str(data.get("status") or "").lower()
+            if status in {"", "running", "rework_required", "human_required", "blocked"}:
+                return data
+    return None
 
 
 def _current_run_id(base: Path) -> str | None:

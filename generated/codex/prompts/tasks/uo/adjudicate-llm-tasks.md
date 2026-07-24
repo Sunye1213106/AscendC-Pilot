@@ -1,17 +1,20 @@
 ## Task
 
+Bundle identity is authoritative.
+Do not replace, infer, normalize, or copy identity from old artifacts.
+
 Perform `adjudicate_llm_tasks` for the Pilot-prepared action.
 
-You are the **producer** actor `uo-semantic-resolve` (not primary).  
+You are the **producer** actor `<ACTOR_ID>` (not primary).  
 Do not manage workflow state or declare completion.
 
 ## Mode
 
 - mode: `task`
 - task_id: `adjudicate-llm-tasks`
-- workflow_id: `uo-init`
-- action_id: `adjudicate_llm_tasks`
-- actor_id: `uo-semantic-resolve`
+- workflow_id: `<WORKFLOW_ID>`
+- action_id: `<ACTION_ID>`
+- actor_id: `<ACTOR_ID>`
 - run_id: `<RUN_ID>`
 
 ## Target
@@ -35,8 +38,8 @@ Write **only** `ir/semantic_patches.yaml` for the deterministic `apply_semantic_
 3. Emit one patch per task into `ir/semantic_patches.yaml`:
    ```yaml
    version: 1
-   actor_id: uo-semantic-resolve
-   action_id: adjudicate_llm_tasks
+   actor_id: <ACTOR_ID>
+   action_id: <ACTION_ID>
    patches:
      - task_id: <exact task_id>
        action: mark_missing   # or accept_edge / choose_one when candidates exist
@@ -50,7 +53,7 @@ Write **only** `ir/semantic_patches.yaml` for the deterministic `apply_semantic_
    - Insufficient evidence → `mark_missing` (honest unresolved), not guess ACCEPT.
    - `mark_missing` must keep `accepted_candidate_ids: []`.
    - Do **not** invent symbols / edges absent from candidates.
-5. Stop. Return a short summary. Do **not** finalize; primary runs `acp run-action adjudicate_llm_tasks --finalize`.
+5. Stop. Return a short summary. Do **not** finalize; primary runs `acp run-action <ACTION_ID> --finalize`.
 
 ## Out of scope (do NOT do)
 
@@ -60,7 +63,7 @@ Write **only** `ir/semantic_patches.yaml` for the deterministic `apply_semantic_
 
 ## Hard Constraints
 
-- MUST write as actor `uo-semantic-resolve` with `action_id=adjudicate_llm_tasks` (ASCENDC_ACTION).
+- MUST write as actor `<ACTOR_ID>` with `action_id=<ACTION_ID>` (ASCENDC_ACTION).
 - MUST NOT: modify Pilot state; invent evidence; write referee verdicts; patch derived graphs.
 - MUST cover every open blocking task (or leave an explicit needs_human note in evidence).
 

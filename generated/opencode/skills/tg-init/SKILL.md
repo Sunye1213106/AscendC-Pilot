@@ -25,16 +25,20 @@ description: 构建测例契约 / 测项合同与绑定、测试工具初始化�
 
 ## Actions
 
-| action_id | 名称 | method | agent | role |
-|---|---|---|---|---|
-| `kb_check` | 校验定稿 KB | `tg-init/kb-check` | `deterministic-tg-engine` | `deterministic_engine` |
-| `contract_build` | 构建合同骨架 | `tg-init/contract-build` | `deterministic-tg-engine` | `deterministic_engine` |
-| `semantic_bind` | 语义绑定 | `tg-init/semantic-bind` | `tg-semantic-bind` | `producer` |
-| `bind_merge` | 绑定合并 | `tg-init/bind-merge` | `deterministic-tg-engine` | `deterministic_engine` |
-| `mid_nest` | 中间量闭合 | `tg-init/mid-nest` | `deterministic-tg-engine` | `deterministic_engine` |
-| `integrity_gate` | 完整性校验 | `tg-init/integrity-gate` | `deterministic-tg-engine` | `deterministic_engine` |
-| `init_audit` | Init 审计 | `tg-init/init-audit` | `tg-init-audit` | `referee` |
-| `human_confirm` | 人工确认 | `tg-init/human-confirm` | `human` | `-` |
+<!-- BEGIN GENERATED ACTIONS -->
+
+| action_id | execution_mode | agent | role | method | prompt | output_contract |
+|---|---|---|---|---|---|---|
+| `kb_check` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-init/kb-check` | `-` | `uo-ready-v1` |
+| `contract_build` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-init/contract-build` | `-` | `csv-contract-v1` |
+| `semantic_bind` | `subagent` | `tg-semantic-bind` | `producer` | `tg-init/semantic-bind` | `tg/semantic-bind` | `semantic-bind-v1` |
+| `bind_merge` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-init/bind-merge` | `-` | `bind-merge-v1` |
+| `mid_nest` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-init/mid-nest` | `-` | `mid-nest-v1` |
+| `integrity_gate` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-init/integrity-gate` | `-` | `tg-integrity-v1` |
+| `init_audit` | `subagent` | `tg-init-audit` | `referee` | `tg-init/init-audit` | `tg/init-audit` | `init-audit-v1` |
+| `human_confirm` | `primary_interactive` | `human` | `-` | `tg-init/human-confirm` | `tg/human-confirm` | `init-confirmed-v1` |
+
+<!-- END GENERATED ACTIONS -->
 
 ## Composed: pilot-control
 

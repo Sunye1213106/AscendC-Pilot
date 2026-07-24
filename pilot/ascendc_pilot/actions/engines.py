@@ -990,8 +990,8 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "kb-layout-v1": ["uo/manifest.yaml"],
     # Canonical run-scoped artifacts (never uo/summary/ — summary is human export only)
     "scope-confirmed-v1": [
-        "uo/runs/*/scope/scope_confirmed.yaml",
-        "uo/runs/*/scope/receipt.yaml",
+        "uo/runs/{run_id}/scope/scope_confirmed.yaml",
+        "uo/runs/{run_id}/scope/receipt.yaml",
         "uo/cbm/index_meta.json",
     ],
     "detect-score-pre-v1": [
@@ -1022,7 +1022,7 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "change-detect-v1": ["uo/diff/change_set.yaml"],
     "update-plan-v1": ["uo/summary/update_plan.yaml"],
     "update-apply-v1": [
-        "uo/runs/*/update/receipt.yaml",
+        "uo/runs/{run_id}/update/receipt.yaml",
         "uo/diff/index.yaml",
         "uo/diff/change_set.yaml",
     ],
@@ -1083,8 +1083,8 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
 # Contracts that must contain at least one nonempty concrete artifact (not empty dir / empty file)
 OUTPUT_CONTRACT_NONEMPTY_GLOBS: dict[str, list[str]] = {
     "scope-confirmed-v1": [
-        "uo/runs/*/scope/scope_confirmed.yaml",
-        "uo/runs/*/scope/receipt.yaml",
+        "uo/runs/{run_id}/scope/scope_confirmed.yaml",
+        "uo/runs/{run_id}/scope/receipt.yaml",
         "uo/cbm/index_meta.json",
     ],
     "extract-plan-v1": [
@@ -1100,7 +1100,7 @@ OUTPUT_CONTRACT_NONEMPTY_GLOBS: dict[str, list[str]] = {
         "uo/summary/update_plan.yaml",
     ],
     "update-apply-v1": [
-        "uo/runs/*/update/receipt.yaml",
+        "uo/runs/{run_id}/update/receipt.yaml",
         "uo/diff/index.yaml",
         "uo/diff/change_set.yaml",
     ],

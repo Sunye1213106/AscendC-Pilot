@@ -201,7 +201,7 @@ def rebuild_derived_graphs(
     """
     from uo._operator.artifacts import existing_operator_root
     from uo.scripts.build_layered_kb import build_layered_kb
-    from uo.scripts.evidence_score import _source_snapshot_hash
+    from uo.scripts.evidence_score import require_source_snapshot
     from uo.scripts.llm_tasks import load_llm_tasks, sync_tasks_from_materialization
     from uo.scripts.resolve_entrypoints import (
         _apply_link_status,
@@ -211,11 +211,29 @@ def rebuild_derived_graphs(
     )
 
     uo_root = existing_operator_root(repo_root, op_name)
-    snap = _source_snapshot_hash(uo_root, run_id=run_id or None)
-    if snap.startswith("FAIL_CLOSED:"):
-        return {"ok": False, "error": "SOURCE_SNAPSHOT_UNAVAILABLE", "detail": snap}
+    snap_res = require_source_snapshot(uo_root, run_id=run_id or None)
+    if not snap_res.get("ok"):
+        return {
+            "ok": False,
+            "error": snap_res.get("error") or "SOURCE_SNAPSHOT_UNAVAILABLE",
+            "detail": snap_res,
+        }
+    snap = str(snap_res.get("hash") or "")
     stale = invalidate_stale_patches(uo_root, current_source_hash=snap)
     ledger = load_ledger(uo_root)
+    # Default: only consume current-run ledger records (or explicitly reusable ones).
+    records = []
+    for rec in ledger.get("records") or []:
+        if not isinstance(rec, dict):
+            continue
+        rec_run = str(rec.get("run_id") or "").strip()
+        if rec_run and run_id and rec_run != str(run_id):
+            reusable = bool(rec.get("allow_cross_run_reuse")) and str(rec.get("source_snapshot_hash") or "") == snap
+            if not reusable:
+                continue
+        records.append(rec)
+    ledger = dict(ledger)
+    ledger["records"] = records
 
     # 1. Base entrypoint graph from source facts (no ledger yet).
     candidates = collect_entrypoint_candidates(repo_root, op_name, architecture=architecture)

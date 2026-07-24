@@ -1,9 +1,11 @@
-id: apply_semantic_patch
-workflow_id: uo-init
+# GENERATED from Workflow Spec — do not hand-edit identity fields
 version: 1
 name_zh: 应用语义补丁
+id: apply_semantic_patch
+workflow_id: uo-init
 role_id: deterministic_engine
 agent_id: deterministic-uo-engine
+execution_mode: deterministic
 capabilities: []
 policies:
 - source-authority
@@ -15,7 +17,14 @@ policies:
 task_prompt_id: null
 context_profile_id: uo-init-apply-semantic-patch
 output_contract_id: semantic-patch-v1
+allowed_write_paths:
+- uo/ir/semantic_resolution_ledger.yaml
+- uo/ir/llm_tasks.yaml
+- uo/ir/semantic_apply_report.yaml
+- uo/ir/**
+forbidden_write_paths: []
 checker:
   required: true
 referee:
   required: false
+generated_from: workflow_spec

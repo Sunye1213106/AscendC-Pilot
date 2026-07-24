@@ -18,9 +18,13 @@ description: 只读查询 UO 知识库 / 问答 / 查某个 KEY。用户提问�
 
 ## Actions
 
-| action_id | 名称 | method | agent | role |
-|---|---|---|---|---|
-| `kb_lookup` | KB 查询 | `uo-query/kb-lookup` | `uo-query` | `readonly_analyst` |
+<!-- BEGIN GENERATED ACTIONS -->
+
+| action_id | execution_mode | agent | role | method | prompt | output_contract |
+|---|---|---|---|---|---|---|
+| `kb_lookup` | `subagent` | `uo-query` | `readonly_analyst` | `uo-query/kb-lookup` | `uo/kb-lookup` | `kb-answer-v1` |
+
+<!-- END GENERATED ACTIONS -->
 
 ## Composed: pilot-control
 

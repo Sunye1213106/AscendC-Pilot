@@ -100,11 +100,19 @@ def test_source_snapshot_isolates_current_run(tmp_path: Path) -> None:
 
 
 def test_source_snapshot_fail_closed_without_run(tmp_path: Path) -> None:
+    from uo.scripts.evidence_score import _source_snapshot_result, require_source_snapshot
+
     uo = tmp_path / "uo"
     uo.mkdir()
     write_yaml(uo / "manifest.yaml", {})
     h = _source_snapshot_hash(uo)
-    assert h.startswith("FAIL_CLOSED")
+    assert h == ""
+    res = _source_snapshot_result(uo)
+    assert res["ok"] is False
+    assert res["error"] == "SOURCE_SNAPSHOT_RUN_MISSING"
+    req = require_source_snapshot(uo)
+    assert req["ok"] is False
+    assert not str(req.get("hash") or "").startswith("FAIL_CLOSED")
 
 
 def test_detect_score_post_requires_plan_host_kernel(tmp_path: Path) -> None:

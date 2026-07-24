@@ -1,9 +1,11 @@
-id: plan_scope
-workflow_id: tg-plan
+# GENERATED from Workflow Spec — do not hand-edit identity fields
 version: 1
 name_zh: 确定规划范围
+id: plan_scope
+workflow_id: tg-plan
 role_id: deterministic_engine
 agent_id: deterministic-tg-engine
+execution_mode: deterministic
 capabilities:
 - obligation-analysis
 - kb-query
@@ -17,7 +19,10 @@ policies:
 task_prompt_id: null
 context_profile_id: tg-plan-plan-scope
 output_contract_id: plan-scope-v1
+allowed_write_paths: []
+forbidden_write_paths: []
 checker:
   required: true
 referee:
   required: false
+generated_from: workflow_spec

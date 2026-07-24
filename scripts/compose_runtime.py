@@ -180,6 +180,104 @@ def _scope_overlap_errors(producer_writes: set[str], referee_writes: set[str]) -
     return errors
 
 
+def sync_action_yaml_mirrors(repo: Path) -> list[str]:
+    """Rewrite skills/actions/**/action.yaml identity fields from Workflow Spec."""
+    errors: list[str] = []
+    if yaml is None:
+        return ["PyYAML required for action.yaml mirrors"]
+    sys.path.insert(0, str(repo / "pilot"))
+    from ascendc_pilot.workflows.specs import WORKFLOWS  # noqa: WPS433
+
+    skills = repo / "skills"
+    for wid, meta in WORKFLOWS.items():
+        if meta.get("reserved") or not meta.get("slash"):
+            continue
+        for action in meta.get("actions") or []:
+            if not isinstance(action, dict):
+                continue
+            mid = str(action.get("action_method_id") or "")
+            if "/" not in mid:
+                continue
+            wf, name = mid.split("/", 1)
+            # Source action.yaml is owned by the method-path workflow prefix only.
+            # Cross-workflow reused methods (e.g. uo-update → uo-init/key-triage) are
+            # mirrored into generated/<host>/skills/<wid>/actions/ instead.
+            if wf != wid:
+                continue
+            adir = skills / "actions" / wf / name
+            if not (adir / "METHOD.md").is_file():
+                continue
+            existing = _load_yaml(adir / "action.yaml")
+            extras = {
+                k: v
+                for k, v in existing.items()
+                if k
+                not in {
+                    "id",
+                    "workflow_id",
+                    "role_id",
+                    "agent_id",
+                    "execution_mode",
+                    "capabilities",
+                    "policies",
+                    "task_prompt_id",
+                    "context_profile_id",
+                    "output_contract_id",
+                    "allowed_write_paths",
+                    "forbidden_write_paths",
+                    "checker",
+                    "referee",
+                    "generated_from",
+                }
+            }
+            mirrored = _spec_action_yaml(wid, action, extras=extras)
+            adir.mkdir(parents=True, exist_ok=True)
+            (adir / "action.yaml").write_text(
+                "# GENERATED from Workflow Spec — do not hand-edit identity fields\n"
+                + yaml.safe_dump(mirrored, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+            )
+    return errors
+
+
+def sync_skill_action_markers(repo: Path) -> list[str]:
+    """Fill source Skill GENERATED ACTIONS markers from Workflow Spec."""
+    errors: list[str] = []
+    sys.path.insert(0, str(repo / "pilot"))
+    from ascendc_pilot.workflows.specs import WORKFLOWS  # noqa: WPS433
+
+    skills = repo / "skills"
+    for wid, meta in WORKFLOWS.items():
+        if meta.get("reserved") or not meta.get("slash"):
+            continue
+        skill_path = skills / "workflows" / wid / "SKILL.md"
+        if not skill_path.is_file():
+            continue
+        raw = skill_path.read_text(encoding="utf-8")
+        try:
+            front, body = _require_skill_frontmatter(raw, path=skill_path)
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
+        new_body = _replace_actions_table(body, meta)
+        # Count actions in generated block
+        begin = "<!-- BEGIN GENERATED ACTIONS -->"
+        end = "<!-- END GENERATED ACTIONS -->"
+        if begin in new_body and end in new_body:
+            block = new_body.split(begin, 1)[1].split(end, 1)[0]
+            found = set(
+                re.findall(r"(?m)^\|\s*`([a-z0-9_]+)`\s*\|", block)
+            )
+            expected = {str(a.get("id")) for a in (meta.get("actions") or []) if isinstance(a, dict)}
+            if found != expected:
+                errors.append(
+                    f"SKILL_ACTION_SET_DRIFT {wid}: generated={sorted(found)} spec={sorted(expected)}"
+                )
+        out = _dump_frontmatter(front) + "\n" + new_body.lstrip("\n")
+        skill_path.write_text(out, encoding="utf-8")
+    return errors
+
+
 def validate(repo: Path) -> list[str]:
     """Static validation; returns list of error strings."""
     paths = _repo_paths(repo)
@@ -187,6 +285,8 @@ def validate(repo: Path) -> list[str]:
     prompts = paths["prompts"]
     agents = paths["agents"]
     errors: list[str] = []
+    errors.extend(sync_action_yaml_mirrors(repo))
+    errors.extend(sync_skill_action_markers(repo))
 
     sys.path.insert(0, str(repo / "pilot"))
     from ascendc_pilot.workflows.specs import WORKFLOWS  # noqa: WPS433
@@ -259,8 +359,13 @@ def validate(repo: Path) -> list[str]:
                     errors.append(f"{wid}/{aid}: missing task prompt {tpid}")
                 else:
                     _scan_forbidden(p, p.read_text(encoding="utf-8"), errors)
-            # Semantic actions need role + context + output contract
-            if action.get("role_id") in {"producer", "referee", "readonly_analyst"}:
+            # Semantic / interactive actions need role + context + output contract
+            if action.get("role_id") in {
+                "producer",
+                "referee",
+                "readonly_analyst",
+                "controller",
+            } or action.get("execution_mode") in {"subagent", "primary_interactive"}:
                 if not action.get("context_profile_id"):
                     errors.append(f"{wid}/{aid}: missing context_profile_id")
                 if not action.get("output_contract_id"):
@@ -269,6 +374,17 @@ def validate(repo: Path) -> list[str]:
             if agent_id and agent_id != "ascendc-pilot":
                 if not (agents / f"{agent_id}.yaml").is_file():
                     errors.append(f"{wid}/{aid}: missing agent {agent_id}")
+            # Primary must not be declared as subagent execution.
+            if action.get("execution_mode") == "subagent" and agent_id == "ascendc-pilot":
+                errors.append(f"{wid}/{aid}: primary agent cannot use subagent execution_mode")
+            # action.yaml must mirror Spec when this workflow owns the method path.
+            mid = action.get("action_method_id")
+            if mid:
+                parts = str(mid).split("/", 1)
+                ayaml, _method = _read_action(skills, str(mid))
+                if ayaml and len(parts) == 2 and parts[0] == wid:
+                    drift = _action_yaml_drift(wid, action, ayaml)
+                    errors.extend(drift)
 
     # operator workflow skill required
     if not (skills / "workflows" / "operator" / "SKILL.md").is_file():
@@ -277,34 +393,119 @@ def validate(repo: Path) -> list[str]:
     return errors
 
 
+def _action_yaml_drift(wid: str, action: dict[str, Any], ayaml: dict[str, Any]) -> list[str]:
+    """Fail when source action.yaml diverges from Workflow Spec identity fields."""
+    errors: list[str] = []
+    aid = str(action.get("id") or "")
+    comparisons = {
+        "id": action.get("id"),
+        "workflow_id": wid,
+        "agent_id": action.get("agent_id"),
+        "role_id": action.get("role_id"),
+        "execution_mode": action.get("execution_mode"),
+        "task_prompt_id": action.get("task_prompt_id"),
+        "context_profile_id": action.get("context_profile_id"),
+        "output_contract_id": action.get("output_contract_id"),
+    }
+    # capabilities / policies lists
+    if action.get("capability_ids") is not None:
+        comparisons["capabilities"] = list(action.get("capability_ids") or [])
+    if action.get("policy_ids") is not None:
+        comparisons["policies"] = list(action.get("policy_ids") or [])
+    for field, spec_value in comparisons.items():
+        yaml_value = ayaml.get(field)
+        if field in {"capabilities", "policies"}:
+            yaml_value = list(yaml_value or [])
+            spec_value = list(spec_value or [])
+        if yaml_value in (None, "") and spec_value in (None, "", []):
+            continue
+        if yaml_value != spec_value:
+            errors.append(
+                "ACTION_METADATA_DRIFT "
+                f"{wid}/{aid} field={field} "
+                f"spec_value={spec_value!r} action_yaml_value={yaml_value!r}"
+            )
+    checker_req = bool(action.get("checker_required", True))
+    yaml_checker = bool(((ayaml.get("checker") or {}) if isinstance(ayaml.get("checker"), dict) else {}).get("required", True))
+    if yaml_checker != checker_req:
+        errors.append(
+            "ACTION_METADATA_DRIFT "
+            f"{wid}/{aid} field=checker.required "
+            f"spec_value={checker_req!r} action_yaml_value={yaml_checker!r}"
+        )
+    referee_req = bool(action.get("referee_required", False))
+    yaml_ref = bool(((ayaml.get("referee") or {}) if isinstance(ayaml.get("referee"), dict) else {}).get("required", False))
+    if yaml_ref != referee_req:
+        errors.append(
+            "ACTION_METADATA_DRIFT "
+            f"{wid}/{aid} field=referee.required "
+            f"spec_value={referee_req!r} action_yaml_value={yaml_ref!r}"
+        )
+    return errors
+
+
+def _spec_action_yaml(wid: str, action: dict[str, Any], extras: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Generate action.yaml body from Workflow Spec (mirror, not authority)."""
+    merged = dict(extras or {})
+    merged.update(
+        {
+            "id": action.get("id"),
+            "workflow_id": wid,
+            "role_id": action.get("role_id"),
+            "agent_id": action.get("agent_id"),
+            "execution_mode": action.get("execution_mode"),
+            "capabilities": list(action.get("capability_ids") or []),
+            "policies": list(action.get("policy_ids") or []),
+            "task_prompt_id": action.get("task_prompt_id"),
+            "context_profile_id": action.get("context_profile_id"),
+            "output_contract_id": action.get("output_contract_id"),
+            "allowed_write_paths": list(action.get("allowed_write_paths") or []),
+            "forbidden_write_paths": list(action.get("forbidden_write_paths") or []),
+            "checker": {"required": bool(action.get("checker_required", True))},
+            "referee": {"required": bool(action.get("referee_required", False))},
+            "generated_from": "workflow_spec",
+        }
+    )
+    return merged
+
+
 def _replace_actions_table(body: str, meta: dict[str, Any]) -> str:
-    """Replace human Actions table with Workflow Spec authority (single source)."""
+    """Replace generated Actions markers with Workflow Spec authority."""
     rows = [
-        "| action_id | 名称 | method | agent | role |",
-        "|---|---|---|---|---|",
+        "| action_id | execution_mode | agent | role | method | prompt | output_contract |",
+        "|---|---|---|---|---|---|---|",
     ]
     for a in meta.get("actions") or []:
         if not isinstance(a, dict):
             continue
         rows.append(
-            "| `{id}` | {label} | `{method}` | `{agent}` | `{role}` |".format(
+            "| `{id}` | `{mode}` | `{agent}` | `{role}` | `{method}` | `{prompt}` | `{contract}` |".format(
                 id=a.get("id"),
-                label=a.get("label_zh") or a.get("id") or "",
-                method=a.get("action_method_id") or "-",
+                mode=a.get("execution_mode") or "-",
                 agent=a.get("agent_id") or "human",
                 role=a.get("role_id") or "-",
+                method=a.get("action_method_id") or "-",
+                prompt=a.get("task_prompt_id") or "-",
+                contract=a.get("output_contract_id") or "-",
             )
         )
-    table = "## Actions\n\n" + "\n".join(rows) + "\n"
-    # Replace existing ## Actions section through next H2, or append.
+    table = "\n".join(rows) + "\n"
+    begin = "<!-- BEGIN GENERATED ACTIONS -->"
+    end = "<!-- END GENERATED ACTIONS -->"
+    if begin in body and end in body:
+        pre, rest = body.split(begin, 1)
+        _, post = rest.split(end, 1)
+        return pre + begin + "\n\n" + table + "\n" + end + post
+    # Fallback: replace ## Actions section, wrapping with markers.
+    wrapped = f"## Actions\n\n{begin}\n\n{table}\n{end}\n"
     if re.search(r"(?m)^## Actions\s*$", body):
         return re.sub(
             r"(?ms)^## Actions\s*\n.*?(?=^## |\Z)",
-            table + "\n",
+            wrapped + "\n",
             body,
             count=1,
         )
-    return body.rstrip() + "\n\n" + table
+    return body.rstrip() + "\n\n" + wrapped
 
 
 def _compose_skill_body(skills: Path, wid: str, meta: dict[str, Any]) -> str:
@@ -505,7 +706,7 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
         expected_n = len(wf_meta.get("actions") or []) if wid != "operator" else None
         _assert_generated_skill(skill_out, expected_actions=expected_n)
         # Copy action methods referenced by this workflow as sidecars;
-        # cross-check action.yaml against Workflow Spec (single runtime authority).
+        # action.yaml is a generated mirror of Workflow Spec (not an editable authority).
         for a in wf_meta.get("actions") or []:
             mid = a.get("action_method_id")
             if not mid:
@@ -514,45 +715,31 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
             if not method:
                 continue
             folder = str(mid).split("/", 1)[-1]
+            parts = str(mid).split("/", 1)
+            # Overwrite source action.yaml only when this workflow owns the method path.
+            if len(parts) == 2 and parts[0] == wid and yaml is not None:
+                src_adir = skills / "actions" / parts[0] / parts[1]
+                src_adir.mkdir(parents=True, exist_ok=True)
+                mirrored = _spec_action_yaml(wid, a, extras={k: v for k, v in (ayaml or {}).items() if k not in {
+                    "id", "workflow_id", "role_id", "agent_id", "execution_mode",
+                    "capabilities", "policies", "task_prompt_id", "context_profile_id",
+                    "output_contract_id", "allowed_write_paths", "forbidden_write_paths",
+                    "checker", "referee", "generated_from",
+                }})
+                (src_adir / "action.yaml").write_text(
+                    "# GENERATED from Workflow Spec — do not hand-edit identity fields\n"
+                    + yaml.safe_dump(mirrored, allow_unicode=True, sort_keys=False),
+                    encoding="utf-8",
+                )
             adir = dest / "actions" / folder
             adir.mkdir(parents=True, exist_ok=True)
             (adir / "METHOD.md").write_text(method, encoding="utf-8")
-            # Spec wins for identity fields; keep method-local extras.
-            merged = dict(ayaml or {})
-            for key in (
-                "id",
-                "workflow_id",
-                "role_id",
-                "agent_id",
-                "capabilities",
-                "policies",
-                "task_prompt_id",
-                "context_profile_id",
-                "output_contract_id",
-            ):
-                if key == "id" and a.get("id"):
-                    merged["id"] = a["id"]
-                elif key == "workflow_id":
-                    merged["workflow_id"] = wid
-                elif key == "role_id" and a.get("role_id"):
-                    merged["role_id"] = a["role_id"]
-                elif key == "agent_id" and a.get("agent_id"):
-                    merged["agent_id"] = a["agent_id"]
-                elif key == "capabilities" and a.get("capability_ids"):
-                    merged["capabilities"] = list(a["capability_ids"])
-                elif key == "policies" and a.get("policy_ids"):
-                    merged["policies"] = list(a["policy_ids"])
-                elif key == "task_prompt_id" and a.get("task_prompt_id"):
-                    merged["task_prompt_id"] = a["task_prompt_id"]
-                elif key == "context_profile_id" and a.get("context_profile_id"):
-                    merged["context_profile_id"] = a["context_profile_id"]
-                elif key == "output_contract_id" and a.get("output_contract_id"):
-                    merged["output_contract_id"] = a["output_contract_id"]
-            merged["checker"] = {"required": bool(a.get("checker_required", True))}
-            merged["referee"] = {"required": bool(a.get("referee_required", False))}
+            # Always write workflow-specific identity into generated skill sidecar.
+            merged = _spec_action_yaml(wid, a, extras=ayaml if isinstance(ayaml, dict) else None)
             if yaml is not None:
                 (adir / "action.yaml").write_text(
-                    yaml.safe_dump(merged, allow_unicode=True, sort_keys=False),
+                    "# GENERATED from Workflow Spec — do not hand-edit identity fields\n"
+                    + yaml.safe_dump(merged, allow_unicode=True, sort_keys=False),
                     encoding="utf-8",
                 )
         # Copy capabilities used
@@ -650,12 +837,13 @@ def validate_generated(repo: Path, *, host: str = "opencode") -> list[str]:
                         pass
                 if aid and agent and agent != "human":
                     # Fail if skill still maps this action to a different agent in the Actions table
+                    # New table: action_id | execution_mode | agent | role | method | prompt | contract
                     m = re.search(
-                        rf"\|\s*`{re.escape(aid)}`\s*\|\s*[^|]+\|\s*`[^`]+`\s*\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|",
+                        rf"\|\s*`{re.escape(aid)}`\s*\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|",
                         text,
                     )
                     if m:
-                        table_agent, table_role = m.group(1), m.group(2)
+                        table_mode, table_agent, table_role = m.group(1), m.group(2), m.group(3)
                         if table_agent != agent:
                             errors.append(
                                 f"generated/{host}/skills/{wid}: action {aid} agent "
@@ -665,6 +853,12 @@ def validate_generated(repo: Path, *, host: str = "opencode") -> list[str]:
                             errors.append(
                                 f"generated/{host}/skills/{wid}: action {aid} role "
                                 f"{table_role!r} != workflow {role!r}"
+                            )
+                        expected_mode = str(action.get("execution_mode") or "")
+                        if expected_mode and table_mode != expected_mode:
+                            errors.append(
+                                f"generated/{host}/skills/{wid}: action {aid} execution_mode "
+                                f"{table_mode!r} != workflow {expected_mode!r}"
                             )
 
     for agent_id in sorted(needed):

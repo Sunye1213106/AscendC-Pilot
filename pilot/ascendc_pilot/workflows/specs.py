@@ -37,6 +37,7 @@ def _act(
     gates: list[str] | None = None,
     agent_id: str | None = None,
     role_id: str | None = None,
+    execution_mode: str | None = None,
     policy_ids: list[str] | None = None,
     capability_ids: list[str] | None = None,
     action_method_id: str | None = None,
@@ -46,13 +47,27 @@ def _act(
     output_mode: str | None = None,
     staging_contract_id: str | None = None,
     merge_action_id: str | None = None,
+    allowed_write_paths: list[str] | None = None,
+    allowed_read_paths: list[str] | None = None,
+    forbidden_write_paths: list[str] | None = None,
 ) -> dict[str, Any]:
     """Declare a Pilot Action with compositional references.
 
     ``actors`` is derived from ``agent_id`` for authorize / spawn checks.
+    Workflow Spec is the sole editable authority for identity fields.
     """
+    from ascendc_pilot.ownership import ACTION_WRITE_PATHS, infer_execution_mode
+
     method_id = action_method_id or f"{workflow_id}/{action_id.replace('_', '-')}"
     actors = [agent_id] if agent_id else []
+    mode = infer_execution_mode(
+        agent_id=agent_id,
+        role_id=role_id,
+        execution_mode=execution_mode,
+    )
+    writes = allowed_write_paths
+    if writes is None:
+        writes = list((ACTION_WRITE_PATHS.get(workflow_id) or {}).get(action_id) or [])
     row: dict[str, Any] = {
         "id": action_id,
         "label_zh": label_zh,
@@ -62,12 +77,16 @@ def _act(
         "gates": list(gates or []),
         "agent_id": agent_id,
         "role_id": role_id,
+        "execution_mode": mode,
         "policy_ids": list(policy_ids if policy_ids is not None else DEFAULT_POLICY_IDS),
         "capability_ids": list(capability_ids or []),
         "action_method_id": method_id,
         "task_prompt_id": task_prompt_id,
         "context_profile_id": context_profile_id or f"{workflow_id}-{action_id.replace('_', '-')}",
         "output_contract_id": output_contract_id,
+        "allowed_write_paths": list(writes or []),
+        "allowed_read_paths": list(allowed_read_paths or []),
+        "forbidden_write_paths": list(forbidden_write_paths or []),
         # Derived for authorize / Task spawn (single primary actor).
         "actors": actors,
     }
@@ -233,7 +252,8 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 phases=["scope"],
                 workflow_id="uo-init",
                 agent_id="ascendc-pilot",
-                role_id="producer",
+                role_id="controller",
+                execution_mode="primary_interactive",
                 gates=["scope_receipt"],
                 capability_ids=["cbm-navigation", "source-reading"],
                 task_prompt_id="uo/scope-confirmation",
@@ -258,10 +278,12 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 workflow_id="uo-init",
                 agent_id="uo-semantic-resolve",
                 role_id="producer",
+                execution_mode="subagent",
                 gates=["extract_plan_subagent"],
                 capability_ids=_CAPS_CODE + ["semantic-resolution"],
                 task_prompt_id="uo/extract-plan",
                 output_contract_id="extract-plan-v1",
+                forbidden_write_paths=["uo/ir/semantic_patches.yaml", "uo/ir/llm_tasks.yaml"],
             ),
             _act(
                 "detect_score_post",
@@ -282,10 +304,15 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 workflow_id="uo-init",
                 agent_id="uo-semantic-resolve",
                 role_id="producer",
+                execution_mode="subagent",
                 gates=["adjudicate_llm_tasks"],
                 capability_ids=_CAPS_CODE + ["semantic-resolution"],
                 task_prompt_id="uo/adjudicate-llm-tasks",
                 output_contract_id="semantic-patches-v1",
+                forbidden_write_paths=[
+                    "uo/ir/extract_plan.yaml",
+                    "uo/ir/semantic_resolution_ledger.yaml",
+                ],
             ),
             _act(
                 "apply_semantic_patch",
@@ -330,10 +357,15 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 workflow_id="uo-init",
                 agent_id="uo-key-resolve",
                 role_id="producer",
+                execution_mode="subagent",
                 gates=["key_triage_required"],
                 capability_ids=_CAPS_RESOLVE,
                 task_prompt_id="uo/key-triage",
                 output_contract_id="key-triage-v1",
+                forbidden_write_paths=[
+                    "uo/ir/input_derivable_patch.yaml",
+                    "uo/ir/key_shape_resolve/**",
+                ],
             ),
             _act(
                 "key_resolution",
@@ -342,10 +374,12 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 workflow_id="uo-init",
                 agent_id="uo-key-resolve",
                 role_id="producer",
+                execution_mode="subagent",
                 gates=["key_resolve_receipt", "empty_only_producer"],
                 capability_ids=_CAPS_RESOLVE,
                 task_prompt_id="uo/key-resolution",
                 output_contract_id="input-derivable-patch-v1",
+                forbidden_write_paths=["uo/ir/key_triage.yaml"],
             ),
             _act(
                 "confidence_report",

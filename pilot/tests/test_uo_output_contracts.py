@@ -39,7 +39,7 @@ def test_uo_update_contracts_aligned() -> None:
     assert _joined("change-detect-v1") == "uo/diff/change_set.yaml"
     assert "change_detect.yaml" not in _joined("change-detect-v1")
     assert "uo/summary/update_plan.yaml" in _joined("update-plan-v1")
-    assert "uo/runs/*/update/receipt.yaml" in _joined("update-apply-v1")
+    assert "uo/runs/{run_id}/update/receipt.yaml" in _joined("update-apply-v1")
     assert "uo/diff/index.yaml" in _joined("diff-summary-v1")
     assert "diff_summary.md" not in _joined("diff-summary-v1")
     for cid in ("change-detect-v1", "update-plan-v1", "update-apply-v1", "diff-summary-v1"):

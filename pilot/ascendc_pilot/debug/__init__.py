@@ -740,6 +740,49 @@ def bind_debug_session_run(project_root: Path | None = None) -> dict[str, Any]:
     return {"ok": True, "debug_session": ds, "changed": changed}
 
 
+def rotate_debug_session_for_new_run(project_root: Path | None = None) -> dict[str, Any]:
+    """Archive the previous debug session and mint a new one for the new workflow run.
+
+    Children registry is isolated by debug_session_id / run_id; old children remain
+    under the archived session and are not visible to the new run.
+    """
+    root = resolve_project_root(project_root)
+    if not is_enabled(root):
+        return {"ok": False, "skipped": True, "reason": "debug_disabled"}
+    from ascendc_pilot.state import load_state
+
+    st = load_state(root) or {}
+    rid = str(st.get("run_id") or "")
+    wid = str(st.get("workflow_id") or "")
+    prev = load_debug_session(root)
+    prev_run = str(prev.get("run_id") or "").strip()
+    if prev_run and rid and prev_run == rid and prev.get("debug_session_id"):
+        return {"ok": True, "skipped": True, "reason": "already_bound_current_run", "debug_session": prev}
+
+    # Archive previous session metadata (best-effort).
+    if prev.get("debug_session_id"):
+        archive_dir = _project_debug_dir(root) / "archived_sessions"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        stamp = _now().replace(":", "").replace("-", "")
+        archive_path = archive_dir / f"{prev.get('debug_session_id')}_{stamp}.yaml"
+        try:
+            _dump_yaml(archive_path, {**prev, "archived_at": _now(), "archived_for_run_id": rid})
+        except Exception:  # noqa: BLE001
+            pass
+
+    session_meta = {
+        "debug_session_id": _new_debug_session_id(),
+        "parent_session_id": str(prev.get("parent_session_id") or ""),
+        "project_root": root.as_posix(),
+        "workflow_id": wid,
+        "run_id": rid,
+        "enabled_at": _now(),
+        "rotated_from": prev.get("debug_session_id") or "",
+    }
+    _save_debug_session(root, session_meta)
+    return {"ok": True, "debug_session": session_meta, "archived": bool(prev.get("debug_session_id"))}
+
+
 def set_enabled(
     project_root: Path | None,
     enabled: bool,

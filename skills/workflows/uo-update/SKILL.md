@@ -1,8 +1,7 @@
 ---
 name: uo-update
-description: >-
-  增量更新 / 刷新已有 UO 知识库（含 diff_only）。用户说更新 KB、刷新知识库时加载。
-  Pilot 管阶段；加载后执行 acp start uo-update。
+description: 增量更新 / 刷新已有 UO 知识库（含 diff_only）。用户说更新 KB、刷新知识库时加载。 Pilot 管阶段；加载后执行 acp
+  start uo-update。
 ---
 
 # uo-update
@@ -19,13 +18,20 @@ description: >-
 
 ## Actions
 
-| action_id | 名称 | agent |
-|---|---|---|
-| `detect_changes` | 检测源码变更 | `deterministic-uo-engine` |
-| `plan_update` | 制定更新计划 | `deterministic-uo-engine` |
-| `apply_update` | 应用变更 | `deterministic-uo-engine` |
-| `key_resolution` | KEY 语义闭合 | `uo-key-resolve` |
-| `confidence_report` | 生成置信度报告 | `deterministic-uo-engine` |
-| `confidence_review` | 置信度原因审查 | `uo-confidence-review` |
-| `export_integrity` | 导出与完整性校验 | `deterministic-uo-engine` |
-| `diff_summary` / `diff_only` | 只读差异摘要 | `deterministic-uo-engine` |
+<!-- BEGIN GENERATED ACTIONS -->
+
+| action_id | execution_mode | agent | role | method | prompt | output_contract |
+|---|---|---|---|---|---|---|
+| `detect_changes` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/detect-changes` | `-` | `change-detect-v1` |
+| `plan_update` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/plan-update` | `-` | `update-plan-v1` |
+| `apply_update` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/apply-update` | `-` | `update-apply-v1` |
+| `key_triage` | `subagent` | `uo-key-resolve` | `producer` | `uo-init/key-triage` | `uo/key-triage` | `key-triage-v1` |
+| `key_resolution` | `subagent` | `uo-key-resolve` | `producer` | `uo-init/key-resolution` | `uo/key-resolution` | `input-derivable-patch-v1` |
+| `confidence_report` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/confidence-report` | `-` | `confidence-report-v1` |
+| `confidence_review` | `subagent` | `uo-confidence-review` | `referee` | `uo-init/confidence-review` | `uo/confidence-review` | `confidence-reason-review-v1` |
+| `export_integrity` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/export-integrity` | `-` | `integrity-v1` |
+| `diff_summary` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/diff-summary` | `-` | `diff-summary-v1` |
+| `diff_only` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/diff-only` | `-` | `diff-summary-v1` |
+
+<!-- END GENERATED ACTIONS -->
+

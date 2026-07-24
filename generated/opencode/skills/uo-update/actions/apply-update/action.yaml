@@ -1,9 +1,11 @@
-id: apply_update
-workflow_id: uo-update
+# GENERATED from Workflow Spec — do not hand-edit identity fields
 version: 1
 name_zh: 应用变更
+id: apply_update
+workflow_id: uo-update
 role_id: deterministic_engine
 agent_id: deterministic-uo-engine
+execution_mode: deterministic
 capabilities:
 - source-reading
 - kb-query
@@ -14,9 +16,13 @@ policies:
 - language
 - pilot-control
 - output-quality
+task_prompt_id: null
 context_profile_id: uo-update-apply-update
 output_contract_id: update-apply-v1
+allowed_write_paths: []
+forbidden_write_paths: []
 checker:
   required: true
 referee:
   required: false
+generated_from: workflow_spec

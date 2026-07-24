@@ -1,9 +1,11 @@
-id: scope_confirmation
-workflow_id: uo-init
+# GENERATED from Workflow Spec — do not hand-edit identity fields
 version: 1
 name_zh: 确认分析范围
-role_id: producer
+id: scope_confirmation
+workflow_id: uo-init
+role_id: controller
 agent_id: ascendc-pilot
+execution_mode: primary_interactive
 capabilities:
 - cbm-navigation
 - source-reading
@@ -17,7 +19,13 @@ policies:
 task_prompt_id: uo/scope-confirmation
 context_profile_id: uo-init-scope-confirmation
 output_contract_id: scope-confirmed-v1
+allowed_write_paths:
+- uo/runs/{run_id}/scope/**
+- uo/cbm/**
+- uo/summary/scope_confirmed.yaml
+forbidden_write_paths: []
 checker:
   required: true
 referee:
   required: false
+generated_from: workflow_spec

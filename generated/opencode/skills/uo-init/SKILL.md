@@ -127,23 +127,30 @@ Task(subagent_type=<actor_id>, resume=<原 task session id>):
 
 ## Actions
 
-| action_id | 名称 | method | agent | role |
-|---|---|---|---|---|
-| `prepare_layout` | 创建知识库目录 | `uo-init/prepare-layout` | `deterministic-uo-engine` | `deterministic_engine` |
-| `scope_confirmation` | 确认分析范围 | `uo-init/scope-confirmation` | `ascendc-pilot` | `producer` |
-| `detect_score_pre` | 抽取前评分(pre_semantic) | `uo-init/detect-score-pre` | `deterministic-uo-engine` | `deterministic_engine` |
-| `extract_plan` | 抽取计划与分层 IR | `uo-init/extract-plan` | `uo-semantic-resolve` | `producer` |
-| `detect_score_post` | 抽取后评分(post_semantic) | `uo-init/detect-score-post` | `deterministic-uo-engine` | `deterministic_engine` |
-| `adjudicate_llm_tasks` | 裁决llm_tasks补丁 | `uo-init/adjudicate-llm-tasks` | `uo-semantic-resolve` | `producer` |
-| `apply_semantic_patch` | 应用语义补丁(ledger) | `uo-init/apply-semantic-patch` | `deterministic-uo-engine` | `deterministic_engine` |
-| `rebuild_from_ledger` | 由账本重建派生图 | `uo-init/rebuild-from-ledger` | `deterministic-uo-engine` | `deterministic_engine` |
-| `recheck_closure` | 复核闭合(不增 attempts) | `uo-init/recheck-closure` | `deterministic-uo-engine` | `deterministic_engine` |
-| `key_triage` | KEY 粗分 | `uo-init/key-triage` | `uo-key-resolve` | `producer` |
-| `key_resolution` | KEY 语义闭合 | `uo-init/key-resolution` | `uo-key-resolve` | `producer` |
-| `confidence_report` | 生成置信度报告 | `uo-init/confidence-report` | `deterministic-uo-engine` | `deterministic_engine` |
-| `confidence_review` | 置信度原因审查 | `uo-init/confidence-review` | `uo-confidence-review` | `referee` |
-| `export_integrity` | 导出与完整性校验 | `uo-init/export-integrity` | `deterministic-uo-engine` | `deterministic_engine` |
-| `kb_review` | KB 产物审查 | `uo-init/kb-review` | `uo-kb-review` | `referee` |
+<!-- BEGIN GENERATED ACTIONS -->
+
+| action_id | execution_mode | agent | role | method | prompt | output_contract |
+|---|---|---|---|---|---|---|
+| `prepare_layout` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/prepare-layout` | `-` | `kb-layout-v1` |
+| `scope_confirmation` | `primary_interactive` | `ascendc-pilot` | `controller` | `uo-init/scope-confirmation` | `uo/scope-confirmation` | `scope-confirmed-v1` |
+| `detect_score_pre` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/detect-score-pre` | `-` | `detect-score-pre-v1` |
+| `extract_plan` | `subagent` | `uo-semantic-resolve` | `producer` | `uo-init/extract-plan` | `uo/extract-plan` | `extract-plan-v1` |
+| `detect_score_post` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/detect-score-post` | `-` | `detect-score-post-v1` |
+| `adjudicate_llm_tasks` | `subagent` | `uo-semantic-resolve` | `producer` | `uo-init/adjudicate-llm-tasks` | `uo/adjudicate-llm-tasks` | `semantic-patches-v1` |
+| `apply_semantic_patch` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/apply-semantic-patch` | `-` | `semantic-patch-v1` |
+| `rebuild_from_ledger` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/rebuild-from-ledger` | `-` | `rebuild-ledger-v1` |
+| `recheck_closure` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/recheck-closure` | `-` | `recheck-closure-v1` |
+| `key_triage` | `subagent` | `uo-key-resolve` | `producer` | `uo-init/key-triage` | `uo/key-triage` | `key-triage-v1` |
+| `key_resolution` | `subagent` | `uo-key-resolve` | `producer` | `uo-init/key-resolution` | `uo/key-resolution` | `input-derivable-patch-v1` |
+| `confidence_report` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/confidence-report` | `-` | `confidence-report-v1` |
+| `confidence_review` | `subagent` | `uo-confidence-review` | `referee` | `uo-init/confidence-review` | `uo/confidence-review` | `confidence-reason-review-v1` |
+| `export_integrity` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/export-integrity` | `-` | `integrity-v1` |
+| `kb_review` | `subagent` | `uo-kb-review` | `referee` | `uo-init/kb-review` | `uo/kb-review` | `kb-review-v1` |
+
+<!-- END GENERATED ACTIONS -->
+
+Pipeline order is owned by Workflow Spec (`pilot/ascendc_pilot/workflows/specs.py` pipelines).
+Do not redefine action order in this Skill.
 
 ## Composed: pilot-control
 
@@ -219,7 +226,7 @@ Pilot 独占状态、合法边、门禁与完成态。
 | action_id | method_path | prompt_path | output_contract | role |
 |---|---|---|---|---|
 | `prepare_layout` | `actions/prepare-layout/METHOD.md` | `-` | `kb-layout-v1` | `deterministic_engine` |
-| `scope_confirmation` | `actions/scope-confirmation/METHOD.md` | `prompts/tasks/uo/scope-confirmation.md` | `scope-confirmed-v1` | `producer` |
+| `scope_confirmation` | `actions/scope-confirmation/METHOD.md` | `prompts/tasks/uo/scope-confirmation.md` | `scope-confirmed-v1` | `controller` |
 | `detect_score_pre` | `actions/detect-score-pre/METHOD.md` | `-` | `detect-score-pre-v1` | `deterministic_engine` |
 | `extract_plan` | `actions/extract-plan/METHOD.md` | `prompts/tasks/uo/extract-plan.md` | `extract-plan-v1` | `producer` |
 | `detect_score_post` | `actions/detect-score-post/METHOD.md` | `-` | `detect-score-post-v1` | `deterministic_engine` |

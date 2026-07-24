@@ -1,9 +1,11 @@
-id: bind_merge
-workflow_id: tg-init
+# GENERATED from Workflow Spec — do not hand-edit identity fields
 version: 1
 name_zh: 绑定合并
+id: bind_merge
+workflow_id: tg-init
 role_id: deterministic_engine
 agent_id: deterministic-tg-engine
+execution_mode: deterministic
 capabilities: []
 policies:
 - source-authority
@@ -15,7 +17,10 @@ policies:
 task_prompt_id: null
 context_profile_id: tg-init-bind-merge
 output_contract_id: bind-merge-v1
+allowed_write_paths: []
+forbidden_write_paths: []
 checker:
   required: true
 referee:
   required: false
+generated_from: workflow_spec

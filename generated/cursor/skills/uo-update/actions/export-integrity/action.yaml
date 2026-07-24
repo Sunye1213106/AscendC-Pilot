@@ -1,9 +1,11 @@
-id: export_integrity
-workflow_id: uo-update
+# GENERATED from Workflow Spec — do not hand-edit identity fields
 version: 1
 name_zh: 导出与完整性校验
+id: export_integrity
+workflow_id: uo-update
 role_id: deterministic_engine
 agent_id: deterministic-uo-engine
+execution_mode: deterministic
 capabilities: []
 policies:
 - source-authority
@@ -15,7 +17,10 @@ policies:
 task_prompt_id: null
 context_profile_id: uo-update-export-integrity
 output_contract_id: integrity-v1
+allowed_write_paths: []
+forbidden_write_paths: []
 checker:
   required: true
 referee:
   required: false
+generated_from: workflow_spec

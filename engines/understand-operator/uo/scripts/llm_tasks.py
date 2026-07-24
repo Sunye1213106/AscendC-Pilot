@@ -156,10 +156,19 @@ def _resolve_patch_edge_id(task: dict[str, Any], patch: dict[str, Any], *, accep
     return None
 
 
-def blocking_gap_tasks(uo_root: Path) -> list[dict[str, Any]]:
+def blocking_gap_tasks(uo_root: Path, *, current_run_id: str | None = None) -> list[dict[str, Any]]:
     """Blocking semantic gaps — shared SSOT for Gate / Engine / recheck."""
     doc = load_llm_tasks(uo_root)
-    return [t for t in doc.get("tasks") or [] if isinstance(t, dict) and _semantic_gap_open(t)]
+    out = []
+    for t in doc.get("tasks") or []:
+        if not isinstance(t, dict) or not _semantic_gap_open(t):
+            continue
+        if current_run_id:
+            task_run = str(t.get("run_id") or "").strip()
+            if task_run and task_run != str(current_run_id):
+                continue
+        out.append(t)
+    return out
 
 
 def stable_task_id(
@@ -203,6 +212,7 @@ def upsert_tasks_from_score_items(
     checkpoint: str,
     run_id: str = "",
     source_snapshot_hash: str = "",
+    workflow_id: str = "",
 ) -> dict[str, Any]:
     """Create/update tasks for items with disposition=llm_task. Same id → no re-open."""
     doc = load_llm_tasks(uo_root)
@@ -285,6 +295,7 @@ def upsert_tasks_from_score_items(
             "status": "open",
             "task_status": "open",
             "run_id": run_id,
+            "workflow_id": workflow_id or "uo-init",
             "checkpoint": checkpoint,
             "source_snapshot_hash": source_snapshot_hash or "nosnap",
             "candidate_set_hash": cand_hash,
@@ -371,13 +382,17 @@ def _default_candidates(item: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def open_blocking_tasks(uo_root: Path) -> list[dict[str, Any]]:
+def open_blocking_tasks(uo_root: Path, *, current_run_id: str | None = None) -> list[dict[str, Any]]:
     """Tasks that still need patch adjudication (open or rework_required)."""
     doc = load_llm_tasks(uo_root)
     out: list[dict[str, Any]] = []
     for t in doc.get("tasks") or []:
         if not isinstance(t, dict):
             continue
+        if current_run_id:
+            task_run = str(t.get("run_id") or "").strip()
+            if task_run and task_run != str(current_run_id):
+                continue
         lifecycle = _task_lifecycle(t)
         if lifecycle not in {"open", "rework_required"}:
             continue
@@ -409,12 +424,32 @@ def validate_task_patch(
     patch: dict[str, Any],
     *,
     current_source_hash: str | None = None,
+    current_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Pure validation for one patch against an in-memory llm_tasks doc. No I/O."""
     task_id = str(patch.get("task_id") or "")
     task = next((t for t in doc.get("tasks") or [] if t.get("task_id") == task_id), None)
     if task is None:
         return {"ok": False, "error": "unknown_task_id", "task_id": task_id}
+    if current_run_id:
+        task_run = str(task.get("run_id") or "").strip()
+        patch_run = str(patch.get("run_id") or "").strip()
+        if task_run and task_run != str(current_run_id):
+            return {
+                "ok": False,
+                "error": "SEMANTIC_TASK_RUN_MISMATCH",
+                "task_id": task_id,
+                "task_run_id": task_run,
+                "current_run_id": current_run_id,
+            }
+        if patch_run and patch_run != str(current_run_id):
+            return {
+                "ok": False,
+                "error": "SEMANTIC_TASK_RUN_MISMATCH",
+                "task_id": task_id,
+                "patch_run_id": patch_run,
+                "current_run_id": current_run_id,
+            }
     lifecycle = str(task.get("task_status") or task.get("status") or "")
     if lifecycle not in {"open", "rework_required"}:
         return {"ok": False, "error": "task_not_open", "status": task.get("status"), "task_id": task_id}

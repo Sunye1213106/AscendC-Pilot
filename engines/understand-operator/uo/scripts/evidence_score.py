@@ -510,12 +510,22 @@ def detect_score_pre(uo_root: Path, *, architecture: str = "arch35", run_id: str
     }
     write_yaml(uo_root / "ir" / "score_report_pre.yaml", report)
     write_yaml(uo_root / "ir" / "score_report.yaml", report)  # latest partial
+    snap = require_source_snapshot(uo_root, run_id=run_id or None)
+    if not snap.get("ok"):
+        return {
+            "ok": False,
+            "error": snap.get("error") or "SOURCE_SNAPSHOT_UNAVAILABLE",
+            "detail": snap,
+            "checkpoint": "extract.pre_semantic",
+            "report": report,
+        }
     tasks = upsert_tasks_from_score_items(
         uo_root,
         items,
         checkpoint="extract.pre_semantic",
         run_id=run_id,
-        source_snapshot_hash=_source_snapshot_hash(uo_root, run_id=run_id or None),
+        source_snapshot_hash=str(snap.get("hash") or ""),
+        workflow_id=str(snap.get("workflow_id") or "uo-init"),
     )
     return {"ok": True, "checkpoint": "extract.pre_semantic", "report": report, "tasks": tasks}
 
@@ -557,12 +567,22 @@ def detect_score_post(uo_root: Path, *, architecture: str = "arch35", run_id: st
     }
     write_yaml(uo_root / "ir" / "score_report_post.yaml", report)
     write_yaml(uo_root / "ir" / "score_report.yaml", report)
+    snap = require_source_snapshot(uo_root, run_id=run_id or None)
+    if not snap.get("ok"):
+        return {
+            "ok": False,
+            "error": snap.get("error") or "SOURCE_SNAPSHOT_UNAVAILABLE",
+            "detail": snap,
+            "checkpoint": "extract.post_semantic",
+            "report": report,
+        }
     tasks = upsert_tasks_from_score_items(
         uo_root,
         items,
         checkpoint="extract.post_semantic",
         run_id=run_id,
-        source_snapshot_hash=_source_snapshot_hash(uo_root, run_id=run_id or None),
+        source_snapshot_hash=str(snap.get("hash") or ""),
+        workflow_id=str(snap.get("workflow_id") or "uo-init"),
     )
     return {"ok": True, "checkpoint": "extract.post_semantic", "report": report, "tasks": tasks}
 
@@ -612,23 +632,53 @@ def _resolve_current_run_id(uo_root: Path, run_id: str | None = None) -> str:
     return ""
 
 
-def _source_snapshot_hash(uo_root: Path, run_id: str | None = None) -> str:
-    """Hash current-run confirmed scope + per-file content. Fail-closed across runs.
-
-    Material includes: run_id, workflow_id, architecture, confirmed_source_files,
-    and content hash of each source file. Never scans sibling runs.
-    """
+def _source_snapshot_result(uo_root: Path, run_id: str | None = None) -> dict[str, Any]:
+    """Structured current-run source snapshot. Callers must check ``ok`` first."""
     from uo.scripts._ir_io import read_yaml
 
     rid = _resolve_current_run_id(uo_root, run_id)
     if not rid:
-        return "FAIL_CLOSED:missing_run_id"
+        return {"ok": False, "error": "SOURCE_SNAPSHOT_RUN_MISSING"}
 
     scope_path = uo_root / "runs" / rid / "scope" / "scope_confirmed.yaml"
     if not scope_path.is_file():
-        return f"FAIL_CLOSED:missing_scope_confirmed:{rid}"
+        return {
+            "ok": False,
+            "error": "SOURCE_SNAPSHOT_SCOPE_MISSING",
+            "run_id": rid,
+            "path": scope_path.as_posix(),
+        }
 
     confirmed = read_yaml(scope_path) or {}
+    if not isinstance(confirmed, dict):
+        return {"ok": False, "error": "SOURCE_SNAPSHOT_SCOPE_INVALID", "run_id": rid}
+
+    scope_run = str(confirmed.get("run_id") or (confirmed.get("artifact_identity") or {}).get("run_id") or "").strip()
+    if scope_run and scope_run != rid:
+        return {
+            "ok": False,
+            "error": "SOURCE_SNAPSHOT_SCOPE_RUN_MISMATCH",
+            "run_id": rid,
+            "scope_run_id": scope_run,
+        }
+    scope_wf = str(
+        confirmed.get("workflow_id")
+        or (confirmed.get("artifact_identity") or {}).get("workflow_id")
+        or ""
+    ).strip()
+    scope_action = str(
+        confirmed.get("action_id")
+        or (confirmed.get("artifact_identity") or {}).get("action_id")
+        or ""
+    ).strip()
+    if scope_action and scope_action != "scope_confirmation":
+        return {
+            "ok": False,
+            "error": "SOURCE_SNAPSHOT_SCOPE_ACTION_MISMATCH",
+            "expected": "scope_confirmation",
+            "actual": scope_action,
+        }
+
     paths: list[str] = []
     for item in confirmed.get("confirmed_source_files") or confirmed.get("confirmed_file_list") or []:
         if isinstance(item, dict) and item.get("path"):
@@ -642,19 +692,19 @@ def _source_snapshot_hash(uo_root: Path, run_id: str | None = None) -> str:
     try:
         from uo._operator.run_context import source_root_for_operator
 
-        # uo_root is typically <project>/.ascendc-pilot/uo/<op>
-        # source_root_for_operator needs operator_root + uo_root
         operator_root = uo_root
         parent_uo = uo_root.parent if uo_root.name != "uo" else uo_root
-        # Prefer manifest source_root / receipt.
         try:
-            repo_root = source_root_for_operator(operator_root, parent_uo if (parent_uo / "manifest.yaml").is_file() else uo_root, rid)
+            repo_root = source_root_for_operator(
+                operator_root,
+                parent_uo if (parent_uo / "manifest.yaml").is_file() else uo_root,
+                rid,
+            )
         except Exception:  # noqa: BLE001
             repo_root = None
     except Exception:  # noqa: BLE001
         repo_root = None
     if repo_root is None:
-        # Walk up for a plausible project root containing the relative paths.
         for candidate in [uo_root, *uo_root.parents]:
             if (candidate / ".ascendc-pilot").is_dir() or (candidate / ".git").is_dir():
                 repo_root = candidate
@@ -695,10 +745,43 @@ def _source_snapshot_hash(uo_root: Path, run_id: str | None = None) -> str:
 
     material = {
         "run_id": rid,
-        "workflow_id": str(confirmed.get("workflow_id") or (read_yaml(uo_root / "manifest.yaml") or {}).get("workflow_id") or ""),
+        "workflow_id": scope_wf
+        or str((read_yaml(uo_root / "manifest.yaml") or {}).get("workflow_id") or ""),
         "architecture": str(confirmed.get("architecture") or ""),
         "confirmed_source_files": paths,
         "file_content_hashes": file_hashes,
     }
     blob = json.dumps(material, sort_keys=True)
-    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+    digest = hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+    return {
+        "ok": True,
+        "hash": digest,
+        "run_id": rid,
+        "workflow_id": material["workflow_id"],
+        "architecture": material["architecture"],
+        "material": material,
+    }
+
+
+def _source_snapshot_hash(uo_root: Path, run_id: str | None = None) -> str:
+    """Compatibility wrapper. Prefer ``_source_snapshot_result`` and check ``ok``.
+
+    Returns the digest on success. On failure returns empty string — callers that
+    still use this helper must treat empty / missing as fail-closed.
+    """
+    result = _source_snapshot_result(uo_root, run_id=run_id)
+    if not result.get("ok"):
+        return ""
+    return str(result.get("hash") or "")
+
+
+def require_source_snapshot(uo_root: Path, run_id: str | None = None) -> dict[str, Any]:
+    """Fail-closed snapshot accessor used by score / tasks / ledger / rebuild."""
+    result = _source_snapshot_result(uo_root, run_id=run_id)
+    if not result.get("ok"):
+        return {
+            "ok": False,
+            "error": str(result.get("error") or "SOURCE_SNAPSHOT_UNAVAILABLE"),
+            "detail": result,
+        }
+    return result

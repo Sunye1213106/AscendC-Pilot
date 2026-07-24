@@ -183,6 +183,7 @@ def _is_pilot_family_agent(agent_l: str, meta: dict[str, Any] | None = None) -> 
 
 _ROLE_WRITE_POLICY = {
     "producer": "formal",
+    "controller": "formal",
     "referee": "review_only",
     "readonly_analyst": "none",
     "readonly_reviewer": "review_only",
@@ -901,6 +902,48 @@ def authorize(
                         write_scopes=scopes,
                         rel=rel,
                     )
+
+                # Action lease intersection: agent ceiling AND precise Action paths.
+                from ascendc_pilot.authorize.lease import lease_allows_write_path, load_lease
+
+                lease = load_lease(project_root)
+                if lease and str(lease.get("status") or "") == "active":
+                    if lease.get("run_id") and state and str(lease.get("run_id")) != str(state.get("run_id") or ""):
+                        return _ok(
+                            "deny",
+                            "ACTION_RUN_MISMATCH",
+                            "lease.run_id 与当前 workflow run 不一致",
+                            lease_run_id=lease.get("run_id"),
+                            run_id=state.get("run_id"),
+                        )
+                    if action_id and lease.get("action_id") and str(lease.get("action_id")) != action_id:
+                        return _ok(
+                            "deny",
+                            "ACTION_OWNER_MISMATCH",
+                            "lease.action_id 与声明 action 不一致",
+                            lease_action_id=lease.get("action_id"),
+                            action_id=action_id,
+                        )
+                    if lease.get("actor_id") and agent_l and str(lease.get("actor_id")).lower() != agent_l:
+                        return _ok(
+                            "deny",
+                            "ACTION_OWNER_MISMATCH",
+                            "lease.actor_id 与当前代理不一致",
+                            lease_actor_id=lease.get("actor_id"),
+                            agent=agent_l,
+                        )
+                    if rel is not None:
+                        path_check = lease_allows_write_path(lease, rel)
+                        if not path_check.get("ok"):
+                            return _ok(
+                                "deny",
+                                str(path_check.get("error") or "ACTION_WRITE_SCOPE_DENIED"),
+                                "当前 Action lease 不允许写入该路径",
+                                path=path_s,
+                                rel=rel,
+                                allowed_write_paths=lease.get("allowed_write_paths") or [],
+                                forbidden_write_paths=lease.get("forbidden_write_paths") or [],
+                            )
 
         return _ok(
             "allow",

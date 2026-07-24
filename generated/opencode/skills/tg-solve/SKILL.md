@@ -18,11 +18,15 @@ Z3 求解与 CSV 投影。
 
 ## Actions
 
-| action_id | 名称 | method | agent | role |
-|---|---|---|---|---|
-| `solve_precheck` | 求解前置校验 | `tg-solve/solve-precheck` | `deterministic-tg-engine` | `deterministic_engine` |
-| `z3_solve` | 求解并投影 | `tg-solve/z3-solve` | `deterministic-tg-engine` | `deterministic_engine` |
-| `cover_confirm` | 覆盖确认 | `tg-solve/cover-confirm` | `deterministic-tg-engine` | `deterministic_engine` |
+<!-- BEGIN GENERATED ACTIONS -->
+
+| action_id | execution_mode | agent | role | method | prompt | output_contract |
+|---|---|---|---|---|---|---|
+| `solve_precheck` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-solve/solve-precheck` | `-` | `solve-precheck-v1` |
+| `z3_solve` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-solve/z3-solve` | `-` | `z3-solve-v1` |
+| `cover_confirm` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-solve/cover-confirm` | `-` | `cover-confirm-v1` |
+
+<!-- END GENERATED ACTIONS -->
 
 ## Composed: pilot-control
 

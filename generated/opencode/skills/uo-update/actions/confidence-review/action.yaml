@@ -1,9 +1,11 @@
-id: confidence_review
-workflow_id: uo-update
+# GENERATED from Workflow Spec — do not hand-edit identity fields
 version: 1
 name_zh: 置信度原因审查
+id: confidence_review
+workflow_id: uo-update
 role_id: referee
 agent_id: uo-confidence-review
+execution_mode: subagent
 capabilities:
 - structured-review
 - kb-query
@@ -17,7 +19,10 @@ policies:
 task_prompt_id: uo/confidence-review
 context_profile_id: uo-update-confidence-review
 output_contract_id: confidence-reason-review-v1
+allowed_write_paths: []
+forbidden_write_paths: []
 checker:
   required: true
 referee:
   required: true
+generated_from: workflow_spec

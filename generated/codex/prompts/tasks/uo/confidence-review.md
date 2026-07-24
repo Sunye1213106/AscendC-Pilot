@@ -1,5 +1,8 @@
 ## Task
 
+Bundle identity is authoritative.
+Do not replace, infer, normalize, or copy identity from old artifacts.
+
 Perform `confidence_review` for the targets provided by the Pilot action.
 
 Follow the assigned role contract and loaded capabilities.
@@ -10,7 +13,7 @@ Do not manage workflow state or declare completion.
 - mode: `task`
 - task_id: `confidence-review`
 - workflow_id: `<WORKFLOW_ID>`
-- action_id: `confidence_review`
+- action_id: `<ACTION_ID>`
 - run_id: `<RUN_ID>`
 
 ## Target
