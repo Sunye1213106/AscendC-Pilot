@@ -336,12 +336,17 @@ def _bridge_tilingkey(
             }
             for i, d in enumerate(dims)
         ]
-        # Prefer matching host call by schema/file hints; else first call.
+        # Prefer matching host call by schema/file hints or writer/unit binding.
         call = None
         for c in host_calls:
             if schema_id != "default" and schema_id in str(c.get("file_path") or ""):
                 call = c
                 break
+        if call is None:
+            for c in host_calls:
+                if c.get("writer_identity_key") or c.get("extraction_unit_id"):
+                    call = c
+                    break
         if call is None and len(host_calls) == 1:
             call = host_calls[0]
         if call is None and len(host_calls) > 1:
@@ -456,7 +461,30 @@ def _find_get_tpl_calls(repo_root: Path, host: dict[str, Any]) -> list[dict[str,
             raw = match.group(1)
             args = [a.strip() for a in _split_args(raw) if a.strip()]
             line = text.count("\n", 0, match.start()) + 1
-            calls.append({"file_path": fp, "line": line, "args": args, "runtime_space": None})
+            writer_key = ""
+            unit_id = ""
+            for n in host.get("nodes") or []:
+                if not isinstance(n, dict):
+                    continue
+                nfp = str(n.get("file_path") or (n.get("locator") or {}).get("file_path") or "")
+                if nfp.replace("\\", "/") != fp.replace("\\", "/"):
+                    continue
+                nline = int((n.get("locator") or {}).get("start_line") or n.get("start_line") or 0)
+                if nline and abs(nline - line) <= 120:
+                    sym = n.get("symbol_ref") if isinstance(n.get("symbol_ref"), dict) else {}
+                    writer_key = str(sym.get("identity_key") or n.get("identity_key") or "")
+                    unit_id = str(n.get("extraction_unit_id") or "")
+                    break
+            calls.append(
+                {
+                    "file_path": fp,
+                    "line": line,
+                    "args": args,
+                    "runtime_space": None,
+                    "writer_identity_key": writer_key or None,
+                    "extraction_unit_id": unit_id or None,
+                }
+            )
     return calls
 
 

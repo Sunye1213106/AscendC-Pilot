@@ -1,4 +1,4 @@
-## Task
+﻿## Task
 
 Perform `key_triage` for the targets provided by the Pilot action.
 
@@ -9,7 +9,7 @@ Do not manage workflow state or declare completion.
 
 - mode: `task`
 - task_id: `key-triage`
-- workflow_id: `uo-init`
+- workflow_id: `<WORKFLOW_ID>`
 - action_id: `key_triage`
 - run_id: `<RUN_ID>`
 
@@ -60,3 +60,5 @@ Contract id: `key-triage-v1`
 
 When evidence is insufficient: retain unresolved or needs_human;
 include the missing evidence type; do not guess; stop and return the blocking reason.
+
+

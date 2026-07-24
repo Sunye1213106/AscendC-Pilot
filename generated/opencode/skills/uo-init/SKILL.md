@@ -14,10 +14,10 @@ description: 首次建立 / 创建本地知识库（UO KB）、建库、初始�
 0.5. **关键启动参数不明确 → 立刻 AskQuestion，禁止探查纠结**（缺一就问，同一轮 `question`）：
    - **算子目录**（`--project`）：用户说「这个算子 / 建库」但未给出**单一**算子根，且 cwd 不是算子包时 → AskQuestion 点选/粘贴路径。
    - **architecture**：用户未说只要某分支、且不能默认时 → AskQuestion（常见：`arch35`）。
-   - **测试脚本路径**（`--test-script-root` / `ASCENDC_TEST_SCRIPT_ROOT` / `csv_consumer_root`）：后续测例契约 / KEY 回溯会用到；用户未给出、环境变量也未设时 → AskQuestion 请用户粘贴测试脚本根目录（或明确选「本步暂无 / 稍后补」若 workflow 允许）。
-   - **MUST NOT**：为猜算子/猜测试目录而 Glob 全仓库、枚举几十个 arch35、读 session 考古、长篇「让我想想」。
+   - **测试脚本路径不属于 uo-init 启动必填**（那是 `tg-init` 测例契约用的）。本 workflow **禁止**为 `--test-script-root` 打断建库；用户未提则不要问、不要猜。
+   - **MUST NOT**：为猜算子目录而 Glob 全仓库、枚举几十个 arch35、读 session 考古、长篇「让我想想」。
    - **MUST NOT**：在未确认 `--project` 前执行 `acp start` / scope / 读源码建库。
-   - 用户已给出路径，或 cwd/`--project` 已是唯一算子根，且 arch/测试路径已明确或可安全默认 → 直接开跑，勿再问。
+   - 用户已给出算子路径，或 cwd/`--project` 已是唯一算子根，且 arch 已明确或可安全默认 → 直接 `acp start`，勿再问。
 1. **`acp` 是真实 CLI**（本机已安装），不是概念步骤，**禁止**“按 METHOD 手工模拟工作流”。
 2. **禁止跳步**：必须先 `acp start` → `acp next` → 当前 `action_id`；不得一上来做 scope 或读源码建 KB。
 3. **确定性 Action**（如 `prepare_layout`）：只跑 `acp run-action <id>`，会自动 finalize。
@@ -36,12 +36,11 @@ description: 首次建立 / 创建本地知识库（UO KB）、建库、初始�
 
 ```text
 # 歧义示例：cwd=D:\PR-review，用户只说「为这个算子建库只要 arch35」
-→ 立刻 question/AskQuestion，至少问清：
+→ 立刻 question/AskQuestion，只问清：
   1) 算子目录（--project）
   2) architecture（若未说）
-  3) 测试脚本根目录（--test-script-root；没有就让用户选「暂无/稍后」或粘贴路径）
-# 确认后：
-acp start uo-init --project <算子目录> --architecture arch35 [--test-script-root <测试脚本目录>]
+# 确认后（勿因缺测试脚本路径而停）：
+acp start uo-init --project <算子目录> --architecture arch35
 ```
 
 **禁止**先 Glob 全树再写长思考链。
@@ -155,7 +154,7 @@ Pilot 独占状态、合法边、门禁与完成态。
 8. bash 优先用工具 `workdir` 指向算子目录；若写 `cd <dir> && acp …`，Pilot 只认末尾纯 `acp` 段（禁止夹杂其它命令）。禁止用 bash/`>`/`Set-Content`/`tee` 写入 `.ascendc-pilot/**` 正式产物以绕过 Write 围栏。
 9. **语义 Action 派发**：必须派声明 actor（如 `uo-semantic-resolve`）；Primary 禁止代写 `uo/ir/**`。Task 须带 `subagent_type`/`agent`=actor 与 `action_id`。**Task 正文只能原样使用 prepare 返回的 `task_prompt_stub`**（禁止复述 METHOD、禁止塞额外目标、禁止把后续 Action 的 `llm_tasks`/`mark_missing` 或超大 candidates 整包粘进 prompt）。
 10. **Debug 模式（可选）**：`acp debug enable --project <算子目录>` 后自动捕捉工具失败与过长非逻辑思考链，并在子代理结束时导出 session bundle 到 `.ascendc-pilot/debug/exports/`。排查完 `acp debug disable`。手动导出：`acp debug export-session`。
-11. **关键参数不明确 → 立刻 AskQuestion**：算子路径（`--project`）、architecture、**测试脚本路径**（`--test-script-root` / `ASCENDC_TEST_SCRIPT_ROOT` / `csv_consumer_root`）、continue/reinit 等缺一不可时，**同一轮**用 `question` 可点选框问清；禁止为猜答案而全库 Glob、读历史 session 考古、长篇「让我想想」。已明确则直接执行，勿重复确认。
+11. **关键参数不明确 → 立刻 AskQuestion**：算子路径（`--project`）、architecture、continue/reinit，以及**当前 workflow 真正要求的**参数（例如 **`tg-init` 的测试脚本路径** `--test-script-root` / `ASCENDC_TEST_SCRIPT_ROOT` / `csv_consumer_root`）缺一不可时，**同一轮**用 `question` 可点选框问清；禁止为猜答案而全库 Glob、读历史 session 考古、长篇「让我想想」。已明确则直接执行，勿重复确认。**`uo-init` / `uo-update` 启动不要求测试脚本路径**——那是 TG 测例契约用的，勿在建库阶段为此打断。
 
 12. **禁止跳步**：`acp next` 返回 `recommended_next_action` 时必须执行该 Action；禁止从 `allowed_actions` 里挑后面的确定性步骤（例如跳过 `detect_score_post`/`adjudicate_llm_tasks` 直接 `apply_semantic_patch`）。语义 Action finalize 后必须立刻再 `acp next`，不要自行猜下一步。
 

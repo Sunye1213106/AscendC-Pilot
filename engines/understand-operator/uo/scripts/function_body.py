@@ -13,14 +13,95 @@ _DEF_OPEN_RE_TMPL = (
 )
 
 
+def _def_matches_for_name(text: str, name: str) -> list[re.Match[str]]:
+    if not name:
+        return []
+    pattern = re.compile(_DEF_OPEN_RE_TMPL.format(name=re.escape(name)), re.MULTILINE)
+    return list(pattern.finditer(text))
+
+
+def _match_line(text: str, pos: int) -> int:
+    return text.count("\n", 0, pos) + 1
+
+
+def _preceding_text(text: str, pos: int, *, max_chars: int = 2048) -> str:
+    return text[max(0, pos - max_chars) : pos]
+
+
+def _owns_class(preceding: str, owning_class: str) -> bool:
+    if not owning_class:
+        return False
+    return bool(
+        re.search(
+            rf"\b(?:class|struct)\s+{re.escape(owning_class)}\b",
+            preceding,
+        )
+    )
+
+
+def find_function_bodies(
+    repo_root: Path,
+    file_path: str,
+    name: str,
+    *,
+    hint_line: int = 0,
+    owning_class: str = "",
+) -> list[tuple[int, int, str, str]]:
+    """Return all brace-bounded definitions for ``name`` (diagnostics / disambiguation)."""
+    resolved = _resolve_function_match(
+        repo_root,
+        file_path,
+        name,
+        hint_line=hint_line,
+        owning_class=owning_class,
+        allow_ambiguous=True,
+    )
+    if resolved is None:
+        return []
+    if isinstance(resolved, list):
+        out: list[tuple[int, int, str, str]] = []
+        for m, text, rel in resolved:
+            body_tuple = _body_from_match(text, m, rel)
+            if body_tuple is not None:
+                out.append(body_tuple)
+        return out
+    m, text, rel = resolved
+    body_tuple = _body_from_match(text, m, rel)
+    return [body_tuple] if body_tuple is not None else []
+
+
 def find_function_body(
     repo_root: Path,
     file_path: str,
     name: str,
     *,
     hint_line: int = 0,
+    owning_class: str = "",
 ) -> tuple[int, int, str, str] | None:
     """Locate ``name`` definition; return (start_line, end_line, body, resolved_rel_path)."""
+    resolved = _resolve_function_match(
+        repo_root,
+        file_path,
+        name,
+        hint_line=hint_line,
+        owning_class=owning_class,
+        allow_ambiguous=False,
+    )
+    if resolved is None or isinstance(resolved, list):
+        return None
+    m, text, rel = resolved
+    return _body_from_match(text, m, rel)
+
+
+def _resolve_function_match(
+    repo_root: Path,
+    file_path: str,
+    name: str,
+    *,
+    hint_line: int,
+    owning_class: str,
+    allow_ambiguous: bool,
+) -> re.Match[str] | tuple[list[tuple[re.Match[str], str, str]], ...] | None:
     if not name:
         return None
     path = resolve_repo_source_path(repo_root, file_path)
@@ -30,25 +111,40 @@ def find_function_body(
         text = path.read_text(encoding="utf-8", errors="ignore")
     except OSError:
         return None
-
-    pattern = re.compile(_DEF_OPEN_RE_TMPL.format(name=re.escape(name)), re.MULTILINE)
-    matches = list(pattern.finditer(text))
+    rel = to_repo_relative(repo_root, path)
+    matches = _def_matches_for_name(text, name)
     if not matches:
         return None
+    if len(matches) == 1:
+        return matches[0], text, rel
 
-    chosen = matches[0]
-    if hint_line > 0 and len(matches) > 1:
+    filtered = matches
+    if owning_class:
+        scoped = [m for m in matches if _owns_class(_preceding_text(text, m.start()), owning_class)]
+        if scoped:
+            filtered = scoped
+
+    if len(filtered) == 1:
+        return filtered[0], text, rel
+
+    if hint_line > 0:
         best = None
         best_dist = 10**9
-        for m in matches:
-            line = text.count("\n", 0, m.start()) + 1
+        for m in filtered:
+            line = _match_line(text, m.start())
             dist = abs(line - hint_line)
             if dist < best_dist:
                 best_dist = dist
                 best = m
-        if best is not None:
-            chosen = best
+        if best is not None and best_dist == 0:
+            return best, text, rel
 
+    if allow_ambiguous:
+        return [(m, text, rel) for m in filtered]
+    return None
+
+
+def _body_from_match(text: str, chosen: re.Match[str], rel: str) -> tuple[int, int, str, str] | None:
     brace_pos = text.find("{", chosen.start())
     if brace_pos < 0:
         return None
@@ -56,11 +152,10 @@ def find_function_body(
     if end_pos is None:
         return None
 
-    def_start = text.count("\n", 0, chosen.start()) + 1
-    def_end = text.count("\n", 0, end_pos) + 1
+    def_start = _match_line(text, chosen.start())
+    def_end = _match_line(text, end_pos)
     lines = text.splitlines()
     body = "\n".join(lines[def_start - 1 : def_end])
-    rel = to_repo_relative(repo_root, path)
     return def_start, def_end, body, rel
 
 
@@ -81,9 +176,20 @@ def resolve_helper_body(
     start = int(item.get("start_line") or 0)
     end = int(item.get("end_line") or start)
     name = str(item.get("name") or "")
+    owning = str(
+        item.get("class_or_namespace")
+        or item.get("owning_class")
+        or ""
+    ).strip()
 
     if prefer_definition and name:
-        resolved = find_function_body(repo_root, file_path, name, hint_line=start)
+        resolved = find_function_body(
+            repo_root,
+            file_path,
+            name,
+            hint_line=start,
+            owning_class=owning,
+        )
         if resolved is not None:
             def_start, def_end, body, rel = resolved
             item["file_path"] = rel

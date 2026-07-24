@@ -180,9 +180,18 @@ def propose_extract_plan(
         for helper_name in extract_callee_names(entry_body, noise=NOISE_CALLS):
             _append_chain_item(chain_items, helper_name, primary, client, architecture)
         if client.available and primary.get("qualified_name"):
-            root = client.resolve_qn(str(primary["qualified_name"]), file_contains=architecture)
+            pcls = str(primary.get("class_or_namespace") or "")
+            root = client.resolve_qn(
+                str(primary["qualified_name"]),
+                file_contains=architecture,
+                class_qn=pcls or None,
+            )
             if root is None and primary.get("name"):
-                root = client.resolve_qn(str(primary["name"]), file_contains=architecture)
+                root = client.resolve_qn(
+                    str(primary["name"]),
+                    file_contains=architecture,
+                    class_qn=pcls or None,
+                )
             if root is not None:
                 keep = {str(x.get("name") or "").casefold() for x in chain_items if x.get("name")}
                 traced = client.bounded_trace(root, keep_names=keep or None, max_depth=4, max_nodes=40)
@@ -447,7 +456,9 @@ def _item_from_ep_node(node: dict[str, Any]) -> dict[str, Any]:
 
 
 def _writer_identity_key(item: dict[str, Any]) -> str:
-    """Identity key: file_path + qualified_name + class (not bare name.casefold)."""
+    """Identity key: identity_key or file|qn|class|sig|tpl (not bare name)."""
+    if item.get("identity_key"):
+        return str(item["identity_key"]).casefold()
     fp = str(item.get("file_path") or "").replace("\\", "/").strip()
     qn = str(item.get("qualified_name") or item.get("name") or "").strip()
     cls = str(item.get("class_or_namespace") or "").strip()
@@ -455,7 +466,9 @@ def _writer_identity_key(item: dict[str, Any]) -> str:
         prefix = qn.rsplit("::", 1)[0]
         if "/" not in prefix:
             cls = prefix
-    return f"{fp}|{qn}|{cls}".casefold()
+    sig = str(item.get("normalized_signature") or item.get("signature") or "").strip()
+    tpl = str(item.get("template_arity_or_signature") or "").strip()
+    return f"{fp}|{qn}|{cls}|{sig}|{tpl}".casefold()
 
 
 def _append_chain_item(
@@ -465,9 +478,10 @@ def _append_chain_item(
     client: CbmClient,
     architecture: str,
 ) -> None:
-    if any(str(x.get("name") or "") == helper_name for x in chain_items):
+    child = _resolve_item(helper_name, parent, client, architecture)
+    if any(_writer_identity_key(x) == _writer_identity_key(child) for x in chain_items):
         return
-    chain_items.append(_resolve_item(helper_name, parent, client, architecture))
+    chain_items.append(child)
 
 
 def _resolve_item(
@@ -476,18 +490,34 @@ def _resolve_item(
     client: CbmClient,
     architecture: str,
 ) -> dict[str, Any]:
-    hit = None
+    parent_cls = str(parent.get("class_or_namespace") or "").strip()
     if client.available:
-        hit = client.resolve_qn(helper_name, file_contains=architecture)
-    if hit is not None:
-        return hit.as_dict()
+        hit, candidates = client.resolve_qn_or_ambiguous(
+            helper_name,
+            file_contains=architecture,
+            class_qn=parent_cls or None,
+        )
+        if hit is not None:
+            return hit.as_dict()
+        if candidates:
+            return {
+                "name": helper_name,
+                "qualified_name": helper_name,
+                "file_path": parent.get("file_path") or "",
+                "start_line": parent.get("start_line") or 0,
+                "end_line": parent.get("end_line") or 0,
+                "class_or_namespace": parent_cls,
+                "resolution_status": "candidate_set",
+                "candidate_symbols": [c.as_dict() for c in candidates],
+            }
     return {
         "name": helper_name,
         "qualified_name": helper_name,
         "file_path": parent.get("file_path") or "",
         "start_line": parent.get("start_line") or 0,
         "end_line": parent.get("end_line") or 0,
-        "class_or_namespace": parent.get("class_or_namespace") or "",
+        "class_or_namespace": parent_cls,
+        "resolution_status": "unresolved",
     }
 
 
@@ -661,7 +691,11 @@ def _discover_writers_by_sink_sets(
                 "end_line": end,
             }
             if client.available:
-                hit = client.resolve_qn(name, file_contains=architecture)
+                hit = client.resolve_qn(
+                    name,
+                    file_contains=architecture,
+                    class_qn=str(item.get("class_or_namespace") or "") or None,
+                )
                 if hit is not None:
                     item = hit.as_dict()
                     item["file_path"] = rel

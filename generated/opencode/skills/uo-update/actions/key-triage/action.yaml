@@ -1,0 +1,25 @@
+id: key_triage
+workflow_id: uo-update
+version: 1
+name_zh: KEY 粗分
+role_id: producer
+agent_id: uo-key-resolve
+capabilities:
+- source-reading
+- cbm-navigation
+- kb-query
+- semantic-resolution
+policies:
+- source-authority
+- code-access
+- evidence
+- language
+- pilot-control
+- output-quality
+task_prompt_id: uo/key-triage
+context_profile_id: uo-update-key-triage
+output_contract_id: key-triage-v1
+checker:
+  required: true
+referee:
+  required: false

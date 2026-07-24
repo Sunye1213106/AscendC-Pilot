@@ -220,8 +220,8 @@ def open_blocking_tasks(uo_root: Path) -> list[dict[str, Any]]:
     return [t for t in doc.get("tasks") or [] if t.get("status") == "open" and t.get("severity") == "blocking"]
 
 
-def _can_auto_mark_missing(task: dict[str, Any]) -> bool:
-    """Empty-candidate / mark_missing tasks may be closed without LLM inventing edges."""
+def can_auto_mark_missing(task: dict[str, Any]) -> bool:
+    """Shared auto mark_missing predicate (Gate / pipeline / apply)."""
     ttype = str(task.get("type") or "")
     cands = list(task.get("candidates") or [])
     allowed = {str(a) for a in (task.get("allowed_actions") or [])}
@@ -232,39 +232,34 @@ def _can_auto_mark_missing(task: dict[str, Any]) -> bool:
     return False
 
 
-def apply_task_patch(
-    uo_root: Path,
+# Back-compat alias
+_can_auto_mark_missing = can_auto_mark_missing
+
+
+def validate_task_patch(
+    doc: dict[str, Any],
     patch: dict[str, Any],
     *,
     current_source_hash: str | None = None,
 ) -> dict[str, Any]:
-    """Validate and apply one LLM patch into the resolution ledger; bump attempts.
-
-    Does NOT mutate derived graphs — writes ledger only (⑦).
-    """
-    from uo.scripts.semantic_resolution_ledger import append_semantic_patch
-
-    doc = load_llm_tasks(uo_root)
+    """Pure validation for one patch against an in-memory llm_tasks doc. No I/O."""
     task_id = str(patch.get("task_id") or "")
     task = next((t for t in doc.get("tasks") or [] if t.get("task_id") == task_id), None)
     if task is None:
         return {"ok": False, "error": "unknown_task_id", "task_id": task_id}
     if task.get("status") != "open":
-        return {"ok": False, "error": "task_not_open", "status": task.get("status")}
+        return {"ok": False, "error": "task_not_open", "status": task.get("status"), "task_id": task_id}
 
     src_hash = current_source_hash or task.get("source_snapshot_hash")
     if src_hash and task.get("source_snapshot_hash") and src_hash != task.get("source_snapshot_hash"):
-        task["status"] = "superseded"
-        save_llm_tasks(uo_root, doc)
         return {"ok": False, "error": "source_snapshot_stale", "task_id": task_id}
 
     cand_ids = {str(c.get("id")) for c in (task.get("candidates") or []) if str(c.get("id") or "").strip()}
     accepted = [str(x) for x in (patch.get("accepted_candidate_ids") or [])]
     rejected = [str(x) for x in (patch.get("rejected_candidate_ids") or [])]
 
-    # Optional: reject invent_symbol
     for sym in patch.get("invented_symbols") or []:
-        return {"ok": False, "error": "forbidden_invent_symbol", "symbol": sym}
+        return {"ok": False, "error": "forbidden_invent_symbol", "symbol": sym, "task_id": task_id}
 
     action = str(patch.get("action") or ("mark_missing" if task.get("type") == "mark_missing" else "accept_edge"))
     allowed = {str(a) for a in (task.get("allowed_actions") or [])}
@@ -279,7 +274,6 @@ def apply_task_patch(
 
     accept_actions = {"accept_edge", "choose_one", "accept", "select_edge", "select"}
     if action in accept_actions:
-        # Empty candidate window must stay mark_missing / unresolved — never invent a close.
         if not cand_ids:
             return {
                 "ok": False,
@@ -291,12 +285,11 @@ def apply_task_patch(
             return {"ok": False, "error": "accept_requires_candidate", "task_id": task_id}
         for cid in accepted + rejected:
             if cid not in cand_ids:
-                return {"ok": False, "error": "candidate_out_of_window", "candidate_id": cid}
+                return {"ok": False, "error": "candidate_out_of_window", "candidate_id": cid, "task_id": task_id}
     else:
         for cid in accepted + rejected:
             if cand_ids and cid not in cand_ids:
-                return {"ok": False, "error": "candidate_out_of_window", "candidate_id": cid}
-        # Honest mark_missing must not smuggle accepted edge ids for ledger upgrade.
+                return {"ok": False, "error": "candidate_out_of_window", "candidate_id": cid, "task_id": task_id}
         if action == "mark_missing" and accepted:
             return {
                 "ok": False,
@@ -304,34 +297,116 @@ def apply_task_patch(
                 "task_id": task_id,
             }
 
-    attempts = int(task.get("task_attempts") or 0) + 1
-    task["task_attempts"] = attempts
-    batches = int(doc.get("total_semantic_batches") or 0) + 1
-    doc["total_semantic_batches"] = batches
+    next_attempts = int(task.get("task_attempts") or 0) + 1
+    if next_attempts > MAX_TASK_ATTEMPTS:
+        return {
+            "ok": False,
+            "error": "task_attempts_exhausted",
+            "task_attempts": next_attempts,
+            "task_id": task_id,
+        }
 
-    if attempts > MAX_TASK_ATTEMPTS:
-        task["status"] = "rejected"
-        task["resolution"] = {"error": "task_attempts_exhausted", "patch": patch}
-        save_llm_tasks(uo_root, doc)
-        return {"ok": False, "error": "task_attempts_exhausted", "task_attempts": attempts}
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "task": task,
+        "action": action,
+        "accepted": accepted,
+        "rejected": rejected,
+        "next_attempts": next_attempts,
+        "patch": patch,
+    }
 
-    if batches > MAX_SEMANTIC_BATCHES:
-        save_llm_tasks(uo_root, doc)
-        return {"ok": False, "error": "total_semantic_batches_exhausted", "batches": batches}
 
-    if action == "mark_missing":
-        task["status"] = "resolved"
-        task["resolution"] = {"action": "mark_missing", "patch": patch}
-    else:
+def validate_patches_batch(
+    uo_root: Path,
+    patches: list[dict[str, Any]],
+    *,
+    current_source_hash: str | None = None,
+) -> dict[str, Any]:
+    """Validate an entire batch with zero side effects."""
+    doc = load_llm_tasks(uo_root)
+    if not patches:
+        return {"ok": True, "validated": [], "doc": doc, "next_batches": int(doc.get("total_semantic_batches") or 0)}
+
+    batches = int(doc.get("total_semantic_batches") or 0)
+    next_batches = batches + 1
+    if next_batches > MAX_SEMANTIC_BATCHES:
+        return {
+            "ok": False,
+            "error": "total_semantic_batches_exhausted",
+            "batches": next_batches,
+            "errors": [{"ok": False, "error": "total_semantic_batches_exhausted", "batches": next_batches}],
+        }
+
+    validated: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    seen_tasks: set[str] = set()
+    for patch in patches:
+        if not isinstance(patch, dict):
+            errors.append({"ok": False, "error": "invalid_patch_entry"})
+            continue
+        tid = str(patch.get("task_id") or "")
+        if tid and tid in seen_tasks:
+            errors.append({"ok": False, "error": "duplicate_task_in_batch", "task_id": tid})
+            continue
+        if tid:
+            seen_tasks.add(tid)
+        result = validate_task_patch(doc, patch, current_source_hash=current_source_hash)
+        if result.get("ok"):
+            validated.append(result)
+        else:
+            errors.append(result)
+
+    if errors:
+        return {"ok": False, "errors": errors, "validated": validated, "doc": doc}
+    return {
+        "ok": True,
+        "validated": validated,
+        "doc": doc,
+        "next_batches": next_batches,
+    }
+
+
+def commit_patches_batch(
+    uo_root: Path,
+    validated: list[dict[str, Any]],
+    *,
+    next_batches: int,
+) -> dict[str, Any]:
+    """Atomically commit a pre-validated batch (one batch increment, one ledger save)."""
+    from datetime import datetime, timezone
+
+    from uo.scripts.semantic_resolution_ledger import load_ledger, save_ledger
+
+    doc = load_llm_tasks(uo_root)
+    by_id = {str(t.get("task_id")): t for t in (doc.get("tasks") or []) if isinstance(t, dict)}
+    ledger = load_ledger(uo_root)
+    applied: list[dict[str, Any]] = []
+    now = datetime.now(timezone.utc).isoformat()
+
+    for item in validated:
+        tid = str(item["task_id"])
+        task = by_id.get(tid)
+        if task is None or task.get("status") != "open":
+            return {
+                "ok": False,
+                "error": "commit_race_task_not_open",
+                "task_id": tid,
+                "applied_count": 0,
+                "error_count": 1,
+                "applied": [],
+                "errors": [{"ok": False, "error": "commit_race_task_not_open", "task_id": tid}],
+            }
+        task["task_attempts"] = int(item["next_attempts"])
+        action = str(item["action"])
+        patch = item["patch"]
         task["status"] = "resolved"
         task["resolution"] = {"action": action, "patch": patch}
-
-    ledger_entry = append_semantic_patch(
-        uo_root,
-        {
-            "task_id": task_id,
-            "accepted_candidate_ids": accepted,
-            "rejected_candidate_ids": rejected,
+        record = {
+            "task_id": tid,
+            "accepted_candidate_ids": list(item["accepted"]),
+            "rejected_candidate_ids": list(item["rejected"]),
             "relation": patch.get("relation") or task.get("type"),
             "evidence": patch.get("evidence") or [],
             "source_snapshot_hash": task.get("source_snapshot_hash"),
@@ -339,16 +414,46 @@ def apply_task_patch(
             "verification_source": "llm",
             "confidence": "semantic_verified",
             "action": action,
-        },
-    )
+            "applied_at": now,
+            "status": "active",
+        }
+        ledger.setdefault("semantic_patches", []).append(record)
+        applied.append(
+            {
+                "ok": True,
+                "task_id": tid,
+                "task_attempts": task["task_attempts"],
+                "total_semantic_batches": next_batches,
+                "ledger_entry": record,
+            }
+        )
+
+    doc["total_semantic_batches"] = next_batches
     save_llm_tasks(uo_root, doc)
+    save_ledger(uo_root, ledger)
     return {
         "ok": True,
-        "task_id": task_id,
-        "task_attempts": attempts,
-        "total_semantic_batches": batches,
-        "ledger_entry": ledger_entry,
+        "applied_count": len(applied),
+        "error_count": 0,
+        "applied": applied,
+        "errors": [],
+        "total_semantic_batches": next_batches,
     }
+
+
+def apply_task_patch(
+    uo_root: Path,
+    patch: dict[str, Any],
+    *,
+    current_source_hash: str | None = None,
+) -> dict[str, Any]:
+    """Validate then commit a single patch as a one-patch transactional batch."""
+    batch = apply_patches_batch(uo_root, [patch], current_source_hash=current_source_hash)
+    if batch.get("ok") and batch.get("applied"):
+        return batch["applied"][0]
+    if batch.get("errors"):
+        return batch["errors"][0]
+    return {"ok": False, "error": batch.get("error") or "apply_failed"}
 
 
 def apply_patches_batch(
@@ -357,25 +462,24 @@ def apply_patches_batch(
     *,
     current_source_hash: str | None = None,
 ) -> dict[str, Any]:
-    """Apply many patches sequentially into the ledger."""
-    applied: list[dict[str, Any]] = []
-    errors: list[dict[str, Any]] = []
-    for patch in patches:
-        if not isinstance(patch, dict):
-            errors.append({"ok": False, "error": "invalid_patch_entry"})
-            continue
-        result = apply_task_patch(uo_root, patch, current_source_hash=current_source_hash)
-        if result.get("ok"):
-            applied.append(result)
-        else:
-            errors.append(result)
-    return {
-        "ok": not errors,
-        "applied_count": len(applied),
-        "error_count": len(errors),
-        "applied": applied,
-        "errors": errors,
-    }
+    """Validate-all-then-commit: any failure leaves llm_tasks and ledger unchanged."""
+    if not patches:
+        return {"ok": True, "applied_count": 0, "error_count": 0, "applied": [], "errors": []}
+    checked = validate_patches_batch(uo_root, patches, current_source_hash=current_source_hash)
+    if not checked.get("ok"):
+        return {
+            "ok": False,
+            "applied_count": 0,
+            "error_count": len(checked.get("errors") or []),
+            "applied": [],
+            "errors": list(checked.get("errors") or []),
+            "error": checked.get("error"),
+        }
+    return commit_patches_batch(
+        uo_root,
+        list(checked.get("validated") or []),
+        next_batches=int(checked["next_batches"]),
+    )
 
 
 def resolve_patches_for_apply(
@@ -385,9 +489,9 @@ def resolve_patches_for_apply(
 ) -> dict[str, Any]:
     """Resolve patch list for deterministic apply.
 
-    Prefers ``ir/semantic_patches.yaml``. If absent, auto-builds honest
-    ``mark_missing`` patches for empty-candidate tasks. Tasks that still need
-    LLM adjudication surface as ``SEMANTIC_PATCHES_REQUIRED``.
+    Prefers ``ir/semantic_patches.yaml``. Merges auto ``mark_missing`` for uncovered
+    empty-candidate tasks. Tasks that still need LLM adjudication surface as
+    ``SEMANTIC_PATCHES_REQUIRED``.
     """
     open_blocking = open_blocking_tasks(uo_root)
     if not open_blocking:
@@ -399,14 +503,14 @@ def resolve_patches_for_apply(
         if isinstance(raw, list):
             patches = [p for p in raw if isinstance(p, dict)]
 
-    if patches:
-        return {"ok": True, "patches": patches, "source": "semantic_patches.yaml"}
-
+    covered = {str(p.get("task_id") or "") for p in patches}
     auto: list[dict[str, Any]] = []
     needs_llm: list[str] = []
     for task in open_blocking:
         tid = str(task.get("task_id") or "")
-        if _can_auto_mark_missing(task):
+        if tid in covered:
+            continue
+        if can_auto_mark_missing(task):
             auto.append(
                 {
                     "task_id": tid,
@@ -430,11 +534,16 @@ def resolve_patches_for_apply(
             "needs_llm_task_ids": needs_llm,
             "auto_mark_missing_count": len(auto),
         }
-    return {"ok": True, "patches": auto, "source": "auto_mark_missing"}
+
+    merged = list(patches) + auto
+    source = "semantic_patches.yaml" if patches else "auto_mark_missing"
+    if patches and auto:
+        source = "semantic_patches.yaml+auto_mark_missing"
+    return {"ok": True, "patches": merged, "source": source}
 
 
 def recheck_does_not_increment(uo_root: Path) -> dict[str, Any]:
-    """⑥ Recheck helper — read budgets without mutating attempts."""
+    """Recheck helper — read budgets without mutating attempts."""
     doc = load_llm_tasks(uo_root)
     return {
         "ok": True,

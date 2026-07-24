@@ -18,7 +18,9 @@ from typing import Any
 
 from uo.scripts.arch_path import architecture_of_path, path_family_of
 
-IDENTITY_VERSION = 2
+IDENTITY_VERSION = 3
+
+SpecializationKind = str  # primary|partial|explicit|instance|none
 
 
 def _clean(value: object) -> str:
@@ -62,6 +64,7 @@ class SemanticIdentity:
     normalized_signature: str
     class_or_namespace: str
     template_arity_or_signature: str
+    specialization_kind: SpecializationKind
     architecture: str
     template_family: str
     path_family: str
@@ -77,6 +80,7 @@ class SemanticIdentity:
             "normalized_signature": self.normalized_signature,
             "class_or_namespace": self.class_or_namespace,
             "template_arity_or_signature": self.template_arity_or_signature,
+            "specialization_kind": self.specialization_kind,
             "architecture": self.architecture,
             "template_family": self.template_family,
             "path_family": self.path_family,
@@ -111,6 +115,104 @@ def make_locator(
     )
 
 
+def normalize_cxx_signature(signature: str) -> str:
+    """Public alias for signature normalization used in identity material."""
+    return _normalize_signature(signature)
+
+
+def parse_template_arity(text_near_decl: str) -> str:
+    """Extract normalized contents of the first balanced ``<...>`` template list."""
+    text = text_near_decl or ""
+    start = text.find("<")
+    if start < 0:
+        return ""
+    depth = 0
+    for i in range(start, len(text)):
+        ch = text[i]
+        if ch == "<":
+            depth += 1
+        elif ch == ">":
+            depth -= 1
+            if depth == 0:
+                inner = text[start + 1 : i]
+                return _clean(re.sub(r"\s*,\s*", ",", inner))
+    return ""
+
+
+def infer_specialization_kind(header_text: str) -> SpecializationKind:
+    """Heuristic C++ template specialization class (generic, not op-specific)."""
+    text = _clean(header_text)
+    if not text:
+        return "none"
+    if re.search(r"\btemplate\s*<>\s*(?:class|struct|typename|\w|\{|<)", text):
+        return "explicit"
+    if re.search(r"\btemplate\s*>\s*(?:class|struct|typename|\w|<|\{)", text):
+        return "explicit"
+    if re.search(r"\btemplate\s*<", text):
+        # partial: template params then class Name< fixed args >
+        if re.search(
+            r"\btemplate\s*<[^>]+>\s*(?:class|struct)\s+\w+\s*<",
+            text,
+        ):
+            return "partial"
+        return "primary"
+    if re.search(r"\b(?:class|struct)\s+\w+\s*<[^>]+>", text):
+        return "instance"
+    if re.search(r"\w+\s*<[^>]+>\s*::\s*\w+", text):
+        return "instance"
+    return "none"
+
+
+def mint_scoped_node_id(
+    prefix: str,
+    owning_identity_key: str,
+    file: str,
+    line: int,
+    extra: str = "",
+) -> str:
+    """Stable scoped id for branches/loops under an owning function identity."""
+    key = _hash_key(_clean(owning_identity_key), _norm_path(file), str(int(line or 0)), extra)
+    p = _clean(prefix).upper().rstrip("_")
+    return f"{p}_{key}"
+
+
+def mint_method_identity(
+    *,
+    name: str,
+    file_path: str,
+    class_or_namespace: str,
+    qualified_name: str = "",
+    signature: str = "",
+    template_arity_or_signature: str = "",
+    specialization_kind: SpecializationKind = "none",
+    architecture: str = "",
+    template_family: str = "",
+    path_family: str = "",
+    prefix: str = "SYM",
+) -> SemanticIdentity:
+    cls = _clean(class_or_namespace)
+    if not cls:
+        raise ValueError("mint_method_identity requires class_or_namespace")
+    qn = _clean(qualified_name) or f"{cls}::{_clean(name)}"
+    sk = _clean(specialization_kind) or "none"
+    if sk not in {"primary", "partial", "explicit", "instance", "none"}:
+        sk = "none"
+    return mint_symbol_identity(
+        kind="method",
+        name=name,
+        file_path=file_path,
+        qualified_name=qn,
+        signature=signature,
+        class_or_namespace=cls,
+        template_arity_or_signature=template_arity_or_signature,
+        specialization_kind=sk,
+        architecture=architecture,
+        template_family=template_family,
+        path_family=path_family,
+        prefix=prefix,
+    )
+
+
 def mint_symbol_identity(
     *,
     kind: str,
@@ -120,6 +222,7 @@ def mint_symbol_identity(
     signature: str = "",
     class_or_namespace: str = "",
     template_arity_or_signature: str = "",
+    specialization_kind: SpecializationKind = "none",
     architecture: str = "",
     template_family: str = "",
     path_family: str = "",
@@ -133,6 +236,9 @@ def mint_symbol_identity(
     sig = _normalize_signature(signature)
     cls = _clean(class_or_namespace)
     tpl = _clean(template_arity_or_signature)
+    sk = _clean(specialization_kind) or "none"
+    if sk not in {"primary", "partial", "explicit", "instance", "none"}:
+        sk = "none"
     tpl_family = _clean(template_family) or "unknown"
     identity_key = _hash_key(
         kind,
@@ -141,6 +247,7 @@ def mint_symbol_identity(
         sig,
         cls,
         tpl,
+        sk,
         arch,
         tpl_family,
         family,
@@ -155,6 +262,7 @@ def mint_symbol_identity(
         normalized_signature=sig,
         class_or_namespace=cls,
         template_arity_or_signature=tpl,
+        specialization_kind=sk,
         architecture=arch,
         template_family=tpl_family,
         path_family=family,

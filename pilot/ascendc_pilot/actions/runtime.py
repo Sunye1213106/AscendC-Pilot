@@ -239,6 +239,90 @@ def _session_dir(project_root: Path, run_id: str, action_id: str) -> Path:
     return run_dir(project_root, run_id) / "actions" / action_id
 
 
+def _load_yaml_file(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        import yaml
+
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _key_open_ids(project_root: Path) -> list[str]:
+    """Open KEY ids from gaps / escalate_keys (deterministic target set for triage)."""
+    from ascendc_pilot.paths import uo_root as _uo_root
+
+    uo = _uo_root(project_root)
+    ids: list[str] = []
+    gaps = _load_yaml_file(uo / "ir" / "input_derivable_gaps.yaml")
+    items = gaps.get("gaps") or gaps.get("items") or gaps.get("open") or []
+    if isinstance(items, list):
+        for it in items:
+            if isinstance(it, dict):
+                kid = str(it.get("id") or it.get("key") or "")
+                status = str(it.get("status") or it.get("state") or "open").lower()
+                if kid and status in {"", "open", "unsolved", "escalate"}:
+                    ids.append(kid)
+            elif isinstance(it, str) and it.strip():
+                ids.append(it.strip())
+    unresolved = _load_yaml_file(uo / "ir" / "unresolved.yaml")
+    raw = unresolved.get("escalate_keys") or []
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, str) and item.strip():
+                ids.append(item.strip())
+            elif isinstance(item, dict):
+                kid = str(item.get("id") or item.get("key") or "").strip()
+                if kid:
+                    ids.append(kid)
+    # stable unique
+    seen: set[str] = set()
+    out: list[str] = []
+    for k in ids:
+        if k not in seen:
+            seen.add(k)
+            out.append(k)
+    return out
+
+
+def _key_triage_target_ids(project_root: Path) -> list[str]:
+    """Targets assigned by triage for resolution (batches/keys)."""
+    from ascendc_pilot.paths import uo_root as _uo_root
+
+    triage = _load_yaml_file(_uo_root(project_root) / "ir" / "key_triage.yaml")
+    if str(triage.get("status") or "").lower() in {"not_applicable", "na", "n/a"}:
+        return []
+    ids: list[str] = []
+    keys = triage.get("keys") or triage.get("items") or []
+    if isinstance(keys, list):
+        for it in keys:
+            if isinstance(it, dict):
+                kid = str(it.get("id") or it.get("key") or "").strip()
+                if kid:
+                    ids.append(kid)
+            elif isinstance(it, str) and it.strip():
+                ids.append(it.strip())
+    batches = triage.get("batches") or []
+    if isinstance(batches, list):
+        for batch in batches:
+            if not isinstance(batch, dict):
+                continue
+            for kid in batch.get("key_ids") or batch.get("keys") or []:
+                s = str(kid).strip() if not isinstance(kid, dict) else str(kid.get("id") or "").strip()
+                if s:
+                    ids.append(s)
+    seen: set[str] = set()
+    out: list[str] = []
+    for k in ids:
+        if k not in seen:
+            seen.add(k)
+            out.append(k)
+    return out
+
+
 def _render_placeholders(
     text: str,
     *,
@@ -369,12 +453,23 @@ def _collect_output_hashes(project_root: Path, contract_id: str) -> dict[str, st
 
 
 def _check_output_contract(project_root: Path, contract_id: str) -> dict[str, Any]:
+    """Fail-closed: missing or unregistered contracts never pass."""
     if not contract_id:
-        return {"ok": True, "skipped": True}
+        return {
+            "ok": False,
+            "skipped": False,
+            "error": "missing_contract_id",
+            "message": "output_contract_id is required; cannot skip validation",
+        }
     root = agent_root(project_root)
     paths = OUTPUT_CONTRACT_PATHS.get(contract_id)
     if paths is None:
-        return {"ok": True, "skipped": True, "message": f"no path map for {contract_id}"}
+        return {
+            "ok": False,
+            "skipped": False,
+            "error": "unknown_contract",
+            "message": f"unregistered output contract {contract_id!r}; finalize denied",
+        }
     missing = []
     empty = []
     for rel in paths:
@@ -464,17 +559,31 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             phase=phase,
             allowed_actions=actions_for_phase(wid, phase),
         )
+        rec_reason = str((recommended or {}).get("reason") or "")
         rec_id = (recommended or {}).get("id")
+        if rec_reason == "pipeline_complete":
+            return {
+                "ok": False,
+                "error": "PIPELINE_COMPLETE_ADVANCE_REQUIRED",
+                "message_zh": (
+                    "本阶段流水线已完成；禁止再 prepare 任意 Action。"
+                    "请 `acp advance` 进入下一阶段。"
+                ),
+                "recommended_next_action": recommended,
+                "requested_action": action_id,
+                "phase": phase,
+            }
         if rec_id and rec_id != action_id:
             return {
                 "ok": False,
                 "error": "PIPELINE_SKIP_DENIED",
                 "message_zh": (
                     f"禁止跳步：当前 recommended_next_action=`{rec_id}`，"
-                    f"不可直接跑 `{action_id}`。请先 `acp next` 再执行推荐 Action。"
+                    f"不可直接跑 `{action_id}`。缺少前置 Action；请先 `acp next`。"
                 ),
                 "recommended_next_action": recommended,
                 "requested_action": action_id,
+                "prerequisite_action": rec_id,
                 "phase": phase,
             }
     elif status == "rework_required":
@@ -628,6 +737,84 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             ],
         }
 
+    # KEY triage: explicit finite target set from gaps / escalate_keys.
+    if action_id == "key_triage" and role_id == "producer":
+        key_ids = _key_open_ids(project_root)
+        if not key_ids:
+            target_line = (
+                "NO open KEY targets — write uo/ir/key_triage.yaml with status=not_applicable; "
+                "DO NOT write input_derivable_patch.yaml"
+            )
+            bundle["dispatch_targets"] = {
+                "target_ids": [],
+                "not_applicable": True,
+                "write": ["uo/ir/key_triage.yaml"],
+                "forbid_write": ["uo/ir/input_derivable_patch.yaml", "uo/ir/key_shape_resolve/**"],
+            }
+            # Explicit N/A proof for resume/pipeline.
+            na_path = sdir / "not_applicable.yaml"
+            _dump(
+                na_path,
+                {
+                    "status": "not_applicable",
+                    "action_id": "key_triage",
+                    "run_id": run_id,
+                    "reason": "no_open_key_targets",
+                },
+            )
+        else:
+            target_line = (
+                "KEY ids (triage only): " + ", ".join(key_ids) + " → write uo/ir/key_triage.yaml only; "
+                "DO NOT write input_derivable_patch.yaml or close gaps"
+            )
+            bundle["dispatch_targets"] = {
+                "target_ids": key_ids,
+                "write": ["uo/ir/key_triage.yaml"],
+                "forbid_write": ["uo/ir/input_derivable_patch.yaml", "uo/ir/key_shape_resolve/**"],
+            }
+        prompt_r = _render_placeholders(prompt, **{**ph_kwargs, "target": target_line})
+
+    # KEY resolution: only triage-assigned targets.
+    if action_id == "key_resolution" and role_id == "producer":
+        assigned = _key_triage_target_ids(project_root)
+        open_ids = _key_open_ids(project_root)
+        if not open_ids and not assigned:
+            target_line = (
+                "NO KEY resolution targets — write input_derivable_patch.yaml with status=not_applicable "
+                "OR empty patches list; DO NOT invent keys"
+            )
+            bundle["dispatch_targets"] = {
+                "target_ids": [],
+                "not_applicable": True,
+                "write": ["uo/ir/input_derivable_patch.yaml"],
+                "forbid_write": ["uo/ir/key_triage.yaml"],
+            }
+            _dump(
+                sdir / "not_applicable.yaml",
+                {
+                    "status": "not_applicable",
+                    "action_id": "key_resolution",
+                    "run_id": run_id,
+                    "reason": "no_key_resolution_targets",
+                },
+            )
+        else:
+            # Prefer triage assignment; never expand beyond open set.
+            allowed = assigned if assigned else open_ids
+            if open_ids:
+                allowed = [k for k in allowed if k in set(open_ids)] or allowed
+            target_line = (
+                "KEY ids (resolution only; do not expand): "
+                + ", ".join(allowed)
+                + " → write uo/ir/input_derivable_patch.yaml; DO NOT rewrite key_triage.yaml"
+            )
+            bundle["dispatch_targets"] = {
+                "target_ids": allowed,
+                "write": ["uo/ir/input_derivable_patch.yaml", "uo/ir/key_shape_resolve/**"],
+                "forbid_write": ["uo/ir/key_triage.yaml"],
+            }
+        prompt_r = _render_placeholders(prompt, **{**ph_kwargs, "target": target_line})
+
     prompt_path = (sdir / "prompt.md").as_posix()
     method_path = (sdir / "method.md").as_posix()
     bundle_path = (sdir / "bundle.yaml").as_posix()
@@ -771,6 +958,46 @@ def finalize_action(
         }
     if str(session.get("run_id")) != run_id or str(session.get("action_id")) != action_id:
         return {"ok": False, "error": "session_mismatch"}
+    if str(session.get("workflow_id") or "") != wid:
+        return {
+            "ok": False,
+            "error": "session_workflow_mismatch",
+            "message_zh": (
+                f"session workflow `{session.get('workflow_id')}` 与当前 `{wid}` 不一致；"
+                "禁止跨工作流 finalize"
+            ),
+        }
+    if str(session.get("phase") or "") != phase:
+        return {
+            "ok": False,
+            "error": "session_phase_mismatch",
+            "message_zh": (
+                f"prepare 时阶段为 `{session.get('phase')}`，当前为 `{phase}`；"
+                "阶段已切换，禁止 finalize 原 Action"
+            ),
+            "session_phase": session.get("phase"),
+            "current_phase": phase,
+        }
+
+    active = _load(agent_root(project_root) / "state" / "active_action.yaml")
+    if isinstance(active, dict) and active.get("action_id"):
+        if str(active.get("action_id")) != action_id:
+            return {
+                "ok": False,
+                "error": "not_active_action",
+                "message_zh": (
+                    f"当前 active_action=`{active.get('action_id')}`，"
+                    f"不可 finalize `{action_id}`"
+                ),
+                "active_action": active.get("action_id"),
+                "requested_action": action_id,
+            }
+        if str(active.get("run_id") or "") and str(active.get("run_id")) != run_id:
+            return {
+                "ok": False,
+                "error": "active_action_run_mismatch",
+                "message_zh": "active_action.run_id 与当前 run 不一致",
+            }
 
     actor_id = str(session.get("actor_id") or action.get("agent_id") or "")
     contract_id = str(session.get("output_contract_id") or action.get("output_contract_id") or "")
@@ -833,6 +1060,36 @@ def finalize_action(
 
     contract = _check_output_contract(project_root, contract_id)
 
+    # KEY resolution: reject patches that expand beyond prepare target_ids.
+    target_violation: dict[str, Any] | None = None
+    if action_id == "key_resolution":
+        allowed = []
+        dt = session.get("dispatch_targets") if isinstance(session.get("dispatch_targets"), dict) else {}
+        allowed = [str(x) for x in (dt.get("target_ids") or []) if str(x).strip()]
+        if allowed:
+            from ascendc_pilot.paths import uo_root as _uo_root
+
+            patch_doc = _load_yaml_file(_uo_root(project_root) / "ir" / "input_derivable_patch.yaml")
+            found: list[str] = []
+            items = patch_doc.get("items") or patch_doc.get("patches") or patch_doc.get("keys") or []
+            if isinstance(items, list):
+                for it in items:
+                    if isinstance(it, dict):
+                        kid = str(it.get("id") or it.get("key") or it.get("key_id") or "").strip()
+                        if kid:
+                            found.append(kid)
+            elif isinstance(patch_doc.get("keys"), dict):
+                found.extend(str(k) for k in patch_doc["keys"])
+            extra = [k for k in found if k not in set(allowed)]
+            if extra:
+                target_violation = {
+                    "ok": False,
+                    "error": "KEY_TARGET_SCOPE_VIOLATION",
+                    "extra_keys": extra,
+                    "allowed_target_ids": allowed,
+                    "message": f"key_resolution wrote keys outside prepare targets: {extra}",
+                }
+
     from ascendc_pilot.gates import run_named_gate
     from ascendc_pilot.spec_hashes import workflow_spec_hash
 
@@ -842,14 +1099,19 @@ def finalize_action(
 
     checker_required = bool(session.get("checker_required", action.get("checker_required", True)))
     gates_ok = all(g.get("ok") for g in gate_results) if gate_results else True
-    # Soft contract for human/primary when checker not required
-    if not checker_required:
-        contract_ok = True
+    # Fail-closed: unknown/missing contracts never pass. checker_required=False only
+    # skips path nonempty checks when the contract is registered and already validated
+    # structurally (unknown still fails above).
+    if contract.get("error") in {"missing_contract_id", "unknown_contract"}:
+        contract_ok = False
+    elif not checker_required:
+        contract_ok = contract.get("error") not in {"missing_contract_id", "unknown_contract"}
     else:
-        contract_ok = bool(contract.get("ok") or contract.get("skipped"))
+        contract_ok = bool(contract.get("ok")) and not contract.get("skipped")
 
     engine_ok = True if engine_result is None else bool(engine_result.get("ok", True))
-    overall_ok = bool(gates_ok and contract_ok and engine_ok)
+    targets_ok = target_violation is None
+    overall_ok = bool(gates_ok and contract_ok and engine_ok and targets_ok)
 
     checker_result = {
         "ok": overall_ok,
@@ -857,6 +1119,7 @@ def finalize_action(
         "output_contract": contract,
         "engine": engine_result or {},
         "apply": apply_result or {},
+        "target_violation": target_violation or {},
     }
 
     out_hashes = _collect_output_hashes(project_root, contract_id)

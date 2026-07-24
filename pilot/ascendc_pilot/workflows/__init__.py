@@ -78,3 +78,21 @@ def actions_for_phase(workflow_id: str, phase: str) -> list[dict[str, Any]]:
     meta = get_workflow(workflow_id)
     actions = [a for a in (meta.get("actions") or []) if isinstance(a, dict)]
     return [a for a in actions if phase in set(a.get("phases") or [])]
+
+
+def phase_pipeline(workflow_id: str, phase: str) -> list[str]:
+    """Ordered mandatory actions for a phase (Spec ``pipelines`` is the sole authority)."""
+    meta = get_workflow(workflow_id)
+    pipes = meta.get("pipelines") or {}
+    raw = pipes.get(phase) if isinstance(pipes, dict) else None
+    if isinstance(raw, list):
+        return [str(a) for a in raw if str(a).strip()]
+    return []
+
+
+def action_by_id(workflow_id: str, action_id: str) -> dict[str, Any] | None:
+    meta = get_workflow(workflow_id)
+    for a in meta.get("actions") or []:
+        if isinstance(a, dict) and str(a.get("id") or "") == action_id:
+            return dict(a)
+    return None

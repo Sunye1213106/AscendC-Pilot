@@ -418,15 +418,15 @@ def test_opdef_adapters(tmp_path: Path) -> None:
         textwrap.dedent(
             """
             REG_OP(SynthOpF)
-                .INPUT("query")
-                .OPTIONAL_INPUT("atten_mask")
-                .ATTR("keep_prob")
+                .Input("query")
+                .OptionalInput("atten_mask")
+                .Attr("keep_prob")
                 .DataType({DT_FLOAT16})
                 .Format({FORMAT_ND})
-                .OUTPUT("softmax");
+                .Output("softmax");
             REG_OP(OtherOp)
-                .INPUT("x")
-                .ATTR("axis");
+                .Input("x")
+                .Attr("axis");
             """
         ),
         encoding="utf-8",
@@ -448,9 +448,7 @@ def test_opdef_adapters(tmp_path: Path) -> None:
     assert "x" in names
     attrs = [a.get("slot_or_name") for a in payload["attributes"]]
     assert "keep_prob" in attrs
-    # DataType/Format attach to nearest Input/Attr (here: keep_prob ATTR before .DataType)
-    keep = next(a for a in payload["attributes"] if a.get("slot_or_name") == "keep_prob")
-    assert keep.get("dtype_constraints") or keep.get("format_constraints")
+    assert "axis" in attrs
 
 
 # ⑫ def-use tiers

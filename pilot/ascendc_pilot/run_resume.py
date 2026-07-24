@@ -6,47 +6,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from ascendc_pilot.paths import context_root, runs_root, state_root, uo_root
+from ascendc_pilot.paths import agent_root, context_root, runs_root, state_root, uo_root
 from ascendc_pilot.state import RUNNING_LIKE, load_state, save_state
-
-# OpenCode `question` UI options (label → decision value).
-ASK_OPTIONS: list[dict[str, str]] = [
-    {
-        "label": "继续上次 (Recommended)",
-        "description": (
-            "先清理中断步骤的残缺/失败产物，回退到最近完整正确状态，再继续执行"
-        ),
-        "value": "continue",
-    },
-    {
-        "label": "删除重开",
-        "description": "abort 当前 run，清除 .ascendc-pilot/uo 后重新 init",
-        "value": "reinit",
-    },
-]
-
-# Finalize-owned outputs per action. Present without a successful receipt ⇒ dirty.
-# Prepare inputs (e.g. extract_plan_candidates.yaml) are intentionally kept.
-_ACTION_OWNED_ARTIFACTS: dict[str, tuple[str, ...]] = {
-    "extract_plan": (
-        "ir/extract_plan.yaml",
-        "ir/host_subgraph.yaml",
-        "ir/kernel_subgraph.yaml",
-        "ir/tilingkey_space.yaml",
-        "ir/bridge.yaml",
-    ),
-    "detect_score_post": ("ir/score_report_post.yaml",),
-    "adjudicate_llm_tasks": ("ir/semantic_patches.yaml",),
-    "key_triage": ("ir/key_triage.yaml",),
-    "input_derivable": ("ir/input_derivable_patch.yaml",),
-    "confidence_report": (
-        "checks/confidence_gate.yaml",
-        "summary/confidence_report.md",
-        "summary/confidence_report.yaml",
-    ),
-    "export_integrity": ("checks/integrity.yaml",),
-    "kb_review": ("review/kb_product_review.yaml",),
-}
 
 _INCOMPLETE_SESSION_STATUSES = frozenset(
     {"prepared", "finalize_failed", "revoked", "actor_running", "failed"}
@@ -66,6 +27,93 @@ _DECISION_ALIASES = {
     "重开": "reinit",
 }
 
+_DEFAULT_RESET_POLICY: dict[str, Any] = {
+    "reinit_delete": [],
+    "reinit_preserve": ["uo", "tg", "ce"],
+    "reinit_wipe_runs": "current",
+    "continue_scrub": "from_contracts",
+}
+
+_STATE_FILES_ON_REINIT = (
+    "workflow.yaml",
+    "active_action.yaml",
+    "action_lease.yaml",
+    "resume.yaml",
+)
+
+# Staging inputs kept on continue-scrub retry (not re-produced by upstream receipts).
+_CONTINUE_SCRUB_KEEP: dict[str, frozenset[str]] = {
+    "extract_plan": frozenset({"uo/ir/extract_plan_candidates.yaml"}),
+}
+
+
+def _scrub_rels_for_action(
+    aid: str,
+    *,
+    owned: dict[str, tuple[str, ...]],
+    dirty: set[str],
+    finalized: set[str],
+) -> tuple[str, ...]:
+    keep: set[str] = set(_CONTINUE_SCRUB_KEEP.get(aid, ()))
+    for other_aid, other_rels in owned.items():
+        if other_aid == aid or other_aid in dirty:
+            continue
+        if other_aid in finalized:
+            keep.update(other_rels)
+            continue
+        # Upstream non-dirty actions may still own shared contract paths (e.g. entrypoint_graph).
+        keep.update(other_rels)
+    rels = owned.get(aid, ())
+    return tuple(r for r in rels if r not in keep)
+
+
+def reset_policy_for(workflow_id: str) -> dict[str, Any]:
+    from ascendc_pilot.workflows import get_workflow
+
+    meta = get_workflow(workflow_id)
+    raw = meta.get("reset_policy")
+    if not isinstance(raw, dict):
+        return dict(_DEFAULT_RESET_POLICY)
+    out = dict(_DEFAULT_RESET_POLICY)
+    out.update(raw)
+    return out
+
+
+def _workflow_label(workflow_id: str) -> str:
+    from ascendc_pilot.workflows import get_workflow
+
+    meta = get_workflow(workflow_id)
+    slash = meta.get("slash")
+    if slash:
+        return str(slash).lstrip("/")
+    return workflow_id
+
+
+def ask_options_for(workflow_id: str) -> list[dict[str, str]]:
+    label = _workflow_label(workflow_id)
+    policy = reset_policy_for(workflow_id)
+    delete_bits = ", ".join(policy.get("reinit_delete") or []) or "工作流产物"
+    preserve = policy.get("reinit_preserve") or []
+    preserve_note = (
+        f"（保留 {', '.join(preserve)}）" if preserve else ""
+    )
+    return [
+        {
+            "label": "继续上次 (Recommended)",
+            "description": (
+                "先清理中断步骤的残缺/失败产物，回退到最近完整正确状态，再继续执行"
+            ),
+            "value": "continue",
+        },
+        {
+            "label": "删除重开",
+            "description": (
+                f"abort 当前 run，按 {label} 策略清除 {delete_bits}{preserve_note} 后重新 start"
+            ),
+            "value": "reinit",
+        },
+    ]
+
 
 def normalize_decision(raw: str) -> str | None:
     key = str(raw or "").strip().lower()
@@ -73,7 +121,7 @@ def normalize_decision(raw: str) -> str | None:
         return None
     if key in _DECISION_ALIASES:
         return _DECISION_ALIASES[key]
-    for opt in ASK_OPTIONS:
+    for opt in ask_options_for("uo-init"):
         label = opt["label"].lower()
         if key == label or key.startswith(opt["value"]) or opt["label"].split()[0].lower() in key:
             return opt["value"]
@@ -96,36 +144,89 @@ def _load_yaml(path: Path) -> dict[str, Any]:
         return {}
 
 
-def _artifact_checklist(uo: Path) -> list[dict[str, Any]]:
-    """Key UO artifacts: present = likely completed step output."""
-    specs = [
-        ("prepare_layout", "manifest.yaml", "布局/manifest"),
-        ("scope_confirmation", "runs/*/scope/receipt.yaml", "范围确认收据"),
-        ("scope_confirmation", "cbm/index_meta.json", "CBM 索引元数据"),
-        ("detect_score_pre", "ir/entrypoint_graph.yaml", "入口图"),
-        ("detect_score_pre", "ir/score_report_pre.yaml", "抽取前评分"),
-        ("detect_score_pre", "ir/llm_tasks.yaml", "LLM 任务清单"),
-        ("extract_plan", "ir/extract_plan_candidates.yaml", "抽取计划候选"),
-        ("extract_plan", "ir/extract_plan.yaml", "抽取计划（确认后）"),
-        ("extract_plan", "ir/host_subgraph.yaml", "Host 分层 IR"),
-        ("detect_score_post", "ir/score_report_post.yaml", "抽取后评分"),
-        ("adjudicate_llm_tasks", "ir/semantic_patches.yaml", "语义补丁(裁决)"),
-        ("apply_semantic_patch", "ir/semantic_resolution_ledger.yaml", "语义账本"),
-        ("confidence_report", "summary/confidence_report.yaml", "置信度报告"),
-        ("export_integrity", "checks/integrity.yaml", "完整性检查"),
-        ("kb_review", "review/kb_product_review.yaml", "KB 审查"),
-    ]
-    out: list[dict[str, Any]] = []
-    for action_id, rel, label in specs:
+def action_owned_artifacts(workflow_id: str) -> dict[str, tuple[str, ...]]:
+    """Action id → contract paths under .ascendc-pilot (from Spec output_contract_id)."""
+    from ascendc_pilot.actions.engines import OUTPUT_CONTRACT_PATHS
+    from ascendc_pilot.workflows import get_workflow
+
+    meta = get_workflow(workflow_id)
+    out: dict[str, tuple[str, ...]] = {}
+    for action in meta.get("actions") or []:
+        if not isinstance(action, dict):
+            continue
+        aid = str(action.get("id") or "").strip()
+        cid = str(action.get("output_contract_id") or "").strip()
+        if not aid or not cid:
+            continue
+        paths = OUTPUT_CONTRACT_PATHS.get(cid)
+        if not paths:
+            continue
+        out[aid] = tuple(str(p) for p in paths)
+    return out
+
+
+def _contract_paths_present(agent: Path, rels: tuple[str, ...]) -> bool:
+    for rel in rels:
         if "*" in rel:
-            present = any(uo.glob(rel)) if uo.is_dir() else False
-        else:
-            present = (uo / rel).is_file()
+            if any(agent.glob(rel)):
+                return True
+        elif (agent / rel).exists():
+            return True
+    return False
+
+
+def _remove_contract_paths(agent: Path, rels: tuple[str, ...]) -> list[str]:
+    removed: list[str] = []
+    for rel in rels:
+        if "*" in rel:
+            for path in sorted(agent.glob(rel)):
+                if path.is_file():
+                    path.unlink(missing_ok=True)
+                    removed.append(path.relative_to(agent).as_posix())
+                elif path.is_dir():
+                    shutil.rmtree(path, ignore_errors=True)
+                    removed.append(path.relative_to(agent).as_posix() + "/")
+            continue
+        path = agent / rel
+        if path.is_file():
+            path.unlink(missing_ok=True)
+            removed.append(rel)
+        elif path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+            removed.append(rel + "/")
+    return removed
+
+
+def _artifact_checklist(agent: Path, workflow_id: str) -> list[dict[str, Any]]:
+    """Key artifacts for summary display (workflow-scoped)."""
+    owned = action_owned_artifacts(workflow_id)
+    label_map = {
+        "prepare_layout": "布局/manifest",
+        "scope_confirmation": "范围确认",
+        "detect_score_pre": "抽取前评分",
+        "extract_plan": "抽取计划",
+        "detect_score_post": "抽取后评分",
+        "adjudicate_llm_tasks": "语义补丁(裁决)",
+        "apply_semantic_patch": "语义账本",
+        "key_triage": "KEY 粗分",
+        "key_resolution": "KEY 语义闭合",
+        "rebuild_from_ledger": "账本重建图",
+        "confidence_report": "置信度报告",
+        "export_integrity": "完整性检查",
+        "kb_review": "KB 审查",
+        "kb_check": "UO KB 就绪",
+        "contract_build": "TG 合同",
+        "code_review": "CE 审查",
+    }
+    out: list[dict[str, Any]] = []
+    for aid, rels in owned.items():
+        present = _contract_paths_present(agent, rels)
+        primary = rels[0] if rels else ""
         out.append(
             {
-                "action_id": action_id,
-                "path": rel,
-                "label_zh": label,
+                "action_id": aid,
+                "path": primary,
+                "label_zh": label_map.get(aid, aid),
                 "present": present,
                 "complete": present,
             }
@@ -159,20 +260,18 @@ def _action_session(project_root: Path, run_id: str, action_id: str) -> dict[str
     return _load_yaml(runs_root(project_root) / run_id / "actions" / action_id / "session.yaml")
 
 
-def _unlink_rel(uo: Path, rel: str) -> str | None:
-    path = uo / rel
-    if path.is_file():
-        path.unlink()
-        return rel
-    return None
-
-
-def _detect_dirty_actions(project_root: Path, run_id: str) -> list[str]:
+def _detect_dirty_actions(project_root: Path, run_id: str, workflow_id: str) -> list[str]:
     """Actions that left incomplete / failed products and must be scrubbed on continue."""
     root = Path(project_root).expanduser().resolve()
+    policy = reset_policy_for(workflow_id)
+    if str(policy.get("continue_scrub") or "") != "from_contracts":
+        return []
+
+    owned = action_owned_artifacts(workflow_id)
     finalized = set(_receipt_actions(root, run_id)) if run_id else set()
     dirty: list[str] = []
     seen: set[str] = set()
+    agent = agent_root(root)
 
     def _mark(aid: str) -> None:
         aid = str(aid or "").strip()
@@ -184,11 +283,27 @@ def _detect_dirty_actions(project_root: Path, run_id: str) -> list[str]:
     active = _active_action(root)
     active_id = str(active.get("action_id") or "").strip()
     active_status = str(active.get("status") or "").strip()
+    state = load_state(root) or {}
+    lf = state.get("last_failure") if isinstance(state.get("last_failure"), dict) else {}
+    lf_action = str(lf.get("action_id") or "").strip()
+
     if active_id and active_status in _INCOMPLETE_SESSION_STATUSES:
         _mark(active_id)
 
-    uo = uo_root(root)
-    for aid, rels in _ACTION_OWNED_ARTIFACTS.items():
+    phase = str(state.get("phase") or "")
+    from ascendc_pilot.workflows import phase_pipeline
+
+    pipe = phase_pipeline(workflow_id, phase)
+    if active_id and active_id in pipe:
+        start_idx = pipe.index(active_id)
+        for aid in pipe[start_idx:]:
+            if aid in finalized:
+                continue
+            rels = owned.get(aid, ())
+            if _contract_paths_present(agent, rels):
+                _mark(aid)
+
+    for aid, rels in owned.items():
         if aid in finalized:
             continue
         session = _action_session(root, run_id, aid)
@@ -196,32 +311,47 @@ def _detect_dirty_actions(project_root: Path, run_id: str) -> list[str]:
         if sess_status in _INCOMPLETE_SESSION_STATUSES:
             _mark(aid)
             continue
-        if any((uo / rel).is_file() for rel in rels):
-            # Owned finalize product without a receipt ⇒ partial / failed scene.
+        if not _contract_paths_present(agent, rels):
+            continue
+        # Orphan finalize products: only the interrupted action (or last failure target).
+        if aid == active_id or (not active_id and aid == lf_action):
             _mark(aid)
 
     return dirty
 
 
-def scrub_incomplete_on_continue(project_root: Path) -> dict[str, Any]:
-    """Remove failed/partial products of interrupted actions; keep last complete state.
+def _resolve_resume_next_action(project_root: Path) -> str:
+    from ascendc_pilot.state import describe_next
 
-    Keeps upstream finalized artifacts (e.g. extract_plan_candidates after detect_score_pre).
-    Clears lease / active_action / failed sessions for dirty actions so prepare can re-run.
-    """
+    nxt = describe_next(project_root)
+    if not nxt.get("ok"):
+        return ""
+    rec = nxt.get("recommended_next_action")
+    if isinstance(rec, dict):
+        return str(rec.get("id") or "").strip()
+    return ""
+
+
+def scrub_incomplete_on_continue(project_root: Path) -> dict[str, Any]:
+    """Remove failed/partial products of interrupted actions; keep last complete state."""
     root = Path(project_root).expanduser().resolve()
     state = load_state(root)
     run_id = str((state or {}).get("run_id") or "")
-    dirty = _detect_dirty_actions(root, run_id)
+    workflow_id = str((state or {}).get("workflow_id") or "uo-init")
+    dirty = _detect_dirty_actions(root, run_id, workflow_id)
+    dirty_set = set(dirty)
     removed: list[str] = []
     sessions_cleared: list[str] = []
-    uo = uo_root(root)
+    agent = agent_root(root)
+    owned = action_owned_artifacts(workflow_id)
+    finalized = set(_receipt_actions(root, run_id)) if run_id else set()
 
     for aid in dirty:
-        for rel in _ACTION_OWNED_ARTIFACTS.get(aid, ()):
-            gone = _unlink_rel(uo, rel)
-            if gone:
-                removed.append(gone)
+        rels = _scrub_rels_for_action(
+            aid, owned=owned, dirty=dirty_set, finalized=finalized
+        )
+        for rel in rels:
+            removed.extend(_remove_contract_paths(agent, (rel,)))
         if run_id:
             sdir = runs_root(root) / run_id / "actions" / aid
             if sdir.is_dir():
@@ -247,7 +377,6 @@ def scrub_incomplete_on_continue(project_root: Path) -> dict[str, Any]:
 
     state_updates: dict[str, Any] = {}
     if state and dirty:
-        # Drop stale failed gates so continue does not carry a dead finalize failure.
         failed = list(state.get("failed_gates") or [])
         if failed:
             state["failed_gates"] = []
@@ -260,14 +389,9 @@ def scrub_incomplete_on_continue(project_root: Path) -> dict[str, Any]:
             state_updates["cleared_last_failure"] = True
         save_state(root, state)
 
-    resume_next = dirty[0] if dirty else ""
-    if not resume_next:
-        # Fall back to checklist-based hint after scrub.
-        summary_probe = _artifact_checklist(uo) if uo.is_dir() else []
-        for a in summary_probe:
-            if not a.get("complete"):
-                resume_next = str(a.get("action_id") or "")
-                break
+    resume_next = _resolve_resume_next_action(root)
+    if not resume_next and dirty:
+        resume_next = dirty[0]
 
     return {
         "ok": True,
@@ -288,13 +412,101 @@ def scrub_incomplete_on_continue(project_root: Path) -> dict[str, Any]:
     }
 
 
+def apply_reinit_wipe(project_root: Path, workflow_id: str) -> dict[str, Any]:
+    """Workflow-scoped reinit wipe per Spec ``reset_policy``."""
+    root = Path(project_root).expanduser().resolve()
+    policy = reset_policy_for(workflow_id)
+    agent = agent_root(root)
+    state = load_state(root) or {}
+    run_id = str(state.get("run_id") or "")
+    removed: list[str] = []
+    preserve_roots = [str(x) for x in (policy.get("reinit_preserve") or [])]
+    explicit_deletes = {str(x).strip().replace("\\", "/") for x in (policy.get("reinit_delete") or [])}
+
+    for item in explicit_deletes:
+        rel = str(item).strip().replace("\\", "/")
+        if not rel:
+            continue
+        target = agent / rel
+        if target.is_dir():
+            shutil.rmtree(target, ignore_errors=True)
+            removed.append(target.as_posix())
+        elif target.is_file():
+            target.unlink(missing_ok=True)
+            removed.append(target.as_posix())
+        elif "*" in rel:
+            removed.extend(_remove_contract_paths(agent, (rel,)))
+
+    wipe_runs = str(policy.get("reinit_wipe_runs") or "current")
+    runs = runs_root(root)
+    if wipe_runs == "all" and runs.exists():
+        shutil.rmtree(runs, ignore_errors=True)
+        removed.append(runs.as_posix())
+    elif wipe_runs == "current" and run_id:
+        run_dir = runs / run_id
+        if run_dir.is_dir():
+            shutil.rmtree(run_dir, ignore_errors=True)
+            removed.append(run_dir.as_posix())
+
+    ctx = context_root(root)
+    if ctx.exists() and workflow_id in {"uo-init", "uo-update"}:
+        shutil.rmtree(ctx, ignore_errors=True)
+        removed.append(ctx.as_posix())
+
+    st = state_root(root)
+    for name in _STATE_FILES_ON_REINIT:
+        path = st / name
+        if path.is_file():
+            path.unlink()
+            removed.append(path.as_posix())
+
+    kept = ["state/pilot_hmac.key", "memory/"]
+    kept.extend(preserve_roots)
+    historical_runs = wipe_runs != "all"
+    if historical_runs and runs.is_dir():
+        kept.append("runs/ (historical)")
+
+    return {
+        "ok": True,
+        "removed": removed,
+        "kept": kept,
+        "policy": policy,
+    }
+
+
+def wipe_uo_for_reinit(project_root: Path) -> dict[str, Any]:
+    """Backward-compatible alias: uo-init scoped wipe."""
+    return apply_reinit_wipe(project_root, "uo-init")
+
+
+def _cross_workflow_conflict(state: dict[str, Any] | None, workflow_id: str) -> dict[str, Any] | None:
+    if not state:
+        return None
+    active_wid = str(state.get("workflow_id") or "")
+    status = str(state.get("status") or "")
+    if active_wid and active_wid != workflow_id and status in RUNNING_LIKE:
+        return {
+            "error": "cross_workflow_active_run",
+            "active_workflow_id": active_wid,
+            "requested_workflow_id": workflow_id,
+            "message_zh": (
+                f"当前活动 run 属于 {active_wid}，与请求的 {workflow_id} 不一致；"
+                "禁止静默覆盖。请先 continue/abort 原 run，或显式 reinit。"
+            ),
+        }
+    return None
+
+
 def build_run_resume_summary(project_root: Path, *, workflow_id: str = "uo-init") -> dict[str, Any]:
     """Human-facing summary of the last interrupted run."""
     root = Path(project_root).expanduser().resolve()
     state = load_state(root)
+    agent = agent_root(root)
     uo = uo_root(root)
     has_uo = uo.is_dir() and any(uo.iterdir())
-    artifacts = _artifact_checklist(uo) if has_uo else []
+    artifacts = _artifact_checklist(agent, workflow_id) if has_uo or workflow_id != "uo-init" else []
+    if not artifacts and agent.is_dir():
+        artifacts = _artifact_checklist(agent, workflow_id)
     complete_arts = [a for a in artifacts if a.get("complete")]
     missing_arts = [a for a in artifacts if not a.get("complete")]
 
@@ -319,6 +531,8 @@ def build_run_resume_summary(project_root: Path, *, workflow_id: str = "uo-init"
 
     phase = str((state or {}).get("phase") or "")
     status = str((state or {}).get("status") or "")
+    state_wid = str((state or {}).get("workflow_id") or "")
+    active_wid = state_wid or workflow_id
     last_complete = {
         "phase": phase if "scope_receipt" in passed_gates or receipts else "",
         "passed_gates": passed_gates,
@@ -340,23 +554,18 @@ def build_run_resume_summary(project_root: Path, *, workflow_id: str = "uo-init"
         "missing_artifacts": [a["path"] for a in missing_arts[:12]],
     }
 
-    next_hint = ""
-    if active.get("status") == "prepared":
+    next_hint = _resolve_resume_next_action(root) if state_wid == workflow_id else ""
+    if not next_hint and active.get("status") == "prepared":
         next_hint = str(active.get("action_id") or "")
     if not next_hint:
         for a in missing_arts:
             next_hint = str(a.get("action_id") or "")
             break
-    if not next_hint and phase == "extract":
-        next_hint = "extract_plan"
-    elif not next_hint and phase == "scope":
-        next_hint = "scope_confirmation"
-    elif not next_hint and phase == "prepare":
-        next_hint = "prepare_layout"
 
+    wf_label = _workflow_label(workflow_id)
     lines = [
         f"run_id: {run_id or '(无)'}",
-        f"workflow: {(state or {}).get('workflow_id') or workflow_id}",
+        f"workflow: {active_wid}",
         f"phase/status: {phase or '-'} / {status or '-'}",
         f"architecture: {(state or {}).get('architecture') or '-'}",
         f"created_at: {(state or {}).get('created_at') or '-'}",
@@ -372,25 +581,59 @@ def build_run_resume_summary(project_root: Path, *, workflow_id: str = "uo-init"
         )
     lines.append(f"继续时下一步: {next_hint or 'acp next'}")
 
-    has_existing_run = (
+    cross = _cross_workflow_conflict(state, workflow_id)
+    same_workflow_running = (
         bool(state)
-        and str((state or {}).get("workflow_id") or "") == workflow_id
-        and str((state or {}).get("status") or "") in RUNNING_LIKE
+        and state_wid == workflow_id
+        and status in RUNNING_LIKE
     )
+    has_existing_run = same_workflow_running and cross is None
+    ask_opts_src = ask_options_for(workflow_id)
+
     if has_existing_run:
-        ask_opts = [{"label": o["label"], "description": o["description"]} for o in ASK_OPTIONS]
+        ask_opts = [{"label": o["label"], "description": o["description"]} for o in ask_opts_src]
+        question_body = (
+            f"检测到算子目录已有未完成的 {wf_label} run。请选择：继续上次，"
+            f"或按策略删除后重新 start。\n\n" + "\n".join(lines)
+        )
+        header = f"发现未完成的 {wf_label}"
+    elif cross:
+        ask_opts = [{"label": o["label"], "description": o["description"]} for o in ask_opts_src]
+        question_body = cross["message_zh"] + "\n\n" + "\n".join(lines)
+        header = f"工作流冲突（请求 {wf_label}）"
+        has_existing_run = True
+    elif workflow_id == "uo-init" and has_uo and (not state or state_wid in {"", "uo-init"}):
+        ask_opts = [
+            {
+                "label": "删除重开",
+                "description": ask_opts_src[1]["description"],
+            }
+        ]
+        question_body = (
+            "检测到残留 UO 产物，但无活动 run。请确认是否删除后重新 init。\n\n"
+            + "\n".join(lines)
+        )
+        header = f"发现 UO 残留（{wf_label}）"
+        has_existing_run = True
     else:
         ask_opts = [
             {
                 "label": "删除重开",
-                "description": "清除残留 .ascendc-pilot/uo 后重新 init（无可继续的活动 run）",
+                "description": ask_opts_src[1]["description"],
             }
         ]
+        question_body = (
+            f"无可继续的活动 {wf_label} run。请确认是否按策略删除后重新 start。\n\n"
+            + "\n".join(lines)
+        )
+        header = f"启动 {wf_label}"
 
     return {
         "has_existing_run": has_existing_run,
         "has_uo_artifacts": has_uo,
-        "workflow_id": str((state or {}).get("workflow_id") or workflow_id),
+        "workflow_id": active_wid,
+        "requested_workflow_id": workflow_id,
+        "cross_workflow": cross,
         "run_id": run_id,
         "phase": phase,
         "status": status,
@@ -399,24 +642,17 @@ def build_run_resume_summary(project_root: Path, *, workflow_id: str = "uo-init"
         "failed_gates": failed_gates,
         "finalized_actions": receipts,
         "artifacts": artifacts,
+        "action_owned_artifacts": action_owned_artifacts(workflow_id),
         "last_complete": last_complete,
         "interrupted_at": interrupted,
         "resume_next_action": next_hint,
         "summary_text_zh": "\n".join(lines),
         "ask_question": {
-            "header": "发现未完成的 uo-init",
-            "question": (
-                "检测到算子目录已有未完成的 uo-init run。请选择：继续上次，"
-                "或删除 .ascendc-pilot/uo 后重新 init。\n\n" + "\n".join(lines)
-                if has_existing_run
-                else (
-                    "检测到残留 UO 产物，但无活动 run。请确认是否删除后重新 init。\n\n"
-                    + "\n".join(lines)
-                )
-            ),
+            "header": header,
+            "question": question_body,
             "options": ask_opts,
         },
-        "decision_values": {o["label"]: o["value"] for o in ASK_OPTIONS},
+        "decision_values": {o["label"]: o["value"] for o in ask_opts_src},
         "commands": {
             "continue": f"acp start {workflow_id} --project . --decision continue",
             "reinit": f"acp start {workflow_id} --project . --decision reinit",
@@ -427,13 +663,14 @@ def build_run_resume_summary(project_root: Path, *, workflow_id: str = "uo-init"
 def needs_resume_decision(project_root: Path, workflow_id: str) -> bool:
     root = Path(project_root).expanduser().resolve()
     state = load_state(root)
+    if _cross_workflow_conflict(state, workflow_id):
+        return True
     if (
         state
         and str(state.get("workflow_id") or "") == workflow_id
         and str(state.get("status") or "") in RUNNING_LIKE
     ):
         return True
-    # Leftover UO KB only blocks uo-init (not tg-*/other workflows).
     if workflow_id != "uo-init":
         return False
     uo = uo_root(root)
@@ -442,31 +679,6 @@ def needs_resume_decision(project_root: Path, workflow_id: str) -> bool:
         if not state or wid in {"", "uo-init"}:
             return True
     return False
-
-
-def wipe_uo_for_reinit(project_root: Path) -> dict[str, Any]:
-    """Delete UO KB + run sessions; keep HMAC key and memory."""
-    root = Path(project_root).expanduser().resolve()
-    removed: list[str] = []
-    uo = uo_root(root)
-    if uo.exists():
-        shutil.rmtree(uo, ignore_errors=True)
-        removed.append(uo.as_posix())
-    runs = runs_root(root)
-    if runs.exists():
-        shutil.rmtree(runs, ignore_errors=True)
-        removed.append(runs.as_posix())
-    ctx = context_root(root)
-    if ctx.exists():
-        shutil.rmtree(ctx, ignore_errors=True)
-        removed.append(ctx.as_posix())
-    st = state_root(root)
-    for name in ("workflow.yaml", "active_action.yaml", "action_lease.yaml", "resume.yaml"):
-        path = st / name
-        if path.is_file():
-            path.unlink()
-            removed.append(path.as_posix())
-    return {"ok": True, "removed": removed, "kept": ["state/pilot_hmac.key", "memory/"]}
 
 
 def apply_resume_decision(
@@ -479,6 +691,7 @@ def apply_resume_decision(
     """Apply continue|reinit after AskQuestion."""
     from ascendc_pilot.state import mark_terminal, start_workflow
     from ascendc_pilot.todo import attach_todo
+    from ascendc_pilot.workflows import entry_state, phase_pipeline
 
     root = Path(project_root).expanduser().resolve()
     choice = normalize_decision(decision)
@@ -492,8 +705,16 @@ def apply_resume_decision(
 
     summary = build_run_resume_summary(root, workflow_id=workflow_id)
     kwargs = dict(start_kwargs or {})
+    cross = _cross_workflow_conflict(load_state(root), workflow_id)
 
     if choice == "continue":
+        if cross:
+            return {
+                "ok": False,
+                "error": cross["error"],
+                "message_zh": cross["message_zh"],
+                "run_summary": summary,
+            }
         state = load_state(root)
         if not state or str(state.get("workflow_id") or "") != workflow_id:
             return {
@@ -510,15 +731,10 @@ def apply_resume_decision(
                 "message_zh": f"当前状态为 {state.get('status')}，无法 continue；请选删除重开",
                 "run_summary": summary,
             }
-        # Clean incomplete / failed products of the interrupted step before resume.
         scrub = scrub_incomplete_on_continue(root)
         state = load_state(root) or state
         summary = build_run_resume_summary(root, workflow_id=workflow_id)
-        next_action = (
-            scrub.get("resume_next_action")
-            or summary.get("resume_next_action")
-            or ""
-        )
+        next_action = scrub.get("resume_next_action") or summary.get("resume_next_action") or ""
         payload = attach_todo(
             {
                 **state,
@@ -544,7 +760,18 @@ def apply_resume_decision(
         return {"ok": True, **payload}
 
     state = load_state(root)
-    if state and str(state.get("status") or "") in RUNNING_LIKE:
+    if cross and choice == "reinit":
+        if state and str(state.get("workflow_id") or "") != workflow_id:
+            if str(state.get("status") or "") in RUNNING_LIKE:
+                try:
+                    from ascendc_pilot.authorize.lease import revoke_active_lease
+
+                    revoke_active_lease(root, reason="reinit_cross_workflow")
+                except Exception:  # noqa: BLE001
+                    pass
+                mark_terminal(root, "failed", reason="reinit_cross_workflow")
+
+    if state and str(state.get("status") or "") in RUNNING_LIKE and not cross:
         try:
             from ascendc_pilot.authorize.lease import revoke_active_lease
 
@@ -553,27 +780,34 @@ def apply_resume_decision(
             pass
         mark_terminal(root, "failed", reason="reinit_by_operator")
 
-    wipe = wipe_uo_for_reinit(root)
+    wipe = apply_reinit_wipe(root, workflow_id)
     fresh = start_workflow(root, workflow_id, **kwargs)
+    entry = entry_state(workflow_id)
+    pipe = phase_pipeline(workflow_id, entry)
+    first_action = pipe[0] if pipe else ""
     return {
         "ok": True,
         "decision": "reinit",
         "wiped": wipe,
         "fresh_start": True,
-        "message_zh": "已删除 UO 产物并重新 init；请从 prepare_layout 开始",
+        "message_zh": (
+            f"已按 {workflow_id} 策略清理并重新 start；"
+            f"请从 {first_action or entry} 开始"
+        ),
         **fresh,
     }
 
 
 def existing_run_decision_payload(project_root: Path, workflow_id: str) -> dict[str, Any]:
     summary = build_run_resume_summary(project_root, workflow_id=workflow_id)
+    wf_label = _workflow_label(workflow_id)
     return {
         "ok": False,
         "needs_human_decision": True,
         "error": "EXISTING_RUN_NEEDS_DECISION",
         "message_zh": (
-            "检测到未完成的 uo-init run。必须用 OpenCode `question`（AskQuestion）弹出可点选框，"
-            "等人选择后执行："
+            f"检测到未完成的 {wf_label} run 或工作流冲突。必须用 OpenCode `question`（AskQuestion）"
+            "弹出可点选框，等人选择后执行："
             f"`{summary['commands']['continue']}` 或 `{summary['commands']['reinit']}`。"
             "禁止静默复用或自动删除。"
         ),

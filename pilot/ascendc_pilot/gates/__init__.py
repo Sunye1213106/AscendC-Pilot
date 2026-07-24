@@ -53,6 +53,27 @@ def _reason_fingerprint(text: str) -> str:
     return t[:240]
 
 
+def gate_prepare_layout_receipt(project_root: Path) -> dict[str, Any]:
+    """Require a verified prepare_layout receipt for the current run (not file existence)."""
+    from ascendc_pilot.runs import verify_receipt
+
+    verified = verify_receipt(
+        project_root,
+        action_id="prepare_layout",
+        require_pilot_issued=True,
+        require_hashes=True,
+        require_action_id=True,
+        require_spec_hash=True,
+    )
+    ok = bool(verified.get("ok"))
+    return {
+        "gate": "prepare_layout_receipt",
+        "ok": ok,
+        "receipt_verify": verified,
+        "message": "ok" if ok else "prepare_layout receipt missing or invalid for current run",
+    }
+
+
 def gate_key_triage_required(uo: Path) -> dict[str, Any]:
     """escalate/gaps open → must have non-empty ir/key_triage.yaml."""
     gaps_path = uo / "ir" / "input_derivable_gaps.yaml"
@@ -119,7 +140,7 @@ def gate_key_triage_required(uo: Path) -> dict[str, Any]:
 
 
 def gate_key_resolve_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
-    """When triage required, require Pilot-issued uo-key-resolve receipt (not patch alone)."""
+    """When triage required, require Pilot-issued key_resolution receipt (exact action_id)."""
     triage = gate_key_triage_required(uo)
     if not triage.get("needs_triage"):
         return {"gate": "key_resolve_receipt", "ok": True, "skipped": True, "message": "no triage needed"}
@@ -137,16 +158,7 @@ def gate_key_resolve_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
         require_action_id=True,
         require_spec_hash=True,
     )
-    # Allow alternate action ids used by triage/resolution producers
-    if not verified.get("ok"):
-        verified = verify_receipt(
-            project_root,
-            actor_id="uo-key-resolve",
-            require_pilot_issued=True,
-            require_hashes=True,
-            require_action_id=False,
-            require_spec_hash=True,
-        )
+    # Fail-closed: triage receipt must NOT satisfy resolution gate.
     patch = uo / "ir" / "input_derivable_patch.yaml"
     shape_dir = uo / "ir" / "key_shape_resolve"
     has_artifacts = patch.is_file() or (shape_dir.is_dir() and any(shape_dir.glob("*.yaml")))
@@ -164,7 +176,7 @@ def gate_key_resolve_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
         "message": (
             "ok"
             if ok
-            else "KEY triage required but missing verified Pilot-issued uo-key-resolve receipt + resolve artifacts"
+            else "KEY triage required but missing verified Pilot-issued key_resolution receipt + resolve artifacts"
         ),
     }
 
@@ -766,6 +778,8 @@ def gate_detect_score_post(uo: Path) -> dict[str, Any]:
 
 def gate_adjudicate_llm_tasks(uo: Path) -> dict[str, Any]:
     """Producer patches required when open blocking tasks need LLM (not auto mark_missing)."""
+    from uo.scripts.llm_tasks import can_auto_mark_missing
+
     tasks_doc = _load(uo / "ir" / "llm_tasks.yaml") or {}
     tasks = tasks_doc.get("tasks") if isinstance(tasks_doc, dict) else []
     open_blocking = [
@@ -781,17 +795,7 @@ def gate_adjudicate_llm_tasks(uo: Path) -> dict[str, Any]:
             "message": "no open blocking llm_tasks",
         }
 
-    def _auto(t: dict[str, Any]) -> bool:
-        ttype = str(t.get("type") or "")
-        cands = list(t.get("candidates") or [])
-        allowed = {str(a) for a in (t.get("allowed_actions") or [])}
-        if ttype == "mark_missing" and not cands:
-            return True
-        if not cands and "mark_missing" in allowed and "accept_edge" not in allowed and "choose_one" not in allowed:
-            return True
-        return False
-
-    needs_llm = [t for t in open_blocking if not _auto(t)]
+    needs_llm = [t for t in open_blocking if not can_auto_mark_missing(t)]
     if not needs_llm:
         return {
             "gate": "adjudicate_llm_tasks",
@@ -827,8 +831,66 @@ def gate_adjudicate_llm_tasks(uo: Path) -> dict[str, Any]:
     }
 
 
+def gate_apply_semantic_patch(uo: Path) -> dict[str, Any]:
+    """Post-apply: blocking tasks cleared, or pending patches still valid to apply."""
+    from uo.scripts.evidence_score import _source_snapshot_hash
+    from uo.scripts.llm_tasks import open_blocking_tasks, resolve_patches_for_apply, validate_patches_batch
+
+    open_blocking = open_blocking_tasks(uo)
+    if not open_blocking:
+        return {
+            "gate": "apply_semantic_patch",
+            "ok": True,
+            "skipped": True,
+            "message": "no open blocking llm_tasks after apply",
+        }
+
+    patches_path = uo / "ir" / "semantic_patches.yaml"
+    patches_doc = _load(patches_path) if patches_path.is_file() else None
+    resolved = resolve_patches_for_apply(uo, patches_doc=patches_doc if isinstance(patches_doc, dict) else None)
+    if not resolved.get("ok"):
+        return {
+            "gate": "apply_semantic_patch",
+            "ok": False,
+            "message": str(resolved.get("error") or resolved.get("message") or "patches_unresolved"),
+            **{k: v for k, v in resolved.items() if k not in {"ok"}},
+        }
+
+    patches = list(resolved.get("patches") or [])
+    if not patches:
+        return {
+            "gate": "apply_semantic_patch",
+            "ok": False,
+            "open_blocking": len(open_blocking),
+            "message": "open blocking remain but no patches to apply",
+        }
+
+    checked = validate_patches_batch(
+        uo,
+        patches,
+        current_source_hash=_source_snapshot_hash(uo),
+    )
+    if checked.get("ok"):
+        return {
+            "gate": "apply_semantic_patch",
+            "ok": False,
+            "open_blocking": len(open_blocking),
+            "message": "patches still applicable; apply_semantic_patch did not close blocking tasks",
+            "patch_count": len(patches),
+        }
+    return {
+        "gate": "apply_semantic_patch",
+        "ok": False,
+        "open_blocking": len(open_blocking),
+        "message": "open blocking remain after apply",
+        "validation_errors": checked.get("errors") or [],
+    }
+
+
 def gate_semantic_closure(uo: Path) -> dict[str, Any]:
     """Blocking LLM tasks uncleared → cannot advance; recheck does not bump attempts (⑥)."""
+    from uo.scripts.llm_tasks import MAX_SEMANTIC_BATCHES
+
     tasks_doc = _load(uo / "ir" / "llm_tasks.yaml") or {}
     tasks = tasks_doc.get("tasks") if isinstance(tasks_doc, dict) else []
     open_blocking = [
@@ -837,7 +899,7 @@ def gate_semantic_closure(uo: Path) -> dict[str, Any]:
         if isinstance(t, dict) and t.get("status") == "open" and t.get("severity") == "blocking"
     ]
     batches = int((tasks_doc or {}).get("total_semantic_batches") or 0) if isinstance(tasks_doc, dict) else 0
-    max_batches = 8
+    max_batches = MAX_SEMANTIC_BATCHES
     if open_blocking and batches < max_batches:
         return {
             "gate": "semantic_closure",
@@ -868,6 +930,7 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
 
     uo = uo_root(project_root, op_name)
     mapping = {
+        "prepare_layout_receipt": lambda: gate_prepare_layout_receipt(project_root),
         "key_triage_required": lambda: gate_key_triage_required(uo),
         "key_resolve_receipt": lambda: gate_key_resolve_receipt(project_root, uo),
         "empty_only_producer": lambda: gate_empty_only_producer(uo),
@@ -883,6 +946,7 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
         "detect_score_pre": lambda: gate_detect_score_pre(uo),
         "detect_score_post": lambda: gate_detect_score_post(uo),
         "adjudicate_llm_tasks": lambda: gate_adjudicate_llm_tasks(uo),
+        "apply_semantic_patch": lambda: gate_apply_semantic_patch(uo),
         "semantic_closure": lambda: gate_semantic_closure(uo),
         "uo_ready": lambda: gate_uo_ready(uo),
         "kb_ready": lambda: gate_uo_ready(uo),

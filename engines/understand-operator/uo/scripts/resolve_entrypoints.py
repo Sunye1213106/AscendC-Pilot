@@ -21,7 +21,13 @@ from uo._operator.artifacts import existing_operator_root, safe_op_name
 from uo.scripts._ir_io import read_yaml, snippet, write_yaml
 from uo.scripts.arch_path import arch_compatible, architecture_of_path, path_family_of
 from uo.scripts.cbm_client import CbmClient, read_source_snippet
-from uo.scripts.semantic_identity import make_locator, mint_edge_id, mint_symbol_identity
+from uo.scripts.semantic_identity import (
+    infer_specialization_kind,
+    make_locator,
+    mint_edge_id,
+    mint_symbol_identity,
+    parse_template_arity,
+)
 
 
 def _path_has_dir(rel: str, dirname: str) -> bool:
@@ -616,6 +622,13 @@ def _normalize_role(role: str) -> str:
     return _LEGACY_ROLE_MAP.get(role, role)
 
 
+def _template_fields_from_snippet(snippet_text: str) -> tuple[str, str]:
+    text = str(snippet_text or "")
+    tpl = parse_template_arity(text)
+    sk = infer_specialization_kind(text)
+    return tpl, sk
+
+
 def _node_from_candidate(cand: dict[str, Any], *, role: str, status: str) -> dict[str, Any]:
     rel = str(cand.get("file_path") or "").replace("\\", "/")
     name = str(cand.get("name") or "")
@@ -632,13 +645,17 @@ def _node_from_candidate(cand: dict[str, Any], *, role: str, status: str) -> dic
         role_n = f"{path_family}_impl"
     elif role in {"public_host_entry", "host_tiling_entry"} and architecture_of_path(rel) == "neutral":
         role_n = "public_host_entry"
+    sig_snip = str(cand.get("signature_snippet") or "")[:240]
+    tpl, sk = _template_fields_from_snippet(sig_snip)
     ident = mint_symbol_identity(
         kind="entrypoint",
         name=name,
         file_path=rel,
         qualified_name=qn,
-        signature=str(cand.get("signature_snippet") or "")[:120],
+        signature=sig_snip[:120],
         class_or_namespace=cls,
+        template_arity_or_signature=tpl,
+        specialization_kind=sk,
         architecture=architecture_of_path(rel),
         template_family=str(cand.get("template_family") or path_family),
         path_family=path_family,
@@ -948,37 +965,63 @@ def _link_host_to_templates(
 ) -> list[dict[str, Any]]:
     edges: list[dict[str, Any]] = []
     publics = [n for n in nodes.values() if n.get("role") == "public_host_entry"]
-    impls = [n for n in nodes.values() if n.get("role") in {"normal_impl", "varlen_impl", "empty_impl", "template_registration"}]
+    impls = [
+        n
+        for n in nodes.values()
+        if n.get("role") in {"normal_impl", "varlen_impl", "empty_impl", "template_registration"}
+    ]
     registries = [n for n in nodes.values() if n.get("role") == "tiling_registry"]
     for pub in publics:
         for reg in registries:
-            # Neutral public entry dispatches via registry when arch evidence exists on registry/impl
             edges.append(
                 {
                     "id": mint_edge_id("dispatches_to", pub["id"], reg["id"]),
                     "type": "dispatches_to",
                     "source": pub["id"],
                     "target": reg["id"],
+                    "target_status": "resolved",
                     "evidence": [{"reason": "public_host_to_registry"}],
                     "confidence": "candidate",
                 }
             )
-        for impl in impls:
-            if impl.get("architecture") not in {"neutral", architecture} and architecture_of_path(
-                str((impl.get("locator") or {}).get("file_path") or "")
-            ) not in {"neutral", architecture}:
-                continue
-            edges.append(
-                {
-                    "id": mint_edge_id("selects", pub["id"], impl["id"]),
-                    "type": "selects",
-                    "source": pub["id"],
-                    "target": impl["id"],
-                    "evidence": [{"reason": "host_to_impl_candidate", "path_family": impl.get("path_family")}],
-                    "confidence": "candidate",
-                }
-            )
-    # template list also drives edges
+        scoped_impls = [
+            impl
+            for impl in impls
+            if impl.get("architecture") in {"neutral", architecture}
+            or architecture_of_path(str((impl.get("locator") or {}).get("file_path") or ""))
+            in {"neutral", architecture}
+        ]
+        by_family: dict[str, list[dict[str, Any]]] = {}
+        for impl in scoped_impls:
+            fam = str(impl.get("path_family") or "unknown")
+            by_family.setdefault(fam, []).append(impl)
+        for fam, group in by_family.items():
+            if len(group) == 1:
+                impl = group[0]
+                edges.append(
+                    {
+                        "id": mint_edge_id("selects", pub["id"], impl["id"]),
+                        "type": "selects",
+                        "source": pub["id"],
+                        "target": impl["id"],
+                        "target_status": "resolved",
+                        "evidence": [{"reason": "host_to_impl_candidate", "path_family": fam}],
+                        "confidence": "candidate",
+                    }
+                )
+            elif len(group) > 1:
+                edges.append(
+                    {
+                        "id": mint_edge_id("selects", pub["id"], fam, "candidate_set"),
+                        "type": "selects",
+                        "source": pub["id"],
+                        "target_status": "candidate_set",
+                        "candidate_ids": [n["id"] for n in group],
+                        "unresolved_reason": "multiple_impl_candidates_same_path_family",
+                        "evidence": [{"reason": "host_to_impl_ambiguous", "path_family": fam}],
+                        "confidence": "candidate",
+                    }
+                )
     for tpl in templates:
         nid = tpl.get("node_id")
         if not nid or nid not in nodes:
@@ -990,6 +1033,7 @@ def _link_host_to_templates(
                     "type": "instantiates",
                     "source": pub["id"],
                     "target": nid,
+                    "target_status": "resolved",
                     "evidence": [{"file_path": tpl.get("file_path"), "line": tpl.get("line")}],
                     "confidence": "source_verified",
                     "verification_source": "source",

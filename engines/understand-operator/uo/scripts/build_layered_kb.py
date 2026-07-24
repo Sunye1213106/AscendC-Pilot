@@ -339,14 +339,26 @@ def _merge_nodes(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
             nid = str(node.get("id") or "")
             if not nid:
                 continue
+            sym = node.get("symbol_ref") if isinstance(node.get("symbol_ref"), dict) else {}
+            ikey = str(node.get("identity_key") or sym.get("identity_key") or "").strip()
             if nid not in out:
                 out[nid] = node
-            else:
-                merged = dict(out[nid])
-                for key, value in node.items():
-                    if key not in merged or merged[key] in (None, "", [], {}):
-                        merged[key] = value
-                out[nid] = merged
+                continue
+            prev = out[nid]
+            prev_sym = prev.get("symbol_ref") if isinstance(prev.get("symbol_ref"), dict) else {}
+            prev_ikey = str(prev.get("identity_key") or prev_sym.get("identity_key") or "").strip()
+            if ikey and prev_ikey and ikey != prev_ikey:
+                # Same short id collision — do not merge distinct semantic identities.
+                alt_id = f"{nid}@{ikey[:8]}"
+                while alt_id in out:
+                    alt_id = f"{alt_id}_"
+                out[alt_id] = {**node, "id": alt_id}
+                continue
+            merged = dict(prev)
+            for key, value in node.items():
+                if key not in merged or merged[key] in (None, "", [], {}):
+                    merged[key] = value
+            out[nid] = merged
     return list(out.values())
 
 

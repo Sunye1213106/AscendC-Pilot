@@ -66,7 +66,7 @@ def _active_action_id(project: Path) -> str:
 
         pass
 
-    return "scope_confirmation"
+    return ""
 
 
 
@@ -183,6 +183,17 @@ def run_uo_scope(
     resolved_op = _resolve_op_name(project, op_name)
 
     action_id = _active_action_id(project)
+
+    if not action_id:
+        return {
+            "ok": False,
+            "error": "no_active_action",
+            "message_zh": (
+                "uo-scope 需要有效的 active_action / lease；"
+                "请先 `acp run-action scope_confirmation` prepare，禁止默认伪造 action_id"
+            ),
+            "step": step_l,
+        }
 
     cbm_name = str(cbm_project or "").strip()
 

@@ -9,7 +9,7 @@ Do not manage workflow state or declare completion.
 
 - mode: `task`
 - task_id: `confidence-review`
-- workflow_id: `uo-update`
+- workflow_id: `<WORKFLOW_ID>`
 - action_id: `confidence_review`
 - run_id: `<RUN_ID>`
 

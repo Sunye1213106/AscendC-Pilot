@@ -33,7 +33,9 @@ def _cand_identity(item: dict[str, Any]) -> str:
     fp = str(item.get("file_path") or "").replace("\\", "/")
     qn = str(item.get("qualified_name") or item.get("name") or "")
     cls = str(item.get("class_or_namespace") or "")
-    return f"{fp}|{qn}|{cls}".casefold()
+    sig = str(item.get("normalized_signature") or item.get("signature") or "")
+    tpl = str(item.get("template_arity_or_signature") or "")
+    return f"{fp}|{qn}|{cls}|{sig}|{tpl}".casefold()
 
 
 def load_extract_plan(uo_root: Path) -> dict[str, Any] | None:

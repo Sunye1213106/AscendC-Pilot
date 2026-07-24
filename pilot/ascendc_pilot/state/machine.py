@@ -191,6 +191,8 @@ def advance_phase(
     from ascendc_pilot.gates import run_named_gate
     from ascendc_pilot.runs import append_event
     from ascendc_pilot.workflows import allowed_transition, get_workflow, label_zh_for
+    from ascendc_pilot.workflows.pipeline import missing_phase_actions, recommend_next_action
+    from ascendc_pilot.workflows import actions_for_phase
 
     state = load_state(project_root)
     if not state:
@@ -203,6 +205,76 @@ def advance_phase(
     current = str(state.get("phase") or "")
     if not allowed_transition(wid, current, next_phase, kind="forward"):
         raise RuntimeError(f"Illegal transition {current!r} → {next_phase!r} (no forward edge)")
+
+    # Hard constraint: cannot advance while recommended (or any pipeline) actions remain.
+    missing = missing_phase_actions(project_root, wid, current)
+    if missing:
+        recommended = recommend_next_action(
+            project_root,
+            workflow_id=wid,
+            phase=current,
+            allowed_actions=actions_for_phase(wid, current),
+        )
+        msgs = [
+            f"阶段 `{current}` 流水线未完成：缺少 Action {missing}",
+            f"当前 recommended_next_action=`{(recommended or {}).get('id')}`",
+        ]
+        from ascendc_pilot.observation import record_pilot_result
+
+        recorded = record_pilot_result(
+            project_root,
+            ok=False,
+            action_id="",
+            step_id="advance",
+            error_code="PIPELINE_INCOMPLETE",
+            messages=msgs,
+            source="advance",
+            extra={"from": current, "to": next_phase, "missing_actions": missing},
+        )
+        state = load_state(project_root)
+        if state.get("status") not in TERMINAL and state.get("status") != "blocked":
+            state["status"] = "rework_required"
+            state["last_failure"] = {
+                "reason_code": "PIPELINE_INCOMPLETE",
+                "error_code": "PIPELINE_INCOMPLETE",
+                "message_zh": "；".join(msgs),
+                "missing_actions": missing,
+                "action_id": (recommended or {}).get("id") or missing[0],
+            }
+            save_state(project_root, state)
+            state = load_state(project_root)
+        append_event(
+            project_root,
+            {
+                "type": "advance_failed",
+                "from": current,
+                "to": next_phase,
+                "failed": ["phase_pipeline"],
+                "missing_actions": missing,
+                "observation_id": (recorded.get("observation") or {}).get("observation_id"),
+            },
+        )
+        return {
+            "ok": False,
+            "advanced": False,
+            "from": current,
+            "to": next_phase,
+            "error": "PIPELINE_INCOMPLETE",
+            "missing_actions": missing,
+            "recommended_next_action": recommended,
+            "failed_gates": [
+                {
+                    "gate": "phase_pipeline",
+                    "ok": False,
+                    "missing_actions": missing,
+                    "message": msgs[0],
+                }
+            ],
+            "status": state.get("status"),
+            "state": state,
+            "observation": recorded.get("observation"),
+            "message_zh": "；".join(msgs),
+        }
 
     gate_ids = (
         list(required_gates)

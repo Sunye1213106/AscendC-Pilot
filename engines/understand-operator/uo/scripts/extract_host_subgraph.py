@@ -28,6 +28,17 @@ from uo.scripts.resolve_entrypoints import entrypoint_units, load_entrypoint_gra
 from uo.scripts.semantic_identity import mint_symbol_identity
 from uo.scripts.source_path import resolve_repo_source_path
 
+def _chain_item_key(item: dict[str, Any]) -> str:
+    if item.get("identity_key"):
+        return str(item["identity_key"]).casefold()
+    fp = str(item.get("file_path") or "").replace("\\", "/")
+    qn = str(item.get("qualified_name") or item.get("name") or "")
+    cls = str(item.get("class_or_namespace") or "")
+    sig = str(item.get("normalized_signature") or item.get("signature") or "")
+    tpl = str(item.get("template_arity_or_signature") or "")
+    return f"{fp}|{qn}|{cls}|{sig}|{tpl}".casefold()
+
+
 IF_RE = re.compile(r"\bif\s*(?:constexpr\s*)?\((.+?)\)\s*\{", re.DOTALL)
 MACRO_IF_RE = re.compile(r"^\s*#\s*if(?:n?def)?\s+(.+)$", re.MULTILINE)
 # Generic tilingData / tiling_data field assigns
@@ -180,9 +191,18 @@ def extract_host_subgraph(
     client = CbmClient(uo_root)
     root_sym = None
     if client.available and primary.get("qualified_name"):
-        root_sym = client.resolve_qn(primary["qualified_name"], file_contains=architecture)
+        pcls = str(primary.get("class_or_namespace") or "")
+        root_sym = client.resolve_qn(
+            primary["qualified_name"],
+            file_contains=architecture,
+            class_qn=pcls or None,
+        )
         if root_sym is None and primary.get("name"):
-            root_sym = client.resolve_qn(primary["name"], file_contains=architecture)
+            root_sym = client.resolve_qn(
+                primary["name"],
+                file_contains=architecture,
+                class_qn=pcls or None,
+            )
 
     chain: list[dict[str, Any]] = []
     for node in seed_nodes:
@@ -229,25 +249,28 @@ def extract_host_subgraph(
         if helper_name.casefold() in writer_keep or not writer_keep:
             seed_names.append(helper_name)
     for helper_name in seed_names:
-        if any(str(item.get("name") or "") == helper_name for item in chain):
-            continue
         hit = None
         if client.available:
-            hit = client.resolve_qn(helper_name, file_contains=architecture)
-        if hit is not None:
-            chain.append(hit.as_dict())
-        else:
-            chain.append(
-                {
-                    "name": helper_name,
-                    "qualified_name": helper_name,
-                    "file_path": primary.get("file_path") or "",
-                    "start_line": primary.get("start_line") or 0,
-                    "end_line": primary.get("end_line") or 0,
-                    "class_or_namespace": primary.get("class_or_namespace") or "",
-                    "label": "helper_call_seed",
-                }
+            hit = client.resolve_qn(
+                helper_name,
+                file_contains=architecture,
+                class_qn=str(primary.get("class_or_namespace") or "") or None,
             )
+        if hit is not None:
+            child = hit.as_dict()
+        else:
+            child = {
+                "name": helper_name,
+                "qualified_name": helper_name,
+                "file_path": primary.get("file_path") or "",
+                "start_line": primary.get("start_line") or 0,
+                "end_line": primary.get("end_line") or 0,
+                "class_or_namespace": primary.get("class_or_namespace") or "",
+                "label": "helper_call_seed",
+            }
+        if any(_chain_item_key(item) == _chain_item_key(child) for item in chain):
+            continue
+        chain.append(child)
 
     # Optional extra host entries from plan
     for entry in (plan or {}).get("extra_host_entries") or []:
@@ -335,6 +358,9 @@ def extract_host_subgraph(
             file_path=file_path,
             qualified_name=str(item.get("qualified_name") or item.get("name") or "fn"),
             class_or_namespace=str(item.get("class_or_namespace") or ""),
+            signature=str(item.get("normalized_signature") or item.get("signature") or ""),
+            template_arity_or_signature=str(item.get("template_arity_or_signature") or ""),
+            specialization_kind=str(item.get("specialization_kind") or "none"),
             architecture=architecture,
             prefix="HOST",
         )

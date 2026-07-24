@@ -1,35 +1,28 @@
-                # KEY 语义闭合
+﻿# key_resolution — KEY 语义闭合（仅处理 triage 分配目标）
 
-                ## Goal
+> 本 Action 只处理 prepare 给出的 target_ids。禁止重做 triage 或扩 scope。
 
-                对指定 KEY 子集做 input_derivable 语义闭合，写 patch。
+## Purpose
 
-                ## Input Interpretation
+对 `key_triage` 分配的 KEY 批次做语义闭合，写出 `input_derivable_patch.yaml`。
 
-                仅处理 `acp next` 提供的当前 unresolved / target 子集与上下文包。
+## Inputs
 
-                ## Domain Procedure
+- Pilot `dispatch_targets.target_ids`（有限集合）
+- `ir/key_triage.yaml`（只读）
 
-                1. 使用 capability `source-reading`。
-2. 使用 capability `cbm-navigation`。
-3. 使用 capability `kb-query`。
-4. 使用 capability `semantic-resolution`。
-                5. 只处理当前 Action 指定的 ID 或文件。
-                6. 按输出合同生成候选产物；证据不足保留 unresolved。
+## Outputs
 
-                ## Domain Decisions
+- `uo/ir/input_derivable_patch.yaml`（+ 可选 `key_shape_resolve/**`）
 
-                - 遵循已加载 Policy 与 Capability 硬限制。
-                - 本 Action 特有分类/闭合规则见关联 task prompt（若有）。
+## Forbidden
 
-                ## Output
+- MUST NOT：改写 `key_triage.yaml`
+- MUST NOT：处理 target_ids 之外的 KEY
+- MUST NOT：为无证据 KEY 假标 high / accepted
 
-                - 合同 id：`input-derivable-patch-v1`
-                - 不得写声明外路径。
+## Procedure
 
-                ## Cannot Decide
-
-                - 证据不足 → unresolved / needs_human
-                - 缺工具或 gate 前置 → 停止并回报 blocking reason
-
-                本文件不得描述 Pilot advance、complete 或其他阶段。
+1. 只处理 prepare 注入的 target_ids。
+2. 证据不足保持 unresolved。
+3. 写完 patch 后停止；后续 confidence/export 由其它 Action 负责。

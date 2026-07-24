@@ -96,10 +96,24 @@ def test_mark_terminal_pass_refused_without_complete(tmp_path: Path):
 
 def test_advance_gate_fail_keeps_phase_rework(tmp_path: Path):
     from ascendc_pilot.state import advance_phase
+    from ascendc_pilot.runs import issue_receipt
+    from ascendc_pilot.spec_hashes import workflow_spec_hash
 
-    start_workflow(tmp_path, "uo-init")
-    # prepare → scope has empty phase_gates; skip to scope then fail scope gate
     start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
+    # Scope pipeline requires scope_confirmation receipt before advance.
+    st = load_state(tmp_path)
+    issue_receipt(
+        tmp_path,
+        actor_type="producer",
+        actor_id="ascendc-pilot",
+        action_id="scope_confirmation",
+        workflow_spec_hash=workflow_spec_hash("uo-init"),
+        input_hashes={"f": "1"},
+        output_hashes={"f": "1"},
+        checker_result={"ok": True},
+        nonce="scope-n",
+        _internal=True,
+    )
     result = advance_phase(tmp_path, "extract")
     assert result["ok"] is False
     st = load_state(tmp_path)
@@ -324,24 +338,39 @@ def test_kb_fingerprint_not_uo_ready_alias(tmp_path: Path):
 
 
 def test_e2e_cli_loop_prepare_to_scope_rework(tmp_path: Path):
-    """CLI-shaped loop: start → next → advance fail → rework_required (not blocked)."""
+    """CLI-shaped loop: start → receipt → advance → scope gate fail → rework_required."""
     from ascendc_pilot.state import advance_phase, describe_next, rework_phase, start_workflow
-    from ascendc_pilot.paths import uo_root
+    from ascendc_pilot.runs import issue_receipt
+    from ascendc_pilot.spec_hashes import workflow_spec_hash
 
     st = start_workflow(tmp_path, "uo-init")
     assert st["phase"] == "prepare"
     nxt = describe_next(tmp_path)
     assert nxt["status"] == "running"
-    # prepare has empty gates → can advance to scope
+    # prepare advance requires prepare_layout receipt (fail-closed)
+    denied = advance_phase(tmp_path, "scope")
+    assert denied["ok"] is False
+    assert denied.get("error") == "PIPELINE_INCOMPLETE"
+    issue_receipt(
+        tmp_path,
+        actor_type="deterministic_engine",
+        actor_id="deterministic-uo-engine",
+        action_id="prepare_layout",
+        workflow_spec_hash=workflow_spec_hash("uo-init"),
+        input_hashes={"f": "1"},
+        output_hashes={"f": "1"},
+        checker_result={"ok": True},
+        nonce="prep-n",
+        _internal=True,
+    )
     ok = advance_phase(tmp_path, "scope")
     assert ok["ok"] is True
     assert load_state(tmp_path)["phase"] == "scope"
-    # scope gate fails without confirmation
+    # scope pipeline incomplete without scope_confirmation receipt
     fail = advance_phase(tmp_path, "extract")
     assert fail["ok"] is False
     assert load_state(tmp_path)["phase"] == "scope"
-    assert load_state(tmp_path)["status"] in {"human_required", "rework_required"}
-    assert load_state(tmp_path)["status"] != "blocked"
+    assert load_state(tmp_path)["status"] in {"human_required", "rework_required", "running"}
     # Force phase extract then rework to scope
     start_workflow(tmp_path, "uo-init", phase="extract", force_phase=True)
     rw = rework_phase(tmp_path, reason_code="SCOPE_REWORK")

@@ -1,4 +1,4 @@
-## Task
+﻿## Task
 
 Perform `key_resolution` for the targets provided by the Pilot action.
 
@@ -9,7 +9,7 @@ Do not manage workflow state or declare completion.
 
 - mode: `task`
 - task_id: `key-resolution`
-- workflow_id: `uo-update`
+- workflow_id: `<WORKFLOW_ID>`
 - action_id: `key_resolution`
 - run_id: `<RUN_ID>`
 
@@ -60,3 +60,5 @@ Contract id: `input-derivable-patch-v1`
 
 When evidence is insufficient: retain unresolved or needs_human;
 include the missing evidence type; do not guess; stop and return the blocking reason.
+
+

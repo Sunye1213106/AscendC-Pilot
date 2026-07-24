@@ -80,6 +80,8 @@ def _setup(tmp_path: Path) -> tuple[Path, str]:
         kernel_name="FooKernel",
         kernel_file="op_kernel/arch35/foo_kernel.h",
     )
+    # propose_extract_plan requires boundary present (even empty slots).
+    write_yaml(ir / "operator_boundary.yaml", {"inputs": [], "attributes": [], "outputs": []})
     return repo, op
 
 

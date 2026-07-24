@@ -111,8 +111,12 @@ def test_resolve_requires_producer_when_candidates(tmp_path: Path) -> None:
 
 
 def test_recommend_extract_order(tmp_path: Path) -> None:
+    from ascendc_pilot.runs import issue_receipt
+    from ascendc_pilot.spec_hashes import workflow_spec_hash
+    from ascendc_pilot.state import start_workflow
+
     root = tmp_path / "op"
-    uo = root / ".ascendc-pilot" / "uo" / "ir"
+    start_workflow(root, "uo-init", phase="extract", force_phase=True)
     allowed = [
         {"id": "detect_score_pre", "label_zh": "pre"},
         {"id": "extract_plan", "label_zh": "plan"},
@@ -125,12 +129,32 @@ def test_recommend_extract_order(tmp_path: Path) -> None:
     rec = recommend_next_action(root, workflow_id="uo-init", phase="extract", allowed_actions=allowed)
     assert rec and rec["id"] == "detect_score_pre"
 
-    _write(uo / "score_report_pre.yaml", {"ok": True})
-    _write(uo / "llm_tasks.yaml", {"tasks": []})
+    issue_receipt(
+        root,
+        actor_type="deterministic_engine",
+        actor_id="deterministic-uo-engine",
+        action_id="detect_score_pre",
+        workflow_spec_hash=workflow_spec_hash("uo-init"),
+        input_hashes={"f": "1"},
+        output_hashes={"f": "1"},
+        checker_result={"ok": True},
+        nonce="pre",
+        _internal=True,
+    )
     rec2 = recommend_next_action(root, workflow_id="uo-init", phase="extract", allowed_actions=allowed)
     assert rec2 and rec2["id"] == "extract_plan"
 
-    _write(uo / "extract_plan.yaml", {"version": 1})
-    _write(uo / "host_subgraph.yaml", {"nodes": []})
+    issue_receipt(
+        root,
+        actor_type="producer",
+        actor_id="uo-semantic-resolve",
+        action_id="extract_plan",
+        workflow_spec_hash=workflow_spec_hash("uo-init"),
+        input_hashes={"f": "1"},
+        output_hashes={"f": "1"},
+        checker_result={"ok": True},
+        nonce="plan",
+        _internal=True,
+    )
     rec3 = recommend_next_action(root, workflow_id="uo-init", phase="extract", allowed_actions=allowed)
     assert rec3 and rec3["id"] == "detect_score_post"

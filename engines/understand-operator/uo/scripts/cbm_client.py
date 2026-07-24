@@ -130,25 +130,120 @@ class CbmClient:
             return []
         return [_row_to_symbol(row) for row in rows]
 
-    def resolve_qn(self, short_or_qn: str, *, file_contains: str | None = None) -> CbmSymbol | None:
+    def resolve_symbols(
+        self,
+        short_or_qn: str,
+        *,
+        file_contains: str | None = None,
+        class_qn: str | None = None,
+        prefer_file_contains: str | None = None,
+        architecture: str | None = None,
+        limit: int = 30,
+    ) -> list[CbmSymbol]:
+        """Return ranked symbol hits; never silently collapse ambiguity."""
         text = short_or_qn.strip()
         if not text:
-            return None
+            return []
+        hits: list[CbmSymbol] = []
         if "." in text or "::" in text:
-            hits = self.search_symbols(qualified_contains=text.split(".")[-1].split("::")[-1], file_contains=file_contains, limit=30)
-            for hit in hits:
-                if hit.qualified_name == text or hit.qualified_name.endswith("." + text) or hit.qualified_name.endswith("::" + text):
-                    return hit
-                if text in hit.qualified_name:
-                    return hit
-        name = text.split("::")[-1].split(".")[-1]
-        hits = self.search_symbols(name_pattern=name, file_contains=file_contains, limit=30)
-        if not hits:
-            hits = self.search_symbols(name_pattern=f"%{name}%", file_contains=file_contains, limit=30)
-        if not hits:
-            return None
-        exact = [h for h in hits if h.name == name]
-        return (exact or hits)[0]
+            short = text.split(".")[-1].split("::")[-1]
+            hits = self.search_symbols(
+                qualified_contains=short,
+                file_contains=file_contains,
+                prefer_file_contains=prefer_file_contains,
+                architecture=architecture,
+                limit=limit,
+            )
+            exact_qn = [
+                h
+                for h in hits
+                if h.qualified_name == text
+                or h.qualified_name.endswith("." + text)
+                or h.qualified_name.endswith("::" + text)
+            ]
+            if exact_qn:
+                hits = exact_qn
+        else:
+            name = text.split("::")[-1].split(".")[-1]
+            hits = self.search_symbols(
+                name_pattern=name,
+                file_contains=file_contains,
+                prefer_file_contains=prefer_file_contains,
+                architecture=architecture,
+                limit=limit,
+            )
+            if not hits:
+                hits = self.search_symbols(
+                    name_pattern=f"%{name}%",
+                    file_contains=file_contains,
+                    prefer_file_contains=prefer_file_contains,
+                    architecture=architecture,
+                    limit=limit,
+                )
+            exact = [h for h in hits if h.name == name]
+            if exact:
+                hits = exact
+        if class_qn:
+            cq = class_qn.strip()
+            if cq:
+                scoped = [
+                    h
+                    for h in hits
+                    if h.qualified_name == cq
+                    or h.qualified_name.startswith(cq + "::")
+                    or h.qualified_name.startswith(cq + ".")
+                    or cq in h.qualified_name
+                ]
+                if scoped:
+                    hits = scoped
+        return hits
+
+    def resolve_qn(
+        self,
+        short_or_qn: str,
+        *,
+        file_contains: str | None = None,
+        class_qn: str | None = None,
+        prefer_file_contains: str | None = None,
+        architecture: str | None = None,
+        limit: int = 30,
+    ) -> CbmSymbol | None:
+        """Fail-closed: return the hit only when exactly one candidate matches."""
+        hits = self.resolve_symbols(
+            short_or_qn,
+            file_contains=file_contains,
+            class_qn=class_qn,
+            prefer_file_contains=prefer_file_contains,
+            architecture=architecture,
+            limit=limit,
+        )
+        if len(hits) == 1:
+            return hits[0]
+        return None
+
+    def resolve_qn_or_ambiguous(
+        self,
+        short_or_qn: str,
+        *,
+        file_contains: str | None = None,
+        class_qn: str | None = None,
+        prefer_file_contains: str | None = None,
+        architecture: str | None = None,
+        limit: int = 30,
+    ) -> tuple[CbmSymbol | None, list[CbmSymbol]]:
+        hits = self.resolve_symbols(
+            short_or_qn,
+            file_contains=file_contains,
+            class_qn=class_qn,
+            prefer_file_contains=prefer_file_contains,
+            architecture=architecture,
+            limit=limit,
+        )
+        if len(hits) == 1:
+            return hits[0], []
+        if len(hits) == 0:
+            return None, []
+        return None, hits
 
     def callers_callees(self, node_id: int, *, direction: str = "outbound", limit: int = 200) -> list[CbmSymbol]:
         con = self.connect()
