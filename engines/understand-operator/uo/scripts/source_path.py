@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-_SOURCE_MARKERS = ("op_host/", "op_kernel/", "op_api/", "op_tiling/")
+_SOURCE_MARKERS = ("op_host/", "op_kernel/", "op_api/", "op_tiling/", "op_graph/")
 
 
 def resolve_repo_source_path(

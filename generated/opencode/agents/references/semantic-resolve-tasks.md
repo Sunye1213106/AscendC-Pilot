@@ -58,7 +58,7 @@ escalate_keys: []
 
 ## C) Extract plan
 
-只读 `ir/extract_plan_candidates.yaml`（可一次 MCP snippet）。确认 writers/sinks/aliases。
+只读 `ir/extract_plan_candidates.yaml`（可一次 MCP snippet）。确认 writers/sinks/aliases/non_sink。
 
 ```yaml
 version: 1
@@ -74,10 +74,16 @@ receivers:
 aliases:
   - local: ...
     tdf_leaf: ...
-non_sink_roots: []
+non_sink_roots:          # bare string names ONLY — never adjudication mappings
+  - ALIGN128
+  - blockIdx
 extra_host_entries: []
-derived_roots: []
+derived_roots: []        # bare string names ONLY
 ```
+
+**Schema 硬规则**：
+- `writers` / `receivers` / `aliases`：mapping；证据不足 → omit（禁止自造 unresolved 对象）
+- `non_sink_roots` / `derived_roots`：**字符串列表**；候选可有空 `file_path`，仍用短名确认；禁止 `{name, adjudication, …}`
 
 角色：
 

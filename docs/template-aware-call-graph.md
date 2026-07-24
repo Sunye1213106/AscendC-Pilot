@@ -1,65 +1,92 @@
-# Template-aware call graph (Phase 6)
+# Template-aware Function / Call Graph
 
-## Problem: old merge paths
+## Problem: old merge paths still left
 
-Earlier extraction merged kernel/host symbols too aggressively:
+Identity v3 stopped short-name ID collisions, but extraction still had:
 
-- **Short-name collision**: nodes with the same display id (e.g. `Process`) from different classes or files were treated as one entity.
-- **CBM `resolve_qn`**: when several symbols shared a short name, the first SQL hit was returned.
-- **`find_function_body`**: multiple brace-bounded definitions with the same name picked `matches[0]` unless a zero-distance `hint_line` applied.
-- **Kernel subgraph**: a single `KPATH_ENTRY` owned file-level `KOP_{kind}_{stem}` markers for every scanned kernel header.
-- **Branch/loop ids**: `stable_id("KBR_", name, line)` ignored owning function and file identity, so the same line number in two files could collide conceptually.
-- **`build_layered_kb`**: merged nodes solely by `id`, even when `identity_key` differed.
+1. Candidate dedupe ignored signature / template / start_line → overloads collapsed early.
+2. Kernel Branch/Loop scanned whole files and hung under a single Entry.
+3. No stable `calls` edges (Entry `contains` Process/Init only).
+4. TDF / KVAR used leaf-only ids (`TDF_<leaf>`).
+5. `KEY_TILINGKEY` selected **all** KernelEntry nodes.
+6. `_merge_nodes` silently renamed colliding ids (`id@ikey[:8]`).
 
-## New identity model (`IDENTITY_VERSION=3`)
+## What changed (production)
 
-Semantic identity material now includes:
+| Area | Change |
+|------|--------|
+| `function_body.py` | `FunctionDefinition` / `CallSite`; `iter_function_definitions` / `resolve_*`; brace parser no longer mistakes nested `if (` for methods |
+| `function_call_graph.py` | verified / `candidate_set` / `missing` `calls` edges (fail-closed) |
+| `resolve_entrypoints.py` | `_dedupe_candidates` key includes signature + template + start_line; enrich from snippet |
+| `extract_kernel_subgraph.py` | per-`FunctionDefinition` Branch/Loop/Call; Entry→KernelClass→Function; typed TDF via `mint_field_identity`; TilingKeyValue→TemplateInstance (no select-all) |
+| `extract_host_subgraph.py` | TDF nodes use `mint_field_identity` + `owning_type` |
+| `reconcile_bridge.py` | leaf fallback marked `owning_type_missing_unique_leaf_fallback` |
+| `semantic_identity.py` | scoped ids prefer ordinal + normalized expr; `mint_template_instance_identity` |
+| `build_layered_kb.py` | `SEMANTIC_ID_COLLISION` diagnostics; no silent alt-id |
 
-| Field | Role |
-|--------|------|
-| `identity_key` / `stable_id` | Hash of kind, path, qn, signature, class, template arity, **specialization_kind**, arch, families |
-| `specialization_kind` | `primary` \| `partial` \| `explicit` \| `instance` \| `none` (generic C++ heuristics) |
-| `template_arity_or_signature` | Normalized contents of the first balanced `<...>` near a declaration |
-| `mint_scoped_node_id` | Branch/loop nodes scoped by **owning function `identity_key` + file + line** |
-| `mint_method_identity` | Methods require `class_or_namespace` |
+### FunctionDefinition schema
 
-Entrypoint linking uses `target_status=candidate_set` with `candidate_ids` when multiple template impls share a path family (fail-closed, no fake resolution).
+```yaml
+name / qualified_name / class_or_namespace
+normalized_signature
+template_arity_or_signature / specialization_kind
+file_path / start_line / end_line
+header_text / body_text
+source_hash / snippet_hash
+identity_key / stable_id
+```
 
-Kernel extraction prefers **`entrypoint_graph.extraction_units`**: each unit gets its own `KernelEntry` node id (`entry_root` / EP stable id), and files attach to the unit matched by `path_family` or seed file.
+### Template instance mapping
 
-## Tests
+```text
+TilingKeyDimension --has_value--> TilingKeyValue
+TilingKeyValue --selects--> TemplateInstance   # resolved | candidate_set
+TemplateInstance --implements--> KernelEntry     # when uniquely matched
+KernelEntry --contains--> KernelClass --contains--> FunctionDefinition
+FunctionDefinition --contains--> Branch|Loop
+FunctionDefinition --calls--> FunctionDefinition
+```
 
-Run:
+Ambiguous KEY→instance: `target_status: candidate_set` + unresolved `tilingkey_template_instance_ambiguous`. Never select-all Entries.
+
+## Unit tests (no live FAG required)
 
 ```bash
 cd engines/understand-operator
-python -m pytest tests/test_template_aware_identity.py tests/test_kernel_unit_isolation.py tests/test_no_fag_hardcode.py -q
+python -m pytest \
+  tests/test_template_aware_identity.py \
+  tests/test_kernel_unit_isolation.py \
+  tests/test_no_fag_hardcode.py \
+  tests/test_function_call_graph.py \
+  tests/test_tiling_field_identity.py \
+  tests/test_fag_function_isolation.py \
+  -q -k "not fag_repo"
 ```
 
-Coverage highlights:
+Last run: **37 passed**.
 
-- DemoKernelA vs DemoKernelB `Process` → different `stable_id`
-- Overloads, template arity, primary vs explicit → distinct keys
-- Branch ids differ for same line across files
-- Ambiguous `resolve_qn` → `None`; ambiguous `find_function_body` without class → `None`
-- Multi-unit kernel graph → multiple `KernelEntry` nodes, Process nodes under distinct entries (not one `KPATH_ENTRY`)
+## FAG rebuild (manual)
 
-## Unresolved / static limits
+```bash
+cd engines/understand-operator
+python -m uo.scripts.build_layered_kb \
+  d:/PR-review/TEST/ops-transformer/attention/flash_attention_score_grad \
+  --op-name flash_attention_score_grad \
+  --architecture arch35 \
+  --layers host,kernel,tilingkey,golden,bridge
+```
 
-- Template specialization detection is heuristic (header snippet only); explicit specializations without `template<>` in the snippet may stay `none`.
-- CBM ambiguity remains unresolved until disambiguated by class, file, or human confirmation — never auto-picked.
-- Multi-unit GET_TPL binding still blocks globally when multiple host calls exist without schema/file/unit association.
+Optional integration:
 
-## FAG verification note
+```bash
+python -m pytest tests/test_fag_function_isolation.py::test_fag_repo_kernel_extract_if_present -q
+```
 
-Production code must not hardcode FAG or FlashAttention names (`tests/test_no_fag_hardcode.py` guards this).
+Do **not** treat pre-rebuild IR under `.ascendc-pilot/uo/ir/` as proof of this change set.
 
-Read-only spot-check on existing fixture IR
-`TEST/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/uo/ir/`
-(artifacts may predate a full re-extract under identity v3):
+## Static limits still open
 
-- `entrypoint_graph.yaml`: **13** `extraction_units`; multiple distinct `identity_key` / `stable_id` values; `symbol_ref.class_or_namespace` includes several kernel/host classes (not a single short-name merge).
-- `host_subgraph.yaml`: helper nodes carry per-symbol `identity_key` + optional `class_or_namespace`.
-- No lone global `KPATH_ENTRY` as the sole kernel owner in current entrypoint units.
-
-Re-running UO extract on FAG after this change set is recommended for a full kernel-subgraph multi-unit `Process`/`Init` binding check.
+- Call resolution is brace/source based; no full C++ overload ranking by argument types.
+- Template specialization kind remains heuristic from nearby header text.
+- Macro regions outside any function attach to `FileScope`, not a KernelEntry.
+- Host REGISTER_TILING_TEMPLATE → instance wiring is best-effort via tilingkey aliases / path_family.

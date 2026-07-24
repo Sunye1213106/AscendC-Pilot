@@ -158,6 +158,11 @@ def test_host_tdf_after_plan(tmp_path: Path) -> None:
                 "file_path": "op_host/arch35/foo_tiling.cpp",
                 "start_line": 14,
                 "role": "key_writer",
+                "evidence_source": "source",
+                "source_verified": True,
+                "evidence_files": ["op_host/arch35/foo_tiling.cpp"],
+                "evidence_lines": ["14-16"],
+                "decision_reason": "calls context->SetTilingKey",
             },
             {
                 "name": "FooTiling",
@@ -261,3 +266,279 @@ def test_validate_rejects_call_edge_adjudications(tmp_path: Path) -> None:
     }
     errors = validate_extract_plan_against_candidates(plan, cands)
     assert any("call_edge_adjudications" in e for e in errors)
+
+
+def test_validate_non_sink_roots_string_list_ok() -> None:
+    from uo.scripts.extract_plan_io import validate_extract_plan_against_candidates
+
+    cands = {
+        "writer_candidates": [],
+        "receiver_candidates": [],
+        "alias_candidates": [],
+        "non_sink_root_candidates": [
+            {"name": "ALIGN128", "file_path": "", "evidence": ["assign_lhs_only"]},
+            {"name": "blockIdx", "file_path": "", "evidence": ["assign_lhs_only"]},
+        ],
+        "extra_entry_candidates": [],
+    }
+    plan = {
+        "version": 1,
+        "writers": [],
+        "receivers": [],
+        "aliases": [],
+        "non_sink_roots": ["ALIGN128", "blockIdx"],
+        "extra_host_entries": [],
+        "derived_roots": [],
+    }
+    assert validate_extract_plan_against_candidates(plan, cands) == []
+
+
+def test_validate_rejects_non_sink_roots_mapping() -> None:
+    """Adjudication/unresolved objects under non_sink_roots are contract violations."""
+    from uo.scripts.extract_plan_io import validate_extract_plan_against_candidates
+
+    cands = {
+        "writer_candidates": [],
+        "receiver_candidates": [],
+        "alias_candidates": [],
+        "non_sink_root_candidates": [
+            {"name": "ALIGN128", "file_path": "", "evidence": ["assign_lhs_only"]},
+        ],
+        "extra_entry_candidates": [],
+    }
+    plan = {
+        "version": 1,
+        "writers": [],
+        "receivers": [],
+        "aliases": [],
+        "non_sink_roots": [
+            {
+                "name": "ALIGN128",
+                "adjudication": "unresolved",
+                "missing_evidence": "file_path",
+                "reason": "assign_lhs_only",
+            }
+        ],
+        "extra_host_entries": [],
+    }
+    errors = validate_extract_plan_against_candidates(plan, cands)
+    assert any("must be a string name, got mapping" in e for e in errors)
+    assert not any("not in candidates: {'name'" in e for e in errors)
+
+
+def test_validate_rejects_derived_roots_mapping() -> None:
+    from uo.scripts.extract_plan_io import validate_extract_plan_against_candidates
+
+    cands = {
+        "writer_candidates": [],
+        "receiver_candidates": [],
+        "alias_candidates": [],
+        "non_sink_root_candidates": [],
+        "extra_entry_candidates": [],
+    }
+    plan = {
+        "version": 1,
+        "writers": [],
+        "receivers": [],
+        "aliases": [],
+        "non_sink_roots": [],
+        "derived_roots": [{"name": "x", "adjudication": "unresolved"}],
+    }
+    errors = validate_extract_plan_against_candidates(plan, cands)
+    assert any("derived_roots entry must be a string name, got mapping" in e for e in errors)
+
+
+def test_validate_rejects_blocking_reasons_section() -> None:
+    from uo.scripts.extract_plan_io import validate_extract_plan_against_candidates
+
+    cands = {
+        "writer_candidates": [],
+        "receiver_candidates": [],
+        "alias_candidates": [],
+        "non_sink_root_candidates": [],
+        "extra_entry_candidates": [],
+    }
+    plan = {
+        "version": 1,
+        "writers": [],
+        "receivers": [],
+        "aliases": [],
+        "non_sink_roots": [],
+        "blocking_reasons": [{"section": "non_sink_roots", "count_omitted": 30}],
+    }
+    errors = validate_extract_plan_against_candidates(plan, cands)
+    assert any("blocking_reasons" in e for e in errors)
+
+
+def test_plan_non_sink_roots_reads_strings_only() -> None:
+    from uo.scripts.extract_plan_io import plan_non_sink_roots
+
+    plan = {
+        "non_sink_roots": [
+            "ALIGN128",
+            {"name": "blockIdx", "adjudication": "unresolved"},
+        ]
+    }
+    assert plan_non_sink_roots(plan) == {"align128"}
+
+
+def test_extract_plan_weak_candidate_requires_source_evidence() -> None:
+    from uo.scripts.extract_plan_io import validate_extract_plan_against_candidates
+
+    cands = {
+        "writer_candidates": [
+            {
+                "name": "AlignTo",
+                "file_path": "op_host/arch35/foo_tiling.cpp",
+                "start_line": 40,
+                "score": 0.45,
+                "evidence": ["on_call_chain", "has_set_field"],
+                "role_suggested": "tiling_writer",
+                "qualified_name": "AlignTo",
+            }
+        ],
+        "receiver_candidates": [],
+        "alias_candidates": [],
+        "non_sink_root_candidates": [],
+        "extra_entry_candidates": [],
+    }
+    plan = {
+        "version": 1,
+        "writers": [
+            {
+                "name": "AlignTo",
+                "file_path": "op_host/arch35/foo_tiling.cpp",
+                "start_line": 40,
+                "role": "tiling_writer",
+                "evidence_source": "source",
+                "source_verified": True,
+                "evidence_files": [],
+            }
+        ],
+        "receivers": [],
+        "aliases": [],
+        "non_sink_roots": [],
+    }
+    errors = validate_extract_plan_against_candidates(plan, cands)
+    assert any("evidence_files" in e for e in errors)
+
+
+def test_candidate_only_decision_not_marked_source_verified() -> None:
+    from uo.scripts.extract_plan_io import validate_extract_plan_against_candidates
+
+    cands = {
+        "writer_candidates": [
+            {
+                "name": "SaveStuff",
+                "file_path": "op_host/arch35/foo_tiling.cpp",
+                "score": 0.9,
+                "evidence": ["has_set_field", "tilingdata_assign"],
+                "role_suggested": "tiling_writer",
+            }
+        ],
+        "receiver_candidates": [],
+        "alias_candidates": [],
+        "non_sink_root_candidates": [],
+        "extra_entry_candidates": [],
+    }
+    plan = {
+        "version": 1,
+        "writers": [
+            {
+                "name": "SaveStuff",
+                "file_path": "op_host/arch35/foo_tiling.cpp",
+                "role": "tiling_writer",
+                "evidence_source": "candidate_only",
+                "source_verified": True,
+                "confidence": "source_verified",
+            }
+        ],
+        "receivers": [],
+        "aliases": [],
+        "non_sink_roots": [],
+    }
+    errors = validate_extract_plan_against_candidates(plan, cands)
+    assert any("candidate_only cannot set source_verified" in e for e in errors)
+
+
+def test_align_helper_not_promoted_by_setter_name_only() -> None:
+    from uo.scripts.extract_plan_io import validate_extract_plan_against_candidates
+
+    cands = {
+        "writer_candidates": [
+            {
+                "name": "AlignTo",
+                "file_path": "op_host/arch35/foo_tiling.cpp",
+                "start_line": 12,
+                "score": 0.48,
+                "evidence": ["on_call_chain", "has_set_field"],
+                "role_suggested": "tiling_writer",
+                "qualified_name": "AlignTo",
+            }
+        ],
+        "receiver_candidates": [],
+        "alias_candidates": [],
+        "non_sink_root_candidates": [],
+        "extra_entry_candidates": [],
+    }
+    plan = {
+        "version": 1,
+        "writers": [
+            {
+                "name": "AlignTo",
+                "file_path": "op_host/arch35/foo_tiling.cpp",
+                "start_line": 12,
+                "role": "tiling_writer",
+                "evidence_source": "candidate_only",
+                "source_verified": False,
+            }
+        ],
+        "receivers": [],
+        "aliases": [],
+        "non_sink_roots": [],
+    }
+    errors = validate_extract_plan_against_candidates(plan, cands)
+    assert any("decision_reason" in e for e in errors)
+
+
+def test_non_sink_roots_not_bulk_accepted_without_source() -> None:
+    """non_sink_roots stay string-only; writers must not claim source_verified without files."""
+    from uo.scripts.extract_plan_io import validate_extract_plan_against_candidates
+
+    cands = {
+        "writer_candidates": [
+            {
+                "name": "SaveStuff",
+                "file_path": "op_host/arch35/foo_tiling.cpp",
+                "score": 0.85,
+                "evidence": ["has_set_field"],
+                "role_suggested": "tiling_writer",
+            }
+        ],
+        "receiver_candidates": [],
+        "alias_candidates": [],
+        "non_sink_root_candidates": [
+            {"name": "ALIGN128", "file_path": "", "evidence": ["assign_lhs_only"]},
+            {"name": "blockIdx", "file_path": "", "evidence": ["assign_lhs_only"]},
+        ],
+        "extra_entry_candidates": [],
+    }
+    plan = {
+        "version": 1,
+        "writers": [
+            {
+                "name": "SaveStuff",
+                "file_path": "op_host/arch35/foo_tiling.cpp",
+                "role": "tiling_writer",
+                "source_verified": True,
+                "evidence_source": "source",
+            }
+        ],
+        "receivers": [],
+        "aliases": [],
+        "non_sink_roots": ["ALIGN128", "blockIdx"],
+    }
+    errors = validate_extract_plan_against_candidates(plan, cands)
+    assert any("evidence_files" in e for e in errors)
+    # String-only non_sink list still valid aside from writer evidence failure.
+    assert not any("non_sink_roots entry must be a string" in e for e in errors)

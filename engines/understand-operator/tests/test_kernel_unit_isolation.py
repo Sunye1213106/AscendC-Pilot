@@ -138,10 +138,24 @@ def test_kernel_subgraph_multiple_entries_not_single_kpath(tmp_path: Path) -> No
 
     process_nodes = [n for n in payload["nodes"] if n.get("name") == "Process" and n.get("node_type") == "Process"]
     assert len(process_nodes) >= 2
-    proc_entry_sources = set()
+    # Entry → KernelClass → FunctionDefinition (Process)
+    contains = [
+        (e.get("source"), e.get("target"))
+        for e in payload["edges"]
+        if e.get("type") == "contains"
+    ]
+    children: dict[str, set[str]] = {}
+    for src, tgt in contains:
+        children.setdefault(str(src), set()).add(str(tgt))
+    entry_ids_list = [n["id"] for n in entries]
+    owners: set[str] = set()
     for pn in process_nodes:
         pid = pn["id"]
-        for e in payload["edges"]:
-            if e.get("target") == pid and e.get("type") == "contains":
-                proc_entry_sources.add(e.get("source"))
-    assert len(proc_entry_sources) >= 2
+        # walk parents: find KernelClass that contains Process, then Entry that contains class
+        for cls_id, kids in children.items():
+            if pid not in kids:
+                continue
+            for eid in entry_ids_list:
+                if cls_id in children.get(eid, set()):
+                    owners.add(eid)
+    assert len(owners) >= 2

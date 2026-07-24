@@ -174,6 +174,7 @@ def main(argv: list[str] | None = None) -> int:
     p_dbg_on.add_argument("--project", type=Path, default=Path.cwd())
     p_dbg_on.add_argument("--global", dest="global_scope", action="store_true")
     p_dbg_on.add_argument("--thought-char-limit", type=int, default=2500)
+    p_dbg_on.add_argument("--parent-session-id", default="", help="Host session id (ses_…)")
     p_dbg_off = p_dbg_sub.add_parser("disable", help="Disable debug capture")
     p_dbg_off.add_argument("--project", type=Path, default=Path.cwd())
     p_dbg_off.add_argument("--global", dest="global_scope", action="store_true")
@@ -184,7 +185,12 @@ def main(argv: list[str] | None = None) -> int:
     p_dbg_exp.add_argument("--project", type=Path, default=Path.cwd())
     p_dbg_exp.add_argument("--reason", default="manual")
     p_dbg_exp.add_argument("--subagent", default="")
-    p_dbg_exp.add_argument("--session-id", default="")
+    p_dbg_exp.add_argument("--session-id", default="", help="Child/task session id (ses_…)")
+    p_dbg_exp.add_argument(
+        "--parent-session-id",
+        default="",
+        help="Host/parent session id (ses_…) for this conversation",
+    )
     p_dbg_exp.add_argument("--transcript", default="")
     p_dbg_exp.add_argument(
         "--if-enabled",
@@ -210,6 +216,58 @@ def main(argv: list[str] | None = None) -> int:
     p_dbg_th.add_argument("--agent", default="")
     p_dbg_th.add_argument("--text", default="")
     p_dbg_th.add_argument("--stdin", action="store_true")
+
+    p_dbg_reg = p_dbg_sub.add_parser("register-child", help="Register a Task child (parent-scoped debug)")
+    p_dbg_reg.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_reg.add_argument("--parent-session-id", required=True)
+    p_dbg_reg.add_argument("--child-session-id", default="")
+    p_dbg_reg.add_argument("--workflow-id", default="")
+    p_dbg_reg.add_argument("--run-id", default="")
+    p_dbg_reg.add_argument("--phase", default="")
+    p_dbg_reg.add_argument("--action-id", default="")
+    p_dbg_reg.add_argument("--actor-id", default="")
+    p_dbg_reg.add_argument("--started-at", default="")
+    p_dbg_reg.add_argument("--task-prompt-path", default="")
+    p_dbg_reg.add_argument("--task-prompt", default="")
+    p_dbg_reg.add_argument("--if-enabled", action="store_true")
+
+    p_dbg_patch = p_dbg_sub.add_parser("patch-child-session", help="Set child session id from Task output")
+    p_dbg_patch.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_patch.add_argument("--child-session-id", required=True)
+    p_dbg_patch.add_argument("--parent-session-id", default="")
+    p_dbg_patch.add_argument("--action-id", default="")
+    p_dbg_patch.add_argument("--registration-id", default="")
+
+    p_dbg_ev = p_dbg_sub.add_parser("record-tool-event", help="Record a tool call for debug audit")
+    p_dbg_ev.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_ev.add_argument("--tool", required=True)
+    p_dbg_ev.add_argument("--parent-session-id", default="")
+    p_dbg_ev.add_argument("--child-session-id", default="")
+    p_dbg_ev.add_argument("--action-id", default="")
+    p_dbg_ev.add_argument("--actor-id", default="")
+    p_dbg_ev.add_argument("--path", default="")
+    p_dbg_ev.add_argument("--pattern", default="")
+    p_dbg_ev.add_argument("--failed", action="store_true")
+    p_dbg_ev.add_argument("--if-enabled", action="store_true")
+
+    p_dbg_cex = p_dbg_sub.add_parser("export-child-session", help="Export registered child debug bundle")
+    p_dbg_cex.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_cex.add_argument("--child-session-id", required=True)
+    p_dbg_cex.add_argument("--reason", default="manual")
+    p_dbg_cex.add_argument("--subagent", default="")
+    p_dbg_cex.add_argument(
+        "--if-enabled",
+        action="store_true",
+        help="No-op unless debug mode is enabled",
+    )
+
+    p_dbg_fin = p_dbg_sub.add_parser(
+        "finalize-parent-index",
+        help="Write parent_session_summary.yaml + children_index.yaml",
+    )
+    p_dbg_fin.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_fin.add_argument("--parent-session-id", default="")
+    p_dbg_fin.add_argument("--if-enabled", action="store_true")
 
     args = parser.parse_args(argv)
 
@@ -562,6 +620,7 @@ def _cmd_debug(args: Any) -> int:
             True,
             scope="global" if getattr(args, "global_scope", False) else "project",
             thought_char_limit=int(getattr(args, "thought_char_limit", 2500) or 2500),
+            parent_session_id=str(getattr(args, "parent_session_id", "") or ""),
         )
         print_json(payload)
         return 0
@@ -587,6 +646,7 @@ def _cmd_debug(args: Any) -> int:
             reason=str(args.reason or "manual"),
             subagent=str(args.subagent or ""),
             session_id=str(args.session_id or ""),
+            parent_session_id=str(getattr(args, "parent_session_id", "") or ""),
             transcript_hint=str(args.transcript or ""),
         )
         print_json(payload)
@@ -616,6 +676,75 @@ def _cmd_debug(args: Any) -> int:
         )
         print_json(payload)
         return 0 if payload.get("ok") or payload.get("skipped") else 1
+    if sub == "register-child":
+        if getattr(args, "if_enabled", False) and not dbg.is_enabled(args.project):
+            print_json({"ok": True, "skipped": True, "reason": "debug_disabled"})
+            return 0
+        payload = dbg.register_child(
+            args.project,
+            parent_session_id=str(args.parent_session_id),
+            child_session_id=str(getattr(args, "child_session_id", "") or ""),
+            workflow_id=str(getattr(args, "workflow_id", "") or ""),
+            run_id=str(getattr(args, "run_id", "") or ""),
+            phase=str(getattr(args, "phase", "") or ""),
+            action_id=str(getattr(args, "action_id", "") or ""),
+            actor_id=str(getattr(args, "actor_id", "") or ""),
+            started_at=str(getattr(args, "started_at", "") or ""),
+            task_prompt_path=str(getattr(args, "task_prompt_path", "") or ""),
+            task_prompt_text=str(getattr(args, "task_prompt", "") or ""),
+        )
+        print_json(payload)
+        return 0 if payload.get("ok") else 1
+    if sub == "patch-child-session":
+        payload = dbg.patch_child_session_id(
+            args.project,
+            child_session_id=str(args.child_session_id),
+            parent_session_id=str(getattr(args, "parent_session_id", "") or ""),
+            action_id=str(getattr(args, "action_id", "") or ""),
+            registration_id=str(getattr(args, "registration_id", "") or ""),
+        )
+        print_json(payload)
+        return 0 if payload.get("ok") else 1
+    if sub == "record-tool-event":
+        if getattr(args, "if_enabled", False) and not dbg.is_enabled(args.project):
+            print_json({"ok": True, "skipped": True, "reason": "debug_disabled"})
+            return 0
+        payload = dbg.record_tool_event(
+            args.project,
+            tool=str(args.tool),
+            parent_session_id=str(getattr(args, "parent_session_id", "") or ""),
+            child_session_id=str(getattr(args, "child_session_id", "") or ""),
+            action_id=str(getattr(args, "action_id", "") or ""),
+            actor_id=str(getattr(args, "actor_id", "") or ""),
+            path=str(getattr(args, "path", "") or ""),
+            pattern=str(getattr(args, "pattern", "") or ""),
+            failed=bool(getattr(args, "failed", False)),
+            outcome="failure" if getattr(args, "failed", False) else "success",
+        )
+        print_json(payload)
+        return 0 if payload.get("ok") or payload.get("skipped") else 1
+    if sub == "export-child-session":
+        if getattr(args, "if_enabled", False) and not dbg.is_enabled(args.project):
+            print_json({"ok": True, "skipped": True, "reason": "debug_disabled"})
+            return 0
+        payload = dbg.export_child_session(
+            args.project,
+            child_session_id=str(args.child_session_id),
+            reason=str(args.reason or "manual"),
+            subagent=str(getattr(args, "subagent", "") or ""),
+        )
+        print_json(payload)
+        return 0 if payload.get("ok") else 1
+    if sub == "finalize-parent-index":
+        if getattr(args, "if_enabled", False) and not dbg.is_enabled(args.project):
+            print_json({"ok": True, "skipped": True, "reason": "debug_disabled"})
+            return 0
+        payload = dbg.finalize_parent_index(
+            args.project,
+            parent_session_id=str(getattr(args, "parent_session_id", "") or ""),
+        )
+        print_json(payload)
+        return 0 if payload.get("ok") else 1
     if sub == "record-thought":
         text = str(args.text or "")
         if getattr(args, "stdin", False):

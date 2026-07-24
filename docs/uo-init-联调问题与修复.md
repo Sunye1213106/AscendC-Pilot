@@ -59,6 +59,8 @@
 | A28 | apply_semantic_patch 无 patch 入口 | **流程** | adjudicate→apply | ses_06d6 |
 | A29 | Host 跳步 / 不跑 acp next | Host+硬拦 | recommended + PIPELINE_SKIP | ses_06d6 |
 | A30 | apply rework 不能跑裁决 producer | 控制面 | recovery_actions | 07-24 |
+| A31 | extract_plan `non_sink_roots` 写成 unresolved dict；Host rework 加戏+新 session | Prompt/校验/Skill | 合同收紧：字符串列表硬拒 mapping；rework 必须 resume | ses_06cf |
+| A32 | Debug export 捞无关 `session-ses_*.md`（如 ses_070d） | Debug | 必须传 session/parent id；禁止 cwd mtime 钓鱼 | ses_06cd |
 
 ---
 
@@ -245,6 +247,17 @@ Prompt 改为 MUST/MUST NOT 合同结构。
 
 **后续修**：成功 Read/`ok:true` 不再误报；todowrite priority 见 §5.2。
 
+### 9.1.1 Debug transcript 绑错会话（ses_06cd / A32）
+
+**现象**：`subagent_stop` 导出包里出现无关的 `transcript_session-ses_070d.md`；同一次 run 堆很多 export。
+
+**根因**：`export_session_bundle` 在无 `session_id` 时用 cwd 下最新 `session-ses_*.md` 兜底；插件未传 Host/Task session id。
+
+**方案**：
+- 导出只接受 `--session-id` / `--parent-session-id` / `--transcript`；**禁止** cwd mtime 钓鱼
+- OpenCode 插件 Task after：解析 `<task id="ses_…">` + hook `sessionID` 传入
+- 找不到匹配文件 → 不拷 transcript（仍导出 run state），DEBUG_REPORT 标明原因
+
 ### 9.2 extract_plan finalize 收据鸡生蛋
 
 Gate 不再要求先有收据；校验 plan/candidates/hash/边界；收据由 finalize 成功后签发。
@@ -312,6 +325,20 @@ detect_score_pre → extract_plan → detect_score_post
 | Debug | `pilot/ascendc_pilot/debug/` + hooks |
 | 语义补丁 | `adjudicate-llm-tasks`、`llm_tasks.py`、`pipeline.py`、`engines.py` |
 | 跳步 | `describe_next` recommended、`PIPELINE_SKIP_DENIED` |
+| non_sink schema / rework resume | `extract_plan_io.py`、`prompts/tasks/uo/extract-plan.md`、uo-init SKILL、pilot-control |
+
+---
+
+## 13.1 A31：non_sink_roots unresolved dict（ses_06cf）
+
+**现象**：子代理把 30 个 non_sink 写成 `{name, adjudication: unresolved, …}`；校验 `str(dict)` 报假 “not in candidates”；Host 误诊为身份规则 → omit，并新开第二个 session + stub 前夹 REWORK 长文。
+
+**根因**：prompt “leave unresolved” 被套用到 `non_sink_roots`；该字段合同是**字符串列表**，无 writers 身份规则；校验未硬拒 mapping。
+
+**方案（开发期·无兼容补丁）**：
+- 校验：mapping → `must be a string name, got mapping`；字符串不在候选 → `not in candidates: <name>`
+- prompt/METHOD/参考：显式 schema + 示例；证据不足对 writers/receivers 用 omit；non_sink 确认短名或 omit
+- Skill：rework 必须 resume；禁止 stub 加戏；finalize 分层构建可能数分钟
 
 ---
 
@@ -322,9 +349,10 @@ detect_score_pre → extract_plan → detect_score_post
 3. **只跑 recommended_next**；finalize 后立刻再 `acp next`。  
 4. **LLM 产物必须有 producer 合同**；deterministic 只应用。  
 5. **Gate fail → rework**，不是一上来 blocked；失败要落 Observation，禁止逃逸手工修。  
-6. **extract ≠ 边裁决**；空候选禁止假 ACCEPT。  
+6. **extract ≠ 边裁决**；空候选禁止假 ACCEPT；`non_sink_roots` 只认字符串名。  
 7. **CBM 不做 KEY/宏表主路径**。  
-8. **改完要 compose + refresh + 重启 OpenCode** 才测的是新代码。
+8. **同 Action rework 必须 resume**；Task 正文只粘 stub。  
+9. **改完要 compose + refresh + 重启 OpenCode** 才测的是新代码。
 
 ---
 

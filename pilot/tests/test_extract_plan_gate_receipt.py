@@ -17,7 +17,7 @@ def _write(path: Path, text: str) -> None:
 
 def test_extract_plan_gate_passes_without_receipt(tmp_path: Path) -> None:
     ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-init")
+    state = start_workflow(tmp_path, "uo-init")
     uo = uo_root(tmp_path)
     cand = uo / "ir" / "extract_plan_candidates.yaml"
     _write(
@@ -25,11 +25,15 @@ def test_extract_plan_gate_passes_without_receipt(tmp_path: Path) -> None:
         "version: 1\nop_name: demo\nstatus: candidates\nok: true\nwriter_candidates: []\n",
     )
     sha = file_sha256(cand)
+    run_id = str(state.get("run_id") or "")
     _write(
         uo / "ir" / "extract_plan.yaml",
         (
             "version: 1\nop_name: demo\naction_id: extract_plan\n"
-            "actor_id: uo-semantic-resolve\nstatus: resolved\n"
+            "actor_id: uo-semantic-resolve\n"
+            f"run_id: {run_id}\n"
+            "workflow_id: uo-init\n"
+            "status: resolved\n"
             f"candidates_sha256: {sha}\nwriters: []\nreceivers: []\naliases: []\n"
         ),
     )

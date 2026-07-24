@@ -234,20 +234,75 @@ def _artifact_checklist(agent: Path, workflow_id: str) -> list[dict[str, Any]]:
     return out
 
 
-def _receipt_actions(project_root: Path, run_id: str) -> list[str]:
+def _classify_receipts(project_root: Path, run_id: str) -> dict[str, list[str]]:
+    """Strict receipt classification via verify_receipt (HMAC + hashes + checker_ok)."""
+    from ascendc_pilot.runs import verify_receipt
+    from ascendc_pilot.workflows import get_workflow
+    from ascendc_pilot.state import load_state
+
+    verified: list[str] = []
+    invalid: list[str] = []
+    missing: list[str] = []
+
+    state = load_state(project_root) or {}
+    wid = str(state.get("workflow_id") or "")
+    meta = get_workflow(wid) if wid else {}
+    expected_actions: list[str] = []
+    for action in meta.get("actions") or []:
+        if isinstance(action, dict) and action.get("id"):
+            expected_actions.append(str(action["id"]))
+
     base = runs_root(project_root) / run_id / "subagents"
-    if not base.is_dir():
-        return []
-    found: list[str] = []
-    for path in sorted(base.glob("*.yaml")):
-        data = _load_yaml(path)
-        aid = str(data.get("action_id") or "").strip()
-        if aid and data.get("issued_by") == "pilot":
-            checker = data.get("checker_result") or {}
-            if checker.get("ok") is False:
+    seen_files: set[str] = set()
+    if base.is_dir():
+        for path in sorted(base.glob("*.yaml")):
+            data = _load_yaml(path)
+            aid = str(data.get("action_id") or "").strip()
+            if not aid:
+                invalid.append(path.stem)
                 continue
-            found.append(aid)
-    return found
+            seen_files.add(aid)
+            checked = verify_receipt(
+                project_root,
+                action_id=aid,
+                require_pilot_issued=True,
+                require_hashes=True,
+                require_action_id=True,
+                require_spec_hash=True,
+                require_signature=True,
+                require_checker_ok=True,
+            )
+            if checked.get("ok"):
+                if aid not in verified:
+                    verified.append(aid)
+            else:
+                if aid not in invalid:
+                    invalid.append(aid)
+
+    # Pipeline actions with no receipt file are missing (not verified).
+    from ascendc_pilot.workflows import phase_pipeline
+
+    phase = str(state.get("phase") or "")
+    for aid in phase_pipeline(wid, phase) if wid and phase else []:
+        if aid not in seen_files and aid not in verified and aid not in missing:
+            # Only report missing for actions we care about when summarizing;
+            # dirty detection uses invalid + incomplete products separately.
+            pass
+
+    return {
+        "verified_receipts": verified,
+        "invalid_receipts": invalid,
+        "missing_receipts": missing,
+    }
+
+
+def _receipt_actions(project_root: Path, run_id: str) -> list[str]:
+    """Actions with a strictly verified Pilot receipt for the current run."""
+    return list(_classify_receipts(project_root, run_id).get("verified_receipts") or [])
+
+
+def _invalid_receipt_actions(project_root: Path, run_id: str) -> list[str]:
+    return list(_classify_receipts(project_root, run_id).get("invalid_receipts") or [])
 
 
 def _active_action(project_root: Path) -> dict[str, Any]:
@@ -268,7 +323,13 @@ def _detect_dirty_actions(project_root: Path, run_id: str, workflow_id: str) -> 
         return []
 
     owned = action_owned_artifacts(workflow_id)
-    finalized = set(_receipt_actions(root, run_id)) if run_id else set()
+    classified = _classify_receipts(root, run_id) if run_id else {
+        "verified_receipts": [],
+        "invalid_receipts": [],
+        "missing_receipts": [],
+    }
+    finalized = set(classified.get("verified_receipts") or [])
+    invalid = set(classified.get("invalid_receipts") or [])
     dirty: list[str] = []
     seen: set[str] = set()
     agent = agent_root(root)
@@ -279,6 +340,9 @@ def _detect_dirty_actions(project_root: Path, run_id: str, workflow_id: str) -> 
             return
         seen.add(aid)
         dirty.append(aid)
+
+    for aid in sorted(invalid):
+        _mark(aid)
 
     active = _active_action(root)
     active_id = str(active.get("action_id") or "").strip()
@@ -511,7 +575,12 @@ def build_run_resume_summary(project_root: Path, *, workflow_id: str = "uo-init"
     missing_arts = [a for a in artifacts if not a.get("complete")]
 
     run_id = str((state or {}).get("run_id") or "")
-    receipts = _receipt_actions(root, run_id) if run_id else []
+    classified = (
+        _classify_receipts(root, run_id)
+        if run_id
+        else {"verified_receipts": [], "invalid_receipts": [], "missing_receipts": []}
+    )
+    receipts = list(classified.get("verified_receipts") or [])
     active = _active_action(root)
 
     passed_gates = [str(g) for g in ((state or {}).get("passed_gates") or [])]
@@ -571,7 +640,8 @@ def build_run_resume_summary(project_root: Path, *, workflow_id: str = "uo-init"
         f"created_at: {(state or {}).get('created_at') or '-'}",
         f"updated_at: {(state or {}).get('updated_at') or '-'}",
         f"已通过 gates: {', '.join(passed_gates) or '(无)'}",
-        f"已 finalize 的 actions: {', '.join(receipts) or '(无)'}",
+        f"已验证收据 actions: {', '.join(receipts) or '(无)'}",
+        f"无效收据 actions: {', '.join(classified.get('invalid_receipts') or []) or '(无)'}",
         f"已有产物: {', '.join(a['label_zh'] for a in complete_arts) or '(无)'}",
         f"中断点: phase={phase or '-'}, active={active.get('action_id') or '-'} ({active.get('status') or '-'})",
     ]
@@ -641,6 +711,9 @@ def build_run_resume_summary(project_root: Path, *, workflow_id: str = "uo-init"
         "passed_gates": passed_gates,
         "failed_gates": failed_gates,
         "finalized_actions": receipts,
+        "verified_receipts": list(classified.get("verified_receipts") or []),
+        "invalid_receipts": list(classified.get("invalid_receipts") or []),
+        "missing_receipts": list(classified.get("missing_receipts") or []),
         "artifacts": artifacts,
         "action_owned_artifacts": action_owned_artifacts(workflow_id),
         "last_complete": last_complete,

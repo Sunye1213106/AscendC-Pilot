@@ -788,11 +788,15 @@ def _run_apply_semantic_patch(project_root: Path, ctx: dict[str, Any]) -> dict[s
             patches,
             current_source_hash=_source_snapshot_hash(uo),
         )
+        from uo.scripts.llm_tasks import compute_semantic_stats
+
+        stats = compute_semantic_stats(uo)
         return {
             "ok": bool(result.get("ok")),
             "engine": "apply_semantic_patch",
             "source": resolved.get("source"),
             **result,
+            **stats,
         }
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "apply_semantic_patch", "error": str(exc)[:300]}
@@ -806,7 +810,10 @@ def _run_rebuild_from_ledger(project_root: Path, ctx: dict[str, Any]) -> dict[st
         from uo.scripts.semantic_resolution_ledger import rebuild_derived_graphs
 
         result = rebuild_derived_graphs(project_root, op_name, architecture=architecture)
-        return {"ok": bool(result.get("ok")), "engine": "rebuild_from_ledger", **result}
+        from uo.scripts.llm_tasks import compute_semantic_stats
+
+        stats = compute_semantic_stats(uo) if uo else {}
+        return {"ok": bool(result.get("ok")), "engine": "rebuild_from_ledger", **result, **stats}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "rebuild_from_ledger", "error": str(exc)[:300]}
 
@@ -815,14 +822,65 @@ def _run_recheck_closure(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
     """Recheck closure/integrity WITHOUT incrementing attempts (⑥)."""
     uo, op_name, _arch = _uo_op_ctx(project_root, ctx)
     try:
-        from uo.scripts.llm_tasks import recheck_does_not_increment
-        from uo.scripts._ir_io import read_yaml
+        import hashlib
+        import json
+
+        from uo.scripts.evidence_score import _source_snapshot_hash
+        from uo.scripts.llm_tasks import compute_semantic_stats, recheck_does_not_increment
+        from uo.scripts._ir_io import read_yaml, write_yaml
+        from uo.scripts.semantic_resolution_ledger import load_ledger
 
         budget = recheck_does_not_increment(uo)
         ep = read_yaml(uo / "ir" / "entrypoint_graph.yaml") or {}
         closure = ep.get("closure") or {}
-        open_blocking = budget.get("open_blocking") or []
-        ok = not open_blocking and closure.get("host_main_chain") == "closed"
+        stats = compute_semantic_stats(uo)
+        blocking_gap_count = int(stats.get("blocking_gap_count") or budget.get("blocking_gap_count") or 0)
+        unconsumed = int(stats.get("unconsumed_patch_count") or 0)
+        host_closed = closure.get("host_main_chain") == "closed"
+        kernel_closed = closure.get("kernel_main_chain") == "closed"
+        ok = blocking_gap_count == 0 and unconsumed == 0 and host_closed and kernel_closed
+
+        snap = _source_snapshot_hash(uo)
+        fp_payload = {
+            "source_snapshot_hash": snap,
+            "entrypoint_graph": ep.get("closure"),
+            "ledger_len": len((load_ledger(uo).get("semantic_patches") or [])),
+            "blocking_gap_count": blocking_gap_count,
+            "unconsumed_patch_count": unconsumed,
+        }
+        fingerprint = hashlib.sha256(json.dumps(fp_payload, sort_keys=True).encode("utf-8")).hexdigest()[:24]
+        fp_path = uo / "ir" / "recheck_fingerprint.yaml"
+        prev = read_yaml(fp_path) or {}
+        prev_fp = str(prev.get("fingerprint") or "")
+        recovery_actions: list[str] = []
+        if not host_closed:
+            if closure.get("host_main_chain") == "unresolved":
+                recovery_actions.append("scope_confirmation")
+            recovery_actions.append("scope/registration generation")
+        if not kernel_closed:
+            recovery_actions.append("kernel candidate generation")
+        if blocking_gap_count:
+            recovery_actions.append("adjudicate_llm_tasks")
+            recovery_actions.append("bridge enrichment")
+        if unconsumed:
+            recovery_actions.append("rebuild_from_ledger")
+            recovery_actions.append("regenerate candidates")
+        if prev_fp and prev_fp == fingerprint and not ok:
+            write_yaml(fp_path, {"fingerprint": fingerprint, "payload": fp_payload})
+            return {
+                "ok": False,
+                "engine": "recheck_closure",
+                "error": "NO_PROGRESS_RECHECK",
+                "closure": closure,
+                "blocking_gap_count": blocking_gap_count,
+                "unconsumed_patch_count": unconsumed,
+                "recovery_actions": sorted(set(recovery_actions)),
+                "fingerprint": fingerprint,
+                "attempts_unchanged": True,
+                **stats,
+            }
+        write_yaml(fp_path, {"fingerprint": fingerprint, "payload": fp_payload})
+
         # Optional integrity subset
         integrity = {}
         if op_name:
@@ -832,15 +890,22 @@ def _run_recheck_closure(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
                 integrity = check_kb_integrity(project_root, op_name, write_outputs=False)
             except Exception as exc:  # noqa: BLE001
                 integrity = {"error": str(exc)[:200]}
-        return {
+        out = {
             "ok": ok,
             "engine": "recheck_closure",
             "closure": closure,
-            "open_blocking_count": len(open_blocking),
+            "open_blocking_count": len(budget.get("open_blocking") or []),
+            "blocking_gap_count": blocking_gap_count,
+            "unconsumed_patch_count": unconsumed,
             "total_semantic_batches": budget.get("total_semantic_batches"),
             "integrity_status": integrity.get("status") if isinstance(integrity, dict) else None,
             "attempts_unchanged": True,
+            "fingerprint": fingerprint,
+            **stats,
         }
+        if not ok:
+            out["recovery_actions"] = sorted(set(recovery_actions))
+        return out
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "recheck_closure", "error": str(exc)[:300]}
 
@@ -946,6 +1011,9 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "tg/realization/semantic_bind_apply.yaml",
         "tg/realization/binding_lexicon.yaml",
         "tg/realization/unresolved.yaml",
+    ],
+    "semantic-bind-patch-v1": [
+        "tg/realization/semantic_bind_patch.yaml",
     ],
     "bind-merge-v1": [
         "tg/realization/uo_merge_report.yaml",

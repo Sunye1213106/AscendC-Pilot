@@ -24,13 +24,18 @@ def main(argv: list[str] | None = None) -> int:
     if not args.skip_compose:
         sys.path.insert(0, str(repo / "scripts"))
         try:
-            from compose_runtime import validate, validate_generated  # noqa: WPS433
+            from compose_runtime import (  # noqa: WPS433
+                check_generated_drift,
+                validate,
+                validate_generated,
+            )
         except ImportError as exc:
             errors.append(f"compose_runtime unavailable: {exc}")
         else:
             errors.extend(validate(repo))
             for host in ("opencode", "cursor", "codex"):
                 errors.extend(validate_generated(repo, host=host))
+            errors.extend(check_generated_drift(repo))
 
     sys.path.insert(0, str(repo / "pilot"))
     from ascendc_pilot.workflows.consistency import check_all  # noqa: WPS433

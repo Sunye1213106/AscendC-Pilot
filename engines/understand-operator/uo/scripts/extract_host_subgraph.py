@@ -25,7 +25,7 @@ from uo.scripts.extract_plan_io import (
 from uo.scripts.function_body import extract_callee_names, resolve_helper_body
 from uo.scripts.macro_regions import analyze_macros, classify_macro_condition
 from uo.scripts.resolve_entrypoints import entrypoint_units, load_entrypoint_graph, nodes_for_role
-from uo.scripts.semantic_identity import mint_symbol_identity
+from uo.scripts.semantic_identity import mint_field_identity, mint_symbol_identity
 from uo.scripts.source_path import resolve_repo_source_path
 
 def _chain_item_key(item: dict[str, Any]) -> str:
@@ -600,19 +600,27 @@ def extract_host_subgraph(
                 if not field_name or key in seen_fields:
                     continue
                 seen_fields.add(key)
-                tdf_id = stable_id("TDF_", field_name)
+                ot = owning_type or "UnknownType"
+                tdf_ident = mint_field_identity(
+                    owning_type=ot,
+                    field_path=field_name,
+                    file_path=file_path,
+                )
+                tdf_id = tdf_ident.stable_id
                 tdf_node: dict[str, Any] = {
                     "id": tdf_id,
                     "layer": "bridge",
                     "node_type": "TilingDataField",
                     "name": field_name,
-                    "qualified_name": field_name,
+                    "qualified_name": tdf_ident.qualified_name,
                     "file_path": file_path,
                     "start_line": start,
                     "end_line": end,
+                    "owning_type": ot,
+                    "field_path": field_name,
+                    "identity_key": tdf_ident.identity_key,
+                    "symbol_ref": tdf_ident.as_dict(),
                 }
-                if owning_type:
-                    tdf_node["owning_type"] = owning_type
                 nodes.append(tdf_node)
                 src = prev_branch_id or helper_id
                 edges.append({"id": stable_id("E_", src, tdf_id), "type": "writes", "source": src, "target": tdf_id})

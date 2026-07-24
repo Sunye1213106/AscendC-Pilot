@@ -54,8 +54,15 @@ def finalize_scope(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
     confirmed = docs["scope_confirmed"] or _scope_confirmed_from_review(
         uo_root, run_id, review, operator=expected_op
     )
-    if confirmed and not docs["scope_confirmed"]:
-        (phase0 / "scope_confirmed.yaml").write_text(yaml.safe_dump(confirmed, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    if isinstance(confirmed, dict):
+        confirmed["run_id"] = run_id
+        confirmed["workflow_id"] = str(confirmed.get("workflow_id") or "uo-init")
+        confirmed["action_id"] = "scope_confirmation"
+        if str(confirmed.get("status") or "").strip().lower() not in {"confirmed", "empty"}:
+            confirmed["status"] = "confirmed" if _confirmed_files(confirmed) else "empty"
+        (phase0 / "scope_confirmed.yaml").write_text(
+            yaml.safe_dump(confirmed, sort_keys=False, allow_unicode=True), encoding="utf-8"
+        )
     files = scan.get("files") if isinstance(scan.get("files"), dict) else {}
     approved = review.get("approved_scope") if isinstance(review.get("approved_scope"), dict) else {}
     def scoped(key: str) -> Any:
@@ -281,6 +288,9 @@ def _scope_confirmed_from_review(
         "artifact": {"type": "runs.scope_confirmed", "schema_version": 1, "owner": "deterministic-uo-engine"},
         "snapshot": scope_snapshot(uo_root, run_id),
         "status": "confirmed" if files else "empty",
+        "run_id": run_id,
+        "workflow_id": "uo-init",
+        "action_id": "scope_confirmation",
         "operator": operator,
         "confirmed_file_list": files,
         "excluded_files": approved.get("excluded_files") or [],

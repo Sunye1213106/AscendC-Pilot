@@ -28,6 +28,12 @@ from uo.scripts.semantic_identity import (
     mint_symbol_identity,
     parse_template_arity,
 )
+from uo.scripts.source_path import resolve_repo_source_path, to_repo_relative
+
+
+def _resolve_source_file(repo_root: Path, rel: str, *, architecture: str = "arch35") -> Path | None:
+    """Resolve confirmed/CBM-prefixed paths (e.g. ``{op}/op_graph/…``) under repo_root."""
+    return resolve_repo_source_path(repo_root, rel, architecture=architecture)
 
 
 def _path_has_dir(rel: str, dirname: str) -> bool:
@@ -261,16 +267,23 @@ def collect_entrypoint_candidates(
             node = _node_from_candidate(cand, role=role, status="verified" if float(cand.get("confidence") or 0) >= 0.85 else "located")
             nodes[node["id"]] = node
 
-    # Registration / dispatch macros → typed edges
+    # Registration / dispatch macros → typed edges (op_name-bound; no global REG_OP fan-out)
     macro_nodes, macro_edges, templates = _scan_registration_graph(
-        repo_root, confirmed_files, architecture, nodes
+        repo_root,
+        confirmed_files,
+        architecture,
+        nodes,
+        op_name=op_name,
     )
     nodes.update(macro_nodes)
     edges.extend(macro_edges)
 
+    # Normalize kernel roles before dispatch linking.
+    _normalize_kernel_roles(nodes, architecture=architecture, op_name=op_name)
+
     # Link public host entries to matching template implementations by class/name proximity
     edges.extend(_link_host_to_templates(nodes, templates, architecture))
-    edges.extend(_link_kernel_dispatch(nodes, architecture))
+    edges.extend(_link_kernel_dispatch(nodes, architecture, op_name=op_name))
 
     # Advance status: linked / closed / unresolved
     _apply_link_status(nodes, edges)
@@ -499,11 +512,12 @@ def _fingerprint_sources(repo_root: Path, file_paths: list[str]) -> dict[str, st
 
     out: dict[str, str] = {}
     for rel in file_paths:
-        path = repo_root / rel
+        key = rel.replace("\\", "/")
+        path = _resolve_source_file(repo_root, rel) or (repo_root / rel)
         if path.is_file():
-            out[rel.replace("\\", "/")] = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+            out[key] = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
         else:
-            out[rel.replace("\\", "/")] = "missing"
+            out[key] = "missing"
     return out
 
 
@@ -688,32 +702,67 @@ def _enclosing_class(text: str, pos: int) -> str:
     return matches[-1].group(1) if matches else ""
 
 
+def _op_name_aliases(op_name: str) -> set[str]:
+    raw = str(op_name or "").strip()
+    if not raw:
+        return set()
+    pascal = _snake_to_pascal(raw)
+    aliases = {raw, pascal, raw.casefold(), pascal.casefold()}
+    return {a for a in aliases if a}
+
+
+def _name_matches_op(symbol: str, op_name: str) -> bool:
+    aliases = _op_name_aliases(op_name)
+    if not aliases:
+        return True
+    name = str(symbol or "").strip()
+    if not name:
+        return False
+    if name in aliases or name.casefold() in aliases:
+        return True
+    # Allow FooBar / foo_bar containment only when op token is a clear prefix/suffix.
+    pascal = _snake_to_pascal(op_name)
+    return bool(pascal) and (name.startswith(pascal) or name.endswith(pascal))
+
+
 def _scan_registration_graph(
     repo_root: Path,
     confirmed_files: list[str],
     architecture: str,
     existing_nodes: dict[str, dict[str, Any]],
+    *,
+    op_name: str = "",
 ) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     nodes: dict[str, dict[str, Any]] = {}
     edges: list[dict[str, Any]] = []
     templates: list[dict[str, Any]] = []
     for rel in confirmed_files:
-        if not arch_compatible(rel, architecture):
+        path = _resolve_source_file(repo_root, rel, architecture=architecture)
+        if path is None:
             continue
-        path = repo_root / rel
-        if not path.exists() or path.suffix not in {".h", ".hpp", ".cpp", ".cc", ".c"}:
+        try:
+            repo_rel = to_repo_relative(repo_root, path)
+        except Exception:  # noqa: BLE001
+            repo_rel = rel.replace("\\", "/")
+        if not arch_compatible(repo_rel, architecture) and "op_graph" not in repo_rel.replace("\\", "/"):
+            # Registration / REG_OP often lives in op_graph (architecture-neutral).
+            if "op_graph" not in repo_rel.replace("\\", "/") and "REG_OP" not in path.name:
+                continue
+        if path.suffix not in {".h", ".hpp", ".cpp", ".cc", ".c"}:
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         for match in REG_OP_RE.finditer(text):
             op_type = match.group(1)
+            if op_name and not _name_matches_op(op_type, op_name):
+                continue
             line = text.count("\n", 0, match.start()) + 1
             ident = mint_symbol_identity(
                 kind="registration",
                 name=op_type,
-                file_path=rel,
+                file_path=repo_rel,
                 qualified_name=f"REG_OP::{op_type}",
-                architecture=architecture_of_path(rel),
-                path_family=path_family_of(rel),
+                architecture=architecture_of_path(repo_rel),
+                path_family=path_family_of(repo_rel),
                 prefix="EP",
             )
             node = {
@@ -725,20 +774,23 @@ def _scan_registration_graph(
                 "status": "verified",
                 "name": op_type,
                 "symbol_ref": ident.as_dict(),
-                "locator": make_locator(rel, start_line=line, end_line=line, text=match.group(0)).as_dict(),
+                "locator": make_locator(repo_rel, start_line=line, end_line=line, text=match.group(0)).as_dict(),
                 "macro": "REG_OP",
+                "verification_source": "source",
             }
             nodes[node["id"]] = node
         for match in IMPL_OP_RE.finditer(text):
             name = match.group(1)
+            if op_name and not _name_matches_op(name, op_name):
+                continue
             line = text.count("\n", 0, match.start()) + 1
             ident = mint_symbol_identity(
                 kind="registration",
                 name=name,
-                file_path=rel,
+                file_path=repo_rel,
                 qualified_name=f"IMPL_OP_OPTILING::{name}",
-                architecture=architecture_of_path(rel),
-                path_family=path_family_of(rel),
+                architecture=architecture_of_path(repo_rel),
+                path_family=path_family_of(repo_rel),
                 prefix="EP",
             )
             node = {
@@ -750,25 +802,36 @@ def _scan_registration_graph(
                 "status": "verified",
                 "name": name,
                 "symbol_ref": ident.as_dict(),
-                "locator": make_locator(rel, start_line=line, end_line=line, text=match.group(0)).as_dict(),
+                "locator": make_locator(repo_rel, start_line=line, end_line=line, text=match.group(0)).as_dict(),
                 "macro": "IMPL_OP_OPTILING",
                 "verification_source": "source",
             }
             nodes[node["id"]] = node
-            # Link registration → public host when both present
+            # Link registration → public host only when op_name / macro args match.
             for reg in list(nodes.values()) + list(existing_nodes.values()):
-                if reg.get("role") == "operator_registration":
-                    edges.append(
-                        {
-                            "id": mint_edge_id("registers", reg["id"], node["id"]),
-                            "type": "registers",
-                            "source": reg["id"],
-                            "target": node["id"],
-                            "evidence": [{"file_path": rel, "line": line, "macro": "IMPL_OP_OPTILING"}],
-                            "confidence": "source_verified",
-                            "verification_source": "source",
-                        }
-                    )
+                if reg.get("role") != "operator_registration":
+                    continue
+                if str(reg.get("name") or "") != name:
+                    continue
+                edges.append(
+                    {
+                        "id": mint_edge_id("registers", reg["id"], node["id"]),
+                        "type": "registers",
+                        "source": reg["id"],
+                        "target": node["id"],
+                        "evidence": [
+                            {
+                                "file_path": repo_rel,
+                                "line": line,
+                                "macro": "IMPL_OP_OPTILING",
+                                "op_name": name,
+                                "reason": "reg_op_to_impl_op_name_match",
+                            }
+                        ],
+                        "confidence": "source_verified",
+                        "verification_source": "source",
+                    }
+                )
             # Fluent .Tiling(X) — X may be class, free function, or other callable.
             # Start as neutral callable; specialize only when source evidence exists.
             window = text[match.start() : match.start() + 400]
@@ -795,11 +858,11 @@ def _scan_registration_graph(
                 tgt_ident = mint_symbol_identity(
                     kind=kind,
                     name=tiling_target,
-                    file_path=rel,
+                    file_path=repo_rel,
                     qualified_name=f"IMPL_OP_OPTILING.Tiling::{tiling_target}",
                     class_or_namespace=tiling_target if kind == "tiling_class" else "",
-                    architecture=architecture_of_path(rel),
-                    path_family=path_family_of(rel),
+                    architecture=architecture_of_path(repo_rel),
+                    path_family=path_family_of(repo_rel),
                     prefix="EP",
                 )
                 tgt_node = {
@@ -807,12 +870,12 @@ def _scan_registration_graph(
                     "role": role,
                     "architecture": tgt_ident.architecture,
                     "path_family": tgt_ident.path_family,
-                    "template_family": path_family_of(rel),
+                    "template_family": path_family_of(repo_rel),
                     "status": "verified" if kind != "tiling_callable" else "located",
                     "name": tiling_target,
                     "symbol_ref": tgt_ident.as_dict(),
                     "locator": make_locator(
-                        rel, start_line=tiling_line, end_line=tiling_line, text=fluent.group(0)[:120]
+                        repo_rel, start_line=tiling_line, end_line=tiling_line, text=fluent.group(0)[:120]
                     ).as_dict(),
                     "macro": "IMPL_OP_OPTILING.Tiling",
                     "verification_source": "source",
@@ -827,7 +890,7 @@ def _scan_registration_graph(
                         "target": tgt_node["id"],
                         "evidence": [
                             {
-                                "file_path": rel,
+                                "file_path": repo_rel,
                                 "line": tiling_line,
                                 "macro": "IMPL_OP_OPTILING.Tiling",
                                 "reason": "fluent_tiling",
@@ -847,7 +910,7 @@ def _scan_registration_graph(
                         "target": tgt_node["id"],
                         "evidence": [
                             {
-                                "file_path": rel,
+                                "file_path": repo_rel,
                                 "line": tiling_line,
                                 "macro": "IMPL_OP_OPTILING.Tiling",
                                 "reason": "fluent_tiling",
@@ -862,7 +925,7 @@ def _scan_registration_graph(
             op_type = match.group(1).strip()
             cls = match.group(2).strip()
             line = text.count("\n", 0, match.start()) + 1
-            family = path_family_of(rel)
+            family = path_family_of(repo_rel)
             if "varlen" in cls.lower():
                 family = "varlen"
             elif "empty" in cls.lower():
@@ -872,10 +935,10 @@ def _scan_registration_graph(
             ident = mint_symbol_identity(
                 kind="tiling_template",
                 name=cls,
-                file_path=rel,
+                file_path=repo_rel,
                 qualified_name=f"REGISTER_TILING_TEMPLATE::{cls}",
                 class_or_namespace=cls,
-                architecture=architecture_of_path(rel),
+                architecture=architecture_of_path(repo_rel),
                 template_family=family,
                 path_family=family,
                 prefix="EP",
@@ -894,7 +957,7 @@ def _scan_registration_graph(
                 "status": "verified",
                 "name": cls,
                 "symbol_ref": ident.as_dict(),
-                "locator": make_locator(rel, start_line=line, end_line=line, text=match.group(0)).as_dict(),
+                "locator": make_locator(repo_rel, start_line=line, end_line=line, text=match.group(0)).as_dict(),
                 "macro": "REGISTER_TILING_TEMPLATE",
                 "op_type": op_type,
             }
@@ -903,9 +966,9 @@ def _scan_registration_graph(
                 {
                     "op_type": op_type,
                     "template_class": cls,
-                    "file_path": rel,
+                    "file_path": repo_rel,
                     "line": line,
-                    "architecture_hint": architecture if architecture in rel else architecture_of_path(rel),
+                    "architecture_hint": architecture if architecture in repo_rel else architecture_of_path(repo_rel),
                     "path_family": family,
                     "node_id": node["id"],
                 }
@@ -913,10 +976,10 @@ def _scan_registration_graph(
             # registry node (file-level)
             reg_ident = mint_symbol_identity(
                 kind="tiling_registry",
-                name=f"registry_{Path(rel).stem}",
-                file_path=rel,
-                qualified_name=f"{rel}::tiling_registry",
-                architecture=architecture_of_path(rel),
+                name=f"registry_{Path(repo_rel).stem}",
+                file_path=repo_rel,
+                qualified_name=f"{repo_rel}::tiling_registry",
+                architecture=architecture_of_path(repo_rel),
                 path_family=family,
                 prefix="EP",
             )
@@ -927,9 +990,9 @@ def _scan_registration_graph(
                 "path_family": family,
                 "template_family": family,
                 "status": "verified",
-                "name": Path(rel).stem,
+                "name": Path(repo_rel).stem,
                 "symbol_ref": reg_ident.as_dict(),
-                "locator": make_locator(rel, start_line=line, end_line=line).as_dict(),
+                "locator": make_locator(repo_rel, start_line=line, end_line=line).as_dict(),
             }
             nodes[reg_node["id"]] = reg_node
             edges.append(
@@ -938,7 +1001,7 @@ def _scan_registration_graph(
                     "type": "registers",
                     "source": reg_node["id"],
                     "target": node["id"],
-                    "evidence": [{"file_path": rel, "line": line, "macro": "REGISTER_TILING_TEMPLATE"}],
+                    "evidence": [{"file_path": repo_rel, "line": line, "macro": "REGISTER_TILING_TEMPLATE"}],
                     "confidence": "source_verified",
                     "verification_source": "source",
                 }
@@ -1042,34 +1105,154 @@ def _link_host_to_templates(
     return edges
 
 
-def _link_kernel_dispatch(nodes: dict[str, dict[str, Any]], architecture: str) -> list[dict[str, Any]]:
+def _normalize_kernel_roles(
+    nodes: dict[str, dict[str, Any]],
+    *,
+    architecture: str,
+    op_name: str = "",
+) -> None:
+    """Split public kernel vs concrete impl so dispatch can close.
+
+    Class-like ``*Kernel`` nodes become ``concrete_kernel_impl``;
+    entry/wrapper symbols stay ``public_kernel_entry``.
+    """
+    for node in nodes.values():
+        if node.get("role") != "public_kernel_entry":
+            continue
+        name = str(node.get("name") or "")
+        lower = name.casefold()
+        if any(tok in lower for tok in ("entry", "launch", "invoke", "wrapper")):
+            continue
+        if name.endswith("Kernel") or (op_name and _name_matches_op(name, op_name) and "Kernel" in name):
+            if node.get("architecture") in {architecture, "neutral"}:
+                node["role"] = "concrete_kernel_impl"
+
+
+def _kernel_locator_file(node: dict[str, Any]) -> str:
+    loc = node.get("locator") if isinstance(node.get("locator"), dict) else {}
+    fp = str(loc.get("file_path") or (node.get("symbol_ref") or {}).get("file_path") or "").replace("\\", "/")
+    return fp
+
+
+def _prefer_kernel_node(nodes: list[dict[str, Any]]) -> dict[str, Any]:
+    """Prefer real op_kernel paths over CBM staging duplicates."""
+    def key(n: dict[str, Any]) -> tuple[int, int, str]:
+        fp = _kernel_locator_file(n)
+        staged = 1 if ".ascendc-pilot" in fp or "index_stage" in fp or "-scope." in fp else 0
+        # Prefer entry_regbase / explicit entry headers slightly lower than kernel.h for impls
+        return (staged, len(fp), fp)
+
+    return sorted(nodes, key=key)[0]
+
+
+def _dedupe_kernel_targets(targets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse duplicate impls that share name+architecture (+ basename when possible)."""
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for t in targets:
+        name = str(t.get("name") or "")
+        arch = str(t.get("architecture") or "")
+        groups.setdefault((name, arch), []).append(t)
+    out: list[dict[str, Any]] = []
+    for group in groups.values():
+        out.append(_prefer_kernel_node(group))
+    return out
+
+
+def _link_kernel_dispatch(
+    nodes: dict[str, dict[str, Any]],
+    architecture: str,
+    *,
+    op_name: str = "",
+) -> list[dict[str, Any]]:
+    """Link public kernel → family/impl with grounded evidence.
+
+    Unique name/op match → source_verified edge.
+    Multiple distinct candidates → candidate edges (LLM may choose).
+    """
     edges: list[dict[str, Any]] = []
-    publics = [n for n in nodes.values() if n.get("role") == "public_kernel_entry"]
+    publics = [
+        n
+        for n in nodes.values()
+        if n.get("role") in {"public_kernel_entry", "template_dispatcher"}
+        and n.get("architecture") in {architecture, "neutral"}
+    ]
     concretes = [
         n
         for n in nodes.values()
-        if n.get("role") in {"concrete_kernel_impl", "kernel_family", "template_dispatcher", "public_kernel_entry"}
+        if n.get("role") in {"concrete_kernel_impl", "kernel_family", "template_dispatcher"}
         and n.get("architecture") in {architecture, "neutral"}
     ]
     for pub in publics:
-        if pub.get("architecture") == "neutral":
-            for other in concretes:
-                if other["id"] == pub["id"]:
-                    continue
-                if other.get("architecture") == architecture:
-                    edges.append(
+        targets = [other for other in concretes if other["id"] != pub["id"]]
+        targets = _dedupe_kernel_targets(targets)
+        if not targets:
+            continue
+        preferred = [
+            t
+            for t in targets
+            if str(t.get("name") or "") == str(pub.get("name") or "")
+            or str(t.get("name") or "").startswith(str(pub.get("name") or ""))
+            or (op_name and _name_matches_op(str(t.get("name") or ""), op_name))
+        ]
+        # Same logical kernel name across duplicates → single target.
+        if preferred:
+            by_name: dict[str, list[dict[str, Any]]] = {}
+            for t in preferred:
+                by_name.setdefault(str(t.get("name") or ""), []).append(t)
+            if len(by_name) == 1:
+                chosen = [_prefer_kernel_node(next(iter(by_name.values())))]
+            else:
+                chosen = [_prefer_kernel_node(v) for v in by_name.values()]
+        else:
+            chosen = targets
+
+        if len(chosen) == 1:
+            other = chosen[0]
+            loc = (other.get("locator") or {}) if isinstance(other.get("locator"), dict) else {}
+            edges.append(
+                {
+                    "id": mint_edge_id("dispatches_to", pub["id"], other["id"]),
+                    "type": "dispatches_to",
+                    "source": pub["id"],
+                    "target": other["id"],
+                    "evidence": [
                         {
-                            "id": mint_edge_id("dispatches_to", pub["id"], other["id"]),
-                            "type": "dispatches_to",
-                            "source": pub["id"],
-                            "target": other["id"],
-                            "evidence": [{"reason": "neutral_kernel_to_arch_impl"}],
-                            "confidence": "candidate",
+                            "reason": "unique_kernel_dispatch_match",
+                            "file_path": loc.get("file_path") or _kernel_locator_file(other),
+                            "source_entry_id": pub["id"],
+                            "candidate_target_ids": [other["id"]],
+                            "op_name": op_name,
                         }
-                    )
-        # Promote arch-local kernel entries to concrete_kernel_impl role marker via edge to self family
-        if pub.get("architecture") == architecture:
-            pub["role"] = "concrete_kernel_impl" if pub.get("role") == "public_kernel_entry" and "entry" not in str(pub.get("name") or "").lower() else pub["role"]
+                    ],
+                    "confidence": "source_verified",
+                    "verification_source": "source",
+                }
+            )
+        else:
+            for other in chosen:
+                loc = (other.get("locator") or {}) if isinstance(other.get("locator"), dict) else {}
+                edges.append(
+                    {
+                        "id": mint_edge_id("dispatches_to", pub["id"], other["id"]),
+                        "type": "dispatches_to",
+                        "source": pub["id"],
+                        "target": other["id"],
+                        "evidence": [
+                            {
+                                "reason": "multi_kernel_dispatch_candidate",
+                                "file_path": loc.get("file_path") or _kernel_locator_file(other),
+                                "line": loc.get("start_line"),
+                                "source_entry_id": pub["id"],
+                                "candidate_target_ids": [c["id"] for c in chosen],
+                                "snippet": str(
+                                    (other.get("symbol_ref") or {}).get("qualified_name") or other.get("name") or ""
+                                )[:160],
+                            }
+                        ],
+                        "confidence": "candidate",
+                        "verification_source": "heuristic",
+                    }
+                )
     return edges
 
 
@@ -1300,17 +1483,77 @@ def _confidence(
     return max(0.0, min(1.0, score))
 
 
+def _enrich_candidate_identity_fields(item: dict[str, Any]) -> dict[str, Any]:
+    """Fill signature / template fields from snippet when CBM omitted them."""
+    from uo.scripts.semantic_identity import (
+        infer_specialization_kind,
+        normalize_cxx_signature,
+        parse_template_arity,
+    )
+
+    out = dict(item)
+    snippet = str(
+        out.get("signature_snippet")
+        or out.get("snippet")
+        or out.get("header_text")
+        or ""
+    )
+    name = str(out.get("name") or "")
+    if not out.get("normalized_signature") and snippet:
+        # Prefer parenthesized list near name
+        sig = ""
+        if name and name in snippet:
+            idx = snippet.find(name)
+            paren = snippet.find("(", idx)
+            if paren >= 0:
+                depth = 0
+                for i in range(paren, len(snippet)):
+                    if snippet[i] == "(":
+                        depth += 1
+                    elif snippet[i] == ")":
+                        depth -= 1
+                        if depth == 0:
+                            sig = snippet[paren : i + 1]
+                            break
+        out["normalized_signature"] = normalize_cxx_signature(sig or snippet)
+    if not out.get("template_arity_or_signature") and snippet:
+        out["template_arity_or_signature"] = parse_template_arity(snippet)
+    if not out.get("specialization_kind") and snippet:
+        out["specialization_kind"] = infer_specialization_kind(snippet)
+    if not out.get("class_or_namespace"):
+        qn = str(out.get("qualified_name") or "")
+        if "::" in qn:
+            out["class_or_namespace"] = qn.rsplit("::", 1)[0]
+    return out
+
+
 def _dedupe_candidates(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Dedupe without collapsing overloads / template specializations."""
     best: dict[str, dict[str, Any]] = {}
-    for item in items:
-        cls = item.get("class_or_namespace") or ""
-        key = f"{item.get('qualified_name')}|{item.get('file_path')}|{cls}|{item.get('name')}"
+    for raw in items:
+        item = _enrich_candidate_identity_fields(raw)
+        key = "|".join(
+            [
+                str(item.get("file_path") or ""),
+                str(item.get("qualified_name") or item.get("name") or ""),
+                str(item.get("normalized_signature") or ""),
+                str(item.get("class_or_namespace") or ""),
+                str(item.get("template_arity_or_signature") or ""),
+                str(item.get("specialization_kind") or ""),
+                str(int(item.get("start_line") or 0)),
+            ]
+        )
         prev = best.get(key)
         if prev is None or item.get("confidence", 0) > prev.get("confidence", 0):
             best[key] = item
     return sorted(
         best.values(),
-        key=lambda x: (-float(x.get("confidence") or 0), x.get("file_path") or "", x.get("name") or ""),
+        key=lambda x: (
+            -float(x.get("confidence") or 0),
+            x.get("file_path") or "",
+            x.get("name") or "",
+            int(x.get("start_line") or 0),
+        ),
     )
 
 
@@ -1342,8 +1585,8 @@ def _scan_paths(repo_root: Path, confirmed_files: list[str], architecture: str, 
             continue
         if role != "public_kernel_entry" and not _path_has_dir(rel, "op_host") and "template_tiling_key" not in rel:
             continue
-        path = repo_root / rel
-        if path.exists() and path.suffix in {".h", ".hpp", ".cpp", ".cc", ".c"}:
+        path = _resolve_source_file(repo_root, rel, architecture=architecture)
+        if path is not None and path.suffix in {".h", ".hpp", ".cpp", ".cc", ".c"}:
             paths.append(path)
     if paths:
         return paths
@@ -1374,9 +1617,13 @@ def _scan_global_kernels(
             continue
         if not arch_compatible(rel_n, architecture):
             continue
-        path = repo_root / rel
-        if not path.exists() or path.suffix not in {".h", ".hpp", ".cpp", ".cc", ".c"}:
+        path = _resolve_source_file(repo_root, rel, architecture=architecture)
+        if path is None or path.suffix not in {".h", ".hpp", ".cpp", ".cc", ".c"}:
             continue
+        try:
+            rel_n = to_repo_relative(repo_root, path)
+        except Exception:  # noqa: BLE001
+            pass
         text = path.read_text(encoding="utf-8", errors="ignore")
         for match in global_re.finditer(text):
             name = match.group(1)

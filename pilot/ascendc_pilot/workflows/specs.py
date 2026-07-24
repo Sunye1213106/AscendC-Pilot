@@ -43,6 +43,9 @@ def _act(
     task_prompt_id: str | None = None,
     context_profile_id: str | None = None,
     output_contract_id: str | None = None,
+    output_mode: str | None = None,
+    staging_contract_id: str | None = None,
+    merge_action_id: str | None = None,
 ) -> dict[str, Any]:
     """Declare a Pilot Action with compositional references.
 
@@ -50,7 +53,7 @@ def _act(
     """
     method_id = action_method_id or f"{workflow_id}/{action_id.replace('_', '-')}"
     actors = [agent_id] if agent_id else []
-    return {
+    row: dict[str, Any] = {
         "id": action_id,
         "label_zh": label_zh,
         "phases": list(phases),
@@ -68,6 +71,13 @@ def _act(
         # Derived for authorize / Task spawn (single primary actor).
         "actors": actors,
     }
+    if output_mode:
+        row["output_mode"] = output_mode
+    if staging_contract_id:
+        row["staging_contract_id"] = staging_contract_id
+    if merge_action_id:
+        row["merge_action_id"] = merge_action_id
+    return row
 
 
 _UO_INIT_RESOLVE_GATES = [
@@ -775,6 +785,9 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 capability_ids=["kb-query", "semantic-resolution"],
                 task_prompt_id="tg/semantic-bind",
                 output_contract_id="semantic-bind-v1",
+                output_mode="staged",
+                staging_contract_id="semantic-bind-patch-v1",
+                merge_action_id="semantic_bind",
             ),
             _act(
                 "bind_merge",

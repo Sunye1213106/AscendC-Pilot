@@ -29,10 +29,13 @@ description: >-
    - **派发正文硬规则**：Task prompt **只能**用 prepare 返回的 `task_prompt_stub`（或 `session/task_prompt_stub.md`）原样粘贴。
      - MUST NOT：自己复述/改写 METHOD；MUST NOT：先 Read method/prompt 再二编长 prompt。
      - MUST NOT：把 `llm_tasks`/`mark_missing`/超大 candidates **整包**粘进 Task（只传路径）。
+     - MUST NOT：在 stub 前后夹 REWORK / 失败诊断 / 额外目标长文。
+   - **同 Action rework**：必须 **resume 原 Task session**（同一 `action_id` 的已有子代理），**禁止**再开第二个 session。
    - **`extract_plan` 只确认 candidates→`extract_plan.yaml`**；边裁决走 `adjudicate_llm_tasks`→`apply_semantic_patch`（禁止跳步）。
    - Write 被拒后 **禁止**用 bash/`Set-Content`/`>` 绕过围栏写正式 IR。
 5. **禁止**用 Glob/Read 自编「文件计数表」代替 `acp uo-scope scan`；`common/` 由扫描脚本向上发现，手数必漏。
 6. **进度 / Todo**：遵循公共策略 `pilot-control`（原生 Todo）；勿在本 Skill 硬编码阶段表，勿在主对话贴状态面板。
+7. **`extract_plan --finalize`**：会校验 plan 并 `build_layered_kb(host/kernel/tilingkey/bridge)`；大算子可能数分钟无输出，属正常，禁止当卡死打断。
 
 ## 启动前：关键参数确认（歧义时立刻问）
 
@@ -93,14 +96,20 @@ acp start uo-init --project <算子目录> --decision reinit     # 删除 uo 产
 `acp run-action <id>` 成功后，JSON 含 `task_prompt_stub`。派发时：
 
 ```text
+# 首次：
 Task(subagent_type=<actor_id>):
   <原样粘贴 task_prompt_stub 全文>
+
+# 同 Action rework / checker_gate 重试：
+Task(subagent_type=<actor_id>, resume=<原 task session id>):
+  <原样粘贴新一轮 task_prompt_stub 全文>
 ```
 
 禁止：
 - 先 Read method/prompt 再改写成更长的 Task
 - 粘贴 `llm_tasks.yaml` / 超大 candidates 全文
-- 给子代理加「顺便裁决 call_edge」等额外目标
+- 给子代理加「顺便裁决 call_edge」/「REWORK：请 omit …」等额外目标
+- rework 时新开第二个 session（必须 resume）
 
 子代理卡要求：启动后**先读** session `prompt.md`。
 
@@ -109,9 +118,11 @@ Task(subagent_type=<actor_id>):
 1. `acp start uo-init --project <算子目录>`（若需决策 → AskQuestion → `--decision …`）
 2. `acp next --project <算子目录>` → **只跑**返回的 `recommended_next_action`（禁止从 `allowed_actions` 跳步）
 3. `acp run-action <recommended_id> --project <算子目录>`
-4. 语义 Action 产出后：`acp run-action <id> --finalize` → **立刻再** `acp next`
+4. 语义 Action 产出后：`acp run-action <id> --finalize` → **立刻再** `acp next`  
+   （`extract_plan --finalize` 含分层构建，大算子可能数分钟）
 5. extract 流水线顺序（硬）：`detect_score_pre` → `extract_plan` → `detect_score_post` → `adjudicate_llm_tasks` → `apply_semantic_patch` → `rebuild_from_ledger` → `recheck_closure`
 6. `acp advance <next_phase>`（仅本阶段 pipeline / phase_gates 齐备时）
+7. Gate fail → `rework_required`：`retry` 同 Action 时 **resume 原子代理**，stub 原样，禁止加戏诊断文
 
 用户说「只分析 arch35」时：在 `scope_confirmation` 用  
 `acp uo-scope scan --architecture arch35`（不要自己筛目录）。

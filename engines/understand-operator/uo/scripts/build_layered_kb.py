@@ -157,6 +157,7 @@ def build_layered_kb(
         golden.get("nodes") or [],
         bridge.get("bridge_nodes") or [],
     )
+    merge_diags = list(_MERGE_NODE_DIAGNOSTICS)
     edges = _merge_edges(
         _entrypoint_edges_as_graph(entrypoint_graph),
         _boundary_edges(ir_dir),
@@ -209,6 +210,18 @@ def build_layered_kb(
             )
     for block in (host, kernel, tilingkey, golden, bridge):
         unresolved.extend(block.get("unresolved") or [])
+    for diag in merge_diags:
+        unresolved.append(
+            {
+                "id": f"UNRES_{diag.get('code')}_{diag.get('node_id')}",
+                "kind": str(diag.get("code") or "SEMANTIC_ID_COLLISION").lower(),
+                "severity": diag.get("severity") or "blocking",
+                "message": diag.get("message"),
+                "identity_keys": diag.get("identity_keys"),
+                "file_path": "",
+                "snippet": "",
+            }
+        )
 
     graph = {
         "version": 1,
@@ -227,6 +240,7 @@ def build_layered_kb(
         "kernel_branches": kernel.get("branches") or [],
         "golden": golden.get("golden"),
         "bridge_diagnostics": bridge.get("diagnostics") or [],
+        "merge_diagnostics": merge_diags,
         "operator_capabilities": caps,
         "unresolved": unresolved,
         "stats": {
@@ -248,6 +262,28 @@ def build_layered_kb(
             ),
             "candidate_edge_count": sum(
                 1 for e in edges if str(e.get("confidence") or "").casefold() in {"candidate", "structurally_inferred"}
+            ),
+            "semantic_collision_count": sum(
+                1 for d in merge_diags if d.get("code") == "SEMANTIC_ID_COLLISION"
+            ),
+            "function_count": sum(
+                1
+                for n in nodes
+                if n.get("kind") == "FunctionDefinition"
+                or n.get("node_type") in {"Process", "Init", "Compute", "FunctionDefinition"}
+            ),
+            "call_edge_count": sum(1 for e in edges if e.get("type") == "calls"),
+            "branch_count": sum(1 for n in nodes if n.get("node_type") == "KernelBranch"),
+            "loop_count": sum(1 for n in nodes if n.get("node_type") == "Loop"),
+            "candidate_call_count": sum(
+                1
+                for e in edges
+                if e.get("type") == "calls" and e.get("target_status") == "candidate_set"
+            ),
+            "unresolved_call_count": sum(
+                1
+                for e in edges
+                if e.get("type") == "calls" and e.get("target_status") == "missing"
             ),
         },
     }
@@ -332,8 +368,12 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+_MERGE_NODE_DIAGNOSTICS: list[dict[str, Any]] = []
+
+
 def _merge_nodes(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
+    diagnostics: list[dict[str, Any]] = []
     for group in groups:
         for node in group:
             nid = str(node.get("id") or "")
@@ -348,21 +388,57 @@ def _merge_nodes(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
             prev_sym = prev.get("symbol_ref") if isinstance(prev.get("symbol_ref"), dict) else {}
             prev_ikey = str(prev.get("identity_key") or prev_sym.get("identity_key") or "").strip()
             if ikey and prev_ikey and ikey != prev_ikey:
-                # Same short id collision — do not merge distinct semantic identities.
-                alt_id = f"{nid}@{ikey[:8]}"
-                while alt_id in out:
-                    alt_id = f"{alt_id}_"
-                out[alt_id] = {**node, "id": alt_id}
+                diagnostics.append(
+                    {
+                        "code": "SEMANTIC_ID_COLLISION",
+                        "node_id": nid,
+                        "identity_keys": [prev_ikey, ikey],
+                        "qualified_names": [
+                            prev.get("qualified_name") or prev.get("name"),
+                            node.get("qualified_name") or node.get("name"),
+                        ],
+                        "severity": "blocking",
+                        "message": (
+                            f"Same node id {nid} maps to distinct identity_key values; "
+                            "refusing silent rename"
+                        ),
+                    }
+                )
                 continue
             merged = dict(prev)
             for key, value in node.items():
+                if key == "locator" and isinstance(value, dict):
+                    locs = merged.get("locators")
+                    if not isinstance(locs, list):
+                        locs = []
+                        if isinstance(merged.get("locator"), dict):
+                            locs.append(merged["locator"])
+                    locs.append(value)
+                    seen: set[tuple[Any, Any]] = set()
+                    uniq: list[dict[str, Any]] = []
+                    for loc in locs:
+                        if not isinstance(loc, dict):
+                            continue
+                        k = (loc.get("file_path"), loc.get("start_line"))
+                        if k in seen:
+                            continue
+                        seen.add(k)
+                        uniq.append(loc)
+                    merged["locators"] = uniq
+                    if uniq:
+                        merged["locator"] = uniq[0]
+                    continue
                 if key not in merged or merged[key] in (None, "", [], {}):
                     merged[key] = value
             out[nid] = merged
+    _MERGE_NODE_DIAGNOSTICS.clear()
+    _MERGE_NODE_DIAGNOSTICS.extend(diagnostics)
     return list(out.values())
 
 
 def _merge_edges(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    from uo.scripts.semantic_identity import mint_edge_id
+
     out: dict[str, dict[str, Any]] = {}
     for group in groups:
         for edge in group:
@@ -373,8 +449,14 @@ def _merge_edges(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 src = str(edge.get("source_id") or edge.get("source") or edge.get("from") or "")
                 tgt = str(edge.get("target_id") or edge.get("target") or edge.get("to") or "")
                 etype = str(edge.get("edge_type") or edge.get("type") or "edge")
-                flag = str(edge.get("flag") or "")
-                eid = f"{etype}:{src}->{tgt}" + (f":{flag}" if flag else "")
+                qual = str(
+                    edge.get("qualifier")
+                    or edge.get("flag")
+                    or edge.get("call_site_id")
+                    or edge.get("target_status")
+                    or ""
+                )
+                eid = mint_edge_id(etype, src, tgt or "none", qual)
             if eid:
                 out[eid] = {**edge, "id": eid}
     return list(out.values())

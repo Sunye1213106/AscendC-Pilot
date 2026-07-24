@@ -445,12 +445,15 @@ Do **not** invent extra goals beyond the session prompt. Do **not** finalize the
     return _dump_frontmatter(front) + "\n" + body
 
 
-def compose_host(repo: Path, host: str) -> dict[str, Any]:
+def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict[str, Any]:
     paths = _repo_paths(repo)
     skills = paths["skills"]
     prompts_src = paths["prompts"]
     agents_src = paths["agents"]
-    out_root = paths["out"] / host
+    if out_root is None:
+        out_root = paths["out"] / host
+    else:
+        out_root = Path(out_root)
     host_meta = _load_yaml(skills / "hosts" / f"{host}.yaml")
 
     sys.path.insert(0, str(repo / "pilot"))
@@ -681,6 +684,89 @@ def validate_generated(repo: Path, *, host: str = "opencode") -> list[str]:
             errors.append(
                 f"generated/{host}/agents/{agent_id}.md: unknown OpenCode keys {unknown}"
             )
+    return errors
+
+
+_GENERATED_DRIFT_IGNORE_RES = (
+    re.compile(r"(?im)^generated_at\s*[:=].*$"),
+    re.compile(r"(?i)[A-Za-z]:\\[^\s\"']+"),  # Windows absolute paths
+    re.compile(r"(?i)/tmp/[^\s\"']+"),
+    re.compile(r"(?i)/var/folders/[^\s\"']+"),
+    re.compile(r"(?i)C:\\Users\\[^\\]+\\AppData\\Local\\Temp[^\s\"']*"),
+)
+
+
+def _normalize_generated_text(text: str, *, tmp_root: str = "", repo_root: str = "") -> str:
+    out = text.replace("\r\n", "\n")
+    for pat in _GENERATED_DRIFT_IGNORE_RES:
+        out = pat.sub("", out)
+    if tmp_root:
+        out = out.replace(tmp_root.replace("\\", "/"), "<TMP>")
+        out = out.replace(tmp_root, "<TMP>")
+    if repo_root:
+        out = out.replace(repo_root.replace("\\", "/"), "<REPO>")
+        out = out.replace(repo_root, "<REPO>")
+    # Drop empty lines introduced by stripping generated_at
+    lines = [ln for ln in out.split("\n") if ln.strip() != ""]
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def check_generated_drift(repo: Path, *, hosts: list[str] | None = None) -> list[str]:
+    """Recompose into a temp dir and compare against committed generated/ (content).
+
+    Does not modify the workspace. Returns GENERATED_DRIFT errors with regen hint.
+    """
+    import tempfile
+
+    host_list = hosts or ["opencode", "cursor", "codex"]
+    errors: list[str] = []
+    repo = repo.expanduser().resolve()
+    src_errors = validate(repo)
+    if src_errors:
+        return [f"GENERATED_DRIFT: compose sources invalid: {e}" for e in src_errors[:8]]
+
+    with tempfile.TemporaryDirectory(prefix="acp-gen-") as tmp:
+        tmp_path = Path(tmp)
+        for host in host_list:
+            candidate_root = tmp_path / host
+            compose_host(repo, host, out_root=candidate_root)
+            committed = repo / "generated" / host
+            if not committed.is_dir():
+                errors.append(f"GENERATED_DRIFT: missing committed generated/{host}/")
+                continue
+            cand_files = {
+                p.relative_to(candidate_root).as_posix()
+                for p in candidate_root.rglob("*")
+                if p.is_file()
+            }
+            committed_files = {
+                p.relative_to(committed).as_posix()
+                for p in committed.rglob("*")
+                if p.is_file()
+            }
+            only_cand = sorted(cand_files - committed_files)
+            only_committed = sorted(committed_files - cand_files)
+            for rel in only_cand[:20]:
+                errors.append(f"GENERATED_DRIFT: generated/{host}/{rel} missing in repo")
+            for rel in only_committed[:20]:
+                errors.append(f"GENERATED_DRIFT: generated/{host}/{rel} stale (not in fresh compose)")
+            for rel in sorted(cand_files & committed_files):
+                left = _normalize_generated_text(
+                    (candidate_root / rel).read_text(encoding="utf-8", errors="replace"),
+                    tmp_root=str(tmp_path),
+                    repo_root=str(repo),
+                )
+                right = _normalize_generated_text(
+                    (committed / rel).read_text(encoding="utf-8", errors="replace"),
+                    tmp_root=str(tmp_path),
+                    repo_root=str(repo),
+                )
+                if left != right:
+                    errors.append(f"GENERATED_DRIFT: generated/{host}/{rel}")
+    if errors:
+        errors.append(
+            "GENERATED_DRIFT: run `python scripts/compose_runtime.py --repo .` to regenerate"
+        )
     return errors
 
 

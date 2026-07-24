@@ -225,18 +225,24 @@ def test_semantic_bind_closed_loop_and_stale_rejection(tmp_path: Path):
     assert prep.get("ok") is True, prep
     assert prep.get("prepare_engine", {}).get("ok") is True or "prepare_engine" in prep
 
-    # Finalize with stale patch must fail
+    # Finalize with stale patch must fail (and revokes lease under fail-closed policy)
     fin_stale = finalize_action(tmp_path, "semantic_bind")
     assert fin_stale.get("ok") is False
     assert fin_stale.get("error") in {"STALE_PATCH", "APPLY_FAILED", "PATCH_REQUIRED"} or (
         (fin_stale.get("apply_result") or {}).get("error") == "STALE_PATCH"
     )
 
-    # Fresh patch after prepare
+    # Re-prepare after failed finalize (lease revoked); then write a fresh patch
+    prep2 = prepare_action(tmp_path, "semantic_bind")
+    assert prep2.get("ok") is True, prep2
     time.sleep(0.05)
-    session_path = Path(prep["session_dir"]) / "session.yaml"
+    session_path = Path(prep2["session_dir"]) / "session.yaml"
     session = yaml.safe_load(session_path.read_text(encoding="utf-8"))
-    nonce = session.get("nonce") or (session.get("prepare_stamp") or {}).get("nonce")
+    nonce = (
+        session.get("prepare_nonce")
+        or session.get("nonce")
+        or (session.get("prepare_stamp") or {}).get("nonce")
+    )
     _write(
         stale,
         {

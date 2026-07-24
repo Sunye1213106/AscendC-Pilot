@@ -214,7 +214,9 @@ def _bridge_tilingdata(
                     "architecture": hf.get("architecture") or kf.get("architecture"),
                     "path_family": hf.get("path_family"),
                     "template_family": hf.get("template_family"),
-                    "registration_evidence": "unique_leaf_candidate",
+                    "registration_evidence": "owning_type_missing_unique_leaf_fallback",
+                    "confidence": "candidate",
+                    "reason": "owning_type_missing_unique_leaf_fallback",
                 }
             )
             matched_host.add(leaf)

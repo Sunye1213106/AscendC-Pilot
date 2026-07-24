@@ -302,7 +302,12 @@ def issue_rework_lease(
     )
 
 
-def revoke_active_lease(project_root: Path, *, reason: str = "") -> dict[str, Any]:
+def revoke_active_lease(
+    project_root: Path,
+    *,
+    reason: str = "",
+    touch_active_action: bool = True,
+) -> dict[str, Any]:
     """Revoke current lease if active. Returns revoke info (may be empty)."""
     import json
 
@@ -334,14 +339,15 @@ def revoke_active_lease(project_root: Path, *, reason: str = "") -> dict[str, An
             + "\n"
         )
 
-    active = agent_root(project_root) / "state" / "active_action.yaml"
-    if active.is_file():
-        data = _load(active)
-        if data:
-            data["status"] = "revoked"
-            data["revoked_at"] = lease["revoked_at"]
-            data["revoke_reason"] = reason
-            _dump(active, data)
+    if touch_active_action:
+        active = agent_root(project_root) / "state" / "active_action.yaml"
+        if active.is_file():
+            data = _load(active)
+            if data:
+                data["status"] = "revoked"
+                data["revoked_at"] = lease["revoked_at"]
+                data["revoke_reason"] = reason
+                _dump(active, data)
 
     return {
         "revoked": True,

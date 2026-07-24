@@ -48,6 +48,8 @@ def _patch(task_id: str, *, cand: str = "cand_1", bad: bool = False) -> dict:
         "action": "accept_edge",
         "accepted_candidate_ids": ["cand_BAD" if bad else cand],
         "rejected_candidate_ids": [],
+        "source_snapshot_hash": "snap1",
+        "candidate_set_hash": "cset",
     }
 
 

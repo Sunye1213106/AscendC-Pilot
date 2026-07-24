@@ -365,6 +365,56 @@ function runDebug(argvExtra: string[], project?: string): void {
   }
 }
 
+/** Extract OpenCode Task child session id from tool output. */
+function extractTaskSessionId(output: Record<string, unknown> | undefined): string {
+  if (!output || typeof output !== "object") return ""
+  const direct = [
+    output.sessionId,
+    output.sessionID,
+    output.session_id,
+    output.id,
+    output.taskId,
+    output.task_id,
+  ]
+  for (const v of direct) {
+    if (typeof v === "string") {
+      const m = v.match(/ses_[A-Za-z0-9]+/)
+      if (m) return m[0]
+    }
+  }
+  const meta = output.metadata
+  if (meta && typeof meta === "object") {
+    for (const k of ["sessionId", "sessionID", "session_id", "id", "taskId"] as const) {
+      const v = (meta as Record<string, unknown>)[k]
+      if (typeof v === "string") {
+        const m = v.match(/ses_[A-Za-z0-9]+/)
+        if (m) return m[0]
+      }
+    }
+  }
+  const chunks: string[] = []
+  for (const k of ["output", "content", "title", "message", "text"] as const) {
+    const v = output[k]
+    if (typeof v === "string" && v.trim()) chunks.push(v)
+  }
+  const blob = chunks.join("\n")
+  const attr = blob.match(/<task\s+[^>]*\bid=["'](ses_[A-Za-z0-9]+)["']/i)
+  if (attr) return attr[1]
+  const any = blob.match(/\b(ses_[A-Za-z0-9]{8,})\b/)
+  return any ? any[1] : ""
+}
+
+function extractHostSessionId(input: Record<string, unknown>): string {
+  for (const k of ["sessionID", "sessionId", "session_id"] as const) {
+    const v = input[k]
+    if (typeof v === "string") {
+      const m = v.match(/ses_[A-Za-z0-9]+/)
+      if (m) return m[0]
+    }
+  }
+  return ""
+}
+
 function extractToolError(
   output: Record<string, unknown> | undefined,
   tool?: string,
@@ -598,6 +648,25 @@ export const AscendCHarnessPlugin = async () => {
         const dispatchAction = action || String(active.action_id || "")
         const dispatchActor = taskAgent || String(active.actor_id || "")
         injectActionContext(args, dispatchAction, dispatchActor)
+        const hostSession = extractHostSessionId(input as Record<string, unknown>)
+        const promptText = String(args.prompt || args.description || args.task || "")
+        if (hostSession) {
+          runDebug(
+            [
+              "register-child",
+              "--if-enabled",
+              "--parent-session-id",
+              hostSession,
+              "--action-id",
+              dispatchAction,
+              "--actor-id",
+              dispatchActor,
+              "--task-prompt",
+              promptText.slice(0, 4000),
+            ],
+            project,
+          )
+        }
         const verdict = runAuthorize({
           tool: "task",
           path: taskAgent,
@@ -612,7 +681,7 @@ export const AscendCHarnessPlugin = async () => {
       }
     },
     "tool.execute.after": async (
-      input: { tool?: string; agent?: string; sessionAgent?: string },
+      input: { tool?: string; agent?: string; sessionAgent?: string; sessionID?: string; sessionId?: string },
       output: Record<string, unknown> | undefined,
     ) => {
       try {
@@ -642,7 +711,44 @@ export const AscendCHarnessPlugin = async () => {
           )
         }
 
-        // Subagent (Task) finished → auto export session bundle when debug enabled.
+        const hostSession = extractHostSessionId(input as Record<string, unknown>)
+        const active = readActiveAction(project || "")
+        const actionId = String(active.action_id || "")
+        const auditTools = new Set([
+          "read",
+          "grep",
+          "glob",
+          "write",
+          "edit",
+          "apply_patch",
+          "strreplace",
+          "patch",
+          "search",
+          "list",
+        ])
+        if (auditTools.has(tool)) {
+          const pattern = String(args.pattern || args.query || "")
+          runDebug(
+            [
+              "record-tool-event",
+              "--if-enabled",
+              "--tool",
+              tool,
+              "--parent-session-id",
+              hostSession,
+              "--action-id",
+              actionId,
+              "--path",
+              path.slice(0, 500),
+              "--pattern",
+              pattern.slice(0, 500),
+              ...(err ? ["--failed"] : []),
+            ],
+            project,
+          )
+        }
+
+        // Subagent (Task) finished → patch child id + export child bundle when debug enabled.
         if (isTaskTool) {
           const sub =
             String(
@@ -653,10 +759,35 @@ export const AscendCHarnessPlugin = async () => {
                 args.name ||
                 "",
             ) || "task"
-          runDebug(
-            ["export-session", "--if-enabled", "--reason", "subagent_stop", "--subagent", sub],
-            project,
-          )
+          const childSession = extractTaskSessionId(output)
+          const dispatchAction = actionId
+          if (childSession) {
+            runDebug(
+              [
+                "patch-child-session",
+                "--child-session-id",
+                childSession,
+                "--parent-session-id",
+                hostSession,
+                "--action-id",
+                dispatchAction,
+              ],
+              project,
+            )
+            runDebug(
+              [
+                "export-child-session",
+                "--if-enabled",
+                "--reason",
+                "subagent_stop",
+                "--subagent",
+                sub,
+                "--child-session-id",
+                childSession,
+              ],
+              project,
+            )
+          }
         }
       } catch {
         // fail-open

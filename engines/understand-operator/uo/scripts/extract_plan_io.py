@@ -26,6 +26,10 @@ CHAIN_ROLES = frozenset(
     }
 )
 
+EVIDENCE_SOURCES = frozenset({"source", "cbm", "candidate_only"})
+PROMOTED_WRITER_ROLES = frozenset({"tiling_writer", "key_writer"})
+WEAK_SCORE_THRESHOLD = 0.55
+
 
 def _cand_identity(item: dict[str, Any]) -> str:
     if item.get("identity_key"):
@@ -89,8 +93,12 @@ def plan_tiling_sink_receivers(plan: dict[str, Any]) -> set[str]:
 
 
 def plan_non_sink_roots(plan: dict[str, Any]) -> set[str]:
-    roots = plan.get("non_sink_roots") or []
-    return {str(r).strip().casefold() for r in roots if str(r).strip()}
+    """Accepted non-sink roots are bare string names only (contract)."""
+    out: set[str] = set()
+    for r in plan.get("non_sink_roots") or []:
+        if isinstance(r, str) and r.strip():
+            out.add(r.strip().casefold())
+    return out
 
 
 def plan_aliases(plan: dict[str, Any]) -> dict[str, str]:
@@ -106,8 +114,43 @@ def plan_aliases(plan: dict[str, Any]) -> dict[str, str]:
 
 
 def plan_derived_roots(plan: dict[str, Any]) -> set[str]:
-    roots = plan.get("derived_roots") or []
-    return {str(r).strip() for r in roots if str(r).strip()}
+    """Accepted derived roots are bare string names only (contract)."""
+    out: set[str] = set()
+    for r in plan.get("derived_roots") or []:
+        if isinstance(r, str) and r.strip():
+            out.add(r.strip())
+    return out
+
+
+def _validate_string_name_list(
+    values: Any,
+    *,
+    field: str,
+    allowed_cf: set[str],
+    errors: list[str],
+) -> None:
+    """``non_sink_roots`` / ``derived_roots``: string names only; no mapping/adjudication objects."""
+    if values is None:
+        return
+    if not isinstance(values, list):
+        errors.append(f"{field} must be a list of string names")
+        return
+    for item in values:
+        if isinstance(item, dict):
+            errors.append(
+                f"{field} entry must be a string name, got mapping "
+                "(do not write adjudication/unresolved objects; "
+                "confirm with a bare string or omit the name)"
+            )
+            continue
+        if not isinstance(item, str):
+            errors.append(f"{field} entry must be a string name, got {type(item).__name__}")
+            continue
+        name = item.strip()
+        if not name:
+            continue
+        if name.casefold() not in allowed_cf:
+            errors.append(f"{field[:-1] if field.endswith('s') else field} not in candidates: {name}")
 
 
 # Top-level keys that belong in ledger / llm_tasks — never in extract_plan.yaml.
@@ -123,8 +166,134 @@ FORBIDDEN_EXTRACT_PLAN_KEYS = frozenset(
         "accepted_edges",
         "entrypoint_dispatch_bind",
         "accepted_candidate_ids",
+        "blocking_reasons",
     }
 )
+
+
+def _effective_evidence_source(item: dict[str, Any]) -> str:
+    raw = str(item.get("evidence_source") or "").strip()
+    if raw in EVIDENCE_SOURCES:
+        return raw
+    return "candidate_only"
+
+
+def _evidence_list(cand: dict[str, Any] | None) -> set[str]:
+    if not cand:
+        return set()
+    ev = cand.get("evidence")
+    if not isinstance(ev, list):
+        return set()
+    return {str(x).strip() for x in ev if str(x).strip()}
+
+
+STRONG_WRITER_EVIDENCE = frozenset(
+    {"tilingdata_assign", "recv_set_call", "sink_set_writer", "one_hop_callee"}
+)
+
+
+def _writer_candidate_weak(
+    item: dict[str, Any],
+    cand: dict[str, Any] | None,
+    all_writers: list[dict[str, Any]],
+) -> bool:
+    """True when heuristic score/evidence is too weak to promote without source read."""
+    name = str(item.get("name") or "").strip()
+    if not name:
+        return False
+    same_name = sum(
+        1
+        for c in all_writers
+        if isinstance(c, dict) and str(c.get("name") or "").casefold() == name.casefold()
+    )
+    if same_name > 1:
+        return True
+    if not cand:
+        return False
+    score = float(cand.get("score") or 0)
+    if score > 0 and score < WEAK_SCORE_THRESHOLD:
+        return True
+    ev = _evidence_list(cand)
+    if "assign_lhs_only" in ev:
+        return True
+    if "has_set_field" in ev and not (ev & STRONG_WRITER_EVIDENCE):
+        return True
+    qn = str(cand.get("qualified_name") or "").strip()
+    cn = str(cand.get("name") or "").strip()
+    if (
+        qn
+        and cn
+        and qn == cn
+        and not str(cand.get("class_or_namespace") or "").strip()
+        and score > 0
+        and score < WEAK_SCORE_THRESHOLD
+    ):
+        return True
+    start = int(item.get("start_line") or cand.get("start_line") or 0)
+    if start > 0:
+        fp = str(item.get("file_path") or cand.get("file_path") or "").replace("\\", "/")
+        overlaps = [
+            c
+            for c in all_writers
+            if isinstance(c, dict)
+            and str(c.get("file_path") or "").replace("\\", "/") == fp
+            and int(c.get("start_line") or 0) == start
+            and str(c.get("name") or "").casefold() != name.casefold()
+        ]
+        if overlaps:
+            return True
+    return False
+
+
+def _validate_decision_evidence(
+    item: dict[str, Any],
+    *,
+    label: str,
+    errors: list[str],
+    cand: dict[str, Any] | None = None,
+    all_pool: list[dict[str, Any]] | None = None,
+    check_weak_writer_promotion: bool = False,
+) -> None:
+    """Source-evidence contract for accepted writer/receiver mappings."""
+    evidence_source = _effective_evidence_source(item)
+    source_verified = item.get("source_verified") is True
+
+    if source_verified:
+        if evidence_source not in ("source", "cbm"):
+            errors.append(
+                f"{label} source_verified:true requires evidence_source source or cbm "
+                f"(got {evidence_source!r})"
+            )
+        files = item.get("evidence_files")
+        if not isinstance(files, list) or not any(str(f).strip() for f in files):
+            errors.append(f"{label} source_verified:true requires non-empty evidence_files")
+
+    if evidence_source == "candidate_only":
+        if source_verified:
+            errors.append(f"{label} candidate_only cannot set source_verified:true")
+        conf = str(item.get("confidence") or "").strip()
+        if conf and conf != "candidate":
+            errors.append(
+                f"{label} evidence_source candidate_only requires confidence:candidate "
+                f"(got {conf!r})"
+            )
+
+    if not str(item.get("evidence_source") or "").strip() and source_verified:
+        errors.append(
+            f"{label} source_verified:true requires explicit evidence_source source|cbm"
+        )
+
+    if check_weak_writer_promotion:
+        role = str(item.get("role") or "").strip()
+        if role in PROMOTED_WRITER_ROLES and evidence_source == "candidate_only":
+            if _writer_candidate_weak(item, cand, all_pool or []):
+                reason = str(item.get("decision_reason") or "").strip()
+                if not reason:
+                    errors.append(
+                        f"writer {item.get('name') or '?'} weak candidate with role {role!r} "
+                        "and evidence_source candidate_only requires decision_reason "
+                        "(read source to reject helper/temp/non-sink) or omit the writer"
+                    )
 
 
 def _match_candidate(
@@ -268,6 +437,16 @@ def validate_extract_plan_against_candidates(
                 f"(copy role_suggested from extract_plan_candidates.yaml; "
                 f"allowed: {sorted(WRITER_ROLES)})"
             )
+        writer_pool = list(candidates.get("writer_candidates") or [])
+        matched = _match_candidate(item, writer_pool)
+        _validate_decision_evidence(
+            item,
+            label=f"writer {name or '?'}",
+            errors=errors,
+            cand=matched,
+            all_pool=writer_pool,
+            check_weak_writer_promotion=True,
+        )
 
     for item in plan.get("receivers") or []:
         if not isinstance(item, dict):
@@ -291,6 +470,16 @@ def validate_extract_plan_against_candidates(
                 f"receiver {name} missing is_tiling_sink "
                 "(copy is_tiling_sink_suggested from extract_plan_candidates.yaml)"
             )
+        recv_pool = list(candidates.get("receiver_candidates") or [])
+        matched_recv = _match_candidate(item, recv_pool)
+        _validate_decision_evidence(
+            item,
+            label=f"receiver {name or '?'}",
+            errors=errors,
+            cand=matched_recv,
+            all_pool=recv_pool,
+            check_weak_writer_promotion=False,
+        )
 
     for item in plan.get("aliases") or []:
         if not isinstance(item, dict):
@@ -305,12 +494,32 @@ def validate_extract_plan_against_candidates(
         ):
             errors.append(f"alias not in candidates: {local}={leaf}")
 
-    for root in plan.get("non_sink_roots") or []:
-        r = str(root).strip()
-        if r and r.casefold() not in non_sink_cands and r.casefold() not in recv_cf:
-            # Allow non_sink from receivers too (LLM may mark intermediate receivers)
-            if r.casefold() not in {n.casefold() for n in recv_names}:
-                errors.append(f"non_sink_root not in candidates: {r}")
+    # non_sink_roots: bare string names only (no identity fields; no adjudication dicts).
+    # Allow names from non_sink_root_candidates or receivers (intermediate receivers).
+    non_sink_allowed = set(non_sink_cands) | recv_cf | {n.casefold() for n in recv_names}
+    _validate_string_name_list(
+        plan.get("non_sink_roots"),
+        field="non_sink_roots",
+        allowed_cf=non_sink_allowed,
+        errors=errors,
+    )
+
+    # derived_roots: bare string names only when present (optional; empty OK).
+    derived = plan.get("derived_roots")
+    if derived is not None:
+        if not isinstance(derived, list):
+            errors.append("derived_roots must be a list of string names")
+        else:
+            for item in derived:
+                if isinstance(item, dict):
+                    errors.append(
+                        "derived_roots entry must be a string name, got mapping "
+                        "(do not write adjudication/unresolved objects)"
+                    )
+                elif not isinstance(item, str):
+                    errors.append(
+                        f"derived_roots entry must be a string name, got {type(item).__name__}"
+                    )
 
     for entry in plan.get("extra_host_entries") or []:
         if isinstance(entry, dict):

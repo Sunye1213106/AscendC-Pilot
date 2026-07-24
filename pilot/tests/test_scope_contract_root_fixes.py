@@ -57,21 +57,31 @@ def test_output_contract_rejects_summary_only_legacy(tmp_path: Path) -> None:
 
 
 def test_gate_scope_receipt_requires_mcp(tmp_path: Path) -> None:
+    state = start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
+    run_id = str(state.get("run_id") or "")
     uo = tmp_path / ".ascendc-pilot" / "uo"
-    scope = uo / "runs" / "r1" / "scope"
+    scope = uo / "runs" / run_id / "scope"
     scope.mkdir(parents=True)
     (scope / "scope_confirmed.yaml").write_text(
-        yaml.safe_dump({"status": "confirmed", "confirmed_file_list": [{"path": "a.cpp"}]}),
+        yaml.safe_dump(
+            {
+                "status": "confirmed",
+                "run_id": run_id,
+                "workflow_id": "uo-init",
+                "action_id": "scope_confirmation",
+                "confirmed_file_list": [{"path": "a.cpp"}],
+            }
+        ),
         encoding="utf-8",
     )
-    assert gate_scope_receipt(uo).get("ok") is False
+    assert gate_scope_receipt(tmp_path, uo).get("ok") is False
     cbm = uo / "cbm"
     cbm.mkdir(parents=True)
     (cbm / "index_meta.json").write_text(
         json.dumps({"indexed_via": "mcp", "cbm_project": "x"}),
         encoding="utf-8",
     )
-    assert gate_scope_receipt(uo).get("ok") is True
+    assert gate_scope_receipt(tmp_path, uo).get("ok") is True
 
 
 def test_extract_pilot_strips_cd_wrapper() -> None:

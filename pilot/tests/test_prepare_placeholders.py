@@ -62,6 +62,9 @@ def test_task_prompt_stub_is_pointer_only() -> None:
 
 def test_prepare_extract_plan_writes_filled_prompt(tmp_path: Path, monkeypatch) -> None:
     """Integration-ish: prepare on extract phase fills UO_ROOT and stub file."""
+    from ascendc_pilot.runs import issue_receipt
+    from ascendc_pilot.spec_hashes import workflow_spec_hash
+
     op = tmp_path / "demo_op"
     op.mkdir()
     ensure_agent_layout(op)
@@ -76,6 +79,18 @@ def test_prepare_extract_plan_writes_filled_prompt(tmp_path: Path, monkeypatch) 
     # Satisfy extract pipeline progress so recommended_next is extract_plan
     (uo / "ir" / "score_report_pre.yaml").write_text("version: 1\nok: true\n", encoding="utf-8")
     (uo / "ir" / "llm_tasks.yaml").write_text("version: 1\ntasks: []\n", encoding="utf-8")
+    issue_receipt(
+        op,
+        actor_type="deterministic_engine",
+        actor_id="deterministic-uo-engine",
+        action_id="detect_score_pre",
+        workflow_spec_hash=workflow_spec_hash("uo-init"),
+        input_hashes={"f": "1"},
+        output_hashes={"f": "1"},
+        checker_result={"ok": True},
+        nonce="pre",
+        _internal=True,
+    )
 
     # Avoid heavy propose: patch invoke_engine for extract_plan propose
     from ascendc_pilot.actions import runtime as rt

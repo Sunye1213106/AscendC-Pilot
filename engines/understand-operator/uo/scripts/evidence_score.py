@@ -348,16 +348,72 @@ def score_tilingdata_bridge(bridge: dict[str, Any]) -> dict[str, Any]:
         evidence.append("unit_consistent")
     conf = normalize_confidence(bridge.get("confidence"))
     score = 0.95 if is_verified_confidence(conf) else float(bridge.get("score") or 0.5)
-    if len(evidence) < 3:
+    identity_complete = len(evidence) >= 3
+    if not identity_complete:
         score = min(score, 0.6)
+    # Incomplete / leaf-only fields must not mass-emit blocking choose_edge tasks.
+    # Only explicit main_chain + required incomplete bridges stay blocking enrichment.
+    explicit_required = bridge.get("required")
+    explicit_main = bool(bridge.get("main_chain") or bridge.get("necessity") == "main_chain")
+    if not identity_complete:
+        necessity = "main_chain" if (explicit_required is True and explicit_main) else "auxiliary"
+    elif explicit_required is False:
+        necessity = "auxiliary"
+    else:
+        necessity = "main_chain"
     result = evaluate_disposition(
         object_type="tilingdata_bridge",
         score=score,
         evidence_classes=evidence,
         conflicts=bool(bridge.get("ambiguous")),
-        necessity="main_chain" if bridge.get("required", True) else "auxiliary",
+        necessity=necessity,
     )
+    if not identity_complete and result.get("disposition") == "llm_task":
+        result["task_hint"] = "evidence_enrichment"
+        result["severity"] = "blocking" if necessity == "main_chain" else "degraded"
+    if result.get("task_hint") == "choose_edge" and not identity_complete:
+        result["task_hint"] = "evidence_enrichment"
+        result["severity"] = "blocking" if necessity == "main_chain" else "degraded"
+
     result["target_id"] = bridge.get("id") or bridge.get("field_path")
+    result["owning_type"] = bridge.get("owning_type")
+    result["canonical_type"] = bridge.get("canonical_type")
+    result["field_path"] = bridge.get("field_path")
+    result["unit_id"] = bridge.get("unit_id")
+    result["extraction_unit"] = bridge.get("extraction_unit")
+    candidates: list[dict[str, Any]] = []
+    for key, sym in (
+        ("host_writer", bridge.get("host_writer")),
+        ("kernel_reader", bridge.get("kernel_reader")),
+    ):
+        if not sym:
+            continue
+        loc = bridge.get(f"{key}_locator") or bridge.get("locator") or {}
+        fp = loc.get("file_path") or bridge.get("file_path") or ""
+        snippet = loc.get("snippet") or bridge.get("snippet") or ""
+        start_line = loc.get("start_line") or bridge.get("start_line")
+        for ev in bridge.get("evidence") or []:
+            if isinstance(ev, dict) and ev.get("file_path"):
+                fp = fp or str(ev.get("file_path"))
+                start_line = start_line or ev.get("line") or ev.get("start_line")
+                snippet = snippet or str(ev.get("snippet") or ev.get("text") or "")[:120]
+        if fp or snippet:
+            candidates.append(
+                {
+                    "id": f"cand_{sym}",
+                    "file_path": fp,
+                    "symbol_ref": str(sym),
+                    "snippet": snippet,
+                    "start_line": start_line,
+                    "score": result.get("score"),
+                    "role": key,
+                }
+            )
+    if candidates:
+        result["candidates"] = candidates
+    elif result.get("task_hint") == "choose_edge":
+        result["task_hint"] = "evidence_enrichment"
+        result["severity"] = "blocking" if necessity == "main_chain" else "degraded"
     return result
 
 

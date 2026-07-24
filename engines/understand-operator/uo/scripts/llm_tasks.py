@@ -22,8 +22,89 @@ TASK_TYPES = frozenset(
         "mark_missing",
         "inspect_candidates",
         "choose_edge",
+        "evidence_enrichment",
+        "candidate_generation",
     }
 )
+
+PATCH_TYPES = frozenset(
+    {
+        "edge_resolution",
+        "entrypoint_node_resolution",
+        "entrypoint_dispatch_resolution",
+        "call_edge_resolution",
+        "tilingdata_bridge_resolution",
+        "template_instance_resolution",
+        "mark_missing",
+    }
+)
+
+_ACCEPT_CLOSE_ACTIONS = frozenset({"accept_edge", "choose_one", "accept", "select_edge", "select"})
+
+
+def _semantic_status(task: dict[str, Any]) -> str:
+    return str(task.get("semantic_status") or "unresolved")
+
+
+def _task_is_blocking(task: dict[str, Any]) -> bool:
+    if "blocking" in task:
+        return bool(task.get("blocking"))
+    return str(task.get("severity") or "") == "blocking"
+
+
+def _is_candidate_node_id(value: Any) -> bool:
+    s = str(value or "").strip()
+    return s.startswith("cand_") or s.startswith("cand_EP_")
+
+
+def _is_real_edge_id(value: Any) -> bool:
+    s = str(value or "").strip()
+    return bool(s) and not _is_candidate_node_id(s)
+
+
+def _bridge_identity_complete(item: dict[str, Any]) -> bool:
+    return bool(
+        (item.get("owning_type") or item.get("canonical_type"))
+        and item.get("field_path")
+        and (item.get("unit_id") or item.get("extraction_unit"))
+    )
+
+
+def _infer_patch_type(task: dict[str, Any], action: str) -> str:
+    if action == "mark_missing":
+        return "mark_missing"
+    ttype = str(task.get("type") or "")
+    obj = str(task.get("object_type") or "")
+    if obj == "tilingdata_bridge" or ttype == "tilingdata_bridge":
+        return "tilingdata_bridge_resolution"
+    if obj == "entrypoint_node":
+        return "entrypoint_node_resolution"
+    if obj == "call_edge":
+        return "call_edge_resolution"
+    if obj in {"entrypoint_dispatch_bind"} or obj in {"registration_edge", "call_edge"}:
+        return "entrypoint_dispatch_resolution"
+    if ttype == "choose_edge":
+        return "edge_resolution"
+    return "edge_resolution"
+
+
+def _resolve_patch_edge_id(task: dict[str, Any], patch: dict[str, Any], *, accepted: list[str]) -> str | None:
+    raw = patch.get("edge_id") or task.get("target")
+    if _is_real_edge_id(raw):
+        return str(raw)
+    for cid in accepted:
+        if _is_real_edge_id(cid):
+            return str(cid)
+    return None
+
+
+def blocking_gap_tasks(uo_root: Path) -> list[dict[str, Any]]:
+    doc = load_llm_tasks(uo_root)
+    return [
+        t
+        for t in doc.get("tasks") or []
+        if isinstance(t, dict) and _task_is_blocking(t) and _semantic_status(t) != "closed"
+    ]
 
 
 def stable_task_id(
@@ -79,25 +160,35 @@ def upsert_tasks_from_score_items(
         if severity == "none":
             continue
         hint = str(item.get("task_hint") or "choose_edge")
+        object_type = str(item.get("object_type") or "")
         if hint == "mark_missing":
             task_type = "mark_missing"
-        elif item.get("object_type") == "io_slot_bind":
+        elif object_type == "io_slot_bind":
             task_type = "io_slot_bind"
-        elif item.get("object_type") == "tilingdata_bridge":
+        elif object_type == "tilingdata_bridge":
             task_type = "tilingdata_bridge"
-        elif item.get("object_type") == "tilingkey_binding":
+        elif object_type == "tilingkey_binding":
             task_type = "tilingkey_schema_bind"
-        elif item.get("object_type") in {"registration_edge", "call_edge", "entrypoint_node"}:
+        elif object_type in {"registration_edge", "call_edge", "entrypoint_node"}:
             task_type = "entrypoint_dispatch_bind"
         else:
             task_type = hint if hint in TASK_TYPES else "inspect_candidates"
 
         target = str(item.get("target_id") or item.get("role") or item.get("edge_type") or "unknown")
         candidates = item.get("candidates") or _default_candidates(item)
-        if hint == "choose_edge" and not candidates:
-            # Critical but ungrounded → mark_missing with empty candidate set forbidden for choose.
-            task_type = "mark_missing"
-            hint = "mark_missing"
+        if not candidates and (hint == "choose_edge" or object_type == "tilingdata_bridge" or task_type == "tilingdata_bridge"):
+            if object_type == "tilingdata_bridge" and not _bridge_identity_complete(item):
+                task_type = "evidence_enrichment"
+                hint = "evidence_enrichment"
+            elif object_type in {"call_edge", "registration_edge", "entrypoint_node"} or task_type == "entrypoint_dispatch_bind":
+                task_type = "candidate_generation"
+                hint = "candidate_generation"
+            else:
+                task_type = "evidence_enrichment"
+                hint = "evidence_enrichment"
+        elif not candidates and hint == "choose_edge":
+            task_type = "candidate_generation"
+            hint = "candidate_generation"
         cand_hash = candidate_set_hash(candidates)
         tid = stable_task_id(
             task_type=task_type,
@@ -109,7 +200,7 @@ def upsert_tasks_from_score_items(
         if existing and existing.get("status") == "open":
             # Same stable id — do not duplicate.
             continue
-        if existing and existing.get("status") in {"resolved", "rejected"}:
+        if existing and existing.get("status") in {"resolved", "rejected", "adjudicated"}:
             continue
         # Supersede older open tasks for same target+type with different snapshot.
         for old in list(by_id.values()):
@@ -122,8 +213,8 @@ def upsert_tasks_from_score_items(
                 old["status"] = "superseded"
                 old["superseded_by"] = tid
 
-        # Empty candidate window / mark_missing: no accept_edge (false closure).
-        if task_type == "mark_missing" or not candidates:
+        # Empty candidate window: never offer accept_edge / choose_one (false closure).
+        if task_type in {"mark_missing", "evidence_enrichment", "candidate_generation"} or not candidates:
             allowed_actions = ["mark_missing", "inspect_candidates", "reject_edge"]
         else:
             allowed_actions = [
@@ -133,16 +224,21 @@ def upsert_tasks_from_score_items(
                 "mark_missing",
                 "inspect_candidates",
             ]
+        blocking = severity == "blocking"
         task = {
             "task_id": tid,
             "status": "open",
+            "task_status": "open",
             "run_id": run_id,
             "checkpoint": checkpoint,
             "source_snapshot_hash": source_snapshot_hash or "nosnap",
             "candidate_set_hash": cand_hash,
             "task_attempts": 0,
             "type": task_type,
+            "task_hint": hint,
             "severity": severity,
+            "blocking": blocking,
+            "semantic_status": "unresolved",
             "target": target,
             "object_type": item.get("object_type"),
             "score": item.get("score"),
@@ -160,7 +256,12 @@ def upsert_tasks_from_score_items(
     return {
         "task_count": len(doc["tasks"]),
         "open_blocking": sum(
-            1 for t in doc["tasks"] if t.get("status") == "open" and t.get("severity") == "blocking"
+            1
+            for t in doc["tasks"]
+            if t.get("status") == "open" and _task_is_blocking(t) and _semantic_status(t) != "closed"
+        ),
+        "blocking_gap_count": sum(
+            1 for t in doc["tasks"] if _task_is_blocking(t) and _semantic_status(t) != "closed"
         ),
         "created": created,
         "total_semantic_batches": int(doc.get("total_semantic_batches") or 0),
@@ -216,18 +317,30 @@ def _default_candidates(item: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def open_blocking_tasks(uo_root: Path) -> list[dict[str, Any]]:
+    """Open tasks that still need patch adjudication (lifecycle, not semantic closure)."""
     doc = load_llm_tasks(uo_root)
-    return [t for t in doc.get("tasks") or [] if t.get("status") == "open" and t.get("severity") == "blocking"]
+    out: list[dict[str, Any]] = []
+    for t in doc.get("tasks") or []:
+        if not isinstance(t, dict):
+            continue
+        lifecycle = str(t.get("task_status") or t.get("status") or "")
+        if lifecycle != "open":
+            continue
+        if not _task_is_blocking(t):
+            continue
+        if _semantic_status(t) == "closed":
+            continue
+        out.append(t)
+    return out
 
 
 def can_auto_mark_missing(task: dict[str, Any]) -> bool:
     """Shared auto mark_missing predicate (Gate / pipeline / apply)."""
     ttype = str(task.get("type") or "")
     cands = list(task.get("candidates") or [])
-    allowed = {str(a) for a in (task.get("allowed_actions") or [])}
+    if ttype in {"evidence_enrichment", "candidate_generation"}:
+        return False
     if ttype == "mark_missing" and not cands:
-        return True
-    if not cands and "mark_missing" in allowed and "accept_edge" not in allowed and "choose_one" not in allowed:
         return True
     return False
 
@@ -247,12 +360,36 @@ def validate_task_patch(
     task = next((t for t in doc.get("tasks") or [] if t.get("task_id") == task_id), None)
     if task is None:
         return {"ok": False, "error": "unknown_task_id", "task_id": task_id}
-    if task.get("status") != "open":
+    lifecycle = str(task.get("task_status") or task.get("status") or "")
+    if lifecycle != "open":
         return {"ok": False, "error": "task_not_open", "status": task.get("status"), "task_id": task_id}
 
-    src_hash = current_source_hash or task.get("source_snapshot_hash")
-    if src_hash and task.get("source_snapshot_hash") and src_hash != task.get("source_snapshot_hash"):
+    task_src = str(task.get("source_snapshot_hash") or "").strip()
+    if not task_src:
+        return {"ok": False, "error": "source_snapshot_hash_missing", "task_id": task_id}
+    cur_src = str(current_source_hash or "").strip()
+    if not cur_src:
+        return {"ok": False, "error": "current_source_hash_missing", "task_id": task_id}
+    if cur_src != task_src:
         return {"ok": False, "error": "source_snapshot_stale", "task_id": task_id}
+    patch_src = str(patch.get("source_snapshot_hash") or "").strip()
+    if patch_src and patch_src != task_src:
+        return {"ok": False, "error": "source_snapshot_stale", "task_id": task_id}
+
+    task_cset = str(task.get("candidate_set_hash") or "").strip()
+    if not task_cset:
+        return {"ok": False, "error": "candidate_set_hash_missing", "task_id": task_id}
+    patch_cset = str(patch.get("candidate_set_hash") or "").strip()
+    if not patch_cset:
+        return {"ok": False, "error": "patch_candidate_set_hash_missing", "task_id": task_id}
+    if patch_cset != task_cset:
+        return {
+            "ok": False,
+            "error": "candidate_set_hash_mismatch",
+            "task_id": task_id,
+            "expected": task_cset,
+            "got": patch_cset,
+        }
 
     cand_ids = {str(c.get("id")) for c in (task.get("candidates") or []) if str(c.get("id") or "").strip()}
     accepted = [str(x) for x in (patch.get("accepted_candidate_ids") or [])]
@@ -272,7 +409,32 @@ def validate_task_patch(
             "task_id": task_id,
         }
 
-    accept_actions = {"accept_edge", "choose_one", "accept", "select_edge", "select"}
+    edge_claim = patch.get("edge_id") or (
+        task.get("target") if action in _ACCEPT_CLOSE_ACTIONS else None
+    )
+    if _is_candidate_node_id(edge_claim):
+        return {
+            "ok": False,
+            "error": "LEDGER_TARGET_TYPE_MISMATCH",
+            "task_id": task_id,
+            "edge_id": str(edge_claim),
+        }
+    if action in _ACCEPT_CLOSE_ACTIONS:
+        for cid in accepted:
+            if _is_candidate_node_id(cid) and str(task.get("object_type") or "") in {
+                "registration_edge",
+                "call_edge",
+            }:
+                # Accepting a candidate node id as an edge binding is forbidden.
+                if not _is_real_edge_id(task.get("target")):
+                    return {
+                        "ok": False,
+                        "error": "LEDGER_TARGET_TYPE_MISMATCH",
+                        "task_id": task_id,
+                        "candidate_id": cid,
+                    }
+
+    accept_actions = _ACCEPT_CLOSE_ACTIONS
     if action in accept_actions:
         if not cand_ids:
             return {
@@ -325,9 +487,57 @@ def validate_patches_batch(
     current_source_hash: str | None = None,
 ) -> dict[str, Any]:
     """Validate an entire batch with zero side effects."""
+    return validate_semantic_patch_set(
+        uo_root,
+        patches,
+        current_source_hash,
+        require_full_coverage=False,
+        mutate=False,
+    )
+
+
+def validate_semantic_patch_set(
+    uo_root: Path,
+    patches: list[dict[str, Any]],
+    current_source_hash: str | None,
+    *,
+    require_full_coverage: bool = True,
+    mutate: bool = False,
+) -> dict[str, Any]:
+    """Single SSOT entry for Gate (validate-only) and Apply (validate then commit).
+
+    ``mutate`` must always be False here; commit happens only via ``commit_patches_batch``.
+    """
+    if mutate:
+        return {
+            "ok": False,
+            "error": "mutate_not_allowed",
+            "message": "validate_semantic_patch_set is validate-only; use apply_patches_batch to commit",
+        }
+
     doc = load_llm_tasks(uo_root)
     if not patches:
-        return {"ok": True, "validated": [], "doc": doc, "next_batches": int(doc.get("total_semantic_batches") or 0)}
+        if require_full_coverage:
+            needs = [
+                str(t.get("task_id") or "")
+                for t in open_blocking_tasks(uo_root)
+                if not can_auto_mark_missing(t)
+            ]
+            needs = [t for t in needs if t]
+            if needs:
+                return {
+                    "ok": False,
+                    "error": "semantic_patches_required",
+                    "missing_task_ids": needs,
+                    "errors": [{"ok": False, "error": "semantic_patches_required", "missing_task_ids": needs}],
+                    "doc": doc,
+                }
+        return {
+            "ok": True,
+            "validated": [],
+            "doc": doc,
+            "next_batches": int(doc.get("total_semantic_batches") or 0),
+        }
 
     batches = int(doc.get("total_semantic_batches") or 0)
     next_batches = batches + 1
@@ -337,6 +547,7 @@ def validate_patches_batch(
             "error": "total_semantic_batches_exhausted",
             "batches": next_batches,
             "errors": [{"ok": False, "error": "total_semantic_batches_exhausted", "batches": next_batches}],
+            "doc": doc,
         }
 
     validated: list[dict[str, Any]] = []
@@ -358,8 +569,35 @@ def validate_patches_batch(
         else:
             errors.append(result)
 
+    if require_full_coverage:
+        needs = {
+            str(t.get("task_id") or "")
+            for t in open_blocking_tasks(uo_root)
+            if not can_auto_mark_missing(t) and str(t.get("task_id") or "").strip()
+        }
+        covered = {str(p.get("task_id") or "") for p in patches if isinstance(p, dict)}
+        missing = sorted(needs - covered)
+        if missing:
+            errors.append(
+                {
+                    "ok": False,
+                    "error": "incomplete_task_coverage",
+                    "missing_task_ids": missing,
+                }
+            )
+
     if errors:
-        return {"ok": False, "errors": errors, "validated": validated, "doc": doc}
+        return {
+            "ok": False,
+            "errors": errors,
+            "validated": validated,
+            "doc": doc,
+            "missing_task_ids": next(
+                (e.get("missing_task_ids") for e in errors if e.get("missing_task_ids")),
+                [],
+            ),
+            "error": str(errors[0].get("error") or "validation_failed"),
+        }
     return {
         "ok": True,
         "validated": validated,
@@ -388,7 +626,7 @@ def commit_patches_batch(
     for item in validated:
         tid = str(item["task_id"])
         task = by_id.get(tid)
-        if task is None or task.get("status") != "open":
+        if task is None or str(task.get("task_status") or task.get("status")) != "open":
             return {
                 "ok": False,
                 "error": "commit_race_task_not_open",
@@ -401,11 +639,38 @@ def commit_patches_batch(
         task["task_attempts"] = int(item["next_attempts"])
         action = str(item["action"])
         patch = item["patch"]
-        task["status"] = "resolved"
+        patch_type = str(patch.get("patch_type") or _infer_patch_type(task, action))
+        accepted = list(item["accepted"])
+        edge_id = _resolve_patch_edge_id(task, patch, accepted=accepted)
+        if edge_id and _is_candidate_node_id(edge_id):
+            return {
+                "ok": False,
+                "error": "LEDGER_TARGET_TYPE_MISMATCH",
+                "task_id": tid,
+                "applied_count": 0,
+                "error_count": 1,
+                "applied": [],
+                "errors": [{"ok": False, "error": "LEDGER_TARGET_TYPE_MISMATCH", "task_id": tid}],
+            }
+        if action == "mark_missing":
+            task["status"] = "adjudicated"
+            task["task_status"] = "adjudicated"
+            task["semantic_status"] = "unresolved"
+            task["blocking"] = True
+        elif action in _ACCEPT_CLOSE_ACTIONS:
+            task["status"] = "resolved"
+            task["task_status"] = "resolved"
+            task["semantic_status"] = "closed"
+            task["blocking"] = False
+        else:
+            task["status"] = "resolved"
+            task["task_status"] = "resolved"
         task["resolution"] = {"action": action, "patch": patch}
         record = {
             "task_id": tid,
-            "accepted_candidate_ids": list(item["accepted"]),
+            "patch_type": patch_type,
+            "edge_id": edge_id,
+            "accepted_candidate_ids": accepted,
             "rejected_candidate_ids": list(item["rejected"]),
             "relation": patch.get("relation") or task.get("type"),
             "evidence": patch.get("evidence") or [],
@@ -416,6 +681,7 @@ def commit_patches_batch(
             "action": action,
             "applied_at": now,
             "status": "active",
+            "apply_status": "pending",
         }
         ledger.setdefault("semantic_patches", []).append(record)
         applied.append(
@@ -448,7 +714,16 @@ def apply_task_patch(
     current_source_hash: str | None = None,
 ) -> dict[str, Any]:
     """Validate then commit a single patch as a one-patch transactional batch."""
-    batch = apply_patches_batch(uo_root, [patch], current_source_hash=current_source_hash)
+    enriched = dict(patch)
+    doc = load_llm_tasks(uo_root)
+    tid = str(enriched.get("task_id") or "")
+    task = next((t for t in doc.get("tasks") or [] if t.get("task_id") == tid), None)
+    if isinstance(task, dict):
+        if not str(enriched.get("candidate_set_hash") or "").strip():
+            enriched["candidate_set_hash"] = str(task.get("candidate_set_hash") or "")
+        if not str(enriched.get("source_snapshot_hash") or "").strip():
+            enriched["source_snapshot_hash"] = str(task.get("source_snapshot_hash") or "")
+    batch = apply_patches_batch(uo_root, [enriched], current_source_hash=current_source_hash)
     if batch.get("ok") and batch.get("applied"):
         return batch["applied"][0]
     if batch.get("errors"):
@@ -465,7 +740,13 @@ def apply_patches_batch(
     """Validate-all-then-commit: any failure leaves llm_tasks and ledger unchanged."""
     if not patches:
         return {"ok": True, "applied_count": 0, "error_count": 0, "applied": [], "errors": []}
-    checked = validate_patches_batch(uo_root, patches, current_source_hash=current_source_hash)
+    checked = validate_semantic_patch_set(
+        uo_root,
+        patches,
+        current_source_hash,
+        require_full_coverage=False,
+        mutate=False,
+    )
     if not checked.get("ok"):
         return {
             "ok": False,
@@ -518,6 +799,8 @@ def resolve_patches_for_apply(
                     "accepted_candidate_ids": [],
                     "rejected_candidate_ids": [],
                     "evidence": ["auto:empty_candidate_mark_missing"],
+                    "source_snapshot_hash": str(task.get("source_snapshot_hash") or ""),
+                    "candidate_set_hash": str(task.get("candidate_set_hash") or ""),
                 }
             )
         else:
@@ -545,9 +828,64 @@ def resolve_patches_for_apply(
 def recheck_does_not_increment(uo_root: Path) -> dict[str, Any]:
     """Recheck helper — read budgets without mutating attempts."""
     doc = load_llm_tasks(uo_root)
+    gaps = blocking_gap_tasks(uo_root)
     return {
         "ok": True,
         "open_blocking": open_blocking_tasks(uo_root),
+        "blocking_gaps": gaps,
+        "blocking_gap_count": len(gaps),
         "total_semantic_batches": int(doc.get("total_semantic_batches") or 0),
         "tasks": doc.get("tasks") or [],
+        **compute_semantic_stats(uo_root),
+    }
+
+
+def compute_semantic_stats(uo_root: Path) -> dict[str, Any]:
+    """Aggregate semantic task / patch / ledger counters for closure engines."""
+    from uo.scripts.semantic_resolution_ledger import load_ledger
+
+    tasks_doc = load_llm_tasks(uo_root)
+    tasks = [t for t in (tasks_doc.get("tasks") or []) if isinstance(t, dict)]
+    patches_doc = read_yaml(uo_root / "ir" / "semantic_patches.yaml") or {}
+    producer_patches = [
+        p for p in (patches_doc.get("patches") or []) if isinstance(p, dict)
+    ]
+    ledger = load_ledger(uo_root)
+    ledger_patches = [p for p in (ledger.get("semantic_patches") or []) if isinstance(p, dict)]
+
+    accept_count = 0
+    reject_count = 0
+    mark_missing_count = 0
+    auto_patch_count = 0
+    materialized_patch_count = 0
+    unconsumed_patch_count = 0
+    for p in ledger_patches:
+        if p.get("status") == "stale":
+            continue
+        action = str(p.get("action") or "")
+        ev = p.get("evidence") or []
+        if any(str(x).startswith("auto:") for x in ev):
+            auto_patch_count += 1
+        if action == "mark_missing":
+            mark_missing_count += 1
+        elif action in _ACCEPT_CLOSE_ACTIONS:
+            accept_count += 1
+        elif action == "reject_edge":
+            reject_count += 1
+        apply_st = str(p.get("apply_status") or "")
+        if apply_st == "materialized":
+            materialized_patch_count += 1
+        elif apply_st == "unconsumed" and p.get("status") == "active":
+            unconsumed_patch_count += 1
+
+    return {
+        "task_total": len(tasks),
+        "producer_patch_count": len(producer_patches),
+        "auto_patch_count": auto_patch_count,
+        "accept_count": accept_count,
+        "reject_count": reject_count,
+        "mark_missing_count": mark_missing_count,
+        "materialized_patch_count": materialized_patch_count,
+        "unconsumed_patch_count": unconsumed_patch_count,
+        "blocking_gap_count": len(blocking_gap_tasks(uo_root)),
     }

@@ -34,6 +34,7 @@ _EXTRACT_PLAN_FORBID_FIELDS = (
     "accepted_edges",
     "entrypoint_dispatch_bind",
     "accepted_candidate_ids",
+    "blocking_reasons",
 )
 
 
@@ -607,7 +608,8 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
 
     actor_id = str(action.get("agent_id") or (action.get("actors") or ["unknown"])[0])
     role_id = str(action.get("role_id") or "")
-    nonce = secrets.token_hex(16)
+    prepare_nonce = secrets.token_hex(16)
+    nonce = prepare_nonce  # mirror for legacy readers; finalize requires prepare_nonce
     sdir = _session_dir(project_root, run_id, action_id)
     sdir.mkdir(parents=True, exist_ok=True)
 
@@ -645,6 +647,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         "action_id": action_id,
         "actor_id": actor_id,
         "role_id": role_id,
+        "prepare_nonce": prepare_nonce,
         "nonce": nonce,
         "policy_ids": list(action.get("policy_ids") or []),
         "capability_ids": list(action.get("capability_ids") or []),
@@ -832,11 +835,30 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     )
     bundle["task_prompt_stub"] = stub
 
+    from ascendc_pilot.authorize.lease import issue_action_lease
+    from datetime import datetime, timezone
+
+    lease = issue_action_lease(
+        project_root,
+        state=state,
+        action_id=action_id,
+        mode="normal",
+        allowed_read_roots=[sdir.as_posix()],
+        allowed_write_roots=list((get_workflow(wid) or {}).get("write_roots") or []),
+    )
+    lease_id = str(lease.get("lease_id") or "")
+    prepared_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    bundle["lease_id"] = lease_id
+    bundle["prepared_at"] = prepared_at
+
     _dump(sdir / "session.yaml", bundle)
     (sdir / "method.md").write_text(method_r, encoding="utf-8")
     (sdir / "prompt.md").write_text(prompt_r, encoding="utf-8")
     (sdir / "task_prompt_stub.md").write_text(stub, encoding="utf-8")
-    _dump(sdir / "bundle.yaml", {k: v for k, v in bundle.items() if k != "nonce"})
+    _dump(
+        sdir / "bundle.yaml",
+        {k: v for k, v in bundle.items() if k not in {"nonce", "prepare_nonce"}},
+    )
     _write_active_action(
         project_root,
         {
@@ -848,19 +870,10 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             "actor_id": actor_id,
             "role_id": role_id,
             "session_dir": sdir.as_posix(),
+            "prepare_nonce": prepare_nonce,
+            "lease_id": lease_id,
             "status": "prepared",
         },
-    )
-
-    from ascendc_pilot.authorize.lease import issue_action_lease
-
-    lease = issue_action_lease(
-        project_root,
-        state=state,
-        action_id=action_id,
-        mode="normal",
-        allowed_read_roots=[sdir.as_posix()],
-        allowed_write_roots=list((get_workflow(wid) or {}).get("write_roots") or []),
     )
 
     append_event(
@@ -870,7 +883,8 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             "action_id": action_id,
             "actor_id": actor_id,
             "role_id": role_id,
-            "lease_id": lease.get("lease_id"),
+            "lease_id": lease_id,
+            "prepare_nonce": prepare_nonce,
         },
         run_id=run_id,
     )
@@ -886,7 +900,8 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         "bundle_path": (sdir / "bundle.yaml").as_posix(),
         "prompt_path": (sdir / "prompt.md").as_posix(),
         "method_path": (sdir / "method.md").as_posix(),
-        "lease_id": lease.get("lease_id"),
+        "lease_id": lease_id,
+        "prepare_nonce": prepare_nonce,
         "auto_finalize": False,
     }
     if prepare_engine is not None:
@@ -931,31 +946,59 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     return result
 
 
-def finalize_action(
+def _revoke_lease_after_finalize(
     project_root: Path,
-    action_id: str,
     *,
-    engine_result: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    ensure_agent_layout(project_root)
-    state = load_state(project_root)
-    if not state:
-        return {"ok": False, "error": "no_active_workflow"}
-    wid = str(state.get("workflow_id") or "")
-    phase = str(state.get("phase") or "")
-    run_id = str(state.get("run_id") or "")
-    action = _action_spec(wid, action_id, phase)
-    if action is None or action.get("_not_in_phase"):
-        return {"ok": False, "error": "action_not_allowed", "action_id": action_id, "phase": phase}
+    reason: str,
+    touch_active_action: bool,
+) -> None:
+    try:
+        from ascendc_pilot.authorize.lease import revoke_active_lease
 
-    sdir = _session_dir(project_root, run_id, action_id)
-    session = _load(sdir / "session.yaml")
-    if not session or not session.get("nonce"):
+        revoke_active_lease(
+            project_root,
+            reason=reason,
+            touch_active_action=touch_active_action,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _finalize_bind_session_lease(
+    project_root: Path,
+    *,
+    session: dict[str, Any],
+    action_id: str,
+    run_id: str,
+    wid: str,
+    phase: str,
+    sdir: Path,
+) -> dict[str, Any] | None:
+    """Return an error payload if prepare session / active_action / lease binding fails."""
+    from ascendc_pilot.authorize.lease import is_lease_revoked, load_lease
+
+    prepare_nonce = str(session.get("prepare_nonce") or "").strip()
+    if not prepare_nonce:
+        if session.get("nonce"):
+            return {
+                "ok": False,
+                "error": "PREPARE_SESSION_MIGRATION_REQUIRED",
+                "message_zh": "session 缺少 prepare_nonce（旧格式）；请重新 prepare",
+            }
         return {
             "ok": False,
             "error": "no_session",
             "message_zh": "缺少 prepare session；请先 acp run-action <action_id>",
         }
+
+    session_lease = str(session.get("lease_id") or "").strip()
+    if not session_lease:
+        return {
+            "ok": False,
+            "error": "SESSION_LEASE_MISMATCH",
+            "message_zh": "session 缺少 lease_id；请重新 prepare",
+        }
+
     if str(session.get("run_id")) != run_id or str(session.get("action_id")) != action_id:
         return {"ok": False, "error": "session_mismatch"}
     if str(session.get("workflow_id") or "") != wid:
@@ -980,24 +1023,140 @@ def finalize_action(
         }
 
     active = _load(agent_root(project_root) / "state" / "active_action.yaml")
-    if isinstance(active, dict) and active.get("action_id"):
-        if str(active.get("action_id")) != action_id:
-            return {
-                "ok": False,
-                "error": "not_active_action",
-                "message_zh": (
-                    f"当前 active_action=`{active.get('action_id')}`，"
-                    f"不可 finalize `{action_id}`"
-                ),
-                "active_action": active.get("action_id"),
-                "requested_action": action_id,
-            }
-        if str(active.get("run_id") or "") and str(active.get("run_id")) != run_id:
-            return {
-                "ok": False,
-                "error": "active_action_run_mismatch",
-                "message_zh": "active_action.run_id 与当前 run 不一致",
-            }
+    if not isinstance(active, dict) or not active.get("action_id"):
+        return {
+            "ok": False,
+            "error": "STALE_PREPARE_SESSION",
+            "message_zh": "active_action 缺失；旧 prepare 已失效，请重新 prepare",
+        }
+    if str(active.get("action_id")) != action_id:
+        return {
+            "ok": False,
+            "error": "not_active_action",
+            "message_zh": (
+                f"当前 active_action=`{active.get('action_id')}`，"
+                f"不可 finalize `{action_id}`"
+            ),
+            "active_action": active.get("action_id"),
+            "requested_action": action_id,
+        }
+    if str(active.get("run_id") or "") and str(active.get("run_id")) != run_id:
+        return {
+            "ok": False,
+            "error": "active_action_run_mismatch",
+            "message_zh": "active_action.run_id 与当前 run 不一致",
+        }
+    active_nonce = str(active.get("prepare_nonce") or "").strip()
+    if not active_nonce or active_nonce != prepare_nonce:
+        return {
+            "ok": False,
+            "error": "SESSION_NONCE_MISMATCH",
+            "message_zh": "active_action.prepare_nonce 与 session 不一致（可能已被新 prepare 覆盖）",
+        }
+    active_lease = str(active.get("lease_id") or "").strip()
+    if not active_lease or active_lease != session_lease:
+        return {
+            "ok": False,
+            "error": "SESSION_LEASE_MISMATCH",
+            "message_zh": "active_action.lease_id 与 session 不一致",
+        }
+    active_sdir = str(active.get("session_dir") or "").strip()
+    if active_sdir and Path(active_sdir).resolve() != sdir.resolve():
+        return {
+            "ok": False,
+            "error": "STALE_PREPARE_SESSION",
+            "message_zh": "active_action.session_dir 与期望 session 不一致",
+        }
+
+    lease = load_lease(project_root)
+    if not lease:
+        return {
+            "ok": False,
+            "error": "LEASE_REVOKED",
+            "message_zh": "当前无有效 lease；请重新 prepare",
+        }
+    if str(lease.get("status") or "").lower() == "revoked" or is_lease_revoked(
+        project_root, session_lease
+    ):
+        return {
+            "ok": False,
+            "error": "LEASE_REVOKED",
+            "message_zh": "lease 已撤销；禁止 finalize",
+        }
+    if str(lease.get("lease_id") or "") != session_lease:
+        return {
+            "ok": False,
+            "error": "SESSION_LEASE_MISMATCH",
+            "message_zh": "当前 active lease 不是本次 prepare 签发的 lease",
+        }
+    if str(lease.get("action_id") or "") != action_id:
+        return {
+            "ok": False,
+            "error": "LEASE_ACTION_MISMATCH",
+            "message_zh": f"lease.action_id={lease.get('action_id')!r} != {action_id!r}",
+        }
+    if str(lease.get("run_id") or "") != run_id:
+        return {
+            "ok": False,
+            "error": "LEASE_RUN_MISMATCH",
+            "message_zh": f"lease.run_id={lease.get('run_id')!r} != {run_id!r}",
+        }
+    if str(lease.get("workflow_id") or "") != wid:
+        return {
+            "ok": False,
+            "error": "LEASE_WORKFLOW_MISMATCH",
+            "message_zh": f"lease.workflow_id={lease.get('workflow_id')!r} != {wid!r}",
+        }
+    return None
+
+
+def finalize_action(
+    project_root: Path,
+    action_id: str,
+    *,
+    engine_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    ensure_agent_layout(project_root)
+    state = load_state(project_root)
+    if not state:
+        return {"ok": False, "error": "no_active_workflow"}
+    wid = str(state.get("workflow_id") or "")
+    phase = str(state.get("phase") or "")
+    run_id = str(state.get("run_id") or "")
+    action = _action_spec(wid, action_id, phase)
+    if action is None or action.get("_not_in_phase"):
+        return {"ok": False, "error": "action_not_allowed", "action_id": action_id, "phase": phase}
+
+    sdir = _session_dir(project_root, run_id, action_id)
+    session = _load(sdir / "session.yaml")
+    if not session:
+        return {
+            "ok": False,
+            "error": "no_session",
+            "message_zh": "缺少 prepare session；请先 acp run-action <action_id>",
+        }
+
+    bind_err = _finalize_bind_session_lease(
+        project_root,
+        session=session,
+        action_id=action_id,
+        run_id=run_id,
+        wid=wid,
+        phase=phase,
+        sdir=sdir,
+    )
+    if bind_err is not None:
+        from ascendc_pilot.authorize.lease import load_lease
+
+        cur = load_lease(project_root)
+        session_lease = str(session.get("lease_id") or "").strip()
+        if cur and session_lease and str(cur.get("lease_id") or "") == session_lease:
+            _revoke_lease_after_finalize(
+                project_root,
+                reason="finalize_denied",
+                touch_active_action=True,
+            )
+        return bind_err
 
     actor_id = str(session.get("actor_id") or action.get("agent_id") or "")
     contract_id = str(session.get("output_contract_id") or action.get("output_contract_id") or "")
@@ -1129,9 +1288,11 @@ def finalize_action(
     in_hashes = {
         "context_pack": file_sha256(Path(str(session.get("context_pack_path") or ""))) or "",
         "prompt": file_sha256(sdir / "prompt.md") or "",
+        "prepare_nonce": str(session.get("prepare_nonce") or ""),
+        "lease_id": str(session.get("lease_id") or ""),
     }
     if isinstance(session.get("prepare_stamp"), dict):
-        in_hashes["prepare_nonce"] = str(session["prepare_stamp"].get("nonce") or "")
+        in_hashes["prepare_stamp_nonce"] = str(session["prepare_stamp"].get("nonce") or "")
         in_hashes["inventory_sha256"] = str(session["prepare_stamp"].get("inventory_sha256") or "")
 
     receipt_path = None
@@ -1145,7 +1306,7 @@ def finalize_action(
             input_hashes=in_hashes,
             output_hashes=out_hashes,
             checker_result=checker_result,
-            nonce=str(session.get("nonce")),
+            nonce=str(session.get("prepare_nonce") or session.get("nonce") or ""),
             _internal=True,
         )
         session["status"] = "finalized"
@@ -1161,9 +1322,16 @@ def finalize_action(
                 "action_id": action_id,
                 "actor_id": actor_id,
                 "role_id": session.get("role_id"),
+                "prepare_nonce": str(session.get("prepare_nonce") or ""),
+                "lease_id": str(session.get("lease_id") or ""),
                 "status": "finalized",
                 "receipt": str(receipt_path),
             },
+        )
+        _revoke_lease_after_finalize(
+            project_root,
+            reason="finalize_ok",
+            touch_active_action=False,
         )
         append_event(
             project_root,

@@ -167,13 +167,66 @@ def mint_scoped_node_id(
     prefix: str,
     owning_identity_key: str,
     file: str,
-    line: int,
+    line: int = 0,
     extra: str = "",
+    *,
+    ordinal: int = 0,
+    normalized_expression: str = "",
 ) -> str:
-    """Stable scoped id for branches/loops under an owning function identity."""
-    key = _hash_key(_clean(owning_identity_key), _norm_path(file), str(int(line or 0)), extra)
+    """Stable scoped id for branches/loops/callsites under an owning function.
+
+    Prefer ``ordinal`` + ``normalized_expression`` (+ snippet via extra) so that
+    inserting comments before the function does not change the stable id.
+    Absolute ``line`` is only a fallback when ordinal/expression are unavailable.
+    """
+    expr = _clean(normalized_expression)
+    if ordinal > 0 or expr:
+        key = _hash_key(
+            _clean(owning_identity_key),
+            _norm_path(file),
+            str(int(ordinal or 0)),
+            expr,
+            _clean(extra),
+        )
+    else:
+        key = _hash_key(
+            _clean(owning_identity_key),
+            _norm_path(file),
+            str(int(line or 0)),
+            _clean(extra),
+        )
     p = _clean(prefix).upper().rstrip("_")
     return f"{p}_{key}"
+
+
+def mint_template_instance_identity(
+    *,
+    name: str,
+    file_path: str,
+    template_definition: str = "",
+    template_args: str = "",
+    class_or_namespace: str = "",
+    architecture: str = "",
+    path_family: str = "",
+) -> SemanticIdentity:
+    """Mint identity for a concrete TemplateInstance / KernelClass specialization."""
+    args = _clean(template_args)
+    tpl_def = _clean(template_definition) or _clean(name)
+    cls = _clean(class_or_namespace) or tpl_def
+    qn = f"{tpl_def}<{args}>" if args else tpl_def
+    return mint_symbol_identity(
+        kind="template_instance",
+        name=name,
+        file_path=file_path,
+        qualified_name=qn,
+        class_or_namespace=cls,
+        template_arity_or_signature=args or parse_template_arity(qn),
+        specialization_kind="instance" if args else "primary",
+        architecture=architecture,
+        template_family=tpl_def,
+        path_family=path_family,
+        prefix="TPL",
+    )
 
 
 def mint_method_identity(

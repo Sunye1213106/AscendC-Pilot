@@ -93,6 +93,90 @@ def _effective_write_scopes(agent_id: str, action_id: str, repo_root: Path) -> l
     return scopes
 
 
+def _check_staged_output(
+    *,
+    wid: str,
+    aid: str,
+    action: dict[str, Any],
+    actions_by_id: dict[str, dict[str, Any]],
+    pipeline_order: list[str],
+    agent_id: str,
+    scopes: list[str],
+    formal_contract_id: str,
+    formal_paths: list[str],
+    root: Path,
+) -> list[str]:
+    """Mode B: agent writes staging contract; merge action writes formal contract."""
+    from ascendc_pilot.actions.engines import OUTPUT_CONTRACT_PATHS
+    from ascendc_pilot.agents_registry import path_matches_scope
+
+    errors: list[str] = []
+    staging_id = str(action.get("staging_contract_id") or "").strip()
+    merge_id = str(action.get("merge_action_id") or "").strip()
+    if not staging_id:
+        errors.append(f"{wid}/{aid}: staged output_mode requires staging_contract_id")
+        return errors
+    if not merge_id:
+        errors.append(f"{wid}/{aid}: staged output_mode requires merge_action_id")
+        return errors
+
+    staging_paths = OUTPUT_CONTRACT_PATHS.get(staging_id)
+    if staging_paths is None:
+        errors.append(f"{wid}/{aid}: unknown staging_contract_id {staging_id!r}")
+        return errors
+    staging_rels = [
+        str(rel).replace("\\", "/")
+        for rel in staging_paths
+        if not str(rel).replace("\\", "/").startswith("runs/")
+    ]
+    if not staging_rels:
+        errors.append(f"{wid}/{aid}: staging contract {staging_id} has no checkable paths")
+        return errors
+    for rel in staging_rels:
+        if not scopes or not path_matches_scope(rel, scopes):
+            errors.append(
+                f"{wid}/{aid}: staging path {rel!r} outside {agent_id} write scopes"
+            )
+
+    if merge_id == aid:
+        # Same-action finalize_engine merge: formal paths are not agent-written.
+        return errors
+
+    merge_action = actions_by_id.get(merge_id)
+    if not merge_action:
+        errors.append(f"{wid}/{aid}: merge_action_id {merge_id!r} not found in Spec actions")
+        return errors
+
+    if aid in pipeline_order and merge_id in pipeline_order:
+        if pipeline_order.index(merge_id) <= pipeline_order.index(aid):
+            errors.append(
+                f"{wid}/{aid}: merge_action_id {merge_id!r} must appear after producer in pipeline"
+            )
+    elif aid in pipeline_order and merge_id not in pipeline_order:
+        errors.append(f"{wid}/{aid}: merge_action_id {merge_id!r} missing from pipeline order")
+
+    merge_role = str(merge_action.get("role_id") or "")
+    if merge_role not in {"deterministic_engine", "producer", "referee"}:
+        errors.append(
+            f"{wid}/{aid}: merge action {merge_id} role {merge_role!r} cannot write formal contract"
+        )
+    merge_agent = str(merge_action.get("agent_id") or "").strip()
+    if not merge_agent:
+        errors.append(f"{wid}/{aid}: merge action {merge_id} missing agent_id")
+        return errors
+    merge_scopes = _effective_write_scopes(merge_agent, merge_id, root)
+    if not merge_scopes:
+        errors.append(f"{wid}/{aid}: merge agent {merge_agent} has empty write_scopes")
+        return errors
+    for rel in formal_paths:
+        if not path_matches_scope(rel, merge_scopes):
+            errors.append(
+                f"{wid}/{aid}: formal contract path {rel!r} not writable by merge "
+                f"action {merge_id} agent {merge_agent}"
+            )
+    return errors
+
+
 def _collect_shared_task_prompts(workflows: dict[str, dict[str, Any]]) -> dict[str, set[str]]:
     usage: dict[str, set[str]] = {}
     for wid, meta in workflows.items():
@@ -194,6 +278,17 @@ def check_all(
             if g and g not in gate_ids:
                 errors.append(f"{wid}: unregistered gate id {g!r}")
 
+        actions_by_id = {str(a.get("id") or ""): a for a in actions if a.get("id")}
+        pipeline_order: list[str] = []
+        for phase in meta.get("phases") or []:
+            for aid in [str(x) for x in ((meta.get("pipelines") or {}).get(phase) or [])]:
+                if aid and aid not in pipeline_order:
+                    pipeline_order.append(aid)
+        # Fallback: Spec action declaration order when pipelines sparse (e.g. tg-init)
+        for aid in action_ids:
+            if aid and aid not in pipeline_order:
+                pipeline_order.append(aid)
+
         for action in actions:
             aid = str(action.get("id") or "")
             role = str(action.get("role_id") or "")
@@ -254,16 +349,37 @@ def check_all(
                     rel_paths = [r for r in rel_paths if not r.startswith("runs/")]
                     if not rel_paths:
                         continue
-                    in_scope = [r for r in rel_paths if scopes and path_matches_scope(r, scopes)]
-                    if not in_scope:
-                        # Formal contract paths may be merged by deterministic engines (e.g. semantic_bind).
-                        continue
-                    for rel_s in rel_paths:
-                        if scopes and not path_matches_scope(rel_s, scopes):
-                            errors.append(
-                                f"{wid}/{aid}: contract path {rel_s!r} outside "
-                                f"{agent_id} write scopes (action {aid})"
+                    output_mode = str(action.get("output_mode") or "direct").strip().lower()
+                    if output_mode == "staged":
+                        errors.extend(
+                            _check_staged_output(
+                                wid=wid,
+                                aid=aid,
+                                action=action,
+                                actions_by_id=actions_by_id,
+                                pipeline_order=pipeline_order,
+                                agent_id=agent_id,
+                                scopes=scopes,
+                                formal_contract_id=cid,
+                                formal_paths=rel_paths,
+                                root=root,
                             )
+                        )
+                    else:
+                        in_scope = [
+                            r for r in rel_paths if scopes and path_matches_scope(r, scopes)
+                        ]
+                        if not in_scope:
+                            errors.append(
+                                f"{wid}/{aid}: agent has no writable output path for contract {cid}"
+                            )
+                        else:
+                            for rel_s in rel_paths:
+                                if scopes and not path_matches_scope(rel_s, scopes):
+                                    errors.append(
+                                        f"{wid}/{aid}: contract path {rel_s!r} outside "
+                                        f"{agent_id} write scopes (action {aid})"
+                                    )
 
             for g in action.get("gates") or []:
                 gs = str(g)
