@@ -1,7 +1,7 @@
 id: ce-reviewer
 version: 1
 name_zh: Code review analyst
-role: readonly_analyst
+role: readonly_reviewer
 mode: subagent
 description: Code review analyst for Code Engineering
 read_scopes:

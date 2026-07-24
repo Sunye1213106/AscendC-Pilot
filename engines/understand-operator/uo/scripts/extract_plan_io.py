@@ -108,6 +108,23 @@ def plan_derived_roots(plan: dict[str, Any]) -> set[str]:
     return {str(r).strip() for r in roots if str(r).strip()}
 
 
+# Top-level keys that belong in ledger / llm_tasks — never in extract_plan.yaml.
+FORBIDDEN_EXTRACT_PLAN_KEYS = frozenset(
+    {
+        "call_edge_adjudications",
+        "llm_tasks",
+        "tasks",
+        "edge_patches",
+        "semantic_patches",
+        "dispatches_to",
+        "mark_missing",
+        "accepted_edges",
+        "entrypoint_dispatch_bind",
+        "accepted_candidate_ids",
+    }
+)
+
+
 def validate_extract_plan_against_candidates(
     plan: dict[str, Any],
     candidates: dict[str, Any],
@@ -116,6 +133,13 @@ def validate_extract_plan_against_candidates(
     errors: list[str] = []
     if int(plan.get("version") or 0) != 1:
         errors.append("version must be 1")
+
+    for key in plan:
+        if str(key) in FORBIDDEN_EXTRACT_PLAN_KEYS:
+            errors.append(
+                f"forbidden extract_plan field {key!r} "
+                "(edge/llm_task adjudication belongs in semantic_resolution_ledger via apply_semantic_patch)"
+            )
 
     writer_names = {
         str(c.get("name") or "").strip()

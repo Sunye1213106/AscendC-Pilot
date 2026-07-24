@@ -5,9 +5,29 @@ from pathlib import Path
 from typing import Any
 
 
-# Paths relative to installed plugin root (ascendc-pilot-plugin).
+# Paths relative to runtime roots:
+#   repo:    <AscendC-Pilot>/generated/opencode/  (skills/agents)
+#            + <AscendC-Pilot>/                     (engines/pilot — bundled as-is)
+#   install: ~/.config/opencode/ascendc-pilot-plugin/
+#
+# Skills/agents are compared against generated/opencode; engines/pilot against repo root.
 # Keep aligned with install.ps1 / install.sh composition layout.
-CHECK_FILES = (
+CHECK_FILES_GENERATED = (
+    "skills/uo-init/SKILL.md",
+    "skills/uo-update/SKILL.md",
+    "skills/uo-query/SKILL.md",
+    "skills/ce-review/SKILL.md",
+    "skills/tg-init/SKILL.md",
+    "skills/operator/SKILL.md",
+    "agents/ascendc-pilot.md",
+    "agents/uo-key-resolve.md",
+    "agents/uo-confidence-review.md",
+    "agents/uo-kb-review.md",
+    "agents/tg-csv-contract.md",
+    "agents/tg-init-audit.md",
+)
+
+CHECK_FILES_REPO = (
     "engines/understand-operator/uo/_operator/install_check.py",
     "engines/understand-operator/uo/_operator/kb_compiler.py",
     "engines/understand-operator/uo/scripts/prepare_operator.py",
@@ -23,60 +43,67 @@ CHECK_FILES = (
     "engines/understand-operator/spec/ownership.yaml",
     "engines/understand-operator/spec/kb_layout.yaml",
     "pilot/ascendc_pilot/workflows/specs.py",
-    "skills/uo-init/SKILL.md",
-    "skills/uo-update/SKILL.md",
-    "skills/uo-query/SKILL.md",
-    "skills/ce-review/SKILL.md",
-    "skills/tg-init/SKILL.md",
-    "skills/operator/SKILL.md",
-    "agents/ascendc-pilot.md",
-    "agents/uo-key-resolve.md",
-    "agents/uo-confidence-review.md",
-    "agents/uo-kb-review.md",
-    "agents/tg-csv-contract.md",
-    "agents/tg-init-audit.md",
 )
+
+# Backward-compatible alias for tests / callers that import CHECK_FILES.
+CHECK_FILES = CHECK_FILES_REPO + CHECK_FILES_GENERATED
 
 
 def file_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() and path.is_file() else ""
 
 
-def compare_installed_skill(repo_plugin_root: Path, installed_skill_root: Path) -> dict[str, Any]:
-    """Compare composed plugin install against a skill junction target.
+def _resolve_repo_root(repo_plugin_root: Path) -> Path:
+    """Map engines/understand-operator or plugin dest → AscendC-Pilot repo root."""
+    root = repo_plugin_root.resolve()
+    if (root / "uo").is_dir() and not (root / "engines").is_dir():
+        maybe = root.parents[1]
+        if (maybe / "pilot").is_dir() or (maybe / "skills").is_dir():
+            return maybe
+    if (root / "pilot").is_dir() and (root / "skills").is_dir():
+        return root
+    if (root / "engines" / "understand-operator").is_dir():
+        return root
+    return root
 
-    Primary skill is ``uo-init``. ``repo_plugin_root`` may be ``engines/understand-operator`` or the
-    install Dest root (``ascendc-pilot-plugin``). When the installed plugin resolves
-    to the same tree, treat as consistent.
-    """
-    installed_skill_link = installed_skill_root
-    # ~/.config/opencode/skills/uo-init → Dest = .../ascendc-pilot-plugin
+
+def _resolve_generated_root(repo_root: Path, host: str = "opencode") -> Path:
+    gen = (repo_root / "generated" / host).resolve()
+    if (gen / "skills" / "uo-init" / "SKILL.md").is_file():
+        return gen
+    return gen
+
+
+def _resolve_installed_plugin_root(installed_skill_root: Path) -> Path:
+    link = installed_skill_root
     candidates = [
-        installed_skill_link.parent.parent / "ascendc-pilot-plugin",
-        installed_skill_link.resolve().parents[1] if installed_skill_link.resolve().exists() else None,
+        link.parent.parent / "ascendc-pilot-plugin",
+        link.resolve().parents[1] if link.exists() else None,
     ]
-    installed_plugin_root = None
     for cand in candidates:
         if cand is not None and cand.is_dir():
-            installed_plugin_root = cand.resolve()
-            break
-    if installed_plugin_root is None:
-        installed_plugin_root = (installed_skill_link.parent.parent / "ascendc-pilot-plugin").resolve()
+            return cand.resolve()
+    return (link.parent.parent / "ascendc-pilot-plugin").resolve()
 
-    repo_plugin_root = repo_plugin_root.resolve()
+
+def compare_installed_skill(repo_plugin_root: Path, installed_skill_root: Path) -> dict[str, Any]:
+    """Compare generated runtime + repo engines against installed plugin tree.
+
+    Primary skill is ``uo-init``. ``repo_plugin_root`` may be ``engines/understand-operator``
+    or the AscendC-Pilot repo root. Skills/agents are hashed from ``generated/opencode``;
+    engines/pilot from the repo root — matching ``install.ps1`` layout.
+    """
+    installed_skill_link = installed_skill_root
+    installed_plugin_root = _resolve_installed_plugin_root(installed_skill_link)
+    repo_root = _resolve_repo_root(repo_plugin_root)
+    generated_root = _resolve_generated_root(repo_root)
     installed_skill_root = installed_skill_link.resolve()
 
-    # Callers historically pass engines/understand-operator; map to bundle/plugin root when possible.
-    if (repo_plugin_root / "uo").is_dir() and not (repo_plugin_root / "engines").is_dir():
-        # engines/understand-operator → try repo root two levels up
-        maybe_repo = repo_plugin_root.parents[1]
-        if (maybe_repo / "pilot").is_dir() or (maybe_repo / "skills").is_dir():
-            repo_plugin_root = maybe_repo
-
-    if repo_plugin_root == installed_plugin_root:
+    if repo_root == installed_plugin_root:
         return {
             "version": 2,
-            "repo_plugin_root": str(repo_plugin_root),
+            "repo_plugin_root": str(repo_root),
+            "repo_runtime_root": str(generated_root),
             "installed_skill_root": str(installed_skill_root),
             "installed_plugin_root": str(installed_plugin_root),
             "same_resolved_plugin_root": True,
@@ -86,14 +113,8 @@ def compare_installed_skill(repo_plugin_root: Path, installed_skill_root: Path) 
         }
 
     mismatches: list[dict[str, str]] = []
-    for rel in CHECK_FILES:
-        repo_path = repo_plugin_root / rel
-        if rel.startswith("skills/"):
-            installed_path = installed_skill_root.parent / Path(rel).name / "SKILL.md"
-            if rel.endswith("SKILL.md"):
-                installed_path = installed_skill_root.parent / Path(rel).parts[1] / "SKILL.md"
-        else:
-            installed_path = installed_plugin_root / rel
+
+    def _cmp(rel: str, repo_path: Path, installed_path: Path) -> None:
         repo_hash = file_hash(repo_path)
         installed_hash = file_hash(installed_path)
         if repo_hash != installed_hash:
@@ -106,9 +127,17 @@ def compare_installed_skill(repo_plugin_root: Path, installed_skill_root: Path) 
                     "installed_hash": installed_hash,
                 }
             )
+
+    for rel in CHECK_FILES_REPO:
+        _cmp(rel, repo_root / rel, installed_plugin_root / rel)
+
+    for rel in CHECK_FILES_GENERATED:
+        _cmp(rel, generated_root / rel, installed_plugin_root / rel)
+
     return {
         "version": 2,
-        "repo_plugin_root": str(repo_plugin_root),
+        "repo_plugin_root": str(repo_root),
+        "repo_runtime_root": str(generated_root),
         "installed_skill_root": str(installed_skill_root),
         "installed_plugin_root": str(installed_plugin_root),
         "consistent": not mismatches,

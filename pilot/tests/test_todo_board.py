@@ -31,7 +31,8 @@ def test_start_attaches_native_items_not_todo_md(tmp_path: Path) -> None:
     assert sync.get("require_full_list") is True
     assert sync.get("require_ids") is True
     assert sync.get("items") == items
-    assert "禁止只写子集" in str(sync.get("instruction_zh") or "")
+    assert "禁止子集" in str(sync.get("instruction_zh") or "")
+    assert "跳过" in str(sync.get("instruction_zh") or "")
     # Must not leave a chat Markdown board for the agent to paste
     assert not (tmp_path / ".ascendc-pilot" / "todo.md").is_file()
 

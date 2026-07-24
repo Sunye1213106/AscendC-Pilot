@@ -1,8 +1,8 @@
 ---
 name: tg-plan
 description: >-
-  生成覆盖义务并人工批准。 Pilot 管阶段；本 Skill 只索引 Action。
-disable-model-invocation: true
+  生成覆盖规划 / 覆盖义务并人工批准（tg-plan、coverage）。用户要覆盖计划时加载。
+  Pilot 管阶段；加载后执行 acp start tg-plan。
 ---
 
 # tg-plan

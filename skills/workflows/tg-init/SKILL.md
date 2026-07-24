@@ -1,7 +1,8 @@
 ---
 name: tg-init
 description: >-
-  构建测项合同与绑定。 Pilot 管阶段；本 Skill 只索引 Action。
+  构建测例契约 / 测项合同与绑定、测试工具初始化。用户说 tg-init、建测例契约时加载。
+  Pilot 管阶段；加载后执行 acp start tg-init。
 ---
 
 # tg-init

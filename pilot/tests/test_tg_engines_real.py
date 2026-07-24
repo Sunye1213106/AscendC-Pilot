@@ -60,9 +60,25 @@ def test_tg_z3_solve_not_marker_only(tmp_path: Path) -> None:
 
 def test_output_contracts_require_concrete_tg_artifacts() -> None:
     assert OUTPUT_CONTRACT_PATHS["csv-contract-v1"] != ["tg"]
-    assert "realization_map.yaml" in ",".join(OUTPUT_CONTRACT_PATHS["csv-contract-v1"])
+    joined = ",".join(OUTPUT_CONTRACT_PATHS["csv-contract-v1"])
+    assert "realization_map.yaml" in joined
+    assert "binding_inventory.yaml" in joined
+    assert "llm_bind_prompt_bundle.yaml" in joined
+    assert "binding_gaps.yaml" in joined
+    assert "unresolved.yaml" in joined
+    assert "understand_contract.json" in joined
+    assert OUTPUT_CONTRACT_PATHS["plan-scope-v1"] == ["tg/plan/levels/*/plan_scope.yaml"]
+    assert OUTPUT_CONTRACT_PATHS["solve-precheck-v1"] == ["tg/plan/levels/*/human_supplement.yaml"]
+    assert "tg/solve/**/realize_report.yaml" in OUTPUT_CONTRACT_PATHS["cover-confirm-v1"]
     assert "plan-build-v1" in OUTPUT_CONTRACT_NONEMPTY_GLOBS
     assert "z3-solve-v1" in OUTPUT_CONTRACT_NONEMPTY_GLOBS
+
+
+def test_tg_init_agents_omit_dead_csv_contract_producer() -> None:
+    agents = {a["id"] for a in WORKFLOWS["tg-init"]["agents"]}
+    assert "tg-csv-contract" not in agents
+    assert "deterministic-tg-engine" in agents
+    assert "tg-semantic-bind" in agents
 
 
 def test_plan_build_contract_rejects_empty_dir(tmp_path: Path) -> None:

@@ -2,7 +2,7 @@ id: code_review
 workflow_id: ce-review
 version: 1
 name_zh: 代码审查
-role_id: readonly_analyst
+role_id: readonly_reviewer
 agent_id: ce-reviewer
 capabilities:
 - structured-review

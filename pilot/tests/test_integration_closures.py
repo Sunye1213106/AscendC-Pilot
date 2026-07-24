@@ -364,3 +364,6 @@ def test_plugin_reads_active_action_helpers():
     assert "active_action.yaml" in text
     assert "injectActionContext" in text
     assert "ASCENDC_ACTION" in text
+    assert "projectRootFromPath" in text
+    assert "resolveEffectiveAgent" in text
+    assert "subagent_type" in text

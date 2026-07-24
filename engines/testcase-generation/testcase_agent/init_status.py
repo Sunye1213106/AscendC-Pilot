@@ -195,7 +195,10 @@ def mark_init_confirmed(out_root: Path, *, notes: str = "", require_merge: bool 
     uo_path = Path(str(doc.get("understand_root") or "")).expanduser()
     if not uo_path.is_dir():
         project = Path(str(doc.get("project_root") or ".")).expanduser()
-        op = str(doc.get("op_name") or out_root.name)
+        op = str(doc.get("op_name") or "")
+        if not op or op in {"tg", "uo"}:
+            # out_root is .ascendc-pilot/tg — never treat directory name as op_name
+            op = project.name if project.name not in {".", ""} else "unknown_operator"
         uo_path = understand_root(project, op)
     if uo_path.is_dir():
         fp = write_kb_fingerprint(out_root, uo_path)

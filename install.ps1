@@ -42,6 +42,38 @@ function Get-PluginsDest([string]$plat) {
   }
 }
 
+function Remove-LegacyAscendcAgentBits([string]$plat, [string]$skills, [string]$agents, [string]$plugins) {
+  # Pre-pilot ascendc-agent leftovers (show up as Tab agents / wrong harness).
+  foreach ($name in @("uo-code-review", "understand-operator", "uo-diff")) {
+    $p = Join-Path $skills $name
+    if (Test-Path -LiteralPath $p) {
+      Remove-Item -Recurse -Force -LiteralPath $p
+      Write-Host "Removed legacy skill → $p"
+    }
+  }
+  foreach ($name in @("ascendc-agent", "uo-code-reviewer", "README")) {
+    $p = Join-Path $agents "$name.md"
+    if (Test-Path -LiteralPath $p) {
+      Remove-Item -Force -LiteralPath $p
+      Write-Host "Removed legacy agent → $p"
+    }
+  }
+  if ($plat -eq "opencode") {
+    $legacyPlug = Join-Path $HOME ".config\opencode\ascendc-agent-plugin"
+    if (Test-Path -LiteralPath $legacyPlug) {
+      Remove-Item -Recurse -Force -LiteralPath $legacyPlug
+      Write-Host "Removed legacy plugin tree → $legacyPlug"
+    }
+    if ($plugins) {
+      $harness = Join-Path $plugins "ascendc-harness.ts"
+      if (Test-Path -LiteralPath $harness) {
+        Remove-Item -Force -LiteralPath $harness
+        Write-Host "Removed legacy plugin → $harness"
+      }
+    }
+  }
+}
+
 if ($Platform -like "uninstall-*") {
   $plat = $Platform.Substring("uninstall-".Length)
   $dest = Get-PluginDest $plat
@@ -49,17 +81,21 @@ if ($Platform -like "uninstall-*") {
   $agents = Get-AgentsDest $plat
   $plugins = Get-PluginsDest $plat
   if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
-  foreach ($name in @("uo-init","uo-update","uo-query","ce-review","tg-init","tg-plan","tg-solve","operator","_policies","understand-operator","uo-diff")) {
+  foreach ($name in @("uo-init","uo-update","uo-query","ce-review","tg-init","tg-plan","tg-solve","operator","_policies","understand-operator","uo-diff","uo-code-review")) {
     $p = Join-Path $skills $name
     if (Test-Path $p) { Remove-Item -Recurse -Force $p }
   }
-  foreach ($name in @("ascendc-pilot","uo-semantic-resolve","uo-key-resolve","uo-confidence-review","uo-kb-review","ce-reviewer","uo-query","tg-csv-contract","tg-semantic-bind","tg-init-audit","deterministic-uo-engine","deterministic-tg-engine")) {
+  foreach ($name in @("ascendc-pilot","ascendc-agent","uo-semantic-resolve","uo-key-resolve","uo-confidence-review","uo-kb-review","ce-reviewer","uo-query","uo-code-reviewer","tg-csv-contract","tg-semantic-bind","tg-init-audit","deterministic-uo-engine","deterministic-tg-engine","README")) {
     $p = Join-Path $agents "$name.md"
     if (Test-Path $p) { Remove-Item -Force $p }
   }
   if ($plat -eq "opencode" -and $plugins) {
-    $pluginFile = Join-Path $plugins "ascendc-pilot.ts"
-    if (Test-Path $pluginFile) { Remove-Item -Force $pluginFile }
+    foreach ($pluginName in @("ascendc-pilot.ts", "ascendc-harness.ts")) {
+      $pluginFile = Join-Path $plugins $pluginName
+      if (Test-Path $pluginFile) { Remove-Item -Force $pluginFile }
+    }
+    $legacyPlug = Join-Path $HOME ".config\opencode\ascendc-agent-plugin"
+    if (Test-Path -LiteralPath $legacyPlug) { Remove-Item -Recurse -Force -LiteralPath $legacyPlug }
   }
   Write-Host "Uninstalled $plat"
   exit 0
@@ -88,32 +124,37 @@ foreach ($name in @("skills","prompts","agents","docs","engines","pilot","templa
   }
 }
 
-# Install ONLY generated runtime trees
+# Install ONLY generated runtime trees.
+# Windows Copy-Item nests (dest/skills/skills) when dest already exists from the
+# source bundle above — remove first so generated becomes runtime authority.
 $genRoot = Join-Path $BundleRoot "generated\$Platform"
+foreach ($name in @("skills", "agents", "prompts")) {
+  $p = Join-Path $Dest $name
+  if (Test-Path -LiteralPath $p) { Remove-Item -Recurse -Force -LiteralPath $p }
+}
 Copy-Item -Recurse -Force (Join-Path $genRoot "skills") (Join-Path $Dest "skills")
 Copy-Item -Recurse -Force (Join-Path $genRoot "agents") (Join-Path $Dest "agents")
 if (Test-Path (Join-Path $genRoot "prompts")) {
   Copy-Item -Recurse -Force (Join-Path $genRoot "prompts") (Join-Path $Dest "prompts")
 }
 
-# Purge pre-pilot legacy skills that teach free-form LLM KB builds (breaks Tab→ascendc-pilot flow).
-foreach ($legacy in @("understand-operator", "uo-diff")) {
-  $legacyLink = Join-Path $Skills $legacy
-  if (Test-Path $legacyLink) {
-    Remove-Item -Recurse -Force $legacyLink
-    Write-Host "Removed legacy skill → $legacyLink"
-  }
-}
+# Purge pre-pilot leftovers (wrong Tab agents / free-form LLM KB skills).
+Remove-LegacyAscendcAgentBits -plat $Platform -skills $Skills -agents $Agents -plugins (Get-PluginsDest $Platform)
 
 foreach ($name in @("uo-init","uo-update","uo-query","ce-review","tg-init","tg-plan","tg-solve","operator")) {
   $target = Join-Path $Dest "skills\$name"
-  if (-not (Test-Path $target)) { continue }
+  if (-not (Test-Path -LiteralPath $target)) {
+    throw "generated skill missing: $target (compose/copy failed)"
+  }
   $link = Join-Path $Skills $name
-  if (Test-Path $link) { Remove-Item -Recurse -Force $link }
+  if (Test-Path -LiteralPath $link) { Remove-Item -Recurse -Force -LiteralPath $link }
   try {
-    New-Item -ItemType Junction -Path $link -Target $target | Out-Null
+    New-Item -ItemType Junction -Path $link -Target $target -ErrorAction Stop | Out-Null
   } catch {
-    Copy-Item -Recurse -Force $target $link
+    Copy-Item -Recurse -Force -LiteralPath $target -Destination $link
+  }
+  if (-not (Test-Path -LiteralPath $link)) {
+    throw "failed to install skill $name → $link"
   }
 }
 
@@ -121,7 +162,10 @@ $agentDir = Join-Path $Dest "agents"
 if (-not (Test-Path $agentDir)) {
   throw "generated agents missing under $agentDir (compose may have failed)"
 }
-$agentFiles = @(Get-ChildItem -Path $agentDir -Filter "*.md" -File)
+# OpenCode treats every .md under agents/ as a Tab entry — never install README.md etc.
+$agentFiles = @(Get-ChildItem -Path $agentDir -Filter "*.md" -File | Where-Object {
+  $_.Name -ne "README.md" -and $_.Name -notmatch '(?i)^readme'
+})
 if ($agentFiles.Count -eq 0) {
   throw "no agent .md files under $agentDir"
 }

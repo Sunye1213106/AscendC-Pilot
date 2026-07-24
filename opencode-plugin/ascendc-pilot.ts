@@ -32,7 +32,30 @@ type AuthorizeResult = {
   allowed_actions?: string[]
 }
 
-function detectProjectRoot(): string {
+function projectRootFromPath(pathHint: string): string {
+  const norm = String(pathHint || "").replace(/\\/g, "/")
+  if (!norm) return ""
+  // …/<op>/.ascendc-pilot/uo/ir/foo.yaml → <op>
+  const marker = "/.ascendc-pilot/"
+  const idx = norm.toLowerCase().indexOf(marker)
+  if (idx > 0) {
+    const root = norm.slice(0, idx)
+    if (existsSync(root)) return root
+  }
+  // Absolute Windows path may appear without leading slash quirks
+  const idx2 = norm.toLowerCase().indexOf(".ascendc-pilot/")
+  if (idx2 > 0) {
+    let root = norm.slice(0, idx2).replace(/\/$/, "")
+    if (root.endsWith(":")) return ""
+    if (existsSync(root)) return root
+  }
+  return ""
+}
+
+function detectProjectRoot(pathHint?: string): string {
+  const fromPath = projectRootFromPath(String(pathHint || ""))
+  if (fromPath) return fromPath
+
   const fromEnv =
     process.env.ASCENDC_PROJECT_ROOT ||
     process.env.OPENCODE_PROJECT_ROOT ||
@@ -73,6 +96,51 @@ function resolveAgent(input: { agent?: string; sessionAgent?: string }): string 
   const fromEnv = process.env.ASCENDC_AGENT || process.env.OPENCODE_AGENT || ""
   const fromInput = input.agent || input.sessionAgent || ""
   return String(fromEnv || fromInput || "ascendc-pilot").trim()
+}
+
+/** Prefer declared producer actor when the hook mislabels the session as primary. */
+function resolveEffectiveAgent(
+  input: { agent?: string; sessionAgent?: string },
+  active: { action_id?: string; actor_id?: string },
+  tool: string,
+): string {
+  let agent = resolveAgent(input)
+  const actor = String(active.actor_id || "").trim()
+  if (!actor) return agent
+  const isTask = tool === "task" || tool === "subagent" || tool === "task_tool"
+  if (isTask) return agent
+  if (!agent || agent === "ascendc-pilot" || agent === "ascendc_agent") {
+    return actor
+  }
+  return agent
+}
+
+const PASS_THROUGH_AGENTS = new Set([
+  "build",
+  "plan",
+  "general",
+  "general-purpose",
+  "generalpurpose",
+  "ask",
+  "debug",
+])
+
+const PILOT_AGENT_PREFIXES = ["uo-", "tg-", "deterministic-", "ce-"]
+
+/** Pilot primary + declared UO/TG/CE actors. Build/Plan/unknown → pass-through. */
+function isPilotFamilyAgent(agent: string): boolean {
+  const a = String(agent || "")
+    .trim()
+    .toLowerCase()
+  if (!a || a === "ascendc-pilot" || a === "ascendc_agent") return true
+  if (PASS_THROUGH_AGENTS.has(a)) return false
+  if (PILOT_AGENT_PREFIXES.some((p) => a.startsWith(p))) return true
+  return false
+}
+
+/** Enforce harness only for Pilot-family agents (global plugin stays loaded). */
+function shouldEnforceHarness(agent: string): boolean {
+  return isPilotFamilyAgent(agent)
 }
 
 function readActiveAction(project: string): { action_id?: string; actor_id?: string } {
@@ -270,21 +338,25 @@ export const AscendCHarnessPlugin = async () => {
           args.glob ||
           "",
       )
-      const project = detectProjectRoot()
+      const project = detectProjectRoot(path)
       const active = readActiveAction(project)
-      let agent = resolveAgent(input)
-      // When subagent hooks omit identity, fall back to prepared actor.
-      if (
-        (!agent || agent === "ascendc-pilot") &&
-        active.actor_id &&
-        tool !== "task" &&
-        tool !== "subagent" &&
-        tool !== "task_tool"
-      ) {
-        agent = active.actor_id
+      let agent = resolveEffectiveAgent(input, active, tool)
+
+      // Build / Plan / other non-Pilot tabs: behave like stock OpenCode.
+      if (!shouldEnforceHarness(agent)) {
+        return
       }
+
       const action = resolveAction(args, project)
-      const taskAgent = String(args.agent || args.subagent || args.name || path || "")
+      const taskAgent = String(
+        args.agent ||
+          args.subagent ||
+          args.subagent_type ||
+          args.subagentType ||
+          args.name ||
+          path ||
+          "",
+      )
 
       if (tool === "bash" || tool === "shell" || tool === "terminal") {
         // Always authorize — including acp CLI — so containment can revoke domain steps.

@@ -557,7 +557,10 @@ def gate_scope_receipt(uo: Path) -> dict[str, Any]:
     if not scope_ok:
         message = "范围确认缺失（需要 runs/*/scope/scope_confirmed.yaml）"
     elif not meta.is_file():
-        message = "缺少 cbm/index_meta.json（须先对 index_stage 执行 MCP index_repository）"
+        message = (
+            "缺少 cbm/index_meta.json（MCP index 后须执行 "
+            "acp uo-scope record-index --cbm-project <name>）"
+        )
     elif not mcp_ok:
         message = f"cbm/index_meta.json indexed_via 必须为 mcp（当前={indexed_via!r}）"
     else:

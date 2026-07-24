@@ -87,6 +87,89 @@ _ENGINE_SOURCE_MARKERS = (
 )
 
 _PRIMARY_AGENTS = frozenset({"ascendc-pilot", "ascendc_agent", ""})
+_PASS_THROUGH_AGENTS = frozenset(
+    {
+        "build",
+        "plan",
+        "general",
+        "general-purpose",
+        "generalpurpose",
+        "ask",
+        "debug",
+    }
+)
+_PILOT_AGENT_PREFIXES = ("uo-", "tg-", "deterministic-", "ce-")
+
+
+def _project_root_for_path(project_root: Path | None, path_s: str) -> Path | None:
+    """Prefer operator package that owns ``path`` when it embeds ``.ascendc-pilot``."""
+    norm = (path_s or "").replace("\\", "/")
+    marker = "/.ascendc-pilot/"
+    idx = norm.lower().find(marker)
+    if idx > 0:
+        candidate = Path(norm[:idx])
+        if (candidate / ".ascendc-pilot").is_dir() or candidate.is_dir():
+            return candidate.resolve()
+    return project_root.resolve() if project_root is not None else None
+
+
+def _load_active_action(project_root: Path | None) -> dict[str, Any]:
+    if project_root is None:
+        return {}
+    try:
+        from ascendc_pilot.paths import agent_root
+
+        path = agent_root(project_root) / "state" / "active_action.yaml"
+        if not path.is_file():
+            return {}
+        import yaml
+
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _remap_primary_actor(
+    project_root: Path | None,
+    agent_l: str,
+    action_id: str,
+) -> tuple[str, str]:
+    """When hooks mislabel producer writes as primary, trust prepared active_action."""
+    if agent_l not in _PRIMARY_AGENTS:
+        return agent_l, action_id
+    active = _load_active_action(project_root)
+    actor = str(active.get("actor_id") or "").strip().lower()
+    act = str(active.get("action_id") or "").strip()
+    if not actor or actor in _PRIMARY_AGENTS:
+        return agent_l, action_id
+    # Only remap when action matches (or caller omitted action and we fill it).
+    if action_id and act and action_id != act:
+        return agent_l, action_id
+    return actor, action_id or act
+
+
+def _is_pilot_family_agent(agent_l: str, meta: dict[str, Any] | None = None) -> bool:
+    """True for ascendc-pilot and declared UO/TG/CE actors; False for Build/Plan/etc."""
+    a = (agent_l or "").strip().lower()
+    if a in _PRIMARY_AGENTS:
+        return True
+    if a in _PASS_THROUGH_AGENTS:
+        return False
+    if a.startswith(_PILOT_AGENT_PREFIXES):
+        return True
+    meta = meta or {}
+    for act in meta.get("actions") or []:
+        if not isinstance(act, dict):
+            continue
+        aid = str(act.get("agent_id") or "").strip().lower()
+        if aid and aid == a:
+            return True
+        for actor in act.get("actors") or []:
+            if str(actor).strip().lower() == a:
+                return True
+    # Unknown Tab agents behave like OpenCode Build (no harness).
+    return False
 
 _ROLE_WRITE_POLICY = {
     "producer": "formal",
@@ -348,6 +431,11 @@ def authorize(
     action_id = (action or "").strip()
     lease_id_s = (lease_id or "").strip()
 
+    # Write path under <op>/.ascendc-pilot/… may arrive with a wrong project_root
+    # (workspace parent). Prefer the operator package that owns the artifact.
+    project_root = _project_root_for_path(project_root, path_s)
+    agent_l, action_id = _remap_primary_actor(project_root, agent_l, action_id)
+
     ctx = _load_context(project_root)
     meta = ctx.get("meta") or {}
     state = ctx.get("state") or {}
@@ -356,6 +444,17 @@ def authorize(
     role = _agent_role(meta, agent_l) if agent_l else None
     status = str(state.get("status") or "")
     auth_mode = authorization_mode_for_status(status) if state else "normal"
+
+    # Non-Pilot tabs (Build / Plan / …): full pass-through even if a leftover
+    # human_required run exists under .ascendc-pilot.
+    if not _is_pilot_family_agent(agent_l, meta if isinstance(meta, dict) else {}):
+        return _ok(
+            "allow",
+            "HARNESS_INACTIVE",
+            "非 Pilot agent：不套用 Harness（与 Build/Plan 相同）",
+            status=status or None,
+            agent=agent_l or None,
+        )
 
     # Explicit old lease reuse check
     if lease_id_s and project_root is not None and is_lease_revoked(project_root, lease_id_s):
@@ -505,6 +604,35 @@ def authorize(
 
     # --- bash / shell ---
     if tool_l in _BASH_TOOLS:
+        # Deny shell redirects / writers aimed at formal pilot artifacts (fence bypass).
+        cmd_l = cmd.lower().replace("\\", "/")
+        if ".ascendc-pilot/" in cmd_l and any(
+            tok in cmd_l
+            for tok in (
+                " >",
+                ">>",
+                " tee ",
+                "set-content",
+                "out-file",
+                "add-content",
+                "ni ",
+                "new-item",
+                "echo ",
+                "printf ",
+                "cat >",
+                "copy ",
+                "move ",
+                "mv ",
+                "cp ",
+            )
+        ):
+            return _ok(
+                "deny",
+                "BASH_PROTECTED_WRITE",
+                "禁止用 bash 写入 .ascendc-pilot 正式产物以绕过 Write 围栏；请由声明 actor 用 Write 或 acp run-action",
+                error_code="HARNESS_ACTION_NOT_AUTHORIZED",
+                command=cmd[:200],
+            )
         for pat in _ALLOW_BASH:
             if pat.search(cmd):
                 return _ok(

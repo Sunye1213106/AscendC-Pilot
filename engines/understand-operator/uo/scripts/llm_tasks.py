@@ -122,6 +122,17 @@ def upsert_tasks_from_score_items(
                 old["status"] = "superseded"
                 old["superseded_by"] = tid
 
+        # Empty candidate window / mark_missing: no accept_edge (false closure).
+        if task_type == "mark_missing" or not candidates:
+            allowed_actions = ["mark_missing", "inspect_candidates", "reject_edge"]
+        else:
+            allowed_actions = [
+                "accept_edge",
+                "reject_edge",
+                "choose_one",
+                "mark_missing",
+                "inspect_candidates",
+            ]
         task = {
             "task_id": tid,
             "status": "open",
@@ -137,7 +148,7 @@ def upsert_tasks_from_score_items(
             "score": item.get("score"),
             "necessity": item.get("necessity"),
             "candidates": candidates,
-            "allowed_actions": ["accept_edge", "reject_edge", "choose_one", "mark_missing", "inspect_candidates"],
+            "allowed_actions": allowed_actions,
             "forbidden": ["invent_symbol", "repo_wide_search"],
             "resolution": None,
         }
@@ -235,16 +246,51 @@ def apply_task_patch(
         save_llm_tasks(uo_root, doc)
         return {"ok": False, "error": "source_snapshot_stale", "task_id": task_id}
 
-    cand_ids = {str(c.get("id")) for c in (task.get("candidates") or [])}
+    cand_ids = {str(c.get("id")) for c in (task.get("candidates") or []) if str(c.get("id") or "").strip()}
     accepted = [str(x) for x in (patch.get("accepted_candidate_ids") or [])]
     rejected = [str(x) for x in (patch.get("rejected_candidate_ids") or [])]
-    for cid in accepted + rejected:
-        if cand_ids and cid not in cand_ids:
-            return {"ok": False, "error": "candidate_out_of_window", "candidate_id": cid}
 
     # Optional: reject invent_symbol
     for sym in patch.get("invented_symbols") or []:
         return {"ok": False, "error": "forbidden_invent_symbol", "symbol": sym}
+
+    action = str(patch.get("action") or ("mark_missing" if task.get("type") == "mark_missing" else "accept_edge"))
+    allowed = {str(a) for a in (task.get("allowed_actions") or [])}
+    if allowed and action not in allowed:
+        return {
+            "ok": False,
+            "error": "action_not_allowed",
+            "action": action,
+            "allowed_actions": sorted(allowed),
+            "task_id": task_id,
+        }
+
+    accept_actions = {"accept_edge", "choose_one", "accept", "select_edge", "select"}
+    if action in accept_actions:
+        # Empty candidate window must stay mark_missing / unresolved — never invent a close.
+        if not cand_ids:
+            return {
+                "ok": False,
+                "error": "empty_candidate_false_closure",
+                "task_id": task_id,
+                "message": "accept_edge forbidden when candidates are empty; use mark_missing",
+            }
+        if not accepted:
+            return {"ok": False, "error": "accept_requires_candidate", "task_id": task_id}
+        for cid in accepted + rejected:
+            if cid not in cand_ids:
+                return {"ok": False, "error": "candidate_out_of_window", "candidate_id": cid}
+    else:
+        for cid in accepted + rejected:
+            if cand_ids and cid not in cand_ids:
+                return {"ok": False, "error": "candidate_out_of_window", "candidate_id": cid}
+        # Honest mark_missing must not smuggle accepted edge ids for ledger upgrade.
+        if action == "mark_missing" and accepted:
+            return {
+                "ok": False,
+                "error": "mark_missing_forbids_accepted_ids",
+                "task_id": task_id,
+            }
 
     attempts = int(task.get("task_attempts") or 0) + 1
     task["task_attempts"] = attempts
@@ -261,7 +307,6 @@ def apply_task_patch(
         save_llm_tasks(uo_root, doc)
         return {"ok": False, "error": "total_semantic_batches_exhausted", "batches": batches}
 
-    action = str(patch.get("action") or ("mark_missing" if task.get("type") == "mark_missing" else "accept_edge"))
     if action == "mark_missing":
         task["status"] = "resolved"
         task["resolution"] = {"action": "mark_missing", "patch": patch}

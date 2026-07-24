@@ -142,9 +142,9 @@ Get-Content "$env:USERPROFILE\.config\opencode\opencode.json" -Raw |
 ### 3.4 与 understand-operator 联通（推荐）
 
 1. 已执行 `./install.ps1 opencode`（插件 skills / PLUGIN_ROOT 已链接）。
-2. 在算子仓库跑 `/uo-init`，**范围确认**通过后应自动：
+2. 在算子仓库跑 `/uo-init`（或加载 `uo-init` skill），**范围确认**通过后应自动：
    - `stage_cbm_scope` → MCP `index_repository(repo_path=$UO_ROOT/cbm/index_stage, ...)`
-   - `prepare_operator.py --write-index-meta --cbm-project <name>`
+   - `acp uo-scope record-index --cbm-project <name>` → `cbm/index_meta.json`
 3. 检查：
 
 ```powershell
@@ -162,9 +162,10 @@ Get-Content .ascendc-pilot\uo\cbm\index_meta.json
 
 1. `stage_cbm_scope` — 把确认文件 stage 到 `$UO_ROOT/cbm/index_stage`
 2. MCP `index_repository(repo_path=.../cbm/index_stage, mode=fast, name=<op>-scope)`
-3. `prepare_operator.py --write-index-meta --cbm-project <name>` → `cbm/index_meta.json`
+3. `acp uo-scope record-index --cbm-project <name>` → `cbm/index_meta.json`
 
 图数据落在 CBM 本地 cache（如 `~/.cache/codebase-memory-mcp/`），不是仓库内 SQLite 手写库。
+`index_meta.json` 由 Pilot `record-index` 写出（MCP **不会**写该文件）。
 
 也可对目录说 **Index this project**，但 `/uo-init` **不应**依赖你再手工索引一遍父仓。
 

@@ -9,7 +9,8 @@ read_scopes:
   - "uo/**"
   - "runs/**"
 write_scopes:
-  - "tg/review/init_audit.yaml"
+  - "tg/init/audit_report.yaml"
+  - "tg/init/**"
 forbidden:
   - modify_pilot_state
   - declare_workflow_passed

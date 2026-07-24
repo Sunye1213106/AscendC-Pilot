@@ -168,6 +168,8 @@ def run_uo_scope(
 
     notes: str = "",
 
+    cbm_project: str = "",
+
 ) -> dict[str, Any]:
 
     """Run one deterministic scope step under Pilot control."""
@@ -181,6 +183,8 @@ def run_uo_scope(
     resolved_op = _resolve_op_name(project, op_name)
 
     action_id = _active_action_id(project)
+
+    cbm_name = str(cbm_project or "").strip()
 
 
 
@@ -358,6 +362,87 @@ def run_uo_scope(
 
 
 
+    if step_l in {"record-index", "record_index", "write-index-meta", "write_index_meta"}:
+
+        from uo.scripts.prepare_operator import main as prepare_main
+
+
+
+        if not cbm_name:
+
+            payload = {
+
+                "ok": False,
+
+                "step": "record-index",
+
+                "error": "cbm_project_required",
+
+                "message_zh": (
+                    "需要 --cbm-project <MCP index_repository 返回的 project 名>；"
+                    "在 MCP 索引之后、uo-scope finalize 之前执行"
+                ),
+
+            }
+
+            return _record_step_result(
+
+                project,
+
+                payload,
+
+                action_id=action_id,
+
+                step_id="uo_scope_record_index",
+
+                messages=["cbm_project_required"],
+
+            )
+
+        argv = [
+
+            str(project),
+
+            "--op-name",
+
+            resolved_op,
+
+            "--write-index-meta",
+
+            "--cbm-project",
+
+            cbm_name,
+
+        ]
+
+        code = int(prepare_main(argv) or 0)
+
+        meta_path = project / ".ascendc-pilot" / "uo" / "cbm" / "index_meta.json"
+
+        payload = {
+
+            "ok": code in {0, 3} and meta_path.is_file(),
+
+            "step": "record-index",
+
+            "exit_code": code,
+
+            "op_name": resolved_op,
+
+            "cbm_project": cbm_name,
+
+            "index_meta": str(meta_path) if meta_path.is_file() else "",
+
+        }
+
+        return _record_step_result(
+
+            project, payload, action_id=action_id, step_id="uo_scope_record_index"
+
+        )
+
+
+
     if step_l in {"finalize", "finalize-scope", "finalize_scope"}:
 
         from uo.scripts.finalize_scope import finalize_scope
@@ -428,7 +513,8 @@ def run_uo_scope(
 
         "message_zh": (
 
-            "未知 step；可用: scan | checkpoint | build-evidence | closure | stage | finalize"
+            "未知 step；可用: scan | checkpoint | build-evidence | closure | stage | "
+            "record-index | finalize"
 
         ),
 

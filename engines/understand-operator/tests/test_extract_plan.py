@@ -194,3 +194,23 @@ def test_apply_rejects_invented_writer(tmp_path: Path) -> None:
     result = apply_extract_plan(repo, op, plan=bad, check_only=True)
     assert not result["ok"]
     assert result["rejected_count"] >= 1
+
+
+def test_validate_rejects_call_edge_adjudications(tmp_path: Path) -> None:
+    """Edge adjudications must not live inside extract_plan.yaml."""
+    from uo.scripts.extract_plan_io import validate_extract_plan_against_candidates
+
+    repo, op = _setup_foo_tiling(tmp_path)
+    cands = propose_extract_plan(repo, op, architecture="arch35")
+    plan = {
+        "version": 1,
+        "confirmed_by": "llm",
+        "writers": [],
+        "receivers": [],
+        "aliases": [],
+        "call_edge_adjudications": [
+            {"task_id": "t1", "action": "ACCEPT", "target": "FakeKernel"},
+        ],
+    }
+    errors = validate_extract_plan_against_candidates(plan, cands)
+    assert any("call_edge_adjudications" in e for e in errors)

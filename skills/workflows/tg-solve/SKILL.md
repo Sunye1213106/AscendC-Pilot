@@ -1,8 +1,8 @@
 ---
 name: tg-solve
 description: >-
-  Z3 求解与 CSV 投影。 Pilot 管阶段；本 Skill 只索引 Action。
-disable-model-invocation: true
+  Z3 求解与 CSV 投影 / 生成测例 CSV。用户说求解、tg-solve、生成 csv 时加载。
+  Pilot 管阶段；加载后执行 acp start tg-solve。
 ---
 
 # tg-solve

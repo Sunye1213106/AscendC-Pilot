@@ -132,6 +132,32 @@ def test_glob_read_denied_after_human_required(tmp_path: Path):
         assert verdict.get("decision") == "deny"
 
 
+def test_build_agent_passthrough_during_containment(tmp_path: Path):
+    """Tab→Build must escape harness even with human_required leftover run."""
+    start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
+    record_pilot_result(
+        tmp_path,
+        ok=False,
+        action_id="scope_confirmation",
+        step_id="uo_scope_finalize",
+        messages=["installed_skill_check.consistent is not true"],
+        source="uo_scope",
+    )
+    for agent in ("Build", "build", "plan", "Plan"):
+        v = authorize(tmp_path, tool="bash", command="dir", agent=agent)
+        assert v.get("decision") == "allow", (agent, v)
+        assert v.get("reason_code") == "HARNESS_INACTIVE"
+        v2 = authorize(
+            tmp_path,
+            tool="write",
+            path=str(tmp_path / "notes.txt"),
+            agent=agent,
+        )
+        assert v2.get("decision") == "allow", (agent, v2)
+    deny = authorize(tmp_path, tool="bash", command="dir", agent="ascendc-pilot")
+    assert deny.get("decision") == "deny"
+
+
 def test_write_formal_artifact_denied_after_failure(tmp_path: Path):
     start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
     record_pilot_result(

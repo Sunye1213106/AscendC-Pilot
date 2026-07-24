@@ -1,8 +1,7 @@
-"""Intent → unique workflow_id."""
+"""Slash → workflow_id. Natural-language intent is agent + skill description, not this module."""
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from ascendc_pilot.workflows.specs import WORKFLOWS
@@ -28,39 +27,53 @@ CE_NOT_IMPLEMENTED = {
     ),
 }
 
-SLASH_MAP = {
-    "/uo-init": "uo-init",
-    "/uo-update": "uo-update",
-    "/uo-query": "uo-query",
-    "/ce-review": "ce-review",
-    "/tg-init": "tg-init",
-    "/tg-plan": "tg-plan",
-    "/tg-solve": "tg-solve",
-}
+# Built from WORKFLOWS so slash map stays in sync with specs.
+def _slash_map() -> dict[str, str]:
+    out: dict[str, str] = {}
+    for wid, meta in WORKFLOWS.items():
+        if meta.get("reserved"):
+            continue
+        slash = str(meta.get("slash") or "").strip()
+        if slash:
+            out[slash] = wid
+    return out
 
-KEYWORD_RULES: list[tuple[re.Pattern[str], str]] = [
-    (
-        re.compile(
-            r"(建库|建立知识库|创建知识库|初始化知识库|uo[- ]?init|build\s+kb)",
-            re.I,
-        ),
-        "uo-init",
-    ),
-    (re.compile(r"(增量更新|刷新\s*kb|uo[- ]?update)", re.I), "uo-update"),
-    (re.compile(r"(查询|问答|这个\s*key|uo[- ]?query)", re.I), "uo-query"),
-    (re.compile(r"(代码审查|code\s*review|查\s*bug)", re.I), "ce-review"),
-    (re.compile(r"(测例契约|tg[- ]?init|测试工具)", re.I), "tg-init"),
-    (re.compile(r"(覆盖规划|tg[- ]?plan|coverage)", re.I), "tg-plan"),
-    (re.compile(r"(求解|z3|tg[- ]?solve|生成\s*csv)", re.I), "tg-solve"),
-]
+
+def _skill_candidates() -> list[dict[str, str]]:
+    """Name + short hint for agent skill selection (not keyword routing)."""
+    items: list[dict[str, str]] = []
+    for wid in list_user_workflows():
+        meta = WORKFLOWS.get(wid) or {}
+        items.append(
+            {
+                "workflow_id": wid,
+                "slash": str(meta.get("slash") or f"/{wid}"),
+                "hint_zh": str(meta.get("label_zh") or meta.get("description") or wid),
+            }
+        )
+    return items
+
+
+_UNMATCHED_MSG_ZH = (
+    "自然语言意图请由 Agent 按 workflow skill 的 description 自行加载对应 Skill，"
+    "然后执行 acp start <workflow_id>。"
+    "acp route 仅支持 slash（如 /uo-init）。"
+)
 
 
 def route(text: str) -> dict[str, Any]:
     raw = (text or "").strip()
     if not raw:
-        return {"ok": False, "workflow_id": None, "error": "empty_input", "candidates": list_user_workflows()}
+        return {
+            "ok": False,
+            "workflow_id": None,
+            "error": "empty_input",
+            "candidates": list_user_workflows(),
+            "skill_candidates": _skill_candidates(),
+            "message_zh": _UNMATCHED_MSG_ZH,
+        }
 
-    # /operator is an alias for acp route — strip and re-route (no separate rule table)
+    # /operator is an optional alias for acp route — strip and re-route
     first = raw.split()[0]
     if first in {"/operator", "operator"}:
         rest = raw[len(first) :].strip()
@@ -69,8 +82,9 @@ def route(text: str) -> dict[str, Any]:
                 "ok": False,
                 "workflow_id": None,
                 "error": "operator_needs_intent",
-                "message_zh": "请在 /operator 后给出意图或 slash（例如 /operator 帮我建库）",
+                "message_zh": "请加载对应 workflow skill，或使用 slash（例如 /operator /uo-init）",
                 "candidates": list_user_workflows(),
+                "skill_candidates": _skill_candidates(),
             }
         inner = route(rest)
         if inner.get("ok"):
@@ -78,30 +92,34 @@ def route(text: str) -> dict[str, Any]:
             inner["via"] = "operator"
         return inner
 
-
     if first in CE_FUTURE_SLASHES or first.lstrip("/") in {s.lstrip("/") for s in CE_FUTURE_SLASHES}:
         return dict(CE_NOT_IMPLEMENTED)
 
+    slash_map = _slash_map()
     # Exact slash (first token)
-    if first in SLASH_MAP:
-        wid = SLASH_MAP[first]
-        out: dict[str, Any] = {
+    if first in slash_map:
+        wid = slash_map[first]
+        return {
             "ok": True,
             "workflow_id": wid,
             "slash": WORKFLOWS[wid].get("slash"),
             "method": "slash",
         }
-        return out
 
-    hits: list[str] = []
-    for pattern, wid in KEYWORD_RULES:
-        if pattern.search(raw):
-            if wid not in hits:
-                hits.append(wid)
+    # Also accept bare workflow id as first token (uo-init)
+    if first in WORKFLOWS and (WORKFLOWS[first].get("slash") and not WORKFLOWS[first].get("reserved")):
+        return {
+            "ok": True,
+            "workflow_id": first,
+            "slash": WORKFLOWS[first].get("slash"),
+            "method": "workflow_id",
+        }
 
-    if len(hits) == 1:
-        wid = hits[0]
-        return {"ok": True, "workflow_id": wid, "slash": WORKFLOWS[wid].get("slash"), "method": "keyword"}
-    if len(hits) > 1:
-        return {"ok": False, "workflow_id": None, "error": "ambiguous", "candidates": hits}
-    return {"ok": False, "workflow_id": None, "error": "unmatched", "candidates": list_user_workflows()}
+    return {
+        "ok": False,
+        "workflow_id": None,
+        "error": "unmatched",
+        "candidates": list_user_workflows(),
+        "skill_candidates": _skill_candidates(),
+        "message_zh": _UNMATCHED_MSG_ZH,
+    }

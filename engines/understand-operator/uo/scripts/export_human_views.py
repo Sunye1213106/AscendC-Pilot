@@ -66,11 +66,13 @@ def export_human_views(uo_root: Path | str, *, write: bool = True) -> dict[str, 
     unresolved_items = unresolved.get("items") if isinstance(unresolved.get("items"), list) else []
     ledger_items = ledger.get("items") if isinstance(ledger.get("items"), list) else []
     ledger_counts = ledger.get("counts") if isinstance(ledger.get("counts"), dict) else {}
+    # uo_root is always .../.ascendc-pilot/uo — never use uo_root.name as op_name.
+    package_name = uo_root.parent.parent.name if uo_root.name == "uo" else uo_root.name
     op_name = str(
         key_space.get("op_name")
         or quality.get("op_name")
         or tilingkey.get("op_name")
-        or uo_root.name
+        or package_name
     )
 
     keys_table = {

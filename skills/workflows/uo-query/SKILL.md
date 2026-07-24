@@ -1,8 +1,8 @@
 ---
 name: uo-query
 description: >-
-  只读查询 UO KB。 Pilot 管阶段；本 Skill 只索引 Action。
-disable-model-invocation: true
+  只读查询 UO 知识库 / 问答 / 查某个 KEY。用户提问已有 KB 内容时加载。
+  Pilot 管阶段；加载后执行 acp start uo-query。
 ---
 
 # uo-query

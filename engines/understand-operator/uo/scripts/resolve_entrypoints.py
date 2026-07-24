@@ -1108,7 +1108,7 @@ def _evaluate_closure(nodes: dict[str, dict[str, Any]], edges: list[dict[str, An
         impl_or_family = {"concrete_kernel_impl", "kernel_family", "template_dispatcher"}
         has_impl_side = any(by_role.get(r) for r in impl_or_family)
         if kern_public and has_impl_side:
-            if not has_edge(
+            if not has_verified_edge(
                 {"dispatches_to", "selects", "instantiates", "registers"},
                 {"public_kernel_entry", "template_dispatcher"},
                 impl_or_family,

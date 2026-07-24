@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import yaml
-
+from uo._operator.install_check import compare_installed_skill
 from uo.scripts.prepare_operator import _resolve_installed_skill_check, main as prepare_main
 
 
@@ -73,3 +72,42 @@ def test_prepare_writes_stubs_even_on_version_mismatch(tmp_path: Path, monkeypat
     text = (phase0 / "installed_skill_check.yaml").read_text(encoding="utf-8")
     assert "uo-init" in text
     assert "legacy_leftovers" not in text
+
+
+def test_compare_generated_tree_consistent_with_self(tmp_path: Path) -> None:
+    """generated/opencode vs a mirror plugin tree → consistent."""
+    bundle = Path(__file__).resolve().parents[3]  # AscendC-Pilot
+    gen = bundle / "generated" / "opencode"
+    if not (gen / "skills" / "uo-init" / "SKILL.md").is_file():
+        import pytest
+
+        pytest.skip("generated/opencode not composed")
+
+    plugin = tmp_path / "ascendc-pilot-plugin"
+    from uo._operator.install_check import CHECK_FILES_GENERATED, CHECK_FILES_REPO
+
+    for rel in CHECK_FILES_GENERATED:
+        src = gen / rel
+        if not src.is_file():
+            continue
+        dst = plugin / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(src.read_bytes())
+    for rel in CHECK_FILES_REPO:
+        src = bundle / rel
+        if not src.is_file():
+            continue
+        dst = plugin / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(src.read_bytes())
+
+    skill = tmp_path / "skills" / "uo-init"
+    skill.mkdir(parents=True)
+    result = compare_installed_skill(bundle, skill)
+    assert result.get("consistent") is True, result.get("mismatches")[:3]
+
+    bad = plugin / "skills" / "uo-init" / "SKILL.md"
+    bad.write_text(bad.read_text(encoding="utf-8") + "\n# tamper\n", encoding="utf-8")
+    result2 = compare_installed_skill(bundle, skill)
+    assert result2.get("consistent") is False
+    assert result2.get("error_code") == "INSTALLED_SKILL_VERSION_MISMATCH"

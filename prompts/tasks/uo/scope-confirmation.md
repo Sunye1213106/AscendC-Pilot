@@ -29,8 +29,9 @@ acp uo-scope build-evidence --project .
 acp uo-scope closure --project .
 acp uo-scope stage --project .
 # MUST：MCP index_repository → …/.ascendc-pilot/uo/cbm/index_stage  (mode=fast)
-#       成功后必须存在 uo/cbm/index_meta.json 且 indexed_via=mcp
-# 禁止跳过 MCP 直接 finalize
+#       MCP 只建图；记下返回的 project 名
+acp uo-scope record-index --project . --cbm-project <MCP返回的project名>
+# ↑ 写出 uo/cbm/index_meta.json（indexed_via=mcp）；禁止跳过直接 finalize
 acp uo-scope finalize --project .
 acp run-action scope_confirmation --finalize --project .
 ```

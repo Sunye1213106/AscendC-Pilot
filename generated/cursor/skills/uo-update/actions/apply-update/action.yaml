@@ -2,13 +2,11 @@ id: apply_update
 workflow_id: uo-update
 version: 1
 name_zh: 应用变更
-role_id: producer
-agent_id: uo-semantic-resolve
+role_id: deterministic_engine
+agent_id: deterministic-uo-engine
 capabilities:
 - source-reading
-- cbm-navigation
 - kb-query
-- semantic-resolution
 policies:
 - source-authority
 - code-access
@@ -16,7 +14,6 @@ policies:
 - language
 - pilot-control
 - output-quality
-task_prompt_id: uo/apply-update
 context_profile_id: uo-update-apply-update
 output_contract_id: update-apply-v1
 checker:

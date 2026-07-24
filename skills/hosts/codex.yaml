@@ -1,6 +1,5 @@
 # Codex host defaults for compiled skills
+# Workflow skills are selectable by the model via description (like normal skills).
 skill_defaults:
-  disable-model-invocation: true
-skills:
-  operator:
-    disable-model-invocation: false
+  disable-model-invocation: false
+skills: {}

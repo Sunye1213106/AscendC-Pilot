@@ -22,6 +22,20 @@ from ascendc_pilot.runs import append_event, file_sha256, issue_receipt, run_dir
 from ascendc_pilot.state import load_state
 from ascendc_pilot.workflows import actions_for_phase, get_workflow
 
+# Mirrors uo.scripts.extract_plan_io.FORBIDDEN_EXTRACT_PLAN_KEYS — keep in sync.
+_EXTRACT_PLAN_FORBID_FIELDS = (
+    "call_edge_adjudications",
+    "llm_tasks",
+    "tasks",
+    "edge_patches",
+    "semantic_patches",
+    "dispatches_to",
+    "mark_missing",
+    "accepted_edges",
+    "entrypoint_dispatch_bind",
+    "accepted_candidate_ids",
+)
+
 
 def _write_active_action(project_root: Path, payload: dict[str, Any]) -> Path:
     """Persist current action context for OpenCode plugin / subagent writes."""
@@ -442,6 +456,39 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             "inventory_path": prepare_engine.get("inventory_path"),
             "csv_consumer_root": prepare_engine.get("csv_consumer_root"),
         }
+    # extract_plan: propose candidates before LLM confirms the plan.
+    if wid == "uo-init" and action_id == "extract_plan" and role_id == "producer":
+        prep_ctx = dict(eng_ctx)
+        prep_ctx["extract_plan_mode"] = "propose"
+        prepare_engine = invoke_engine(project_root, wid, action_id, ctx=prep_ctx)
+        if not prepare_engine.get("ok"):
+            return {
+                "ok": False,
+                "error": "EXTRACT_PLAN_PREPARE_FAILED",
+                "engine": prepare_engine,
+                "message_zh": str(prepare_engine.get("error") or "extract_plan propose failed"),
+            }
+        bundle["prepare_engine"] = {
+            "ok": True,
+            "phase": prepare_engine.get("phase"),
+            "candidates_path": prepare_engine.get("candidates_path"),
+        }
+        cand_path = str(prepare_engine.get("candidates_path") or "uo/ir/extract_plan_candidates.yaml")
+        target_line = (
+            f"{cand_path} → confirm writers/receivers/aliases only; "
+            "DO NOT read or adjudicate ir/llm_tasks.yaml"
+        )
+        prompt_r = prompt_r.replace("<TARGET_IDS_OR_FILES>", target_line)
+        prompt_r = prompt_r.replace(
+            "(see context pack / human input)",
+            target_line,
+        )
+        bundle["dispatch_targets"] = {
+            "read": ["uo/ir/extract_plan_candidates.yaml"],
+            "write": ["uo/ir/extract_plan.yaml"],
+            "forbid_read": ["uo/ir/llm_tasks.yaml"],
+            "forbid_write_fields": list(_EXTRACT_PLAN_FORBID_FIELDS),
+        }
 
     _dump(sdir / "session.yaml", bundle)
     (sdir / "method.md").write_text(method_r, encoding="utf-8")
@@ -513,9 +560,21 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
 
     result["message_zh"] = (
         f"已准备 Action Runtime Bundle；请派发 actor `{actor_id}` "
-        f"（写入时需携带 action_id={action_id} / ASCENDC_ACTION），"
+        f"（Task 的 subagent_type/agent 必须是 `{actor_id}`；"
+        f"写入时需携带 action_id={action_id} / ASCENDC_ACTION；"
+        f"Primary 禁止代写正式 IR），"
         f"完成后执行 acp run-action {action_id} --finalize"
     )
+    if wid == "uo-init" and action_id == "extract_plan":
+        result["message_zh"] = (
+            f"已准备 extract_plan；派发 `{actor_id}` 只确认 "
+            f"`extract_plan_candidates.yaml` → `ir/extract_plan.yaml`"
+            f"（writers/receivers/aliases）。禁止把 llm_tasks/mark_missing 塞进 Task；"
+            f"边裁决留给 apply_semantic_patch。完成后 "
+            f"acp run-action extract_plan --finalize"
+        )
+        if prepare_engine is not None:
+            result["dispatch_targets"] = bundle.get("dispatch_targets")
     return result
 
 
@@ -572,6 +631,37 @@ def finalize_action(
                 messages=[
                     str(apply_result.get("error") or "APPLY_FAILED"),
                     str(apply_result.get("message") or ""),
+                ],
+            )
+
+    # extract_plan finalize: validate plan + build host/kernel/tilingkey/bridge layers.
+    if wid == "uo-init" and action_id == "extract_plan" and engine_result is None:
+        fin_ctx = {
+            "op_name": state.get("op_name") or "",
+            "architecture": state.get("architecture") or "arch35",
+            "run_id": run_id,
+            "extract_plan_mode": "finalize",
+        }
+        apply_result = invoke_engine(project_root, wid, action_id, ctx=fin_ctx)
+        if not apply_result.get("ok"):
+            session["status"] = "finalize_failed"
+            session["apply_result"] = apply_result
+            _dump(sdir / "session.yaml", session)
+            fail_payload = {
+                "ok": False,
+                "phase_runtime": "finalize",
+                "action_id": action_id,
+                "error": apply_result.get("error") or "EXTRACT_PLAN_BUILD_FAILED",
+                "apply_result": apply_result,
+                "message_zh": str(apply_result.get("error") or "extract_plan 分层构建失败"),
+            }
+            return _attach_finalize_observation(
+                project_root,
+                fail_payload,
+                action_id=action_id,
+                messages=[
+                    str(apply_result.get("error") or "EXTRACT_PLAN_BUILD_FAILED"),
+                    str((apply_result.get("apply") or {}).get("rejected") or ""),
                 ],
             )
 

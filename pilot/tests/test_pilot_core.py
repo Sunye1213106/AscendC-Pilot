@@ -38,16 +38,23 @@ def _write(path: Path, data: object) -> None:
         path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
 
-def test_router_slash_and_keyword():
+def test_router_slash_only_no_nl_keywords():
+    """NL intent is agent+skill description; acp route only accepts slash / workflow id."""
     assert route("/uo-init foo").get("workflow_id") == "uo-init"
-    assert route("帮我建库初始化知识库").get("workflow_id") == "uo-init"
-    assert route("为 flash_attention_score_grad 算子建立知识库，只分析 arch35").get("workflow_id") == "uo-init"
-    assert route("请创建知识库").get("workflow_id") == "uo-init"
     assert route("/tg-plan").get("workflow_id") == "tg-plan"
+    assert route("uo-init").get("workflow_id") == "uo-init"
+    # Natural language must NOT be keyword-routed by the script
+    nl = route("为 flash_attention_score_grad 算子建立本地知识库，只分析 arch35")
+    assert nl.get("ok") is False
+    assert nl.get("error") == "unmatched"
+    assert "uo-init" in (nl.get("candidates") or [])
+    assert nl.get("message_zh")
+    assert route("帮我建库初始化知识库").get("ok") is False
     assert route("完全无关的话").get("ok") is False
     assert route("/uo-diff").get("ok") is False
-    op = route("/operator 帮我建库")
+    op = route("/operator /uo-init")
     assert op.get("ok") is True and op.get("workflow_id") == "uo-init" and op.get("via") == "operator"
+    assert route("/operator 帮我建库").get("ok") is False
     assert route("/operator").get("ok") is False
 
 

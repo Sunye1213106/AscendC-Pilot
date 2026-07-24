@@ -42,6 +42,29 @@ plugins_dest() {
   esac
 }
 
+purge_legacy_ascendc_agent() {
+  local plat="$1" skills="$2" agents="$3" plugins="$4"
+  local name p
+  for name in uo-code-review understand-operator uo-diff; do
+    if [[ -e "$skills/$name" || -L "$skills/$name" ]]; then
+      rm -rf "$skills/$name"
+      echo "Removed legacy skill → $skills/$name"
+    fi
+  done
+  for name in ascendc-agent uo-code-reviewer README; do
+    if [[ -f "$agents/$name.md" || -L "$agents/$name.md" ]]; then
+      rm -f "$agents/$name.md"
+      echo "Removed legacy agent → $agents/$name.md"
+    fi
+  done
+  if [[ "$plat" == "opencode" ]]; then
+    rm -rf "$HOME/.config/opencode/ascendc-agent-plugin"
+    if [[ -n "$plugins" ]]; then
+      rm -f "$plugins/ascendc-harness.ts"
+    fi
+  fi
+}
+
 uninstall() {
   local plat="$1"
   local plug skills agents plugins
@@ -50,14 +73,15 @@ uninstall() {
   agents="$(agents_dest "$plat")"
   plugins="$(plugins_dest "$plat")"
   rm -rf "$plug"
-  for name in uo-init uo-update uo-query ce-review tg-init tg-plan tg-solve operator _policies; do
+  for name in uo-init uo-update uo-query ce-review tg-init tg-plan tg-solve operator _policies uo-code-review; do
     rm -rf "$skills/$name"
   done
-  for name in ascendc-pilot uo-semantic-resolve uo-key-resolve uo-confidence-review uo-kb-review ce-reviewer uo-query tg-csv-contract tg-semantic-bind tg-init-audit deterministic-uo-engine deterministic-tg-engine; do
+  for name in ascendc-pilot ascendc-agent uo-semantic-resolve uo-key-resolve uo-confidence-review uo-kb-review ce-reviewer uo-query uo-code-reviewer tg-csv-contract tg-semantic-bind tg-init-audit deterministic-uo-engine deterministic-tg-engine README; do
     rm -f "$agents/$name.md"
   done
   if [[ "$plat" == "opencode" && -n "$plugins" ]]; then
-    rm -f "$plugins/ascendc-pilot.ts"
+    rm -f "$plugins/ascendc-pilot.ts" "$plugins/ascendc-harness.ts"
+    rm -rf "$HOME/.config/opencode/ascendc-agent-plugin"
   fi
   echo "Uninstalled $plat ascendc-pilot plugin"
 }
@@ -93,19 +117,19 @@ for name in skills prompts agents docs engines acp templates scripts opencode-pl
 done
 
 GEN="$BUNDLE_ROOT/generated/$PLATFORM"
+# Remove source-bundled trees first — otherwise cp -R nests as dest/skills/skills
+# when dest/skills already exists, and skill junctions silently skip.
+for name in skills agents prompts; do
+  rm -rf "$DEST/$name"
+done
 cp -R "$GEN/skills" "$DEST/skills"
 cp -R "$GEN/agents" "$DEST/agents"
 if [[ -d "$GEN/prompts" ]]; then
   cp -R "$GEN/prompts" "$DEST/prompts"
 fi
 
-# Purge pre-pilot legacy skills (free-form LLM KB builds; not Tab→ascendc-pilot).
-for legacy in understand-operator uo-diff; do
-  if [[ -e "$SKILLS/$legacy" || -L "$SKILLS/$legacy" ]]; then
-    rm -rf "$SKILLS/$legacy"
-    echo "Removed legacy skill → $SKILLS/$legacy"
-  fi
-done
+# Purge pre-pilot leftovers (wrong Tab agents / free-form LLM KB skills).
+purge_legacy_ascendc_agent "$PLATFORM" "$SKILLS" "$AGENTS" "$(plugins_dest "$PLATFORM")"
 
 for name in uo-init uo-update uo-query ce-review tg-init tg-plan tg-solve operator; do
   [[ -d "$DEST/skills/$name" ]] || continue
@@ -113,9 +137,11 @@ for name in uo-init uo-update uo-query ce-review tg-init tg-plan tg-solve operat
   ln -sfn "$DEST/skills/$name" "$SKILLS/$name" 2>/dev/null || cp -R "$DEST/skills/$name" "$SKILLS/$name"
 done
 
+# OpenCode treats every .md under agents/ as a Tab entry — never install README.md.
 for f in "$DEST/agents"/*.md; do
   [[ -f "$f" ]] || continue
   base="$(basename "$f")"
+  [[ "$base" == "README.md" ]] && continue
   ln -sfn "$f" "$AGENTS/$base" 2>/dev/null || cp "$f" "$AGENTS/$base"
 done
 

@@ -218,6 +218,63 @@ def test_stale_patch_rejected(tmp_path: Path) -> None:
     assert stale["error"] == "source_snapshot_stale"
 
 
+def test_mark_missing_rejects_accept_edge_false_closure(tmp_path: Path) -> None:
+    """Empty-candidate mark_missing must not invent accept_edge closes."""
+    op = "synth_op_mark_missing"
+    root = _prep_op(tmp_path, op)
+    uo = root / ".ascendc-pilot" / "uo"
+    items = [
+        {
+            "disposition": "llm_task",
+            "severity": "blocking",
+            "task_hint": "mark_missing",
+            "object_type": "call_edge",
+            "target_id": "edge_empty",
+            "score": 0.2,
+            "necessity": "main_chain",
+            "candidates": [],
+        }
+    ]
+    upsert_tasks_from_score_items(
+        uo, items, checkpoint="extract.pre_semantic", run_id="r1", source_snapshot_hash="hashA"
+    )
+    doc = load_llm_tasks(uo)
+    task = next(t for t in doc["tasks"] if t["status"] == "open")
+    assert task["type"] == "mark_missing"
+    assert "accept_edge" not in (task.get("allowed_actions") or [])
+
+    bad = apply_task_patch(
+        uo,
+        {
+            "task_id": task["task_id"],
+            "action": "accept_edge",
+            "accepted_candidate_ids": ["some_edge_id_in_graph"],
+        },
+        current_source_hash="hashA",
+    )
+    assert bad["ok"] is False
+    assert bad["error"] in {"action_not_allowed", "empty_candidate_false_closure"}
+
+    smuggle = apply_task_patch(
+        uo,
+        {
+            "task_id": task["task_id"],
+            "action": "mark_missing",
+            "accepted_candidate_ids": ["some_edge_id_in_graph"],
+        },
+        current_source_hash="hashA",
+    )
+    assert smuggle["ok"] is False
+    assert smuggle["error"] == "mark_missing_forbids_accepted_ids"
+
+    ok = apply_task_patch(
+        uo,
+        {"task_id": task["task_id"], "action": "mark_missing"},
+        current_source_hash="hashA",
+    )
+    assert ok["ok"] is True
+
+
 # ⑥ attempts only on resolve+apply
 def test_attempts_only_on_resolve_apply(tmp_path: Path) -> None:
     op = "synth_op_c"

@@ -11,7 +11,8 @@
 ### 1. LLM 残留 unresolved（任务 B）
 
 - Prompt：`tpl_residual.md`
-- 简单 FP 抽样 ≤12 → 写 `ir/resolution_patch.yaml`；由后续确定性 Action / 引擎 apply（**禁止**直调 `apply_resolution.py`）
+- 本 Action **合同产物仅为** `ir/key_triage.yaml`（不得写 `resolution_patch.yaml`；该文件属 `uo-semantic-resolve` / extract 路径）
+- 简单 FP 抽样 ≤12 → 记入 triage 结果；由后续 `key_resolution` / 确定性引擎处理（**禁止**直调 `apply_resolution.py`）
 - 复杂 KEY → 写入 `escalate_keys`（交 `uo-key-resolve` triage→分流；建库期不派 `/uo-query`）
 
 ### 2. KEY triage + 按复杂度 resolve

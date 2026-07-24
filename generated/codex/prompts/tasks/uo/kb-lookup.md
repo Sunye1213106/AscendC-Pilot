@@ -29,12 +29,12 @@ Only process the listed targets. Do not expand scope unless the Action Method ex
 
 ## Required Procedure
 
-1. Apply loaded capabilities in order.
+1. Apply loaded capabilities in order (read-only KB / CBM query).
 2. Evaluate each listed target independently.
-3. Record evidence for every accepted conclusion.
+3. Record evidence for every accepted conclusion **in the task reply** (not by rewriting KB files).
 4. Preserve unresolved items when evidence is insufficient.
-5. Write only the declared output artifact.
-6. Stop after producing the artifact and concise task result.
+5. **Do not write** `uo/manifest.yaml` or `uo/checks/integrity.yaml` — contract `kb-answer-v1` only verifies KB readiness (those files already exist from `uo-init` / `export_integrity`). Put the answer in the task reply.
+6. Stop after the concise task result.
 
 ## Hard Constraints
 
@@ -43,6 +43,7 @@ Only process the listed targets. Do not expand scope unless the Action Method ex
 - MUST NOT: invent evidence or confidence.
 - MUST NOT: write referee verdicts when acting as producer.
 - MUST NOT: modify reviewed artifacts when acting as referee.
+- MUST NOT: overwrite integrity / manifest / formal KB graphs.
 
 ## Output Contract
 

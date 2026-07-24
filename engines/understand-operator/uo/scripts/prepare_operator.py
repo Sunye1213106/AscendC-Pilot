@@ -176,7 +176,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Output: {base}")
     print(f"Run: {run_id}")
     print("CBM: use MCP index_repository only after scope confirmation; pass only confirmed_file_list")
-    print("Next: acp uo-scope scan → checkpoint → stage → MCP index → finalize")
+    print("Next: acp uo-scope scan → checkpoint → stage → MCP index → "
+          "acp uo-scope record-index --cbm-project <name> → finalize")
 
     if not check.get("skill_present", check.get("consistent")):
         print(

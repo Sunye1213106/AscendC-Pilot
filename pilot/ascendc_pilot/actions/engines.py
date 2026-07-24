@@ -127,6 +127,50 @@ def _run_detect_changes(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
         return {"ok": False, "engine": "detect_changes", "error": str(exc)[:300]}
 
 
+def _run_plan_update(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    uo, op_name, _arch = _uo_op_ctx(project_root, ctx)
+    if not op_name:
+        return {"ok": False, "engine": "plan_update", "error": "op_name required"}
+    try:
+        from uo.scripts.detect_kb_changes import detect_kb_changes
+        from uo.scripts.plan_kb_update import plan_kb_update
+
+        change_set = detect_kb_changes(project_root, op_name, write=True)
+        plan_kb_update(project_root, op_name, change_set=change_set, write=True)
+        out = uo / "summary" / "update_plan.yaml"
+        return {
+            "ok": out.is_file(),
+            "engine": "plan_update",
+            "artifact": out.as_posix() if out.is_file() else "",
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "plan_update", "error": str(exc)[:300]}
+
+
+def _run_apply_update(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    uo, op_name, _arch = _uo_op_ctx(project_root, ctx)
+    if not op_name:
+        return {"ok": False, "engine": "apply_update", "error": "op_name required"}
+    try:
+        from uo.scripts.update_operator import update_operator
+
+        result = update_operator(project_root, op_name)
+        receipt_ok = any((uo / "runs").glob("*/update/receipt.yaml")) if (uo / "runs").is_dir() else False
+        diff_ok = (uo / "diff" / "index.yaml").is_file() and (uo / "diff" / "change_set.yaml").is_file()
+        eng_ok = True
+        if isinstance(result, dict) and "ok" in result:
+            eng_ok = bool(result.get("ok"))
+        return {
+            "ok": eng_ok and diff_ok,
+            "engine": "apply_update",
+            "receipt_present": receipt_ok,
+            "diff_present": diff_ok,
+            "result_keys": list(result.keys())[:12] if isinstance(result, dict) else [],
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "apply_update", "error": str(exc)[:300]}
+
+
 def _run_diff_summary(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     """Emit canonical diff/ product (index + change_set + impact + unresolved)."""
     _uo, op_name, _arch = _uo_op_ctx(project_root, ctx)
@@ -312,7 +356,9 @@ def _run_tg_semantic_bind(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
         schema = read_yaml(tg / "realization" / "consumer_schema.yaml") or {}
         if not schema:
             schema = read_yaml(tg / "contract" / "consumer_schema.yaml") or {}
-        lexicon = read_yaml(tg / "realization" / "lexicon.yaml") or {}
+        lexicon = read_yaml(tg / "realization" / "binding_lexicon.yaml") or {}
+        if not lexicon:
+            lexicon = read_yaml(tg / "realization" / "lexicon.yaml") or {}
         gaps = list((rmap.get("binding_gaps") if isinstance(rmap, dict) else None) or [])
         contract_result = {
             "realization_map": rmap if isinstance(rmap, dict) else {},
@@ -546,19 +592,138 @@ def _uo_op_ctx(project_root: Path, ctx: dict[str, Any]) -> tuple[Path, str, str]
 
 
 def _run_detect_score_pre(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """extract.pre_semantic — entrypoint/registration/boundary scoring only (①)."""
-    uo, _op, architecture = _uo_op_ctx(project_root, ctx)
+    """extract.pre_semantic — materialize entrypoint graph, then score (①).
+
+    ``ir/entrypoint_graph.yaml`` is produced here (entrypoints layer), not by scope.
+    Gate ``detect_score_pre`` requires that file after this engine runs.
+    """
+    uo, op_name, architecture = _uo_op_ctx(project_root, ctx)
+    if not op_name:
+        op_name = project_root.name
     try:
+        from uo.scripts.build_layered_kb import build_layered_kb
         from uo.scripts.evidence_score import detect_score_pre
 
+        layered = build_layered_kb(
+            project_root,
+            op_name,
+            architecture=architecture,
+            layers={"entrypoints"},
+            allow_empty_plan=True,
+        )
+        ep_path = uo / "ir" / "entrypoint_graph.yaml"
+        if not ep_path.is_file():
+            return {
+                "ok": False,
+                "engine": "detect_score_pre",
+                "error": "entrypoint_graph.yaml not written by entrypoints layer",
+            }
+        boundary_path = uo / "ir" / "operator_boundary.yaml"
+        if not boundary_path.is_file():
+            try:
+                from uo.scripts.extract_operator_boundary import extract_operator_boundary
+
+                extract_operator_boundary(project_root, op_name, architecture=architecture)
+            except Exception as exc:  # noqa: BLE001
+                return {
+                    "ok": False,
+                    "engine": "detect_score_pre",
+                    "error": f"operator_boundary missing and extract failed: {exc}"[:300],
+                }
+        if not boundary_path.is_file():
+            return {
+                "ok": False,
+                "engine": "detect_score_pre",
+                "error": "operator_boundary.yaml missing after entrypoints layer",
+            }
         result = detect_score_pre(
             uo,
             architecture=architecture,
             run_id=str(ctx.get("run_id") or ""),
         )
-        return {"ok": bool(result.get("ok", True)), "engine": "detect_score_pre", **result}
+        ep = layered.get("entrypoint_graph") if isinstance(layered, dict) else {}
+        nodes = (ep or {}).get("nodes") if isinstance(ep, dict) else []
+        return {
+            "ok": bool(result.get("ok", True)),
+            "engine": "detect_score_pre",
+            "entrypoint_node_count": len(nodes or []),
+            "has_operator_boundary": (uo / "ir" / "operator_boundary.yaml").is_file(),
+            **result,
+        }
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "detect_score_pre", "error": str(exc)[:300]}
+
+
+def _run_extract_plan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """extract.plan_and_graph prepare/finalize helper.
+
+    Prepare path (no plan yet): write ``extract_plan_candidates.yaml`` via propose.
+    Finalize path (plan present): validate plan then build host/kernel/tilingkey/bridge.
+    """
+    uo, op_name, architecture = _uo_op_ctx(project_root, ctx)
+    if not op_name:
+        op_name = project_root.name
+    mode = str(ctx.get("extract_plan_mode") or "").strip().lower()
+    plan_path = uo / "ir" / "extract_plan.yaml"
+    try:
+        from uo.scripts.apply_extract_plan import apply_extract_plan
+        from uo.scripts.build_layered_kb import build_layered_kb
+        from uo.scripts.propose_extract_plan import propose_extract_plan
+
+        if mode == "finalize" or (not mode and plan_path.is_file()):
+            applied = apply_extract_plan(project_root, op_name, check_only=False)
+            if not applied.get("ok"):
+                return {
+                    "ok": False,
+                    "engine": "extract_plan",
+                    "phase": "apply",
+                    "error": "extract_plan validation failed",
+                    "apply": applied,
+                }
+            layered = build_layered_kb(
+                project_root,
+                op_name,
+                architecture=architecture,
+                layers={"entrypoints", "host", "kernel", "tilingkey", "bridge"},
+                allow_empty_plan=False,
+            )
+            return {
+                "ok": True,
+                "engine": "extract_plan",
+                "phase": "build",
+                "apply": applied,
+                "has_host": (uo / "ir" / "host_subgraph.yaml").is_file(),
+                "has_kernel": (uo / "ir" / "kernel_subgraph.yaml").is_file(),
+                "stats": (layered or {}).get("stats") if isinstance(layered, dict) else {},
+            }
+
+        # Prepare: candidates only (LLM confirms → extract_plan.yaml)
+        from uo.scripts._ir_io import write_yaml
+
+        candidates = propose_extract_plan(project_root, op_name, architecture=architecture)
+        cand_path = uo / "ir" / "extract_plan_candidates.yaml"
+        write_yaml(cand_path, candidates if isinstance(candidates, dict) else {"ok": False})
+        status = str((candidates or {}).get("status") or "").lower() if isinstance(candidates, dict) else ""
+        if status in {"blocked", "fail", "failed"} or (
+            isinstance(candidates, dict) and candidates.get("ok") is False
+        ):
+            return {
+                "ok": False,
+                "engine": "extract_plan",
+                "phase": "propose",
+                "error": "propose_extract_plan blocked",
+                "propose": candidates,
+                "candidates_path": cand_path.as_posix(),
+            }
+        return {
+            "ok": True,
+            "engine": "extract_plan",
+            "phase": "propose",
+            "candidates_path": cand_path.as_posix(),
+            "propose_status": status or "ok",
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "extract_plan", "error": str(exc)[:400]}
 
 
 def _run_detect_score_post(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -650,6 +815,7 @@ def _run_recheck_closure(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
 ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("uo-init", "prepare_layout"): _run_prepare_layout,
     ("uo-init", "detect_score_pre"): _run_detect_score_pre,
+    ("uo-init", "extract_plan"): _run_extract_plan,
     ("uo-init", "detect_score_post"): _run_detect_score_post,
     ("uo-init", "apply_semantic_patch"): _run_apply_semantic_patch,
     ("uo-init", "rebuild_from_ledger"): _run_rebuild_from_ledger,
@@ -657,6 +823,8 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("uo-init", "confidence_report"): _run_confidence_report,
     ("uo-init", "export_integrity"): _run_export_integrity,
     ("uo-update", "detect_changes"): _run_detect_changes,
+    ("uo-update", "plan_update"): _run_plan_update,
+    ("uo-update", "apply_update"): _run_apply_update,
     ("uo-update", "confidence_report"): _run_confidence_report,
     ("uo-update", "export_integrity"): _run_export_integrity,
     ("uo-update", "diff_summary"): _run_diff_summary,
@@ -685,13 +853,23 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "uo/runs/*/scope/receipt.yaml",
         "uo/cbm/index_meta.json",
     ],
-    "detect-score-pre-v1": ["uo/ir/score_report_pre.yaml", "uo/ir/llm_tasks.yaml"],
+    "detect-score-pre-v1": [
+        "uo/ir/entrypoint_graph.yaml",
+        "uo/ir/operator_boundary.yaml",
+        "uo/ir/score_report_pre.yaml",
+        "uo/ir/llm_tasks.yaml",
+    ],
     "detect-score-post-v1": ["uo/ir/score_report_post.yaml", "uo/ir/llm_tasks.yaml"],
     "semantic-patch-v1": ["uo/ir/semantic_resolution_ledger.yaml"],
     "rebuild-ledger-v1": ["uo/ir/entrypoint_graph.yaml", "uo/ir/operator_graph.yaml"],
     # Recheck is validation-only; required state under inspection
     "recheck-closure-v1": ["uo/ir/entrypoint_graph.yaml", "uo/ir/llm_tasks.yaml"],
-    "extract-plan-v1": ["uo/ir/extract_plan.yaml", "uo/ir/extract_plan_candidates.yaml"],
+    "extract-plan-v1": [
+        "uo/ir/extract_plan.yaml",
+        "uo/ir/extract_plan_candidates.yaml",
+        "uo/ir/host_subgraph.yaml",
+        "uo/ir/kernel_subgraph.yaml",
+    ],
     "key-triage-v1": ["uo/ir/key_triage.yaml"],
     # Shape staging is optional; patch is the producer contract
     "input-derivable-patch-v1": ["uo/ir/input_derivable_patch.yaml"],
@@ -712,16 +890,21 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "uo/diff/impact.yaml",
         "uo/diff/unresolved.yaml",
     ],
+    # kb-answer / uo-ready: readiness precondition (existing KB), not answer/write payload.
     "kb-answer-v1": ["uo/manifest.yaml", "uo/checks/integrity.yaml"],
     "code-review-v1": [
-        "uo/review/index.yaml",
-        "uo/review/functional_report.yaml",
-        "uo/review/bug_report.yaml",
+        "ce/review/index.yaml",
+        "ce/review/functional_report.yaml",
+        "ce/review/bug_report.yaml",
     ],
     "uo-ready-v1": ["uo/manifest.yaml", "uo/checks/integrity.yaml"],
     "csv-contract-v1": [
-        "tg/realization/realization_map.yaml",
         "tg/snapshot/understand_contract.json",
+        "tg/realization/realization_map.yaml",
+        "tg/realization/binding_inventory.yaml",
+        "tg/realization/llm_bind_prompt_bundle.yaml",
+        "tg/realization/binding_gaps.yaml",
+        "tg/realization/unresolved.yaml",
     ],
     "semantic-bind-v1": [
         "tg/realization/binding_inventory.yaml",
@@ -738,15 +921,18 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "tg-integrity-v1": [
         "tg/realization/uo_merge_report.yaml",
     ],
-    "init-audit-v1": ["tg/init"],
+    "init-audit-v1": ["tg/init/audit_report.yaml"],
     "init-confirmed-v1": ["tg/init/status.yaml"],
-    "plan-scope-v1": ["tg/plan"],
+    "plan-scope-v1": ["tg/plan/levels/*/plan_scope.yaml"],
     "plan-precheck-v1": ["tg/init/status.yaml"],
     "plan-build-v1": ["tg/plan"],
-    "plan-approved-v1": ["tg/plan"],
-    "solve-precheck-v1": ["tg/plan"],
+    "plan-approved-v1": ["tg/plan/levels/*/human_supplement.yaml"],
+    "solve-precheck-v1": ["tg/plan/levels/*/human_supplement.yaml"],
     "z3-solve-v1": ["tg/solve"],
-    "cover-confirm-v1": ["tg/solve"],
+    "cover-confirm-v1": [
+        "tg/solve/**/realize_report.yaml",
+        "tg/solve/**/solver_report.yaml",
+    ],
 }
 
 # Contracts that must contain at least one nonempty concrete artifact (not empty dir / empty file)
@@ -759,6 +945,8 @@ OUTPUT_CONTRACT_NONEMPTY_GLOBS: dict[str, list[str]] = {
     "extract-plan-v1": [
         "uo/ir/extract_plan.yaml",
         "uo/ir/extract_plan_candidates.yaml",
+        "uo/ir/host_subgraph.yaml",
+        "uo/ir/kernel_subgraph.yaml",
     ],
     "change-detect-v1": [
         "uo/diff/change_set.yaml",
@@ -781,9 +969,9 @@ OUTPUT_CONTRACT_NONEMPTY_GLOBS: dict[str, list[str]] = {
         "uo/review/kb_product_review.yaml",
     ],
     "code-review-v1": [
-        "uo/review/index.yaml",
-        "uo/review/functional_report.yaml",
-        "uo/review/bug_report.yaml",
+        "ce/review/index.yaml",
+        "ce/review/functional_report.yaml",
+        "ce/review/bug_report.yaml",
     ],
     "plan-build-v1": [
         "tg/plan/levels/*/coverage_obligations.yaml",

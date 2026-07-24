@@ -45,12 +45,21 @@ def main(argv: list[str] | None = None) -> int:
     p_start.add_argument("--project", type=Path, default=Path.cwd())
     p_start.add_argument("--intent", default="", help="e.g. diff_only for uo-update")
     p_start.add_argument("--force-new", action="store_true", help="Force a new run even if same workflow is active")
+    p_start.add_argument(
+        "--decision",
+        default="",
+        help="Human AskQuestion decision for existing run: continue | reinit",
+    )
     p_start.add_argument("--op-name", default="", help="Operator name for UO/TG engines")
     p_start.add_argument("--architecture", default="", help="Target architecture (default arch35)")
     p_start.add_argument("--test-script-root", type=Path, default=None, help="CSV consumer / test script root")
     p_start.add_argument("--csv-consumer-root", type=Path, default=None, help="Alias of --test-script-root")
     p_start.add_argument("--level", default="", help="TG plan/solve level (default L0)")
     p_start.add_argument("--focus", default="", help="TG plan focus")
+
+    p_run_sum = sub.add_parser("run-summary", help="Summarize interrupted uo-init run for AskQuestion")
+    p_run_sum.add_argument("--project", type=Path, default=Path.cwd())
+    p_run_sum.add_argument("--workflow", default="uo-init")
 
     p_run = sub.add_parser("run-action", help="Prepare or finalize a workflow Action (sole execution entry)")
     p_run.add_argument("action_id")
@@ -120,7 +129,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_scope.add_argument(
         "step",
-        choices=["scan", "checkpoint", "build-evidence", "closure", "stage", "finalize"],
+        choices=[
+            "scan",
+            "checkpoint",
+            "build-evidence",
+            "closure",
+            "stage",
+            "record-index",
+            "finalize",
+        ],
         help="Deterministic scope step",
     )
     p_scope.add_argument("--project", type=Path, default=Path.cwd())
@@ -132,6 +149,11 @@ def main(argv: list[str] | None = None) -> int:
         help="For checkpoint: continue|revise|stop|manual_supplement",
     )
     p_scope.add_argument("--notes", default="")
+    p_scope.add_argument(
+        "--cbm-project",
+        default="",
+        help="For record-index: MCP index_repository project name",
+    )
 
     p_uq = sub.add_parser("uo-query", help="Query UO KB graph (wraps uo_kb_query; no direct .py)")
     p_uq.add_argument("--project", type=Path, default=Path.cwd())
@@ -186,46 +208,93 @@ def main(argv: list[str] | None = None) -> int:
         pack = build_context_pack(args.project, intent=args.intent, topic=args.topic)
         print_json(pack)
         return 0
+    if args.cmd == "run-summary":
+        from ascendc_pilot.run_resume import existing_run_decision_payload, needs_resume_decision
+
+        if not needs_resume_decision(args.project, args.workflow):
+            print_json(
+                {
+                    "ok": True,
+                    "needs_human_decision": False,
+                    "message_zh": "无未完成 run / UO 残留；可直接 acp start",
+                }
+            )
+            return 0
+        payload = existing_run_decision_payload(args.project, args.workflow)
+        print_json(payload)
+        return 2
     if args.cmd == "start":
-        from ascendc_pilot.state import load_state, start_workflow
-        from ascendc_pilot.todo import attach_todo
+        from ascendc_pilot.run_resume import (
+            apply_resume_decision,
+            existing_run_decision_payload,
+            needs_resume_decision,
+            normalize_decision,
+        )
+        from ascendc_pilot.state import start_workflow
         from ascendc_pilot.workflows import get_workflow
 
         get_workflow(args.workflow_id)  # validate
-        if not args.force_new:
-            existing = load_state(args.project)
-            if (
-                existing
-                and str(existing.get("workflow_id") or "") == args.workflow_id
-                and str(existing.get("status") or "")
-                in {"running", "rework_required", "human_required"}
-            ):
-                payload = attach_todo(
-                    {**existing, "resumed": True, "message_zh": "复用同 workflow 活动 run"},
-                    args.project,
-                    state=existing,
-                )
-                print_json(payload)
-                return 0
-        state = start_workflow(
-            args.project,
-            args.workflow_id,
-            intent=getattr(args, "intent", "") or "",
-            op_name=getattr(args, "op_name", "") or "",
-            architecture=getattr(args, "architecture", "") or "",
-            test_script_root=(
+        start_kwargs = {
+            "intent": getattr(args, "intent", "") or "",
+            "op_name": getattr(args, "op_name", "") or "",
+            "architecture": getattr(args, "architecture", "") or "",
+            "test_script_root": (
                 str(args.test_script_root.resolve())
                 if getattr(args, "test_script_root", None)
                 else ""
             ),
-            csv_consumer_root=(
+            "csv_consumer_root": (
                 str(args.csv_consumer_root.resolve())
                 if getattr(args, "csv_consumer_root", None)
                 else ""
             ),
-            level=getattr(args, "level", "") or "",
-            focus=getattr(args, "focus", "") or "",
-        )
+            "level": getattr(args, "level", "") or "",
+            "focus": getattr(args, "focus", "") or "",
+        }
+        decision = normalize_decision(getattr(args, "decision", "") or "")
+        # --force-new alone ⇒ reinit (script escape). Skill path must AskQuestion first.
+        if args.force_new and not decision:
+            decision = "reinit"
+
+        if decision:
+            result = apply_resume_decision(
+                args.project,
+                args.workflow_id,
+                decision,
+                start_kwargs=start_kwargs,
+            )
+            if result.get("ok") and result.get("decision") == "reinit":
+                try:
+                    from ascendc_pilot.paths import context_root
+                    import yaml
+
+                    params = {
+                        "op_name": result.get("op_name") or start_kwargs.get("op_name") or "",
+                        "architecture": result.get("architecture")
+                        or start_kwargs.get("architecture")
+                        or "arch35",
+                        "test_script_root": result.get("test_script_root") or "",
+                        "csv_consumer_root": result.get("csv_consumer_root") or "",
+                        "level": result.get("level") or "L0",
+                        "focus": result.get("focus") or "",
+                    }
+                    out = context_root(args.project) / "pilot_params.yaml"
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    out.write_text(
+                        yaml.safe_dump(params, allow_unicode=True, sort_keys=False),
+                        encoding="utf-8",
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            print_json(result)
+            return 0 if result.get("ok") else 1
+
+        if needs_resume_decision(args.project, args.workflow_id):
+            payload = existing_run_decision_payload(args.project, args.workflow_id)
+            print_json(payload)
+            return 2
+
+        state = start_workflow(args.project, args.workflow_id, **start_kwargs)
         # Persist acp params for subsequent context packs / engines.
         try:
             from ascendc_pilot.paths import context_root
@@ -408,6 +477,7 @@ def main(argv: list[str] | None = None) -> int:
             architecture=args.architecture or "arch35",
             decision=args.decision or "",
             notes=args.notes or "",
+            cbm_project=getattr(args, "cbm_project", "") or "",
         )
         return print_result(payload)
     if args.cmd == "uo-query":

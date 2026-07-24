@@ -4,8 +4,8 @@ name_zh: AscendC-Pilot
 role: producer
 mode: primary
 description: >-
-  AscendC-Pilot primary control agent. Tab-select this agent before /uo-init|/tg-init|/ce-review;
-  default Build agent will skip pilot.
+  AscendC-Pilot primary control agent. Load workflow skills by description
+  (uo-init / tg-init / …) then acp start; Build/Plan tabs bypass harness.
 read_scopes:
   - "*"
 write_scopes:

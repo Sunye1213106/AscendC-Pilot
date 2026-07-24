@@ -38,7 +38,8 @@ def impact_from_files(
         return {
             "status": "missing",
             "error": "CBM SQLite unavailable",
-            "hint": "Run /uo-init scope confirmation index (MCP index_repository) and ensure cbm/index_meta.json is set",
+            "hint": "Run /uo-init scope confirmation: MCP index_repository on index_stage, then "
+            "`acp uo-scope record-index --cbm-project <name>` so cbm/index_meta.json exists",
             "project": client.project or None,
             "db_path": str(client.db_path) if client.db_path else None,
             "changed_symbols": [],
@@ -118,7 +119,10 @@ def cbm_status(uo_root: Path) -> dict[str, Any]:
         "db_path": str(client.db_path) if client.db_path else None,
         "hint": None
         if client.available
-        else "Run /uo-init scope confirmation (MCP index_repository) then prepare_operator --write-index-meta",
+        else (
+            "Run /uo-init scope confirmation: MCP index_repository then "
+            "`acp uo-scope record-index --cbm-project <name>`"
+        ),
     }
 
 

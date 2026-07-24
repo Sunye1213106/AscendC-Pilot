@@ -30,7 +30,7 @@ Skill/Agent **不得**自行宣布 done。
 | `unsolved` 或 confidence≠high | **必须**派 `uo-key-resolve`；并写满中文「原因」 |
 | gaps / escalate_keys 非空但无 `ir/key_triage.yaml` | **fail**（禁止父代理直接 accepted） |
 | missing_producer 仅 empty 路径 | **不得** final accepted；apply/classify **拒收** |
-| LLM 仍无法 high | 写 `summary/confidence_report.md`；**禁止**多 KEY 复制同一套 bit-pack 借口 |
+| LLM 仍无法 high | **不得**代写 `summary/confidence_report.md`（仅 `confidence_report` 引擎可写）；在 `confidence_reason_review` 中记录原因；**禁止**多 KEY 复制同一套 bit-pack 借口 |
 | 非 high 项已写原因 | **必须**派 `uo-confidence-review`；缺裁判产物 → gate fail |
 | `closed_high_count=0` 且 KEY 非空 | **默认 fail**（任意 confidence_gate status）；仅 `checks/human_accept_reported.yaml` 可放行 |
 

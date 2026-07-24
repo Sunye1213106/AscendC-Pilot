@@ -42,15 +42,18 @@ def finalize_scope(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
         "scope_review": _load_yaml(phase0 / "scope_review.yaml"),
         "scope_confirmed": _load_yaml(phase0 / "scope_confirmed.yaml"),
     }
-    errors = _validation_errors(repo_root, uo_root, docs)
+    errors = _validation_errors(repo_root, uo_root, docs, op_name=op_name)
     if errors:
         return 2, errors
 
     context = _item_data(docs["context"])
+    expected_op = str(context.get("op_name") or op_name or "").strip() or safe_op_name(None, repo_root)
     cbm_meta = _load_json(uo_root / "cbm" / "index_meta.json")
     scan = docs["scope_scan"]
     review = docs["scope_review"]
-    confirmed = docs["scope_confirmed"] or _scope_confirmed_from_review(uo_root, run_id, review)
+    confirmed = docs["scope_confirmed"] or _scope_confirmed_from_review(
+        uo_root, run_id, review, operator=expected_op
+    )
     if confirmed and not docs["scope_confirmed"]:
         (phase0 / "scope_confirmed.yaml").write_text(yaml.safe_dump(confirmed, sort_keys=False, allow_unicode=True), encoding="utf-8")
     files = scan.get("files") if isinstance(scan.get("files"), dict) else {}
@@ -121,14 +124,21 @@ def finalize_scope(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
     return 0, [f"wrote {out}"]
 
 
-def _validation_errors(repo_root: Path, uo_root: Path, docs: dict[str, dict[str, Any]]) -> list[str]:
+def _validation_errors(
+    repo_root: Path,
+    uo_root: Path,
+    docs: dict[str, dict[str, Any]],
+    *,
+    op_name: str = "",
+) -> list[str]:
     errors: list[str] = []
     context = _item_data(docs["context"])
     skill = _item_data(docs["installed_skill_check"])
     meta_path = uo_root / "cbm" / "index_meta.json"
     if not meta_path.is_file():
         errors.append(
-            "cbm/index_meta.json missing — run MCP index_repository on uo/cbm/index_stage before finalize"
+            "cbm/index_meta.json missing — after MCP index_repository run "
+            "`acp uo-scope record-index --cbm-project <name>` before finalize"
         )
     cbm_meta = _load_json(meta_path)
     # Presence of uo-init is hard; hash drift is soft (matches prepare_layout exit 3).
@@ -157,8 +167,17 @@ def _validation_errors(repo_root: Path, uo_root: Path, docs: dict[str, dict[str,
         errors.append("cbm/index_meta.json missing indexed_at")
     if cbm_meta.get("repo_root") and Path(str(cbm_meta["repo_root"])).resolve() != repo_root:
         errors.append("cbm/index_meta.json repo_root does not match current repository")
-    if cbm_meta.get("op_name") and cbm_meta.get("op_name") != (uo_root.name):
-        errors.append("cbm/index_meta.json op_name does not match operator root")
+    # KB lives at <repo>/.ascendc-pilot/uo — uo_root.name is always "uo".
+    # Compare op_name to context / CLI / package name, never to uo_root.name.
+    expected_op = (
+        str(context.get("op_name") or op_name or "").strip() or safe_op_name(None, repo_root)
+    )
+    meta_op = str(cbm_meta.get("op_name") or "").strip()
+    if meta_op and meta_op != expected_op:
+        errors.append(
+            f"cbm/index_meta.json op_name does not match operator root "
+            f"(meta={meta_op!r}, expected={expected_op!r})"
+        )
     if cbm_meta.get("project_confirmed") is False:
         errors.append("cbm/index_meta.json project_confirmed is false")
     if _doc_status(docs["scope_scan"]) != "complete":
@@ -248,7 +267,13 @@ def _validate_semantic_enrichment(doc: dict[str, Any], errors: list[str]) -> Non
             errors.append(f"semantic_enrichment.yaml cbm_queries[{index}] missing result/error")
 
 
-def _scope_confirmed_from_review(uo_root: Path, run_id: str, review: dict[str, Any]) -> dict[str, Any]:
+def _scope_confirmed_from_review(
+    uo_root: Path,
+    run_id: str,
+    review: dict[str, Any],
+    *,
+    operator: str,
+) -> dict[str, Any]:
     approved = review.get("approved_scope") if isinstance(review.get("approved_scope"), dict) else {}
     files = _confirmed_files(review)
     return {
@@ -256,7 +281,7 @@ def _scope_confirmed_from_review(uo_root: Path, run_id: str, review: dict[str, A
         "artifact": {"type": "runs.scope_confirmed", "schema_version": 1, "owner": "deterministic-uo-engine"},
         "snapshot": scope_snapshot(uo_root, run_id),
         "status": "confirmed" if files else "empty",
-        "operator": uo_root.name,
+        "operator": operator,
         "confirmed_file_list": files,
         "excluded_files": approved.get("excluded_files") or [],
         "analysis_scope": {
