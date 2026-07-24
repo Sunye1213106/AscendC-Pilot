@@ -521,7 +521,13 @@ def authorize(
 
     lf = state.get("last_failure") if isinstance(state.get("last_failure"), dict) else {}
     failed_action = str(lf.get("action_id") or lease.get("action_id") or "")
-    recovery_actions = [str(x) for x in (lf.get("recovery_actions") or []) if str(x).strip()]
+    from ascendc_pilot.recovery import filter_executable_recovery_actions
+
+    wid = str(state.get("workflow_id") or "uo-init")
+    recovery_actions = filter_executable_recovery_actions(
+        [str(x) for x in (lf.get("recovery_actions") or []) if str(x).strip()],
+        workflow_id=wid,
+    )
     if failed_action == "apply_semantic_patch" and "adjudicate_llm_tasks" not in recovery_actions:
         recovery_actions = list(recovery_actions) + ["adjudicate_llm_tasks"]
 

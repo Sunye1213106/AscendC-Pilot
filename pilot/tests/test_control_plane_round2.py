@@ -314,7 +314,7 @@ def test_adjudicate_gate_rejects_stale_snapshot(tmp_path: Path, monkeypatch) -> 
     )
     monkeypatch.setattr(
         "uo.scripts.evidence_score._source_snapshot_hash",
-        lambda _uo: "OTHER",
+        lambda _uo, run_id=None, **kw: "OTHER",
     )
     result = gate_adjudicate_llm_tasks(uo)
     assert result["ok"] is False
@@ -342,7 +342,7 @@ def test_adjudicate_gate_rejects_candidate_out_of_window(tmp_path: Path, monkeyp
             ]
         },
     )
-    monkeypatch.setattr("uo.scripts.evidence_score._source_snapshot_hash", lambda _uo: "snap1")
+    monkeypatch.setattr("uo.scripts.evidence_score._source_snapshot_hash", lambda _uo, run_id=None, **kw: "snap1")
     result = gate_adjudicate_llm_tasks(uo)
     assert result["ok"] is False
     errs = result.get("validation_errors") or []
@@ -370,7 +370,7 @@ def test_adjudicate_gate_rejects_unknown_task(tmp_path: Path, monkeypatch) -> No
             ]
         },
     )
-    monkeypatch.setattr("uo.scripts.evidence_score._source_snapshot_hash", lambda _uo: "snap1")
+    monkeypatch.setattr("uo.scripts.evidence_score._source_snapshot_hash", lambda _uo, run_id=None, **kw: "snap1")
     result = gate_adjudicate_llm_tasks(uo)
     assert result["ok"] is False
 
@@ -395,7 +395,7 @@ def test_adjudicate_gate_and_apply_share_validation(tmp_path: Path, monkeypatch)
         }
     ]
     _write(uo / "ir" / "semantic_patches.yaml", {"patches": patches})
-    monkeypatch.setattr("uo.scripts.evidence_score._source_snapshot_hash", lambda _uo: "snap1")
+    monkeypatch.setattr("uo.scripts.evidence_score._source_snapshot_hash", lambda _uo, run_id=None, **kw: "snap1")
     gate = gate_adjudicate_llm_tasks(uo)
     core = validate_semantic_patch_set(uo, patches, "snap1", require_full_coverage=True, mutate=False)
     assert gate["ok"] is True
@@ -552,6 +552,11 @@ def test_detect_score_post_requires_plan_and_host(tmp_path: Path) -> None:
     assert r["ok"] is False
     assert "extract_plan.yaml" in (r.get("missing") or [])
     _write(uo / "ir" / "extract_plan.yaml", {"version": 1})
+    # plan+host without kernel still fail (shared Engine/Gate contract)
+    r2 = gate_detect_score_post(uo)
+    assert r2["ok"] is False
+    assert "kernel_subgraph.yaml" in (r2.get("missing") or [])
+    _write(uo / "ir" / "kernel_subgraph.yaml", {"version": 1})
     assert gate_detect_score_post(uo).get("ok") is True
 
 

@@ -812,7 +812,7 @@ def _run_apply_semantic_patch(project_root: Path, ctx: dict[str, Any]) -> dict[s
         result = apply_patches_batch(
             uo,
             patches,
-            current_source_hash=_source_snapshot_hash(uo),
+            current_source_hash=_source_snapshot_hash(uo, run_id=str(ctx.get("run_id") or "") or None),
         )
         from uo.scripts.llm_tasks import compute_semantic_stats
 
@@ -835,7 +835,12 @@ def _run_rebuild_from_ledger(project_root: Path, ctx: dict[str, Any]) -> dict[st
     try:
         from uo.scripts.semantic_resolution_ledger import rebuild_derived_graphs
 
-        result = rebuild_derived_graphs(project_root, op_name, architecture=architecture)
+        result = rebuild_derived_graphs(
+            project_root,
+            op_name,
+            architecture=architecture,
+            run_id=str(ctx.get("run_id") or ""),
+        )
         from uo.scripts.llm_tasks import compute_semantic_stats
 
         stats = compute_semantic_stats(uo) if uo else {}
@@ -851,6 +856,7 @@ def _run_recheck_closure(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
         import hashlib
         import json
 
+        from ascendc_pilot.recovery import recoveries_for_closure_gaps
         from uo.scripts.evidence_score import _source_snapshot_hash
         from uo.scripts.llm_tasks import compute_semantic_stats, recheck_does_not_increment
         from uo.scripts._ir_io import read_yaml, write_yaml
@@ -866,7 +872,7 @@ def _run_recheck_closure(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
         kernel_closed = closure.get("kernel_main_chain") == "closed"
         ok = blocking_gap_count == 0 and unconsumed == 0 and host_closed and kernel_closed
 
-        snap = _source_snapshot_hash(uo)
+        snap = _source_snapshot_hash(uo, run_id=str(ctx.get("run_id") or "") or None)
         fp_payload = {
             "source_snapshot_hash": snap,
             "entrypoint_graph": ep.get("closure"),
@@ -878,20 +884,26 @@ def _run_recheck_closure(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
         fp_path = uo / "ir" / "recheck_fingerprint.yaml"
         prev = read_yaml(fp_path) or {}
         prev_fp = str(prev.get("fingerprint") or "")
-        recovery_actions: list[str] = []
-        if not host_closed:
-            if closure.get("host_main_chain") == "unresolved":
-                recovery_actions.append("scope_confirmation")
-            recovery_actions.append("scope/registration generation")
-        if not kernel_closed:
-            recovery_actions.append("kernel candidate generation")
-        if blocking_gap_count:
-            recovery_actions.append("adjudicate_llm_tasks")
-            recovery_actions.append("bridge enrichment")
-        if unconsumed:
-            recovery_actions.append("rebuild_from_ledger")
-            recovery_actions.append("regenerate candidates")
-        if prev_fp and prev_fp == fingerprint and not ok:
+        no_progress = bool(prev_fp and prev_fp == fingerprint and not ok)
+
+        from ascendc_pilot.state import load_state
+
+        st = load_state(project_root) or {}
+        current_phase = str(st.get("phase") or ctx.get("phase") or "extract")
+        wid = str(st.get("workflow_id") or ctx.get("workflow_id") or "uo-init")
+        routed = recoveries_for_closure_gaps(
+            host_closed=host_closed,
+            kernel_closed=kernel_closed,
+            blocking_gap_count=blocking_gap_count,
+            unconsumed_patch_count=unconsumed,
+            no_progress=no_progress,
+            workflow_id=wid,
+            current_phase=current_phase,
+        )
+        recovery_actions = list(routed.get("recovery_actions") or [])
+        recoveries = list(routed.get("recoveries") or [])
+
+        if no_progress:
             write_yaml(fp_path, {"fingerprint": fingerprint, "payload": fp_payload})
             return {
                 "ok": False,
@@ -900,7 +912,9 @@ def _run_recheck_closure(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
                 "closure": closure,
                 "blocking_gap_count": blocking_gap_count,
                 "unconsumed_patch_count": unconsumed,
-                "recovery_actions": sorted(set(recovery_actions)),
+                "recovery_actions": recovery_actions,
+                "recoveries": recoveries,
+                "reason_codes": routed.get("reason_codes") or ["NO_PROGRESS_RECHECK"],
                 "fingerprint": fingerprint,
                 "attempts_unchanged": True,
                 **stats,
@@ -930,7 +944,9 @@ def _run_recheck_closure(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
             **stats,
         }
         if not ok:
-            out["recovery_actions"] = sorted(set(recovery_actions))
+            out["recovery_actions"] = recovery_actions
+            out["recoveries"] = recoveries
+            out["reason_codes"] = routed.get("reason_codes") or []
         return out
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "recheck_closure", "error": str(exc)[:300]}

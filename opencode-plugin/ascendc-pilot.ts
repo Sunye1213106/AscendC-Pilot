@@ -347,12 +347,30 @@ function denyMessage(verdict: AuthorizeResult, kind: string, detail: string): st
   return allowed ? `${base} (allowed: ${allowed})` : base
 }
 
-/** Best-effort debug capture via `acp debug` (never throws). */
-function runDebug(argvExtra: string[], project?: string): void {
+/** Pending Task registrations keyed by host session (correlation, not latest-guess). */
+const pendingTaskRegs = new Map<
+  string,
+  { registration_id: string; dispatch_nonce: string; action_id: string; parent_session_id: string }
+>()
+
+/** Active child session for current tool context (child tools → child_session_id). */
+const activeChildByHost = new Map<string, string>()
+
+type DebugRunResult = {
+  ok: boolean
+  skipped?: boolean
+  payload?: Record<string, unknown>
+  exit_code: number
+  stdout: string
+  stderr: string
+}
+
+/** Best-effort debug capture via `acp debug`. Checks exit/JSON; records anomaly on failure. */
+function runDebug(argvExtra: string[], project?: string): DebugRunResult {
+  const root = project || detectProjectRoot() || readRememberedProjectRoot() || process.cwd()
   try {
-    const root = project || detectProjectRoot() || readRememberedProjectRoot() || process.cwd()
     const acpBin = resolveAcpBin()
-    spawnSync(acpBin, ["debug", ...argvExtra, "--project", root], {
+    const res = spawnSync(acpBin, ["debug", ...argvExtra, "--project", root], {
       encoding: "utf-8",
       shell: false,
       windowsHide: true,
@@ -360,8 +378,66 @@ function runDebug(argvExtra: string[], project?: string): void {
       env: { ...process.env, ASCENDC_PROJECT_ROOT: root },
       timeout: 45_000,
     })
-  } catch {
-    // fail-open
+    const exitCode = typeof res.status === "number" ? res.status : 1
+    const stdout = String(res.stdout || "")
+    const stderr = String(res.stderr || "")
+    let payload: Record<string, unknown> | undefined
+    let jsonOk: boolean | null = null
+    try {
+      const trimmed = stdout.trim()
+      if (trimmed.startsWith("{")) {
+        payload = JSON.parse(trimmed) as Record<string, unknown>
+        if (typeof payload.ok === "boolean") jsonOk = payload.ok
+      }
+    } catch {
+      jsonOk = null
+    }
+    const failed =
+      exitCode !== 0 ||
+      jsonOk === false ||
+      /traceback|error:/i.test(stderr)
+    if (failed && !payload?.skipped) {
+      try {
+        spawnSync(
+          acpBin,
+          [
+            "debug",
+            "record-anomaly",
+            "--kind",
+            "debug_export_failure",
+            "--summary",
+            `runDebug failed: ${argvExtra[0] || "unknown"} exit=${exitCode}`,
+            "--project",
+            root,
+          ],
+          {
+            encoding: "utf-8",
+            shell: false,
+            windowsHide: true,
+            cwd: root,
+            env: { ...process.env, ASCENDC_PROJECT_ROOT: root },
+            timeout: 15_000,
+          },
+        )
+      } catch {
+        // ignore nested failure
+      }
+    }
+    return {
+      ok: !failed,
+      skipped: Boolean(payload?.skipped),
+      payload,
+      exit_code: exitCode,
+      stdout,
+      stderr,
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      exit_code: 1,
+      stdout: "",
+      stderr: String(err),
+    }
   }
 }
 
@@ -651,7 +727,8 @@ export const AscendCHarnessPlugin = async () => {
         const hostSession = extractHostSessionId(input as Record<string, unknown>)
         const promptText = String(args.prompt || args.description || args.task || "")
         if (hostSession) {
-          runDebug(
+          const nonce = `nonce_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+          const reg = runDebug(
             [
               "register-child",
               "--if-enabled",
@@ -661,11 +738,36 @@ export const AscendCHarnessPlugin = async () => {
               dispatchAction,
               "--actor-id",
               dispatchActor,
+              "--dispatch-nonce",
+              nonce,
               "--task-prompt",
               promptText.slice(0, 4000),
             ],
             project,
           )
+          const regId = String(
+            (reg.payload && (reg.payload.registration_id || (reg.payload.registration as any)?.registration_id)) ||
+              "",
+          )
+          const resolvedNonce = String(
+            (reg.payload && (reg.payload.dispatch_nonce || (reg.payload.registration as any)?.dispatch_nonce)) ||
+              nonce,
+          )
+          if (regId) {
+            pendingTaskRegs.set(`${hostSession}::${nonce}`, {
+              registration_id: regId,
+              dispatch_nonce: resolvedNonce,
+              action_id: dispatchAction,
+              parent_session_id: hostSession,
+            })
+            // Also index latest for this host+action for after-hook lookup by nonce list.
+            pendingTaskRegs.set(`${hostSession}::pending::${dispatchAction}`, {
+              registration_id: regId,
+              dispatch_nonce: resolvedNonce,
+              action_id: dispatchAction,
+              parent_session_id: hostSession,
+            })
+          }
         }
         const verdict = runAuthorize({
           tool: "task",
@@ -728,6 +830,14 @@ export const AscendCHarnessPlugin = async () => {
         ])
         if (auditTools.has(tool)) {
           const pattern = String(args.pattern || args.query || "")
+          // Host tools: parent=host, child=""; child tools: parent=host, child=child session.
+          const maybeChild = hostSession ? activeChildByHost.get(hostSession) || "" : ""
+          const sessionFromInput = extractHostSessionId(input as Record<string, unknown>)
+          // If the executing session is a registered child, treat it as child_session_id.
+          const childSession =
+            maybeChild ||
+            (sessionFromInput && sessionFromInput !== hostSession ? sessionFromInput : "")
+          const parentForEvent = hostSession || sessionFromInput
           runDebug(
             [
               "record-tool-event",
@@ -735,7 +845,9 @@ export const AscendCHarnessPlugin = async () => {
               "--tool",
               tool,
               "--parent-session-id",
-              hostSession,
+              parentForEvent,
+              "--child-session-id",
+              childSession,
               "--action-id",
               actionId,
               "--path",
@@ -762,19 +874,44 @@ export const AscendCHarnessPlugin = async () => {
           const childSession = extractTaskSessionId(output)
           const dispatchAction = actionId
           if (childSession) {
-            runDebug(
-              [
-                "patch-child-session",
-                "--child-session-id",
-                childSession,
-                "--parent-session-id",
-                hostSession,
-                "--action-id",
-                dispatchAction,
-              ],
-              project,
-            )
-            runDebug(
+            const pendingKey = `${hostSession}::pending::${dispatchAction}`
+            const pending = pendingTaskRegs.get(pendingKey)
+            const resultText = (() => {
+              const chunks: string[] = []
+              if (!output) return ""
+              for (const k of ["output", "content", "message", "text", "result"] as const) {
+                const v = output[k]
+                if (typeof v === "string" && v.trim()) chunks.push(v)
+              }
+              return chunks.join("\n").slice(0, 8000)
+            })()
+            const patchArgs = [
+              "patch-child-session",
+              "--child-session-id",
+              childSession,
+              "--parent-session-id",
+              hostSession,
+              "--action-id",
+              dispatchAction,
+            ]
+            if (pending?.registration_id) {
+              patchArgs.push("--registration-id", pending.registration_id)
+            }
+            if (pending?.dispatch_nonce) {
+              patchArgs.push("--dispatch-nonce", pending.dispatch_nonce)
+            }
+            if (resultText) {
+              patchArgs.push("--task-result", resultText)
+            }
+            runDebug(patchArgs, project)
+            if (hostSession) {
+              activeChildByHost.set(hostSession, childSession)
+            }
+            if (pending) {
+              pendingTaskRegs.delete(pendingKey)
+              pendingTaskRegs.delete(`${hostSession}::${pending.dispatch_nonce}`)
+            }
+            const exp = runDebug(
               [
                 "export-child-session",
                 "--if-enabled",
@@ -787,6 +924,12 @@ export const AscendCHarnessPlugin = async () => {
               ],
               project,
             )
+            if (!exp.ok && !exp.skipped) {
+              // already anomaly-recorded inside runDebug
+            }
+            if (hostSession) {
+              activeChildByHost.delete(hostSession)
+            }
           }
         }
       } catch {

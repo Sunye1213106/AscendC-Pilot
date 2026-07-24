@@ -201,6 +201,19 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         "meta": {
             "max_semantic_resolve_attempts": 3,
             "max_semantic_batches": 8,
+            "recovery_by_reason": {
+                "SCOPE_REWORK": {
+                    "type": "transition",
+                    "target_phase": "scope",
+                    "next_action": "scope_confirmation",
+                },
+                "ENTRYPOINT_REWORK": {"type": "action", "action_id": "detect_score_pre"},
+                "KERNEL_DISPATCH_REWORK": {"type": "action", "action_id": "adjudicate_llm_tasks"},
+                "BRIDGE_REWORK": {"type": "action", "action_id": "adjudicate_llm_tasks"},
+                "SEMANTIC_PATCH_REWORK": {"type": "action", "action_id": "adjudicate_llm_tasks"},
+                "LEDGER_REBUILD_REWORK": {"type": "action", "action_id": "rebuild_from_ledger"},
+                "NO_PROGRESS_RECHECK": {"type": "action", "action_id": "adjudicate_llm_tasks"},
+            },
         },
         "actions": [
             _act(

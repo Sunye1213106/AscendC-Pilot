@@ -156,7 +156,9 @@ def test_retry_after_failed_batch_succeeds(tmp_path: Path) -> None:
     assert second["ok"] is True
     after = load_llm_tasks(uo)
     assert int(after["total_semantic_batches"]) == 1
-    assert after["tasks"][0]["status"] == "resolved"
+    assert after["tasks"][0]["status"] == "pending_materialization"
+    assert after["tasks"][0]["semantic_status"] == "pending_materialization"
+    assert after["tasks"][0]["blocking"] is True
 
 
 def test_validate_batch_budget_current_plus_one(tmp_path: Path) -> None:

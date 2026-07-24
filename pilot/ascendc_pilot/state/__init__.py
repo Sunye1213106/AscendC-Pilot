@@ -251,6 +251,14 @@ def start_workflow(
         {"type": "workflow_started", "workflow_id": workflow_id, "phase": start_phase, "intent": intent},
         run_id=run_id,
     )
+    # If debug was enabled before start, atomically bind the new run_id (once).
+    try:
+        from ascendc_pilot import debug as _dbg
+
+        if _dbg.is_enabled(project_root):
+            _dbg.bind_debug_session_run(project_root)
+    except Exception:  # noqa: BLE001
+        pass
     fresh = load_state(project_root)
     from ascendc_pilot.todo import attach_todo
 

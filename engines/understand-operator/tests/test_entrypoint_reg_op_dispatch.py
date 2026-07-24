@@ -119,8 +119,10 @@ def test_kernel_dispatch_has_real_candidates(tmp_path: Path) -> None:
     uo = root / ".ascendc-pilot" / "uo"
     kdir = root / "op_kernel" / "arch35"
     kdir.mkdir(parents=True)
+    # Use the preferred KernelEntry symbol name so entry survives materialization,
+    # plus a concrete *Kernel impl for dispatch linking.
     (kdir / "kern_disp_op_entry.h").write_text(
-        "__global__ void KernDispOpEntry() {}\n",
+        "__global__ void KernelEntry() {}\n",
         encoding="utf-8",
     )
     (kdir / "kern_disp_op_kernel.h").write_text(
@@ -139,6 +141,12 @@ def test_kernel_dispatch_has_real_candidates(tmp_path: Path) -> None:
     # Either verified unique link or grounded multi-candidate edges with file_path evidence.
     assert dispatches
     assert all((e.get("evidence") or [{}])[0].get("file_path") or e.get("confidence") for e in dispatches)
+    # Name-only unique match must stay candidate (not fake source_verified).
+    for e in dispatches:
+        reasons = [str((ev or {}).get("reason") or "") for ev in (e.get("evidence") or [])]
+        if any("name_match" in r for r in reasons):
+            assert e.get("confidence") == "candidate"
+            assert e.get("verification_source") == "heuristic"
 
 
 def test_empty_dispatch_candidates_route_to_enrichment(tmp_path: Path) -> None:

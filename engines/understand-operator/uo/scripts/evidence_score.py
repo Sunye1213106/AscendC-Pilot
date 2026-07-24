@@ -515,7 +515,7 @@ def detect_score_pre(uo_root: Path, *, architecture: str = "arch35", run_id: str
         items,
         checkpoint="extract.pre_semantic",
         run_id=run_id,
-        source_snapshot_hash=_source_snapshot_hash(uo_root),
+        source_snapshot_hash=_source_snapshot_hash(uo_root, run_id=run_id or None),
     )
     return {"ok": True, "checkpoint": "extract.pre_semantic", "report": report, "tasks": tasks}
 
@@ -525,14 +525,12 @@ def detect_score_post(uo_root: Path, *, architecture: str = "arch35", run_id: st
     from uo.scripts._ir_io import read_yaml
     from uo.scripts.llm_tasks import upsert_tasks_from_score_items
 
-    # Hard dependency: host/kernel or tilingkey must exist (①).
-    host = uo_root / "ir" / "host_subgraph.yaml"
-    kernel = uo_root / "ir" / "kernel_subgraph.yaml"
-    plan = uo_root / "ir" / "extract_plan.yaml"
-    if not host.is_file() and not kernel.is_file() and not plan.is_file():
+    prereq = post_semantic_prerequisites(uo_root)
+    if not prereq.get("ok"):
         return {
             "ok": False,
-            "error": "extract.post_semantic requires host/kernel/extract_plan artifacts",
+            "error": "POST_SEMANTIC_PREREQUISITE_MISSING",
+            "missing": prereq.get("missing") or [],
             "checkpoint": "extract.post_semantic",
         }
 
@@ -564,9 +562,30 @@ def detect_score_post(uo_root: Path, *, architecture: str = "arch35", run_id: st
         items,
         checkpoint="extract.post_semantic",
         run_id=run_id,
-        source_snapshot_hash=_source_snapshot_hash(uo_root),
+        source_snapshot_hash=_source_snapshot_hash(uo_root, run_id=run_id or None),
     )
     return {"ok": True, "checkpoint": "extract.post_semantic", "report": report, "tasks": tasks}
+
+
+def post_semantic_prerequisites(uo_root: Path) -> dict[str, Any]:
+    """Shared Engine/Gate contract for detect_score_post.
+
+    Requires extract_plan.yaml + host_subgraph.yaml + kernel_subgraph.yaml.
+    Kernel is required by this contract (not optional) so Engine and Gate agree.
+    """
+    required = {
+        "extract_plan.yaml": uo_root / "ir" / "extract_plan.yaml",
+        "host_subgraph.yaml": uo_root / "ir" / "host_subgraph.yaml",
+        "kernel_subgraph.yaml": uo_root / "ir" / "kernel_subgraph.yaml",
+    }
+    missing = [name for name, path in required.items() if not path.is_file()]
+    if missing:
+        return {
+            "ok": False,
+            "error": "POST_SEMANTIC_PREREQUISITE_MISSING",
+            "missing": missing,
+        }
+    return {"ok": True, "missing": []}
 
 
 def _stats(items: list[dict[str, Any]]) -> dict[str, Any]:
@@ -580,18 +599,106 @@ def _stats(items: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _source_snapshot_hash(uo_root: Path) -> str:
-    scope = uo_root / "runs"
-    paths: list[str] = []
-    # Prefer confirmed scope list.
+def _resolve_current_run_id(uo_root: Path, run_id: str | None = None) -> str:
+    if run_id and str(run_id).strip():
+        return str(run_id).strip()
     from uo.scripts._ir_io import read_yaml
 
-    for run_dir in sorted(p for p in scope.glob("*") if p.is_dir())[-3:]:
-        confirmed = read_yaml(run_dir / "scope" / "scope_confirmed.yaml") or {}
-        for item in confirmed.get("confirmed_source_files") or confirmed.get("confirmed_file_list") or []:
-            if isinstance(item, dict) and item.get("path"):
-                paths.append(str(item["path"]))
-            elif isinstance(item, str):
-                paths.append(item)
-    blob = json.dumps(sorted(set(paths)), sort_keys=True)
+    manifest = read_yaml(uo_root / "manifest.yaml") or {}
+    for key in ("current_run_id", "current_run"):
+        val = str(manifest.get(key) or "").strip()
+        if val:
+            return val
+    return ""
+
+
+def _source_snapshot_hash(uo_root: Path, run_id: str | None = None) -> str:
+    """Hash current-run confirmed scope + per-file content. Fail-closed across runs.
+
+    Material includes: run_id, workflow_id, architecture, confirmed_source_files,
+    and content hash of each source file. Never scans sibling runs.
+    """
+    from uo.scripts._ir_io import read_yaml
+
+    rid = _resolve_current_run_id(uo_root, run_id)
+    if not rid:
+        return "FAIL_CLOSED:missing_run_id"
+
+    scope_path = uo_root / "runs" / rid / "scope" / "scope_confirmed.yaml"
+    if not scope_path.is_file():
+        return f"FAIL_CLOSED:missing_scope_confirmed:{rid}"
+
+    confirmed = read_yaml(scope_path) or {}
+    paths: list[str] = []
+    for item in confirmed.get("confirmed_source_files") or confirmed.get("confirmed_file_list") or []:
+        if isinstance(item, dict) and item.get("path"):
+            paths.append(str(item["path"]).replace("\\", "/"))
+        elif isinstance(item, str):
+            paths.append(item.replace("\\", "/"))
+    paths = sorted(set(paths))
+
+    # Resolve repo root for content hashing.
+    repo_root: Path | None = None
+    try:
+        from uo._operator.run_context import source_root_for_operator
+
+        # uo_root is typically <project>/.ascendc-pilot/uo/<op>
+        # source_root_for_operator needs operator_root + uo_root
+        operator_root = uo_root
+        parent_uo = uo_root.parent if uo_root.name != "uo" else uo_root
+        # Prefer manifest source_root / receipt.
+        try:
+            repo_root = source_root_for_operator(operator_root, parent_uo if (parent_uo / "manifest.yaml").is_file() else uo_root, rid)
+        except Exception:  # noqa: BLE001
+            repo_root = None
+    except Exception:  # noqa: BLE001
+        repo_root = None
+    if repo_root is None:
+        # Walk up for a plausible project root containing the relative paths.
+        for candidate in [uo_root, *uo_root.parents]:
+            if (candidate / ".ascendc-pilot").is_dir() or (candidate / ".git").is_dir():
+                repo_root = candidate
+                break
+    if repo_root is None:
+        repo_root = uo_root.parent if uo_root.name == "uo" else uo_root
+
+    file_hashes: dict[str, str] = {}
+    for rel in paths:
+        resolved: Path | None = None
+        try:
+            from uo.scripts.source_path import resolve_repo_source_path
+
+            for root_try in (repo_root, uo_root, uo_root.parent, *list(uo_root.parents)[:3]):
+                try:
+                    hit = resolve_repo_source_path(root_try, rel)
+                except Exception:  # noqa: BLE001
+                    hit = None
+                if hit is not None and Path(hit).is_file():
+                    resolved = Path(hit)
+                    break
+                cand = Path(root_try) / rel
+                if cand.is_file():
+                    resolved = cand
+                    break
+        except Exception:  # noqa: BLE001
+            resolved = None
+        if resolved is None:
+            for root_try in (repo_root, uo_root.parent, uo_root):
+                cand = Path(root_try) / rel
+                if cand.is_file():
+                    resolved = cand
+                    break
+        if resolved is not None and resolved.is_file():
+            file_hashes[rel] = hashlib.sha256(resolved.read_bytes()).hexdigest()[:16]
+        else:
+            file_hashes[rel] = "MISSING"
+
+    material = {
+        "run_id": rid,
+        "workflow_id": str(confirmed.get("workflow_id") or (read_yaml(uo_root / "manifest.yaml") or {}).get("workflow_id") or ""),
+        "architecture": str(confirmed.get("architecture") or ""),
+        "confirmed_source_files": paths,
+        "file_content_hashes": file_hashes,
+    }
+    blob = json.dumps(material, sort_keys=True)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]

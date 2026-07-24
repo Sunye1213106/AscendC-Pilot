@@ -940,23 +940,22 @@ def gate_detect_score_pre(uo: Path) -> dict[str, Any]:
 
 
 def gate_detect_score_post(uo: Path) -> dict[str, Any]:
-    """Post-semantic scoring requires plan AND host AND score_report_post."""
-    plan = uo / "ir" / "extract_plan.yaml"
-    host = uo / "ir" / "host_subgraph.yaml"
+    """Post-semantic scoring requires plan AND host AND kernel (shared contract)."""
+    from uo.scripts.evidence_score import post_semantic_prerequisites
+
+    prereq = post_semantic_prerequisites(uo)
     post = uo / "ir" / "score_report_post.yaml"
-    missing: list[str] = []
-    if not plan.is_file():
-        missing.append("extract_plan.yaml")
-    if not host.is_file():
-        missing.append("host_subgraph.yaml")
+    missing = list(prereq.get("missing") or [])
     if not post.is_file():
-        missing.append("score_report_post.yaml")
+        # Gate after engine run also requires the report; engine itself won't write without prereqs.
+        missing = missing + (["score_report_post.yaml"] if "score_report_post.yaml" not in missing else [])
     if missing:
         return {
             "gate": "detect_score_post",
             "ok": False,
             "missing": missing,
-            "message": f"detect_score_post requires plan+host+score_report_post; missing={missing}",
+            "error": "POST_SEMANTIC_PREREQUISITE_MISSING" if prereq.get("missing") else "score_report_post_missing",
+            "message": f"detect_score_post requires plan+host+kernel(+report); missing={missing}",
         }
     return {
         "gate": "detect_score_post",
@@ -964,6 +963,7 @@ def gate_detect_score_post(uo: Path) -> dict[str, Any]:
         "has_post_report": True,
         "has_plan": True,
         "has_host": True,
+        "has_kernel": True,
         "message": "ok",
     }
 

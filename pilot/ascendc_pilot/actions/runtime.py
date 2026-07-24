@@ -1415,15 +1415,28 @@ def _attach_finalize_observation(
     eng = payload.get("engine") if isinstance(payload.get("engine"), dict) else {}
     checker = payload.get("checker_result") if isinstance(payload.get("checker_result"), dict) else {}
     eng2 = checker.get("engine") if isinstance(checker.get("engine"), dict) else {}
-    recovery = list(eng.get("recovery_actions") or eng2.get("recovery_actions") or [])
-    if recovery:
+    from ascendc_pilot.recovery import filter_executable_recovery_actions
+
+    wid = str((load_state(project_root) or {}).get("workflow_id") or "uo-init")
+    recovery = filter_executable_recovery_actions(
+        list(eng.get("recovery_actions") or eng2.get("recovery_actions") or []),
+        workflow_id=wid,
+    )
+    recoveries = list(eng.get("recoveries") or eng2.get("recoveries") or [])
+    if recovery or recoveries:
         lf = dict(out.get("last_failure") or {})
-        lf["recovery_actions"] = recovery
+        if recovery:
+            lf["recovery_actions"] = recovery
+        if recoveries:
+            lf["recoveries"] = recoveries
         out["last_failure"] = lf
         st = load_state(project_root)
         if st:
             st_lf = dict(st.get("last_failure") or {})
-            st_lf["recovery_actions"] = recovery
+            if recovery:
+                st_lf["recovery_actions"] = recovery
+            if recoveries:
+                st_lf["recoveries"] = recoveries
             st["last_failure"] = st_lf
             save_state(project_root, st)
     return out

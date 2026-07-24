@@ -135,7 +135,10 @@ def test_workspace_writer_emits_tdf(tmp_path: Path) -> None:
         "writers": [
             w
             for w in [
-                {"name": "SaveStuff", "file_path": "op_host/arch35/foo_tiling.cpp", "start_line": 1, "role": "tiling_writer"},
+                {"name": "SaveStuff", "file_path": "op_host/arch35/foo_tiling.cpp", "start_line": 1, "role": "tiling_writer",
+                 "evidence_source": "source", "source_verified": True,
+                 "evidence_files": ["op_host/arch35/foo_tiling.cpp"], "evidence_lines": [1],
+                 "decision_reason": "blob_->set_x tilingData sink write"},
                 {"name": "GetWorkspaceSize", "file_path": "op_host/arch35/foo_tiling.cpp", "start_line": 1, "role": "workspace_writer"},
             ]
             if w["name"] in cand_names
@@ -166,7 +169,10 @@ def test_provenance_helper_attrs_without_tdf(tmp_path: Path) -> None:
         "writers": [
             w
             for w in [
-                {"name": "SaveStuff", "file_path": "op_host/arch35/foo_tiling.cpp", "start_line": 1, "role": "tiling_writer"},
+                {"name": "SaveStuff", "file_path": "op_host/arch35/foo_tiling.cpp", "start_line": 1, "role": "tiling_writer",
+                 "evidence_source": "source", "source_verified": True,
+                 "evidence_files": ["op_host/arch35/foo_tiling.cpp"], "evidence_lines": [1],
+                 "decision_reason": "blob_->set_x tilingData sink write"},
                 {"name": "ProcessAttr", "file_path": "op_host/arch35/foo_tiling.cpp", "start_line": 1, "role": "provenance_helper"},
                 {"name": "InitStuff", "file_path": "op_host/arch35/foo_tiling.cpp", "start_line": 1, "role": "ignore"},
                 {"name": "FooTiling", "file_path": "op_host/arch35/foo_tiling.cpp", "start_line": 1, "role": "ignore"},

@@ -42,14 +42,44 @@ PATCH_TYPES = frozenset(
 _ACCEPT_CLOSE_ACTIONS = frozenset({"accept_edge", "choose_one", "accept", "select_edge", "select"})
 
 
+# Task lifecycle (task_status):
+#   open → adjudicated → pending_materialization → resolved
+# Failure: pending_materialization → rework_required → (open/unresolved)
+# semantic_status: unresolved | pending_materialization | closed
+
+_SEMANTIC_OPEN = frozenset({"unresolved", "pending_materialization", ""})
+_LIFECYCLE_GAP = frozenset(
+    {"open", "adjudicated", "pending_materialization", "rework_required"}
+)
+
+
 def _semantic_status(task: dict[str, Any]) -> str:
     return str(task.get("semantic_status") or "unresolved")
+
+
+def _task_lifecycle(task: dict[str, Any]) -> str:
+    return str(task.get("task_status") or task.get("status") or "")
 
 
 def _task_is_blocking(task: dict[str, Any]) -> bool:
     if "blocking" in task:
         return bool(task.get("blocking"))
     return str(task.get("severity") or "") == "blocking"
+
+
+def _semantic_gap_open(task: dict[str, Any]) -> bool:
+    """True when semantic closure still needs work (shared by Gate/Engine/recheck)."""
+    if not _task_is_blocking(task):
+        return False
+    if _semantic_status(task) == "closed":
+        return False
+    lifecycle = _task_lifecycle(task)
+    if lifecycle in {"resolved"} and _semantic_status(task) == "closed":
+        return False
+    # pending_materialization / rework_required / adjudicated / open all count as gaps
+    if lifecycle in _LIFECYCLE_GAP or _semantic_status(task) in _SEMANTIC_OPEN:
+        return True
+    return _semantic_status(task) != "closed"
 
 
 def _is_candidate_node_id(value: Any) -> bool:
@@ -80,12 +110,40 @@ def _infer_patch_type(task: dict[str, Any], action: str) -> str:
     if obj == "entrypoint_node":
         return "entrypoint_node_resolution"
     if obj == "call_edge":
+        # Legacy choose_edge patches without typed payload stay edge_resolution.
         return "call_edge_resolution"
-    if obj in {"entrypoint_dispatch_bind"} or obj in {"registration_edge", "call_edge"}:
+    if obj in {"entrypoint_dispatch_bind"} or obj in {"registration_edge"}:
         return "entrypoint_dispatch_resolution"
     if ttype == "choose_edge":
         return "edge_resolution"
     return "edge_resolution"
+
+
+def _effective_patch_type(task: dict[str, Any], patch: dict[str, Any], action: str) -> str:
+    """Prefer explicit patch_type; downgrade typed types to edge_resolution when payload incomplete."""
+    explicit = str(patch.get("patch_type") or "").strip()
+    inferred = explicit or _infer_patch_type(task, action)
+    if inferred == "call_edge_resolution":
+        if not (patch.get("caller_function_id") and patch.get("callee_function_id")):
+            return "edge_resolution"
+    if inferred == "entrypoint_dispatch_resolution":
+        if not (patch.get("source_node_id") and patch.get("target_node_id")):
+            return "edge_resolution"
+    if inferred == "tilingdata_bridge_resolution":
+        if not (patch.get("host_field_id") and patch.get("kernel_field_id")):
+            return "edge_resolution"
+    if inferred == "template_instance_resolution":
+        if not (
+            patch.get("tilingkey_value_id")
+            and patch.get("template_instance_id")
+            and patch.get("kernel_entry_id")
+        ):
+            return "edge_resolution"
+    if inferred == "entrypoint_node_resolution":
+        if not (patch.get("node_id") or patch.get("candidate_id")):
+            # May still resolve via accepted candidate ids as node ids.
+            return inferred
+    return inferred
 
 
 def _resolve_patch_edge_id(task: dict[str, Any], patch: dict[str, Any], *, accepted: list[str]) -> str | None:
@@ -99,12 +157,9 @@ def _resolve_patch_edge_id(task: dict[str, Any], patch: dict[str, Any], *, accep
 
 
 def blocking_gap_tasks(uo_root: Path) -> list[dict[str, Any]]:
+    """Blocking semantic gaps — shared SSOT for Gate / Engine / recheck."""
     doc = load_llm_tasks(uo_root)
-    return [
-        t
-        for t in doc.get("tasks") or []
-        if isinstance(t, dict) and _task_is_blocking(t) and _semantic_status(t) != "closed"
-    ]
+    return [t for t in doc.get("tasks") or [] if isinstance(t, dict) and _semantic_gap_open(t)]
 
 
 def stable_task_id(
@@ -317,14 +372,14 @@ def _default_candidates(item: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def open_blocking_tasks(uo_root: Path) -> list[dict[str, Any]]:
-    """Open tasks that still need patch adjudication (lifecycle, not semantic closure)."""
+    """Tasks that still need patch adjudication (open or rework_required)."""
     doc = load_llm_tasks(uo_root)
     out: list[dict[str, Any]] = []
     for t in doc.get("tasks") or []:
         if not isinstance(t, dict):
             continue
-        lifecycle = str(t.get("task_status") or t.get("status") or "")
-        if lifecycle != "open":
+        lifecycle = _task_lifecycle(t)
+        if lifecycle not in {"open", "rework_required"}:
             continue
         if not _task_is_blocking(t):
             continue
@@ -361,7 +416,7 @@ def validate_task_patch(
     if task is None:
         return {"ok": False, "error": "unknown_task_id", "task_id": task_id}
     lifecycle = str(task.get("task_status") or task.get("status") or "")
-    if lifecycle != "open":
+    if lifecycle not in {"open", "rework_required"}:
         return {"ok": False, "error": "task_not_open", "status": task.get("status"), "task_id": task_id}
 
     task_src = str(task.get("source_snapshot_hash") or "").strip()
@@ -615,7 +670,9 @@ def commit_patches_batch(
     """Atomically commit a pre-validated batch (one batch increment, one ledger save)."""
     from datetime import datetime, timezone
 
-    from uo.scripts.semantic_resolution_ledger import load_ledger, save_ledger
+    from uo.scripts._ir_io import commit_semantic_artifacts
+    from uo.scripts.semantic_patches import extract_typed_payload, validate_typed_patch
+    from uo.scripts.semantic_resolution_ledger import load_ledger
 
     doc = load_llm_tasks(uo_root)
     by_id = {str(t.get("task_id")): t for t in (doc.get("tasks") or []) if isinstance(t, dict)}
@@ -626,7 +683,10 @@ def commit_patches_batch(
     for item in validated:
         tid = str(item["task_id"])
         task = by_id.get(tid)
-        if task is None or str(task.get("task_status") or task.get("status")) != "open":
+        if task is None or str(task.get("task_status") or task.get("status")) not in {
+            "open",
+            "rework_required",
+        }:
             return {
                 "ok": False,
                 "error": "commit_race_task_not_open",
@@ -639,7 +699,19 @@ def commit_patches_batch(
         task["task_attempts"] = int(item["next_attempts"])
         action = str(item["action"])
         patch = item["patch"]
-        patch_type = str(patch.get("patch_type") or _infer_patch_type(task, action))
+        patch_type = _effective_patch_type(task, patch, action)
+        typed = validate_typed_patch(patch, patch_type=patch_type)
+        if not typed.get("ok") and action != "mark_missing":
+            return {
+                "ok": False,
+                "error": typed.get("error") or "SEMANTIC_PATCH_INVALID",
+                "task_id": tid,
+                "applied_count": 0,
+                "error_count": 1,
+                "applied": [],
+                "errors": [{"ok": False, "error": typed.get("error"), "task_id": tid, "detail": typed.get("detail")}],
+            }
+        typed_payload = typed.get("payload") if isinstance(typed.get("payload"), dict) else extract_typed_payload(patch, patch_type)
         accepted = list(item["accepted"])
         edge_id = _resolve_patch_edge_id(task, patch, accepted=accepted)
         if edge_id and _is_candidate_node_id(edge_id):
@@ -658,13 +730,16 @@ def commit_patches_batch(
             task["semantic_status"] = "unresolved"
             task["blocking"] = True
         elif action in _ACCEPT_CLOSE_ACTIONS:
-            task["status"] = "resolved"
-            task["task_status"] = "resolved"
-            task["semantic_status"] = "closed"
-            task["blocking"] = False
+            # Do NOT close until rebuild confirms materialization.
+            task["status"] = "pending_materialization"
+            task["task_status"] = "pending_materialization"
+            task["semantic_status"] = "pending_materialization"
+            task["blocking"] = True
         else:
-            task["status"] = "resolved"
-            task["task_status"] = "resolved"
+            task["status"] = "pending_materialization"
+            task["task_status"] = "pending_materialization"
+            task["semantic_status"] = "pending_materialization"
+            task["blocking"] = True
         task["resolution"] = {"action": action, "patch": patch}
         record = {
             "task_id": tid,
@@ -672,7 +747,7 @@ def commit_patches_batch(
             "edge_id": edge_id,
             "accepted_candidate_ids": accepted,
             "rejected_candidate_ids": list(item["rejected"]),
-            "relation": patch.get("relation") or task.get("type"),
+            "relation": patch.get("relation") or typed_payload.get("relation") or task.get("type"),
             "evidence": patch.get("evidence") or [],
             "source_snapshot_hash": task.get("source_snapshot_hash"),
             "candidate_set_hash": task.get("candidate_set_hash"),
@@ -682,7 +757,12 @@ def commit_patches_batch(
             "applied_at": now,
             "status": "active",
             "apply_status": "pending",
+            "payload": typed_payload,
         }
+        # Flatten typed payload onto record so rebuild never drops fields.
+        for key, value in typed_payload.items():
+            if key not in record or record[key] in (None, "", []):
+                record[key] = value
         ledger.setdefault("semantic_patches", []).append(record)
         applied.append(
             {
@@ -695,8 +775,8 @@ def commit_patches_batch(
         )
 
     doc["total_semantic_batches"] = next_batches
-    save_llm_tasks(uo_root, doc)
-    save_ledger(uo_root, ledger)
+    # Transactional: llm_tasks + ledger together (no apply_report yet — that comes from rebuild).
+    commit_semantic_artifacts(uo_root, llm_tasks=doc, ledger=ledger)
     return {
         "ok": True,
         "applied_count": len(applied),
@@ -888,4 +968,77 @@ def compute_semantic_stats(uo_root: Path) -> dict[str, Any]:
         "materialized_patch_count": materialized_patch_count,
         "unconsumed_patch_count": unconsumed_patch_count,
         "blocking_gap_count": len(blocking_gap_tasks(uo_root)),
+    }
+
+
+_FAILURE_APPLY_STATUSES = frozenset(
+    {"unconsumed", "invalid", "target_missing", "target_type_mismatch"}
+)
+
+
+def sync_tasks_from_materialization(
+    uo_root: Path,
+    ledger: dict[str, Any],
+    *,
+    mutate_doc: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Update llm_tasks from ledger apply_status after rebuild verification.
+
+    - materialized → task_status=resolved, semantic_status=closed, blocking=false
+    - unconsumed/invalid/target_* → rework_required + unresolved + blocking
+    - mark_missing → remains adjudicated/unresolved/blocking
+    """
+    doc = mutate_doc if mutate_doc is not None else load_llm_tasks(uo_root)
+    by_id = {str(t.get("task_id")): t for t in (doc.get("tasks") or []) if isinstance(t, dict)}
+    closed = 0
+    reopened = 0
+    for patch in ledger.get("semantic_patches") or []:
+        if not isinstance(patch, dict) or patch.get("status") == "stale":
+            continue
+        tid = str(patch.get("task_id") or "")
+        task = by_id.get(tid)
+        if task is None:
+            continue
+        action = str(patch.get("action") or "")
+        apply_st = str(patch.get("apply_status") or "")
+        if action == "mark_missing" or str(patch.get("patch_type") or "") == "mark_missing":
+            task["status"] = "adjudicated"
+            task["task_status"] = "adjudicated"
+            task["semantic_status"] = "unresolved"
+            task["blocking"] = True
+            continue
+        if apply_st == "materialized":
+            task["status"] = "resolved"
+            task["task_status"] = "resolved"
+            task["semantic_status"] = "closed"
+            task["blocking"] = False
+            task.pop("failure_code", None)
+            task.pop("failure_detail", None)
+            closed += 1
+        elif apply_st in _FAILURE_APPLY_STATUSES:
+            task["status"] = "rework_required"
+            task["task_status"] = "rework_required"
+            task["semantic_status"] = "unresolved"
+            task["blocking"] = True
+            code = str(patch.get("apply_error") or "")
+            if apply_st == "unconsumed":
+                code = code or "SEMANTIC_PATCH_UNCONSUMED"
+            elif apply_st == "invalid":
+                code = code or "SEMANTIC_PATCH_INVALID"
+            elif apply_st == "target_missing":
+                code = code or "SEMANTIC_TARGET_NOT_FOUND"
+            elif apply_st == "target_type_mismatch":
+                code = code or "SEMANTIC_TARGET_TYPE_MISMATCH"
+            task["failure_code"] = code
+            task["failure_detail"] = str(patch.get("apply_detail") or apply_st)
+            reopened += 1
+        elif apply_st in {"pending", "adjudicated_only"}:
+            # Still waiting or mark_missing-equivalent.
+            if _task_lifecycle(task) == "pending_materialization":
+                pass
+    return {
+        "ok": True,
+        "doc": doc,
+        "closed_count": closed,
+        "rework_count": reopened,
     }

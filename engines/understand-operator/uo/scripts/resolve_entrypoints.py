@@ -808,11 +808,15 @@ def _scan_registration_graph(
             }
             nodes[node["id"]] = node
             # Link registration → public host only when op_name / macro args match.
+            # Name equality alone is heuristic ranking — not source verification.
             for reg in list(nodes.values()) + list(existing_nodes.values()):
                 if reg.get("role") != "operator_registration":
                     continue
                 if str(reg.get("name") or "") != name:
                     continue
+                reg_loc = reg.get("locator") if isinstance(reg.get("locator"), dict) else {}
+                # Both sides have macro locators from REG_OP / IMPL_OP — grounded.
+                has_macro_evidence = bool(reg.get("macro")) and bool(node.get("macro"))
                 edges.append(
                     {
                         "id": mint_edge_id("registers", reg["id"], node["id"]),
@@ -826,10 +830,13 @@ def _scan_registration_graph(
                                 "macro": "IMPL_OP_OPTILING",
                                 "op_name": name,
                                 "reason": "reg_op_to_impl_op_name_match",
+                                "reg_file_path": reg_loc.get("file_path"),
+                                "reg_line": reg_loc.get("start_line"),
                             }
                         ],
-                        "confidence": "source_verified",
-                        "verification_source": "source",
+                        # Name match alone → candidate; both macros present → source_verified.
+                        "confidence": "source_verified" if has_macro_evidence else "candidate",
+                        "verification_source": "source" if has_macro_evidence else "heuristic",
                     }
                 )
             # Fluent .Tiling(X) — X may be class, free function, or other callable.
@@ -882,6 +889,10 @@ def _scan_registration_graph(
                     "callable_kind": kind,
                 }
                 nodes[tgt_node["id"]] = tgt_node
+                # Fluent .Tiling(X) is source-verified only when X has a real decl in this file.
+                fluent_verified = evidence_reason in {"class_or_struct_decl", "function_decl"}
+                fluent_conf = "source_verified" if fluent_verified else "candidate"
+                fluent_vsrc = "source" if fluent_verified else "heuristic"
                 edges.append(
                     {
                         "id": mint_edge_id("dispatches_to", node["id"], tgt_node["id"], tiling_target),
@@ -898,8 +909,8 @@ def _scan_registration_graph(
                                 "evidence_reason": evidence_reason,
                             }
                         ],
-                        "confidence": "source_verified",
-                        "verification_source": "source",
+                        "confidence": fluent_conf,
+                        "verification_source": fluent_vsrc,
                     }
                 )
                 edges.append(
@@ -915,10 +926,11 @@ def _scan_registration_graph(
                                 "macro": "IMPL_OP_OPTILING.Tiling",
                                 "reason": "fluent_tiling",
                                 "callable_kind": kind,
+                                "evidence_reason": evidence_reason,
                             }
                         ],
-                        "confidence": "source_verified",
-                        "verification_source": "source",
+                        "confidence": fluent_conf,
+                        "verification_source": fluent_vsrc,
                     }
                 )
         for match in REGISTER_TILING_RE.finditer(text):
@@ -1089,17 +1101,48 @@ def _link_host_to_templates(
         nid = tpl.get("node_id")
         if not nid or nid not in nodes:
             continue
+        # Isolate by architecture / path_family / template_family / op_type — never full cross product.
+        tpl_arch = str(tpl.get("architecture_hint") or nodes[nid].get("architecture") or "")
+        tpl_fam = str(tpl.get("path_family") or nodes[nid].get("path_family") or "")
+        tpl_op = str(tpl.get("op_type") or "")
+        matched_pubs = []
         for pub in publics:
+            pub_arch = str(pub.get("architecture") or "")
+            pub_fam = str(pub.get("path_family") or "")
+            pub_name = str(pub.get("name") or "")
+            if tpl_arch and pub_arch and tpl_arch not in {pub_arch, "neutral"} and pub_arch != "neutral":
+                continue
+            if tpl_fam and pub_fam and tpl_fam != pub_fam and pub_fam not in {"", "unknown"} and tpl_fam not in {"", "unknown"}:
+                # Allow when families differ only if op_type matches public name.
+                if not (tpl_op and pub_name and tpl_op == pub_name):
+                    continue
+            matched_pubs.append(pub)
+        # If isolation yields nothing, keep as ranked candidates against same-arch publics only.
+        if not matched_pubs:
+            matched_pubs = [
+                p
+                for p in publics
+                if str(p.get("architecture") or "") in {tpl_arch, "neutral", architecture, ""}
+            ]
+        for pub in matched_pubs:
             edges.append(
                 {
                     "id": mint_edge_id("instantiates", pub["id"], nid, tpl.get("template_class") or ""),
                     "type": "instantiates",
                     "source": pub["id"],
                     "target": nid,
-                    "target_status": "resolved",
-                    "evidence": [{"file_path": tpl.get("file_path"), "line": tpl.get("line")}],
-                    "confidence": "source_verified",
-                    "verification_source": "source",
+                    "target_status": "resolved_candidate" if len(matched_pubs) == 1 else "candidate_set",
+                    "evidence": [
+                        {
+                            "file_path": tpl.get("file_path"),
+                            "line": tpl.get("line"),
+                            "reason": "host_template_name_rank",
+                            "macro": "REGISTER_TILING_TEMPLATE",
+                        }
+                    ],
+                    # Registration macro proves template exists; host↔template link is heuristic without call.
+                    "confidence": "candidate",
+                    "verification_source": "heuristic",
                 }
             )
     return edges
@@ -1166,8 +1209,8 @@ def _link_kernel_dispatch(
 ) -> list[dict[str, Any]]:
     """Link public kernel → family/impl with grounded evidence.
 
-    Unique name/op match → source_verified edge.
-    Multiple distinct candidates → candidate edges (LLM may choose).
+    Name/op uniqueness may produce a candidate edge for ranking.
+    source_verified requires real call/macro/locator evidence — never name alone.
     """
     edges: list[dict[str, Any]] = []
     publics = [
@@ -1209,23 +1252,40 @@ def _link_kernel_dispatch(
         if len(chosen) == 1:
             other = chosen[0]
             loc = (other.get("locator") or {}) if isinstance(other.get("locator"), dict) else {}
+            pub_loc = (pub.get("locator") or {}) if isinstance(pub.get("locator"), dict) else {}
+            # Grounded verification: both sides have file locators AND an explicit
+            # call/macro/snippet linking them. Pure name uniqueness stays candidate.
+            has_call_evidence = bool(
+                other.get("macro")
+                or pub.get("macro")
+                or (loc.get("snippet_hash") and pub_loc.get("file_path") == loc.get("file_path"))
+            )
+            # Name-only unique match → candidate (may close only via later ledger/source).
+            conf = "source_verified" if has_call_evidence else "candidate"
+            vsrc = "source" if has_call_evidence else "heuristic"
             edges.append(
                 {
                     "id": mint_edge_id("dispatches_to", pub["id"], other["id"]),
                     "type": "dispatches_to",
                     "source": pub["id"],
                     "target": other["id"],
+                    "target_status": "resolved_candidate" if conf == "candidate" else "resolved",
                     "evidence": [
                         {
-                            "reason": "unique_kernel_dispatch_match",
+                            "reason": (
+                                "unique_kernel_dispatch_call_evidence"
+                                if has_call_evidence
+                                else "unique_kernel_dispatch_name_match"
+                            ),
                             "file_path": loc.get("file_path") or _kernel_locator_file(other),
+                            "line": loc.get("start_line"),
                             "source_entry_id": pub["id"],
                             "candidate_target_ids": [other["id"]],
                             "op_name": op_name,
                         }
                     ],
-                    "confidence": "source_verified",
-                    "verification_source": "source",
+                    "confidence": conf,
+                    "verification_source": vsrc,
                 }
             )
         else:
@@ -1237,6 +1297,7 @@ def _link_kernel_dispatch(
                         "type": "dispatches_to",
                         "source": pub["id"],
                         "target": other["id"],
+                        "target_status": "candidate_set",
                         "evidence": [
                             {
                                 "reason": "multi_kernel_dispatch_candidate",
