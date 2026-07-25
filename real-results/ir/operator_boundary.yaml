@@ -1,0 +1,458 @@
+version: 1
+op_name: flash_attention_score_grad
+architecture: arch35
+inputs: []
+outputs: []
+attributes: []
+optional_input_states: {}
+const_index_map: {}
+unresolved:
+- severity: blocking
+  code: input_accessor_index_unresolved
+  related_symbols:
+  - QUERY_IDX
+  candidate_files:
+  - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  evidence_present:
+  - GetInputShape(QUERY_IDX)
+  evidence_missing:
+  - constexpr_or_literal_index
+  reason: GetInputShape(QUERY_IDX) index cannot be resolved from source evidence
+  semantic_task: accessor_index_binding
+- severity: blocking
+  code: input_accessor_index_unresolved
+  related_symbols:
+  - KEY_IDX
+  candidate_files:
+  - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  evidence_present:
+  - GetInputShape(KEY_IDX)
+  evidence_missing:
+  - constexpr_or_literal_index
+  reason: GetInputShape(KEY_IDX) index cannot be resolved from source evidence
+  semantic_task: accessor_index_binding
+- severity: blocking
+  code: input_accessor_index_unresolved
+  related_symbols:
+  - VALUE_IDX
+  candidate_files:
+  - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  evidence_present:
+  - GetInputShape(VALUE_IDX)
+  evidence_missing:
+  - constexpr_or_literal_index
+  reason: GetInputShape(VALUE_IDX) index cannot be resolved from source evidence
+  semantic_task: accessor_index_binding
+- severity: blocking
+  code: attr_slot_unbound
+  related_symbols:
+  - HEAD_ATTR_IDX
+  candidate_files:
+  - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  evidence_present:
+  - GetAttrPointer<int>(HEAD_ATTR_IDX)
+  evidence_missing:
+  - OpDef_Attr_registration
+  reason: attribute accessor HEAD_ATTR_IDX lacks registration evidence
+  semantic_task: attr_slot_binding
+- severity: blocking
+  code: attr_slot_unbound
+  related_symbols:
+  - LAYOUT_ATTR_IDX
+  candidate_files:
+  - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  evidence_present:
+  - GetAttrPointer<char>(LAYOUT_ATTR_IDX)
+  evidence_missing:
+  - OpDef_Attr_registration
+  reason: attribute accessor LAYOUT_ATTR_IDX lacks registration evidence
+  semantic_task: attr_slot_binding
+- severity: degraded
+  code: accessor_expression_unparseable
+  related_symbols:
+  - GetOptionalInputShape(
+  candidate_files:
+  - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  evidence_present:
+  - "GetOptionalInputShape(static_cast<size_t>(InputIndex::QUERY_ROPE_IDX));\n    const gert::Shape *queryRopeShape = &queryRo"
+  evidence_missing:
+  - literal_or_named_index
+  reason: complex accessor expression; emit semantic task instead of guessing
+  semantic_task: accessor_expression_binding
+  line: 58
+- severity: degraded
+  code: accessor_expression_unparseable
+  related_symbols:
+  - GetOptionalInputShape(
+  candidate_files:
+  - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  evidence_present:
+  - "GetOptionalInputShape(static_cast<size_t>(InputIndex::KEY_ROPE_IDX));\n    const gert::Shape *keyRopeShape = &keyRope->Ge"
+  evidence_missing:
+  - literal_or_named_index
+  reason: complex accessor expression; emit semantic task instead of guessing
+  semantic_task: accessor_expression_binding
+  line: 61
+- severity: degraded
+  code: accessor_expression_unparseable
+  related_symbols:
+  - GetOptionalInputShape(
+  candidate_files:
+  - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  evidence_present:
+  - "GetOptionalInputShape(static_cast<size_t>(InputIndex::DY));\n    const gert::Shape *dyShape = &dy->GetStorageShape();\n\
+    \   "
+  evidence_missing:
+  - literal_or_named_index
+  reason: complex accessor expression; emit semantic task instead of guessing
+  semantic_task: accessor_expression_binding
+  line: 65
+- severity: degraded
+  code: accessor_expression_unparseable
+  related_symbols:
+  - GetOptionalInputShape(
+  candidate_files:
+  - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  evidence_present:
+  - "GetOptionalInputShape(static_cast<size_t>(InputIndex::ATTENTION_IN));\n    const gert::Shape *attentionInShape = &attenti"
+  evidence_missing:
+  - literal_or_named_index
+  reason: complex accessor expression; emit semantic task instead of guessing
+  semantic_task: accessor_expression_binding
+  line: 67
+- severity: degraded
+  code: accessor_expression_unparseable
+  related_symbols:
+  - GetAttrPointer<char>(
+  candidate_files:
+  - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  evidence_present:
+  - "GetAttrPointer<char>(static_cast<size_t>(AttrIndex::TND_SOFTMAX_IN)) :\n            \"\";\n    if (strcmp(tndSoftmaxIn,\
+    \ \"\") "
+  evidence_missing:
+  - literal_or_named_index
+  reason: complex accessor expression; emit semantic task instead of guessing
+  semantic_task: accessor_expression_binding
+  line: 417
+- severity: blocking
+  code: input_accessor_index_unresolved
+  related_symbols:
+  - QUERY_INPUT_INDEX
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - GetInputShape(QUERY_INPUT_INDEX)
+  evidence_missing:
+  - constexpr_or_literal_index
+  reason: GetInputShape(QUERY_INPUT_INDEX) index cannot be resolved from source evidence
+  semantic_task: accessor_index_binding
+- severity: blocking
+  code: input_accessor_index_unresolved
+  related_symbols:
+  - KEY_INPUT_INDEX
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - GetInputShape(KEY_INPUT_INDEX)
+  evidence_missing:
+  - constexpr_or_literal_index
+  reason: GetInputShape(KEY_INPUT_INDEX) index cannot be resolved from source evidence
+  semantic_task: accessor_index_binding
+- severity: blocking
+  code: input_accessor_index_unresolved
+  related_symbols:
+  - VALUE_INPUT_INDEX
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - GetInputShape(VALUE_INPUT_INDEX)
+  evidence_missing:
+  - constexpr_or_literal_index
+  reason: GetInputShape(VALUE_INPUT_INDEX) index cannot be resolved from source evidence
+  semantic_task: accessor_index_binding
+- severity: blocking
+  code: input_accessor_index_unresolved
+  related_symbols:
+  - QUERY_ROPE_INPUT_INDEX
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - GetOptionalInputShape(QUERY_ROPE_INPUT_INDEX)
+  evidence_missing:
+  - constexpr_or_literal_index
+  reason: GetOptionalInputShape(QUERY_ROPE_INPUT_INDEX) index cannot be resolved from source evidence
+  semantic_task: accessor_index_binding
+- severity: blocking
+  code: input_accessor_index_unresolved
+  related_symbols:
+  - KEY_ROPE_INPUT_INDEX
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - GetOptionalInputShape(KEY_ROPE_INPUT_INDEX)
+  evidence_missing:
+  - constexpr_or_literal_index
+  reason: GetOptionalInputShape(KEY_ROPE_INPUT_INDEX) index cannot be resolved from source evidence
+  semantic_task: accessor_index_binding
+- severity: blocking
+  code: input_accessor_index_unresolved
+  related_symbols:
+  - QUERY_ROPE_INPUT_INDEX
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - GetOptionalInputShape(QUERY_ROPE_INPUT_INDEX)
+  evidence_missing:
+  - constexpr_or_literal_index
+  reason: GetOptionalInputShape(QUERY_ROPE_INPUT_INDEX) index cannot be resolved from source evidence
+  semantic_task: accessor_index_binding
+- severity: blocking
+  code: input_accessor_index_unresolved
+  related_symbols:
+  - KEY_ROPE_INPUT_INDEX
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - GetOptionalInputShape(KEY_ROPE_INPUT_INDEX)
+  evidence_missing:
+  - constexpr_or_literal_index
+  reason: GetOptionalInputShape(KEY_ROPE_INPUT_INDEX) index cannot be resolved from source evidence
+  semantic_task: accessor_index_binding
+- severity: blocking
+  code: input_accessor_index_unresolved
+  related_symbols:
+  - QUERY_ROPE_INPUT_INDEX
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - GetOptionalInputShape(QUERY_ROPE_INPUT_INDEX)
+  evidence_missing:
+  - constexpr_or_literal_index
+  reason: GetOptionalInputShape(QUERY_ROPE_INPUT_INDEX) index cannot be resolved from source evidence
+  semantic_task: accessor_index_binding
+- severity: blocking
+  code: input_accessor_index_unresolved
+  related_symbols:
+  - KEY_ROPE_INPUT_INDEX
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - GetOptionalInputShape(KEY_ROPE_INPUT_INDEX)
+  evidence_missing:
+  - constexpr_or_literal_index
+  reason: GetOptionalInputShape(KEY_ROPE_INPUT_INDEX) index cannot be resolved from source evidence
+  semantic_task: accessor_index_binding
+- severity: blocking
+  code: input_accessor_index_unresolved
+  related_symbols:
+  - QUERY_ROPE_INPUT_INDEX
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - GetOptionalInputShape(QUERY_ROPE_INPUT_INDEX)
+  evidence_missing:
+  - constexpr_or_literal_index
+  reason: GetOptionalInputShape(QUERY_ROPE_INPUT_INDEX) index cannot be resolved from source evidence
+  semantic_task: accessor_index_binding
+- severity: blocking
+  code: input_accessor_index_unresolved
+  related_symbols:
+  - KEY_ROPE_INPUT_INDEX
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - GetOptionalInputShape(KEY_ROPE_INPUT_INDEX)
+  evidence_missing:
+  - constexpr_or_literal_index
+  reason: GetOptionalInputShape(KEY_ROPE_INPUT_INDEX) index cannot be resolved from source evidence
+  semantic_task: accessor_index_binding
+- severity: blocking
+  code: input_accessor_index_unresolved
+  related_symbols:
+  - QUERY_INPUT_INDEX
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - GetInputShape(QUERY_INPUT_INDEX)
+  evidence_missing:
+  - constexpr_or_literal_index
+  reason: GetInputShape(QUERY_INPUT_INDEX) index cannot be resolved from source evidence
+  semantic_task: accessor_index_binding
+- severity: blocking
+  code: input_accessor_index_unresolved
+  related_symbols:
+  - KEY_INPUT_INDEX
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - GetInputShape(KEY_INPUT_INDEX)
+  evidence_missing:
+  - constexpr_or_literal_index
+  reason: GetInputShape(KEY_INPUT_INDEX) index cannot be resolved from source evidence
+  semantic_task: accessor_index_binding
+- severity: blocking
+  code: input_accessor_index_unresolved
+  related_symbols:
+  - VALUE_INPUT_INDEX
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - GetInputShape(VALUE_INPUT_INDEX)
+  evidence_missing:
+  - constexpr_or_literal_index
+  reason: GetInputShape(VALUE_INPUT_INDEX) index cannot be resolved from source evidence
+  semantic_task: accessor_index_binding
+- severity: blocking
+  code: input_accessor_index_unresolved
+  related_symbols:
+  - DY_INPUT_INDEX
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - GetInputShape(DY_INPUT_INDEX)
+  evidence_missing:
+  - constexpr_or_literal_index
+  reason: GetInputShape(DY_INPUT_INDEX) index cannot be resolved from source evidence
+  semantic_task: accessor_index_binding
+- severity: blocking
+  code: input_accessor_index_unresolved
+  related_symbols:
+  - SOFTMAX_MAX
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - GetOptionalInputShape(SOFTMAX_MAX)
+  evidence_missing:
+  - constexpr_or_literal_index
+  reason: GetOptionalInputShape(SOFTMAX_MAX) index cannot be resolved from source evidence
+  semantic_task: accessor_index_binding
+- severity: blocking
+  code: input_accessor_index_unresolved
+  related_symbols:
+  - SOFTMAX_SUM
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - GetOptionalInputShape(SOFTMAX_SUM)
+  evidence_missing:
+  - constexpr_or_literal_index
+  reason: GetOptionalInputShape(SOFTMAX_SUM) index cannot be resolved from source evidence
+  semantic_task: accessor_index_binding
+- severity: blocking
+  code: input_accessor_index_unresolved
+  related_symbols:
+  - ATTENTION_IN
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - GetOptionalInputShape(ATTENTION_IN)
+  evidence_missing:
+  - constexpr_or_literal_index
+  reason: GetOptionalInputShape(ATTENTION_IN) index cannot be resolved from source evidence
+  semantic_task: accessor_index_binding
+- severity: blocking
+  code: attr_slot_unbound
+  related_symbols:
+  - HEAD_NUM_IDX
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - GetAttrPointer<int>(HEAD_NUM_IDX)
+  evidence_missing:
+  - OpDef_Attr_registration
+  reason: attribute accessor HEAD_NUM_IDX lacks registration evidence
+  semantic_task: attr_slot_binding
+- severity: blocking
+  code: attr_slot_unbound
+  related_symbols:
+  - LAYOUT_ATTR_IDX
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - GetAttrPointer<char>(LAYOUT_ATTR_IDX)
+  evidence_missing:
+  - OpDef_Attr_registration
+  reason: attribute accessor LAYOUT_ATTR_IDX lacks registration evidence
+  semantic_task: attr_slot_binding
+- severity: degraded
+  code: accessor_expression_unparseable
+  related_symbols:
+  - GetAttrPointer<float>(
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - "GetAttrPointer<float>(idx++);\n    auto keepProbPtr = attrs->GetAttrPointer<float>(idx++);\n    auto preTokensPtr = attrs-"
+  evidence_missing:
+  - literal_or_named_index
+  reason: complex accessor expression; emit semantic task instead of guessing
+  semantic_task: accessor_expression_binding
+  line: 263
+- severity: degraded
+  code: accessor_expression_unparseable
+  related_symbols:
+  - GetAttrPointer<float>(
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - "GetAttrPointer<float>(idx++);\n    auto preTokensPtr = attrs->GetAttrPointer<int64_t>(idx++);\n    auto nextTokensPtr\
+    \ = at"
+  evidence_missing:
+  - literal_or_named_index
+  reason: complex accessor expression; emit semantic task instead of guessing
+  semantic_task: accessor_expression_binding
+  line: 264
+- severity: degraded
+  code: accessor_expression_unparseable
+  related_symbols:
+  - GetAttrPointer<int64_t>(
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - "GetAttrPointer<int64_t>(idx++);\n    auto nextTokensPtr = attrs->GetAttrPointer<int64_t>(idx++);\n    auto n1SizePtr\
+    \ = att"
+  evidence_missing:
+  - literal_or_named_index
+  reason: complex accessor expression; emit semantic task instead of guessing
+  semantic_task: accessor_expression_binding
+  line: 265
+- severity: degraded
+  code: accessor_expression_unparseable
+  related_symbols:
+  - GetAttrPointer<int64_t>(
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - "GetAttrPointer<int64_t>(idx++);\n    auto n1SizePtr = attrs->GetAttrPointer<uint32_t>(idx++);\n    auto inputLayoutPtr\
+    \ = a"
+  evidence_missing:
+  - literal_or_named_index
+  reason: complex accessor expression; emit semantic task instead of guessing
+  semantic_task: accessor_expression_binding
+  line: 266
+- severity: degraded
+  code: accessor_expression_unparseable
+  related_symbols:
+  - GetAttrPointer<uint32_t>(
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - "GetAttrPointer<uint32_t>(idx++);\n    auto inputLayoutPtr = attrs->GetAttrPointer<char>(idx++);\n    size_t *workspaces\
+    \ = "
+  evidence_missing:
+  - literal_or_named_index
+  reason: complex accessor expression; emit semantic task instead of guessing
+  semantic_task: accessor_expression_binding
+  line: 267
+- severity: degraded
+  code: accessor_expression_unparseable
+  related_symbols:
+  - GetAttrPointer<char>(
+  candidate_files:
+  - op_host/flash_attention_score_grad_tiling.cpp
+  evidence_present:
+  - "GetAttrPointer<char>(idx++);\n    size_t *workspaces = context->GetWorkspaceSizes(1);\n\n    OP_CHECK_NULL_WITH_CONTEXT(con"
+  evidence_missing:
+  - literal_or_named_index
+  reason: complex accessor expression; emit semantic task instead of guessing
+  semantic_task: accessor_expression_binding
+  line: 268

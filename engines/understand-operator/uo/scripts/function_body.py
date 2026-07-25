@@ -31,7 +31,7 @@ _DEF_OPEN_RE_TMPL = (
     r"^([^\n]*\b{name}\s*\([^;{{]*\)\s*(?:const\s*|override\s*|final\s*)*\{{)"
 )
 
-_CONTROL_NAMES = frozenset({"if", "for", "while", "switch", "catch", "else", "try"})
+_CONTROL_NAMES = frozenset({"if", "for", "while", "switch", "catch", "else", "try", "constexpr"})
 _DEF_ANY_RE = re.compile(
     r"^([^\n]*\b([A-Za-z_][A-Za-z0-9_]*)\s*\([^;{]*\)\s*(?:const\s*|override\s*|final\s*)*\{)",
     re.MULTILINE,
@@ -50,14 +50,13 @@ _FN_CANDIDATE_RE = re.compile(
 _POST_PARAM_RE = re.compile(
     r"\s*(?:const\s*|override\s*|final\s*|noexcept\s*(?:\([^)]*\))?\s*)*\{"
 )
-_CALL_RE = re.compile(
-    r"(?:"
-    r"(?P<recv>(?:this\s*->|[A-Za-z_]\w*(?:\s*::\s*[A-Za-z_]\w*)*\s*\.\s*|"
-    r"[A-Za-z_]\w*(?:\s*::\s*[A-Za-z_]\w*)*\s*->\s*))?"
-    r"(?P<callee>(?:[A-Za-z_]\w*(?:\s*::\s*)?)+)"
-    r"(?P<targs>\s*<[^>;{]{0,120}>)?"
+# Deliberately linear call-head scan. Qualified names and receivers are parsed
+# with a bounded backward walk below; nesting optional repetitions here caused
+# catastrophic backtracking on large AscendC kernel bodies.
+_CALL_OPEN_RE = re.compile(
+    r"\b(?P<callee>[A-Za-z_]\w*)"
+    r"(?P<targs>\s*<[^>;{}\n]{0,120}>)?"
     r"\s*\("
-    r")",
 )
 
 _SOURCE_TEXT_CACHE: OrderedDict[tuple[str, int, int], str] = OrderedDict()
@@ -265,10 +264,11 @@ def _build_function_definition_from_span(
     architecture: str = "",
     qual_hint: str = "",
     line_starts: list[int] | None = None,
+    source_lines: list[str] | None = None,
 ) -> FunctionDefinition | None:
     def_start = _match_line(text, start_pos, line_starts)
     def_end = _match_line(text, end_pos, line_starts)
-    lines = text.splitlines()
+    lines = source_lines if source_lines is not None else text.splitlines()
     header = lines[def_start - 1] if 0 < def_start <= len(lines) else text[start_pos : text.find("{", start_pos)]
     body = "\n".join(lines[def_start - 1 : def_end])
     preceding = _preceding_text(text, start_pos)
@@ -337,6 +337,7 @@ def iter_function_definitions_from_text(
     rel = to_repo_relative(repo_root, path)
     src_hash = source_hash or hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
     starts = _line_starts(text)
+    source_lines = text.splitlines()
     out: list[FunctionDefinition] = []
     seen_spans: set[tuple[int, int, str]] = set()
     captured_outer_end = 0
@@ -359,6 +360,7 @@ def iter_function_definitions_from_text(
             architecture=architecture,
             qual_hint=(match.group("qual") or ""),
             line_starts=starts,
+            source_lines=source_lines,
         )
         if fn is None:
             continue
@@ -605,6 +607,67 @@ def extract_callee_names(body: str, *, noise: set[str] | frozenset[str]) -> list
     return found
 
 
+def _skip_ws_left(text: str, pos: int, *, floor: int) -> int:
+    while pos > floor and text[pos - 1].isspace():
+        pos -= 1
+    return pos
+
+
+def _read_ident_left(text: str, pos: int, *, floor: int) -> tuple[str, int]:
+    pos = _skip_ws_left(text, pos, floor=floor)
+    end = pos
+    while pos > floor and (text[pos - 1].isalnum() or text[pos - 1] == "_"):
+        pos -= 1
+    if pos == end or not (text[pos].isalpha() or text[pos] == "_"):
+        return "", end
+    return text[pos:end], pos
+
+
+def _call_context(text: str, name_start: int, callee: str) -> tuple[str, str, int]:
+    """Return (qualified callee, receiver, expression start) with bounded work."""
+    floor = max(0, name_start - 240)
+    pos = _skip_ws_left(text, name_start, floor=floor)
+
+    # Namespace/class qualification: A::B::Method(
+    qual_parts: list[str] = []
+    qpos = pos
+    while qpos - 2 >= floor and text[qpos - 2 : qpos] == "::":
+        ident, ident_start = _read_ident_left(text, qpos - 2, floor=floor)
+        if not ident:
+            break
+        qual_parts.append(ident)
+        qpos = _skip_ws_left(text, ident_start, floor=floor)
+    if qual_parts:
+        raw = "::".join(reversed(qual_parts)) + "::" + callee
+        return raw, "", qpos
+
+    # Object receiver: this->Method( / obj.Method( / Type::obj->Method(
+    op = ""
+    rpos = pos
+    if rpos - 2 >= floor and text[rpos - 2 : rpos] == "->":
+        op = "->"
+        rpos -= 2
+    elif rpos - 1 >= floor and text[rpos - 1] == ".":
+        op = "."
+        rpos -= 1
+    if not op:
+        return callee, "", name_start
+
+    ident, ident_start = _read_ident_left(text, rpos, floor=floor)
+    if not ident:
+        return callee, "", name_start
+    recv_parts = [ident]
+    rpos = _skip_ws_left(text, ident_start, floor=floor)
+    while rpos - 2 >= floor and text[rpos - 2 : rpos] == "::":
+        ident, ident_start = _read_ident_left(text, rpos - 2, floor=floor)
+        if not ident:
+            break
+        recv_parts.append(ident)
+        rpos = _skip_ws_left(text, ident_start, floor=floor)
+    receiver = "::".join(reversed(recv_parts)) + op
+    return callee, receiver, rpos
+
+
 def extract_call_sites(
     fn: FunctionDefinition,
     *,
@@ -632,21 +695,21 @@ def extract_call_sites(
     scan_base_line = fn.start_line + (body[: brace + 1].count("\n") if brace >= 0 else 0)
     out: list[CallSite] = []
     ordinal = 0
-    for match in _CALL_RE.finditer(scan):
-        callee_raw = (match.group("callee") or "").strip()
-        callee = callee_raw.split("::")[-1].strip()
+    for match in _CALL_OPEN_RE.finditer(scan):
+        callee = (match.group("callee") or "").strip()
         if not callee or callee.casefold() in noise_cf:
             continue
-        if callee == fn.name and not match.group("recv"):
+        callee_raw, recv, expr_start = _call_context(scan, match.start("callee"), callee)
+        if callee == fn.name and not recv:
             # Likely constructor-like / recursive — keep but mark hint
             pass
-        recv = (match.group("recv") or "").strip()
         targs = (match.group("targs") or "").strip()
         # Rough argument count: commas at depth 0 until matching ')'
         arg_count = _count_args(scan, match.end() - 1)
-        line_in_scan = _line_from_starts(scan_starts, match.start())
+        line_in_scan = _line_from_starts(scan_starts, expr_start)
         abs_line = scan_base_line + line_in_scan - 1
-        expr = match.group(0).rstrip("(").strip()
+        expr_head = callee_raw if "::" in callee_raw else f"{recv}{callee}"
+        expr = f"{expr_head}{targs}".strip()
         hint = ""
         if "::" in callee_raw:
             hint = callee_raw

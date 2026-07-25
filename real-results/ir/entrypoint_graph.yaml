@@ -1,0 +1,1029 @@
+version: 2
+op_name: flash_attention_score_grad
+architecture: arch35
+nodes:
+- id: EP_ENTRYPOINT_30A11DA1A2DCEF0C
+  role: concrete_kernel_impl
+  architecture: arch35
+  path_family: unknown
+  template_family: unknown
+  status: closed
+  name: FlashAttentionScoreGradKernel
+  symbol_ref:
+    identity_version: 3
+    kind: entrypoint
+    identity_key: 30A11DA1A2DCEF0C
+    stable_id: EP_ENTRYPOINT_30A11DA1A2DCEF0C
+    qualified_name: FlashAttentionScoreGradKernel::FlashAttentionScoreGradKernel
+    normalized_signature: __aicore__ inline void FlashAttentionScoreGradKernel<CubeBlockType,VecBlockType>::Process(){ if(this->tilingData-
+    class_or_namespace: FlashAttentionScoreGradKernel
+    template_arity_or_signature: CubeBlockType,VecBlockType
+    specialization_kind: instance
+    architecture: arch35
+    template_family: unknown
+    path_family: unknown
+    repo_relative_path: op_kernel/arch35/flash_attention_score_grad_kernel.h
+  locator:
+    file_path: op_kernel/arch35/flash_attention_score_grad_kernel.h
+    start_line: 39
+    end_line: 39
+    source_hash: ''
+    snippet_hash: 7a71fd24dcd2a1e4
+  confidence: 1.0
+- id: EP_ENTRYPOINT_4AE2A7A0AFE1EA7F
+  role: concrete_kernel_impl
+  architecture: arch35
+  path_family: unknown
+  template_family: unknown
+  status: closed
+  name: FlashAttentionScoreGradKernel
+  symbol_ref:
+    identity_version: 3
+    kind: entrypoint
+    identity_key: 4AE2A7A0AFE1EA7F
+    stable_id: EP_ENTRYPOINT_4AE2A7A0AFE1EA7F
+    qualified_name: op_kernel/arch35/flash_attention_score_grad_kernel.h::FlashAttentionScoreGradKernel
+    normalized_signature: 'class FlashAttentionScoreGradKernel : public FlashAttentionScoreGradKernelBase<FlashAttentionScoreGradKernel<CubeBlo'
+    class_or_namespace: op_kernel/arch35/flash_attention_score_grad_kernel.h
+    template_arity_or_signature: FlashAttentionScoreGradKernel<CubeBlockType,VecBlockType>,CubeBlockType,VecBlockType
+    specialization_kind: none
+    architecture: arch35
+    template_family: unknown
+    path_family: unknown
+    repo_relative_path: op_kernel/arch35/flash_attention_score_grad_kernel.h
+  locator:
+    file_path: op_kernel/arch35/flash_attention_score_grad_kernel.h
+    start_line: 28
+    end_line: 28
+    source_hash: ''
+    snippet_hash: 0e7e09ca7970eca3
+  confidence: 1.0
+- id: EP_ENTRYPOINT_5AA8A4CF489101C3
+  role: concrete_kernel_impl
+  architecture: arch35
+  path_family: unknown
+  template_family: unknown
+  status: closed
+  name: FlashAttentionScoreGradKernel
+  symbol_ref:
+    identity_version: 3
+    kind: entrypoint
+    identity_key: 5AA8A4CF489101C3
+    stable_id: EP_ENTRYPOINT_5AA8A4CF489101C3
+    qualified_name: op_kernel/arch35/flash_attention_score_grad_entry_regbase.h::FlashAttentionScoreGradKernel
+    normalized_signature: (DETER_SPARSE_TYPE)== NO_DETER,FagBaseApi::FlashAttentionScoreGradKernel<CubeBlockType,VecBlockType>,\
+    class_or_namespace: op_kernel/arch35/flash_attention_score_grad_entry_regbase.h
+    template_arity_or_signature: CubeBlockType,VecBlockType
+    specialization_kind: none
+    architecture: arch35
+    template_family: unknown
+    path_family: unknown
+    repo_relative_path: op_kernel/arch35/flash_attention_score_grad_entry_regbase.h
+  locator:
+    file_path: op_kernel/arch35/flash_attention_score_grad_entry_regbase.h
+    start_line: 85
+    end_line: 85
+    source_hash: ''
+    snippet_hash: 4442edd96f22f8f1
+  confidence: 1.0
+- id: EP_ENTRYPOINT_6E0460B4344C6250
+  role: concrete_kernel_impl
+  architecture: arch35
+  path_family: unknown
+  template_family: unknown
+  status: closed
+  name: FlashAttentionScoreGradKernel
+  symbol_ref:
+    identity_version: 3
+    kind: entrypoint
+    identity_key: 6E0460B4344C6250
+    stable_id: EP_ENTRYPOINT_6E0460B4344C6250
+    qualified_name: FlashAttentionScoreGradKernel::FlashAttentionScoreGradKernel
+    normalized_signature: ': public FlashAttentionScoreGradKernelBase<FlashAttentionScoreGradKernel<CubeBlockType,VecBlockType>,'
+    class_or_namespace: FlashAttentionScoreGradKernel
+    template_arity_or_signature: FlashAttentionScoreGradKernel<CubeBlockType,VecBlockType>,CubeBlockType,VecBlockType
+    specialization_kind: none
+    architecture: arch35
+    template_family: unknown
+    path_family: unknown
+    repo_relative_path: op_kernel/arch35/flash_attention_score_grad_kernel.h
+  locator:
+    file_path: op_kernel/arch35/flash_attention_score_grad_kernel.h
+    start_line: 29
+    end_line: 29
+    source_hash: ''
+    snippet_hash: eef31acf16674138
+  confidence: 1.0
+- id: EP_ENTRYPOINT_D6DD1F0882948036
+  role: concrete_kernel_impl
+  architecture: arch35
+  path_family: unknown
+  template_family: unknown
+  status: closed
+  name: FlashAttentionScoreGradKernel
+  symbol_ref:
+    identity_version: 3
+    kind: entrypoint
+    identity_key: D6DD1F0882948036
+    stable_id: EP_ENTRYPOINT_D6DD1F0882948036
+    qualified_name: FlashAttentionScoreGradKernel::FlashAttentionScoreGradKernel
+    normalized_signature: using BaseClass = FlashAttentionScoreGradKernelBase<FlashAttentionScoreGradKernel<CubeBlockType,VecBlockType>,
+    class_or_namespace: FlashAttentionScoreGradKernel
+    template_arity_or_signature: FlashAttentionScoreGradKernel<CubeBlockType,VecBlockType>,CubeBlockType,VecBlockType
+    specialization_kind: none
+    architecture: arch35
+    template_family: unknown
+    path_family: unknown
+    repo_relative_path: op_kernel/arch35/flash_attention_score_grad_kernel.h
+  locator:
+    file_path: op_kernel/arch35/flash_attention_score_grad_kernel.h
+    start_line: 33
+    end_line: 33
+    source_hash: ''
+    snippet_hash: 509282deb5cfd7c5
+  confidence: 1.0
+- id: EP_ENTRYPOINT_F667C23C917536D3
+  role: concrete_kernel_impl
+  architecture: arch35
+  path_family: unknown
+  template_family: unknown
+  status: closed
+  name: FlashAttentionScoreGradKernel
+  symbol_ref:
+    identity_version: 3
+    kind: entrypoint
+    identity_key: F667C23C917536D3
+    stable_id: EP_ENTRYPOINT_F667C23C917536D3
+    qualified_name: op_kernel/arch35/flash_attention_score_grad_entry_regbase.h::FlashAttentionScoreGradKernel
+    normalized_signature: FagBaseApi::FlashAttentionScoreGradKernel<CubeBlockType,VecBlockType> op; \
+    class_or_namespace: op_kernel/arch35/flash_attention_score_grad_entry_regbase.h
+    template_arity_or_signature: CubeBlockType,VecBlockType
+    specialization_kind: none
+    architecture: arch35
+    template_family: unknown
+    path_family: unknown
+    repo_relative_path: op_kernel/arch35/flash_attention_score_grad_entry_regbase.h
+  locator:
+    file_path: op_kernel/arch35/flash_attention_score_grad_entry_regbase.h
+    start_line: 165
+    end_line: 165
+    source_hash: ''
+    snippet_hash: 1022cb89125ef7d5
+  confidence: 1.0
+- id: EP_ENTRYPOINT_526F264F0DFE45E9
+  role: get_tiling_key
+  architecture: arch35
+  path_family: normal
+  template_family: normal
+  status: verified
+  name: GetTilingKey
+  symbol_ref:
+    identity_version: 3
+    kind: entrypoint
+    identity_key: 526F264F0DFE45E9
+    stable_id: EP_ENTRYPOINT_526F264F0DFE45E9
+    qualified_name: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::GetTilingKey
+    normalized_signature: uint64_t FlashAttentionScoreGradTilingNormalRegbase::GetTilingKey()const { auto attenMaskCfg = fBaseParams.attenMas
+    class_or_namespace: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    template_arity_or_signature: ''
+    specialization_kind: none
+    architecture: arch35
+    template_family: normal
+    path_family: normal
+    repo_relative_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  locator:
+    file_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    start_line: 1435
+    end_line: 1435
+    source_hash: ''
+    snippet_hash: cff30c2661452403
+  confidence: 1.0
+- id: EP_ENTRYPOINT_E6C37BA1BCEB84E7
+  role: get_tiling_key
+  architecture: arch35
+  path_family: normal
+  template_family: normal
+  status: verified
+  name: GetTilingKey
+  symbol_ref:
+    identity_version: 3
+    kind: entrypoint
+    identity_key: E6C37BA1BCEB84E7
+    stable_id: EP_ENTRYPOINT_E6C37BA1BCEB84E7
+    qualified_name: FlashAttentionScoreGradTilingNormalRegbase::GetTilingKey
+    normalized_signature: uint64_t GetTilingKey()const override; ge::graphStatus GetWorkspaceSize()override; ge::graphStatus
+      PostTiling(
+    class_or_namespace: FlashAttentionScoreGradTilingNormalRegbase
+    template_arity_or_signature: ''
+    specialization_kind: none
+    architecture: arch35
+    template_family: normal
+    path_family: normal
+    repo_relative_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.h
+  locator:
+    file_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.h
+    start_line: 77
+    end_line: 77
+    source_hash: ''
+    snippet_hash: c3b25b0dba378b83
+  confidence: 1.0
+- id: EP_ENTRYPOINT_008BAD82BEBBE208
+  role: init_tiling_data
+  architecture: arch35
+  path_family: normal
+  template_family: normal
+  status: verified
+  name: InitTilingData
+  symbol_ref:
+    identity_version: 3
+    kind: entrypoint
+    identity_key: 008BAD82BEBBE208
+    stable_id: EP_ENTRYPOINT_008BAD82BEBBE208
+    qualified_name: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::InitTilingData
+    normalized_signature: OP_LOGE("InitTilingData","InitTilingData failed."); return ge::GRAPH_FAILED; } return ge::GRAPH_SUCCESS
+    class_or_namespace: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    template_arity_or_signature: ''
+    specialization_kind: none
+    architecture: arch35
+    template_family: normal
+    path_family: normal
+    repo_relative_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  locator:
+    file_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    start_line: 1815
+    end_line: 1815
+    source_hash: ''
+    snippet_hash: 0bf057292d8ee159
+  confidence: 1.0
+- id: EP_ENTRYPOINT_7061290C3F1A3451
+  role: init_tiling_data
+  architecture: arch35
+  path_family: normal
+  template_family: normal
+  status: verified
+  name: InitTilingData
+  symbol_ref:
+    identity_version: 3
+    kind: entrypoint
+    identity_key: 7061290C3F1A3451
+    stable_id: EP_ENTRYPOINT_7061290C3F1A3451
+    qualified_name: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::InitTilingData
+    normalized_signature: OP_LOGE("InitTilingData","InitTilingData failed."); return ge::GRAPH_FAILED; } s1s2BNGS1S2B
+    class_or_namespace: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    template_arity_or_signature: ''
+    specialization_kind: none
+    architecture: arch35
+    template_family: normal
+    path_family: normal
+    repo_relative_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  locator:
+    file_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    start_line: 1785
+    end_line: 1785
+    source_hash: ''
+    snippet_hash: 40070582ca0ee7a6
+  confidence: 1.0
+- id: EP_ENTRYPOINT_BE973343EB6F2665
+  role: init_tiling_data
+  architecture: arch35
+  path_family: normal
+  template_family: normal
+  status: verified
+  name: InitTilingData
+  symbol_ref:
+    identity_version: 3
+    kind: entrypoint
+    identity_key: BE973343EB6F2665
+    stable_id: EP_ENTRYPOINT_BE973343EB6F2665
+    qualified_name: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::InitTilingData
+    normalized_signature: ge::graphStatus FlashAttentionScoreGradTilingNormalRegbase::InitTilingData(){ bool isTnd =(fBaseParams.layoutType
+    class_or_namespace: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    template_arity_or_signature: ''
+    specialization_kind: none
+    architecture: arch35
+    template_family: normal
+    path_family: normal
+    repo_relative_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  locator:
+    file_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    start_line: 1752
+    end_line: 1752
+    source_hash: ''
+    snippet_hash: 1e34b765654c9ffa
+  confidence: 1.0
+- id: EP_ENTRYPOINT_F208046BBF4E7B8A
+  role: init_tiling_data
+  architecture: arch35
+  path_family: normal
+  template_family: normal
+  status: verified
+  name: InitTilingData
+  symbol_ref:
+    identity_version: 3
+    kind: entrypoint
+    identity_key: F208046BBF4E7B8A
+    stable_id: EP_ENTRYPOINT_F208046BBF4E7B8A
+    qualified_name: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.h::InitTilingData
+    normalized_signature: OP_LOGE("InitTilingData","InitTilingData failed."); \ return ge::GRAPH_FAILED; \ } \ s1s2BN
+    class_or_namespace: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.h
+    template_arity_or_signature: ''
+    specialization_kind: none
+    architecture: arch35
+    template_family: normal
+    path_family: normal
+    repo_relative_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.h
+  locator:
+    file_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.h
+    start_line: 44
+    end_line: 44
+    source_hash: ''
+    snippet_hash: 84f2cde971ae3b02
+  confidence: 1.0
+- id: EP_ENTRYPOINT_F3BB0920172867B2
+  role: init_tiling_data
+  architecture: arch35
+  path_family: normal
+  template_family: normal
+  status: verified
+  name: InitTilingData
+  symbol_ref:
+    identity_version: 3
+    kind: entrypoint
+    identity_key: F3BB0920172867B2
+    stable_id: EP_ENTRYPOINT_F3BB0920172867B2
+    qualified_name: FlashAttentionScoreGradTilingNormalRegbase::InitTilingData
+    normalized_signature: ge::graphStatus InitTilingData(); void DoSplit(); ge::graphStatus DoSparse(); bool DoBn2s2Sparse();
+      uint
+    class_or_namespace: FlashAttentionScoreGradTilingNormalRegbase
+    template_arity_or_signature: ''
+    specialization_kind: none
+    architecture: arch35
+    template_family: normal
+    path_family: normal
+    repo_relative_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.h
+  locator:
+    file_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.h
+    start_line: 81
+    end_line: 81
+    source_hash: ''
+    snippet_hash: 1bfbe12e08e941db
+  confidence: 1.0
+- id: EP_ENTRYPOINT_F8A7A1BC7A159C16
+  role: init_tiling_data
+  architecture: arch35
+  path_family: normal
+  template_family: normal
+  status: verified
+  name: InitTilingData
+  symbol_ref:
+    identity_version: 3
+    kind: entrypoint
+    identity_key: F8A7A1BC7A159C16
+    stable_id: EP_ENTRYPOINT_F8A7A1BC7A159C16
+    qualified_name: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::InitTilingData
+    normalized_signature: ret = InitTilingData(); if(ret != ge::GRAPH_SUCCESS){ return ret; } DoPreTiling(); DoPostTilin
+    class_or_namespace: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    template_arity_or_signature: ''
+    specialization_kind: none
+    architecture: arch35
+    template_family: normal
+    path_family: normal
+    repo_relative_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  locator:
+    file_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    start_line: 468
+    end_line: 468
+    source_hash: ''
+    snippet_hash: e8296db8b3d76e28
+  confidence: 1.0
+- id: EP_ENTRYPOINT_60BCED05932EB067
+  role: normal_impl
+  architecture: arch35
+  path_family: normal
+  template_family: normal
+  status: verified
+  name: DoOpTiling
+  symbol_ref:
+    identity_version: 3
+    kind: entrypoint
+    identity_key: 60BCED05932EB067
+    stable_id: EP_ENTRYPOINT_60BCED05932EB067
+    qualified_name: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::DoOpTiling
+    normalized_signature: ge::graphStatus FlashAttentionScoreGradTilingNormalRegbase::DoOpTiling(){ SetSplitAxis(context_,fBaseParams);
+    class_or_namespace: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    template_arity_or_signature: ''
+    specialization_kind: none
+    architecture: arch35
+    template_family: normal
+    path_family: normal
+    repo_relative_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  locator:
+    file_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    start_line: 430
+    end_line: 430
+    source_hash: ''
+    snippet_hash: 31b5cc4360341c2d
+  confidence: 1.0
+- id: EP_ENTRYPOINT_C9BBBDAE0C19E0AC
+  role: normal_impl
+  architecture: arch35
+  path_family: normal
+  template_family: normal
+  status: verified
+  name: DoOpTiling
+  symbol_ref:
+    identity_version: 3
+    kind: entrypoint
+    identity_key: C9BBBDAE0C19E0AC
+    stable_id: EP_ENTRYPOINT_C9BBBDAE0C19E0AC
+    qualified_name: FlashAttentionScoreGradTilingNormalRegbase::DoOpTiling
+    normalized_signature: ge::graphStatus DoOpTiling()override; ge::graphStatus DoLibApiTiling()override; uint64_t GetTilingKey()const
+    class_or_namespace: FlashAttentionScoreGradTilingNormalRegbase
+    template_arity_or_signature: ''
+    specialization_kind: none
+    architecture: arch35
+    template_family: normal
+    path_family: normal
+    repo_relative_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.h
+  locator:
+    file_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.h
+    start_line: 75
+    end_line: 75
+    source_hash: ''
+    snippet_hash: 3c7cb89c1e4652ef
+  confidence: 1.0
+- id: EP_TILING_TEMPLATE_B8411E8B0FF006A0
+  role: normal_impl
+  architecture: arch35
+  path_family: normal
+  template_family: normal
+  status: closed
+  name: FlashAttentionScoreGradTilingNormalRegbase
+  symbol_ref:
+    identity_version: 3
+    kind: tiling_template
+    identity_key: B8411E8B0FF006A0
+    stable_id: EP_TILING_TEMPLATE_B8411E8B0FF006A0
+    qualified_name: REGISTER_TILING_TEMPLATE::FlashAttentionScoreGradTilingNormalRegbase
+    normalized_signature: ''
+    class_or_namespace: FlashAttentionScoreGradTilingNormalRegbase
+    template_arity_or_signature: ''
+    specialization_kind: none
+    architecture: arch35
+    template_family: normal
+    path_family: normal
+    repo_relative_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  locator:
+    file_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    start_line: 1930
+    end_line: 1930
+    source_hash: ''
+    snippet_hash: 7f09314c2be697dc
+  macro: REGISTER_TILING_TEMPLATE
+  op_type: FlashAttentionScoreGrad
+- id: EP_REGISTRATION_464194BE50FC6317
+  role: operator_registration
+  architecture: neutral
+  path_family: shared
+  template_family: shared
+  status: closed
+  name: FlashAttentionScoreGrad
+  symbol_ref:
+    identity_version: 3
+    kind: registration
+    identity_key: 464194BE50FC6317
+    stable_id: EP_REGISTRATION_464194BE50FC6317
+    qualified_name: REG_OP::FlashAttentionScoreGrad
+    normalized_signature: ''
+    class_or_namespace: ''
+    template_arity_or_signature: ''
+    specialization_kind: none
+    architecture: neutral
+    template_family: unknown
+    path_family: shared
+    repo_relative_path: op_graph/flash_attention_score_grad_proto.h
+  locator:
+    file_path: op_graph/flash_attention_score_grad_proto.h
+    start_line: 86
+    end_line: 86
+    source_hash: ''
+    snippet_hash: 9ba25ac427d8e454
+  macro: REG_OP
+  verification_source: source
+- id: EP_REGISTRATION_07AC433527F3382B
+  role: public_host_entry
+  architecture: neutral
+  path_family: shared
+  template_family: shared
+  status: closed
+  name: FlashAttentionScoreGrad
+  symbol_ref:
+    identity_version: 3
+    kind: registration
+    identity_key: 07AC433527F3382B
+    stable_id: EP_REGISTRATION_07AC433527F3382B
+    qualified_name: IMPL_OP_OPTILING::FlashAttentionScoreGrad
+    normalized_signature: ''
+    class_or_namespace: ''
+    template_arity_or_signature: ''
+    specialization_kind: none
+    architecture: neutral
+    template_family: unknown
+    path_family: shared
+    repo_relative_path: op_host/flash_attention_score_grad_tiling.cpp
+  locator:
+    file_path: op_host/flash_attention_score_grad_tiling.cpp
+    start_line: 467
+    end_line: 467
+    source_hash: ''
+    snippet_hash: d62eab7e3f2df594
+  macro: IMPL_OP_OPTILING
+  verification_source: source
+- id: EP_TILING_FN_48964739D7F16BE9
+  role: public_host_entry
+  architecture: neutral
+  path_family: shared
+  template_family: shared
+  status: closed
+  name: TilingFlashAttentionGradScore
+  symbol_ref:
+    identity_version: 3
+    kind: tiling_fn
+    identity_key: 48964739D7F16BE9
+    stable_id: EP_TILING_FN_48964739D7F16BE9
+    qualified_name: IMPL_OP_OPTILING.Tiling::TilingFlashAttentionGradScore
+    normalized_signature: ''
+    class_or_namespace: ''
+    template_arity_or_signature: ''
+    specialization_kind: none
+    architecture: neutral
+    template_family: unknown
+    path_family: shared
+    repo_relative_path: op_host/flash_attention_score_grad_tiling.cpp
+  locator:
+    file_path: op_host/flash_attention_score_grad_tiling.cpp
+    start_line: 467
+    end_line: 467
+    source_hash: ''
+    snippet_hash: 1ea00b1cc2c9180c
+  macro: IMPL_OP_OPTILING.Tiling
+  verification_source: source
+  callable_kind: tiling_fn
+- id: EP_ENTRYPOINT_2D93EE6BF6337174
+  role: save_tiling_data
+  architecture: arch35
+  path_family: normal
+  template_family: normal
+  status: verified
+  name: SaveToTilingData
+  symbol_ref:
+    identity_version: 3
+    kind: entrypoint
+    identity_key: 2D93EE6BF6337174
+    stable_id: EP_ENTRYPOINT_2D93EE6BF6337174
+    qualified_name: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::SaveToTilingData
+    normalized_signature: 'SaveToTilingData(); auto numBlocks = 0; if(fBaseParams.isDeterministic ||(fBaseParams.queryType
+      == ge:'
+    class_or_namespace: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    template_arity_or_signature: ''
+    specialization_kind: none
+    architecture: arch35
+    template_family: normal
+    path_family: normal
+    repo_relative_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  locator:
+    file_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    start_line: 1485
+    end_line: 1485
+    source_hash: ''
+    snippet_hash: 9662a5aadd349276
+  confidence: 1.0
+- id: EP_ENTRYPOINT_61D4FB2868D6E999
+  role: save_tiling_data
+  architecture: arch35
+  path_family: normal
+  template_family: normal
+  status: verified
+  name: SaveToTilingData
+  symbol_ref:
+    identity_version: 3
+    kind: entrypoint
+    identity_key: 61D4FB2868D6E999
+    stable_id: EP_ENTRYPOINT_61D4FB2868D6E999
+    qualified_name: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::SaveToTilingData
+    normalized_signature: ge::graphStatus FlashAttentionScoreGradTilingNormalRegbase::SaveToTilingData(){ s1s2BNGS1S2BaseParams_->set_coreNum
+    class_or_namespace: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    template_arity_or_signature: ''
+    specialization_kind: none
+    architecture: arch35
+    template_family: normal
+    path_family: normal
+    repo_relative_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  locator:
+    file_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    start_line: 1821
+    end_line: 1821
+    source_hash: ''
+    snippet_hash: 4ecb831712cf1ef0
+  confidence: 1.0
+- id: EP_ENTRYPOINT_91AB420955FC4C7B
+  role: save_tiling_data
+  architecture: arch35
+  path_family: normal
+  template_family: normal
+  status: verified
+  name: SaveToTilingData
+  symbol_ref:
+    identity_version: 3
+    kind: entrypoint
+    identity_key: 91AB420955FC4C7B
+    stable_id: EP_ENTRYPOINT_91AB420955FC4C7B
+    qualified_name: FlashAttentionScoreGradTilingNormalRegbase::SaveToTilingData
+    normalized_signature: ge::graphStatus SaveToTilingData(); ge::graphStatus GetSparsePrefixBlockInfo(); virtual ge::graphStatus
+      GetSpars
+    class_or_namespace: FlashAttentionScoreGradTilingNormalRegbase
+    template_arity_or_signature: ''
+    specialization_kind: none
+    architecture: arch35
+    template_family: normal
+    path_family: normal
+    repo_relative_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.h
+  locator:
+    file_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.h
+    start_line: 100
+    end_line: 100
+    source_hash: ''
+    snippet_hash: de1207924b63853b
+  confidence: 1.0
+- id: EP_TILING_REGISTRY_05575E5E6EB0C0B7
+  role: tiling_registry
+  architecture: arch35
+  path_family: varlen
+  template_family: varlen
+  status: closed
+  name: flash_attention_score_grad_tiling_varlen_regbase
+  symbol_ref:
+    identity_version: 3
+    kind: tiling_registry
+    identity_key: 05575E5E6EB0C0B7
+    stable_id: EP_TILING_REGISTRY_05575E5E6EB0C0B7
+    qualified_name: op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp::tiling_registry
+    normalized_signature: ''
+    class_or_namespace: ''
+    template_arity_or_signature: ''
+    specialization_kind: none
+    architecture: arch35
+    template_family: unknown
+    path_family: varlen
+    repo_relative_path: op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp
+  locator:
+    file_path: op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp
+    start_line: 1415
+    end_line: 1415
+    source_hash: ''
+    snippet_hash: ''
+- id: EP_TILING_REGISTRY_F84A0840012F9749
+  role: tiling_registry
+  architecture: arch35
+  path_family: normal
+  template_family: normal
+  status: closed
+  name: flash_attention_score_grad_tiling_normal_regbase
+  symbol_ref:
+    identity_version: 3
+    kind: tiling_registry
+    identity_key: F84A0840012F9749
+    stable_id: EP_TILING_REGISTRY_F84A0840012F9749
+    qualified_name: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::tiling_registry
+    normalized_signature: ''
+    class_or_namespace: ''
+    template_arity_or_signature: ''
+    specialization_kind: none
+    architecture: arch35
+    template_family: unknown
+    path_family: normal
+    repo_relative_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  locator:
+    file_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    start_line: 1930
+    end_line: 1930
+    source_hash: ''
+    snippet_hash: ''
+- id: EP_TILING_TEMPLATE_030DA80CEF676546
+  role: varlen_impl
+  architecture: arch35
+  path_family: varlen
+  template_family: varlen
+  status: closed
+  name: FlashAttentionScoreGradTilingVarlenRegbase
+  symbol_ref:
+    identity_version: 3
+    kind: tiling_template
+    identity_key: 030DA80CEF676546
+    stable_id: EP_TILING_TEMPLATE_030DA80CEF676546
+    qualified_name: REGISTER_TILING_TEMPLATE::FlashAttentionScoreGradTilingVarlenRegbase
+    normalized_signature: ''
+    class_or_namespace: FlashAttentionScoreGradTilingVarlenRegbase
+    template_arity_or_signature: ''
+    specialization_kind: none
+    architecture: arch35
+    template_family: varlen
+    path_family: varlen
+    repo_relative_path: op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp
+  locator:
+    file_path: op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp
+    start_line: 1415
+    end_line: 1415
+    source_hash: ''
+    snippet_hash: a5d43d9b26fb9b5c
+  macro: REGISTER_TILING_TEMPLATE
+  op_type: FlashAttentionScoreGrad
+edges:
+- id: EDGE_AFBD06B14D2985DC
+  type: registers
+  source: EP_TILING_REGISTRY_F84A0840012F9749
+  target: EP_TILING_TEMPLATE_B8411E8B0FF006A0
+  evidence:
+  - file_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    line: 1930
+    macro: REGISTER_TILING_TEMPLATE
+  confidence: source_verified
+  verification_source: source
+- id: EDGE_A99F5E78D57F8BD2
+  type: registers
+  source: EP_TILING_REGISTRY_05575E5E6EB0C0B7
+  target: EP_TILING_TEMPLATE_030DA80CEF676546
+  evidence:
+  - file_path: op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp
+    line: 1415
+    macro: REGISTER_TILING_TEMPLATE
+  confidence: source_verified
+  verification_source: source
+- id: EDGE_85A77BA0D434C9A8
+  type: registers
+  source: EP_REGISTRATION_464194BE50FC6317
+  target: EP_REGISTRATION_07AC433527F3382B
+  evidence:
+  - file_path: op_host/flash_attention_score_grad_tiling.cpp
+    line: 467
+    macro: IMPL_OP_OPTILING
+    op_name: FlashAttentionScoreGrad
+    reason: reg_op_to_impl_op_name_match
+    reg_file_path: op_graph/flash_attention_score_grad_proto.h
+    reg_line: 86
+  confidence: source_verified
+  verification_source: source
+- id: EDGE_FAFC1BAD3163C5D5
+  type: dispatches_to
+  source: EP_REGISTRATION_07AC433527F3382B
+  target: EP_TILING_FN_48964739D7F16BE9
+  evidence:
+  - file_path: op_host/flash_attention_score_grad_tiling.cpp
+    line: 467
+    macro: IMPL_OP_OPTILING.Tiling
+    reason: fluent_tiling
+    callable_kind: tiling_fn
+    evidence_reason: function_decl
+  confidence: source_verified
+  verification_source: source
+- id: EDGE_20B20AB7412B977D
+  type: registers
+  source: EP_REGISTRATION_07AC433527F3382B
+  target: EP_TILING_FN_48964739D7F16BE9
+  evidence:
+  - file_path: op_host/flash_attention_score_grad_tiling.cpp
+    line: 467
+    macro: IMPL_OP_OPTILING.Tiling
+    reason: fluent_tiling
+    callable_kind: tiling_fn
+    evidence_reason: function_decl
+  confidence: source_verified
+  verification_source: source
+- id: EDGE_F452DE77E5759CB3
+  type: dispatches_to
+  source: EP_REGISTRATION_07AC433527F3382B
+  target: EP_TILING_REGISTRY_F84A0840012F9749
+  target_status: resolved
+  evidence:
+  - reason: public_host_to_registry
+  confidence: candidate
+- id: EDGE_BA603F812DC9BD38
+  type: dispatches_to
+  source: EP_REGISTRATION_07AC433527F3382B
+  target: EP_TILING_REGISTRY_05575E5E6EB0C0B7
+  target_status: resolved
+  evidence:
+  - reason: public_host_to_registry
+  confidence: candidate
+- id: EDGE_8261053D0D07A0EE
+  type: selects
+  source: EP_REGISTRATION_07AC433527F3382B
+  target_status: candidate_set
+  candidate_ids:
+  - EP_ENTRYPOINT_60BCED05932EB067
+  - EP_ENTRYPOINT_C9BBBDAE0C19E0AC
+  - EP_TILING_TEMPLATE_B8411E8B0FF006A0
+  unresolved_reason: multiple_impl_candidates_same_path_family
+  evidence:
+  - reason: host_to_impl_ambiguous
+    path_family: normal
+  confidence: candidate
+- id: EDGE_3AD9135DEFE2E7E1
+  type: selects
+  source: EP_REGISTRATION_07AC433527F3382B
+  target: EP_TILING_TEMPLATE_030DA80CEF676546
+  target_status: resolved
+  evidence:
+  - reason: host_to_impl_candidate
+    path_family: varlen
+  confidence: candidate
+- id: EDGE_5FC686AFA2786C74
+  type: dispatches_to
+  source: EP_TILING_FN_48964739D7F16BE9
+  target: EP_TILING_REGISTRY_F84A0840012F9749
+  target_status: resolved
+  evidence:
+  - reason: public_host_to_registry
+  confidence: candidate
+- id: EDGE_146939FDF76B6E27
+  type: dispatches_to
+  source: EP_TILING_FN_48964739D7F16BE9
+  target: EP_TILING_REGISTRY_05575E5E6EB0C0B7
+  target_status: resolved
+  evidence:
+  - reason: public_host_to_registry
+  confidence: candidate
+- id: EDGE_9124E06D01D9C620
+  type: selects
+  source: EP_TILING_FN_48964739D7F16BE9
+  target_status: candidate_set
+  candidate_ids:
+  - EP_ENTRYPOINT_60BCED05932EB067
+  - EP_ENTRYPOINT_C9BBBDAE0C19E0AC
+  - EP_TILING_TEMPLATE_B8411E8B0FF006A0
+  unresolved_reason: multiple_impl_candidates_same_path_family
+  evidence:
+  - reason: host_to_impl_ambiguous
+    path_family: normal
+  confidence: candidate
+- id: EDGE_D6DE8A9129A0B9C8
+  type: selects
+  source: EP_TILING_FN_48964739D7F16BE9
+  target: EP_TILING_TEMPLATE_030DA80CEF676546
+  target_status: resolved
+  evidence:
+  - reason: host_to_impl_candidate
+    path_family: varlen
+  confidence: candidate
+- id: EDGE_CE3D3770EB1BCF13
+  type: instantiates
+  source: EP_REGISTRATION_07AC433527F3382B
+  target: EP_TILING_TEMPLATE_B8411E8B0FF006A0
+  target_status: resolved_candidate
+  evidence:
+  - file_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    line: 1930
+    reason: host_template_name_rank
+    macro: REGISTER_TILING_TEMPLATE
+  confidence: candidate
+  verification_source: heuristic
+- id: EDGE_1A7E75939870EF48
+  type: instantiates
+  source: EP_REGISTRATION_07AC433527F3382B
+  target: EP_TILING_TEMPLATE_030DA80CEF676546
+  target_status: resolved_candidate
+  evidence:
+  - file_path: op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp
+    line: 1415
+    reason: host_template_name_rank
+    macro: REGISTER_TILING_TEMPLATE
+  confidence: candidate
+  verification_source: heuristic
+roots:
+- EP_REGISTRATION_464194BE50FC6317
+- EP_REGISTRATION_07AC433527F3382B
+- EP_TILING_FN_48964739D7F16BE9
+extraction_units:
+- id: UNIT_C2E924C79ED56A96
+  architecture: arch35
+  path_family: normal
+  template_family: normal
+  entry_root: EP_ENTRYPOINT_60BCED05932EB067
+  member_nodes:
+  - EP_ENTRYPOINT_60BCED05932EB067
+- id: UNIT_DD35E33AA4564C57
+  architecture: arch35
+  path_family: normal
+  template_family: normal
+  entry_root: EP_ENTRYPOINT_C9BBBDAE0C19E0AC
+  member_nodes:
+  - EP_ENTRYPOINT_C9BBBDAE0C19E0AC
+- id: UNIT_5D5642AAADE06FA4
+  architecture: arch35
+  path_family: unknown
+  template_family: unknown
+  entry_root: EP_ENTRYPOINT_5AA8A4CF489101C3
+  member_nodes:
+  - EP_ENTRYPOINT_5AA8A4CF489101C3
+- id: UNIT_05B6BFB52F0A2804
+  architecture: arch35
+  path_family: unknown
+  template_family: unknown
+  entry_root: EP_ENTRYPOINT_F667C23C917536D3
+  member_nodes:
+  - EP_ENTRYPOINT_F667C23C917536D3
+- id: UNIT_1092BE7348266795
+  architecture: arch35
+  path_family: unknown
+  template_family: unknown
+  entry_root: EP_ENTRYPOINT_4AE2A7A0AFE1EA7F
+  member_nodes:
+  - EP_ENTRYPOINT_4AE2A7A0AFE1EA7F
+- id: UNIT_823E0F36BBA0D813
+  architecture: arch35
+  path_family: unknown
+  template_family: unknown
+  entry_root: EP_ENTRYPOINT_6E0460B4344C6250
+  member_nodes:
+  - EP_ENTRYPOINT_6E0460B4344C6250
+- id: UNIT_D8555002C6B81A92
+  architecture: arch35
+  path_family: unknown
+  template_family: unknown
+  entry_root: EP_ENTRYPOINT_D6DD1F0882948036
+  member_nodes:
+  - EP_ENTRYPOINT_D6DD1F0882948036
+- id: UNIT_5CAEF58CDCDF8741
+  architecture: arch35
+  path_family: unknown
+  template_family: unknown
+  entry_root: EP_ENTRYPOINT_30A11DA1A2DCEF0C
+  member_nodes:
+  - EP_ENTRYPOINT_30A11DA1A2DCEF0C
+- id: UNIT_893BF9208C2A7B9A
+  architecture: arch35
+  path_family: normal
+  template_family: normal
+  entry_root: EP_TILING_TEMPLATE_B8411E8B0FF006A0
+  member_nodes:
+  - EP_REGISTRATION_07AC433527F3382B
+  - EP_TILING_REGISTRY_F84A0840012F9749
+  - EP_TILING_TEMPLATE_B8411E8B0FF006A0
+- id: UNIT_5774E07F61F512C8
+  architecture: arch35
+  path_family: varlen
+  template_family: varlen
+  entry_root: EP_TILING_TEMPLATE_030DA80CEF676546
+  member_nodes:
+  - EP_REGISTRATION_07AC433527F3382B
+  - EP_TILING_FN_48964739D7F16BE9
+  - EP_TILING_REGISTRY_05575E5E6EB0C0B7
+  - EP_TILING_TEMPLATE_030DA80CEF676546
+- id: UNIT_264F737B2A5CD6B3
+  architecture: arch35
+  path_family: shared
+  template_family: shared
+  entry_root: EP_REGISTRATION_07AC433527F3382B
+  member_nodes:
+  - EP_REGISTRATION_07AC433527F3382B
+  - EP_REGISTRATION_464194BE50FC6317
+  - EP_TILING_FN_48964739D7F16BE9
+  - EP_TILING_REGISTRY_05575E5E6EB0C0B7
+  - EP_TILING_REGISTRY_F84A0840012F9749
+  - EP_TILING_TEMPLATE_030DA80CEF676546
+  - EP_TILING_TEMPLATE_B8411E8B0FF006A0
+  - None
+- id: UNIT_51A54A57BE9B01CA
+  architecture: arch35
+  path_family: shared
+  template_family: shared
+  entry_root: EP_TILING_FN_48964739D7F16BE9
+  member_nodes:
+  - EP_REGISTRATION_07AC433527F3382B
+  - EP_TILING_FN_48964739D7F16BE9
+  - EP_TILING_REGISTRY_05575E5E6EB0C0B7
+  - EP_TILING_REGISTRY_F84A0840012F9749
+  - EP_TILING_TEMPLATE_030DA80CEF676546
+  - None
+closure:
+  host_main_chain: closed
+  kernel_main_chain: closed
+  blocking_unresolved: []
+  closed: true
+tiling_templates:
+- op_type: FlashAttentionScoreGrad
+  template_class: FlashAttentionScoreGradTilingNormalRegbase
+  file_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  line: 1930
+  architecture_hint: arch35
+  path_family: normal
+  node_id: EP_TILING_TEMPLATE_B8411E8B0FF006A0
+- op_type: FlashAttentionScoreGrad
+  template_class: FlashAttentionScoreGradTilingVarlenRegbase
+  file_path: op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp
+  line: 1415
+  architecture_hint: arch35
+  path_family: varlen
+  node_id: EP_TILING_TEMPLATE_030DA80CEF676546
+cbm_available: false
+cbm_project: ''

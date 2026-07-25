@@ -1,0 +1,226 @@
+version: 1
+status: open
+gaps:
+- id: IDGAP_KEY_DETERTYPE
+  target: KEY_DETERTYPE
+  gap_kind: chain_incomplete
+  status: unresolved
+  confidence: low
+  reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+  evidence: []
+  host_parent: null
+  tried_frontier:
+  - KEY_DETERTYPE
+- id: IDGAP_KEY_DTEMPLATENUM
+  target: KEY_DTEMPLATENUM
+  gap_kind: chain_incomplete
+  status: unresolved
+  confidence: low
+  reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+  evidence: []
+  host_parent: null
+  tried_frontier:
+  - KEY_DTEMPLATENUM
+- id: IDGAP_KEY_INPUTDTYPE
+  target: KEY_INPUTDTYPE
+  gap_kind: chain_incomplete
+  status: unresolved
+  confidence: low
+  reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+  evidence: []
+  host_parent: null
+  tried_frontier:
+  - KEY_INPUTDTYPE
+- id: IDGAP_KEY_ISATTENMASK
+  target: KEY_ISATTENMASK
+  gap_kind: chain_incomplete
+  status: unresolved
+  confidence: low
+  reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+  evidence: []
+  host_parent: null
+  tried_frontier:
+  - KEY_ISATTENMASK
+- id: IDGAP_KEY_ISBN2MULTIBLK
+  target: KEY_ISBN2MULTIBLK
+  gap_kind: chain_incomplete
+  status: unresolved
+  confidence: low
+  reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+  evidence: []
+  host_parent: null
+  tried_frontier:
+  - KEY_ISBN2MULTIBLK
+- id: IDGAP_KEY_ISDNOEQUAL
+  target: KEY_ISDNOEQUAL
+  gap_kind: chain_incomplete
+  status: unresolved
+  confidence: low
+  reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+  evidence: []
+  host_parent: null
+  tried_frontier:
+  - KEY_ISDNOEQUAL
+- id: IDGAP_KEY_ISDROP
+  target: KEY_ISDROP
+  gap_kind: chain_incomplete
+  status: unresolved
+  confidence: low
+  reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+  evidence: []
+  host_parent: null
+  tried_frontier:
+  - KEY_ISDROP
+- id: IDGAP_KEY_ISEMPTYTENSOR
+  target: KEY_ISEMPTYTENSOR
+  gap_kind: chain_incomplete
+  status: unresolved
+  confidence: low
+  reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+  evidence: []
+  host_parent: null
+  tried_frontier:
+  - KEY_ISEMPTYTENSOR
+- id: IDGAP_KEY_ISNEQUAL
+  target: KEY_ISNEQUAL
+  gap_kind: chain_incomplete
+  status: unresolved
+  confidence: low
+  reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+  evidence: []
+  host_parent: null
+  tried_frontier:
+  - KEY_ISNEQUAL
+- id: IDGAP_KEY_ISNZOUT
+  target: KEY_ISNZOUT
+  gap_kind: chain_incomplete
+  status: unresolved
+  confidence: low
+  reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+  evidence: []
+  host_parent: null
+  tried_frontier:
+  - KEY_ISNZOUT
+- id: IDGAP_KEY_ISPSE
+  target: KEY_ISPSE
+  gap_kind: chain_incomplete
+  status: unresolved
+  confidence: low
+  reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+  evidence: []
+  host_parent: null
+  tried_frontier:
+  - KEY_ISPSE
+- id: IDGAP_KEY_ISREGBASE
+  target: KEY_ISREGBASE
+  gap_kind: chain_incomplete
+  status: unresolved
+  confidence: low
+  reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+  evidence: []
+  host_parent: null
+  tried_frontier:
+  - KEY_ISREGBASE
+- id: IDGAP_KEY_ISROPE
+  target: KEY_ISROPE
+  gap_kind: chain_incomplete
+  status: unresolved
+  confidence: low
+  reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+  evidence: []
+  host_parent: null
+  tried_frontier:
+  - KEY_ISROPE
+- id: IDGAP_KEY_ISTND
+  target: KEY_ISTND
+  gap_kind: chain_incomplete
+  status: unresolved
+  confidence: low
+  reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+  evidence: []
+  host_parent: null
+  tried_frontier:
+  - KEY_ISTND
+- id: IDGAP_KEY_ISTNDSWIZZLE
+  target: KEY_ISTNDSWIZZLE
+  gap_kind: chain_incomplete
+  status: unresolved
+  confidence: low
+  reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+  evidence: []
+  host_parent: null
+  tried_frontier:
+  - KEY_ISTNDSWIZZLE
+- id: IDGAP_KEY_OUTDTYPE
+  target: KEY_OUTDTYPE
+  gap_kind: chain_incomplete
+  status: unresolved
+  confidence: low
+  reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+  evidence: []
+  host_parent: null
+  tried_frontier:
+  - KEY_OUTDTYPE
+- id: IDGAP_KEY_S1TEMPLATENUM
+  target: KEY_S1TEMPLATENUM
+  gap_kind: chain_incomplete
+  status: unresolved
+  confidence: low
+  reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+  evidence: []
+  host_parent: null
+  tried_frontier:
+  - KEY_S1TEMPLATENUM
+- id: IDGAP_KEY_S2TEMPLATENUM
+  target: KEY_S2TEMPLATENUM
+  gap_kind: chain_incomplete
+  status: unresolved
+  confidence: low
+  reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+  evidence: []
+  host_parent: null
+  tried_frontier:
+  - KEY_S2TEMPLATENUM
+- id: IDGAP_KEY_SPLITAXIS
+  target: KEY_SPLITAXIS
+  gap_kind: chain_incomplete
+  status: unresolved
+  confidence: low
+  reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+  evidence: []
+  host_parent: null
+  tried_frontier:
+  - KEY_SPLITAXIS
+- id: IDGAP_KEY_TILINGKEY
+  target: KEY_TILINGKEY
+  gap_kind: missing_edge
+  status: unresolved
+  confidence: low
+  reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+  evidence: []
+  host_parent: HOST_BR_INITTILINGDATA_9
+  tried_frontier:
+  - KEY_TILINGKEY
+  - HOST_BR_INITTILINGDATA_9
+  - HOST_BR_DOPOSTTILING_0
+  - HOST_PRED_INITTILINGDATA_9
+  - HOST_PRED_DOPOSTTILING_0
+  - HOST_HELPER_77D6B841D6543F48
+  - HOST_HELPER_3990AD9F26DAF19B
+  - HOST_BR_SAVETOTILINGDATA_6
+  - HOST_BR_DOPRETILING_2
+  - HOST_PRED_SAVETOTILINGDATA_6
+  - HOST_PRED_DOPRETILING_2
+  - HOST_HELPER_89B64E24113F44AA
+  - HOST_HELPER_0D9C60D69E34A568
+  - HOST_BR_TILINGFLASHATTENTIONGRADSCORE_3
+  - HOST_PLAT_AICNUM
+  - HOST_PLAT_CORENUM
+  - HOST_BR_RUNEMPTYTILING_4
+  - HOST_PLAT_UBSIZE
+  - HOST_PRED_TILINGFLASHATTENTIONGRADSCORE_3
+  - HOST_PRED_RUNEMPTYTILING_4
+  - HOST_HELPER_486207B96E33E072
+  - HOST_HELPER_199725B923E369AF
+  - HOST_BR_DOOPTILING_1
+  - HOST_BR_RUNEMPTYTILINGREGBASE_6

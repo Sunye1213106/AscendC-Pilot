@@ -1,0 +1,328 @@
+version: 1
+op_name: flash_attention_score_grad
+keys:
+  KEY_DETERTYPE:
+    input_derivable: unsolved
+    confidence: low
+    needs_binding: true
+    not_input_derivable: false
+    host_parent: null
+    host_parent_evidence: ''
+    derivation_roots: []
+    gap_kind: chain_incomplete
+    reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+    tried_frontier:
+    - KEY_DETERTYPE
+    gap_ref: IDGAP_KEY_DETERTYPE
+  KEY_DTEMPLATENUM:
+    input_derivable: unsolved
+    confidence: low
+    needs_binding: true
+    not_input_derivable: false
+    host_parent: null
+    host_parent_evidence: ''
+    derivation_roots: []
+    gap_kind: chain_incomplete
+    reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+    tried_frontier:
+    - KEY_DTEMPLATENUM
+    gap_ref: IDGAP_KEY_DTEMPLATENUM
+  KEY_INPUTDTYPE:
+    input_derivable: unsolved
+    confidence: low
+    needs_binding: true
+    not_input_derivable: false
+    host_parent: null
+    host_parent_evidence: ''
+    derivation_roots: []
+    gap_kind: chain_incomplete
+    reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+    tried_frontier:
+    - KEY_INPUTDTYPE
+    gap_ref: IDGAP_KEY_INPUTDTYPE
+  KEY_ISATTENMASK:
+    input_derivable: unsolved
+    confidence: low
+    needs_binding: true
+    not_input_derivable: false
+    host_parent: null
+    host_parent_evidence: ''
+    derivation_roots: []
+    gap_kind: chain_incomplete
+    reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+    tried_frontier:
+    - KEY_ISATTENMASK
+    gap_ref: IDGAP_KEY_ISATTENMASK
+  KEY_ISBN2MULTIBLK:
+    input_derivable: unsolved
+    confidence: low
+    needs_binding: true
+    not_input_derivable: false
+    host_parent: null
+    host_parent_evidence: ''
+    derivation_roots: []
+    gap_kind: chain_incomplete
+    reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+    tried_frontier:
+    - KEY_ISBN2MULTIBLK
+    gap_ref: IDGAP_KEY_ISBN2MULTIBLK
+  KEY_ISDNOEQUAL:
+    input_derivable: unsolved
+    confidence: low
+    needs_binding: true
+    not_input_derivable: false
+    host_parent: null
+    host_parent_evidence: ''
+    derivation_roots: []
+    gap_kind: chain_incomplete
+    reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+    tried_frontier:
+    - KEY_ISDNOEQUAL
+    gap_ref: IDGAP_KEY_ISDNOEQUAL
+  KEY_ISDROP:
+    input_derivable: unsolved
+    confidence: low
+    needs_binding: true
+    not_input_derivable: false
+    host_parent: null
+    host_parent_evidence: ''
+    derivation_roots: []
+    gap_kind: chain_incomplete
+    reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+    tried_frontier:
+    - KEY_ISDROP
+    gap_ref: IDGAP_KEY_ISDROP
+  KEY_ISEMPTYTENSOR:
+    input_derivable: unsolved
+    confidence: low
+    needs_binding: true
+    not_input_derivable: false
+    host_parent: null
+    host_parent_evidence: ''
+    derivation_roots: []
+    gap_kind: chain_incomplete
+    reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+    tried_frontier:
+    - KEY_ISEMPTYTENSOR
+    gap_ref: IDGAP_KEY_ISEMPTYTENSOR
+  KEY_ISNEQUAL:
+    input_derivable: unsolved
+    confidence: low
+    needs_binding: true
+    not_input_derivable: false
+    host_parent: null
+    host_parent_evidence: ''
+    derivation_roots: []
+    gap_kind: chain_incomplete
+    reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+    tried_frontier:
+    - KEY_ISNEQUAL
+    gap_ref: IDGAP_KEY_ISNEQUAL
+  KEY_ISNZOUT:
+    input_derivable: unsolved
+    confidence: low
+    needs_binding: true
+    not_input_derivable: false
+    host_parent: null
+    host_parent_evidence: ''
+    derivation_roots: []
+    gap_kind: chain_incomplete
+    reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+    tried_frontier:
+    - KEY_ISNZOUT
+    gap_ref: IDGAP_KEY_ISNZOUT
+  KEY_ISPSE:
+    input_derivable: unsolved
+    confidence: low
+    needs_binding: true
+    not_input_derivable: false
+    host_parent: null
+    host_parent_evidence: ''
+    derivation_roots: []
+    gap_kind: chain_incomplete
+    reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+    tried_frontier:
+    - KEY_ISPSE
+    gap_ref: IDGAP_KEY_ISPSE
+  KEY_ISREGBASE:
+    input_derivable: unsolved
+    confidence: low
+    needs_binding: true
+    not_input_derivable: false
+    host_parent: null
+    host_parent_evidence: ''
+    derivation_roots: []
+    gap_kind: chain_incomplete
+    reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+    tried_frontier:
+    - KEY_ISREGBASE
+    gap_ref: IDGAP_KEY_ISREGBASE
+  KEY_ISROPE:
+    input_derivable: unsolved
+    confidence: low
+    needs_binding: true
+    not_input_derivable: false
+    host_parent: null
+    host_parent_evidence: ''
+    derivation_roots: []
+    gap_kind: chain_incomplete
+    reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+    tried_frontier:
+    - KEY_ISROPE
+    gap_ref: IDGAP_KEY_ISROPE
+  KEY_ISTND:
+    input_derivable: unsolved
+    confidence: low
+    needs_binding: true
+    not_input_derivable: false
+    host_parent: null
+    host_parent_evidence: ''
+    derivation_roots: []
+    gap_kind: chain_incomplete
+    reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+    tried_frontier:
+    - KEY_ISTND
+    gap_ref: IDGAP_KEY_ISTND
+  KEY_ISTNDSWIZZLE:
+    input_derivable: unsolved
+    confidence: low
+    needs_binding: true
+    not_input_derivable: false
+    host_parent: null
+    host_parent_evidence: ''
+    derivation_roots: []
+    gap_kind: chain_incomplete
+    reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+    tried_frontier:
+    - KEY_ISTNDSWIZZLE
+    gap_ref: IDGAP_KEY_ISTNDSWIZZLE
+  KEY_OUTDTYPE:
+    input_derivable: unsolved
+    confidence: low
+    needs_binding: true
+    not_input_derivable: false
+    host_parent: null
+    host_parent_evidence: ''
+    derivation_roots: []
+    gap_kind: chain_incomplete
+    reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+    tried_frontier:
+    - KEY_OUTDTYPE
+    gap_ref: IDGAP_KEY_OUTDTYPE
+  KEY_S1TEMPLATENUM:
+    input_derivable: unsolved
+    confidence: low
+    needs_binding: true
+    not_input_derivable: false
+    host_parent: null
+    host_parent_evidence: ''
+    derivation_roots: []
+    gap_kind: chain_incomplete
+    reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+    tried_frontier:
+    - KEY_S1TEMPLATENUM
+    gap_ref: IDGAP_KEY_S1TEMPLATENUM
+  KEY_S2TEMPLATENUM:
+    input_derivable: unsolved
+    confidence: low
+    needs_binding: true
+    not_input_derivable: false
+    host_parent: null
+    host_parent_evidence: ''
+    derivation_roots: []
+    gap_kind: chain_incomplete
+    reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+    tried_frontier:
+    - KEY_S2TEMPLATENUM
+    gap_ref: IDGAP_KEY_S2TEMPLATENUM
+  KEY_SPLITAXIS:
+    input_derivable: unsolved
+    confidence: low
+    needs_binding: true
+    not_input_derivable: false
+    host_parent: null
+    host_parent_evidence: ''
+    derivation_roots: []
+    gap_kind: chain_incomplete
+    reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+    tried_frontier:
+    - KEY_SPLITAXIS
+    gap_ref: IDGAP_KEY_SPLITAXIS
+  KEY_TILINGKEY:
+    input_derivable: unsolved
+    confidence: low
+    needs_binding: true
+    not_input_derivable: false
+    host_parent: HOST_BR_INITTILINGDATA_9
+    host_parent_evidence: ''
+    derivation_roots: []
+    gap_kind: missing_edge
+    reason: 回溯未闭合到输入根（缺边或 optional 未实例化）
+    tried_frontier:
+    - KEY_TILINGKEY
+    - HOST_BR_INITTILINGDATA_9
+    - HOST_BR_DOPOSTTILING_0
+    - HOST_PRED_INITTILINGDATA_9
+    - HOST_PRED_DOPOSTTILING_0
+    - HOST_HELPER_77D6B841D6543F48
+    - HOST_HELPER_3990AD9F26DAF19B
+    - HOST_BR_SAVETOTILINGDATA_6
+    - HOST_BR_DOPRETILING_2
+    - HOST_PRED_SAVETOTILINGDATA_6
+    - HOST_PRED_DOPRETILING_2
+    - HOST_HELPER_89B64E24113F44AA
+    - HOST_HELPER_0D9C60D69E34A568
+    - HOST_BR_TILINGFLASHATTENTIONGRADSCORE_3
+    - HOST_PLAT_AICNUM
+    - HOST_PLAT_CORENUM
+    - HOST_BR_RUNEMPTYTILING_4
+    - HOST_PLAT_UBSIZE
+    - HOST_PRED_TILINGFLASHATTENTIONGRADSCORE_3
+    - HOST_PRED_RUNEMPTYTILING_4
+    - HOST_HELPER_486207B96E33E072
+    - HOST_HELPER_199725B923E369AF
+    - HOST_BR_DOOPTILING_1
+    - HOST_BR_RUNEMPTYTILINGREGBASE_6
+    gap_ref: IDGAP_KEY_TILINGKEY
+kvars:
+  KVAR_08C56888E4126ACA:
+    input_derivable: false
+    not_input_derivable: true
+    needs_binding: false
+    host_parent: null
+    reason: kernel_local_batch_or_loop_index
+  KVAR_8D9F9A267EF0FED3:
+    input_derivable: false
+    not_input_derivable: true
+    needs_binding: false
+    host_parent: null
+    reason: kernel_local_batch_or_loop_index
+  KVAR_D0957469618C7B08:
+    input_derivable: false
+    not_input_derivable: true
+    needs_binding: false
+    host_parent: null
+    reason: kernel_local_batch_or_loop_index
+  KVAR_D9550661E1A7413F:
+    input_derivable: false
+    not_input_derivable: true
+    needs_binding: false
+    host_parent: null
+    reason: kernel_local_batch_or_loop_index
+  KVAR_982430F0D37D5DF3:
+    input_derivable: false
+    not_input_derivable: true
+    needs_binding: false
+    host_parent: null
+    reason: kernel_local_batch_or_loop_index
+graph_markers:
+- source: KEY_TILINGKEY
+  target: HOST_BR_INITTILINGDATA_9
+  type: determined_by
+  evidence: ''
+rejected_patches: []
+stats:
+  'true': 0
+  'false': 0
+  unsolved: 20
+  rejected_patches: 0

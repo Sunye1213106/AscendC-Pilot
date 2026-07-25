@@ -9,6 +9,7 @@ from uo.scripts.function_body import (
     CallSite,
     FunctionDefinition,
     iter_function_definitions,
+    extract_call_sites,
 )
 from uo.scripts.function_call_graph import resolve_call_site
 from uo.scripts.extract_kernel_subgraph import (
@@ -147,3 +148,25 @@ IMPL_OP_OPTILING(FlashAttentionScoreGrad)
 
 def test_default_non_sink_budget_covers_real_fag_candidate_volume() -> None:
     assert MAX_NON_SINK >= 177
+
+
+
+def test_call_scan_is_linear_on_long_qualified_noise() -> None:
+    noise = "A::" * 20000 + "not_a_call;"
+    body = (
+        "void Run() {\n" + noise +
+        "\nobj->Process(x);\nKernel::Compute<Mode>(a, b);\n}"
+    )
+    fn = FunctionDefinition(
+        name="Run", qualified_name="Driver::Run", class_or_namespace="Driver",
+        normalized_signature="()", template_arity_or_signature="",
+        specialization_kind="none", file_path="op_kernel/long.cpp",
+        start_line=1, end_line=4, header_text="void Run()",
+        body_text=body, source_hash="s", snippet_hash="h",
+        identity_key="IK_LONG", stable_id="FN_LONG",
+    )
+    sites = extract_call_sites(fn)
+    assert [site.callee_name for site in sites] == ["Process", "Compute"]
+    assert sites[0].receiver_type_or_object == "obj->"
+    assert sites[1].callee_qualified_hint == "Kernel::Compute"
+    assert sites[1].argument_count == 2

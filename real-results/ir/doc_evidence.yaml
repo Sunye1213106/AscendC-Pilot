@@ -1,0 +1,104 @@
+version: 1
+op_name: flash_attention_score_grad
+cann_version: offline_fixture
+authority_order:
+- operator_source
+- target_cann_docs
+- latest_docs
+- other
+items:
+- symbol_or_macro: GET_TPL_TILING_KEY
+  document_title: AscendC TilingKey template helpers
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/latest/index/index.html
+  cann_version: offline_fixture
+  semantic_summary: Packs Host-side TilingKey arguments in declaration order.
+  parameter_order:
+  - dim0
+  - dim1
+  - '...'
+  return_semantics: uint64 tiling key
+  nullability: n/a
+  constraints:
+  - argument order must match ASCENDC_TPL_ARGS_DECL
+  applicable_architecture: all
+  evidence_excerpt: GET_TPL_TILING_KEY(args...) binds by position to ARGS_DECL
+  confidence: 0.7
+  retrieved_at: '2026-07-25T04:23:27.272078+00:00'
+- symbol_or_macro: ASCENDC_TPL_ARGS_DECL
+  document_title: AscendC TilingKey ARGS_DECL
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/latest/index/index.html
+  cann_version: offline_fixture
+  semantic_summary: Declares TilingKey dimensions (declaration_space).
+  parameter_order:
+  - op_name
+  - BOOL/UINT_DECL...
+  return_semantics: declaration only
+  nullability: n/a
+  constraints:
+  - order defines Host/Kernel positional binding
+  applicable_architecture: all
+  evidence_excerpt: ASCENDC_TPL_ARGS_DECL defines declaration_space
+  confidence: 0.7
+  retrieved_at: '2026-07-25T04:23:27.272216+00:00'
+- symbol_or_macro: ASCENDC_TPL_ARGS_SEL
+  document_title: AscendC TilingKey ARGS_SEL
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/latest/index/index.html
+  cann_version: offline_fixture
+  semantic_summary: Compile-time selection space (subset of declaration_space).
+  parameter_order:
+  - SEL entries
+  return_semantics: compile selection
+  nullability: n/a
+  constraints:
+  - must not be merged with declaration_space
+  applicable_architecture: all
+  evidence_excerpt: ARGS_SEL defines compile_selection_space
+  confidence: 0.7
+  retrieved_at: '2026-07-25T04:23:27.272302+00:00'
+- symbol_or_macro: GET_TILING_DATA
+  document_title: Kernel GetTilingData
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/latest/index/index.html
+  cann_version: offline_fixture
+  semantic_summary: Loads default TilingData type for current kernel.
+  parameter_order:
+  - tiling_data_var
+  return_semantics: fills tiling data struct
+  nullability: n/a
+  constraints:
+  - type must match REGISTER_TILING_DEFAULT / FOR_TILINGKEY
+  applicable_architecture: all
+  evidence_excerpt: GET_TILING_DATA binds kernel reader to registered type
+  confidence: 0.7
+  retrieved_at: '2026-07-25T04:23:27.272403+00:00'
+- symbol_or_macro: GetOptionalInputShape
+  document_title: TilingContext optional input
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/latest/index/index.html
+  cann_version: offline_fixture
+  semantic_summary: Returns nullptr when optional input absent; empty tensor is present-but-empty.
+  parameter_order:
+  - index
+  return_semantics: gert::Shape* or null
+  nullability: nullable
+  constraints:
+  - null => absent; non-null empty dims => present_but_empty
+  applicable_architecture: all
+  evidence_excerpt: Optional input nullability contract
+  confidence: 0.7
+  retrieved_at: '2026-07-25T04:23:27.272492+00:00'
+- symbol_or_macro: REGISTER_TILING_TEMPLATE
+  document_title: Host tiling template registration
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/latest/index/index.html
+  cann_version: offline_fixture
+  semantic_summary: Registers a tiling template class into the op registry.
+  parameter_order:
+  - op_type
+  - template_class
+  return_semantics: registration side-effect
+  nullability: n/a
+  constraints:
+  - creates registry→class edge
+  applicable_architecture: all
+  evidence_excerpt: REGISTER_TILING_TEMPLATE(op, Class)
+  confidence: 0.7
+  retrieved_at: '2026-07-25T04:23:27.272564+00:00'
+unresolved: []
