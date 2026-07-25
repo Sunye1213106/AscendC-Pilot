@@ -1,4 +1,4 @@
-name: Inventory real FAG repository
+name: Validate real FAG graph rebuild
 
 on:
   pull_request:
@@ -9,82 +9,262 @@ permissions:
   contents: read
 
 jobs:
-  inventory:
+  benchmark:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - name: Checkout Pilot PR branch
+      - name: Checkout PR3 baseline
+        uses: actions/checkout@v4
+        with:
+          ref: b9f61a07ba8d33786792bd0b986af703d37b1063
+          path: pilot-base
+          fetch-depth: 1
+      - name: Checkout PR4 implementation
         uses: actions/checkout@v4
         with:
           ref: agent/tg-workflow-contract-closure
-          path: pilot-repo
+          path: pilot-new
           fetch-depth: 1
       - name: Checkout real FAG repository
         uses: actions/checkout@v4
         with:
           repository: Sunye1213106/flashattention
           ref: main
-          path: fag-repo
+          path: fag-source
           fetch-depth: 1
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install UO engine
-        working-directory: pilot-repo
+      - name: Install UO dependencies
+        working-directory: pilot-new
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e engines/understand-operator
-      - name: Build inventory report
+      - name: Prepare identical FAG workspaces
         shell: bash
         run: |
-          {
-            echo '=== repositories ==='
-            git -C pilot-repo rev-parse HEAD
-            git -C fag-repo rev-parse HEAD
-            echo
-            echo '=== FAG root files ==='
-            find fag-repo -maxdepth 2 -mindepth 1 -printf '%y %p\n' | sort | head -400
-            echo
-            echo '=== operator candidates ==='
-            find fag-repo -type d \( -name op_kernel -o -name op_host \) -print | sort
-            echo
-            echo '=== flash/fag named paths ==='
-            find fag-repo -maxdepth 8 -iname '*flash*attention*' -o -iname '*fag*' | sort | head -500
-            echo
-            echo '=== existing UO artifacts ==='
-            find fag-repo -path '*/.understand-operator/*' -maxdepth 10 -print | sort | head -500
-            echo
-            echo '=== Python UO modules and help ==='
-            python - <<'PY'
-          import importlib.util
-          mods = [
-              'uo.scripts.build_layered_kb',
-              'uo.scripts.resolve_entrypoints',
-              'uo.scripts.propose_extract_plan',
-              'uo.scripts.extract_host_subgraph',
-              'uo.scripts.extract_kernel_subgraph',
-          ]
-          for mod in mods:
-              spec = importlib.util.find_spec(mod)
-              print(f'{mod}: {spec.origin if spec else "MISSING"}')
-          PY
-            echo
-            python -m uo.scripts.build_layered_kb --help || true
-            echo
-            echo '=== likely operation names ==='
-            python - <<'PY'
+          set -euo pipefail
+          mkdir -p real-fag-results
+          unzip -l fag-source/flash_attention_score_grad/.understand-operator.zip \
+            > real-fag-results/archive-listing.txt
+
+          prepare_workspace() {
+            local dest="$1"
+            cp -a fag-source "$dest"
+            local op="$dest/flash_attention_score_grad"
+            local extracted="$op/.uo-archive-extracted"
+            rm -rf "$extracted" "$op/.ascendc-pilot"
+            mkdir -p "$extracted" "$op/.ascendc-pilot"
+            unzip -q "$op/.understand-operator.zip" -d "$extracted"
+
+            local root=""
+            local manifest
+            manifest="$(find "$extracted" -type f -name manifest.yaml | head -1 || true)"
+            if [[ -n "$manifest" ]]; then
+              root="$(dirname "$manifest")"
+            else
+              local entry
+              entry="$(find "$extracted" -type f -name entrypoint_graph.yaml | head -1 || true)"
+              if [[ -n "$entry" ]]; then
+                root="$(dirname "$(dirname "$entry")")"
+              fi
+            fi
+            if [[ -z "$root" || ! -d "$root" ]]; then
+              echo "Unable to locate KB root in archive" >&2
+              find "$extracted" -maxdepth 6 -print >&2
+              return 2
+            fi
+            cp -a "$root" "$op/.ascendc-pilot/uo"
+            rm -rf "$extracted"
+
+            {
+              echo "workspace=$dest"
+              echo "archive_root=$root"
+              echo "entrypoint_graph=$(test -f "$op/.ascendc-pilot/uo/ir/entrypoint_graph.yaml" && echo yes || echo no)"
+              echo "extract_plan=$(test -f "$op/.ascendc-pilot/uo/ir/extract_plan.yaml" && echo yes || echo no)"
+              echo "cbm_files=$(find "$op/.ascendc-pilot/uo/cbm" -type f 2>/dev/null | wc -l)"
+            } > "real-fag-results/${dest}-prepare.txt"
+          }
+
+          prepare_workspace fag-base
+          prepare_workspace fag-new
+      - name: Rebuild PR3 and PR4 graphs
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -u
+          run_build() {
+            local label="$1"
+            local pilot="$2"
+            local repo="$3/flash_attention_score_grad"
+            local log="real-fag-results/${label}.log"
+            local timing="real-fag-results/${label}-time.txt"
+            local code="real-fag-results/${label}-exit-code.txt"
+            local started="real-fag-results/${label}-started.txt"
+            date -u +%FT%TZ > "$started"
+            set +e
+            env PYTHONPATH="$GITHUB_WORKSPACE/$pilot/engines/understand-operator" \
+              /usr/bin/time -f 'elapsed_seconds=%e\nuser_seconds=%U\nsystem_seconds=%S\nmax_rss_kb=%M' \
+              -o "$timing" \
+              timeout 1200s python -m uo.scripts.build_layered_kb \
+                "$repo" \
+                --op-name flash_attention_score_grad \
+                --architecture arch35 \
+                --layers host,kernel,tilingkey,bridge \
+                > "$log" 2>&1
+            rc=$?
+            set -e
+            echo "$rc" > "$code"
+            cp -a "$repo/.ascendc-pilot/uo/ir" "real-fag-results/${label}-ir" || true
+            return 0
+          }
+
+          run_build baseline pilot-base fag-base
+          run_build pr4 pilot-new fag-new
+      - name: Summarize real FAG outputs
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+
+          from collections import Counter, defaultdict
           from pathlib import Path
-          root = Path('fag-repo')
-          found = []
-          for p in root.rglob('op_kernel'):
-              if p.is_dir():
-                  found.append((p.parent.name, p.parent.as_posix()))
-          for name, path in sorted(set(found)):
-              print(f'{name}\t{path}')
+          import json
+          import re
+          import yaml
+
+          root = Path('real-fag-results')
+
+          def load_yaml(path: Path):
+              if not path.is_file():
+                  return {}
+              try:
+                  return yaml.safe_load(path.read_text(encoding='utf-8')) or {}
+              except Exception as exc:
+                  return {'_load_error': str(exc)}
+
+          def time_values(label: str):
+              out = {}
+              path = root / f'{label}-time.txt'
+              if path.is_file():
+                  for line in path.read_text(encoding='utf-8').splitlines():
+                      if '=' in line:
+                          k, v = line.split('=', 1)
+                          try:
+                              out[k] = float(v)
+                          except ValueError:
+                              out[k] = v
+              return out
+
+          def summarize(label: str):
+              ir = root / f'{label}-ir'
+              graph = load_yaml(ir / 'operator_graph.yaml')
+              host = load_yaml(ir / 'host_subgraph.yaml')
+              kernel = load_yaml(ir / 'kernel_subgraph.yaml')
+              unresolved_doc = load_yaml(ir / 'unresolved.yaml')
+              unresolved = unresolved_doc.get('items') or graph.get('unresolved') or []
+              stats = graph.get('stats') or {}
+              nodes = graph.get('nodes') or []
+              host_nodes = host.get('nodes') or []
+              kernel_nodes = kernel.get('nodes') or []
+
+              function_groups = defaultdict(list)
+              for node in nodes:
+                  if not isinstance(node, dict):
+                      continue
+                  if node.get('kind') == 'FunctionDefinition' or node.get('node_type') == 'FunctionDefinition':
+                      function_groups[str(node.get('name') or '')].append(node)
+              duplicate_functions = {
+                  name: sorted({
+                      str(n.get('qualified_name') or '') + '|' + str(n.get('identity_key') or n.get('id') or '')
+                      for n in group
+                  })
+                  for name, group in function_groups.items()
+                  if name and len({str(n.get('identity_key') or n.get('id') or '') for n in group}) > 1
+              }
+
+              set_tiling = []
+              for node in host_nodes:
+                  name = str(node.get('name') or '')
+                  if 'settilingdata' in name.replace('_', '').casefold():
+                      set_tiling.append({
+                          'id': node.get('id'),
+                          'name': name,
+                          'qualified_name': node.get('qualified_name'),
+                          'class_or_namespace': node.get('class_or_namespace'),
+                          'file_path': node.get('file_path'),
+                          'identity_key': node.get('identity_key'),
+                      })
+
+              kinds = Counter(str(item.get('kind') or 'unknown') for item in unresolved if isinstance(item, dict))
+              rc_path = root / f'{label}-exit-code.txt'
+              rc = int(rc_path.read_text().strip()) if rc_path.is_file() else None
+              return {
+                  'exit_code': rc,
+                  'timing': time_values(label),
+                  'stats': stats,
+                  'operator_nodes': len(nodes),
+                  'operator_edges': len(graph.get('edges') or []),
+                  'host_nodes': len(host_nodes),
+                  'host_edges': len(host.get('edges') or []),
+                  'kernel_nodes': len(kernel_nodes),
+                  'kernel_edges': len(kernel.get('edges') or []),
+                  'kernel_branches': len(kernel.get('branches') or []),
+                  'unresolved_count': len(unresolved),
+                  'unresolved_kinds': dict(kinds.most_common()),
+                  'set_tiling_data_nodes': set_tiling,
+                  'duplicate_function_name_count': len(duplicate_functions),
+                  'duplicate_function_samples': dict(list(sorted(duplicate_functions.items()))[:25]),
+                  'host_trace_truncated': 'host_trace_truncated' in kinds,
+                  'load_errors': {
+                      name: doc.get('_load_error')
+                      for name, doc in [('graph', graph), ('host', host), ('kernel', kernel), ('unresolved', unresolved_doc)]
+                      if isinstance(doc, dict) and doc.get('_load_error')
+                  },
+              }
+
+          baseline = summarize('baseline')
+          pr4 = summarize('pr4')
+          comparison = {'baseline': baseline, 'pr4': pr4}
+          b = baseline.get('timing', {}).get('elapsed_seconds')
+          n = pr4.get('timing', {}).get('elapsed_seconds')
+          if isinstance(b, (int, float)) and isinstance(n, (int, float)) and b > 0:
+              comparison['elapsed_delta_seconds'] = n - b
+              comparison['elapsed_speedup_ratio'] = b / n if n > 0 else None
+              comparison['elapsed_reduction_percent'] = (b - n) / b * 100
+          (root / 'summary.json').write_text(json.dumps(comparison, ensure_ascii=False, indent=2), encoding='utf-8')
+
+          lines = ['# Real FAG graph rebuild comparison', '']
+          for label, data in [('PR3 baseline', baseline), ('PR4', pr4)]:
+              lines.extend([
+                  f'## {label}',
+                  f"- exit code: {data['exit_code']}",
+                  f"- elapsed seconds: {data.get('timing', {}).get('elapsed_seconds')}",
+                  f"- max RSS KB: {data.get('timing', {}).get('max_rss_kb')}",
+                  f"- operator nodes/edges: {data['operator_nodes']}/{data['operator_edges']}",
+                  f"- host nodes/edges: {data['host_nodes']}/{data['host_edges']}",
+                  f"- kernel nodes/edges/branches: {data['kernel_nodes']}/{data['kernel_edges']}/{data['kernel_branches']}",
+                  f"- unresolved: {data['unresolved_count']}",
+                  f"- host trace truncated: {data['host_trace_truncated']}",
+                  f"- SetTilingData-like Host nodes: {len(data['set_tiling_data_nodes'])}",
+                  f"- duplicate function-name groups preserved: {data['duplicate_function_name_count']}",
+                  '',
+              ])
+          if 'elapsed_reduction_percent' in comparison:
+              lines.extend([
+                  '## Timing delta',
+                  f"- PR4 - baseline: {comparison['elapsed_delta_seconds']:.3f} s",
+                  f"- speedup ratio: {comparison['elapsed_speedup_ratio']:.3f}x",
+                  f"- elapsed reduction: {comparison['elapsed_reduction_percent']:.2f}%",
+                  '',
+              ])
+          (root / 'summary.md').write_text('\n'.join(lines), encoding='utf-8')
+          print((root / 'summary.md').read_text(encoding='utf-8'))
           PY
-          } > fag-inventory.txt 2>&1
-          cat fag-inventory.txt
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: real-fag-inventory
-          path: fag-inventory.txt
+          name: real-fag-graph-rebuild
+          path: real-fag-results
           retention-days: 1
