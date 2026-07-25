@@ -19,9 +19,13 @@ disable-model-invocation: false
 
 ## Actions
 
-| action_id | 名称 | method | agent | role |
-|---|---|---|---|---|
-| `code_review` | 代码审查 | `ce-review/code-review` | `ce-reviewer` | `readonly_reviewer` |
+<!-- BEGIN GENERATED ACTIONS -->
+
+| action_id | execution_mode | agent | role | method | prompt | output_contract |
+|---|---|---|---|---|---|---|
+| `code_review` | `subagent` | `ce-reviewer` | `readonly_reviewer` | `ce-review/code-review` | `ce/code-review` | `code-review-v1` |
+
+<!-- END GENERATED ACTIONS -->
 
 ## Composed: pilot-control
 

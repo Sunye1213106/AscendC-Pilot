@@ -38,3 +38,6 @@ uo-cbm-impact = "uo.scripts.cbm_impact:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["uo*"]
+
+[tool.setuptools.package-data]
+"uo" = ["resources/*.yaml"]

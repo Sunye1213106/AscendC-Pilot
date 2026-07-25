@@ -1,8 +1,7 @@
 ---
 name: tg-plan
-description: >-
-  生成覆盖规划 / 覆盖义务并人工批准（tg-plan、coverage）。用户要覆盖计划时加载。
-  Pilot 管阶段；加载后执行 acp start tg-plan。
+description: 生成覆盖规划 / 覆盖义务并人工批准（tg-plan、coverage）。用户要覆盖计划时加载。 Pilot 管阶段；加载后执行 acp
+  start tg-plan。
 ---
 
 # tg-plan
@@ -19,9 +18,14 @@ description: >-
 
 ## Actions
 
-| action_id | 名称 | method | agent |
-|---|---|---|---|
-| `plan_scope` | 确定规划范围 | `tg-plan/plan-scope` | `deterministic-tg-engine` |
-| `plan_precheck` | 规划前置门禁 | `tg-plan/plan-precheck` | `deterministic-tg-engine` |
-| `plan_build` | 生成覆盖义务 | `tg-plan/plan-build` | `deterministic-tg-engine` |
-| `plan_approve` | 批准规划 | `tg-plan/plan-approve` | `human` |
+<!-- BEGIN GENERATED ACTIONS -->
+
+| action_id | execution_mode | agent | role | method | prompt | output_contract |
+|---|---|---|---|---|---|---|
+| `plan_scope` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-plan/plan-scope` | `-` | `plan-scope-v1` |
+| `plan_precheck` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-plan/plan-precheck` | `-` | `plan-precheck-v1` |
+| `plan_build` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-plan/plan-build` | `-` | `plan-build-v1` |
+| `plan_approve` | `primary_interactive` | `human` | `-` | `tg-plan/plan-approve` | `tg/plan-approve` | `plan-approved-v1` |
+
+<!-- END GENERATED ACTIONS -->
+

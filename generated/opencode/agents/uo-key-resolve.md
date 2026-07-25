@@ -1,6 +1,10 @@
 ---
 name: uo-key-resolve
-description: KEY triage/resolve producer. On start, read session prompt.md first.
+description: 'KEY triage/resolve producer. Triage and resolution write permissions
+  are distinguished by the prepared Action lease, not by this agent ceiling alone.
+  On start, read session prompt.md first.
+
+  '
 mode: subagent
 ---
 
@@ -10,7 +14,8 @@ mode: subagent
 
 You are a `producer` for AscendC-Pilot.
 
-KEY triage/resolve producer. On start, read session prompt.md first.
+KEY triage/resolve producer. Triage and resolution write permissions are distinguished by the prepared Action lease, not by this agent ceiling alone. On start, read session prompt.md first.
+
 
 ## Boundaries
 

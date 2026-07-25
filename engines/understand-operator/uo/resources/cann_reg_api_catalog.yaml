@@ -1,0 +1,272 @@
+version: 1
+catalog: cann_reg_api_catalog
+authority_order:
+- official_hiascend_symbol_page
+notes: Official AscendC::Reg SIMD symbol contracts used for deterministic call classification.
+contracts:
+- symbol_or_macro: LoadAlign
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Reg::LoadAlign]
+  receiver_types: []
+  argument_counts: [2, 3, 4, 5]
+  allow_unqualified: true
+  document_title: LoadAlign - Reg aligned load
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900beta2/API/ascendcopapi/atlasascendc_api_07_0319.html
+  semantic_summary: Loads aligned UB data into one or two RegTensor operands, with optional offset or post-update stride.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0', '9.1']
+  confidence: 1.0
+- symbol_or_macro: StoreAlign
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Reg::StoreAlign]
+  receiver_types: []
+  argument_counts: [3, 4, 5]
+  allow_unqualified: true
+  document_title: StoreAlign - Reg aligned store
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900beta2/API/ascendcopapi/atlasascendc_api_07_0320.html
+  semantic_summary: Stores one or two RegTensor operands to aligned UB memory, with optional offset or post-update stride.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0', '9.1']
+  confidence: 1.0
+- symbol_or_macro: StoreUnAlign
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Reg::StoreUnAlign]
+  receiver_types: []
+  argument_counts: [3, 4, 5]
+  allow_unqualified: true
+  document_title: StoreUnAlign - Reg unaligned store
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900beta2/API/ascendcopapi/atlasascendc_api_07_0324.html
+  semantic_summary: Stores RegTensor data to unaligned UB memory using an unaligned store register.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0', '9.1']
+  confidence: 1.0
+- symbol_or_macro: StoreUnAlignPost
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Reg::StoreUnAlignPost]
+  receiver_types: []
+  argument_counts: [2, 3]
+  allow_unqualified: true
+  document_title: StoreUnAlignPost - Reg unaligned store finalization
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900beta2/API/ascendcopapi/atlasascendc_api_07_0324.html
+  semantic_summary: Flushes remaining buffered bytes after StoreUnAlign operations.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0', '9.1']
+  confidence: 1.0
+- symbol_or_macro: CreateMask
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Reg::CreateMask]
+  receiver_types: []
+  argument_counts: [0]
+  allow_unqualified: true
+  document_title: CreateMask - MaskReg construction
+  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/900/API/ascendcopapi/atlasascendc_api_07_0315.html
+  semantic_summary: Creates a MaskReg from a data type and mask pattern.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0', '9.1']
+  confidence: 1.0
+- symbol_or_macro: UpdateMask
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Reg::UpdateMask]
+  receiver_types: []
+  argument_counts: [1]
+  allow_unqualified: true
+  document_title: UpdateMask - MaskReg update
+  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/900/API/ascendcopapi/atlasascendc_api_07_0315.html
+  semantic_summary: Creates or updates a MaskReg from the remaining scalar element count.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0', '9.1']
+  confidence: 1.0
+- symbol_or_macro: Cast
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Reg::Cast]
+  receiver_types: []
+  argument_counts: [3]
+  allow_unqualified: true
+  document_title: Cast - Reg type conversion
+  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/900/API/ascendcopapi/atlasascendc_api_07_0398.html
+  semantic_summary: Converts RegTensor elements to another data type under a CastTrait and MaskReg.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0', '9.1']
+  confidence: 1.0
+- symbol_or_macro: Add
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Reg::Add]
+  receiver_types: []
+  argument_counts: [4, 5]
+  allow_unqualified: true
+  document_title: Add - Reg elementwise addition
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900beta2/API/ascendcopapi/atlasascendc_api_07_0356.html
+  semantic_summary: Adds two RegTensor operands elementwise under a MaskReg, optionally producing carry bits.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0', '9.1']
+  confidence: 1.0
+- symbol_or_macro: Sub
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Reg::Sub]
+  receiver_types: []
+  argument_counts: [4, 5]
+  allow_unqualified: true
+  document_title: Sub - Reg elementwise subtraction
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900beta2/API/ascendcopapi/atlasascendc_api_07_0357.html
+  semantic_summary: Subtracts two RegTensor operands elementwise under a MaskReg, optionally producing borrow bits.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0', '9.1']
+  confidence: 1.0
+- symbol_or_macro: Mul
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Reg::Mul]
+  receiver_types: []
+  argument_counts: [4]
+  allow_unqualified: true
+  document_title: Mul - Reg elementwise multiplication
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900beta2/API/ascendcopapi/atlasascendc_api_07_0358.html
+  semantic_summary: Multiplies two RegTensor operands elementwise under a MaskReg.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0', '9.1']
+  confidence: 1.0
+- symbol_or_macro: Div
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Reg::Div]
+  receiver_types: []
+  argument_counts: [4]
+  allow_unqualified: true
+  document_title: Div - Reg elementwise division
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900beta2/API/ascendcopapi/atlasascendc_api_07_0359.html
+  semantic_summary: Divides two RegTensor operands elementwise under a MaskReg.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0', '9.1']
+  confidence: 1.0
+- symbol_or_macro: Adds
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Reg::Adds]
+  receiver_types: []
+  argument_counts: [4]
+  allow_unqualified: true
+  document_title: Adds - Reg scalar addition
+  document_url: https://www.hiascend.com/document/detail/en/CANNCommunityEdition/900/programug/Ascendcopdevg/atlas_ascendc_10_10053.html
+  semantic_summary: Adds a scalar value to each active RegTensor element.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0', '9.1']
+  confidence: 1.0
+- symbol_or_macro: Interleave
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Reg::Interleave]
+  receiver_types: []
+  argument_counts: [4]
+  allow_unqualified: true
+  document_title: Interleave - Reg data rearrangement
+  document_url: https://www.hiascend.com/document/detail/en/CANNCommunityEdition/900/API/ascendcopapi/atlasascendc_api_07_0405.html
+  semantic_summary: Interleaves two source RegTensor operands into two destination RegTensor operands.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0', '9.1']
+  confidence: 1.0
+- symbol_or_macro: Select
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Reg::Select]
+  receiver_types: []
+  argument_counts: [4]
+  allow_unqualified: true
+  document_title: Select - MaskReg selection
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900beta2/API/ascendcopapi/atlasascendc_api_07_0337.html
+  semantic_summary: Selects values from two source operands according to a MaskReg.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0', '9.1']
+  confidence: 1.0
+- symbol_or_macro: Arange
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Reg::Arange]
+  receiver_types: []
+  argument_counts: [2]
+  allow_unqualified: true
+  document_title: Arange - Reg index generation
+  document_url: https://www.hiascend.com/document/detail/en/CANNCommunityEdition/900/API/ascendcopapi/atlasascendc_api_07_0408.html
+  semantic_summary: Generates ascending or descending indices in a RegTensor.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0', '9.1']
+  confidence: 1.0
+- symbol_or_macro: Abs
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Reg::Abs]
+  receiver_types: []
+  argument_counts: [3]
+  allow_unqualified: true
+  document_title: Abs - Reg absolute value
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900/API/ascendcopapi/atlasascendc_api_07_10584.html
+  semantic_summary: Computes elementwise absolute values in RegTensor operands under a MaskReg.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0', '9.1']
+  confidence: 1.0
+- symbol_or_macro: Exp
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Reg::Exp]
+  receiver_types: []
+  argument_counts: [3]
+  allow_unqualified: true
+  document_title: Exp - Reg exponential
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900/API/ascendcopapi/atlasascendc_api_07_10584.html
+  semantic_summary: Computes elementwise exponentials in RegTensor operands under a MaskReg.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0', '9.1']
+  confidence: 1.0
+- symbol_or_macro: Log
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Reg::Log]
+  receiver_types: []
+  argument_counts: [3]
+  allow_unqualified: true
+  document_title: Log - Reg logarithm
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900/API/ascendcopapi/atlasascendc_api_07_10584.html
+  semantic_summary: Computes elementwise logarithms in RegTensor operands under a MaskReg.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0', '9.1']
+  confidence: 1.0
+- symbol_or_macro: Sqrt
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Reg::Sqrt]
+  receiver_types: []
+  argument_counts: [3]
+  allow_unqualified: true
+  document_title: Sqrt - Reg square root
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900/API/ascendcopapi/atlasascendc_api_07_10584.html
+  semantic_summary: Computes elementwise square roots in RegTensor operands under a MaskReg.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0', '9.1']
+  confidence: 1.0

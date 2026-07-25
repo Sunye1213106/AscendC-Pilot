@@ -347,12 +347,39 @@ function denyMessage(verdict: AuthorizeResult, kind: string, detail: string): st
   return allowed ? `${base} (allowed: ${allowed})` : base
 }
 
-/** Best-effort debug capture via `acp debug` (never throws). */
-function runDebug(argvExtra: string[], project?: string): void {
+/** Pending Task registrations keyed by stable invocation id or dispatch_nonce. */
+const pendingTaskRegs = new Map<
+  string,
+  { registration_id: string; dispatch_nonce: string; action_id: string; parent_session_id: string }
+>()
+
+/** Local child→parent relationship registry (mirrors Python children registry). */
+const childSessionRegistry = new Map<
+  string,
+  {
+    parent_session_id: string
+    registration_id: string
+    dispatch_nonce: string
+    run_id: string
+    action_id: string
+  }
+>()
+
+type DebugRunResult = {
+  ok: boolean
+  skipped?: boolean
+  payload?: Record<string, unknown>
+  exit_code: number
+  stdout: string
+  stderr: string
+}
+
+/** Best-effort debug capture via `acp debug`. Checks exit/JSON; records anomaly on failure. */
+function runDebug(argvExtra: string[], project?: string): DebugRunResult {
+  const root = project || detectProjectRoot() || readRememberedProjectRoot() || process.cwd()
   try {
-    const root = project || detectProjectRoot() || readRememberedProjectRoot() || process.cwd()
     const acpBin = resolveAcpBin()
-    spawnSync(acpBin, ["debug", ...argvExtra, "--project", root], {
+    const res = spawnSync(acpBin, ["debug", ...argvExtra, "--project", root], {
       encoding: "utf-8",
       shell: false,
       windowsHide: true,
@@ -360,8 +387,66 @@ function runDebug(argvExtra: string[], project?: string): void {
       env: { ...process.env, ASCENDC_PROJECT_ROOT: root },
       timeout: 45_000,
     })
-  } catch {
-    // fail-open
+    const exitCode = typeof res.status === "number" ? res.status : 1
+    const stdout = String(res.stdout || "")
+    const stderr = String(res.stderr || "")
+    let payload: Record<string, unknown> | undefined
+    let jsonOk: boolean | null = null
+    try {
+      const trimmed = stdout.trim()
+      if (trimmed.startsWith("{")) {
+        payload = JSON.parse(trimmed) as Record<string, unknown>
+        if (typeof payload.ok === "boolean") jsonOk = payload.ok
+      }
+    } catch {
+      jsonOk = null
+    }
+    const failed =
+      exitCode !== 0 ||
+      jsonOk === false ||
+      /traceback|error:/i.test(stderr)
+    if (failed && !payload?.skipped) {
+      try {
+        spawnSync(
+          acpBin,
+          [
+            "debug",
+            "record-anomaly",
+            "--kind",
+            "debug_export_failure",
+            "--summary",
+            `runDebug failed: ${argvExtra[0] || "unknown"} exit=${exitCode}`,
+            "--project",
+            root,
+          ],
+          {
+            encoding: "utf-8",
+            shell: false,
+            windowsHide: true,
+            cwd: root,
+            env: { ...process.env, ASCENDC_PROJECT_ROOT: root },
+            timeout: 15_000,
+          },
+        )
+      } catch {
+        // ignore nested failure
+      }
+    }
+    return {
+      ok: !failed,
+      skipped: Boolean(payload?.skipped),
+      payload,
+      exit_code: exitCode,
+      stdout,
+      stderr,
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      exit_code: 1,
+      stdout: "",
+      stderr: String(err),
+    }
   }
 }
 
@@ -413,6 +498,126 @@ function extractHostSessionId(input: Record<string, unknown>): string {
     }
   }
   return ""
+}
+
+/** Stable Task invocation id from OpenCode hook input (before/after must match). */
+function extractTaskInvocationId(input: Record<string, unknown>): string {
+  for (const k of ["tool_call_id", "call_id", "message_id", "task_invocation_id"] as const) {
+    const v = input[k]
+    if (typeof v === "string" && v.trim()) return v.trim()
+  }
+  // Nested under common OpenCode envelopes.
+  for (const nest of ["call", "toolCall", "tool_call", "message"] as const) {
+    const obj = input[nest]
+    if (obj && typeof obj === "object") {
+      const nested = extractTaskInvocationId(obj as Record<string, unknown>)
+      if (nested) return nested
+    }
+  }
+  return ""
+}
+
+/** Inject dispatch_nonce / registration_id into Task args so after-hook can recover without latest-pending. */
+function injectTaskCorrelationMeta(
+  args: Record<string, unknown>,
+  meta: { dispatch_nonce: string; registration_id: string; task_invocation_id?: string },
+): void {
+  const bag =
+    args.metadata && typeof args.metadata === "object"
+      ? ({ ...(args.metadata as Record<string, unknown>) } as Record<string, unknown>)
+      : ({} as Record<string, unknown>)
+  bag.ascendc_dispatch_nonce = meta.dispatch_nonce
+  bag.ascendc_registration_id = meta.registration_id
+  if (meta.task_invocation_id) bag.ascendc_task_invocation_id = meta.task_invocation_id
+  args.metadata = bag
+  args.ascendc_dispatch_nonce = meta.dispatch_nonce
+  args.ascendc_registration_id = meta.registration_id
+  if (meta.task_invocation_id) args.ascendc_task_invocation_id = meta.task_invocation_id
+}
+
+function extractTaskCorrelationFromArgs(args: Record<string, unknown>): {
+  dispatch_nonce: string
+  registration_id: string
+  task_invocation_id: string
+} {
+  const meta =
+    args.metadata && typeof args.metadata === "object"
+      ? (args.metadata as Record<string, unknown>)
+      : {}
+  const pick = (obj: Record<string, unknown>, key: string): string => {
+    const v = obj[key]
+    return typeof v === "string" && v.trim() ? v.trim() : ""
+  }
+  return {
+    dispatch_nonce:
+      pick(args, "ascendc_dispatch_nonce") ||
+      pick(meta, "ascendc_dispatch_nonce") ||
+      pick(args, "dispatch_nonce") ||
+      pick(meta, "dispatch_nonce"),
+    registration_id:
+      pick(args, "ascendc_registration_id") ||
+      pick(meta, "ascendc_registration_id") ||
+      pick(args, "registration_id") ||
+      pick(meta, "registration_id"),
+    task_invocation_id:
+      pick(args, "ascendc_task_invocation_id") ||
+      pick(meta, "ascendc_task_invocation_id") ||
+      pick(args, "task_invocation_id") ||
+      pick(meta, "task_invocation_id"),
+  }
+}
+
+function lookupPendingTaskReg(
+  invocationId: string,
+  fromArgs: { dispatch_nonce: string; registration_id: string; task_invocation_id: string },
+):
+  | {
+      key: string
+      reg: {
+        registration_id: string
+        dispatch_nonce: string
+        action_id: string
+        parent_session_id: string
+      }
+    }
+  | undefined {
+  const keys = [
+    invocationId,
+    fromArgs.task_invocation_id,
+    fromArgs.dispatch_nonce,
+    fromArgs.registration_id,
+  ].filter(Boolean)
+  for (const k of keys) {
+    const reg = pendingTaskRegs.get(k)
+    if (reg) return { key: k, reg }
+  }
+  if (fromArgs.registration_id) {
+    for (const [key, reg] of pendingTaskRegs.entries()) {
+      if (reg.registration_id === fromArgs.registration_id) return { key, reg }
+    }
+  }
+  if (fromArgs.dispatch_nonce) {
+    for (const [key, reg] of pendingTaskRegs.entries()) {
+      if (reg.dispatch_nonce === fromArgs.dispatch_nonce) return { key, reg }
+    }
+  }
+  return undefined
+}
+
+/** Resolve parent/child for the session that is executing this tool hook. */
+function resolveToolEventSessions(eventSessionId: string): {
+  parent_session_id: string
+  child_session_id: string
+} {
+  if (!eventSessionId) return { parent_session_id: "", child_session_id: "" }
+  const rel = childSessionRegistry.get(eventSessionId)
+  if (rel) {
+    return {
+      parent_session_id: rel.parent_session_id,
+      child_session_id: eventSessionId,
+    }
+  }
+  return { parent_session_id: eventSessionId, child_session_id: "" }
 }
 
 function extractToolError(
@@ -649,9 +854,11 @@ export const AscendCHarnessPlugin = async () => {
         const dispatchActor = taskAgent || String(active.actor_id || "")
         injectActionContext(args, dispatchAction, dispatchActor)
         const hostSession = extractHostSessionId(input as Record<string, unknown>)
+        const taskInvocationId = extractTaskInvocationId(input as Record<string, unknown>)
         const promptText = String(args.prompt || args.description || args.task || "")
         if (hostSession) {
-          runDebug(
+          const nonce = `nonce_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+          const reg = runDebug(
             [
               "register-child",
               "--if-enabled",
@@ -661,11 +868,41 @@ export const AscendCHarnessPlugin = async () => {
               dispatchAction,
               "--actor-id",
               dispatchActor,
+              "--dispatch-nonce",
+              nonce,
               "--task-prompt",
               promptText.slice(0, 4000),
             ],
             project,
           )
+          const regId = String(
+            (reg.payload && (reg.payload.registration_id || (reg.payload.registration as any)?.registration_id)) ||
+              "",
+          )
+          const resolvedNonce = String(
+            (reg.payload && (reg.payload.dispatch_nonce || (reg.payload.registration as any)?.dispatch_nonce)) ||
+              nonce,
+          )
+          if (regId) {
+            const entry = {
+              registration_id: regId,
+              dispatch_nonce: resolvedNonce,
+              action_id: dispatchAction,
+              parent_session_id: hostSession,
+            }
+            // Prefer Hook-provided stable call id; always also index by dispatch_nonce.
+            // NEVER key by parent+action "latest pending" (concurrent overwrite).
+            if (taskInvocationId) {
+              pendingTaskRegs.set(taskInvocationId, entry)
+            }
+            pendingTaskRegs.set(resolvedNonce, entry)
+            pendingTaskRegs.set(regId, entry)
+            injectTaskCorrelationMeta(args, {
+              dispatch_nonce: resolvedNonce,
+              registration_id: regId,
+              task_invocation_id: taskInvocationId || undefined,
+            })
+          }
         }
         const verdict = runAuthorize({
           tool: "task",
@@ -711,7 +948,7 @@ export const AscendCHarnessPlugin = async () => {
           )
         }
 
-        const hostSession = extractHostSessionId(input as Record<string, unknown>)
+        const eventSession = extractHostSessionId(input as Record<string, unknown>)
         const active = readActiveAction(project || "")
         const actionId = String(active.action_id || "")
         const auditTools = new Set([
@@ -728,14 +965,21 @@ export const AscendCHarnessPlugin = async () => {
         ])
         if (auditTools.has(tool)) {
           const pattern = String(args.pattern || args.query || "")
+          // Ownership from relationship registry: registered child → child=current;
+          // else parent=current, child="". event_session_id enables exact-id backfill.
+          const owned = resolveToolEventSessions(eventSession)
           runDebug(
             [
               "record-tool-event",
               "--if-enabled",
               "--tool",
               tool,
+              "--event-session-id",
+              eventSession,
               "--parent-session-id",
-              hostSession,
+              owned.parent_session_id,
+              "--child-session-id",
+              owned.child_session_id,
               "--action-id",
               actionId,
               "--path",
@@ -748,7 +992,7 @@ export const AscendCHarnessPlugin = async () => {
           )
         }
 
-        // Subagent (Task) finished → patch child id + export child bundle when debug enabled.
+        // Subagent (Task) finished → exact invocation correlation + export child bundle.
         if (isTaskTool) {
           const sub =
             String(
@@ -760,21 +1004,72 @@ export const AscendCHarnessPlugin = async () => {
                 "",
             ) || "task"
           const childSession = extractTaskSessionId(output)
-          const dispatchAction = actionId
-          if (childSession) {
+          const parentSession = eventSession
+          const taskInvocationId = extractTaskInvocationId(input as Record<string, unknown>)
+          // Recover correlation from args (injected in before) and output/input envelopes.
+          const fromArgs = extractTaskCorrelationFromArgs({
+            ...args,
+            ...((output && typeof output === "object" ? output : {}) as Record<string, unknown>),
+            ...((input as Record<string, unknown>) || {}),
+          })
+          const hit = lookupPendingTaskReg(taskInvocationId, fromArgs)
+          const resultText = (() => {
+            const chunks: string[] = []
+            if (!output) return ""
+            for (const k of ["output", "content", "message", "text", "result"] as const) {
+              const v = output[k]
+              if (typeof v === "string" && v.trim()) chunks.push(v)
+            }
+            return chunks.join("\n").slice(0, 8000)
+          })()
+
+          if (!hit) {
+            // Correlation miss: never wrong-bind via parent+action latest-pending.
             runDebug(
               [
-                "patch-child-session",
-                "--child-session-id",
-                childSession,
-                "--parent-session-id",
-                hostSession,
-                "--action-id",
-                dispatchAction,
+                "record-anomaly",
+                "--kind",
+                "DEBUG_TASK_CORRELATION_MISSING",
+                "--summary",
+                `Task after-hook missing pending reg parent=${parentSession} action=${actionId} inv=${taskInvocationId || fromArgs.task_invocation_id || "-"} child=${childSession || "-"}`,
               ],
               project,
             )
-            runDebug(
+          } else if (childSession) {
+            const pending = hit.reg
+            const patchArgs = [
+              "patch-child-session",
+              "--child-session-id",
+              childSession,
+              "--parent-session-id",
+              pending.parent_session_id || parentSession,
+              "--action-id",
+              pending.action_id || actionId,
+              "--registration-id",
+              pending.registration_id,
+              "--dispatch-nonce",
+              pending.dispatch_nonce,
+            ]
+            if (resultText) {
+              patchArgs.push("--task-result", resultText)
+            }
+            const patched = runDebug(patchArgs, project)
+            // Update local relationship registry so subsequent child tools attribute correctly.
+            childSessionRegistry.set(childSession, {
+              parent_session_id: pending.parent_session_id || parentSession,
+              registration_id: pending.registration_id,
+              dispatch_nonce: pending.dispatch_nonce,
+              run_id: String((patched.payload as any)?.registration?.run_id || ""),
+              action_id: pending.action_id || actionId,
+            })
+            // Clear all index keys for this pending entry.
+            pendingTaskRegs.delete(hit.key)
+            if (pending.dispatch_nonce) pendingTaskRegs.delete(pending.dispatch_nonce)
+            if (pending.registration_id) pendingTaskRegs.delete(pending.registration_id)
+            if (taskInvocationId) pendingTaskRegs.delete(taskInvocationId)
+            if (fromArgs.task_invocation_id) pendingTaskRegs.delete(fromArgs.task_invocation_id)
+
+            const exp = runDebug(
               [
                 "export-child-session",
                 "--if-enabled",
@@ -787,6 +1082,25 @@ export const AscendCHarnessPlugin = async () => {
               ],
               project,
             )
+            if (!exp.ok && !exp.skipped) {
+              // already anomaly-recorded inside runDebug
+            }
+          } else if (hit) {
+            // Task finished but child session id not extractable — clear pending to avoid leak,
+            // still record correlation anomaly for observability.
+            runDebug(
+              [
+                "record-anomaly",
+                "--kind",
+                "DEBUG_TASK_CORRELATION_MISSING",
+                "--summary",
+                `Task after-hook has pending reg but no child session id inv=${taskInvocationId || hit.reg.dispatch_nonce}`,
+              ],
+              project,
+            )
+            pendingTaskRegs.delete(hit.key)
+            if (hit.reg.dispatch_nonce) pendingTaskRegs.delete(hit.reg.dispatch_nonce)
+            if (hit.reg.registration_id) pendingTaskRegs.delete(hit.reg.registration_id)
           }
         }
       } catch {

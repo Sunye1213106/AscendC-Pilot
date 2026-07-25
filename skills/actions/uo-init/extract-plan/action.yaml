@@ -1,9 +1,11 @@
-id: extract_plan
-workflow_id: uo-init
+# GENERATED from Workflow Spec — do not hand-edit identity fields
 version: 1
 name_zh: 抽取计划与分层 IR
+id: extract_plan
+workflow_id: uo-init
 role_id: producer
 agent_id: uo-semantic-resolve
+execution_mode: subagent
 capabilities:
 - source-reading
 - cbm-navigation
@@ -19,7 +21,20 @@ policies:
 task_prompt_id: uo/extract-plan
 context_profile_id: uo-init-extract-plan
 output_contract_id: extract-plan-v1
+allowed_write_paths:
+- uo/ir/extract_plan.yaml
+forbidden_write_paths:
+- uo/ir/semantic_patches.yaml
+- uo/ir/llm_tasks.yaml
+allowed_read_paths:
+- uo/ir/extract_plan_candidates.yaml
+- uo/ir/entrypoint_graph.yaml
+forbidden_read_paths:
+- uo/ir/llm_tasks.yaml
+- uo/ir/semantic_patches.yaml
+- uo/ir/semantic_resolution_ledger.yaml
 checker:
   required: true
 referee:
   required: false
+generated_from: workflow_spec

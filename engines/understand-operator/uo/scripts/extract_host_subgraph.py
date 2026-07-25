@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -37,6 +38,65 @@ def _chain_item_key(item: dict[str, Any]) -> str:
     sig = str(item.get("normalized_signature") or item.get("signature") or "")
     tpl = str(item.get("template_arity_or_signature") or "")
     return f"{fp}|{qn}|{cls}|{sig}|{tpl}".casefold()
+
+def _has_precise_identity(item: dict[str, Any]) -> bool:
+    if item.get("identity_key"):
+        return True
+    return bool(
+        item.get("file_path")
+        and (item.get("qualified_name") or item.get("class_or_namespace"))
+        and (
+            item.get("start_line")
+            or item.get("normalized_signature")
+            or item.get("signature")
+            or item.get("template_arity_or_signature")
+        )
+    )
+
+
+def _writer_role_indexes(
+    plan: dict[str, Any],
+) -> tuple[dict[str, str], dict[str, str], set[str]]:
+    by_identity: dict[str, str] = {}
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for writer in plan.get("writers") or []:
+        if not isinstance(writer, dict):
+            continue
+        role = str(writer.get("role") or "")
+        if not role or role == "ignore":
+            continue
+        by_identity[_chain_item_key(writer)] = role
+        name = str(writer.get("name") or "").casefold()
+        if name:
+            grouped.setdefault(name, []).append(writer)
+    by_name: dict[str, str] = {}
+    incomplete_duplicates: set[str] = set()
+    for name, writers in grouped.items():
+        roles = {str(w.get("role") or "") for w in writers}
+        if len(roles) == 1:
+            by_name[name] = next(iter(roles))
+        if len(writers) > 1 and not all(_has_precise_identity(w) for w in writers):
+            incomplete_duplicates.add(name)
+    return by_identity, by_name, incomplete_duplicates
+
+
+def _add_chain_item(
+    chain: list[dict[str, Any]], chain_keys: set[str], item: dict[str, Any]
+) -> bool:
+    key = _chain_item_key(item)
+    if key in chain_keys:
+        return False
+    chain_keys.add(key)
+    chain.append(item)
+    return True
+
+
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError:
+        value = default
+    return max(minimum, min(maximum, value))
 
 
 IF_RE = re.compile(r"\bif\s*(?:constexpr\s*)?\((.+?)\)\s*\{", re.DOTALL)
@@ -182,11 +242,23 @@ def extract_host_subgraph(
             if n:
                 non_sink_roots.add(n.casefold())
 
-    writer_roles = {
-        str(w.get("name") or "").casefold(): str(w.get("role") or "")
-        for w in (plan or {}).get("writers") or []
-        if isinstance(w, dict)
-    }
+    writer_roles_by_identity, writer_roles_by_name, incomplete_duplicate_writers = (
+        _writer_role_indexes(plan or {})
+    )
+    for duplicate_name in sorted(incomplete_duplicate_writers):
+        unresolved.append(
+            {
+                "id": stable_id("UNRES_HOST_WRITER_ID_", duplicate_name),
+                "kind": "writer_identity_incomplete",
+                "severity": "blocking",
+                "message": (
+                    f"duplicate host writer {duplicate_name!r} lacks file/class/signature identity; "
+                    "short-name role assignment is disabled"
+                ),
+                "file_path": "",
+                "snippet": "",
+            }
+        )
 
     client = CbmClient(uo_root)
     root_sym = None
@@ -205,35 +277,48 @@ def extract_host_subgraph(
             )
 
     chain: list[dict[str, Any]] = []
+    chain_keys: set[str] = set()
     for node in seed_nodes:
-        item = _item_from_ep_node(node)
-        if not any(
-            (x.get("qualified_name") == item.get("qualified_name") and x.get("file_path") == item.get("file_path"))
-            for x in chain
-        ):
-            chain.append(item)
+        _add_chain_item(chain, chain_keys, _item_from_ep_node(node))
 
     keep_for_trace = {n for n in writer_keep if n} | {str(primary.get("name") or "").casefold()}
     if root_sym is not None:
+        trace_max_depth = _env_int("UO_HOST_TRACE_MAX_DEPTH", 6, 1, 12)
+        trace_max_nodes = _env_int("UO_HOST_TRACE_MAX_NODES", 200, 20, 4000)
         traced = client.bounded_trace(
             root_sym,
             keep_names=keep_for_trace or None,
-            max_depth=5,
-            max_nodes=60,
+            max_depth=trace_max_depth,
+            max_nodes=trace_max_nodes,
         )
         for sym in traced:
-            d = sym.as_dict()
-            if not any(item.get("qualified_name") == d.get("qualified_name") for item in chain):
-                chain.append(d)
+            _add_chain_item(chain, chain_keys, sym.as_dict())
+        if len(traced) >= trace_max_nodes:
+            unresolved.append(
+                {
+                    "id": "UNRES_HOST_TRACE_TRUNCATED",
+                    "kind": "host_trace_truncated",
+                    "severity": "blocking",
+                    "message": (
+                        f"CBM host trace reached max_nodes={trace_max_nodes}; "
+                        "raise UO_HOST_TRACE_MAX_NODES and rebuild"
+                    ),
+                    "file_path": str(primary.get("file_path") or ""),
+                    "snippet": "",
+                }
+            )
 
     for role in BRIDGE_ROLE_HINTS:
         for node in nodes_for_role(graph, role):
-            item = _item_from_ep_node(node)
-            if not any(x.get("qualified_name") == item.get("qualified_name") for x in chain):
-                chain.append(item)
+            _add_chain_item(chain, chain_keys, _item_from_ep_node(node))
 
-    # Seed helpers named in plan chain roles + entry-body CamelCase calls
-    entry_body, _, _ = resolve_helper_body(repo_root, primary, prefer_definition=True)
+    # Seed exact plan writers first. This preserves Normal/Varlen/Empty helpers
+    # that share a short name but differ by class, signature, or source location.
+    body_cache: dict[str, tuple[str, int, int]] = {}
+    entry_body, entry_start, entry_end = resolve_helper_body(
+        repo_root, primary, prefer_definition=True
+    )
+    body_cache[_chain_item_key(primary)] = (entry_body, entry_start, entry_end)
     seed_names: list[str] = []
     for item in (plan or {}).get("writers") or []:
         if isinstance(item, dict) and str(item.get("role") or "") in {
@@ -243,7 +328,10 @@ def extract_host_subgraph(
             "provenance_helper",
         }:
             n = str(item.get("name") or "").strip()
-            if n:
+            if not n:
+                continue
+            _add_chain_item(chain, chain_keys, dict(item))
+            if not _has_precise_identity(item):
                 seed_names.append(n)
     for helper_name in extract_callee_names(entry_body, noise=NOISE_CALLS):
         if helper_name.casefold() in writer_keep or not writer_keep:
@@ -268,9 +356,7 @@ def extract_host_subgraph(
                 "class_or_namespace": primary.get("class_or_namespace") or "",
                 "label": "helper_call_seed",
             }
-        if any(_chain_item_key(item) == _chain_item_key(child) for item in chain):
-            continue
-        chain.append(child)
+        _add_chain_item(chain, chain_keys, child)
 
     # Optional extra host entries from plan
     for entry in (plan or {}).get("extra_host_entries") or []:
@@ -282,12 +368,10 @@ def extract_host_subgraph(
             meta = {"name": name}
         if not name:
             continue
-        if any(str(item.get("name") or "") == name for item in chain):
-            continue
         hit = None
         if client.available:
             hit = client.resolve_qn(name, file_contains=architecture)
-        chain.append(hit.as_dict() if hit is not None else meta)
+        _add_chain_item(chain, chain_keys, hit.as_dict() if hit is not None else meta)
 
     prev_branch_id = None
     # Optional KEY index for host macro provenance (best-effort).
@@ -307,9 +391,20 @@ def extract_host_subgraph(
     for item in chain:
         file_path = str(item.get("file_path") or "")
         name_l = str(item.get("name") or "").casefold()
-        role = writer_roles.get(name_l, "")
+        item_key_before = _chain_item_key(item)
+        role = writer_roles_by_identity.get(
+            item_key_before, writer_roles_by_name.get(name_l, "")
+        )
         prefer_def = True  # always brace-bound when definition exists; else tight window
-        body, start, end = resolve_helper_body(repo_root, item, prefer_definition=prefer_def)
+        cached_body = body_cache.get(item_key_before)
+        if cached_body is None:
+            body, start, end = resolve_helper_body(
+                repo_root, item, prefer_definition=prefer_def
+            )
+            body_cache[item_key_before] = (body, start, end)
+            body_cache[_chain_item_key(item)] = (body, start, end)
+        else:
+            body, start, end = cached_body
         file_path = str(item.get("file_path") or file_path)
 
         if body:
@@ -351,6 +446,7 @@ def extract_host_subgraph(
             else:
                 scan_lines.append("")
         scan_body = "\n".join(scan_lines)
+        scan_body_cf = scan_body.casefold()
 
         helper_ident = mint_symbol_identity(
             kind="helper",
@@ -509,7 +605,8 @@ def extract_host_subgraph(
                 }
             )
 
-        for idx, cond in enumerate(IF_RE.findall(scan_body)):
+        for idx, match in enumerate(IF_RE.finditer(scan_body)):
+            cond = match.group(1)
             cond_s = " ".join(cond.split())
             pred_id = stable_id("HOST_PRED_", item.get("name") or "fn", str(idx))
             branch_id = stable_id("HOST_BR_", item.get("name") or "fn", str(idx))
@@ -525,7 +622,7 @@ def extract_host_subgraph(
                     "end_line": end,
                     "condition": cond_s,
                     "binding_time": "compile_time"
-                    if "constexpr" in scan_body[scan_body.find(cond) : scan_body.find(cond) + 40]
+                    if "constexpr" in match.group(0).split("(", 1)[0]
                     else "runtime",
                 }
             )
@@ -590,9 +687,7 @@ def extract_host_subgraph(
             edges.append({"id": stable_id("E_", src, key_id), "type": "writes", "source": src, "target": key_id})
 
         # TDF writes for tiling_writer and workspace_writer (offsets often land on tiling sinks)
-        if role in {"tiling_writer", "workspace_writer"} or (
-            name_l in tiling_writers and role != "provenance_helper"
-        ):
+        if role in {"tiling_writer", "workspace_writer"}:
             fields = _collect_tdf_fields(scan_body, sink_recvs, non_sink_roots)
             seen_fields: set[str] = set()
             for field_name in fields:
@@ -625,7 +720,7 @@ def extract_host_subgraph(
                 src = prev_branch_id or helper_id
                 edges.append({"id": stable_id("E_", src, tdf_id), "type": "writes", "source": src, "target": tdf_id})
 
-        if role == "workspace_writer" or "workspace" in name_l or "workspace" in scan_body.lower():
+        if role == "workspace_writer" or "workspace" in name_l or "workspace" in scan_body_cf:
             node_id = "BRIDGE_WORKSPACE"
             nodes.append(
                 {
@@ -647,7 +742,7 @@ def extract_host_subgraph(
                     "target": node_id,
                 }
             )
-        if "blockdim" in name_l or "blockdim" in scan_body.lower() or "block_dim" in scan_body.lower():
+        if "blockdim" in name_l or "blockdim" in scan_body_cf or "block_dim" in scan_body_cf:
             node_id = "BRIDGE_BLOCKDIM"
             nodes.append(
                 {

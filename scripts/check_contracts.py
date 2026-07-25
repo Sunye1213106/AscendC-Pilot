@@ -38,9 +38,18 @@ def main(argv: list[str] | None = None) -> int:
             errors.extend(check_generated_drift(repo))
 
     sys.path.insert(0, str(repo / "pilot"))
+    sys.path.insert(0, str(repo / "engines" / "understand-operator"))
     from ascendc_pilot.workflows.consistency import check_all  # noqa: WPS433
 
     errors.extend(check_all(repo))
+
+    # Ownership / identity auditor (Spec, Skill, lease ceilings, run-scoped contracts).
+    try:
+        from check_ownership_contracts import audit as ownership_audit  # noqa: WPS433
+
+        errors.extend(ownership_audit(repo))
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"ownership auditor unavailable: {exc}")
 
     if errors:
         print({"ok": False, "error_count": len(errors), "errors": errors})

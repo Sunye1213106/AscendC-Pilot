@@ -1,9 +1,11 @@
-id: plan_precheck
-workflow_id: tg-plan
+# GENERATED from Workflow Spec — do not hand-edit identity fields
 version: 1
 name_zh: 规划前置门禁
+id: plan_precheck
+workflow_id: tg-plan
 role_id: deterministic_engine
 agent_id: deterministic-tg-engine
+execution_mode: deterministic
 capabilities: []
 policies:
 - source-authority
@@ -15,7 +17,12 @@ policies:
 task_prompt_id: null
 context_profile_id: tg-plan-plan-precheck
 output_contract_id: plan-precheck-v1
+allowed_write_paths: []
+forbidden_write_paths: []
+allowed_read_paths: []
+forbidden_read_paths: []
 checker:
   required: true
 referee:
   required: false
+generated_from: workflow_spec

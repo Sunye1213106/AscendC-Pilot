@@ -1,9 +1,11 @@
 id: uo-semantic-resolve
 version: 1
-name_zh: Extract plan producer
+name_zh: UO semantic producer
 role: producer
 mode: subagent
-description: Extract plan producer. On start, read session prompt.md first.
+description: >
+  UO semantic producer for action-scoped extraction planning and semantic adjudication.
+  Actual writes are limited by the prepared Action lease.
 read_scopes:
   - "uo/**"
   - "runs/**"

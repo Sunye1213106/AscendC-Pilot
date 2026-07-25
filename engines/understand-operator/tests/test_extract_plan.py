@@ -121,11 +121,26 @@ def test_normalize_fills_role_and_sink_from_candidates(tmp_path: Path) -> None:
     plan["writers"] = [w for w in plan["writers"] if w["name"] in cw]
     plan["receivers"] = [r for r in plan["receivers"] if r["name"] in cr]
 
+    # Ensure candidates expose sink suggestion so normalize can fill (no silent default).
+    for rc in cands.get("receiver_candidates") or []:
+        if str(rc.get("name") or "") == "blob_" and "is_tiling_sink_suggested" not in rc:
+            rc["is_tiling_sink_suggested"] = True
+
     filled = normalize_plan_from_candidates(plan, cands)
     assert filled["writers"][0]["role"] == "tiling_writer"
     assert filled["receivers"][0]["is_tiling_sink"] is True
+    # Promoted tiling_writer on possibly-weak candidate needs source evidence.
+    filled["writers"][0].update(
+        {
+            "evidence_source": "source",
+            "source_verified": True,
+            "evidence_files": ["op_host/arch35/foo_tiling.cpp"],
+            "evidence_lines": [8],
+            "decision_reason": "blob_->set_x / set_y tilingData sink writes",
+        }
+    )
 
-    result = apply_extract_plan(repo, op, plan=plan, check_only=True)
+    result = apply_extract_plan(repo, op, plan=filled, check_only=True)
     assert result["ok"], result
 
 
@@ -152,6 +167,11 @@ def test_host_tdf_after_plan(tmp_path: Path) -> None:
                 "file_path": "op_host/arch35/foo_tiling.cpp",
                 "start_line": 8,
                 "role": "tiling_writer",
+                "evidence_source": "source",
+                "source_verified": True,
+                "evidence_files": ["op_host/arch35/foo_tiling.cpp"],
+                "evidence_lines": [8],
+                "decision_reason": "blob_->set_x / set_y tilingData sink writes",
             },
             {
                 "name": "GetTilingKey",

@@ -1,0 +1,596 @@
+version: 1
+catalog: cann_api_catalog
+authority_order:
+- official_hiascend_symbol_page
+- official_hiascend_api_list
+notes: Machine-readable official contracts. Project call edges still require source-level matching.
+contracts:
+- symbol_or_macro: SetGlobalBuffer
+  symbol_kind: method
+  call_style: method
+  qualified_names:
+  - AscendC::GlobalTensor::SetGlobalBuffer
+  receiver_types:
+  - GlobalTensor
+  argument_counts:
+  - 1
+  - 2
+  allow_unqualified: false
+  return_type: ''
+  document_title: SetGlobalBuffer - GlobalTensor
+  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/850/API/ascendcopapi/atlasascendc_api_07_00024.html
+  semantic_summary: Binds a GlobalTensor to a global-memory address and optional logical size.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: GetValue
+  symbol_kind: method
+  call_style: method
+  qualified_names:
+  - AscendC::LocalTensor::GetValue
+  - AscendC::GlobalTensor::GetValue
+  receiver_types: [LocalTensor, GlobalTensor]
+  argument_counts: [1]
+  allow_unqualified: false
+  return_type: ''
+  document_title: GetValue - LocalTensor/GlobalTensor
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/82RC1alpha002/API/ascendcopapi/atlasascendc_api_07_00026.html
+  semantic_summary: Reads one scalar element from a LocalTensor or GlobalTensor.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: SetValue
+  symbol_kind: method
+  call_style: method
+  qualified_names:
+  - AscendC::LocalTensor::SetValue
+  - AscendC::GlobalTensor::SetValue
+  receiver_types: [LocalTensor, GlobalTensor]
+  argument_counts: [2]
+  allow_unqualified: false
+  return_type: ''
+  document_title: SetValue - LocalTensor/GlobalTensor
+  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/81RC1/apiref/ascendcopapi/atlasascendc_api_07_00028.html
+  semantic_summary: Writes one scalar element to a LocalTensor or GlobalTensor.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: GetPhyAddr
+  symbol_kind: method
+  call_style: method
+  qualified_names:
+  - AscendC::LocalTensor::GetPhyAddr
+  - AscendC::GlobalTensor::GetPhyAddr
+  receiver_types: [LocalTensor, GlobalTensor]
+  argument_counts: [0, 1]
+  allow_unqualified: false
+  return_type: ''
+  document_title: GetPhyAddr - Tensor address
+  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/82RC1/API/ascendcopapi/atlasascendc_api_07_00111.html
+  semantic_summary: Returns the physical or global address of a tensor, optionally with an element offset.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: ReinterpretCast
+  symbol_kind: method
+  call_style: method
+  qualified_names:
+  - AscendC::LocalTensor::ReinterpretCast
+  - AscendC::GlobalTensor::ReinterpretCast
+  receiver_types: [LocalTensor, GlobalTensor]
+  argument_counts: [0]
+  allow_unqualified: false
+  return_type: ''
+  document_title: ReinterpretCast - LocalTensor
+  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/850/API/ascendcopapi/atlasascendc_api_07_00110.html
+  semantic_summary: Reinterprets the current tensor as another element type without changing its address or bytes.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: SetAddrWithOffset
+  symbol_kind: method
+  call_style: method
+  qualified_names: [AscendC::LocalTensor::SetAddrWithOffset]
+  receiver_types: [LocalTensor]
+  argument_counts: [2]
+  allow_unqualified: false
+  return_type: ''
+  document_title: SetAddrWithOffset - LocalTensor
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha002/API/ascendcopapi/atlasascendc_api_07_00116.html
+  semantic_summary: Sets a LocalTensor address from another tensor plus an element offset.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: InitBuffer
+  symbol_kind: method
+  call_style: method
+  qualified_names: [AscendC::TPipe::InitBuffer]
+  receiver_types: [TPipe]
+  argument_counts: [2, 3]
+  allow_unqualified: false
+  return_type: ''
+  document_title: InitBuffer - TPipe
+  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/900/API/ascendcopapi/atlasascendc_api_07_0130.html
+  semantic_summary: Initializes TQue, TBuf, or related pipe-managed buffers.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: AllocTensor
+  symbol_kind: method
+  call_style: method
+  qualified_names: [AscendC::TQue::AllocTensor, AscendC::TQueBind::AllocTensor]
+  receiver_types: [TQue, TQueBind]
+  argument_counts: [0]
+  allow_unqualified: false
+  return_type: ''
+  document_title: AllocTensor - TQue
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha003/API/ascendcopapi/atlasascendc_api_07_0138.html
+  semantic_summary: Allocates a LocalTensor from a TQue or TQueBind buffer.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: EnQue
+  symbol_kind: method
+  call_style: method
+  qualified_names: [AscendC::TQue::EnQue, AscendC::TQueBind::EnQue]
+  receiver_types: [TQue, TQueBind]
+  argument_counts: [1]
+  allow_unqualified: false
+  return_type: ''
+  document_title: EnQue - TQue
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha003/API/ascendcopapi/atlasascendc_api_07_0140.html
+  semantic_summary: Enqueues a LocalTensor into a TQue or TQueBind.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: DeQue
+  symbol_kind: method
+  call_style: method
+  qualified_names: [AscendC::TQue::DeQue, AscendC::TQueBind::DeQue]
+  receiver_types: [TQue, TQueBind]
+  argument_counts: [0]
+  allow_unqualified: false
+  return_type: ''
+  document_title: DeQue - TQue/TQueBind
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/82RC1alpha003/API/ascendcopapi/atlasascendc_api_07_0152.html
+  semantic_summary: Dequeues a LocalTensor from a TQue or TQueBind.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: FreeTensor
+  symbol_kind: method
+  call_style: method
+  qualified_names: [AscendC::TQue::FreeTensor, AscendC::TQueBind::FreeTensor]
+  receiver_types: [TQue, TQueBind]
+  argument_counts: [1]
+  allow_unqualified: false
+  return_type: ''
+  document_title: FreeTensor - TQue
+  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/850/API/ascendcopapi/atlasascendc_api_07_0141.html
+  semantic_summary: Returns a LocalTensor allocation to its TQue or TQueBind.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: Get
+  symbol_kind: method
+  call_style: method
+  qualified_names: [AscendC::TBuf::Get]
+  receiver_types: [TBuf]
+  argument_counts: [0]
+  allow_unqualified: false
+  return_type: ''
+  document_title: Get - TBuf
+  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/850/API/ascendcopapi/atlasascendc_api_07_0127.html
+  semantic_summary: Gets a typed LocalTensor view from a TBuf.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: FetchEventID
+  symbol_kind: method
+  call_style: method
+  qualified_names: [AscendC::TPipe::FetchEventID]
+  receiver_types: [TPipe]
+  argument_counts: [1]
+  allow_unqualified: false
+  return_type: ''
+  document_title: FetchEventID - TPipe
+  document_url: https://www.hiascend.com/document/detail/en/canncommercial/850/API/ascendcopapi/atlasascendc_api_07_0270.html
+  semantic_summary: Gets an event ID for a specified HardEvent from the current TPipe.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: DataCopy
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::DataCopy]
+  receiver_types: []
+  argument_counts: [3, 6]
+  allow_unqualified: true
+  return_type: ''
+  document_title: DataCopy - basic data movement
+  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/900/API/ascendcopapi/atlasascendc_api_07_0103.html
+  semantic_summary: Moves data between GlobalTensor and LocalTensor or between LocalTensors.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: DataCopyPad
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::DataCopyPad]
+  receiver_types: []
+  argument_counts: [3, 4, 7, 10, 11]
+  allow_unqualified: true
+  return_type: ''
+  document_title: DataCopyPad - padded data movement
+  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/80RC2/apiref/opdevgapi/atlasascendc_api_07_0258.html
+  semantic_summary: Moves data with padding and extended copy parameters.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: CrossCoreSetFlag
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::CrossCoreSetFlag]
+  receiver_types: []
+  argument_counts: [1]
+  allow_unqualified: true
+  return_type: ''
+  document_title: CrossCoreSetFlag - cross-core synchronization
+  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/80RC22/apiref/opdevgapi/atlasascendc_api_07_0268.html
+  semantic_summary: Sets a cross-core synchronization flag between AIC and AIV on split architectures.
+  applicable_architecture: [arch35]
+  constraints: [Must be paired with CrossCoreWaitFlag.]
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: CrossCoreWaitFlag
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::CrossCoreWaitFlag]
+  receiver_types: []
+  argument_counts: [1]
+  allow_unqualified: true
+  return_type: ''
+  document_title: CrossCoreWaitFlag - cross-core synchronization
+  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/80RC3/apiref/ascendcopapi/atlasascendc_api_07_0261.html
+  semantic_summary: Waits for a cross-core synchronization flag.
+  applicable_architecture: [arch35]
+  constraints: [Must be paired with CrossCoreSetFlag.]
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: SetFlag
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::SetFlag]
+  receiver_types: []
+  argument_counts: [1]
+  allow_unqualified: true
+  return_type: ''
+  document_title: SetFlag/WaitFlag - intra-core synchronization
+  document_url: https://www.hiascend.com/document/detail/en/canncommercial/850/API/ascendcopapi/atlasascendc_api_07_0270.html
+  semantic_summary: Sets an event for synchronization between pipelines in one core.
+  applicable_architecture: all
+  constraints: [Must be paired with WaitFlag.]
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: WaitFlag
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::WaitFlag]
+  receiver_types: []
+  argument_counts: [1]
+  allow_unqualified: true
+  return_type: ''
+  document_title: SetFlag/WaitFlag - intra-core synchronization
+  document_url: https://www.hiascend.com/document/detail/en/canncommercial/850/API/ascendcopapi/atlasascendc_api_07_0270.html
+  semantic_summary: Waits on an event for synchronization between pipelines in one core.
+  applicable_architecture: all
+  constraints: [Must be paired with SetFlag.]
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: Fixpipe
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Fixpipe]
+  receiver_types: []
+  argument_counts: [3]
+  allow_unqualified: true
+  return_type: ''
+  document_title: Fixpipe - matrix result movement
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900/API/ascendcopapi/atlasascendc_api_07_0251.html
+  semantic_summary: Processes matrix results and moves them from CO1 to destination memory.
+  applicable_architecture: [arch35]
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: GetTPipePtr
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::GetTPipePtr]
+  receiver_types: []
+  argument_counts: [0]
+  allow_unqualified: true
+  return_type: TPipe*
+  document_title: GetTPipePtr - current pipe accessor
+  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/850/API/ascendcopapi/atlasascendc_api_07_0269.html
+  semantic_summary: Returns a pointer to the current TPipe instance.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: GetBlockIdx
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::GetBlockIdx]
+  receiver_types: []
+  argument_counts: [0]
+  allow_unqualified: true
+  return_type: int64_t
+  document_title: GetBlockIdx - system variable
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/80RC2alpha002/apiref/opdevgapi/atlasascendc_api_07_0173.html
+  semantic_summary: Returns the current AI Core block index.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: GetSubBlockIdx
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::GetSubBlockIdx]
+  receiver_types: []
+  argument_counts: [0]
+  allow_unqualified: true
+  return_type: int64_t
+  document_title: GetSubBlockIdx - system variable
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900beta2/API/ascendcopapi/atlasascendc_api_07_0663.html
+  semantic_summary: Returns the current AIV sub-core index on split architectures.
+  applicable_architecture: [arch35]
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: SyncAll
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::SyncAll]
+  receiver_types: []
+  argument_counts: [0]
+  allow_unqualified: true
+  return_type: ''
+  document_title: SyncAll - cross-core barrier
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/81RC1alpha001/apiref/ascendcopapi/atlasascendc_api_07_0204.html
+  semantic_summary: Synchronizes participating AI Cores.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: SetAtomicAdd
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::SetAtomicAdd]
+  receiver_types: []
+  argument_counts: [0]
+  allow_unqualified: true
+  return_type: ''
+  document_title: SetAtomicAdd - DMA atomic add
+  document_url: https://www.hiascend.com/document/detail/en/canncommercial/800/apiref/ascendcopapi/atlasascendc_api_07_0210.html
+  semantic_summary: Enables atomic-add behavior for supported DMA data movement.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: SetAtomicNone
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::SetAtomicNone]
+  receiver_types: []
+  argument_counts: [0]
+  allow_unqualified: true
+  return_type: ''
+  document_title: SetAtomicNone - disable DMA atomic mode
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900beta2/API/ascendcopapi/atlasascendc_api_07_00200.html
+  semantic_summary: Disables the DMA atomic mode; renamed to DisableDmaAtomic in CANN 9.0.
+  applicable_architecture: all
+  constraints: []
+  aliases: [DisableDmaAtomic]
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: Muls
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Muls]
+  receiver_types: []
+  argument_counts: [4, 6]
+  allow_unqualified: true
+  return_type: ''
+  document_title: Muls - vector-scalar multiplication
+  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/80RC22/apiref/opdevgapi/atlasascendc_api_07_0065.html
+  semantic_summary: Multiplies each source tensor element by a scalar.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: Cast
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Cast]
+  receiver_types: []
+  argument_counts: [4, 6]
+  allow_unqualified: true
+  return_type: ''
+  document_title: Cast - vector precision conversion
+  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/82RC1/API/ascendcopapi/atlasascendc_api_07_0073.html
+  semantic_summary: Converts LocalTensor elements between supported data types and rounding modes.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: Duplicate
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Duplicate]
+  receiver_types: []
+  argument_counts: [3, 5]
+  allow_unqualified: true
+  return_type: ''
+  document_title: Duplicate - tensor fill
+  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/700/operatordev/Ascendcopdevg/atlasascendc_api_07_0148.html
+  semantic_summary: Fills a LocalTensor with a scalar value.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: Mmad
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::Mmad]
+  receiver_types: []
+  argument_counts: [4, 5]
+  allow_unqualified: true
+  return_type: ''
+  document_title: Mmad - matrix multiply-accumulate
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/80RC3alpha003/apiref/opdevgapi/atlasascendc_api_07_0242.html
+  semantic_summary: Performs matrix multiply-accumulate using LocalTensor operands.
+  applicable_architecture: [arch35]
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: PipeBarrier
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::PipeBarrier]
+  receiver_types: []
+  argument_counts: [0]
+  allow_unqualified: true
+  return_type: ''
+  document_title: PipeBarrier - pipeline barrier
+  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/900/API/ascendcopapi/atlasascendc_api_07_0271.html
+  semantic_summary: Blocks a pipeline until preceding dependent operations in the same pipeline complete.
+  applicable_architecture: all
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
+  confidence: 1.0
+- symbol_or_macro: AllocMutexID
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::AllocMutexID]
+  receiver_types: []
+  argument_counts: [0]
+  allow_unqualified: true
+  return_type: MutexID
+  document_title: AllocMutexID - mutex ID allocation
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900beta2/API/ascendcopapi/atlasascendc_api_07_00136.html
+  semantic_summary: Allocates and reserves a framework-managed MutexID.
+  applicable_architecture: [arch35]
+  constraints: [Release the ID with ReleaseMutexID after use.]
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0']
+  confidence: 1.0
+- symbol_or_macro: ReleaseMutexID
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::ReleaseMutexID]
+  receiver_types: []
+  argument_counts: [1]
+  allow_unqualified: true
+  return_type: ''
+  document_title: ReleaseMutexID - mutex ID release
+  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/900/API/ascendcopapi/atlasascendc_api_07_00137.html
+  semantic_summary: Releases a framework-managed MutexID.
+  applicable_architecture: [arch35]
+  constraints: []
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0']
+  confidence: 1.0
+
+- symbol_or_macro: CeilDivision
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::CeilDivision]
+  receiver_types: []
+  argument_counts: [2]
+  allow_unqualified: true
+  document_title: CeilDivision - scalar integer ceiling division
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900beta2/API/ascendcopapi/atlasascendc_api_07_00265.html
+  semantic_summary: Computes integer ceiling division for two scalar integer arguments.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0', '9.1']
+  confidence: 1.0

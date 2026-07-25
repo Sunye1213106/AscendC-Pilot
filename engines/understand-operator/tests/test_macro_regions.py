@@ -226,3 +226,29 @@ void SaveStuff() {
     macros = [n for n in payload["nodes"] if n.get("node_type") == "HostMacroBranch"]
     assert macros
     assert any("FEATURE_X" in str(n.get("condition") or "") or "FEATURE_X" in str(n.get("determinant_ref") or "") for n in macros)
+
+def test_function_like_macro_metadata_is_preserved() -> None:
+    info = analyze_macros(
+        "#define LIKELY(x) __builtin_expect(!!(x), 1)\n"
+        "#define TRACE(fmt, ...) log(fmt, __VA_ARGS__)\n"
+    )
+    assert info.function_macros["LIKELY"]["parameters"] == ["x"]
+    assert info.function_macros["LIKELY"]["body"].startswith("__builtin_expect")
+    assert info.function_macros["TRACE"]["variadic"] is True
+    directives = [d for d in info.directives if d.function_like]
+    assert {d.name for d in directives} == {"LIKELY", "TRACE"}
+
+
+
+def test_multiline_function_macro_is_one_definition() -> None:
+    text = """#define INVOKE_IMPL(T, FLAG) \\
+    Kernel<T>(FLAG); \\
+    SyncAll();
+void Run() { INVOKE_IMPL(float, true); }
+"""
+    info = analyze_macros(text)
+    macro = info.function_macros["INVOKE_IMPL"]
+    assert macro["line"] == 1
+    assert macro["end_line"] == 3
+    assert macro["parameters"] == ["T", "FLAG"]
+    assert macro["expands_to_symbols"] == ["Kernel", "SyncAll"]

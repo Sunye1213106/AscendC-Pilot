@@ -229,6 +229,7 @@ def main(argv: list[str] | None = None) -> int:
     p_dbg_reg.add_argument("--started-at", default="")
     p_dbg_reg.add_argument("--task-prompt-path", default="")
     p_dbg_reg.add_argument("--task-prompt", default="")
+    p_dbg_reg.add_argument("--dispatch-nonce", default="")
     p_dbg_reg.add_argument("--if-enabled", action="store_true")
 
     p_dbg_patch = p_dbg_sub.add_parser("patch-child-session", help="Set child session id from Task output")
@@ -237,12 +238,19 @@ def main(argv: list[str] | None = None) -> int:
     p_dbg_patch.add_argument("--parent-session-id", default="")
     p_dbg_patch.add_argument("--action-id", default="")
     p_dbg_patch.add_argument("--registration-id", default="")
+    p_dbg_patch.add_argument("--dispatch-nonce", default="")
+    p_dbg_patch.add_argument("--task-result", default="")
 
     p_dbg_ev = p_dbg_sub.add_parser("record-tool-event", help="Record a tool call for debug audit")
     p_dbg_ev.add_argument("--project", type=Path, default=Path.cwd())
     p_dbg_ev.add_argument("--tool", required=True)
     p_dbg_ev.add_argument("--parent-session-id", default="")
     p_dbg_ev.add_argument("--child-session-id", default="")
+    p_dbg_ev.add_argument(
+        "--event-session-id",
+        default="",
+        help="Executing session id from the hook (used for ownership + backfill)",
+    )
     p_dbg_ev.add_argument("--action-id", default="")
     p_dbg_ev.add_argument("--actor-id", default="")
     p_dbg_ev.add_argument("--path", default="")
@@ -260,6 +268,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="No-op unless debug mode is enabled",
     )
+
+    p_dbg_anom = p_dbg_sub.add_parser("record-anomaly", help="Append a debug anomaly (export failures etc.)")
+    p_dbg_anom.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_anom.add_argument("--kind", required=True)
+    p_dbg_anom.add_argument("--summary", required=True)
 
     p_dbg_fin = p_dbg_sub.add_parser(
         "finalize-parent-index",
@@ -692,6 +705,7 @@ def _cmd_debug(args: Any) -> int:
             started_at=str(getattr(args, "started_at", "") or ""),
             task_prompt_path=str(getattr(args, "task_prompt_path", "") or ""),
             task_prompt_text=str(getattr(args, "task_prompt", "") or ""),
+            dispatch_nonce=str(getattr(args, "dispatch_nonce", "") or ""),
         )
         print_json(payload)
         return 0 if payload.get("ok") else 1
@@ -702,6 +716,8 @@ def _cmd_debug(args: Any) -> int:
             parent_session_id=str(getattr(args, "parent_session_id", "") or ""),
             action_id=str(getattr(args, "action_id", "") or ""),
             registration_id=str(getattr(args, "registration_id", "") or ""),
+            dispatch_nonce=str(getattr(args, "dispatch_nonce", "") or ""),
+            task_result_text=str(getattr(args, "task_result", "") or ""),
         )
         print_json(payload)
         return 0 if payload.get("ok") else 1
@@ -714,6 +730,7 @@ def _cmd_debug(args: Any) -> int:
             tool=str(args.tool),
             parent_session_id=str(getattr(args, "parent_session_id", "") or ""),
             child_session_id=str(getattr(args, "child_session_id", "") or ""),
+            event_session_id=str(getattr(args, "event_session_id", "") or ""),
             action_id=str(getattr(args, "action_id", "") or ""),
             actor_id=str(getattr(args, "actor_id", "") or ""),
             path=str(getattr(args, "path", "") or ""),
@@ -733,8 +750,22 @@ def _cmd_debug(args: Any) -> int:
             reason=str(args.reason or "manual"),
             subagent=str(getattr(args, "subagent", "") or ""),
         )
+        if not payload.get("ok") and not payload.get("skipped"):
+            dbg.record_export_failure_anomaly(
+                args.project,
+                summary=str(payload.get("error") or payload.get("reason") or "export_failed"),
+                detail=payload if isinstance(payload, dict) else {},
+            )
         print_json(payload)
-        return 0 if payload.get("ok") else 1
+        return 0 if payload.get("ok") or payload.get("skipped") else 1
+    if sub == "record-anomaly":
+        payload = dbg.append_anomaly(
+            args.project,
+            kind=str(args.kind),
+            summary=str(args.summary),
+        )
+        print_json(payload)
+        return 0 if payload.get("ok") or payload.get("skipped") else 1
     if sub == "finalize-parent-index":
         if getattr(args, "if_enabled", False) and not dbg.is_enabled(args.project):
             print_json({"ok": True, "skipped": True, "reason": "debug_disabled"})

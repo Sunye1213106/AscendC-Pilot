@@ -202,11 +202,17 @@ def issue_action_lease(
     *,
     state: dict[str, Any] | None = None,
     action_id: str,
+    actor_id: str = "",
     mode: str = MODE_NORMAL,
     allowed_tools: list[str] | None = None,
     allowed_commands: list[str] | None = None,
     allowed_read_roots: list[str] | None = None,
     allowed_write_roots: list[str] | None = None,
+    allowed_write_paths: list[str] | None = None,
+    allowed_read_paths: list[str] | None = None,
+    forbidden_write_paths: list[str] | None = None,
+    forbidden_read_paths: list[str] | None = None,
+    allowed_target_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Issue (replace) the active action lease for the given mode."""
     from ascendc_pilot.runs import append_event
@@ -223,6 +229,7 @@ def issue_action_lease(
         "run_id": st.get("run_id") or "",
         "workflow_id": st.get("workflow_id") or "",
         "action_id": action_id,
+        "actor_id": actor_id or "",
         "phase": st.get("phase") or "",
         "state_version": _state_version(st),
         "mode": mode_l,
@@ -231,6 +238,11 @@ def issue_action_lease(
         "allowed_commands": list(allowed_commands or def_cmds),
         "allowed_read_roots": list(allowed_read_roots or []),
         "allowed_write_roots": list(allowed_write_roots or []),
+        "allowed_write_paths": list(allowed_write_paths or []),
+        "allowed_read_paths": list(allowed_read_paths or []),
+        "forbidden_write_paths": list(forbidden_write_paths or []),
+        "forbidden_read_paths": list(forbidden_read_paths or []),
+        "allowed_target_ids": list(allowed_target_ids or []),
         "issued_at": _now(),
         "revoked_at": None,
         "revoke_reason": None,
@@ -242,12 +254,41 @@ def issue_action_lease(
             "type": "ActionPrepared" if mode_l == MODE_NORMAL else "StateTransitioned",
             "lease_id": lease["lease_id"],
             "action_id": action_id,
+            "actor_id": actor_id or "",
             "mode": mode_l,
             "lease_event": "issued",
         },
         run_id=str(st.get("run_id") or "") or None,
     )
     return lease
+
+
+def lease_allows_write_path(lease: dict[str, Any], rel_posix: str) -> dict[str, Any]:
+    """Check Action-precise write paths (after workflow root containment)."""
+    from ascendc_pilot.ownership import path_matches_patterns
+
+    rel = str(rel_posix or "").replace("\\", "/").lstrip("/")
+    forbid = list(lease.get("forbidden_write_paths") or [])
+    if forbid and path_matches_patterns(rel, [str(x) for x in forbid]):
+        return {"ok": False, "error": "ACTION_FORBIDDEN_PATH", "path": rel}
+    precise = list(lease.get("allowed_write_paths") or [])
+    if precise and not path_matches_patterns(rel, [str(x) for x in precise]):
+        return {"ok": False, "error": "ACTION_WRITE_SCOPE_DENIED", "path": rel, "allowed": precise}
+    return {"ok": True}
+
+
+def lease_allows_read_path(lease: dict[str, Any], rel_posix: str) -> dict[str, Any]:
+    """Check Action-precise read paths (forbidden deny-first, then allow-list)."""
+    from ascendc_pilot.ownership import path_matches_patterns
+
+    rel = str(rel_posix or "").replace("\\", "/").lstrip("/")
+    forbid = list(lease.get("forbidden_read_paths") or [])
+    if forbid and path_matches_patterns(rel, [str(x) for x in forbid]):
+        return {"ok": False, "error": "ACTION_FORBIDDEN_READ_PATH", "path": rel}
+    precise = list(lease.get("allowed_read_paths") or [])
+    if precise and not path_matches_patterns(rel, [str(x) for x in precise]):
+        return {"ok": False, "error": "ACTION_READ_SCOPE_DENIED", "path": rel, "allowed": precise}
+    return {"ok": True}
 
 
 def issue_lease_for_status(
@@ -485,7 +526,9 @@ __all__ = [
     "issue_lease_for_status",
     "issue_rework_lease",
     "lease_allows_command",
+    "lease_allows_read_path",
     "lease_allows_tool",
+    "lease_allows_write_path",
     "lease_path",
     "load_lease",
     "revoke_active_lease",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import secrets
 from pathlib import Path
@@ -338,6 +339,10 @@ def _render_placeholders(
     context_pack_path: str = "",
     op_name: str = "",
     target: str = "",
+    architecture: str = "",
+    role_id: str = "",
+    lease_id: str = "",
+    action_session_id: str = "",
 ) -> str:
     repl = {
         "<RUN_ID>": run_id,
@@ -351,6 +356,10 @@ def _render_placeholders(
         "<TG_ROOT>": tg_root_path,
         "<TOPIC>": topic,
         "<CONTEXT_PACK_PATH>": context_pack_path,
+        "<ARCHITECTURE>": architecture or "arch35",
+        "<ROLE_ID>": role_id,
+        "<LEASE_ID>": lease_id,
+        "<ACTION_SESSION_ID>": action_session_id,
     }
     out = text
     for k, v in repl.items():
@@ -429,12 +438,192 @@ def _resolve_contract_paths(root: Path, rel: str) -> list[Path]:
     return [path] if path.exists() else []
 
 
-def _collect_output_hashes(project_root: Path, contract_id: str) -> dict[str, str]:
+_PRODUCER_OWNED_ARTIFACT_NAMES = {
+    "extract_plan.yaml",
+    "semantic_patches.yaml",
+    "key_triage.yaml",
+    "input_derivable_patch.yaml",
+}
+_ACTION_OWNED_ARTIFACT_NAMES = _PRODUCER_OWNED_ARTIFACT_NAMES | {
+    "scope_confirmed.yaml",
+    "receipt.yaml",
+}
+
+
+def _hash_prepare_nonce(prepare_nonce: str = "", prepare_nonce_hash: str = "") -> str:
+    if prepare_nonce_hash:
+        return str(prepare_nonce_hash).strip()
+    if not prepare_nonce:
+        return ""
+    return hashlib.sha256(str(prepare_nonce).encode("utf-8")).hexdigest()
+
+
+def _declared_artifact_identity(data: dict[str, Any]) -> dict[str, str]:
+    identity = data.get("artifact_identity") if isinstance(data.get("artifact_identity"), dict) else {}
+    checks: dict[str, str] = {}
+    for field in (
+        "run_id",
+        "workflow_id",
+        "phase",
+        "action_id",
+        "actor_id",
+        "role_id",
+        "action_session_id",
+        "lease_id",
+        "prepare_nonce_hash",
+        "produced_by",
+    ):
+        checks[field] = str(identity.get(field) or data.get(field) or "").strip()
+    declared_nonce = str(identity.get("prepare_nonce") or data.get("prepare_nonce") or "").strip()
+    if declared_nonce and not checks["prepare_nonce_hash"]:
+        checks["prepare_nonce_hash"] = _hash_prepare_nonce(declared_nonce)
+    return checks
+
+
+def _contract_identity_ok(
+    path: Path,
+    *,
+    run_id: str,
+    workflow_id: str,
+    phase: str = "",
+    action_id: str = "",
+    actor_id: str = "",
+    role_id: str = "",
+    action_session_id: str = "",
+    lease_id: str = "",
+    prepare_nonce_hash: str = "",
+    prepare_nonce: str = "",
+    require_finalizer_stamp: bool = False,
+) -> dict[str, Any]:
+    """Validate declared artifact identity against the current Action session."""
+    if yaml is None or not path.is_file() or path.suffix.lower() not in {".yaml", ".yml"}:
+        return {"ok": True, "skipped": True}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001
+        return {"ok": True, "skipped": True}
+    if not isinstance(data, dict):
+        return {"ok": True, "skipped": True}
+    checks = _declared_artifact_identity(data)
+    expected = {
+        "run_id": str(run_id or "").strip(),
+        "workflow_id": str(workflow_id or "").strip(),
+        "phase": str(phase or "").strip(),
+        "action_id": str(action_id or "").strip(),
+        "actor_id": str(actor_id or "").strip(),
+        "role_id": str(role_id or "").strip(),
+        "action_session_id": str(action_session_id or "").strip(),
+        "lease_id": str(lease_id or "").strip(),
+        "prepare_nonce_hash": _hash_prepare_nonce(prepare_nonce, prepare_nonce_hash),
+    }
+    posix = path.as_posix()
+    action_owned = path.name in _ACTION_OWNED_ARTIFACT_NAMES or "/runs/" in posix
+
+    # Missing identity on older artifacts is a migration error for run-scoped contracts.
+    if any(ch in posix for ch in ("/runs/", "scope_confirmed", "receipt.yaml")):
+        if not checks["run_id"]:
+            return {
+                "ok": False,
+                "error": "ARTIFACT_IDENTITY_MISSING",
+                "path": path.as_posix(),
+                "message": "run-scoped artifact missing identity; re-prepare / re-finalize",
+            }
+
+    if action_owned and (require_finalizer_stamp or checks["produced_by"] == "pilot-finalizer"):
+        for field in (
+            "run_id",
+            "workflow_id",
+            "phase",
+            "action_id",
+            "actor_id",
+            "role_id",
+            "action_session_id",
+            "lease_id",
+            "prepare_nonce_hash",
+        ):
+            if expected[field] and not checks[field]:
+                return {
+                    "ok": False,
+                    "error": "ARTIFACT_IDENTITY_MISSING",
+                    "field": field,
+                    "path": path.as_posix(),
+                    "message": "finalized artifact missing trusted identity field",
+                }
+        if not checks["produced_by"]:
+            return {
+                "ok": False,
+                "error": "ARTIFACT_IDENTITY_MISSING",
+                "field": "produced_by",
+                "path": path.as_posix(),
+                "message": "finalized artifact missing pilot-finalizer stamp",
+            }
+
+    if action_owned and checks["produced_by"] and checks["produced_by"] != "pilot-finalizer":
+        return {
+            "ok": False,
+            "error": "ARTIFACT_OWNER_MISMATCH",
+            "field": "produced_by",
+            "path": path.as_posix(),
+            "expected": "pilot-finalizer",
+            "actual": checks["produced_by"],
+        }
+
+    error_by_field = {
+        "action_session_id": "ARTIFACT_SESSION_MISMATCH",
+        "lease_id": "ARTIFACT_LEASE_MISMATCH",
+        "prepare_nonce_hash": "ARTIFACT_NONCE_MISMATCH",
+    }
+    for field, actual in checks.items():
+        if field == "produced_by":
+            continue
+        expected_value = expected.get(field, "")
+        if not expected_value or not actual or actual == expected_value:
+            continue
+        # Canonical IR may be shared across actions; only enforce action-owned
+        # producer/session fields where the artifact is owned by this action.
+        if field not in {"run_id", "workflow_id"} and not action_owned:
+            continue
+        return {
+            "ok": False,
+            "error": error_by_field.get(field, "ARTIFACT_OWNER_MISMATCH"),
+            "field": field,
+            "path": path.as_posix(),
+            "expected": expected_value,
+            "actual": actual,
+        }
+
+    return {"ok": True}
+
+
+def _collect_output_hashes(
+    project_root: Path,
+    contract_id: str,
+    *,
+    run_id: str = "",
+    workflow_id: str = "",
+    phase: str = "",
+    action_id: str = "",
+    actor_id: str = "",
+    role_id: str = "",
+    action_session_id: str = "",
+    lease_id: str = "",
+    prepare_nonce_hash: str = "",
+    prepare_nonce: str = "",
+) -> dict[str, str]:
+    from ascendc_pilot.ownership import expand_contract_paths
+
     root = agent_root(project_root)
     hashes: dict[str, str] = {}
     import hashlib
 
-    for rel in OUTPUT_CONTRACT_PATHS.get(contract_id, []):
+    for rel in expand_contract_paths(
+        list(OUTPUT_CONTRACT_PATHS.get(contract_id, [])),
+        run_id=run_id,
+        workflow_id=workflow_id,
+        action_id=action_id,
+        actor_id=actor_id,
+        action_session_id=action_session_id,
+    ):
         matches = _resolve_contract_paths(root, rel)
         if not matches:
             continue
@@ -453,8 +642,25 @@ def _collect_output_hashes(project_root: Path, contract_id: str) -> dict[str, st
     return hashes
 
 
-def _check_output_contract(project_root: Path, contract_id: str) -> dict[str, Any]:
+def _check_output_contract(
+    project_root: Path,
+    contract_id: str,
+    *,
+    run_id: str = "",
+    workflow_id: str = "",
+    phase: str = "",
+    action_id: str = "",
+    actor_id: str = "",
+    role_id: str = "",
+    action_session_id: str = "",
+    lease_id: str = "",
+    prepare_nonce_hash: str = "",
+    prepare_nonce: str = "",
+    require_finalizer_stamp: bool = False,
+) -> dict[str, Any]:
     """Fail-closed: missing or unregistered contracts never pass."""
+    from ascendc_pilot.ownership import expand_contract_paths
+
     if not contract_id:
         return {
             "ok": False,
@@ -471,9 +677,28 @@ def _check_output_contract(project_root: Path, contract_id: str) -> dict[str, An
             "error": "unknown_contract",
             "message": f"unregistered output contract {contract_id!r}; finalize denied",
         }
+    expanded = expand_contract_paths(
+        list(paths),
+        run_id=run_id,
+        workflow_id=workflow_id,
+        action_id=action_id,
+        actor_id=actor_id,
+        action_session_id=action_session_id,
+    )
+    # Unconstrained run wildcards are forbidden once identity templates are available.
+    for rel in expanded:
+        if "runs/*/" in rel.replace("\\", "/"):
+            return {
+                "ok": False,
+                "skipped": False,
+                "error": "CONTRACT_RUN_WILDCARD_FORBIDDEN",
+                "message": f"run-scoped contract must use {{run_id}}, got {rel!r}",
+                "contract_id": contract_id,
+            }
     missing = []
     empty = []
-    for rel in paths:
+    identity_errors: list[dict[str, Any]] = []
+    for rel in expanded:
         matches = _resolve_contract_paths(root, rel)
         if not matches:
             missing.append(rel)
@@ -482,6 +707,22 @@ def _check_output_contract(project_root: Path, contract_id: str) -> dict[str, An
         for path in matches:
             if path.is_file() and path.stat().st_size > 0:
                 nonempty = True
+                id_check = _contract_identity_ok(
+                    path,
+                    run_id=run_id,
+                    workflow_id=workflow_id,
+                    phase=phase,
+                    action_id=action_id,
+                    actor_id=actor_id,
+                    role_id=role_id,
+                    action_session_id=action_session_id,
+                    lease_id=lease_id,
+                    prepare_nonce_hash=prepare_nonce_hash,
+                    prepare_nonce=prepare_nonce,
+                    require_finalizer_stamp=require_finalizer_stamp,
+                )
+                if not id_check.get("ok"):
+                    identity_errors.append(id_check)
                 break
             if path.is_dir() and any(p.is_file() and p.stat().st_size > 0 for p in path.rglob("*")):
                 nonempty = True
@@ -491,7 +732,14 @@ def _check_output_contract(project_root: Path, contract_id: str) -> dict[str, An
 
     # Stronger nonempty globs for TG plan/solve contracts
     glob_miss: list[str] = []
-    for pattern in OUTPUT_CONTRACT_NONEMPTY_GLOBS.get(contract_id, []):
+    for pattern in expand_contract_paths(
+        list(OUTPUT_CONTRACT_NONEMPTY_GLOBS.get(contract_id, [])),
+        run_id=run_id,
+        workflow_id=workflow_id,
+        action_id=action_id,
+        actor_id=actor_id,
+        action_session_id=action_session_id,
+    ):
         matches = [p for p in root.glob(pattern) if p.is_file() and p.stat().st_size > 0]
         if not matches:
             # Also try rglob-style ** manually
@@ -506,7 +754,7 @@ def _check_output_contract(project_root: Path, contract_id: str) -> dict[str, An
             if not matches:
                 glob_miss.append(pattern)
 
-    ok = not missing and not empty and not glob_miss
+    ok = not missing and not empty and not glob_miss and not identity_errors
     parts = []
     if missing:
         parts.append(f"missing outputs: {missing}")
@@ -514,12 +762,15 @@ def _check_output_contract(project_root: Path, contract_id: str) -> dict[str, An
         parts.append(f"empty outputs: {empty}")
     if glob_miss:
         parts.append(f"missing nonempty artifacts: {glob_miss}")
+    if identity_errors:
+        parts.append(f"identity errors: {[e.get('error') for e in identity_errors]}")
     return {
         "ok": ok,
         "contract_id": contract_id,
         "missing": missing,
         "empty": empty,
         "missing_globs": glob_miss,
+        "identity_errors": identity_errors,
         "message": "ok" if ok else "; ".join(parts),
     }
 
@@ -608,10 +859,31 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
 
     actor_id = str(action.get("agent_id") or (action.get("actors") or ["unknown"])[0])
     role_id = str(action.get("role_id") or "")
+    from ascendc_pilot.ownership import (
+        EXECUTION_DETERMINISTIC,
+        EXECUTION_PRIMARY_INTERACTIVE,
+        EXECUTION_SUBAGENT,
+        action_session_id as make_action_session_id,
+        action_write_paths,
+        build_bundle_identity,
+        expand_path_template,
+        infer_execution_mode,
+        prompt_has_unresolved,
+        staging_dir,
+        unresolved_placeholders,
+    )
+
+    execution_mode = infer_execution_mode(
+        agent_id=actor_id if actor_id != "unknown" else None,
+        role_id=role_id,
+        execution_mode=str(action.get("execution_mode") or "") or None,
+    )
     prepare_nonce = secrets.token_hex(16)
     nonce = prepare_nonce  # mirror for legacy readers; finalize requires prepare_nonce
+    action_sid = make_action_session_id(run_id, action_id, prepare_nonce)
     sdir = _session_dir(project_root, run_id, action_id)
     sdir.mkdir(parents=True, exist_ok=True)
+    staging_dir(sdir).mkdir(parents=True, exist_ok=True)
 
     from ascendc_pilot.context import build_context_pack
     from ascendc_pilot.paths import tg_root, uo_root
@@ -619,11 +891,29 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     pack = build_context_pack(project_root, intent=f"run-action:{action_id}", topic=action_id)
     repo = _repo_root(project_root)
     method, prompt = _load_method_and_prompt(repo, action)
+    if execution_mode in {EXECUTION_SUBAGENT, EXECUTION_PRIMARY_INTERACTIVE}:
+        mid = str(action.get("action_method_id") or "")
+        tpid = str(action.get("task_prompt_id") or "")
+        if mid and not str(method or "").strip():
+            return {
+                "ok": False,
+                "error": "ACTION_METHOD_MISSING",
+                "message_zh": f"Action {action_id} missing METHOD.md for {mid}",
+                "action_method_id": mid,
+            }
+        if tpid and not str(prompt or "").strip():
+            return {
+                "ok": False,
+                "error": "TASK_PROMPT_MISSING",
+                "message_zh": f"Action {action_id} missing task prompt {tpid}",
+                "task_prompt_id": tpid,
+            }
     root_s = Path(project_root).expanduser().resolve().as_posix()
     uo_s = uo_root(project_root).as_posix()
     tg_s = tg_root(project_root).as_posix()
     pack_path = str(pack.get("path") or "")
     op_name = str(state.get("op_name") or Path(project_root).name or "")
+    architecture = str(state.get("architecture") or "arch35")
     ph_kwargs = {
         "run_id": run_id,
         "action_id": action_id,
@@ -635,18 +925,36 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         "topic": action_id,
         "context_pack_path": pack_path,
         "op_name": op_name,
+        "architecture": architecture,
+        "role_id": role_id,
+        "action_session_id": action_sid,
     }
     method_r = _render_placeholders(method, **ph_kwargs)
     prompt_r = _render_placeholders(prompt, **ph_kwargs)
 
+    identity = build_bundle_identity(
+        run_id=run_id,
+        workflow_id=wid,
+        phase=phase,
+        action_id=action_id,
+        actor_id=actor_id,
+        role_id=role_id,
+        action_session_id=action_sid,
+        prepare_nonce=prepare_nonce,
+        lease_id="",
+        execution_mode=execution_mode,
+    )
     bundle = {
         "version": 1,
+        "identity": identity,
         "run_id": run_id,
         "workflow_id": wid,
         "phase": phase,
         "action_id": action_id,
         "actor_id": actor_id,
         "role_id": role_id,
+        "execution_mode": execution_mode,
+        "action_session_id": action_sid,
         "prepare_nonce": prepare_nonce,
         "nonce": nonce,
         "policy_ids": list(action.get("policy_ids") or []),
@@ -663,7 +971,12 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         "uo_root": uo_s,
         "tg_root": tg_s,
         "op_name": op_name,
+        "architecture": architecture,
         "status": "prepared",
+        "identity_note": (
+            "Bundle identity is authoritative. "
+            "Do not replace, infer, normalize, or copy identity from old artifacts."
+        ),
     }
 
     eng_ctx = _eng_ctx_from_pack(pack, state, run_id)
@@ -715,9 +1028,16 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         )
         prompt_r = _render_placeholders(prompt, **{**ph_kwargs, "target": target_line})
         bundle["dispatch_targets"] = {
-            "read": ["uo/ir/extract_plan_candidates.yaml"],
+            "read": [
+                "uo/ir/extract_plan_candidates.yaml",
+                "uo/ir/entrypoint_graph.yaml",
+            ],
             "write": ["uo/ir/extract_plan.yaml"],
-            "forbid_read": ["uo/ir/llm_tasks.yaml"],
+            "forbid_read": [
+                "uo/ir/llm_tasks.yaml",
+                "uo/ir/semantic_patches.yaml",
+                "uo/ir/semantic_resolution_ledger.yaml",
+            ],
             "forbid_write_fields": list(_EXTRACT_PLAN_FORBID_FIELDS),
         }
 
@@ -818,43 +1138,138 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             }
         prompt_r = _render_placeholders(prompt, **{**ph_kwargs, "target": target_line})
 
+    # Fail-closed: never dispatch a half-rendered prompt/method.
+    unresolved = unresolved_placeholders(prompt_r) + unresolved_placeholders(method_r)
+    if unresolved or prompt_has_unresolved(prompt_r) or prompt_has_unresolved(method_r):
+        return {
+            "ok": False,
+            "error": "PROMPT_IDENTITY_UNRESOLVED",
+            "unresolved": unresolved,
+            "message_zh": "Task Prompt / METHOD 仍有未解析占位符；禁止派发",
+        }
+
     prompt_path = (sdir / "prompt.md").as_posix()
     method_path = (sdir / "method.md").as_posix()
     bundle_path = (sdir / "bundle.yaml").as_posix()
-    stub = _build_task_prompt_stub(
-        actor_id=actor_id,
-        action_id=action_id,
-        run_id=run_id,
-        session_dir=sdir.as_posix(),
-        prompt_path=prompt_path,
-        method_path=method_path,
-        bundle_path=bundle_path,
-        dispatch_targets=bundle.get("dispatch_targets")
-        if isinstance(bundle.get("dispatch_targets"), dict)
-        else None,
-    )
-    bundle["task_prompt_stub"] = stub
+    stub = ""
+    if execution_mode == EXECUTION_SUBAGENT:
+        stub = _build_task_prompt_stub(
+            actor_id=actor_id,
+            action_id=action_id,
+            run_id=run_id,
+            session_dir=sdir.as_posix(),
+            prompt_path=prompt_path,
+            method_path=method_path,
+            bundle_path=bundle_path,
+            dispatch_targets=bundle.get("dispatch_targets")
+            if isinstance(bundle.get("dispatch_targets"), dict)
+            else None,
+        )
+        bundle["task_prompt_stub"] = stub
 
     from ascendc_pilot.authorize.lease import issue_action_lease
     from datetime import datetime, timezone
 
+    write_paths = list(action.get("allowed_write_paths") or [])
+    if not write_paths:
+        write_paths = action_write_paths(wid, action_id, run_id=run_id)
+    else:
+        write_paths = [expand_path_template(p, run_id=run_id) for p in write_paths]
+    forbid_write = [
+        expand_path_template(p, run_id=run_id)
+        for p in list(action.get("forbidden_write_paths") or [])
+    ]
+    read_paths = list(action.get("allowed_read_paths") or [])
+    if not read_paths:
+        from ascendc_pilot.ownership import action_read_paths
+
+        read_paths = action_read_paths(wid, action_id, run_id=run_id)
+    else:
+        read_paths = [expand_path_template(p, run_id=run_id) for p in read_paths]
+    forbid_read = [
+        expand_path_template(p, run_id=run_id)
+        for p in list(action.get("forbidden_read_paths") or [])
+    ]
+    if not forbid_read:
+        from ascendc_pilot.ownership import action_forbidden_read_paths
+
+        forbid_read = action_forbidden_read_paths(wid, action_id, run_id=run_id)
+    # Dispatch targets may further narrow write paths for producers.
+    dt = bundle.get("dispatch_targets") if isinstance(bundle.get("dispatch_targets"), dict) else {}
+    if dt.get("write"):
+        write_paths = [expand_path_template(str(p), run_id=run_id) for p in dt["write"]]
+    if dt.get("forbid_write"):
+        forbid_write = [
+            expand_path_template(str(p), run_id=run_id) for p in dt["forbid_write"]
+        ] + forbid_write
+    if dt.get("read"):
+        read_paths = [expand_path_template(str(p), run_id=run_id) for p in dt["read"]]
+    if dt.get("forbid_read"):
+        forbid_read = [
+            expand_path_template(str(p), run_id=run_id) for p in dt["forbid_read"]
+        ] + forbid_read
+    # De-dupe while preserving order.
+    if forbid_read:
+        seen_fr: set[str] = set()
+        deduped_fr: list[str] = []
+        for p in forbid_read:
+            if p not in seen_fr:
+                seen_fr.add(p)
+                deduped_fr.append(p)
+        forbid_read = deduped_fr
+    if read_paths:
+        seen_rp: set[str] = set()
+        deduped_rp: list[str] = []
+        for p in read_paths:
+            if p not in seen_rp:
+                seen_rp.add(p)
+                deduped_rp.append(p)
+        read_paths = deduped_rp
+    allowed_targets = [str(x) for x in (dt.get("target_ids") or []) if str(x).strip()]
+    # Outer containment: workflow write_roots; precise paths are Action lease.
+    wf_roots = list((get_workflow(wid) or {}).get("write_roots") or [])
     lease = issue_action_lease(
         project_root,
         state=state,
         action_id=action_id,
+        actor_id=actor_id,
         mode="normal",
         allowed_read_roots=[sdir.as_posix()],
-        allowed_write_roots=list((get_workflow(wid) or {}).get("write_roots") or []),
+        allowed_write_roots=wf_roots,
+        allowed_write_paths=write_paths,
+        allowed_read_paths=read_paths,
+        forbidden_write_paths=forbid_write,
+        forbidden_read_paths=forbid_read,
+        allowed_target_ids=allowed_targets,
     )
     lease_id = str(lease.get("lease_id") or "")
     prepared_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     bundle["lease_id"] = lease_id
     bundle["prepared_at"] = prepared_at
+    bundle["identity"] = build_bundle_identity(
+        run_id=run_id,
+        workflow_id=wid,
+        phase=phase,
+        action_id=action_id,
+        actor_id=actor_id,
+        role_id=role_id,
+        action_session_id=action_sid,
+        prepare_nonce=prepare_nonce,
+        lease_id=lease_id,
+        execution_mode=execution_mode,
+    )
+    bundle["allowed_write_paths"] = write_paths
+    bundle["forbidden_write_paths"] = forbid_write
+    bundle["allowed_read_paths"] = read_paths
+    bundle["forbidden_read_paths"] = forbid_read
+    bundle["allowed_target_ids"] = allowed_targets
+    bundle["staging_dir"] = staging_dir(sdir).as_posix()
 
     _dump(sdir / "session.yaml", bundle)
     (sdir / "method.md").write_text(method_r, encoding="utf-8")
     (sdir / "prompt.md").write_text(prompt_r, encoding="utf-8")
-    (sdir / "task_prompt_stub.md").write_text(stub, encoding="utf-8")
+    if stub:
+        (sdir / "task_prompt_stub.md").write_text(stub, encoding="utf-8")
     _dump(
         sdir / "bundle.yaml",
         {k: v for k, v in bundle.items() if k not in {"nonce", "prepare_nonce"}},
@@ -869,10 +1284,16 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             "action_id": action_id,
             "actor_id": actor_id,
             "role_id": role_id,
+            "execution_mode": execution_mode,
+            "action_session_id": action_sid,
             "session_dir": sdir.as_posix(),
             "prepare_nonce": prepare_nonce,
             "lease_id": lease_id,
             "status": "prepared",
+            "allowed_write_paths": write_paths,
+            "forbidden_write_paths": forbid_write,
+            "allowed_read_paths": read_paths,
+            "forbidden_read_paths": forbid_read,
         },
     )
 
@@ -883,8 +1304,10 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             "action_id": action_id,
             "actor_id": actor_id,
             "role_id": role_id,
+            "execution_mode": execution_mode,
             "lease_id": lease_id,
             "prepare_nonce": prepare_nonce,
+            "action_session_id": action_sid,
         },
         run_id=run_id,
     )
@@ -895,25 +1318,54 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         "action_id": action_id,
         "actor_id": actor_id,
         "role_id": role_id,
+        "execution_mode": execution_mode,
+        "action_session_id": action_sid,
         "run_id": run_id,
         "session_dir": sdir.as_posix(),
         "bundle_path": (sdir / "bundle.yaml").as_posix(),
         "prompt_path": (sdir / "prompt.md").as_posix(),
         "method_path": (sdir / "method.md").as_posix(),
+        "primary_instructions_path": (sdir / "prompt.md").as_posix(),
         "lease_id": lease_id,
         "prepare_nonce": prepare_nonce,
         "auto_finalize": False,
+        "identity": bundle["identity"],
     }
     if prepare_engine is not None:
         result["prepare_engine"] = prepare_engine
 
-    if role_id == "deterministic_engine":
+    if execution_mode == EXECUTION_DETERMINISTIC or role_id == "deterministic_engine":
         eng = invoke_engine(project_root, wid, action_id, ctx=eng_ctx)
         result["engine"] = eng
         fin = finalize_action(project_root, action_id, engine_result=eng)
         result["auto_finalize"] = True
         result["finalize"] = fin
         result["ok"] = bool(fin.get("ok"))
+        return result
+
+    if execution_mode == EXECUTION_PRIMARY_INTERACTIVE:
+        interactive_steps = [
+            f"acp uo-scope scan --project <PROJECT_ROOT> --architecture {architecture}",
+            "AskQuestion: continue | revise | stop | manual_supplement",
+            "acp uo-scope checkpoint --project <PROJECT_ROOT> --decision <decision>",
+            "acp uo-scope build-evidence --project <PROJECT_ROOT>",
+            "acp uo-scope closure --project <PROJECT_ROOT>",
+            "acp uo-scope stage --project <PROJECT_ROOT>",
+            "MCP index_repository → uo/cbm/index_stage",
+            "acp uo-scope record-index --project <PROJECT_ROOT> --cbm-project <MCP_PROJECT>",
+            "acp uo-scope finalize --project <PROJECT_ROOT>",
+            f"acp run-action {action_id} --finalize --project <PROJECT_ROOT>",
+        ]
+        # Render project root into the interactive step list for the primary.
+        interactive_steps = [s.replace("<PROJECT_ROOT>", root_s) for s in interactive_steps]
+        result["interactive_steps"] = interactive_steps
+        result["message_zh"] = (
+            f"已准备 primary_interactive Action `{action_id}`。"
+            f"请在当前 primary 会话按 `primary_instructions_path` / interactive_steps 执行；"
+            f"禁止 Task 派发自身或再次 `acp run-action {action_id}`（prepare）。"
+            f"完成后 `acp run-action {action_id} --finalize`。"
+        )
+        result["dispatch_task"] = False
         return result
 
     result["message_zh"] = (
@@ -926,6 +1378,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     )
     result["task_prompt_stub"] = stub
     result["task_prompt_stub_path"] = (sdir / "task_prompt_stub.md").as_posix()
+    result["dispatch_task"] = True
     if wid == "uo-init" and action_id == "extract_plan":
         result["message_zh"] = (
             f"已准备 extract_plan；派发 `{actor_id}` 时原样使用 `task_prompt_stub`："
@@ -944,6 +1397,154 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         )
         result["dispatch_targets"] = bundle.get("dispatch_targets")
     return result
+
+
+def _finalize_owned_artifact_path(
+    project_root: Path,
+    *,
+    session: dict[str, Any],
+    action_id: str,
+) -> Path | None:
+    from ascendc_pilot.paths import uo_root as _uo_root
+
+    owned: dict[str, Path] = {
+        "extract_plan": _uo_root(project_root) / "ir" / "extract_plan.yaml",
+        "adjudicate_llm_tasks": _uo_root(project_root) / "ir" / "semantic_patches.yaml",
+        "key_triage": _uo_root(project_root) / "ir" / "key_triage.yaml",
+        "key_resolution": _uo_root(project_root) / "ir" / "input_derivable_patch.yaml",
+        "confidence_review": _uo_root(project_root) / "review" / "confidence_reason_review.yaml",
+        "kb_review": _uo_root(project_root) / "review" / "kb_product_review.yaml",
+        "scope_confirmation": _uo_root(project_root)
+        / "runs"
+        / str(session.get("run_id") or "")
+        / "scope"
+        / "scope_confirmed.yaml",
+    }
+    return owned.get(action_id)
+
+
+def _validate_producer_declared_identity(
+    project_root: Path,
+    *,
+    session: dict[str, Any],
+    action_id: str,
+) -> dict[str, Any]:
+    """Reject producer-declared identity that conflicts with the prepared session."""
+    if action_id not in {"extract_plan", "adjudicate_llm_tasks", "key_triage", "key_resolution"}:
+        return {"ok": True, "skipped": True}
+    path = _finalize_owned_artifact_path(project_root, session=session, action_id=action_id)
+    if path is None or not path.is_file():
+        return {"ok": True, "skipped": True, "path": path.as_posix() if path else ""}
+    check = _contract_identity_ok(
+        path,
+        run_id=str(session.get("run_id") or ""),
+        workflow_id=str(session.get("workflow_id") or ""),
+        phase=str(session.get("phase") or ""),
+        action_id=str(session.get("action_id") or action_id or ""),
+        actor_id=str(session.get("actor_id") or ""),
+        role_id=str(session.get("role_id") or ""),
+        action_session_id=str(session.get("action_session_id") or ""),
+        lease_id=str(session.get("lease_id") or ""),
+        prepare_nonce=str(session.get("prepare_nonce") or ""),
+        require_finalizer_stamp=False,
+    )
+    if check.get("ok"):
+        return {"ok": True, "path": path.as_posix()}
+    return {
+        "ok": False,
+        "error": "PRODUCER_DECLARED_IDENTITY_MISMATCH",
+        "path": path.as_posix(),
+        "identity_error": check,
+        "message": "producer-declared artifact identity conflicts with prepared Action session",
+    }
+
+
+def _finalize_inject_artifact_identity(
+    project_root: Path,
+    *,
+    session: dict[str, Any],
+    action_id: str,
+    contract_id: str,
+) -> dict[str, Any]:
+    """Overwrite LLM-declared identity with session-trusted artifact_identity."""
+    from ascendc_pilot.ownership import artifact_identity_from_session, inject_trusted_identity
+
+    identity = artifact_identity_from_session(session)
+    path = _finalize_owned_artifact_path(project_root, session=session, action_id=action_id)
+    if path is None:
+        return {"ok": True, "skipped": True, "reason": "no_owned_artifact", "contract_id": contract_id}
+    if not path.is_file():
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "artifact_missing",
+            "path": path.as_posix(),
+            "contract_id": contract_id,
+        }
+    if yaml is None:
+        return {
+            "ok": False,
+            "error": "IDENTITY_INJECTION_UNAVAILABLE",
+            "path": path.as_posix(),
+            "message": "PyYAML is required to stamp artifact identity",
+        }
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "error": "IDENTITY_INJECTION_READ_FAILED",
+            "path": path.as_posix(),
+            "message": str(exc),
+        }
+    if not isinstance(doc, dict):
+        return {
+            "ok": False,
+            "error": "IDENTITY_INJECTION_INVALID_ARTIFACT",
+            "path": path.as_posix(),
+            "message": "artifact must be a YAML mapping to stamp identity",
+        }
+    trusted = inject_trusted_identity(doc, identity)
+    try:
+        _dump(path, trusted)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "error": "IDENTITY_INJECTION_WRITE_FAILED",
+            "path": path.as_posix(),
+            "message": str(exc),
+        }
+    # Also stamp scope receipt when present.
+    if action_id == "scope_confirmation":
+        receipt = path.parent / "receipt.yaml"
+        if receipt.is_file():
+            try:
+                rdoc = yaml.safe_load(receipt.read_text(encoding="utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                return {
+                    "ok": False,
+                    "error": "IDENTITY_INJECTION_READ_FAILED",
+                    "path": receipt.as_posix(),
+                    "message": str(exc),
+                }
+            if isinstance(rdoc, dict):
+                try:
+                    _dump(receipt, inject_trusted_identity(rdoc, identity))
+                except Exception as exc:  # noqa: BLE001
+                    return {
+                        "ok": False,
+                        "error": "IDENTITY_INJECTION_WRITE_FAILED",
+                        "path": receipt.as_posix(),
+                        "message": str(exc),
+                    }
+            else:
+                return {
+                    "ok": False,
+                    "error": "IDENTITY_INJECTION_INVALID_ARTIFACT",
+                    "path": receipt.as_posix(),
+                    "message": "receipt must be a YAML mapping to stamp identity",
+                }
+    return {"ok": True, "path": path.as_posix(), "contract_id": contract_id}
 
 
 def _revoke_lease_after_finalize(
@@ -1159,10 +1760,26 @@ def finalize_action(
         return bind_err
 
     actor_id = str(session.get("actor_id") or action.get("agent_id") or "")
+    role_id = str(session.get("role_id") or action.get("role_id") or "")
     contract_id = str(session.get("output_contract_id") or action.get("output_contract_id") or "")
+    action_sid = str(session.get("action_session_id") or "")
+    lease_id = str(session.get("lease_id") or "")
+    prepare_nonce = str(session.get("prepare_nonce") or "")
+
+    producer_identity = _validate_producer_declared_identity(
+        project_root,
+        session=session,
+        action_id=action_id,
+    )
+    producer_identity_ok = bool(producer_identity.get("ok"))
 
     apply_result: dict[str, Any] | None = None
-    if wid == "tg-init" and action_id == "semantic_bind" and engine_result is None:
+    if (
+        producer_identity_ok
+        and wid == "tg-init"
+        and action_id == "semantic_bind"
+        and engine_result is None
+    ):
         apply_result = _apply_semantic_bind_on_finalize(project_root, session=session)
         if not apply_result.get("ok"):
             session["status"] = "finalize_failed"
@@ -1187,7 +1804,12 @@ def finalize_action(
             )
 
     # extract_plan finalize: validate plan + build host/kernel/tilingkey/bridge layers.
-    if wid == "uo-init" and action_id == "extract_plan" and engine_result is None:
+    if (
+        producer_identity_ok
+        and wid == "uo-init"
+        and action_id == "extract_plan"
+        and engine_result is None
+    ):
         fin_ctx = {
             "op_name": state.get("op_name") or "",
             "architecture": state.get("architecture") or "arch35",
@@ -1217,11 +1839,35 @@ def finalize_action(
                 ],
             )
 
-    contract = _check_output_contract(project_root, contract_id)
+    if producer_identity_ok:
+        contract = _check_output_contract(
+            project_root,
+            contract_id,
+            run_id=run_id,
+            workflow_id=wid,
+            phase=phase,
+            action_id=action_id,
+            actor_id=actor_id,
+            role_id=role_id,
+            action_session_id=action_sid,
+            lease_id=lease_id,
+            prepare_nonce=prepare_nonce,
+        )
+    else:
+        contract = {
+            "ok": False,
+            "skipped": False,
+            "error": "PRODUCER_DECLARED_IDENTITY_MISMATCH",
+            "producer_identity": producer_identity,
+            "message": str(
+                producer_identity.get("message")
+                or "producer-declared artifact identity conflicts with prepared Action session"
+            ),
+        }
 
     # KEY resolution: reject patches that expand beyond prepare target_ids.
     target_violation: dict[str, Any] | None = None
-    if action_id == "key_resolution":
+    if producer_identity_ok and action_id == "key_resolution":
         allowed = []
         dt = session.get("dispatch_targets") if isinstance(session.get("dispatch_targets"), dict) else {}
         allowed = [str(x) for x in (dt.get("target_ids") or []) if str(x).strip()]
@@ -1253,8 +1899,9 @@ def finalize_action(
     from ascendc_pilot.spec_hashes import workflow_spec_hash
 
     gate_results = []
-    for gid in session.get("gates") or action.get("gates") or []:
-        gate_results.append(run_named_gate(project_root, str(gid)))
+    if producer_identity_ok:
+        for gid in session.get("gates") or action.get("gates") or []:
+            gate_results.append(run_named_gate(project_root, str(gid)))
 
     checker_required = bool(session.get("checker_required", action.get("checker_required", True)))
     gates_ok = all(g.get("ok") for g in gate_results) if gate_results else True
@@ -1270,10 +1917,22 @@ def finalize_action(
 
     engine_ok = True if engine_result is None else bool(engine_result.get("ok", True))
     targets_ok = target_violation is None
-    overall_ok = bool(gates_ok and contract_ok and engine_ok and targets_ok)
+    overall_ok = bool(producer_identity_ok and gates_ok and contract_ok and engine_ok and targets_ok)
+
+    identity_injection = {"ok": True, "skipped": True}
+    if overall_ok:
+        identity_injection = _finalize_inject_artifact_identity(
+            project_root,
+            session=session,
+            action_id=action_id,
+            contract_id=contract_id,
+        )
+        overall_ok = bool(identity_injection.get("ok"))
 
     checker_result = {
         "ok": overall_ok,
+        "producer_identity": producer_identity,
+        "identity_injection": identity_injection,
         "gates": gate_results,
         "output_contract": contract,
         "engine": engine_result or {},
@@ -1281,7 +1940,19 @@ def finalize_action(
         "target_violation": target_violation or {},
     }
 
-    out_hashes = _collect_output_hashes(project_root, contract_id)
+    out_hashes = _collect_output_hashes(
+        project_root,
+        contract_id,
+        run_id=run_id,
+        workflow_id=wid,
+        phase=phase,
+        action_id=action_id,
+        actor_id=actor_id,
+        role_id=role_id,
+        action_session_id=action_sid,
+        lease_id=lease_id,
+        prepare_nonce=prepare_nonce,
+    )
     if not out_hashes:
         out_hashes = {"session": file_sha256(sdir / "session.yaml") or "none"}
 
@@ -1299,7 +1970,7 @@ def finalize_action(
     if overall_ok:
         receipt_path = issue_receipt(
             project_root,
-            actor_type=str(session.get("role_id") or action.get("role_id") or "producer"),
+            actor_type=role_id or "producer",
             actor_id=actor_id,
             action_id=action_id,
             workflow_spec_hash=workflow_spec_hash(wid) if wid else workflow_spec_hash(),
@@ -1363,6 +2034,10 @@ def finalize_action(
             else "Finalize 失败：Checker/Output Contract 未通过"
         ),
     }
+    if not overall_ok and not producer_identity_ok:
+        result["error"] = "PRODUCER_DECLARED_IDENTITY_MISMATCH"
+    elif not overall_ok and not identity_injection.get("ok"):
+        result["error"] = str(identity_injection.get("error") or "IDENTITY_INJECTION_FAILED")
     if overall_ok:
         from ascendc_pilot.observation import record_pilot_result
 
@@ -1377,6 +2052,10 @@ def finalize_action(
         return result
 
     msgs = ["Finalize 失败：Checker/Output Contract 未通过"]
+    if not producer_identity_ok:
+        msgs.append(str(producer_identity.get("error") or "PRODUCER_DECLARED_IDENTITY_MISMATCH"))
+    if not identity_injection.get("ok"):
+        msgs.append(str(identity_injection.get("error") or "IDENTITY_INJECTION_FAILED"))
     for g in gate_results:
         if not g.get("ok"):
             msgs.append(str(g.get("message") or g.get("gate") or "gate_failed"))
@@ -1415,15 +2094,28 @@ def _attach_finalize_observation(
     eng = payload.get("engine") if isinstance(payload.get("engine"), dict) else {}
     checker = payload.get("checker_result") if isinstance(payload.get("checker_result"), dict) else {}
     eng2 = checker.get("engine") if isinstance(checker.get("engine"), dict) else {}
-    recovery = list(eng.get("recovery_actions") or eng2.get("recovery_actions") or [])
-    if recovery:
+    from ascendc_pilot.recovery import filter_executable_recovery_actions
+
+    wid = str((load_state(project_root) or {}).get("workflow_id") or "uo-init")
+    recovery = filter_executable_recovery_actions(
+        list(eng.get("recovery_actions") or eng2.get("recovery_actions") or []),
+        workflow_id=wid,
+    )
+    recoveries = list(eng.get("recoveries") or eng2.get("recoveries") or [])
+    if recovery or recoveries:
         lf = dict(out.get("last_failure") or {})
-        lf["recovery_actions"] = recovery
+        if recovery:
+            lf["recovery_actions"] = recovery
+        if recoveries:
+            lf["recoveries"] = recoveries
         out["last_failure"] = lf
         st = load_state(project_root)
         if st:
             st_lf = dict(st.get("last_failure") or {})
-            st_lf["recovery_actions"] = recovery
+            if recovery:
+                st_lf["recovery_actions"] = recovery
+            if recoveries:
+                st_lf["recoveries"] = recoveries
             st["last_failure"] = st_lf
             save_state(project_root, st)
     return out

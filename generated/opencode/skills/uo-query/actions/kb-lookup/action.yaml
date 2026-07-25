@@ -1,9 +1,11 @@
-id: kb_lookup
-workflow_id: uo-query
+# GENERATED from Workflow Spec — do not hand-edit identity fields
 version: 1
 name_zh: KB 查询
+id: kb_lookup
+workflow_id: uo-query
 role_id: readonly_analyst
 agent_id: uo-query
+execution_mode: subagent
 capabilities:
 - kb-query
 - cbm-navigation
@@ -18,7 +20,12 @@ policies:
 task_prompt_id: uo/kb-lookup
 context_profile_id: uo-query-kb-lookup
 output_contract_id: kb-answer-v1
+allowed_write_paths: []
+forbidden_write_paths: []
+allowed_read_paths: []
+forbidden_read_paths: []
 checker:
   required: true
 referee:
   required: false
+generated_from: workflow_spec

@@ -22,11 +22,23 @@ from uo.scripts.semantic_resolution_ledger import (
     rebuild_derived_graphs,
 )
 
+RUN_TEST = "RUN_TEST"
+
 
 def _uo(tmp_path: Path) -> Path:
     uo = tmp_path / "uo"
     (uo / "ir").mkdir(parents=True)
     return uo
+
+
+def _tasks_doc(tasks: list[dict], *, total_semantic_batches: int = 0) -> dict:
+    return {
+        "version": 1,
+        "artifact_identity": {"run_id": RUN_TEST, "workflow_id": "uo-init"},
+        "active_run_id": RUN_TEST,
+        "total_semantic_batches": total_semantic_batches,
+        "tasks": tasks,
+    }
 
 
 def test_empty_bridge_candidates_not_emitted_as_choose_edge(tmp_path: Path) -> None:
@@ -43,6 +55,7 @@ def test_empty_bridge_candidates_not_emitted_as_choose_edge(tmp_path: Path) -> N
         uo,
         [scored],
         checkpoint="extract.post_semantic",
+        run_id=RUN_TEST,
         source_snapshot_hash="snap_bridge",
     )
     doc = load_llm_tasks(uo)
@@ -66,7 +79,7 @@ def test_mark_missing_task_is_adjudicated_but_still_blocking(tmp_path: Path) -> 
             "candidates": [],
         }
     ]
-    upsert_tasks_from_score_items(uo, items, checkpoint="pre", source_snapshot_hash="h1")
+    upsert_tasks_from_score_items(uo, items, checkpoint="pre", run_id=RUN_TEST, source_snapshot_hash="h1")
     task = load_llm_tasks(uo)["tasks"][0]
     ok = apply_task_patch(
         uo,
@@ -76,6 +89,7 @@ def test_mark_missing_task_is_adjudicated_but_still_blocking(tmp_path: Path) -> 
             "source_snapshot_hash": "h1",
             "candidate_set_hash": task["candidate_set_hash"],
         },
+        current_run_id=RUN_TEST,
         current_source_hash="h1",
     )
     assert ok["ok"] is True
@@ -99,8 +113,8 @@ def test_mark_missing_does_not_reduce_blocking_gap_count(tmp_path: Path) -> None
             "candidates": [],
         }
     ]
-    upsert_tasks_from_score_items(uo, items, checkpoint="pre", source_snapshot_hash="h1")
-    before = len(blocking_gap_tasks(uo))
+    upsert_tasks_from_score_items(uo, items, checkpoint="pre", run_id=RUN_TEST, source_snapshot_hash="h1")
+    before = len(blocking_gap_tasks(uo, current_run_id=RUN_TEST))
     task = load_llm_tasks(uo)["tasks"][0]
     apply_task_patch(
         uo,
@@ -110,12 +124,13 @@ def test_mark_missing_does_not_reduce_blocking_gap_count(tmp_path: Path) -> None
             "source_snapshot_hash": "h1",
             "candidate_set_hash": task["candidate_set_hash"],
         },
+        current_run_id=RUN_TEST,
         current_source_hash="h1",
     )
-    after = len(blocking_gap_tasks(uo))
+    after = len(blocking_gap_tasks(uo, current_run_id=RUN_TEST))
     assert before == 1
     assert after == 1
-    stats = compute_semantic_stats(uo)
+    stats = compute_semantic_stats(uo, current_run_id=RUN_TEST)
     assert stats["blocking_gap_count"] == 1
     assert stats["mark_missing_count"] == 1
 
@@ -124,12 +139,12 @@ def test_candidate_node_id_not_consumed_as_edge_id(tmp_path: Path) -> None:
     uo = _uo(tmp_path)
     write_yaml(
         uo / "ir" / "llm_tasks.yaml",
-        {
-            "version": 1,
-            "total_semantic_batches": 0,
-            "tasks": [
+        _tasks_doc(
+            [
                 {
                     "task_id": "t_edge",
+                    "run_id": RUN_TEST,
+                    "workflow_id": "uo-init",
                     "status": "open",
                     "task_status": "open",
                     "severity": "blocking",
@@ -143,13 +158,14 @@ def test_candidate_node_id_not_consumed_as_edge_id(tmp_path: Path) -> None:
                     "task_attempts": 0,
                 }
             ],
-        },
+        ),
     )
     doc = load_llm_tasks(uo)
     bad = validate_task_patch(
         doc,
         {
             "task_id": "t_edge",
+            "run_id": RUN_TEST,
             "action": "accept_edge",
             "edge_id": "cand_EP_99",
             "accepted_candidate_ids": ["cand_EP_1"],
@@ -157,6 +173,7 @@ def test_candidate_node_id_not_consumed_as_edge_id(tmp_path: Path) -> None:
             "candidate_set_hash": "cset1",
         },
         current_source_hash="snap1",
+        current_run_id=RUN_TEST,
     )
     assert bad["ok"] is False
     assert bad["error"] == "LEDGER_TARGET_TYPE_MISMATCH"
@@ -173,6 +190,9 @@ def test_rebuild_does_not_overwrite_ledger_applied_graph(tmp_path: Path) -> None
         "semantic_patches": [
             {
                 "task_id": "TASK_y",
+                "run_id": RUN_TEST,
+                "control_action_id": "adjudicate_llm_tasks",
+                "actor_id": "uo-semantic-resolve",
                 "status": "active",
                 "action": "accept_edge",
                 "patch_type": "edge_resolution",
@@ -194,9 +214,12 @@ def test_recheck_requires_kernel_closed(tmp_path: Path) -> None:
             "closure": {"host_main_chain": "closed", "kernel_main_chain": "unresolved"},
         },
     )
-    write_yaml(uo / "ir" / "llm_tasks.yaml", {"version": 1, "tasks": [], "total_semantic_batches": 0})
-    write_yaml(uo / "ir" / "semantic_resolution_ledger.yaml", {"version": 1, "semantic_patches": []})
-    budget = recheck_does_not_increment(uo)
+    write_yaml(uo / "ir" / "llm_tasks.yaml", _tasks_doc([]))
+    write_yaml(
+        uo / "ir" / "semantic_resolution_ledger.yaml",
+        {"version": 1, "artifact_identity": {"run_id": RUN_TEST, "workflow_id": "uo-init"}, "semantic_patches": []},
+    )
+    budget = recheck_does_not_increment(uo, current_run_id=RUN_TEST)
     assert budget["blocking_gap_count"] == 0
     # Engine-level ok requires kernel closed; simulate check here.
     ep_closure = {"host_main_chain": "closed", "kernel_main_chain": "unresolved"}
@@ -217,10 +240,13 @@ def test_same_fingerprint_recheck_does_not_consume_retry(tmp_path: Path) -> None
             "closure": {"host_main_chain": "unresolved", "kernel_main_chain": "unresolved"},
         },
     )
-    write_yaml(uo / "ir" / "llm_tasks.yaml", {"version": 1, "tasks": [], "total_semantic_batches": 2})
-    write_yaml(uo / "ir" / "semantic_resolution_ledger.yaml", {"version": 1, "semantic_patches": []})
+    write_yaml(uo / "ir" / "llm_tasks.yaml", _tasks_doc([], total_semantic_batches=2))
+    write_yaml(
+        uo / "ir" / "semantic_resolution_ledger.yaml",
+        {"version": 1, "artifact_identity": {"run_id": RUN_TEST, "workflow_id": "uo-init"}, "semantic_patches": []},
+    )
     first_batches = int(load_llm_tasks(uo).get("total_semantic_batches") or 0)
-    recheck_does_not_increment(uo)
+    recheck_does_not_increment(uo, current_run_id=RUN_TEST)
     second_batches = int(load_llm_tasks(uo).get("total_semantic_batches") or 0)
     assert second_batches == first_batches
 
@@ -231,7 +257,7 @@ def test_same_fingerprint_recheck_does_not_consume_retry(tmp_path: Path) -> None
     import shutil
 
     shutil.copytree(uo, project / ".ascendc-pilot" / "uo", dirs_exist_ok=True)
-    ctx = {"uo_root": str(project / ".ascendc-pilot" / "uo")}
+    ctx = {"uo_root": str(project / ".ascendc-pilot" / "uo"), "run_id": RUN_TEST}
     first = _run_recheck_closure(project, ctx)
     assert first.get("ok") is False
     second = _run_recheck_closure(project, ctx)

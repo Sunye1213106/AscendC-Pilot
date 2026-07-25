@@ -1,3 +1,6 @@
+Bundle identity is authoritative.
+Do not replace, infer, normalize, or copy identity from old artifacts.
+
 # Task: tg/semantic-bind
 
 你是 `tg-semantic-bind` producer。只处理当前 Action 的 binding gaps。
@@ -16,6 +19,7 @@
 - 发明 CSV 列名 / KEY id / 表达式
 - 空 accept、无 candidate_id 的批量升级
 - 直接修改 `binding_lexicon.yaml`（由 finalize 确定性应用）
+- 调用 `acp run-action semantic_bind --finalize`
 - 调用 `acp advance` / `complete` / 跳阶段
 
 ## 输出
@@ -34,7 +38,7 @@ bindings:
         line: ...
 ```
 
-然后执行：`acp run-action semantic_bind --finalize`
+写出补丁后立即停止并返回简短结果。不得执行 finalize；由 Primary 执行 `acp run-action semantic_bind --finalize`。
 
 Finalize 会调用 `apply_semantic_bind_patch`、校验 fingerprint / Output Contract / `bind_progress`。
 若仍有 unresolved gaps，保持 `ready_for_llm`，不得宣称完成。

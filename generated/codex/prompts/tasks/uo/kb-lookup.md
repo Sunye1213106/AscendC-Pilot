@@ -1,5 +1,8 @@
 ## Task
 
+Bundle identity is authoritative.
+Do not replace, infer, normalize, or copy identity from old artifacts.
+
 Perform `kb_lookup` for the targets provided by the Pilot action.
 
 Follow the assigned role contract and loaded capabilities.

@@ -1,9 +1,11 @@
-id: prepare_layout
-workflow_id: uo-init
+# GENERATED from Workflow Spec — do not hand-edit identity fields
 version: 1
 name_zh: 创建知识库目录
+id: prepare_layout
+workflow_id: uo-init
 role_id: deterministic_engine
 agent_id: deterministic-uo-engine
+execution_mode: deterministic
 capabilities: []
 policies:
 - source-authority
@@ -15,7 +17,14 @@ policies:
 task_prompt_id: null
 context_profile_id: uo-init-prepare-layout
 output_contract_id: kb-layout-v1
+allowed_write_paths:
+- uo/manifest.yaml
+- uo/**
+forbidden_write_paths: []
+allowed_read_paths: []
+forbidden_read_paths: []
 checker:
   required: true
 referee:
   required: false
+generated_from: workflow_spec

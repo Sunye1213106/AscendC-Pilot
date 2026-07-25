@@ -251,6 +251,22 @@ def start_workflow(
         {"type": "workflow_started", "workflow_id": workflow_id, "phase": start_phase, "intent": intent},
         run_id=run_id,
     )
+    # If debug was enabled before start, mint a fresh debug session for this run.
+    try:
+        from ascendc_pilot import debug as _dbg
+
+        if _dbg.is_enabled(project_root):
+            rotated = _dbg.rotate_debug_session_for_new_run(project_root)
+            if not rotated.get("ok") and rotated.get("error") == "debug_run_already_bound":
+                # Never silently ignore a bound mismatch when starting a new workflow.
+                raise RuntimeError(
+                    f"debug_run_already_bound: {rotated.get('bound_run_id')} vs {run_id}"
+                )
+            _dbg.bind_debug_session_run(project_root)
+    except RuntimeError:
+        raise
+    except Exception:  # noqa: BLE001
+        pass
     fresh = load_state(project_root)
     from ascendc_pilot.todo import attach_todo
 

@@ -1,0 +1,371 @@
+"""Unified ownership / identity model for Pilot Actions.
+
+Authority layers (single editable authority per concern):
+
+* Workflow Spec (`workflows/specs.py`) — action order, phase, actor, role,
+  execution_mode, contracts, gates, and action-scoped write paths.
+* Runtime Bundle / Action Lease — authoritative run/action/actor/session identity
+  and the precise paths the current Action may write.
+* Finalizer — injects trusted ``artifact_identity``; LLM declarations are not trusted.
+* Skill / action.yaml — generated mirrors of Spec; never independent authorities.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import re
+from pathlib import Path
+from typing import Any
+
+EXECUTION_DETERMINISTIC = "deterministic"
+EXECUTION_SUBAGENT = "subagent"
+EXECUTION_PRIMARY_INTERACTIVE = "primary_interactive"
+EXECUTION_MODES = frozenset(
+    {
+        EXECUTION_DETERMINISTIC,
+        EXECUTION_SUBAGENT,
+        EXECUTION_PRIMARY_INTERACTIVE,
+    }
+)
+
+PRIMARY_AGENT_ID = "ascendc-pilot"
+
+# Action-precise write paths relative to `.ascendc-pilot/` (may include `{run_id}`).
+# Agent write_scopes are ceilings; lease must be a subset.
+ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
+    "uo-init": {
+        "prepare_layout": ["uo/manifest.yaml", "uo/**"],
+        "scope_confirmation": [
+            "uo/runs/{run_id}/scope/**",
+            "uo/cbm/**",
+            "uo/summary/scope_confirmed.yaml",
+        ],
+        "detect_score_pre": [
+            "uo/ir/entrypoint_graph.yaml",
+            "uo/ir/operator_boundary.yaml",
+            "uo/ir/score_report_pre.yaml",
+            "uo/ir/llm_tasks.yaml",
+            "uo/ir/**",
+        ],
+        "extract_plan": ["uo/ir/extract_plan.yaml"],
+        "detect_score_post": ["uo/ir/score_report_post.yaml", "uo/ir/llm_tasks.yaml", "uo/ir/**"],
+        "adjudicate_llm_tasks": ["uo/ir/semantic_patches.yaml"],
+        "apply_semantic_patch": [
+            "uo/ir/semantic_resolution_ledger.yaml",
+            "uo/ir/llm_tasks.yaml",
+            "uo/ir/semantic_apply_report.yaml",
+            "uo/ir/**",
+        ],
+        "rebuild_from_ledger": ["uo/ir/**"],
+        "recheck_closure": ["uo/ir/llm_tasks.yaml", "uo/ir/**"],
+        "key_triage": ["uo/ir/key_triage.yaml"],
+        "key_resolution": [
+            "uo/ir/input_derivable_patch.yaml",
+            "uo/ir/key_shape_resolve/**",
+        ],
+        "confidence_report": [
+            "uo/checks/confidence_gate.yaml",
+            "uo/summary/confidence_report.md",
+            "uo/ir/**",
+        ],
+        "confidence_review": ["uo/review/confidence_reason_review.yaml"],
+        "export_integrity": ["uo/checks/integrity.yaml", "uo/summary/**", "uo/ir/**"],
+        "kb_review": ["uo/review/kb_product_review.yaml"],
+    },
+}
+
+# Action-precise read paths (lease allow-list). Empty → no Action-level allow filter.
+# Agent read_scopes are ceilings; lease must be a subset when non-empty.
+ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
+    "uo-init": {
+        "extract_plan": [
+            "uo/ir/extract_plan_candidates.yaml",
+            "uo/ir/entrypoint_graph.yaml",
+        ],
+        "adjudicate_llm_tasks": [
+            "uo/ir/llm_tasks.yaml",
+            "uo/ir/score_report_pre.yaml",
+            "uo/ir/score_report_post.yaml",
+        ],
+    },
+}
+
+# Action-precise forbidden reads (deny first, before allow-list).
+ACTION_FORBIDDEN_READ_PATHS: dict[str, dict[str, list[str]]] = {
+    "uo-init": {
+        "extract_plan": [
+            "uo/ir/llm_tasks.yaml",
+            "uo/ir/semantic_patches.yaml",
+            "uo/ir/semantic_resolution_ledger.yaml",
+        ],
+    },
+}
+
+# Canonical producer staging relative to action session dir.
+STAGING_OUTPUT_NAME = "staging/output.yaml"
+
+_UNRESOLVED_RE = re.compile(r"\[UNRESOLVED:[A-Z][A-Z0-9_]{2,}\]")
+_ANGLE_TOKEN_RE = re.compile(r"<([A-Z][A-Z0-9_]{2,})>")
+
+
+def infer_execution_mode(
+    *,
+    agent_id: str | None,
+    role_id: str | None,
+    execution_mode: str | None = None,
+) -> str:
+    if execution_mode:
+        mode = str(execution_mode).strip().lower()
+        if mode not in EXECUTION_MODES:
+            raise ValueError(f"unknown execution_mode: {execution_mode!r}")
+        return mode
+    if role_id == "deterministic_engine":
+        return EXECUTION_DETERMINISTIC
+    if not agent_id or agent_id == PRIMARY_AGENT_ID:
+        return EXECUTION_PRIMARY_INTERACTIVE
+    return EXECUTION_SUBAGENT
+
+
+def action_write_paths(workflow_id: str, action_id: str, *, run_id: str = "") -> list[str]:
+    rows = (ACTION_WRITE_PATHS.get(workflow_id) or {}).get(action_id) or []
+    return [expand_path_template(p, run_id=run_id) for p in rows]
+
+
+def action_read_paths(workflow_id: str, action_id: str, *, run_id: str = "") -> list[str]:
+    rows = (ACTION_READ_PATHS.get(workflow_id) or {}).get(action_id) or []
+    return [expand_path_template(p, run_id=run_id) for p in rows]
+
+
+def action_forbidden_read_paths(workflow_id: str, action_id: str, *, run_id: str = "") -> list[str]:
+    rows = (ACTION_FORBIDDEN_READ_PATHS.get(workflow_id) or {}).get(action_id) or []
+    return [expand_path_template(p, run_id=run_id) for p in rows]
+
+
+def expand_path_template(path: str, *, run_id: str = "", **extra: str) -> str:
+    mapping = {"run_id": run_id or "", **extra}
+    try:
+        return path.format(**mapping)
+    except (KeyError, ValueError):
+        return path
+
+
+def expand_contract_paths(paths: list[str], *, run_id: str = "", **extra: str) -> list[str]:
+    return [expand_path_template(p, run_id=run_id, **extra) for p in paths]
+
+
+def unresolved_placeholders(text: str) -> list[str]:
+    found: list[str] = []
+    for m in _UNRESOLVED_RE.finditer(text or ""):
+        found.append(m.group(0))
+    for m in _ANGLE_TOKEN_RE.finditer(text or ""):
+        tok = m.group(1)
+        found.append(f"<{tok}>")
+    # de-dupe preserving order
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in found:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
+
+def prompt_has_unresolved(text: str) -> bool:
+    return bool(unresolved_placeholders(text))
+
+
+def build_bundle_identity(
+    *,
+    run_id: str,
+    workflow_id: str,
+    phase: str,
+    action_id: str,
+    actor_id: str,
+    role_id: str,
+    action_session_id: str = "",
+    prepare_nonce: str = "",
+    lease_id: str = "",
+    execution_mode: str = "",
+) -> dict[str, Any]:
+    nonce_hash = ""
+    if prepare_nonce:
+        nonce_hash = hashlib.sha256(prepare_nonce.encode("utf-8")).hexdigest()
+    return {
+        "run_id": run_id,
+        "workflow_id": workflow_id,
+        "phase": phase,
+        "action_id": action_id,
+        "actor_id": actor_id,
+        "role_id": role_id,
+        "action_session_id": action_session_id,
+        "prepare_nonce_hash": nonce_hash,
+        "lease_id": lease_id,
+        "execution_mode": execution_mode,
+    }
+
+
+def artifact_identity_from_session(
+    session: dict[str, Any],
+    *,
+    source_snapshot_hash: str = "",
+    produced_by: str = "pilot-finalizer",
+) -> dict[str, Any]:
+    identity = dict(session.get("identity") or {})
+    if not identity:
+        identity = build_bundle_identity(
+            run_id=str(session.get("run_id") or ""),
+            workflow_id=str(session.get("workflow_id") or ""),
+            phase=str(session.get("phase") or ""),
+            action_id=str(session.get("action_id") or ""),
+            actor_id=str(session.get("actor_id") or ""),
+            role_id=str(session.get("role_id") or ""),
+            action_session_id=str(session.get("action_session_id") or ""),
+            prepare_nonce=str(session.get("prepare_nonce") or ""),
+            lease_id=str(session.get("lease_id") or ""),
+            execution_mode=str(session.get("execution_mode") or ""),
+        )
+    out = dict(identity)
+    out["produced_by"] = produced_by
+    if source_snapshot_hash:
+        out["source_snapshot_hash"] = source_snapshot_hash
+    # Never expose plaintext prepare_nonce in canonical artifacts.
+    out.pop("prepare_nonce", None)
+    return out
+
+
+def inject_trusted_identity(doc: dict[str, Any], identity: dict[str, Any]) -> dict[str, Any]:
+    """Overwrite LLM-declared identity with finalizer-trusted values."""
+    out = dict(doc)
+    out["artifact_identity"] = dict(identity)
+    # Keep top-level mirrors for older readers, but always overwrite from session.
+    for key in ("run_id", "workflow_id", "action_id", "actor_id"):
+        if identity.get(key):
+            out[key] = identity[key]
+    return out
+
+
+def path_matches_patterns(rel_posix: str, patterns: list[str]) -> bool:
+    """Match a `.ascendc-pilot`-relative posix path against lease patterns."""
+    rel = rel_posix.replace("\\", "/").lstrip("/")
+    for pat in patterns:
+        p = str(pat or "").replace("\\", "/").lstrip("/")
+        if not p:
+            continue
+        if p.endswith("/**"):
+            prefix = p[:-3].rstrip("/")
+            if rel == prefix or rel.startswith(prefix + "/"):
+                return True
+            continue
+        if "*" in p or "?" in p:
+            # simple glob: ** already handled; treat * as single-segment wildcard
+            rx = re.escape(p).replace(r"\*\*", ".*").replace(r"\*", "[^/]*").replace(r"\?", ".")
+            if re.fullmatch(rx, rel):
+                return True
+            continue
+        if rel == p:
+            return True
+    return False
+
+
+def _pattern_prefix(pattern: str) -> str:
+    """Literal directory prefix of a path pattern (before first glob metachar)."""
+    norm = str(pattern or "").replace("\\", "/").lstrip("/")
+    parts: list[str] = []
+    for part in norm.split("/"):
+        if any(ch in part for ch in "*?["):
+            break
+        parts.append(part)
+    return "/".join(parts)
+
+
+def path_within_scopes(path_or_pattern: str, scopes: list[str], *, run_id: str = "_RUN_") -> bool:
+    """True if a concrete path or glob pattern is covered by ceiling scopes.
+
+    Used for Action ⊆ Agent ⊆ Workflow ownership audits.
+    """
+    if not scopes:
+        return False
+    raw = expand_path_template(str(path_or_pattern or ""), run_id=run_id or "_RUN_")
+    rel = raw.replace("\\", "/").lstrip("/")
+    ceilings = [
+        expand_path_template(str(s or ""), run_id=run_id or "_RUN_").replace("\\", "/").lstrip("/")
+        for s in scopes
+        if str(s or "").strip()
+    ]
+    if not ceilings:
+        return False
+    # Concrete file / already-expanded path.
+    if "*" not in rel and "?" not in rel and "[" not in rel:
+        return path_matches_patterns(rel, ceilings)
+    # Pattern ⊆ ceiling: prefix of the narrower pattern must match a ceiling.
+    prefix = _pattern_prefix(rel)
+    if prefix and path_matches_patterns(prefix, ceilings):
+        return True
+    for c in ceilings:
+        c_prefix = _pattern_prefix(c)
+        if not c_prefix:
+            # Broad ``**`` / ``*`` ceiling.
+            if c in {"**", "*", "**/**"}:
+                return True
+            continue
+        if prefix == c_prefix or (prefix and prefix.startswith(c_prefix + "/")):
+            return True
+        if c.endswith("/**") and prefix and (prefix == c[:-3] or prefix.startswith(c[:-3] + "/")):
+            return True
+    return False
+
+
+def write_roots_as_scopes(write_roots: list[str]) -> list[str]:
+    """Expand workflow write_roots into patterns usable by ``path_within_scopes``."""
+    out: list[str] = []
+    for root in write_roots or []:
+        r = str(root or "").replace("\\", "/").strip("/")
+        if not r:
+            continue
+        out.append(r)
+        if not r.endswith("/**"):
+            out.append(f"{r}/**")
+    return out
+
+
+def action_session_id(run_id: str, action_id: str, prepare_nonce: str) -> str:
+    raw = f"{run_id}:{action_id}:{prepare_nonce}"
+    return f"ACTION_SESSION_{hashlib.sha256(raw.encode('utf-8')).hexdigest()[:16]}"
+
+
+def staging_dir(session_dir: Path) -> Path:
+    return Path(session_dir) / "staging"
+
+
+def staging_output_path(session_dir: Path) -> Path:
+    return Path(session_dir) / STAGING_OUTPUT_NAME
+
+
+__all__ = [
+    "ACTION_FORBIDDEN_READ_PATHS",
+    "ACTION_READ_PATHS",
+    "ACTION_WRITE_PATHS",
+    "EXECUTION_DETERMINISTIC",
+    "EXECUTION_MODES",
+    "EXECUTION_PRIMARY_INTERACTIVE",
+    "EXECUTION_SUBAGENT",
+    "PRIMARY_AGENT_ID",
+    "STAGING_OUTPUT_NAME",
+    "action_forbidden_read_paths",
+    "action_read_paths",
+    "action_session_id",
+    "action_write_paths",
+    "artifact_identity_from_session",
+    "build_bundle_identity",
+    "expand_contract_paths",
+    "expand_path_template",
+    "infer_execution_mode",
+    "inject_trusted_identity",
+    "path_matches_patterns",
+    "path_within_scopes",
+    "prompt_has_unresolved",
+    "staging_dir",
+    "staging_output_path",
+    "unresolved_placeholders",
+    "write_roots_as_scopes",
+]

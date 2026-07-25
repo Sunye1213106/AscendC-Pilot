@@ -184,12 +184,126 @@ def audit_stats_from_tool_events(events: list[dict[str, Any]]) -> dict[str, int]
     return stats
 
 
+def get_session_relationship(
+    project_root: Path | None,
+    session_id: str,
+) -> dict[str, Any] | None:
+    """Return child→parent relationship when ``session_id`` is a registered child.
+
+    Shape: ``{parent_session_id, registration_id, dispatch_nonce, run_id, action_id}``.
+    """
+    row = get_child_registration(project_root, session_id)
+    if not row:
+        return None
+    return {
+        "parent_session_id": normalize_session_id(str(row.get("parent_session_id") or "")),
+        "registration_id": str(row.get("registration_id") or ""),
+        "dispatch_nonce": str(row.get("dispatch_nonce") or ""),
+        "run_id": str(row.get("run_id") or ""),
+        "action_id": str(row.get("action_id") or ""),
+        "child_session_id": normalize_session_id(session_id),
+    }
+
+
+def resolve_event_session_ownership(
+    project_root: Path | None,
+    event_session_id: str,
+) -> dict[str, Any]:
+    """Resolve parent/child for a tool-hook session id via the relationship registry.
+
+    - Registered child → ``child_session_id=current``, ``parent`` from registry.
+    - Otherwise → ``parent_session_id=current``, ``child_session_id=""``.
+    """
+    sid = normalize_session_id(event_session_id)
+    if not sid:
+        return {
+            "parent_session_id": "",
+            "child_session_id": "",
+            "relationship": None,
+            "is_child": False,
+        }
+    rel = get_session_relationship(project_root, sid)
+    if rel:
+        return {
+            "parent_session_id": str(rel.get("parent_session_id") or ""),
+            "child_session_id": sid,
+            "relationship": rel,
+            "is_child": True,
+        }
+    return {
+        "parent_session_id": sid,
+        "child_session_id": "",
+        "relationship": None,
+        "is_child": False,
+    }
+
+
+def backfill_tool_events_by_session(
+    project_root: Path | None,
+    *,
+    child_session_id: str,
+    parent_session_id: str,
+    registration_id: str = "",
+    dispatch_nonce: str = "",
+    action_id: str = "",
+) -> dict[str, Any]:
+    """Backfill tool events by exact ``event_session_id`` match (never by action/time).
+
+    Events recorded while the child id was not yet registered carry
+    ``event_session_id=<child>`` with empty ``child_session_id``. After Task
+    returns and the relationship is known, rewrite those rows deterministically.
+    """
+    root = resolve_project_root(project_root)
+    child = normalize_session_id(child_session_id)
+    parent = normalize_session_id(parent_session_id)
+    if not child:
+        return {"ok": False, "error": "missing_child_session_id", "updated": 0}
+    path = _tool_events_path(root)
+    if not path.is_file():
+        return {"ok": True, "updated": 0, "child_session_id": child}
+    lines = path.read_text(encoding="utf-8").splitlines()
+    updated = 0
+    out_lines: list[str] = []
+    for line in lines:
+        raw = line.strip()
+        if not raw:
+            continue
+        try:
+            row = json.loads(raw)
+        except Exception:  # noqa: BLE001
+            out_lines.append(line)
+            continue
+        if not isinstance(row, dict):
+            out_lines.append(line)
+            continue
+        ev_sid = normalize_session_id(str(row.get("event_session_id") or ""))
+        if ev_sid != child:
+            out_lines.append(json.dumps(row, ensure_ascii=False, default=str))
+            continue
+        # Exact session id match only.
+        row["child_session_id"] = child
+        if parent:
+            row["parent_session_id"] = parent
+        if registration_id and not row.get("registration_id"):
+            row["registration_id"] = registration_id
+        if dispatch_nonce and not row.get("dispatch_nonce"):
+            row["dispatch_nonce"] = dispatch_nonce
+        if action_id and not row.get("action_id"):
+            row["action_id"] = action_id
+        row["backfilled_at"] = _now()
+        updated += 1
+        out_lines.append(json.dumps(row, ensure_ascii=False, default=str))
+    path.write_text("\n".join(out_lines) + ("\n" if out_lines else ""), encoding="utf-8")
+    return {"ok": True, "updated": updated, "child_session_id": child, "parent_session_id": parent}
+
+
 def record_tool_event(
     project_root: Path | None,
     *,
     tool: str,
     parent_session_id: str = "",
     child_session_id: str = "",
+    event_session_id: str = "",
     action_id: str = "",
     actor_id: str = "",
     path: str = "",
@@ -202,11 +316,44 @@ def record_tool_event(
     if not is_enabled(root):
         return {"ok": False, "skipped": True, "reason": "debug_disabled"}
     ds = load_debug_session(root)
+    event_sid = (
+        normalize_session_id(event_session_id)
+        or normalize_session_id(child_session_id)
+        or normalize_session_id(parent_session_id)
+    )
+    explicit_child = normalize_session_id(child_session_id)
+    explicit_parent = normalize_session_id(parent_session_id)
+
+    # Prefer relationship registry when the executing session is a known child.
+    ownership = resolve_event_session_ownership(root, event_sid) if event_sid else None
+    if ownership and ownership.get("is_child"):
+        parent = str(ownership.get("parent_session_id") or explicit_parent or "")
+        child = str(ownership.get("child_session_id") or "")
+    elif explicit_child:
+        # Caller already knows child ownership (e.g. post-backfill tests).
+        parent = explicit_parent or str(ds.get("parent_session_id") or "")
+        child = explicit_child
+    else:
+        # Host, or not-yet-registered child (backfill by exact event_session_id later).
+        ds_parent = normalize_session_id(str(ds.get("parent_session_id") or ""))
+        if event_sid and ds_parent and event_sid != ds_parent:
+            # Executing session ≠ known host → likely child tools mid-Task.
+            # Keep child empty; prefer real host as parent (TS may have echoed event_sid).
+            if explicit_parent and explicit_parent != event_sid:
+                parent = explicit_parent
+            else:
+                parent = ds_parent
+            child = ""
+        else:
+            parent = explicit_parent or event_sid or ds_parent
+            child = ""
+
     entry = {
         "at": _now(),
         "tool": tool,
-        "parent_session_id": normalize_session_id(parent_session_id) or ds.get("parent_session_id") or "",
-        "child_session_id": normalize_session_id(child_session_id),
+        "event_session_id": event_sid,
+        "parent_session_id": parent,
+        "child_session_id": child,
         "action_id": action_id,
         "actor_id": actor_id,
         "path": path[:500],
@@ -234,10 +381,14 @@ def register_child(
     started_at: str = "",
     task_prompt_path: str = "",
     task_prompt_text: str = "",
+    dispatch_nonce: str = "",
 ) -> dict[str, Any]:
     root = resolve_project_root(project_root)
     if not is_enabled(root):
         return {"ok": False, "skipped": True, "reason": "debug_disabled"}
+    ds = load_debug_session(root)
+    # Bind run if debug was enabled before acp start (run_id empty).
+    bind_debug_session_run(root)
     ds = load_debug_session(root)
     parent = normalize_session_id(parent_session_id)
     child = normalize_session_id(child_session_id)
@@ -249,8 +400,11 @@ def register_child(
         p = Path(task_prompt_path)
         if p.is_file():
             prompt_text = p.read_text(encoding="utf-8", errors="replace")
+    registration_id = _new_registration_id()
+    nonce = str(dispatch_nonce or "").strip() or f"nonce_{uuid.uuid4().hex[:10]}"
     row: dict[str, Any] = {
-        "registration_id": _new_registration_id(),
+        "registration_id": registration_id,
+        "dispatch_nonce": nonce,
         "parent_session_id": parent,
         "child_session_id": child,
         "workflow_id": workflow_id or str(ds.get("workflow_id") or ""),
@@ -261,6 +415,7 @@ def register_child(
         "started_at": started_at or _now(),
         "task_prompt_path": task_prompt_path,
         "task_prompt_text": prompt_text[:50_000],
+        "task_result_text": "",
         "exported": False,
         "export_dir": "",
     }
@@ -269,7 +424,7 @@ def register_child(
     if parent and not ds.get("parent_session_id"):
         ds["parent_session_id"] = parent
         _save_debug_session(root, ds)
-    return {"ok": True, "registration": row}
+    return {"ok": True, "registration": row, "registration_id": registration_id, "dispatch_nonce": nonce}
 
 
 def patch_child_session_id(
@@ -279,8 +434,10 @@ def patch_child_session_id(
     parent_session_id: str = "",
     action_id: str = "",
     registration_id: str = "",
+    dispatch_nonce: str = "",
+    task_result_text: str = "",
 ) -> dict[str, Any]:
-    """Set child_session_id from Task tool return only (caller must pass parsed id)."""
+    """Bind child_session_id via registration_id/dispatch_nonce (no latest-pending guess)."""
     root = resolve_project_root(project_root)
     child = normalize_session_id(child_session_id)
     if not child:
@@ -293,7 +450,15 @@ def patch_child_session_id(
             if row.get("registration_id") == registration_id:
                 target = row
                 break
+    if target is None and dispatch_nonce:
+        for row in reg["children"]:
+            if str(row.get("dispatch_nonce") or "") == dispatch_nonce:
+                target = row
+                break
     if target is None:
+        # Never use "latest pending by parent+action". Only bind when exactly one
+        # unmatched registration exists (non-concurrent). Concurrent same action
+        # requires registration_id or dispatch_nonce.
         candidates = [
             r
             for r in reg["children"]
@@ -301,14 +466,38 @@ def patch_child_session_id(
             and (not parent or normalize_session_id(str(r.get("parent_session_id") or "")) == parent)
             and (not action_id or str(r.get("action_id") or "") == action_id)
         ]
-        if candidates:
-            target = sorted(candidates, key=lambda r: str(r.get("started_at") or ""))[-1]
+        if len(candidates) == 1:
+            target = candidates[0]
+        elif len(candidates) > 1:
+            return {
+                "ok": False,
+                "error": "ambiguous_pending_registration",
+                "message": "concurrent Tasks with same parent/action require registration_id",
+                "pending_count": len(candidates),
+                "pending_registration_ids": [c.get("registration_id") for c in candidates],
+            }
     if target is None:
         return {"ok": False, "error": "no_pending_registration"}
     target["child_session_id"] = child
     target["patched_at"] = _now()
+    if task_result_text:
+        target["task_result_text"] = str(task_result_text)[:50_000]
     _save_children_registry(root, reg)
-    return {"ok": True, "registration": target}
+    bound_parent = normalize_session_id(str(target.get("parent_session_id") or "")) or parent
+    backfill = backfill_tool_events_by_session(
+        root,
+        child_session_id=child,
+        parent_session_id=bound_parent,
+        registration_id=str(target.get("registration_id") or ""),
+        dispatch_nonce=str(target.get("dispatch_nonce") or ""),
+        action_id=str(target.get("action_id") or action_id or ""),
+    )
+    return {
+        "ok": True,
+        "registration": target,
+        "relationship": get_session_relationship(root, child),
+        "backfill": backfill,
+    }
 
 
 def get_child_registration(project_root: Path | None, child_session_id: str) -> dict[str, Any] | None:
@@ -403,7 +592,9 @@ def export_child_session(
     ds = load_debug_session(root)
     row = get_child_registration(root, child_session_id)
     if not row:
-        return {"ok": False, "error": "child_not_registered", "child_session_id": child_session_id}
+        out = {"ok": False, "error": "child_not_registered", "child_session_id": child_session_id}
+        record_export_failure_anomaly(root, summary="child_not_registered", detail=out)
+        return out
     ok, why = _child_export_eligible(row, ds, root)
     if not ok and not force:
         return {"ok": False, "skipped": True, "reason": why, "child_session_id": child_session_id}
@@ -419,16 +610,12 @@ def export_child_session(
     )
     export_dir.mkdir(parents=True, exist_ok=True)
 
+    # Child bundle: only events that explicitly carry this child_session_id.
+    # Host events (child_session_id empty) must NOT leak into child bundles.
     events = [
         e
         for e in list_tool_events(root)
         if normalize_session_id(str(e.get("child_session_id") or "")) == child
-        or (
-            not e.get("child_session_id")
-            and normalize_session_id(str(e.get("parent_session_id") or ""))
-            == normalize_session_id(str(row.get("parent_session_id") or ""))
-            and str(e.get("action_id") or "") == action_id
-        )
     ]
     audit = audit_stats_from_tool_events(events)
 
@@ -457,8 +644,21 @@ def export_child_session(
             fh.write(json.dumps(ev, ensure_ascii=False, default=str) + "\n")
 
     result_md = export_dir / "result.md"
+    result_body = str(row.get("task_result_text") or "").strip()
+    if not result_body:
+        # Structured summary from audit / transcript status when raw result missing.
+        result_body = (
+            f"- transcript_status: {transcript_info.get('transcript_status')}\n"
+            f"- transcript_reason: {transcript_info.get('reason', '')}\n"
+            f"- tool_event_count: {len(events)}\n"
+            f"- audit: {audit}\n"
+        )
     result_md.write_text(
-        f"# Child result\n\n- child_session_id: `{child}`\n- reason: `{reason}`\n",
+        f"# Child result\n\n"
+        f"- child_session_id: `{child}`\n"
+        f"- registration_id: `{row.get('registration_id')}`\n"
+        f"- reason: `{reason}`\n\n"
+        f"## Task output\n\n{result_body}\n",
         encoding="utf-8",
     )
 
@@ -668,6 +868,85 @@ def is_enabled(project_root: Path | None = None) -> bool:
     return bool(load_config(project_root).get("enabled"))
 
 
+
+def bind_debug_session_run(project_root: Path | None = None) -> dict[str, Any]:
+    """Atomically bind workflow_id/run_id when debug was enabled before acp start.
+
+    Once bound, another run must not overwrite the binding.
+    """
+    root = resolve_project_root(project_root)
+    if not is_enabled(root):
+        return {"ok": False, "skipped": True, "reason": "debug_disabled"}
+    ds = load_debug_session(root)
+    if not ds.get("debug_session_id"):
+        return {"ok": False, "skipped": True, "reason": "no_debug_session"}
+    from ascendc_pilot.state import load_state
+
+    st = load_state(root) or {}
+    wid = str(st.get("workflow_id") or "")
+    rid = str(st.get("run_id") or "")
+    changed = False
+    if rid and not str(ds.get("run_id") or "").strip():
+        ds["run_id"] = rid
+        changed = True
+    elif rid and str(ds.get("run_id") or "").strip() and str(ds.get("run_id")) != rid:
+        return {
+            "ok": False,
+            "error": "debug_run_already_bound",
+            "bound_run_id": ds.get("run_id"),
+            "attempted_run_id": rid,
+        }
+    if wid and not str(ds.get("workflow_id") or "").strip():
+        ds["workflow_id"] = wid
+        changed = True
+    if changed:
+        _save_debug_session(root, ds)
+    return {"ok": True, "debug_session": ds, "changed": changed}
+
+
+def rotate_debug_session_for_new_run(project_root: Path | None = None) -> dict[str, Any]:
+    """Archive the previous debug session and mint a new one for the new workflow run.
+
+    Children registry is isolated by debug_session_id / run_id; old children remain
+    under the archived session and are not visible to the new run.
+    """
+    root = resolve_project_root(project_root)
+    if not is_enabled(root):
+        return {"ok": False, "skipped": True, "reason": "debug_disabled"}
+    from ascendc_pilot.state import load_state
+
+    st = load_state(root) or {}
+    rid = str(st.get("run_id") or "")
+    wid = str(st.get("workflow_id") or "")
+    prev = load_debug_session(root)
+    prev_run = str(prev.get("run_id") or "").strip()
+    if prev_run and rid and prev_run == rid and prev.get("debug_session_id"):
+        return {"ok": True, "skipped": True, "reason": "already_bound_current_run", "debug_session": prev}
+
+    # Archive previous session metadata (best-effort).
+    if prev.get("debug_session_id"):
+        archive_dir = _project_debug_dir(root) / "archived_sessions"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        stamp = _now().replace(":", "").replace("-", "")
+        archive_path = archive_dir / f"{prev.get('debug_session_id')}_{stamp}.yaml"
+        try:
+            _dump_yaml(archive_path, {**prev, "archived_at": _now(), "archived_for_run_id": rid})
+        except Exception:  # noqa: BLE001
+            pass
+
+    session_meta = {
+        "debug_session_id": _new_debug_session_id(),
+        "parent_session_id": str(prev.get("parent_session_id") or ""),
+        "project_root": root.as_posix(),
+        "workflow_id": wid,
+        "run_id": rid,
+        "enabled_at": _now(),
+        "rotated_from": prev.get("debug_session_id") or "",
+    }
+    _save_debug_session(root, session_meta)
+    return {"ok": True, "debug_session": session_meta, "archived": bool(prev.get("debug_session_id"))}
+
+
 def set_enabled(
     project_root: Path | None,
     enabled: bool,
@@ -717,6 +996,45 @@ def set_enabled(
 def anomalies_path(project_root: Path | None = None) -> Path:
     root = resolve_project_root(project_root)
     return _project_debug_dir(root) / "anomalies.jsonl"
+
+
+
+def run_debug_subprocess_checked(result: dict[str, Any] | None = None, *, exit_code: int = 0, stderr: str = "", ok_json: bool | None = None) -> dict[str, Any]:
+    """Validate acp debug subprocess outcome; write anomaly on failure (non-blocking)."""
+    ok = True
+    reasons: list[str] = []
+    if exit_code != 0:
+        ok = False
+        reasons.append(f"exit_code={exit_code}")
+    if ok_json is False:
+        ok = False
+        reasons.append("json_ok_false")
+    if stderr and ("error" in stderr.lower() or "traceback" in stderr.lower()):
+        ok = False
+        reasons.append("stderr_error")
+    if result is not None and isinstance(result, dict) and result.get("ok") is False and not result.get("skipped"):
+        ok = False
+        reasons.append(str(result.get("error") or result.get("reason") or "result_not_ok"))
+    out = {"ok": ok, "reasons": reasons, "exit_code": exit_code, "stderr": (stderr or "")[:500]}
+    return out
+
+
+def record_export_failure_anomaly(
+    project_root: Path | None,
+    *,
+    summary: str,
+    detail: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Export failures must not block the main flow, but must be recorded."""
+    try:
+        return append_anomaly(
+            project_root,
+            kind="debug_export_failure",
+            summary=summary[:500],
+            detail=detail or {},
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)[:200]}
 
 
 def append_anomaly(

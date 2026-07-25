@@ -1,9 +1,11 @@
-id: adjudicate_llm_tasks
-workflow_id: uo-init
+# GENERATED from Workflow Spec — do not hand-edit identity fields
 version: 1
 name_zh: 裁决 llm_tasks 补丁
+id: adjudicate_llm_tasks
+workflow_id: uo-init
 role_id: producer
 agent_id: uo-semantic-resolve
+execution_mode: subagent
 capabilities:
 - source-reading
 - cbm-navigation
@@ -19,7 +21,18 @@ policies:
 task_prompt_id: uo/adjudicate-llm-tasks
 context_profile_id: uo-init-adjudicate-llm-tasks
 output_contract_id: semantic-patches-v1
+allowed_write_paths:
+- uo/ir/semantic_patches.yaml
+forbidden_write_paths:
+- uo/ir/extract_plan.yaml
+- uo/ir/semantic_resolution_ledger.yaml
+allowed_read_paths:
+- uo/ir/llm_tasks.yaml
+- uo/ir/score_report_pre.yaml
+- uo/ir/score_report_post.yaml
+forbidden_read_paths: []
 checker:
   required: true
 referee:
   required: false
+generated_from: workflow_spec

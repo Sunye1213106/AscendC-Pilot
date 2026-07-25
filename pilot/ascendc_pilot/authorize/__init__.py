@@ -183,6 +183,7 @@ def _is_pilot_family_agent(agent_l: str, meta: dict[str, Any] | None = None) -> 
 
 _ROLE_WRITE_POLICY = {
     "producer": "formal",
+    "controller": "formal",
     "referee": "review_only",
     "readonly_analyst": "none",
     "readonly_reviewer": "review_only",
@@ -521,7 +522,13 @@ def authorize(
 
     lf = state.get("last_failure") if isinstance(state.get("last_failure"), dict) else {}
     failed_action = str(lf.get("action_id") or lease.get("action_id") or "")
-    recovery_actions = [str(x) for x in (lf.get("recovery_actions") or []) if str(x).strip()]
+    from ascendc_pilot.recovery import filter_executable_recovery_actions
+
+    wid = str(state.get("workflow_id") or "uo-init")
+    recovery_actions = filter_executable_recovery_actions(
+        [str(x) for x in (lf.get("recovery_actions") or []) if str(x).strip()],
+        workflow_id=wid,
+    )
     if failed_action == "apply_semantic_patch" and "adjudicate_llm_tasks" not in recovery_actions:
         recovery_actions = list(recovery_actions) + ["adjudicate_llm_tasks"]
 
@@ -737,6 +744,86 @@ def authorize(
                     error_code="HARNESS_ACTION_NOT_AUTHORIZED",
                     path=path_s,
                 )
+
+        # Action lease read intersection: agent read_scopes ceiling AND precise Action paths.
+        if agent_l and agent_l not in _PRIMARY_AGENTS and state and path_s:
+            from ascendc_pilot.agents_registry import (
+                agent_read_scopes,
+                path_matches_scope,
+                rel_under_agent_dir,
+            )
+            from ascendc_pilot.authorize.lease import lease_allows_read_path, load_lease
+
+            lease = load_lease(project_root) if project_root is not None else {}
+            if lease and str(lease.get("status") or "") == "active":
+                if lease.get("run_id") and str(lease.get("run_id")) != str(state.get("run_id") or ""):
+                    return _ok(
+                        "deny",
+                        "ACTION_READ_OWNER_MISMATCH",
+                        "lease.run_id 与当前 workflow run 不一致",
+                        lease_run_id=lease.get("run_id"),
+                        run_id=state.get("run_id"),
+                        path=path_s,
+                    )
+                if action_id and lease.get("action_id") and str(lease.get("action_id")) != action_id:
+                    return _ok(
+                        "deny",
+                        "ACTION_READ_OWNER_MISMATCH",
+                        "lease.action_id 与声明 action 不一致",
+                        lease_action_id=lease.get("action_id"),
+                        action_id=action_id,
+                        path=path_s,
+                    )
+                if lease.get("actor_id") and agent_l and str(lease.get("actor_id")).lower() != agent_l:
+                    return _ok(
+                        "deny",
+                        "ACTION_READ_OWNER_MISMATCH",
+                        "lease.actor_id 与当前代理不一致",
+                        lease_actor_id=lease.get("actor_id"),
+                        agent=agent_l,
+                        path=path_s,
+                    )
+
+                rel = rel_under_agent_dir(path_s or norm, project_root)
+                if rel is None:
+                    rel_try = norm
+                    marker = "/.ascendc-pilot/"
+                    if marker in rel_try:
+                        rel = rel_try.split(marker, 1)[1]
+                    elif "uo/" in rel_try or rel_try.startswith("uo/"):
+                        idx = rel_try.find("uo/")
+                        rel = rel_try[idx:]
+                    elif "tg/" in rel_try or rel_try.startswith("tg/"):
+                        idx = rel_try.find("tg/")
+                        rel = rel_try[idx:]
+                    else:
+                        rel = None
+
+                if rel is not None:
+                    scopes = agent_read_scopes(agent_l, project_root)
+                    if scopes and not path_matches_scope(rel, scopes):
+                        return _ok(
+                            "deny",
+                            "ACTION_READ_SCOPE_DENIED",
+                            f"代理 {agent_l} 不得读取声明 read_scopes 之外的路径",
+                            path=path_s,
+                            agent=agent_l,
+                            read_scopes=scopes,
+                            rel=rel,
+                        )
+                    if lease.get("allowed_read_paths") or lease.get("forbidden_read_paths"):
+                        path_check = lease_allows_read_path(lease, rel)
+                        if not path_check.get("ok"):
+                            return _ok(
+                                "deny",
+                                str(path_check.get("error") or "ACTION_READ_SCOPE_DENIED"),
+                                "当前 Action lease 不允许读取该路径",
+                                path=path_s,
+                                rel=rel,
+                                allowed_read_paths=lease.get("allowed_read_paths") or [],
+                                forbidden_read_paths=lease.get("forbidden_read_paths") or [],
+                            )
+
         return _ok("allow", "READ_OK", "读取授权通过", tool=tool_l, path=path_s or None)
 
     # --- task / subagent spawn ---
@@ -895,6 +982,48 @@ def authorize(
                         write_scopes=scopes,
                         rel=rel,
                     )
+
+                # Action lease intersection: agent ceiling AND precise Action paths.
+                from ascendc_pilot.authorize.lease import lease_allows_write_path, load_lease
+
+                lease = load_lease(project_root)
+                if lease and str(lease.get("status") or "") == "active":
+                    if lease.get("run_id") and state and str(lease.get("run_id")) != str(state.get("run_id") or ""):
+                        return _ok(
+                            "deny",
+                            "ACTION_RUN_MISMATCH",
+                            "lease.run_id 与当前 workflow run 不一致",
+                            lease_run_id=lease.get("run_id"),
+                            run_id=state.get("run_id"),
+                        )
+                    if action_id and lease.get("action_id") and str(lease.get("action_id")) != action_id:
+                        return _ok(
+                            "deny",
+                            "ACTION_OWNER_MISMATCH",
+                            "lease.action_id 与声明 action 不一致",
+                            lease_action_id=lease.get("action_id"),
+                            action_id=action_id,
+                        )
+                    if lease.get("actor_id") and agent_l and str(lease.get("actor_id")).lower() != agent_l:
+                        return _ok(
+                            "deny",
+                            "ACTION_OWNER_MISMATCH",
+                            "lease.actor_id 与当前代理不一致",
+                            lease_actor_id=lease.get("actor_id"),
+                            agent=agent_l,
+                        )
+                    if rel is not None:
+                        path_check = lease_allows_write_path(lease, rel)
+                        if not path_check.get("ok"):
+                            return _ok(
+                                "deny",
+                                str(path_check.get("error") or "ACTION_WRITE_SCOPE_DENIED"),
+                                "当前 Action lease 不允许写入该路径",
+                                path=path_s,
+                                rel=rel,
+                                allowed_write_paths=lease.get("allowed_write_paths") or [],
+                                forbidden_write_paths=lease.get("forbidden_write_paths") or [],
+                            )
 
         return _ok(
             "allow",

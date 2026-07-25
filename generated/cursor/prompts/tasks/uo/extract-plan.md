@@ -1,17 +1,20 @@
 ## Task
 
+Bundle identity is authoritative.
+Do not replace, infer, normalize, or copy identity from old artifacts.
+
 Perform `extract_plan` for the Pilot-prepared action.
 
-You are the **producer** actor `uo-semantic-resolve` (not primary).  
+You are the **producer** actor `<ACTOR_ID>` (not primary).  
 Do not manage workflow state or declare completion.
 
 ## Mode
 
 - mode: `task`
 - task_id: `extract-plan`
-- workflow_id: `uo-init`
-- action_id: `extract_plan`
-- actor_id: `uo-semantic-resolve`
+- workflow_id: `<WORKFLOW_ID>`
+- action_id: `<ACTION_ID>`
+- actor_id: `<ACTOR_ID>`
 - run_id: `<RUN_ID>`
 
 ## Target
@@ -43,9 +46,9 @@ Do **not** expand into `llm_tasks` / `mark_missing` / `dispatches_to` adjudicati
    Classify: real **TilingData writer** vs alignment/helper (e.g. `AlignTo`) vs temp/local vs **non-sink** intermediate. Helpers/temps → `role: ignore` or omit; do not promote by setter name only.
 5. Write **only** `ir/extract_plan.yaml` with schema fields:
    - `version: 1`
-   - `actor_id: uo-semantic-resolve` (**required**)
+   - `actor_id: <ACTOR_ID>` (**required**)
    - `run_id: <RUN_ID>` (**required**, must match prepare session)
-   - `workflow_id: uo-init` (**required**)
+   - `workflow_id: <WORKFLOW_ID>` (**required**)
    - `candidates_sha256: <sha256 of ir/extract_plan_candidates.yaml>` (**required**)
    - `writers` / `receivers` / `aliases` — **mappings** (see below)
    - `non_sink_roots` / `derived_roots` — **bare string name lists only**
@@ -62,7 +65,7 @@ Do **not** expand into `llm_tasks` / `mark_missing` / `dispatches_to` adjudicati
      - `evidence_lines`: `[]` — line ranges or anchors from those files
      - `decision_reason`: short string (required for weak `candidate_only` promotions)
      - If `evidence_source: candidate_only` → **`source_verified: false`** and `confidence: candidate` — never mark source-verified without files.
-6. Stop. Return a short summary. Do **not** finalize; primary runs `acp run-action extract_plan --finalize`.
+6. Stop. Return a short summary. Do **not** finalize; primary runs `acp run-action <ACTION_ID> --finalize`.
 
 ## Schema (hard)
 
@@ -112,7 +115,7 @@ derived_roots: []
 
 ## Hard Constraints
 
-- MUST write as actor `uo-semantic-resolve` with `action_id=extract_plan` (ASCENDC_ACTION).
+- MUST write as actor `<ACTOR_ID>` with `action_id=extract_plan` (ASCENDC_ACTION).
 - MUST NOT: modify Pilot state; invent evidence; write referee verdicts; patch derived graphs.
 - MUST NOT: call domain scripts (`build_layered_kb.py` / `propose_extract_plan.py` / `apply_extract_plan.py`).
 - MUST NOT: put mappings under `non_sink_roots` / `derived_roots`.

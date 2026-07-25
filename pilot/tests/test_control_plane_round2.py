@@ -29,6 +29,8 @@ from ascendc_pilot.run_resume import (
     scrub_incomplete_on_continue,
 )
 
+RUN_TEST = "RUN_TEST"
+
 
 def _write(path: Path, data: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -268,16 +270,24 @@ def test_second_prepare_invalidates_first_session(tmp_path: Path) -> None:
 def _uo_with_open_task(tmp_path: Path, *, cand: str = "cand_1") -> Path:
     uo = tmp_path / "uo"
     (uo / "ir").mkdir(parents=True)
+    _write(uo / "manifest.yaml", {"current_run_id": RUN_TEST, "workflow_id": "uo-init"})
     _write(
         uo / "ir" / "llm_tasks.yaml",
         {
             "version": 1,
+            "artifact_identity": {"run_id": RUN_TEST, "workflow_id": "uo-init"},
+            "active_run_id": RUN_TEST,
             "total_semantic_batches": 0,
             "tasks": [
                 {
                     "task_id": "t1",
+                    "run_id": RUN_TEST,
+                    "workflow_id": "uo-init",
                     "status": "open",
+                    "task_status": "open",
                     "severity": "blocking",
+                    "blocking": True,
+                    "semantic_status": "unresolved",
                     "type": "choose_edge",
                     "candidates": [{"id": cand}],
                     "allowed_actions": ["choose_one", "accept_edge", "mark_missing"],
@@ -303,6 +313,7 @@ def test_adjudicate_gate_rejects_stale_snapshot(tmp_path: Path, monkeypatch) -> 
             "patches": [
                 {
                     "task_id": "t1",
+                    "run_id": RUN_TEST,
                     "action": "accept_edge",
                     "accepted_candidate_ids": ["cand_1"],
                     "rejected_candidate_ids": [],
@@ -314,7 +325,7 @@ def test_adjudicate_gate_rejects_stale_snapshot(tmp_path: Path, monkeypatch) -> 
     )
     monkeypatch.setattr(
         "uo.scripts.evidence_score._source_snapshot_hash",
-        lambda _uo: "OTHER",
+        lambda _uo, run_id=None, **kw: "OTHER",
     )
     result = gate_adjudicate_llm_tasks(uo)
     assert result["ok"] is False
@@ -333,6 +344,7 @@ def test_adjudicate_gate_rejects_candidate_out_of_window(tmp_path: Path, monkeyp
             "patches": [
                 {
                     "task_id": "t1",
+                    "run_id": RUN_TEST,
                     "action": "accept_edge",
                     "accepted_candidate_ids": ["cand_BAD"],
                     "rejected_candidate_ids": [],
@@ -342,7 +354,7 @@ def test_adjudicate_gate_rejects_candidate_out_of_window(tmp_path: Path, monkeyp
             ]
         },
     )
-    monkeypatch.setattr("uo.scripts.evidence_score._source_snapshot_hash", lambda _uo: "snap1")
+    monkeypatch.setattr("uo.scripts.evidence_score._source_snapshot_hash", lambda _uo, run_id=None, **kw: "snap1")
     result = gate_adjudicate_llm_tasks(uo)
     assert result["ok"] is False
     errs = result.get("validation_errors") or []
@@ -362,6 +374,7 @@ def test_adjudicate_gate_rejects_unknown_task(tmp_path: Path, monkeypatch) -> No
             "patches": [
                 {
                     "task_id": "unknown_task",
+                    "run_id": RUN_TEST,
                     "action": "accept_edge",
                     "accepted_candidate_ids": ["cand_1"],
                     "source_snapshot_hash": "snap1",
@@ -370,7 +383,7 @@ def test_adjudicate_gate_rejects_unknown_task(tmp_path: Path, monkeypatch) -> No
             ]
         },
     )
-    monkeypatch.setattr("uo.scripts.evidence_score._source_snapshot_hash", lambda _uo: "snap1")
+    monkeypatch.setattr("uo.scripts.evidence_score._source_snapshot_hash", lambda _uo, run_id=None, **kw: "snap1")
     result = gate_adjudicate_llm_tasks(uo)
     assert result["ok"] is False
 
@@ -387,6 +400,7 @@ def test_adjudicate_gate_and_apply_share_validation(tmp_path: Path, monkeypatch)
     patches = [
         {
             "task_id": "t1",
+            "run_id": RUN_TEST,
             "action": "accept_edge",
             "accepted_candidate_ids": ["cand_1"],
             "rejected_candidate_ids": [],
@@ -394,10 +408,15 @@ def test_adjudicate_gate_and_apply_share_validation(tmp_path: Path, monkeypatch)
             "candidate_set_hash": "cset1",
         }
     ]
-    _write(uo / "ir" / "semantic_patches.yaml", {"patches": patches})
-    monkeypatch.setattr("uo.scripts.evidence_score._source_snapshot_hash", lambda _uo: "snap1")
+    _write(
+        uo / "ir" / "semantic_patches.yaml",
+        {"artifact_identity": {"run_id": RUN_TEST, "workflow_id": "uo-init"}, "patches": patches},
+    )
+    monkeypatch.setattr("uo.scripts.evidence_score._source_snapshot_hash", lambda _uo, run_id=None, **kw: "snap1")
     gate = gate_adjudicate_llm_tasks(uo)
-    core = validate_semantic_patch_set(uo, patches, "snap1", require_full_coverage=True, mutate=False)
+    core = validate_semantic_patch_set(
+        uo, patches, "snap1", current_run_id=RUN_TEST, require_full_coverage=True, mutate=False
+    )
     assert gate["ok"] is True
     assert core["ok"] is True
 
@@ -552,6 +571,11 @@ def test_detect_score_post_requires_plan_and_host(tmp_path: Path) -> None:
     assert r["ok"] is False
     assert "extract_plan.yaml" in (r.get("missing") or [])
     _write(uo / "ir" / "extract_plan.yaml", {"version": 1})
+    # plan+host without kernel still fail (shared Engine/Gate contract)
+    r2 = gate_detect_score_post(uo)
+    assert r2["ok"] is False
+    assert "kernel_subgraph.yaml" in (r2.get("missing") or [])
+    _write(uo / "ir" / "kernel_subgraph.yaml", {"version": 1})
     assert gate_detect_score_post(uo).get("ok") is True
 
 

@@ -42,14 +42,44 @@ PATCH_TYPES = frozenset(
 _ACCEPT_CLOSE_ACTIONS = frozenset({"accept_edge", "choose_one", "accept", "select_edge", "select"})
 
 
+# Task lifecycle (task_status):
+#   open → adjudicated → pending_materialization → resolved
+# Failure: pending_materialization → rework_required → (open/unresolved)
+# semantic_status: unresolved | pending_materialization | closed
+
+_SEMANTIC_OPEN = frozenset({"unresolved", "pending_materialization", ""})
+_LIFECYCLE_GAP = frozenset(
+    {"open", "adjudicated", "pending_materialization", "rework_required"}
+)
+
+
 def _semantic_status(task: dict[str, Any]) -> str:
     return str(task.get("semantic_status") or "unresolved")
+
+
+def _task_lifecycle(task: dict[str, Any]) -> str:
+    return str(task.get("task_status") or task.get("status") or "")
 
 
 def _task_is_blocking(task: dict[str, Any]) -> bool:
     if "blocking" in task:
         return bool(task.get("blocking"))
     return str(task.get("severity") or "") == "blocking"
+
+
+def _semantic_gap_open(task: dict[str, Any]) -> bool:
+    """True when semantic closure still needs work (shared by Gate/Engine/recheck)."""
+    if not _task_is_blocking(task):
+        return False
+    if _semantic_status(task) == "closed":
+        return False
+    lifecycle = _task_lifecycle(task)
+    if lifecycle in {"resolved"} and _semantic_status(task) == "closed":
+        return False
+    # pending_materialization / rework_required / adjudicated / open all count as gaps
+    if lifecycle in _LIFECYCLE_GAP or _semantic_status(task) in _SEMANTIC_OPEN:
+        return True
+    return _semantic_status(task) != "closed"
 
 
 def _is_candidate_node_id(value: Any) -> bool:
@@ -80,12 +110,138 @@ def _infer_patch_type(task: dict[str, Any], action: str) -> str:
     if obj == "entrypoint_node":
         return "entrypoint_node_resolution"
     if obj == "call_edge":
-        return "call_edge_resolution"
-    if obj in {"entrypoint_dispatch_bind"} or obj in {"registration_edge", "call_edge"}:
+        # Legacy choose_edge patches without an explicit typed payload stay edge_resolution.
+        return "edge_resolution"
+    if obj in {"entrypoint_dispatch_bind"} or obj in {"registration_edge"}:
         return "entrypoint_dispatch_resolution"
     if ttype == "choose_edge":
         return "edge_resolution"
     return "edge_resolution"
+
+
+def _effective_patch_type(task: dict[str, Any], patch: dict[str, Any], action: str) -> str:
+    """Prefer explicit patch_type. Never silently downgrade typed patches to edge_resolution."""
+    explicit = str(patch.get("patch_type") or "").strip()
+    return explicit or _infer_patch_type(task, action)
+
+
+def _require_current_run_id(current_run_id: str | None) -> dict[str, Any] | None:
+    if not str(current_run_id or "").strip():
+        return {"ok": False, "error": "SEMANTIC_DOCUMENT_RUN_ID_MISSING", "message": "current_run_id is required"}
+    return None
+
+
+def _assert_task_run(task: dict[str, Any], current_run_id: str) -> dict[str, Any] | None:
+    task_run = str(task.get("run_id") or "").strip()
+    if not task_run:
+        return {
+            "ok": False,
+            "error": "SEMANTIC_TASK_RUN_ID_MISSING",
+            "task_id": task.get("task_id"),
+        }
+    if task_run != str(current_run_id):
+        return {
+            "ok": False,
+            "error": "SEMANTIC_TASK_RUN_MISMATCH",
+            "task_id": task.get("task_id"),
+            "task_run_id": task_run,
+            "current_run_id": current_run_id,
+        }
+    return None
+
+
+def _assert_patch_run(patch: dict[str, Any], current_run_id: str) -> dict[str, Any] | None:
+    patch_run = str(patch.get("run_id") or "").strip()
+    if not patch_run:
+        # Also accept nested artifact_identity on single patch entries
+        ident = patch.get("artifact_identity") if isinstance(patch.get("artifact_identity"), dict) else {}
+        patch_run = str(ident.get("run_id") or "").strip()
+    if not patch_run:
+        return {
+            "ok": False,
+            "error": "SEMANTIC_PATCH_RUN_ID_MISSING",
+            "task_id": patch.get("task_id"),
+        }
+    if patch_run != str(current_run_id):
+        return {
+            "ok": False,
+            "error": "SEMANTIC_PATCH_RUN_MISMATCH",
+            "task_id": patch.get("task_id"),
+            "patch_run_id": patch_run,
+            "current_run_id": current_run_id,
+        }
+    return None
+
+
+def assert_llm_tasks_document_run(
+    doc: dict[str, Any],
+    current_run_id: str,
+    *,
+    workflow_id: str = "",
+) -> dict[str, Any]:
+    """Fail-closed document identity check for llm_tasks.yaml."""
+    identity = doc.get("artifact_identity") if isinstance(doc.get("artifact_identity"), dict) else {}
+    doc_run = str(identity.get("run_id") or doc.get("active_run_id") or "").strip()
+    active = str(doc.get("active_run_id") or "").strip()
+    if not doc_run and not active and not (doc.get("tasks") or []):
+        # Empty fresh doc — caller should stamp identity on first write.
+        return {"ok": True, "empty": True}
+    if not doc_run:
+        return {"ok": False, "error": "SEMANTIC_DOCUMENT_RUN_ID_MISSING"}
+    if active and active != doc_run:
+        return {
+            "ok": False,
+            "error": "SEMANTIC_DOCUMENT_RUN_MISMATCH",
+            "active_run_id": active,
+            "artifact_run_id": doc_run,
+        }
+    if doc_run != str(current_run_id):
+        return {
+            "ok": False,
+            "error": "SEMANTIC_DOCUMENT_RUN_MISMATCH",
+            "document_run_id": doc_run,
+            "current_run_id": current_run_id,
+        }
+    if workflow_id:
+        doc_wf = str(identity.get("workflow_id") or doc.get("workflow_id") or "").strip()
+        if doc_wf and doc_wf != workflow_id:
+            return {
+                "ok": False,
+                "error": "SEMANTIC_DOCUMENT_RUN_MISMATCH",
+                "field": "workflow_id",
+                "document_workflow_id": doc_wf,
+                "current_workflow_id": workflow_id,
+            }
+    return {"ok": True}
+
+
+def stamp_llm_tasks_identity(
+    doc: dict[str, Any],
+    *,
+    run_id: str,
+    workflow_id: str = "uo-init",
+) -> dict[str, Any]:
+    out = dict(doc)
+    out["version"] = int(out.get("version") or 1)
+    out["active_run_id"] = run_id
+    out["artifact_identity"] = {
+        "run_id": run_id,
+        "workflow_id": workflow_id or "uo-init",
+    }
+    return out
+
+
+def _tasks_for_run(doc: dict[str, Any], current_run_id: str) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for t in doc.get("tasks") or []:
+        if not isinstance(t, dict):
+            continue
+        err = _assert_task_run(t, current_run_id)
+        if err is None:
+            out.append(t)
+        # Missing/mismatch tasks are excluded from processing lists; validators
+        # surface explicit errors when those tasks are targeted by patches.
+    return out
 
 
 def _resolve_patch_edge_id(task: dict[str, Any], patch: dict[str, Any], *, accepted: list[str]) -> str | None:
@@ -98,13 +254,22 @@ def _resolve_patch_edge_id(task: dict[str, Any], patch: dict[str, Any], *, accep
     return None
 
 
-def blocking_gap_tasks(uo_root: Path) -> list[dict[str, Any]]:
+def blocking_gap_tasks(uo_root: Path, *, current_run_id: str) -> list[dict[str, Any]]:
+    """Blocking semantic gaps — shared SSOT for Gate / Engine / recheck.
+
+    ``current_run_id`` is required. Tasks without matching run_id are ignored.
+    """
+    if not str(current_run_id or "").strip():
+        raise ValueError("SEMANTIC_DOCUMENT_RUN_ID_MISSING: current_run_id required")
     doc = load_llm_tasks(uo_root)
-    return [
-        t
-        for t in doc.get("tasks") or []
-        if isinstance(t, dict) and _task_is_blocking(t) and _semantic_status(t) != "closed"
-    ]
+    doc_check = assert_llm_tasks_document_run(doc, current_run_id)
+    if not doc_check.get("ok") and not doc_check.get("empty"):
+        return []
+    out = []
+    for t in _tasks_for_run(doc, current_run_id):
+        if _semantic_gap_open(t):
+            out.append(t)
+    return out
 
 
 def stable_task_id(
@@ -146,11 +311,20 @@ def upsert_tasks_from_score_items(
     items: list[dict[str, Any]],
     *,
     checkpoint: str,
-    run_id: str = "",
+    run_id: str,
     source_snapshot_hash: str = "",
+    workflow_id: str = "",
 ) -> dict[str, Any]:
     """Create/update tasks for items with disposition=llm_task. Same id → no re-open."""
+    if not str(run_id or "").strip():
+        raise ValueError("SEMANTIC_DOCUMENT_RUN_ID_MISSING: run_id required for upsert_tasks_from_score_items")
+    current_run_id = str(run_id).strip()
+    wf = workflow_id or "uo-init"
     doc = load_llm_tasks(uo_root)
+    doc_check = assert_llm_tasks_document_run(doc, current_run_id, workflow_id=wf)
+    if not doc_check.get("ok") and not doc_check.get("empty"):
+        raise ValueError(f"{doc_check.get('error')}: llm_tasks document run mismatch")
+    doc = stamp_llm_tasks_identity(doc, run_id=current_run_id, workflow_id=wf)
     by_id = {str(t.get("task_id")): t for t in doc.get("tasks") or [] if isinstance(t, dict)}
     created = 0
     for item in items:
@@ -207,6 +381,7 @@ def upsert_tasks_from_score_items(
             if (
                 old.get("type") == task_type
                 and old.get("target") == target
+                and str(old.get("run_id") or "").strip() == current_run_id
                 and old.get("status") == "open"
                 and old.get("task_id") != tid
             ):
@@ -229,7 +404,8 @@ def upsert_tasks_from_score_items(
             "task_id": tid,
             "status": "open",
             "task_status": "open",
-            "run_id": run_id,
+            "run_id": current_run_id,
+            "workflow_id": wf,
             "checkpoint": checkpoint,
             "source_snapshot_hash": source_snapshot_hash or "nosnap",
             "candidate_set_hash": cand_hash,
@@ -252,19 +428,22 @@ def upsert_tasks_from_score_items(
         created += 1
 
     doc["tasks"] = list(by_id.values())
+    doc = stamp_llm_tasks_identity(doc, run_id=current_run_id, workflow_id=wf)
     save_llm_tasks(uo_root, doc)
+    run_tasks = _tasks_for_run(doc, current_run_id)
     return {
-        "task_count": len(doc["tasks"]),
+        "task_count": len(run_tasks),
         "open_blocking": sum(
             1
-            for t in doc["tasks"]
+            for t in run_tasks
             if t.get("status") == "open" and _task_is_blocking(t) and _semantic_status(t) != "closed"
         ),
         "blocking_gap_count": sum(
-            1 for t in doc["tasks"] if _task_is_blocking(t) and _semantic_status(t) != "closed"
+            1 for t in run_tasks if _task_is_blocking(t) and _semantic_status(t) != "closed"
         ),
         "created": created,
         "total_semantic_batches": int(doc.get("total_semantic_batches") or 0),
+        "active_run_id": current_run_id,
     }
 
 
@@ -316,15 +495,18 @@ def _default_candidates(item: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def open_blocking_tasks(uo_root: Path) -> list[dict[str, Any]]:
-    """Open tasks that still need patch adjudication (lifecycle, not semantic closure)."""
+def open_blocking_tasks(uo_root: Path, *, current_run_id: str) -> list[dict[str, Any]]:
+    """Tasks that still need patch adjudication (open or rework_required)."""
+    if not str(current_run_id or "").strip():
+        raise ValueError("SEMANTIC_DOCUMENT_RUN_ID_MISSING: current_run_id required")
     doc = load_llm_tasks(uo_root)
+    doc_check = assert_llm_tasks_document_run(doc, current_run_id)
+    if not doc_check.get("ok") and not doc_check.get("empty"):
+        return []
     out: list[dict[str, Any]] = []
-    for t in doc.get("tasks") or []:
-        if not isinstance(t, dict):
-            continue
-        lifecycle = str(t.get("task_status") or t.get("status") or "")
-        if lifecycle != "open":
+    for t in _tasks_for_run(doc, current_run_id):
+        lifecycle = _task_lifecycle(t)
+        if lifecycle not in {"open", "rework_required"}:
             continue
         if not _task_is_blocking(t):
             continue
@@ -354,14 +536,24 @@ def validate_task_patch(
     patch: dict[str, Any],
     *,
     current_source_hash: str | None = None,
+    current_run_id: str,
 ) -> dict[str, Any]:
     """Pure validation for one patch against an in-memory llm_tasks doc. No I/O."""
+    req = _require_current_run_id(current_run_id)
+    if req is not None:
+        return req
     task_id = str(patch.get("task_id") or "")
     task = next((t for t in doc.get("tasks") or [] if t.get("task_id") == task_id), None)
     if task is None:
         return {"ok": False, "error": "unknown_task_id", "task_id": task_id}
+    task_err = _assert_task_run(task, current_run_id)
+    if task_err is not None:
+        return task_err
+    patch_err = _assert_patch_run(patch, current_run_id)
+    if patch_err is not None:
+        return patch_err
     lifecycle = str(task.get("task_status") or task.get("status") or "")
-    if lifecycle != "open":
+    if lifecycle not in {"open", "rework_required"}:
         return {"ok": False, "error": "task_not_open", "status": task.get("status"), "task_id": task_id}
 
     task_src = str(task.get("source_snapshot_hash") or "").strip()
@@ -485,12 +677,14 @@ def validate_patches_batch(
     patches: list[dict[str, Any]],
     *,
     current_source_hash: str | None = None,
+    current_run_id: str,
 ) -> dict[str, Any]:
     """Validate an entire batch with zero side effects."""
     return validate_semantic_patch_set(
         uo_root,
         patches,
         current_source_hash,
+        current_run_id=current_run_id,
         require_full_coverage=False,
         mutate=False,
     )
@@ -501,6 +695,7 @@ def validate_semantic_patch_set(
     patches: list[dict[str, Any]],
     current_source_hash: str | None,
     *,
+    current_run_id: str,
     require_full_coverage: bool = True,
     mutate: bool = False,
 ) -> dict[str, Any]:
@@ -514,13 +709,25 @@ def validate_semantic_patch_set(
             "error": "mutate_not_allowed",
             "message": "validate_semantic_patch_set is validate-only; use apply_patches_batch to commit",
         }
+    req = _require_current_run_id(current_run_id)
+    if req is not None:
+        return req
 
     doc = load_llm_tasks(uo_root)
+    doc_check = assert_llm_tasks_document_run(doc, current_run_id)
+    if not doc_check.get("ok") and not doc_check.get("empty"):
+        return {**doc_check, "errors": [doc_check], "doc": doc}
+
+    # Producer document-level identity (if present) must match current run.
+    if isinstance(patches, list) and patches:
+        # When caller passes full patches_doc via wrapper, identity is checked separately.
+        pass
+
     if not patches:
         if require_full_coverage:
             needs = [
                 str(t.get("task_id") or "")
-                for t in open_blocking_tasks(uo_root)
+                for t in open_blocking_tasks(uo_root, current_run_id=current_run_id)
                 if not can_auto_mark_missing(t)
             ]
             needs = [t for t in needs if t]
@@ -563,8 +770,32 @@ def validate_semantic_patch_set(
             continue
         if tid:
             seen_tasks.add(tid)
-        result = validate_task_patch(doc, patch, current_source_hash=current_source_hash)
+        result = validate_task_patch(
+            doc,
+            patch,
+            current_source_hash=current_source_hash,
+            current_run_id=current_run_id,
+        )
         if result.get("ok"):
+            # Fail closed on typed patch incomplete payloads (no silent downgrade).
+            from uo.scripts.semantic_patches import validate_typed_patch
+
+            action = str(result.get("action") or patch.get("action") or "")
+            patch_type = _effective_patch_type(result["task"], patch, action)
+            if action != "mark_missing" and patch_type not in {"", "edge_resolution", "mark_missing"}:
+                typed = validate_typed_patch(patch, patch_type=patch_type)
+                if not typed.get("ok"):
+                    errors.append(
+                        {
+                            "ok": False,
+                            "error": typed.get("error") or "TYPED_PATCH_PAYLOAD_INCOMPLETE",
+                            "task_id": tid,
+                            "patch_type": patch_type,
+                            "detail": typed.get("detail"),
+                        }
+                    )
+                    continue
+            result["patch_type"] = patch_type
             validated.append(result)
         else:
             errors.append(result)
@@ -572,7 +803,7 @@ def validate_semantic_patch_set(
     if require_full_coverage:
         needs = {
             str(t.get("task_id") or "")
-            for t in open_blocking_tasks(uo_root)
+            for t in open_blocking_tasks(uo_root, current_run_id=current_run_id)
             if not can_auto_mark_missing(t) and str(t.get("task_id") or "").strip()
         }
         covered = {str(p.get("task_id") or "") for p in patches if isinstance(p, dict)}
@@ -611,22 +842,56 @@ def commit_patches_batch(
     validated: list[dict[str, Any]],
     *,
     next_batches: int,
+    current_run_id: str,
+    workflow_id: str = "uo-init",
+    phase: str = "",
+    control_action_id: str = "adjudicate_llm_tasks",
+    actor_id: str = "uo-semantic-resolve",
+    role_id: str = "producer",
+    action_session_id: str = "",
+    lease_id: str = "",
 ) -> dict[str, Any]:
     """Atomically commit a pre-validated batch (one batch increment, one ledger save)."""
     from datetime import datetime, timezone
 
-    from uo.scripts.semantic_resolution_ledger import load_ledger, save_ledger
+    from uo.scripts._ir_io import commit_semantic_artifacts
+    from uo.scripts.semantic_patches import extract_typed_payload, validate_typed_patch
+    from uo.scripts.semantic_resolution_ledger import load_ledger
+
+    req = _require_current_run_id(current_run_id)
+    if req is not None:
+        return {**req, "applied_count": 0, "error_count": 1, "applied": [], "errors": [req]}
 
     doc = load_llm_tasks(uo_root)
+    doc_check = assert_llm_tasks_document_run(doc, current_run_id, workflow_id=workflow_id)
+    if not doc_check.get("ok") and not doc_check.get("empty"):
+        return {
+            **doc_check,
+            "applied_count": 0,
+            "error_count": 1,
+            "applied": [],
+            "errors": [doc_check],
+        }
+    doc = stamp_llm_tasks_identity(doc, run_id=current_run_id, workflow_id=workflow_id or "uo-init")
     by_id = {str(t.get("task_id")): t for t in (doc.get("tasks") or []) if isinstance(t, dict)}
     ledger = load_ledger(uo_root)
+    ledger.setdefault("artifact_identity", {})
+    if isinstance(ledger.get("artifact_identity"), dict):
+        ledger["artifact_identity"] = {
+            **dict(ledger.get("artifact_identity") or {}),
+            "run_id": current_run_id,
+            "workflow_id": workflow_id or "uo-init",
+        }
     applied: list[dict[str, Any]] = []
     now = datetime.now(timezone.utc).isoformat()
 
     for item in validated:
         tid = str(item["task_id"])
         task = by_id.get(tid)
-        if task is None or str(task.get("task_status") or task.get("status")) != "open":
+        if task is None or str(task.get("task_status") or task.get("status")) not in {
+            "open",
+            "rework_required",
+        }:
             return {
                 "ok": False,
                 "error": "commit_race_task_not_open",
@@ -636,10 +901,31 @@ def commit_patches_batch(
                 "applied": [],
                 "errors": [{"ok": False, "error": "commit_race_task_not_open", "task_id": tid}],
             }
+        task_err = _assert_task_run(task, current_run_id)
+        if task_err is not None:
+            return {
+                **task_err,
+                "applied_count": 0,
+                "error_count": 1,
+                "applied": [],
+                "errors": [task_err],
+            }
         task["task_attempts"] = int(item["next_attempts"])
         action = str(item["action"])
         patch = item["patch"]
-        patch_type = str(patch.get("patch_type") or _infer_patch_type(task, action))
+        patch_type = str(item.get("patch_type") or _effective_patch_type(task, patch, action))
+        typed = validate_typed_patch(patch, patch_type=patch_type)
+        if not typed.get("ok") and action != "mark_missing" and patch_type not in {"edge_resolution", "mark_missing", ""}:
+            return {
+                "ok": False,
+                "error": typed.get("error") or "TYPED_PATCH_PAYLOAD_INCOMPLETE",
+                "task_id": tid,
+                "applied_count": 0,
+                "error_count": 1,
+                "applied": [],
+                "errors": [{"ok": False, "error": typed.get("error"), "task_id": tid, "detail": typed.get("detail")}],
+            }
+        typed_payload = typed.get("payload") if isinstance(typed.get("payload"), dict) else extract_typed_payload(patch, patch_type)
         accepted = list(item["accepted"])
         edge_id = _resolve_patch_edge_id(task, patch, accepted=accepted)
         if edge_id and _is_candidate_node_id(edge_id):
@@ -658,31 +944,47 @@ def commit_patches_batch(
             task["semantic_status"] = "unresolved"
             task["blocking"] = True
         elif action in _ACCEPT_CLOSE_ACTIONS:
-            task["status"] = "resolved"
-            task["task_status"] = "resolved"
-            task["semantic_status"] = "closed"
-            task["blocking"] = False
+            task["status"] = "pending_materialization"
+            task["task_status"] = "pending_materialization"
+            task["semantic_status"] = "pending_materialization"
+            task["blocking"] = True
         else:
-            task["status"] = "resolved"
-            task["task_status"] = "resolved"
+            task["status"] = "pending_materialization"
+            task["task_status"] = "pending_materialization"
+            task["semantic_status"] = "pending_materialization"
+            task["blocking"] = True
         task["resolution"] = {"action": action, "patch": patch}
         record = {
             "task_id": tid,
+            "run_id": current_run_id,
+            "workflow_id": workflow_id or "uo-init",
+            "phase": phase or "",
+            "control_action_id": control_action_id or "adjudicate_llm_tasks",
+            "actor_id": actor_id or "uo-semantic-resolve",
+            "role_id": role_id or "producer",
+            "action_session_id": action_session_id or "",
+            "lease_id": lease_id or "",
             "patch_type": patch_type,
+            "semantic_action": action,
+            # Legacy mirror — production code must prefer semantic_action.
+            "action": action,
             "edge_id": edge_id,
             "accepted_candidate_ids": accepted,
             "rejected_candidate_ids": list(item["rejected"]),
-            "relation": patch.get("relation") or task.get("type"),
+            "relation": patch.get("relation") or typed_payload.get("relation") or task.get("type"),
             "evidence": patch.get("evidence") or [],
             "source_snapshot_hash": task.get("source_snapshot_hash"),
             "candidate_set_hash": task.get("candidate_set_hash"),
             "verification_source": "llm",
             "confidence": "semantic_verified",
-            "action": action,
             "applied_at": now,
             "status": "active",
             "apply_status": "pending",
+            "payload": typed_payload,
         }
+        for key, value in typed_payload.items():
+            if key not in record or record[key] in (None, "", []):
+                record[key] = value
         ledger.setdefault("semantic_patches", []).append(record)
         applied.append(
             {
@@ -695,8 +997,7 @@ def commit_patches_batch(
         )
 
     doc["total_semantic_batches"] = next_batches
-    save_llm_tasks(uo_root, doc)
-    save_ledger(uo_root, ledger)
+    commit_semantic_artifacts(uo_root, llm_tasks=doc, ledger=ledger)
     return {
         "ok": True,
         "applied_count": len(applied),
@@ -711,10 +1012,23 @@ def apply_task_patch(
     uo_root: Path,
     patch: dict[str, Any],
     *,
+    current_run_id: str,
     current_source_hash: str | None = None,
+    workflow_id: str = "uo-init",
+    phase: str = "",
+    control_action_id: str = "adjudicate_llm_tasks",
+    actor_id: str = "uo-semantic-resolve",
+    role_id: str = "producer",
+    action_session_id: str = "",
+    lease_id: str = "",
 ) -> dict[str, Any]:
     """Validate then commit a single patch as a one-patch transactional batch."""
+    req = _require_current_run_id(current_run_id)
+    if req is not None:
+        return req
     enriched = dict(patch)
+    if not str(enriched.get("run_id") or "").strip():
+        enriched["run_id"] = current_run_id
     doc = load_llm_tasks(uo_root)
     tid = str(enriched.get("task_id") or "")
     task = next((t for t in doc.get("tasks") or [] if t.get("task_id") == tid), None)
@@ -723,7 +1037,19 @@ def apply_task_patch(
             enriched["candidate_set_hash"] = str(task.get("candidate_set_hash") or "")
         if not str(enriched.get("source_snapshot_hash") or "").strip():
             enriched["source_snapshot_hash"] = str(task.get("source_snapshot_hash") or "")
-    batch = apply_patches_batch(uo_root, [enriched], current_source_hash=current_source_hash)
+    batch = apply_patches_batch(
+        uo_root,
+        [enriched],
+        current_run_id=current_run_id,
+        current_source_hash=current_source_hash,
+        workflow_id=workflow_id,
+        phase=phase,
+        control_action_id=control_action_id,
+        actor_id=actor_id,
+        role_id=role_id,
+        action_session_id=action_session_id,
+        lease_id=lease_id,
+    )
     if batch.get("ok") and batch.get("applied"):
         return batch["applied"][0]
     if batch.get("errors"):
@@ -735,15 +1061,35 @@ def apply_patches_batch(
     uo_root: Path,
     patches: list[dict[str, Any]],
     *,
+    current_run_id: str,
     current_source_hash: str | None = None,
+    workflow_id: str = "uo-init",
+    phase: str = "",
+    control_action_id: str = "adjudicate_llm_tasks",
+    actor_id: str = "uo-semantic-resolve",
+    role_id: str = "producer",
+    action_session_id: str = "",
+    lease_id: str = "",
 ) -> dict[str, Any]:
     """Validate-all-then-commit: any failure leaves llm_tasks and ledger unchanged."""
+    req = _require_current_run_id(current_run_id)
+    if req is not None:
+        return {**req, "applied_count": 0, "error_count": 1, "applied": [], "errors": [req]}
     if not patches:
         return {"ok": True, "applied_count": 0, "error_count": 0, "applied": [], "errors": []}
+    stamped = []
+    for p in patches:
+        if not isinstance(p, dict):
+            continue
+        ep = dict(p)
+        if not str(ep.get("run_id") or "").strip():
+            ep["run_id"] = current_run_id
+        stamped.append(ep)
     checked = validate_semantic_patch_set(
         uo_root,
-        patches,
+        stamped,
         current_source_hash,
+        current_run_id=current_run_id,
         require_full_coverage=False,
         mutate=False,
     )
@@ -760,13 +1106,59 @@ def apply_patches_batch(
         uo_root,
         list(checked.get("validated") or []),
         next_batches=int(checked["next_batches"]),
+        current_run_id=current_run_id,
+        workflow_id=workflow_id,
+        phase=phase,
+        control_action_id=control_action_id,
+        actor_id=actor_id,
+        role_id=role_id,
+        action_session_id=action_session_id,
+        lease_id=lease_id,
     )
+
+
+def assert_semantic_patches_document_run(
+    doc: dict[str, Any],
+    current_run_id: str,
+    *,
+    workflow_id: str = "",
+) -> dict[str, Any]:
+    """Fail-closed document identity for semantic_patches.yaml when present."""
+    if not isinstance(doc, dict):
+        return {"ok": True, "empty": True}
+    identity = doc.get("artifact_identity") if isinstance(doc.get("artifact_identity"), dict) else {}
+    doc_run = str(identity.get("run_id") or doc.get("run_id") or "").strip()
+    patches = [p for p in (doc.get("patches") or []) if isinstance(p, dict)]
+    if not doc_run and not patches:
+        return {"ok": True, "empty": True}
+    if not doc_run:
+        return {"ok": False, "error": "SEMANTIC_DOCUMENT_RUN_ID_MISSING"}
+    if doc_run != str(current_run_id):
+        return {
+            "ok": False,
+            "error": "SEMANTIC_DOCUMENT_RUN_MISMATCH",
+            "document_run_id": doc_run,
+            "current_run_id": current_run_id,
+        }
+    if workflow_id:
+        doc_wf = str(identity.get("workflow_id") or doc.get("workflow_id") or "").strip()
+        if doc_wf and doc_wf != workflow_id:
+            return {
+                "ok": False,
+                "error": "SEMANTIC_DOCUMENT_RUN_MISMATCH",
+                "field": "workflow_id",
+                "document_workflow_id": doc_wf,
+                "current_workflow_id": workflow_id,
+            }
+    return {"ok": True}
 
 
 def resolve_patches_for_apply(
     uo_root: Path,
     *,
+    current_run_id: str,
     patches_doc: dict[str, Any] | None = None,
+    workflow_id: str = "uo-init",
 ) -> dict[str, Any]:
     """Resolve patch list for deterministic apply.
 
@@ -774,15 +1166,38 @@ def resolve_patches_for_apply(
     empty-candidate tasks. Tasks that still need LLM adjudication surface as
     ``SEMANTIC_PATCHES_REQUIRED``.
     """
-    open_blocking = open_blocking_tasks(uo_root)
+    req = _require_current_run_id(current_run_id)
+    if req is not None:
+        return req
+    open_blocking = open_blocking_tasks(uo_root, current_run_id=current_run_id)
     if not open_blocking:
         return {"ok": True, "patches": [], "skipped": True, "reason": "no_open_blocking"}
 
     patches: list[dict[str, Any]] = []
     if isinstance(patches_doc, dict):
+        doc_check = assert_semantic_patches_document_run(
+            patches_doc, current_run_id, workflow_id=workflow_id
+        )
+        if not doc_check.get("ok") and not doc_check.get("empty"):
+            return doc_check
         raw = patches_doc.get("patches")
         if isinstance(raw, list):
-            patches = [p for p in raw if isinstance(p, dict)]
+            for p in raw:
+                if not isinstance(p, dict):
+                    continue
+                ep = dict(p)
+                if not str(ep.get("run_id") or "").strip():
+                    # Producer omitted per-patch run_id — inherit document identity only
+                    # when document run already validated; still fail if neither present.
+                    ident = (
+                        patches_doc.get("artifact_identity")
+                        if isinstance(patches_doc.get("artifact_identity"), dict)
+                        else {}
+                    )
+                    inherited = str(ident.get("run_id") or patches_doc.get("run_id") or "").strip()
+                    if inherited:
+                        ep["run_id"] = inherited
+                patches.append(ep)
 
     covered = {str(p.get("task_id") or "") for p in patches}
     auto: list[dict[str, Any]] = []
@@ -795,6 +1210,7 @@ def resolve_patches_for_apply(
             auto.append(
                 {
                     "task_id": tid,
+                    "run_id": current_run_id,
                     "action": "mark_missing",
                     "accepted_candidate_ids": [],
                     "rejected_candidate_ids": [],
@@ -825,33 +1241,77 @@ def resolve_patches_for_apply(
     return {"ok": True, "patches": merged, "source": source}
 
 
-def recheck_does_not_increment(uo_root: Path) -> dict[str, Any]:
+def recheck_does_not_increment(uo_root: Path, *, current_run_id: str) -> dict[str, Any]:
     """Recheck helper — read budgets without mutating attempts."""
+    req = _require_current_run_id(current_run_id)
+    if req is not None:
+        return req
     doc = load_llm_tasks(uo_root)
-    gaps = blocking_gap_tasks(uo_root)
+    gaps = blocking_gap_tasks(uo_root, current_run_id=current_run_id)
     return {
         "ok": True,
-        "open_blocking": open_blocking_tasks(uo_root),
+        "open_blocking": open_blocking_tasks(uo_root, current_run_id=current_run_id),
         "blocking_gaps": gaps,
         "blocking_gap_count": len(gaps),
         "total_semantic_batches": int(doc.get("total_semantic_batches") or 0),
-        "tasks": doc.get("tasks") or [],
-        **compute_semantic_stats(uo_root),
+        "tasks": _tasks_for_run(doc, current_run_id),
+        **compute_semantic_stats(uo_root, current_run_id=current_run_id),
     }
 
 
-def compute_semantic_stats(uo_root: Path) -> dict[str, Any]:
-    """Aggregate semantic task / patch / ledger counters for closure engines."""
+def compute_semantic_stats(uo_root: Path, *, current_run_id: str) -> dict[str, Any]:
+    """Aggregate semantic task / patch / ledger counters for the current run only."""
     from uo.scripts.semantic_resolution_ledger import load_ledger
 
+    req = _require_current_run_id(current_run_id)
+    if req is not None:
+        return {**req, "task_total": 0, "blocking_gap_count": 0}
+
     tasks_doc = load_llm_tasks(uo_root)
-    tasks = [t for t in (tasks_doc.get("tasks") or []) if isinstance(t, dict)]
+    doc_check = assert_llm_tasks_document_run(tasks_doc, current_run_id)
+    if not doc_check.get("ok") and not doc_check.get("empty"):
+        return {
+            **doc_check,
+            "task_total": 0,
+            "blocking_gap_count": 0,
+            "producer_patch_count": 0,
+            "auto_patch_count": 0,
+            "accept_count": 0,
+            "reject_count": 0,
+            "mark_missing_count": 0,
+            "materialized_patch_count": 0,
+            "unconsumed_patch_count": 0,
+            "total_semantic_batches": 0,
+        }
+    tasks = _tasks_for_run(tasks_doc, current_run_id)
     patches_doc = read_yaml(uo_root / "ir" / "semantic_patches.yaml") or {}
-    producer_patches = [
-        p for p in (patches_doc.get("patches") or []) if isinstance(p, dict)
-    ]
+    patch_doc_check = assert_semantic_patches_document_run(patches_doc, current_run_id)
+    if not patch_doc_check.get("ok") and not patch_doc_check.get("empty"):
+        producer_patches: list[dict[str, Any]] = []
+    else:
+        producer_patches = []
+        for p in patches_doc.get("patches") or []:
+            if not isinstance(p, dict):
+                continue
+            if _assert_patch_run(p, current_run_id) is None:
+                producer_patches.append(p)
+            else:
+                # Inherit document run when per-patch missing but doc validated.
+                ident = (
+                    patches_doc.get("artifact_identity")
+                    if isinstance(patches_doc.get("artifact_identity"), dict)
+                    else {}
+                )
+                inherited = str(ident.get("run_id") or patches_doc.get("run_id") or "").strip()
+                if inherited == str(current_run_id) and not str(p.get("run_id") or "").strip():
+                    producer_patches.append(p)
     ledger = load_ledger(uo_root)
-    ledger_patches = [p for p in (ledger.get("semantic_patches") or []) if isinstance(p, dict)]
+    ledger_patches = []
+    for p in ledger.get("semantic_patches") or []:
+        if not isinstance(p, dict):
+            continue
+        if str(p.get("run_id") or "").strip() == str(current_run_id):
+            ledger_patches.append(p)
 
     accept_count = 0
     reject_count = 0
@@ -862,7 +1322,7 @@ def compute_semantic_stats(uo_root: Path) -> dict[str, Any]:
     for p in ledger_patches:
         if p.get("status") == "stale":
             continue
-        action = str(p.get("action") or "")
+        action = str(p.get("semantic_action") or p.get("action") or "")
         ev = p.get("evidence") or []
         if any(str(x).startswith("auto:") for x in ev):
             auto_patch_count += 1
@@ -887,5 +1347,99 @@ def compute_semantic_stats(uo_root: Path) -> dict[str, Any]:
         "mark_missing_count": mark_missing_count,
         "materialized_patch_count": materialized_patch_count,
         "unconsumed_patch_count": unconsumed_patch_count,
-        "blocking_gap_count": len(blocking_gap_tasks(uo_root)),
+        "blocking_gap_count": len(blocking_gap_tasks(uo_root, current_run_id=current_run_id)),
+        "total_semantic_batches": int(tasks_doc.get("total_semantic_batches") or 0),
+        "active_run_id": current_run_id,
+    }
+
+
+_FAILURE_APPLY_STATUSES = frozenset(
+    {"unconsumed", "invalid", "target_missing", "target_type_mismatch"}
+)
+
+
+def sync_tasks_from_materialization(
+    uo_root: Path,
+    ledger: dict[str, Any],
+    *,
+    current_run_id: str,
+    mutate_doc: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Update llm_tasks from ledger apply_status after rebuild verification.
+
+    - materialized → task_status=resolved, semantic_status=closed, blocking=false
+    - unconsumed/invalid/target_* → rework_required + unresolved + blocking
+    - mark_missing → remains adjudicated/unresolved/blocking
+    """
+    req = _require_current_run_id(current_run_id)
+    if req is not None:
+        return {**req, "doc": mutate_doc or {}, "closed_count": 0, "rework_count": 0}
+    doc = mutate_doc if mutate_doc is not None else load_llm_tasks(uo_root)
+    by_id = {str(t.get("task_id")): t for t in (doc.get("tasks") or []) if isinstance(t, dict)}
+    closed = 0
+    reopened = 0
+    for patch in ledger.get("semantic_patches") or []:
+        if not isinstance(patch, dict) or patch.get("status") == "stale":
+            continue
+        patch_run = str(patch.get("run_id") or "").strip()
+        if not patch_run:
+            return {
+                "ok": False,
+                "error": "LEDGER_RUN_ID_MISSING",
+                "task_id": patch.get("task_id"),
+                "doc": doc,
+                "closed_count": closed,
+                "rework_count": reopened,
+            }
+        if patch_run != str(current_run_id):
+            continue
+        tid = str(patch.get("task_id") or "")
+        task = by_id.get(tid)
+        if task is None:
+            continue
+        task_err = _assert_task_run(task, current_run_id)
+        if task_err is not None:
+            continue
+        action = str(patch.get("semantic_action") or patch.get("action") or "")
+        apply_st = str(patch.get("apply_status") or "")
+        if action == "mark_missing" or str(patch.get("patch_type") or "") == "mark_missing":
+            task["status"] = "adjudicated"
+            task["task_status"] = "adjudicated"
+            task["semantic_status"] = "unresolved"
+            task["blocking"] = True
+            continue
+        if apply_st == "materialized":
+            task["status"] = "resolved"
+            task["task_status"] = "resolved"
+            task["semantic_status"] = "closed"
+            task["blocking"] = False
+            task.pop("failure_code", None)
+            task.pop("failure_detail", None)
+            closed += 1
+        elif apply_st in _FAILURE_APPLY_STATUSES:
+            task["status"] = "rework_required"
+            task["task_status"] = "rework_required"
+            task["semantic_status"] = "unresolved"
+            task["blocking"] = True
+            code = str(patch.get("apply_error") or "")
+            if apply_st == "unconsumed":
+                code = code or "SEMANTIC_PATCH_UNCONSUMED"
+            elif apply_st == "invalid":
+                code = code or "SEMANTIC_PATCH_INVALID"
+            elif apply_st == "target_missing":
+                code = code or "SEMANTIC_TARGET_NOT_FOUND"
+            elif apply_st == "target_type_mismatch":
+                code = code or "SEMANTIC_TARGET_TYPE_MISMATCH"
+            task["failure_code"] = code
+            task["failure_detail"] = str(patch.get("apply_detail") or apply_st)
+            reopened += 1
+        elif apply_st in {"pending", "adjudicated_only"}:
+            # Still waiting or mark_missing-equivalent.
+            if _task_lifecycle(task) == "pending_materialization":
+                pass
+    return {
+        "ok": True,
+        "doc": doc,
+        "closed_count": closed,
+        "rework_count": reopened,
     }

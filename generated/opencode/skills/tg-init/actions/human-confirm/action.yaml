@@ -1,9 +1,11 @@
-id: human_confirm
-workflow_id: tg-init
+# GENERATED from Workflow Spec — do not hand-edit identity fields
 version: 1
 name_zh: 人工确认
+id: human_confirm
+workflow_id: tg-init
 role_id: null
 agent_id: null
+execution_mode: primary_interactive
 capabilities: []
 policies:
 - source-authority
@@ -15,7 +17,12 @@ policies:
 task_prompt_id: tg/human-confirm
 context_profile_id: tg-init-human-confirm
 output_contract_id: init-confirmed-v1
+allowed_write_paths: []
+forbidden_write_paths: []
+allowed_read_paths: []
+forbidden_read_paths: []
 checker:
   required: true
 referee:
   required: false
+generated_from: workflow_spec

@@ -1,9 +1,13 @@
-id: semantic_bind
-workflow_id: tg-init
+# GENERATED from Workflow Spec — do not hand-edit identity fields
 version: 1
 name_zh: 语义绑定
+gates:
+- bind_progress
+id: semantic_bind
+workflow_id: tg-init
 role_id: producer
 agent_id: tg-semantic-bind
+execution_mode: subagent
 capabilities:
 - kb-query
 - semantic-resolution
@@ -17,9 +21,12 @@ policies:
 task_prompt_id: tg/semantic-bind
 context_profile_id: tg-init-semantic-bind
 output_contract_id: semantic-bind-v1
+allowed_write_paths: []
+forbidden_write_paths: []
+allowed_read_paths: []
+forbidden_read_paths: []
 checker:
   required: true
 referee:
   required: false
-gates:
-- bind_progress
+generated_from: workflow_spec

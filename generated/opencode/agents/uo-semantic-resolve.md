@@ -1,6 +1,9 @@
 ---
 name: uo-semantic-resolve
-description: Extract plan producer. On start, read session prompt.md first.
+description: 'UO semantic producer for action-scoped extraction planning and semantic
+  adjudication. Actual writes are limited by the prepared Action lease.
+
+  '
 mode: subagent
 ---
 
@@ -10,7 +13,8 @@ mode: subagent
 
 You are a `producer` for AscendC-Pilot.
 
-Extract plan producer. On start, read session prompt.md first.
+UO semantic producer for action-scoped extraction planning and semantic adjudication. Actual writes are limited by the prepared Action lease.
+
 
 ## Boundaries
 

@@ -27,6 +27,8 @@ DEFAULT_DOC_INDEX = "https://www.hiascend.com/document/detail/zh/CANNCommunityEd
 # Built-in offline contract fixtures (tests / air-gapped). Not project provenance.
 BUILTIN_CONTRACTS: dict[str, dict[str, Any]] = {
     "GET_TPL_TILING_KEY": {
+        "symbol_kind": "macro",
+        "qualified_names": ['GET_TPL_TILING_KEY'],
         "symbol_or_macro": "GET_TPL_TILING_KEY",
         "document_title": "AscendC TilingKey template helpers",
         "document_url": DEFAULT_DOC_INDEX,
@@ -41,6 +43,8 @@ BUILTIN_CONTRACTS: dict[str, dict[str, Any]] = {
         "confidence": 0.7,
     },
     "ASCENDC_TPL_ARGS_DECL": {
+        "symbol_kind": "macro",
+        "qualified_names": ['ASCENDC_TPL_ARGS_DECL'],
         "symbol_or_macro": "ASCENDC_TPL_ARGS_DECL",
         "document_title": "AscendC TilingKey ARGS_DECL",
         "document_url": DEFAULT_DOC_INDEX,
@@ -55,6 +59,8 @@ BUILTIN_CONTRACTS: dict[str, dict[str, Any]] = {
         "confidence": 0.7,
     },
     "ASCENDC_TPL_ARGS_SEL": {
+        "symbol_kind": "macro",
+        "qualified_names": ['ASCENDC_TPL_ARGS_SEL'],
         "symbol_or_macro": "ASCENDC_TPL_ARGS_SEL",
         "document_title": "AscendC TilingKey ARGS_SEL",
         "document_url": DEFAULT_DOC_INDEX,
@@ -69,6 +75,8 @@ BUILTIN_CONTRACTS: dict[str, dict[str, Any]] = {
         "confidence": 0.7,
     },
     "GET_TILING_DATA": {
+        "symbol_kind": "macro",
+        "qualified_names": ['GET_TILING_DATA'],
         "symbol_or_macro": "GET_TILING_DATA",
         "document_title": "Kernel GetTilingData",
         "document_url": DEFAULT_DOC_INDEX,
@@ -83,6 +91,8 @@ BUILTIN_CONTRACTS: dict[str, dict[str, Any]] = {
         "confidence": 0.7,
     },
     "GetOptionalInputShape": {
+        "symbol_kind": "method",
+        "qualified_names": ['gert::TilingContext::GetOptionalInputShape'],
         "symbol_or_macro": "GetOptionalInputShape",
         "document_title": "TilingContext optional input",
         "document_url": DEFAULT_DOC_INDEX,
@@ -97,6 +107,8 @@ BUILTIN_CONTRACTS: dict[str, dict[str, Any]] = {
         "confidence": 0.7,
     },
     "REGISTER_TILING_TEMPLATE": {
+        "symbol_kind": "macro",
+        "qualified_names": ['REGISTER_TILING_TEMPLATE'],
         "symbol_or_macro": "REGISTER_TILING_TEMPLATE",
         "document_title": "Host tiling template registration",
         "document_url": DEFAULT_DOC_INDEX,
@@ -111,6 +123,113 @@ BUILTIN_CONTRACTS: dict[str, dict[str, Any]] = {
         "confidence": 0.7,
     },
 }
+
+
+PACKAGED_CATALOG_PATH = Path(__file__).resolve().parents[1] / "resources" / "cann_api_catalog.yaml"
+PACKAGED_REG_CATALOG_PATH = Path(__file__).resolve().parents[1] / "resources" / "cann_reg_api_catalog.yaml"
+PACKAGED_REG_LOGIC_CATALOG_PATH = Path(__file__).resolve().parents[1] / "resources" / "cann_reg_logic_catalog.yaml"
+
+
+def load_packaged_contracts() -> dict[str, dict[str, Any]]:
+    # Load validated, machine-readable CANN symbol contracts shipped with UO.
+    payload = read_yaml(PACKAGED_CATALOG_PATH) or {}
+    rows = payload.get("contracts") or []
+    out: dict[str, dict[str, Any]] = {}
+    for raw in rows:
+        if not isinstance(raw, dict):
+            continue
+        item = dict(raw)
+        symbol = str(item.get("symbol_or_macro") or "").strip()
+        kind = str(item.get("symbol_kind") or "").casefold()
+        if not symbol or kind not in {"macro", "function", "method", "interface", "api"}:
+            continue
+        if not str(item.get("document_url") or "").startswith("https://www.hiascend.com/"):
+            continue
+        if float(item.get("confidence") or 0.0) < 0.9:
+            continue
+        out[symbol] = item
+        for alias in item.get("aliases") or []:
+            alias_name = str(alias or "").strip()
+            if alias_name:
+                alias_item = dict(item)
+                alias_item["symbol_or_macro"] = alias_name
+                alias_item["canonical_symbol"] = symbol
+                out.setdefault(alias_name, alias_item)
+    return out
+
+
+def load_packaged_reg_contracts() -> dict[str, dict[str, Any]]:
+    # Load official AscendC::Reg contracts without collapsing same-name Memory APIs.
+    payload = read_yaml(PACKAGED_REG_CATALOG_PATH) or {}
+    rows = payload.get("contracts") or []
+    out: dict[str, dict[str, Any]] = {}
+    for raw in rows:
+        if not isinstance(raw, dict):
+            continue
+        item = dict(raw)
+        symbol = str(item.get("symbol_or_macro") or "").strip()
+        kind = str(item.get("symbol_kind") or "").casefold()
+        if not symbol or kind not in {"macro", "function", "method", "interface", "api"}:
+            continue
+        if not str(item.get("document_url") or "").startswith("https://www.hiascend.com/"):
+            continue
+        if float(item.get("confidence") or 0.0) < 0.9:
+            continue
+        out[f"Reg::{symbol}"] = item
+    return out
+
+
+def load_packaged_reg_logic_contracts() -> dict[str, dict[str, Any]]:
+    # Load official Reg comparison/logic contracts with collision-safe keys.
+    payload = read_yaml(PACKAGED_REG_LOGIC_CATALOG_PATH) or {}
+    rows = payload.get("contracts") or []
+    out: dict[str, dict[str, Any]] = {}
+    for raw in rows:
+        if not isinstance(raw, dict):
+            continue
+        item = dict(raw)
+        symbol = str(item.get("symbol_or_macro") or "").strip()
+        kind = str(item.get("symbol_kind") or "").casefold()
+        if not symbol or kind not in {"macro", "function", "method", "interface", "api"}:
+            continue
+        if not str(item.get("document_url") or "").startswith("https://www.hiascend.com/"):
+            continue
+        if float(item.get("confidence") or 0.0) < 0.9:
+            continue
+        out[f"RegLogic::{symbol}"] = item
+    return out
+
+
+def packaged_doc_evidence_bundle(
+    *, cann_version: str = "latest"
+) -> dict[str, Any]:
+    # Return the packaged official catalog in doc_evidence.yaml shape.
+    packaged_items = (
+        list(load_packaged_contracts().values())
+        + list(load_packaged_reg_contracts().values())
+        + list(load_packaged_reg_logic_contracts().values())
+    )
+    items = [
+        _version_gate(dict(item), cann_version)
+        for item in packaged_items
+    ]
+    return {
+        "version": 1,
+        "cann_version": cann_version,
+        "authority_order": ["operator_source", "target_cann_docs", "latest_docs", "other"],
+        "catalog_sources": [
+            PACKAGED_CATALOG_PATH.as_posix(),
+            PACKAGED_REG_CATALOG_PATH.as_posix(),
+            PACKAGED_REG_LOGIC_CATALOG_PATH.as_posix(),
+        ],
+        "items": [item for item in items if not item.get("unresolved")],
+        "unresolved": [item for item in items if item.get("unresolved")],
+    }
+
+
+BUILTIN_CONTRACTS.update(load_packaged_contracts())
+BUILTIN_CONTRACTS.update(load_packaged_reg_contracts())
+BUILTIN_CONTRACTS.update(load_packaged_reg_logic_contracts())
 
 
 def docs_cache_dir(uo_root: Path) -> Path:
@@ -202,6 +321,13 @@ def collect_doc_evidence_bundle(
 
 
 def _version_gate(data: dict[str, Any], requested: str) -> dict[str, Any]:
+    if str(data.get("version_scope") or "") == "multi_version":
+        supported = {str(value) for value in data.get("cann_versions") or []}
+        if requested in {"", "latest", "offline_fixture"} or not supported:
+            return data
+        requested_prefix = ".".join(str(requested).split(".")[:2])
+        if any(str(value).startswith(requested_prefix) or requested_prefix.startswith(str(value)) for value in supported):
+            return data
     have = str(data.get("cann_version") or "")
     if requested and requested not in {"offline_fixture", "latest", ""} and have not in {requested, "offline_fixture"}:
         return {

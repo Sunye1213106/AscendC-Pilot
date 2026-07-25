@@ -209,7 +209,8 @@ def _writer_candidate_weak(
     if same_name > 1:
         return True
     if not cand:
-        return False
+        # No matched candidate — treat promotion as weak (fail-closed).
+        return True
     score = float(cand.get("score") or 0)
     if score > 0 and score < WEAK_SCORE_THRESHOLD:
         return True
@@ -218,16 +219,19 @@ def _writer_candidate_weak(
         return True
     if "has_set_field" in ev and not (ev & STRONG_WRITER_EVIDENCE):
         return True
+    # Suggested non-sink cannot be promoted to sink writer roles without source proof.
+    if cand.get("is_tiling_sink_suggested") is False:
+        return True
+    if cand.get("non_sink_suggested") is True or cand.get("suggested_non_sink") is True:
+        return True
+    # Setter name alone cannot prove a real TilingData sink write.
+    setter_only = bool(ev & {"has_set_field", "setter_name"}) and not (ev & STRONG_WRITER_EVIDENCE)
+    if setter_only:
+        return True
     qn = str(cand.get("qualified_name") or "").strip()
     cn = str(cand.get("name") or "").strip()
-    if (
-        qn
-        and cn
-        and qn == cn
-        and not str(cand.get("class_or_namespace") or "").strip()
-        and score > 0
-        and score < WEAK_SCORE_THRESHOLD
-    ):
+    if qn and cn and qn == cn and not str(cand.get("class_or_namespace") or "").strip():
+        # Incomplete qualified name.
         return True
     start = int(item.get("start_line") or cand.get("start_line") or 0)
     if start > 0:
@@ -285,15 +289,28 @@ def _validate_decision_evidence(
 
     if check_weak_writer_promotion:
         role = str(item.get("role") or "").strip()
-        if role in PROMOTED_WRITER_ROLES and evidence_source == "candidate_only":
-            if _writer_candidate_weak(item, cand, all_pool or []):
-                reason = str(item.get("decision_reason") or "").strip()
-                if not reason:
-                    errors.append(
-                        f"writer {item.get('name') or '?'} weak candidate with role {role!r} "
-                        "and evidence_source candidate_only requires decision_reason "
-                        "(read source to reject helper/temp/non-sink) or omit the writer"
-                    )
+        promoting = role in PROMOTED_WRITER_ROLES or item.get("is_tiling_sink") is True
+        if promoting and _writer_candidate_weak(item, cand, all_pool or []):
+            # Weak candidate → must have real source/cbm evidence to promote.
+            files = item.get("evidence_files")
+            lines = item.get("evidence_lines")
+            reason = str(item.get("decision_reason") or "").strip()
+            has_files = isinstance(files, list) and any(str(f).strip() for f in files)
+            has_lines = isinstance(lines, list) and any(str(x).strip() for x in lines)
+            if evidence_source == "candidate_only" or not (
+                evidence_source in ("source", "cbm")
+                and item.get("source_verified") is True
+                and has_files
+                and has_lines
+                and reason
+            ):
+                errors.append(
+                    f"{label} weak candidate cannot promote to {role or 'tiling_sink'!r} "
+                    "with candidate_only / missing source evidence "
+                    "(require evidence_source source|cbm, source_verified:true, "
+                    "non-empty evidence_files/evidence_lines/decision_reason; "
+                    "or set role:ignore / omit the candidate)"
+                )
 
 
 def _match_candidate(
@@ -322,16 +339,18 @@ def _match_candidate(
         return exact[0]
     if len(by_name) == 1:
         return by_name[0]
-    return by_name[0] if by_name else None
+    # Ambiguous short-name match — fail closed (do not pick arbitrarily).
+    return None
 
 
 def normalize_plan_from_candidates(
     plan: dict[str, Any],
     candidates: dict[str, Any],
 ) -> dict[str, Any]:
-    """Fill missing role / is_tiling_sink from candidate suggestions before validate.
+    """Fill missing role from candidate suggestions before validate.
 
-    Does not invent writers/receivers; only completes confirmation labels.
+    Does not invent writers/receivers; does NOT default missing is_tiling_sink to true.
+    Missing sink evidence must fail closed in validate.
     """
     out = dict(plan)
     writers = []
@@ -359,9 +378,7 @@ def normalize_plan_from_candidates(
             cand = _match_candidate(row, list(candidates.get("receiver_candidates") or []))
             if cand is not None and "is_tiling_sink_suggested" in cand:
                 row["is_tiling_sink"] = bool(cand.get("is_tiling_sink_suggested"))
-            else:
-                # Receivers that made it into candidates via set_* are sinks by default.
-                row["is_tiling_sink"] = True
+            # else: leave unset → validate fails closed
         receivers.append(row)
     out["receivers"] = receivers
     return out
