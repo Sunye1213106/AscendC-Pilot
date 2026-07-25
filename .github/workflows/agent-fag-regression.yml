@@ -1,0 +1,46 @@
+name: FAG graph related regression
+
+on:
+  pull_request:
+    branches:
+      - cursor/semantic-control-plane-closure-44d6
+
+permissions:
+  contents: write
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/tg-workflow-contract-closure
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e engines/understand-operator pytest
+      - name: Run related UO graph tests
+        run: |
+          mapfile -t TEST_FILES < <(
+            grep -rlE \
+              'extract_host_subgraph|extract_kernel_subgraph|function_body|function_call_graph|propose_extract_plan' \
+              engines/understand-operator/tests \
+              --include='test_*.py' | sort -u
+          )
+          printf 'Selected %s test files:\n' "${#TEST_FILES[@]}"
+          printf '  %s\n' "${TEST_FILES[@]}"
+          test "${#TEST_FILES[@]}" -gt 0
+          pytest -q "${TEST_FILES[@]}"
+      - name: Remove one-shot workflow
+        run: rm -f .github/workflows/agent-fag-regression.yml
+      - name: Commit cleanup
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "test(uo): validate FAG graph refactor regressions"
+          git push origin HEAD:agent/tg-workflow-contract-closure
