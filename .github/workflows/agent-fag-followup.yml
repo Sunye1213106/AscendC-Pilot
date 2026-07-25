@@ -27,8 +27,8 @@ jobs:
           host = Path('engines/understand-operator/uo/scripts/extract_host_subgraph.py')
           text = host.read_text(encoding='utf-8')
           old = '''        if role in {"tiling_writer", "workspace_writer"} or (
-              name_l in tiling_writers and role != "provenance_helper"
-          ):
+                      name_l in tiling_writers and role != "provenance_helper"
+                  ):
           '''
           new = '''        if role in {"tiling_writer", "workspace_writer"}:
           '''
