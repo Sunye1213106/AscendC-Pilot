@@ -32,7 +32,8 @@ jobs:
           python .github/apply_selector_type_resolution.py
           python -m py_compile \
             engines/understand-operator/uo/scripts/type_normalizer.py \
-            engines/understand-operator/uo/scripts/receiver_type_facts.py
+            engines/understand-operator/uo/scripts/receiver_type_facts.py \
+            engines/understand-operator/uo/scripts/function_call_graph.py
       - name: Strict focused regression
         env:
           PYTHONPATH: engines/understand-operator
@@ -80,6 +81,7 @@ jobs:
           git add \
             engines/understand-operator/uo/scripts/type_normalizer.py \
             engines/understand-operator/uo/scripts/receiver_type_facts.py \
+            engines/understand-operator/uo/scripts/function_call_graph.py \
             engines/understand-operator/tests/test_nested_type_resolution.py \
             engines/understand-operator/tests/test_selector_type_resolution.py
           git commit -m 'feat(uo): resolve selector and conditional_t receiver types'
