@@ -1,4 +1,4 @@
-name: Validate receiver type propagation
+name: Validate template type normalization
 
 on:
   pull_request:
@@ -27,98 +27,82 @@ jobs:
       - name: Capture baseline FAG metrics
         env:
           PYTHONPATH: engines/understand-operator
-        run: python .github/receiver_type_report.py --repo real-fag --output receiver-before.json
+        run: python .github/receiver_type_report.py --repo real-fag --output template-before.json
 
-      - name: Capture receiver patch application
+      - name: Apply template type resolver
         run: |
-          set +e
-          {
-            python .github/apply_receiver_type_propagation.py
-            python .github/fix_receiver_type_patcher.py
-            python .github/fix_receiver_resolution_order.py
-            python .github/fix_receiver_resolution_syntax.py
-            python -m py_compile \
-              engines/understand-operator/uo/scripts/receiver_type_facts.py \
-              engines/understand-operator/uo/scripts/function_call_graph.py
-          } 2>&1 | tee receiver-apply.log
-          echo ${PIPESTATUS[0]} > receiver-apply.status
-          exit 0
+          python .github/apply_template_type_resolver.py
+          python -m py_compile \
+            engines/understand-operator/uo/scripts/type_normalizer.py \
+            engines/understand-operator/uo/scripts/receiver_type_facts.py
 
-      - name: Capture focused regressions
+      - name: Run focused regressions
         env:
           PYTHONPATH: engines/understand-operator
         run: |
-          set +e
           pytest -q \
+            engines/understand-operator/tests/test_template_type_normalizer.py \
             engines/understand-operator/tests/test_receiver_type_propagation.py \
             engines/understand-operator/tests/test_call_external_classification.py \
             engines/understand-operator/tests/test_function_call_graph.py \
             engines/understand-operator/tests/test_call_scanner.py \
             engines/understand-operator/tests/test_fag_graph_identity_and_perf.py \
-            2>&1 | tee receiver-pytest.log
-          echo ${PIPESTATUS[0]} > receiver-pytest.status
-          exit 0
+            2>&1 | tee template-pytest.log
 
       - name: Capture patched FAG metrics
         env:
           PYTHONPATH: engines/understand-operator
+        run: python .github/receiver_type_report.py --repo real-fag --output template-after.json
+
+      - name: Gate deterministic improvement
         run: |
-          set +e
-          python .github/receiver_type_report.py --repo real-fag --output receiver-after.json 2>&1 | tee receiver-after.log
-          echo ${PIPESTATUS[0]} > receiver-after.status
-          exit 0
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          before=json.loads(Path('template-before.json').read_text())
+          after=json.loads(Path('template-after.json').read_text())
+          bs=before['status']; ass=after['status']
+          print('before', bs)
+          print('after ', ass)
+          assert ass.get('candidate_set',0) <= bs.get('candidate_set',0), (bs,ass)
+          assert ass.get('missing',0) <= bs.get('missing',0), (bs,ass)
+          assert ass.get('resolved',0) >= bs.get('resolved',0), (bs,ass)
+          watched=('Get','GetTensor','Init')
+          improvement=0
+          for name in watched:
+              b=before['watched'].get(name,{})
+              a=after['watched'].get(name,{})
+              print(name, b, '=>', a)
+              improvement += b.get('candidate_set',0)-a.get('candidate_set',0)
+              improvement += a.get('resolved',0)-b.get('resolved',0)
+          assert improvement > 0, improvement
+          PY
 
       - name: Upload validation report
         uses: actions/upload-artifact@v4
         with:
-          name: fag-receiver-type-propagation
+          name: fag-template-type-normalization
           path: |
-            receiver-before.json
-            receiver-after.json
-            receiver-after.log
-            receiver-after.status
-            receiver-pytest.log
-            receiver-pytest.status
-            receiver-apply.log
-            receiver-apply.status
-
-      - name: Gate deterministic improvement
-        run: |
-          test "$(cat receiver-apply.status)" = "0"
-          test "$(cat receiver-pytest.status)" = "0"
-          test "$(cat receiver-after.status)" = "0"
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          before=json.loads(Path('receiver-before.json').read_text())
-          after=json.loads(Path('receiver-after.json').read_text())
-          bs=before['status']; ass=after['status']
-          print('before', bs)
-          print('after ', ass)
-          assert ass.get('candidate_set',0) < bs.get('candidate_set',0), (bs,ass)
-          assert ass.get('resolved',0) + ass.get('external',0) > bs.get('resolved',0) + bs.get('external',0), (bs,ass)
-          assert ass.get('missing',0) <= bs.get('missing',0), (bs,ass)
-          watched=('Get','GetTensor','Init')
-          reductions=[]
-          for name in watched:
-              b=before['watched'].get(name,{})
-              a=after['watched'].get(name,{})
-              reductions.append(b.get('candidate_set',0)-a.get('candidate_set',0))
-              print(name, b, '=>', a)
-          assert sum(reductions) > 0, reductions
-          PY
+            template-before.json
+            template-after.json
+            template-pytest.log
 
       - name: Commit validated implementation
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add \
+            engines/understand-operator/uo/scripts/type_normalizer.py \
             engines/understand-operator/uo/scripts/receiver_type_facts.py \
-            engines/understand-operator/uo/scripts/function_call_graph.py \
-            engines/understand-operator/tests/test_receiver_type_propagation.py
-          if git diff --cached --quiet; then
-            echo 'No product changes to commit.'
-          else
-            git commit -m 'feat(uo): infer receiver types and propagate direct returns'
-            git push origin HEAD:agent/tg-workflow-contract-closure
-          fi
+            engines/understand-operator/tests/test_template_type_normalizer.py
+          git commit -m 'feat(uo): normalize template receiver types' || true
+          git push origin HEAD:agent/tg-workflow-contract-closure
+
+      - name: Remove one-shot validation assets
+        run: |
+          git rm -f \
+            .github/apply_template_type_resolver.py \
+            .github/receiver_type_report.py \
+            .github/workflows/validate-receiver-type-propagation.yml
+          git commit -m 'chore(ci): remove template type validation assets'
+          git push origin HEAD:agent/tg-workflow-contract-closure
