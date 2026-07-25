@@ -1,0 +1,136 @@
+name: Analyze FAG official contract candidates
+
+on:
+  pull_request:
+    branches: [cursor/semantic-control-plane-closure-44d6]
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/tg-workflow-contract-closure
+      - uses: actions/checkout@v4
+        with:
+          repository: Sunye1213106/flashattention
+          ref: 94e37bc4630a6b2b5695e6a76809d1e94931d8c8
+          path: real-fag
+      - name: Analyze unresolved arch35 calls
+        env:
+          PYTHONPATH: engines/understand-operator
+        run: |
+          python - <<'PY'
+          from collections import Counter, defaultdict
+          from pathlib import Path
+          import json
+
+          from uo.scripts.cann_doc_evidence import BUILTIN_CONTRACTS
+          from uo.scripts.function_body import iter_function_definitions
+          from uo.scripts.function_call_graph import (
+              build_call_edges_for_functions,
+              collect_call_resolution_facts,
+              _infer_receiver_type,
+          )
+
+          roots = [p for p in Path('real-fag').rglob('flash_attention_score_grad') if p.is_dir()]
+          root = min(roots, key=lambda p: len(p.parts))
+          files = []
+          for path in root.rglob('*'):
+              if not path.is_file() or path.suffix.lower() not in {'.h','.hpp','.cpp','.cc','.cxx'}:
+                  continue
+              parts = path.relative_to(root).parts
+              if 'op_kernel' not in parts:
+                  continue
+              arch_parts = {part for part in parts if part.startswith('arch') and part[4:].isdigit()}
+              if arch_parts and 'arch35' not in arch_parts:
+                  continue
+              files.append(path)
+          files.sort()
+
+          functions, source_texts = [], {}
+          for path in files:
+              rel = path.relative_to(root).as_posix()
+              text = path.read_text(encoding='utf-8', errors='ignore')
+              source_texts[rel] = text
+              functions.extend(iter_function_definitions(root, rel, architecture='arch35'))
+
+          docs = {'items': list(BUILTIN_CONTRACTS.values())}
+          facts = collect_call_resolution_facts(functions, source_texts=source_texts, doc_evidence=docs)
+          unresolved = []
+          nodes, edges = build_call_edges_for_functions(
+              functions, unresolved=unresolved, facts=facts,
+          )
+          site_nodes = {
+              str(n.get('id')): n for n in nodes if n.get('node_type') == 'CallSite'
+          }
+          unresolved_by_key = defaultdict(list)
+          for item in unresolved:
+              key = (str(item.get('file_path') or ''), int(item.get('start_line') or 0), str(item.get('callee_name') or ''))
+              unresolved_by_key[key].append(item)
+
+          details = defaultdict(lambda: {'count': 0, 'kinds': Counter(), 'receivers': Counter(), 'receiver_types': Counter(), 'argument_counts': Counter(), 'samples': []})
+          for edge in edges:
+              if edge.get('target_status') != 'missing':
+                  continue
+              site = site_nodes.get(str(edge.get('call_site_id') or ''), {})
+              name = str(edge.get('callee_name') or site.get('callee_name') or '')
+              file_path = str(site.get('file_path') or edge.get('locator', {}).get('file_path') or '')
+              line = int(site.get('start_line') or edge.get('locator', {}).get('start_line') or 0)
+              receiver = str(site.get('receiver_type_or_object') or '')
+              receiver_type = str(site.get('receiver_type') or '')
+              argc = int(site.get('argument_count') or 0)
+              bucket = details[name]
+              bucket['count'] += 1
+              bucket['receivers'][receiver] += 1
+              bucket['receiver_types'][receiver_type] += 1
+              bucket['argument_counts'][argc] += 1
+              for item in unresolved_by_key.get((file_path, line, name), []):
+                  bucket['kinds'][str(item.get('kind') or '')] += 1
+              if len(bucket['samples']) < 12:
+                  lines = source_texts.get(file_path, '').splitlines()
+                  lo, hi = max(0, line - 3), min(len(lines), line + 2)
+                  bucket['samples'].append({
+                      'file_path': file_path,
+                      'line': line,
+                      'call_expression': site.get('call_expression'),
+                      'receiver': receiver,
+                      'receiver_type': receiver_type,
+                      'argument_count': argc,
+                      'context': '\n'.join(f'{i+1}: {lines[i]}' for i in range(lo, hi)),
+                  })
+
+          serial = {}
+          for name, bucket in sorted(details.items(), key=lambda kv: (-kv[1]['count'], kv[0])):
+              serial[name] = {
+                  'count': bucket['count'],
+                  'kinds': dict(bucket['kinds']),
+                  'receivers': bucket['receivers'].most_common(20),
+                  'receiver_types': bucket['receiver_types'].most_common(20),
+                  'argument_counts': bucket['argument_counts'].most_common(20),
+                  'samples': bucket['samples'],
+              }
+          report = {
+              'operator_root': root.as_posix(),
+              'architecture': 'arch35',
+              'files': len(files),
+              'functions': len(functions),
+              'missing_total': sum(v['count'] for v in serial.values()),
+              'symbols': serial,
+          }
+          Path('fag-official-contract-candidates.json').write_text(
+              json.dumps(report, indent=2, ensure_ascii=False), encoding='utf-8'
+          )
+          print(json.dumps({
+              'files': report['files'], 'functions': report['functions'],
+              'missing_total': report['missing_total'],
+              'top': [(k, v['count']) for k, v in list(serial.items())[:30]],
+          }, indent=2, ensure_ascii=False))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fag-official-contract-candidates
+          path: fag-official-contract-candidates.json
