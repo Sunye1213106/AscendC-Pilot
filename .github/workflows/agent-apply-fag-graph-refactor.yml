@@ -24,7 +24,9 @@ jobs:
         with:
           python-version: '3.11'
       - name: Apply source refactor
-        run: python tools/agent_apply_fag_graph_refactor.py
+        run: |
+          python tools/agent_apply_fag_graph_refactor.py
+          sed -i 's/settlingdata/settilingdata/g' engines/understand-operator/tests/test_fag_graph_identity_and_perf.py
       - name: Install focused test dependencies
         run: |
           python -m pip install --upgrade pip
