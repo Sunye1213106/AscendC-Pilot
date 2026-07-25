@@ -18,6 +18,9 @@ DIRECTIVE_RE = re.compile(
 DEFINE_RE = re.compile(
     r"^\s*#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)\b(?:\s+(.*?))?\s*$"
 )
+FUNCTION_DEFINE_RE = re.compile(
+    r"^\s*#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*(.*?)\s*$"
+)
 UNDEF_RE = re.compile(r"^\s*#\s*undef\s+([A-Za-z_][A-Za-z0-9_]*)\b")
 IDENT_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b")
 DEFINED_RE = re.compile(r"defined\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)|defined\s+([A-Za-z_][A-Za-z0-9_]*)")
@@ -31,11 +34,15 @@ class MacroDirective:
     name: str = ""
     value: str | None = None
     eval_result: bool | None = None  # None = unknown
+    parameters: tuple[str, ...] = ()
+    function_like: bool = False
+    variadic: bool = False
 
 
 @dataclass
 class MacroAnalysis:
     defines: dict[str, str | None] = field(default_factory=dict)
+    function_macros: dict[str, dict[str, Any]] = field(default_factory=dict)
     directives: list[MacroDirective] = field(default_factory=list)
     # 1-based inclusive active line ranges after constant folding where known
     active_ranges: list[tuple[int, int]] = field(default_factory=list)
@@ -71,6 +78,7 @@ def analyze_macros(
     (kept active) instead of false, so KEY-gated code is not dropped.
     """
     defines: dict[str, str | None] = dict(seed_defines or {})
+    function_macros: dict[str, dict[str, Any]] = {}
     soft = {_norm_macro_name(x) for x in (soft_undefined or set()) if x}
     directives: list[MacroDirective] = []
     lines = text.splitlines()
@@ -101,15 +109,32 @@ def analyze_macros(
         rest = (m.group(2) or "").strip()
 
         if kind == "define":
+            fm = FUNCTION_DEFINE_RE.match(stripped)
+            if fm:
+                name = fm.group(1)
+                raw_params = fm.group(2).strip()
+                body = fm.group(3).strip()
+                params = tuple(p.strip() for p in raw_params.split(",") if p.strip())
+                variadic = any(p == "..." or p.endswith("...") for p in params)
+                function_macros[name] = {
+                    "name": name,
+                    "parameters": list(params),
+                    "variadic": variadic,
+                    "body": body,
+                    "line": line_no,
+                }
+                directives.append(
+                    MacroDirective(
+                        line=line_no, kind="define", name=name, value=body,
+                        parameters=params, function_like=True, variadic=variadic,
+                    )
+                )
+                mark_line(line_no, parent_active())
+                continue
             dm = DEFINE_RE.match(stripped)
             if dm:
                 name = dm.group(1)
                 value = dm.group(2)
-                # Skip function-like macros: #define NAME(
-                if re.search(rf"#\s*define\s+{re.escape(name)}\s*\(", stripped):
-                    directives.append(MacroDirective(line=line_no, kind="define", name=name, value=value))
-                    mark_line(line_no, parent_active())
-                    continue
                 defines[name] = None if value is None or value == "" else value.strip()
                 directives.append(
                     MacroDirective(line=line_no, kind="define", name=name, value=defines[name])
@@ -122,6 +147,7 @@ def analyze_macros(
             name = um.group(1) if um else rest.split()[0] if rest.split() else ""
             if name:
                 defines.pop(name, None)
+                function_macros.pop(name, None)
             directives.append(MacroDirective(line=line_no, kind="undef", name=name))
             mark_line(line_no, parent_active())
             continue
@@ -252,7 +278,10 @@ def analyze_macros(
     # Build active ranges from complement of inactive (compact)
     active_ranges: list[tuple[int, int]] = []
     if n == 0:
-        return MacroAnalysis(defines=defines, directives=directives, active_ranges=[], inactive_lines=inactive)
+        return MacroAnalysis(
+            defines=defines, function_macros=function_macros, directives=directives,
+            active_ranges=[], inactive_lines=inactive,
+        )
 
     i = 1
     while i <= n:
@@ -266,6 +295,7 @@ def analyze_macros(
 
     return MacroAnalysis(
         defines=defines,
+        function_macros=function_macros,
         directives=directives,
         active_ranges=active_ranges,
         inactive_lines=inactive,

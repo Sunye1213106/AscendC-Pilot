@@ -736,8 +736,15 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
                     }
                 )
 
-    # Call graph across all collected FunctionDefinitions
-    call_nodes, call_edges = build_call_edges_for_functions(all_functions, unresolved=unresolved)
+    # Call graph across all collected FunctionDefinitions. Official contracts classify
+    # interfaces/macros, while source facts remain authoritative for project edges.
+    doc_evidence = read_yaml(uo_root / "ir" / "doc_evidence.yaml") or {}
+    call_nodes, call_edges = build_call_edges_for_functions(
+        all_functions,
+        unresolved=unresolved,
+        source_texts=source_texts,
+        doc_evidence=doc_evidence,
+    )
     nodes.extend(call_nodes)
     edges.extend(call_edges)
 

@@ -53,10 +53,13 @@ _POST_PARAM_RE = re.compile(
 # Deliberately linear call-head scan. Qualified names and receivers are parsed
 # with a bounded backward walk below; nesting optional repetitions here caused
 # catastrophic backtracking on large AscendC kernel bodies.
-_CALL_OPEN_RE = re.compile(
-    r"\b(?P<callee>[A-Za-z_]\w*)"
-    r"(?P<targs>\s*<[^>;{}\n]{0,120}>)?"
-    r"\s*\("
+_CALL_NAME_RE = re.compile(r"\b(?P<callee>[A-Za-z_]\w*)\b")
+_BUILTIN_CAST_NAMES = frozenset(
+    {
+        "bool", "char", "signed", "unsigned", "short", "int", "long",
+        "float", "double", "size_t", "ssize_t", "ptrdiff_t", "intptr_t",
+        "uintptr_t", "wchar_t", "char8_t", "char16_t", "char32_t",
+    }
 )
 
 _SOURCE_TEXT_CACHE: OrderedDict[tuple[str, int, int], str] = OrderedDict()
@@ -623,12 +626,149 @@ def _read_ident_left(text: str, pos: int, *, floor: int) -> tuple[str, int]:
     return text[pos:end], pos
 
 
+def _mask_non_code(text: str) -> str:
+    """Mask comments, literals, and preprocessor directive lines while preserving offsets."""
+    chars = list(text)
+    n = len(chars)
+    i = 0
+    state = "code"
+    line_start = True
+    while i < n:
+        ch = chars[i]
+        nxt = chars[i + 1] if i + 1 < n else ""
+        if state == "code":
+            if line_start:
+                j = i
+                while j < n and chars[j] in " \t":
+                    j += 1
+                if j < n and chars[j] == "#":
+                    while j < n and chars[j] != "\n":
+                        chars[j] = " "
+                        j += 1
+                    i = j
+                    line_start = True
+                    continue
+            if ch == "/" and nxt == "/":
+                chars[i] = chars[i + 1] = " "
+                state = "line_comment"
+                i += 2
+                continue
+            if ch == "/" and nxt == "*":
+                chars[i] = chars[i + 1] = " "
+                state = "block_comment"
+                i += 2
+                continue
+            if ch == '"':
+                chars[i] = " "
+                state = "string"
+                i += 1
+                line_start = False
+                continue
+            if ch == "'":
+                chars[i] = " "
+                state = "char"
+                i += 1
+                line_start = False
+                continue
+            line_start = ch == "\n"
+            if not ch.isspace():
+                line_start = False
+            i += 1
+            continue
+        if state == "line_comment":
+            if ch == "\n":
+                state = "code"
+                line_start = True
+            else:
+                chars[i] = " "
+            i += 1
+            continue
+        if state == "block_comment":
+            if ch == "*" and nxt == "/":
+                chars[i] = chars[i + 1] = " "
+                state = "code"
+                i += 2
+            else:
+                if ch != "\n":
+                    chars[i] = " "
+                i += 1
+            continue
+        if state in {"string", "char"}:
+            quote = '"' if state == "string" else "'"
+            if ch == "\\":
+                chars[i] = " "
+                if i + 1 < n and chars[i + 1] != "\n":
+                    chars[i + 1] = " "
+                i += 2
+                continue
+            if ch == quote:
+                chars[i] = " "
+                state = "code"
+                i += 1
+                continue
+            if ch != "\n":
+                chars[i] = " "
+            i += 1
+    return "".join(chars)
+
+
+def _call_open_after_name(text: str, name_end: int) -> tuple[int, str] | None:
+    """Return the opening parenthesis and raw template args for a call head."""
+    n = len(text)
+    pos = name_end
+    if pos < n and text[pos] == "<":
+        start = pos
+        depth = 0
+        while pos < n and pos - start <= 240:
+            ch = text[pos]
+            if ch == "<":
+                depth += 1
+            elif ch == ">":
+                depth -= 1
+                if depth == 0:
+                    pos += 1
+                    break
+            elif ch in "(;){}\n" and depth > 0:
+                return None
+            pos += 1
+        if depth != 0:
+            return None
+        targs = text[start:pos]
+        while pos < n and text[pos].isspace():
+            pos += 1
+        return (pos, targs) if pos < n and text[pos] == "(" else None
+    while pos < n and text[pos].isspace():
+        pos += 1
+    return (pos, "") if pos < n and text[pos] == "(" else None
+
+
+def _is_builtin_cast_name(name: str) -> bool:
+    return name in _BUILTIN_CAST_NAMES or bool(re.fullmatch(r"(?:u?int|float)\d+_t", name))
+
+
+def _looks_like_direct_initializer(text: str, name_start: int) -> bool:
+    line_start = max(text.rfind("\n", 0, name_start), text.rfind(";", 0, name_start), text.rfind("{", 0, name_start)) + 1
+    prefix = text[line_start:name_start]
+    return bool(
+        re.fullmatch(
+            r"\s*(?:(?:const|volatile|static|mutable|typename|struct|class|auto)\s+)*"
+            r"(?:[A-Za-z_]\w*::)*[A-Za-z_]\w*(?:\s*<[^;{}\n]{0,240}>)?"
+            r"\s*(?:[*&]\s*)*",
+            prefix,
+        )
+    )
+
+
 def _call_context(text: str, name_start: int, callee: str) -> tuple[str, str, int]:
     """Return (qualified callee, receiver, expression start) with bounded work."""
     floor = max(0, name_start - 240)
     pos = _skip_ws_left(text, name_start, floor=floor)
 
-    # Namespace/class qualification: A::B::Method(
+    # obj.template Method<T>(...) — skip the dependent-name keyword.
+    word, word_start = _read_ident_left(text, pos, floor=floor)
+    if word == "template":
+        pos = _skip_ws_left(text, word_start, floor=floor)
+
     qual_parts: list[str] = []
     qpos = pos
     while qpos - 2 >= floor and text[qpos - 2 : qpos] == "::":
@@ -641,7 +781,6 @@ def _call_context(text: str, name_start: int, callee: str) -> tuple[str, str, in
         raw = "::".join(reversed(qual_parts)) + "::" + callee
         return raw, "", qpos
 
-    # Object receiver: this->Method( / obj.Method( / Type::obj->Method(
     op = ""
     rpos = pos
     if rpos - 2 >= floor and text[rpos - 2 : rpos] == "->":
@@ -673,61 +812,46 @@ def extract_call_sites(
     *,
     noise: set[str] | frozenset[str] | None = None,
 ) -> list[CallSite]:
-    """Extract call sites from a FunctionDefinition body (relative ordinal)."""
+    """Extract lexical call sites while excluding comments, casts, and declarations."""
     noise = noise or _CONTROL_NAMES | {
-        "static_cast",
-        "reinterpret_cast",
-        "const_cast",
-        "dynamic_cast",
-        "sizeof",
-        "alignof",
-        "decltype",
-        "typeid",
-        "return",
-        "sizeof",
+        "static_cast", "reinterpret_cast", "const_cast", "dynamic_cast",
+        "sizeof", "alignof", "decltype", "typeid", "return",
     }
     noise_cf = {name.casefold() for name in noise}
     body = fn.body_text or ""
-    # Only scan inside braces when possible
     brace = body.find("{")
-    scan = body[brace + 1 :] if brace >= 0 else body
+    scan_original = body[brace + 1 :] if brace >= 0 else body
+    scan = _mask_non_code(scan_original)
     scan_starts = _line_starts(scan)
     scan_base_line = fn.start_line + (body[: brace + 1].count("\n") if brace >= 0 else 0)
     out: list[CallSite] = []
     ordinal = 0
-    for match in _CALL_OPEN_RE.finditer(scan):
+    for match in _CALL_NAME_RE.finditer(scan):
         callee = (match.group("callee") or "").strip()
-        if not callee or callee.casefold() in noise_cf:
+        if not callee or callee.casefold() in noise_cf or _is_builtin_cast_name(callee):
             continue
+        opened = _call_open_after_name(scan, match.end("callee"))
+        if opened is None:
+            continue
+        open_paren, targs = opened
         callee_raw, recv, expr_start = _call_context(scan, match.start("callee"), callee)
-        if callee == fn.name and not recv:
-            # Likely constructor-like / recursive — keep but mark hint
-            pass
-        targs = (match.group("targs") or "").strip()
-        # Rough argument count: commas at depth 0 until matching ')'
-        arg_count = _count_args(scan, match.end() - 1)
+        if not recv and "::" not in callee_raw and _looks_like_direct_initializer(scan, match.start("callee")):
+            continue
+        arg_count = _count_args(scan, open_paren)
         line_in_scan = _line_from_starts(scan_starts, expr_start)
         abs_line = scan_base_line + line_in_scan - 1
         expr_head = callee_raw if "::" in callee_raw else f"{recv}{callee}"
         expr = f"{expr_head}{targs}".strip()
-        hint = ""
-        if "::" in callee_raw:
-            hint = callee_raw
-        elif recv:
-            hint = f"{recv}{callee}"
+        hint = callee_raw if "::" in callee_raw else f"{recv}{callee}" if recv else ""
         ordinal += 1
         out.append(
             CallSite(
-                caller_function_id=fn.stable_id,
-                callee_name=callee,
-                callee_qualified_hint=hint,
-                call_expression=expr[:240],
-                file_path=fn.file_path,
-                line=abs_line,
+                caller_function_id=fn.stable_id, callee_name=callee,
+                callee_qualified_hint=hint, call_expression=expr[:240],
+                file_path=fn.file_path, line=abs_line,
                 receiver_type_or_object=recv,
                 template_args=parse_template_arity(targs) if targs else "",
-                argument_count=arg_count,
-                ordinal_in_function=ordinal,
+                argument_count=arg_count, ordinal_in_function=ordinal,
                 snippet_hash=snippet_hash(expr),
             )
         )

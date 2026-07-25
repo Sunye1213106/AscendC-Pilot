@@ -27,6 +27,8 @@ DEFAULT_DOC_INDEX = "https://www.hiascend.com/document/detail/zh/CANNCommunityEd
 # Built-in offline contract fixtures (tests / air-gapped). Not project provenance.
 BUILTIN_CONTRACTS: dict[str, dict[str, Any]] = {
     "GET_TPL_TILING_KEY": {
+        "symbol_kind": "macro",
+        "qualified_names": ['GET_TPL_TILING_KEY'],
         "symbol_or_macro": "GET_TPL_TILING_KEY",
         "document_title": "AscendC TilingKey template helpers",
         "document_url": DEFAULT_DOC_INDEX,
@@ -41,6 +43,8 @@ BUILTIN_CONTRACTS: dict[str, dict[str, Any]] = {
         "confidence": 0.7,
     },
     "ASCENDC_TPL_ARGS_DECL": {
+        "symbol_kind": "macro",
+        "qualified_names": ['ASCENDC_TPL_ARGS_DECL'],
         "symbol_or_macro": "ASCENDC_TPL_ARGS_DECL",
         "document_title": "AscendC TilingKey ARGS_DECL",
         "document_url": DEFAULT_DOC_INDEX,
@@ -55,6 +59,8 @@ BUILTIN_CONTRACTS: dict[str, dict[str, Any]] = {
         "confidence": 0.7,
     },
     "ASCENDC_TPL_ARGS_SEL": {
+        "symbol_kind": "macro",
+        "qualified_names": ['ASCENDC_TPL_ARGS_SEL'],
         "symbol_or_macro": "ASCENDC_TPL_ARGS_SEL",
         "document_title": "AscendC TilingKey ARGS_SEL",
         "document_url": DEFAULT_DOC_INDEX,
@@ -69,6 +75,8 @@ BUILTIN_CONTRACTS: dict[str, dict[str, Any]] = {
         "confidence": 0.7,
     },
     "GET_TILING_DATA": {
+        "symbol_kind": "macro",
+        "qualified_names": ['GET_TILING_DATA'],
         "symbol_or_macro": "GET_TILING_DATA",
         "document_title": "Kernel GetTilingData",
         "document_url": DEFAULT_DOC_INDEX,
@@ -83,6 +91,8 @@ BUILTIN_CONTRACTS: dict[str, dict[str, Any]] = {
         "confidence": 0.7,
     },
     "GetOptionalInputShape": {
+        "symbol_kind": "method",
+        "qualified_names": ['gert::TilingContext::GetOptionalInputShape'],
         "symbol_or_macro": "GetOptionalInputShape",
         "document_title": "TilingContext optional input",
         "document_url": DEFAULT_DOC_INDEX,
@@ -97,6 +107,8 @@ BUILTIN_CONTRACTS: dict[str, dict[str, Any]] = {
         "confidence": 0.7,
     },
     "REGISTER_TILING_TEMPLATE": {
+        "symbol_kind": "macro",
+        "qualified_names": ['REGISTER_TILING_TEMPLATE'],
         "symbol_or_macro": "REGISTER_TILING_TEMPLATE",
         "document_title": "Host tiling template registration",
         "document_url": DEFAULT_DOC_INDEX,
