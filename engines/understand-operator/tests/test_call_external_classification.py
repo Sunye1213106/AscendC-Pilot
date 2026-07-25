@@ -120,7 +120,7 @@ def test_capitalized_unknown_without_evidence_stays_unresolved() -> None:
         _site("MissingHelper"), caller, by_name={}, by_qn={}, by_id={}
     )
     assert edge and edge["target_status"] == "missing"
-    assert unresolved and unresolved["kind"] == "internal_definition_not_indexed"
+    assert unresolved and unresolved["kind"] == "project_definition_not_indexed"
 
 
 def test_receiver_type_resolves_internal_member() -> None:
@@ -174,7 +174,7 @@ def test_using_namespace_does_not_prove_unknown_free_function() -> None:
         _site("UnknownHelper", argc=0), caller, by_name={}, by_qn={}, by_id={}, facts=facts
     )
     assert edge and edge["target_status"] == "missing"
-    assert unresolved and unresolved["kind"] == "internal_definition_not_indexed"
+    assert unresolved and unresolved["kind"] == "project_definition_not_indexed"
 
 
 def test_method_contract_requires_matching_receiver_type() -> None:

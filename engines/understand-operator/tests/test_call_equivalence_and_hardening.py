@@ -52,43 +52,6 @@ def test_nullptr_conditional_receiver_narrows_to_object_type() -> None:
     assert "nullptr" not in narrowed
 
 
-def test_conditional_t_receiver_methods_resolve() -> None:
-    source = """
-using PolicyType = std::conditional_t<FLAG, RealPolicy, DummyPolicy>;
-class RealPolicy { public: void *Get() { return nullptr; } };
-class DummyPolicy { public: void *Get() { return nullptr; } };
-class Driver {
-public:
-  PolicyType policy;
-  void Run() { auto *p = policy.Get(); }
-};
-"""
-    caller = _fn(
-        name="Run", owner="Driver", header="void Driver::Run() {",
-        body="void Driver::Run() { auto *p = policy.Get(); }",
-        signature="()", stable_id="FN_RUN",
-    )
-    real = _fn(
-        name="Get", owner="RealPolicy", header="void *RealPolicy::Get() {",
-        body="void *RealPolicy::Get() { return nullptr; }",
-        signature="()", stable_id="FN_REAL", line=2,
-    )
-    dummy = _fn(
-        name="Get", owner="DummyPolicy", header="void *DummyPolicy::Get() {",
-        body="void *DummyPolicy::Get() { return nullptr; }",
-        signature="()", stable_id="FN_DUMMY", line=3,
-    )
-    unresolved: list[dict] = []
-    facts = collect_call_resolution_facts(
-        [caller, real, dummy], source_texts={"op_kernel/test.h": source}
-    )
-    _nodes, edges = build_call_edges_for_functions(
-        [caller, real, dummy], unresolved=unresolved, facts=facts
-    )
-    call = _edge(edges, caller.stable_id, "Get")
-    assert call["target_status"] == "resolved"
-
-
 def test_out_of_line_destructor_binds_member_receiver() -> None:
     source = """
 class BufferPolicy { public: void Uninit(int x) {} };
@@ -193,7 +156,9 @@ public:
         [caller, real, dummy], unresolved=unresolved, facts=facts
     )
     call = _edge(edges, caller.stable_id, "InitUbBuffer")
-    assert call["target_status"] == "resolved"
+    # Same signature under conditional owners is classified, not forcibly resolved.
+    assert call["target_status"] == "conditional"
+    assert call["resolution_kind"] == "conditional_candidate"
 
 
 def test_multi_declarator_members_resolve_official_method() -> None:
@@ -261,7 +226,7 @@ public:
     assert site["receiver_type"] == "BufferPolicy"
 
 
-def test_signature_equivalent_conditional_owners_resolve() -> None:
+def test_signature_equivalent_conditional_owners_stay_conditional() -> None:
     source = """
 using BlockType = std::conditional<FLAG, RealBlock, DummyBlock>::type;
 class RealBlock { public: void Process(int x) {} };
@@ -295,12 +260,14 @@ public:
         [caller, real, dummy], unresolved=unresolved, facts=facts
     )
     call = _edge(edges, caller.stable_id, "Process")
-    assert call["target_status"] == "resolved"
-    assert "signature_equivalent" in call["verification_source"]
+    assert call["target_status"] == "conditional"
+    assert call["target"] is None
+    assert call["resolution_kind"] == "conditional_candidate"
     assert set(call["candidate_ids"]) == {real.stable_id, dummy.stable_id}
+    assert any(item.get("kind") == "call_target_conditional" for item in unresolved)
 
 
-def test_same_file_identical_signature_duplicates_resolve() -> None:
+def test_same_file_identical_body_duplicates_resolve() -> None:
     source = """
 #ifndef TEST_MODE
 void Helper(int x) {}
@@ -309,16 +276,20 @@ void Helper(int x) {}
 #endif
 void Driver() { Helper(1); }
 """
+    body = "void Helper(int x) {}"
     first = _fn(
         name="Helper", owner="", header="void Helper(int x) {",
-        body="void Helper(int x) {}",
+        body=body,
         signature="(int x)", stable_id="FN_A",
     )
     second = _fn(
         name="Helper", owner="", header="void Helper(int x) {",
-        body="void Helper(int x) {}",
+        body=body,
         signature="(int x)", stable_id="FN_B", line=4,
     )
+    # Force identical snippet hashes so body equality is the merge key.
+    first.snippet_hash = "same_body"
+    second.snippet_hash = "same_body"
     caller = _fn(
         name="Driver", owner="", header="void Driver() {",
         body="void Driver() { Helper(1); }",
@@ -333,6 +304,44 @@ void Driver() { Helper(1); }
     )
     call = _edge(edges, caller.stable_id, "Helper")
     assert call["target_status"] == "resolved"
+    assert call["resolution_kind"] == "resolved_by_source"
+
+
+def test_same_file_different_bodies_remain_candidate_set() -> None:
+    source = """
+#ifndef TEST_MODE
+void Helper(int x) { return; }
+#else
+void Helper(int x) { x = x + 1; }
+#endif
+void Driver() { Helper(1); }
+"""
+    first = _fn(
+        name="Helper", owner="", header="void Helper(int x) {",
+        body="void Helper(int x) { return; }",
+        signature="(int x)", stable_id="FN_A",
+    )
+    second = _fn(
+        name="Helper", owner="", header="void Helper(int x) {",
+        body="void Helper(int x) { x = x + 1; }",
+        signature="(int x)", stable_id="FN_B", line=4,
+    )
+    first.snippet_hash = "body_a"
+    second.snippet_hash = "body_b"
+    caller = _fn(
+        name="Driver", owner="", header="void Driver() {",
+        body="void Driver() { Helper(1); }",
+        signature="()", stable_id="FN_DRIVER", line=6,
+    )
+    unresolved: list[dict] = []
+    facts = collect_call_resolution_facts(
+        [caller, first, second], source_texts={"op_kernel/test.h": source}
+    )
+    _nodes, edges = build_call_edges_for_functions(
+        [caller, first, second], unresolved=unresolved, facts=facts
+    )
+    call = _edge(edges, caller.stable_id, "Helper")
+    assert call["target_status"] == "candidate_set"
 
 
 def test_aliased_tensor_receiver_matches_official_method_contract() -> None:
@@ -361,14 +370,91 @@ public:
     assert "official_contract" in call["verification_source"]
 
 
-def test_type_like_construction_is_external() -> None:
+def test_type_like_construction_requires_type_fact() -> None:
+    source = """
+enum class AxisType { X = 0, Y = 1 };
+class Driver {
+public:
+  void Run() { AxisType(value); }
+};
+"""
     caller = _fn(
         name="Run", owner="Driver", header="void Driver::Run() {",
         body="void Driver::Run() { AxisType(value); }",
         signature="()", stable_id="FN_RUN",
     )
     unresolved: list[dict] = []
-    _nodes, edges = build_call_edges_for_functions([caller], unresolved=unresolved)
+    facts = collect_call_resolution_facts(
+        [caller], source_texts={"op_kernel/test.h": source}
+    )
+    _nodes, edges = build_call_edges_for_functions(
+        [caller], unresolved=unresolved, facts=facts
+    )
     call = _edge(edges, caller.stable_id, "AxisType")
     assert call["target_status"] == "external"
     assert call["verification_source"] == "type_like_construction"
+
+
+def test_type_suffix_alone_is_not_external() -> None:
+    caller = _fn(
+        name="Run", owner="Driver", header="void Driver::Run() {",
+        body="void Driver::Run() { MysteryType(value); }",
+        signature="()", stable_id="FN_RUN",
+    )
+    unresolved: list[dict] = []
+    _nodes, edges = build_call_edges_for_functions([caller], unresolved=unresolved)
+    call = _edge(edges, caller.stable_id, "MysteryType")
+    assert call["target_status"] == "missing"
+    assert call.get("unresolved_kind") == "project_definition_not_indexed" or any(
+        item.get("kind") == "project_definition_not_indexed" for item in unresolved
+    )
+
+
+def test_capitalized_min_is_not_standard_external() -> None:
+    caller = _fn(
+        name="Run", owner="Driver", header="void Driver::Run() {",
+        body="void Driver::Run() { auto x = Min(a, b); }",
+        signature="()", stable_id="FN_RUN",
+    )
+    unresolved: list[dict] = []
+    _nodes, edges = build_call_edges_for_functions([caller], unresolved=unresolved)
+    call = _edge(edges, caller.stable_id, "Min")
+    assert call["target_status"] == "missing"
+    assert any(item.get("kind") == "project_definition_not_indexed" for item in unresolved)
+
+
+def test_conditional_t_receiver_methods_are_conditional() -> None:
+    source = """
+using PolicyType = std::conditional_t<FLAG, RealPolicy, DummyPolicy>;
+class RealPolicy { public: void *Get() { return nullptr; } };
+class DummyPolicy { public: void *Get() { return nullptr; } };
+class Driver {
+public:
+  PolicyType policy;
+  void Run() { auto *p = policy.Get(); }
+};
+"""
+    caller = _fn(
+        name="Run", owner="Driver", header="void Driver::Run() {",
+        body="void Driver::Run() { auto *p = policy.Get(); }",
+        signature="()", stable_id="FN_RUN",
+    )
+    real = _fn(
+        name="Get", owner="RealPolicy", header="void *RealPolicy::Get() {",
+        body="void *RealPolicy::Get() { return nullptr; }",
+        signature="()", stable_id="FN_REAL", line=2,
+    )
+    dummy = _fn(
+        name="Get", owner="DummyPolicy", header="void *DummyPolicy::Get() {",
+        body="void *DummyPolicy::Get() { return nullptr; }",
+        signature="()", stable_id="FN_DUMMY", line=3,
+    )
+    unresolved: list[dict] = []
+    facts = collect_call_resolution_facts(
+        [caller, real, dummy], source_texts={"op_kernel/test.h": source}
+    )
+    _nodes, edges = build_call_edges_for_functions(
+        [caller, real, dummy], unresolved=unresolved, facts=facts
+    )
+    call = _edge(edges, caller.stable_id, "Get")
+    assert call["target_status"] == "conditional"

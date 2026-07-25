@@ -8,6 +8,7 @@ from typing import Any, Mapping
 
 from uo.scripts.call_equivalence import (
     choose_equivalent_candidate,
+    classify_equivalent_candidates,
     filter_candidates_by_receiver_owners,
     narrow_receiver_for_method_call,
 )
@@ -27,7 +28,7 @@ from uo.scripts.receiver_type_facts import (
     infer_receiver_type as infer_receiver_type_from_facts,
 )
 from uo.scripts.semantic_identity import mint_edge_id, mint_scoped_node_id
-from uo.scripts.type_normalizer import expand_type_candidates
+from uo.scripts.type_normalizer import collect_type_aliases, expand_type_candidates
 
 
 _CALL_NOISE = frozenset(
@@ -41,24 +42,22 @@ _CALL_NOISE = frozenset(
 
 _STANDARD_EXTERNAL_SYMBOLS = frozenset(
     {
+        # Lowercase C/C++ library symbols only. Do not classify capitalized
+        # project helpers (Min/Max/Ceil/Abs) or undocumented MicroAPI wrappers
+        # as standard externals — that would fake-reduce unresolved.
         "abs", "acos", "asin", "atan", "atan2", "ceil", "cos", "exp", "floor",
         "fmax", "fmin", "log", "log2", "max", "memcpy", "memmove", "memset",
         "min", "pow", "printf", "sin", "sqrt", "tan",
-        # Capitalized scalar helpers commonly used unqualified in device kernels
-        # when the defining header is outside the local include closure.
-        "Min", "Max", "Ceil", "Abs",
-        # AscendC / MicroAPI high-frequency intrinsics commonly used unqualified.
-        "vstas", "vstus", "vads", "vmuls", "vadds",
-        "FusedMulDstAdd", "FusedExpSub", "ExpSub",
-        "Gather", "Reduce", "ReduceMax", "WholeReduceSum",
     }
 )
-_TYPE_CONSTRUCTION_RE = re.compile(r"^[A-Z][A-Za-z0-9_]*Type$")
 _COMPILER_MACRO_SYMBOLS = frozenset(
     {"likely", "unlikely", "__builtin_expect", "__builtin_assume", "__builtin_unreachable"}
 )
 _DEFAULT_EXTERNAL_NAMESPACES = frozenset({"std", "AscendC", "MicroAPI"})
 _USING_NAMESPACE_RE = re.compile(r"\busing\s+namespace\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*;")
+_NAMED_TYPE_RE = re.compile(
+    r"\b(?:class|struct|enum(?:\s+class)?|typename|typedef)\s+([A-Za-z_]\w*)\b"
+)
 _DECL_TYPE_RE_TEMPLATE = (
     r"(?:^|[;{{}},(])\s*"
     r"(?:(?:const|volatile|static|mutable|typename|struct|class)\s+)*"
@@ -80,6 +79,7 @@ class CallResolutionFacts:
     using_namespaces_by_file: dict[str, set[str]] = field(default_factory=dict)
     source_text_by_file: dict[str, str] = field(default_factory=dict)
     internal_classes: set[str] = field(default_factory=set)
+    known_type_names: set[str] = field(default_factory=set)
     receiver_type_facts: ReceiverTypeFacts | None = None
     signature_index: dict[str, FunctionSignatureFacts] = field(default_factory=dict)
 
@@ -112,6 +112,13 @@ def collect_call_resolution_facts(
         namespaces = {m.group(1) for m in _USING_NAMESPACE_RE.finditer(source)}
         if namespaces:
             facts.using_namespaces_by_file.setdefault(rel, set()).update(namespaces)
+        for match in _NAMED_TYPE_RE.finditer(source):
+            facts.known_type_names.add(match.group(1))
+
+    aliases = collect_type_aliases(facts.source_text_by_file)
+    for alias_name in aliases:
+        facts.known_type_names.add(alias_name.split("::")[-1])
+        facts.known_type_names.add(alias_name)
 
     if not doc_evidence:
         from uo.scripts.cann_doc_evidence import packaged_doc_evidence_bundle
@@ -332,47 +339,87 @@ def resolve_call_site(
                 "candidate_ids": [chosen.stable_id],
                 "confidence": "source_verified",
                 "verification_source": "+".join(evidence),
+                "resolution_kind": "resolved_by_signature",
                 "candidate_scores": _score_payload([(chosen, 1000, evidence)]),
                 "signature_matches": [item.as_dict() for item in signature_matches],
             }
             return edge, site_node, None
         candidates = filtered
-        equivalent, equiv_reason = choose_equivalent_candidate(
+        equiv_kind, equiv_reason = classify_equivalent_candidates(
             candidates,
             receiver_type=receiver_type,
             aliases=aliases,
             signature_index=facts.signature_index,
         )
-        if equivalent is not None:
-            evidence = [equiv_reason, "signature_equivalent"]
+        if equiv_kind == "conditional":
+            ids = [c.stable_id for c in candidates]
             edge = {
                 **base_edge,
-                "id": mint_edge_id("calls", caller.stable_id, equivalent.stable_id, site_id),
-                "target": equivalent.stable_id, "target_status": "resolved",
-                "candidate_ids": [c.stable_id for c in candidates],
-                "confidence": "structurally_inferred",
-                "verification_source": "+".join(evidence),
+                "id": mint_edge_id("calls", caller.stable_id, "conditional", site_id),
+                "target": None,
+                "target_status": "conditional",
+                "candidate_ids": ids,
+                "confidence": "candidate",
+                "verification_source": equiv_reason or "signature_equivalent_conditional_owners",
+                "resolution_kind": "conditional_candidate",
                 "candidate_scores": _score_payload(
-                    [(equivalent, 900, evidence)]
-                    + [(c, 800, ["signature_equivalent_peer"]) for c in candidates if c.stable_id != equivalent.stable_id]
+                    [(c, 800, ["conditional_peer"]) for c in candidates]
                 ),
                 "signature_matches": [item.as_dict() for item in signature_matches],
             }
-            return edge, site_node, None
+            unres = {
+                "id": f"UNRES_CALL_COND_{site_id[-12:]}",
+                "kind": "call_target_conditional",
+                "message": f"Conditional callee set for {site.call_expression}",
+                "file_path": site.file_path,
+                "start_line": site.line,
+                "caller_function_id": caller.stable_id,
+                "callee_name": site.callee_name,
+                "candidate_ids": ids,
+                "candidate_scores": edge["candidate_scores"],
+                "unresolved_reason": "signature_equivalent_conditional_owners",
+            }
+            return edge, site_node, unres
+        if equiv_kind == "identical_body_duplicate":
+            equivalent, _ = choose_equivalent_candidate(
+                candidates,
+                receiver_type=receiver_type,
+                aliases=aliases,
+                signature_index=facts.signature_index,
+            )
+            if equivalent is not None:
+                evidence = [equiv_reason, "identical_body"]
+                edge = {
+                    **base_edge,
+                    "id": mint_edge_id("calls", caller.stable_id, equivalent.stable_id, site_id),
+                    "target": equivalent.stable_id,
+                    "target_status": "resolved",
+                    "candidate_ids": [equivalent.stable_id],
+                    "confidence": "source_verified",
+                    "verification_source": "+".join(evidence),
+                    "resolution_kind": "resolved_by_source",
+                    "candidate_scores": _score_payload([(equivalent, 900, evidence)]),
+                    "signature_matches": [item.as_dict() for item in signature_matches],
+                }
+                return edge, site_node, None
 
     chosen, score_rows = _choose_candidate(site, caller, candidates, receiver_type)
     if chosen is not None:
         evidence = score_rows[0][2] if score_rows else ["unique_candidate"]
+        source_like = any(
+            e in {"exact_qualified_name", "receiver_type", "same_class", "this_receiver"}
+            for e in evidence
+        )
         edge = {
             **base_edge,
             "id": mint_edge_id("calls", caller.stable_id, chosen.stable_id, site_id),
             "target": chosen.stable_id, "target_status": "resolved",
             "candidate_ids": [chosen.stable_id],
-            "confidence": "source_verified" if any(
-                e in {"exact_qualified_name", "receiver_type", "same_class", "signature_unique"}
-                for e in evidence
-            ) else "structurally_inferred",
+            "confidence": "source_verified" if source_like else "structurally_inferred",
             "verification_source": "+".join(evidence) if evidence else "unique_candidate",
+            "resolution_kind": (
+                "resolved_by_source" if source_like else "resolved_by_signature"
+            ),
             "candidate_scores": _score_payload(score_rows),
         }
         if signature_matches:
@@ -386,6 +433,7 @@ def resolve_call_site(
             "id": mint_edge_id("calls", caller.stable_id, "candidate_set", site_id),
             "target": None, "target_status": "candidate_set", "candidate_ids": ids,
             "confidence": "candidate", "verification_source": "ranked_ambiguous_candidates",
+            "resolution_kind": "candidate_set",
             "candidate_scores": _score_payload(score_rows),
         }
         if signature_matches:
@@ -420,6 +468,7 @@ def _classify_unindexed_target(
             site, caller, site_id, site_node, base_edge,
             node_type="CompileMacro", status="macro", reason=reason, confidence=confidence,
             source_definitions=facts.source_macro_definitions.get(name),
+            resolution_kind="resolved_by_source" if name in facts.source_macros else "external_by_heuristic",
         )
 
     contract, contract_reason = _matching_official_contract(site, receiver_type, facts)
@@ -432,6 +481,9 @@ def _classify_unindexed_target(
             reason=contract_reason,
             confidence="documented",
             contract=contract,
+            resolution_kind=(
+                "resolved_by_official_contract" if kind == "macro" else "external_by_exact_contract"
+            ),
         )
 
     if name in facts.standard_external:
@@ -439,18 +491,20 @@ def _classify_unindexed_target(
             site, caller, site_id, site_node, base_edge,
             node_type="ExternalFunction", status="external",
             reason="standard_library_symbol", confidence="structurally_inferred",
+            resolution_kind="external_by_heuristic",
         )
 
-    # Enum-/strong-typedef style constructions: FooType(value)
+    # Type construction only when source facts prove the name is a type.
     if (
         not (site.receiver_type_or_object or "").strip()
         and site.argument_count == 1
-        and _TYPE_CONSTRUCTION_RE.match(name)
+        and name in facts.known_type_names
     ):
         return _emit_target(
             site, caller, site_id, site_node, base_edge,
             node_type="ExternalFunction", status="external",
-            reason="type_like_construction", confidence="structurally_inferred",
+            reason="type_like_construction", confidence="source_verified",
+            resolution_kind="external_by_exact_contract",
         )
 
     hint = (site.callee_qualified_hint or "").replace(" ", "")
@@ -490,7 +544,7 @@ def _classify_unindexed_target(
         )
     return _emit_missing(
         site, caller, site_id, site_node, base_edge,
-        kind="internal_definition_not_indexed",
+        kind="project_definition_not_indexed",
         reason="unqualified_symbol_has_no_indexed_definition",
         receiver_type=receiver_type,
     )
@@ -548,6 +602,7 @@ def _emit_target(
     confidence: str,
     contract: dict[str, Any] | None = None,
     source_definitions: list[dict[str, Any]] | None = None,
+    resolution_kind: str = "",
 ) -> tuple[dict[str, Any], dict[str, Any], None]:
     canonical_names = list(contract.get("qualified_names") or []) if contract else []
     qualified = str(canonical_names[0]) if canonical_names else (site.callee_qualified_hint or site.callee_name)
@@ -587,11 +642,15 @@ def _emit_target(
             "semantic_summary": contract.get("semantic_summary"),
             "source_authority": contract.get("source_authority"),
         }
+    kind = resolution_kind or (
+        "external_by_exact_contract" if contract else "external_by_heuristic"
+    )
     edge = {
         **base_edge,
         "id": mint_edge_id("calls", caller.stable_id, target_id, site_id),
         "target": target_id, "target_status": status, "candidate_ids": [],
         "confidence": confidence, "verification_source": reason,
+        "resolution_kind": kind,
         "_target_node": target_node,
     }
     return edge, site_node, None
@@ -613,6 +672,8 @@ def _emit_missing(
         "id": mint_edge_id("calls", caller.stable_id, f"missing:{site.callee_name}", site_id),
         "target": None, "target_status": "missing", "candidate_ids": [],
         "confidence": "unresolved", "verification_source": reason,
+        "unresolved_kind": kind,
+        "resolution_kind": "missing",
     }
     unres = {
         "id": f"UNRES_CALL_{site_id[-12:]}", "kind": kind,

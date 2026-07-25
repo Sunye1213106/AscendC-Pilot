@@ -189,9 +189,9 @@ contracts:
 - symbol_or_macro: Select
   symbol_kind: function
   call_style: free_function
-  qualified_names: [AscendC::Reg::Select, AscendC::Select]
+  qualified_names: [AscendC::Reg::Select]
   receiver_types: []
-  argument_counts: [4, 8]
+  argument_counts: [4]
   allow_unqualified: true
   document_title: Select - MaskReg selection
   document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900beta2/API/ascendcopapi/atlasascendc_api_07_0337.html

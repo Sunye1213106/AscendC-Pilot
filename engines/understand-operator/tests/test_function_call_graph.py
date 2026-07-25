@@ -315,7 +315,7 @@ def test_unknown_callee_emits_unresolved(tmp_path: Path) -> None:
         iter_function_definitions(tmp_path, "k.h"), unresolved=unresolved
     )
     assert any(e.get("target_status") == "missing" for e in edges)
-    assert any(u.get("kind") == "internal_definition_not_indexed" for u in unresolved)
+    assert any(u.get("kind") == "project_definition_not_indexed" for u in unresolved)
 
 
 def test_call_edge_has_source_locator(tmp_path: Path) -> None:

@@ -243,7 +243,7 @@ contracts:
   call_style: free_function
   qualified_names: [AscendC::DataCopy]
   receiver_types: []
-  argument_counts: [2, 3, 4, 5, 6]
+  argument_counts: [3, 6]
   allow_unqualified: true
   return_type: ''
   document_title: DataCopy - basic data movement
@@ -260,7 +260,7 @@ contracts:
   call_style: free_function
   qualified_names: [AscendC::DataCopyPad]
   receiver_types: []
-  argument_counts: [1, 3, 4, 7, 10, 11]
+  argument_counts: [3, 4, 7, 10, 11]
   allow_unqualified: true
   return_type: ''
   document_title: DataCopyPad - padded data movement
@@ -499,7 +499,7 @@ contracts:
   call_style: free_function
   qualified_names: [AscendC::Duplicate]
   receiver_types: []
-  argument_counts: [2, 3, 5]
+  argument_counts: [3, 5]
   allow_unqualified: true
   return_type: ''
   document_title: Duplicate - tensor fill
@@ -594,48 +594,6 @@ contracts:
   version_scope: multi_version
   cann_versions: ['9.0', '9.1']
   confidence: 1.0
-- symbol_or_macro: Ceil
-  symbol_kind: function
-  call_style: free_function
-  qualified_names: [AscendC::Ceil]
-  receiver_types: []
-  argument_counts: [1, 2]
-  allow_unqualified: true
-  document_title: Ceil - scalar ceiling helper
-  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900beta2/API/ascendcopapi/atlasascendc_api_07_00265.html
-  semantic_summary: Template scalar ceiling helper used by AscendC kernels for integer alignment.
-  source_authority: official_hiascend
-  version_scope: multi_version
-  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0', '9.1']
-  confidence: 0.95
-- symbol_or_macro: GetUserWorkspace
-  symbol_kind: function
-  call_style: free_function
-  qualified_names: [AscendC::GetUserWorkspace]
-  receiver_types: []
-  argument_counts: [1]
-  allow_unqualified: true
-  document_title: GetUserWorkspace - workspace pointer
-  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/latest/index/index.html
-  semantic_summary: Returns the user workspace pointer for the current kernel.
-  source_authority: official_hiascend
-  version_scope: multi_version
-  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
-  confidence: 0.95
-- symbol_or_macro: GET_TILING_DATA_WITH_STRUCT
-  symbol_kind: macro
-  call_style: free_function
-  qualified_names: [GET_TILING_DATA_WITH_STRUCT]
-  receiver_types: []
-  argument_counts: [2, 3]
-  allow_unqualified: true
-  document_title: GET_TILING_DATA_WITH_STRUCT - tiling data load
-  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/latest/index/index.html
-  semantic_summary: Loads tiling data into a named struct variable for the current kernel.
-  source_authority: official_hiascend
-  version_scope: multi_version
-  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
-  confidence: 0.95
 - symbol_or_macro: LocalMemBar
   symbol_kind: function
   call_style: free_function
@@ -650,20 +608,6 @@ contracts:
   version_scope: multi_version
   cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
   confidence: 0.95
-- symbol_or_macro: InitOutput
-  symbol_kind: function
-  call_style: free_function
-  qualified_names: [AscendC::InitOutput, matmul::InitOutput]
-  receiver_types: []
-  argument_counts: [3]
-  allow_unqualified: true
-  document_title: InitOutput - initialize output buffer
-  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/900/API/ascendcopapi/atlasascendc_api_07_0103.html
-  semantic_summary: Initializes a GlobalTensor output region with a scalar fill value.
-  source_authority: official_hiascend
-  version_scope: multi_version
-  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
-  confidence: 0.95
 - symbol_or_macro: ReduceSum
   symbol_kind: function
   call_style: free_function
@@ -674,62 +618,6 @@ contracts:
   document_title: ReduceSum - vector reduction sum
   document_url: https://www.hiascend.com/document/detail/zh/canncommercial/82RC1/API/ascendcopapi/atlasascendc_api_07_0073.html
   semantic_summary: Reduces LocalTensor values with summation into a destination tensor.
-  source_authority: official_hiascend
-  version_scope: multi_version
-  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
-  confidence: 0.95
-- symbol_or_macro: DataCopyScatter
-  symbol_kind: function
-  call_style: free_function
-  qualified_names: [AscendC::DataCopyScatter]
-  receiver_types: []
-  argument_counts: [3, 4, 5, 6]
-  allow_unqualified: true
-  document_title: DataCopyScatter - scattered data movement
-  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/900/API/ascendcopapi/atlasascendc_api_07_0103.html
-  semantic_summary: Performs scattered DataCopy-style movement with extended addressing.
-  source_authority: official_hiascend
-  version_scope: multi_version
-  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
-  confidence: 0.95
-- symbol_or_macro: REGISTER_TILING_FOR_TILINGKEY
-  symbol_kind: macro
-  call_style: free_function
-  qualified_names: [REGISTER_TILING_FOR_TILINGKEY]
-  receiver_types: []
-  argument_counts: [2]
-  allow_unqualified: true
-  document_title: REGISTER_TILING_FOR_TILINGKEY - tiling registration
-  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/latest/index/index.html
-  semantic_summary: Registers a tiling-data type for a tiling-key predicate.
-  source_authority: official_hiascend
-  version_scope: multi_version
-  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
-  confidence: 0.95
-- symbol_or_macro: REGISTER_TILING_DEFAULT
-  symbol_kind: macro
-  call_style: free_function
-  qualified_names: [REGISTER_TILING_DEFAULT]
-  receiver_types: []
-  argument_counts: [1, 2]
-  allow_unqualified: true
-  document_title: REGISTER_TILING_DEFAULT - default tiling registration
-  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/latest/index/index.html
-  semantic_summary: Registers the default tiling-data type for an operator.
-  source_authority: official_hiascend
-  version_scope: multi_version
-  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
-  confidence: 0.95
-- symbol_or_macro: KERNEL_TASK_TYPE_DEFAULT
-  symbol_kind: macro
-  call_style: free_function
-  qualified_names: [KERNEL_TASK_TYPE_DEFAULT]
-  receiver_types: []
-  argument_counts: [0, 1, 2]
-  allow_unqualified: true
-  document_title: KERNEL_TASK_TYPE_DEFAULT - kernel task type
-  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/latest/index/index.html
-  semantic_summary: Declares the default kernel task type for an AscendC kernel entry.
   source_authority: official_hiascend
   version_scope: multi_version
   cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
