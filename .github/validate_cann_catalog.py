@@ -6,6 +6,8 @@ from uo.scripts.cann_doc_evidence import BUILTIN_CONTRACTS
 from uo.scripts.function_body import iter_function_definitions
 from uo.scripts.function_call_graph import build_call_edges_for_functions
 
+FAIL_CLOSED_BASELINE_MISSING = 1946
+
 roots = [p for p in Path('real-fag').rglob('flash_attention_score_grad') if p.is_dir()]
 if not roots:
     raise SystemExit('flash_attention_score_grad directory not found')
@@ -51,8 +53,10 @@ official_symbols = Counter(
     for edge in edges
     if str(edge.get('verification_source') or '').startswith('official_contract:')
 )
+missing_count = int(status.get('missing', 0))
 report = {
-    'baseline_missing': 887,
+    'baseline_kind': 'fail_closed_without_packaged_symbol_catalogs',
+    'baseline_missing': FAIL_CLOSED_BASELINE_MISSING,
     'operator_root': root.as_posix(),
     'architecture': 'arch35',
     'files': len(files),
@@ -66,18 +70,20 @@ report = {
     'official_contract_symbols': official_symbols.most_common(),
     'official_contract_edges': sum(official_symbols.values()),
     'builtin_contract_count': len(BUILTIN_CONTRACTS),
-    'missing_reduction': 887 - int(status.get('missing', 0)),
+    'missing_reduction': FAIL_CLOSED_BASELINE_MISSING - missing_count,
 }
 Path('cann-api-catalog-validation.json').write_text(
     json.dumps(report, indent=2, ensure_ascii=False), encoding='utf-8'
 )
 print(json.dumps(report, indent=2, ensure_ascii=False))
 
-assert status.get('missing', 0) < 587, status
-assert report['official_contract_edges'] >= 300, report['official_contract_edges']
+assert missing_count <= 700, status
+assert report['missing_reduction'] >= 1200, report['missing_reduction']
+assert report['official_contract_edges'] >= 2000, report['official_contract_edges']
 assert reasons.get('using_external_namespace_without_internal_definition', 0) == 0
 assert reasons.get('api_style_symbol_without_internal_definition', 0) == 0
 assert kinds.get('call_target_missing', 0) == 0
+# Same-name non-CANN helpers and unverified project functions must remain unresolved.
 assert missing_names.get('Ceil', 0) > 0
 assert missing_names.get('Min', 0) > 0
 assert missing_names.get('Max', 0) > 0
