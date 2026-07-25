@@ -45,7 +45,7 @@ class CallResolutionFacts:
     source_macros: set[str] = field(default_factory=set)
     documented_macros: set[str] = field(default_factory=set)
     documented_external: set[str] = field(default_factory=set)
-    official_contracts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    official_contracts: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     standard_external: set[str] = field(default_factory=lambda: set(_STANDARD_EXTERNAL_SYMBOLS))
     compiler_macros: set[str] = field(default_factory=lambda: set(_COMPILER_MACRO_SYMBOLS))
     external_namespaces: set[str] = field(default_factory=lambda: set(_DEFAULT_EXTERNAL_NAMESPACES))
@@ -79,13 +79,20 @@ def collect_call_resolution_facts(
         if namespaces:
             facts.using_namespaces_by_file.setdefault(rel, set()).update(namespaces)
 
+    if not doc_evidence:
+        from uo.scripts.cann_doc_evidence import packaged_doc_evidence_bundle
+
+        doc_evidence = packaged_doc_evidence_bundle()
     for item in (doc_evidence or {}).get("items") or []:
         if not isinstance(item, dict):
             continue
         symbol = str(item.get("symbol_or_macro") or "").strip()
         if not symbol:
             continue
-        facts.official_contracts[symbol] = item
+        names = [symbol] + [str(alias or "").strip() for alias in item.get("aliases") or []]
+        for name in names:
+            if name:
+                facts.official_contracts.setdefault(name, []).append(item)
         kind = _official_contract_kind(item)
         if kind == "macro":
             facts.documented_macros.add(symbol)
@@ -237,26 +244,31 @@ def _classify_unindexed_target(
     facts: CallResolutionFacts,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
     name = site.callee_name
-    if name in facts.source_macros or name in facts.compiler_macros or name in facts.documented_macros:
-        if name in facts.source_macros:
-            reason, confidence = "source_function_macro", "source_verified"
-        elif name in facts.documented_macros:
-            reason, confidence = "official_documented_macro", "documented"
-        else:
-            reason, confidence = "compiler_builtin_macro", "structurally_inferred"
+    if name in facts.source_macros or name in facts.compiler_macros:
+        reason = "source_function_macro" if name in facts.source_macros else "compiler_builtin_macro"
+        confidence = "source_verified" if name in facts.source_macros else "structurally_inferred"
         return _emit_target(
             site, caller, site_id, site_node, base_edge,
             node_type="CompileMacro", status="macro", reason=reason, confidence=confidence,
-            contract=facts.official_contracts.get(name),
         )
 
-    if name in facts.documented_external or name in facts.standard_external:
-        reason = "official_documented_interface" if name in facts.documented_external else "standard_library_symbol"
-        confidence = "documented" if name in facts.documented_external else "structurally_inferred"
+    contract, contract_reason = _matching_official_contract(site, receiver_type, facts)
+    if contract is not None:
+        kind = _official_contract_kind(contract)
         return _emit_target(
             site, caller, site_id, site_node, base_edge,
-            node_type="ExternalFunction", status="external", reason=reason, confidence=confidence,
-            contract=facts.official_contracts.get(name),
+            node_type="CompileMacro" if kind == "macro" else "ExternalFunction",
+            status="macro" if kind == "macro" else "external",
+            reason=contract_reason,
+            confidence="documented",
+            contract=contract,
+        )
+
+    if name in facts.standard_external:
+        return _emit_target(
+            site, caller, site_id, site_node, base_edge,
+            node_type="ExternalFunction", status="external",
+            reason="standard_library_symbol", confidence="structurally_inferred",
         )
 
     hint = (site.callee_qualified_hint or "").replace(" ", "")
@@ -268,19 +280,11 @@ def _classify_unindexed_target(
             reason="known_external_namespace", confidence="source_verified",
         )
 
-    used_external = facts.using_namespaces_by_file.get(site.file_path, set()) & facts.external_namespaces
-    if used_external and not site.receiver_type_or_object:
-        return _emit_target(
-            site, caller, site_id, site_node, base_edge,
-            node_type="ExternalFunction", status="external",
-            reason="using_external_namespace_without_internal_definition",
-            confidence="structurally_inferred",
-        )
-
+    # A using-directive expands lookup candidates; it does not prove symbol ownership.
     if site.receiver_type_or_object:
         receiver_base = _normalize_type_name(receiver_type)
         if receiver_base and receiver_base not in facts.internal_classes and (
-            _type_namespace_root(receiver_type) in facts.external_namespaces or used_external
+            _type_namespace_root(receiver_type) in facts.external_namespaces
         ):
             return _emit_target(
                 site, caller, site_id, site_node, base_edge,
@@ -310,6 +314,41 @@ def _classify_unindexed_target(
     )
 
 
+def _matching_official_contract(
+    site: CallSite,
+    receiver_type: str,
+    facts: CallResolutionFacts,
+) -> tuple[dict[str, Any] | None, str]:
+    # Match by call style, arity, qualification, and owner type.
+    hint = (site.callee_qualified_hint or "").replace(" ", "")
+    has_receiver = bool((site.receiver_type_or_object or "").strip())
+    for contract in facts.official_contracts.get(site.callee_name, []):
+        counts = {int(value) for value in contract.get("argument_counts") or []}
+        if counts and site.argument_count not in counts:
+            continue
+        kind = _official_contract_kind(contract)
+        style = str(contract.get("call_style") or ("method" if kind == "method" else "free_function"))
+        qualified = {str(value or "").replace(" ", "") for value in contract.get("qualified_names") or []}
+        if kind == "macro":
+            return contract, "official_contract:macro"
+        if style == "method" or contract.get("receiver_types"):
+            if not has_receiver:
+                continue
+            allowed_types = [str(value or "") for value in contract.get("receiver_types") or []]
+            if not receiver_type or not any(_type_matches_scope(receiver_type, value) for value in allowed_types):
+                continue
+            return contract, "official_contract:receiver_type"
+        if "::" in hint:
+            if qualified and hint not in qualified and not any(
+                hint.endswith("::" + value.split("::")[-1]) for value in qualified
+            ):
+                continue
+            return contract, "official_contract:qualified_name"
+        if bool(contract.get("allow_unqualified")):
+            return contract, "official_contract:unqualified_free_function"
+    return None, ""
+
+
 def _emit_target(
     site: CallSite,
     caller: FunctionDefinition,
@@ -323,7 +362,8 @@ def _emit_target(
     confidence: str,
     contract: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], None]:
-    qualified = site.callee_qualified_hint or site.callee_name
+    canonical_names = list(contract.get("qualified_names") or []) if contract else []
+    qualified = str(canonical_names[0]) if canonical_names else (site.callee_qualified_hint or site.callee_name)
     prefix = "MACRO" if node_type == "CompileMacro" else "EXTFN"
     target_id = mint_scoped_node_id(
         prefix, qualified, status, normalized_expression=qualified
@@ -336,10 +376,16 @@ def _emit_target(
     }
     if contract:
         target_node["official_contract"] = {
+            "symbol_kind": contract.get("symbol_kind"),
+            "qualified_names": contract.get("qualified_names") or [],
+            "receiver_types": contract.get("receiver_types") or [],
+            "argument_counts": contract.get("argument_counts") or [],
             "document_title": contract.get("document_title"),
             "document_url": contract.get("document_url"),
             "cann_version": contract.get("cann_version"),
+            "cann_versions": contract.get("cann_versions") or [],
             "semantic_summary": contract.get("semantic_summary"),
+            "source_authority": contract.get("source_authority"),
         }
     edge = {
         **base_edge,
@@ -499,6 +545,12 @@ def _infer_receiver_type(
         return ""
     if receiver == "this":
         return caller.class_or_namespace
+    if receiver.endswith("()"):
+        accessor = receiver[:-2].split("::")[-1]
+        for contract in facts.official_contracts.get(accessor, []):
+            return_type = _normalize_declared_type(str(contract.get("return_type") or ""))
+            if return_type:
+                return return_type
     pattern = re.compile(_DECL_TYPE_RE_TEMPLATE.format(receiver=re.escape(receiver)), re.MULTILINE)
     sources = [caller.header_text or "", caller.body_text or ""]
     full = facts.source_text_by_file.get(site.file_path, "")
@@ -509,7 +561,9 @@ def _infer_receiver_type(
     for source in sources:
         for match in pattern.finditer(source):
             type_name = _normalize_declared_type(match.group("type"))
-            if type_name:
+            if type_name and _normalize_type_name(type_name).casefold() not in {
+                "return", "if", "for", "while", "switch", "case", "auto"
+            }:
                 matches.append(type_name)
     return matches[-1] if matches else ""
 
@@ -517,6 +571,7 @@ def _infer_receiver_type(
 def _receiver_object(receiver: str) -> str:
     text = str(receiver or "").strip()
     text = text[:-2] if text.endswith("->") else text[:-1] if text.endswith(".") else text
+    text = re.sub(r"\[[^\]]*\]$", "", text)
     return text.split("::")[-1].strip()
 
 

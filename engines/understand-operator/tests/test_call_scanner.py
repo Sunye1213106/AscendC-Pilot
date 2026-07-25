@@ -65,3 +65,16 @@ def test_template_member_call_preserves_receiver() -> None:
     assert sites[0].callee_name == "Get"
     assert sites[0].receiver_type_or_object == "obj."
     assert sites[0].template_args
+
+
+def test_indexed_member_call_preserves_base_receiver() -> None:
+    sites = extract_call_sites(_fn("void Run() { queues[idx].template AllocTensor<float>(); }"))
+    assert len(sites) == 1
+    assert sites[0].callee_name == "AllocTensor"
+    assert sites[0].receiver_type_or_object == "queues[]."
+
+
+def test_chained_accessor_call_preserves_receiver() -> None:
+    sites = extract_call_sites(_fn("void Run() { GetTPipePtr()->FetchEventID(HardEvent::S_V); }"))
+    names = {site.callee_name: site for site in sites}
+    assert names["FetchEventID"].receiver_type_or_object == "GetTPipePtr()->"

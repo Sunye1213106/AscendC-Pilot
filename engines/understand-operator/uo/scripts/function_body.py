@@ -759,6 +759,43 @@ def _looks_like_direct_initializer(text: str, name_start: int) -> bool:
     )
 
 
+def _balanced_open_left(
+    text: str, pos: int, *, open_ch: str, close_ch: str, floor: int
+) -> int | None:
+    if pos <= floor or text[pos - 1] != close_ch:
+        return None
+    depth = 0
+    idx = pos - 1
+    while idx >= floor:
+        ch = text[idx]
+        if ch == close_ch:
+            depth += 1
+        elif ch == open_ch:
+            depth -= 1
+            if depth == 0:
+                return idx
+        idx -= 1
+    return None
+
+
+def _read_receiver_atom_left(text: str, pos: int, *, floor: int) -> tuple[str, int]:
+    # Read identifier, indexed identifier, or zero-arg accessor immediately left.
+    pos = _skip_ws_left(text, pos, floor=floor)
+    if pos > floor and text[pos - 1] == "]":
+        open_pos = _balanced_open_left(text, pos, open_ch="[", close_ch="]", floor=floor)
+        if open_pos is not None:
+            ident, ident_start = _read_ident_left(text, open_pos, floor=floor)
+            if ident:
+                return f"{ident}[]", ident_start
+    if pos > floor and text[pos - 1] == ")":
+        open_pos = _balanced_open_left(text, pos, open_ch="(", close_ch=")", floor=floor)
+        if open_pos is not None:
+            ident, ident_start = _read_ident_left(text, open_pos, floor=floor)
+            if ident:
+                return f"{ident}()", ident_start
+    return _read_ident_left(text, pos, floor=floor)
+
+
 def _call_context(text: str, name_start: int, callee: str) -> tuple[str, str, int]:
     """Return (qualified callee, receiver, expression start) with bounded work."""
     floor = max(0, name_start - 240)
@@ -792,7 +829,7 @@ def _call_context(text: str, name_start: int, callee: str) -> tuple[str, str, in
     if not op:
         return callee, "", name_start
 
-    ident, ident_start = _read_ident_left(text, rpos, floor=floor)
+    ident, ident_start = _read_receiver_atom_left(text, rpos, floor=floor)
     if not ident:
         return callee, "", name_start
     recv_parts = [ident]

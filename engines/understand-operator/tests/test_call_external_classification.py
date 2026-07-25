@@ -149,18 +149,45 @@ def test_receiver_type_resolves_internal_member() -> None:
     assert unresolved is None
 
 
-def test_using_external_namespace_supports_unqualified_interface() -> None:
-    caller = _fn("void Run() { DataCopy(a, b); }")
+def test_packaged_contract_supports_unqualified_interface() -> None:
+    caller = _fn("void Run() { DataCopy(a, b, 16); }")
     facts = collect_call_resolution_facts(
         [caller],
         source_texts={"op_kernel/test.cpp": "using namespace AscendC;\n" + caller.body_text},
     )
     edge, _node, unresolved = resolve_call_site(
-        _site("DataCopy", argc=2), caller, by_name={}, by_qn={}, by_id={}, facts=facts
+        _site("DataCopy", argc=3), caller, by_name={}, by_qn={}, by_id={}, facts=facts
     )
     assert edge and edge["target_status"] == "external"
-    assert edge["verification_source"] == "using_external_namespace_without_internal_definition"
+    assert edge["verification_source"] == "official_contract:unqualified_free_function"
+    assert edge["_target_node"]["official_contract"]["source_authority"] == "official_hiascend"
     assert unresolved is None
+
+
+def test_using_namespace_does_not_prove_unknown_free_function() -> None:
+    caller = _fn("void Run() { UnknownHelper(); }")
+    facts = collect_call_resolution_facts(
+        [caller],
+        source_texts={"op_kernel/test.cpp": "using namespace AscendC;\n" + caller.body_text},
+    )
+    edge, _node, unresolved = resolve_call_site(
+        _site("UnknownHelper", argc=0), caller, by_name={}, by_qn={}, by_id={}, facts=facts
+    )
+    assert edge and edge["target_status"] == "missing"
+    assert unresolved and unresolved["kind"] == "internal_definition_not_indexed"
+
+
+def test_method_contract_requires_matching_receiver_type() -> None:
+    caller = _fn("void Run() { Worker worker; worker.GetValue(0); }")
+    facts = collect_call_resolution_facts(
+        [caller], source_texts={"op_kernel/test.cpp": caller.body_text}
+    )
+    edge, _node, unresolved = resolve_call_site(
+        _site("GetValue", receiver="worker.", argc=1),
+        caller, by_name={}, by_qn={}, by_id={}, facts=facts
+    )
+    assert edge and edge["target_status"] == "missing"
+    assert unresolved and unresolved["kind"] == "member_target_not_indexed"
 
 
 def test_target_nodes_are_deduplicated() -> None:
