@@ -51,6 +51,13 @@ jobs:
         env:
           PYTHONPATH: engines/understand-operator
         run: python .github/nested_type_report.py --repo real-fag --output nested-after.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fag-nested-type-resolution
+          path: |
+            nested-before.json
+            nested-after.json
+            nested-pytest.log
       - name: Gate improvement
         run: |
           python - <<'PY'
@@ -67,13 +74,6 @@ jobs:
           improvement=(b.get('candidate_set',0)-a.get('candidate_set',0)) + (a.get('resolved',0)-b.get('resolved',0))
           assert improvement > 0, improvement
           PY
-      - uses: actions/upload-artifact@v4
-        with:
-          name: fag-nested-type-resolution
-          path: |
-            nested-before.json
-            nested-after.json
-            nested-pytest.log
       - name: Commit validated implementation
         run: |
           git config user.name github-actions[bot]
