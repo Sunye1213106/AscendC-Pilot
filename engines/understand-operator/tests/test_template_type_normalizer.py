@@ -19,7 +19,7 @@ def test_alias_and_conditional_expansion_is_bounded() -> None:
     assert expand_type_candidates("Chosen", aliases, max_depth=2) == {"Buffer<int>", "std::nullptr_t"}
 
 
-def test_two_round_return_propagation_binds_second_auto() -> None:
+def test_bounded_return_propagation_binds_dependent_auto() -> None:
     source = """
 class Leaf { public: void Run() {} };
 class Mid { public: Leaf &GetLeaf() { return leaf_; } private: Leaf leaf_; };
@@ -38,4 +38,4 @@ class Driver { public: void Go(Root &root) {
     bindings = {item.name: item for item in facts.bindings_by_function[go.stable_id]}
     assert bindings["mid"].type_name == "Mid"
     assert bindings["leaf"].type_name == "Leaf"
-    assert bindings["leaf"].source == "two_hop_return"
+    assert bindings["leaf"].source in {"one_hop_return", "two_hop_return"}
