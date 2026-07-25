@@ -6,10 +6,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from uo.scripts.call_signature_facts import (
+    FunctionSignatureFacts,
+    SignatureMatch,
+    build_signature_index,
+    filter_candidates_by_signature,
+    infer_call_argument_facts,
+)
 from uo.scripts.function_body import CallSite, FunctionDefinition, extract_call_sites
 from uo.scripts.macro_regions import analyze_macros
 from uo.scripts.receiver_type_facts import (
     ReceiverTypeFacts,
+    _split_top_level,
     build_receiver_type_facts,
     infer_receiver_type as infer_receiver_type_from_facts,
 )
@@ -59,6 +67,7 @@ class CallResolutionFacts:
     source_text_by_file: dict[str, str] = field(default_factory=dict)
     internal_classes: set[str] = field(default_factory=set)
     receiver_type_facts: ReceiverTypeFacts | None = None
+    signature_index: dict[str, FunctionSignatureFacts] = field(default_factory=dict)
 
 
 def collect_call_resolution_facts(
@@ -118,6 +127,7 @@ def collect_call_resolution_facts(
         facts.source_text_by_file,
         official_contracts=facts.official_contracts,
     )
+    facts.signature_index = build_signature_index(functions, facts.source_text_by_file)
     return facts
 
 
@@ -186,6 +196,19 @@ def resolve_call_site(
         normalized_expression=site.call_expression,
     )
     receiver_type = _infer_receiver_type(site, caller, facts)
+    source_text = facts.source_text_by_file.get(site.file_path, "")
+    arg_facts = infer_call_argument_facts(
+        site, caller, facts.receiver_type_facts, source_text=source_text
+    )
+    if not site.explicit_template_arguments and site.template_args:
+        site.explicit_template_arguments = tuple(
+            part.strip()
+            for part in _split_top_level(site.template_args, ",")
+            if part.strip()
+        )
+    if not site.argument_expressions and arg_facts:
+        site.argument_expressions = tuple(item.expression for item in arg_facts)
+    site.argument_type_candidates = tuple(item.type_candidates for item in arg_facts)
     site_node = {
         "id": site_id, "layer": "kernel", "node_type": "CallSite",
         "name": site.callee_name,
@@ -197,6 +220,9 @@ def resolve_call_site(
         "receiver_object": _receiver_object(site.receiver_type_or_object),
         "receiver_type": receiver_type,
         "template_args": site.template_args, "argument_count": site.argument_count,
+        "explicit_template_arguments": list(site.explicit_template_arguments),
+        "argument_expressions": list(site.argument_expressions),
+        "argument_type_candidates": [list(item) for item in site.argument_type_candidates],
         "ordinal_in_function": site.ordinal_in_function, "snippet_hash": site.snippet_hash,
         "owning_function_id": caller.stable_id, "owning_identity_key": caller.identity_key,
     }
@@ -243,6 +269,49 @@ def resolve_call_site(
     candidates = _candidate_callees(
         site, caller, by_name=by_name, by_qn=by_qn, receiver_type=receiver_type
     )
+    signature_matches: list[SignatureMatch] = []
+    if len(candidates) > 1:
+        if not facts.signature_index:
+            facts.signature_index = build_signature_index(
+                [item for values in by_name.values() for item in values],
+                facts.source_text_by_file,
+            )
+        filtered, signature_matches, unique = filter_candidates_by_signature(
+            site,
+            caller,
+            candidates,
+            signature_index=facts.signature_index,
+            receiver_facts=facts.receiver_type_facts,
+            receiver_type=receiver_type,
+            source_text=source_text,
+        )
+        site_node["argument_expressions"] = list(site.argument_expressions)
+        site_node["argument_type_candidates"] = [
+            list(item) for item in site.argument_type_candidates
+        ]
+        site_node["explicit_template_arguments"] = list(site.explicit_template_arguments)
+        if unique and len(filtered) == 1:
+            chosen = filtered[0]
+            match = next(
+                (item for item in signature_matches if item.function_id == chosen.stable_id),
+                None,
+            )
+            evidence = ["signature_unique"]
+            if match:
+                evidence.extend(list(match.reasons)[:6])
+            edge = {
+                **base_edge,
+                "id": mint_edge_id("calls", caller.stable_id, chosen.stable_id, site_id),
+                "target": chosen.stable_id, "target_status": "resolved",
+                "candidate_ids": [chosen.stable_id],
+                "confidence": "source_verified",
+                "verification_source": "+".join(evidence),
+                "candidate_scores": _score_payload([(chosen, 1000, evidence)]),
+                "signature_matches": [item.as_dict() for item in signature_matches],
+            }
+            return edge, site_node, None
+        candidates = filtered
+
     chosen, score_rows = _choose_candidate(site, caller, candidates, receiver_type)
     if chosen is not None:
         evidence = score_rows[0][2] if score_rows else ["unique_candidate"]
@@ -252,11 +321,14 @@ def resolve_call_site(
             "target": chosen.stable_id, "target_status": "resolved",
             "candidate_ids": [chosen.stable_id],
             "confidence": "source_verified" if any(
-                e in {"exact_qualified_name", "receiver_type", "same_class"} for e in evidence
+                e in {"exact_qualified_name", "receiver_type", "same_class", "signature_unique"}
+                for e in evidence
             ) else "structurally_inferred",
             "verification_source": "+".join(evidence) if evidence else "unique_candidate",
             "candidate_scores": _score_payload(score_rows),
         }
+        if signature_matches:
+            edge["signature_matches"] = [item.as_dict() for item in signature_matches]
         return edge, site_node, None
 
     if candidates:
@@ -268,6 +340,8 @@ def resolve_call_site(
             "confidence": "candidate", "verification_source": "ranked_ambiguous_candidates",
             "candidate_scores": _score_payload(score_rows),
         }
+        if signature_matches:
+            edge["signature_matches"] = [item.as_dict() for item in signature_matches]
         unres = {
             "id": f"UNRES_CALL_AMBIG_{site_id[-12:]}", "kind": "call_target_ambiguous",
             "message": f"Ambiguous callee for {site.call_expression}",

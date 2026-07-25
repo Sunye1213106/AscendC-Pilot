@@ -98,7 +98,7 @@ def build_receiver_type_facts(
                 facts.return_types_by_method.setdefault((owner, fn.name, arity), set()).add(return_type)
             facts.return_types_by_name.setdefault((fn.name, arity), set()).add(return_type)
 
-        for name, type_name in _parameter_bindings(fn.header_text, fn.name):
+        for name, type_name in _parameter_bindings(_function_declarator_text(fn), fn.name):
             facts.add_binding(fn.stable_id, TypeBinding(name, type_name, fn.start_line, "parameter"))
 
         body_text = fn.body_text or ""
@@ -315,6 +315,18 @@ def _collect_class_members(text: str, facts: ReceiverTypeFacts) -> None:
                 continue
             name, type_name = declared
             facts.member_types_by_class.setdefault(owner, {}).setdefault(name, type_name)
+
+
+def _function_declarator_text(fn: FunctionDefinition) -> str:
+    """Prefer multiline body declarator so parameter bindings survive line wraps."""
+    body = str(fn.body_text or "")
+    brace = body.find("{")
+    if brace >= 0:
+        return body[: brace + 1]
+    header = str(fn.header_text or "")
+    if header and not header.rstrip().endswith("{"):
+        return header + " {"
+    return header
 
 
 def _parameter_bindings(header: str, function_name: str) -> list[tuple[str, str]]:

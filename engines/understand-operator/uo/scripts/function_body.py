@@ -140,6 +140,9 @@ class CallSite:
     argument_count: int
     ordinal_in_function: int
     snippet_hash: str
+    explicit_template_arguments: tuple[str, ...] = ()
+    argument_expressions: tuple[str, ...] = ()
+    argument_type_candidates: tuple[tuple[str, ...], ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -874,12 +877,22 @@ def extract_call_sites(
         callee_raw, recv, expr_start = _call_context(scan, match.start("callee"), callee)
         if not recv and "::" not in callee_raw and _looks_like_direct_initializer(scan, match.start("callee")):
             continue
-        arg_count = _count_args(scan, open_paren)
+        # Prefer unmasked source for argument expression text when spans align.
+        masked_args = _extract_arg_expressions(scan, open_paren)
+        raw_args = _extract_arg_expressions(scan_original, open_paren)
+        arg_exprs = raw_args if len(raw_args) == len(masked_args) else masked_args
+        arg_count = len(arg_exprs)
         line_in_scan = _line_from_starts(scan_starts, expr_start)
         abs_line = scan_base_line + line_in_scan - 1
         expr_head = callee_raw if "::" in callee_raw else f"{recv}{callee}"
         expr = f"{expr_head}{targs}".strip()
         hint = callee_raw if "::" in callee_raw else f"{recv}{callee}" if recv else ""
+        template_inner = parse_template_arity(targs) if targs else ""
+        explicit_targs = tuple(
+            part.strip()
+            for part in _split_top_level_args(template_inner, ",")
+            if part.strip()
+        ) if template_inner else ()
         ordinal += 1
         out.append(
             CallSite(
@@ -887,21 +900,25 @@ def extract_call_sites(
                 callee_qualified_hint=hint, call_expression=expr[:240],
                 file_path=fn.file_path, line=abs_line,
                 receiver_type_or_object=recv,
-                template_args=parse_template_arity(targs) if targs else "",
+                template_args=template_inner,
                 argument_count=arg_count, ordinal_in_function=ordinal,
                 snippet_hash=snippet_hash(expr),
+                explicit_template_arguments=explicit_targs,
+                argument_expressions=tuple(arg_exprs),
             )
         )
     return out
 
 
-def _count_args(text: str, open_paren_pos: int) -> int:
+def _extract_arg_expressions(text: str, open_paren_pos: int) -> list[str]:
     if open_paren_pos < 0 or open_paren_pos >= len(text) or text[open_paren_pos] != "(":
-        return 0
+        return []
     depth = 0
+    angle = 0
     i = open_paren_pos
     n = len(text)
-    commas = 0
+    start = open_paren_pos + 1
+    parts: list[str] = []
     saw_token = False
     while i < n:
         ch = text[i]
@@ -910,14 +927,44 @@ def _count_args(text: str, open_paren_pos: int) -> int:
         elif ch == ")":
             depth -= 1
             if depth == 0:
-                return commas + 1 if saw_token else 0
-        elif ch == "," and depth == 1:
-            commas += 1
-            saw_token = True
+                piece = text[start:i].strip()
+                if saw_token or piece:
+                    parts.append(piece)
+                return parts
+        elif ch == "<":
+            angle += 1
+        elif ch == ">" and angle:
+            angle -= 1
+        elif ch == "," and depth == 1 and angle == 0:
+            parts.append(text[start:i].strip())
+            start = i + 1
+            saw_token = False
         elif not ch.isspace() and depth == 1:
             saw_token = True
         i += 1
-    return 0
+    return []
+
+
+def _split_top_level_args(text: str, delimiter: str) -> list[str]:
+    out: list[str] = []
+    start = 0
+    depths = {"(": 0, "[": 0, "{": 0, "<": 0}
+    pairs = {")": "(", "]": "[", "}": "{", ">": "<"}
+    for index, ch in enumerate(text):
+        if ch in depths:
+            depths[ch] += 1
+        elif ch in pairs:
+            key = pairs[ch]
+            depths[key] = max(0, depths[key] - 1)
+        elif ch == delimiter and not any(depths.values()):
+            out.append(text[start:index])
+            start = index + 1
+    out.append(text[start:])
+    return out
+
+
+def _count_args(text: str, open_paren_pos: int) -> int:
+    return len(_extract_arg_expressions(text, open_paren_pos))
 
 
 def iter_function_defs(
