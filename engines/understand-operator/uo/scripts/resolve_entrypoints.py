@@ -725,6 +725,56 @@ def _name_matches_op(symbol: str, op_name: str) -> bool:
     return bool(pascal) and (name.startswith(pascal) or name.endswith(pascal))
 
 
+def _registration_scan_paths(
+    repo_root: Path,
+    confirmed_files: list[str],
+    architecture: str,
+) -> list[Path]:
+    """Return scoped registration sources, with a safe first-run fallback.
+
+    Confirmed scope remains authoritative when it contains host/graph files.
+    A fresh repository has no scope ledger or CBM metadata yet, so inspect
+    only compatible ``op_host`` and ``op_graph`` C/C++ sources instead of
+    silently producing an empty registration graph.
+    """
+    suffixes = {".h", ".hpp", ".cpp", ".cc", ".c"}
+    paths: list[Path] = []
+    seen: set[str] = set()
+
+    def add(path: Path | None) -> None:
+        if path is None or not path.is_file() or path.suffix not in suffixes:
+            return
+        try:
+            rel = to_repo_relative(repo_root, path)
+        except Exception:  # noqa: BLE001
+            rel = path.as_posix()
+        rel_n = rel.replace("\\", "/")
+        if not arch_compatible(rel_n, architecture):
+            return
+        key = path.resolve().as_posix()
+        if key in seen:
+            return
+        seen.add(key)
+        paths.append(path)
+
+    if confirmed_files:
+        for rel in confirmed_files:
+            rel_n = str(rel).replace("\\", "/")
+            if not (_path_has_dir(rel_n, "op_host") or _path_has_dir(rel_n, "op_graph")):
+                continue
+            add(_resolve_source_file(repo_root, rel_n, architecture=architecture))
+        if paths:
+            return sorted(paths, key=lambda p: p.as_posix())
+
+    for dirname in ("op_host", "op_graph"):
+        base = repo_root / dirname
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*"):
+            add(path)
+    return sorted(paths, key=lambda p: p.as_posix())
+
+
 def _scan_registration_graph(
     repo_root: Path,
     confirmed_files: list[str],
@@ -736,14 +786,11 @@ def _scan_registration_graph(
     nodes: dict[str, dict[str, Any]] = {}
     edges: list[dict[str, Any]] = []
     templates: list[dict[str, Any]] = []
-    for rel in confirmed_files:
-        path = _resolve_source_file(repo_root, rel, architecture=architecture)
-        if path is None:
-            continue
+    for path in _registration_scan_paths(repo_root, confirmed_files, architecture):
         try:
             repo_rel = to_repo_relative(repo_root, path)
         except Exception:  # noqa: BLE001
-            repo_rel = rel.replace("\\", "/")
+            repo_rel = path.as_posix()
         if not arch_compatible(repo_rel, architecture) and "op_graph" not in repo_rel.replace("\\", "/"):
             # Registration / REG_OP often lives in op_graph (architecture-neutral).
             if "op_graph" not in repo_rel.replace("\\", "/") and "REG_OP" not in path.name:

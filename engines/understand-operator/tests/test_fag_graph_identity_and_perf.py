@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from uo.scripts.extract_host_subgraph import _chain_item_key, _writer_role_indexes
+from uo.scripts.resolve_entrypoints import collect_entrypoint_candidates
+from uo.scripts.propose_extract_plan import MAX_NON_SINK
 from uo.scripts.function_body import (
     CallSite,
     FunctionDefinition,
@@ -112,3 +114,36 @@ def test_host_tdf_writes_do_not_use_short_name_fallback() -> None:
 
     source = getsource(extract_host_subgraph)
     assert "name_l in tiling_writers" not in source
+
+
+
+def test_fresh_repo_scans_neutral_host_registration_without_scope(tmp_path: Path) -> None:
+    host = tmp_path / "op_host" / "flash_attention_score_grad_tiling.cpp"
+    host.parent.mkdir(parents=True)
+    host.write_text(
+        """ge::graphStatus TilingFlashAttentionGradScore(gert::TilingContext *context) {
+    return ge::GRAPH_SUCCESS;
+}
+IMPL_OP_OPTILING(FlashAttentionScoreGrad)
+    .Tiling(TilingFlashAttentionGradScore);
+""",
+        encoding="utf-8",
+    )
+    doc = collect_entrypoint_candidates(
+        tmp_path, "flash_attention_score_grad", architecture="arch35"
+    )
+    graph = doc["entrypoint_graph"]
+    roles = {str(node.get("role")) for node in graph.get("nodes") or []}
+    names = {str(node.get("name")) for node in graph.get("nodes") or []}
+    assert "public_host_entry" in roles
+    assert "FlashAttentionScoreGrad" in names
+    assert "TilingFlashAttentionGradScore" in names
+    assert any(
+        edge.get("type") == "dispatches_to"
+        and edge.get("confidence") == "source_verified"
+        for edge in graph.get("edges") or []
+    )
+
+
+def test_default_non_sink_budget_covers_real_fag_candidate_volume() -> None:
+    assert MAX_NON_SINK >= 177
