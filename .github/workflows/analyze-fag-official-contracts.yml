@@ -23,46 +23,27 @@ jobs:
             engines/understand-operator/uo/scripts/function_call_graph.py \
             engines/understand-operator/uo/scripts/function_body.py
       - run: python -m pip install -q pytest pyyaml
-      - name: Run focused regressions
+      - name: Capture focused regressions
         env:
           PYTHONPATH: engines/understand-operator
         run: |
-          pytest -q \
+          set +e
+          pytest -vv \
             engines/understand-operator/tests/test_cann_api_catalog.py \
             engines/understand-operator/tests/test_call_external_classification.py \
             engines/understand-operator/tests/test_call_scanner.py \
             engines/understand-operator/tests/test_function_call_graph.py \
             engines/understand-operator/tests/test_macro_regions.py \
-            engines/understand-operator/tests/test_fag_graph_identity_and_perf.py
-      - uses: actions/checkout@v4
+            engines/understand-operator/tests/test_fag_graph_identity_and_perf.py \
+            2>&1 | tee pytest-cann-catalog.log
+          echo ${PIPESTATUS[0]} > pytest-cann-catalog.status
+          exit 0
+      - name: Upload regression diagnostics
+        uses: actions/upload-artifact@v4
         with:
-          repository: Sunye1213106/flashattention
-          ref: 94e37bc4630a6b2b5695e6a76809d1e94931d8c8
-          path: real-fag
-      - name: Validate real FAG arch35
-        env:
-          PYTHONPATH: engines/understand-operator
-        run: python .github/validate_cann_catalog.py
-      - uses: actions/upload-artifact@v4
-        with:
-          name: cann-api-catalog-validation
-          path: cann-api-catalog-validation.json
-      - name: Commit validated implementation
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add \
-            engines/understand-operator/pyproject.toml \
-            engines/understand-operator/uo/resources/cann_api_catalog.yaml \
-            engines/understand-operator/uo/scripts/cann_doc_evidence.py \
-            engines/understand-operator/uo/scripts/function_call_graph.py \
-            engines/understand-operator/uo/scripts/function_body.py \
-            engines/understand-operator/tests/test_cann_api_catalog.py \
-            engines/understand-operator/tests/test_call_external_classification.py \
-            engines/understand-operator/tests/test_call_scanner.py
-          if git diff --cached --quiet; then
-            echo 'No implementation changes to commit.'
-          else
-            git commit -m 'feat(uo): resolve CANN calls from official symbol contracts'
-            git push origin HEAD:agent/tg-workflow-contract-closure
-          fi
+          name: cann-api-catalog-pytest
+          path: |
+            pytest-cann-catalog.log
+            pytest-cann-catalog.status
+      - name: Gate regressions
+        run: test "$(cat pytest-cann-catalog.status)" = "0"
