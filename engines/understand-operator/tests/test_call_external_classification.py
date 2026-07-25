@@ -91,9 +91,16 @@ def test_official_documented_interface_becomes_external() -> None:
                 {
                     "symbol_or_macro": "DataCopy",
                     "symbol_kind": "function",
+                    "call_style": "free_function",
+                    "qualified_names": ["AscendC::DataCopy"],
+                    "argument_counts": [1],
+                    "allow_unqualified": True,
                     "document_title": "CANN DataCopy API",
+                    "document_url": "https://www.hiascend.com/document/detail/zh/canncommercial/900/API/ascendcopapi/atlasascendc_api_07_0103.html",
                     "cann_version": "9.1.0",
                     "semantic_summary": "Copies tensor data.",
+                    "source_authority": "official_hiascend",
+                    "confidence": 1.0,
                 }
             ]
         },
@@ -102,7 +109,7 @@ def test_official_documented_interface_becomes_external() -> None:
         _site("DataCopy"), caller, by_name={}, by_qn={}, by_id={}, facts=facts
     )
     assert edge and edge["target_status"] == "external"
-    assert edge["verification_source"] == "official_documented_interface"
+    assert edge["verification_source"].startswith("official_contract:")
     assert edge["_target_node"]["official_contract"]["cann_version"] == "9.1.0"
     assert unresolved is None
 
