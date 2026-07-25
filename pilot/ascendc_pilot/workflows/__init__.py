@@ -47,7 +47,15 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
         },
         "contract_build": {
             "read": ["uo/**", "context/**"],
-            "write": ["tg/snapshot/**", "tg/consumer_evidence/**", "tg/realization/**", "tg/init/run_context.yaml"],
+            "write": [
+                "tg/intake/**",
+                "tg/snapshot/**",
+                "tg/realization/**",
+                "tg/contract/**",
+                "tg/plan/coverage_obligations.yaml",
+                "tg/run.yaml",
+                "context/pilot_params.yaml",
+            ],
         },
         "semantic_bind": {
             "read": [
@@ -71,12 +79,17 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
             "write": [],
         },
         "init_audit": {
-            "read": ["tg/snapshot/**", "tg/consumer_evidence/**", "tg/realization/**", "tg/init/**"],
+            "read": ["tg/snapshot/**", "tg/contract/**", "tg/realization/**", "tg/init/**"],
             "write": ["tg/init/audit_report.yaml"],
         },
         "human_confirm": {
-            "read": ["tg/init/audit_report.yaml", "tg/realization/**", "tg/snapshot/**"],
-            "write": ["tg/init/status.yaml"],
+            "read": ["tg/init/**", "tg/realization/**", "tg/snapshot/**"],
+            "write": [
+                "tg/init/status.yaml",
+                "tg/init/kb_fingerprint.yaml",
+                "tg/realization/domain_review.yaml",
+                "tg/realization/binding_lexicon.yaml",
+            ],
         },
     },
     "tg-plan": {
@@ -89,8 +102,14 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
             "write": [],
         },
         "plan_build": {
-            "read": ["tg/init/**", "tg/snapshot/**", "tg/realization/**", "context/**"],
-            "write": ["tg/plan/**"],
+            "read": [
+                "tg/init/**",
+                "tg/snapshot/**",
+                "tg/realization/**",
+                "tg/contract/**",
+                "context/**",
+            ],
+            "write": ["tg/plan/**", "tg/extract/**", "tg/realization/**", "tg/contract/**", "tg/run.yaml"],
         },
         "plan_approve": {
             "read": ["tg/plan/levels/*/**"],
@@ -103,11 +122,19 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
             "write": [],
         },
         "z3_solve": {
-            "read": ["tg/init/**", "tg/plan/**", "tg/snapshot/**", "tg/realization/**", "context/**"],
-            "write": ["tg/solve/**"],
+            "read": [
+                "tg/init/**",
+                "tg/plan/**",
+                "tg/snapshot/**",
+                "tg/realization/**",
+                "tg/contract/**",
+                "tg/extract/**",
+                "context/**",
+            ],
+            "write": ["tg/solve/**", "tg/cases/**", "tg/realization/**"],
         },
         "cover_confirm": {
-            "read": ["tg/solve/**", "tg/plan/**"],
+            "read": ["tg/solve/**", "tg/cases/**", "tg/plan/**"],
             "write": [],
         },
     },
@@ -119,6 +146,13 @@ def _action(meta: dict[str, Any], action_id: str) -> dict[str, Any] | None:
         if isinstance(row, dict) and str(row.get("id") or "") == action_id:
             return row
     return None
+
+
+def _ensure_agent(meta: dict[str, Any], agent_id: str, role_id: str) -> None:
+    agents = [row for row in (meta.get("agents") or []) if isinstance(row, dict)]
+    if not any(str(row.get("id") or "") == agent_id for row in agents):
+        agents.append({"id": agent_id, "role": role_id})
+    meta["agents"] = agents
 
 
 def _apply_tg_control_plane_contracts() -> None:
@@ -148,21 +182,31 @@ def _apply_tg_control_plane_contracts() -> None:
         row["role_id"] = "controller"
         row["execution_mode"] = "primary_interactive"
         row["actors"] = ["ascendc-pilot"]
+        _ensure_agent(meta, "ascendc-pilot", "controller")
 
     # Reinitializing a downstream TG workflow must preserve its upstream
     # contracts. Only products owned by that workflow and its descendants are
     # invalidated.
+    upstream = [
+        "uo",
+        "tg/intake",
+        "tg/snapshot",
+        "tg/contract",
+        "tg/realization",
+        "tg/init",
+        "tg/run.yaml",
+    ]
     plan = WORKFLOWS.get("tg-plan") or {}
     plan["reset_policy"] = {
-        "reinit_delete": ["tg/plan", "tg/solve"],
-        "reinit_preserve": ["uo", "tg/snapshot", "tg/consumer_evidence", "tg/realization", "tg/init"],
+        "reinit_delete": ["tg/plan", "tg/solve", "tg/cases", "tg/extract"],
+        "reinit_preserve": upstream,
         "reinit_wipe_runs": "current",
         "continue_scrub": "from_contracts",
     }
     solve = WORKFLOWS.get("tg-solve") or {}
     solve["reset_policy"] = {
-        "reinit_delete": ["tg/solve"],
-        "reinit_preserve": ["uo", "tg/snapshot", "tg/consumer_evidence", "tg/realization", "tg/init", "tg/plan"],
+        "reinit_delete": ["tg/solve", "tg/cases"],
+        "reinit_preserve": [*upstream, "tg/plan", "tg/extract"],
         "reinit_wipe_runs": "current",
         "continue_scrub": "from_contracts",
     }
