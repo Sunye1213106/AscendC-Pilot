@@ -8,6 +8,11 @@ from typing import Any, Mapping
 
 from uo.scripts.function_body import CallSite, FunctionDefinition, extract_call_sites
 from uo.scripts.macro_regions import analyze_macros
+from uo.scripts.receiver_type_facts import (
+    ReceiverTypeFacts,
+    build_receiver_type_facts,
+    infer_receiver_type as infer_receiver_type_from_facts,
+)
 from uo.scripts.semantic_identity import mint_edge_id, mint_scoped_node_id
 
 
@@ -53,6 +58,7 @@ class CallResolutionFacts:
     using_namespaces_by_file: dict[str, set[str]] = field(default_factory=dict)
     source_text_by_file: dict[str, str] = field(default_factory=dict)
     internal_classes: set[str] = field(default_factory=set)
+    receiver_type_facts: ReceiverTypeFacts | None = None
 
 
 def collect_call_resolution_facts(
@@ -107,6 +113,11 @@ def collect_call_resolution_facts(
             root = str(qualified).split("::", 1)[0].strip()
             if root:
                 facts.external_namespaces.add(root)
+    facts.receiver_type_facts = build_receiver_type_facts(
+        functions,
+        facts.source_text_by_file,
+        official_contracts=facts.official_contracts,
+    )
     return facts
 
 
@@ -197,6 +208,37 @@ def resolve_call_site(
         },
         "call_site_id": site_id, "callee_name": site.callee_name,
     }
+
+    # A precise receiver may prove an official method before generic short-name
+    # lookup sees unrelated project helpers with the same name (for example TBuf::Get).
+    method_contract, method_reason = _matching_official_contract(site, receiver_type, facts)
+    if method_contract is not None and (site.receiver_type_or_object or "").strip():
+        method_kind = _official_contract_kind(method_contract)
+        method_style = str(
+            method_contract.get("call_style")
+            or ("method" if method_kind == "method" else "free_function")
+        )
+        if method_style == "method" or method_contract.get("receiver_types"):
+            typed_source = [
+                candidate
+                for candidate in _filter_by_arity(
+                    list(by_name.get(site.callee_name) or []), site.argument_count
+                )
+                if _type_matches_scope(receiver_type, candidate.class_or_namespace)
+            ]
+            if not typed_source:
+                return _emit_target(
+                    site,
+                    caller,
+                    site_id,
+                    site_node,
+                    base_edge,
+                    node_type="ExternalFunction",
+                    status="external",
+                    reason=method_reason,
+                    confidence="documented",
+                    contract=method_contract,
+                )
 
     candidates = _candidate_callees(
         site, caller, by_name=by_name, by_qn=by_qn, receiver_type=receiver_type
@@ -560,6 +602,50 @@ def _signature_arity(signature: str) -> int:
 def _infer_receiver_type(
     site: CallSite, caller: FunctionDefinition, facts: CallResolutionFacts
 ) -> str:
+    receiver_facts = facts.receiver_type_facts
+    if receiver_facts is None:
+        receiver_facts = build_receiver_type_facts(
+            [caller],
+            facts.source_text_by_file,
+            official_contracts=facts.official_contracts,
+        )
+    structured = infer_receiver_type_from_facts(
+        site,
+        caller,
+        receiver_facts,
+        official_contracts=facts.official_contracts,
+    )
+    legacy = _legacy_receiver_type(site, caller, facts)
+    if _receiver_type_supported(site, structured, facts):
+        return structured
+    if _receiver_type_supported(site, legacy, facts):
+        return legacy
+    # Preserve previous fail-closed behavior for aliases the lightweight parser
+    # cannot bind to a concrete class; structured facts are preferred only when
+    # they carry source/API support.
+    return legacy or structured
+
+
+def _receiver_type_supported(
+    site: CallSite, receiver_type: str, facts: CallResolutionFacts
+) -> bool:
+    if not receiver_type:
+        return False
+    if any(_type_matches_scope(receiver_type, scope) for scope in facts.internal_classes):
+        return True
+    for contract in facts.official_contracts.get(site.callee_name, []):
+        counts = {int(value) for value in contract.get("argument_counts") or []}
+        if counts and site.argument_count not in counts:
+            continue
+        allowed = [str(value or "") for value in contract.get("receiver_types") or []]
+        if allowed and any(_type_matches_scope(receiver_type, value) for value in allowed):
+            return True
+    return False
+
+
+def _legacy_receiver_type(
+    site: CallSite, caller: FunctionDefinition, facts: CallResolutionFacts
+) -> str:
     receiver = _receiver_object(site.receiver_type_or_object)
     if not receiver:
         return ""
@@ -571,7 +657,9 @@ def _infer_receiver_type(
             return_type = _normalize_declared_type(str(contract.get("return_type") or ""))
             if return_type:
                 return return_type
-    pattern = re.compile(_DECL_TYPE_RE_TEMPLATE.format(receiver=re.escape(receiver)), re.MULTILINE)
+    pattern = re.compile(
+        _DECL_TYPE_RE_TEMPLATE.format(receiver=re.escape(receiver)), re.MULTILINE
+    )
     sources = [caller.header_text or "", caller.body_text or ""]
     full = facts.source_text_by_file.get(site.file_path, "")
     if full:
