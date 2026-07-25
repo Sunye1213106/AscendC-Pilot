@@ -13,7 +13,11 @@ from typing import Any, Mapping
 
 from uo.scripts.function_body import CallSite, FunctionDefinition
 from uo.scripts.type_normalizer import (
-    canonical_base, collect_type_aliases, expand_type_candidates, normalize_declared_type,
+    canonical_base,
+    collect_type_aliases,
+    expand_type_candidates,
+    narrow_receiver_for_method_call,
+    normalize_declared_type,
 )
 
 
@@ -53,6 +57,7 @@ class TypeBinding:
 class ReceiverTypeFacts:
     bindings_by_function: dict[str, list[TypeBinding]] = field(default_factory=dict)
     member_types_by_class: dict[str, dict[str, str]] = field(default_factory=dict)
+    base_classes_by_class: dict[str, list[str]] = field(default_factory=dict)
     return_types_by_method: dict[tuple[str, str, int], set[str]] = field(default_factory=dict)
     return_types_by_name: dict[tuple[str, int], set[str]] = field(default_factory=dict)
     type_aliases: dict[str, set[str]] = field(default_factory=dict)
@@ -87,6 +92,7 @@ def build_receiver_type_facts(
 
     for raw_path, text in source_by_rel.items():
         _collect_class_members(text, facts)
+        _collect_base_classes(text, facts)
 
     assignments: list[_AutoAssignment] = []
     for fn in functions:
@@ -98,7 +104,7 @@ def build_receiver_type_facts(
                 facts.return_types_by_method.setdefault((owner, fn.name, arity), set()).add(return_type)
             facts.return_types_by_name.setdefault((fn.name, arity), set()).add(return_type)
 
-        for name, type_name in _parameter_bindings(fn.header_text, fn.name):
+        for name, type_name in _parameter_bindings(_function_declarator_text(fn), fn.name):
             facts.add_binding(fn.stable_id, TypeBinding(name, type_name, fn.start_line, "parameter"))
 
         body_text = fn.body_text or ""
@@ -111,9 +117,7 @@ def build_receiver_type_facts(
             if auto_assignment is not None:
                 assignments.append(auto_assignment)
                 continue
-            declared = _parse_declaration(statement)
-            if declared is not None:
-                name, type_name = declared
+            for name, type_name in _parse_declarations(statement):
                 facts.add_binding(fn.stable_id, TypeBinding(name, type_name, line, "local"))
 
     pending = list(assignments)
@@ -194,13 +198,15 @@ def infer_receiver_type(
         site.line,
         facts,
     )
-    return _narrow_receiver_type(
+    narrowed = _narrow_receiver_type(
         receiver_type,
         site.callee_name,
         site.argument_count,
         facts,
         official_contracts or {},
     )
+    # Method calls cannot target nullptr_t/void branches of std::conditional.
+    return narrow_receiver_for_method_call(narrowed or receiver_type, facts.type_aliases)
 
 
 def _lookup_receiver_expression(
@@ -226,7 +232,7 @@ def _lookup_receiver_expression(
         return matches[-1].type_name
 
     owner = _normalize_type_name(caller_class)
-    member = facts.member_types_by_class.get(owner, {}).get(text)
+    member = _lookup_member_type(owner, text, facts)
     if member:
         return member
     return ""
@@ -302,6 +308,48 @@ def _narrow_receiver_type(
         return sorted(candidates, key=lambda value: (len(value), value))[0]
     return receiver_type
 
+def _lookup_member_type(owner: str, member_name: str, facts: ReceiverTypeFacts) -> str:
+    if not owner or not member_name:
+        return ""
+    seen: set[str] = set()
+    stack = [owner]
+    while stack:
+        current = stack.pop()
+        if not current or current in seen:
+            continue
+        seen.add(current)
+        direct = facts.member_types_by_class.get(current, {}).get(member_name)
+        if direct:
+            return direct
+        for base in facts.base_classes_by_class.get(current, []):
+            stack.append(_normalize_type_name(base))
+    return ""
+
+
+def _collect_base_classes(text: str, facts: ReceiverTypeFacts) -> None:
+    for match in re.finditer(
+        r"\b(?:class|struct)\s+([A-Za-z_]\w*)\s*(?:<[^;{]*>)?\s*:\s*([^;{]+)\{",
+        text,
+        re.DOTALL,
+    ):
+        owner = _normalize_type_name(match.group(1))
+        bases: list[str] = []
+        for part in _split_top_level(match.group(2), ","):
+            cleaned = re.sub(
+                r"\b(?:public|protected|private|virtual)\b",
+                " ",
+                part,
+            )
+            base = _normalize_type_name(cleaned)
+            if base:
+                bases.append(base)
+        if bases:
+            facts.base_classes_by_class.setdefault(owner, [])
+            for base in bases:
+                if base not in facts.base_classes_by_class[owner]:
+                    facts.base_classes_by_class[owner].append(base)
+
+
 def _collect_class_members(text: str, facts: ReceiverTypeFacts) -> None:
     for match in _CLASS_OPEN_RE.finditer(text):
         end = _matching_brace(text, match.end() - 1)
@@ -310,11 +358,20 @@ def _collect_class_members(text: str, facts: ReceiverTypeFacts) -> None:
         owner = _normalize_type_name(match.group(1))
         body = text[match.end():end]
         for statement, _offset in _iter_class_member_statements(body):
-            declared = _parse_declaration(statement)
-            if declared is None:
-                continue
-            name, type_name = declared
-            facts.member_types_by_class.setdefault(owner, {}).setdefault(name, type_name)
+            for name, type_name in _parse_declarations(statement):
+                facts.member_types_by_class.setdefault(owner, {}).setdefault(name, type_name)
+
+
+def _function_declarator_text(fn: FunctionDefinition) -> str:
+    """Prefer multiline body declarator so parameter bindings survive line wraps."""
+    body = str(fn.body_text or "")
+    brace = body.find("{")
+    if brace >= 0:
+        return body[: brace + 1]
+    header = str(fn.header_text or "")
+    if header and not header.rstrip().endswith("{"):
+        return header + " {"
+    return header
 
 
 def _parameter_bindings(header: str, function_name: str) -> list[tuple[str, str]]:
@@ -333,32 +390,51 @@ def _parameter_bindings(header: str, function_name: str) -> list[tuple[str, str]
 
 
 def _parse_declaration(statement: str) -> tuple[str, str] | None:
+    declared = _parse_declarations(statement)
+    return declared[0] if len(declared) == 1 else None
+
+
+def _parse_declarations(statement: str) -> list[tuple[str, str]]:
+    """Parse one or more declarators sharing a type: ``T a, b, c;``."""
     text = _strip_comments(statement).strip()
     text = re.sub(r"^(?:public|private|protected)\s*:\s*", "", text).strip()
     if not text or text.startswith(_CONTROL_PREFIXES):
-        return None
-    text = _strip_top_level_initializer(text)
+        return []
     text = text.rstrip(";").strip()
     if not text or "(" in _strip_template_text(text):
-        return None
-    if _top_level_contains(text, ","):
-        return None
+        return []
 
-    match = re.search(r"([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*$", text)
+    # Split declarators at top-level commas, then recover the shared type prefix.
+    parts = [part.strip() for part in _split_top_level(text, ",") if part.strip()]
+    if not parts:
+        return []
+
+    first = _strip_top_level_initializer(parts[0]).strip()
+    match = re.search(r"([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*$", first)
     if not match:
-        return None
-    name = match.group(1)
-    prefix = text[:match.start()].strip()
-    if not prefix or any(ch in prefix for ch in "{};"):
-        return None
-    type_name = _normalize_declared_type(prefix)
+        return []
+    first_name = match.group(1)
+    type_prefix = first[: match.start()].strip()
+    if not type_prefix or any(ch in type_prefix for ch in "{};"):
+        return []
+    type_name = _normalize_declared_type(type_prefix)
     if (
         not type_name
         or any(ch in type_name for ch in "{};")
         or _normalize_type_name(type_name) in {"auto", "void"}
     ):
-        return None
-    return name, type_name
+        return []
+
+    names = [first_name]
+    for part in parts[1:]:
+        piece = _strip_top_level_initializer(part).strip()
+        # Allow leading pointer/ref markers on later declarators: ``T a, *b, &c``.
+        piece = re.sub(r"^[*&\s]+", "", piece).strip()
+        name_match = re.fullmatch(r"([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?", piece)
+        if not name_match:
+            return []
+        names.append(name_match.group(1))
+    return [(name, type_name) for name in names]
 
 
 def _parse_auto_assignment(statement: str, fn: FunctionDefinition, line: int) -> _AutoAssignment | None:

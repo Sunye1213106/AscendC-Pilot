@@ -19,6 +19,29 @@ def test_alias_and_conditional_expansion_is_bounded() -> None:
     assert expand_type_candidates("Chosen", aliases, max_depth=2) == {"Buffer<int>", "std::nullptr_t"}
 
 
+def test_conditional_t_and_nested_type_alias_expand() -> None:
+    source = """
+struct BuffSelector {
+  using TYPE = std::conditional_t<FLAG, MutexBuffersPolicyDB<BufferType::L1>, MutexBuffersPolicySingleBuffer<BufferType::L1>>;
+};
+using Chosen = std::conditional_t<REUSE, BuffSelector<FLAG>::TYPE, std::nullptr_t>;
+"""
+    aliases = collect_type_aliases({"x.h": source})
+    expanded = expand_type_candidates("Chosen", aliases, max_depth=4)
+    assert "std::nullptr_t" in expanded
+    assert any("MutexBuffersPolicyDB" in item for item in expanded)
+    assert any("MutexBuffersPolicySingleBuffer" in item for item in expanded)
+    from uo.scripts.type_normalizer import narrow_receiver_for_method_call
+
+    # Unique object branch after dropping nullptr_t.
+    narrowed = narrow_receiver_for_method_call(
+        "std::conditional_t<REUSE,MutexBuffersPolicyDB<BufferType::L1>,std::nullptr_t>",
+        aliases,
+    )
+    assert "MutexBuffersPolicyDB" in narrowed
+    assert "nullptr" not in narrowed
+
+
 def test_bounded_return_propagation_binds_dependent_auto() -> None:
     source = """
 class Leaf { public: void Run() {} };

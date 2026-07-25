@@ -295,11 +295,14 @@ def test_overloaded_callee_ambiguous_is_candidate_set(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     unresolved: list[dict] = []
-    _nodes, edges = build_call_edges_for_functions(
-        iter_function_definitions(tmp_path, "k.h"), unresolved=unresolved
-    )
+    functions = iter_function_definitions(tmp_path, "k.h")
+    by_id = {fn.stable_id: fn for fn in functions}
+    _nodes, edges = build_call_edges_for_functions(functions, unresolved=unresolved)
     helper_calls = [e for e in edges if e.get("callee_name") == "Helper"]
-    assert helper_calls and helper_calls[0].get("target_status") == "candidate_set"
+    # Integer literal deterministically selects Helper(int) over Helper(float).
+    assert helper_calls and helper_calls[0].get("target_status") == "resolved"
+    target = by_id[str(helper_calls[0].get("target"))]
+    assert target.normalized_signature.replace(" ", "").startswith("(int")
 
 
 def test_unknown_callee_emits_unresolved(tmp_path: Path) -> None:
@@ -312,7 +315,7 @@ def test_unknown_callee_emits_unresolved(tmp_path: Path) -> None:
         iter_function_definitions(tmp_path, "k.h"), unresolved=unresolved
     )
     assert any(e.get("target_status") == "missing" for e in edges)
-    assert any(u.get("kind") == "internal_definition_not_indexed" for u in unresolved)
+    assert any(u.get("kind") == "project_definition_not_indexed" for u in unresolved)
 
 
 def test_call_edge_has_source_locator(tmp_path: Path) -> None:

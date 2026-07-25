@@ -6,14 +6,29 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from uo.scripts.call_equivalence import (
+    choose_equivalent_candidate,
+    classify_equivalent_candidates,
+    filter_candidates_by_receiver_owners,
+    narrow_receiver_for_method_call,
+)
+from uo.scripts.call_signature_facts import (
+    FunctionSignatureFacts,
+    SignatureMatch,
+    build_signature_index,
+    filter_candidates_by_signature,
+    infer_call_argument_facts,
+)
 from uo.scripts.function_body import CallSite, FunctionDefinition, extract_call_sites
 from uo.scripts.macro_regions import analyze_macros
 from uo.scripts.receiver_type_facts import (
     ReceiverTypeFacts,
+    _split_top_level,
     build_receiver_type_facts,
     infer_receiver_type as infer_receiver_type_from_facts,
 )
 from uo.scripts.semantic_identity import mint_edge_id, mint_scoped_node_id
+from uo.scripts.type_normalizer import collect_type_aliases, expand_type_candidates
 
 
 _CALL_NOISE = frozenset(
@@ -27,6 +42,9 @@ _CALL_NOISE = frozenset(
 
 _STANDARD_EXTERNAL_SYMBOLS = frozenset(
     {
+        # Lowercase C/C++ library symbols only. Do not classify capitalized
+        # project helpers (Min/Max/Ceil/Abs) or undocumented MicroAPI wrappers
+        # as standard externals — that would fake-reduce unresolved.
         "abs", "acos", "asin", "atan", "atan2", "ceil", "cos", "exp", "floor",
         "fmax", "fmin", "log", "log2", "max", "memcpy", "memmove", "memset",
         "min", "pow", "printf", "sin", "sqrt", "tan",
@@ -37,6 +55,9 @@ _COMPILER_MACRO_SYMBOLS = frozenset(
 )
 _DEFAULT_EXTERNAL_NAMESPACES = frozenset({"std", "AscendC", "MicroAPI"})
 _USING_NAMESPACE_RE = re.compile(r"\busing\s+namespace\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*;")
+_NAMED_TYPE_RE = re.compile(
+    r"\b(?:class|struct|enum(?:\s+class)?|typename|typedef)\s+([A-Za-z_]\w*)\b"
+)
 _DECL_TYPE_RE_TEMPLATE = (
     r"(?:^|[;{{}},(])\s*"
     r"(?:(?:const|volatile|static|mutable|typename|struct|class)\s+)*"
@@ -58,7 +79,9 @@ class CallResolutionFacts:
     using_namespaces_by_file: dict[str, set[str]] = field(default_factory=dict)
     source_text_by_file: dict[str, str] = field(default_factory=dict)
     internal_classes: set[str] = field(default_factory=set)
+    known_type_names: set[str] = field(default_factory=set)
     receiver_type_facts: ReceiverTypeFacts | None = None
+    signature_index: dict[str, FunctionSignatureFacts] = field(default_factory=dict)
 
 
 def collect_call_resolution_facts(
@@ -89,6 +112,13 @@ def collect_call_resolution_facts(
         namespaces = {m.group(1) for m in _USING_NAMESPACE_RE.finditer(source)}
         if namespaces:
             facts.using_namespaces_by_file.setdefault(rel, set()).update(namespaces)
+        for match in _NAMED_TYPE_RE.finditer(source):
+            facts.known_type_names.add(match.group(1))
+
+    aliases = collect_type_aliases(facts.source_text_by_file)
+    for alias_name in aliases:
+        facts.known_type_names.add(alias_name.split("::")[-1])
+        facts.known_type_names.add(alias_name)
 
     if not doc_evidence:
         from uo.scripts.cann_doc_evidence import packaged_doc_evidence_bundle
@@ -118,6 +148,7 @@ def collect_call_resolution_facts(
         facts.source_text_by_file,
         official_contracts=facts.official_contracts,
     )
+    facts.signature_index = build_signature_index(functions, facts.source_text_by_file)
     return facts
 
 
@@ -186,6 +217,26 @@ def resolve_call_site(
         normalized_expression=site.call_expression,
     )
     receiver_type = _infer_receiver_type(site, caller, facts)
+    aliases = (
+        facts.receiver_type_facts.type_aliases
+        if facts.receiver_type_facts is not None
+        else {}
+    )
+    if (site.receiver_type_or_object or "").strip():
+        receiver_type = narrow_receiver_for_method_call(receiver_type, aliases) or receiver_type
+    source_text = facts.source_text_by_file.get(site.file_path, "")
+    arg_facts = infer_call_argument_facts(
+        site, caller, facts.receiver_type_facts, source_text=source_text
+    )
+    if not site.explicit_template_arguments and site.template_args:
+        site.explicit_template_arguments = tuple(
+            part.strip()
+            for part in _split_top_level(site.template_args, ",")
+            if part.strip()
+        )
+    if not site.argument_expressions and arg_facts:
+        site.argument_expressions = tuple(item.expression for item in arg_facts)
+    site.argument_type_candidates = tuple(item.type_candidates for item in arg_facts)
     site_node = {
         "id": site_id, "layer": "kernel", "node_type": "CallSite",
         "name": site.callee_name,
@@ -196,7 +247,11 @@ def resolve_call_site(
         "receiver_type_or_object": site.receiver_type_or_object,
         "receiver_object": _receiver_object(site.receiver_type_or_object),
         "receiver_type": receiver_type,
-        "template_args": site.template_args, "argument_count": site.argument_count,
+        "template_args": site.template_args,
+        "argument_count": site.argument_count,
+        "explicit_template_arguments": list(site.explicit_template_arguments),
+        "argument_expressions": list(site.argument_expressions),
+        "argument_type_candidates": [list(item) for item in site.argument_type_candidates],
         "ordinal_in_function": site.ordinal_in_function, "snippet_hash": site.snippet_hash,
         "owning_function_id": caller.stable_id, "owning_identity_key": caller.identity_key,
     }
@@ -243,20 +298,132 @@ def resolve_call_site(
     candidates = _candidate_callees(
         site, caller, by_name=by_name, by_qn=by_qn, receiver_type=receiver_type
     )
+    if len(candidates) > 1 and receiver_type:
+        candidates = filter_candidates_by_receiver_owners(
+            candidates, receiver_type, aliases
+        )
+    signature_matches: list[SignatureMatch] = []
+    if len(candidates) > 1:
+        if not facts.signature_index:
+            facts.signature_index = build_signature_index(
+                [item for values in by_name.values() for item in values],
+                facts.source_text_by_file,
+            )
+        filtered, signature_matches, unique = filter_candidates_by_signature(
+            site,
+            caller,
+            candidates,
+            signature_index=facts.signature_index,
+            receiver_facts=facts.receiver_type_facts,
+            receiver_type=receiver_type,
+            source_text=source_text,
+        )
+        site_node["argument_expressions"] = list(site.argument_expressions)
+        site_node["argument_type_candidates"] = [
+            list(item) for item in site.argument_type_candidates
+        ]
+        site_node["explicit_template_arguments"] = list(site.explicit_template_arguments)
+        if unique and len(filtered) == 1:
+            chosen = filtered[0]
+            match = next(
+                (item for item in signature_matches if item.function_id == chosen.stable_id),
+                None,
+            )
+            evidence = ["signature_unique"]
+            if match:
+                evidence.extend(list(match.reasons)[:6])
+            edge = {
+                **base_edge,
+                "id": mint_edge_id("calls", caller.stable_id, chosen.stable_id, site_id),
+                "target": chosen.stable_id, "target_status": "resolved",
+                "candidate_ids": [chosen.stable_id],
+                "confidence": "source_verified",
+                "verification_source": "+".join(evidence),
+                "resolution_kind": "resolved_by_signature",
+                "candidate_scores": _score_payload([(chosen, 1000, evidence)]),
+                "signature_matches": [item.as_dict() for item in signature_matches],
+            }
+            return edge, site_node, None
+        candidates = filtered
+        equiv_kind, equiv_reason = classify_equivalent_candidates(
+            candidates,
+            receiver_type=receiver_type,
+            aliases=aliases,
+            signature_index=facts.signature_index,
+        )
+        if equiv_kind == "conditional":
+            ids = [c.stable_id for c in candidates]
+            edge = {
+                **base_edge,
+                "id": mint_edge_id("calls", caller.stable_id, "conditional", site_id),
+                "target": None,
+                "target_status": "conditional",
+                "candidate_ids": ids,
+                "confidence": "candidate",
+                "verification_source": equiv_reason or "signature_equivalent_conditional_owners",
+                "resolution_kind": "conditional_candidate",
+                "candidate_scores": _score_payload(
+                    [(c, 800, ["conditional_peer"]) for c in candidates]
+                ),
+                "signature_matches": [item.as_dict() for item in signature_matches],
+            }
+            unres = {
+                "id": f"UNRES_CALL_COND_{site_id[-12:]}",
+                "kind": "call_target_conditional",
+                "message": f"Conditional callee set for {site.call_expression}",
+                "file_path": site.file_path,
+                "start_line": site.line,
+                "caller_function_id": caller.stable_id,
+                "callee_name": site.callee_name,
+                "candidate_ids": ids,
+                "candidate_scores": edge["candidate_scores"],
+                "unresolved_reason": "signature_equivalent_conditional_owners",
+            }
+            return edge, site_node, unres
+        if equiv_kind == "identical_body_duplicate":
+            equivalent, _ = choose_equivalent_candidate(
+                candidates,
+                receiver_type=receiver_type,
+                aliases=aliases,
+                signature_index=facts.signature_index,
+            )
+            if equivalent is not None:
+                evidence = [equiv_reason, "identical_body"]
+                edge = {
+                    **base_edge,
+                    "id": mint_edge_id("calls", caller.stable_id, equivalent.stable_id, site_id),
+                    "target": equivalent.stable_id,
+                    "target_status": "resolved",
+                    "candidate_ids": [equivalent.stable_id],
+                    "confidence": "source_verified",
+                    "verification_source": "+".join(evidence),
+                    "resolution_kind": "resolved_by_source",
+                    "candidate_scores": _score_payload([(equivalent, 900, evidence)]),
+                    "signature_matches": [item.as_dict() for item in signature_matches],
+                }
+                return edge, site_node, None
+
     chosen, score_rows = _choose_candidate(site, caller, candidates, receiver_type)
     if chosen is not None:
         evidence = score_rows[0][2] if score_rows else ["unique_candidate"]
+        source_like = any(
+            e in {"exact_qualified_name", "receiver_type", "same_class", "this_receiver"}
+            for e in evidence
+        )
         edge = {
             **base_edge,
             "id": mint_edge_id("calls", caller.stable_id, chosen.stable_id, site_id),
             "target": chosen.stable_id, "target_status": "resolved",
             "candidate_ids": [chosen.stable_id],
-            "confidence": "source_verified" if any(
-                e in {"exact_qualified_name", "receiver_type", "same_class"} for e in evidence
-            ) else "structurally_inferred",
+            "confidence": "source_verified" if source_like else "structurally_inferred",
             "verification_source": "+".join(evidence) if evidence else "unique_candidate",
+            "resolution_kind": (
+                "resolved_by_source" if source_like else "resolved_by_signature"
+            ),
             "candidate_scores": _score_payload(score_rows),
         }
+        if signature_matches:
+            edge["signature_matches"] = [item.as_dict() for item in signature_matches]
         return edge, site_node, None
 
     if candidates:
@@ -266,8 +433,11 @@ def resolve_call_site(
             "id": mint_edge_id("calls", caller.stable_id, "candidate_set", site_id),
             "target": None, "target_status": "candidate_set", "candidate_ids": ids,
             "confidence": "candidate", "verification_source": "ranked_ambiguous_candidates",
+            "resolution_kind": "candidate_set",
             "candidate_scores": _score_payload(score_rows),
         }
+        if signature_matches:
+            edge["signature_matches"] = [item.as_dict() for item in signature_matches]
         unres = {
             "id": f"UNRES_CALL_AMBIG_{site_id[-12:]}", "kind": "call_target_ambiguous",
             "message": f"Ambiguous callee for {site.call_expression}",
@@ -298,6 +468,7 @@ def _classify_unindexed_target(
             site, caller, site_id, site_node, base_edge,
             node_type="CompileMacro", status="macro", reason=reason, confidence=confidence,
             source_definitions=facts.source_macro_definitions.get(name),
+            resolution_kind="resolved_by_source" if name in facts.source_macros else "external_by_heuristic",
         )
 
     contract, contract_reason = _matching_official_contract(site, receiver_type, facts)
@@ -310,6 +481,9 @@ def _classify_unindexed_target(
             reason=contract_reason,
             confidence="documented",
             contract=contract,
+            resolution_kind=(
+                "resolved_by_official_contract" if kind == "macro" else "external_by_exact_contract"
+            ),
         )
 
     if name in facts.standard_external:
@@ -317,6 +491,20 @@ def _classify_unindexed_target(
             site, caller, site_id, site_node, base_edge,
             node_type="ExternalFunction", status="external",
             reason="standard_library_symbol", confidence="structurally_inferred",
+            resolution_kind="external_by_heuristic",
+        )
+
+    # Type construction only when source facts prove the name is a type.
+    if (
+        not (site.receiver_type_or_object or "").strip()
+        and site.argument_count == 1
+        and name in facts.known_type_names
+    ):
+        return _emit_target(
+            site, caller, site_id, site_node, base_edge,
+            node_type="ExternalFunction", status="external",
+            reason="type_like_construction", confidence="source_verified",
+            resolution_kind="external_by_exact_contract",
         )
 
     hint = (site.callee_qualified_hint or "").replace(" ", "")
@@ -356,7 +544,7 @@ def _classify_unindexed_target(
         )
     return _emit_missing(
         site, caller, site_id, site_node, base_edge,
-        kind="internal_definition_not_indexed",
+        kind="project_definition_not_indexed",
         reason="unqualified_symbol_has_no_indexed_definition",
         receiver_type=receiver_type,
     )
@@ -383,7 +571,11 @@ def _matching_official_contract(
             if not has_receiver:
                 continue
             allowed_types = [str(value or "") for value in contract.get("receiver_types") or []]
-            if not receiver_type or not any(_type_matches_scope(receiver_type, value) for value in allowed_types):
+            if not receiver_type or not any(
+                _type_matches_scope(candidate, value)
+                for candidate in _receiver_type_match_candidates(receiver_type, facts)
+                for value in allowed_types
+            ):
                 continue
             return contract, "official_contract:receiver_type"
         if "::" in hint:
@@ -410,6 +602,7 @@ def _emit_target(
     confidence: str,
     contract: dict[str, Any] | None = None,
     source_definitions: list[dict[str, Any]] | None = None,
+    resolution_kind: str = "",
 ) -> tuple[dict[str, Any], dict[str, Any], None]:
     canonical_names = list(contract.get("qualified_names") or []) if contract else []
     qualified = str(canonical_names[0]) if canonical_names else (site.callee_qualified_hint or site.callee_name)
@@ -449,11 +642,15 @@ def _emit_target(
             "semantic_summary": contract.get("semantic_summary"),
             "source_authority": contract.get("source_authority"),
         }
+    kind = resolution_kind or (
+        "external_by_exact_contract" if contract else "external_by_heuristic"
+    )
     edge = {
         **base_edge,
         "id": mint_edge_id("calls", caller.stable_id, target_id, site_id),
         "target": target_id, "target_status": status, "candidate_ids": [],
         "confidence": confidence, "verification_source": reason,
+        "resolution_kind": kind,
         "_target_node": target_node,
     }
     return edge, site_node, None
@@ -475,6 +672,8 @@ def _emit_missing(
         "id": mint_edge_id("calls", caller.stable_id, f"missing:{site.callee_name}", site_id),
         "target": None, "target_status": "missing", "candidate_ids": [],
         "confidence": "unresolved", "verification_source": reason,
+        "unresolved_kind": kind,
+        "resolution_kind": "missing",
     }
     unres = {
         "id": f"UNRES_CALL_{site_id[-12:]}", "kind": kind,
@@ -631,16 +830,35 @@ def _receiver_type_supported(
 ) -> bool:
     if not receiver_type:
         return False
-    if any(_type_matches_scope(receiver_type, scope) for scope in facts.internal_classes):
+    candidates = _receiver_type_match_candidates(receiver_type, facts)
+    if any(
+        _type_matches_scope(candidate, scope)
+        for candidate in candidates
+        for scope in facts.internal_classes
+    ):
         return True
     for contract in facts.official_contracts.get(site.callee_name, []):
         counts = {int(value) for value in contract.get("argument_counts") or []}
         if counts and site.argument_count not in counts:
             continue
         allowed = [str(value or "") for value in contract.get("receiver_types") or []]
-        if allowed and any(_type_matches_scope(receiver_type, value) for value in allowed):
+        if allowed and any(
+            _type_matches_scope(candidate, value)
+            for candidate in candidates
+            for value in allowed
+        ):
             return True
     return False
+
+
+def _receiver_type_match_candidates(
+    receiver_type: str, facts: CallResolutionFacts
+) -> set[str]:
+    aliases = {}
+    if facts.receiver_type_facts is not None:
+        aliases = facts.receiver_type_facts.type_aliases
+    expanded = expand_type_candidates(receiver_type, aliases, max_depth=3)
+    return {item for item in expanded if item} or {receiver_type}
 
 
 def _legacy_receiver_type(

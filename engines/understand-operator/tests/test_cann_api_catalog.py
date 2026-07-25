@@ -56,3 +56,18 @@ def test_scalar_ceil_division_is_official_but_tensor_ceil_is_not_aliased() -> No
     assert contract["argument_counts"] == [2]
     assert contract["qualified_names"] == ["AscendC::CeilDivision"]
     assert "Ceil" not in contract.get("aliases", [])
+    assert "Ceil" not in contracts
+
+
+def test_high_frequency_copy_arities_are_not_broadened() -> None:
+    contracts = load_packaged_contracts()
+    assert contracts["DataCopy"]["argument_counts"] == [3, 6]
+    assert contracts["DataCopyPad"]["argument_counts"] == [3, 4, 7, 10, 11]
+    assert contracts["Duplicate"]["argument_counts"] == [3, 5]
+
+
+def test_select_reg_contract_keeps_documented_arity() -> None:
+    contracts = load_packaged_reg_contracts()
+    select = next(item for item in contracts.values() if item["symbol_or_macro"] == "Select")
+    assert select["argument_counts"] == [4]
+    assert select["qualified_names"] == ["AscendC::Reg::Select"]
