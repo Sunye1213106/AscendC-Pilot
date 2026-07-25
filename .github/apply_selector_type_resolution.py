@@ -58,7 +58,12 @@ receiver_path.write_text(r)
 cg = call_graph_path.read_text()
 cg = cg.replace(
 "    method_contract, method_reason = _matching_official_contract(site, receiver_type, facts)\n",
-"    method_contract, method_reason = _matching_official_contract(site, receiver_type, facts)\n    if method_contract is None:\n        legacy_receiver_type = _legacy_receiver_type(site, caller, facts)\n        if legacy_receiver_type and legacy_receiver_type != receiver_type:\n            method_contract, method_reason = _matching_official_contract(\n                site, legacy_receiver_type, facts\n            )\n",
+"    contract_receiver_type = receiver_type\n    method_contract, method_reason = _matching_official_contract(site, receiver_type, facts)\n    if method_contract is None:\n        legacy_receiver_type = _legacy_receiver_type(site, caller, facts)\n        if legacy_receiver_type and legacy_receiver_type != receiver_type:\n            method_contract, method_reason = _matching_official_contract(\n                site, legacy_receiver_type, facts\n            )\n            if method_contract is not None:\n                contract_receiver_type = legacy_receiver_type\n",
+)
+cg = cg.replace(
+"                if _type_matches_scope(receiver_type, candidate.class_or_namespace)\n",
+"                if _type_matches_scope(contract_receiver_type, candidate.class_or_namespace)\n",
+1,
 )
 call_graph_path.write_text(cg)
 
