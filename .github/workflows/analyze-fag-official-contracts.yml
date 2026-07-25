@@ -18,6 +18,7 @@ jobs:
       - name: Apply catalog integration
         run: |
           python .github/apply_cann_catalog.py
+          python .github/apply_cann_reg_catalog.py
           python -m py_compile \
             engines/understand-operator/uo/scripts/cann_doc_evidence.py \
             engines/understand-operator/uo/scripts/function_call_graph.py \
@@ -50,10 +51,30 @@ jobs:
       - name: Upload real FAG report
         uses: actions/upload-artifact@v4
         with:
-          name: cann-api-catalog-validation-debug
+          name: cann-api-catalog-validation-full
           path: |
             cann-api-catalog-validation.json
             cann-api-catalog-validation.log
             cann-api-catalog-validation.status
       - name: Gate real FAG validation
         run: test "$(cat cann-api-catalog-validation.status)" = "0"
+      - name: Commit validated implementation
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add \
+            engines/understand-operator/pyproject.toml \
+            engines/understand-operator/uo/resources/cann_api_catalog.yaml \
+            engines/understand-operator/uo/resources/cann_reg_api_catalog.yaml \
+            engines/understand-operator/uo/scripts/cann_doc_evidence.py \
+            engines/understand-operator/uo/scripts/function_call_graph.py \
+            engines/understand-operator/uo/scripts/function_body.py \
+            engines/understand-operator/tests/test_cann_api_catalog.py \
+            engines/understand-operator/tests/test_call_external_classification.py \
+            engines/understand-operator/tests/test_call_scanner.py
+          if git diff --cached --quiet; then
+            echo 'No implementation changes to commit.'
+          else
+            git commit -m 'feat(uo): resolve CANN calls from official symbol catalogs'
+            git push origin HEAD:agent/tg-workflow-contract-closure
+          fi
