@@ -36,6 +36,9 @@ def main() -> None:
     seed_ids = {fn.stable_id for fn in seed_functions}
     seed_edges = [edge for edge in edges if edge.get('source') in seed_ids]
     status = Counter(str(edge.get('target_status') or '') for edge in seed_edges)
+    status_symbols = defaultdict(Counter)
+    for edge in seed_edges:
+        status_symbols[str(edge.get('target_status') or '')][str(edge.get('callee_name') or '')] += 1
     unresolved_seed = [item for item in unresolved if item.get('caller_function_id') in seed_ids]
     kinds = Counter(str(item.get('kind') or '') for item in unresolved_seed)
     watched_names = {'Get', 'GetTensor', 'Init', 'UnInit', 'LoadDataToL0B', 'GetReused'}
@@ -76,6 +79,7 @@ def main() -> None:
         'function_count': len(functions),
         'edge_count': len(seed_edges),
         'status': dict(status),
+        'status_symbols': {key: dict(value) for key, value in status_symbols.items()},
         'unresolved_kinds': dict(kinds),
         'watched': {name: dict(values) for name, values in watched.items()},
         'candidate_samples': dict(samples),
