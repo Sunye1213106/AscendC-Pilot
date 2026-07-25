@@ -1,4 +1,4 @@
-name: Diagnose full FAG discovery regression
+name: Verify PR3 baseline failures
 
 on:
   pull_request:
@@ -9,42 +9,34 @@ permissions:
   contents: read
 
 jobs:
-  diagnose:
+  baseline:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: agent/tg-workflow-contract-closure
+          ref: b9f61a07ba8d33786792bd0b986af703d37b1063
           fetch-depth: 1
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Apply source patch
-        run: python tools/agent_apply_real_fag_discovery_fixes.py
       - name: Install full test dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e engines/understand-operator -e pilot pytest
-      - name: Capture test reports
+      - name: Run suspected pre-existing failures
         env:
           PYTHONPATH: ${{ github.workspace }}/engines/understand-operator:${{ github.workspace }}/pilot
         run: |
           mkdir -p diagnostics
           set +e
-          pytest -vv engines/understand-operator/tests/test_fag_graph_identity_and_perf.py \
-            > diagnostics/focused.txt 2>&1
-          echo $? > diagnostics/focused-exit.txt
-          mapfile -t TEST_FILES < <(
-            grep -rlE 'resolve_entrypoints|propose_extract_plan|extract_host_subgraph|extract_kernel_subgraph' \
-              engines/understand-operator/tests --include='test_*.py' | sort -u
-          )
-          printf '%s\n' "${TEST_FILES[@]}" > diagnostics/selected-tests.txt
-          pytest -vv "${TEST_FILES[@]}" > diagnostics/related.txt 2>&1
-          echo $? > diagnostics/related-exit.txt
+          pytest -vv \
+            engines/understand-operator/tests/test_session_optimizations.py::test_propagate_empty_tensor_siblings \
+            engines/understand-operator/tests/test_synthetic_operator_pipeline.py::test_opdef_unquoted_and_input_desc_hint \
+            > diagnostics/pr3-baseline.txt 2>&1
+          echo $? > diagnostics/pr3-baseline-exit.txt
           set -e
       - uses: actions/upload-artifact@v4
         with:
-          name: real-fag-full-regression-diagnostics
+          name: pr3-baseline-unrelated-failures
           path: diagnostics
           retention-days: 1
