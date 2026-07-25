@@ -16,14 +16,15 @@ jobs:
         run: |
           set -o pipefail
           {
-            echo '=== candidate files ==='
-            find engines/understand-operator -type f \( -name '*.py' -o -name '*.md' -o -name '*.yaml' \) | sort
-            echo
             echo '=== macro/preprocessor/compiler API references ==='
-            rg -n -i 'macro|preprocessor|libclang|clang|compile_commands|translation.?unit|cursor.kind|macro_definition|macro_instantiation|source.lookup|codebase.memory|cbm|mcp' engines/understand-operator || true
+            grep -RInE 'macro|preprocessor|libclang|clang|compile_commands|translation.?unit|cursor.kind|macro_definition|macro_instantiation|source.lookup|codebase.memory|cbm|mcp|cann_doc_evidence|load_doc_contract' \
+              engines/understand-operator/uo engines/understand-operator/tests \
+              --include='*.py' --include='*.md' --include='*.yaml' || true
             echo
             echo '=== call graph related definitions ==='
-            rg -n 'class CallSite|def extract_call_sites|def build_call_edges|def resolve_call_site|receiver_type|argument_count|include|declaration' engines/understand-operator/uo/scripts engines/understand-operator/tests || true
+            grep -RInE 'class CallSite|def extract_call_sites|def build_call_edges|def resolve_call_site|receiver_type|argument_count|include|declaration' \
+              engines/understand-operator/uo/scripts engines/understand-operator/tests \
+              --include='*.py' || true
           } | tee call-resolution-inspection.txt
       - uses: actions/upload-artifact@v4
         with:
