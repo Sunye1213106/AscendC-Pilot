@@ -1,0 +1,59 @@
+name: Inspect FAG wrappers and macros
+
+on:
+  pull_request:
+    branches: [cursor/semantic-control-plane-closure-44d6]
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/tg-workflow-contract-closure
+      - uses: actions/checkout@v4
+        with:
+          repository: Sunye1213106/flashattention
+          ref: 94e37bc4630a6b2b5695e6a76809d1e94931d8c8
+          path: real-fag
+      - name: Collect exact definitions and call contexts
+        run: |
+          set -o pipefail
+          {
+            echo '=== LOAD DATA DEFINITIONS/USES ==='
+            rg -n -C 8 'LoadDataToL0A|LoadDataToL0B|LoadDataToL0AMx|LoadDataToL0BMx|\bLoadData\s*\(' real-fag || true
+            echo '=== MIN MAX CEIL DEFINITIONS/USES ==='
+            rg -n -C 5 '(^|[^A-Za-z0-9_])(Min|Max|Ceil|CeilDivision)\s*(<[^;{()]*>)?\s*\(' real-fag || true
+            echo '=== FAG INVOKE MACRO DEFINITIONS/USES ==='
+            rg -n -C 10 '#\s*define\s+INVOKE_FAG_|INVOKE_FAG_GENERAL_' real-fag || true
+            echo '=== RELATED FUNCTION DEFINITIONS ==='
+            rg -n -C 8 '(inline|static|__aicore__).*?(LoadDataToL0|CeilDivision|\bMin\b|\bMax\b)' real-fag || true
+          } > fag-wrapper-macro-context.txt
+          python - <<'PY'
+          from pathlib import Path
+          import json, re
+          root = Path('real-fag')
+          symbols = ['LoadDataToL0A','LoadDataToL0B','LoadDataToL0AMx','LoadDataToL0BMx','Min','Max','Ceil','CeilDivision']
+          rows=[]
+          for p in root.rglob('*'):
+              if not p.is_file() or p.suffix.lower() not in {'.h','.hpp','.cpp','.cc','.cxx'}:
+                  continue
+              text=p.read_text(encoding='utf-8',errors='ignore')
+              for sym in symbols:
+                  for m in re.finditer(rf'\b{re.escape(sym)}\s*(?:<[^;{{}}()]*>)?\s*\(', text):
+                      line=text.count('\n',0,m.start())+1
+                      ls=text.splitlines()
+                      lo=max(0,line-5); hi=min(len(ls),line+4)
+                      rows.append({'symbol':sym,'file':p.as_posix(),'line':line,'context':'\n'.join(f'{i+1}: {ls[i]}' for i in range(lo,hi))})
+          Path('fag-wrapper-sites.json').write_text(json.dumps(rows,ensure_ascii=False,indent=2),encoding='utf-8')
+          print('sites',len(rows))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fag-wrapper-macro-context
+          path: |
+            fag-wrapper-macro-context.txt
+            fag-wrapper-sites.json
