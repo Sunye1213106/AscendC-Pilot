@@ -19,6 +19,7 @@ jobs:
         run: |
           python .github/apply_cann_catalog.py
           python .github/apply_cann_reg_catalog.py
+          python .github/apply_cann_reg_logic_catalog.py
           python -m py_compile \
             engines/understand-operator/uo/scripts/cann_doc_evidence.py \
             engines/understand-operator/uo/scripts/function_call_graph.py \
@@ -51,7 +52,7 @@ jobs:
       - name: Upload real FAG report
         uses: actions/upload-artifact@v4
         with:
-          name: cann-api-catalog-validation-full
+          name: cann-api-catalog-validation-final
           path: |
             cann-api-catalog-validation.json
             cann-api-catalog-validation.log
@@ -66,6 +67,7 @@ jobs:
             engines/understand-operator/pyproject.toml \
             engines/understand-operator/uo/resources/cann_api_catalog.yaml \
             engines/understand-operator/uo/resources/cann_reg_api_catalog.yaml \
+            engines/understand-operator/uo/resources/cann_reg_logic_catalog.yaml \
             engines/understand-operator/uo/scripts/cann_doc_evidence.py \
             engines/understand-operator/uo/scripts/function_call_graph.py \
             engines/understand-operator/uo/scripts/function_body.py \
