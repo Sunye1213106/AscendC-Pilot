@@ -687,9 +687,7 @@ def extract_host_subgraph(
             edges.append({"id": stable_id("E_", src, key_id), "type": "writes", "source": src, "target": key_id})
 
         # TDF writes for tiling_writer and workspace_writer (offsets often land on tiling sinks)
-        if role in {"tiling_writer", "workspace_writer"} or (
-            name_l in tiling_writers and role != "provenance_helper"
-        ):
+        if role in {"tiling_writer", "workspace_writer"}:
             fields = _collect_tdf_fields(scan_body, sink_recvs, non_sink_roots)
             seen_fields: set[str] = set()
             for field_name in fields:

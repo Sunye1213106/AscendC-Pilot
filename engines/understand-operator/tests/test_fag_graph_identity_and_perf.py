@@ -9,6 +9,10 @@ from uo.scripts.function_body import (
     iter_function_definitions,
 )
 from uo.scripts.function_call_graph import resolve_call_site
+from uo.scripts.extract_kernel_subgraph import (
+    parse_constexpr_block_domains,
+    parse_enum_class_domains,
+)
 
 
 def _fn(name: str, cls: str, sig: str, stable_id: str) -> FunctionDefinition:
@@ -85,3 +89,26 @@ def test_function_definition_cache_avoids_second_read(tmp_path: Path, monkeypatc
     second = iter_function_definitions(tmp_path, "sample.cpp", architecture="arch35")
     assert first and second
     assert reads == 1
+
+
+def test_declared_domain_parsers_compute_lines_without_external_state() -> None:
+    enum_text = """// header
+enum class Mode { A = 0, B = 1 };
+"""
+    enum_domains = parse_enum_class_domains(enum_text, "mode.h")
+    assert enum_domains and enum_domains[0].start_line == 2
+
+    constexpr_text = """// header
+constexpr int MODE_A = 0;
+constexpr int MODE_B = 1;
+"""
+    constexpr_domains = parse_constexpr_block_domains(constexpr_text, "mode.h")
+    assert constexpr_domains and constexpr_domains[0].start_line == 2
+
+
+def test_host_tdf_writes_do_not_use_short_name_fallback() -> None:
+    from inspect import getsource
+    from uo.scripts.extract_host_subgraph import extract_host_subgraph
+
+    source = getsource(extract_host_subgraph)
+    assert "name_l in tiling_writers" not in source

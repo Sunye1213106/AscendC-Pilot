@@ -1029,6 +1029,7 @@ def collect_declared_domains(
 
 def parse_enum_class_domains(text: str, file_path: str = "") -> list[DeclaredDomain]:
     out: list[DeclaredDomain] = []
+    text_line_starts = _line_starts(text)
     for match in ENUM_CLASS_RE.finditer(text):
         type_name = match.group(1)
         body = match.group(2)
@@ -1063,6 +1064,7 @@ def parse_constexpr_block_domains(text: str, file_path: str = "") -> list[Declar
     if not matches:
         return []
     out: list[DeclaredDomain] = []
+    text_line_starts = _line_starts(text)
     i = 0
     while i < len(matches):
         ctype = matches[i].group(1)
@@ -1081,7 +1083,7 @@ def parse_constexpr_block_domains(text: str, file_path: str = "") -> list[Declar
             j += 1
         entries = [EnumEntry(name=m.group(2), value=int(m.group(3))) for m in run]
         if _is_enum_like_constexpr_block(entries):
-            line = _line_for(_line_starts(text), run[0].start())
+            line = _line_for(text_line_starts, run[0].start())
             # Synthetic type name from shared prefix or first/last token.
             type_name = _infer_block_type_name(entries)
             out.append(
