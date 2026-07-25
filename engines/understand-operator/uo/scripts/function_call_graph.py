@@ -6,6 +6,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from uo.scripts.call_equivalence import (
+    choose_equivalent_candidate,
+    filter_candidates_by_receiver_owners,
+    narrow_receiver_for_method_call,
+)
 from uo.scripts.call_signature_facts import (
     FunctionSignatureFacts,
     SignatureMatch,
@@ -38,8 +43,13 @@ _STANDARD_EXTERNAL_SYMBOLS = frozenset(
         "abs", "acos", "asin", "atan", "atan2", "ceil", "cos", "exp", "floor",
         "fmax", "fmin", "log", "log2", "max", "memcpy", "memmove", "memset",
         "min", "pow", "printf", "sin", "sqrt", "tan",
+        # AscendC / MicroAPI high-frequency intrinsics commonly used unqualified.
+        "vstas", "vstus", "vads", "vmuls", "vadds",
+        "FusedMulDstAdd", "FusedExpSub", "ExpSub",
+        "Gather", "Reduce", "ReduceMax", "WholeReduceSum",
     }
 )
+_TYPE_CONSTRUCTION_RE = re.compile(r"^[A-Z][A-Za-z0-9_]*Type$")
 _COMPILER_MACRO_SYMBOLS = frozenset(
     {"likely", "unlikely", "__builtin_expect", "__builtin_assume", "__builtin_unreachable"}
 )
@@ -196,6 +206,13 @@ def resolve_call_site(
         normalized_expression=site.call_expression,
     )
     receiver_type = _infer_receiver_type(site, caller, facts)
+    aliases = (
+        facts.receiver_type_facts.type_aliases
+        if facts.receiver_type_facts is not None
+        else {}
+    )
+    if (site.receiver_type_or_object or "").strip():
+        receiver_type = narrow_receiver_for_method_call(receiver_type, aliases) or receiver_type
     source_text = facts.source_text_by_file.get(site.file_path, "")
     arg_facts = infer_call_argument_facts(
         site, caller, facts.receiver_type_facts, source_text=source_text
@@ -219,7 +236,8 @@ def resolve_call_site(
         "receiver_type_or_object": site.receiver_type_or_object,
         "receiver_object": _receiver_object(site.receiver_type_or_object),
         "receiver_type": receiver_type,
-        "template_args": site.template_args, "argument_count": site.argument_count,
+        "template_args": site.template_args,
+        "argument_count": site.argument_count,
         "explicit_template_arguments": list(site.explicit_template_arguments),
         "argument_expressions": list(site.argument_expressions),
         "argument_type_candidates": [list(item) for item in site.argument_type_candidates],
@@ -269,6 +287,10 @@ def resolve_call_site(
     candidates = _candidate_callees(
         site, caller, by_name=by_name, by_qn=by_qn, receiver_type=receiver_type
     )
+    if len(candidates) > 1 and receiver_type:
+        candidates = filter_candidates_by_receiver_owners(
+            candidates, receiver_type, aliases
+        )
     signature_matches: list[SignatureMatch] = []
     if len(candidates) > 1:
         if not facts.signature_index:
@@ -311,6 +333,28 @@ def resolve_call_site(
             }
             return edge, site_node, None
         candidates = filtered
+        equivalent, equiv_reason = choose_equivalent_candidate(
+            candidates,
+            receiver_type=receiver_type,
+            aliases=aliases,
+            signature_index=facts.signature_index,
+        )
+        if equivalent is not None:
+            evidence = [equiv_reason, "signature_equivalent"]
+            edge = {
+                **base_edge,
+                "id": mint_edge_id("calls", caller.stable_id, equivalent.stable_id, site_id),
+                "target": equivalent.stable_id, "target_status": "resolved",
+                "candidate_ids": [c.stable_id for c in candidates],
+                "confidence": "structurally_inferred",
+                "verification_source": "+".join(evidence),
+                "candidate_scores": _score_payload(
+                    [(equivalent, 900, evidence)]
+                    + [(c, 800, ["signature_equivalent_peer"]) for c in candidates if c.stable_id != equivalent.stable_id]
+                ),
+                "signature_matches": [item.as_dict() for item in signature_matches],
+            }
+            return edge, site_node, None
 
     chosen, score_rows = _choose_candidate(site, caller, candidates, receiver_type)
     if chosen is not None:
@@ -391,6 +435,18 @@ def _classify_unindexed_target(
             site, caller, site_id, site_node, base_edge,
             node_type="ExternalFunction", status="external",
             reason="standard_library_symbol", confidence="structurally_inferred",
+        )
+
+    # Enum-/strong-typedef style constructions: FooType(value)
+    if (
+        not (site.receiver_type_or_object or "").strip()
+        and site.argument_count == 1
+        and _TYPE_CONSTRUCTION_RE.match(name)
+    ):
+        return _emit_target(
+            site, caller, site_id, site_node, base_edge,
+            node_type="ExternalFunction", status="external",
+            reason="type_like_construction", confidence="structurally_inferred",
         )
 
     hint = (site.callee_qualified_hint or "").replace(" ", "")

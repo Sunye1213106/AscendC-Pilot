@@ -79,6 +79,48 @@ def normalize_declared_type(type_name: str) -> str:
     return text.strip("*& ")
 
 
+_NON_OBJECT_TYPES = frozenset(
+    {
+        "",
+        "void",
+        "nullptr",
+        "nullptr_t",
+        "std::nullptr_t",
+        "null_ptr",
+        "NULL",
+    }
+)
+
+
+def prune_non_object_types(type_names: set[str]) -> set[str]:
+    """Drop branches that cannot host method calls (nullptr_t/void/...)."""
+    out: set[str] = set()
+    for raw in type_names:
+        text = normalize_declared_type(raw)
+        base = canonical_base(text)
+        if not text or text in _NON_OBJECT_TYPES or base in _NON_OBJECT_TYPES:
+            continue
+        out.add(text)
+    return out
+
+
+def narrow_receiver_for_method_call(
+    receiver_type: str,
+    aliases: Mapping[str, set[str]] | None = None,
+) -> str:
+    """Narrow conditional/alias receivers to a unique object type when possible."""
+    if not receiver_type:
+        return ""
+    expanded = expand_type_candidates(receiver_type, aliases, max_depth=3)
+    usable = prune_non_object_types(set(expanded))
+    if not usable:
+        return receiver_type
+    bases = {canonical_base(item) for item in usable if canonical_base(item)}
+    if len(bases) == 1:
+        return sorted(usable, key=lambda value: (len(value), value))[0]
+    return receiver_type
+
+
 def _expand_once(value: str, aliases: Mapping[str, set[str]]) -> set[str]:
     base = canonical_base(value)
     if base in aliases:
