@@ -16,6 +16,12 @@ _CALL_NOISE = frozenset(
         "catch",
         "else",
         "try",
+        "constexpr",
+        "consteval",
+        "constinit",
+        "requires",
+        "noexcept",
+        "static_assert",
         "static_cast",
         "reinterpret_cast",
         "const_cast",
@@ -37,9 +43,12 @@ def build_call_edges_for_functions(
     *,
     unresolved: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Emit CallSite nodes + calls edges for resolved FunctionDefinitions.
+    """Emit CallSite/ExternalFunction nodes and calls edges.
 
-    Returns (nodes, edges). Never invents callee FunctionDefinition nodes.
+    Missing internal definitions are kept unresolved. Calls that carry explicit
+    external evidence (object receiver, namespace/class qualification, or a
+    conventional exported/API-style capitalized symbol) are represented as
+    auditable ExternalFunction nodes rather than false internal missing targets.
     """
     by_id = {fn.stable_id: fn for fn in functions}
     by_name: dict[str, list[FunctionDefinition]] = {}
@@ -50,6 +59,7 @@ def build_call_edges_for_functions(
 
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
+    external_nodes: dict[str, dict[str, Any]] = {}
 
     for fn in functions:
         sites = extract_call_sites(fn, noise=_CALL_NOISE)
@@ -60,9 +70,13 @@ def build_call_edges_for_functions(
             if site_node:
                 nodes.append(site_node)
             if edge:
+                ext_node = edge.pop("_external_target_node", None)
+                if isinstance(ext_node, dict) and ext_node.get("id"):
+                    external_nodes.setdefault(str(ext_node["id"]), ext_node)
                 edges.append(edge)
             if unres:
                 unresolved.append(unres)
+    nodes.extend(external_nodes.values())
     return nodes, edges
 
 
@@ -74,7 +88,7 @@ def resolve_call_site(
     by_qn: dict[str, list[FunctionDefinition]],
     by_id: dict[str, FunctionDefinition],
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None]:
-    """Resolve one CallSite into a calls edge (verified / candidate_set / missing)."""
+    """Resolve one CallSite into a verified, candidate, external, or missing edge."""
     del by_id  # reserved for future CBM edge join
     site_id = mint_scoped_node_id(
         "CALL",
@@ -121,6 +135,37 @@ def resolve_call_site(
     }
 
     if not candidates:
+        external_reason = _external_symbol_reason(site)
+        if external_reason:
+            qualified = site.callee_qualified_hint or site.callee_name
+            ext_id = mint_scoped_node_id(
+                "EXTFN",
+                qualified,
+                "external",
+                normalized_expression=qualified,
+            )
+            ext_node = {
+                "id": ext_id,
+                "layer": "kernel",
+                "node_type": "ExternalFunction",
+                "name": site.callee_name,
+                "qualified_name": qualified,
+                "symbol_scope": "external_or_unindexed",
+                "resolution_status": "external",
+                "classification_reason": external_reason,
+            }
+            edge = {
+                **base_edge,
+                "id": mint_edge_id("calls", caller.stable_id, ext_id, site_id),
+                "target": ext_id,
+                "target_status": "external",
+                "candidate_ids": [],
+                "confidence": "structurally_inferred",
+                "verification_source": external_reason,
+                "_external_target_node": ext_node,
+            }
+            return edge, site_node, None
+
         edge = {
             **base_edge,
             "id": mint_edge_id("calls", caller.stable_id, f"missing:{site.callee_name}", site_id),
@@ -132,8 +177,8 @@ def resolve_call_site(
         }
         unres = {
             "id": f"UNRES_CALL_{site_id[-12:]}",
-            "kind": "call_target_missing",
-            "message": f"No FunctionDefinition candidate for call {site.call_expression}",
+            "kind": "internal_definition_not_indexed",
+            "message": f"No internal FunctionDefinition candidate for call {site.call_expression}",
             "file_path": site.file_path,
             "start_line": site.line,
             "caller_function_id": caller.stable_id,
@@ -189,6 +234,23 @@ def resolve_call_site(
     return edge, site_node, unres
 
 
+def _external_symbol_reason(site: CallSite) -> str:
+    """Return conservative structural evidence that a missing target is external.
+
+    This is operator-agnostic: no API or operator name allowlist is used.
+    """
+    recv = (site.receiver_type_or_object or "").strip()
+    hint = (site.callee_qualified_hint or "").replace(" ", "")
+    if recv and recv not in {".", "->", "this->"}:
+        return "object_receiver_without_internal_definition"
+    if "::" in hint and not hint.startswith("this::"):
+        return "qualified_symbol_without_internal_definition"
+    name = site.callee_name or ""
+    if name and name[0].isupper():
+        return "api_style_symbol_without_internal_definition"
+    return ""
+
+
 def _candidate_callees(
     site: CallSite,
     caller: FunctionDefinition,
@@ -218,8 +280,6 @@ def _candidate_callees(
         if same:
             return _filter_by_arity(same, site.argument_count)
 
-    # An arbitrary object receiver does not prove the caller's class. Keep the
-    # cross-class candidate set unless the source carries an explicit Class:: hint.
     if recv and ("." in recv or "->" in recv):
         return _filter_by_arity(name_hits, site.argument_count)
 
