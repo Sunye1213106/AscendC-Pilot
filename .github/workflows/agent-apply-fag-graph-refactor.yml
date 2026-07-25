@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/tg-workflow-contract-closure
+  pull_request:
+    branches:
+      - cursor/semantic-control-plane-closure-44d6
 
 permissions:
   contents: write
