@@ -25,7 +25,12 @@ def test_tg_primary_actions_have_named_controller_identity_and_precise_writes() 
     assert init_action["execution_mode"] == "primary_interactive"
     assert init_action["agent_id"] == "ascendc-pilot"
     assert init_action["role_id"] == "controller"
-    assert init_action["allowed_write_paths"] == ["tg/init/status.yaml"]
+    assert init_action["allowed_write_paths"] == [
+        "tg/init/status.yaml",
+        "tg/init/kb_fingerprint.yaml",
+        "tg/realization/domain_review.yaml",
+        "tg/realization/binding_lexicon.yaml",
+    ]
 
     assert plan_action["execution_mode"] == "primary_interactive"
     assert plan_action["agent_id"] == "ascendc-pilot"
@@ -33,13 +38,29 @@ def test_tg_primary_actions_have_named_controller_identity_and_precise_writes() 
     assert plan_action["allowed_write_paths"] == ["tg/plan/levels/*/human_supplement.yaml"]
 
 
+def test_deterministic_tg_leases_cover_domain_engine_outputs() -> None:
+    contract = action_by_id("tg-init", "contract_build") or {}
+    plan = action_by_id("tg-plan", "plan_build") or {}
+    solve = action_by_id("tg-solve", "z3_solve") or {}
+
+    assert "tg/contract/**" in contract["allowed_write_paths"]
+    assert "tg/plan/coverage_obligations.yaml" in contract["allowed_write_paths"]
+    assert "context/pilot_params.yaml" in contract["allowed_write_paths"]
+    assert "tg/extract/**" in plan["allowed_write_paths"]
+    assert "tg/realization/**" in plan["allowed_write_paths"]
+    assert "tg/cases/**" in solve["allowed_write_paths"]
+    assert "tg/realization/**" in solve["allowed_write_paths"]
+
+
 def test_downstream_reinit_preserves_upstream_tg_contracts() -> None:
     plan = WORKFLOWS["tg-plan"]["reset_policy"]
     solve = WORKFLOWS["tg-solve"]["reset_policy"]
-    assert plan["reinit_delete"] == ["tg/plan", "tg/solve"]
+    assert plan["reinit_delete"] == ["tg/plan", "tg/solve", "tg/cases", "tg/extract"]
     assert "tg/init" in plan["reinit_preserve"]
-    assert solve["reinit_delete"] == ["tg/solve"]
+    assert "tg/contract" in plan["reinit_preserve"]
+    assert solve["reinit_delete"] == ["tg/solve", "tg/cases"]
     assert "tg/plan" in solve["reinit_preserve"]
+    assert "tg/extract" in solve["reinit_preserve"]
 
 
 def test_primary_steps_do_not_inherit_uo_scope_recipe(tmp_path: Path) -> None:
