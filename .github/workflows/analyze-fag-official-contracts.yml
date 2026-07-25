@@ -1,63 +1,188 @@
-name: Inspect FAG wrappers and macros
+name: Validate FAG source symbol closure
 
 on:
   pull_request:
     branches: [cursor/semantic-control-plane-closure-44d6]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  inspect:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: agent/tg-workflow-contract-closure
+          fetch-depth: 0
+      - name: Apply deterministic integration
+        run: |
+          python .github/apply_source_symbol_closure.py
+          python -m py_compile \
+            engines/understand-operator/uo/scripts/source_include_closure.py \
+            engines/understand-operator/uo/scripts/macro_regions.py \
+            engines/understand-operator/uo/scripts/function_call_graph.py \
+            engines/understand-operator/uo/scripts/extract_kernel_subgraph.py \
+            engines/understand-operator/uo/scripts/cann_doc_evidence.py
+      - run: python -m pip install -q pytest pyyaml
+      - name: Run focused regressions
+        env:
+          PYTHONPATH: engines/understand-operator
+        run: |
+          pytest -q \
+            engines/understand-operator/tests/test_source_include_closure.py \
+            engines/understand-operator/tests/test_macro_regions.py \
+            engines/understand-operator/tests/test_call_external_classification.py \
+            engines/understand-operator/tests/test_call_scanner.py \
+            engines/understand-operator/tests/test_function_call_graph.py \
+            engines/understand-operator/tests/test_cann_api_catalog.py \
+            engines/understand-operator/tests/test_fag_graph_identity_and_perf.py
       - uses: actions/checkout@v4
         with:
           repository: Sunye1213106/flashattention
           ref: 94e37bc4630a6b2b5695e6a76809d1e94931d8c8
           path: real-fag
-      - name: Collect helper definitions and include chain
+      - name: Evaluate real FAG arch35
+        env:
+          PYTHONPATH: engines/understand-operator
         run: |
-          python - <<'PY'
+          set +e
+          python - <<'PY' 2>&1 | tee source-symbol-closure.log
+          from collections import Counter, defaultdict
           from pathlib import Path
-          import json, re
-          root = Path('real-fag')
-          suffixes={'.h','.hpp','.hh','.hxx','.inc','.cpp','.cc','.cxx'}
-          symbols=['LoadDataToL0A','LoadDataToL0B','LoadDataToL0AMx','LoadDataToL0BMx','Min','Max','Ceil','CeilDivision']
-          definitions=[]; includes=[]; macros=[]
-          for p in root.rglob('*'):
-              if not p.is_file() or p.suffix.lower() not in suffixes:
+          import json
+
+          from uo.scripts.cann_doc_evidence import packaged_doc_evidence_bundle
+          from uo.scripts.function_body import iter_function_definitions
+          from uo.scripts.function_call_graph import build_call_edges_for_functions
+          from uo.scripts.source_include_closure import expand_local_include_closure
+
+          repo = Path('real-fag').resolve()
+          roots = [p for p in repo.rglob('flash_attention_score_grad') if p.is_dir()]
+          if not roots:
+              raise SystemExit('operator root missing')
+          op_root = min(roots, key=lambda p: len(p.parts))
+          seed_files = []
+          for path in op_root.rglob('*'):
+              if not path.is_file() or path.suffix.lower() not in {'.h','.hh','.hpp','.hxx','.inc','.c','.cc','.cpp','.cxx'}:
                   continue
-              text=p.read_text(encoding='utf-8',errors='ignore')
-              lines=text.splitlines()
-              for i,line in enumerate(lines):
-                  if re.match(r'^\s*#\s*include\b', line):
-                      if any(key in p.as_posix() for key in ('flash_attention_score_grad_kernel_deter.h','cube_api/matmul.h','common/op_kernel/matmul.h')):
-                          includes.append({'file':p.as_posix(),'line':i+1,'text':line})
-                  if re.match(r'^\s*#\s*define\s+INVOKE_FAG_',line):
-                      j=i; logical=line
-                      while re.search(r'\\\s*$',logical) and j+1<len(lines):
-                          logical=re.sub(r'\\\s*$',' ',logical)+lines[j+1]
-                          j+=1
-                      macros.append({'file':p.as_posix(),'line':i+1,'end_line':j+1,'text':logical[:4000]})
-              for sym in symbols:
-                  pat=re.compile(rf'\b{re.escape(sym)}\s*(?:<[^;{{}}()]*>)?\s*\(')
-                  for m in pat.finditer(text):
-                      line=text.count('\n',0,m.start())+1
-                      lo=max(0,line-8); hi=min(len(lines),line+12)
-                      pre='\n'.join(lines[lo:line])
-                      head='\n'.join(lines[lo:hi])
-                      looks_def=bool(re.search(r'(#\s*define|\btemplate\b|\binline\b|\bconstexpr\b|\bstatic\b|__aicore__)[^;{}]{0,500}$',pre,re.S))
-                      if looks_def:
-                          definitions.append({'symbol':sym,'file':p.as_posix(),'line':line,'context':'\n'.join(f'{k+1}: {lines[k]}' for k in range(lo,hi))})
-          payload={'definitions':definitions,'includes':includes,'macros':macros}
-          Path('fag-helper-definitions.json').write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding='utf-8')
-          print(json.dumps({'definition_count':len(definitions),'include_count':len(includes),'macro_count':len(macros),'symbols':sorted({d['symbol'] for d in definitions})},ensure_ascii=False,indent=2))
+              parts = path.relative_to(op_root).parts
+              if 'op_kernel' not in parts:
+                  continue
+              arch_parts = {part.casefold() for part in parts if part.casefold().startswith('arch') and part[4:].isdigit()}
+              if arch_parts and 'arch35' not in arch_parts:
+                  continue
+              seed_files.append(path.resolve())
+          seed_files.sort()
+          closure = expand_local_include_closure(repo, seed_files, architecture='arch35')
+
+          def load(paths):
+              texts = {}
+              functions = []
+              for path in paths:
+                  rel = path.relative_to(repo).as_posix()
+                  text = path.read_text(encoding='utf-8', errors='ignore')
+                  texts[rel] = text
+                  functions.extend(iter_function_definitions(repo, rel, architecture='arch35'))
+              return texts, functions
+
+          seed_texts, seed_functions = load(seed_files)
+          closure_texts, closure_functions = load(closure.files)
+          docs = packaged_doc_evidence_bundle(cann_version='9.0')
+
+          baseline_unresolved = []
+          baseline_nodes, baseline_edges = build_call_edges_for_functions(
+              seed_functions, unresolved=baseline_unresolved,
+              source_texts=seed_texts, doc_evidence=docs,
+          )
+          closure_unresolved = []
+          closure_nodes, closure_edges = build_call_edges_for_functions(
+              closure_functions, unresolved=closure_unresolved,
+              source_texts=closure_texts, doc_evidence=docs,
+          )
+          seed_ids = {fn.stable_id for fn in seed_functions}
+          closure_edges = [edge for edge in closure_edges if edge.get('source') in seed_ids]
+          closure_unresolved = [item for item in closure_unresolved if item.get('caller_function_id') in seed_ids]
+
+          def summarize(edges, unresolved):
+              status = Counter(str(edge.get('target_status') or '') for edge in edges)
+              by_symbol = defaultdict(Counter)
+              for edge in edges:
+                  by_symbol[str(edge.get('callee_name') or '')][str(edge.get('target_status') or '')] += 1
+                  by_symbol[str(edge.get('callee_name') or '')]['reason:' + str(edge.get('verification_source') or '')] += 1
+              kinds = Counter(str(item.get('kind') or '') for item in unresolved)
+              return status, {name: dict(counts) for name, counts in by_symbol.items()}, kinds
+
+          before_status, before_symbols, before_kinds = summarize(baseline_edges, baseline_unresolved)
+          after_status, after_symbols, after_kinds = summarize(closure_edges, closure_unresolved)
+          closure_rels = [path.relative_to(repo).as_posix() for path in closure.files]
+          invoke_symbols = sorted(name for name in after_symbols if name.startswith('INVOKE_FAG_'))
+          watched = [
+              'LoadDataToL0A','LoadDataToL0B','LoadDataToL0AMx','LoadDataToL0BMx',
+              'Min','Max','Ceil','CeilDivision',
+          ]
+          report = {
+              'seed_file_count': len(seed_files),
+              'closure_file_count': len(closure.files),
+              'closure_added_files': len(closure.files) - len(seed_files),
+              'closure_truncated': closure.truncated,
+              'closure_unresolved': closure.unresolved,
+              'contains_common_matmul': any(path.endswith('common/op_kernel/matmul.h') for path in closure_rels),
+              'contains_other_arch': [path for path in closure_rels if '/arch' in path and '/arch35/' not in path and any(part.startswith('arch') and part[4:].isdigit() for part in path.split('/'))],
+              'seed_function_count': len(seed_functions),
+              'closure_function_count': len(closure_functions),
+              'before_status': dict(before_status),
+              'after_status_seed_callers': dict(after_status),
+              'missing_reduction': int(before_status.get('missing',0)) - int(after_status.get('missing',0)),
+              'before_unresolved_kinds': dict(before_kinds),
+              'after_unresolved_kinds': dict(after_kinds),
+              'watched_before': {name: before_symbols.get(name,{}) for name in watched},
+              'watched_after': {name: after_symbols.get(name,{}) for name in watched},
+              'invoke_macro_symbols': {name: after_symbols.get(name,{}) for name in invoke_symbols},
+              'source_scope_sample': closure_rels[:80],
+          }
+          Path('source-symbol-closure-report.json').write_text(json.dumps(report,indent=2,ensure_ascii=False),encoding='utf-8')
+          print(json.dumps(report,indent=2,ensure_ascii=False))
+
+          assert not closure.truncated
+          assert report['contains_common_matmul']
+          assert not report['contains_other_arch']
+          assert report['missing_reduction'] > 0
+          for name in ['LoadDataToL0A','LoadDataToL0B','LoadDataToL0AMx','LoadDataToL0BMx']:
+              assert report['watched_after'][name].get('missing',0) == 0, (name, report['watched_after'][name])
+          assert sum(v.get('missing',0) for v in report['invoke_macro_symbols'].values()) == 0
+          assert report['watched_after']['Min'].get('external',0) == 0
+          assert report['watched_after']['Max'].get('external',0) == 0
           PY
-      - uses: actions/upload-artifact@v4
+          echo ${PIPESTATUS[0]} > source-symbol-closure.status
+          exit 0
+      - name: Upload validation report
+        uses: actions/upload-artifact@v4
         with:
-          name: fag-helper-definitions
-          path: fag-helper-definitions.json
+          name: fag-source-symbol-closure
+          path: |
+            source-symbol-closure-report.json
+            source-symbol-closure.log
+            source-symbol-closure.status
+      - name: Gate real FAG validation
+        run: test "$(cat source-symbol-closure.status)" = "0"
+      - name: Commit validated implementation
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add \
+            engines/understand-operator/uo/scripts/source_include_closure.py \
+            engines/understand-operator/uo/scripts/macro_regions.py \
+            engines/understand-operator/uo/scripts/function_call_graph.py \
+            engines/understand-operator/uo/scripts/extract_kernel_subgraph.py \
+            engines/understand-operator/uo/resources/cann_api_catalog.yaml \
+            engines/understand-operator/tests/test_source_include_closure.py \
+            engines/understand-operator/tests/test_macro_regions.py \
+            engines/understand-operator/tests/test_call_external_classification.py \
+            engines/understand-operator/tests/test_cann_api_catalog.py
+          if git diff --cached --quiet; then
+            echo 'No implementation changes to commit.'
+          else
+            git commit -m 'feat(uo): close project helpers through includes and macros'
+            git push origin HEAD:agent/tg-workflow-contract-closure
+          fi
