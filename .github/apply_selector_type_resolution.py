@@ -57,27 +57,9 @@ receiver_path.write_text(r)
 
 cg = call_graph_path.read_text()
 cg = cg.replace(
-"    legacy = _legacy_receiver_type(site, caller, facts)\n    if _receiver_type_supported(site, structured, facts):\n",
-"    legacy = _legacy_receiver_type(site, caller, facts)\n    if _receiver_type_matches_official(site, legacy, facts):\n        return legacy\n    if _receiver_type_supported(site, structured, facts):\n",
+"    method_contract, method_reason = _matching_official_contract(site, receiver_type, facts)\n",
+"    method_contract, method_reason = _matching_official_contract(site, receiver_type, facts)\n    if method_contract is None:\n        legacy_receiver_type = _legacy_receiver_type(site, caller, facts)\n        if legacy_receiver_type and legacy_receiver_type != receiver_type:\n            method_contract, method_reason = _matching_official_contract(\n                site, legacy_receiver_type, facts\n            )\n",
 )
-helper2 = '''def _receiver_type_matches_official(
-    site: CallSite, receiver_type: str, facts: CallResolutionFacts
-) -> bool:
-    if not receiver_type:
-        return False
-    for contract in facts.official_contracts.get(site.callee_name, []):
-        counts = {int(value) for value in contract.get("argument_counts") or []}
-        if counts and site.argument_count not in counts:
-            continue
-        allowed = [str(value or "") for value in contract.get("receiver_types") or []]
-        if allowed and any(_type_matches_scope(receiver_type, value) for value in allowed):
-            return True
-    return False
-
-
-'''
-if 'def _receiver_type_matches_official' not in cg:
-    cg = cg.replace('def _receiver_type_supported(\n', helper2 + 'def _receiver_type_supported(\n')
 call_graph_path.write_text(cg)
 
 test_path.write_text('''from uo.scripts.type_normalizer import (
