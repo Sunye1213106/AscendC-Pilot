@@ -36,6 +36,7 @@ jobs:
             python .github/apply_receiver_type_propagation.py
             python .github/fix_receiver_type_patcher.py
             python .github/fix_receiver_resolution_order.py
+            python .github/fix_receiver_resolution_syntax.py
             python -m py_compile \
               engines/understand-operator/uo/scripts/receiver_type_facts.py \
               engines/understand-operator/uo/scripts/function_call_graph.py
