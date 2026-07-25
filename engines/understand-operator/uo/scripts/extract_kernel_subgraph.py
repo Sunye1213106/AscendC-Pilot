@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import re
+from bisect import bisect_right
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,10 +20,12 @@ from uo.scripts.function_body import (
     FunctionDefinition,
     find_function_body,
     iter_function_definitions,
+    iter_function_definitions_from_text,
     iter_function_defs,
 )
 from uo.scripts.function_call_graph import build_call_edges_for_functions
 from uo.scripts.resolve_entrypoints import entrypoint_units, load_entrypoint_graph
+from uo.scripts.source_include_closure import expand_local_include_closure
 from uo.scripts.semantic_identity import (
     infer_specialization_kind,
     mint_edge_id,
@@ -56,6 +59,28 @@ TILING_DATA_READ_RE = re.compile(
 )
 # Generic defaults; plan.derived_roots may extend roots at runtime.
 _DEFAULT_DERIVED_ROOTS = ("constInfo", "commonConstInfo", "deterConstInfo", "runInfo")
+
+def _line_starts(text: str) -> list[int]:
+    starts = [0]
+    starts.extend(match.end() for match in re.finditer("\n", text))
+    return starts
+
+
+def _line_for(starts: list[int], pos: int) -> int:
+    return bisect_right(starts, max(0, pos))
+
+
+def _read_source_files(paths: list[Path]) -> dict[Path, str]:
+    out: dict[Path, str] = {}
+    for path in dict.fromkeys(paths):
+        if not path.is_file():
+            continue
+        try:
+            out[path] = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+    return out
+
 
 
 def _derived_read_re(extra_roots: set[str] | None = None) -> re.Pattern[str]:
@@ -241,7 +266,30 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
     tilingkey_space = load_tilingkey_space(uo_root, repo_root, op_name, architecture=architecture)
     key_index = load_key_dimension_index(tilingkey_space)
 
-    kernel_files = _kernel_files(repo_root, op_name, architecture, primary if primary else None, kernel_nodes)
+    kernel_seed_files = _kernel_files(
+        repo_root, op_name, architecture, primary if primary else None, kernel_nodes
+    )
+    include_closure = expand_local_include_closure(
+        repo_root, kernel_seed_files, architecture=architecture
+    )
+    kernel_files = include_closure.files
+    domain_files = list(
+        dict.fromkeys(_enum_declaration_files(repo_root, op_name, architecture) + kernel_files)
+    )
+    for item in include_closure.unresolved:
+        if item.get("kind") in {
+            "include_target_ambiguous", "include_closure_file_budget",
+            "include_closure_depth_budget", "include_read_failed",
+        }:
+            unresolved.append(
+                {
+                    "id": stable_id("UNRES_INCLUDE_", repr(sorted(item.items()))),
+                    "kind": item.get("kind"),
+                    "message": "Repository-local include closure could not be completed safely",
+                    **item,
+                }
+            )
+    source_texts = _read_source_files(domain_files)
     if not kernel_files:
         unresolved.append(
             {
@@ -264,6 +312,7 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
         unit_ctxs,
         tilingkey_space,
         architecture,
+        source_texts=source_texts,
     )
     nodes.extend(tpl_nodes)
     edges.extend(tpl_edges)
@@ -284,22 +333,19 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
             loaded_fields.add(leaf)
     derived_re = _derived_read_re(plan_derived_roots(plan) if plan else set())
     declared_domains = collect_declared_domains(
-        _enum_declaration_files(repo_root, op_name, architecture) + kernel_files
+        domain_files, text_by_path=source_texts
     )
 
     # Seed only valued feature macros across kernel files for #if evaluation.
     # Do NOT seed include-guard #define FOO_H — that kills #ifndef FOO_H bodies.
     seed_defines: dict[str, str | None] = {}
     for path in kernel_files:
-        try:
-            seed_defines = merge_defines(
-                seed_defines,
-                valued_seed_defines(
-                    analyze_macros(path.read_text(encoding="utf-8", errors="ignore")).defines
-                ),
-            )
-        except OSError:
+        source_text = source_texts.get(path, "")
+        if not source_text:
             continue
+        seed_defines = merge_defines(
+            seed_defines, valued_seed_defines(analyze_macros(source_text).defines)
+        )
     # Tiling-key symbols are compile-injected; do not treat #ifdef KEY as dead.
     soft_undefined = {str(k) for k in (key_index or {})}
 
@@ -309,14 +355,20 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
         file_ctx = _ctx_for_entry(unit_ctxs, file_entry_id)
         file_class = str(file_ctx.get("owning_class") or "")
         extraction_unit_id = str(file_ctx.get("unit_id") or "")
-        text = path.read_text(encoding="utf-8", errors="ignore")
+        text = source_texts.get(path, "")
+        if not text:
+            continue
+        text_line_starts = _line_starts(text)
         macro_info = analyze_macros(text, seed_defines=seed_defines, soft_undefined=soft_undefined)
         owning_type_default = _infer_tiling_owning_type(text, file_class)
 
         def _active(line: int) -> bool:
             return macro_info.is_active_line(line)
 
-        file_fns = iter_function_definitions(repo_root, rel, architecture=architecture)
+        file_fns = iter_function_definitions_from_text(
+            repo_root, rel, text, architecture=architecture
+        )
+        file_fn_starts = [fn.start_line for fn in file_fns]
         all_functions.extend(file_fns)
         class_ids: dict[str, str] = {}
         for fn in file_fns:
@@ -382,7 +434,7 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
         )
 
         for match in TDF_ASSIGN_RE.finditer(text):
-            line = text.count("\n", 0, match.start()) + 1
+            line = _line_for(text_line_starts, match.start())
             if not _active(line):
                 continue
             lhs = re.sub(r"\s+", "", match.group(1))
@@ -391,15 +443,15 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
             tdf_leaf = tdf_path.split(".")[-1]
             local_to_tdf[local] = tdf_leaf
             loaded_fields.add(tdf_leaf)
-            ot = _owning_type_at_line(file_fns, line, owning_type_default)
+            ot = _owning_type_at_line(file_fns, line, owning_type_default, file_fn_starts)
             loaded_typed_fields.add((ot, tdf_leaf))
         for match in TILING_DATA_READ_RE.finditer(text):
-            line = text.count("\n", 0, match.start()) + 1
+            line = _line_for(text_line_starts, match.start())
             if not _active(line):
                 continue
             leaf = match.group(1).split(".")[-1]
             loaded_fields.add(leaf)
-            ot = _owning_type_at_line(file_fns, line, owning_type_default)
+            ot = _owning_type_at_line(file_fns, line, owning_type_default, file_fn_starts)
             loaded_typed_fields.add((ot, leaf))
 
         # File-scope macros (#if outside any function) → FileScope / TemplateDefinition
@@ -408,7 +460,7 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
                 continue
             cond = directive.condition or directive.name or ""
             source, ref, domain = classify_macro_condition(cond, key_index=key_index)
-            owner_fn = _function_covering_line(file_fns, directive.line)
+            owner_fn = _function_covering_line(file_fns, directive.line, file_fn_starts)
             if owner_fn is None:
                 owning_key = mint_symbol_identity(
                     kind="file_scope",
@@ -462,11 +514,12 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
             body = fn.body_text or ""
             brace = body.find("{")
             scan = body[brace + 1 :] if brace >= 0 else body
+            scan_line_starts = _line_starts(scan)
             base_line = fn.start_line + (body[: brace + 1].count("\n") if brace >= 0 else 0)
             owner_meta = _owner_meta(fn, extraction_unit_id)
 
             for idx, match in enumerate(IF_CONSTEXPR_RE.finditer(scan)):
-                line = base_line + scan.count("\n", 0, match.start())
+                line = base_line + _line_for(scan_line_starts, match.start()) - 1
                 if not _active(line):
                     continue
                 cond = " ".join(match.group(1).split())
@@ -500,7 +553,7 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
                 window_start = max(0, match.start() - 12)
                 if "constexpr" in scan[window_start:match.start()]:
                     continue
-                line = base_line + scan.count("\n", 0, match.start())
+                line = base_line + _line_for(scan_line_starts, match.start()) - 1
                 if not _active(line):
                     continue
                 cond = " ".join(match.group(1).split())
@@ -669,7 +722,7 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
                 header = " ".join(match.group(1).split())
                 if len(header) > 160:
                     continue
-                line = base_line + scan.count("\n", 0, match.start())
+                line = base_line + _line_for(scan_line_starts, match.start()) - 1
                 loop_kind = "tail" if "tail" in header.lower() else "main"
                 node_id = mint_scoped_node_id(
                     "KLOOP",
@@ -703,8 +756,15 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
                     }
                 )
 
-    # Call graph across all collected FunctionDefinitions
-    call_nodes, call_edges = build_call_edges_for_functions(all_functions, unresolved=unresolved)
+    # Call graph across all collected FunctionDefinitions. Official contracts classify
+    # interfaces/macros, while source facts remain authoritative for project edges.
+    doc_evidence = read_yaml(uo_root / "ir" / "doc_evidence.yaml") or {}
+    call_nodes, call_edges = build_call_edges_for_functions(
+        all_functions,
+        unresolved=unresolved,
+        source_texts=source_texts,
+        doc_evidence=doc_evidence,
+    )
     nodes.extend(call_nodes)
     edges.extend(call_edges)
 
@@ -967,18 +1027,24 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
             for d in declared_domains
         ],
         "loaded_tiling_fields": sorted(loaded_fields | enum_fields_resolved),
+        "source_scope": include_closure.as_dict(repo_root),
         "function_definitions": [fn.as_dict() for fn in all_functions],
         "unresolved": unresolved,
     }
 
 
-def collect_declared_domains(files: list[Path]) -> list[DeclaredDomain]:
+def collect_declared_domains(
+    files: list[Path], *, text_by_path: dict[Path, str] | None = None
+) -> list[DeclaredDomain]:
     domains: list[DeclaredDomain] = []
     seen: set[tuple[str, tuple[str, ...]]] = set()
+    cache = text_by_path or {}
     for path in files:
         if not path.is_file():
             continue
-        text = path.read_text(encoding="utf-8", errors="ignore")
+        text = cache.get(path)
+        if text is None:
+            text = path.read_text(encoding="utf-8", errors="ignore")
         rel = path.as_posix()
         for domain in parse_enum_class_domains(text, rel) + parse_constexpr_block_domains(text, rel):
             key = (domain.type_name, tuple(domain.names))
@@ -991,6 +1057,7 @@ def collect_declared_domains(files: list[Path]) -> list[DeclaredDomain]:
 
 def parse_enum_class_domains(text: str, file_path: str = "") -> list[DeclaredDomain]:
     out: list[DeclaredDomain] = []
+    text_line_starts = _line_starts(text)
     for match in ENUM_CLASS_RE.finditer(text):
         type_name = match.group(1)
         body = match.group(2)
@@ -1006,7 +1073,7 @@ def parse_enum_class_domains(text: str, file_path: str = "") -> list[DeclaredDom
             next_value += 1
         if len(entries) < 2:
             continue
-        line = text.count("\n", 0, match.start()) + 1
+        line = _line_for(text_line_starts, match.start())
         out.append(
             DeclaredDomain(
                 kind="enum_class",
@@ -1025,6 +1092,7 @@ def parse_constexpr_block_domains(text: str, file_path: str = "") -> list[Declar
     if not matches:
         return []
     out: list[DeclaredDomain] = []
+    text_line_starts = _line_starts(text)
     i = 0
     while i < len(matches):
         ctype = matches[i].group(1)
@@ -1043,7 +1111,7 @@ def parse_constexpr_block_domains(text: str, file_path: str = "") -> list[Declar
             j += 1
         entries = [EnumEntry(name=m.group(2), value=int(m.group(3))) for m in run]
         if _is_enum_like_constexpr_block(entries):
-            line = text.count("\n", 0, run[0].start()) + 1
+            line = _line_for(text_line_starts, run[0].start())
             # Synthetic type name from shared prefix or first/last token.
             type_name = _infer_block_type_name(entries)
             out.append(
@@ -1254,17 +1322,30 @@ def _owner_meta(fn: FunctionDefinition, extraction_unit_id: str) -> dict[str, An
     }
 
 
-def _function_covering_line(fns: list[FunctionDefinition], line: int) -> FunctionDefinition | None:
-    best: FunctionDefinition | None = None
-    for fn in fns:
+def _function_covering_line(
+    fns: list[FunctionDefinition], line: int, starts: list[int] | None = None
+) -> FunctionDefinition | None:
+    if not fns:
+        return None
+    ordered_starts = starts if starts is not None else [fn.start_line for fn in fns]
+    idx = bisect_right(ordered_starts, line) - 1
+    while idx >= 0:
+        fn = fns[idx]
         if fn.start_line <= line <= fn.end_line:
-            if best is None or fn.start_line >= best.start_line:
-                best = fn
-    return best
+            return fn
+        if fn.end_line < line:
+            break
+        idx -= 1
+    return None
 
 
-def _owning_type_at_line(fns: list[FunctionDefinition], line: int, default: str) -> str:
-    fn = _function_covering_line(fns, line)
+def _owning_type_at_line(
+    fns: list[FunctionDefinition],
+    line: int,
+    default: str,
+    starts: list[int] | None = None,
+) -> str:
+    fn = _function_covering_line(fns, line, starts)
     if fn is None:
         return default or "UnknownType"
     return _infer_tiling_owning_type(fn.body_text, default) or default or "UnknownType"
@@ -1297,6 +1378,8 @@ def _build_tilingkey_template_instance_graph(
     unit_ctxs: list[dict[str, Any]],
     tilingkey_space: dict[str, Any],
     architecture: str,
+    *,
+    source_texts: dict[Path, str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     """Map TilingKeyValue → TemplateInstance (fail-closed; never select-all Entries)."""
     nodes: list[dict[str, Any]] = []
@@ -1469,16 +1552,20 @@ def _build_tilingkey_template_instance_graph(
             )
 
     # REGISTER_TILING_TEMPLATE evidence → TemplateDefinition nodes (no select-all)
+    cached_sources = source_texts or {}
     for path in kernel_files:
-        try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
+        text = cached_sources.get(path)
+        if text is None:
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
         rel = path.relative_to(repo_root).as_posix()
+        text_line_starts = _line_starts(text)
         # Also scan host-side registrations when present in confirmed set — kernel files rarely have them.
         for match in REGISTER_TPL_RE.finditer(text):
             cls = match.group(2).strip()
-            line = text.count("\n", 0, match.start()) + 1
+            line = _line_for(text_line_starts, match.start())
             ident = mint_symbol_identity(
                 kind="template_definition",
                 name=cls,

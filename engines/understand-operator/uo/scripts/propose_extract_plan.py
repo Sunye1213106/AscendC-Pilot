@@ -8,6 +8,7 @@ P1: one-hop callees from helper definitions enter writer_candidates.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -69,14 +70,22 @@ NOISE_CALLS = frozenset(
 )
 WEAK_NAME_HINT_RE = re.compile(r"(tiling|workspace|blockdim|block_dim)", re.IGNORECASE)
 
-MAX_WRITERS = 40
-MAX_RECEIVERS = 40
-MAX_ALIASES = 60
-MAX_NON_SINK = 30
-MAX_EXTRA = 20
-MAX_ONE_HOP = 30
-MAX_SINK_SCAN_FILES = 12
-MAX_KERNEL_ALIAS_FILES = 80
+def _env_limit(name: str, default: int, maximum: int = 5000) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError:
+        value = default
+    return max(1, min(maximum, value))
+
+
+MAX_WRITERS = _env_limit("UO_EXTRACT_MAX_WRITERS", 200)
+MAX_RECEIVERS = _env_limit("UO_EXTRACT_MAX_RECEIVERS", 200)
+MAX_ALIASES = _env_limit("UO_EXTRACT_MAX_ALIASES", 300)
+MAX_NON_SINK = _env_limit("UO_EXTRACT_MAX_NON_SINK", 512)
+MAX_EXTRA = _env_limit("UO_EXTRACT_MAX_EXTRA", 100)
+MAX_ONE_HOP = _env_limit("UO_EXTRACT_MAX_ONE_HOP", 240)
+MAX_SINK_SCAN_FILES = _env_limit("UO_EXTRACT_MAX_SINK_SCAN_FILES", 64)
+MAX_KERNEL_ALIAS_FILES = _env_limit("UO_EXTRACT_MAX_KERNEL_ALIAS_FILES", 320)
 
 
 def propose_extract_plan(
@@ -194,7 +203,11 @@ def propose_extract_plan(
                 )
             if root is not None:
                 keep = {str(x.get("name") or "").casefold() for x in chain_items if x.get("name")}
-                traced = client.bounded_trace(root, keep_names=keep or None, max_depth=4, max_nodes=40)
+                traced = client.bounded_trace(
+                    root, keep_names=keep or None,
+                    max_depth=_env_limit("UO_EXTRACT_TRACE_MAX_DEPTH", 6, 12),
+                    max_nodes=_env_limit("UO_EXTRACT_TRACE_MAX_NODES", 240),
+                )
                 for sym in traced:
                     child = sym.as_dict()
                     if not any(_writer_identity_key(item) == _writer_identity_key(child) for item in chain_items):
@@ -330,6 +343,21 @@ def propose_extract_plan(
 
     client.close()
 
+    raw_counts = {
+        "writers": len(writers),
+        "receivers": len(receivers),
+        "aliases": len(aliases),
+        "non_sink_roots": len(non_sink),
+        "extra_entries": len(extra),
+    }
+    limits = {
+        "writers": MAX_WRITERS,
+        "receivers": MAX_RECEIVERS,
+        "aliases": MAX_ALIASES,
+        "non_sink_roots": MAX_NON_SINK,
+        "extra_entries": MAX_EXTRA,
+    }
+    truncated = {name: raw_counts[name] - limit for name, limit in limits.items() if raw_counts[name] > limit}
     writer_list = _top_scored(list(writers.values()), MAX_WRITERS)
     receiver_list = _top_scored(list(receivers.values()), MAX_RECEIVERS)
     alias_list = list(aliases.values())[:MAX_ALIASES]
@@ -337,8 +365,9 @@ def propose_extract_plan(
         "version": 1,
         "op_name": op_name,
         "architecture": architecture,
-        "status": "candidates",
-        "ok": True,
+        "status": "blocked" if truncated else "candidates",
+        "ok": not bool(truncated),
+        "reason": "candidate_budget_exhausted" if truncated else "",
         "writer_candidates": writer_list,
         "receiver_candidates": receiver_list,
         "alias_candidates": alias_list,
@@ -351,6 +380,14 @@ def propose_extract_plan(
             "non_sink_roots": min(len(non_sink), MAX_NON_SINK),
             "extra_entries": min(len(extra), MAX_EXTRA),
         },
+        "raw_counts": raw_counts,
+        "candidate_limits": limits,
+        "truncated": truncated,
+        "recovery": (
+            "raise the matching UO_EXTRACT_MAX_* environment limit and rebuild; "
+            "candidate truncation is never treated as a complete FAG graph"
+            if truncated else ""
+        ),
     }
 
 

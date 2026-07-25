@@ -6,7 +6,10 @@ fallback and must not invent unique resolution under ambiguity.
 """
 from __future__ import annotations
 
+import hashlib
 import re
+from bisect import bisect_right
+from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -28,7 +31,7 @@ _DEF_OPEN_RE_TMPL = (
     r"^([^\n]*\b{name}\s*\([^;{{]*\)\s*(?:const\s*|override\s*|final\s*)*\{{)"
 )
 
-_CONTROL_NAMES = frozenset({"if", "for", "while", "switch", "catch", "else", "try"})
+_CONTROL_NAMES = frozenset({"if", "for", "while", "switch", "catch", "else", "try", "constexpr"})
 _DEF_ANY_RE = re.compile(
     r"^([^\n]*\b([A-Za-z_][A-Za-z0-9_]*)\s*\([^;{]*\)\s*(?:const\s*|override\s*|final\s*)*\{)",
     re.MULTILINE,
@@ -47,15 +50,56 @@ _FN_CANDIDATE_RE = re.compile(
 _POST_PARAM_RE = re.compile(
     r"\s*(?:const\s*|override\s*|final\s*|noexcept\s*(?:\([^)]*\))?\s*)*\{"
 )
-_CALL_RE = re.compile(
-    r"(?:"
-    r"(?P<recv>(?:this\s*->|[A-Za-z_]\w*(?:\s*::\s*[A-Za-z_]\w*)*\s*\.\s*|"
-    r"[A-Za-z_]\w*(?:\s*::\s*[A-Za-z_]\w*)*\s*->\s*))?"
-    r"(?P<callee>(?:[A-Za-z_]\w*(?:\s*::\s*)?)+)"
-    r"(?P<targs>\s*<[^>;{]{0,120}>)?"
-    r"\s*\("
-    r")",
+# Deliberately linear call-head scan. Qualified names and receivers are parsed
+# with a bounded backward walk below; nesting optional repetitions here caused
+# catastrophic backtracking on large AscendC kernel bodies.
+_CALL_NAME_RE = re.compile(r"\b(?P<callee>[A-Za-z_]\w*)\b")
+_BUILTIN_CAST_NAMES = frozenset(
+    {
+        "bool", "char", "signed", "unsigned", "short", "int", "long",
+        "float", "double", "size_t", "ssize_t", "ptrdiff_t", "intptr_t",
+        "uintptr_t", "wchar_t", "char8_t", "char16_t", "char32_t",
+    }
 )
+
+_SOURCE_TEXT_CACHE: OrderedDict[tuple[str, int, int], str] = OrderedDict()
+_FUNCTION_DEFINITION_CACHE: OrderedDict[
+    tuple[str, int, int, str], tuple[FunctionDefinition, ...]
+] = OrderedDict()
+_CACHE_LIMIT = 128
+
+
+def _cache_put(cache: OrderedDict, key: object, value: object) -> None:
+    cache[key] = value
+    cache.move_to_end(key)
+    while len(cache) > _CACHE_LIMIT:
+        cache.popitem(last=False)
+
+
+def _path_version(path: Path) -> tuple[str, int, int]:
+    stat = path.stat()
+    return (path.as_posix(), int(stat.st_mtime_ns), int(stat.st_size))
+
+
+def _read_source_text(path: Path) -> str:
+    key = _path_version(path)
+    cached = _SOURCE_TEXT_CACHE.get(key)
+    if cached is not None:
+        _SOURCE_TEXT_CACHE.move_to_end(key)
+        return cached
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    _cache_put(_SOURCE_TEXT_CACHE, key, text)
+    return text
+
+
+def _line_starts(text: str) -> list[int]:
+    starts = [0]
+    starts.extend(match.end() for match in re.finditer("\n", text))
+    return starts
+
+
+def _line_from_starts(starts: list[int], pos: int) -> int:
+    return bisect_right(starts, max(0, pos))
 
 
 @dataclass
@@ -108,7 +152,9 @@ def _def_matches_for_name(text: str, name: str) -> list[re.Match[str]]:
     return list(pattern.finditer(text))
 
 
-def _match_line(text: str, pos: int) -> int:
+def _match_line(text: str, pos: int, starts: list[int] | None = None) -> int:
+    if starts is not None:
+        return _line_from_starts(starts, pos)
     return text.count("\n", 0, pos) + 1
 
 
@@ -220,10 +266,12 @@ def _build_function_definition_from_span(
     source_hash: str,
     architecture: str = "",
     qual_hint: str = "",
+    line_starts: list[int] | None = None,
+    source_lines: list[str] | None = None,
 ) -> FunctionDefinition | None:
-    def_start = _match_line(text, start_pos)
-    def_end = _match_line(text, end_pos)
-    lines = text.splitlines()
+    def_start = _match_line(text, start_pos, line_starts)
+    def_end = _match_line(text, end_pos, line_starts)
+    lines = source_lines if source_lines is not None else text.splitlines()
     header = lines[def_start - 1] if 0 < def_start <= len(lines) else text[start_pos : text.find("{", start_pos)]
     body = "\n".join(lines[def_start - 1 : def_end])
     preceding = _preceding_text(text, start_pos)
@@ -277,33 +325,33 @@ def _build_function_definition_from_span(
     )
 
 
-def iter_function_definitions(
+def iter_function_definitions_from_text(
     repo_root: Path,
     file_path: str,
+    text: str,
     *,
     architecture: str = "",
+    source_hash: str = "",
 ) -> list[FunctionDefinition]:
-    """Return all brace-bounded FunctionDefinitions in a file (overloads preserved)."""
+    """Parse all definitions from already-loaded text; overload identities are preserved."""
     path = resolve_repo_source_path(repo_root, file_path)
     if path is None:
         return []
-    try:
-        text = path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return []
     rel = to_repo_relative(repo_root, path)
-    src_hash = source_file_hash(path)
+    src_hash = source_hash or hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
+    starts = _line_starts(text)
+    source_lines = text.splitlines()
     out: list[FunctionDefinition] = []
     seen_spans: set[tuple[int, int, str]] = set()
+    captured_outer_end = 0
 
     for match in _FN_CANDIDATE_RE.finditer(text):
         span = _definition_span_at(text, match)
         if span is None:
             continue
         start_pos, end_pos, name = span
-        start_line = _match_line(text, start_pos)
-        # Skip nested defs inside an already-captured outer function body.
-        if any(fn.start_line < start_line < fn.end_line for fn in out):
+        start_line = _match_line(text, start_pos, starts)
+        if start_line < captured_outer_end:
             continue
         fn = _build_function_definition_from_span(
             name=name,
@@ -314,6 +362,8 @@ def iter_function_definitions(
             source_hash=src_hash,
             architecture=architecture,
             qual_hint=(match.group("qual") or ""),
+            line_starts=starts,
+            source_lines=source_lines,
         )
         if fn is None:
             continue
@@ -322,8 +372,43 @@ def iter_function_definitions(
             continue
         seen_spans.add(key)
         out.append(fn)
-    out.sort(key=lambda f: (f.start_line, f.qualified_name))
+        captured_outer_end = max(captured_outer_end, fn.end_line)
+    out.sort(key=lambda f: (f.start_line, f.qualified_name, f.normalized_signature))
     return out
+
+
+def iter_function_definitions(
+    repo_root: Path,
+    file_path: str,
+    *,
+    architecture: str = "",
+) -> list[FunctionDefinition]:
+    """Return brace-bounded definitions with a stat-keyed source/parse cache."""
+    path = resolve_repo_source_path(repo_root, file_path)
+    if path is None:
+        return []
+    try:
+        version = _path_version(path)
+    except OSError:
+        return []
+    cache_key = (*version, architecture)
+    cached = _FUNCTION_DEFINITION_CACHE.get(cache_key)
+    if cached is not None:
+        _FUNCTION_DEFINITION_CACHE.move_to_end(cache_key)
+        return list(cached)
+    try:
+        source = _read_source_text(path)
+    except OSError:
+        return []
+    parsed = iter_function_definitions_from_text(
+        repo_root,
+        to_repo_relative(repo_root, path),
+        source,
+        architecture=architecture,
+        source_hash=hashlib.sha256(source.encode("utf-8", errors="ignore")).hexdigest(),
+    )
+    _cache_put(_FUNCTION_DEFINITION_CACHE, cache_key, tuple(parsed))
+    return list(parsed)
 
 
 def resolve_function_candidates(
@@ -504,7 +589,7 @@ def resolve_helper_body(
     else:
         safe_end = min(safe_end, start + max_fallback_lines)
     try:
-        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        lines = _read_source_text(path).splitlines()
     except OSError:
         return "", start, start
     lo = max(0, start - 1)
@@ -525,63 +610,285 @@ def extract_callee_names(body: str, *, noise: set[str] | frozenset[str]) -> list
     return found
 
 
+def _skip_ws_left(text: str, pos: int, *, floor: int) -> int:
+    while pos > floor and text[pos - 1].isspace():
+        pos -= 1
+    return pos
+
+
+def _read_ident_left(text: str, pos: int, *, floor: int) -> tuple[str, int]:
+    pos = _skip_ws_left(text, pos, floor=floor)
+    end = pos
+    while pos > floor and (text[pos - 1].isalnum() or text[pos - 1] == "_"):
+        pos -= 1
+    if pos == end or not (text[pos].isalpha() or text[pos] == "_"):
+        return "", end
+    return text[pos:end], pos
+
+
+def _mask_non_code(text: str) -> str:
+    """Mask comments, literals, and preprocessor directive lines while preserving offsets."""
+    chars = list(text)
+    n = len(chars)
+    i = 0
+    state = "code"
+    line_start = True
+    while i < n:
+        ch = chars[i]
+        nxt = chars[i + 1] if i + 1 < n else ""
+        if state == "code":
+            if line_start:
+                j = i
+                while j < n and chars[j] in " \t":
+                    j += 1
+                if j < n and chars[j] == "#":
+                    while j < n and chars[j] != "\n":
+                        chars[j] = " "
+                        j += 1
+                    i = j
+                    line_start = True
+                    continue
+            if ch == "/" and nxt == "/":
+                chars[i] = chars[i + 1] = " "
+                state = "line_comment"
+                i += 2
+                continue
+            if ch == "/" and nxt == "*":
+                chars[i] = chars[i + 1] = " "
+                state = "block_comment"
+                i += 2
+                continue
+            if ch == '"':
+                chars[i] = " "
+                state = "string"
+                i += 1
+                line_start = False
+                continue
+            if ch == "'":
+                chars[i] = " "
+                state = "char"
+                i += 1
+                line_start = False
+                continue
+            line_start = ch == "\n"
+            if not ch.isspace():
+                line_start = False
+            i += 1
+            continue
+        if state == "line_comment":
+            if ch == "\n":
+                state = "code"
+                line_start = True
+            else:
+                chars[i] = " "
+            i += 1
+            continue
+        if state == "block_comment":
+            if ch == "*" and nxt == "/":
+                chars[i] = chars[i + 1] = " "
+                state = "code"
+                i += 2
+            else:
+                if ch != "\n":
+                    chars[i] = " "
+                i += 1
+            continue
+        if state in {"string", "char"}:
+            quote = '"' if state == "string" else "'"
+            if ch == "\\":
+                chars[i] = " "
+                if i + 1 < n and chars[i + 1] != "\n":
+                    chars[i + 1] = " "
+                i += 2
+                continue
+            if ch == quote:
+                chars[i] = " "
+                state = "code"
+                i += 1
+                continue
+            if ch != "\n":
+                chars[i] = " "
+            i += 1
+    return "".join(chars)
+
+
+def _call_open_after_name(text: str, name_end: int) -> tuple[int, str] | None:
+    """Return the opening parenthesis and raw template args for a call head."""
+    n = len(text)
+    pos = name_end
+    if pos < n and text[pos] == "<":
+        start = pos
+        depth = 0
+        while pos < n and pos - start <= 240:
+            ch = text[pos]
+            if ch == "<":
+                depth += 1
+            elif ch == ">":
+                depth -= 1
+                if depth == 0:
+                    pos += 1
+                    break
+            elif ch in "(;){}\n" and depth > 0:
+                return None
+            pos += 1
+        if depth != 0:
+            return None
+        targs = text[start:pos]
+        while pos < n and text[pos].isspace():
+            pos += 1
+        return (pos, targs) if pos < n and text[pos] == "(" else None
+    while pos < n and text[pos].isspace():
+        pos += 1
+    return (pos, "") if pos < n and text[pos] == "(" else None
+
+
+def _is_builtin_cast_name(name: str) -> bool:
+    return name in _BUILTIN_CAST_NAMES or bool(re.fullmatch(r"(?:u?int|float)\d+_t", name))
+
+
+def _looks_like_direct_initializer(text: str, name_start: int) -> bool:
+    line_start = max(text.rfind("\n", 0, name_start), text.rfind(";", 0, name_start), text.rfind("{", 0, name_start)) + 1
+    prefix = text[line_start:name_start]
+    return bool(
+        re.fullmatch(
+            r"\s*(?:(?:const|volatile|static|mutable|typename|struct|class|auto)\s+)*"
+            r"(?:[A-Za-z_]\w*::)*[A-Za-z_]\w*(?:\s*<[^;{}\n]{0,240}>)?"
+            r"\s*(?:[*&]\s*)*",
+            prefix,
+        )
+    )
+
+
+def _balanced_open_left(
+    text: str, pos: int, *, open_ch: str, close_ch: str, floor: int
+) -> int | None:
+    if pos <= floor or text[pos - 1] != close_ch:
+        return None
+    depth = 0
+    idx = pos - 1
+    while idx >= floor:
+        ch = text[idx]
+        if ch == close_ch:
+            depth += 1
+        elif ch == open_ch:
+            depth -= 1
+            if depth == 0:
+                return idx
+        idx -= 1
+    return None
+
+
+def _read_receiver_atom_left(text: str, pos: int, *, floor: int) -> tuple[str, int]:
+    # Read identifier, indexed identifier, or zero-arg accessor immediately left.
+    pos = _skip_ws_left(text, pos, floor=floor)
+    if pos > floor and text[pos - 1] == "]":
+        open_pos = _balanced_open_left(text, pos, open_ch="[", close_ch="]", floor=floor)
+        if open_pos is not None:
+            ident, ident_start = _read_ident_left(text, open_pos, floor=floor)
+            if ident:
+                return f"{ident}[]", ident_start
+    if pos > floor and text[pos - 1] == ")":
+        open_pos = _balanced_open_left(text, pos, open_ch="(", close_ch=")", floor=floor)
+        if open_pos is not None:
+            ident, ident_start = _read_ident_left(text, open_pos, floor=floor)
+            if ident:
+                return f"{ident}()", ident_start
+    return _read_ident_left(text, pos, floor=floor)
+
+
+def _call_context(text: str, name_start: int, callee: str) -> tuple[str, str, int]:
+    """Return (qualified callee, receiver, expression start) with bounded work."""
+    floor = max(0, name_start - 240)
+    pos = _skip_ws_left(text, name_start, floor=floor)
+
+    # obj.template Method<T>(...) — skip the dependent-name keyword.
+    word, word_start = _read_ident_left(text, pos, floor=floor)
+    if word == "template":
+        pos = _skip_ws_left(text, word_start, floor=floor)
+
+    qual_parts: list[str] = []
+    qpos = pos
+    while qpos - 2 >= floor and text[qpos - 2 : qpos] == "::":
+        ident, ident_start = _read_ident_left(text, qpos - 2, floor=floor)
+        if not ident:
+            break
+        qual_parts.append(ident)
+        qpos = _skip_ws_left(text, ident_start, floor=floor)
+    if qual_parts:
+        raw = "::".join(reversed(qual_parts)) + "::" + callee
+        return raw, "", qpos
+
+    op = ""
+    rpos = pos
+    if rpos - 2 >= floor and text[rpos - 2 : rpos] == "->":
+        op = "->"
+        rpos -= 2
+    elif rpos - 1 >= floor and text[rpos - 1] == ".":
+        op = "."
+        rpos -= 1
+    if not op:
+        return callee, "", name_start
+
+    ident, ident_start = _read_receiver_atom_left(text, rpos, floor=floor)
+    if not ident:
+        return callee, "", name_start
+    recv_parts = [ident]
+    rpos = _skip_ws_left(text, ident_start, floor=floor)
+    while rpos - 2 >= floor and text[rpos - 2 : rpos] == "::":
+        ident, ident_start = _read_ident_left(text, rpos - 2, floor=floor)
+        if not ident:
+            break
+        recv_parts.append(ident)
+        rpos = _skip_ws_left(text, ident_start, floor=floor)
+    receiver = "::".join(reversed(recv_parts)) + op
+    return callee, receiver, rpos
+
+
 def extract_call_sites(
     fn: FunctionDefinition,
     *,
     noise: set[str] | frozenset[str] | None = None,
 ) -> list[CallSite]:
-    """Extract call sites from a FunctionDefinition body (relative ordinal)."""
+    """Extract lexical call sites while excluding comments, casts, and declarations."""
     noise = noise or _CONTROL_NAMES | {
-        "static_cast",
-        "reinterpret_cast",
-        "const_cast",
-        "dynamic_cast",
-        "sizeof",
-        "alignof",
-        "decltype",
-        "typeid",
-        "return",
-        "sizeof",
+        "static_cast", "reinterpret_cast", "const_cast", "dynamic_cast",
+        "sizeof", "alignof", "decltype", "typeid", "return",
     }
+    noise_cf = {name.casefold() for name in noise}
     body = fn.body_text or ""
-    # Only scan inside braces when possible
     brace = body.find("{")
-    scan = body[brace + 1 :] if brace >= 0 else body
+    scan_original = body[brace + 1 :] if brace >= 0 else body
+    scan = _mask_non_code(scan_original)
+    scan_starts = _line_starts(scan)
+    scan_base_line = fn.start_line + (body[: brace + 1].count("\n") if brace >= 0 else 0)
     out: list[CallSite] = []
     ordinal = 0
-    for match in _CALL_RE.finditer(scan):
-        callee_raw = (match.group("callee") or "").strip()
-        callee = callee_raw.split("::")[-1].strip()
-        if not callee or callee.casefold() in {n.casefold() for n in noise}:
+    for match in _CALL_NAME_RE.finditer(scan):
+        callee = (match.group("callee") or "").strip()
+        if not callee or callee.casefold() in noise_cf or _is_builtin_cast_name(callee):
             continue
-        if callee == fn.name and not match.group("recv"):
-            # Likely constructor-like / recursive — keep but mark hint
-            pass
-        recv = (match.group("recv") or "").strip()
-        targs = (match.group("targs") or "").strip()
-        # Rough argument count: commas at depth 0 until matching ')'
-        arg_count = _count_args(scan, match.end() - 1)
-        line_in_scan = scan.count("\n", 0, match.start()) + 1
-        abs_line = fn.start_line + (body[: brace + 1 + match.start()].count("\n") if brace >= 0 else line_in_scan - 1)
-        expr = match.group(0).rstrip("(").strip()
-        hint = ""
-        if "::" in callee_raw:
-            hint = callee_raw
-        elif recv:
-            hint = f"{recv}{callee}"
+        opened = _call_open_after_name(scan, match.end("callee"))
+        if opened is None:
+            continue
+        open_paren, targs = opened
+        callee_raw, recv, expr_start = _call_context(scan, match.start("callee"), callee)
+        if not recv and "::" not in callee_raw and _looks_like_direct_initializer(scan, match.start("callee")):
+            continue
+        arg_count = _count_args(scan, open_paren)
+        line_in_scan = _line_from_starts(scan_starts, expr_start)
+        abs_line = scan_base_line + line_in_scan - 1
+        expr_head = callee_raw if "::" in callee_raw else f"{recv}{callee}"
+        expr = f"{expr_head}{targs}".strip()
+        hint = callee_raw if "::" in callee_raw else f"{recv}{callee}" if recv else ""
         ordinal += 1
         out.append(
             CallSite(
-                caller_function_id=fn.stable_id,
-                callee_name=callee,
-                callee_qualified_hint=hint,
-                call_expression=expr[:240],
-                file_path=fn.file_path,
-                line=abs_line,
+                caller_function_id=fn.stable_id, callee_name=callee,
+                callee_qualified_hint=hint, call_expression=expr[:240],
+                file_path=fn.file_path, line=abs_line,
                 receiver_type_or_object=recv,
                 template_args=parse_template_arity(targs) if targs else "",
-                argument_count=arg_count,
-                ordinal_in_function=ordinal,
+                argument_count=arg_count, ordinal_in_function=ordinal,
                 snippet_hash=snippet_hash(expr),
             )
         )
