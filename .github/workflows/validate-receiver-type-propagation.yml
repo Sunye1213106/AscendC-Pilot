@@ -36,16 +36,20 @@ jobs:
             engines/understand-operator/uo/scripts/receiver_type_facts.py \
             engines/understand-operator/uo/scripts/function_call_graph.py
 
-      - name: Run focused regressions
+      - name: Capture focused regressions
         env:
           PYTHONPATH: engines/understand-operator
         run: |
+          set +e
           pytest -q \
             engines/understand-operator/tests/test_receiver_type_propagation.py \
             engines/understand-operator/tests/test_call_external_classification.py \
             engines/understand-operator/tests/test_function_call_graph.py \
             engines/understand-operator/tests/test_call_scanner.py \
-            engines/understand-operator/tests/test_fag_graph_identity_and_perf.py
+            engines/understand-operator/tests/test_fag_graph_identity_and_perf.py \
+            2>&1 | tee receiver-pytest.log
+          echo ${PIPESTATUS[0]} > receiver-pytest.status
+          exit 0
 
       - name: Capture patched FAG metrics
         env:
@@ -56,8 +60,21 @@ jobs:
           echo ${PIPESTATUS[0]} > receiver-after.status
           exit 0
 
+      - name: Upload validation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: fag-receiver-type-propagation
+          path: |
+            receiver-before.json
+            receiver-after.json
+            receiver-after.log
+            receiver-after.status
+            receiver-pytest.log
+            receiver-pytest.status
+
       - name: Gate deterministic improvement
         run: |
+          test "$(cat receiver-pytest.status)" = "0"
           test "$(cat receiver-after.status)" = "0"
           python - <<'PY'
           import json
@@ -79,16 +96,6 @@ jobs:
               print(name, b, '=>', a)
           assert sum(reductions) > 0, reductions
           PY
-
-      - name: Upload validation report
-        uses: actions/upload-artifact@v4
-        with:
-          name: fag-receiver-type-propagation
-          path: |
-            receiver-before.json
-            receiver-after.json
-            receiver-after.log
-            receiver-after.status
 
       - name: Commit validated implementation
         run: |
