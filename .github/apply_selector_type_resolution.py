@@ -3,6 +3,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[1]
 type_path = root / 'engines/understand-operator/uo/scripts/type_normalizer.py'
 receiver_path = root / 'engines/understand-operator/uo/scripts/receiver_type_facts.py'
+call_graph_path = root / 'engines/understand-operator/uo/scripts/function_call_graph.py'
 test_path = root / 'engines/understand-operator/tests/test_selector_type_resolution.py'
 
 text = type_path.read_text()
@@ -52,25 +53,32 @@ r = r.replace(
 "    candidates = expand_type_candidates(receiver_type, facts.type_aliases, max_depth=2)\n    nested: set[str] = set()\n    for item in candidates:\n        nested.update(expand_nested_member_candidates(item, facts.member_type_aliases))\n    candidates = nested or candidates\n",
 "    candidates = _expanded_receiver_candidates(receiver_type, facts)\n",
 )
-safeguard = '''    for contract in official_contracts.get(method, []):
+receiver_path.write_text(r)
+
+cg = call_graph_path.read_text()
+cg = cg.replace(
+"    legacy = _legacy_receiver_type(site, caller, facts)\n    if _receiver_type_supported(site, structured, facts):\n",
+"    legacy = _legacy_receiver_type(site, caller, facts)\n    if _receiver_type_matches_official(site, legacy, facts):\n        return legacy\n    if _receiver_type_supported(site, structured, facts):\n",
+)
+helper2 = '''def _receiver_type_matches_official(
+    site: CallSite, receiver_type: str, facts: CallResolutionFacts
+) -> bool:
+    if not receiver_type:
+        return False
+    for contract in facts.official_contracts.get(site.callee_name, []):
         counts = {int(value) for value in contract.get("argument_counts") or []}
-        if counts and argument_count not in counts:
+        if counts and site.argument_count not in counts:
             continue
         allowed = [str(value or "") for value in contract.get("receiver_types") or []]
-        if allowed and any(_type_matches(receiver_type, item) for item in allowed):
-            return receiver_type
+        if allowed and any(_type_matches_scope(receiver_type, value) for value in allowed):
+            return True
+    return False
+
+
 '''
-needle = '''def _narrow_receiver_type(
-    receiver_type: str,
-    method: str,
-    argument_count: int,
-    facts: ReceiverTypeFacts,
-    official_contracts: Mapping[str, list[dict[str, Any]]],
-) -> str:
-'''
-if safeguard.strip() not in r:
-    r = r.replace(needle, needle + safeguard)
-receiver_path.write_text(r)
+if 'def _receiver_type_matches_official' not in cg:
+    cg = cg.replace('def _receiver_type_supported(\n', helper2 + 'def _receiver_type_supported(\n')
+call_graph_path.write_text(cg)
 
 test_path.write_text('''from uo.scripts.type_normalizer import (
     collect_member_type_aliases,
