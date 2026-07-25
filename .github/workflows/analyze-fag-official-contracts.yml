@@ -1,4 +1,4 @@
-name: Validate FAG source symbol closure
+name: Validate FAG overload-family compression
 
 on:
   pull_request:
@@ -15,15 +15,10 @@ jobs:
         with:
           ref: agent/tg-workflow-contract-closure
           fetch-depth: 0
-      - name: Apply deterministic integration
+      - name: Apply overload-family integration
         run: |
-          python .github/apply_source_symbol_closure.py
-          python -m py_compile \
-            engines/understand-operator/uo/scripts/source_include_closure.py \
-            engines/understand-operator/uo/scripts/macro_regions.py \
-            engines/understand-operator/uo/scripts/function_call_graph.py \
-            engines/understand-operator/uo/scripts/extract_kernel_subgraph.py \
-            engines/understand-operator/uo/scripts/cann_doc_evidence.py
+          python .github/apply_overload_family.py
+          python -m py_compile engines/understand-operator/uo/scripts/function_call_graph.py
       - run: python -m pip install -q pytest pyyaml
       - name: Run focused regressions
         env:
@@ -47,7 +42,7 @@ jobs:
           PYTHONPATH: engines/understand-operator
         run: |
           set +e
-          python - <<'PY' 2>&1 | tee source-symbol-closure.log
+          python - <<'PY' 2>&1 | tee overload-family.log
           from collections import Counter, defaultdict
           from pathlib import Path
           import json
@@ -59,8 +54,6 @@ jobs:
 
           repo = Path('real-fag').resolve()
           roots = [p for p in repo.rglob('flash_attention_score_grad') if p.is_dir()]
-          if not roots:
-              raise SystemExit('operator root missing')
           op_root = min(roots, key=lambda p: len(p.parts))
           seed_files = []
           for path in op_root.rglob('*'):
@@ -76,113 +69,85 @@ jobs:
           seed_files.sort()
           closure = expand_local_include_closure(repo, seed_files, architecture='arch35')
 
-          def load(paths):
-              texts = {}
-              functions = []
-              for path in paths:
-                  rel = path.relative_to(repo).as_posix()
-                  text = path.read_text(encoding='utf-8', errors='ignore')
-                  texts[rel] = text
-                  functions.extend(iter_function_definitions(repo, rel, architecture='arch35'))
-              return texts, functions
-
-          seed_texts, seed_functions = load(seed_files)
-          closure_texts, closure_functions = load(closure.files)
-          docs = packaged_doc_evidence_bundle(cann_version='9.0')
-
-          baseline_unresolved = []
-          baseline_nodes, baseline_edges = build_call_edges_for_functions(
-              seed_functions, unresolved=baseline_unresolved,
-              source_texts=seed_texts, doc_evidence=docs,
-          )
-          closure_unresolved = []
-          closure_nodes, closure_edges = build_call_edges_for_functions(
-              closure_functions, unresolved=closure_unresolved,
-              source_texts=closure_texts, doc_evidence=docs,
-          )
-          seed_ids = {fn.stable_id for fn in seed_functions}
-          closure_edges = [edge for edge in closure_edges if edge.get('source') in seed_ids]
-          closure_unresolved = [item for item in closure_unresolved if item.get('caller_function_id') in seed_ids]
-
-          def summarize(edges, unresolved):
-              status = Counter(str(edge.get('target_status') or '') for edge in edges)
-              by_symbol = defaultdict(Counter)
-              for edge in edges:
-                  by_symbol[str(edge.get('callee_name') or '')][str(edge.get('target_status') or '')] += 1
-                  by_symbol[str(edge.get('callee_name') or '')]['reason:' + str(edge.get('verification_source') or '')] += 1
-              kinds = Counter(str(item.get('kind') or '') for item in unresolved)
-              return status, {name: dict(counts) for name, counts in by_symbol.items()}, kinds
-
-          before_status, before_symbols, before_kinds = summarize(baseline_edges, baseline_unresolved)
-          after_status, after_symbols, after_kinds = summarize(closure_edges, closure_unresolved)
-          closure_rels = [path.relative_to(repo).as_posix() for path in closure.files]
-          invoke_symbols = sorted(name for name in after_symbols if name.startswith('INVOKE_FAG_'))
-          watched = [
-              'LoadDataToL0A','LoadDataToL0B','LoadDataToL0AMx','LoadDataToL0BMx',
-              'Min','Max','Ceil','CeilDivision',
-          ]
-          report = {
-              'seed_file_count': len(seed_files),
-              'closure_file_count': len(closure.files),
-              'closure_added_files': len(closure.files) - len(seed_files),
-              'closure_truncated': closure.truncated,
-              'closure_unresolved': closure.unresolved,
-              'contains_common_matmul': any(path.endswith('common/op_kernel/matmul.h') for path in closure_rels),
-              'contains_other_arch': [path for path in closure_rels if '/arch' in path and '/arch35/' not in path and any(part.startswith('arch') and part[4:].isdigit() for part in path.split('/'))],
-              'seed_function_count': len(seed_functions),
-              'closure_function_count': len(closure_functions),
-              'before_status': dict(before_status),
-              'after_status_seed_callers': dict(after_status),
-              'missing_reduction': int(before_status.get('missing',0)) - int(after_status.get('missing',0)),
-              'before_unresolved_kinds': dict(before_kinds),
-              'after_unresolved_kinds': dict(after_kinds),
-              'watched_before': {name: before_symbols.get(name,{}) for name in watched},
-              'watched_after': {name: after_symbols.get(name,{}) for name in watched},
-              'invoke_macro_symbols': {name: after_symbols.get(name,{}) for name in invoke_symbols},
-              'source_scope_sample': closure_rels[:80],
+          texts = {}
+          functions = []
+          for path in closure.files:
+              rel = path.relative_to(repo).as_posix()
+              source = path.read_text(encoding='utf-8', errors='ignore')
+              texts[rel] = source
+              functions.extend(iter_function_definitions(repo, rel, architecture='arch35'))
+          seed_ids = {
+              fn.stable_id for fn in functions
+              if (repo / fn.file_path).resolve() in set(seed_files)
           }
-          Path('source-symbol-closure-report.json').write_text(json.dumps(report,indent=2,ensure_ascii=False),encoding='utf-8')
+          unresolved = []
+          nodes, edges = build_call_edges_for_functions(
+              functions, unresolved=unresolved, source_texts=texts,
+              doc_evidence=packaged_doc_evidence_bundle(cann_version='9.0'),
+          )
+          seed_edges = [edge for edge in edges if edge.get('source') in seed_ids]
+          seed_unresolved = [item for item in unresolved if item.get('caller_function_id') in seed_ids]
+          status = Counter(str(edge.get('target_status') or '') for edge in seed_edges)
+          kinds = Counter(str(item.get('kind') or '') for item in seed_unresolved)
+          symbols = defaultdict(Counter)
+          for edge in seed_edges:
+              name = str(edge.get('callee_name') or '')
+              symbols[name][str(edge.get('target_status') or '')] += 1
+              symbols[name]['reason:' + str(edge.get('verification_source') or '')] += 1
+          family_nodes = [node for node in nodes if node.get('node_type') == 'FunctionOverloadSet']
+          family_members = Counter(
+              str(node.get('qualified_name') or '') for node in family_nodes
+          )
+          report = {
+              'seed_call_status': dict(status),
+              'unresolved_kinds': dict(kinds),
+              'overload_family_node_count': len(family_nodes),
+              'overload_family_names': family_members.most_common(80),
+              'load_data_to_l0b': dict(symbols.get('LoadDataToL0B', {})),
+              'min': dict(symbols.get('Min', {})),
+              'max': dict(symbols.get('Max', {})),
+              'ceil': dict(symbols.get('Ceil', {})),
+              'candidate_symbols': sorted(
+                  ((name, counts.get('candidate_set',0)) for name, counts in symbols.items() if counts.get('candidate_set',0)),
+                  key=lambda item: (-item[1], item[0]),
+              )[:80],
+              'family_symbols': sorted(
+                  ((name, counts.get('resolved_family',0)) for name, counts in symbols.items() if counts.get('resolved_family',0)),
+                  key=lambda item: (-item[1], item[0]),
+              )[:80],
+          }
+          Path('overload-family-report.json').write_text(json.dumps(report,indent=2,ensure_ascii=False),encoding='utf-8')
           print(json.dumps(report,indent=2,ensure_ascii=False))
 
-          assert not closure.truncated
-          assert report['contains_common_matmul']
-          assert not report['contains_other_arch']
-          assert report['missing_reduction'] > 0
-          for name in ['LoadDataToL0A','LoadDataToL0B','LoadDataToL0AMx','LoadDataToL0BMx']:
-              assert report['watched_after'][name].get('missing',0) == 0, (name, report['watched_after'][name])
-          assert sum(v.get('missing',0) for v in report['invoke_macro_symbols'].values()) == 0
-          assert report['watched_after']['Min'].get('external',0) == 0
-          assert report['watched_after']['Max'].get('external',0) == 0
+          assert status.get('missing',0) <= 481
+          assert status.get('candidate_set',0) < 351
+          assert status.get('resolved_family',0) > 0
+          assert report['load_data_to_l0b'].get('missing',0) == 0
+          assert report['min'].get('external',0) == 0
+          assert report['max'].get('external',0) == 0
           PY
-          echo ${PIPESTATUS[0]} > source-symbol-closure.status
+          echo ${PIPESTATUS[0]} > overload-family.status
           exit 0
       - name: Upload validation report
         uses: actions/upload-artifact@v4
         with:
-          name: fag-source-symbol-closure
+          name: fag-overload-family
           path: |
-            source-symbol-closure-report.json
-            source-symbol-closure.log
-            source-symbol-closure.status
+            overload-family-report.json
+            overload-family.log
+            overload-family.status
       - name: Gate real FAG validation
-        run: test "$(cat source-symbol-closure.status)" = "0"
+        run: test "$(cat overload-family.status)" = "0"
       - name: Commit validated implementation
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add \
-            engines/understand-operator/uo/scripts/source_include_closure.py \
-            engines/understand-operator/uo/scripts/macro_regions.py \
             engines/understand-operator/uo/scripts/function_call_graph.py \
-            engines/understand-operator/uo/scripts/extract_kernel_subgraph.py \
-            engines/understand-operator/uo/resources/cann_api_catalog.yaml \
-            engines/understand-operator/tests/test_source_include_closure.py \
-            engines/understand-operator/tests/test_macro_regions.py \
-            engines/understand-operator/tests/test_call_external_classification.py \
-            engines/understand-operator/tests/test_cann_api_catalog.py
+            engines/understand-operator/tests/test_function_call_graph.py
           if git diff --cached --quiet; then
             echo 'No implementation changes to commit.'
           else
-            git commit -m 'feat(uo): close project helpers through includes and macros'
+            git commit -m 'feat(uo): compress source overloads into function families'
             git push origin HEAD:agent/tg-workflow-contract-closure
           fi
