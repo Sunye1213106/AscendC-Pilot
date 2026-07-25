@@ -1,0 +1,134 @@
+name: Apply deterministic call resolution v2
+
+on:
+  pull_request:
+    branches: [cursor/semantic-control-plane-closure-44d6]
+
+permissions:
+  contents: write
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/tg-workflow-contract-closure
+          fetch-depth: 0
+      - name: Apply generic implementation
+        run: |
+          cat .github/call-resolution-payload.part* | base64 -d | gzip -d > /tmp/apply_call_opt.py
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('/tmp/apply_call_opt.py')
+          text = p.read_text()
+          text = text.replace(
+              're.subn(pattern, replacement, text, count=1, flags=re.DOTALL | re.MULTILINE)',
+              're.subn(pattern, lambda _match: replacement, text, count=1, flags=re.DOTALL | re.MULTILINE)',
+          )
+          p.write_text(text)
+          PY
+          python /tmp/apply_call_opt.py
+          python -m py_compile \
+            engines/understand-operator/uo/scripts/macro_regions.py \
+            engines/understand-operator/uo/scripts/function_body.py \
+            engines/understand-operator/uo/scripts/function_call_graph.py \
+            engines/understand-operator/uo/scripts/cann_doc_evidence.py \
+            engines/understand-operator/uo/scripts/extract_kernel_subgraph.py
+      - run: python -m pip install -q pytest pyyaml
+      - name: Run focused regressions
+        env:
+          PYTHONPATH: engines/understand-operator
+        run: |
+          set +e
+          pytest -vv --tb=short \
+            engines/understand-operator/tests/test_call_external_classification.py \
+            engines/understand-operator/tests/test_call_scanner.py \
+            engines/understand-operator/tests/test_function_call_graph.py \
+            engines/understand-operator/tests/test_macro_regions.py \
+            engines/understand-operator/tests/test_fag_graph_identity_and_perf.py \
+            2>&1 | tee call-resolution-test.log
+          echo "${PIPESTATUS[0]}" > call-resolution-test.rc
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: call-resolution-test-report-v2
+          path: |
+            call-resolution-test.log
+            call-resolution-test.rc
+      - name: Gate focused regressions
+        run: test "$(cat call-resolution-test.rc)" = "0"
+      - name: Checkout real FAG
+        uses: actions/checkout@v4
+        with:
+          repository: Sunye1213106/flashattention
+          ref: 94e37bc4630a6b2b5695e6a76809d1e94931d8c8
+          path: real-fag
+      - name: Validate real FAG arch35
+        env:
+          PYTHONPATH: engines/understand-operator
+        run: |
+          python - <<'PY'
+          from collections import Counter
+          from pathlib import Path
+          import json
+          from uo.scripts.cann_doc_evidence import BUILTIN_CONTRACTS
+          from uo.scripts.function_body import iter_function_definitions
+          from uo.scripts.function_call_graph import build_call_edges_for_functions
+
+          roots = [p for p in Path('real-fag').rglob('flash_attention_score_grad') if p.is_dir()]
+          root = min(roots, key=lambda p: len(p.parts))
+          files = []
+          for path in root.rglob('*'):
+              if not path.is_file() or path.suffix.lower() not in {'.h','.hpp','.cpp','.cc','.cxx'}:
+                  continue
+              parts = path.relative_to(root).parts
+              if 'op_kernel' not in parts:
+                  continue
+              arch_parts = {p for p in parts if p.startswith('arch') and p[4:].isdigit()}
+              if arch_parts and 'arch35' not in arch_parts:
+                  continue
+              files.append(path)
+          functions, source_texts = [], {}
+          for path in sorted(files):
+              rel = path.relative_to(root).as_posix()
+              source_texts[rel] = path.read_text(encoding='utf-8', errors='ignore')
+              functions.extend(iter_function_definitions(root, rel, architecture='arch35'))
+          unresolved = []
+          nodes, edges = build_call_edges_for_functions(
+              functions, unresolved=unresolved, source_texts=source_texts,
+              doc_evidence={'items': list(BUILTIN_CONTRACTS.values())},
+          )
+          status = Counter(str(e.get('target_status') or '') for e in edges)
+          kinds = Counter(str(u.get('kind') or '') for u in unresolved)
+          reasons = Counter(str(e.get('verification_source') or '') for e in edges)
+          unresolved_names = Counter(str(u.get('callee_name') or '') for u in unresolved)
+          call_names = Counter(str(e.get('callee_name') or '') for e in edges)
+          report = {
+              'architecture':'arch35','files':len(files),'functions':len(functions),
+              'nodes':len(nodes),'edges':len(edges),'target_status':dict(status),
+              'unresolved_kinds':dict(kinds),'verification_reasons':dict(reasons),
+              'top_unresolved_callees':unresolved_names.most_common(50),
+          }
+          print(json.dumps(report, indent=2, ensure_ascii=False))
+          Path('call-resolution-optimized-report.json').write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding='utf-8')
+          assert call_names.get('constexpr', 0) == 0
+          assert reasons.get('api_style_symbol_without_internal_definition', 0) == 0
+          assert unresolved_names.get('likely', 0) == 0
+          assert unresolved_names.get('unlikely', 0) == 0
+          assert status.get('macro', 0) > 0
+          assert kinds.get('call_target_missing', 0) == 0
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: call-resolution-optimized-report-v2
+          path: call-resolution-optimized-report.json
+      - name: Commit implementation
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add engines/understand-operator/uo/scripts engines/understand-operator/tests
+          if ! git diff --cached --quiet; then
+            git commit -m 'fix(uo): resolve calls from macro and type evidence'
+            git push origin HEAD:agent/tg-workflow-contract-closure
+          fi
