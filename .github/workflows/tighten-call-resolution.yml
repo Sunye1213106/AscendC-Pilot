@@ -1,8 +1,8 @@
 name: Tighten fail-closed call resolution
 
 on:
-  pull_request:
-    branches: [cursor/semantic-control-plane-closure-44d6]
+  push:
+    branches: [agent/tg-workflow-contract-closure]
 
 permissions:
   contents: write
@@ -40,9 +40,11 @@ jobs:
 
     if site.receiver_type_or_object:
 '''
-          if old not in text:
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
               raise SystemExit('namespace classification block not found')
-          graph.write_text(text.replace(old, new, 1), encoding='utf-8')
+          graph.write_text(text, encoding='utf-8')
 
           test = Path('engines/understand-operator/tests/test_call_external_classification.py')
           t = test.read_text(encoding='utf-8')
@@ -149,10 +151,11 @@ jobs:
         with:
           name: call-resolution-fail-closed-report
           path: call-resolution-fail-closed-report.json
-      - name: Commit implementation
+      - name: Commit implementation and remove runner
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add engines/understand-operator/uo/scripts/function_call_graph.py engines/understand-operator/tests/test_call_external_classification.py
+          git rm -f .github/workflows/tighten-call-resolution.yml .github/tighten-call-resolution.trigger
           git commit -m 'fix(uo): require evidence for namespace call targets'
           git push origin HEAD:agent/tg-workflow-contract-closure
