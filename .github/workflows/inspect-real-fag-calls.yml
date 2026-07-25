@@ -1,0 +1,111 @@
+name: Inspect real FAG unresolved calls
+
+on:
+  pull_request:
+    branches: [cursor/semantic-control-plane-closure-44d6]
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Sunye1213106/flashattention
+          ref: 94e37bc4630a6b2b5695e6a76809d1e94931d8c8
+          path: real-fag
+      - name: Inspect unresolved call context
+        env:
+          PYTHONPATH: engines/understand-operator
+        run: |
+          python - <<'PY'
+          from collections import Counter, defaultdict
+          from pathlib import Path
+          import json, re
+
+          from uo.scripts.function_body import iter_function_definitions, extract_call_sites
+          from uo.scripts.function_call_graph import build_call_edges_for_functions, _CALL_NOISE
+
+          roots = [p for p in Path('real-fag').rglob('flash_attention_score_grad') if p.is_dir()]
+          root = min(roots, key=lambda p: len(p.parts))
+          all_files = sorted(
+              p for p in root.rglob('*')
+              if p.is_file() and p.suffix.lower() in {'.h', '.hpp', '.cpp', '.cc', '.cxx'}
+          )
+          kernel_files = [p for p in all_files if 'op_kernel' in p.as_posix()]
+          functions = []
+          for path in kernel_files:
+              functions.extend(iter_function_definitions(root, path.relative_to(root).as_posix(), architecture='arch35'))
+
+          unresolved = []
+          nodes, edges = build_call_edges_for_functions(functions, unresolved=unresolved)
+          sites = {str(n.get('id')): n for n in nodes if n.get('node_type') == 'CallSite'}
+          edge_by_site = {str(e.get('call_site_id')): e for e in edges}
+          source_lines = {}
+          for p in all_files:
+              try:
+                  source_lines[p.relative_to(root).as_posix()] = p.read_text(encoding='utf-8', errors='ignore').splitlines()
+              except OSError:
+                  pass
+
+          grouped = defaultdict(list)
+          for item in unresolved:
+              if item.get('kind') != 'internal_definition_not_indexed':
+                  continue
+              name = str(item.get('callee_name') or '')
+              file_path = str(item.get('file_path') or '')
+              line = int(item.get('start_line') or 0)
+              lines = source_lines.get(file_path, [])
+              lo, hi = max(0, line - 2), min(len(lines), line + 1)
+              context = '\n'.join(f'{i+1}: {lines[i]}' for i in range(lo, hi))
+              site = next((s for s in sites.values() if s.get('file_path') == file_path and int(s.get('start_line') or 0) == line and s.get('callee_name') == name), {})
+              grouped[name].append({
+                  'file_path': file_path,
+                  'line': line,
+                  'call_expression': site.get('call_expression'),
+                  'receiver': site.get('receiver_type_or_object'),
+                  'caller_function_id': item.get('caller_function_id'),
+                  'context': context,
+              })
+
+          def declaration_hits(name):
+              pat = re.compile(r'\b' + re.escape(name) + r'\s*(?:<[^;{}\n]{0,160}>)?\s*\(')
+              hits = []
+              for rel, lines in source_lines.items():
+                  for idx, line in enumerate(lines, 1):
+                      if pat.search(line):
+                          hits.append(f'{rel}:{idx}:{line.strip()}')
+                          if len(hits) >= 12:
+                              return hits
+              return hits
+
+          macro_defs = defaultdict(list)
+          macro_pat = re.compile(r'^\s*#\s*define\s+([A-Za-z_]\w*)\s*\(')
+          for rel, lines in source_lines.items():
+              for idx, line in enumerate(lines, 1):
+                  m = macro_pat.match(line)
+                  if m:
+                      macro_defs[m.group(1)].append(f'{rel}:{idx}:{line.strip()}')
+
+          counts = Counter(str(u.get('callee_name') or '') for u in unresolved if u.get('kind') == 'internal_definition_not_indexed')
+          report = {
+              'counts': counts,
+              'samples': {},
+              'macro_definitions': {},
+              'declaration_hits': {},
+          }
+          for name, count in counts.most_common(60):
+              report['samples'][name] = grouped[name][:5]
+              if name in macro_defs:
+                  report['macro_definitions'][name] = macro_defs[name][:12]
+              report['declaration_hits'][name] = declaration_hits(name)
+          Path('real-fag-unresolved-context.json').write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding='utf-8')
+          print(json.dumps(report, indent=2, ensure_ascii=False))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: real-fag-unresolved-context
+          path: real-fag-unresolved-context.json
