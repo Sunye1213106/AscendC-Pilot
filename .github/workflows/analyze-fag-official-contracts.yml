@@ -1,49 +1,31 @@
-name: Validate FAG overload-family compression
+name: Inspect FAG receiver-type ambiguity
 
 on:
   pull_request:
     branches: [cursor/semantic-control-plane-closure-44d6]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  validate:
+  inspect:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: agent/tg-workflow-contract-closure
-          fetch-depth: 0
-      - name: Apply overload-family integration
-        run: |
-          python .github/apply_overload_family.py
-          python -m py_compile engines/understand-operator/uo/scripts/function_call_graph.py
-      - run: python -m pip install -q pytest pyyaml
-      - name: Run focused regressions
-        env:
-          PYTHONPATH: engines/understand-operator
-        run: |
-          pytest -q \
-            engines/understand-operator/tests/test_source_include_closure.py \
-            engines/understand-operator/tests/test_macro_regions.py \
-            engines/understand-operator/tests/test_call_external_classification.py \
-            engines/understand-operator/tests/test_call_scanner.py \
-            engines/understand-operator/tests/test_function_call_graph.py \
-            engines/understand-operator/tests/test_cann_api_catalog.py \
-            engines/understand-operator/tests/test_fag_graph_identity_and_perf.py
+      - run: python -m pip install -q pyyaml
       - uses: actions/checkout@v4
         with:
           repository: Sunye1213106/flashattention
           ref: 94e37bc4630a6b2b5695e6a76809d1e94931d8c8
           path: real-fag
-      - name: Evaluate real FAG arch35
+      - name: Capture candidate contexts
         env:
           PYTHONPATH: engines/understand-operator
         run: |
-          set +e
-          python - <<'PY' 2>&1 | tee overload-family.log
-          from collections import Counter, defaultdict
+          python - <<'PY'
+          from collections import defaultdict
           from pathlib import Path
           import json
 
@@ -52,99 +34,60 @@ jobs:
           from uo.scripts.function_call_graph import build_call_edges_for_functions
           from uo.scripts.source_include_closure import expand_local_include_closure
 
-          repo = Path('real-fag').resolve()
-          roots = [p for p in repo.rglob('flash_attention_score_grad') if p.is_dir()]
-          op_root = min(roots, key=lambda p: len(p.parts))
-          seed_files = []
-          for path in op_root.rglob('*'):
-              if not path.is_file() or path.suffix.lower() not in {'.h','.hh','.hpp','.hxx','.inc','.c','.cc','.cpp','.cxx'}:
-                  continue
-              parts = path.relative_to(op_root).parts
-              if 'op_kernel' not in parts:
-                  continue
-              arch_parts = {part.casefold() for part in parts if part.casefold().startswith('arch') and part[4:].isdigit()}
-              if arch_parts and 'arch35' not in arch_parts:
-                  continue
-              seed_files.append(path.resolve())
-          seed_files.sort()
-          closure = expand_local_include_closure(repo, seed_files, architecture='arch35')
-
-          texts = {}
-          functions = []
-          seed_paths = set(seed_files)
-          for path in closure.files:
-              rel = path.relative_to(repo).as_posix()
-              source = path.read_text(encoding='utf-8', errors='ignore')
-              texts[rel] = source
-              functions.extend(iter_function_definitions(repo, rel, architecture='arch35'))
-          seed_ids = {
-              fn.stable_id for fn in functions
-              if (repo / fn.file_path).resolve() in seed_paths
-          }
-          unresolved = []
-          nodes, edges = build_call_edges_for_functions(
-              functions, unresolved=unresolved, source_texts=texts,
-              doc_evidence=packaged_doc_evidence_bundle(cann_version='9.0'),
-          )
-          seed_edges = [edge for edge in edges if edge.get('source') in seed_ids]
-          seed_unresolved = [item for item in unresolved if item.get('caller_function_id') in seed_ids]
-          status = Counter(str(edge.get('target_status') or '') for edge in seed_edges)
-          kinds = Counter(str(item.get('kind') or '') for item in seed_unresolved)
-          symbols = defaultdict(Counter)
-          for edge in seed_edges:
-              name = str(edge.get('callee_name') or '')
-              symbols[name][str(edge.get('target_status') or '')] += 1
-              symbols[name]['reason:' + str(edge.get('verification_source') or '')] += 1
-          family_nodes = [node for node in nodes if node.get('node_type') == 'FunctionOverloadSet']
-          report = {
-              'seed_call_status': dict(status),
-              'unresolved_kinds': dict(kinds),
-              'overload_family_node_count': len(family_nodes),
-              'load_data_to_l0b': dict(symbols.get('LoadDataToL0B', {})),
-              'min': dict(symbols.get('Min', {})),
-              'max': dict(symbols.get('Max', {})),
-              'ceil': dict(symbols.get('Ceil', {})),
-              'candidate_symbols': sorted(
-                  ((name, counts.get('candidate_set',0)) for name, counts in symbols.items() if counts.get('candidate_set',0)),
-                  key=lambda item: (-item[1], item[0]),
-              )[:80],
-              'family_symbols': sorted(
-                  ((name, counts.get('resolved_family',0)) for name, counts in symbols.items() if counts.get('resolved_family',0)),
-                  key=lambda item: (-item[1], item[0]),
-              )[:80],
-          }
-          Path('overload-family-report.json').write_text(json.dumps(report,indent=2,ensure_ascii=False),encoding='utf-8')
-          print(json.dumps(report,indent=2,ensure_ascii=False))
-
-          assert status.get('missing',0) <= 481
-          assert status.get('candidate_set',0) < 351
-          assert status.get('resolved_family',0) > 0
-          assert report['load_data_to_l0b'].get('missing',0) == 0
-          assert report['min'].get('external',0) == 0
-          assert report['max'].get('external',0) == 0
+          repo=Path('real-fag').resolve()
+          op=min([p for p in repo.rglob('flash_attention_score_grad') if p.is_dir()],key=lambda p:len(p.parts))
+          seeds=[]
+          for p in op.rglob('*'):
+              if not p.is_file() or p.suffix.lower() not in {'.h','.hh','.hpp','.hxx','.inc','.c','.cc','.cpp','.cxx'}: continue
+              parts=p.relative_to(op).parts
+              if 'op_kernel' not in parts: continue
+              arches={x.casefold() for x in parts if x.casefold().startswith('arch') and x[4:].isdigit()}
+              if arches and 'arch35' not in arches: continue
+              seeds.append(p.resolve())
+          closure=expand_local_include_closure(repo,seeds,architecture='arch35')
+          texts={}; funcs=[]
+          for p in closure.files:
+              rel=p.relative_to(repo).as_posix(); txt=p.read_text(encoding='utf-8',errors='ignore')
+              texts[rel]=txt; funcs.extend(iter_function_definitions(repo,rel,architecture='arch35'))
+          unresolved=[]
+          nodes,edges=build_call_edges_for_functions(funcs,unresolved=unresolved,source_texts=texts,doc_evidence=packaged_doc_evidence_bundle(cann_version='9.0'))
+          sites={str(n.get('id')):n for n in nodes if n.get('node_type')=='CallSite'}
+          fns={fn.stable_id:fn for fn in funcs}
+          watched={'Get','GetTensor','Init','LoadDataToL0B'}
+          out=defaultdict(list)
+          for edge in edges:
+              name=str(edge.get('callee_name') or '')
+              if name not in watched or edge.get('target_status')!='candidate_set': continue
+              site=sites.get(str(edge.get('call_site_id') or ''),{})
+              file=str(site.get('file_path') or '')
+              line=int(site.get('start_line') or 0)
+              src_lines=texts.get(file,'').splitlines()
+              lo=max(0,line-5); hi=min(len(src_lines),line+4)
+              candidates=[]
+              for row in edge.get('candidate_scores') or []:
+                  fn=fns.get(str(row.get('function_id') or ''))
+                  candidates.append({
+                      'id':row.get('function_id'),'score':row.get('score'),'evidence':row.get('evidence'),
+                      'qualified_name':fn.qualified_name if fn else None,
+                      'owner':fn.class_or_namespace if fn else None,
+                      'signature':fn.normalized_signature if fn else None,
+                      'file':fn.file_path if fn else None,
+                  })
+              if len(out[name])<30:
+                  out[name].append({
+                      'call_expression':site.get('call_expression'),
+                      'receiver':site.get('receiver_type_or_object'),
+                      'receiver_object':site.get('receiver_object'),
+                      'receiver_type':site.get('receiver_type'),
+                      'argument_count':site.get('argument_count'),
+                      'file':file,'line':line,
+                      'context':'\n'.join(f'{i+1}: {src_lines[i]}' for i in range(lo,hi)),
+                      'candidates':candidates,
+                  })
+          Path('receiver-ambiguity.json').write_text(json.dumps(out,indent=2,ensure_ascii=False),encoding='utf-8')
+          print(json.dumps({k:len(v) for k,v in out.items()},indent=2))
           PY
-          echo ${PIPESTATUS[0]} > overload-family.status
-          exit 0
-      - name: Upload validation report
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: fag-overload-family
-          path: |
-            overload-family-report.json
-            overload-family.log
-            overload-family.status
-      - name: Gate real FAG validation
-        run: test "$(cat overload-family.status)" = "0"
-      - name: Commit validated implementation
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add \
-            engines/understand-operator/uo/scripts/function_call_graph.py \
-            engines/understand-operator/tests/test_function_call_graph.py
-          if git diff --cached --quiet; then
-            echo 'No implementation changes to commit.'
-          else
-            git commit -m 'feat(uo): compress source overloads into function families'
-            git push origin HEAD:agent/tg-workflow-contract-closure
-          fi
+          name: fag-receiver-ambiguity
+          path: receiver-ambiguity.json
