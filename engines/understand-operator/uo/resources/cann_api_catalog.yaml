@@ -734,3 +734,45 @@ contracts:
   version_scope: multi_version
   cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0']
   confidence: 0.95
+- symbol_or_macro: SetMaskNorm
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::SetMaskNorm]
+  receiver_types: []
+  argument_counts: [0]
+  allow_unqualified: true
+  document_title: SetMaskNorm - mask normal mode
+  document_url: https://www.hiascend.com/document/detail/zh/canncommercial/850/API/ascendcopapi/atlasascendc_api_07_0095.html
+  semantic_summary: Sets the Vector mask mode to Normal so iteration counts are configured explicitly.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0', '9.1']
+  confidence: 1.0
+- symbol_or_macro: SetSysWorkSpace
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::SetSysWorkSpace]
+  receiver_types: []
+  argument_counts: [1]
+  allow_unqualified: true
+  document_title: SetSysWorkSpace - system workspace pointer
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha003/API/ascendcopapi/atlasascendc_api_07_0171.html
+  semantic_summary: Sets the system workspace pointer required by high-level AscendC APIs such as Matmul.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0', '9.1']
+  confidence: 1.0
+- symbol_or_macro: SetSysWorkspace
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::SetSysWorkspace, AscendC::SetSysWorkSpace]
+  receiver_types: []
+  argument_counts: [1]
+  allow_unqualified: true
+  document_title: SetSysWorkspace - system workspace pointer (alternate spelling)
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha003/API/ascendcopapi/atlasascendc_api_07_0171.html
+  semantic_summary: Alternate spelling of SetSysWorkSpace used in some AscendC kernel sources.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['8.0', '8.1', '8.2', '8.3', '8.5', '9.0', '9.1']
+  confidence: 0.95

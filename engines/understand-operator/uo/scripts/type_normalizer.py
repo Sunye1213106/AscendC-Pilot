@@ -9,6 +9,11 @@ _ALIAS_RE = re.compile(
     r"\btypedef\s+([^;]+?)\s+([A-Za-z_]\w*)\s*;",
     re.DOTALL,
 )
+_CLASS_HEAD_RE = re.compile(
+    r"\b(?:class|struct)\s+([A-Za-z_]\w*)\b[^{;]*\{",
+    re.MULTILINE,
+)
+_NESTED_TYPE_SUFFIXES = frozenset({"TYPE", "type", "type_t"})
 
 
 def collect_type_aliases(source_texts: Mapping[object, str] | None) -> dict[str, set[str]]:
@@ -23,6 +28,7 @@ def collect_type_aliases(source_texts: Mapping[object, str] | None) -> dict[str,
             normalized = normalize_declared_type(expression)
             if normalized:
                 aliases.setdefault(name, set()).add(normalized)
+        _collect_class_scoped_aliases(source, aliases)
     return aliases
 
 
@@ -75,6 +81,8 @@ def canonical_base(type_name: str) -> str:
 def normalize_declared_type(type_name: str) -> str:
     text = str(type_name or "").strip()
     text = re.sub(r"\b(?:const|volatile|static|mutable|typename|struct|class|register|extern)\b", " ", text)
+    # Macro line-continuations occasionally leak into collected type strings.
+    text = text.replace("\\", "")
     text = re.sub(r"\s+", "", text)
     return text.strip("*& ")
 
@@ -111,7 +119,7 @@ def narrow_receiver_for_method_call(
     """Narrow conditional/alias receivers to a unique object type when possible."""
     if not receiver_type:
         return ""
-    expanded = expand_type_candidates(receiver_type, aliases, max_depth=3)
+    expanded = expand_type_candidates(receiver_type, aliases, max_depth=4)
     usable = prune_non_object_types(set(expanded))
     if not usable:
         return receiver_type
@@ -125,31 +133,79 @@ def _expand_once(value: str, aliases: Mapping[str, set[str]]) -> set[str]:
     base = canonical_base(value)
     if base in aliases:
         return set(aliases[base])
+    nested = _nested_member_type_branches(value, aliases)
+    if nested:
+        return nested
     conditional = _conditional_branches(value)
     if conditional:
         return conditional
     return {value}
 
 
+def _nested_member_type_branches(
+    value: str, aliases: Mapping[str, set[str]]
+) -> set[str]:
+    """Expand ``Selector<...>::TYPE`` via class-scoped using/typedef aliases."""
+    head, sep, tail = value.rpartition("::")
+    if not sep or tail not in _NESTED_TYPE_SUFFIXES or not head:
+        return set()
+    owner_base = canonical_base(head)
+    if not owner_base:
+        return set()
+    hits = set(aliases.get(f"{owner_base}::{tail}", set()))
+    if not hits and owner_base in aliases and tail == "TYPE":
+        # Some codebases alias the selector itself; keep fail-closed otherwise.
+        hits = set()
+    return {normalize_declared_type(item) for item in hits if normalize_declared_type(item)}
+
+
 def _conditional_branches(value: str) -> set[str]:
-    marker = "std::conditional<"
-    start = value.find(marker)
-    if start < 0:
-        marker = "conditional<"
+    # Prefer *_t alias forms before the trait forms so ``conditional_t`` is not
+    # misread as ``conditional``.
+    markers = (
+        ("std::conditional_t<", True),
+        ("conditional_t<", True),
+        ("std::conditional<", False),
+        ("conditional<", False),
+    )
+    for marker, alias_form in markers:
         start = value.find(marker)
-    if start < 0:
-        return set()
-    open_pos = start + len(marker) - 1
-    close_pos = _matching_angle(value, open_pos)
-    if close_pos is None:
-        return set()
-    suffix = value[close_pos + 1 :]
-    if suffix not in {"::type", "::type_t", ""}:
-        return set()
-    args = _split_top_level(value[open_pos + 1 : close_pos], ",")
-    if len(args) != 3:
-        return set()
-    return {normalize_declared_type(args[1]), normalize_declared_type(args[2])} - {""}
+        if start < 0:
+            continue
+        open_pos = start + len(marker) - 1
+        close_pos = _matching_angle(value, open_pos)
+        if close_pos is None:
+            continue
+        suffix = value[close_pos + 1 :]
+        if alias_form:
+            if suffix not in {"", "::type", "::type_t"}:
+                continue
+        elif suffix not in {"::type", "::type_t", ""}:
+            continue
+        args = _split_top_level(value[open_pos + 1 : close_pos], ",")
+        if len(args) != 3:
+            continue
+        return {normalize_declared_type(args[1]), normalize_declared_type(args[2])} - {""}
+    return set()
+
+
+def _collect_class_scoped_aliases(source: str, aliases: dict[str, set[str]]) -> None:
+    for match in _CLASS_HEAD_RE.finditer(source):
+        owner = match.group(1)
+        open_brace = match.end() - 1
+        close_brace = _matching_brace(source, open_brace)
+        if close_brace is None:
+            continue
+        body = source[open_brace + 1 : close_brace]
+        for alias_match in _ALIAS_RE.finditer(body):
+            if alias_match.group(1):
+                name, expression = alias_match.group(1), alias_match.group(2)
+            else:
+                name, expression = alias_match.group(4), alias_match.group(3)
+            normalized = normalize_declared_type(expression)
+            if not normalized:
+                continue
+            aliases.setdefault(f"{owner}::{name}", set()).add(normalized)
 
 
 def _matching_angle(text: str, open_pos: int) -> int | None:
@@ -161,6 +217,29 @@ def _matching_angle(text: str, open_pos: int) -> int | None:
             depth -= 1
             if depth == 0:
                 return index
+    return None
+
+
+def _matching_brace(text: str, open_pos: int) -> int | None:
+    depth = 0
+    index = open_pos
+    n = len(text)
+    while index < n:
+        ch = text[index]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+        elif ch in "'\"":
+            quote = ch
+            index += 1
+            while index < n and text[index] != quote:
+                if text[index] == "\\":
+                    index += 1
+                index += 1
+        index += 1
     return None
 
 

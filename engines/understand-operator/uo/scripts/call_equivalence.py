@@ -25,7 +25,7 @@ def receiver_owner_bases(
     receiver_type: str,
     aliases: Mapping[str, set[str]] | None = None,
 ) -> set[str]:
-    expanded = expand_type_candidates(receiver_type, aliases, max_depth=3)
+    expanded = expand_type_candidates(receiver_type, aliases, max_depth=5)
     usable = prune_non_object_types(set(expanded))
     return {canonical_base(item) for item in usable if canonical_base(item)}
 

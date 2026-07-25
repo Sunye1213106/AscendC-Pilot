@@ -575,32 +575,68 @@ def _extract_parameter_clauses(declarator: str, name: str) -> list[str]:
 def _extract_template_parameters(
     fn: FunctionDefinition, source: str
 ) -> list[TemplateParameter]:
+    """Extract function-template parameters only.
+
+    Class-template arguments in ``Class<Args>::Method`` headers and angle
+    brackets from nearby expressions (e.g. ``WaitFlag<HardEvent::MTE3_S>``)
+    must not be treated as function template parameters.
+    """
+    header_blob = f"{fn.header_text or ''}\n{(fn.body_text or '').split('{', 1)[0]}"
+    from_header = _template_params_before_name(header_blob, fn.name)
+    if from_header is not None:
+        return from_header
+
     lines = source.splitlines() if source else (fn.body_text or "").splitlines()
-    if not lines:
-        # Fall back to stored template arity string.
-        return _parse_template_parameter_list(fn.template_arity_or_signature)
+    if lines:
+        start = max(0, int(fn.start_line or 1) - 1)
+        for index in range(start, max(-1, start - 8), -1):
+            chunk = "\n".join(lines[index : start + 1])
+            parsed = _template_params_before_name(chunk, fn.name)
+            if parsed is not None:
+                return parsed
 
-    start = max(0, int(fn.start_line or 1) - 1)
-    for index in range(start, max(-1, start - 8), -1):
-        chunk = "\n".join(lines[index : start + 1])
-        matches = list(re.finditer(r"\btemplate\s*<", chunk))
-        if not matches:
-            continue
-        marker = matches[-1]
-        open_angle = chunk.find("<", marker.start())
-        close_angle = _matching_delimiter(chunk, open_angle, "<", ">")
-        if close_angle is None:
-            continue
-        after = chunk[close_angle + 1 :]
-        name_match = re.search(rf"\b{re.escape(fn.name)}\b", after)
-        if not name_match:
-            continue
-        between = after[: name_match.start()]
-        if re.search(r"[;{}]", between):
-            continue
-        return _parse_template_parameter_list(chunk[open_angle + 1 : close_angle])
+    return _fallback_template_parameters(fn.template_arity_or_signature)
 
-    return _parse_template_parameter_list(fn.template_arity_or_signature)
+
+def _template_params_before_name(chunk: str, name: str) -> list[TemplateParameter] | None:
+    matches = list(re.finditer(r"\btemplate\s*<", chunk))
+    if not matches:
+        return None
+    marker = matches[-1]
+    open_angle = chunk.find("<", marker.start())
+    close_angle = _matching_delimiter(chunk, open_angle, "<", ">")
+    if close_angle is None:
+        return None
+    after = chunk[close_angle + 1 :]
+    # Destructors are written as Class::~Class(...).
+    name_match = re.search(rf"~?\b{re.escape(name)}\b", after)
+    if not name_match:
+        return None
+    between = after[: name_match.start()]
+    if re.search(r"[;{}]", between):
+        return None
+    # Reject class/struct template heads accidentally captured above a method.
+    if re.search(r"\b(?:class|struct)\b", between):
+        return None
+    return _parse_template_parameter_list(chunk[open_angle + 1 : close_angle])
+
+
+def _fallback_template_parameters(text: str) -> list[TemplateParameter]:
+    """Accept only strings that look like real template parameter lists."""
+    inner = str(text or "").strip()
+    if inner.startswith("<") and inner.endswith(">"):
+        inner = inner[1:-1].strip()
+    if not inner:
+        return []
+    # Macro-style class template packs / leaked expression fragments.
+    if re.fullmatch(r"[A-Z][A-Z0-9_]*", inner):
+        return []
+    if "::" in inner and not re.search(r"\b(?:typename|class)\b", inner):
+        return []
+    if not re.search(r"\b(?:typename|class|bool|int|uint\d*_t|size_t|auto)\b", inner):
+        return []
+    return _parse_template_parameter_list(inner)
+
 
 
 def _parse_template_parameter_list(text: str) -> list[TemplateParameter]:

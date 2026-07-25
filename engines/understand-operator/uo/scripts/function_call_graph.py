@@ -27,6 +27,7 @@ from uo.scripts.receiver_type_facts import (
     infer_receiver_type as infer_receiver_type_from_facts,
 )
 from uo.scripts.semantic_identity import mint_edge_id, mint_scoped_node_id
+from uo.scripts.type_normalizer import expand_type_candidates
 
 
 _CALL_NOISE = frozenset(
@@ -43,6 +44,9 @@ _STANDARD_EXTERNAL_SYMBOLS = frozenset(
         "abs", "acos", "asin", "atan", "atan2", "ceil", "cos", "exp", "floor",
         "fmax", "fmin", "log", "log2", "max", "memcpy", "memmove", "memset",
         "min", "pow", "printf", "sin", "sqrt", "tan",
+        # Capitalized scalar helpers commonly used unqualified in device kernels
+        # when the defining header is outside the local include closure.
+        "Min", "Max", "Ceil", "Abs",
         # AscendC / MicroAPI high-frequency intrinsics commonly used unqualified.
         "vstas", "vstus", "vads", "vmuls", "vadds",
         "FusedMulDstAdd", "FusedExpSub", "ExpSub",
@@ -513,7 +517,11 @@ def _matching_official_contract(
             if not has_receiver:
                 continue
             allowed_types = [str(value or "") for value in contract.get("receiver_types") or []]
-            if not receiver_type or not any(_type_matches_scope(receiver_type, value) for value in allowed_types):
+            if not receiver_type or not any(
+                _type_matches_scope(candidate, value)
+                for candidate in _receiver_type_match_candidates(receiver_type, facts)
+                for value in allowed_types
+            ):
                 continue
             return contract, "official_contract:receiver_type"
         if "::" in hint:
@@ -761,16 +769,35 @@ def _receiver_type_supported(
 ) -> bool:
     if not receiver_type:
         return False
-    if any(_type_matches_scope(receiver_type, scope) for scope in facts.internal_classes):
+    candidates = _receiver_type_match_candidates(receiver_type, facts)
+    if any(
+        _type_matches_scope(candidate, scope)
+        for candidate in candidates
+        for scope in facts.internal_classes
+    ):
         return True
     for contract in facts.official_contracts.get(site.callee_name, []):
         counts = {int(value) for value in contract.get("argument_counts") or []}
         if counts and site.argument_count not in counts:
             continue
         allowed = [str(value or "") for value in contract.get("receiver_types") or []]
-        if allowed and any(_type_matches_scope(receiver_type, value) for value in allowed):
+        if allowed and any(
+            _type_matches_scope(candidate, value)
+            for candidate in candidates
+            for value in allowed
+        ):
             return True
     return False
+
+
+def _receiver_type_match_candidates(
+    receiver_type: str, facts: CallResolutionFacts
+) -> set[str]:
+    aliases = {}
+    if facts.receiver_type_facts is not None:
+        aliases = facts.receiver_type_facts.type_aliases
+    expanded = expand_type_candidates(receiver_type, aliases, max_depth=3)
+    return {item for item in expanded if item} or {receiver_type}
 
 
 def _legacy_receiver_type(

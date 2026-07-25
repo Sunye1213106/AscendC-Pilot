@@ -197,9 +197,9 @@ def _extract_signature(header: str, name: str) -> str:
 
 
 def _infer_class_from_context(text: str, match_start: int, header: str) -> str:
-    # Out-of-class: Class::Method(
+    # Out-of-class: Class::Method( / Class::~Class(
     m = re.search(
-        r"\b([A-Za-z_]\w*(?:\s*<[^>]*>)?)\s*::\s*([A-Za-z_]\w*)\s*\(",
+        r"\b([A-Za-z_]\w*(?:\s*<[^>]*>)?)\s*::\s*~?([A-Za-z_]\w*)\s*\(",
         header,
     )
     if m:
