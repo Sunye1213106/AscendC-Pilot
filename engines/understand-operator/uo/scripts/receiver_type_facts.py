@@ -12,6 +12,9 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from uo.scripts.function_body import CallSite, FunctionDefinition
+from uo.scripts.type_normalizer import (
+    canonical_base, collect_type_aliases, expand_type_candidates, normalize_declared_type,
+)
 
 
 _DECL_QUALIFIERS = frozenset(
@@ -52,6 +55,7 @@ class ReceiverTypeFacts:
     member_types_by_class: dict[str, dict[str, str]] = field(default_factory=dict)
     return_types_by_method: dict[tuple[str, str, int], set[str]] = field(default_factory=dict)
     return_types_by_name: dict[tuple[str, int], set[str]] = field(default_factory=dict)
+    type_aliases: dict[str, set[str]] = field(default_factory=dict)
 
     def add_binding(self, function_id: str, binding: TypeBinding) -> None:
         bucket = self.bindings_by_function.setdefault(function_id, [])
@@ -78,6 +82,7 @@ def build_receiver_type_facts(
     official_contracts: Mapping[str, list[dict[str, Any]]] | None = None,
 ) -> ReceiverTypeFacts:
     facts = ReceiverTypeFacts()
+    facts.type_aliases = collect_type_aliases(source_texts)
     source_by_rel = {str(path).replace("\\", "/"): str(text or "") for path, text in (source_texts or {}).items()}
 
     for raw_path, text in source_by_rel.items():
@@ -111,26 +116,41 @@ def build_receiver_type_facts(
                 name, type_name = declared
                 facts.add_binding(fn.stable_id, TypeBinding(name, type_name, line, "local"))
 
-    for assignment in assignments:
-        receiver_type = _lookup_receiver_expression(
-            assignment.receiver,
-            assignment.function_id,
-            assignment.caller_class,
-            assignment.line,
-            facts,
-        )
-        return_type = _unique_return_type(
-            receiver_type,
-            assignment.method,
-            assignment.argument_count,
-            facts,
-            official_contracts or {},
-        )
-        if return_type:
-            facts.add_binding(
+    pending = list(assignments)
+    for propagation_depth in range(2):
+        next_pending: list[_AutoAssignment] = []
+        progress = False
+        for assignment in pending:
+            receiver_type = _lookup_receiver_expression(
+                assignment.receiver,
                 assignment.function_id,
-                TypeBinding(assignment.name, return_type, assignment.line, "one_hop_return"),
+                assignment.caller_class,
+                assignment.line,
+                facts,
             )
+            return_type = _unique_return_type(
+                receiver_type,
+                assignment.method,
+                assignment.argument_count,
+                facts,
+                official_contracts or {},
+            )
+            if return_type:
+                facts.add_binding(
+                    assignment.function_id,
+                    TypeBinding(
+                        assignment.name,
+                        return_type,
+                        assignment.line,
+                        "one_hop_return" if propagation_depth == 0 else "two_hop_return",
+                    ),
+                )
+                progress = True
+            else:
+                next_pending.append(assignment)
+        pending = next_pending
+        if not progress or not pending:
+            break
     return facts
 
 
@@ -167,12 +187,19 @@ def infer_receiver_type(
             official_contracts or {},
         )
 
-    return _lookup_receiver_expression(
+    receiver_type = _lookup_receiver_expression(
         receiver,
         caller.stable_id,
         caller.class_or_namespace,
         site.line,
         facts,
+    )
+    return _narrow_receiver_type(
+        receiver_type,
+        site.callee_name,
+        site.argument_count,
+        facts,
+        official_contracts or {},
     )
 
 
@@ -213,10 +240,11 @@ def _unique_return_type(
     official_contracts: Mapping[str, list[dict[str, Any]]],
 ) -> str:
     candidates: set[str] = set()
-    owner = _normalize_type_name(receiver_type)
-    if owner:
+    receiver_candidates = expand_type_candidates(receiver_type, facts.type_aliases, max_depth=2)
+    owner_candidates = {_normalize_type_name(item) for item in receiver_candidates if _normalize_type_name(item)}
+    for owner in owner_candidates:
         candidates.update(facts.return_types_by_method.get((owner, method, argument_count), set()))
-    elif method:
+    if not owner_candidates and method:
         candidates.update(facts.return_types_by_name.get((method, argument_count), set()))
 
     for contract in official_contracts.get(method, []):
@@ -224,7 +252,9 @@ def _unique_return_type(
         if counts and argument_count not in counts:
             continue
         allowed = [str(value or "") for value in contract.get("receiver_types") or []]
-        if allowed and (not receiver_type or not any(_type_matches(receiver_type, item) for item in allowed)):
+        if allowed and (not receiver_candidates or not any(
+            _type_matches(candidate, item) for candidate in receiver_candidates for item in allowed
+        )):
             continue
         return_type = _normalize_declared_type(str(contract.get("return_type") or ""))
         if return_type:
@@ -238,6 +268,39 @@ def _unique_return_type(
         return ""
     return sorted(normalized, key=lambda value: (len(value), value))[0]
 
+
+
+def _narrow_receiver_type(
+    receiver_type: str,
+    method: str,
+    argument_count: int,
+    facts: ReceiverTypeFacts,
+    official_contracts: Mapping[str, list[dict[str, Any]]],
+) -> str:
+    candidates = expand_type_candidates(receiver_type, facts.type_aliases, max_depth=2)
+    if not candidates:
+        return receiver_type
+    supported: set[str] = set()
+    for candidate in candidates:
+        owner = _normalize_type_name(candidate)
+        if facts.return_types_by_method.get((owner, method, argument_count)):
+            supported.add(candidate)
+            continue
+        for contract in official_contracts.get(method, []):
+            counts = {int(value) for value in contract.get("argument_counts") or []}
+            if counts and argument_count not in counts:
+                continue
+            allowed = [str(value or "") for value in contract.get("receiver_types") or []]
+            if allowed and any(_type_matches(candidate, item) for item in allowed):
+                supported.add(candidate)
+                break
+    bases = {canonical_base(item) for item in supported if canonical_base(item)}
+    if len(bases) == 1 and supported:
+        return sorted(supported, key=lambda value: (len(value), value))[0]
+    all_bases = {canonical_base(item) for item in candidates if canonical_base(item)}
+    if len(all_bases) == 1:
+        return sorted(candidates, key=lambda value: (len(value), value))[0]
+    return receiver_type
 
 def _collect_class_members(text: str, facts: ReceiverTypeFacts) -> None:
     for match in _CLASS_OPEN_RE.finditer(text):
@@ -543,10 +606,7 @@ def _strip_receiver_suffix(receiver: str) -> str:
 
 
 def _normalize_declared_type(type_name: str) -> str:
-    text = str(type_name or "").strip()
-    text = re.sub(r"\b(?:const|volatile|static|mutable|typename|struct|class|register|extern)\b", " ", text)
-    text = re.sub(r"\s+", "", text)
-    return text.strip("*& ")
+    return normalize_declared_type(type_name)
 
 
 def _normalize_type_name(type_name: str) -> str:
