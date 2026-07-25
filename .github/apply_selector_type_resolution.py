@@ -52,6 +52,51 @@ r = r.replace(
 "    candidates = expand_type_candidates(receiver_type, facts.type_aliases, max_depth=2)\n    nested: set[str] = set()\n    for item in candidates:\n        nested.update(expand_nested_member_candidates(item, facts.member_type_aliases))\n    candidates = nested or candidates\n",
 "    candidates = _expanded_receiver_candidates(receiver_type, facts)\n",
 )
+safeguard = '''    for contract in official_contracts.get(method, []):
+        counts = {int(value) for value in contract.get("argument_counts") or []}
+        if counts and argument_count not in counts:
+            continue
+        allowed = [str(value or "") for value in contract.get("receiver_types") or []]
+        if allowed and any(_type_matches(receiver_type, item) for item in allowed):
+            return receiver_type
+'''
+needle = '''def _narrow_receiver_type(
+    receiver_type: str,
+    method: str,
+    argument_count: int,
+    facts: ReceiverTypeFacts,
+    official_contracts: Mapping[str, list[dict[str, Any]]],
+) -> str:
+'''
+if safeguard.strip() not in r:
+    r = r.replace(needle, needle + safeguard)
 receiver_path.write_text(r)
 
-test_path.write_text('''from uo.scripts.type_normalizer import (\n    collect_member_type_aliases,\n    expand_nested_member_candidates,\n    expand_type_candidates,\n)\n\n\ndef test_conditional_t_expands_without_type_suffix() -> None:\n    assert expand_type_candidates(\n        'std::conditional_t<FLAG, Buffer<int>, std::nullptr_t>', {}, max_depth=2\n    ) == {'Buffer<int>', 'std::nullptr_t'}\n\n\ndef test_real_selector_shape_expands_member_alias() -> None:\n    source = \"\"\"\n    template <uint8_t A, uint8_t B>\n    struct QL1BuffSelector {\n      using TYPE = std::conditional_t<A, PolicyDB<int>, PolicySingle<int>>;\n    };\n    \"\"\"\n    aliases = collect_member_type_aliases({'x.h': source})\n    member = expand_nested_member_candidates('QL1BuffSelector<X,Y>::TYPE', aliases)\n    assert member == {'std::conditional_t<A,PolicyDB<int>,PolicySingle<int>>'}\n    leaves = set()\n    for item in member:\n        leaves.update(expand_type_candidates(item, {}, max_depth=2))\n    assert leaves == {'PolicyDB<int>', 'PolicySingle<int>'}\n''')
+test_path.write_text('''from uo.scripts.type_normalizer import (
+    collect_member_type_aliases,
+    expand_nested_member_candidates,
+    expand_type_candidates,
+)
+
+
+def test_conditional_t_expands_without_type_suffix() -> None:
+    assert expand_type_candidates(
+        'std::conditional_t<FLAG, Buffer<int>, std::nullptr_t>', {}, max_depth=2
+    ) == {'Buffer<int>', 'std::nullptr_t'}
+
+
+def test_real_selector_shape_expands_member_alias() -> None:
+    source = """
+    template <uint8_t A, uint8_t B>
+    struct QL1BuffSelector {
+      using TYPE = std::conditional_t<A, PolicyDB<int>, PolicySingle<int>>;
+    };
+    """
+    aliases = collect_member_type_aliases({'x.h': source})
+    member = expand_nested_member_candidates('QL1BuffSelector<X,Y>::TYPE', aliases)
+    assert member == {'std::conditional_t<A,PolicyDB<int>,PolicySingle<int>>'}
+    leaves = set()
+    for item in member:
+        leaves.update(expand_type_candidates(item, {}, max_depth=2))
+    assert leaves == {'PolicyDB<int>', 'PolicySingle<int>'}
+''')
