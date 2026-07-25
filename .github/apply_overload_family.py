@@ -101,8 +101,6 @@ if "def _source_overload_family(" not in text:
 
 graph.write_text(text, encoding="utf-8")
 
-# Update the existing overload regression: preserve every member, but do not ask
-# semantic agents to choose a concrete overload when source facts only prove the family.
 test = ENGINE / "tests" / "test_function_call_graph.py"
 t = test.read_text(encoding="utf-8")
 old = '''def test_overloaded_callee_ambiguous_is_candidate_set(tmp_path: Path) -> None:
@@ -122,16 +120,32 @@ t = t.replace(
 )
 addition = '''
 
-def test_same_short_name_in_different_scopes_stays_candidate_set(tmp_path: Path) -> None:
-    (tmp_path / "k.h").write_text(
-        "class A { public: static void Helper(int x) {} }; "
-        "class B { public: static void Helper(int x) {} }; "
-        "void Run() { Helper(1); }\\n",
-        encoding="utf-8",
-    )
+def test_same_short_name_in_different_scopes_stays_candidate_set() -> None:
+    def make_fn(name: str, qualified: str, owner: str, signature: str, body: str, stable_id: str) -> FunctionDefinition:
+        return FunctionDefinition(
+            name=name,
+            qualified_name=qualified,
+            class_or_namespace=owner,
+            normalized_signature=signature,
+            template_arity_or_signature="",
+            specialization_kind="none",
+            file_path="k.h",
+            start_line=1,
+            end_line=1,
+            header_text=f"void {qualified}{signature}",
+            body_text=body,
+            source_hash=stable_id,
+            snippet_hash=stable_id,
+            identity_key=f"IK_{stable_id}",
+            stable_id=stable_id,
+        )
+
+    caller = make_fn("Run", "Run", "", "()", "void Run() { Helper(1); }", "FN_RUN")
+    helper_a = make_fn("Helper", "A::Helper", "A", "(int x)", "void A::Helper(int x) {}", "FN_A")
+    helper_b = make_fn("Helper", "B::Helper", "B", "(int x)", "void B::Helper(int x) {}", "FN_B")
     unresolved: list[dict] = []
     _nodes, edges = build_call_edges_for_functions(
-        iter_function_definitions(tmp_path, "k.h"), unresolved=unresolved
+        [caller, helper_a, helper_b], unresolved=unresolved
     )
     helper_calls = [edge for edge in edges if edge.get("callee_name") == "Helper"]
     assert helper_calls and helper_calls[0].get("target_status") == "candidate_set"
