@@ -1,4 +1,4 @@
-name: Time real FAG graph layers
+name: Time real FAG layers in parallel
 
 on:
   pull_request:
@@ -9,9 +9,13 @@ permissions:
   contents: read
 
 jobs:
-  layers:
+  layer:
+    strategy:
+      fail-fast: false
+      matrix:
+        layer: [tilingkey, host, kernel]
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,7 +35,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e pilot/engines/understand-operator
-      - name: Prepare confirmed candidate-backed plan
+      - name: Prepare candidate-backed plan
         shell: bash
         run: |
           set -euo pipefail
@@ -46,74 +50,65 @@ jobs:
             > results/propose.log 2>&1
           python pilot/tools/agent_prepare_real_fag_plan.py "$OP" \
             --report results/plan-validation.json
-      - name: Run each layer with independent timing
+          if [[ "${{ matrix.layer }}" != "tilingkey" ]]; then
+            python -m uo.scripts.extract_tilingkey_space "$OP" \
+              --op-name flash_attention_score_grad --architecture arch35 --write \
+              > results/tilingkey-setup.log 2>&1
+          fi
+      - name: Time selected layer
         shell: bash
         run: |
           set +e
           OP="$GITHUB_WORKSPACE/fag/flash_attention_score_grad"
           export PYTHONPATH="$GITHUB_WORKSPACE/pilot/engines/understand-operator"
-          run_layer() {
-            label="$1"; shift
-            /usr/bin/time -f 'elapsed_seconds=%e\nuser_seconds=%U\nsystem_seconds=%S\nmax_rss_kb=%M' \
-              -o "results/${label}-time.txt" \
-              timeout 600s "$@" > "results/${label}.log" 2>&1
-            echo $? > "results/${label}-exit-code.txt"
-          }
-          run_layer tilingkey python -m uo.scripts.extract_tilingkey_space "$OP" \
-            --op-name flash_attention_score_grad --architecture arch35 --write
-          run_layer host python -m uo.scripts.extract_host_subgraph "$OP" \
-            --op-name flash_attention_score_grad --architecture arch35 --write
-          run_layer kernel python -m uo.scripts.extract_kernel_subgraph "$OP" \
-            --op-name flash_attention_score_grad --architecture arch35 --write
-          run_layer bridge python -m uo.scripts.reconcile_bridge "$OP" \
-            --op-name flash_attention_score_grad --write
-          run_layer merge python -m uo.scripts.build_layered_kb "$OP" \
-            --op-name flash_attention_score_grad --architecture arch35 --layers bridge
+          case "${{ matrix.layer }}" in
+            tilingkey)
+              CMD=(python -m uo.scripts.extract_tilingkey_space "$OP" --op-name flash_attention_score_grad --architecture arch35 --write)
+              ;;
+            host)
+              CMD=(python -m uo.scripts.extract_host_subgraph "$OP" --op-name flash_attention_score_grad --architecture arch35 --write)
+              ;;
+            kernel)
+              CMD=(python -m uo.scripts.extract_kernel_subgraph "$OP" --op-name flash_attention_score_grad --architecture arch35 --write)
+              ;;
+          esac
+          /usr/bin/time -f 'elapsed_seconds=%e\nuser_seconds=%U\nsystem_seconds=%S\nmax_rss_kb=%M' \
+            -o results/time.txt timeout 300s "${CMD[@]}" > results/layer.log 2>&1
+          echo $? > results/exit-code.txt
           cp -a "$OP/.ascendc-pilot/uo/ir" results/ir 2>/dev/null || true
           set -e
-      - name: Summarize layers
+      - name: Summarize selected layer
         if: always()
         run: |
           python - <<'PY'
           from pathlib import Path
           import json, yaml
-          root = Path('results')
-          out = {}
-          for label in ('tilingkey','host','kernel','bridge','merge'):
-              code = root / f'{label}-exit-code.txt'
-              timing = root / f'{label}-time.txt'
-              vals = {}
-              if timing.is_file():
-                  for line in timing.read_text().splitlines():
-                      if '=' in line:
-                          k,v=line.split('=',1)
-                          try: vals[k]=float(v)
-                          except ValueError: vals[k]=v
-              out[label] = {'exit_code': int(code.read_text()) if code.is_file() else None, **vals}
-          ir = root / 'ir'
-          def load(name):
-              p=ir/name
-              if not p.is_file(): return {}
-              try: return yaml.safe_load(p.read_text(encoding='utf-8')) or {}
-              except Exception as exc: return {'error':str(exc)}
-          host, kernel, graph = load('host_subgraph.yaml'), load('kernel_subgraph.yaml'), load('operator_graph.yaml')
-          out['graph'] = {
-              'host_nodes': len(host.get('nodes') or []),
-              'host_edges': len(host.get('edges') or []),
-              'kernel_nodes': len(kernel.get('nodes') or []),
-              'kernel_edges': len(kernel.get('edges') or []),
-              'kernel_branches': len(kernel.get('branches') or []),
-              'operator_nodes': len(graph.get('nodes') or []),
-              'operator_edges': len(graph.get('edges') or []),
-              'unresolved': len(graph.get('unresolved') or []),
-              'stats': graph.get('stats') or {},
-          }
-          (root/'summary.json').write_text(json.dumps(out,ensure_ascii=False,indent=2),encoding='utf-8')
-          print(json.dumps(out,ensure_ascii=False,indent=2))
+          root=Path('results')
+          vals={}
+          p=root/'time.txt'
+          if p.is_file():
+              for line in p.read_text().splitlines():
+                  if '=' in line:
+                      k,v=line.split('=',1)
+                      try: vals[k]=float(v)
+                      except ValueError: vals[k]=v
+          code=root/'exit-code.txt'
+          layer='${{ matrix.layer }}'
+          ir=root/'ir'
+          fname={'tilingkey':'tilingkey_space.yaml','host':'host_subgraph.yaml','kernel':'kernel_subgraph.yaml'}[layer]
+          doc={}
+          fp=ir/fname
+          if fp.is_file():
+              doc=yaml.safe_load(fp.read_text(encoding='utf-8')) or {}
+          out={'layer':layer,'exit_code':int(code.read_text()) if code.is_file() else None,**vals,
+               'nodes':len(doc.get('nodes') or []),'edges':len(doc.get('edges') or []),
+               'branches':len(doc.get('branches') or []),'unresolved':len(doc.get('unresolved') or [])}
+          (root/'summary.json').write_text(json.dumps(out,indent=2),encoding='utf-8')
+          print(json.dumps(out,indent=2))
           PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: real-fag-layer-timings
+          name: real-fag-${{ matrix.layer }}-timing
           path: results
           retention-days: 1
