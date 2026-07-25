@@ -1,0 +1,47 @@
+name: Debug call resolution tests v2
+
+on:
+  pull_request:
+    branches: [cursor/semantic-control-plane-closure-44d6]
+
+permissions:
+  contents: read
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: f00e07238f9314ad881c7f8d29e4e5bea5f5a4bc
+          fetch-depth: 0
+      - name: Apply exact patch payload
+        run: |
+          cat .github/call-resolution-payload.part* > /tmp/call-resolution-payload.b64
+          base64 -d /tmp/call-resolution-payload.b64 | gzip -d > /tmp/apply_call_opt.py
+          python /tmp/apply_call_opt.py
+      - run: python -m pip install -q pytest pyyaml
+      - name: Capture pytest diagnostics
+        env:
+          PYTHONPATH: engines/understand-operator
+        run: |
+          set +e
+          pytest -vv --tb=long \
+            engines/understand-operator/tests/test_call_external_classification.py \
+            engines/understand-operator/tests/test_call_scanner.py \
+            engines/understand-operator/tests/test_function_call_graph.py \
+            engines/understand-operator/tests/test_macro_regions.py \
+            engines/understand-operator/tests/test_fag_graph_identity_and_perf.py \
+            > call-resolution-test.log 2>&1
+          echo "$?" > call-resolution-test.rc
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: call-resolution-test-diagnostics-v2
+          path: |
+            call-resolution-test.log
+            call-resolution-test.rc
+      - name: Gate tests
+        run: |
+          cat call-resolution-test.log
+          test "$(cat call-resolution-test.rc)" = "0"
