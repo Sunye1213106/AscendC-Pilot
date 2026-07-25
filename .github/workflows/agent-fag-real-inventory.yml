@@ -1,4 +1,4 @@
-name: Apply real FAG discovery fixes
+name: Diagnose real FAG discovery fixes
 
 on:
   pull_request:
@@ -6,21 +6,21 @@ on:
       - cursor/semantic-control-plane-closure-44d6
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  patch-and-test:
+  diagnose:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           ref: agent/tg-workflow-contract-closure
-          fetch-depth: 0
+          fetch-depth: 1
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Apply source fixes
+      - name: Apply candidate source fixes
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -41,13 +41,6 @@ jobs:
               confirmed_files: list[str],
               architecture: str,
           ) -> list[Path]:
-              """Registration sources for both confirmed and first-run repositories.
-
-              Scope-confirmed files remain authoritative when present. On a fresh
-              repository there is no scope ledger or CBM index yet, so scan only
-              neutral/compatible ``op_host`` and ``op_graph`` C/C++ sources rather
-              than returning an empty registration graph.
-              """
               suffixes = {".h", ".hpp", ".cpp", ".cc", ".c"}
               paths: list[Path] = []
               seen: set[str] = set()
@@ -79,16 +72,13 @@ jobs:
 
               for dirname in ("op_host", "op_graph"):
                   base = repo_root / dirname
-                  if not base.is_dir():
-                      continue
-                  for path in base.rglob("*"):
-                      add(path)
+                  if base.is_dir():
+                      for path in base.rglob("*"):
+                          add(path)
               return sorted(paths, key=lambda p: p.as_posix())
 
 
           ''' + marker
-          if marker not in text:
-              raise SystemExit('registration function marker missing')
           text = text.replace(marker, helper, 1)
           old = '''    for rel in confirmed_files:
                   path = _resolve_source_file(repo_root, rel, architecture=architecture)
@@ -105,17 +95,16 @@ jobs:
                   except Exception:  # noqa: BLE001
                       repo_rel = path.as_posix()
           '''
-          if old not in text:
-              raise SystemExit('registration loop marker missing')
-          resolver.write_text(text.replace(old, new, 1), encoding='utf-8')
+          text = text.replace(old, new, 1)
+          resolver.write_text(text, encoding='utf-8')
 
           proposal = Path('engines/understand-operator/uo/scripts/propose_extract_plan.py')
-          text = proposal.read_text(encoding='utf-8')
-          old = 'MAX_NON_SINK = _env_limit("UO_EXTRACT_MAX_NON_SINK", 120)'
-          new = 'MAX_NON_SINK = _env_limit("UO_EXTRACT_MAX_NON_SINK", 512)'
-          if old not in text:
-              raise SystemExit('non-sink default marker missing')
-          proposal.write_text(text.replace(old, new, 1), encoding='utf-8')
+          text = proposal.read_text(encoding='utf-8').replace(
+              'MAX_NON_SINK = _env_limit("UO_EXTRACT_MAX_NON_SINK", 120)',
+              'MAX_NON_SINK = _env_limit("UO_EXTRACT_MAX_NON_SINK", 512)',
+              1,
+          )
+          proposal.write_text(text, encoding='utf-8')
 
           tests = Path('engines/understand-operator/tests/test_fag_graph_identity_and_perf.py')
           text = tests.read_text(encoding='utf-8')
@@ -165,25 +154,30 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e engines/understand-operator pytest
-      - name: Compile and test
+      - name: Capture test reports
         env:
           PYTHONPATH: ${{ github.workspace }}/engines/understand-operator
         run: |
+          mkdir -p diagnostics
+          set +e
           python -m compileall -q \
             engines/understand-operator/uo/scripts/resolve_entrypoints.py \
-            engines/understand-operator/uo/scripts/propose_extract_plan.py
-          pytest -q engines/understand-operator/tests/test_fag_graph_identity_and_perf.py
+            engines/understand-operator/uo/scripts/propose_extract_plan.py \
+            > diagnostics/compile.txt 2>&1
+          echo $? > diagnostics/compile-exit.txt
+          pytest -vv engines/understand-operator/tests/test_fag_graph_identity_and_perf.py \
+            > diagnostics/focused.txt 2>&1
+          echo $? > diagnostics/focused-exit.txt
           mapfile -t TEST_FILES < <(
             grep -rlE 'resolve_entrypoints|propose_extract_plan|extract_host_subgraph|extract_kernel_subgraph' \
               engines/understand-operator/tests --include='test_*.py' | sort -u
           )
-          pytest -q "${TEST_FILES[@]}"
-      - name: Remove one-shot workflow
-        run: rm -f .github/workflows/agent-fag-real-inventory.yml
-      - name: Commit fixes
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "fix(uo): discover fresh FAG registrations and retain candidate evidence"
-          git push origin HEAD:agent/tg-workflow-contract-closure
+          printf '%s\n' "${TEST_FILES[@]}" > diagnostics/selected-tests.txt
+          pytest -vv "${TEST_FILES[@]}" > diagnostics/related.txt 2>&1
+          echo $? > diagnostics/related-exit.txt
+          set -e
+      - uses: actions/upload-artifact@v4
+        with:
+          name: real-fag-discovery-fix-diagnostics
+          path: diagnostics
+          retention-days: 1
