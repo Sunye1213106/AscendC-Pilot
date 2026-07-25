@@ -19,41 +19,45 @@ jobs:
           repository: Sunye1213106/flashattention
           ref: 94e37bc4630a6b2b5695e6a76809d1e94931d8c8
           path: real-fag
-      - name: Collect exact definitions and call contexts
+      - name: Collect helper definitions and include chain
         run: |
-          set -o pipefail
-          {
-            echo '=== LOAD DATA DEFINITIONS/USES ==='
-            rg -n -C 8 'LoadDataToL0A|LoadDataToL0B|LoadDataToL0AMx|LoadDataToL0BMx|\bLoadData\s*\(' real-fag || true
-            echo '=== MIN MAX CEIL DEFINITIONS/USES ==='
-            rg -n -C 5 '(^|[^A-Za-z0-9_])(Min|Max|Ceil|CeilDivision)\s*(<[^;{()]*>)?\s*\(' real-fag || true
-            echo '=== FAG INVOKE MACRO DEFINITIONS/USES ==='
-            rg -n -C 10 '#\s*define\s+INVOKE_FAG_|INVOKE_FAG_GENERAL_' real-fag || true
-            echo '=== RELATED FUNCTION DEFINITIONS ==='
-            rg -n -C 8 '(inline|static|__aicore__).*?(LoadDataToL0|CeilDivision|\bMin\b|\bMax\b)' real-fag || true
-          } > fag-wrapper-macro-context.txt
           python - <<'PY'
           from pathlib import Path
           import json, re
           root = Path('real-fag')
-          symbols = ['LoadDataToL0A','LoadDataToL0B','LoadDataToL0AMx','LoadDataToL0BMx','Min','Max','Ceil','CeilDivision']
-          rows=[]
+          suffixes={'.h','.hpp','.hh','.hxx','.inc','.cpp','.cc','.cxx'}
+          symbols=['LoadDataToL0A','LoadDataToL0B','LoadDataToL0AMx','LoadDataToL0BMx','Min','Max','Ceil','CeilDivision']
+          definitions=[]; includes=[]; macros=[]
           for p in root.rglob('*'):
-              if not p.is_file() or p.suffix.lower() not in {'.h','.hpp','.cpp','.cc','.cxx'}:
+              if not p.is_file() or p.suffix.lower() not in suffixes:
                   continue
               text=p.read_text(encoding='utf-8',errors='ignore')
+              lines=text.splitlines()
+              for i,line in enumerate(lines):
+                  if re.match(r'^\s*#\s*include\b', line):
+                      if any(key in p.as_posix() for key in ('flash_attention_score_grad_kernel_deter.h','cube_api/matmul.h','common/op_kernel/matmul.h')):
+                          includes.append({'file':p.as_posix(),'line':i+1,'text':line})
+                  if re.match(r'^\s*#\s*define\s+INVOKE_FAG_',line):
+                      j=i; logical=line
+                      while re.search(r'\\\s*$',logical) and j+1<len(lines):
+                          logical=re.sub(r'\\\s*$',' ',logical)+lines[j+1]
+                          j+=1
+                      macros.append({'file':p.as_posix(),'line':i+1,'end_line':j+1,'text':logical[:4000]})
               for sym in symbols:
-                  for m in re.finditer(rf'\b{re.escape(sym)}\s*(?:<[^;{{}}()]*>)?\s*\(', text):
+                  pat=re.compile(rf'\b{re.escape(sym)}\s*(?:<[^;{{}}()]*>)?\s*\(')
+                  for m in pat.finditer(text):
                       line=text.count('\n',0,m.start())+1
-                      ls=text.splitlines()
-                      lo=max(0,line-5); hi=min(len(ls),line+4)
-                      rows.append({'symbol':sym,'file':p.as_posix(),'line':line,'context':'\n'.join(f'{i+1}: {ls[i]}' for i in range(lo,hi))})
-          Path('fag-wrapper-sites.json').write_text(json.dumps(rows,ensure_ascii=False,indent=2),encoding='utf-8')
-          print('sites',len(rows))
+                      lo=max(0,line-8); hi=min(len(lines),line+12)
+                      pre='\n'.join(lines[lo:line])
+                      head='\n'.join(lines[lo:hi])
+                      looks_def=bool(re.search(r'(#\s*define|\btemplate\b|\binline\b|\bconstexpr\b|\bstatic\b|__aicore__)[^;{}]{0,500}$',pre,re.S))
+                      if looks_def:
+                          definitions.append({'symbol':sym,'file':p.as_posix(),'line':line,'context':'\n'.join(f'{k+1}: {lines[k]}' for k in range(lo,hi))})
+          payload={'definitions':definitions,'includes':includes,'macros':macros}
+          Path('fag-helper-definitions.json').write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding='utf-8')
+          print(json.dumps({'definition_count':len(definitions),'include_count':len(includes),'macro_count':len(macros),'symbols':sorted({d['symbol'] for d in definitions})},ensure_ascii=False,indent=2))
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: fag-wrapper-macro-context
-          path: |
-            fag-wrapper-macro-context.txt
-            fag-wrapper-sites.json
+          name: fag-helper-definitions
+          path: fag-helper-definitions.json
