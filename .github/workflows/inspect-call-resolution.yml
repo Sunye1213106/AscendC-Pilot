@@ -1,0 +1,31 @@
+name: Inspect call resolution inputs
+
+on:
+  pull_request:
+    branches: [cursor/semantic-control-plane-closure-44d6]
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect macro and symbol integrations
+        run: |
+          set -o pipefail
+          {
+            echo '=== candidate files ==='
+            find engines/understand-operator -type f \( -name '*.py' -o -name '*.md' -o -name '*.yaml' \) | sort
+            echo
+            echo '=== macro/preprocessor/compiler API references ==='
+            rg -n -i 'macro|preprocessor|libclang|clang|compile_commands|translation.?unit|cursor.kind|macro_definition|macro_instantiation|source.lookup|codebase.memory|cbm|mcp' engines/understand-operator || true
+            echo
+            echo '=== call graph related definitions ==='
+            rg -n 'class CallSite|def extract_call_sites|def build_call_edges|def resolve_call_site|receiver_type|argument_count|include|declaration' engines/understand-operator/uo/scripts engines/understand-operator/tests || true
+          } | tee call-resolution-inspection.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: call-resolution-inspection
+          path: call-resolution-inspection.txt
