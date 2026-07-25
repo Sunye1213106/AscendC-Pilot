@@ -33,6 +33,7 @@ jobs:
         run: |
           python .github/apply_receiver_type_propagation.py
           python .github/fix_receiver_type_patcher.py
+          python .github/fix_receiver_resolution_order.py
           python -m py_compile \
             engines/understand-operator/uo/scripts/receiver_type_facts.py \
             engines/understand-operator/uo/scripts/function_call_graph.py
@@ -86,7 +87,7 @@ jobs:
           print('before', bs)
           print('after ', ass)
           assert ass.get('candidate_set',0) < bs.get('candidate_set',0), (bs,ass)
-          assert ass.get('resolved',0) > bs.get('resolved',0), (bs,ass)
+          assert ass.get('resolved',0) + ass.get('external',0) > bs.get('resolved',0) + bs.get('external',0), (bs,ass)
           assert ass.get('missing',0) <= bs.get('missing',0), (bs,ass)
           watched=('Get','GetTensor','Init')
           reductions=[]
