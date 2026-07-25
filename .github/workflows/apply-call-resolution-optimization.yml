@@ -18,14 +18,34 @@ jobs:
           fetch-depth: 0
       - name: Apply generic deterministic improvements
         run: |
-          cat .github/call-resolution-payload.part* | base64 -d | gzip -d > /tmp/apply_call_opt.py
-          python /tmp/apply_call_opt.py
-          python -m py_compile \
-            engines/understand-operator/uo/scripts/macro_regions.py \
-            engines/understand-operator/uo/scripts/function_body.py \
-            engines/understand-operator/uo/scripts/function_call_graph.py \
-            engines/understand-operator/uo/scripts/cann_doc_evidence.py \
-            engines/understand-operator/uo/scripts/extract_kernel_subgraph.py
+          set +e
+          {
+            cat .github/call-resolution-payload.part* > /tmp/call-resolution-payload.b64
+            echo "payload_bytes=$(wc -c < /tmp/call-resolution-payload.b64)"
+            sha256sum /tmp/call-resolution-payload.b64
+            base64 -d /tmp/call-resolution-payload.b64 | gzip -d > /tmp/apply_call_opt.py
+            echo "apply_script_bytes=$(wc -c < /tmp/apply_call_opt.py)"
+            python /tmp/apply_call_opt.py
+            python -m py_compile \
+              engines/understand-operator/uo/scripts/macro_regions.py \
+              engines/understand-operator/uo/scripts/function_body.py \
+              engines/understand-operator/uo/scripts/function_call_graph.py \
+              engines/understand-operator/uo/scripts/cann_doc_evidence.py \
+              engines/understand-operator/uo/scripts/extract_kernel_subgraph.py
+          } > apply-call-resolution.log 2>&1
+          rc=$?
+          echo "$rc" > apply-call-resolution.rc
+          cat apply-call-resolution.log
+          exit 0
+      - name: Upload apply diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: apply-call-resolution-diagnostics
+          path: |
+            apply-call-resolution.log
+            apply-call-resolution.rc
+      - name: Gate apply result
+        run: test "$(cat apply-call-resolution.rc)" = "0"
       - name: Install test dependencies
         run: python -m pip install -q pytest pyyaml
       - name: Run deterministic call-resolution regressions
