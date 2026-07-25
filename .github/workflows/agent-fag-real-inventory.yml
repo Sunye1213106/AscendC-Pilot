@@ -38,9 +38,15 @@ jobs:
             grep -rlE 'resolve_entrypoints|propose_extract_plan|extract_host_subgraph|extract_kernel_subgraph' \
               engines/understand-operator/tests --include='test_*.py' | sort -u
           )
-          pytest -q "${TEST_FILES[@]}" \
-            --deselect engines/understand-operator/tests/test_session_optimizations.py::test_propagate_empty_tensor_siblings \
-            --deselect engines/understand-operator/tests/test_synthetic_operator_pipeline.py::test_opdef_unquoted_and_input_desc_hint
+          mapfile -t CLEAN_FILES < <(
+            printf '%s\n' "${TEST_FILES[@]}" | grep -vE \
+              'test_session_optimizations.py|test_synthetic_operator_pipeline.py'
+          )
+          pytest -q "${CLEAN_FILES[@]}"
+          pytest -q engines/understand-operator/tests/test_session_optimizations.py \
+            -k 'not test_propagate_empty_tensor_siblings'
+          pytest -q engines/understand-operator/tests/test_synthetic_operator_pipeline.py \
+            -k 'not test_opdef_unquoted_and_input_desc_hint'
       - name: Remove one-shot validation files
         run: |
           rm -f .github/workflows/agent-fag-real-inventory.yml
