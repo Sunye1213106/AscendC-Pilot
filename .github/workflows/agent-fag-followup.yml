@@ -1,4 +1,4 @@
-name: Diagnose FAG runtime follow-up
+name: Finalize FAG runtime follow-up
 
 on:
   pull_request:
@@ -6,10 +6,10 @@ on:
       - cursor/semantic-control-plane-closure-44d6
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  diagnose:
+  fix-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,10 +26,15 @@ jobs:
 
           host = Path('engines/understand-operator/uo/scripts/extract_host_subgraph.py')
           text = host.read_text(encoding='utf-8')
-          text = text.replace(
+          old = (
               '        if role in {"tiling_writer", "workspace_writer"} or (\n'
               '            name_l in tiling_writers and role != "provenance_helper"\n'
-              '        ):\n',
+              '        ):\n'
+          )
+          if old not in text:
+              raise SystemExit('host short-name TDF fallback marker missing')
+          text = text.replace(
+              old,
               '        if role in {"tiling_writer", "workspace_writer"}:\n',
               1,
           )
@@ -37,17 +42,25 @@ jobs:
 
           kernel = Path('engines/understand-operator/uo/scripts/extract_kernel_subgraph.py')
           text = kernel.read_text(encoding='utf-8')
-          text = text.replace(
-              'def parse_enum_class_domains(text: str, file_path: str = "") -> list[DeclaredDomain]:\n'
-              '    out: list[DeclaredDomain] = []\n',
+          old = (
               'def parse_enum_class_domains(text: str, file_path: str = "") -> list[DeclaredDomain]:\n'
               '    out: list[DeclaredDomain] = []\n'
-              '    text_line_starts = _line_starts(text)\n',
+          )
+          if old not in text:
+              raise SystemExit('enum parser marker missing')
+          text = text.replace(
+              old,
+              old + '    text_line_starts = _line_starts(text)\n',
               1,
           )
+          old = '    out: list[DeclaredDomain] = []\n    i = 0\n'
+          if old not in text:
+              raise SystemExit('constexpr parser marker missing')
           text = text.replace(
-              '    out: list[DeclaredDomain] = []\n    i = 0\n',
-              '    out: list[DeclaredDomain] = []\n    text_line_starts = _line_starts(text)\n    i = 0\n',
+              old,
+              '    out: list[DeclaredDomain] = []\n'
+              '    text_line_starts = _line_starts(text)\n'
+              '    i = 0\n',
               1,
           )
           text = text.replace(
@@ -71,11 +84,16 @@ jobs:
           text += '''
 
           def test_declared_domain_parsers_compute_lines_without_external_state() -> None:
-              enum_text = "// header\nenum class Mode { A = 0, B = 1 };\n"
+              enum_text = """// header
+          enum class Mode { A = 0, B = 1 };
+          """
               enum_domains = parse_enum_class_domains(enum_text, "mode.h")
               assert enum_domains and enum_domains[0].start_line == 2
 
-              constexpr_text = "// header\nconstexpr int MODE_A = 0;\nconstexpr int MODE_B = 1;\n"
+              constexpr_text = """// header
+          constexpr int MODE_A = 0;
+          constexpr int MODE_B = 1;
+          """
               constexpr_domains = parse_constexpr_block_domains(constexpr_text, "mode.h")
               assert constexpr_domains and constexpr_domains[0].start_line == 2
 
@@ -93,16 +111,19 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e engines/understand-operator pytest
-      - name: Capture test report
+      - name: Compile and test
         run: |
-          set +e
-          pytest -vv engines/understand-operator/tests/test_fag_graph_identity_and_perf.py > fag-test-output.txt 2>&1
-          echo $? > fag-test-exit-code.txt
-          set -e
-      - uses: actions/upload-artifact@v4
-        with:
-          name: fag-followup-diagnostics
-          path: |
-            fag-test-output.txt
-            fag-test-exit-code.txt
-          retention-days: 1
+          python -m compileall -q \
+            engines/understand-operator/uo/scripts/extract_host_subgraph.py \
+            engines/understand-operator/uo/scripts/extract_kernel_subgraph.py \
+            engines/understand-operator/tests/test_fag_graph_identity_and_perf.py
+          pytest -q engines/understand-operator/tests/test_fag_graph_identity_and_perf.py
+      - name: Remove one-shot workflow
+        run: rm -f .github/workflows/agent-fag-followup.yml
+      - name: Commit follow-up
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(uo): close FAG runtime identity and domain parser gaps"
+          git push origin HEAD:agent/tg-workflow-contract-closure
