@@ -26,8 +26,8 @@ jobs:
           from pathlib import Path
           import json, re
 
-          from uo.scripts.function_body import iter_function_definitions, extract_call_sites
-          from uo.scripts.function_call_graph import build_call_edges_for_functions, _CALL_NOISE
+          from uo.scripts.function_body import iter_function_definitions
+          from uo.scripts.function_call_graph import build_call_edges_for_functions
 
           roots = [p for p in Path('real-fag').rglob('flash_attention_score_grad') if p.is_dir()]
           root = min(roots, key=lambda p: len(p.parts))
@@ -43,33 +43,23 @@ jobs:
           unresolved = []
           nodes, edges = build_call_edges_for_functions(functions, unresolved=unresolved)
           sites = {str(n.get('id')): n for n in nodes if n.get('node_type') == 'CallSite'}
-          edge_by_site = {str(e.get('call_site_id')): e for e in edges}
           source_lines = {}
+          source_text = {}
           for p in all_files:
               try:
-                  source_lines[p.relative_to(root).as_posix()] = p.read_text(encoding='utf-8', errors='ignore').splitlines()
+                  rel = p.relative_to(root).as_posix()
+                  text = p.read_text(encoding='utf-8', errors='ignore')
+                  source_text[rel] = text
+                  source_lines[rel] = text.splitlines()
               except OSError:
                   pass
 
-          grouped = defaultdict(list)
-          for item in unresolved:
-              if item.get('kind') != 'internal_definition_not_indexed':
-                  continue
-              name = str(item.get('callee_name') or '')
-              file_path = str(item.get('file_path') or '')
-              line = int(item.get('start_line') or 0)
+          def context_for(site):
+              file_path = str(site.get('file_path') or '')
+              line = int(site.get('start_line') or 0)
               lines = source_lines.get(file_path, [])
               lo, hi = max(0, line - 2), min(len(lines), line + 1)
-              context = '\n'.join(f'{i+1}: {lines[i]}' for i in range(lo, hi))
-              site = next((s for s in sites.values() if s.get('file_path') == file_path and int(s.get('start_line') or 0) == line and s.get('callee_name') == name), {})
-              grouped[name].append({
-                  'file_path': file_path,
-                  'line': line,
-                  'call_expression': site.get('call_expression'),
-                  'receiver': site.get('receiver_type_or_object'),
-                  'caller_function_id': item.get('caller_function_id'),
-                  'context': context,
-              })
+              return '\n'.join(f'{i+1}: {lines[i]}' for i in range(lo, hi))
 
           def declaration_hits(name):
               pat = re.compile(r'\b' + re.escape(name) + r'\s*(?:<[^;{}\n]{0,160}>)?\s*\(')
@@ -90,22 +80,67 @@ jobs:
                   if m:
                       macro_defs[m.group(1)].append(f'{rel}:{idx}:{line.strip()}')
 
-          counts = Counter(str(u.get('callee_name') or '') for u in unresolved if u.get('kind') == 'internal_definition_not_indexed')
+          missing = defaultdict(list)
+          for item in unresolved:
+              if item.get('kind') != 'internal_definition_not_indexed':
+                  continue
+              name = str(item.get('callee_name') or '')
+              site = next((s for s in sites.values() if s.get('file_path') == item.get('file_path') and int(s.get('start_line') or 0) == int(item.get('start_line') or 0) and s.get('callee_name') == name), {})
+              missing[name].append({
+                  'file_path': site.get('file_path'), 'line': site.get('start_line'),
+                  'call_expression': site.get('call_expression'), 'receiver': site.get('receiver_type_or_object'),
+                  'context': context_for(site),
+              })
+
+          external = defaultdict(list)
+          external_reasons = Counter()
+          for edge in edges:
+              if edge.get('target_status') != 'external':
+                  continue
+              site = sites.get(str(edge.get('call_site_id')), {})
+              name = str(edge.get('callee_name') or '')
+              reason = str(edge.get('verification_source') or '')
+              external_reasons[reason] += 1
+              external[name].append({
+                  'reason': reason, 'file_path': site.get('file_path'), 'line': site.get('start_line'),
+                  'call_expression': site.get('call_expression'), 'receiver': site.get('receiver_type_or_object'),
+                  'context': context_for(site),
+              })
+
+          ambiguous = defaultdict(list)
+          for item in unresolved:
+              if item.get('kind') != 'call_target_ambiguous':
+                  continue
+              name = str(item.get('callee_name') or '')
+              site = next((s for s in sites.values() if s.get('file_path') == item.get('file_path') and int(s.get('start_line') or 0) == int(item.get('start_line') or 0) and s.get('callee_name') == name), {})
+              ambiguous[name].append({
+                  'file_path': site.get('file_path'), 'line': site.get('start_line'),
+                  'call_expression': site.get('call_expression'), 'receiver': site.get('receiver_type_or_object'),
+                  'candidate_ids': item.get('candidate_ids'), 'context': context_for(site),
+              })
+
+          missing_counts = Counter({k: len(v) for k, v in missing.items()})
+          external_counts = Counter({k: len(v) for k, v in external.items()})
+          ambiguous_counts = Counter({k: len(v) for k, v in ambiguous.items()})
           report = {
-              'counts': counts,
-              'samples': {},
-              'macro_definitions': {},
-              'declaration_hits': {},
+              'summary': {
+                  'functions': len(functions), 'nodes': len(nodes), 'edges': len(edges),
+                  'status': Counter(str(e.get('target_status') or '') for e in edges),
+                  'unresolved': Counter(str(u.get('kind') or '') for u in unresolved),
+                  'external_reasons': external_reasons,
+              },
+              'missing': {}, 'external': {}, 'ambiguous': {},
           }
-          for name, count in counts.most_common(60):
-              report['samples'][name] = grouped[name][:5]
-              if name in macro_defs:
-                  report['macro_definitions'][name] = macro_defs[name][:12]
-              report['declaration_hits'][name] = declaration_hits(name)
-          Path('real-fag-unresolved-context.json').write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding='utf-8')
-          print(json.dumps(report, indent=2, ensure_ascii=False))
+          for name, _ in missing_counts.most_common(80):
+              report['missing'][name] = {'count': len(missing[name]), 'samples': missing[name][:5], 'macro_defs': macro_defs.get(name, [])[:12], 'declaration_hits': declaration_hits(name)}
+          for name, _ in external_counts.most_common(100):
+              report['external'][name] = {'count': len(external[name]), 'samples': external[name][:5], 'macro_defs': macro_defs.get(name, [])[:12], 'declaration_hits': declaration_hits(name)}
+          for name, _ in ambiguous_counts.most_common(60):
+              report['ambiguous'][name] = {'count': len(ambiguous[name]), 'samples': ambiguous[name][:5]}
+          Path('real-fag-call-classification.json').write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding='utf-8')
+          print(json.dumps(report['summary'], indent=2, ensure_ascii=False))
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: real-fag-unresolved-context
-          path: real-fag-unresolved-context.json
+          name: real-fag-call-classification
+          path: real-fag-call-classification.json
