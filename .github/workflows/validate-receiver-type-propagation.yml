@@ -31,6 +31,10 @@ jobs:
           python .github/apply_template_type_resolver.py 2>&1 | tee template-apply.log
           APPLY=${PIPESTATUS[0]}
           if [ "$APPLY" = "0" ]; then
+            python .github/fix_template_type_resolver.py 2>&1 | tee -a template-apply.log
+            APPLY=${PIPESTATUS[0]}
+          fi
+          if [ "$APPLY" = "0" ]; then
             python -m py_compile \
               engines/understand-operator/uo/scripts/type_normalizer.py \
               engines/understand-operator/uo/scripts/receiver_type_facts.py \
@@ -107,6 +111,7 @@ jobs:
         run: |
           git rm -f \
             .github/apply_template_type_resolver.py \
+            .github/fix_template_type_resolver.py \
             .github/receiver_type_report.py \
             .github/workflows/validate-receiver-type-propagation.yml
           git commit -m 'chore(ci): remove template type validation assets'
