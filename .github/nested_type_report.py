@@ -27,6 +27,7 @@ def main() -> None:
     functions = []
     for rel, text in texts.items():
         functions.extend(iter_function_definitions_from_text(root, rel, text, architecture='arch35'))
+    fn_by_id = {fn.stable_id: fn for fn in functions}
     seed_rels = {p.relative_to(root).as_posix() for p in seeds}
     seed_functions = [fn for fn in functions if fn.file_path in seed_rels]
     facts = collect_call_resolution_facts(functions, source_texts=texts)
@@ -39,6 +40,7 @@ def main() -> None:
     kinds = Counter(str(item.get('kind') or '') for item in unresolved_seed)
     watched_names = {'Get', 'GetTensor', 'Init', 'UnInit', 'LoadDataToL0B', 'GetReused'}
     watched = defaultdict(Counter)
+    samples = defaultdict(list)
     node_by_id = {str(node.get('id')): node for node in nodes}
     for edge in seed_edges:
         name = str(edge.get('callee_name') or '')
@@ -48,6 +50,25 @@ def main() -> None:
         site = node_by_id.get(str(edge.get('call_site_id') or ''), {})
         if site.get('receiver_type'):
             watched[name]['typed_receiver'] += 1
+        if edge.get('target_status') == 'candidate_set' and len(samples[name]) < 20:
+            candidates = []
+            for candidate_id in edge.get('candidate_ids') or []:
+                fn = fn_by_id.get(candidate_id)
+                if fn is not None:
+                    candidates.append({
+                        'owner': fn.class_or_namespace,
+                        'qualified_name': fn.qualified_name,
+                        'signature': fn.normalized_signature,
+                        'file_path': fn.file_path,
+                    })
+            samples[name].append({
+                'call_expression': site.get('call_expression'),
+                'receiver_object': site.get('receiver_object'),
+                'receiver_type': site.get('receiver_type'),
+                'file_path': site.get('file_path'),
+                'line': site.get('start_line'),
+                'candidates': candidates,
+            })
     top = Counter(str(edge.get('callee_name') or '') for edge in seed_edges if edge.get('target_status') == 'candidate_set')
     payload = {
         'seed_file_count': len(seeds),
@@ -57,6 +78,7 @@ def main() -> None:
         'status': dict(status),
         'unresolved_kinds': dict(kinds),
         'watched': {name: dict(values) for name, values in watched.items()},
+        'candidate_samples': dict(samples),
         'top_candidate_symbols': top.most_common(30),
     }
     Path(args.output).write_text(json.dumps(payload, indent=2, ensure_ascii=False))
