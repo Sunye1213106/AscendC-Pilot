@@ -1,0 +1,87 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from uo.scripts.extract_host_subgraph import _chain_item_key, _writer_role_indexes
+from uo.scripts.function_body import (
+    CallSite,
+    FunctionDefinition,
+    iter_function_definitions,
+)
+from uo.scripts.function_call_graph import resolve_call_site
+
+
+def _fn(name: str, cls: str, sig: str, stable_id: str) -> FunctionDefinition:
+    return FunctionDefinition(
+        name=name, qualified_name=f"{cls}::{name}", class_or_namespace=cls,
+        normalized_signature=sig, template_arity_or_signature="",
+        specialization_kind="none", file_path="op_kernel/test.cpp",
+        start_line=1, end_line=3, header_text=f"void {name}{sig}",
+        body_text=f"void {name}{sig} {{}}", source_hash="s", snippet_hash="h",
+        identity_key=f"IK_{stable_id}", stable_id=stable_id,
+    )
+
+
+def test_host_writer_roles_preserve_same_name_identity() -> None:
+    normal = {
+        "name": "SetTilingData", "qualified_name": "NormalTiling::SetTilingData",
+        "class_or_namespace": "NormalTiling", "file_path": "normal.cpp",
+        "start_line": 10, "role": "tiling_writer",
+    }
+    varlen = {
+        "name": "SetTilingData", "qualified_name": "VarlenTiling::SetTilingData",
+        "class_or_namespace": "VarlenTiling", "file_path": "varlen.cpp",
+        "start_line": 20, "role": "workspace_writer",
+    }
+    by_identity, by_name, incomplete = _writer_role_indexes({"writers": [normal, varlen]})
+    assert by_identity[_chain_item_key(normal)] == "tiling_writer"
+    assert by_identity[_chain_item_key(varlen)] == "workspace_writer"
+    assert "settilingdata" not in by_name
+    assert not incomplete
+
+
+def test_incomplete_duplicate_writer_fails_closed() -> None:
+    a = {"name": "SetTilingData", "role": "tiling_writer"}
+    b = {"name": "SetTilingData", "role": "workspace_writer"}
+    _by_identity, by_name, incomplete = _writer_role_indexes({"writers": [a, b]})
+    assert "settilingdata" not in by_name
+    assert "settilingdata" in incomplete
+
+
+def test_unknown_object_receiver_keeps_cross_class_candidates() -> None:
+    caller = _fn("Run", "Driver", "()", "CALLER")
+    a = _fn("Process", "NormalKernel", "(int)", "A")
+    b = _fn("Process", "VarlenKernel", "(int)", "B")
+    site = CallSite(
+        caller_function_id=caller.stable_id, callee_name="Process",
+        callee_qualified_hint="obj->Process", call_expression="obj->Process",
+        file_path=caller.file_path, line=2, receiver_type_or_object="obj->",
+        template_args="", argument_count=1, ordinal_in_function=1, snippet_hash="x",
+    )
+    edge, _node, unresolved = resolve_call_site(
+        site, caller, by_name={"Process": [a, b]},
+        by_qn={a.qualified_name: [a], b.qualified_name: [b]},
+        by_id={a.stable_id: a, b.stable_id: b},
+    )
+    assert edge and edge["target_status"] == "candidate_set"
+    assert set(edge["candidate_ids"]) == {"A", "B"}
+    assert unresolved and unresolved["kind"] == "call_target_ambiguous"
+
+
+def test_function_definition_cache_avoids_second_read(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "sample.cpp"
+    source.write_text("class A { public: void Run() { Helper(); } void Helper() {} };", encoding="utf-8")
+    reads = 0
+    original = Path.read_text
+
+    def counted(self: Path, *args, **kwargs):
+        nonlocal reads
+        if self == source:
+            reads += 1
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counted)
+    first = iter_function_definitions(tmp_path, "sample.cpp", architecture="arch35")
+    second = iter_function_definitions(tmp_path, "sample.cpp", architecture="arch35")
+    assert first and second
+    assert reads == 1

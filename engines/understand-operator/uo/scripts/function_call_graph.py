@@ -216,17 +216,43 @@ def _candidate_callees(
     if recv.startswith("this") or recv in {".", "->", "this->"}:
         same = [c for c in name_hits if c.class_or_namespace == caller.class_or_namespace]
         if same:
-            return same
+            return _filter_by_arity(same, site.argument_count)
 
+    # An arbitrary object receiver does not prove the caller's class. Keep the
+    # cross-class candidate set unless the source carries an explicit Class:: hint.
     if recv and ("." in recv or "->" in recv):
-        same_cls = [c for c in name_hits if c.class_or_namespace == caller.class_or_namespace]
-        if same_cls:
-            return same_cls
+        return _filter_by_arity(name_hits, site.argument_count)
 
     same_cls = [c for c in name_hits if c.class_or_namespace == caller.class_or_namespace]
     if same_cls:
-        return same_cls
+        return _filter_by_arity(same_cls, site.argument_count)
 
-    if len(name_hits) == 1:
-        return name_hits
-    return name_hits
+    return _filter_by_arity(name_hits, site.argument_count)
+
+
+def _filter_by_arity(
+    candidates: list[FunctionDefinition], argument_count: int
+) -> list[FunctionDefinition]:
+    if len(candidates) <= 1:
+        return candidates
+    hits = [fn for fn in candidates if _signature_arity(fn.normalized_signature) == argument_count]
+    return hits or candidates
+
+
+def _signature_arity(signature: str) -> int:
+    text = str(signature or "").strip()
+    if not text.startswith("(") or not text.endswith(")"):
+        return -1
+    inner = text[1:-1].strip()
+    if not inner or inner == "void":
+        return 0
+    depth = 0
+    count = 1
+    for ch in inner:
+        if ch in "(<[{":
+            depth += 1
+        elif ch in ")>]}":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            count += 1
+    return count

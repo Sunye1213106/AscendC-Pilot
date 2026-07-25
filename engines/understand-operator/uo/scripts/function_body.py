@@ -6,7 +6,10 @@ fallback and must not invent unique resolution under ambiguity.
 """
 from __future__ import annotations
 
+import hashlib
 import re
+from bisect import bisect_right
+from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -56,6 +59,45 @@ _CALL_RE = re.compile(
     r"\s*\("
     r")",
 )
+
+_SOURCE_TEXT_CACHE: OrderedDict[tuple[str, int, int], str] = OrderedDict()
+_FUNCTION_DEFINITION_CACHE: OrderedDict[
+    tuple[str, int, int, str], tuple[FunctionDefinition, ...]
+] = OrderedDict()
+_CACHE_LIMIT = 128
+
+
+def _cache_put(cache: OrderedDict, key: object, value: object) -> None:
+    cache[key] = value
+    cache.move_to_end(key)
+    while len(cache) > _CACHE_LIMIT:
+        cache.popitem(last=False)
+
+
+def _path_version(path: Path) -> tuple[str, int, int]:
+    stat = path.stat()
+    return (path.as_posix(), int(stat.st_mtime_ns), int(stat.st_size))
+
+
+def _read_source_text(path: Path) -> str:
+    key = _path_version(path)
+    cached = _SOURCE_TEXT_CACHE.get(key)
+    if cached is not None:
+        _SOURCE_TEXT_CACHE.move_to_end(key)
+        return cached
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    _cache_put(_SOURCE_TEXT_CACHE, key, text)
+    return text
+
+
+def _line_starts(text: str) -> list[int]:
+    starts = [0]
+    starts.extend(match.end() for match in re.finditer("\n", text))
+    return starts
+
+
+def _line_from_starts(starts: list[int], pos: int) -> int:
+    return bisect_right(starts, max(0, pos))
 
 
 @dataclass
@@ -108,7 +150,9 @@ def _def_matches_for_name(text: str, name: str) -> list[re.Match[str]]:
     return list(pattern.finditer(text))
 
 
-def _match_line(text: str, pos: int) -> int:
+def _match_line(text: str, pos: int, starts: list[int] | None = None) -> int:
+    if starts is not None:
+        return _line_from_starts(starts, pos)
     return text.count("\n", 0, pos) + 1
 
 
@@ -220,9 +264,10 @@ def _build_function_definition_from_span(
     source_hash: str,
     architecture: str = "",
     qual_hint: str = "",
+    line_starts: list[int] | None = None,
 ) -> FunctionDefinition | None:
-    def_start = _match_line(text, start_pos)
-    def_end = _match_line(text, end_pos)
+    def_start = _match_line(text, start_pos, line_starts)
+    def_end = _match_line(text, end_pos, line_starts)
     lines = text.splitlines()
     header = lines[def_start - 1] if 0 < def_start <= len(lines) else text[start_pos : text.find("{", start_pos)]
     body = "\n".join(lines[def_start - 1 : def_end])
@@ -277,33 +322,32 @@ def _build_function_definition_from_span(
     )
 
 
-def iter_function_definitions(
+def iter_function_definitions_from_text(
     repo_root: Path,
     file_path: str,
+    text: str,
     *,
     architecture: str = "",
+    source_hash: str = "",
 ) -> list[FunctionDefinition]:
-    """Return all brace-bounded FunctionDefinitions in a file (overloads preserved)."""
+    """Parse all definitions from already-loaded text; overload identities are preserved."""
     path = resolve_repo_source_path(repo_root, file_path)
     if path is None:
         return []
-    try:
-        text = path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return []
     rel = to_repo_relative(repo_root, path)
-    src_hash = source_file_hash(path)
+    src_hash = source_hash or hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
+    starts = _line_starts(text)
     out: list[FunctionDefinition] = []
     seen_spans: set[tuple[int, int, str]] = set()
+    captured_outer_end = 0
 
     for match in _FN_CANDIDATE_RE.finditer(text):
         span = _definition_span_at(text, match)
         if span is None:
             continue
         start_pos, end_pos, name = span
-        start_line = _match_line(text, start_pos)
-        # Skip nested defs inside an already-captured outer function body.
-        if any(fn.start_line < start_line < fn.end_line for fn in out):
+        start_line = _match_line(text, start_pos, starts)
+        if start_line < captured_outer_end:
             continue
         fn = _build_function_definition_from_span(
             name=name,
@@ -314,6 +358,7 @@ def iter_function_definitions(
             source_hash=src_hash,
             architecture=architecture,
             qual_hint=(match.group("qual") or ""),
+            line_starts=starts,
         )
         if fn is None:
             continue
@@ -322,8 +367,43 @@ def iter_function_definitions(
             continue
         seen_spans.add(key)
         out.append(fn)
-    out.sort(key=lambda f: (f.start_line, f.qualified_name))
+        captured_outer_end = max(captured_outer_end, fn.end_line)
+    out.sort(key=lambda f: (f.start_line, f.qualified_name, f.normalized_signature))
     return out
+
+
+def iter_function_definitions(
+    repo_root: Path,
+    file_path: str,
+    *,
+    architecture: str = "",
+) -> list[FunctionDefinition]:
+    """Return brace-bounded definitions with a stat-keyed source/parse cache."""
+    path = resolve_repo_source_path(repo_root, file_path)
+    if path is None:
+        return []
+    try:
+        version = _path_version(path)
+    except OSError:
+        return []
+    cache_key = (*version, architecture)
+    cached = _FUNCTION_DEFINITION_CACHE.get(cache_key)
+    if cached is not None:
+        _FUNCTION_DEFINITION_CACHE.move_to_end(cache_key)
+        return list(cached)
+    try:
+        source = _read_source_text(path)
+    except OSError:
+        return []
+    parsed = iter_function_definitions_from_text(
+        repo_root,
+        to_repo_relative(repo_root, path),
+        source,
+        architecture=architecture,
+        source_hash=hashlib.sha256(source.encode("utf-8", errors="ignore")).hexdigest(),
+    )
+    _cache_put(_FUNCTION_DEFINITION_CACHE, cache_key, tuple(parsed))
+    return list(parsed)
 
 
 def resolve_function_candidates(
@@ -504,7 +584,7 @@ def resolve_helper_body(
     else:
         safe_end = min(safe_end, start + max_fallback_lines)
     try:
-        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        lines = _read_source_text(path).splitlines()
     except OSError:
         return "", start, start
     lo = max(0, start - 1)
@@ -543,16 +623,19 @@ def extract_call_sites(
         "return",
         "sizeof",
     }
+    noise_cf = {name.casefold() for name in noise}
     body = fn.body_text or ""
     # Only scan inside braces when possible
     brace = body.find("{")
     scan = body[brace + 1 :] if brace >= 0 else body
+    scan_starts = _line_starts(scan)
+    scan_base_line = fn.start_line + (body[: brace + 1].count("\n") if brace >= 0 else 0)
     out: list[CallSite] = []
     ordinal = 0
     for match in _CALL_RE.finditer(scan):
         callee_raw = (match.group("callee") or "").strip()
         callee = callee_raw.split("::")[-1].strip()
-        if not callee or callee.casefold() in {n.casefold() for n in noise}:
+        if not callee or callee.casefold() in noise_cf:
             continue
         if callee == fn.name and not match.group("recv"):
             # Likely constructor-like / recursive — keep but mark hint
@@ -561,8 +644,8 @@ def extract_call_sites(
         targs = (match.group("targs") or "").strip()
         # Rough argument count: commas at depth 0 until matching ')'
         arg_count = _count_args(scan, match.end() - 1)
-        line_in_scan = scan.count("\n", 0, match.start()) + 1
-        abs_line = fn.start_line + (body[: brace + 1 + match.start()].count("\n") if brace >= 0 else line_in_scan - 1)
+        line_in_scan = _line_from_starts(scan_starts, match.start())
+        abs_line = scan_base_line + line_in_scan - 1
         expr = match.group(0).rstrip("(").strip()
         hint = ""
         if "::" in callee_raw:
