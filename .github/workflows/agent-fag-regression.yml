@@ -1,4 +1,4 @@
-name: Diagnose FAG graph related regression
+name: Finalize FAG graph related regression
 
 on:
   pull_request:
@@ -6,7 +6,7 @@ on:
       - cursor/semantic-control-plane-closure-44d6
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   regression:
@@ -23,7 +23,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e engines/understand-operator pytest
-      - name: Capture related UO graph tests
+      - name: Run related UO graph tests
+        env:
+          PYTHONPATH: engines/understand-operator
         run: |
           mapfile -t TEST_FILES < <(
             grep -rlE \
@@ -31,16 +33,16 @@ jobs:
               engines/understand-operator/tests \
               --include='test_*.py' | sort -u
           )
-          printf '%s\n' "${TEST_FILES[@]}" > fag-regression-files.txt
-          set +e
-          pytest -vv "${TEST_FILES[@]}" > fag-regression-output.txt 2>&1
-          echo $? > fag-regression-exit-code.txt
-          set -e
-      - uses: actions/upload-artifact@v4
-        with:
-          name: fag-related-regression-diagnostics
-          path: |
-            fag-regression-files.txt
-            fag-regression-output.txt
-            fag-regression-exit-code.txt
-          retention-days: 1
+          printf 'Selected %s test files:\n' "${#TEST_FILES[@]}"
+          printf '  %s\n' "${TEST_FILES[@]}"
+          test "${#TEST_FILES[@]}" -gt 0
+          pytest -q "${TEST_FILES[@]}"
+      - name: Remove one-shot workflow
+        run: rm -f .github/workflows/agent-fag-regression.yml
+      - name: Commit cleanup
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "test(uo): validate FAG graph refactor regressions"
+          git push origin HEAD:agent/tg-workflow-contract-closure
