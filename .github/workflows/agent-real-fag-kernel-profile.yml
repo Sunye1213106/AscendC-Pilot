@@ -1,0 +1,79 @@
+name: Profile real FAG kernel extraction
+
+on:
+  pull_request:
+    branches:
+      - cursor/semantic-control-plane-closure-44d6
+
+permissions:
+  contents: read
+
+jobs:
+  profile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/tg-workflow-contract-closure
+          path: pilot
+          fetch-depth: 1
+      - uses: actions/checkout@v4
+        with:
+          repository: Sunye1213106/flashattention
+          ref: main
+          path: fag
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install and prepare
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e pilot/engines/understand-operator
+          mkdir -p results
+          OP="$GITHUB_WORKSPACE/fag/flash_attention_score_grad"
+          export PYTHONPATH="$GITHUB_WORKSPACE/pilot/engines/understand-operator"
+          python -m uo.scripts.build_layered_kb "$OP" \
+            --op-name flash_attention_score_grad --architecture arch35 \
+            --layers entrypoints > results/entrypoints.log 2>&1
+          python -m uo.scripts.propose_extract_plan "$OP" \
+            --op-name flash_attention_score_grad --architecture arch35 --write \
+            > results/propose.log 2>&1
+          python pilot/tools/agent_prepare_real_fag_plan.py "$OP" \
+            --report results/plan-validation.json
+          python -m uo.scripts.extract_tilingkey_space "$OP" \
+            --op-name flash_attention_score_grad --architecture arch35 --write \
+            > results/tilingkey.log 2>&1
+      - name: Capture repeated kernel stacks
+        shell: bash
+        run: |
+          set +e
+          export PYTHONPATH="$GITHUB_WORKSPACE/pilot/engines/understand-operator"
+          timeout -s TERM -k 10s 150s python -u - <<'PY' > results/kernel-profile.log 2>&1
+          import faulthandler
+          import time
+          from pathlib import Path
+          from uo.scripts.extract_kernel_subgraph import extract_kernel_subgraph
+
+          faulthandler.enable()
+          faulthandler.dump_traceback_later(20, repeat=True)
+          root = Path('fag/flash_attention_score_grad').resolve()
+          started = time.perf_counter()
+          print('kernel_extract_start', flush=True)
+          payload = extract_kernel_subgraph(root, 'flash_attention_score_grad', architecture='arch35')
+          print('kernel_extract_done', time.perf_counter() - started,
+                len(payload.get('nodes') or []), len(payload.get('edges') or []),
+                len(payload.get('branches') or []), len(payload.get('unresolved') or []), flush=True)
+          faulthandler.cancel_dump_traceback_later()
+          PY
+          echo $? > results/exit-code.txt
+          set -e
+          cat results/kernel-profile.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: real-fag-kernel-profile
+          path: results
+          retention-days: 1
