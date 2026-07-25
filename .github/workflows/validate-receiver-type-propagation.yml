@@ -29,14 +29,19 @@ jobs:
           PYTHONPATH: engines/understand-operator
         run: python .github/receiver_type_report.py --repo real-fag --output receiver-before.json
 
-      - name: Apply receiver type propagation
+      - name: Capture receiver patch application
         run: |
-          python .github/apply_receiver_type_propagation.py
-          python .github/fix_receiver_type_patcher.py
-          python .github/fix_receiver_resolution_order.py
-          python -m py_compile \
-            engines/understand-operator/uo/scripts/receiver_type_facts.py \
-            engines/understand-operator/uo/scripts/function_call_graph.py
+          set +e
+          {
+            python .github/apply_receiver_type_propagation.py
+            python .github/fix_receiver_type_patcher.py
+            python .github/fix_receiver_resolution_order.py
+            python -m py_compile \
+              engines/understand-operator/uo/scripts/receiver_type_facts.py \
+              engines/understand-operator/uo/scripts/function_call_graph.py
+          } 2>&1 | tee receiver-apply.log
+          echo ${PIPESTATUS[0]} > receiver-apply.status
+          exit 0
 
       - name: Capture focused regressions
         env:
@@ -73,9 +78,12 @@ jobs:
             receiver-after.status
             receiver-pytest.log
             receiver-pytest.status
+            receiver-apply.log
+            receiver-apply.status
 
       - name: Gate deterministic improvement
         run: |
+          test "$(cat receiver-apply.status)" = "0"
           test "$(cat receiver-pytest.status)" = "0"
           test "$(cat receiver-after.status)" = "0"
           python - <<'PY'
