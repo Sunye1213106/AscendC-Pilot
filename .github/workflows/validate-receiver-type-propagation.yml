@@ -15,31 +15,36 @@ jobs:
         with:
           ref: agent/tg-workflow-contract-closure
           fetch-depth: 0
-
       - run: python -m pip install -q pytest pyyaml
-
       - uses: actions/checkout@v4
         with:
           repository: Sunye1213106/flashattention
           ref: 94e37bc4630a6b2b5695e6a76809d1e94931d8c8
           path: real-fag
-
       - name: Capture baseline FAG metrics
         env:
           PYTHONPATH: engines/understand-operator
         run: python .github/receiver_type_report.py --repo real-fag --output template-before.json
-
-      - name: Apply template type resolver
+      - name: Capture template resolver application
         run: |
-          python .github/apply_template_type_resolver.py
-          python -m py_compile \
-            engines/understand-operator/uo/scripts/type_normalizer.py \
-            engines/understand-operator/uo/scripts/receiver_type_facts.py
-
+          set +e
+          python .github/apply_template_type_resolver.py 2>&1 | tee template-apply.log
+          APPLY=${PIPESTATUS[0]}
+          if [ "$APPLY" = "0" ]; then
+            python -m py_compile \
+              engines/understand-operator/uo/scripts/type_normalizer.py \
+              engines/understand-operator/uo/scripts/receiver_type_facts.py \
+              2>&1 | tee -a template-apply.log
+            APPLY=${PIPESTATUS[0]}
+          fi
+          echo "$APPLY" > template-apply.status
+          exit 0
       - name: Run focused regressions
+        if: always()
         env:
           PYTHONPATH: engines/understand-operator
         run: |
+          if [ "$(cat template-apply.status)" != "0" ]; then exit 0; fi
           pytest -q \
             engines/understand-operator/tests/test_template_type_normalizer.py \
             engines/understand-operator/tests/test_receiver_type_propagation.py \
@@ -48,28 +53,39 @@ jobs:
             engines/understand-operator/tests/test_call_scanner.py \
             engines/understand-operator/tests/test_fag_graph_identity_and_perf.py \
             2>&1 | tee template-pytest.log
-
       - name: Capture patched FAG metrics
+        if: always()
         env:
           PYTHONPATH: engines/understand-operator
-        run: python .github/receiver_type_report.py --repo real-fag --output template-after.json
-
+        run: |
+          if [ "$(cat template-apply.status)" != "0" ]; then exit 0; fi
+          python .github/receiver_type_report.py --repo real-fag --output template-after.json
+      - name: Upload validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fag-template-type-normalization
+          path: |
+            template-before.json
+            template-after.json
+            template-apply.log
+            template-apply.status
+            template-pytest.log
       - name: Gate deterministic improvement
         run: |
+          test "$(cat template-apply.status)" = "0"
           python - <<'PY'
           import json
           from pathlib import Path
           before=json.loads(Path('template-before.json').read_text())
           after=json.loads(Path('template-after.json').read_text())
           bs=before['status']; ass=after['status']
-          print('before', bs)
-          print('after ', ass)
+          print('before', bs); print('after ', ass)
           assert ass.get('candidate_set',0) <= bs.get('candidate_set',0), (bs,ass)
           assert ass.get('missing',0) <= bs.get('missing',0), (bs,ass)
           assert ass.get('resolved',0) >= bs.get('resolved',0), (bs,ass)
-          watched=('Get','GetTensor','Init')
           improvement=0
-          for name in watched:
+          for name in ('Get','GetTensor','Init'):
               b=before['watched'].get(name,{})
               a=after['watched'].get(name,{})
               print(name, b, '=>', a)
@@ -77,16 +93,6 @@ jobs:
               improvement += a.get('resolved',0)-b.get('resolved',0)
           assert improvement > 0, improvement
           PY
-
-      - name: Upload validation report
-        uses: actions/upload-artifact@v4
-        with:
-          name: fag-template-type-normalization
-          path: |
-            template-before.json
-            template-after.json
-            template-pytest.log
-
       - name: Commit validated implementation
         run: |
           git config user.name github-actions[bot]
@@ -97,7 +103,6 @@ jobs:
             engines/understand-operator/tests/test_template_type_normalizer.py
           git commit -m 'feat(uo): normalize template receiver types' || true
           git push origin HEAD:agent/tg-workflow-contract-closure
-
       - name: Remove one-shot validation assets
         run: |
           git rm -f \
