@@ -37,6 +37,7 @@ class MacroDirective:
     parameters: tuple[str, ...] = ()
     function_like: bool = False
     variadic: bool = False
+    end_line: int = 0
 
 
 @dataclass
@@ -61,6 +62,52 @@ def _norm_macro_name(name: str) -> str:
     return "".join(ch for ch in str(name or "") if ch.isalnum()).casefold()
 
 
+def _logical_preprocessor_lines(text: str) -> tuple[list[str], list[int]]:
+    """Join backslash-continued directives while preserving physical line indexes."""
+    physical = text.splitlines()
+    logical = list(physical)
+    end_lines = [idx + 1 for idx in range(len(physical))]
+    idx = 0
+    while idx < len(physical):
+        raw = physical[idx]
+        if not re.match(r"^\s*#", raw):
+            idx += 1
+            continue
+        end = idx
+        joined = raw
+        while re.search(r"\\\s*$", joined) and end + 1 < len(physical):
+            joined = re.sub(r"\\\s*$", " ", joined) + physical[end + 1].lstrip()
+            end += 1
+        if end > idx:
+            logical[idx] = joined
+            end_lines[idx] = end + 1
+            for continuation in range(idx + 1, end + 1):
+                logical[continuation] = ""
+                end_lines[continuation] = end + 1
+            idx = end + 1
+        else:
+            idx += 1
+    return logical, end_lines
+
+
+def _macro_expansion_symbols(body: str, parameters: tuple[str, ...]) -> list[str]:
+    """Return deterministic call-like symbols referenced by a macro body."""
+    parameter_names = {value.rstrip(".") for value in parameters}
+    noise = {
+        "if", "for", "while", "switch", "sizeof", "decltype", "static_cast",
+        "reinterpret_cast", "const_cast", "dynamic_cast", "return",
+    }
+    found: list[str] = []
+    seen: set[str] = set()
+    for match in re.finditer(r"\b([A-Za-z_]\w*)\s*(?:<[^;{}()]{0,240}>)?\s*\(", body):
+        name = match.group(1)
+        if name in parameter_names or name in noise or name in seen:
+            continue
+        seen.add(name)
+        found.append(name)
+    return found
+
+
 def analyze_macros(
     text: str,
     *,
@@ -81,7 +128,7 @@ def analyze_macros(
     function_macros: dict[str, dict[str, Any]] = {}
     soft = {_norm_macro_name(x) for x in (soft_undefined or set()) if x}
     directives: list[MacroDirective] = []
-    lines = text.splitlines()
+    lines, logical_end_lines = _logical_preprocessor_lines(text)
     n = len(lines)
 
     # Stack frames: each open conditional group
@@ -116,17 +163,21 @@ def analyze_macros(
                 body = fm.group(3).strip()
                 params = tuple(p.strip() for p in raw_params.split(",") if p.strip())
                 variadic = any(p == "..." or p.endswith("...") for p in params)
+                end_line = logical_end_lines[idx]
                 function_macros[name] = {
                     "name": name,
                     "parameters": list(params),
                     "variadic": variadic,
                     "body": body,
                     "line": line_no,
+                    "end_line": end_line,
+                    "expands_to_symbols": _macro_expansion_symbols(body, params),
                 }
                 directives.append(
                     MacroDirective(
                         line=line_no, kind="define", name=name, value=body,
                         parameters=params, function_like=True, variadic=variadic,
+                        end_line=end_line,
                     )
                 )
                 mark_line(line_no, parent_active())

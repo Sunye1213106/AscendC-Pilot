@@ -197,3 +197,22 @@ def test_target_nodes_are_deduplicated() -> None:
     macros = [node for node in nodes if node.get("node_type") == "CompileMacro"]
     assert len(macros) == 1
     assert len([edge for edge in edges if edge.get("target_status") == "macro"]) == 2
+
+
+def test_multiline_source_macro_keeps_compact_expansion_metadata() -> None:
+    caller = _fn("void Run() { INVOKE_IMPL(float, true); }")
+    source = """#define INVOKE_IMPL(T, FLAG) \\
+    Kernel<T>(FLAG); \\
+    SyncAll();
+""" + caller.body_text
+    facts = collect_call_resolution_facts(
+        [caller], source_texts={"op_kernel/test.cpp": source}
+    )
+    edge, _node, unresolved = resolve_call_site(
+        _site("INVOKE_IMPL", argc=2), caller, by_name={}, by_qn={}, by_id={}, facts=facts
+    )
+    assert edge and edge["target_status"] == "macro"
+    definition = edge["_target_node"]["source_macro_definitions"][0]
+    assert definition["end_line"] == 3
+    assert definition["expands_to_symbols"] == ["Kernel", "SyncAll"]
+    assert unresolved is None

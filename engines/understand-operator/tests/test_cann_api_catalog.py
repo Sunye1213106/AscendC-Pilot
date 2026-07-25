@@ -48,3 +48,11 @@ def test_packaged_reg_logic_catalog_has_exact_contracts() -> None:
     symbols = {item["symbol_or_macro"] for item in contracts.values()}
     assert {"Max", "Min", "Or"} <= symbols
     assert all(item.get("argument_counts") == [4] for item in contracts.values())
+
+
+def test_scalar_ceil_division_is_official_but_tensor_ceil_is_not_aliased() -> None:
+    contracts = load_packaged_contracts()
+    contract = contracts["CeilDivision"]
+    assert contract["argument_counts"] == [2]
+    assert contract["qualified_names"] == ["AscendC::CeilDivision"]
+    assert "Ceil" not in contract.get("aliases", [])

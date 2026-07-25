@@ -43,6 +43,7 @@ _DECL_TYPE_RE_TEMPLATE = (
 @dataclass
 class CallResolutionFacts:
     source_macros: set[str] = field(default_factory=set)
+    source_macro_definitions: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     documented_macros: set[str] = field(default_factory=set)
     documented_external: set[str] = field(default_factory=set)
     official_contracts: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
@@ -75,6 +76,10 @@ def collect_call_resolution_facts(
         facts.source_text_by_file[rel] = source
         info = analyze_macros(source)
         facts.source_macros.update(info.function_macros)
+        for macro_name, definition in info.function_macros.items():
+            payload = dict(definition)
+            payload["file_path"] = rel
+            facts.source_macro_definitions.setdefault(macro_name, []).append(payload)
         namespaces = {m.group(1) for m in _USING_NAMESPACE_RE.finditer(source)}
         if namespaces:
             facts.using_namespaces_by_file.setdefault(rel, set()).update(namespaces)
@@ -250,6 +255,7 @@ def _classify_unindexed_target(
         return _emit_target(
             site, caller, site_id, site_node, base_edge,
             node_type="CompileMacro", status="macro", reason=reason, confidence=confidence,
+            source_definitions=facts.source_macro_definitions.get(name),
         )
 
     contract, contract_reason = _matching_official_contract(site, receiver_type, facts)
@@ -361,6 +367,7 @@ def _emit_target(
     reason: str,
     confidence: str,
     contract: dict[str, Any] | None = None,
+    source_definitions: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], None]:
     canonical_names = list(contract.get("qualified_names") or []) if contract else []
     qualified = str(canonical_names[0]) if canonical_names else (site.callee_qualified_hint or site.callee_name)
@@ -374,6 +381,19 @@ def _emit_target(
         "symbol_scope": status, "resolution_status": status,
         "classification_reason": reason,
     }
+    if source_definitions:
+        target_node["source_macro_definitions"] = [
+            {
+                "file_path": item.get("file_path"),
+                "line": item.get("line"),
+                "end_line": item.get("end_line"),
+                "parameters": item.get("parameters") or [],
+                "variadic": bool(item.get("variadic")),
+                "expands_to_symbols": item.get("expands_to_symbols") or [],
+                "body": item.get("body") or "",
+            }
+            for item in source_definitions
+        ]
     if contract:
         target_node["official_contract"] = {
             "symbol_kind": contract.get("symbol_kind"),

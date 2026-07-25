@@ -579,3 +579,18 @@ contracts:
   version_scope: multi_version
   cann_versions: ['9.0']
   confidence: 1.0
+
+- symbol_or_macro: CeilDivision
+  symbol_kind: function
+  call_style: free_function
+  qualified_names: [AscendC::CeilDivision]
+  receiver_types: []
+  argument_counts: [2]
+  allow_unqualified: true
+  document_title: CeilDivision - scalar integer ceiling division
+  document_url: https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/900beta2/API/ascendcopapi/atlasascendc_api_07_00265.html
+  semantic_summary: Computes integer ceiling division for two scalar integer arguments.
+  source_authority: official_hiascend
+  version_scope: multi_version
+  cann_versions: ['9.0', '9.1']
+  confidence: 1.0

@@ -25,6 +25,7 @@ from uo.scripts.function_body import (
 )
 from uo.scripts.function_call_graph import build_call_edges_for_functions
 from uo.scripts.resolve_entrypoints import entrypoint_units, load_entrypoint_graph
+from uo.scripts.source_include_closure import expand_local_include_closure
 from uo.scripts.semantic_identity import (
     infer_specialization_kind,
     mint_edge_id,
@@ -265,10 +266,29 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
     tilingkey_space = load_tilingkey_space(uo_root, repo_root, op_name, architecture=architecture)
     key_index = load_key_dimension_index(tilingkey_space)
 
-    kernel_files = _kernel_files(repo_root, op_name, architecture, primary if primary else None, kernel_nodes)
+    kernel_seed_files = _kernel_files(
+        repo_root, op_name, architecture, primary if primary else None, kernel_nodes
+    )
+    include_closure = expand_local_include_closure(
+        repo_root, kernel_seed_files, architecture=architecture
+    )
+    kernel_files = include_closure.files
     domain_files = list(
         dict.fromkeys(_enum_declaration_files(repo_root, op_name, architecture) + kernel_files)
     )
+    for item in include_closure.unresolved:
+        if item.get("kind") in {
+            "include_target_ambiguous", "include_closure_file_budget",
+            "include_closure_depth_budget", "include_read_failed",
+        }:
+            unresolved.append(
+                {
+                    "id": stable_id("UNRES_INCLUDE_", repr(sorted(item.items()))),
+                    "kind": item.get("kind"),
+                    "message": "Repository-local include closure could not be completed safely",
+                    **item,
+                }
+            )
     source_texts = _read_source_files(domain_files)
     if not kernel_files:
         unresolved.append(
@@ -1007,6 +1027,7 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
             for d in declared_domains
         ],
         "loaded_tiling_fields": sorted(loaded_fields | enum_fields_resolved),
+        "source_scope": include_closure.as_dict(repo_root),
         "function_definitions": [fn.as_dict() for fn in all_functions],
         "unresolved": unresolved,
     }
