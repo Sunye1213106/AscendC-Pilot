@@ -1,0 +1,88 @@
+name: Recheck real FAG candidates
+
+on:
+  pull_request:
+    branches:
+      - cursor/semantic-control-plane-closure-44d6
+
+permissions:
+  contents: read
+
+jobs:
+  candidates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/tg-workflow-contract-closure
+          path: pilot
+          fetch-depth: 1
+      - uses: actions/checkout@v4
+        with:
+          repository: Sunye1213106/flashattention
+          ref: main
+          path: fag
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install UO
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e pilot/engines/understand-operator
+      - name: Generate candidates
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          OP="$GITHUB_WORKSPACE/fag/flash_attention_score_grad"
+          export PYTHONPATH="$GITHUB_WORKSPACE/pilot/engines/understand-operator"
+          /usr/bin/time -f 'elapsed_seconds=%e\nmax_rss_kb=%M' -o results/entrypoints-time.txt \
+            python -m uo.scripts.build_layered_kb "$OP" \
+              --op-name flash_attention_score_grad --architecture arch35 \
+              --layers entrypoints > results/entrypoints.log 2>&1
+          python -m uo.scripts.propose_extract_plan "$OP" \
+            --op-name flash_attention_score_grad --architecture arch35 --write \
+            > results/propose.log 2>&1
+          cp -a "$OP/.ascendc-pilot/uo/ir" results/ir
+      - name: Summarize
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json, yaml
+          root = Path('results/ir')
+          def load(name):
+              p = root / name
+              return yaml.safe_load(p.read_text(encoding='utf-8')) if p.is_file() else {}
+          entry = load('entrypoint_graph.yaml') or {}
+          plan = load('extract_plan_candidates.yaml') or {}
+          summary = {
+              'closure': entry.get('closure'),
+              'nodes': len(entry.get('nodes') or []),
+              'edges': len(entry.get('edges') or []),
+              'roles': {},
+              'candidate_status': plan.get('status'),
+              'candidate_ok': plan.get('ok'),
+              'counts': plan.get('counts'),
+              'raw_counts': plan.get('raw_counts'),
+              'truncated': plan.get('truncated'),
+              'writers': (plan.get('writer_candidates') or [])[:80],
+              'receivers': (plan.get('receiver_candidates') or [])[:30],
+              'aliases': (plan.get('alias_candidates') or [])[:120],
+              'non_sink_roots': plan.get('non_sink_root_candidates') or [],
+              'extra_entries': plan.get('extra_entry_candidates') or [],
+          }
+          for node in entry.get('nodes') or []:
+              role = str(node.get('role') or 'unknown')
+              summary['roles'][role] = summary['roles'].get(role, 0) + 1
+          Path('results/summary.json').write_text(
+              json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8'
+          )
+          print(json.dumps({k: v for k, v in summary.items() if k not in {'writers','receivers','aliases','non_sink_roots'}}, ensure_ascii=False, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: real-fag-candidates-after-fix
+          path: results
+          retention-days: 1
