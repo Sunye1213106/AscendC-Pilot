@@ -27,6 +27,7 @@ jobs:
         run: python .github/nested_type_report.py --repo real-fag --output nested-before.json
       - name: Apply implementation
         run: |
+          python .github/fix_nested_patcher_quotes.py
           python .github/apply_nested_type_resolution.py
           python -m py_compile \
             engines/understand-operator/uo/scripts/type_normalizer.py \
@@ -87,6 +88,7 @@ jobs:
         run: |
           git rm -f \
             .github/apply_nested_type_resolution.py \
+            .github/fix_nested_patcher_quotes.py \
             .github/nested_type_report.py \
             .github/workflows/validate-nested-type-resolution.yml
           git commit -m 'chore(ci): remove nested type validation assets'
