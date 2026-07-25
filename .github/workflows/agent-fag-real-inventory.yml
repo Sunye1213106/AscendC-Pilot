@@ -1,0 +1,90 @@
+name: Inventory real FAG repository
+
+on:
+  pull_request:
+    branches:
+      - cursor/semantic-control-plane-closure-44d6
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Pilot PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/tg-workflow-contract-closure
+          path: pilot-repo
+          fetch-depth: 1
+      - name: Checkout real FAG repository
+        uses: actions/checkout@v4
+        with:
+          repository: Sunye1213106/flashattention
+          ref: main
+          path: fag-repo
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install UO engine
+        working-directory: pilot-repo
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e engines/understand-operator
+      - name: Build inventory report
+        shell: bash
+        run: |
+          {
+            echo '=== repositories ==='
+            git -C pilot-repo rev-parse HEAD
+            git -C fag-repo rev-parse HEAD
+            echo
+            echo '=== FAG root files ==='
+            find fag-repo -maxdepth 2 -mindepth 1 -printf '%y %p\n' | sort | head -400
+            echo
+            echo '=== operator candidates ==='
+            find fag-repo -type d \( -name op_kernel -o -name op_host \) -print | sort
+            echo
+            echo '=== flash/fag named paths ==='
+            find fag-repo -maxdepth 8 -iname '*flash*attention*' -o -iname '*fag*' | sort | head -500
+            echo
+            echo '=== existing UO artifacts ==='
+            find fag-repo -path '*/.understand-operator/*' -maxdepth 10 -print | sort | head -500
+            echo
+            echo '=== Python UO modules and help ==='
+            python - <<'PY'
+          import importlib.util
+          mods = [
+              'uo.scripts.build_layered_kb',
+              'uo.scripts.resolve_entrypoints',
+              'uo.scripts.propose_extract_plan',
+              'uo.scripts.extract_host_subgraph',
+              'uo.scripts.extract_kernel_subgraph',
+          ]
+          for mod in mods:
+              spec = importlib.util.find_spec(mod)
+              print(f'{mod}: {spec.origin if spec else "MISSING"}')
+          PY
+            echo
+            python -m uo.scripts.build_layered_kb --help || true
+            echo
+            echo '=== likely operation names ==='
+            python - <<'PY'
+          from pathlib import Path
+          root = Path('fag-repo')
+          found = []
+          for p in root.rglob('op_kernel'):
+              if p.is_dir():
+                  found.append((p.parent.name, p.parent.as_posix()))
+          for name, path in sorted(set(found)):
+              print(f'{name}\t{path}')
+          PY
+          } > fag-inventory.txt 2>&1
+          cat fag-inventory.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: real-fag-inventory
+          path: fag-inventory.txt
+          retention-days: 1
