@@ -1,4 +1,4 @@
-name: Validate selector type resolution
+name: Validate nested template member aliases
 
 on:
   pull_request:
@@ -24,12 +24,10 @@ jobs:
       - name: Capture baseline
         env:
           PYTHONPATH: engines/understand-operator
-        run: python .github/nested_type_report.py --repo real-fag --output selector-before.json
-      - name: Apply implementation
+        run: python .github/nested_type_report.py --repo real-fag --output nested-before.json
+      - name: Apply nested member integration
         run: |
-          python .github/fix_nested_patcher_quotes.py
-          python .github/apply_nested_type_resolution.py
-          python .github/apply_selector_type_resolution.py
+          python .github/apply_nested_member_types.py
           python -m py_compile \
             engines/understand-operator/uo/scripts/type_normalizer.py \
             engines/understand-operator/uo/scripts/receiver_type_facts.py \
@@ -41,37 +39,36 @@ jobs:
         run: |
           set -o pipefail
           pytest -q \
-            engines/understand-operator/tests/test_selector_type_resolution.py \
-            engines/understand-operator/tests/test_nested_type_resolution.py \
             engines/understand-operator/tests/test_template_type_normalizer.py \
             engines/understand-operator/tests/test_receiver_type_propagation.py \
             engines/understand-operator/tests/test_call_external_classification.py \
             engines/understand-operator/tests/test_function_call_graph.py \
             engines/understand-operator/tests/test_call_scanner.py \
             engines/understand-operator/tests/test_fag_graph_identity_and_perf.py \
-            2>&1 | tee selector-pytest.log
+            2>&1 | tee nested-pytest.log
       - name: Capture patched metrics
         env:
           PYTHONPATH: engines/understand-operator
-        run: python .github/nested_type_report.py --repo real-fag --output selector-after.json
+        run: python .github/nested_type_report.py --repo real-fag --output nested-after.json
       - uses: actions/upload-artifact@v4
         with:
-          name: fag-selector-type-resolution
+          name: fag-nested-template-member-aliases
           path: |
-            selector-before.json
-            selector-after.json
-            selector-pytest.log
-      - name: Gate improvement
+            nested-before.json
+            nested-after.json
+            nested-pytest.log
+      - name: Gate deterministic improvement
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          b=json.loads(Path('selector-before.json').read_text())['status']
-          a=json.loads(Path('selector-after.json').read_text())['status']
+          b=json.loads(Path('nested-before.json').read_text())['status']
+          a=json.loads(Path('nested-after.json').read_text())['status']
           print('before', b)
           print('after ', a)
           assert a.get('candidate_set',0) < b.get('candidate_set',0), (b,a)
           assert a.get('missing',0) <= b.get('missing',0), (b,a)
+          assert a.get('external',0) >= b.get('external',0), (b,a)
           assert a.get('resolved',0) > b.get('resolved',0), (b,a)
           PY
       - name: Commit validated implementation
@@ -81,18 +78,17 @@ jobs:
           git add \
             engines/understand-operator/uo/scripts/type_normalizer.py \
             engines/understand-operator/uo/scripts/receiver_type_facts.py \
-            engines/understand-operator/uo/scripts/function_call_graph.py \
-            engines/understand-operator/tests/test_nested_type_resolution.py \
-            engines/understand-operator/tests/test_selector_type_resolution.py
-          git commit -m 'feat(uo): resolve selector and conditional_t receiver types'
+            engines/understand-operator/tests/test_template_type_normalizer.py
+          git commit -m 'feat(uo): resolve nested template member aliases'
           git push origin HEAD:agent/tg-workflow-contract-closure
       - name: Remove one-shot assets
         run: |
           git rm -f \
+            .github/apply_nested_member_types.py \
             .github/apply_nested_type_resolution.py \
             .github/apply_selector_type_resolution.py \
             .github/fix_nested_patcher_quotes.py \
             .github/nested_type_report.py \
             .github/workflows/validate-nested-type-resolution.yml
-          git commit -m 'chore(ci): remove selector type validation assets'
+          git commit -m 'chore(ci): remove nested type validation assets'
           git push origin HEAD:agent/tg-workflow-contract-closure
