@@ -1,0 +1,37 @@
+name: Cleanup call resolution temporary files
+
+on:
+  pull_request:
+    branches: [cursor/semantic-control-plane-closure-44d6]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/tg-workflow-contract-closure
+          fetch-depth: 0
+      - name: Remove one-shot files
+        run: |
+          git rm -f --ignore-unmatch \
+            .github/call-resolution-payload.part0 \
+            .github/call-resolution-payload.part1 \
+            .github/call-resolution-payload.part2 \
+            .github/call-resolution-payload.part3 \
+            .github/call-resolution-payload.part4 \
+            .github/workflows/inspect-call-resolution.yml \
+            .github/workflows/inspect-real-fag-calls.yml \
+            .github/workflows/apply-call-resolution-optimization.yml \
+            .github/workflows/debug-call-resolution-tests.yml \
+            .github/workflows/debug-call-resolution-tests-v2.yml \
+            .github/workflows/apply-call-resolution-v2.yml \
+            .github/workflows/apply-call-resolution-v3.yml \
+            .github/workflows/cleanup-call-resolution-temp.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m 'chore: remove one-shot call-resolution workflows'
+          git push origin HEAD:agent/tg-workflow-contract-closure
