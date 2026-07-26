@@ -123,6 +123,11 @@ def resolve_recovery(
         pass
     if routes:
         table.update(routes)
+    # Kernel dispatch is a source-derived deterministic responsibility. Keep the
+    # recovery fail-closed even when an older workflow spec still points at LLM
+    # adjudication; this also makes mixed-version installations safe.
+    if code == KERNEL_DISPATCH_REWORK:
+        table[code] = dict(_DEFAULT_ROUTES[KERNEL_DISPATCH_REWORK])
     route = dict(table.get(code) or {})
     if not route:
         return {
