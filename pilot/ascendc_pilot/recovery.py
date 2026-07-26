@@ -47,7 +47,9 @@ _DEFAULT_ROUTES: dict[str, dict[str, Any]] = {
     },
     KERNEL_DISPATCH_REWORK: {
         "type": "action",
-        "action_id": "adjudicate_llm_tasks",
+        # Kernel dispatch is now deterministic inside entrypoint/macro materialization.
+        # Re-run that stage instead of entering an LLM adjudication loop with no tasks.
+        "action_id": "detect_score_pre",
         "reason_code": KERNEL_DISPATCH_REWORK,
     },
     BRIDGE_REWORK: {
@@ -209,7 +211,16 @@ def recoveries_for_closure_gaps(
         reason_codes.append(SEMANTIC_PATCH_REWORK)
     if unconsumed_patch_count:
         reason_codes.append(LEDGER_REBUILD_REWORK)
-    if no_progress:
+    # Kernel-only no-progress is already handled by the deterministic entrypoint rerun.
+    # Do not append a second LLM recovery that would immediately no-op and loop.
+    kernel_only_stall = (
+        no_progress
+        and not kernel_closed
+        and host_closed
+        and blocking_gap_count == 0
+        and unconsumed_patch_count == 0
+    )
+    if no_progress and not kernel_only_stall:
         reason_codes.append(NO_PROGRESS_RECHECK)
 
     recoveries: list[dict[str, Any]] = []
@@ -234,9 +245,9 @@ def recoveries_for_closure_gaps(
 
     # Deduplicate while preserving order.
     uniq_actions: list[str] = []
-    for a in action_ids:
-        if a not in uniq_actions:
-            uniq_actions.append(a)
+    for action in action_ids:
+        if action not in uniq_actions:
+            uniq_actions.append(action)
 
     return {
         "reason_codes": list(seen),
@@ -263,8 +274,8 @@ def filter_executable_recovery_actions(
 ) -> list[str]:
     """Drop any descriptive / unregistered strings from a recovery_actions list."""
     out: list[str] = []
-    for a in actions:
-        s = str(a or "").strip()
-        if is_registered_action_id(s, workflow_id=workflow_id) and s not in out:
-            out.append(s)
+    for action in actions:
+        value = str(action or "").strip()
+        if is_registered_action_id(value, workflow_id=workflow_id) and value not in out:
+            out.append(value)
     return out
