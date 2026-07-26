@@ -107,3 +107,38 @@ def test_recheck_uses_closure_only_and_caches_unchanged_success(tmp_path, monkey
     assert second["ok"] is True
     assert second["cache_hit"] is True
     assert calls == 1
+
+
+def test_rebuild_delegates_when_unconsumed_patch_exists(tmp_path, monkeypatch) -> None:
+    uo = tmp_path / ".ascendc-pilot" / "uo"
+    _dump(uo / "manifest.yaml", {"op_name": "demo", "architecture": "arch35"})
+
+    import uo.scripts.evidence_score as evidence_score
+    import uo.scripts.llm_tasks as llm_tasks
+    import uo.scripts.semantic_resolution_ledger as ledger
+
+    monkeypatch.setattr(evidence_score, "_source_snapshot_hash", lambda *_a, **_k: "snap")
+    monkeypatch.setattr(ledger, "should_skip_layered_rebuild", lambda *_a, **_k: {"skip": True})
+    monkeypatch.setattr(
+        llm_tasks,
+        "compute_semantic_stats",
+        lambda *_a, **_k: {"blocking_gap_count": 1, "unconsumed_patch_count": 1},
+    )
+
+    called = False
+
+    def fallback(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        return {"ok": True, "engine": "canonical"}
+
+    out = invoke_fast_uo_engine(
+        tmp_path,
+        "uo-init",
+        "rebuild_from_ledger",
+        ctx={"run_id": "RUN_TEST", "op_name": "demo", "architecture": "arch35"},
+        fallback=fallback,
+    )
+
+    assert called is True
+    assert out["engine"] == "canonical"
