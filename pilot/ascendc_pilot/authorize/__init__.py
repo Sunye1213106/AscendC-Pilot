@@ -515,6 +515,59 @@ def _is_acp_start(command: str) -> bool:
     )
 
 
+def _split_shell_segments(command: str) -> list[str]:
+    """Split on ``&&`` / ``;`` / ``|`` only outside quotes.
+
+    findstr/Select-String patterns often embed ``\\|`` inside ``"..."``; a naive
+    ``re.split`` on ``|`` falsely treats those as pipelines and denies readonly
+    locate commands (NON_PRIMARY_BASH).
+    """
+    cmd = command or ""
+    segments: list[str] = []
+    buf: list[str] = []
+    quote: str | None = None
+    i = 0
+    n = len(cmd)
+    while i < n:
+        ch = cmd[i]
+        if quote:
+            buf.append(ch)
+            if ch == quote:
+                quote = None
+            elif ch == "\\" and i + 1 < n:
+                # Keep escaped char inside quotes (e.g. findstr ``\|``).
+                buf.append(cmd[i + 1])
+                i += 2
+                continue
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == "&" and i + 1 < n and cmd[i + 1] == "&":
+            seg = "".join(buf).strip()
+            if seg:
+                segments.append(seg)
+            buf = []
+            i += 2
+            continue
+        if ch in (";", "|"):
+            seg = "".join(buf).strip()
+            if seg:
+                segments.append(seg)
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    seg = "".join(buf).strip()
+    if seg:
+        segments.append(seg)
+    return segments
+
+
 def _is_readonly_inspect_bash(command: str) -> bool:
     """Allow ls / Get-ChildItem / pwd / cd … for structure probing (no writes)."""
     cmd = (command or "").strip()
@@ -525,7 +578,8 @@ def _is_readonly_inspect_bash(command: str) -> bool:
     if any(p.search(cmd_l) for p in _BASH_PROTECTED_WRITE_RES):
         return False
     # Split compound commands; every segment must be a readonly head or pipe stage.
-    segments = [s.strip() for s in re.split(r"\s*(?:&&|;|\|)\s*", cmd) if s.strip()]
+    # Quote-aware: do not treat ``|`` inside ``"..."`` / ``'...'`` as a pipe.
+    segments = _split_shell_segments(cmd)
     if not segments:
         return False
     if not any(p.search(segments[0]) for p in _ALLOW_BASH_READONLY_HEAD):
@@ -675,22 +729,31 @@ def authorize(
             rel = rel_try.split(marker, 1)[1] if marker in rel_try else ""
             fail_aid = str(failed_action or "").strip()
             allow_inspect = False
-            if rel in {
-                "uo/ir/extract_plan.yaml",
-                "uo/ir/extract_plan_candidates.yaml",
-                "uo/ir/extract_plan_candidates.sha256",
-                "uo/ir/extract_plan_candidates.summary.yaml",
-                "uo/ir/extract_plan.rework_hints.yaml",
-                "uo/ir/semantic_patches.yaml",
-            }:
+            if fail_aid and rel.startswith("runs/") and f"/actions/{fail_aid}/" in rel:
                 allow_inspect = True
-            if fail_aid and rel.startswith(f"runs/") and f"/actions/{fail_aid}/" in rel:
-                allow_inspect = True
+            if fail_aid and rel:
+                try:
+                    from ascendc_pilot.ownership import (
+                        action_read_paths,
+                        action_write_paths,
+                        path_matches_patterns,
+                    )
+                    from ascendc_pilot.state import load_state
+
+                    st = load_state(project_root) or {}
+                    wid = str(st.get("workflow_id") or "uo-init")
+                    rid = str(st.get("run_id") or "")
+                    patterns = list(action_read_paths(wid, fail_aid, run_id=rid) or [])
+                    patterns.extend(action_write_paths(wid, fail_aid, run_id=rid) or [])
+                    if patterns and path_matches_patterns(rel, [str(x) for x in patterns]):
+                        allow_inspect = True
+                except Exception:  # noqa: BLE001
+                    pass
             if allow_inspect:
                 return _ok(
                     "allow",
                     "CONTAINMENT_INSPECT_READ",
-                    f"失败收敛模式允许读取失败 Action 产物以便 inspect（status={status}）",
+                    f"失败收敛模式允许读取失败 Action 合同路径以便 inspect（status={status}）",
                     status=status,
                     path=path_s,
                 )
@@ -960,6 +1023,35 @@ def authorize(
                                 allowed_read_paths=lease.get("allowed_read_paths") or [],
                                 forbidden_read_paths=lease.get("forbidden_read_paths") or [],
                             )
+                else:
+                    # Outside .ascendc-pilot: confirmed-scope operator sources only.
+                    from ascendc_pilot.authorize.lease import lease_allows_source_path
+
+                    src_rel = None
+                    if project_root is not None:
+                        try:
+                            src_rel = (
+                                Path(path_s).resolve().relative_to(Path(project_root).resolve()).as_posix()
+                            )
+                        except Exception:  # noqa: BLE001
+                            src_rel = None
+                    if src_rel is None:
+                        return _ok(
+                            "deny",
+                            "ACTION_SOURCE_SCOPE_DENIED",
+                            "禁止读取算子 project_root / confirmed scope 之外的源码路径",
+                            path=path_s,
+                        )
+                    src_check = lease_allows_source_path(lease, src_rel)
+                    if not src_check.get("ok"):
+                        return _ok(
+                            "deny",
+                            str(src_check.get("error") or "ACTION_SOURCE_SCOPE_DENIED"),
+                            "当前 Action lease 不允许读取该算子源码路径（confirmed scope）",
+                            path=path_s,
+                            rel=src_rel,
+                            allowed_source_roots=lease.get("allowed_source_roots") or [],
+                        )
 
         return _ok("allow", "READ_OK", "读取授权通过", tool=tool_l, path=path_s or None)
 

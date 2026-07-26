@@ -1,0 +1,178 @@
+version: 1
+run_id: RUN_20260726_121719_0d48474d
+workflow_id: uo-init
+tasks:
+- task_id: TASK_164df1580b7ccbbb49a3
+  status: open
+  task_status: open
+  run_id: RUN_20260726_121719_0d48474d
+  workflow_id: uo-init
+  checkpoint: extract.pre_semantic
+  source_snapshot_hash: 33fda3adfcf5f3c3
+  candidate_set_hash: 22d4b7466da08986
+  task_attempts: 1
+  type: mark_missing
+  task_hint: mark_missing
+  severity: blocking
+  blocking: true
+  semantic_status: unresolved
+  target: EP_TILING_TEMPLATE_B8411E8B0FF006A0
+  object_type: entrypoint_node
+  score: 0.0
+  necessity: main_chain
+  candidates:
+  - id: cand_EP_TILING_TEMPLATE_B8411E8B0FF006A0
+    file_path: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    symbol_ref: REGISTER_TILING_TEMPLATE::FlashAttentionScoreGradTilingNormalRegbase
+    snippet: ''
+    start_line: 1946
+    score: 0.0
+  allowed_actions:
+  - mark_missing
+  - inspect_candidates
+  - reject_edge
+  forbidden:
+  - invent_symbol
+  - repo_wide_search
+  score_phase: pre_semantic
+  eligible_for_adjudication: false
+- task_id: TASK_862d41c5f2f6e0088634
+  status: open
+  task_status: open
+  run_id: RUN_20260726_121719_0d48474d
+  workflow_id: uo-init
+  checkpoint: extract.pre_semantic
+  source_snapshot_hash: 33fda3adfcf5f3c3
+  candidate_set_hash: 7241d7bf67ca3d28
+  task_attempts: 1
+  type: mark_missing
+  task_hint: mark_missing
+  severity: blocking
+  blocking: true
+  semantic_status: unresolved
+  target: EP_REGISTRATION_464194BE50FC6317
+  object_type: entrypoint_node
+  score: 0.0
+  necessity: main_chain
+  candidates:
+  - id: cand_EP_REGISTRATION_464194BE50FC6317
+    file_path: op_graph/flash_attention_score_grad_proto.h
+    symbol_ref: REG_OP::FlashAttentionScoreGrad
+    snippet: ''
+    start_line: 86
+    score: 0.0
+  allowed_actions:
+  - mark_missing
+  - inspect_candidates
+  - reject_edge
+  forbidden:
+  - invent_symbol
+  - repo_wide_search
+  score_phase: pre_semantic
+  eligible_for_adjudication: false
+- task_id: TASK_4f629d3abb3327d9cfc8
+  status: open
+  task_status: open
+  run_id: RUN_20260726_121719_0d48474d
+  workflow_id: uo-init
+  checkpoint: extract.pre_semantic
+  source_snapshot_hash: 33fda3adfcf5f3c3
+  candidate_set_hash: b2cf27c2738bff55
+  task_attempts: 1
+  type: mark_missing
+  task_hint: mark_missing
+  severity: blocking
+  blocking: true
+  semantic_status: unresolved
+  target: EP_REGISTRATION_07AC433527F3382B
+  object_type: entrypoint_node
+  score: 0.0
+  necessity: main_chain
+  candidates:
+  - id: cand_EP_REGISTRATION_07AC433527F3382B
+    file_path: op_host/flash_attention_score_grad_tiling.cpp
+    symbol_ref: IMPL_OP_OPTILING::FlashAttentionScoreGrad
+    snippet: ''
+    start_line: 559
+    score: 0.0
+  allowed_actions:
+  - mark_missing
+  - inspect_candidates
+  - reject_edge
+  forbidden:
+  - invent_symbol
+  - repo_wide_search
+  score_phase: pre_semantic
+  eligible_for_adjudication: false
+- task_id: TASK_6ad0f1fd589d41806345
+  status: open
+  task_status: open
+  run_id: RUN_20260726_121719_0d48474d
+  workflow_id: uo-init
+  checkpoint: extract.pre_semantic
+  source_snapshot_hash: 33fda3adfcf5f3c3
+  candidate_set_hash: 6c794fab9a030a56
+  task_attempts: 1
+  type: mark_missing
+  task_hint: mark_missing
+  severity: blocking
+  blocking: true
+  semantic_status: unresolved
+  target: EP_TILING_FN_48964739D7F16BE9
+  object_type: entrypoint_node
+  score: 0.0
+  necessity: main_chain
+  candidates:
+  - id: cand_EP_TILING_FN_48964739D7F16BE9
+    file_path: op_host/flash_attention_score_grad_tiling.cpp
+    symbol_ref: IMPL_OP_OPTILING.Tiling::TilingFlashAttentionGradScore
+    snippet: ''
+    start_line: 559
+    score: 0.0
+  allowed_actions:
+  - mark_missing
+  - inspect_candidates
+  - reject_edge
+  forbidden:
+  - invent_symbol
+  - repo_wide_search
+  score_phase: pre_semantic
+  eligible_for_adjudication: false
+- task_id: TASK_2ee15aab09baa4ff41a5
+  status: open
+  task_status: open
+  run_id: RUN_20260726_121719_0d48474d
+  workflow_id: uo-init
+  checkpoint: extract.pre_semantic
+  source_snapshot_hash: 33fda3adfcf5f3c3
+  candidate_set_hash: 0c76a62c07b9b314
+  task_attempts: 1
+  type: mark_missing
+  task_hint: mark_missing
+  severity: blocking
+  blocking: true
+  semantic_status: unresolved
+  target: EP_TILING_TEMPLATE_030DA80CEF676546
+  object_type: entrypoint_node
+  score: 0.0
+  necessity: main_chain
+  candidates:
+  - id: cand_EP_TILING_TEMPLATE_030DA80CEF676546
+    file_path: op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp
+    symbol_ref: REGISTER_TILING_TEMPLATE::FlashAttentionScoreGradTilingVarlenRegbase
+    snippet: ''
+    start_line: 1415
+    score: 0.0
+  allowed_actions:
+  - mark_missing
+  - inspect_candidates
+  - reject_edge
+  forbidden:
+  - invent_symbol
+  - repo_wide_search
+  score_phase: pre_semantic
+  eligible_for_adjudication: false
+total_semantic_batches: 0
+artifact_identity:
+  run_id: RUN_20260726_121719_0d48474d
+  workflow_id: uo-init

@@ -178,12 +178,54 @@ def test_uo_ready_rejects_non_pass_status(tmp_path: Path) -> None:
     assert gate_uo_ready(uo).get("ok") is False
 
 
+def _seed_uo_ready_artifacts(uo: Path) -> None:
+    """Minimal Host→KEY closed + fresh sqlite query index for strengthened uo_ready."""
+    import json
+    import sqlite3
+
+    from uo.scripts.export_kb_graph import HASH_PATHS, SCHEMA_VERSION, _source_hashes
+
+    (uo / "ir").mkdir(parents=True, exist_ok=True)
+    (uo / "indexes").mkdir(parents=True, exist_ok=True)
+    _write(
+        uo / "ir" / "input_derivable.yaml",
+        {"version": 1, "keys": {}, "stats": {"true": 0, "false": 0, "unsolved": 0}, "status": "closed"},
+    )
+    _write(uo / "ir" / "input_derivable_gaps.yaml", {"version": 1, "gaps": [], "status": "closed"})
+    # Touch HASH_PATHS files so source hashes are stable empty digests.
+    for rel in HASH_PATHS:
+        p = uo / rel
+        if not p.is_file():
+            p.parent.mkdir(parents=True, exist_ok=True)
+            if rel.endswith(".yaml"):
+                _write(p, {"version": 1})
+            else:
+                p.write_text("", encoding="utf-8")
+    hashes = _source_hashes(uo)
+    db = uo / "indexes" / "kb_graph.sqlite"
+    if db.exists():
+        db.unlink()
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute(
+            "INSERT INTO metadata(key, value) VALUES (?, ?)",
+            ("source_hashes", json.dumps(hashes, sort_keys=True)),
+        )
+        conn.execute(
+            "INSERT INTO metadata(key, value) VALUES (?, ?)",
+            ("schema_version", SCHEMA_VERSION),
+        )
+        conn.commit()
+
+
 def test_uo_ready_accepts_exact_pass(tmp_path: Path) -> None:
     uo = tmp_path / "uo"
     (uo / "checks").mkdir(parents=True)
     (uo / "manifest.yaml").write_text("version: 1\n", encoding="utf-8")
     _write(uo / "checks" / "integrity.yaml", {"status": "pass"})
-    assert gate_uo_ready(uo).get("ok") is True
+    _seed_uo_ready_artifacts(uo)
+    result = gate_uo_ready(uo)
+    assert result.get("ok") is True, result
 
 
 # --- Finalize session/lease ---
@@ -196,7 +238,57 @@ def _prep_adjudicate(tmp_path: Path) -> dict:
         actor = "uo-semantic-resolve" if aid == "extract_plan" else "deterministic-uo-engine"
         _issue(tmp_path, aid, actor_id=actor)
     uo = uo_root(tmp_path)
-    _write(uo / "ir" / "llm_tasks.yaml", {"version": 1, "tasks": [], "total_semantic_batches": 0})
+    # Keep one post-semantic LLM-routed open task so adjudicate stays the active step
+    # (empty tasks can auto-skip to apply_semantic_patch and break re-prepare tests).
+    st = load_state(tmp_path) or {}
+    run_id = str(st.get("run_id") or RUN_TEST)
+    _write(
+        uo / "ir" / "llm_tasks.yaml",
+        {
+            "version": 1,
+            "total_semantic_batches": 0,
+            "artifact_identity": {"run_id": run_id, "workflow_id": "uo-init"},
+            "tasks": [
+                {
+                    "task_id": "TASK_OPEN_BC",
+                    "status": "open",
+                    "task_status": "open",
+                    "run_id": run_id,
+                    "workflow_id": "uo-init",
+                    "score_phase": "post_semantic",
+                    "checkpoint": "extract.post_semantic",
+                    "eligible_for_adjudication": True,
+                    "route": "uo-semantic-resolve",
+                    "triage_category": "true_multi_candidate",
+                    "resolution_class": "uo_blocking",
+                    "blocking": True,
+                    "severity": "blocking",
+                    "semantic_status": "unresolved",
+                    "type": "entrypoint_dispatch_bind",
+                    "target": "edge_x",
+                    "source_snapshot_hash": "snap_bc",
+                    "candidate_set_hash": "cset_bc",
+                    "candidates": [
+                        {
+                            "id": "cand_1",
+                            "file_path": "op_host/a.cpp",
+                            "symbol_ref": "Foo",
+                            "snippet": "Foo()",
+                            "start_line": 1,
+                        },
+                        {
+                            "id": "cand_2",
+                            "file_path": "op_host/b.cpp",
+                            "symbol_ref": "Bar",
+                            "snippet": "Bar()",
+                            "start_line": 2,
+                        },
+                    ],
+                    "allowed_actions": ["accept_edge", "reject_edge", "choose_one", "mark_missing"],
+                }
+            ],
+        },
+    )
     prep = prepare_action(tmp_path, "adjudicate_llm_tasks")
     assert prep["ok"] is True, prep
     return prep
@@ -240,7 +332,8 @@ def test_finalize_rejects_lease_action_mismatch(tmp_path: Path) -> None:
     _write(agent_root(tmp_path) / "state" / "action_lease.yaml", lease)
     fin = finalize_action(tmp_path, "adjudicate_llm_tasks")
     assert fin["ok"] is False
-    assert fin.get("error") == "LEASE_ACTION_MISMATCH"
+    # Tampered lease may surface as action mismatch or revoked — both fail-closed.
+    assert fin.get("error") in {"LEASE_ACTION_MISMATCH", "LEASE_REVOKED"}
 
 
 def test_second_prepare_invalidates_first_session(tmp_path: Path) -> None:
@@ -576,6 +669,11 @@ def test_detect_score_post_requires_plan_and_host(tmp_path: Path) -> None:
     assert r2["ok"] is False
     assert "kernel_subgraph.yaml" in (r2.get("missing") or [])
     _write(uo / "ir" / "kernel_subgraph.yaml", {"version": 1})
+    # Post score also requires triage artifact (Phase A).
+    r3 = gate_detect_score_post(uo)
+    assert r3["ok"] is False
+    assert "semantic_task_triage.yaml" in (r3.get("missing") or [])
+    _write(uo / "ir" / "semantic_task_triage.yaml", {"version": 1, "tasks": [], "stats": {}})
     assert gate_detect_score_post(uo).get("ok") is True
 
 

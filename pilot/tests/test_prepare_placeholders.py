@@ -83,6 +83,11 @@ def test_task_prompt_stub_injects_must_read_order_for_summary() -> None:
     assert "section_lines" in stub
     assert "readonly_search" in stub
     assert "extract_plan_candidates.summary.yaml" in stub
+    assert "candidates_sha256_rule" in stub
+    assert "evidence_sha_rule" in stub
+    assert "neighbor candidate" in stub
+    assert "non_sink_rule" in stub
+    assert "non_sink_root_names" in stub
 
 
 def test_task_prompt_stub_must_read_order_is_action_agnostic() -> None:

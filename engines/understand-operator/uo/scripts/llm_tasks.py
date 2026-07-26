@@ -73,13 +73,38 @@ def _semantic_gap_open(task: dict[str, Any]) -> bool:
         return False
     if _semantic_status(task) == "closed":
         return False
+    # Phase-scoped: KEY gaps / tg_resolvable must not block extract advance.
+    if task.get("blocks_extract_advance") is False:
+        return False
+    if str(task.get("resolution_class") or "") == "tg_resolvable":
+        return False
+    if str(task.get("resolution_class") or "") == "degraded":
+        return False
     lifecycle = _task_lifecycle(task)
+    if lifecycle in {"provisional"}:
+        # Pre-semantic diagnostics are not extract-blocking gaps.
+        return False
     if lifecycle in {"resolved"} and _semantic_status(task) == "closed":
         return False
     # pending_materialization / rework_required / adjudicated / open all count as gaps
     if lifecycle in _LIFECYCLE_GAP or _semantic_status(task) in _SEMANTIC_OPEN:
         return True
     return _semantic_status(task) != "closed"
+
+
+def _task_eligible_for_adjudication(task: dict[str, Any]) -> bool:
+    if task.get("eligible_for_adjudication") is False:
+        return False
+    score_phase = str(task.get("score_phase") or "")
+    checkpoint = str(task.get("checkpoint") or "")
+    if score_phase == "pre_semantic" or "pre_semantic" in checkpoint:
+        return False
+    if score_phase and score_phase != "post_semantic" and "post_semantic" not in checkpoint:
+        return False
+    route = str(task.get("route") or "")
+    if route and route != "uo-semantic-resolve":
+        return False
+    return True
 
 
 def _is_candidate_node_id(value: Any) -> bool:
@@ -314,12 +339,19 @@ def upsert_tasks_from_score_items(
     run_id: str,
     source_snapshot_hash: str = "",
     workflow_id: str = "",
+    score_phase: str = "",
+    eligible_for_adjudication: bool | None = None,
 ) -> dict[str, Any]:
     """Create/update tasks for items with disposition=llm_task. Same id → no re-open."""
     if not str(run_id or "").strip():
         raise ValueError("SEMANTIC_DOCUMENT_RUN_ID_MISSING: run_id required for upsert_tasks_from_score_items")
     current_run_id = str(run_id).strip()
     wf = workflow_id or "uo-init"
+    phase = str(score_phase or "").strip()
+    if not phase:
+        phase = "pre_semantic" if "pre_semantic" in checkpoint else (
+            "post_semantic" if "post_semantic" in checkpoint else ""
+        )
     doc = load_llm_tasks(uo_root)
     doc_check = assert_llm_tasks_document_run(doc, current_run_id, workflow_id=wf)
     if not doc_check.get("ok") and not doc_check.get("empty"):
@@ -372,20 +404,24 @@ def upsert_tasks_from_score_items(
         )
         existing = by_id.get(tid)
         if existing and existing.get("status") == "open":
-            # Same stable id — do not duplicate.
+            # Same stable id — do not duplicate; refresh phase flags.
+            existing["score_phase"] = phase or existing.get("score_phase")
+            if eligible_for_adjudication is not None:
+                existing["eligible_for_adjudication"] = eligible_for_adjudication
             continue
         if existing and existing.get("status") in {"resolved", "rejected", "adjudicated"}:
             continue
-        # Supersede older open tasks for same target+type with different snapshot.
+        # Supersede older open/provisional tasks for same target+type with different snapshot.
         for old in list(by_id.values()):
             if (
                 old.get("type") == task_type
                 and old.get("target") == target
                 and str(old.get("run_id") or "").strip() == current_run_id
-                and old.get("status") == "open"
+                and old.get("status") in {"open", "provisional"}
                 and old.get("task_id") != tid
             ):
                 old["status"] = "superseded"
+                old["task_status"] = "superseded"
                 old["superseded_by"] = tid
 
         # Empty candidate window: never offer accept_edge / choose_one (false closure).
@@ -400,13 +436,20 @@ def upsert_tasks_from_score_items(
                 "inspect_candidates",
             ]
         blocking = severity == "blocking"
+        is_pre = phase == "pre_semantic"
+        elig = False if is_pre else eligible_for_adjudication
+        if elig is None and not is_pre:
+            elig = True  # triage may tighten later
         task = {
             "task_id": tid,
+            # Keep status=open for document compatibility; task_status carries provisional.
             "status": "open",
-            "task_status": "open",
+            "task_status": "provisional" if is_pre else "open",
             "run_id": current_run_id,
             "workflow_id": wf,
             "checkpoint": checkpoint,
+            "score_phase": phase,
+            "eligible_for_adjudication": bool(elig) if elig is not None else (not is_pre),
             "source_snapshot_hash": source_snapshot_hash or "nosnap",
             "candidate_set_hash": cand_hash,
             "task_attempts": 0,
@@ -439,12 +482,46 @@ def upsert_tasks_from_score_items(
             if t.get("status") == "open" and _task_is_blocking(t) and _semantic_status(t) != "closed"
         ),
         "blocking_gap_count": sum(
-            1 for t in run_tasks if _task_is_blocking(t) and _semantic_status(t) != "closed"
+            1 for t in run_tasks if _semantic_gap_open(t)
         ),
         "created": created,
         "total_semantic_batches": int(doc.get("total_semantic_batches") or 0),
         "active_run_id": current_run_id,
     }
+
+
+def close_tasks_resolved_by_score(
+    uo_root: Path,
+    items: list[dict[str, Any]],
+    *,
+    current_run_id: str,
+    reason: str = "post_semantic_auto_accept",
+) -> dict[str, Any]:
+    """Close open/provisional tasks whose targets are now auto_accept in score items."""
+    if not str(current_run_id or "").strip():
+        return {"ok": False, "closed": 0}
+    accepted_targets = {
+        str(i.get("target_id") or "")
+        for i in items
+        if isinstance(i, dict) and i.get("disposition") == "auto_accept" and i.get("target_id")
+    }
+    if not accepted_targets:
+        return {"ok": True, "closed": 0}
+    doc = load_llm_tasks(uo_root)
+    closed = 0
+    for t in _tasks_for_run(doc, current_run_id):
+        if str(t.get("target") or "") not in accepted_targets:
+            continue
+        if t.get("status") not in {"open", "provisional", "rework_required"}:
+            continue
+        t["status"] = "resolved"
+        t["task_status"] = "resolved"
+        t["semantic_status"] = "closed"
+        t["resolution"] = {"action": "auto_closed", "reason": reason}
+        closed += 1
+    if closed:
+        save_llm_tasks(uo_root, doc)
+    return {"ok": True, "closed": closed, "accepted_targets": sorted(accepted_targets)}
 
 
 def _default_candidates(item: dict[str, Any]) -> list[dict[str, Any]]:
@@ -496,7 +573,7 @@ def _default_candidates(item: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def open_blocking_tasks(uo_root: Path, *, current_run_id: str) -> list[dict[str, Any]]:
-    """Tasks that still need patch adjudication (open or rework_required)."""
+    """Tasks that still need LLM patch adjudication (post_semantic + routed)."""
     if not str(current_run_id or "").strip():
         raise ValueError("SEMANTIC_DOCUMENT_RUN_ID_MISSING: current_run_id required")
     doc = load_llm_tasks(uo_root)
@@ -511,6 +588,8 @@ def open_blocking_tasks(uo_root: Path, *, current_run_id: str) -> list[dict[str,
         if not _task_is_blocking(t):
             continue
         if _semantic_status(t) == "closed":
+            continue
+        if not _task_eligible_for_adjudication(t):
             continue
         out.append(t)
     return out
@@ -530,6 +609,24 @@ def can_auto_mark_missing(task: dict[str, Any]) -> bool:
 # Back-compat alias
 _can_auto_mark_missing = can_auto_mark_missing
 
+# Legacy error code from ses_0622; keep as alias for log search.
+LEGACY_PATCH_CSET_MISSING = "patch_candidate_set_hash_missing"
+PATCH_CSET_MISSING = "candidate_set_hash_missing_on_patch"
+
+
+def normalize_patch_candidate_set_hash(patch: dict[str, Any]) -> dict[str, Any]:
+    """Canonical field is ``candidate_set_hash``; accept legacy ``patch_candidate_set_hash``.
+
+    Returns a shallow copy with the authoritative key filled when only the alias
+    was written (ses_0622 Host/producer misread the old error code).
+    """
+    out = dict(patch)
+    primary = str(out.get("candidate_set_hash") or "").strip()
+    alias = str(out.get("patch_candidate_set_hash") or "").strip()
+    if not primary and alias:
+        out["candidate_set_hash"] = alias
+    return out
+
 
 def validate_task_patch(
     doc: dict[str, Any],
@@ -537,11 +634,13 @@ def validate_task_patch(
     *,
     current_source_hash: str | None = None,
     current_run_id: str,
+    uo_root: Path | None = None,
 ) -> dict[str, Any]:
-    """Pure validation for one patch against an in-memory llm_tasks doc. No I/O."""
+    """Validate one patch against an in-memory llm_tasks doc (mark_missing may read scope artifacts)."""
     req = _require_current_run_id(current_run_id)
     if req is not None:
         return req
+    patch = normalize_patch_candidate_set_hash(patch)
     task_id = str(patch.get("task_id") or "")
     task = next((t for t in doc.get("tasks") or [] if t.get("task_id") == task_id), None)
     if task is None:
@@ -573,7 +672,14 @@ def validate_task_patch(
         return {"ok": False, "error": "candidate_set_hash_missing", "task_id": task_id}
     patch_cset = str(patch.get("candidate_set_hash") or "").strip()
     if not patch_cset:
-        return {"ok": False, "error": "patch_candidate_set_hash_missing", "task_id": task_id}
+        return {
+            "ok": False,
+            "error": PATCH_CSET_MISSING,
+            "legacy_error": LEGACY_PATCH_CSET_MISSING,
+            "task_id": task_id,
+            "hint_zh": "在 patch 上填写 candidate_set_hash（从 llm_tasks 同 task_id 原样复制）；"
+            "勿只写 patch_candidate_set_hash",
+        }
     if patch_cset != task_cset:
         return {
             "ok": False,
@@ -651,6 +757,11 @@ def validate_task_patch(
                 "task_id": task_id,
             }
 
+    if action == "mark_missing":
+        mm_err = validate_mark_missing_patch(task, patch, uo_root=uo_root)
+        if mm_err is not None:
+            return mm_err
+
     next_attempts = int(task.get("task_attempts") or 0) + 1
     if next_attempts > MAX_TASK_ATTEMPTS:
         return {
@@ -670,6 +781,139 @@ def validate_task_patch(
         "next_attempts": next_attempts,
         "patch": patch,
     }
+
+
+_SCORE_ONLY_MARKERS = (
+    "score",
+    "confidence too low",
+    "低于",
+    "auto_accept",
+    "阈值",
+    "threshold",
+    "评分",
+)
+
+_ABSENCE_KINDS = frozenset(
+    {
+        "negative_verified",
+        "external_exact_contract",
+        "project_definition_absent",
+        "project_definition_not_indexed",
+        "generated_definition",
+        "scope_incomplete",
+        "conditional_definition",
+    }
+)
+
+
+def validate_mark_missing_patch(
+    task: dict[str, Any],
+    patch: dict[str, Any],
+    *,
+    uo_root: Path | None = None,
+) -> dict[str, Any] | None:
+    """Hard Gate for mark_missing. Returns error dict or None if ok."""
+    task_id = str(task.get("task_id") or patch.get("task_id") or "")
+    if str(task.get("triage_category") or "") == "macro_contract_resolvable":
+        return {
+            "ok": False,
+            "error": "mark_missing_forbidden_macro_contract",
+            "task_id": task_id,
+            "message": "macro_contract_resolvable tasks cannot be mark_missing; use materializer",
+        }
+    # Detect score-only rationales in evidence strings.
+    evidence = patch.get("evidence") or []
+    evidence_text = " ".join(str(x) for x in evidence).casefold()
+    neg = patch.get("negative_evidence")
+    if not isinstance(neg, dict) or not neg:
+        if any(m.casefold() in evidence_text for m in _SCORE_ONLY_MARKERS) or not evidence_text.strip():
+            return {
+                "ok": False,
+                "error": "mark_missing_score_only_forbidden",
+                "task_id": task_id,
+                "message": "mark_missing requires machine-verifiable negative_evidence; score/confidence alone is forbidden",
+            }
+        return {
+            "ok": False,
+            "error": "mark_missing_negative_evidence_required",
+            "task_id": task_id,
+        }
+
+    absence = str(neg.get("absence_kind") or "").strip()
+    if absence not in _ABSENCE_KINDS:
+        return {
+            "ok": False,
+            "error": "mark_missing_absence_kind_invalid",
+            "task_id": task_id,
+            "allowed": sorted(_ABSENCE_KINDS),
+        }
+    queries = neg.get("queries") or []
+    if not isinstance(queries, list) or not queries:
+        return {
+            "ok": False,
+            "error": "mark_missing_queries_required",
+            "task_id": task_id,
+        }
+    windows = neg.get("inspected_windows") or []
+    if not isinstance(windows, list):
+        return {
+            "ok": False,
+            "error": "mark_missing_inspected_windows_invalid",
+            "task_id": task_id,
+        }
+    for w in windows:
+        if not isinstance(w, dict):
+            return {
+                "ok": False,
+                "error": "mark_missing_inspected_windows_invalid",
+                "task_id": task_id,
+            }
+        if not (w.get("file") or w.get("file_path")):
+            return {
+                "ok": False,
+                "error": "mark_missing_window_file_missing",
+                "task_id": task_id,
+            }
+        if not (w.get("window_sha256") or w.get("sha256")):
+            return {
+                "ok": False,
+                "error": "mark_missing_window_sha_missing",
+                "task_id": task_id,
+            }
+
+    # Do not trust model-claimed include_scope_complete; require artifact status when claimed complete.
+    claimed = str(neg.get("include_closure_status") or "").casefold()
+    if claimed in {"complete", "closed", "ok"} and uo_root is not None:
+        artifact = str(neg.get("include_closure_artifact") or "ir/source_scope.yaml")
+        path = uo_root / artifact if not artifact.startswith("uo/") else uo_root.parent.parent / artifact
+        # Prefer relative to uo_root/ir
+        candidates = [
+            uo_root / artifact,
+            uo_root / "ir" / Path(artifact).name,
+            uo_root / artifact.removeprefix("uo/"),
+        ]
+        data = None
+        for p in candidates:
+            if p.is_file():
+                data = read_yaml(p) or {}
+                break
+        if data is None:
+            return {
+                "ok": False,
+                "error": "mark_missing_include_closure_unverified",
+                "task_id": task_id,
+                "message": "include_closure_status=complete but closure artifact missing/unreadable",
+            }
+        status = str(
+            data.get("include_closure_status") or data.get("status") or data.get("closure_status") or ""
+        ).casefold()
+        if status not in {"complete", "closed", "ok"}:
+            return {
+                "ok": False,
+                "error": "mark_missing_include_closure_unverified",
+                "task_id": task_id,
+            }
+    return None
 
 
 def validate_patches_batch(
@@ -772,9 +1016,10 @@ def validate_semantic_patch_set(
             seen_tasks.add(tid)
         result = validate_task_patch(
             doc,
-            patch,
+            normalize_patch_candidate_set_hash(patch),
             current_source_hash=current_source_hash,
             current_run_id=current_run_id,
+            uo_root=uo_root,
         )
         if result.get("ok"):
             # Fail closed on typed patch incomplete payloads (no silent downgrade).
@@ -1026,7 +1271,7 @@ def apply_task_patch(
     req = _require_current_run_id(current_run_id)
     if req is not None:
         return req
-    enriched = dict(patch)
+    enriched = normalize_patch_candidate_set_hash(patch)
     if not str(enriched.get("run_id") or "").strip():
         enriched["run_id"] = current_run_id
     doc = load_llm_tasks(uo_root)

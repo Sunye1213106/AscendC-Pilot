@@ -23,5 +23,4 @@ forbidden:
   - write_uo_formal_products
   - invent_csv_columns_or_keys
   - free_repo_search
-tool_budget:
-  max_calls: 16
+

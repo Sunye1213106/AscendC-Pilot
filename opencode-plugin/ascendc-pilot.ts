@@ -738,17 +738,8 @@ function injectActionContext(
     args.action = action
     args.action_id = action
   }
-  const prompt = String(args.prompt || args.description || args.task || "")
-  if (prompt && !/ASCENDC_ACTION|action_id\s*=/.test(prompt)) {
-    const prefix =
-      `[ASCENDC_ACTION=${action}` +
-      (actor ? `; ASCENDC_AGENT=${actor}` : "") +
-      `] 正式写入必须携带 action_id=${action}。\n\n`
-    if (args.prompt != null) args.prompt = prefix + String(args.prompt)
-    else if (args.description != null) args.description = prefix + String(args.description)
-    else if (args.task != null) args.task = prefix + String(args.task)
-  }
-  // Common OpenCode task env bags
+  // Identity travels via env/metadata only — do NOT mutate Task prompt body
+  // (ses_0622: prefix + FIX ONLY identity churn). Finalize trusts artifact_identity.
   const envBag = (args.env || args.environment || args.envVars) as Record<string, string> | undefined
   if (envBag && typeof envBag === "object") {
     envBag.ASCENDC_ACTION = action
@@ -883,6 +874,18 @@ export const AscendCHarnessPlugin = async () => {
         ) {
           throw new Error(
             "[ascendc-pilot] Task prompt 为空或无效（禁止 {} / 空串）；必须原样粘贴 prepare 返回的 task_prompt_stub",
+          )
+        }
+        // ses_0622: Host burned retries with "FIX ONLY change action_session_id".
+        if (
+          /FIX\s*ONLY/i.test(promptTrim) &&
+          /action_session_id/i.test(promptTrim) &&
+          !/^action_id\s*=/m.test(promptTrim)
+        ) {
+          throw new Error(
+            "[ascendc-pilot] 禁止 FIX ONLY 只改 action_session_id；" +
+              "ARTIFACT_SESSION_MISMATCH 须 resume 原 stub 或完整 re-prepare 后整份重写产物。" +
+              "semantic_patches 权威字段是 candidate_set_hash（勿写 patch_candidate_set_hash）。",
           )
         }
         if (hostSession) {

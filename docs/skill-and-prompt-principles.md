@@ -28,12 +28,13 @@
 ## Composer
 
 ```text
-python scripts/compose_runtime.py --repo .
+python scripts/compose_runtime.py --host opencode
 # 或
+python scripts/compose_runtime.py --repo .
 python scripts/compile_skills.py --repo .
 ```
 
-安装只部署 `generated/<host>/{skills,agents,prompts}`。
+安装只部署 `generated/<host>/{skills,agents,prompts}`。改 `policies` / `actions` / `prompts` / `agents` 后必须 compose 并提交 `generated/opencode`；CI `compose-drift.yml` 用 `git diff --exit-code` 防漂移。
 
 ## 证据与 Lease（2026-07-26 沉淀）
 

@@ -116,6 +116,49 @@ def test_atomic_rollback_on_mid_batch_failure(tmp_path: Path) -> None:
     assert not ledger.get("semantic_patches")
 
 
+def test_patch_accepts_legacy_candidate_set_hash_alias() -> None:
+    """ses_0622: producers wrote patch_candidate_set_hash; Gate must accept alias."""
+    from uo.scripts.llm_tasks import (
+        PATCH_CSET_MISSING,
+        normalize_patch_candidate_set_hash,
+    )
+
+    doc = _tasks_doc([_task("t_alias")])
+    tid = doc["tasks"][0]["task_id"]
+    alias_only = {
+        "task_id": tid,
+        "run_id": RUN_TEST,
+        "action": "accept_edge",
+        "accepted_candidate_ids": ["cand_1"],
+        "rejected_candidate_ids": [],
+        "source_snapshot_hash": "snap1",
+        "patch_candidate_set_hash": "cset",
+    }
+    assert "candidate_set_hash" not in alias_only
+    norm = normalize_patch_candidate_set_hash(alias_only)
+    assert norm["candidate_set_hash"] == "cset"
+    ok = validate_task_patch(
+        doc, alias_only, current_source_hash="snap1", current_run_id=RUN_TEST
+    )
+    assert ok.get("ok") is True, ok
+
+    missing = validate_task_patch(
+        doc,
+        {
+            "task_id": tid,
+            "run_id": RUN_TEST,
+            "action": "mark_missing",
+            "accepted_candidate_ids": [],
+            "rejected_candidate_ids": [],
+            "source_snapshot_hash": "snap1",
+        },
+        current_source_hash="snap1",
+        current_run_id=RUN_TEST,
+    )
+    assert missing.get("ok") is False
+    assert missing.get("error") == PATCH_CSET_MISSING
+
+
 def test_stale_patch_validate_no_side_effects(tmp_path: Path) -> None:
     uo = _uo(tmp_path)
     write_yaml(

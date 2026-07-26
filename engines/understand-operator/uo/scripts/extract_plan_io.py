@@ -78,12 +78,54 @@ def scan_candidates_section_lines(candidates_path: Path) -> dict[str, dict[str, 
     return scan_yaml_section_lines(candidates_path, _CANDIDATES_SECTION_KEYS)
 
 
+_NAME_ITEM_LINE_RE = re.compile(r"^(\s*)-\s+name:\s*")
+
+
+def scan_candidate_name_item_lines(
+    candidates_path: Path | None,
+    *,
+    section_lines: dict[str, dict[str, int]] | None = None,
+) -> dict[str, list[int]]:
+    """1-based YAML lines of ``- name:`` items per candidates section (order preserved)."""
+    out: dict[str, list[int]] = {k: [] for k in _CANDIDATES_SECTION_KEYS}
+    if candidates_path is None or not Path(candidates_path).is_file():
+        return out
+    try:
+        text = Path(candidates_path).read_text(encoding="utf-8")
+    except OSError:
+        return out
+    sections = section_lines or scan_candidates_section_lines(Path(candidates_path))
+    lines = text.splitlines()
+    for key in _CANDIDATES_SECTION_KEYS:
+        span = sections.get(key) if isinstance(sections, dict) else None
+        if not isinstance(span, dict):
+            continue
+        start = int(span.get("start_line") or 0)
+        end = int(span.get("end_line") or 0)
+        if start < 1 or end < start:
+            continue
+        for lineno in range(start, min(end, len(lines)) + 1):
+            if _NAME_ITEM_LINE_RE.match(lines[lineno - 1] or ""):
+                out[key].append(lineno)
+    return out
+
+
+def _source_window_nav(c: dict[str, Any]) -> tuple[int | None, int | None, str | None]:
+    """Return (start_line, end_line, source_window_sha256) from candidate fields."""
+    sw = c.get("source_window") if isinstance(c.get("source_window"), dict) else {}
+    start = int(c.get("start_line") or sw.get("start_line") or 0) or None
+    end = int(c.get("end_line") or sw.get("end_line") or 0) or None
+    sha = str(sw.get("sha256") or "").strip() or None
+    return start, end, sha
+
+
 def build_extract_plan_candidates_summary(
     candidates: dict[str, Any],
     *,
     candidates_sha256: str = "",
     section_lines: dict[str, dict[str, int]] | None = None,
     candidates_line_count: int | None = None,
+    candidates_path: Path | None = None,
 ) -> dict[str, Any]:
     """Action-shaped summary; public ``section_lines``/``must`` via ``ir_summary``."""
     writers = [c for c in (candidates.get("writer_candidates") or []) if isinstance(c, dict)]
@@ -98,29 +140,61 @@ def build_extract_plan_candidates_summary(
     extras = [
         c for c in (candidates.get("extra_entry_candidates") or []) if isinstance(c, dict)
     ]
+    name_lines = scan_candidate_name_item_lines(
+        candidates_path, section_lines=section_lines
+    )
+    writer_lines = name_lines.get("writer_candidates") or []
+    recv_lines = name_lines.get("receiver_candidates") or []
 
-    def _short_writer(c: dict[str, Any]) -> dict[str, Any]:
-        return {
+    def _short_writer(c: dict[str, Any], idx: int) -> dict[str, Any]:
+        start, end, sha = _source_window_nav(c)
+        card: dict[str, Any] = {
             "name": str(c.get("name") or "").strip(),
             "file_path": str(c.get("file_path") or "").replace("\\", "/"),
-            "start_line": int(c.get("start_line") or 0) or None,
+            "start_line": start,
+            "end_line": end,
+            "source_window_sha256": sha,
             "role_suggested": str(c.get("role_suggested") or "").strip() or None,
             "score": c.get("score"),
         }
+        if idx < len(writer_lines):
+            card["candidates_line"] = writer_lines[idx]
+        return card
 
-    def _short_recv(c: dict[str, Any]) -> dict[str, Any]:
-        return {
+    def _short_recv(c: dict[str, Any], idx: int) -> dict[str, Any]:
+        start, end, sha = _source_window_nav(c)
+        card: dict[str, Any] = {
             "name": str(c.get("name") or "").strip(),
             "file_path": str(c.get("file_path") or "").replace("\\", "/"),
+            "start_line": start,
+            "end_line": end,
+            "source_window_sha256": sha,
             "is_tiling_sink_suggested": bool(c.get("is_tiling_sink_suggested")),
             "score": c.get("score"),
         }
+        if idx < len(recv_lines):
+            card["candidates_line"] = recv_lines[idx]
+        return card
 
     key_writers = [
         str(c.get("name") or "").strip()
         for c in writers
         if str(c.get("role_suggested") or "").strip() == "key_writer"
         and str(c.get("name") or "").strip()
+    ]
+    # Sink cards keep navigation; map each sink back to its receiver index for candidates_line.
+    sink_cards: list[dict[str, Any]] = []
+    for c in sinks[:80]:
+        try:
+            ridx = receivers.index(c)
+        except ValueError:
+            ridx = len(recv_lines)  # omit candidates_line when unmapped
+        sink_cards.append(_short_recv(c, ridx))
+
+    non_sink_root_names = [
+        str(c.get("name") or "").strip()
+        for c in non_sinks
+        if str(c.get("name") or "").strip()
     ]
     domain = {
         "kind": "extract_plan_candidates_summary",
@@ -132,9 +206,9 @@ def build_extract_plan_candidates_summary(
             "non_sink_roots": len(non_sinks),
             "extra_entries": len(extras),
         },
-        "writer_candidates": [_short_writer(c) for c in writers[:80]],
-        "sink_candidates": [_short_recv(c) for c in sinks[:80]],
-        "receiver_candidates": [_short_recv(c) for c in receivers[:80]],
+        "writer_candidates": [_short_writer(c, i) for i, c in enumerate(writers[:80])],
+        "sink_candidates": sink_cards,
+        "receiver_candidates": [_short_recv(c, i) for i, c in enumerate(receivers[:80])],
         "key_writer_suggested": key_writers,
         "alias_candidates": [
             {
@@ -144,11 +218,22 @@ def build_extract_plan_candidates_summary(
             for c in aliases[:80]
             if str(c.get("local") or "").strip() and str(c.get("tdf_leaf") or "").strip()
         ],
+        # Compact allowlist for plan.non_sink_roots (assign-LHS names, not functions).
+        "non_sink_root_names": non_sink_root_names,
     }
     must = (
         f"{DEFAULT_LARGE_IR_MUST} "
         "extract_plan: also Read extract_plan.rework_hints.yaml if present; "
-        "aliases require local+tdf_leaf."
+        "aliases require local+tdf_leaf. "
+        "Copy summary source_window_sha256 into evidence_window_sha256 "
+        "(or leave sha blank when evidence_files+lines+contiguous snippet are set — "
+        "apply enrich fills sha from disk). "
+        "FORBIDDEN: Grep/findstr whole candidates only to harvest sha256; "
+        "FORBIDDEN: reuse a neighbor candidate's hash. "
+        "non_sink_roots: prefer []; if accepting any, copy exact names from "
+        "summary non_sink_root_names only (assign-LHS identifiers, not functions). "
+        "FORBIDDEN: invent names from evidence_snippet / source identifiers; "
+        "uncertain → omit."
     )
     return attach_large_ir_meta(
         domain,
@@ -272,6 +357,57 @@ def _validate_string_name_list(
             continue
         if name.casefold() not in allowed_cf:
             errors.append(f"{field[:-1] if field.endswith('s') else field} not in candidates: {name}")
+
+
+def drop_invented_non_sink_roots(
+    plan: dict[str, Any],
+    candidates: dict[str, Any],
+) -> list[str]:
+    """Drop invented ``non_sink_roots`` string names (not in candidates/receivers).
+
+    Product resilience (same spirit as evidence sha enrich): keep allowlisted
+    strings; leave mappings / non-strings for validate to reject. Returns action tags.
+    """
+    raw = plan.get("non_sink_roots")
+    if not isinstance(raw, list) or not raw:
+        return []
+    non_sink_cands = {
+        str(c.get("name") or "").strip().casefold()
+        for c in (candidates.get("non_sink_root_candidates") or [])
+        if isinstance(c, dict) and str(c.get("name") or "").strip()
+    }
+    recv_cf: set[str] = set()
+    for c in candidates.get("receiver_candidates") or []:
+        if not isinstance(c, dict):
+            continue
+        n = str(c.get("name") or "").strip()
+        if n:
+            recv_cf.add(n.casefold())
+    for item in plan.get("receivers") or []:
+        if not isinstance(item, dict):
+            continue
+        n = str(item.get("name") or "").strip()
+        if n:
+            recv_cf.add(n.casefold())
+    allowed_cf = non_sink_cands | recv_cf
+    kept: list[Any] = []
+    dropped = 0
+    for item in raw:
+        if isinstance(item, str):
+            name = item.strip()
+            if not name:
+                continue
+            if name.casefold() in allowed_cf:
+                kept.append(name)
+            else:
+                dropped += 1
+            continue
+        # Mappings / wrong types: keep for validate (do not silently widen contract).
+        kept.append(item)
+    if dropped:
+        plan["non_sink_roots"] = kept
+        return ["drop_invented_non_sink"] * dropped
+    return []
 
 
 # Top-level keys that belong in ledger / llm_tasks / free-form essays — never in extract_plan.yaml.

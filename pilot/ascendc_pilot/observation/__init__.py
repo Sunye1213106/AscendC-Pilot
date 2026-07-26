@@ -27,11 +27,18 @@ ENVIRONMENT_INVARIANT = "environment_invariant"
 WORKFLOW_SPEC_ERROR = "workflow_spec_error"
 POLICY_VIOLATION = "policy_violation"
 RETRY_EXHAUSTED = "retry_exhausted"
+# Identity / format / transport: retryable but must NOT burn semantic attempt budget.
+IDENTITY_CONTRACT = "identity_contract"
+FORMAT_TRANSPORT = "format_transport"
 
 HUMAN_CLASSES = frozenset(
     {ENVIRONMENT_INVARIANT, WORKFLOW_SPEC_ERROR, POLICY_VIOLATION, RETRY_EXHAUSTED}
 )
-RETRYABLE_CLASSES = frozenset({PRODUCER_OUTPUT, CHECKER_GATE, TRANSIENT_TOOL})
+RETRYABLE_CLASSES = frozenset(
+    {PRODUCER_OUTPUT, CHECKER_GATE, TRANSIENT_TOOL, IDENTITY_CONTRACT, FORMAT_TRANSPORT}
+)
+# Do not increment no_progress_streak / decrement retry_budget (semantic attempts).
+NON_SEMANTIC_BURN_CLASSES = frozenset({IDENTITY_CONTRACT, FORMAT_TRANSPORT, TRANSIENT_TOOL})
 
 # Legal recovery verbs surfaced to agents / humans
 HUMAN_LEGAL_ACTIONS = (
@@ -82,7 +89,20 @@ _PRODUCER_PATTERNS = (
     re.compile(r"output[_-]contract", re.I),
     re.compile(r"missing[_\s-]?field", re.I),
     re.compile(r"PATCH_REQUIRED|STALE_PATCH|STALE_INVENTORY", re.I),
+)
+_IDENTITY_PATTERNS = (
+    re.compile(r"ARTIFACT_SESSION_MISMATCH", re.I),
+    re.compile(r"PRODUCER_DECLARED_IDENTITY", re.I),
+    re.compile(r"ARTIFACT_IDENTITY", re.I),
+    re.compile(r"action_session_id", re.I),
+    re.compile(r"prepare_nonce", re.I),
+)
+_FORMAT_TRANSPORT_PATTERNS = (
+    re.compile(r"yaml\s*(parse|error|scanner|composer)", re.I),
     re.compile(r"format[_\s-]?error", re.I),
+    re.compile(r"literal[_-]?block", re.I),
+    re.compile(r"JSONDecodeError|UnicodeDecodeError", re.I),
+    re.compile(r"ECONNRESET|ConnectionReset|BrokenPipe", re.I),
 )
 
 
@@ -167,6 +187,18 @@ def classify_failure(
     if _hit(_TRANSIENT_PATTERNS):
         return {
             "failure_class": TRANSIENT_TOOL,
+            "retryable": True,
+            "recommended_transition": "rework_required",
+        }
+    if _hit(_IDENTITY_PATTERNS):
+        return {
+            "failure_class": IDENTITY_CONTRACT,
+            "retryable": True,
+            "recommended_transition": "rework_required",
+        }
+    if _hit(_FORMAT_TRANSPORT_PATTERNS):
+        return {
+            "failure_class": FORMAT_TRANSPORT,
             "retryable": True,
             "recommended_transition": "rework_required",
         }
@@ -598,24 +630,29 @@ def apply_observation(project_root: Path, observation: dict[str, Any]) -> dict[s
         run_id=str(state.get("run_id") or "") or None,
     )
 
-    fp = str(obs.get("failure_fingerprint") or "")
-    prev_fp = str(state.get("last_failure_fingerprint") or "")
-    if fp and fp == prev_fp:
-        streak = int(state.get("no_progress_streak") or 0) + 1
-    else:
-        streak = 1
-    state["no_progress_streak"] = streak
-    state["last_failure_fingerprint"] = fp
-
     fc = str(obs.get("failure_class") or CHECKER_GATE)
     retryable = bool(obs.get("retryable"))
     budget = int(state.get("retry_budget") if isinstance(state.get("retry_budget"), int) else 3)
+    # Identity/format/transport must not burn semantic attempt budget (ses_0622).
+    burns_semantic = fc not in NON_SEMANTIC_BURN_CLASSES
+
+    fp = str(obs.get("failure_fingerprint") or "")
+    prev_fp = str(state.get("last_failure_fingerprint") or "")
+    if burns_semantic:
+        if fp and fp == prev_fp:
+            streak = int(state.get("no_progress_streak") or 0) + 1
+        else:
+            streak = 1
+        state["no_progress_streak"] = streak
+        state["last_failure_fingerprint"] = fp
+    else:
+        streak = int(state.get("no_progress_streak") or 0)
 
     if prev_status == "blocked":
         new_status = "blocked"
     elif fc in HUMAN_CLASSES or not retryable:
         new_status = "human_required"
-    elif streak >= budget:
+    elif burns_semantic and streak >= budget:
         new_status = "human_required"
         summary = dict(summary)
         summary["failure_class"] = RETRY_EXHAUSTED
@@ -633,7 +670,8 @@ def apply_observation(project_root: Path, observation: dict[str, Any]) -> dict[s
         obs["error_code"] = "RETRY_EXHAUSTED"
     elif retryable and budget > 0:
         new_status = "rework_required"
-        state["retry_budget"] = max(0, budget - 1)
+        if burns_semantic:
+            state["retry_budget"] = max(0, budget - 1)
     else:
         new_status = "human_required"
 

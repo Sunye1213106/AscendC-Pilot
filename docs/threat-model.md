@@ -4,8 +4,8 @@
 
 在 **AscendC-Pilot**（OpenCode `mode: primary`）内：
 
-- Agent frontmatter：`bash: "*": deny` + `acp *: allow`
-- Plugin `tool.execute.before` → `acp authorize`
+- Agent frontmatter：`bash: "*": deny` + `acp *` / 只读定位（`grep`/`rg`/`Select-String`/`ls`/`Test-Path`…）`allow`；原生 `grep` 工具 `allow`
+- Plugin `tool.execute.before` → `acp authorize`（OpenCode permission 先于 Pilot authorize）
 
 可阻止**常规**越级（直调 `build_layered_kb.py` / `tg-solve`、乱写正式 IR/review）。
 

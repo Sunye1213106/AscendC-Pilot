@@ -149,6 +149,32 @@ def check_kb_integrity(repo_root: Path, op_name: str, *, write_outputs: bool = T
                     "message": f"kb_graph.sqlite 断头边 orphan_src={orphan_src} orphan_dst={orphan_dst}",
                 }
             )
+        # Derived sqlite is the canonical *query* surface — must stay fresh vs YAML.
+        try:
+            from uo.scripts.kb_graph_query import index_status
+
+            idx = index_status(uo_root)
+            if idx.get("index_status") == "stale":
+                issues.append(
+                    {
+                        "code": "SQLITE_STALE",
+                        "severity": "error",
+                        "rework_stage": "export_graph",
+                        "message": (
+                            "kb_graph.sqlite stale vs YAML source hashes; "
+                            f"stale_keys={idx.get('stale_keys') or []}; re-run export_kb_graph"
+                        ),
+                    }
+                )
+        except Exception as exc:  # noqa: BLE001
+            issues.append(
+                {
+                    "code": "SQLITE_STATUS_ERROR",
+                    "severity": "warning",
+                    "rework_stage": "export_graph",
+                    "message": f"kb_graph index_status failed: {exc}"[:240],
+                }
+            )
     else:
         issues.append(
             {

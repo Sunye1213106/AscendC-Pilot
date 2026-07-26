@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -13,6 +15,291 @@ from uo.scripts.semantic_patches import (
     apply_patch_to_layers,
     verify_patch_against_layers,
 )
+
+
+def _file_sha16(path: Path) -> str:
+    if not path.is_file():
+        return ""
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+
+
+def materializable_delta_count(ledger: dict[str, Any], *, current_run_id: str) -> int:
+    """Count current-run patches that can still change the graph (not mark_missing / already done)."""
+    n = 0
+    for rec in ledger.get("semantic_patches") or []:
+        if not isinstance(rec, dict):
+            continue
+        if str(rec.get("run_id") or "") != current_run_id:
+            continue
+        action = str(rec.get("action") or "")
+        ptype = str(rec.get("patch_type") or "")
+        if action == "mark_missing" or ptype == "mark_missing":
+            continue
+        status = str(rec.get("apply_status") or rec.get("status") or "").casefold()
+        if status in {"materialized", "applied", "consumed"}:
+            continue
+        n += 1
+    return n
+
+
+def compute_rebuild_input_fingerprint(
+    uo_root: Path,
+    *,
+    architecture: str,
+    source_snapshot: str,
+    current_run_id: str,
+) -> dict[str, Any]:
+    """Fingerprint inputs that invalidate a skipped rebuild."""
+    from uo.scripts.macro_semantic_materializer import (
+        MATERIALIZER_VERSION,
+        macro_contracts_hash,
+        materializer_hash,
+    )
+
+    ir = uo_root / "ir"
+    # Confirmed scope: newest run scope file if present.
+    scope_hash = ""
+    runs = uo_root / "runs"
+    if runs.is_dir():
+        scopes = sorted(runs.glob("*/scope/scope_confirmed.yaml"), reverse=True)
+        if scopes:
+            scope_hash = _file_sha16(scopes[0])
+    ledger = load_ledger(uo_root)
+    # Effective ledger: current-run non-stale patches content hash.
+    effective_parts: list[dict[str, Any]] = []
+    for rec in ledger.get("semantic_patches") or []:
+        if not isinstance(rec, dict):
+            continue
+        if str(rec.get("run_id") or "") != current_run_id:
+            continue
+        effective_parts.append(
+            {
+                "task_id": rec.get("task_id"),
+                "action": rec.get("action"),
+                "patch_type": rec.get("patch_type"),
+                "accepted_candidate_ids": rec.get("accepted_candidate_ids"),
+                "apply_status": rec.get("apply_status"),
+            }
+        )
+    ledger_effect = hashlib.sha256(
+        json.dumps(effective_parts, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()[:16]
+    fp = {
+        "source_snapshot": source_snapshot,
+        "confirmed_scope": scope_hash,
+        "extract_plan": _file_sha16(ir / "extract_plan.yaml"),
+        "semantic_ledger_effective": ledger_effect,
+        "macro_contracts": macro_contracts_hash(),
+        "materializer": materializer_hash(),
+        "materializer_version": MATERIALIZER_VERSION,
+        "schema": _file_sha16(ir / "operator_capabilities.yaml"),
+        "architecture": architecture,
+    }
+    digest = hashlib.sha256(json.dumps(fp, sort_keys=True).encode("utf-8")).hexdigest()[:24]
+    return {"fingerprint": digest, "parts": fp}
+
+
+def baseline_graph_artifacts_complete(uo_root: Path) -> bool:
+    ir = uo_root / "ir"
+    required = [
+        "entrypoint_graph.yaml",
+        "host_subgraph.yaml",
+        "kernel_subgraph.yaml",
+        "bridge.yaml",
+        "operator_graph.yaml",
+    ]
+    return all((ir / name).is_file() for name in required)
+
+
+def should_skip_layered_rebuild(
+    uo_root: Path,
+    *,
+    architecture: str,
+    source_snapshot: str,
+    current_run_id: str,
+) -> dict[str, Any]:
+    """Decide whether to skip build_layered_kb (delta + fingerprint first)."""
+    ledger = load_ledger(uo_root)
+    delta = materializable_delta_count(ledger, current_run_id=current_run_id)
+    fp = compute_rebuild_input_fingerprint(
+        uo_root,
+        architecture=architecture,
+        source_snapshot=source_snapshot,
+        current_run_id=current_run_id,
+    )
+    prev = read_yaml(uo_root / "ir" / "rebuild_input_fingerprint.yaml") or {}
+    prev_fp = str(prev.get("fingerprint") or "")
+    artifacts_ok = baseline_graph_artifacts_complete(uo_root)
+    skip = (
+        delta == 0
+        and bool(prev_fp)
+        and prev_fp == str(fp.get("fingerprint") or "")
+        and artifacts_ok
+    )
+    layer_plan = select_layers_for_rebuild(
+        uo_root,
+        architecture=architecture,
+        source_snapshot=source_snapshot,
+        current_run_id=current_run_id,
+        force_full=False,
+    )
+    return {
+        "skip": skip,
+        "materializable_delta_count": delta,
+        "rebuild_input_fingerprint": fp,
+        "previous_fingerprint": prev_fp,
+        "baseline_artifacts_complete": artifacts_ok,
+        "layers_to_rebuild": sorted(layer_plan.get("layers") or []),
+        "layer_fingerprints": layer_plan.get("current_layer_fingerprints") or {},
+        "layer_rebuild_mode": layer_plan.get("mode"),
+    }
+
+
+# patch_type → extract layers (reuse plan_kb_update role→layer idea for ledger deltas)
+PATCH_TYPE_TO_LAYERS: dict[str, set[str]] = {
+    "entrypoint_node_resolution": {"entrypoints", "bridge"},
+    "entrypoint_dispatch_resolution": {"entrypoints", "bridge"},
+    "call_edge_resolution": {"host", "kernel", "bridge", "entrypoints"},
+    "tilingdata_bridge_resolution": {"bridge", "host", "kernel"},
+    "template_instance_resolution": {"tilingkey", "kernel", "bridge"},
+    "edge_resolution": {"entrypoints", "bridge"},
+    "mark_missing": set(),
+}
+
+
+def compute_layer_input_fingerprints(
+    uo_root: Path,
+    *,
+    architecture: str,
+    source_snapshot: str,
+) -> dict[str, str]:
+    """Per-layer input digests for selective rebuild."""
+    from uo.scripts.macro_semantic_materializer import macro_contracts_hash, materializer_hash
+
+    ir = uo_root / "ir"
+    scope_hash = ""
+    runs = uo_root / "runs"
+    if runs.is_dir():
+        scopes = sorted(runs.glob("*/scope/scope_confirmed.yaml"), reverse=True)
+        if scopes:
+            scope_hash = _file_sha16(scopes[0])
+    plan_h = _file_sha16(ir / "extract_plan.yaml")
+    caps_h = _file_sha16(ir / "operator_capabilities.yaml")
+    macro_h = macro_contracts_hash()
+    mat_h = materializer_hash()
+    base = {
+        "source_snapshot": source_snapshot,
+        "confirmed_scope": scope_hash,
+        "architecture": architecture,
+        "schema": caps_h,
+    }
+
+    def _digest(extra: dict[str, Any]) -> str:
+        payload = {**base, **extra}
+        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+    return {
+        "entrypoints": _digest({"extract_plan": plan_h, "macro_contracts": macro_h, "materializer": mat_h}),
+        "host": _digest({"extract_plan": plan_h, "layer": "host"}),
+        "kernel": _digest({"extract_plan": plan_h, "layer": "kernel"}),
+        "tilingkey": _digest({"layer": "tilingkey"}),
+        "golden": _digest({"layer": "golden"}),
+        "bridge": _digest(
+            {
+                "extract_plan": plan_h,
+                "host_out": _file_sha16(ir / "host_subgraph.yaml"),
+                "kernel_out": _file_sha16(ir / "kernel_subgraph.yaml"),
+                "tilingkey_out": _file_sha16(ir / "tilingkey_space.yaml"),
+                "layer": "bridge",
+            }
+        ),
+    }
+
+
+def select_layers_for_rebuild(
+    uo_root: Path,
+    *,
+    architecture: str,
+    source_snapshot: str,
+    current_run_id: str,
+    force_full: bool = False,
+) -> dict[str, Any]:
+    """Choose which layers to rebuild (empty set ⇒ full skip when combined with should_skip)."""
+    current = compute_layer_input_fingerprints(
+        uo_root, architecture=architecture, source_snapshot=source_snapshot
+    )
+    prev_doc = read_yaml(uo_root / "ir" / "layer_input_fingerprints.yaml") or {}
+    prev = prev_doc.get("layers") if isinstance(prev_doc.get("layers"), dict) else {}
+    dirty = {name for name, digest in current.items() if str(prev.get(name) or "") != digest}
+
+    ledger = load_ledger(uo_root)
+    patch_layers: set[str] = set()
+    for rec in ledger.get("semantic_patches") or []:
+        if not isinstance(rec, dict):
+            continue
+        if str(rec.get("run_id") or "") != current_run_id:
+            continue
+        action = str(rec.get("action") or "")
+        ptype = str(rec.get("patch_type") or "")
+        if action == "mark_missing" or ptype == "mark_missing":
+            continue
+        status = str(rec.get("apply_status") or rec.get("status") or "").casefold()
+        if status in {"materialized", "applied", "consumed"}:
+            continue
+        mapped = PATCH_TYPE_TO_LAYERS.get(ptype)
+        if mapped is None:
+            patch_layers.update({"host", "kernel", "tilingkey", "bridge", "entrypoints"})
+        else:
+            patch_layers |= set(mapped)
+
+    layers = set(dirty) | set(patch_layers)
+    if force_full:
+        layers = {"entrypoints", "host", "kernel", "tilingkey", "bridge"}
+    if layers & {"host", "kernel", "tilingkey"}:
+        layers.add("bridge")
+    if layers & {"host", "kernel"}:
+        layers.add("entrypoints")
+
+    mode = "noop"
+    if not layers and not patch_layers and not dirty:
+        mode = "noop"
+    elif layers >= {"host", "kernel", "tilingkey", "bridge"}:
+        mode = "full"
+    elif layers:
+        mode = "selective"
+    return {
+        "mode": mode,
+        "layers": layers,
+        "dirty_layers": sorted(dirty),
+        "patch_layers": sorted(patch_layers),
+        "current_layer_fingerprints": current,
+        "previous_layer_fingerprints": prev,
+    }
+
+
+def persist_layer_input_fingerprints(
+    uo_root: Path,
+    fingerprints: dict[str, str],
+    *,
+    rebuilt_layers: set[str] | list[str] | None = None,
+) -> None:
+    prev = read_yaml(uo_root / "ir" / "layer_input_fingerprints.yaml") or {}
+    layers = dict(prev.get("layers") or {}) if isinstance(prev.get("layers"), dict) else {}
+    if rebuilt_layers is None:
+        layers.update(fingerprints)
+    else:
+        for name in rebuilt_layers:
+            if name in fingerprints:
+                layers[name] = fingerprints[name]
+        # Always refresh bridge digest after structural rebuild.
+        if "bridge" in fingerprints and (
+            set(rebuilt_layers) & {"host", "kernel", "tilingkey", "bridge", "entrypoints"}
+        ):
+            layers["bridge"] = fingerprints["bridge"]
+    write_yaml(
+        uo_root / "ir" / "layer_input_fingerprints.yaml",
+        {"version": 1, "layers": layers},
+    )
 
 
 class LedgerTargetTypeMismatch(Exception):
@@ -306,29 +593,69 @@ def rebuild_derived_graphs(
     working_ledger = dict(ledger)
     working_ledger["semantic_patches"] = filtered
 
-    # 1. Base entrypoint graph from source facts (no ledger yet).
-    candidates = collect_entrypoint_candidates(repo_root, op_name, architecture=architecture)
-    entrypoint_graph = dict(candidates.get("entrypoint_graph") or {})
+    from uo.scripts.llm_tasks import blocking_gap_tasks
 
-    # 2. Build host/kernel/tilingkey/bridge base layers.
-    layers_set = {"host", "kernel", "tilingkey", "bridge"}
-    try:
-        layered = build_layered_kb(
-            repo_root,
-            op_name,
-            architecture=architecture,
-            layers=layers_set,
-            allow_empty_plan=True,
-        )
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": str(exc)[:300], "stale_patches": stale}
-
-    host = read_yaml(uo_root / "ir" / "host_subgraph.yaml") or {}
-    kernel = read_yaml(uo_root / "ir" / "kernel_subgraph.yaml") or {}
-    bridge = read_yaml(uo_root / "ir" / "bridge.yaml") or {}
-    operator_graph = read_yaml(uo_root / "ir" / "operator_graph.yaml") or (
-        layered if isinstance(layered, dict) else {}
+    blocking_before = len(blocking_gap_tasks(uo_root, current_run_id=current_run_id))
+    skip_info = should_skip_layered_rebuild(
+        uo_root,
+        architecture=architecture,
+        source_snapshot=snap,
+        current_run_id=current_run_id,
     )
+    build_layered_kb_invoked = False
+    large_yaml_reexported = False
+    layered: dict[str, Any] = {}
+
+    rebuilt_layer_names: list[str] = []
+    if skip_info.get("skip"):
+        # Zero effective delta + unchanged fingerprint → skip expensive layered rebuild.
+        entrypoint_graph = read_yaml(uo_root / "ir" / "entrypoint_graph.yaml") or {}
+        host = read_yaml(uo_root / "ir" / "host_subgraph.yaml") or {}
+        kernel = read_yaml(uo_root / "ir" / "kernel_subgraph.yaml") or {}
+        bridge = read_yaml(uo_root / "ir" / "bridge.yaml") or {}
+        operator_graph = read_yaml(uo_root / "ir" / "operator_graph.yaml") or {}
+    else:
+        # Selective layered rebuild from layer digests + patch_type mapping.
+        layers_set = set(skip_info.get("layers_to_rebuild") or [])
+        if not layers_set:
+            layers_set = {"host", "kernel", "tilingkey", "bridge", "entrypoints"}
+        # Always include structural dependents.
+        if layers_set & {"host", "kernel", "tilingkey"}:
+            layers_set.add("bridge")
+        try:
+            layered = build_layered_kb(
+                repo_root,
+                op_name,
+                architecture=architecture,
+                layers=layers_set,
+                allow_empty_plan=True,
+            )
+            build_layered_kb_invoked = True
+            large_yaml_reexported = True
+            rebuilt_layer_names = sorted(layers_set)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)[:300], "stale_patches": stale}
+
+        # Prefer materializer-upgraded entrypoint graph when present.
+        ep_after = read_yaml(uo_root / "ir" / "entrypoint_graph.yaml") or {}
+        if ep_after:
+            entrypoint_graph = ep_after
+        elif "entrypoints" not in layers_set:
+            entrypoint_graph = read_yaml(uo_root / "ir" / "entrypoint_graph.yaml") or {}
+            if not entrypoint_graph:
+                candidates = collect_entrypoint_candidates(
+                    repo_root, op_name, architecture=architecture
+                )
+                entrypoint_graph = dict(candidates.get("entrypoint_graph") or {})
+        else:
+            entrypoint_graph = read_yaml(uo_root / "ir" / "entrypoint_graph.yaml") or {}
+
+        host = read_yaml(uo_root / "ir" / "host_subgraph.yaml") or {}
+        kernel = read_yaml(uo_root / "ir" / "kernel_subgraph.yaml") or {}
+        bridge = read_yaml(uo_root / "ir" / "bridge.yaml") or {}
+        operator_graph = read_yaml(uo_root / "ir" / "operator_graph.yaml") or (
+            layered if isinstance(layered, dict) else {}
+        )
 
     layers: dict[str, dict[str, Any]] = {
         "entrypoint_graph": entrypoint_graph,
@@ -438,10 +765,43 @@ def rebuild_derived_graphs(
         }
 
     # Derived graphs are rebuild outputs (not part of the semantic tx trio, but written after success).
-    atomic_write_yaml(uo_root / "ir" / "entrypoint_graph.yaml", ep)
-    atomic_write_yaml(uo_root / "ir" / "operator_graph.yaml", op)
-    if layers.get("bridge"):
-        atomic_write_yaml(uo_root / "ir" / "bridge.yaml", layers["bridge"])
+    # On skip path, avoid rewriting large YAMLs unless ledger apply mutated layers.
+    if build_layered_kb_invoked or int(skip_info.get("materializable_delta_count") or 0) > 0:
+        atomic_write_yaml(uo_root / "ir" / "entrypoint_graph.yaml", ep)
+        atomic_write_yaml(uo_root / "ir" / "operator_graph.yaml", op)
+        if layers.get("bridge"):
+            atomic_write_yaml(uo_root / "ir" / "bridge.yaml", layers["bridge"])
+        large_yaml_reexported = True
+        # Persist fingerprint after a real rebuild so future zero-delta calls can skip.
+        fp_payload = skip_info.get("rebuild_input_fingerprint") or compute_rebuild_input_fingerprint(
+            uo_root,
+            architecture=architecture,
+            source_snapshot=snap,
+            current_run_id=current_run_id,
+        )
+        write_yaml(
+            uo_root / "ir" / "rebuild_input_fingerprint.yaml",
+            {"version": 1, **fp_payload},
+        )
+        fps = skip_info.get("layer_fingerprints") or compute_layer_input_fingerprints(
+            uo_root, architecture=architecture, source_snapshot=snap
+        )
+        persist_layer_input_fingerprints(
+            uo_root, fps, rebuilt_layers=rebuilt_layer_names or list(fps.keys())
+        )
+    elif not (uo_root / "ir" / "rebuild_input_fingerprint.yaml").is_file():
+        # First skip-capable baseline: store fingerprint without forcing full rebuild.
+        write_yaml(
+            uo_root / "ir" / "rebuild_input_fingerprint.yaml",
+            {"version": 1, **(skip_info.get("rebuild_input_fingerprint") or {})},
+        )
+        fps = skip_info.get("layer_fingerprints") or {}
+        if fps:
+            persist_layer_input_fingerprints(uo_root, fps)
+
+    blocking_after = len(blocking_gap_tasks(uo_root, current_run_id=current_run_id))
+    delta_n = int(skip_info.get("materializable_delta_count") or 0)
+    no_semantic_progress = blocking_after >= blocking_before and delta_n == 0 and materialized == 0
 
     return {
         "ok": True,
@@ -451,10 +811,27 @@ def rebuild_derived_graphs(
         "edge_count": len(op.get("edges") or []),
         "closure": closure,
         "materialized_patch_count": materialized,
+        "materializable_delta_count": delta_n,
         "unconsumed_patch_count": unconsumed,
         "apply_report": apply_report,
         "tasks_closed": sync.get("closed_count"),
         "tasks_rework": sync.get("rework_count"),
+        "build_layered_kb_invoked": build_layered_kb_invoked,
+        "large_yaml_reexported": large_yaml_reexported,
+        "rebuild_skipped": bool(skip_info.get("skip")),
+        "rebuild_input_fingerprint": (skip_info.get("rebuild_input_fingerprint") or {}).get(
+            "fingerprint"
+        ),
+        "layers_rebuilt": rebuilt_layer_names,
+        "layer_rebuild_mode": skip_info.get("layer_rebuild_mode"),
+        "blocking_before": blocking_before,
+        "blocking_after": blocking_after,
+        "semantic_progress": not no_semantic_progress,
+        "NO_SEMANTIC_PROGRESS": no_semantic_progress,
+        "macro_materialization": (layered.get("stats") or {}).get("macro_materialization")
+        if isinstance(layered, dict)
+        else None,
+        "timing_ms": (layered.get("stats") or {}).get("timing_ms") if isinstance(layered, dict) else None,
     }
 
 

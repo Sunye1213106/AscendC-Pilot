@@ -8,8 +8,8 @@
 
 1. 理解普通函数/类/调用关系时优先使用 CBM（MCP codebase-memory）。
 2. 已有明确 `file_path` 时可直接打开目标源码窗口。
-3. Grep / rg / `Select-String` **只用于定位**（OpenCode Grep 或 bash 只读搜索均允许），不可单独作为复杂语义结论 / high / `source_verified` 的唯一证据。
-4. 不允许无边界扫描整个仓库或父仓。**大 IR 公共模式**：prepare 须写 `*.summary.yaml`（`section_lines` + `must`；共享 `uo.scripts.ir_summary`）；dispatch `read` 把 summary（及 `*.rework_hints.yaml`）排在全量 IR 前；Host stub 见 `*.summary.yaml` 即注入 `MUST_READ_ORDER`。禁止先 Grep/offset 扫整份 candidates。
+3. Grep / rg / `Select-String` **只用于定位**（OpenCode Grep 或 bash 只读搜索均允许），不可单独作为复杂语义结论 / high / `source_verified` 的唯一证据。Windows `findstr` 路径须用反斜杠（`D:\…\file`）；正斜杠 `D:/…` 会被当成开关导致「无法打开」。
+4. 不允许无边界扫描整个仓库或父仓。**大 IR 公共模式**：prepare 须写 `*.summary.yaml`（`section_lines` + `must` + 本步导航字段如 `source_window_sha256` / `non_sink_root_names`；共享 `uo.scripts.ir_summary`）；dispatch `read` 把 summary（及 `*.rework_hints.yaml`）排在全量 IR 前；Host stub 见 `*.summary.yaml` 即注入 `MUST_READ_ORDER`。禁止先 Grep/offset 扫整份 candidates。
 5. CBM 空结果不代表符号不存在；须回退定向源码阅读或受控 source_closure。
 6. 禁止索引父仓；`project` 必须等于 `index_meta.cbm_project`。
 7. 宏表 / 注册宏 / Host 谓词 / CMake / 模板参数绑定：以确定性脚本 + 范围内 Read 为主路径，CBM 为 MAY。

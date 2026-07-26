@@ -23,25 +23,30 @@ from ascendc_pilot.runs import append_event, file_sha256, issue_receipt, run_dir
 from ascendc_pilot.state import load_state
 from ascendc_pilot.workflows import actions_for_phase, get_workflow
 
-# Mirrors uo.scripts.extract_plan_io.FORBIDDEN_EXTRACT_PLAN_KEYS — keep in sync.
-_EXTRACT_PLAN_FORBID_FIELDS = (
-    "call_edge_adjudications",
-    "llm_tasks",
-    "tasks",
-    "edge_patches",
-    "semantic_patches",
-    "dispatches_to",
-    "mark_missing",
-    "accepted_edges",
-    "entrypoint_dispatch_bind",
-    "accepted_candidate_ids",
-    "blocking_reasons",
-    "semantic_groups",
-    "ignored_candidates",
-    "receiver_summary",
-    "alias_summary",
-    "adjudication",
-)
+try:
+    from uo.scripts.extract_plan_io import FORBIDDEN_EXTRACT_PLAN_KEYS as _EXTRACT_PLAN_FORBID_FIELDS
+except ImportError:  # pragma: no cover
+    # Fallback only when UO engine is not on PYTHONPATH (should not happen in Pilot installs).
+    _EXTRACT_PLAN_FORBID_FIELDS = frozenset(
+        {
+            "call_edge_adjudications",
+            "llm_tasks",
+            "tasks",
+            "edge_patches",
+            "semantic_patches",
+            "dispatches_to",
+            "mark_missing",
+            "accepted_edges",
+            "entrypoint_dispatch_bind",
+            "accepted_candidate_ids",
+            "blocking_reasons",
+            "semantic_groups",
+            "ignored_candidates",
+            "receiver_summary",
+            "alias_summary",
+            "adjudication",
+        }
+    )
 
 
 def _write_active_action(project_root: Path, payload: dict[str, Any]) -> Path:
@@ -394,6 +399,7 @@ def _build_task_prompt_stub(
     project_root: str = "",
     architecture: str = "",
     candidates_sha256: str = "",
+    environment_path: str = "",
 ) -> str:
     """Minimal Host→subagent Task body: pointers only, no METHOD paraphrase."""
     lines = [
@@ -429,6 +435,8 @@ def _build_task_prompt_stub(
         lines.append(f"cbm_project: {cbm_project}")
     if candidates_sha256:
         lines.append(f"candidates_sha256: {candidates_sha256}")
+    if environment_path:
+        lines.append(f"environment: {environment_path}")
     # Public: any Action that lists *.summary.yaml in dispatch read gets MUST_READ_ORDER.
     from ascendc_pilot.ir_summary import large_ir_must_read_order_lines
 
@@ -446,6 +454,15 @@ def _build_task_prompt_stub(
                 "search_graph / grep alone is NOT enough.",
                 "candidates_sha256_rule: copy the exact candidates_sha256 value above "
                 "into extract_plan.yaml (do not recompute; bash hash tools are blocked)",
+                "evidence_sha_rule: copy summary/candidate source_window_sha256 into "
+                "evidence_window_sha256 (or omit sha when evidence_files+lines+contiguous "
+                "snippet are set — finalize enrich fills sha from disk). "
+                "FORBIDDEN: bash recompute; FORBIDDEN: Grep/findstr whole candidates only "
+                "to harvest sha256; FORBIDDEN: reuse a neighbor candidate's hash.",
+                "non_sink_rule: prefer non_sink_roots: []. If accepting any, copy exact "
+                "names from summary non_sink_root_names only (assign-LHS identifiers, "
+                "not functions). FORBIDDEN: invent names from snippets/source "
+                "identifiers. Uncertain → omit.",
                 f"project_root: {project_root}" if project_root else "project_root: (see prompt)",
                 f"architecture: {architecture or 'arch35'}",
             ]
@@ -1153,23 +1170,72 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
                     pass
 
     # adjudicate_llm_tasks: producer writes patches for deterministic apply.
+    adjudicate_not_applicable = False
     if wid == "uo-init" and action_id == "adjudicate_llm_tasks" and role_id == "producer":
-        target_line = (
-            "uo/ir/llm_tasks.yaml (open+blocking only) → write uo/ir/semantic_patches.yaml; "
-            "DO NOT write ledger or derived graphs"
-        )
+        try:
+            from uo.scripts.llm_tasks import can_auto_mark_missing, open_blocking_tasks
+
+            open_blocking = open_blocking_tasks(uo_root(project_root), current_run_id=run_id)
+            needs_llm = [t for t in open_blocking if not can_auto_mark_missing(t)]
+            adjudicate_not_applicable = not needs_llm
+        except Exception:  # noqa: BLE001
+            adjudicate_not_applicable = False
+        if adjudicate_not_applicable:
+            target_line = (
+                "NO open blocking llm_tasks needing producer — "
+                "status=semantic_patch_not_applicable; DO NOT invent patches"
+            )
+            bundle["dispatch_targets"] = {
+                "not_applicable": True,
+                "read": ["uo/ir/llm_tasks.yaml"],
+                "write": ["uo/ir/semantic_patches.yaml"],
+                "forbid_write": [
+                    "uo/ir/semantic_resolution_ledger.yaml",
+                    "uo/ir/extract_plan.yaml",
+                ],
+            }
+            _dump(
+                sdir / "not_applicable.yaml",
+                {
+                    "status": "semantic_patch_not_applicable",
+                    "action_id": "adjudicate_llm_tasks",
+                    "run_id": run_id,
+                    "phase": phase,
+                    "reason": "no_open_blocking_llm_tasks",
+                },
+            )
+            # Contract path must exist for auto-finalize (semantic-patches-v1).
+            _dump(
+                uo_root(project_root) / "ir" / "semantic_patches.yaml",
+                {
+                    "version": 1,
+                    "status": "semantic_patch_not_applicable",
+                    "reason": "no_open_blocking_llm_tasks",
+                    "run_id": run_id,
+                    "patches": [],
+                },
+            )
+        else:
+            target_line = (
+                "uo/ir/llm_tasks.yaml (open+blocking only) → write uo/ir/semantic_patches.yaml; "
+                "DO NOT write ledger or derived graphs"
+            )
+            bundle["dispatch_targets"] = {
+                "read": [
+                    "uo/ir/llm_tasks.yaml",
+                    "uo/ir/score_report_post.yaml",
+                    "uo/ir/score_report_pre.yaml",
+                ],
+                "write": ["uo/ir/semantic_patches.yaml"],
+                "forbid_write": [
+                    "uo/ir/semantic_resolution_ledger.yaml",
+                    "uo/ir/extract_plan.yaml",
+                    "uo/ir/entrypoint_graph.yaml",
+                    "uo/ir/host_subgraph.yaml",
+                    "uo/ir/kernel_subgraph.yaml",
+                ],
+            }
         prompt_r = _render_placeholders(prompt, **{**ph_kwargs, "target": target_line})
-        bundle["dispatch_targets"] = {
-            "read": ["uo/ir/llm_tasks.yaml", "uo/ir/score_report_post.yaml", "uo/ir/score_report_pre.yaml"],
-            "write": ["uo/ir/semantic_patches.yaml"],
-            "forbid_write": [
-                "uo/ir/semantic_resolution_ledger.yaml",
-                "uo/ir/extract_plan.yaml",
-                "uo/ir/entrypoint_graph.yaml",
-                "uo/ir/host_subgraph.yaml",
-                "uo/ir/kernel_subgraph.yaml",
-            ],
-        }
 
     # KEY triage: explicit finite target set from gaps / escalate_keys.
     if action_id == "key_triage" and role_id == "producer":
@@ -1263,6 +1329,20 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     method_path = (sdir / "method.md").as_posix()
     bundle_path = (sdir / "bundle.yaml").as_posix()
     agent_root_posix = agent_root(project_root).as_posix()
+
+    from ascendc_pilot.environment_capabilities import (
+        source_scope_for_lease,
+        write_environment_capabilities,
+    )
+
+    env_path = write_environment_capabilities(
+        sdir,
+        project_root,
+        architecture=architecture,
+        run_id=run_id,
+        host="opencode",
+    )
+    env_posix = env_path.as_posix()
     stub = ""
     if execution_mode == EXECUTION_SUBAGENT:
         stub = _build_task_prompt_stub(
@@ -1281,6 +1361,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             project_root=root_s,
             architecture=architecture,
             candidates_sha256=str(bundle.get("candidates_sha256") or ph_kwargs.get("candidates_sha256") or ""),
+            environment_path=env_posix,
         )
         bundle["task_prompt_stub"] = stub
 
@@ -1303,6 +1384,13 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         read_paths = action_read_paths(wid, action_id, run_id=run_id)
     else:
         read_paths = [expand_path_template(p, run_id=run_id) for p in read_paths]
+    # Session pack always readable (env capabilities + stubs).
+    for extra in (
+        f"runs/{run_id}/actions/{action_id}/**",
+        f"runs/{run_id}/actions/{action_id}/environment_capabilities.yaml",
+    ):
+        if extra not in read_paths:
+            read_paths.append(extra)
     forbid_read = [
         expand_path_template(p, run_id=run_id)
         for p in list(action.get("forbidden_read_paths") or [])
@@ -1356,6 +1444,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     allowed_targets = [str(x) for x in (dt.get("target_ids") or []) if str(x).strip()]
     # Outer containment: workflow write_roots; precise paths are Action lease.
     wf_roots = list((get_workflow(wid) or {}).get("write_roots") or [])
+    src_scope = source_scope_for_lease(project_root, run_id=run_id)
     lease = issue_action_lease(
         project_root,
         state=state,
@@ -1369,6 +1458,8 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         forbidden_write_paths=forbid_write,
         forbidden_read_paths=forbid_read,
         allowed_target_ids=allowed_targets,
+        allowed_source_roots=src_scope.get("allowed_source_roots") or [],
+        allowed_source_files=src_scope.get("allowed_source_files") or [],
     )
     lease_id = str(lease.get("lease_id") or "")
     prepared_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1517,6 +1608,17 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         if prepare_engine is not None:
             result["dispatch_targets"] = bundle.get("dispatch_targets")
     if wid == "uo-init" and action_id == "adjudicate_llm_tasks":
+        if adjudicate_not_applicable:
+            fin = finalize_action(project_root, action_id)
+            result["auto_finalize"] = True
+            result["dispatch_task"] = False
+            result["finalize"] = fin
+            result["ok"] = bool(fin.get("ok"))
+            result["message_zh"] = (
+                "adjudicate_llm_tasks：无 open blocking 需 producer，"
+                "已签发 semantic_patch_not_applicable 并 auto-finalize；请 `acp next`。"
+            )
+            return result
         result["message_zh"] = (
             f"已准备 adjudicate_llm_tasks；派发 `{actor_id}` 时原样使用 `task_prompt_stub`："
             f"只裁决 open blocking llm_tasks→semantic_patches.yaml。"

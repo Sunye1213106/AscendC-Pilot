@@ -1,0 +1,27 @@
+name: compose-drift
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  opencode-generated:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install PyYAML
+        run: pip install "PyYAML>=6.0"
+      - name: Compose OpenCode runtime
+        run: python scripts/compose_runtime.py --host opencode
+      - name: Fail on generated/opencode drift
+        run: |
+          git add -A generated/opencode
+          git diff --cached --exit-code -- generated/opencode
+          git diff --exit-code -- generated/opencode

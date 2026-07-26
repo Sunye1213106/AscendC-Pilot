@@ -891,12 +891,35 @@ def gate_extract_plan_subagent(project_root: Path, uo: Path) -> dict[str, Any]:
     }
 
 
+def gate_input_derivable_closed(uo: Path) -> dict[str, Any]:
+    """Host→KEY input_derivable loop must be closed before TG intake."""
+    try:
+        from uo.scripts.semantic_severity import input_derivable_closure
+
+        detail = input_derivable_closure(uo)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "gate": "input_derivable_closed",
+            "ok": False,
+            "error": str(exc)[:200],
+            "message": "input_derivable closure check failed",
+        }
+    return {
+        "gate": "input_derivable_closed",
+        "ok": bool(detail.get("ok")),
+        "detail": detail,
+        "message": detail.get("message") or ("ok" if detail.get("ok") else "input_derivable open"),
+    }
+
+
 def gate_uo_ready(uo: Path) -> dict[str, Any]:
+    """TG intake readiness: integrity pass + sqlite fresh + input_derivable closed."""
     manifest = uo / "manifest.yaml"
     integrity_path = uo / "checks" / "integrity.yaml"
     manifest_exists = manifest.is_file() and manifest.stat().st_size > 0
     integrity_exists = integrity_path.is_file() and integrity_path.stat().st_size > 0
     status = ""
+    checks: dict[str, Any] = {}
     if integrity_exists:
         try:
             integrity = _load(integrity_path)
@@ -910,12 +933,61 @@ def gate_uo_ready(uo: Path) -> dict[str, Any]:
         ok_status, status = _integrity_status_pass(integrity)
     else:
         ok_status = False
-    ok = bool(manifest_exists and integrity_exists and ok_status and status == "pass")
+    checks["integrity_pass"] = bool(manifest_exists and integrity_exists and ok_status and status == "pass")
+
+    # SQLite query index must exist and match YAML source hashes (canonical query surface).
+    try:
+        from uo.scripts.kb_graph_query import index_status
+
+        idx = index_status(uo)
+        checks["sqlite_status"] = idx.get("index_status")
+        checks["sqlite_fresh"] = idx.get("index_status") == "fresh"
+        checks["sqlite_stale_keys"] = idx.get("stale_keys") or []
+    except Exception as exc:  # noqa: BLE001
+        checks["sqlite_status"] = "error"
+        checks["sqlite_fresh"] = False
+        checks["sqlite_error"] = str(exc)[:200]
+
+    id_gate = gate_input_derivable_closed(uo)
+    checks["input_derivable_closed"] = bool(id_gate.get("ok"))
+    checks["input_derivable"] = id_gate.get("detail")
+
+    # Optional: family/path obligation when layered exports exist.
+    try:
+        from uo.scripts.family_path_obligation import check_family_path_obligation
+
+        fam = check_family_path_obligation(uo, write=True)
+        checks["family_path_obligation"] = {
+            "ok": bool(fam.get("ok")),
+            "status": fam.get("status"),
+            "error_count": (fam.get("stats") or {}).get("error_count"),
+        }
+        fam_ok = bool(fam.get("ok"))
+    except Exception as exc:  # noqa: BLE001
+        checks["family_path_obligation"] = {"ok": False, "error": str(exc)[:200]}
+        fam_ok = False
+
+    ok = bool(
+        checks.get("integrity_pass")
+        and checks.get("sqlite_fresh")
+        and checks.get("input_derivable_closed")
+        and fam_ok
+    )
+    reasons = []
+    if not checks.get("integrity_pass"):
+        reasons.append("integrity")
+    if not checks.get("sqlite_fresh"):
+        reasons.append(f"sqlite:{checks.get('sqlite_status')}")
+    if not checks.get("input_derivable_closed"):
+        reasons.append("input_derivable")
+    if not fam_ok:
+        reasons.append("family_path_obligation")
     return {
         "gate": "uo_ready",
         "ok": ok,
         "integrity_status": status,
-        "message": "ok" if ok else "UO KB not ready (manifest/integrity pass required)",
+        "checks": checks,
+        "message": "ok" if ok else f"UO KB not ready ({','.join(reasons) or 'unknown'})",
     }
 
 
@@ -975,22 +1047,26 @@ def gate_detect_score_post(uo: Path) -> dict[str, Any]:
 
     prereq = post_semantic_prerequisites(uo)
     post = uo / "ir" / "score_report_post.yaml"
+    triage = uo / "ir" / "semantic_task_triage.yaml"
     missing = list(prereq.get("missing") or [])
     if not post.is_file():
         # Gate after engine run also requires the report; engine itself won't write without prereqs.
         missing = missing + (["score_report_post.yaml"] if "score_report_post.yaml" not in missing else [])
+    if post.is_file() and not triage.is_file():
+        missing = missing + ["semantic_task_triage.yaml"]
     if missing:
         return {
             "gate": "detect_score_post",
             "ok": False,
             "missing": missing,
             "error": "POST_SEMANTIC_PREREQUISITE_MISSING" if prereq.get("missing") else "score_report_post_missing",
-            "message": f"detect_score_post requires plan+host+kernel(+report); missing={missing}",
+            "message": f"detect_score_post requires plan+host+kernel(+report+triage); missing={missing}",
         }
     return {
         "gate": "detect_score_post",
         "ok": True,
         "has_post_report": True,
+        "has_triage": True,
         "has_plan": True,
         "has_host": True,
         "has_kernel": True,
@@ -1246,6 +1322,8 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
         "semantic_closure": lambda: gate_semantic_closure(uo, project_root=project_root),
         "uo_ready": lambda: gate_uo_ready(uo),
         "kb_ready": lambda: gate_uo_ready(uo),
+        "input_derivable_closed": lambda: gate_input_derivable_closed(uo),
+        "family_path_obligation": lambda: tg_adapters.gate_family_path_obligation(project_root),
         "context_pack": lambda: {
             "gate": "context_pack",
             "ok": (project_root / ".ascendc-pilot" / "context" / "context_pack.yaml").is_file(),

@@ -7,6 +7,40 @@ description: 'UO semantic producer for action-scoped extraction planning and sem
 
   '
 mode: subagent
+permission:
+  bash:
+    '*': deny
+    acp *: allow
+    grep *: allow
+    Grep *: allow
+    rg *: allow
+    ripgrep *: allow
+    findstr *: allow
+    Select-String *: allow
+    sls *: allow
+    ls: allow
+    ls *: allow
+    dir: allow
+    dir *: allow
+    pwd: allow
+    tree: allow
+    tree *: allow
+    Get-ChildItem *: allow
+    gci *: allow
+    Get-Item *: allow
+    gi *: allow
+    Get-Location: allow
+    Get-Location *: allow
+    gl: allow
+    Test-Path *: allow
+    Resolve-Path *: allow
+    cd *: allow
+    Set-Location *: allow
+    sl *: allow
+    Push-Location *: allow
+    Pop-Location: allow
+    Pop-Location *: allow
+  grep: allow
 ---
 
 # Agent: uo-semantic-resolve
@@ -72,6 +106,7 @@ Pilot 独占状态、合法边、门禁与完成态。
 7. **进度只进 OpenCode 原生 Todo**（见下方「原生 Todo」）；禁止在主对话输出工作流状态面板。
 8. bash 优先用工具 `workdir` 指向算子目录；若写 `cd <dir> && acp …`，Pilot 只认末尾纯 `acp` 段（禁止夹杂其它命令）。禁止用 bash/`>`/`Set-Content`/`tee` 写入 `.ascendc-pilot/**` 正式产物以绕过 Write 围栏。**只读定位**允许：`ls`/`Get-ChildItem`/`grep`/`rg`/`Select-String`/`findstr`（无写重定向）；仍不得当高置信证据。
 9. **语义 Action 派发**：必须派声明 actor（如 `uo-semantic-resolve`）；Primary 禁止代写 `uo/ir/**`。Task 须带 `subagent_type`/`agent`=actor 与 `action_id`。**Task 正文只能原样使用 prepare 返回的 `task_prompt_stub`**（禁止复述 METHOD、禁止塞额外目标/REWORK 长文、禁止把后续 Action 的 `llm_tasks`/`mark_missing` 或超大 candidates 整包粘进 prompt；**禁止空 prompt / `{}`**）。**同 Action rework 必须 resume 原 Task session**，禁止新开第二个 session。Gate fail → **resume 原 stub** 再派（**校验失败禁止无故 re-prepare / re-propose**，以免 `candidates_sha256` churn）；**禁止**凭子代理摘要声称「无候选 / 无 receiver」而跳过读 `*.summary.yaml` / 全量 candidates；若子代理摘要写明「只改 sha / 证据未改」→ **禁止 finalize**，继续 resume 或先 `--check`；语义 Action 仅 Host **finalize**（禁止 primary 代写 IR）。
+9a. **`ARTIFACT_SESSION_MISMATCH` / identity 失败**：禁止派发「FIX ONLY 改 `action_session_id`」类非 stub 正文。合法路径二选一：(1) **resume 原 Task + 原样 stub** 让子代理按合同重写整份产物 identity；(2) 按 `retry_command` **完整 re-prepare** 后，用**新 stub** 派发，由子代理按新 session **整份重写**产物（不得只改 identity 单字段）。`candidate_set_hash` 权威字段名见 adjudicate 合同（勿误写 `patch_candidate_set_hash`）。
 10. **Debug 模式（可选）**：`acp debug enable --project <算子目录>` 后自动捕捉工具失败与过长非逻辑思考链，并在子代理结束时导出 session bundle 到 `.ascendc-pilot/debug/exports/`。排查完 `acp debug disable`。手动导出：`acp debug export-session`。
 11. **关键参数不明确 → 立刻 AskQuestion**：算子路径（`--project`）、architecture、continue/reinit，以及**当前 workflow 真正要求的**参数（例如 **`tg-init` 的测试脚本路径** `--test-script-root` / `ASCENDC_TEST_SCRIPT_ROOT` / `csv_consumer_root`）缺一不可时，**同一轮**用 `question` 可点选框问清；禁止为猜答案而全库 Glob、读历史 session 考古、长篇「让我想想」。已明确则直接执行，勿重复确认。**`uo-init` / `uo-update` 启动不要求测试脚本路径**——那是 TG 测例契约用的，勿在建库阶段为此打断。
 
@@ -150,14 +185,19 @@ Pilot 独占状态、合法边、门禁与完成态。
 9. **证据载体（硬 · AND 不是 OR）**：高置信必须 **同时** 有 `evidence_window_sha256` **与** 连续 `evidence_snippet`。仅 sha、仅 snippet、或 sha 对但 snippet 非连续窗口子串 → Gate / apply **拒绝**。共享校验：`uo.scripts.source_evidence.require_disk_window_proof`。
 10. **产品韧性（公共）**：apply 可在 files/lines 可解析时从磁盘窗口（或候选 `source_window.text`）**回填**连续 snippet 与 sha（`enrich_item_evidence_from_disk`）；禁止省略号拼贴残留。回填不是放宽合同，而是消除易碎 YAML。
 11. **禁止占位证据**：`candidates_sha256`、snippet、行号不得填 `PLACEHOLDER` / `TODO` / 编造 hash；Gate 必须拒绝。
-12. 校验实现统一走共享模块（`uo.scripts.source_evidence` / `yaml_literal_sanitize`），各 Action finalize **复用**，不得各自发明宽松规则。
+12. **邻项 / 错窗 sha 视为编造**：`evidence_window_sha256` 必须对应该条目的 `evidence_files`+`evidence_lines`（或候选同窗 `source_window.sha256` / summary 的 `source_window_sha256`）。复用邻居候选的 hash → Gate / apply **拒绝**；若 files/lines/连续 snippet 已正确，apply 可按磁盘窗 **覆盖**错误 sha（`enrich_item_evidence_from_disk`），覆盖不是放宽合同。禁止为捞 sha 而 Grep/findstr 全量大 IR。
+13. 校验实现统一走共享模块（`uo.scripts.source_evidence` / `yaml_literal_sanitize`），各 Action finalize **复用**，不得各自发明宽松规则。
+14. **`mark_missing` 硬 Gate（公共）**：不得仅以 `score < threshold` / `confidence too low` 作为唯一理由。必须提供机器可核验的 `negative_evidence`（`scope_snapshot_sha256`、`include_closure_status` 对照产物、`queries[]`、`inspected_windows[]+window_sha256`、`absence_kind`）。Gate **不信任**模型自填的 `include_scope_complete: true`，须读 scope/include closure 产物。`triage_category=macro_contract_resolvable` 禁止 `mark_missing`（应交宏合同物化）。校验：`uo.scripts.llm_tasks.validate_mark_missing_patch`。
 
 ## Hard Constraints
 
 - MUST：每个闭合结论附证据类型与引用。
 - MUST：`confidence: high` ⇒ `source_verified: true` + 磁盘窗口 sha **且** 连续可核验 `evidence_snippet`。
+- MUST：`mark_missing` ⇒ 机器可核验 `negative_evidence`；禁止 score-only / 伪 missing。
 - MUST NOT：发明证据、行号、KB 节点或 snippet；禁止用「仅 window sha」放行拼贴 snippet。
+- MUST NOT：复用邻居候选 / 错窗的 `evidence_window_sha256`（邻项 hash 视为编造）。
 - MUST NOT：用「命名像 / 候选表有 / search 命中」当作 high 的唯一依据。
+- MUST NOT：对 `macro_contract_resolvable` 任务写 `mark_missing`。
 - MUST NOT：在个别 skill prompt 里弱化或覆盖本策略；skill 只可引用本策略，不可另立例外。
 
 
@@ -173,8 +213,8 @@ Pilot 独占状态、合法边、门禁与完成态。
 
 1. 理解普通函数/类/调用关系时优先使用 CBM（MCP codebase-memory）。
 2. 已有明确 `file_path` 时可直接打开目标源码窗口。
-3. Grep / rg / `Select-String` **只用于定位**（OpenCode Grep 或 bash 只读搜索均允许），不可单独作为复杂语义结论 / high / `source_verified` 的唯一证据。
-4. 不允许无边界扫描整个仓库或父仓。**大 IR 公共模式**：prepare 须写 `*.summary.yaml`（`section_lines` + `must`；共享 `uo.scripts.ir_summary`）；dispatch `read` 把 summary（及 `*.rework_hints.yaml`）排在全量 IR 前；Host stub 见 `*.summary.yaml` 即注入 `MUST_READ_ORDER`。禁止先 Grep/offset 扫整份 candidates。
+3. Grep / rg / `Select-String` **只用于定位**（OpenCode Grep 或 bash 只读搜索均允许），不可单独作为复杂语义结论 / high / `source_verified` 的唯一证据。Windows `findstr` 路径须用反斜杠（`D:\…\file`）；正斜杠 `D:/…` 会被当成开关导致「无法打开」。
+4. 不允许无边界扫描整个仓库或父仓。**大 IR 公共模式**：prepare 须写 `*.summary.yaml`（`section_lines` + `must` + 本步导航字段如 `source_window_sha256` / `non_sink_root_names`；共享 `uo.scripts.ir_summary`）；dispatch `read` 把 summary（及 `*.rework_hints.yaml`）排在全量 IR 前；Host stub 见 `*.summary.yaml` 即注入 `MUST_READ_ORDER`。禁止先 Grep/offset 扫整份 candidates。
 5. CBM 空结果不代表符号不存在；须回退定向源码阅读或受控 source_closure。
 6. 禁止索引父仓；`project` 必须等于 `index_meta.cbm_project`。
 7. 宏表 / 注册宏 / Host 谓词 / CMake / 模板参数绑定：以确定性脚本 + 范围内 Read 为主路径，CBM 为 MAY。

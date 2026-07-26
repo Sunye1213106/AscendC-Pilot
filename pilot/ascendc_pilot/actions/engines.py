@@ -95,13 +95,25 @@ def _run_prepare_layout(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
         }
 
 def _run_confidence_report(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    del ctx
     uo = _uo(project_root)
+    run_id = str((ctx or {}).get("run_id") or "")
     try:
+        # Re-consume key_resolution patches into Host→KEY product before confidence.
+        from uo.scripts.classify_input_derivable import classify_and_write
         from uo.scripts.check_final_confidence import check_final_confidence
+        from uo.scripts.semantic_severity import grade_summary, input_derivable_closure
 
+        id_payload = classify_and_write(uo)
         payload = check_final_confidence(uo, write_report=True, write_skeleton=False)
-        return {"ok": bool(payload.get("ok") or str(payload.get("status") or "") in {"pass", "reported"}), "payload": payload}
+        closure = input_derivable_closure(uo)
+        grades = grade_summary(uo, current_run_id=run_id)
+        return {
+            "ok": bool(payload.get("ok") or str(payload.get("status") or "") in {"pass", "reported"}),
+            "payload": payload,
+            "input_derivable": id_payload.get("stats") if isinstance(id_payload, dict) else {},
+            "input_derivable_closed": closure,
+            "severity_grades": grades,
+        }
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)[:300]}
 
@@ -713,6 +725,7 @@ def _run_extract_plan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
                 layers={"entrypoints", "host", "kernel", "tilingkey", "bridge"},
                 allow_empty_plan=False,
             )
+            stats = (layered or {}).get("stats") if isinstance(layered, dict) else {}
             return {
                 "ok": True,
                 "engine": "extract_plan",
@@ -720,7 +733,10 @@ def _run_extract_plan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
                 "apply": applied,
                 "has_host": (uo / "ir" / "host_subgraph.yaml").is_file(),
                 "has_kernel": (uo / "ir" / "kernel_subgraph.yaml").is_file(),
-                "stats": (layered or {}).get("stats") if isinstance(layered, dict) else {},
+                "has_macro_semantics": (uo / "ir" / "macro_semantics.yaml").is_file(),
+                "stats": stats,
+                "macro_materialization": (stats or {}).get("macro_materialization") or {},
+                "timing_ms": (stats or {}).get("timing_ms") or {},
             }
 
         # Prepare: candidates only (LLM confirms → extract_plan.yaml)
@@ -779,6 +795,7 @@ def _run_extract_plan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
                     candidates_sha256=candidates_sha256,
                     section_lines=section_lines,
                     candidates_line_count=line_count,
+                    candidates_path=cand_path,
                 ),
             )
         status = str((candidates or {}).get("status") or "").lower() if isinstance(candidates, dict) else ""
@@ -963,7 +980,13 @@ def _run_rebuild_from_ledger(project_root: Path, ctx: dict[str, Any]) -> dict[st
         from uo.scripts.llm_tasks import compute_semantic_stats
 
         stats = compute_semantic_stats(uo, current_run_id=run_id) if uo and run_id else {}
-        return {"ok": bool(result.get("ok")), "engine": "rebuild_from_ledger", **result, **stats}
+        out = {"ok": bool(result.get("ok")), "engine": "rebuild_from_ledger", **result, **stats}
+        # Surface progress / skip contract for Host observation.
+        if result.get("NO_SEMANTIC_PROGRESS"):
+            out["recovery_reason"] = "NO_SEMANTIC_PROGRESS"
+        if result.get("macro_materialization"):
+            out["macro_materialization"] = result.get("macro_materialization")
+        return out
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "rebuild_from_ledger", "error": str(exc)[:300]}
 
@@ -1140,7 +1163,11 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "uo/ir/score_report_pre.yaml",
         "uo/ir/llm_tasks.yaml",
     ],
-    "detect-score-post-v1": ["uo/ir/score_report_post.yaml", "uo/ir/llm_tasks.yaml"],
+    "detect-score-post-v1": [
+        "uo/ir/score_report_post.yaml",
+        "uo/ir/llm_tasks.yaml",
+        "uo/ir/semantic_task_triage.yaml",
+    ],
     "semantic-patches-v1": ["uo/ir/semantic_patches.yaml"],
     "semantic-patch-v1": ["uo/ir/semantic_resolution_ledger.yaml"],
     "rebuild-ledger-v1": ["uo/ir/entrypoint_graph.yaml", "uo/ir/operator_graph.yaml"],
@@ -1151,6 +1178,7 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "uo/ir/extract_plan_candidates.yaml",
         "uo/ir/host_subgraph.yaml",
         "uo/ir/kernel_subgraph.yaml",
+        "uo/ir/macro_semantics.yaml",
     ],
     "key-triage-v1": ["uo/ir/key_triage.yaml"],
     # Shape staging is optional; patch is the producer contract

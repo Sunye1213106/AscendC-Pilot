@@ -17,8 +17,10 @@ def test_uo_init_contracts_aligned() -> None:
     assert "uo/ir/extract_plan_candidates.yaml" in _joined("extract-plan-v1")
     assert "uo/ir/host_subgraph.yaml" in _joined("extract-plan-v1")
     assert "uo/ir/kernel_subgraph.yaml" in _joined("extract-plan-v1")
+    assert "uo/ir/macro_semantics.yaml" in _joined("extract-plan-v1")
     assert "uo/ir/entrypoint_graph.yaml" in _joined("detect-score-pre-v1")
     assert "uo/ir/score_report_pre.yaml" in _joined("detect-score-pre-v1")
+    assert "uo/ir/semantic_task_triage.yaml" in _joined("detect-score-post-v1")
 
     assert _joined("kb-review-v1") == "uo/review/kb_product_review.yaml"
     assert "kb_review.yaml" not in _joined("kb-review-v1")

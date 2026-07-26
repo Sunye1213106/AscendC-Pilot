@@ -229,7 +229,10 @@ def test_authorize_allows_readonly_inspect_commands(tmp_path: Path) -> None:
         f'rg -n "SaveStuff" "{tmp_path}"',
         f'grep -n "blob_" "{tmp_path}"',
         f'Select-String -Path "{tmp_path}\\*.cpp" -Pattern "set_"',
+        f'Select-String -Path "{tmp_path}\\ir.yaml" -Pattern "sha256:" | Select-Object -First 20',
         f'findstr /n /c:"tiling" "{tmp_path}\\foo.cpp"',
+        # Quoted findstr alternation must not be treated as a shell pipe.
+        f'findstr /n "DoPreSfmgTiling\\|DoPreTiling\\|DoPostTiling" "{tmp_path}\\extract_plan_candidates.yaml"',
     ]
     for cmd in allowed:
         verdict = authorize(tmp_path, tool="bash", command=cmd, agent="ascendc-pilot")

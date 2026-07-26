@@ -192,7 +192,12 @@ def test_stale_patch_rejected(tmp_path: Path) -> None:
         }
     ]
     upsert_tasks_from_score_items(
-        uo, items, checkpoint="extract.pre_semantic", run_id=RUN_TEST, source_snapshot_hash="hashA"
+        uo,
+        items,
+        checkpoint="extract.post_semantic",
+        run_id=RUN_TEST,
+        source_snapshot_hash="hashA",
+        score_phase="post_semantic",
     )
     doc = load_llm_tasks(uo)
     task = next(t for t in doc["tasks"] if t["status"] == "open")
@@ -240,7 +245,12 @@ def test_mark_missing_rejects_accept_edge_false_closure(tmp_path: Path) -> None:
         }
     ]
     upsert_tasks_from_score_items(
-        uo, items, checkpoint="extract.pre_semantic", run_id=RUN_TEST, source_snapshot_hash="hashA"
+        uo,
+        items,
+        checkpoint="extract.post_semantic",
+        run_id=RUN_TEST,
+        source_snapshot_hash="hashA",
+        score_phase="post_semantic",
     )
     doc = load_llm_tasks(uo)
     task = next(t for t in doc["tasks"] if t["status"] == "open")
@@ -275,7 +285,20 @@ def test_mark_missing_rejects_accept_edge_false_closure(tmp_path: Path) -> None:
 
     ok = apply_task_patch(
         uo,
-        {"task_id": task["task_id"], "action": "mark_missing"},
+        {
+            "task_id": task["task_id"],
+            "action": "mark_missing",
+            "evidence": ["definition absent after scope search"],
+            "negative_evidence": {
+                "scope_snapshot_sha256": "hashA",
+                "include_closure_status": "incomplete",
+                "queries": [{"symbol": "edge_empty", "search_mode": "exact", "result_count": 0}],
+                "inspected_windows": [
+                    {"file": "op_host/a.cpp", "lines": [1, 5], "window_sha256": "abc123"}
+                ],
+                "absence_kind": "project_definition_absent",
+            },
+        },
         current_run_id=RUN_TEST,
         current_source_hash="hashA",
     )
@@ -300,7 +323,12 @@ def test_attempts_only_on_resolve_apply(tmp_path: Path) -> None:
         }
     ]
     upsert_tasks_from_score_items(
-        uo, items, checkpoint="extract.pre_semantic", run_id=RUN_TEST, source_snapshot_hash="snap1"
+        uo,
+        items,
+        checkpoint="extract.post_semantic",
+        run_id=RUN_TEST,
+        source_snapshot_hash="snap1",
+        score_phase="post_semantic",
     )
     before = load_llm_tasks(uo)
     batches0 = int(before.get("total_semantic_batches") or 0)

@@ -78,3 +78,5 @@ def test_detect_score_pre_contract_includes_graph() -> None:
     assert "uo/ir/score_report_pre.yaml" in paths
     assert "uo/ir/host_subgraph.yaml" in OUTPUT_CONTRACT_PATHS["extract-plan-v1"]
     assert "uo/ir/kernel_subgraph.yaml" in OUTPUT_CONTRACT_PATHS["extract-plan-v1"]
+    assert "uo/ir/macro_semantics.yaml" in OUTPUT_CONTRACT_PATHS["extract-plan-v1"]
+    assert "uo/ir/semantic_task_triage.yaml" in OUTPUT_CONTRACT_PATHS["detect-score-post-v1"]

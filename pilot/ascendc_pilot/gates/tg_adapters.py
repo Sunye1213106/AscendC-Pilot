@@ -330,6 +330,21 @@ def _uncovered_terminal(items: list[Any]) -> tuple[bool, list[str]]:
     return (not open_ids), open_ids
 
 
+def gate_family_path_obligation(project_root: Path) -> dict[str, Any]:
+    """FAM ↔ KPATH ↔ obligation refs must be consistent on UO export surface."""
+
+    def _run() -> Any:
+        from uo.scripts.family_path_obligation import check_family_path_obligation
+
+        uo = uo_root(project_root)
+        payload = check_family_path_obligation(uo, write=True)
+        if not payload.get("ok"):
+            raise RuntimeError(payload.get("message") or "family_path_obligation failed")
+        return payload
+
+    return _wrap_exc("family_path_obligation", _run)
+
+
 def gate_solve_terminal(project_root: Path) -> dict[str, Any]:
     """Terminal solve must use real solver/realization/CSV/obligation artifacts — not status.yaml."""
     out = tg_root(project_root)

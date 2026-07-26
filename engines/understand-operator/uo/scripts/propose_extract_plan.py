@@ -469,9 +469,31 @@ def propose_extract_plan(
     # Kernel-side TDF assign aliases (host may never see layoutType = tilingData->layout)
     _collect_kernel_aliases(repo_root, architecture, aliases)
 
+    # Obvious assign-LHS noise (not functions): single-char / trivial words.
+    _NON_SINK_LHS_NOISE = frozenset(
+        {
+            "begin",
+            "end",
+            "length",
+            "first",
+            "last",
+            "tmp",
+            "temp",
+            "i",
+            "j",
+            "k",
+            "n",
+            "m",
+            "x",
+            "y",
+            "z",
+        }
+    )
     non_sink: list[dict[str, Any]] = []
     for root in sorted(assign_lhs_roots - set_recv_roots):
         if not root or root.casefold() in {"tilingdata", "tiling_data", "this"}:
+            continue
+        if len(root) <= 1 or root.casefold() in _NON_SINK_LHS_NOISE:
             continue
         non_sink.append(
             {

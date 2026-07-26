@@ -383,7 +383,7 @@ detect_score_pre → extract_plan → detect_score_post
 | 主题 | 落点 | 要点 |
 |---|---|---|
 | 高置信=源码比对 | `skills/policies/evidence/POLICY.md`、`code-access`、`source-authority` | `confidence:high` / `source_verified:true` ⇒ 磁盘可核验；search 不算比对 |
-| 共享校验 | `uo/scripts/source_evidence.py`；`extract_plan_io` 复用 | snippet 或 **`evidence_window_sha256`**；去缩进比对 |
+| 共享校验 | `uo/scripts/source_evidence.py`；`extract_plan_io` 复用 | snippet **且** **`evidence_window_sha256`**（AND，禁止 OR）；去缩进比对 |
 | YAML 韧性 | `uo/scripts/yaml_literal_sanitize.py`；`_ir_io.read_yaml` / gate `_load` | `|` 块内容行缩进 pad 到首行；加载后仍可 parse |
 | 证据优先序 | `evidence` POLICY + `apply_extract_plan._enrich_evidence_window_sha` | 优先 files/lines + window sha（可从候选 `source_window.sha256` 或磁盘计算）；少塞大段 C++ |
 | Lease write⊆read | `authorize/lease.py` `issue_action_lease`；`pilot-control` §13；runtime prepare 双保险 | **所有 Action** 签发时 write 路径可读 |
@@ -492,6 +492,100 @@ detect_score_pre → extract_plan → detect_score_post
 | policy / 原则文档 | `code-access`；`skill-and-prompt-principles` | 已做 |
 | 仍留本步 | sinks / key_writer / alias 字段合同 + evidence_tools stub | 正当例外 |
 
+### A46：OpenCode permission 拦 bash grep（2026-07-26）
+
+| 项 | 说明 | 状态 |
+|---|---|---|
+| 现象 | `Bash Grep …` → `Permission denied by OpenCode permissions` | 已确认 |
+| 根因 | primary frontmatter `bash: *:deny` 只放行 `acp *`；**先于** Pilot authorize | — |
+| 修复 | `compose_runtime._opencode_bash_permission`：只读定位 + `acp`；`grep` 工具 allow；subagent 同 fence | 已做 |
+
+### A47：adjudicate `candidate_set_hash` 字段错位（ses_0622 · 2026-07-26）
+
+| 项 | 说明 | 状态 |
+|---|---|---|
+| 现象 | finalize 20× `patch_candidate_set_hash_missing` → FIX ONLY 改 session → `RETRY_EXHAUSTED` | 已确认 |
+| 根因 | Gate 读 `candidate_set_hash`，错误码却叫 `patch_candidate_set_hash_missing`；Host 指挥写错字段；re-prepare 导致 session 漂移 | — |
+| 修复 | 权威字段 `candidate_set_hash` + 别名兼容；错误码 `candidate_set_hash_missing_on_patch`；prompt/METHOD 补字段；禁 FIX ONLY 只改 session | 已做 |
+| 文档 | 证据 snippet **AND** sha（非 OR） | 已改 |
+
+### A48：uo-init 修复计划落地（W0–W2 · 2026-07-26）
+
+| 波次 | 内容 | 状态 |
+|---|---|---|
+| W0 | hash 合同 + 文档 AND + Host session 纪律 | 已做 |
+| W1 | `environment_capabilities.yaml`；`allowed_source_*`；adjudicate no-op；compose-drift CI；identity/format 不烧 semantic budget | 已做 |
+| W2 | containment 合同读；FORBIDDEN 单源；sanitize 下沉 Pilot；Task identity 仅 env；删假 `tool_budget` | 已做 |
+| W3 自动化 | `test_uo_init_plan_hardening.py` + hash 别名单测 + compose drift | 见门禁 |
+| W3 手工 | FAG `flash_attention_score_grad`：`acp start --force-new` → `acp complete` | **未跑** |
+
+### A49：只读定位误拒 + sha256 导航缺失（2026-07-26）
+
+| 现象 | 根因 | 落点 | 状态 |
+|---|---|---|---|
+| `findstr /n "A\|B\|C" …` → non-acp / ask | authorize 裸拆 `|`，把引号内 `\|` 当成管道 | `authorize._split_shell_segments` + readonly 单测 | 已做 |
+| 子代理「找不到」`evidence_window_sha256`，Grep/findstr 扫全量 candidates | summary 无 `source_window_sha256` / `candidates_line` / `end_line` 导航 | `extract_plan_io.build_extract_plan_candidates_summary` + `must` | 已做 |
+| 邻项 sha 复用（如 GetWorkspaceSize hash 套 DoPreTiling） | 导航缺失 + 误判须自算；合同未写明邻项 hash=编造 | `policies/evidence`；stub `evidence_sha_rule`；enrich 覆盖错 sha（既有）+ 单测锁定 | 已做 |
+
+**交付**：`compose_runtime.py --host opencode` 已跑；安装侧需 `refresh-opencode.ps1` 后 **重启 OpenCode**。扫算子根 Grep 仍由 confirmed source scope 拒绝（正确围栏，不放宽）。
+
+### A50：non_sink 宽召回 + 编造名返工（2026-07-26）
+
+| 现象 | 根因 | 落点 | 状态 |
+|---|---|---|---|
+| candidates 有 ~648 个 `non_sink_root_candidates` | 确定性 propose：writer 函数体内 `ident =` 赋值 LHS − sink receiver（`assign_lhs_only`）；**不是** 648 个函数 | `propose_extract_plan`（召回语义保留） | 已说明 |
+| finalize `NON_SINK_INVENTED_47` → rework | 子代理从 snippet 发明 `fBaseParams`/`batchSize` 等；summary 仅有 count 无名字清单 | summary `non_sink_root_names`；stub `non_sink_rule`（默认 `[]`）；`drop_invented_non_sink_roots` apply 韧性 | 已做 |
+| 返工时 findstr / Grep 空转很久 | Windows `findstr` 正斜杠路径误解析；大 IR 扫名单 | `code-access` 注明 `\` 路径；summary 名单避免扫全量 | 已做 |
+| Host resume 塞大段 `REWORK: …` | 违反「Task 只粘原 stub」 | 纪律：resume **原样 stub**；细节只进 `rework_hints.yaml` | 文档强调 |
+
+**覆盖口径**：plan 默认 omit / 自动丢编造名 **不削弱** writers/sinks/aliases 主链；不硬砍 648 候选池。propose 仅滤单字符/`Begin` 级 LHS 噪声。
+
+**产品宣称口径（未变）**：在 W3 手工 FAG 回归通过前，状态维持 **功能候选完成**，不宣称「生产可稳定跑完」。
+
+**手工回归记录模板（跑完后填）**
+
+| 字段 | 值 |
+|---|---|
+| 算子 | `flash_attention_score_grad` |
+| run_id | |
+| 结果 | `acp complete` / 失败点 |
+| 产物摘要 | |
+| 备注 | 需 `compose` → `refresh-opencode.ps1` → **重启 OpenCode** 后再测 |
+
+**Compose 纪律**：改 `policies` / `actions` / `prompts` / `agents` 后必须 `python scripts/compose_runtime.py --host opencode` 并提交 `generated/opencode`；CI `compose-drift.yml` 会 `git diff --exit-code`。
+
+### A51：宏注册链未物化 + 伪 mark_missing + 零增量仍全量 rebuild（2026-07-26）
+
+| 现象 | 根因 | 落点 | 状态 |
+|---|---|---|---|
+| 20× `REGISTER_*` / `REG_OP` → LLM 全员 `mark_missing`（理由 score=0） | 宏节点 `confidence=None` 被当成 score 0；无公共宏合同物化；`mark_missing` 无否定证据 Gate | `ascendc_macro_contracts.yaml` + `macro_semantic_materializer`（挂 `build_layered_kb`）+ `score_entrypoint_node` 修 + `validate_mark_missing_patch` | 已做 |
+| pre 任务进入 adjudicate | `detect_score_pre` 任务被当最终任务源 | pre=`provisional` / `eligible_for_adjudication=false`；post 重算入口图并关闭已 auto_accept 目标 | 已做 |
+| KEY gap 挡 extract → 死锁 | `semantic_closure` 把所有 blocking 当 extract 阻塞 | triage `blocks_extract_advance`；KEY → `blocking_phase=resolve` | 已做 |
+| 0 物化仍全量 `build_layered_kb` | rebuild 无 effective-delta / fingerprint 短路 | `should_skip_layered_rebuild` + `rebuild_input_fingerprint`；先 delta 后 `NO_SEMANTIC_PROGRESS` | 已做 |
+
+**流水线**：`detect_score_pre`(provisional) → `extract_plan`/`build_layered_kb`(+macro) → `detect_score_post`(canonical+triage) → adjudicate 仅 `post_semantic`+`route=uo-semantic-resolve` → apply → rebuild(可 skip) → recheck。
+
+**夹具**：`engines/understand-operator/tests/fixtures/fag_macro_semantic_failure/`（RUN_20260726_121719_0d48474d 脱敏最小集）。
+
+**Host 纪律**：Gate fail / `NO_SEMANTIC_PROGRESS` → **resume 原 stub**，禁止 REWORK 长文。
+
+**交付**：改 policies/engines 后跑 `compose_runtime.py --host opencode`；安装侧 `refresh-opencode.ps1` 后重启 OpenCode。
+
+### A52：Phase B/C — KEY 闭环分级 + 分层增量 + uo_ready 强化（2026-07-26）
+
+| 目标 | 落点 | 状态 |
+|---|---|---|
+| Host→KEY `input_derivable` 闭环 | `semantic_severity.input_derivable_closure`；`gate_input_derivable_closed`；confidence_report 先 `classify_and_write` | 已做 |
+| UO blocking / TG-resolvable / degraded | `resolution_class`（triage+severity）；extract `semantic_closure` 不挡 `tg_resolvable` | 已做 |
+| family→path→obligation Gate | `family_path_obligation.py` + `tg_adapters.gate_family_path_obligation`；tg-init nest/gate | 已做 |
+| 分层 hash 增量重建 | `compute_layer_input_fingerprints` / `select_layers_for_rebuild`；`rebuild_derived_graphs` 选择性 `layers=` | 已做 |
+| SQLite canonical **query** | 保持 YAML SoT；`SQLITE_STALE` + `uo_ready` 要求 `index_status=fresh` | 已做 |
+| 强化 `uo_ready` | integrity pass ∧ sqlite fresh ∧ input_derivable closed ∧ family/path（无导出则 skip pass） | 已做 |
+
+**不做**：把 sqlite 改成写权威 SoT（与 `ownership.yaml` / `kb_layout` 冲突）。
+
+**单测**：`tests/test_phase_bc_semantic_closure.py`；夹具仍用 A51 FAG macro failure 集。完整 FAG `acp complete` 仍属手工 W3。
+
 ---
 
 ## 14. 一句话原则（沉淀）
@@ -503,7 +597,7 @@ detect_score_pre → extract_plan → detect_score_post
 5. **Gate fail → rework**，不是一上来 blocked；失败要落 Observation，禁止逃逸手工修 / **禁止 primary 代写 IR**。  
 6. **extract ≠ 边裁决**；空候选禁止假 ACCEPT；`non_sink_roots` 只认字符串名。  
 7. **CBM 不做 KEY/宏表主路径**；语义结论须取窗（MCP 全名 / `acp cbm lookup` / 窗口 Read）。  
-8. **同 Action rework 必须 resume**；Task 正文只粘 stub。  
+8. **同 Action rework 必须 resume**；Task 正文只粘**原样 stub**（禁止塞 `REWORK:` 长文；细节只进 `rework_hints.yaml`）。  
 9. **高置信规则进公共 Policy/Capability/共享校验**，禁止只改个别 skill。  
 10. **Lease：write ⊆ read**；高置信 = **窗口 sha AND 连续 snippet**（禁止 OR / 拼贴）；大 IR 可有 `*.summary.yaml`。  
 11. **改完要 compose + refresh + 重启 OpenCode** 才测的是新代码。  

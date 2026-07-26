@@ -217,6 +217,8 @@ def issue_action_lease(
     forbidden_write_paths: list[str] | None = None,
     forbidden_read_paths: list[str] | None = None,
     allowed_target_ids: list[str] | None = None,
+    allowed_source_roots: list[str] | None = None,
+    allowed_source_files: list[str] | None = None,
 ) -> dict[str, Any]:
     """Issue (replace) the active action lease for the given mode."""
     from ascendc_pilot.runs import append_event
@@ -243,6 +245,16 @@ def issue_action_lease(
     for wp in write_paths:
         if wp not in read_paths:
             read_paths.append(wp)
+    source_roots = [
+        str(p).replace("\\", "/").lstrip("/")
+        for p in list(allowed_source_roots or [])
+        if str(p).strip()
+    ]
+    source_files = [
+        str(p).replace("\\", "/").lstrip("/")
+        for p in list(allowed_source_files or [])
+        if str(p).strip()
+    ]
     lease = {
         "lease_id": new_lease_id(),
         "run_id": st.get("run_id") or "",
@@ -262,6 +274,8 @@ def issue_action_lease(
         "forbidden_write_paths": list(forbidden_write_paths or []),
         "forbidden_read_paths": list(forbidden_read_paths or []),
         "allowed_target_ids": list(allowed_target_ids or []),
+        "allowed_source_roots": source_roots,
+        "allowed_source_files": source_files,
         "issued_at": _now(),
         "revoked_at": None,
         "revoke_reason": None,
@@ -372,6 +386,35 @@ def lease_allows_read_path(lease: dict[str, Any], rel_posix: str) -> dict[str, A
                 "allowed_read_roots": roots,
             }
     return {"ok": True}
+
+
+def lease_allows_source_path(lease: dict[str, Any], rel_posix: str) -> dict[str, Any]:
+    """Operator-source path check (outside .ascendc-pilot).
+
+    When lease declares ``allowed_source_roots`` / ``allowed_source_files``,
+    reads must match; empty lists mean no source hard-fence (legacy allow).
+    """
+    from ascendc_pilot.ownership import path_matches_patterns
+
+    rel = str(rel_posix or "").replace("\\", "/").lstrip("/")
+    files = [str(x).replace("\\", "/").lstrip("/") for x in (lease.get("allowed_source_files") or [])]
+    roots = [str(x).replace("\\", "/").lstrip("/") for x in (lease.get("allowed_source_roots") or [])]
+    if not files and not roots:
+        return {"ok": True, "unfenced": True}
+    if files and path_matches_patterns(rel, files):
+        return {"ok": True}
+    for root in roots:
+        if not root:
+            continue
+        if rel == root or rel.startswith(root.rstrip("/") + "/"):
+            return {"ok": True}
+    return {
+        "ok": False,
+        "error": "ACTION_SOURCE_SCOPE_DENIED",
+        "path": rel,
+        "allowed_source_roots": roots,
+        "allowed_source_files": files[:40],
+    }
 
 
 def issue_lease_for_status(
@@ -638,6 +681,7 @@ __all__ = [
     "issue_rework_lease",
     "lease_allows_command",
     "lease_allows_read_path",
+    "lease_allows_source_path",
     "lease_allows_tool",
     "lease_allows_write_path",
     "lease_path",

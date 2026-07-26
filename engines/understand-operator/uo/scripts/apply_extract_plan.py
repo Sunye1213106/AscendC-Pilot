@@ -16,6 +16,7 @@ from uo._operator.artifacts import existing_operator_root, safe_op_name
 from uo.scripts._ir_io import read_yaml, write_yaml
 from uo.scripts.extract_plan_io import (
     _match_candidate,
+    drop_invented_non_sink_roots,
     normalize_plan_from_candidates,
     validate_extract_plan_against_candidates,
 )
@@ -69,6 +70,13 @@ def apply_extract_plan(
     # Product resilience: backfill contiguous snippet + sha from disk / candidate
     # source_window (same spirit as prior sha-only enrich). Collage `...` is replaced.
     enrich_stats = _enrich_evidence(plan, repo_root, cand_doc)
+    # Drop invented non_sink string names before validate (allowlist-only).
+    drop_tags = drop_invented_non_sink_roots(plan, cand_doc)
+    if drop_tags:
+        enrich_stats["items"] = int(enrich_stats.get("items") or 0) + 1
+        acts = list(enrich_stats.get("actions") or [])
+        acts.extend(drop_tags)
+        enrich_stats["actions"] = acts
 
     errors = validate_extract_plan_against_candidates(
         plan, cand_doc, project_root=repo_root

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,9 @@ def build_layered_kb(
     layers: set[str] | list[str] | None = None,
     allow_empty_plan: bool = False,
 ) -> dict[str, Any]:
+    build_t0 = time.perf_counter()
+    timing_ms: dict[str, int] = {}
+    macro_materialization: dict[str, Any] = {}
     uo_root = existing_operator_root(repo_root, op_name)
     ir_dir = uo_root / "ir"
     ir_dir.mkdir(parents=True, exist_ok=True)
@@ -46,9 +50,9 @@ def build_layered_kb(
     selected = set(ALL_EXTRACT_LAYERS) if not layers else {str(item).strip().lower() for item in layers if str(item).strip()}
     if selected & {"host", "kernel", "tilingkey"}:
         selected.add("bridge")
-
     # entrypoints → ir/entrypoint_graph.yaml (unique confirmation fact source)
     if "entrypoints" in selected:
+        t_ep = time.perf_counter()
         candidates = collect_entrypoint_candidates(
             repo_root, op_name, architecture=architecture, auto_confirm_high_confidence=auto_confirm
         )
@@ -89,6 +93,7 @@ def build_layered_kb(
             collect_doc_evidence_bundle(repo_root, op_name)
         except Exception:  # noqa: BLE001
             pass
+        timing_ms["entrypoints"] = int((time.perf_counter() - t_ep) * 1000)
     else:
         candidates = read_yaml(ir_dir / "entrypoint_candidates.yaml") or {}
         entrypoint_graph = read_yaml(ir_dir / "entrypoint_graph.yaml")
@@ -96,6 +101,29 @@ def build_layered_kb(
             raise FileNotFoundError(
                 "ir/entrypoint_graph.yaml missing; include entrypoints layer or run full build"
             )
+
+    # Macro semantic materialization: typed facts before host/kernel / post-score.
+    t_macro = time.perf_counter()
+    try:
+        from uo.scripts.macro_semantic_materializer import materialize_macro_semantics
+
+        macro_result = materialize_macro_semantics(
+            repo_root, op_name, architecture=architecture, uo_root=uo_root
+        )
+        macro_materialization = dict(macro_result.get("macro_materialization") or {})
+        if isinstance(macro_result.get("entrypoint_graph"), dict):
+            entrypoint_graph = macro_result["entrypoint_graph"]
+    except Exception as exc:  # noqa: BLE001
+        macro_materialization = {
+            "status": "error",
+            "error": str(exc)[:300],
+            "timing_ms": int((time.perf_counter() - t_macro) * 1000),
+        }
+    else:
+        macro_materialization.setdefault(
+            "timing_ms", int((time.perf_counter() - t_macro) * 1000)
+        )
+    timing_ms["macro_semantics"] = int(macro_materialization.get("timing_ms") or 0)
 
     closure = entrypoint_graph.get("closure") or {}
     llm_needed = (
@@ -105,8 +133,10 @@ def build_layered_kb(
         pass
 
     if "tilingkey" in selected:
+        t0 = time.perf_counter()
         tilingkey = extract_tilingkey_space(repo_root, op_name, architecture=architecture)
         write_yaml(ir_dir / "tilingkey_space.yaml", tilingkey)
+        timing_ms["tilingkey"] = int((time.perf_counter() - t0) * 1000)
     else:
         tilingkey = read_yaml(ir_dir / "tilingkey_space.yaml") or {"nodes": [], "edges": [], "unresolved": [], "dimensions": [], "template_blocks": []}
 
@@ -120,6 +150,7 @@ def build_layered_kb(
             )
 
     if "host" in selected:
+        t0 = time.perf_counter()
         host = extract_host_subgraph(
             repo_root,
             op_name,
@@ -127,12 +158,15 @@ def build_layered_kb(
             allow_empty_plan=allow_empty_plan,
         )
         write_yaml(ir_dir / "host_subgraph.yaml", host)
+        timing_ms["host"] = int((time.perf_counter() - t0) * 1000)
     else:
         host = read_yaml(ir_dir / "host_subgraph.yaml") or {"nodes": [], "edges": [], "unresolved": []}
 
     if "kernel" in selected:
+        t0 = time.perf_counter()
         kernel = extract_kernel_subgraph(repo_root, op_name, architecture=architecture)
         write_yaml(ir_dir / "kernel_subgraph.yaml", kernel)
+        timing_ms["kernel"] = int((time.perf_counter() - t0) * 1000)
     else:
         kernel = read_yaml(ir_dir / "kernel_subgraph.yaml") or {"nodes": [], "edges": [], "unresolved": [], "branches": []}
 
@@ -143,11 +177,12 @@ def build_layered_kb(
         golden = read_yaml(ir_dir / "golden.yaml") or {"nodes": [], "unresolved": [], "golden": {}}
 
     if "bridge" in selected:
+        t0 = time.perf_counter()
         bridge = reconcile_bridge(repo_root, op_name)
         write_yaml(ir_dir / "bridge.yaml", bridge)
+        timing_ms["bridge"] = int((time.perf_counter() - t0) * 1000)
     else:
         bridge = read_yaml(ir_dir / "bridge.yaml") or {"bridge_nodes": [], "bridge_edges": [], "unresolved": [], "diagnostics": []}
-
     nodes = _merge_nodes(
         _entrypoint_nodes_as_graph(entrypoint_graph),
         _boundary_nodes(ir_dir),
@@ -158,8 +193,11 @@ def build_layered_kb(
         bridge.get("bridge_nodes") or [],
     )
     merge_diags = list(_MERGE_NODE_DIAGNOSTICS)
+    macro_doc = read_yaml(ir_dir / "macro_semantics.yaml") or {}
+    macro_edges = list(macro_doc.get("emitted_edges") or [])
     edges = _merge_edges(
         _entrypoint_edges_as_graph(entrypoint_graph),
+        macro_edges,
         _boundary_edges(ir_dir),
         _def_use_edges(host),
         host.get("edges") or [],
@@ -303,6 +341,7 @@ def build_layered_kb(
 
     materialize_testcase_contract_files(uo_root, graph)
 
+    t_export = time.perf_counter()
     try:
         from uo.scripts.export_kb_graph import export_kb_graph
 
@@ -326,6 +365,41 @@ def build_layered_kb(
         }
     except Exception as exc:  # noqa: BLE001
         graph.setdefault("stats", {})["human_views"] = {"status": "error", "error": str(exc)}
+    timing_ms["yaml_export"] = int((time.perf_counter() - t_export) * 1000)
+    timing_ms["total"] = int((time.perf_counter() - build_t0) * 1000)
+    graph.setdefault("stats", {})["timing_ms"] = timing_ms
+    graph.setdefault("stats", {})["macro_materialization"] = macro_materialization
+    write_yaml(ir_dir / "build_layered_timing.yaml", {"version": 1, "timing_ms": timing_ms})
+
+    # Seed rebuild + layer fingerprints so post-adjudicate rebuild can skip / select layers.
+    try:
+        from uo.scripts.evidence_score import require_source_snapshot
+        from uo.scripts.semantic_resolution_ledger import (
+            compute_layer_input_fingerprints,
+            compute_rebuild_input_fingerprint,
+            persist_layer_input_fingerprints,
+        )
+
+        manifest = read_yaml(uo_root / "manifest.yaml") or {}
+        run_id = str(manifest.get("current_run_id") or manifest.get("current_run") or "")
+        snap_res = require_source_snapshot(uo_root, run_id=run_id or None)
+        if snap_res.get("ok") and run_id:
+            snap = str(snap_res.get("hash") or "")
+            fp = compute_rebuild_input_fingerprint(
+                uo_root,
+                architecture=architecture,
+                source_snapshot=snap,
+                current_run_id=run_id,
+            )
+            write_yaml(ir_dir / "rebuild_input_fingerprint.yaml", {"version": 1, **fp})
+            graph.setdefault("stats", {})["rebuild_input_fingerprint"] = fp.get("fingerprint")
+            layer_fps = compute_layer_input_fingerprints(
+                uo_root, architecture=architecture, source_snapshot=snap
+            )
+            persist_layer_input_fingerprints(uo_root, layer_fps, rebuilt_layers=sorted(selected))
+            graph.setdefault("stats", {})["layer_input_fingerprints"] = layer_fps
+    except Exception:  # noqa: BLE001
+        pass
 
     return graph
 

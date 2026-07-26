@@ -92,6 +92,7 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
             "uo/ir/llm_tasks.yaml",
             "uo/ir/score_report_pre.yaml",
             "uo/ir/score_report_post.yaml",
+            "uo/ir/semantic_patches.yaml",
         ],
     },
 }

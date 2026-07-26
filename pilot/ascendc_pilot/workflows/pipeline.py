@@ -32,9 +32,15 @@ def _not_applicable_proof(project_root: Path, action_id: str) -> bool:
         return False
     if not isinstance(data, dict):
         return False
-    return str(data.get("status") or "").lower() in {"not_applicable", "na", "n/a"} and str(
-        data.get("action_id") or action_id
-    ) == action_id and str(data.get("run_id") or run_id) == run_id
+    status = str(data.get("status") or "").lower()
+    return status in {
+        "not_applicable",
+        "na",
+        "n/a",
+        "semantic_patch_not_applicable",
+    } and str(data.get("action_id") or action_id) == action_id and str(
+        data.get("run_id") or run_id
+    ) == run_id
 
 
 def action_receipt_ok(project_root: Path, action_id: str) -> bool:

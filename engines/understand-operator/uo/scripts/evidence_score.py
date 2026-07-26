@@ -158,11 +158,23 @@ def evaluate_disposition(
 
 
 def score_entrypoint_node(node: dict[str, Any], *, architecture: str = "arch35") -> dict[str, Any]:
-    score = float(node.get("confidence") or 0.0)
-    if score > 1.0:
-        # Already a string tier — treat verified as high.
-        conf = normalize_confidence(node.get("confidence") or node.get("status"))
-        score = 0.9 if is_verified_confidence(conf) else 0.55
+    raw_conf = node.get("confidence")
+    score: float
+    if isinstance(raw_conf, (int, float)):
+        score = float(raw_conf)
+    elif isinstance(raw_conf, str) and raw_conf.strip():
+        try:
+            score = float(raw_conf)
+        except ValueError:
+            conf = normalize_confidence(raw_conf)
+            score = 0.95 if is_verified_confidence(conf) else 0.55
+    else:
+        # Macro / verified status without numeric confidence must not score as 0.0.
+        status = str(node.get("status") or "").casefold()
+        if node.get("macro") or status in {"verified", "source_verified", "semantic_verified"}:
+            score = 0.95
+        else:
+            score = 0.0
     evidence: list[str] = []
     loc = node.get("locator") or {}
     if loc.get("file_path") or node.get("symbol_ref"):
@@ -182,6 +194,13 @@ def score_entrypoint_node(node: dict[str, Any], *, architecture: str = "arch35")
         conflicts=bool(node.get("conflicts")),
         necessity=necessity,
     )
+    # Contract-backed macros with locator are source-verified — never LLM mark_missing.
+    if node.get("macro") and (loc.get("file_path") or node.get("symbol_ref")) and not node.get("conflicts"):
+        result["disposition"] = "auto_accept"
+        result["confidence"] = SOURCE_VERIFIED
+        result["severity"] = "none"
+        result["task_hint"] = None
+        result["score"] = max(float(result.get("score") or 0.0), 0.95)
     result["target_id"] = node.get("id")
     result["role"] = role
     loc = node.get("locator") or {}
@@ -526,14 +545,22 @@ def detect_score_pre(uo_root: Path, *, architecture: str = "arch35", run_id: str
         run_id=run_id,
         source_snapshot_hash=str(snap.get("hash") or ""),
         workflow_id=str(snap.get("workflow_id") or "uo-init"),
+        score_phase="pre_semantic",
+        eligible_for_adjudication=False,
     )
     return {"ok": True, "checkpoint": "extract.pre_semantic", "report": report, "tasks": tasks}
 
 
 def detect_score_post(uo_root: Path, *, architecture: str = "arch35", run_id: str = "") -> dict[str, Any]:
-    """Checkpoint extract.post_semantic — bridge / tilingkey / provenance."""
+    """Checkpoint extract.post_semantic — re-score entrypoints (post-macro) + bridge/key."""
     from uo.scripts._ir_io import read_yaml
-    from uo.scripts.llm_tasks import upsert_tasks_from_score_items
+    from uo.scripts.llm_tasks import (
+        close_tasks_resolved_by_score,
+        load_llm_tasks,
+        save_llm_tasks,
+        upsert_tasks_from_score_items,
+    )
+    from uo.scripts.semantic_task_triage import apply_triage_to_tasks, write_semantic_task_triage
 
     prereq = post_semantic_prerequisites(uo_root)
     if not prereq.get("ok"):
@@ -544,9 +571,22 @@ def detect_score_post(uo_root: Path, *, architecture: str = "arch35", run_id: st
             "checkpoint": "extract.post_semantic",
         }
 
+    # Canonical post-semantic score: re-evaluate entrypoint graph AFTER macro materialization.
+    ep = read_yaml(uo_root / "ir" / "entrypoint_graph.yaml") or {}
+    boundary = read_yaml(uo_root / "ir" / "operator_boundary.yaml") or {}
     bridge = read_yaml(uo_root / "ir" / "bridge.yaml") or {}
     tilingkey = read_yaml(uo_root / "ir" / "tilingkey_space.yaml") or {}
     items: list[dict[str, Any]] = []
+    for node in ep.get("nodes") or []:
+        if isinstance(node, dict):
+            items.append(score_entrypoint_node(node, architecture=architecture))
+    for edge in ep.get("edges") or []:
+        if isinstance(edge, dict):
+            ot = "registration_edge" if edge.get("type") == "registers" else "call_edge"
+            items.append(score_edge(edge, object_type=ot))
+    for slot in (boundary.get("inputs") or []) + (boundary.get("attributes") or []):
+        if isinstance(slot, dict):
+            items.append(score_io_slot(slot))
     for b in bridge.get("tilingdata_bridges") or bridge.get("bridge_edges") or []:
         if isinstance(b, dict) and (b.get("type") in {None, "maps_tilingdata"} or "field_path" in b):
             items.append(score_tilingdata_bridge(b))
@@ -554,16 +594,13 @@ def detect_score_post(uo_root: Path, *, architecture: str = "arch35", run_id: st
         if isinstance(dim, dict):
             items.append(score_tilingkey_binding(dim))
 
-    # Merge with pre report if present.
-    pre = read_yaml(uo_root / "ir" / "score_report_pre.yaml") or {}
-    all_items = list(pre.get("items") or []) + items
     report = {
         "version": 1,
         "checkpoint": "extract.post_semantic",
         "architecture": architecture,
-        "items": all_items,
+        "items": items,
         "post_items": items,
-        "stats": _stats(all_items),
+        "stats": _stats(items),
     }
     write_yaml(uo_root / "ir" / "score_report_post.yaml", report)
     write_yaml(uo_root / "ir" / "score_report.yaml", report)
@@ -576,15 +613,46 @@ def detect_score_post(uo_root: Path, *, architecture: str = "arch35", run_id: st
             "checkpoint": "extract.post_semantic",
             "report": report,
         }
-    tasks = upsert_tasks_from_score_items(
+
+    # Close provisional pre tasks whose targets auto-accepted after macro materialization.
+    closed = close_tasks_resolved_by_score(
         uo_root,
         items,
+        current_run_id=str(run_id),
+        reason="post_semantic_auto_accept",
+    )
+
+    llm_items = [i for i in items if i.get("disposition") == "llm_task"]
+    tasks = upsert_tasks_from_score_items(
+        uo_root,
+        llm_items,
         checkpoint="extract.post_semantic",
         run_id=run_id,
         source_snapshot_hash=str(snap.get("hash") or ""),
         workflow_id=str(snap.get("workflow_id") or "uo-init"),
+        score_phase="post_semantic",
+        eligible_for_adjudication=None,  # set by triage
     )
-    return {"ok": True, "checkpoint": "extract.post_semantic", "report": report, "tasks": tasks}
+
+    # Triage → annotate routes / phase blocking; write semantic_task_triage.yaml
+    doc = load_llm_tasks(uo_root)
+    run_tasks = [
+        t
+        for t in (doc.get("tasks") or [])
+        if isinstance(t, dict) and str(t.get("run_id") or "") == str(run_id)
+    ]
+    apply_triage_to_tasks(run_tasks, uo_root=uo_root)
+    save_llm_tasks(uo_root, doc)
+    triage = write_semantic_task_triage(uo_root, tasks=run_tasks, run_id=str(run_id))
+
+    return {
+        "ok": True,
+        "checkpoint": "extract.post_semantic",
+        "report": report,
+        "tasks": tasks,
+        "closed_pre_tasks": closed,
+        "triage": triage.get("stats"),
+    }
 
 
 def post_semantic_prerequisites(uo_root: Path) -> dict[str, Any]:

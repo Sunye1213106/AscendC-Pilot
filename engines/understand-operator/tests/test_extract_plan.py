@@ -759,16 +759,54 @@ def test_validate_rejects_empty_sink_receivers_when_candidates_suggest(tmp_path:
     assert any("GetTilingKey" in e for e in errors)
 
 
-def test_build_candidates_summary_counts() -> None:
-    from uo.scripts.extract_plan_io import (
-        build_extract_plan_candidates_summary,
-        scan_candidates_section_lines,
-    )
+def test_build_candidates_summary_counts(tmp_path: Path) -> None:
+    from uo.scripts.extract_plan_io import build_extract_plan_candidates_summary
 
+    cand_path = tmp_path / "extract_plan_candidates.yaml"
+    cand_path.write_text(
+        "version: 1\n"
+        "writer_candidates:\n"
+        "- name: SaveStuff\n"
+        "  file_path: op_host/a.cpp\n"
+        "  start_line: 10\n"
+        "  end_line: 20\n"
+        "  source_window:\n"
+        "    start_line: 10\n"
+        "    end_line: 20\n"
+        "    sha256: aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899\n"
+        "- name: GetTilingKey\n"
+        "  role_suggested: key_writer\n"
+        "receiver_candidates:\n"
+        "- name: blob_\n"
+        "  is_tiling_sink_suggested: true\n"
+        "- name: mid_\n"
+        "  is_tiling_sink_suggested: false\n"
+        "alias_candidates:\n"
+        "- local: a\n"
+        "  tdf_leaf: b\n"
+        "non_sink_root_candidates: []\n"
+        "extra_entry_candidates: []\n",
+        encoding="utf-8",
+    )
     summary = build_extract_plan_candidates_summary(
         {
             "writer_candidates": [
-                {"name": "SaveStuff", "role_suggested": "tiling_writer", "score": 0.8},
+                {
+                    "name": "SaveStuff",
+                    "role_suggested": "tiling_writer",
+                    "score": 0.8,
+                    "file_path": "op_host/a.cpp",
+                    "start_line": 10,
+                    "end_line": 20,
+                    "source_window": {
+                        "start_line": 10,
+                        "end_line": 20,
+                        "sha256": (
+                            "aabbccddeeff00112233445566778899"
+                            "aabbccddeeff00112233445566778899"
+                        ),
+                    },
+                },
                 {"name": "GetTilingKey", "role_suggested": "key_writer", "score": 0.3},
             ],
             "receiver_candidates": [
@@ -781,17 +819,77 @@ def test_build_candidates_summary_counts() -> None:
         },
         candidates_sha256=_TEST_CAND_SHA,
         section_lines={
-            "writer_candidates": {"start_line": 10, "end_line": 40},
-            "receiver_candidates": {"start_line": 41, "end_line": 60},
+            "writer_candidates": {"start_line": 2, "end_line": 12},
+            "receiver_candidates": {"start_line": 13, "end_line": 17},
+            "alias_candidates": {"start_line": 18, "end_line": 20},
+            "non_sink_root_candidates": {"start_line": 21, "end_line": 21},
+            "extra_entry_candidates": {"start_line": 22, "end_line": 22},
         },
+        candidates_path=cand_path,
     )
     assert summary["counts"]["writers"] == 2
     assert summary["counts"]["sinks_suggested"] == 1
     assert "GetTilingKey" in summary["key_writer_suggested"]
     assert summary["alias_candidates"] == [{"local": "a", "tdf_leaf": "b"}]
-    assert summary["section_lines"]["writer_candidates"]["start_line"] == 10
+    assert summary["section_lines"]["writer_candidates"]["start_line"] == 2
     assert "MUST Read this summary" in summary["must"]
     assert "section_lines" in summary["must"] or "BEFORE" in summary["must"]
+    save = summary["writer_candidates"][0]
+    assert save["end_line"] == 20
+    assert save["source_window_sha256"] == (
+        "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
+    )
+    assert save["candidates_line"] == 3
+    assert "source_window_sha256" in summary["must"]
+    assert "FORBIDDEN" in summary["must"] and "neighbor" in summary["must"]
+    assert summary["non_sink_root_names"] == []
+    assert "non_sink_root_names" in summary["must"]
+
+
+def test_build_candidates_summary_non_sink_root_names() -> None:
+    from uo.scripts.extract_plan_io import build_extract_plan_candidates_summary
+
+    summary = build_extract_plan_candidates_summary(
+        {
+            "writer_candidates": [],
+            "receiver_candidates": [],
+            "alias_candidates": [],
+            "non_sink_root_candidates": [
+                {"name": "ALIGN128", "score": 0.4},
+                {"name": "blockIdx", "score": 0.4},
+                {"name": "", "score": 0.4},
+            ],
+            "extra_entry_candidates": [],
+        },
+        candidates_sha256=_TEST_CAND_SHA,
+    )
+    assert summary["non_sink_root_names"] == ["ALIGN128", "blockIdx"]
+    assert summary["counts"]["non_sink_roots"] == 3
+    assert "prefer []" in summary["must"] or "non_sink_roots" in summary["must"]
+
+
+def test_drop_invented_non_sink_roots() -> None:
+    from uo.scripts.extract_plan_io import drop_invented_non_sink_roots
+
+    plan = {
+        "non_sink_roots": [
+            "ALIGN128",
+            "fBaseParams",
+            "batchSize",
+            {"name": "mapping_kept_for_validate"},
+        ],
+        "receivers": [],
+    }
+    cands = {
+        "non_sink_root_candidates": [
+            {"name": "ALIGN128"},
+            {"name": "blockIdx"},
+        ],
+        "receiver_candidates": [],
+    }
+    tags = drop_invented_non_sink_roots(plan, cands)
+    assert tags.count("drop_invented_non_sink") == 2
+    assert plan["non_sink_roots"] == ["ALIGN128", {"name": "mapping_kept_for_validate"}]
 
 
 def test_scan_yaml_section_lines_public(tmp_path: Path) -> None:
@@ -906,6 +1004,179 @@ def test_apply_backfills_collage_snippet(tmp_path: Path) -> None:
     assert (result.get("enriched") or {}).get("items", 0) >= 1
     saved = (ir / "extract_plan.yaml").read_text(encoding="utf-8")
     assert "..." not in saved.split("evidence_snippet:")[1].split("decision_reason:")[0]
+
+
+def test_apply_drops_invented_non_sink_and_passes(tmp_path: Path) -> None:
+    """Invented non_sink string names are dropped; allowlisted names kept; gate can pass."""
+    from uo.scripts._ir_io import read_yaml
+
+    repo, op = _setup_foo_tiling(tmp_path)
+    cands = propose_extract_plan(repo, op, architecture="arch35")
+    ir = operator_root(repo, op) / "ir"
+    # Ensure allowlist includes ALIGN128 when propose emits it; else inject.
+    ns = list(cands.get("non_sink_root_candidates") or [])
+    if not any(str(c.get("name") or "") == "ALIGN128" for c in ns if isinstance(c, dict)):
+        ns.append(
+            {
+                "name": "ALIGN128",
+                "file_path": "",
+                "start_line": 0,
+                "snippet": "ALIGN128 = ... (assign LHS only)",
+                "score": 0.4,
+                "evidence": ["assign_lhs_only"],
+                "is_tiling_sink_suggested": False,
+            }
+        )
+        cands["non_sink_root_candidates"] = ns
+    write_yaml(ir / "extract_plan_candidates.yaml", cands)
+    window = read_source_window(repo, "op_host/arch35/foo_tiling.cpp", 7, 11, pad=0)
+    sha = hashlib.sha256(window.encode("utf-8")).hexdigest()
+    key_snip = _window_snippet(repo, "op_host/arch35/foo_tiling.cpp", 13, 15)
+    key_win = read_source_window(repo, "op_host/arch35/foo_tiling.cpp", 13, 15, pad=0)
+    key_sha = hashlib.sha256(key_win.encode("utf-8")).hexdigest()
+    plan = {
+        "version": 1,
+        "candidates_sha256": _TEST_CAND_SHA,
+        "writers": [
+            {
+                "name": "SaveStuff",
+                "file_path": "op_host/arch35/foo_tiling.cpp",
+                "role": "tiling_writer",
+                "evidence_source": "source",
+                "source_verified": True,
+                "evidence_files": ["op_host/arch35/foo_tiling.cpp"],
+                "evidence_lines": ["7-11"],
+                "evidence_window_sha256": sha,
+                "evidence_snippet": window,
+                "decision_reason": "blob_ set_* tiling sink",
+            },
+            {
+                "name": "GetTilingKey",
+                "file_path": "op_host/arch35/foo_tiling.cpp",
+                "role": "key_writer",
+                "evidence_source": "source",
+                "source_verified": True,
+                "evidence_files": ["op_host/arch35/foo_tiling.cpp"],
+                "evidence_lines": ["13-15"],
+                "evidence_window_sha256": key_sha,
+                "evidence_snippet": key_snip,
+                "decision_reason": "SetTilingKey",
+            },
+        ],
+        "receivers": [
+            {
+                "name": "blob_",
+                "file_path": "op_host/arch35/foo_tiling.cpp",
+                "is_tiling_sink": True,
+                "evidence_source": "source",
+                "source_verified": True,
+                "evidence_files": ["op_host/arch35/foo_tiling.cpp"],
+                "evidence_lines": ["7-11"],
+                "evidence_window_sha256": sha,
+                "evidence_snippet": window,
+                "decision_reason": "sink",
+            },
+            {
+                "name": "mid_",
+                "file_path": "op_host/arch35/foo_tiling.cpp",
+                "is_tiling_sink": False,
+            },
+        ],
+        "aliases": [],
+        "non_sink_roots": ["ALIGN128", "fBaseParams", "batchSize"],
+    }
+    cw = {c["name"] for c in cands["writer_candidates"]}
+    plan["writers"] = [w for w in plan["writers"] if w["name"] in cw]
+    cr = {c["name"] for c in cands["receiver_candidates"]}
+    plan["receivers"] = [r for r in plan["receivers"] if r["name"] in cr]
+    result = apply_extract_plan(repo, op, plan=plan, check_only=False)
+    assert result["ok"], result
+    assert "drop_invented_non_sink" in ((result.get("enriched") or {}).get("actions") or [])
+    saved = read_yaml(ir / "extract_plan.yaml")
+    assert isinstance(saved, dict)
+    assert "fBaseParams" not in (saved.get("non_sink_roots") or [])
+    assert "batchSize" not in (saved.get("non_sink_roots") or [])
+    assert "ALIGN128" in (saved.get("non_sink_roots") or [])
+
+
+def test_apply_overwrites_neighbor_wrong_sha(tmp_path: Path) -> None:
+    """Wrong neighbor evidence_window_sha256 is corrected when files/lines/snippet match disk."""
+    from uo.scripts._ir_io import read_yaml
+
+    repo, op = _setup_foo_tiling(tmp_path)
+    cands = propose_extract_plan(repo, op, architecture="arch35")
+    ir = operator_root(repo, op) / "ir"
+    write_yaml(ir / "extract_plan_candidates.yaml", cands)
+    window = read_source_window(repo, "op_host/arch35/foo_tiling.cpp", 7, 11, pad=0)
+    actual_sha = hashlib.sha256(window.encode("utf-8")).hexdigest()
+    neighbor_sha = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    assert neighbor_sha != actual_sha
+    key_snip = _window_snippet(repo, "op_host/arch35/foo_tiling.cpp", 13, 15)
+    key_win = read_source_window(repo, "op_host/arch35/foo_tiling.cpp", 13, 15, pad=0)
+    key_sha = hashlib.sha256(key_win.encode("utf-8")).hexdigest()
+    plan = {
+        "version": 1,
+        "candidates_sha256": _TEST_CAND_SHA,
+        "writers": [
+            {
+                "name": "SaveStuff",
+                "file_path": "op_host/arch35/foo_tiling.cpp",
+                "role": "tiling_writer",
+                "evidence_source": "source",
+                "source_verified": True,
+                "evidence_files": ["op_host/arch35/foo_tiling.cpp"],
+                "evidence_lines": ["7-11"],
+                "evidence_window_sha256": neighbor_sha,
+                "evidence_snippet": window,
+                "decision_reason": "blob_ set_* tiling sink",
+            },
+            {
+                "name": "GetTilingKey",
+                "file_path": "op_host/arch35/foo_tiling.cpp",
+                "role": "key_writer",
+                "evidence_source": "source",
+                "source_verified": True,
+                "evidence_files": ["op_host/arch35/foo_tiling.cpp"],
+                "evidence_lines": ["13-15"],
+                "evidence_window_sha256": key_sha,
+                "evidence_snippet": key_snip,
+                "decision_reason": "SetTilingKey",
+            },
+        ],
+        "receivers": [
+            {
+                "name": "blob_",
+                "file_path": "op_host/arch35/foo_tiling.cpp",
+                "is_tiling_sink": True,
+                "evidence_source": "source",
+                "source_verified": True,
+                "evidence_files": ["op_host/arch35/foo_tiling.cpp"],
+                "evidence_lines": ["7-11"],
+                "evidence_window_sha256": neighbor_sha,
+                "evidence_snippet": window,
+                "decision_reason": "sink",
+            },
+            {
+                "name": "mid_",
+                "file_path": "op_host/arch35/foo_tiling.cpp",
+                "is_tiling_sink": False,
+            },
+        ],
+        "aliases": [],
+        "non_sink_roots": [],
+    }
+    cw = {c["name"] for c in cands["writer_candidates"]}
+    plan["writers"] = [w for w in plan["writers"] if w["name"] in cw]
+    cr = {c["name"] for c in cands["receiver_candidates"]}
+    plan["receivers"] = [r for r in plan["receivers"] if r["name"] in cr]
+    result = apply_extract_plan(repo, op, plan=plan, check_only=False)
+    assert result["ok"], result
+    assert "sha" in ((result.get("enriched") or {}).get("actions") or [])
+    saved = read_yaml(ir / "extract_plan.yaml")
+    assert isinstance(saved, dict)
+    save_w = next(w for w in saved["writers"] if w.get("name") == "SaveStuff")
+    assert save_w["evidence_window_sha256"] == actual_sha
+    assert save_w["evidence_window_sha256"] != neighbor_sha
 
 
 def test_bucket_extract_plan_errors_dedupes() -> None:

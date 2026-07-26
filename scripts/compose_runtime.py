@@ -623,6 +623,49 @@ _OPENCODE_AGENT_ALLOWED_KEYS = frozenset(
 )
 
 
+def _opencode_bash_permission() -> dict[str, str]:
+    """OpenCode frontmatter bash rules (last match wins: deny-all first, then allows).
+
+    Aligns with ``authorize`` ``BASH_READONLY_INSPECT`` + ``acp *``.
+    Without these, primary ``bash: *: deny`` blocks ``grep``/``rg`` before Pilot authorize runs.
+    """
+    return {
+        "*": "deny",
+        "acp *": "allow",
+        # Locate-only search (bash tool; OpenCode Grep tool is separate → permission.grep)
+        "grep *": "allow",
+        "Grep *": "allow",
+        "rg *": "allow",
+        "ripgrep *": "allow",
+        "findstr *": "allow",
+        "Select-String *": "allow",
+        "sls *": "allow",
+        # Path / listing probes
+        "ls": "allow",
+        "ls *": "allow",
+        "dir": "allow",
+        "dir *": "allow",
+        "pwd": "allow",
+        "tree": "allow",
+        "tree *": "allow",
+        "Get-ChildItem *": "allow",
+        "gci *": "allow",
+        "Get-Item *": "allow",
+        "gi *": "allow",
+        "Get-Location": "allow",
+        "Get-Location *": "allow",
+        "gl": "allow",
+        "Test-Path *": "allow",
+        "Resolve-Path *": "allow",
+        "cd *": "allow",
+        "Set-Location *": "allow",
+        "sl *": "allow",
+        "Push-Location *": "allow",
+        "Pop-Location": "allow",
+        "Pop-Location *": "allow",
+    }
+
+
 def _compose_agent_md(repo: Path, agent_meta: dict[str, Any]) -> str:
     skills = repo / "skills"
     aid = agent_meta.get("id", "agent")
@@ -647,16 +690,25 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any]) -> str:
         "name": aid,
         "description": agent_meta.get("description") or aid,
     }
+    bash_perm = _opencode_bash_permission()
     if agent_meta.get("mode") == "primary":
         front["mode"] = "primary"
         front["permission"] = {
-            "bash": {"*": "deny", "acp *": "allow"},
+            "bash": bash_perm,
+            # Native OpenCode Grep tool (not bash); default allow, set explicitly.
+            "grep": "allow",
             "edit": {"*": "ask"},
             "write": {"*": "ask"},
         }
     else:
         # OpenCode recognizes mode=subagent (not type=subagent).
         front["mode"] = "subagent"
+        # Same bash fence as primary so Task does not inherit a silent deny-all
+        # while still allowing locate-only search + acp (Pilot authorize remains).
+        front["permission"] = {
+            "bash": bash_perm,
+            "grep": "allow",
+        }
 
     body = f"""# Agent: {aid}
 
