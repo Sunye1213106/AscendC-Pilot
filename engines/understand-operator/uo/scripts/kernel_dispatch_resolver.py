@@ -76,7 +76,7 @@ _FUNCTION_RE = re.compile(
     r"(?P<decl>"
     r"(?:template\s*<[^;{}]{0,2500}>\s*)?"
     r"(?:(?:extern\s+\"C\"\s+)?__global__\s+__aicore__\s+void|"
-    r"(?:inline\s+)?__aicore__\s+void)"
+    r"(?:inline\s+)?__aicore__\s+void))"
     r"\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(",
     re.MULTILINE | re.DOTALL,
 )
