@@ -6,6 +6,7 @@ layers, so ``detect_score_post`` sees macro-closed registration chains.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import time
 from pathlib import Path
@@ -13,7 +14,7 @@ from typing import Any
 
 from uo.scripts._ir_io import read_yaml, write_yaml
 
-MATERIALIZER_VERSION = "1.0.0"
+MATERIALIZER_VERSION = "1.1.0"
 
 _CONTRACTS_PATH = (
     Path(__file__).resolve().parents[1] / "resources" / "ascendc_macro_contracts.yaml"
@@ -379,14 +380,9 @@ def _upgrade_entrypoint_from_invocations(
 
 def _confirmed_source_files(uo_root: Path, repo_root: Path) -> list[Path]:
     """Resolve confirmed scope files under operator / repo roots."""
-    # Prefer current-run scope; fall back to common locations.
-    candidates = [
-        uo_root / "runs",
-    ]
     paths: list[Path] = []
-    for runs in candidates:
-        if not runs.is_dir():
-            continue
+    runs = uo_root / "runs"
+    if runs.is_dir():
         for scope in sorted(runs.glob("*/scope/scope_confirmed.yaml"), reverse=True):
             data = read_yaml(scope) or {}
             files = data.get("confirmed_source_files") or data.get("confirmed_file_list") or []
@@ -396,21 +392,86 @@ def _confirmed_source_files(uo_root: Path, repo_root: Path) -> list[Path]:
                 )
                 if not rel:
                     continue
-                for root in (repo_root, uo_root.parent.parent if uo_root.name == "uo" else repo_root):
-                    p = (root / rel).resolve()
-                    if p.is_file():
-                        paths.append(p)
+                for base in (repo_root, uo_root.parent.parent if uo_root.name == "uo" else repo_root):
+                    path = (base / rel).resolve()
+                    if path.is_file():
+                        paths.append(path)
                         break
             if paths:
-                return paths
-    # Fallback: scan op_host/op_kernel/op_graph under repo_root.
-    for sub in ("op_host", "op_kernel", "op_graph"):
-        d = repo_root / sub
-        if d.is_dir():
-            paths.extend(sorted(d.rglob("*.cpp")))
-            paths.extend(sorted(d.rglob("*.h")))
-            paths.extend(sorted(d.rglob("*.hpp")))
-    return paths
+                break
+    if not paths:
+        # Fallback: scan op_host/op_kernel/op_graph under repo_root.
+        for sub in ("op_host", "op_kernel", "op_graph"):
+            directory = repo_root / sub
+            if directory.is_dir():
+                paths.extend(sorted(directory.rglob("*.cpp")))
+                paths.extend(sorted(directory.rglob("*.h")))
+                paths.extend(sorted(directory.rglob("*.hpp")))
+    # Stable de-duplication avoids repeated reads from overlapping scope aliases.
+    unique: dict[str, Path] = {}
+    for path in paths:
+        try:
+            key = str(path.resolve()).casefold()
+        except OSError:
+            key = str(path).casefold()
+        unique.setdefault(key, path)
+    return sorted(unique.values(), key=lambda p: str(p).replace("\\", "/"))
+
+
+def _relative_path(path: Path, repo_root: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(repo_root.resolve())).replace("\\", "/")
+    except ValueError:
+        return path.name
+
+
+def _source_cache_key(
+    source_files: list[Path],
+    repo_root: Path,
+    *,
+    architecture: str,
+    contracts_hash: str,
+    code_hash: str,
+) -> str:
+    rows: list[dict[str, Any]] = []
+    for path in source_files:
+        try:
+            stat = path.stat()
+            rows.append(
+                {
+                    "path": _relative_path(path, repo_root),
+                    "size": int(stat.st_size),
+                    "mtime_ns": int(stat.st_mtime_ns),
+                }
+            )
+        except OSError:
+            rows.append({"path": _relative_path(path, repo_root), "missing": True})
+    payload = {
+        "architecture": architecture,
+        "contracts_hash": contracts_hash,
+        "materializer_hash": code_hash,
+        "files": rows,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:24]
+
+
+def _reattach_contracts(
+    invocations: list[dict[str, Any]], contracts: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    by_name = {str(contract.get("name")): contract for contract in contracts}
+    out: list[dict[str, Any]] = []
+    for serial in invocations:
+        if not isinstance(serial, dict):
+            continue
+        macro = str(serial.get("macro") or "")
+        contract = by_name.get(macro)
+        if not contract:
+            continue
+        item = dict(serial)
+        item["contract"] = contract
+        item["handler"] = (contract.get("materializer") or {}).get("handler")
+        out.append(item)
+    return out
 
 
 def materialize_macro_semantics(
@@ -423,12 +484,18 @@ def materialize_macro_semantics(
     """Scan macros, upgrade entrypoint_graph, write ``ir/macro_semantics.yaml``."""
     t0 = time.perf_counter()
     from uo._operator.artifacts import existing_operator_root
+    from uo.scripts.kernel_dispatch_resolver import (
+        apply_cached_kernel_dispatch_facts,
+        resolve_kernel_dispatch_semantics,
+    )
 
     root = uo_root or existing_operator_root(repo_root, op_name)
     ir_dir = root / "ir"
     ir_dir.mkdir(parents=True, exist_ok=True)
 
     contracts = load_macro_contracts()
+    contracts_h = macro_contracts_hash()
+    code_h = materializer_hash()
     entrypoint_graph = read_yaml(ir_dir / "entrypoint_graph.yaml") or {
         "version": 2,
         "nodes": [],
@@ -436,65 +503,102 @@ def materialize_macro_semantics(
     }
 
     source_files = _confirmed_source_files(root, repo_root)
-    invocations: list[dict[str, Any]] = []
-    for path in source_files:
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        try:
-            rel = str(path.resolve().relative_to(repo_root.resolve())).replace("\\", "/")
-        except ValueError:
-            rel = path.name
-        # Strip contract object before serializing invocations.
-        for inv in scan_macro_invocations(rel, text, contracts):
-            serial = {k: v for k, v in inv.items() if k != "contract"}
-            serial["handler"] = inv.get("handler")
-            invocations.append(serial)
-            # Keep contract for upgrade path via re-attach.
-            inv["_serial"] = serial
+    cache_key = _source_cache_key(
+        source_files,
+        repo_root,
+        architecture=architecture,
+        contracts_hash=contracts_h,
+        code_hash=code_h,
+    )
+    previous = read_yaml(ir_dir / "macro_semantics.yaml") or {}
+    cache_hit = bool(
+        previous.get("source_cache_key") == cache_key
+        and previous.get("macro_contracts_hash") == contracts_h
+        and previous.get("materializer_hash") == code_h
+        and isinstance(previous.get("invocations"), list)
+    )
 
-    # Re-scan with contracts attached for upgrade.
+    source_texts: dict[str, str] = {}
+    invocations: list[dict[str, Any]] = []
     inv_full: list[dict[str, Any]] = []
-    by_key = {(i["file_path"], i["start_line"], i["macro"]): i for i in invocations}
-    for path in source_files:
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        try:
-            rel = str(path.resolve().relative_to(repo_root.resolve())).replace("\\", "/")
-        except ValueError:
-            rel = path.name
-        for inv in scan_macro_invocations(rel, text, contracts):
-            key = (inv["file_path"], inv["start_line"], inv["macro"])
-            if key in by_key:
+    bytes_read = 0
+    read_count = 0
+    scan_t0 = time.perf_counter()
+
+    if cache_hit:
+        invocations = [dict(item) for item in previous.get("invocations") or [] if isinstance(item, dict)]
+        inv_full = _reattach_contracts(invocations, contracts)
+    else:
+        for path in source_files:
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            rel = _relative_path(path, repo_root)
+            source_texts[rel] = text
+            bytes_read += len(text.encode("utf-8", errors="replace"))
+            read_count += 1
+            for inv in scan_macro_invocations(rel, text, contracts):
                 inv_full.append(inv)
+                serial = {k: v for k, v in inv.items() if k != "contract"}
+                serial["handler"] = inv.get("handler")
+                invocations.append(serial)
+    scan_ms = int((time.perf_counter() - scan_t0) * 1000)
 
     emitted_nodes, emitted_edges, unresolved = _upgrade_entrypoint_from_invocations(
         entrypoint_graph, inv_full, architecture=architecture
     )
 
     # Also upgrade any EP macro nodes even if scan missed (status verified, confidence None).
-    for n in entrypoint_graph.get("nodes") or []:
-        if not isinstance(n, dict):
+    for node in entrypoint_graph.get("nodes") or []:
+        if not isinstance(node, dict):
             continue
-        if n.get("macro") and not n.get("confidence"):
-            n["confidence"] = "source_verified"
-            n["verification_source"] = "macro_contract"
-            n["status"] = n.get("status") or "verified"
-            emitted_nodes.append(n)
+        if node.get("macro") and not node.get("confidence"):
+            node["confidence"] = "source_verified"
+            node["verification_source"] = "macro_contract"
+            node["status"] = node.get("status") or "verified"
+            emitted_nodes.append(node)
+
+    dispatch_t0 = time.perf_counter()
+    cached_dispatch = previous.get("kernel_dispatch_facts") if isinstance(previous, dict) else None
+    if cache_hit and isinstance(cached_dispatch, dict):
+        entrypoint_graph = apply_cached_kernel_dispatch_facts(
+            entrypoint_graph, cached_dispatch, architecture=architecture
+        )
+        dispatch_facts = cached_dispatch
+    else:
+        if not source_texts:
+            # Cache did not contain dispatch facts; load only confirmed sources once.
+            for path in source_files:
+                try:
+                    text = path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                rel = _relative_path(path, repo_root)
+                source_texts[rel] = text
+                bytes_read += len(text.encode("utf-8", errors="replace"))
+                read_count += 1
+        entrypoint_graph, dispatch_facts = resolve_kernel_dispatch_semantics(
+            entrypoint_graph,
+            source_texts,
+            op_name=op_name,
+            architecture=architecture,
+        )
+    dispatch_ms = int((time.perf_counter() - dispatch_t0) * 1000)
 
     write_yaml(ir_dir / "entrypoint_graph.yaml", entrypoint_graph)
 
     timing_ms = int((time.perf_counter() - t0) * 1000)
+    dispatch_stats = dict((dispatch_facts or {}).get("stats") or {})
     payload = {
-        "version": 1,
+        "version": 2,
         "op_name": op_name,
         "architecture": architecture,
         "materializer_version": MATERIALIZER_VERSION,
-        "macro_contracts_hash": macro_contracts_hash(),
-        "materializer_hash": materializer_hash(),
+        "macro_contracts_hash": contracts_h,
+        "materializer_hash": code_h,
+        "source_cache_key": cache_key,
+        "cache_hit": cache_hit,
         "invocations": invocations,
         "emitted_nodes": [
             {"id": n.get("id"), "macro": n.get("macro"), "role": n.get("role")}
@@ -502,13 +606,21 @@ def materialize_macro_semantics(
             if isinstance(n, dict)
         ],
         "emitted_edges": emitted_edges,
+        "kernel_dispatch_facts": dispatch_facts,
         "unresolved": unresolved,
         "stats": {
             "contract_count": len(contracts),
+            "source_file_count": len(source_files),
+            "source_read_count": read_count,
+            "source_bytes_read": bytes_read,
+            "cache_hit": cache_hit,
+            "scan_timing_ms": scan_ms,
+            "kernel_dispatch_timing_ms": dispatch_ms,
             "invocation_count": len(invocations),
             "emitted_edge_count": len(emitted_edges),
             "emitted_node_count": len(emitted_nodes),
             "unresolved_count": len(unresolved),
+            "kernel_dispatch": dispatch_stats,
             "timing_ms": timing_ms,
         },
     }
@@ -520,4 +632,5 @@ def materialize_macro_semantics(
         "materializer_hash": payload["materializer_hash"],
         "entrypoint_graph": entrypoint_graph,
         "emitted_edges": emitted_edges,
+        "kernel_dispatch_facts": dispatch_facts,
     }
