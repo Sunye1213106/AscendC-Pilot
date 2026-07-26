@@ -15,6 +15,8 @@ from typing import Any
 from uo.scripts.resolve_entrypoints import _apply_link_status, _build_extraction_units, _evaluate_closure
 
 _VERIFIED = "source_verified"
+_MACRO_CALL_NAME_RE = re.compile(r"\b([A-Z][A-Z0-9_]*)\s*\(")
+_ARCH_SEGMENT_RE = re.compile(r"arch[0-9]+", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -136,13 +138,15 @@ def _expanded_body(body: str, macros: dict[str, dict[str, Any]], *, max_depth: i
     expanded = body
     seen: set[str] = set()
     frontier = body
+    available = set(macros)
     for _ in range(max_depth):
-        invoked: list[str] = []
-        for name in macros:
-            if name in seen:
-                continue
-            if re.search(rf"\b{re.escape(name)}\s*\(", frontier):
-                invoked.append(name)
+        # Extract call-like uppercase identifiers once per expansion level instead
+        # of running one regex over the full body for every macro definition.
+        invoked = sorted(
+            {match.group(1) for match in _MACRO_CALL_NAME_RE.finditer(frontier)}
+            & available
+            - seen
+        )
         if not invoked:
             break
         chunks = []
@@ -174,6 +178,12 @@ def _called_names(text: str, names: set[str]) -> set[str]:
 
 def _path_parts(path: str) -> set[str]:
     return {part.casefold() for part in str(path or "").replace("\\", "/").split("/") if part}
+
+
+def _architecture_compatible(path: str, architecture: str) -> bool:
+    segments = _path_parts(path)
+    declared = {segment for segment in segments if _ARCH_SEGMENT_RE.fullmatch(segment)}
+    return not declared or str(architecture or "").casefold() in declared
 
 
 def _demote_false_kernel_entries(nodes: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -318,6 +328,8 @@ def resolve_kernel_dispatch_semantics(
     macros_by_file: dict[str, dict[str, dict[str, Any]]] = {}
     for file_path, text in source_texts.items():
         if "op_kernel" not in _path_parts(file_path):
+            continue
+        if not _architecture_compatible(file_path, architecture):
             continue
         all_functions.extend(_functions(file_path, text))
         macros_by_file[file_path] = _macro_definitions(text)
