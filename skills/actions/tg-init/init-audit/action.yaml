@@ -19,9 +19,14 @@ policies:
 task_prompt_id: tg/init-audit
 context_profile_id: tg-init-init-audit
 output_contract_id: init-audit-v1
-allowed_write_paths: []
+allowed_write_paths:
+- tg/init/audit_report.yaml
 forbidden_write_paths: []
-allowed_read_paths: []
+allowed_read_paths:
+- tg/snapshot/**
+- tg/contract/**
+- tg/realization/**
+- tg/init/**
 forbidden_read_paths: []
 checker:
   required: true

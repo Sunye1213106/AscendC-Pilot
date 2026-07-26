@@ -48,23 +48,22 @@ blocking LLM 未清且预算未尽 → 不可 advance。
   （字段：`writers` / `receivers` / `aliases` / `non_sink_roots` / `extra_host_entries`）
 - **禁止**：裁决 `ir/llm_tasks.yaml` 里的 `mark_missing` / `dispatches_to` / `entrypoint_dispatch_bind`
 - **禁止**：把 call_edge 裁决写进 `extract_plan.yaml`（那是假闭合）
+- **禁止**：自造 `semantic_groups` / essay 结构代替 `writers` 列表
 - 空候选 / 证据不足的 **边** → **留给**后续 `adjudicate_llm_tasks` → `apply_semantic_patch`（写 ledger），本步不要 ACCEPT
 
-**产出 schema（硬）**：
-- 顶栏必填：`actor_id: uo-semantic-resolve`、`run_id`（当前 run）、`workflow_id: uo-init`、
-  `candidates_sha256`（`extract_plan_candidates.yaml` 的 sha256；Gate 强制匹配）
-- `writers` / `receivers` / `aliases`：mapping 列表；证据不足则 **omit**（禁止自造 unresolved 对象）
-- 每条 accepted writer/receiver 携带 **source-evidence 决策字段**：
-  `evidence_source`（source|cbm|candidate_only）、`source_verified`、`evidence_files`、`evidence_lines`、`decision_reason`
-  - `candidate_only` → 必须 `source_verified: false`，可标 `confidence: candidate`；禁止无文件假 verified
-  - 弱候选（低分、assign_lhs_only、仅 has_set_field、同名、qn 不全、start_line 重叠、tiling/key/non-sink）→ **必须先读源码窗口**再 accept/omit
-  - `set_*`  alone 不能当 TilingData writer；AlignTo 类 helper → ignore/omit
-  - finalize 校验：`source_verified:true` 无 `evidence_files` 或 evidence_source 非 source|cbm → 拒；弱候选 + tiling_writer/key_writer + candidate_only 无 decision_reason → 拒
-- `non_sink_roots` / `derived_roots`：**纯字符串名字列表**（例：`[ALIGN128, blockIdx]`）
-  - 候选可有空 `file_path` / `assign_lhs_only`——对该列表仍可确认短名（**字符串契约不变**）
-  - 确认前仍须读源码（与 writer 弱候选规则一致）；证据写在 writer/receiver 元数据，不在此列表加 mapping
-  - **禁止**写成 `{name, adjudication, missing_evidence, …}` mapping
-  - 不确认则 omit，不要用 adjudication 占位
+**证据（硬 · 公共策略，禁止本 Action 另立例外）**：
+- 服从 `evidence` / `code-access` / `source-authority`（`DEFAULT_POLICY_IDS`；compose 已注入 Agent）。
+- 能力路径：`cbm-navigation`（`search_graph` → **`get_code_snippet`** / `acp cbm lookup`）→ `source-reading` 窗口 Read。
+- 高置信 / `source_verified:true` ⇒ 磁盘窗口 sha **且** 连续 `evidence_snippet`（共享 `require_disk_window_proof`；禁止仅 sha / 拼贴行）。
+- prepare 写 `extract_plan_candidates.summary.yaml`（本步字段形状 + 公共 `ir_summary` 的 `section_lines`/`must`）。读序服从 `code-access` 大 IR 模式（stub 自动 `MUST_READ_ORDER`）。
+- 只读定位服从 `code-access`（Grep/bash rg 等）；**不算** verified。AlignTo/CeilDivide → `role:ignore` / omit。
+- 有 sink 候选且 promote writer → `receivers` 不得空；`GetTilingKey`（key_writer 建议）须 `key_writer` 或显式 `ignore`。
+
+**产出 schema（硬 · 本 Action 合同）**：
+- 顶栏：`actor_id` / `run_id` / `workflow_id` / `candidates_sha256`（prepare stub 原样复制）
+- 集合：`writers` / `receivers` / `aliases` / `non_sink_roots` / `extra_host_entries` / `derived_roots`
+- accepted writer/receiver 字段：`evidence_source`、`source_verified`、`evidence_files`、`evidence_lines`、`evidence_snippet`、`decision_reason`
+- `non_sink_roots` / `derived_roots`：**纯字符串名字列表**；禁止 adjudication mapping；不确认则 omit
 
 流程：
 1. prepare：确定性 `propose_extract_plan` → `ir/extract_plan_candidates.yaml`

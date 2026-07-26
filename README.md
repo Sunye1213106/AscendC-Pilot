@@ -54,7 +54,7 @@ pip install -e "./engines/testcase-generation[solver]"
 acp doctor
 ```
 
-CBM： [docs/cbm-mcp-setup.md](./docs/cbm-mcp-setup.md)
+CBM：`.\install.ps1 cbm`（勿把上游脚本下载成仓库根目录的 `install.ps1`）。详见 [docs/cbm-mcp-setup.md](./docs/cbm-mcp-setup.md)
 
 ---
 

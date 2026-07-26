@@ -16,5 +16,7 @@
 ## Hard Constraints
 
 - MUST：高优先级证据冲突时，以更高优先级为准并记录冲突。
+- MUST：声称「已核对源码」时，证据层级必须落到第 1 级（定向 `path:line` 窗口），并满足 `evidence` 策略的 snippet 磁盘比对。
 - MUST NOT：用模型记忆或命名猜测闭合 KEY / 合同字段。
 - MUST NOT：把过期本地记忆当作当前源码事实。
+- MUST NOT：用候选表 / 搜索摘要冒充第 1 级源码权威。

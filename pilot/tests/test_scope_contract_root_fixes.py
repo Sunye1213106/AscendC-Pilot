@@ -107,6 +107,25 @@ def test_extract_pilot_strips_cd_wrapper() -> None:
     assert extract_pilot_command("acp next --project .") == "acp next --project ."
 
 
+def test_extract_pilot_strips_env_prefix_before_acp() -> None:
+    """ses_0662: $env:VAR=…; acp … must authorize as harness CLI."""
+    cmd = "$env:UO_EXTRACT_MAX_NON_SINK = '1024'; acp run-action extract_plan"
+    assert extract_pilot_command(cmd) == "acp run-action extract_plan"
+    cmd2 = "UO_EXTRACT_MAX_NON_SINK=1024 acp run-action extract_plan --project ."
+    assert extract_pilot_command(cmd2) == "acp run-action extract_plan --project ."
+
+
+def test_authorize_allows_env_prefixed_acp(tmp_path: Path) -> None:
+    start_workflow(tmp_path, "uo-init", phase="extract", force_phase=True)
+    cmd = (
+        "$env:UO_EXTRACT_MAX_NON_SINK = '1024'; "
+        f'acp run-action extract_plan --project "{tmp_path}"'
+    )
+    verdict = authorize(tmp_path, tool="bash", command=cmd, agent="ascendc-pilot")
+    assert verdict.get("decision") == "allow", verdict
+    assert verdict.get("reason_code") == "HARNESS_CLI"
+
+
 def test_authorize_allows_cd_and_acp(tmp_path: Path) -> None:
     start_workflow(tmp_path, "uo-init")
     verdict = authorize(
@@ -117,3 +136,118 @@ def test_authorize_allows_cd_and_acp(tmp_path: Path) -> None:
     )
     assert verdict.get("decision") == "allow"
     assert verdict.get("ok") is True
+
+
+def test_authorize_allows_acp_record_index_with_ascendc_pilot_path(tmp_path: Path) -> None:
+    """ses_0663: "cp " ⊂ "acp " must not trip BASH_PROTECTED_WRITE when args contain .ascendc-pilot/."""
+    start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
+    cmd = (
+        'acp uo-scope record-index '
+        f'--project "{tmp_path}" '
+        f'--cbm-repo "{tmp_path / ".ascendc-pilot" / "uo" / "cbm" / "index_stage"}"'
+    )
+    verdict = authorize(tmp_path, tool="bash", command=cmd, agent="ascendc-pilot")
+    assert verdict.get("decision") == "allow", verdict
+    assert verdict.get("ok") is True
+    assert verdict.get("reason_code") == "HARNESS_CLI"
+
+
+def test_authorize_still_denies_shell_write_into_ascendc_pilot(tmp_path: Path) -> None:
+    start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
+    cmd = f'echo hi > "{tmp_path / ".ascendc-pilot" / "uo" / "cbm" / "index_meta.json"}"'
+    verdict = authorize(tmp_path, tool="bash", command=cmd, agent="ascendc-pilot")
+    assert verdict.get("decision") == "deny", verdict
+    assert verdict.get("reason_code") == "BASH_PROTECTED_WRITE"
+
+
+def test_output_contract_accepts_receipt_with_snapshot_run_id_only(tmp_path: Path) -> None:
+    """ses_0663 deadlock: finalize_scope nested run_id under snapshot; contract must still pass."""
+    from ascendc_pilot.actions.runtime import _contract_identity_ok
+
+    start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
+    run = tmp_path / ".ascendc-pilot" / "uo" / "runs" / "RUN_SNAP" / "scope"
+    run.mkdir(parents=True)
+    (run / "scope_confirmed.yaml").write_text(
+        "status: confirmed\nrun_id: RUN_SNAP\nworkflow_id: uo-init\n"
+        "action_id: scope_confirmation\nconfirmed_file_list: [{path: a.cpp}]\n",
+        encoding="utf-8",
+    )
+    # Legacy shape: no top-level run_id (only snapshot.run_id) — previously ARTIFACT_IDENTITY_MISSING.
+    (run / "receipt.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "status": "pass",
+                "snapshot": {"run_id": "RUN_SNAP"},
+                "artifact": {"type": "runs.receipt"},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    cbm = tmp_path / ".ascendc-pilot" / "uo" / "cbm"
+    cbm.mkdir(parents=True)
+    (cbm / "index_meta.json").write_text(
+        json.dumps({"indexed_via": "mcp", "cbm_project": "p", "indexed_at": "t"}),
+        encoding="utf-8",
+    )
+
+    id_check = _contract_identity_ok(
+        run / "receipt.yaml",
+        run_id="RUN_SNAP",
+        workflow_id="uo-init",
+        phase="scope",
+        action_id="scope_confirmation",
+        actor_id="ascendc-pilot",
+        role_id="controller",
+    )
+    assert id_check.get("ok") is True, id_check
+
+    checked = _check_output_contract(
+        tmp_path,
+        "scope-confirmed-v1",
+        run_id="RUN_SNAP",
+        workflow_id="uo-init",
+        phase="scope",
+        action_id="scope_confirmation",
+        actor_id="ascendc-pilot",
+        role_id="controller",
+    )
+    assert checked.get("ok") is True, checked
+
+
+def test_authorize_allows_readonly_inspect_commands(tmp_path: Path) -> None:
+    start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
+    allowed = [
+        f'Get-ChildItem "{tmp_path}" -Directory',
+        f'Get-ChildItem "{tmp_path}" | Select-Object Name, Mode',
+        f'ls "{tmp_path}"',
+        "pwd",
+        f'cd "{tmp_path}"; Get-ChildItem',
+        f'Test-Path "{tmp_path / ".ascendc-pilot"}"',
+        f'tree "{tmp_path}"',
+        f'rg -n "SaveStuff" "{tmp_path}"',
+        f'grep -n "blob_" "{tmp_path}"',
+        f'Select-String -Path "{tmp_path}\\*.cpp" -Pattern "set_"',
+        f'findstr /n /c:"tiling" "{tmp_path}\\foo.cpp"',
+    ]
+    for cmd in allowed:
+        verdict = authorize(tmp_path, tool="bash", command=cmd, agent="ascendc-pilot")
+        assert verdict.get("decision") == "allow", (cmd, verdict)
+        assert verdict.get("reason_code") == "BASH_READONLY_INSPECT", (cmd, verdict)
+
+
+def test_authorize_readonly_inspect_still_blocks_writes(tmp_path: Path) -> None:
+    start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
+    denied = [
+        f'Get-ChildItem "{tmp_path}" > "{tmp_path / "out.txt"}"',
+        f'Get-ChildItem "{tmp_path}"; Remove-Item -Recurse "{tmp_path / "x"}"',
+        f'mkdir "{tmp_path / "newdir"}"',
+    ]
+    for cmd in denied:
+        verdict = authorize(tmp_path, tool="bash", command=cmd, agent="ascendc-pilot")
+        assert verdict.get("decision") != "allow" or verdict.get("reason_code") != "BASH_READONLY_INSPECT", (
+            cmd,
+            verdict,
+        )
+        assert verdict.get("decision") in {"deny", "ask"}, (cmd, verdict)

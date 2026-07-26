@@ -1,10 +1,23 @@
 """Shared extract_plan load / validate helpers (no operator-specific names)."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
 from uo.scripts._ir_io import read_yaml
+from uo.scripts.ir_summary import (
+    DEFAULT_LARGE_IR_MUST,
+    attach_large_ir_meta,
+    scan_yaml_section_lines,
+)
+from uo.scripts.source_evidence import (
+    MIN_EVIDENCE_SNIPPET_CHARS as _MIN_EVIDENCE_SNIPPET_CHARS,
+    is_placeholder_sha256,
+    parse_line_span as _parse_line_span,
+    require_disk_window_proof,
+    require_high_confidence_source_fields,
+)
 
 WRITER_ROLES = frozenset(
     {
@@ -27,7 +40,7 @@ CHAIN_ROLES = frozenset(
 )
 
 EVIDENCE_SOURCES = frozenset({"source", "cbm", "candidate_only"})
-PROMOTED_WRITER_ROLES = frozenset({"tiling_writer", "key_writer"})
+PROMOTED_WRITER_ROLES = frozenset({"tiling_writer", "key_writer", "workspace_writer"})
 WEAK_SCORE_THRESHOLD = 0.55
 
 
@@ -46,8 +59,116 @@ def load_extract_plan(uo_root: Path) -> dict[str, Any] | None:
     path = uo_root / "ir" / "extract_plan.yaml"
     if not path.is_file():
         return None
+    # read_yaml applies literal-block sanitize for extract_plan.yaml
     data = read_yaml(path)
     return data if isinstance(data, dict) else None
+
+
+_CANDIDATES_SECTION_KEYS = (
+    "writer_candidates",
+    "receiver_candidates",
+    "alias_candidates",
+    "non_sink_root_candidates",
+    "extra_entry_candidates",
+)
+
+
+def scan_candidates_section_lines(candidates_path: Path) -> dict[str, dict[str, int]]:
+    """Thin wrap: extract_plan candidates section keys → public YAML line scan."""
+    return scan_yaml_section_lines(candidates_path, _CANDIDATES_SECTION_KEYS)
+
+
+def build_extract_plan_candidates_summary(
+    candidates: dict[str, Any],
+    *,
+    candidates_sha256: str = "",
+    section_lines: dict[str, dict[str, int]] | None = None,
+    candidates_line_count: int | None = None,
+) -> dict[str, Any]:
+    """Action-shaped summary; public ``section_lines``/``must`` via ``ir_summary``."""
+    writers = [c for c in (candidates.get("writer_candidates") or []) if isinstance(c, dict)]
+    receivers = [
+        c for c in (candidates.get("receiver_candidates") or []) if isinstance(c, dict)
+    ]
+    sinks = [c for c in receivers if c.get("is_tiling_sink_suggested") is True]
+    aliases = [c for c in (candidates.get("alias_candidates") or []) if isinstance(c, dict)]
+    non_sinks = [
+        c for c in (candidates.get("non_sink_root_candidates") or []) if isinstance(c, dict)
+    ]
+    extras = [
+        c for c in (candidates.get("extra_entry_candidates") or []) if isinstance(c, dict)
+    ]
+
+    def _short_writer(c: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "name": str(c.get("name") or "").strip(),
+            "file_path": str(c.get("file_path") or "").replace("\\", "/"),
+            "start_line": int(c.get("start_line") or 0) or None,
+            "role_suggested": str(c.get("role_suggested") or "").strip() or None,
+            "score": c.get("score"),
+        }
+
+    def _short_recv(c: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "name": str(c.get("name") or "").strip(),
+            "file_path": str(c.get("file_path") or "").replace("\\", "/"),
+            "is_tiling_sink_suggested": bool(c.get("is_tiling_sink_suggested")),
+            "score": c.get("score"),
+        }
+
+    key_writers = [
+        str(c.get("name") or "").strip()
+        for c in writers
+        if str(c.get("role_suggested") or "").strip() == "key_writer"
+        and str(c.get("name") or "").strip()
+    ]
+    domain = {
+        "kind": "extract_plan_candidates_summary",
+        "counts": {
+            "writers": len(writers),
+            "receivers": len(receivers),
+            "sinks_suggested": len(sinks),
+            "aliases": len(aliases),
+            "non_sink_roots": len(non_sinks),
+            "extra_entries": len(extras),
+        },
+        "writer_candidates": [_short_writer(c) for c in writers[:80]],
+        "sink_candidates": [_short_recv(c) for c in sinks[:80]],
+        "receiver_candidates": [_short_recv(c) for c in receivers[:80]],
+        "key_writer_suggested": key_writers,
+        "alias_candidates": [
+            {
+                "local": str(c.get("local") or "").strip(),
+                "tdf_leaf": str(c.get("tdf_leaf") or "").strip(),
+            }
+            for c in aliases[:80]
+            if str(c.get("local") or "").strip() and str(c.get("tdf_leaf") or "").strip()
+        ],
+    }
+    must = (
+        f"{DEFAULT_LARGE_IR_MUST} "
+        "extract_plan: also Read extract_plan.rework_hints.yaml if present; "
+        "aliases require local+tdf_leaf."
+    )
+    return attach_large_ir_meta(
+        domain,
+        section_lines=section_lines,
+        source_line_count=candidates_line_count,
+        must=must,
+        source_sha256=candidates_sha256,
+    )
+
+
+def _item_has_disk_window_proof(
+    item: dict[str, Any],
+    *,
+    project_root: Path | None,
+) -> tuple[bool, str]:
+    """True when window sha AND contiguous snippet both match disk (policy: evidence)."""
+    match = require_disk_window_proof(project_root, item, pad=0)
+    if match.get("ok"):
+        return True, "sha_and_snippet"
+    return False, str(match.get("error") or "no disk window proof")
 
 
 def plan_writer_names(plan: dict[str, Any], *, roles: set[str] | None = None) -> set[str]:
@@ -153,7 +274,7 @@ def _validate_string_name_list(
             errors.append(f"{field[:-1] if field.endswith('s') else field} not in candidates: {name}")
 
 
-# Top-level keys that belong in ledger / llm_tasks — never in extract_plan.yaml.
+# Top-level keys that belong in ledger / llm_tasks / free-form essays — never in extract_plan.yaml.
 FORBIDDEN_EXTRACT_PLAN_KEYS = frozenset(
     {
         "call_edge_adjudications",
@@ -167,8 +288,43 @@ FORBIDDEN_EXTRACT_PLAN_KEYS = frozenset(
         "entrypoint_dispatch_bind",
         "accepted_candidate_ids",
         "blocking_reasons",
+        # Free-form / wrong-schema dumps seen from producers that skipped source tools.
+        "semantic_groups",
+        "ignored_candidates",
+        "receiver_summary",
+        "alias_summary",
+        "adjudication",
     }
 )
+
+# Alignment / math helpers — never promote as tiling/key/workspace writers.
+HELPER_WRITER_NAMES = frozenset(
+    {
+        "alignto",
+        "ceildivide",
+        "ceildivideby",
+        "min",
+        "max",
+        "std::min",
+        "std::max",
+    }
+)
+
+def read_evidence_window(
+    project_root: Path,
+    file_path: str,
+    lines_field: Any,
+    *,
+    pad: int = 0,
+) -> str:
+    """Read a bounded source window (shared helper; policy: evidence / code-access)."""
+    from uo.scripts.source_evidence import read_source_window
+
+    span = _parse_line_span(lines_field)
+    if span is None:
+        return ""
+    lo, hi = span
+    return read_source_window(project_root, file_path, lo, hi, pad=pad)
 
 
 def _effective_evidence_source(item: dict[str, Any]) -> str:
@@ -257,60 +413,63 @@ def _validate_decision_evidence(
     cand: dict[str, Any] | None = None,
     all_pool: list[dict[str, Any]] | None = None,
     check_weak_writer_promotion: bool = False,
+    project_root: Path | None = None,
 ) -> None:
-    """Source-evidence contract for accepted writer/receiver mappings."""
+    """Source-evidence contract — delegates shared rules to source_evidence (policy)."""
     evidence_source = _effective_evidence_source(item)
-    source_verified = item.get("source_verified") is True
+    errors.extend(require_high_confidence_source_fields(item, label=label))
 
-    if source_verified:
-        if evidence_source not in ("source", "cbm"):
-            errors.append(
-                f"{label} source_verified:true requires evidence_source source or cbm "
-                f"(got {evidence_source!r})"
-            )
-        files = item.get("evidence_files")
-        if not isinstance(files, list) or not any(str(f).strip() for f in files):
-            errors.append(f"{label} source_verified:true requires non-empty evidence_files")
-
-    if evidence_source == "candidate_only":
-        if source_verified:
-            errors.append(f"{label} candidate_only cannot set source_verified:true")
-        conf = str(item.get("confidence") or "").strip()
-        if conf and conf != "candidate":
-            errors.append(
-                f"{label} evidence_source candidate_only requires confidence:candidate "
-                f"(got {conf!r})"
-            )
-
-    if not str(item.get("evidence_source") or "").strip() and source_verified:
-        errors.append(
-            f"{label} source_verified:true requires explicit evidence_source source|cbm"
-        )
+    # Disk match once (avoid duplicate high-confidence + promote appends).
+    disk_err = ""
+    needs_disk = (
+        item.get("source_verified") is True
+        or str(item.get("confidence") or "").strip().lower() == "high"
+    )
+    if needs_disk and project_root is not None and evidence_source in ("source", "cbm"):
+        ok_disk, why = _item_has_disk_window_proof(item, project_root=project_root)
+        if not ok_disk:
+            disk_err = f"{label} {why}"
+            errors.append(disk_err)
 
     if check_weak_writer_promotion:
         role = str(item.get("role") or "").strip()
         promoting = role in PROMOTED_WRITER_ROLES or item.get("is_tiling_sink") is True
-        if promoting and _writer_candidate_weak(item, cand, all_pool or []):
-            # Weak candidate → must have real source/cbm evidence to promote.
+        # Product rule: any promoted writer/sink must prove via CBM or windowed source
+        # read — candidate YAML short snippets / search_graph hits alone are never enough.
+        if promoting:
             files = item.get("evidence_files")
             lines = item.get("evidence_lines")
             reason = str(item.get("decision_reason") or "").strip()
+            snip = str(item.get("evidence_snippet") or "").strip()
+            win_sha = str(item.get("evidence_window_sha256") or "").strip()
             has_files = isinstance(files, list) and any(str(f).strip() for f in files)
-            has_lines = isinstance(lines, list) and any(str(x).strip() for x in lines)
+            has_lines = isinstance(lines, list) and bool(lines)
+            has_proof = (
+                len(snip) >= _MIN_EVIDENCE_SNIPPET_CHARS
+                and not is_placeholder_sha256(win_sha)
+            )
             if evidence_source == "candidate_only" or not (
                 evidence_source in ("source", "cbm")
                 and item.get("source_verified") is True
                 and has_files
                 and has_lines
                 and reason
+                and has_proof
             ):
+                weak = _writer_candidate_weak(item, cand, all_pool or [])
+                kind = "weak candidate" if weak else "promoted writer"
                 errors.append(
-                    f"{label} weak candidate cannot promote to {role or 'tiling_sink'!r} "
-                    "with candidate_only / missing source evidence "
+                    f"{label} {kind} cannot promote to {role or 'tiling_sink'!r} "
+                    "without CBM/source window evidence "
                     "(require evidence_source source|cbm, source_verified:true, "
-                    "non-empty evidence_files/evidence_lines/decision_reason; "
-                    "or set role:ignore / omit the candidate)"
+                    "evidence_files/evidence_lines/decision_reason, and "
+                    "evidence_window_sha256 AND evidence_snippet; "
+                    "prefer candidate source_window.sha256; or set role:ignore / omit)"
                 )
+            elif project_root is not None and not disk_err:
+                ok_disk, why = _item_has_disk_window_proof(item, project_root=project_root)
+                if not ok_disk:
+                    errors.append(f"{label} {why}")
 
 
 def _match_candidate(
@@ -387,18 +546,33 @@ def normalize_plan_from_candidates(
 def validate_extract_plan_against_candidates(
     plan: dict[str, Any],
     candidates: dict[str, Any],
+    *,
+    project_root: Path | None = None,
 ) -> list[str]:
     """Return rejection reasons; empty means OK."""
     errors: list[str] = []
     if int(plan.get("version") or 0) != 1:
         errors.append("version must be 1")
 
+    sha = str(plan.get("candidates_sha256") or "").strip()
+    if not sha:
+        errors.append("candidates_sha256 missing (copy exact value from prepare stub)")
+    elif is_placeholder_sha256(sha):
+        errors.append(
+            "candidates_sha256 is placeholder/invalid — copy the sha256 from prepare "
+            "task_prompt_stub (do not invent; producer bash cannot compute hashes)"
+        )
+
     for key in plan:
         if str(key) in FORBIDDEN_EXTRACT_PLAN_KEYS:
             errors.append(
                 f"forbidden extract_plan field {key!r} "
-                "(edge/llm_task adjudication belongs in semantic_resolution_ledger via apply_semantic_patch)"
+                "(edge/llm_task adjudication belongs in semantic_resolution_ledger via apply_semantic_patch; "
+                "writers/receivers/aliases/non_sink_roots are the only plan collections)"
             )
+
+    if "writers" not in plan or not isinstance(plan.get("writers"), list):
+        errors.append("extract_plan.writers must be a list (omit items instead of inventing semantic_groups)")
 
     writer_names = {
         str(c.get("name") or "").strip()
@@ -438,6 +612,11 @@ def validate_extract_plan_against_candidates(
             errors.append("writer missing name")
         elif name not in writer_names and name.casefold() not in writer_cf:
             errors.append(f"writer not in candidates: {name}")
+        if name and name.casefold() in HELPER_WRITER_NAMES and role in PROMOTED_WRITER_ROLES:
+            errors.append(
+                f"writer {name} is an alignment/math helper — set role:ignore or omit "
+                "(do not promote AlignTo/CeilDivide as tiling/key/workspace writers)"
+            )
         # Require identity fields — ban short-name-only hits.
         if not (item.get("file_path") or item.get("qualified_name") or item.get("identity_key")):
             # Ban short-name-only when multiple candidates share the name.
@@ -463,6 +642,7 @@ def validate_extract_plan_against_candidates(
             cand=matched,
             all_pool=writer_pool,
             check_weak_writer_promotion=True,
+            project_root=project_root,
         )
 
     for item in plan.get("receivers") or []:
@@ -495,7 +675,8 @@ def validate_extract_plan_against_candidates(
             errors=errors,
             cand=matched_recv,
             all_pool=recv_pool,
-            check_weak_writer_promotion=False,
+            check_weak_writer_promotion=bool(item.get("is_tiling_sink")),
+            project_root=project_root,
         )
 
     for item in plan.get("aliases") or []:
@@ -546,4 +727,96 @@ def validate_extract_plan_against_candidates(
         if name and name not in extra_cands and name.casefold() not in {n.casefold() for n in extra_cands}:
             errors.append(f"extra_host_entry not in candidates: {name}")
 
+    _validate_extract_plan_contracts(plan, candidates, errors)
     return errors
+
+
+def _validate_extract_plan_contracts(
+    plan: dict[str, Any],
+    candidates: dict[str, Any],
+    errors: list[str],
+) -> None:
+    """Action-local schema contracts (sinks / key_writer) — not global evidence policy."""
+    sink_cands = [
+        c
+        for c in (candidates.get("receiver_candidates") or [])
+        if isinstance(c, dict) and c.get("is_tiling_sink_suggested") is True
+    ]
+    sink_names = {
+        str(c.get("name") or "").strip()
+        for c in sink_cands
+        if str(c.get("name") or "").strip()
+    }
+
+    promoted_writers = [
+        w
+        for w in (plan.get("writers") or [])
+        if isinstance(w, dict)
+        and str(w.get("role") or "").strip() in PROMOTED_WRITER_ROLES
+    ]
+    tiling_sink_receivers = [
+        r
+        for r in (plan.get("receivers") or [])
+        if isinstance(r, dict) and r.get("is_tiling_sink") is True
+    ]
+    plan_recv_cf = {
+        str(r.get("name") or "").strip().casefold()
+        for r in (plan.get("receivers") or [])
+        if isinstance(r, dict) and str(r.get("name") or "").strip()
+    }
+
+    if sink_cands and promoted_writers and not tiling_sink_receivers:
+        errors.append(
+            "tiling_sink receivers must not be empty when candidates suggest sinks "
+            f"({len(sink_cands)} is_tiling_sink_suggested) and plan promotes "
+            f"{len(promoted_writers)} writer(s) — copy sinks from "
+            "extract_plan_candidates.yaml / candidates.summary.yaml"
+        )
+
+    # Writer evidence that names a suggested sink ⇒ that sink must be listed.
+    for w in promoted_writers:
+        blob = " ".join(
+            [
+                str(w.get("evidence_snippet") or ""),
+                str(w.get("decision_reason") or ""),
+            ]
+        )
+        if not blob.strip():
+            continue
+        wname = str(w.get("name") or "").strip() or "?"
+        for sn in sorted(sink_names):
+            if sn.casefold() in plan_recv_cf:
+                continue
+            # Word-ish match: sink token appears in evidence text.
+            if re.search(rf"(?<![A-Za-z0-9_]){re.escape(sn)}(?![A-Za-z0-9_])", blob):
+                errors.append(
+                    f"writer {wname} evidence names sink {sn!r} but receivers omit it "
+                    "(add receiver with is_tiling_sink:true or drop the sink mention)"
+                )
+
+    # Unique GetTilingKey (role_suggested=key_writer) ⇒ key_writer or explicit ignore.
+    key_cands = [
+        c
+        for c in (candidates.get("writer_candidates") or [])
+        if isinstance(c, dict)
+        and str(c.get("role_suggested") or "").strip() == "key_writer"
+        and str(c.get("name") or "").strip().casefold() == "gettilingkey"
+    ]
+    if len(key_cands) == 1:
+        plan_writers = [w for w in (plan.get("writers") or []) if isinstance(w, dict)]
+        gtk = [
+            w
+            for w in plan_writers
+            if str(w.get("name") or "").strip().casefold() == "gettilingkey"
+        ]
+        if not gtk:
+            errors.append(
+                "GetTilingKey (role_suggested=key_writer) must appear in writers "
+                "as key_writer or role:ignore — do not omit silently"
+            )
+        else:
+            role = str(gtk[0].get("role") or "").strip()
+            if role not in {"key_writer", "ignore"}:
+                errors.append(
+                    f"GetTilingKey must use role key_writer or ignore (got {role!r})"
+                )

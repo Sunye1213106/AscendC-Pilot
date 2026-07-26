@@ -724,15 +724,73 @@ def _run_extract_plan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
             }
 
         # Prepare: candidates only (LLM confirms → extract_plan.yaml)
-        from uo.scripts._ir_io import write_yaml
+        from uo.scripts._ir_io import read_yaml, write_yaml
+        from ascendc_pilot.runs import file_sha256
+        from uo.scripts.extract_plan_io import (
+            build_extract_plan_candidates_summary,
+            scan_candidates_section_lines,
+        )
+        from uo.scripts.ir_summary import count_file_lines
 
-        candidates = propose_extract_plan(project_root, op_name, architecture=architecture)
         cand_path = uo / "ir" / "extract_plan_candidates.yaml"
-        write_yaml(cand_path, candidates if isinstance(candidates, dict) else {"ok": False})
+        sha_side = uo / "ir" / "extract_plan_candidates.sha256"
+        force_propose = str(ctx.get("extract_plan_force_propose") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        reused = False
+        candidates: dict[str, Any] | Any = None
+        candidates_sha256 = ""
+
+        # Rework after checker fail: keep candidates + sha (ses_0625 churn fix).
+        if not force_propose and cand_path.is_file() and sha_side.is_file():
+            should_reuse = plan_path.is_file()
+            if not should_reuse:
+                try:
+                    from ascendc_pilot.state import load_state
+
+                    st = str((load_state(project_root) or {}).get("status") or "")
+                    should_reuse = st in {"rework_required", "human_required"}
+                except Exception:  # noqa: BLE001
+                    should_reuse = False
+            if should_reuse:
+                loaded = read_yaml(cand_path)
+                if isinstance(loaded, dict):
+                    candidates = loaded
+                    candidates_sha256 = sha_side.read_text(encoding="utf-8").strip()
+                    reused = bool(candidates_sha256)
+
+        if not reused:
+            candidates = propose_extract_plan(project_root, op_name, architecture=architecture)
+            write_yaml(cand_path, candidates if isinstance(candidates, dict) else {"ok": False})
+            candidates_sha256 = file_sha256(cand_path) or ""
+            if candidates_sha256:
+                sha_side.write_text(candidates_sha256 + "\n", encoding="utf-8")
+
+        summary_path = uo / "ir" / "extract_plan_candidates.summary.yaml"
+        if isinstance(candidates, dict):
+            section_lines = scan_candidates_section_lines(cand_path)
+            line_count = count_file_lines(cand_path)
+            write_yaml(
+                summary_path,
+                build_extract_plan_candidates_summary(
+                    candidates,
+                    candidates_sha256=candidates_sha256,
+                    section_lines=section_lines,
+                    candidates_line_count=line_count,
+                ),
+            )
         status = str((candidates or {}).get("status") or "").lower() if isinstance(candidates, dict) else ""
         if status in {"blocked", "fail", "failed"} or (
             isinstance(candidates, dict) and candidates.get("ok") is False
         ):
+            recovery = (candidates or {}).get("recovery") if isinstance(candidates, dict) else None
+            recovery_cli = ""
+            if isinstance(candidates, dict):
+                recovery_cli = str(candidates.get("recovery_cli") or "")
+                if not recovery_cli and isinstance(recovery, dict):
+                    recovery_cli = str(recovery.get("cli") or "")
             return {
                 "ok": False,
                 "engine": "extract_plan",
@@ -740,13 +798,37 @@ def _run_extract_plan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
                 "error": "propose_extract_plan blocked",
                 "propose": candidates,
                 "candidates_path": cand_path.as_posix(),
+                "candidates_sha256": candidates_sha256,
+                "reused_candidates": reused,
+                "recovery_cli": recovery_cli,
+                "message_zh": (
+                    str((recovery or {}).get("message_zh") or "propose_extract_plan 被候选预算拦住")
+                    if isinstance(recovery, dict)
+                    else "propose_extract_plan 被候选预算拦住"
+                ),
             }
+        raised = (candidates or {}).get("limits_auto_raised") if isinstance(candidates, dict) else None
         return {
             "ok": True,
             "engine": "extract_plan",
             "phase": "propose",
             "candidates_path": cand_path.as_posix(),
+            "candidates_sha256": candidates_sha256,
+            "reused_candidates": reused,
             "propose_status": status or "ok",
+            "limits_auto_raised": raised or {},
+            "limits_persisted": str((candidates or {}).get("limits_persisted") or "")
+            if isinstance(candidates, dict)
+            else "",
+            "message_zh": (
+                "rework：已复用既有 extract_plan_candidates（未 re-propose，避免 sha churn）"
+                if reused
+                else (
+                    "已自动抬高 extract 候选预算并写入 pilot_params"
+                    if raised
+                    else "extract_plan candidates 已就绪"
+                )
+            ),
         }
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "extract_plan", "error": str(exc)[:400]}

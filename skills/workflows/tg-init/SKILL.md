@@ -36,7 +36,7 @@ description: 构建测例契约 / 测项合同与绑定、测试工具初始化�
 | `mid_nest` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-init/mid-nest` | `-` | `mid-nest-v1` |
 | `integrity_gate` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-init/integrity-gate` | `-` | `tg-integrity-v1` |
 | `init_audit` | `subagent` | `tg-init-audit` | `referee` | `tg-init/init-audit` | `tg/init-audit` | `init-audit-v1` |
-| `human_confirm` | `primary_interactive` | `human` | `-` | `tg-init/human-confirm` | `tg/human-confirm` | `init-confirmed-v1` |
+| `human_confirm` | `primary_interactive` | `ascendc-pilot` | `controller` | `tg-init/human-confirm` | `tg/human-confirm` | `init-confirmed-v1` |
 
 <!-- END GENERATED ACTIONS -->
 

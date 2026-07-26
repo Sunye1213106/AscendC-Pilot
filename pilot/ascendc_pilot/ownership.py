@@ -80,7 +80,13 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
     "uo-init": {
         "extract_plan": [
             "uo/ir/extract_plan_candidates.yaml",
+            "uo/ir/extract_plan_candidates.sha256",
+            "uo/ir/extract_plan_candidates.summary.yaml",
+            "uo/ir/extract_plan.rework_hints.yaml",
             "uo/ir/entrypoint_graph.yaml",
+            "uo/cbm/index_meta.json",
+            # Producer must re-read its own write target (self-check / rework edits).
+            "uo/ir/extract_plan.yaml",
         ],
         "adjudicate_llm_tasks": [
             "uo/ir/llm_tasks.yaml",

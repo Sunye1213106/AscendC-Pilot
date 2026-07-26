@@ -110,15 +110,18 @@ CONTAINMENT_COMMAND_PREFIXES = _RECOVERY_CORE + (
 REWORK_COMMAND_PREFIXES = _RECOVERY_CORE + (
     "acp run-action",
     "acp uo-scope",
+    "acp cbm",
     "acp context",
     "acp authorize",
     "acp debug",
     "python -m ascendc_pilot run-action",
     "python -m ascendc_pilot uo-scope",
+    "python -m ascendc_pilot cbm",
     "python -m ascendc_pilot context",
     "python -m ascendc_pilot debug",
     "python3 -m ascendc_pilot run-action",
     "python3 -m ascendc_pilot uo-scope",
+    "python3 -m ascendc_pilot cbm",
     "python3 -m ascendc_pilot context",
     "python3 -m ascendc_pilot debug",
 )
@@ -129,6 +132,7 @@ NORMAL_COMMAND_PREFIXES = (
     "acp run-action",
     "acp advance",
     "acp uo-scope",
+    "acp cbm",
     "acp authorize",
     "acp context",
     "acp complete",
@@ -224,6 +228,21 @@ def issue_action_lease(
     if mode_l not in {MODE_NORMAL, MODE_REWORK, MODE_CONTAINMENT}:
         mode_l = MODE_NORMAL
     def_tools, def_cmds = _defaults_for_mode(mode_l)
+    write_paths = [
+        str(p).replace("\\", "/").lstrip("/")
+        for p in list(allowed_write_paths or [])
+        if str(p).strip()
+    ]
+    read_paths = [
+        str(p).replace("\\", "/").lstrip("/")
+        for p in list(allowed_read_paths or [])
+        if str(p).strip()
+    ]
+    # Global invariant (all Actions): write target ⊆ readable.
+    # Prevents "can Write artifact but cannot Read it back" producer dead-ends.
+    for wp in write_paths:
+        if wp not in read_paths:
+            read_paths.append(wp)
     lease = {
         "lease_id": new_lease_id(),
         "run_id": st.get("run_id") or "",
@@ -238,8 +257,8 @@ def issue_action_lease(
         "allowed_commands": list(allowed_commands or def_cmds),
         "allowed_read_roots": list(allowed_read_roots or []),
         "allowed_write_roots": list(allowed_write_roots or []),
-        "allowed_write_paths": list(allowed_write_paths or []),
-        "allowed_read_paths": list(allowed_read_paths or []),
+        "allowed_write_paths": write_paths,
+        "allowed_read_paths": read_paths,
         "forbidden_write_paths": list(forbidden_write_paths or []),
         "forbidden_read_paths": list(forbidden_read_paths or []),
         "allowed_target_ids": list(allowed_target_ids or []),
@@ -277,6 +296,55 @@ def lease_allows_write_path(lease: dict[str, Any], rel_posix: str) -> dict[str, 
     return {"ok": True}
 
 
+def _rel_from_ascendc_abs(path_s: str) -> str:
+    """``…/.ascendc-pilot/<rel>`` → ``<rel>``; otherwise empty."""
+    norm = str(path_s or "").replace("\\", "/")
+    marker = "/.ascendc-pilot/"
+    idx = norm.lower().find(marker)
+    if idx < 0:
+        return ""
+    return norm[idx + len(marker) :].lstrip("/")
+
+
+def _is_dir_prefix_of_allowed(rel: str, precise: list[str]) -> bool:
+    """True when ``rel`` is a directory prefix of an allow-listed file/pattern.
+
+    Lets subagents Glob/list ``uo/ir`` when only concrete YAML files are leased
+    (ses_062d: producer blocked on parent dirs / session pack).
+    """
+    if not rel:
+        return False
+    for raw in precise:
+        p = str(raw or "").replace("\\", "/").lstrip("/")
+        if not p:
+            continue
+        if p.endswith("/**"):
+            prefix = p[:-3].rstrip("/")
+        else:
+            prefix = p.rsplit("/", 1)[0] if "/" in p else ""
+            # Also treat the file's full parent chain.
+            parts = p.split("/")
+            for i in range(1, len(parts)):
+                parent = "/".join(parts[:i])
+                if rel == parent:
+                    return True
+            continue
+        if rel == prefix or prefix.startswith(rel + "/"):
+            return True
+    return False
+
+
+def _under_allowed_read_roots(rel: str, roots: list[str]) -> bool:
+    """Honor ``allowed_read_roots`` (absolute session dirs written at prepare)."""
+    for root in roots:
+        root_rel = _rel_from_ascendc_abs(str(root))
+        if not root_rel:
+            continue
+        if rel == root_rel or rel.startswith(root_rel + "/"):
+            return True
+    return False
+
+
 def lease_allows_read_path(lease: dict[str, Any], rel_posix: str) -> dict[str, Any]:
     """Check Action-precise read paths (forbidden deny-first, then allow-list)."""
     from ascendc_pilot.ownership import path_matches_patterns
@@ -286,8 +354,23 @@ def lease_allows_read_path(lease: dict[str, Any], rel_posix: str) -> dict[str, A
     if forbid and path_matches_patterns(rel, [str(x) for x in forbid]):
         return {"ok": False, "error": "ACTION_FORBIDDEN_READ_PATH", "path": rel}
     precise = list(lease.get("allowed_read_paths") or [])
-    if precise and not path_matches_patterns(rel, [str(x) for x in precise]):
-        return {"ok": False, "error": "ACTION_READ_SCOPE_DENIED", "path": rel, "allowed": precise}
+    roots = list(lease.get("allowed_read_roots") or [])
+    if precise or roots:
+        ok = False
+        if precise and path_matches_patterns(rel, [str(x) for x in precise]):
+            ok = True
+        elif precise and _is_dir_prefix_of_allowed(rel, [str(x) for x in precise]):
+            ok = True
+        elif roots and _under_allowed_read_roots(rel, [str(x) for x in roots]):
+            ok = True
+        if not ok:
+            return {
+                "ok": False,
+                "error": "ACTION_READ_SCOPE_DENIED",
+                "path": rel,
+                "allowed": precise,
+                "allowed_read_roots": roots,
+            }
     return {"ok": True}
 
 
@@ -441,6 +524,24 @@ _CD_WRAPPER = re.compile(
     r'^(?:cd|pushd|Set-Location|chdir)\s+(?:"[^"]+"|\'[^\']+\'|[^\s&|;]+)\s*(?:&&|;)\s*',
     re.IGNORECASE,
 )
+# PowerShell / cmd / unix env prefixes before acp (ses_0662 fence bypass for limits).
+_ENV_WRAPPERS = (
+    re.compile(
+        r"^\$env:([A-Za-z_][\w]*)\s*=\s*(?:'[^']*'|\"[^\"]*\"|[^\s;]+)\s*;\s*",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^\[System\.Environment\]::SetEnvironmentVariable\(\s*'[^']+'\s*,\s*'[^']*'"
+        r"(?:\s*,\s*'[^']*')?\s*\)\s*;\s*",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^set\s+([A-Za-z_][\w]*)\s*=\s*([^\s&]+)\s*(?:&&)\s*",
+        re.IGNORECASE,
+    ),
+    # Unix: FOO=bar BAZ=1 acp ...
+    re.compile(r"^([A-Za-z_][\w]*)=([^\s]+)\s+"),
+)
 _ACP_HEAD = re.compile(
     r"^(?:acp(?:\s|$)|python(?:3)?\s+-m\s+ascendc_pilot(?:\s|$))",
     re.IGNORECASE,
@@ -448,7 +549,7 @@ _ACP_HEAD = re.compile(
 
 
 def extract_pilot_command(command: str) -> str | None:
-    """Return pure acp CLI if command is only optional cd wrappers + acp."""
+    """Return pure acp CLI if command is only optional cd/env wrappers + acp."""
     cmd = " ".join(str(command or "").strip().split())
     if not cmd:
         return None
@@ -457,6 +558,16 @@ def extract_pilot_command(command: str) -> str | None:
         if not match:
             break
         cmd = cmd[match.end() :].strip()
+    # Strip env prefixes; keep stripping while matched (multiple --set via $env).
+    progressed = True
+    while progressed:
+        progressed = False
+        for pat in _ENV_WRAPPERS:
+            match = pat.match(cmd)
+            if match:
+                cmd = cmd[match.end() :].strip()
+                progressed = True
+                break
     if any(sep in cmd for sep in ("&&", "||", ";", "|", ">", "<")):
         return None
     if not _ACP_HEAD.match(cmd):

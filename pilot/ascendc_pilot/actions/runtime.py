@@ -36,6 +36,11 @@ _EXTRACT_PLAN_FORBID_FIELDS = (
     "entrypoint_dispatch_bind",
     "accepted_candidate_ids",
     "blocking_reasons",
+    "semantic_groups",
+    "ignored_candidates",
+    "receiver_summary",
+    "alias_summary",
+    "adjudication",
 )
 
 
@@ -343,6 +348,8 @@ def _render_placeholders(
     role_id: str = "",
     lease_id: str = "",
     action_session_id: str = "",
+    cbm_project: str = "",
+    candidates_sha256: str = "",
 ) -> str:
     repl = {
         "<RUN_ID>": run_id,
@@ -360,6 +367,9 @@ def _render_placeholders(
         "<ROLE_ID>": role_id,
         "<LEASE_ID>": lease_id,
         "<ACTION_SESSION_ID>": action_session_id,
+        "<CBM_PROJECT>": cbm_project or "(read uo/cbm/index_meta.json → cbm_project)",
+        "<CANDIDATES_SHA256>": candidates_sha256
+        or "(copy from task_prompt_stub candidates_sha256=…)",
     }
     out = text
     for k, v in repl.items():
@@ -379,6 +389,11 @@ def _build_task_prompt_stub(
     method_path: str,
     bundle_path: str,
     dispatch_targets: dict[str, Any] | None = None,
+    agent_root_path: str = "",
+    cbm_project: str = "",
+    project_root: str = "",
+    architecture: str = "",
+    candidates_sha256: str = "",
 ) -> str:
     """Minimal Host→subagent Task body: pointers only, no METHOD paraphrase."""
     lines = [
@@ -392,12 +407,49 @@ def _build_task_prompt_stub(
         f"session_dir: {session_dir}",
     ]
     dt = dispatch_targets or {}
+    root = str(agent_root_path or "").rstrip("/\\")
+
+    def _abs_under_agent(rel: str) -> str:
+        r = str(rel or "").replace("\\", "/").lstrip("/")
+        if not r or not root:
+            return r
+        if r.lower().startswith(root.replace("\\", "/").lower()):
+            return r
+        return f"{Path(root).as_posix()}/{r}"
+
     if dt.get("read"):
-        lines.append("read: " + ", ".join(str(x) for x in dt["read"]))
+        # Absolute paths under .ascendc-pilot — relative ``uo/ir/...`` is often
+        # misread as ``<op>/uo/ir/...`` (missing .ascendc-pilot) by subagents.
+        lines.append("read: " + ", ".join(_abs_under_agent(str(x)) for x in dt["read"]))
     if dt.get("write"):
-        lines.append("write: " + ", ".join(str(x) for x in dt["write"]))
+        lines.append("write: " + ", ".join(_abs_under_agent(str(x)) for x in dt["write"]))
     if dt.get("forbid_read"):
         lines.append("forbid_read: " + ", ".join(str(x) for x in dt["forbid_read"]))
+    if cbm_project:
+        lines.append(f"cbm_project: {cbm_project}")
+    if candidates_sha256:
+        lines.append(f"candidates_sha256: {candidates_sha256}")
+    # Public: any Action that lists *.summary.yaml in dispatch read gets MUST_READ_ORDER.
+    from ascendc_pilot.ir_summary import large_ir_must_read_order_lines
+
+    read_list = [str(x) for x in (dt.get("read") or [])]
+    lines.extend(large_ir_must_read_order_lines(read_list))
+    if action_id == "extract_plan":
+        # Action contract only (evidence sha / collage); read-order is public above.
+        lines.extend(
+            [
+                "evidence_tools: for EACH accepted promoted writer/sink — "
+                "MCP get_code_snippet (after search_graph) OR `acp cbm lookup` OR "
+                "copy candidate source_window.text OR windowed Read of evidence_files; "
+                "MUST put contiguous window text into evidence_snippet "
+                "(finalize verifies against on-disk source; no `...` collage). "
+                "search_graph / grep alone is NOT enough.",
+                "candidates_sha256_rule: copy the exact candidates_sha256 value above "
+                "into extract_plan.yaml (do not recompute; bash hash tools are blocked)",
+                f"project_root: {project_root}" if project_root else "project_root: (see prompt)",
+                f"architecture: {architecture or 'arch35'}",
+            ]
+        )
     lines.extend(
         [
             "Return a short summary when done.",
@@ -460,6 +512,7 @@ def _hash_prepare_nonce(prepare_nonce: str = "", prepare_nonce_hash: str = "") -
 
 def _declared_artifact_identity(data: dict[str, Any]) -> dict[str, str]:
     identity = data.get("artifact_identity") if isinstance(data.get("artifact_identity"), dict) else {}
+    snapshot = data.get("snapshot") if isinstance(data.get("snapshot"), dict) else {}
     checks: dict[str, str] = {}
     for field in (
         "run_id",
@@ -474,6 +527,10 @@ def _declared_artifact_identity(data: dict[str, Any]) -> dict[str, str]:
         "produced_by",
     ):
         checks[field] = str(identity.get(field) or data.get(field) or "").strip()
+    # Scope receipt from finalize_scope historically nested run_id under snapshot only.
+    # Accept that so contract check can pass before pilot-finalizer stamps artifact_identity.
+    if not checks["run_id"]:
+        checks["run_id"] = str(snapshot.get("run_id") or "").strip()
     declared_nonce = str(identity.get("prepare_nonce") or data.get("prepare_nonce") or "").strip()
     if declared_nonce and not checks["prepare_nonce_hash"]:
         checks["prepare_nonce_hash"] = _hash_prepare_nonce(declared_nonce)
@@ -914,6 +971,17 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     pack_path = str(pack.get("path") or "")
     op_name = str(state.get("op_name") or Path(project_root).name or "")
     architecture = str(state.get("architecture") or "arch35")
+    cbm_project = ""
+    try:
+        meta_path = Path(uo_s) / "cbm" / "index_meta.json"
+        if meta_path.is_file():
+            import json
+
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            if isinstance(meta, dict):
+                cbm_project = str(meta.get("cbm_project") or "").strip()
+    except Exception:  # noqa: BLE001
+        cbm_project = ""
     ph_kwargs = {
         "run_id": run_id,
         "action_id": action_id,
@@ -928,6 +996,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         "architecture": architecture,
         "role_id": role_id,
         "action_session_id": action_sid,
+        "cbm_project": cbm_project,
     }
     method_r = _render_placeholders(method, **ph_kwargs)
     prompt_r = _render_placeholders(prompt, **ph_kwargs)
@@ -1010,11 +1079,20 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         prep_ctx["extract_plan_mode"] = "propose"
         prepare_engine = invoke_engine(project_root, wid, action_id, ctx=prep_ctx)
         if not prepare_engine.get("ok"):
+            recovery_cli = str(prepare_engine.get("recovery_cli") or "").strip()
+            msg = str(
+                prepare_engine.get("message_zh")
+                or prepare_engine.get("error")
+                or "extract_plan propose failed"
+            )
+            if recovery_cli:
+                msg = f"{msg}；请直接执行：`{recovery_cli}`（勿用 $env 拼 bash）"
             return {
                 "ok": False,
                 "error": "EXTRACT_PLAN_PREPARE_FAILED",
                 "engine": prepare_engine,
-                "message_zh": str(prepare_engine.get("error") or "extract_plan propose failed"),
+                "recovery_cli": recovery_cli,
+                "message_zh": msg,
             }
         bundle["prepare_engine"] = {
             "ok": True,
@@ -1022,15 +1100,30 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             "candidates_path": prepare_engine.get("candidates_path"),
         }
         cand_path = str(prepare_engine.get("candidates_path") or "uo/ir/extract_plan_candidates.yaml")
+        candidates_sha256 = str(prepare_engine.get("candidates_sha256") or "").strip()
+        if not candidates_sha256:
+            sha_side = Path(uo_s) / "ir" / "extract_plan_candidates.sha256"
+            if sha_side.is_file():
+                candidates_sha256 = sha_side.read_text(encoding="utf-8").strip()
+        ph_kwargs["candidates_sha256"] = candidates_sha256
         target_line = (
             f"{cand_path} → confirm writers/receivers/aliases only; "
+            f"candidates_sha256={candidates_sha256 or '(missing)'}; "
             "DO NOT read or adjudicate ir/llm_tasks.yaml"
         )
         prompt_r = _render_placeholders(prompt, **{**ph_kwargs, "target": target_line})
+        if prepare_engine.get("reused_candidates"):
+            bundle["prepare_engine"]["reused_candidates"] = True
         bundle["dispatch_targets"] = {
             "read": [
+                "uo/ir/extract_plan_candidates.summary.yaml",
+                "uo/ir/extract_plan.rework_hints.yaml",
                 "uo/ir/extract_plan_candidates.yaml",
+                "uo/ir/extract_plan_candidates.sha256",
                 "uo/ir/entrypoint_graph.yaml",
+                "uo/cbm/index_meta.json",
+                # Write target must also be readable (self-check / rework).
+                "uo/ir/extract_plan.yaml",
             ],
             "write": ["uo/ir/extract_plan.yaml"],
             "forbid_read": [
@@ -1040,6 +1133,24 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             ],
             "forbid_write_fields": list(_EXTRACT_PLAN_FORBID_FIELDS),
         }
+        bundle["candidates_sha256"] = candidates_sha256
+        # Drop only *unreadable/invalid* producer dumps. Keep parseable plans so
+        # re-prepare (new lease) does not force a full rewrite + hash churn loop.
+        stale_plan = Path(uo_s) / "ir" / "extract_plan.yaml"
+        if stale_plan.is_file():
+            keep = False
+            try:
+                from uo.scripts.yaml_literal_sanitize import safe_load_yaml_text
+
+                doc = safe_load_yaml_text(stale_plan.read_text(encoding="utf-8"))
+                keep = isinstance(doc, dict) and int(doc.get("version") or 0) == 1
+            except Exception:  # noqa: BLE001
+                keep = False
+            if not keep:
+                try:
+                    stale_plan.unlink()
+                except OSError:
+                    pass
 
     # adjudicate_llm_tasks: producer writes patches for deterministic apply.
     if wid == "uo-init" and action_id == "adjudicate_llm_tasks" and role_id == "producer":
@@ -1151,6 +1262,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     prompt_path = (sdir / "prompt.md").as_posix()
     method_path = (sdir / "method.md").as_posix()
     bundle_path = (sdir / "bundle.yaml").as_posix()
+    agent_root_posix = agent_root(project_root).as_posix()
     stub = ""
     if execution_mode == EXECUTION_SUBAGENT:
         stub = _build_task_prompt_stub(
@@ -1164,6 +1276,11 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             dispatch_targets=bundle.get("dispatch_targets")
             if isinstance(bundle.get("dispatch_targets"), dict)
             else None,
+            agent_root_path=agent_root_posix,
+            cbm_project=cbm_project,
+            project_root=root_s,
+            architecture=architecture,
+            candidates_sha256=str(bundle.get("candidates_sha256") or ph_kwargs.get("candidates_sha256") or ""),
         )
         bundle["task_prompt_stub"] = stub
 
@@ -1208,6 +1325,17 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         forbid_read = [
             expand_path_template(str(p), run_id=run_id) for p in dt["forbid_read"]
         ] + forbid_read
+    # Always allow re-reading Action write targets (producer self-check / rework).
+    # Root cause: write-only lease blocked Read of uo/ir/extract_plan.yaml after Write.
+    for wp in write_paths:
+        wps = expand_path_template(str(wp), run_id=run_id)
+        if wps and wps not in read_paths:
+            read_paths.append(wps)
+    # Stub tells producer to read prompt/method/bundle first — always lease the
+    # prepared action session pack (allowed_read_roots alone was previously ignored).
+    if run_id and action_id:
+        session_pack = f"runs/{run_id}/actions/{action_id}/**"
+        read_paths = [session_pack, *read_paths]
     # De-dupe while preserving order.
     if forbid_read:
         seen_fr: set[str] = set()
@@ -1821,21 +1949,38 @@ def finalize_action(
             session["status"] = "finalize_failed"
             session["apply_result"] = apply_result
             _dump(sdir / "session.yaml", session)
+            apply_inner = apply_result.get("apply") if isinstance(apply_result.get("apply"), dict) else {}
+            buckets = apply_inner.get("rejected_buckets") if isinstance(apply_inner, dict) else None
+            bucket_summary = ""
+            if isinstance(buckets, dict):
+                bucket_summary = str(buckets.get("summary") or "")
+            fail_msg = str(
+                apply_inner.get("message_zh")
+                or apply_result.get("error")
+                or "extract_plan 分层构建失败"
+            )
+            if bucket_summary:
+                fail_msg = f"{fail_msg} [{bucket_summary}]"
             fail_payload = {
                 "ok": False,
                 "phase_runtime": "finalize",
                 "action_id": action_id,
                 "error": apply_result.get("error") or "EXTRACT_PLAN_BUILD_FAILED",
                 "apply_result": apply_result,
-                "message_zh": str(apply_result.get("error") or "extract_plan 分层构建失败"),
+                "rejected_buckets": buckets or {},
+                "message_zh": fail_msg,
             }
+            uniq = []
+            if isinstance(buckets, dict):
+                uniq = list(buckets.get("unique_errors") or [])[:12]
             return _attach_finalize_observation(
                 project_root,
                 fail_payload,
                 action_id=action_id,
                 messages=[
                     str(apply_result.get("error") or "EXTRACT_PLAN_BUILD_FAILED"),
-                    str((apply_result.get("apply") or {}).get("rejected") or ""),
+                    bucket_summary or fail_msg,
+                    *uniq,
                 ],
             )
 

@@ -15,8 +15,13 @@ if __package__ in (None, ""):
 from uo._operator.artifacts import existing_operator_root, safe_op_name
 from uo.scripts._ir_io import read_yaml, write_yaml
 from uo.scripts.extract_plan_io import (
+    _match_candidate,
     normalize_plan_from_candidates,
     validate_extract_plan_against_candidates,
+)
+from uo.scripts.source_evidence import (
+    bucket_extract_plan_errors,
+    enrich_item_evidence_from_disk,
 )
 
 
@@ -37,15 +42,15 @@ def apply_extract_plan(
             "rejected": [{"reason": "extract_plan_candidates.yaml missing"}],
         }
     candidates = read_yaml(cand_path)
+    out_plan_path = Path(plan_path) if plan_path else (uo_root / "ir" / "extract_plan.yaml")
     if plan is None:
-        src = plan_path or (uo_root / "ir" / "extract_plan.yaml")
-        if not Path(src).is_file():
+        if not out_plan_path.is_file():
             return {
                 "ok": False,
                 "rejected_count": 1,
-                "rejected": [{"reason": f"extract_plan missing: {src}"}],
+                "rejected": [{"reason": f"extract_plan missing: {out_plan_path}"}],
             }
-        plan = read_yaml(Path(src))
+        plan = read_yaml(out_plan_path)
     if not isinstance(plan, dict):
         return {"ok": False, "rejected_count": 1, "rejected": [{"reason": "plan not a mapping"}]}
 
@@ -61,13 +66,34 @@ def apply_extract_plan(
 
     cand_doc = candidates if isinstance(candidates, dict) else {}
     plan = normalize_plan_from_candidates(plan, cand_doc)
+    # Product resilience: backfill contiguous snippet + sha from disk / candidate
+    # source_window (same spirit as prior sha-only enrich). Collage `...` is replaced.
+    enrich_stats = _enrich_evidence(plan, repo_root, cand_doc)
 
-    errors = validate_extract_plan_against_candidates(plan, cand_doc)
+    errors = validate_extract_plan_against_candidates(
+        plan, cand_doc, project_root=repo_root
+    )
+    buckets = bucket_extract_plan_errors(errors)
+    # Persist evidence enrichments even when other contract fields still fail,
+    # so rework does not keep burning retries on collage snippets.
+    if enrich_stats.get("items") and not check_only:
+        write_yaml(out_plan_path, plan)
+
     if errors:
+        if not check_only:
+            _write_rework_hints(uo_root, buckets, enrich_stats)
         return {
             "ok": False,
-            "rejected_count": len(errors),
-            "rejected": [{"reason": e} for e in errors],
+            "rejected_count": int(buckets.get("unique_count") or len(errors)),
+            "rejected_raw_count": len(errors),
+            "rejected": [{"reason": e} for e in (buckets.get("unique_errors") or errors)[:40]],
+            "rejected_buckets": buckets,
+            "enriched": enrich_stats,
+            "message_zh": (
+                f"extract_plan 校验失败（{buckets.get('summary') or 'errors'}）；"
+                "请 resume 原子代理修复 alias/non_sink 等合同项；"
+                "证据拼贴已尝试从磁盘回填"
+            ),
         }
 
     result = {
@@ -77,11 +103,65 @@ def apply_extract_plan(
         "writers": len(plan.get("writers") or []),
         "receivers": len(plan.get("receivers") or []),
         "aliases": len(plan.get("aliases") or []),
+        "enriched": enrich_stats,
     }
     if not check_only:
-        write_yaml(uo_root / "ir" / "extract_plan.yaml", plan)
-        result["written"] = str(uo_root / "ir" / "extract_plan.yaml")
+        write_yaml(out_plan_path, plan)
+        result["written"] = str(out_plan_path)
+        hints = uo_root / "ir" / "extract_plan.rework_hints.yaml"
+        if hints.is_file():
+            try:
+                hints.unlink()
+            except OSError:
+                pass
     return result
+
+
+def _enrich_evidence(
+    plan: dict[str, Any],
+    repo_root: Path,
+    candidates: dict[str, Any],
+) -> dict[str, Any]:
+    touched = 0
+    tags: list[str] = []
+    writer_pool = list(candidates.get("writer_candidates") or [])
+    recv_pool = list(candidates.get("receiver_candidates") or [])
+    for key, pool in (("writers", writer_pool), ("receivers", recv_pool)):
+        for item in plan.get(key) or []:
+            if not isinstance(item, dict):
+                continue
+            cand = _match_candidate(item, pool)
+            acts = enrich_item_evidence_from_disk(repo_root, item, candidate=cand)
+            if acts:
+                touched += 1
+                tags.extend(acts)
+    return {"items": touched, "actions": tags}
+
+
+def _write_rework_hints(
+    uo_root: Path,
+    buckets: dict[str, Any],
+    enrich_stats: dict[str, Any],
+) -> None:
+    try:
+        write_yaml(
+            uo_root / "ir" / "extract_plan.rework_hints.yaml",
+            {
+                "version": 1,
+                "kind": "extract_plan_rework_hints",
+                "buckets": buckets.get("counts") or {},
+                "summary": buckets.get("summary") or "",
+                "unique_errors": buckets.get("unique_errors") or [],
+                "enriched": enrich_stats,
+                "fix_zh": (
+                    "禁止只改 candidates_sha256。证据：拷候选 source_window.text 或磁盘连续窗"
+                    "（禁 ...）。aliases 必须 local+tdf_leaf。不确定的 non_sink omit。"
+                    "Host：子代理若称只改 sha / 未改证据 → 禁止 finalize，继续 resume。"
+                ),
+            },
+        )
+    except OSError:
+        pass
 
 
 def main(argv: list[str] | None = None) -> int:

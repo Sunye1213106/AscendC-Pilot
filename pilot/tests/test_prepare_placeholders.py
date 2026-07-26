@@ -57,7 +57,51 @@ def test_task_prompt_stub_is_pointer_only() -> None:
     assert "forbid_read" in stub
     assert "llm_tasks" in stub
     assert "METHOD" not in stub or "Do NOT" in stub
-    assert len(stub.splitlines()) <= 16
+    # No *.summary.yaml in read → public MUST_READ_ORDER not injected.
+    assert "MUST_READ_ORDER" not in stub
+
+
+def test_task_prompt_stub_injects_must_read_order_for_summary() -> None:
+    stub = _build_task_prompt_stub(
+        actor_id="uo-semantic-resolve",
+        action_id="extract_plan",
+        run_id="RUN_1",
+        session_dir="/s",
+        prompt_path="/s/prompt.md",
+        method_path="/s/method.md",
+        bundle_path="/s/bundle.yaml",
+        dispatch_targets={
+            "read": [
+                "uo/ir/extract_plan_candidates.summary.yaml",
+                "uo/ir/extract_plan.rework_hints.yaml",
+                "uo/ir/extract_plan_candidates.yaml",
+            ],
+            "write": ["uo/ir/extract_plan.yaml"],
+        },
+    )
+    assert "MUST_READ_ORDER" in stub
+    assert "section_lines" in stub
+    assert "readonly_search" in stub
+    assert "extract_plan_candidates.summary.yaml" in stub
+
+
+def test_task_prompt_stub_must_read_order_is_action_agnostic() -> None:
+    stub = _build_task_prompt_stub(
+        actor_id="uo-semantic-resolve",
+        action_id="adjudicate_llm_tasks",
+        run_id="RUN_1",
+        session_dir="/s",
+        prompt_path="/s/prompt.md",
+        method_path="/s/method.md",
+        bundle_path="/s/bundle.yaml",
+        dispatch_targets={
+            "read": ["uo/ir/llm_tasks.summary.yaml", "uo/ir/llm_tasks.yaml"],
+            "write": ["uo/ir/semantic_patches.yaml"],
+        },
+    )
+    assert "MUST_READ_ORDER" in stub
+    assert "llm_tasks.summary.yaml" in stub
+    assert "evidence_tools:" not in stub  # extract_plan-only contract
 
 
 def test_prepare_extract_plan_writes_filled_prompt(tmp_path: Path, monkeypatch) -> None:

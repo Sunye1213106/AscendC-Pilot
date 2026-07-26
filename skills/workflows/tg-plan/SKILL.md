@@ -25,7 +25,7 @@ description: 生成覆盖规划 / 覆盖义务并人工批准（tg-plan、covera
 | `plan_scope` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-plan/plan-scope` | `-` | `plan-scope-v1` |
 | `plan_precheck` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-plan/plan-precheck` | `-` | `plan-precheck-v1` |
 | `plan_build` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-plan/plan-build` | `-` | `plan-build-v1` |
-| `plan_approve` | `primary_interactive` | `human` | `-` | `tg-plan/plan-approve` | `tg/plan-approve` | `plan-approved-v1` |
+| `plan_approve` | `primary_interactive` | `ascendc-pilot` | `controller` | `tg-plan/plan-approve` | `tg/plan-approve` | `plan-approved-v1` |
 
 <!-- END GENERATED ACTIONS -->
 

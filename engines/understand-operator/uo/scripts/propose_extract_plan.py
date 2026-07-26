@@ -8,11 +8,17 @@ P1: one-hop callees from helper definitions enter writer_candidates.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import re
 import sys
 from pathlib import Path
 from typing import Any
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover
+    yaml = None  # type: ignore[assignment]
 
 if __package__ in (None, ""):
     _ROOT = Path(__file__).resolve().parents[2]
@@ -21,11 +27,54 @@ if __package__ in (None, ""):
 
 from uo._operator.artifacts import existing_operator_root, safe_op_name
 from uo.scripts._ir_io import read_yaml, snippet, write_yaml
-from uo.scripts.cbm_client import CbmClient
+from uo.scripts.cbm_client import CbmClient, read_source_snippet
 from uo.scripts.extract_kernel_subgraph import TDF_ASSIGN_RE
 from uo.scripts.function_body import extract_callee_names, iter_function_defs, resolve_helper_body
 from uo.scripts.resolve_entrypoints import entrypoint_units, load_entrypoint_graph, nodes_for_role
 from uo.scripts.source_path import to_repo_relative
+
+_SOURCE_WINDOW_TEXT_CAP = 8000
+
+
+def _attach_source_windows(
+    repo_root: Path,
+    writer_list: list[dict[str, Any]],
+    body_by_key: dict[str, tuple[str, int, int, dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    """Attach brace-bounded source windows so producers can cite real code.
+
+    Uses the same body resolution path as scoring (``resolve_helper_body`` /
+    ``read_source_snippet``) — no second parser.
+    """
+    out: list[dict[str, Any]] = []
+    for raw in writer_list:
+        w = dict(raw)
+        key = _writer_identity_key(w)
+        packed = body_by_key.get(key)
+        fp = str(w.get("file_path") or "").replace("\\", "/")
+        start = int(w.get("start_line") or 0)
+        end = start
+        body = ""
+        if packed:
+            body, start, end, _item = packed
+        if fp and start > 0:
+            snip = read_source_snippet(repo_root, fp, start, end or start, pad=0)
+            if snip.strip():
+                body = snip
+        if body.strip():
+            full_sha = hashlib.sha256(body.encode("utf-8", errors="ignore")).hexdigest()
+            text = body if len(body) <= _SOURCE_WINDOW_TEXT_CAP else body[:_SOURCE_WINDOW_TEXT_CAP]
+            w["end_line"] = end or start
+            w["source_window"] = {
+                "file_path": fp,
+                "start_line": start,
+                "end_line": end or start,
+                "sha256": full_sha,
+                "text": text,
+                "text_truncated": len(body) > _SOURCE_WINDOW_TEXT_CAP,
+            }
+        out.append(w)
+    return out
 
 # Generic: any identifier that receives set_field
 RECV_SET_RE = re.compile(
@@ -70,7 +119,22 @@ NOISE_CALLS = frozenset(
 )
 WEAK_NAME_HINT_RE = re.compile(r"(tiling|workspace|blockdim|block_dim)", re.IGNORECASE)
 
-def _env_limit(name: str, default: int, maximum: int = 5000) -> int:
+EXTRACT_LIMIT_HARD_MAX = 5000
+
+# payload key → (env var, default)
+EXTRACT_LIMIT_SPECS: dict[str, tuple[str, int]] = {
+    "writers": ("UO_EXTRACT_MAX_WRITERS", 200),
+    "receivers": ("UO_EXTRACT_MAX_RECEIVERS", 200),
+    "aliases": ("UO_EXTRACT_MAX_ALIASES", 300),
+    "non_sink_roots": ("UO_EXTRACT_MAX_NON_SINK", 512),
+    "extra_entries": ("UO_EXTRACT_MAX_EXTRA", 100),
+    "one_hop": ("UO_EXTRACT_MAX_ONE_HOP", 240),
+    "sink_scan_files": ("UO_EXTRACT_MAX_SINK_SCAN_FILES", 64),
+    "kernel_alias_files": ("UO_EXTRACT_MAX_KERNEL_ALIAS_FILES", 320),
+}
+
+
+def _env_limit(name: str, default: int, maximum: int = EXTRACT_LIMIT_HARD_MAX) -> int:
     try:
         value = int(os.environ.get(name, str(default)))
     except ValueError:
@@ -78,14 +142,137 @@ def _env_limit(name: str, default: int, maximum: int = 5000) -> int:
     return max(1, min(maximum, value))
 
 
-MAX_WRITERS = _env_limit("UO_EXTRACT_MAX_WRITERS", 200)
-MAX_RECEIVERS = _env_limit("UO_EXTRACT_MAX_RECEIVERS", 200)
-MAX_ALIASES = _env_limit("UO_EXTRACT_MAX_ALIASES", 300)
-MAX_NON_SINK = _env_limit("UO_EXTRACT_MAX_NON_SINK", 512)
-MAX_EXTRA = _env_limit("UO_EXTRACT_MAX_EXTRA", 100)
-MAX_ONE_HOP = _env_limit("UO_EXTRACT_MAX_ONE_HOP", 240)
-MAX_SINK_SCAN_FILES = _env_limit("UO_EXTRACT_MAX_SINK_SCAN_FILES", 64)
-MAX_KERNEL_ALIAS_FILES = _env_limit("UO_EXTRACT_MAX_KERNEL_ALIAS_FILES", 320)
+def _pilot_params_path(repo_root: Path) -> Path:
+    return Path(repo_root) / ".ascendc-pilot" / "context" / "pilot_params.yaml"
+
+
+def load_extract_limit_overrides(repo_root: Path | None) -> dict[str, int]:
+    """Read extract_limits from context/pilot_params.yaml (env-key or short-key)."""
+    if repo_root is None or yaml is None:
+        return {}
+    path = _pilot_params_path(repo_root)
+    if not path.is_file():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    raw = data.get("extract_limits")
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, int] = {}
+    env_to_key = {env: key for key, (env, _default) in EXTRACT_LIMIT_SPECS.items()}
+    for k, v in raw.items():
+        key = str(k).strip()
+        short = env_to_key.get(key, key)
+        if short not in EXTRACT_LIMIT_SPECS:
+            continue
+        try:
+            out[short] = max(1, min(EXTRACT_LIMIT_HARD_MAX, int(v)))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def persist_extract_limits(repo_root: Path, limits_by_key: dict[str, int]) -> Path | None:
+    """Merge raised limits into context/pilot_params.yaml (survives agent bash fence)."""
+    if yaml is None or not limits_by_key:
+        return None
+    path = _pilot_params_path(repo_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    except Exception:  # noqa: BLE001
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    section = data.get("extract_limits")
+    if not isinstance(section, dict):
+        section = {}
+    for key, value in limits_by_key.items():
+        spec = EXTRACT_LIMIT_SPECS.get(key)
+        if not spec:
+            continue
+        env_name, _default = spec
+        try:
+            section[env_name] = max(1, min(EXTRACT_LIMIT_HARD_MAX, int(value)))
+        except (TypeError, ValueError):
+            continue
+    data["extract_limits"] = section
+    path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    return path
+
+
+def resolve_extract_limits(repo_root: Path | None = None) -> dict[str, int]:
+    """Precedence: process env > pilot_params.yaml > built-in defaults."""
+    overrides = load_extract_limit_overrides(repo_root)
+    out: dict[str, int] = {}
+    for key, (env_name, default) in EXTRACT_LIMIT_SPECS.items():
+        if os.environ.get(env_name) not in (None, ""):
+            out[key] = _env_limit(env_name, default)
+        elif key in overrides:
+            out[key] = overrides[key]
+        else:
+            out[key] = default
+    return out
+
+
+def apply_extract_limits_to_environ(limits_by_key: dict[str, int]) -> None:
+    for key, value in limits_by_key.items():
+        spec = EXTRACT_LIMIT_SPECS.get(key)
+        if not spec:
+            continue
+        os.environ[spec[0]] = str(int(value))
+
+
+def _sync_module_limit_globals(limits: dict[str, int]) -> None:
+    global MAX_WRITERS, MAX_RECEIVERS, MAX_ALIASES, MAX_NON_SINK, MAX_EXTRA
+    global MAX_ONE_HOP, MAX_SINK_SCAN_FILES, MAX_KERNEL_ALIAS_FILES
+    MAX_WRITERS = limits["writers"]
+    MAX_RECEIVERS = limits["receivers"]
+    MAX_ALIASES = limits["aliases"]
+    MAX_NON_SINK = limits["non_sink_roots"]
+    MAX_EXTRA = limits["extra_entries"]
+    MAX_ONE_HOP = limits["one_hop"]
+    MAX_SINK_SCAN_FILES = limits["sink_scan_files"]
+    MAX_KERNEL_ALIAS_FILES = limits["kernel_alias_files"]
+
+
+def _auto_raise_extract_limits(
+    raw_counts: dict[str, int],
+    limits: dict[str, int],
+) -> tuple[dict[str, int], dict[str, int], dict[str, int]]:
+    """Raise limits to fit raw counts (within hard max). Returns (limits, raised, still_over)."""
+    new_limits = dict(limits)
+    raised: dict[str, int] = {}
+    still_over: dict[str, int] = {}
+    for key in ("writers", "receivers", "aliases", "non_sink_roots", "extra_entries"):
+        raw = int(raw_counts.get(key) or 0)
+        lim = int(new_limits.get(key) or 0)
+        if raw <= lim:
+            continue
+        if raw > EXTRACT_LIMIT_HARD_MAX:
+            still_over[key] = raw - EXTRACT_LIMIT_HARD_MAX
+            new_limits[key] = EXTRACT_LIMIT_HARD_MAX
+            raised[key] = EXTRACT_LIMIT_HARD_MAX
+            continue
+        new_limits[key] = raw
+        raised[key] = raw
+    return new_limits, raised, still_over
+
+
+# Defaults (env-aware at import) — tests may import MAX_NON_SINK.
+_LIMITS0 = resolve_extract_limits(None)
+MAX_WRITERS = _LIMITS0["writers"]
+MAX_RECEIVERS = _LIMITS0["receivers"]
+MAX_ALIASES = _LIMITS0["aliases"]
+MAX_NON_SINK = _LIMITS0["non_sink_roots"]
+MAX_EXTRA = _LIMITS0["extra_entries"]
+MAX_ONE_HOP = _LIMITS0["one_hop"]
+MAX_SINK_SCAN_FILES = _LIMITS0["sink_scan_files"]
+MAX_KERNEL_ALIAS_FILES = _LIMITS0["kernel_alias_files"]
 
 
 def propose_extract_plan(
@@ -94,6 +281,11 @@ def propose_extract_plan(
     *,
     architecture: str = "arch35",
 ) -> dict[str, Any]:
+    repo_root = Path(repo_root).resolve()
+    limits = resolve_extract_limits(repo_root)
+    apply_extract_limits_to_environ(limits)
+    _sync_module_limit_globals(limits)
+
     uo_root = existing_operator_root(repo_root, op_name)
     graph = load_entrypoint_graph(uo_root)
     if not graph or not (graph.get("nodes") or graph.get("extraction_units")):
@@ -357,10 +549,75 @@ def propose_extract_plan(
         "non_sink_roots": MAX_NON_SINK,
         "extra_entries": MAX_EXTRA,
     }
-    truncated = {name: raw_counts[name] - limit for name, limit in limits.items() if raw_counts[name] > limit}
-    writer_list = _top_scored(list(writers.values()), MAX_WRITERS)
+    truncated = {
+        name: raw_counts[name] - lim for name, lim in limits.items() if raw_counts[name] > lim
+    }
+    limits_auto_raised: dict[str, int] = {}
+    limits_persisted: str = ""
+    if truncated:
+        # Fundamental fix (ses_0662): raise within hard max + persist to pilot_params so
+        # agents need not inject shell env through the bash fence.
+        new_limits, raised, still_over = _auto_raise_extract_limits(raw_counts, limits)
+        if raised:
+            persisted = persist_extract_limits(repo_root, raised)
+            apply_extract_limits_to_environ(raised)
+            limits = dict(new_limits)
+            full = resolve_extract_limits(repo_root)
+            full.update(limits)
+            _sync_module_limit_globals(full)
+            limits_auto_raised = {
+                EXTRACT_LIMIT_SPECS[k][0]: v for k, v in raised.items() if k in EXTRACT_LIMIT_SPECS
+            }
+            limits_persisted = persisted.as_posix() if persisted else ""
+            truncated = {
+                name: raw_counts[name] - lim
+                for name, lim in limits.items()
+                if raw_counts[name] > lim
+            }
+            # still_over means raw > HARD_MAX — keep those as truncated
+            for key, over in still_over.items():
+                truncated[key] = over
+
+    writer_list = _attach_source_windows(
+        repo_root,
+        _top_scored(list(writers.values()), MAX_WRITERS),
+        body_by_key,
+    )
     receiver_list = _top_scored(list(receivers.values()), MAX_RECEIVERS)
     alias_list = list(aliases.values())[:MAX_ALIASES]
+    suggested_env = {
+        EXTRACT_LIMIT_SPECS[k][0]: int(raw_counts[k])
+        for k in ("writers", "receivers", "aliases", "non_sink_roots", "extra_entries")
+        if raw_counts.get(k, 0) > limits.get(k, 0)
+    }
+    recovery_cli = ""
+    if truncated and suggested_env:
+        parts = " ".join(f"--set {k}={v}" for k, v in suggested_env.items())
+        recovery_cli = f"acp run-action extract_plan {parts}".strip()
+    recovery: Any
+    if truncated:
+        recovery = {
+            "message": (
+                "candidate truncation is never treated as a complete FAG graph; "
+                "raise limits then retry prepare"
+            ),
+            "message_zh": (
+                "候选预算仍超硬上限，请用 acp --set 抬高后重试（勿在 bash 里拼 $env；"
+                "变量名是 UO_EXTRACT_MAX_NON_SINK 不是 *_NON_SINK_ROOTS）"
+            ),
+            "env": suggested_env,
+            "cli": recovery_cli or "acp run-action extract_plan --raise-extract-limits",
+        }
+    elif limits_auto_raised:
+        recovery = {
+            "message": "candidate limits auto-raised to fit raw graph; persisted to pilot_params",
+            "message_zh": "已自动抬高候选预算并写入 context/pilot_params.yaml，无需设置 shell 环境变量",
+            "env": limits_auto_raised,
+            "persisted": limits_persisted,
+            "cli": "",
+        }
+    else:
+        recovery = ""
     return {
         "version": 1,
         "op_name": op_name,
@@ -383,11 +640,10 @@ def propose_extract_plan(
         "raw_counts": raw_counts,
         "candidate_limits": limits,
         "truncated": truncated,
-        "recovery": (
-            "raise the matching UO_EXTRACT_MAX_* environment limit and rebuild; "
-            "candidate truncation is never treated as a complete FAG graph"
-            if truncated else ""
-        ),
+        "limits_auto_raised": limits_auto_raised,
+        "limits_persisted": limits_persisted,
+        "recovery": recovery,
+        "recovery_cli": recovery_cli,
     }
 
 

@@ -53,13 +53,21 @@ function projectRootFromPath(pathHint: string): string {
   return ""
 }
 
+function isPilotProjectRoot(root: string): boolean {
+  const r = String(root || "").trim()
+  if (!r) return false
+  return existsSync(resolve(r, ".ascendc-pilot", "state", "workflow.yaml"))
+}
+
 function lastProjectCachePath(): string {
   return resolve(homedir(), ".config", "opencode", "ascendc-last-project")
 }
 
 function rememberProjectRoot(project: string): void {
   const root = String(project || "").trim()
-  if (!root || !existsSync(root)) return
+  // Never cache workspace/git parents that are not a live Pilot project — that
+  // poisons Task dispatch when OpenCode cwd is D:\TEST (or similar).
+  if (!root || !isPilotProjectRoot(root)) return
   try {
     const cache = lastProjectCachePath()
     mkdirSync(resolve(homedir(), ".config", "opencode"), { recursive: true })
@@ -74,7 +82,7 @@ function readRememberedProjectRoot(): string {
     const cache = lastProjectCachePath()
     if (!existsSync(cache)) return ""
     const root = readFileSync(cache, "utf-8").trim()
-    if (root && existsSync(resolve(root, ".ascendc-pilot", "state", "workflow.yaml"))) {
+    if (root && isPilotProjectRoot(root)) {
       return root
     }
   } catch {
@@ -85,20 +93,24 @@ function readRememberedProjectRoot(): string {
 
 function detectProjectRoot(pathHint?: string): string {
   const fromPath = projectRootFromPath(String(pathHint || ""))
-  if (fromPath) return fromPath
+  if (fromPath && isPilotProjectRoot(fromPath)) return fromPath
+  // Operator package path before acp start (has op_kernel etc., no workflow yet).
+  if (fromPath && existsSync(fromPath)) return fromPath
 
   const fromEnv =
     process.env.ASCENDC_PROJECT_ROOT ||
     process.env.OPENCODE_PROJECT_ROOT ||
     process.env.PROJECT_ROOT ||
     ""
-  if (fromEnv && existsSync(fromEnv)) return fromEnv
+  if (fromEnv && existsSync(fromEnv)) {
+    if (isPilotProjectRoot(fromEnv)) return fromEnv
+  }
 
   // Prefer cwd when it looks like an operator package, even before acp start
   // creates `.ascendc-pilot`. Walking up to a parent `.ascendc-pilot` would otherwise
   // authorize against the wrong leftover run (e.g. ops-transformer vs op dir).
   const cwd = process.cwd()
-  if (existsSync(resolve(cwd, ".ascendc-pilot", "state", "workflow.yaml"))) {
+  if (isPilotProjectRoot(cwd)) {
     return cwd
   }
   if (
@@ -111,17 +123,9 @@ function detectProjectRoot(pathHint?: string): string {
 
   // Walk up: prefer active Pilot workflow over bare .git / pilot repo root.
   let cur = cwd
-  let foundGit = ""
-  let foundPilotRepo = ""
   for (let i = 0; i < 8; i++) {
-    if (existsSync(resolve(cur, ".ascendc-pilot", "state", "workflow.yaml"))) {
+    if (isPilotProjectRoot(cur)) {
       return cur
-    }
-    if (!foundPilotRepo && existsSync(resolve(cur, "pilot")) && existsSync(resolve(cur, "engines"))) {
-      foundPilotRepo = cur
-    }
-    if (!foundGit && existsSync(resolve(cur, ".git"))) {
-      foundGit = cur
     }
     const parent = resolve(cur, "..")
     if (parent === cur) break
@@ -131,25 +135,35 @@ function detectProjectRoot(pathHint?: string): string {
   const remembered = readRememberedProjectRoot()
   if (remembered) return remembered
 
-  return foundPilotRepo || foundGit || process.cwd()
+  // Do NOT fall back to bare .git / AscendC-Pilot repo — those authorize as a
+  // fake project with empty phase actors and block Task (ses_062d).
+  return fromEnv && existsSync(fromEnv) ? fromEnv : process.cwd()
 }
 
-function detectProjectRootForTask(): string {
-  // Task args often carry subagent names, not file paths — ignore path hints.
+function detectProjectRootForTask(promptHint?: string): string {
+  // Task args carry subagent names, not file paths. Prefer paths embedded in the
+  // prepare stub (…/<op>/.ascendc-pilot/runs/.../actions/extract_plan/...).
+  const fromPrompt = projectRootFromPath(String(promptHint || ""))
+  if (fromPrompt && isPilotProjectRoot(fromPrompt)) {
+    return fromPrompt
+  }
+
   const fromEnv =
     process.env.ASCENDC_PROJECT_ROOT ||
     process.env.OPENCODE_PROJECT_ROOT ||
     process.env.PROJECT_ROOT ||
     ""
-  if (fromEnv && existsSync(resolve(fromEnv, ".ascendc-pilot", "state", "workflow.yaml"))) {
+  if (fromEnv && isPilotProjectRoot(fromEnv)) {
     return fromEnv
   }
   const cwd = process.cwd()
-  if (existsSync(resolve(cwd, ".ascendc-pilot", "state", "workflow.yaml"))) {
+  if (isPilotProjectRoot(cwd)) {
     return cwd
   }
   const remembered = readRememberedProjectRoot()
   if (remembered) return remembered
+  // Last resort: still try prompt even without workflow (pre-start edge).
+  if (fromPrompt && existsSync(fromPrompt)) return fromPrompt
   return detectProjectRoot()
 }
 
@@ -767,7 +781,10 @@ export const AscendCHarnessPlugin = async () => {
           "",
       )
       const isTaskTool = tool === "task" || tool === "subagent" || tool === "task_tool"
-      const project = isTaskTool ? detectProjectRootForTask() : detectProjectRoot(path)
+      const taskPromptHint = String(args.prompt || args.description || args.task || "")
+      const project = isTaskTool
+        ? detectProjectRootForTask(taskPromptHint)
+        : detectProjectRoot(path)
       if (project) rememberProjectRoot(project)
       const active = readActiveAction(project)
       let agent = resolveEffectiveAgent(input, active, tool)
@@ -856,6 +873,18 @@ export const AscendCHarnessPlugin = async () => {
         const hostSession = extractHostSessionId(input as Record<string, unknown>)
         const taskInvocationId = extractTaskInvocationId(input as Record<string, unknown>)
         const promptText = String(args.prompt || args.description || args.task || "")
+        const promptTrim = promptText.trim()
+        // Empty / placeholder Task bodies poison producer sessions (ses_0627).
+        if (
+          !promptTrim ||
+          promptTrim === "{}" ||
+          promptTrim === "null" ||
+          promptTrim === "undefined"
+        ) {
+          throw new Error(
+            "[ascendc-pilot] Task prompt 为空或无效（禁止 {} / 空串）；必须原样粘贴 prepare 返回的 task_prompt_stub",
+          )
+        }
         if (hostSession) {
           const nonce = `nonce_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
           const reg = runDebug(
@@ -931,7 +960,10 @@ export const AscendCHarnessPlugin = async () => {
           args.filePath || args.path || args.file || args.filepath || args.target || "",
         )
         const isTaskTool = tool === "task" || tool === "subagent" || tool === "task_tool"
-        const project = isTaskTool ? detectProjectRootForTask() : detectProjectRoot(path)
+        const taskPromptHint = String(args.prompt || args.description || args.task || "")
+        const project = isTaskTool
+          ? detectProjectRootForTask(taskPromptHint)
+          : detectProjectRoot(path)
         if (project) rememberProjectRoot(project)
 
         const err = extractToolError(output, tool)

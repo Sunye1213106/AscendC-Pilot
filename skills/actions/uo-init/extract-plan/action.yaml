@@ -28,7 +28,12 @@ forbidden_write_paths:
 - uo/ir/llm_tasks.yaml
 allowed_read_paths:
 - uo/ir/extract_plan_candidates.yaml
+- uo/ir/extract_plan_candidates.sha256
+- uo/ir/extract_plan_candidates.summary.yaml
+- uo/ir/extract_plan.rework_hints.yaml
 - uo/ir/entrypoint_graph.yaml
+- uo/cbm/index_meta.json
+- uo/ir/extract_plan.yaml
 forbidden_read_paths:
 - uo/ir/llm_tasks.yaml
 - uo/ir/semantic_patches.yaml

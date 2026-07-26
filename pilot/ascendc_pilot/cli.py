@@ -11,6 +11,87 @@ from typing import Any
 from ascendc_pilot.io import configure_stdio, print_json
 
 
+def _apply_run_action_limit_flags(args: argparse.Namespace) -> dict[str, Any]:
+    """Apply --set / --raise-extract-limits into pilot_params + process env (ses_0662)."""
+    project = Path(args.project).resolve()
+    sets = list(getattr(args, "set", None) or [])
+    raise_limits = bool(getattr(args, "raise_extract_limits", False))
+    if not sets and not raise_limits:
+        return {}
+
+    try:
+        from uo.scripts.propose_extract_plan import (
+            EXTRACT_LIMIT_SPECS,
+            apply_extract_limits_to_environ,
+            persist_extract_limits,
+        )
+    except Exception:  # noqa: BLE001
+        return {"ok": False, "error": "extract_limit_helpers_unavailable"}
+
+    env_to_key = {env: key for key, (env, _default) in EXTRACT_LIMIT_SPECS.items()}
+    raised: dict[str, int] = {}
+
+    for item in sets:
+        text = str(item or "").strip()
+        if not text or "=" not in text:
+            continue
+        key, _, raw = text.partition("=")
+        key = key.strip()
+        short = env_to_key.get(key, key)
+        if short not in EXTRACT_LIMIT_SPECS:
+            continue
+        try:
+            raised[short] = int(raw.strip())
+        except ValueError:
+            continue
+
+    if raise_limits:
+        cand = (
+            project
+            / ".ascendc-pilot"
+            / "uo"
+            / "ir"
+            / "extract_plan_candidates.yaml"
+        )
+        raw_counts: dict[str, int] = {}
+        if cand.is_file():
+            try:
+                import yaml
+
+                doc = yaml.safe_load(cand.read_text(encoding="utf-8")) or {}
+                if isinstance(doc, dict) and isinstance(doc.get("raw_counts"), dict):
+                    raw_counts = {
+                        str(k): int(v)
+                        for k, v in doc["raw_counts"].items()
+                        if str(k) in EXTRACT_LIMIT_SPECS
+                    }
+            except Exception:  # noqa: BLE001
+                raw_counts = {}
+        for key, (_env, default) in EXTRACT_LIMIT_SPECS.items():
+            if key not in ("writers", "receivers", "aliases", "non_sink_roots", "extra_entries"):
+                continue
+            needed = int(raw_counts.get(key) or 0)
+            if needed > 0:
+                raised[key] = max(raised.get(key, 0), needed)
+            elif key not in raised:
+                # ensure at least a generous bump when no prior candidates
+                if key == "non_sink_roots":
+                    raised[key] = max(default * 2, 1024)
+
+    if not raised:
+        return {"ok": False, "error": "no_valid_extract_limits"}
+
+    path = persist_extract_limits(project, raised)
+    apply_extract_limits_to_environ(raised)
+    return {
+        "ok": True,
+        "extract_limits": {
+            EXTRACT_LIMIT_SPECS[k][0]: v for k, v in raised.items() if k in EXTRACT_LIMIT_SPECS
+        },
+        "persisted": path.as_posix() if path else "",
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     configure_stdio()
     parser = argparse.ArgumentParser(prog="acp", description="AscendC-Pilot")
@@ -68,6 +149,24 @@ def main(argv: list[str] | None = None) -> int:
         "--finalize",
         action="store_true",
         help="Finalize prepared action: check contract/gates and issue signed receipt",
+    )
+    p_run.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help=(
+            "Persist extract limit / pilot param for this project then run "
+            "(e.g. --set UO_EXTRACT_MAX_NON_SINK=1024). Prefer this over shell $env."
+        ),
+    )
+    p_run.add_argument(
+        "--raise-extract-limits",
+        action="store_true",
+        help=(
+            "For extract_plan: raise candidate budgets from last candidates raw_counts "
+            "(or defaults) into context/pilot_params.yaml, then prepare"
+        ),
     )
 
     p_adv = sub.add_parser("advance", help="Advance phase only if phase_gates pass")
@@ -164,6 +263,23 @@ def main(argv: list[str] | None = None) -> int:
     p_uq.add_argument("--limit", type=int, default=50)
     p_uq.add_argument("--relation-type", default="")
     p_uq.add_argument("--status-only", action="store_true")
+
+    p_cbm = sub.add_parser(
+        "cbm",
+        help="CBM locate + windowed source read for producers (wraps CbmClient)",
+    )
+    p_cbm_sub = p_cbm.add_subparsers(dest="cbm_cmd", required=True)
+    p_cbm_lu = p_cbm_sub.add_parser(
+        "lookup",
+        help="Resolve symbol → bounded snippet (prefer before whole-file Read)",
+    )
+    p_cbm_lu.add_argument("--project", type=Path, default=Path.cwd())
+    p_cbm_lu.add_argument("--name", required=True, help="Symbol short name or qualified_name")
+    p_cbm_lu.add_argument("--file-contains", default="", help="Prefer/narrow by path fragment")
+    p_cbm_lu.add_argument("--architecture", default="", help="e.g. arch35 (ranking only)")
+    p_cbm_lu.add_argument("--class-qn", default="", help="Owning class / namespace hint")
+    p_cbm_lu.add_argument("--pad", type=int, default=2, help="Snippet line padding")
+    p_cbm_lu.add_argument("--limit", type=int, default=8, help="Max ambiguous hits")
 
     p_dbg = sub.add_parser(
         "debug",
@@ -435,7 +551,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "run-action":
         from ascendc_pilot.actions import run_action
 
+        applied = _apply_run_action_limit_flags(args)
         result = run_action(args.project, args.action_id, finalize=bool(args.finalize))
+        if applied:
+            result = dict(result)
+            result["pilot_params_updated"] = applied
         print_json(result, default=str)
         return 0 if result.get("ok") else 1
     if args.cmd == "advance":
@@ -618,6 +738,22 @@ def main(argv: list[str] | None = None) -> int:
             if args.relation_type:
                 argv.extend(["--relation-type", args.relation_type])
         return int(query_main(argv) or 0)
+    if args.cmd == "cbm":
+        if args.cbm_cmd == "lookup":
+            from ascendc_pilot.cbm_lookup import lookup_symbol
+
+            payload = lookup_symbol(
+                Path(args.project).resolve(),
+                name=str(args.name or ""),
+                file_contains=str(args.file_contains or ""),
+                architecture=str(args.architecture or ""),
+                class_qn=str(getattr(args, "class_qn", "") or ""),
+                pad=int(args.pad or 2),
+                limit=int(args.limit or 8),
+            )
+            print_json(payload)
+            return 0 if payload.get("ok") else 1
+        return 2
     if args.cmd == "debug":
         return _cmd_debug(args)
     return 2

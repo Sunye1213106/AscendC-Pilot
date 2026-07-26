@@ -3,8 +3,8 @@ version: 1
 name_zh: 人工确认
 id: human_confirm
 workflow_id: tg-init
-role_id: null
-agent_id: null
+role_id: controller
+agent_id: ascendc-pilot
 execution_mode: primary_interactive
 capabilities: []
 policies:
@@ -17,9 +17,16 @@ policies:
 task_prompt_id: tg/human-confirm
 context_profile_id: tg-init-human-confirm
 output_contract_id: init-confirmed-v1
-allowed_write_paths: []
+allowed_write_paths:
+- tg/init/status.yaml
+- tg/init/kb_fingerprint.yaml
+- tg/realization/domain_review.yaml
+- tg/realization/binding_lexicon.yaml
 forbidden_write_paths: []
-allowed_read_paths: []
+allowed_read_paths:
+- tg/init/**
+- tg/realization/**
+- tg/snapshot/**
 forbidden_read_paths: []
 checker:
   required: true

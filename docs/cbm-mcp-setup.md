@@ -26,28 +26,33 @@
 
 ## 1. 安装 binary（Windows）
 
+**推荐**（本仓库根目录，不会覆盖本仓 `install.ps1`）：
+
 ```powershell
-# 1) 下载安装脚本
-Invoke-WebRequest -Uri https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.ps1 -OutFile install.ps1
-
-# 2) 解除 Mark-of-the-Web（浏览器 / Invoke-WebRequest 下载常见）
-Unblock-File .\install.ps1
-
-# 3) 执行（会下载 binary，并尝试自动写入已检测到的 agent 配置，含 OpenCode）
-.\install.ps1
+.\install.ps1 cbm
 ```
 
-若遇执行策略限制：
+该子命令把上游安装脚本下载到 `%TEMP%` 再执行，装 binary，并尝试自动写入已检测到的 agent 配置（含 OpenCode）。
+
+### 手动安装（勿用仓库根目录的 `install.ps1` 作 OutFile）
+
+```powershell
+# 必须写到 TEMP / 异名文件，否则会覆盖本仓 AscendC-Pilot\install.ps1
+$cbm = Join-Path $env:TEMP "cbm-install.ps1"
+Invoke-WebRequest -Uri https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.ps1 -OutFile $cbm
+Unblock-File $cbm
+PowerShell -ExecutionPolicy Bypass -File $cbm
+```
+
+若遇执行策略限制，可先：
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-# 或
-PowerShell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-可选：`--skip-config` 只装 binary、不改 agent 配置；`--dir=<路径>` 指定安装目录。
+上游脚本可选参数：`--skip-config` 只装 binary、不改 agent 配置；`--dir=<路径>` 指定安装目录。
 
-macOS / Linux：
+macOS / Linux（管道执行，不落盘，无覆盖风险）：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash
@@ -80,7 +85,7 @@ curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/i
 
 说明：
 
-- `install.ps1` 若已检测到 OpenCode，可能已写入类似条目；请核对 `command` 是否指向真实文件。
+- 上游 CBM 安装脚本（或本仓 `.\install.ps1 cbm`）若已检测到 OpenCode，可能已写入类似条目；请核对 `command` 是否指向真实文件。
 - 也可直接指向 exe，例如：
 
 ```json
@@ -196,7 +201,7 @@ Get-Content .ascendc-pilot\uo\cbm\index_meta.json
 | agent 不走 MCP、直调本地索引 | 更新安装并新开会话；确认 `opencode mcp list` 已连接 |
 | `project not found` | 对 `cbm/index_stage` 跑 `index_repository`，或 `/uo-init --full` |
 | 查询空结果 | 先 `search_graph` 拿精确符号名，再 `get_code_snippet` / `trace_path` |
-| binary 不在 PATH | `install.ps1` 默认目录加入 PATH，或配置里写绝对路径 |
+| binary 不在 PATH | 用 `.\install.ps1 cbm` 或上游脚本默认目录加入 PATH，或配置里写绝对路径 |
 
 ---
 

@@ -17,9 +17,12 @@ policies:
 task_prompt_id: null
 context_profile_id: tg-init-bind-merge
 output_contract_id: bind-merge-v1
-allowed_write_paths: []
+allowed_write_paths:
+- tg/realization/**
 forbidden_write_paths: []
-allowed_read_paths: []
+allowed_read_paths:
+- tg/snapshot/**
+- tg/realization/**
 forbidden_read_paths: []
 checker:
   required: true

@@ -553,10 +553,17 @@ def _compose_skill_body(skills: Path, wid: str, meta: dict[str, Any]) -> str:
     raw = src.read_text(encoding="utf-8") if src.is_file() else f"---\nname: {wid}\ndescription: {wid}\n---\n\n# {wid}\n"
     _, body = _require_skill_frontmatter(raw, path=src if src.is_file() else None)
     body = _replace_actions_table(body, meta)
-    # Inject pilot-control policy summary once
-    hc = _read_policy(skills, "pilot-control")
-    if "## Composed: pilot-control" not in body and hc:
-        body = body.rstrip() + "\n\n## Composed: pilot-control\n\n" + hc + "\n"
+    # Inject shared policies once (same core as agents — avoid skill-local forks).
+    for pid in (
+        "pilot-control",
+        "evidence",
+        "code-access",
+        "source-authority",
+    ):
+        marker = f"## Composed: {pid}"
+        text = _read_policy(skills, pid)
+        if marker not in body and text:
+            body = body.rstrip() + f"\n\n{marker}\n\n" + text + "\n"
     # Index composed refs + runtime bundle paths
     lines = [
         "\n## Composition index\n",
@@ -623,8 +630,19 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any]) -> str:
     reads = "\n".join(f"- `{x}`" for x in (agent_meta.get("read_scopes") or [])) or "- (none)"
     writes = "\n".join(f"- `{x}`" for x in (agent_meta.get("write_scopes") or [])) or "- (none)"
     forbidden = "\n".join(f"- {x}" for x in (agent_meta.get("forbidden") or []))
-    hc = _read_policy(skills, "pilot-control")
-    lang = _read_policy(skills, "language")
+    # Shared policies for ALL agents (DEFAULT_POLICY_IDS core). Do not push
+    # high-confidence / source-window rules into individual skill prompts only.
+    _agent_policy_ids = (
+        "pilot-control",
+        "language",
+        "evidence",
+        "code-access",
+        "source-authority",
+        "output-quality",
+    )
+    _agent_policies = {pid: _read_policy(skills, pid) for pid in _agent_policy_ids}
+    hc = _agent_policies["pilot-control"]
+    lang = _agent_policies["language"]
     front: dict[str, Any] = {
         "name": aid,
         "description": agent_meta.get("description") or aid,
@@ -654,6 +672,9 @@ You may read:
 
 {reads}
 
+Confirmed-scope **operator sources** (`op_host/**`, `op_kernel/**`, …) are outside `.ascendc-pilot`.
+Locate with CBM first (`search_graph` → `get_code_snippet`, or `acp cbm lookup`), then windowed `Read` — never whole-file dumps.
+
 You may write:
 
 {writes}
@@ -669,7 +690,7 @@ At runtime, follow:
 1. **First**: Read the session `prompt.md` from the prepared Action Bundle (path given by Host `task_prompt_stub` / `session_dir`). Treat it as the sole task body.
 2. Then the current Pilot Action / METHOD only as referenced by that prompt;
 3. the composed Policies;
-4. the composed Capabilities;
+4. the composed Capabilities (`cbm-navigation`, `source-reading` when declared on the Action);
 5. the declared Output Contract.
 
 When these sources conflict, follow the session `prompt.md` and Pilot Action / source-authority Policy.
@@ -682,6 +703,22 @@ Do **not** invent extra goals beyond the session prompt. Do **not** finalize the
 ## Composed: language
 
 {lang}
+
+## Composed: evidence
+
+{_agent_policies["evidence"]}
+
+## Composed: code-access
+
+{_agent_policies["code-access"]}
+
+## Composed: source-authority
+
+{_agent_policies["source-authority"]}
+
+## Composed: output-quality
+
+{_agent_policies["output-quality"]}
 """
     return _dump_frontmatter(front) + "\n" + body
 

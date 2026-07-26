@@ -74,6 +74,12 @@ def finalize_scope(repo_root: Path, op_name: str) -> tuple[int, list[str]]:
     receipt = {
         "version": 1,
         "artifact": {"type": "runs.receipt", "schema_version": 1, "owner": "deterministic-uo-engine"},
+        # Top-level identity so run-action --finalize contract check passes before
+        # pilot-finalizer stamps artifact_identity (avoids ARTIFACT_IDENTITY_MISSING deadlock).
+        "run_id": run_id,
+        "workflow_id": "uo-init",
+        "phase": "scope",
+        "action_id": "scope_confirmation",
         "snapshot": scope_snapshot(uo_root, run_id),
         "status": "pass",
         "source": source,

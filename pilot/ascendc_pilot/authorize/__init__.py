@@ -48,6 +48,50 @@ _ALLOW_BASH = [
     re.compile(r"^\s*python(?:3)?\s+-m\s+ascendc_pilot(\s|$)"),
 ]
 
+# Read-only path / structure probes (prefer Read/Glob tools for file contents).
+# grep/rg/Select-String allowed as locate-only (policy: code-access); not evidence alone.
+_ALLOW_BASH_READONLY_HEAD = [
+    # Unix / cmd listing & cwd
+    re.compile(r"^\s*(ls|dir|tree|pwd)\b", re.I),
+    # Locate-only search (no writes; still blocked if redirected into .ascendc-pilot)
+    re.compile(r"^\s*(grep|rg|ripgrep|findstr)\b", re.I),
+    re.compile(r"^\s*(Select-String|sls)\b", re.I),
+    # PowerShell listing / path probes / navigation
+    re.compile(
+        r"^\s*(Get-ChildItem|gci|Get-Item|gi|Get-Location|gl|"
+        r"Test-Path|Resolve-Path|Get-Command|gcm|"
+        r"cd|Set-Location|sl|Push-Location|Pop-Location)\b",
+        re.I,
+    ),
+]
+# Safe pipeline stages after a readonly head (still no writes).
+_ALLOW_BASH_READONLY_PIPE = [
+    re.compile(
+        r"^\s*(Select-Object|select|Format-Table|ft|Format-List|fl|"
+        r"Where-Object|where|\?|Sort-Object|sort|Measure-Object|measure|"
+        r"Group-Object|ForEach-Object|%|Select-String|sls)\b",
+        re.I,
+    ),
+]
+
+# Shell writers into .ascendc-pilot — word boundaries so "cp " does not match "acp ".
+_BASH_PROTECTED_WRITE_RES = [
+    re.compile(r"\s>>?"),
+    re.compile(r"(^|[\s|;&])tee(\s|$)"),
+    re.compile(r"\bset-content\b"),
+    re.compile(r"\bout-file\b"),
+    re.compile(r"\badd-content\b"),
+    re.compile(r"(^|[\s|;&])ni(\s|$)"),
+    re.compile(r"\bnew-item\b"),
+    re.compile(r"(^|[\s|;&])echo(\s|$)"),
+    re.compile(r"(^|[\s|;&])printf(\s|$)"),
+    re.compile(r"\bcat\s*>"),
+    re.compile(r"\bcopy(\s|$)"),
+    re.compile(r"\bmove(\s|$)"),
+    re.compile(r"(^|[\s|;&])mv(\s|$)"),
+    re.compile(r"(^|[\s|;&])cp(\s|$)"),
+]
+
 # Formal product paths — require matching producer/referee/engine action
 _PROTECTED_MARKERS = (
     "/ir/",
@@ -111,6 +155,41 @@ def _project_root_for_path(project_root: Path | None, path_s: str) -> Path | Non
         if (candidate / ".ascendc-pilot").is_dir() or candidate.is_dir():
             return candidate.resolve()
     return project_root.resolve() if project_root is not None else None
+
+
+def _is_pilot_project_root(project_root: Path | None) -> bool:
+    if project_root is None:
+        return False
+    try:
+        from ascendc_pilot.paths import agent_root
+
+        return (agent_root(Path(project_root)) / "state" / "workflow.yaml").is_file()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _read_last_project_cache() -> Path | None:
+    """OpenCode plugin cache of the last live Pilot operator root."""
+    cache = Path.home() / ".config" / "opencode" / "ascendc-last-project"
+    try:
+        if not cache.is_file():
+            return None
+        root = Path(cache.read_text(encoding="utf-8").strip())
+        if _is_pilot_project_root(root):
+            return root.resolve()
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _resolve_task_project_root(project_root: Path | None) -> Path | None:
+    """Task hooks often pass workspace cwd (no workflow). Prefer last live Pilot root."""
+    if _is_pilot_project_root(project_root):
+        return Path(project_root).resolve()
+    cached = _read_last_project_cache()
+    if cached is not None:
+        return cached
+    return Path(project_root).resolve() if project_root is not None else None
 
 
 def _load_active_action(project_root: Path | None) -> dict[str, Any]:
@@ -436,6 +515,30 @@ def _is_acp_start(command: str) -> bool:
     )
 
 
+def _is_readonly_inspect_bash(command: str) -> bool:
+    """Allow ls / Get-ChildItem / pwd / cd … for structure probing (no writes)."""
+    cmd = (command or "").strip()
+    if not cmd:
+        return False
+    cmd_l = cmd.lower().replace("\\", "/")
+    # Any redirect / shell writer → not readonly.
+    if any(p.search(cmd_l) for p in _BASH_PROTECTED_WRITE_RES):
+        return False
+    # Split compound commands; every segment must be a readonly head or pipe stage.
+    segments = [s.strip() for s in re.split(r"\s*(?:&&|;|\|)\s*", cmd) if s.strip()]
+    if not segments:
+        return False
+    if not any(p.search(segments[0]) for p in _ALLOW_BASH_READONLY_HEAD):
+        return False
+    for seg in segments[1:]:
+        if any(p.search(seg) for p in _ALLOW_BASH_READONLY_HEAD):
+            continue
+        if any(p.search(seg) for p in _ALLOW_BASH_READONLY_PIPE):
+            continue
+        return False
+    return True
+
+
 def authorize(
     project_root: Path | None = None,
     *,
@@ -466,8 +569,12 @@ def authorize(
     # Write path under <op>/.ascendc-pilot/… may arrive with a wrong project_root
     # (workspace parent). Prefer the operator package that owns the artifact.
     # Task path is usually the subagent name — never treat it as a filesystem path.
+    # OpenCode cwd is often the workspace (e.g. D:\TEST) while the live run lives
+    # under the operator package — recover via last-project cache (ses_062d).
     if tool_l in _TASK_TOOLS:
-        project_root = Path(project_root).resolve() if project_root is not None else None
+        project_root = _resolve_task_project_root(
+            Path(project_root).resolve() if project_root is not None else None
+        )
     else:
         project_root = _project_root_for_path(project_root, path_s)
 
@@ -560,6 +667,33 @@ def authorize(
                 command=cmd[:200],
                 allowed_actions=allowed_cmds[:8],
             )
+        # Containment may Read failed Action IR / session pack for inspect
+        # (product: human_required must not blind the host to the broken artifact).
+        if tool_l in _READ_TOOLS and path_s and project_root is not None:
+            rel_try = str(path_s).replace("\\", "/")
+            marker = "/.ascendc-pilot/"
+            rel = rel_try.split(marker, 1)[1] if marker in rel_try else ""
+            fail_aid = str(failed_action or "").strip()
+            allow_inspect = False
+            if rel in {
+                "uo/ir/extract_plan.yaml",
+                "uo/ir/extract_plan_candidates.yaml",
+                "uo/ir/extract_plan_candidates.sha256",
+                "uo/ir/extract_plan_candidates.summary.yaml",
+                "uo/ir/extract_plan.rework_hints.yaml",
+                "uo/ir/semantic_patches.yaml",
+            }:
+                allow_inspect = True
+            if fail_aid and rel.startswith(f"runs/") and f"/actions/{fail_aid}/" in rel:
+                allow_inspect = True
+            if allow_inspect:
+                return _ok(
+                    "allow",
+                    "CONTAINMENT_INSPECT_READ",
+                    f"失败收敛模式允许读取失败 Action 产物以便 inspect（status={status}）",
+                    status=status,
+                    path=path_s,
+                )
         if tool_l in _READ_TOOLS | _WRITE_TOOLS | _TASK_TOOLS:
             return _deny_not_authorized(
                 f"Current run is {status}; {tool_l} not authorized",
@@ -613,11 +747,19 @@ def authorize(
                         status=status,
                         command=cmd[:200],
                     )
+            if _is_readonly_inspect_bash(cmd_raw if cmd_raw else cmd):
+                return _ok(
+                    "allow",
+                    "BASH_READONLY_INSPECT",
+                    "返工模式允许只读探查（ls/Get-ChildItem/pwd/cd/…）",
+                    status=status,
+                    command=cmd[:200],
+                )
             if agent_l in _PRIMARY_AGENTS:
                 return _ok(
                     "ask",
                     "BASH_NOT_HARNESS",
-                    "返工模式默认仅允许 acp *；其他 bash 需人工确认",
+                    "返工模式默认仅允许 acp * 与只读探查；其他 bash 需人工确认",
                     command=cmd[:200],
                 )
             return _ok(
@@ -662,35 +804,9 @@ def authorize(
 
     # --- bash / shell ---
     if tool_l in _BASH_TOOLS:
-        # Deny shell redirects / writers aimed at formal pilot artifacts (fence bypass).
-        cmd_l = cmd.lower().replace("\\", "/")
-        if ".ascendc-pilot/" in cmd_l and any(
-            tok in cmd_l
-            for tok in (
-                " >",
-                ">>",
-                " tee ",
-                "set-content",
-                "out-file",
-                "add-content",
-                "ni ",
-                "new-item",
-                "echo ",
-                "printf ",
-                "cat >",
-                "copy ",
-                "move ",
-                "mv ",
-                "cp ",
-            )
-        ):
-            return _ok(
-                "deny",
-                "BASH_PROTECTED_WRITE",
-                "禁止用 bash 写入 .ascendc-pilot 正式产物以绕过 Write 围栏；请由声明 actor 用 Write 或 acp run-action",
-                error_code="HARNESS_ACTION_NOT_AUTHORIZED",
-                command=cmd[:200],
-            )
+        # Harness CLI first: acp * is the authorized writer into .ascendc-pilot/.
+        # Must run before the protected-write heuristic — naive token "cp " matches
+        # inside "acp " and falsely denied record-index when args contain the path.
         for pat in _ALLOW_BASH:
             if pat.search(cmd):
                 return _ok(
@@ -700,6 +816,17 @@ def authorize(
                     workflow_id=ctx.get("workflow_id"),
                     phase=ctx.get("phase"),
                 )
+        # Deny shell redirects / writers aimed at formal pilot artifacts (fence bypass).
+        # Word-boundary patterns: "cp " must not match the trailing "cp " of "acp ".
+        cmd_l = cmd.lower().replace("\\", "/")
+        if ".ascendc-pilot/" in cmd_l and any(p.search(cmd_l) for p in _BASH_PROTECTED_WRITE_RES):
+            return _ok(
+                "deny",
+                "BASH_PROTECTED_WRITE",
+                "禁止用 bash 写入 .ascendc-pilot 正式产物以绕过 Write 围栏；请由声明 actor 用 Write 或 acp run-action",
+                error_code="HARNESS_ACTION_NOT_AUTHORIZED",
+                command=cmd[:200],
+            )
         for pat in _DENY_BASH:
             if pat.search(cmd):
                 return _ok(
@@ -709,11 +836,21 @@ def authorize(
                     error_code="HARNESS_ACTION_NOT_AUTHORIZED",
                     command=cmd[:200],
                 )
+        # Structure probes: ls / Get-ChildItem / pwd / cd … (no writes / no domain CLI).
+        if _is_readonly_inspect_bash(cmd_raw if cmd_raw else cmd):
+            return _ok(
+                "allow",
+                "BASH_READONLY_INSPECT",
+                "允许只读探查（ls/Get-ChildItem/pwd/cd/…）",
+                workflow_id=ctx.get("workflow_id"),
+                phase=ctx.get("phase"),
+                command=cmd[:200],
+            )
         if agent_l in _PRIMARY_AGENTS:
             return _ok(
                 "ask",
                 "BASH_NOT_HARNESS",
-                "AscendC-Pilot 默认仅允许 acp *；其他 bash 需人工确认",
+                "AscendC-Pilot 默认仅允许 acp * 与只读探查（ls/Get-ChildItem/…）；其他 bash 需人工确认",
                 command=cmd[:200],
             )
         return _ok(
@@ -829,6 +966,20 @@ def authorize(
     # --- task / subagent spawn ---
     if tool_l in _TASK_TOOLS:
         if agent_l in _PRIMARY_AGENTS:
+            # Defense in depth: empty prompt may arrive as --command when plugin
+            # forwards stub text; bare "{}" / empty must never spawn a producer.
+            prompt_probe = (cmd_raw or "").strip()
+            if prompt_probe in {"{}", "null", "undefined"} or (
+                prompt_probe.startswith("{")
+                and prompt_probe.endswith("}")
+                and len(prompt_probe) <= 4
+            ):
+                return _ok(
+                    "deny",
+                    "TASK_PROMPT_EMPTY",
+                    "Task prompt 为空或无效（禁止 {}）；须原样使用 prepare 的 task_prompt_stub",
+                    tool=tool_l,
+                )
             target = path_s or cmd
             declared_actors = _declared_phase_actors(allowed, meta, project_root)
             target_l = target.strip().lower()

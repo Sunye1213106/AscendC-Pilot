@@ -171,8 +171,10 @@ def test_weak_writer_candidate_only_fails() -> None:
 
 
 def test_strong_source_evidence_allows_weak_score_promotion() -> None:
+    snip = "blob_->set_x(1);\n  blob_->set_y(2);\n  mid_->set_tmp(0);\n" + ("x" * 20)
     plan = {
         "version": 1,
+        "candidates_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "writers": [
             {
                 "name": "SaveStuff",
@@ -181,7 +183,9 @@ def test_strong_source_evidence_allows_weak_score_promotion() -> None:
                 "evidence_source": "source",
                 "source_verified": True,
                 "evidence_files": ["a.cpp"],
-                "evidence_lines": [10],
+                "evidence_lines": [10, 20],
+                "evidence_window_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                "evidence_snippet": snip,
                 "decision_reason": "recv_set_call on tilingData sink",
             }
         ],
@@ -204,6 +208,7 @@ def test_strong_source_evidence_allows_weak_score_promotion() -> None:
         "non_sink_root_candidates": [],
         "extra_entry_candidates": [],
     }
+    # No project_root → structural AND fields only (disk match skipped).
     errors = validate_extract_plan_against_candidates(plan, cands)
     assert errors == []
 

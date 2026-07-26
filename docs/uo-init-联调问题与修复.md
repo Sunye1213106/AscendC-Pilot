@@ -1,10 +1,11 @@
 # uo-init / AscendC-Pilot 联调问题与修复记录
 
 > 范围：OpenCode + AscendC Pilot（含早期 Harness / Ascendc-PR-test-agent）在 FASG 等算子上的联调。  
-> 更新日期：2026-07-24  
+> 更新日期：2026-07-26  
 > 证据来源：
 > - Cursor 对话（`~/.cursor/projects/d-PR-review/agent-transcripts/`，约 69 条父会话，其中 ~30 条与 Pilot/UO 强相关）
-> - OpenCode session：`session-ses_06e5` / `06e3` / `06e2` / `06e0` / `06dc` / `06d8` / `06d6`，以及更早的 `ses_0711` / `070d` / `076d` / `0772` 等
+> - Cursor 对话（`d-TEST`）：`67647551-5a41-46a8-901a-c8e0cf140949`（FAG arch35 extract_plan / 证据策略 / Host 越权）
+> - OpenCode session：`session-ses_0629` / `ses_06298d…`（子代理），以及更早的 `session-ses_06e5` / `06e3` / `06e2` / `06e0` / `06dc` / `06d8` / `06d6`，`ses_0711` / `070d` / `076d` / `0772` 等
 
 本文按时间线 + 主题汇总**问题 → 根因 → 方案 → 状态**，供回归与复盘。
 
@@ -20,6 +21,7 @@
 | 07-23 晚 | `43f34de7…` `7a18ec14…` | 中文乱码、Todo 展示、Gate fail 后逃逸、refresh 脚本、ses_070d/0711 |
 | 07-23 夜 | `0066487b…` | 迁移为 AscendC-Pilot / `acp` CLI |
 | 07-24 | `c175ed62…`（及分支会话） | 安装链接、路由/产物对齐、extract 职责串台、Write 围栏、continue/reinit、stub 派发、debug、AskQuestion、语义补丁断档 |
+| 07-26 | `67647551…`（d-TEST）+ `session-ses_0629` | 高置信源码比对上收公共策略；lease write⊆read；CBM 工具调用失败；YAML `} else {` 炸 plan；Host 代写 IR / stub 加戏 → RETRY_EXHAUSTED |
 
 引用对话时可用：`[<标题>](<uuid>)`（uuid 为上表 transcript 目录名）。
 
@@ -61,6 +63,11 @@
 | A30 | apply rework 不能跑裁决 producer | 控制面 | recovery_actions | 07-24 |
 | A31 | extract_plan `non_sink_roots` 写成 unresolved dict；Host rework 加戏+新 session | Prompt/校验/Skill | 合同收紧：字符串列表硬拒 mapping；rework 必须 resume | ses_06cf |
 | A32 | Debug export 捞无关 `session-ses_*.md`（如 ses_070d） | Debug | 必须传 session/parent id；禁止 cwd mtime 钓鱼 | ses_06cd |
+| A33 | 高置信/`source_verified` 可空口闭合；规则只改个别 skill 易碎片化 | 公共策略+校验 | `evidence`/`code-access`/`source_evidence`；compose 注入全 agent | ses_0629 / 67647551 |
+| A34 | Lease 可 Write 产物不可 Read 自检 | Lease | `issue_action_lease` 强制 write⊆read；pilot-control §13 | ses_06298d |
+| A35 | CBM「不能用」：模型经 `invalid` 误调；失败后放弃取窗 | Capability | `cbm-navigation` 写清 OpenCode 全名+重试+`acp cbm lookup` | ses_06298d |
+| A36 | `evidence_snippet` 含缩进掉级的 `} else {` → YAML 不可解析 → finalize 死循环 | 产品加载/证据载体 | `yaml_literal_sanitize`；优先 `evidence_window_sha256`；apply 按磁盘补 sha | ses_0629 |
+| A37 | Host rework：代写 IR、stub 加戏、反复 prepare 换 sha → retry_exhausted | Host/控制面 | 禁 primary 改 IR；rework resume+原样 stub；prepare 只删不可解析 plan；containment 可读失败 IR | ses_0629 |
 
 ---
 
@@ -305,9 +312,10 @@ detect_score_pre → extract_plan → detect_score_post
 3. `acp start` → 若已有 run → AskQuestion continue/reinit  
 4. 循环：`acp next` → **只跑 recommended** →（语义则 stub 派发 → finalize）→ 再 `next`  
 5. 跳步应被拒绝；有候选 llm_tasks 必须 adjudicate→apply  
-6. 可选：`acp debug enable`（重装后一般仍 enabled）
+6. extract_plan：证据优先 `evidence_window_sha256`；故意塞缩进掉级的 `} else {` 进 snippet 仍应能被 sanitize 加载（见 `test_yaml_literal_sanitize`）  
+7. 可选：`acp debug enable`（重装后一般仍 enabled）
 
-相关单测：`test_semantic_patch_pipeline.py`、`test_prepare_placeholders.py`、`test_uo_output_contracts.py` 等。
+相关单测：`test_semantic_patch_pipeline.py`、`test_prepare_placeholders.py`、`test_uo_output_contracts.py`、`test_yaml_literal_sanitize.py`、`test_extract_plan.py`、`test_lease_read_session_pack.py` 等。
 
 ---
 
@@ -326,6 +334,11 @@ detect_score_pre → extract_plan → detect_score_post
 | 语义补丁 | `adjudicate-llm-tasks`、`llm_tasks.py`、`pipeline.py`、`engines.py` |
 | 跳步 | `describe_next` recommended、`PIPELINE_SKIP_DENIED` |
 | non_sink schema / rework resume | `extract_plan_io.py`、`prompts/tasks/uo/extract-plan.md`、uo-init SKILL、pilot-control |
+| 高置信源码比对（公共） | `skills/policies/evidence`、`code-access`、`source-authority`；`uo/scripts/source_evidence.py`；compose 注入 |
+| Lease write⊆read | `authorize/lease.py`、`pilot-control` POLICY、`actions/runtime.py` prepare |
+| YAML literal sanitize / window sha | `uo/scripts/yaml_literal_sanitize.py`、`_ir_io.read_yaml`、`apply_extract_plan`、gates `_load` |
+| CBM 全名+回退 | `skills/capabilities/cbm-navigation/METHOD.md` |
+| containment 读失败 IR | `authorize/__init__.py` MODE_CONTAINMENT 读例外 |
 
 ---
 
@@ -342,17 +355,159 @@ detect_score_pre → extract_plan → detect_score_post
 
 ---
 
+## 13.2 A33–A37：高置信源码比对 / Lease / YAML 证据 / Host 越权（2026-07-26 · FAG arch35）
+
+**场景**：`flash_attention_score_grad`（仅 arch35）`uo-init` → `extract_plan`。  
+**证据**：OpenCode `session-ses_0629`（primary）+ 子代理 `ses_06298d…`；Cursor `67647551-5a41-46a8-901a-c8e0cf140949`。
+
+### 现象摘要
+
+1. 子代理能窗口 Read `op_host`，写出 writers/receivers 大体对齐源码，但 **`evidence_snippet` 内 `} else {` 缩进掉级** → `extract_plan.yaml` PyYAML 解析失败 → finalize `ACTION_FINALIZE_FAILED_EXTRACT_PLAN`。  
+2. Host（primary）**直接 Edit `uo/ir/extract_plan.yaml`**、往 stub 后拼 `CRITICAL YAML RULE`、lease 过期后 **再 prepare**（candidates sha 变更）→ 子代理重写仍炸 → **`RETRY_EXHAUSTED` / `human_required`**。  
+3. 子代理误以为 CBM 不可用：实际 MCP 工具在 available 列表中，但经 **`invalid` / 错误调用** 失败后放弃，未重试 / 未 `acp cbm lookup`。  
+4. Lease **允许 Write `extract_plan.yaml` 却不允许 Read**，自检被拒。  
+5. 规则若只改 `extract-plan` prompt/METHOD，系统再次碎片化。
+
+### 根因分层
+
+| 层 | 根因 |
+|---|---|
+| 证据合同 | 高置信依赖易碎 YAML 内嵌 C++；缺少「磁盘窗口 sha」主路径 |
+| Lease | write 未自动并入 read（签发层无全局不变量） |
+| Capability | CBM 未写清 OpenCode 工具全名与失败回退 |
+| Host 行为 | Gate fail 后代写 IR / stub 加戏 / 无故 re-prepare，违反 producer 合同 |
+| 加载层 | 无 literal-block sanitize，一次缩进错误整文件不可用 |
+
+### 产品方案（公共层 · 禁止只改个别 skill）
+
+| 主题 | 落点 | 要点 |
+|---|---|---|
+| 高置信=源码比对 | `skills/policies/evidence/POLICY.md`、`code-access`、`source-authority` | `confidence:high` / `source_verified:true` ⇒ 磁盘可核验；search 不算比对 |
+| 共享校验 | `uo/scripts/source_evidence.py`；`extract_plan_io` 复用 | snippet 或 **`evidence_window_sha256`**；去缩进比对 |
+| YAML 韧性 | `uo/scripts/yaml_literal_sanitize.py`；`_ir_io.read_yaml` / gate `_load` | `|` 块内容行缩进 pad 到首行；加载后仍可 parse |
+| 证据优先序 | `evidence` POLICY + `apply_extract_plan._enrich_evidence_window_sha` | 优先 files/lines + window sha（可从候选 `source_window.sha256` 或磁盘计算）；少塞大段 C++ |
+| Lease write⊆read | `authorize/lease.py` `issue_action_lease`；`pilot-control` §13；runtime prepare 双保险 | **所有 Action** 签发时 write 路径可读 |
+| CBM 路径 | `skills/capabilities/cbm-navigation/METHOD.md` | `codebase-memory-mcp_search_graph` → `_get_code_snippet`；失败重试 / `acp cbm lookup` / 窗口 Read |
+| Compose 注入 | `scripts/compose_runtime.py` | 全 agent / skill 注入 evidence、code-access、source-authority（不只 extract-plan） |
+| prepare | `actions/runtime.py` | 仅删除**不可解析**的旧 plan；可解析则保留，减轻 sha  churn |
+| containment 读失败产物 | `authorize/__init__.py` | `human_required` 下允许 Read `extract_plan.yaml` 等失败 IR + 该 Action session pack |
+| extract-plan prompt | `prompts/tasks/uo/extract-plan.md` | **引用**公共策略/能力，不另立证据例外；推荐 window sha |
+
+### Host / 子代理行为约束（仍有效）
+
+- Gate fail → **resume 原 Task + 原样 stub**；禁止 primary `Edit/Write uo/ir/**`；禁止 stub 加戏。  
+- 子代理不得把 `GetTilingKey` 等 `key_writer` 推给下游 adjudicate（本步合同内应确认或 omit 并写清）。  
+- 改完：`compose_runtime.py --host opencode` → `refresh-opencode.ps1` → 重启 OpenCode。
+
+### 回归单测
+
+- `engines/understand-operator/tests/test_yaml_literal_sanitize.py`  
+- `engines/understand-operator/tests/test_extract_plan.py`  
+- `pilot/tests/test_lease_read_session_pack.py`（含 `test_lease_write_paths_are_always_readable`）
+
+---
+
+## 13.3 A38–A42：证据 AND / 空 sinks / summary / Gate 同源 / 空 Task（2026-07-26）
+
+**场景**：`flash_attention_score_grad`（arch35）`uo-init` → `extract_plan`（继 13.2）。  
+**证据**：OpenCode primary `session-ses_0625`；子代理 `ses_0624edc4…`；run `RUN_20260726_090703_0b49bd65`。  
+**状态**：A38–A42 已落地；A43+（ses_0625）产品韧性 / rework 复用 candidates / failure 分桶 **已落地（2026-07-26）**。待 `compose` + `refresh-opencode.ps1` 后 FAG 再测（建议清坏 plan 或从 `human_required` 合法恢复后再 prepare）。
+
+### 现象摘要（问题）
+
+1. 子代理已能 CBM，writers/receivers/GetTilingKey 结构大体对，但 snippet 含 `...` / 非连续；receiver 错贴 sha；alias 缺 `tdf_leaf`；non_sink 发明名。  
+2. Host 首次派发 stub **合规**（含 summary）；finalize 正确失败。  
+3. Rework 时 Host **无故再 prepare** → `candidates_sha256` 从 `5ba163…` 变为 `a28a24…`；子代理 resume 后**只改 sha 头**声称「源码未变」→ Host **明知未修证据仍二次 finalize** → 同 fingerprint ×2 → 预算耗尽。
+
+### 根因分层
+
+| 层 | 根因 |
+|---|---|
+| 证据合同 | 已收紧为 sha **AND** 连续 snippet（拒拼贴）——校验对；缺「可核验则回填连续窗」韧性 |
+| Action 合同 | alias/non_sink 合同正确拒；summary 未列合法 alias 对 |
+| Rework / prepare | **校验失败不应重跑 propose**；重 prepare 制造 sha churn，掩盖真修复 |
+| Host | resume+原 stub 合规，但 **盲信「只改 sha」摘要仍 finalize**；failure_card 142 条重复噪声，stub 无结构化修复信号 |
+| 观测 | 同 reason 双计（high+promote）；整包 reject 塞进一条 finding |
+
+### 产品方案（公共优先 · 禁止只改 extract-plan skill）
+
+| 项 | 层级 | 落点 | 要点 |
+|---|---|---|---|
+| 高置信 = sha **且** 连续 snippet | **公共**（已做） | `require_disk_window_proof` | 保持拒拼贴 |
+| **可核验则回填连续 snippet** | **公共**（下一刀） | `apply_extract_plan` / `source_evidence`（对齐 `_enrich_evidence_window_sha`） | files/lines 齐 → 从磁盘或候选 `source_window.text` 写入连续 snippet；禁省略号 |
+| **校验失败禁止无故 re-propose** | **公共控制面** | extract prepare / runtime rework | 已有可解析 plan + 仅 checker 失败 → **保留 candidates + 原 sha**，只换 lease/stub |
+| 压缩 failure + 可选 rework hints | **公共模式** | Observation / failure_card；lease 可读 `*.rework_hints.yaml` | 分桶：collage/sha/alias/non_sink；禁止 142 条重复 |
+| Host：子代理称「未改证据」禁止 finalize | **公共** `pilot-control` | 一句硬规则 | 先 `check`/再 resume；禁止「先 finalize 试试」 |
+| summary 列 alias 对；空 sinks/GetTilingKey | **挂 extract**（部分已做） | summary + `_validate_extract_plan_contracts` | 字段合同不进公共 evidence |
+
+### 回归单测 / 交付
+
+- [x] A38–A42 单测 + compose  
+- [ ] 回填 snippet + rework 不 churn sha 单测  
+- [ ] FAG：同 fingerprint 不再因「只改 sha」烧尽预算
+
+---
+
+## 13.4 A43+：Host rework 空转 / 证据回填 / 禁 sha churn（ses_0625 · 2026-07-26）
+
+**证据**：[`session-ses_0625.md`](../session-ses_0625.md) — finalize 失败 → 再 prepare → resume 只改 sha → 再 finalize → `RETRY_EXHAUSTED`。
+
+### 已落地（公共优先）
+
+| 项 | 落点 | 状态 |
+|---|---|---|
+| 拼贴 snippet → 磁盘/候选窗回填 | `source_evidence.enrich_item_evidence_from_disk`；`apply_extract_plan` | 已做 |
+| rework 复用 candidates+sha（禁无故 re-propose） | `engines._run_extract_plan`（plan 存在或 status=rework/human） | 已做 |
+| failure 分桶去重 + `extract_plan.rework_hints.yaml` | `bucket_extract_plan_errors`；lease 可读 hints | 已做 |
+| Host 禁盲 finalize（只改 sha） | `pilot-control` §9 | 已做 |
+| summary 列 alias `local/tdf_leaf` | `build_extract_plan_candidates_summary` | 已做 |
+| 校验错误去重（high+promote） | `extract_plan_io._validate_decision_evidence` | 已做 |
+
+### 回归单测
+
+- `test_apply_backfills_collage_snippet` / `test_bucket_extract_plan_errors_dedupes`  
+- `pilot/tests/test_extract_plan_reuse_candidates.py`
+
+### 联调恢复建议
+
+1. `compose_runtime.py --host opencode` → `refresh-opencode.ps1` → 重启 OpenCode。  
+2. 当前 `human_required`：按 Pilot 合法恢复路径重试 extract_plan（prepare 应 `reused_candidates:true`）。  
+3. Host：子代理若只改 sha → 禁止 finalize；读 `extract_plan.rework_hints.yaml`。
+
+### A44：summary 硬约束 + 只读 grep（2026-07-26）
+
+| 项 | 落点 | 状态 |
+|---|---|---|
+| summary 含 `section_lines` / `must` | `scan_candidates_section_lines` + summary builder | 已做 |
+| stub `MUST_READ_ORDER` 禁先扫全量 candidates | `runtime._build_task_prompt_stub`；prompt/METHOD | 已做 |
+| bash 只读 `grep\|rg\|Select-String\|findstr` | `authorize._ALLOW_BASH_READONLY_HEAD`；`code-access`/`pilot-control` | 已做 |
+| Grep 仍非 high 证据 | 公共 policy | 已写清 |
+
+### A45：大 IR summary 上收公共层（2026-07-26）
+
+| 项 | 落点 | 状态 |
+|---|---|---|
+| YAML `section_lines` / `attach_large_ir_meta` | `uo.scripts.ir_summary`；extract_plan 薄封装 | 已做 |
+| stub 见 `*.summary.yaml` 即注入 `MUST_READ_ORDER` | `ascendc_pilot.ir_summary` + runtime（不按 action 特判） | 已做 |
+| policy / 原则文档 | `code-access`；`skill-and-prompt-principles` | 已做 |
+| 仍留本步 | sinks / key_writer / alias 字段合同 + evidence_tools stub | 正当例外 |
+
+---
+
 ## 14. 一句话原则（沉淀）
 
 1. **Pilot 独占状态**；Skill/Prompt 不推进阶段。  
 2. **歧义就问**（路径/arch/continue；**tg-init** 才问测试脚本），禁止 Glob 考古。  
 3. **只跑 recommended_next**；finalize 后立刻再 `acp next`。  
 4. **LLM 产物必须有 producer 合同**；deterministic 只应用。  
-5. **Gate fail → rework**，不是一上来 blocked；失败要落 Observation，禁止逃逸手工修。  
+5. **Gate fail → rework**，不是一上来 blocked；失败要落 Observation，禁止逃逸手工修 / **禁止 primary 代写 IR**。  
 6. **extract ≠ 边裁决**；空候选禁止假 ACCEPT；`non_sink_roots` 只认字符串名。  
-7. **CBM 不做 KEY/宏表主路径**。  
+7. **CBM 不做 KEY/宏表主路径**；语义结论须取窗（MCP 全名 / `acp cbm lookup` / 窗口 Read）。  
 8. **同 Action rework 必须 resume**；Task 正文只粘 stub。  
-9. **改完要 compose + refresh + 重启 OpenCode** 才测的是新代码。
+9. **高置信规则进公共 Policy/Capability/共享校验**，禁止只改个别 skill。  
+10. **Lease：write ⊆ read**；高置信 = **窗口 sha AND 连续 snippet**（禁止 OR / 拼贴）；大 IR 可有 `*.summary.yaml`。  
+11. **改完要 compose + refresh + 重启 OpenCode** 才测的是新代码。  
+12. **Gate 与 apply 同源 validate**；Host 禁盲信「无候选」；禁空 Task prompt。
 
 ---
 

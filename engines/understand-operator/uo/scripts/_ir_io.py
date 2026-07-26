@@ -19,7 +19,17 @@ def read_yaml(path: Path) -> dict[str, Any]:
     require_yaml()
     if not path.exists():
         return {}
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    text = path.read_text(encoding="utf-8")
+    # extract_plan / other IR with embedded code: sanitize `|` blocks first.
+    name = path.name.lower()
+    if name in {"extract_plan.yaml", "semantic_patches.yaml"} or name.endswith(
+        "_plan.yaml"
+    ):
+        from uo.scripts.yaml_literal_sanitize import safe_load_yaml_text
+
+        data = safe_load_yaml_text(text) or {}
+    else:
+        data = yaml.safe_load(text) or {}
     return data if isinstance(data, dict) else {}
 
 

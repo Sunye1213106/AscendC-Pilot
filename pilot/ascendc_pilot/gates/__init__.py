@@ -39,7 +39,16 @@ BITPACK_EXCUSE_MARKERS = (
 def _load(path: Path) -> Any:
     if yaml is None or not path.is_file():
         return None
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+    # IR with embedded code snippets: sanitize literal blocks before parse.
+    if path.name in {"extract_plan.yaml", "semantic_patches.yaml"}:
+        try:
+            from uo.scripts.yaml_literal_sanitize import safe_load_yaml_text
+
+            return safe_load_yaml_text(text)
+        except Exception:  # noqa: BLE001
+            pass
+    return yaml.safe_load(text)
 
 
 def _norm(text: str) -> str:
@@ -800,6 +809,8 @@ def gate_extract_plan_subagent(project_root: Path, uo: Path) -> dict[str, Any]:
         else:
             workflow_ok = True
 
+    contract_ok = True
+    contract_errors: list[str] = []
     if plan_ok and cand_ok:
         expected = str(
             plan_doc.get("candidates_sha256")
@@ -821,6 +832,23 @@ def gate_extract_plan_subagent(project_root: Path, uo: Path) -> dict[str, Any]:
             if st in {"blocked", "fail", "failed"} or cand_doc.get("ok") is False:
                 cand_status_ok = False
                 errors.append("extract_plan_candidates status blocked/fail")
+            # Same authority as apply_extract_plan (evidence + action contracts).
+            try:
+                from uo.scripts.extract_plan_io import (
+                    normalize_plan_from_candidates,
+                    validate_extract_plan_against_candidates,
+                )
+
+                normalized = normalize_plan_from_candidates(plan_doc, cand_doc)
+                contract_errors = validate_extract_plan_against_candidates(
+                    normalized, cand_doc, project_root=project_root
+                )
+                if contract_errors:
+                    contract_ok = False
+                    errors.extend(contract_errors[:12])
+            except Exception as exc:  # noqa: BLE001
+                contract_ok = False
+                errors.append(f"extract_plan contract validate failed: {exc}")
 
     ok = bool(
         plan_ok
@@ -832,6 +860,14 @@ def gate_extract_plan_subagent(project_root: Path, uo: Path) -> dict[str, Any]:
         and producer_ok
         and run_ok
         and workflow_ok
+        and contract_ok
+    )
+    # receipt_required=false: pre-finalize gate; receipt_verify failure is informational only.
+    msg = "ok" if ok else (
+        "extract requires entrypoint_graph + operator_boundary "
+        "+ ir/extract_plan.yaml with actor_id/run_id/workflow_id/candidates_sha256 "
+        "+ same validate as apply; "
+        + "; ".join(errors[:8])
     )
     return {
         "gate": "extract_plan_subagent",
@@ -839,25 +875,19 @@ def gate_extract_plan_subagent(project_root: Path, uo: Path) -> dict[str, Any]:
         "has_receipt": has_receipt,
         "receipt_required": False,
         "receipt_verify": verified,
+        "receipt_informational": True,
         "has_plan": plan_ok,
         "has_candidates": cand_ok,
         "has_entrypoint_graph": ep_ok,
         "has_operator_boundary": boundary_ok,
         "candidates_status_ok": cand_status_ok,
         "hash_ok": hash_ok,
+        "contract_ok": contract_ok,
         "producer_actor_ok": producer_ok,
         "run_id_ok": run_ok,
         "workflow_id_ok": workflow_ok,
         "errors": errors,
-        "message": (
-            "ok"
-            if ok
-            else (
-                "extract requires entrypoint_graph + operator_boundary "
-                "+ ir/extract_plan.yaml with actor_id/run_id/workflow_id/candidates_sha256; "
-                + "; ".join(errors[:6])
-            )
-        ),
+        "message": msg,
     }
 
 
