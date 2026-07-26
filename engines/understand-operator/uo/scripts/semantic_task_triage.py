@@ -92,15 +92,36 @@ def _scope_complete(uo_root: Path) -> bool:
     return False
 
 
+def _score_phase(task: dict[str, Any]) -> str:
+    """Resolve phase with explicit score_phase taking precedence over old checkpoint text."""
+    explicit = str(task.get("score_phase") or "").strip()
+    if explicit:
+        return explicit
+    checkpoint = str(task.get("checkpoint") or "")
+    if "post_semantic" in checkpoint:
+        return "post_semantic"
+    if "pre_semantic" in checkpoint:
+        return "pre_semantic"
+    return ""
+
+
+def _promote_post_semantic_task(task: dict[str, Any]) -> bool:
+    """Promote a reused pre-semantic provisional task into the canonical post task."""
+    if _score_phase(task) != "post_semantic":
+        return False
+    lifecycle = str(task.get("task_status") or task.get("status") or "")
+    if lifecycle != "provisional":
+        return False
+    task["task_status"] = "open"
+    if str(task.get("status") or "") in {"", "open", "provisional"}:
+        task["status"] = "open"
+    task["promoted_from_provisional"] = True
+    return True
+
+
 def classify_task(task: dict[str, Any], *, uo_root: Path | None = None) -> dict[str, Any]:
     """Return triage fields for one task."""
-    score_phase = str(task.get("score_phase") or "")
-    if not score_phase:
-        ck = str(task.get("checkpoint") or "")
-        if "pre_semantic" in ck:
-            score_phase = "pre_semantic"
-        elif "post_semantic" in ck:
-            score_phase = "post_semantic"
+    score_phase = _score_phase(task)
 
     # KEY gaps first — some KEY macros overlap MACRO_MARKERS (GET_TPL_TILING_KEY).
     if _is_key_task(task):
@@ -138,15 +159,15 @@ def classify_task(task: dict[str, Any], *, uo_root: Path | None = None) -> dict[
     if n_cand == 0:
         return {
             "task_id": task.get("task_id"),
-            "category": "incomplete_scope_candidate",
-            "route": "none",
+            "category": "candidate_generation_required",
+            "route": "uo-semantic-resolve",
             "blocking_scope": "extract",
             "blocking_phase": "extract",
             "blocks_extract_advance": True,
             "blocks_workflow_complete": True,
-            "eligible_for_adjudication": False,
+            "eligible_for_adjudication": score_phase != "pre_semantic",
             "score_phase": score_phase or "post_semantic",
-            "reason": "no grounded candidates",
+            "reason": "no grounded candidates; generate or enrich candidates before adjudication",
         }
 
     if n_cand == 1 and strong and scope_ok:
@@ -231,23 +252,31 @@ def apply_triage_to_tasks(
     for task in tasks:
         if not isinstance(task, dict):
             continue
+        phase = _score_phase(task)
         if score_phase_filter:
-            sp = str(task.get("score_phase") or "")
-            ck = str(task.get("checkpoint") or "")
-            if score_phase_filter == "post_semantic" and "post_semantic" not in sp and "post_semantic" not in ck:
+            if score_phase_filter == "post_semantic" and phase != "post_semantic":
                 # Still triage open tasks without phase for safety.
-                if task.get("status") not in {"open", "rework_required"}:
+                if phase or task.get("status") not in {"open", "rework_required"}:
                     continue
+        promoted = _promote_post_semantic_task(task)
+        phase = _score_phase(task)
         row = classify_task(task, uo_root=uo_root)
-        # Pre-semantic tasks are never adjudicable.
-        if str(task.get("score_phase") or "") == "pre_semantic" or "pre_semantic" in str(
-            task.get("checkpoint") or ""
-        ):
+        if promoted:
+            row["promoted_from_provisional"] = True
+
+        # Pre-semantic diagnostics are provisional and never adjudicable.
+        if phase == "pre_semantic":
             row["eligible_for_adjudication"] = False
             row["score_phase"] = "pre_semantic"
             task["task_status"] = task.get("task_status") or "provisional"
             if task.get("status") == "open":
                 task["task_status"] = "provisional"
+        elif phase == "post_semantic" and row.get("blocks_extract_advance"):
+            # Post-semantic blocking tasks must have an executable deterministic or LLM route.
+            if not str(row.get("route") or "").strip() or row.get("route") == "none":
+                row["route"] = "uo-semantic-resolve"
+                row["eligible_for_adjudication"] = True
+
         task["triage_category"] = row["category"]
         task["route"] = row["route"]
         task["blocking_scope"] = row["blocking_scope"]
@@ -276,7 +305,7 @@ def write_semantic_task_triage(
         tasks = [t for t in (doc.get("tasks") or []) if isinstance(t, dict)]
         if run_id:
             tasks = [t for t in tasks if str(t.get("run_id") or "") == run_id]
-    _, rows = apply_triage_to_tasks(list(tasks), uo_root=uo_root)
+    triaged_tasks, rows = apply_triage_to_tasks(list(tasks), uo_root=uo_root)
     by_cat: dict[str, int] = {}
     for r in rows:
         cat = str(r.get("category") or "unknown")
@@ -290,6 +319,18 @@ def write_semantic_task_triage(
             "by_category": by_cat,
             "llm_eligible": sum(1 for r in rows if r.get("eligible_for_adjudication")),
             "blocks_extract": sum(1 for r in rows if r.get("blocks_extract_advance")),
+            "post_semantic_provisional_count": sum(
+                1
+                for task in triaged_tasks
+                if _score_phase(task) == "post_semantic"
+                and str(task.get("task_status") or task.get("status") or "") == "provisional"
+            ),
+            "blocking_route_none_count": sum(
+                1
+                for task in triaged_tasks
+                if task.get("blocks_extract_advance")
+                and str(task.get("route") or "") in {"", "none"}
+            ),
         },
     }
     write_yaml(uo_root / "ir" / "semantic_task_triage.yaml", payload)
