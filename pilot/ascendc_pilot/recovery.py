@@ -231,10 +231,12 @@ def recoveries_for_closure_gaps(
     recoveries: list[dict[str, Any]] = []
     action_ids: list[str] = []
     seen: set[str] = set()
+    ordered_reason_codes: list[str] = []
     for code in reason_codes:
         if code in seen:
             continue
         seen.add(code)
+        ordered_reason_codes.append(code)
         resolved = resolve_recovery(code, workflow_id=workflow_id, current_phase=current_phase)
         if not resolved.get("ok"):
             continue
@@ -255,7 +257,7 @@ def recoveries_for_closure_gaps(
             uniq_actions.append(action)
 
     return {
-        "reason_codes": list(seen),
+        "reason_codes": ordered_reason_codes,
         "recoveries": recoveries,
         # Legacy flat list: ONLY registered action_ids (never prose).
         "recovery_actions": uniq_actions,
