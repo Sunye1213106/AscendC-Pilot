@@ -73,6 +73,7 @@ def _normalize_subgraph(payload: dict) -> dict:
         out[key] = items
     out.pop("timing_ms", None)
     out.pop("_worker_ms", None)
+    out.pop("file_parallel", None)  # parallel metadata may differ; structure must not
     return out
 
 

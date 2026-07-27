@@ -241,15 +241,36 @@ def map_kernel_files_parallel(
     *,
     parallel: bool | None = None,
     min_files: int = 2,
+    meta: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Run file workers in sorted job order; never use completion order for ids."""
+    """Run file workers in sorted job order; never use completion order for ids.
+
+    When ``meta`` is provided, records ``parallel_used`` / ``fallback`` /
+    ``fallback_reason`` instead of silently swallowing ProcessPool failures.
+    """
     ordered = sorted(jobs, key=lambda j: str(j[1]))  # rel is args[1]
+    if meta is not None:
+        meta.update(
+            {
+                "parallel_enabled": parallel_kernel_file_enabled(explicit=parallel),
+                "file_count": len(ordered),
+                "parallel_used": False,
+                "fallback": False,
+                "fallback_reason": "",
+            }
+        )
     if not parallel_kernel_file_enabled(explicit=parallel) or len(ordered) < min_files:
         return [run_kernel_file_worker(job) for job in ordered]
     try:
         with ProcessPoolExecutor(max_workers=min(4, len(ordered))) as pool:
             # Submit in sorted order; collect by index (not completion order).
             futures = [pool.submit(run_kernel_file_worker, job) for job in ordered]
-            return [fut.result() for fut in futures]
-    except Exception:  # noqa: BLE001
+            results = [fut.result() for fut in futures]
+        if meta is not None:
+            meta["parallel_used"] = True
+        return results
+    except Exception as exc:  # noqa: BLE001
+        if meta is not None:
+            meta["fallback"] = True
+            meta["fallback_reason"] = f"{type(exc).__name__}: {exc}"[:300]
         return [run_kernel_file_worker(job) for job in ordered]

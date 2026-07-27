@@ -51,7 +51,7 @@ def update_operator(
     change_set: dict[str, Any] | None = None
     plan: dict[str, Any] | None = None
     if reuse_artifacts and base is None and head is None:
-        change_set = load_change_set_if_fresh(uo_root)
+        change_set = load_change_set_if_fresh(uo_root, repo_root=repo_root)
         if change_set is not None:
             plan = load_update_plan_if_fresh(uo_root, change_set=change_set)
     if change_set is None:
@@ -111,7 +111,7 @@ def update_operator(
         architecture=architecture,
         layers=layers or None,
         mode="structural",
-        allow_empty_plan=True,
+        allow_empty_plan=False,
     )
     write_yaml(update_dir / "rebuild_layers.yaml", {"layers": graph.get("rebuild_layers") or sorted(layers)})
 

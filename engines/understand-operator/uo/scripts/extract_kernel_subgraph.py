@@ -358,6 +358,13 @@ def extract_kernel_subgraph(
     # Optional deterministic file-level parallel parse (structural facts only).
     preparsed_fns_by_rel: dict[str, list[FunctionDefinition]] = {}
     preparsed_structural: set[str] = set()
+    file_parallel_meta: dict[str, Any] = {
+        "parallel_enabled": False,
+        "parallel_used": False,
+        "fallback": False,
+        "fallback_reason": "",
+        "file_count": 0,
+    }
     try:
         from uo.scripts.kernel_file_worker import map_kernel_files_parallel, merge_kernel_file_facts
 
@@ -382,7 +389,9 @@ def extract_kernel_subgraph(
                 )
             )
         if jobs:
-            file_facts = map_kernel_files_parallel(jobs, parallel=file_parallel)
+            file_facts = map_kernel_files_parallel(
+                jobs, parallel=file_parallel, meta=file_parallel_meta
+            )
             merged_facts = merge_kernel_file_facts(file_facts)
             nodes.extend(merged_facts.get("nodes") or [])
             edges.extend(merged_facts.get("edges") or [])
@@ -394,9 +403,16 @@ def extract_kernel_subgraph(
                 preparsed_fns_by_rel.setdefault(fn.file_path, []).append(fn)
                 all_functions.append(fn)
             preparsed_structural = set(preparsed_fns_by_rel)
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         preparsed_fns_by_rel = {}
         preparsed_structural = set()
+        file_parallel_meta = {
+            "fallback": True,
+            "fallback_reason": f"{type(exc).__name__}: {exc}"[:300],
+            "parallel_used": False,
+            "parallel_enabled": bool(file_parallel) if file_parallel is not None else True,
+            "file_count": file_parallel_meta.get("file_count") or 0,
+        }
 
     for path in kernel_files:
         rel = path.relative_to(repo_root).as_posix()
@@ -1086,6 +1102,7 @@ def extract_kernel_subgraph(
         "source_scope": include_closure.as_dict(repo_root),
         "function_definitions": [fn.as_dict() for fn in all_functions],
         "unresolved": unresolved,
+        "file_parallel": file_parallel_meta,
     }
 
 

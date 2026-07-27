@@ -29,3 +29,8 @@ env/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Agent/session transcripts (never commit)
+session-ses_*.md
+session-*.md
+

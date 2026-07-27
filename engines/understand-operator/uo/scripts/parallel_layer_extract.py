@@ -53,7 +53,13 @@ def _kernel_worker(args: tuple[str, str, str]) -> dict[str, Any]:
     from uo.scripts.extract_kernel_subgraph import extract_kernel_subgraph
 
     t0 = _time.perf_counter()
-    payload = extract_kernel_subgraph(Path(repo_root_s), op_name, architecture=architecture)
+    # Avoid nested ProcessPool: outer host/kernel pool already uses a worker process.
+    payload = extract_kernel_subgraph(
+        Path(repo_root_s),
+        op_name,
+        architecture=architecture,
+        file_parallel=False,
+    )
     payload = dict(payload)
     payload["_worker_ms"] = int((_time.perf_counter() - t0) * 1000)
     return payload

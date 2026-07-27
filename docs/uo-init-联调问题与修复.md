@@ -634,6 +634,8 @@ detect_score_pre → extract_plan → detect_score_post
 
 **性能文档**：`docs/performance/after.md`；探针 `scripts/profile_uo_pipeline.py`（有效 run_id、rebuild error、可选 TG 双跑）。
 
+**A55 审查补丁**：`load_change_set_if_fresh` 校验 `head_revision==git HEAD` 与 `base_revision==manifest.source.revision`；`update_operator` 生产路径 `allow_empty_plan=False`；`write_yaml`/`atomic_write_yaml`/`commit_semantic_artifacts` 失效 `.content-hash` sidecar；consumer cache 纳入 `ctime_ns` + 可选 `TG_CONSUMER_CACHE_VERIFY_HASH`；Host/Kernel ProcessPool 内层 `file_parallel=False` 防嵌套；删除误提交 `session-ses_*.md`。
+
 
 ## 14. 一句话原则（沉淀）
 

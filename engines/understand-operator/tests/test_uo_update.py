@@ -164,6 +164,18 @@ def _seed_kb(repo: Path, revision: str) -> Path:
     }
     _write_yaml(ir / "operator_graph.yaml", graph)
     _write_yaml(ir / "unresolved.yaml", {"version": 1, "op_name": "DemoOp", "items": []})
+    _write_yaml(
+        ir / "extract_plan.yaml",
+        {
+            "version": 1,
+            "confirmed_by": "test",
+            "writers": [],
+            "receivers": [],
+            "aliases": [],
+            "non_sink_roots": [],
+            "extra_host_entries": [],
+        },
+    )
 
     for rel in [
         "tiling/key_space.yaml",

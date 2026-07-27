@@ -38,14 +38,23 @@ def _render_yaml(data: dict[str, Any]) -> str:
     return yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=120)
 
 
+def _content_hash_path(path: Path) -> Path:
+    return path.with_name(path.name + ".content-hash")
+
+
+def _invalidate_content_hash(path: Path) -> None:
+    """Drop sidecar so write_yaml_if_changed cannot reuse a stale digest."""
+    try:
+        _content_hash_path(path).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def write_yaml(path: Path, data: dict[str, Any]) -> None:
     require_yaml()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_render_yaml(data), encoding="utf-8")
-
-
-def _content_hash_path(path: Path) -> Path:
-    return path.with_name(path.name + ".content-hash")
+    _invalidate_content_hash(path)
 
 
 def _stable_payload_hash(data: dict[str, Any]) -> str:
@@ -60,6 +69,8 @@ def write_yaml_if_changed(path: Path, data: dict[str, Any]) -> bool:
     """Write YAML only when structured content hash differs. Returns True if written.
 
     Uses a sidecar ``*.content-hash`` to skip ``safe_dump`` when payload is unchanged.
+    Plain ``write_yaml`` / ``atomic_write_yaml`` invalidate the sidecar so a later
+    ``write_yaml_if_changed`` cannot skip after an out-of-band rewrite.
     """
     digest = _stable_payload_hash(data)
     hash_path = _content_hash_path(path)
@@ -94,6 +105,7 @@ def atomic_write_yaml(path: Path, data: dict[str, Any]) -> None:
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp_name, path)
+        _invalidate_content_hash(path)
     except Exception:
         try:
             os.unlink(tmp_name)
@@ -169,6 +181,7 @@ def commit_semantic_artifacts(
         try:
             for tmp_path, dest in staged:
                 os.replace(tmp_path, dest)
+                _invalidate_content_hash(dest)
                 replaced.append(dest)
                 temps = [t for t in temps if t != tmp_path]
         except Exception:

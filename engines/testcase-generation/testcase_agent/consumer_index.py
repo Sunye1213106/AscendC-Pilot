@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,15 @@ from typing import Any
 TEXT_EXTENSIONS = {".py", ".md", ".markdown", ".yaml", ".yml", ".json", ".txt"}
 MAX_SCAN_FILES = 64
 MAX_FILE_BYTES = 256 * 1024
+
+
+def _verify_hash_enabled() -> bool:
+    return os.environ.get("TG_CONSUMER_CACHE_VERIFY_HASH", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 @dataclass
@@ -99,20 +109,27 @@ def _file_stat_row(root: Path, path: Path) -> dict[str, Any]:
             "path": rel,
             "size": int(st.st_size),
             "mtime_ns": int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9))),
+            "ctime_ns": int(getattr(st, "st_ctime_ns", int(st.st_ctime * 1e9))),
         }
     except OSError:
-        return {"path": rel, "size": -1, "mtime_ns": -1}
+        return {"path": rel, "size": -1, "mtime_ns": -1, "ctime_ns": -1}
 
 
 def _stat_fingerprint(rows: list[dict[str, Any]]) -> str:
     payload = json.dumps(
-        [(r.get("path"), r.get("size"), r.get("mtime_ns")) for r in rows],
+        [(r.get("path"), r.get("size"), r.get("mtime_ns"), r.get("ctime_ns")) for r in rows],
         sort_keys=True,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _stats_match_cached(cached_files: list[dict[str, Any]], current_rows: list[dict[str, Any]]) -> bool:
+def _stats_match_cached(
+    cached_files: list[dict[str, Any]],
+    current_rows: list[dict[str, Any]],
+    *,
+    root: Path | None = None,
+    verify_hash: bool = False,
+) -> bool:
     if len(cached_files) != len(current_rows):
         return False
     by_path = {str(f.get("path") or ""): f for f in cached_files if isinstance(f, dict)}
@@ -124,8 +141,18 @@ def _stats_match_cached(cached_files: list[dict[str, Any]], current_rows: list[d
             return False
         if int(prev.get("mtime_ns") or -2) != int(row.get("mtime_ns") or -1):
             return False
+        # Older caches without ctime_ns still match on size/mtime; new builds record it.
+        if "ctime_ns" in prev and int(prev.get("ctime_ns") or -2) != int(row.get("ctime_ns") or -1):
+            return False
         if not prev.get("sha256"):
             return False
+        if verify_hash and root is not None:
+            try:
+                raw = (root / str(row["path"])).read_bytes()
+            except OSError:
+                return False
+            if hashlib.sha256(raw).hexdigest() != str(prev.get("sha256") or ""):
+                return False
     return True
 
 
@@ -145,20 +172,27 @@ def load_or_build_consumer_index(
     current_rows = [_file_stat_row(root, p) for p in scan_paths]
     fp = _stat_fingerprint(current_rows)
 
+    verify_hash = _verify_hash_enabled()
     if not force_rebuild and path.is_file():
         try:
             cached = json.loads(path.read_text(encoding="utf-8"))
             if (
                 isinstance(cached, dict)
                 and cached.get("fingerprint") == fp
-                and _stats_match_cached(list(cached.get("files") or []), current_rows)
+                and _stats_match_cached(
+                    list(cached.get("files") or []),
+                    current_rows,
+                    root=root,
+                    verify_hash=verify_hash,
+                )
             ):
                 idx = ConsumerIndex.from_dict(cached)
                 idx.ast_cache = {}
-                idx.bytes_read_count = 0
-                idx.source_read_count = 0
+                # VERIFY_HASH reads bytes for integrity but is not a rebuild scan.
+                idx.bytes_read_count = len(current_rows) if verify_hash else 0
+                idx.source_read_count = idx.bytes_read_count
                 idx.ast_parse_count = 0
-                idx.stat_only_hits = len(current_rows)
+                idx.stat_only_hits = 0 if verify_hash else len(current_rows)
                 return idx
         except (OSError, json.JSONDecodeError):
             pass
@@ -184,6 +218,7 @@ def load_or_build_consumer_index(
                 "sha256": digest,
                 "size": int(row["size"]),
                 "mtime_ns": int(row["mtime_ns"]),
+                "ctime_ns": int(row.get("ctime_ns") or -1),
             }
         )
         if file_path.suffix.lower() == ".py":

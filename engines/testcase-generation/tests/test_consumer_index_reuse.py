@@ -65,6 +65,18 @@ def test_consumer_index_reuse_zero_bytes_on_hit(tmp_path: Path) -> None:
     assert second.field_accesses == first.field_accesses
 
 
+def test_consumer_index_verify_hash_env(tmp_path: Path, monkeypatch) -> None:
+    consumer = _consumer_script(tmp_path)
+    out_root = tmp_path / "tg"
+    (out_root / "realization").mkdir(parents=True)
+    load_or_build_consumer_index(out_root, consumer)
+    monkeypatch.setenv("TG_CONSUMER_CACHE_VERIFY_HASH", "1")
+    hit = load_or_build_consumer_index(out_root, consumer)
+    assert hit.ast_parse_count == 0
+    assert hit.bytes_read_count >= 1  # hash verification re-reads bytes
+    assert hit.required_optional_evidence
+
+
 def test_consumer_evidence_index_paths_equivalent(tmp_path: Path) -> None:
     consumer = _consumer_script(tmp_path)
     out_root = tmp_path / "tg"

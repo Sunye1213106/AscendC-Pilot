@@ -182,7 +182,7 @@ def _run_plan_update(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         from uo.scripts.plan_kb_update import plan_kb_update
         from uo.scripts.update_artifact_io import load_change_set_if_fresh
 
-        change_set = load_change_set_if_fresh(uo)
+        change_set = load_change_set_if_fresh(uo, repo_root=project_root)
         reused = change_set is not None
         if change_set is None:
             change_set = detect_kb_changes(project_root, op_name, write=True)
@@ -244,7 +244,7 @@ def _run_diff_summary(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
         from uo.scripts.plan_kb_update import plan_kb_update
         from uo.scripts.update_artifact_io import load_change_set_if_fresh, load_update_plan_if_fresh
 
-        change_set = load_change_set_if_fresh(uo)
+        change_set = load_change_set_if_fresh(uo, repo_root=project_root)
         plan = load_update_plan_if_fresh(uo, change_set=change_set) if change_set else None
         reused = change_set is not None and plan is not None
         if change_set is None:

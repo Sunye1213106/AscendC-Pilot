@@ -22,3 +22,16 @@ def test_write_yaml_if_changed_writes_on_delta(tmp_path: Path) -> None:
     assert write_yaml_if_changed(path, {"version": 1, "nodes": [{"id": "B1"}]}) is True
     doc = read_yaml(path)
     assert len(doc.get("nodes") or []) == 1
+
+
+def test_plain_write_yaml_invalidates_content_hash_sidecar(tmp_path: Path) -> None:
+    path = tmp_path / "ir" / "operator_graph.yaml"
+    payload = {"version": 1, "nodes": [{"id": "N1"}]}
+    assert write_yaml_if_changed(path, payload) is True
+    hash_path = path.with_name(path.name + ".content-hash")
+    assert hash_path.is_file()
+    # Out-of-band rewrite must drop sidecar so the next if_changed cannot skip.
+    write_yaml(path, {"version": 1, "nodes": [{"id": "N2"}]})
+    assert not hash_path.is_file()
+    assert write_yaml_if_changed(path, payload) is True
+    assert read_yaml(path).get("nodes") == [{"id": "N1"}]
