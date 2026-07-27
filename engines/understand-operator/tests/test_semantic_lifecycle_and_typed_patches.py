@@ -193,6 +193,7 @@ def test_mark_missing_never_closes_gap(tmp_path: Path) -> None:
                 {
                     **_open_task("TASK_mm"),
                     "type": "mark_missing",
+                    "effective_task_type": "mark_missing",
                     "candidates": [],
                     "allowed_actions": ["mark_missing"],
                     "candidate_set_hash": "empty",
@@ -204,9 +205,19 @@ def test_mark_missing_never_closes_gap(tmp_path: Path) -> None:
         uo,
         {
             "task_id": "TASK_mm",
+            "run_id": RUN_TEST,
             "action": "mark_missing",
             "source_snapshot_hash": "snap1",
             "candidate_set_hash": "empty",
+            "evidence": ["searched confirmed scope; definition absent"],
+            "negative_evidence": {
+                "scope_snapshot_sha256": "snap1",
+                "queries": [{"symbol": "MissingSym", "search_mode": "exact", "result_count": 0}],
+                "inspected_windows": [
+                    {"file": "op_host/a.cpp", "lines": [1, 20], "window_sha256": "deadbeef"}
+                ],
+                "absence_kind": "project_definition_absent",
+            },
         },
         current_run_id=RUN_TEST,
         current_source_hash="snap1",

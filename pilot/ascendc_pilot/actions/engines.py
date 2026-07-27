@@ -1003,6 +1003,29 @@ def _run_rebuild_from_ledger(project_root: Path, ctx: dict[str, Any]) -> dict[st
         return {"ok": False, "engine": "rebuild_from_ledger", "error": str(exc)[:300]}
 
 
+def _run_apply_scope_expansion(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Audit LLM scope expansion requests and update confirmed scope."""
+    uo, op_name, arch = _uo_op_ctx(project_root, ctx)
+    try:
+        from uo.scripts.scope_expansion import apply_scope_expansion
+
+        result = apply_scope_expansion(
+            project_root,
+            op_name,
+            uo_root=uo,
+            architecture=arch or "arch35",
+        )
+        out = {"ok": bool(result.get("ok")), "engine": "apply_scope_expansion", **result}
+        if result.get("ok") and result.get("new_files"):
+            out["recovery_actions"] = ["detect_score_post", "rebuild_from_ledger"]
+            out["next_actions"] = ["detect_score_post"]
+        elif result.get("status") == "human_required":
+            out["human_required"] = True
+        return out
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "apply_scope_expansion", "error": str(exc)[:300]}
+
+
 def _run_recheck_closure(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     """Recheck closure/integrity WITHOUT incrementing attempts (⑥)."""
     uo, op_name, _arch = _uo_op_ctx(project_root, ctx)
@@ -1012,7 +1035,11 @@ def _run_recheck_closure(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
 
         from ascendc_pilot.recovery import recoveries_for_closure_gaps
         from uo.scripts.evidence_score import _source_snapshot_hash
-        from uo.scripts.llm_tasks import compute_semantic_stats, recheck_does_not_increment
+        from uo.scripts.llm_tasks import (
+            blocking_gap_tasks,
+            compute_semantic_stats,
+            recheck_does_not_increment,
+        )
         from uo.scripts._ir_io import read_yaml, write_yaml
         from uo.scripts.semantic_resolution_ledger import load_ledger
 
@@ -1023,10 +1050,12 @@ def _run_recheck_closure(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
                 "engine": "recheck_closure",
                 "error": "SEMANTIC_DOCUMENT_RUN_ID_MISSING",
             }
+
         budget = recheck_does_not_increment(uo, current_run_id=run_id)
         ep = read_yaml(uo / "ir" / "entrypoint_graph.yaml") or {}
         closure = ep.get("closure") or {}
         stats = compute_semantic_stats(uo, current_run_id=run_id)
+        gap_tasks = blocking_gap_tasks(uo, current_run_id=run_id)
         blocking_gap_count = int(stats.get("blocking_gap_count") or budget.get("blocking_gap_count") or 0)
         unconsumed = int(stats.get("unconsumed_patch_count") or 0)
         host_closed = closure.get("host_main_chain") == "closed"
@@ -1045,6 +1074,15 @@ def _run_recheck_closure(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
             for t in (budget.get("tasks") or [])
             if isinstance(t, dict)
         ]
+        effective_types = sorted(
+            {
+                str(t.get("effective_task_type") or t.get("type") or "")
+                for t in gap_tasks
+                if isinstance(t, dict)
+            }
+        )
+        boundary = read_yaml(uo / "ir" / "operator_boundary.yaml") or {}
+        scope_receipt = read_yaml(uo / "ir" / "scope_expansion_receipt.yaml") or {}
         fp_payload = {
             "run_id": run_id,
             "source_snapshot_hash": snap,
@@ -1054,6 +1092,11 @@ def _run_recheck_closure(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
             "kernel_closure": closure.get("kernel_main_chain"),
             "blocking_gap_count": blocking_gap_count,
             "unconsumed_patch_count": unconsumed,
+            "effective_task_types": effective_types,
+            "boundary_input_count": len(boundary.get("inputs") or []),
+            "boundary_output_count": len(boundary.get("outputs") or []),
+            "scope_expansion_rounds": int(scope_receipt.get("rounds") or 0),
+            "patch_ids": sorted(current_ledger_ids),
         }
         fingerprint = hashlib.sha256(json.dumps(fp_payload, sort_keys=True).encode("utf-8")).hexdigest()[:24]
         fp_path = uo / "ir" / "recheck_fingerprint.yaml"
@@ -1074,6 +1117,7 @@ def _run_recheck_closure(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
             no_progress=no_progress,
             workflow_id=wid,
             current_phase=current_phase,
+            blocking_tasks=gap_tasks,
         )
         recovery_actions = list(routed.get("recovery_actions") or [])
         recoveries = list(routed.get("recoveries") or [])
@@ -1084,6 +1128,8 @@ def _run_recheck_closure(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
                 "ok": False,
                 "engine": "recheck_closure",
                 "error": "NO_PROGRESS_RECHECK",
+                "human_required": True,
+                "deadlock_diagnosis": routed.get("deadlock_diagnosis") or ["deadlock_no_progress"],
                 "closure": closure,
                 "blocking_gap_count": blocking_gap_count,
                 "unconsumed_patch_count": unconsumed,
@@ -1126,6 +1172,7 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("uo-init", "extract_plan"): _run_extract_plan,
     ("uo-init", "detect_score_post"): _run_detect_score_post,
     ("uo-init", "apply_semantic_patch"): _run_apply_semantic_patch,
+    ("uo-init", "apply_scope_expansion"): _run_apply_scope_expansion,
     ("uo-init", "rebuild_from_ledger"): _run_rebuild_from_ledger,
     ("uo-init", "recheck_closure"): _run_recheck_closure,
     ("uo-init", "confidence_report"): _run_confidence_report,
@@ -1174,6 +1221,7 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     ],
     "semantic-patches-v1": ["uo/ir/semantic_patches.yaml"],
     "semantic-patch-v1": ["uo/ir/semantic_resolution_ledger.yaml"],
+    "scope-expansion-v1": ["uo/ir/scope_expansion_receipt.yaml"],
     "rebuild-ledger-v1": ["uo/ir/entrypoint_graph.yaml", "uo/ir/operator_graph.yaml"],
     # Recheck is validation-only; required state under inspection
     "recheck-closure-v1": ["uo/ir/entrypoint_graph.yaml", "uo/ir/llm_tasks.yaml"],

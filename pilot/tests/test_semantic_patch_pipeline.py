@@ -47,10 +47,25 @@ def test_resolve_auto_mark_missing(tmp_path: Path, monkeypatch) -> None:
                     "status": "open",
                     "severity": "blocking",
                     "type": "mark_missing",
+                    "effective_task_type": "mark_missing",
                     "candidates": [],
                     "allowed_actions": ["mark_missing"],
                     "source_snapshot_hash": "h1",
                     "candidate_set_hash": "c1",
+                    "negative_evidence": {
+                        "scope_snapshot_sha256": "h1",
+                        "queries": [
+                            {"symbol": "MissingSym", "search_mode": "exact", "result_count": 0}
+                        ],
+                        "inspected_windows": [
+                            {
+                                "file": "op_host/a.cpp",
+                                "lines": [1, 20],
+                                "window_sha256": "deadbeef",
+                            }
+                        ],
+                        "absence_kind": "project_definition_absent",
+                    },
                 }
             ],
         },

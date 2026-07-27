@@ -56,6 +56,13 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "uo/ir/semantic_apply_report.yaml",
             "uo/ir/**",
         ],
+        "apply_scope_expansion": [
+            "uo/ir/scope_expansion_requests.yaml",
+            "uo/ir/scope_expansion_decisions.yaml",
+            "uo/ir/scope_expansion_receipt.yaml",
+            "uo/ir/**",
+            "uo/runs/**",
+        ],
         "rebuild_from_ledger": ["uo/ir/**"],
         "recheck_closure": ["uo/ir/llm_tasks.yaml", "uo/ir/**"],
         "key_triage": ["uo/ir/key_triage.yaml"],

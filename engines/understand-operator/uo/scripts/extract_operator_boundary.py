@@ -25,6 +25,10 @@ from uo._operator.artifacts import existing_operator_root, safe_op_name
 from uo.scripts._ir_io import read_yaml, write_yaml
 from uo.scripts.arch_path import arch_compatible
 from uo.scripts.resolve_entrypoints import load_entrypoint_graph
+from uo.scripts.source_path_resolve import (
+    ScopePathMismatchError,
+    resolve_confirmed_sources,
+)
 
 # First string literal in a multi-arg OpDef call is the registered name.
 _OP_CALL_RE = re.compile(
@@ -63,7 +67,52 @@ _UNPARSEABLE_ACCESSOR_RE = re.compile(
 
 def extract_operator_boundary(repo_root: Path, op_name: str, *, architecture: str = "arch35") -> dict[str, Any]:
     uo_root = existing_operator_root(repo_root, op_name)
-    files = _confirmed_sources(uo_root)
+    scoped_files = _confirmed_sources(uo_root)
+    try:
+        resolved = resolve_confirmed_sources(
+            repo_root,
+            scoped_files,
+            op_name,
+            architecture=architecture,
+            fail_if_none_readable=bool(scoped_files),
+        )
+    except ScopePathMismatchError as exc:
+        detail = dict(exc.detail or {})
+        payload = {
+            "version": 1,
+            "op_name": op_name,
+            "architecture": architecture,
+            "inputs": [],
+            "outputs": [],
+            "attributes": [],
+            "optional_input_states": {},
+            "const_index_map": {},
+            "status": "fail",
+            "error": ScopePathMismatchError.code,
+            "path_resolution": detail,
+            "unresolved": [
+                {
+                    "severity": "blocking",
+                    "code": ScopePathMismatchError.code,
+                    "related_symbols": [],
+                    "candidate_files": list(detail.get("sample_confirmed_paths") or [])[:8],
+                    "evidence_present": [],
+                    "evidence_missing": ["readable_confirmed_sources"],
+                    "reason": str(exc),
+                    "semantic_task": "scope_path_normalization",
+                }
+            ],
+        }
+        write_yaml(uo_root / "ir" / "operator_boundary.yaml", payload)
+        _merge_unresolved(uo_root, list(payload["unresolved"]))
+        return payload
+
+    files = [str(item.get("rel") or item.get("scoped_path") or "") for item in resolved.get("readable") or []]
+    path_by_rel = {
+        str(item.get("rel") or item.get("scoped_path") or ""): Path(str(item["resolved_path"]))
+        for item in (resolved.get("readable") or [])
+        if item.get("resolved_path")
+    }
     inputs: list[dict[str, Any]] = []
     outputs: list[dict[str, Any]] = []
     attributes: list[dict[str, Any]] = []
@@ -71,12 +120,26 @@ def extract_operator_boundary(repo_root: Path, op_name: str, *, architecture: st
     optional_states: dict[str, str] = {}
     const_index: dict[str, int] = {}
 
+    for miss in resolved.get("failed") or []:
+        unresolved.append(
+            {
+                "severity": "degraded",
+                "code": "confirmed_source_unreadable",
+                "related_symbols": [],
+                "candidate_files": [str(miss.get("scoped_path") or "")],
+                "evidence_present": [],
+                "evidence_missing": ["readable_file"],
+                "reason": "confirmed scope path could not be resolved under project_root",
+                "semantic_task": "scope_path_normalization",
+            }
+        )
+
     slot = 0
     for rel in files:
         if not arch_compatible(rel, architecture) and "/op_host/" not in rel and "reg" not in rel.lower():
             if "reg" not in Path(rel).name.lower() and "op_host" not in rel:
                 continue
-        path = repo_root / rel
+        path = path_by_rel.get(rel) or (repo_root / rel)
         if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
@@ -270,6 +333,28 @@ def extract_operator_boundary(repo_root: Path, op_name: str, *, architecture: st
         if item.get("optional") and item.get("name"):
             optional_states.setdefault(str(item["name"]), "unknown")
 
+    if (
+        not inputs
+        and not outputs
+        and not attributes
+        and not any(str(u.get("code") or "") == "OPERATOR_BOUNDARY_EMPTY" for u in unresolved)
+    ):
+        unresolved.append(
+            {
+                "severity": "blocking",
+                "code": "OPERATOR_BOUNDARY_EMPTY",
+                "related_symbols": [],
+                "candidate_files": files[:8],
+                "evidence_present": [],
+                "evidence_missing": ["registered_io_or_attr_slots"],
+                "reason": (
+                    "operator_boundary has empty inputs/outputs/attributes; "
+                    "refuse silent success for a normal AscendC operator"
+                ),
+                "semantic_task": "operator_boundary_extraction",
+            }
+        )
+
     payload = {
         "version": 1,
         "op_name": op_name,
@@ -279,6 +364,16 @@ def extract_operator_boundary(repo_root: Path, op_name: str, *, architecture: st
         "attributes": attributes,
         "optional_input_states": optional_states,
         "const_index_map": {k: v for k, v in sorted(const_index.items())},
+        "path_resolution": {
+            "confirmed_source_count": resolved.get("confirmed_source_count"),
+            "readable_source_count": resolved.get("readable_source_count"),
+            "failed_count": len(resolved.get("failed") or []),
+        },
+        "status": "fail"
+        if any(str(u.get("severity") or "") == "blocking" for u in unresolved)
+        and not inputs
+        and not outputs
+        else "ok",
         "unresolved": unresolved,
     }
     write_yaml(uo_root / "ir" / "operator_boundary.yaml", payload)

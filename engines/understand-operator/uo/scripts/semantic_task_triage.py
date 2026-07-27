@@ -27,6 +27,61 @@ KEY_MARKERS = (
     "tilingkey_schema",
 )
 
+# triage_category → authoritative effective_task_type (downstream must use this).
+CATEGORY_TO_EFFECTIVE_TYPE: dict[str, str] = {
+    "candidate_generation_required": "candidate_generation",
+    "incomplete_scope_candidate": "evidence_enrichment",
+    "identity_join_ambiguous": "choose_edge",
+    "true_multi_candidate": "choose_edge",
+    "source_proven_unique": "deterministic_accept",
+    "macro_contract_resolvable": "macro_semantics",
+    "key_derivation_gap": "key_derivation",
+    "tilingdata_type_unknown": "typed_bridge_resolution",
+}
+
+
+def effective_task_type_for(task: dict[str, Any]) -> str:
+    """Authoritative task type for route/apply/auto-missing decisions."""
+    explicit = str(task.get("effective_task_type") or "").strip()
+    if explicit:
+        return explicit
+    cat = str(task.get("triage_category") or task.get("category") or "").strip()
+    if cat in CATEGORY_TO_EFFECTIVE_TYPE:
+        return CATEGORY_TO_EFFECTIVE_TYPE[cat]
+    return str(task.get("type") or "").strip()
+
+
+def validate_semantic_task_contract(task: dict[str, Any]) -> dict[str, Any]:
+    """Reject illegal type/category/route combinations."""
+    category = str(task.get("triage_category") or task.get("category") or "")
+    effective = effective_task_type_for(task)
+    route = str(task.get("route") or "")
+    eligible = bool(task.get("eligible_for_adjudication"))
+    conflicts: list[str] = []
+
+    if effective == "mark_missing" and category == "candidate_generation_required":
+        conflicts.append("mark_missing+candidate_generation_required")
+    if route == "uo-semantic-resolve" and not eligible and category == "true_multi_candidate":
+        conflicts.append("multi_candidate_not_eligible")
+    if effective == "macro_semantics" and route == "uo-semantic-resolve":
+        conflicts.append("macro_semantics_on_llm_route")
+    if effective == "key_derivation" and route == "uo-semantic-resolve":
+        conflicts.append("key_derivation_on_extract_llm_route")
+    if category == "candidate_generation_required" and effective == "mark_missing":
+        conflicts.append("category_effective_type_mismatch")
+
+    if conflicts:
+        return {
+            "ok": False,
+            "error": "SEMANTIC_TASK_CONTRACT_CONFLICT",
+            "conflicts": conflicts,
+            "triage_category": category,
+            "effective_task_type": effective,
+            "route": route,
+            "task_id": task.get("task_id"),
+        }
+    return {"ok": True, "effective_task_type": effective}
+
 
 def _task_text(task: dict[str, Any]) -> str:
     parts = [
@@ -284,10 +339,20 @@ def apply_triage_to_tasks(
         task["blocks_extract_advance"] = row["blocks_extract_advance"]
         task["blocks_workflow_complete"] = row["blocks_workflow_complete"]
         task["eligible_for_adjudication"] = row["eligible_for_adjudication"]
+        if not task.get("original_task_type"):
+            task["original_task_type"] = str(task.get("type") or "")
+        effective = CATEGORY_TO_EFFECTIVE_TYPE.get(str(row["category"]), str(task.get("type") or ""))
+        task["effective_task_type"] = effective
+        row["effective_task_type"] = effective
+        row["original_task_type"] = task.get("original_task_type")
         if not task.get("score_phase"):
             task["score_phase"] = row.get("score_phase")
         task["resolution_class"] = grade_task(task)
         row["resolution_class"] = task["resolution_class"]
+        contract = validate_semantic_task_contract(task)
+        if not contract.get("ok"):
+            row["contract_error"] = contract
+            task["contract_error"] = contract.get("error")
         rows.append(row)
     annotate_resolution_class(tasks)
     return tasks, rows

@@ -484,6 +484,24 @@ def patch_child_session_id(
         target["task_result_text"] = str(task_result_text)[:50_000]
     _save_children_registry(root, reg)
     bound_parent = normalize_session_id(str(target.get("parent_session_id") or "")) or parent
+    # Persist control-plane dispatch lineage (does not claim resume without parent).
+    try:
+        run_id = str(target.get("run_id") or "")
+        act_id = str(target.get("action_id") or action_id or "")
+        if run_id and act_id:
+            from ascendc_pilot.actions.action_dispatch import record_continuation
+
+            record_continuation(
+                root,
+                run_id=run_id,
+                action_id=act_id,
+                external_task_session_id=child,
+                parent_session_id=bound_parent,
+                resumed_from="",
+                actor_id=str(target.get("actor_id") or ""),
+            )
+    except Exception:  # noqa: BLE001
+        pass
     backfill = backfill_tool_events_by_session(
         root,
         child_session_id=child,

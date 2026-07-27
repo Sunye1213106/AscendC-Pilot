@@ -34,8 +34,13 @@ TYPED_PATCH_TYPES = frozenset(
         "template_instance_resolution",
         "edge_resolution",  # legacy edge upgrade
         "mark_missing",
+        "candidate_enrichment",
+        "scope_expansion_request",
     }
 )
+
+TYPED_PATCH_CANDIDATE_ENRICHMENT_INCOMPLETE = "TYPED_PATCH_CANDIDATE_ENRICHMENT_INCOMPLETE"
+TYPED_PATCH_SCOPE_EXPANSION_INCOMPLETE = "TYPED_PATCH_SCOPE_EXPANSION_INCOMPLETE"
 
 # Payload fields that must survive commit into the ledger.
 TYPED_PAYLOAD_FIELDS: dict[str, tuple[str, ...]] = {
@@ -55,6 +60,8 @@ TYPED_PAYLOAD_FIELDS: dict[str, tuple[str, ...]] = {
         "template_instance_id",
         "kernel_entry_id",
     ),
+    "candidate_enrichment": ("candidates",),
+    "scope_expansion_request": ("proposed_files",),
 }
 
 
@@ -103,6 +110,7 @@ def validate_typed_patch(patch: dict[str, Any], *, patch_type: str) -> dict[str,
 
     payload = extract_typed_payload(patch, ptype)
     required = TYPED_PAYLOAD_FIELDS.get(ptype) or ()
+    nested = patch.get("payload") if isinstance(patch.get("payload"), dict) else {}
 
     def _incomplete(code: str, detail: str) -> dict[str, Any]:
         return {
@@ -111,6 +119,33 @@ def validate_typed_patch(patch: dict[str, Any], *, patch_type: str) -> dict[str,
             "code": code,
             "detail": detail,
         }
+
+    if ptype == "candidate_enrichment":
+        cands = patch.get("candidates") or nested.get("candidates") or payload.get("candidates") or []
+        if not isinstance(cands, list) or not cands:
+            return _incomplete(
+                TYPED_PATCH_CANDIDATE_ENRICHMENT_INCOMPLETE,
+                "candidate_enrichment requires non-empty candidates",
+            )
+        payload["candidates"] = cands
+        return {"ok": True, "payload": payload}
+
+    if ptype == "scope_expansion_request":
+        proposed = (
+            patch.get("proposed_files")
+            or nested.get("proposed_files")
+            or payload.get("proposed_files")
+            or []
+        )
+        if not isinstance(proposed, list) or not proposed:
+            return _incomplete(
+                TYPED_PATCH_SCOPE_EXPANSION_INCOMPLETE,
+                "scope_expansion_request requires proposed_files",
+            )
+        payload["proposed_files"] = proposed
+        if patch.get("missing_symbol") or nested.get("missing_symbol"):
+            payload["missing_symbol"] = patch.get("missing_symbol") or nested.get("missing_symbol")
+        return {"ok": True, "payload": payload}
 
     if ptype == "entrypoint_node_resolution":
         node_id = payload.get("node_id") or patch.get("edge_id")
@@ -591,6 +626,32 @@ def materialize_edge_resolution(
     }
 
 
+def materialize_candidate_enrichment(
+    layers: dict[str, dict[str, Any]],
+    patch: dict[str, Any],
+) -> dict[str, Any]:
+    """Candidates are updated on llm_tasks at commit time; graph noop."""
+    _ = layers
+    nested = patch.get("payload") if isinstance(patch.get("payload"), dict) else {}
+    cands = patch.get("candidates") or nested.get("candidates") or []
+    if not cands:
+        return {
+            "ok": False,
+            "apply_status": "invalid",
+            "error": TYPED_PATCH_CANDIDATE_ENRICHMENT_INCOMPLETE,
+        }
+    return {"ok": True, "apply_status": "materialized", "candidate_count": len(cands)}
+
+
+def materialize_scope_expansion_request(
+    layers: dict[str, dict[str, Any]],
+    patch: dict[str, Any],
+) -> dict[str, Any]:
+    """Scope requests are audited by apply_scope_expansion; not a graph edge."""
+    _ = layers
+    return {"ok": True, "apply_status": "adjudicated_only"}
+
+
 MATERIALIZERS: dict[str, Callable[[dict[str, dict[str, Any]], dict[str, Any]], dict[str, Any]]] = {
     "entrypoint_node_resolution": materialize_entrypoint_node_resolution,
     "entrypoint_dispatch_resolution": materialize_entrypoint_dispatch_resolution,
@@ -598,6 +659,8 @@ MATERIALIZERS: dict[str, Callable[[dict[str, dict[str, Any]], dict[str, Any]], d
     "tilingdata_bridge_resolution": materialize_tilingdata_bridge_resolution,
     "template_instance_resolution": materialize_template_instance_resolution,
     "edge_resolution": materialize_edge_resolution,
+    "candidate_enrichment": materialize_candidate_enrichment,
+    "scope_expansion_request": materialize_scope_expansion_request,
 }
 
 
@@ -617,6 +680,8 @@ def apply_patch_to_layers(
     ptype = str(patch.get("patch_type") or "edge_resolution")
     if ptype == "mark_missing":
         return {"ok": True, "apply_status": "adjudicated_only"}
+    if ptype == "scope_expansion_request" or action == "scope_expansion_request":
+        return materialize_scope_expansion_request(layers, patch)
     fn = MATERIALIZERS.get(ptype) or materialize_edge_resolution
     try:
         result = fn(layers, patch)

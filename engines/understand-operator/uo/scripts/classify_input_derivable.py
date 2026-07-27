@@ -273,6 +273,31 @@ def _classify_one(
                     host_parent = f"SYM::{ident}"
                     break
 
+    # Compile / platform / hardcoded constants are valid non-input conclusions.
+    non_input_markers = (
+        "BuildConfig",
+        "CompileMacro",
+        "PlatformInfo",
+        "ASCENDC_",
+        "HARDCODE",
+        "constexpr",
+    )
+    source_kind = str(set_by.get("source_kind") or set_by.get("determinant_source") or "")
+    if any(m.casefold() in (expr_raw + source_kind).casefold() for m in non_input_markers) and not rev_writers:
+        return {
+            "input_derivable": False,
+            "confidence": "high",
+            "needs_binding": False,
+            "not_input_derivable": True,
+            "non_input_reason": source_kind or "compile_or_platform_constant",
+            "host_parent": host_parent,
+            "host_parent_evidence": evidence,
+            "derivation_roots": [],
+            "gap_kind": None,
+            "reason": "KEY determined by compile/platform/hardcoded source, not CSV input",
+            "tried_frontier": [],
+        }
+
     if set_status == "missing" and not rev_writers and not writers:
         return {
             "input_derivable": "unsolved",

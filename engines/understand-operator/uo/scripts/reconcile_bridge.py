@@ -76,6 +76,34 @@ def reconcile_bridge(repo_root: Path, op_name: str, *, persist: bool = True) -> 
         if det.get("csv_controllable") is False:
             continue
 
+    verified = [b for b in tilingdata_bridges if b.get("status") == "verified"]
+    candidates = [b for b in tilingdata_bridges if b.get("status") == "candidate"]
+    unknown_type_count = sum(
+        1
+        for f in list(host_fields) + list(kernel_fields)
+        if not _norm_type(f.get("owning_type"))
+    )
+    kernel_loaded = len(kernel_fields)
+    host_produced = len(verified)
+    coverage = (host_produced / kernel_loaded) if kernel_loaded else 1.0
+    field_classifications = []
+    matched_kern_ids = {str(b.get("kernel_reader") or "") for b in tilingdata_bridges}
+    for kf in kernel_fields:
+        kid = str(kf.get("id") or "")
+        if kid in matched_kern_ids:
+            cls = "host_produced"
+        elif not _norm_type(kf.get("owning_type")):
+            cls = "unresolved"
+        else:
+            cls = "unresolved"
+        field_classifications.append(
+            {
+                "id": kid,
+                "field_path": kf.get("field_path") or kf.get("name"),
+                "owning_type": kf.get("owning_type") or "",
+                "classification": cls,
+            }
+        )
     payload = {
         "version": 2,
         "op_name": op_name,
@@ -88,6 +116,16 @@ def reconcile_bridge(repo_root: Path, op_name: str, *, persist: bool = True) -> 
         "diagnostics": td_diagnostics,
         "unresolved": unresolved,
         "csv_excluded_determinant_sources": ["BuildConfig", "CompileMacro", "PlatformInfo", "SourceSelection", "KernelRuntimeVariable"],
+        "bridge_metrics": {
+            "kernel_loaded_field_count": kernel_loaded,
+            "typed_field_count": sum(1 for f in kernel_fields if _norm_type(f.get("owning_type"))),
+            "host_produced_count": host_produced,
+            "candidate_count": len(candidates),
+            "unresolved_count": len([d for d in td_diagnostics if d.get("code") == "missing_tiling_field_producer"]),
+            "unknown_type_count": unknown_type_count,
+            "coverage_ratio": round(coverage, 4),
+        },
+        "field_classifications": field_classifications,
     }
     if persist:
         write_yaml(uo_root / "ir" / "bridge.yaml", payload)
@@ -528,6 +566,8 @@ def _norm_key(name: Any) -> str:
 def _norm_type(name: Any) -> str:
     text = str(name or "").strip()
     text = text.replace("::", ".").split("<")[0].strip()
+    if text.casefold() in {"", "unknowntype", "unknown", "none"}:
+        return ""
     return text
 
 

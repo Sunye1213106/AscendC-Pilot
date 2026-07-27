@@ -239,6 +239,63 @@ def check_kb_integrity(repo_root: Path, op_name: str, *, write_outputs: bool = T
         status = "pass_with_degradation"
     else:
         status = "pass"
+
+    boundary = read_yaml(uo_root / "ir" / "operator_boundary.yaml") or {}
+    bridge = read_yaml(uo_root / "ir" / "bridge.yaml") or {}
+    bridge_metrics = bridge.get("bridge_metrics") if isinstance(bridge.get("bridge_metrics"), dict) else {}
+    id_true = int((id_stats or {}).get("true_count") or (id_stats or {}).get("input_derivable_true") or 0)
+    id_false = int((id_stats or {}).get("false_count") or (id_stats or {}).get("input_derivable_false") or 0)
+    id_unsolved = int((id_stats or {}).get("unsolved_count") or (id_stats or {}).get("input_derivable_unsolved") or 0)
+    # Fallback: count from keys map if present
+    if not (id_true or id_false or id_unsolved):
+        id_doc = read_yaml(uo_root / "ir" / "input_derivable.yaml") or {}
+        for entry in (id_doc.get("keys") or {}).values() if isinstance(id_doc.get("keys"), dict) else []:
+            if not isinstance(entry, dict):
+                continue
+            v = entry.get("input_derivable")
+            if v is True:
+                id_true += 1
+            elif v is False:
+                id_false += 1
+            else:
+                id_unsolved += 1
+
+    structural_ready = bool(
+        host_chain == "closed"
+        and kernel_chain == "closed"
+        and (uo_root / "ir" / "host_subgraph.yaml").is_file()
+        and (uo_root / "ir" / "kernel_subgraph.yaml").is_file()
+    )
+    boundary_ok = bool(boundary.get("inputs") or boundary.get("outputs"))
+    semantic_ready = bool(
+        structural_ready
+        and boundary_ok
+        and len(blocking_unresolved) == 0
+        and error_count == 0
+    )
+    typed_bridge_count = int(bridge_metrics.get("host_produced_count") or 0)
+    unknown_type_count = int(bridge_metrics.get("unknown_type_count") or 0)
+    consumer_ready = bool(
+        semantic_ready
+        and typed_bridge_count > 0
+        and not (id_true == 0 and id_false == 0 and id_unsolved > 0)
+        and unknown_type_count < max(1, int(bridge_metrics.get("kernel_loaded_field_count") or 0))
+    )
+    if not boundary_ok:
+        issues.append(
+            {
+                "code": "OPERATOR_BOUNDARY_EMPTY_OR_INVALID",
+                "severity": "error",
+                "rework_stage": "entrypoints",
+                "message": "operator_boundary missing inputs/outputs; structural graph alone is not a complete KB",
+            }
+        )
+        status = "fail"
+        semantic_ready = False
+        consumer_ready = False
+
+    overall = "pass" if (structural_ready and semantic_ready and consumer_ready and status == "pass") else "fail"
+
     payload = {
         "version": 1,
         "status": status,
@@ -258,6 +315,14 @@ def check_kb_integrity(repo_root: Path, op_name: str, *, write_outputs: bool = T
         "sqlite_orphan_dst": orphan_dst,
         "input_derivable": id_stats,
         "layered_coverage": coverage_stats,
+        "bridge_metrics": bridge_metrics,
+        "structural_status": "pass" if structural_ready else "fail",
+        "semantic_status": "pass" if semantic_ready else "fail",
+        "consumer_ready_status": "pass" if consumer_ready else "fail",
+        "overall_status": overall,
+        "structural_ready": structural_ready,
+        "semantic_ready": semantic_ready,
+        "tg_consumer_ready": consumer_ready,
         "issues": issues,
         "rework_reason": primary_rework_reason({"issues": issues}) if status != "pass" else "none",
     }
@@ -299,6 +364,28 @@ def check_kb_integrity(repo_root: Path, op_name: str, *, write_outputs: bool = T
         out = uo_root / "checks" / "integrity.yaml"
         out.parent.mkdir(parents=True, exist_ok=True)
         write_yaml(out, payload)
+        quality_path = uo_root / "quality.yaml"
+        qdoc = read_yaml(quality_path) if quality_path.is_file() else {}
+        if not isinstance(qdoc, dict):
+            qdoc = {}
+        qdoc.update(
+            {
+                "structural_status": payload.get("structural_status"),
+                "semantic_status": payload.get("semantic_status"),
+                "consumer_ready_status": payload.get("consumer_ready_status"),
+                "overall_status": payload.get("overall_status"),
+                "tg_consumer_ready": payload.get("tg_consumer_ready"),
+                "integrity_status": status,
+                "bridge_metrics": payload.get("bridge_metrics") or {},
+            }
+        )
+        if status == "pass" and payload.get("overall_status") == "pass":
+            qdoc["status"] = "pass"
+            qdoc["decision"] = "pass"
+        elif status != "pass":
+            qdoc["status"] = "fail"
+            qdoc["decision"] = "fail"
+        write_yaml(quality_path, qdoc)
         # Refresh overview so integrity status is visible (not stuck at "unknown").
         try:
             from uo.scripts.export_human_views import export_human_views

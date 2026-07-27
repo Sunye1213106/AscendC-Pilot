@@ -1173,44 +1173,120 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     adjudicate_not_applicable = False
     if wid == "uo-init" and action_id == "adjudicate_llm_tasks" and role_id == "producer":
         try:
-            from uo.scripts.llm_tasks import can_auto_mark_missing, open_blocking_tasks
+            from uo.scripts.llm_tasks import (
+                blocking_gap_tasks,
+                can_auto_mark_missing,
+                open_blocking_tasks,
+            )
 
-            open_blocking = open_blocking_tasks(uo_root(project_root), current_run_id=run_id)
-            needs_llm = [t for t in open_blocking if not can_auto_mark_missing(t)]
-            adjudicate_not_applicable = not needs_llm
+            uo = uo_root(project_root)
+            open_blocking = open_blocking_tasks(uo, current_run_id=run_id)
+            gap_blocking = blocking_gap_tasks(uo, current_run_id=run_id)
+            needs_llm = [
+                t
+                for t in open_blocking
+                if str(t.get("route") or "") == "uo-semantic-resolve"
+                and bool(t.get("eligible_for_adjudication", True))
+                and not can_auto_mark_missing(t)
+            ]
+            # False N/A: eligible LLM tasks exist → must dispatch.
+            non_llm_gaps = [
+                t
+                for t in gap_blocking
+                if str(t.get("route") or "") != "uo-semantic-resolve"
+                or not bool(t.get("eligible_for_adjudication", True))
+            ]
+            if needs_llm:
+                adjudicate_not_applicable = False
+            elif gap_blocking and (not open_blocking or non_llm_gaps):
+                # Gaps exist but none (or not all) are LLM-adjudicable — route-aware recovery.
+                from ascendc_pilot.recovery import recoveries_for_task_routes
+
+                routed = recoveries_for_task_routes(
+                    gap_blocking, workflow_id=wid, current_phase=phase
+                )
+                _dump(
+                    sdir / "not_applicable.yaml",
+                    {
+                        "status": "ADJUDICATION_ROUTED_NON_LLM",
+                        "action_id": "adjudicate_llm_tasks",
+                        "run_id": run_id,
+                        "phase": phase,
+                        "reason": "blocking_gaps_require_non_llm_routes",
+                        "blocking_gap_count": len(gap_blocking),
+                        "task_ids": [str(t.get("task_id") or "") for t in gap_blocking],
+                        "effective_task_types": [
+                            str(t.get("effective_task_type") or t.get("type") or "")
+                            for t in gap_blocking
+                        ],
+                        "triage_categories": [
+                            str(t.get("triage_category") or "") for t in gap_blocking
+                        ],
+                        "recovery_actions": routed.get("recovery_actions") or [],
+                        "reason_codes": routed.get("reason_codes") or [],
+                    },
+                )
+                adjudicate_not_applicable = True
+                bundle["dispatch_targets"] = {
+                    "not_applicable": True,
+                    "status": "ADJUDICATION_ROUTED_NON_LLM",
+                    "read": ["uo/ir/llm_tasks.yaml", "uo/ir/semantic_task_triage.yaml"],
+                    "write": ["uo/ir/semantic_patches.yaml"],
+                    "forbid_write": [
+                        "uo/ir/semantic_resolution_ledger.yaml",
+                        "uo/ir/extract_plan.yaml",
+                    ],
+                    "recovery_actions": routed.get("recovery_actions") or [],
+                }
+            else:
+                adjudicate_not_applicable = not needs_llm
         except Exception:  # noqa: BLE001
             adjudicate_not_applicable = False
+        routed_non_llm = (bundle.get("dispatch_targets") or {}).get("status") == "ADJUDICATION_ROUTED_NON_LLM"
         if adjudicate_not_applicable:
-            target_line = (
-                "NO open blocking llm_tasks needing producer — "
-                "status=semantic_patch_not_applicable; DO NOT invent patches"
-            )
-            bundle["dispatch_targets"] = {
-                "not_applicable": True,
-                "read": ["uo/ir/llm_tasks.yaml"],
-                "write": ["uo/ir/semantic_patches.yaml"],
-                "forbid_write": [
-                    "uo/ir/semantic_resolution_ledger.yaml",
-                    "uo/ir/extract_plan.yaml",
-                ],
-            }
-            _dump(
-                sdir / "not_applicable.yaml",
-                {
-                    "status": "semantic_patch_not_applicable",
-                    "action_id": "adjudicate_llm_tasks",
-                    "run_id": run_id,
-                    "phase": phase,
-                    "reason": "no_open_blocking_llm_tasks",
-                },
+            if not routed_non_llm:
+                target_line = (
+                    "NO open blocking llm_tasks needing producer — "
+                    "status=semantic_patch_not_applicable; DO NOT invent patches"
+                )
+                bundle["dispatch_targets"] = {
+                    "not_applicable": True,
+                    "read": ["uo/ir/llm_tasks.yaml"],
+                    "write": ["uo/ir/semantic_patches.yaml"],
+                    "forbid_write": [
+                        "uo/ir/semantic_resolution_ledger.yaml",
+                        "uo/ir/extract_plan.yaml",
+                    ],
+                }
+                _dump(
+                    sdir / "not_applicable.yaml",
+                    {
+                        "status": "semantic_patch_not_applicable",
+                        "action_id": "adjudicate_llm_tasks",
+                        "run_id": run_id,
+                        "phase": phase,
+                        "reason": "no_open_blocking_llm_tasks",
+                    },
+                )
+            else:
+                target_line = (
+                    "blocking gaps require non-LLM routes — "
+                    "status=ADJUDICATION_ROUTED_NON_LLM; follow recovery_actions"
+                )
+            na_status = (
+                "ADJUDICATION_ROUTED_NON_LLM"
+                if routed_non_llm
+                else "semantic_patch_not_applicable"
             )
             # Contract path must exist for auto-finalize (semantic-patches-v1).
             _dump(
                 uo_root(project_root) / "ir" / "semantic_patches.yaml",
                 {
                     "version": 1,
-                    "status": "semantic_patch_not_applicable",
-                    "reason": "no_open_blocking_llm_tasks",
+                    "status": na_status,
+                    "reason": "no_open_blocking_llm_tasks"
+                    if not routed_non_llm
+                    else "blocking_gaps_require_non_llm_routes",
                     "run_id": run_id,
                     "patches": [],
                 },
@@ -1598,6 +1674,42 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     result["task_prompt_stub"] = stub
     result["task_prompt_stub_path"] = (sdir / "task_prompt_stub.md").as_posix()
     result["dispatch_task"] = True
+    try:
+        from ascendc_pilot.actions.action_dispatch import (
+            load_dispatch,
+            prepare_resume_fields,
+            write_dispatch,
+        )
+
+        resume_fields = prepare_resume_fields(
+            project_root,
+            run_id=run_id,
+            action_id=action_id,
+            workflow_status=str(state.get("status") or ""),
+        )
+        result.update(resume_fields)
+        prev_dispatch = load_dispatch(project_root, run_id, action_id)
+        write_dispatch(
+            project_root,
+            run_id,
+            action_id,
+            {
+                "workflow_id": wid,
+                "actor_id": actor_id,
+                "action_session_id": action_sid,
+                "dispatch_attempt": int(prev_dispatch.get("dispatch_attempt") or 0) + 1,
+                **resume_fields,
+            },
+        )
+        if resume_fields.get("resume_required"):
+            result["message_zh"] = (
+                str(result.get("message_zh") or "")
+                + f" rework 必须 Task(resume={resume_fields.get('resume_session_id')})；"
+                "禁止无条件重新 propose candidates。"
+            )
+    except Exception:  # noqa: BLE001
+        result.setdefault("resume_required", False)
+        result.setdefault("resume_session_id", "")
     if wid == "uo-init" and action_id == "extract_plan":
         result["message_zh"] = (
             f"已准备 extract_plan；派发 `{actor_id}` 时原样使用 `task_prompt_stub`："

@@ -601,6 +601,25 @@ detect_score_pre → extract_plan → detect_score_post
 
 ---
 
+### A54：uo-init 语义闭合 — 假 N/A 死循环 / boundary / typed bridge / KEY / quality 分层（2026-07-27）
+
+| 现象 | 根因 | 落点 | 状态 |
+|---|---|---|---|
+| recheck→adjudicate N/A→空 apply 死循环 | `blocking_gap_tasks` 与 `open_blocking_tasks` 不一致时仍写 `semantic_patch_not_applicable` | `runtime.prepare` → `ADJUDICATION_ROUTED_NON_LLM` + `recoveries_for_task_routes` | 已做 |
+| 空候选假 mark_missing | `can_auto_mark_missing` 只看 type/空候选 | 禁 triage 类别；要求 `effective_task_type==mark_missing` + 完整 `negative_evidence`；auto patch validate-only | 已做 |
+| operator_boundary 空/路径静默失败 | 相对路径带 op 前缀时读不到；空 IO 当成功 | `source_path_resolve` + `OPERATOR_BOUNDARY_EMPTY` fail-closed | 已做 |
+| rework 无 resume | 仅 debug registry，无 prepare 回写 | `action_dispatch`：`dispatch.yaml`/`handoff.yaml`；`resume_session_id`；无 lineage→`fork_with_context` | 已做 |
+| incomplete_scope 死循环 adjudicate | recovery 一律 `adjudicate_llm_tasks` | route-aware：`SCOPE_EXPANSION_REWORK`→`apply_scope_expansion`→`detect_score_post`；同指纹→`human_required` | 已做 |
+| typed bridge≈0 / UnknownType verified | leaf fallback 当 verified；缺 metrics | UnknownType 不当 typed；`bridge_metrics`；integrity/quality 分层 | 已做 |
+| KEY 全 unsolved 当成功 | 缺 compile/platform→false | `classify_input_derivable` 写 `false`+`non_input_reason`；consumer_ready 禁全 unresolved | 已做 |
+
+**共享层**：`source_path_resolve`、`semantic_task_triage.effective_task_type`、`scope_expansion`、`recoveries_for_task_routes`、`action_dispatch`。
+
+**单测**：`tests/test_operator_boundary_path_resolve.py`、`tests/test_semantic_closure_p0_p2.py`；compose `apply-scope-expansion` METHOD。
+
+**FAG arch35 局部回归**：boundary `inputs=27/outputs=7`，readable_source_count=confirmed；报告 `docs/performance/fag_arch35_semantic_closure_report.json`。完整 `acp complete` 仍需 Host LLM（W3）。
+
+
 ## 14. 一句话原则（沉淀）
 
 1. **Pilot 独占状态**；Skill/Prompt 不推进阶段。  

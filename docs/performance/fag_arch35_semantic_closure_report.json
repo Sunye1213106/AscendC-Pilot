@@ -1,0 +1,16 @@
+{
+  "op_name": "flash_attention_score_grad",
+  "architecture": "arch35",
+  "confirmed_source_count": 90,
+  "readable_source_count": 90,
+  "failed_sample": [],
+  "inputs": 27,
+  "outputs": 7,
+  "attributes": 0,
+  "unresolved_codes": [
+    "accessor_expression_unparseable",
+    "attr_slot_unbound",
+    "input_accessor_index_unresolved"
+  ],
+  "boundary_empty_blocked": false
+}

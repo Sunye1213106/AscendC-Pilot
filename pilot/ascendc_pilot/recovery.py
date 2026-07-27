@@ -17,6 +17,9 @@ BRIDGE_REWORK = "BRIDGE_REWORK"
 SEMANTIC_PATCH_REWORK = "SEMANTIC_PATCH_REWORK"
 LEDGER_REBUILD_REWORK = "LEDGER_REBUILD_REWORK"
 NO_PROGRESS_RECHECK = "NO_PROGRESS_RECHECK"
+MACRO_MATERIALIZE_REWORK = "MACRO_MATERIALIZE_REWORK"
+KEY_DERIVATION_REWORK = "KEY_DERIVATION_REWORK"
+SCOPE_EXPANSION_REWORK = "SCOPE_EXPANSION_REWORK"
 
 KNOWN_REASON_CODES = frozenset(
     {
@@ -27,6 +30,9 @@ KNOWN_REASON_CODES = frozenset(
         SEMANTIC_PATCH_REWORK,
         LEDGER_REBUILD_REWORK,
         NO_PROGRESS_RECHECK,
+        MACRO_MATERIALIZE_REWORK,
+        KEY_DERIVATION_REWORK,
+        SCOPE_EXPANSION_REWORK,
     }
 )
 
@@ -68,11 +74,97 @@ _DEFAULT_ROUTES: dict[str, dict[str, Any]] = {
         "reason_code": LEDGER_REBUILD_REWORK,
     },
     NO_PROGRESS_RECHECK: {
-        "type": "action",
-        "action_id": "adjudicate_llm_tasks",
+        # Same fingerprint with no closure progress → stop LLM retry loops.
+        "type": "human_required",
         "reason_code": NO_PROGRESS_RECHECK,
+        "diagnosis": "deadlock_no_progress",
+    },
+    MACRO_MATERIALIZE_REWORK: {
+        "type": "action",
+        "action_id": "rebuild_from_ledger",
+        "reason_code": MACRO_MATERIALIZE_REWORK,
+    },
+    KEY_DERIVATION_REWORK: {
+        "type": "action",
+        "action_id": "key_triage",
+        "reason_code": KEY_DERIVATION_REWORK,
+    },
+    SCOPE_EXPANSION_REWORK: {
+        "type": "action",
+        "action_id": "apply_scope_expansion",
+        "reason_code": SCOPE_EXPANSION_REWORK,
     },
 }
+
+
+_ROUTE_TO_REASON: dict[str, str] = {
+    "macro_semantic_materializer": MACRO_MATERIALIZE_REWORK,
+    "uo-key-resolve": KEY_DERIVATION_REWORK,
+    "deterministic_accept": LEDGER_REBUILD_REWORK,
+    "uo-semantic-resolve": SEMANTIC_PATCH_REWORK,
+}
+
+
+def recoveries_for_task_routes(
+    tasks: list[dict[str, Any]],
+    *,
+    workflow_id: str = "uo-init",
+    current_phase: str = "extract",
+) -> dict[str, Any]:
+    """Map blocking tasks to recovery actions by triage route / effective type."""
+    reason_codes: list[str] = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        route = str(task.get("route") or "").strip()
+        category = str(task.get("triage_category") or "").strip()
+        effective = str(task.get("effective_task_type") or task.get("type") or "").strip()
+        if category == "incomplete_scope_candidate" or effective == "evidence_enrichment":
+            # Propose via adjudicate, then deterministic apply_scope_expansion.
+            if task.get("pending_scope_expansion"):
+                reason_codes.append(SCOPE_EXPANSION_REWORK)
+            else:
+                reason_codes.append(SEMANTIC_PATCH_REWORK)
+                reason_codes.append(SCOPE_EXPANSION_REWORK)
+        elif effective == "candidate_generation" or category == "candidate_generation_required":
+            reason_codes.append(SEMANTIC_PATCH_REWORK)
+        elif effective == "macro_semantics" or route == "macro_semantic_materializer":
+            reason_codes.append(MACRO_MATERIALIZE_REWORK)
+        elif effective == "key_derivation" or route == "uo-key-resolve" or category == "key_derivation_gap":
+            reason_codes.append(KEY_DERIVATION_REWORK)
+        elif route in _ROUTE_TO_REASON:
+            reason_codes.append(_ROUTE_TO_REASON[route])
+        else:
+            reason_codes.append(SEMANTIC_PATCH_REWORK)
+
+    recoveries: list[dict[str, Any]] = []
+    action_ids: list[str] = []
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for code in reason_codes:
+        if code in seen:
+            continue
+        seen.add(code)
+        ordered.append(code)
+        resolved = resolve_recovery(code, workflow_id=workflow_id, current_phase=current_phase)
+        if not resolved.get("ok"):
+            continue
+        rec = resolved["recovery"]
+        recoveries.append(rec)
+        if rec.get("type") == "action" and rec.get("action_id"):
+            action_ids.append(str(rec["action_id"]))
+        elif rec.get("type") == "transition" and current_phase == rec.get("target_phase") and rec.get("next_action"):
+            action_ids.append(str(rec["next_action"]))
+
+    uniq: list[str] = []
+    for action in action_ids:
+        if action not in uniq:
+            uniq.append(action)
+    return {
+        "reason_codes": ordered,
+        "recoveries": recoveries,
+        "recovery_actions": uniq,
+    }
 
 
 def _workflow_action_ids(workflow_id: str = "uo-init") -> set[str]:
@@ -162,6 +254,16 @@ def resolve_recovery(
             }
         return {"ok": True, "recovery": {"type": "action", "action_id": aid, "reason_code": code}}
 
+    if rtype == "human_required":
+        return {
+            "ok": True,
+            "recovery": {
+                "type": "human_required",
+                "reason_code": code,
+                "diagnosis": route.get("diagnosis") or "deadlock_no_progress",
+            },
+        }
+
     if rtype == "transition":
         next_action = str(route.get("next_action") or "")
         target_phase = str(route.get("target_phase") or "")
@@ -203,6 +305,7 @@ def recoveries_for_closure_gaps(
     no_progress: bool = False,
     workflow_id: str = "uo-init",
     current_phase: str = "extract",
+    blocking_tasks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build structured recovery list from recheck closure gaps."""
     reason_codes: list[str] = []
@@ -212,8 +315,18 @@ def recoveries_for_closure_gaps(
     if not kernel_closed:
         reason_codes.append(KERNEL_DISPATCH_REWORK)
     if blocking_gap_count:
-        reason_codes.append(BRIDGE_REWORK)
-        reason_codes.append(SEMANTIC_PATCH_REWORK)
+        tasks = [t for t in (blocking_tasks or []) if isinstance(t, dict)]
+        if tasks:
+            routed = recoveries_for_task_routes(
+                tasks,
+                workflow_id=workflow_id,
+                current_phase=current_phase,
+            )
+            reason_codes.extend(list(routed.get("reason_codes") or []))
+        else:
+            # Fallback when triage fields unavailable.
+            reason_codes.append(BRIDGE_REWORK)
+            reason_codes.append(SEMANTIC_PATCH_REWORK)
     if unconsumed_patch_count:
         reason_codes.append(LEDGER_REBUILD_REWORK)
     # Kernel-only no-progress is already handled by the deterministic entrypoint rerun.
@@ -232,6 +345,8 @@ def recoveries_for_closure_gaps(
     action_ids: list[str] = []
     seen: set[str] = set()
     ordered_reason_codes: list[str] = []
+    human_required = False
+    diagnoses: list[str] = []
     for code in reason_codes:
         if code in seen:
             continue
@@ -242,6 +357,11 @@ def recoveries_for_closure_gaps(
             continue
         rec = resolved["recovery"]
         recoveries.append(rec)
+        if rec.get("type") == "human_required":
+            human_required = True
+            if rec.get("diagnosis"):
+                diagnoses.append(str(rec["diagnosis"]))
+            continue
         if rec.get("type") == "action" and rec.get("action_id"):
             action_ids.append(str(rec["action_id"]))
         elif rec.get("type") == "transition" and rec.get("next_action"):
@@ -256,12 +376,16 @@ def recoveries_for_closure_gaps(
         if action not in uniq_actions:
             uniq_actions.append(action)
 
-    return {
+    out = {
         "reason_codes": ordered_reason_codes,
         "recoveries": recoveries,
         # Legacy flat list: ONLY registered action_ids (never prose).
         "recovery_actions": uniq_actions,
     }
+    if human_required:
+        out["human_required"] = True
+        out["deadlock_diagnosis"] = diagnoses or ["deadlock_no_progress"]
+    return out
 
 
 def is_registered_action_id(action_id: str, *, workflow_id: str = "uo-init") -> bool:

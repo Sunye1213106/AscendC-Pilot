@@ -138,6 +138,7 @@ Task(subagent_type=<actor_id>, resume=<原 task session id>):
 | `detect_score_post` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/detect-score-post` | `-` | `detect-score-post-v1` |
 | `adjudicate_llm_tasks` | `subagent` | `uo-semantic-resolve` | `producer` | `uo-init/adjudicate-llm-tasks` | `uo/adjudicate-llm-tasks` | `semantic-patches-v1` |
 | `apply_semantic_patch` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/apply-semantic-patch` | `-` | `semantic-patch-v1` |
+| `apply_scope_expansion` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/apply-scope-expansion` | `-` | `scope-expansion-v1` |
 | `rebuild_from_ledger` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/rebuild-from-ledger` | `-` | `rebuild-ledger-v1` |
 | `recheck_closure` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/recheck-closure` | `-` | `recheck-closure-v1` |
 | `key_triage` | `subagent` | `uo-key-resolve` | `producer` | `uo-init/key-triage` | `uo/key-triage` | `key-triage-v1` |

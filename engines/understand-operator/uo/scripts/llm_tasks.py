@@ -36,6 +36,8 @@ PATCH_TYPES = frozenset(
         "tilingdata_bridge_resolution",
         "template_instance_resolution",
         "mark_missing",
+        "candidate_enrichment",
+        "scope_expansion_request",
     }
 )
 
@@ -128,8 +130,17 @@ def _bridge_identity_complete(item: dict[str, Any]) -> bool:
 def _infer_patch_type(task: dict[str, Any], action: str) -> str:
     if action == "mark_missing":
         return "mark_missing"
+    if action in {"candidate_enrichment", "enrich_candidates"}:
+        return "candidate_enrichment"
+    if action in {"scope_expansion_request", "request_scope_expansion"}:
+        return "scope_expansion_request"
     ttype = str(task.get("type") or "")
+    effective = str(task.get("effective_task_type") or "")
     obj = str(task.get("object_type") or "")
+    if effective == "candidate_generation" or ttype == "candidate_generation":
+        return "candidate_enrichment"
+    if effective == "evidence_enrichment" or ttype == "evidence_enrichment":
+        return "scope_expansion_request"
     if obj == "tilingdata_bridge" or ttype == "tilingdata_bridge":
         return "tilingdata_bridge_resolution"
     if obj == "entrypoint_node":
@@ -595,15 +606,57 @@ def open_blocking_tasks(uo_root: Path, *, current_run_id: str) -> list[dict[str,
     return out
 
 
-def can_auto_mark_missing(task: dict[str, Any]) -> bool:
-    """Shared auto mark_missing predicate (Gate / pipeline / apply)."""
-    ttype = str(task.get("type") or "")
-    cands = list(task.get("candidates") or [])
-    if ttype in {"evidence_enrichment", "candidate_generation"}:
+_AUTO_MARK_MISSING_FORBIDDEN_CATEGORIES = frozenset(
+    {
+        "candidate_generation_required",
+        "incomplete_scope_candidate",
+        "identity_join_ambiguous",
+        "true_multi_candidate",
+        "macro_contract_resolvable",
+        "key_derivation_gap",
+        "tilingdata_type_unknown",
+    }
+)
+
+
+def _valid_negative_evidence(evidence: Any) -> bool:
+    if not isinstance(evidence, dict):
         return False
-    if ttype == "mark_missing" and not cands:
-        return True
-    return False
+    queries = evidence.get("queries")
+    windows = evidence.get("inspected_windows")
+    absence = str(evidence.get("absence_kind") or "").strip()
+    if absence in {"scope_incomplete", ""}:
+        return False
+    if not isinstance(queries, list) or not queries:
+        return False
+    if not isinstance(windows, list) or not windows:
+        return False
+    if not str(evidence.get("scope_snapshot_sha256") or "").strip():
+        return False
+    return True
+
+
+def can_auto_mark_missing(task: dict[str, Any]) -> bool:
+    """Shared auto mark_missing predicate (Gate / pipeline / apply).
+
+    Empty candidates alone never proves absence — triage category and
+    machine-verifiable negative_evidence are required.
+    """
+    category = str(task.get("triage_category") or task.get("category") or "")
+    if category in _AUTO_MARK_MISSING_FORBIDDEN_CATEGORIES:
+        return False
+    effective = str(
+        task.get("effective_task_type")
+        or task.get("type")
+        or ""
+    ).strip()
+    if effective in {"evidence_enrichment", "candidate_generation", "macro_semantics", "key_derivation", "typed_bridge_resolution", "choose_edge"}:
+        return False
+    if effective != "mark_missing":
+        return False
+    if task.get("candidates"):
+        return False
+    return _valid_negative_evidence(task.get("negative_evidence"))
 
 
 # Back-compat alias
@@ -697,7 +750,38 @@ def validate_task_patch(
         return {"ok": False, "error": "forbidden_invent_symbol", "symbol": sym, "task_id": task_id}
 
     action = str(patch.get("action") or ("mark_missing" if task.get("type") == "mark_missing" else "accept_edge"))
+    patch_type_hint = str(patch.get("patch_type") or "").strip()
+    # Enrichment / scope-expansion patches may omit accept ids; validate before accept path.
+    if action in {"candidate_enrichment", "enrich_candidates"} or patch_type_hint == "candidate_enrichment":
+        nested = patch.get("payload") if isinstance(patch.get("payload"), dict) else {}
+        new_cands = patch.get("candidates") or nested.get("candidates") or []
+        if not isinstance(new_cands, list) or not new_cands:
+            return {
+                "ok": False,
+                "error": "candidate_enrichment_empty",
+                "task_id": task_id,
+                "message": "candidate_enrichment requires non-empty candidates; mark_missing forbidden here",
+            }
+        action = "candidate_enrichment"
+    elif action in {"scope_expansion_request", "request_scope_expansion"} or patch_type_hint == "scope_expansion_request":
+        nested = patch.get("payload") if isinstance(patch.get("payload"), dict) else {}
+        proposed = patch.get("proposed_files") or nested.get("proposed_files") or []
+        if not isinstance(proposed, list) or not proposed:
+            return {
+                "ok": False,
+                "error": "scope_expansion_empty",
+                "task_id": task_id,
+                "message": "scope_expansion_request requires proposed_files",
+            }
+        action = "scope_expansion_request"
+
     allowed = {str(a) for a in (task.get("allowed_actions") or [])}
+    # Implicitly allow enrichment actions for generation/scope triage categories.
+    effective = str(task.get("effective_task_type") or task.get("type") or "")
+    if effective == "candidate_generation":
+        allowed = allowed | {"candidate_enrichment", "enrich_candidates"}
+    if effective == "evidence_enrichment":
+        allowed = allowed | {"scope_expansion_request", "request_scope_expansion"}
     if allowed and action not in allowed:
         return {
             "ok": False,
@@ -733,7 +817,10 @@ def validate_task_patch(
                     }
 
     accept_actions = _ACCEPT_CLOSE_ACTIONS
-    if action in accept_actions:
+    if action in {"candidate_enrichment", "scope_expansion_request"}:
+        # Candidate ids in enrichment patches are new window members, not accept/reject.
+        pass
+    elif action in accept_actions:
         if not cand_ids:
             return {
                 "ok": False,
@@ -1188,6 +1275,67 @@ def commit_patches_batch(
             task["task_status"] = "adjudicated"
             task["semantic_status"] = "unresolved"
             task["blocking"] = True
+        elif action == "candidate_enrichment":
+            nested = patch.get("payload") if isinstance(patch.get("payload"), dict) else {}
+            new_cands = [
+                c
+                for c in (patch.get("candidates") or nested.get("candidates") or [])
+                if isinstance(c, dict)
+            ]
+            existing = [c for c in (task.get("candidates") or []) if isinstance(c, dict)]
+            by_id = {str(c.get("id") or ""): c for c in existing if str(c.get("id") or "").strip()}
+            for c in new_cands:
+                cid = str(c.get("id") or "").strip()
+                if cid:
+                    by_id[cid] = c
+                else:
+                    existing.append(c)
+            merged = list(by_id.values()) if by_id else existing + new_cands
+            if not merged:
+                return {
+                    "ok": False,
+                    "error": "candidate_enrichment_empty",
+                    "task_id": tid,
+                    "applied_count": 0,
+                    "error_count": 1,
+                    "applied": [],
+                    "errors": [{"ok": False, "error": "candidate_enrichment_empty", "task_id": tid}],
+                }
+            task["candidates"] = merged
+            task["candidate_set_hash"] = candidate_set_hash(merged)
+            task["type"] = "choose_edge"
+            task["effective_task_type"] = "choose_edge"
+            task["triage_category"] = "true_multi_candidate" if len(merged) > 1 else "source_proven_unique"
+            task["status"] = "open"
+            task["task_status"] = "open"
+            task["semantic_status"] = "unresolved"
+            task["blocking"] = True
+            task["eligible_for_adjudication"] = True
+            task["allowed_actions"] = sorted(
+                set(list(task.get("allowed_actions") or []) + ["accept_edge", "choose_one", "mark_missing"])
+            )
+        elif action == "scope_expansion_request":
+            nested = patch.get("payload") if isinstance(patch.get("payload"), dict) else {}
+            proposed = list(patch.get("proposed_files") or nested.get("proposed_files") or [])
+            req_doc = read_yaml(uo_root / "ir" / "scope_expansion_requests.yaml") or {
+                "version": 1,
+                "requests": [],
+            }
+            req_doc.setdefault("requests", []).append(
+                {
+                    "task_id": tid,
+                    "run_id": current_run_id,
+                    "missing_symbol": patch.get("missing_symbol") or nested.get("missing_symbol") or task.get("target"),
+                    "proposed_files": proposed,
+                    "evidence": patch.get("evidence") or [],
+                }
+            )
+            write_yaml(uo_root / "ir" / "scope_expansion_requests.yaml", req_doc)
+            task["status"] = "adjudicated"
+            task["task_status"] = "adjudicated"
+            task["semantic_status"] = "unresolved"
+            task["blocking"] = True
+            task["pending_scope_expansion"] = True
         elif action in _ACCEPT_CLOSE_ACTIONS:
             task["status"] = "pending_materialization"
             task["task_status"] = "pending_materialization"
@@ -1199,6 +1347,13 @@ def commit_patches_batch(
             task["semantic_status"] = "pending_materialization"
             task["blocking"] = True
         task["resolution"] = {"action": action, "patch": patch}
+        apply_status = "pending"
+        if action == "candidate_enrichment":
+            apply_status = "materialized"
+        elif action == "scope_expansion_request":
+            apply_status = "adjudicated_only"
+        elif action == "mark_missing":
+            apply_status = "adjudicated_only"
         record = {
             "task_id": tid,
             "run_id": current_run_id,
@@ -1224,7 +1379,7 @@ def commit_patches_batch(
             "confidence": "semantic_verified",
             "applied_at": now,
             "status": "active",
-            "apply_status": "pending",
+            "apply_status": apply_status,
             "payload": typed_payload,
         }
         for key, value in typed_payload.items():
@@ -1447,25 +1602,53 @@ def resolve_patches_for_apply(
     covered = {str(p.get("task_id") or "") for p in patches}
     auto: list[dict[str, Any]] = []
     needs_llm: list[str] = []
+    invalid_auto: list[dict[str, Any]] = []
+    tasks_doc = load_llm_tasks(uo_root)
     for task in open_blocking:
         tid = str(task.get("task_id") or "")
         if tid in covered:
             continue
         if can_auto_mark_missing(task):
-            auto.append(
-                {
-                    "task_id": tid,
-                    "run_id": current_run_id,
-                    "action": "mark_missing",
-                    "accepted_candidate_ids": [],
-                    "rejected_candidate_ids": [],
-                    "evidence": ["auto:empty_candidate_mark_missing"],
-                    "source_snapshot_hash": str(task.get("source_snapshot_hash") or ""),
-                    "candidate_set_hash": str(task.get("candidate_set_hash") or ""),
-                }
+            candidate = {
+                "task_id": tid,
+                "run_id": current_run_id,
+                "action": "mark_missing",
+                "accepted_candidate_ids": [],
+                "rejected_candidate_ids": [],
+                "evidence": ["auto:validated_negative_evidence"],
+                "negative_evidence": dict(task.get("negative_evidence") or {}),
+                "source_snapshot_hash": str(task.get("source_snapshot_hash") or ""),
+                "candidate_set_hash": str(task.get("candidate_set_hash") or ""),
+            }
+            # Auto patches must pass the same Gate as producer patches.
+            validated = validate_task_patch(
+                tasks_doc,
+                candidate,
+                current_source_hash=str(task.get("source_snapshot_hash") or "") or None,
+                current_run_id=current_run_id,
+                uo_root=uo_root,
             )
+            if not validated.get("ok"):
+                invalid_auto.append(
+                    {
+                        "task_id": tid,
+                        "error": "AUTO_PATCH_CONTRACT_INVALID",
+                        "detail": validated,
+                    }
+                )
+                needs_llm.append(tid)
+                continue
+            auto.append(candidate)
         else:
             needs_llm.append(tid)
+
+    if invalid_auto and not auto and not patches:
+        return {
+            "ok": False,
+            "error": "AUTO_PATCH_CONTRACT_INVALID",
+            "invalid_auto": invalid_auto,
+            "needs_llm_task_ids": needs_llm,
+        }
 
     if needs_llm:
         return {
@@ -1477,6 +1660,7 @@ def resolve_patches_for_apply(
             ),
             "needs_llm_task_ids": needs_llm,
             "auto_mark_missing_count": len(auto),
+            "invalid_auto": invalid_auto,
         }
 
     merged = list(patches) + auto
