@@ -20,7 +20,10 @@ context_profile_id: tg-solve-cover-confirm
 output_contract_id: cover-confirm-v1
 allowed_write_paths: []
 forbidden_write_paths: []
-allowed_read_paths: []
+allowed_read_paths:
+- tg/solve/**
+- tg/cases/**
+- tg/plan/**
 forbidden_read_paths: []
 checker:
   required: true

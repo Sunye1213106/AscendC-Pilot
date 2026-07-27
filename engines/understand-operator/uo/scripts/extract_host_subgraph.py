@@ -242,6 +242,13 @@ def extract_host_subgraph(
             if n:
                 non_sink_roots.add(n.casefold())
 
+    # Receiver bindings → canonical owner identity for set_* fields.
+    from uo.scripts.receiver_binding import index_bindings_by_receiver, owner_identity_string
+
+    recv_bindings = index_bindings_by_receiver(
+        [b for b in ((plan or {}).get("receiver_bindings") or []) if isinstance(b, dict)]
+    )
+
     writer_roles_by_identity, writer_roles_by_name, incomplete_duplicate_writers = (
         _writer_role_indexes(plan or {})
     )
@@ -486,6 +493,18 @@ def extract_host_subgraph(
             )
 
         owning_type = _detect_owning_type(scan_body, item)
+        # Prefer receiver binding canonical owner when body has no GetTilingData<T>.
+        if not owning_type and recv_bindings:
+            for recv_name, binding in recv_bindings.items():
+                if f"{recv_name}->" in (scan_body or "") or f"{recv_name}." in (scan_body or ""):
+                    ident = owner_identity_string(binding.get("canonical_owner_key"))
+                    if ident:
+                        owning_type = ident
+                        break
+                    mt = str(binding.get("member_type") or "")
+                    if mt:
+                        owning_type = mt
+                        break
 
         # Host preprocessor branches overlapping this helper
         for directive in macro_info.directives:
@@ -688,14 +707,29 @@ def extract_host_subgraph(
 
         # TDF writes for tiling_writer and workspace_writer (offsets often land on tiling sinks)
         if role in {"tiling_writer", "workspace_writer"}:
-            fields = _collect_tdf_fields(scan_body, sink_recvs, non_sink_roots)
+            field_rows = _collect_tdf_field_rows(scan_body, sink_recvs, non_sink_roots)
             seen_fields: set[str] = set()
-            for field_name in fields:
+            for field_name, recv_name in field_rows:
                 key = field_name.casefold()
                 if not field_name or key in seen_fields:
                     continue
                 seen_fields.add(key)
-                ot = owning_type or "UnknownType"
+                ot = owning_type or ""
+                unknown_reason = ""
+                binding = recv_bindings.get(recv_name) if recv_name else None
+                if binding:
+                    cok = binding.get("canonical_owner_key") if isinstance(binding, dict) else None
+                    ident = owner_identity_string(cok)
+                    if ident:
+                        ot = ident
+                    elif binding.get("member_type"):
+                        ot = str(binding.get("member_type"))
+                    nested = str((cok or {}).get("nested_path") or binding.get("nested_field") or "")
+                    if nested and not str(field_name).startswith(nested + "."):
+                        field_name = f"{nested}.{field_name}"
+                if not ot:
+                    ot = "UnknownType"
+                    unknown_reason = "missing_receiver_binding"
                 tdf_ident = mint_field_identity(
                     owning_type=ot,
                     field_path=field_name,
@@ -706,7 +740,7 @@ def extract_host_subgraph(
                     "id": tdf_id,
                     "layer": "bridge",
                     "node_type": "TilingDataField",
-                    "name": field_name,
+                    "name": field_name.split(".")[-1],
                     "qualified_name": tdf_ident.qualified_name,
                     "file_path": file_path,
                     "start_line": start,
@@ -716,6 +750,13 @@ def extract_host_subgraph(
                     "identity_key": tdf_ident.identity_key,
                     "symbol_ref": tdf_ident.as_dict(),
                 }
+                if binding:
+                    tdf_node["canonical_owner_key"] = binding.get("canonical_owner_key")
+                    tdf_node["receiver"] = recv_name
+                    tdf_node["member_type"] = binding.get("member_type")
+                    tdf_node["root_tiling_types"] = binding.get("root_tiling_types")
+                if unknown_reason:
+                    tdf_node["unknown_type_reason"] = unknown_reason
                 nodes.append(tdf_node)
                 src = prev_branch_id or helper_id
                 edges.append({"id": stable_id("E_", src, tdf_id), "type": "writes", "source": src, "target": tdf_id})
@@ -875,33 +916,34 @@ def _detect_owning_type(body: str, item: dict[str, Any]) -> str:
 
 def _collect_tdf_fields(body: str, sink_recvs: set[str], non_sink_roots: set[str]) -> list[str]:
     """Generic field extraction; filter by plan sinks / non-sink roots."""
-    fields: list[str] = []
-    # tilingData->path =
+    return [field for field, _recv in _collect_tdf_field_rows(body, sink_recvs, non_sink_roots)]
+
+
+def _collect_tdf_field_rows(
+    body: str, sink_recvs: set[str], non_sink_roots: set[str]
+) -> list[tuple[str, str]]:
+    """Return (field_leaf, receiver_name) rows for TDF writes."""
+    rows: list[tuple[str, str]] = []
     for path in FIELD_WRITE_RE.findall(body):
         leaf = path.split(".")[-1]
         root = path.split(".")[0].casefold()
         if root in non_sink_roots:
             continue
-        fields.append(leaf)
-    # recv->set_field — only sinks (or all set_ if no sinks confirmed yet)
+        rows.append((leaf, ""))
     for recv, field in RECV_SETTER_RE.findall(body):
         if recv.casefold() in non_sink_roots:
             continue
         if sink_recvs and recv.casefold() not in sink_recvs and recv not in sink_recvs:
             continue
-        fields.append(field)
-    # Bare set_field in tiling_writer body when no recv prefix (common AscendC style)
-    if not fields:
+        rows.append((field, recv))
+    if not rows:
         for field in SET_FIELD_RE.findall(body):
-            fields.append(field)
-    elif sink_recvs:
-        # Also allow bare set_ alongside recv sinks inside tiling writers
-        pass
-    else:
+            rows.append((field, ""))
+    elif not sink_recvs:
         for field in SET_FIELD_RE.findall(body):
-            if field not in fields:
-                fields.append(field)
-    return fields
+            if field not in {r[0] for r in rows}:
+                rows.append((field, ""))
+    return rows
 
 
 def main(argv: list[str] | None = None) -> int:

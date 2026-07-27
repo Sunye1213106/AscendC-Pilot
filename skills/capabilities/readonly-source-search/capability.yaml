@@ -1,0 +1,15 @@
+id: readonly-source-search
+version: 1
+name_zh: 只读源码检索
+description: 通过受控 acp ro-search 包装 rg/grep/Select-String，禁止裸 shell 重定向写盘。
+applies_when:
+  - 需要按模式定位源码路径/行号
+  - producer 需要只读搜索但不得开放完整 Bash/PowerShell
+requires:
+  inputs: [pattern, paths]
+  tools: [acp_ro_search]
+  context: [project_root, scope]
+produces: [locate_hits]
+compatible_roles: [producer, readonly_analyst]
+policies: [code-access, source-authority]
+method_file: METHOD.md

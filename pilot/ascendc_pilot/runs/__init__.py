@@ -103,6 +103,120 @@ def file_sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def _sha256_json(value: Any) -> str:
+    blob = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()
+
+
+def slim_checker_result_for_receipt(checker_result: dict[str, Any] | None) -> dict[str, Any]:
+    """Keep receipt checker_result small: ok + summaries/hashes, never full engine blobs.
+
+    Full engine/apply payloads belong in session artifacts / IR; embedding them in
+    HMAC-signed receipts makes every ``acp next`` verify path O(blob size).
+    """
+    raw = dict(checker_result or {})
+    if not raw:
+        return {}
+
+    def _gate_row(g: Any) -> dict[str, Any]:
+        if not isinstance(g, dict):
+            return {"ok": bool(g)}
+        return {
+            "id": str(g.get("id") or g.get("gate") or g.get("name") or ""),
+            "ok": bool(g.get("ok", True)),
+            "error": str(g.get("error") or g.get("reason_code") or "")[:120],
+        }
+
+    gates_in = raw.get("gates")
+    gates_out: list[dict[str, Any]] = []
+    if isinstance(gates_in, list):
+        gates_out = [_gate_row(g) for g in gates_in[:32]]
+
+    contract = raw.get("output_contract") if isinstance(raw.get("output_contract"), dict) else {}
+    engine = raw.get("engine") if isinstance(raw.get("engine"), dict) else {}
+    apply = raw.get("apply") if isinstance(raw.get("apply"), dict) else {}
+    identity_injection = (
+        raw.get("identity_injection") if isinstance(raw.get("identity_injection"), dict) else {}
+    )
+    producer_identity = (
+        raw.get("producer_identity") if isinstance(raw.get("producer_identity"), dict) else {}
+    )
+    target_violation = (
+        raw.get("target_violation") if isinstance(raw.get("target_violation"), dict) else {}
+    )
+
+    engine_summary: dict[str, Any] = {}
+    if engine:
+        engine_summary = {
+            "ok": bool(engine.get("ok", True)),
+            "engine": str(engine.get("engine") or ""),
+            "checkpoint": str(engine.get("checkpoint") or ""),
+            "payload_sha256": _sha256_json(engine),
+        }
+        for key in ("tasks", "closed_pre_tasks", "triage", "report"):
+            if key in engine:
+                engine_summary[f"{key}_sha256"] = _sha256_json(engine.get(key))
+
+    apply_summary: dict[str, Any] = {}
+    if apply:
+        apply_summary = {
+            "ok": bool(apply.get("ok", True)),
+            "payload_sha256": _sha256_json(apply),
+        }
+
+    return {
+        "ok": bool(raw.get("ok")),
+        "schema": "receipt_checker_v1",
+        "full_checker_sha256": _sha256_json(raw),
+        "producer_identity": {
+            "ok": bool(producer_identity.get("ok", True)),
+            "error": str(producer_identity.get("error") or "")[:120],
+        }
+        if producer_identity
+        else {},
+        "identity_injection": {
+            "ok": bool(identity_injection.get("ok", True)),
+            "skipped": bool(identity_injection.get("skipped", False)),
+            "error": str(identity_injection.get("error") or "")[:120],
+        }
+        if identity_injection
+        else {},
+        "gates": gates_out,
+        "output_contract": {
+            "ok": bool(contract.get("ok", True)),
+            "skipped": bool(contract.get("skipped", False)),
+            "error": str(contract.get("error") or "")[:120],
+            "contract_id": str(contract.get("contract_id") or ""),
+        }
+        if contract
+        else {},
+        "engine": engine_summary,
+        "apply": apply_summary,
+        "target_violation": {
+            "ok": bool(target_violation.get("ok", True)) if target_violation else True,
+            "error": str(target_violation.get("error") or "")[:120],
+        }
+        if target_violation
+        else {},
+    }
+
+
+def _receipt_paths_for_action(base: Path, action_id: str = "") -> list[Path]:
+    """Prefer filename filter when action_id known (identity = run:action:actor).
+
+    When ``action_id`` is set and no filename matches, return empty — never fall
+    back to scanning every receipt (that made ``acp next`` O(all fat receipts)
+    for each incomplete pipeline step).
+    """
+    if not base.is_dir():
+        return []
+    aid = str(action_id or "").strip()
+    if aid:
+        # Filename is `{run}_{action}_{actor}.yaml` after ':' → '_'
+        return sorted({*base.glob(f"*_{aid}_*.yaml"), *base.glob(f"*_{aid}.yaml")})
+    return sorted(base.glob("*.yaml"))
+
+
 def issue_receipt(
     project_root: Path,
     *,
@@ -121,6 +235,7 @@ def issue_receipt(
     """Issue an HMAC-signed receipt. Only callable from acp run-action finalize.
 
     External callers must finalize through the action runtime; receipts are private.
+    ``checker_result`` is always slimmed before signing (full blobs stay in session/IR).
     """
     if not _internal:
         raise RuntimeError(
@@ -131,7 +246,9 @@ def issue_receipt(
     identity = identity or f"{run_id}:{action_id}:{actor_id}"
     safe = identity.replace(":", "_").replace("/", "_")
     path = run_dir(project_root, run_id) / "subagents" / f"{safe}.yaml"
-    checker = dict(checker_result or {})
+    checker = slim_checker_result_for_receipt(
+        checker_result if isinstance(checker_result, dict) else {}
+    )
     payload = {
         "identity": identity,
         "run_id": run_id,
@@ -159,6 +276,65 @@ def issue_receipt(
     return path
 
 
+def _maybe_compact_bloated_receipt(
+    project_root: Path, path: Path, data: dict[str, Any]
+) -> dict[str, Any]:
+    """Rewrite legacy fat receipts to slim checker_result + resign (once).
+
+    Old finalize embedded full engine.report into HMAC receipts (~100KB–1MB),
+    making every subsequent verify dominate ``acp next``. Compaction preserves
+    identity/hashes and re-signs with the project HMAC key.
+    """
+    checker = data.get("checker_result")
+    if not isinstance(checker, dict) or checker.get("schema") == "receipt_checker_v1":
+        return data
+    try:
+        approx = len(json.dumps(checker, ensure_ascii=False, default=str))
+    except Exception:  # noqa: BLE001
+        approx = 0
+    if approx < 8192:
+        return data
+    slim = slim_checker_result_for_receipt(checker)
+    payload = {k: v for k, v in data.items() if k not in {"signature", "_path"}}
+    payload["checker_result"] = slim
+    payload["signature"] = sign_receipt_payload(project_root, payload)
+    try:
+        _dump(path, payload)
+    except Exception:  # noqa: BLE001
+        return data
+    payload["_path"] = data.get("_path") or path.as_posix()
+    return payload
+
+
+_VERIFY_RESULT_CACHE: dict[tuple[Any, ...], dict[str, Any]] = {}
+
+
+def _verify_cache_key(
+    project_root: Path,
+    *,
+    run_id: str,
+    action_id: str,
+    path: Path,
+    actor_id: str,
+    require_checker_ok: bool,
+    require_spec_hash: bool,
+) -> tuple[Any, ...] | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (
+        str(Path(project_root).resolve()),
+        run_id,
+        action_id,
+        actor_id,
+        require_checker_ok,
+        require_spec_hash,
+        int(st.st_mtime_ns),
+        int(st.st_size),
+    )
+
+
 def verify_receipt(
     project_root: Path,
     *,
@@ -181,6 +357,10 @@ def verify_receipt(
     Checks: HMAC signature, run_id, actor, action_id, input/output hashes,
     checker_result, workflow_spec_hash, issued_by=acp.
     File existence alone is not enough.
+
+    Performance: when ``action_id`` is set, only matching receipt files are loaded;
+    missing action_id never scans siblings; cheap identity filters run before HMAC;
+    successful verifies are cached by (path mtime/size) within the process.
     """
     state = _load_state(project_root)
     run_id = str(state.get("run_id") or "")
@@ -190,6 +370,35 @@ def verify_receipt(
     base = runs_root(project_root) / run_id / "subagents"
     if not base.is_dir():
         return {"ok": False, "reason_code": "NO_RECEIPTS_DIR", "message": "subagents receipt dir missing"}
+
+    # Fast path: single matching receipt + no hash overrides → process cache
+    can_cache = (
+        bool(action_id)
+        and not expected_input_hashes
+        and not expected_output_hashes
+        and not identity_prefix
+        and not actor_type
+        and require_pilot_issued
+        and require_hashes
+        and require_action_id
+        and require_signature
+    )
+    paths = _receipt_paths_for_action(base, action_id)
+    if not paths:
+        return {"ok": False, "reason_code": "NO_RECEIPT", "message": "no receipt files"}
+
+    if can_cache and len(paths) == 1:
+        ck = _verify_cache_key(
+            project_root,
+            run_id=run_id,
+            action_id=action_id,
+            path=paths[0],
+            actor_id=actor_id,
+            require_checker_ok=require_checker_ok,
+            require_spec_hash=require_spec_hash,
+        )
+        if ck is not None and ck in _VERIFY_RESULT_CACHE:
+            return dict(_VERIFY_RESULT_CACHE[ck])
 
     expected_wf_hash = ""
     if require_spec_hash:
@@ -201,25 +410,14 @@ def verify_receipt(
         except Exception:  # noqa: BLE001
             expected_wf_hash = ""
 
-    candidates: list[dict[str, Any]] = []
-    for path in sorted(base.glob("*.yaml")):
+    errors: list[str] = []
+    for path in paths:
         data = _load(path)
         if not data:
             continue
         data["_path"] = path.as_posix()
-        candidates.append(data)
 
-    if not candidates:
-        return {"ok": False, "reason_code": "NO_RECEIPT", "message": "no receipt files"}
-
-    errors: list[str] = []
-    for data in candidates:
-        if require_pilot_issued and str(data.get("issued_by") or "") != "pilot":
-            errors.append(f"{data.get('_path')}: issued_by!=acp")
-            continue
-        if require_signature and not verify_receipt_signature(project_root, data):
-            errors.append(f"{data.get('_path')}: invalid or missing HMAC signature")
-            continue
+        # Cheap filters BEFORE HMAC (legacy receipts can be hundreds of KB).
         if str(data.get("run_id") or "") != run_id:
             errors.append(f"{data.get('_path')}: run_id mismatch")
             continue
@@ -235,6 +433,13 @@ def verify_receipt(
             continue
         if require_action_id and not rid_action:
             errors.append(f"{data.get('_path')}: action_id missing")
+            continue
+        if require_pilot_issued and str(data.get("issued_by") or "") != "pilot":
+            errors.append(f"{data.get('_path')}: issued_by!=acp")
+            continue
+
+        if require_signature and not verify_receipt_signature(project_root, data):
+            errors.append(f"{data.get('_path')}: invalid or missing HMAC signature")
             continue
 
         in_h = data.get("input_hashes") if isinstance(data.get("input_hashes"), dict) else {}
@@ -280,7 +485,12 @@ def verify_receipt(
                 errors.append(f"{data.get('_path')}: checker_result.ok != true")
                 continue
 
-        return {
+        # Migrate bloated legacy receipts after they pass verify (rewrite+resign once).
+        data = _maybe_compact_bloated_receipt(project_root, path, data)
+        rid_actor = str(data.get("actor_id") or data.get("agent") or rid_actor)
+        rid_action = str(data.get("action_id") or rid_action)
+
+        result = {
             "ok": True,
             "receipt": {k: v for k, v in data.items() if k != "_path"},
             "path": data.get("_path"),
@@ -289,6 +499,19 @@ def verify_receipt(
             "action_id": rid_action,
             "workflow_spec_hash": data.get("workflow_spec_hash"),
         }
+        if can_cache:
+            ck = _verify_cache_key(
+                project_root,
+                run_id=run_id,
+                action_id=rid_action,
+                path=path,
+                actor_id=actor_id,
+                require_checker_ok=require_checker_ok,
+                require_spec_hash=require_spec_hash,
+            )
+            if ck is not None:
+                _VERIFY_RESULT_CACHE[ck] = dict(result)
+        return result
 
     return {
         "ok": False,
@@ -357,6 +580,7 @@ __all__ = [
     "run_dir",
     "semantic_progress_fingerprint",
     "sign_receipt_payload",
+    "slim_checker_result_for_receipt",
     "verify_receipt",
     "verify_receipt_signature",
 ]

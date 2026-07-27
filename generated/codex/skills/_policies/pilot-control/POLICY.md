@@ -13,12 +13,14 @@ Pilot 独占状态、合法边、门禁与完成态。
 5. 禁止直调领域 CLI（`build_layered_kb.py`、`tg-init`、`tg-plan`、`tg-solve` 等）；须经 acp 包装。
 6. 正式产物须 Pilot 签发收据。
 7. **进度只进 OpenCode 原生 Todo**（见下方「原生 Todo」）；禁止在主对话输出工作流状态面板。
-8. bash 优先用工具 `workdir` 指向算子目录；若写 `cd <dir> && acp …`，Pilot 只认末尾纯 `acp` 段（禁止夹杂其它命令）。禁止用 bash/`>`/`Set-Content`/`tee` 写入 `.ascendc-pilot/**` 正式产物以绕过 Write 围栏。
-9. **语义 Action 派发**：必须派声明 actor（如 `uo-semantic-resolve`）；Primary 禁止代写 `uo/ir/**`。Task 须带 `subagent_type`/`agent`=actor 与 `action_id`。**Task 正文只能原样使用 prepare 返回的 `task_prompt_stub`**（禁止复述 METHOD、禁止塞额外目标/REWORK 长文、禁止把后续 Action 的 `llm_tasks`/`mark_missing` 或超大 candidates 整包粘进 prompt）。**同 Action rework 必须 resume 原 Task session**，禁止新开第二个 session。
+8. bash 优先用工具 `workdir` 指向算子目录；若写 `cd <dir> && acp …`，Pilot 只认末尾纯 `acp` 段（禁止夹杂其它命令）。禁止用 bash/`>`/`Set-Content`/`tee` 写入 `.ascendc-pilot/**` 正式产物以绕过 Write 围栏。**只读定位**允许：`ls`/`Get-ChildItem`/`grep`/`rg`/`Select-String`/`findstr`（无写重定向）；仍不得当高置信证据。
+9. **语义 Action 派发**：必须派声明 actor（如 `uo-semantic-resolve`）；Primary 禁止代写 `uo/ir/**`。Task 须带 `subagent_type`/`agent`=actor 与 `action_id`。**Task 正文只能原样使用 prepare 返回的 `task_prompt_stub`**（禁止复述 METHOD、禁止塞额外目标/REWORK 长文、禁止把后续 Action 的 `llm_tasks`/`mark_missing` 或超大 candidates 整包粘进 prompt；**禁止空 prompt / `{}`**）。**同 Action rework 必须 resume 原 Task session**，禁止新开第二个 session。Gate fail → **resume 原 stub** 再派（**校验失败禁止无故 re-prepare / re-propose**，以免 `candidates_sha256` churn）；**禁止**凭子代理摘要声称「无候选 / 无 receiver」而跳过读 `*.summary.yaml` / 全量 candidates；若子代理摘要写明「只改 sha / 证据未改」→ **禁止 finalize**，继续 resume 或先 `--check`；语义 Action 仅 Host **finalize**（禁止 primary 代写 IR）。
+9a. **`ARTIFACT_SESSION_MISMATCH` / identity 失败**：禁止派发「FIX ONLY 改 `action_session_id`」类非 stub 正文。合法路径二选一：(1) **resume 原 Task + 原样 stub** 让子代理按合同重写整份产物 identity；(2) 按 `retry_command` **完整 re-prepare** 后，用**新 stub** 派发，由子代理按新 session **整份重写**产物（不得只改 identity 单字段）。`candidate_set_hash` 权威字段名见 adjudicate 合同（勿误写 `patch_candidate_set_hash`）。
 10. **Debug 模式（可选）**：`acp debug enable --project <算子目录>` 后自动捕捉工具失败与过长非逻辑思考链，并在子代理结束时导出 session bundle 到 `.ascendc-pilot/debug/exports/`。排查完 `acp debug disable`。手动导出：`acp debug export-session`。
 11. **关键参数不明确 → 立刻 AskQuestion**：算子路径（`--project`）、architecture、continue/reinit，以及**当前 workflow 真正要求的**参数（例如 **`tg-init` 的测试脚本路径** `--test-script-root` / `ASCENDC_TEST_SCRIPT_ROOT` / `csv_consumer_root`）缺一不可时，**同一轮**用 `question` 可点选框问清；禁止为猜答案而全库 Glob、读历史 session 考古、长篇「让我想想」。已明确则直接执行，勿重复确认。**`uo-init` / `uo-update` 启动不要求测试脚本路径**——那是 TG 测例契约用的，勿在建库阶段为此打断。
 
 12. **禁止跳步**：`acp next` 返回 `recommended_next_action` 时必须执行该 Action；禁止从 `allowed_actions` 里挑后面的确定性步骤（例如跳过 `detect_score_post`/`adjudicate_llm_tasks` 直接 `apply_semantic_patch`）。语义 Action finalize 后必须立刻再 `acp next`，不要自行猜下一步。
+13. **Lease 不变量（全局）**：Action `allowed_write_paths` **必须**可读（签发时自动并入 `allowed_read_paths`）。禁止「能 Write 产物却不能 Read 自检」；勿在个别 skill 里另开例外。
 
 ## 原生 Todo（所有 workflow 共用 · OpenCode `todowrite`）
 

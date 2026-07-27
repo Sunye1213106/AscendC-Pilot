@@ -679,6 +679,106 @@ detect_score_pre → extract_plan → detect_score_post
 **判定**：`unit_fix_direction: mostly_correct`；**仍非** `integration_verified` / `full_fag_verified`（未跑 OpenCode hook + MCP + FAG）。
 
 
+### A58：extract-plan deterministic completion（2026-07-27）
+
+**现象（FAG arch35）**：118 高置信 alias 只进 plan 80 条；LLM 静默遗漏；COMMON_ASSIGN / InitTilingData 被当成「指针赋值」忽略。
+
+**根因**：alias 仅候选打分，无 finalize 自动合并；无稳定 `candidate_id`；无 accepted/rejected/deferred 覆盖 Gate。
+
+**落点**：
+- `extract_plan_autofill.py`：`stamp_candidate_ids` / `auto_merge_high_confidence_aliases` / 三态 coverage
+- `apply_extract_plan.py`：finalize 前确定性补全 + `extract_plan_auto_fill_report.yaml`
+- producer 只写 `runs/.../extract_plan/staging/output.yaml`
+
+**状态**：已做（单测 `test_extract_plan_bridge_autofill.py`）。
+
+
+### A59：receiver binding / typed bridge（2026-07-27）
+
+**现象**：Host `set_*` 大量 `UnknownType`；`host_produced_count=0` / `coverage_ratio=0`。
+
+**根因**：owning_type 只靠 `GetTilingData<T>` 启发式；未解析 `recv=&td->nested`；Bridge 把 member_type 当唯一身份会失配。
+
+**落点**：
+- 共享 `receiver_binding.py`（root_type + nested_path 为 canonical；member_type 辅助）
+- `propose_extract_plan` 产出 `receiver_binding_candidates`
+- `extract_host_subgraph` 传播 binding；`reconcile_bridge` 三级匹配
+- `key_dimension_source` ∈ WRITER_ROLES+CHAIN_ROLES，∉ PROMOTED_WRITER_ROLES
+
+**状态**：已做。
+
+
+### A60：semantic task canonical grouping（2026-07-27）
+
+**现象**：327 Bridge 任务按 occurrence/`gap_kind` 膨胀；同字段多任务。
+
+**根因**：`bridge_gap:{code}:{field}` target；`stable_task_id` 含有效 task_type。
+
+**落点**：
+- `score_canonicalize.canonicalize_score_items`：obligation key **不含** gap_kind
+- Bridge `stable_task_id_override` = hash(object_type, obligation_id, snapshot)
+- content-level `candidate_set_hash`；IO 单候选唯一 schema → auto_accept
+- `KERNEL_DISPATCH_REWORK` → `detect_score_pre`（不进通用 adjudicate）
+
+**状态**：已做。
+
+
+### A61：adjudication Map-Reduce + subagent sandbox（2026-07-27）
+
+**现象**：单 worker 读万行 llm_tasks；多写者冲突；非法 mark_missing 风险。
+
+**落点**：
+- Capabilities：`structured-ir-query` / `readonly-source-search` / `action-scratch` / `sharded-semantic-producer`
+- `ACTION_PRODUCER_WRITE_PATHS` / `ACTION_FINALIZER_WRITE_PATHS`；staging vs parts
+- `semantic_patch_shards.py` + prepare `dispatch_tasks[]`；finalize reduce → `semantic_patches.yaml`
+- CLI：`acp inspect` / `acp ro-search`
+
+**基线**：`TEST/baselines/fag_RUN_20260727_062531_b1268a63/`（含 metrics/SHA）；禁止在旧 run 上继续 adjudicate。
+
+**状态**：已做（权限/分片单测通过）；完整 FAG reinit 仍待 compose+refresh 后手工验收。
+
+
+### A63：extract-plan decision_worklist / slim IR（2026-07-27）
+
+**现象**（对照 `test_subagent.md` FAG 联调）：
+1. 子代理手工扫大 `candidates.yaml` → 遗漏 / 错误计数 / 空 `candidate_id`；
+2. `COMMON_ASSIGN` 被误判「非函数」reject，receiver binding 只能写在 `decision_reason`；
+3. evidence 只验真实性、不验角色充分性；canonical `extract_plan.yaml` 被审计字段撑爆。
+
+**根因**：运行期审计与 canonical IR 未分离；规则塞进 prompt 而非 Gate/共享模块。
+
+**落点**（公共优先）：
+- `extract_plan_decision.py`：`build_decision_worklist` / `decision_report` / coverage / architecture / slim+sidecar
+- `role_evidence.py`：`validate_role_evidence`（authentic ≠ sufficient）
+- `receiver_binding.py`：`extract_receiver_bindings` + COMMON_ASSIGN 宏证据
+- prepare 写 `inputs/decision_worklist.yaml`；producer 只写 `staging/decision_report.yaml`
+- finalize：`validate_extract_plan_staging` → materialize → autofill → slim `extract_plan.yaml` + `extract_plan_aliases.yaml` + `receiver_bindings.yaml`
+- lease：producer 禁写正式 IR；`acp inspect extract-plan-worklist|coverage|validate --what extract-plan-staging`
+- METHOD/prompt 只保留「读 worklist → 写 report → 跑 validator」；判断规则在 Policy/Gate
+
+**状态**：代码已落；需 `compose_runtime` + `refresh-opencode.ps1` 后重启再跑 FAG extract_plan 验收。
+
+
+### A62：acp next 慢 + adjudicate prepare NameError（2026-07-27）
+
+**现象**：
+1. `acp next` 在 detect_score_post 后经常 30s+ 超时；
+2. `acp run-action adjudicate_llm_tasks` prepare 报 `NameError: session is not defined`。
+
+**根因**：
+1. `verify_receipt` 对 `subagents/*.yaml` **全量加载并先 HMAC**，再按 `action_id` 过滤；`detect_score_*` 收据的 `checker_result.engine.report` 达数百 KB，pipeline 又对同一批 action **重复验签**（`recommend_next` 循环 + `missing_phase_actions`）。
+2. Map-Reduce prepare 误用尚未构造的 `session` 字典，应为 prepare 阶段已生成的 `action_sid`。
+
+**落点**（共享模块，非 skill/prompt）：
+- `runs.slim_checker_result_for_receipt`：签发收据只保留 ok/摘要/sha，**禁止**嵌入完整 engine report；验签成功后自动 compact 旧胖收据并重签；
+- `verify_receipt`：`action_id` 文件名过滤；**无匹配绝不回扫全目录**；先身份过滤再 HMAC；进程内 mtime 缓存；
+- `workflows.pipeline`：`done_cache` 单次扫描，禁止重复 `missing_phase_actions` 全量再验；
+- `state.save_state`：**禁止**把 `all_obligations` / 带 label 的大 open_items 写入热路径 `workflow.yaml`；`load_state` 按 mtime 缓存（否则每次 verify 解析 300KB+ YAML ≈1s）；
+- `actions.runtime` prepare：`action_session = action_sid`；禁止把 `task_prompt_stub` 塞进 `_render_placeholders` kwargs。
+
+**状态**：已做（`test_receipt_verify_perf.py`）；旧 run 首次 `acp next` 会 compact 收据并瘦身 workflow.yaml，之后应明显加速。
+
+
 ## 14. 一句话原则（沉淀）
 
 1. **Pilot 独占状态**；Skill/Prompt 不推进阶段。  

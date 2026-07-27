@@ -740,7 +740,27 @@ def _run_extract_plan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
         from uo.scripts.propose_extract_plan import propose_extract_plan
 
         if mode == "finalize" or (not mode and plan_path.is_file()):
-            applied = apply_extract_plan(project_root, op_name, check_only=False)
+            staging_path = None
+            run_id = str(ctx.get("run_id") or "").strip()
+            if run_id:
+                cand_stage = (
+                    project_root
+                    / ".ascendc-pilot"
+                    / "runs"
+                    / run_id
+                    / "actions"
+                    / "extract_plan"
+                    / "staging"
+                    / "output.yaml"
+                )
+                if cand_stage.is_file():
+                    staging_path = cand_stage
+            applied = apply_extract_plan(
+                project_root,
+                op_name,
+                staging_path=staging_path,
+                check_only=False,
+            )
             if not applied.get("ok"):
                 return {
                     "ok": False,
@@ -830,6 +850,42 @@ def _run_extract_plan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
                     candidates_path=cand_path,
                 ),
             )
+            # Decision worklist (run-scoped) for producer — not canonical IR.
+            try:
+                from uo.scripts.extract_plan_decision import build_decision_worklist
+                from uo.scripts.resolve_entrypoints import entrypoint_units, load_entrypoint_graph
+
+                units: set[str] = set()
+                try:
+                    graph = load_entrypoint_graph(uo)
+                    for u in entrypoint_units(graph) or []:
+                        name = str(u.get("name") or u.get("extraction_unit") or "").strip()
+                        if name:
+                            units.add(name)
+                except Exception:  # noqa: BLE001
+                    units = set()
+                worklist = build_decision_worklist(
+                    candidates,
+                    architecture=architecture,
+                    entrypoint_units=units,
+                )
+                run_id = str(ctx.get("run_id") or "").strip()
+                if run_id:
+                    wl_dir = (
+                        project_root
+                        / ".ascendc-pilot"
+                        / "runs"
+                        / run_id
+                        / "actions"
+                        / "extract_plan"
+                        / "inputs"
+                    )
+                    wl_dir.mkdir(parents=True, exist_ok=True)
+                    write_yaml(wl_dir / "decision_worklist.yaml", worklist)
+                # Also stash a copy next to summary for inspect without run_id.
+                write_yaml(uo / "ir" / "extract_plan_decision_worklist.yaml", worklist)
+            except Exception:  # noqa: BLE001
+                pass
         status = str((candidates or {}).get("status") or "").lower() if isinstance(candidates, dict) else ""
         if status in {"blocked", "fail", "failed"} or (
             isinstance(candidates, dict) and candidates.get("ok") is False
@@ -1260,9 +1316,14 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "extract-plan-v1": [
         "uo/ir/extract_plan.yaml",
         "uo/ir/extract_plan_candidates.yaml",
+        "uo/ir/extract_plan_aliases.yaml",
+        "uo/ir/receiver_bindings.yaml",
         "uo/ir/host_subgraph.yaml",
         "uo/ir/kernel_subgraph.yaml",
         "uo/ir/macro_semantics.yaml",
+    ],
+    "extract-plan-staging-v1": [
+        "runs/{run_id}/actions/extract_plan/staging/decision_report.yaml",
     ],
     "key-triage-v1": ["uo/ir/key_triage.yaml"],
     # Shape staging is optional; patch is the producer contract
@@ -1342,6 +1403,8 @@ OUTPUT_CONTRACT_NONEMPTY_GLOBS: dict[str, list[str]] = {
     "extract-plan-v1": [
         "uo/ir/extract_plan.yaml",
         "uo/ir/extract_plan_candidates.yaml",
+        "uo/ir/extract_plan_aliases.yaml",
+        "uo/ir/receiver_bindings.yaml",
         "uo/ir/host_subgraph.yaml",
         "uo/ir/kernel_subgraph.yaml",
     ],

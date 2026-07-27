@@ -23,6 +23,7 @@ WRITER_ROLES = frozenset(
     {
         "tiling_writer",
         "key_writer",
+        "key_dimension_source",
         "workspace_writer",
         "provenance_helper",
         "ignore",
@@ -34,6 +35,7 @@ CHAIN_ROLES = frozenset(
     {
         "tiling_writer",
         "key_writer",
+        "key_dimension_source",
         "workspace_writer",
         "provenance_helper",
     }
@@ -61,7 +63,15 @@ def load_extract_plan(uo_root: Path) -> dict[str, Any] | None:
         return None
     # read_yaml applies literal-block sanitize for extract_plan.yaml
     data = read_yaml(path)
-    return data if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        return None
+    # Hydrate slim v2 sidecars (aliases / receiver_bindings).
+    try:
+        from uo.scripts.extract_plan_decision import hydrate_extract_plan
+
+        return hydrate_extract_plan(data, uo_root / "ir")
+    except Exception:  # noqa: BLE001
+        return data
 
 
 _CANDIDATES_SECTION_KEYS = (
@@ -687,8 +697,11 @@ def validate_extract_plan_against_candidates(
 ) -> list[str]:
     """Return rejection reasons; empty means OK."""
     errors: list[str] = []
-    if int(plan.get("version") or 0) != 1:
-        errors.append("version must be 1")
+    ver = int(plan.get("version") or 0)
+    if ver not in {1, 2}:
+        errors.append("version must be 1 or 2")
+    # v2 canonical slim: evidence already verified pre-slim; skip snippet contracts.
+    slim_mode = ver >= 2 and bool(plan.get("aliases_ref") or plan.get("receiver_bindings_ref"))
 
     sha = str(plan.get("candidates_sha256") or "").strip()
     if not sha:
@@ -709,6 +722,16 @@ def validate_extract_plan_against_candidates(
 
     if "writers" not in plan or not isinstance(plan.get("writers"), list):
         errors.append("extract_plan.writers must be a list (omit items instead of inventing semantic_groups)")
+
+    # Tri-state coverage for high-confidence alias / receiver_binding candidates.
+    # Slim v2 drops accepted/rejected lists — coverage was enforced on decision_report.
+    if not slim_mode:
+        try:
+            from uo.scripts.extract_plan_autofill import validate_tri_state_coverage
+
+            errors.extend(validate_tri_state_coverage(plan, candidates))
+        except Exception as exc:  # pragma: no cover - import/runtime guard
+            errors.append(f"TRI_STATE_COVERAGE_CHECK_FAILED:{exc}")
 
     writer_names = {
         str(c.get("name") or "").strip()
@@ -754,7 +777,7 @@ def validate_extract_plan_against_candidates(
                 "(do not promote AlignTo/CeilDivide as tiling/key/workspace writers)"
             )
         # Require identity fields — ban short-name-only hits.
-        if not (item.get("file_path") or item.get("qualified_name") or item.get("identity_key")):
+        if not (item.get("file_path") or item.get("qualified_name") or item.get("identity_key") or item.get("id")):
             # Ban short-name-only when multiple candidates share the name.
             matches = [
                 c
@@ -769,17 +792,18 @@ def validate_extract_plan_against_candidates(
                 f"(copy role_suggested from extract_plan_candidates.yaml; "
                 f"allowed: {sorted(WRITER_ROLES)})"
             )
-        writer_pool = list(candidates.get("writer_candidates") or [])
-        matched = _match_candidate(item, writer_pool)
-        _validate_decision_evidence(
-            item,
-            label=f"writer {name or '?'}",
-            errors=errors,
-            cand=matched,
-            all_pool=writer_pool,
-            check_weak_writer_promotion=True,
-            project_root=project_root,
-        )
+        if not slim_mode:
+            writer_pool = list(candidates.get("writer_candidates") or [])
+            matched = _match_candidate(item, writer_pool)
+            _validate_decision_evidence(
+                item,
+                label=f"writer {name or '?'}",
+                errors=errors,
+                cand=matched,
+                all_pool=writer_pool,
+                check_weak_writer_promotion=True,
+                project_root=project_root,
+            )
 
     for item in plan.get("receivers") or []:
         if not isinstance(item, dict):
@@ -790,7 +814,7 @@ def validate_extract_plan_against_candidates(
             errors.append("receiver missing name")
         elif name not in recv_names and name.casefold() not in recv_cf:
             errors.append(f"receiver not in candidates: {name}")
-        if not (item.get("file_path") or item.get("qualified_name") or item.get("identity_key")):
+        if not (item.get("file_path") or item.get("qualified_name") or item.get("identity_key") or item.get("id")):
             matches = [
                 c
                 for c in (candidates.get("receiver_candidates") or [])
@@ -803,17 +827,18 @@ def validate_extract_plan_against_candidates(
                 f"receiver {name} missing is_tiling_sink "
                 "(copy is_tiling_sink_suggested from extract_plan_candidates.yaml)"
             )
-        recv_pool = list(candidates.get("receiver_candidates") or [])
-        matched_recv = _match_candidate(item, recv_pool)
-        _validate_decision_evidence(
-            item,
-            label=f"receiver {name or '?'}",
-            errors=errors,
-            cand=matched_recv,
-            all_pool=recv_pool,
-            check_weak_writer_promotion=bool(item.get("is_tiling_sink")),
-            project_root=project_root,
-        )
+        if not slim_mode:
+            recv_pool = list(candidates.get("receiver_candidates") or [])
+            matched_recv = _match_candidate(item, recv_pool)
+            _validate_decision_evidence(
+                item,
+                label=f"receiver {name or '?'}",
+                errors=errors,
+                cand=matched_recv,
+                all_pool=recv_pool,
+                check_weak_writer_promotion=bool(item.get("is_tiling_sink")),
+                project_root=project_root,
+            )
 
     for item in plan.get("aliases") or []:
         if not isinstance(item, dict):

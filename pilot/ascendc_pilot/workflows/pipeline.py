@@ -58,22 +58,37 @@ def action_receipt_ok(project_root: Path, action_id: str) -> bool:
     return bool(verified.get("ok"))
 
 
-def _action_done(project_root: Path, action_id: str) -> bool:
+def _action_done(
+    project_root: Path,
+    action_id: str,
+    *,
+    done_cache: dict[str, bool] | None = None,
+) -> bool:
     """Receipt (or explicit not_applicable proof) — never file existence alone."""
-    if action_receipt_ok(project_root, action_id):
-        return True
-    return _not_applicable_proof(project_root, action_id)
+    if done_cache is not None and action_id in done_cache:
+        return done_cache[action_id]
+    ok = action_receipt_ok(project_root, action_id) or _not_applicable_proof(project_root, action_id)
+    if done_cache is not None:
+        done_cache[action_id] = ok
+    return ok
 
 
 def preferred_pipeline(workflow_id: str, phase: str) -> list[str]:
     return phase_pipeline(workflow_id, phase)
 
 
-def missing_phase_actions(project_root: Path, workflow_id: str, phase: str) -> list[str]:
+def missing_phase_actions(
+    project_root: Path,
+    workflow_id: str,
+    phase: str,
+    *,
+    done_cache: dict[str, bool] | None = None,
+) -> list[str]:
     """Pipeline actions not yet proven complete for the current run."""
+    cache = done_cache if done_cache is not None else {}
     missing: list[str] = []
     for aid in preferred_pipeline(workflow_id, phase):
-        if not _action_done(project_root, aid):
+        if not _action_done(project_root, aid, done_cache=cache):
             missing.append(aid)
     return missing
 
@@ -98,17 +113,22 @@ def recommend_next_action(
             "label_zh": str(a0.get("label_zh") or a0.get("id") or ""),
             "reason": "first_allowed",
         }
+    # Single-pass completion index: never re-verify the whole pipeline twice.
+    done_cache: dict[str, bool] = {}
+    missing = missing_phase_actions(
+        project_root, workflow_id, phase, done_cache=done_cache
+    )
     for aid in pipe:
         if aid not in by_id:
             continue
-        if not _action_done(project_root, aid):
+        if aid in missing:
             row = by_id[aid]
             return {
                 "id": aid,
                 "label_zh": str(row.get("label_zh") or aid),
                 "reason": "pipeline_incomplete",
                 "pipeline": pipe,
-                "missing_actions": missing_phase_actions(project_root, workflow_id, phase),
+                "missing_actions": missing,
             }
     return {
         "id": None,

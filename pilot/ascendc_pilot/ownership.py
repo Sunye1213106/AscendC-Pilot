@@ -32,6 +32,41 @@ PRIMARY_AGENT_ID = "ascendc-pilot"
 
 # Action-precise write paths relative to `.ascendc-pilot/` (may include `{run_id}`).
 # Agent write_scopes are ceilings; lease must be a subset.
+#
+# Producer vs finalizer split (Phase 0.5):
+# - ACTION_PRODUCER_WRITE_PATHS: subagent / Map worker staging only
+# - ACTION_FINALIZER_WRITE_PATHS: deterministic finalize / reduce canonical IR
+# - ACTION_WRITE_PATHS: union fallback for engines that do not yet split roles
+ACTION_PRODUCER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
+    "uo-init": {
+        "extract_plan": [
+            "runs/{run_id}/actions/extract_plan/staging/decision_report.yaml",
+            "runs/{run_id}/actions/extract_plan/staging/output.yaml",
+            "runs/{run_id}/actions/extract_plan/scratch/**",
+        ],
+        "adjudicate_llm_tasks": [
+            "runs/{run_id}/actions/adjudicate_llm_tasks/parts/**",
+            "runs/{run_id}/actions/adjudicate_llm_tasks/scratch/**",
+        ],
+    },
+}
+
+ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
+    "uo-init": {
+        "extract_plan": [
+            "uo/ir/extract_plan.yaml",
+            "uo/ir/extract_plan_aliases.yaml",
+            "uo/ir/receiver_bindings.yaml",
+            "uo/ir/extract_plan_auto_fill_report.yaml",
+            "uo/ir/extract_plan_decision_report.yaml",
+        ],
+        "adjudicate_llm_tasks": [
+            "uo/ir/semantic_patches.yaml",
+            "runs/{run_id}/actions/adjudicate_llm_tasks/reduce_report.yaml",
+        ],
+    },
+}
+
 ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     "uo-init": {
         "prepare_layout": ["uo/manifest.yaml", "uo/**"],
@@ -47,9 +82,26 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "uo/ir/llm_tasks.yaml",
             "uo/ir/**",
         ],
-        "extract_plan": ["uo/ir/extract_plan.yaml"],
+        # Union of producer staging + finalizer canonical (engines / gates).
+        "extract_plan": [
+            "runs/{run_id}/actions/extract_plan/staging/decision_report.yaml",
+            "runs/{run_id}/actions/extract_plan/staging/output.yaml",
+            "runs/{run_id}/actions/extract_plan/scratch/**",
+            "uo/ir/extract_plan.yaml",
+            "uo/ir/extract_plan_aliases.yaml",
+            "uo/ir/receiver_bindings.yaml",
+            "uo/ir/extract_plan_auto_fill_report.yaml",
+            "uo/ir/extract_plan_decision_report.yaml",
+        ],
         "detect_score_post": ["uo/ir/score_report_post.yaml", "uo/ir/llm_tasks.yaml", "uo/ir/**"],
-        "adjudicate_llm_tasks": ["uo/ir/semantic_patches.yaml"],
+        "adjudicate_llm_tasks": [
+            "runs/{run_id}/actions/adjudicate_llm_tasks/parts/**",
+            "runs/{run_id}/actions/adjudicate_llm_tasks/scratch/**",
+            "runs/{run_id}/actions/adjudicate_llm_tasks/batches/**",
+            "runs/{run_id}/actions/adjudicate_llm_tasks/semantic_batches.yaml",
+            "runs/{run_id}/actions/adjudicate_llm_tasks/reduce_report.yaml",
+            "uo/ir/semantic_patches.yaml",
+        ],
         "apply_semantic_patch": [
             "uo/ir/semantic_resolution_ledger.yaml",
             "uo/ir/llm_tasks.yaml",
@@ -89,17 +141,30 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
             "uo/ir/extract_plan_candidates.yaml",
             "uo/ir/extract_plan_candidates.sha256",
             "uo/ir/extract_plan_candidates.summary.yaml",
+            "uo/ir/extract_plan_decision_worklist.yaml",
             "uo/ir/extract_plan.rework_hints.yaml",
             "uo/ir/entrypoint_graph.yaml",
             "uo/cbm/index_meta.json",
-            # Producer must re-read its own write target (self-check / rework edits).
+            # Decision worklist + staging self-check / rework.
+            "runs/{run_id}/actions/extract_plan/inputs/decision_worklist.yaml",
+            "runs/{run_id}/actions/extract_plan/staging/decision_report.yaml",
+            "runs/{run_id}/actions/extract_plan/staging/output.yaml",
+            "runs/{run_id}/actions/extract_plan/scratch/**",
             "uo/ir/extract_plan.yaml",
+            "uo/ir/extract_plan_aliases.yaml",
+            "uo/ir/receiver_bindings.yaml",
+            "uo/ir/extract_plan_auto_fill_report.yaml",
         ],
         "adjudicate_llm_tasks": [
             "uo/ir/llm_tasks.yaml",
             "uo/ir/score_report_pre.yaml",
             "uo/ir/score_report_post.yaml",
             "uo/ir/semantic_patches.yaml",
+            "runs/{run_id}/actions/adjudicate_llm_tasks/semantic_batches.yaml",
+            "runs/{run_id}/actions/adjudicate_llm_tasks/batches/**",
+            "runs/{run_id}/actions/adjudicate_llm_tasks/parts/**",
+            "runs/{run_id}/actions/adjudicate_llm_tasks/scratch/**",
+            "runs/{run_id}/actions/adjudicate_llm_tasks/reduce_report.yaml",
         ],
     },
 }
@@ -145,6 +210,20 @@ def action_write_paths(workflow_id: str, action_id: str, *, run_id: str = "") ->
     return [expand_path_template(p, run_id=run_id) for p in rows]
 
 
+def action_producer_write_paths(workflow_id: str, action_id: str, *, run_id: str = "") -> list[str]:
+    rows = (ACTION_PRODUCER_WRITE_PATHS.get(workflow_id) or {}).get(action_id) or []
+    if rows:
+        return [expand_path_template(p, run_id=run_id) for p in rows]
+    return action_write_paths(workflow_id, action_id, run_id=run_id)
+
+
+def action_finalizer_write_paths(workflow_id: str, action_id: str, *, run_id: str = "") -> list[str]:
+    rows = (ACTION_FINALIZER_WRITE_PATHS.get(workflow_id) or {}).get(action_id) or []
+    if rows:
+        return [expand_path_template(p, run_id=run_id) for p in rows]
+    return action_write_paths(workflow_id, action_id, run_id=run_id)
+
+
 def action_read_paths(workflow_id: str, action_id: str, *, run_id: str = "") -> list[str]:
     rows = (ACTION_READ_PATHS.get(workflow_id) or {}).get(action_id) or []
     return [expand_path_template(p, run_id=run_id) for p in rows]
@@ -153,6 +232,69 @@ def action_read_paths(workflow_id: str, action_id: str, *, run_id: str = "") -> 
 def action_forbidden_read_paths(workflow_id: str, action_id: str, *, run_id: str = "") -> list[str]:
     rows = (ACTION_FORBIDDEN_READ_PATHS.get(workflow_id) or {}).get(action_id) or []
     return [expand_path_template(p, run_id=run_id) for p in rows]
+
+
+def shard_producer_write_paths(
+    workflow_id: str,
+    action_id: str,
+    *,
+    run_id: str,
+    shard_id: str,
+) -> list[str]:
+    """Narrow Map-worker lease to one shard part + scratch."""
+    sid = str(shard_id or "").strip()
+    if not sid:
+        return action_producer_write_paths(workflow_id, action_id, run_id=run_id)
+    return [
+        expand_path_template(
+            f"runs/{{run_id}}/actions/{action_id}/parts/part_{sid}.yaml",
+            run_id=run_id,
+        ),
+        expand_path_template(
+            f"runs/{{run_id}}/actions/{action_id}/scratch/{sid}/**",
+            run_id=run_id,
+        ),
+    ]
+
+
+def shard_producer_read_paths(
+    workflow_id: str,
+    action_id: str,
+    *,
+    run_id: str,
+    shard_id: str,
+    batch_name: str = "",
+) -> list[str]:
+    """Narrow Map-worker reads to assigned batch + own part (rework)."""
+    sid = str(shard_id or "").strip()
+    batch = str(batch_name or f"batch_{sid}.yaml").strip()
+    paths = [
+        expand_path_template(
+            f"runs/{{run_id}}/actions/{action_id}/semantic_batches.yaml",
+            run_id=run_id,
+        ),
+        expand_path_template(
+            f"runs/{{run_id}}/actions/{action_id}/batches/{batch}",
+            run_id=run_id,
+        ),
+    ]
+    if sid:
+        paths.append(
+            expand_path_template(
+                f"runs/{{run_id}}/actions/{action_id}/parts/part_{sid}.yaml",
+                run_id=run_id,
+            )
+        )
+        paths.append(
+            expand_path_template(
+                f"runs/{{run_id}}/actions/{action_id}/scratch/{sid}/**",
+                run_id=run_id,
+            )
+        )
+    # Shared score/task context (read-only; not other shards' parts).
+    paths.extend(action_read_paths(workflow_id, action_id, run_id=run_id))
+    # Deny cross-shard parts via forbidden patterns applied separately.
+    return paths
 
 
 def expand_path_template(path: str, *, run_id: str = "", **extra: str) -> str:
@@ -356,7 +498,9 @@ def staging_output_path(session_dir: Path) -> Path:
 
 
 __all__ = [
+    "ACTION_FINALIZER_WRITE_PATHS",
     "ACTION_FORBIDDEN_READ_PATHS",
+    "ACTION_PRODUCER_WRITE_PATHS",
     "ACTION_READ_PATHS",
     "ACTION_WRITE_PATHS",
     "EXECUTION_DETERMINISTIC",
@@ -365,7 +509,9 @@ __all__ = [
     "EXECUTION_SUBAGENT",
     "PRIMARY_AGENT_ID",
     "STAGING_OUTPUT_NAME",
+    "action_finalizer_write_paths",
     "action_forbidden_read_paths",
+    "action_producer_write_paths",
     "action_read_paths",
     "action_session_id",
     "action_write_paths",
@@ -378,6 +524,8 @@ __all__ = [
     "path_matches_patterns",
     "path_within_scopes",
     "prompt_has_unresolved",
+    "shard_producer_read_paths",
+    "shard_producer_write_paths",
     "staging_dir",
     "staging_output_path",
     "unresolved_placeholders",

@@ -19,7 +19,7 @@ Do not manage workflow state or declare completion.
 
 ## Target
 
-Confirm **only** the extraction-plan candidates listed below.  
+Confirm **only** the extraction-plan work items prepared below.  
 Do **not** expand into `llm_tasks` / `mark_missing` / `dispatches_to` adjudication.
 
 ## Context
@@ -31,29 +31,29 @@ Do **not** expand into `llm_tasks` / `mark_missing` / `dispatches_to` adjudicati
 - Context pack: `<CONTEXT_PACK_PATH>`
 - CBM project (MCP `project` / `acp cbm lookup`): `<CBM_PROJECT>`
 - Architecture preference: `<ARCHITECTURE>`
-- **candidates_sha256 (copy verbatim into plan):** `<CANDIDATES_SHA256>`
+- **candidates_sha256 (copy verbatim into decision_report):** `<CANDIDATES_SHA256>`
 
 ## Required Procedure
 
 1. Read session `prompt.md` / `method.md` / `bundle.yaml`.
-2. Follow public **large-IR** read order (`code-access`): Read
-   `extract_plan_candidates.summary.yaml` first (counts / sinks /
-   `key_writer_suggested` / `alias_candidates` / **`section_lines`**), then
-   `extract_plan.rework_hints.yaml` if present. **FORBIDDEN**: Grep/offset-hunt the full
-   candidates file before summary.
-3. Use `section_lines` to Read only needed windows of the full candidates file
-   (writers carry deterministic `source_window` + `sha256`). Optionally skim
-   `entrypoint_graph.yaml` and `uo/cbm/index_meta.json`.
-4. For **each** writer / tiling-sink receiver you **accept**：follow `cbm-navigation` +
-   `source-reading` and policies `evidence` / `code-access`.
-   Locate-only Grep/`rg`/`Select-String` OK; **not** evidence alone.
-   **Required evidence (AND)**: `evidence_files` + `evidence_lines` +
-   `evidence_window_sha256` (copy from candidate `source_window.sha256`) **and** contiguous
-   `evidence_snippet` from that window + `decision_reason`. Helpers (`AlignTo`, `CeilDivide`, …) → `role: ignore` / omit.
-5. Write **only** `<UO_ROOT>/ir/extract_plan.yaml`. Set `candidates_sha256` to **exactly** `<CANDIDATES_SHA256>`.
-6. Stop. Do **not** finalize.
+2. Read **decision_worklist** first:
+   `runs/<RUN_ID>/actions/extract_plan/inputs/decision_worklist.yaml`
+   (or `uo/ir/extract_plan_decision_worklist.yaml`).  
+   Use `acp inspect extract-plan-worklist` / `acp inspect extract-plan-coverage` for counts —
+   **FORBIDDEN** to hand-count candidates YAML.
+3. Follow public **large-IR** read order when a source window is needed:
+   summary → rework_hints → targeted candidate windows only.
+4. For each `required_decision: true` work item: decide `accept` / `reject` / `defer`
+   using public Policy/Capability/Gates (not inventing local rules).
+5. Write **only**:
+   `runs/<RUN_ID>/actions/extract_plan/staging/decision_report.yaml`
+   (legacy `staging/output.yaml` accepted temporarily).  
+   **FORBIDDEN**: write `uo/ir/extract_plan.yaml` / aliases / receiver_bindings
+   (finalizer materializes slim IR + sidecars).
+6. Run `acp inspect validate --what extract-plan-staging --run-id <RUN_ID>` and fix Gate errors.
+7. Stop. Do **not** finalize / next / advance / complete.
 
-## Schema (hard)
+## Schema (hard) — decision_report only
 
 ```yaml
 version: 1
@@ -61,53 +61,30 @@ actor_id: <ACTOR_ID>
 run_id: <RUN_ID>
 workflow_id: <WORKFLOW_ID>
 candidates_sha256: <CANDIDATES_SHA256>
-writers:
-  - name: SaveStuff
-    file_path: op_host/arch35/foo_tiling.cpp
-    start_line: 10
+accepted:
+  - candidate_id: CAND_xxx
     role: tiling_writer
-    evidence_source: cbm
-    source_verified: true
-    evidence_files: [op_host/arch35/foo_tiling.cpp]
-    evidence_lines: ["10-40"]
-    evidence_snippet: |
-      ge::graphStatus Foo::SaveStuff() {
-        blob_->set_x(...);
-        ...
-      }
-    decision_reason: window shows blob_->set_* on TilingData sink
-receivers:
-  - name: blob_
-    file_path: op_host/arch35/foo_tiling.cpp
-    is_tiling_sink: true
-    evidence_source: cbm
-    source_verified: true
-    evidence_files: [op_host/arch35/foo_tiling.cpp]
-    evidence_lines: ["10-40"]
-    evidence_snippet: |
-      blob_->set_x(...);
-    decision_reason: sink receiver confirmed in same window
-aliases:
-  - local: localType
-    tdf_leaf: layout
-non_sink_roots:
-  - ALIGN128
-derived_roots: []
+rejected:
+  - candidate_id: CAND_yyy
+    reason_code: helper_or_out_of_scope
+deferred:
+  - candidate_id: CAND_zzz
+    reason_code: unreachable_or_ambiguous
+receiver_binding_confirmations:
+  - candidate_id: CAND_bbb
+    binding_ref: RB_001
 ```
 
 ## Hard Constraints
 
-- MUST: follow composed policies `evidence` + `code-access` + `source-authority` (not Action-local exceptions).
-- MUST: `candidates_sha256` equals prepare stub value (no placeholders).
-- MUST NOT: invent snippet text; promote AlignTo/CeilDivide; write `semantic_groups` / `llm_tasks`.
-- MUST NOT: call domain scripts (`propose_extract_plan.py` / `apply_extract_plan.py`).
+- MUST NOT invent writers/receivers outside decision_worklist candidate_ids
+- MUST NOT put evidence_snippet / decision_reason / full candidate lists into canonical IR
+- MUST NOT finalize or write `uo/ir/**` plan files
+- MUST cover every `required_decision: true` work item (accept ∪ reject ∪ defer, exclusive)
+- MUST NOT treat macro/binding kinds as automatic reject solely for “not a function”
+- MUST NOT read `uo/ir/llm_tasks.yaml` / `semantic_patches.yaml` / ledger
 
-## Output Contract
+## Stop
 
-Contract id: `extract-plan-v1`  
-Path: `<UO_ROOT>/ir/extract_plan.yaml`
-
-## Failure Handling
-
-- Cannot obtain a matching source window → **omit** that item.
-- Do not write placeholder sha256 / fake snippets.
+After writing decision_report and passing staging validate, return a short summary.
+Primary runs `acp run-action extract_plan --finalize`.

@@ -18,9 +18,11 @@ policies:
 task_prompt_id: null
 context_profile_id: tg-init-mid-nest
 output_contract_id: mid-nest-v1
-allowed_write_paths: []
+allowed_write_paths:
+- tg/realization/mid_symbol_queue.yaml
 forbidden_write_paths: []
-allowed_read_paths: []
+allowed_read_paths:
+- tg/realization/**
 forbidden_read_paths: []
 checker:
   required: true

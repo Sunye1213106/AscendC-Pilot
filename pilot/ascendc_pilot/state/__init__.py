@@ -23,6 +23,10 @@ _STATUS_ALIASES = {
     "human": "human_required",
 }
 
+# Hot workflow.yaml must stay small: verify_receipt / pipeline call load_state many times.
+_OPEN_ITEM_PERSIST_KEYS = ("id", "status", "kind", "settled_by_gate")
+_STATE_LOAD_CACHE: dict[str, tuple[int, int, dict[str, Any]]] = {}
+
 
 def _now() -> str:
     return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -44,6 +48,32 @@ def _dump(path: Path, data: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
+def _compact_state_for_persist(state: dict[str, Any]) -> dict[str, Any]:
+    """Drop bulky obligation snapshots from the hot workflow pointer file.
+
+    Full obligation lists belong in describe_next / collect_obligations responses,
+    not in workflow.yaml (embedding them made every verify_receipt ~1s).
+    """
+    out = dict(state)
+    out.pop("all_obligations", None)
+    oi = out.get("open_items")
+    if isinstance(oi, list):
+        compact: list[dict[str, Any]] = []
+        for it in oi:
+            if not isinstance(it, dict):
+                continue
+            row = {
+                k: it.get(k)
+                for k in _OPEN_ITEM_PERSIST_KEYS
+                if it.get(k) not in (None, "")
+            }
+            if row.get("id"):
+                compact.append(row)
+        out["open_items"] = compact
+        out["open_items_count"] = len(compact)
+    return out
+
+
 def workflow_state_path(project_root: Path) -> Path:
     return state_root(project_root) / "workflow.yaml"
 
@@ -57,13 +87,36 @@ def new_run_id(prefix: str = "RUN") -> str:
 
 
 def load_state(project_root: Path) -> dict[str, Any]:
-    return _load(workflow_state_path(project_root))
+    path = workflow_state_path(project_root)
+    if not path.is_file():
+        return {}
+    try:
+        st = path.stat()
+        key = str(path.resolve())
+        hit = _STATE_LOAD_CACHE.get(key)
+        if hit and hit[0] == int(st.st_mtime_ns) and hit[1] == int(st.st_size):
+            return dict(hit[2])
+        data = _load(path)
+        _STATE_LOAD_CACHE[key] = (int(st.st_mtime_ns), int(st.st_size), data)
+        return dict(data)
+    except OSError:
+        return _load(path)
 
 
 def save_state(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
-    state = dict(state)
+    state = _compact_state_for_persist(dict(state))
     state["updated_at"] = _now()
-    _dump(workflow_state_path(project_root), state)
+    path = workflow_state_path(project_root)
+    _dump(path, state)
+    try:
+        st = path.stat()
+        _STATE_LOAD_CACHE[str(path.resolve())] = (
+            int(st.st_mtime_ns),
+            int(st.st_size),
+            dict(state),
+        )
+    except OSError:
+        pass
     return state
 
 
@@ -231,7 +284,6 @@ def start_workflow(
         "failed_gates": [],
         "passed_gates": [],
         "open_items": open_obligations(all_obl),
-        "all_obligations": all_obl,
         "last_failure": None,
         "created_at": _now(),
         "meta": {},

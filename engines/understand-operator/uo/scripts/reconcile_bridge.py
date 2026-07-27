@@ -287,6 +287,10 @@ def _collect_typed_fields(layer: dict[str, Any], *, side: str, also: list[Any] |
                 "expression": n.get("expression") or n.get("expr_raw"),
                 "producer_kind": n.get("producer_kind"),
                 "runtime_domain": n.get("runtime_domain"),
+                "canonical_owner_key": n.get("canonical_owner_key"),
+                "member_type": n.get("member_type"),
+                "root_tiling_types": n.get("root_tiling_types"),
+                "receiver": n.get("receiver"),
                 "node": n,
             }
         )
@@ -360,13 +364,42 @@ def _bridge_tilingdata(
         leaf = _norm_key(hf.get("name"))
         owning = _norm_type(hf.get("owning_type"))
         fpath = _norm_key(hf.get("field_path") or hf.get("name"))
-        typed_hits = kern_by_typed.get((owning, fpath), []) if owning else []
+        # Prefer canonical owner identity (root::nested) when present.
+        cok = hf.get("canonical_owner_key") if isinstance(hf.get("canonical_owner_key"), dict) else {}
+        root = _norm_type(cok.get("root_type") or "")
+        nested = _norm_key(cok.get("nested_path") or "")
+        member = _norm_type(cok.get("member_type") or hf.get("member_type") or "")
+        owner_idents = []
+        if root and nested:
+            owner_idents.append(f"{root}::{nested}")
+        if owning:
+            owner_idents.append(owning)
+        if member:
+            owner_idents.append(member)
+        typed_hits: list[dict[str, Any]] = []
+        for oid in owner_idents:
+            typed_hits.extend(kern_by_typed.get((_norm_type(oid), fpath), []))
+            # Also try leaf-only field path under same owner
+            leaf_path = _norm_key(str(fpath).rsplit(".", 1)[-1]) if fpath else leaf
+            if leaf_path and leaf_path != fpath:
+                typed_hits.extend(kern_by_typed.get((_norm_type(oid), leaf_path), []))
+        # de-dupe typed hits by kernel id
+        seen_k: set[str] = set()
+        uniq_hits: list[dict[str, Any]] = []
+        for kf in typed_hits:
+            kid = str(kf.get("id") or id(kf))
+            if kid in seen_k:
+                continue
+            seen_k.add(kid)
+            uniq_hits.append(kf)
+        typed_hits = uniq_hits
         leaf_hits = kern_by_leaf.get(leaf, [])
 
-        if owning and typed_hits:
+        if owner_idents and typed_hits:
+            canon = owner_idents[0]
             for kf in typed_hits:
                 ident = mint_field_identity(
-                    owning_type=owning,
+                    owning_type=canon,
                     field_path=str(hf.get("field_path") or hf.get("name")),
                     file_path=str((hf.get("node") or {}).get("file_path") or ""),
                     architecture=str(hf.get("architecture") or ""),
@@ -376,7 +409,7 @@ def _bridge_tilingdata(
                 bridges.append(
                     {
                         "status": "verified",
-                        "canonical_type": owning,
+                        "canonical_type": canon,
                         "field_path": hf.get("field_path") or hf.get("name"),
                         "host_writer": hf.get("id") or ident.stable_id,
                         "kernel_reader": kf.get("id") or ident.stable_id,
@@ -390,8 +423,32 @@ def _bridge_tilingdata(
                 matched_kern.add(_norm_key(kf.get("name")))
             continue
 
+        # Member-type-only match (priority 2) when root+nested missed but member aligns.
+        if member:
+            member_hits = kern_by_typed.get((member, fpath), []) or kern_by_typed.get(
+                (member, leaf), []
+            )
+            if member_hits:
+                for kf in member_hits:
+                    bridges.append(
+                        {
+                            "status": "verified",
+                            "canonical_type": member,
+                            "field_path": hf.get("field_path") or hf.get("name"),
+                            "host_writer": hf.get("id"),
+                            "kernel_reader": kf.get("id"),
+                            "architecture": hf.get("architecture") or kf.get("architecture"),
+                            "path_family": hf.get("path_family") or kf.get("path_family"),
+                            "template_family": hf.get("template_family") or kf.get("template_family"),
+                            "registration_evidence": "member_type_field_match",
+                        }
+                    )
+                    matched_host.add(leaf)
+                    matched_kern.add(_norm_key(kf.get("name")))
+                continue
+
         # Unknown type on one side with unique leaf candidate → candidate only
-        if not owning and len(leaf_hits) == 1:
+        if (not owning or owning.casefold() == "unknowntype") and len(leaf_hits) == 1:
             kf = leaf_hits[0]
             bridges.append(
                 {
@@ -417,17 +474,31 @@ def _bridge_tilingdata(
             unresolved.append(
                 {
                     "severity": "blocking",
-                    "code": "tilingdata_bridge_ambiguous",
-                    "related_symbols": [hf.get("name")],
-                    "candidate_files": [],
-                    "evidence_present": [f"leaf={hf.get('name')}", f"types={types}"],
-                    "evidence_missing": ["canonical_type_agreement"],
-                    "reason": f"field {hf.get('name')} matches multiple kernel owning types: {types}",
+                    "code": "ambiguous_leaf_types",
+                    "field": leaf,
+                    "field_path": fpath,
+                    "owning_type": owning,
+                    "candidate_types": types,
+                    "message": f"multiple kernel owning types for leaf {leaf}: {types}",
                 }
             )
             continue
 
-        if owning and leaf_hits:
+        if not leaf_hits:
+            diagnostics.append(
+                {
+                    "severity": "blocking",
+                    "code": "missing_producer",
+                    "classification": "missing_producer",
+                    "field": leaf,
+                    "field_path": fpath,
+                    "owning_type": owning,
+                    "message": f"host field {fpath or leaf} has no kernel reader",
+                }
+            )
+            continue
+
+        if owning and owning.casefold() != "unknowntype" and leaf_hits:
             # type conflict
             conflict = [x for x in leaf_hits if _norm_type(x.get("owning_type")) not in {"", owning}]
             if conflict:

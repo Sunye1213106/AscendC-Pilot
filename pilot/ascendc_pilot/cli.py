@@ -190,6 +190,57 @@ def main(argv: list[str] | None = None) -> int:
     p_inspect = sub.add_parser("inspect-failure", help="Show structured last_failure / failure card")
     p_inspect.add_argument("--project", type=Path, default=Path.cwd())
 
+    p_ir = sub.add_parser(
+        "inspect",
+        help="Structured IR query (candidates/tasks/yaml counts) for producers",
+    )
+    p_ir_sub = p_ir.add_subparsers(dest="inspect_cmd", required=True)
+    p_ir_c = p_ir_sub.add_parser("candidates", help="Summarize extract_plan_candidates")
+    p_ir_c.add_argument("--project", type=Path, default=Path.cwd())
+    p_ir_c.add_argument("--kind", default="alias", help="writer|receiver|alias|receiver_binding")
+    p_ir_c.add_argument("--min-score", type=float, default=0.0)
+    p_ir_c.add_argument("--limit", type=int, default=50)
+    p_ir_t = p_ir_sub.add_parser("tasks", help="Summarize llm_tasks")
+    p_ir_t.add_argument("--project", type=Path, default=Path.cwd())
+    p_ir_t.add_argument("--severity", default="")
+    p_ir_t.add_argument("--object-type", default="")
+    p_ir_t.add_argument("--limit", type=int, default=50)
+    p_ir_y = p_ir_sub.add_parser("yaml", help="Count top-level keys / list lengths in a YAML IR file")
+    p_ir_y.add_argument("--project", type=Path, default=Path.cwd())
+    p_ir_y.add_argument("--rel", required=True, help="Path relative to .ascendc-pilot/")
+    p_ir_d = p_ir_sub.add_parser("duplicates", help="Find duplicate llm_tasks targets")
+    p_ir_d.add_argument("--project", type=Path, default=Path.cwd())
+    p_ir_v = p_ir_sub.add_parser("validate", help="Validate producer staging / tri-state coverage")
+    p_ir_v.add_argument("--project", type=Path, default=Path.cwd())
+    p_ir_v.add_argument(
+        "--what",
+        default="extract_plan",
+        choices=["extract_plan", "extract-plan-staging", "parts"],
+    )
+    p_ir_v.add_argument("--run-id", default="", help="Run id for staging paths")
+    p_ir_wl = p_ir_sub.add_parser(
+        "extract-plan-worklist",
+        help="Summarize extract-plan decision_worklist",
+    )
+    p_ir_wl.add_argument("--project", type=Path, default=Path.cwd())
+    p_ir_wl.add_argument("--run-id", default="")
+    p_ir_cov = p_ir_sub.add_parser(
+        "extract-plan-coverage",
+        help="Report decision_report coverage vs worklist",
+    )
+    p_ir_cov.add_argument("--project", type=Path, default=Path.cwd())
+    p_ir_cov.add_argument("--run-id", default="")
+
+    p_ro = sub.add_parser(
+        "ro-search",
+        help="Readonly source search wrapper (no shell redirects)",
+    )
+    p_ro.add_argument("--project", type=Path, default=Path.cwd())
+    p_ro.add_argument("--pattern", required=True)
+    p_ro.add_argument("--paths", nargs="*", default=["."], help="Relative paths under project")
+    p_ro.add_argument("--glob", default="*.{cpp,h,hpp,cc}", dest="file_glob")
+    p_ro.add_argument("--limit", type=int, default=50)
+
     p_retry_env = sub.add_parser(
         "retry-after-environment-fix",
         help="After human_required environment fix, restore rework_required for failed action",
@@ -606,6 +657,10 @@ def main(argv: list[str] | None = None) -> int:
         }
         print_json(payload)
         return 0
+    if args.cmd == "inspect":
+        return _cmd_inspect(args)
+    if args.cmd == "ro-search":
+        return _cmd_ro_search(args)
     if args.cmd == "retry-after-environment-fix":
         from ascendc_pilot.authorize.lease import issue_lease_for_status
         from ascendc_pilot.runs import append_event
@@ -926,6 +981,319 @@ def _cmd_debug(args: Any) -> int:
         return 0
     print_json({"ok": False, "error": "unknown_debug_cmd", "debug_cmd": sub})
     return 2
+
+
+def _cmd_inspect(args: Any) -> int:
+    from collections import Counter
+
+    from uo.scripts._ir_io import read_yaml
+
+    project = Path(args.project).resolve()
+    uo = project / ".ascendc-pilot" / "uo"
+    sub = str(getattr(args, "inspect_cmd", "") or "")
+    if sub == "candidates":
+        doc = read_yaml(uo / "ir" / "extract_plan_candidates.yaml") or {}
+        kind = str(args.kind or "alias")
+        key = {
+            "writer": "writer_candidates",
+            "receiver": "receiver_candidates",
+            "alias": "alias_candidates",
+            "receiver_binding": "receiver_binding_candidates",
+        }.get(kind, "alias_candidates")
+        rows = [r for r in (doc.get(key) or []) if isinstance(r, dict)]
+        min_score = float(getattr(args, "min_score", 0.0) or 0.0)
+        rows = [r for r in rows if float(r.get("score") or 0) >= min_score]
+        limit = int(getattr(args, "limit", 50) or 50)
+        print_json(
+            {
+                "ok": True,
+                "kind": kind,
+                "count": len(rows),
+                "items": rows[:limit],
+            },
+            default=str,
+        )
+        return 0
+    if sub == "tasks":
+        doc = read_yaml(uo / "ir" / "llm_tasks.yaml") or {}
+        rows = [t for t in (doc.get("tasks") or []) if isinstance(t, dict)]
+        sev = str(getattr(args, "severity", "") or "").casefold()
+        ot = str(getattr(args, "object_type", "") or "").casefold()
+        if sev:
+            rows = [t for t in rows if str(t.get("severity") or "").casefold() == sev]
+        if ot:
+            rows = [
+                t
+                for t in rows
+                if str(t.get("object_type") or t.get("task_type") or "").casefold() == ot
+            ]
+        limit = int(getattr(args, "limit", 50) or 50)
+        print_json(
+            {
+                "ok": True,
+                "count": len(rows),
+                "object_types": dict(
+                    Counter(
+                        str(t.get("object_type") or t.get("task_type") or "?") for t in rows
+                    )
+                ),
+                "task_ids": [str(t.get("task_id")) for t in rows[:limit]],
+            },
+            default=str,
+        )
+        return 0
+    if sub == "yaml":
+        rel = str(getattr(args, "rel", "") or "").replace("\\", "/").lstrip("/")
+        path = project / ".ascendc-pilot" / rel
+        if not path.is_file():
+            print_json({"ok": False, "error": "missing", "path": str(path)})
+            return 1
+        doc = read_yaml(path) or {}
+        counts = {
+            k: (len(v) if isinstance(v, list) else type(v).__name__)
+            for k, v in (doc.items() if isinstance(doc, dict) else [])
+        }
+        print_json({"ok": True, "path": rel, "counts": counts}, default=str)
+        return 0
+    if sub == "duplicates":
+        doc = read_yaml(uo / "ir" / "llm_tasks.yaml") or {}
+        targets = [
+            str(t.get("target") or t.get("target_id") or "")
+            for t in (doc.get("tasks") or [])
+            if isinstance(t, dict)
+        ]
+        c = Counter(targets)
+        dups = {k: v for k, v in c.items() if k and v > 1}
+        print_json({"ok": True, "duplicate_targets": dups, "count": len(dups)}, default=str)
+        return 0
+    if sub == "extract-plan-worklist":
+        from uo.scripts.extract_plan_decision import build_decision_worklist
+
+        run_id = str(getattr(args, "run_id", "") or "").strip()
+        wl_path = None
+        if run_id:
+            cand = (
+                project
+                / ".ascendc-pilot"
+                / "runs"
+                / run_id
+                / "actions"
+                / "extract_plan"
+                / "inputs"
+                / "decision_worklist.yaml"
+            )
+            if cand.is_file():
+                wl_path = cand
+        if wl_path is None:
+            alt = uo / "ir" / "extract_plan_decision_worklist.yaml"
+            wl_path = alt if alt.is_file() else None
+        if wl_path is not None:
+            doc = read_yaml(wl_path) or {}
+        else:
+            cands = read_yaml(uo / "ir" / "extract_plan_candidates.yaml") or {}
+            doc = build_decision_worklist(cands if isinstance(cands, dict) else {})
+        items = [w for w in (doc.get("work_items") or []) if isinstance(w, dict)]
+        print_json(
+            {
+                "ok": True,
+                "path": str(wl_path) if wl_path else "(built)",
+                "counts": doc.get("counts") or {
+                    "work_items": len(items),
+                    "required": sum(1 for w in items if w.get("required_decision")),
+                },
+                "required_ids": [
+                    str(w.get("candidate_id"))
+                    for w in items
+                    if w.get("required_decision") and w.get("candidate_id")
+                ][:200],
+            },
+            default=str,
+        )
+        return 0
+    if sub == "extract-plan-coverage":
+        from uo.scripts.extract_plan_decision import (
+            build_decision_worklist,
+            report_extract_plan_coverage,
+        )
+
+        run_id = str(getattr(args, "run_id", "") or "").strip()
+        wl = read_yaml(uo / "ir" / "extract_plan_decision_worklist.yaml")
+        if not isinstance(wl, dict) and run_id:
+            p = (
+                project
+                / ".ascendc-pilot"
+                / "runs"
+                / run_id
+                / "actions"
+                / "extract_plan"
+                / "inputs"
+                / "decision_worklist.yaml"
+            )
+            wl = read_yaml(p) if p.is_file() else None
+        if not isinstance(wl, dict):
+            cands = read_yaml(uo / "ir" / "extract_plan_candidates.yaml") or {}
+            wl = build_decision_worklist(cands if isinstance(cands, dict) else {})
+        report = None
+        if run_id:
+            rp = (
+                project
+                / ".ascendc-pilot"
+                / "runs"
+                / run_id
+                / "actions"
+                / "extract_plan"
+                / "staging"
+                / "decision_report.yaml"
+            )
+            if rp.is_file():
+                report = read_yaml(rp)
+        if not isinstance(report, dict):
+            report = read_yaml(uo / "ir" / "extract_plan_decision_report.yaml")
+        cov = report_extract_plan_coverage(
+            wl if isinstance(wl, dict) else {},
+            report if isinstance(report, dict) else None,
+        )
+        # Optionally write to action scratch when run_id present.
+        if run_id:
+            scratch = (
+                project
+                / ".ascendc-pilot"
+                / "runs"
+                / run_id
+                / "actions"
+                / "extract_plan"
+                / "scratch"
+                / "coverage_report.yaml"
+            )
+            try:
+                scratch.parent.mkdir(parents=True, exist_ok=True)
+                from uo.scripts._ir_io import write_yaml
+
+                write_yaml(scratch, cov)
+                cov["scratch"] = str(scratch)
+            except OSError:
+                pass
+        print_json(cov, default=str)
+        return 0 if cov.get("ok") else 1
+    if sub == "validate":
+        what = str(getattr(args, "what", "extract_plan") or "extract_plan")
+        if what in {"extract_plan", "extract-plan-staging"}:
+            from uo.scripts.extract_plan_autofill import (
+                stamp_candidate_ids,
+                validate_tri_state_coverage,
+            )
+            from uo.scripts.extract_plan_decision import (
+                build_decision_worklist,
+                is_decision_report,
+                validate_extract_plan_staging,
+            )
+
+            cands = read_yaml(uo / "ir" / "extract_plan_candidates.yaml") or {}
+            if isinstance(cands, dict):
+                stamp_candidate_ids(cands)
+            run_id = str(getattr(args, "run_id", "") or "").strip()
+            report = None
+            worklist = read_yaml(uo / "ir" / "extract_plan_decision_worklist.yaml")
+            if run_id:
+                rp = (
+                    project
+                    / ".ascendc-pilot"
+                    / "runs"
+                    / run_id
+                    / "actions"
+                    / "extract_plan"
+                    / "staging"
+                    / "decision_report.yaml"
+                )
+                if rp.is_file():
+                    report = read_yaml(rp)
+                wlp = (
+                    project
+                    / ".ascendc-pilot"
+                    / "runs"
+                    / run_id
+                    / "actions"
+                    / "extract_plan"
+                    / "inputs"
+                    / "decision_worklist.yaml"
+                )
+                if wlp.is_file():
+                    worklist = read_yaml(wlp)
+            if what == "extract-plan-staging":
+                if not isinstance(worklist, dict):
+                    worklist = build_decision_worklist(
+                        cands if isinstance(cands, dict) else {}
+                    )
+                errs = validate_extract_plan_staging(
+                    report=report if isinstance(report, dict) else None,
+                    worklist=worklist if isinstance(worklist, dict) else {},
+                    plan=None,
+                    candidates=cands if isinstance(cands, dict) else {},
+                    project_root=project,
+                )
+                print_json({"ok": not errs, "errors": errs}, default=str)
+                return 0 if not errs else 1
+            plan = read_yaml(uo / "ir" / "extract_plan.yaml") or {}
+            if isinstance(report, dict) and is_decision_report(report):
+                errs = validate_extract_plan_staging(
+                    report=report,
+                    worklist=worklist
+                    if isinstance(worklist, dict)
+                    else build_decision_worklist(cands if isinstance(cands, dict) else {}),
+                )
+            else:
+                errs = validate_tri_state_coverage(
+                    plan if isinstance(plan, dict) else {}, cands
+                )
+            print_json({"ok": not errs, "errors": errs}, default=str)
+            return 0 if not errs else 1
+        print_json({"ok": False, "error": "unsupported_validate", "what": what})
+        return 2
+    print_json({"ok": False, "error": "unknown_inspect_cmd", "inspect_cmd": sub})
+    return 2
+
+
+def _cmd_ro_search(args: Any) -> int:
+    """Readonly ripgrep-like search; forbids write redirects by never invoking a shell."""
+    import re
+    from pathlib import Path as P
+
+    project = P(args.project).resolve()
+    pattern = str(args.pattern or "")
+    try:
+        cre = re.compile(pattern)
+    except re.error as exc:
+        print_json({"ok": False, "error": "bad_pattern", "detail": str(exc)})
+        return 2
+    roots = [project / p for p in (args.paths or ["."])]
+    hits: list[dict[str, Any]] = []
+    limit = int(getattr(args, "limit", 50) or 50)
+    suffixes = {".cpp", ".h", ".hpp", ".cc", ".c", ".py", ".yaml", ".yml"}
+    for root in roots:
+        if not root.exists():
+            continue
+        files = [root] if root.is_file() else list(root.rglob("*"))
+        for fp in files:
+            if not fp.is_file() or fp.suffix.casefold() not in suffixes:
+                continue
+            try:
+                text = fp.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for i, line in enumerate(text.splitlines(), 1):
+                if cre.search(line):
+                    hits.append(
+                        {
+                            "file": str(fp.relative_to(project)).replace("\\", "/"),
+                            "line": i,
+                            "text": line[:240],
+                        }
+                    )
+                    if len(hits) >= limit:
+                        print_json({"ok": True, "hits": hits, "truncated": True}, default=str)
+                        return 0
+    print_json({"ok": True, "hits": hits, "truncated": False}, default=str)
+    return 0
 
 
 def _doctor(project: Path) -> int:

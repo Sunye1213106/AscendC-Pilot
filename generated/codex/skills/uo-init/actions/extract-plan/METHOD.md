@@ -39,41 +39,41 @@ blocking LLM 未清且预算未尽 → 不可 advance。
 - 评分 + `required_evidence` → 能否 `source_verified` 自动接受
 - 必要性（主链）独立决定 blocking / degraded / informational
 - **低分主链缺口仍为 blocking**（`mark_missing` / `inspect_candidates`）
-- per-type `score_profile`；禁止统一 0.85 当真值
+- per-type `score_profile`；禁止跨 object_type 统一 0.85 当真值（alias 可用独立 profile）
+- finalize 确定性：高置信 alias auto-fill；冲突进 `deferred_candidates`；三态覆盖 Gate
+- producer 只写 staging；canonical `extract_plan.yaml` 由 finalizer 写入
 
 ### 3. extract_plan（本 Action · 仅 plan）
 
 **职责边界（硬）**：
-- **只做**：确认 `extract_plan_candidates.yaml` → 写出 `ir/extract_plan.yaml`
-  （字段：`writers` / `receivers` / `aliases` / `non_sink_roots` / `extra_host_entries`）
+- **只做**：确认 prepare 产出的 `decision_worklist` → 写出 staging `decision_report.yaml`
+- Finalizer 物化紧凑 `ir/extract_plan.yaml` + sidecar（`extract_plan_aliases.yaml` / `receiver_bindings.yaml`）
 - **禁止**：裁决 `ir/llm_tasks.yaml` 里的 `mark_missing` / `dispatches_to` / `entrypoint_dispatch_bind`
-- **禁止**：把 call_edge 裁决写进 `extract_plan.yaml`（那是假闭合）
+- **禁止**：把 call_edge 裁决 / 完整 candidate 列表 / evidence_snippet 写入 canonical `extract_plan.yaml`
+- **禁止**：自造 `semantic_groups` / essay 结构代替 decision_report
 - 空候选 / 证据不足的 **边** → **留给**后续 `adjudicate_llm_tasks` → `apply_semantic_patch`（写 ledger），本步不要 ACCEPT
 
-**产出 schema（硬）**：
-- 顶栏必填：`actor_id: uo-semantic-resolve`、`run_id`（当前 run）、`workflow_id: uo-init`、
-  `candidates_sha256`（`extract_plan_candidates.yaml` 的 sha256；Gate 强制匹配）
-- `writers` / `receivers` / `aliases`：mapping 列表；证据不足则 **omit**（禁止自造 unresolved 对象）
-- 每条 accepted writer/receiver 携带 **source-evidence 决策字段**：
-  `evidence_source`（source|cbm|candidate_only）、`source_verified`、`evidence_files`、`evidence_lines`、`decision_reason`
-  - `candidate_only` → 必须 `source_verified: false`，可标 `confidence: candidate`；禁止无文件假 verified
-  - 弱候选（低分、assign_lhs_only、仅 has_set_field、同名、qn 不全、start_line 重叠、tiling/key/non-sink）→ **必须先读源码窗口**再 accept/omit
-  - `set_*`  alone 不能当 TilingData writer；AlignTo 类 helper → ignore/omit
-  - finalize 校验：`source_verified:true` 无 `evidence_files` 或 evidence_source 非 source|cbm → 拒；弱候选 + tiling_writer/key_writer + candidate_only 无 decision_reason → 拒
-- `non_sink_roots` / `derived_roots`：**纯字符串名字列表**（例：`[ALIGN128, blockIdx]`）
-  - 候选可有空 `file_path` / `assign_lhs_only`——对该列表仍可确认短名（**字符串契约不变**）
-  - 确认前仍须读源码（与 writer 弱候选规则一致）；证据写在 writer/receiver 元数据，不在此列表加 mapping
-  - **禁止**写成 `{name, adjudication, missing_evidence, …}` mapping
-  - 不确认则 omit，不要用 adjudication 占位
+**证据（硬 · 公共策略，禁止本 Action 另立例外）**：
+- 服从 `evidence` / `code-access` / `source-authority`（`DEFAULT_POLICY_IDS`；compose 已注入 Agent）。
+- 能力路径：`structured-ir-query` / `action-scratch` / `cbm-navigation` / `source-reading`。
+- Gate 同时校验 **真实性**（磁盘窗口）与 **充分性**（`validate_role_evidence`）；不足 → rework_hints。
+- prepare 写 `decision_worklist` + `extract_plan_candidates.summary.yaml`。读序服从 `code-access` 大 IR 模式。
+- 用 `acp inspect extract-plan-worklist|extract-plan-coverage|validate --what extract-plan-staging` 自检；禁止手工扫全量 candidates 计数。
+
+**Producer 产出（硬）**：
+- 唯一语义裁决文件：`runs/{run_id}/actions/extract_plan/staging/decision_report.yaml`
+- 字段：`accepted` / `rejected` / `deferred` / `receiver_binding_confirmations`（含 `candidate_id`）
+- `candidates_sha256` 从 prepare stub 原样复制
+- **禁止**写：`uo/ir/extract_plan.yaml`、`extract_plan_aliases.yaml`、`receiver_bindings.yaml`、ledger、workflow state
+- **禁止**：finalize / next / advance / complete
 
 流程：
-1. prepare：确定性 `propose_extract_plan` → `ir/extract_plan_candidates.yaml`
+1. prepare：`propose_extract_plan` → candidates + **decision_worklist**
 2. 派发 **`uo-semantic-resolve`**（不得由 primary 代写 IR）
-3. Producer 只确认 candidates → `ir/extract_plan.yaml`
-4. `acp run-action extract_plan --finalize`：校验 plan + build host/kernel/tilingkey/bridge  
-   （大算子分层构建可能数分钟，属正常耗时）
+3. Producer：worklist → `decision_report.yaml` + staging validate
+4. `acp run-action extract_plan --finalize`：coverage / role evidence / architecture Gate → slim IR + sidecars + host/kernel/tilingkey/bridge
 
-Writer/receiver 身份：`file_path|qn|class`（禁止短名唯一键）。  
+Writer/receiver 身份：`candidate_id`（禁止短名唯一键）。  
 `non_sink_roots` **无**身份字段要求——只认候选名字字符串。
 
 ### 4. llm_tasks / mark_missing（后续 Action · 非本步）

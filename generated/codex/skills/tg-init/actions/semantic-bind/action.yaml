@@ -21,9 +21,14 @@ policies:
 task_prompt_id: tg/semantic-bind
 context_profile_id: tg-init-semantic-bind
 output_contract_id: semantic-bind-v1
-allowed_write_paths: []
+allowed_write_paths:
+- tg/realization/semantic_bind_patch.yaml
 forbidden_write_paths: []
-allowed_read_paths: []
+allowed_read_paths:
+- tg/realization/llm_bind_prompt_bundle.yaml
+- tg/realization/binding_inventory.yaml
+- tg/realization/binding_gaps.yaml
+- tg/realization/unresolved.yaml
 forbidden_read_paths: []
 checker:
   required: true

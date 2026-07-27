@@ -640,7 +640,7 @@ def propose_extract_plan(
         }
     else:
         recovery = ""
-    return {
+    payload = {
         "version": 1,
         "op_name": op_name,
         "architecture": architecture,
@@ -652,12 +652,14 @@ def propose_extract_plan(
         "alias_candidates": alias_list,
         "non_sink_root_candidates": non_sink[:MAX_NON_SINK],
         "extra_entry_candidates": extra[:MAX_EXTRA],
+        "receiver_binding_candidates": [],
         "counts": {
             "writers": len(writer_list),
             "receivers": len(receiver_list),
             "aliases": len(alias_list),
             "non_sink_roots": min(len(non_sink), MAX_NON_SINK),
             "extra_entries": min(len(extra), MAX_EXTRA),
+            "receiver_bindings": 0,
         },
         "raw_counts": raw_counts,
         "candidate_limits": limits,
@@ -667,6 +669,40 @@ def propose_extract_plan(
         "recovery": recovery,
         "recovery_cli": recovery_cli,
     }
+    # Collect receiver bindings from writer/InitTilingData bodies already scanned.
+    try:
+        from uo.scripts.extract_plan_autofill import stamp_candidate_ids
+        from uo.scripts.receiver_binding import (
+            binding_candidate_id,
+            extract_receiver_bindings_from_text,
+        )
+
+        binding_by_recv: dict[str, dict] = {}
+        for _key, packed in body_by_key.items():
+            body, start, _end, item = packed
+            fp = str(item.get("file_path") or "").replace("\\", "/")
+            cls = str(item.get("class_or_namespace") or "")
+            for b in extract_receiver_bindings_from_text(
+                body,
+                file_path=fp,
+                class_or_namespace=cls,
+                extraction_unit=cls,
+                start_line=int(start or 0),
+            ):
+                recv = str(b.get("receiver") or "")
+                if not recv:
+                    continue
+                b["candidate_id"] = binding_candidate_id(b)
+                prev = binding_by_recv.get(recv)
+                if prev is None or float(b.get("score") or 0) >= float(prev.get("score") or 0):
+                    binding_by_recv[recv] = b
+        binding_list = list(binding_by_recv.values())
+        payload["receiver_binding_candidates"] = binding_list
+        payload["counts"]["receiver_bindings"] = len(binding_list)
+        stamp_candidate_ids(payload)
+    except Exception:
+        pass
+    return payload
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -902,13 +938,27 @@ def _suggest_writer_role(name: str, evidence: list[str]) -> str:
     """Heuristic role for LLM confirm; plan.writers[].role may override."""
     ev = {str(x) for x in evidence}
     n = (name or "").casefold()
+    # Dimension helpers (e.g. GetDeterSparseTilingKey) are not final key writers.
+    if (
+        ("key" in n or "tilingkey" in n)
+        and any(tok in n for tok in ("deter", "sparse", "dim", "axis", "layout", "dtype"))
+        and "gettilingkey" not in n
+    ):
+        return "key_dimension_source"
     if "has_set_field" in ev or "recv_set_call" in ev or "sink_set_writer" in ev:
         if "key" in n or "tilingkey" in n or "blockdim" in n:
             return "key_writer"
         if "workspace" in n or "worksize" in n:
             return "workspace_writer"
         return "tiling_writer"
+    if "gettilingkey" in n or n.endswith("tilingkey"):
+        return "key_writer"
     if "key" in n or "tilingkey" in n:
+        # Generic *Key* helpers without GET_TPL / final pack → dimension source.
+        if "get" in n and "tilingkey" not in n.replace("gettilingkey", ""):
+            return "key_dimension_source"
+        if "gettilingkey" not in n:
+            return "key_dimension_source"
         return "key_writer"
     if "workspace" in n:
         return "workspace_writer"

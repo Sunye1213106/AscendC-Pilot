@@ -59,6 +59,8 @@ def _act(
     """
     from ascendc_pilot.ownership import (
         ACTION_FORBIDDEN_READ_PATHS,
+        ACTION_FINALIZER_WRITE_PATHS,
+        ACTION_PRODUCER_WRITE_PATHS,
         ACTION_READ_PATHS,
         ACTION_WRITE_PATHS,
         infer_execution_mode,
@@ -73,13 +75,22 @@ def _act(
     )
     writes = allowed_write_paths
     if writes is None:
-        writes = list((ACTION_WRITE_PATHS.get(workflow_id) or {}).get(action_id) or [])
+        if output_mode == "staged" and role_id == "producer":
+            writes = list((ACTION_PRODUCER_WRITE_PATHS.get(workflow_id) or {}).get(action_id) or [])
+        if not writes:
+            writes = list((ACTION_WRITE_PATHS.get(workflow_id) or {}).get(action_id) or [])
     reads = allowed_read_paths
     if reads is None:
         reads = list((ACTION_READ_PATHS.get(workflow_id) or {}).get(action_id) or [])
     forbid_reads = forbidden_read_paths
     if forbid_reads is None:
         forbid_reads = list((ACTION_FORBIDDEN_READ_PATHS.get(workflow_id) or {}).get(action_id) or [])
+    # Staged producers must not write finalizer canonical paths.
+    forbid_writes = list(forbidden_write_paths or [])
+    if output_mode == "staged" and role_id == "producer":
+        for p in (ACTION_FINALIZER_WRITE_PATHS.get(workflow_id) or {}).get(action_id) or []:
+            if p not in forbid_writes:
+                forbid_writes.append(p)
     row: dict[str, Any] = {
         "id": action_id,
         "label_zh": label_zh,
@@ -98,7 +109,7 @@ def _act(
         "output_contract_id": output_contract_id,
         "allowed_write_paths": list(writes or []),
         "allowed_read_paths": list(reads or []),
-        "forbidden_write_paths": list(forbidden_write_paths or []),
+        "forbidden_write_paths": list(forbid_writes),
         "forbidden_read_paths": list(forbid_reads or []),
         # Derived for authorize / Task spawn (single primary actor).
         "actors": actors,
@@ -145,6 +156,25 @@ CLOSED_OBLIGATION_STATUSES = frozenset(
 )
 
 _CAPS_CODE = ["source-reading", "cbm-navigation", "kb-query"]
+_CAPS_EXTRACT = [
+    "source-reading",
+    "cbm-navigation",
+    "kb-query",
+    "semantic-resolution",
+    "structured-ir-query",
+    "readonly-source-search",
+    "action-scratch",
+]
+_CAPS_ADJUDICATE = [
+    "source-reading",
+    "cbm-navigation",
+    "kb-query",
+    "semantic-resolution",
+    "structured-ir-query",
+    "readonly-source-search",
+    "action-scratch",
+    "sharded-semantic-producer",
+]
 _CAPS_RESOLVE = ["source-reading", "cbm-navigation", "kb-query", "semantic-resolution"]
 _CAPS_REVIEW = ["structured-review", "kb-query"]
 _CAPS_CONTRACT = ["contract-building", "kb-query", "obligation-analysis"]
@@ -241,7 +271,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                     "next_action": "scope_confirmation",
                 },
                 "ENTRYPOINT_REWORK": {"type": "action", "action_id": "detect_score_pre"},
-                "KERNEL_DISPATCH_REWORK": {"type": "action", "action_id": "adjudicate_llm_tasks"},
+                "KERNEL_DISPATCH_REWORK": {"type": "action", "action_id": "detect_score_pre"},
                 "BRIDGE_REWORK": {"type": "action", "action_id": "adjudicate_llm_tasks"},
                 "SEMANTIC_PATCH_REWORK": {"type": "action", "action_id": "adjudicate_llm_tasks"},
                 "LEDGER_REBUILD_REWORK": {"type": "action", "action_id": "rebuild_from_ledger"},
@@ -305,10 +335,22 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 role_id="producer",
                 execution_mode="subagent",
                 gates=["extract_plan_subagent"],
-                capability_ids=_CAPS_CODE + ["semantic-resolution"],
+                capability_ids=_CAPS_EXTRACT,
                 task_prompt_id="uo/extract-plan",
                 output_contract_id="extract-plan-v1",
-                forbidden_write_paths=["uo/ir/semantic_patches.yaml", "uo/ir/llm_tasks.yaml"],
+                output_mode="staged",
+                staging_contract_id="extract-plan-staging-v1",
+                merge_action_id="extract_plan",
+                allowed_write_paths=[
+                    "runs/{run_id}/actions/extract_plan/staging/output.yaml",
+                    "runs/{run_id}/actions/extract_plan/scratch/**",
+                ],
+                forbidden_write_paths=[
+                    "uo/ir/extract_plan.yaml",
+                    "uo/ir/semantic_patches.yaml",
+                    "uo/ir/llm_tasks.yaml",
+                    "uo/ir/semantic_resolution_ledger.yaml",
+                ],
             ),
             _act(
                 "detect_score_post",
@@ -331,12 +373,21 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 role_id="producer",
                 execution_mode="subagent",
                 gates=["adjudicate_llm_tasks"],
-                capability_ids=_CAPS_CODE + ["semantic-resolution"],
+                capability_ids=_CAPS_ADJUDICATE,
                 task_prompt_id="uo/adjudicate-llm-tasks",
                 output_contract_id="semantic-patches-v1",
+                output_mode="staged",
+                staging_contract_id="semantic-patches-parts-v1",
+                merge_action_id="adjudicate_llm_tasks",
+                allowed_write_paths=[
+                    "runs/{run_id}/actions/adjudicate_llm_tasks/parts/**",
+                    "runs/{run_id}/actions/adjudicate_llm_tasks/scratch/**",
+                ],
                 forbidden_write_paths=[
                     "uo/ir/extract_plan.yaml",
+                    "uo/ir/semantic_patches.yaml",
                     "uo/ir/semantic_resolution_ledger.yaml",
+                    "uo/ir/llm_tasks.yaml",
                 ],
             ),
             _act(

@@ -314,9 +314,9 @@ Pilot 独占状态、合法边、门禁与完成态。
 | `prepare_layout` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/prepare-layout` | `-` | `deterministic-uo-engine` |
 | `scope_confirmation` | source-authority,code-access,evidence,language,pilot-control,output-quality | cbm-navigation,source-reading | `uo-init/scope-confirmation` | `uo/scope-confirmation` | `ascendc-pilot` |
 | `detect_score_pre` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/detect-score-pre` | `-` | `deterministic-uo-engine` |
-| `extract_plan` | source-authority,code-access,evidence,language,pilot-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution | `uo-init/extract-plan` | `uo/extract-plan` | `uo-semantic-resolve` |
+| `extract_plan` | source-authority,code-access,evidence,language,pilot-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution,structured-ir-query,readonly-source-search,action-scratch | `uo-init/extract-plan` | `uo/extract-plan` | `uo-semantic-resolve` |
 | `detect_score_post` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/detect-score-post` | `-` | `deterministic-uo-engine` |
-| `adjudicate_llm_tasks` | source-authority,code-access,evidence,language,pilot-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution | `uo-init/adjudicate-llm-tasks` | `uo/adjudicate-llm-tasks` | `uo-semantic-resolve` |
+| `adjudicate_llm_tasks` | source-authority,code-access,evidence,language,pilot-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution,structured-ir-query,readonly-source-search,action-scratch,sharded-semantic-producer | `uo-init/adjudicate-llm-tasks` | `uo/adjudicate-llm-tasks` | `uo-semantic-resolve` |
 | `apply_semantic_patch` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/apply-semantic-patch` | `-` | `deterministic-uo-engine` |
 | `apply_scope_expansion` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/apply-scope-expansion` | `-` | `deterministic-uo-engine` |
 | `rebuild_from_ledger` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/rebuild-from-ledger` | `-` | `deterministic-uo-engine` |

@@ -355,6 +355,7 @@ def _render_placeholders(
     action_session_id: str = "",
     cbm_project: str = "",
     candidates_sha256: str = "",
+    **_ignored: Any,
 ) -> str:
     repl = {
         "<RUN_ID>": run_id,
@@ -1124,37 +1125,66 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
                 candidates_sha256 = sha_side.read_text(encoding="utf-8").strip()
         ph_kwargs["candidates_sha256"] = candidates_sha256
         target_line = (
-            f"{cand_path} → confirm writers/receivers/aliases only; "
+            f"{cand_path} → confirm via decision_worklist → "
+            f"staging/decision_report.yaml; "
             f"candidates_sha256={candidates_sha256 or '(missing)'}; "
+            "FORBIDDEN: write uo/ir/extract_plan.yaml; "
             "DO NOT read or adjudicate ir/llm_tasks.yaml"
         )
         prompt_r = _render_placeholders(prompt, **{**ph_kwargs, "target": target_line})
         if prepare_engine.get("reused_candidates"):
             bundle["prepare_engine"]["reused_candidates"] = True
+        staging_rel = f"runs/{run_id}/actions/extract_plan/staging/decision_report.yaml"
+        staging_legacy = f"runs/{run_id}/actions/extract_plan/staging/output.yaml"
+        scratch_rel = f"runs/{run_id}/actions/extract_plan/scratch/**"
+        worklist_rel = f"runs/{run_id}/actions/extract_plan/inputs/decision_worklist.yaml"
         bundle["dispatch_targets"] = {
             "read": [
+                worklist_rel,
+                "uo/ir/extract_plan_decision_worklist.yaml",
                 "uo/ir/extract_plan_candidates.summary.yaml",
                 "uo/ir/extract_plan.rework_hints.yaml",
                 "uo/ir/extract_plan_candidates.yaml",
                 "uo/ir/extract_plan_candidates.sha256",
                 "uo/ir/entrypoint_graph.yaml",
                 "uo/cbm/index_meta.json",
-                # Write target must also be readable (self-check / rework).
-                "uo/ir/extract_plan.yaml",
+                staging_rel,
+                staging_legacy,
+                scratch_rel,
             ],
-            "write": ["uo/ir/extract_plan.yaml"],
+            "write": [staging_rel, staging_legacy, scratch_rel],
             "forbid_read": [
                 "uo/ir/llm_tasks.yaml",
                 "uo/ir/semantic_patches.yaml",
                 "uo/ir/semantic_resolution_ledger.yaml",
             ],
+            "forbid_write": [
+                "uo/ir/extract_plan.yaml",
+                "uo/ir/extract_plan_aliases.yaml",
+                "uo/ir/receiver_bindings.yaml",
+                "uo/ir/semantic_patches.yaml",
+                "uo/ir/llm_tasks.yaml",
+            ],
             "forbid_write_fields": list(_EXTRACT_PLAN_FORBID_FIELDS),
+            "output_mode": "staged",
         }
         bundle["candidates_sha256"] = candidates_sha256
+        # Ensure staging dir exists for producer.
+        try:
+            (Path(sdir) / "staging").mkdir(parents=True, exist_ok=True)
+            (Path(sdir) / "scratch").mkdir(parents=True, exist_ok=True)
+            (Path(sdir) / "inputs").mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
         # Drop only *unreadable/invalid* producer dumps. Keep parseable plans so
         # re-prepare (new lease) does not force a full rewrite + hash churn loop.
-        stale_plan = Path(uo_s) / "ir" / "extract_plan.yaml"
-        if stale_plan.is_file():
+        for stale_plan in (
+            Path(uo_s) / "ir" / "extract_plan.yaml",
+            Path(sdir) / "staging" / "output.yaml",
+            Path(sdir) / "staging" / "decision_report.yaml",
+        ):
+            if not stale_plan.is_file():
+                continue
             keep = False
             try:
                 from uo.scripts.yaml_literal_sanitize import safe_load_yaml_text
@@ -1163,12 +1193,12 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
                 keep = isinstance(doc, dict) and int(doc.get("version") or 0) == 1
             except Exception:  # noqa: BLE001
                 keep = False
-            if not keep:
+            if not keep and stale_plan.name == "extract_plan.yaml":
+                # Only auto-delete unreadable canonical; staging may be mid-edit.
                 try:
                     stale_plan.unlink()
                 except OSError:
                     pass
-
     # adjudicate_llm_tasks: producer writes patches for deterministic apply.
     adjudicate_not_applicable = False
     if wid == "uo-init" and action_id == "adjudicate_llm_tasks" and role_id == "producer":
@@ -1291,27 +1321,104 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
                     "patches": [],
                 },
             )
+            prompt_r = _render_placeholders(prompt, **{**ph_kwargs, "target": target_line})
         else:
+            # Map-Reduce prepare: plan semantic batches; workers write parts only.
+            from uo.scripts.llm_tasks import load_llm_tasks
+            from uo.scripts.semantic_patch_shards import (
+                plan_semantic_batches,
+                write_semantic_batches,
+            )
+
+            uo = uo_root(project_root)
+            doc = load_llm_tasks(uo)
+            tasks_by_id = {
+                str(t.get("task_id")): t
+                for t in (doc.get("tasks") or [])
+                if isinstance(t, dict) and t.get("task_id")
+            }
+            snap = ""
+            try:
+                from uo.scripts.source_snapshot import require_source_snapshot
+
+                s = require_source_snapshot(uo, run_id=run_id or None)
+                if s.get("ok"):
+                    snap = str(s.get("source_snapshot_hash") or s.get("hash") or "")
+            except Exception:
+                snap = ""
+            # session.yaml is written later; use prepare-time action_sid already in scope
+            action_session = str(action_sid or run_id)
+            manifest = plan_semantic_batches(
+                list(needs_llm),
+                action_session_id=action_session,
+                source_snapshot_hash=snap,
+            )
+            write_semantic_batches(Path(sdir), manifest, tasks_by_id)
+            dispatch_tasks = []
+            for shard in manifest.get("shards") or []:
+                if not isinstance(shard, dict):
+                    continue
+                sid = str(shard.get("shard_id") or "")
+                stub = (
+                    f"action_id=adjudicate_llm_tasks shard_id={sid}\n"
+                    f"run_id={run_id}\n"
+                    f"action_session_id={action_session}\n"
+                    f"read: runs/{run_id}/actions/adjudicate_llm_tasks/batches/batch_{sid}.yaml\n"
+                    f"write: runs/{run_id}/actions/adjudicate_llm_tasks/parts/part_{sid}.yaml\n"
+                    f"scratch: runs/{run_id}/actions/adjudicate_llm_tasks/scratch/{sid}/**\n"
+                    "FORBIDDEN: write uo/ir/semantic_patches.yaml / ledger / llm_tasks; "
+                    "FORBIDDEN: read other shards; FORBIDDEN: acp finalize/next/advance\n"
+                    f"task_ids ({shard.get('task_count')}): {', '.join(shard.get('task_ids') or [])}\n"
+                )
+                dispatch_tasks.append(
+                    {
+                        "shard_id": sid,
+                        "actor_id": "uo-semantic-resolve",
+                        "category": shard.get("category"),
+                        "task_ids": list(shard.get("task_ids") or []),
+                        "task_prompt_stub": stub,
+                        "batch_file": shard.get("batch_file"),
+                        "part_file": shard.get("part_file"),
+                    }
+                )
             target_line = (
-                "uo/ir/llm_tasks.yaml (open+blocking only) → write uo/ir/semantic_patches.yaml; "
-                "DO NOT write ledger or derived graphs"
+                f"Map-Reduce adjudicate: {len(dispatch_tasks)} shards → write parts only; "
+                "finalizer reduces to uo/ir/semantic_patches.yaml"
             )
             bundle["dispatch_targets"] = {
                 "read": [
                     "uo/ir/llm_tasks.yaml",
                     "uo/ir/score_report_post.yaml",
                     "uo/ir/score_report_pre.yaml",
+                    f"runs/{run_id}/actions/adjudicate_llm_tasks/semantic_batches.yaml",
+                    f"runs/{run_id}/actions/adjudicate_llm_tasks/batches/**",
+                    f"runs/{run_id}/actions/adjudicate_llm_tasks/parts/**",
                 ],
-                "write": ["uo/ir/semantic_patches.yaml"],
+                "write": [
+                    f"runs/{run_id}/actions/adjudicate_llm_tasks/parts/**",
+                    f"runs/{run_id}/actions/adjudicate_llm_tasks/scratch/**",
+                ],
                 "forbid_write": [
+                    "uo/ir/semantic_patches.yaml",
                     "uo/ir/semantic_resolution_ledger.yaml",
                     "uo/ir/extract_plan.yaml",
+                    "uo/ir/llm_tasks.yaml",
                     "uo/ir/entrypoint_graph.yaml",
                     "uo/ir/host_subgraph.yaml",
                     "uo/ir/kernel_subgraph.yaml",
                 ],
+                "output_mode": "staged",
+                "map_reduce": True,
             }
-        prompt_r = _render_placeholders(prompt, **{**ph_kwargs, "target": target_line})
+            bundle["dispatch_tasks"] = dispatch_tasks
+            bundle["semantic_batches"] = {
+                "shard_count": len(dispatch_tasks),
+                "task_set_hash": manifest.get("task_set_hash"),
+                "source_snapshot_hash": snap,
+            }
+            # Stubs live on dispatch_tasks / task_prompt_stub.md — never in ph_kwargs
+            # (_render_placeholders only accepts template token kwargs).
+            prompt_r = _render_placeholders(prompt, **{**ph_kwargs, "target": target_line})
 
     # KEY triage: explicit finite target set from gaps / escalate_keys.
     if action_id == "key_triage" and role_id == "producer":
@@ -2197,6 +2304,59 @@ def finalize_action(
                     *uniq,
                 ],
             )
+
+    # adjudicate_llm_tasks finalize: reduce Map parts → canonical semantic_patches.yaml
+    if (
+        producer_identity_ok
+        and wid == "uo-init"
+        and action_id == "adjudicate_llm_tasks"
+        and engine_result is None
+    ):
+        man_path = Path(sdir) / "semantic_batches.yaml"
+        if man_path.is_file():
+            try:
+                from uo.scripts._ir_io import write_yaml
+                from uo.scripts.semantic_patch_shards import reduce_semantic_parts
+
+                reduced = reduce_semantic_parts(Path(sdir))
+                if not reduced.get("ok"):
+                    session["status"] = "finalize_failed"
+                    session["apply_result"] = reduced
+                    _dump(sdir / "session.yaml", session)
+                    return _attach_finalize_observation(
+                        project_root,
+                        {
+                            "ok": False,
+                            "phase_runtime": "finalize",
+                            "action_id": action_id,
+                            "error": "SEMANTIC_PARTS_REDUCE_FAILED",
+                            "apply_result": reduced,
+                            "message_zh": "semantic patch parts reduce 失败",
+                        },
+                        action_id=action_id,
+                        messages=list(reduced.get("errors") or [])[:20],
+                    )
+                merged = reduced.get("merged") or {
+                    "version": 1,
+                    "patches": reduced.get("patches") or [],
+                }
+                write_yaml(uo_root(project_root) / "ir" / "semantic_patches.yaml", merged)
+                session["reduce_report"] = reduced.get("report")
+            except Exception as exc:  # noqa: BLE001
+                session["status"] = "finalize_failed"
+                _dump(sdir / "session.yaml", session)
+                return _attach_finalize_observation(
+                    project_root,
+                    {
+                        "ok": False,
+                        "phase_runtime": "finalize",
+                        "action_id": action_id,
+                        "error": "SEMANTIC_PARTS_REDUCE_EXCEPTION",
+                        "message_zh": str(exc),
+                    },
+                    action_id=action_id,
+                    messages=[str(exc)],
+                )
 
     if producer_identity_ok:
         contract = _check_output_contract(

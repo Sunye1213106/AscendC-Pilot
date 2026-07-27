@@ -301,7 +301,26 @@ def score_io_slot(slot: dict[str, Any]) -> dict[str, Any]:
     if slot.get("host_accessors"):
         evidence.append("accessor")
     status = str(slot.get("binding_status") or "")
-    if status == "verified" and "registration" in evidence and "accessor" in evidence:
+    # Deterministic unique schema close: name/index/direction unique + single declaration.
+    unique_schema = bool(slot.get("schema_unique") or slot.get("declaration_unique"))
+    name_ok = bool(slot.get("name"))
+    index_ok = slot.get("slot") is not None or slot.get("index") is not None
+    direction = str(slot.get("direction") or slot.get("io_kind") or slot.get("kind") or "").casefold()
+    direction_ok = direction in {"input", "output", "attribute", "attr", "in", "out"} or bool(
+        slot.get("direction") or slot.get("io_kind")
+    )
+    competing = bool(slot.get("competing_declaration") or slot.get("ambiguous"))
+    single_cand_path = False
+    accessors = [a for a in (slot.get("host_accessors") or []) if isinstance(a, dict) and a.get("file_path")]
+    ev_rows = [e for e in (slot.get("evidence") or []) if isinstance(e, dict) and e.get("file_path")]
+    if len(accessors) + len(ev_rows) == 1 and name_ok and index_ok and direction_ok and not competing:
+        single_cand_path = True
+        unique_schema = True
+
+    if (
+        (status == "verified" and "registration" in evidence and "accessor" in evidence)
+        or (unique_schema and single_cand_path and "registration" in evidence)
+    ):
         score = 0.9
     elif "registration" in evidence and "accessor" in evidence:
         score = 0.8
@@ -316,6 +335,11 @@ def score_io_slot(slot: dict[str, Any]) -> dict[str, Any]:
         evidence_classes=evidence,
         necessity=necessity,
     )
+    # Force auto_accept when unique single-candidate schema matches.
+    if unique_schema and single_cand_path and score >= 0.75:
+        result["disposition"] = "auto_accept"
+        result["severity"] = "none"
+        result["decision_reason"] = "deterministic_unique_io_slot"
     result["target_id"] = slot.get("name") or f"slot[{slot.get('slot')}]"
     candidates: list[dict[str, Any]] = []
     for i, acc in enumerate(slot.get("host_accessors") or []):
@@ -659,6 +683,14 @@ def detect_score_post(uo_root: Path, *, architecture: str = "arch35", run_id: st
     for dim in tilingkey.get("dimensions") or tilingkey.get("bindings") or []:
         if isinstance(dim, dict):
             items.append(score_tilingkey_binding(dim))
+
+    # Aggregate Bridge occurrence/gap_kind into semantic obligations (no gap_kind in key).
+    try:
+        from uo.scripts.score_canonicalize import canonicalize_score_items
+
+        items = canonicalize_score_items(items, architecture=architecture)
+    except Exception:
+        pass
 
     report = {
         "version": 1,

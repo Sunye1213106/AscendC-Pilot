@@ -1003,7 +1003,9 @@ def test_apply_backfills_collage_snippet(tmp_path: Path) -> None:
     assert result["ok"], result
     assert (result.get("enriched") or {}).get("items", 0) >= 1
     saved = (ir / "extract_plan.yaml").read_text(encoding="utf-8")
-    assert "..." not in saved.split("evidence_snippet:")[1].split("decision_reason:")[0]
+    # Canonical slim IR must not embed evidence snippets.
+    assert "evidence_snippet" not in saved
+    assert "aliases_ref" in saved or "receiver_bindings_ref" in saved
 
 
 def test_apply_drops_invented_non_sink_and_passes(tmp_path: Path) -> None:
@@ -1174,9 +1176,14 @@ def test_apply_overwrites_neighbor_wrong_sha(tmp_path: Path) -> None:
     assert "sha" in ((result.get("enriched") or {}).get("actions") or [])
     saved = read_yaml(ir / "extract_plan.yaml")
     assert isinstance(saved, dict)
+    # Canonical slim IR drops evidence_* ; wrong neighbor sha must not leak into IR.
     save_w = next(w for w in saved["writers"] if w.get("name") == "SaveStuff")
-    assert save_w["evidence_window_sha256"] == actual_sha
-    assert save_w["evidence_window_sha256"] != neighbor_sha
+    assert "evidence_window_sha256" not in save_w
+    assert "evidence_snippet" not in save_w
+    assert "evidence_snippet" not in (ir / "extract_plan.yaml").read_text(encoding="utf-8")
+    # Sidecars written by finalizer.
+    assert (ir / "extract_plan_aliases.yaml").is_file()
+    assert (ir / "receiver_bindings.yaml").is_file()
 
 
 def test_bucket_extract_plan_errors_dedupes() -> None:

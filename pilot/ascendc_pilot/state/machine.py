@@ -29,7 +29,7 @@ def describe_next(project_root: Path) -> dict[str, Any]:
     meta = get_workflow(wid)
     fresh = collect_obligations(project_root, wid)
     state["open_items"] = open_obligations(fresh)
-    state["all_obligations"] = fresh
+    state.pop("all_obligations", None)
     save_state(project_root, state)
 
     status = str(state.get("status") or "running")
@@ -157,7 +157,7 @@ def _apply_gate_failure(
     already_blocked = state.get("status") == "blocked"
     all_obl = collect_obligations(project_root, wid)
     state["open_items"] = open_obligations(all_obl)
-    state["all_obligations"] = all_obl
+    state.pop("all_obligations", None)
     state["last_failure"] = last_failure
     if already_blocked:
         state["status"] = "blocked"
@@ -477,7 +477,7 @@ def complete_workflow(project_root: Path, *, reason: str = "") -> dict[str, Any]
     items = collect_obligations(project_root, wid)
     state = load_state(project_root)
     state["open_items"] = open_obligations(items)
-    state["all_obligations"] = items
+    state.pop("all_obligations", None)
     save_state(project_root, state)
     if not all_obligations_closed(items):
         open_ids = [str(it.get("id")) for it in open_obligations(items)]

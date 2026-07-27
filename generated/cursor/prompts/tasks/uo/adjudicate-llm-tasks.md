@@ -49,12 +49,17 @@ Write **only** `ir/semantic_patches.yaml` for the deterministic `apply_semantic_
    patches:
      - run_id: <RUN_ID>
        task_id: <exact task_id>
+       candidate_set_hash: <copy verbatim from llm_tasks task.candidate_set_hash>
+       source_snapshot_hash: <copy verbatim from llm_tasks task.source_snapshot_hash>
        action: mark_missing   # or accept_edge / choose_one when candidates exist
        accepted_candidate_ids: []
        rejected_candidate_ids: []
        evidence: ["path:line or reason"]
    ```
 4. Rules (hard):
+   - **MUST** set `candidate_set_hash` (authoritative name; not `patch_candidate_set_hash`)
+     by copying the matching task field from `llm_tasks.yaml`.
+   - **MUST** set `source_snapshot_hash` the same way when present on the task.
    - Empty `candidates` → **only** `mark_missing` (never invent edge ids).
    - Non-empty candidates + enough evidence → `accept_edge`/`choose_one` with ids **inside** the candidate window.
    - Insufficient evidence → `mark_missing` (honest unresolved), not guess ACCEPT.

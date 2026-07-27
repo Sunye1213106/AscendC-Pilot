@@ -326,8 +326,18 @@ def stable_task_id(
 
 
 def candidate_set_hash(candidates: list[dict[str, Any]] | None) -> str:
-    ids = sorted(str(c.get("id") or c.get("symbol_ref") or c.get("file_path") or "") for c in (candidates or []))
-    return hashlib.sha256(",".join(ids).encode("utf-8")).hexdigest()[:16]
+    """Content-aware hash (id + path + lines + window/snippet sha)."""
+    try:
+        from uo.scripts.score_canonicalize import candidate_set_content_hash
+
+        return candidate_set_content_hash(list(candidates or []))
+    except Exception:
+        ids = sorted(
+            str(c.get("id") or c.get("candidate_id") or c.get("symbol_ref") or c.get("file_path") or "")
+            for c in (candidates or [])
+            if isinstance(c, dict)
+        )
+        return hashlib.sha256(",".join(ids).encode("utf-8")).hexdigest()[:16]
 
 
 def load_llm_tasks(uo_root: Path) -> dict[str, Any]:
@@ -419,12 +429,20 @@ def upsert_tasks_from_score_items(
                 task_type = "evidence_enrichment"
                 hint = "evidence_enrichment"
         cand_hash = candidate_set_hash(candidates)
-        tid = stable_task_id(
-            task_type=task_type,
-            target_role_or_edge=target,
-            candidate_ids=[str(c.get("id") or "") for c in candidates],
-            source_snapshot_hash=source_snapshot_hash or "nosnap",
-        )
+        if item.get("stable_task_id_override"):
+            tid = str(item.get("stable_task_id_override"))
+        elif item.get("canonical_obligation_id") or item.get("obligation_id"):
+            obl = str(item.get("canonical_obligation_id") or item.get("obligation_id"))
+            raw = f"tilingdata_bridge|{obl}|{source_snapshot_hash or 'nosnap'}"
+            tid = "TASK_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+            target = str(item.get("target_id") or f"bridge_obl:{obl}")
+        else:
+            tid = stable_task_id(
+                task_type=task_type,
+                target_role_or_edge=target,
+                candidate_ids=[str(c.get("id") or c.get("candidate_id") or "") for c in candidates],
+                source_snapshot_hash=source_snapshot_hash or "nosnap",
+            )
         existing = by_id.get(tid)
         if existing and existing.get("status") == "open":
             # Same stable id — do not duplicate; refresh phase flags.
