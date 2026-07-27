@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +15,88 @@ def require_yaml() -> Any:
     if yaml is None:
         raise RuntimeError("PyYAML is required")
     return yaml
+
+
+def _loader() -> Any:
+    require_yaml()
+    return getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
+def _dumper() -> Any:
+    require_yaml()
+    return getattr(yaml, "CSafeDumper", yaml.SafeDumper)
+
+
+def _render_yaml(data: dict[str, Any]) -> str:
+    require_yaml()
+    return yaml.dump(
+        data,
+        Dumper=_dumper(),
+        sort_keys=False,
+        allow_unicode=True,
+        width=120,
+    )
+
+
+def _semantic_digest(data: dict[str, Any]) -> str:
+    """Stable, cheap content key used only to avoid redundant YAML serialization.
+
+    JSON-compatible IR payloads take the fast path. Unusual values fall back to a
+    deterministic repr so callers never fail merely because caching is unavailable.
+    The sidecar is trusted only while the destination file stat still matches.
+    """
+
+    try:
+        raw = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    except (TypeError, ValueError):
+        raw = repr(data)
+    return hashlib.sha256(raw.encode("utf-8", errors="surrogatepass")).hexdigest()
+
+
+def _hash_sidecar(path: Path) -> Path:
+    return path.with_name(f".{path.name}.semantic-hash.json")
+
+
+def _read_hash_sidecar(path: Path) -> dict[str, Any]:
+    sidecar = _hash_sidecar(path)
+    if not sidecar.is_file() or not path.is_file():
+        return {}
+    try:
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+        stat = path.stat()
+    except (OSError, ValueError, TypeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    if int(payload.get("size") or -1) != int(stat.st_size):
+        return {}
+    if int(payload.get("mtime_ns") or -1) != int(stat.st_mtime_ns):
+        return {}
+    return payload
+
+
+def _write_hash_sidecar(path: Path, digest: str) -> None:
+    try:
+        stat = path.stat()
+        payload = {
+            "version": 1,
+            "digest": digest,
+            "size": int(stat.st_size),
+            "mtime_ns": int(stat.st_mtime_ns),
+        }
+        sidecar = _hash_sidecar(path)
+        sidecar.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    except OSError:
+        # Sidecars are an optimization only; artifact writes remain authoritative.
+        pass
+
+
+def _payload_unchanged(path: Path, data: dict[str, Any], digest: str | None = None) -> bool:
+    if not path.is_file():
+        return False
+    digest = digest or _semantic_digest(data)
+    cached = _read_hash_sidecar(path)
+    return bool(cached and cached.get("digest") == digest)
 
 
 def read_yaml(path: Path) -> dict[str, Any]:
@@ -29,27 +113,58 @@ def read_yaml(path: Path) -> dict[str, Any]:
 
         data = safe_load_yaml_text(text) or {}
     else:
-        data = yaml.safe_load(text) or {}
+        data = yaml.load(text, Loader=_loader()) or {}
     return data if isinstance(data, dict) else {}
 
 
-def write_yaml(path: Path, data: dict[str, Any]) -> None:
+def write_yaml_if_changed(path: Path, data: dict[str, Any]) -> bool:
+    """Write YAML only when semantic content changed.
+
+    Returns ``True`` when the file was replaced and ``False`` on a proven no-op.
+    The stat-validated sidecar prevents stale cache hits after external edits.
+    """
+
     require_yaml()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=120),
-        encoding="utf-8",
-    )
+    digest = _semantic_digest(data)
+    if _payload_unchanged(path, data, digest):
+        return False
+    rendered = _render_yaml(data)
+    # Bootstrap compatibility for artifacts written before sidecars existed.
+    if path.is_file():
+        try:
+            if path.read_text(encoding="utf-8") == rendered:
+                _write_hash_sidecar(path, digest)
+                return False
+        except OSError:
+            pass
+    path.write_text(rendered, encoding="utf-8")
+    _write_hash_sidecar(path, digest)
+    return True
 
 
-def atomic_write_yaml(path: Path, data: dict[str, Any]) -> None:
-    """Write YAML via temp file + os.replace (crash-safe single-file update)."""
+def write_yaml(path: Path, data: dict[str, Any]) -> None:
+    write_yaml_if_changed(path, data)
+
+
+def atomic_write_yaml(path: Path, data: dict[str, Any]) -> bool:
+    """Write YAML via temp file + os.replace, skipping proven no-op payloads."""
     import os
     import tempfile
 
     require_yaml()
     path.parent.mkdir(parents=True, exist_ok=True)
-    text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=120)
+    digest = _semantic_digest(data)
+    if _payload_unchanged(path, data, digest):
+        return False
+    text = _render_yaml(data)
+    if path.is_file():
+        try:
+            if path.read_text(encoding="utf-8") == text:
+                _write_hash_sidecar(path, digest)
+                return False
+        except OSError:
+            pass
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -57,6 +172,8 @@ def atomic_write_yaml(path: Path, data: dict[str, Any]) -> None:
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp_name, path)
+        _write_hash_sidecar(path, digest)
+        return True
     except Exception:
         try:
             os.unlink(tmp_name)
@@ -87,10 +204,10 @@ def commit_semantic_artifacts(
     ledger: dict[str, Any] | None = None,
     apply_report: dict[str, Any] | None = None,
 ) -> None:
-    """Transactionally update llm_tasks / ledger / apply_report (all-or-nothing).
+    """Transactionally update changed semantic artifacts only.
 
-    Stages all payloads to temp files, backups existing dests, then replaces.
-    On mid-replace failure, restores from backups so no half-updated trio remains.
+    Unchanged members are excluded before staging. Changed members retain the prior
+    all-or-nothing backup/restore behavior.
     """
     import os
     import shutil
@@ -104,14 +221,30 @@ def commit_semantic_artifacts(
         (ledger, ir / "semantic_resolution_ledger.yaml"),
         (apply_report, ir / "semantic_apply_report.yaml"),
     ]
-    staged: list[tuple[Path, Path]] = []
+    changed: list[tuple[dict[str, Any], Path, str, str]] = []
+    for payload, dest in mapping:
+        if payload is None:
+            continue
+        digest = _semantic_digest(payload)
+        if _payload_unchanged(dest, payload, digest):
+            continue
+        text = _render_yaml(payload)
+        if dest.is_file():
+            try:
+                if dest.read_text(encoding="utf-8") == text:
+                    _write_hash_sidecar(dest, digest)
+                    continue
+            except OSError:
+                pass
+        changed.append((payload, dest, text, digest))
+    if not changed:
+        return
+
+    staged: list[tuple[Path, Path, str]] = []
     backups: list[tuple[Path, Path | None]] = []
     temps: list[Path] = []
     try:
-        for payload, dest in mapping:
-            if payload is None:
-                continue
-            text = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True, width=120)
+        for _payload, dest, text, digest in changed:
             fd, tmp_name = tempfile.mkstemp(prefix=f".{dest.name}.", suffix=".tmp", dir=str(ir))
             tmp_path = Path(tmp_name)
             temps.append(tmp_path)
@@ -126,22 +259,22 @@ def commit_semantic_artifacts(
                 backup = Path(bak_name)
                 shutil.copy2(dest, backup)
                 temps.append(backup)
-            staged.append((tmp_path, dest))
+            staged.append((tmp_path, dest, digest))
             backups.append((dest, backup))
         replaced: list[Path] = []
         try:
-            for tmp_path, dest in staged:
+            for tmp_path, dest, _digest in staged:
                 os.replace(tmp_path, dest)
                 replaced.append(dest)
                 temps = [t for t in temps if t != tmp_path]
         except Exception:
-            # Restore any already-replaced dests from backups.
             for dest, backup in backups:
                 if dest in replaced and backup is not None and backup.is_file():
                     os.replace(backup, dest)
                     temps = [t for t in temps if t != backup]
             raise
-        # Success: drop backups.
+        for _tmp, dest, digest in staged:
+            _write_hash_sidecar(dest, digest)
         for _, backup in backups:
             if backup is not None:
                 try:
