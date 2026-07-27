@@ -50,7 +50,9 @@ def _git_head(project_root: Path) -> str:
         return ""
 
 
-def _update_documents(project_root: Path) -> tuple[Path, dict[str, Any], dict[str, Any], bool]:
+def _update_documents(
+    project_root: Path, *, require_plan: bool = False
+) -> tuple[Path, dict[str, Any], dict[str, Any], bool]:
     from ascendc_pilot.paths import uo_root
 
     uo = uo_root(project_root)
@@ -59,8 +61,8 @@ def _update_documents(project_root: Path) -> tuple[Path, dict[str, Any], dict[st
     head = _git_head(project_root)
     recorded = str(change_set.get("head_revision") or "")
     fresh = bool(change_set and head and recorded == head)
-    if update_plan:
-        fresh = fresh and str(update_plan.get("head_revision") or "") == head
+    if require_plan:
+        fresh = fresh and bool(update_plan) and str(update_plan.get("head_revision") or "") == head
     return uo, change_set, update_plan, fresh
 
 
@@ -72,7 +74,7 @@ def _invoke_update_plan(
     *,
     fallback: EngineFallback,
 ) -> dict[str, Any]:
-    _uo, change_set, _plan, fresh = _update_documents(project_root)
+    _uo, change_set, _plan, fresh = _update_documents(project_root, require_plan=False)
     if not fresh:
         return fallback(project_root, workflow_id, action_id, ctx=ctx)
     try:
@@ -99,7 +101,7 @@ def _invoke_update_apply(
     *,
     fallback: EngineFallback,
 ) -> dict[str, Any]:
-    _uo, change_set, update_plan, fresh = _update_documents(project_root)
+    _uo, change_set, update_plan, fresh = _update_documents(project_root, require_plan=True)
     if not fresh or not update_plan:
         return fallback(project_root, workflow_id, action_id, ctx=ctx)
     try:
@@ -155,7 +157,7 @@ def _invoke_update_diff_summary(
     *,
     fallback: EngineFallback,
 ) -> dict[str, Any]:
-    _uo, change_set, update_plan, fresh = _update_documents(project_root)
+    _uo, change_set, update_plan, fresh = _update_documents(project_root, require_plan=True)
     if not fresh or not update_plan:
         return fallback(project_root, workflow_id, action_id, ctx=ctx)
     try:
