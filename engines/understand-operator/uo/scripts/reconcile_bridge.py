@@ -31,7 +31,7 @@ _NON_TILING_PREFIXES = ("origdtype",)
 GET_TPL_CALL_RE = re.compile(r"GET_TPL_TILING_KEY\s*\(([^;]*)\)", re.DOTALL)
 
 
-def reconcile_bridge(repo_root: Path, op_name: str) -> dict[str, Any]:
+def reconcile_bridge(repo_root: Path, op_name: str, *, persist: bool = True) -> dict[str, Any]:
     uo_root = existing_operator_root(repo_root, op_name)
     host = read_yaml(uo_root / "ir" / "host_subgraph.yaml")
     kernel = read_yaml(uo_root / "ir" / "kernel_subgraph.yaml")
@@ -89,9 +89,10 @@ def reconcile_bridge(repo_root: Path, op_name: str) -> dict[str, Any]:
         "unresolved": unresolved,
         "csv_excluded_determinant_sources": ["BuildConfig", "CompileMacro", "PlatformInfo", "SourceSelection", "KernelRuntimeVariable"],
     }
-    write_yaml(uo_root / "ir" / "bridge.yaml", payload)
-    if unresolved:
-        _merge_unresolved(uo_root, unresolved)
+    if persist:
+        write_yaml(uo_root / "ir" / "bridge.yaml", payload)
+        if unresolved:
+            _merge_unresolved(uo_root, unresolved)
     return payload
 
 

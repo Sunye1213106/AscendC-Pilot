@@ -12,7 +12,7 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_ROOT))
 
 from uo._operator.artifacts import existing_operator_root, safe_op_name
-from uo.scripts._ir_io import read_yaml, write_yaml
+from uo.scripts._ir_io import read_yaml, write_yaml, write_yaml_if_changed
 from uo.scripts.extract_golden import extract_golden
 from uo.scripts.extract_host_subgraph import extract_host_subgraph
 from uo.scripts.extract_kernel_subgraph import extract_kernel_subgraph
@@ -28,6 +28,50 @@ from uo.scripts.resolve_entrypoints import (
 
 
 ALL_EXTRACT_LAYERS = ("entrypoints", "host", "kernel", "tilingkey", "golden", "bridge")
+BUILD_MODES = frozenset({"structural", "full"})
+
+
+def _write_ir_yaml(path: Path, data: dict[str, Any]) -> None:
+    write_yaml_if_changed(path, data)
+
+
+def _graph_content_hash(graph: dict[str, Any]) -> str:
+    import hashlib
+    import json
+
+    payload = {
+        "node_count": len(graph.get("nodes") or []),
+        "edge_count": len(graph.get("edges") or []),
+        "unresolved_count": len(graph.get("unresolved") or []),
+        "stats": graph.get("stats") or {},
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:24]
+
+
+def _write_closure_summary(
+    uo_root: Path,
+    *,
+    op_name: str,
+    entrypoint_graph: dict[str, Any],
+    graph: dict[str, Any],
+    run_id: str = "",
+) -> None:
+    closure = entrypoint_graph.get("closure") or {}
+    stats = graph.get("stats") or {}
+    _write_ir_yaml(
+        uo_root / "ir" / "closure_summary.yaml",
+        {
+            "version": 1,
+            "op_name": op_name,
+            "run_id": run_id,
+            "host_main_chain": closure.get("host_main_chain"),
+            "kernel_main_chain": closure.get("kernel_main_chain"),
+            "blocking_gap_count": stats.get("blocking_gap_count"),
+            "unconsumed_patch_count": stats.get("unconsumed_patch_count"),
+            "graph_hash": _graph_content_hash(graph),
+            "closure": closure,
+        },
+    )
 
 
 def build_layered_kb(
@@ -39,10 +83,15 @@ def build_layered_kb(
     auto_confirm: bool = True,
     layers: set[str] | list[str] | None = None,
     allow_empty_plan: bool = False,
+    mode: str = "full",
+    parallel: bool | None = None,
 ) -> dict[str, Any]:
     build_t0 = time.perf_counter()
     timing_ms: dict[str, int] = {}
     macro_materialization: dict[str, Any] = {}
+    build_mode = str(mode or "full").strip().lower()
+    if build_mode not in BUILD_MODES:
+        raise ValueError(f"unsupported build mode: {mode!r}; expected structural|full")
     uo_root = existing_operator_root(repo_root, op_name)
     ir_dir = uo_root / "ir"
     ir_dir.mkdir(parents=True, exist_ok=True)
@@ -149,26 +198,55 @@ def build_layered_kb(
                 "uo-semantic-resolve extract-plan confirm, or pass --allow-empty-plan for tests"
             )
 
-    if "host" in selected:
-        t0 = time.perf_counter()
-        host = extract_host_subgraph(
+    if "host" in selected and "kernel" in selected:
+        from uo.scripts.parallel_layer_extract import extract_host_kernel_parallel
+
+        host, kernel, hk_timing = extract_host_kernel_parallel(
             repo_root,
             op_name,
             architecture=architecture,
             allow_empty_plan=allow_empty_plan,
+            parallel=parallel,
         )
-        write_yaml(ir_dir / "host_subgraph.yaml", host)
-        timing_ms["host"] = int((time.perf_counter() - t0) * 1000)
+        timing_ms.update(hk_timing)
+        _write_ir_yaml(ir_dir / "host_subgraph.yaml", host)
+        _write_ir_yaml(ir_dir / "kernel_subgraph.yaml", kernel)
     else:
-        host = read_yaml(ir_dir / "host_subgraph.yaml") or {"nodes": [], "edges": [], "unresolved": []}
+        if "host" in selected:
+            t0 = time.perf_counter()
+            host = extract_host_subgraph(
+                repo_root,
+                op_name,
+                architecture=architecture,
+                allow_empty_plan=allow_empty_plan,
+            )
+            _write_ir_yaml(ir_dir / "host_subgraph.yaml", host)
+            timing_ms["host"] = int((time.perf_counter() - t0) * 1000)
+        else:
+            host = read_yaml(ir_dir / "host_subgraph.yaml") or {"nodes": [], "edges": [], "unresolved": []}
 
-    if "kernel" in selected:
-        t0 = time.perf_counter()
-        kernel = extract_kernel_subgraph(repo_root, op_name, architecture=architecture)
-        write_yaml(ir_dir / "kernel_subgraph.yaml", kernel)
-        timing_ms["kernel"] = int((time.perf_counter() - t0) * 1000)
-    else:
-        kernel = read_yaml(ir_dir / "kernel_subgraph.yaml") or {"nodes": [], "edges": [], "unresolved": [], "branches": []}
+        if "kernel" in selected:
+            t0 = time.perf_counter()
+            kernel = extract_kernel_subgraph(repo_root, op_name, architecture=architecture)
+            _write_ir_yaml(ir_dir / "kernel_subgraph.yaml", kernel)
+            timing_ms["kernel"] = int((time.perf_counter() - t0) * 1000)
+        else:
+            kernel = read_yaml(ir_dir / "kernel_subgraph.yaml") or {
+                "nodes": [],
+                "edges": [],
+                "unresolved": [],
+                "branches": [],
+            }
+
+    if "host" not in selected:
+        host = read_yaml(ir_dir / "host_subgraph.yaml") or {"nodes": [], "edges": [], "unresolved": []}
+    if "kernel" not in selected:
+        kernel = read_yaml(ir_dir / "kernel_subgraph.yaml") or {
+            "nodes": [],
+            "edges": [],
+            "unresolved": [],
+            "branches": [],
+        }
 
     if "golden" in selected:
         golden = extract_golden(repo_root, op_name)
@@ -178,8 +256,8 @@ def build_layered_kb(
 
     if "bridge" in selected:
         t0 = time.perf_counter()
-        bridge = reconcile_bridge(repo_root, op_name)
-        write_yaml(ir_dir / "bridge.yaml", bridge)
+        bridge = reconcile_bridge(repo_root, op_name, persist=False)
+        _write_ir_yaml(ir_dir / "bridge.yaml", bridge)
         timing_ms["bridge"] = int((time.perf_counter() - t0) * 1000)
     else:
         bridge = read_yaml(ir_dir / "bridge.yaml") or {"bridge_nodes": [], "bridge_edges": [], "unresolved": [], "diagnostics": []}
@@ -325,8 +403,8 @@ def build_layered_kb(
             ),
         },
     }
-    write_yaml(ir_dir / "operator_graph.yaml", graph)
-    write_yaml(ir_dir / "unresolved.yaml", {"version": 1, "op_name": op_name, "items": unresolved})
+    _write_ir_yaml(ir_dir / "operator_graph.yaml", graph)
+    _write_ir_yaml(ir_dir / "unresolved.yaml", {"version": 1, "op_name": op_name, "items": unresolved})
 
     # Classify input_derivable from graph markers (no key_cards product).
     try:
@@ -337,39 +415,50 @@ def build_layered_kb(
     except Exception as exc:  # noqa: BLE001
         graph.setdefault("stats", {})["input_derivable"] = {"status": "error", "error": str(exc)}
 
-    from uo.scripts.kb_query_export import materialize_testcase_contract_files
+    manifest = read_yaml(uo_root / "manifest.yaml") or {}
+    run_id = str(manifest.get("current_run_id") or manifest.get("current_run") or "")
+    _write_closure_summary(
+        uo_root,
+        op_name=op_name,
+        entrypoint_graph=entrypoint_graph,
+        graph=graph,
+        run_id=run_id,
+    )
 
-    materialize_testcase_contract_files(uo_root, graph)
+    if build_mode == "full":
+        from uo.scripts.publish_kb_products import publish_kb_products
 
-    t_export = time.perf_counter()
-    try:
-        from uo.scripts.export_kb_graph import export_kb_graph
-
-        kb_graph_stats = export_kb_graph(repo_root, op_name, write=True)
+        t_export = time.perf_counter()
+        publish_stats = publish_kb_products(
+            repo_root,
+            op_name,
+            graph=graph,
+            write=True,
+            include_testcase_contract=True,
+            include_integrity=False,
+        )
+        kb_graph_stats = publish_stats.get("kb_graph") if isinstance(publish_stats.get("kb_graph"), dict) else {}
+        human_stats = publish_stats.get("human_views") if isinstance(publish_stats.get("human_views"), dict) else {}
         graph.setdefault("stats", {})["kb_graph"] = {
             "entity_count": kb_graph_stats.get("entity_count"),
             "relation_count": kb_graph_stats.get("relation_count"),
             "status": kb_graph_stats.get("status"),
         }
-    except Exception as exc:  # noqa: BLE001
-        graph.setdefault("stats", {})["kb_graph"] = {"status": "error", "error": str(exc)}
-
-    try:
-        from uo.scripts.export_human_views import export_human_views
-
-        human_stats = export_human_views(uo_root, write=True)
         graph.setdefault("stats", {})["human_views"] = {
-            "key_count": (human_stats.get("keys_table") or {}).get("key_count"),
+            "key_count": (human_stats.get("keys_table") or {}).get("key_count")
+            if isinstance(human_stats.get("keys_table"), dict)
+            else None,
             "ktpl_count": human_stats.get("ktpl_count"),
-            "status": "ok",
+            "status": "ok" if human_stats else "skipped",
         }
-    except Exception as exc:  # noqa: BLE001
-        graph.setdefault("stats", {})["human_views"] = {"status": "error", "error": str(exc)}
-    timing_ms["yaml_export"] = int((time.perf_counter() - t_export) * 1000)
+        timing_ms["yaml_export"] = int((time.perf_counter() - t_export) * 1000)
+    else:
+        timing_ms["yaml_export"] = 0
     timing_ms["total"] = int((time.perf_counter() - build_t0) * 1000)
     graph.setdefault("stats", {})["timing_ms"] = timing_ms
     graph.setdefault("stats", {})["macro_materialization"] = macro_materialization
-    write_yaml(ir_dir / "build_layered_timing.yaml", {"version": 1, "timing_ms": timing_ms})
+    graph.setdefault("stats", {})["build_mode"] = build_mode
+    _write_ir_yaml(ir_dir / "build_layered_timing.yaml", {"version": 1, "timing_ms": timing_ms, "mode": build_mode})
 
     # Seed rebuild + layer fingerprints so post-adjudicate rebuild can skip / select layers.
     try:
@@ -421,6 +510,17 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Allow missing ir/extract_plan.yaml (tests / fail-soft only)",
     )
+    parser.add_argument(
+        "--mode",
+        default="full",
+        choices=sorted(BUILD_MODES),
+        help="structural: IR only; full: IR + publish products (default)",
+    )
+    parser.add_argument(
+        "--no-parallel",
+        action="store_true",
+        help="Disable host+kernel parallel extraction",
+    )
     args = parser.parse_args(argv)
     repo_root = Path(args.repo).resolve()
     op_name = safe_op_name(args.op_name, repo_root)
@@ -433,6 +533,8 @@ def main(argv: list[str] | None = None) -> int:
         confirmation_patch=patch,
         layers=layer_set,
         allow_empty_plan=bool(args.allow_empty_plan),
+        mode=args.mode,
+        parallel=False if args.no_parallel else None,
     )
     print(
         f"layered KB nodes={graph['stats']['node_count']} edges={graph['stats']['edge_count']} "

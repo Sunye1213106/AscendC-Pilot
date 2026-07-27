@@ -123,20 +123,30 @@ def _run_export_integrity(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
     uo = _uo(project_root)
     errors: list[str] = []
     try:
-        from uo.scripts.export_kb_graph import export_kb_graph  # type: ignore[import-not-found]
+        from uo.scripts.publish_kb_products import publish_kb_products  # type: ignore[import-not-found]
+        from uo.scripts._ir_io import read_yaml
 
-        export_kb_graph(project_root, op_name=None)
+        man = read_yaml(uo / "manifest.yaml") or {}
+        op_name = str(man.get("op_name") or project_root.name).strip()
+        payload = publish_kb_products(
+            project_root,
+            op_name,
+            write=True,
+            include_testcase_contract=True,
+            include_integrity=True,
+        )
+        ok = bool(payload.get("ok", True))
+        integrity = payload.get("integrity") if isinstance(payload.get("integrity"), dict) else {}
+        if not ok:
+            errors.append("publish_kb_products failed")
+        return {
+            "ok": ok and not errors,
+            "integrity": integrity,
+            "publish": payload,
+            "errors": errors,
+        }
     except Exception as exc:  # noqa: BLE001
-        errors.append(f"export_kb_graph: {exc}"[:200])
-    try:
-        from uo.scripts.check_kb_integrity import check_kb_integrity  # type: ignore[import-not-found]
-
-        payload = check_kb_integrity(uo)
-        ok = bool(payload.get("ok")) if isinstance(payload, dict) else False
-        return {"ok": ok and not errors, "integrity": payload if isinstance(payload, dict) else {}, "errors": errors}
-    except Exception as exc:  # noqa: BLE001
-        errors.append(f"check_kb_integrity: {exc}"[:200])
-        # Write a minimal integrity stub only when nothing exists (tests / dry runs).
+        errors.append(f"publish_kb_products: {exc}"[:200])
         gate = uo / "checks" / "integrity.yaml"
         if not gate.is_file():
             gate.parent.mkdir(parents=True, exist_ok=True)
@@ -648,6 +658,7 @@ def _run_detect_score_pre(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
             architecture=architecture,
             layers={"entrypoints"},
             allow_empty_plan=True,
+            mode="structural",
         )
         ep_path = uo / "ir" / "entrypoint_graph.yaml"
         if not ep_path.is_file():
@@ -724,6 +735,7 @@ def _run_extract_plan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
                 architecture=architecture,
                 layers={"entrypoints", "host", "kernel", "tilingkey", "bridge"},
                 allow_empty_plan=False,
+                mode="structural",
             )
             stats = (layered or {}).get("stats") if isinstance(layered, dict) else {}
             return {
@@ -1084,15 +1096,6 @@ def _run_recheck_closure(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
             }
         write_yaml(fp_path, {"fingerprint": fingerprint, "payload": fp_payload})
 
-        # Optional integrity subset
-        integrity = {}
-        if op_name:
-            try:
-                from uo.scripts.check_kb_integrity import check_kb_integrity
-
-                integrity = check_kb_integrity(project_root, op_name, write_outputs=False)
-            except Exception as exc:  # noqa: BLE001
-                integrity = {"error": str(exc)[:200]}
         out = {
             "ok": ok,
             "engine": "recheck_closure",
@@ -1101,7 +1104,8 @@ def _run_recheck_closure(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
             "blocking_gap_count": blocking_gap_count,
             "unconsumed_patch_count": unconsumed,
             "total_semantic_batches": budget.get("total_semantic_batches"),
-            "integrity_status": integrity.get("status") if isinstance(integrity, dict) else None,
+            "integrity_status": "deferred_to_export_integrity",
+            "integrity_recomputed": False,
             "attempts_unchanged": True,
             "fingerprint": fingerprint,
             **stats,

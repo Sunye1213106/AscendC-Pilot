@@ -88,7 +88,13 @@ def update_operator(
     if plan.get("mode") == "full_extract":
         layers = set()  # empty => all layers in build_layered_kb
 
-    graph = build_layered_kb(repo_root, op_name, architecture=architecture, layers=layers or None)
+    graph = build_layered_kb(
+        repo_root,
+        op_name,
+        architecture=architecture,
+        layers=layers or None,
+        mode="structural",
+    )
     write_yaml(update_dir / "rebuild_layers.yaml", {"layers": graph.get("rebuild_layers") or sorted(layers)})
 
     _bump_manifest(uo_root, repo_root, run_id, change_set.get("head_revision"))

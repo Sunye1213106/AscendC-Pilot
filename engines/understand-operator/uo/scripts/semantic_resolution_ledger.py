@@ -629,6 +629,7 @@ def rebuild_derived_graphs(
                 architecture=architecture,
                 layers=layers_set,
                 allow_empty_plan=True,
+                mode="structural",
             )
             build_layered_kb_invoked = True
             large_yaml_reexported = True
