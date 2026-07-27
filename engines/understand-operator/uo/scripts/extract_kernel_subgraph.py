@@ -190,7 +190,13 @@ class FieldIntUsage:
     branch_values: set[int] = field(default_factory=set)
 
 
-def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str = "arch35") -> dict[str, Any]:
+def extract_kernel_subgraph(
+    repo_root: Path,
+    op_name: str,
+    *,
+    architecture: str = "arch35",
+    file_parallel: bool | None = None,
+) -> dict[str, Any]:
     uo_root = existing_operator_root(repo_root, op_name)
     graph = load_entrypoint_graph(uo_root)
     nodes_by_id = {
@@ -349,6 +355,49 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
     # Tiling-key symbols are compile-injected; do not treat #ifdef KEY as dead.
     soft_undefined = {str(k) for k in (key_index or {})}
 
+    # Optional deterministic file-level parallel parse (structural facts only).
+    preparsed_fns_by_rel: dict[str, list[FunctionDefinition]] = {}
+    preparsed_structural: set[str] = set()
+    try:
+        from uo.scripts.kernel_file_worker import map_kernel_files_parallel, merge_kernel_file_facts
+
+        jobs: list[tuple[Any, ...]] = []
+        for path in sorted(kernel_files, key=lambda p: p.relative_to(repo_root).as_posix()):
+            rel = path.relative_to(repo_root).as_posix()
+            text = source_texts.get(path, "")
+            if not text:
+                continue
+            file_entry_id = _pick_entry_for_file(rel, unit_ctxs, default_entry_id)
+            file_ctx = _ctx_for_entry(unit_ctxs, file_entry_id)
+            jobs.append(
+                (
+                    str(repo_root),
+                    rel,
+                    text,
+                    architecture,
+                    file_entry_id,
+                    str(file_ctx.get("owning_class") or ""),
+                    str(file_ctx.get("unit_id") or ""),
+                    str(file_ctx.get("path_family") or ""),
+                )
+            )
+        if jobs:
+            file_facts = map_kernel_files_parallel(jobs, parallel=file_parallel)
+            merged_facts = merge_kernel_file_facts(file_facts)
+            nodes.extend(merged_facts.get("nodes") or [])
+            edges.extend(merged_facts.get("edges") or [])
+            loaded_fields.update(merged_facts.get("loaded_fields") or [])
+            for fd in merged_facts.get("function_dicts") or []:
+                if not isinstance(fd, dict):
+                    continue
+                fn = FunctionDefinition(**fd)
+                preparsed_fns_by_rel.setdefault(fn.file_path, []).append(fn)
+                all_functions.append(fn)
+            preparsed_structural = set(preparsed_fns_by_rel)
+    except Exception:  # noqa: BLE001
+        preparsed_fns_by_rel = {}
+        preparsed_structural = set()
+
     for path in kernel_files:
         rel = path.relative_to(repo_root).as_posix()
         file_entry_id = _pick_entry_for_file(rel, unit_ctxs, default_entry_id)
@@ -365,73 +414,80 @@ def extract_kernel_subgraph(repo_root: Path, op_name: str, *, architecture: str 
         def _active(line: int) -> bool:
             return macro_info.is_active_line(line)
 
-        file_fns = iter_function_definitions_from_text(
-            repo_root, rel, text, architecture=architecture
-        )
-        file_fn_starts = [fn.start_line for fn in file_fns]
-        all_functions.extend(file_fns)
-        class_ids: dict[str, str] = {}
-        for fn in file_fns:
-            fn_node = _function_definition_node(fn, extraction_unit_id=extraction_unit_id)
-            nodes.append(fn_node)
-            cls = fn.class_or_namespace or file_class or "Unknown"
-            if cls not in class_ids:
-                kcls = mint_symbol_identity(
-                    kind="kernel_class",
-                    name=cls,
-                    file_path=rel,
-                    qualified_name=cls,
-                    class_or_namespace=cls,
-                    architecture=architecture,
-                    path_family=str(file_ctx.get("path_family") or ""),
-                    prefix="KCLS",
-                )
-                class_ids[cls] = kcls.stable_id
-                nodes.append(
-                    {
-                        "id": kcls.stable_id,
-                        "layer": "kernel",
-                        "node_type": "KernelClass",
-                        "name": cls,
-                        "qualified_name": cls,
-                        "file_path": rel,
-                        "start_line": 0,
-                        "end_line": 0,
-                        "identity_key": kcls.identity_key,
-                        "symbol_ref": kcls.as_dict(),
-                        "extraction_unit_id": extraction_unit_id or None,
-                    }
-                )
+        if rel in preparsed_structural:
+            file_fns = list(preparsed_fns_by_rel.get(rel) or [])
+            file_fn_starts = [fn.start_line for fn in file_fns]
+            class_ids: dict[str, str] = {}
+            # Worker already emitted FileScope; keep id for macro ownership below.
+            file_scope_id = stable_id("FSCOPE_", rel)
+        else:
+            file_fns = iter_function_definitions_from_text(
+                repo_root, rel, text, architecture=architecture
+            )
+            file_fn_starts = [fn.start_line for fn in file_fns]
+            all_functions.extend(file_fns)
+            class_ids = {}
+            for fn in file_fns:
+                fn_node = _function_definition_node(fn, extraction_unit_id=extraction_unit_id)
+                nodes.append(fn_node)
+                cls = fn.class_or_namespace or file_class or "Unknown"
+                if cls not in class_ids:
+                    kcls = mint_symbol_identity(
+                        kind="kernel_class",
+                        name=cls,
+                        file_path=rel,
+                        qualified_name=cls,
+                        class_or_namespace=cls,
+                        architecture=architecture,
+                        path_family=str(file_ctx.get("path_family") or ""),
+                        prefix="KCLS",
+                    )
+                    class_ids[cls] = kcls.stable_id
+                    nodes.append(
+                        {
+                            "id": kcls.stable_id,
+                            "layer": "kernel",
+                            "node_type": "KernelClass",
+                            "name": cls,
+                            "qualified_name": cls,
+                            "file_path": rel,
+                            "start_line": 0,
+                            "end_line": 0,
+                            "identity_key": kcls.identity_key,
+                            "symbol_ref": kcls.as_dict(),
+                            "extraction_unit_id": extraction_unit_id or None,
+                        }
+                    )
+                    edges.append(
+                        {
+                            "id": mint_edge_id("contains", file_entry_id, kcls.stable_id),
+                            "type": "contains",
+                            "source": file_entry_id,
+                            "target": kcls.stable_id,
+                        }
+                    )
                 edges.append(
                     {
-                        "id": mint_edge_id("contains", file_entry_id, kcls.stable_id),
+                        "id": mint_edge_id("contains", class_ids[cls], fn.stable_id),
                         "type": "contains",
-                        "source": file_entry_id,
-                        "target": kcls.stable_id,
+                        "source": class_ids[cls],
+                        "target": fn.stable_id,
                     }
                 )
-            edges.append(
+
+            file_scope_id = stable_id("FSCOPE_", rel)
+            nodes.append(
                 {
-                    "id": mint_edge_id("contains", class_ids[cls], fn.stable_id),
-                    "type": "contains",
-                    "source": class_ids[cls],
-                    "target": fn.stable_id,
+                    "id": file_scope_id,
+                    "layer": "kernel",
+                    "node_type": "FileScope",
+                    "name": Path(rel).name,
+                    "qualified_name": rel,
+                    "file_path": rel,
+                    "start_line": 0,
+                    "end_line": 0,
                 }
             )
-
-        file_scope_id = stable_id("FSCOPE_", rel)
-        nodes.append(
-            {
-                "id": file_scope_id,
-                "layer": "kernel",
-                "node_type": "FileScope",
-                "name": Path(rel).name,
-                "qualified_name": rel,
-                "file_path": rel,
-                "start_line": 0,
-                "end_line": 0,
-            }
-        )
 
         for match in TDF_ASSIGN_RE.finditer(text):
             line = _line_for(text_line_starts, match.start())
