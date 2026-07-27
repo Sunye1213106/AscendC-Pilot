@@ -619,6 +619,21 @@ detect_score_pre → extract_plan → detect_score_post
 
 **FAG arch35 局部回归**：boundary `inputs=27/outputs=7`，readable_source_count=confirmed；报告 `docs/performance/fag_arch35_semantic_closure_report.json`。完整 `acp complete` 仍需 Host LLM（W3）。
 
+### A55：性能优化 P0/P1 缺口修复 — TG evidence 漂移 + update integrity 顺序（2026-07-27）
+
+| 现象 | 根因 | 落点 | 状态 |
+|---|---|---|---|
+| TG `required_read`/`optional_read` evidence 丢失或混入 field_accesses | `ConsumerIndex` 把 `required_optional_evidence` 塞进 `field_accesses`；消费端用永不存在的 `kind=="required_optional"` 反推 | 共享 `consumer_index.required_optional_evidence`；`consumer_evidence` 只消费 index；stat/sha256 fingerprint | 已做 |
+| `uo-update` apply 因 stale sqlite 失败 | `update_operator` structural 后先 `check_kb_integrity` 再 export | apply 只做 structural+receipt；gates/export 留给 `confidence_report`/`export_integrity`→`publish_kb_products` | 已做 |
+| human views 双导出 | publish 与 integrity 各 export 一次 | `check_kb_integrity(refresh_human_views=False)`；publish 末尾单次 `export_human_views` | 已做 |
+| update Action 重复 detect/plan | plan/apply/diff 各自重跑 | 共享 `update_artifact_io.load_*_if_fresh`；engines 只调用 | 已做 |
+| kernel 文件级并行未接入 / 测试是 fake | worker 脚手架未挂 extract；monkeypatch 假并行 | `kernel_file_worker` + `extract_kernel_subgraph`；真实多文件串并等价测试；fallback 可观测 | 已做 |
+| SQLite skip 太晚 / YAML 仍全量 dump | skip 在 entity 物化后；无 content-hash sidecar | `export_kb_graph` 前移 skip；`_ir_io.write_yaml_if_changed` sidecar | 已做 |
+
+**不做**：不在 skill/METHOD/prompt 写性能例外；不改 scoring 阈值；不硬编码 FAG。
+
+**性能文档**：`docs/performance/after.md`；探针 `scripts/profile_uo_pipeline.py`（有效 run_id、rebuild error、可选 TG 双跑）。
+
 
 ## 14. 一句话原则（沉淀）
 
