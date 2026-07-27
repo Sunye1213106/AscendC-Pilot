@@ -54,7 +54,14 @@ def _semantic_digest(data: dict[str, Any]) -> str:
 
 
 def _hash_sidecar(path: Path) -> Path:
-    return path.with_name(f".{path.name}.semantic-hash.json")
+    import os
+    import tempfile
+
+    root = Path(os.environ.get("ASCENDC_PILOT_CACHE_DIR") or tempfile.gettempdir())
+    cache_dir = root / "ascendc-pilot" / "yaml-hashes"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    key = hashlib.sha256(str(path.resolve()).encode("utf-8", errors="surrogatepass")).hexdigest()
+    return cache_dir / f"{key}.json"
 
 
 def _read_hash_sidecar(path: Path) -> dict[str, Any]:
