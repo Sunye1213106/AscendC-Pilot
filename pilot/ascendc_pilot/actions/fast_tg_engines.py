@@ -161,6 +161,18 @@ def _receipt_path(project_root: Path) -> Path:
     return project_root / ".ascendc-pilot" / "tg" / "realization" / "contract_fastpath.yaml"
 
 
+def _artifact_hashes(project_root: Path) -> dict[str, str]:
+    tg = project_root / ".ascendc-pilot" / "tg"
+    out: dict[str, str] = {}
+    for path in _required_artifacts(project_root):
+        try:
+            rel = path.relative_to(tg).as_posix()
+        except ValueError:
+            rel = path.as_posix()
+        out[rel] = _hash_file(path) if path.is_file() else "missing"
+    return out
+
+
 def _cache_valid(project_root: Path, consumer: Path) -> tuple[bool, str, dict[str, Any]]:
     if any(not path.is_file() or path.stat().st_size == 0 for path in _required_artifacts(project_root)):
         return False, "", {}
@@ -170,6 +182,7 @@ def _cache_valid(project_root: Path, consumer: Path) -> tuple[bool, str, dict[st
         receipt.get("status") == "complete"
         and receipt.get("fingerprint") == fingerprint
         and receipt.get("consumer_root") == consumer.as_posix()
+        and receipt.get("artifact_hashes") == _artifact_hashes(project_root)
     )
     return bool(valid), fingerprint, inputs
 
@@ -183,6 +196,7 @@ def _write_receipt(project_root: Path, consumer: Path, *, status: str = "complet
         "consumer_root": consumer.as_posix(),
         "inputs": inputs,
         "required_artifacts": [p.as_posix() for p in _required_artifacts(project_root)],
+        "artifact_hashes": _artifact_hashes(project_root),
     }
     _write_yaml_if_changed(_receipt_path(project_root), payload)
     return payload
