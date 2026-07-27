@@ -512,18 +512,18 @@ def _resolve_run_action_for_patch(
         aid = aid or str(aa.get("action_id") or "")
     except Exception:  # noqa: BLE001
         pass
-    if (not rid or not aid) and registration_id:
+    if (not rid or not aid) and (registration_id or dispatch_nonce):
         try:
-            from ascendc_pilot.actions.external_session_registry import global_index_path
+            from ascendc_pilot.actions.external_session_registry import lookup_registration
 
-            idx = _load_yaml(global_index_path(root))
-            for entry in reversed(list(idx.get("entries") or [])):
-                if not isinstance(entry, dict):
-                    continue
-                if entry.get("registration_id") == registration_id:
-                    rid = rid or str(entry.get("run_id") or "")
-                    aid = aid or str(entry.get("action_id") or "")
-                    break
+            found = lookup_registration(
+                root,
+                registration_id=registration_id,
+                dispatch_nonce=dispatch_nonce,
+            )
+            if found:
+                rid = rid or str(found.get("run_id") or "")
+                aid = aid or str(found.get("action_id") or "")
         except Exception:  # noqa: BLE001
             pass
     return rid, aid

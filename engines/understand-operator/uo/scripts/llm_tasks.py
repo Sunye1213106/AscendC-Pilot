@@ -137,12 +137,17 @@ def _infer_patch_type(task: dict[str, Any], action: str) -> str:
     ttype = str(task.get("type") or "")
     effective = str(task.get("effective_task_type") or "")
     obj = str(task.get("object_type") or "")
+    # Bridge object type / typed_bridge_resolution beats generic enrichment remaps.
+    if (
+        obj == "tilingdata_bridge"
+        or ttype in {"tilingdata_bridge", "typed_bridge_resolution"}
+        or effective == "typed_bridge_resolution"
+    ):
+        return "tilingdata_bridge_resolution"
     if effective == "candidate_generation" or ttype == "candidate_generation":
         return "candidate_enrichment"
     if effective == "evidence_enrichment" or ttype == "evidence_enrichment":
         return "scope_expansion_request"
-    if obj == "tilingdata_bridge" or ttype == "tilingdata_bridge":
-        return "tilingdata_bridge_resolution"
     if obj == "entrypoint_node":
         return "entrypoint_node_resolution"
     if obj == "call_edge":

@@ -329,7 +329,25 @@ def write_include_closure_ssot(
         for u in unresolved
         if isinstance(u, dict) and str(u.get("kind") or "") == "include_target_ambiguous"
     ]
-    status = "failed" if body.get("error") else ("partial" if truncated or ambiguous else "complete")
+    blocking_kinds = {
+        "include_target_missing",
+        "include_target_ambiguous",
+        "include_read_failed",
+        "include_closure_file_budget",
+        "include_closure_depth_budget",
+    }
+    blocking_unresolved = [
+        u
+        for u in unresolved
+        if isinstance(u, dict) and str(u.get("kind") or "") in blocking_kinds
+    ]
+    # external_system_header / generated_header do not block completeness.
+    if body.get("error"):
+        status = "failed"
+    elif truncated or blocking_unresolved:
+        status = "partial"
+    else:
+        status = "complete"
     payload = {
         "schema_version": 1,
         "status": status,

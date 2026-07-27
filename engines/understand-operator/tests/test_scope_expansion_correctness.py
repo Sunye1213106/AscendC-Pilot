@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 from uo.scripts._ir_io import read_yaml, write_yaml
@@ -156,16 +157,13 @@ def test_ambiguous_include_is_not_verified(tmp_path: Path) -> None:
         confirmed_rels=["op_host/main.cpp"],
         uo_root=uo,
     )
-    # Must not silently accept via basename; either applied via unique resolve from source dir, or ambiguous/reject
-    if "op_host/a/dup.h" in audit["applied_files"]:
-        # quote include from main.cpp parent may unique-resolve via suffix index failure → ambiguous
-        pass
-    else:
-        assert any(
-            d.get("disposition") in {"ambiguous_reachability", "rejected"}
-            or d.get("reason") in {"ambiguous_reachability", "not_reachable", "include_target_ambiguous"}
-            for d in audit["file_dispositions"]
-        )
+    # Must not silently accept ambiguous include targets.
+    assert "op_host/a/dup.h" not in audit["applied_files"]
+    assert any(
+        d.get("disposition") in {"ambiguous_reachability", "rejected"}
+        or d.get("reason") in {"ambiguous_reachability", "not_reachable", "include_target_ambiguous"}
+        for d in audit["file_dispositions"]
+    )
 
 
 def test_include_closure_single_ssot(tmp_path: Path) -> None:
@@ -188,7 +186,55 @@ def test_scope_expansion_requires_index_receipt(tmp_path: Path) -> None:
     assert result.get("ok") is True
     assert result.get("pending_index") is True
     assert "detect_score_post" not in (result.get("next_actions") or [])
+    assert "uo_scope_record_index" in (result.get("next_actions") or [])
     assert (uo / "ir" / "cbm_reindex_request.yaml").is_file()
     assert (uo / "ir" / "include_closure.yaml").is_file()
     ready = cbm_index_ready_for_score(uo)
     assert ready.get("ok") is False
+
+    from uo.scripts.scope_expansion import complete_cbm_index_receipt
+
+    receipt = complete_cbm_index_receipt(uo, cbm_project="demo_proj", indexed_files=["op_host/extra.h"])
+    assert receipt.get("ok") is True
+    assert read_yaml(uo / "ir" / "cbm_reindex_request.yaml").get("status") == "indexed"
+    meta = json.loads((uo / "cbm" / "index_meta.json").read_text(encoding="utf-8"))
+    assert meta.get("status") == "indexed"
+    assert cbm_index_ready_for_score(uo).get("ok") is True
+
+
+def test_include_target_missing_marks_closure_partial(tmp_path: Path) -> None:
+    from uo.scripts.source_include_closure import expand_local_include_closure, write_include_closure_ssot
+
+    op = tmp_path / "DemoOp"
+    (op / "op_host").mkdir(parents=True)
+    (op / "op_host" / "main.cpp").write_text('#include "missing_local.h"\n', encoding="utf-8")
+    uo = op / ".ascendc-pilot" / "uo"
+    (uo / "ir").mkdir(parents=True)
+    result = expand_local_include_closure(op, [op / "op_host" / "main.cpp"])
+    body = write_include_closure_ssot(uo, closure=result, repo_root=op)
+    assert any(
+        u.get("kind") == "include_target_missing" for u in (body.get("unresolved_includes") or [])
+    )
+    assert body.get("status") == "partial"
+    assert include_closure_is_complete(uo) is False
+
+
+def test_scope_evidence_lines_only_without_snippet_rejected(tmp_path: Path) -> None:
+    from uo.scripts.source_evidence import verify_scope_symbol_evidence
+
+    op, _uo = _op_with_include(tmp_path)
+    cand = op / "op_host" / "extra.h"
+    out = verify_scope_symbol_evidence(
+        op,
+        "op_host/extra.h",
+        cand,
+        windows=[{"file": "op_host/extra.h", "lines": [1, 1]}],
+        missing_symbol="FooBar",
+    )
+    assert out.get("ok") is False
+    assert out.get("matched") is not True
+    assert (out.get("error") or out.get("reason_code")) in {
+        "EVIDENCE_SNIPPET_REQUIRED",
+        "EVIDENCE_SYMBOL_ABSENT",
+        "EVIDENCE_WINDOW_MISSING",
+    }

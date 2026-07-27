@@ -39,28 +39,36 @@ def _stable_hash(payload: Any) -> str:
 
 
 def current_scope_identity(uo_root: Path) -> dict[str, Any]:
-    """Return scope_revision / scope_fingerprint / confirmed_sources_hash for freshness."""
+    """Return scope_revision / scope_fingerprint / confirmed_sources_hash for freshness.
+
+    Fingerprint is always recomputed from confirmed scope content. Persisted
+    snapshot fingerprints are validation-only and must not gate freshness.
+    """
     from uo.scripts.scope_expansion import _confirmed_rels, _latest_scope_confirmed
 
     path, scope = _latest_scope_confirmed(uo_root)
     rels = sorted(_confirmed_rels(scope))
     revision = scope.get("scope_revision")
-    if revision is None and path is not None:
-        snap = read_yaml(path.parent / "scope_snapshot.yaml") or {}
-        revision = snap.get("scope_revision")
-    confirmed_sources_hash = _stable_hash(rels)[:32]
-    # Prefer persisted fingerprint from snapshot when present.
-    snap_fp = ""
+    snap: dict[str, Any] = {}
     if path is not None:
         snap = read_yaml(path.parent / "scope_snapshot.yaml") or {}
-        snap_fp = str(snap.get("scope_fingerprint") or snap.get("source_snapshot_hash") or "")
-    scope_fingerprint = snap_fp or _stable_hash({"files": rels, "revision": revision})[:32]
-    return {
-        "scope_revision": revision if revision is not None else 0,
-        "scope_fingerprint": scope_fingerprint,
+        if revision is None:
+            revision = snap.get("scope_revision")
+    if revision is None:
+        revision = 0
+    confirmed_sources_hash = _stable_hash(rels)[:32]
+    computed_fp = _stable_hash({"confirmed_sources": rels, "scope_revision": revision})[:32]
+    persisted_fp = str(snap.get("scope_fingerprint") or snap.get("source_snapshot_hash") or "")
+    out: dict[str, Any] = {
+        "scope_revision": revision,
+        "scope_fingerprint": computed_fp,
         "confirmed_sources_hash": confirmed_sources_hash,
         "confirmed_sources": rels,
     }
+    if persisted_fp and persisted_fp != computed_fp:
+        out["status"] = "inconsistent"
+        out["persisted_scope_fingerprint"] = persisted_fp
+    return out
 
 
 def compute_change_set_fingerprint(
@@ -143,6 +151,12 @@ def load_change_set_if_fresh(
 
     scope_now = current_scope_identity(uo_root)
     if cs_scope_fp != str(scope_now.get("scope_fingerprint") or ""):
+        return None
+    cs_rev = doc.get("scope_revision")
+    if cs_rev is not None and int(cs_rev) != int(scope_now.get("scope_revision") or 0):
+        return None
+    cs_sources_hash = str(doc.get("confirmed_sources_hash") or "").strip()
+    if cs_sources_hash and cs_sources_hash != str(scope_now.get("confirmed_sources_hash") or ""):
         return None
 
     expected_cs_fp = compute_change_set_fingerprint(

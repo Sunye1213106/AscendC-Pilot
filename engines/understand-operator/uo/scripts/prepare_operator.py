@@ -189,9 +189,20 @@ def main(argv: list[str] | None = None) -> int:
                 "operator_path": scope.get("operator_path") or "",
                 "dependency_roots": scope.get("dependency_roots") or [],
                 "scope_hash": scope.get("scope_hash") or "",
+                "status": "indexed",
                 "cbm_status": status,
             },
         )
+        try:
+            from uo.scripts.scope_expansion import complete_cbm_index_receipt
+
+            complete_cbm_index_receipt(
+                base,
+                cbm_project=str(args.cbm_project or ""),
+                indexed_files=confirmed_files,
+            )
+        except Exception:  # noqa: BLE001
+            pass
         write_text(
             base / "cbm" / "cbm_mcp_log.md",
             "# CBM Index Log\n\n"
@@ -448,7 +459,7 @@ def _update_manifest_scope(base: Path, run_id: str, repo_root: Path) -> None:
         return
 
 
-def _current_scope_meta(base: Path) -> dict[str, Any]:
+def _current_scope_meta(base: Path) -> dict[str, object]:
     try:
         run_id = _current_run_id(base)
     except Exception:  # noqa: BLE001
@@ -456,7 +467,21 @@ def _current_scope_meta(base: Path) -> dict[str, Any]:
     phase0 = base / "runs" / run_id / "scope"
     confirmed = read_yaml_mapping(phase0 / "scope_confirmed.yaml")
     if confirmed:
-        files = confirmed.get("confirmed_file_list") if isinstance(confirmed.get("confirmed_file_list"), list) else []
+        files_raw = (
+            confirmed.get("confirmed_source_files")
+            or confirmed.get("confirmed_file_list")
+            or confirmed.get("files")
+            or []
+        )
+        files: list[object] = []
+        if isinstance(files_raw, list):
+            for item in files_raw:
+                if isinstance(item, str):
+                    files.append(item)
+                elif isinstance(item, dict):
+                    p = str(item.get("path") or item.get("file") or "").strip()
+                    if p:
+                        files.append(p)
         roots = _roots_for_confirmed_files(files)
         digest = hashlib.sha256()
         for item in files:
@@ -486,7 +511,7 @@ def _current_scope_meta(base: Path) -> dict[str, Any]:
     }
 
 
-def _roots_for_confirmed_files(files: list[Any]) -> list[dict[str, str]]:
+def _roots_for_confirmed_files(files: list[object]) -> list[dict[str, str]]:
     roots: dict[str, dict[str, str]] = {}
     for item in files:
         raw = item.get("path") if isinstance(item, dict) else item

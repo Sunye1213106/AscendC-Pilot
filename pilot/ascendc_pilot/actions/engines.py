@@ -1036,10 +1036,22 @@ def _run_apply_scope_expansion(project_root: Path, ctx: dict[str, Any]) -> dict[
             architecture=arch or "arch35",
         )
         out = {"ok": bool(result.get("ok")), "engine": "apply_scope_expansion", **result}
-        if result.get("ok") and result.get("new_files"):
-            out["recovery_actions"] = ["detect_score_post", "rebuild_from_ledger"]
-            out["next_actions"] = ["detect_score_post"]
-        elif result.get("status") == "human_required":
+        # Preserve scope_expansion next_actions (e.g. uo_scope_record_index when
+        # pending_index). Never force detect_score_post before index receipt.
+        if result.get("pending_index") or "uo_scope_record_index" in (
+            result.get("next_actions") or []
+        ):
+            out["next_actions"] = list(result.get("next_actions") or ["uo_scope_record_index"])
+            out["recovery_actions"] = list(
+                result.get("recovery_actions") or ["uo_scope_record_index"]
+            )
+        elif result.get("ok") and result.get("new_files"):
+            # Index already ready / no reindex pending — allow score refresh.
+            if not out.get("next_actions"):
+                out["next_actions"] = ["detect_score_post"]
+            if not out.get("recovery_actions"):
+                out["recovery_actions"] = ["detect_score_post", "rebuild_from_ledger"]
+        if result.get("status") == "human_required":
             out["human_required"] = True
         return out
     except Exception as exc:  # noqa: BLE001

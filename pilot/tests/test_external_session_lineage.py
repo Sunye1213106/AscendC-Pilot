@@ -191,13 +191,22 @@ def test_resume_verified_only_when_host_points_to_previous_child(tmp_path: Path)
 
 
 def test_prepare_resume_reads_control_plane(tmp_path: Path) -> None:
-    patch_external_session_id(
+    register_external_session(
+        tmp_path,
+        run_id="r1",
+        action_id="adjudicate_llm_tasks",
+        primary_session_id="ses_primary",
+        dispatch_nonce="nonce_resume",
+    )
+    patched = patch_external_session_id(
         tmp_path,
         run_id="r1",
         action_id="adjudicate_llm_tasks",
         external_task_session_id="ses_prev",
         primary_session_id="ses_primary",
+        dispatch_nonce="nonce_resume",
     )
+    assert patched.get("ok") is True, patched
     fields = prepare_resume_fields(
         tmp_path,
         run_id="r1",
@@ -206,3 +215,48 @@ def test_prepare_resume_reads_control_plane(tmp_path: Path) -> None:
     )
     assert fields["resume_required"] is True
     assert fields["resume_session_id"] == "ses_prev"
+
+
+def test_patch_without_pending_registration_fails_closed(tmp_path: Path) -> None:
+    bad = patch_external_session_id(
+        tmp_path,
+        run_id="r1",
+        action_id="adjudicate_llm_tasks",
+        external_task_session_id="ses_orphan",
+        primary_session_id="ses_primary",
+    )
+    assert bad.get("ok") is False
+    assert bad.get("error") == "no_pending_registration"
+
+
+def _mp_register_worker(root: str, i: int, q) -> None:
+    from pathlib import Path
+
+    from ascendc_pilot.actions.external_session_registry import register_external_session
+
+    q.put(
+        register_external_session(
+            Path(root),
+            run_id="r1",
+            action_id="adjudicate_llm_tasks",
+            primary_session_id="ses_primary",
+            dispatch_nonce=f"nonce_mp_{i}",
+        )
+    )
+
+
+def test_concurrent_external_session_registration_multiprocess(tmp_path: Path) -> None:
+    import multiprocessing as mp
+
+    ctx = mp.get_context("spawn")
+    q = ctx.Queue()
+    procs = [ctx.Process(target=_mp_register_worker, args=(str(tmp_path), i, q)) for i in range(6)]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join(timeout=30)
+        assert p.exitcode == 0, p.exitcode
+    results = [q.get(timeout=5) for _ in range(6)]
+    assert all(r.get("ok") for r in results), results
+    reg = load_registry(tmp_path, "r1", "adjudicate_llm_tasks")
+    assert len({s.get("registration_id") for s in reg["sessions"]}) == 6

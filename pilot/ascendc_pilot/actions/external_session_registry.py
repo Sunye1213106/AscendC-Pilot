@@ -310,6 +310,38 @@ def register_external_session(
     return {"ok": True, "registration": row, "registration_id": registration_id, "dispatch_nonce": nonce}
 
 
+def lookup_registration(
+    project_root: Path,
+    *,
+    registration_id: str = "",
+    dispatch_nonce: str = "",
+) -> dict[str, Any] | None:
+    """Resolve run_id/action_id from SQLite (control plane). YAML index is not authoritative."""
+    root = Path(project_root)
+    rid = str(registration_id or "").strip()
+    nonce = str(dispatch_nonce or "").strip()
+    if not rid and not nonce:
+        return None
+    with _DB_LOCK:
+        conn = _connect(root)
+        try:
+            _migrate_yaml_once(root, conn)
+            row = None
+            if rid:
+                row = conn.execute(
+                    "SELECT * FROM registrations WHERE registration_id=?",
+                    (rid,),
+                ).fetchone()
+            if row is None and nonce:
+                row = conn.execute(
+                    "SELECT * FROM registrations WHERE dispatch_nonce=?",
+                    (nonce,),
+                ).fetchone()
+            return _row_to_dict(row) if row else None
+        finally:
+            conn.close()
+
+
 def patch_external_session_id(
     project_root: Path,
     *,
@@ -321,6 +353,7 @@ def patch_external_session_id(
     dispatch_nonce: str = "",
     host_reported_resumed_from: str = "",
     actor_id: str = "",
+    allow_orphan_recovery: bool = False,
 ) -> dict[str, Any]:
     """Bind child session id with compare-and-set on registration identity."""
     root = Path(project_root)
@@ -450,6 +483,15 @@ def patch_external_session_id(
             conn.close()
 
     if target_dict is None:
+        if not allow_orphan_recovery:
+            return {
+                "ok": False,
+                "error": "no_pending_registration",
+                "run_id": rid,
+                "action_id": aid,
+                "registration_id": registration_id,
+                "dispatch_nonce": dispatch_nonce,
+            }
         return register_external_session(
             root,
             run_id=rid,

@@ -660,6 +660,25 @@ detect_score_pre → extract_plan → detect_score_post
 **未做**：完整 OpenCode hook / MCP reindex / 全量 FAG `acp complete`（依赖外部环境）；性能自适应调度独立提交。
 
 
+### A57（第二轮 P0/P1 正确性补丁，相对 A56）
+
+静态审查发现 5 个主流程 P0 仍阻塞 `integration_verified`。本轮只修正确性断点：
+
+| # | 问题 | 落点 | 状态 |
+|---|---|---|---|
+| P0-1 | `detect_kb_changes` 不读 `confirmed_source_files` | `_extract_file_list` 与 scope expansion 同 key | 已做 |
+| P0-2 | include missing 仍标 `complete` | `write_include_closure_ssot` blocking kinds → `partial` | 已做 |
+| P0-3 | 无 snippet/SHA 的 lines-only evidence 假通过 | `verify_scope_symbol_evidence` fail-closed | 已做 |
+| P0-4 | Bridge 零候选进 generic candidate_generation | triage 优先 `tilingdata_type_unknown`；`_infer_patch_type` bridge 优先 | 已做 |
+| P0-5 | 非 Host determinant 仍留 missing_producer blocking | 分类后过滤 unresolved/diagnostics | 已做 |
+| P1 | engines 覆盖 `next_actions`→`detect_score_post` | 保留 `uo_scope_record_index` / `pending_index` | 已做 |
+| P1 | record-index 不解除 pending | `complete_cbm_index_receipt` + prepare `--write-index-meta` | 已做 |
+| P1 | freshness 信任过期 snapshot fp | `current_scope_identity` 始终重算；比 revision/hash | 已做 |
+| P1 | patch orphan 自动 register | 默认 `no_pending_registration`；SQLite `lookup_registration` | 已做 |
+
+**判定**：`unit_fix_direction: mostly_correct`；**仍非** `integration_verified` / `full_fag_verified`（未跑 OpenCode hook + MCP + FAG）。
+
+
 ## 14. 一句话原则（沉淀）
 
 1. **Pilot 独占状态**；Skill/Prompt 不推进阶段。  

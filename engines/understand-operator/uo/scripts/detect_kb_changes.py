@@ -118,12 +118,23 @@ def _load_scope_index(uo_root: Path) -> dict[str, str]:
 
 
 def _extract_file_list(doc: dict[str, Any]) -> dict[str, str]:
+    """Parse confirmed scope files — same SSOT keys as scope_expansion._confirmed_rels."""
     raw: list[Any] = []
     frozen = doc.get("frozen_scope")
     if isinstance(frozen, dict):
-        raw = frozen.get("confirmed_file_list") or frozen.get("files") or []
+        raw = (
+            frozen.get("confirmed_source_files")
+            or frozen.get("confirmed_file_list")
+            or frozen.get("files")
+            or []
+        )
     if not raw:
-        raw = doc.get("confirmed_file_list") or []
+        raw = (
+            doc.get("confirmed_source_files")
+            or doc.get("confirmed_file_list")
+            or doc.get("files")
+            or []
+        )
     out: dict[str, str] = {}
     for item in raw if isinstance(raw, list) else []:
         if isinstance(item, str):

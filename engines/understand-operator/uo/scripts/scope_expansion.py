@@ -601,3 +601,48 @@ def cbm_index_ready_for_score(uo_root: Path) -> dict[str, Any]:
             if str(req.get("status") or "") == "pending_index" or meta.get("requested_files"):
                 return {"ok": False, "error": "CBM_INDEX_RECEIPT_REQUIRED", "meta_status": meta.get("status")}
     return {"ok": True}
+
+
+def complete_cbm_index_receipt(
+    uo_root: Path,
+    *,
+    cbm_project: str = "",
+    indexed_files: list[Any] | None = None,
+) -> dict[str, Any]:
+    """Mark MCP index receipt complete — clears pending_index for detect_score_post.
+
+    Called by ``acp uo-scope record-index`` / ``prepare_operator --write-index-meta``.
+    """
+    meta_path = uo_root / "cbm" / "index_meta.json"
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    prev: dict[str, Any] = {}
+    if meta_path.is_file():
+        try:
+            prev = json.loads(meta_path.read_text(encoding="utf-8")) or {}
+        except Exception:  # noqa: BLE001
+            prev = {}
+    req = read_yaml(uo_root / "ir" / "cbm_reindex_request.yaml") or {}
+    files = list(indexed_files or prev.get("indexed_files") or req.get("requested_files") or [])
+    meta = {
+        **prev,
+        "status": "indexed",
+        "cbm_project": cbm_project or prev.get("cbm_project") or "",
+        "indexed_via": prev.get("indexed_via") or "mcp",
+        "indexed_files": files,
+        "requested_files": [],
+        "index_mode": prev.get("index_mode") or "delta",
+        "scope_fingerprint": prev.get("scope_fingerprint") or req.get("scope_fingerprint"),
+    }
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    write_yaml(
+        uo_root / "ir" / "cbm_reindex_request.yaml",
+        {
+            "version": int(req.get("version") or 1),
+            "status": "indexed",
+            "scope_fingerprint": meta.get("scope_fingerprint"),
+            "requested_files": [],
+            "indexed_files": files,
+            "cbm_project": meta.get("cbm_project"),
+        },
+    )
+    return {"ok": True, "status": "indexed", "index_meta": str(meta_path)}

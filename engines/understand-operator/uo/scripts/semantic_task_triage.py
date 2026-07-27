@@ -197,6 +197,23 @@ def classify_task(task: dict[str, Any], *, uo_root: Path | None = None) -> dict[
             "reason": "contract-backed registration/template macro",
         }
 
+    # Typed bridge gaps before generic empty-candidate logic.
+    obj = str(task.get("object_type") or "")
+    ttype = str(task.get("type") or "")
+    if obj == "tilingdata_bridge" or ttype in {"tilingdata_bridge", "typed_bridge_resolution"}:
+        return {
+            "task_id": task.get("task_id"),
+            "category": "tilingdata_type_unknown",
+            "route": "uo-semantic-resolve",
+            "blocking_scope": "extract",
+            "blocking_phase": "extract",
+            "blocks_extract_advance": True,
+            "blocks_workflow_complete": True,
+            "eligible_for_adjudication": score_phase != "pre_semantic",
+            "score_phase": score_phase or "post_semantic",
+            "reason": "typed TilingData bridge gap — resolve via tilingdata_bridge_resolution",
+        }
+
     n_cand = _candidate_count(task)
     strong = _has_strong_match(task)
     scope_ok = _scope_complete(uo_root) if uo_root is not None else False

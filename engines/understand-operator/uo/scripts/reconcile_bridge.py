@@ -142,6 +142,46 @@ def reconcile_bridge(repo_root: Path, op_name: str, *, persist: bool = True) -> 
                 "runtime_domain": kf.get("runtime_domain"),
             }
         )
+
+    # Drop missing-producer blocking for fields that do not require a Host writer.
+    host_producer_not_required = {
+        "compile_macro",
+        "platform_runtime",
+        "kernel_runtime",
+        "external_runtime",
+        "constant",
+        "template_arg",
+        "derived_from_tiling_field",
+        "host_produced",
+    }
+    exempt_leaves = {
+        str(c.get("field_path") or "").split(".")[-1].casefold()
+        for c in field_classifications
+        if c.get("classification") in host_producer_not_required
+    }
+    exempt_leaves |= {
+        str(c.get("id") or "").casefold()
+        for c in field_classifications
+        if c.get("classification") in host_producer_not_required
+    }
+    # Also exempt by normalized leaf name used in _bridge_tilingdata diagnostics.
+    exempt_leaves |= {
+        str(c.get("field_path") or c.get("id") or "").split(".")[-1].casefold()
+        for c in field_classifications
+        if c.get("classification") in host_producer_not_required
+    }
+
+    def _missing_producer_exempt(row: dict[str, Any]) -> bool:
+        if str(row.get("code") or "") != "missing_tiling_field_producer":
+            return False
+        field = str(row.get("field") or "")
+        symbols = [str(s) for s in (row.get("related_symbols") or [])]
+        names = {field.casefold(), *(s.casefold() for s in symbols), field.split(".")[-1].casefold()}
+        return bool(names & exempt_leaves)
+
+    td_unresolved = [u for u in td_unresolved if not (isinstance(u, dict) and _missing_producer_exempt(u))]
+    td_diagnostics = [d for d in td_diagnostics if not (isinstance(d, dict) and _missing_producer_exempt(d))]
+    unresolved = list(td_unresolved) + list(tk_unresolved)
     payload = {
         "version": 2,
         "op_name": op_name,
@@ -153,7 +193,13 @@ def reconcile_bridge(repo_root: Path, op_name: str, *, persist: bool = True) -> 
         "missing_tiling_fields": [d["field"] for d in td_diagnostics if d.get("code") == "missing_tiling_field_producer"],
         "diagnostics": td_diagnostics,
         "unresolved": unresolved,
-        "csv_excluded_determinant_sources": ["BuildConfig", "CompileMacro", "PlatformInfo", "SourceSelection", "KernelRuntimeVariable"],
+        "csv_excluded_determinant_sources": [
+            "BuildConfig",
+            "CompileMacro",
+            "PlatformInfo",
+            "SourceSelection",
+            "KernelRuntimeVariable",
+        ],
         "bridge_metrics": {
             "kernel_loaded_field_count": kernel_loaded,
             "typed_field_count": sum(1 for f in kernel_fields if _norm_type(f.get("owning_type"))),
@@ -164,9 +210,15 @@ def reconcile_bridge(repo_root: Path, op_name: str, *, persist: bool = True) -> 
                 1 for c in field_classifications if c.get("classification") == "derived_from_tiling_field"
             ),
             "compile_macro_count": sum(1 for c in field_classifications if c.get("classification") == "compile_macro"),
-            "platform_runtime_count": sum(1 for c in field_classifications if c.get("classification") == "platform_runtime"),
-            "missing_producer_count": sum(1 for c in field_classifications if c.get("classification") == "missing_producer"),
-            "unresolved_count": len([d for d in td_diagnostics if d.get("code") == "missing_tiling_field_producer"]),
+            "platform_runtime_count": sum(
+                1 for c in field_classifications if c.get("classification") == "platform_runtime"
+            ),
+            "missing_producer_count": sum(
+                1 for c in field_classifications if c.get("classification") == "missing_producer"
+            ),
+            "unresolved_count": len(
+                [d for d in td_diagnostics if d.get("code") == "missing_tiling_field_producer"]
+            ),
             "unknown_type_count": unknown_type_count,
             "coverage_ratio": round(coverage, 4),
         },
