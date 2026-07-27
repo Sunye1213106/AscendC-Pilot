@@ -88,11 +88,8 @@ def build_consumer_evidence(
         ordered_header_candidates = list(index.header_candidates)
         field_accesses = dict(index.field_accesses)
         type_conversion_evidence = dict(index.type_conversions)
+        required_optional_evidence = dict(index.required_optional_evidence)
         test_requirement_refs = list(index.api_calls)
-        for column, refs in field_accesses.items():
-            required_optional_evidence.setdefault(column, []).extend(
-                [r for r in refs if r.get("kind") == "required_optional"]
-            )
     else:
         for path in _bounded_scan(root):
             rel = path.relative_to(root).as_posix()
@@ -320,20 +317,26 @@ def _bounded_scan(root: Path) -> list[Path]:
     return paths
 
 
-def _scan_python_columns(text: str, rel: str) -> dict[str, Any]:
+def _scan_python_columns(
+    text: str,
+    rel: str,
+    *,
+    tree: ast.AST | None = None,
+) -> dict[str, Any]:
     field_accesses: dict[str, list[dict[str, Any]]] = {}
     required_optional_evidence: dict[str, list[dict[str, Any]]] = {}
     type_conversion_evidence: dict[str, list[dict[str, Any]]] = {}
     ordered_header_candidates: list[dict[str, Any]] = []
-    try:
-        tree = ast.parse(text)
-    except SyntaxError:
-        return {
-            "field_accesses": field_accesses,
-            "required_optional_evidence": required_optional_evidence,
-            "type_conversion_evidence": type_conversion_evidence,
-            "ordered_header_candidates": ordered_header_candidates,
-        }
+    if tree is None:
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            return {
+                "field_accesses": field_accesses,
+                "required_optional_evidence": required_optional_evidence,
+                "type_conversion_evidence": type_conversion_evidence,
+                "ordered_header_candidates": ordered_header_candidates,
+            }
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             name = _call_name(node.func)

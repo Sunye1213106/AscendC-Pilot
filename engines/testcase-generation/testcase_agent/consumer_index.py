@@ -22,28 +22,36 @@ class ConsumerIndex:
     ast_cache: dict[str, Any] = field(default_factory=dict)
     header_candidates: list[dict[str, Any]] = field(default_factory=list)
     field_accesses: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    required_optional_evidence: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     type_conversions: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     api_calls: list[dict[str, Any]] = field(default_factory=list)
-    source_read_count: int = 0
+    bytes_read_count: int = 0
     ast_parse_count: int = 0
+    stat_only_hits: int = 0
+    # Back-compat aliases used by older tests / callers.
+    source_read_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "version": 1,
+            "version": 2,
             "consumer_root": self.consumer_root,
             "files": self.files,
             "text_cache": self.text_cache,
             "ast_cache": {k: "cached" for k in self.ast_cache},
             "header_candidates": self.header_candidates,
             "field_accesses": self.field_accesses,
+            "required_optional_evidence": self.required_optional_evidence,
             "type_conversions": self.type_conversions,
             "api_calls": self.api_calls,
-            "source_read_count": self.source_read_count,
+            "bytes_read_count": self.bytes_read_count,
             "ast_parse_count": self.ast_parse_count,
+            "stat_only_hits": self.stat_only_hits,
+            "source_read_count": self.bytes_read_count,
         }
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> ConsumerIndex:
+        bytes_read = int(payload.get("bytes_read_count") or payload.get("source_read_count") or 0)
         return cls(
             consumer_root=str(payload.get("consumer_root") or ""),
             files=list(payload.get("files") or []),
@@ -51,10 +59,13 @@ class ConsumerIndex:
             ast_cache={},
             header_candidates=list(payload.get("header_candidates") or []),
             field_accesses=dict(payload.get("field_accesses") or {}),
+            required_optional_evidence=dict(payload.get("required_optional_evidence") or {}),
             type_conversions=dict(payload.get("type_conversions") or {}),
             api_calls=list(payload.get("api_calls") or []),
-            source_read_count=int(payload.get("source_read_count") or 0),
+            bytes_read_count=bytes_read,
             ast_parse_count=int(payload.get("ast_parse_count") or 0),
+            stat_only_hits=int(payload.get("stat_only_hits") or 0),
+            source_read_count=bytes_read,
         )
 
 
@@ -71,23 +82,51 @@ def _bounded_scan(root: Path) -> list[Path]:
             continue
         if path.suffix.lower() not in TEXT_EXTENSIONS:
             continue
-        if path.stat().st_size > MAX_FILE_BYTES:
+        try:
+            if path.stat().st_size > MAX_FILE_BYTES:
+                continue
+        except OSError:
             continue
         paths.append(path)
     return paths
 
 
-def _fingerprint_files(root: Path, paths: list[Path]) -> str:
-    rows = []
-    for path in paths:
-        rel = path.relative_to(root).as_posix()
-        try:
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
-            rows.append((rel, digest, path.stat().st_size))
-        except OSError:
-            rows.append((rel, "", -1))
-    payload = json.dumps(rows, sort_keys=True)
+def _file_stat_row(root: Path, path: Path) -> dict[str, Any]:
+    rel = path.relative_to(root).as_posix()
+    try:
+        st = path.stat()
+        return {
+            "path": rel,
+            "size": int(st.st_size),
+            "mtime_ns": int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9))),
+        }
+    except OSError:
+        return {"path": rel, "size": -1, "mtime_ns": -1}
+
+
+def _stat_fingerprint(rows: list[dict[str, Any]]) -> str:
+    payload = json.dumps(
+        [(r.get("path"), r.get("size"), r.get("mtime_ns")) for r in rows],
+        sort_keys=True,
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _stats_match_cached(cached_files: list[dict[str, Any]], current_rows: list[dict[str, Any]]) -> bool:
+    if len(cached_files) != len(current_rows):
+        return False
+    by_path = {str(f.get("path") or ""): f for f in cached_files if isinstance(f, dict)}
+    for row in current_rows:
+        prev = by_path.get(str(row.get("path") or ""))
+        if not prev:
+            return False
+        if int(prev.get("size") or -2) != int(row.get("size") or -1):
+            return False
+        if int(prev.get("mtime_ns") or -2) != int(row.get("mtime_ns") or -1):
+            return False
+        if not prev.get("sha256"):
+            return False
+    return True
 
 
 def load_or_build_consumer_index(
@@ -103,15 +142,23 @@ def load_or_build_consumer_index(
         return ConsumerIndex(consumer_root="")
 
     scan_paths = _bounded_scan(root)
-    fp = _fingerprint_files(root, scan_paths)
+    current_rows = [_file_stat_row(root, p) for p in scan_paths]
+    fp = _stat_fingerprint(current_rows)
+
     if not force_rebuild and path.is_file():
         try:
             cached = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(cached, dict) and cached.get("fingerprint") == fp:
+            if (
+                isinstance(cached, dict)
+                and cached.get("fingerprint") == fp
+                and _stats_match_cached(list(cached.get("files") or []), current_rows)
+            ):
                 idx = ConsumerIndex.from_dict(cached)
                 idx.ast_cache = {}
+                idx.bytes_read_count = 0
                 idx.source_read_count = 0
                 idx.ast_parse_count = 0
+                idx.stat_only_hits = len(current_rows)
                 return idx
         except (OSError, json.JSONDecodeError):
             pass
@@ -120,25 +167,34 @@ def load_or_build_consumer_index(
     from .csv_domain_cover import normalize_column_name
 
     idx = ConsumerIndex(consumer_root=str(root))
-    for file_path in scan_paths:
-        rel = file_path.relative_to(root).as_posix()
-        text = file_path.read_text(encoding="utf-8", errors="ignore")
-        idx.source_read_count += 1
+    for file_path, row in zip(scan_paths, current_rows):
+        rel = str(row["path"])
+        try:
+            raw = file_path.read_bytes()
+        except OSError:
+            continue
+        idx.bytes_read_count += 1
+        idx.source_read_count = idx.bytes_read_count
+        digest = hashlib.sha256(raw).hexdigest()
+        text = raw.decode("utf-8", errors="ignore")
         idx.text_cache[rel] = text
         idx.files.append(
             {
                 "path": rel,
-                "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
-                "size": file_path.stat().st_size,
+                "sha256": digest,
+                "size": int(row["size"]),
+                "mtime_ns": int(row["mtime_ns"]),
             }
         )
         if file_path.suffix.lower() == ".py":
+            tree: Any = None
             try:
-                idx.ast_cache[rel] = ast.parse(text)
+                tree = ast.parse(text)
                 idx.ast_parse_count += 1
+                idx.ast_cache[rel] = tree
             except SyntaxError:
                 idx.ast_cache[rel] = None
-            script_info = _scan_python_columns(text, rel)
+            script_info = _scan_python_columns(text, rel, tree=tree)
             for item in script_info["ordered_header_candidates"]:
                 cols = [normalize_column_name(str(c)) for c in (item.get("columns") or [])]
                 idx.header_candidates.append({**item, "columns": cols})
@@ -150,7 +206,7 @@ def load_or_build_consumer_index(
                 idx.type_conversions.setdefault(key, []).extend(refs)
             for column, refs in script_info.get("required_optional_evidence", {}).items():
                 key = normalize_column_name(column)
-                idx.field_accesses.setdefault(key, []).extend(refs)
+                idx.required_optional_evidence.setdefault(key, []).extend(refs)
         elif file_path.suffix.lower() in {".md", ".markdown", ".yaml", ".yml", ".json"}:
             idx.api_calls.extend(_scan_requirement_refs(text, rel))
 
