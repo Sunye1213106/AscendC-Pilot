@@ -51,7 +51,13 @@ def map_rework_stage(stage: str) -> str:
     return str(REWORK_STAGE_ALIASES.get(text) or text)
 
 
-def check_kb_integrity(repo_root: Path, op_name: str, *, write_outputs: bool = True) -> dict[str, Any]:
+def check_kb_integrity(
+    repo_root: Path,
+    op_name: str,
+    *,
+    write_outputs: bool = True,
+    refresh_human_views: bool = True,
+) -> dict[str, Any]:
     uo_root = existing_operator_root(repo_root, op_name)
     issues: list[dict[str, Any]] = []
 
@@ -387,14 +393,19 @@ def check_kb_integrity(repo_root: Path, op_name: str, *, write_outputs: bool = T
             qdoc["decision"] = "fail"
         write_yaml(quality_path, qdoc)
         # Refresh overview so integrity status is visible (not stuck at "unknown").
-        try:
-            from uo.scripts.export_human_views import export_human_views
+        # publish_kb_products passes refresh_human_views=False to avoid double export.
+        if refresh_human_views:
+            try:
+                from uo.scripts.export_human_views import export_human_views
 
-            export_human_views(uo_root, write=True)
-            payload["overview_refreshed"] = True
-        except Exception as exc:  # noqa: BLE001
+                export_human_views(uo_root, write=True)
+                payload["overview_refreshed"] = True
+            except Exception as exc:  # noqa: BLE001
+                payload["overview_refreshed"] = False
+                payload["overview_refresh_error"] = str(exc)
+        else:
             payload["overview_refreshed"] = False
-            payload["overview_refresh_error"] = str(exc)
+            payload["overview_refresh_deferred"] = True
 
     payload["final_status"] = final_result.status
     return payload

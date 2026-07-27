@@ -180,14 +180,19 @@ def _run_plan_update(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     try:
         from uo.scripts.detect_kb_changes import detect_kb_changes
         from uo.scripts.plan_kb_update import plan_kb_update
+        from uo.scripts.update_artifact_io import load_change_set_if_fresh
 
-        change_set = detect_kb_changes(project_root, op_name, write=True)
+        change_set = load_change_set_if_fresh(uo)
+        reused = change_set is not None
+        if change_set is None:
+            change_set = detect_kb_changes(project_root, op_name, write=True)
         plan_kb_update(project_root, op_name, change_set=change_set, write=True)
         out = uo / "summary" / "update_plan.yaml"
         return {
             "ok": out.is_file(),
             "engine": "plan_update",
             "artifact": out.as_posix() if out.is_file() else "",
+            "change_set_reused": reused,
         }
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "plan_update", "error": str(exc)[:300]}
@@ -201,36 +206,51 @@ def _run_apply_update(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
     try:
         from uo.scripts.update_operator import update_operator
 
-        result = update_operator(project_root, op_name, run_id=run_id or None)
+        result = update_operator(
+            project_root,
+            op_name,
+            run_id=run_id or None,
+            reuse_artifacts=True,
+            run_gates=False,
+        )
+        status = str((result or {}).get("status") or "")
         receipt_ok = any((uo / "runs").glob("*/update/receipt.yaml")) if (uo / "runs").is_dir() else False
         diff_ok = (uo / "diff" / "index.yaml").is_file() and (uo / "diff" / "change_set.yaml").is_file()
-        eng_ok = True
-        if isinstance(result, dict) and "ok" in result:
-            eng_ok = bool(result.get("ok"))
+        eng_ok = status in {"pass", "blocked", "noop"} or status == "pass"
+        if status == "fail":
+            eng_ok = False
         return {
-            "ok": eng_ok and diff_ok,
+            "ok": eng_ok and (diff_ok or status == "blocked"),
             "engine": "apply_update",
             "receipt_present": receipt_ok,
             "diff_present": diff_ok,
+            "publish_deferred": bool((result or {}).get("publish_deferred")),
             "run_id": (result.get("run_id") if isinstance(result, dict) else None) or run_id,
             "result_keys": list(result.keys())[:12] if isinstance(result, dict) else [],
+            "status": status,
         }
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "apply_update", "error": str(exc)[:300]}
 
 
 def _run_diff_summary(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """Emit canonical diff/ product (index + change_set + impact + unresolved)."""
-    _uo, op_name, _arch = _uo_op_ctx(project_root, ctx)
+    """Emit canonical diff/ product from existing change_set/update_plan when fresh."""
+    uo, op_name, _arch = _uo_op_ctx(project_root, ctx)
     if not op_name:
         return {"ok": False, "engine": "diff_summary", "error": "op_name required"}
     try:
         from uo.scripts.detect_kb_changes import detect_kb_changes
         from uo.scripts.export_diff_product import export_diff_product
         from uo.scripts.plan_kb_update import plan_kb_update
+        from uo.scripts.update_artifact_io import load_change_set_if_fresh, load_update_plan_if_fresh
 
-        change_set = detect_kb_changes(project_root, op_name, write=True)
-        plan = plan_kb_update(project_root, op_name, change_set=change_set, write=True)
+        change_set = load_change_set_if_fresh(uo)
+        plan = load_update_plan_if_fresh(uo, change_set=change_set) if change_set else None
+        reused = change_set is not None and plan is not None
+        if change_set is None:
+            change_set = detect_kb_changes(project_root, op_name, write=True)
+        if plan is None:
+            plan = plan_kb_update(project_root, op_name, change_set=change_set, write=True)
         product = export_diff_product(
             project_root,
             op_name,
@@ -238,7 +258,7 @@ def _run_diff_summary(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
             update_plan=plan,
             write=True,
         )
-        return {"ok": True, "engine": "diff_summary", "product": product}
+        return {"ok": True, "engine": "diff_summary", "product": product, "artifacts_reused": reused}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "diff_summary", "error": str(exc)[:300]}
 
