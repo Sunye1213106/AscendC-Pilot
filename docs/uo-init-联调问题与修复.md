@@ -571,7 +571,20 @@ detect_score_pre → extract_plan → detect_score_post
 
 **交付**：改 policies/engines 后跑 `compose_runtime.py --host opencode`；安装侧 `refresh-opencode.ps1` 后重启 OpenCode。
 
-### A52：Phase B/C — KEY 闭环分级 + 分层增量 + uo_ready 强化（2026-07-26）
+### A53：确定性流水线性能 — structural/publish 分离 + 并行提取 + IO 缓存（2026-07-27）
+
+| 现象 | 根因 | 落点 | 状态 |
+|---|---|---|---|
+| `extract_plan` finalize / rebuild 重复 export sqlite + human views | `build_layered_kb` 混合结构构建与 publish；`export_integrity` 再跑一遍 | `mode=structural|full` + 共享 `publish_kb_products`（仅 `export_integrity` 调用） | 已做 |
+| `bridge.yaml` 双写 | `reconcile_bridge` 内部 persist + caller 再写 | `persist=False` + 父流程单次 `write_yaml_if_changed` | 已做 |
+| host/kernel 串行 | `build_layered_kb` 顺序调用 | `parallel_layer_extract.extract_host_kernel_parallel`（ProcessPool max_workers=2，失败回退串行） | 已做 |
+| TG consumer 重复读盘/AST | `consumer_evidence` 每步全量扫描 | 共享 `consumer_index.json`（`load_or_build_consumer_index`） | 已做 |
+| closure 误跑 integrity | `_run_recheck_closure` 慢路径调 `check_kb_integrity` | integrity 仅 `export_integrity`；`recheck_closure` 读 `closure_summary` | 已做 |
+
+**性能文档**：`docs/performance/baseline.md`、`docs/performance/after.md`；探针 `scripts/profile_uo_pipeline.py`。
+
+**交付**：共享模块单测见 `test_structural_publish_split.py` 等；禁止在 skill/prompt 复制性能规则。
+
 
 | 目标 | 落点 | 状态 |
 |---|---|---|
