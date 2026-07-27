@@ -33,36 +33,38 @@ def _defer_uo_publish_products() -> Iterator[dict[str, Any]]:
         import uo.scripts.export_human_views as human
         import uo.scripts.export_kb_graph as sqlite_export
         from uo.scripts._ir_io import write_yaml_if_changed
+    except ImportError:
+        yield state
+        return
 
-        def patch(module: Any, name: str, replacement: Any) -> None:
-            original = getattr(module, name)
-            patched.append((module, name, original))
-            setattr(module, name, replacement)
+    def patch(module: Any, name: str, replacement: Any) -> None:
+        original = getattr(module, name)
+        patched.append((module, name, original))
+        setattr(module, name, replacement)
 
-        def defer_sqlite(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
-            state["deferred_products"].append("kb_graph.sqlite")
-            return {
-                **_deferred_stats("kb_graph.sqlite"),
-                "entity_count": None,
-                "relation_count": None,
-            }
+    def defer_sqlite(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        state["deferred_products"].append("kb_graph.sqlite")
+        return {
+            **_deferred_stats("kb_graph.sqlite"),
+            "entity_count": None,
+            "relation_count": None,
+        }
 
-        def defer_human(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
-            state["deferred_products"].append("human_views")
-            return {
-                **_deferred_stats("human_views"),
-                "keys_table": {"key_count": None},
-                "ktpl_count": None,
-            }
+    def defer_human(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        state["deferred_products"].append("human_views")
+        return {
+            **_deferred_stats("human_views"),
+            "keys_table": {"key_count": None},
+            "ktpl_count": None,
+        }
 
+    try:
         patch(sqlite_export, "export_kb_graph", defer_sqlite)
         patch(human, "export_human_views", defer_human)
         # build_layered_kb keeps a module-local alias. Content-aware writes remove
         # duplicate bridge writes and unchanged graph rewrites.
         patch(layered, "write_yaml", write_yaml_if_changed)
         state["active"] = True
-        yield state
-    except ImportError:
         yield state
     finally:
         for module, name, original in reversed(patched):
@@ -105,43 +107,44 @@ def _reuse_fresh_sqlite_index(project_root: Path, ctx: dict[str, Any]) -> Iterat
         import uo.scripts.export_kb_graph as export_mod
         from ascendc_pilot.paths import uo_root
         from uo.scripts.kb_graph_query import index_status
-
-        uo = uo_root(project_root)
-        db_path = uo / "indexes" / "kb_graph.sqlite"
-        original = export_mod.export_kb_graph
-
-        def cached_or_export(*args: Any, **kwargs: Any) -> dict[str, Any]:
-            try:
-                status = index_status(uo)
-            except Exception:  # noqa: BLE001
-                status = {}
-            if db_path.is_file() and status.get("index_status") == "fresh":
-                meta: dict[str, str] = {}
-                try:
-                    with sqlite3.connect(db_path) as db:
-                        meta = {str(k): str(v) for k, v in db.execute("SELECT key, value FROM metadata")}
-                except Exception:  # noqa: BLE001
-                    meta = {}
-                state["cache_hit"] = True
-                return {
-                    "status": "ok",
-                    "cache_hit": True,
-                    "db_path": str(db_path),
-                    "entity_count": int(meta.get("entity_count") or 0),
-                    "relation_count": int(meta.get("relation_count") or 0),
-                    "alias_count": int(meta.get("alias_count") or 0),
-                    "schema_version": meta.get("schema_version") or "1",
-                    "source_hashes": status.get("source_hashes") or {},
-                }
-            return original(*args, **kwargs)
-
-        export_mod.export_kb_graph = cached_or_export
-        try:
-            yield state
-        finally:
-            export_mod.export_kb_graph = original
     except ImportError:
         yield state
+        return
+
+    uo = uo_root(project_root)
+    db_path = uo / "indexes" / "kb_graph.sqlite"
+    original = export_mod.export_kb_graph
+
+    def cached_or_export(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        try:
+            status = index_status(uo)
+        except Exception:  # noqa: BLE001
+            status = {}
+        if db_path.is_file() and status.get("index_status") == "fresh":
+            meta: dict[str, str] = {}
+            try:
+                with sqlite3.connect(db_path) as db:
+                    meta = {str(k): str(v) for k, v in db.execute("SELECT key, value FROM metadata")}
+            except Exception:  # noqa: BLE001
+                meta = {}
+            state["cache_hit"] = True
+            return {
+                "status": "ok",
+                "cache_hit": True,
+                "db_path": str(db_path),
+                "entity_count": int(meta.get("entity_count") or 0),
+                "relation_count": int(meta.get("relation_count") or 0),
+                "alias_count": int(meta.get("alias_count") or 0),
+                "schema_version": meta.get("schema_version") or "1",
+                "source_hashes": status.get("source_hashes") or {},
+            }
+        return original(*args, **kwargs)
+
+    export_mod.export_kb_graph = cached_or_export
+    try:
+        yield state
+    finally:
+        export_mod.export_kb_graph = original
 
 
 def _invoke_export_integrity(
