@@ -14,12 +14,12 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(_ROOT))
 
 from uo._operator.artifacts import existing_operator_root, safe_op_name
-from uo._operator.kb_compiler import validate_kb
 from uo.scripts._ir_io import read_yaml, write_yaml
 from uo.scripts.build_layered_kb import build_layered_kb
 from uo.scripts.detect_kb_changes import detect_kb_changes
 from uo.scripts.export_diff_product import export_diff_product
 from uo.scripts.plan_kb_update import plan_kb_update
+from uo.scripts.update_artifact_io import load_change_set_if_fresh, load_update_plan_if_fresh
 
 
 def update_operator(
@@ -30,17 +30,34 @@ def update_operator(
     base: str | None = None,
     head: str | None = None,
     confirm_scope: bool = False,
-    skip_validate: bool = False,
+    skip_validate: bool = True,
+    run_gates: bool = False,
     run_id: str | None = None,
+    reuse_artifacts: bool = True,
 ) -> dict[str, Any]:
+    """Apply structural KB update only.
+
+    Confidence / integrity / sqlite / human views belong to workflow phases
+    ``confidence_report`` and ``export_integrity`` (via ``publish_kb_products``).
+    ``run_gates`` is legacy opt-in and defaults to False.
+    """
+    del skip_validate  # legacy CLI flag; gates are never run unless run_gates=True
     uo_root = existing_operator_root(repo_root, op_name)
     if not (uo_root / "manifest.yaml").exists():
         raise FileNotFoundError(f"KB missing at {uo_root}; run /uo-init first")
     if not (uo_root / "ir" / "operator_graph.yaml").exists():
         raise FileNotFoundError("ir/operator_graph.yaml missing; run /uo-init extract first")
 
-    change_set = detect_kb_changes(repo_root, op_name, base=base, head=head, write=True)
-    plan = plan_kb_update(repo_root, op_name, change_set=change_set, write=True)
+    change_set: dict[str, Any] | None = None
+    plan: dict[str, Any] | None = None
+    if reuse_artifacts and base is None and head is None:
+        change_set = load_change_set_if_fresh(uo_root)
+        if change_set is not None:
+            plan = load_update_plan_if_fresh(uo_root, change_set=change_set)
+    if change_set is None:
+        change_set = detect_kb_changes(repo_root, op_name, base=base, head=head, write=True)
+    if plan is None:
+        plan = plan_kb_update(repo_root, op_name, change_set=change_set, write=True)
 
     bound = str(run_id or "").strip()
     if bound:
@@ -94,15 +111,20 @@ def update_operator(
         architecture=architecture,
         layers=layers or None,
         mode="structural",
+        allow_empty_plan=True,
     )
     write_yaml(update_dir / "rebuild_layers.yaml", {"layers": graph.get("rebuild_layers") or sorted(layers)})
 
     _bump_manifest(uo_root, repo_root, run_id, change_set.get("head_revision"))
 
-    validate_result = None
-    confidence_result: dict[str, Any] | None = None
-    integrity_result: dict[str, Any] | None = None
-    if not skip_validate:
+    # Structural apply only — gates/export live in confidence_report / export_integrity.
+    if run_gates:
+        from uo._operator.kb_compiler import validate_kb
+        from uo.scripts.check_final_confidence import check_final_confidence
+        from uo.scripts.check_kb_integrity import check_kb_integrity
+        from uo.scripts.classify_input_derivable import classify_and_write
+        from uo.scripts.publish_kb_products import publish_kb_products
+
         validate_result = validate_kb(uo_root, op_name, phase="final", write_outputs=True)
         if validate_result.status == "fail":
             export_diff_product(repo_root, op_name, change_set=change_set, update_plan=plan, status="blocked", write=True)
@@ -123,45 +145,21 @@ def update_operator(
                 "receipt": receipt,
                 "validate": validate_result,
             }
-        # Init-parity gates: classify → confidence → integrity (kb-review remains agent-owned).
-        try:
-            from uo.scripts.classify_input_derivable import classify_and_write
-
-            classify_and_write(uo_root)
-        except Exception as exc:  # noqa: BLE001
-            export_diff_product(repo_root, op_name, change_set=change_set, update_plan=plan, status="blocked", write=True)
-            receipt = _receipt(
-                run_id,
-                change_set,
-                plan,
-                status="fail",
-                message=f"classify_input_derivable failed: {exc}",
-                validate_status=validate_result.status if validate_result else "skipped",
-            )
-            write_yaml(update_dir / "receipt.yaml", receipt)
-            return {
-                "status": "fail",
-                "run_id": run_id,
-                "plan": plan,
-                "change_set": change_set,
-                "receipt": receipt,
-                "validate": validate_result,
-            }
-        from uo.scripts.check_final_confidence import check_final_confidence
-        from uo.scripts.check_kb_integrity import check_kb_integrity
-
+        classify_and_write(uo_root)
         confidence_result = check_final_confidence(uo_root, write_skeleton=True)
-        if str(confidence_result.get("status") or "").lower() == "fail":
+        publish = publish_kb_products(repo_root, op_name, graph=graph, write=True, include_integrity=True)
+        integrity_result = publish.get("integrity") if isinstance(publish.get("integrity"), dict) else {}
+        if str(confidence_result.get("status") or "").lower() == "fail" or not publish.get("ok", True):
             export_diff_product(repo_root, op_name, change_set=change_set, update_plan=plan, status="blocked", write=True)
             receipt = _receipt(
                 run_id,
                 change_set,
                 plan,
                 status="fail",
-                message="confidence_gate failed",
-                validate_status=validate_result.status if validate_result else "skipped",
+                message="legacy run_gates failed",
+                validate_status=validate_result.status,
+                rebuild_layers=graph.get("rebuild_layers"),
             )
-            receipt["confidence_gate"] = confidence_result.get("status")
             write_yaml(update_dir / "receipt.yaml", receipt)
             return {
                 "status": "fail",
@@ -169,52 +167,23 @@ def update_operator(
                 "plan": plan,
                 "change_set": change_set,
                 "receipt": receipt,
-                "validate": validate_result,
-                "confidence": confidence_result,
-            }
-        integrity_result = check_kb_integrity(repo_root, op_name, write_outputs=True)
-        if str(integrity_result.get("status") or "").lower() == "fail":
-            export_diff_product(repo_root, op_name, change_set=change_set, update_plan=plan, status="blocked", write=True)
-            receipt = _receipt(
-                run_id,
-                change_set,
-                plan,
-                status="fail",
-                message="integrity failed",
-                validate_status=validate_result.status if validate_result else "skipped",
-            )
-            receipt["confidence_gate"] = (confidence_result or {}).get("status")
-            receipt["integrity"] = integrity_result.get("status")
-            write_yaml(update_dir / "receipt.yaml", receipt)
-            return {
-                "status": "fail",
-                "run_id": run_id,
-                "plan": plan,
-                "change_set": change_set,
-                "receipt": receipt,
-                "validate": validate_result,
                 "confidence": confidence_result,
                 "integrity": integrity_result,
             }
 
-    diff_product = export_diff_product(repo_root, op_name, change_set=change_set, update_plan=plan, status="ready", write=True)
-    kb_graph_export = _safe_export_kb_graph(repo_root, op_name)
-    human_views = _safe_export_human_views(uo_root)
+    diff_product = export_diff_product(
+        repo_root, op_name, change_set=change_set, update_plan=plan, status="ready", write=True
+    )
     receipt = _receipt(
         run_id,
         change_set,
         plan,
         status="pass",
-        message="update complete",
-        validate_status=(validate_result.status if validate_result else "skipped"),
+        message="structural update complete; export_integrity owns sqlite/human views",
+        validate_status="deferred",
         rebuild_layers=graph.get("rebuild_layers"),
     )
-    receipt["kb_graph"] = kb_graph_export
-    receipt["human_views"] = human_views
-    if confidence_result is not None:
-        receipt["confidence_gate"] = confidence_result.get("status")
-    if integrity_result is not None:
-        receipt["integrity"] = integrity_result.get("status")
+    receipt["publish_deferred_to"] = "export_integrity"
     write_yaml(update_dir / "receipt.yaml", receipt)
     return {
         "status": "pass",
@@ -224,29 +193,9 @@ def update_operator(
         "diff": diff_product["index"],
         "receipt": receipt,
         "graph_stats": graph.get("stats"),
-        "kb_graph": kb_graph_export,
-        "human_views": human_views,
-        "confidence": confidence_result,
-        "integrity": integrity_result,
+        "build_layered_kb_mode": "structural",
+        "publish_deferred": True,
     }
-
-
-def _safe_export_kb_graph(repo_root: Path, op_name: str) -> dict[str, Any]:
-    try:
-        from uo.scripts.export_kb_graph import export_kb_graph
-
-        return export_kb_graph(repo_root, op_name, write=True)
-    except Exception as exc:  # noqa: BLE001
-        return {"status": "error", "error": str(exc)}
-
-
-def _safe_export_human_views(uo_root: Path) -> dict[str, Any]:
-    try:
-        from uo.scripts.export_human_views import export_human_views
-
-        return export_human_views(uo_root, write=True)
-    except Exception as exc:  # noqa: BLE001
-        return {"status": "error", "error": str(exc)}
 
 
 def _new_run_id() -> str:
@@ -320,7 +269,16 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Continue despite out-of-scope suspicious sources (after human scope confirmation decision)",
     )
-    parser.add_argument("--skip-validate", action="store_true")
+    parser.add_argument(
+        "--skip-validate",
+        action="store_true",
+        help="Deprecated no-op: apply_update never runs integrity/export (use export_integrity).",
+    )
+    parser.add_argument(
+        "--run-gates",
+        action="store_true",
+        help="Legacy: run validate/confidence/publish after structural rebuild (not used by Pilot workflow).",
+    )
     parser.add_argument(
         "--run-id",
         default="",
@@ -337,7 +295,8 @@ def main(argv: list[str] | None = None) -> int:
             base=args.base,
             head=args.head,
             confirm_scope=args.confirm_scope,
-            skip_validate=args.skip_validate,
+            skip_validate=True,
+            run_gates=bool(args.run_gates),
             run_id=str(args.run_id or "").strip() or None,
         )
     except (FileNotFoundError, ValueError, RuntimeError) as exc:

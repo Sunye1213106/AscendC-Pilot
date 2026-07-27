@@ -313,3 +313,32 @@ def test_cli_update_help() -> None:
     )
     assert result.returncode == 0
     assert "uo-update" in result.stdout.lower() or "Incremental" in result.stdout or "--op-name" in result.stdout
+
+
+def test_apply_update_ignores_stale_sqlite(tmp_path: Path) -> None:
+    """Structural apply must not fail when indexes/kb_graph.sqlite is stale."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    base = _init_git_repo(repo)
+    root = _seed_kb(repo, base)
+
+    # Stale sqlite that would fail integrity if apply still ran gates/export.
+    db = root / "indexes" / "kb_graph.sqlite"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    db.write_bytes(b"not-a-valid-sqlite-db")
+
+    (repo / "op_host" / "demo.cpp").write_text(
+        "void DemoOpHost() { int x = 2; TilingData tile; tile.v = x; }\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "host change")
+
+    result = update_operator(repo, "DemoOp", run_gates=False, reuse_artifacts=False)
+    assert result["status"] == "pass"
+    # Must not have attempted integrity against stale sqlite.
+    assert result.get("integrity") is None
+    receipt = result.get("receipt") or {}
+    assert receipt.get("publish_deferred_to") == "export_integrity"
+    # Corrupt sqlite left untouched by structural apply.
+    assert db.read_bytes() == b"not-a-valid-sqlite-db"
