@@ -65,28 +65,100 @@ def _stable_payload_hash(data: dict[str, Any]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _file_sha256(path: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _read_content_hash_sidecar(hash_path: Path) -> dict[str, Any]:
+    """Parse sidecar; supports legacy plain-digest and structured YAML."""
+    require_yaml()
+    try:
+        text = hash_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return {}
+    if not text:
+        return {}
+    if "\n" not in text and ":" not in text and len(text) == 64:
+        return {"desired_content_hash": text, "schema_version": 0}
+    try:
+        data = yaml.safe_load(text) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {"desired_content_hash": text.splitlines()[0].strip(), "schema_version": 0}
+
+
 def write_yaml_if_changed(path: Path, data: dict[str, Any]) -> bool:
     """Write YAML only when structured content hash differs. Returns True if written.
 
-    Uses a sidecar ``*.content-hash`` to skip ``safe_dump`` when payload is unchanged.
-    Plain ``write_yaml`` / ``atomic_write_yaml`` invalidate the sidecar so a later
-    ``write_yaml_if_changed`` cannot skip after an out-of-band rewrite.
+    Crash-safe protocol:
+    1. invalidate old sidecar
+    2. write temp YAML + temp sidecar (desired_content_hash + actual_yaml_sha256)
+    3. fsync
+    4. os.replace YAML then sidecar
+
+    Skip only when sidecar.actual_yaml_sha256 matches on-disk YAML SHA **and**
+    desired_content_hash matches the incoming payload digest.
     """
+    import os
+    import tempfile
+
     digest = _stable_payload_hash(data)
     hash_path = _content_hash_path(path)
     if path.is_file() and hash_path.is_file():
+        meta = _read_content_hash_sidecar(hash_path)
+        desired = str(meta.get("desired_content_hash") or "").strip()
+        actual = str(meta.get("actual_yaml_sha256") or "").strip()
         try:
-            if hash_path.read_text(encoding="utf-8").strip() == digest:
-                return False
+            file_sha = _file_sha256(path)
         except OSError:
-            pass
+            file_sha = ""
+        # Fail-closed: legacy sidecars without actual_yaml_sha256 never skip.
+        if (
+            desired == digest
+            and actual
+            and file_sha
+            and actual == file_sha
+            and int(meta.get("schema_version") or 0) >= 1
+        ):
+            return False
+
     text = _render_yaml(data)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    _invalidate_content_hash(path)
+
+    fd_y, tmp_y = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    fd_h, tmp_h = tempfile.mkstemp(prefix=f".{hash_path.name}.", suffix=".tmp", dir=str(path.parent))
     try:
-        hash_path.write_text(digest + "\n", encoding="utf-8")
-    except OSError:
-        pass
+        import hashlib
+
+        yaml_bytes = text.encode("utf-8")
+        # Binary write avoids Windows text-mode newline translation skewing SHA.
+        with os.fdopen(fd_y, "wb") as fh:
+            fh.write(yaml_bytes)
+            fh.flush()
+            os.fsync(fh.fileno())
+        yaml_sha = hashlib.sha256(yaml_bytes).hexdigest()
+        sidecar = {
+            "schema_version": 1,
+            "desired_content_hash": digest,
+            "actual_yaml_sha256": yaml_sha,
+        }
+        side_bytes = _render_yaml(sidecar).encode("utf-8")
+        with os.fdopen(fd_h, "wb") as fh:
+            fh.write(side_bytes)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_y, path)
+        os.replace(tmp_h, hash_path)
+    except Exception:
+        for tmp in (tmp_y, tmp_h):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        raise
     return True
 
 

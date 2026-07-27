@@ -228,7 +228,7 @@ def test_stale_patch_rejected(tmp_path: Path) -> None:
 
 
 def test_mark_missing_rejects_accept_edge_false_closure(tmp_path: Path) -> None:
-    """Empty-candidate mark_missing must not invent accept_edge closes."""
+    """Empty-candidate low-score edge is canonicalized to candidate_generation (not mark_missing)."""
     op = "synth_op_mark_missing"
     root = _prep_op(tmp_path, op)
     uo = root / ".ascendc-pilot" / "uo"
@@ -254,7 +254,7 @@ def test_mark_missing_rejects_accept_edge_false_closure(tmp_path: Path) -> None:
     )
     doc = load_llm_tasks(uo)
     task = next(t for t in doc["tasks"] if t["status"] == "open")
-    assert task["type"] == "mark_missing"
+    assert task["type"] == "candidate_generation"
     assert "accept_edge" not in (task.get("allowed_actions") or [])
 
     bad = apply_task_patch(
@@ -269,40 +269,6 @@ def test_mark_missing_rejects_accept_edge_false_closure(tmp_path: Path) -> None:
     )
     assert bad["ok"] is False
     assert bad["error"] in {"action_not_allowed", "empty_candidate_false_closure"}
-
-    smuggle = apply_task_patch(
-        uo,
-        {
-            "task_id": task["task_id"],
-            "action": "mark_missing",
-            "accepted_candidate_ids": ["some_edge_id_in_graph"],
-        },
-        current_run_id=RUN_TEST,
-        current_source_hash="hashA",
-    )
-    assert smuggle["ok"] is False
-    assert smuggle["error"] == "mark_missing_forbids_accepted_ids"
-
-    ok = apply_task_patch(
-        uo,
-        {
-            "task_id": task["task_id"],
-            "action": "mark_missing",
-            "evidence": ["definition absent after scope search"],
-            "negative_evidence": {
-                "scope_snapshot_sha256": "hashA",
-                "include_closure_status": "incomplete",
-                "queries": [{"symbol": "edge_empty", "search_mode": "exact", "result_count": 0}],
-                "inspected_windows": [
-                    {"file": "op_host/a.cpp", "lines": [1, 5], "window_sha256": "abc123"}
-                ],
-                "absence_kind": "project_definition_absent",
-            },
-        },
-        current_run_id=RUN_TEST,
-        current_source_hash="hashA",
-    )
-    assert ok["ok"] is True
 
 
 # ⑥ attempts only on resolve+apply

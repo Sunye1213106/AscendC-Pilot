@@ -378,6 +378,12 @@ def upsert_tasks_from_score_items(
             continue
         hint = str(item.get("task_hint") or "choose_edge")
         object_type = str(item.get("object_type") or "")
+        target = str(item.get("target_id") or item.get("role") or item.get("edge_type") or "unknown")
+        # Canonicalize candidates first; task type depends on final candidate set.
+        candidates = _default_candidates(item)
+        if not isinstance(candidates, list):
+            candidates = []
+
         if hint == "mark_missing":
             task_type = "mark_missing"
         elif object_type == "io_slot_bind":
@@ -391,21 +397,22 @@ def upsert_tasks_from_score_items(
         else:
             task_type = hint if hint in TASK_TYPES else "inspect_candidates"
 
-        target = str(item.get("target_id") or item.get("role") or item.get("edge_type") or "unknown")
-        candidates = item.get("candidates") or _default_candidates(item)
-        if not candidates and (hint == "choose_edge" or object_type == "tilingdata_bridge" or task_type == "tilingdata_bridge"):
-            if object_type == "tilingdata_bridge" and not _bridge_identity_complete(item):
-                task_type = "evidence_enrichment"
-                hint = "evidence_enrichment"
+        # Empty candidates: scoring hint alone never implies mark_missing.
+        # Keep mark_missing only with machine-verifiable negative_evidence.
+        if not candidates:
+            has_neg = _valid_negative_evidence(item.get("negative_evidence"))
+            if hint == "mark_missing" and has_neg:
+                task_type = "mark_missing"
+                hint = "mark_missing"
             elif object_type in {"call_edge", "registration_edge", "entrypoint_node"} or task_type == "entrypoint_dispatch_bind":
                 task_type = "candidate_generation"
                 hint = "candidate_generation"
-            else:
+            elif object_type == "tilingdata_bridge" or task_type == "tilingdata_bridge":
                 task_type = "evidence_enrichment"
                 hint = "evidence_enrichment"
-        elif not candidates and hint == "choose_edge":
-            task_type = "candidate_generation"
-            hint = "candidate_generation"
+            elif hint in {"choose_edge", "mark_missing"} or severity == "blocking":
+                task_type = "evidence_enrichment"
+                hint = "evidence_enrichment"
         cand_hash = candidate_set_hash(candidates)
         tid = stable_task_id(
             task_type=task_type,
@@ -478,6 +485,8 @@ def upsert_tasks_from_score_items(
             "forbidden": ["invent_symbol", "repo_wide_search"],
             "resolution": None,
         }
+        if isinstance(item.get("negative_evidence"), dict):
+            task["negative_evidence"] = dict(item["negative_evidence"])
         by_id[tid] = task
         created += 1
 
@@ -971,7 +980,7 @@ def validate_mark_missing_patch(
     # Do not trust model-claimed include_scope_complete; require artifact status when claimed complete.
     claimed = str(neg.get("include_closure_status") or "").casefold()
     if claimed in {"complete", "closed", "ok"} and uo_root is not None:
-        artifact = str(neg.get("include_closure_artifact") or "ir/source_scope.yaml")
+        artifact = str(neg.get("include_closure_artifact") or "ir/include_closure.yaml")
         path = uo_root / artifact if not artifact.startswith("uo/") else uo_root.parent.parent / artifact
         # Prefer relative to uo_root/ir
         candidates = [
@@ -1327,7 +1336,17 @@ def commit_patches_batch(
                     "run_id": current_run_id,
                     "missing_symbol": patch.get("missing_symbol") or nested.get("missing_symbol") or task.get("target"),
                     "proposed_files": proposed,
-                    "evidence": patch.get("evidence") or [],
+                    "evidence": patch.get("evidence") or nested.get("evidence") or [],
+                    "evidence_windows": (
+                        patch.get("evidence_windows")
+                        or nested.get("evidence_windows")
+                        or []
+                    ),
+                    "symbol_evidence": (
+                        patch.get("symbol_evidence")
+                        or nested.get("symbol_evidence")
+                        or []
+                    ),
                 }
             )
             write_yaml(uo_root / "ir" / "scope_expansion_requests.yaml", req_doc)

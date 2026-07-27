@@ -420,3 +420,115 @@ def require_high_confidence_source_fields(
             )
 
     return errors
+
+
+def verify_scope_symbol_evidence(
+    project_root: Path,
+    candidate_rel: str,
+    candidate_path: Path,
+    windows: list[Any],
+    *,
+    missing_symbol: str = "",
+) -> dict[str, Any]:
+    """Machine-verify scope-expansion symbol/evidence windows (shared, fail-closed).
+
+    Requires canonical path equality (not basename), line range in file, contiguous
+    snippet in window, and window_sha256 match when provided.
+    """
+    cand = str(candidate_rel or "").replace("\\", "/").strip()
+    if not cand or not candidate_path.is_file():
+        return {"ok": False, "error": "EVIDENCE_CANDIDATE_MISSING", "reason_code": "EVIDENCE_CANDIDATE_MISSING"}
+    try:
+        cand_resolved = candidate_path.resolve()
+        total_lines = len(cand_resolved.read_text(encoding="utf-8", errors="ignore").splitlines())
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)[:200], "reason_code": "EVIDENCE_READ_FAILED"}
+
+    matched = False
+    last_error = "EVIDENCE_WINDOW_MISSING"
+    for win in windows or []:
+        if not isinstance(win, dict):
+            continue
+        wpath = str(win.get("file") or win.get("path") or "").replace("\\", "/").strip()
+        if not wpath:
+            continue
+        # Canonical path must match exactly (no basename / endswith shortcuts).
+        if wpath != cand and Path(wpath).as_posix() != cand:
+            # Allow absolute/resolved equality only.
+            try:
+                if Path(wpath).resolve() != cand_resolved:
+                    last_error = "EVIDENCE_PATH_MISMATCH"
+                    continue
+            except OSError:
+                last_error = "EVIDENCE_PATH_MISMATCH"
+                continue
+
+        span = parse_line_span(win.get("lines") or win.get("evidence_lines"))
+        if span is None:
+            last_error = "EVIDENCE_LINES_INVALID"
+            continue
+        lo, hi = span
+        if lo < 1 or hi < lo or hi > max(total_lines, 1):
+            last_error = "EVIDENCE_LINES_OUT_OF_RANGE"
+            continue
+
+        snippet = str(win.get("snippet") or win.get("evidence_snippet") or "").strip()
+        symbol = str(win.get("symbol") or missing_symbol or "").strip()
+        if not snippet and not symbol:
+            last_error = "EVIDENCE_EMPTY"
+            continue
+
+        item = {
+            "evidence_files": [cand],
+            "evidence_lines": [lo, hi],
+            "evidence_snippet": snippet,
+            "evidence_window_sha256": win.get("window_sha256") or win.get("evidence_window_sha256") or "",
+        }
+        if snippet:
+            proof = evidence_snippet_matches_source(
+                project_root,
+                item,
+                min_chars=min(MIN_EVIDENCE_SNIPPET_CHARS, max(1, len(snippet))),
+                pad=0,
+                require_full_contiguous=True,
+            )
+            if not proof.get("ok"):
+                last_error = "EVIDENCE_SNIPPET_MISMATCH"
+                continue
+            claimed_sha = str(item.get("evidence_window_sha256") or "").strip()
+            if claimed_sha and claimed_sha != proof.get("window_sha256"):
+                last_error = "EVIDENCE_WINDOW_SHA_MISMATCH"
+                continue
+        elif str(item.get("evidence_window_sha256") or "").strip():
+            sha_ok = window_sha_matches_source(project_root, item, pad=0)
+            if not sha_ok.get("ok"):
+                last_error = "EVIDENCE_WINDOW_SHA_MISMATCH"
+                continue
+
+        if symbol:
+            window = read_source_window(Path(project_root), cand, lo, hi, pad=0)
+            if symbol not in window and missing_symbol and missing_symbol not in window:
+                # For missing_symbol claims, absence in *other* files is OK; presence of
+                # the target symbol name in the evidence window is required when provided
+                # as positive location proof. If only missing_symbol is set without snippet,
+                # require the window text to be non-empty (inspected).
+                if snippet or win.get("symbol"):
+                    if symbol not in window:
+                        last_error = "EVIDENCE_SYMBOL_ABSENT"
+                        continue
+
+        file_sha = str(win.get("source_file_sha256") or "").strip()
+        if file_sha:
+            import hashlib as _hashlib
+
+            actual = _hashlib.sha256(cand_resolved.read_bytes()).hexdigest()
+            if file_sha.lower() != actual.lower():
+                last_error = "EVIDENCE_FILE_SHA_MISMATCH"
+                continue
+
+        matched = True
+        break
+
+    if matched:
+        return {"ok": True, "reason_code": "symbol_evidence_verified"}
+    return {"ok": False, "error": last_error, "reason_code": last_error}

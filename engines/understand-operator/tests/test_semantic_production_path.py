@@ -67,6 +67,13 @@ def test_empty_bridge_candidates_not_emitted_as_choose_edge(tmp_path: Path) -> N
 
 def test_mark_missing_task_is_adjudicated_but_still_blocking(tmp_path: Path) -> None:
     uo = _uo(tmp_path)
+    neg = {
+        "scope_snapshot_sha256": "h1",
+        "include_closure_status": "incomplete",
+        "queries": [{"symbol": "edge_empty", "search_mode": "exact", "result_count": 0}],
+        "inspected_windows": [{"file": "op_host/a.cpp", "lines": [1, 5], "window_sha256": "abc"}],
+        "absence_kind": "project_definition_absent",
+    }
     items = [
         {
             "disposition": "llm_task",
@@ -77,10 +84,12 @@ def test_mark_missing_task_is_adjudicated_but_still_blocking(tmp_path: Path) -> 
             "score": 0.2,
             "necessity": "main_chain",
             "candidates": [],
+            "negative_evidence": neg,
         }
     ]
     upsert_tasks_from_score_items(uo, items, checkpoint="pre", run_id=RUN_TEST, source_snapshot_hash="h1")
     task = load_llm_tasks(uo)["tasks"][0]
+    assert task["type"] == "mark_missing"
     ok = apply_task_patch(
         uo,
         {
@@ -88,11 +97,13 @@ def test_mark_missing_task_is_adjudicated_but_still_blocking(tmp_path: Path) -> 
             "action": "mark_missing",
             "source_snapshot_hash": "h1",
             "candidate_set_hash": task["candidate_set_hash"],
+            "negative_evidence": neg,
+            "evidence": ["absent after scope search"],
         },
         current_run_id=RUN_TEST,
         current_source_hash="h1",
     )
-    assert ok["ok"] is True
+    assert ok["ok"] is True, ok
     after = next(t for t in load_llm_tasks(uo)["tasks"] if t["task_id"] == task["task_id"])
     assert after["status"] == "adjudicated"
     assert after.get("semantic_status") == "unresolved"
@@ -101,6 +112,13 @@ def test_mark_missing_task_is_adjudicated_but_still_blocking(tmp_path: Path) -> 
 
 def test_mark_missing_does_not_reduce_blocking_gap_count(tmp_path: Path) -> None:
     uo = _uo(tmp_path)
+    neg = {
+        "scope_snapshot_sha256": "h1",
+        "include_closure_status": "incomplete",
+        "queries": [{"symbol": "edge_empty", "search_mode": "exact", "result_count": 0}],
+        "inspected_windows": [{"file": "op_host/a.cpp", "lines": [1, 5], "window_sha256": "abc"}],
+        "absence_kind": "project_definition_absent",
+    }
     items = [
         {
             "disposition": "llm_task",
@@ -111,6 +129,7 @@ def test_mark_missing_does_not_reduce_blocking_gap_count(tmp_path: Path) -> None
             "score": 0.2,
             "necessity": "main_chain",
             "candidates": [],
+            "negative_evidence": neg,
         }
     ]
     upsert_tasks_from_score_items(uo, items, checkpoint="pre", run_id=RUN_TEST, source_snapshot_hash="h1")
@@ -123,6 +142,8 @@ def test_mark_missing_does_not_reduce_blocking_gap_count(tmp_path: Path) -> None
             "action": "mark_missing",
             "source_snapshot_hash": "h1",
             "candidate_set_hash": task["candidate_set_hash"],
+            "negative_evidence": neg,
+            "evidence": ["absent after scope search"],
         },
         current_run_id=RUN_TEST,
         current_source_hash="h1",

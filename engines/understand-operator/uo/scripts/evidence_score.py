@@ -357,6 +357,71 @@ def score_io_slot(slot: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def score_bridge_blocking_gaps(bridge: dict[str, Any]) -> list[dict[str, Any]]:
+    """Emit stable llm_task score items for blocking bridge gaps (unresolved/diagnostics/classifications)."""
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _emit(gap: dict[str, Any], *, hint: str, candidates: list[dict[str, Any]] | None = None) -> None:
+        code = str(gap.get("code") or gap.get("classification") or "bridge_gap")
+        field = str(gap.get("field") or gap.get("field_path") or gap.get("id") or code)
+        target = f"bridge_gap:{code}:{field}"
+        if target in seen:
+            return
+        seen.add(target)
+        cands = list(candidates or [])
+        task_hint = hint
+        if gap.get("negative_evidence"):
+            task_hint = "mark_missing"
+        elif len(cands) > 1:
+            task_hint = "choose_edge"
+        elif len(cands) == 1:
+            task_hint = "evidence_enrichment"
+        elif not cands:
+            task_hint = "evidence_enrichment"
+        items.append(
+            {
+                "object_type": "tilingdata_bridge",
+                "target_id": target,
+                "severity": "blocking",
+                "disposition": "llm_task",
+                "task_hint": task_hint,
+                "score": float(gap.get("score") or 0.2),
+                "necessity": "main_chain",
+                "field_path": gap.get("field_path") or gap.get("field"),
+                "owning_type": gap.get("owning_type"),
+                "candidates": cands,
+                "evidence_refs": list(gap.get("evidence") or gap.get("evidence_refs") or []),
+                "gap_code": code,
+                "negative_evidence": gap.get("negative_evidence"),
+            }
+        )
+
+    for row in list(bridge.get("unresolved") or []):
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("severity") or "blocking").casefold() != "blocking":
+            continue
+        _emit(row, hint="evidence_enrichment")
+
+    for row in list(bridge.get("diagnostics") or []):
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("severity") or "").casefold() != "blocking":
+            continue
+        _emit(row, hint="evidence_enrichment")
+
+    for row in list(bridge.get("field_classifications") or []):
+        if not isinstance(row, dict):
+            continue
+        cls = str(row.get("classification") or "")
+        if cls not in {"missing_producer", "unknown_type", "candidate_only"}:
+            continue
+        _emit({**row, "code": cls, "severity": "blocking"}, hint="evidence_enrichment")
+
+    return items
+
+
 def score_tilingdata_bridge(bridge: dict[str, Any]) -> dict[str, Any]:
     evidence: list[str] = []
     if bridge.get("owning_type") or bridge.get("canonical_type"):
@@ -590,6 +655,7 @@ def detect_score_post(uo_root: Path, *, architecture: str = "arch35", run_id: st
     for b in bridge.get("tilingdata_bridges") or bridge.get("bridge_edges") or []:
         if isinstance(b, dict) and (b.get("type") in {None, "maps_tilingdata"} or "field_path" in b):
             items.append(score_tilingdata_bridge(b))
+    items.extend(score_bridge_blocking_gaps(bridge))
     for dim in tilingkey.get("dimensions") or tilingkey.get("bindings") or []:
         if isinstance(dim, dict):
             items.append(score_tilingkey_binding(dim))
@@ -678,6 +744,7 @@ def post_semantic_prerequisites(uo_root: Path) -> dict[str, Any]:
 
     Requires extract_plan.yaml + host_subgraph.yaml + kernel_subgraph.yaml.
     Kernel is required by this contract (not optional) so Engine and Gate agree.
+    Pending CBM reindex after scope expansion also blocks scoring.
     """
     required = {
         "extract_plan.yaml": uo_root / "ir" / "extract_plan.yaml",
@@ -691,6 +758,19 @@ def post_semantic_prerequisites(uo_root: Path) -> dict[str, Any]:
             "error": "POST_SEMANTIC_PREREQUISITE_MISSING",
             "missing": missing,
         }
+    try:
+        from uo.scripts.scope_expansion import cbm_index_ready_for_score
+
+        cbm = cbm_index_ready_for_score(uo_root)
+        if not cbm.get("ok"):
+            return {
+                "ok": False,
+                "error": str(cbm.get("error") or "CBM_REINDEX_PENDING"),
+                "missing": [],
+                "cbm": cbm,
+            }
+    except Exception:  # noqa: BLE001
+        pass
     return {"ok": True, "missing": []}
 
 

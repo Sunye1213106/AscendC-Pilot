@@ -13,6 +13,10 @@ if __package__ in (None, ""):
 from uo._operator.artifacts import existing_operator_root, safe_op_name
 from uo._operator.spec import spec_bundle_hash
 from uo.scripts._ir_io import read_yaml, write_yaml
+from uo.scripts.update_artifact_io import (
+    compute_plan_fingerprint,
+    current_scope_identity,
+)
 
 ALL_LAYERS = ("entrypoints", "host", "kernel", "tilingkey", "golden", "bridge")
 
@@ -85,11 +89,29 @@ def plan_kb_update(
     scripts = _scripts_for_layers(layers)
     needs_cbm_reindex = bool(scoped_files) or needs_scope
 
+    scope_id = current_scope_identity(uo_root)
+    scope_fingerprint = str(
+        change_set.get("scope_fingerprint") or scope_id.get("scope_fingerprint") or ""
+    )
+    change_set_fingerprint = str(
+        change_set.get("change_set_fingerprint") or change_set.get("fingerprint") or ""
+    )
+    plan_fingerprint = compute_plan_fingerprint(
+        head_revision=str(change_set.get("head_revision") or ""),
+        base_revision=str(change_set.get("base_revision") or ""),
+        scope_fingerprint=scope_fingerprint,
+        change_set_fingerprint=change_set_fingerprint,
+        mode=mode,
+        affected_layers=sorted(layers),
+    )
     plan = {
         "version": 1,
         "op_name": op_name,
         "base_revision": change_set.get("base_revision"),
         "head_revision": change_set.get("head_revision"),
+        "scope_fingerprint": scope_fingerprint,
+        "change_set_fingerprint": change_set_fingerprint,
+        "plan_fingerprint": plan_fingerprint,
         "mode": mode,
         "affected_layers": sorted(layers),
         "scripts": scripts,

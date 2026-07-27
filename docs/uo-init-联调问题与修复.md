@@ -636,6 +636,29 @@ detect_score_pre → extract_plan → detect_score_post
 
 **A55 审查补丁**：`load_change_set_if_fresh` 校验 `head_revision==git HEAD` 与 `base_revision==manifest.source.revision`；`update_operator` 生产路径 `allow_empty_plan=False`；`write_yaml`/`atomic_write_yaml`/`commit_semantic_artifacts` 失效 `.content-hash` sidecar；consumer cache 纳入 `ctime_ns` + 可选 `TG_CONSUMER_CACHE_VERIFY_HASH`；Host/Kernel ProcessPool 内层 `file_parallel=False` 防嵌套；删除误提交 `session-ses_*.md`。
 
+### A56：uo-init 正确性闭环 — task canonicalize / session / scope / bridge / freshness / IO（2026-07-27）
+
+| 现象 | 根因 | 落点 | 状态 |
+|---|---|---|---|
+| 低分空候选 → mark_missing → contract conflict | upsert 先锁 `mark_missing`，空候选不规范化 | `llm_tasks.upsert_tasks_from_score_items`；contract 只看 `effective_task_type` | 已做 |
+| Debug-off after-hook 无法 patch child | `patch_child_session_id` 先查 debug registry | 控制面 `patch_external_session_id` 优先；debug 仅 mirror | 已做 |
+| request consumed 但 scope 未应用 | 先 consumed 再写 scope；缺文件仍推进 | `SCOPE_CONFIRMED_MISSING` fail-closed；写后重读校验 | 已做 |
+| 预算静默丢 accepted 文件 | `break` / `newly[:budget]` | 全文件 disposition；deferred ≠ consumed | 已做 |
+| evidence / basename include 假匹配 | 本地 OR 校验；`include_edge_name` | 上收 `source_evidence` + `source_include_closure.classify_include_resolution` | 已做 |
+| include closure 多文件 SSOT 碎 | writer/reader 路径不一致 | 统一 `ir/include_closure.yaml` SSOT | 已做 |
+| CBM 只 staged 当完成 | 覆写 `index_meta` + 直跳 `detect_score_post` | `pending_index` + `cbm_reindex_request`；receipt 前禁 score | 已做 |
+| update 复用忽略 scope 变更 | freshness 缺 fingerprint / skip-when-missing | `update_artifact_io` 强制 scope/change_set/plan fingerprints | 已做 |
+| bridge blocking 无 llm_task | `detect_score_post` 不扫 unresolved | `score_bridge_blocking_gaps` → upsert | 已做 |
+| typed 元数据丢 / `id:null` | `_collect_typed_fields` 丢字段 | determinant 传播 + `mint_field_identity` 稳定 ID | 已做 |
+| external registry 并发丢失 | YAML RMW 无锁 | SQLite `registrations` 事务 + CAS | 已做 |
+| content-hash 崩溃窗口 | 先写 YAML 再写 sidecar；skip 不验文件 SHA | invalidate → temp+fsync+replace；`actual_yaml_sha256` | 已做 |
+
+**共享层**：`source_evidence`、`source_include_closure`、`semantic_task_triage`、`external_session_registry`、`update_artifact_io`、`_ir_io`。未改个别 skill METHOD 例外；未跑 compose（Policy 无 diff）。
+
+**单测**：`test_semantic_task_canonicalize`、`test_external_session_lineage`、`test_scope_expansion_correctness`、`test_update_artifact_freshness`、`test_bridge_gap_tasks`、`test_yaml_write_if_changed`。
+
+**未做**：完整 OpenCode hook / MCP reindex / 全量 FAG `acp complete`（依赖外部环境）；性能自适应调度独立提交。
+
 
 ## 14. 一句话原则（沉淀）
 

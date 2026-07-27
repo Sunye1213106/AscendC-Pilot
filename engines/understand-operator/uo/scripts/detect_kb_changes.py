@@ -13,6 +13,10 @@ if __package__ in (None, ""):
 
 from uo._operator.artifacts import existing_operator_root, safe_op_name
 from uo.scripts._ir_io import read_yaml, write_yaml
+from uo.scripts.update_artifact_io import (
+    compute_change_set_fingerprint,
+    current_scope_identity,
+)
 
 SOURCE_SUFFIXES = {".cpp", ".cc", ".c", ".h", ".hpp", ".py", ".cuh", ".cu"}
 OPERATOR_PATH_MARKERS = ("op_host", "op_kernel", "op_api", "common", "tiling")
@@ -63,11 +67,24 @@ def detect_kb_changes(
             }
         )
 
+    scope_id = current_scope_identity(uo_root)
+    scope_fingerprint = str(scope_id.get("scope_fingerprint") or "")
+    change_set_fingerprint = compute_change_set_fingerprint(
+        head_revision=head_revision,
+        base_revision=base_revision,
+        scope_fingerprint=scope_fingerprint,
+        changed_files=files,
+    )
     payload = {
         "version": 1,
         "op_name": op_name,
         "base_revision": base_revision,
         "head_revision": head_revision,
+        "scope_revision": scope_id.get("scope_revision"),
+        "scope_fingerprint": scope_fingerprint,
+        "confirmed_sources_hash": scope_id.get("confirmed_sources_hash"),
+        "change_set_fingerprint": change_set_fingerprint,
+        "fingerprint": change_set_fingerprint,
         "needs_scope_review": needs_scope_review,
         "scoped_change_count": sum(1 for item in files if item["in_scope"]),
         "files": files,

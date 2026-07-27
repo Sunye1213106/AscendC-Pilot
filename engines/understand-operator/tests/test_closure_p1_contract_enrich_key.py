@@ -11,19 +11,32 @@ from uo.scripts.semantic_task_triage import apply_triage_to_tasks
 
 
 def test_contract_fail_blocks_adjudication() -> None:
-    task = {
+    from uo.scripts.semantic_task_triage import validate_semantic_task_contract
+
+    # Direct contract: effective still mark_missing + candidate_generation_required → conflict.
+    illegal = {
         "task_id": "t_contract",
         "type": "mark_missing",
         "triage_category": "candidate_generation_required",
         "effective_task_type": "mark_missing",
         "candidates": [],
         "route": "uo-semantic-resolve",
+        "eligible_for_adjudication": True,
+    }
+    assert validate_semantic_task_contract(illegal).get("error") == "SEMANTIC_TASK_CONTRACT_CONFLICT"
+
+    # After triage remap, effective becomes candidate_generation — no conflict on declared type.
+    task = {
+        "task_id": "t_contract_remap",
+        "type": "mark_missing",
+        "original_task_type": "mark_missing",
+        "candidates": [],
+        "route": "uo-semantic-resolve",
     }
     tasks, rows = apply_triage_to_tasks([task])
-    assert tasks[0].get("contract_error") == "SEMANTIC_TASK_CONTRACT_CONFLICT"
-    assert tasks[0]["eligible_for_adjudication"] is False
-    assert tasks[0]["blocks_extract_advance"] is True
-    assert rows[0]["eligible_for_adjudication"] is False
+    assert tasks[0].get("effective_task_type") == "candidate_generation"
+    assert tasks[0].get("contract_error") in {None, ""}
+    assert rows[0]["category"] == "candidate_generation_required"
 
 
 def test_enrichment_commit_reruns_triage(tmp_path: Path) -> None:

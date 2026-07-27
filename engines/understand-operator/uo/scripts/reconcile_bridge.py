@@ -109,14 +109,24 @@ def reconcile_bridge(repo_root: Path, op_name: str, *, persist: bool = True) -> 
             cls = "unknown_type"
         else:
             cls = "missing_producer"
-        # Host-side determinant hints (deterministic fields only).
+        # Determinant / source_kind → explicit runtime/compile classifications.
         det = str(kf.get("determinant_source") or kf.get("source_kind") or "")
-        if cls == "missing_producer" and det:
-            low = det.casefold()
-            if "compile" in low or "macro" in low:
+        producer_kind = str(kf.get("producer_kind") or "").casefold()
+        runtime_domain = str(kf.get("runtime_domain") or "").casefold()
+        if cls in {"missing_producer", "unknown_type", "candidate_only"} and (det or producer_kind or runtime_domain):
+            low = f"{det} {producer_kind} {runtime_domain}".casefold()
+            if "derived" in low or "tiling_field" in low:
+                cls = "derived_from_tiling_field"
+            elif "template" in low:
+                cls = "template_arg"
+            elif "compile" in low or "macro" in low:
                 cls = "compile_macro"
             elif "platform" in low:
                 cls = "platform_runtime"
+            elif "kernel_runtime" in low or ("kernel" in low and "runtime" in low):
+                cls = "kernel_runtime"
+            elif "external" in low and "runtime" in low:
+                cls = "external_runtime"
             elif "const" in low or "hardcode" in low:
                 cls = "constant"
         field_classifications.append(
@@ -125,6 +135,11 @@ def reconcile_bridge(repo_root: Path, op_name: str, *, persist: bool = True) -> 
                 "field_path": kf.get("field_path") or kf.get("name"),
                 "owning_type": kf.get("owning_type") or "",
                 "classification": cls,
+                "determinant_source": kf.get("determinant_source"),
+                "source_kind": kf.get("source_kind"),
+                "expression": kf.get("expression"),
+                "producer_kind": kf.get("producer_kind"),
+                "runtime_domain": kf.get("runtime_domain"),
             }
         )
     payload = {
@@ -145,7 +160,9 @@ def reconcile_bridge(repo_root: Path, op_name: str, *, persist: bool = True) -> 
             "host_produced_count": host_produced,
             "candidate_count": len(candidates),
             "constant_count": sum(1 for c in field_classifications if c.get("classification") == "constant"),
-            "derived_count": sum(1 for c in field_classifications if c.get("classification") == "derived"),
+            "derived_count": sum(
+                1 for c in field_classifications if c.get("classification") == "derived_from_tiling_field"
+            ),
             "compile_macro_count": sum(1 for c in field_classifications if c.get("classification") == "compile_macro"),
             "platform_runtime_count": sum(1 for c in field_classifications if c.get("classification") == "platform_runtime"),
             "missing_producer_count": sum(1 for c in field_classifications if c.get("classification") == "missing_producer"),
@@ -162,6 +179,25 @@ def reconcile_bridge(repo_root: Path, op_name: str, *, persist: bool = True) -> 
     return payload
 
 
+def _stable_field_id(
+    *,
+    owning_type: str,
+    field_path: str,
+    architecture: str = "",
+    source_path: str = "",
+    existing_id: Any = None,
+) -> str:
+    if existing_id not in (None, "", "null"):
+        return str(existing_id)
+    ident = mint_field_identity(
+        owning_type=owning_type or "UnknownType",
+        field_path=field_path,
+        file_path=source_path,
+        architecture=architecture or "",
+    )
+    return str(getattr(ident, "stable_id", None) or getattr(ident, "id", None) or ident)
+
+
 def _collect_typed_fields(layer: dict[str, Any], *, side: str, also: list[Any] | None = None) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for n in layer.get("nodes") or []:
@@ -175,16 +211,30 @@ def _collect_typed_fields(layer: dict[str, Any], *, side: str, also: list[Any] |
             continue
         owning = str(n.get("owning_type") or n.get("canonical_type") or n.get("struct_type") or "")
         field_path = str(n.get("field_path") or name)
+        source_path = str(n.get("file_path") or n.get("path") or "")
+        arch = str(n.get("architecture") or "")
+        fid = _stable_field_id(
+            owning_type=owning,
+            field_path=field_path,
+            architecture=arch,
+            source_path=source_path,
+            existing_id=n.get("id"),
+        )
         out.append(
             {
                 "side": side,
                 "name": leaf,
                 "field_path": field_path,
                 "owning_type": owning,
-                "id": n.get("id"),
+                "id": fid,
                 "architecture": n.get("architecture"),
                 "path_family": n.get("path_family"),
                 "template_family": n.get("template_family"),
+                "determinant_source": n.get("determinant_source"),
+                "source_kind": n.get("source_kind"),
+                "expression": n.get("expression") or n.get("expr_raw"),
+                "producer_kind": n.get("producer_kind"),
+                "runtime_domain": n.get("runtime_domain"),
                 "node": n,
             }
         )
@@ -193,23 +243,43 @@ def _collect_typed_fields(layer: dict[str, Any], *, side: str, also: list[Any] |
             leaf = str(item.get("name") or item.get("field") or "").split(".")[-1]
             owning = str(item.get("owning_type") or "")
             field_path = str(item.get("field_path") or leaf)
+            arch = str(item.get("architecture") or "")
+            source_path = str(item.get("file_path") or item.get("path") or "")
+            existing = item.get("id")
+            meta = item
         else:
             leaf = str(item).split(".")[-1]
             owning = ""
             field_path = str(item)
+            arch = ""
+            source_path = ""
+            existing = None
+            meta = {}
         if not leaf or _is_non_tiling_key(leaf):
             continue
+        fid = _stable_field_id(
+            owning_type=owning,
+            field_path=field_path,
+            architecture=arch,
+            source_path=source_path or f"{side}:{field_path}",
+            existing_id=existing,
+        )
         out.append(
             {
                 "side": side,
                 "name": leaf,
                 "field_path": field_path,
                 "owning_type": owning,
-                "id": None,
-                "architecture": None,
-                "path_family": None,
-                "template_family": None,
-                "node": {},
+                "id": fid,
+                "architecture": arch or None,
+                "path_family": meta.get("path_family") if isinstance(meta, dict) else None,
+                "template_family": meta.get("template_family") if isinstance(meta, dict) else None,
+                "determinant_source": meta.get("determinant_source") if isinstance(meta, dict) else None,
+                "source_kind": meta.get("source_kind") if isinstance(meta, dict) else None,
+                "expression": (meta.get("expression") or meta.get("expr_raw")) if isinstance(meta, dict) else None,
+                "producer_kind": meta.get("producer_kind") if isinstance(meta, dict) else None,
+                "runtime_domain": meta.get("runtime_domain") if isinstance(meta, dict) else None,
+                "node": meta if isinstance(meta, dict) else {},
             }
         )
     return out

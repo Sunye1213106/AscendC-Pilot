@@ -52,29 +52,27 @@ def effective_task_type_for(task: dict[str, Any]) -> str:
 
 
 def validate_semantic_task_contract(task: dict[str, Any]) -> dict[str, Any]:
-    """Reject illegal type/category/route combinations."""
+    """Reject illegal effective_type / category / route / eligibility combinations.
+
+    Uses effective_task_type (post-canonicalize / post-triage), not original declared
+    type — a scoring hint of mark_missing that was remapped to candidate_generation
+    must not raise SEMANTIC_TASK_CONTRACT_CONFLICT.
+    """
     category = str(task.get("triage_category") or task.get("category") or "")
     effective = effective_task_type_for(task)
-    # Declared/original type must participate — category remap must not hide conflicts.
-    declared = str(task.get("original_task_type") or task.get("type") or "").strip()
     route = str(task.get("route") or "")
     eligible = bool(task.get("eligible_for_adjudication"))
     conflicts: list[str] = []
 
-    if (
-        effective == "mark_missing" or declared == "mark_missing"
-    ) and category == "candidate_generation_required":
+    if effective == "mark_missing" and category == "candidate_generation_required":
         conflicts.append("mark_missing+candidate_generation_required")
+        conflicts.append("category_effective_type_mismatch")
     if route == "uo-semantic-resolve" and not eligible and category == "true_multi_candidate":
         conflicts.append("multi_candidate_not_eligible")
-    if (effective == "macro_semantics" or declared == "macro_semantics") and route == "uo-semantic-resolve":
+    if effective == "macro_semantics" and route == "uo-semantic-resolve":
         conflicts.append("macro_semantics_on_llm_route")
-    if (effective == "key_derivation" or declared == "key_derivation") and route == "uo-semantic-resolve":
+    if effective == "key_derivation" and route == "uo-semantic-resolve":
         conflicts.append("key_derivation_on_extract_llm_route")
-    if category == "candidate_generation_required" and (
-        effective == "mark_missing" or declared == "mark_missing"
-    ):
-        conflicts.append("category_effective_type_mismatch")
 
     if conflicts:
         return {
@@ -84,6 +82,7 @@ def validate_semantic_task_contract(task: dict[str, Any]) -> dict[str, Any]:
             "triage_category": category,
             "effective_task_type": effective,
             "route": route,
+            "eligible_for_adjudication": eligible,
             "task_id": task.get("task_id"),
         }
     return {"ok": True, "effective_task_type": effective}
@@ -132,25 +131,10 @@ def _has_strong_match(task: dict[str, Any]) -> bool:
 
 
 def _scope_complete(uo_root: Path) -> bool:
-    """Machine check: prefer include-closure / scope artifacts over model claims."""
-    for rel in (
-        "ir/source_scope.yaml",
-        "ir/include_closure.yaml",
-    ):
-        data = read_yaml(uo_root / rel) or {}
-        status = str(
-            data.get("include_closure_status")
-            or data.get("status")
-            or data.get("closure_status")
-            or ""
-        ).casefold()
-        if status in {"complete", "closed", "ok"}:
-            return True
-    # Confirmed scope present counts as usable but not proven-complete.
-    runs = uo_root / "runs"
-    if runs.is_dir() and any(runs.glob("*/scope/scope_confirmed.yaml")):
-        return False
-    return False
+    """Machine check via include_closure SSOT only (no multi-file dual-read)."""
+    from uo.scripts.source_include_closure import include_closure_is_complete
+
+    return include_closure_is_complete(uo_root)
 
 
 def _score_phase(task: dict[str, Any]) -> str:
