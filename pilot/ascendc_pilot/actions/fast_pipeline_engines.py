@@ -30,24 +30,14 @@ def _defer_uo_publish_products() -> Iterator[dict[str, Any]]:
     state: dict[str, Any] = {"active": False, "deferred_products": []}
     try:
         import uo.scripts.build_layered_kb as layered
-        import uo.scripts.classify_input_derivable as classify
         import uo.scripts.export_human_views as human
         import uo.scripts.export_kb_graph as sqlite_export
-        import uo.scripts.kb_query_export as contracts
         from uo.scripts._ir_io import write_yaml_if_changed
 
         def patch(module: Any, name: str, replacement: Any) -> None:
             original = getattr(module, name)
             patched.append((module, name, original))
             setattr(module, name, replacement)
-
-        def defer_classify(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
-            state["deferred_products"].append("input_derivable")
-            return {"stats": _deferred_stats("input_derivable")}
-
-        def defer_contracts(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
-            state["deferred_products"].append("testcase_contract_files")
-            return _deferred_stats("testcase_contract_files")
 
         def defer_sqlite(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
             state["deferred_products"].append("kb_graph.sqlite")
@@ -65,8 +55,6 @@ def _defer_uo_publish_products() -> Iterator[dict[str, Any]]:
                 "ktpl_count": None,
             }
 
-        patch(classify, "classify_and_write", defer_classify)
-        patch(contracts, "materialize_testcase_contract_files", defer_contracts)
         patch(sqlite_export, "export_kb_graph", defer_sqlite)
         patch(human, "export_human_views", defer_human)
         # build_layered_kb keeps a module-local alias. Content-aware writes remove
@@ -109,6 +97,7 @@ def _invoke_structural(
 def _reuse_fresh_sqlite_index(project_root: Path, ctx: dict[str, Any]) -> Iterator[dict[str, Any]]:
     """Skip SQLite rebuild when its recorded YAML hashes are already fresh."""
 
+    del ctx
     state: dict[str, Any] = {"cache_hit": False}
     try:
         import sqlite3
