@@ -230,6 +230,37 @@ def snippet_needs_contiguous_backfill(snippet: object) -> bool:
     return False
 
 
+_SOURCE_WINDOW_CACHE: dict[tuple[str, int, int, str], str] = {}
+
+
+def clear_source_window_cache() -> None:
+    _SOURCE_WINDOW_CACHE.clear()
+
+
+def cached_read_source_window(
+    project_root: Path,
+    file_path: str,
+    start_line: int,
+    end_line: int,
+    *,
+    source_snapshot_hash: str = "",
+    pad: int = 0,
+) -> str:
+    """run-scoped source window cache：同一窗口只读一次。"""
+    key = (
+        str(file_path).replace("\\", "/"),
+        int(start_line),
+        int(end_line),
+        str(source_snapshot_hash or ""),
+    )
+    hit = _SOURCE_WINDOW_CACHE.get(key)
+    if hit is not None:
+        return hit
+    text = read_source_window(Path(project_root), file_path, start_line, end_line, pad=pad)
+    _SOURCE_WINDOW_CACHE[key] = text
+    return text
+
+
 def enrich_item_evidence_from_disk(
     project_root: Path,
     item: dict[str, Any],
@@ -237,18 +268,24 @@ def enrich_item_evidence_from_disk(
     candidate: dict[str, Any] | None = None,
     pad: int = 0,
     min_chars: int = MIN_EVIDENCE_SNIPPET_CHARS,
+    source_snapshot_hash: str = "",
 ) -> list[str]:
-    """Backfill contiguous snippet + window sha from disk (or candidate source_window).
+    """从磁盘回填连续 snippet + window sha。
 
-    Only runs when evidence_files/evidence_lines resolve to a window of at least
-    ``min_chars`` (avoids "fixing" single-line wrong spans into a pass).
-    Returns list of enrichment action tags (empty = no change).
+    仅当 evidence_files/evidence_lines 可解析为至少 ``min_chars`` 窗口时执行。
     """
+    if not isinstance(item, dict):
+        raise TypeError("item 必须为 dict")
+    if candidate is not None and not isinstance(candidate, dict):
+        raise TypeError("candidate 必须为 dict 或 None")
+
     actions: list[str] = []
     if item.get("source_verified") is not True and not item.get("is_tiling_sink"):
         return actions
 
     files = item.get("evidence_files")
+    if files is not None and not isinstance(files, list):
+        raise TypeError("evidence_files 必须为 list")
     span = parse_line_span(item.get("evidence_lines"))
     window = ""
     fp = ""
@@ -256,7 +293,14 @@ def enrich_item_evidence_from_disk(
     if isinstance(files, list) and any(str(f).strip() for f in files) and span is not None:
         fp = str(files[0] or "").replace("\\", "/").strip()
         lo, hi = span
-        window = read_source_window(Path(project_root), fp, lo, hi, pad=pad)
+        window = cached_read_source_window(
+            Path(project_root),
+            fp,
+            lo,
+            hi,
+            source_snapshot_hash=source_snapshot_hash,
+            pad=pad,
+        )
 
     # Prefer candidate source_window when plan window is unusable / too small.
     sw = (candidate or {}).get("source_window") if isinstance(candidate, dict) else None

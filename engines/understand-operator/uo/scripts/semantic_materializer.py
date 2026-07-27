@@ -310,11 +310,7 @@ def hydrate_materialized_plan(
     *,
     candidates_sha256: str = "",
 ) -> dict[str, Any]:
-    """Stamp sha + copy candidate evidence/identity onto relation-derived rows.
-
-    Relation materialize proves *what* is selected; candidates remain the evidence
-    authority for windows / roles / identity fields required by validate.
-    """
+    """回填 candidate 身份与证据窗口；禁止覆盖 Relation 派生的 role/binding/sink。"""
     from uo.scripts.extract_plan_autofill import required_high_confidence_candidate_ids
     from uo.scripts.extract_plan_io import HELPER_WRITER_NAMES, _match_candidate
 
@@ -386,9 +382,18 @@ def hydrate_materialized_plan(
         if cid:
             row["candidate_id"] = cid
             used_ids.add(cid)
+        # role_suggested 不得覆盖 Relation 派生 role；冲突仅记诊断。
         suggested = str(cand.get("role_suggested") or "").strip()
-        if suggested:
-            row["role"] = suggested
+        derived_role = str(row.get("role") or "").strip()
+        if suggested and derived_role and suggested != derived_role:
+            plan.setdefault("legacy_hint_conflicts", []).append(
+                {
+                    "candidate_id": cid or row.get("candidate_id"),
+                    "name": row.get("name"),
+                    "relation_role": derived_role,
+                    "role_suggested": suggested,
+                }
+            )
         if sw:
             lo = int(sw.get("start_line") or cand.get("start_line") or 0)
             hi = int(sw.get("end_line") or cand.get("end_line") or lo)

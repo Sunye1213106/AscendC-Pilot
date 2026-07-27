@@ -219,14 +219,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_ir_v.add_argument("--run-id", default="", help="Run id for staging paths")
     p_ir_wl = p_ir_sub.add_parser(
-        "extract-plan-worklist",
-        help="Summarize extract-plan decision_worklist",
+        "extract-plan-obligations",
+        help="汇总 extract_plan semantic_obligations / snapshot",
     )
     p_ir_wl.add_argument("--project", type=Path, default=Path.cwd())
     p_ir_wl.add_argument("--run-id", default="")
     p_ir_cov = p_ir_sub.add_parser(
-        "extract-plan-coverage",
-        help="Report decision_report coverage vs worklist",
+        "extract-plan-relations",
+        help="汇总 semantic_relations / unresolved 计数",
     )
     p_ir_cov.add_argument("--project", type=Path, default=Path.cwd())
     p_ir_cov.add_argument("--run-id", default="")
@@ -1066,13 +1066,12 @@ def _cmd_inspect(args: Any) -> int:
         dups = {k: v for k, v in c.items() if k and v > 1}
         print_json({"ok": True, "duplicate_targets": dups, "count": len(dups)}, default=str)
         return 0
-    if sub == "extract-plan-worklist":
-        from uo.scripts.extract_plan_decision import build_decision_worklist
-
+    if sub == "extract-plan-obligations":
         run_id = str(getattr(args, "run_id", "") or "").strip()
-        wl_path = None
+        obl = None
+        snap = None
         if run_id:
-            cand = (
+            base = (
                 project
                 / ".ascendc-pilot"
                 / "runs"
@@ -1080,45 +1079,25 @@ def _cmd_inspect(args: Any) -> int:
                 / "actions"
                 / "extract_plan"
                 / "inputs"
-                / "decision_worklist.yaml"
             )
-            if cand.is_file():
-                wl_path = cand
-        if wl_path is None:
-            alt = uo / "ir" / "extract_plan_decision_worklist.yaml"
-            wl_path = alt if alt.is_file() else None
-        if wl_path is not None:
-            doc = read_yaml(wl_path) or {}
-        else:
-            cands = read_yaml(uo / "ir" / "extract_plan_candidates.yaml") or {}
-            doc = build_decision_worklist(cands if isinstance(cands, dict) else {})
-        items = [w for w in (doc.get("work_items") or []) if isinstance(w, dict)]
+            if (base / "semantic_obligations.yaml").is_file():
+                obl = read_yaml(base / "semantic_obligations.yaml")
+            if (base / "extract_plan_snapshot.yaml").is_file():
+                snap = read_yaml(base / "extract_plan_snapshot.yaml")
         print_json(
             {
                 "ok": True,
-                "path": str(wl_path) if wl_path else "(built)",
-                "counts": doc.get("counts") or {
-                    "work_items": len(items),
-                    "required": sum(1 for w in items if w.get("required_decision")),
-                },
-                "required_ids": [
-                    str(w.get("candidate_id"))
-                    for w in items
-                    if w.get("required_decision") and w.get("candidate_id")
-                ][:200],
+                "snapshot": snap if isinstance(snap, dict) else {},
+                "deterministic_count": (obl or {}).get("deterministic_count") if isinstance(obl, dict) else 0,
+                "llm_required_count": (obl or {}).get("llm_required_count") if isinstance(obl, dict) else 0,
             },
             default=str,
         )
         return 0
-    if sub == "extract-plan-coverage":
-        from uo.scripts.extract_plan_decision import (
-            build_decision_worklist,
-            report_extract_plan_coverage,
-        )
-
+    if sub == "extract-plan-relations":
         run_id = str(getattr(args, "run_id", "") or "").strip()
-        wl = read_yaml(uo / "ir" / "extract_plan_decision_worklist.yaml")
-        if not isinstance(wl, dict) and run_id:
+        graph = read_yaml(uo / "ir" / "semantic_relations.yaml")
+        if not isinstance(graph, dict) and run_id:
             p = (
                 project
                 / ".ascendc-pilot"
@@ -1126,76 +1105,36 @@ def _cmd_inspect(args: Any) -> int:
                 / run_id
                 / "actions"
                 / "extract_plan"
-                / "inputs"
-                / "decision_worklist.yaml"
-            )
-            wl = read_yaml(p) if p.is_file() else None
-        if not isinstance(wl, dict):
-            cands = read_yaml(uo / "ir" / "extract_plan_candidates.yaml") or {}
-            wl = build_decision_worklist(cands if isinstance(cands, dict) else {})
-        report = None
-        if run_id:
-            rp = (
-                project
-                / ".ascendc-pilot"
-                / "runs"
-                / run_id
-                / "actions"
-                / "extract_plan"
                 / "staging"
-                / "decision_report.yaml"
+                / "semantic_relations.yaml"
             )
-            if rp.is_file():
-                report = read_yaml(rp)
-        if not isinstance(report, dict):
-            report = read_yaml(uo / "ir" / "extract_plan_decision_report.yaml")
-        cov = report_extract_plan_coverage(
-            wl if isinstance(wl, dict) else {},
-            report if isinstance(report, dict) else None,
+            if p.is_file():
+                graph = read_yaml(p)
+        graph = graph if isinstance(graph, dict) else {}
+        print_json(
+            {
+                "ok": True,
+                "relation_count": len(graph.get("relations") or []),
+                "entity_count": len(graph.get("entities") or []),
+                "unresolved_count": len(graph.get("unresolved") or []),
+                "input_root_count": len(graph.get("input_roots") or []),
+            },
+            default=str,
         )
-        # Optionally write to action scratch when run_id present.
-        if run_id:
-            scratch = (
-                project
-                / ".ascendc-pilot"
-                / "runs"
-                / run_id
-                / "actions"
-                / "extract_plan"
-                / "scratch"
-                / "coverage_report.yaml"
-            )
-            try:
-                scratch.parent.mkdir(parents=True, exist_ok=True)
-                from uo.scripts._ir_io import write_yaml
-
-                write_yaml(scratch, cov)
-                cov["scratch"] = str(scratch)
-            except OSError:
-                pass
-        print_json(cov, default=str)
-        return 0 if cov.get("ok") else 1
+        return 0
     if sub == "validate":
         what = str(getattr(args, "what", "extract_plan") or "extract_plan")
-        if what in {"extract_plan", "extract-plan-staging"}:
-            from uo.scripts.extract_plan_autofill import (
-                stamp_candidate_ids,
-                validate_tri_state_coverage,
-            )
-            from uo.scripts.extract_plan_decision import (
-                build_decision_worklist,
-                is_decision_report,
-                validate_extract_plan_staging,
-            )
+        if what in {"extract_plan", "extract-plan-staging", "parts"}:
+            from uo.scripts.extract_plan_slim import assert_canonical_plan_slim
 
-            cands = read_yaml(uo / "ir" / "extract_plan_candidates.yaml") or {}
-            if isinstance(cands, dict):
-                stamp_candidate_ids(cands)
+            plan = read_yaml(uo / "ir" / "extract_plan.yaml") or {}
+            errs = assert_canonical_plan_slim(plan if isinstance(plan, dict) else {})
+            rel = read_yaml(uo / "ir" / "semantic_relations.yaml")
+            if what != "parts" and not isinstance(rel, dict):
+                errs.append("缺少 semantic_relations.yaml")
             run_id = str(getattr(args, "run_id", "") or "").strip()
-            report = None
-            worklist = read_yaml(uo / "ir" / "extract_plan_decision_worklist.yaml")
-            if run_id:
-                rp = (
+            if what == "parts" and run_id:
+                part_dir = (
                     project
                     / ".ascendc-pilot"
                     / "runs"
@@ -1203,48 +1142,10 @@ def _cmd_inspect(args: Any) -> int:
                     / "actions"
                     / "extract_plan"
                     / "staging"
-                    / "decision_report.yaml"
+                    / "relation_parts"
                 )
-                if rp.is_file():
-                    report = read_yaml(rp)
-                wlp = (
-                    project
-                    / ".ascendc-pilot"
-                    / "runs"
-                    / run_id
-                    / "actions"
-                    / "extract_plan"
-                    / "inputs"
-                    / "decision_worklist.yaml"
-                )
-                if wlp.is_file():
-                    worklist = read_yaml(wlp)
-            if what == "extract-plan-staging":
-                if not isinstance(worklist, dict):
-                    worklist = build_decision_worklist(
-                        cands if isinstance(cands, dict) else {}
-                    )
-                errs = validate_extract_plan_staging(
-                    report=report if isinstance(report, dict) else None,
-                    worklist=worklist if isinstance(worklist, dict) else {},
-                    plan=None,
-                    candidates=cands if isinstance(cands, dict) else {},
-                    project_root=project,
-                )
-                print_json({"ok": not errs, "errors": errs}, default=str)
-                return 0 if not errs else 1
-            plan = read_yaml(uo / "ir" / "extract_plan.yaml") or {}
-            if isinstance(report, dict) and is_decision_report(report):
-                errs = validate_extract_plan_staging(
-                    report=report,
-                    worklist=worklist
-                    if isinstance(worklist, dict)
-                    else build_decision_worklist(cands if isinstance(cands, dict) else {}),
-                )
-            else:
-                errs = validate_tri_state_coverage(
-                    plan if isinstance(plan, dict) else {}, cands
-                )
+                if not part_dir.is_dir():
+                    errs.append("缺少 staging/relation_parts")
             print_json({"ok": not errs, "errors": errs}, default=str)
             return 0 if not errs else 1
         print_json({"ok": False, "error": "unsupported_validate", "what": what})

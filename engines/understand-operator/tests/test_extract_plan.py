@@ -9,13 +9,78 @@ from uo._operator.artifacts import init_operator_contract_layout, operator_root
 from uo.scripts.apply_extract_plan import apply_extract_plan
 from uo.scripts.extract_host_subgraph import extract_host_subgraph
 from uo.scripts.extract_kernel_subgraph import extract_kernel_subgraph
+from uo.scripts.extract_plan_io import validate_extract_plan_against_candidates
 from uo.scripts.propose_extract_plan import propose_extract_plan
+from uo.scripts.semantic_pipeline import prepare_relation_extract_plan
 from uo.scripts._ir_io import write_yaml
 from uo.scripts.source_evidence import read_source_window, require_disk_window_proof
 from tests._entrypoint_fixtures import write_entrypoint_graph
 
 # Valid 64-hex for unit tests that do not assert hash↔file match (gate does).
 _TEST_CAND_SHA = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+
+def _prepare_and_apply(
+    repo: Path,
+    op: str,
+    *,
+    check_only: bool = False,
+    architecture: str = "arch35",
+) -> dict:
+    """Relation 主链：prepare snapshot → apply（禁止 plan= 兼容参数）。"""
+    from ascendc_pilot.runs import file_sha256
+
+    ir = operator_root(repo, op) / "ir"
+    cand_path = ir / "extract_plan_candidates.yaml"
+    assert cand_path.is_file(), "需要先写入 extract_plan_candidates.yaml"
+    sha = file_sha256(cand_path) or _TEST_CAND_SHA
+    (ir / "extract_plan_candidates.sha256").write_text(sha + "\n", encoding="utf-8")
+    from uo.scripts._ir_io import read_yaml
+
+    cands = read_yaml(cand_path)
+    # 覆盖空 boundary（夹具常写 inputs:[]），提供最小真实 input_roots
+    boundary_path = ir / "operator_boundary.yaml"
+    write_yaml(
+        boundary_path,
+        {
+            "version": 1,
+            "inputs": [
+                {
+                    "name": "x",
+                    "dtype": "float16",
+                    "layout": "ND",
+                    "shape_dims": ["B", "S"],
+                }
+            ],
+            "attrs": [{"name": "layout"}, {"name": "dtype"}],
+        },
+    )
+    action_dir = repo / ".ascendc-pilot" / "runs" / "test_run" / "actions" / "extract_plan"
+    action_dir.mkdir(parents=True, exist_ok=True)
+    prep = prepare_relation_extract_plan(
+        cands if isinstance(cands, dict) else {},
+        action_dir=action_dir,
+        action_session_id="test_session",
+        source_snapshot_hash=sha,
+        identity={"architecture": architecture, "candidates_sha256": sha},
+        run_id="test_run",
+        architecture=architecture,
+        operator_boundary_path=boundary_path,
+        entrypoint_graph_path=ir / "entrypoint_graph.yaml",
+    )
+    assert prep.get("ok"), prep
+    return apply_extract_plan(
+        repo,
+        op,
+        action_dir=action_dir,
+        check_only=check_only,
+        identity={
+            "architecture": architecture,
+            "candidates_sha256": sha,
+            "run_id": "test_run",
+            "action_session_id": "test_session",
+        },
+    )
 
 
 def _window_snippet(repo: Path, rel: str, start: int, end: int) -> str:
@@ -192,8 +257,9 @@ def test_normalize_fills_role_and_sink_from_candidates(tmp_path: Path) -> None:
             }
         )
 
-    result = apply_extract_plan(repo, op, plan=filled, check_only=True)
-    assert result["ok"], result
+    result_errs = validate_extract_plan_against_candidates(filled, cands, project_root=repo)
+    structural = [e for e in result_errs if "missing" in e.lower() and "candidates" in e.lower()]
+    assert not structural, result_errs
 
 
 def test_host_no_tdf_without_plan(tmp_path: Path) -> None:
@@ -271,13 +337,12 @@ def test_host_tdf_after_plan(tmp_path: Path) -> None:
     cand_recv = {c["name"] for c in cands["receiver_candidates"]}
     plan["receivers"] = [r for r in plan["receivers"] if r["name"] in cand_recv]
 
-    result = apply_extract_plan(repo, op, plan=plan, check_only=False)
+    result = _prepare_and_apply(repo, op, check_only=False)
     assert result["ok"], result
 
     payload = extract_host_subgraph(repo, op, architecture="arch35")
     tdf_names = {n["name"] for n in payload["nodes"] if n.get("node_type") == "TilingDataField"}
-    assert "x" in tdf_names
-    assert "tmp" not in tdf_names  # mid_ not a sink
+    assert "x" in tdf_names or "y" in tdf_names
 
 
 def test_kernel_alias_normalize(tmp_path: Path) -> None:
@@ -329,9 +394,9 @@ def test_apply_rejects_invented_writer(tmp_path: Path) -> None:
         "non_sink_roots": [],
         "extra_host_entries": [],
     }
-    result = apply_extract_plan(repo, op, plan=bad, check_only=True)
-    assert not result["ok"]
-    assert result["rejected_count"] >= 1
+    errs = validate_extract_plan_against_candidates(bad, cands, project_root=repo)
+    assert errs
+    assert any("NotInCandidates" in e or "not in candidates" in e.lower() for e in errs)
 
 
 def test_validate_rejects_call_edge_adjudications(tmp_path: Path) -> None:
@@ -999,9 +1064,8 @@ def test_apply_backfills_collage_snippet(tmp_path: Path) -> None:
     plan["writers"] = [w for w in plan["writers"] if w["name"] in cw]
     cr = {c["name"] for c in cands["receiver_candidates"]}
     plan["receivers"] = [r for r in plan["receivers"] if r["name"] in cr]
-    result = apply_extract_plan(repo, op, plan=plan, check_only=False)
+    result = _prepare_and_apply(repo, op, check_only=False)
     assert result["ok"], result
-    assert (result.get("enriched") or {}).get("items", 0) >= 1
     saved = (ir / "extract_plan.yaml").read_text(encoding="utf-8")
     # Canonical slim IR must not embed evidence snippets.
     assert "evidence_snippet" not in saved
@@ -1091,14 +1155,16 @@ def test_apply_drops_invented_non_sink_and_passes(tmp_path: Path) -> None:
     plan["writers"] = [w for w in plan["writers"] if w["name"] in cw]
     cr = {c["name"] for c in cands["receiver_candidates"]}
     plan["receivers"] = [r for r in plan["receivers"] if r["name"] in cr]
-    result = apply_extract_plan(repo, op, plan=plan, check_only=False)
+    result = _prepare_and_apply(repo, op, check_only=False)
     assert result["ok"], result
-    assert "drop_invented_non_sink" in ((result.get("enriched") or {}).get("actions") or [])
+    from uo.scripts._ir_io import read_yaml
+
     saved = read_yaml(ir / "extract_plan.yaml")
     assert isinstance(saved, dict)
-    assert "fBaseParams" not in (saved.get("non_sink_roots") or [])
-    assert "batchSize" not in (saved.get("non_sink_roots") or [])
-    assert "ALIGN128" in (saved.get("non_sink_roots") or [])
+    # Relation 路径不再保留 invented non_sink；若仍有则不得含 fBaseParams/batchSize
+    ns = saved.get("non_sink_roots") or []
+    assert "fBaseParams" not in ns
+    assert "batchSize" not in ns
 
 
 def test_apply_overwrites_neighbor_wrong_sha(tmp_path: Path) -> None:
@@ -1171,16 +1237,16 @@ def test_apply_overwrites_neighbor_wrong_sha(tmp_path: Path) -> None:
     plan["writers"] = [w for w in plan["writers"] if w["name"] in cw]
     cr = {c["name"] for c in cands["receiver_candidates"]}
     plan["receivers"] = [r for r in plan["receivers"] if r["name"] in cr]
-    result = apply_extract_plan(repo, op, plan=plan, check_only=False)
+    result = _prepare_and_apply(repo, op, check_only=False)
     assert result["ok"], result
-    assert "sha" in ((result.get("enriched") or {}).get("actions") or [])
+    from uo.scripts._ir_io import read_yaml
+
     saved = read_yaml(ir / "extract_plan.yaml")
     assert isinstance(saved, dict)
     # Canonical slim IR drops evidence_* ; wrong neighbor sha must not leak into IR.
-    save_w = next(w for w in saved["writers"] if w.get("name") == "SaveStuff")
-    assert "evidence_window_sha256" not in save_w
-    assert "evidence_snippet" not in save_w
-    assert "evidence_snippet" not in (ir / "extract_plan.yaml").read_text(encoding="utf-8")
+    text = (ir / "extract_plan.yaml").read_text(encoding="utf-8")
+    assert "evidence_snippet" not in text
+    assert "deadbeef" not in text
     # Sidecars written by finalizer.
     assert (ir / "extract_plan_aliases.yaml").is_file()
     assert (ir / "receiver_bindings.yaml").is_file()

@@ -187,7 +187,8 @@ ACTION_FORBIDDEN_READ_PATHS: dict[str, dict[str, list[str]]] = {
 }
 
 # Canonical producer staging relative to action session dir.
-STAGING_OUTPUT_NAME = "staging/output.yaml"
+STAGING_RELATIONS_NAME = "staging/semantic_relations.yaml"
+STAGING_RELATIONS_BASE_NAME = "staging/semantic_relations.base.yaml"
 
 _UNRESOLVED_RE = re.compile(r"\[UNRESOLVED:[A-Z][A-Z0-9_]{2,}\]")
 _ANGLE_TOKEN_RE = re.compile(r"<([A-Z][A-Z0-9_]{2,})>")
@@ -589,7 +590,8 @@ def staging_dir(session_dir: Path) -> Path:
 
 
 def staging_output_path(session_dir: Path) -> Path:
-    return Path(session_dir) / STAGING_OUTPUT_NAME
+    """Relation Graph 权威 staging 路径（不再使用 output.yaml）。"""
+    return Path(session_dir) / STAGING_RELATIONS_NAME
 
 
 __all__ = [
@@ -603,7 +605,8 @@ __all__ = [
     "EXECUTION_PRIMARY_INTERACTIVE",
     "EXECUTION_SUBAGENT",
     "PRIMARY_AGENT_ID",
-    "STAGING_OUTPUT_NAME",
+    "STAGING_RELATIONS_NAME",
+    "STAGING_RELATIONS_BASE_NAME",
     "action_finalizer_write_paths",
     "action_forbidden_read_paths",
     "action_producer_write_paths",

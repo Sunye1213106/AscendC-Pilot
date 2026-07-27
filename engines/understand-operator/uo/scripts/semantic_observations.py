@@ -348,6 +348,15 @@ def build_observations_from_candidates(candidates: dict[str, Any]) -> dict[str, 
                 if oid and oid not in seen:
                     seen.add(oid)
                     obs["section"] = section
+                    # 保留真实源码窗口作为证据（禁止后续合成）
+                    if text and not obs.get("evidence_snippet"):
+                        obs["evidence_snippet"] = text
+                    sw = item.get("source_window") if isinstance(item.get("source_window"), dict) else None
+                    if sw and not obs.get("source_window"):
+                        obs["source_window"] = dict(sw)
+                    # 正则发现默认中置信；结构化完整字段可升 high
+                    if "confidence" not in obs:
+                        obs["confidence"] = "medium"
                     observations.append(obs)
             # Alias candidates: emit equivalence observation from fields.
             if section == "alias_candidates":
@@ -368,6 +377,8 @@ def build_observations_from_candidates(candidates: dict[str, Any]) -> dict[str, 
                                 "evidence_refs": [eref],
                                 "candidate_id": cid or None,
                                 "section": section,
+                                "evidence_snippet": text or f"{local} = tilingData->{leaf};",
+                                "confidence": "high",
                             }
                         )
     return {

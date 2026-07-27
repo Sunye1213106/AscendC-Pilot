@@ -47,80 +47,179 @@ def _add_relation(graph: dict[str, Any], rel: dict[str, Any]) -> None:
     rels.append(rel)
 
 
-def ensure_standard_input_roots(graph: dict[str, Any]) -> list[str]:
-    """Declare canonical input roots (shape dims + common attrs)."""
-    roots = [
-        ("layout", "layout"),
-        ("dtype", "dtype"),
-        ("deterministic", "attr"),
-        ("sparse_mode", "attr"),
-        ("B", "shape_dim"),
-        ("N", "shape_dim"),
-        ("S", "shape_dim"),
-        ("D", "shape_dim"),
-    ]
+def build_input_roots_from_operator_boundary(
+    boundary: dict[str, Any] | None,
+    *,
+    host_inputs: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """仅从真实算子边界构建 input_roots；不得补通用 layout/dtype/B/N/S/D。"""
+    roots: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _add(rid: str, kind: str, symbol: str, extra: dict[str, Any] | None = None) -> None:
+        if rid in seen:
+            return
+        seen.add(rid)
+        row = {"id": rid, "kind": kind, "symbol": symbol}
+        if extra:
+            row.update(extra)
+        roots.append(row)
+
+    boundary = boundary if isinstance(boundary, dict) else {}
+    for inp in list(boundary.get("inputs") or []) + list(host_inputs or []):
+        if not isinstance(inp, dict):
+            continue
+        name = str(inp.get("name") or inp.get("id") or "").strip()
+        if not name:
+            continue
+        optional = bool(inp.get("optional") or inp.get("is_optional"))
+        kind = "optional_input" if optional else "tensor_input"
+        prefix = "optional" if optional else "input"
+        _add(f"{prefix}:{name}", kind, name)
+        dims = inp.get("shape_dims") or inp.get("dims") or inp.get("shape") or []
+        if isinstance(dims, list):
+            for d in dims:
+                dname = str(d.get("name") if isinstance(d, dict) else d).strip()
+                if dname:
+                    _add(f"input:{name}.shape.{dname}", "shape_dim", dname, {"parent": name})
+        dtype = str(inp.get("dtype") or "").strip()
+        if dtype:
+            _add(f"input:{name}.dtype", "dtype", dtype, {"parent": name})
+        layout = str(inp.get("layout") or inp.get("format") or "").strip()
+        if layout:
+            _add(f"input:{name}.layout", "layout", layout, {"parent": name})
+
+    for attr in boundary.get("attrs") or boundary.get("attributes") or []:
+        if not isinstance(attr, dict):
+            continue
+        aname = str(attr.get("name") or attr.get("id") or "").strip()
+        if aname:
+            _add(f"attr:{aname}", "attribute", aname)
+
+    return roots
+
+
+def _apply_input_roots(graph: dict[str, Any], roots: list[dict[str, Any]]) -> list[str]:
     ids: list[str] = []
-    for symbol, input_kind in roots:
-        eid = _ensure_entity(
-            graph,
-            kind="input_root",
-            symbol=symbol,
-            extra={"input_kind": input_kind},
-        )
+    for r in roots:
+        if not isinstance(r, dict):
+            continue
+        symbol = str(r.get("symbol") or r.get("id") or "").strip()
+        kind = str(r.get("kind") or "other_input")
+        eid = str(r.get("id") or "") or _eid("input_root", symbol)
+        ents = graph.setdefault("entities", [])
+        if not any(isinstance(e, dict) and e.get("id") == eid for e in ents):
+            ents.append(
+                make_entity(
+                    entity_id=eid,
+                    kind="input_root",
+                    symbol=symbol,
+                    extra={"input_kind": kind, **{k: v for k, v in r.items() if k not in {"id", "kind", "symbol"}}},
+                )
+            )
         ids.append(eid)
     graph["input_roots"] = ids
     return ids
 
 
+def _obs_evidence_text(obs_items: list[dict[str, Any]]) -> str:
+    """只使用真实 source window / snippet，禁止合成代码字符串。"""
+    bits: list[str] = []
+    for o in obs_items:
+        snip = str(o.get("evidence_snippet") or o.get("text") or "").strip()
+        if snip:
+            bits.append(snip)
+            continue
+        sw = o.get("source_window") if isinstance(o.get("source_window"), dict) else {}
+        text = str(sw.get("text") or "").strip()
+        if text:
+            bits.append(text)
+    return "\n".join(bits)
+
+
+def _unresolved(
+    graph: dict[str, Any],
+    *,
+    obligation_id: Any,
+    relation: str,
+    reason_code: str,
+    affected_entity_ids: list[str] | None = None,
+    affected_relation_ids: list[str] | None = None,
+) -> None:
+    graph.setdefault("unresolved", []).append(
+        {
+            "obligation_id": obligation_id,
+            "relation": relation,
+            "reason_code": reason_code,
+            "status": "unresolved",
+            "affected_entity_ids": list(affected_entity_ids or []),
+            "affected_relation_ids": list(affected_relation_ids or []),
+        }
+    )
+
+
 def _ground(
     graph: dict[str, Any],
     subject: str,
-    input_symbol: str,
+    input_root_id: str,
     *,
     evidence_refs: list[str] | None = None,
-) -> None:
-    obj = _ensure_entity(
-        graph,
-        kind="input_root",
-        symbol=input_symbol,
-        extra={"input_kind": "other_input"},
-    )
-    # Fix input_kind for known symbols.
+) -> bool:
+    """仅当 input_root_id 已在 graph.input_roots / entities 中存在时建立 GROUNDED_IN。"""
+    roots = set(graph.get("input_roots") or [])
     by = index_entities(graph)
-    ent = by.get(obj)
-    if ent and ent.get("kind") == "input_root":
-        known = {
-            "layout": "layout",
-            "dtype": "dtype",
-            "deterministic": "attr",
-            "sparse_mode": "attr",
-            "B": "shape_dim",
-            "N": "shape_dim",
-            "S": "shape_dim",
-            "D": "shape_dim",
-        }
-        if input_symbol in known:
-            ent["input_kind"] = known[input_symbol]
+    if input_root_id not in roots and input_root_id not in by:
+        # 允许 input:xxx / attr:xxx 形式已注册实体
+        if not (input_root_id.startswith("input:") or input_root_id.startswith("attr:") or input_root_id.startswith("optional:")):
+            return False
+        if input_root_id not in by:
+            return False
+    if input_root_id not in by:
+        return False
     _add_relation(
         graph,
         make_relation(
-            relation_id=_rid("ground", subject, input_symbol),
+            relation_id=_rid("ground", subject, input_root_id),
             relation_type="GROUNDED_IN",
             subject=subject,
-            object=obj,
+            object=input_root_id,
             evidence_refs=evidence_refs or [],
             origin="deterministic",
         ),
     )
+    return True
+
+
+def _find_root_id(graph: dict[str, Any], symbol: str) -> str:
+    """在已注册 roots 中按 symbol / 后缀匹配；找不到返回空。"""
+    sym = str(symbol or "").strip()
+    if not sym:
+        return ""
+    by = index_entities(graph)
+    for rid in graph.get("input_roots") or []:
+        ent = by.get(str(rid))
+        if not ent:
+            continue
+        if str(ent.get("symbol") or "") == sym or str(ent.get("id") or "").endswith(":" + sym):
+            return str(ent.get("id"))
+        if str(ent.get("id") or "") == sym:
+            return str(ent.get("id"))
+    # 直接 id
+    if sym in by and is_input_root_entity(by[sym]):
+        return sym
+    return ""
 
 
 def close_deterministic_relations(
     observations: dict[str, Any],
     obligations: dict[str, Any],
+    *,
+    operator_boundary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Produce a relation graph from deterministic obligation closures."""
+    """从确定性义务闭合生成 Relation Graph（仅完整结构证据）。"""
     graph = empty_relation_graph()
-    ensure_standard_input_roots(graph)
+    roots = build_input_roots_from_operator_boundary(operator_boundary)
+    _apply_input_roots(graph, roots)
     obs_by_id = {
         str(o.get("id") or ""): o
         for o in (observations.get("observations") or [])
@@ -137,50 +236,31 @@ def close_deterministic_relations(
         obs_items = [obs_by_id[i] for i in obs_ids if i in obs_by_id]
 
         for rtype in close_as:
-            # Validate against concatenated observation context when possible.
-            text_bits = []
-            for o in obs_items:
-                # Reconstruct minimal lexical cues from observation type.
-                t = str(o.get("type") or "")
-                if t == "common_assign_macro":
-                    text_bits.append(f"{o.get('macro')}(tilingData);")
-                    text_bits.append("x_ = &tilingData->nested;")
-                elif t == "address_of_nested_member":
-                    text_bits.append(
-                        f"{o.get('receiver')} = &tilingData->{o.get('nested_field')};"
-                    )
-                elif t == "setter_call":
-                    text_bits.append(f"{o.get('receiver')}->set_{o.get('field')}(v);")
-                elif t == "key_macro_call":
-                    text_bits.append("uint64_t key = GET_TPL_TILING_KEY(...); return key;")
-                elif t == "get_tiling_data":
-                    text_bits.append(f"GetTilingData<{o.get('root_type')}>();")
-                elif t == "layout_condition":
-                    text_bits.append("if (layoutType == INPUT_FORMAT_TND)")
-                elif t == "dtype_condition":
-                    text_bits.append("if (inputDtype == ge::DT_FLOAT16)")
-                elif t == "deterministic_or_sparse_condition":
-                    text_bits.append("if (isDeterministic)")
-                elif t == "alias_candidate":
-                    text_bits.append(
-                        f"{o.get('local')} = tilingData->{o.get('tdf_path') or o.get('tdf_leaf')};"
-                    )
-                elif t == "derived_assign":
-                    text_bits.append(f"{o.get('local')} = ceil_div(s1, blockFactor);")
-                elif t == "template_alias":
-                    text_bits.append(f"using {o.get('alias')} = {o.get('base')}<")
-                elif t == "branch_if":
-                    text_bits.append("if (cond)")
-            text = "\n".join(text_bits)
-            check = validate_relation_evidence(rtype, text=text)
-            if not check.get("supported"):
-                graph.setdefault("unresolved", []).append(
-                    {
-                        "obligation_id": obl.get("obligation_id"),
-                        "relation": rtype,
-                        "reason_code": check.get("reason_code") or "unsupported",
-                        "status": "unresolved",
-                    }
+            text = _obs_evidence_text(obs_items)
+            # 宏仅见 invocation、无真实窗口 → 不得 deterministic close
+            if any(
+                str(o.get("type") or "") == "common_assign_macro"
+                and not _obs_evidence_text([o])
+                for o in obs_items
+            ):
+                _unresolved(
+                    graph,
+                    obligation_id=obl.get("obligation_id"),
+                    relation=rtype,
+                    reason_code="MACRO_BODY_UNRESOLVED",
+                    affected_entity_ids=[entity_name],
+                )
+                continue
+            check = validate_relation_evidence(rtype, text=text, authentic=bool(text.strip()))
+            sufficient = bool(check.get("sufficient", check.get("supported")))
+            authentic = bool(check.get("authentic"))
+            if not (authentic and sufficient):
+                _unresolved(
+                    graph,
+                    obligation_id=obl.get("obligation_id"),
+                    relation=rtype,
+                    reason_code=str(check.get("reason_code") or "unsupported"),
+                    affected_entity_ids=[entity_name],
                 )
                 continue
 
@@ -281,8 +361,26 @@ def close_deterministic_relations(
                         evidence_refs=erefs,
                     ),
                 )
-                # Key dims typically grounded to layout/dtype/deter.
-                for dim in ("layout", "dtype", "deterministic", "sparse_mode"):
+                # 仅从真实 key_construction observation 参数提取 dimension。
+                dims: list[str] = []
+                for o in obs_items:
+                    if str(o.get("type") or "") not in {"key_macro_call", "key_construction"}:
+                        continue
+                    args = o.get("arguments") or o.get("argument_symbols") or o.get("dimensions") or []
+                    if isinstance(args, list):
+                        for a in args:
+                            name = str(a.get("name") if isinstance(a, dict) else a).strip()
+                            if name:
+                                dims.append(name)
+                if not dims:
+                    _unresolved(
+                        graph,
+                        obligation_id=obl.get("obligation_id"),
+                        relation="COMPOSES_KEY",
+                        reason_code="KEY_DIMENSIONS_UNKNOWN",
+                        affected_entity_ids=[sub, obj],
+                    )
+                for dim in dims:
                     dim_e = _ensure_entity(graph, kind="key_dimension", symbol=dim)
                     _add_relation(
                         graph,
@@ -294,10 +392,17 @@ def close_deterministic_relations(
                             evidence_refs=erefs,
                         ),
                     )
-                    _ground(graph, dim_e, dim, evidence_refs=erefs)
-                _ground(graph, sub, "layout", evidence_refs=erefs)
-                _ground(graph, sub, "dtype", evidence_refs=erefs)
-                _ground(graph, sub, "deterministic", evidence_refs=erefs)
+                    root_id = _find_root_id(graph, dim)
+                    if root_id:
+                        _ground(graph, dim_e, root_id, evidence_refs=erefs)
+                    else:
+                        _unresolved(
+                            graph,
+                            obligation_id=obl.get("obligation_id"),
+                            relation="CONTRIBUTES_TO_KEY",
+                            reason_code="KEY_DIM_ROOT_UNKNOWN",
+                            affected_entity_ids=[dim_e],
+                        )
 
             elif rtype == "CONTRIBUTES_TO_KEY":
                 fn = entity_name
@@ -335,60 +440,91 @@ def close_deterministic_relations(
 
             elif rtype == "DERIVES":
                 local = entity_name
+                inputs: list[str] = []
+                expression: dict[str, Any] | None = None
                 for o in obs_items:
-                    if o.get("local"):
-                        local = str(o.get("local"))
+                    if o.get("local") or o.get("output"):
+                        local = str(o.get("local") or o.get("output"))
+                    for s in o.get("input_symbols") or o.get("inputs") or []:
+                        name = str(s.get("name") if isinstance(s, dict) else s).strip()
+                        if name:
+                            inputs.append(name)
+                    if isinstance(o.get("expression"), dict):
+                        expression = dict(o.get("expression") or {})
+                    elif o.get("expression"):
+                        expression = {"raw": str(o.get("expression"))}
                 sub = _ensure_entity(graph, kind="local", symbol=local)
+                if not inputs:
+                    _unresolved(
+                        graph,
+                        obligation_id=obl.get("obligation_id"),
+                        relation="DERIVES",
+                        reason_code="DERIVE_INPUTS_INCOMPLETE",
+                        affected_entity_ids=[sub],
+                    )
+                    continue
+                resolved_inputs: list[str] = []
+                for inp in inputs:
+                    rid = _find_root_id(graph, inp)
+                    if rid:
+                        resolved_inputs.append(rid)
+                        _ground(graph, sub, rid, evidence_refs=erefs)
+                    else:
+                        # 允许 tiling_field / local 作为中间输入
+                        mid = _ensure_entity(
+                            graph,
+                            kind="tiling_field" if "." in inp or inp.startswith("tiling") else "local",
+                            symbol=inp,
+                        )
+                        resolved_inputs.append(mid)
                 _add_relation(
                     graph,
                     make_relation(
                         relation_id=_rid("der", local),
                         relation_type="DERIVES",
                         subject=sub,
-                        object="",
+                        object=resolved_inputs[0] if len(resolved_inputs) == 1 else "",
                         evidence_refs=erefs,
-                        inputs=["shape_or_field"],
+                        inputs=resolved_inputs,
+                        extra={"expression": expression} if expression else None,
                     ),
                 )
-                _ground(graph, sub, "S", evidence_refs=erefs)
 
             elif rtype == "GUARDS":
                 cond_sym = entity_name
                 sub = _ensure_entity(graph, kind="condition", symbol=cond_sym)
+                grounded_any = False
                 for o in obs_items:
+                    symbols = list(o.get("condition_symbols") or [])
                     t = str(o.get("type") or "")
                     if t == "layout_condition":
-                        _ground(graph, sub, "layout", evidence_refs=erefs)
+                        symbols.append("layout")
                     elif t == "dtype_condition":
-                        _ground(graph, sub, "dtype", evidence_refs=erefs)
+                        symbols.append("dtype")
                     elif t == "deterministic_or_sparse_condition":
-                        _ground(graph, sub, "deterministic", evidence_refs=erefs)
-                        _ground(graph, sub, "sparse_mode", evidence_refs=erefs)
+                        symbols.extend(["deterministic", "sparse_mode"])
                     elif t == "shape_dim_ref":
-                        dim = str(o.get("dim") or "S").upper()
-                        if dim.lower() in {"b", "n", "s", "d"}:
-                            dim = dim.upper()
-                        elif dim in {"batch"}:
-                            dim = "B"
-                        elif dim in {"seqLen", "s1", "s2"}:
-                            dim = "S"
-                        elif dim in {"headNum", "n2"}:
-                            dim = "N"
-                        elif dim in {"headDim"}:
-                            dim = "D"
-                        _ground(graph, sub, dim if dim in {"B", "N", "S", "D"} else "S", evidence_refs=erefs)
-                _add_relation(
-                    graph,
-                    make_relation(
-                        relation_id=_rid("guards", cond_sym),
-                        relation_type="GUARDS",
-                        subject=sub,
-                        object=sub,
-                        evidence_refs=erefs,
-                    ),
-                )
-                # Branch node activated by guard.
-                br = _ensure_entity(graph, kind="branch", symbol=f"branch:{cond_sym}")
+                        symbols.append(str(o.get("dim") or ""))
+                    for sym in symbols:
+                        rid = _find_root_id(graph, str(sym))
+                        if rid and _ground(graph, sub, rid, evidence_refs=erefs):
+                            grounded_any = True
+                if not grounded_any:
+                    _unresolved(
+                        graph,
+                        obligation_id=obl.get("obligation_id"),
+                        relation="GUARDS",
+                        reason_code="GUARD_ROOT_UNKNOWN",
+                        affected_entity_ids=[sub],
+                    )
+                branch_target = ""
+                for o in obs_items:
+                    if o.get("branch_target"):
+                        branch_target = str(o.get("branch_target"))
+                        break
+                if not branch_target:
+                    branch_target = f"branch:{cond_sym}"
+                br = _ensure_entity(graph, kind="branch", symbol=branch_target)
                 _add_relation(
                     graph,
                     make_relation(
@@ -417,8 +553,6 @@ def close_deterministic_relations(
                                 evidence_refs=erefs,
                             ),
                         )
-                        _ground(graph, obj, "layout", evidence_refs=erefs)
-                        _ground(graph, obj, "deterministic", evidence_refs=erefs)
                     elif o.get("type") == "template_alias":
                         alias = str(o.get("alias") or "")
                         obj = _ensure_entity(graph, kind="template", symbol=alias)
@@ -609,7 +743,7 @@ def validate_input_root_grounding(graph: dict[str, Any]) -> list[str]:
 
 
 __all__ = [
-    "ensure_standard_input_roots",
+    "build_input_roots_from_operator_boundary",
     "close_deterministic_relations",
     "merge_llm_relation_parts",
     "validate_input_root_grounding",

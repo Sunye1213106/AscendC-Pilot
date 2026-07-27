@@ -67,7 +67,7 @@ def load_extract_plan(uo_root: Path) -> dict[str, Any] | None:
         return None
     # Hydrate slim v2 sidecars (aliases / receiver_bindings).
     try:
-        from uo.scripts.extract_plan_decision import hydrate_extract_plan
+        from uo.scripts.extract_plan_slim import hydrate_extract_plan
 
         return hydrate_extract_plan(data, uo_root / "ir")
     except Exception:  # noqa: BLE001

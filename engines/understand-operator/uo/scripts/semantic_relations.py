@@ -44,10 +44,13 @@ ENTITY_KINDS = frozenset(
 
 INPUT_ROOT_KINDS = frozenset(
     {
-        "shape_dim",  # B/N/S/D or declared shape dims
+        "shape_dim",
         "layout",
         "dtype",
         "attr",
+        "attribute",
+        "tensor_input",
+        "optional_input",
         "optional_tensor",
         "tensor",
         "other_input",

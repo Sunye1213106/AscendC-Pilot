@@ -112,6 +112,8 @@ def build_layered_kb(
     allow_empty_plan: bool = False,
     mode: str = "full",
     parallel: bool | None = None,
+    reuse_fresh_layers: bool = False,
+    include_entrypoints_if_stale: bool = False,
 ) -> dict[str, Any]:
     build_t0 = time.perf_counter()
     timing_ms: dict[str, int] = {}
@@ -126,6 +128,74 @@ def build_layered_kb(
     selected = set(ALL_EXTRACT_LAYERS) if not layers else {str(item).strip().lower() for item in layers if str(item).strip()}
     if selected & {"host", "kernel", "tilingkey"}:
         selected.add("bridge")
+
+    # fingerprint：只重建 missing/stale；entrypoints 若已由 detect_score_pre 生成且 fresh → reuse
+    skipped_fresh: list[str] = []
+    if reuse_fresh_layers:
+        try:
+            from uo.scripts.evidence_score import require_source_snapshot
+            from uo.scripts.semantic_resolution_ledger import compute_layer_input_fingerprints
+
+            manifest = read_yaml(uo_root / "manifest.yaml") or {}
+            run_id = str(manifest.get("current_run_id") or manifest.get("current_run") or "")
+            snap_res = require_source_snapshot(uo_root, run_id=run_id or None)
+            snap = str(snap_res.get("hash") or "") if snap_res.get("ok") else ""
+            desired = compute_layer_input_fingerprints(
+                uo_root, architecture=architecture, source_snapshot=snap
+            )
+            stored = read_yaml(ir_dir / "layer_input_fingerprints.yaml") or {}
+            stored_layers = (
+                stored.get("layers") if isinstance(stored.get("layers"), dict) else stored
+            )
+            if not isinstance(stored_layers, dict):
+                stored_layers = {}
+            desired_layers = (
+                desired.get("layers")
+                if isinstance(desired, dict) and isinstance(desired.get("layers"), dict)
+                else desired
+            )
+            if not isinstance(desired_layers, dict):
+                desired_layers = {}
+
+            def _fp_of(layer: str, bag: dict[str, Any]) -> str:
+                v = bag.get(layer)
+                if isinstance(v, dict):
+                    return str(v.get("fingerprint") or v.get("sha256") or "")
+                return str(v or "")
+
+            ep_path = ir_dir / "entrypoint_graph.yaml"
+            if ep_path.is_file() and _fp_of("entrypoints", stored_layers) and _fp_of(
+                "entrypoints", stored_layers
+            ) == _fp_of("entrypoints", desired_layers):
+                selected.discard("entrypoints")
+                skipped_fresh.append("entrypoints")
+            elif include_entrypoints_if_stale and (
+                not ep_path.is_file()
+                or _fp_of("entrypoints", stored_layers) != _fp_of("entrypoints", desired_layers)
+            ):
+                selected.add("entrypoints")
+
+            for layer_name, artifact in (
+                ("host", "host_subgraph.yaml"),
+                ("kernel", "kernel_subgraph.yaml"),
+                ("tilingkey", "tilingkey_subgraph.yaml"),
+                ("bridge", "bridge_subgraph.yaml"),
+            ):
+                if layer_name not in selected:
+                    continue
+                path = ir_dir / artifact
+                if (
+                    path.is_file()
+                    and _fp_of(layer_name, stored_layers)
+                    and _fp_of(layer_name, stored_layers) == _fp_of(layer_name, desired_layers)
+                ):
+                    selected.discard(layer_name)
+                    skipped_fresh.append(layer_name)
+        except Exception:  # noqa: BLE001
+            if reuse_fresh_layers and (ir_dir / "entrypoint_graph.yaml").is_file():
+                selected.discard("entrypoints")
+                skipped_fresh.append("entrypoints")
+
     # entrypoints → ir/entrypoint_graph.yaml (unique confirmation fact source)
     if "entrypoints" in selected:
         t_ep = time.perf_counter()
@@ -476,6 +546,7 @@ def build_layered_kb(
     graph.setdefault("stats", {})["timing_ms"] = timing_ms
     graph.setdefault("stats", {})["macro_materialization"] = macro_materialization
     graph.setdefault("stats", {})["build_mode"] = build_mode
+    graph.setdefault("stats", {})["skipped_fresh_layers"] = skipped_fresh
     # Write structural operator_graph once after all structural stats are filled.
     _write_ir_yaml(ir_dir / "operator_graph.yaml", graph)
     _write_ir_yaml(ir_dir / "build_layered_timing.yaml", {"version": 1, "timing_ms": timing_ms, "mode": build_mode})

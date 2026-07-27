@@ -738,7 +738,46 @@ detect_score_pre → extract_plan → detect_score_post
 **状态**：已做（权限/分片单测通过）；完整 FAG reinit 仍待 compose+refresh 后手工验收。
 
 
-### A64：LLM Work Scheduler / extract_plan Map-Reduce（2026-07-27）
+### A66：extract_plan 两阶段生命周期与语义主链重构（2026-07-27）
+
+**现象**：`acp run-action extract_plan` 长时间卡在 “prepare Action”；FAG 上 prepare 实际内联 finalize + 全量 layered KB；Relation artifacts 被重复构建三次；无阶段进度；异常被吞掉。
+
+**根因**：
+1. `deterministic_only` 时 Runtime prepare 内联 `finalize_action`；
+2. engine propose + Runtime prepare + finalize `apply_semantic_extract_plan` 三次 `build_relation_artifacts`；
+3. 无 `ActionProgressReporter`；主链 `except: pass`；
+4. 平面 role/decision_report 路径与 Relation 权威并存；synthetic evidence / `role_suggested` 覆盖 / 标准 input_roots 无条件创建。
+
+**落点**：
+- prepare **永不** finalize；返回 `finalize_required` + `recommended_command: --finalize`；
+- 唯一 `prepare_semantic_relation_snapshot` + `extract_plan_snapshot.yaml`；finalize 只读 SHA，禁止重算；
+- `ActionProgressReporter` + finalizer lease 分离（失败可重试 `--finalize`）；
+- 删除 `extract_plan_decision.py` / `role_evidence.py` / `staging/output.yaml`；slim → `extract_plan_slim.py`；
+- Relation part 唯一 `decisions[]`；越权校验；细粒度 `conflict_group`；
+- materializer 不覆盖 role；真实证据；input_roots 来自 operator_boundary；
+- layered KB fingerprint reuse；detect_score_post / rebuild / recheck 消费 Relation consistency gate。
+
+**状态**：主链已落地；需 `compose_runtime` + `refresh-opencode.ps1` 后联调 FAG 验收。
+
+---
+
+**现象**（`RUN_20260727_102815_9849f7c5` FAG arch35）：
+1. prepare 因 `<SHARD_ID>`/`<TARGET>` 未渲染 → `PROMPT_IDENTITY_UNRESOLVED`；
+2. 0 LLM obligation 仍要求 Host 派子代理 / 手工 `--finalize`；
+3. finalize：`enrich_item_evidence_from_disk` 参数顺序错；`drop_invented_non_sink_roots` 返回值被当成 plan；
+4. materialize 缺 `candidates_sha256` / 身份字段 / 候选窗回填 → gate `actor_id` 缺失、AlignTo 误提升、同名候选歧义；
+5. skill / staging contract 仍写旧 `candidates→extract_plan` / `decision_report.yaml`。
+
+**落点**：
+- prepare：渲染 `SHARD_ID`/`TARGET`；`deterministic_only` → `dispatch_task=false` + **auto-finalize**；
+- Map-Reduce lease：禁止再 prepend `actions/**`；forbidden 改为 `inputs/batches/**`；
+- Spec/ownership/SKILL：producer 写 `relation_parts/**`；stub/METHOD 改为 Relation-only；
+- `hydrate_materialized_plan`：sha + CAND 消歧 + 证据窗 + 丢 HELPER/`ignore`；apply 写入 `actor_id/run_id/workflow_id`；
+- staging contract：`semantic_relations.base.yaml`（不再要 `decision_report.yaml`）。
+
+**状态**：控制面 + materialize 合同已对齐；**分层 KB `build_layered_kb` 全量由人工验收**（勿在本会话长跑）。旧 docs A63/A64 上半仍含 decision_report 叙述，以本条与 METHOD 为准。
+
+
 
 **现象**：`RUN_20260727_084743_4d8c9a54` 单 subagent 消化 ~118 项 decision → 上下文超载、手工计数、遗漏、误判、输出过长（该 run **保留为失败样本，不补齐/不 finalize**）。
 

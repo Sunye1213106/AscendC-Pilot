@@ -740,31 +740,37 @@ def _run_extract_plan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
         from uo.scripts.propose_extract_plan import propose_extract_plan
 
         if mode == "finalize" or (not mode and plan_path.is_file()):
+            from ascendc_pilot.actions.progress import ActionProgressReporter
+
             staging_path = None
+            action_dir = None
             run_id = str(ctx.get("run_id") or "").strip()
-            if run_id:
-                action_staging = (
+            if ctx.get("action_dir"):
+                action_dir = Path(str(ctx.get("action_dir")))
+                staging_path = action_dir / "staging"
+            elif run_id:
+                action_dir = (
                     project_root
                     / ".ascendc-pilot"
                     / "runs"
                     / run_id
                     / "actions"
                     / "extract_plan"
-                    / "staging"
                 )
-                # Prefer relation staging marker; fall back to legacy output.yaml
+                action_staging = action_dir / "staging"
                 if (action_staging / "semantic_relations.yaml").is_file() or (
                     action_staging / "semantic_relations.base.yaml"
                 ).is_file():
                     staging_path = action_staging
-                else:
-                    cand_stage = action_staging / "output.yaml"
-                    if cand_stage.is_file():
-                        staging_path = cand_stage
+            progress = ctx.get("progress")
+            if progress is None and run_id:
+                progress = ActionProgressReporter(
+                    project_root, run_id=run_id, action_id="extract_plan", phase="finalize"
+                )
             applied = apply_extract_plan(
                 project_root,
                 op_name,
-                staging_path=staging_path,
+                action_dir=action_dir,
                 check_only=False,
                 identity={
                     "actor_id": str(ctx.get("actor_id") or "uo-semantic-resolve"),
@@ -773,24 +779,36 @@ def _run_extract_plan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
                     "architecture": architecture,
                     "action_session_id": str(ctx.get("action_session_id") or ""),
                     "lease_id": str(ctx.get("lease_id") or ""),
+                    "prepare_nonce": str(ctx.get("prepare_nonce") or ""),
+                    "candidates_sha256": "",
                 },
+                progress=progress,
             )
             if not applied.get("ok"):
                 return {
                     "ok": False,
                     "engine": "extract_plan",
                     "phase": "apply",
-                    "error": "extract_plan validation failed",
+                    "error": applied.get("error") or "extract_plan validation failed",
                     "apply": applied,
+                    "message_zh": applied.get("message_zh") or applied.get("message") or "",
+                    "retryable": bool(applied.get("retryable", True)),
                 }
+            # 仅构建 missing/stale layers（entrypoints 若 fresh 则 reuse）
+            if progress is not None:
+                progress.start_stage("build_layered_kb")
             layered = build_layered_kb(
                 project_root,
                 op_name,
                 architecture=architecture,
-                layers={"entrypoints", "host", "kernel", "tilingkey", "bridge"},
+                layers={"host", "kernel", "tilingkey", "bridge"},
                 allow_empty_plan=False,
                 mode="structural",
+                reuse_fresh_layers=True,
+                include_entrypoints_if_stale=True,
             )
+            if progress is not None:
+                progress.complete_stage()
             stats = (layered or {}).get("stats") if isinstance(layered, dict) else {}
             return {
                 "ok": True,
@@ -805,7 +823,7 @@ def _run_extract_plan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
                 "timing_ms": (stats or {}).get("timing_ms") or {},
             }
 
-        # Prepare: candidates only (LLM confirms → extract_plan.yaml)
+        # Prepare: 仅 propose candidates（Relation snapshot 由 Runtime prepare 唯一构建）
         from uo.scripts._ir_io import read_yaml, write_yaml
         from ascendc_pilot.runs import file_sha256
         from uo.scripts.extract_plan_io import (
@@ -834,8 +852,10 @@ def _run_extract_plan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
 
                     st = str((load_state(project_root) or {}).get("status") or "")
                     should_reuse = st in {"rework_required", "human_required"}
-                except Exception:  # noqa: BLE001
-                    should_reuse = False
+                except Exception as exc:  # noqa: BLE001
+                    raise RuntimeError(
+                        f"EXTRACT_PLAN_STAGE_FAILED:propose_reuse_state:{type(exc).__name__}:{exc}"
+                    ) from exc
             if should_reuse:
                 loaded = read_yaml(cand_path)
                 if isinstance(loaded, dict):
@@ -864,42 +884,6 @@ def _run_extract_plan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
                     candidates_path=cand_path,
                 ),
             )
-            # Relation Graph staging artifacts (run-scoped) — not decision_worklist.
-            try:
-                from uo.scripts.semantic_pipeline import build_relation_artifacts
-
-                artifacts = build_relation_artifacts(
-                    candidates,
-                    identity={"architecture": architecture},
-                )
-                run_id = str(ctx.get("run_id") or "").strip()
-                if run_id:
-                    wl_dir = (
-                        project_root
-                        / ".ascendc-pilot"
-                        / "runs"
-                        / run_id
-                        / "actions"
-                        / "extract_plan"
-                        / "inputs"
-                    )
-                    st_dir = (
-                        project_root
-                        / ".ascendc-pilot"
-                        / "runs"
-                        / run_id
-                        / "actions"
-                        / "extract_plan"
-                        / "staging"
-                    )
-                    wl_dir.mkdir(parents=True, exist_ok=True)
-                    st_dir.mkdir(parents=True, exist_ok=True)
-                    write_yaml(wl_dir / "semantic_obligations.yaml", artifacts["obligations"])
-                    write_yaml(st_dir / "semantic_observations.yaml", artifacts["observations"])
-                    write_yaml(st_dir / "semantic_relations.base.yaml", artifacts["graph"])
-                write_yaml(uo / "ir" / "semantic_observations.yaml", artifacts["observations"])
-            except Exception:  # noqa: BLE001
-                pass
         status = str((candidates or {}).get("status") or "").lower() if isinstance(candidates, dict) else ""
         if status in {"blocked", "fail", "failed"} or (
             isinstance(candidates, dict) and candidates.get("ok") is False
@@ -958,13 +942,23 @@ def _run_detect_score_post(project_root: Path, ctx: dict[str, Any]) -> dict[str,
     uo, _op, architecture = _uo_op_ctx(project_root, ctx)
     try:
         from uo.scripts.evidence_score import detect_score_post
+        from uo.scripts.relation_consistency import run_relation_consistency_gate
 
         result = detect_score_post(
             uo,
             architecture=architecture,
             run_id=str(ctx.get("run_id") or ""),
         )
-        return {"ok": bool(result.get("ok", True)), "engine": "detect_score_post", **result}
+        rel_gate = run_relation_consistency_gate(uo)
+        result["relation_consistency"] = rel_gate
+        ok = bool(result.get("ok", True)) and bool(rel_gate.get("ok"))
+        if not rel_gate.get("ok"):
+            result["relation_consistency_errors"] = rel_gate.get("errors") or []
+            result["message_zh"] = (
+                "detect_score_post：Relation Graph 与 materialized plan 不一致；"
+                + "; ".join(str(x) for x in (rel_gate.get("errors") or [])[:5])
+            )
+        return {"ok": ok, "engine": "detect_score_post", **result}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "detect_score_post", "error": str(exc)[:300]}
 
@@ -1080,9 +1074,17 @@ def _run_rebuild_from_ledger(project_root: Path, ctx: dict[str, Any]) -> dict[st
             run_id=run_id,
         )
         from uo.scripts.llm_tasks import compute_semantic_stats
+        from uo.scripts.relation_consistency import reconcile_semantic_relations_from_ledger
 
+        reconcile = reconcile_semantic_relations_from_ledger(uo)
         stats = compute_semantic_stats(uo, current_run_id=run_id) if uo and run_id else {}
-        out = {"ok": bool(result.get("ok")), "engine": "rebuild_from_ledger", **result, **stats}
+        out = {
+            "ok": bool(result.get("ok")) and bool(reconcile.get("ok")),
+            "engine": "rebuild_from_ledger",
+            **result,
+            **stats,
+            "relation_reconcile": reconcile,
+        }
         # Surface progress / skip contract for Host observation.
         if result.get("NO_SEMANTIC_PROGRESS"):
             out["recovery_reason"] = "NO_SEMANTIC_PROGRESS"
@@ -1162,7 +1164,16 @@ def _run_recheck_closure(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
         unconsumed = int(stats.get("unconsumed_patch_count") or 0)
         host_closed = closure.get("host_main_chain") == "closed"
         kernel_closed = closure.get("kernel_main_chain") == "closed"
-        ok = blocking_gap_count == 0 and unconsumed == 0 and host_closed and kernel_closed
+        from uo.scripts.relation_consistency import run_relation_consistency_gate
+
+        rel_gate = run_relation_consistency_gate(uo)
+        ok = (
+            blocking_gap_count == 0
+            and unconsumed == 0
+            and host_closed
+            and kernel_closed
+            and bool(rel_gate.get("ok"))
+        )
 
         snap = _source_snapshot_hash(uo, run_id=run_id)
         ledger_doc = load_ledger(uo)
@@ -1256,12 +1267,16 @@ def _run_recheck_closure(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
             "integrity_recomputed": False,
             "attempts_unchanged": True,
             "fingerprint": fingerprint,
+            "relation_consistency": rel_gate,
             **stats,
         }
         if not ok:
             out["recovery_actions"] = recovery_actions
             out["recoveries"] = recoveries
             out["reason_codes"] = routed.get("reason_codes") or []
+            if not rel_gate.get("ok"):
+                out.setdefault("reason_codes", []).append("RELATION_CONSISTENCY_FAILED")
+                out["relation_consistency_errors"] = rel_gate.get("errors") or []
         return out
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "recheck_closure", "error": str(exc)[:300]}
@@ -1337,7 +1352,8 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "uo/ir/macro_semantics.yaml",
     ],
     "extract-plan-staging-v1": [
-        "runs/{run_id}/actions/extract_plan/staging/decision_report.yaml",
+        # Deterministic-only: base graph; Map path: relation_parts → reduced relations.
+        "runs/{run_id}/actions/extract_plan/staging/semantic_relations.base.yaml",
     ],
     "key-triage-v1": ["uo/ir/key_triage.yaml"],
     # Shape staging is optional; patch is the producer contract

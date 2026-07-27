@@ -1140,12 +1140,20 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
 
             cand_doc = read_yaml(Path(uo_s) / "ir" / "extract_plan_candidates.yaml") or {}
             action_session = str(action_sid or run_id)
+            uo_ir = Path(uo_s) / "ir"
             prep = prepare_relation_extract_plan(
                 cand_doc if isinstance(cand_doc, dict) else {},
                 action_dir=Path(sdir),
                 action_session_id=action_session,
                 source_snapshot_hash=candidates_sha256,
                 identity={"architecture": architecture, "candidates_sha256": candidates_sha256},
+                run_id=str(run_id or ""),
+                workflow_id=str(wid or "uo-init"),
+                action_id="extract_plan",
+                prepare_nonce_hash=str(action_sid or ""),
+                architecture=str(architecture or ""),
+                operator_boundary_path=uo_ir / "operator_boundary.yaml",
+                entrypoint_graph_path=uo_ir / "entrypoint_graph.yaml",
             )
             if not prep.get("ok"):
                 return {
@@ -1178,7 +1186,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
                 dispatch_tasks = []
                 target_line = (
                     "extract_plan Relation Graph: all obligations closed deterministically; "
-                    "no Map workers; prepare auto-finalizes materialize slim IR + layered KB"
+                    "no Map workers; Host must run `acp run-action extract_plan --finalize`"
                 )
                 bundle["dispatch_tasks"] = []
                 bundle["relation_batches"] = {
@@ -2016,25 +2024,20 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         result.setdefault("resume_session_id", "")
     if wid == "uo-init" and action_id == "extract_plan":
         dt_ep = bundle.get("dispatch_targets") if isinstance(bundle.get("dispatch_targets"), dict) else {}
+        result["finalize_required"] = True
+        result["recommended_command"] = "acp run-action extract_plan --finalize"
+        result["dispatch_targets"] = dt_ep or bundle.get("dispatch_targets")
+        result["relation_batches"] = bundle.get("relation_batches")
         if dt_ep.get("deterministic_only") or dt_ep.get("skip_subagent"):
-            # No LLM obligations — materialize immediately (Host must not dispatch workers).
-            fin = finalize_action(project_root, action_id)
-            result["auto_finalize"] = True
+            # prepare 永不内联 finalize；即使无 LLM obligation 也立即返回。
             result["dispatch_task"] = False
-            result["finalize"] = fin
-            result["ok"] = bool(fin.get("ok"))
-            result["dispatch_targets"] = dt_ep
-            result["relation_batches"] = bundle.get("relation_batches")
-            if fin.get("ok"):
-                result["message_zh"] = (
-                    "extract_plan Relation Graph：义务已全部确定性闭合，已 auto-finalize "
-                    "（materialize slim IR + layered KB）；禁止再派 uo-semantic-resolve；请 `acp next`。"
-                )
-            else:
-                result["message_zh"] = (
-                    "extract_plan 确定性 materialize/finalize 失败；查看 finalize 错误后 "
-                    "`acp run-action extract_plan --finalize` 或 rework。"
-                )
+            result["deterministic_only"] = True
+            result["auto_finalize"] = False
+            result["message_zh"] = (
+                "extract_plan Relation Graph：义务已全部确定性闭合；prepare 已完成。"
+                "禁止再派 uo-semantic-resolve；请立即执行 "
+                "`acp run-action extract_plan --finalize`，然后 `acp next`。"
+            )
             return result
         result["message_zh"] = (
             f"已准备 extract_plan Relation Graph；按 `dispatch_tasks[]` 并行派发 `{actor_id}`："
@@ -2478,9 +2481,108 @@ def finalize_action(
         and action_id == "extract_plan"
         and engine_result is None
     ):
+        from ascendc_pilot.actions.progress import ActionProgressReporter
+        from ascendc_pilot.authorize.lease import issue_action_lease, revoke_active_lease
+
+        progress = ActionProgressReporter(
+            project_root, run_id=run_id, action_id=action_id, phase="finalize"
+        )
+        # 签发独立 finalizer lease；失败时只释放 finalizer，保留 prepare session。
+        prepare_lease_id = str(session.get("lease_id") or lease_id or "")
+        session["prepare_lease_id"] = prepare_lease_id
+        try:
+            fin_lease = issue_action_lease(
+                project_root,
+                state=state,
+                action_id=action_id,
+                actor_id=actor_id or "finalizer",
+                mode="normal",
+                allowed_write_paths=[
+                    f"runs/{run_id}/actions/extract_plan/staging/**",
+                    f"runs/{run_id}/actions/extract_plan/scratch/**",
+                    "uo/ir/extract_plan.yaml",
+                    "uo/ir/extract_plan_aliases.yaml",
+                    "uo/ir/receiver_bindings.yaml",
+                    "uo/ir/semantic_relations.yaml",
+                    "uo/ir/semantic_observations.yaml",
+                    "uo/ir/host_subgraph.yaml",
+                    "uo/ir/kernel_subgraph.yaml",
+                    "uo/ir/tilingkey_subgraph.yaml",
+                    "uo/ir/bridge_subgraph.yaml",
+                    "uo/ir/layer_fingerprints.yaml",
+                ],
+                allowed_read_paths=[
+                    f"runs/{run_id}/actions/extract_plan/**",
+                    "uo/ir/**",
+                ],
+            )
+            session["finalizer_lease_id"] = str(fin_lease.get("lease_id") or "")
+            lease_id = str(fin_lease.get("lease_id") or lease_id)
+            _dump(sdir / "session.yaml", session)
+        except Exception as exc:  # noqa: BLE001
+            return _attach_finalize_observation(
+                project_root,
+                {
+                    "ok": False,
+                    "phase_runtime": "finalize",
+                    "action_id": action_id,
+                    "error": "EXTRACT_PLAN_STAGE_FAILED",
+                    "stage": "issue_finalizer_lease",
+                    "message_zh": f"签发 finalizer lease 失败：{exc}",
+                    "retryable": True,
+                },
+                action_id=action_id,
+                messages=[str(exc)],
+            )
+
+        def _release_finalizer_keep_prepare(reason: str) -> None:
+            try:
+                revoke_active_lease(
+                    project_root,
+                    reason=reason,
+                    touch_active_action=False,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            # 恢复 prepare 可重试状态（不永久 LEASE_REVOKED）
+            session["status"] = "prepare_ready"
+            session["finalize_retryable"] = True
+            session.pop("finalizer_lease_id", None)
+            _dump(sdir / "session.yaml", session)
+            active = _load(agent_root(project_root) / "state" / "active_action.yaml")
+            if isinstance(active, dict):
+                active["status"] = "prepared"
+                active["lease_id"] = prepare_lease_id
+                _dump(agent_root(project_root) / "state" / "active_action.yaml", active)
+            # 重新签发 prepare 范围 lease，便于重试 finalize
+            try:
+                restored = issue_action_lease(
+                    project_root,
+                    state=state,
+                    action_id=action_id,
+                    actor_id=str(session.get("actor_id") or actor_id or ""),
+                    mode="normal",
+                    allowed_write_paths=[
+                        f"runs/{run_id}/actions/extract_plan/staging/**",
+                        f"runs/{run_id}/actions/extract_plan/scratch/**",
+                    ],
+                    allowed_read_paths=[
+                        f"runs/{run_id}/actions/extract_plan/**",
+                        "uo/ir/**",
+                    ],
+                )
+                session["lease_id"] = str(restored.get("lease_id") or prepare_lease_id)
+                _dump(sdir / "session.yaml", session)
+                if isinstance(active, dict):
+                    active["lease_id"] = session["lease_id"]
+                    _dump(agent_root(project_root) / "state" / "active_action.yaml", active)
+            except Exception:  # noqa: BLE001
+                pass
+
         man_path = Path(sdir) / "inputs" / "relation_batches.yaml"
         if man_path.is_file():
             try:
+                progress.start_stage("reduce_relation_parts")
                 from uo.scripts._ir_io import read_yaml
                 from uo.scripts.semantic_relation_reduce import reduce_relation_parts
 
@@ -2502,9 +2604,13 @@ def finalize_action(
                         "grounding_errors": reduced.get("grounding_errors"),
                     }
                     if not reduced.get("ok"):
-                        session["status"] = "finalize_failed"
                         session["apply_result"] = reduced
                         _dump(sdir / "session.yaml", session)
+                        progress.fail_stage(
+                            "RELATION_REDUCE_FAILED",
+                            "relation parts reduce 失败",
+                        )
+                        _release_finalizer_keep_prepare("finalize_reduce_failed")
                         return _attach_finalize_observation(
                             project_root,
                             {
@@ -2514,6 +2620,7 @@ def finalize_action(
                                 "error": "EXTRACT_PLAN_RELATION_REDUCE_FAILED",
                                 "apply_result": reduced,
                                 "retry_shards": reduced.get("retry_shards") or [],
+                                "retryable": True,
                                 "message_zh": (
                                     "extract_plan relation parts reduce 失败；"
                                     f"仅重跑失败 shard: {reduced.get('retry_shards')}"
@@ -2523,13 +2630,13 @@ def finalize_action(
                             messages=list(reduced.get("errors") or [])[:20],
                         )
                 elif base_graph:
-                    # Deterministic-only: promote base graph to staging relations.
                     from uo.scripts._ir_io import write_yaml
 
                     write_yaml(Path(sdir) / "staging" / "semantic_relations.yaml", base_graph)
+                progress.complete_stage()
             except Exception as exc:  # noqa: BLE001
-                session["status"] = "finalize_failed"
-                _dump(sdir / "session.yaml", session)
+                progress.fail_stage("EXTRACT_PLAN_PARTS_REDUCE_EXCEPTION", str(exc))
+                _release_finalizer_keep_prepare("finalize_reduce_exception")
                 return _attach_finalize_observation(
                     project_root,
                     {
@@ -2538,6 +2645,7 @@ def finalize_action(
                         "action_id": action_id,
                         "error": "EXTRACT_PLAN_PARTS_REDUCE_EXCEPTION",
                         "message_zh": str(exc),
+                        "retryable": True,
                     },
                     action_id=action_id,
                     messages=[str(exc)],
@@ -2553,10 +2661,11 @@ def finalize_action(
             "action_session_id": action_sid,
             "lease_id": lease_id,
             "prepare_nonce": prepare_nonce,
+            "progress": progress,
+            "action_dir": str(sdir),
         }
         apply_result = invoke_engine(project_root, wid, action_id, ctx=fin_ctx)
         if not apply_result.get("ok"):
-            session["status"] = "finalize_failed"
             session["apply_result"] = apply_result
             _dump(sdir / "session.yaml", session)
             apply_inner = apply_result.get("apply") if isinstance(apply_result.get("apply"), dict) else {}
@@ -2571,6 +2680,7 @@ def finalize_action(
             )
             if bucket_summary:
                 fail_msg = f"{fail_msg} [{bucket_summary}]"
+            _release_finalizer_keep_prepare("finalize_build_failed")
             fail_payload = {
                 "ok": False,
                 "phase_runtime": "finalize",
@@ -2579,6 +2689,7 @@ def finalize_action(
                 "apply_result": apply_result,
                 "rejected_buckets": buckets or {},
                 "message_zh": fail_msg,
+                "retryable": True,
             }
             uniq = []
             if isinstance(buckets, dict):
@@ -2593,6 +2704,10 @@ def finalize_action(
                     *uniq,
                 ],
             )
+        # 成功路径：继续走下方 receipt；finalizer lease 在成功 revoke 时清理
+        engine_result = apply_result
+        session["apply_result"] = apply_result
+        _dump(sdir / "session.yaml", session)
 
     # adjudicate_llm_tasks finalize: reduce Map parts → canonical semantic_patches.yaml
 # adjudicate_llm_tasks finalize: reduce Map parts → canonical semantic_patches.yaml

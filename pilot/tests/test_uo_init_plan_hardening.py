@@ -148,7 +148,9 @@ def test_adjudicate_noop_when_no_open_blocking(tmp_path: Path) -> None:
 
     prep = prepare_action(tmp_path, "adjudicate_llm_tasks")
     assert prep.get("ok") is True, prep
-    assert prep.get("auto_finalize") is True
+    assert prep.get("finalize_required") is True
+    assert prep.get("auto_finalize") is not True
+    assert "finalize" in str(prep.get("recommended_command") or "")
     assert prep.get("dispatch_task") is False
     na = Path(prep["session_dir"]) / "not_applicable.yaml"
     assert na.is_file()
