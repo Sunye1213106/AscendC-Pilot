@@ -60,3 +60,13 @@ def test_contract_build_skips_when_fingerprint_is_fresh(tmp_path: Path) -> None:
     assert out["cache_hit"] is True
     assert out["contract_rebuilt"] is False
     assert calls == []
+
+
+def test_contract_receipt_invalidates_on_output_corruption(tmp_path: Path) -> None:
+    consumer = tmp_path / "tests"
+    _seed_contract(tmp_path, consumer)
+    _write_receipt(tmp_path, consumer)
+    target = tmp_path / ".ascendc-pilot" / "tg" / "realization" / "realization_map.yaml"
+    target.write_text("broken: true\n", encoding="utf-8")
+    valid, _, _ = _cache_valid(tmp_path, consumer)
+    assert valid is False
