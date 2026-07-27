@@ -1,0 +1,46 @@
+﻿{
+  "ok": true,
+  "status": "human_required",
+  "phase": "extract",
+  "last_failure": {
+    "action_id": "extract_plan",
+    "step_id": "action_finalize",
+    "error_code": "RETRY_EXHAUSTED",
+    "failure_class": "retry_exhausted",
+    "retryable": false,
+    "reason_code": "RETRY_EXHAUSTED",
+    "message_zh": "鐩稿悓澶辫触杩炵画 3 娆★紝閲嶈瘯棰勭畻锛?锛夎€楀敖锛涢渶浜哄伐浠嬪叆",
+    "findings": [
+      {
+        "code": "OUTPUT_CONTRACT_FAILED",
+        "message": "Finalize 澶辫触锛欳hecker/Output Contract 鏈€氳繃",
+        "evidence": {}
+      },
+      {
+        "code": "EXTRACT_REQUIRES_ENTRYPOINT_GRAPH_OPERATOR_BOUND",
+        "message": "extract requires entrypoint_graph + operator_boundary + ir/extract_plan.yaml with actor_id/run_id/workflow_id/candidates_sha256 + same validate as apply; extract_plan.actor_id missing; extract_plan.run_id missing; extract_plan.workflow_id missing; writer SaveToTilingData ambiguous without identity fields (file_path|qualified_name|identity_key); writer AlignTo is an alignment/math helper 鈥?set role:ignore or omit (do not promote AlignTo/CeilDivide as tiling/key/workspace writers); writer GetTilingKey ambiguous without identity fields (file_path|qualified_name|identity_key); receiver baseDeterParam_ ambiguous without identity fields (file_path|qualified_name|identity_key); receiver deterParam ambiguous without identity fields (file_path|qualified_name|identity_key)",
+        "evidence": {}
+      }
+    ],
+    "observation_id": "OBS_5111d58668d2",
+    "failure_fingerprint": "41cfb0d43c7184e2dd92300f",
+    "recommended_transition": "rework_required",
+    "legal_recovery_actions": [
+      "inspect_failure",
+      "retry_after_environment_fix",
+      "abort_run"
+    ],
+    "forbidden_recovery_actions": [
+      "advance",
+      "direct_domain_cli",
+      "write_pilot_artifact_outside_contract"
+    ]
+  },
+  "last_observation_id": "OBS_5111d58668d2",
+  "failure_card": "褰撳墠闃舵锛歟xtract\n澶辫触 Action锛歟xtract_plan\n澶辫触姝ラ锛歛ction_finalize\n鐘舵€侊細human_required\n\n澶辫触绫诲瀷锛歳etry_exhausted\n閿欒浠ｇ爜锛歊ETRY_EXHAUSTED\n\n澶辫触椤癸細\n- Finalize 澶辫触锛欳hecker/Output Contract 鏈€氳繃\n- extract requires entrypoint_graph + operator_boundary + ir/extract_plan.yaml with actor_id/run_id/workflow_id/candidates_sha256 + same validate as apply; extract_plan.actor_id missing; extract_plan.run_id missing; extract_plan.workflow_id missing; writer SaveToTilingData ambiguous without identity fields (file_path|qualified_name|identity_key); writer AlignTo is an alignment/math helper 鈥?set role:ignore or omit (do not promote AlignTo/CeilDivide as tiling/key/workspace writers); writer GetTilingKey ambiguous without identity fields (file_path|qualified_name|identity_key); receiver baseDeterParam_ ambiguous without identity fields (file_path|qualified_name|identity_key); receiver deterParam ambiguous without identity fields (file_path|qualified_name|identity_key)\n\n鑷姩鎵ц宸插仠姝€傚綋鍓?Action 鏉冮檺宸叉挙閿€銆俓n绂佹鐩磋皟棰嗗煙鑴氭湰鎴栦慨鏀?Pilot 姝ｅ紡浜х墿缁曡繃鎺у埗闈€俓n\n鍚堟硶鍚庣画锛歕n- 鏌ョ湅缁撴瀯鍖栧け璐ヤ俊鎭痋n- 淇澶栭儴鐜鍚庨噸璇昞n- 缁堟鏈杩愯",
+  "legal_actions": [
+    "inspect_failure",
+    "retry_after_environment_fix",
+    "abort_run"
+  ]
+}

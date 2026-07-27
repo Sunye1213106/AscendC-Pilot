@@ -164,6 +164,9 @@ _CAPS_EXTRACT = [
     "structured-ir-query",
     "readonly-source-search",
     "action-scratch",
+    "sharded-llm-producer",
+    "bounded-semantic-batch",
+    "producer-self-check",
 ]
 _CAPS_ADJUDICATE = [
     "source-reading",
@@ -174,6 +177,9 @@ _CAPS_ADJUDICATE = [
     "readonly-source-search",
     "action-scratch",
     "sharded-semantic-producer",
+    "sharded-llm-producer",
+    "bounded-semantic-batch",
+    "producer-self-check",
 ]
 _CAPS_RESOLVE = ["source-reading", "cbm-navigation", "kb-query", "semantic-resolution"]
 _CAPS_REVIEW = ["structured-review", "kb-query"]
@@ -342,7 +348,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 staging_contract_id="extract-plan-staging-v1",
                 merge_action_id="extract_plan",
                 allowed_write_paths=[
-                    "runs/{run_id}/actions/extract_plan/staging/output.yaml",
+                    "runs/{run_id}/actions/extract_plan/staging/relation_parts/**",
                     "runs/{run_id}/actions/extract_plan/scratch/**",
                 ],
                 forbidden_write_paths=[
@@ -350,6 +356,12 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                     "uo/ir/semantic_patches.yaml",
                     "uo/ir/llm_tasks.yaml",
                     "uo/ir/semantic_resolution_ledger.yaml",
+                    "runs/{run_id}/actions/extract_plan/staging/semantic_relations.yaml",
+                    "uo/ir/extract_plan_aliases.yaml",
+                    "uo/ir/receiver_bindings.yaml",
+                    "uo/ir/semantic_relations.yaml",
+                    "uo/ir/semantic_observations.yaml",
+                    "uo/ir/extract_plan_auto_fill_report.yaml",
                 ],
             ),
             _act(

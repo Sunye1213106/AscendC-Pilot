@@ -738,7 +738,40 @@ detect_score_pre → extract_plan → detect_score_post
 **状态**：已做（权限/分片单测通过）；完整 FAG reinit 仍待 compose+refresh 后手工验收。
 
 
+### A64：LLM Work Scheduler / extract_plan Map-Reduce（2026-07-27）
+
+**现象**：`RUN_20260727_084743_4d8c9a54` 单 subagent 消化 ~118 项 decision → 上下文超载、手工计数、遗漏、误判、输出过长（该 run **保留为失败样本，不补齐/不 finalize**）。
+
+**根因**：extract_plan 已有 Decision Worklist，但仍是单 worker；未接入公共 Map-Reduce；分片/计数依赖 prompt。
+
+**落点**（公共优先）：
+- 新 `uo/scripts/llm_work_scheduler.py`：硬限 **30 obligations/shard** + token budget；`LLM_WORK_NOT_SHARDED` / `LLM_SHARD_TOO_LARGE`；冲突组不跨 shard
+- `semantic_patch_shards.py` 改走公共 scheduler（max 30）
+- extract_plan：确定性 prune → `inputs/decision_batches.yaml` + `batches/batch_*.yaml` + `dispatch_tasks[]`；worker 只写 `staging/decision_report.parts/part_NNN.yaml`；finalize reduce → `decision_report.yaml` → slim IR
+- Capabilities：`sharded-llm-producer` / `bounded-semantic-batch` / `producer-self-check`
+- Lease：map_reduce 禁 `actions/**` 全开；forbid 完整 candidates/worklist；producer 禁写总 report / 正式 IR
+- METHOD/prompt 只保留「读本 batch → 写本 part → 自检」
+
+**状态**：单测通过；compose 已跑；需 `refresh-opencode.ps1` + 重启后新 prepare 验收（勿续跑 `RUN_20260727_084743_4d8c9a54`）。
+
+
+### A64：输入为根的 Relation Graph（探索分支）（2026-07-27）
+
+**现象**：role 平面分类规则膨胀；COMMON_ASSIGN / GetTilingData 易被误判为 writer；条件无法固化到 BNSD 等输入根。
+
+**根因**：缺少 Observation→Relation→派生 role 分层；中间量被当根。
+
+**落点**（新分支 `explore/input-rooted-relation-graph`，不兼容旧 decision_report）：
+- `semantic_observations` / `semantic_obligations` / `relation_evidence` / `semantic_graph_builder` / `semantic_materializer` / `semantic_pipeline` / `semantic_impact`
+- extract_plan prepare/finalize 改为 Relation 分片（`relation_parts`）+ materialize
+- Policy：Roles derive from relations；input_roots 为唯一根；未 grounding 不得出题
+- 影响面：`export_diff_product` 消费 `semantic_relations.yaml` → coverage_obligations
+
+**状态**：核心管线与单测已落；需 compose + refresh 后 FAG arch35 全链路验收。
+
+
 ### A63：extract-plan decision_worklist / slim IR（2026-07-27）
+
 
 **现象**（对照 `test_subagent.md` FAG 联调）：
 1. 子代理手工扫大 `candidates.yaml` → 遗漏 / 错误计数 / 空 `candidate_id`；

@@ -1,14 +1,24 @@
-"""Map-Reduce helpers for adjudicate_llm_tasks: batch plan, part validate, reduce."""
+"""Map-Reduce helpers for adjudicate_llm_tasks: batch plan, part validate, reduce.
+
+Uses public ``llm_work_scheduler`` (max 30 obligations + token budget).
+"""
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from typing import Any
 
 from uo.scripts._ir_io import read_yaml, write_yaml
-from uo.scripts.score_canonicalize import candidate_set_content_hash
+from uo.scripts.llm_work_scheduler import (
+    DEFAULT_TOKEN_BUDGET,
+    MAX_OBLIGATIONS_PER_SHARD,
+    build_dispatch_tasks,
+    plan_llm_work_shards,
+    reduce_llm_parts,
+    require_valid_manifest,
+    validate_llm_part,
+    write_llm_batches,
+)
 
-MAX_OBLIGATIONS_PER_SHARD = 40
 DEFAULT_PARALLELISM = 6
 
 
@@ -48,6 +58,7 @@ def plan_semantic_batches(
     source_snapshot_hash: str,
     max_per_shard: int = MAX_OBLIGATIONS_PER_SHARD,
     include_degraded: bool = False,
+    token_budget: int = DEFAULT_TOKEN_BUDGET,
 ) -> dict[str, Any]:
     """Split blocking (optionally degraded) tasks into semantic shards."""
     eligible: list[dict[str, Any]] = []
@@ -64,59 +75,36 @@ def plan_semantic_batches(
             continue
         if sev not in {"blocking", "degraded"}:
             continue
-        # Macro pool stays out of general Map workers.
         if _task_category(t) == "macro":
             continue
         route = str(t.get("route") or t.get("actor_route") or "uo-semantic-resolve")
         if route and route not in {"uo-semantic-resolve", ""}:
             continue
-        eligible.append(t)
+        row = dict(t)
+        row["obligation_id"] = str(t.get("task_id") or "")
+        eligible.append(row)
 
-    groups: dict[str, list[dict[str, Any]]] = {}
-    for t in eligible:
-        groups.setdefault(_group_key(t), []).append(t)
-
-    shards: list[dict[str, Any]] = []
-    shard_idx = 0
-    # Stable order by category then key
-    for gkey in sorted(groups.keys()):
-        bucket = groups[gkey]
-        cat = gkey.split("::", 1)[0]
-        for i in range(0, len(bucket), max(1, int(max_per_shard))):
-            chunk = bucket[i : i + max_per_shard]
-            sid = f"{cat}_{shard_idx:03d}"
-            task_ids = [str(t.get("task_id")) for t in chunk if t.get("task_id")]
-            shards.append(
-                {
-                    "shard_id": sid,
-                    "category": cat,
-                    "group_key": gkey,
-                    "task_ids": task_ids,
-                    "task_count": len(task_ids),
-                    "worker_session_id": "",
-                    "status": "pending",
-                    "batch_file": f"batches/batch_{sid}.yaml",
-                    "part_file": f"parts/part_{sid}.yaml",
-                }
-            )
-            shard_idx += 1
-
-    task_ids_all = [str(t.get("task_id")) for t in eligible if t.get("task_id")]
-    task_set_hash = hashlib.sha256(
-        ",".join(sorted(task_ids_all)).encode("utf-8")
-    ).hexdigest()[:16]
-
-    return {
-        "version": 1,
-        "action_session_id": action_session_id,
-        "source_snapshot_hash": source_snapshot_hash,
-        "task_set_hash": task_set_hash,
-        "max_per_shard": int(max_per_shard),
-        "shard_count": len(shards),
-        "shards": shards,
-        "excluded_macro": True,
-        "excluded_degraded": not include_degraded,
-    }
+    manifest = plan_llm_work_shards(
+        eligible,
+        action_session_id=action_session_id,
+        source_snapshot_hash=source_snapshot_hash,
+        max_per_shard=max_per_shard,
+        token_budget=token_budget,
+        group_key_fn=_group_key,
+        id_keys=("obligation_id", "task_id"),
+        batch_dir="batches",
+        part_dir="parts",
+        batch_name_fn=lambda sid, _idx: f"batches/batch_{sid}.yaml",
+        part_name_fn=lambda sid, _idx: f"parts/part_{sid}.yaml",
+    )
+    for sh in manifest.get("shards") or []:
+        if isinstance(sh, dict):
+            sh["task_ids"] = list(sh.get("obligation_ids") or [])
+            sh["task_count"] = sh.get("obligation_count")
+    manifest["task_set_hash"] = manifest.get("obligation_set_hash")
+    manifest["excluded_macro"] = True
+    manifest["excluded_degraded"] = not include_degraded
+    return manifest
 
 
 def write_semantic_batches(
@@ -125,33 +113,18 @@ def write_semantic_batches(
     tasks_by_id: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     """Persist manifest + per-shard batch YAML under action_dir."""
-    action_dir = Path(action_dir)
-    batches_dir = action_dir / "batches"
-    parts_dir = action_dir / "parts"
-    batches_dir.mkdir(parents=True, exist_ok=True)
-    parts_dir.mkdir(parents=True, exist_ok=True)
-    (action_dir / "scratch").mkdir(parents=True, exist_ok=True)
-
-    for shard in manifest.get("shards") or []:
-        if not isinstance(shard, dict):
-            continue
-        sid = str(shard.get("shard_id") or "")
-        task_ids = list(shard.get("task_ids") or [])
-        rows = [tasks_by_id[tid] for tid in task_ids if tid in tasks_by_id]
-        batch = {
-            "version": 1,
-            "shard_id": sid,
-            "category": shard.get("category"),
-            "action_session_id": manifest.get("action_session_id"),
-            "source_snapshot_hash": manifest.get("source_snapshot_hash"),
-            "task_set_hash": manifest.get("task_set_hash"),
-            "task_ids": task_ids,
-            "tasks": rows,
-        }
-        write_yaml(batches_dir / f"batch_{sid}.yaml", batch)
-
-    write_yaml(action_dir / "semantic_batches.yaml", manifest)
-    return {"ok": True, "shard_count": len(manifest.get("shards") or []), "dir": str(action_dir)}
+    by_obl: dict[str, dict[str, Any]] = {}
+    for tid, t in (tasks_by_id or {}).items():
+        if isinstance(t, dict):
+            by_obl[str(tid)] = t
+    return write_llm_batches(
+        action_dir,
+        manifest,
+        by_obl,
+        batches_subdir="batches",
+        parts_subdir="parts",
+        manifest_name="semantic_batches.yaml",
+    )
 
 
 def validate_part(
@@ -160,31 +133,33 @@ def validate_part(
     shard: dict[str, Any],
     manifest: dict[str, Any],
 ) -> list[str]:
-    errors: list[str] = []
-    if not isinstance(part, dict):
-        return ["PART_NOT_MAPPING"]
-    if str(part.get("shard_id") or "") != str(shard.get("shard_id") or ""):
-        errors.append("PART_SHARD_MISMATCH")
-    if str(part.get("action_session_id") or "") != str(manifest.get("action_session_id") or ""):
-        errors.append("PART_ACTION_SESSION_MISMATCH")
-    if str(part.get("source_snapshot_hash") or "") != str(manifest.get("source_snapshot_hash") or ""):
-        errors.append("PART_SOURCE_SNAPSHOT_MISMATCH")
-    allowed = set(str(x) for x in (shard.get("task_ids") or []))
-    seen: set[str] = set()
-    for p in part.get("patches") or []:
-        if not isinstance(p, dict):
-            errors.append("PART_PATCH_NOT_MAPPING")
-            continue
-        tid = str(p.get("task_id") or "")
-        if not tid:
-            errors.append("PART_PATCH_MISSING_TASK_ID")
-            continue
-        if tid not in allowed:
-            errors.append(f"PART_PATCH_OUT_OF_SHARD:{tid}")
-        if tid in seen:
-            errors.append(f"PART_PATCH_DUPLICATE_TASK:{tid}")
-        seen.add(tid)
-    return errors
+    sh = dict(shard)
+    if not sh.get("obligation_ids") and sh.get("task_ids"):
+        sh["obligation_ids"] = list(sh.get("task_ids") or [])
+        sh["obligation_count"] = len(sh["obligation_ids"])
+    adapted = dict(part) if isinstance(part, dict) else {}
+    if "patches" in adapted and "decisions" not in adapted:
+        adapted["decisions"] = [
+            {**p, "candidate_id": p.get("task_id")}
+            for p in (adapted.get("patches") or [])
+            if isinstance(p, dict)
+        ]
+    errs = validate_llm_part(
+        adapted,
+        shard=sh,
+        manifest=manifest,
+        decision_key="decisions",
+        id_field="candidate_id",
+    )
+    out = []
+    for e in errs:
+        out.append(
+            e.replace("PART_DECISION_OUT_OF_SHARD", "PART_PATCH_OUT_OF_SHARD")
+            .replace("PART_DECISION_DUPLICATE", "PART_PATCH_DUPLICATE_TASK")
+            .replace("PART_DECISION_MISSING_ID", "PART_PATCH_MISSING_TASK_ID")
+            .replace("PART_DECISION_MISSING:", "PART_PATCH_MISSING_TASK:")
+        )
+    return out
 
 
 def reduce_semantic_parts(
@@ -198,85 +173,69 @@ def reduce_semantic_parts(
         man_path = action_dir / "semantic_batches.yaml"
         if not man_path.is_file():
             return {"ok": False, "errors": ["semantic_batches.yaml missing"]}
-        manifest = read_yaml(man_path)
-    assert isinstance(manifest, dict)
+        manifest = read_yaml(man_path) or {}
+    if isinstance(manifest, dict):
+        for sh in manifest.get("shards") or []:
+            if isinstance(sh, dict) and not sh.get("obligation_ids"):
+                sh["obligation_ids"] = list(sh.get("task_ids") or [])
+                sh["obligation_count"] = len(sh["obligation_ids"])
 
-    errors: list[str] = []
-    patches: list[dict[str, Any]] = []
-    seen_tasks: set[str] = set()
-    covered: set[str] = set()
+    parts_dir = action_dir / "parts"
+    if parts_dir.is_dir():
+        for p in parts_dir.glob("part_*.yaml"):
+            doc = read_yaml(p)
+            if isinstance(doc, dict) and doc.get("patches") and not doc.get("decisions"):
+                doc["decisions"] = [
+                    {**x, "candidate_id": x.get("task_id")}
+                    for x in (doc.get("patches") or [])
+                    if isinstance(x, dict)
+                ]
+                write_yaml(p, doc)
 
-    for shard in manifest.get("shards") or []:
-        if not isinstance(shard, dict):
+    reduced = reduce_llm_parts(
+        action_dir,
+        manifest=manifest if isinstance(manifest, dict) else None,
+        manifest_name="semantic_batches.yaml",
+        parts_subdir="parts",
+        decision_key="decisions",
+        id_field="candidate_id",
+    )
+    if not reduced.get("ok"):
+        return reduced
+    patches = []
+    for row in reduced.get("decisions") or []:
+        if not isinstance(row, dict):
             continue
-        sid = str(shard.get("shard_id") or "")
-        part_path = action_dir / "parts" / f"part_{sid}.yaml"
-        if not part_path.is_file():
-            errors.append(f"MISSING_PART:{sid}")
-            continue
-        part = read_yaml(part_path)
-        if not isinstance(part, dict):
-            errors.append(f"PART_INVALID:{sid}")
-            continue
-        # Optional candidate content hash check
-        expected_hash = str(part.get("candidate_set_hash") or "")
-        if expected_hash and part.get("patches"):
-            # Recompute from part-declared candidates if present
-            for p in part.get("patches") or []:
-                if isinstance(p, dict) and p.get("candidates"):
-                    got = candidate_set_content_hash(list(p.get("candidates") or []))
-                    # Only flag if part embeds per-patch candidates and mismatches header
-                    _ = got
-        verrs = validate_part(part, shard=shard, manifest=manifest)
-        errors.extend(verrs)
-        covered.add(sid)
-        for p in part.get("patches") or []:
-            if not isinstance(p, dict):
-                continue
-            tid = str(p.get("task_id") or "")
-            if tid in seen_tasks:
-                errors.append(f"DUPLICATE_TASK_ACROSS_PARTS:{tid}")
-                continue
-            seen_tasks.add(tid)
-            patches.append(p)
-
-    required = {str(s.get("shard_id")) for s in (manifest.get("shards") or []) if isinstance(s, dict)}
-    missing = sorted(required - covered)
-    for sid in missing:
-        if f"MISSING_PART:{sid}" not in errors:
-            errors.append(f"MISSING_PART:{sid}")
-
-    report = {
-        "version": 1,
-        "ok": not errors,
-        "errors": errors,
-        "shard_count": len(required),
-        "parts_merged": len(covered),
-        "patch_count": len(patches),
-        "action_session_id": manifest.get("action_session_id"),
-        "source_snapshot_hash": manifest.get("source_snapshot_hash"),
-        "task_set_hash": manifest.get("task_set_hash"),
-    }
-    write_yaml(action_dir / "reduce_report.yaml", report)
-    if errors:
-        return {"ok": False, "errors": errors, "report": report, "patches": patches}
-
+        p = dict(row)
+        if not p.get("task_id") and p.get("candidate_id"):
+            p["task_id"] = p.get("candidate_id")
+        p.pop("_bucket", None)
+        patches.append(p)
     merged = {
         "version": 1,
-        "action_session_id": manifest.get("action_session_id"),
-        "source_snapshot_hash": manifest.get("source_snapshot_hash"),
-        "task_set_hash": manifest.get("task_set_hash"),
         "patches": patches,
-        "produced_by": "semantic_patch_reducer",
+        "action_session_id": (manifest or {}).get("action_session_id"),
+        "source_snapshot_hash": (manifest or {}).get("source_snapshot_hash"),
+        "task_set_hash": (manifest or {}).get("task_set_hash")
+        or (manifest or {}).get("obligation_set_hash"),
     }
-    return {"ok": True, "errors": [], "report": report, "patches": patches, "merged": merged}
+    write_yaml(action_dir / "reduce_report.yaml", reduced.get("report") or {})
+    return {
+        "ok": True,
+        "patches": patches,
+        "merged": merged,
+        "report": reduced.get("report"),
+    }
 
 
 __all__ = [
     "DEFAULT_PARALLELISM",
+    "DEFAULT_TOKEN_BUDGET",
     "MAX_OBLIGATIONS_PER_SHARD",
+    "build_dispatch_tasks",
     "plan_semantic_batches",
     "reduce_semantic_parts",
+    "require_valid_manifest",
     "validate_part",
     "write_semantic_batches",
 ]

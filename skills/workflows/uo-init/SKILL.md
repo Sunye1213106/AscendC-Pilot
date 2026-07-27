@@ -29,11 +29,14 @@ description: 首次建立 / 创建本地知识库（UO KB）、建库、初始�
      - MUST NOT：把 `llm_tasks`/`mark_missing`/超大 candidates **整包**粘进 Task（只传路径）。
      - MUST NOT：在 stub 前后夹 REWORK / 失败诊断 / 额外目标长文。
    - **同 Action rework**：必须 **resume 原 Task session**（同一 `action_id` 的已有子代理），**禁止**再开第二个 session。
-   - **`extract_plan` 只确认 candidates→`extract_plan.yaml`**；边裁决走 `adjudicate_llm_tasks`→`apply_semantic_patch`（禁止跳步）。
+   - **`extract_plan`（Relation Graph）**：prepare 建 observations/obligations/base graph；
+     有歧义义务 → 按 `dispatch_tasks[]` 派 Map worker 写 `staging/relation_parts/`（只确认 Relation，禁止选 role）；
+     **义务已全部确定性闭合** → prepare **auto-finalize**（禁止再派子代理）；
+     finalize materialize slim IR + layered KB。边裁决仍走 `adjudicate_llm_tasks`→`apply_semantic_patch`（禁止跳步）。
    - Write 被拒后 **禁止**用 bash/`Set-Content`/`>` 绕过围栏写正式 IR。
 5. **禁止**用 Glob/Read 自编「文件计数表」代替 `acp uo-scope scan`；`common/` 由扫描脚本向上发现，手数必漏。
 6. **进度 / Todo**：遵循公共策略 `pilot-control`（原生 Todo）；勿在本 Skill 硬编码阶段表，勿在主对话贴状态面板。
-7. **`extract_plan --finalize`**：会校验 plan 并 `build_layered_kb(host/kernel/tilingkey/bridge)`；大算子可能数分钟无输出，属正常，禁止当卡死打断。
+7. **`extract_plan` finalize / auto-finalize**：会 materialize Relation→slim IR 并 `build_layered_kb(host/kernel/tilingkey/bridge)`；大算子可能数分钟无输出，属正常，禁止当卡死打断。
 
 ## 启动前：关键参数确认（歧义时立刻问）
 

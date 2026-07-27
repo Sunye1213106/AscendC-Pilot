@@ -14,6 +14,9 @@ capabilities:
 - structured-ir-query
 - readonly-source-search
 - action-scratch
+- sharded-llm-producer
+- bounded-semantic-batch
+- producer-self-check
 policies:
 - source-authority
 - code-access
@@ -25,32 +28,37 @@ task_prompt_id: uo/extract-plan
 context_profile_id: uo-init-extract-plan
 output_contract_id: extract-plan-v1
 allowed_write_paths:
-- runs/{run_id}/actions/extract_plan/staging/output.yaml
+- runs/{run_id}/actions/extract_plan/staging/relation_parts/**
 - runs/{run_id}/actions/extract_plan/scratch/**
 forbidden_write_paths:
 - uo/ir/extract_plan.yaml
 - uo/ir/semantic_patches.yaml
 - uo/ir/llm_tasks.yaml
 - uo/ir/semantic_resolution_ledger.yaml
+- runs/{run_id}/actions/extract_plan/staging/semantic_relations.yaml
 - uo/ir/extract_plan_aliases.yaml
 - uo/ir/receiver_bindings.yaml
+- uo/ir/semantic_relations.yaml
+- uo/ir/semantic_observations.yaml
 - uo/ir/extract_plan_auto_fill_report.yaml
-- uo/ir/extract_plan_decision_report.yaml
 allowed_read_paths:
 - uo/ir/extract_plan_candidates.yaml
 - uo/ir/extract_plan_candidates.sha256
 - uo/ir/extract_plan_candidates.summary.yaml
-- uo/ir/extract_plan_decision_worklist.yaml
+- uo/ir/semantic_observations.yaml
 - uo/ir/extract_plan.rework_hints.yaml
 - uo/ir/entrypoint_graph.yaml
 - uo/cbm/index_meta.json
-- runs/{run_id}/actions/extract_plan/inputs/decision_worklist.yaml
-- runs/{run_id}/actions/extract_plan/staging/decision_report.yaml
-- runs/{run_id}/actions/extract_plan/staging/output.yaml
+- runs/{run_id}/actions/extract_plan/inputs/**
+- runs/{run_id}/actions/extract_plan/staging/relation_parts/**
+- runs/{run_id}/actions/extract_plan/staging/semantic_relations.yaml
+- runs/{run_id}/actions/extract_plan/staging/semantic_relations.base.yaml
+- runs/{run_id}/actions/extract_plan/staging/semantic_observations.yaml
 - runs/{run_id}/actions/extract_plan/scratch/**
 - uo/ir/extract_plan.yaml
 - uo/ir/extract_plan_aliases.yaml
 - uo/ir/receiver_bindings.yaml
+- uo/ir/semantic_relations.yaml
 - uo/ir/extract_plan_auto_fill_report.yaml
 forbidden_read_paths:
 - uo/ir/llm_tasks.yaml

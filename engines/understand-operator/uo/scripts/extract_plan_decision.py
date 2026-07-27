@@ -919,16 +919,379 @@ def assert_canonical_plan_slim(plan: dict[str, Any]) -> list[str]:
     return errors
 
 
+def extract_plan_conflict_group_key(item: dict[str, Any]) -> str:
+    """Semantic pool key — conflict groups must stay in one shard."""
+    kinds = item.get("candidate_kind") or []
+    kind = kinds[0] if isinstance(kinds, list) and kinds else str(item.get("candidate_kind") or "")
+    kind = str(kind or "generic")
+    name = str(item.get("name") or item.get("local") or item.get("receiver") or "").casefold()
+    if kind in {"function_writer", "macro_binding", "key_dimension_source", "helper"}:
+        # Same symbol writers stay together
+        return f"writer::{name or item.get('candidate_id')}"
+    if kind in {"receiver_binding", "receiver_sink"}:
+        return f"receiver::{name or item.get('candidate_id')}"
+    if kind == "alias":
+        local = str(item.get("name") or item.get("local") or "").casefold()
+        return f"alias::{local or item.get('candidate_id')}"
+    if item.get("reachable") is False:
+        return "architecture_unknown"
+    return f"generic::{kind}"
+
+
+def prune_deterministic_work_items(
+    worklist: dict[str, Any],
+    candidates: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Deterministic pre-decisions — only ambiguous obligations go to LLM.
+
+    Auto paths (no LLM):
+      - high-confidence non-conflicting aliases
+      - unique complete receiver bindings
+      - duplicate candidates → defer/reject
+      - architecture unreachable → defer
+      - helper kinds with ignore role → reject
+      - single candidate with sufficient role evidence → accept
+    """
+    from uo.scripts.extract_plan_autofill import (
+        ALIAS_AUTO_ACCEPT_THRESHOLD,
+        ALIAS_EVIDENCE_KINDS,
+        detect_alias_conflicts,
+    )
+    from uo.scripts.role_evidence import validate_role_evidence
+
+    items = [w for w in (worklist.get("work_items") or []) if isinstance(w, dict)]
+    by_id = index_candidates_by_id(candidates) if isinstance(candidates, dict) else {}
+
+    # Alias conflicts
+    alias_rows = []
+    if isinstance(candidates, dict):
+        alias_rows = [a for a in (candidates.get("alias_candidates") or []) if isinstance(a, dict)]
+    conflict_locals = set(detect_alias_conflicts(alias_rows).keys()) if alias_rows else set()
+
+    # Receiver uniqueness
+    recv_counts: dict[str, int] = {}
+    for w in items:
+        kinds = w.get("candidate_kind") or []
+        kind = kinds[0] if isinstance(kinds, list) and kinds else ""
+        if kind == "receiver_binding":
+            name = str(w.get("name") or "").strip()
+            if name:
+                recv_counts[name] = recv_counts.get(name, 0) + 1
+
+    auto_accepted: list[dict[str, Any]] = []
+    auto_rejected: list[dict[str, Any]] = []
+    auto_deferred: list[dict[str, Any]] = []
+    llm_items: list[dict[str, Any]] = []
+
+    for w in items:
+        cid = str(w.get("candidate_id") or "").strip()
+        if not cid:
+            continue
+        kinds = w.get("candidate_kind") or []
+        kind = kinds[0] if isinstance(kinds, list) and kinds else str(w.get("candidate_kind") or "")
+        name = str(w.get("name") or "").strip()
+        score = float(w.get("score") or 0)
+        cand = by_id.get(cid)
+
+        # Unreachable → defer (never accept)
+        if w.get("reachable") is False:
+            auto_deferred.append(
+                {"candidate_id": cid, "reason_code": "architecture_unreachable"}
+            )
+            continue
+
+        # Duplicates → defer
+        if kind == "duplicate":
+            auto_deferred.append({"candidate_id": cid, "reason_code": "duplicate_candidate"})
+            continue
+
+        # Helpers → reject
+        if kind == "helper":
+            auto_rejected.append({"candidate_id": cid, "reason_code": "helper_ignore"})
+            continue
+
+        # High-confidence alias without local conflict
+        if kind == "alias":
+            ev = set()
+            if cand:
+                for x in cand.get("evidence") or []:
+                    if x:
+                        ev.add(str(x))
+            if (
+                score >= ALIAS_AUTO_ACCEPT_THRESHOLD
+                and (ev & ALIAS_EVIDENCE_KINDS)
+                and name not in conflict_locals
+            ):
+                auto_accepted.append(
+                    {"candidate_id": cid, "role": "alias", "reason_code": "deterministic_alias"}
+                )
+                continue
+            if name in conflict_locals:
+                llm_items.append(w)
+                continue
+            if not w.get("required_decision"):
+                continue
+            llm_items.append(w)
+            continue
+
+        # Unique receiver binding with nested_field
+        if kind == "receiver_binding":
+            nested = ""
+            if cand:
+                nested = str(cand.get("nested_field") or "").strip()
+            if name and recv_counts.get(name, 0) == 1 and nested and score >= 0.85:
+                auto_accepted.append(
+                    {
+                        "candidate_id": cid,
+                        "role": "receiver_binding",
+                        "reason_code": "deterministic_unique_binding",
+                        "binding_ref": None,
+                    }
+                )
+                continue
+            if w.get("required_decision"):
+                llm_items.append(w)
+            continue
+
+        # Single writer with sufficient evidence in window → accept
+        if kind in {"function_writer", "macro_binding", "key_dimension_source"} and cand:
+            roles = list(w.get("role_candidates") or [])
+            role = str(roles[0] if roles else cand.get("role_suggested") or "tiling_writer")
+            # Ambiguous same-name siblings stay for LLM
+            same_name = [
+                x
+                for x in items
+                if str(x.get("name") or "").casefold() == name.casefold()
+                and (x.get("candidate_kind") or [""])[0]
+                in {"function_writer", "macro_binding", "key_dimension_source"}
+            ]
+            if len(same_name) > 1:
+                if w.get("required_decision"):
+                    llm_items.append(w)
+                continue
+            ev = validate_role_evidence(
+                {
+                    "role": role,
+                    "evidence_snippet": str(
+                        ((w.get("evidence") or {}) if isinstance(w.get("evidence"), dict) else {}).get(
+                            "snippet"
+                        )
+                        or ""
+                    ),
+                },
+                role=role,
+                candidate=cand,
+                candidate_kind=kind,
+                authentic=True,
+            )
+            if (
+                w.get("required_decision")
+                and score >= 0.9
+                and ev.get("sufficient")
+                and role in PROMOTED_WRITER_ROLES | {"key_dimension_source", "tiling_writer"}
+            ):
+                auto_accepted.append(
+                    {
+                        "candidate_id": cid,
+                        "role": role,
+                        "reason_code": "deterministic_unique_writer",
+                    }
+                )
+                continue
+
+        if w.get("required_decision"):
+            llm_items.append(w)
+
+    return {
+        "version": 1,
+        "auto_accepted": auto_accepted,
+        "auto_rejected": auto_rejected,
+        "auto_deferred": auto_deferred,
+        "llm_obligations": llm_items,
+        "counts": {
+            "auto_accepted": len(auto_accepted),
+            "auto_rejected": len(auto_rejected),
+            "auto_deferred": len(auto_deferred),
+            "llm": len(llm_items),
+        },
+    }
+
+
+def plan_extract_plan_batches(
+    worklist: dict[str, Any],
+    candidates: dict[str, Any] | None = None,
+    *,
+    action_session_id: str = "",
+    source_snapshot_hash: str = "",
+    max_per_shard: int = 30,
+    token_budget: int = 12_000,
+) -> dict[str, Any]:
+    """Prune + shard extract-plan LLM obligations via public scheduler."""
+    from uo.scripts.llm_work_scheduler import (
+        MAX_OBLIGATIONS_PER_SHARD,
+        plan_llm_work_shards,
+    )
+
+    pruned = prune_deterministic_work_items(worklist, candidates)
+    max_n = int(max_per_shard) if max_per_shard else MAX_OBLIGATIONS_PER_SHARD
+    obligations = list(pruned.get("llm_obligations") or [])
+    # Annotate obligation_id
+    for o in obligations:
+        o["obligation_id"] = str(o.get("candidate_id") or "")
+
+    manifest = plan_llm_work_shards(
+        obligations,
+        action_session_id=action_session_id,
+        source_snapshot_hash=source_snapshot_hash,
+        max_per_shard=max_n,
+        token_budget=token_budget,
+        group_key_fn=extract_plan_conflict_group_key,
+        id_keys=("obligation_id", "candidate_id"),
+        batch_dir="batches",
+        part_dir="decision_report.parts",
+        batch_name_fn=lambda _sid, idx: f"batches/batch_{idx:03d}.yaml",
+        part_name_fn=lambda _sid, idx: f"decision_report.parts/part_{idx:03d}.yaml",
+    )
+    manifest["pruned"] = {
+        "counts": pruned.get("counts"),
+        "auto_accepted": pruned.get("auto_accepted"),
+        "auto_rejected": pruned.get("auto_rejected"),
+        "auto_deferred": pruned.get("auto_deferred"),
+        "llm_obligations": obligations,
+    }
+    manifest["kind"] = "extract_plan_decision_batches"
+    return manifest
+
+
+def merge_decision_report_parts(
+    action_dir: Path,
+    *,
+    manifest: dict[str, Any] | None = None,
+    only_failed: bool = False,
+) -> dict[str, Any]:
+    """Reduce Map parts + deterministic prune → staging decision_report.yaml."""
+    from uo.scripts._ir_io import write_yaml
+    from uo.scripts.llm_work_scheduler import reduce_llm_parts
+
+    action_dir = Path(action_dir)
+    # Parts live under staging/decision_report.parts; manifest under inputs/
+    inputs_dir = action_dir / "inputs"
+    staging_dir = action_dir / "staging"
+    man = manifest
+    if man is None:
+        man_path = inputs_dir / "decision_batches.yaml"
+        if man_path.is_file():
+            from uo.scripts._ir_io import read_yaml
+
+            man = read_yaml(man_path)
+    # reduce looks relative to action_dir — rewrite part paths to staging/
+    if isinstance(man, dict):
+        for sh in man.get("shards") or []:
+            if not isinstance(sh, dict):
+                continue
+            pf = str(sh.get("part_file") or "")
+            if pf and not pf.startswith("staging/"):
+                sh["part_file"] = f"staging/{Path(pf).name}" if "decision_report.parts" not in pf else f"staging/{pf}" if not pf.startswith("staging/") else pf
+            # Normalize: staging/decision_report.parts/part_000.yaml
+            name = Path(str(sh.get("part_file") or "")).name
+            sh["part_file"] = f"staging/decision_report.parts/{name}"
+
+    # reduce_llm_parts uses action_dir as root; point parts_subdir accordingly
+    # Copy/link: actually parts are under staging/decision_report.parts
+    reduced = reduce_llm_parts(
+        action_dir,
+        manifest=man if isinstance(man, dict) else None,
+        manifest_name="inputs/decision_batches.yaml",
+        parts_subdir="staging/decision_report.parts",
+        decision_key="decisions",
+        id_field="candidate_id",
+        only_failed=only_failed,
+    )
+    if not reduced.get("ok"):
+        return reduced
+
+    pruned = (man or {}).get("pruned") if isinstance(man, dict) else {}
+    pruned = pruned if isinstance(pruned, dict) else {}
+
+    accepted = list(pruned.get("auto_accepted") or [])
+    rejected = list(pruned.get("auto_rejected") or [])
+    deferred = list(pruned.get("auto_deferred") or [])
+    binding_confirms: list[dict[str, Any]] = []
+
+    for row in reduced.get("decisions") or []:
+        if not isinstance(row, dict):
+            continue
+        bucket = str(row.get("_bucket") or row.get("decision") or "").casefold()
+        cid = str(row.get("candidate_id") or "").strip()
+        if not cid:
+            continue
+        if bucket in {"accepted", "accept"} or row.get("role"):
+            if bucket in {"rejected", "reject"}:
+                rejected.append(
+                    {"candidate_id": cid, "reason_code": row.get("reason_code") or "rejected"}
+                )
+            elif bucket in {"deferred", "defer"}:
+                deferred.append(
+                    {"candidate_id": cid, "reason_code": row.get("reason_code") or "deferred"}
+                )
+            else:
+                entry = {"candidate_id": cid, "role": row.get("role")}
+                accepted.append(entry)
+                if row.get("binding_ref"):
+                    binding_confirms.append(
+                        {"candidate_id": cid, "binding_ref": row.get("binding_ref")}
+                    )
+        elif bucket in {"rejected", "reject"}:
+            rejected.append(
+                {"candidate_id": cid, "reason_code": row.get("reason_code") or "rejected"}
+            )
+        elif bucket in {"deferred", "defer"}:
+            deferred.append(
+                {"candidate_id": cid, "reason_code": row.get("reason_code") or "deferred"}
+            )
+        else:
+            # Default: treat as accepted if role present else deferred
+            if row.get("role"):
+                accepted.append({"candidate_id": cid, "role": row.get("role")})
+            else:
+                deferred.append(
+                    {"candidate_id": cid, "reason_code": row.get("reason_code") or "unspecified"}
+                )
+
+    report = {
+        "version": 1,
+        "action_session_id": (man or {}).get("action_session_id"),
+        "source_snapshot_hash": (man or {}).get("source_snapshot_hash"),
+        "obligation_set_hash": (man or {}).get("obligation_set_hash"),
+        "candidates_sha256": (man or {}).get("candidates_sha256"),
+        "accepted": accepted,
+        "rejected": rejected,
+        "deferred": deferred,
+        "receiver_binding_confirmations": binding_confirms,
+        "map_reduce": True,
+        "shard_count": (man or {}).get("shard_count"),
+    }
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    write_yaml(staging_dir / "decision_report.yaml", report)
+    reduced["decision_report"] = report
+    reduced["written"] = str(staging_dir / "decision_report.yaml")
+    return reduced
+
+
 __all__ = [
     "ALLOWED_DECISIONS",
     "CANDIDATE_KINDS",
     "assert_canonical_plan_slim",
     "build_decision_worklist",
     "classify_candidate_kind",
+    "extract_plan_conflict_group_key",
     "hydrate_extract_plan",
     "index_candidates_by_id",
     "is_decision_report",
     "materialize_plan_from_decision_report",
+    "merge_decision_report_parts",
+    "plan_extract_plan_batches",
+    "prune_deterministic_work_items",
     "report_extract_plan_coverage",
     "slim_extract_plan",
     "validate_candidate_architecture",

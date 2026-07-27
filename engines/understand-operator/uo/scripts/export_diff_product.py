@@ -166,6 +166,40 @@ def export_diff_product(
         "coverage_hints": coverage_hints,
         "recommended_test_level": "L1",
     }
+
+    # Enrich with input-rooted Relation Graph impact when available.
+    try:
+        from uo.scripts.semantic_impact import impact_from_change_set
+
+        rel_path = uo_root / "ir" / "semantic_relations.yaml"
+        if rel_path.is_file():
+            rel_graph = read_yaml(rel_path)
+            if isinstance(rel_graph, dict):
+                touched_files = [
+                    str(f.get("path") or "")
+                    for f in (change_set.get("files") or [])
+                    if isinstance(f, dict) and f.get("path")
+                ]
+                touched_symbols = list(entities.get("symbols") or []) if isinstance(entities, dict) else []
+                # Also collect node names from graph entities if present on change_set
+                for n in change_set.get("symbols") or []:
+                    if n:
+                        touched_symbols.append(str(n))
+                sem = impact_from_change_set(
+                    rel_graph,
+                    change_set=change_set,
+                    touched_files=touched_files,
+                    touched_symbols=touched_symbols,
+                )
+                impact["relation_impact"] = sem
+                impact["affected_tiling_fields"] = sem.get("affected_tiling_fields") or []
+                impact["affected_key_dimensions"] = sem.get("affected_key_dimensions") or []
+                impact["affected_templates"] = sem.get("affected_templates") or []
+                impact["dependent_input_roots"] = sem.get("dependent_input_roots") or []
+                impact["coverage_obligations"] = sem.get("coverage_obligations") or []
+    except Exception:  # noqa: BLE001
+        pass
+
     unresolved_doc = {"version": 1, "op_name": op_name, "items": unresolved_items}
     index = {
         "version": 1,

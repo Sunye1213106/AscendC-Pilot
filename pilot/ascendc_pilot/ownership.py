@@ -40,8 +40,7 @@ PRIMARY_AGENT_ID = "ascendc-pilot"
 ACTION_PRODUCER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     "uo-init": {
         "extract_plan": [
-            "runs/{run_id}/actions/extract_plan/staging/decision_report.yaml",
-            "runs/{run_id}/actions/extract_plan/staging/output.yaml",
+            "runs/{run_id}/actions/extract_plan/staging/relation_parts/**",
             "runs/{run_id}/actions/extract_plan/scratch/**",
         ],
         "adjudicate_llm_tasks": [
@@ -54,11 +53,13 @@ ACTION_PRODUCER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
 ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     "uo-init": {
         "extract_plan": [
+            "runs/{run_id}/actions/extract_plan/staging/semantic_relations.yaml",
             "uo/ir/extract_plan.yaml",
             "uo/ir/extract_plan_aliases.yaml",
             "uo/ir/receiver_bindings.yaml",
+            "uo/ir/semantic_relations.yaml",
+            "uo/ir/semantic_observations.yaml",
             "uo/ir/extract_plan_auto_fill_report.yaml",
-            "uo/ir/extract_plan_decision_report.yaml",
         ],
         "adjudicate_llm_tasks": [
             "uo/ir/semantic_patches.yaml",
@@ -84,14 +85,17 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         ],
         # Union of producer staging + finalizer canonical (engines / gates).
         "extract_plan": [
-            "runs/{run_id}/actions/extract_plan/staging/decision_report.yaml",
-            "runs/{run_id}/actions/extract_plan/staging/output.yaml",
+            "runs/{run_id}/actions/extract_plan/staging/relation_parts/**",
+            "runs/{run_id}/actions/extract_plan/staging/semantic_relations.yaml",
+            "runs/{run_id}/actions/extract_plan/staging/semantic_relations.base.yaml",
+            "runs/{run_id}/actions/extract_plan/staging/semantic_observations.yaml",
             "runs/{run_id}/actions/extract_plan/scratch/**",
             "uo/ir/extract_plan.yaml",
             "uo/ir/extract_plan_aliases.yaml",
             "uo/ir/receiver_bindings.yaml",
+            "uo/ir/semantic_relations.yaml",
+            "uo/ir/semantic_observations.yaml",
             "uo/ir/extract_plan_auto_fill_report.yaml",
-            "uo/ir/extract_plan_decision_report.yaml",
         ],
         "detect_score_post": ["uo/ir/score_report_post.yaml", "uo/ir/llm_tasks.yaml", "uo/ir/**"],
         "adjudicate_llm_tasks": [
@@ -141,18 +145,20 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
             "uo/ir/extract_plan_candidates.yaml",
             "uo/ir/extract_plan_candidates.sha256",
             "uo/ir/extract_plan_candidates.summary.yaml",
-            "uo/ir/extract_plan_decision_worklist.yaml",
+            "uo/ir/semantic_observations.yaml",
             "uo/ir/extract_plan.rework_hints.yaml",
             "uo/ir/entrypoint_graph.yaml",
             "uo/cbm/index_meta.json",
-            # Decision worklist + staging self-check / rework.
-            "runs/{run_id}/actions/extract_plan/inputs/decision_worklist.yaml",
-            "runs/{run_id}/actions/extract_plan/staging/decision_report.yaml",
-            "runs/{run_id}/actions/extract_plan/staging/output.yaml",
+            "runs/{run_id}/actions/extract_plan/inputs/**",
+            "runs/{run_id}/actions/extract_plan/staging/relation_parts/**",
+            "runs/{run_id}/actions/extract_plan/staging/semantic_relations.yaml",
+            "runs/{run_id}/actions/extract_plan/staging/semantic_relations.base.yaml",
+            "runs/{run_id}/actions/extract_plan/staging/semantic_observations.yaml",
             "runs/{run_id}/actions/extract_plan/scratch/**",
             "uo/ir/extract_plan.yaml",
             "uo/ir/extract_plan_aliases.yaml",
             "uo/ir/receiver_bindings.yaml",
+            "uo/ir/semantic_relations.yaml",
             "uo/ir/extract_plan_auto_fill_report.yaml",
         ],
         "adjudicate_llm_tasks": [
@@ -245,6 +251,21 @@ def shard_producer_write_paths(
     sid = str(shard_id or "").strip()
     if not sid:
         return action_producer_write_paths(workflow_id, action_id, run_id=run_id)
+    if action_id == "extract_plan":
+        return [
+            expand_path_template(
+                f"runs/{{run_id}}/actions/extract_plan/staging/relation_parts/part_{sid}.yaml",
+                run_id=run_id,
+            ),
+            expand_path_template(
+                "runs/{run_id}/actions/extract_plan/staging/relation_parts/**",
+                run_id=run_id,
+            ),
+            expand_path_template(
+                f"runs/{{run_id}}/actions/extract_plan/scratch/{sid}/**",
+                run_id=run_id,
+            ),
+        ]
     return [
         expand_path_template(
             f"runs/{{run_id}}/actions/{action_id}/parts/part_{sid}.yaml",
@@ -268,6 +289,47 @@ def shard_producer_read_paths(
     """Narrow Map-worker reads to assigned batch + own part (rework)."""
     sid = str(shard_id or "").strip()
     batch = str(batch_name or f"batch_{sid}.yaml").strip()
+    if action_id == "extract_plan":
+        paths = [
+            expand_path_template(
+                "runs/{run_id}/actions/extract_plan/inputs/relation_batches.yaml",
+                run_id=run_id,
+            ),
+            expand_path_template(
+                "runs/{run_id}/actions/extract_plan/inputs/semantic_obligations.yaml",
+                run_id=run_id,
+            ),
+            expand_path_template(
+                f"runs/{{run_id}}/actions/extract_plan/inputs/batches/{batch}",
+                run_id=run_id,
+            ),
+            expand_path_template(
+                f"runs/{{run_id}}/actions/extract_plan/staging/relation_parts/part_{sid}.yaml",
+                run_id=run_id,
+            ),
+            expand_path_template(
+                f"runs/{{run_id}}/actions/extract_plan/scratch/{sid}/**",
+                run_id=run_id,
+            ),
+            # Session pack / env only — NOT full worklist / candidates
+            expand_path_template(
+                f"runs/{{run_id}}/actions/extract_plan/environment_capabilities.yaml",
+                run_id=run_id,
+            ),
+            expand_path_template(
+                f"runs/{{run_id}}/actions/extract_plan/prompt.md",
+                run_id=run_id,
+            ),
+            expand_path_template(
+                f"runs/{{run_id}}/actions/extract_plan/method.md",
+                run_id=run_id,
+            ),
+            expand_path_template(
+                f"runs/{{run_id}}/actions/extract_plan/bundle.yaml",
+                run_id=run_id,
+            ),
+        ]
+        return paths
     paths = [
         expand_path_template(
             f"runs/{{run_id}}/actions/{action_id}/semantic_batches.yaml",
@@ -291,10 +353,43 @@ def shard_producer_read_paths(
                 run_id=run_id,
             )
         )
-    # Shared score/task context (read-only; not other shards' parts).
     paths.extend(action_read_paths(workflow_id, action_id, run_id=run_id))
-    # Deny cross-shard parts via forbidden patterns applied separately.
     return paths
+
+
+def shard_producer_forbidden_read_paths(
+    workflow_id: str,
+    action_id: str,
+    *,
+    run_id: str,
+    shard_id: str = "",
+) -> list[str]:
+    """Cross-shard / full-IR reads forbidden for Map workers."""
+    _ = workflow_id
+    sid = str(shard_id or "").strip()
+    if action_id == "extract_plan":
+        return [
+            "uo/ir/extract_plan_candidates.yaml",
+            expand_path_template(
+                "runs/{run_id}/actions/extract_plan/inputs/batches/**",
+                run_id=run_id,
+            ),
+            "uo/ir/extract_plan.yaml",
+            "uo/ir/semantic_relations.yaml",
+            "uo/ir/llm_tasks.yaml",
+            "uo/ir/semantic_patches.yaml",
+            "uo/ir/semantic_resolution_ledger.yaml",
+        ]
+    if action_id == "adjudicate_llm_tasks":
+        return [
+            "uo/ir/semantic_patches.yaml",
+            "uo/ir/semantic_resolution_ledger.yaml",
+            expand_path_template(
+                "runs/{run_id}/actions/adjudicate_llm_tasks/parts/**",
+                run_id=run_id,
+            ),
+        ]
+    return []
 
 
 def expand_path_template(path: str, *, run_id: str = "", **extra: str) -> str:
@@ -524,6 +619,7 @@ __all__ = [
     "path_matches_patterns",
     "path_within_scopes",
     "prompt_has_unresolved",
+    "shard_producer_forbidden_read_paths",
     "shard_producer_read_paths",
     "shard_producer_write_paths",
     "staging_dir",

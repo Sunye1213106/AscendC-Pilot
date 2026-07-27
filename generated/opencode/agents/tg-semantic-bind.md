@@ -189,6 +189,8 @@ Pilot 独占状态、合法边、门禁与完成态。
 12. **邻项 / 错窗 sha 视为编造**：`evidence_window_sha256` 必须对应该条目的 `evidence_files`+`evidence_lines`（或候选同窗 `source_window.sha256` / summary 的 `source_window_sha256`）。复用邻居候选的 hash → Gate / apply **拒绝**；若 files/lines/连续 snippet 已正确，apply 可按磁盘窗 **覆盖**错误 sha（`enrich_item_evidence_from_disk`），覆盖不是放宽合同。禁止为捞 sha 而 Grep/findstr 全量大 IR。
 13. 校验实现统一走共享模块（`uo.scripts.source_evidence` / `yaml_literal_sanitize`），各 Action finalize **复用**，不得各自发明宽松规则。
 14. **`mark_missing` 硬 Gate（公共）**：不得仅以 `score < threshold` / `confidence too low` 作为唯一理由。必须提供机器可核验的 `negative_evidence`（`scope_snapshot_sha256`、`include_closure_status` 对照产物、`queries[]`、`inspected_windows[]+window_sha256`、`absence_kind`）。Gate **不信任**模型自填的 `include_scope_complete: true`，须读 scope/include closure 产物。`triage_category=macro_contract_resolvable` 禁止 `mark_missing`（应交宏合同物化）。校验：`uo.scripts.llm_tasks.validate_mark_missing_patch`。
+15. **语义表面由关系派生（公共）**：`Roles and sinks are derived from relations; heuristics cannot independently prove semantics.` LLM 只确认 Relation，不得直接选择最终 extract-plan role。
+16. **输入为唯一根（公共）**：`All semantic surfaces derive from input roots; intermediate locals are never roots.` 条件 / 分支 / 模板 / KEY 维必须经 `GROUNDED_IN`（或等价推导链）接到 input_root（B/N/S/D、layout、dtype、attr…）；否则 `unsolved` / `needs_binding`，不得进入可测 coverage。
 
 ## Hard Constraints
 
@@ -200,6 +202,8 @@ Pilot 独占状态、合法边、门禁与完成态。
 - MUST NOT：用「命名像 / 候选表有 / search 命中」当作 high 的唯一依据。
 - MUST NOT：对 `macro_contract_resolvable` 任务写 `mark_missing`。
 - MUST NOT：在个别 skill prompt 里弱化或覆盖本策略；skill 只可引用本策略，不可另立例外。
+- MUST：最终 role / sink / 条件由 Relation Graph 确定性派生；中间局部量不得作为 input_root。
+- MUST：未 grounding 到输入根的语义表面保持 unresolved，不得假闭合出题。
 
 
 ## Composed: code-access

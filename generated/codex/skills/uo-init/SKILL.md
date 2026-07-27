@@ -30,11 +30,14 @@ disable-model-invocation: false
      - MUST NOT：把 `llm_tasks`/`mark_missing`/超大 candidates **整包**粘进 Task（只传路径）。
      - MUST NOT：在 stub 前后夹 REWORK / 失败诊断 / 额外目标长文。
    - **同 Action rework**：必须 **resume 原 Task session**（同一 `action_id` 的已有子代理），**禁止**再开第二个 session。
-   - **`extract_plan` 只确认 candidates→`extract_plan.yaml`**；边裁决走 `adjudicate_llm_tasks`→`apply_semantic_patch`（禁止跳步）。
+   - **`extract_plan`（Relation Graph）**：prepare 建 observations/obligations/base graph；
+     有歧义义务 → 按 `dispatch_tasks[]` 派 Map worker 写 `staging/relation_parts/`（只确认 Relation，禁止选 role）；
+     **义务已全部确定性闭合** → prepare **auto-finalize**（禁止再派子代理）；
+     finalize materialize slim IR + layered KB。边裁决仍走 `adjudicate_llm_tasks`→`apply_semantic_patch`（禁止跳步）。
    - Write 被拒后 **禁止**用 bash/`Set-Content`/`>` 绕过围栏写正式 IR。
 5. **禁止**用 Glob/Read 自编「文件计数表」代替 `acp uo-scope scan`；`common/` 由扫描脚本向上发现，手数必漏。
 6. **进度 / Todo**：遵循公共策略 `pilot-control`（原生 Todo）；勿在本 Skill 硬编码阶段表，勿在主对话贴状态面板。
-7. **`extract_plan --finalize`**：会校验 plan 并 `build_layered_kb(host/kernel/tilingkey/bridge)`；大算子可能数分钟无输出，属正常，禁止当卡死打断。
+7. **`extract_plan` finalize / auto-finalize**：会 materialize Relation→slim IR 并 `build_layered_kb(host/kernel/tilingkey/bridge)`；大算子可能数分钟无输出，属正常，禁止当卡死打断。
 
 ## 启动前：关键参数确认（歧义时立刻问）
 
@@ -234,6 +237,8 @@ Pilot 独占状态、合法边、门禁与完成态。
 12. **邻项 / 错窗 sha 视为编造**：`evidence_window_sha256` 必须对应该条目的 `evidence_files`+`evidence_lines`（或候选同窗 `source_window.sha256` / summary 的 `source_window_sha256`）。复用邻居候选的 hash → Gate / apply **拒绝**；若 files/lines/连续 snippet 已正确，apply 可按磁盘窗 **覆盖**错误 sha（`enrich_item_evidence_from_disk`），覆盖不是放宽合同。禁止为捞 sha 而 Grep/findstr 全量大 IR。
 13. 校验实现统一走共享模块（`uo.scripts.source_evidence` / `yaml_literal_sanitize`），各 Action finalize **复用**，不得各自发明宽松规则。
 14. **`mark_missing` 硬 Gate（公共）**：不得仅以 `score < threshold` / `confidence too low` 作为唯一理由。必须提供机器可核验的 `negative_evidence`（`scope_snapshot_sha256`、`include_closure_status` 对照产物、`queries[]`、`inspected_windows[]+window_sha256`、`absence_kind`）。Gate **不信任**模型自填的 `include_scope_complete: true`，须读 scope/include closure 产物。`triage_category=macro_contract_resolvable` 禁止 `mark_missing`（应交宏合同物化）。校验：`uo.scripts.llm_tasks.validate_mark_missing_patch`。
+15. **语义表面由关系派生（公共）**：`Roles and sinks are derived from relations; heuristics cannot independently prove semantics.` LLM 只确认 Relation，不得直接选择最终 extract-plan role。
+16. **输入为唯一根（公共）**：`All semantic surfaces derive from input roots; intermediate locals are never roots.` 条件 / 分支 / 模板 / KEY 维必须经 `GROUNDED_IN`（或等价推导链）接到 input_root（B/N/S/D、layout、dtype、attr…）；否则 `unsolved` / `needs_binding`，不得进入可测 coverage。
 
 ## Hard Constraints
 
@@ -245,6 +250,8 @@ Pilot 独占状态、合法边、门禁与完成态。
 - MUST NOT：用「命名像 / 候选表有 / search 命中」当作 high 的唯一依据。
 - MUST NOT：对 `macro_contract_resolvable` 任务写 `mark_missing`。
 - MUST NOT：在个别 skill prompt 里弱化或覆盖本策略；skill 只可引用本策略，不可另立例外。
+- MUST：最终 role / sink / 条件由 Relation Graph 确定性派生；中间局部量不得作为 input_root。
+- MUST：未 grounding 到输入根的语义表面保持 unresolved，不得假闭合出题。
 
 ## Composed: code-access
 
@@ -315,9 +322,9 @@ Pilot 独占状态、合法边、门禁与完成态。
 | `prepare_layout` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/prepare-layout` | `-` | `deterministic-uo-engine` |
 | `scope_confirmation` | source-authority,code-access,evidence,language,pilot-control,output-quality | cbm-navigation,source-reading | `uo-init/scope-confirmation` | `uo/scope-confirmation` | `ascendc-pilot` |
 | `detect_score_pre` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/detect-score-pre` | `-` | `deterministic-uo-engine` |
-| `extract_plan` | source-authority,code-access,evidence,language,pilot-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution,structured-ir-query,readonly-source-search,action-scratch | `uo-init/extract-plan` | `uo/extract-plan` | `uo-semantic-resolve` |
+| `extract_plan` | source-authority,code-access,evidence,language,pilot-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution,structured-ir-query,readonly-source-search,action-scratch,sharded-llm-producer,bounded-semantic-batch,producer-self-check | `uo-init/extract-plan` | `uo/extract-plan` | `uo-semantic-resolve` |
 | `detect_score_post` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/detect-score-post` | `-` | `deterministic-uo-engine` |
-| `adjudicate_llm_tasks` | source-authority,code-access,evidence,language,pilot-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution,structured-ir-query,readonly-source-search,action-scratch,sharded-semantic-producer | `uo-init/adjudicate-llm-tasks` | `uo/adjudicate-llm-tasks` | `uo-semantic-resolve` |
+| `adjudicate_llm_tasks` | source-authority,code-access,evidence,language,pilot-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution,structured-ir-query,readonly-source-search,action-scratch,sharded-semantic-producer,sharded-llm-producer,bounded-semantic-batch,producer-self-check | `uo-init/adjudicate-llm-tasks` | `uo/adjudicate-llm-tasks` | `uo-semantic-resolve` |
 | `apply_semantic_patch` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/apply-semantic-patch` | `-` | `deterministic-uo-engine` |
 | `apply_scope_expansion` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/apply-scope-expansion` | `-` | `deterministic-uo-engine` |
 | `rebuild_from_ledger` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/rebuild-from-ledger` | `-` | `deterministic-uo-engine` |

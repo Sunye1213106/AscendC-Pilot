@@ -176,7 +176,7 @@ def test_semantic_batches_and_reduce(tmp_path: Path) -> None:
             "eligible_for_adjudication": True,
             "route": "uo-semantic-resolve",
             "object_type": "tilingdata_bridge",
-            "normalized_owner_identity": "OwnerA" if i < 5 else "OwnerB",
+            "normalized_owner_identity": f"Owner{i // 4}",
         }
         for i in range(10)
     ]

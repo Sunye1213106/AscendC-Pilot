@@ -743,7 +743,7 @@ def _run_extract_plan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
             staging_path = None
             run_id = str(ctx.get("run_id") or "").strip()
             if run_id:
-                cand_stage = (
+                action_staging = (
                     project_root
                     / ".ascendc-pilot"
                     / "runs"
@@ -751,15 +751,29 @@ def _run_extract_plan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
                     / "actions"
                     / "extract_plan"
                     / "staging"
-                    / "output.yaml"
                 )
-                if cand_stage.is_file():
-                    staging_path = cand_stage
+                # Prefer relation staging marker; fall back to legacy output.yaml
+                if (action_staging / "semantic_relations.yaml").is_file() or (
+                    action_staging / "semantic_relations.base.yaml"
+                ).is_file():
+                    staging_path = action_staging
+                else:
+                    cand_stage = action_staging / "output.yaml"
+                    if cand_stage.is_file():
+                        staging_path = cand_stage
             applied = apply_extract_plan(
                 project_root,
                 op_name,
                 staging_path=staging_path,
                 check_only=False,
+                identity={
+                    "actor_id": str(ctx.get("actor_id") or "uo-semantic-resolve"),
+                    "run_id": str(ctx.get("run_id") or ""),
+                    "workflow_id": str(ctx.get("workflow_id") or "uo-init"),
+                    "architecture": architecture,
+                    "action_session_id": str(ctx.get("action_session_id") or ""),
+                    "lease_id": str(ctx.get("lease_id") or ""),
+                },
             )
             if not applied.get("ok"):
                 return {
@@ -850,24 +864,13 @@ def _run_extract_plan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
                     candidates_path=cand_path,
                 ),
             )
-            # Decision worklist (run-scoped) for producer — not canonical IR.
+            # Relation Graph staging artifacts (run-scoped) — not decision_worklist.
             try:
-                from uo.scripts.extract_plan_decision import build_decision_worklist
-                from uo.scripts.resolve_entrypoints import entrypoint_units, load_entrypoint_graph
+                from uo.scripts.semantic_pipeline import build_relation_artifacts
 
-                units: set[str] = set()
-                try:
-                    graph = load_entrypoint_graph(uo)
-                    for u in entrypoint_units(graph) or []:
-                        name = str(u.get("name") or u.get("extraction_unit") or "").strip()
-                        if name:
-                            units.add(name)
-                except Exception:  # noqa: BLE001
-                    units = set()
-                worklist = build_decision_worklist(
+                artifacts = build_relation_artifacts(
                     candidates,
-                    architecture=architecture,
-                    entrypoint_units=units,
+                    identity={"architecture": architecture},
                 )
                 run_id = str(ctx.get("run_id") or "").strip()
                 if run_id:
@@ -880,10 +883,21 @@ def _run_extract_plan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
                         / "extract_plan"
                         / "inputs"
                     )
+                    st_dir = (
+                        project_root
+                        / ".ascendc-pilot"
+                        / "runs"
+                        / run_id
+                        / "actions"
+                        / "extract_plan"
+                        / "staging"
+                    )
                     wl_dir.mkdir(parents=True, exist_ok=True)
-                    write_yaml(wl_dir / "decision_worklist.yaml", worklist)
-                # Also stash a copy next to summary for inspect without run_id.
-                write_yaml(uo / "ir" / "extract_plan_decision_worklist.yaml", worklist)
+                    st_dir.mkdir(parents=True, exist_ok=True)
+                    write_yaml(wl_dir / "semantic_obligations.yaml", artifacts["obligations"])
+                    write_yaml(st_dir / "semantic_observations.yaml", artifacts["observations"])
+                    write_yaml(st_dir / "semantic_relations.base.yaml", artifacts["graph"])
+                write_yaml(uo / "ir" / "semantic_observations.yaml", artifacts["observations"])
             except Exception:  # noqa: BLE001
                 pass
         status = str((candidates or {}).get("status") or "").lower() if isinstance(candidates, dict) else ""

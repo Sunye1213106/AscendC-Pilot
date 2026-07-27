@@ -162,32 +162,38 @@ def test_sidecar_refs_present() -> None:
 
 def test_producer_cannot_write_canonical_ir() -> None:
     rows = ACTION_PRODUCER_WRITE_PATHS["uo-init"]["extract_plan"]
-    assert any("decision_report.yaml" in p for p in rows)
+    assert any("relation_parts" in p for p in rows)
+    assert not any(p.endswith("semantic_relations.yaml") and "staging" not in p for p in rows)
     assert not any(p == "uo/ir/extract_plan.yaml" for p in rows)
     fin = ACTION_FINALIZER_WRITE_PATHS["uo-init"]["extract_plan"]
     assert "uo/ir/extract_plan.yaml" in fin
     assert "uo/ir/receiver_bindings.yaml" in fin
+    assert "uo/ir/semantic_relations.yaml" in fin
     patterns = action_producer_write_paths("uo-init", "extract_plan", run_id="RUN_x")
     assert not path_matches_patterns("uo/ir/extract_plan.yaml", patterns)
     assert path_matches_patterns(
-        "runs/RUN_x/actions/extract_plan/staging/decision_report.yaml", patterns
+        "runs/RUN_x/actions/extract_plan/staging/relation_parts/part_000.yaml",
+        patterns,
+    )
+    assert not path_matches_patterns(
+        "uo/ir/semantic_relations.yaml",
+        patterns,
     )
 
 
 def test_wrong_role_with_real_snippet_fails_sufficiency() -> None:
-    """Authentic source text that does not support key_writer must fail."""
-    item = {
-        "role": "key_writer",
-        "evidence_snippet": (
-            "void SaveToTilingData() {\n"
-            "  baseParams_->set_b(1);\n"
-            "  baseParams_->set_n2(2);\n"
-            "}\n"
-        ),
-    }
-    r = validate_role_evidence(item, role="key_writer", authentic=True)
+    """Setter-only text must not support COMPOSES_KEY."""
+    from uo.scripts.relation_evidence import validate_relation_evidence
+
+    text = (
+        "void SaveToTilingData() {\n"
+        "  baseParams_->set_b(1);\n"
+        "  baseParams_->set_n2(2);\n"
+        "}\n"
+    )
+    r = validate_relation_evidence("COMPOSES_KEY", text=text, authentic=True)
     assert r["authentic"] is True
-    assert r["sufficient"] is False
+    assert r["supported"] is False
 
 
 def test_materialize_and_staging_gate() -> None:

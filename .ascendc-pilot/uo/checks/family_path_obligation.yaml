@@ -1,9 +1,0 @@
-version: 1
-ok: true
-status: skipped
-message: tiling/families.yaml and kernel/paths.yaml absent; skip until export
-issues: []
-stats:
-  family_count: 0
-  path_count: 0
-  obligation_count: 0

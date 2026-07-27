@@ -1,0 +1,16 @@
+id: sharded-llm-producer
+version: 1
+name_zh: 分片 LLM Producer
+description: 所有批量 LLM Action 的 Map worker 只读写本 shard 的 batch/part/scratch；禁止写 canonical IR 或 finalize。
+applies_when:
+  - extract_plan Map-Reduce
+  - adjudicate_llm_tasks Map-Reduce
+  - 任意 llm_work_scheduler 分片 worker
+requires:
+  inputs: [batch_path, shard_id]
+  tools: [write, read]
+  context: [action_session_id, shard_id]
+produces: [shard_part]
+compatible_roles: [producer]
+policies: [pilot-control, evidence]
+method_file: METHOD.md

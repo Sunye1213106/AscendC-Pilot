@@ -355,6 +355,7 @@ def _render_placeholders(
     action_session_id: str = "",
     cbm_project: str = "",
     candidates_sha256: str = "",
+    shard_id: str = "",
     **_ignored: Any,
 ) -> str:
     repl = {
@@ -363,6 +364,8 @@ def _render_placeholders(
         "<WORKFLOW_ID>": workflow_id,
         "<ACTOR_ID>": actor_id,
         "<TARGET_IDS_OR_FILES>": target or "(see context pack / human input)",
+        "<TARGET>": target or "(see dispatch_targets / batch file)",
+        "<SHARD_ID>": shard_id or "(see dispatch_tasks[].shard_id)",
         "<OP_NAME>": op_name,
         "<PROJECT_ROOT>": project_root,
         "<UO_ROOT>": uo_root,
@@ -444,26 +447,17 @@ def _build_task_prompt_stub(
     read_list = [str(x) for x in (dt.get("read") or [])]
     lines.extend(large_ir_must_read_order_lines(read_list))
     if action_id == "extract_plan":
-        # Action contract only (evidence sha / collage); read-order is public above.
+        # Relation Graph Map worker contract (roles derive from relations; no role pick).
         lines.extend(
             [
-                "evidence_tools: for EACH accepted promoted writer/sink — "
-                "MCP get_code_snippet (after search_graph) OR `acp cbm lookup` OR "
-                "copy candidate source_window.text OR windowed Read of evidence_files; "
-                "MUST put contiguous window text into evidence_snippet "
-                "(finalize verifies against on-disk source; no `...` collage). "
-                "search_graph / grep alone is NOT enough.",
-                "candidates_sha256_rule: copy the exact candidates_sha256 value above "
-                "into extract_plan.yaml (do not recompute; bash hash tools are blocked)",
-                "evidence_sha_rule: copy summary/candidate source_window_sha256 into "
-                "evidence_window_sha256 (or omit sha when evidence_files+lines+contiguous "
-                "snippet are set — finalize enrich fills sha from disk). "
-                "FORBIDDEN: bash recompute; FORBIDDEN: Grep/findstr whole candidates only "
-                "to harvest sha256; FORBIDDEN: reuse a neighbor candidate's hash.",
-                "non_sink_rule: prefer non_sink_roots: []. If accepting any, copy exact "
-                "names from summary non_sink_root_names only (assign-LHS identifiers, "
-                "not functions). FORBIDDEN: invent names from snippets/source "
-                "identifiers. Uncertain → omit.",
+                "relation_only: confirm/reject/unresolved Relations from the batch; "
+                "FORBIDDEN: choose extract-plan roles / writers / sinks / bindings directly.",
+                "write_only: staging/relation_parts/part_NNN.yaml for this shard; "
+                "FORBIDDEN: write uo/ir/extract_plan.yaml or slim IR sidecars.",
+                "grounding: Relations must cite evidence windows; GetTilingData alone "
+                "≠ WRITES; setter alone ≠ BINDS; COMMON_ASSIGN alone ≠ writer.",
+                "candidates_sha256_rule: copy the exact candidates_sha256 value from stub "
+                "(do not recompute; bash hash tools are blocked).",
                 f"project_root: {project_root}" if project_root else "project_root: (see prompt)",
                 f"architecture: {architecture or 'arch35'}",
             ]
@@ -1124,65 +1118,244 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             if sha_side.is_file():
                 candidates_sha256 = sha_side.read_text(encoding="utf-8").strip()
         ph_kwargs["candidates_sha256"] = candidates_sha256
-        target_line = (
-            f"{cand_path} → confirm via decision_worklist → "
-            f"staging/decision_report.yaml; "
-            f"candidates_sha256={candidates_sha256 or '(missing)'}; "
-            "FORBIDDEN: write uo/ir/extract_plan.yaml; "
-            "DO NOT read or adjudicate ir/llm_tasks.yaml"
-        )
-        prompt_r = _render_placeholders(prompt, **{**ph_kwargs, "target": target_line})
         if prepare_engine.get("reused_candidates"):
             bundle["prepare_engine"]["reused_candidates"] = True
-        staging_rel = f"runs/{run_id}/actions/extract_plan/staging/decision_report.yaml"
-        staging_legacy = f"runs/{run_id}/actions/extract_plan/staging/output.yaml"
-        scratch_rel = f"runs/{run_id}/actions/extract_plan/scratch/**"
-        worklist_rel = f"runs/{run_id}/actions/extract_plan/inputs/decision_worklist.yaml"
-        bundle["dispatch_targets"] = {
-            "read": [
-                worklist_rel,
-                "uo/ir/extract_plan_decision_worklist.yaml",
-                "uo/ir/extract_plan_candidates.summary.yaml",
-                "uo/ir/extract_plan.rework_hints.yaml",
-                "uo/ir/extract_plan_candidates.yaml",
-                "uo/ir/extract_plan_candidates.sha256",
-                "uo/ir/entrypoint_graph.yaml",
-                "uo/cbm/index_meta.json",
-                staging_rel,
-                staging_legacy,
-                scratch_rel,
-            ],
-            "write": [staging_rel, staging_legacy, scratch_rel],
-            "forbid_read": [
-                "uo/ir/llm_tasks.yaml",
-                "uo/ir/semantic_patches.yaml",
-                "uo/ir/semantic_resolution_ledger.yaml",
-            ],
-            "forbid_write": [
-                "uo/ir/extract_plan.yaml",
-                "uo/ir/extract_plan_aliases.yaml",
-                "uo/ir/receiver_bindings.yaml",
-                "uo/ir/semantic_patches.yaml",
-                "uo/ir/llm_tasks.yaml",
-            ],
-            "forbid_write_fields": list(_EXTRACT_PLAN_FORBID_FIELDS),
-            "output_mode": "staged",
-        }
         bundle["candidates_sha256"] = candidates_sha256
-        # Ensure staging dir exists for producer.
+        # Relation Graph prepare: observations → obligations → optional relation shards.
         try:
-            (Path(sdir) / "staging").mkdir(parents=True, exist_ok=True)
+            (Path(sdir) / "staging" / "relation_parts").mkdir(parents=True, exist_ok=True)
             (Path(sdir) / "scratch").mkdir(parents=True, exist_ok=True)
-            (Path(sdir) / "inputs").mkdir(parents=True, exist_ok=True)
+            (Path(sdir) / "inputs" / "batches").mkdir(parents=True, exist_ok=True)
         except OSError:
             pass
-        # Drop only *unreadable/invalid* producer dumps. Keep parseable plans so
-        # re-prepare (new lease) does not force a full rewrite + hash churn loop.
-        for stale_plan in (
-            Path(uo_s) / "ir" / "extract_plan.yaml",
-            Path(sdir) / "staging" / "output.yaml",
-            Path(sdir) / "staging" / "decision_report.yaml",
-        ):
+
+        try:
+            from uo.scripts._ir_io import read_yaml, write_yaml
+            from uo.scripts.llm_work_scheduler import (
+                build_dispatch_tasks,
+                require_valid_manifest,
+                write_llm_batches,
+            )
+            from uo.scripts.semantic_pipeline import prepare_relation_extract_plan
+
+            cand_doc = read_yaml(Path(uo_s) / "ir" / "extract_plan_candidates.yaml") or {}
+            action_session = str(action_sid or run_id)
+            prep = prepare_relation_extract_plan(
+                cand_doc if isinstance(cand_doc, dict) else {},
+                action_dir=Path(sdir),
+                action_session_id=action_session,
+                source_snapshot_hash=candidates_sha256,
+                identity={"architecture": architecture, "candidates_sha256": candidates_sha256},
+            )
+            if not prep.get("ok"):
+                return {
+                    "ok": False,
+                    "error": "EXTRACT_PLAN_RELATION_PREPARE_FAILED",
+                    "message_zh": "extract_plan Relation 准备失败",
+                    "prepare": prep,
+                }
+            manifest = prep.get("manifest") or {}
+            manifest["candidates_sha256"] = candidates_sha256
+            try:
+                if int(manifest.get("obligation_count") or 0) > 0:
+                    require_valid_manifest(manifest)
+            except ValueError as exc:
+                return {
+                    "ok": False,
+                    "error": str(exc).split(":")[0] if ":" in str(exc) else "LLM_WORK_NOT_SHARDED",
+                    "message_zh": f"extract_plan relation 分片失败：{exc}",
+                    "manifest": {
+                        "obligation_count": manifest.get("obligation_count"),
+                        "shard_count": manifest.get("shard_count"),
+                        "errors": manifest.get("errors"),
+                    },
+                }
+
+            inputs_dir = Path(sdir) / "inputs"
+            llm_n = int(manifest.get("obligation_count") or 0)
+            if llm_n == 0:
+                write_yaml(inputs_dir / "relation_batches.yaml", manifest)
+                dispatch_tasks = []
+                target_line = (
+                    "extract_plan Relation Graph: all obligations closed deterministically; "
+                    "no Map workers; prepare auto-finalizes materialize slim IR + layered KB"
+                )
+                bundle["dispatch_tasks"] = []
+                bundle["relation_batches"] = {
+                    "shard_count": 0,
+                    "obligation_count": 0,
+                    "deterministic_count": prep.get("deterministic_count"),
+                    "deterministic_only": True,
+                }
+                bundle["dispatch_targets"] = {
+                    "read": [
+                        f"runs/{run_id}/actions/extract_plan/staging/semantic_relations.base.yaml",
+                    ],
+                    "write": [],
+                    "forbid_write": ["uo/ir/extract_plan.yaml"],
+                    "output_mode": "staged",
+                    "map_reduce": False,
+                    "deterministic_only": True,
+                    "relation_graph": True,
+                    "skip_subagent": True,
+                }
+                prompt_r = _render_placeholders(
+                    prompt,
+                    **{
+                        **ph_kwargs,
+                        "target": target_line,
+                        "shard_id": "deterministic",
+                        "candidates_sha256": candidates_sha256,
+                    },
+                )
+            else:
+                obl_by_id = {
+                    str(o.get("obligation_id") or ""): o
+                    for o in (manifest.get("pruned") or {}).get("llm_obligations") or []
+                    if isinstance(o, dict) and o.get("obligation_id")
+                }
+                write_llm_batches(
+                    inputs_dir,
+                    manifest,
+                    obl_by_id,
+                    batches_subdir="batches",
+                    parts_subdir="batches",
+                    manifest_name="relation_batches.yaml",
+                    extra_batch_fields={"candidates_sha256": candidates_sha256},
+                )
+                (Path(sdir) / "staging" / "relation_parts").mkdir(parents=True, exist_ok=True)
+                for sh in manifest.get("shards") or []:
+                    if isinstance(sh, dict):
+                        idx = int(sh.get("shard_index") or 0)
+                        sh["part_file"] = f"staging/relation_parts/part_{idx:03d}.yaml"
+                        sh["batch_file"] = f"inputs/batches/batch_{idx:03d}.yaml"
+                write_yaml(inputs_dir / "relation_batches.yaml", manifest)
+
+                dispatch_tasks = build_dispatch_tasks(
+                    manifest,
+                    action_id="extract_plan",
+                    run_id=run_id,
+                    actor_id="uo-semantic-resolve",
+                    action_session_id=action_session,
+                    batch_root="inputs/batches",
+                    part_root="staging/relation_parts",
+                )
+                from ascendc_pilot.ownership import (
+                    shard_producer_forbidden_read_paths,
+                    shard_producer_read_paths,
+                )
+
+                for dt in dispatch_tasks:
+                    sid = str(dt.get("shard_id") or "")
+                    idx = int(dt.get("shard_index") or 0)
+                    batch_name = f"batch_{idx:03d}.yaml"
+                    part_name = f"part_{idx:03d}.yaml"
+                    shard_target = (
+                        f"Relation obligation batch {batch_name} → write "
+                        f"staging/relation_parts/{part_name}; confirm/reject/unresolved Relations only"
+                    )
+                    dt["allowed_read_paths"] = shard_producer_read_paths(
+                        "uo-init",
+                        "extract_plan",
+                        run_id=run_id,
+                        shard_id=f"{idx:03d}",
+                        batch_name=batch_name,
+                    )
+                    dt["allowed_write_paths"] = [
+                        f"runs/{run_id}/actions/extract_plan/staging/relation_parts/part_{idx:03d}.yaml",
+                        f"runs/{run_id}/actions/extract_plan/scratch/{sid}/**",
+                    ]
+                    dt["forbidden_read_paths"] = shard_producer_forbidden_read_paths(
+                        "uo-init", "extract_plan", run_id=run_id, shard_id=sid
+                    )
+                    # Per-shard rendered prompt + stub (Host must use each task's stub).
+                    dt["prompt_rendered"] = _render_placeholders(
+                        prompt,
+                        **{
+                            **ph_kwargs,
+                            "target": shard_target,
+                            "shard_id": sid or f"{idx:03d}",
+                            "candidates_sha256": candidates_sha256,
+                        },
+                    )
+                    dt["task_prompt_stub"] = (
+                        f"action_id=extract_plan\n"
+                        f"actor_id=uo-semantic-resolve\n"
+                        f"run_id={run_id}\n"
+                        f"shard_id={sid or f'{idx:03d}'}\n"
+                        f"batch: runs/{run_id}/actions/extract_plan/inputs/batches/{batch_name}\n"
+                        f"write: runs/{run_id}/actions/extract_plan/staging/relation_parts/{part_name}\n"
+                        "Confirm/reject/unresolved Relations only; do NOT choose extract-plan roles; "
+                        "do NOT finalize.\n"
+                    )
+
+                shard_n = int(manifest.get("shard_count") or 0)
+                target_line = (
+                    f"Relation Graph extract_plan: {llm_n} ambiguous obligations → {shard_n} shards; "
+                    "confirm/reject/unresolved Relations only; "
+                    "workers write staging/relation_parts/part_NNN.yaml; "
+                    "finalizer reduces → semantic_relations → materialize slim IR"
+                )
+                bundle["dispatch_tasks"] = dispatch_tasks
+                bundle["relation_batches"] = {
+                    "shard_count": shard_n,
+                    "obligation_count": llm_n,
+                    "obligation_set_hash": manifest.get("obligation_set_hash"),
+                    "deterministic_count": prep.get("deterministic_count"),
+                }
+                bundle["dispatch_targets"] = {
+                    "read": [
+                        f"runs/{run_id}/actions/extract_plan/inputs/relation_batches.yaml",
+                        f"runs/{run_id}/actions/extract_plan/inputs/batches/**",
+                        f"runs/{run_id}/actions/extract_plan/inputs/semantic_obligations.yaml",
+                        f"runs/{run_id}/actions/extract_plan/staging/relation_parts/**",
+                        f"runs/{run_id}/actions/extract_plan/scratch/**",
+                    ],
+                    "write": [
+                        f"runs/{run_id}/actions/extract_plan/staging/relation_parts/**",
+                        f"runs/{run_id}/actions/extract_plan/scratch/**",
+                    ],
+                    "forbid_read": [
+                        "uo/ir/extract_plan_candidates.yaml",
+                        "uo/ir/llm_tasks.yaml",
+                        "uo/ir/semantic_patches.yaml",
+                        "uo/ir/semantic_resolution_ledger.yaml",
+                    ],
+                    "forbid_write": [
+                        "uo/ir/extract_plan.yaml",
+                        "uo/ir/extract_plan_aliases.yaml",
+                        "uo/ir/receiver_bindings.yaml",
+                        "uo/ir/semantic_relations.yaml",
+                        "uo/ir/semantic_patches.yaml",
+                        "uo/ir/llm_tasks.yaml",
+                    ],
+                    "forbid_write_fields": list(_EXTRACT_PLAN_FORBID_FIELDS),
+                    "output_mode": "staged",
+                    "map_reduce": True,
+                    "relation_graph": True,
+                }
+                # Session-level prompt: placeholders filled; per-shard details in dispatch_tasks.
+                first_sid = ""
+                if dispatch_tasks:
+                    first_sid = str(dispatch_tasks[0].get("shard_id") or "000")
+                prompt_r = _render_placeholders(
+                    prompt,
+                    **{
+                        **ph_kwargs,
+                        "target": target_line,
+                        "shard_id": first_sid or "see_dispatch_tasks",
+                        "candidates_sha256": candidates_sha256,
+                    },
+                )
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "ok": False,
+                "error": "EXTRACT_PLAN_SHARD_PREPARE_FAILED",
+                "message_zh": f"extract_plan Relation prepare 失败：{exc}",
+            }
+
+        # Drop unreadable canonical; keep mid-edit staging parts.
+        for stale_plan in (Path(uo_s) / "ir" / "extract_plan.yaml",):
             if not stale_plan.is_file():
                 continue
             keep = False
@@ -1190,11 +1363,10 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
                 from uo.scripts.yaml_literal_sanitize import safe_load_yaml_text
 
                 doc = safe_load_yaml_text(stale_plan.read_text(encoding="utf-8"))
-                keep = isinstance(doc, dict) and int(doc.get("version") or 0) == 1
+                keep = isinstance(doc, dict) and int(doc.get("version") or 0) in {1, 2}
             except Exception:  # noqa: BLE001
                 keep = False
-            if not keep and stale_plan.name == "extract_plan.yaml":
-                # Only auto-delete unreadable canonical; staging may be mid-edit.
+            if not keep:
                 try:
                     stale_plan.unlink()
                 except OSError:
@@ -1556,10 +1728,25 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         write_paths = action_write_paths(wid, action_id, run_id=run_id)
     else:
         write_paths = [expand_path_template(p, run_id=run_id) for p in write_paths]
+    # Map-Reduce: prefer producer-only write paths from ownership + dispatch_targets.
+    dt = bundle.get("dispatch_targets") if isinstance(bundle.get("dispatch_targets"), dict) else {}
+    if dt.get("map_reduce"):
+        from ascendc_pilot.ownership import action_producer_write_paths
+
+        prod_writes = action_producer_write_paths(wid, action_id, run_id=run_id)
+        if prod_writes:
+            write_paths = list(prod_writes)
+        if dt.get("write"):
+            write_paths = [expand_path_template(p, run_id=run_id) for p in list(dt.get("write") or [])]
     forbid_write = [
         expand_path_template(p, run_id=run_id)
         for p in list(action.get("forbidden_write_paths") or [])
     ]
+    if dt.get("forbid_write"):
+        for p in dt.get("forbid_write") or []:
+            ep = expand_path_template(str(p), run_id=run_id)
+            if ep not in forbid_write:
+                forbid_write.append(ep)
     read_paths = list(action.get("allowed_read_paths") or [])
     if not read_paths:
         from ascendc_pilot.ownership import action_read_paths
@@ -1567,11 +1754,21 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         read_paths = action_read_paths(wid, action_id, run_id=run_id)
     else:
         read_paths = [expand_path_template(p, run_id=run_id) for p in read_paths]
+    if dt.get("map_reduce") and dt.get("read"):
+        # Narrow action-level reads to Map-Reduce allow-list (+ session pack below).
+        read_paths = [expand_path_template(p, run_id=run_id) for p in list(dt.get("read") or [])]
     # Session pack always readable (env capabilities + stubs).
-    for extra in (
-        f"runs/{run_id}/actions/{action_id}/**",
+    # Map-Reduce: do NOT open actions/{action_id}/** (would re-expose all batches).
+    session_extras = [
         f"runs/{run_id}/actions/{action_id}/environment_capabilities.yaml",
-    ):
+        f"runs/{run_id}/actions/{action_id}/prompt.md",
+        f"runs/{run_id}/actions/{action_id}/method.md",
+        f"runs/{run_id}/actions/{action_id}/bundle.yaml",
+        f"runs/{run_id}/actions/{action_id}/session.yaml",
+    ]
+    if not dt.get("map_reduce"):
+        session_extras.insert(0, f"runs/{run_id}/actions/{action_id}/**")
+    for extra in session_extras:
         if extra not in read_paths:
             read_paths.append(extra)
     forbid_read = [
@@ -1583,14 +1780,13 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
 
         forbid_read = action_forbidden_read_paths(wid, action_id, run_id=run_id)
     # Dispatch targets may further narrow write paths for producers.
-    dt = bundle.get("dispatch_targets") if isinstance(bundle.get("dispatch_targets"), dict) else {}
     if dt.get("write"):
         write_paths = [expand_path_template(str(p), run_id=run_id) for p in dt["write"]]
     if dt.get("forbid_write"):
         forbid_write = [
             expand_path_template(str(p), run_id=run_id) for p in dt["forbid_write"]
         ] + forbid_write
-    if dt.get("read"):
+    if dt.get("read") and not dt.get("map_reduce"):
         read_paths = [expand_path_template(str(p), run_id=run_id) for p in dt["read"]]
     if dt.get("forbid_read"):
         forbid_read = [
@@ -1602,9 +1798,10 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         wps = expand_path_template(str(wp), run_id=run_id)
         if wps and wps not in read_paths:
             read_paths.append(wps)
-    # Stub tells producer to read prompt/method/bundle first — always lease the
-    # prepared action session pack (allowed_read_roots alone was previously ignored).
-    if run_id and action_id:
+    # Stub tells producer to read prompt/method/bundle first — lease the
+    # prepared action session pack. Map-Reduce must NOT open actions/** or
+    # every batch becomes readable again (narrow reads already set above).
+    if run_id and action_id and not dt.get("map_reduce"):
         session_pack = f"runs/{run_id}/actions/{action_id}/**"
         read_paths = [session_pack, *read_paths]
     # De-dupe while preserving order.
@@ -1818,14 +2015,36 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         result.setdefault("resume_required", False)
         result.setdefault("resume_session_id", "")
     if wid == "uo-init" and action_id == "extract_plan":
+        dt_ep = bundle.get("dispatch_targets") if isinstance(bundle.get("dispatch_targets"), dict) else {}
+        if dt_ep.get("deterministic_only") or dt_ep.get("skip_subagent"):
+            # No LLM obligations — materialize immediately (Host must not dispatch workers).
+            fin = finalize_action(project_root, action_id)
+            result["auto_finalize"] = True
+            result["dispatch_task"] = False
+            result["finalize"] = fin
+            result["ok"] = bool(fin.get("ok"))
+            result["dispatch_targets"] = dt_ep
+            result["relation_batches"] = bundle.get("relation_batches")
+            if fin.get("ok"):
+                result["message_zh"] = (
+                    "extract_plan Relation Graph：义务已全部确定性闭合，已 auto-finalize "
+                    "（materialize slim IR + layered KB）；禁止再派 uo-semantic-resolve；请 `acp next`。"
+                )
+            else:
+                result["message_zh"] = (
+                    "extract_plan 确定性 materialize/finalize 失败；查看 finalize 错误后 "
+                    "`acp run-action extract_plan --finalize` 或 rework。"
+                )
+            return result
         result["message_zh"] = (
-            f"已准备 extract_plan；派发 `{actor_id}` 时原样使用 `task_prompt_stub`："
-            f"只确认 candidates→extract_plan.yaml。"
-            f"禁止塞 llm_tasks/mark_missing。完成后 "
-            f"acp run-action extract_plan --finalize，然后必须 `acp next`。"
+            f"已准备 extract_plan Relation Graph；按 `dispatch_tasks[]` 并行派发 `{actor_id}`："
+            f"每 shard 原样使用该 task 的 `task_prompt_stub`（只确认 Relation，禁止选 role）。"
+            f"全部 shard 完成后 `acp run-action extract_plan --finalize`，然后必须 `acp next`。"
         )
+        result["dispatch_tasks"] = bundle.get("dispatch_tasks") or []
         if prepare_engine is not None:
             result["dispatch_targets"] = bundle.get("dispatch_targets")
+        result["relation_batches"] = bundle.get("relation_batches")
     if wid == "uo-init" and action_id == "adjudicate_llm_tasks":
         if adjudicate_not_applicable:
             fin = finalize_action(project_root, action_id)
@@ -2252,18 +2471,88 @@ def finalize_action(
                 ],
             )
 
-    # extract_plan finalize: validate plan + build host/kernel/tilingkey/bridge layers.
+    # extract_plan finalize: reduce relation parts, then engine materialize + layers.
     if (
         producer_identity_ok
         and wid == "uo-init"
         and action_id == "extract_plan"
         and engine_result is None
     ):
+        man_path = Path(sdir) / "inputs" / "relation_batches.yaml"
+        if man_path.is_file():
+            try:
+                from uo.scripts._ir_io import read_yaml
+                from uo.scripts.semantic_relation_reduce import reduce_relation_parts
+
+                base_graph: dict = {}
+                base_path = Path(sdir) / "staging" / "semantic_relations.base.yaml"
+                if base_path.is_file():
+                    loaded = read_yaml(base_path)
+                    if isinstance(loaded, dict):
+                        base_graph = loaded
+                only_failed = bool(session.get("retry_failed_shards_only"))
+                obl_n = int((read_yaml(man_path) or {}).get("obligation_count") or 0)
+                if obl_n > 0:
+                    reduced = reduce_relation_parts(
+                        Path(sdir), base_graph, only_failed=only_failed
+                    )
+                    session["reduce_report"] = {
+                        "ok": reduced.get("ok"),
+                        "errors": reduced.get("errors"),
+                        "grounding_errors": reduced.get("grounding_errors"),
+                    }
+                    if not reduced.get("ok"):
+                        session["status"] = "finalize_failed"
+                        session["apply_result"] = reduced
+                        _dump(sdir / "session.yaml", session)
+                        return _attach_finalize_observation(
+                            project_root,
+                            {
+                                "ok": False,
+                                "phase_runtime": "finalize",
+                                "action_id": action_id,
+                                "error": "EXTRACT_PLAN_RELATION_REDUCE_FAILED",
+                                "apply_result": reduced,
+                                "retry_shards": reduced.get("retry_shards") or [],
+                                "message_zh": (
+                                    "extract_plan relation parts reduce 失败；"
+                                    f"仅重跑失败 shard: {reduced.get('retry_shards')}"
+                                ),
+                            },
+                            action_id=action_id,
+                            messages=list(reduced.get("errors") or [])[:20],
+                        )
+                elif base_graph:
+                    # Deterministic-only: promote base graph to staging relations.
+                    from uo.scripts._ir_io import write_yaml
+
+                    write_yaml(Path(sdir) / "staging" / "semantic_relations.yaml", base_graph)
+            except Exception as exc:  # noqa: BLE001
+                session["status"] = "finalize_failed"
+                _dump(sdir / "session.yaml", session)
+                return _attach_finalize_observation(
+                    project_root,
+                    {
+                        "ok": False,
+                        "phase_runtime": "finalize",
+                        "action_id": action_id,
+                        "error": "EXTRACT_PLAN_PARTS_REDUCE_EXCEPTION",
+                        "message_zh": str(exc),
+                    },
+                    action_id=action_id,
+                    messages=[str(exc)],
+                )
         fin_ctx = {
             "op_name": state.get("op_name") or "",
             "architecture": state.get("architecture") or "arch35",
             "run_id": run_id,
             "extract_plan_mode": "finalize",
+            "actor_id": actor_id,
+            "workflow_id": wid,
+            "phase": phase,
+            "action_session_id": action_sid,
+            "lease_id": lease_id,
+            "prepare_nonce": prepare_nonce,
         }
         apply_result = invoke_engine(project_root, wid, action_id, ctx=fin_ctx)
         if not apply_result.get("ok"):
@@ -2306,6 +2595,7 @@ def finalize_action(
             )
 
     # adjudicate_llm_tasks finalize: reduce Map parts → canonical semantic_patches.yaml
+# adjudicate_llm_tasks finalize: reduce Map parts → canonical semantic_patches.yaml
     if (
         producer_identity_ok
         and wid == "uo-init"

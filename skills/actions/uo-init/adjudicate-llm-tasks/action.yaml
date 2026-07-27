@@ -15,6 +15,9 @@ capabilities:
 - readonly-source-search
 - action-scratch
 - sharded-semantic-producer
+- sharded-llm-producer
+- bounded-semantic-batch
+- producer-self-check
 policies:
 - source-authority
 - code-access
