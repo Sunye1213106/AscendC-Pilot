@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from ascendc_pilot.actions import runtime as _runtime
+from ascendc_pilot.actions.fast_uo_engines import invoke_fast_uo_engine
 from ascendc_pilot.actions.tg_primary import (
     PRIMARY_TG_ACTIONS,
     materialize_primary_decision,
@@ -36,8 +37,35 @@ def _sanitize_semantic_bind_session(result: dict[str, Any]) -> None:
         path.write_text(text, encoding="utf-8")
 
 
+def _prepare_with_fast_uo_engine(project_root: Path, action_id: str) -> dict[str, Any]:
+    """Scope a temporary engine router to one synchronous CLI prepare call."""
+
+    original = _runtime.invoke_engine
+
+    def routed(
+        root: Path,
+        workflow_id: str,
+        engine_action_id: str,
+        *,
+        ctx: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return invoke_fast_uo_engine(
+            Path(root),
+            workflow_id,
+            engine_action_id,
+            ctx=ctx,
+            fallback=original,
+        )
+
+    _runtime.invoke_engine = routed
+    try:
+        return _runtime.prepare_action(project_root, action_id)
+    finally:
+        _runtime.invoke_engine = original
+
+
 def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
-    result = _runtime.prepare_action(project_root, action_id)
+    result = _prepare_with_fast_uo_engine(project_root, action_id)
     _sanitize_semantic_bind_session(result)
     if result.get("ok") and action_id in PRIMARY_TG_ACTIONS:
         result["interactive_steps"] = primary_interactive_steps(
