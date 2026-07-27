@@ -645,6 +645,24 @@ def detect_score_post(uo_root: Path, *, architecture: str = "arch35", run_id: st
     save_llm_tasks(uo_root, doc)
     triage = write_semantic_task_triage(uo_root, tasks=run_tasks, run_id=str(run_id))
 
+    contract_ids = [
+        str(t.get("task_id") or "")
+        for t in run_tasks
+        if isinstance(t, dict) and t.get("contract_error")
+    ]
+    if contract_ids:
+        return {
+            "ok": False,
+            "error": "SEMANTIC_TASK_CONTRACT_CONFLICT",
+            "checkpoint": "extract.post_semantic",
+            "task_ids": contract_ids,
+            "contract_error_count": len(contract_ids),
+            "report": report,
+            "tasks": tasks,
+            "closed_pre_tasks": closed,
+            "triage": triage.get("stats"),
+        }
+
     return {
         "ok": True,
         "checkpoint": "extract.post_semantic",

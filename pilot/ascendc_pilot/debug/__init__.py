@@ -382,49 +382,111 @@ def register_child(
     task_prompt_path: str = "",
     task_prompt_text: str = "",
     dispatch_nonce: str = "",
+    host_reported_resumed_from: str = "",
 ) -> dict[str, Any]:
+    """Register external Task session.
+
+    Control-plane identity is ALWAYS written (not debug-gated).
+    Debug children_registry / transcript binding is best-effort when debug enabled.
+    """
     root = resolve_project_root(project_root)
-    if not is_enabled(root):
-        return {"ok": False, "skipped": True, "reason": "debug_disabled"}
-    ds = load_debug_session(root)
-    # Bind run if debug was enabled before acp start (run_id empty).
-    bind_debug_session_run(root)
-    ds = load_debug_session(root)
+    # Prefer explicit run/action; fall back to active action / debug session.
+    rid = str(run_id or "").strip()
+    aid = str(action_id or "").strip()
+    if not rid or not aid:
+        try:
+            from ascendc_pilot.state import load_state
+            from ascendc_pilot.paths import agent_root
+
+            aa = _load_yaml(agent_root(root) / "state" / "active_action.yaml") or {}
+            st = load_state(root) or {}
+            rid = rid or str(aa.get("run_id") or st.get("run_id") or "")
+            aid = aid or str(aa.get("action_id") or "")
+        except Exception:  # noqa: BLE001
+            pass
+    if not rid:
+        try:
+            bind_debug_session_run(root)
+            ds0 = load_debug_session(root)
+            rid = rid or str(ds0.get("run_id") or "")
+        except Exception:  # noqa: BLE001
+            pass
+
     parent = normalize_session_id(parent_session_id)
     child = normalize_session_id(child_session_id)
     if child and not _SESSION_ID_RE.search(child):
         child = ""
-    reg = _load_children_registry(root)
-    prompt_text = task_prompt_text
-    if not prompt_text and task_prompt_path:
-        p = Path(task_prompt_path)
-        if p.is_file():
-            prompt_text = p.read_text(encoding="utf-8", errors="replace")
-    registration_id = _new_registration_id()
-    nonce = str(dispatch_nonce or "").strip() or f"nonce_{uuid.uuid4().hex[:10]}"
-    row: dict[str, Any] = {
-        "registration_id": registration_id,
-        "dispatch_nonce": nonce,
-        "parent_session_id": parent,
-        "child_session_id": child,
-        "workflow_id": workflow_id or str(ds.get("workflow_id") or ""),
-        "run_id": run_id or str(ds.get("run_id") or ""),
-        "phase": phase,
-        "action_id": action_id,
-        "actor_id": actor_id,
-        "started_at": started_at or _now(),
-        "task_prompt_path": task_prompt_path,
-        "task_prompt_text": prompt_text[:50_000],
-        "task_result_text": "",
-        "exported": False,
-        "export_dir": "",
+
+    control: dict[str, Any] = {"ok": False}
+    if rid and aid:
+        from ascendc_pilot.actions.external_session_registry import register_external_session
+
+        control = register_external_session(
+            root,
+            run_id=rid,
+            action_id=aid,
+            primary_session_id=parent,
+            external_task_session_id=child,
+            actor_id=actor_id,
+            dispatch_nonce=dispatch_nonce,
+            host_reported_resumed_from=host_reported_resumed_from,
+        )
+    else:
+        control = {"ok": False, "error": "run_id_or_action_id_missing_for_control_plane"}
+
+    # Debug mirror (optional) — never gates control-plane success.
+    debug_row: dict[str, Any] | None = None
+    if is_enabled(root):
+        ds = load_debug_session(root)
+        bind_debug_session_run(root)
+        ds = load_debug_session(root)
+        reg = _load_children_registry(root)
+        prompt_text = task_prompt_text
+        if not prompt_text and task_prompt_path:
+            pp = Path(task_prompt_path)
+            if pp.is_file():
+                prompt_text = pp.read_text(encoding="utf-8", errors="replace")
+        registration_id = str(control.get("registration_id") or _new_registration_id())
+        nonce = str(control.get("dispatch_nonce") or dispatch_nonce or "").strip() or f"nonce_{uuid.uuid4().hex[:10]}"
+        debug_row = {
+            "registration_id": registration_id,
+            "dispatch_nonce": nonce,
+            "parent_session_id": parent,
+            "child_session_id": child,
+            "workflow_id": workflow_id or str(ds.get("workflow_id") or ""),
+            "run_id": rid or str(ds.get("run_id") or ""),
+            "phase": phase,
+            "action_id": aid or action_id,
+            "actor_id": actor_id,
+            "started_at": started_at or _now(),
+            "task_prompt_path": task_prompt_path,
+            "task_prompt_text": prompt_text[:50_000],
+            "task_result_text": "",
+            "exported": False,
+            "export_dir": "",
+            "host_reported_resumed_from": host_reported_resumed_from,
+        }
+        reg["children"].append(debug_row)
+        _save_children_registry(root, reg)
+        if parent and not ds.get("parent_session_id"):
+            ds["parent_session_id"] = parent
+            _save_debug_session(root, ds)
+
+    if control.get("ok"):
+        return {
+            "ok": True,
+            "registration": control.get("registration") or debug_row,
+            "registration_id": control.get("registration_id"),
+            "dispatch_nonce": control.get("dispatch_nonce"),
+            "control_plane": True,
+            "debug_mirrored": bool(debug_row),
+        }
+    # Fallback: if control plane failed but we have enough to return error.
+    return {
+        "ok": False,
+        "error": control.get("error") or "register_external_session_failed",
+        "control": control,
     }
-    reg["children"].append(row)
-    _save_children_registry(root, reg)
-    if parent and not ds.get("parent_session_id"):
-        ds["parent_session_id"] = parent
-        _save_debug_session(root, ds)
-    return {"ok": True, "registration": row, "registration_id": registration_id, "dispatch_nonce": nonce}
 
 
 def patch_child_session_id(
@@ -436,6 +498,7 @@ def patch_child_session_id(
     registration_id: str = "",
     dispatch_nonce: str = "",
     task_result_text: str = "",
+    host_reported_resumed_from: str = "",
 ) -> dict[str, Any]:
     """Bind child_session_id via registration_id/dispatch_nonce (no latest-pending guess)."""
     root = resolve_project_root(project_root)
@@ -483,21 +546,38 @@ def patch_child_session_id(
     if task_result_text:
         target["task_result_text"] = str(task_result_text)[:50_000]
     _save_children_registry(root, reg)
+    if host_reported_resumed_from:
+        target["host_reported_resumed_from"] = normalize_session_id(host_reported_resumed_from)
     bound_parent = normalize_session_id(str(target.get("parent_session_id") or "")) or parent
-    # Persist control-plane dispatch lineage (does not claim resume without parent).
+    # Persist control-plane lineage via always-on registry (resume only via previous child).
     try:
         run_id = str(target.get("run_id") or "")
         act_id = str(target.get("action_id") or action_id or "")
-        if run_id and act_id:
-            from ascendc_pilot.actions.action_dispatch import record_continuation
+        if not run_id or not act_id:
+            try:
+                from ascendc_pilot.state import load_state
+                from ascendc_pilot.paths import agent_root
 
-            record_continuation(
+                aa = _load_yaml(agent_root(root) / "state" / "active_action.yaml") or {}
+                st = load_state(root) or {}
+                run_id = run_id or str(aa.get("run_id") or st.get("run_id") or "")
+                act_id = act_id or str(aa.get("action_id") or action_id or "")
+            except Exception:  # noqa: BLE001
+                pass
+        if run_id and act_id:
+            from ascendc_pilot.actions.external_session_registry import patch_external_session_id
+
+            host_resume = str(target.get("host_reported_resumed_from") or "")
+            # Prefer explicit kw if callers start passing it via task_result metadata later.
+            patch_external_session_id(
                 root,
                 run_id=run_id,
                 action_id=act_id,
                 external_task_session_id=child,
-                parent_session_id=bound_parent,
-                resumed_from="",
+                primary_session_id=bound_parent,
+                registration_id=str(target.get("registration_id") or registration_id or ""),
+                dispatch_nonce=str(target.get("dispatch_nonce") or dispatch_nonce or ""),
+                host_reported_resumed_from=host_resume,
                 actor_id=str(target.get("actor_id") or ""),
             )
     except Exception:  # noqa: BLE001
@@ -1384,8 +1464,8 @@ def _export_legacy_session_bundle(
     return meta
 
 
-_SESSION_ID_RE = re.compile(r"(ses_[A-Za-z0-9]+)")
-_TASK_ID_ATTR_RE = re.compile(r"""<task\s+[^>]*\bid=["'](ses_[A-Za-z0-9]+)["']""", re.I)
+_SESSION_ID_RE = re.compile(r"(ses_[A-Za-z0-9_]+)")
+_TASK_ID_ATTR_RE = re.compile(r"""<task\s+[^>]*\bid=["'](ses_[A-Za-z0-9_]+)["']""", re.I)
 
 
 def normalize_session_id(raw: str) -> str:

@@ -273,30 +273,9 @@ def _classify_one(
                     host_parent = f"SYM::{ident}"
                     break
 
-    # Compile / platform / hardcoded constants are valid non-input conclusions.
-    non_input_markers = (
-        "BuildConfig",
-        "CompileMacro",
-        "PlatformInfo",
-        "ASCENDC_",
-        "HARDCODE",
-        "constexpr",
-    )
+    # Substring markers alone never yield false/high — require graph terminal roots later.
     source_kind = str(set_by.get("source_kind") or set_by.get("determinant_source") or "")
-    if any(m.casefold() in (expr_raw + source_kind).casefold() for m in non_input_markers) and not rev_writers:
-        return {
-            "input_derivable": False,
-            "confidence": "high",
-            "needs_binding": False,
-            "not_input_derivable": True,
-            "non_input_reason": source_kind or "compile_or_platform_constant",
-            "host_parent": host_parent,
-            "host_parent_evidence": evidence,
-            "derivation_roots": [],
-            "gap_kind": None,
-            "reason": "KEY determined by compile/platform/hardcoded source, not CSV input",
-            "tried_frontier": [],
-        }
+    marker_hint = source_kind if source_kind in {"BuildConfig", "CompileMacro", "PlatformInfo"} else ""
 
     if set_status == "missing" and not rev_writers and not writers:
         return {
@@ -313,6 +292,7 @@ def _classify_one(
         }
 
     roots: set[str] = set()
+    compile_terminals: set[str] = set()
     frontier_seen: list[str] = []
     hit_kernel_only = False
     hit_gap = False
@@ -348,7 +328,8 @@ def _classify_one(
             roots.add(nid)
             continue
         if ntype in COMPILE_ROOT_TYPES or nid.startswith("HOST_PLAT_"):
-            # Platform / compile-time alone is not a CSV-facing input root.
+            # Compile/platform terminals are non-input only when walk closes without Input*.
+            compile_terminals.add(nid)
             continue
         if KERNEL_LOCAL_RE.match(name) or _looks_kernel_local(name):
             hit_kernel_only = True
@@ -368,6 +349,22 @@ def _classify_one(
                 visited.add(src)
                 q.append((src, depth + 1))
 
+    if roots and compile_terminals:
+        # Mixed Input* + CompileMacro cannot be false; prefer true with binding.
+        return {
+            "input_derivable": True,
+            "confidence": "medium",
+            "needs_binding": True,
+            "not_input_derivable": False,
+            "host_parent": host_parent,
+            "host_parent_evidence": evidence,
+            "derivation_roots": sorted(roots)[:16],
+            "gap_kind": None,
+            "reason": "mixed input and compile/platform terminals; not false",
+            "tried_frontier": frontier_seen[:24],
+            "terminal_root_type": "mixed_input_compile",
+        }
+
     if roots:
         return {
             "input_derivable": True,
@@ -380,20 +377,44 @@ def _classify_one(
             "gap_kind": None,
             "reason": "",
             "tried_frontier": frontier_seen[:24],
+            "terminal_root_type": "input",
         }
 
-    if hit_kernel_only and not hit_gap and not rev_writers:
+    if compile_terminals and not hit_gap and not roots:
+        # false/high only when every closed terminal is non-input and walk completed.
+        terminal = sorted(compile_terminals)[0]
+        tnode = nodes_by_id.get(terminal) or {}
         return {
             "input_derivable": False,
             "confidence": "high",
             "needs_binding": False,
             "not_input_derivable": True,
+            "non_input_reason": str(tnode.get("node_type") or source_kind or "compile_or_platform"),
             "host_parent": host_parent,
             "host_parent_evidence": evidence,
             "derivation_roots": [],
             "gap_kind": None,
-            "reason": "仅核内局部/分批符号，无 Host 输入祖先",
-            "tried_frontier": frontier_seen[:24],
+            "reason": "graph walk closed on compile/platform terminals only",
+            "tried_frontier": frontier_seen[:40],
+            "evidence_source": "deterministic_graph",
+            "evidence_files": [str(set_by.get("file_path") or "")] if set_by.get("file_path") else [],
+            "evidence_lines": [int(set_by.get("start_line") or 0)] if set_by.get("start_line") else [],
+            "determinant_source": source_kind or str(tnode.get("node_type") or ""),
+            "terminal_root_type": str(tnode.get("node_type") or "CompileMacro"),
+        }
+
+    if hit_kernel_only and not hit_gap and not rev_writers:
+        return {
+            "input_derivable": "unsolved",
+            "confidence": "medium",
+            "needs_binding": True,
+            "not_input_derivable": False,
+            "host_parent": host_parent,
+            "host_parent_evidence": evidence,
+            "derivation_roots": [],
+            "gap_kind": "kernel_local_heuristic",
+            "reason": "kernel-local name heuristic insufficient for false/high; needs graph terminal roots",
+            "tried_frontier": frontier_seen[:40],
         }
 
     return {

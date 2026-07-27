@@ -81,11 +81,13 @@ def test_scope_expansion_audit_accepts_reachable(tmp_path: Path) -> None:
     op = tmp_path / "DemoOp"
     host = op / "op_host"
     host.mkdir(parents=True)
+    (host / "main.cpp").write_text('#include "extra.cpp"\n', encoding="utf-8")
     (host / "extra.cpp").write_text("// x\n", encoding="utf-8")
     audit = audit_scope_expansion_request(
         op,
         "DemoOp",
         {"proposed_files": ["op_host/extra.cpp"], "missing_symbol": "X"},
+        confirmed_rels=["op_host/main.cpp"],
     )
     assert audit["ok"] is True
     assert "op_host/extra.cpp" in audit["accepted_files"]

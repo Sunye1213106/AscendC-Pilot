@@ -55,19 +55,25 @@ def validate_semantic_task_contract(task: dict[str, Any]) -> dict[str, Any]:
     """Reject illegal type/category/route combinations."""
     category = str(task.get("triage_category") or task.get("category") or "")
     effective = effective_task_type_for(task)
+    # Declared/original type must participate — category remap must not hide conflicts.
+    declared = str(task.get("original_task_type") or task.get("type") or "").strip()
     route = str(task.get("route") or "")
     eligible = bool(task.get("eligible_for_adjudication"))
     conflicts: list[str] = []
 
-    if effective == "mark_missing" and category == "candidate_generation_required":
+    if (
+        effective == "mark_missing" or declared == "mark_missing"
+    ) and category == "candidate_generation_required":
         conflicts.append("mark_missing+candidate_generation_required")
     if route == "uo-semantic-resolve" and not eligible and category == "true_multi_candidate":
         conflicts.append("multi_candidate_not_eligible")
-    if effective == "macro_semantics" and route == "uo-semantic-resolve":
+    if (effective == "macro_semantics" or declared == "macro_semantics") and route == "uo-semantic-resolve":
         conflicts.append("macro_semantics_on_llm_route")
-    if effective == "key_derivation" and route == "uo-semantic-resolve":
+    if (effective == "key_derivation" or declared == "key_derivation") and route == "uo-semantic-resolve":
         conflicts.append("key_derivation_on_extract_llm_route")
-    if category == "candidate_generation_required" and effective == "mark_missing":
+    if category == "candidate_generation_required" and (
+        effective == "mark_missing" or declared == "mark_missing"
+    ):
         conflicts.append("category_effective_type_mismatch")
 
     if conflicts:
@@ -353,6 +359,11 @@ def apply_triage_to_tasks(
         if not contract.get("ok"):
             row["contract_error"] = contract
             task["contract_error"] = contract.get("error")
+            task["eligible_for_adjudication"] = False
+            row["eligible_for_adjudication"] = False
+            task["blocks_extract_advance"] = True
+            row["blocks_extract_advance"] = True
+            task["blocking"] = True
         rows.append(row)
     annotate_resolution_class(tasks)
     return tasks, rows

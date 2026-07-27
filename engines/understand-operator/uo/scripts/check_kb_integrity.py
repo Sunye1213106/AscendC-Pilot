@@ -281,11 +281,16 @@ def check_kb_integrity(
     )
     typed_bridge_count = int(bridge_metrics.get("host_produced_count") or 0)
     unknown_type_count = int(bridge_metrics.get("unknown_type_count") or 0)
+    kernel_loaded = int(bridge_metrics.get("kernel_loaded_field_count") or 0)
+    missing_producer = int(bridge_metrics.get("unresolved_count") or 0)
+    # Large missing-producer ratio blocks TG consumer readiness.
+    missing_ratio = (missing_producer / kernel_loaded) if kernel_loaded else 0.0
     consumer_ready = bool(
         semantic_ready
         and typed_bridge_count > 0
         and not (id_true == 0 and id_false == 0 and id_unsolved > 0)
-        and unknown_type_count < max(1, int(bridge_metrics.get("kernel_loaded_field_count") or 0))
+        and unknown_type_count < max(1, kernel_loaded)
+        and missing_ratio < 0.5
     )
     if not boundary_ok:
         issues.append(
@@ -300,12 +305,14 @@ def check_kb_integrity(
         semantic_ready = False
         consumer_ready = False
 
-    overall = "pass" if (structural_ready and semantic_ready and consumer_ready and status == "pass") else "fail"
+    overall_ok = bool(structural_ready and semantic_ready and consumer_ready and status == "pass")
+    overall = "pass" if overall_ok else "fail"
 
     payload = {
         "version": 1,
         "status": status,
-        "ok": status == "pass",
+        "integrity_status": status,
+        "ok": overall_ok,
         "op_name": op_name,
         "open_unresolved_count": open_count,
         "blocking_unresolved_count": len(blocking_unresolved),
@@ -330,7 +337,7 @@ def check_kb_integrity(
         "semantic_ready": semantic_ready,
         "tg_consumer_ready": consumer_ready,
         "issues": issues,
-        "rework_reason": primary_rework_reason({"issues": issues}) if status != "pass" else "none",
+        "rework_reason": primary_rework_reason({"issues": issues}) if not overall_ok else "none",
     }
 
     # Fold into validate_kb / final
@@ -385,10 +392,10 @@ def check_kb_integrity(
                 "bridge_metrics": payload.get("bridge_metrics") or {},
             }
         )
-        if status == "pass" and payload.get("overall_status") == "pass":
+        if overall_ok:
             qdoc["status"] = "pass"
             qdoc["decision"] = "pass"
-        elif status != "pass":
+        else:
             qdoc["status"] = "fail"
             qdoc["decision"] = "fail"
         write_yaml(quality_path, qdoc)

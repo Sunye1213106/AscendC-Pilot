@@ -347,6 +347,8 @@ def main(argv: list[str] | None = None) -> int:
     p_dbg_reg.add_argument("--task-prompt", default="")
     p_dbg_reg.add_argument("--dispatch-nonce", default="")
     p_dbg_reg.add_argument("--if-enabled", action="store_true")
+    p_dbg_reg.add_argument("--resumed-from", default="", help="Host-reported previous external session id (resume lineage)")
+    p_dbg_reg.add_argument("--host-reported-resumed-from", default="", dest="host_reported_resumed_from")
 
     p_dbg_patch = p_dbg_sub.add_parser("patch-child-session", help="Set child session id from Task output")
     p_dbg_patch.add_argument("--project", type=Path, default=Path.cwd())
@@ -355,6 +357,8 @@ def main(argv: list[str] | None = None) -> int:
     p_dbg_patch.add_argument("--action-id", default="")
     p_dbg_patch.add_argument("--registration-id", default="")
     p_dbg_patch.add_argument("--dispatch-nonce", default="")
+    p_dbg_patch.add_argument("--resumed-from", default="", help="Host-reported previous external session id")
+    p_dbg_patch.add_argument("--host-reported-resumed-from", default="", dest="host_reported_resumed_from")
     p_dbg_patch.add_argument("--task-result", default="")
 
     p_dbg_ev = p_dbg_sub.add_parser("record-tool-event", help="Record a tool call for debug audit")
@@ -826,9 +830,8 @@ def _cmd_debug(args: Any) -> int:
         print_json(payload)
         return 0 if payload.get("ok") or payload.get("skipped") else 1
     if sub == "register-child":
-        if getattr(args, "if_enabled", False) and not dbg.is_enabled(args.project):
-            print_json({"ok": True, "skipped": True, "reason": "debug_disabled"})
-            return 0
+        # Control-plane identity always registers; --if-enabled is ignored for skip
+        # (kept for CLI compat). Debug transcript mirror is best-effort inside register_child.
         payload = dbg.register_child(
             args.project,
             parent_session_id=str(args.parent_session_id),
@@ -842,6 +845,7 @@ def _cmd_debug(args: Any) -> int:
             task_prompt_path=str(getattr(args, "task_prompt_path", "") or ""),
             task_prompt_text=str(getattr(args, "task_prompt", "") or ""),
             dispatch_nonce=str(getattr(args, "dispatch_nonce", "") or ""),
+            host_reported_resumed_from=str(getattr(args, "host_reported_resumed_from", "") or getattr(args, "resumed_from", "") or ""),
         )
         print_json(payload)
         return 0 if payload.get("ok") else 1
@@ -854,6 +858,7 @@ def _cmd_debug(args: Any) -> int:
             registration_id=str(getattr(args, "registration_id", "") or ""),
             dispatch_nonce=str(getattr(args, "dispatch_nonce", "") or ""),
             task_result_text=str(getattr(args, "task_result", "") or ""),
+            host_reported_resumed_from=str(getattr(args, "host_reported_resumed_from", "") or getattr(args, "resumed_from", "") or ""),
         )
         print_json(payload)
         return 0 if payload.get("ok") else 1

@@ -120,12 +120,11 @@ def recoveries_for_task_routes(
         category = str(task.get("triage_category") or "").strip()
         effective = str(task.get("effective_task_type") or task.get("type") or "").strip()
         if category == "incomplete_scope_candidate" or effective == "evidence_enrichment":
-            # Propose via adjudicate, then deterministic apply_scope_expansion.
+            # Sequencing: propose first; apply only after pending_scope_expansion.
             if task.get("pending_scope_expansion"):
                 reason_codes.append(SCOPE_EXPANSION_REWORK)
             else:
                 reason_codes.append(SEMANTIC_PATCH_REWORK)
-                reason_codes.append(SCOPE_EXPANSION_REWORK)
         elif effective == "candidate_generation" or category == "candidate_generation_required":
             reason_codes.append(SEMANTIC_PATCH_REWORK)
         elif effective == "macro_semantics" or route == "macro_semantic_materializer":

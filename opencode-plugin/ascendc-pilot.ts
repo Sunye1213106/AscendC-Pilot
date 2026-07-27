@@ -890,23 +890,31 @@ export const AscendCHarnessPlugin = async () => {
         }
         if (hostSession) {
           const nonce = `nonce_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
-          const reg = runDebug(
-            [
-              "register-child",
-              "--if-enabled",
-              "--parent-session-id",
-              hostSession,
-              "--action-id",
-              dispatchAction,
-              "--actor-id",
-              dispatchActor,
-              "--dispatch-nonce",
-              nonce,
-              "--task-prompt",
-              promptText.slice(0, 4000),
-            ],
-            project,
+          // Control-plane session identity always registers (not debug-gated).
+          const resumeFrom = String(
+            (args as any).sessionId ||
+              (args as any).sessionID ||
+              (args as any).resume ||
+              (args as any).resumeSessionId ||
+              "",
           )
+          const regArgs = [
+            "register-child",
+            "--parent-session-id",
+            hostSession,
+            "--action-id",
+            dispatchAction,
+            "--actor-id",
+            dispatchActor,
+            "--dispatch-nonce",
+            nonce,
+            "--task-prompt",
+            promptText.slice(0, 4000),
+          ]
+          if (resumeFrom) {
+            regArgs.push("--resumed-from", resumeFrom)
+          }
+          const reg = runDebug(regArgs, project)
           const regId = String(
             (reg.payload && (reg.payload.registration_id || (reg.payload.registration as any)?.registration_id)) ||
               "",
@@ -1085,6 +1093,16 @@ export const AscendCHarnessPlugin = async () => {
               "--dispatch-nonce",
               pending.dispatch_nonce,
             ]
+            const hostResume = String(
+              (args as any).sessionId ||
+                (args as any).sessionID ||
+                (args as any).resume ||
+                (args as any).resumeSessionId ||
+                "",
+            )
+            if (hostResume) {
+              patchArgs.push("--resumed-from", hostResume)
+            }
             if (resultText) {
               patchArgs.push("--task-result", resultText)
             }

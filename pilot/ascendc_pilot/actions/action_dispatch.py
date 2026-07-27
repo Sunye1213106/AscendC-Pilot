@@ -1,4 +1,4 @@
-﻿"""Action dispatch lineage: Pilot action_session vs external Task session."""
+"""Action dispatch lineage: Pilot action_session vs external Task session."""
 
 from __future__ import annotations
 
@@ -83,43 +83,11 @@ def latest_external_session(
     action_id: str,
 ) -> dict[str, Any]:
     """Look up the most recent registered child session for this action."""
-    try:
-        from ascendc_pilot.debug import _load_children_registry
+    from ascendc_pilot.actions.external_session_registry import (
+        latest_external_session as _latest,
+    )
 
-        reg = _load_children_registry(Path(project_root))
-    except Exception:  # noqa: BLE001
-        return {}
-    matches: list[dict[str, Any]] = []
-    for row in reg.get("children") or []:
-        if not isinstance(row, dict):
-            continue
-        if str(row.get("run_id") or "") and str(row.get("run_id") or "") != run_id:
-            continue
-        if str(row.get("action_id") or "") != action_id:
-            continue
-        if not str(row.get("child_session_id") or "").strip():
-            continue
-        matches.append(row)
-    if not matches:
-        # Fall back to dispatch.yaml
-        doc = load_dispatch(project_root, run_id, action_id)
-        sid = str(doc.get("external_task_session_id") or "").strip()
-        if sid:
-            return {
-                "external_task_session_id": sid,
-                "parent_session_id": doc.get("parent_session_id"),
-                "resumed_from": doc.get("resumed_from"),
-                "continuation_mode": doc.get("continuation_mode"),
-                "lineage_verified": bool(doc.get("lineage_verified")),
-            }
-        return {}
-    row = matches[-1]
-    return {
-        "external_task_session_id": str(row.get("child_session_id") or ""),
-        "parent_session_id": str(row.get("parent_session_id") or ""),
-        "registration_id": row.get("registration_id"),
-        "actor_id": row.get("actor_id"),
-    }
+    return _latest(Path(project_root), run_id=run_id, action_id=action_id)
 
 
 def prepare_resume_fields(
@@ -145,8 +113,11 @@ def prepare_resume_fields(
             "resume_required": True,
             "resume_session_id": sid,
             "external_task_session_id": sid,
+            "current_external_task_session_id": sid,
+            "previous_external_task_session_id": sid,
             "continuation_mode": "resume",
-            "lineage_verified": False,  # verified only after host returns parent linkage
+            # Verified only after host reports resumed_from == previous child.
+            "lineage_verified": False,
         },
     )
     return {"resume_required": True, "resume_session_id": sid}
@@ -158,38 +129,61 @@ def record_continuation(
     run_id: str,
     action_id: str,
     external_task_session_id: str,
-    resumed_from: str = "",
-    parent_session_id: str = "",
+    primary_session_id: str = "",
+    previous_external_task_session_id: str = "",
+    host_reported_resumed_from: str = "",
+    resumed_from: str = "",  # legacy alias for host_reported_resumed_from
+    parent_session_id: str = "",  # legacy alias for primary_session_id
     actor_id: str = "",
 ) -> dict[str, Any]:
-    """Persist host continuation observation. Never claim resume without parent linkage."""
-    prev = str(resumed_from or parent_session_id or "").strip()
+    """Persist host continuation. Resume verified ONLY via previous child match.
+
+    Primary parent equality must never set continuation_mode=resume or lineage_verified.
+    """
+    primary = str(primary_session_id or parent_session_id or "").strip()
+    host_resume = str(host_reported_resumed_from or resumed_from or "").strip()
+    previous_child = str(previous_external_task_session_id or "").strip()
+    if not previous_child:
+        prev_doc = load_dispatch(project_root, run_id, action_id)
+        previous_child = str(
+            prev_doc.get("current_external_task_session_id")
+            or prev_doc.get("external_task_session_id")
+            or ""
+        ).strip()
     current = str(external_task_session_id or "").strip()
-    if prev and current and (prev == current or parent_session_id or resumed_from):
+
+    verified = bool(host_resume and previous_child and host_resume == previous_child)
+    if verified:
         mode = "resume"
-        verified = bool(parent_session_id or resumed_from)
-    elif prev and current and prev != current and not (parent_session_id or resumed_from):
+    elif previous_child and current and previous_child != current:
         mode = "fork_with_context"
-        verified = False
-    else:
+    elif current and not previous_child:
         mode = "new"
-        verified = False
+    else:
+        mode = "fork_with_context" if current else "new"
+
     payload = {
-        "external_task_session_id": current,
-        "resumed_from": resumed_from or prev,
-        "parent_session_id": parent_session_id,
+        "primary_session_id": primary,
+        "previous_external_task_session_id": previous_child,
+        "current_external_task_session_id": current,
+        "external_task_session_id": current,  # legacy alias
+        "host_reported_resumed_from": host_resume,
+        "resumed_from": host_resume,  # legacy alias — never Primary parent
+        "parent_session_id": primary,  # legacy alias for Primary
         "continuation_mode": mode,
         "lineage_verified": verified,
         "actor_id": actor_id,
-        "fork_reason": "" if verified or mode != "fork_with_context" else "host_resume_lineage_not_observable",
+        "fork_reason": ""
+        if verified or mode != "fork_with_context"
+        else "host_resume_lineage_not_observable",
     }
     write_dispatch(project_root, run_id, action_id, payload)
     if mode == "fork_with_context":
         handoff_extra: dict[str, Any] = {
-            "source_session_id": prev,
+            "source_session_id": previous_child,
             "pending_items": [],
-            "notes": "Host returned a new session without parent linkage; continue from handoff only. "
-            "Do not unconditionally re-scan candidates.",
+            "notes": "Host returned a new session without resumed_from==previous child; "
+            "continue from handoff only. Do not unconditionally re-scan candidates.",
         }
         try:
             from ascendc_pilot.paths import uo_root
@@ -199,7 +193,8 @@ def record_continuation(
             open_ids = [
                 str(t.get("task_id") or "")
                 for t in (tasks.get("tasks") or [])
-                if isinstance(t, dict) and str(t.get("task_status") or t.get("status") or "") in {"open", "rework_required"}
+                if isinstance(t, dict)
+                and str(t.get("task_status") or t.get("status") or "") in {"open", "rework_required"}
             ]
             csets = sorted(
                 {

@@ -1062,6 +1062,33 @@ def gate_detect_score_post(uo: Path) -> dict[str, Any]:
             "error": "POST_SEMANTIC_PREREQUISITE_MISSING" if prereq.get("missing") else "score_report_post_missing",
             "message": f"detect_score_post requires plan+host+kernel(+report+triage); missing={missing}",
         }
+    # Fail-closed on semantic task contract conflicts.
+    try:
+        from uo.scripts._ir_io import read_yaml
+
+        triage_doc = read_yaml(triage) or {}
+        conflict_ids = [
+            str(r.get("task_id") or "")
+            for r in (triage_doc.get("tasks") or triage_doc.get("rows") or [])
+            if isinstance(r, dict) and r.get("contract_error")
+        ]
+        if not conflict_ids:
+            llm = read_yaml(uo / "ir" / "llm_tasks.yaml") or {}
+            conflict_ids = [
+                str(t.get("task_id") or "")
+                for t in (llm.get("tasks") or [])
+                if isinstance(t, dict) and t.get("contract_error")
+            ]
+        if conflict_ids:
+            return {
+                "gate": "detect_score_post",
+                "ok": False,
+                "error": "SEMANTIC_TASK_CONTRACT_CONFLICT",
+                "task_ids": conflict_ids,
+                "message": f"semantic task contract conflicts: {conflict_ids[:8]}",
+            }
+    except Exception:  # noqa: BLE001
+        pass
     return {
         "gate": "detect_score_post",
         "ok": True,

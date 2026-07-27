@@ -88,14 +88,37 @@ def reconcile_bridge(repo_root: Path, op_name: str, *, persist: bool = True) -> 
     coverage = (host_produced / kernel_loaded) if kernel_loaded else 1.0
     field_classifications = []
     matched_kern_ids = {str(b.get("kernel_reader") or "") for b in tilingdata_bridges}
+    candidate_kern_ids = {
+        str(b.get("kernel_reader") or "")
+        for b in tilingdata_bridges
+        if b.get("status") == "candidate"
+    }
+    verified_kern_ids = {
+        str(b.get("kernel_reader") or "")
+        for b in tilingdata_bridges
+        if b.get("status") == "verified"
+    }
     for kf in kernel_fields:
         kid = str(kf.get("id") or "")
-        if kid in matched_kern_ids:
+        owning = _norm_type(kf.get("owning_type"))
+        if kid in verified_kern_ids:
             cls = "host_produced"
-        elif not _norm_type(kf.get("owning_type")):
-            cls = "unresolved"
+        elif kid in candidate_kern_ids:
+            cls = "candidate_only"
+        elif not owning:
+            cls = "unknown_type"
         else:
-            cls = "unresolved"
+            cls = "missing_producer"
+        # Host-side determinant hints (deterministic fields only).
+        det = str(kf.get("determinant_source") or kf.get("source_kind") or "")
+        if cls == "missing_producer" and det:
+            low = det.casefold()
+            if "compile" in low or "macro" in low:
+                cls = "compile_macro"
+            elif "platform" in low:
+                cls = "platform_runtime"
+            elif "const" in low or "hardcode" in low:
+                cls = "constant"
         field_classifications.append(
             {
                 "id": kid,
@@ -121,6 +144,11 @@ def reconcile_bridge(repo_root: Path, op_name: str, *, persist: bool = True) -> 
             "typed_field_count": sum(1 for f in kernel_fields if _norm_type(f.get("owning_type"))),
             "host_produced_count": host_produced,
             "candidate_count": len(candidates),
+            "constant_count": sum(1 for c in field_classifications if c.get("classification") == "constant"),
+            "derived_count": sum(1 for c in field_classifications if c.get("classification") == "derived"),
+            "compile_macro_count": sum(1 for c in field_classifications if c.get("classification") == "compile_macro"),
+            "platform_runtime_count": sum(1 for c in field_classifications if c.get("classification") == "platform_runtime"),
+            "missing_producer_count": sum(1 for c in field_classifications if c.get("classification") == "missing_producer"),
             "unresolved_count": len([d for d in td_diagnostics if d.get("code") == "missing_tiling_field_producer"]),
             "unknown_type_count": unknown_type_count,
             "coverage_ratio": round(coverage, 4),
@@ -312,8 +340,19 @@ def _bridge_tilingdata(
                 "id": f"DIAG_MISSING_{leaf}",
                 "code": "missing_tiling_field_producer",
                 "field": leaf,
-                "severity": "warning",
+                "severity": "blocking",
                 "message": f"Kernel loads TilingDataField {leaf} but Host graph has no typed writer",
+            }
+        )
+        unresolved.append(
+            {
+                "severity": "blocking",
+                "code": "missing_tiling_field_producer",
+                "related_symbols": [leaf],
+                "candidate_files": [],
+                "evidence_present": [],
+                "evidence_missing": ["host_typed_writer"],
+                "reason": f"kernel field {leaf} has no host producer",
             }
         )
     return bridges, unresolved, diagnostics

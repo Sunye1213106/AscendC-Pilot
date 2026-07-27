@@ -1303,17 +1303,17 @@ def commit_patches_batch(
                 }
             task["candidates"] = merged
             task["candidate_set_hash"] = candidate_set_hash(merged)
-            task["type"] = "choose_edge"
-            task["effective_task_type"] = "choose_edge"
-            task["triage_category"] = "true_multi_candidate" if len(merged) > 1 else "source_proven_unique"
             task["status"] = "open"
             task["task_status"] = "open"
             task["semantic_status"] = "unresolved"
             task["blocking"] = True
-            task["eligible_for_adjudication"] = True
             task["allowed_actions"] = sorted(
-                set(list(task.get("allowed_actions") or []) + ["accept_edge", "choose_one", "mark_missing"])
+                set(list(task.get("allowed_actions") or []) + ["accept_edge", "choose_one", "mark_missing", "candidate_enrichment"])
             )
+            # Category/route/eligibility owned by triage SSOT — never hand-write.
+            from uo.scripts.semantic_task_triage import apply_triage_to_tasks
+
+            apply_triage_to_tasks([task], uo_root=uo_root)
         elif action == "scope_expansion_request":
             nested = patch.get("payload") if isinstance(patch.get("payload"), dict) else {}
             proposed = list(patch.get("proposed_files") or nested.get("proposed_files") or [])
