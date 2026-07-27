@@ -24,7 +24,7 @@ def test_common_assign_observes_binds_not_writes() -> None:
     """
     obs = observe_text(text, function="TND_TILING_DATA_COMMON_ASSIGN")
     types = {o["type"] for o in obs}
-    assert "common_assign_macro" in types
+    assert "receiver_binding_macro" in types or "common_assign_macro" in types
     assert "address_of_nested_member" in types
     # Must not claim writes from macro alone
     assert validate_relation_evidence("WRITES", text=text)["supported"] is False

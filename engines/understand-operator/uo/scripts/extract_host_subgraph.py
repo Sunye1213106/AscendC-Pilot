@@ -218,18 +218,60 @@ def extract_host_subgraph(
     )
     primary = _item_from_ep_node(primary_node) if primary_node else {}
     plan = load_extract_plan(uo_root)
-    if plan is None and not allow_empty_plan:
+    tcg = {}
+    try:
+        from uo.scripts._ir_io import read_yaml as _read_yaml
+
+        tcg = _read_yaml(uo_root / "ir" / "tiling_contract_graph.yaml") or {}
+    except Exception:  # noqa: BLE001
+        tcg = {}
+    hcg = {}
+    try:
+        from uo.scripts._ir_io import read_yaml as _read_yaml
+
+        hcg = _read_yaml(uo_root / "ir" / "host_configuration_graph.yaml") or {}
+    except Exception:  # noqa: BLE001
+        hcg = {}
+
+    # 权威改为 HCG/TCG：有新图时不再因缺 extract_plan 阻断；role 不决定是否提取
+    host_contract_ready = bool(tcg.get("entities") or hcg.get("entities"))
+    if plan is None and not allow_empty_plan and not host_contract_ready:
         unresolved.append(
             {
                 "id": "UNRES_EXTRACT_PLAN_MISSING",
                 "kind": "extract_plan_missing",
-                "message": "ir/extract_plan.yaml missing; propose+LLM confirm before host TDF writes",
+                "message": "ir/extract_plan.yaml missing and host contract graphs absent",
                 "file_path": "",
                 "snippet": "",
             }
         )
-        # Fail soft: still emit helper chain structure without TDF write edges.
         plan = {"writers": [], "receivers": [], "aliases": [], "non_sink_roots": []}
+    elif plan is None:
+        plan = {"writers": [], "receivers": [], "aliases": [], "non_sink_roots": []}
+
+    # Seed writers from tiling contract facts when plan roles are empty
+    if host_contract_ready and not (plan.get("writers") or []):
+        derived_writers: list[dict[str, Any]] = []
+        for ent in tcg.get("entities") or []:
+            if ent.get("kind") == "FieldWrite" and ent.get("writer_function"):
+                derived_writers.append(
+                    {
+                        "name": ent["writer_function"],
+                        "role": "tiling_writer",
+                        "derived_from": "WRITES_FIELD",
+                    }
+                )
+            if ent.get("kind") in {"KeyReturnComposer", "ObservedKeyComposition"}:
+                derived_writers.append(
+                    {
+                        "name": str(ent.get("qualified_name") or "key"),
+                        "role": "key_writer",
+                        "derived_from": "COMPOSES_TILING_KEY",
+                    }
+                )
+        if derived_writers:
+            plan = dict(plan)
+            plan["writers"] = derived_writers
 
     writer_keep = plan_chain_names(plan) if plan else set()
     tiling_writers = plan_tiling_writer_names(plan) if plan else set()
@@ -688,7 +730,28 @@ def extract_host_subgraph(
                 )
             prev_branch_id = branch_id
 
-        if role == "key_writer" or "tilingkey" in name_l or "gettilingkey" in name_l or "settilingkey" in name_l:
+        # Host contract 权威：有 FieldWrite/Key 事实或源码写入形态时即提取，不再仅靠 plan role
+        emit_key = (
+            role == "key_writer"
+            or "tilingkey" in name_l
+            or "gettilingkey" in name_l
+            or "settilingkey" in name_l
+            or "GET_TPL_TILING_KEY" in scan_body
+            or "ASCENDC_TPL_SEL_PARAM" in scan_body
+            or host_contract_ready
+            and any(
+                e.get("kind") in {"KeyReturnComposer", "ObservedKeyComposition"}
+                for e in (tcg.get("entities") or [])
+            )
+        )
+        if emit_key and (
+            role == "key_writer"
+            or "tilingkey" in name_l
+            or "gettilingkey" in name_l
+            or "settilingkey" in name_l
+            or "GET_TPL_TILING_KEY" in scan_body
+            or "ASCENDC_TPL_SEL_PARAM" in scan_body
+        ):
             key_id = "KEY_TILINGKEY"
             nodes.append(
                 {
@@ -705,8 +768,21 @@ def extract_host_subgraph(
             src = prev_branch_id or helper_id
             edges.append({"id": stable_id("E_", src, key_id), "type": "writes", "source": src, "target": key_id})
 
-        # TDF writes for tiling_writer and workspace_writer (offsets often land on tiling sinks)
-        if role in {"tiling_writer", "workspace_writer"}:
+        # TDF writes：plan role 或源码 setter/赋值 或 TCG FieldWrite
+        emit_tdf = (
+            role in {"tiling_writer", "workspace_writer"}
+            or bool(RECV_SETTER_RE.search(scan_body))
+            or bool(FIELD_WRITE_RE.search(scan_body))
+            or (
+                host_contract_ready
+                and any(
+                    e.get("kind") == "FieldWrite"
+                    and e.get("writer_function") == item.get("name")
+                    for e in (tcg.get("entities") or [])
+                )
+            )
+        )
+        if emit_tdf:
             field_rows = _collect_tdf_field_rows(scan_body, sink_recvs, non_sink_roots)
             seen_fields: set[str] = set()
             for field_name, recv_name in field_rows:

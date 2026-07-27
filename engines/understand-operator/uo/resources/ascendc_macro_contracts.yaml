@@ -1,19 +1,22 @@
-version: 1
+version: 2
 catalog: ascendc_macro_contracts
 notes: >
-  Public AscendC registration / template / KEY macro contracts for deterministic
-  semantic materialization. Handlers live in uo.scripts.macro_semantic_materializer.
+  仅登记 CANN / AscendC 官方包内宏。合同是框架语义权威；源码 invocation 是项目事实权威。
+  算子仓自定义宏（例如 FAG 的 TND_/BASE_TILING_DATA_COMMON_ASSIGN、IsTnd 业务维度名）
+  禁止写入本文件：能在算子源码 #define / 调用点找到的，一律走源码发现，不做合同登记。
+  不得按宏名直接生成最终 writer role。handlers 由 ascendc_macro_facts /
+  macro_entrypoint_projection / tiling_* 模块消费。
+  验收：源码中出现的已知官方宏必须被物化；不是合同列表每项都必须出现。
 contracts:
   - name: REG_OP
     semantic_kind: operator_schema
     invocation_style: function_like
+    contract_class: framework_required
+    version_scope: "cann>=7.0"
     argument_roles:
       0: operator_type
-    emits:
-      nodes:
-        - role: operator_registration
-      edges:
-        - type: declares_operator
+    emitted_fact_types:
+      - operator_registration
     materializer:
       handler: registration_operator
     confidence_rule:
@@ -22,26 +25,50 @@ contracts:
   - name: IMPL_OP_OPTILING
     semantic_kind: host_registration
     invocation_style: chained_dsl
+    contract_class: framework_required
+    version_scope: "cann>=7.0"
     argument_roles:
       0: operator_type
     chained_methods:
       Tiling:
         argument_roles:
           0: tiling_function
-        emits:
-          edges:
-            - type: binds_tiling
+        emitted_fact_types:
+          - binds_tiling
       TilingParse:
         argument_roles:
           0: tiling_parse_function
-        emits:
-          edges:
-            - type: binds_tiling_parse
-    emits:
-      nodes:
-        - role: public_host_entry
-      edges:
-        - type: registers
+        emitted_fact_types:
+          - binds_tiling_parse
+    emitted_fact_types:
+      - public_host_entry
+      - registers
+    materializer:
+      handler: registration_host_chained
+    confidence_rule:
+      source_invocation_required: true
+
+  - name: DEVICE_IMPL_OP_OPTILING
+    semantic_kind: host_registration
+    invocation_style: chained_dsl
+    contract_class: optional_framework_pattern
+    version_scope: "cann>=8.0"
+    argument_roles:
+      0: operator_type
+    chained_methods:
+      Tiling:
+        argument_roles:
+          0: tiling_function
+        emitted_fact_types:
+          - binds_tiling
+      TilingParse:
+        argument_roles:
+          0: tiling_parse_function
+        emitted_fact_types:
+          - binds_tiling_parse
+    emitted_fact_types:
+      - public_host_entry
+      - registers
     materializer:
       handler: registration_host_chained
     confidence_rule:
@@ -50,19 +77,16 @@ contracts:
   - name: REGISTER_TILING_TEMPLATE
     semantic_kind: template_registration
     invocation_style: function_like
+    contract_class: framework_required
+    version_scope: "cann>=7.0"
     argument_roles:
       0: operator_type
       1: template_class
       2: architecture
       3: priority
-    conditions:
-      architecture_argument: 2
-    emits:
-      nodes:
-        - role: template_registration
-      edges:
-        - type: registers_template
-        - type: available_on_arch
+    emitted_fact_types:
+      - registers_template
+      - available_on_arch
     materializer:
       handler: registration_template
     confidence_rule:
@@ -71,57 +95,237 @@ contracts:
   - name: REGISTER_TILING_TEMPLATE_WITH_ARCH
     semantic_kind: template_registration
     invocation_style: function_like
+    contract_class: framework_required
+    version_scope: "cann>=7.0"
     argument_roles:
       0: operator_type
       1: template_class
       2: architecture
       3: priority
-    conditions:
-      architecture_argument: 2
-    emits:
-      nodes:
-        - role: template_registration
-      edges:
-        - type: registers_template
-        - type: available_on_arch
+    emitted_fact_types:
+      - registers_template
+      - available_on_arch
     materializer:
       handler: registration_template
+    confidence_rule:
+      source_invocation_required: true
+
+  - name: ASCENDC_TPL_ARGS_DECL
+    semantic_kind: tiling_key_declaration
+    invocation_style: nested_selection
+    contract_class: framework_required
+    version_scope: "cann>=7.0"
+    argument_roles:
+      0: operator_type
+    emitted_fact_types:
+      - key_dimension_space
+    materializer:
+      handler: tiling_key_declaration
+    confidence_rule:
+      source_invocation_required: true
+
+  - name: ASCENDC_TPL_BOOL_DECL
+    semantic_kind: tiling_key_declaration
+    invocation_style: function_like
+    contract_class: framework_required
+    version_scope: "cann>=7.0"
+    argument_roles:
+      0: dimension_name
+      1: domain_min
+      2: domain_max
+    emitted_fact_types:
+      - key_dimension_bool
+    materializer:
+      handler: tiling_key_declaration
+    confidence_rule:
+      source_invocation_required: true
+
+  - name: ASCENDC_TPL_UINT_DECL
+    semantic_kind: tiling_key_declaration
+    invocation_style: function_like
+    contract_class: framework_required
+    version_scope: "cann>=7.0"
+    argument_roles:
+      0: dimension_name
+      1: bit_width_token
+      2: selection_mode
+    emitted_fact_types:
+      - key_dimension_uint
+    materializer:
+      handler: tiling_key_declaration
     confidence_rule:
       source_invocation_required: true
 
   - name: ASCENDC_TPL_ARGS_SEL
     semantic_kind: kernel_compile_selection
     invocation_style: nested_selection
+    contract_class: framework_required
+    version_scope: "cann>=7.0"
+    composition_strategy: nested_selector
     argument_roles: {}
-    emits:
-      edges:
-        - type: selects_tiling_key
+    emitted_fact_types:
+      - registered_template_pattern
     materializer:
-      handler: kernel_tpl_selection
+      handler: tiling_key_selection
+    confidence_rule:
+      source_invocation_required: true
+
+  - name: ASCENDC_TPL_SEL_PARAM
+    semantic_kind: tiling_key_composition
+    invocation_style: function_like
+    contract_class: optional_framework_pattern
+    version_scope: "cann>=8.0"
+    composition_strategy: context_mutation
+    argument_roles:
+      0: context
+    emitted_fact_types:
+      - key_context_mutation
+    materializer:
+      handler: tiling_key_composition
     confidence_rule:
       source_invocation_required: true
 
   - name: GET_TPL_TILING_KEY
-    semantic_kind: kernel_compile_selection
+    semantic_kind: tiling_key_composition
     invocation_style: function_like
+    contract_class: framework_required
+    version_scope: "cann>=7.0"
+    composition_strategy: positional_full_key
     argument_roles: {}
-    emits:
-      edges:
-        - type: writes_tiling_key
+    emitted_fact_types:
+      - key_return_composer
     materializer:
-      handler: kernel_tpl_selection
+      handler: tiling_key_composition
+    confidence_rule:
+      source_invocation_required: true
+
+  - name: BEGIN_TILING_DATA_DEF
+    semantic_kind: tiling_data_schema
+    invocation_style: function_like
+    contract_class: optional_framework_pattern
+    version_scope: "cann>=7.0"
+    argument_roles:
+      0: schema_name
+    emitted_fact_types:
+      - tiling_schema_begin
+    materializer:
+      handler: tiling_data_schema
+    confidence_rule:
+      source_invocation_required: true
+
+  - name: TILING_DATA_FIELD_DEF
+    semantic_kind: tiling_data_schema
+    invocation_style: function_like
+    contract_class: optional_framework_pattern
+    version_scope: "cann>=7.0"
+    argument_roles:
+      0: field_type
+      1: field_name
+    emitted_fact_types:
+      - tiling_field
+    materializer:
+      handler: tiling_data_schema
+    confidence_rule:
+      source_invocation_required: true
+
+  - name: TILING_DATA_FIELD_DEF_ARR
+    semantic_kind: tiling_data_schema
+    invocation_style: function_like
+    contract_class: optional_framework_pattern
+    version_scope: "cann>=7.0"
+    argument_roles:
+      0: field_type
+      1: field_name
+      2: array_size
+    emitted_fact_types:
+      - tiling_field_array
+    materializer:
+      handler: tiling_data_schema
+    confidence_rule:
+      source_invocation_required: true
+
+  - name: TILING_DATA_FIELD_DEF_STRUCT
+    semantic_kind: tiling_data_schema
+    invocation_style: function_like
+    contract_class: optional_framework_pattern
+    version_scope: "cann>=7.0"
+    argument_roles:
+      0: nested_schema
+      1: field_name
+    emitted_fact_types:
+      - tiling_field_struct
+    materializer:
+      handler: tiling_data_schema
+    confidence_rule:
+      source_invocation_required: true
+
+  - name: END_TILING_DATA_DEF
+    semantic_kind: tiling_data_schema
+    invocation_style: function_like
+    contract_class: optional_framework_pattern
+    version_scope: "cann>=7.0"
+    argument_roles: {}
+    emitted_fact_types:
+      - tiling_schema_end
+    materializer:
+      handler: tiling_data_schema
+    confidence_rule:
+      source_invocation_required: true
+
+  - name: REGISTER_TILING_DATA_CLASS
+    semantic_kind: tiling_data_registration
+    invocation_style: function_like
+    contract_class: optional_framework_pattern
+    version_scope: "cann>=7.0"
+    argument_roles:
+      0: operator_type
+      1: schema_class
+    emitted_fact_types:
+      - register_tiling_data_class
+    materializer:
+      handler: tiling_data_registration
+    confidence_rule:
+      source_invocation_required: true
+
+  - name: REGISTER_TILING_DEFAULT
+    semantic_kind: tiling_data_registration
+    invocation_style: function_like
+    contract_class: optional_framework_pattern
+    version_scope: "cann>=7.0"
+    argument_roles:
+      0: operator_type
+      1: schema_class
+    emitted_fact_types:
+      - register_tiling_default
+    materializer:
+      handler: tiling_data_registration
     confidence_rule:
       source_invocation_required: true
 
   - name: GET_TILING_DATA
     semantic_kind: kernel_runtime_binding
     invocation_style: function_like
+    contract_class: framework_required
+    version_scope: "cann>=7.0"
     argument_roles:
       0: tiling_data_type
-    emits:
-      edges:
-        - type: uses_tiling_data
+    emitted_fact_types:
+      - uses_tiling_data
     materializer:
       handler: kernel_tiling_data_bind
+    confidence_rule:
+      source_invocation_required: true
+
+  - name: GET_TILING_DATA_MEMBER
+    semantic_kind: tiling_data_access
+    invocation_style: function_like
+    contract_class: optional_framework_pattern
+    version_scope: "cann>=7.0"
+    argument_roles:
+      0: member_name
+    emitted_fact_types:
+      - tiling_data_member_access
+    materializer:
+      handler: tiling_data_member_access
     confidence_rule:
       source_invocation_required: true

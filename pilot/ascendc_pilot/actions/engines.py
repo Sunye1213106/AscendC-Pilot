@@ -767,42 +767,95 @@ def _run_extract_plan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
                 progress = ActionProgressReporter(
                     project_root, run_id=run_id, action_id="extract_plan", phase="finalize"
                 )
-            applied = apply_extract_plan(
-                project_root,
-                op_name,
-                action_dir=action_dir,
-                check_only=False,
-                identity={
-                    "actor_id": str(ctx.get("actor_id") or "uo-semantic-resolve"),
-                    "run_id": str(ctx.get("run_id") or ""),
-                    "workflow_id": str(ctx.get("workflow_id") or "uo-init"),
-                    "architecture": architecture,
-                    "action_session_id": str(ctx.get("action_session_id") or ""),
-                    "lease_id": str(ctx.get("lease_id") or ""),
-                    "prepare_nonce": str(ctx.get("prepare_nonce") or ""),
-                    "candidates_sha256": "",
-                },
-                progress=progress,
-            )
-            if not applied.get("ok"):
+
+            # Host contract 主链（权威 HCG/TCG）；extract_plan 仅物化视图
+            host_contract = None
+            try:
+                from uo.scripts.host_contract_pipeline import run_host_contract_pipeline
+                from uo.scripts.resolve_host_contract_gaps import finalize_host_contract_gaps
+
+                if progress is not None:
+                    progress.start_stage("host_contract_pipeline")
+                host_contract = run_host_contract_pipeline(
+                    project_root,
+                    op_name,
+                    architecture=architecture,
+                    uo_root=uo,
+                    materialize_view=True,
+                    run_gaps=True,
+                    gap_decisions=[],
+                )
+                # merge gap decision parts if present
+                gap_parts = None
+                if action_dir is not None:
+                    gap_parts = action_dir / "staging" / "gap_decision_parts"
+                if gap_parts and gap_parts.is_dir():
+                    finalize_host_contract_gaps(
+                        project_root,
+                        op_name,
+                        uo_root=uo,
+                        run_dir=action_dir / "staging",
+                    )
+                if progress is not None:
+                    progress.complete_stage()
+            except Exception as exc:  # noqa: BLE001
                 return {
                     "ok": False,
                     "engine": "extract_plan",
-                    "phase": "apply",
-                    "error": applied.get("error") or "extract_plan validation failed",
-                    "apply": applied,
-                    "message_zh": applied.get("message_zh") or applied.get("message") or "",
-                    "retryable": bool(applied.get("retryable", True)),
+                    "phase": "host_contract",
+                    "error": str(exc)[:400],
+                    "message_zh": f"Host contract 主链失败: {exc}",
                 }
-            # 仅构建 missing/stale layers（entrypoints 若 fresh 则 reuse）
+
+            plan_doc = {}
+            try:
+                from uo.scripts._ir_io import read_yaml as _ry
+
+                plan_doc = _ry(plan_path) or {}
+            except Exception:  # noqa: BLE001
+                plan_doc = {}
+
+            applied = {"ok": True, "skipped_legacy_relation_materialize": True}
+            if not plan_doc.get("materialized_view"):
+                # 兼容旧路径：非物化视图时仍走 relation finalize
+                applied = apply_extract_plan(
+                    project_root,
+                    op_name,
+                    action_dir=action_dir,
+                    check_only=False,
+                    identity={
+                        "actor_id": str(ctx.get("actor_id") or "uo-semantic-resolve"),
+                        "run_id": str(ctx.get("run_id") or ""),
+                        "workflow_id": str(ctx.get("workflow_id") or "uo-init"),
+                        "architecture": architecture,
+                        "action_session_id": str(ctx.get("action_session_id") or ""),
+                        "lease_id": str(ctx.get("lease_id") or ""),
+                        "prepare_nonce": str(ctx.get("prepare_nonce") or ""),
+                        "candidates_sha256": "",
+                    },
+                    progress=progress,
+                )
+                if not applied.get("ok"):
+                    return {
+                        "ok": False,
+                        "engine": "extract_plan",
+                        "phase": "apply",
+                        "error": applied.get("error") or "extract_plan validation failed",
+                        "apply": applied,
+                        "host_contract": host_contract,
+                        "message_zh": applied.get("message_zh") or applied.get("message") or "",
+                        "retryable": bool(applied.get("retryable", True)),
+                    }
+
+            # Host-only partial：仍尝试构建 host 层；kernel 允许空
             if progress is not None:
                 progress.start_stage("build_layered_kb")
             layered = build_layered_kb(
                 project_root,
                 op_name,
                 architecture=architecture,
-                layers={"host", "kernel", "tilingkey", "bridge"},
-                allow_empty_plan=False,
+                layers={"host", "tilingkey", "bridge"},
+                allow_empty_plan=True,
                 mode="structural",
                 reuse_fresh_layers=True,
                 include_entrypoints_if_stale=True,
@@ -815,9 +868,15 @@ def _run_extract_plan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
                 "engine": "extract_plan",
                 "phase": "build",
                 "apply": applied,
+                "host_contract": host_contract,
+                "kb_status": "partial",
+                "build_profile": "host_contract_only",
                 "has_host": (uo / "ir" / "host_subgraph.yaml").is_file(),
+                "has_host_configuration": (uo / "ir" / "host_configuration_graph.yaml").is_file(),
+                "has_tiling_contract": (uo / "ir" / "tiling_contract_graph.yaml").is_file(),
                 "has_kernel": (uo / "ir" / "kernel_subgraph.yaml").is_file(),
-                "has_macro_semantics": (uo / "ir" / "macro_semantics.yaml").is_file(),
+                "has_macro_semantics": (uo / "ir" / "macro_facts.yaml").is_file()
+                or (uo / "ir" / "macro_semantics.yaml").is_file(),
                 "stats": stats,
                 "macro_materialization": (stats or {}).get("macro_materialization") or {},
                 "timing_ms": (stats or {}).get("timing_ms") or {},

@@ -9,11 +9,11 @@ import re
 from typing import Any
 
 from uo.scripts.receiver_binding import (
-    COMMON_ASSIGN_MACRO_RE,
     GET_TILING_DATA_RE,
     RECV_ADDR_ASSIGN_RE,
     extract_receiver_bindings_from_text,
     extract_root_tiling_types,
+    list_discovered_binding_macro_names,
 )
 
 _SET_CALL_RE = re.compile(
@@ -100,12 +100,14 @@ def observe_text(
             }
         )
 
-    for m in COMMON_ASSIGN_MACRO_RE.finditer(text):
-        macro = str(m.group(1) or "").strip()
+    # 算子仓自定义 binding 宏：仅当同窗口可见 #define 时观测，禁止硬编码宏名
+    for macro in list_discovered_binding_macro_names(text):
+        if not re.search(rf"(?m)^(?!\s*#\s*define).*?\b{re.escape(macro)}\s*\(", text):
+            continue
         out.append(
             {
                 "id": _obs_id("obs_ca", function, macro, eref),
-                "type": "common_assign_macro",
+                "type": "receiver_binding_macro",
                 "function": function,
                 "macro": macro,
                 "file_path": file_path,

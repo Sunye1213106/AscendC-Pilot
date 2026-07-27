@@ -851,6 +851,25 @@ detect_score_pre → extract_plan → detect_score_post
 **状态**：已做（`test_receipt_verify_perf.py`）；旧 run 首次 `acp next` 会 compact 收据并瘦身 workflow.yaml，之后应明显加速。
 
 
+## 13.x Host Configuration / Tiling Contract 图重构（Host-only）
+
+**问题**：`extract_plan role → 决定 Host 是否提取` 反向依赖；Input→HostValue→TilingData/Key 路径不可信。
+
+**根因**：缺少统一 Schema/时间语义；宏扫描与 Host 数据流/FieldWrite/Key 声明混在 plan role 门控里。
+
+**落点**：
+- `uo/scripts/host_contract_schema.py` + `macro_token_scanner.py` + `ascendc_macro_facts.py`
+- `host_compile_context.py` / `host_configuration_builder.py`
+- `tiling_data_schema.py` / `tiling_data_flow.py` / `tiling_key_*` / `tiling_contract_builder.py`
+- 权威：`host_configuration_graph.yaml` + `tiling_contract_graph.yaml`（`contract_status: producer_only`，`kb_status: partial`）
+- `extract_plan.yaml` 仅 `materialize_extract_plan_view` 物化视图，可删可重建
+- LLM 只裁决 `candidate_edge_id`（`resolve_host_contract_gaps.py`）
+- CLI：`acp uo explain-host-value|explain-tiling-field|explain-key-dimension`
+- 测试：`tests/test_host_contract_phase*.py` + `test_host_contract_fag_smoke.py`
+
+**状态**：已做（Host-only；Kernel consumer 仍 pending）。
+
+
 ## 14. 一句话原则（沉淀）
 
 1. **Pilot 独占状态**；Skill/Prompt 不推进阶段。  

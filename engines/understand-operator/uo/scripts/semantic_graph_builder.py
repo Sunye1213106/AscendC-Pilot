@@ -239,7 +239,8 @@ def close_deterministic_relations(
             text = _obs_evidence_text(obs_items)
             # 宏仅见 invocation、无真实窗口 → 不得 deterministic close
             if any(
-                str(o.get("type") or "") == "common_assign_macro"
+                str(o.get("type") or "")
+                in {"common_assign_macro", "receiver_binding_macro"}
                 and not _obs_evidence_text([o])
                 for o in obs_items
             ):
@@ -269,6 +270,7 @@ def close_deterministic_relations(
                     if o.get("type") not in {
                         "address_of_nested_member",
                         "common_assign_macro",
+                        "receiver_binding_macro",
                     }:
                         continue
                     recv = str(o.get("receiver") or entity_name)

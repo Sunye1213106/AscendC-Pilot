@@ -17,6 +17,9 @@ def _cond_hash(expr: str) -> str:
     return hashlib.sha1(str(expr or "").encode("utf-8", errors="ignore")).hexdigest()[:10]
 
 
+_BINDING_MACRO_OBS = frozenset({"common_assign_macro", "receiver_binding_macro"})
+
+
 def _stable_identity(o: dict[str, Any]) -> tuple[str, str, str]:
     """返回 (stable_id_key, pool, conflict_group)。"""
     t = str(o.get("type") or "")
@@ -29,7 +32,7 @@ def _stable_identity(o: dict[str, Any]) -> tuple[str, str, str]:
     dim = str(o.get("dimension") or o.get("dim") or "").strip()
     ctor = str(o.get("constructor") or o.get("macro") or "").strip()
 
-    if t in {"address_of_nested_member", "common_assign_macro", "receiver_binding"}:
+    if t in {"address_of_nested_member", "receiver_binding", *_BINDING_MACRO_OBS}:
         key = f"binding:{recv or 'anon'}:{nested or 'nested'}"
         return key, "binding_relations", key
     if t == "setter_call":
@@ -74,7 +77,7 @@ def _has_real_evidence(o: dict[str, Any]) -> bool:
 
 def _macro_body_resolved(o: dict[str, Any]) -> bool:
     """宏仅见 invocation 且无解析体 → False。"""
-    if str(o.get("type") or "") != "common_assign_macro":
+    if str(o.get("type") or "") not in _BINDING_MACRO_OBS:
         return True
     if o.get("macro_body_resolved") is True:
         return True
@@ -171,7 +174,8 @@ def build_semantic_obligations(
             if fns:
                 entities = sorted(set(fns))
         if pool == "binding_relations" or any(
-            str(x.get("type") or "") in {"address_of_nested_member", "receiver_binding", "common_assign_macro"}
+            str(x.get("type") or "")
+            in {"address_of_nested_member", "receiver_binding", *_BINDING_MACRO_OBS}
             for x in items
         ):
             recvs = [str(x.get("receiver") or "").strip() for x in items if x.get("receiver")]
@@ -210,7 +214,7 @@ def build_semantic_obligations(
 
         # 宏未解析体 → LLM
         if any(
-            str(x.get("type") or "") == "common_assign_macro" and not _macro_body_resolved(x)
+            str(x.get("type") or "") in _BINDING_MACRO_OBS and not _macro_body_resolved(x)
             for x in items
         ):
             llm_required.append(
@@ -248,7 +252,14 @@ def build_semantic_obligations(
             continue
 
         has_bind = bool(
-            types & {"common_assign_macro", "address_of_nested_member", "receiver_binding", "get_tiling_data"}
+            types
+            & {
+                "common_assign_macro",
+                "receiver_binding_macro",
+                "address_of_nested_member",
+                "receiver_binding",
+                "get_tiling_data",
+            }
         )
         has_cond = bool(
             types

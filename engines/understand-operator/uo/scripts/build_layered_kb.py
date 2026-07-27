@@ -251,14 +251,47 @@ def build_layered_kb(
     # Macro semantic materialization: typed facts before host/kernel / post-score.
     t_macro = time.perf_counter()
     try:
+        from uo.scripts.ascendc_macro_facts import extract_macro_facts
+        from uo.scripts.host_compile_context import extract_host_compile_context
+        from uo.scripts.macro_entrypoint_projection import project_macro_facts_to_entrypoint
         from uo.scripts.macro_semantic_materializer import materialize_macro_semantics
 
-        macro_result = materialize_macro_semantics(
+        # 新主链：macro_facts + entrypoint projection
+        ctx_doc = extract_host_compile_context(
             repo_root, op_name, architecture=architecture, uo_root=uo_root
         )
-        macro_materialization = dict(macro_result.get("macro_materialization") or {})
-        if isinstance(macro_result.get("entrypoint_graph"), dict):
-            entrypoint_graph = macro_result["entrypoint_graph"]
+        facts = extract_macro_facts(
+            repo_root,
+            op_name,
+            architecture=architecture,
+            uo_root=uo_root,
+            compile_context_id=str(ctx_doc.get("compile_context_id") or ""),
+        )
+        proj = project_macro_facts_to_entrypoint(
+            repo_root,
+            op_name,
+            architecture=architecture,
+            uo_root=uo_root,
+            macro_facts=facts,
+        )
+        if isinstance(proj.get("entrypoint_graph"), dict):
+            entrypoint_graph = proj["entrypoint_graph"]
+        # 兼容旧 macro_semantics 读者
+        try:
+            macro_result = materialize_macro_semantics(
+                repo_root, op_name, architecture=architecture, uo_root=uo_root
+            )
+            macro_materialization = dict(macro_result.get("macro_materialization") or {})
+            if isinstance(macro_result.get("entrypoint_graph"), dict):
+                entrypoint_graph = macro_result["entrypoint_graph"]
+        except Exception:  # noqa: BLE001
+            macro_materialization = {
+                "status": "ok",
+                "via": "ascendc_macro_facts",
+                "invocation_count": int((facts.get("counts") or {}).get("invocations") or 0),
+            }
+        macro_materialization.setdefault("macro_facts_count", (facts.get("counts") or {}).get("invocations"))
+        macro_materialization.setdefault("compile_context_id", ctx_doc.get("compile_context_id"))
     except Exception as exc:  # noqa: BLE001
         macro_materialization = {
             "status": "error",

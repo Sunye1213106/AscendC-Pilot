@@ -315,6 +315,18 @@ def main(argv: list[str] | None = None) -> int:
     p_uq.add_argument("--relation-type", default="")
     p_uq.add_argument("--status-only", action="store_true")
 
+    p_uo = sub.add_parser("uo", help="UO Host contract 查询与解释")
+    p_uo_sub = p_uo.add_subparsers(dest="uo_cmd", required=True)
+    for explain_name, help_zh in (
+        ("explain-host-value", "解释 HostValue 推导路径"),
+        ("explain-tiling-field", "解释 TilingField 写入链"),
+        ("explain-key-dimension", "解释 KeyDimension 组成"),
+    ):
+        p_ex = p_uo_sub.add_parser(explain_name, help=help_zh)
+        p_ex.add_argument("entity_id", help="实体 id / qualified_name / field_path / dimension_name")
+        p_ex.add_argument("--project", type=Path, default=Path.cwd())
+        p_ex.add_argument("--op-name", default="")
+
     p_cbm = sub.add_parser(
         "cbm",
         help="CBM locate + windowed source read for producers (wraps CbmClient)",
@@ -797,6 +809,29 @@ def main(argv: list[str] | None = None) -> int:
             if args.relation_type:
                 argv.extend(["--relation-type", args.relation_type])
         return int(query_main(argv) or 0)
+    if args.cmd == "uo":
+        from uo._operator.artifacts import existing_operator_root
+        from uo.scripts.host_contract_explain import (
+            explain_host_value,
+            explain_key_dimension,
+            explain_tiling_field,
+        )
+
+        project = Path(args.project).resolve()
+        op = str(args.op_name or "").strip() or project.name
+        uo_root = existing_operator_root(project, op)
+        eid = str(args.entity_id or "")
+        if args.uo_cmd == "explain-host-value":
+            result = explain_host_value(uo_root, eid)
+        elif args.uo_cmd == "explain-tiling-field":
+            result = explain_tiling_field(uo_root, eid)
+        elif args.uo_cmd == "explain-key-dimension":
+            result = explain_key_dimension(uo_root, eid)
+        else:
+            print_json({"ok": False, "error": f"未知 uo 子命令: {args.uo_cmd}"})
+            return 2
+        print_json(result)
+        return 0 if result.get("ok") else 1
     if args.cmd == "cbm":
         if args.cbm_cmd == "lookup":
             from ascendc_pilot.cbm_lookup import lookup_symbol

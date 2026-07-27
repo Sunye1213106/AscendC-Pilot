@@ -5,9 +5,9 @@ import re
 from typing import Any
 
 from uo.scripts.receiver_binding import (
-    COMMON_ASSIGN_MACRO_RE,
     GET_TILING_DATA_RE,
     RECV_ADDR_ASSIGN_RE,
+    list_discovered_binding_macro_names,
 )
 
 _SET_CALL_RE = re.compile(r"\bset_[A-Za-z0-9_]+\s*\(")
@@ -63,9 +63,14 @@ def validate_relation_evidence(
         return _result(authentic=True, sufficient=False, reason_code="evidence_window_empty")
 
     if rtype == "BINDS":
+        discovered = list_discovered_binding_macro_names(body)
+        has_discovered_inv = any(
+            re.search(rf"(?m)^(?!\s*#\s*define).*?\b{re.escape(n)}\s*\(", body)
+            for n in discovered
+        )
         ok = bool(
             RECV_ADDR_ASSIGN_RE.search(body)
-            or COMMON_ASSIGN_MACRO_RE.search(body)
+            or has_discovered_inv
             or (GET_TILING_DATA_RE.search(body) and RECV_ADDR_ASSIGN_RE.search(body))
         )
         if not ok and _SET_CALL_RE.search(body) and not RECV_ADDR_ASSIGN_RE.search(body):
@@ -80,8 +85,13 @@ def validate_relation_evidence(
         has_set = bool(_SET_CALL_RE.search(body))
         if GET_TILING_DATA_RE.search(body) and not has_set:
             return _result(authentic=True, sufficient=False, reason_code="get_tiling_data_not_writes")
-        if COMMON_ASSIGN_MACRO_RE.search(body) and not has_set:
-            return _result(authentic=True, sufficient=False, reason_code="common_assign_not_writes")
+        discovered = list_discovered_binding_macro_names(body)
+        has_discovered_inv = any(
+            re.search(rf"(?m)^(?!\s*#\s*define).*?\b{re.escape(n)}\s*\(", body)
+            for n in discovered
+        )
+        if has_discovered_inv and not has_set:
+            return _result(authentic=True, sufficient=False, reason_code="binding_macro_not_writes")
         return _result(
             authentic=True,
             sufficient=has_set,
