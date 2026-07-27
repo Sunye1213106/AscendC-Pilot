@@ -10,8 +10,16 @@ TORCH_IMPORT_RE = re.compile(r"\b(torch|torch_npu)\b")
 ACLNN_RE = re.compile(r"\baclnn[A-Za-z0-9_]*\b|\bacl(rt|nn)[A-Za-z0-9_]*\b")
 
 
-def fingerprint_consumer(consumer_root: Path) -> dict[str, Any]:
-    """Classify test scripts as torch / aclnn / unknown; collect call sites."""
+def fingerprint_consumer(
+    consumer_root: Path,
+    *,
+    out_root: Path | None = None,
+) -> dict[str, Any]:
+    """Classify test scripts as torch / aclnn / unknown; collect call sites.
+
+    When ``out_root`` is provided, reuse ``consumer_index`` text cache to avoid
+    a second full filesystem scan / AST walk.
+    """
     root = Path(consumer_root)
     kind = "unknown"
     sites: list[dict[str, Any]] = []
@@ -19,6 +27,65 @@ def fingerprint_consumer(consumer_root: Path) -> dict[str, Any]:
     acl_hits = 0
     if not root.is_dir():
         return {"consumer_kind": kind, "api_call_sites": sites}
+
+    text_by_rel: dict[str, str] | None = None
+    if out_root is not None:
+        try:
+            from .consumer_index import load_or_build_consumer_index
+
+            idx = load_or_build_consumer_index(out_root, root)
+            text_by_rel = dict(idx.text_cache)
+        except Exception:  # noqa: BLE001
+            text_by_rel = None
+
+    if text_by_rel is not None:
+        for rel in sorted(text_by_rel):
+            if not rel.endswith(".py"):
+                continue
+            text = text_by_rel[rel]
+            if TORCH_IMPORT_RE.search(text):
+                torch_hits += 1
+                sites.append({"path": rel, "kind": "torch", "symbol": "torch"})
+            for match in ACLNN_RE.finditer(text):
+                acl_hits += 1
+                sites.append(
+                    {
+                        "path": rel,
+                        "kind": "aclnn",
+                        "symbol": match.group(0),
+                        "line": text[: match.start()].count("\n") + 1,
+                    }
+                )
+            try:
+                tree = ast.parse(text)
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Compare):
+                    for comp in node.comparators:
+                        if isinstance(comp, ast.Constant) and isinstance(comp.value, str) and comp.value.strip():
+                            sites.append(
+                                {
+                                    "path": rel,
+                                    "kind": "string_literal",
+                                    "value": comp.value,
+                                    "line": getattr(node, "lineno", None),
+                                }
+                            )
+        if acl_hits and not torch_hits:
+            kind = "aclnn"
+        elif torch_hits and not acl_hits:
+            kind = "torch"
+        elif torch_hits and acl_hits:
+            kind = "mixed"
+        return {
+            "consumer_kind": kind,
+            "api_call_sites": sites[:200],
+            "torch_hits": torch_hits,
+            "aclnn_hits": acl_hits,
+            "index_reused": True,
+        }
+
     for path in sorted(root.rglob("*.py")):
         if any(part.startswith(".") or part in {"__pycache__", "venv", ".venv"} for part in path.parts):
             continue
@@ -67,6 +134,7 @@ def build_binding_inventory(
     snapshot_files: dict[str, Any] | None,
     consumer_root: Path | None,
     binding_gaps: list[dict[str, Any]] | None = None,
+    out_root: Path | None = None,
 ) -> dict[str, Any]:
     columns = list(schema.get("columns") or [])
     fields = [f for f in (schema.get("fields") or []) if isinstance(f, dict)]
@@ -115,7 +183,11 @@ def build_binding_inventory(
                     "input_derivable": idv,
                 }
 
-    fingerprint = fingerprint_consumer(consumer_root) if consumer_root else {"consumer_kind": "unknown", "api_call_sites": []}
+    fingerprint = (
+        fingerprint_consumer(consumer_root, out_root=out_root)
+        if consumer_root
+        else {"consumer_kind": "unknown", "api_call_sites": []}
+    )
     doc_candidates = _find_doc_candidates(consumer_root) if consumer_root else []
 
     gaps = list(binding_gaps or [])

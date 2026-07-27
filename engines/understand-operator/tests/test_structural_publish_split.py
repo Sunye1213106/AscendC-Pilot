@@ -105,14 +105,17 @@ def test_full_mode_publishes_products(layered_repo: tuple[Path, str], monkeypatc
         "uo.scripts.build_layered_kb.reconcile_bridge",
         lambda *a, **k: {"bridge_nodes": [], "bridge_edges": [], "unresolved": [], "diagnostics": []},
     )
-    monkeypatch.setattr(
-        "uo.scripts.publish_kb_products.publish_kb_products",
-        lambda *a, **k: {
+    publish_calls: list[dict] = []
+
+    def _fake_publish(*a, **k):  # type: ignore[no-untyped-def]
+        publish_calls.append({"args": a, "kwargs": k})
+        return {
             "ok": True,
             "kb_graph": {"status": "ok", "entity_count": 1, "relation_count": 0},
             "human_views": {"keys_table": {"key_count": 0}, "ktpl_count": 0},
-        },
-    )
+        }
+
+    monkeypatch.setattr("uo.scripts.publish_kb_products.publish_kb_products", _fake_publish)
 
     graph = build_layered_kb(
         repo,
@@ -122,5 +125,7 @@ def test_full_mode_publishes_products(layered_repo: tuple[Path, str], monkeypatc
         mode="full",
         parallel=False,
     )
-    assert graph.get("stats", {}).get("kb_graph", {}).get("status") == "ok"
+    # Publish stats live in publish_receipt.yaml, not structural operator_graph.stats.
+    assert publish_calls, "full mode must call publish_kb_products"
+    assert "kb_graph" not in (graph.get("stats") or {})
     assert graph.get("stats", {}).get("build_mode") == "full"

@@ -224,6 +224,7 @@ def tg_contract(
         snapshot_files=files,
         consumer_root=consumer_root,
         binding_gaps=binding_gaps,
+        out_root=out_root,
     )
     write_yaml(paths["dir"] / "binding_inventory.yaml", inventory)
     evidence["consumer_kind"] = inventory.get("consumer_kind")

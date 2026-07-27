@@ -44,17 +44,38 @@ def write_yaml(path: Path, data: dict[str, Any]) -> None:
     path.write_text(_render_yaml(data), encoding="utf-8")
 
 
+def _content_hash_path(path: Path) -> Path:
+    return path.with_name(path.name + ".content-hash")
+
+
+def _stable_payload_hash(data: dict[str, Any]) -> str:
+    import hashlib
+    import json
+
+    raw = json.dumps(data, sort_keys=True, default=str, ensure_ascii=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 def write_yaml_if_changed(path: Path, data: dict[str, Any]) -> bool:
-    """Write YAML only when rendered content differs. Returns True if written."""
-    text = _render_yaml(data)
-    if path.is_file():
+    """Write YAML only when structured content hash differs. Returns True if written.
+
+    Uses a sidecar ``*.content-hash`` to skip ``safe_dump`` when payload is unchanged.
+    """
+    digest = _stable_payload_hash(data)
+    hash_path = _content_hash_path(path)
+    if path.is_file() and hash_path.is_file():
         try:
-            if path.read_text(encoding="utf-8") == text:
+            if hash_path.read_text(encoding="utf-8").strip() == digest:
                 return False
         except OSError:
             pass
+    text = _render_yaml(data)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+    try:
+        hash_path.write_text(digest + "\n", encoding="utf-8")
+    except OSError:
+        pass
     return True
 
 

@@ -256,17 +256,26 @@ def _fast_recheck_closure(
         out["recoveries"] = list(routed.get("recoveries") or [])
         out["reason_codes"] = list(routed.get("reason_codes") or [])
 
-    _write_yaml_if_changed(
-        summary_path,
+    # Merge into unified closure_summary schema (structural + recheck fields).
+    merged = dict(previous) if isinstance(previous, dict) else {}
+    merged.update(
         {
-            "version": 1,
+            "version": 2,
             "op_name": op_name,
             "run_id": run_id,
+            "host_main_chain": closure.get("host_main_chain") or merged.get("host_main_chain"),
+            "kernel_main_chain": closure.get("kernel_main_chain") or merged.get("kernel_main_chain"),
+            "blocking_gap_count": blocking,
+            "unconsumed_patch_count": unconsumed,
+            "closure": closure or merged.get("closure") or {},
             "input_fingerprint": input_fp,
             "integrity_policy": "read_existing_only; full check runs in export_integrity",
             "result": out,
-        },
+        }
     )
+    if "graph_hash" not in merged:
+        merged["graph_hash"] = previous.get("graph_hash") or ""
+    _write_yaml_if_changed(summary_path, merged)
     return out
 
 

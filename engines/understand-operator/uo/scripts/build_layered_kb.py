@@ -39,12 +39,32 @@ def _graph_content_hash(graph: dict[str, Any]) -> str:
     import hashlib
     import json
 
-    payload = {
-        "node_count": len(graph.get("nodes") or []),
-        "edge_count": len(graph.get("edges") or []),
-        "unresolved_count": len(graph.get("unresolved") or []),
-        "stats": graph.get("stats") or {},
-    }
+    nodes = sorted(
+        (
+            str(n.get("id") or ""),
+            str(n.get("layer") or ""),
+            str(n.get("node_type") or n.get("kind") or ""),
+            str(n.get("name") or ""),
+        )
+        for n in (graph.get("nodes") or [])
+        if isinstance(n, dict)
+    )
+    edges = sorted(
+        (
+            str(e.get("id") or ""),
+            str(e.get("type") or e.get("edge_type") or ""),
+            str(e.get("source") or e.get("source_id") or ""),
+            str(e.get("target") or e.get("target_id") or ""),
+        )
+        for e in (graph.get("edges") or [])
+        if isinstance(e, dict)
+    )
+    unresolved = sorted(
+        (str(u.get("id") or ""), str(u.get("kind") or ""), str(u.get("severity") or ""))
+        for u in (graph.get("unresolved") or [])
+        if isinstance(u, dict)
+    )
+    payload = {"nodes": nodes, "edges": edges, "unresolved": unresolved}
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:24]
 
 
@@ -55,23 +75,30 @@ def _write_closure_summary(
     entrypoint_graph: dict[str, Any],
     graph: dict[str, Any],
     run_id: str = "",
+    input_fingerprint: str = "",
+    result: dict[str, Any] | None = None,
 ) -> None:
+    """Unified closure_summary schema for structural build + recheck fast path."""
+    path = uo_root / "ir" / "closure_summary.yaml"
+    prev = read_yaml(path) or {}
     closure = entrypoint_graph.get("closure") or {}
     stats = graph.get("stats") or {}
-    _write_ir_yaml(
-        uo_root / "ir" / "closure_summary.yaml",
-        {
-            "version": 1,
-            "op_name": op_name,
-            "run_id": run_id,
-            "host_main_chain": closure.get("host_main_chain"),
-            "kernel_main_chain": closure.get("kernel_main_chain"),
-            "blocking_gap_count": stats.get("blocking_gap_count"),
-            "unconsumed_patch_count": stats.get("unconsumed_patch_count"),
-            "graph_hash": _graph_content_hash(graph),
-            "closure": closure,
-        },
-    )
+    doc = {
+        "version": 2,
+        "op_name": op_name,
+        "run_id": run_id or prev.get("run_id") or "",
+        "host_main_chain": closure.get("host_main_chain"),
+        "kernel_main_chain": closure.get("kernel_main_chain"),
+        "blocking_gap_count": stats.get("blocking_gap_count"),
+        "unconsumed_patch_count": stats.get("unconsumed_patch_count"),
+        "graph_hash": _graph_content_hash(graph),
+        "closure": closure,
+        "input_fingerprint": input_fingerprint or prev.get("input_fingerprint") or "",
+        "integrity_policy": prev.get("integrity_policy")
+        or "read_existing_only; full check runs in export_integrity",
+        "result": result if result is not None else prev.get("result") or {},
+    }
+    _write_ir_yaml(path, doc)
 
 
 def build_layered_kb(
@@ -403,7 +430,6 @@ def build_layered_kb(
             ),
         },
     }
-    _write_ir_yaml(ir_dir / "operator_graph.yaml", graph)
     _write_ir_yaml(ir_dir / "unresolved.yaml", {"version": 1, "op_name": op_name, "items": unresolved})
 
     # Classify input_derivable from graph markers (no key_cards product).
@@ -415,52 +441,7 @@ def build_layered_kb(
     except Exception as exc:  # noqa: BLE001
         graph.setdefault("stats", {})["input_derivable"] = {"status": "error", "error": str(exc)}
 
-    manifest = read_yaml(uo_root / "manifest.yaml") or {}
-    run_id = str(manifest.get("current_run_id") or manifest.get("current_run") or "")
-    _write_closure_summary(
-        uo_root,
-        op_name=op_name,
-        entrypoint_graph=entrypoint_graph,
-        graph=graph,
-        run_id=run_id,
-    )
-
-    if build_mode == "full":
-        from uo.scripts.publish_kb_products import publish_kb_products
-
-        t_export = time.perf_counter()
-        publish_stats = publish_kb_products(
-            repo_root,
-            op_name,
-            graph=graph,
-            write=True,
-            include_testcase_contract=True,
-            include_integrity=False,
-        )
-        kb_graph_stats = publish_stats.get("kb_graph") if isinstance(publish_stats.get("kb_graph"), dict) else {}
-        human_stats = publish_stats.get("human_views") if isinstance(publish_stats.get("human_views"), dict) else {}
-        graph.setdefault("stats", {})["kb_graph"] = {
-            "entity_count": kb_graph_stats.get("entity_count"),
-            "relation_count": kb_graph_stats.get("relation_count"),
-            "status": kb_graph_stats.get("status"),
-        }
-        graph.setdefault("stats", {})["human_views"] = {
-            "key_count": (human_stats.get("keys_table") or {}).get("key_count")
-            if isinstance(human_stats.get("keys_table"), dict)
-            else None,
-            "ktpl_count": human_stats.get("ktpl_count"),
-            "status": "ok" if human_stats else "skipped",
-        }
-        timing_ms["yaml_export"] = int((time.perf_counter() - t_export) * 1000)
-    else:
-        timing_ms["yaml_export"] = 0
-    timing_ms["total"] = int((time.perf_counter() - build_t0) * 1000)
-    graph.setdefault("stats", {})["timing_ms"] = timing_ms
-    graph.setdefault("stats", {})["macro_materialization"] = macro_materialization
-    graph.setdefault("stats", {})["build_mode"] = build_mode
-    _write_ir_yaml(ir_dir / "build_layered_timing.yaml", {"version": 1, "timing_ms": timing_ms, "mode": build_mode})
-
-    # Seed rebuild + layer fingerprints so post-adjudicate rebuild can skip / select layers.
+    # Seed rebuild + layer fingerprints before final structural graph write.
     try:
         from uo.scripts.evidence_score import require_source_snapshot
         from uo.scripts.semantic_resolution_ledger import (
@@ -489,6 +470,42 @@ def build_layered_kb(
             graph.setdefault("stats", {})["layer_input_fingerprints"] = layer_fps
     except Exception:  # noqa: BLE001
         pass
+
+    timing_ms["yaml_export"] = 0
+    timing_ms["total"] = int((time.perf_counter() - build_t0) * 1000)
+    graph.setdefault("stats", {})["timing_ms"] = timing_ms
+    graph.setdefault("stats", {})["macro_materialization"] = macro_materialization
+    graph.setdefault("stats", {})["build_mode"] = build_mode
+    # Write structural operator_graph once after all structural stats are filled.
+    _write_ir_yaml(ir_dir / "operator_graph.yaml", graph)
+    _write_ir_yaml(ir_dir / "build_layered_timing.yaml", {"version": 1, "timing_ms": timing_ms, "mode": build_mode})
+
+    manifest = read_yaml(uo_root / "manifest.yaml") or {}
+    run_id = str(manifest.get("current_run_id") or manifest.get("current_run") or "")
+    _write_closure_summary(
+        uo_root,
+        op_name=op_name,
+        entrypoint_graph=entrypoint_graph,
+        graph=graph,
+        run_id=run_id,
+    )
+
+    if build_mode == "full":
+        from uo.scripts.publish_kb_products import publish_kb_products
+
+        t_export = time.perf_counter()
+        publish_kb_products(
+            repo_root,
+            op_name,
+            graph=graph,
+            write=True,
+            include_testcase_contract=True,
+            include_integrity=False,
+        )
+        timing_ms["yaml_export"] = int((time.perf_counter() - t_export) * 1000)
+        timing_ms["total"] = int((time.perf_counter() - build_t0) * 1000)
+        graph.setdefault("stats", {})["timing_ms"] = timing_ms
+        # Publish stats stay in publish_receipt.yaml — do not mutate structural graph on disk.
 
     return graph
 

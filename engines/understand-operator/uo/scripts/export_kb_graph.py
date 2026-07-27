@@ -38,6 +38,25 @@ HASH_PATHS = (
 def export_kb_graph(repo_root: Path, op_name: str, *, write: bool = True) -> dict[str, Any]:
     uo_root = existing_operator_root(repo_root, op_name)
     graph_path = uo_root / "ir" / "operator_graph.yaml"
+    if not graph_path.is_file():
+        raise FileNotFoundError(f"missing {graph_path}; run /uo-init extract first")
+
+    source_hashes = _source_hashes(uo_root)
+    db_path = uo_root / "indexes" / "kb_graph.sqlite"
+    # Skip before expensive YAML→entity materialization when hashes match.
+    if write and _should_skip_sqlite_rebuild(db_path, source_hashes):
+        return {
+            "op_name": op_name,
+            "db_path": str(db_path),
+            "entity_count": None,
+            "relation_count": None,
+            "alias_count": None,
+            "source_hashes": source_hashes,
+            "schema_version": SCHEMA_VERSION,
+            "status": "skipped",
+            "skip_reason": "source_hashes_unchanged",
+        }
+
     graph = read_yaml(graph_path)
     if not graph:
         raise FileNotFoundError(f"missing {graph_path}; run /uo-init extract first")
@@ -60,8 +79,6 @@ def export_kb_graph(repo_root: Path, op_name: str, *, write: bool = True) -> dic
             f"sample={sample}"
         )
     aliases = _collect_aliases(uo_root, entities)
-    source_hashes = _source_hashes(uo_root)
-    db_path = uo_root / "indexes" / "kb_graph.sqlite"
 
     payload = {
         "op_name": op_name,
@@ -75,11 +92,6 @@ def export_kb_graph(repo_root: Path, op_name: str, *, write: bool = True) -> dic
     if not write:
         return payload
 
-    if _should_skip_sqlite_rebuild(db_path, source_hashes):
-        payload["status"] = "skipped"
-        payload["skip_reason"] = "source_hashes_unchanged"
-        return payload
-
     db_path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix="kb_graph.", suffix=".sqlite", dir=str(db_path.parent))
     os.close(fd)
@@ -91,7 +103,9 @@ def export_kb_graph(repo_root: Path, op_name: str, *, write: bool = True) -> dic
             _insert_relations(db, relations)
             _insert_aliases(db, aliases)
             _create_indexes(db)
-            db.execute("PRAGMA integrity_check")
+            check_row = db.execute("PRAGMA integrity_check").fetchone()
+            if not check_row or str(check_row[0]).lower() != "ok":
+                raise RuntimeError(f"sqlite integrity_check failed: {check_row}")
             meta = {
                 "schema_version": SCHEMA_VERSION,
                 "built_at": datetime.now(tz=timezone.utc).isoformat(),
