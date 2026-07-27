@@ -6,8 +6,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ascendc_pilot.actions import runtime as _runtime
-from ascendc_pilot.actions.fast_tg_engines import invoke_fast_tg_engine
-from ascendc_pilot.actions.fast_uo_engines import invoke_fast_uo_engine
+from ascendc_pilot.actions.fast_pipeline_engines import invoke_fast_pipeline_engine
 from ascendc_pilot.actions.tg_primary import (
     PRIMARY_TG_ACTIONS,
     materialize_primary_decision,
@@ -53,27 +52,12 @@ def _with_fast_engines(call: RuntimeCall) -> dict[str, Any]:
         *,
         ctx: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        def tg_or_canonical(
-            inner_root: Path,
-            inner_workflow: str,
-            inner_action: str,
-            *,
-            ctx: dict[str, Any] | None = None,
-        ) -> dict[str, Any]:
-            return invoke_fast_tg_engine(
-                Path(inner_root),
-                inner_workflow,
-                inner_action,
-                ctx=ctx,
-                fallback=original,
-            )
-
-        return invoke_fast_uo_engine(
+        return invoke_fast_pipeline_engine(
             Path(root),
             workflow_id,
             engine_action_id,
             ctx=ctx,
-            fallback=tg_or_canonical,
+            fallback=original,
         )
 
     _runtime.invoke_engine = routed
