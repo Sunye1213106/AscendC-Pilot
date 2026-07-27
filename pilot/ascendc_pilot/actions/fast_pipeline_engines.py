@@ -1,0 +1,387 @@
+"""Cross-workflow deterministic performance router.
+
+The router composes the existing UO semantic fast paths with publication deferral,
+TG content-addressed reuse, and fresh SQLite reuse. It never changes the semantic
+extractors themselves; workers still produce the same Host/Kernel/KEY/Bridge facts.
+"""
+from __future__ import annotations
+
+import subprocess
+import time
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Callable, Iterator
+
+from ascendc_pilot.actions.fast_tg_engines import invoke_fast_tg_engine
+from ascendc_pilot.actions.fast_uo_engines import invoke_fast_uo_engine
+
+EngineFallback = Callable[..., dict[str, Any]]
+_STRUCTURAL_UO_ACTIONS = frozenset({"detect_score_pre", "extract_plan", "rebuild_from_ledger"})
+
+
+def _deferred_stats(name: str) -> dict[str, Any]:
+    return {"status": "deferred", "deferred_to": "export_integrity", "product": name}
+
+
+def _read_yaml(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        import yaml
+
+        loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+        value = yaml.load(path.read_text(encoding="utf-8"), Loader=loader) or {}
+        return value if isinstance(value, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _git_head(project_root: Path) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result.stdout.strip() if result.returncode == 0 else ""
+    except OSError:
+        return ""
+
+
+def _update_documents(
+    project_root: Path, *, require_plan: bool = False
+) -> tuple[Path, dict[str, Any], dict[str, Any], bool]:
+    from ascendc_pilot.paths import uo_root
+
+    uo = uo_root(project_root)
+    change_set = _read_yaml(uo / "diff" / "change_set.yaml")
+    update_plan = _read_yaml(uo / "summary" / "update_plan.yaml")
+    head = _git_head(project_root)
+    recorded = str(change_set.get("head_revision") or "")
+    fresh = bool(change_set and head and recorded == head)
+    if require_plan:
+        fresh = fresh and bool(update_plan) and str(update_plan.get("head_revision") or "") == head
+    return uo, change_set, update_plan, fresh
+
+
+def _invoke_update_plan(
+    project_root: Path,
+    workflow_id: str,
+    action_id: str,
+    ctx: dict[str, Any],
+    *,
+    fallback: EngineFallback,
+) -> dict[str, Any]:
+    _uo, change_set, _plan, fresh = _update_documents(project_root, require_plan=False)
+    if not fresh:
+        return fallback(project_root, workflow_id, action_id, ctx=ctx)
+    try:
+        import uo.scripts.detect_kb_changes as detect_mod
+    except ImportError:
+        return fallback(project_root, workflow_id, action_id, ctx=ctx)
+    original = detect_mod.detect_kb_changes
+    detect_mod.detect_kb_changes = lambda *_args, **_kwargs: dict(change_set)
+    try:
+        out = fallback(project_root, workflow_id, action_id, ctx=ctx)
+    finally:
+        detect_mod.detect_kb_changes = original
+    if isinstance(out, dict):
+        out = dict(out)
+        out["change_set_cache_hit"] = True
+    return out
+
+
+def _invoke_update_apply(
+    project_root: Path,
+    workflow_id: str,
+    action_id: str,
+    ctx: dict[str, Any],
+    *,
+    fallback: EngineFallback,
+) -> dict[str, Any]:
+    _uo, change_set, update_plan, fresh = _update_documents(project_root, require_plan=True)
+    if not fresh or not update_plan:
+        return fallback(project_root, workflow_id, action_id, ctx=ctx)
+    try:
+        import uo.scripts.update_operator as update_mod
+    except ImportError:
+        return fallback(project_root, workflow_id, action_id, ctx=ctx)
+
+    originals = {
+        "detect_kb_changes": update_mod.detect_kb_changes,
+        "plan_kb_update": update_mod.plan_kb_update,
+        "update_operator": update_mod.update_operator,
+        "_safe_export_kb_graph": update_mod._safe_export_kb_graph,
+        "_safe_export_human_views": update_mod._safe_export_human_views,
+    }
+
+    def structural_update(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        kwargs["skip_validate"] = True
+        return originals["update_operator"](*args, **kwargs)
+
+    update_mod.detect_kb_changes = lambda *_args, **_kwargs: dict(change_set)
+    update_mod.plan_kb_update = lambda *_args, **_kwargs: dict(update_plan)
+    update_mod.update_operator = structural_update
+    update_mod._safe_export_kb_graph = lambda *_args, **_kwargs: _deferred_stats("kb_graph.sqlite")
+    update_mod._safe_export_human_views = lambda *_args, **_kwargs: _deferred_stats("human_views")
+    state: dict[str, Any] = {"active": False, "deferred_products": []}
+    try:
+        with _defer_uo_publish_products() as state:
+            out = fallback(project_root, workflow_id, action_id, ctx=ctx)
+    finally:
+        for name, original in originals.items():
+            setattr(update_mod, name, original)
+    if isinstance(out, dict):
+        out = dict(out)
+        out.update(
+            {
+                "change_set_cache_hit": True,
+                "update_plan_cache_hit": True,
+                "validation_deferred": True,
+                "publish_deferred": bool(state.get("active")),
+                "deferred_products": sorted(
+                    set((state.get("deferred_products") or []) + ["kb_graph.sqlite", "human_views"])
+                ),
+            }
+        )
+    return out
+
+
+def _invoke_update_diff_summary(
+    project_root: Path,
+    workflow_id: str,
+    action_id: str,
+    ctx: dict[str, Any],
+    *,
+    fallback: EngineFallback,
+) -> dict[str, Any]:
+    _uo, change_set, update_plan, fresh = _update_documents(project_root, require_plan=True)
+    if not fresh or not update_plan:
+        return fallback(project_root, workflow_id, action_id, ctx=ctx)
+    try:
+        import uo.scripts.detect_kb_changes as detect_mod
+        import uo.scripts.plan_kb_update as plan_mod
+    except ImportError:
+        return fallback(project_root, workflow_id, action_id, ctx=ctx)
+    original_detect = detect_mod.detect_kb_changes
+    original_plan = plan_mod.plan_kb_update
+    detect_mod.detect_kb_changes = lambda *_args, **_kwargs: dict(change_set)
+    plan_mod.plan_kb_update = lambda *_args, **_kwargs: dict(update_plan)
+    try:
+        out = fallback(project_root, workflow_id, action_id, ctx=ctx)
+    finally:
+        detect_mod.detect_kb_changes = original_detect
+        plan_mod.plan_kb_update = original_plan
+    if isinstance(out, dict):
+        out = dict(out)
+        out["change_set_cache_hit"] = True
+        out["update_plan_cache_hit"] = True
+    return out
+
+
+@contextmanager
+def _defer_uo_publish_products() -> Iterator[dict[str, Any]]:
+    """Suppress publish-only work while retaining structural graph construction."""
+
+    patched: list[tuple[Any, str, Any]] = []
+    state: dict[str, Any] = {"active": False, "deferred_products": []}
+    try:
+        import uo.scripts.build_layered_kb as layered
+        import uo.scripts.export_human_views as human
+        import uo.scripts.export_kb_graph as sqlite_export
+        from uo.scripts._ir_io import write_yaml_if_changed
+    except ImportError:
+        yield state
+        return
+
+    def patch(module: Any, name: str, replacement: Any) -> None:
+        original = getattr(module, name)
+        patched.append((module, name, original))
+        setattr(module, name, replacement)
+
+    def defer_sqlite(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        state["deferred_products"].append("kb_graph.sqlite")
+        return {
+            **_deferred_stats("kb_graph.sqlite"),
+            "entity_count": None,
+            "relation_count": None,
+        }
+
+    def defer_human(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        state["deferred_products"].append("human_views")
+        return {
+            **_deferred_stats("human_views"),
+            "keys_table": {"key_count": None},
+            "ktpl_count": None,
+        }
+
+    try:
+        patch(sqlite_export, "export_kb_graph", defer_sqlite)
+        patch(human, "export_human_views", defer_human)
+        # build_layered_kb keeps a module-local alias. Content-aware writes remove
+        # duplicate bridge writes and unchanged graph rewrites.
+        patch(layered, "write_yaml", write_yaml_if_changed)
+        state["active"] = True
+        yield state
+    finally:
+        for module, name, original in reversed(patched):
+            setattr(module, name, original)
+
+
+def _invoke_structural(
+    project_root: Path,
+    workflow_id: str,
+    action_id: str,
+    ctx: dict[str, Any],
+    *,
+    fallback: EngineFallback,
+) -> dict[str, Any]:
+    t0 = time.perf_counter()
+    with _defer_uo_publish_products() as state:
+        result = fallback(project_root, workflow_id, action_id, ctx=ctx)
+    if not isinstance(result, dict):
+        return result
+    out = dict(result)
+    if state.get("active"):
+        out["build_mode"] = "structural" if not out.get("rebuild_skipped") else "noop"
+        out["publish_deferred"] = True
+        out["deferred_products"] = sorted(set(state.get("deferred_products") or []))
+        timing = dict(out.get("timing_ms") or {})
+        timing.setdefault("pipeline_router", int((time.perf_counter() - t0) * 1000))
+        out["timing_ms"] = timing
+    return out
+
+
+@contextmanager
+def _reuse_fresh_sqlite_index(project_root: Path, ctx: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """Skip SQLite rebuild when its recorded YAML hashes are already fresh."""
+
+    del ctx
+    state: dict[str, Any] = {"cache_hit": False}
+    try:
+        import sqlite3
+
+        import uo.scripts.export_kb_graph as export_mod
+        from ascendc_pilot.paths import uo_root
+        from uo.scripts.kb_graph_query import index_status
+    except ImportError:
+        yield state
+        return
+
+    uo = uo_root(project_root)
+    db_path = uo / "indexes" / "kb_graph.sqlite"
+    original = export_mod.export_kb_graph
+
+    def cached_or_export(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        try:
+            status = index_status(uo)
+        except Exception:  # noqa: BLE001
+            status = {}
+        if db_path.is_file() and status.get("index_status") == "fresh":
+            meta: dict[str, str] = {}
+            try:
+                with sqlite3.connect(db_path) as db:
+                    meta = {str(k): str(v) for k, v in db.execute("SELECT key, value FROM metadata")}
+            except Exception:  # noqa: BLE001
+                meta = {}
+            state["cache_hit"] = True
+            return {
+                "status": "ok",
+                "cache_hit": True,
+                "db_path": str(db_path),
+                "entity_count": int(meta.get("entity_count") or 0),
+                "relation_count": int(meta.get("relation_count") or 0),
+                "alias_count": int(meta.get("alias_count") or 0),
+                "schema_version": meta.get("schema_version") or "1",
+                "source_hashes": status.get("source_hashes") or {},
+            }
+        return original(*args, **kwargs)
+
+    export_mod.export_kb_graph = cached_or_export
+    try:
+        yield state
+    finally:
+        export_mod.export_kb_graph = original
+
+
+def _invoke_export_integrity(
+    project_root: Path,
+    workflow_id: str,
+    action_id: str,
+    ctx: dict[str, Any],
+    *,
+    fallback: EngineFallback,
+) -> dict[str, Any]:
+    with _reuse_fresh_sqlite_index(project_root, ctx) as state:
+        result = fallback(project_root, workflow_id, action_id, ctx=ctx)
+    if isinstance(result, dict):
+        result = dict(result)
+        result["sqlite_cache_hit"] = bool(state.get("cache_hit"))
+    return result
+
+
+def invoke_fast_pipeline_engine(
+    project_root: Path,
+    workflow_id: str,
+    action_id: str,
+    *,
+    ctx: dict[str, Any] | None,
+    fallback: EngineFallback,
+) -> dict[str, Any]:
+    """Compose UO/TG fast paths while preserving the canonical fallback."""
+
+    payload = dict(ctx or {})
+
+    def tg_or_canonical(
+        inner_root: Path,
+        inner_workflow: str,
+        inner_action: str,
+        *,
+        ctx: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return invoke_fast_tg_engine(
+            Path(inner_root),
+            inner_workflow,
+            inner_action,
+            ctx=ctx,
+            fallback=fallback,
+        )
+
+    def uo_then_tg(
+        inner_root: Path,
+        inner_workflow: str,
+        inner_action: str,
+        *,
+        ctx: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return invoke_fast_uo_engine(
+            Path(inner_root),
+            inner_workflow,
+            inner_action,
+            ctx=ctx,
+            fallback=tg_or_canonical,
+        )
+
+    if workflow_id == "uo-update" and action_id == "plan_update":
+        return _invoke_update_plan(
+            Path(project_root), workflow_id, action_id, payload, fallback=uo_then_tg
+        )
+    if workflow_id == "uo-update" and action_id == "apply_update":
+        return _invoke_update_apply(
+            Path(project_root), workflow_id, action_id, payload, fallback=uo_then_tg
+        )
+    if workflow_id == "uo-update" and action_id == "diff_summary":
+        return _invoke_update_diff_summary(
+            Path(project_root), workflow_id, action_id, payload, fallback=uo_then_tg
+        )
+    if workflow_id in {"uo-init", "uo-update"} and action_id == "export_integrity":
+        return _invoke_export_integrity(
+            Path(project_root), workflow_id, action_id, payload, fallback=uo_then_tg
+        )
+    if workflow_id == "uo-init" and action_id in _STRUCTURAL_UO_ACTIONS:
+        return _invoke_structural(
+            Path(project_root), workflow_id, action_id, payload, fallback=uo_then_tg
+        )
+    return uo_then_tg(project_root, workflow_id, action_id, ctx=payload)
