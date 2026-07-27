@@ -33,13 +33,29 @@ def read_yaml(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _render_yaml(data: dict[str, Any]) -> str:
+    require_yaml()
+    return yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=120)
+
+
 def write_yaml(path: Path, data: dict[str, Any]) -> None:
     require_yaml()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=120),
-        encoding="utf-8",
-    )
+    path.write_text(_render_yaml(data), encoding="utf-8")
+
+
+def write_yaml_if_changed(path: Path, data: dict[str, Any]) -> bool:
+    """Write YAML only when rendered content differs. Returns True if written."""
+    text = _render_yaml(data)
+    if path.is_file():
+        try:
+            if path.read_text(encoding="utf-8") == text:
+                return False
+        except OSError:
+            pass
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return True
 
 
 def atomic_write_yaml(path: Path, data: dict[str, Any]) -> None:

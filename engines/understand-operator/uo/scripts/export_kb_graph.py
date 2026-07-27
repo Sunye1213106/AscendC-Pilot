@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sqlite3
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -73,30 +75,63 @@ def export_kb_graph(repo_root: Path, op_name: str, *, write: bool = True) -> dic
     if not write:
         return payload
 
+    if _should_skip_sqlite_rebuild(db_path, source_hashes):
+        payload["status"] = "skipped"
+        payload["skip_reason"] = "source_hashes_unchanged"
+        return payload
+
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    if db_path.exists():
-        db_path.unlink()
-    with sqlite3.connect(db_path) as db:
-        _init_schema(db)
-        _insert_entities(db, entities)
-        _insert_relations(db, relations)
-        _insert_aliases(db, aliases)
-        meta = {
-            "schema_version": SCHEMA_VERSION,
-            "built_at": datetime.now(tz=timezone.utc).isoformat(),
-            "op_name": op_name,
-            "source_hashes": json.dumps(source_hashes, sort_keys=True),
-            "entity_count": str(len(entities)),
-            "relation_count": str(len(relations)),
-            "alias_count": str(len(aliases)),
-        }
-        db.executemany("INSERT INTO metadata(key, value) VALUES (?, ?)", list(meta.items()))
-        db.commit()
+    fd, tmp_name = tempfile.mkstemp(prefix="kb_graph.", suffix=".sqlite", dir=str(db_path.parent))
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    try:
+        with sqlite3.connect(tmp_path) as db:
+            _init_schema_tables(db)
+            _insert_entities(db, entities)
+            _insert_relations(db, relations)
+            _insert_aliases(db, aliases)
+            _create_indexes(db)
+            db.execute("PRAGMA integrity_check")
+            meta = {
+                "schema_version": SCHEMA_VERSION,
+                "built_at": datetime.now(tz=timezone.utc).isoformat(),
+                "op_name": op_name,
+                "source_hashes": json.dumps(source_hashes, sort_keys=True),
+                "entity_count": str(len(entities)),
+                "relation_count": str(len(relations)),
+                "alias_count": str(len(aliases)),
+            }
+            db.executemany("INSERT INTO metadata(key, value) VALUES (?, ?)", list(meta.items()))
+            db.commit()
+        os.replace(tmp_path, db_path)
+    except Exception:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
     payload["status"] = "ok"
     return payload
 
 
-def _init_schema(db: sqlite3.Connection) -> None:
+def _should_skip_sqlite_rebuild(db_path: Path, source_hashes: dict[str, str]) -> bool:
+    if not db_path.is_file():
+        return False
+    try:
+        with sqlite3.connect(db_path) as db:
+            row = db.execute(
+                "SELECT value FROM metadata WHERE key = ?",
+                ("source_hashes",),
+            ).fetchone()
+        if not row:
+            return False
+        prev = json.loads(str(row[0] or "{}"))
+        return isinstance(prev, dict) and prev == source_hashes
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _init_schema_tables(db: sqlite3.Connection) -> None:
     db.executescript(
         """
         CREATE TABLE entities (
@@ -125,6 +160,13 @@ def _init_schema(db: sqlite3.Connection) -> None:
             key TEXT PRIMARY KEY,
             value TEXT
         );
+        """
+    )
+
+
+def _create_indexes(db: sqlite3.Connection) -> None:
+    db.executescript(
+        """
         CREATE INDEX idx_entities_kind ON entities(kind);
         CREATE INDEX idx_entities_file ON entities(file_path);
         CREATE INDEX idx_relations_src ON relations(source_id);
@@ -133,6 +175,11 @@ def _init_schema(db: sqlite3.Connection) -> None:
         CREATE INDEX idx_aliases_norm ON aliases(normalized_alias);
         """
     )
+
+
+def _init_schema(db: sqlite3.Connection) -> None:
+    _init_schema_tables(db)
+    _create_indexes(db)
 
 
 def _collect_entities(uo_root: Path, graph: dict[str, Any]) -> list[dict[str, Any]]:

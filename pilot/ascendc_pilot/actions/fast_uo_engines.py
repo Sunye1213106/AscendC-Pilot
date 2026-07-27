@@ -28,18 +28,9 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 
 
 def _write_yaml_if_changed(path: Path, payload: dict[str, Any]) -> bool:
-    import yaml
+    from uo.scripts._ir_io import write_yaml_if_changed
 
-    rendered = yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
-    if path.is_file():
-        try:
-            if path.read_text(encoding="utf-8") == rendered:
-                return False
-        except OSError:
-            pass
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(rendered, encoding="utf-8")
-    return True
+    return write_yaml_if_changed(path, payload)
 
 
 def _stat_fingerprint(paths: list[Path], *, run_id: str) -> str:

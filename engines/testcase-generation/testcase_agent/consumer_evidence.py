@@ -80,6 +80,19 @@ def build_consumer_evidence(
 
     if root is None:
         warnings.append("csv consumer root not found")
+    elif out_root is not None:
+        from .consumer_index import load_or_build_consumer_index
+
+        index = load_or_build_consumer_index(out_root, root)
+        files_read = list(index.files)
+        ordered_header_candidates = list(index.header_candidates)
+        field_accesses = dict(index.field_accesses)
+        type_conversion_evidence = dict(index.type_conversions)
+        test_requirement_refs = list(index.api_calls)
+        for column, refs in field_accesses.items():
+            required_optional_evidence.setdefault(column, []).extend(
+                [r for r in refs if r.get("kind") == "required_optional"]
+            )
     else:
         for path in _bounded_scan(root):
             rel = path.relative_to(root).as_posix()
