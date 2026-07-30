@@ -1,7 +1,7 @@
 # Ascend C PR Test Agent - Python dependencies
 #
 #   pip install -r requirements.txt
-#   pip install -e "./pilot" -e "./engines/understand-operator" -e "./engines/testcase-generation[solver]"
+#   pip install -e "./engines/common" -e "./pilot" -e "./engines/understand-operator" -e "./engines/testcase-generation[solver]"
 #
 # Requires: Python >= 3.10
 

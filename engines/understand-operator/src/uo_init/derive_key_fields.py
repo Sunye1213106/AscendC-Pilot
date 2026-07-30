@@ -18,7 +18,7 @@ Nothing here is operator-specific: the substitution set comes from the Host IR
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +33,7 @@ from uo_init.predicate import (
     NormalizeError,
     PredicateNormalizer,
     REASON_OPAQUE,
+    REASON_UNMAPPED_LEAF,
     _as_operand,
     _leaf_text,
     collect_vars,
@@ -44,6 +45,72 @@ from uo_init.variable_model import VarSpec
 STATUS_DERIVED = "derived"
 STATUS_PARTIAL = "partial"
 STATUS_UNRESOLVED = "unresolved"
+
+# How faithful the derived expression is to the source, which `status` alone
+# cannot say: "derived" covers both a field pinned exactly to its inputs and one
+# whose guards were all replaced by free booleans. A test generator treating the
+# second as decided will believe it controls a dimension that nothing controls.
+EX_EXACT = "exact"
+EX_CONSTANT = "constant"
+EX_OVERAPPROX = "overapproximated"
+EX_PARTIAL = "partial"
+EX_UNRESOLVED = "unresolved"
+
+# Variables the derivation invents when it cannot decide something. Each one
+# widens the field's condition, so their presence in `value_expr` is exactly
+# what separates `exact` from `overapproximated`:
+#   VAR_UNDECIDED_  a guard that failed to normalize
+#   VAR_SCHED_      a guard on schedule position rather than on the input
+#   VAR_REACHED_    "did control actually reach this function"
+#   VAR_INIT_       "no guard matched, so the field kept its default"
+#   VAR_LOOPELEM_   an element of a container built inside a loop
+LOOPELEM_PREFIX = "VAR_LOOPELEM_"
+
+OVERAPPROX_PREFIXES = (
+    "VAR_UNDECIDED_",
+    "VAR_SCHED_",
+    "VAR_REACHED_",
+    "VAR_INIT_",
+    LOOPELEM_PREFIX,
+)
+
+
+def is_overapprox_var(var_id: str) -> bool:
+    return str(var_id).startswith(OVERAPPROX_PREFIXES)
+
+
+def classify_exactness(
+    *,
+    value_expr: dict[str, Any] | None,
+    variables: list[str],
+    unresolved: list[dict[str, str]],
+) -> tuple[str, list[str]]:
+    """Grade a derivation and list the variables standing in for what it lost."""
+    if value_expr is None:
+        return EX_UNRESOLVED, []
+    free = sorted({v for v in variables if is_overapprox_var(v)})
+    if unresolved:
+        return EX_PARTIAL, free
+    if free:
+        return EX_OVERAPPROX, free
+    if not variables:
+        return EX_CONSTANT, []
+    return EX_EXACT, []
+
+
+#: `status` is the coarse view older consumers read; keep it a projection of
+#: exactness so the two can never disagree.
+_STATUS_OF_EXACTNESS = {
+    EX_EXACT: STATUS_DERIVED,
+    EX_CONSTANT: STATUS_DERIVED,
+    EX_OVERAPPROX: STATUS_PARTIAL,
+    EX_PARTIAL: STATUS_PARTIAL,
+    EX_UNRESOLVED: STATUS_UNRESOLVED,
+}
+
+
+def status_of_exactness(exactness: str) -> str:
+    return _STATUS_OF_EXACTNESS.get(exactness, STATUS_UNRESOLVED)
 
 # Roots that say *where in the schedule* we are, not *what the input was*.
 # `coreIdx`/`blockIdx`/loop counters are traversal position: a branch on them
@@ -57,15 +124,20 @@ SCHEDULING_ROOTS = frozenset(
     {"LOOP_DERIVED", "LOOP_INDUCTION", "KERNEL_BUILTIN", "EXECUTION_ROLE"}
 )
 
-# Guard text / leaf patterns that are schedule simulation — soft immediately
-# instead of expanding into huge UNMAPPED trees.
-_SCHED_SOFT_RE = re.compile(
-    r"syncRound|currentSum|maxBlockNumPerCore|totalRound|coreIdx|blockIdx|"
-    r"invalidS1Array|actualS1Outer|actualS2Outer|prefix0Max|prefix1Max|prefix2Max|"
-    r"CheckExceedL2Cache|CaclePerCore|GetSparseUnpad|__reached_|"
-    r"ret\s*!=\s*ge::GRAPH_SUCCESS|GRAPH_SUCCESS",
-    re.I,
-)
+# Synthetic marker `_chain` emits for a cross-function unguarded write: "this
+# assignment applies if control reached that function at all". It is not a
+# source-level name, so it can be recognized by spelling.
+REACHED_PREFIX = "__reached_"
+
+
+def _is_true(e: Expr) -> bool:
+    return isinstance(e, Const) and e.value is True
+
+# Roots that carry no constraint on the input and so cannot pin a key down:
+# traversal position, and leaves the resolver could only call constant or
+# external. Everything else in LEGAL_ROOTS — shapes, dtypes, formats,
+# attributes, platform facts — is a real constraint and must survive.
+_UNCONSTRAINING_ROOTS = SCHEDULING_ROOTS | {"CONSTANT", "EXTERNAL"}
 
 _PLATFORM_CORE_CALLS = frozenset(
     {"GetCoreNumAic", "GetCoreNumAiv", "GetCoreNum", "GetL2Size"}
@@ -160,7 +232,13 @@ class KeyFieldDerivation:
     unresolved: list[dict[str, str]] = field(default_factory=list)
     scheduling: dict[str, str] = field(default_factory=dict)
     undecided: dict[str, str] = field(default_factory=dict)
+    #: var_id -> the symbol resolution stopped on, for guards whose text is far
+    #: too large to read the failure out of.
+    blocked_on: dict[str, str] = field(default_factory=dict)
     status: str = STATUS_UNRESOLVED
+    exactness: str = EX_UNRESOLVED
+    free_vars: list[str] = field(default_factory=list)
+    implicit_defaults: list[dict[str, Any]] = field(default_factory=list)
     note: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -178,7 +256,11 @@ class KeyFieldDerivation:
             "unresolved": list(self.unresolved),
             "scheduling": dict(self.scheduling),
             "undecided": dict(self.undecided),
+            "blocked_on": dict(self.blocked_on),
             "status": self.status,
+            "exactness": self.exactness,
+            "free_vars": list(self.free_vars),
+            "implicit_defaults": list(self.implicit_defaults),
             "note": self.note,
         }
 
@@ -269,6 +351,56 @@ def _collect_vars_dag(node: Any, seen: set[int] | None = None) -> set[str]:
         for item in node:
             out |= _collect_vars_dag(item, seen)
     return out
+
+
+def collect_vars_dag(node: Any) -> set[str]:
+    """Public view of `_collect_vars_dag`, for consumers outside derivation."""
+    return _collect_vars_dag(node)
+
+
+def substitute_vars(node: Any, replacements: dict[str, Any]) -> Any:
+    """Rewrite `<var> == True` probes of the given variables into real conditions.
+
+    A softened guard enters `value_expr` as `{"op": "eq", "var": VAR_UNDECIDED_x,
+    "value": True}`. When something later establishes what that guard actually
+    tested, substituting the condition back in is what removes the
+    over-approximation. Dropping the guard *record* alone would only hide it:
+    the free variable would still be in the expression a solver sees, but
+    nothing would remain to say what it stood for.
+
+    Structure-sharing is preserved — a normalized expression is a DAG, and
+    rebuilding it as a tree unfolds to the size the sharing exists to avoid.
+    """
+    if not replacements:
+        return node
+    memo: dict[int, Any] = {}
+
+    def rewrite(n: Any) -> Any:
+        if isinstance(n, (str, int, float, bool)) or n is None:
+            return n
+        hit = memo.get(id(n))
+        if hit is not None:
+            return hit
+        out: Any
+        if isinstance(n, dict):
+            var = n.get("var")
+            if (
+                isinstance(var, str)
+                and var in replacements
+                and n.get("op") == "eq"
+                and n.get("value") is True
+            ):
+                out = replacements[var]
+            else:
+                out = {k: rewrite(v) for k, v in n.items()}
+        elif isinstance(n, list):
+            out = [rewrite(item) for item in n]
+        else:
+            out = n
+        memo[id(n)] = out
+        return out
+
+    return rewrite(node)
 
 
 def _pretty(e: Expr) -> str:
@@ -365,6 +497,163 @@ def _pretty_dag(root: Expr) -> str:
     return "\n".join(lines)
 
 
+# Normalisation memoises by node identity (`_ValueNormalizer._lower`), so a
+# `value_expr` is a DAG: one sub-expression object is reachable by many paths.
+# JSON and YAML have no notion of sharing, so a plain dump writes it once per
+# path — the unfolded tree, which is the cost the sharing exists to avoid. One
+# FAG field reached ~10MB that way and the full report ran out of memory.
+_DAG_MARK = "$dag"
+_DAG_REF = "$ref"
+
+# Under this, the unfolded form is still small enough to read, and a legible
+# artifact is worth more than the bytes.
+DAG_ENVELOPE_MIN_NODES = 4000
+
+
+def _is_expr_container(node: Any) -> bool:
+    return isinstance(node, (dict, list))
+
+
+def _smt_children(node: Any) -> list[Any]:
+    if isinstance(node, dict):
+        return [v for v in node.values() if _is_expr_container(v)]
+    if isinstance(node, list):
+        return [v for v in node if _is_expr_container(v)]
+    return []
+
+
+def _dag_postorder(root: Any) -> tuple[list[Any], dict[int, int]]:
+    """Distinct containers of `root`, children before parents, plus in-degree.
+
+    Iterative because a derived expression nests deeper than the default
+    recursion limit, and counted per DAG edge rather than per path so the walk
+    stays linear in the shared structure.
+    """
+    order: list[Any] = []
+    refs: dict[int, int] = {}
+    seen: set[int] = set()
+    stack: list[tuple[Any, bool]] = [(root, False)]
+    while stack:
+        node, done = stack.pop()
+        if not _is_expr_container(node):
+            continue
+        if done:
+            order.append(node)
+            continue
+        refs[id(node)] = refs.get(id(node), 0) + 1
+        if id(node) in seen:
+            continue
+        seen.add(id(node))
+        stack.append((node, True))
+        for child in _smt_children(node):
+            stack.append((child, False))
+    return order, refs
+
+
+def _dag_sizes(order: list[Any]) -> dict[int, int]:
+    """Unfolded size per node, as a proxy for what dumping it would cost."""
+    size: dict[int, int] = {}
+    for node in order:
+        size[id(node)] = len(node) + sum(
+            size.get(id(child), 0) for child in _smt_children(node)
+        )
+    return size
+
+
+def expr_tree_size(root: Any) -> int:
+    """Size `root` would have written out as a tree.
+
+    Computed over the DAG, so asking the question does not cost what the answer
+    is there to warn about.
+    """
+    if not _is_expr_container(root):
+        return 1
+    order, _ = _dag_postorder(root)
+    return _dag_sizes(order).get(id(root), 1)
+
+
+def encode_expr_dag(node: Any, *, min_tree_nodes: int = DAG_ENVELOPE_MIN_NODES) -> Any:
+    """Make sharing explicit, so a dump costs the DAG and not the unfolded tree.
+
+    Small expressions pass through unchanged: every reader already accepts the
+    plain form, and keeping the artifact legible is worth more than the bytes.
+    Above the threshold the result is `{"$dag": 1, "root": …, "defs": {…}}`
+    with `{"$ref": name}` standing in for each shared sub-expression.
+
+    A reader that skips `decode_expr_dag` sees a dict that is plainly not an
+    expression, rather than a subtly truncated one.
+    """
+    if not _is_expr_container(node):
+        return node
+    order, refs = _dag_postorder(node)
+    size = _dag_sizes(order)
+    if size.get(id(node), 0) <= min_tree_nodes:
+        return node
+
+    names: dict[int, str] = {}
+    built: dict[int, Any] = {}
+    defs: dict[str, Any] = {}
+
+    def emit(value: Any) -> Any:
+        if not _is_expr_container(value):
+            return value
+        name = names.get(id(value))
+        return {_DAG_REF: name} if name else built[id(value)]
+
+    for n in order:
+        if isinstance(n, dict):
+            body: Any = {k: emit(v) for k, v in n.items()}
+        else:
+            body = [emit(v) for v in n]
+        built[id(n)] = body
+        # Naming a node costs a definition plus one reference per use, so it
+        # only pays off for shared nodes big enough to beat repeating them.
+        if refs.get(id(n), 0) > 1 and size.get(id(n), 0) >= _SHARE_MIN_SIZE:
+            name = f"n{len(defs) + 1}"
+            names[id(n)] = name
+            defs[name] = body
+
+    return {
+        _DAG_MARK: 1,
+        "nodes": len(order),
+        "tree_nodes": size.get(id(node), 0),
+        "root": emit(node),
+        "defs": defs,
+    }
+
+
+def decode_expr_dag(node: Any) -> Any:
+    """Inverse of `encode_expr_dag`; a plain expression passes straight through.
+
+    Sharing is rebuilt, not merely the shape: a consumer that walked the
+    restored form as a tree would pay exactly the cost the envelope avoids.
+    """
+    if not (isinstance(node, dict) and _DAG_MARK in node):
+        return node
+    defs = node.get("defs") or {}
+    memo: dict[str, Any] = {}
+
+    def resolve(name: str) -> Any:
+        if name in memo:
+            return memo[name]
+        if name not in defs:
+            raise ValueError(f"expression DAG references undefined node {name!r}")
+        memo[name] = out = rebuild(defs[name])
+        return out
+
+    def rebuild(value: Any) -> Any:
+        if isinstance(value, dict):
+            ref = value.get(_DAG_REF)
+            if isinstance(ref, str):
+                return resolve(ref)
+            return {k: rebuild(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [rebuild(v) for v in value]
+        return value
+
+    return rebuild(node.get("root"))
+
+
 # A *named* constant, as opposed to any old SCREAMING_CASE identifier. Axis
 # names in tiling code are short and upper-case — `S1`, `S2`, `D`, `B`, `N2` —
 # and they are ordinary input-derived locals. Admitting them would let a helper
@@ -440,10 +729,18 @@ def smt_value_leaves(node: Any) -> set[str]:
     Bare boolean key fields (`layoutType == TND`) expand to a comparison with
     no `Ite`, so `value_leaves(expanded)` is empty; the normalizer then wraps
     them as `if_then_else(cond, 1, 0)`. Those 0/1 arms must still count.
+
+    Shared sub-expressions are visited once. The result is a set either way, so
+    this is purely about not paying the unfolded size of the DAG.
     """
     vals: set[str] = set()
+    seen: set[int] = set()
 
     def walk(n: Any) -> None:
+        if _is_expr_container(n):
+            if id(n) in seen:
+                return
+            seen.add(id(n))
         if isinstance(n, dict):
             if n.get("op") == "if_then_else":
                 for side in (n.get("then"), n.get("else")):
@@ -511,10 +808,31 @@ class KeyFieldDeriver:
         self.model = var_model
         self.max_helper_guards = max_helper_guards
         self._nodes = 0
-        self._cache: dict[tuple[str, str], Expr] = {}
+        self._cache: dict[tuple[str, str, tuple[tuple[str, int], ...]], Expr] = {}
         self._stack: set[tuple[str, str]] = set()
+        #: Names whose chain is currently being built. Cycle detection has to
+        #: key on identity alone — unlike the cache, which also keys on the
+        #: part-built values in scope — or a name re-entered under a different
+        #: context would not be recognised as recursion.
+        self._active: set[str] = set()
         self._scoped: dict[str, Any] = {}
+        #: Variable being chained -> value of its writes so far, so that a
+        #: self-referencing RHS reads the previous version instead of looking
+        #: like a cycle. See `_chain`.
+        self._prev_version: dict[str, Expr] = {}
+        #: Names whose previous version was read while building the expansion
+        #: currently in progress, so a result that depended on someone else's
+        #: half-built value can be kept out of the cache.
+        self._prev_read: set[str] = set()
+        #: Functions whose reachability condition is being built, to stop
+        #: recursion in the call graph.
+        self._reach_stack: set[str] = set()
+        self._reach_cache: dict[str, Expr] = {}
         self.cycles: set[str] = set()
+        #: Sites where an if/else-if chain was closed with an assumed zero
+        #: default. See `_chain`.
+        self.implicit_zero: list[dict[str, Any]] = []
+        self._implicit_seen: set[tuple[str, str, int]] = set()
         # (id(node), scope) -> (node, expansion). The node is kept alive so its
         # id cannot be recycled onto a different object.
         self._ememo: dict[tuple[int, str], tuple[Expr, Expr]] = {}
@@ -576,7 +894,44 @@ class KeyFieldDeriver:
                 got = self._field_defs(f"{owner}.{name}")
                 if got:
                     return got
+        out_param = self._out_param_defs(name, fn)
+        if out_param:
+            return out_param
         return self._unique_foreign_defs(name, fn)
+
+    def _out_param_defs(self, name: str, fn: str) -> list[DefSite]:
+        """A local the callee writes through a reference parameter.
+
+        `CalcleActualToken(fBaseParams, i, s1Token, s2Token)` leaves no write
+        to `s2Token` in this function at all — the assignments are to the
+        formal, inside the callee. The whole guarded chain is taken, not the
+        last assignment alone: these functions typically set a default and
+        then refine it, so the last write is often `x = f(x)` and on its own
+        says nothing about what `x` was.
+        """
+        caller = self.ir.summaries.get(fn)
+        if caller is None:
+            return []
+        found: list[tuple[str, str]] = []
+        for callee, args in caller.calls:
+            target = self.ir.summaries.get(callee)
+            if target is None or not target.out_params:
+                continue
+            outs = set(target.out_params)
+            for pname, actual in zip(target.params, args):
+                if pname not in outs:
+                    continue
+                if (actual or "").lstrip("&").strip() != name:
+                    continue
+                if (callee, pname) not in found:
+                    found.append((callee, pname))
+        # Written through two different callees: which one ran last is a
+        # question about order this does not answer, so it stays unresolved
+        # rather than picking one.
+        if len(found) != 1:
+            return []
+        callee, pname = found[0]
+        return self._local_defs(pname, callee)
 
     def _unique_foreign_defs(self, name: str, fn: str) -> list[DefSite]:
         """A local defined in a different function than the one being expanded.
@@ -693,7 +1048,9 @@ class KeyFieldDeriver:
         ]
 
     # -- expansion ---------------------------------------------------------
-    def _chain(self, sites: list[DefSite], fn: str, depth: int) -> Expr:
+    def _chain(
+        self, sites: list[DefSite], fn: str, depth: int, *, defining: str = ""
+    ) -> Expr:
         """Sequential assignment semantics: a later write wins where its guard holds.
 
         An unguarded write only overrides prior writes from the *same* function.
@@ -701,11 +1058,40 @@ class KeyFieldDeriver:
         guards) would last-wins-erase `SetSplitAxis`'s `BN2S2` from another TU,
         collapsing a three-valued enum to two. Cross-function unguarded writes
         become soft alternatives under a reachability tag instead.
+
+        `defining` names the variable these sites write, which is what makes
+        `x = f(x)` readable: sites are in source order, so when the RHS of one
+        mentions the variable, it means the value built by the sites before it
+        — exactly what `result` holds at that point.
         """
+        result: Expr | None = None
+        result_fn: str | None = None
+        outer = self._prev_version.pop(defining, None) if defining else None
+        try:
+            return self._chain_sites(sites, fn, depth, defining)
+        finally:
+            if defining:
+                if outer is None:
+                    self._prev_version.pop(defining, None)
+                else:
+                    self._prev_version[defining] = outer
+
+    def _chain_sites(
+        self, sites: list[DefSite], fn: str, depth: int, defining: str
+    ) -> Expr:
         result: Expr | None = None
         result_fn: str | None = None
         for site in sites:
             scope = site.function or fn
+            if defining:
+                # Read by `_expand_name` when the RHS or guard names the
+                # variable being defined. Absent for the first site: a
+                # self-reference there is a read before any write, which is
+                # a genuine unknown rather than a previous version.
+                if result is None:
+                    self._prev_version.pop(defining, None)
+                else:
+                    self._prev_version[defining] = result
             value = self._expand_text(site.rhs, scope, depth + 1)
             guard_text = _conjoin_text(site.guards)
             if not guard_text:
@@ -713,15 +1099,98 @@ class KeyFieldDeriver:
                     result = value
                     result_fn = scope
                 else:
-                    result = Ite(Ref(f"__reached_{scope}"), value, result)
+                    result = Ite(self._reached(scope, depth), value, result)
                 continue
             cond = self._expand_text(guard_text, scope, depth + 1)
             # An if/else-if chain with no unguarded write falls through to the
             # declared default, which for tiling structs and enums is zero.
+            #
+            # That default is an assumption about a declaration we have not
+            # read, so it is recorded rather than taken silently: if the field
+            # is initialised to anything else, every key derived through this
+            # branch is wrong, and nothing else would show it.
+            if result is None:
+                # One site, one assumption. A site can be chained more than
+                # once — different callers, different cache contexts — and
+                # counting it each time would report the number of visits
+                # rather than the number of things assumed.
+                site_key = (scope, site.file, site.line)
+                if site_key not in self._implicit_seen:
+                    self._implicit_seen.add(site_key)
+                    self.implicit_zero.append(
+                        {
+                            "function": scope,
+                            "file": site.file,
+                            "line": site.line,
+                            "guard": guard_text[:120],
+                        }
+                    )
             fallthrough = result if result is not None else Const(0)
             result = Ite(cond, value, fallthrough)
             result_fn = scope
         return result if result is not None else Unknown(REASON_NO_DEFINITION)
+
+    def _reached(self, scope: str, depth: int) -> Expr:
+        """When does `scope` run? The disjunction over its call sites.
+
+        A write with no guard of its own still only happens if its function is
+        called, and only on the paths the call is on. Those guards are
+        recorded, so this is an ordinary condition on the input; the
+        `__reached_` placeholder it replaces was a free boolean that let a
+        solver have the write both ways.
+
+        A function with no call site inside the walked TUs is a framework
+        entry (virtual override, registry hook). The host tiling path is
+        entered exactly once per run, so treating it as always-reached is
+        exact for those roots — not an over-approximation. Leaving a free
+        boolean there forced every callee to re-expand the same path
+        conditions under an undecided parent, which both inflated free_vars
+        and made reachability quadratic in the call graph.
+        """
+        short = scope.split("::")[-1]
+        if short in self._reach_stack:
+            # Recursion, direct or mutual: no finite condition to build here.
+            return Ref(f"{REACHED_PREFIX}{scope}")
+        # Whether a function runs is a property of the call graph, not of the
+        # expansion that asked. Recomputing it per ask walks every path to the
+        # entry point again, and rebuilds nodes the DAG is meant to share.
+        hit = self._reach_cache.get(short)
+        if hit is not None:
+            return hit
+        sites = self.ir.calls_to(short) if hasattr(self.ir, "calls_to") else []
+        if not sites:
+            # Framework entry / uncalled root of the walked corpus.
+            self._reach_cache[short] = Const(True)
+            return Const(True)
+        self._reach_stack.add(short)
+        try:
+            terms: list[Expr] = []
+            for site in sites:
+                guard_text = _conjoin_text(
+                    tuple(c.pretty() for c in site.path_conditions if not c.is_opaque)
+                )
+                # Resolve caller reachability first: when the caller is a
+                # framework entry (Const True) and this call is unguarded, the
+                # whole term collapses without expanding any path text.
+                up = self._reached(site.caller, depth + 1)
+                if not guard_text:
+                    term = up
+                elif _is_true(up):
+                    term = self._expand_text(guard_text, site.caller, depth + 1)
+                else:
+                    here = self._expand_text(guard_text, site.caller, depth + 1)
+                    term = Bin("&&", up, here)
+                if _is_true(term):
+                    self._reach_cache[short] = Const(True)
+                    return Const(True)
+                terms.append(term)
+        finally:
+            self._reach_stack.discard(short)
+        out = terms[0]
+        for t in terms[1:]:
+            out = Bin("||", out, t)
+        self._reach_cache[short] = out
+        return out
 
     def _expand_text(self, text: str, fn: str, depth: int) -> Expr:
         if not text or not text.strip():
@@ -803,9 +1272,19 @@ class KeyFieldDeriver:
             # Keep the container surface symbolic. Expanding the array through
             # write defs replaces a vector with one `push_back` element and
             # loses the name `_container_element` needs for provenance.
+            #
+            # The subscript stays shallow for a different reason: nothing here
+            # ever consumes its value. A `Select` is replaced wholesale by
+            # `_element_or_cut`, so the index only ever serves to say *which*
+            # element was read — and for that it has to keep the shape it had in
+            # the source. Expanded, a subscript picks up whatever guards its
+            # definition sat under (`SetSparseParams(...)`, `platformInfoPtr ==
+            # None`), so the same `parseInfo[i]` renders differently on
+            # different expansion paths and splits into a dozen variables that
+            # the source has no counterpart for.
             return Select(
                 self._expand_container_surface(e.array, fn, depth),
-                self._expand(e.index, fn, depth),
+                self._expand_surface(e.index, fn, depth),
             )
         if isinstance(e, Ref):
             return self._expand_name(e.symbol, e, fn, depth)
@@ -861,7 +1340,9 @@ class KeyFieldDeriver:
 
     def _expand_surface(self, e: Expr, fn: str, depth: int) -> Expr:
         """Expand casts / strcmp rewrites, but leave names as resolver leaves."""
-        if isinstance(e, (Const, Unknown, Ref)):
+        if isinstance(e, Ref):
+            return replace(e, scope=fn)
+        if isinstance(e, (Const, Unknown)):
             return e
         if isinstance(e, Un):
             return Un(e.op, self._expand_surface(e.arg, fn, depth))
@@ -902,12 +1383,22 @@ class KeyFieldDeriver:
         self._nodes += 1
         if self._nodes > MAX_NODES or depth > MAX_DEPTH:
             return Unknown(REASON_BUDGET if self._nodes > MAX_NODES else REASON_DEPTH)
-        if isinstance(e, (Const, Unknown, Ref)):
+        if isinstance(e, (Const, Unknown)):
             return e
+        if isinstance(e, Ref):
+            # Tag the scope, exactly as `_expand_surface` does for ordinary
+            # names. A container reached through `Select` is usually a local of
+            # another function; untagged, `_container_element` resolves it in
+            # the encode function, finds no binding, and an element that really
+            # is input-backed (`qValue[i]`, i.e.
+            # `actualSeqQlenTensor->GetData<int64_t>()`) degrades into an
+            # over-approximation.
+            return replace(e, scope=fn)
         if isinstance(e, Select):
+            # Shallow index for the same reason as the main path above.
             return Select(
                 self._expand_container_surface(e.array, fn, depth + 1),
-                self._expand(e.index, fn, depth + 1),
+                self._expand_surface(e.index, fn, depth + 1),
             )
         if isinstance(e, Call):
             name = e.func[len("field:") :] if e.func.startswith("field:") else e.func
@@ -1043,19 +1534,43 @@ class KeyFieldDeriver:
         `fBaseParams.splitAxis` resolves to INPUT_SHAPE, but *which* shape
         predicate selects each value is only visible in its guarded writes.
         """
-        leaf = original if isinstance(original, Ref) else Ref(name)
+        # Every `return leaf` below hands back a name we could not expand. It
+        # has to carry the function it was read in, or the normalizer will look
+        # for it in the encode function and not find it.
+        leaf = Ref(name, scope=fn) if not isinstance(original, Ref) else replace(original, scope=fn)
         canon = self._canonical_name(name, fn)
-        key = (fn, canon)
-        if key in self._stack or any(n == canon for _s, n in self._stack):
+        # Expanding inside another name's chain can read that name's previous
+        # version, so the result is only valid under the same set of
+        # part-built values. Keying on them keeps such results cached — and
+        # therefore structurally shared — instead of rebuilt at every use,
+        # which is what turns the expression DAG back into a tree.
+        # Most expansions do not read anyone else's part-built value, and those
+        # are valid everywhere — they go in the context-free slot so all uses
+        # share one object. Only an expansion that actually read an enclosing
+        # name's previous version is stored against that context.
+        generic = (fn, canon, ())
+        key = (fn, canon, self._version_context())
+        if canon in self._active:
+            # `x = f(x)` is not a cycle. Sites are chained in source order, so
+            # the name on the right of the one being expanded refers to the
+            # value the earlier sites produced. Treating it as a cycle used to
+            # abandon the whole guard, and 24 of the remaining dropped guards
+            # were nothing more than ordinary sequential assignment.
+            prev = self._prev_version.get(canon)
+            if prev is not None:
+                self._prev_read.add(canon)
+                return prev
             self.cycles.add(canon)
             return leaf
-        cached = self._cache.get(key)
+        cached = self._cache.get(generic)
+        if cached is None and key != generic:
+            cached = self._cache.get(key)
         if cached is not None:
             return cached
         # Same host state under another caller scope.
-        for (scope2, other), got in self._cache.items():
-            if other == canon and scope2 != fn:
-                self._cache[key] = got
+        for (scope2, other, ctx2), got in self._cache.items():
+            if other == canon and scope2 != fn and ctx2 == ():
+                self._cache[generic] = got
                 return got
         sites = self._defs_for(name, fn)
         if not sites and canon != name:
@@ -1067,19 +1582,46 @@ class KeyFieldDeriver:
         # an unconditional definition and fold `i` to `0`. Leave the name as a
         # leaf so the resolver can classify it as LOOP_INDUCTION / scheduling.
         if _loop_scoped_only(sites):
-            self._cache[key] = leaf
+            self._cache[generic] = leaf
             return leaf
-        self._stack.add(key)
+        self._active.add(canon)
+        outer_reads = self._prev_read
+        self._prev_read = set()
         try:
-            out = self._chain(sites, fn, depth)
+            out = self._chain(sites, fn, depth, defining=canon)
+            reads = self._prev_read
         finally:
-            self._stack.discard(key)
+            self._active.discard(canon)
+            # Anything this expansion read of an *enclosing* name still makes
+            # the caller's result context-dependent, so it propagates up.
+            self._prev_read = outer_reads | (self._prev_read - {canon})
         # A depth-truncated result is an artefact of *where* the name was first
         # reached, not a property of the name. Caching it would poison every
         # later, shallower use.
+        #
+        # Reading an enclosing name's previous version makes a result
+        # context-dependent for the same reason: it is that name's value
+        # partway through its own chain, and reusing it elsewhere would
+        # substitute a half-built value for the finished one. Reading *this*
+        # name's own previous version is not context-dependent — it is what
+        # `x = f(x)` means, and the chain that produced it is self-contained.
         if not _has_reason(out, REASON_DEPTH):
-            self._cache[key] = out
+            # Self-contained results are valid anywhere and go in the shared
+            # slot; a result that leaned on an enclosing chain is only valid
+            # under the same one.
+            self._cache[generic if not (reads - {canon}) else key] = out
         return out
+
+    def _version_context(self) -> tuple[tuple[str, int], ...]:
+        """Identity of the part-built values an expansion could read.
+
+        Two expansions of the same name are interchangeable only if the
+        previous versions visible to them are the same objects; identity is
+        enough because these are memoised nodes of one DAG.
+        """
+        if not self._prev_version:
+            return ()
+        return tuple(sorted((n, id(v)) for n, v in self._prev_version.items()))
 
     def _scope(self, fn: str):
         if fn not in self._scoped:
@@ -1090,6 +1632,8 @@ class KeyFieldDeriver:
     def derive(self, *, dim_name: str, index: int, host_expr: str, function: str):
         self._nodes = 0
         self.cycles = set()
+        self.implicit_zero = []
+        self._implicit_seen = set()
         expanded = self._expand_text(host_expr, function, 0)
         out = KeyFieldDerivation(
             name=dim_name,
@@ -1098,7 +1642,7 @@ class KeyFieldDeriver:
             expanded=_pretty_dag(expanded),
             def_sites=self._defs_for(strip_casts(host_expr), function),
         )
-        norm = _ValueNormalizer(self._scope(function), self.model)
+        norm = _ValueNormalizer(self._scope(function), self.model, scope_for=self._scope)
         try:
             out.value_expr = norm.value(expanded)
         except NormalizeError as exc:
@@ -1109,6 +1653,8 @@ class KeyFieldDeriver:
         out.value_leaves = sorted(leaves)
         out.scheduling = dict(norm.scheduling)
         out.undecided = dict(norm.undecided)
+        out.blocked_on = dict(norm.blocked_on)
+        out.implicit_defaults = list(self.implicit_zero)
         for reason in sorted(set(_collect_unknowns(expanded))):
             out.unresolved.append({"text": "", "reason": reason})
         if self.cycles:
@@ -1126,76 +1672,21 @@ class KeyFieldDeriver:
                     if v in norm.roots and not v.startswith(("VAR_SCHED_", "VAR_UNDECIDED_"))
                 }
             )
-        # Softening an undecidable guard is an over-approximation, and a field
-        # whose *every* guard was softened carries no input constraint at all —
-        # calling that "derived" would hand the test generator a dimension it
-        # believes is decided when nothing decides it. A field that folded to a
-        # genuine constant has no undecided guards and is unaffected.
-        #
-        # Do NOT harvest roots from the full expanded DAG when value_expr
-        # already exists: that reintroduces the platform/scheduling leaves the
-        # projection above just removed.
-        if out.undecided and not out.input_roots and out.value_expr is None:
-            harvested = self._harvest_input_roots(expanded)
-            if harvested:
-                out.input_roots = sorted(harvested)
-                out.status = STATUS_DERIVED
-            else:
-                out.note = "; ".join(filter(None, [out.note, "ALL_GUARDS_SOFTENED"]))
-                out.status = STATUS_PARTIAL
-        elif out.value_expr is not None and not out.unresolved:
-            out.status = STATUS_DERIVED
-        elif out.value_expr is not None or out.variables:
-            out.status = STATUS_PARTIAL
-        else:
-            out.status = STATUS_UNRESOLVED
+        # Grade the result by what actually survived into `value_expr`, and let
+        # `status` follow from that. The previous rule had an escape hatch: when
+        # every guard had been softened it went looking for input roots in the
+        # *unexpanded* DAG and, on finding any, called the field "derived" —
+        # reporting a dimension as decided on the strength of names that no
+        # longer appeared in the expression the solver would be given.
+        out.exactness, out.free_vars = classify_exactness(
+            value_expr=out.value_expr,
+            variables=out.variables,
+            unresolved=out.unresolved,
+        )
+        out.status = status_of_exactness(out.exactness)
+        if out.exactness == EX_OVERAPPROX and not out.input_roots:
+            out.note = "; ".join(filter(None, [out.note, "ALL_GUARDS_SOFTENED"]))
         return out
-
-    def _harvest_input_roots(self, exp: Expr) -> set[str]:
-        """Recover input roots from the expanded DAG when SMT soft-only."""
-        from uo_init.source_resolver import LEGAL_ROOTS
-
-        roots: set[str] = set()
-        stack = [exp]
-        seen: set[int] = set()
-        while stack:
-            n = stack.pop()
-            if id(n) in seen:
-                continue
-            seen.add(id(n))
-            if isinstance(n, (Bin,)):
-                stack.extend([n.left, n.right])
-            elif isinstance(n, Un):
-                stack.append(n.arg)
-            elif isinstance(n, Ite):
-                stack.extend([n.cond, n.then, n.else_])
-            elif isinstance(n, Call):
-                stack.extend(n.args)
-                text = _pretty_dag(n)[:200]
-                res = self.resolver.resolve(text)
-                for a in res.atoms:
-                    if a.root in LEGAL_ROOTS and a.root not in (
-                        "CONSTANT",
-                        "EXTERNAL",
-                        "LOOP_DERIVED",
-                        "LOOP_INDUCTION",
-                        "KERNEL_BUILTIN",
-                    ):
-                        roots.add(a.root)
-            elif isinstance(n, Select):
-                stack.extend([n.array, n.index])
-            elif isinstance(n, Ref):
-                res = self.resolver.resolve(n.symbol)
-                for a in res.atoms:
-                    if a.root in LEGAL_ROOTS and a.root not in (
-                        "CONSTANT",
-                        "EXTERNAL",
-                        "LOOP_DERIVED",
-                        "LOOP_INDUCTION",
-                        "KERNEL_BUILTIN",
-                    ):
-                        roots.add(a.root)
-        return roots
 
 
 def _deref(e: Expr) -> Expr:
@@ -1249,8 +1740,14 @@ _GET_RE = re.compile(r"^get<(\d+)>$")
 _PAIR_SLOTS = {"first": 0, "second": 1}
 
 
+def _slot_short(func: str) -> str:
+    """Accessor name without the `field:` tag or a namespace qualifier."""
+    bare = func[len("field:") :] if func.startswith("field:") else func
+    return bare.split("::")[-1]
+
+
 def _projection_index(func: str) -> int | None:
-    short = (func[len("field:") :] if func.startswith("field:") else func).split("::")[-1]
+    short = _slot_short(func)
     m = _GET_RE.match(short)
     return int(m.group(1)) if m else _PAIR_SLOTS.get(short)
 
@@ -1306,14 +1803,21 @@ def _container_of(arg: Expr) -> str:
     The iterator method parses as a plain call wrapping the container rather
     than as a member access, so unwrap it before asking for the dotted path.
     Nested selects (`a[i][j]`) peel down to the outermost container name.
+
+    Pretty-print / re-parse also loses the `field:` tag the member parser
+    emits, so `actualSeqQlen(fBaseParams)` must be recognised as the same
+    surface as `field:actualSeqQlen(fBaseParams)` — otherwise every
+    `actualSeqQlen(fBaseParams)[i]` Select fails `_container_element` even
+    though the dotted member form resolves to INPUT_VALUE.
     """
     arg = _deref(arg)
     while isinstance(arg, Select):
         arg = _deref(arg.array)
+    arg = _normalize_member_calls(arg)
     if isinstance(arg, Call):
         short = arg.func[len("field:") :] if arg.func.startswith("field:") else arg.func
         if short.split("::")[-1] in _ITERATOR_METHODS and len(arg.args) == 1:
-            arg = arg.args[0]
+            arg = _normalize_member_calls(_deref(arg.args[0]))
     path = dotted_path(arg)
     if not path:
         if isinstance(arg, Ref):
@@ -1321,6 +1825,71 @@ def _container_of(arg: Expr) -> str:
         return ""
     head, _, tail = path.rpartition(".")
     return head if head and tail in _ITERATOR_METHODS else path
+
+
+def _scope_under(expr: Expr) -> str:
+    """Function the first scoped name under `expr` was read in.
+
+    Part of a loop-local variable's identity: the same container name is a
+    local of several functions here, and equating them would constrain
+    unrelated code to agree.
+    """
+    for node in _walk_dag(expr):
+        if isinstance(node, Ref) and getattr(node, "scope", ""):
+            return node.scope
+    return ""
+
+
+def _subscript_chain(expr: Select) -> list[Expr]:
+    """Every subscript of a nested `Select`, outermost first.
+
+    `_container_of` deliberately peels all of them off — it answers "which
+    container is this", and the input root lives on the base name. Identity of
+    one *element* needs the opposite: `a[b][0][SUM_ALL]` and
+    `a[b-1][0][SUM_ALL]` are different values, and keying them on the innermost
+    subscript alone equates them — a false equality, since these are prefix sums
+    whose neighbours are never equal.
+    """
+    indices: list[Expr] = []
+    cur: Expr = expr
+    while isinstance(cur, Select):
+        indices.append(cur.index)
+        cur = _deref(cur.array)
+    indices.reverse()
+    return indices
+
+
+# camelCase identifier: tiling struct members (`actualSeqQlen`), not helpers
+# (`CeilDiv`, `GetDim`) or free functions that happen to take one argument.
+_MEMBER_LIKE_RE = re.compile(r"^[a-z][A-Za-z0-9]*$")
+
+
+def _normalize_member_calls(arg: Expr) -> Expr:
+    """Rewrite call-style member access back to the parser's `field:` form.
+
+    Only unary calls whose callee looks like a data-member name are rewritten.
+    Known casts, container ops, and iterators are left alone so `size(v)` /
+    `begin(v)` keep their real meaning.
+    """
+    arg = _deref(arg)
+    seen: set[int] = set()
+    while isinstance(arg, Call) and id(arg) not in seen:
+        seen.add(id(arg))
+        if arg.func.startswith("field:"):
+            break
+        if len(arg.args) != 1:
+            break
+        short = arg.func.split("::")[-1]
+        if (
+            short in _ITERATOR_METHODS
+            or short in _CONTAINER_OPS
+            or short in _CAST_CALLS
+            or short in _PLATFORM_CORE_CALLS
+            or not _MEMBER_LIKE_RE.match(short)
+        ):
+            break
+        arg = Call(f"field:{short}", arg.args)
+    return arg
 
 
 # A member name is not a name in scope. Substituting a formal called `d` into
@@ -1346,15 +1915,29 @@ class _ValueNormalizer(PredicateNormalizer):
     SMT as `if_then_else` at value level rather than being coerced to a bool.
     """
 
-    def __init__(self, resolver, model) -> None:
+    def __init__(self, resolver, model, scope_for=None) -> None:
         super().__init__(resolver, model)
+        #: Maps a function name to a resolver scoped to it. Expansion inlines
+        #: across functions, so leaves reach here carrying the scope they were
+        #: read in; without this they would all be resolved against the encode
+        #: function, where another function's locals simply do not exist.
+        self._scope_for = scope_for
         self.roots: dict[str, str] = {}
         self.scheduling: dict[str, str] = {}
         self.undecided: dict[str, str] = {}
+        #: var_id -> the single symbol that defeated resolution, as opposed to
+        #: the full guard text in `undecided`.
+        self.blocked_on: dict[str, str] = {}
         # The expanded expression is a DAG. Normalising it as a tree costs the
         # unfolded size, so each (node, position) is lowered exactly once and
         # the resulting SMT-lite object is shared by every reference to it.
         self._memo: dict[tuple[int, str], tuple[Expr, dict[str, Any]]] = {}
+
+    def _resolver_for(self, expr: Expr):
+        scope = getattr(expr, "scope", "")
+        if scope and self._scope_for is not None:
+            return self._scope_for(scope)
+        return self.resolver
 
     def _lower(self, expr: Expr, position: str, fn) -> dict[str, Any]:
         key = (id(expr), position)
@@ -1419,24 +2002,104 @@ class _ValueNormalizer(PredicateNormalizer):
                     )
                 )
             self.undecided[var_id] = f"{exc.reason}: {text[:160]}"
+            # The guard text is the whole condition; `detail` is the one symbol
+            # inside it that could not be resolved. Without it, a 900-character
+            # guard tells you it failed but not on what, and every diagnosis
+            # starts by re-deriving to find out.
+            if exc.detail:
+                self.blocked_on[var_id] = str(exc.detail)
             return {"op": "eq", "var": var_id, "value": True}
 
+    def _guard_leaf_roots(self, cond: Expr) -> tuple[set[str], bool, bool]:
+        """Roots of this guard's leaves, plus reached / unresolved flags.
+
+        Resolving leaf by leaf rather than rendering the guard and resolving
+        the text: a substituted guard is a DAG whose printed form runs to
+        megabytes, and the print alone costs more than the derivation.
+
+        Leaves must be resolved in the function they were read in (`Ref.scope`):
+        a layout / rope local defined in `GetShapeAttrsInfo` has no binding in
+        the encode-function resolver, and classifying it from there makes every
+        such guard look "unconstrained" — then softens it as schedule.
+        """
+        roots: set[str] = set()
+        reached = False
+        unresolved = False
+        for node in _walk_dag(cond):
+            if isinstance(node, Ref):
+                if node.symbol.startswith(REACHED_PREFIX):
+                    reached = True
+                    continue
+                symbol = node.symbol
+                resolver = self._resolver_for(node)
+            elif isinstance(node, Call):
+                # Arguments are separate nodes in the walk, so the callee name
+                # is all this node contributes.
+                symbol = (
+                    node.func[len("field:") :]
+                    if node.func.startswith("field:")
+                    else node.func
+                )
+                resolver = self.resolver
+            else:
+                continue
+            got = False
+            for atom in resolver.resolve(symbol).atoms:
+                if atom.root:
+                    roots.add(atom.root)
+                    got = True
+            if not got:
+                # A leaf we cannot classify. Silence here used to let a sibling
+                # CONSTANT (MULT_BASE, CORE_LIST_NUM) alone push the whole
+                # guard into SCHED_SOFT — which is how `bTail % MULT_BASE == 1`
+                # and `size(syncRounds) > CORE_LIST_NUM` were mislabelled.
+                unresolved = True
+        return roots, reached, unresolved
+
     def _sched_soft_guard(self, cond: Expr) -> dict[str, Any] | None:
-        """Mark known scheduling/reachability guards without expanding them."""
+        """Soften a guard only when nothing about the input decides it.
+
+        The rule used to be a regex over the guard text, listing identifiers
+        lifted from one operator's source (`invalidS1Array`, `prefix0Max`,
+        `CaclePerCore`) plus a second regex exempting the mixed guards the
+        first over-caught. That is unusable twice over: on any other operator
+        the first list matches nothing and every schedule guard becomes an
+        UNMAPPED blocker, while on this one it swallowed layout comparisons and
+        discarded real input constraints.
+
+        Classify the leaves instead. A guard is schedule iff every root it
+        reaches is a traversal position — one leaf backed by a shape, dtype,
+        format or attribute makes it an input constraint no matter what it is
+        named, and it goes through normal normalization.
+
+        Unresolved leaves are *not* schedule: they are modelling gaps. Softening
+        them hid `N12`/`bTail`/`size(syncRounds)` as VAR_SCHED when the truth
+        was "we failed to bind an input-derived local".
+        """
+        roots, reached, unresolved = self._guard_leaf_roots(cond)
+        constraining = roots - _UNCONSTRAINING_ROOTS
+        if constraining:
+            return None
+        if reached:
+            # Distinct from schedule position: this says control-flow analysis
+            # could not tell whether the writing function runs, which call-graph
+            # slicing can settle. Keeping it separate stops a modelling gap from
+            # hiding among the guards we soften deliberately.
+            return self._soft_var(cond, prefix="VAR_REACHED", origin="REACHED_SOFT")
+        # Soften only when a leaf is *actually* a traversal position. A guard
+        # whose only "roots" are CONSTANT / EXTERNAL used to land here too —
+        # that is how `N12 > 0` (SCREAMING_CASE false-positive) and
+        # `bTail % MULT_BASE == 1` (unresolved local + named constant) were
+        # labelled schedule. Those are modelling gaps; report them as UNDECIDED.
+        if unresolved or not (roots & SCHEDULING_ROOTS):
+            return None
+        return self._soft_var(cond, prefix="VAR_SCHED", origin="SCHED_SOFT")
+
+    def _soft_var(self, cond: Expr, *, prefix: str, origin: str) -> dict[str, Any]:
         from uo_init.ids import hash12
 
         text = _pretty_dag(cond)
-        if not _SCHED_SOFT_RE.search(text):
-            return None
-        # Only soft when the *dominant* theme is schedule — keep mixed input
-        # guards going through normal _bool so layout/shape conjuncts survive.
-        if re.search(
-            r"GetAttr|GetDim|GetDataType|hasRope|QUERY_ROPE|keepProb|layoutType|"
-            r"INPUT_FORMAT|splitAxis|isBn2|deterSparse|queryType",
-            text,
-        ) and not re.search(r"__reached_|syncRound|currentSum|CheckExceedL2", text):
-            return None
-        var_id = f"VAR_SCHED_{hash12(text)[:12]}"
+        var_id = f"{prefix}_{hash12(text)[:12]}"
         if self.model.get(var_id) is None:
             self.model.add(
                 VarSpec(
@@ -1447,23 +2110,26 @@ class _ValueNormalizer(PredicateNormalizer):
                         var_id=var_id,
                         value_type="bool",
                         completeness="open",
-                        source="scheduling_guard",
+                        source=origin.lower(),
                     ),
-                    origin="SCHED_SOFT",
-                    description=f"scheduling/reachability soft: {text[:120]}",
+                    origin=origin,
+                    description=f"{origin}: {text[:120]}",
                 )
             )
-        self.scheduling[var_id] = "SCHED_SOFT"
-        self.undecided[var_id] = f"SCHED_SOFT: {text[:160]}"
+        self.scheduling[var_id] = origin
+        self.undecided[var_id] = f"{origin}: {text[:160]}"
         return {"op": "eq", "var": var_id, "value": True}
 
     def _leaf(self, expr: Expr) -> dict[str, Any]:
         expr = _deref(expr)
         if isinstance(expr, Select):
-            elem = self._container_element(expr.array, kind="elem")
+            elem = self._element_or_cut(expr)
             if elem is not None:
                 return elem
             raise NormalizeError(REASON_OPAQUE, "array_subscript")
+        member = self._element_member(expr)
+        if member is not None:
+            return member
         text = _leaf_text(expr)
         lit = self._named_lit(text)
         if lit is not None:
@@ -1476,6 +2142,12 @@ class _ValueNormalizer(PredicateNormalizer):
             named = self._named_lit(out["lit"])
             if named is not None:
                 return {"lit": named}
+            # Only reject the SCREAMING_CASE false positives that look like
+            # short locals (`N12`, `N11`): letters + digits, no underscore.
+            # Broader rejection of every unresolved string lit also killed
+            # dtype / layout enum names (`FLOAT16`, `SBH`) and dropped CLOSED.
+            if re.fullmatch(r"[A-Z]+\d+", out["lit"]):
+                raise NormalizeError(REASON_UNMAPPED_LEAF, out["lit"])
         if "var" in out and out.get("root"):
             self.roots[out["var"]] = out["root"]
         return out
@@ -1496,6 +2168,12 @@ class _ValueNormalizer(PredicateNormalizer):
         Same provenance story as `_container_reduction`: the concrete index is
         often a scheduling position, but the *value* still comes from the input
         that fills the container.
+
+        The container name must be resolved in the function it was read in.
+        Cross-function expansion leaves `qValue` / `actualSeqQlen` tagged with
+        e.g. `GetShapeAttrsInfo`; looking them up in the encode-function
+        resolver returns nothing, and every `Select` then becomes an
+        `array_subscript` undecided — even when the binding exists in scope.
         """
         container = _container_of(container_expr)
         if not container:
@@ -1503,7 +2181,7 @@ class _ValueNormalizer(PredicateNormalizer):
             container = path or ""
         if not container:
             return None
-        res = self.resolver.resolve(container)
+        res = self._resolver_for_tree(container_expr).resolve(container)
         atoms = [a for a in res.atoms if a.root and a.root != "CONSTANT"]
         if not atoms:
             return None
@@ -1541,6 +2219,141 @@ class _ValueNormalizer(PredicateNormalizer):
         self.roots[var_id] = atom.root
         return {"var": var_id, "root": atom.root}
 
+    def _loop_element_var(self, expr: Select, *, slot: str = "") -> dict[str, Any] | None:
+        """A loop-local container element, as one named over-approximation.
+
+        `_container_element` needs a container backed by an input to name the
+        element after. A vector filled inside a loop and read at the induction
+        variable has no such root, and no closed form over its elements: what
+        the loop establishes is a quantified statement, which this analysis
+        does not compute.
+
+        Failing here costs far more than the subscript. The `NormalizeError`
+        reaches `_guard_uncached`, which replaces *the whole guard* with a
+        single free boolean — and an expanded guard is the conjunction of every
+        source guard on the path, so one unresolved subscript also throws away
+        the layout / platform / attribute constraints standing beside it.
+        Cutting at the subscript keeps those and confines the
+        over-approximation to the element that earned it.
+
+        Identity is `(scope, container, index, slot)`. Reads of the same element
+        in the same function stay one variable, so the guard cannot be satisfied
+        two contradictory ways; a same-named container in another function is
+        not silently equated with this one.
+        """
+        container = _container_of(expr.array) or dotted_path(_deref(expr.array)) or ""
+        if not container:
+            return None
+        subscripts = "".join(f"[{_pretty_dag(i)}]" for i in _subscript_chain(expr))
+        surface = f"{container}{subscripts}" + (f".{slot}" if slot else "")
+        out = self._loop_local_var(
+            surface=surface,
+            label=f"{container}_{slot}" if slot else container,
+            scope=_scope_under(expr.array),
+            what=f"{slot or 'element'} of loop-local {container}",
+        )
+        self.blocked_on[out["var"]] = f"{container}[]" + (f".{slot}" if slot else "")
+        return out
+
+    def _loop_reduction_var(self, container_expr: Expr, kind: str) -> dict[str, Any] | None:
+        """A whole-container summary of a loop-local container.
+
+        `_container_reduction` can only name a summary after the input that
+        fills the container. `syncRounds` / `slicePrefix1` are built inside a
+        loop and have no such root, and returning `None` there costs the whole
+        guard — `size(syncRounds) + size(syncRoundRanges) > CORE_LIST_NUM`
+        collapsed along with every layout and platform constraint beside it.
+
+        Same trade already made for elements and for tuple slots: confine the
+        over-approximation to the summary that earned it. Identity is
+        `(scope, container, kind)`, so `size(v)` read twice is one variable
+        while `size(v)` and `back(v)` stay apart.
+        """
+        container = (
+            _container_of(container_expr) or dotted_path(_deref(container_expr)) or ""
+        )
+        if not container:
+            return None
+        surface = f"{kind}({container})"
+        out = self._loop_local_var(
+            surface=surface,
+            label=f"{kind}_{container}",
+            scope=_scope_under(container_expr),
+            what=f"{kind} of loop-local {container}",
+        )
+        self.blocked_on[out["var"]] = surface
+        return out
+
+    def _loop_local_var(
+        self, *, surface: str, label: str, scope: str, what: str
+    ) -> dict[str, Any]:
+        """Register one loop-local unknown, element and summary alike."""
+        from uo_init.ids import hash12, slug
+
+        var_id = f"{LOOPELEM_PREFIX}{slug(label)}_{hash12(f'{scope}|{surface}')}"
+        if self.model.get(var_id) is None:
+            self.model.add(
+                VarSpec(
+                    var_id=var_id,
+                    name=surface[:80],
+                    # Left as an unbounded int rather than a bool: the element
+                    # type is exactly what we could not resolve, and `_truthy`
+                    # reads a non-zero int as true either way.
+                    value_type="int",
+                    domain=Domain(
+                        var_id=var_id,
+                        value_type="int",
+                        completeness="open",
+                        source="loop_local_element",
+                    ),
+                    origin="LOOP_ELEMENT",
+                    description=what + (f" in {scope}" if scope else ""),
+                )
+            )
+        self.undecided[var_id] = f"LOOP_ELEMENT: {surface[:160]}"
+        return {"var": var_id}
+
+    def _element_or_cut(self, expr: Select, *, slot: str = "") -> dict[str, Any] | None:
+        """An input-backed element if there is one, else a loop-local cut."""
+        elem = self._container_element(expr.array, kind=slot or "elem")
+        if elem is not None:
+            return elem
+        return self._loop_element_var(expr, slot=slot)
+
+    def _element_member(self, expr: Expr) -> dict[str, Any] | None:
+        """A tuple slot of a container element, cut like the element itself.
+
+        `_element_or_cut` is only reached for a bare `Select`, and
+        `s1ValidIdx[i].second` is a `Call` wrapping one, so it used to miss
+        every cut and fall through to the text path — where `dotted_path`
+        cannot render a subscript, the leaf arrives as `second(?)`, and an
+        unmapped call takes the whole guard down with it.
+
+        Only what earlier stages could not see through gets here: `_expand_call`
+        already projects a slot out of a tuple it can reach (`make_pair`, an
+        `Ite` over them). A subscript is not such a tuple — what the container
+        holds is decided inside the loop that filled it.
+
+        The slot belongs to the variable's identity. `.first` and `.second` of
+        one element are different values, and naming them alike would let the
+        solver equate a sequence-length bound with the index it is paired with.
+        """
+        if not isinstance(expr, Call) or len(expr.args) != 1:
+            return None
+        if _projection_index(expr.func) is None:
+            return None
+        base = _deref(expr.args[0])
+        if not isinstance(base, Select):
+            return None
+        return self._element_or_cut(base, slot=_slot_short(expr.func))
+
+    def _resolver_for_tree(self, expr: Expr):
+        """Resolver for the first scoped Ref under `expr`, else encode scope."""
+        for node in _walk_dag(expr):
+            if isinstance(node, Ref) and getattr(node, "scope", ""):
+                return self._resolver_for(node)
+        return self.resolver
+
     def _container_reduction(self, short: str, args: list[Expr]) -> dict[str, Any] | None:
         """`*std::max_element(v.begin(), v.end())` as one input-derived value.
 
@@ -1555,14 +2368,15 @@ class _ValueNormalizer(PredicateNormalizer):
         if kind is None or not args:
             return None
         if short in _ELEMENT_ACCESSORS:
-            return self._container_element(args[0], kind=kind)
+            elem = self._container_element(args[0], kind=kind)
+            return elem if elem is not None else self._loop_reduction_var(args[0], kind)
         container = _container_of(args[0])
         if not container:
             return None
-        res = self.resolver.resolve(container)
+        res = self._resolver_for_tree(args[0]).resolve(container)
         atoms = [a for a in res.atoms if a.root and a.root != "CONSTANT"]
         if not atoms:
-            return None
+            return self._loop_reduction_var(args[0], kind)
         from uo_init.ids import slug
 
         atom = atoms[0]
@@ -1600,6 +2414,12 @@ class _ValueNormalizer(PredicateNormalizer):
         Left to the base normalizer these raise UNMAPPED_LEAF, because
         `var_id_for` has no id for them, and one loop counter deep inside a
         guard would sink the whole field.
+
+        Recorded in `undecided` as well as `scheduling`: a key field whose
+        *value* depends on the core index is not decided by the input, and
+        that has to be as visible as a softened guard. It was only in
+        `scheduling`, which nothing downstream reads, so these leaves reached
+        `value_expr` with no record explaining them.
         """
         from uo_init.ids import slug
 
@@ -1630,15 +2450,19 @@ class _ValueNormalizer(PredicateNormalizer):
                 )
             )
         self.scheduling[var_id] = atom.root
+        self.undecided[var_id] = f"{atom.root}: {atom.symbol or text}"
         return {"var": var_id, "root": atom.root}
 
     def _bool(self, expr: Expr) -> dict[str, Any]:
         expr = _deref(expr)
         if isinstance(expr, Select):
-            leaf = self._container_element(expr.array, kind="elem")
+            leaf = self._element_or_cut(expr)
             if leaf is not None:
                 return self._truthy(leaf)
             raise NormalizeError(REASON_OPAQUE, "array_subscript")
+        member = self._element_member(expr)
+        if member is not None:
+            return self._truthy(member)
         return self._lower(expr, "bool", lambda e: super(_ValueNormalizer, self)._bool(_deref(e)))
 
     def _value(self, expr: Expr) -> dict[str, Any]:
@@ -1650,7 +2474,7 @@ class _ValueNormalizer(PredicateNormalizer):
         if isinstance(expr, Unknown):
             raise NormalizeError(expr.reason, "")
         if isinstance(expr, Select):
-            elem = self._container_element(expr.array, kind="elem")
+            elem = self._element_or_cut(expr)
             if elem is not None:
                 return elem
             raise NormalizeError(REASON_OPAQUE, "array_subscript")
@@ -1658,6 +2482,9 @@ class _ValueNormalizer(PredicateNormalizer):
             helper = self._pure_helper(expr)
             if helper is not None:
                 return helper
+            member = self._element_member(expr)
+            if member is not None:
+                return member
         if isinstance(expr, Ite):
             return {
                 "op": "if_then_else",

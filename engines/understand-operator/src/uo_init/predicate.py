@@ -38,10 +38,11 @@ REASON_PARSE_FAILED = "PARSE_FAILED"
 REASON_EMPTY = "NO_CONDITION_TEXT"
 REASON_OPAQUE = "OPAQUE_EXPRESSION"
 
-# Layout string literals that appear in `strcmp(GetAttr…LAYOUT…, "TND")`.
-_LAYOUT_STRINGS = frozenset(
-    {"TND", "BSH", "SBH", "BNSD", "BSND", "NBSD", "BN2GS2D", "BS2N2GD", "S2BN2GD"}
-)
+# Longest string literal still treated as an enum tag rather than free text.
+# Layout and mode names ("TND", "BN2GS2D", "HIGH_PRECISION") sit well inside
+# this; anything longer is a message or a path, and rewriting a comparison
+# against it as an enum equality would invent a domain value.
+_MAX_ENUM_LITERAL = 16
 
 
 def _call_name(e: Expr) -> str:
@@ -80,9 +81,9 @@ def rewrite_strcmp_cmp(expr: Expr) -> Expr:
             return None
         a, b = call.args[0], call.args[1]
         sa, sb = _string_lit(a), _string_lit(b)
-        if sb is not None and (sb in _LAYOUT_STRINGS or len(sb) <= 16):
+        if sb is not None and len(sb) <= _MAX_ENUM_LITERAL:
             return Bin(expr.op, a, Const(sb))
-        if sa is not None and (sa in _LAYOUT_STRINGS or len(sa) <= 16):
+        if sa is not None and len(sa) <= _MAX_ENUM_LITERAL:
             return Bin(expr.op, b, Const(sa))
         return None
 
@@ -165,13 +166,18 @@ class PredicateNormalizer:
         self.resolver = resolver
         self.model = model
 
+    def _resolver_for(self, expr: Expr) -> SourceResolver:
+        """Which scope to read this leaf in. One resolver unless overridden."""
+        del expr
+        return self.resolver
+
     # -- leaves ------------------------------------------------------------
     def _leaf(self, expr: Expr) -> dict[str, Any]:
         """A symbol or accessor call becomes `{"var": VAR_...}`."""
         text = _leaf_text(expr)
         if not text:
             raise NormalizeError(REASON_OPAQUE, type(expr).__name__)
-        res = self.resolver.resolve(text)
+        res = self._resolver_for(expr).resolve(text)
         atoms = [a for a in res.atoms if a.root != "CONSTANT"]
         if not atoms:
             # The whole leaf folded to a constant, e.g. a scoped enum member.

@@ -28,6 +28,8 @@ def test_parse_minimal_decl_fixture():
 
 
 def test_uint_index_encoding():
+    """The UI_LIST marker introduces the values; it is not one of them, so
+    indices count from the first real value."""
     dim = TplDim(
         name="S1",
         kind="UINT",
@@ -35,8 +37,10 @@ def test_uint_index_encoding():
         vals=["ASCENDC_TPL_UI_LIST", "0", "64", "128"],
     )
     sch = TplSchema(op_tag="X", dims=[dim])
-    assert sch.encode_uint(dim, 128) == 3
-    assert sch.encode_uint(dim, "64") == 2
+    assert dim.value_domain == ["0", "64", "128"]
+    assert sch.encode_uint(dim, "0") == 0
+    assert sch.encode_uint(dim, "64") == 1
+    assert sch.encode_uint(dim, 128) == 2
 
 
 def test_bool_direct_encoding():

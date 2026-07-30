@@ -1,0 +1,15 @@
+id: producer-self-check
+version: 1
+name_zh: Producer 自检
+description: Map worker / producer 在交卷前用受控 inspect/validate 自检本 shard 覆盖与越权，结果写 scratch。
+applies_when:
+  - extract_plan Map worker
+  - adjudicate_llm_tasks Map worker
+requires:
+  inputs: [part_path, batch_path]
+  tools: [acp inspect]
+  context: [shard_id]
+produces: [scratch_self_check]
+compatible_roles: [producer]
+policies: [pilot-control, output-quality]
+method_file: METHOD.md

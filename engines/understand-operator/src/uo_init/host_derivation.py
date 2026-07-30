@@ -31,6 +31,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from uo_init.derive_key_fields import (
+    EX_EXACT,
+    EX_UNRESOLVED,
+    LOOPELEM_PREFIX,
+    decode_expr_dag,
+    encode_expr_dag,
+)
 from uo_init.ids import hash12
 
 DERIVATION_VERSION = 1
@@ -40,15 +47,36 @@ DERIVATION_VERSION = 1
 # from a per-operator table.
 PRESORT_SCHEDULING = "scheduling"
 PRESORT_PLATFORM = "platform"
+PRESORT_REACHABILITY = "reachability"
 PRESORT_UNMAPPED = "unmapped"
+PRESORT_LOOP_ELEMENT = "loop_element"
 PRESORT_UNKNOWN = "unknown"
 
-PRESORTS = (PRESORT_SCHEDULING, PRESORT_PLATFORM, PRESORT_UNMAPPED, PRESORT_UNKNOWN)
+PRESORTS = (
+    PRESORT_SCHEDULING,
+    PRESORT_PLATFORM,
+    PRESORT_REACHABILITY,
+    PRESORT_UNMAPPED,
+    PRESORT_LOOP_ELEMENT,
+    PRESORT_UNKNOWN,
+)
 
-# Scheduling guards are softened on purpose — a branch on traversal position is
+# Guards that must not become LLM work, for opposite reasons.
+#
+# Scheduling guards are softened on purpose: a branch on traversal position is
 # taken on some iteration whatever the input, so pinning it would wrongly rule
-# keys out. They are recorded for audit but never become LLM work.
-NON_ESCALATING = frozenset({PRESORT_SCHEDULING})
+# keys out. Nothing to ask.
+#
+# Reachability guards ("did control reach the function that wrote this") are a
+# gap in our own call-graph analysis. A model guessing at them would be
+# guessing at something the source states outright, so they are tracked as
+# unclosed — they still count as over-approximations — and fixed by analysis.
+#
+# Loop-element guards are deliberately *not* here. What a loop establishes about
+# the container it fills is a quantified statement this analysis does not
+# compute, so unlike reachability it is not a gap that more source reading
+# closes — which makes it the one bucket a judgement call genuinely belongs to.
+NON_ESCALATING = frozenset({PRESORT_SCHEDULING, PRESORT_REACHABILITY})
 
 # Platform quantities are locked by the CANN profile (K5). One still showing up
 # undecided means the fold missed it, which is a real gap.
@@ -96,11 +124,19 @@ def split_reason(detail: str) -> tuple[str, str]:
 
 def presort_guard(var_id: str, detail: str) -> str:
     """Deterministic bucket for one softened guard."""
+    if str(var_id).startswith("VAR_REACHED_"):
+        return PRESORT_REACHABILITY
     if str(var_id).startswith("VAR_SCHED_"):
         return PRESORT_SCHEDULING
+    if str(var_id).startswith(LOOPELEM_PREFIX):
+        return PRESORT_LOOP_ELEMENT
     reason, text = split_reason(detail)
+    if reason == "REACHED_SOFT":
+        return PRESORT_REACHABILITY
     if reason == "SCHED_SOFT":
         return PRESORT_SCHEDULING
+    if reason == "LOOP_ELEMENT":
+        return PRESORT_LOOP_ELEMENT
     if _PLATFORM_RE.search(text):
         return PRESORT_PLATFORM
     if reason in _UNMAPPED_REASONS:
@@ -130,12 +166,24 @@ class GuardEvidenceIndex:
     """Map a softened guard back to a source location.
 
     The undecided text is the *expanded* form, so it cannot be matched to the
-    original guard literally. Identifier overlap against every recorded path
-    condition is enough to point a reader (or the LLM) at the right line, and a
-    miss degrades to no evidence rather than to a fabricated one.
+    original guard literally. What can be asked instead is which recorded path
+    conditions appear *inside* it, so the score is how much of the source
+    guard the expansion covers — not how similar the two texts are overall.
+
+    Symmetric similarity was the wrong question: an expanded guard is a
+    conjunction of many source guards, so every individual one scores low
+    against it, and short unrelated conditions score as well as the real
+    source. That is how `platformInfoPtr == nullptr` came to be cited, at
+    0.25, as the origin of a guard about `coreIdx` — a location that sent a
+    reader to an unrelated function. A wrong line is worse than no line.
+
+    An expanded guard has no single origin, so `also` reports how many other
+    source guards are in there with it.
     """
 
-    MIN_SCORE = 0.12
+    #: How much of a source guard must appear in the expansion. Below 1.0
+    #: because normalisation rewrites some tokens (`nullptr` -> `None`).
+    MIN_COVERAGE = 0.75
 
     def __init__(self, host_ir: Any) -> None:
         self._rows: list[tuple[frozenset[str], str, int, str]] = []
@@ -161,23 +209,27 @@ class GuardEvidenceIndex:
         toks = _tokens(text)
         if not toks or not self._rows:
             return None
-        best: tuple[str, int, str] | None = None
-        score = 0.0
+        found: list[tuple[int, float, str, int, str]] = []
         for row_toks, cfile, cline, raw in self._rows:
-            hit = len(toks & row_toks)
-            if not hit:
+            covered = len(toks & row_toks) / len(row_toks)
+            if covered < self.MIN_COVERAGE:
                 continue
-            s = hit / len(toks | row_toks)
-            if s > score:
-                score, best = s, (cfile, cline, raw)
-        if best is None or score < self.MIN_SCORE:
+            # Longest first: where several source guards are present, the most
+            # specific one is the most useful place to start reading.
+            found.append((len(row_toks), covered, cfile, cline, raw))
+        if not found:
             return None
-        return {
-            "file": best[0].replace("\\", "/"),
-            "line": best[1],
-            "snippet": best[2][:200],
-            "match": round(score, 3),
+        found.sort(key=lambda r: (r[0], r[1]), reverse=True)
+        _n, covered, cfile, cline, raw = found[0]
+        out: dict[str, Any] = {
+            "file": cfile.replace("\\", "/"),
+            "line": cline,
+            "snippet": raw[:200],
+            "match": round(covered, 3),
         }
+        if len(found) > 1:
+            out["also"] = len(found) - 1
+        return out
 
 
 def encode_function(host_ir: Any, site: Any) -> str:
@@ -200,6 +252,9 @@ class UndecidedGuard:
     presort: str
     escalate: bool
     evidence: dict[str, Any] | None = None
+    #: The symbol resolution stopped on. `text` is the whole guard, which for a
+    #: deeply expanded condition says nothing about where it went wrong.
+    blocked_on: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -210,6 +265,8 @@ class UndecidedGuard:
             "presort": self.presort,
             "escalate": self.escalate,
         }
+        if self.blocked_on:
+            out["blocked_on"] = self.blocked_on
         if self.evidence:
             out["evidence"] = dict(self.evidence)
         return out
@@ -220,6 +277,10 @@ class FieldDerivation:
     name: str
     index: int
     status: str
+    exactness: str = EX_UNRESOLVED
+    #: Over-approximation variables still standing in `value_expr`. Closing the
+    #: derivation means emptying this list, not merely reaching `status=derived`.
+    free_vars: list[str] = field(default_factory=list)
     host_expr: str = ""
     domain: list[str] = field(default_factory=list)
     value_expr: dict[str, Any] | None = None
@@ -229,6 +290,11 @@ class FieldDerivation:
     undecided_guards: list[UndecidedGuard] = field(default_factory=list)
     unresolved: list[dict[str, str]] = field(default_factory=list)
     def_sites: list[dict[str, Any]] = field(default_factory=list)
+    #: Sites where an if/else-if chain was closed with an assumed zero default
+    #: because no unguarded write was found. Not an over-approximation — the
+    #: expression is exact *if* the assumption holds — but it rests on a
+    #: declaration we never read, so it is reported rather than taken silently.
+    implicit_defaults: list[dict[str, Any]] = field(default_factory=list)
     note: str = ""
     seconds: float = 0.0
     expanded_chars: int = 0
@@ -238,20 +304,37 @@ class FieldDerivation:
     def escalating(self) -> list[UndecidedGuard]:
         return [g for g in self.undecided_guards if g.escalate]
 
+    def unrecorded_free_vars(self) -> list[str]:
+        """Over-approximations in `value_expr` that no guard record explains.
+
+        This must always be empty. A free variable with no guard behind it is
+        invisible to the gap machinery, so it can never be escalated or closed,
+        while the solver still treats the condition it replaced as "either
+        way" — an over-approximation that has dropped off the books rather
+        than been resolved.
+        """
+        recorded = {g.var_id for g in self.undecided_guards}
+        return sorted(v for v in self.free_vars if v not in recorded)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "index": self.index,
             "status": self.status,
+            "exactness": self.exactness,
+            "free_vars": list(self.free_vars),
             "host_expr": self.host_expr,
             "domain": list(self.domain),
-            "value_expr": self.value_expr,
+            # Shared sub-expressions are named rather than repeated; see
+            # `encode_expr_dag`. Read it back with `decode_expr_dag`.
+            "value_expr": encode_expr_dag(self.value_expr),
             "value_leaves": list(self.value_leaves),
             "root_vars": list(self.root_vars),
             "variables": list(self.variables),
             "undecided_guards": [g.to_dict() for g in self.undecided_guards],
             "unresolved": list(self.unresolved),
             "def_sites": list(self.def_sites),
+            "implicit_defaults": list(self.implicit_defaults),
             "note": self.note,
             "seconds": self.seconds,
             "expanded_chars": self.expanded_chars,
@@ -276,6 +359,16 @@ class HostDerivation:
             "derived": sum(1 for f in self.fields if f.status == "derived"),
             "partial": sum(1 for f in self.fields if f.status == "partial"),
             "unresolved": sum(1 for f in self.fields if f.status == "unresolved"),
+            # The closure target. `derived` counts fields we have *some*
+            # expression for; `exact` counts the ones whose expression still
+            # means what the source means.
+            "exact": sum(1 for f in self.fields if f.exactness == EX_EXACT),
+            "free_vars": len({v for f in self.fields for v in f.free_vars}),
+            # Must stay 0: see FieldDerivation.unrecorded_free_vars.
+            "unrecorded_free_vars": len(
+                {v for f in self.fields for v in f.unrecorded_free_vars()}
+            ),
+            "implicit_defaults": sum(len(f.implicit_defaults) for f in self.fields),
             "undecided": sum(len(f.undecided_guards) for f in self.fields),
             "scheduling": sum(
                 1
@@ -418,6 +511,7 @@ def _to_field(
     row: dict[str, Any], evidence: GuardEvidenceIndex | None
 ) -> FieldDerivation:
     guards: list[UndecidedGuard] = []
+    blocked_on = row.get("blocked_on") or {}
     for var_id, detail in sorted((row.get("undecided") or {}).items()):
         reason, text = split_reason(detail)
         presort = presort_guard(var_id, detail)
@@ -430,21 +524,25 @@ def _to_field(
                 presort=presort,
                 escalate=presort not in NON_ESCALATING,
                 evidence=evidence.best(text) if evidence is not None else None,
+                blocked_on=str(blocked_on.get(var_id) or ""),
             )
         )
     return FieldDerivation(
         name=str(row.get("name") or ""),
         index=int(row.get("index") or 0),
         status=str(row.get("status") or "unresolved"),
+        exactness=str(_readopt(row, "exactness", EX_UNRESOLVED)),
+        free_vars=sorted(str(v) for v in _readopt(row, "free_vars", [])),
         host_expr=str(_readopt(row, "host_expr", "")),
         domain=[str(v) for v in _readopt(row, "domain", [])],
-        value_expr=row.get("value_expr"),
+        value_expr=decode_expr_dag(row.get("value_expr")),
         value_leaves=sorted(str(v) for v in _readopt(row, "value_leaves", [])),
         root_vars=sorted(str(v) for v in _readopt(row, "input_roots", [])),
         variables=sorted(str(v) for v in _readopt(row, "variables", [])),
         undecided_guards=guards,
         unresolved=list(_readopt(row, "unresolved", [])),
         def_sites=list(_readopt(row, "def_sites", [])),
+        implicit_defaults=list(_readopt(row, "implicit_defaults", [])),
         note=str(_readopt(row, "note", "")),
         seconds=float(_readopt(row, "seconds", 0.0)),
         expanded_chars=int(_readopt(row, "expanded_chars", 0)),
@@ -583,7 +681,7 @@ def to_key_derivations(doc: HostDerivation) -> dict[str, Any]:
                 "index": f.index,
                 "status": f.status,
                 "host_expr": f.host_expr,
-                "expr": f.value_expr,
+                "expr": encode_expr_dag(f.value_expr),
                 "domain": list(f.domain),
                 "value_leaves": list(f.value_leaves),
                 "root_vars": list(f.root_vars),

@@ -89,7 +89,7 @@ def _member_path(n) -> str:
     return ".".join(reversed([p for p in parts if p]))
 
 
-def analyze_host(path: str, ctx: BuildContext, op_needle: str = "flash_attention") -> ParseResult:
+def analyze_host(path: str, ctx: BuildContext, op_needle: str) -> ParseResult:
     res = parse_path(path, ctx.host_args())
     if res.tu is None:
         return res
@@ -123,8 +123,8 @@ def analyze_host(path: str, ctx: BuildContext, op_needle: str = "flash_attention
 def analyze_kernel(
     path: str,
     ctx: BuildContext,
+    op_needle: str,
     dtype_variant: str | None = "DT_FLOAT16",
-    op_needle: str = "flash_attention",
 ) -> ParseResult:
     res = parse_path(path, ctx.kernel_args(dtype_variant=dtype_variant))
     if res.tu is None:

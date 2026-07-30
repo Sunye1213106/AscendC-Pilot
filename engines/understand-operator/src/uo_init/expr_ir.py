@@ -15,6 +15,12 @@ class Const:
 class Ref:
     symbol: str
     version: int = 0
+    #: Function the symbol was read in. Expansion inlines definitions across
+    #: functions, so a name left unexpanded here may be a local of a function
+    #: far from the one being derived; resolving it against the wrong scope
+    #: finds no binding and yields UNMAPPED_SYMBOL. Empty means "wherever the
+    #: consumer is looking".
+    scope: str = ""
 
 
 @dataclass(frozen=True)

@@ -1,20 +1,18 @@
 # 变量归一化
 
-> **cp 是真实 CLI。** 本 Action 走 uo_init.pilot_engines.normalize_variables。
+> **`acp` 是真实 CLI。** 本 Action 走 `uo_init.pilot_engines.normalize_variables`（确定性）。
 
 ## Goal
 
-变量归一化（clang 确定性引擎）。
+流水线占位。变量域已在 `extract_host` → `extract_host_bundle` 内建好；本步只写 deferred receipt，满足阶段顺序。
 
 ## Domain Procedure
 
-`	ext
+```text
 acp run-action normalize_variables --project <算子目录>
-`
-
-成功标志：finalize ok: true，并满足本 Action 的 output contract。
+```
 
 ## Output
 
-- 仅写 Spec / ownership 声明路径。
-- 本文件不得描述 Pilot advance、complete 或其他阶段。
+- `uo/tiling/normalize_variables_receipt.yaml`（`deferred_to: export_kb`）
+- 合同：`normalize-variables-v1`

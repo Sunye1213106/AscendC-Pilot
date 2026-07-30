@@ -697,8 +697,10 @@ def resolve_gaps(project_root: Path, payload: dict[str, Any] | None = None) -> d
     """Subagent trigger point: skip when unresolved is empty/closed."""
     from uo_init.gap_patch import SCHEMA_HINT
 
+    ctx = _ctx(payload)
     uo = _uo_root(project_root)
-    unresolved = _load(uo / "ir" / "unresolved.yaml")
+    run = _run_dir(uo, ctx)
+    unresolved = _load(uo / "ir" / "unresolved.yaml") or {}
     count = int(unresolved.get("blocker_count") or len(unresolved.get("blockers") or []))
     der_count = int(unresolved.get("derivation_blocker_count") or 0)
     if count == 0 or unresolved.get("status") == "closed":
@@ -728,6 +730,9 @@ def resolve_gaps(project_root: Path, payload: dict[str, Any] | None = None) -> d
             "input_derived 时 binding.var_id 必须已在 VariableModel 中，禁止发明符号或写自由表达式。"
         ),
     }
+    staging_rel = f"runs/{run.name}/actions/resolve_gaps/staging.yaml"
+    _dump(run / "actions" / "resolve_gaps" / "staging.yaml", staging)
+    # Mirror under ir for humans / older readers (Host-only).
     _dump(uo / "ir" / "resolve_gaps_staging.yaml", staging)
     _dump(
         uo / "ir" / "resolve_gaps_receipt.yaml",
@@ -738,7 +743,7 @@ def resolve_gaps(project_root: Path, payload: dict[str, Any] | None = None) -> d
             "derivation_blocker_count": der_count,
             "need_subagent": need_subagent,
             "deferred": not need_subagent,
-            "staging": "uo/ir/resolve_gaps_staging.yaml",
+            "staging": staging_rel,
         },
     )
     return {
@@ -747,6 +752,7 @@ def resolve_gaps(project_root: Path, payload: dict[str, Any] | None = None) -> d
         "skipped": False,
         "blocker_count": count,
         "need_subagent": need_subagent,
+        "deferred": not need_subagent,
         "message_zh": (
             f"有 {count} 个 blocker（派生 {der_count}）"
             + ("，交 resolve_gaps subagent" if need_subagent else "（确定性记录后继续）")
@@ -776,6 +782,7 @@ def apply_gap_patch(project_root: Path, payload: dict[str, Any] | None = None) -
     if consolidated.is_file():
         patch_files.append(consolidated)
     if not patch_files:
+        dump_bindings(uo / "ir" / "gap_bindings.yaml", [])
         _dump(
             uo / "ir" / "gap_patch_receipt.yaml",
             {"ok": True, "applied": 0, "skipped": True},

@@ -60,10 +60,17 @@ _EXPR_SPACE = (
     (re.compile(r"\s*\.\s*"), "."),
     (re.compile(r"\s*->\s*"), "->"),
     (re.compile(r"\s*::\s*"), "::"),
-    (re.compile(r"\s*<\s*"), "<"),
-    (re.compile(r"\s*>\s*"), ">"),
-    (re.compile(r"\s*\(\s*"), "("),
-    (re.compile(r"\s*\)\s*"), ")"),
+    # Close a bracket up against what it belongs to, and no further. Eating the
+    # space on both sides turned `strcmp(a, b) == 0` into `strcmp(a, b)== 0`
+    # and `x.size() > 0` into `x.size()>0`. These strings get matched against
+    # source text and against each other, so the spacing has to survive.
+    #
+    # `<` and `>` are left alone: in a condition they are nearly always
+    # comparisons, and nothing distinguishes `a < b` from `Cast < T >` by
+    # spacing alone. Keeping the space is what agrees with the source.
+    (re.compile(r"(?<=[\w\]>])\s+([(\[])"), r"\1"),
+    (re.compile(r"([(\[])\s+"), r"\1"),
+    (re.compile(r"\s+([)\]])"), r"\1"),
     (re.compile(r"\s*,\s*"), ", "),
     (re.compile(r"\s+"), " "),
 )

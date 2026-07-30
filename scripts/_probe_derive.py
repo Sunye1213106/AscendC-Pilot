@@ -37,6 +37,7 @@ BUNDLE = CACHE / "fag_bundle.pkl"
 RESULT = CACHE / "fag_derive.json"
 OUTDIR = ROOT / "docs" / "fag"
 REPORT = OUTDIR / "fag_arch35.md"
+HISTORY = ROOT / "docs" / "debug" / "history.jsonl"
 
 
 def build_bundle() -> dict:
@@ -88,6 +89,8 @@ def load_bundle() -> dict:
 
 def _field_row(f) -> dict:
     """Probe-cache shape: keep the old keys so --show / report stay readable."""
+    from uo_init.derive_key_fields import encode_expr_dag
+
     undecided = {g.var_id: f"{g.reason}: {g.text}" for g in f.undecided_guards}
     scheduling = {
         g.var_id: f"{g.reason}: {g.text}"
@@ -98,9 +101,14 @@ def _field_row(f) -> dict:
         "name": f.name,
         "index": f.index,
         "status": f.status,
+        "exactness": f.exactness,
+        "free_vars": list(f.free_vars),
+        "unrecorded_free_vars": f.unrecorded_free_vars(),
+        "implicit_defaults": list(f.implicit_defaults),
         "host_expr": f.host_expr,
         "domain": list(f.domain),
-        "value_expr": f.value_expr,
+        # A shared DAG; dumping it as a tree is what used to exhaust memory.
+        "value_expr": encode_expr_dag(f.value_expr),
         "value_leaves": list(f.value_leaves),
         "input_roots": list(f.root_vars),
         "variables": list(f.variables),
@@ -160,13 +168,26 @@ def run_derive(
 
 MARK = {"derived": "ok", "partial": "~~", "unresolved": "XX"}
 
+# `derived` only says a field has an expression. `closed` says that expression
+# still means what the source means — that is the number being driven to 19.
+CLOSED_GRADES = ("exact", "constant")
+
 
 def totals(fields: list[dict]) -> dict:
+    free = {v for f in fields for v in f.get("free_vars") or []}
     return {
+        "closed": sum(1 for f in fields if f.get("exactness") in CLOSED_GRADES),
         "derived": sum(1 for f in fields if f["status"] == "derived"),
         "partial": sum(1 for f in fields if f["status"] == "partial"),
         "unresolved": sum(1 for f in fields if f["status"] == "unresolved"),
         "total": len(fields),
+        "free_vars": len(free),
+        # Must stay 0: an over-approximation with no guard record can never be
+        # escalated or closed, yet still weakens the condition.
+        "unrecorded": len({v for f in fields for v in f.get("unrecorded_free_vars") or []}),
+        # Not over-approximations: places where a missing unguarded write was
+        # closed by assuming the field defaults to zero.
+        "implicit_defaults": sum(len(f.get("implicit_defaults") or []) for f in fields),
         "scheduling": sum(len(f.get("scheduling") or {}) for f in fields),
         "undecided": sum(len(f.get("undecided") or {}) for f in fields),
         "max_chars": max((f.get("expanded_chars", 0) for f in fields), default=0),
@@ -174,14 +195,28 @@ def totals(fields: list[dict]) -> dict:
     }
 
 
+def append_history(doc: dict) -> None:
+    """One line per full run, so progress is a diff rather than a memory.
+
+    Skipped for partial runs: a row mixing recomputed and stale fields would
+    read as a regression that never happened.
+    """
+    t = totals(doc["fields"])
+    row = {"timestamp": doc["timestamp"], "helper": doc["max_helper_guards"], **t}
+    HISTORY.parent.mkdir(parents=True, exist_ok=True)
+    with HISTORY.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
 def print_field(f: dict, prev: dict | None) -> None:
     delta = ""
-    if prev and prev.get("status") != f["status"]:
-        delta = f"  <- was {prev['status']}"
+    if prev and prev.get("exactness") != f.get("exactness"):
+        delta = f"  <- was {prev.get('exactness') or prev.get('status')}"
     print(
         f"  {MARK.get(f['status'], '??')} {f['index']:2} {f['name']:16} "
+        f"{str(f.get('exactness') or '?'):<16} "
         f"{f.get('seconds', 0):>6.1f}s  chars={f.get('expanded_chars', 0):>9} "
-        f"sched={len(f.get('scheduling') or {}):<3} und={len(f.get('undecided') or {}):<3} "
+        f"free={len(f.get('free_vars') or []):<3} und={len(f.get('undecided') or {}):<3} "
         f"leaves={len(f.get('value_leaves') or []):<3} "
         f"{','.join(f.get('input_roots') or []) or '-'}{delta}",
         flush=True,
@@ -220,31 +255,37 @@ def write_report(doc: dict) -> None:
         f"- run at: {doc['timestamp']}",
         f"- encode site: `{site.get('file')}:{site.get('line')}` in `{doc.get('encode_function')}`",
         f"- max_helper_guards: {doc['max_helper_guards']}",
-        f"- derived: **{t['derived']}/{t['total']}** "
-        f"(partial {t['partial']}, unresolved {t['unresolved']})",
-        f"- scheduling leaves: {t['scheduling']} | undecided guards: {t['undecided']}",
+        f"- **closed (exact or constant): {t['closed']}/{t['total']}** — "
+        f"{t['free_vars']} distinct over-approximations remaining",
+        f"- derived: {t['derived']}/{t['total']} "
+        f"(partial {t['partial']}, unresolved {t['unresolved']}) — "
+        "`derived` only means an expression exists, not that it is faithful",
+        f"- over-approximations with no guard record: {t['unrecorded']} (must be 0)",
         f"- largest rendered expression: {t['max_chars']} chars",
         "",
-        "| # | field | status | secs | chars | leaves | roots | sched | undec |",
-        "|---|-------|--------|------|-------|--------|-------|-------|-------|",
+        "| # | field | exactness | free | secs | chars | leaves | roots | undec |",
+        "|---|-------|-----------|------|------|-------|--------|-------|-------|",
     ]
     for f in fields:
         lines.append(
-            f"| {f['index']} | `{f['name']}` | {f['status']} | {f.get('seconds', 0)} | "
+            f"| {f['index']} | `{f['name']}` | {f.get('exactness') or '?'} | "
+            f"{len(f.get('free_vars') or [])} | {f.get('seconds', 0)} | "
             f"{f.get('expanded_chars', 0)} | {len(f.get('value_leaves') or [])} | "
             f"{','.join(f.get('input_roots') or []) or '-'} | "
-            f"{len(f.get('scheduling') or {})} | {len(f.get('undecided') or {})} |"
+            f"{len(f.get('undecided') or {})} |"
         )
     lines += ["", "## Per-field detail", ""]
     for f in fields:
         lines += [
-            f"### {f['name']}  ({f['status']})",
+            f"### {f['name']}  ({f.get('exactness') or f['status']})",
             "",
             f"- host_expr: `{f['host_expr']}`",
             f"- domain: {f['domain']}",
             f"- value_leaves: {f.get('value_leaves')}",
             f"- input_roots: {f.get('input_roots')}",
         ]
+        if f.get("free_vars"):
+            lines.append(f"- free_vars: {f['free_vars']}")
         guards = f.get("undecided_guards") or []
         if guards:
             lines.append("- undecided_guards:")
@@ -308,10 +349,17 @@ def main() -> int:
         print_field(f, prev_by.get(f["name"]))
     t = totals(doc["fields"])
     print(
-        f"\nderived {t['derived']}/{t['total']}  und={t['undecided']}  "
-        f"max_chars={t['max_chars']}  {t['seconds']}s"
+        f"\nCLOSED {t['closed']}/{t['total']}  free_vars={t['free_vars']}  "
+        f"implicit_zero={t['implicit_defaults']}  "
+        f"(derived {t['derived']})  max_chars={t['max_chars']}  {t['seconds']}s"
     )
-    print(f"wrote {RESULT} and {REPORT}")
+    if t["unrecorded"]:
+        print(f"WARNING: {t['unrecorded']} over-approximations have no guard record")
+    wrote = [str(RESULT), str(REPORT)]
+    if not args.fields:
+        append_history(doc)
+        wrote.append(str(HISTORY))
+    print("wrote " + ", ".join(wrote))
     return 0
 
 

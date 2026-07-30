@@ -130,7 +130,7 @@ if ($Platform -like "uninstall-*") {
 }
 
 if ($SkipPip -ne "1") {
-  python -m pip install -e "$BundleRoot\pilot" -e "$BundleRoot\engines\understand-operator" -e "$BundleRoot\engines\testcase-generation[solver]"
+  python -m pip install -e "$BundleRoot\engines\common" -e "$BundleRoot\pilot" -e "$BundleRoot\engines\understand-operator" -e "$BundleRoot\engines\testcase-generation[solver]"
 }
 
 # Compose sources → generated/<platform>/{skills,agents,prompts}
@@ -154,7 +154,7 @@ foreach ($name in @("skills","prompts","agents","docs","pilot","templates","scri
 # Engines: only packages still installed / required (no understand-operator-old / codebase-memory-mcp)
 $enginesDest = Join-Path $Dest "engines"
 New-Item -ItemType Directory -Force -Path $enginesDest | Out-Null
-foreach ($eng in @("understand-operator","testcase-generation","code-engineering")) {
+foreach ($eng in @("common","understand-operator","testcase-generation","code-engineering")) {
   $src = Join-Path $BundleRoot "engines\$eng"
   if (Test-Path $src) {
     Copy-Item -Recurse -Force $src (Join-Path $enginesDest $eng)

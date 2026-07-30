@@ -42,6 +42,7 @@ ACTION_PRODUCER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "resolve_gaps": [
             "runs/{run_id}/actions/resolve_gaps/parts/**",
             "runs/{run_id}/actions/resolve_gaps/scratch/**",
+            "runs/{run_id}/actions/resolve_gaps/staging.yaml",
         ],
     },
 }
@@ -84,6 +85,7 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "resolve_gaps": [
             "runs/{run_id}/actions/resolve_gaps/parts/**",
             "runs/{run_id}/actions/resolve_gaps/scratch/**",
+            "runs/{run_id}/actions/resolve_gaps/staging.yaml",
             "uo/ir/resolve_gaps_receipt.yaml",
             "uo/ir/**",
         ],
@@ -258,6 +260,40 @@ def shard_producer_read_paths(
             ),
         ]
         return paths
+    if action_id == "resolve_gaps":
+        paths = [
+            expand_path_template(
+                "runs/{run_id}/actions/resolve_gaps/inputs/blocker_batches.yaml",
+                run_id=run_id,
+            ),
+            expand_path_template(
+                f"runs/{{run_id}}/actions/resolve_gaps/inputs/batches/{batch}",
+                run_id=run_id,
+            ),
+            "uo/ir/unresolved.yaml",
+            "uo/ir/resolve_gaps_staging.yaml",
+        ]
+        if sid:
+            paths.append(
+                expand_path_template(
+                    f"runs/{{run_id}}/actions/resolve_gaps/parts/part_{sid}.yaml",
+                    run_id=run_id,
+                )
+            )
+            paths.append(
+                expand_path_template(
+                    f"runs/{{run_id}}/actions/resolve_gaps/scratch/{sid}/**",
+                    run_id=run_id,
+                )
+            )
+        for extra in (
+            f"runs/{{run_id}}/actions/resolve_gaps/environment_capabilities.yaml",
+            f"runs/{{run_id}}/actions/resolve_gaps/prompt.md",
+            f"runs/{{run_id}}/actions/resolve_gaps/method.md",
+            f"runs/{{run_id}}/actions/resolve_gaps/bundle.yaml",
+        ):
+            paths.append(expand_path_template(extra, run_id=run_id))
+        return paths
     paths = [
         expand_path_template(
             f"runs/{{run_id}}/actions/{action_id}/semantic_batches.yaml",
@@ -316,6 +352,14 @@ def shard_producer_forbidden_read_paths(
                 "runs/{run_id}/actions/adjudicate_llm_tasks/parts/**",
                 run_id=run_id,
             ),
+        ]
+    if action_id == "resolve_gaps":
+        # Do not glob-forbid batches/parts — assigned paths are allow-listed per shard.
+        return [
+            "uo/ir/gap_bindings.yaml",
+            "uo/ir/host_derivation.yaml",
+            "uo/ir/operator_graph.yaml",
+            "uo/ir/quality.yaml",
         ]
     return []
 

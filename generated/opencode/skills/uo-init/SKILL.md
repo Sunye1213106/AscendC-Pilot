@@ -45,6 +45,7 @@ acp run-action <action_id>
 | `extract_registry` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/extract-registry` | `-` | `extract-registry-v1` |
 | `extract_kernel` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/extract-kernel` | `-` | `extract-kernel-v1` |
 | `normalize_variables` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/normalize-variables` | `-` | `normalize-variables-v1` |
+| `derive_key_fields` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/derive-key-fields` | `-` | `derive-key-fields-v1` |
 | `normalize_predicates` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/normalize-predicates` | `-` | `normalize-predicates-v1` |
 | `resolve_gaps` | `subagent` | `uo-gap-resolve` | `producer` | `uo-init/resolve-gaps` | `uo/resolve-gaps` | `resolve-gaps-v1` |
 | `apply_gap_patch` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/apply-gap-patch` | `-` | `gap-patch-v1` |
@@ -231,8 +232,9 @@ Pilot 独占状态、合法边、门禁与完成态。
 | `extract_registry` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/extract-registry` | `-` | `deterministic-uo-engine` |
 | `extract_kernel` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/extract-kernel` | `-` | `deterministic-uo-engine` |
 | `normalize_variables` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/normalize-variables` | `-` | `deterministic-uo-engine` |
+| `derive_key_fields` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/derive-key-fields` | `-` | `deterministic-uo-engine` |
 | `normalize_predicates` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/normalize-predicates` | `-` | `deterministic-uo-engine` |
-| `resolve_gaps` | source-authority,code-access,evidence,language,pilot-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution | `uo-init/resolve-gaps` | `uo/resolve-gaps` | `uo-gap-resolve` |
+| `resolve_gaps` | source-authority,code-access,evidence,language,pilot-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution,action-scratch,sharded-llm-producer,bounded-semantic-batch,producer-self-check | `uo-init/resolve-gaps` | `uo/resolve-gaps` | `uo-gap-resolve` |
 | `apply_gap_patch` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/apply-gap-patch` | `-` | `deterministic-uo-engine` |
 | `export_kb` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/export-kb` | `-` | `deterministic-uo-engine` |
 | `build_index` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/build-index` | `-` | `deterministic-uo-engine` |
@@ -251,6 +253,7 @@ Pilot 独占状态、合法边、门禁与完成态。
 | `extract_registry` | `actions/extract-registry/METHOD.md` | `-` | `extract-registry-v1` | `deterministic_engine` |
 | `extract_kernel` | `actions/extract-kernel/METHOD.md` | `-` | `extract-kernel-v1` | `deterministic_engine` |
 | `normalize_variables` | `actions/normalize-variables/METHOD.md` | `-` | `normalize-variables-v1` | `deterministic_engine` |
+| `derive_key_fields` | `actions/derive-key-fields/METHOD.md` | `-` | `derive-key-fields-v1` | `deterministic_engine` |
 | `normalize_predicates` | `actions/normalize-predicates/METHOD.md` | `-` | `normalize-predicates-v1` | `deterministic_engine` |
 | `resolve_gaps` | `actions/resolve-gaps/METHOD.md` | `prompts/tasks/uo/resolve-gaps.md` | `resolve-gaps-v1` | `producer` |
 | `apply_gap_patch` | `actions/apply-gap-patch/METHOD.md` | `-` | `gap-patch-v1` | `deterministic_engine` |

@@ -94,14 +94,14 @@ KBR_<hash12(rel_file + "::" + function + "::" + normalized_guard + "#" + ordinal
 
 **新增**
 
-- `uo_init/pilot_engines.py`：15 Action 的 `fn(project_root, payload)` 入口
+- `uo_init/pilot_engines.py`：16 Action 的 `fn(project_root, payload)` 入口（含 `derive_key_fields`）
 - `uo_init/{kb_export,kb_index,uo_query,assemble_kb,variable_model,predicate,controllability,op_spec}.py`
 - gates：`layout_receipt` / `scope_probe_clean` / `extract_receipt` / `normalize_receipt` / `gap_patch_evidence`
 - TG：`OPTIONAL_KB_EXPORT_FILES`，`not_extracted` 视为已声明缺失
 
 **修改**
 
-- `specs.py` `WORKFLOWS["uo-init"]` → 6 阶段 15 Action / 2 subagent
+- `specs.py` `WORKFLOWS["uo-init"]` → 6 阶段 16 Action / 2 subagent（`uo-gap-resolve`、`uo-kb-review`）
 - `engines.py` ENGINE_REGISTRY 改挂 `uo_init.pilot_engines`（不再 `uo.scripts.*`）
 - `ownership.py` 写路径切到分层 YAML + `resolve_gaps` staging
 - `Node.to_dict`：保留字段优先于 `data`，避免 `data.kind` 覆盖节点 kind
@@ -127,16 +127,22 @@ Host 高置信闭合（FAG arch35 作回归样本，**无 FAG 特化**）：
 |------|------|
 | PRODUCTION 节点 | 740 |
 | `source_closure` | **0.9662**（≥ 0.95） |
+## 5. 当前基线（2026-07-28，脚本闭环）
+
+| 指标 | 值 |
+|---|---|
+| `source_closure` | **0.9595** |
 | `input_controllability` | **0.2405** |
 | `blocker_count`（LLM task） | **12**（&lt; 20） |
 
 Kernel / KB / TG（2026-07-28 UO↔TG 闭环）：
 
 - pairwise×`DT_FLOAT16` → 37 job → **2** 唯一 `KBR_*`
-- tiling materialize：`template_blocks=65`，`legal_keys=8705`，`key_field_obligations=19`
-- `gate_uo_ready` pass（新契约；不依赖 `uo.scripts`）
-- L2 CSV 8705 唯一 TilingKey；L1 input_controllable branches 180 行；`gen_8705_cases.py --validate` pass
-- KeyField 派生调试：`docs/fag/` + `docs/debug/handoff.md`（探针产物，非契约）
+- tiling materialize（**脚本** `export_operator_closure` 传 `tpl_schema`）：`legal_keys=8705`
+- Pilot 主链 `export_kb_action` **常未传** `tpl_schema` → materialize 可能跳过；K6 真 Z3（`value_expr` 联立）**未完成**
+- KeyField 派生已进主链 Action `derive_key_fields`；调试快照见 `docs/fag/` + `docs/debug/handoff.md`（非契约）
+
+Action 数：**16**（含 `derive_key_fields`）。`resolve_gaps` 按 blocker 分片（≤30/shard，`uo_init.blocker_shards`）。
 
 对应验收项：
 
@@ -144,16 +150,16 @@ Kernel / KB / TG（2026-07-28 UO↔TG 闭环）：
 |---|---|
 | 单测（含 materialize_tiling） | 通过 |
 | 引擎链冒烟 `prepare→scope→export→index→integrity` | 通过 |
-| TG L2 `expand_l2_tiling_keys` | **8705 reachable** |
-| TG `gate_uo_ready` / `built_kb_ready` | **pass** |
-| 8705 Legal 全表 + reason 列 | 通过（脚本路径） |
-| `acp start uo-init` 全流程 UI | 后置（脚本闭环已通） |
+| TG L2 `expand_l2_tiling_keys` | **8705 reachable**（脚本路径） |
+| TG `gate_uo_ready` / `built_kb_ready` | **pass**（脚本路径） |
+| Pilot 主链 K6 / 8705 全表 | **未宣称完成** |
+| `acp start uo-init` 全流程 UI | 后置 |
 
 残留（有意）：
 
 - 旧引擎目录已删除；`uo-update` 挂 `uo_init.update`
-- 完整 acp UI 会话端到端：可在 refresh 后走同一引擎
 - key_triage LLM 链：见 `docs/debug/open-problems.md`（当前 stub）
+- K6：删硬编码不变式、联立 `host_derivation.value_expr`
 
 ## 6. 变更日志
 
@@ -161,3 +167,4 @@ Kernel / KB / TG（2026-07-28 UO↔TG 闭环）：
 - 2026-07-28 Host gate：`source_closure` 0.9595、`blocker_count` 18；Kernel fold KBR + KB assemble/export 接通。
 - 2026-07-28 收尾：KBR evidence、kind 覆盖修复、hashes 扁平化、sqlite/integrity/kb_review、TG intake pass、CE impact 冒烟、第二算子泛化、文档重写；临时产物 `_diag.py`/`fag_report.json` 删除。
 - 2026-07-28 UO↔TG 闭环：materialize tiling 契约、8705 L2 + L1 CSV、gate_uo_ready 新实现、调试日志归档。
+- 2026-07-30 对齐：16 Action + `derive_key_fields`；`resolve_gaps` 分片调度落 `uo_init.blocker_shards`；诚实化 8705/K6 口径。

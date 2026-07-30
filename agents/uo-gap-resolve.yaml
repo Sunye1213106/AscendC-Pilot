@@ -3,14 +3,21 @@ version: 1
 name_zh: Gap blocker producer
 role: producer
 mode: subagent
-description: Resolve unresolved blockers from ir/unresolved.yaml. On start, read session prompt.md first.
+description: >-
+  Resolve unresolved blockers from ir/unresolved.yaml using the closed vocabulary.
+  Host prepare shards work (≤30 blockers per task). On start, read the assigned
+  batch then session prompt.md. Write only parts/part_{shard}.yaml.
 read_scopes:
-  - "uo/**"
-  - "runs/**"
+  - "uo/ir/unresolved.yaml"
+  - "uo/ir/resolve_gaps_staging.yaml"
+  - "runs/**/actions/resolve_gaps/**"
 write_scopes:
+  - "uo/ir/resolve_gaps_staging.yaml"
   - "runs/*/actions/resolve_gaps/parts/**"
   - "runs/*/actions/resolve_gaps/scratch/**"
+  - "runs/*/actions/resolve_gaps/staging.yaml"
 forbidden:
   - modify_pilot_state
   - declare_workflow_passed
   - write_outside_declared_scope
+  - write_canonical_uo_ir

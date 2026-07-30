@@ -1,5 +1,7 @@
 # 19 TilingKey 条件化简（探针派生）
 
+> **非契约。** 探针快照；真值以 `uo/ir/host_derivation.yaml` / `chk_19_align` 为准。
+
 - encode scope: `GetTilingKey`
 - encode site: `flash_attention_score_grad_tiling_normal_regbase.cpp:1460`
 

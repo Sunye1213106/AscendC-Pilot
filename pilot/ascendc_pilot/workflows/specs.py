@@ -181,7 +181,16 @@ _CAPS_ADJUDICATE = [
     "bounded-semantic-batch",
     "producer-self-check",
 ]
-_CAPS_RESOLVE = ["source-reading", "cbm-navigation", "kb-query", "semantic-resolution"]
+_CAPS_RESOLVE = [
+    "source-reading",
+    "cbm-navigation",
+    "kb-query",
+    "semantic-resolution",
+    "action-scratch",
+    "sharded-llm-producer",
+    "bounded-semantic-batch",
+    "producer-self-check",
+]
 _CAPS_REVIEW = ["structured-review", "kb-query"]
 _CAPS_CONTRACT = ["contract-building", "kb-query", "obligation-analysis"]
 _CAPS_OBLIGATION = ["obligation-analysis", "kb-query"]
@@ -395,6 +404,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 allowed_write_paths=[
                     "runs/{run_id}/actions/resolve_gaps/parts/**",
                     "runs/{run_id}/actions/resolve_gaps/scratch/**",
+                    "runs/{run_id}/actions/resolve_gaps/staging.yaml",
                 ],
             ),
             _act(

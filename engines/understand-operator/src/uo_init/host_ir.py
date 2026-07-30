@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-from uo_init.clang_walk import PathCond, WriteRecord, walk_file
+from uo_init.clang_walk import CallSite, PathCond, WriteRecord, walk_file
 
 
 
@@ -128,9 +128,25 @@ class HostIR:
     class_fields: set[str] = field(default_factory=set)
     # Guarded assignments to plain locals, keyed nowhere: use local_writes_in().
     local_writes: list[WriteEvent] = field(default_factory=list)
+    call_sites: list[CallSite] = field(default_factory=list)
 
     def paths(self) -> list[str]:
         return [w.path for w in self.writes]
+
+    def calls_to(self, callee: str) -> list[CallSite]:
+        """Every recorded call of `callee`, with the guards reaching each one.
+
+        A function reached from exactly one unguarded call always runs; one
+        reached only under `layoutType == TND` runs exactly then. Either is a
+        condition on the input, where the alternative is a free boolean.
+        """
+        cached = getattr(self, "_calls_by_callee", None)
+        if cached is None:
+            cached = {}
+            for site in self.call_sites:
+                cached.setdefault(site.callee, []).append(site)
+            self._calls_by_callee = cached
+        return cached.get(callee, [])
 
     def local_writes_in(self, function: str) -> dict[str, list[WriteEvent]]:
         """local name -> its guarded assignments inside `function`."""
@@ -407,6 +423,8 @@ def build_host_ir(
 
     all_writes: list[WriteEvent] = []
     all_local_writes: list[WriteEvent] = []
+    all_calls: list[CallSite] = []
+    seen_calls: set[tuple[str, str, str, int]] = set()
     summaries: dict[str, FuncSummary] = {}
     class_fields: set[str] = set()
     path_list = [Path(p) for p in paths]
@@ -431,6 +449,13 @@ def build_host_ir(
             _to_event(r, template_precondition) for r in res.local_writes
         )
         class_fields |= res.class_fields
+        for site in getattr(res, "call_sites", ()) or ():
+            # A header included by several TUs is walked once per TU, so the
+            # same physical call arrives repeatedly.
+            key = (site.caller, site.callee, site.file, site.line)
+            if key not in seen_calls:
+                seen_calls.add(key)
+                all_calls.append(site)
         for name, fr in res.functions.items():
             s = summaries.setdefault(name, FuncSummary(name=name))
             for w in fr.writes:
@@ -470,6 +495,7 @@ def build_host_ir(
         backend="clang",
         class_fields=class_fields,
         local_writes=_assign_ssa(all_local_writes),
+        call_sites=all_calls,
     )
 
 

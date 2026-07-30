@@ -55,7 +55,7 @@ def test_host_nested_writes_nonzero(fag_dir, cann_root, ops_root):
         arch_dir="arch35",
     )
     path = fag_dir / "op_host" / "arch35" / "flash_attention_score_grad_tiling_normal_regbase.cpp"
-    res = analyze_host(str(path), ctx)
+    res = analyze_host(str(path), ctx, "flash_attention")
     assert len(res.nested_writes) >= 1
     blob = " ".join(res.nested_writes)
     assert "isNzOut" in blob or "splitAxis" in blob
@@ -72,7 +72,7 @@ def test_kernel_fag_zero_diag(fag_dir, cann_root, ops_root):
         arch_dir="arch35",
     )
     apt = fag_dir / "op_kernel" / "flash_attention_score_grad_apt.cpp"
-    res = analyze_kernel(str(apt), ctx)
+    res = analyze_kernel(str(apt), ctx, "flash_attention")
     # Residual errors live in CANN AscendC impl headers; FAG *sources* must be clean.
     fag_errs = [
         (sev, fn, sp)
@@ -99,7 +99,7 @@ def test_kernel_fag_ast_keeps_entry_templates_and_branches(
         arch_dir="arch35",
     )
     apt = fag_dir / "op_kernel" / "flash_attention_score_grad_apt.cpp"
-    res = analyze_kernel(str(apt), ctx)
+    res = analyze_kernel(str(apt), ctx, "flash_attention")
 
     structural = []
     for node in res.tu.cursor.walk_preorder():

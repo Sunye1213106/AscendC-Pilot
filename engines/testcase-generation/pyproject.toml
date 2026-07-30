@@ -9,6 +9,7 @@ description = "AscendC Testcase Generation (TG) engine for AscendC-Pilot"
 requires-python = ">=3.10"
 dependencies = [
   "PyYAML>=6.0",
+  "acp-common",
 ]
 
 [project.optional-dependencies]

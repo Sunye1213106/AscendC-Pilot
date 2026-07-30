@@ -84,6 +84,24 @@ class WriteRecord:
     path_conditions: tuple[PathCond, ...] = ()
 
 
+@dataclass(frozen=True)
+class CallSite:
+    """One call, with the guards that have to hold to reach it.
+
+    A write inside a helper is only reached if the helper is called, and only
+    on the paths where the call is. Without the guards here, an unguarded
+    write in another function has to be modelled as "may or may not happen" —
+    a free boolean the solver reads as either way.
+    """
+
+    caller: str
+    callee: str
+    file: str
+    line: int
+    args: tuple[str, ...] = ()
+    path_conditions: tuple[PathCond, ...] = ()
+
+
 _CONTAINER_MUTATORS = frozenset(
     {
         "push_back",
@@ -128,6 +146,9 @@ class WalkResult:
     # local (`GET_TPL_TILING_KEY(..., splitAxis, ...)`), and without the guards
     # there is no condition left to derive.
     local_writes: list[WriteRecord] = field(default_factory=list)
+    #: Every call with its guards, so "was this function reached" is a real
+    #: condition rather than an unknown.
+    call_sites: list[CallSite] = field(default_factory=list)
     functions: dict[str, FuncRecord] = field(default_factory=dict)
     diagnostics: list[tuple[int, str, str]] = field(default_factory=list)
     macro_idioms: int = 0
@@ -356,6 +377,7 @@ class _Walker:
         self.controls: list[CtrlNode] = []
         self.writes: list[WriteRecord] = []
         self.local_writes: list[WriteRecord] = []
+        self.call_sites: list[CallSite] = []
         self.functions: dict[str, FuncRecord] = {}
         self.class_fields: set[str] = set()
         self.macro_idioms = 0
@@ -434,11 +456,12 @@ class _Walker:
         if self._in_scope(file):
             self._record_local_write(RETURN_SLOT, text, cursor, file, func, stack)
 
-    def _record_call(self, cursor, func: str) -> None:
+    def _record_call(self, cursor, func: str, stack=()) -> None:
         """Remember the actual arguments so callee parameters can be resolved."""
         if not func or func not in self.functions:
             return
-        if not self._in_scope(_file_of(cursor)):
+        file = _file_of(cursor)
+        if not self._in_scope(file):
             return
         callee = cursor.spelling
         if not callee:
@@ -449,6 +472,18 @@ class _Walker:
             return
         if any(args):
             self.functions[func].calls.append((callee, args))
+        # Recorded for every call, including argument-less ones: reachability
+        # is about whether the call happens, not about what is passed.
+        self.call_sites.append(
+            CallSite(
+                caller=func,
+                callee=callee,
+                file=file,
+                line=cursor.location.line,
+                args=args,
+                path_conditions=tuple(stack),
+            )
+        )
 
     def _record_control(
         self,
@@ -660,6 +695,21 @@ class _Walker:
         if not rhs:
             return
         assert file is not None
+        fr = self.functions[func]
+        # Local containers are SSA state too. Recording their inserted value
+        # lets ``items.size()/find()/empty()`` and out-parameter containers
+        # resolve back to the source of their elements.
+        fr.assigns[path] = rhs
+        hist = fr.assign_lists.setdefault(path, [])
+        if rhs not in hist:
+            hist.append(rhs)
+        if path.count(".") < 1:
+            # A bare name is a function-local `std::set`/`vector`, not tiling
+            # data — `_record_write` already draws that line for `=`. Without
+            # it here, `scratch.insert(x)` became an ownerless WriteRecord that
+            # tail-matching could then attribute to a real tiling field.
+            self._record_local_write(path, rhs, cursor, file, func, stack)
+            return
         self.writes.append(
             WriteRecord(
                 path=path,
@@ -670,16 +720,8 @@ class _Walker:
                 path_conditions=tuple(stack),
             )
         )
-        fr = self.functions[func]
         if path not in fr.writes:
             fr.writes.append(path)
-        # Local containers are SSA state too. Recording their inserted value
-        # lets ``items.size()/find()/empty()`` and out-parameter containers
-        # resolve back to the source of their elements.
-        fr.assigns[path] = rhs
-        hist = fr.assign_lists.setdefault(path, [])
-        if rhs not in hist:
-            hist.append(rhs)
 
     # -- traversal ---------------------------------------------------------
     def walk(self, cursor, stack: list[PathCond], func: str) -> None:
@@ -741,7 +783,7 @@ class _Walker:
         elif kind_name == "VAR_DECL":
             self._record_var_decl(cursor, func, stack)
         elif kind_name in ("CALL_EXPR", "CXX_MEMBER_CALL_EXPR"):
-            self._record_call(cursor, func)
+            self._record_call(cursor, func, stack)
             if self.collect_writes:
                 self._record_container_write(cursor, stack, func)
                 if (cursor.spelling or "") == "operator=":
@@ -1050,6 +1092,7 @@ def walk_file(
         controls=w.controls,
         writes=w.writes,
         local_writes=w.local_writes,
+        call_sites=w.call_sites,
         functions=w.functions,
         diagnostics=diags,
         macro_idioms=w.macro_idioms,

@@ -323,11 +323,43 @@ def merge_accepted(
     return list(by_id.values()), accepted, rejected
 
 
+def binding_condition(binding: dict[str, Any]) -> dict[str, Any] | None:
+    """`{var_id, op, value}` as an SMT-lite condition, or None if incomplete.
+
+    This is the whole content of an `input_derived` verdict: a statement that
+    the guard the model could not read is really this test on a known variable.
+    """
+    binding = _as_dict(binding)
+    var_id = str(binding.get("var_id") or "")
+    op = str(binding.get("op") or "")
+    if not var_id or op not in BINDING_OPS or "value" not in binding:
+        return None
+    value = binding.get("value")
+    if op == "in":
+        values = value if isinstance(value, list) else [value]
+        return {"op": "in", "var": var_id, "values": list(values)}
+    return {"op": op, "var": var_id, "value": value}
+
+
 def apply_bindings_to_derivation(doc: Any, bindings: list[dict[str, Any]]) -> dict[str, int]:
     """Mutate a HostDerivation in place using accepted ledger rows.
 
+    An `input_derived` verdict has to be substituted into `value_expr`, not
+    merely struck from the guard list. Removing the record on its own left the
+    free variable sitting in the expression with nothing left to explain it:
+    the solver still treated the guard as "either way", while the escalation
+    counters reported it closed. That is how a field reached `derived` while
+    its condition was still weaker than the source.
+
     Returns counters used by the loop gate: escalating_before/after, etc.
     """
+    from uo_init.derive_key_fields import (
+        classify_exactness,
+        collect_vars_dag,
+        status_of_exactness,
+        substitute_vars,
+    )
+
     before = sum(len(f.escalating) for f in getattr(doc, "fields", []) or [])
     by_guard: dict[str, dict[str, Any]] = {}
     by_text: dict[str, dict[str, Any]] = {}
@@ -344,9 +376,11 @@ def apply_bindings_to_derivation(doc: Any, bindings: list[dict[str, Any]]) -> di
 
     resolved = 0
     softened = 0
+    unusable = 0
     for fld in getattr(doc, "fields", []) or []:
         field_binding = field_cls.get(fld.name)
         kept = []
+        substitutions: dict[str, Any] = {}
         for guard in list(fld.undecided_guards or []):
             binding = (
                 by_guard.get(guard.id)
@@ -358,19 +392,39 @@ def apply_bindings_to_derivation(doc: Any, bindings: list[dict[str, Any]]) -> di
                 continue
             cls = str(binding.get("classification") or "")
             if cls in ("scheduling", "validation_assumption"):
+                # Still an over-approximation, just one we accept on purpose.
+                # It stays recorded so the field never reads as exact.
                 guard.presort = "scheduling"
                 guard.escalate = False
                 kept.append(guard)
                 softened += 1
             elif cls == "input_derived":
+                condition = binding_condition(binding.get("binding"))
+                if condition is None:
+                    # "It comes from the input" with no statement of *what* it
+                    # tests teaches us nothing substitutable. Keep the guard.
+                    kept.append(guard)
+                    unusable += 1
+                    continue
+                substitutions[guard.var_id] = condition
                 resolved += 1
             else:
                 kept.append(guard)
         fld.undecided_guards = kept
+        if substitutions and fld.value_expr is not None:
+            fld.value_expr = substitute_vars(fld.value_expr, substitutions)
+            fld.variables = sorted(collect_vars_dag(fld.value_expr))
+            fld.exactness, fld.free_vars = classify_exactness(
+                value_expr=fld.value_expr,
+                variables=fld.variables,
+                unresolved=fld.unresolved,
+            )
+            fld.status = status_of_exactness(fld.exactness)
     after = sum(len(f.escalating) for f in getattr(doc, "fields", []) or [])
     return {
         "escalating_before": before,
         "escalating_after": after,
         "resolved": resolved,
         "softened": softened,
+        "unusable": unusable,
     }

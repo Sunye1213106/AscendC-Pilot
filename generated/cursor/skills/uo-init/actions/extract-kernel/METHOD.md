@@ -1,20 +1,18 @@
 # 抽取 Kernel 折叠分支
 
-> **cp 是真实 CLI。** 本 Action 走 uo_init.pilot_engines.extract_kernel。
+> **`acp` 是真实 CLI。** 本 Action 走 `uo_init.pilot_engines.extract_kernel`（确定性）。
 
 ## Goal
 
-抽取 Kernel 折叠分支（clang 确定性引擎）。
+在有 tiling key header 与 kernel 入口时，按模板维折叠 kernel 分支；缺失则可 skip。
 
 ## Domain Procedure
 
-`	ext
+```text
 acp run-action extract_kernel --project <算子目录>
-`
-
-成功标志：finalize ok: true，并满足本 Action 的 output contract。
+```
 
 ## Output
 
-- 仅写 Spec / ownership 声明路径。
-- 本文件不得描述 Pilot advance、complete 或其他阶段。
+- `uo/kernel/fold_receipt.yaml`
+- 合同：`extract-kernel-v1`

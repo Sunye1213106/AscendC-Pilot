@@ -1,0 +1,15 @@
+id: action-scratch
+version: 1
+name_zh: Action 临时工作区
+description: 允许写入 runs/{run_id}/actions/{action_id}/scratch/** 做临时统计与草稿；scratch 不进入正式 IR。
+applies_when:
+  - producer 需要临时统计、查询缓存、validator 报告
+  - Map worker 需要 per-shard scratch
+requires:
+  inputs: [action_session_dir]
+  tools: [write]
+  context: [run_id, action_id]
+produces: [scratch_artifacts]
+compatible_roles: [producer]
+policies: [pilot-control]
+method_file: METHOD.md

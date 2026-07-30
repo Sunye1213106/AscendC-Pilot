@@ -65,7 +65,7 @@ def test_gates_emit_reason_codes():
 def test_coverage_baseline_row(fag_dir):
     from uo_init.registry_capable import build_arch35_competition
 
-    c = build_arch35_competition(fag_dir / "op_host")
+    c = build_arch35_competition(fag_dir / "op_host", op_name="FlashAttentionScoreGrad")
     # same_as_input=1 => tnd_softmax_in=TND => Normal false
     pred = c.preds[c.ordered[1]["class"]]
     assert pred.eval_arch35({"npu_arch": "DAV_3510", "tnd_softmax_in": "TND"}) is False

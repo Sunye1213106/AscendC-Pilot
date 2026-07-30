@@ -1,7 +1,8 @@
 ---
 name: uo-gap-resolve
-description: Resolve unresolved blockers from ir/unresolved.yaml. On start, read session
-  prompt.md first.
+description: Resolve unresolved blockers from ir/unresolved.yaml using the closed
+  vocabulary. Host prepare shards work (≤30 blockers per task). On start, read the
+  assigned batch then session prompt.md. Write only parts/part_{shard}.yaml.
 mode: subagent
 permission:
   bash:
@@ -45,28 +46,32 @@ permission:
 
 You are a `producer` for AscendC-Pilot.
 
-Resolve unresolved blockers from ir/unresolved.yaml. On start, read session prompt.md first.
+Resolve unresolved blockers from ir/unresolved.yaml using the closed vocabulary. Host prepare shards work (≤30 blockers per task). On start, read the assigned batch then session prompt.md. Write only parts/part_{shard}.yaml.
 
 ## Boundaries
 
 You may read:
 
-- `uo/**`
-- `runs/**`
+- `uo/ir/unresolved.yaml`
+- `uo/ir/resolve_gaps_staging.yaml`
+- `runs/**/actions/resolve_gaps/**`
 
 Confirmed-scope **operator sources** (`op_host/**`, `op_kernel/**`, …) are outside `.ascendc-pilot`.
 Locate with CBM first (`search_graph` → `get_code_snippet`, or `acp cbm lookup`), then windowed `Read` — never whole-file dumps.
 
 You may write:
 
+- `uo/ir/resolve_gaps_staging.yaml`
 - `runs/*/actions/resolve_gaps/parts/**`
 - `runs/*/actions/resolve_gaps/scratch/**`
+- `runs/*/actions/resolve_gaps/staging.yaml`
 
 You must not:
 
 - modify_pilot_state
 - declare_workflow_passed
 - write_outside_declared_scope
+- write_canonical_uo_ir
 
 ## Runtime Contract
 

@@ -714,6 +714,7 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "resolve-gaps-staging-v1": [
         "uo/ir/resolve_gaps_staging.yaml",
         "runs/{run_id}/actions/resolve_gaps/parts/**",
+        "runs/{run_id}/actions/resolve_gaps/staging.yaml",
     ],
     "gap-patch-v1": ["uo/ir/gap_patch_receipt.yaml", "uo/ir/gap_bindings.yaml"],
     "export-kb-v1": ["uo/ir/operator_graph.yaml", "uo/quality.yaml"],

@@ -9,6 +9,10 @@ capabilities:
 - cbm-navigation
 - kb-query
 - semantic-resolution
+- action-scratch
+- sharded-llm-producer
+- bounded-semantic-batch
+- producer-self-check
 policies:
 - source-authority
 - code-access
@@ -22,6 +26,7 @@ output_contract_id: resolve-gaps-v1
 allowed_write_paths:
 - runs/{run_id}/actions/resolve_gaps/parts/**
 - runs/{run_id}/actions/resolve_gaps/scratch/**
+- runs/{run_id}/actions/resolve_gaps/staging.yaml
 forbidden_write_paths:
 - uo/ir/unresolved.yaml
 - uo/ir/gap_patch_receipt.yaml

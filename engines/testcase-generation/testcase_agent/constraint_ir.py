@@ -1,44 +1,82 @@
+# -*- coding: utf-8 -*-
+"""TG-side constraint IR: obligations, contracts, snapshots and realization map.
+
+The pure expression/domain core lives in `acp_common.constraint_ir` and is
+re-exported here so existing importers keep their current import paths.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
+from acp_common.constraint_ir import (
+    ConstraintIRError,
+    SUPPORTED_EXPR_OPS,
+    SUPPORTED_VAR_TYPES,
+    _as_dict,
+    _as_list,
+    _error,
+    _int_domain,
+    _iter_items,
+    _merge_int_domain,
+    _normalize_int_domain,
+    _validate_variable_domains,
+    _var_id,
+    collect_expr_variables,
+    compile_pattern_to_expr,
+    has_explicit_domain,
+    normalize_domain,
+    normalize_expr,
+    parse_bool_literal,
+)
 
-SUPPORTED_VAR_TYPES = {"bool", "int", "enum"}
-SUPPORTED_EXPR_OPS = {
-    "eq",
-    "ne",
-    "lt",
-    "le",
-    "gt",
-    "ge",
-    "in",
-    "not_in",
-    "and",
-    "or",
-    "not",
-    "implies",
-    "requires",
-    "mutex",
-    "add",
-    "sub",
-    "mul",
-    "div",
-    "mod",
-    "aligned",
-    "derived",
-    "if_then_else",
-    "lit",
-}
-
-
-def _error(code: str, *, scope: str, severity: str = "error", **fields: Any) -> dict[str, Any]:
-    return {"code": code, "scope": scope, "severity": severity, **fields}
-
-
-class ConstraintIRError(ValueError):
-    pass
-
+__all__ = [
+    "ConstraintIRError",
+    "SUPPORTED_EXPR_OPS",
+    "SUPPORTED_VAR_TYPES",
+    "_as_dict",
+    "_as_list",
+    "_error",
+    "_int_domain",
+    "_iter_items",
+    "_merge_int_domain",
+    "_normalize_int_domain",
+    "_validate_variable_domains",
+    "_var_id",
+    "collect_expr_variables",
+    "compile_pattern_to_expr",
+    "has_explicit_domain",
+    "normalize_domain",
+    "normalize_expr",
+    "parse_bool_literal",
+    "IRBuildResult",
+    "TargetCompileResult",
+    "_add_variable",
+    "_apply_realization_map",
+    "_branch_var_id",
+    "_collect_contract_targets",
+    "_domain_authority",
+    "_ensure_bool",
+    "_ensure_enum",
+    "_ensure_int",
+    "_entity_var_id",
+    "_force_derived_variable",
+    "_key_var_id",
+    "_list_is_ints",
+    "_optional_var_id",
+    "_realization_ir_metadata",
+    "_register_derived_variable",
+    "_relation_var_id",
+    "_target_failure",
+    "_target_outside_declared_domain",
+    "_variables_from_context_slice",
+    "_variables_from_interface",
+    "_variables_from_obligations",
+    "build_constraint_ir",
+    "compile_obligation_target",
+    "compile_relation_expr",
+    "obligation_target_expr",
+]
 
 @dataclass(frozen=True)
 class IRBuildResult:
@@ -47,14 +85,12 @@ class IRBuildResult:
     global_errors: list[dict[str, Any]]
     obligation_errors: dict[str, list[dict[str, Any]]]
 
-
 @dataclass(frozen=True)
 class TargetCompileResult:
     status: str
     expr: dict[str, Any] | None
     code: str = ""
     reason: str = ""
-
 
 def build_constraint_ir(
     snapshot: dict[str, Any],
@@ -137,7 +173,6 @@ def build_constraint_ir(
     }
     return IRBuildResult(ir=ir, errors=all_errors, global_errors=global_errors, obligation_errors=obligation_errors)
 
-
 def compile_obligation_target(obligation: dict[str, Any], ir: dict[str, Any] | set[str]) -> TargetCompileResult:
     variable_ids = set(ir) if isinstance(ir, set) else {str(item.get("id")) for item in ir.get("variables", []) if isinstance(item, dict)}
     priority = str(obligation.get("priority") or "normal").lower()
@@ -175,7 +210,6 @@ def compile_obligation_target(obligation: dict[str, Any], ir: dict[str, Any] | s
             )
     return TargetCompileResult(status="ok", expr=expr)
 
-
 def _target_outside_declared_domain(expr: dict[str, Any], ir: dict[str, Any]) -> tuple[str, Any, Any] | None:
     variables = {str(item.get("id")): item for item in ir.get("variables", []) if isinstance(item, dict)}
 
@@ -208,7 +242,6 @@ def _target_outside_declared_domain(expr: dict[str, Any], ir: dict[str, Any]) ->
         return None
 
     return visit(expr)
-
 
 def obligation_target_expr(obligation: dict[str, Any], variable_ids: set[str]) -> dict[str, Any] | None:
     constraints = _as_dict(obligation.get("constraints"))
@@ -266,7 +299,6 @@ def obligation_target_expr(obligation: dict[str, Any], variable_ids: set[str]) -
         return {"op": "eq", "var": _var_id(f"KEY_{field}"), "value": values[0]}
     return None
 
-
 def compile_relation_expr(constraints: dict[str, Any]) -> dict[str, Any] | None:
     relation_type = str(constraints.get("relation_type") or "").lower()
     if not relation_type:
@@ -308,62 +340,6 @@ def compile_relation_expr(constraints: dict[str, Any]) -> dict[str, Any] | None:
     if relation_type in {"pairwise", "must_cover"}:
         raise ConstraintIRError(f"{relation_type} relation does not provide a deterministic target expression")
     raise ConstraintIRError(f"Unsupported relation_type: {relation_type}")
-
-
-def compile_pattern_to_expr(pattern: Any) -> dict[str, Any] | None:
-    if not isinstance(pattern, dict) or not pattern:
-        return None
-    args = [{"op": "eq", "var": _var_id(str(key)), "value": value} for key, value in sorted(pattern.items())]
-    return args[0] if len(args) == 1 else {"op": "and", "args": args}
-
-
-def normalize_expr(expr: Any) -> dict[str, Any]:
-    if not isinstance(expr, dict):
-        raise ConstraintIRError(f"Constraint expression must be a mapping, got {type(expr).__name__}")
-    op = str(expr.get("op") or expr.get("type") or "").strip()
-    if not op:
-        if {"var", "value"} <= set(expr):
-            op = "eq"
-        else:
-            raise ConstraintIRError(f"Expression is missing op: {expr}")
-    if op not in SUPPORTED_EXPR_OPS:
-        raise ConstraintIRError(f"Unsupported expression op: {op}")
-    out: dict[str, Any] = {"op": op}
-    if op in {"eq", "ne", "lt", "le", "gt", "ge"}:
-        if "lhs" in expr or "rhs" in expr:
-            out["lhs"] = _normalize_value_or_expr(expr.get("lhs"))
-            out["rhs"] = _normalize_value_or_expr(expr.get("rhs"))
-        else:
-            out["var"] = _require_var(expr)
-            out["value"] = expr.get("value")
-    elif op in {"in", "not_in"}:
-        out["var"] = _require_var(expr)
-        out["values"] = _as_list(expr.get("values") if "values" in expr else expr.get("value"))
-    elif op in {"and", "or"}:
-        out["args"] = [normalize_expr(arg) for arg in _require_args(expr)]
-    elif op == "not":
-        out["arg"] = normalize_expr(expr.get("arg") or expr.get("expr"))
-    elif op in {"implies", "requires"}:
-        out["antecedent"] = normalize_expr(expr.get("antecedent") or expr.get("if") or expr.get("requires"))
-        out["consequent"] = normalize_expr(expr.get("consequent") or expr.get("then") or expr.get("required"))
-    elif op == "mutex":
-        out["args"] = [normalize_expr(arg) for arg in _require_args(expr)]
-    elif op in {"add", "sub", "mul", "div", "mod"}:
-        out["args"] = [_normalize_arith_arg(arg) for arg in _require_args(expr)]
-    elif op == "lit":
-        out["value"] = expr.get("value")
-    elif op == "aligned":
-        out["var"] = _require_var(expr)
-        out["alignment"] = int(expr.get("alignment") or expr.get("value") or 1)
-    elif op == "derived":
-        out["var"] = _require_var(expr)
-        out["expr"] = normalize_expr(expr.get("expr") or expr.get("definition"))
-    elif op == "if_then_else":
-        out["condition"] = normalize_expr(expr.get("condition") or expr.get("if"))
-        out["then"] = _normalize_value_or_expr(expr.get("then"))
-        out["else"] = _normalize_value_or_expr(expr.get("else"))
-    return out
-
 
 def _add_variable(variables: dict[str, dict[str, Any]], spec: dict[str, Any], errors: list[dict[str, Any]], source: str) -> None:
     var_id = str(spec.get("id") or spec.get("stable_id") or spec.get("var") or "")
@@ -419,7 +395,6 @@ def _add_variable(variables: dict[str, dict[str, Any]], spec: dict[str, Any], er
         variables[var_id]["derived"] = derived
         variables[var_id]["definition"] = spec.get("definition") or spec.get("expr")
 
-
 def _variables_from_interface(variables: dict[str, dict[str, Any]], contract: dict[str, Any], errors: list[dict[str, Any]]) -> None:
     interface = _as_dict(contract.get("interface"))
     _ensure_enum(variables, "VAR_DTYPE_LAYOUT_CLASS", [str(item.get("id") or item.get("name") or item.get("class") or item.get("dtype")) for item in _iter_items(interface.get("dtype_layout_domains")) if item], source="interface.dtype_layout_domains", errors=errors)
@@ -427,7 +402,6 @@ def _variables_from_interface(variables: dict[str, dict[str, Any]], contract: di
         name = str(item.get("id") or item.get("name") or item.get("input") or "")
         if name:
             _ensure_bool(variables, _optional_var_id(name), source="interface.optional_inputs", errors=errors)
-
 
 def _variables_from_context_slice(variables: dict[str, dict[str, Any]], context_slice: dict[str, Any], errors: list[dict[str, Any]]) -> None:
     bucket_members: dict[str, list[str]] = {
@@ -470,7 +444,6 @@ def _variables_from_context_slice(variables: dict[str, dict[str, Any]], context_
             _ensure_int(variables, var_id, source="context_entity_type_only", errors=errors)
     for var_id, members in bucket_members.items():
         _ensure_enum(variables, var_id, sorted(set(members)), source="context_entity_bucket", errors=errors)
-
 
 def _variables_from_obligations(variables: dict[str, dict[str, Any]], obligations: list[dict[str, Any]], obligation_errors: dict[str, list[dict[str, Any]]]) -> None:
     def errors_for(item: dict[str, Any]) -> list[dict[str, Any]]:
@@ -530,7 +503,6 @@ def _variables_from_obligations(variables: dict[str, dict[str, Any]], obligation
     for oid in [oid for oid, errors in obligation_errors.items() if not errors]:
         obligation_errors.pop(oid, None)
 
-
 def _apply_realization_map(
     variables: dict[str, dict[str, Any]],
     constraints: list[dict[str, Any]],
@@ -565,7 +537,6 @@ def _apply_realization_map(
         except ConstraintIRError as exc:
             errors.append(_error("UNSUPPORTED_EXPRESSION", scope="global", variable_id=str(spec.get("id") or ""), source="realization_map.yaml", message=str(exc)))
 
-
 def _force_derived_variable(variables: dict[str, dict[str, Any]], spec: dict[str, Any], expr: dict[str, Any], errors: list[dict[str, Any]]) -> None:
     if expr.get("op") != "derived":
         return
@@ -593,7 +564,6 @@ def _force_derived_variable(variables: dict[str, dict[str, Any]], spec: dict[str
     existing["domain_sources"] = sorted(set(existing.get("domain_sources", [])) | {"realization_map.yaml"})
     existing["source"] = ",".join(sorted(set(str(existing.get("source") or "").split(",")) | {"realization_map.yaml"}))
 
-
 def _realization_ir_metadata(realization_map: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(realization_map, dict):
         return {"enabled": False, "abstract_branch_vars": [], "mapped_branch_vars": []}
@@ -613,7 +583,6 @@ def _realization_ir_metadata(realization_map: dict[str, Any] | None) -> dict[str
         "abstract_branch_vars": sorted(set(abstract)),
         "mapped_branch_vars": sorted(set(mapped)),
     }
-
 
 def _register_derived_variable(variables: dict[str, dict[str, Any]], spec: dict[str, Any], expr: dict[str, Any], errors: list[dict[str, Any]]) -> None:
     if expr.get("op") != "derived":
@@ -645,82 +614,12 @@ def _register_derived_variable(variables: dict[str, dict[str, Any]], spec: dict[
         "source": "contracts/testcase.yaml.typed_constraints",
     }
 
-
-def normalize_domain(var_type: str, spec: dict[str, Any]) -> Any:
-    if var_type == "bool":
-        return [False, True]
-    if "domain" in spec:
-        domain = spec["domain"]
-        if var_type == "int" and isinstance(domain, dict):
-            return {"kind": "range", "min": domain.get("min"), "max": domain.get("max"), "explicit": True, "authority": "explicit", "sources": ["contract_variables"]}
-        if var_type == "int" and isinstance(domain, list):
-            return {"kind": "discrete", "values": sorted(dict.fromkeys(int(item) for item in domain)), "explicit": True, "authority": "explicit", "sources": ["contract_variables"]}
-        return domain
-    if "values" in spec:
-        values = spec["values"]
-        if var_type == "int" and isinstance(values, list) and values:
-            return {"kind": "discrete", "values": sorted(dict.fromkeys(int(item) for item in values)), "explicit": True, "authority": "explicit", "sources": ["contract_variables"]}
-        return values
-    if "enum_values" in spec:
-        return spec["enum_values"]
-    if var_type == "int":
-        if "min" in spec or "max" in spec:
-            return {"kind": "range", "min": spec.get("min"), "max": spec.get("max"), "explicit": True, "authority": "explicit", "sources": ["contract_variables"]}
-        return {"kind": "range", "min": None, "max": None, "explicit": False, "authority": "inferred", "sources": ["contract_type_only"]}
-    return []
-
-
-def has_explicit_domain(spec: dict[str, Any], var_type: str) -> bool:
-    if var_type == "bool":
-        return True
-    if "domain" in spec and spec.get("domain") not in (None, [], {}):
-        return True
-    if "values" in spec and spec.get("values") not in (None, []):
-        return True
-    if "enum_values" in spec and spec.get("enum_values") not in (None, []):
-        return True
-    return "min" in spec or "max" in spec
-
-
-def parse_bool_literal(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int) and not isinstance(value, bool) and value in {0, 1}:
-        return bool(value)
-    if isinstance(value, str):
-        text = value.strip().lower()
-        if text == "true":
-            return True
-        if text == "false":
-            return False
-    raise ConstraintIRError(f"INVALID_BOOL_LITERAL: {value!r}")
-
-
-def collect_expr_variables(expr: Any) -> set[str]:
-    found: set[str] = set()
-
-    def visit(node: Any) -> None:
-        if isinstance(node, dict):
-            var = node.get("var") or node.get("variable")
-            if isinstance(var, str):
-                found.add(var)
-            for child in node.values():
-                visit(child)
-        elif isinstance(node, list):
-            for child in node:
-                visit(child)
-
-    visit(expr)
-    return found
-
-
 def _target_failure(obligation: dict[str, Any], priority: str, reason: str, *, code: str = "OBLIGATION_TARGET_NOT_COMPILED") -> TargetCompileResult:
     if code == "OBLIGATION_OUTSIDE_DECLARED_DOMAIN":
         return TargetCompileResult(status="error", expr=None, code=code, reason=reason)
     if priority in {"hard", "high"}:
         return TargetCompileResult(status="error", expr=None, code=code, reason=reason)
     return TargetCompileResult(status="skipped", expr=None, code=code, reason=reason)
-
 
 def _ensure_bool(
     variables: dict[str, dict[str, Any]],
@@ -735,7 +634,6 @@ def _ensure_bool(
         errors.append(_error("VARIABLE_TYPE_CONFLICT", scope="obligation" if obligation_id else "global", obligation_id=obligation_id, variable_id=var_id, source=source, message=f"Variable {var_id} declared as both {existing.get('type')} and bool"))
         return
     variables.setdefault(var_id, {"id": var_id, "name": var_id, "type": "bool", "domain": [False, True], "domain_authority": "intrinsic", "domain_sources": [source], "stable_id": var_id, "free": True, "derived": False, "definition": None, "source": source})
-
 
 def _ensure_int(
     variables: dict[str, dict[str, Any]],
@@ -770,7 +668,6 @@ def _ensure_int(
             errors.append(_error(error["code"], scope=scope, variable_id=var_id, obligation_id=obligation_id, source=source, **{k: v for k, v in error.items() if k != "code"}))
     existing["source"] = ",".join(sorted(set(str(existing.get("source") or "").split(",")) | {source}))
 
-
 def _ensure_enum(variables: dict[str, dict[str, Any]], var_id: str, domain: list[str], *, source: str = "derived_from_plan", errors: list[dict[str, Any]] | None = None, obligation_id: str | None = None) -> None:
     clean = sorted(dict.fromkeys(str(item) for item in domain if str(item)))
     if not clean:
@@ -804,126 +701,6 @@ def _ensure_enum(variables: dict[str, dict[str, Any]], var_id: str, domain: list
         return
     variables[var_id] = {"id": var_id, "name": var_id, "type": "enum", "domain": clean, "domain_authority": _domain_authority(source), "domain_sources": [source], "stable_id": var_id, "free": True, "derived": False, "definition": None, "source": source}
 
-
-def _int_domain(values: list[int] | None = None, *, min_value: Any = None, max_value: Any = None, source: str, authority: str) -> dict[str, Any]:
-    clean = sorted(dict.fromkeys(int(value) for value in values or []))
-    if clean:
-        return {"kind": "discrete", "values": clean, "explicit": authority == "explicit", "authority": authority, "sources": [source]}
-    if min_value is not None or max_value is not None:
-        return {
-            "kind": "range",
-            "min": int(min_value) if min_value is not None else None,
-            "max": int(max_value) if max_value is not None else None,
-            "explicit": authority == "explicit",
-            "authority": authority,
-            "sources": [source],
-        }
-    return {"kind": "range", "min": None, "max": None, "explicit": False, "authority": authority, "sources": [source]}
-
-
-def _merge_int_domain(left: Any, right: Any, left_authority: str, right_authority: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    left = _normalize_int_domain(left, left_authority)
-    right = _normalize_int_domain(right, right_authority)
-    errors: list[dict[str, Any]] = []
-    for domain in (left, right):
-        if domain.get("kind") != "range":
-            continue
-        if domain.get("min") is not None and domain.get("max") is not None and int(domain["min"]) > int(domain["max"]):
-            errors.append({"code": "INVALID_INT_DOMAIN", "message": "min is greater than max"})
-    def outside(value: Any, domain: dict[str, Any]) -> bool:
-        if domain.get("kind") == "discrete":
-            return int(value) not in [int(item) for item in domain.get("values", [])]
-        return (domain.get("min") is not None and value < int(domain["min"])) or (domain.get("max") is not None and value > int(domain["max"]))
-    def requested_values(domain: dict[str, Any]) -> list[int]:
-        if domain.get("kind") == "discrete":
-            return [int(item) for item in domain.get("values", [])]
-        return [int(value) for value in (domain.get("min"), domain.get("max")) if value is not None]
-    if left_authority == "explicit" and right_authority != "explicit":
-        for value in requested_values(right):
-            if outside(int(value), left):
-                errors.append({"code": "OBLIGATION_OUTSIDE_DECLARED_DOMAIN", "requested_value": str(value), "declared_domain": _format_int_domain(left)})
-        result = dict(left)
-        result.update({"authority": "explicit", "explicit": True, "sources": sorted(set(_as_list(left.get("sources")) + _as_list(right.get("sources"))))})
-        return result, errors
-    if left_authority != "explicit" and right_authority == "explicit":
-        result = dict(right)
-        result.update({"authority": "explicit", "explicit": True, "sources": sorted(set(_as_list(left.get("sources")) + _as_list(right.get("sources"))))})
-        return result, errors
-    if left_authority == "explicit" and right_authority == "explicit":
-        result = _intersect_int_domains(left, right, "explicit")
-        result["sources"] = sorted(set(_as_list(left.get("sources")) + _as_list(right.get("sources"))))
-        if _int_domain_empty(result):
-            errors.append({"code": "DOMAIN_CONFLICT", "message": "Explicit integer domains do not intersect"})
-        return result, errors
-    result = _merge_inferred_int_domains(left, right)
-    result["sources"] = sorted(set(_as_list(left.get("sources")) + _as_list(right.get("sources"))))
-    return result, errors
-
-
-def _normalize_int_domain(domain: Any, authority: str = "inferred") -> dict[str, Any]:
-    if isinstance(domain, list):
-        return {"kind": "discrete", "values": sorted(dict.fromkeys(int(item) for item in domain)), "authority": authority, "explicit": authority == "explicit", "sources": []}
-    if not isinstance(domain, dict):
-        return {"kind": "range", "min": None, "max": None, "authority": authority, "explicit": authority == "explicit", "sources": []}
-    if domain.get("kind") == "discrete" or "values" in domain:
-        return {
-            "kind": "discrete",
-            "values": sorted(dict.fromkeys(int(item) for item in _as_list(domain.get("values")))),
-            "authority": domain.get("authority", authority),
-            "explicit": bool(domain.get("explicit", authority == "explicit")),
-            "sources": _as_list(domain.get("sources")),
-        }
-    return {
-        "kind": "range",
-        "min": int(domain["min"]) if domain.get("min") is not None else None,
-        "max": int(domain["max"]) if domain.get("max") is not None else None,
-        "authority": domain.get("authority", authority),
-        "explicit": bool(domain.get("explicit", authority == "explicit")),
-        "sources": _as_list(domain.get("sources")),
-    }
-
-
-def _intersect_int_domains(left: dict[str, Any], right: dict[str, Any], authority: str) -> dict[str, Any]:
-    if left.get("kind") == "discrete" and right.get("kind") == "discrete":
-        return {"kind": "discrete", "values": sorted(set(left.get("values", [])) & set(right.get("values", []))), "authority": authority, "explicit": authority == "explicit"}
-    if left.get("kind") == "range" and right.get("kind") == "range":
-        mins = [value for value in (left.get("min"), right.get("min")) if value is not None]
-        maxs = [value for value in (left.get("max"), right.get("max")) if value is not None]
-        return {"kind": "range", "min": max(mins) if mins else None, "max": min(maxs) if maxs else None, "authority": authority, "explicit": authority == "explicit"}
-    discrete = left if left.get("kind") == "discrete" else right
-    range_domain = right if left.get("kind") == "discrete" else left
-    values = [int(value) for value in discrete.get("values", []) if not _value_outside_range(int(value), range_domain)]
-    return {"kind": "discrete", "values": sorted(values), "authority": authority, "explicit": authority == "explicit"}
-
-
-def _merge_inferred_int_domains(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
-    if left.get("kind") == "discrete" or right.get("kind") == "discrete":
-        values = []
-        values.extend(int(item) for item in left.get("values", []) if left.get("kind") == "discrete")
-        values.extend(int(item) for item in right.get("values", []) if right.get("kind") == "discrete")
-        if values:
-            return {"kind": "discrete", "values": sorted(set(values)), "authority": "inferred", "explicit": False}
-    mins = [value for value in (left.get("min"), right.get("min")) if value is not None]
-    maxs = [value for value in (left.get("max"), right.get("max")) if value is not None]
-    return {"kind": "range", "min": min(mins) if mins else None, "max": max(maxs) if maxs else None, "authority": "inferred", "explicit": False}
-
-
-def _value_outside_range(value: int, domain: dict[str, Any]) -> bool:
-    return (domain.get("min") is not None and value < int(domain["min"])) or (domain.get("max") is not None and value > int(domain["max"]))
-
-
-def _int_domain_empty(domain: dict[str, Any]) -> bool:
-    if domain.get("kind") == "discrete":
-        return not domain.get("values")
-    return domain.get("min") is not None and domain.get("max") is not None and int(domain["min"]) > int(domain["max"])
-
-
-def _format_int_domain(domain: dict[str, Any]) -> Any:
-    if domain.get("kind") == "discrete":
-        return list(domain.get("values", []))
-    return f"{domain.get('min')}..{domain.get('max')}"
-
-
 def _domain_authority(source: str) -> str:
     if source in {"contracts/testcase.yaml.variables", "context_entity", "context_entity_bucket", "interface.dtype_layout_domains", "interface.optional_inputs", "realization_map.csv_variables"}:
         return "explicit"
@@ -931,24 +708,10 @@ def _domain_authority(source: str) -> str:
         return "intrinsic"
     return "inferred"
 
-
-def _validate_variable_domains(variables: dict[str, dict[str, Any]], errors: list[dict[str, Any]]) -> None:
-    for var_id, variable in variables.items():
-        domain = variable.get("domain")
-        if variable.get("type") != "int" or not isinstance(domain, dict):
-            continue
-        domain = _normalize_int_domain(domain, variable.get("domain_authority", "inferred"))
-        variable["domain"] = domain
-        lower, upper = domain.get("min"), domain.get("max")
-        if domain.get("kind") == "range" and lower is not None and upper is not None and int(lower) > int(upper):
-            errors.append(_error("INVALID_INT_DOMAIN", scope="global", variable_id=var_id, message="min is greater than max"))
-
-
 def _key_var_id(target_ref: str, field: str) -> str:
     if target_ref.startswith("KEY_"):
         return _var_id(target_ref)
     return _var_id(f"KEY_{field}")
-
 
 def _branch_var_id(target_ref: str) -> str:
     if target_ref.startswith(("KBR_", "KDEC_")):
@@ -957,12 +720,10 @@ def _branch_var_id(target_ref: str) -> str:
         return target_ref
     return _var_id(f"BRANCH_{target_ref}")
 
-
 def _optional_var_id(ref: str) -> str:
     if ref.startswith("VAR_OPTIONAL_"):
         return ref
     return _var_id(f"OPTIONAL_{ref}")
-
 
 def _relation_var_id(ref: str) -> str:
     if ref.startswith("VAR_"):
@@ -971,7 +732,6 @@ def _relation_var_id(ref: str) -> str:
         return _var_id(ref)
     return _var_id(ref)
 
-
 def _entity_var_id(entity_id: str) -> str:
     if entity_id.startswith("VAR_"):
         return entity_id
@@ -979,10 +739,8 @@ def _entity_var_id(entity_id: str) -> str:
         return _var_id(entity_id)
     return ""
 
-
 def _list_is_ints(value: Any) -> bool:
     return isinstance(value, list) and bool(value) and all(isinstance(item, int) and not isinstance(item, bool) for item in value)
-
 
 def _collect_contract_targets(contract: dict[str, Any], bucket: str) -> list[str]:
     items = _iter_items(_as_dict(contract.get("coverage_obligations")).get(bucket))
@@ -990,60 +748,3 @@ def _collect_contract_targets(contract: dict[str, Any], bucket: str) -> list[str
     for item in items:
         out.extend(str(ref) for ref in _as_list(item.get("target_refs") or item.get("target_ref") or item.get("family_id") or item.get("id")) if str(ref))
     return out
-
-
-def _require_var(expr: dict[str, Any]) -> str:
-    var = expr.get("var") or expr.get("variable")
-    if not var:
-        raise ConstraintIRError(f"Expression requires var: {expr}")
-    return str(var)
-
-
-def _require_args(expr: dict[str, Any]) -> list[Any]:
-    args = expr.get("args")
-    if not isinstance(args, list) or not args:
-        raise ConstraintIRError(f"Expression requires non-empty args: {expr}")
-    return args
-
-
-def _normalize_arith_arg(arg: Any) -> Any:
-    if isinstance(arg, dict):
-        if arg.get("op") == "lit":
-            return arg.get("value")
-        if "op" in arg:
-            return normalize_expr(arg)
-        return {"var": _require_var(arg)}
-    return arg
-
-
-def _normalize_value_or_expr(value: Any) -> Any:
-    if isinstance(value, dict) and "op" in value:
-        return normalize_expr(value)
-    return value
-
-
-def _var_id(name: str) -> str:
-    text = "".join(ch if ch.isalnum() else "_" for ch in str(name)).strip("_").upper()
-    if text.startswith("VAR_"):
-        return text
-    return f"VAR_{text or 'UNKNOWN'}"
-
-
-def _iter_items(value: Any) -> list[dict[str, Any]]:
-    if isinstance(value, dict):
-        return [{"id": str(key), **item} if isinstance(item, dict) else {"id": str(key), "value": item} for key, item in sorted(value.items())]
-    if isinstance(value, list):
-        return [item for item in value if isinstance(item, dict)]
-    return []
-
-
-def _as_dict(value: Any) -> dict[str, Any]:
-    return value if isinstance(value, dict) else {}
-
-
-def _as_list(value: Any) -> list[Any]:
-    if isinstance(value, list):
-        return value
-    if value in (None, "", {}, []):
-        return []
-    return [value]

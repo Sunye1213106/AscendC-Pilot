@@ -901,6 +901,20 @@ def gate_input_derivable_closed(uo: Path) -> dict[str, Any]:
             "error": str(exc)[:200],
             "message": "input_derivable closure check failed",
         }
+    if isinstance(detail, bool):
+        return {
+            "gate": "input_derivable_closed",
+            "ok": detail,
+            "detail": {"ok": detail},
+            "message": "ok" if detail else "input_derivable open",
+        }
+    if not isinstance(detail, dict):
+        return {
+            "gate": "input_derivable_closed",
+            "ok": False,
+            "detail": detail,
+            "message": "input_derivable closure returned unexpected type",
+        }
     return {
         "gate": "input_derivable_closed",
         "ok": bool(detail.get("ok")),
@@ -1385,7 +1399,7 @@ def gate_gap_patch_evidence(uo: Path, project_root: Path | None = None) -> dict[
     del project_root
     resolve_receipt = uo / "ir" / "resolve_gaps_receipt.yaml"
     patch_receipt = uo / "ir" / "gap_patch_receipt.yaml"
-    unresolved = _load(uo / "ir" / "unresolved.yaml")
+    unresolved = _load(uo / "ir" / "unresolved.yaml") or {}
     count = int(unresolved.get("blocker_count") or len(unresolved.get("blockers") or []))
     if count == 0 or unresolved.get("status") == "closed":
         return {"gate": "gap_patch_evidence", "ok": True, "skipped": True, "blocker_count": 0}
@@ -1396,7 +1410,7 @@ def gate_gap_patch_evidence(uo: Path, project_root: Path | None = None) -> dict[
             "message": "resolve_gaps receipt missing while blockers remain",
             "blocker_count": count,
         }
-    resolve_doc = _load(resolve_receipt)
+    resolve_doc = _load(resolve_receipt) or {}
     if resolve_doc.get("skipped") or resolve_doc.get("deferred"):
         return {
             "gate": "gap_patch_evidence",
@@ -1411,7 +1425,7 @@ def gate_gap_patch_evidence(uo: Path, project_root: Path | None = None) -> dict[
             "message": "gap_patch_receipt missing after resolve_gaps",
             "blocker_count": count,
         }
-    patch_doc = _load(patch_receipt)
+    patch_doc = _load(patch_receipt) or {}
     loop = patch_doc.get("loop") or {}
     rejected = patch_doc.get("rejected") or []
     # Format / vocabulary rejects are fine (ok=True overall); loop regression is not.
