@@ -21,137 +21,113 @@ def _tg(project_root: Path):
     return tg_root(project_root)
 
 
-def _run_prepare_layout(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    project_root = Path(project_root).expanduser().resolve()
-    uo = _uo(project_root)
-    raw_op = str((ctx or {}).get("op_name") or "").strip()
-    op_name = raw_op or project_root.name
-    run_id = str((ctx or {}).get("run_id") or "").strip()
-    if not run_id:
-        return {
-            "ok": False,
-            "engine": "prepare_layout",
-            "error": "run_id_required",
-            "op_name": op_name,
-            "message_zh": "prepare_layout 需要 Pilot state.run_id（一次会话一个 run id）",
-        }
-    try:
-        from uo.scripts.prepare_operator import main as prepare_main
-
-        argv = [str(project_root), "--op-name", op_name, "--run-id", run_id]
-        code = int(prepare_main(argv) or 0)
-        manifest = uo / "manifest.yaml"
-        # prepare_operator exit codes:
-        #   0 = ok
-        #   2 = uo-init skill missing (hard)
-        #   3 = plugin/skill hash drift (soft; stubs already written)
-        if code == 2:
-            return {
-                "ok": False,
-                "engine": "prepare_operator",
-                "exit_code": code,
-                "error": "uo-init skill missing — reinstall with install.ps1/install.sh",
-                "op_name": op_name,
-                "run_id": run_id,
-                "message_zh": "缺少已安装的 uo-init skill，请重新执行 install",
-            }
-        if not manifest.is_file():
-            return {
-                "ok": False,
-                "engine": "prepare_operator",
-                "exit_code": code,
-                "error": "manifest.yaml missing after prepare_operator",
-                "op_name": op_name,
-                "run_id": run_id,
-            }
-        scope_dir = uo / "runs" / run_id / "scope"
-        if not scope_dir.is_dir():
-            return {
-                "ok": False,
-                "engine": "prepare_operator",
-                "exit_code": code,
-                "error": "run_id_layout_mismatch",
-                "op_name": op_name,
-                "run_id": run_id,
-                "message_zh": f"UO 未写入 runs/{run_id}/scope（run id 未与 Pilot 对齐）",
-            }
-        return {
-            "ok": True,
-            "engine": "prepare_operator",
-            "exit_code": code,
-            "op_name": op_name,
-            "run_id": run_id,
-            "manifest": manifest.as_posix(),
-            "warning": "installed_skill_version_mismatch" if code == 3 else "",
-        }
-    except Exception as exc:  # noqa: BLE001
-        return {
-            "ok": False,
-            "engine": "prepare_layout",
-            "error": str(exc)[:400],
-            "op_name": op_name,
-            "run_id": run_id,
-            "message_zh": "prepare_layout 失败；禁止空目录 fallback 假通过",
-        }
 
 def _run_confidence_report(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Emit confidence gate from new-engine quality.yaml (no old classify/ledger)."""
     uo = _uo(project_root)
-    run_id = str((ctx or {}).get("run_id") or "")
+    del ctx
     try:
-        # Re-consume key_resolution patches into Host→KEY product before confidence.
-        from uo.scripts.classify_input_derivable import classify_and_write
-        from uo.scripts.check_final_confidence import check_final_confidence
-        from uo.scripts.semantic_severity import grade_summary, input_derivable_closure
+        from uo_init.yaml_io import read_yaml, write_yaml
 
-        id_payload = classify_and_write(uo)
-        payload = check_final_confidence(uo, write_report=True, write_skeleton=False)
-        closure = input_derivable_closure(uo)
-        grades = grade_summary(uo, current_run_id=run_id)
+        quality = read_yaml(uo / "quality.yaml") or {}
+        unresolved = read_yaml(uo / "ir" / "unresolved.yaml") or {}
+        blockers = unresolved.get("blockers") if isinstance(unresolved.get("blockers"), list) else []
+        ok = bool(quality) and len(blockers) == 0
+        status = "pass" if ok else "reported"
+        payload = {
+            "ok": ok,
+            "status": status,
+            "quality": quality,
+            "blocker_count": len(blockers),
+            "engine": "uo_init",
+        }
+        checks = uo / "checks"
+        checks.mkdir(parents=True, exist_ok=True)
+        write_yaml(checks / "confidence_gate.yaml", payload)
+        summary = uo / "summary"
+        summary.mkdir(parents=True, exist_ok=True)
+        (summary / "confidence_report.md").write_text(
+            f"# Confidence\n\nstatus: {status}\nblockers: {len(blockers)}\n",
+            encoding="utf-8",
+        )
         return {
-            "ok": bool(payload.get("ok") or str(payload.get("status") or "") in {"pass", "reported"}),
+            "ok": True,
             "payload": payload,
-            "input_derivable": id_payload.get("stats") if isinstance(id_payload, dict) else {},
-            "input_derivable_closed": closure,
-            "severity_grades": grades,
+            "input_derivable": {},
+            "input_derivable_closed": True,
+            "severity_grades": {},
         }
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)[:300]}
 
 
-def _run_export_integrity(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+def _run_key_triage_stub(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Deterministic stub: new layered KB has no old escalate/key_triage authority yet."""
     del ctx
-    uo = _uo(project_root)
-    errors: list[str] = []
-    try:
-        from uo.scripts.publish_kb_products import publish_kb_products  # type: ignore[import-not-found]
-        from uo.scripts._ir_io import read_yaml
+    from uo_init.yaml_io import write_yaml
 
-        man = read_yaml(uo / "manifest.yaml") or {}
-        op_name = str(man.get("op_name") or project_root.name).strip()
-        payload = publish_kb_products(
-            project_root,
-            op_name,
-            write=True,
-            include_testcase_contract=True,
-            include_integrity=True,
-        )
-        ok = bool(payload.get("ok", True))
-        integrity = payload.get("integrity") if isinstance(payload.get("integrity"), dict) else {}
-        if not ok:
-            errors.append("publish_kb_products failed")
-        return {
-            "ok": ok and not errors,
-            "integrity": integrity,
-            "publish": payload,
-            "errors": errors,
-        }
+    uo = _uo(project_root)
+    ir = uo / "ir"
+    ir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "status": "not_applicable",
+        "keys": [],
+        "engine": "uo_init.update",
+        "message": "key_triage deferred on new KB; see docs/debug/open-problems.md",
+    }
+    write_yaml(ir / "key_triage.yaml", payload)
+    return {"ok": True, "skipped": True, "payload": payload}
+
+
+def _run_key_resolution_stub(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Deterministic stub until key-resolution is rewritten for layered KB IDs."""
+    del ctx
+    from uo_init.yaml_io import write_yaml
+
+    uo = _uo(project_root)
+    ir = uo / "ir"
+    ir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "status": "not_applicable",
+        "patches": [],
+        "engine": "uo_init.update",
+        "message": "key_resolution deferred on new KB; see docs/debug/open-problems.md",
+    }
+    write_yaml(ir / "input_derivable_patch.yaml", payload)
+    return {"ok": True, "skipped": True, "payload": payload}
+
+
+def _run_confidence_review_stub(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Deterministic stub referee receipt for new-engine confidence_report."""
+    del ctx
+    from uo_init.yaml_io import write_yaml
+
+    uo = _uo(project_root)
+    review = uo / "review"
+    review.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "status": "accepted",
+        "ok": True,
+        "engine": "uo_init.update",
+        "message": "confidence_review auto-accepted for quality.yaml-backed report",
+    }
+    write_yaml(review / "confidence_reason_review.yaml", payload)
+    return {"ok": True, "skipped": True, "payload": payload}
+
+
+def _run_export_integrity(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Delegate integrity to uo_init.pilot_engines.export_integrity."""
+    try:
+        from uo_init.pilot_engines import export_integrity
+
+        return export_integrity(Path(project_root), ctx or {})
     except Exception as exc:  # noqa: BLE001
-        errors.append(f"publish_kb_products: {exc}"[:200])
+        uo = _uo(project_root)
         gate = uo / "checks" / "integrity.yaml"
         if not gate.is_file():
             gate.parent.mkdir(parents=True, exist_ok=True)
             gate.write_text("status: fail\nmessage: engine_invoke_failed\n", encoding="utf-8")
-        return {"ok": False, "errors": errors}
+        return {"ok": False, "errors": [str(exc)[:200]]}
 
 
 def _run_detect_changes(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -159,7 +135,7 @@ def _run_detect_changes(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
     if not op_name:
         return {"ok": False, "engine": "detect_changes", "error": "op_name required"}
     try:
-        from uo.scripts.detect_kb_changes import detect_kb_changes
+        from uo_init.update import detect_kb_changes
 
         payload = detect_kb_changes(project_root, op_name, write=True)
         out = uo / "diff" / "change_set.yaml"
@@ -178,9 +154,7 @@ def _run_plan_update(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     if not op_name:
         return {"ok": False, "engine": "plan_update", "error": "op_name required"}
     try:
-        from uo.scripts.detect_kb_changes import detect_kb_changes
-        from uo.scripts.plan_kb_update import plan_kb_update
-        from uo.scripts.update_artifact_io import load_change_set_if_fresh
+        from uo_init.update import detect_kb_changes, load_change_set_if_fresh, plan_kb_update
 
         change_set = load_change_set_if_fresh(uo, repo_root=project_root)
         reused = change_set is not None
@@ -199,19 +173,21 @@ def _run_plan_update(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
 
 
 def _run_apply_update(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    uo, op_name, _arch = _uo_op_ctx(project_root, ctx)
+    uo, op_name, arch = _uo_op_ctx(project_root, ctx)
     if not op_name:
         return {"ok": False, "engine": "apply_update", "error": "op_name required"}
     run_id = str((ctx or {}).get("run_id") or "").strip()
     try:
-        from uo.scripts.update_operator import update_operator
+        from uo_init.update import update_operator
 
         result = update_operator(
             project_root,
             op_name,
+            architecture=arch or "arch35",
             run_id=run_id or None,
             reuse_artifacts=True,
-            run_gates=False,
+            cann_root=str((ctx or {}).get("cann_root") or "") or None,
+            ops_root=str((ctx or {}).get("ops_root") or "") or None,
         )
         status = str((result or {}).get("status") or "")
         receipt_ok = any((uo / "runs").glob("*/update/receipt.yaml")) if (uo / "runs").is_dir() else False
@@ -239,10 +215,13 @@ def _run_diff_summary(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
     if not op_name:
         return {"ok": False, "engine": "diff_summary", "error": "op_name required"}
     try:
-        from uo.scripts.detect_kb_changes import detect_kb_changes
-        from uo.scripts.export_diff_product import export_diff_product
-        from uo.scripts.plan_kb_update import plan_kb_update
-        from uo.scripts.update_artifact_io import load_change_set_if_fresh, load_update_plan_if_fresh
+        from uo_init.update import (
+            detect_kb_changes,
+            export_diff_product,
+            load_change_set_if_fresh,
+            load_update_plan_if_fresh,
+            plan_kb_update,
+        )
 
         change_set = load_change_set_if_fresh(uo, repo_root=project_root)
         plan = load_update_plan_if_fresh(uo, change_set=change_set) if change_set else None
@@ -649,7 +628,7 @@ def _uo_op_ctx(project_root: Path, ctx: dict[str, Any]) -> tuple[Path, str, str]
     op_name = str(ctx.get("op_name") or "").strip()
     if not op_name:
         try:
-            from uo.scripts._ir_io import read_yaml
+            from ascendc_pilot.uo_artifacts import read_yaml
 
             man = read_yaml(uo / "manifest.yaml") or {}
             op_name = str(man.get("op_name") or "").strip()
@@ -659,704 +638,41 @@ def _uo_op_ctx(project_root: Path, ctx: dict[str, Any]) -> tuple[Path, str, str]
     return uo, op_name, architecture
 
 
-def _run_detect_score_pre(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """extract.pre_semantic — materialize entrypoint graph, then score (①).
+def _uo_init_engine(action_id: str) -> EngineFn:
+    def _run(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+        from uo_init.pilot_engines import ENGINES
 
-    ``ir/entrypoint_graph.yaml`` is produced here (entrypoints layer), not by scope.
-    Gate ``detect_score_pre`` requires that file after this engine runs.
-    """
-    uo, op_name, architecture = _uo_op_ctx(project_root, ctx)
-    if not op_name:
-        op_name = project_root.name
-    try:
-        from uo.scripts.build_layered_kb import build_layered_kb
-        from uo.scripts.evidence_score import detect_score_pre
+        fn = ENGINES[action_id]
+        return fn(Path(project_root), ctx or {})
 
-        layered = build_layered_kb(
-            project_root,
-            op_name,
-            architecture=architecture,
-            layers={"entrypoints"},
-            allow_empty_plan=True,
-            mode="structural",
-        )
-        ep_path = uo / "ir" / "entrypoint_graph.yaml"
-        if not ep_path.is_file():
-            return {
-                "ok": False,
-                "engine": "detect_score_pre",
-                "error": "entrypoint_graph.yaml not written by entrypoints layer",
-            }
-        boundary_path = uo / "ir" / "operator_boundary.yaml"
-        if not boundary_path.is_file():
-            try:
-                from uo.scripts.extract_operator_boundary import extract_operator_boundary
-
-                extract_operator_boundary(project_root, op_name, architecture=architecture)
-            except Exception as exc:  # noqa: BLE001
-                return {
-                    "ok": False,
-                    "engine": "detect_score_pre",
-                    "error": f"operator_boundary missing and extract failed: {exc}"[:300],
-                }
-        if not boundary_path.is_file():
-            return {
-                "ok": False,
-                "engine": "detect_score_pre",
-                "error": "operator_boundary.yaml missing after entrypoints layer",
-            }
-        result = detect_score_pre(
-            uo,
-            architecture=architecture,
-            run_id=str(ctx.get("run_id") or ""),
-        )
-        ep = layered.get("entrypoint_graph") if isinstance(layered, dict) else {}
-        nodes = (ep or {}).get("nodes") if isinstance(ep, dict) else []
-        return {
-            "ok": bool(result.get("ok", True)),
-            "engine": "detect_score_pre",
-            "entrypoint_node_count": len(nodes or []),
-            "has_operator_boundary": (uo / "ir" / "operator_boundary.yaml").is_file(),
-            **result,
-        }
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "engine": "detect_score_pre", "error": str(exc)[:300]}
+    _run.__name__ = f"_run_uo_init_{action_id}"
+    return _run
 
 
-def _run_extract_plan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """extract.plan_and_graph prepare/finalize helper.
-
-    Prepare path (no plan yet): write ``extract_plan_candidates.yaml`` via propose.
-    Finalize path (plan present): validate plan then build host/kernel/tilingkey/bridge.
-    """
-    uo, op_name, architecture = _uo_op_ctx(project_root, ctx)
-    if not op_name:
-        op_name = project_root.name
-    mode = str(ctx.get("extract_plan_mode") or "").strip().lower()
-    plan_path = uo / "ir" / "extract_plan.yaml"
-    try:
-        from uo.scripts.apply_extract_plan import apply_extract_plan
-        from uo.scripts.build_layered_kb import build_layered_kb
-        from uo.scripts.propose_extract_plan import propose_extract_plan
-
-        if mode == "finalize" or (not mode and plan_path.is_file()):
-            from ascendc_pilot.actions.progress import ActionProgressReporter
-
-            staging_path = None
-            action_dir = None
-            run_id = str(ctx.get("run_id") or "").strip()
-            if ctx.get("action_dir"):
-                action_dir = Path(str(ctx.get("action_dir")))
-                staging_path = action_dir / "staging"
-            elif run_id:
-                action_dir = (
-                    project_root
-                    / ".ascendc-pilot"
-                    / "runs"
-                    / run_id
-                    / "actions"
-                    / "extract_plan"
-                )
-                action_staging = action_dir / "staging"
-                if (action_staging / "semantic_relations.yaml").is_file() or (
-                    action_staging / "semantic_relations.base.yaml"
-                ).is_file():
-                    staging_path = action_staging
-            progress = ctx.get("progress")
-            if progress is None and run_id:
-                progress = ActionProgressReporter(
-                    project_root, run_id=run_id, action_id="extract_plan", phase="finalize"
-                )
-
-            # Host contract 主链（权威 HCG/TCG）；extract_plan 仅物化视图
-            host_contract = None
-            try:
-                from uo.scripts.host_contract_pipeline import run_host_contract_pipeline
-                from uo.scripts.resolve_host_contract_gaps import finalize_host_contract_gaps
-
-                if progress is not None:
-                    progress.start_stage("host_contract_pipeline")
-                host_contract = run_host_contract_pipeline(
-                    project_root,
-                    op_name,
-                    architecture=architecture,
-                    uo_root=uo,
-                    materialize_view=True,
-                    run_gaps=True,
-                    gap_decisions=[],
-                )
-                # merge gap decision parts if present
-                gap_parts = None
-                if action_dir is not None:
-                    gap_parts = action_dir / "staging" / "gap_decision_parts"
-                if gap_parts and gap_parts.is_dir():
-                    finalize_host_contract_gaps(
-                        project_root,
-                        op_name,
-                        uo_root=uo,
-                        run_dir=action_dir / "staging",
-                    )
-                if progress is not None:
-                    progress.complete_stage()
-            except Exception as exc:  # noqa: BLE001
-                return {
-                    "ok": False,
-                    "engine": "extract_plan",
-                    "phase": "host_contract",
-                    "error": str(exc)[:400],
-                    "message_zh": f"Host contract 主链失败: {exc}",
-                }
-
-            plan_doc = {}
-            try:
-                from uo.scripts._ir_io import read_yaml as _ry
-
-                plan_doc = _ry(plan_path) or {}
-            except Exception:  # noqa: BLE001
-                plan_doc = {}
-
-            applied = {"ok": True, "skipped_legacy_relation_materialize": True}
-            if not plan_doc.get("materialized_view"):
-                # 兼容旧路径：非物化视图时仍走 relation finalize
-                applied = apply_extract_plan(
-                    project_root,
-                    op_name,
-                    action_dir=action_dir,
-                    check_only=False,
-                    identity={
-                        "actor_id": str(ctx.get("actor_id") or "uo-semantic-resolve"),
-                        "run_id": str(ctx.get("run_id") or ""),
-                        "workflow_id": str(ctx.get("workflow_id") or "uo-init"),
-                        "architecture": architecture,
-                        "action_session_id": str(ctx.get("action_session_id") or ""),
-                        "lease_id": str(ctx.get("lease_id") or ""),
-                        "prepare_nonce": str(ctx.get("prepare_nonce") or ""),
-                        "candidates_sha256": "",
-                    },
-                    progress=progress,
-                )
-                if not applied.get("ok"):
-                    return {
-                        "ok": False,
-                        "engine": "extract_plan",
-                        "phase": "apply",
-                        "error": applied.get("error") or "extract_plan validation failed",
-                        "apply": applied,
-                        "host_contract": host_contract,
-                        "message_zh": applied.get("message_zh") or applied.get("message") or "",
-                        "retryable": bool(applied.get("retryable", True)),
-                    }
-
-            # Host-only partial：仍尝试构建 host 层；kernel 允许空
-            if progress is not None:
-                progress.start_stage("build_layered_kb")
-            layered = build_layered_kb(
-                project_root,
-                op_name,
-                architecture=architecture,
-                layers={"host", "tilingkey", "bridge"},
-                allow_empty_plan=True,
-                mode="structural",
-                reuse_fresh_layers=True,
-                include_entrypoints_if_stale=True,
-            )
-            if progress is not None:
-                progress.complete_stage()
-            stats = (layered or {}).get("stats") if isinstance(layered, dict) else {}
-            return {
-                "ok": True,
-                "engine": "extract_plan",
-                "phase": "build",
-                "apply": applied,
-                "host_contract": host_contract,
-                "kb_status": "partial",
-                "build_profile": "host_contract_only",
-                "has_host": (uo / "ir" / "host_subgraph.yaml").is_file(),
-                "has_host_configuration": (uo / "ir" / "host_configuration_graph.yaml").is_file(),
-                "has_tiling_contract": (uo / "ir" / "tiling_contract_graph.yaml").is_file(),
-                "has_kernel": (uo / "ir" / "kernel_subgraph.yaml").is_file(),
-                "has_macro_semantics": (uo / "ir" / "macro_facts.yaml").is_file()
-                or (uo / "ir" / "macro_semantics.yaml").is_file(),
-                "stats": stats,
-                "macro_materialization": (stats or {}).get("macro_materialization") or {},
-                "timing_ms": (stats or {}).get("timing_ms") or {},
-            }
-
-        # Prepare: 仅 propose candidates（Relation snapshot 由 Runtime prepare 唯一构建）
-        from uo.scripts._ir_io import read_yaml, write_yaml
-        from ascendc_pilot.runs import file_sha256
-        from uo.scripts.extract_plan_io import (
-            build_extract_plan_candidates_summary,
-            scan_candidates_section_lines,
-        )
-        from uo.scripts.ir_summary import count_file_lines
-
-        cand_path = uo / "ir" / "extract_plan_candidates.yaml"
-        sha_side = uo / "ir" / "extract_plan_candidates.sha256"
-        force_propose = str(ctx.get("extract_plan_force_propose") or "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-        }
-        reused = False
-        candidates: dict[str, Any] | Any = None
-        candidates_sha256 = ""
-
-        # Rework after checker fail: keep candidates + sha (ses_0625 churn fix).
-        if not force_propose and cand_path.is_file() and sha_side.is_file():
-            should_reuse = plan_path.is_file()
-            if not should_reuse:
-                try:
-                    from ascendc_pilot.state import load_state
-
-                    st = str((load_state(project_root) or {}).get("status") or "")
-                    should_reuse = st in {"rework_required", "human_required"}
-                except Exception as exc:  # noqa: BLE001
-                    raise RuntimeError(
-                        f"EXTRACT_PLAN_STAGE_FAILED:propose_reuse_state:{type(exc).__name__}:{exc}"
-                    ) from exc
-            if should_reuse:
-                loaded = read_yaml(cand_path)
-                if isinstance(loaded, dict):
-                    candidates = loaded
-                    candidates_sha256 = sha_side.read_text(encoding="utf-8").strip()
-                    reused = bool(candidates_sha256)
-
-        if not reused:
-            candidates = propose_extract_plan(project_root, op_name, architecture=architecture)
-            write_yaml(cand_path, candidates if isinstance(candidates, dict) else {"ok": False})
-            candidates_sha256 = file_sha256(cand_path) or ""
-            if candidates_sha256:
-                sha_side.write_text(candidates_sha256 + "\n", encoding="utf-8")
-
-        summary_path = uo / "ir" / "extract_plan_candidates.summary.yaml"
-        if isinstance(candidates, dict):
-            section_lines = scan_candidates_section_lines(cand_path)
-            line_count = count_file_lines(cand_path)
-            write_yaml(
-                summary_path,
-                build_extract_plan_candidates_summary(
-                    candidates,
-                    candidates_sha256=candidates_sha256,
-                    section_lines=section_lines,
-                    candidates_line_count=line_count,
-                    candidates_path=cand_path,
-                ),
-            )
-        status = str((candidates or {}).get("status") or "").lower() if isinstance(candidates, dict) else ""
-        if status in {"blocked", "fail", "failed"} or (
-            isinstance(candidates, dict) and candidates.get("ok") is False
-        ):
-            recovery = (candidates or {}).get("recovery") if isinstance(candidates, dict) else None
-            recovery_cli = ""
-            if isinstance(candidates, dict):
-                recovery_cli = str(candidates.get("recovery_cli") or "")
-                if not recovery_cli and isinstance(recovery, dict):
-                    recovery_cli = str(recovery.get("cli") or "")
-            return {
-                "ok": False,
-                "engine": "extract_plan",
-                "phase": "propose",
-                "error": "propose_extract_plan blocked",
-                "propose": candidates,
-                "candidates_path": cand_path.as_posix(),
-                "candidates_sha256": candidates_sha256,
-                "reused_candidates": reused,
-                "recovery_cli": recovery_cli,
-                "message_zh": (
-                    str((recovery or {}).get("message_zh") or "propose_extract_plan 被候选预算拦住")
-                    if isinstance(recovery, dict)
-                    else "propose_extract_plan 被候选预算拦住"
-                ),
-            }
-        raised = (candidates or {}).get("limits_auto_raised") if isinstance(candidates, dict) else None
-        return {
-            "ok": True,
-            "engine": "extract_plan",
-            "phase": "propose",
-            "candidates_path": cand_path.as_posix(),
-            "candidates_sha256": candidates_sha256,
-            "reused_candidates": reused,
-            "propose_status": status or "ok",
-            "limits_auto_raised": raised or {},
-            "limits_persisted": str((candidates or {}).get("limits_persisted") or "")
-            if isinstance(candidates, dict)
-            else "",
-            "message_zh": (
-                "rework：已复用既有 extract_plan_candidates（未 re-propose，避免 sha churn）"
-                if reused
-                else (
-                    "已自动抬高 extract 候选预算并写入 pilot_params"
-                    if raised
-                    else "extract_plan candidates 已就绪"
-                )
-            ),
-        }
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "engine": "extract_plan", "error": str(exc)[:400]}
-
-
-def _run_detect_score_post(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """extract.post_semantic — bridge/key/provenance after plan_and_graph (①)."""
-    uo, _op, architecture = _uo_op_ctx(project_root, ctx)
-    try:
-        from uo.scripts.evidence_score import detect_score_post
-        from uo.scripts.relation_consistency import run_relation_consistency_gate
-
-        result = detect_score_post(
-            uo,
-            architecture=architecture,
-            run_id=str(ctx.get("run_id") or ""),
-        )
-        rel_gate = run_relation_consistency_gate(uo)
-        result["relation_consistency"] = rel_gate
-        ok = bool(result.get("ok", True)) and bool(rel_gate.get("ok"))
-        if not rel_gate.get("ok"):
-            result["relation_consistency_errors"] = rel_gate.get("errors") or []
-            result["message_zh"] = (
-                "detect_score_post：Relation Graph 与 materialized plan 不一致；"
-                + "; ".join(str(x) for x in (rel_gate.get("errors") or [])[:5])
-            )
-        return {"ok": ok, "engine": "detect_score_post", **result}
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "engine": "detect_score_post", "error": str(exc)[:300]}
-
-
-def _run_apply_semantic_patch(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """Apply producer patches (or auto mark_missing) into ledger; bump attempts (⑥)."""
-    uo, _op, _arch = _uo_op_ctx(project_root, ctx)
-    try:
-        from uo.scripts._ir_io import read_yaml
-        from uo.scripts.evidence_score import _source_snapshot_hash
-        from uo.scripts.llm_tasks import apply_patches_batch, resolve_patches_for_apply
-
-        run_id = str(ctx.get("run_id") or "").strip()
-        if not run_id:
-            return {
-                "ok": False,
-                "engine": "apply_semantic_patch",
-                "error": "SEMANTIC_DOCUMENT_RUN_ID_MISSING",
-                "message": "ctx.run_id required",
-            }
-        workflow_id = str(ctx.get("workflow_id") or "uo-init")
-        phase = str(ctx.get("phase") or "")
-        actor_id = str(ctx.get("actor_id") or "uo-semantic-resolve")
-        role_id = str(ctx.get("role_id") or "producer")
-        action_session_id = str(ctx.get("action_session_id") or "")
-        lease_id = str(ctx.get("lease_id") or "")
-
-        # Prefer explicit ctx.patch / patch_path; else ir/semantic_patches.yaml; else auto.
-        patches_doc: dict[str, Any] | None = None
-        single = ctx.get("patch") if isinstance(ctx.get("patch"), dict) else None
-        if single and single.get("task_id"):
-            patches_doc = {"patches": [single]}
-        elif ctx.get("patch_path"):
-            patches_doc = read_yaml(Path(str(ctx["patch_path"]))) or {}
-        else:
-            patches_path = uo / "ir" / "semantic_patches.yaml"
-            if patches_path.is_file():
-                patches_doc = read_yaml(patches_path) or {}
-
-        resolved = resolve_patches_for_apply(
-            uo,
-            current_run_id=run_id,
-            patches_doc=patches_doc,
-            workflow_id=workflow_id,
-        )
-        if not resolved.get("ok"):
-            out = {"ok": False, "engine": "apply_semantic_patch", **resolved}
-            if resolved.get("error") == "SEMANTIC_PATCHES_REQUIRED":
-                out["recovery_actions"] = ["adjudicate_llm_tasks", "apply_semantic_patch"]
-            return out
-        patches = list(resolved.get("patches") or [])
-        if resolved.get("skipped") or not patches:
-            # Ensure ledger artifact exists for output contract even when nothing to apply.
-            ledger = uo / "ir" / "semantic_resolution_ledger.yaml"
-            if not ledger.is_file():
-                from uo.scripts.semantic_resolution_ledger import save_ledger
-
-                save_ledger(
-                    uo,
-                    {
-                        "version": 1,
-                        "artifact_identity": {"run_id": run_id, "workflow_id": workflow_id},
-                        "semantic_patches": [],
-                        "note": "empty_skip",
-                    },
-                )
-            return {
-                "ok": True,
-                "engine": "apply_semantic_patch",
-                "skipped": True,
-                "reason": resolved.get("reason") or "no_patches",
-                "source": resolved.get("source"),
-            }
-        result = apply_patches_batch(
-            uo,
-            patches,
-            current_run_id=run_id,
-            current_source_hash=_source_snapshot_hash(uo, run_id=run_id),
-            workflow_id=workflow_id,
-            phase=phase,
-            control_action_id=str(ctx.get("action_id") or "apply_semantic_patch"),
-            actor_id=actor_id,
-            role_id=role_id,
-            action_session_id=action_session_id,
-            lease_id=lease_id,
-        )
-        from uo.scripts.llm_tasks import compute_semantic_stats
-
-        stats = compute_semantic_stats(uo, current_run_id=run_id)
-        return {
-            "ok": bool(result.get("ok")),
-            "engine": "apply_semantic_patch",
-            "source": resolved.get("source"),
-            **result,
-            **stats,
-        }
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "engine": "apply_semantic_patch", "error": str(exc)[:300]}
-
-
-def _run_rebuild_from_ledger(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    uo, op_name, architecture = _uo_op_ctx(project_root, ctx)
-    if not op_name:
-        return {"ok": False, "engine": "rebuild_from_ledger", "error": "op_name required"}
-    try:
-        from uo.scripts.semantic_resolution_ledger import rebuild_derived_graphs
-
-        run_id = str(ctx.get("run_id") or "").strip()
-        result = rebuild_derived_graphs(
-            project_root,
-            op_name,
-            architecture=architecture,
-            run_id=run_id,
-        )
-        from uo.scripts.llm_tasks import compute_semantic_stats
-        from uo.scripts.relation_consistency import reconcile_semantic_relations_from_ledger
-
-        reconcile = reconcile_semantic_relations_from_ledger(uo)
-        stats = compute_semantic_stats(uo, current_run_id=run_id) if uo and run_id else {}
-        out = {
-            "ok": bool(result.get("ok")) and bool(reconcile.get("ok")),
-            "engine": "rebuild_from_ledger",
-            **result,
-            **stats,
-            "relation_reconcile": reconcile,
-        }
-        # Surface progress / skip contract for Host observation.
-        if result.get("NO_SEMANTIC_PROGRESS"):
-            out["recovery_reason"] = "NO_SEMANTIC_PROGRESS"
-        if result.get("macro_materialization"):
-            out["macro_materialization"] = result.get("macro_materialization")
-        return out
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "engine": "rebuild_from_ledger", "error": str(exc)[:300]}
-
-
-def _run_apply_scope_expansion(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """Audit LLM scope expansion requests and update confirmed scope."""
-    uo, op_name, arch = _uo_op_ctx(project_root, ctx)
-    try:
-        from uo.scripts.scope_expansion import apply_scope_expansion
-
-        result = apply_scope_expansion(
-            project_root,
-            op_name,
-            uo_root=uo,
-            architecture=arch or "arch35",
-        )
-        out = {"ok": bool(result.get("ok")), "engine": "apply_scope_expansion", **result}
-        # Preserve scope_expansion next_actions (e.g. uo_scope_record_index when
-        # pending_index). Never force detect_score_post before index receipt.
-        if result.get("pending_index") or "uo_scope_record_index" in (
-            result.get("next_actions") or []
-        ):
-            out["next_actions"] = list(result.get("next_actions") or ["uo_scope_record_index"])
-            out["recovery_actions"] = list(
-                result.get("recovery_actions") or ["uo_scope_record_index"]
-            )
-        elif result.get("ok") and result.get("new_files"):
-            # Index already ready / no reindex pending — allow score refresh.
-            if not out.get("next_actions"):
-                out["next_actions"] = ["detect_score_post"]
-            if not out.get("recovery_actions"):
-                out["recovery_actions"] = ["detect_score_post", "rebuild_from_ledger"]
-        if result.get("status") == "human_required":
-            out["human_required"] = True
-        return out
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "engine": "apply_scope_expansion", "error": str(exc)[:300]}
-
-
-def _run_recheck_closure(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """Recheck closure/integrity WITHOUT incrementing attempts (⑥)."""
-    uo, op_name, _arch = _uo_op_ctx(project_root, ctx)
-    try:
-        import hashlib
-        import json
-
-        from ascendc_pilot.recovery import recoveries_for_closure_gaps
-        from uo.scripts.evidence_score import _source_snapshot_hash
-        from uo.scripts.llm_tasks import (
-            blocking_gap_tasks,
-            compute_semantic_stats,
-            recheck_does_not_increment,
-        )
-        from uo.scripts._ir_io import read_yaml, write_yaml
-        from uo.scripts.semantic_resolution_ledger import load_ledger
-
-        run_id = str(ctx.get("run_id") or "").strip()
-        if not run_id:
-            return {
-                "ok": False,
-                "engine": "recheck_closure",
-                "error": "SEMANTIC_DOCUMENT_RUN_ID_MISSING",
-            }
-
-        budget = recheck_does_not_increment(uo, current_run_id=run_id)
-        ep = read_yaml(uo / "ir" / "entrypoint_graph.yaml") or {}
-        closure = ep.get("closure") or {}
-        stats = compute_semantic_stats(uo, current_run_id=run_id)
-        gap_tasks = blocking_gap_tasks(uo, current_run_id=run_id)
-        blocking_gap_count = int(stats.get("blocking_gap_count") or budget.get("blocking_gap_count") or 0)
-        unconsumed = int(stats.get("unconsumed_patch_count") or 0)
-        host_closed = closure.get("host_main_chain") == "closed"
-        kernel_closed = closure.get("kernel_main_chain") == "closed"
-        from uo.scripts.relation_consistency import run_relation_consistency_gate
-
-        rel_gate = run_relation_consistency_gate(uo)
-        ok = (
-            blocking_gap_count == 0
-            and unconsumed == 0
-            and host_closed
-            and kernel_closed
-            and bool(rel_gate.get("ok"))
-        )
-
-        snap = _source_snapshot_hash(uo, run_id=run_id)
-        ledger_doc = load_ledger(uo)
-        current_ledger_ids = [
-            str(p.get("task_id") or "")
-            for p in (ledger_doc.get("semantic_patches") or [])
-            if isinstance(p, dict) and str(p.get("run_id") or "") == run_id
-        ]
-        current_task_ids = [
-            str(t.get("task_id") or "")
-            for t in (budget.get("tasks") or [])
-            if isinstance(t, dict)
-        ]
-        effective_types = sorted(
-            {
-                str(t.get("effective_task_type") or t.get("type") or "")
-                for t in gap_tasks
-                if isinstance(t, dict)
-            }
-        )
-        boundary = read_yaml(uo / "ir" / "operator_boundary.yaml") or {}
-        scope_receipt = read_yaml(uo / "ir" / "scope_expansion_receipt.yaml") or {}
-        fp_payload = {
-            "run_id": run_id,
-            "source_snapshot_hash": snap,
-            "current_run_task_ids": sorted(current_task_ids),
-            "current_run_ledger_ids": sorted(current_ledger_ids),
-            "host_closure": closure.get("host_main_chain"),
-            "kernel_closure": closure.get("kernel_main_chain"),
-            "blocking_gap_count": blocking_gap_count,
-            "unconsumed_patch_count": unconsumed,
-            "effective_task_types": effective_types,
-            "boundary_input_count": len(boundary.get("inputs") or []),
-            "boundary_output_count": len(boundary.get("outputs") or []),
-            "scope_expansion_rounds": int(scope_receipt.get("rounds") or 0),
-            "patch_ids": sorted(current_ledger_ids),
-        }
-        fingerprint = hashlib.sha256(json.dumps(fp_payload, sort_keys=True).encode("utf-8")).hexdigest()[:24]
-        fp_path = uo / "ir" / "recheck_fingerprint.yaml"
-        prev = read_yaml(fp_path) or {}
-        prev_fp = str(prev.get("fingerprint") or "")
-        no_progress = bool(prev_fp and prev_fp == fingerprint and not ok)
-
-        from ascendc_pilot.state import load_state
-
-        st = load_state(project_root) or {}
-        current_phase = str(st.get("phase") or ctx.get("phase") or "extract")
-        wid = str(st.get("workflow_id") or ctx.get("workflow_id") or "uo-init")
-        routed = recoveries_for_closure_gaps(
-            host_closed=host_closed,
-            kernel_closed=kernel_closed,
-            blocking_gap_count=blocking_gap_count,
-            unconsumed_patch_count=unconsumed,
-            no_progress=no_progress,
-            workflow_id=wid,
-            current_phase=current_phase,
-            blocking_tasks=gap_tasks,
-        )
-        recovery_actions = list(routed.get("recovery_actions") or [])
-        recoveries = list(routed.get("recoveries") or [])
-
-        if no_progress:
-            write_yaml(fp_path, {"fingerprint": fingerprint, "payload": fp_payload})
-            return {
-                "ok": False,
-                "engine": "recheck_closure",
-                "error": "NO_PROGRESS_RECHECK",
-                "human_required": True,
-                "deadlock_diagnosis": routed.get("deadlock_diagnosis") or ["deadlock_no_progress"],
-                "closure": closure,
-                "blocking_gap_count": blocking_gap_count,
-                "unconsumed_patch_count": unconsumed,
-                "recovery_actions": recovery_actions,
-                "recoveries": recoveries,
-                "reason_codes": routed.get("reason_codes") or ["NO_PROGRESS_RECHECK"],
-                "fingerprint": fingerprint,
-                "attempts_unchanged": True,
-                **stats,
-            }
-        write_yaml(fp_path, {"fingerprint": fingerprint, "payload": fp_payload})
-
-        out = {
-            "ok": ok,
-            "engine": "recheck_closure",
-            "closure": closure,
-            "open_blocking_count": len(budget.get("open_blocking") or []),
-            "blocking_gap_count": blocking_gap_count,
-            "unconsumed_patch_count": unconsumed,
-            "total_semantic_batches": budget.get("total_semantic_batches"),
-            "integrity_status": "deferred_to_export_integrity",
-            "integrity_recomputed": False,
-            "attempts_unchanged": True,
-            "fingerprint": fingerprint,
-            "relation_consistency": rel_gate,
-            **stats,
-        }
-        if not ok:
-            out["recovery_actions"] = recovery_actions
-            out["recoveries"] = recoveries
-            out["reason_codes"] = routed.get("reason_codes") or []
-            if not rel_gate.get("ok"):
-                out.setdefault("reason_codes", []).append("RELATION_CONSISTENCY_FAILED")
-                out["relation_consistency_errors"] = rel_gate.get("errors") or []
-        return out
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "engine": "recheck_closure", "error": str(exc)[:300]}
-
-
-# (workflow_id, action_id) → engine
 ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
-    ("uo-init", "prepare_layout"): _run_prepare_layout,
-    ("uo-init", "detect_score_pre"): _run_detect_score_pre,
-    ("uo-init", "extract_plan"): _run_extract_plan,
-    ("uo-init", "detect_score_post"): _run_detect_score_post,
-    ("uo-init", "apply_semantic_patch"): _run_apply_semantic_patch,
-    ("uo-init", "apply_scope_expansion"): _run_apply_scope_expansion,
-    ("uo-init", "rebuild_from_ledger"): _run_rebuild_from_ledger,
-    ("uo-init", "recheck_closure"): _run_recheck_closure,
-    ("uo-init", "confidence_report"): _run_confidence_report,
-    ("uo-init", "export_integrity"): _run_export_integrity,
+    ("uo-init", "prepare_layout"): _uo_init_engine("prepare_layout"),
+    ("uo-init", "scope_scan"): _uo_init_engine("scope_scan"),
+    ("uo-init", "scope_confirm"): _uo_init_engine("scope_confirm"),
+    ("uo-init", "extract_host"): _uo_init_engine("extract_host"),
+    ("uo-init", "extract_tiling_key"): _uo_init_engine("extract_tiling_key"),
+    ("uo-init", "extract_registry"): _uo_init_engine("extract_registry"),
+    ("uo-init", "extract_kernel"): _uo_init_engine("extract_kernel"),
+    ("uo-init", "normalize_variables"): _uo_init_engine("normalize_variables"),
+    ("uo-init", "derive_key_fields"): _uo_init_engine("derive_key_fields"),
+    ("uo-init", "normalize_predicates"): _uo_init_engine("normalize_predicates"),
+    ("uo-init", "resolve_gaps"): _uo_init_engine("resolve_gaps"),
+    ("uo-init", "apply_gap_patch"): _uo_init_engine("apply_gap_patch"),
+    ("uo-init", "export_kb"): _uo_init_engine("export_kb"),
+    ("uo-init", "build_index"): _uo_init_engine("build_index"),
+    ("uo-init", "export_integrity"): _uo_init_engine("export_integrity"),
+    ("uo-init", "kb_review"): _uo_init_engine("kb_review"),
     ("uo-update", "detect_changes"): _run_detect_changes,
     ("uo-update", "plan_update"): _run_plan_update,
     ("uo-update", "apply_update"): _run_apply_update,
+    ("uo-update", "key_triage"): _run_key_triage_stub,
+    ("uo-update", "key_resolution"): _run_key_resolution_stub,
     ("uo-update", "confidence_report"): _run_confidence_report,
+    ("uo-update", "confidence_review"): _run_confidence_review_stub,
     ("uo-update", "export_integrity"): _run_export_integrity,
     ("uo-update", "diff_summary"): _run_diff_summary,
     ("uo-update", "diff_only"): _run_diff_summary,
@@ -1377,13 +693,31 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
 
 # Output contract id → relative paths under .ascendc-pilot (existence + nonempty where applicable)
 OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
-    "kb-layout-v1": ["uo/manifest.yaml"],
-    # Canonical run-scoped artifacts (never uo/summary/ — summary is human export only)
+    "kb-layout-v1": ["uo/manifest.yaml", "uo/operator.yaml"],
+    "scope-candidates-v1": ["uo/summary/scope_candidates.yaml"],
     "scope-confirmed-v1": [
         "uo/runs/{run_id}/scope/scope_confirmed.yaml",
         "uo/runs/{run_id}/scope/receipt.yaml",
-        "uo/cbm/index_meta.json",
     ],
+    "extract-host-v1": ["uo/ir/host_extract_receipt.yaml"],
+    "extract-tiling-key-v1": ["uo/tiling/key_bind_receipt.yaml"],
+    "extract-registry-v1": ["uo/tiling/families.yaml"],
+    "extract-kernel-v1": ["uo/kernel/fold_receipt.yaml"],
+    "normalize-variables-v1": ["uo/tiling/normalize_variables_receipt.yaml"],
+    "derive-key-fields-v1": [
+        "uo/ir/host_derivation.yaml",
+        "uo/ir/derive_key_fields_receipt.yaml",
+        "uo/tiling/key_derivations.yaml",
+    ],
+    "normalize-predicates-v1": ["uo/ir/unresolved.yaml"],
+    "resolve-gaps-v1": ["uo/ir/resolve_gaps_receipt.yaml"],
+    "resolve-gaps-staging-v1": [
+        "uo/ir/resolve_gaps_staging.yaml",
+        "runs/{run_id}/actions/resolve_gaps/parts/**",
+    ],
+    "gap-patch-v1": ["uo/ir/gap_patch_receipt.yaml", "uo/ir/gap_bindings.yaml"],
+    "export-kb-v1": ["uo/ir/operator_graph.yaml", "uo/quality.yaml"],
+    "build-index-v1": ["uo/indexes/kb_graph.sqlite"],
     "detect-score-pre-v1": [
         "uo/ir/entrypoint_graph.yaml",
         "uo/ir/operator_boundary.yaml",

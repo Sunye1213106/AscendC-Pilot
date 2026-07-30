@@ -4,8 +4,7 @@
 
 ```text
 AscendC-Pilot
-
-├── Understand Operator
+├── Understand Operator   (uo_init)
 ├── Testcase Generation
 └── Code Engineering
 ```
@@ -13,33 +12,28 @@ AscendC-Pilot
 | 层 | 作用 |
 | --- | --- |
 | [pilot/](./pilot/) | Pilot 控制面：状态、门禁、路由、Context、记忆 |
-| [engines/understand-operator/](./engines/understand-operator/) | Understand Operator（UO）领域引擎 |
-| [engines/testcase-generation/](./engines/testcase-generation/) | Testcase Generation（TG）领域引擎 |
-| [engines/code-engineering/](./engines/code-engineering/) | Code Engineering（CE）；当前实现 `/ce-review` |
-| [skills/](./skills/) · [prompts/](./prompts/) · [agents/](./agents/) | 组合式业务源（Policy/Capability/Action/Prompt/Agent） |
-| [generated/](./generated/) | Composer 宿主产物（可丢弃，安装前重生成） |
+| [engines/understand-operator/](./engines/understand-operator/) | UO 唯一引擎（包 `uo_init`：init / update / query） |
+| [engines/testcase-generation/](./engines/testcase-generation/) | TG |
+| [engines/code-engineering/](./engines/code-engineering/) | CE（`/ce-review`） |
+| [skills/](./skills/) · [prompts/](./prompts/) · [agents/](./agents/) | 组合式业务源 |
+| [generated/](./generated/) | Composer 宿主产物 |
+| [docs/](./docs/README.md) | 文档四夹：design / workflows / fag / debug |
 
 支持安装到 **OpenCode / Codex / Cursor**。
 
 ---
 
-## 功能一览
+## 功能
 
 | 命令 | 功能 |
 | --- | --- |
-| `/uo-init` | 建 KB（环境准备 → 范围确认 → 结构抽取 → 语义闭合 → 导出与校验 → 产物审查） |
+| `/uo-init` | 建 KB（prepare → scope → extract → normalize → export → review） |
 | `/uo-query` | 定稿后只读问答 |
-| `/uo-update` | 增量刷新 KB |
-| `/tg-init` | 测项合同与绑定 → 人工确认 |
-| `/tg-plan` | 覆盖规划与人工批准 |
-| `/tg-solve` | Z3 求解 → CSV 投影 |
-| `/ce-review` | 基于 UO KB 的代码审查（Code Engineering） |
+| `/uo-update` | 增量刷新 KB（`uo_init.update`） |
+| `/tg-init` / `/tg-plan` / `/tg-solve` | 测项合同 / 规划 / Z3 求解 |
+| `/ce-review` | 基于 UO KB 的代码审查 |
 
-本地统一产物：
-
-```text
-<算子仓>/.ascendc-pilot/{uo,tg,ce,memory,runs,context,state}/
-```
+产物：`<算子仓>/.ascendc-pilot/{uo,tg,ce,memory,runs,context,state}/`
 
 ---
 
@@ -54,32 +48,24 @@ pip install -e "./engines/testcase-generation[solver]"
 acp doctor
 ```
 
-CBM：`.\install.ps1 cbm`（勿把上游脚本下载成仓库根目录的 `install.ps1`）。详见 [docs/cbm-mcp-setup.md](./docs/cbm-mcp-setup.md)
+CBM（可选导航）：`.\install.ps1 cbm` 下载**上游**临时脚本安装，与本仓引擎目录无关。详见 docs 中 CBM 说明（若有）或 doctor 提示。
 
 ---
 
 ## CLI
 
 ```powershell
-acp --help
 acp doctor
 acp route /uo-init
-acp route /tg-init
-acp route /ce-review
+acp uo-query --help
 ```
 
 完成态只认 `acp complete`。
 
 ---
 
-## 端到端
+## 文档
 
-```text
-/uo-init → /tg-init → --confirm → /tg-plan → approve → /tg-solve
-```
-
-代码工程：
-
-```text
-/uo-init → /ce-review
-```
+- [docs/README.md](./docs/README.md)
+- [docs/workflows/overview.md](./docs/workflows/overview.md)
+- [docs/debug/open-problems.md](./docs/debug/open-problems.md)

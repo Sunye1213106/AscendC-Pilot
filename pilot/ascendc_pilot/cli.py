@@ -19,14 +19,8 @@ def _apply_run_action_limit_flags(args: argparse.Namespace) -> dict[str, Any]:
     if not sets and not raise_limits:
         return {}
 
-    try:
-        from uo.scripts.propose_extract_plan import (
-            EXTRACT_LIMIT_SPECS,
-            apply_extract_limits_to_environ,
-            persist_extract_limits,
-        )
-    except Exception:  # noqa: BLE001
-        return {"ok": False, "error": "extract_limit_helpers_unavailable"}
+    # Old extract-plan limit knobs removed with understand-operator-old.
+    return {"ok": True, "skipped": True, "reason": "extract_limits_not_applicable"}
 
     env_to_key = {env: key for key, (env, _default) in EXTRACT_LIMIT_SPECS.items()}
     raised: dict[str, int] = {}
@@ -747,7 +741,7 @@ def main(argv: list[str] | None = None) -> int:
         from ascendc_pilot.paths import uo_root
 
         uo = uo_root(args.project, args.op_name or None)
-        from uo.scripts.check_final_confidence import check_final_confidence
+        return print_json({"ok": False, "error": "legacy_command_removed"}) or 2
 
         payload = check_final_confidence(
             uo,
@@ -789,48 +783,74 @@ def main(argv: list[str] | None = None) -> int:
         )
         return print_result(payload)
     if args.cmd == "uo-query":
-        from uo.scripts.uo_kb_query import main as query_main
+        from ascendc_pilot.paths import uo_root
+        from uo_init.uo_query import open_query
 
         project = Path(args.project).resolve()
-        op = str(args.op_name or "").strip() or project.name
-        argv = [str(project), "--op-name", op]
+        uo = uo_root(project)
         if args.status_only:
-            argv.append("--status-only")
-        else:
-            if not args.pattern:
-                print_json(
-                    {"ok": False, "error": "pattern_required", "message_zh": "非 --status-only 时需要 --pattern"}
-                )
-                return 2
-            argv.extend(["--pattern", args.pattern])
-            if args.target:
-                argv.extend(["--target", args.target])
-            argv.extend(["--depth", str(args.depth), "--limit", str(args.limit)])
-            if args.relation_type:
-                argv.extend(["--relation-type", args.relation_type])
-        return int(query_main(argv) or 0)
+            db = uo / "indexes" / "kb_graph.sqlite"
+            print_json(
+                {
+                    "ok": db.is_file(),
+                    "uo_root": uo.as_posix(),
+                    "sqlite": db.as_posix() if db.is_file() else "",
+                    "engine": "uo_init.uo_query",
+                }
+            )
+            return 0 if db.is_file() else 1
+        pattern = str(args.pattern or "").strip()
+        if not pattern:
+            print_json(
+                {"ok": False, "error": "pattern_required", "message_zh": "非 --status-only 时需要 --pattern"}
+            )
+            return 2
+        try:
+            q = open_query(uo)
+            # Narrow CLI: treat pattern as entity id for constraints_for.
+            rows = q.constraints_for(pattern)
+            if not rows and hasattr(q, "entities_in_files"):
+                rows = q.entities_in_files(pattern)  # type: ignore[call-arg]
+            print_json(
+                {
+                    "ok": True,
+                    "pattern": pattern,
+                    "count": len(rows),
+                    "rows": rows[: int(args.limit or 50)],
+                    "engine": "uo_init.uo_query",
+                },
+                default=str,
+            )
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            print_json({"ok": False, "error": str(exc)[:300]})
+            return 1
     if args.cmd == "uo":
-        from uo._operator.artifacts import existing_operator_root
-        from uo.scripts.host_contract_explain import (
-            explain_host_value,
-            explain_key_dimension,
-            explain_tiling_field,
-        )
+        from ascendc_pilot.paths import uo_root
+        from uo_init.uo_query import open_query
 
         project = Path(args.project).resolve()
-        op = str(args.op_name or "").strip() or project.name
-        uo_root = existing_operator_root(project, op)
+        uo = uo_root(project)
         eid = str(args.entity_id or "")
-        if args.uo_cmd == "explain-host-value":
-            result = explain_host_value(uo_root, eid)
-        elif args.uo_cmd == "explain-tiling-field":
-            result = explain_tiling_field(uo_root, eid)
-        elif args.uo_cmd == "explain-key-dimension":
-            result = explain_key_dimension(uo_root, eid)
-        else:
-            print_json({"ok": False, "error": f"未知 uo 子命令: {args.uo_cmd}"})
-            return 2
-        print_json(result)
+        try:
+            q = open_query(uo)
+            if args.uo_cmd == "explain-host-value":
+                result = {"ok": True, "entity_id": eid, "constraints": q.constraints_for(eid)}
+            elif args.uo_cmd == "explain-tiling-field":
+                result = {"ok": True, "entity_id": eid, "constraints": q.constraints_for(eid)}
+            elif args.uo_cmd == "explain-key-dimension":
+                result = {
+                    "ok": True,
+                    "entity_id": eid,
+                    "branches": q.branches_for_key(eid) if hasattr(q, "branches_for_key") else [],
+                    "templates": q.templates_for_key(eid) if hasattr(q, "templates_for_key") else [],
+                }
+            else:
+                print_json({"ok": False, "error": f"未知 uo 子命令: {args.uo_cmd}"})
+                return 2
+        except Exception as exc:  # noqa: BLE001
+            result = {"ok": False, "error": str(exc)[:300]}
+        print_json(result, default=str)
         return 0 if result.get("ok") else 1
     if args.cmd == "cbm":
         if args.cbm_cmd == "lookup":
@@ -1021,7 +1041,7 @@ def _cmd_debug(args: Any) -> int:
 def _cmd_inspect(args: Any) -> int:
     from collections import Counter
 
-    from uo.scripts._ir_io import read_yaml
+    from ascendc_pilot.uo_artifacts import read_yaml
 
     project = Path(args.project).resolve()
     uo = project / ".ascendc-pilot" / "uo"
@@ -1160,7 +1180,7 @@ def _cmd_inspect(args: Any) -> int:
     if sub == "validate":
         what = str(getattr(args, "what", "extract_plan") or "extract_plan")
         if what in {"extract_plan", "extract-plan-staging", "parts"}:
-            from uo.scripts.extract_plan_slim import assert_canonical_plan_slim
+            return print_json({"ok": False, "error": "legacy_command_removed"}) or 2
 
             plan = read_yaml(uo / "ir" / "extract_plan.yaml") or {}
             errs = assert_canonical_plan_slim(plan if isinstance(plan, dict) else {})
@@ -1244,9 +1264,9 @@ def _doctor(project: Path) -> int:
     except ImportError:
         issues.append("ascendc_pilot not installed (pip install -e ./pilot)")
     try:
-        import uo  # noqa: F401
+        import uo_init  # noqa: F401
     except ImportError:
-        issues.append("uo engine not installed (pip install -e ./engines/understand-operator)")
+        issues.append("uo_init engine not installed (pip install -e ./engines/understand-operator)")
     try:
         import testcase_agent  # noqa: F401
     except ImportError:

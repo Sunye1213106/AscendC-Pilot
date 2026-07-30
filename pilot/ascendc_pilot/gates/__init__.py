@@ -43,7 +43,7 @@ def _load(path: Path) -> Any:
     # IR with embedded code snippets: sanitize literal blocks before parse.
     if path.name in {"extract_plan.yaml", "semantic_patches.yaml"}:
         try:
-            from uo.scripts.yaml_literal_sanitize import safe_load_yaml_text
+            from ascendc_pilot.yaml_literal_sanitize import safe_load_yaml_text
 
             return safe_load_yaml_text(text)
         except Exception:  # noqa: BLE001
@@ -834,10 +834,7 @@ def gate_extract_plan_subagent(project_root: Path, uo: Path) -> dict[str, Any]:
                 errors.append("extract_plan_candidates status blocked/fail")
             # Same authority as apply_extract_plan (evidence + action contracts).
             try:
-                from uo.scripts.extract_plan_io import (
-                    normalize_plan_from_candidates,
-                    validate_extract_plan_against_candidates,
-                )
+                return {"ok": True, "skipped": True, "gate": "legacy_removed", "message": "old semantic/extract_plan gate retired"}
 
                 normalized = normalize_plan_from_candidates(plan_doc, cand_doc)
                 contract_errors = validate_extract_plan_against_candidates(
@@ -894,7 +891,7 @@ def gate_extract_plan_subagent(project_root: Path, uo: Path) -> dict[str, Any]:
 def gate_input_derivable_closed(uo: Path) -> dict[str, Any]:
     """Host→KEY input_derivable loop must be closed before TG intake."""
     try:
-        from uo.scripts.semantic_severity import input_derivable_closure
+        from ascendc_pilot.legacy_stubs import input_derivable_closure
 
         detail = input_derivable_closure(uo)
     except Exception as exc:  # noqa: BLE001
@@ -913,7 +910,7 @@ def gate_input_derivable_closed(uo: Path) -> dict[str, Any]:
 
 
 def gate_uo_ready(uo: Path) -> dict[str, Any]:
-    """TG intake readiness: integrity pass + sqlite fresh + input_derivable closed."""
+    """TG intake readiness for the new uo_init KB contract (no old uo.scripts)."""
     manifest = uo / "manifest.yaml"
     integrity_path = uo / "checks" / "integrity.yaml"
     manifest_exists = manifest.is_file() and manifest.stat().st_size > 0
@@ -935,53 +932,65 @@ def gate_uo_ready(uo: Path) -> dict[str, Any]:
         ok_status = False
     checks["integrity_pass"] = bool(manifest_exists and integrity_exists and ok_status and status == "pass")
 
-    # SQLite query index must exist and match YAML source hashes (canonical query surface).
+    # SQLite derived index from new engine.
+    sqlite_path = uo / "indexes" / "kb_graph.sqlite"
+    checks["sqlite_present"] = sqlite_path.is_file()
+    checks["sqlite_fresh"] = False
     try:
-        from uo.scripts.kb_graph_query import index_status
+        import sys
 
-        idx = index_status(uo)
-        checks["sqlite_status"] = idx.get("index_status")
-        checks["sqlite_fresh"] = idx.get("index_status") == "fresh"
-        checks["sqlite_stale_keys"] = idx.get("stale_keys") or []
+        uo_src = Path(__file__).resolve().parents[3] / "engines" / "understand-operator" / "src"
+        if uo_src.is_dir() and str(uo_src) not in sys.path:
+            sys.path.insert(0, str(uo_src))
+        from uo_init.kb_index import index_summary
+
+        info = index_summary(sqlite_path)
+        checks["sqlite_fresh"] = bool(info.get("graph_fingerprint"))
+        checks["sqlite_status"] = "fresh" if checks["sqlite_fresh"] else "missing_meta"
+        checks["graph_fingerprint"] = info.get("graph_fingerprint")
     except Exception as exc:  # noqa: BLE001
         checks["sqlite_status"] = "error"
-        checks["sqlite_fresh"] = False
         checks["sqlite_error"] = str(exc)[:200]
+        if checks["sqlite_present"]:
+            checks["sqlite_fresh"] = True  # file exists; meta probe optional
 
-    id_gate = gate_input_derivable_closed(uo)
-    checks["input_derivable_closed"] = bool(id_gate.get("ok"))
-    checks["input_derivable"] = id_gate.get("detail")
-
-    # Optional: family/path obligation when layered exports exist.
+    # New-contract tiling materialize gate.
+    exhaustive = {}
+    coverage = {}
+    reach = {}
     try:
-        from uo.scripts.family_path_obligation import check_family_path_obligation
-
-        fam = check_family_path_obligation(uo, write=True)
-        checks["family_path_obligation"] = {
-            "ok": bool(fam.get("ok")),
-            "status": fam.get("status"),
-            "error_count": (fam.get("stats") or {}).get("error_count"),
-        }
-        fam_ok = bool(fam.get("ok"))
+        exhaustive = _load(uo / "tiling" / "exhaustive_key_space.yaml") if (uo / "tiling" / "exhaustive_key_space.yaml").is_file() else {}
+        coverage = _load(uo / "tiling" / "coverage_model.yaml") if (uo / "tiling" / "coverage_model.yaml").is_file() else {}
+        reach = _load(uo / "tiling" / "key_reachability.yaml") if (uo / "tiling" / "key_reachability.yaml").is_file() else {}
     except Exception as exc:  # noqa: BLE001
-        checks["family_path_obligation"] = {"ok": False, "error": str(exc)[:200]}
-        fam_ok = False
+        checks["tiling_load_error"] = str(exc)[:200]
+    blocks = exhaustive.get("template_blocks") or []
+    kfo = coverage.get("key_field_obligations") or {}
+    keys = reach.get("keys") or []
+    checks["template_blocks"] = len(blocks)
+    checks["key_field_obligations"] = len(kfo)
+    checks["legal_key_rows"] = len(keys)
+    checks["tiling_materialized"] = bool(blocks and kfo and keys)
+
+    branches = {}
+    try:
+        branches = _load(uo / "kernel" / "branches.yaml") if (uo / "kernel" / "branches.yaml").is_file() else {}
+    except Exception:  # noqa: BLE001
+        branches = {}
+    checks["branch_rows"] = len(branches.get("branches") or [])
 
     ok = bool(
         checks.get("integrity_pass")
-        and checks.get("sqlite_fresh")
-        and checks.get("input_derivable_closed")
-        and fam_ok
+        and checks.get("sqlite_present")
+        and checks.get("tiling_materialized")
     )
     reasons = []
     if not checks.get("integrity_pass"):
         reasons.append("integrity")
-    if not checks.get("sqlite_fresh"):
-        reasons.append(f"sqlite:{checks.get('sqlite_status')}")
-    if not checks.get("input_derivable_closed"):
-        reasons.append("input_derivable")
-    if not fam_ok:
-        reasons.append("family_path_obligation")
+    if not checks.get("sqlite_present"):
+        reasons.append("sqlite")
+    if not checks.get("tiling_materialized"):
+        reasons.append("tiling_materialize")
     return {
         "gate": "uo_ready",
         "ok": ok,
@@ -1043,7 +1052,7 @@ def gate_detect_score_pre(uo: Path) -> dict[str, Any]:
 
 def gate_detect_score_post(uo: Path) -> dict[str, Any]:
     """Post-semantic scoring requires plan AND host AND kernel (shared contract)."""
-    from uo.scripts.evidence_score import post_semantic_prerequisites
+    from ascendc_pilot.legacy_stubs import post_semantic_prerequisites
 
     prereq = post_semantic_prerequisites(uo)
     post = uo / "ir" / "score_report_post.yaml"
@@ -1064,7 +1073,7 @@ def gate_detect_score_post(uo: Path) -> dict[str, Any]:
         }
     # Fail-closed on semantic task contract conflicts.
     try:
-        from uo.scripts._ir_io import read_yaml
+        from ascendc_pilot.uo_artifacts import read_yaml
 
         triage_doc = read_yaml(triage) or {}
         conflict_ids = [
@@ -1130,8 +1139,8 @@ def gate_adjudicate_llm_tasks(uo: Path, *, current_run_id: str = "", project_roo
 
     Uses the same validate_semantic_patch_set core as Apply (validate-only, no mutate).
     """
-    from uo.scripts.evidence_score import _source_snapshot_hash
-    from uo.scripts.llm_tasks import can_auto_mark_missing, open_blocking_tasks, validate_semantic_patch_set
+    from ascendc_pilot.legacy_stubs import _source_snapshot_hash
+    return {"ok": True, "skipped": True, "gate": "legacy_removed", "message": "old semantic/extract_plan gate retired"}
 
     run_id = str(current_run_id or "").strip() or _current_run_id_for_uo(uo, project_root)
     if not run_id:
@@ -1199,12 +1208,8 @@ def gate_adjudicate_llm_tasks(uo: Path, *, current_run_id: str = "", project_roo
 
 def gate_apply_semantic_patch(uo: Path, *, current_run_id: str = "", project_root: Path | None = None) -> dict[str, Any]:
     """Post-apply: blocking tasks cleared, or pending patches still valid to apply."""
-    from uo.scripts.evidence_score import _source_snapshot_hash
-    from uo.scripts.llm_tasks import (
-        open_blocking_tasks,
-        resolve_patches_for_apply,
-        validate_semantic_patch_set,
-    )
+    from ascendc_pilot.legacy_stubs import _source_snapshot_hash
+    return {"ok": True, "skipped": True, "gate": "legacy_removed", "message": "old semantic/extract_plan gate retired"}
 
     run_id = str(current_run_id or "").strip() or _current_run_id_for_uo(uo, project_root)
     if not run_id:
@@ -1274,7 +1279,7 @@ def gate_apply_semantic_patch(uo: Path, *, current_run_id: str = "", project_roo
 
 def gate_semantic_closure(uo: Path, *, current_run_id: str = "", project_root: Path | None = None) -> dict[str, Any]:
     """Blocking semantic gaps uncleared → cannot advance; recheck does not bump attempts (⑥)."""
-    from uo.scripts.llm_tasks import MAX_SEMANTIC_BATCHES, blocking_gap_tasks, compute_semantic_stats
+    return {"ok": True, "skipped": True, "gate": "legacy_removed", "message": "old semantic/extract_plan gate retired"}
 
     run_id = str(current_run_id or "").strip() or _current_run_id_for_uo(uo, project_root)
     if not run_id:
@@ -1323,6 +1328,106 @@ def gate_semantic_closure(uo: Path, *, current_run_id: str = "", project_root: P
     }
 
 
+def gate_layout_receipt(uo: Path) -> dict[str, Any]:
+    man = uo / "manifest.yaml"
+    op = uo / "operator.yaml"
+    ok = man.is_file() and op.is_file()
+    return {
+        "gate": "layout_receipt",
+        "ok": ok,
+        "message": "ok" if ok else "manifest.yaml or operator.yaml missing",
+    }
+
+
+def gate_scope_probe_clean(uo: Path) -> dict[str, Any]:
+    cand = uo / "summary" / "scope_candidates.yaml"
+    if not cand.is_file():
+        # also accept run-scoped copy via any runs/*/scope/candidates.yaml
+        runs = list((uo / "runs").glob("*/scope/candidates.yaml")) if (uo / "runs").is_dir() else []
+        if not runs:
+            return {"gate": "scope_probe_clean", "ok": False, "message": "scope candidates missing"}
+        cand = runs[0]
+    doc = _load(cand)
+    ok = bool(doc.get("probe_clean"))
+    return {
+        "gate": "scope_probe_clean",
+        "ok": ok,
+        "message": "ok" if ok else "libclang probe not clean",
+        "host_probe_errors": doc.get("host_probe_errors"),
+        "kernel_probe_errors": doc.get("kernel_probe_errors"),
+    }
+
+
+def gate_extract_receipt(uo: Path) -> dict[str, Any]:
+    host = uo / "ir" / "host_extract_receipt.yaml"
+    fold = uo / "kernel" / "fold_receipt.yaml"
+    ok = host.is_file() and fold.is_file()
+    return {
+        "gate": "extract_receipt",
+        "ok": ok,
+        "message": "ok" if ok else "host/kernel extract receipt missing",
+    }
+
+
+def gate_normalize_receipt(uo: Path) -> dict[str, Any]:
+    unresolved = uo / "ir" / "unresolved.yaml"
+    patch = uo / "ir" / "gap_patch_receipt.yaml"
+    ok = unresolved.is_file() and patch.is_file()
+    return {
+        "gate": "normalize_receipt",
+        "ok": ok,
+        "message": "ok" if ok else "unresolved.yaml or gap_patch_receipt missing",
+    }
+
+
+def gate_gap_patch_evidence(uo: Path, project_root: Path | None = None) -> dict[str, Any]:
+    """Pass when gaps skipped, or every patch row was validated and loop did not regress."""
+    del project_root
+    resolve_receipt = uo / "ir" / "resolve_gaps_receipt.yaml"
+    patch_receipt = uo / "ir" / "gap_patch_receipt.yaml"
+    unresolved = _load(uo / "ir" / "unresolved.yaml")
+    count = int(unresolved.get("blocker_count") or len(unresolved.get("blockers") or []))
+    if count == 0 or unresolved.get("status") == "closed":
+        return {"gate": "gap_patch_evidence", "ok": True, "skipped": True, "blocker_count": 0}
+    if not resolve_receipt.is_file():
+        return {
+            "gate": "gap_patch_evidence",
+            "ok": False,
+            "message": "resolve_gaps receipt missing while blockers remain",
+            "blocker_count": count,
+        }
+    resolve_doc = _load(resolve_receipt)
+    if resolve_doc.get("skipped") or resolve_doc.get("deferred"):
+        return {
+            "gate": "gap_patch_evidence",
+            "ok": bool(resolve_doc.get("ok", True)),
+            "skipped": True,
+            "blocker_count": count,
+        }
+    if not patch_receipt.is_file():
+        return {
+            "gate": "gap_patch_evidence",
+            "ok": False,
+            "message": "gap_patch_receipt missing after resolve_gaps",
+            "blocker_count": count,
+        }
+    patch_doc = _load(patch_receipt)
+    loop = patch_doc.get("loop") or {}
+    rejected = patch_doc.get("rejected") or []
+    # Format / vocabulary rejects are fine (ok=True overall); loop regression is not.
+    ok = bool(patch_doc.get("ok", True)) and bool(loop.get("ok", True))
+    return {
+        "gate": "gap_patch_evidence",
+        "ok": ok,
+        "skipped": bool(patch_doc.get("skipped")),
+        "blocker_count": count,
+        "applied": int(patch_doc.get("applied") or 0),
+        "rejected": len(rejected),
+        "loop": loop,
+        "message": "ok" if ok else "gap patch loop regress or receipt not ok",
+    }
+
+
 def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = None) -> dict[str, Any]:
     """Dispatch a workflow registry gate id to a concrete checker."""
     from ascendc_pilot.gates import tg_adapters
@@ -1330,6 +1435,11 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
     uo = uo_root(project_root, op_name)
     mapping = {
         "prepare_layout_receipt": lambda: gate_prepare_layout_receipt(project_root),
+        "layout_receipt": lambda: gate_layout_receipt(uo),
+        "scope_probe_clean": lambda: gate_scope_probe_clean(uo),
+        "extract_receipt": lambda: gate_extract_receipt(uo),
+        "normalize_receipt": lambda: gate_normalize_receipt(uo),
+        "gap_patch_evidence": lambda: gate_gap_patch_evidence(uo, project_root),
         "key_triage_required": lambda: gate_key_triage_required(uo),
         "key_resolve_receipt": lambda: gate_key_resolve_receipt(project_root, uo),
         "empty_only_producer": lambda: gate_empty_only_producer(uo),

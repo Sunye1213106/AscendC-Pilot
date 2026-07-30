@@ -14,5 +14,5 @@ Map worker 只处理本 shard；分片算法与全局计数在 Host/Runtime，�
 ## Hard Constraints
 
 - MUST NOT：读取完整 worklist / 完整 candidates / 其他 batch / 其他 part。
-- MUST NOT：写 canonical `uo/ir/**` 或总 `semantic_relations.yaml` / `semantic_patches.yaml` / 旧 `decision_report.yaml`。
+- MUST NOT：写 canonical `uo/ir/**` 或总 `semantic_relations.yaml` / `semantic_patches.yaml` / `decision_report.yaml`。
 - MUST NOT：在 prompt 或手工实现分片算法 / 全局计数。

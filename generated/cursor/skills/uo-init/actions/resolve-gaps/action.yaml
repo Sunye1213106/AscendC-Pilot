@@ -1,0 +1,39 @@
+# GENERATED from Workflow Spec — do not hand-edit identity fields
+id: resolve_gaps
+workflow_id: uo-init
+role_id: producer
+agent_id: uo-gap-resolve
+execution_mode: subagent
+capabilities:
+- source-reading
+- cbm-navigation
+- kb-query
+- semantic-resolution
+policies:
+- source-authority
+- code-access
+- evidence
+- language
+- pilot-control
+- output-quality
+task_prompt_id: uo/resolve-gaps
+context_profile_id: uo-init-resolve-gaps
+output_contract_id: resolve-gaps-v1
+allowed_write_paths:
+- runs/{run_id}/actions/resolve_gaps/parts/**
+- runs/{run_id}/actions/resolve_gaps/scratch/**
+forbidden_write_paths:
+- uo/ir/unresolved.yaml
+- uo/ir/gap_patch_receipt.yaml
+allowed_read_paths:
+- uo/ir/unresolved.yaml
+- uo/quality.yaml
+- uo/ir/operator_graph.yaml
+- runs/{run_id}/actions/resolve_gaps/parts/**
+- runs/{run_id}/actions/resolve_gaps/scratch/**
+forbidden_read_paths: []
+checker:
+  required: true
+referee:
+  required: false
+generated_from: workflow_spec

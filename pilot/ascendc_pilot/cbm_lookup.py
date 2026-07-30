@@ -1,4 +1,4 @@
-"""Producer-facing CBM locate + windowed source read (wraps uo.scripts.cbm_client)."""
+"""Producer-facing CBM locate + windowed source read."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def lookup_symbol(
     Reuses ``CbmClient`` + ``read_source_snippet`` — no second indexing path.
     """
     from ascendc_pilot.paths import uo_root
-    from uo.scripts.cbm_client import CbmClient, read_source_snippet
+    from ascendc_pilot.cbm_client import CbmClient, read_source_snippet
 
     root = Path(project_root).expanduser().resolve()
     uo = uo_root(root)

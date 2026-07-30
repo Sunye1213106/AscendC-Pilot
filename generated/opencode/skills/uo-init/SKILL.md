@@ -1,132 +1,35 @@
 ---
 name: uo-init
-description: 首次建立 / 创建本地知识库（UO KB）、建库、初始化算子知识库。 用户提到建立知识库、只分析某架构分支（如 arch35）时加载本 Skill。
-  Pilot 管阶段；加载后执行 acp start uo-init。
+description: 首次建立 / 创建本地知识库（UO KB）。用户提到建库、只分析某架构分支（如 arch35）时加载。Pilot 管阶段；加载后执行 acp
+  start uo-init。
 ---
 
 # uo-init
 
-首次建立 UO KB。
+首次建立 UO KB。引擎：`engines/understand-operator`（包 `uo_init`）。
 
-## 硬规则（读完再动手）
+## 硬规则
 
-0. **必须先 Tab 切到 `ascendc-pilot`（primary）再跑本 Skill**。默认 Build/其它 agent 没有 acp 权限围栏，会把流程当成“读 METHOD 手干”。
-0.5. **关键启动参数不明确 → 立刻 AskQuestion，禁止探查纠结**（缺一就问，同一轮 `question`）：
-   - **算子目录**（`--project`）：用户说「这个算子 / 建库」但未给出**单一**算子根，且 cwd 不是算子包时 → AskQuestion 点选/粘贴路径。
-   - **architecture**：用户未说只要某分支、且不能默认时 → AskQuestion（常见：`arch35`）。
-   - **测试脚本路径不属于 uo-init 启动必填**（那是 `tg-init` 测例契约用的）。本 workflow **禁止**为 `--test-script-root` 打断建库；用户未提则不要问、不要猜。
-   - **MUST NOT**：为猜算子目录而 Glob 全仓库、枚举几十个 arch35、读 session 考古、长篇「让我想想」。
-   - **MUST NOT**：在未确认 `--project` 前执行 `acp start` / scope / 读源码建库。
-   - 用户已给出算子路径，或 cwd/`--project` 已是唯一算子根，且 arch 已明确或可安全默认 → 直接 `acp start`，勿再问。
-1. **`acp` 是真实 CLI**（本机已安装），不是概念步骤，**禁止**“按 METHOD 手工模拟工作流”。
-2. **禁止跳步**：必须先 `acp start` → `acp next` → 当前 `action_id`；不得一上来做 scope 或读源码建 KB。
-3. **确定性 Action**（如 `prepare_layout`）：只跑 `acp run-action <id>`，会自动 finalize。
-4. **语义 Action**：`run-action` 准备 → 按 Bundle **派发声明 actor**（如 `uo-semantic-resolve`）→ actor 写合同产物 → `--finalize`。
-   - Primary **禁止**自己 Write `uo/ir/**`（会 `PRIMARY_PROTECTED_WRITE`）。
-   - Task 须带 `subagent_type`/`agent` = Bundle 的 `actor_id`，并带上 `action_id`。
-   - **派发正文硬规则**：Task prompt **只能**用 prepare 返回的 `task_prompt_stub`（或 `session/task_prompt_stub.md`）原样粘贴。
-     - MUST NOT：自己复述/改写 METHOD；MUST NOT：先 Read method/prompt 再二编长 prompt。
-     - MUST NOT：把 `llm_tasks`/`mark_missing`/超大 candidates **整包**粘进 Task（只传路径）。
-     - MUST NOT：在 stub 前后夹 REWORK / 失败诊断 / 额外目标长文。
-   - **同 Action rework**：必须 **resume 原 Task session**（同一 `action_id` 的已有子代理），**禁止**再开第二个 session。
-   - **`extract_plan`（Relation Graph）**：prepare 建 observations/obligations/base graph；
-     有歧义义务 → 按 `dispatch_tasks[]` 派 Map worker 写 `staging/relation_parts/`（只确认 Relation，禁止选 role）；
-     **义务已全部确定性闭合** → prepare **auto-finalize**（禁止再派子代理）；
-     finalize materialize slim IR + layered KB。边裁决仍走 `adjudicate_llm_tasks`→`apply_semantic_patch`（禁止跳步）。
-   - Write 被拒后 **禁止**用 bash/`Set-Content`/`>` 绕过围栏写正式 IR。
-5. **禁止**用 Glob/Read 自编「文件计数表」代替 `acp uo-scope scan`；`common/` 由扫描脚本向上发现，手数必漏。
-6. **进度 / Todo**：遵循公共策略 `pilot-control`（原生 Todo）；勿在本 Skill 硬编码阶段表，勿在主对话贴状态面板。
-7. **`extract_plan` finalize / auto-finalize**：会 materialize Relation→slim IR 并 `build_layered_kb(host/kernel/tilingkey/bridge)`；大算子可能数分钟无输出，属正常，禁止当卡死打断。
+0. **必须先 Tab 切到 `ascendc-pilot`（primary）再跑本 Skill**。
+0.5. **关键启动参数不明确 → 立刻 AskQuestion**（算子目录 `--project`、architecture）。
+1. **`acp` 是真实 CLI**，禁止按 METHOD 手工模拟工作流。
+2. **禁止跳步**：`acp start` → `acp next` → 当前 `action_id`。
+3. **确定性 Action**：只跑 `acp run-action <id>`（自动 finalize）。
+4. **语义 Action**（如 `resolve_gaps` / `kb_review`）：`run-action` 准备 → 派发 Bundle 声明的 actor → `--finalize`。
+   - Primary **禁止**自己 Write `uo/ir/**`。
+   - Task 正文只能用 prepare 返回的 `task_prompt_stub` 原样粘贴。
+5. **禁止**用 Glob/Read 自编文件表代替 `acp uo-scope scan`。
+6. **进度**：遵循公共策略 `pilot-control`。
 
-## 启动前：关键参数确认（歧义时立刻问）
+## 启动
 
 ```text
-# 歧义示例：cwd=D:\PR-review，用户只说「为这个算子建库只要 arch35」
-→ 立刻 question/AskQuestion，只问清：
-  1) 算子目录（--project）
-  2) architecture（若未说）
-# 确认后（勿因缺测试脚本路径而停）：
 acp start uo-init --project <算子目录> --architecture arch35
+acp next
+acp run-action <action_id>
 ```
 
-**禁止**先 Glob 全树再写长思考链。
-
-## Debug 模式（可选）
-
-排查 Host 绕弯 / 工具失败 / 子代理收尾时开启：
-
-```text
-acp debug enable --project <算子目录>
-# 可选：ASCENDC_DEBUG=1
-acp debug status --project <算子目录>
-acp debug export-session --project <算子目录>   # 手动打包
-acp debug disable --project <算子目录>
-```
-
-开启后：
-- **工具调用失败** → 写入 `.ascendc-pilot/debug/anomalies.jsonl`（Cursor `postToolUseFailure` / OpenCode `tool.execute.after`）
-- **过长非逻辑思考链**（长 + meta 纠结词密集）→ 同文件 `long_nonlogical_thought`
-- **子代理 Task 结束** → 自动导出 `.ascendc-pilot/debug/exports/<stamp>_…/`（含 events/observations/anomalies + `DEBUG_REPORT.md`）
-
-## 启动前：未完成 run → AskQuestion（与 scope 同款可点选框）
-
-算子目录若已有活动 `uo-init` run 或残留 `.ascendc-pilot/uo`，**禁止静默复用 / 自动删除**。
-
-```text
-acp start uo-init --project <算子目录>
-# 若返回 needs_human_decision=true / EXISTING_RUN_NEEDS_DECISION：
-# 1) 把 run_summary.summary_text_zh（完整/中断点）贴给用户
-# 2) 必须调用 OpenCode `question`（AskQuestion），options 用返回的 ask_question.options
-# 3) 等人点选后再执行：
-acp start uo-init --project <算子目录> --decision continue   # 清理残缺 → 回退完整点 → 继续
-acp start uo-init --project <算子目录> --decision reinit     # 删除 uo 产物后重新 init
-```
-
-可选先查摘要：`acp run-summary --project <算子目录>`。
-
-| 选项 | 含义 |
-|---|---|
-| 继续上次 | **先检查中断步骤是否有失败/残缺产物并清理**（如无效 `extract_plan.yaml`、半成品 host/kernel 图、失败 session/lease）；保留上游已 finalize 产物；回退到最近完整正确状态后再 `resume_next_action` / `acp next` |
-| 删除重开 | abort + 清除 `.ascendc-pilot/uo`（及 runs/context）→ 新 run 从 `prepare_layout` |
-
-**MUST**：与 `scope_confirmation` 一样用可点选框；禁止只在聊天里口头问“要不要继续”。  
-**MUST NOT**：未 AskQuestion 就 `--force-new` / 静默 resume。
-
-## 语义 Action 派发模板（短 · 禁止加戏）
-
-`acp run-action <id>` 成功后，JSON 含 `task_prompt_stub`。派发时：
-
-```text
-# 首次：
-Task(subagent_type=<actor_id>):
-  <原样粘贴 task_prompt_stub 全文>
-
-# 同 Action rework / checker_gate 重试：
-Task(subagent_type=<actor_id>, resume=<原 task session id>):
-  <原样粘贴新一轮 task_prompt_stub 全文>
-```
-
-禁止：
-- 先 Read method/prompt 再改写成更长的 Task
-- 粘贴 `llm_tasks.yaml` / 超大 candidates 全文
-- 给子代理加「顺便裁决 call_edge」/「REWORK：请 omit …」等额外目标
-- rework 时新开第二个 session（必须 resume）
-
-子代理卡要求：启动后**先读** session `prompt.md`。
-
-## 执行循环
-
-1. `acp start uo-init --project <算子目录>`（若需决策 → AskQuestion → `--decision …`）
-2. `acp next --project <算子目录>` → **只跑**返回的 `recommended_next_action`（禁止从 `allowed_actions` 跳步）
-3. `acp run-action <recommended_id> --project <算子目录>`
-4. 语义 Action 产出后：`acp run-action <id> --finalize` → **立刻再** `acp next`  
-   （`extract_plan --finalize` 含分层构建，大算子可能数分钟）
-5. extract 流水线顺序（硬）：`detect_score_pre` → `extract_plan` → `detect_score_post` → `adjudicate_llm_tasks` → `apply_semantic_patch` → `rebuild_from_ledger` → `recheck_closure`
-6. `acp advance <next_phase>`（仅本阶段 pipeline / phase_gates 齐备时）
-7. Gate fail → `rework_required`：`retry` 同 Action 时 **resume 原子代理**，stub 原样，禁止加戏诊断文
-
-用户说「只分析 arch35」时：在 `scope_confirmation` 用  
-`acp uo-scope scan --architecture arch35`（不要自己筛目录）。
+已有活动 run：按 `needs_human_decision` / AskQuestion 选项处理，禁止静默复用或自动删除。
 
 ## Actions
 
@@ -135,26 +38,28 @@ Task(subagent_type=<actor_id>, resume=<原 task session id>):
 | action_id | execution_mode | agent | role | method | prompt | output_contract |
 |---|---|---|---|---|---|---|
 | `prepare_layout` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/prepare-layout` | `-` | `kb-layout-v1` |
-| `scope_confirmation` | `primary_interactive` | `ascendc-pilot` | `controller` | `uo-init/scope-confirmation` | `uo/scope-confirmation` | `scope-confirmed-v1` |
-| `detect_score_pre` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/detect-score-pre` | `-` | `detect-score-pre-v1` |
-| `extract_plan` | `subagent` | `uo-semantic-resolve` | `producer` | `uo-init/extract-plan` | `uo/extract-plan` | `extract-plan-v1` |
-| `detect_score_post` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/detect-score-post` | `-` | `detect-score-post-v1` |
-| `adjudicate_llm_tasks` | `subagent` | `uo-semantic-resolve` | `producer` | `uo-init/adjudicate-llm-tasks` | `uo/adjudicate-llm-tasks` | `semantic-patches-v1` |
-| `apply_semantic_patch` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/apply-semantic-patch` | `-` | `semantic-patch-v1` |
-| `apply_scope_expansion` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/apply-scope-expansion` | `-` | `scope-expansion-v1` |
-| `rebuild_from_ledger` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/rebuild-from-ledger` | `-` | `rebuild-ledger-v1` |
-| `recheck_closure` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/recheck-closure` | `-` | `recheck-closure-v1` |
-| `key_triage` | `subagent` | `uo-key-resolve` | `producer` | `uo-init/key-triage` | `uo/key-triage` | `key-triage-v1` |
-| `key_resolution` | `subagent` | `uo-key-resolve` | `producer` | `uo-init/key-resolution` | `uo/key-resolution` | `input-derivable-patch-v1` |
-| `confidence_report` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/confidence-report` | `-` | `confidence-report-v1` |
-| `confidence_review` | `subagent` | `uo-confidence-review` | `referee` | `uo-init/confidence-review` | `uo/confidence-review` | `confidence-reason-review-v1` |
+| `scope_scan` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/scope-scan` | `-` | `scope-candidates-v1` |
+| `scope_confirm` | `primary_interactive` | `ascendc-pilot` | `controller` | `uo-init/scope-confirm` | `uo/scope-confirmation` | `scope-confirmed-v1` |
+| `extract_host` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/extract-host` | `-` | `extract-host-v1` |
+| `extract_tiling_key` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/extract-tiling-key` | `-` | `extract-tiling-key-v1` |
+| `extract_registry` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/extract-registry` | `-` | `extract-registry-v1` |
+| `extract_kernel` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/extract-kernel` | `-` | `extract-kernel-v1` |
+| `normalize_variables` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/normalize-variables` | `-` | `normalize-variables-v1` |
+| `normalize_predicates` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/normalize-predicates` | `-` | `normalize-predicates-v1` |
+| `resolve_gaps` | `subagent` | `uo-gap-resolve` | `producer` | `uo-init/resolve-gaps` | `uo/resolve-gaps` | `resolve-gaps-v1` |
+| `apply_gap_patch` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/apply-gap-patch` | `-` | `gap-patch-v1` |
+| `export_kb` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/export-kb` | `-` | `export-kb-v1` |
+| `build_index` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/build-index` | `-` | `build-index-v1` |
 | `export_integrity` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/export-integrity` | `-` | `integrity-v1` |
 | `kb_review` | `subagent` | `uo-kb-review` | `referee` | `uo-init/kb-review` | `uo/kb-review` | `kb-review-v1` |
 
 <!-- END GENERATED ACTIONS -->
 
-Pipeline order is owned by Workflow Spec (`pilot/ascendc_pilot/workflows/specs.py` pipelines).
-Do not redefine action order in this Skill.
+## 阶段（规格真值）
+
+prepare → scope → extract → normalize → export → review
+
+全部确定性抽取挂 `uo_init.pilot_engines`；无旧 `extract_plan` / `uo.scripts` 路径。
 
 ## Composed: pilot-control
 
@@ -319,19 +224,18 @@ Pilot 独占状态、合法边、门禁与完成态。
 | action_id | policies | capabilities | method | prompt | agent |
 |---|---|---|---|---|---|
 | `prepare_layout` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/prepare-layout` | `-` | `deterministic-uo-engine` |
-| `scope_confirmation` | source-authority,code-access,evidence,language,pilot-control,output-quality | cbm-navigation,source-reading | `uo-init/scope-confirmation` | `uo/scope-confirmation` | `ascendc-pilot` |
-| `detect_score_pre` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/detect-score-pre` | `-` | `deterministic-uo-engine` |
-| `extract_plan` | source-authority,code-access,evidence,language,pilot-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution,structured-ir-query,readonly-source-search,action-scratch,sharded-llm-producer,bounded-semantic-batch,producer-self-check | `uo-init/extract-plan` | `uo/extract-plan` | `uo-semantic-resolve` |
-| `detect_score_post` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/detect-score-post` | `-` | `deterministic-uo-engine` |
-| `adjudicate_llm_tasks` | source-authority,code-access,evidence,language,pilot-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution,structured-ir-query,readonly-source-search,action-scratch,sharded-semantic-producer,sharded-llm-producer,bounded-semantic-batch,producer-self-check | `uo-init/adjudicate-llm-tasks` | `uo/adjudicate-llm-tasks` | `uo-semantic-resolve` |
-| `apply_semantic_patch` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/apply-semantic-patch` | `-` | `deterministic-uo-engine` |
-| `apply_scope_expansion` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/apply-scope-expansion` | `-` | `deterministic-uo-engine` |
-| `rebuild_from_ledger` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/rebuild-from-ledger` | `-` | `deterministic-uo-engine` |
-| `recheck_closure` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/recheck-closure` | `-` | `deterministic-uo-engine` |
-| `key_triage` | source-authority,code-access,evidence,language,pilot-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution | `uo-init/key-triage` | `uo/key-triage` | `uo-key-resolve` |
-| `key_resolution` | source-authority,code-access,evidence,language,pilot-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution | `uo-init/key-resolution` | `uo/key-resolution` | `uo-key-resolve` |
-| `confidence_report` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/confidence-report` | `-` | `deterministic-uo-engine` |
-| `confidence_review` | source-authority,code-access,evidence,language,pilot-control,output-quality | structured-review,kb-query | `uo-init/confidence-review` | `uo/confidence-review` | `uo-confidence-review` |
+| `scope_scan` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/scope-scan` | `-` | `deterministic-uo-engine` |
+| `scope_confirm` | source-authority,code-access,evidence,language,pilot-control,output-quality | cbm-navigation,source-reading | `uo-init/scope-confirm` | `uo/scope-confirmation` | `ascendc-pilot` |
+| `extract_host` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/extract-host` | `-` | `deterministic-uo-engine` |
+| `extract_tiling_key` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/extract-tiling-key` | `-` | `deterministic-uo-engine` |
+| `extract_registry` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/extract-registry` | `-` | `deterministic-uo-engine` |
+| `extract_kernel` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/extract-kernel` | `-` | `deterministic-uo-engine` |
+| `normalize_variables` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/normalize-variables` | `-` | `deterministic-uo-engine` |
+| `normalize_predicates` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/normalize-predicates` | `-` | `deterministic-uo-engine` |
+| `resolve_gaps` | source-authority,code-access,evidence,language,pilot-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution | `uo-init/resolve-gaps` | `uo/resolve-gaps` | `uo-gap-resolve` |
+| `apply_gap_patch` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/apply-gap-patch` | `-` | `deterministic-uo-engine` |
+| `export_kb` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/export-kb` | `-` | `deterministic-uo-engine` |
+| `build_index` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/build-index` | `-` | `deterministic-uo-engine` |
 | `export_integrity` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/export-integrity` | `-` | `deterministic-uo-engine` |
 | `kb_review` | source-authority,code-access,evidence,language,pilot-control,output-quality | structured-review,kb-query | `uo-init/kb-review` | `uo/kb-review` | `uo-kb-review` |
 
@@ -340,18 +244,17 @@ Pilot 独占状态、合法边、门禁与完成态。
 | action_id | method_path | prompt_path | output_contract | role |
 |---|---|---|---|---|
 | `prepare_layout` | `actions/prepare-layout/METHOD.md` | `-` | `kb-layout-v1` | `deterministic_engine` |
-| `scope_confirmation` | `actions/scope-confirmation/METHOD.md` | `prompts/tasks/uo/scope-confirmation.md` | `scope-confirmed-v1` | `controller` |
-| `detect_score_pre` | `actions/detect-score-pre/METHOD.md` | `-` | `detect-score-pre-v1` | `deterministic_engine` |
-| `extract_plan` | `actions/extract-plan/METHOD.md` | `prompts/tasks/uo/extract-plan.md` | `extract-plan-v1` | `producer` |
-| `detect_score_post` | `actions/detect-score-post/METHOD.md` | `-` | `detect-score-post-v1` | `deterministic_engine` |
-| `adjudicate_llm_tasks` | `actions/adjudicate-llm-tasks/METHOD.md` | `prompts/tasks/uo/adjudicate-llm-tasks.md` | `semantic-patches-v1` | `producer` |
-| `apply_semantic_patch` | `actions/apply-semantic-patch/METHOD.md` | `-` | `semantic-patch-v1` | `deterministic_engine` |
-| `apply_scope_expansion` | `actions/apply-scope-expansion/METHOD.md` | `-` | `scope-expansion-v1` | `deterministic_engine` |
-| `rebuild_from_ledger` | `actions/rebuild-from-ledger/METHOD.md` | `-` | `rebuild-ledger-v1` | `deterministic_engine` |
-| `recheck_closure` | `actions/recheck-closure/METHOD.md` | `-` | `recheck-closure-v1` | `deterministic_engine` |
-| `key_triage` | `actions/key-triage/METHOD.md` | `prompts/tasks/uo/key-triage.md` | `key-triage-v1` | `producer` |
-| `key_resolution` | `actions/key-resolution/METHOD.md` | `prompts/tasks/uo/key-resolution.md` | `input-derivable-patch-v1` | `producer` |
-| `confidence_report` | `actions/confidence-report/METHOD.md` | `-` | `confidence-report-v1` | `deterministic_engine` |
-| `confidence_review` | `actions/confidence-review/METHOD.md` | `prompts/tasks/uo/confidence-review.md` | `confidence-reason-review-v1` | `referee` |
+| `scope_scan` | `actions/scope-scan/METHOD.md` | `-` | `scope-candidates-v1` | `deterministic_engine` |
+| `scope_confirm` | `actions/scope-confirm/METHOD.md` | `prompts/tasks/uo/scope-confirmation.md` | `scope-confirmed-v1` | `controller` |
+| `extract_host` | `actions/extract-host/METHOD.md` | `-` | `extract-host-v1` | `deterministic_engine` |
+| `extract_tiling_key` | `actions/extract-tiling-key/METHOD.md` | `-` | `extract-tiling-key-v1` | `deterministic_engine` |
+| `extract_registry` | `actions/extract-registry/METHOD.md` | `-` | `extract-registry-v1` | `deterministic_engine` |
+| `extract_kernel` | `actions/extract-kernel/METHOD.md` | `-` | `extract-kernel-v1` | `deterministic_engine` |
+| `normalize_variables` | `actions/normalize-variables/METHOD.md` | `-` | `normalize-variables-v1` | `deterministic_engine` |
+| `normalize_predicates` | `actions/normalize-predicates/METHOD.md` | `-` | `normalize-predicates-v1` | `deterministic_engine` |
+| `resolve_gaps` | `actions/resolve-gaps/METHOD.md` | `prompts/tasks/uo/resolve-gaps.md` | `resolve-gaps-v1` | `producer` |
+| `apply_gap_patch` | `actions/apply-gap-patch/METHOD.md` | `-` | `gap-patch-v1` | `deterministic_engine` |
+| `export_kb` | `actions/export-kb/METHOD.md` | `-` | `export-kb-v1` | `deterministic_engine` |
+| `build_index` | `actions/build-index/METHOD.md` | `-` | `build-index-v1` | `deterministic_engine` |
 | `export_integrity` | `actions/export-integrity/METHOD.md` | `-` | `integrity-v1` | `deterministic_engine` |
 | `kb_review` | `actions/kb-review/METHOD.md` | `prompts/tasks/uo/kb-review.md` | `kb-review-v1` | `referee` |

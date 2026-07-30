@@ -24,7 +24,7 @@ from ascendc_pilot.state import load_state
 from ascendc_pilot.workflows import actions_for_phase, get_workflow
 
 try:
-    from uo.scripts.extract_plan_io import FORBIDDEN_EXTRACT_PLAN_KEYS as _EXTRACT_PLAN_FORBID_FIELDS
+    from ascendc_pilot.legacy_stubs import FORBIDDEN_EXTRACT_PLAN_KEYS as _EXTRACT_PLAN_FORBID_FIELDS
 except ImportError:  # pragma: no cover
     # Fallback only when UO engine is not on PYTHONPATH (should not happen in Pilot installs).
     _EXTRACT_PLAN_FORBID_FIELDS = frozenset(
@@ -1130,13 +1130,9 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             pass
 
         try:
-            from uo.scripts._ir_io import read_yaml, write_yaml
-            from uo.scripts.llm_work_scheduler import (
-                build_dispatch_tasks,
-                require_valid_manifest,
-                write_llm_batches,
-            )
-            from uo.scripts.semantic_pipeline import prepare_relation_extract_plan
+            from ascendc_pilot.uo_artifacts import read_yaml, write_yaml
+            return {"ok": False, "error": "legacy_uo_scripts_removed", "message_zh": "旧 extract/semantic 路径已移除"}
+            return {"ok": False, "error": "legacy_uo_scripts_removed", "message_zh": "旧 extract/semantic 路径已移除"}
 
             cand_doc = read_yaml(Path(uo_s) / "ir" / "extract_plan_candidates.yaml") or {}
             action_session = str(action_sid or run_id)
@@ -1368,7 +1364,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
                 continue
             keep = False
             try:
-                from uo.scripts.yaml_literal_sanitize import safe_load_yaml_text
+                from ascendc_pilot.yaml_literal_sanitize import safe_load_yaml_text
 
                 doc = safe_load_yaml_text(stale_plan.read_text(encoding="utf-8"))
                 keep = isinstance(doc, dict) and int(doc.get("version") or 0) in {1, 2}
@@ -1383,11 +1379,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     adjudicate_not_applicable = False
     if wid == "uo-init" and action_id == "adjudicate_llm_tasks" and role_id == "producer":
         try:
-            from uo.scripts.llm_tasks import (
-                blocking_gap_tasks,
-                can_auto_mark_missing,
-                open_blocking_tasks,
-            )
+            return {"ok": False, "error": "legacy_uo_scripts_removed", "message_zh": "旧 extract/semantic 路径已移除"}
 
             uo = uo_root(project_root)
             open_blocking = open_blocking_tasks(uo, current_run_id=run_id)
@@ -1504,11 +1496,8 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             prompt_r = _render_placeholders(prompt, **{**ph_kwargs, "target": target_line})
         else:
             # Map-Reduce prepare: plan semantic batches; workers write parts only.
-            from uo.scripts.llm_tasks import load_llm_tasks
-            from uo.scripts.semantic_patch_shards import (
-                plan_semantic_batches,
-                write_semantic_batches,
-            )
+            return {"ok": False, "error": "legacy_uo_scripts_removed", "message_zh": "旧 extract/semantic 路径已移除"}
+            return {"ok": False, "error": "legacy_uo_scripts_removed", "message_zh": "旧 extract/semantic 路径已移除"}
 
             uo = uo_root(project_root)
             doc = load_llm_tasks(uo)
@@ -1519,7 +1508,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             }
             snap = ""
             try:
-                from uo.scripts.source_snapshot import require_source_snapshot
+                return {"ok": False, "error": "legacy_uo_scripts_removed", "message_zh": "旧 extract/semantic 路径已移除"}
 
                 s = require_source_snapshot(uo, run_id=run_id or None)
                 if s.get("ok"):
@@ -2583,8 +2572,8 @@ def finalize_action(
         if man_path.is_file():
             try:
                 progress.start_stage("reduce_relation_parts")
-                from uo.scripts._ir_io import read_yaml
-                from uo.scripts.semantic_relation_reduce import reduce_relation_parts
+                from ascendc_pilot.uo_artifacts import read_yaml
+                return {"ok": False, "error": "legacy_uo_scripts_removed", "message_zh": "旧 extract/semantic 路径已移除"}
 
                 base_graph: dict = {}
                 base_path = Path(sdir) / "staging" / "semantic_relations.base.yaml"
@@ -2630,7 +2619,7 @@ def finalize_action(
                             messages=list(reduced.get("errors") or [])[:20],
                         )
                 elif base_graph:
-                    from uo.scripts._ir_io import write_yaml
+                    from ascendc_pilot.uo_artifacts import write_yaml
 
                     write_yaml(Path(sdir) / "staging" / "semantic_relations.yaml", base_graph)
                 progress.complete_stage()
@@ -2720,8 +2709,8 @@ def finalize_action(
         man_path = Path(sdir) / "semantic_batches.yaml"
         if man_path.is_file():
             try:
-                from uo.scripts._ir_io import write_yaml
-                from uo.scripts.semantic_patch_shards import reduce_semantic_parts
+                from ascendc_pilot.uo_artifacts import write_yaml
+                return {"ok": False, "error": "legacy_uo_scripts_removed", "message_zh": "旧 extract/semantic 路径已移除"}
 
                 reduced = reduce_semantic_parts(Path(sdir))
                 if not reduced.get("ok"):

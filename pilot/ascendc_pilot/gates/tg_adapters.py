@@ -334,7 +334,7 @@ def gate_family_path_obligation(project_root: Path) -> dict[str, Any]:
     """FAM ↔ KPATH ↔ obligation refs must be consistent on UO export surface."""
 
     def _run() -> Any:
-        from uo.scripts.family_path_obligation import check_family_path_obligation
+        from ascendc_pilot.legacy_stubs import check_family_path_obligation
 
         uo = uo_root(project_root)
         payload = check_family_path_obligation(uo, write=True)

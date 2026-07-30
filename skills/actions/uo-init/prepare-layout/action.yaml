@@ -19,6 +19,7 @@ context_profile_id: uo-init-prepare-layout
 output_contract_id: kb-layout-v1
 allowed_write_paths:
 - uo/manifest.yaml
+- uo/operator.yaml
 - uo/**
 forbidden_write_paths: []
 allowed_read_paths: []

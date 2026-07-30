@@ -1627,6 +1627,15 @@ def focus_excludes_key(combo: dict[str, Any], semantic_focus: dict[str, Any]) ->
 
 
 def match_key_realization(key_fields: dict[str, Any], constraints: dict[str, Any], exhaustive: dict[str, Any]) -> dict[str, Any]:
+    # New UO contract: legal ARGS_SEL instances are themselves the realization witness.
+    if str(constraints.get("input_realization_mode") or "") == "tpl_identity":
+        return {
+            "status": "realized",
+            "matched_input_realization_refs": ["IR_TPL_IDENTITY"],
+            "matched_reverse_realization_refs": [],
+            "confidence": "high",
+            "reason": "",
+        }
     input_realization = _as_dict(constraints.get("input_realization"))
     matched = []
     for rid, rule in sorted(input_realization.items()):

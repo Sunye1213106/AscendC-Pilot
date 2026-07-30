@@ -187,7 +187,7 @@ def record_continuation(
         }
         try:
             from ascendc_pilot.paths import uo_root
-            from uo.scripts._ir_io import read_yaml
+            from ascendc_pilot.uo_artifacts import read_yaml
 
             tasks = read_yaml(uo_root(project_root) / "ir" / "llm_tasks.yaml") or {}
             open_ids = [

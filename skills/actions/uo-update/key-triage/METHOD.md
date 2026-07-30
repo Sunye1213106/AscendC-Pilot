@@ -1,4 +1,5 @@
-﻿# key_triage (uo-update)
+﻿# key_triage（uo-update · stub）
 
-与 uo-init `key_triage` 同职责：只写 `ir/key_triage.yaml`，禁止写 resolution 产物。
-详见 uo-init/key-triage METHOD。
+新分层 KB 上暂无旧 `escalate_keys` / KeyField LLM 粗分链。本 Action 由确定性引擎写出 `uo/ir/key_triage.yaml`（`status=not_applicable`）。
+
+详见 `docs/debug/open-problems.md`。

@@ -1,0 +1,16 @@
+id: uo-gap-resolve
+version: 1
+name_zh: Gap blocker producer
+role: producer
+mode: subagent
+description: Resolve unresolved blockers from ir/unresolved.yaml. On start, read session prompt.md first.
+read_scopes:
+  - "uo/**"
+  - "runs/**"
+write_scopes:
+  - "runs/*/actions/resolve_gaps/parts/**"
+  - "runs/*/actions/resolve_gaps/scratch/**"
+forbidden:
+  - modify_pilot_state
+  - declare_workflow_passed
+  - write_outside_declared_scope

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .io import read_yaml
-from .validation import REQUIRED_KB_EXPORT_FILES
+from .validation import OPTIONAL_KB_EXPORT_FILES, REQUIRED_KB_EXPORT_FILES
 
 
 class UnderstandExportError(RuntimeError):
@@ -45,15 +45,13 @@ def understand_root(project_root: Path, op_name: str) -> Path:
 
 
 def built_kb_ready(uo_root: Path) -> bool:
-    """KB ready when layered export + quality exist. Does not require UO contracts/**.
-
-    When checks/integrity.yaml is present it must not be fail (定稿门禁).
-    confidence_gate=reported is allowed (documented leftovers).
-    """
+    """KB ready when layered export + quality + tiling materialize exist."""
     required = (
         uo_root / "manifest.yaml",
         uo_root / "quality.yaml",
         uo_root / "tiling" / "key_space.yaml",
+        uo_root / "tiling" / "exhaustive_key_space.yaml",
+        uo_root / "tiling" / "coverage_model.yaml",
         uo_root / "kernel" / "branches.yaml",
     )
     if not all(path.is_file() for path in required):
@@ -63,12 +61,16 @@ def built_kb_ready(uo_root: Path) -> bool:
         integrity = read_yaml(integrity_path)
         if isinstance(integrity, dict) and str(integrity.get("status") or "").lower() == "fail":
             return False
-    # Prefer hashes or sqlite as freshness signals when present.
+    exhaustive = read_yaml(uo_root / "tiling" / "exhaustive_key_space.yaml")
+    coverage = read_yaml(uo_root / "tiling" / "coverage_model.yaml")
+    if not isinstance(exhaustive, dict) or not (exhaustive.get("template_blocks") or []):
+        return False
+    if not isinstance(coverage, dict) or not (coverage.get("key_field_obligations") or {}):
+        return False
     if (uo_root / "checks" / "artifact_hashes.yaml").is_file():
         return True
     if (uo_root / "indexes" / "kb_graph.sqlite").is_file():
         return True
-    # Still accept when layered REQUIRED files are all present.
     return all((uo_root / Path(rel)).is_file() for rel in REQUIRED_KB_EXPORT_FILES)
 
 
@@ -107,6 +109,7 @@ def load_built_kb(uo_root: Path, op_name: str) -> dict[str, Any]:
         "ir/operator_graph.yaml",
         "ir/input_derivable.yaml",
         "summary/keys_table.yaml",
+        *OPTIONAL_KB_EXPORT_FILES,
     ):
         path = uo_root / Path(optional)
         if path.is_file():

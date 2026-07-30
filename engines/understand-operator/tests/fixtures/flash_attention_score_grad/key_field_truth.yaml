@@ -1,0 +1,74 @@
+# key_field_truth.yaml — G0 fixture for flash_attention_score_grad arch35
+# Structural expectations for 19 TilingKey dims (source-backed).
+version: 1
+operator: flash_attention_score_grad
+architecture: arch35
+encode_site: flash_attention_score_grad_tiling_normal_regbase.cpp:GetTilingKey
+fields:
+  IsEmptyTensor:
+    local: "IsEmptyOutput ? TILING_KEY_1 : 0"
+    domain: ["0", "1"]
+    min_leaves: 2
+  SplitAxis:
+    local: "fBaseParams.splitAxis"
+    domain: ["0", "1", "5"]
+    must_have_any: [["BN2GS1S2", "0"], ["BN2", "1"], ["BN2S2", "5"]]
+  InputDType:
+    local: "DetermineMode(queryType)"
+    domain: ["0", "1", "2", "3", "4", "5", "6"]
+    min_leaves: 3
+  IsTnd:
+    local: "layoutType == INPUT_FORMAT_TND"
+    domain: ["0", "1"]
+  IsDrop:
+    local: "keepProb < 1 ? ENABLE : DISABLE"
+    domain: ["0", "1"]
+  IsPse:
+    local: "pseOptional == NORMAL_TENSOR ? ENABLE : DISABLE"
+    domain: ["0", "1"]
+  IsAttenMask:
+    local: "attenMaskOptional == EMPTY_TENSOR ? DISABLE : ENABLE"
+    domain: ["0", "1"]
+  S1TemplateNum:
+    local: "s1TemplateType"
+    domain: ["0", "64", "128", "512"]
+  S2TemplateNum:
+    local: "s2TemplateType"
+    domain: ["0", "128", "256", "512"]
+  DTemplateNum:
+    local: "dTemplateType; hasRope -> 192"
+    domain: ["0", "64", "128", "192", "256", "768"]
+    must_have_any: [["NUM192", "ROPE_D_192", "192"]]
+  DeterType:
+    local: "deterSparseType"
+    domain: ["0", "1", "2", "3", "4"]
+    min_leaves: 3
+  IsNEqual:
+    local: "deterSparseType not in {NO_DETER,DETER_OLD} && g==1"
+    domain: ["0", "1"]
+  IsBn2MultiBlk:
+    local: "isBn2MultiBlk"
+    domain: ["0", "1"]
+  IsDNoEqual:
+    local: "(d1 != d) || hasRope"
+    domain: ["0", "1"]
+  IsRope:
+    local: "hasQueryRope && hasKeyRope"
+    domain: ["0", "1"]
+  OutDType:
+    local: "outDtype = inputDtype"
+    domain: ["0", "1", "2", "3"]
+    min_leaves: 3
+  IsNzOut:
+    local: "BN2GS1S2 && 64<d<128 && enableSwizzle && s>=2048"
+    domain: ["0", "1"]
+  IsTndSwizzle:
+    local: "enableSwizzle && TND && BN2S2 templateSupport"
+    domain: ["0", "1"]
+  IsRegbase:
+    local: "OptionEnum::ENABLE"
+    domain: ["0", "1"]
+    min_leaves: 1
+platform:
+  default_sku: Ascend950PR_9589
+  aic_num: 32

@@ -1,20 +1,29 @@
 ---
 name: uo-update
-description: 增量更新 / 刷新已有 UO 知识库（含 diff_only）。用户说更新 KB、刷新知识库时加载。 Pilot 管阶段；加载后执行 acp
+description: 增量更新 / 刷新已有 UO 知识库（含 diff_only）。用户说更新 KB、刷新知识库时加载。Pilot 管阶段；加载后执行 acp
   start uo-update。
 ---
 
 # uo-update
 
-增量更新 UO KB；含 diff_only。
+增量更新 UO KB。引擎：`uo_init.update`（与 `uo-init` 同一包，消费新分层 KB）。
 
-本 Skill 不定义工作流阶段。执行时：
+## 硬规则
 
-1. 调用 `acp start uo-update`（同 workflow 活动 run 则复用）；
-2. 调用 `acp next`；
-3. 对返回的 action_id 调用 `acp run-action <action_id>`（prepare；确定性 Action 会自动 finalize）；
-4. 语义 Action：按 Bundle 派发 actor → `acp run-action <action_id> --finalize`；
-5. 需要推进时：`acp advance <next_phase>`。
+1. `acp start uo-update` → `acp next` → `acp run-action <action_id>`。
+2. 变更检测 / 计划 / 应用 / diff / 置信度 / 完整性均为确定性 Action。
+3. `key_triage` / `key_resolution` / `confidence_review` 当前为**确定性 stub**（新 KB 尚无旧 escalate 链）；见 `docs/debug/open-problems.md`。
+4. **禁止**读取或依赖 `extract_plan.yaml` / 旧 semantic ledger。
+
+## 启动
+
+```text
+acp start uo-update --project <算子目录>
+acp next
+acp run-action detect_changes
+```
+
+diff_only：按 Bundle 进入 `diff` 管线即可。
 
 ## Actions
 
@@ -25,10 +34,10 @@ description: 增量更新 / 刷新已有 UO 知识库（含 diff_only）。用�
 | `detect_changes` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/detect-changes` | `-` | `change-detect-v1` |
 | `plan_update` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/plan-update` | `-` | `update-plan-v1` |
 | `apply_update` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/apply-update` | `-` | `update-apply-v1` |
-| `key_triage` | `subagent` | `uo-key-resolve` | `producer` | `uo-init/key-triage` | `uo/key-triage` | `key-triage-v1` |
-| `key_resolution` | `subagent` | `uo-key-resolve` | `producer` | `uo-init/key-resolution` | `uo/key-resolution` | `input-derivable-patch-v1` |
+| `key_triage` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/key-triage` | `-` | `key-triage-v1` |
+| `key_resolution` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/key-resolution` | `-` | `input-derivable-patch-v1` |
 | `confidence_report` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/confidence-report` | `-` | `confidence-report-v1` |
-| `confidence_review` | `subagent` | `uo-confidence-review` | `referee` | `uo-init/confidence-review` | `uo/confidence-review` | `confidence-reason-review-v1` |
+| `confidence_review` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/confidence-review` | `-` | `confidence-reason-review-v1` |
 | `export_integrity` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/export-integrity` | `-` | `integrity-v1` |
 | `diff_summary` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/diff-summary` | `-` | `diff-summary-v1` |
 | `diff_only` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/diff-only` | `-` | `diff-summary-v1` |
@@ -200,10 +209,10 @@ Pilot 独占状态、合法边、门禁与完成态。
 | `detect_changes` | source-authority,code-access,evidence,language,pilot-control,output-quality | source-reading | `uo-update/detect-changes` | `-` | `deterministic-uo-engine` |
 | `plan_update` | source-authority,code-access,evidence,language,pilot-control,output-quality | source-reading,kb-query | `uo-update/plan-update` | `-` | `deterministic-uo-engine` |
 | `apply_update` | source-authority,code-access,evidence,language,pilot-control,output-quality | source-reading,kb-query | `uo-update/apply-update` | `-` | `deterministic-uo-engine` |
-| `key_triage` | source-authority,code-access,evidence,language,pilot-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution | `uo-init/key-triage` | `uo/key-triage` | `uo-key-resolve` |
-| `key_resolution` | source-authority,code-access,evidence,language,pilot-control,output-quality | source-reading,cbm-navigation,kb-query,semantic-resolution | `uo-init/key-resolution` | `uo/key-resolution` | `uo-key-resolve` |
+| `key_triage` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-update/key-triage` | `-` | `deterministic-uo-engine` |
+| `key_resolution` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-update/key-resolution` | `-` | `deterministic-uo-engine` |
 | `confidence_report` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-update/confidence-report` | `-` | `deterministic-uo-engine` |
-| `confidence_review` | source-authority,code-access,evidence,language,pilot-control,output-quality | structured-review,kb-query | `uo-init/confidence-review` | `uo/confidence-review` | `uo-confidence-review` |
+| `confidence_review` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-update/confidence-review` | `-` | `deterministic-uo-engine` |
 | `export_integrity` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-update/export-integrity` | `-` | `deterministic-uo-engine` |
 | `diff_summary` | source-authority,code-access,evidence,language,pilot-control,output-quality | kb-query | `uo-update/diff-summary` | `-` | `deterministic-uo-engine` |
 | `diff_only` | source-authority,code-access,evidence,language,pilot-control,output-quality | kb-query | `uo-update/diff-only` | `-` | `deterministic-uo-engine` |
@@ -215,10 +224,10 @@ Pilot 独占状态、合法边、门禁与完成态。
 | `detect_changes` | `actions/detect-changes/METHOD.md` | `-` | `change-detect-v1` | `deterministic_engine` |
 | `plan_update` | `actions/plan-update/METHOD.md` | `-` | `update-plan-v1` | `deterministic_engine` |
 | `apply_update` | `actions/apply-update/METHOD.md` | `-` | `update-apply-v1` | `deterministic_engine` |
-| `key_triage` | `actions/key-triage/METHOD.md` | `prompts/tasks/uo/key-triage.md` | `key-triage-v1` | `producer` |
-| `key_resolution` | `actions/key-resolution/METHOD.md` | `prompts/tasks/uo/key-resolution.md` | `input-derivable-patch-v1` | `producer` |
+| `key_triage` | `actions/key-triage/METHOD.md` | `-` | `key-triage-v1` | `deterministic_engine` |
+| `key_resolution` | `actions/key-resolution/METHOD.md` | `-` | `input-derivable-patch-v1` | `deterministic_engine` |
 | `confidence_report` | `actions/confidence-report/METHOD.md` | `-` | `confidence-report-v1` | `deterministic_engine` |
-| `confidence_review` | `actions/confidence-review/METHOD.md` | `prompts/tasks/uo/confidence-review.md` | `confidence-reason-review-v1` | `referee` |
+| `confidence_review` | `actions/confidence-review/METHOD.md` | `-` | `confidence-reason-review-v1` | `deterministic_engine` |
 | `export_integrity` | `actions/export-integrity/METHOD.md` | `-` | `integrity-v1` | `deterministic_engine` |
 | `diff_summary` | `actions/diff-summary/METHOD.md` | `-` | `diff-summary-v1` | `deterministic_engine` |
 | `diff_only` | `actions/diff-only/METHOD.md` | `-` | `diff-summary-v1` | `deterministic_engine` |

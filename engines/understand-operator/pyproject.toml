@@ -1,43 +1,32 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "understand-operator"
-version = "0.3.0"
-description = "AscendC Understand Operator (UO) engine for AscendC-Pilot"
+name = "uo-init"
+version = "0.1.0"
+description = "Ascend C understand-operator init: control-source closure graph"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+  "libclang>=18.1.1",
   "PyYAML>=6.0",
-  "jsonschema>=4.0",
+  "z3-solver>=4.12",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
 [project.scripts]
-uo-prepare = "uo.scripts.prepare_operator:main"
-uo-review = "uo.scripts.review_checkpoint:main"
-uo-verify-subagents = "uo.scripts.verify_required_subagents:main"
-uo-resolve-entrypoints = "uo.scripts.resolve_entrypoints:main"
-uo-build-layered-kb = "uo.scripts.build_layered_kb:main"
-uo-extract-host = "uo.scripts.extract_host_subgraph:main"
-uo-extract-kernel = "uo.scripts.extract_kernel_subgraph:main"
-uo-extract-tilingkey = "uo.scripts.extract_tilingkey_space:main"
-uo-extract-golden = "uo.scripts.extract_golden:main"
-uo-reconcile-bridge = "uo.scripts.reconcile_bridge:main"
-uo-apply-resolution = "uo.scripts.apply_resolution:main"
-uo-kb-export = "uo.scripts.kb_query_export:main"
-uo-export-kb-graph = "uo.scripts.export_kb_graph:main"
-uo-kb-query = "uo.scripts.uo_kb_query:main"
-uo-query-readonly = "uo.scripts.uo_query_readonly:main"
-uo-detect-changes = "uo.scripts.detect_kb_changes:main"
-uo-plan-update = "uo.scripts.plan_kb_update:main"
-uo-export-diff = "uo.scripts.export_diff_product:main"
-uo-update = "uo.scripts.update_operator:main"
-uo-prepare-review-context = "uo.scripts.prepare_review_context:main"
-uo-cbm-impact = "uo.scripts.cbm_impact:main"
+uo-init = "uo_init.workflow:main"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["uo*"]
+where = ["src"]
 
-[tool.setuptools.package-data]
-"uo" = ["resources/*.yaml"]
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "requires_cann: needs extracted CANN headers under cann_root",
+  "requires_fag: needs FAG operator sources under ops_root",
+]
+filterwarnings = ["ignore::DeprecationWarning"]

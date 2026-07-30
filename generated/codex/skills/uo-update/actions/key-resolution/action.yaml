@@ -1,16 +1,12 @@
 # GENERATED from Workflow Spec — do not hand-edit identity fields
 version: 1
-name_zh: KEY 语义闭合
+name_zh: KEY 语义闭合（新 KB stub）
 id: key_resolution
 workflow_id: uo-update
-role_id: producer
-agent_id: uo-key-resolve
-execution_mode: subagent
-capabilities:
-- source-reading
-- cbm-navigation
-- kb-query
-- semantic-resolution
+role_id: deterministic_engine
+agent_id: deterministic-uo-engine
+execution_mode: deterministic
+capabilities: []
 policies:
 - source-authority
 - code-access
@@ -18,7 +14,7 @@ policies:
 - language
 - pilot-control
 - output-quality
-task_prompt_id: uo/key-resolution
+task_prompt_id: null
 context_profile_id: uo-update-key-resolution
 output_contract_id: input-derivable-patch-v1
 allowed_write_paths: []

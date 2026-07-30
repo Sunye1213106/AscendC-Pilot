@@ -145,10 +145,19 @@ if (Test-Path $Dest) { Remove-Item -Recurse -Force $Dest }
 New-Item -ItemType Directory -Force -Path $Dest | Out-Null
 
 # Bundle sources for offline reference (not runtime authority)
-foreach ($name in @("skills","prompts","agents","docs","engines","pilot","templates","scripts","opencode-plugin")) {
+foreach ($name in @("skills","prompts","agents","docs","pilot","templates","scripts","opencode-plugin")) {
   $src = Join-Path $BundleRoot $name
   if (Test-Path $src) {
     Copy-Item -Recurse -Force $src (Join-Path $Dest $name)
+  }
+}
+# Engines: only packages still installed / required (no understand-operator-old / codebase-memory-mcp)
+$enginesDest = Join-Path $Dest "engines"
+New-Item -ItemType Directory -Force -Path $enginesDest | Out-Null
+foreach ($eng in @("understand-operator","testcase-generation","code-engineering")) {
+  $src = Join-Path $BundleRoot "engines\$eng"
+  if (Test-Path $src) {
+    Copy-Item -Recurse -Force $src (Join-Path $enginesDest $eng)
   }
 }
 

@@ -53,20 +53,22 @@ def test_finalize_failure_updates_state(tmp_path: Path):
     assert old_lease.get("status") == "active"
 
     with patch(
-        "uo.scripts.finalize_scope.finalize_scope",
-        return_value=(
-            2,
-            [
-                "installed_skill_check.consistent is not true",
-                "semantic_enrichment.yaml status must be pending, complete, or degraded",
-            ],
-        ),
+        "uo_init.pilot_engines.ENGINES",
+        {
+            "scope_confirm": lambda _root, _ctx: {
+                "ok": False,
+                "messages": [
+                    "installed_skill_check.consistent is not true",
+                    "semantic_enrichment.yaml status must be pending, complete, or degraded",
+                ],
+            }
+        },
     ):
         from ascendc_pilot.uo_scope import run_uo_scope
 
         result = run_uo_scope(tmp_path, "finalize", op_name=tmp_path.name)
 
-    assert result.get("ok") is False
+    assert result.get("status") == "human_required" or (result.get("applied") or {}).get("ok") is False
     st = load_state(tmp_path)
     assert st.get("last_failure") is not None
     assert st["status"] == "human_required"
@@ -215,7 +217,7 @@ def test_direct_domain_script_denied_after_failure(tmp_path: Path):
 
 
 def test_repeated_retryable_failure_upgrades(tmp_path: Path):
-    start_workflow(tmp_path, "uo-init", phase="resolve", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="normalize", force_phase=True)
     st = load_state(tmp_path)
     st["retry_budget"] = 2
     save_state(tmp_path, st)
@@ -224,9 +226,9 @@ def test_repeated_retryable_failure_upgrades(tmp_path: Path):
         return record_pilot_result(
             tmp_path,
             ok=False,
-            action_id="key_resolution",
+            action_id="resolve_gaps",
             step_id="action_finalize",
-            error_code="ACTION_FINALIZE_FAILED_KEY_RESOLUTION",
+            error_code="ACTION_FINALIZE_FAILED_RESOLVE_GAPS",
             messages=["output_contract_failed"],
             source="finalize_action",
             explicit_class="checker_gate",
@@ -302,20 +304,22 @@ def test_ses_0711_replay_finalize_containment(tmp_path: Path):
     assert load_state(tmp_path)["status"] == "running"
 
     with patch(
-        "uo.scripts.finalize_scope.finalize_scope",
-        return_value=(
-            2,
-            [
-                "installed_skill_check.consistent is not true",
-                "semantic_enrichment.yaml status must be pending, complete, or degraded",
-            ],
-        ),
+        "uo_init.pilot_engines.ENGINES",
+        {
+            "scope_confirm": lambda _root, _ctx: {
+                "ok": False,
+                "messages": [
+                    "installed_skill_check.consistent is not true",
+                    "semantic_enrichment.yaml status must be pending, complete, or degraded",
+                ],
+            }
+        },
     ):
         from ascendc_pilot.uo_scope import run_uo_scope
 
         fin = run_uo_scope(tmp_path, "finalize", op_name=tmp_path.name)
 
-    assert fin.get("ok") is False
+    assert fin.get("status") == "human_required" or (fin.get("applied") or {}).get("ok") is False
     st = load_state(tmp_path)
     assert st["status"] == "human_required"
     assert st["phase"] == "scope"
@@ -360,11 +364,11 @@ def test_ses_0711_replay_finalize_containment(tmp_path: Path):
 
 
 def test_rework_required_next_returns_targets_only(tmp_path: Path):
-    start_workflow(tmp_path, "uo-init", phase="resolve", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="normalize", force_phase=True)
     record_pilot_result(
         tmp_path,
         ok=False,
-        action_id="key_resolution",
+        action_id="resolve_gaps",
         step_id="action_finalize",
         messages=["output_contract_failed"],
         source="finalize_action",
@@ -374,7 +378,7 @@ def test_rework_required_next_returns_targets_only(tmp_path: Path):
     assert nxt["status"] == "rework_required"
     assert nxt["allowed_actions"] == []
     assert nxt["rework_targets"]
-    assert nxt["rework_targets"][0]["action_id"] == "key_resolution"
+    assert nxt["rework_targets"][0]["action_id"] == "resolve_gaps"
 
 
 def test_observation_persisted_to_run_dir(tmp_path: Path):

@@ -4,6 +4,9 @@
 # Local-only eval oracles (do not commit)
 .tmp-oracle/
 
+# Cached clang bundles / derivation runs for scripts/_probe_derive.py
+.probe_cache/
+
 # Python cache and test artifacts
 __pycache__/
 *.py[cod]

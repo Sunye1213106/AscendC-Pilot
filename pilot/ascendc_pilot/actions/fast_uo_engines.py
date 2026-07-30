@@ -28,7 +28,7 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 
 
 def _write_yaml_if_changed(path: Path, payload: dict[str, Any]) -> bool:
-    from uo.scripts._ir_io import write_yaml_if_changed
+    from ascendc_pilot.uo_artifacts import write_yaml_if_changed
 
     return write_yaml_if_changed(path, payload)
 
@@ -70,9 +70,9 @@ def _fast_rebuild_if_safe(
         return fallback(project_root, workflow_id, action_id, ctx=ctx)
 
     try:
-        from uo.scripts.evidence_score import _source_snapshot_hash
-        from uo.scripts.llm_tasks import compute_semantic_stats
-        from uo.scripts.semantic_resolution_ledger import should_skip_layered_rebuild
+        from ascendc_pilot.legacy_stubs import _source_snapshot_hash
+        from ascendc_pilot.legacy_stubs import compute_semantic_stats
+        from ascendc_pilot.legacy_stubs import should_skip_layered_rebuild
 
         snapshot = str(_source_snapshot_hash(uo, run_id=run_id) or "")
         if not snapshot:
@@ -197,7 +197,7 @@ def _fast_recheck_closure(
     try:
         from ascendc_pilot.recovery import recoveries_for_closure_gaps
         from ascendc_pilot.state import load_state
-        from uo.scripts.llm_tasks import compute_semantic_stats
+        from ascendc_pilot.legacy_stubs import compute_semantic_stats
 
         entrypoint = _read_yaml(ir / "entrypoint_graph.yaml")
         closure = entrypoint.get("closure") if isinstance(entrypoint.get("closure"), dict) else {}

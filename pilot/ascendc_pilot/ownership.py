@@ -39,154 +39,81 @@ PRIMARY_AGENT_ID = "ascendc-pilot"
 # - ACTION_WRITE_PATHS: union fallback for engines that do not yet split roles
 ACTION_PRODUCER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     "uo-init": {
-        "extract_plan": [
-            "runs/{run_id}/actions/extract_plan/staging/relation_parts/**",
-            "runs/{run_id}/actions/extract_plan/scratch/**",
-        ],
-        "adjudicate_llm_tasks": [
-            "runs/{run_id}/actions/adjudicate_llm_tasks/parts/**",
-            "runs/{run_id}/actions/adjudicate_llm_tasks/scratch/**",
+        "resolve_gaps": [
+            "runs/{run_id}/actions/resolve_gaps/parts/**",
+            "runs/{run_id}/actions/resolve_gaps/scratch/**",
         ],
     },
 }
-
 ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     "uo-init": {
-        "extract_plan": [
-            "runs/{run_id}/actions/extract_plan/staging/semantic_relations.yaml",
-            "uo/ir/extract_plan.yaml",
-            "uo/ir/extract_plan_aliases.yaml",
-            "uo/ir/receiver_bindings.yaml",
-            "uo/ir/semantic_relations.yaml",
-            "uo/ir/semantic_observations.yaml",
-            "uo/ir/extract_plan_auto_fill_report.yaml",
+        "resolve_gaps": [
+            "uo/ir/unresolved.yaml",
+            "uo/ir/gap_patch_receipt.yaml",
         ],
-        "adjudicate_llm_tasks": [
-            "uo/ir/semantic_patches.yaml",
-            "runs/{run_id}/actions/adjudicate_llm_tasks/reduce_report.yaml",
+        "apply_gap_patch": [
+            "uo/ir/gap_patch_receipt.yaml",
+            "uo/ir/**",
         ],
     },
 }
-
 ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     "uo-init": {
-        "prepare_layout": ["uo/manifest.yaml", "uo/**"],
-        "scope_confirmation": [
+        "prepare_layout": ["uo/manifest.yaml", "uo/operator.yaml", "uo/**"],
+        "scope_scan": [
             "uo/runs/{run_id}/scope/**",
-            "uo/cbm/**",
+            "uo/summary/scope_candidates.yaml",
+        ],
+        "scope_confirm": [
+            "uo/runs/{run_id}/scope/**",
             "uo/summary/scope_confirmed.yaml",
         ],
-        "detect_score_pre": [
-            "uo/ir/entrypoint_graph.yaml",
-            "uo/ir/operator_boundary.yaml",
-            "uo/ir/score_report_pre.yaml",
-            "uo/ir/llm_tasks.yaml",
+        "extract_host": ["uo/ir/**"],
+        "extract_tiling_key": ["uo/tiling/**"],
+        "extract_registry": ["uo/tiling/families.yaml", "uo/tiling/**"],
+        "extract_kernel": ["uo/kernel/**"],
+        "normalize_variables": ["uo/tiling/**"],
+        "derive_key_fields": [
+            "uo/ir/host_derivation.yaml",
+            "uo/ir/derive_key_fields_receipt.yaml",
+            "uo/tiling/key_derivations.yaml",
+            "uo/ir/**",
+            "uo/tiling/**",
+        ],
+        "normalize_predicates": ["uo/ir/unresolved.yaml", "uo/ir/**"],
+        "resolve_gaps": [
+            "runs/{run_id}/actions/resolve_gaps/parts/**",
+            "runs/{run_id}/actions/resolve_gaps/scratch/**",
+            "uo/ir/resolve_gaps_receipt.yaml",
             "uo/ir/**",
         ],
-        # Union of producer staging + finalizer canonical (engines / gates).
-        "extract_plan": [
-            "runs/{run_id}/actions/extract_plan/staging/relation_parts/**",
-            "runs/{run_id}/actions/extract_plan/staging/semantic_relations.yaml",
-            "runs/{run_id}/actions/extract_plan/staging/semantic_relations.base.yaml",
-            "runs/{run_id}/actions/extract_plan/staging/semantic_observations.yaml",
-            "runs/{run_id}/actions/extract_plan/scratch/**",
-            "uo/ir/extract_plan.yaml",
-            "uo/ir/extract_plan_aliases.yaml",
-            "uo/ir/receiver_bindings.yaml",
-            "uo/ir/semantic_relations.yaml",
-            "uo/ir/semantic_observations.yaml",
-            "uo/ir/extract_plan_auto_fill_report.yaml",
-        ],
-        "detect_score_post": ["uo/ir/score_report_post.yaml", "uo/ir/llm_tasks.yaml", "uo/ir/**"],
-        "adjudicate_llm_tasks": [
-            "runs/{run_id}/actions/adjudicate_llm_tasks/parts/**",
-            "runs/{run_id}/actions/adjudicate_llm_tasks/scratch/**",
-            "runs/{run_id}/actions/adjudicate_llm_tasks/batches/**",
-            "runs/{run_id}/actions/adjudicate_llm_tasks/semantic_batches.yaml",
-            "runs/{run_id}/actions/adjudicate_llm_tasks/reduce_report.yaml",
-            "uo/ir/semantic_patches.yaml",
-        ],
-        "apply_semantic_patch": [
-            "uo/ir/semantic_resolution_ledger.yaml",
-            "uo/ir/llm_tasks.yaml",
-            "uo/ir/semantic_apply_report.yaml",
-            "uo/ir/**",
-        ],
-        "apply_scope_expansion": [
-            "uo/ir/scope_expansion_requests.yaml",
-            "uo/ir/scope_expansion_decisions.yaml",
-            "uo/ir/scope_expansion_receipt.yaml",
-            "uo/ir/**",
-            "uo/runs/**",
-        ],
-        "rebuild_from_ledger": ["uo/ir/**"],
-        "recheck_closure": ["uo/ir/llm_tasks.yaml", "uo/ir/**"],
-        "key_triage": ["uo/ir/key_triage.yaml"],
-        "key_resolution": [
-            "uo/ir/input_derivable_patch.yaml",
-            "uo/ir/key_shape_resolve/**",
-        ],
-        "confidence_report": [
-            "uo/checks/confidence_gate.yaml",
-            "uo/summary/confidence_report.md",
-            "uo/ir/**",
-        ],
-        "confidence_review": ["uo/review/confidence_reason_review.yaml"],
-        "export_integrity": ["uo/checks/integrity.yaml", "uo/summary/**", "uo/ir/**"],
+        "apply_gap_patch": ["uo/ir/gap_patch_receipt.yaml", "uo/ir/**"],
+        "export_kb": ["uo/**"],
+        "build_index": ["uo/indexes/**"],
+        "export_integrity": ["uo/checks/integrity.yaml", "uo/summary/**", "uo/checks/**"],
         "kb_review": ["uo/review/kb_product_review.yaml"],
     },
 }
-
-# Action-precise read paths (lease allow-list). Empty → no Action-level allow filter.
-# Agent read_scopes are ceilings; lease must be a subset when non-empty.
 ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
     "uo-init": {
-        "extract_plan": [
-            "uo/ir/extract_plan_candidates.yaml",
-            "uo/ir/extract_plan_candidates.sha256",
-            "uo/ir/extract_plan_candidates.summary.yaml",
-            "uo/ir/semantic_observations.yaml",
-            "uo/ir/extract_plan.rework_hints.yaml",
-            "uo/ir/entrypoint_graph.yaml",
-            "uo/cbm/index_meta.json",
-            "runs/{run_id}/actions/extract_plan/inputs/**",
-            "runs/{run_id}/actions/extract_plan/staging/relation_parts/**",
-            "runs/{run_id}/actions/extract_plan/staging/semantic_relations.yaml",
-            "runs/{run_id}/actions/extract_plan/staging/semantic_relations.base.yaml",
-            "runs/{run_id}/actions/extract_plan/staging/semantic_observations.yaml",
-            "runs/{run_id}/actions/extract_plan/scratch/**",
-            "uo/ir/extract_plan.yaml",
-            "uo/ir/extract_plan_aliases.yaml",
-            "uo/ir/receiver_bindings.yaml",
-            "uo/ir/semantic_relations.yaml",
-            "uo/ir/extract_plan_auto_fill_report.yaml",
+        "resolve_gaps": [
+            "uo/ir/unresolved.yaml",
+            "uo/quality.yaml",
+            "uo/ir/operator_graph.yaml",
+            "runs/{run_id}/actions/resolve_gaps/parts/**",
+            "runs/{run_id}/actions/resolve_gaps/scratch/**",
         ],
-        "adjudicate_llm_tasks": [
-            "uo/ir/llm_tasks.yaml",
-            "uo/ir/score_report_pre.yaml",
-            "uo/ir/score_report_post.yaml",
-            "uo/ir/semantic_patches.yaml",
-            "runs/{run_id}/actions/adjudicate_llm_tasks/semantic_batches.yaml",
-            "runs/{run_id}/actions/adjudicate_llm_tasks/batches/**",
-            "runs/{run_id}/actions/adjudicate_llm_tasks/parts/**",
-            "runs/{run_id}/actions/adjudicate_llm_tasks/scratch/**",
-            "runs/{run_id}/actions/adjudicate_llm_tasks/reduce_report.yaml",
+        "kb_review": [
+            "uo/quality.yaml",
+            "uo/ir/unresolved.yaml",
+            "uo/checks/integrity.yaml",
+            "uo/manifest.yaml",
         ],
     },
 }
-
-# Action-precise forbidden reads (deny first, before allow-list).
 ACTION_FORBIDDEN_READ_PATHS: dict[str, dict[str, list[str]]] = {
-    "uo-init": {
-        "extract_plan": [
-            "uo/ir/llm_tasks.yaml",
-            "uo/ir/semantic_patches.yaml",
-            "uo/ir/semantic_resolution_ledger.yaml",
-        ],
-    },
+    "uo-init": {},
 }
-
-# Canonical producer staging relative to action session dir.
 STAGING_RELATIONS_NAME = "staging/semantic_relations.yaml"
 STAGING_RELATIONS_BASE_NAME = "staging/semantic_relations.base.yaml"
 

@@ -1,0 +1,39 @@
+# key_invariants.yaml — I1–I12 structural alignment for FAG arch35
+version: 1
+invariants:
+  - id: I1
+    name: OutDType_eq_InputDType
+    check: OutDType.expanded == InputDType.expanded
+  - id: I2
+    name: InputDType_multivalued
+    check: len(InputDType.leaves) >= 3
+  - id: I3
+    name: S1_S2_template_overapprox
+    check: S1 has 64|128 and S2 has 128
+  - id: I4
+    name: DTemplate_rope
+    check: DTemplateNum mentions QUERY_ROPE|hasRope and 192
+  - id: I5
+    name: IsDNoEqual_rope
+    check: IsDNoEqual mentions QUERY_ROPE|hasRope
+  - id: I6
+    name: IsRegbase_ENABLE
+    check: IsRegbase.leaves ⊆ {ENABLE,1,True}
+  - id: I7
+    name: IsEmptyTensor_has_one
+    check: IsEmptyTensor.leaves ∩ {1,TILING_KEY_1,True}
+  - id: I8
+    name: SplitAxis_BN2_and_MultiBlk
+    check: SplitAxis has BN2 and IsBn2MultiBlk multivalued
+  - id: I9
+    name: IsTndSwizzle_and_BN2S2
+    check: IsTndSwizzle multivalued and SplitAxis has BN2S2
+  - id: I10
+    name: IsNzOut_live
+    check: IsNzOut multivalued and mentions 128|NUM128|ConstAxisTemplateNum
+  - id: I11
+    name: IsNEqual_deter
+    check: IsNEqual mentions DETER_OLD|NO_DETER|deterSparseType
+  - id: I12
+    name: SplitAxis_rope_expanded
+    check: BN2S2 present and QUERY_ROPE|hasRope|BN2_MAX_D; no opaque bn2S2RouteLimit Ref

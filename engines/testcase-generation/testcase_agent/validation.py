@@ -34,27 +34,30 @@ STABLE_PREFIXES = (
 STABLE_ID_RE = re.compile(rf"^({'|'.join(STABLE_PREFIXES)})_[A-Z0-9_]+$")
 LEGACY_ID_RE = re.compile(r"^(TF\d+|K\d+|C\d+|D\d+|P\d+|R\d+|IR\d+|KR\d+|VC\d+|KU\d+|PR\d+|MG\d+)$")
 ID_TOKEN_RE = re.compile(rf"\b(?:{'|'.join(STABLE_PREFIXES)})_[A-Za-z0-9_]+\b")
-# Layered KB export required for TG intake (UO no longer ships contracts/testcase.yaml).
+# Layered KB export: hard requirements vs declared-optional (not_extracted ok).
 REQUIRED_KB_EXPORT_FILES = (
-    "test/contract.yaml",
     "tiling/variables.yaml",
     "tiling/key_space.yaml",
     "tiling/exhaustive_key_space.yaml",
     "tiling/constraints.yaml",
     "tiling/families.yaml",
-    "tiling/data_model.yaml",
     "tiling/coverage_model.yaml",
-    "kernel/compile_model.yaml",
+    "kernel/branches.yaml",
     "kernel/variables.yaml",
     "kernel/paths.yaml",
-    "kernel/branches.yaml",
-    "kernel/pipeline.yaml",
-    "kernel/resources.yaml",
+    "kernel/compile_model.yaml",
     "cross_layer/impact_graph.yaml",
     "cross_layer/tiling_to_kernel.yaml",
+    "quality.yaml",
+)
+OPTIONAL_KB_EXPORT_FILES = (
+    "test/contract.yaml",
+    "tiling/data_model.yaml",
+    "kernel/pipeline.yaml",
+    "kernel/resources.yaml",
     "flow/golden_model.yaml",
     "flow/numerical_model.yaml",
-    "quality.yaml",
+    "cross_layer/variable_lineage.yaml",
 )
 REQUIRED_TESTCASE_CONTRACT_FILES = REQUIRED_KB_EXPORT_FILES
 HARD_WORDS = {"hard", "blocking", "blocker", "error", "fail", "failed", "conflicting", "unresolved"}
@@ -136,6 +139,35 @@ def validate_intake(export_payload: dict[str, Any], final_validation: dict[str, 
                 f"kb-export missing required layered file: {rel}",
                 rel,
                 rel,
+            )
+
+    for rel in OPTIONAL_KB_EXPORT_FILES:
+        payload = files.get(rel)
+        if payload is None:
+            report.add(
+                "OPTIONAL_FILE_ABSENT",
+                "info",
+                f"optional layered file absent (allowed): {rel}",
+                rel,
+                rel,
+            )
+            continue
+        status = str(_as_dict(payload).get("status") or "").lower()
+        if status == "not_extracted":
+            report.add(
+                "OPTIONAL_NOT_EXTRACTED",
+                "info",
+                f"optional layered file declared not_extracted: {rel}",
+                rel,
+                rel,
+            )
+        elif status not in {"", "extracted", "partial", "closed", "unresolved"}:
+            report.add(
+                "OPTIONAL_BAD_STATUS",
+                "warning",
+                f"optional file has unexpected status={status!r}: {rel}",
+                rel,
+                status,
             )
 
     # Soft signals: manifest / sqlite / integrity when present in files or via final_validation.
