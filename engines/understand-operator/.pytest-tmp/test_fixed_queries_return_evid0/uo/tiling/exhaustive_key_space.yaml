@@ -1,0 +1,24 @@
+args_sel_count: 0
+dimensions: []
+enumeration_source: args_sel_cartesian
+field_order: []
+legal_key_count: 0
+legal_key_index: tiling/legal_key_index.jsonl
+nodes:
+- confidence: 1.0
+  evidence_refs:
+  - EV_2CEDD7C8914E
+  id: KEY_MODE
+  kind: TilingKeyDim
+  layer: tiling
+  name: mode
+  status: extracted
+op_name: SampleOp
+status: not_extracted
+summary:
+  expanded_key_count: 0
+  key_dimension_count: 0
+  ktpl_instance_count: 0
+  template_block_count: 0
+template_blocks: []
+version: 1

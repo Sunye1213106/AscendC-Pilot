@@ -12,6 +12,15 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from uo_init.ids import named_id, slug
+from uo_init.key_reachability import (
+    LAYER_TEMPLATE,
+    R_REACHABLE,
+    R_UNDERIVABLE,
+    R_UNKNOWN,
+    R_UNREACHABLE,
+    KeyReachability,
+    KeyVerdict,
+)
 from uo_init.kb_model import (
     CONTROLLABLE_ROOTS,
     STATUS_EXTRACTED,
@@ -78,12 +87,23 @@ class LegalKeyRow:
     dims: dict[str, str]
     sel_group_id: str
     reason_code: str = REASON_OK
-    status: str = "reachable"
+    #: Default is the weakest status, not the strongest. A row that nobody
+    #: classified must not read as "a host run produces this".
+    status: str = R_UNDERIVABLE
     detail: str = ""
     blocker_ids: list[str] = field(default_factory=list)
+    #: Which check produced the status, so a reader can tell a template-side
+    #: rejection from a solver result.
+    layer: str = LAYER_TEMPLATE
+    #: Root assignment producing this key. Only present on `reachable`.
+    witness: dict[str, Any] = field(default_factory=dict)
+    #: Which dimensions Z3 needed for the contradiction, on `unreachable`.
+    unsat_core: list[str] = field(default_factory=list)
+    #: Dimensions that entered the solver. Anything else was not checked.
+    checked_dims: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "index": self.index,
             "tiling_key": self.tiling_key,
             "tiling_key_hex": self.tiling_key_hex,
@@ -93,7 +113,15 @@ class LegalKeyRow:
             "status": self.status,
             "detail": self.detail,
             "blocker_ids": list(self.blocker_ids),
+            "layer": self.layer,
         }
+        if self.witness:
+            out["witness"] = dict(self.witness)
+        if self.unsat_core:
+            out["unsat_core"] = list(self.unsat_core)
+        if self.checked_dims:
+            out["checked_dims"] = list(self.checked_dims)
+        return out
 
 
 def _sel_domain(sel: dict[str, Any]) -> list[str]:
@@ -166,105 +194,12 @@ def _bind_complete(binding: BindingResult | None, schema: TplSchema) -> tuple[bo
     return True, ""
 
 
-def _hard_invariants(dims: dict[str, str]) -> list[tuple[str, bool]]:
-    """Cheap source-level invariants (no full field DAG required).
-
-    Returns list of (detail, ok). False means the key is unreachable.
-    """
-    checks: list[tuple[str, bool]] = []
-    reg = str(dims.get("IsRegbase", ""))
-    # arch35 regbase path always ENABLE / 1
-    if reg and reg not in ("1", "ENABLE", "OptionEnum::ENABLE", "True"):
-        checks.append((f"IsRegbase={reg} not ENABLE", False))
-    else:
-        checks.append(("IsRegbase ENABLE", True))
-    # OutDType ≡ InputDType on arch35
-    out_v, in_v = dims.get("OutDType"), dims.get("InputDType")
-    if out_v is not None and in_v is not None and str(out_v) != str(in_v):
-        checks.append((f"OutDType={out_v} != InputDType={in_v}", False))
-    else:
-        checks.append(("OutDType==InputDType", True))
-    # Empty path is a separate encode site; normal ARGS_SEL keep IsEmptyTensor=0
-    empty = str(dims.get("IsEmptyTensor", "0"))
-    if empty in ("1", "TILING_KEY_1", "True", "ENABLE"):
-        # Allow only if other dims are mostly zeroed (template empty block).
-        nonzero = [
-            n
-            for n, v in dims.items()
-            if n not in ("IsEmptyTensor", "IsRegbase") and str(v) not in ("0", "DISABLE", "False")
-        ]
-        if len(nonzero) > 3:
-            checks.append(("IsEmptyTensor=1 with rich dims", False))
-        else:
-            checks.append(("IsEmptyTensor empty-block", True))
-    return checks
-
-
-def z3_check_key_dims(dims: dict[str, str], *, full: bool = False) -> tuple[str, str, str]:
-    """Return (status, reason_code, detail) using hard invariants + optional z3.
-
-    Status: reachable | unreachable | unknown
-
-    Full per-key z3 encoding is opt-in (`full=True` or env ``UO_KEY_Z3_FULL=1``)
-    because the ARGS_SEL product is thousands of keys; hard invariants cover the
-    structural conflicts (OutDType≡InputDType, IsRegbase, empty-path).
-    """
-    import os
-
-    hard = _hard_invariants(dims)
-    bad = [d for d, ok in hard if not ok]
-    if bad:
-        return "unreachable", REASON_Z3_UNSAT, "; ".join(bad)
-    do_full = full or os.environ.get("UO_KEY_Z3_FULL") == "1"
-    if not do_full:
-        return "reachable", REASON_OK, "invariants_ok"
-    try:
-        import z3  # type: ignore
-    except ImportError:
-        return "reachable", REASON_OK, "invariants_ok;z3_unavailable"
-
-    s = z3.Solver()
-    s.set(timeout=200)
-    syms: dict[str, Any] = {}
-    for name, val in dims.items():
-        if name in (
-            "IsRegbase",
-            "IsEmptyTensor",
-            "IsDrop",
-            "IsPse",
-            "IsAttenMask",
-            "IsTnd",
-            "IsNEqual",
-            "IsBn2MultiBlk",
-            "IsDNoEqual",
-            "IsRope",
-            "IsNzOut",
-            "IsTndSwizzle",
-        ):
-            syms[name] = z3.Bool(name)
-            truth = str(val) in ("1", "True", "ENABLE", "TILING_KEY_1", "NORMAL_TENSOR")
-            if str(val) in ("0", "False", "DISABLE", "EMPTY_TENSOR"):
-                truth = False
-            s.add(syms[name] == truth)
-        else:
-            raw = str(val).split("::")[-1]
-            try:
-                iv = int(raw) if raw.lstrip("-").isdigit() else None
-            except ValueError:
-                iv = None
-            if iv is not None:
-                syms[name] = z3.Int(name)
-                s.add(syms[name] == iv)
-    if "OutDType" in syms and "InputDType" in syms:
-        s.add(syms["OutDType"] == syms["InputDType"])
-    if "IsRegbase" in syms:
-        s.add(syms["IsRegbase"] == True)  # noqa: E712
-    r = s.check()
-    if r == z3.unsat:
-        return "unreachable", REASON_Z3_UNSAT, "z3_unsat"
-    if r == z3.unknown:
-        return "unknown", REASON_Z3_UNKNOWN, "z3_unknown"
-    return "reachable", REASON_OK, "z3_sat"
+_REASON_BY_STATUS = {
+    R_REACHABLE: REASON_OK,
+    R_UNREACHABLE: REASON_Z3_UNSAT,
+    R_UNKNOWN: REASON_Z3_UNKNOWN,
+    R_UNDERIVABLE: REASON_NOT_INPUT_DERIVABLE,
+}
 
 
 def classify_key_reachability(
@@ -273,38 +208,57 @@ def classify_key_reachability(
     schema: TplSchema,
     binding: BindingResult | None,
     blocker_ids: list[str],
-    input_controllable_fraction: float,
-    use_z3: bool = True,
-) -> tuple[str, str, str]:
-    """Return (status, reason_code, detail)."""
+    reachability: KeyReachability | None,
+) -> KeyVerdict:
+    """Decide one key, from the template's side first and the host's second.
+
+    The template checks are the cheap ones and answer a different question:
+    whether this combination is even spellable and bound to an encode site. Only
+    then does the host derivation get asked whether a run can produce it.
+
+    There is no fallback path that returns `reachable`. Previously three
+    hand-written invariants stood in for the derivation, and anything they did
+    not object to was called reachable — including when the solver was switched
+    off and when open blockers said the derivation was incomplete. Absent an
+    answer the honest status is `underivable`.
+    """
     ok_bind, bind_detail = _bind_complete(binding, schema)
     if not ok_bind:
-        return "underivable", REASON_BIND_INCOMPLETE, bind_detail
+        return KeyVerdict(
+            status=R_UNDERIVABLE, reason=bind_detail, layer=LAYER_TEMPLATE
+        )
     for dim in schema.dims:
         val = dims.get(dim.name)
         if val is None:
-            return "underivable", REASON_HOST_ENCODE_CONFLICT, f"missing {dim.name}"
-        if str(val) not in [str(x) for x in dim.value_domain]:
-            return (
-                "underivable",
-                REASON_HOST_ENCODE_CONFLICT,
-                f"{dim.name}={val} not in domain",
+            return KeyVerdict(
+                status=R_UNDERIVABLE,
+                reason=f"missing {dim.name}",
+                layer=LAYER_TEMPLATE,
             )
-    if input_controllable_fraction <= 0.0:
-        return (
-            "underivable",
-            REASON_NOT_INPUT_DERIVABLE,
-            "no input_controllable host predicates",
+        if str(val) not in [str(x) for x in dim.value_domain]:
+            return KeyVerdict(
+                status=R_UNDERIVABLE,
+                reason=f"{dim.name}={val} not in domain",
+                layer=LAYER_TEMPLATE,
+            )
+    if reachability is None:
+        return KeyVerdict(
+            status=R_UNDERIVABLE,
+            reason="no host derivation to check against",
+            layer=LAYER_TEMPLATE,
         )
-    if use_z3:
-        status, reason, detail = z3_check_key_dims(dims)
-        if blocker_ids and status == "reachable":
-            detail = (detail + f"; open_blockers={len(blocker_ids)}").strip("; ")
-        return status, reason, detail
-    detail = ""
-    if blocker_ids:
-        detail = f"open_blockers={len(blocker_ids)}"
-    return "reachable", REASON_OK, detail
+    verdict = reachability.verdict(dims)
+    if verdict.status == R_REACHABLE and blocker_ids:
+        # The derivation is still missing pieces somewhere, so "a run produces
+        # this" is a claim about an incomplete model.
+        return KeyVerdict(
+            status=R_UNKNOWN,
+            reason=f"open_blockers={len(blocker_ids)}",
+            layer=verdict.layer,
+            witness=verdict.witness,
+            participating=verdict.participating,
+        )
+    return verdict
 
 
 def build_legal_key_rows(
@@ -312,22 +266,23 @@ def build_legal_key_rows(
     *,
     binding: BindingResult | None = None,
     blocker_ids: Iterable[str] = (),
-    input_controllable_fraction: float = 0.0,
-    use_z3: bool = True,
+    reachability: KeyReachability | None = None,
 ) -> list[LegalKeyRow]:
     blockers = list(blocker_ids)
     rows: list[LegalKeyRow] = []
     for idx, (gi, dims) in enumerate(expand_legal_with_groups(schema)):
         full = {d.name: str(dims.get(d.name, d.value_domain[0])) for d in schema.dims}
         key = schema.encode_tiling_key(full)
-        status, reason, detail = classify_key_reachability(
+        verdict = classify_key_reachability(
             dims=full,
             schema=schema,
             binding=binding,
             blocker_ids=blockers,
-            input_controllable_fraction=input_controllable_fraction,
-            use_z3=use_z3,
+            reachability=reachability,
         )
+        status = verdict.status
+        reason = _REASON_BY_STATUS.get(status, REASON_Z3_UNKNOWN)
+        detail = verdict.reason
         rows.append(
             LegalKeyRow(
                 index=idx,
@@ -339,6 +294,10 @@ def build_legal_key_rows(
                 status=status,
                 detail=detail,
                 blocker_ids=blockers if reason == REASON_PREDICATE_UNRESOLVED else [],
+                layer=verdict.layer,
+                witness=dict(verdict.witness),
+                unsat_core=list(verdict.unsat_core),
+                checked_dims=list(verdict.participating),
             )
         )
     return rows
@@ -350,9 +309,15 @@ def materialize_into_kb(
     schema: TplSchema | None,
     var_model: VariableModel | None = None,
     binding: BindingResult | None = None,
+    derivation: Any | None = None,
     header_path: str = "",
 ) -> dict[str, Any]:
-    """Add KEY/VAR/KTPL nodes + domains; stash contract payloads in kb.notes."""
+    """Add KEY/VAR/KTPL nodes + domains; stash contract payloads in kb.notes.
+
+    `derivation` is the per-dimension `HostDerivation`. Without it no dimension
+    can be called input-derivable: having a host expression bound to a key field
+    says the encode site was found, not that a test case can steer it.
+    """
     if schema is None or not schema.dims:
         kb.notes["tiling_materialize"] = {"ok": False, "reason": "no_tpl_schema"}
         return {"ok": False, "reason": "no_tpl_schema"}
@@ -361,6 +326,7 @@ def materialize_into_kb(
     field_order = [d.name for d in schema.dims]
     dimensions: list[dict[str, Any]] = []
     key_field_obligations: dict[str, Any] = {}
+    derived_fields = derivation.by_name() if derivation is not None else {}
 
     for dim in schema.dims:
         kid = named_id("TilingKeyDim", dim.name)
@@ -392,6 +358,7 @@ def materialize_into_kb(
                 },
             )
         )
+        fld = derived_fields.get(dim.name)
         dimensions.append(
             {
                 "id": kid,
@@ -402,6 +369,9 @@ def materialize_into_kb(
                 "bw": dim.bw,
                 "kind": dim.kind,
                 "completeness": "closed",
+                "exactness": getattr(fld, "exactness", "") if fld else "",
+                "input_closure": getattr(fld, "input_closure", "") if fld else "",
+                "input_derivable": bool(getattr(fld, "input_derivable", False)) if fld else False,
             }
         )
         key_field_obligations[dim.name] = {
@@ -467,14 +437,18 @@ def materialize_into_kb(
                 }
             )
 
-    quality = kb.notes.get("quality") if isinstance(kb.notes.get("quality"), dict) else {}
-    ic = float(quality.get("input_controllability") or 0.0)
     blocker_ids = sorted(kb.blockers.keys())
+    if derivation is None or var_model is None:
+        reachability = KeyReachability.unavailable(
+            "no host derivation" if derivation is None else "no variable model"
+        )
+    else:
+        reachability = KeyReachability.from_derivation(derivation, var_model)
     legal_rows = build_legal_key_rows(
         schema,
         binding=binding,
         blocker_ids=blocker_ids,
-        input_controllable_fraction=ic,
+        reachability=reachability,
     )
 
     # Host-derived realization: binding maps each key dim to a host expression.
@@ -484,13 +458,18 @@ def materialize_into_kb(
     if binding and binding.bindings:
         for b in binding.bindings:
             rid = f"IR_{slug(b.decl.name)}"
+            fld = derived_fields.get(b.decl.name)
             input_realization[rid] = {
                 "id": rid,
                 "key_pattern": {b.decl.name: "*"},
                 "host_expr": b.host_expr,
                 "csv_hints": {b.decl.name: f"HOST.{b.decl.name}"},
                 "source": "host_encode_binding",
-                "input_derivable": True,
+                # Was hardcoded True for every bound dimension. A binding only
+                # locates the encode site; whether the input reaches it is the
+                # derivation's answer.
+                "input_derivable": bool(getattr(fld, "input_derivable", False)) if fld else False,
+                "input_closure": getattr(fld, "input_closure", "") if fld else "",
             }
     else:
         for dim in schema.dims:
@@ -536,16 +515,24 @@ def materialize_into_kb(
         "bind_edges": bind_edges,
         "legal_keys": [r.to_dict() for r in legal_rows],
         "key_status_counts": {
-            "reachable": sum(1 for r in legal_rows if r.status == "reachable"),
-            "unreachable": sum(1 for r in legal_rows if r.status == "unreachable"),
-            "unknown": sum(1 for r in legal_rows if r.status == "unknown"),
-            "underivable": sum(1 for r in legal_rows if r.status == "underivable"),
+            "reachable": sum(1 for r in legal_rows if r.status == R_REACHABLE),
+            "unreachable": sum(1 for r in legal_rows if r.status == R_UNREACHABLE),
+            "unknown": sum(1 for r in legal_rows if r.status == R_UNKNOWN),
+            "underivable": sum(1 for r in legal_rows if r.status == R_UNDERIVABLE),
         },
+        "reachability": reachability.summary(),
         "summary": {
             "template_block_count": len(blocks),
             "expanded_key_count": len(legal_rows),
             "ktpl_instance_count": len(blocks),
             "key_dimension_count": len(dimensions),
+            # Two different questions. The template count is how many keys can
+            # be spelled; the host count is how many a run can produce. They
+            # were previously the same number, which is what made 8705 read as
+            # a reachability result.
+            "template_admissible": len(legal_rows),
+            "host_reachable": sum(1 for r in legal_rows if r.status == R_REACHABLE),
+            "host_unreachable": sum(1 for r in legal_rows if r.status == R_UNREACHABLE),
         },
     }
     kb.notes["tiling_materialize"] = contract

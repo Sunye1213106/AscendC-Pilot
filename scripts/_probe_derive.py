@@ -110,7 +110,10 @@ def _field_row(f) -> dict:
         # A shared DAG; dumping it as a tree is what used to exhaust memory.
         "value_expr": encode_expr_dag(f.value_expr),
         "value_leaves": list(f.value_leaves),
+        "domain_violations": f.domain_violations,
         "input_roots": list(f.root_vars),
+        "input_closure": f.input_closure,
+        "input_derivable": f.input_derivable,
         "variables": list(f.variables),
         "def_sites": list(f.def_sites),
         "unresolved": list(f.unresolved),
@@ -177,6 +180,12 @@ def totals(fields: list[dict]) -> dict:
     free = {v for f in fields for v in f.get("free_vars") or []}
     return {
         "closed": sum(1 for f in fields if f.get("exactness") in CLOSED_GRADES),
+        # Closed *and* drivable. Lower than `closed` whenever a field bottoms out
+        # in host tiling state, which closes the expression without giving a
+        # generator anything to set.
+        "input_derivable": sum(1 for f in fields if f.get("input_derivable")),
+        # Operator-side: the host writes key values the template never declared.
+        "domain_violations": sum(1 for f in fields if f.get("domain_violations")),
         "derived": sum(1 for f in fields if f["status"] == "derived"),
         "partial": sum(1 for f in fields if f["status"] == "partial"),
         "unresolved": sum(1 for f in fields if f["status"] == "unresolved"),
@@ -349,12 +358,21 @@ def main() -> int:
         print_field(f, prev_by.get(f["name"]))
     t = totals(doc["fields"])
     print(
-        f"\nCLOSED {t['closed']}/{t['total']}  free_vars={t['free_vars']}  "
+        f"\nCLOSED {t['closed']}/{t['total']}  "
+        f"INPUT_DERIVABLE {t['input_derivable']}/{t['total']}  "
+        f"free_vars={t['free_vars']}  "
         f"implicit_zero={t['implicit_defaults']}  "
         f"(derived {t['derived']})  max_chars={t['max_chars']}  {t['seconds']}s"
     )
     if t["unrecorded"]:
         print(f"WARNING: {t['unrecorded']} over-approximations have no guard record")
+    for f in doc["fields"]:
+        if f.get("domain_violations"):
+            print(
+                f"WARNING: {f['name']} encodes {f['domain_violations']} "
+                f"but the template declares {f.get('domain')} "
+                "— operator-side contract conflict, not a derivation gap"
+            )
     wrote = [str(RESULT), str(REPORT)]
     if not args.fields:
         append_history(doc)

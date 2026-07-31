@@ -6,7 +6,6 @@ from pathlib import Path
 
 import yaml
 
-from uo_init.materialize_tiling import z3_check_key_dims
 from uo_init.platform_ini import load_platform_profile
 
 FIX = (
@@ -42,19 +41,15 @@ def test_k7_invariants_file_has_i1_i12():
     assert ids >= {f"I{n}" for n in range(1, 13)}
 
 
-def test_k6_hard_invariant_gate():
-    # Sanity: empty-path with rich dims is rejected.
-    st, reason, _ = z3_check_key_dims(
-        {
-            "IsEmptyTensor": "1",
-            "IsRegbase": "1",
-            "SplitAxis": "5",
-            "InputDType": "2",
-            "OutDType": "2",
-            "IsTnd": "1",
-            "IsDrop": "1",
-            "IsPse": "1",
-        }
-    )
-    assert st == "unreachable"
-    assert reason == "Z3_UNSAT"
+def test_the_invariants_fixture_is_documentation_not_a_gate():
+    """K7's invariants describe the operator; K6 must not assert them.
+
+    They used to be three hand-written rules inside `z3_check_key_dims`, which
+    made every key they did not object to `reachable` — a claim nothing had
+    checked. Reachability now comes from the derivation, so this file is a
+    reference to compare derived results against, not an input to them.
+    """
+    from uo_init import materialize_tiling
+
+    assert not hasattr(materialize_tiling, "z3_check_key_dims")
+    assert not hasattr(materialize_tiling, "_hard_invariants")

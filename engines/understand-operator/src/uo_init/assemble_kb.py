@@ -44,6 +44,7 @@ def assemble_kb(
     notes: dict[str, Any] | None = None,
     tpl_schema=None,
     var_model=None,
+    derivation=None,
     tpl_header: str = "",
 ) -> KnowledgeBase:
     """Build an in-memory KB ready for :func:`export_kb`."""
@@ -143,6 +144,7 @@ def assemble_kb(
             schema=tpl_schema,
             var_model=var_model,
             binding=binding,
+            derivation=derivation,
             header_path=tpl_header,
         )
     return kb
@@ -426,6 +428,7 @@ def export_operator_closure(
         notes=notes,
         tpl_schema=bundle.get("tpl_schema"),
         var_model=bundle.get("var_model"),
+        derivation=bundle.get("host_derivation"),
         tpl_header=bundle.get("tpl_header") or "",
     )
     receipt = export_operator_kb(kb, spec.op_dir)

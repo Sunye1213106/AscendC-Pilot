@@ -40,6 +40,55 @@ CONTROLLABLE_ROOTS = frozenset(
     }
 )
 
+# Not knobs, but fixed once the CANN profile and build are chosen, so a case can
+# still be constructed against them — they behave as constants at generation
+# time rather than as unknowns.
+PLATFORM_LOCKED_ROOTS = frozenset(
+    {
+        "PLATFORM_ARCH",
+        "PLATFORM_CORE_COUNT",
+        "PLATFORM_MEMORY_SIZE",
+        "PLATFORM_L2_SIZE",
+        "PLATFORM_AIV_COUNT",
+        "COMPILE_INFO",
+        "COMPILE_DEFINE",
+        "TEMPLATE_LITERAL",
+        "CONSTANT",
+    }
+)
+
+#: How far a derivation got toward something a test case can drive. Orthogonal
+#: to `exactness`, which only says whether the *expression* closed: a field can
+#: be exact and still be undrivable. `IsTnd` is exactly that — its SMT form is
+#: the single comparison `layoutType == 4`, with no free variables at all, but
+#: `layoutType` is host state the resolver stopped on instead of the layout
+#: attribute behind it, so nothing a generator sets reaches it.
+IC_CONTROLLABLE = "controllable"
+IC_PLATFORM_LOCKED = "platform_locked"
+IC_HOST_STATE = "host_state"
+IC_NONE = "none"
+
+
+def classify_input_closure(roots: Iterable[str]) -> str:
+    """Grade a set of input roots by whether a test case can drive them.
+
+    Anything unrecognized counts as host state. Guessing the other way would
+    report a dimension as drivable on the strength of a root nobody classified.
+    """
+    seen = {str(r) for r in roots if str(r)}
+    if not seen:
+        return IC_NONE
+    if seen <= CONTROLLABLE_ROOTS:
+        return IC_CONTROLLABLE
+    if seen <= (CONTROLLABLE_ROOTS | PLATFORM_LOCKED_ROOTS):
+        return IC_PLATFORM_LOCKED
+    return IC_HOST_STATE
+
+
+def input_closure_is_drivable(closure: str) -> bool:
+    """A constant field is drivable: nothing needs setting to reach its value."""
+    return closure in (IC_CONTROLLABLE, IC_PLATFORM_LOCKED, IC_NONE)
+
 
 def load_schema() -> dict[str, Any]:
     return yaml.safe_load(SCHEMA_PATH.read_text(encoding="utf-8")) or {}

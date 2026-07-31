@@ -95,6 +95,18 @@ class VarSpec:
     origin: str
     evidence: list[Evidence] = field(default_factory=list)
     description: str = ""
+    #: True when one id stands for several distinct values, because what
+    #: distinguishes them is not in the id. Two cases produce it: a variable
+    #: named after the accessor that read it (`VAR_SHAPE_GETSTORAGESHAPE` is
+    #: every shape dimension in the operator), and an element of a container at
+    #: an index we could not resolve.
+    #:
+    #: Within one expression the merge is a harmless over-approximation — the
+    #: variable is free, so it can take whichever value that occurrence needs.
+    #: It stops being harmless when two expressions are solved together, where
+    #: sharing the id asserts an equality nobody proved. Anything conjoining
+    #: expressions must isolate these per expression first.
+    identity_merged: bool = False
 
     def to_tg_entry(self) -> dict[str, Any]:
         """Shape expected by `testcase_agent.z3_backend._declare_symbols`."""
@@ -110,6 +122,17 @@ class VarSpec:
         entry["origin"] = self.origin
         entry["evidence_refs"] = [e.id for e in self.evidence]
         return entry
+
+
+#: A variable whose name came from a getter call rather than from the thing it
+#: reads. The resolver reaches `GetStorageShape` / `GetDimNum` / `GetAttrs` for
+#: every tensor and every axis, so the slug collapses all of them into one id.
+_ACCESSOR_NAMED = re.compile(r"_GET[A-Z]")
+
+
+def names_an_accessor(var_id: str) -> bool:
+    """Is this id named after the call that read it, not after what was read?"""
+    return bool(_ACCESSOR_NAMED.search(str(var_id)))
 
 
 def _uniq(seq: Iterable[str]) -> list[str]:
@@ -204,10 +227,23 @@ class VariableModel:
         for ev in spec.evidence:
             if ev.id not in {e.id for e in existing.evidence}:
                 existing.evidence.append(ev)
+        # A merge never un-merges: one occurrence that cannot say which value it
+        # means is enough to make the id ambiguous for every reader.
+        existing.identity_merged = existing.identity_merged or spec.identity_merged
         return existing
 
     def get(self, var_id: str) -> VarSpec | None:
         return self.variables.get(var_id)
+
+    def mark_identity_merged(self, var_id: str) -> None:
+        """Record that this id stands for more than one value.
+
+        Separate from `add` because the caller often finds the variable already
+        declared and skips construction entirely.
+        """
+        spec = self.variables.get(var_id)
+        if spec is not None:
+            spec.identity_merged = True
 
     # -- atom mapping ------------------------------------------------------
     def var_id_for(self, root: str, symbol: str, index: int | None = None) -> str | None:
@@ -279,6 +315,7 @@ class VariableModel:
                 ),
                 origin="guard_reference",
                 description="referenced by a guard; domain not proven by the definition",
+                identity_merged=names_an_accessor(var_id),
             )
         )
 
@@ -469,13 +506,72 @@ CONSTEXPR_INT_RE = re.compile(
 )
 
 
+# `ge::DataType`, transcribed from CANN metadef `graph/c_types.h`. Host tiling
+# compares `GetDataType()` against these, so without them every dtype guard is
+# an unreadable symbol.
+#
+# Transcribed rather than parsed: `graph/types.h` spells each member as
+# `DT_FLOAT = ::C_DT_FLOAT`, which `parse_enums` cannot evaluate, and its
+# fallback (keep counting up) would hand out wrong values at the reserved gap
+# after 4. Values here are the literals from `c_types.h`; an operator that
+# redefines one of these names wins, because source-scanned constants are
+# applied on top.
+GE_DATA_TYPE: dict[str, int] = {
+    "DT_FLOAT": 0,
+    "DT_FLOAT16": 1,
+    "DT_INT8": 2,
+    "DT_INT32": 3,
+    "DT_UINT8": 4,
+    # 5 is reserved and has no name
+    "DT_INT16": 6,
+    "DT_UINT16": 7,
+    "DT_UINT32": 8,
+    "DT_INT64": 9,
+    "DT_UINT64": 10,
+    "DT_DOUBLE": 11,
+    "DT_BOOL": 12,
+    "DT_STRING": 13,
+    "DT_DUAL_SUB_INT8": 14,
+    "DT_DUAL_SUB_UINT8": 15,
+    "DT_COMPLEX64": 16,
+    "DT_COMPLEX128": 17,
+    "DT_QINT8": 18,
+    "DT_QINT16": 19,
+    "DT_QINT32": 20,
+    "DT_QUINT8": 21,
+    "DT_QUINT16": 22,
+    "DT_RESOURCE": 23,
+    "DT_STRING_REF": 24,
+    "DT_DUAL": 25,
+    "DT_VARIANT": 26,
+    "DT_BF16": 27,
+    "DT_UNDEFINED": 28,
+    "DT_INT4": 29,
+    "DT_UINT1": 30,
+    "DT_INT2": 31,
+    "DT_UINT2": 32,
+    "DT_COMPLEX32": 33,
+    "DT_HIFLOAT8": 34,
+    "DT_FLOAT8_E5M2": 35,
+    "DT_FLOAT8_E4M3FN": 36,
+    "DT_FLOAT8_E8M0": 37,
+    "DT_FLOAT6_E3M2": 38,
+    "DT_FLOAT6_E2M3": 39,
+    "DT_FLOAT4_E2M1": 40,
+    "DT_FLOAT4_E1M2": 41,
+    "DT_HIFLOAT4": 42,
+}
+
+
 def _named_constants_from(
     enums: dict[str, dict[str, int]],
     *,
     header_texts: Iterable[str] = (),
 ) -> dict[str, int]:
     """Flatten enum members and constexpr ints into a symbol → value map."""
-    out: dict[str, int] = {}
+    out: dict[str, int] = dict(GE_DATA_TYPE)
+    for member, value in GE_DATA_TYPE.items():
+        out[f"ge::{member}"] = value
     for ename, members in enums.items():
         for member, value in members.items():
             out[member] = value

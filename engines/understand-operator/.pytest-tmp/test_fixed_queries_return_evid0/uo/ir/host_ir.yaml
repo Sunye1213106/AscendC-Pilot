@@ -1,0 +1,12 @@
+edges: []
+nodes:
+- confidence: 1.0
+  evidence_refs:
+  - EV_76E96C17AA7C
+  id: HBR_0123456789AB
+  kind: HostBranch
+  layer: host
+  name: mode branch
+  status: extracted
+status: extracted
+version: 1

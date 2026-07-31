@@ -1,0 +1,5 @@
+architecture: arch35
+interface: []
+op_name: MyOp
+status: extracted
+version: 1

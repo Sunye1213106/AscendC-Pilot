@@ -1,0 +1,10 @@
+architecture: arch35
+authority: yaml
+derived_index: indexes/kb_graph.sqlite
+graph_fingerprint: fdfaa85c7157079be2d1b2c79e8121673487e9945a93b5ee6d30e35df1d443dc
+legal_key_count: 0
+op_name: MyOp
+schema: kb_schema-v1
+status: extracted
+template_block_count: 0
+version: 1

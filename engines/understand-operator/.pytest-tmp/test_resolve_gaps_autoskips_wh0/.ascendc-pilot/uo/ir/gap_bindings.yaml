@@ -1,0 +1,14 @@
+version: 1
+status: empty
+schema:
+  blocker_id: BLK_… from ir/unresolved.yaml
+  classification: scheduling | input_derived | validation_assumption | genuinely_unknown
+  binding:
+    var_id: must already exist in VariableModel (only when input_derived)
+    op: eq | ge | gt | in | le | lt | ne
+    value: literal or declared enum member inside the var's domain
+  evidence:
+  - file: repo-relative path
+    line: 1
+    snippet: must match source
+bindings: []

@@ -1,0 +1,26 @@
+domains:
+  VAR_KEY_MODE:
+    completeness: closed
+    domain: &id001
+    - 0
+    - 1
+    source: template_key
+    type: enum
+nodes:
+- confidence: 1.0
+  evidence_refs:
+  - EV_2CEDD7C8914E
+  id: VAR_KEY_MODE
+  kind: Variable
+  layer: variables
+  name: key_mode
+  status: extracted
+status: extracted
+variables:
+  VAR_KEY_MODE:
+    completeness: closed
+    domain: *id001
+    id: VAR_KEY_MODE
+    source: template_key
+    type: enum
+version: 1

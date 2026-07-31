@@ -292,7 +292,7 @@ def _vars_of(preds: list[NormalizedPredicate]) -> set[str]:
 
 def _close_params_as_derived(resolver, atoms) -> str | None:
     """If every failing atom is a formal whose actuals are Params/constant, close."""
-    from uo_init.source_resolver import _PARAMS_DERIVED_RE, _norm_expr
+    from uo_init.source_resolver import _norm_expr
 
     root = None
     for a in atoms:
@@ -304,7 +304,7 @@ def _close_params_as_derived(resolver, atoms) -> str | None:
             return None
         for actual in actuals:
             act = _norm_expr(actual)
-            if _PARAMS_DERIVED_RE.search(act):
+            if resolver.tiling_derived(act):
                 root = root or "TILING_DATA"
                 continue
             sub = resolver.resolve(act)

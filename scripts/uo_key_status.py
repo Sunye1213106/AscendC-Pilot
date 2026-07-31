@@ -41,6 +41,16 @@ def free_vars_of(field: dict[str, Any]) -> list[str]:
     return sorted(str(v) for v in field.get("variables") or [] if str(v).startswith(prefixes))
 
 
+def derivable_of(field: dict[str, Any]) -> bool | None:
+    """Closed *and* drivable, or None if the artifact predates the grading.
+
+    Recomputing it here would mean copying `CONTROLLABLE_ROOTS` into a reporting
+    script, so old artifacts read as unknown instead.
+    """
+    recorded = field.get("input_derivable")
+    return bool(recorded) if recorded is not None else None
+
+
 def exactness_of(field: dict[str, Any]) -> str:
     recorded = field.get("exactness")
     if recorded:
@@ -74,7 +84,10 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"op={doc.get('op_name') or '?'} arch={doc.get('architecture') or '?'} fields={len(fields)}")
     print()
-    print(f"{'#':>3} {'field':<24} {'exactness':<17} {'status':<11} {'vars':>5} {'free':>5}  note")
+    print(
+        f"{'#':>3} {'field':<24} {'exactness':<17} {'closure':<15} "
+        f"{'drivable':<9} {'vars':>5} {'free':>5}  note"
+    )
     grades: Counter[str] = Counter()
     all_free: Counter[str] = Counter()
     for f in sorted(fields, key=lambda x: int(x.get("index") or 0)):
@@ -83,9 +96,12 @@ def main(argv: list[str] | None = None) -> int:
         grades[grade] += 1
         all_free.update(free)
         note = str(f.get("note") or "")[:44]
+        drivable = derivable_of(f)
         print(
             f"{int(f.get('index') or 0):>3} {str(f.get('name') or ''):<24} {grade:<17} "
-            f"{str(f.get('status') or ''):<11} {len(f.get('variables') or []):>5} {len(free):>5}  {note}"
+            f"{str(f.get('input_closure') or '-'):<15} "
+            f"{('-' if drivable is None else str(drivable)):<9} "
+            f"{len(f.get('variables') or []):>5} {len(free):>5}  {note}"
         )
         if args.verbose and free:
             for v in free:
@@ -97,6 +113,26 @@ def main(argv: list[str] | None = None) -> int:
     print(f"distinct free variables: {len(all_free)}")
     exact = grades.get("exact", 0) + grades.get("constant", 0)
     print(f"CLOSED {exact}/{len(fields)} fields, {len(all_free)} over-approximations remaining")
+
+    # The number a generator should read. Lower than CLOSED whenever a field
+    # closes onto host tiling state: the expression is exact, and nothing a case
+    # can set reaches it.
+    verdicts = [derivable_of(f) for f in fields]
+    known = [v for v in verdicts if v is not None]
+    if known:
+        print(f"INPUT_DERIVABLE {sum(known)}/{len(fields)} fields (closed and drivable)")
+    else:
+        print("INPUT_DERIVABLE unknown: artifact predates the input_closure grading")
+
+    # The template and the host disagree about what a dimension may hold.
+    # Neither side is ours to change; it goes back to the operator.
+    for f in fields:
+        bad = f.get("domain_violations") or []
+        if bad:
+            print(
+                f"  contract conflict: {f.get('name')} encodes {list(bad)}, "
+                f"template declares {list(f.get('domain') or [])}"
+            )
 
     # A free variable with no guard record cannot be escalated or closed, yet
     # still weakens the condition. It has to be zero.

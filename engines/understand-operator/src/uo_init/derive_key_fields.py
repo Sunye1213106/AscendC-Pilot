@@ -20,12 +20,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from uo_init.clang_walk import RETURN_SLOT
 from uo_init.cpp_expr import parse_expr
 from uo_init.expr_ir import Bin, Call, Const, Expr, Ite, Ref, Select, Un, Unknown
-from uo_init.kb_model import Domain
+from uo_init.kb_model import CONTROLLABLE_ROOTS, PLATFORM_LOCKED_ROOTS, Domain
 from uo_init.predicate import (
     ARITH_OPS,
     BOOL_OPS,
@@ -177,6 +177,19 @@ _CAST_CALLS = frozenset(
 MAX_DEPTH = 160
 MAX_NODES = 400000
 
+# How far to follow a classifier operand's writes before giving up on it. This
+# bounds the *cost* of the attempt only — whether the result is used is decided
+# by `_reduces_to_inputs`, not by size. Wide enough that no expansion which does
+# reduce has been seen to hit it (the largest, IsAttenMask, is ~40 nodes),
+# narrow enough that a runaway one stops in well under a second rather than
+# grinding to the global budget, which took 185s for IsBn2MultiBlk.
+CLASSIFIER_PROBE_NODES = 4000
+
+# Roots a generated case can pin down: knobs plus everything fixed by the CANN
+# profile. A classifier operand that still reaches anything else after expansion
+# has not been reduced to an input condition.
+_DRIVABLE_ROOTS = CONTROLLABLE_ROOTS | PLATFORM_LOCKED_ROOTS
+
 # A path condition that cannot act as a value guard: loop headers say "this
 # write happened on some iteration", and truncated text cannot be re-parsed.
 _NON_GUARD_RE = re.compile(r"^\s*(?:while|for|do|switch|cxx_for_range)\b")
@@ -206,6 +219,11 @@ class DefSite:
     file: str = ""
     line: int = 0
     function: str = ""
+    #: The same guards before `pretty()` flattened negation into `!(…)` text.
+    #: Needed to tell the two branches of one `if` apart, which is what decides
+    #: whether a chain of writes leaves any path falling through to the default.
+    #: Empty for def sites that do not come from a recorded write.
+    conds: tuple[Any, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -215,6 +233,89 @@ class DefSite:
             "line": self.line,
             "function": self.function,
         }
+
+
+def _decisive_conds(w) -> tuple[Any, ...]:
+    """A write's guards, keeping only those that decide a branch.
+
+    A macro-expanded guard has no readable text, and a loop or `switch` guard is
+    not a two-way decision (see `PathCond.is_decision`), so neither can be
+    reasoned about as "this path or the other". Both are dropped rather than
+    treated as decisions, which makes the coverage test below give up instead of
+    concluding wrongly.
+    """
+    return tuple(
+        pc for pc in getattr(w, "path_conditions", ()) if not pc.is_opaque and _decides(pc)
+    )
+
+
+def _decides(pc) -> bool:
+    if "kind" in getattr(pc, "__dict__", {}):
+        return pc.is_decision
+    # A guard with no `kind` comes either from the text backend or from a cached
+    # extraction predating the field. Both spell a loop or `switch` into the
+    # text, which is what this used to read before `kind` existed.
+    return not _NON_GUARD_RE.match(pc.text or "")
+
+
+def _same_decision(a, b) -> bool:
+    return (a.file, a.line, a.text) == (b.file, b.line, b.text)
+
+
+def _paths_are_covered(paths: list[tuple[Any, ...]]) -> bool:
+    """Do these guarded writes leave no path falling through to the default?
+
+    This is what tells `if (A) x=1; else if (B) x=2; else x=3;` — exhaustive,
+    nothing assumed — apart from `if (A) x=1;`, where the source really does
+    leave `x` at whatever it was declared as.
+
+    An unguarded write among them is *not* taken as covering the rest. Inside a
+    function it would, but whether it runs at all depends on the function being
+    called, and which write wins depends on the order `_chain_sites` folds them
+    in. That decision stays there.
+    """
+    if not paths or any(len(p) == 0 for p in paths):
+        return False
+    return _covers(paths)
+
+
+def _records_rest(paths: list[tuple[Any, ...]]) -> bool:
+    """Do the guards leading into these paths record what follows them?
+
+    Asked per side of a decision, not per decision: a `guard_clause` is always
+    the negated side, so the two sides can differ.
+    """
+    return all(getattr(p[0], "records_what_follows", True) for p in paths)
+
+
+def _covers(paths: list[tuple[Any, ...]], trusted: bool = True) -> bool:
+    """Recursively: from this point on, is every continuation written?
+
+    At each point every path must be deciding the same condition, and both of
+    its branches must in turn be covered. A path that has run out means this
+    side of the decision is written outright. Paths that disagree about which
+    condition comes next cannot be folded this way, and the answer is no: an
+    unproven assumption reported as one is the safe direction.
+
+    `trusted` says whether the guard leading into these paths records what
+    follows it. When it does not (see `PathCond.records_what_follows`) a path
+    running out is not evidence of an unconditional write — the rest of its
+    guards were never written down. Without this, a `return` after
+    `if (c) return;` looks unconditional and stops this decision's two sides
+    from being checked at all.
+    """
+    if not paths:
+        return False
+    if any(len(p) == 0 for p in paths):
+        return trusted
+    head = paths[0][0]
+    if not all(_same_decision(p[0], head) for p in paths):
+        return False
+    pos = [p for p in paths if not p[0].negated]
+    neg = [p for p in paths if p[0].negated]
+    return _covers([p[1:] for p in pos], _records_rest(pos)) and _covers(
+        [p[1:] for p in neg], _records_rest(neg)
+    )
 
 
 @dataclass
@@ -358,8 +459,27 @@ def collect_vars_dag(node: Any) -> set[str]:
     return _collect_vars_dag(node)
 
 
+def truth_probe_var(node: Any) -> str | None:
+    """The variable a "this guard held" probe tests, or None if not a probe.
+
+    `PredicateNormalizer._truthy` renders the probe by the variable's type: a
+    bool becomes `var == True`, an int becomes `var != 0` (C's implicit
+    truthiness). Both mean the same thing, so both are substitutable.
+    """
+    var = node.get("var")
+    if not isinstance(var, str):
+        return None
+    op = node.get("op")
+    value = node.get("value")
+    if op == "eq" and value is True:
+        return var
+    if op == "ne" and not isinstance(value, bool) and value == 0:
+        return var
+    return None
+
+
 def substitute_vars(node: Any, replacements: dict[str, Any]) -> Any:
-    """Rewrite `<var> == True` probes of the given variables into real conditions.
+    """Rewrite truth probes of the given variables into real conditions.
 
     A softened guard enters `value_expr` as `{"op": "eq", "var": VAR_UNDECIDED_x,
     "value": True}`. When something later establishes what that guard actually
@@ -367,6 +487,12 @@ def substitute_vars(node: Any, replacements: dict[str, Any]) -> Any:
     over-approximation. Dropping the guard *record* alone would only hide it:
     the free variable would still be in the expression a solver sees, but
     nothing would remain to say what it stood for.
+
+    Only the `eq/True` shape used to be matched, so every int-typed variable —
+    which is all of the loop-element cuts — was skipped in silence: the guard
+    got struck from the record while its variable stayed in the expression,
+    exactly the failure the paragraph above describes. Callers should still
+    verify the substitution landed; see `apply_bindings_to_derivation`.
 
     Structure-sharing is preserved — a normalized expression is a DAG, and
     rebuilding it as a tree unfolds to the size the sharing exists to avoid.
@@ -383,14 +509,9 @@ def substitute_vars(node: Any, replacements: dict[str, Any]) -> Any:
             return hit
         out: Any
         if isinstance(n, dict):
-            var = n.get("var")
-            if (
-                isinstance(var, str)
-                and var in replacements
-                and n.get("op") == "eq"
-                and n.get("value") is True
-            ):
-                out = replacements[var]
+            probe = truth_probe_var(n)
+            if probe is not None and probe in replacements:
+                out = replacements[probe]
             else:
                 out = {k: rewrite(v) for k, v in n.items()}
         elif isinstance(n, list):
@@ -833,6 +954,15 @@ class KeyFieldDeriver:
         #: default. See `_chain`.
         self.implicit_zero: list[dict[str, Any]] = []
         self._implicit_seen: set[tuple[str, str, int]] = set()
+        #: field path → whether its writes re-read it. See
+        #: `_writes_are_self_routing`.
+        self._self_routing: dict[str, bool] = {}
+        #: Tightened node budget while probing a classifier operand; `None`
+        #: means the global `MAX_NODES` applies.
+        self._node_ceiling: int | None = None
+        #: Fields whose expansion did not reduce to inputs. Kept across
+        #: dimensions: it is a property of the field's writes, not of the read.
+        self._rejected: set[str] = set()
         # (id(node), scope) -> (node, expansion). The node is kept alive so its
         # id cannot be recycled onto a different object.
         self._ememo: dict[tuple[int, str], tuple[Expr, Expr]] = {}
@@ -842,6 +972,7 @@ class KeyFieldDeriver:
         tail = path.rsplit(".", 1)[-1]
         by_tail = self.ir.writes_by_tail().get(tail, [])
         exact = [w for w in by_tail if w.path == path or w.path.endswith("." + path)]
+        exact += self._alias_writes(path, tail, exact)
         pool = exact or [
             w for w in by_tail if w.path.rsplit(".", 1)[0] == path.rsplit(".", 1)[0]
         ]
@@ -852,10 +983,38 @@ class KeyFieldDeriver:
                 file=w.file,
                 line=w.line,
                 function=w.function,
+                conds=_decisive_conds(w),
             )
             for w in sorted(pool, key=lambda w: (w.file, w.line))
             if w.rhs.strip()
         ]
+
+    def _alias_writes(self, path: str, tail: str, already: list) -> list:
+        """Writes reaching `path` through a reference parameter.
+
+        `SetSplitAxis(ctx, FuzzyBaseInfoParamsRegbase& fBaseParams)` records
+        `fBaseParams.splitAxis`, which the suffix match above cannot relate to
+        `this.fBaseParams.splitAxis`. Take those writes only when the parameter
+        provably receives that member at every call site, so a helper handed a
+        different object of the same type stays out.
+        """
+        target = path[len("this.") :] if path.startswith("this.") else path
+        member, _, rest = target.partition(".")
+        if not rest:
+            # A one-segment path has no member prefix to bind against, and the
+            # parameter name would be matched against the field name itself.
+            return []
+        seen = {(w.file, w.line, w.path) for w in already}
+        out = []
+        for w in self.ir.writes_by_tail().get(tail, []):
+            head = w.path.split(".", 1)[0]
+            if head in ("this", "") or w.path != f"{head}.{rest}":
+                continue
+            if (w.file, w.line, w.path) in seen:
+                continue
+            if self.ir.param_bound_member(w.function, head) == member:
+                out.append(w)
+        return out
 
     def _local_defs(self, name: str, fn: str) -> list[DefSite]:
         writes = self.ir.local_writes_in(fn).get(name, [])
@@ -866,6 +1025,7 @@ class KeyFieldDeriver:
                 file=w.file,
                 line=w.line,
                 function=w.function,
+                conds=_decisive_conds(w),
             )
             for w in sorted(writes, key=lambda w: (w.file, w.line))
             if w.rhs.strip() and w.rhs.strip() != name
@@ -1043,6 +1203,11 @@ class KeyFieldDeriver:
                 file=w.file,
                 line=w.line,
                 function=short,
+                # The guards are renamed into the caller's names above; the
+                # conditions are not, because nothing reads their text — only
+                # which decision each one is, to tell an exhaustive chain of
+                # returns from one that falls through to a default.
+                conds=_decisive_conds(w),
             )
             for w in reversed(list(slot))
         ]
@@ -1081,6 +1246,13 @@ class KeyFieldDeriver:
     ) -> Expr:
         result: Expr | None = None
         result_fn: str | None = None
+        # When the writes cover every path, the zero fall-through below is dead
+        # code and there is nothing being assumed about the declaration. Only
+        # within one function: two functions each writing one side of the same
+        # condition look exhaustive together, but either can be called alone.
+        exhaustive = len({s.function for s in sites}) == 1 and _paths_are_covered(
+            [s.conds for s in sites]
+        )
         for site in sites:
             scope = site.function or fn
             if defining:
@@ -1109,26 +1281,57 @@ class KeyFieldDeriver:
             # read, so it is recorded rather than taken silently: if the field
             # is initialised to anything else, every key derived through this
             # branch is wrong, and nothing else would show it.
-            if result is None:
-                # One site, one assumption. A site can be chained more than
-                # once — different callers, different cache contexts — and
-                # counting it each time would report the number of visits
-                # rather than the number of things assumed.
-                site_key = (scope, site.file, site.line)
-                if site_key not in self._implicit_seen:
-                    self._implicit_seen.add(site_key)
-                    self.implicit_zero.append(
-                        {
-                            "function": scope,
-                            "file": site.file,
-                            "line": site.line,
-                            "guard": guard_text[:120],
-                        }
-                    )
-            fallthrough = result if result is not None else Const(0)
+            declared = None
+            if result is None and not exhaustive:
+                declared = self._declared_default(defining, scope, depth)
+                if declared is None:
+                    # One site, one assumption. A site can be chained more than
+                    # once — different callers, different cache contexts — and
+                    # counting it each time would report the number of visits
+                    # rather than the number of things assumed.
+                    site_key = (scope, site.file, site.line)
+                    if site_key not in self._implicit_seen:
+                        self._implicit_seen.add(site_key)
+                        self.implicit_zero.append(
+                            {
+                                "function": scope,
+                                "file": site.file,
+                                "line": site.line,
+                                "guard": guard_text[:120],
+                            }
+                        )
+            if result is not None:
+                fallthrough = result
+            else:
+                fallthrough = declared if declared is not None else Const(0)
             result = Ite(cond, value, fallthrough)
             result_fn = scope
         return result if result is not None else Unknown(REASON_NO_DEFINITION)
+
+    def _declared_default(self, defining: str, scope: str, depth: int) -> Expr | None:
+        """What the declaration initialises `defining` to, if that is knowable.
+
+        Closing a chain with `Const(0)` asserts a default nobody read, and for
+        `dTemplateType` (declared `NUM64`) or `s1TemplateType` (`NUM128`) that
+        assertion is simply false — a solver would then accept keys where the
+        field is 0, which the operator cannot produce.
+
+        Returns None when the answer is not known, which keeps the assumption
+        and its record. Three separate reasons for that, all left alone on
+        purpose: no declaration was found, the member declares no initialiser
+        at all (its value really is indeterminate before the first write), or
+        the initialiser does not reduce to a constant.
+        """
+        if not defining or self.ir is None:
+            return None
+        decl = self.ir.field_decl(defining)
+        if decl is None or decl.init is None:
+            return None
+        try:
+            expanded = self._expand_text(decl.init, scope, depth + 1)
+        except Exception:  # noqa: BLE001 - an unreadable initialiser is "unknown"
+            return None
+        return expanded if _is_constant(expanded) else None
 
     def _reached(self, scope: str, depth: int) -> Expr:
         """When does `scope` run? The disjunction over its call sites.
@@ -1216,7 +1419,7 @@ class KeyFieldDeriver:
 
     def _expand_uncached(self, e: Expr, fn: str, depth: int) -> Expr:
         self._nodes += 1
-        if self._nodes > MAX_NODES:
+        if self._nodes > (self._node_ceiling or MAX_NODES):
             return Unknown(REASON_BUDGET)
         # Depth is only a guard against exhausting the Python stack; termination
         # comes from `_stack` (cycles) and `_nodes` (breadth).
@@ -1313,12 +1516,17 @@ class KeyFieldDeriver:
         return None
 
     def _expand_named_const_cmp(self, e: Bin, fn: str, depth: int) -> Expr | None:
-        """Keep field-vs-enum comparisons shallow.
+        """Expand a field-vs-enum comparison as deep as the field allows.
 
-        When exactly one side is already a named constant / constexpr, the
-        other side is a classifier operand: expand casts only, do not substitute
-        every guarded write of the field. Full substitution is still used for
-        arithmetic and for non-constant comparisons (e.g. `d > s1`).
+        When exactly one side is a named constant / constexpr, the other side is
+        a classifier operand. Substituting its guarded writes is what recovers
+        the input condition selecting each value — without it the field stays a
+        surface leaf, the resolver classifies it as host state, and the
+        dimension comes out `exact` yet undrivable. That is how IsPse and
+        IsAttenMask ended up rooted in TILING_DATA despite each having exactly
+        two writes guarded by an input shape.
+
+        A self-routing field is the exception; see `_writes_are_self_routing`.
         """
         if e.op not in CMP_OPS:
             return None
@@ -1330,13 +1538,152 @@ class KeyFieldDeriver:
             return Bin(
                 e.op,
                 self._expand(e.left, fn, depth),
-                self._expand_surface(e.right, fn, depth),
+                self._expand_operand(e.right, fn, depth),
             )
         return Bin(
             e.op,
-            self._expand_surface(e.left, fn, depth),
+            self._expand_operand(e.left, fn, depth),
             self._expand(e.right, fn, depth),
         )
+
+    def _expand_operand(self, e: Expr, fn: str, depth: int) -> Expr:
+        """Substitute a classifier operand only if doing so reduces it to inputs.
+
+        Expanding is worth it when the field's guarded writes *are* the input
+        condition — `pseOptional` becomes a test on the pse shape, and the
+        dimension turns drivable. It is not worth it when the writes are guarded
+        by other host fields, because then expansion drags in their chains too:
+        the operand comes back with host state and free variables still in it,
+        the dimension is no better driven than before, and the expression grew by
+        two orders of magnitude. Measured on FAG: IsPse 335 chars and fully
+        input-rooted, versus IsNEqual 25220 chars with 8 roots including
+        TILING_DATA, and IsBn2MultiBlk exhausting the node budget outright.
+
+        So the expansion is attempted and kept only if it reduced. Rejecting it
+        restores exactly the previous behaviour, which is the safe direction —
+        the field stays a surface leaf classified as host state.
+        """
+        name = self._classifier_operand(e, fn)
+        if name is None or self._writes_are_self_routing(name, fn):
+            return self._expand_surface(e, fn, depth)
+        # Probing the same field twice is pure waste: rejecting an expansion
+        # rolls back the caches that would have remembered it, so without this
+        # the attempt is repeated at every occurrence. Keyed on the field alone
+        # rather than the reading scope — a field that will not reduce to inputs
+        # in one caller almost never does in another, and being wrong here only
+        # means falling back to the surface leaf, which is where we started.
+        if name in self._rejected:
+            return self._expand_surface(e, fn, depth)
+        state = self._snapshot()
+        ceiling = self._node_ceiling
+        self._node_ceiling = min(
+            ceiling or MAX_NODES, self._nodes + CLASSIFIER_PROBE_NODES
+        )
+        try:
+            deep = self._expand(e, fn, depth)
+        finally:
+            self._node_ceiling = ceiling
+        if self._reduces_to_inputs(deep, fn):
+            return deep
+        self._rejected.add(name)
+        self._restore(state)
+        return self._expand_surface(e, fn, depth)
+
+    def _snapshot(self) -> tuple:
+        """State a rejected expansion has to give back.
+
+        A truncated expansion must not stay in the caches: every later use of
+        that name would read the truncation. `implicit_zero` matters for the
+        same reason — those are assumptions recorded about branches that are no
+        longer in the tree.
+
+        `_nodes` is part of it because the global budget pays for the tree that
+        is kept, not for attempts that were thrown away. Leaving the probes
+        charged to it exhausted the budget on SplitAxis and turned a field that
+        derives fine into `unresolved`.
+        """
+        return (
+            self._nodes,
+            dict(self._cache),
+            dict(self._ememo),
+            list(self.implicit_zero),
+            set(self._implicit_seen),
+            set(self.cycles),
+        )
+
+    def _restore(self, state: tuple) -> None:
+        nodes, cache, ememo, zeros, seen, cycles = state
+        self._nodes = nodes
+        self._cache = cache
+        self._ememo = ememo
+        self.implicit_zero = zeros
+        self._implicit_seen = seen
+        self.cycles = cycles
+
+    def _reduces_to_inputs(self, e: Expr, fn: str) -> bool:
+        """Is every name left in `e` something a test case can set?
+
+        Truncated or cyclic expansions fail here too: an operand carrying
+        `Unknown` is strictly worse than the surface leaf it replaced.
+        """
+        names: set[tuple[str, str]] = set()
+        for node in _walk_dag(e):
+            if isinstance(node, Unknown):
+                return False
+            if isinstance(node, Ref):
+                names.add((node.symbol, node.scope or fn))
+            elif isinstance(node, Call):
+                path = dotted_path(node)
+                if path is not None:
+                    names.add((path, fn))
+        for name, scope in names:
+            res = self._scope(scope).resolve(name)
+            if not res.closed or not res.roots:
+                return False
+            if any(r not in _DRIVABLE_ROOTS for r in res.roots):
+                return False
+        return True
+
+    def _classifier_operand(self, e: Expr, fn: str) -> str | None:
+        """The path of the field side of a comparison, if this side is one."""
+        if isinstance(e, Ref):
+            name: str | None = e.symbol
+        elif isinstance(e, Call):
+            name = dotted_path(e)
+        else:
+            name = None
+        return self._canonical_name(name, fn) if name else None
+
+    def _writes_are_self_routing(self, path: str, fn: str) -> bool:
+        """Does any write of `path` read `path` itself, in its value or guard?
+
+        `layoutType = isAllSame ? TND : layoutType`, under a guard that itself
+        tests `layoutType == TND`, is a field the host *routes*: a value is set
+        from the inputs and later rewritten along some paths. Its writes cannot
+        be chained into one value. Chaining a prefix of them reports a value the
+        later rewrites contradict — the failure direction that matters, since a
+        dimension would be called drivable on a value the host does not produce.
+        Chaining all of them re-reads the field inside its own guards, which for
+        `layoutType` is 8 writes under 18 guards, ~43k characters, and a
+        MemoryError in normalization.
+
+        An ordinary classifier field — `pseOptional`, `attenMaskOptional` — has
+        no such write, and its chain is exactly its input condition.
+        """
+        cached = self._self_routing.get(path)
+        if cached is not None:
+            return cached
+        tail = path.rsplit(".", 1)[-1]
+        pat = re.compile(rf"\b{re.escape(tail)}\b")
+        out = False
+        # Guard against a field whose own expansion asks this question again.
+        self._self_routing[path] = True
+        for site in self._all_defs_for(path, fn):
+            if pat.search(site.rhs) or any(pat.search(g) for g in site.guards):
+                out = True
+                break
+        self._self_routing[path] = out
+        return out
 
     def _expand_surface(self, e: Expr, fn: str, depth: int) -> Expr:
         """Expand casts / strcmp rewrites, but leave names as resolver leaves."""
@@ -1443,6 +1790,10 @@ class KeyFieldDeriver:
         # container. Expanding the iterator arguments substitutes the container
         # for the element written by one `push_back`, which loses the name.
         if short in _CONTAINER_OPS:
+            if short == "back":
+                pushed = self._last_push_dominates_back(e, fn)
+                if pushed is not None:
+                    return self._expand(pushed, fn, depth + 1)
             return e
         slot = _projection_index(name)
         if slot is not None and len(e.args) == 1:
@@ -1464,6 +1815,96 @@ class KeyFieldDeriver:
                 finally:
                     self._stack.discard(key)
         return Call(e.func, tuple(self._expand(a, fn, depth) for a in e.args))
+
+    def _last_push_dominates_back(self, e: Call, fn: str) -> Expr | None:
+        """`v.push_back(x); … v.back()` is `x`, when nothing can intervene.
+
+        Not a closed form over the container — the exact opposite. When the
+        last thing that happened to `v` before this read was appending `x`, the
+        read *is* `x`, and treating it as an unknown throws away a value the
+        source states outright. In FAG this is `slicePrefix1`: sliced, then
+        appended `R1` unconditionally, then read back on the next line.
+
+        The expression IR carries no source position, so the read locates
+        itself through `sole_member_read`: one `back()` on this container in
+        this function, or nothing. Every condition below is a way for the
+        rewrite to be wrong, so failing any of them returns None and the caller
+        keeps its over-approximation.
+
+        Members are excluded outright. `deterPrefixData.prefix1` is appended to
+        in six functions and any callee can reach it through `this`, so
+        "nothing intervened" is not decidable from one function's events.
+        """
+        if len(e.args) != 1 or not fn:
+            return None
+        ir = getattr(self, "ir", None)
+        if ir is None:
+            return None
+        container = _container_of(e.args[0]) or dotted_path(_deref(e.args[0])) or ""
+        if not container or "." in container:
+            return None
+        read = ir.sole_member_read(fn, container, "back")
+        if read is None:
+            return None
+        here = (read.file, read.line, read.column)
+        events = [
+            w
+            for w in ir.container_events(container, fn)
+            if (w.file, w.line, w.column) < here
+        ]
+        if not events:
+            return None
+        last = events[-1]
+        if last.kind != "append" or not (last.rhs or "").strip():
+            return None
+        # A push inside a loop appends once per iteration, so which element is
+        # last depends on the trip count; a read inside a loop sees a different
+        # container on the second pass. Either way program order across the
+        # back edge is not the textual order.
+        if _under_loop(last.path_conditions) or _under_loop(read.path_conditions):
+            return None
+        # The push has to happen on every path reaching the read. It does when
+        # the read's guards imply the push's — every guard on the push is also
+        # on the read — which is what dominance means here without a CFG.
+        # Demanding the push be unconditional instead would reject the case
+        # this exists for: in FAG both sit inside the same `deterSparseType ==
+        # DETER_BAND` block, so both carry that guard.
+        if not _cond_keys(last.path_conditions) <= _cond_keys(read.path_conditions):
+            return None
+        # A `guard_clause` records less than the truth (see `PathCond`), so a
+        # push carrying one may have conditions the comparison above never saw.
+        if not all(pc.records_what_follows for pc in last.path_conditions):
+            return None
+        if self._container_may_escape(container, fn, last, read):
+            return None
+        return parse_expr(strip_casts(last.rhs))
+
+    def _container_may_escape(self, container: str, fn: str, last, read) -> bool:
+        """Whether anything between the push and the read could change `container`.
+
+        `container_events` only knows the mutations we model. A call taking the
+        container by reference, or a method we have no rule for, can change the
+        last element without leaving a write event — so the absence of an event
+        is not evidence here, and any such call in the window is disqualifying.
+        """
+        ir = getattr(self, "ir", None)
+        if ir is None:
+            return True
+        lo = (last.file, last.line, last.column)
+        hi = (read.file, read.line, read.column)
+        word = re.compile(rf"\b{re.escape(container)}\b")
+        for s in ir.call_sites:
+            if s.caller != fn:
+                continue
+            at = (s.file, s.line, getattr(s, "column", 0))
+            if not (lo < at < hi):
+                continue
+            recv = (getattr(s, "receiver", "") or "").split(".")[0]
+            if recv == container and s.callee not in _READONLY_CONTAINER_METHODS:
+                return True
+            if any(word.search(a or "") for a in s.args):
+                return True
+        return False
 
     def _platform_const_call(self, short: str) -> Const | None:
         prof = getattr(self.model, "platform_profile", None)
@@ -1642,7 +2083,12 @@ class KeyFieldDeriver:
             expanded=_pretty_dag(expanded),
             def_sites=self._defs_for(strip_casts(host_expr), function),
         )
-        norm = _ValueNormalizer(self._scope(function), self.model, scope_for=self._scope)
+        norm = _ValueNormalizer(
+            self._scope(function),
+            self.model,
+            scope_for=self._scope,
+            host_ir=self.ir,
+        )
         try:
             out.value_expr = norm.value(expanded)
         except NormalizeError as exc:
@@ -1716,6 +2162,57 @@ _ELEMENT_ACCESSORS = {
 }
 
 _CONTAINER_OPS = {**_REDUCTIONS, **_ELEMENT_ACCESSORS}
+
+#: Container methods that cannot change the last element. Anything else called
+#: on a container — including a method we simply have no rule for — has to
+#: count as a possible change; see `_container_may_escape`.
+_READONLY_CONTAINER_METHODS = frozenset(
+    {
+        "back",
+        "front",
+        "at",
+        "size",
+        "empty",
+        "capacity",
+        "begin",
+        "end",
+        "cbegin",
+        "cend",
+        "rbegin",
+        "rend",
+        "crbegin",
+        "crend",
+        "data",
+        "max_size",
+    }
+)
+
+#: Loop statement kinds as they appear in `PathCond.kind`.
+_LOOP_COND_KINDS = frozenset({"for", "while", "do", "cxx_for_range"})
+
+
+def _under_loop(conds: Iterable[Any]) -> bool:
+    return any(getattr(pc, "kind", "") in _LOOP_COND_KINDS for pc in conds or ())
+
+
+def _cond_keys(conds: Iterable[Any]) -> set[tuple[Any, ...]]:
+    """Path conditions as a comparable set, to ask whether one guards implies another.
+
+    Keyed on the statement's own position as well as its text, so two distinct
+    `if` statements testing the same thing are not treated as one guard.
+    """
+    return {
+        (pc.text, pc.negated, pc.file, pc.line) for pc in conds or ()
+    }
+
+# Accesses whose index we never resolved, so the variable stands for *some*
+# element rather than a particular one. `back` / `front` / `size` / `empty` and
+# the reductions are not here: those name one value of the container *while the
+# container holds still* — see `_summary_identity_is_merged` for the case where
+# it does not. `first` / `second` arrive as slot names from `_element_member`,
+# and they are index-free for the same reason `elem` is — the slot is known,
+# the index is not.
+INDEX_FREE_KINDS = frozenset({"elem", "first", "second"})
 
 # Accessor names that must not become the variable slug — they collide across
 # every tensor that resolves through the same GetData/GetDim chase.
@@ -1915,8 +2412,12 @@ class _ValueNormalizer(PredicateNormalizer):
     SMT as `if_then_else` at value level rather than being coerced to a bool.
     """
 
-    def __init__(self, resolver, model, scope_for=None) -> None:
+    def __init__(self, resolver, model, scope_for=None, host_ir=None) -> None:
         super().__init__(resolver, model)
+        #: Consulted only to ask whether a container is written between reads,
+        #: which decides whether one variable may stand for `back(v)` at all of
+        #: them. Absent, every container summary is isolated — the safe side.
+        self.ir = host_ir
         #: Maps a function name to a resolver scoped to it. Expansion inlines
         #: across functions, so leaves reach here carrying the scope they were
         #: read in; without this they would all be resolved against the encode
@@ -2160,6 +2661,36 @@ class _ValueNormalizer(PredicateNormalizer):
             return None
         return lookup(symbol)
 
+    def _summary_identity_is_merged(
+        self, container: str, kind: str, scope: str
+    ) -> bool:
+        """Whether one variable may stand for this summary at every read point.
+
+        `back(v)` names one value of `v` only while `v` holds still. In FAG it
+        often does not: `deterPrefixData.prefix1` is pushed to in six functions,
+        and `prefix1.back()` is read both before and after those pushes. One
+        variable for all of those reads asserts an equality the source does not
+        provide, and the way that fails is by *inventing* an unsatisfiable key —
+        the one direction the design forbids. So the identity is merged (the
+        variable stands for *some* value, and cross-read equalities are dropped)
+        whenever program order cannot rule the interleaving out.
+
+        Order cannot be recovered when the reading function also writes the
+        container, or when writes are spread over several functions: writes
+        carry a line number, reads do not. A container filled in exactly one
+        function and read in others — `actualSeqQlen`, filled in
+        `GetShapeAttrsInfo` and reduced later — keeps a shared identity, which
+        is what lets `max(actualSeqQlen)` agree across the five dimensions
+        that read it.
+        """
+        if kind in INDEX_FREE_KINDS:
+            return True
+        ir = getattr(self, "ir", None)
+        if ir is None:
+            return True
+        writers = ir.container_writers(container)
+        return len(writers) > 1 or (bool(scope) and scope in writers)
+
     def _container_element(
         self, container_expr: Expr, *, kind: str = "elem"
     ) -> dict[str, Any] | None:
@@ -2198,6 +2729,9 @@ class _ValueNormalizer(PredicateNormalizer):
             label = raw_sym
         var_id = f"VAR_ELEM_{kind.upper()}_{slug(label)}"
         value_type = "bool" if kind == "empty" else "int"
+        merged = self._summary_identity_is_merged(
+            container, kind, _scope_under(container_expr)
+        )
         if self.model.get(var_id) is None:
             self.model.add(
                 VarSpec(
@@ -2213,8 +2747,11 @@ class _ValueNormalizer(PredicateNormalizer):
                     ),
                     origin=atom.root,
                     description=f"{kind} of {container}; decided by its input",
+                    identity_merged=merged,
                 )
             )
+        if merged:
+            self.model.mark_identity_merged(var_id)
         self.model.declare_on_demand(var_id, atom.root)
         self.roots[var_id] = atom.root
         return {"var": var_id, "root": atom.root}
@@ -2308,8 +2845,13 @@ class _ValueNormalizer(PredicateNormalizer):
                     ),
                     origin="LOOP_ELEMENT",
                     description=what + (f" in {scope}" if scope else ""),
+                    # One id per read site, but the index within the container
+                    # is exactly what is unknown, so two dimensions reading it
+                    # need not mean the same element.
+                    identity_merged=True,
                 )
             )
+        self.model.mark_identity_merged(var_id)
         self.undecided[var_id] = f"LOOP_ELEMENT: {surface[:160]}"
         return {"var": var_id}
 
@@ -2387,6 +2929,9 @@ class _ValueNormalizer(PredicateNormalizer):
             else raw_sym
         )
         var_id = f"VAR_REDUCE_{kind.upper()}_{slug(label)}"
+        merged = self._summary_identity_is_merged(
+            container, kind, _scope_under(args[0])
+        )
         if self.model.get(var_id) is None:
             self.model.add(
                 VarSpec(
@@ -2402,8 +2947,11 @@ class _ValueNormalizer(PredicateNormalizer):
                     ),
                     origin=atom.root,
                     description=f"{kind} over {container}; decided by its input",
+                    identity_merged=merged,
                 )
             )
+        if merged:
+            self.model.mark_identity_merged(var_id)
         self.model.declare_on_demand(var_id, atom.root)
         self.roots[var_id] = atom.root
         return {"var": var_id, "root": atom.root}

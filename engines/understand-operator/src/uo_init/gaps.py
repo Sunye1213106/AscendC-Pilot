@@ -16,6 +16,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
+from uo_init.host_derivation import NON_ESCALATING
 from uo_init.ids import hash12
 from uo_init.kb_model import Blocker, Evidence
 
@@ -245,8 +246,9 @@ class GapReport:
 def collect_derivation_gap_items(host_derivation) -> list[GapItem]:
     """Escalate undecided key-field guards that pre-sort could not soften.
 
-    Scheduling guards stay out of this list on purpose: they are soft by
-    design and must not become LLM work. Everything else (unmapped / platform /
+    Scheduling, reachability and loop-element guards stay out of this list on
+    purpose — see `host_derivation.NON_ESCALATING` for why each one is a
+    question nobody should be asked. Everything else (unmapped / platform /
     unknown) is one question per guard id, tagged onto the key field it blocks.
     """
     items: list[GapItem] = []
@@ -255,6 +257,12 @@ def collect_derivation_gap_items(host_derivation) -> list[GapItem]:
         for guard in getattr(fld, "escalating", None) or []:
             text = normalize_atom_text(getattr(guard, "text", "") or "")
             if not text or text in _NOISE_ATOMS:
+                continue
+            # Filter on the pre-sort, not on the reason text. The reason says
+            # *how* normalization failed and is orthogonal: a loop element that
+            # failed as UNMAPPED_SYMBOL carried an escalatable reason and slipped
+            # through the old `SCHED_SOFT` check.
+            if str(getattr(guard, "presort", "") or "") in NON_ESCALATING:
                 continue
             reason = (getattr(guard, "reason", "") or "DERIVATION_UNDECIDED").split(":")[0]
             if reason in ("SCHED_SOFT", "scheduling"):

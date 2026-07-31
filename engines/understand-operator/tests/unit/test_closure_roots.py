@@ -34,6 +34,13 @@ def test_local_tuple_element_chases_binding_not_field_writer():
     """`best.first` where best is a local must chase the local, not `*.first` writes."""
     ir = HostIR(
         class_fields={"tileParams"},
+        # A field write is what makes `tileParams` a tiling aggregate; the name
+        # alone no longer says so.
+        writes=[
+            WriteEvent(
+                path="tileParams.first", line=1, rhs="1", file="f.cpp", function="f"
+            )
+        ],
         summaries={
             "f": FuncSummary(
                 name="f",

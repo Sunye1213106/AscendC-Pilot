@@ -616,6 +616,81 @@ def test_an_input_backed_summary_keeps_its_input_root():
     assert norm.undecided == {}
 
 
+# -- whether one variable may stand for a summary at every read point ------
+class _Writers:
+    """Stand-in for `HostIR.container_writers`."""
+
+    def __init__(self, writers: dict[str, set[str]]) -> None:
+        self._writers = writers
+
+    def container_writers(self, path: str) -> set[str]:
+        return set(self._writers.get(path.rsplit(".", 1)[-1], ()))
+
+
+def _summary_normalizer(writers: dict[str, set[str]], root: str = "INPUT_VALUE"):
+    encode = SourceResolver()
+    scoped = SourceResolver(local_roots={"prefix1": root, "actualSeqQlen": root})
+    return _ValueNormalizer(
+        encode,
+        VariableModel(),
+        scope_for=lambda fn: scoped,
+        host_ir=_Writers(writers),
+    )
+
+
+def test_a_summary_of_a_container_written_in_several_functions_is_isolated():
+    """`prefix1.back()` is read both before and after the `push_back`s that
+    six functions perform on it, and reads carry no line number, so program
+    order cannot rule the interleaving out. One variable for all those reads
+    asserts an equality the source never provides, and it fails by inventing
+    an unsatisfiable key."""
+    norm = _summary_normalizer({"prefix1": {"CalcleTNDDenseDeterParam", "GQA"}})
+    out = norm._guard(
+        Bin(">", Call("back", (Ref("prefix1", scope="Reader"),)), Const(0))
+    )
+    var = next(v for v in norm.model.variables if v.startswith("VAR_ELEM_BACK_"))
+    assert norm.model.variables[var].identity_merged, out
+
+
+def test_a_summary_of_a_container_filled_in_one_other_function_stays_shared():
+    """`max(actualSeqQlen)` is the counterpart: filled once in
+    `GetShapeAttrsInfo` and reduced later elsewhere, so all five dimensions
+    that read it do mean the same value, and dropping that equality would
+    only cost reachability verdicts."""
+    norm = _summary_normalizer({"actualSeqQlen": {"GetShapeAttrsInfo"}})
+    norm._guard(
+        Bin(
+            ">",
+            Call("back", (Ref("actualSeqQlen", scope="CalcTiling"),)),
+            Const(0),
+        )
+    )
+    var = next(v for v in norm.model.variables if v.startswith("VAR_ELEM_BACK_"))
+    assert not norm.model.variables[var].identity_merged
+
+
+def test_a_summary_read_in_a_function_that_also_writes_it_is_isolated():
+    """One writer is not enough when it is the reader: `+=` on a container in
+    the same body puts a write between two reads."""
+    norm = _summary_normalizer({"prefix1": {"Reader"}})
+    norm._guard(Bin(">", Call("back", (Ref("prefix1", scope="Reader"),)), Const(0)))
+    var = next(v for v in norm.model.variables if v.startswith("VAR_ELEM_BACK_"))
+    assert norm.model.variables[var].identity_merged
+
+
+def test_an_element_stays_index_free_whatever_the_writers_say():
+    """`elem` names *some* element regardless of mutation, so the rule above
+    must not be able to make it any less merged."""
+    from uo_init.expr_ir import Select
+
+    norm = _summary_normalizer({})
+    norm._guard(
+        Bin("==", Select(Ref("actualSeqQlen", scope="F"), Ref("i")), Const(0))
+    )
+    var = next(v for v in norm.model.variables if v.startswith("VAR_ELEM_ELEM_"))
+    assert norm.model.variables[var].identity_merged
+
+
 # -- the scope a container is read in --------------------------------------
 def test_a_container_surface_carries_the_scope_it_was_read_in():
     """`Select.array` goes through `_expand_container_surface`, not
@@ -647,3 +722,494 @@ def test_container_of_accepts_call_style_member_access():
     )
     # Unary helpers must not be mistaken for members.
     assert _container_of(Select(parse_expr("CeilDiv(n)"), Const(0))) == ""
+
+
+# -- how deep a field-vs-enum comparison is expanded -----------------------
+def _classifier_deriver(writes, *, local_roots=None):
+    """A deriver over one field's guarded writes, read from `Encode`."""
+    from uo_init.derive_key_fields import KeyFieldDeriver
+    from uo_init.host_ir import FuncSummary, HostIR, WriteEvent
+    from uo_init.clang_walk import PathCond
+
+    events = [
+        WriteEvent(
+            path="fBaseParams.opt",
+            line=n,
+            rhs=rhs,
+            file="f.cpp",
+            function="Writer",
+            path_conditions=(PathCond(guard, negated, "f.cpp", n),),
+        )
+        for n, (rhs, guard, negated) in enumerate(writes, start=1)
+    ]
+    ir = HostIR(
+        writes=events,
+        class_fields={"fBaseParams", "opt"},
+        summaries={"Writer": FuncSummary(name="Writer"), "Encode": FuncSummary(name="Encode")},
+    )
+    return KeyFieldDeriver(
+        host_ir=ir,
+        resolver=SourceResolver(host_ir=ir, local_roots=local_roots or {}),
+        var_model=VariableModel(),
+    )
+
+
+def test_a_classifier_field_is_expanded_into_the_input_condition_that_picks_it():
+    """`pseOptional == NORMAL_TENSOR` says nothing a test can act on until the
+    field's two guarded writes are substituted; then it is a test on the pse
+    shape. Left shallow, the resolver calls the field host state and the
+    dimension comes out `exact` yet undrivable."""
+    deriver = _classifier_deriver(
+        [("NORMAL_TENSOR", "pseShape == 0", True), ("EMPTY_TENSOR", "pseShape == 0", False)],
+        local_roots={"pseShape": "INPUT_SHAPE"},
+    )
+    out = deriver._expand_operand(parse_expr("fBaseParams.opt"), "Encode", 0)
+    assert "pseShape" in _pretty(out), out
+
+
+def test_a_field_its_own_writes_read_back_is_left_shallow():
+    """`layoutType = isAllSame ? TND : layoutType` is a field the host routes:
+    set from the inputs, then rewritten on some paths. Chaining a prefix of
+    those writes would report a value the later ones contradict."""
+    deriver = _classifier_deriver(
+        [("TND", "isAllSame", False), ("isAllSame ? TND : opt", "bn2Limit", False)],
+        local_roots={"isAllSame": "INPUT_SHAPE", "bn2Limit": "INPUT_SHAPE"},
+    )
+    out = deriver._expand_operand(parse_expr("fBaseParams.opt"), "Encode", 0)
+    assert _pretty(out) == "opt(fBaseParams)", out
+
+
+def test_an_expansion_that_does_not_reach_inputs_is_thrown_away():
+    """Expanding is only worth it if it *reduces*. When the writes are guarded
+    by other host state, substitution drags in its chains too and the operand
+    comes back no better driven than the leaf it replaced — two orders of
+    magnitude larger, and still rooted in TILING_DATA."""
+    deriver = _classifier_deriver(
+        [("NORMAL_TENSOR", "someHostField != 0", False)],
+        local_roots={"someHostField": "TILING_DATA"},
+    )
+    out = deriver._expand_operand(parse_expr("fBaseParams.opt"), "Encode", 0)
+    assert _pretty(out) == "opt(fBaseParams)", out
+
+
+def test_a_rejected_expansion_gives_back_the_node_budget_it_spent():
+    """The global budget pays for the tree that is kept, not for attempts that
+    were discarded. Leaving probes charged to it exhausted the budget on the
+    largest field and turned one that derives fine into `unresolved`."""
+    deriver = _classifier_deriver(
+        [("NORMAL_TENSOR", "someHostField != 0", False)],
+        local_roots={"someHostField": "TILING_DATA"},
+    )
+    before = deriver._nodes
+    deriver._expand_operand(parse_expr("fBaseParams.opt"), "Encode", 0)
+    assert deriver._nodes == before
+
+
+# -- what a chain falls through to ----------------------------------------
+def _fallthrough_deriver(writes, decls):
+    """A deriver over one guarded write, with a member-declaration table."""
+    from uo_init.clang_walk import FieldDecl, PathCond
+    from uo_init.derive_key_fields import KeyFieldDeriver
+    from uo_init.host_ir import FuncSummary, HostIR, WriteEvent
+
+    events = [
+        WriteEvent(
+            path="fBaseParams.opt",
+            line=n,
+            rhs=rhs,
+            file="f.cpp",
+            function="Writer",
+            path_conditions=(PathCond(guard, negated, "f.cpp", n),),
+        )
+        for n, (rhs, guard, negated) in enumerate(writes, start=1)
+    ]
+    ir = HostIR(
+        writes=events,
+        class_fields={"fBaseParams", "opt"},
+        summaries={"Writer": FuncSummary(name="Writer")},
+        field_decls={
+            (host, name): FieldDecl(host, name, init, "h.h", 1)
+            for host, name, init in decls
+        },
+    )
+    return KeyFieldDeriver(
+        host_ir=ir,
+        resolver=SourceResolver(host_ir=ir, local_roots={"cond": "INPUT_SHAPE"}),
+        var_model=VariableModel(),
+    )
+
+
+def test_a_chain_falls_through_to_what_the_declaration_says():
+    """`Const(0)` asserts a default nobody read. `dTemplateType` is declared
+    `NUM64` and `s1TemplateType` `NUM128`, so the assertion was not merely
+    unproven — it was false, and let a solver accept keys where the field is 0."""
+    deriver = _fallthrough_deriver(
+        [("7", "cond", False)], [("Params", "opt", "192")]
+    )
+    out = deriver._expand_text("fBaseParams.opt", "Writer", 0)
+    assert "192" in _pretty(out), out
+    assert deriver.implicit_zero == []
+
+
+def test_a_member_declaring_no_initialiser_keeps_its_assumption():
+    """No in-class initialiser means the value before the first write really is
+    indeterminate. That is a stronger statement than "we did not look", and
+    neither one is an excuse to invent a default."""
+    deriver = _fallthrough_deriver([("7", "cond", False)], [("Params", "opt", None)])
+    deriver._expand_text("fBaseParams.opt", "Writer", 0)
+    assert len(deriver.implicit_zero) == 1
+
+
+def test_a_member_name_two_structs_declare_is_not_resolved():
+    """A write path names a variable, not a struct, so the member name has to
+    identify the declaration alone. The generated tiling-data structs declare
+    many of the same names `= 0`; picking one would turn "cannot prove" into
+    "proved to be zero"."""
+    deriver = _fallthrough_deriver(
+        [("7", "cond", False)],
+        [("Params", "opt", "192"), ("OtherTilingData", "opt", "0")],
+    )
+    out = deriver._expand_text("fBaseParams.opt", "Writer", 0)
+    assert "192" not in _pretty(out), out
+    assert len(deriver.implicit_zero) == 1
+
+
+def test_a_non_constant_initialiser_is_not_used_as_a_default():
+    """`= other * 2` is a value, but not one this chain can state without
+    chasing `other` too — and `other`'s own value at that point is a different
+    question from what the declaration says."""
+    deriver = _fallthrough_deriver(
+        [("7", "cond", False)], [("Params", "opt", "someOther * 2")]
+    )
+    deriver._expand_text("fBaseParams.opt", "Writer", 0)
+    assert len(deriver.implicit_zero) == 1
+
+
+# -- writes reaching a member through a reference parameter ----------------
+def _alias_deriver(calls, *, param="fBaseParams", helper="Helper"):
+    """`this.fBaseParams.opt` written once directly and once through `helper`.
+
+    `calls` lists what each caller passes in the parameter's position, so a test
+    can hand the helper the member, something else, or nothing at all.
+    """
+    from uo_init.clang_walk import PathCond
+    from uo_init.derive_key_fields import KeyFieldDeriver
+    from uo_init.host_ir import FuncSummary, HostIR, WriteEvent
+
+    events = [
+        WriteEvent(
+            path="this.fBaseParams.opt",
+            line=1,
+            rhs="1",
+            file="f.cpp",
+            function="Owner",
+            path_conditions=(PathCond("cond", False, "f.cpp", 1),),
+        ),
+        WriteEvent(
+            path=f"{param}.opt",
+            line=2,
+            rhs="2",
+            file="f.cpp",
+            function=helper,
+            path_conditions=(PathCond("cond", True, "f.cpp", 2),),
+        ),
+    ]
+    summaries = {
+        "Owner": FuncSummary(
+            name="Owner", calls=[(helper, tuple(a)) for a in calls]
+        ),
+        helper: FuncSummary(name=helper, params=["ctx", param]),
+    }
+    ir = HostIR(
+        writes=events,
+        class_fields={"fBaseParams", "other"},
+        summaries=summaries,
+    )
+    return KeyFieldDeriver(
+        host_ir=ir,
+        resolver=SourceResolver(host_ir=ir, local_roots={"cond": "INPUT_SHAPE"}),
+        var_model=VariableModel(),
+    )
+
+
+def test_a_helper_handed_the_member_defines_it():
+    """`SetSplitAxis(ctx, fBaseParams)` writes `fBaseParams.splitAxis`, named
+    after its parameter. Without the binding the suffix match cannot relate that
+    to `this.fBaseParams.splitAxis`, and the field looks like it has one write
+    when it has four."""
+    deriver = _alias_deriver([("ctx", "fBaseParams")])
+    assert len(deriver._field_defs("this.fBaseParams.opt")) == 2
+
+
+def test_the_two_spellings_of_one_member_agree():
+    """Asking for `fBaseParams.opt` and for `this.fBaseParams.opt` is asking
+    about the same storage. Two answers would make exhaustiveness — which reads
+    this pool — depend on how the caller happened to spell it."""
+    deriver = _alias_deriver([("ctx", "fBaseParams")])
+    a = deriver._field_defs("this.fBaseParams.opt")
+    b = deriver._field_defs("fBaseParams.opt")
+    assert [(d.file, d.line) for d in a] == [(d.file, d.line) for d in b]
+
+
+def test_a_helper_that_two_callers_hand_different_objects_defines_neither():
+    """Two objects of one type reach the same parameter, so a write through it
+    cannot be attributed to either. `CalcleTNDBandDeterPrefix` is really called
+    this way, and merging its 10 writes into a member would invent branches."""
+    deriver = _alias_deriver([("ctx", "fBaseParams"), ("ctx", "other")])
+    assert len(deriver._field_defs("this.fBaseParams.opt")) == 1
+
+
+def test_a_parameter_holding_something_that_is_not_a_member_is_not_bound():
+    """A local `FuzzyBaseInfoParamsRegbase` passed by reference is a different
+    object from the class member of the same type."""
+    deriver = _alias_deriver([("ctx", "scratch")])
+    assert len(deriver._field_defs("this.fBaseParams.opt")) == 1
+
+
+def test_a_helper_nobody_calls_is_not_bound():
+    """No call site is no evidence. Attributing the write to `this` would let an
+    unreferenced helper contribute branches the operator never takes."""
+    deriver = _alias_deriver([])
+    assert len(deriver._field_defs("this.fBaseParams.opt")) == 1
+
+
+def test_a_bare_member_name_does_not_bind_through_a_parameter():
+    """`this.b` and `this.fBaseParams.b` are two fields sharing a tail. A
+    one-segment path has no member prefix to bind against, so the parameter name
+    would be matched against the field name itself."""
+    deriver = _alias_deriver([("ctx", "fBaseParams")], param="b", helper="Take")
+    assert len(deriver._field_defs("this.b")) == 0
+
+
+# -- `push_back(x); back()` is `x` -----------------------------------------
+def _back_deriver(
+    events,
+    reads,
+    *,
+    calls=(),
+    local_defs=None,
+):
+    """A function that appends to a local container and reads `back()`.
+
+    `events` are `(line, column, kind, rhs, conds)` mutations of `v`; `reads`
+    are `(line, column)` of `v.back()` calls, and `calls` are extra
+    `(callee, line, column, receiver, args)` sites in the window between them.
+    """
+    from uo_init.clang_walk import CallSite
+    from uo_init.derive_key_fields import KeyFieldDeriver
+    from uo_init.host_ir import FuncSummary, HostIR, WriteEvent
+
+    writes = [
+        WriteEvent(
+            path="v",
+            line=line,
+            column=col,
+            rhs=rhs,
+            file="f.cpp",
+            function="Fn",
+            kind=kind,
+            path_conditions=tuple(conds),
+        )
+        for line, col, kind, rhs, conds in events
+    ]
+    sites = [
+        CallSite(
+            caller="Fn",
+            callee="back",
+            file="f.cpp",
+            line=r[0],
+            column=r[1],
+            receiver="v",
+            path_conditions=tuple(r[2]) if len(r) > 2 else (),
+        )
+        for r in reads
+    ] + [
+        CallSite(
+            caller="Fn",
+            callee=callee,
+            file="f.cpp",
+            line=l,
+            column=c,
+            receiver=recv,
+            args=tuple(args),
+        )
+        for callee, l, c, recv, args in calls
+    ]
+    ir = HostIR(
+        local_writes=writes,
+        call_sites=sites,
+        summaries={
+            "Fn": FuncSummary(name="Fn", locals=dict(local_defs or {})),
+        },
+    )
+    return KeyFieldDeriver(
+        host_ir=ir,
+        resolver=SourceResolver(host_ir=ir, local_roots={"R1": "INPUT_SHAPE"}),
+        var_model=VariableModel(),
+    )
+
+
+def _back_of_v(deriver):
+    from uo_init.cpp_expr import parse_expr
+
+    return deriver._last_push_dominates_back(parse_expr("v.back()"), "Fn")
+
+
+def test_the_last_push_before_a_back_read_is_its_value():
+    """`slicePrefix1.push_back(R1); … slicePrefix1.back()` — the source states
+    the value outright, and calling it unknown loses it for no reason."""
+    deriver = _back_deriver([(2, 5, "append", "R1", ())], [(4, 9)])
+    assert _pretty(_back_of_v(deriver)) == "R1"
+
+
+def test_a_push_after_the_read_is_not_its_value():
+    """Program order decides, not the presence of a push somewhere in the
+    function."""
+    deriver = _back_deriver([(9, 5, "append", "R1", ())], [(4, 9)])
+    assert _back_of_v(deriver) is None
+
+
+def test_a_clear_between_the_push_and_the_read_blocks_the_rewrite():
+    """The event that makes the answer `no` carries an empty RHS, which is why
+    this rule reads raw events instead of the filtered write index."""
+    deriver = _back_deriver(
+        [(2, 5, "append", "R1", ()), (3, 5, "shrink", "", ())], [(4, 9)]
+    )
+    assert _back_of_v(deriver) is None
+
+
+def test_a_whole_container_assignment_after_the_push_blocks_the_rewrite():
+    deriver = _back_deriver(
+        [(2, 5, "append", "R1", ()), (3, 5, "replace", "other", ())], [(4, 9)]
+    )
+    assert _back_of_v(deriver) is None
+
+
+def test_two_reads_of_back_in_one_function_block_the_rewrite():
+    """The expression IR carries no position, so with two reads there is no way
+    to tell which one is being expanded. Pinning the push's value to the wrong
+    read would assert an equality the source does not make."""
+    deriver = _back_deriver([(2, 5, "append", "R1", ())], [(4, 9), (7, 3)])
+    assert _back_of_v(deriver) is None
+
+
+def test_a_conditional_push_is_not_the_value_on_every_path():
+    """Reached only under a guard, so on the other path `back()` is whatever
+    was there before."""
+    from uo_init.clang_walk import PathCond
+
+    deriver = _back_deriver(
+        [(2, 5, "append", "R1", (PathCond("cond", False, "f.cpp", 1),))], [(4, 9)]
+    )
+    assert _back_of_v(deriver) is None
+
+
+def test_a_push_and_read_under_the_same_guard_still_rewrites():
+    """The real case: both sit inside the same `deterSparseType == DETER_BAND`
+    block. Demanding the push be unconditional would reject exactly the shape
+    this rule exists for."""
+    from uo_init.clang_walk import PathCond
+
+    guard = PathCond("sparse != BAND", True, "f.cpp", 1)
+    deriver = _back_deriver(
+        [(2, 5, "append", "R1", (guard,))], [(4, 9, (guard,))]
+    )
+    assert _pretty(_back_of_v(deriver)) == "R1"
+
+
+def test_a_push_guarded_more_tightly_than_the_read_does_not_rewrite():
+    """The push runs under an extra condition the read does not carry, so on
+    the other side of it `back()` is whatever was there before."""
+    from uo_init.clang_walk import PathCond
+
+    outer = PathCond("sparse != BAND", True, "f.cpp", 1)
+    inner = PathCond("g == 1", False, "f.cpp", 2)
+    deriver = _back_deriver(
+        [(3, 5, "append", "R1", (outer, inner))], [(5, 9, (outer,))]
+    )
+    assert _back_of_v(deriver) is None
+
+
+def test_a_push_behind_an_incompletely_recorded_guard_does_not_rewrite():
+    """`guard_clause` records less than the truth, so the guard comparison
+    cannot see every condition the push really runs under."""
+    from uo_init.clang_walk import PathCond
+
+    guard = PathCond("ptr == nullptr", True, "f.cpp", 1, kind="guard_clause")
+    deriver = _back_deriver(
+        [(2, 5, "append", "R1", (guard,))], [(4, 9, (guard,))]
+    )
+    assert _back_of_v(deriver) is None
+
+
+def test_a_push_inside_a_loop_is_not_a_known_last_element():
+    """Which element is last depends on the trip count, and textual order is
+    not program order across a back edge."""
+    from uo_init.clang_walk import PathCond
+
+    deriver = _back_deriver(
+        [(2, 5, "append", "R1", (PathCond("i < n", False, "f.cpp", 1, kind="for"),))],
+        [(4, 9)],
+    )
+    assert _back_of_v(deriver) is None
+
+
+def test_handing_the_container_to_a_callee_blocks_the_rewrite():
+    """A by-reference parameter can change the last element without leaving any
+    write event, so the absence of an event is not evidence here."""
+    deriver = _back_deriver(
+        [(2, 5, "append", "R1", ())],
+        [(4, 9)],
+        calls=[("Mutate", 3, 5, "", ("v",))],
+    )
+    assert _back_of_v(deriver) is None
+
+
+def test_an_unmodelled_method_call_on_the_container_blocks_the_rewrite():
+    deriver = _back_deriver(
+        [(2, 5, "append", "R1", ())],
+        [(4, 9)],
+        calls=[("shrink_to_fit", 3, 5, "v", ())],
+    )
+    assert _back_of_v(deriver) is None
+
+
+def test_a_read_only_method_call_on_the_container_still_allows_it():
+    """`v.size()` between the two does not change the last element."""
+    deriver = _back_deriver(
+        [(2, 5, "append", "R1", ())],
+        [(4, 9)],
+        calls=[("size", 3, 5, "v", ())],
+    )
+    assert _pretty(_back_of_v(deriver)) == "R1"
+
+
+def test_a_push_on_the_same_line_before_the_read_still_counts():
+    """`prefix0.push_back(x); … prefix0.back()` share a line in FAG, so the
+    column is what orders them."""
+    deriver = _back_deriver([(4, 5, "append", "R1", ())], [(4, 30)])
+    assert _pretty(_back_of_v(deriver)) == "R1"
+
+
+def test_a_push_later_on_the_same_line_is_not_the_read_value():
+    deriver = _back_deriver([(4, 30, "append", "R1", ())], [(4, 5)])
+    assert _back_of_v(deriver) is None
+
+
+def test_a_member_container_is_never_rewritten_this_way():
+    """`deterPrefixData.prefix1` is appended to in six functions and any callee
+    reaches it through `this`, so one function's events cannot show that
+    nothing intervened."""
+    from uo_init.cpp_expr import parse_expr
+
+    deriver = _back_deriver([(2, 5, "append", "R1", ())], [(4, 9)])
+    out = deriver._last_push_dominates_back(
+        parse_expr("deterPrefixData.prefix1.back()"), "Fn"
+    )
+    assert out is None
+
+
+def _pretty(e):
+    from uo_init.derive_key_fields import _pretty_dag
+
+    return _pretty_dag(e)

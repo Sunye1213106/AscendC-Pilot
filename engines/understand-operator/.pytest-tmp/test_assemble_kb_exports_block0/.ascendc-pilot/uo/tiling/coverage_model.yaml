@@ -1,0 +1,36 @@
+coverage_policy: clang_layered_kb
+family_obligations:
+- family_id: FAM_DEFAULT
+  id: COV_FAM_DEFAULT
+key_field_obligations: {}
+key_fields: []
+key_relation_obligations: []
+op_name: MyOp
+quality:
+  blocker_count: 1
+  details:
+    closed_nodes: 96
+    controllable_nodes: 0
+    input_controllability: 0.0
+    note: source_closure counts any legal root; input_controllability counts only
+      roots a test case can set
+    open_nodes: 1
+    partial_nodes: 0
+    predicate_normalization: 0.0
+    reason_histogram: {}
+    root_histogram: {}
+    source_closure: 0.96
+    total_nodes: 100
+  edge_count: 0
+  evidence_count: 2
+  extracted_node_count: 1
+  graph_fingerprint: fdfaa85c7157079be2d1b2c79e8121673487e9945a93b5ee6d30e35df1d443dc
+  input_controllability: 0.0
+  node_count: 1
+  predicate_normalization: 0.0
+  source_closure: 0.96
+  status: partial
+  unresolved_node_count: 0
+  version: 1
+status: not_extracted
+version: 1

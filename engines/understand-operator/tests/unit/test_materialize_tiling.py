@@ -31,14 +31,21 @@ def test_legal_keys_unique_and_roundtrip():
     if not HEADER.is_file():
         return
     schema = parse_file(HEADER)
-    rows = build_legal_key_rows(
-        schema, binding=None, blocker_ids=[], input_controllable_fraction=0.2
-    )
+    rows = build_legal_key_rows(schema, binding=None, blocker_ids=[])
     assert len(rows) == 8705
     assert len({r.tiling_key for r in rows}) == 8705
     for row in rows[:20]:
         dec = schema.decode_tiling_key(row.tiling_key)
         assert all(dec[k] == row.dims[k] for k in row.dims)
+
+
+def test_the_template_product_alone_never_claims_a_key_is_reachable():
+    """8705 is how many keys are spellable, not how many a host run produces."""
+    if not HEADER.is_file():
+        return
+    schema = parse_file(HEADER)
+    rows = build_legal_key_rows(schema, binding=None, blocker_ids=[])
+    assert {r.status for r in rows} == {"underivable"}
 
 
 def test_materialize_into_kb_writes_notes():

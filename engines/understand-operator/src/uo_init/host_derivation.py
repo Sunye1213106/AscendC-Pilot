@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from uo_init.derive_key_fields import (
+    EX_CONSTANT,
     EX_EXACT,
     EX_UNRESOLVED,
     LOOPELEM_PREFIX,
@@ -39,6 +40,7 @@ from uo_init.derive_key_fields import (
     encode_expr_dag,
 )
 from uo_init.ids import hash12
+from uo_init.kb_model import classify_input_closure, input_closure_is_drivable
 
 DERIVATION_VERSION = 1
 
@@ -72,11 +74,18 @@ PRESORTS = (
 # guessing at something the source states outright, so they are tracked as
 # unclosed — they still count as over-approximations — and fixed by analysis.
 #
-# Loop-element guards are deliberately *not* here. What a loop establishes about
-# the container it fills is a quantified statement this analysis does not
-# compute, so unlike reachability it is not a gap that more source reading
-# closes — which makes it the one bucket a judgement call genuinely belongs to.
-NON_ESCALATING = frozenset({PRESORT_SCHEDULING, PRESORT_REACHABILITY})
+# Loop-element guards used to be excluded from this set, on the theory that a
+# quantified statement about a container is a judgement call. Reading the source
+# disproved it: all six surviving loop elements in FAG are computed from the
+# operator's own inputs — `invalidS1Array[j]` is interval coverage over sparse
+# bands, `parseInfo[i][LENGTH_IDX]` is a prefix sum, `size(syncRounds)` is a
+# filtered count. Nothing is unknown; what is missing is the ability to *reason*
+# about aggregation, and a model asked "is this input-derived?" would answer yes
+# without that making the expression any more solvable. So they are tracked as
+# over-approximations until the summaries land (P2).
+NON_ESCALATING = frozenset(
+    {PRESORT_SCHEDULING, PRESORT_REACHABILITY, PRESORT_LOOP_ELEMENT}
+)
 
 # Platform quantities are locked by the CANN profile (K5). One still showing up
 # undecided means the fold missed it, which is a real gap.
@@ -242,6 +251,19 @@ def encode_function(host_ir: Any, site: Any) -> str:
     return max(near, key=lambda w: w.line).function if near else ""
 
 
+def _as_int(text: Any) -> int | None:
+    """Numeric value of a rendered constant, or None if it stays symbolic."""
+    s = str(text).strip()
+    if s in ("True", "true"):
+        return 1
+    if s in ("False", "false"):
+        return 0
+    try:
+        return int(s, 0)
+    except ValueError:
+        return None
+
+
 # -- records ---------------------------------------------------------------
 @dataclass
 class UndecidedGuard:
@@ -304,6 +326,48 @@ class FieldDerivation:
     def escalating(self) -> list[UndecidedGuard]:
         return [g for g in self.undecided_guards if g.escalate]
 
+    @property
+    def domain_violations(self) -> list[str]:
+        """Values the field can take that the template never declared.
+
+        A generic sentinel for "derivation disagrees with the TPL contract". It
+        fires on `OutDType` here: the template declares 0-3, but the FP8 and
+        HiFloat8 paths write 4/5/6 into the key. That is an operator-side
+        inconsistency, not a derivation bug — the derivation is what exposes it.
+
+        Only leaves that resolve to a number are judged. `value_leaves` also
+        carries unfolded enum spellings (`DtypeEnum::FLOAT32`, `TILING_KEY_1`),
+        and counting those as out-of-domain would flag all 19 dimensions and
+        make the check useless. So this is a lower bound on the real conflicts.
+        """
+        allowed = {n for n in (_as_int(v) for v in self.domain) if n is not None}
+        if not allowed:
+            return []
+        bad = {n for n in (_as_int(v) for v in self.value_leaves) if n is not None}
+        return [str(n) for n in sorted(bad - allowed)]
+
+    @property
+    def input_closure(self) -> str:
+        """Whether a test case can drive this field, which `exactness` cannot say.
+
+        Derived from `root_vars` rather than stored so the two can never
+        disagree. See `kb_model.classify_input_closure`.
+        """
+        return classify_input_closure(self.root_vars)
+
+    @property
+    def input_derivable(self) -> bool:
+        """Closed *and* drivable — the single question a generator should ask.
+
+        The old rule was `status == "derived" and bool(root_vars)`, which passed
+        any non-empty root set. Four dimensions here close onto `TILING_DATA`
+        alone, so a generator was told it controlled them while nothing it can
+        set reaches them.
+        """
+        return self.exactness in (EX_EXACT, EX_CONSTANT) and input_closure_is_drivable(
+            self.input_closure
+        )
+
     def unrecorded_free_vars(self) -> list[str]:
         """Over-approximations in `value_expr` that no guard record explains.
 
@@ -322,6 +386,8 @@ class FieldDerivation:
             "index": self.index,
             "status": self.status,
             "exactness": self.exactness,
+            "input_closure": self.input_closure,
+            "input_derivable": self.input_derivable,
             "free_vars": list(self.free_vars),
             "host_expr": self.host_expr,
             "domain": list(self.domain),
@@ -329,6 +395,7 @@ class FieldDerivation:
             # `encode_expr_dag`. Read it back with `decode_expr_dag`.
             "value_expr": encode_expr_dag(self.value_expr),
             "value_leaves": list(self.value_leaves),
+            "domain_violations": self.domain_violations,
             "root_vars": list(self.root_vars),
             "variables": list(self.variables),
             "undecided_guards": [g.to_dict() for g in self.undecided_guards],
@@ -368,6 +435,10 @@ class HostDerivation:
             "unrecorded_free_vars": len(
                 {v for f in self.fields for v in f.unrecorded_free_vars()}
             ),
+            "input_derivable": sum(1 for f in self.fields if f.input_derivable),
+            # Operator-side contract conflicts, reported not gated: the template
+            # and the host disagree, and neither is ours to change.
+            "domain_violations": sum(1 for f in self.fields if f.domain_violations),
             "implicit_defaults": sum(len(f.implicit_defaults) for f in self.fields),
             "undecided": sum(len(f.undecided_guards) for f in self.fields),
             "scheduling": sum(
@@ -550,8 +621,42 @@ def _to_field(
     )
 
 
+#: How to re-declare a softened guard, by the bucket it was sorted into. This
+#: has to reproduce what the worker declared: a loop element is an unbounded
+#: int (`_truthy` renders it as `!= 0`, which only type-checks as an int) while
+#: the other soft variables really are booleans. Declaring them all bool used
+#: to rewrite the loop-element variables' type and origin behind the caller's
+#: back, which then made them look interchangeable across dimensions.
+_SOFT_VAR_KINDS: dict[str, dict[str, Any]] = {
+    PRESORT_LOOP_ELEMENT: {
+        "type": "int",
+        "origin": "LOOP_ELEMENT",
+        "source": "loop_local_element",
+        "merged": True,
+    },
+    PRESORT_SCHEDULING: {
+        "type": "bool",
+        "origin": "SCHED_SOFT",
+        "source": "scheduling_guard",
+        "merged": False,
+    },
+    PRESORT_REACHABILITY: {
+        "type": "bool",
+        "origin": "REACHED_SOFT",
+        "source": "reachability_guard",
+        "merged": False,
+    },
+    "": {
+        "type": "bool",
+        "origin": "UNDECIDED_GUARD",
+        "source": "undecidable_guard",
+        "merged": False,
+    },
+}
+
+
 def _reregister_soft_vars(var_model: Any, doc: HostDerivation) -> None:
-    """Re-declare the free booleans the workers created.
+    """Re-declare the free variables the workers created.
 
     Softening happens inside the child process, so the parent's model never
     sees those `VarSpec`s. The solver needs them declared, and the patch
@@ -564,28 +669,21 @@ def _reregister_soft_vars(var_model: Any, doc: HostDerivation) -> None:
         for guard in fld.undecided_guards:
             if var_model.get(guard.var_id) is not None:
                 continue
-            source = (
-                "scheduling_guard"
-                if guard.presort == PRESORT_SCHEDULING
-                else "undecidable_guard"
-            )
+            kind = _SOFT_VAR_KINDS.get(guard.presort) or _SOFT_VAR_KINDS[""]
             var_model.add(
                 VarSpec(
                     var_id=guard.var_id,
                     name=guard.var_id,
-                    value_type="bool",
+                    value_type=kind["type"],
                     domain=Domain(
                         var_id=guard.var_id,
-                        value_type="bool",
+                        value_type=kind["type"],
                         completeness="open",
-                        source=source,
+                        source=kind["source"],
                     ),
-                    origin=(
-                        "SCHED_SOFT"
-                        if guard.presort == PRESORT_SCHEDULING
-                        else "UNDECIDED_GUARD"
-                    ),
+                    origin=kind["origin"],
                     description=f"{guard.reason}: {guard.text[:160]}",
+                    identity_merged=bool(kind["merged"]),
                 )
             )
 
@@ -686,7 +784,8 @@ def to_key_derivations(doc: HostDerivation) -> dict[str, Any]:
                 "value_leaves": list(f.value_leaves),
                 "root_vars": list(f.root_vars),
                 "variables": list(f.variables),
-                "input_derivable": f.status == "derived" and bool(f.root_vars),
+                "input_closure": f.input_closure,
+                "input_derivable": f.input_derivable,
                 "undecided_guard_ids": [g.id for g in f.undecided_guards],
             }
             for f in doc.fields

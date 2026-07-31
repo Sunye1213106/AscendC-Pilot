@@ -224,10 +224,12 @@ def export_kb(kb: KnowledgeBase, uo_root: str | Path) -> dict[str, Any]:
             "keys": {
                 str(d.get("name")): {
                     "id": d.get("id"),
-                    "input_derivable": (
-                        ((kb.notes.get("tiling_materialize") or {}).get("input_realization_mode"))
-                        == "host_derivation"
-                    ),
+                    # Per-dimension, from the derivation. Reading the realization
+                    # *mode* instead marked all 19 dimensions derivable whenever
+                    # any binding existed, including the ones that close onto
+                    # host state a generator cannot set.
+                    "input_derivable": bool(d.get("input_derivable")),
+                    "input_closure": d.get("input_closure") or "",
                     "completeness": d.get("completeness") or "closed",
                 }
                 for d in dimensions
@@ -313,6 +315,12 @@ def export_kb(kb: KnowledgeBase, uo_root: str | Path) -> dict[str, Any]:
             "version": FORMAT_VERSION,
             "status": "extracted" if legal_keys else "not_extracted",
             "legal_key_count": len(legal_keys),
+            "status_counts": dict(mat.get("key_status_counts") or {}),
+            # Which dimensions the solver could actually use, and which
+            # variables it had to isolate. Without this the counts below cannot
+            # be read: `unknown` means something different when 10 of 19
+            # dimensions never entered the conjunction.
+            "solver": dict(mat.get("reachability") or {}),
             "keys": legal_keys,
         },
         "tiling/data_model.yaml": _view(

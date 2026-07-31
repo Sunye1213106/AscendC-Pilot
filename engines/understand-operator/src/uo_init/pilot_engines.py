@@ -814,6 +814,7 @@ def apply_gap_patch(project_root: Path, payload: dict[str, Any] | None = None) -
         bundle["host_derivation"] = before_doc
     before_derived = sum(1 for f in before_doc.fields if f.status == "derived")
     before_escalating = sum(len(f.escalating) for f in before_doc.fields)
+    before_free = len({v for f in before_doc.fields for v in f.free_vars})
 
     merged, accepted, rejected = merge_accepted(
         existing, verdicts, blockers=blockers
@@ -825,9 +826,15 @@ def apply_gap_patch(project_root: Path, payload: dict[str, Any] | None = None) -
     )
     metrics = apply_bindings_to_derivation(after_doc, merged)
     after_derived = sum(1 for f in after_doc.fields if f.status == "derived")
+    after_free = len({v for f in after_doc.fields for v in f.free_vars})
+    # A round has to shrink the questions without growing what is unexplained.
+    # Counting only `derived` and `escalating` let a patch trade one for the
+    # other: strike guards off the record, leave their variables in the
+    # expressions, and both tracked numbers still improve.
     loop_ok = (
         after_derived >= before_derived
         and metrics["escalating_after"] < before_escalating
+        and after_free <= before_free
     )
     if accepted and not loop_ok:
         # Roll back: keep only previously existing bindings.
@@ -839,7 +846,8 @@ def apply_gap_patch(project_root: Path, payload: dict[str, Any] | None = None) -
                     "code": "loop_regression",
                     "message": (
                         f"derived {before_derived}->{after_derived}, "
-                        f"escalating {before_escalating}->{metrics['escalating_after']}"
+                        f"escalating {before_escalating}->{metrics['escalating_after']}, "
+                        f"free_vars {before_free}->{after_free}"
                     ),
                 }
             ]
@@ -851,6 +859,7 @@ def apply_gap_patch(project_root: Path, payload: dict[str, Any] | None = None) -
             "escalating_after": before_escalating,
             "resolved": 0,
             "softened": 0,
+            "reverted": 0,
         }
     else:
         bundle["host_derivation"] = after_doc
@@ -866,6 +875,8 @@ def apply_gap_patch(project_root: Path, payload: dict[str, Any] | None = None) -
         "loop": {
             "derived_before": before_derived,
             "derived_after": after_derived,
+            "free_vars_before": before_free,
+            "free_vars_after": after_free,
             **metrics,
             "ok": loop_ok if accepted else True,
         },
@@ -918,6 +929,9 @@ def export_kb_action(project_root: Path, payload: dict[str, Any] | None = None) 
                 )
         if not kbr:
             kbr = list(fold.get("kernel_branch_ids") or [])
+        from uo_init.host_derivation import HostDerivation, to_key_derivations
+
+        derivation = bundle.get("host_derivation")
         kb = assemble_kb(
             op_name=bundle["spec"].op_name,
             architecture=bundle["spec"].arch_dir or "",
@@ -928,18 +942,27 @@ def export_kb_action(project_root: Path, payload: dict[str, Any] | None = None) 
             binding=bundle.get("binding"),
             kernel_branches=kbr,
             notes={"kernel_fold": fold},
+            # Without these the key space is never materialized at all, and
+            # `legal_key_index.jsonl` keeps whatever a previous run left. The
+            # derivation is what turns the template product into a reachability
+            # answer; absent it every key is reported `underivable`.
+            tpl_schema=bundle.get("tpl_schema"),
+            var_model=bundle.get("var_model"),
+            derivation=derivation,
+            tpl_header=bundle.get("tpl_header") or "",
         )
         receipt = export_operator_kb(kb, root)
         receipt["engine"] = "export_kb"
         receipt["source_closure"] = bundle["metrics"].source_closure
         receipt["blocker_count"] = len(bundle["gap"].blockers)
         receipt["kernel_branch_count"] = len(kbr)
+        materialized = kb.notes.get("tiling_materialize")
+        if isinstance(materialized, dict) and materialized.get("ok"):
+            receipt["key_status_counts"] = dict(materialized["key_status_counts"])
+            receipt["reachability"] = dict(materialized["reachability"])
         # Re-emit the TG contract if derive_key_fields already ran in this process.
         # export_kb does not wipe tiling/key_derivations.yaml, but a fresh
         # in-memory derivation is the authoritative view.
-        from uo_init.host_derivation import HostDerivation, to_key_derivations
-
-        derivation = bundle.get("host_derivation")
         if isinstance(derivation, HostDerivation):
             _dump(uo / "tiling" / "key_derivations.yaml", to_key_derivations(derivation))
             receipt["key_derivations"] = derivation.status

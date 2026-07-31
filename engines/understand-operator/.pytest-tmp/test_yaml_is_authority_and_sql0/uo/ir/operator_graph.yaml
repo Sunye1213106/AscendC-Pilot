@@ -1,0 +1,90 @@
+architecture: arch35
+blockers: []
+domains:
+  VAR_KEY_MODE:
+    completeness: closed
+    domain:
+    - 0
+    - 1
+    source: template_key
+    type: enum
+edges:
+- confidence: 1.0
+  dst: HBR_0123456789AB
+  id: REL_0781EEA8DBD4
+  kind: controls
+  src: VAR_KEY_MODE
+  status: extracted
+- confidence: 1.0
+  dst: HBR_0123456789AB
+  id: REL_6DB346145464
+  kind: guards
+  src: CON_927736A17EBB
+  status: extracted
+- confidence: 1.0
+  dst: VAR_KEY_MODE
+  id: REL_F3F2FB938AC9
+  kind: encodes
+  src: KEY_MODE
+  status: extracted
+evidence:
+- file: op_host/sample_tiling.cpp
+  id: EV_2CEDD7C8914E
+  line_end: 10
+  line_start: 10
+  snippet: KEY_MODE
+  source_hash: ''
+- file: op_host/sample_tiling.cpp
+  id: EV_76E96C17AA7C
+  line_end: 30
+  line_start: 30
+  snippet: if (mode == 1)
+  source_hash: ''
+fingerprint: 4dfbf322e88690df848204ccce1a9f43163e891ff07dac0899b4bd7c8e6e4f78
+nodes:
+- confidence: 1.0
+  evidence_refs:
+  - EV_76E96C17AA7C
+  id: CON_927736A17EBB
+  kind: Predicate
+  layer: constraints
+  name: mode == 1
+  owner_id: HBR_0123456789AB
+  polarity: true
+  smt:
+    op: eq
+    value: 1
+    var: VAR_KEY_MODE
+  status: extracted
+- confidence: 1.0
+  evidence_refs:
+  - EV_76E96C17AA7C
+  id: HBR_0123456789AB
+  kind: HostBranch
+  layer: host
+  name: mode branch
+  status: extracted
+- confidence: 1.0
+  evidence_refs:
+  - EV_2CEDD7C8914E
+  id: KEY_MODE
+  kind: TilingKeyDim
+  layer: tiling
+  name: mode
+  status: extracted
+- confidence: 1.0
+  evidence_refs:
+  - EV_2CEDD7C8914E
+  id: VAR_KEY_MODE
+  kind: Variable
+  layer: variables
+  name: key_mode
+  status: extracted
+notes:
+  quality:
+    input_controllability: 1.0
+    predicate_normalization: 1.0
+    source_closure: 1.0
+op_name: SampleOp
+status: extracted
+version: 1

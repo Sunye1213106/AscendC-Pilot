@@ -48,6 +48,12 @@ class PathCond:
     negated: bool
     file: str
     line: int
+    #: What kind of statement put this guard on the path — `if`, `ternary`,
+    #: `switch`, a loop (`for` / `while` / `do` / `cxx_for_range`), or
+    #: `guard_clause` for the negation implied by an earlier `if (c) return;`.
+    #: Loop and switch guards also spell their kind into `text`, but only as
+    #: text: this is what lets a reader tell them apart without parsing it out.
+    kind: str = "if"
 
     def pretty(self) -> str:
         text = self.text or "<macro-expanded>"
@@ -57,6 +63,29 @@ class PathCond:
     def is_opaque(self) -> bool:
         """True when the guard came from a macro expansion with no readable text."""
         return not self.text.strip()
+
+    @property
+    def is_decision(self) -> bool:
+        """True when this guard splits paths two ways, so its negation is the
+        other way and the two together cover everything.
+
+        A loop guard says "on some iteration" and a `switch` case is one of
+        many with no promise of a `default`, so neither can be paired with a
+        negation that way.
+        """
+        return self.kind in ("if", "ternary", "guard_clause")
+
+    @property
+    def records_what_follows(self) -> bool:
+        """True when everything further down this path was also recorded.
+
+        False for `guard_clause`, which is the negation implied by an
+        `if (c) { return; } else if (…) { … }`: only `c` gets negated onto the
+        path, never the chain's own conditions, so the recorded guard is weaker
+        than the truth and running out of the path proves nothing. The same
+        `if` without an else chain records `!c` in full and is not marked.
+        """
+        return self.kind != "guard_clause"
 
 
 @dataclass
@@ -82,6 +111,18 @@ class WriteRecord:
     file: str
     function: str = ""
     path_conditions: tuple[PathCond, ...] = ()
+    #: How the write changes the destination. Consumers that chase a value need
+    #: `assign` / `replace` (the RHS *is* the new value) apart from `append`
+    #: (the RHS is one element, and the container's value is the whole
+    #: sequence), and both apart from `opaque` — a change we recognised but
+    #: cannot describe. Without the distinction, `size(v)` resolves to the value
+    #: of whichever element was pushed last, and a `clear()` we failed to model
+    #: is indistinguishable from no write at all.
+    kind: str = "assign"
+    #: Same reason `CallSite` carries one: ordering a write against a read on
+    #: the same line needs the column. Deciding whether a `push_back` is the
+    #: last change before a `back()` is exactly that question.
+    column: int = 0
 
 
 @dataclass(frozen=True)
@@ -100,9 +141,20 @@ class CallSite:
     line: int
     args: tuple[str, ...] = ()
     path_conditions: tuple[PathCond, ...] = ()
+    #: For a C++ member call, the object it was called on. Not derivable from
+    #: `args`: clang does not put the receiver among a member call's arguments,
+    #: so without this `v.clear()` records as `callee='clear', args=()` and
+    #: there is no way to learn which container was emptied.
+    receiver: str = ""
+    #: One line can hold several calls on the same container —
+    #: `prefix0.push_back(x)` and `prefix0.back()` share a line in FAG. Ordering
+    #: them needs the column; the line alone cannot say which ran first.
+    column: int = 0
 
 
-_CONTAINER_MUTATORS = frozenset(
+#: Methods that add to a container. The argument is one element, never the
+#: container's new value — see `WriteRecord.kind`.
+_CONTAINER_APPENDERS = frozenset(
     {
         "push_back",
         "emplace_back",
@@ -113,6 +165,40 @@ _CONTAINER_MUTATORS = frozenset(
         "append",
     }
 )
+
+#: Methods that change a container's length without naming the new contents.
+#: They used to leave no trace at all, which made "the container held still"
+#: indistinguishable from "we did not look". Recorded with an empty RHS and
+#: `kind` from `_MUTATOR_KINDS` so the change is at least *visible*.
+_CONTAINER_SHRINKERS = frozenset({"clear", "pop_back", "pop_front", "erase", "resize"})
+
+#: Methods that replace a container's contents wholesale.
+_CONTAINER_REPLACERS = frozenset({"assign", "swap"})
+
+_MUTATOR_KINDS = {
+    **{m: "append" for m in _CONTAINER_APPENDERS},
+    **{m: "shrink" for m in _CONTAINER_SHRINKERS},
+    **{m: "replace" for m in _CONTAINER_REPLACERS},
+}
+
+_CONTAINER_MUTATORS = frozenset(_MUTATOR_KINDS)
+
+
+@dataclass(frozen=True)
+class FieldDecl:
+    """A data member's declaration and whatever it initialises itself to.
+
+    `init` is `None` when the member has no in-class initialiser at all — its
+    value before the first write is then indeterminate, which is a stronger
+    statement than "we did not look". A member missing from the table entirely
+    is the "did not look" case.
+    """
+
+    host: str
+    name: str
+    init: str | None
+    file: str
+    line: int
 
 
 @dataclass
@@ -132,6 +218,9 @@ class FuncRecord:
     returns: list[str] = field(default_factory=list)
     # local_name → RHS of the *last* assignment (last write wins)
     assigns: dict[str, str] = field(default_factory=dict)
+    # container path → every element appended to it, in order. Deliberately not
+    # in `assigns`: an element is not the container's value.
+    appends: dict[str, list[str]] = field(default_factory=dict)
     # local_name → every RHS seen in order (init + assigns); enables cycle-safe chase
     assign_lists: dict[str, list[str]] = field(default_factory=dict)
 
@@ -155,6 +244,11 @@ class WalkResult:
     # data members declared by the tiling classes in this TU: a bare identifier
     # naming one of these is really `this->name`
     class_fields: set[str] = field(default_factory=set)
+    #: (declaring struct, member) -> its declaration. Keyed on the struct too
+    #: because member names collide freely: `b` is declared by six different
+    #: structs here, and the generated tiling-data ones all say `= 0`. Reading a
+    #: bare name would turn "cannot prove" into "proved to be zero".
+    field_decls: dict[tuple[str, str], FieldDecl] = field(default_factory=dict)
 
     @property
     def error_count(self) -> int:
@@ -312,6 +406,33 @@ def _is_out_param(cursor) -> bool:
     return False
 
 
+def _receiver_path(cursor, method: str) -> str:
+    """The object a member call was made on, as a dotted path.
+
+    Clang does not list the receiver among a member call's arguments, so this
+    reads it off the callee child: a member call's first child is a
+    MemberRefExpr whose own base is the object.
+
+    A free function has no receiver and has to come back empty. That is why
+    only two shapes are accepted — the MemberRefExpr above, and a member
+    reference already flattened into the path text so that it ends in the
+    method name. Accepting any dotted path from the first child would report
+    `std::max(a.b, c)` as a call on `a.b`, because the namespace refs are
+    skipped and the next child is an argument.
+    """
+    for ch in cursor.get_children():
+        kn = ch.kind.name
+        if kn == "MEMBER_REF_EXPR" and (ch.spelling or "") == method:
+            bases = list(ch.get_children())
+            return member_path(bases[0]) if bases else ""
+        if kn in ("MEMBER_REF_EXPR", "DECL_REF_EXPR", "UNEXPOSED_EXPR"):
+            cand = member_path(ch)
+            if cand.endswith("." + method):
+                return cand[: -(len(method) + 1)]
+            return ""
+    return ""
+
+
 def _host_field_allowed(file: str | None, side: str) -> bool:
     """Host analysis must ignore kernel-header FIELD_DECL pollution."""
     if side != "host":
@@ -380,6 +501,7 @@ class _Walker:
         self.call_sites: list[CallSite] = []
         self.functions: dict[str, FuncRecord] = {}
         self.class_fields: set[str] = set()
+        self.field_decls: dict[tuple[str, str], FieldDecl] = {}
         self.macro_idioms = 0
         self._ordinal: dict[tuple[str, int, str], int] = {}
         # induction variables of every loop currently enclosing the cursor
@@ -394,6 +516,36 @@ class _Walker:
         n = self._ordinal.get(key, 0)
         self._ordinal[key] = n + 1
         return f"{file}:{line}:{col}:{kind}:{n}"
+
+    def _record_field_decl(self, cursor, file: str) -> None:
+        """Record a data member's in-class initialiser, or its absence."""
+        parent = cursor.semantic_parent
+        host = (parent.spelling if parent is not None else "") or ""
+        if not host:
+            # An anonymous struct or union. Without a name for the declaring type
+            # there is no key that tells its members apart from anyone else's.
+            return
+        init: str | None = None
+        children = [
+            c
+            for c in cursor.get_children()
+            if c.kind.name not in ("TYPE_REF", "TEMPLATE_REF", "NAMESPACE_REF")
+        ]
+        if children:
+            text = _text_of(children[-1], EXPR_TOKENS)
+            if text.startswith("{") and text.endswith("}"):
+                text = text[1:-1].strip()
+            init = text or None
+        self.field_decls.setdefault(
+            (host, cursor.spelling),
+            FieldDecl(
+                host=host,
+                name=cursor.spelling,
+                init=init,
+                file=file,
+                line=cursor.location.line,
+            ),
+        )
 
     def _record_var_decl(self, cursor, func: str, stack=()) -> None:
         if not func or func not in self.functions:
@@ -420,17 +572,26 @@ class _Walker:
                 cursor.spelling, text, cursor, file, func, stack
             )
 
-    def _record_local_write(self, name, rhs, cursor, file, func, stack) -> None:
-        if not (name and rhs and file) or rhs == name:
+    def _record_local_write(
+        self, name, rhs, cursor, file, func, stack, kind: str = "assign"
+    ) -> None:
+        # A write that names its new value is worthless without the value, so
+        # those are still dropped. A length change has no value to name, and
+        # dropping it would hide the change itself.
+        if not (name and file):
+            return
+        if kind in ("assign", "append") and (not rhs or rhs == name):
             return
         self.local_writes.append(
             WriteRecord(
                 path=name,
                 line=cursor.location.line,
+                column=cursor.location.column,
                 rhs=rhs,
                 file=file,
                 function=func,
                 path_conditions=tuple(stack),
+                kind=kind,
             )
         )
 
@@ -473,7 +634,9 @@ class _Walker:
         if any(args):
             self.functions[func].calls.append((callee, args))
         # Recorded for every call, including argument-less ones: reachability
-        # is about whether the call happens, not about what is passed.
+        # is about whether the call happens, not about what is passed. The
+        # receiver matters for the same reason — `v.clear()` passes nothing and
+        # changes everything.
         self.call_sites.append(
             CallSite(
                 caller=func,
@@ -482,6 +645,13 @@ class _Walker:
                 line=cursor.location.line,
                 args=args,
                 path_conditions=tuple(stack),
+                # Not gated on a member-call cursor kind: this libclang reports
+                # `v.clear()` as a plain CALL_EXPR and has no
+                # CXX_MEMBER_CALL_EXPR in `CursorKind` at all, so gating on it
+                # left every receiver empty. `_receiver_path` returns "" for a
+                # free function, which is the only distinction needed.
+                receiver=_receiver_path(cursor, callee),
+                column=cursor.location.column,
             )
         )
 
@@ -641,6 +811,7 @@ class _Walker:
         rec = WriteRecord(
             path=path,
             line=cursor.location.line,
+            column=cursor.location.column,
             rhs=rhs,
             file=file,
             function=func,
@@ -657,67 +828,70 @@ class _Walker:
                         fr.reads.append(p)
 
     def _record_container_write(self, cursor, stack, func: str) -> None:
-        """push_back / emplace_back / insert → WriteEvent on the container path."""
+        """A container mutation → WriteEvent on the container path.
+
+        Appends carry the pushed element as the RHS. Length changes
+        (`clear` / `pop_back` / `erase` / `resize`) and wholesale replacements
+        (`assign` / `swap`) carry no readable new value, and are recorded with an
+        empty RHS purely so that "the container changed here" is visible: a
+        `clear()` that leaves no trace is indistinguishable from no write, and
+        anything reasoning about `back(v)` would then be reasoning about a write
+        sequence it cannot see.
+        """
         if not func or func not in self.functions:
             return
         file = _file_of(cursor)
         if not self._in_scope(file):
             return
         method = cursor.spelling or ""
-        if method not in _CONTAINER_MUTATORS:
+        kind = _MUTATOR_KINDS.get(method)
+        if kind is None:
             return
         try:
             args = list(cursor.get_arguments())
         except Exception:
             return
-        if not args:
+        if kind == "append" and not args:
             return
-        # Callee is typically the first child: MemberRefExpr whose base is the container.
-        path = ""
-        for ch in cursor.get_children():
-            kn = ch.kind.name
-            if kn == "MEMBER_REF_EXPR" and (ch.spelling or "") in _CONTAINER_MUTATORS:
-                bases = list(ch.get_children())
-                if bases:
-                    path = member_path(bases[0])
-                break
-            if kn in ("MEMBER_REF_EXPR", "DECL_REF_EXPR", "UNEXPOSED_EXPR"):
-                cand = member_path(ch)
-                if cand.count(".") >= 1 and not cand.endswith("." + method):
-                    path = cand
-                    break
-                if cand.endswith("." + method):
-                    path = cand[: -(len(method) + 1)]
-                    break
+        path = _receiver_path(cursor, method)
         if not path:
             return
-        rhs = _text_of(args[0], EXPR_TOKENS)
-        if not rhs:
+        rhs = _text_of(args[0], EXPR_TOKENS) if kind == "append" and args else ""
+        if kind == "append" and not rhs:
             return
         assert file is not None
         fr = self.functions[func]
-        # Local containers are SSA state too. Recording their inserted value
-        # lets ``items.size()/find()/empty()`` and out-parameter containers
-        # resolve back to the source of their elements.
-        fr.assigns[path] = rhs
-        hist = fr.assign_lists.setdefault(path, [])
-        if rhs not in hist:
-            hist.append(rhs)
+        if rhs:
+            # Local containers are SSA state too. Recording their inserted value
+            # lets ``items.size()/find()/empty()`` and out-parameter containers
+            # resolve back to the source of their elements.
+            #
+            # Kept apart from `assigns` on purpose. An appended element is not
+            # the container's value, and while it lived in `assigns` the
+            # container's *definition* was whichever element was pushed last —
+            # `assigns['slicePrefix1'] == 'R1'`. Every consumer of
+            # `defs_by_function()` would then resolve `size(v)` or `v` itself to
+            # one element's value.
+            hist = fr.appends.setdefault(path, [])
+            if rhs not in hist:
+                hist.append(rhs)
         if path.count(".") < 1:
             # A bare name is a function-local `std::set`/`vector`, not tiling
             # data — `_record_write` already draws that line for `=`. Without
             # it here, `scratch.insert(x)` became an ownerless WriteRecord that
             # tail-matching could then attribute to a real tiling field.
-            self._record_local_write(path, rhs, cursor, file, func, stack)
+            self._record_local_write(path, rhs, cursor, file, func, stack, kind=kind)
             return
         self.writes.append(
             WriteRecord(
                 path=path,
                 line=cursor.location.line,
+                column=cursor.location.column,
                 rhs=rhs,
                 file=file,
                 function=func,
                 path_conditions=tuple(stack),
+                kind=kind,
             )
         )
         if path not in fr.writes:
@@ -780,8 +954,13 @@ class _Walker:
                 and _host_field_allowed(file, self.side)
             ):
                 self.class_fields.add(cursor.spelling)
+                self._record_field_decl(cursor, file)
         elif kind_name == "VAR_DECL":
             self._record_var_decl(cursor, func, stack)
+        # `CXX_MEMBER_CALL_EXPR` is not a kind this libclang has — `v.clear()`
+        # arrives as a plain CALL_EXPR, and `CursorKind` has no such member at
+        # all. Kept for bindings that do expose it; do not read it as evidence
+        # that member calls are dispatched separately here.
         elif kind_name in ("CALL_EXPR", "CXX_MEMBER_CALL_EXPR"):
             self._record_call(cursor, func, stack)
             if self.collect_writes:
@@ -827,21 +1006,47 @@ class _Walker:
         rhs_text = _text_of(rhs, EXPR_TOKENS)
         if self._record_tie_unpack(lhs, rhs_text, func):
             return
-        # Plain `local = expr` via overloaded operator= — rare for ints
         path = member_path(lhs)
         if (
-            path.count(".") < 1
-            and path
-            and path not in ("tie", "make_tuple", "forward_as_tuple")
-            and func in self.functions
-            and rhs_text
-            and rhs_text != path
+            not path
+            or path in ("tie", "make_tuple", "forward_as_tuple")
+            or func not in self.functions
+            or not rhs_text
+            or rhs_text == path
         ):
-            fr = self.functions[func]
+            return
+        fr = self.functions[func]
+        # Plain `local = expr` via overloaded operator= — rare for ints
+        if path.count(".") < 1:
             fr.assigns[path] = rhs_text
             hist = fr.assign_lists.setdefault(path, [])
             if rhs_text not in hist:
                 hist.append(rhs_text)
+            return
+        # `a.b = expr` where `b`'s type overloads operator= (a container, a
+        # string, a struct with a user-defined assignment). This used to be
+        # dropped outright: it survived only in `FuncSummary.calls`, which no
+        # write-chasing consumer reads. Anything following the write history of
+        # `a.b` was therefore reading a sequence with entries missing, and would
+        # report a value the source had already overwritten.
+        file = _file_of(cursor)
+        if not self._in_scope(file):
+            return
+        assert file is not None
+        self.writes.append(
+            WriteRecord(
+                path=path,
+                line=cursor.location.line,
+                column=cursor.location.column,
+                rhs=rhs_text,
+                file=file,
+                function=func,
+                path_conditions=tuple(stack),
+                kind="replace",
+            )
+        )
+        if path not in fr.writes:
+            fr.writes.append(path)
 
     def _cond_and_branches(self, cursor):
         children = list(cursor.get_children())
@@ -883,9 +1088,17 @@ class _Walker:
         if cond is not None:
             self.walk(cond, stack, func)
         if rest:
-            self.walk(rest[0], stack + [PathCond(cond_text, False, file, line)], func)
+            self.walk(
+                rest[0],
+                stack + [PathCond(cond_text, False, file, line, kind="ternary")],
+                func,
+            )
         if len(rest) > 1:
-            self.walk(rest[1], stack + [PathCond(cond_text, True, file, line)], func)
+            self.walk(
+                rest[1],
+                stack + [PathCond(cond_text, True, file, line, kind="ternary")],
+                func,
+            )
 
     def _walk_switch(self, cursor, stack, func):
         cond, rest = self._cond_and_branches(cursor)
@@ -896,7 +1109,12 @@ class _Walker:
         if cond is not None:
             self.walk(cond, stack, func)
         for body in rest:
-            self.walk(body, stack + [PathCond(f"switch({cond_text})", False, file, line)], func)
+            self.walk(
+                body,
+                stack
+                + [PathCond(f"switch({cond_text})", False, file, line, kind="switch")],
+                func,
+            )
 
     def _walk_loop(self, cursor, stack, func, kind):
         children = list(cursor.get_children())
@@ -926,7 +1144,12 @@ class _Walker:
         self._loop_vars = tuple(dict.fromkeys(outer + induction))
         try:
             for ch in children:
-                self.walk(ch, stack + [PathCond(f"{kind}({cond_text})", False, file, line)], func)
+                self.walk(
+                    ch,
+                    stack
+                    + [PathCond(f"{kind}({cond_text})", False, file, line, kind=kind)],
+                    func,
+                )
         finally:
             self._loop_vars = outer
 
@@ -981,7 +1204,18 @@ def _guard_clause_negation(stmt) -> PathCond | None:
     cond_text = _text_of(cond, COND_TOKENS)
     if not cond_text:
         return None
-    return PathCond(cond_text, True, _file_of(stmt) or "", stmt.location.line)
+    # `if (c) { return; }` with no else: `!c` is the whole condition on what
+    # follows, so it reads like any other branch. With an `else if` chain the
+    # chain's own conditions are never negated onto the path, so `!c` alone is
+    # weaker than the truth — `guard_clause` marks that, see
+    # `PathCond.records_what_follows`.
+    return PathCond(
+        cond_text,
+        True,
+        _file_of(stmt) or "",
+        stmt.location.line,
+        kind="guard_clause" if else_stmt is not None else "if",
+    )
 
 
 def _loop_header(children: list, kind: str):
@@ -1097,4 +1331,5 @@ def walk_file(
         diagnostics=diags,
         macro_idioms=w.macro_idioms,
         class_fields=w.class_fields,
+        field_decls=w.field_decls,
     )

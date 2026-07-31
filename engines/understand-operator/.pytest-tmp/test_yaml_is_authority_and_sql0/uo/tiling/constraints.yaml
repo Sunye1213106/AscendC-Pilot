@@ -1,0 +1,22 @@
+input_realization: {}
+input_realization_mode: ''
+nodes:
+- confidence: 1.0
+  evidence_refs:
+  - EV_76E96C17AA7C
+  id: CON_927736A17EBB
+  kind: Predicate
+  layer: constraints
+  name: mode == 1
+  owner_id: HBR_0123456789AB
+  polarity: true
+  smt:
+    op: eq
+    value: 1
+    var: VAR_KEY_MODE
+  status: extracted
+relations: []
+status: extracted
+tiling_key_merging: {}
+tiling_key_pruning: {}
+version: 1

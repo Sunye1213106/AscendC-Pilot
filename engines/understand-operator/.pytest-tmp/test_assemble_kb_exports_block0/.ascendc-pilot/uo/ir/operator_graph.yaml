@@ -1,0 +1,88 @@
+architecture: arch35
+blockers:
+- affected_node_count: 1
+  affected_nodes:
+  - HBR_1
+  evidence:
+  - file: h.cpp
+    id: EV_890963795048
+    line_end: 1
+    line_start: 1
+    snippet: scratch
+    source_hash: ''
+  evidence_refs:
+  - EV_890963795048
+  hint: ''
+  id: BLK_1
+  reason_code: UNMAPPED_SYMBOL
+  text: scratch
+domains: {}
+edges: []
+evidence:
+- file: k.cpp
+  id: EV_74DD642215BD
+  line_end: 1
+  line_start: 1
+  snippet: flag
+  source_hash: ''
+- file: h.cpp
+  id: EV_890963795048
+  line_end: 1
+  line_start: 1
+  snippet: scratch
+  source_hash: ''
+fingerprint: fdfaa85c7157079be2d1b2c79e8121673487e9945a93b5ee6d30e35df1d443dc
+nodes:
+- condition: flag
+  confidence: 1.0
+  ctrl_kind: if
+  evidence_refs:
+  - EV_74DD642215BD
+  function: my_op
+  id: KBR_EFB1891D3A44
+  kind: KernelBranch
+  layer: ''
+  name: ''
+  side: kernel
+  status: extracted
+notes:
+  gap:
+    blocker_count: 1
+    blockers:
+    - affected_node_count: 1
+      affected_nodes:
+      - HBR_1
+      evidence:
+      - file: h.cpp
+        id: EV_890963795048
+        line_end: 1
+        line_start: 1
+        snippet: scratch
+        source_hash: ''
+      evidence_refs:
+      - EV_890963795048
+      hint: ''
+      id: BLK_1
+      reason_code: UNMAPPED_SYMBOL
+      text: scratch
+    nodes_per_blocker: 1.0
+    note: 分片单位是 blocker 而不是节点：一个符号常常同时挡住几十个分支，按节点分片会把同一个问题问很多遍
+    open_node_count: 1
+    status: extracted
+    version: 1
+  quality:
+    closed_nodes: 96
+    controllable_nodes: 0
+    input_controllability: 0.0
+    note: source_closure counts any legal root; input_controllability counts only
+      roots a test case can set
+    open_nodes: 1
+    partial_nodes: 0
+    predicate_normalization: 0.0
+    reason_histogram: {}
+    root_histogram: {}
+    source_closure: 0.96
+    total_nodes: 100
+op_name: MyOp
+status: extracted
+version: 1

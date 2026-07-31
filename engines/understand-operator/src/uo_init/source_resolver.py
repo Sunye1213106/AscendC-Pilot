@@ -137,13 +137,15 @@ SYMBOL_ROOTS: list[tuple[str, str]] = [
     (r"^ge::|^std::numeric_limits", "CONSTANT"),
 ]
 
+#: Fallback only, for a resolver built without a HostIR — see
+#: `SourceResolver.tiling_derived`, which decides this structurally instead.
+#: This pattern spells one operator's names and will misclassify any operator
+#: that chose others.
 _PARAMS_DERIVED_RE = re.compile(
     r"\b(?:\w*(?:Params|TilingData)|tilingData|deterPrefixData)\.",
 )
-_AGGREGATE_FIELD_RE = re.compile(
-    r"(?:Params?|TilingData|tilingData|PrefixData|SplitCore|compileInfo)_?$",
-    re.I,
-)
+#: An identifier immediately followed by a member access.
+_DOTTED_HEAD_RE = re.compile(r"\b([A-Za-z_]\w*)\s*\.")
 _TUPLE_ACCESSORS = frozenset({"first", "second", "third", "data", "value", "get"})
 
 
@@ -623,9 +625,7 @@ class SourceResolver:
                 base = self.resolve_symbol(head, depth + 1)
                 accessor = rest.split(".", 1)[0]
                 if base.root in LEGAL_ROOTS and not base.partial and not base.reason:
-                    if accessor in _TUPLE_ACCESSORS or _PARAMS_DERIVED_RE.search(
-                        f"x.{rest}"
-                    ):
+                    if accessor in _TUPLE_ACCESSORS or self.tiling_derived(f"x.{rest}"):
                         return Atom(
                             text=sym,
                             root=base.root,
@@ -698,9 +698,7 @@ class SourceResolver:
                 # reducible locals such as `isExceed` as a TILING_DATA field that
                 # no variable corresponds to.
                 for rhs in candidates:
-                    if _PARAMS_DERIVED_RE.search(rhs) and not _INPUT_ACCESSOR_RE.search(
-                        rhs
-                    ):
+                    if self.tiling_derived(rhs) and not _INPUT_ACCESSOR_RE.search(rhs):
                         return Atom(
                             text=sym,
                             root="TILING_DATA",
@@ -719,16 +717,27 @@ class SourceResolver:
         if sym in self.parameters:
             return self._chase_parameter(sym, depth)
         if self.host_ir is not None and sym in self.host_ir.class_fields:
-            if _AGGREGATE_FIELD_RE.search(sym) or sym in (
-                "fBaseParams",
-                "tilingData",
-                "deterPrefixData",
-                "context_",
-                "context",
-            ):
+            # A class field the host fills member by member is tiling state as a
+            # whole; chasing a write to the aggregate itself would find nothing.
+            if sym in self.host_ir.aggregate_heads():
                 return Atom(text=sym, root="TILING_DATA", symbol=sym)
             return self._chase_field(f"this.{sym}", depth)
         return Atom(text=sym, reason=REASON_UNMAPPED_SYMBOL)
+
+    def tiling_derived(self, text: str) -> bool:
+        """Does `text` read a member of a host tiling aggregate?
+
+        Decided structurally: an aggregate is a symbol whose fields the host
+        writes (`HostIR.aggregate_heads`). Falls back to the name patterns only
+        when there is no IR to ask, since those hardcode one operator's names.
+        """
+        if not text:
+            return False
+        ir = self.host_ir
+        if ir is None:
+            return bool(_PARAMS_DERIVED_RE.search(text))
+        heads = ir.aggregate_heads()
+        return any(m.group(1) in heads for m in _DOTTED_HEAD_RE.finditer(text))
 
     def _in_function(self, fn: str) -> "SourceResolver":
         """Re-scope onto another function: its locals, parameters and call sites.
@@ -901,9 +910,7 @@ class SourceResolver:
                     resolved = self.bindings[sym]
                 else:
                     continue
-            if _PARAMS_DERIVED_RE.search(resolved) and not _INPUT_ACCESSOR_RE.search(
-                resolved
-            ):
+            if self.tiling_derived(resolved) and not _INPUT_ACCESSOR_RE.search(resolved):
                 roots.append("TILING_DATA")
                 symbols.append(sym)
                 continue

@@ -351,6 +351,13 @@ def apply_bindings_to_derivation(doc: Any, bindings: list[dict[str, Any]]) -> di
     counters reported it closed. That is how a field reached `derived` while
     its condition was still weaker than the source.
 
+    So the substitution is verified rather than trusted: a verdict whose variable
+    survives in the expression is rolled back and its guard restored. The check
+    is mechanical and does not care *why* the rewrite missed — a shape
+    `substitute_vars` cannot match, a variable that also appears in a value
+    position, a model naming the wrong guard — which is the point, since the
+    failure mode is silent in every one of those cases.
+
     Returns counters used by the loop gate: escalating_before/after, etc.
     """
     from uo_init.derive_key_fields import (
@@ -377,11 +384,14 @@ def apply_bindings_to_derivation(doc: Any, bindings: list[dict[str, Any]]) -> di
     resolved = 0
     softened = 0
     unusable = 0
+    reverted = 0
     for fld in getattr(doc, "fields", []) or []:
         field_binding = field_cls.get(fld.name)
+        original = list(fld.undecided_guards or [])
         kept = []
         substitutions: dict[str, Any] = {}
-        for guard in list(fld.undecided_guards or []):
+        guard_of_var: dict[str, Any] = {}
+        for guard in original:
             binding = (
                 by_guard.get(guard.id)
                 or by_text.get(str(guard.text or "").strip())
@@ -407,12 +417,42 @@ def apply_bindings_to_derivation(doc: Any, bindings: list[dict[str, Any]]) -> di
                     unusable += 1
                     continue
                 substitutions[guard.var_id] = condition
-                resolved += 1
+                guard_of_var[guard.var_id] = guard
             else:
                 kept.append(guard)
-        fld.undecided_guards = kept
-        if substitutions and fld.value_expr is not None:
-            fld.value_expr = substitute_vars(fld.value_expr, substitutions)
+
+        # Only count a guard resolved once its variable is *gone* from the
+        # expression. A verdict that does not land must not lower the escalating
+        # count: that is how a field reads `derived` while its condition is still
+        # weaker than the source. Drop the ones that did not take, put their
+        # guards back, and retry — the loop shrinks `pending` every round.
+        pending: dict[str, Any] = {}
+        rolled_back: list[Any] = []
+        new_expr = fld.value_expr
+        if substitutions and fld.value_expr is None:
+            # Nothing to substitute into, so nothing can be verified either.
+            rolled_back = list(guard_of_var.values())
+        elif substitutions:
+            pending = dict(substitutions)
+            while True:
+                new_expr = substitute_vars(fld.value_expr, pending)
+                left = collect_vars_dag(new_expr)
+                stuck = [v for v in pending if v in left]
+                if not stuck:
+                    break
+                for var_id in stuck:
+                    pending.pop(var_id, None)
+                    rolled_back.append(guard_of_var[var_id])
+                if not pending:
+                    new_expr = fld.value_expr
+                    break
+
+        keep = {id(g) for g in kept} | {id(g) for g in rolled_back}
+        fld.undecided_guards = [g for g in original if id(g) in keep]
+        resolved += len(pending)
+        reverted += len(rolled_back)
+        if pending:
+            fld.value_expr = new_expr
             fld.variables = sorted(collect_vars_dag(fld.value_expr))
             fld.exactness, fld.free_vars = classify_exactness(
                 value_expr=fld.value_expr,
@@ -427,4 +467,5 @@ def apply_bindings_to_derivation(doc: Any, bindings: list[dict[str, Any]]) -> di
         "resolved": resolved,
         "softened": softened,
         "unusable": unusable,
+        "reverted": reverted,
     }

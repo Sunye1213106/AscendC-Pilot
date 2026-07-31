@@ -86,3 +86,94 @@ def test_locals_and_params_lookup_helpers(normal_ir):
     ir, _ = normal_ir
     assert any(ir.locals_by_function().values())
     assert any(ir.params_by_function().values())
+
+
+# -- the control statements, not just the guards they put on writes --------
+def test_the_control_statements_reach_the_ir(normal_ir):
+    ir, _ = normal_ir
+    assert ir.controls
+    kinds = {n.kind for n in ir.controls}
+    assert "if" in kinds and kinds & {"for", "while", "cxx_for_range"}
+
+
+def test_a_loop_guard_finds_its_statement_and_induction_variable(normal_ir):
+    """A write inside a loop carries the loop's file and line in its guard.
+    That is what lets a loop be summarised instead of given up on — the guard
+    text alone names no induction variable."""
+    ir, _ = normal_ir
+    loop_conds = [
+        pc
+        for w in list(ir.writes) + list(ir.local_writes)
+        for pc in w.path_conditions
+        if pc.kind in ("for", "while", "do", "cxx_for_range")
+    ]
+    assert loop_conds, "expected at least one write inside a loop"
+    found = [ir.loop_at(pc.file, pc.line) for pc in loop_conds]
+    assert all(n is not None for n in found)
+    assert any(n.induction_vars for n in found)
+
+
+def test_member_declarations_carry_their_in_class_initialiser(normal_ir):
+    ir, _ = normal_ir
+    assert ir.field_decls
+    with_init = [d for d in ir.field_decls.values() if d.init is not None]
+    without = [d for d in ir.field_decls.values() if d.init is None]
+    assert with_init and without, "expected both kinds in a real header"
+    assert all(d.host and d.name and d.line > 0 for d in ir.field_decls.values())
+
+
+def test_a_member_declared_by_two_structs_is_not_resolved_by_name(normal_ir):
+    """`field_decl` is keyed by member name and must give up on collisions. The
+    table itself is keyed on the struct, so both declarations survive in it."""
+    ir, _ = normal_ir
+    by_name: dict[str, list] = {}
+    for (_, name), decl in ir.field_decls.items():
+        by_name.setdefault(name, []).append(decl)
+    shared = [n for n, ds in by_name.items() if len(ds) > 1]
+    for name in shared:
+        assert ir.field_decl(name) is None
+    unique = next(n for n, ds in by_name.items() if len(ds) == 1)
+    assert ir.field_decl(unique) is not None
+    assert ir.field_decl(f"this.fBaseParams.{unique}") is not None
+
+
+def test_one_statement_is_not_counted_once_per_translation_unit(normal_ir):
+    """Headers are walked once per TU. Deduplication is on position, because an
+    id's ordinal is assigned in walk order and the TUs run in parallel."""
+    ir, _ = normal_ir
+    seen = [(n.file, n.line, n.column, n.kind) for n in ir.controls]
+    assert len(seen) == len(set(seen))
+
+
+# -- one line, several calls on different containers -----------------------
+def test_two_calls_of_one_method_on_one_line_both_survive(normal_ir):
+    """`a.size() + b.size()` agrees on caller, callee, file and line. Keying
+    deduplication on those four made the second call look like a header arriving
+    twice, and dropped a container's only read."""
+    ir, _ = normal_ir
+    by_pos: dict[tuple[str, int, str], set[str]] = {}
+    for cs in ir.call_sites:
+        if cs.receiver:
+            by_pos.setdefault((cs.file, cs.line, cs.callee), set()).add(cs.receiver)
+    shared = {k: v for k, v in by_pos.items() if len(v) > 1}
+    assert shared, "expected a line calling one method on two different objects"
+
+
+def test_a_call_knows_its_column(normal_ir):
+    """A container read and a write to it can share a line, so ordering them
+    needs the column."""
+    ir, _ = normal_ir
+    assert all(cs.column > 0 for cs in ir.call_sites)
+    per_line: dict[tuple[str, int], set[int]] = {}
+    for cs in ir.call_sites:
+        per_line.setdefault((cs.file, cs.line), set()).add(cs.column)
+    assert any(len(cols) > 1 for cols in per_line.values())
+
+
+def test_the_same_call_is_still_not_recorded_twice(normal_ir):
+    ir, _ = normal_ir
+    keys = [
+        (cs.caller, cs.callee, cs.file, cs.line, cs.column, cs.receiver)
+        for cs in ir.call_sites
+    ]
+    assert len(keys) == len(set(keys))

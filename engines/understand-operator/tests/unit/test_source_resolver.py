@@ -231,7 +231,33 @@ def test_multi_def_prefers_independent_rhs():
     assert "INPUT_SHAPE" in res.roots or "TILING_DATA" in res.roots
 
 
-def test_aggregate_params_close_as_tiling_data():
-    ir = HostIR(class_fields={"fBaseParams", "deterPrefixData"})
-    res = SourceResolver(host_ir=ir).resolve("fBaseParams")
+def _filled_aggregate(name: str) -> HostIR:
+    return HostIR(
+        class_fields={name},
+        writes=[
+            WriteEvent(path=f"{name}.b", line=1, rhs="1", file="f.cpp", function="f")
+        ],
+    )
+
+
+def test_an_aggregate_the_host_fills_closes_as_tiling_data():
+    res = SourceResolver(host_ir=_filled_aggregate("fBaseParams")).resolve("fBaseParams")
     assert res.closed and res.roots == ["TILING_DATA"]
+
+
+def test_an_aggregate_is_recognised_by_its_writes_not_its_name():
+    """An operator that named its tiling struct something else still closes.
+
+    The old test asserted the name pattern `*Params`; a struct called `cfg` was
+    silently left unclassified, which is the whole failure this replaces.
+    """
+    res = SourceResolver(host_ir=_filled_aggregate("cfg")).resolve("cfg")
+    assert res.closed and res.roots == ["TILING_DATA"]
+
+
+def test_a_params_shaped_name_with_no_writes_is_not_assumed_to_be_tiling_data():
+    """No write means no evidence. Reporting a root here would be a guess."""
+    res = SourceResolver(host_ir=HostIR(class_fields={"fBaseParams"})).resolve(
+        "fBaseParams"
+    )
+    assert not res.closed

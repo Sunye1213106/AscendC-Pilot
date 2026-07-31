@@ -1,0 +1,20 @@
+blocker_count: 1
+blockers:
+- affected_node_count: 1
+  affected_nodes:
+  - HBR_1
+  evidence:
+  - file: h.cpp
+    id: EV_890963795048
+    line_end: 1
+    line_start: 1
+    snippet: scratch
+    source_hash: ''
+  evidence_refs:
+  - EV_890963795048
+  hint: ''
+  id: BLK_1
+  reason_code: UNMAPPED_SYMBOL
+  text: scratch
+status: unresolved
+version: 1

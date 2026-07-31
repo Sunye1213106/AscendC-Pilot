@@ -1,0 +1,22 @@
+ambiguities: []
+architecture: arch35
+op_name: DummyOp
+op_snake: dummy_op
+op_spec:
+  ambiguities: []
+  arch_dir: arch35
+  available_archs:
+  - arch35
+  docs: []
+  host_targets: []
+  kernel_entry: ''
+  op_dir: D:/PR-review/AscendC-Pilot/engines/understand-operator/.pytest-tmp/test_prepare_layout_scrubs_dis0/DummyOp
+  op_name: DummyOp
+  op_snake: dummy_op
+  opdef: ''
+  proto: ''
+  source: discovered
+  tiling_data_header: ''
+  tiling_key_header: ''
+status: prepared
+version: 1

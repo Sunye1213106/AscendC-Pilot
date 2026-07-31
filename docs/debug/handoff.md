@@ -8,17 +8,18 @@
 
 ---
 
-## 当前状态（2026-07-30）
+## 当前状态（2026-07-31）
 
 | 项 | 状态 |
 | --- | --- |
 | **19 维精确闭合** | **CLOSED 14/19**，unique free_vars=6；array_subscript / `.second` / UNMAPPED **全 0**，残余 6 个全部具名 |
-| 隐式零默认 | **211 处**，压在 6 个已判 exact 的字段下——`exact` 判据尚不充分 |
+| **19 维输入可控** | **INPUT_DERIVABLE 12/19** — 下游该读的是这个数，不是 CLOSED；差的 2 个（IsTnd / IsNEqual）闭合到 host 状态 |
+| 隐式零默认 | **133 处**（原 211），压在 exact 字段下的 **0 处**（原 6）——穷尽 cascade 判掉 + 读声明初值；剩余全在 overapproximated 字段下 |
 | 派生进主链 Action | **已到**（`derive_key_fields` + `host_derivation.yaml`） |
 | 共享求解器 | **已到**：`engines/common`（`acp_common`），TG / UO 同一套 IR 与 Z3 语义 |
-| 19 维结构对齐 | **FAIL=0 / WARN=1**（OutDType 叶含 4/5/6 vs TPL 0..3） |
-| LLM 封闭回环 | 已联调，但 `apply_gap_patch` 曾只改账不改式，见 F.2 |
-| key 判定 8705 / K6 真 Z3 | **未做** |
+| 19 维结构对齐 | **FAIL=0**；`domain_violations` 唯一报例（OutDType）**已求证为本工具假阳性**，检查本身有设计缺陷 —— 见「`domain_violations` 比错了东西」 |
+| LLM 封闭回环 | 已联调；「只改账不改式」现由消元后校验 + 回退挡住，见 F.2 / F.12 |
+| key 判定 8705 / K6 真 Z3 | **已到**：8705 个合法 key 全部过 Z3，14/19 维进求解器；当前 8704 `unknown` + 1 `unreachable`（见 F.13） |
 | G0 fixture / K5 / K7 | **未做** |
 
 **不能宣称三重全覆盖已达成。**
@@ -75,6 +76,56 @@ SCHED=0  REACHED=0  array_subscript=0  UNMAPPED_CALL=0  UNMAPPED_SYMBOL=0
 **⑥ 让 free_vars 从 5 涨回 6，这是对的。** 判据不能只看这一个数：`SplitAxis` 的变量总数同时从 34 涨到 39，即多了 5 个变量参与约束而只多 1 个自由变量 —— 那 4 个是原本被整条守卫塌缩吞掉的**已解析输入约束**（`CORE_LIST_NUM` 比较等）。用 1 个自由变量换回 4 个真实约束，且过近似从"整条守卫不可知"收窄到"3 个容器摘要不可知"。
 
 剩下 6 个**全是 `LOOP_ELEMENT`**（元素 3 个 + 容器摘要 3 个），已没有静态解析缺陷可修：它们是循环建立的量化命题，本分析不计算。见 [open-problems.md](./open-problems.md)。
+
+### 口径变更（二）：`CLOSED` 也不等于「下游可用」
+
+`exactness` 回答的是**表达式**闭不闭合，不回答「测试用例能不能把它调出来」。这两件事在 FAG 上差 4 个字段：
+
+```
+CLOSED 14/19   INPUT_DERIVABLE 10/19   free_vars=6   implicit_zero=211
+```
+
+`IsTnd` 是最干净的例子：SMT 形态就是一条 `layoutType == 4`，零自由变量，判 `exact` 毫无争议 —— 但 `layoutType` 是 resolver 停在的 host tiling 状态，不是它背后的 layout 属性。生成器无论怎么设输入都碰不到它。`IsPse` / `IsAttenMask` / `IsNEqual` 同理。
+
+所以新增一个与 `exactness` 正交的维度 `input_closure`（`kb_model.classify_input_closure`，由 `root_vars` 现算而非另存，两者不可能不一致）：
+
+| input_closure | 含义 | 算可用 |
+| --- | --- | --- |
+| `controllable` | 根全在 `CONTROLLABLE_ROOTS`（shape / dtype / format / value / attr / optional presence / session option） | 是 |
+| `platform_locked` | 还含 `PLATFORM_* / COMPILE_* / TEMPLATE_LITERAL / CONSTANT` —— 不是旋钮，但给定 CANN profile 后固定 | 是 |
+| `host_state` | 含 `TILING_DATA / TILING_KEY / EXTERNAL` 或调度根，**也包括任何没分类的根** | 否 |
+| `none` | 无根（常量字段） | 是 |
+
+未识别的根一律归 `host_state`：反过来猜会拿一个没人分类过的根去宣称维度可控。
+
+`input_derivable` 三处判据统一为 `exactness ∈ {exact, constant} 且 input_closure ≠ host_state`：
+
+| 落点 | 旧判据 | 问题 |
+| --- | --- | --- |
+| `host_derivation.py` `to_key_derivations` | `status == "derived" and bool(root_vars)` | `TILING_DATA` 也算 True |
+| `kb_export.py` `ir/input_derivable.yaml` | 读 `input_realization_mode == "host_derivation"` | 只要有 binding 就给**全部 19 维**标 True |
+| `materialize_tiling.py` `input_realization` | 硬编码 `True` | binding 只说明找到了 encode 点 |
+
+后两处现在都读同一个 per-field 判据（真源在 derivation，`materialize_into_kb` 新增 `derivation` 入参；**没有 derivation 时一律 False**）。
+
+顺带修正一个反向错误：`IsRegbase` 是 `constant`、无根，旧判据 `bool(root_vars)` 把它判成 False。常量字段不需要设任何东西就能取到它的值，应算可用。所以净变化是 −4 +1 = **13 → 10**。
+
+**账面变差但正确**，与当初 `derived 19/19` 落回 `exact 10/19` 同性质。
+
+### 值域一致性：`domain_violations`
+
+`value_leaves ⊆ domain` 的通用哨兵（`FieldDerivation.domain_violations`）。FAG 上立刻抓到一条：
+
+```
+WARNING: OutDType encodes ['4', '5', '6'] but the template declares ['0', '1', '2', '3']
+```
+
+这**不是派生 bug**。源码就是直接赋值、无任何映射（`..._tiling_common_regbase.cpp:1180` `fBaseParams.outDtype = fBaseParams.inputDtype;`），所以派生给出 `OutDType` 与 `InputDType` 表达式相同是对的。缺陷在算子侧：TPL 只声明 `OutDType` 取 0-3，host 在 FP8/HiFloat8 路径会写 4/5/6 并编进 key。需要单独报给算子方。
+
+两个实现细节，都关乎这个检查有没有区分度：
+
+- **只判能定值的叶子**。`value_leaves` 里同时有折叠后的数字和没折叠的枚举拼写（`DtypeEnum::FLOAT32`、`TILING_KEY_1`），把后者也算越域会让 19/19 全报警，检查即失效。所以报的是真实冲突的**下界**。
+- **`InputDType` 是对照组**：它带着与 `OutDType` 完全相同的叶子集合，但声明 0-6，因此干净。没有这个对照就说不清检查是不是碰巧过的。
 
 ### 为什么一个下标能毁掉整条守卫（②的动机）
 
@@ -144,11 +195,13 @@ let $2 = (!((platformInfoPtr == None)) ? 32 : …
 
 三条 cut 现在共用 `_loop_local_var` 记账，避免 VarSpec 构造逻辑三份。
 
-### 隐式零默认（211 处）
+### 隐式零默认（213 → 159 处）
 
 `_chain` 构建 if/else-if 链时，最内层那个 `Ite` 的 else 没有来源，就填 `Const(0)`（「字段默认为零」）。这**不是**自由变量，不计入 `free_vars`，但它是一个我们从没读过声明就下的断言，所以现在逐处记录到 `implicit_defaults`。
 
-实测 211 处，**且压在 6 个已判 `exact` 的字段下**（InputDType、S1TemplateNum、S2TemplateNum、OutDType、DTemplateNum、IsDNoEqual）。即当前的 `exact` 判据尚不足以保证正确 —— 口径以 `python scripts/uo_key_status.py .probe_cache/fag_derive.json` 末尾两行为准。
+原先 211 处，**且压在 6 个已判 `exact` 的字段下**（InputDType、S1TemplateNum、S2TemplateNum、OutDType、DTemplateNum、IsDNoEqual）。即当时的 `exact` 判据尚不足以保证正确 —— 口径以 `python scripts/uo_key_status.py .probe_cache/fag_derive.json` 末尾两行为准。
+
+**这个风险面现在是 133 处 / 0 个 `exact` 字段。** 分两步走到的：穷尽性判定先把 6 个收到 3 个（`InputDType` / `OutDType` / `IsDNoEqual` 是 dtype cascade 被判穷尽的直接结果），读声明初值再把剩下 3 个（DTemplateNum / S1TemplateNum / S2TemplateNum）关掉——那 3 个的声明初值是 128/128/64 而非 0，属于**假设为假**而不只是未证明。比计数更要紧的是这一条：**下游无条件信任的 `exact` + `drivable` 标签，现在不再背着未证明假设**。剩下 133 处全部压在已判 `overapproximated` 的字段下，下游本来就不会盲信。
 
 多数其实**语义上不可达**。以 layout cascade 为例（`..._tiling_normal_regbase.cpp:99-320`）：
 
@@ -162,7 +215,107 @@ else /* BSND */                            { fBaseParams.b = …; }
 
 分支是穷尽的，`Const(0)` 那条路走不到。但**求解器不知道**——它会认为字段可以取 0，于是放行本不存在的 key。方向是过近似（多放行），不是漏判。
 
-正确解法不是逐个去查默认值，而是证明守卫析取为真：`acp_common.z3_backend.prove_implies` 已经具备这个能力，缺的是 constraint IR 组装（阶段 2）与 `GRAPH_FAILED` 校验前提（3.D）。证不出来的才需要真去读构造函数（3.E）。
+#### 穷尽的那部分已经不再记假设（P1.3 前半，2026-07-31）
+
+原先判断「正确解法是用 `prove_implies` 证守卫析取为真」——这判断是错的，**代价被高估了**。`if/else-if/else` 的穷尽性是语法性质，不需要求解器：走一遍 `PathCond` 的决策树即可。
+
+`PathCond` 本来就带 `negated`，但 `DefSite.guards` 存的是 `pretty()` 之后的文本（negated 被压成 `!(…)` 字符串），结构在这一步丢了。所以 `DefSite` 加了 `conds`（原始 `PathCond` 元组），判定在 `derive_key_fields._paths_are_covered` / `_covers`：
+
+- 每一层要求所有路径在决策**同一个** `(file, line, text)`，然后 then / else 两侧各自递归；
+- 路径走空 = 这一侧被无条件写到，覆盖其下全部；
+- 路径对「下一个判什么」不一致 → 判否。方向安全：把真假设漏报才是危险，多报无害。
+
+必须按路径树递归、不能只找「一正一负配对」：else-if 级联的各条路径**长度不等**（`(A假)`、`(A真,B假)`、`(A真,B真)`），配对法认不出来，而它恰是 layout / dtype 的实际形态。
+
+两处收紧是抽查真实数据抓出来的，都关乎正确性：
+
+1. **顶层的无 guard 写不算「覆盖其余」。** 函数**内部**它确实覆盖，但它是否执行取决于该函数被不被调用，且哪条写生效是 `_chain_sites` 的折叠顺序决定的。放宽这一条会让 `this.b`（18 条无 guard 写散在十几个函数里）被静默判为穷尽。
+2. **跨函数不算穷尽。** 两个函数各写同一条件的一侧，合起来看像穷尽，但任一个都可能被单独调用。`_chain_sites` 里加 `len({s.function for s in sites}) == 1`。
+
+收紧前 354 个多写字段被判穷尽，收紧后 22 个 —— 全是同函数内逐层取反的真级联。抽查 `fBaseParams.g`（`..._normal_regbase.cpp:103/142/182/294/326`）：5 条正对应 SBH / BSH / BNSD / TND / `} else {` BSND，最后一条落在真 `else` 上，与源码一致。
+
+**第三处收紧：early-return 蕴含的否定可能不完整。** 隔离调查警告 `GetDTemplateType` 的穷尽判定「成立得侥幸」，核实后确认这是真隐患。`_guard_clause_negation` 为 `if (c) { …; return; }` 之后的语句补一条 `!c`，但只补**最外层**的 `c`：面对
+
+```cpp
+if (d <= NUM64)       { …; return; }
+else if (d <= NUM128) { …; return; }   // 这几层的条件从不被取反到路径上
+…
+return NUM768;                          // 只拿到 !(d<=NUM64)
+```
+
+收尾语句记录的 guard **弱于真实**，于是它的路径在 `_covers` 递归里**提前走空**，那一层就直接判「这侧被无条件写」，跳过了对该层决策两侧的检查 —— 漏报假设的方向。
+
+这种路径与真正的 `else` 分支在 `PathCond` 上完全同形（都是 `negated=True` + 同 file/line），只能靠来源区分，所以加了 `kind="guard_clause"` 与 `records_what_follows`。判据必须精确到**这个 `if` 有没有 else 链**：`if (c) {…return;}` 无 else 时 `!c` 就是完整条件（`ProcessPseInfo` 给 `pseOptional` 赋值正是这个形态，两条写恰是正反两侧的真穷尽），只有带 else 链时才不完整。第一版按「凡 implied 皆不可信」处理，`IsPse` / `IsAttenMask` 立刻被误判为带假设（161 处 / 5 个 exact 字段）；精确化后回到 159 处 / 3 个，但机制从「恰好答对」变成「按理答对」。
+
+`_covers` 的信任标记要**按侧**判定而非按决策：`guard_clause` 恒为取反侧，两侧的 kind 可以不同，传错侧就判错。
+
+结果 `implicit_zero` **213 → 159**，`CLOSED 14/19`、`INPUT_DERIVABLE 12/19`、`free_vars=6` 逐项不变。（未收紧时是 137，那 22 处差额里含前述两类误判，不可取。）
+
+#### 剩下的出路：读声明初值（P1.3 后半，已做）
+
+159 条记录落在 60 个不同写点、8 个维度上（`.probe_cache/diag_zero_rest.py`）：
+
+| 数量 | 形态 |
+|---:|---|
+| 41 | 该函数内只有这一条有 guard 的写，别处不赋值 |
+| 14 | 同伴写确实留了第一个决策的一侧没写 |
+| 5 | 同伴写在单函数内穷尽，但别的函数也写同一路径（被上面第 2 条收紧拒掉） |
+
+隔离调查（不预设结论）给出的分解比上表更有用 —— 60 个站点里 **37 个本身就是带初始化器的局部声明**（初始化器早已在 IR 里，就是站点自己的 RHS，无物可读）、**3 个是 `__return__` 合成槽**（不存在声明）、真正需要读声明的只有 **20 个结构体成员写**，其中 13 个成员有类内初始化器、7 个完全没有。
+
+**关键不是计数，是其中 3 个假设是错的。** `FuzzyBaseInfoParamsRegbase` 的声明（`..._tiling_common_regbase.h`）：
+
+| 成员 | 声明初值 | 工具此前当作 |
+|---|---|---|
+| `s1TemplateType` | `ConstAxisTemplateNum::NUM128` = 128 | 0 |
+| `s2TemplateType` | `ConstAxisTemplateNum::NUM128` = 128 | 0 |
+| `dTemplateType` | `ConstAxisTemplateNum::NUM64` = 64 | 0 |
+
+而这 3 个成员正好是 `S1TemplateNum` / `S2TemplateNum` / `DTemplateNum` 的来源 —— 也就是当时**唯一剩下的 3 个「exact 却带假设」的字段**。核对源码确认假设是真的：`GetS1S2TemplateType`（`:810-843`）的写止于第 4 个 `else if`，`GetDTemplateType`（`:845-868`）止于 `d<=NUM768`，收尾 `return` 都**不写**这些成员，所以条件全不成立时它们保持声明初值。求解器此前会放行 `S1TemplateNum == 0` 的 key，而算子产不出这个值。
+
+实现：`FIELD_DECL` 分支除 `class_fields.add` 外读初始化器，存 `WalkResult.field_decls` / `HostIR.field_decls`，`_chain_sites` 的兜底改查 `_declared_default`。三处刻意保留假设：查不到声明、成员**声明就没有初始化器**（值真的不确定，比"没去读"更强的结论）、初始化器不是常量。
+
+**索引键必须是 (结构体, 成员名)，且查询要求成员名唯一。** 调查抓到的陷阱：若按裸名索引（像 `class_fields` 那样），7 个"无初始化器"成员里有 6 个会撞上生成的 tiling-data 同名成员（那些是 `= 0`），把「无法证明」伪造成「已证明为 0」。今天 `_host_field_allowed` 恰好把它们滤掉了，但扩到 arch22 宿主侧就会真撞上。名字撞了就放弃 —— 保守降级。
+
+结果 **`implicit_zero` 159 → 133**，且「压在 exact 字段下的假设」这一行**整行消失**：`exact` 判据现在不再背着任何未证明假设。三个字段的 `value_leaves` 都不再含 `0`（`_probe_derive.py --show S1TemplateNum` 可见最内层兜底是 `ConstAxisTemplateNum::NUM128`）。关掉 26 个而非预期的 13 个，因为一个成员的声明会被多个读取点复用。
+
+尚未做的两项（调查已给设计，收益已量化）：37 个局部声明站点可用 `kind="decl"` 让兜底取声明自身值（`Ite(g, init, init)` 坍缩），但要先处理 6 个循环体内声明与 `_loop_scoped_only` 的先后、以及 `rm3` 那处同作用域遮蔽；7 个无初始化器成员**永远关不掉**（对象经 `new T(context)` default-init、构造体为空、全树无 memset，读之前的值确实不确定），它们该被重新分类为比"假设为 0"更严重的问题。
+
+### 循环与分支现在是结构化的（P2 前置，2026-07-31）
+
+原先记为「循环检测靠 `for(` 字符串前缀匹配」。核实后这个说法要修正一半：`PathCond.text` 对循环**本来就是**这份代码自己合成的 `f"{kind}({cond_text})"`（`clang_walk.py:1038`），producer 与 consumer 同仓，所以 `_NON_GUARD_RE` 不是从源码猜格式的脆弱启发式。
+
+真正的问题是 `kind` 被编码进了 `text`：想知道「这条 guard 是不是二分决策」只能把文本剥回来，而**循环的归纳变量和 trip count 根本没地方放** —— `CtrlNode` 有 `induction_vars`，但 `WriteRecord` 只带 `PathCond`，且 `build_host_ir` 把 `res.controls` 整个丢了。
+
+两步都做了，`text` 格式一字未动（产物不变）：
+
+1. **`PathCond.kind`**（`if` / `ternary` / `switch` / `for` / `while` / `do` / `cxx_for_range`）+ `is_decision` property。`is_decision` 只对 `if` / `ternary` 为真：三元的两侧确实穷尽，而 `switch` 的各 case 全是 `negated=False` 且**没有 `default` 的保证**，循环则是「某次迭代」。上面的覆盖判定改读它，不再剥文本。
+   - 留了一条文本回退（`_decides`）：缓存 bundle 与文本后端的 `PathCond` 没有 `kind`，若直接走 `is_decision` 会退化成「一律算决策」，把循环 guard 也算进穷尽性 —— 那是不安全方向。判据是 `"kind" in pc.__dict__` 而非 `getattr`，因为 property 抛 `AttributeError` 会被 `getattr` 的默认值吞掉。
+2. **`HostIR.controls` + `loop_at(file, line)`**。循环内的写在 guard 里带着循环头的 file/line，这就是把写对回到归纳变量的钥匙。去重按 `(file, line, column, kind)` 而非 `CtrlNode.id`：id 的 ordinal 是 walk 序分配的，而 TU 是并行 walk 的。
+
+验证走真实 clang walk（`test_host_ir_clang.py`，非缓存）：`controls` 非空且含 `if` 与循环 kind；每条循环 guard 都能 `loop_at` 到语句，且至少一条有归纳变量；位置无重复。
+
+### 一个字段的定义池不该取决于怎么拼写它（P1.5，2026-07-31）
+
+`_field_defs` 的匹配原先是单向的：`w.path == path or w.path.endswith("." + path)`。自由函数 `SetSplitAxis(ctx, FuzzyBaseInfoParamsRegbase& fBaseParams)` 把写记成 `fBaseParams.splitAxis` —— **跟着形参名**，于是查 `this.fBaseParams.splitAxis` 命不中，查 `fBaseParams.splitAxis` 才命中。同一个字段两种拼写拿到两套定义池（实测 6 vs 9），而**穷尽性判定吃的就是这个池子**，池子不全会让路径集不全。
+
+没用"剥掉 `this.` 前缀再字面比较"这个拼写技巧。它在这份算子上恰好安全，但 `CalcleTNDBandDeterPrefix` / `CalcleTNDCausalDeterParamGQA` 等 4 个函数的 `deterPrefixData` 形参共 29 处写会被它误并（那 4 处调用点传的**不是**同一个对象），只是 FAG 上没有 `this.deterPrefixData.*` 这种查询路径才没暴露 —— 属于数据相关的安全，不是结构性的。
+
+改成结构性判据 `HostIR.param_bound_member(fn, param)`：只有当该形参在**每个**调用点收到的实参都是 `this` 的同名成员时才合并，任何一个调用点传别的对象、或实参不是类成员、或压根没有调用点，都返回 `None`。实测 20 个形参解析到 `this.fBaseParams`，6 个（`deterPrefixData` ×4、`s1ValidIdx`、`tndBandDeterRoundInfo`）正确排除。
+
+影响面 7 个路径（全在 `this.fBaseParams.*`），19 维指标逐项零变化 —— 那 7 个不在展开路径上。价值不在指标而在消除不确定性。单段路径刻意不做：`this.b` 剥前缀得裸名 `b`，而 `b` 是多个宿主的共同尾名（`this.fBaseParams.b` 是**另一个字段**），一段路径没有成员前缀可绑，形参名会被拿去和字段名比。
+
+### `domain_violations` 比错了东西（P0.2 的设计缺陷，唯一报例已证伪）
+
+判据原是 `value_leaves ⊆ TPL domain`。**`value_leaves` 是表达式里出现过的字面量集合，不是该维度可达的取值集合** —— `Ite` 死分支里的常量必然被计入，同一个值还会以折叠数字（`4`）和未折叠枚举拼写（`DTYPE_ENUM_INDEX_4`）各算一次。所以原先记的"报的是真实冲突的下界"要撤销：下界性依赖"叶子都可达"，而这个前提不成立。
+
+`OutDType` 那条已证伪，证据是决定性的：**8705 个合法 key 里 `InputDType` 只取 0/1/2/3**，且 `(InputDType, OutDType)` 严格 `in == out`。`ASCENDC_TPL_UINT_DECL(InputDType, …, 0…6)` 是**声明域**，真正的合法集是 65 个 `ASCENDC_TPL_ARGS_SEL` 组的并集，没一组用 4/5/6。host 侧 `..._common_regbase.cpp:1146-1148` 一个 early return 同时拒掉 FP8_E5M2 / FP8_E4M3FN / **HIFLOAT8**（三者一起），所以 host 与模板一致。
+
+> 别踩的推理陷阱：直觉版本会说"HIFP8 先写成 6，再被 `out_dtype` 属性改写成 BF16"。arch35 tiling 侧 `fBaseParams.outDtype` **只有一处赋值**（`:1180`），无任何重写；那段 `out_dtype == 1 → BFLOAT16` 在 `flash_attention_score_grad_infershape.cpp:141-177`，管的是输出 tensor dtype，与 tiling key 无关。
+
+正确判据是求解器问题：**存在一组满足约束的输入，使该维度取值 `v` 且 `v` ∉ SEL 合法域吗**。K6 那条链已具备能力，改造复用它。**「声明域 ≠ SEL 合法集」这条要推广**：任何拿"某维度声明了哪些值"做判断的地方都有同样风险，一律走 `expand_legal_with_groups`。
+
+**另一个独立缺陷，修了上面也不消失**：`clang_walk.py:1186-1187` 的 `_ERROR_EXIT_RE` 有意丢弃所有错误退出守卫的否定。该论证把两类混为一类 —— `if (shape == nullptr) return FAILED` 是**重述型**（取反无信息），`if (queryType == DT_HIFLOAT8) return FAILED` 是**排除型**（把具体输入值排除出可达域，取反是真实约束）。arch35 的 65 处 `return GRAPH_FAILED` 全按重述型处理，实测后果是 `:1180` 那个写的 `path_conditions` 为**空**。恢复前要先量化两类占比与表达式膨胀 —— 当初抑制的动机（防止一打守卫挂到后面所有代码上）是真顾虑。
 
 ### 不变式：过近似必须留痕
 
@@ -330,6 +483,74 @@ cd engines/understand-operator; python -m pytest tests/unit/test_host_ir_clang.p
 
 11. **`implicit_zero` 会重复计数**：同一站点被不同调用方/不同缓存上下文多次链接时每次都记一笔，542 实际只有 202 个站点。已按 `(function, file, line)` 去重——报的是假设数量，不是访问次数。
 
+12. **F.2 的修法只覆盖了一半形态（同类静默错误复发）**：`substitute_vars` 只匹配 `{"op": "eq", "var": X, "value": true}`。但 `PredicateNormalizer._truthy` 是**按变量类型**渲染真值探针的：bool 型出 `X == True`，int 型出 `X != 0`（C 的隐式真值测试）。而 `VAR_LOOPELEM_*` 全是 int 型。
+
+    后果与 F.2 一字不差，只是换了个入口：LLM 对这类变量答 `input_derived`，`gap_patch.py` 把 guard 从 `kept` 删掉、`resolved` +1、`escalating_after` 下降、loop gate 通过，**而表达式原地不动**。同时它会破坏一直维护的 `unrecorded_free_vars() ≡ 0` —— 这也正是修它的抓手。
+
+    - **两处都改**：`truth_probe_var()` 认下两种探针形态（只认这两种；`X == 5` 是源码写的比较，binding 说的是 guard，替换它是错的）。
+    - **更根本的护栏**：`apply_bindings_to_derivation` 不再信任替换，而是**验证**——替换后变量若仍在 `collect_vars_dag` 里，就把该 binding 撤掉、guard 放回 `kept`、计入新的 `reverted`，只有真消掉的才计 `resolved`。回退是机械的，不关心替换为什么没生效（形态不匹配、变量还出现在值位、模型指错了 guard），因为**这几种情况的失败方式全是静默的**。
+    - loop gate 补第三条：`free_vars` 总残量不得上升。只看 `derived` 与 `escalating` 时，一个 patch 可以用后者换前者 —— 划掉记录、留下变量，两个被监控的数都变好。
+
+13. **符号折叠把两套编码混进同一个变量（K6 侧，2026-07-31）**：`key_reachability._Symbols.fold` 逐符号查 `named_constants`，查到用真值、查不到编一个负数。于是 `VAR_ATTR_GETATTRS` 上同时出现四个 layout 字符串：`"BNSD"` 折成 **2**（撞上某个不相干枚举的裸名 `BNSD`）、`"TND"` 折成 **4**（同样撞名，而 `LayoutEnum::TND` 其实是 3），`"SBH"` / `"BSH"` 拿编造的负数。字符串比较被安放到整数枚举的域里，求解器于是在判定源码从没写过的比较。
+
+    - **修法一：按组折叠。** 组 = 该符号所比较的变量（跨全部维度聚合，因为存活下来的共享变量在每个维度里是同一个变量）。整组符号**全部读到 → 全用真值**（别名因此仍能相等），**否则整组一起编码**。绝不在一组里混真值与编造值。
+    - **修法二：`ge::DataType` 抄进 `variable_model.GE_DATA_TYPE`。** 这 5 个 `ge::DT_*` 才是真正"读不到"的符号，值在 CANN metadef `graph/c_types.h`。不解析而是抄录：`graph/types.h` 写作 `DT_FLOAT = ::C_DT_FLOAT`，`parse_enums` 求不出值，而它求不出时的兜底是**继续往上数**，会在 4 之后的保留空位处发错值。算子若自己重定义同名常量，源码扫描仍然覆盖抄录值。→ `InputDType` / `OutDType` / `S1TemplateNum` 等 9 个维度的符号全部读到，**零假设**。
+    - **修法三：编号计数器必须单调。** 原来用 `FIRST - len(self._invented)`，而 `_invented` 按符号名去重，于是同一名字在第二个组里不增长长度，**整组四个符号拿到同一个数** —— 本该互不相等的值全都相等。这是比错折更狠的一版：它直接伪造等式。
+    - **修法四：裸符号不再当常量。** `{"op":"gt","lhs":…,"rhs":"m0Max"}` 里的 `m0Max` 不是常量，是 `CalcleTNDCausalDeterParam` 的局部归约变量（`m2Max = std::max(m2Max, …)`）；`i` / `j` / `s2Inner` / `deterTilingSplitMode` 同类，共 13 个。把变量替换成一个远低于真实范围的数会让 `x < m0Max` 恒假——**收紧**方向，正是伪造矛盾的方向。改为该维度 `omit`（`unmodelled_variable`）。
+    - 效果：编译 14/19，假设只剩 4 个 layout 字符串；**`Z3Backend` 构造从 37 分钟没跑完变成 0.2s**——原先最贵的正是这 5 个含未建模变量的循环展开树，它们本就不该进求解器。8705 个 key 全量判定 127s（14.6 ms/key）。
+    - 判定分布诚实地差：8704 `unknown`（"5 个维度未约束"）+ 1 `unreachable`。要往 `reachable` 走必须先做循环摘要（第 10 项），不是调参能得到的。
+
+14. **容器摘要在不同读取点被断言相等（2026-07-31，隔离调查所得）**：`_container_element` 只给 `INDEX_FREE_KINDS`（`elem` / `first` / `second`）设 `identity_merged`，注释的理由是"`back` / `size` / 归约命名的是容器的**一个**值"。这对**静止的**容器成立，对**可变的**容器不成立。`deterPrefixData.prefix1` 在 6 个函数里被 `push_back`，而 `prefix1.back()` 在这些 `push_back` 的前后都被读到（源码 106 / 164 / 165 / 267 行与 503 行守卫），却共用 `VAR_ELEM_BACK_DETERPREFIXDATA_PREFIX1` 一个变量。**这是在断言源码不提供的等式，失败方向是凭空造出不可达 key** —— 正是设计规则明令禁止的方向。讽刺之处：过近似那条路径（`_loop_local_var`）反而设了 `identity_merged=True`，更"精确"的那条才是危险的。
+
+    - 判据必须能把这一类和它的反例分开，而反例是真实存在的：`max(actualSeqQlen)` 跨 **5 个维度**共用一个变量，那个等式是**对的**（`actualSeqQlen` 在 `GetShapeAttrsInfo` 里填完就不再变），丢掉它只会让判决从 `unreachable` 退成 `unknown`。
+    - 可用的判据只能建立在 IR 真有的东西上：**写点带行号，读点不带**（`FuncSummary.reads` 是无序名字列表）。所以"最后一次变更"无法表达，能表达的是「顺序是否**可能**被打乱」：容器被**多个函数**写，或**读取点所在函数自己也写**它 → 隔离；只有一个写入函数且不是读取者 → 保持共享。新增 `HostIR.container_writers()` + `_ValueNormalizer._summary_identity_is_merged()`。
+    - 实测正好切开两类：`prefix0/1/2.back()` 三个变量转为隔离，`max(actualSeqQlen)` / `max(actualSeqKvlen)` 保持共享，19 维的 `free_vars` 一个没动（这次的收益不在数字上，在于不再伪造等式）。
+    - **顺带纠正一处成本认知**：K6 **不会**因为树里有 `LOOP_ELEMENT` 就丢弃维度 —— 被 `omit` 的 5 个维度全部是 F.13 修法四的 `unmodelled_variable`。含自由变量的维度照样参与约束合取，丢的是 `_sat_caveats` 里的判决置信度（SAT 降级为 `unknown`）。所以闭合一个 `back()` 的收益是"把 unknown 变成判决"，**不是**"补回缺失的约束"。
+
+15. **IR 补强：类型化变更记录 + 成员调用接收者（2026-07-31）**。两项都为"容器在读取点前被改过吗"服务，而这个问题此前完全不可判定。
+
+    - `WriteRecord.kind` / `WriteEvent.kind` ∈ {`assign`, `append`, `replace`, `shrink`}。`append` 的 RHS 是**一个元素**而不是容器的新值 —— 不区分它，`size(v)` 就会被求成最后一次 `push_back` 的元素。`_CONTAINER_MUTATORS` 同时扩到 `clear` / `pop_back` / `pop_front` / `erase` / `resize`（`shrink`）与 `assign` / `swap`（`replace`）；改端操作没有可写的新值，以**空 RHS** 记录，只为让"这里变过"可见 —— 一个不留痕的 `clear()` 与"没有写"无法区分，而任何关于 `back(v)` 的推理都会在一个看不见的写序列上进行。FAG 实测：1795 条字段写里 35 条 `append`，3126 条局部写里 11 条 `append` + 3 条 `replace`（三处真实的 `.assign(...)`），**零条 `shrink` —— 因为这棵算子树里根本没有 `clear` / `pop_back` / `erase` / `resize` 调用**（已全文搜索确认，不是漏提）。
+    - **`CallSite.receiver`，以及我自己造的一个坑。** 第一版把它门闩在 `cursor.kind.name == "CXX_MEMBER_CALL_EXPR"` 上，结果 3461 个 call site **一条都没填上**。根因：**本机 libclang 的 `CursorKind` 里没有 `CXX_MEMBER_CALL_EXPR` 这个成员**，`v.clear()` 一律以 `CALL_EXPR` 到达，门闩恒假。`walk()` 里那句 `kind_name in ("CALL_EXPR", "CXX_MEMBER_CALL_EXPR")` 长期靠前者兜住，看上去像是在分派成员调用 —— 我正是被它误导的，已就地加注释。
+    - **去掉门闩不能照抄，`_receiver_path` 必须同时收紧。** 它原本只在 `_record_container_write` 里用（那里已知调用是容器 mutator，第一个孩子必是 `MEMBER_REF_EXPR`），所以有一条"第一个孩子的点分路径就算接收者"的宽松兜底。用到全部 call site 上，这条兜底会把 `std::max(a.b, c)` 报成"在 `a.b` 上的调用"——命名空间引用被跳过后，下一个孩子是**实参**。改为只接受两种形态：`MEMBER_REF_EXPR` 且 spelling 等于方法名，或路径文本已被压平成以 `.方法名` 结尾。
+    - 效果：**969/3461** 个 call site 有接收者，自由函数误判 **0**，`append + replace` 仍是 **49** 条（收紧没丢任何写记录），两次全量 `--refresh` 后 `CLOSED 14/19` / `free_vars 6` / `implicit_zero 211` / `unrecorded 0` 逐项不变。
+    - **意外收获：读取点的程序序到手了。** 原以为要给 `FuncSummary.reads` 附行号，但 `back()` / `size()` / `begin()` 本身就是成员调用，`receiver` + `line` 直接构成有序事件流。`deterPrefixData.prefix1` 现在能看到 29 个成员调用，`push_back` 与 `back()` 的交错一目了然（`:96` 读+写、`:106` 读、`:116` 写、`:164`/`:165` 读、`:167` 写…）；`slicePrefix1` 是干净的 `:168` 写 → `:171` 读 → `:177` `begin`/`end`。这让 F.14 那条粗判据（"多个函数写就隔离"）有了升级为真正读写交错判定的可能 —— 当前方向保守，不急着改。
+
+16. **写记录的两个静默缺口（2026-07-31）**。都是"IR 说的比源码少"，而下游把残缺的写序列当完整的用。
+
+    - **成员路径上的整容器 `operator=`**：`_record_operator_assign` 的 `path.count(".") < 1` 限制放开，记为 `kind="replace"`。全集实测 **14 条**，全部是 `deterPrefixData.{prefix0,prefix1,prefix2,deterPrefix,deterPrefixAlign} = SliceVector(自身, step)`。
+    - **`push_back` 的元素冒充容器定义式**：元素移入新槽 `FuncRecord.appends` / `FuncSummary.appends`，`assigns` 不再被污染。实测"容器的 `assigns` 条目是元素"降为 **0**，46 个元素一条不少地进新槽。
+    - 效果：`prefix0` 的写序列由 7 条（全 append）补全为 **11 条**（4 `replace` + 7 `append`），`prefix1` 同样补到 11 条。全量单测 **301 passed**，`--refresh` 后 `CLOSED 14/19` / `INPUT_DERIVABLE 10/19` / `free_vars 6` / `implicit_zero 211` 逐项不变。
+    - **为什么此前没出错答案，以及它锁定了 P1.4 的顺序。** 这 5 个路径全部被 `source_resolver.py:722-729` 的名字白名单短路成 `TILING_DATA` 根，`_chase_field` 从不追它们的写序列 —— 白名单**掩盖**了两个缺陷；去掉白名单（P1.4）会立刻激活它们。所以必须先让写记录诚实再动白名单，这是这两条插到 P1.4 之前的原因。
+    - **`appends` 新槽顺手暴露了 P2 要处理的形态**：`deterPrefixData.prefix1 <- ['deterPrefixData.prefix1.back() + actualS1Outer * actualS2Outer', 'fBaseParams.deterMaxRound']` —— 自引用 `back()` 的前缀和递推，正是 `PrefixSumLast`。
+    - **P1.1c（局部引用别名）经核实在 FAG 上无实例，不做**：host 侧的引用别名全部是 `auto &qShape = ...GetStorageShape()`，绑 `gert::Shape` 且纯读，没有一个绑到可变容器，也没有任何经别名的写。原调查把它列为"阻塞项"是按代码可能性而非本算子事实。
+
+17. **按名字认 tiling 聚合体 → 按写记录认（2026-07-31）**。`_PARAMS_DERIVED_RE`（字面写着 `deterPrefixData`）与 `_AGGREGATE_FIELD_RE`（后缀 `Params|TilingData|PrefixData|SplitCore|compileInfo`）决定"这个符号是 host tiling 状态"，换一个算子改了命名就静默误分类。
+
+    - 结构性判据：`HostIR.aggregate_heads()` = **字段被 host 写过的符号**。输入访问器天然不满足 —— 没有代码给 `context->GetInputShape(0)->GetStorageShape().dim` 赋值。新增 `SourceResolver.tiling_derived()`，4 个使用点（`resolve_symbol` 的 accessor 分支、局部 RHS 兜底、参数实参、`controllability._close_params_as_derived`）全部改用它；`_AGGREGATE_FIELD_RE` 随之成为死代码，已删；`_PARAMS_DERIVED_RE` 仅在**没有 IR 可问**时兜底。
+    - **先修 H2/H3 才敢动这里**：白名单短路让 `_chase_field` 从不追 `deterPrefixData.*` 的写序列，正是它掩盖了那两个缺口。
+    - 判据很紧：152 个 `class_fields` 里只有 **7** 个符号入选，名字正则能抓的**一条不漏**（missed = 0），另外多抓 5 个名字不像但确实是 host 填充的聚合体（`compileInfoPtr`、`tndBaseInfo`、`tndBandDeterRoundInfo`、`emptyTensorTilingDataRegbase`、`s1ValidIdx` —— 后者是 `vector<pair<>>`，`s1ValidIdx[i].first` 剥下标后成 `s1ValidIdx.first`）。输入访问器与只读别名全部排除（`queryShape.GetDim(0)`、`qShape.GetDimNum()`、`std::max(a, b)` 均为 False）。
+    - 全量单测 **301 passed**（两条按名字断言的旧测试重写为按写记录断言，并补了"名字像 Params 但无写记录不得假设为 tiling 根"与"改名为 `cfg` 仍能闭合"两条）；重跑派生 `CLOSED 14/19` / `INPUT_DERIVABLE 10/19` / `free_vars 6` / `implicit_zero 211` 逐字段一致。
+    - **诚实的边界**：零回归说明新旧判据在本算子上**结论等价**，不说明跨算子通用性被验证过 —— 多抓的那 5 个符号没有改变任何字段的结论，所以收益目前是设计上的，未经数据考验。同时判据现在**依赖写记录存在**：若某聚合体的字段写全在被 `_in_scope` 过滤掉的 TU 里，它会降级为 `TILING_DATA_NO_WRITER` 而不是被假设成 tiling 根 —— 方向是保守的（变成 gap 上报，不是假 closed）。
+
+18. **exact 却不可驱动：分类字段展开到输入条件（2026-07-31）**。`IsPse` / `IsAttenMask` / `IsTnd` 被标 `exact` 但根是 `TILING_DATA` —— 知道它等于什么，却无法用测试输入驱动它。
+
+    - **根因不在 `_chase_writes`**（那条"多常量写 → host 根"是合理的保守，且 `Atom` 本就没有承载分段值的槽），而在 `derive_key_fields._expand_named_const_cmp`：字段 vs 具名常量的比较，字段侧只做 `_expand_surface`，于是 `_chain_sites` 那套现成的 `Ite(guard, value, …)` 机制从未被调用，字段停在表面叶子、被 resolver 归为 host 状态。
+    - 改为**尝试展开 + 两道关**。质量关（`_reduces_to_inputs`）决定是否采用：展开只有在把该字段完全化归为可控/平台锁定根时才是进步，若仍留下 host 状态、自由变量或 `Unknown`，就丢弃并回到与改动前完全相同的浅展开。预算关（`CLASSIFIER_PROBE_NODES = 4000`，配合新增的 `_node_ceiling`）只限制**试探的代价**，不参与判定。
+    - 结果：`IsPse` / `IsAttenMask` 从 `TILING_DATA` 变为 **`INPUT_SHAPE` + `OPTIONAL_INPUT_PRESENCE`**（243 / 266 字符），**`INPUT_DERIVABLE` 10/19 → 12/19**；其余 17 维 exactness / free_vars / 根集合逐项不变，`CLOSED` 仍 14/19，`free_vars` 仍 6，耗时 27.7s → 29.2s。全量单测 **303 passed**，另补 4 条钉住两道关的用例。
+    - **IsTnd 明确不做**。调查建议"只链 `GetShapeAttrsInfo` 的 5 条 layout cascade"（约 532 字符、根变 `ATTRIBUTE`），但后续 `SupportTrans2BS2N2GD` / `SetSplitAxis` / `DoSparse` 会改写 `layoutType`；忽略那 3 条写会报出一个"由 `inputLayout` 唯一决定"的值，而真实 host 在部分路由下已是 `BS2N2GD` —— 失败方向是**替换成无根据的确定值**，正是最该避免的那个。全链则是 8 写 / 18 guard / ~43k 字符 / normalize MemoryError。现状 `exact + TILING_DATA + input_derivable=false` 能力受限但诚实，`layoutType` 的阻塞归入 P2 一类。判据用**无自指**（`_writes_are_self_routing`：任一写点的 RHS 或 guard 提及该字段本身）而非"写条数"这种武断门槛 —— 自指既是爆炸的根源，也是"先设值再路由改写"的标志。
+    - **踩过的坑**：第一版判据只有"无自指"这一关，结果 `IsBn2MultiBlk` 变 `unresolved`（185s）、`IsNEqual` 从 exact 退化、耗时 372s。加上质量关后仍有 `SplitAxis` → `unresolved`，根因是**被拒绝的试探仍在消耗全局 `MAX_NODES`**，累积把它推到了预算上限；`_snapshot`/`_restore` 补上 `_nodes` 后恢复。另外回滚缓存会让同一字段被反复试探（耗时的另一半），加 `_rejected` 记忆后解决。
+    - `implicit_zero` 211 → 213：`IsPse` / `IsAttenMask` 展开后多了 2 个 if/else 链的零默认假设点，是诚实的新增而非回归。`IsNzOut` / `IsTndSwizzle` 表达式变大（15877→25542、16278→16613）但根与 free_vars 不变 —— 单个 operand 化归成功，维度整体仍被其他因素阻塞。
+
+19. **`push_back(x)` 之后的 `back()` 就是 `x`（2026-07-31）**。`back(slicePrefix1)` 不是聚合、不需要量词、也不需要展开切片循环：`varlen_regbase.cpp:168` 无条件追加 `R1`，`:171` 读 `back()`，中间只隔一句读 `prefix0` 的语句。把它当未知数是在丢弃源码明写的值。
+
+    - 规则 `LAST_PUSH_DOMINATES_BACK`（`derive_key_fields._last_push_dominates_back`），按形态匹配而非变量名：最后一次早于读点的容器变更是 `append` 且其守卫蕴含于读点守卫时，`back(v) := ` 该元素，随后继续正常展开（`R1` 因此被展开成完整输入表达式，而不是换一个名字的自由变量）。
+    - **读点位置这一关是靠"唯一性"绕过去的，不是靠给 Expr 加位置。** Expr IR 刻意不带 file/line，补它要动所有构造 Expr 的路径。但 `back()` 本身是成员调用，已记为 `CallSite`（带 receiver / line / column）。于是新增 `HostIR.sole_member_read`：该函数内该容器**只有一个** `back()` 读点时位置无歧义，有多个就返回 None —— 表达式树无法告知自己是哪一个，此时把某次 push 的值钉到错误的读点会伪造一个源码没有的等式。
+    - **必须绕开既有的写索引。** `writes_by_tail()` 与 `_local_defs` 都过滤空 RHS，而 `clear()` / `pop_back()` 正是空 RHS —— 用它们判"中间无破坏性操作"会在最需要看见的地方瞎掉。新增 `HostIR.container_events` 直接读 `writes + local_writes`，含空 RHS 事件，按 `(file, line, column)` 排序。
+    - **第一版判据是错的，记下来**：要求 push 无条件（`not any(pc.is_decision …)`），结果 `free_vars` 一动不动 —— push 和 read 同在 `deterSparseType == DETER_BAND` 块内，两者都带这个守卫。正确的判据是 push 的守卫集合 ⊆ read 的守卫集合（read 可达 ⟹ push 已执行），这也正好拒掉"push 在内层 if、read 在外层"。另要求 push 的守卫都不是 `guard_clause`：那种记录弱于真实，集合比较看不到它真实的额外条件。
+    - 只对**局部**容器生效。`deterPrefixData.prefix1` 在 6 个函数里被 push，任何被调函数都能经 `this` 改它，"中间没发生别的事"无法由单函数事件序列判定。另外三道关：push / read 都不在循环内（回边让文本序不等于程序序）、窗口内没有把容器交给别的函数（by-ref 可改末元素而不留写事件）、窗口内该容器上没有非只读方法调用（含我们没有规则的方法）。
+    - 顺带补齐：`WriteRecord` / `WriteEvent` 加 `column`（4 个构造点），`_assign_ssa` 排序键由 `(file, line)` 改为 `(file, line, column)` —— 同行两次写此前拿到的是任意相对版本号。
+    - 效果：**`free_vars` 6 → 5**，`SplitAxis` 表达式 56556 → 56968 字符（`R1` 展开后的完整式子比一个变量长），`CLOSED 14/19` / `INPUT_DERIVABLE 12/19` / 各维根集合不变。`implicit_zero` 133 → 136：`R1` 链条更深，多走到 3 个 fallthrough 无声明初值的点，是诚实新增。单测 **+17 条**（每个拒绝条件一条），全量通过。
+
 **剩余 67 条过近似的分布**（口径：`undecided_guards` 条数，非变量数）：
 
 | presort | 条数 | 归属 |
@@ -350,16 +571,26 @@ I2/I3 仍是**过近似**（未建模 `GRAPH_FAILED` 收窄），结构性「能
 
 ---
 
-## 6 个过近似——按「卡住几个字段」排序
+## 5 个过近似——按「卡住几个字段」排序
+
+> 原为 6 个。`back(slicePrefix1)` 已由 `LAST_PUSH_DOMINATES_BACK` 精确消元，见下节。
 
 `python scripts/uo_key_blockers.py .probe_cache/fag_derive.json`，或按阻塞点分组：`python .probe_cache/diag_blocked_on.py`。
 
-| 卡住字段数 | 变量 | 阻塞点 | 性质 | 处理 |
-| ---: | ---: | --- | --- | --- |
-| 5 | 2 | `invalidS1Array[j]` | LOOP_ELEMENT | 区间覆盖判定，**输入可定**；要的是循环出口摘要，不是判断题 |
-| 2 | 1 | `parseInfo[(s2Outer-1)][LENGTH_IDX]` | LOOP_ELEMENT | 前缀和末项；同上 |
-| 1 | 2 | `size(syncRounds)` / `size(syncRoundRanges)` | LOOP_ELEMENT | 相邻核列切分需同步的轮次对数；见问题 6 |
-| 1 | 1 | `back(slicePrefix1)` | LOOP_ELEMENT | band deter 前缀和的最大轮次 |
+| 卡住字段数 | 变量 | 阻塞点 | 聚合语义 | 循环上界 | 能否精确消元 |
+| ---: | ---: | --- | --- | --- | --- |
+| 5 | 2 | `invalidS1Array[j]` | 布尔掩码上「是否存在仍为 false 的元素」（覆盖标记 + 带 break 扫描） | `s1Outer` / `actualS1Outer`，**依赖 shape** | **不能**。闭式是「区间并 `∪[BEGIN_i,END_i)` 是否盖满 `[0,s1Outer)`」，需对 `i` 量化而 `i` 上界也依赖 shape |
+| 2 | 1 | `parseInfo[(s2Outer-1)][LENGTH_IDX]` | 前缀和取末项 = `Σ tmpSize[i]` | `s2Outer = (s2+cvS2Inner-1)/cvS2Inner`，**依赖 shape** | **不能**（展开项数不定）；闭式求和已知但无有限上界 |
+| 1 | 2 | `size(syncRounds)` / `size(syncRoundRanges)` | 条件 `push_back` 的次数 | `CORE_LIST_NUM = 36`，**静态常量** | **能**，O(36) 指示函数之和 |
+| ~~1~~ | ~~1~~ | ~~`back(slicePrefix1)`~~ | 切片后追加再取 `back()` | 切片循环依赖 `prefix1.size()/step` | **已消元**，见下节 |
+
+**这张表推翻了一个原先的预期。** 原先记的处理是「要的是循环出口摘要」，隐含着做完摘要这 5 个维度就能闭合。实际不成立：`invalidS1Array`（卡住全部 5 个字段）与 `parseInfo` 的循环上界都是 shape 派生的，**不是有界的**。有界量词需要界；要表达它们只能用无界量词，而 `acp_common` 侧唯一的资源保护是 `SolveConfig.timeout_ms = 5000`（无 `rlimit` / `max_memory`），无界量词的结果会是 `unknown` 而不是答案。扩 `acp_common` 也救不了这两类，且那层的消费者不止 UO —— **整个 TG 求解栈**都建在它上面（`testcase_agent/constraint_ir.py` 再导出、`z3_backend.py` 子类化 `_CommonZ3Backend`），改 IR 语义两边都吃。
+
+所以 P2 的定位要改写：**它不会让这 5 个维度变成 `input_derivable`**（一个维度要 exact 得把自由变量全消掉，而 `SplitAxis` 的 6 个里有 2 个属于上面「不能」那两行）。它能买到的是另一样东西 —— 这 6 个自由变量现在**完全无约束**，Z3 可以赋任意整数，过近似极松以致 SAT 无意义（只有 UNSAT 可信）。把能闭式的消掉、剩下的加上可靠约束（如 `size(syncRounds) + size(syncRoundRanges) <= 36`），过近似收紧，K6 就能多砍掉真不可达的 key，也就是**减少生成出来会失败的 case**。
+
+一处措辞更正：`slicePrefix1` / `syncRounds*` / 其中一个 `invalidS1Array` 的源码在 **`..._tiling_varlen_regbase.cpp`**，不在长期作为重点的 normal / common 里（该文件在 bundle 解析范围内，分析没漏，但此前描述问题时的措辞偏窄）。
+
+**这 6 个已不再派给 LLM**：`PRESORT_LOOP_ELEMENT` 归入 `NON_ESCALATING`。此前文档里"这是唯一真正该出判断题的桶"的判断被源码调查证否 —— 见下方说明与 [open-problems.md](./open-problems.md)。`gaps.py` 那道二层过滤同时从「看 reason 文本」改为「看 presort」：一个 loop element 若归一化失败在 `UNMAPPED_SYMBOL` 上，它带的 reason 是可升级的，旧的 `SCHED_SOFT` 检查照样放它过去。
 
 `.second`（原 `UNMAPPED_CALL`）随④归零，`slicePrefix1` / `syncRounds`（原 `UNMAPPED_SYMBOL`）随⑥归零。`calculatedBlockInfo` 随⑤消失 —— 它原本是被下标的定义链拉进来的，而下标的定义链不属于字段值的决定因素（各字段 `input_roots` / `value_leaves` 前后不变，可确认不是丢约束）。
 
@@ -371,21 +602,49 @@ I2/I3 仍是**过近似**（未建模 `GRAPH_FAILED` 收窄），结构性「能
 
 对 **K6 逐 key Z3**：过近似 → 自由 bool → 约束变弱 → **可能多放行非法 key**，很少误杀合法 key。可以先开 K6 但结果偏松；要收紧按上表从头做。
 
+注意 K6 **不会**因为树里有 `LOOP_ELEMENT` 而丢弃该维度（那是 `unmodelled_variable` 才触发的 `omit`）：维度照样参与约束合取，丢的只是 `_sat_caveats` 里的判决置信度。所以消掉上表任一项的收益是"把 `unknown` 变成判决"，不是"补回缺失的约束"。
+
 ---
 
 ## 剩余问题（按优先级）
 
-### 0. 把 CLOSED 从 14/19 推到 19/19（当前主线）
+### 0. 把 CLOSED 从 14/19 推到 19/19（**不是当前主线**）
+
+判据已经从「CLOSED 几个」换成「任何标成 `input_derivable` / `reachable` 的关系是否确实由测试输入控制」。在标签修好之前把 CLOSED 从 14 推到 19，只会重演 `derived 19/19` 那次假成功。所以顺序是**先让标签诚实（已完成）→ 让产物可安全消费（K6 接主链）→ 再追闭合**。
 
 layout 与 rope 两类已随 F.8 的作用域修复一并消失（它们本就是同一个根因）；顺序赋值假环见 F.10。`array_subscript` 已归零。
 
-**静态解析缺陷已见底**：`array_subscript` / `UNMAPPED_CALL` / `UNMAPPED_SYMBOL` 全部归零，残余 6 个全是具名 `LOOP_ELEMENT`（3 个元素 + 3 个容器摘要），且**全部由输入决定**。
+~~**静态解析缺陷已见底**~~ —— **这个判断是错的，勿再引用**。`back(slicePrefix1)` 就是反例：`slicePrefix1` 全仓库仅 4 处出现，`push_back(R1)` 在 `varlen_regbase.cpp:166`、`.back()` 在 171 行，中间只隔一句读 `prefix0` 的语句，**无循环回边、无分支** —— 这是容器 SSA 能确定性闭合的形态，不需要量词。另有两处同类：`_chase_writes` 遇到多个 guarded 常量写入就判 `TILING_DATA`（这正是 `IsTnd` 丢掉输入根的原因），以及 211 处隐式零默认里多数来自穷尽的 layout cascade、真实路径走不到默认 0。
 
-要再涨 CLOSED 只剩一条路：**实现循环出口摘要 / 量化推理**。三种形态各需要的东西不同：
+据此修正后的分工：确定性静态闭合还有三项可做（容器 SSA、多写点 enum 折叠、默认值穷尽性证明），**之后**才是循环摘要。注意 `back()` 闭合大概率**不降** `free_vars`：`R1` 依赖 `deterPrefixData.prefix1.back()` 与 `mnMax`，两者都由 `CalcleTNDBandDeterPrefix` 的 `for (i < b)` 循环累加/取 max 得出。收益是让 blocker 形态诚实，不是消元 —— 别拿数字当判据。
 
-1. `invalidS1Array[j]` —— 区间覆盖判定（`∃j` 不被任何 `[begin_i, end_i)` 覆盖），可推闭式或用量词编码给 Z3。卡住全部 5 个字段，收益最大。
-2. `parseInfo[(s2Outer-1)][LENGTH_IDX]` —— 前缀和的**末项**，即"有效基本块总数"。这类"前缀和末项"其实是一个可闭式求和的量。
-3. `size(syncRounds)` / `back(slicePrefix1)` —— 循环出口的计数 / 末元素，需要循环出口摘要（`partition_count` 一类）。
+**容器 SSA 的前提在当前 IR 下不成立（隔离调查，2026-07-31）。** 上面那段说的"无循环回边、无分支"是**读源码**得到的，不是从 IR 判定出来的，而替换本身必须由机器验证 —— 判断错的失败方向是"用一个不成立的确定值替换自由变量"。四个容器实例里只有 `back(slicePrefix1)` 属于"缺一个局部数据流查询"，另外三个性质完全不同，任何以它为样本的通用规则套上去都会给出错误的确定值：
+
+| 实例 | 现状 | 判定 |
+| --- | --- | --- |
+| `back(slicePrefix1)` | `LOOP_ELEMENT`（无输入根的函数局部 vector） | 可闭合，但需先机器验证 5 项前置条件 |
+| `back(deterPrefixData.prefix0)` | **不是** `LOOP_ELEMENT`，是 `TILING_DATA` 根的 `VAR_ELEM_BACK_*` | 不可闭合：7 条写分布在 5 个函数，2 条在循环内 |
+| `back(deterPrefixData.prefix1)` | 同上 | 结构性不可闭合：**前缀和**，末项取决于 trip count 与每轮 `actualSeqQlen[i]` |
+| `size(syncRounds)` | `LOOP_ELEMENT` | 不可闭合：带过滤的计数，等价于对循环体的存在量化 |
+
+真正的阻碍是根因不在"信息没被记录"—— `push_back` 连守卫一起被完整记录在 `local_writes` / `assigns` 里。是三层叠加：(1) resolver 给不了纯函数局部容器一个输入根，而 `_container_element` 把输入根同时当作命名锚点和溯源凭证，两者绑死；(2) `derive_key_fields.py:1465` **有意**不展开任何容器操作，理由写在注释里且成立（展开会把 vector 换成某一次 `push_back` 的元素并丢掉容器名，`size(v)` 会被求成某个元素的值），于是已记录的写历史无人查询；(3) 管线里**不存在**"按程序点求容器最后一次变更"的机制 —— 写点带行号，读点不带。
+
+5 项前置条件里有 2 项当时 IR 无法判定。补齐进度：
+
+1. ~~**成员调用的接收者**~~ —— **已补（F.15）**，并且顺带把第 4 项也解决了。
+2. **局部引用的别名标记**（仍阻塞）。`auto &v = deterPrefixData.prefix1;` 被当普通局部记录，经它做的 `push_back` 记在路径 `v` 上，与原容器毫无关联。类型判定所需的 `LVALUEREFERENCE` 检查在 `_is_out_param` 里已有现成实现。
+3. ~~类型化的变更记录~~ —— **已补（F.15）**：`WriteRecord.kind` / `WriteEvent.kind`。
+4. ~~读取点的程序序~~ —— **已补（F.15）**，方式与预想的不同：不必给 `FuncSummary.reads` 附行号，因为 `back()` / `size()` 本身就是成员调用，`CallSite` 的 `receiver` + `line` 直接给出有序的读写事件流。
+5. 把 `WalkResult.controls` 带进 `HostIR`：`CtrlNode.kind` / `induction_vars` 已经算好却被丢掉，白让循环检测退化成 `for(` 字符串前缀匹配。
+
+残余 6 个全是具名 `LOOP_ELEMENT`（3 个元素 + 3 个容器摘要），且**全部由输入决定**。
+
+要消掉这 6 个需要**循环出口摘要 / 量化推理**。三种形态各需要的东西不同：
+
+1. `invalidS1Array[j]` —— 区间覆盖判定（`∃j` 不被任何 `[begin_i, end_i)` 覆盖），需要存在量词。卡住全部 5 个字段，收益最大。注意**两个 scope 语义不同**：Normal 路径是整数区间，Varlen 路径用 **float** 边界且每 batch `assign` 重建，所以按 scope 分成两个变量是对的，不能共用一套摘要。
+2. `parseInfo[(s2Outer-1)][LENGTH_IDX]` —— 前缀和的**末项**，即"有效基本块总数"，`Σ max(end_i - begin_i, 0)` 可闭式求和。顺带一个算子缺陷线索：`s2Outer == 0` 时 `parseInfo[-1]` 下溢，arch35 无保护而 arch22 有。
+3. `size(syncRounds)` / `size(syncRoundRanges)` —— 受限 count-if，**不是全 coreId 的计数**：迭代域被 `continue` 过滤，且 Dense 用 `coreId > aicNum - 1`、Band 用 `coreId >= aicNum - 1`（两者不同），只有 `coreId != 0` 才 push。
+4. `back(slicePrefix1)` —— 见上，走容器 SSA 而非量化。
 
 `CLOSED` 只会在**真正消元**时才涨；把过近似收窄或改名都不算。
 
@@ -409,11 +668,17 @@ layout 与 rope 两类已随 F.8 的作用域修复一并消失（它们本就�
 - 再跑一遍 `diag_align.py` + `diag_collapse.py`（只剩 IsRegbase 恒 1 合法、IsRope 检测器误报可接受）。  
 - 接受当前过近似（结果偏松），或先做 layout 归一（高杠杆、非必须）。
 
-### 2. K6 — 逐 key Z3（三重覆盖第 2 项）
+### 2. K6 — 逐 key Z3（**已完成，本节留作设计依据**）
 
-- 删 `IR_TPL_IDENTITY`、`input_derivable: True` 硬编码。  
-- `classify_key_reachability` 逐 key 调 z3，输出 OK / Z3_UNSAT / Z3_UNKNOWN + 见证。  
-- **派生假折叠未清时不要接**（当前对齐已过，可接）。
+依据是软化的单向性：软化只放大可行域，所以 **UNSAT 可判 unreachable，SAT 只能判 unknown**。这条让 5 个过近似字段仍有价值（能砍掉真不可达组合），同时杜绝误报 —— 也是为什么可以先接 K6 再追闭合。
+
+> **8705 是什么**：不是 19 维值域的笛卡尔积（那是天文数字）。TPL 声明了 65 个 `ASCENDC_TPL_ARGS_SEL` 组，合法集是**各组内部笛卡尔积的并集**，由 `expand_legal_with_groups` 展开，共 8705 个。写探针枚举 key 一律走这个函数，不要自己对 `domain` 做 product。
+
+- 新建 `uo_init/key_reachability.py`：用 `acp_common.z3_backend` 把 `var_model` + 19 棵 `value_expr` 组装成一份 IR，逐 KEY `push/pop`。`predicate.py` 产出的 SMT-lite 本来就照着 `SUPPORTED_EXPR_OPS` 写的，不用另写编译器。
+- 四分类：任一字段 `partial/unresolved` 或 `input_closure == host_state` → `underivable`；UNSAT → `unreachable` + unsat_core；SAT 且全 `exact/constant` → `reachable` + witness；SAT 含过近似 → `unknown`。
+- `materialize_tiling.py` 要删的：`_hard_invariants` 那三条硬编码规则（其中 `OutDType == InputDType` 虽然语义上碰巧对，但必须由派生给出而非硬写）、`z3_check_key_dims` 的维度白名单、`classify_key_reachability` 的全局 `input_controllable_fraction` gate；要修的：「有 blocker 仍返回 reachable」与 `use_z3=False` 直接 reachable。
+- 接线：`export_kb_action` 补传 `tpl_schema` / `var_model` / `host_derivation`。无 derivation 时全部标 `underivable`，**不得回退到 `invariants_ok → reachable`**。
+- 产物：`legal_key_index.jsonl` 每行加 `layer` / `witness` / `exactness_summary`；`template_admissible`（8705）与 `host_reachable` 是两个独立计数。
 
 ### 3. K5 — platform_context
 
@@ -478,8 +743,12 @@ layout 与 rope 两类已随 F.8 的作用域修复一并消失（它们本就�
 4. ~~`.second`（`UNMAPPED_CALL`）~~ —— 已归零：元素的 tuple slot 纳入同一个 cut（④）。`free_vars 9 → 6`。
 5. ~~多维下标 identity 过粗~~ —— 已修（⑤）：下标改浅展开 + 完整下标链，同时消除假等式与伪区分；附带 `max_chars` 减半、耗时减半。
 6. ~~reduction / accessor 的 cut fallback~~ —— 已修（⑥）：`UNMAPPED_SYMBOL` 归零。
-7. **6 个 `LOOP_ELEMENT`（当前主线）**：循环出口摘要 / 区间覆盖闭式。它们输入可定，**不该出判断题**。剩余主要工作量，见上节三种形态。
-8. **K6** 逐 key Z3；K5 / G0 / K7。
+7. ~~标签诚实化（P0）~~ —— 已完成：`input_closure` 收紧三处 `input_derivable`（13→10）、`domain_violations` 抓出 `OutDType` 契约冲突、`LOOP_ELEMENT` 移出 LLM 队列、`substitute_vars` 支持 int 探针 + 消元后强制校验回退、loop gate 加 `free_vars` 不得上升。派生数字（CLOSED 14 / free_vars 6 / implicit_zero 211）不变 —— 这一轮只动标签，不动派生。
+8. ~~K6 逐 key Z3~~ —— 已完成（F.13）：14/19 维进求解器，8705 key 全量判定 127s。产物可交下游，只是可用维度较少 —— 这比一个 19/19 但语义不可信的产物有用得多。**当前 8704/8705 是 `unknown`，卡点已明确是第 10 项（循环摘要）**：5 个被 `omit` 的维度全部因为未建模的循环归约变量（`m0Max` / `s2Inner` / `deterTilingSplitMode` …）。
+9. **确定性静态闭合**：容器 SSA（`back(slicePrefix1)`）→ 多写点 enum 折叠（`IsTnd` / `IsPse` / `IsAttenMask` 的输入根，**风险最高，会影响所有字段的 root，必须逐字段对比前后**）→ 隐式零默认穷尽性证明。
+   - **容器 SSA 已降级，不要直接开工。** 隔离调查（见「剩余问题 0」内的表）表明它只对 4 个容器实例中的 1 个成立，且 5 项前置条件里有 2 项当前 IR 无法判定（成员调用接收者、局部引用别名）。补齐这些 IR 缺口同时也修掉「写记录里两个静默缺口」（见 [open-problems.md](./open-problems.md)），那两条本身就是正确性缺陷，方向是"替换成无根据的确定值"；而容器 SSA 自身的收益按 F.14 的更正只是把某个维度的 `unknown` 变成判决，不补回缺失约束。**先修 IR 缺口，再谈替换。**
+10. **6 个 `LOOP_ELEMENT`**：循环出口摘要 / 区间覆盖闭式，最后做。它们输入可定，**不该出判断题**。IR 层有两条路，做到那时再定：(a) 在 UO 内把摘要消元成现有 `SUPPORTED_EXPR_OPS`（不动共享层，但表达力受限）；(b) 给 `acp_common/constraint_ir.py` 加有界聚合节点。当前 IR 的 `variables` 是 flat 列表、类型只有 `bool|int|enum`，没有索引变量概念，所以 (b) 要引入绑定范围结构。
+11. K5 / G0 / K7。
 
 当前阻塞分布（`python .probe_cache/diag_blocked_on.py`）：
 
@@ -497,7 +766,7 @@ layout 与 rope 两类已随 F.8 的作用域修复一并消失（它们本就�
 - `free_vars` **涨**也可能是对的 —— ⑥ 用 +1 个自由变量换回 4 个真实约束。判据是字段 `vars` 总数同时上升。
 - `free_vars` 涨也可能是错的 —— ⑤ 的第一版把一个元素拆成 11 个伪变量。判据是 surface 是否还是源码形态（`python .probe_cache/diag_surfaces.py`）。
 
-所以每步至少同时看：`free_vars`、字段 `vars` 总数、`max_chars`、`input_roots` / `value_leaves` 是否守住。
+所以每步至少同时看：`free_vars`、字段 `vars` 总数、`max_chars`、`input_roots` / `value_leaves` 是否守住、`unrecorded_free_vars` 恒为 0。**另外记住 CLOSED 与 INPUT_DERIVABLE 是两个数**：把过近似消掉会涨前者，把根追到输入才涨后者。
 
 ---
 
@@ -509,7 +778,7 @@ layout 与 rope 两类已随 F.8 的作用域修复一并消失（它们本就�
 cd engines/understand-operator; python -m pytest tests/ -q
 ```
 
-当前 **257 passed / 0 failed**（`tests/unit`，6m54s）。上一版交接里那 4 条「基线红测」已全部修完，**UO 不再有已知红测**；再出红就是真回归：
+当前 **277 passed / 0 failed**（`tests/unit`，7m52s）。上一版交接里那 4 条「基线红测」已全部修完，**UO 不再有已知红测**；再出红就是真回归：
 
 | 测试 | 结论 |
 | --- | --- |
@@ -518,11 +787,13 @@ cd engines/understand-operator; python -m pytest tests/ -q
 | `test_coverage_baseline_row` | 测试错：漏传 `op_name` |
 | `test_uint_index_encoding` | 测试错：把 `ASCENDC_TPL_UI_LIST` 标记也数进下标了 |
 
-新增：`test_key_exactness.py`（**45 条**：分级 + 哪些守卫可软化 + 叶子必须在它来源的函数作用域里解析 + 下标 cut point + 容器 surface 打 scope + 元素 tuple slot + **下标浅展开与下标链的 5 条** + **容器摘要 cut 的 4 条**）、`test_expr_dag.py`（DAG 序列化，10 条）、`test_gap_patch_consistency.py`（解析必须改表达式而非只改账）、`engines/common/tests/test_shared_solver.py`（10 passed）。
+新增：`test_key_exactness.py`（**45 条**：分级 + 哪些守卫可软化 + 叶子必须在它来源的函数作用域里解析 + 下标 cut point + 容器 surface 打 scope + 元素 tuple slot + **下标浅展开与下标链的 5 条** + **容器摘要 cut 的 4 条**）、`test_key_contract.py`（**20 条**，产物契约：`input_closure` 分级 + `domain_violations` + 哪些守卫可以成为 LLM 问题 + 消元必须真落地）、`test_expr_dag.py`（DAG 序列化，10 条）、`test_gap_patch_consistency.py`（解析必须改表达式而非只改账）、`engines/common/tests/test_shared_solver.py`（10 passed）。
 
 `test_isnzout_derivation_chain` 通过，是直接测派生链的用例。
 
 其中几条钉的是 soundness 而非行为，改动时别当冗余删掉：`test_two_slots_of_one_element_are_different_variables`、`test_different_outer_subscripts_are_different_variables`、`test_two_summaries_of_one_container_are_different_variables`（三处"不同未知量不得共用变量"），以及反向的 `test_a_slot_on_something_other_than_a_subscript_is_left_alone`、`test_an_input_backed_summary_keeps_its_input_root`（cut 不得抢已能精确解析的路径）。`test_a_subscript_is_not_expanded_through_its_definitions` 钉的是"下标不深展开"这条不变量。
+
+`test_key_contract.py` 里同样有几条是 soundness：`test_a_field_closing_onto_host_state_is_not_input_derivable`（`exact` 不等于可控）、`test_an_unclassified_root_counts_as_host_state`（未知根必须保守）、`test_a_verdict_that_does_not_land_is_rolled_back`（改账不改式必须被拒），以及反向的 `test_platform_facts_do_not_make_a_field_undrivable`、`test_the_same_values_under_a_wider_declaration_are_clean`、`test_an_unmapped_guard_is_still_escalated`（收紧不得过度，否则会把本可用的维度和本该问的问题一起丢掉）。
 
 > **Windows 上 pytest 的退出码不可用作判据。** 收尾清理 `%TEMP%\pytest-of-*\pytest-current` 会抛 `PermissionError: [WinError 5]`，于是 exit code 恒为 1，并且**连 `N passed` 摘要行一起吞掉**。判绿要看进度行是否走到 `[100%]` 且没有 `F` / `E`。也不要给 pytest 输出接 `Select-Object -Last N`：摘要行在异常栈之前，会被截掉。
 >
