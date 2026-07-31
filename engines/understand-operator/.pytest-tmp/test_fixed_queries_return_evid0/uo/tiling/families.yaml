@@ -1,8 +1,0 @@
-edges: []
-nodes:
-- id: FAM_DEFAULT
-  kind: Family
-  name: default
-  status: extracted
-status: partial
-version: 1

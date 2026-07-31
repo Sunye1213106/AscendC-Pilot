@@ -195,7 +195,7 @@ class GuardEvidenceIndex:
     MIN_COVERAGE = 0.75
 
     def __init__(self, host_ir: Any) -> None:
-        self._rows: list[tuple[frozenset[str], str, int, str]] = []
+        self._rows: list[tuple[frozenset[str], str, int, str, str]] = []
         seen: set[tuple[str, int, str]] = set()
         writes = list(getattr(host_ir, "writes", []) or [])
         writes += list(getattr(host_ir, "local_writes", []) or [])
@@ -212,14 +212,28 @@ class GuardEvidenceIndex:
                 seen.add(key)
                 toks = _tokens(text)
                 if toks:
-                    self._rows.append((toks, cfile, cline, text))
+                    self._rows.append(
+                        (toks, cfile, cline, text, getattr(w, "function", "") or "")
+                    )
 
-    def best(self, text: str) -> dict[str, Any] | None:
+    def best(self, text: str, scope: str = "") -> dict[str, Any] | None:
+        """Where this guard came from, optionally confined to one function.
+
+        Without `scope` the answer is whichever source guard shares the most
+        tokens, and identically-worded guards in two functions are
+        indistinguishable — that is how both `invalidS1Array[j]` variables came
+        to cite the normal-path line, sending a reader to the wrong coordinate
+        domain. When a scope is known and it has no match, the answer is None
+        rather than a line from some other function: a wrong line is worse than
+        no line.
+        """
         toks = _tokens(text)
         if not toks or not self._rows:
             return None
         found: list[tuple[int, float, str, int, str]] = []
-        for row_toks, cfile, cline, raw in self._rows:
+        for row_toks, cfile, cline, raw, fn in self._rows:
+            if scope and fn and fn != scope:
+                continue
             covered = len(toks & row_toks) / len(row_toks)
             if covered < self.MIN_COVERAGE:
                 continue
@@ -277,6 +291,9 @@ class UndecidedGuard:
     #: The symbol resolution stopped on. `text` is the whole guard, which for a
     #: deeply expanded condition says nothing about where it went wrong.
     blocked_on: str = ""
+    #: Function the variable was read in. Part of its identity: same-named
+    #: locals in two functions are two variables, not one.
+    scope: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -289,6 +306,8 @@ class UndecidedGuard:
         }
         if self.blocked_on:
             out["blocked_on"] = self.blocked_on
+        if self.scope:
+            out["scope"] = self.scope
         if self.evidence:
             out["evidence"] = dict(self.evidence)
         return out
@@ -583,9 +602,11 @@ def _to_field(
 ) -> FieldDerivation:
     guards: list[UndecidedGuard] = []
     blocked_on = row.get("blocked_on") or {}
+    var_scope = row.get("var_scope") or {}
     for var_id, detail in sorted((row.get("undecided") or {}).items()):
         reason, text = split_reason(detail)
         presort = presort_guard(var_id, detail)
+        scope = str(var_scope.get(var_id) or "")
         guards.append(
             UndecidedGuard(
                 id=guard_id(var_id),
@@ -594,8 +615,9 @@ def _to_field(
                 text=text[:TEXT_KEEP],
                 presort=presort,
                 escalate=presort not in NON_ESCALATING,
-                evidence=evidence.best(text) if evidence is not None else None,
+                evidence=evidence.best(text, scope) if evidence is not None else None,
                 blocked_on=str(blocked_on.get(var_id) or ""),
+                scope=scope,
             )
         )
     return FieldDerivation(

@@ -26,6 +26,7 @@ from uo_init.clang_walk import RETURN_SLOT
 from uo_init.cpp_expr import parse_expr
 from uo_init.expr_ir import Bin, Call, Const, Expr, Ite, Ref, Select, Un, Unknown
 from uo_init.kb_model import CONTROLLABLE_ROOTS, PLATFORM_LOCKED_ROOTS, Domain
+from uo_init.loop_summary import guard_truth
 from uo_init.predicate import (
     ARITH_OPS,
     BOOL_OPS,
@@ -336,6 +337,10 @@ class KeyFieldDerivation:
     #: var_id -> the symbol resolution stopped on, for guards whose text is far
     #: too large to read the failure out of.
     blocked_on: dict[str, str] = field(default_factory=dict)
+    #: var_id -> the function the variable was read in. Two same-named
+    #: containers in different functions share guard text, so evidence lookup
+    #: needs this to cite the right one.
+    var_scope: dict[str, str] = field(default_factory=dict)
     status: str = STATUS_UNRESOLVED
     exactness: str = EX_UNRESOLVED
     free_vars: list[str] = field(default_factory=list)
@@ -358,6 +363,7 @@ class KeyFieldDerivation:
             "scheduling": dict(self.scheduling),
             "undecided": dict(self.undecided),
             "blocked_on": dict(self.blocked_on),
+            "var_scope": dict(self.var_scope),
             "status": self.status,
             "exactness": self.exactness,
             "free_vars": list(self.free_vars),
@@ -957,6 +963,10 @@ class KeyFieldDeriver:
         #: field path → whether its writes re-read it. See
         #: `_writes_are_self_routing`.
         self._self_routing: dict[str, bool] = {}
+        #: (guard text, function) → whether its value is already settled. Kept
+        #: across dimensions: the same guard is chained once per field that
+        #: passes through it, and each answer costs two solver calls.
+        self._guard_truth_cache: dict[tuple[str, str], Any] = {}
         #: Tightened node budget while probing a classifier operand; `None`
         #: means the global `MAX_NODES` applies.
         self._node_ceiling: int | None = None
@@ -1255,6 +1265,13 @@ class KeyFieldDeriver:
         )
         for site in sites:
             scope = site.function or fn
+            guards = self._live_guards(site.guards, scope)
+            if guards is None:
+                # A guard proved false on every run: this write cannot happen,
+                # and keeping it would put a branch in the expression that the
+                # operator never takes — along with the free variables its
+                # condition mentions.
+                continue
             if defining:
                 # Read by `_expand_name` when the RHS or guard names the
                 # variable being defined. Absent for the first site: a
@@ -1265,7 +1282,7 @@ class KeyFieldDeriver:
                 else:
                     self._prev_version[defining] = result
             value = self._expand_text(site.rhs, scope, depth + 1)
-            guard_text = _conjoin_text(site.guards)
+            guard_text = _conjoin_text(guards)
             if not guard_text:
                 if result is None or scope == result_fn:
                     result = value
@@ -1307,6 +1324,44 @@ class KeyFieldDeriver:
             result = Ite(cond, value, fallthrough)
             result_fn = scope
         return result if result is not None else Unknown(REASON_NO_DEFINITION)
+
+    def _live_guards(self, guards: tuple[str, ...], scope: str) -> tuple[str, ...] | None:
+        """`guards` without the ones already decided, or None if none can hold.
+
+        A guard whose value is fixed before any input is not a condition, and
+        writing it into the expression costs a branch plus a free variable for
+        everything it mentions. `syncRounds.size() + syncRoundRanges.size() >
+        CORE_LIST_NUM` is the case this exists for: both vectors are filled
+        from opposite sides of one `if` inside a 36-iteration loop, so the sum
+        never exceeds 36 and the early return behind it is unreachable.
+        """
+        out: list[str] = []
+        for text in guards:
+            truth = self._guard_truth(text, scope)
+            if truth.always_false:
+                return None
+            if truth.always_true:
+                continue
+            out.append(text)
+        return tuple(out)
+
+    def _guard_truth(self, text: str, scope: str):
+        key = (text, scope)
+        hit = self._guard_truth_cache.get(key)
+        if hit is None:
+            hit = guard_truth(
+                self.ir, text, scope, constants=self._int_named_constants()
+            )
+            self._guard_truth_cache[key] = hit
+        return hit
+
+    def _int_named_constants(self) -> dict[str, int]:
+        cached = getattr(self, "_int_consts", None)
+        if cached is None:
+            named = getattr(self.model, "named_constants", None) or {}
+            cached = {k: v for k, v in named.items() if isinstance(v, int)}
+            self._int_consts = cached
+        return cached
 
     def _declared_default(self, defining: str, scope: str, depth: int) -> Expr | None:
         """What the declaration initialises `defining` to, if that is knowable.
@@ -2100,6 +2155,7 @@ class KeyFieldDeriver:
         out.scheduling = dict(norm.scheduling)
         out.undecided = dict(norm.undecided)
         out.blocked_on = dict(norm.blocked_on)
+        out.var_scope = dict(norm.var_scope)
         out.implicit_defaults = list(self.implicit_zero)
         for reason in sorted(set(_collect_unknowns(expanded))):
             out.unresolved.append({"text": "", "reason": reason})
@@ -2429,6 +2485,9 @@ class _ValueNormalizer(PredicateNormalizer):
         #: var_id -> the single symbol that defeated resolution, as opposed to
         #: the full guard text in `undecided`.
         self.blocked_on: dict[str, str] = {}
+        #: var_id -> the function it was read in, so evidence lookup can be
+        #: confined to that function instead of matching guard text globally.
+        self.var_scope: dict[str, str] = {}
         # The expanded expression is a DAG. Normalising it as a tree costs the
         # unfolded size, so each (node, position) is lowered exactly once and
         # the resulting SMT-lite object is shared by every reference to it.
@@ -2853,6 +2912,15 @@ class _ValueNormalizer(PredicateNormalizer):
             )
         self.model.mark_identity_merged(var_id)
         self.undecided[var_id] = f"LOOP_ELEMENT: {surface[:160]}"
+        # Two same-named containers in different functions are different
+        # variables here, but their guard *text* is identical, so evidence
+        # lookup by text alone cites whichever it finds first. The two
+        # `invalidS1Array[j]` were both reported at the normal-path line even
+        # though one of them lives in the varlen path, in a different
+        # coordinate domain. Recording the scope is what lets the lookup be
+        # restricted to the function the variable actually came from.
+        if scope:
+            self.var_scope[var_id] = scope
         return {"var": var_id}
 
     def _element_or_cut(self, expr: Select, *, slot: str = "") -> dict[str, Any] | None:

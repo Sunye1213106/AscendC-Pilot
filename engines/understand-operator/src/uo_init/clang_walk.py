@@ -101,6 +101,12 @@ class CtrlNode:
     universe: str = "PRODUCTION"
     path_conditions: tuple[PathCond, ...] = ()
     induction_vars: tuple[str, ...] = ()
+    #: Loop initial value and per-iteration delta, when both are read straight
+    #: off the AST. Neither appears in `condition`, and `snippet` is truncated,
+    #: so a trip count has no other honest source. `None` means the loop was
+    #: not one of the shapes we read, and callers must not guess from text.
+    init_value: int | None = None
+    step: int | None = None
 
 
 @dataclass
@@ -201,6 +207,31 @@ class FieldDecl:
     line: int
 
 
+@dataclass(frozen=True)
+class LocalDecl:
+    """A local variable's declaration, whether or not it initialises anything.
+
+    Declarations with no initialiser are recorded too, and that is the point:
+    `std::vector<T> v;` writes nothing, so it leaves no write event, yet
+    "declared here and default-constructed" is a fact — and an empty container
+    at the top of a function is exactly the premise a size bound rests on.
+    Absent an entry, the variable was never declared in a function we walked,
+    which is a weaker statement than "declared with no initialiser".
+
+    Kept apart from `local_writes` on purpose: a declaration without a value is
+    not an assignment, and feeding it to the definition chains as one would put
+    an empty right-hand side where a value is expected.
+    """
+
+    name: str
+    function: str
+    type_text: str
+    init: str | None
+    file: str
+    line: int
+    column: int = 0
+
+
 @dataclass
 class FuncRecord:
     name: str
@@ -249,6 +280,8 @@ class WalkResult:
     #: structs here, and the generated tiling-data ones all say `= 0`. Reading a
     #: bare name would turn "cannot prove" into "proved to be zero".
     field_decls: dict[tuple[str, str], FieldDecl] = field(default_factory=dict)
+    #: Local declarations, including the ones that initialise nothing.
+    local_decls: list[LocalDecl] = field(default_factory=list)
 
     @property
     def error_count(self) -> int:
@@ -502,6 +535,7 @@ class _Walker:
         self.functions: dict[str, FuncRecord] = {}
         self.class_fields: set[str] = set()
         self.field_decls: dict[tuple[str, str], FieldDecl] = {}
+        self.local_decls: list[LocalDecl] = []
         self.macro_idioms = 0
         self._ordinal: dict[tuple[str, int, str], int] = {}
         # induction variables of every loop currently enclosing the cursor
@@ -554,14 +588,29 @@ class _Walker:
         if not self._in_scope(file):
             return
         children = list(cursor.get_children())
-        if not children:
-            return
-        init = children[-1]
-        if init.kind.name in ("TYPE_REF", "TEMPLATE_REF", "NAMESPACE_REF"):
-            return
-        text = _text_of(init, EXPR_TOKENS)
+        init = children[-1] if children else None
+        # A trailing type reference is the declared type, not a value: these are
+        # the declarations that initialise nothing.
+        if init is not None and (
+            init.kind.name in ("TYPE_REF", "TEMPLATE_REF", "NAMESPACE_REF")
+            or _is_default_construction(init)
+        ):
+            init = None
+        text = _text_of(init, EXPR_TOKENS) if init is not None else ""
         if text.startswith("{") and text.endswith("}"):
             text = text[1:-1].strip()  # brace initialisation: `int64_t m{expr}`
+        if cursor.spelling:
+            self.local_decls.append(
+                LocalDecl(
+                    name=cursor.spelling,
+                    function=func,
+                    type_text=(cursor.type.spelling if cursor.type else "") or "",
+                    init=text or None,
+                    file=file,
+                    line=cursor.location.line,
+                    column=cursor.location.column,
+                )
+            )
         if text:
             fr = self.functions[func]
             fr.locals.setdefault(cursor.spelling, text)
@@ -664,6 +713,8 @@ class _Walker:
         func: str,
         cond_cursor=None,
         induction_vars: tuple[str, ...] = (),
+        init_value: int | None = None,
+        step: int | None = None,
     ):
         file = _file_of(cursor)
         if not self._in_scope(file):
@@ -690,6 +741,8 @@ class _Walker:
             path_conditions=tuple(stack),
             # a nested branch can also be guarded by any enclosing loop variable
             induction_vars=tuple(dict.fromkeys(induction_vars + self._loop_vars)),
+            init_value=init_value,
+            step=step,
         )
         node.universe = classify_universe(node, op_root=self.op_root)
         self.controls.append(node)
@@ -1127,7 +1180,7 @@ class _Walker:
             for ch in children:
                 self.walk(ch, stack, func)
             return
-        cond_cursor, induction = _loop_header(children, kind)
+        cond_cursor, induction, init_value, step = _loop_header(children, kind)
         cond_text = _text_of(cond_cursor, COND_TOKENS) if cond_cursor is not None else _text_of(cursor, 24)
         self._record_control(
             cursor,
@@ -1137,6 +1190,8 @@ class _Walker:
             func,
             cond_cursor=cond_cursor,
             induction_vars=induction,
+            init_value=init_value,
+            step=step,
         )
         file = _file_of(cursor) or ""
         line = cursor.location.line
@@ -1218,16 +1273,99 @@ def _guard_clause_negation(stmt) -> PathCond | None:
     )
 
 
+#: Wrappers libclang inserts between a declaration and its literal initialiser.
+#: `unsigned int i = 0` arrives as UNEXPOSED_EXPR because 0 needs converting.
+_LITERAL_WRAPPERS = frozenset(
+    {"UNEXPOSED_EXPR", "CSTYLE_CAST_EXPR", "CXX_STATIC_CAST_EXPR", "PAREN_EXPR"}
+)
+
+
+def _is_default_construction(node) -> bool:
+    """Whether this node is an implicit default constructor rather than a value.
+
+    `std::vector<T> v;` has no initialiser, but libclang still hangs a
+    `CALL_EXPR` off the declaration for the implicit default constructor. It
+    has no children and its extent covers only the declarator, so reading its
+    tokens gives back the variable's own name — which is how
+    `std::vector<...> syncRounds;` was recorded as initialised to
+    `syncRounds`. A constructor with arguments (`std::vector<int> v(n)`) has
+    children, and is a real initialiser.
+    """
+    return node.kind.name == "CALL_EXPR" and not list(node.get_children())
+
+
+def _int_literal(cursor) -> int | None:
+    """The integer this expression is, or None if it is not plainly one."""
+    if cursor is None:
+        return None
+    name = cursor.kind.name
+    if name == "INTEGER_LITERAL":
+        toks = [t.spelling for t in cursor.get_tokens()]
+        if not toks:
+            return None
+        # Suffixed literals (`0u`, `36UL`) still name one integer.
+        text = toks[0].rstrip("uUlL")
+        try:
+            return int(text, 0)
+        except ValueError:
+            return None
+    if name in _LITERAL_WRAPPERS:
+        kids = list(cursor.get_children())
+        return _int_literal(kids[0]) if len(kids) == 1 else None
+    if name == "UNARY_OPERATOR":
+        kids = list(cursor.get_children())
+        toks = [t.spelling for t in cursor.get_tokens()]
+        if len(kids) == 1 and toks and toks[0] == "-":
+            inner = _int_literal(kids[0])
+            return None if inner is None else -inner
+    return None
+
+
+def _loop_step(cursor) -> int | None:
+    """Per-iteration delta of a loop's increment clause, if it is a constant.
+
+    Only `i++` / `i--` / `i += k` / `i -= k` are read. The `++i` and `i++`
+    forms differ in token order, so the operator is looked for anywhere in the
+    clause rather than at a fixed position.
+    """
+    if cursor is None:
+        return None
+    toks = [t.spelling for t in cursor.get_tokens()]
+    name = cursor.kind.name
+    if name == "UNARY_OPERATOR":
+        if "++" in toks:
+            return 1
+        if "--" in toks:
+            return -1
+        return None
+    if name == "COMPOUND_ASSIGNMENT_OPERATOR":
+        kids = list(cursor.get_children())
+        if len(kids) != 2:
+            return None
+        amount = _int_literal(kids[1])
+        if amount is None:
+            return None
+        if "+=" in toks:
+            return amount
+        if "-=" in toks:
+            return -amount
+    return None
+
+
 def _loop_header(children: list, kind: str):
-    """Split a loop's children into (condition cursor, induction variable names).
+    """Split a loop's children into (condition, induction names, init, step).
 
     `for (int i = 0; i < N; ++i)` yields cond=`i < N` and induction=('i',), so
     the guard resolves against the loop variable instead of being reported as
     an unmapped symbol.
+
+    libclang omits absent header clauses rather than leaving a hole, so a
+    `for` has four children only when all three clauses are written. `init`
+    and `step` are therefore read only from that shape; anything else reports
+    None instead of a value inferred from position.
     """
     if not children:
-        return None, ()
-    body = children[-1]
+        return None, (), None, None
     header = children[:-1]
     induction: list[str] = []
     for h in header:
@@ -1236,16 +1374,34 @@ def _loop_header(children: list, kind: str):
                 if d.kind.name == "VAR_DECL" and d.spelling:
                     induction.append(d.spelling)
     if kind == "while":
-        return (header[0] if header else None), ()
+        return (header[0] if header else None), (), None, None
     if kind == "do":
-        return (children[-1] if len(children) > 1 else None), ()
+        return (children[-1] if len(children) > 1 else None), (), None, None
     if kind == "for":
+        if len(header) == 3:
+            init_c, cond_c, step_c = header
+            # Positional, and only here: with all three clauses present the
+            # middle one is the condition by construction. Scanning for the
+            # first BINARY_OPERATOR instead would pick up an assignment-style
+            # init (`for (i = 0; ...)`), which libclang also reports as a
+            # BINARY_OPERATOR, and report `i = 0` as the loop condition.
+            init_value = None
+            if init_c.kind.name == "DECL_STMT":
+                decls = [
+                    d for d in init_c.get_children() if d.kind.name == "VAR_DECL"
+                ]
+                # Two induction variables and one increment clause is a shape
+                # whose trip count we have not established; say so.
+                if len(decls) == 1:
+                    kids = list(decls[0].get_children())
+                    init_value = _int_literal(kids[-1]) if kids else None
+            return cond_c, tuple(induction), init_value, _loop_step(step_c)
         for h in header:
             if h.kind.name in ("BINARY_OPERATOR", "CXX_BOOL_LITERAL_EXPR", "UNEXPOSED_EXPR"):
-                return h, tuple(induction)
-        return None, tuple(induction)
+                return h, tuple(induction), None, None
+        return None, tuple(induction), None, None
     # range-for: `for (auto x : range)`
-    return None, tuple(induction)
+    return None, tuple(induction), None, None
 
 
 def collect_member_paths(cursor, limit: int = 256) -> list[str]:
@@ -1332,4 +1488,5 @@ def walk_file(
         macro_idioms=w.macro_idioms,
         class_fields=w.class_fields,
         field_decls=w.field_decls,
+        local_decls=w.local_decls,
     )

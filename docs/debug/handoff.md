@@ -8,17 +8,25 @@
 
 ---
 
-## 当前状态（2026-07-31）
+## 数字看哪里（2026-07-31 定）
+
+| 用途 | 文件 | 谁写 |
+| --- | --- | --- |
+| **权威机器结果** | `docs/debug/current-status.md`、`docs/debug/history.jsonl`、`docs/fag/fag_arch35.md` | `scripts/_probe_derive.py` 每次全量跑自动写 |
+| 说明性文档 | 本文件、`docs/debug/open-problems.md` | 手写 |
+
+**本文件与 `open-problems.md` 不得作为 gate，其中的数字是当时的注解，可能落后于机器结果。** 此前顶部长期挂着手写指标，改一次派生就过期一次，而过期的数字被当作门槛比没有数字更糟——所以指标表已删除，下面各节保留的数字只用于解释「某次改动带来了什么变化」，判断现状请读 `current-status.md`。
+
+## 当前状态（能力项，非指标）
 
 | 项 | 状态 |
 | --- | --- |
-| **19 维精确闭合** | **CLOSED 14/19**，unique free_vars=6；array_subscript / `.second` / UNMAPPED **全 0**，残余 6 个全部具名 |
-| **19 维输入可控** | **INPUT_DERIVABLE 12/19** — 下游该读的是这个数，不是 CLOSED；差的 2 个（IsTnd / IsNEqual）闭合到 host 状态 |
-| 隐式零默认 | **133 处**（原 211），压在 exact 字段下的 **0 处**（原 6）——穷尽 cascade 判掉 + 读声明初值；剩余全在 overapproximated 字段下 |
+| **19 维精确闭合 / 输入可控** | 见 `current-status.md`。下游该读的是 `INPUT_DERIVABLE`，不是 `CLOSED` |
+| 隐式零默认 | 压在 exact 字段下的 **0 处**（原 6）——穷尽 cascade 判掉 + 读声明初值；剩余全在 overapproximated 字段下 |
 | 派生进主链 Action | **已到**（`derive_key_fields` + `host_derivation.yaml`） |
 | 共享求解器 | **已到**：`engines/common`（`acp_common`），TG / UO 同一套 IR 与 Z3 语义 |
 | 19 维结构对齐 | **FAIL=0**；`domain_violations` 唯一报例（OutDType）**已求证为本工具假阳性**，检查本身有设计缺陷 —— 见「`domain_violations` 比错了东西」 |
-| LLM 封闭回环 | 已联调；「只改账不改式」现由消元后校验 + 回退挡住，见 F.2 / F.12 |
+| LLM 封闭回环 | 已联调；「只改账不改式」现由消元后校验 + 回退挡住，见 F.2 / F.12。**`LOOP_ELEMENT` 已移出 LLM 队列，且不再回收** |
 | key 判定 8705 / K6 真 Z3 | **已到**：8705 个合法 key 全部过 Z3，14/19 维进求解器；当前 8704 `unknown` + 1 `unreachable`（见 F.13） |
 | G0 fixture / K5 / K7 | **未做** |
 
@@ -38,9 +46,43 @@
 | `partial` | 还有 unresolved 子项 | partial |
 | `unresolved` | 没有表达式 | unresolved |
 
-**验收数 = `CLOSED`（exact + constant）= 14/19；目标 19/19 且 `free_vars = 0`。**
+### 验收口径再改（2026-07-31）：不再以 `CLOSED 19/19` / `free_vars = 0` 为目标
 
-同口径最新（下标浅展开 + 完整下标链 + 容器摘要 cut 后）：
+**旧目标「19/19 且 `free_vars = 0`」已作废，勿再引用。** 剩下的自由变量里，`invalidS1Array` × 2 与 `parseInfo[last]` 的量化上界依赖 shape，要精确表达就得往共享 Constraint IR 里加索引变量、绑定范围与求和 lowering —— 那是把这个项目从「关系提取器」推成「抽象解释器」，投入产出已经倒挂。这三个**有意保留过近似**，由真实 Host tiling 回放兜底（见下节）。
+
+静态侧的停止线定在：**有界循环 + 条件事件计数 + 语义互斥**的关系摘要做完即止。
+
+新的验收看 K6 的判决分布，不看 `CLOSED` 是否上涨：
+
+```
+unreachable_count   必须增加
+unknown_count       不得增加
+reachable_count     不得凭空增加
+死分支              被证明 UNSAT
+```
+
+正确性最终由动态兜底，而不是靠静态做到 19/19：
+
+```
+Z3 生成输入 witness → 执行真实 Host tiling → 读回实际 19 维 TilingKey → 与预测比对
+状态分四档：unreachable_static / candidate_static / confirmed_runtime / runtime_mismatch
+```
+
+静态多产生的候选会被真实 tiling 过滤掉，只有回放成功的才计入 KEY 覆盖。所以 `invalidS1Array` 不精确**不影响 case 正确性**，只影响候选数量。
+
+#### 这条验收标准当前测不出来，原因已定位（2026-07-31）
+
+有界基数摘要做完后实测 K6：8705 个合法 key 里 **8704 unknown / 1 unreachable**，与做之前逐项相同。不是摘要没生效，而是**判决被更上游的东西挡住**：每个 unknown 的理由都是同一句
+
+```
+5 dimension(s) not constrained: [SplitAxis, DeterType, IsBn2MultiBlk, IsNzOut, IsTndSwizzle]
+```
+
+这 5 个正是 `overapproximated` 的 5 个，而它们现在只剩 `invalidS1Array` × 2 与 `parseInfo[last]` 三个自由变量 —— 也就是上面明确决定**有意保留**的那三个。
+
+结论要记住的一点：**消掉 `size()` 是必要不充分的。** 只要这 3 个还在，K6 就不会有任何判决变化，`unreachable_count 必须增加`这条标准在动态回放接上之前无法满足。当前能核的是它的另外三条（unknown 不增、reachable 不凭空增、unreachable 不减），三条都过。
+
+历史快照（当时口径，仅供对照，勿作现状）：
 
 ```
 CLOSED 14/19   unique free_vars=6   implicit_zero=211   ~12s
@@ -48,14 +90,14 @@ exact=13  constant=1  overapproximated=5   max_chars=80326
 SCHED=0  REACHED=0  array_subscript=0  UNMAPPED_CALL=0  UNMAPPED_SYMBOL=0
 ```
 
-残余 6 个**全部具名可解释**（不再有 `VAR_UNDECIDED_*` 匿名布尔量）：
+当时残余 6 个**全部具名可解释**（不再有 `VAR_UNDECIDED_*` 匿名布尔量）：
 
 | 变量 surface | 源码 |
 | --- | --- |
 | `invalidS1Array[j]` ×2（两个 scope） | `normal_regbase.cpp:1546`、`varlen_regbase.cpp:897` |
 | `parseInfo[(s2Outer(fBaseParams) - 1)][LENGTH_IDX]` | `normal_regbase.cpp:1558` |
-| `size(syncRounds)`、`size(syncRoundRanges)` | `varlen_regbase.cpp:716` |
-| `back(slicePrefix1)` | `varlen_regbase.cpp:171` |
+| `size(syncRounds)`、`size(syncRoundRanges)` | `varlen_regbase.cpp:716`（**已消元**，见「有界基数摘要」） |
+| `back(slicePrefix1)` | `varlen_regbase.cpp:171`（**已消元**，见 `LAST_PUSH_DOMINATES_BACK`） |
 
 5 个未闭合：`SplitAxis / DeterType / IsBn2MultiBlk / IsNzOut / IsTndSwizzle`。
 
@@ -551,6 +593,20 @@ cd engines/understand-operator; python -m pytest tests/unit/test_host_ir_clang.p
     - 顺带补齐：`WriteRecord` / `WriteEvent` 加 `column`（4 个构造点），`_assign_ssa` 排序键由 `(file, line)` 改为 `(file, line, column)` —— 同行两次写此前拿到的是任意相对版本号。
     - 效果：**`free_vars` 6 → 5**，`SplitAxis` 表达式 56556 → 56968 字符（`R1` 展开后的完整式子比一个变量长），`CLOSED 14/19` / `INPUT_DERIVABLE 12/19` / 各维根集合不变。`implicit_zero` 133 → 136：`R1` 链条更深，多走到 3 个 fallthrough 无声明初值的点，是诚实新增。单测 **+17 条**（每个拒绝条件一条），全量通过。
 
+20. **有界基数摘要：`size(a) + size(b) > 36` 恒假（2026-07-31）**。这一步消掉 `size(syncRounds)` 与 `size(syncRoundRanges)`，`free_vars` **5 → 3**。它要证的不是任一容器有多大，而是**两者之和**有多大 —— 各自定界给出 36+36=72，settle 不了这条守卫；对和定界才行，而这需要把两个 `push_back` 看作在争夺同一批循环迭代。
+
+    证明链（每一环都从 IR 结构读出，没有按名字特判）：容器在 `CalcleTNDDenseBns2DeterParam` 局部声明且默认构造 → 两次 `push_back` 落在同一个 `for (coreId = 0; coreId < CORE_LIST_NUM; ...)` 内 → 该循环 trip = 36 → 两次 push 的守卫互为 `if/else` 两侧，一次迭代最多产出一个元素 → 和 ≤ 36 → `> CORE_LIST_NUM` 在 Z3 下 UNSAT → 早退分支不可达，守卫连同它提到的两个 `size()` 一起消失。
+
+    - **原以为需要「枚举语义互斥」，取证后发现不需要。** 事前判断是 Dense/Band 两个生产者共享容器、要靠 `deterSparseType == DETER_DENSE` 与 `== DETER_BAND` 互斥来防止相加。实际上这两个函数**各自持有自己的局部 vector**，根本不是同一个对象；跨调用点取 max 而非求和就够了。这也是为什么下面 C3 做的是「容器身份归一」而不是「守卫归一」。
+    - **C1 `CtrlNode.init_value` / `step`**：trip count 在 IR 里此前无诚实来源（`condition` 不含初值和步长，`snippet` 被截断）。只在 `for` 三个头子句齐全时从 AST 读，其余一律 `None`。顺带修掉一个既有 bug：`for (i = 0; ...)` 的赋值式初值是 `BINARY_OPERATOR`，被 `_loop_header` 当成了循环条件。
+    - **C3 容器身份跨函数归一**（`loop_summary.resolve_param_container`）：从消费者的形参反查调用点实参，再正向追出该对象的全部 mutation（含被调函数内的 append）。追不完就拒绝 —— 逃逸进未知函数、我们没有规则的方法、`std::move`，任一出现即无上界。**多调用点分列不合并**：两个调用方各自的 vector 是两个对象，合并会把一方的 mutation 记到另一方头上。
+    - **按值形参这一点故意不区分。** `CalculateSyncRound(std::vector<...> syncRounds)` 是按值传的，callee 内对形参的改动回不到调用方。当前一律追踪，方向是**高估**（上界只会更大），安全；要精确需要给 `FuncSummary` 加形参类型，是另一件事。
+    - **C4 互斥判定改成一次 SAT 查询**（`guards_exclusive`）：`if/else` 与 `x == A` / `x == B` 都只是「合取不可满足」，不必两套规则。解析不了的守卫**兜底成不透明原子而不是丢弃** —— 丢弃会削弱合取、让「判不出」静默变成「不互斥」；留成原子则 `c ∧ !c` 照样 UNSAT。局部变量按函数限定作用域，成员不限定：两个函数各自的 `i` 是两个变量，`fBaseParams.deterSparseType` 在两个函数里是一个。
+    - **修掉一个既有 bug：无初值声明被记成自指初值。** libclang 给 `std::vector<T> v;` 挂了一个隐式默认构造 `CALL_EXPR`，它零子节点、extent 只盖住声明符，读 token 得到变量名本身 —— 于是 `fr.locals` 里长期存着 `syncRounds -> "syncRounds"`。`local_writes` 因为 `rhs == name` 的过滤没被污染，但 `locals` / `assign_lists` 没有这层保护。判据：最后一个非类型引用子节点若是**无参** `CALL_EXPR` 则视为无初值（`std::vector<int> v(n)` 有子节点，仍算有初值）。
+    - **新增 `LocalDecl` 表，与 `local_writes` 分开。** 「声明了但没初始化」是事实，而不是赋值；喂给定义链会在期待值的位置放一个空 RHS。而「容器开局为空」正是整条上界的第一个前提，没有它就无从谈起。
+    - 效果：`free_vars` **5 → 3**，`implicit_zero` 136 → 135，其余 18 维的字符数与自由变量数**逐项不变**（19531 / 80462 / 25562 / 16637 全部对齐）。单测 **+62 条**（`test_loop_bounds` / `test_container_flow` / `test_event_exclusion` / `test_cardinality`），全量 **450 passed**。
+    - **K6 判决没有变化，原因见上文「这条验收标准当前测不出来」** —— 瓶颈在剩下 3 个自由变量，不在 `size()`。
+
 **剩余 67 条过近似的分布**（口径：`undecided_guards` 条数，非变量数）：
 
 | presort | 条数 | 归属 |
@@ -571,9 +627,12 @@ I2/I3 仍是**过近似**（未建模 `GRAPH_FAILED` 收窄），结构性「能
 
 ---
 
-## 5 个过近似——按「卡住几个字段」排序
+## 3 个过近似——按「卡住几个字段」排序
 
-> 原为 6 个。`back(slicePrefix1)` 已由 `LAST_PUSH_DOMINATES_BACK` 精确消元，见下节。
+> 原为 6 个。`back(slicePrefix1)` 由 `LAST_PUSH_DOMINATES_BACK` 消元，`size(syncRounds)` /
+> `size(syncRoundRanges)` 由有界基数摘要消元（第 19、20 条）。剩下 3 个是**有意保留**的
+> 过近似，由动态回放兜底，不再深挖。当前数字一律以
+> [current-status.md](./current-status.md) 为准。
 
 `python scripts/uo_key_blockers.py .probe_cache/fag_derive.json`，或按阻塞点分组：`python .probe_cache/diag_blocked_on.py`。
 

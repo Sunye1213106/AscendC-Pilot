@@ -1,7 +1,0 @@
-// dtype_variant=DT_FLOAT16
-// instance={'IsEmptyTensor': '0', 'SplitAxis': '0', 'InputDType': '3', 'IsTnd': '0', 'IsDrop': '0', 'IsPse': '0', 'IsAttenMask': '0', 'S1TemplateNum': '128', 'S2TemplateNum': '128', 'DTemplateNum': '128', 'DeterType': '4', 'IsNEqual': '1', 'IsBn2MultiBlk': '0', 'IsDNoEqual': '0', 'IsRope': '0', 'OutDType': '3', 'IsNzOut': '1', 'IsTndSwizzle': '0', 'IsRegbase': '1'}
-#define ORIG_DTYPE_QUERY DT_FLOAT16
-#include "D:/PR-review/TEST/ops-transformer/attention/flash_attention_score_grad/op_kernel/flash_attention_score_grad_apt.cpp"
-
-template __global__ __aicore__ void flash_attention_score_grad<false, static_cast<uint8_t>(0), static_cast<uint8_t>(3), false, false, false, false, static_cast<uint16_t>(128), static_cast<uint16_t>(128), static_cast<uint16_t>(128), static_cast<uint8_t>(4), true, false, false, false, static_cast<uint8_t>(3), true, false, true>(
-    __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *, __gm__ uint8_t *);

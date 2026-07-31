@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pickle
 import sys
 import time
@@ -28,9 +29,17 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "engines" / "understand-operator" / "src"
 sys.path.insert(0, str(SRC))
 
-OP = Path(r"d:\PR-review\TEST\ops-transformer\attention\flash_attention_score_grad")
-CANN = r"d:\PR-review\_cann\pkg"
-ARCH = "arch35"
+# Resolved relative to the checkout, not to one machine. The operator tree and
+# the CANN package sit beside the repo; override either when they do not.
+WORKSPACE = Path(os.environ.get("UO_WORKSPACE", ROOT.parent))
+OP = Path(
+    os.environ.get(
+        "UO_OP_DIR",
+        WORKSPACE / "TEST/ops-transformer/attention/flash_attention_score_grad",
+    )
+)
+CANN = os.environ.get("UO_CANN_ROOT", str(WORKSPACE / "_cann/pkg"))
+ARCH = os.environ.get("UO_ARCH", "arch35")
 
 CACHE = ROOT / ".probe_cache"
 BUNDLE = CACHE / "fag_bundle.pkl"
@@ -38,6 +47,7 @@ RESULT = CACHE / "fag_derive.json"
 OUTDIR = ROOT / "docs" / "fag"
 REPORT = OUTDIR / "fag_arch35.md"
 HISTORY = ROOT / "docs" / "debug" / "history.jsonl"
+STATUS = ROOT / "docs" / "debug" / "current-status.md"
 
 
 def build_bundle() -> dict:
@@ -307,6 +317,82 @@ def write_report(doc: dict) -> None:
     REPORT.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def write_status(doc: dict) -> None:
+    """The current numbers, written by the run that produced them.
+
+    Hand-maintained figures in the prose docs went stale the moment a run
+    changed them, and a stale figure read as a gate is worse than no figure.
+    This file and `history.jsonl` are the machine record; the prose explains
+    it and must not be quoted for numbers.
+    """
+    fields = doc["fields"]
+    t = totals(fields)
+    free = sorted({v for f in fields for v in f.get("free_vars") or []})
+    blocked: dict[str, list[str]] = {}
+    for f in fields:
+        for g in f.get("undecided_guards") or []:
+            blocked.setdefault(g.get("blocked_on") or g.get("text", ""), []).append(
+                f["name"]
+            )
+    lines = [
+        "# UO current status (generated)",
+        "",
+        "> Written by `scripts/_probe_derive.py` on every full run. Do not edit.",
+        "> Numbers quoted anywhere else are commentary and may lag this file.",
+        "",
+        f"- run: `{doc['timestamp']}`  op: `{doc['op']}`  arch: `{doc['arch']}`",
+        "",
+        "| metric | value |",
+        "| --- | ---: |",
+        f"| CLOSED (exact + constant) | **{t['closed']}/{t['total']}** |",
+        f"| INPUT_DERIVABLE | **{t['input_derivable']}/{t['total']}** |",
+        f"| unique free_vars | **{t['free_vars']}** |",
+        f"| unrecorded free_vars (must be 0) | **{t['unrecorded']}** |",
+        f"| implicit_defaults | {t['implicit_defaults']} |",
+        f"| domain_violations | {t['domain_violations']} |",
+        f"| max expanded chars | {t['max_chars']} |",
+        f"| total seconds | {t['seconds']} |",
+        "",
+        "## Remaining free variables",
+        "",
+    ]
+    if free:
+        # Surface text alone does not identify one of these: the two
+        # `invalidS1Array[j]` live in different functions and different
+        # coordinate domains, and reading them as one variable is how a summary
+        # proved for one gets applied to the other.
+        lines += [
+            "| variable | where | blocks | dimensions |",
+            "| --- | --- | ---: | --- |",
+        ]
+        by_var: dict[str, tuple[str, str]] = {}
+        for f in fields:
+            for g in f.get("undecided_guards") or []:
+                ev = g.get("evidence") or {}
+                site = g.get("scope") or ""
+                if ev.get("file"):
+                    site = f"{site} @ {Path(ev['file']).name}:{ev['line']}".lstrip(" @")
+                by_var.setdefault(
+                    g["var_id"], (g.get("text", ""), site or g["var_id"][-12:])
+                )
+        for v in free:
+            dims = [f["name"] for f in fields if v in (f.get("free_vars") or [])]
+            text, site = by_var.get(v, (v, ""))
+            lines.append(
+                f"| `{text}` | {site} | {len(dims)} | {', '.join(sorted(dims))} |"
+            )
+    else:
+        lines.append("None.")
+    lines += ["", "## Per-dimension", "", "| # | dimension | exactness | input_derivable | free |", "| ---: | --- | --- | --- | ---: |"]
+    for f in fields:
+        lines.append(
+            f"| {f['index']} | {f['name']} | {f.get('exactness') or f['status']} | "
+            f"{'yes' if f.get('input_derivable') else 'no'} | "
+            f"{len(f.get('free_vars') or [])} |"
+        )
+    STATUS.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("fields", nargs="*", help="optional field names to recompute")
@@ -375,8 +461,12 @@ def main() -> int:
             )
     wrote = [str(RESULT), str(REPORT)]
     if not args.fields:
+        # Both skipped for partial runs, for the same reason: a row or a status
+        # page mixing recomputed and stale fields reads as a change that never
+        # happened.
         append_history(doc)
-        wrote.append(str(HISTORY))
+        write_status(doc)
+        wrote += [str(HISTORY), str(STATUS)]
     print("wrote " + ", ".join(wrote))
     return 0
 

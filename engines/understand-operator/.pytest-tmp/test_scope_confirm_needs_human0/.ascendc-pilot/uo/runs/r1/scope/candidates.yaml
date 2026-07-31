@@ -1,3 +1,0 @@
-probe_clean: false
-ambiguities: [multi_arch]
-op_name: X

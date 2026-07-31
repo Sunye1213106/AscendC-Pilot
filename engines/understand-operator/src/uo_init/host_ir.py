@@ -18,6 +18,7 @@ from uo_init.clang_walk import (
     CallSite,
     CtrlNode,
     FieldDecl,
+    LocalDecl,
     PathCond,
     WriteRecord,
     walk_file,
@@ -161,6 +162,27 @@ class HostIR:
     controls: list[CtrlNode] = field(default_factory=list)
     #: (declaring struct, member) -> declaration. Read through `field_decl()`.
     field_decls: dict[tuple[str, str], FieldDecl] = field(default_factory=dict)
+    #: Local declarations, including those initialising nothing. Read through
+    #: `local_decl()`.
+    local_decls: list[LocalDecl] = field(default_factory=list)
+
+    def local_decl(self, name: str, function: str) -> LocalDecl | None:
+        """Where `name` was declared in `function`, if it was declared there.
+
+        None covers both "not a local of this function" and "declared in a
+        function we did not walk"; neither lets a caller assume anything about
+        the variable's starting value.
+        """
+        cached = getattr(self, "_local_decls_by_name", None)
+        if cached is None:
+            cached = {}
+            for d in self.local_decls:
+                # First declaration wins: a name redeclared in a nested scope
+                # shadows rather than replaces, and picking the later one would
+                # attribute the inner variable's initialiser to the outer.
+                cached.setdefault((d.name, d.function), d)
+            self._local_decls_by_name = cached
+        return cached.get((name, function))
 
     def paths(self) -> list[str]:
         return [w.path for w in self.writes]
@@ -633,6 +655,8 @@ def build_host_ir(
     all_calls: list[CallSite] = []
     all_controls: list[CtrlNode] = []
     all_field_decls: dict[tuple[str, str], FieldDecl] = {}
+    all_local_decls: list[LocalDecl] = []
+    seen_local_decls: set[tuple[str, str, int, int]] = set()
     seen_calls: set[tuple[str, str, str, int, int, str]] = set()
     seen_controls: set[tuple[str, int, int, str]] = set()
     summaries: dict[str, FuncSummary] = {}
@@ -663,6 +687,13 @@ def build_host_ir(
         # arrives repeatedly; they agree, so the first one stands.
         for key, decl in (getattr(res, "field_decls", None) or {}).items():
             all_field_decls.setdefault(key, decl)
+        for d in getattr(res, "local_decls", ()) or ():
+            # Same reason as the calls below: a header walked once per TU
+            # yields the same declaration repeatedly. Position identifies it.
+            dkey = (d.file, d.name, d.line, d.column)
+            if dkey not in seen_local_decls:
+                seen_local_decls.add(dkey)
+                all_local_decls.append(d)
         for site in getattr(res, "call_sites", ()) or ():
             # A header included by several TUs is walked once per TU, so the
             # same physical call arrives repeatedly. Position has to include the
@@ -734,6 +765,7 @@ def build_host_ir(
         call_sites=all_calls,
         controls=all_controls,
         field_decls=all_field_decls,
+        local_decls=all_local_decls,
     )
 
 
