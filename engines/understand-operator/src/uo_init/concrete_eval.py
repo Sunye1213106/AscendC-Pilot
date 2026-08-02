@@ -19,17 +19,29 @@ from __future__ import annotations
 import itertools
 import re
 from collections import defaultdict
-from typing import Any, Iterable
+from dataclasses import dataclass, field
+from typing import Any, Iterable, Mapping
+
+from uo_init.kb_model import CONTROLLABLE_ROOTS, PLATFORM_LOCKED_ROOTS
 
 __all__ = [
     "Unknown",
     "ValueTree",
     "Premises",
+    "Auxiliaries",
+    "Axis",
+    "CONFIRMED",
+    "CANDIDATE",
+    "axes_for",
+    "drivable_root",
+    "grade_witness",
+    "root_of_var",
     "samples",
     "domains_of",
     "domain_for",
     "enumerate_cells",
     "possible_values",
+    "undrivable_in",
 ]
 
 _CMP = ("eq", "ne", "lt", "le", "gt", "ge")
@@ -42,6 +54,111 @@ OTHER = "__other__"
 
 #: `VAR_SHAPE_QUERY_D2` is axis 2 of the tensor `VAR_SHAPE_QUERY`.
 _AXIS_SUFFIX = re.compile(r"_D\d+$")
+
+# -- what a witness is worth -------------------------------------------------
+#
+# A value reached by assigning something the operator computes for itself is
+# not reached: `SplitAxis == 5` witnessed by `VAR_TDF_SPLITAXIS = 5` restates
+# the question. Telling the two apart is the difference between a coverage
+# number and a story, so every witness is graded.
+
+#: Roots a witness may name. Either a test case sets them, or choosing the CANN
+#: profile fixes them, which is as good at generation time. See `kb_model`.
+DRIVABLE_ROOTS = CONTROLLABLE_ROOTS | PLATFORM_LOCKED_ROOTS
+
+#: What the analysis mints where it could not decide something. Each stands for
+#: a quantity the operator computes, so an assignment to one describes host
+#: state rather than an input, whatever root the resolver put behind it.
+UNMODELLED_PREFIXES = (
+    "VAR_UNDECIDED_",
+    "VAR_SCHED_",
+    "VAR_REACHED_",
+    "VAR_INIT_",
+    "VAR_LOOPELEM_",
+    "VAR_AUX_",
+)
+
+#: Inverse of `variable_model.var_id_for`, for ids whose root nobody recorded.
+#: `VAR_ELEM_` and `VAR_REDUCE_` are deliberately absent: an element of a
+#: container is drivable exactly when the container came from an input, and the
+#: id does not say which one it was. Anything missing here reads as undrivable,
+#: the way `classify_input_closure` reads an unrecognized root — guessing the
+#: other way calls a witness runnable on the strength of a variable nobody
+#: classified.
+_ROOT_BY_PREFIX: tuple[tuple[str, str], ...] = (
+    ("VAR_SHAPE_", "INPUT_SHAPE"),
+    ("VAR_DTYPE_", "INPUT_DTYPE"),
+    ("VAR_FORMAT_", "INPUT_FORMAT"),
+    ("VAR_VALUE_", "INPUT_VALUE"),
+    ("VAR_OPT_", "OPTIONAL_INPUT_PRESENCE"),
+    ("VAR_ATTR_", "ATTRIBUTE"),
+    ("VAR_SESSION_", "SESSION_OPTION"),
+    ("VAR_COMPILE_", "COMPILE_INFO"),
+    ("VAR_TDF_", "TILING_DATA"),
+    ("VAR_KEY_", "TILING_KEY"),
+)
+
+_PLATFORM_PREFIX = "VAR_PLATFORM_"
+
+#: Every variable in the witness is one a test case can set.
+CONFIRMED = "confirmed"
+#: At least one is not, so the key is proposed rather than demonstrated.
+CANDIDATE = "candidate"
+
+
+def root_of_var(var_id: str, roots: Mapping[str, str] | None = None) -> str | None:
+    """Where this variable's value comes from, as a root name.
+
+    `roots` is what the derivation recorded, and it wins: only it can say
+    whether a container element came from an input. The id prefix answers for
+    the rest, and None means nobody said.
+    """
+    if not var_id.startswith(UNMODELLED_PREFIXES) and roots:
+        got = roots.get(var_id)
+        if got:
+            return str(got)
+    if var_id.startswith(_PLATFORM_PREFIX):
+        return "PLATFORM_" + var_id[len(_PLATFORM_PREFIX) :]
+    for prefix, root in _ROOT_BY_PREFIX:
+        if var_id.startswith(prefix):
+            return root
+    return None
+
+
+def drivable_root(var_id: str, roots: Mapping[str, str] | None = None) -> bool:
+    """Whether a test case could give this variable the value a witness wants."""
+    if var_id.startswith(UNMODELLED_PREFIXES):
+        return False
+    return root_of_var(var_id, roots) in DRIVABLE_ROOTS
+
+
+def undrivable_in(
+    names: Iterable[str], roots: Mapping[str, str] | None = None
+) -> list[str]:
+    return sorted({n for n in names if not drivable_root(n, roots)})
+
+
+def grade_witness(
+    env: Mapping[str, Any], roots: Mapping[str, str] | None = None
+) -> tuple[str, list[str]]:
+    """`(grade, the variables that cost it)` for one input point.
+
+    Confirmed means the point is an input: hand it to a generator and the
+    operator will be given exactly it. Candidate means part of the point is a
+    value the operator decides, so the key it produced may or may not exist.
+    """
+    bad = undrivable_in(env, roots)
+    return (CANDIDATE if bad else CONFIRMED), bad
+
+
+#: Starting points for the fixpoint below. Two of them, because agreement
+#: between two starts is what tells a settled value from an artefact of where
+#: the iteration began.
+AUX_SEEDS = (0, 1)
+
+#: Sweeps before the iteration is declared not to settle. `blockOuter` needs
+#: two; anything still moving after this many is oscillating.
+AUX_ROUNDS = 8
 
 
 class Unknown(Exception):
@@ -75,6 +192,8 @@ class ValueTree:
         else:
             self.defs = {}
             self.root = blob
+        #: Where `_read` reports to for the duration of one `value` call.
+        self._sink: set[str] = set()
 
     def deref(self, node: Any) -> Any:
         seen = 0
@@ -200,9 +319,42 @@ class ValueTree:
         walk(self.root)
         return found
 
+    def zero_blame(
+        self, node: Any, env: Mapping[str, Any]
+    ) -> tuple[str, Any] | None:
+        """The one drawn value that put a zero in this denominator, if one did.
+
+        `divisors` rules out zeros ahead of the search, from the shape of the
+        expression alone. This is the other half: a denominator like `n - 1`
+        or `d / 16` is zero at some value nothing could name in advance, and
+        the search only finds out by dividing. When the subtree reads a single
+        variable, that value is the whole reason, and it is a fact about the
+        operator rather than about this draw — the next draw that picks it
+        divides by zero again. Returning it lets the caller stop picking it.
+
+        More than one variable and there is no such fact: `b - c` is zero on a
+        diagonal, and banning either value would refuse inputs the operator
+        accepts. Those draws are still worth repairing, one at a time.
+        """
+        names = [v for v in self.vars_under(node) if v in env]
+        if len(names) != 1:
+            return None
+        return names[0], env[names[0]]
+
     # -- evaluation --------------------------------------------------------
-    def value(self, env: dict[str, Any]) -> Any:
-        return self._eval(self.root, env)
+    def value(self, env: dict[str, Any], *, read: set[str] | None = None) -> Any:
+        """The value at `env`, filling `read` with the variables it consulted.
+
+        Which variables were consulted is not `variables()`: a branch not taken
+        reads none of its subtree. It is what makes a witness gradeable — an
+        input point drawn over fifty variables says nothing about the fifty,
+        only about the six the taken path looked at.
+        """
+        prev, self._sink = self._sink, set() if read is None else read
+        try:
+            return self._eval(self.root, env)
+        finally:
+            self._sink = prev
 
     def _eval(self, node: Any, env: dict[str, Any]) -> Any:
         node = self.deref(node)
@@ -235,8 +387,16 @@ class ValueTree:
             members = [self._eval(v, env) for v in node.get("values") or ()]
             return (left in members) if op == "in" else (left not in members)
         if op in ("and", "or"):
-            args = [self._eval(a, env) for a in node.get("args") or ()]
-            return all(args) if op == "and" else any(args)
+            # Short-circuiting, as `&&` and `||` do in the source these came
+            # from. Evaluating the rest anyway charges the value to variables
+            # the run never looked at, and raises division by zero out of the
+            # very conjunct that was written to guard against it —
+            # `n != 0 && total / n > 1` is the shape most of them have.
+            decides = op == "or"
+            for a in node.get("args") or ():
+                if bool(self._eval(a, env)) is decides:
+                    return decides
+            return not decides
         if op == "not":
             return not self._eval(node.get("arg"), env)
         if op in ("add", "sub", "mul", "div", "mod"):
@@ -257,6 +417,7 @@ class ValueTree:
         raise Unknown(f"op {op}")
 
     def _read(self, name: str, env: dict[str, Any]) -> Any:
+        self._sink.add(name)
         if name not in env:
             raise Unknown(f"unbound {name}")
         return env[name]
@@ -370,6 +531,24 @@ def samples(
     return nulls + sorted(out)
 
 
+def invented_range(thresholds: Iterable[Any], domain: Any = None) -> bool:
+    """Whether `samples` had to make the points up.
+
+    True when neither the model nor the source says anything about the range:
+    no declared values, and nothing anywhere compares against the variable. The
+    magnitudes that come back are then the evaluator's choice, and a verdict
+    resting on one rests on an invention. `lo`/`hi` only clip that choice, so
+    they do not turn it into evidence; a boolean threshold set does, because
+    `[False, True]` is the whole range rather than a guess at it.
+    """
+    thresholds = set(thresholds)
+    if getattr(domain, "values", None):
+        return False
+    if any(isinstance(t, str) for t in thresholds):
+        return False
+    return not any(isinstance(t, int) for t in thresholds)
+
+
 def domains_of(var_model: Any) -> tuple[dict[str, Any], dict[str, int]]:
     """What each input may be, and the integers the code's names stand for."""
     out: dict[str, Any] = {}
@@ -472,28 +651,70 @@ class Premises:
         return any(_refuses(t, env) for t in self.trees)
 
 
-def _axes(
+@dataclass(frozen=True)
+class Axis:
+    """One variable of the input space, with what the points are worth."""
+
+    var: str
+    values: tuple[Any, ...] = ()
+    #: Nothing declared a range and nothing compares against it, so the points
+    #: are the evaluator's invention. See `invented_range`.
+    invented: bool = False
+    #: A test case cannot set this variable, so a witness that moves it is
+    #: describing host state. See `grade_witness`.
+    drivable: bool = True
+
+
+def axes_for(
     tree: ValueTree,
-    domains: dict[str, Any],
-    constants: dict[str, int] | None,
-    premises: Premises | None,
-) -> list[tuple[str, list[Any]]]:
+    *,
+    domains: Mapping[str, Any] | None = None,
+    constants: Mapping[str, int] | None = None,
+    premises: Premises | None = None,
+    roots: Mapping[str, str] | None = None,
+    auxiliaries: "Auxiliaries | None" = None,
+) -> list[Axis]:
+    """The input space this tree reads, one representative set per variable.
+
+    An auxiliary is not an axis — drawing it would assert a value the input
+    already determines — but what it reads is, and its thresholds cut the same
+    space. A dimension whose only variable is an auxiliary still has an input
+    space; it is one level further back.
+    """
+    domains = dict(domains or {})
     cuts, all_vars = tree.cuts()
+    divisors = tree.divisors()
+    if auxiliaries is not None:
+        for extra in auxiliaries.trees.values():
+            extra_cuts, extra_vars = extra.cuts()
+            all_vars |= extra_vars
+            divisors |= extra.divisors()
+            for name, values in extra_cuts.items():
+                cuts.setdefault(name, set()).update(values)
+        all_vars -= auxiliaries.names
     if premises is not None:
         # A premise splits the input space too, and only on the variables this
         # dimension reads: a rejection of one dtype matters to a dimension
         # that reads that dtype and to no other.
         for v in all_vars & premises.vars:
             cuts.setdefault(v, set()).update(premises.cuts.get(v, set()))
-    divisors = tree.divisors()
-    out = []
+    out: list[Axis] = []
     for v in sorted(all_vars):
-        vals = samples(cuts.get(v, set()), domain_for(v, domains), constants)
+        thresholds = cuts.get(v, set())
+        domain = domain_for(v, domains)
+        vals = samples(thresholds, domain, dict(constants or {}))
         if v in divisors:
             vals = [x for x in vals if x != 0] or vals
         if premises is not None:
             vals = premises.keeps(v, vals)
-        out.append((v, vals))
+        out.append(
+            Axis(
+                var=v,
+                values=tuple(vals),
+                invented=invented_range(thresholds, domain),
+                drivable=drivable_root(v, roots),
+            )
+        )
     return out
 
 
@@ -504,42 +725,79 @@ def enumerate_cells(
     domains: dict[str, Any] | None = None,
     constants: dict[str, int] | None = None,
     premises: Premises | None = None,
+    roots: Mapping[str, str] | None = None,
+    auxiliaries: "Auxiliaries | None" = None,
 ) -> dict[str, Any]:
     """Every value one derived expression can take, with a witness for each.
 
     A witness is the point that produced the value, so a caller never has to
-    take the verdict on trust: the input is there to re-run.
+    take the verdict on trust: the input is there to re-run. `grades` says how
+    far that trust goes, per value — see `grade_witness`.
     """
-    domains = domains or {}
     tree = ValueTree(blob)
-    axes = _axes(tree, domains, constants, premises)
+    axes = axes_for(
+        tree,
+        domains=domains,
+        constants=constants,
+        premises=premises,
+        roots=roots,
+        auxiliaries=auxiliaries,
+    )
     total = 1
-    for _, vals in axes:
-        total *= len(vals)
+    for axis in axes:
+        total *= len(axis.values)
+    report = {
+        "vars": len(axes),
+        "cells": total,
+        # Named on the way out whether or not the walk happens: a caller that
+        # skipped the table still needs to know the space it declined to walk
+        # was partly made up.
+        "undrivable_vars": sorted(a.var for a in axes if not a.drivable),
+        "invented_vars": sorted(a.var for a in axes if a.invented),
+    }
     if total > cap:
-        return {"vars": len(axes), "cells": total, "skipped": True}
+        return {**report, "skipped": True}
 
     reached: dict[Any, dict[str, Any]] = {}
+    grades: dict[Any, str] = {}
     unknown = 0
     refused = 0
-    for combo in itertools.product(*[vals for _, vals in axes]):
-        env = {v: x for (v, _), x in zip(axes, combo)}
-        if premises is not None and premises.rejects(env):
+    for combo in itertools.product(*[a.values for a in axes]):
+        drawn = {a.var: x for a, x in zip(axes, combo)}
+        if premises is not None and premises.rejects(drawn):
             refused += 1
             continue
+        env = drawn
+        if auxiliaries is not None:
+            env = {**drawn, **auxiliaries.resolve(drawn)}
+        read: set[str] = set()
         try:
-            got = tree.value(env)
+            got = tree.value(env, read=read)
         except Unknown:
             unknown += 1
             continue
         if not isinstance(got, (int, str, bool)):
             unknown += 1
             continue
-        reached.setdefault(got, env)
+        # Graded on the path this point took, and on the part of it that was
+        # drawn: a variable the taken branch never looked at was set to
+        # something but did not decide anything, and one the auxiliaries
+        # computed was decided by the draw rather than alongside it.
+        grade, _ = grade_witness({k: drawn[k] for k in read if k in drawn}, roots)
+        # A confirmed witness replaces a candidate one. The value was reachable
+        # either way, but only one of the two points can be handed to a
+        # generator, and keeping whichever came first would decide that by
+        # enumeration order.
+        if got not in reached or (
+            grade == CONFIRMED and grades.get(got) == CANDIDATE
+        ):
+            reached[got] = drawn
+            grades[got] = grade
     return {
-        "vars": len(axes),
-        "cells": total,
+        **report,
         "values": reached,
+        "grades": grades,
+        "confirmed": sum(1 for g in grades.values() if g == CONFIRMED),
         "unknown": unknown,
         "refused": refused,
         "skipped": False,
@@ -645,6 +903,108 @@ def reaching_inputs(
         return [{}]
 
     return [w for w in solve(tree.root, target, 0) if w][:keep]
+
+
+class Auxiliaries:
+    """Values the operator computes for itself, evaluated before the key is.
+
+    These are not inputs and must never be drawn: `blockOuter` has one value at
+    any given input, and sampling it as if it were free is how a witness comes
+    to assert host state. They are not ordinary sub-expressions either — the
+    dependency graph re-enters them, so there is no order in which each is
+    ready before its readers.
+
+    Iterating to a fixpoint is what settles that. The catch is that iteration
+    needs a starting point, and picking one is picking a value. So each point
+    is run from two different starts, and only a name that lands on the same
+    value from both is reported: agreement means the start did not decide it.
+    """
+
+    def __init__(self, trees: Mapping[str, Any], *, rounds: int = AUX_ROUNDS) -> None:
+        self.trees = {k: ValueTree(v) for k, v in trees.items() if v is not None}
+        self.rounds = rounds
+        self.order = self._dependency_order()
+
+    @classmethod
+    def from_rows(cls, rows: Mapping[str, Mapping[str, Any]]) -> "Auxiliaries":
+        """From a document's `auxiliaries`, whatever the expression key is called."""
+        trees = {}
+        for var_id, row in (rows or {}).items():
+            blob = row.get("value_expr") if isinstance(row, Mapping) else None
+            if blob is None and isinstance(row, Mapping):
+                blob = row.get("expr")
+            if blob is not None:
+                trees[str(var_id)] = blob
+        return cls(trees)
+
+    @property
+    def names(self) -> set[str]:
+        return set(self.trees)
+
+    def _dependency_order(self) -> list[str]:
+        """Readers after what they read, as far as the graph allows.
+
+        A cycle has no such order; those names come last in name order, and the
+        iteration is what resolves them.
+        """
+        reads = {
+            name: (tree.variables() & set(self.trees)) - {name}
+            for name, tree in self.trees.items()
+        }
+        out: list[str] = []
+        placed: set[str] = set()
+        while len(out) < len(self.trees):
+            ready = sorted(n for n in self.trees if n not in placed and reads[n] <= placed)
+            if not ready:
+                ready = sorted(n for n in self.trees if n not in placed)
+            out.extend(ready)
+            placed.update(ready)
+        return out
+
+    def resolve(self, env: Mapping[str, Any]) -> dict[str, Any]:
+        """What the auxiliaries come to at this input, for the ones that settle.
+
+        A name missing from the result is one this input does not decide — it
+        oscillated, divided by zero, or depended on another that did. Its
+        readers then evaluate to nothing, which is the honest outcome: no key
+        comes off this draw rather than a key resting on a guess.
+        """
+        if not self.trees:
+            return {}
+        runs = [self._iterate(env, seed) for seed in AUX_SEEDS]
+        first = runs[0]
+        return {
+            name: value
+            for name, value in first.items()
+            if all(name in r and r[name] == value for r in runs[1:])
+        }
+
+    def _iterate(self, env: Mapping[str, Any], seed: Any) -> dict[str, Any]:
+        """The names this seed stops moving, whether or not all of them do.
+
+        Returning nothing unless every name settles makes one oscillating name
+        cost every other: `splitAxis` reads itself back through `blockOuter`
+        and never settles, and taking the whole sweep down with it loses
+        `layoutType`, which had the same value from the second sweep on. A name
+        unchanged across the last two sweeps has reached its own fixpoint --
+        its readers may keep moving, but nothing further will move it.
+        """
+        got: dict[str, Any] = {name: seed for name in self.trees}
+        settled: dict[str, Any] = {}
+        for _ in range(self.rounds):
+            nxt: dict[str, Any] = {}
+            for name in self.order:
+                # Names already recomputed this sweep win over last sweep's,
+                # which is what makes one sweep worth more than one step.
+                scope = {**env, **got, **nxt}
+                try:
+                    nxt[name] = self.trees[name].value(scope)
+                except Unknown:
+                    pass
+            if nxt == got:
+                return got
+            settled, got = got, nxt
+        return {k: v for k, v in got.items() if k in settled and settled[k] == v}
 
 
 def _quietly(ok, value) -> bool:

@@ -3,23 +3,26 @@
 > Written by `scripts/_probe_derive.py` on every full run. Do not edit.
 > Numbers quoted anywhere else are commentary and may lag this file.
 
-- run: `2026-08-02T04:30:29.695111+00:00`  op: `FlashAttentionScoreGrad`  arch: `arch35`
+- run: `2026-08-02T07:03:55.399833+00:00`  op: `FlashAttentionScoreGrad`  arch: `arch35`
 
 | metric | value |
 | --- | ---: |
 | CLOSED (exact + constant) | **14/19** |
 | INPUT_DERIVABLE | **12/19** |
-| unique free_vars | **8** |
-| unrecorded free_vars (must be 0) | **0** |
+| unique free_vars | **11** |
+| unrecorded free_vars (must be 0) | **3** |
 | implicit_defaults | 8 |
 | domain_violations | 1 |
-| max expanded chars | 380290 |
-| total seconds | 75.4 |
+| max expanded chars | 380966 |
+| total seconds | 72.3 |
 
 ## Remaining free variables
 
 | variable | where | blocks | dimensions |
 | --- | --- | ---: | --- |
+| `VAR_AUX_DOBN2S2SPARSE_BLOCKOUTER` |  | 5 | DeterType, IsBn2MultiBlk, IsNzOut, IsTndSwizzle, SplitAxis |
+| `VAR_AUX_FBASEPARAMS_DETERSPARSETYPE` |  | 2 | DeterType, IsNzOut |
+| `VAR_AUX_FBASEPARAMS_ISDETERMINISTIC` |  | 3 | DeterType, IsNzOut, SplitAxis |
 | `VAR_INIT_2288AFE53928` |  | 1 | DeterType |
 | `VAR_INIT_36CDA3758519` |  | 5 | DeterType, IsBn2MultiBlk, IsNzOut, IsTndSwizzle, SplitAxis |
 | `VAR_INIT_ECF6DE7D873A` |  | 2 | IsNzOut, IsTndSwizzle |
@@ -34,7 +37,7 @@
 | # | dimension | exactness | input_derivable | free |
 | ---: | --- | --- | --- | ---: |
 | 0 | IsEmptyTensor | exact | yes | 0 |
-| 1 | SplitAxis | overapproximated | no | 5 |
+| 1 | SplitAxis | overapproximated | no | 7 |
 | 2 | InputDType | exact | yes | 0 |
 | 3 | IsTnd | exact | no | 0 |
 | 4 | IsDrop | exact | yes | 0 |
@@ -43,12 +46,12 @@
 | 7 | S1TemplateNum | exact | yes | 0 |
 | 8 | S2TemplateNum | exact | yes | 0 |
 | 9 | DTemplateNum | exact | yes | 0 |
-| 10 | DeterType | overapproximated | no | 6 |
+| 10 | DeterType | overapproximated | no | 9 |
 | 11 | IsNEqual | exact | no | 0 |
-| 12 | IsBn2MultiBlk | overapproximated | no | 5 |
+| 12 | IsBn2MultiBlk | overapproximated | no | 6 |
 | 13 | IsDNoEqual | exact | yes | 0 |
 | 14 | IsRope | exact | yes | 0 |
 | 15 | OutDType | exact | yes | 0 |
-| 16 | IsNzOut | overapproximated | no | 7 |
-| 17 | IsTndSwizzle | overapproximated | no | 7 |
+| 16 | IsNzOut | overapproximated | no | 10 |
+| 17 | IsTndSwizzle | overapproximated | no | 8 |
 | 18 | IsRegbase | constant | yes | 0 |

@@ -29,16 +29,19 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from uo_init.derive_key_fields import (
+    AUX_PREFIX,
     EX_CONSTANT,
     EX_EXACT,
+    EX_OVERAPPROX,
     EX_UNRESOLVED,
     LOOPELEM_PREFIX,
     OVERAPPROX_PREFIXES,
     decode_expr_dag,
     encode_expr_dag,
+    is_aux_var,
 )
 from uo_init.ids import hash12
 from uo_init.kb_model import classify_input_closure, input_closure_is_drivable
@@ -335,6 +338,18 @@ class FieldDerivation:
     value_leaves: list[str] = field(default_factory=list)
     root_vars: list[str] = field(default_factory=list)
     variables: list[str] = field(default_factory=list)
+    #: var_id -> the root that variable resolved to. `root_vars` is the set of
+    #: them and grades the field; this grades one assignment, which is what a
+    #: witness is made of.
+    var_roots: dict[str, str] = field(default_factory=dict)
+    #: var_id -> `[name, function]` for each `VAR_AUX_*` in `value_expr`. Their
+    #: own derivations live in `HostDerivation.auxiliaries`.
+    aux_targets: dict[str, list[str]] = field(default_factory=dict)
+    #: The same for `VAR_TDF_*`: host fields expansion stopped on rather than
+    #: substituted. Derived alongside the auxiliaries and evaluated ahead of
+    #: this field, which is what makes them settable from inputs instead of
+    #: standing free. Unlike `aux_targets` they do not weaken the grade.
+    state_targets: dict[str, list[str]] = field(default_factory=dict)
     undecided_guards: list[UndecidedGuard] = field(default_factory=list)
     unresolved: list[dict[str, str]] = field(default_factory=list)
     def_sites: list[dict[str, Any]] = field(default_factory=list)
@@ -403,15 +418,19 @@ class FieldDerivation:
         way" — an over-approximation that has dropped off the books rather
         than been resolved.
 
-        Two kinds of record answer for a variable. A softened guard is one. The
-        other is an assumed default: the chain reached a point where the field's
-        prior value was unreadable, which is not a guard at all but is recorded
-        just as precisely, down to the site that raised it.
+        Three kinds of record answer for a variable. A softened guard is one.
+        An assumed default is another: the chain reached a point where the
+        field's prior value was unreadable, which is not a guard at all but is
+        recorded just as precisely, down to the site that raised it. The third
+        is a cut that did not close — `aux_targets` names the host expression
+        and the function it was read in, which is more than a guard record
+        carries, and its own derivation says exactly where it stopped.
         """
         recorded = {g.var_id for g in self.undecided_guards}
         recorded |= {
             str(d["variable"]) for d in self.implicit_defaults if d.get("variable")
         }
+        recorded |= set(self.aux_targets)
         return sorted(v for v in self.free_vars if v not in recorded)
 
     def to_dict(self) -> dict[str, Any]:
@@ -432,6 +451,9 @@ class FieldDerivation:
             "domain_violations": self.domain_violations,
             "root_vars": list(self.root_vars),
             "variables": list(self.variables),
+            "var_roots": dict(self.var_roots),
+            "aux_targets": {k: list(v) for k, v in self.aux_targets.items()},
+            "state_targets": {k: list(v) for k, v in self.state_targets.items()},
             "undecided_guards": [g.to_dict() for g in self.undecided_guards],
             "unresolved": list(self.unresolved),
             "def_sites": list(self.def_sites),
@@ -457,9 +479,44 @@ class HostDerivation:
     #: still looks available, and the values only it can produce are reported as
     #: reachable. See `HostIR.legality_premises`.
     premises: list[dict[str, Any]] = field(default_factory=list)
+    #: `VAR_AUX_*` and `VAR_TDF_*` -> its own derivation. A field's expression
+    #: names the first where the dependency graph re-entered itself and the
+    #: second where expansion stopped on host state; either way evaluating the
+    #: field means evaluating these first. See `derive_key_fields._aux_leaf`
+    #: and `_ValueNormalizer.state_surfaces`.
+    auxiliaries: dict[str, FieldDerivation] = field(default_factory=dict)
 
     def by_name(self) -> dict[str, FieldDerivation]:
         return {f.name: f for f in self.fields}
+
+    def aux_closure(self, start: Iterable[str], *, through_state: bool = True) -> set[str]:
+        """Every auxiliary reachable from these, including unresolved ones.
+
+        An auxiliary that names another is not unusual: cutting `blockOuter`
+        exposes `splitAxis`, whose own derivation reads `blockOuter` back.
+
+        `through_state=False` follows only the cut edges. The two edge kinds
+        answer different questions and must not be mixed when grading: a cut
+        that stays open is a hole in the field, while host state that stays
+        opaque is where the field always bottomed out. Walking from a state
+        target into some cut made inside *its* derivation and charging the
+        field for it reports a loss the field never took — which is how `IsTnd`
+        went from exact to over-approximated on a change that only added
+        information.
+        """
+        out: set[str] = set()
+        stack = [str(v) for v in start]
+        while stack:
+            var_id = stack.pop()
+            if var_id in out:
+                continue
+            out.add(var_id)
+            aux = self.auxiliaries.get(var_id)
+            if aux is not None:
+                stack.extend(aux.aux_targets)
+                if through_state:
+                    stack.extend(aux.state_targets)
+        return out
 
     def totals(self) -> dict[str, Any]:
         return {
@@ -516,6 +573,7 @@ class HostDerivation:
             "note": self.note,
             "premises": [dict(p) for p in self.premises],
             "fields": [f.to_dict() for f in self.fields],
+            "auxiliaries": {k: v.to_dict() for k, v in sorted(self.auxiliaries.items())},
         }
 
 
@@ -542,6 +600,36 @@ def _derive_row(bundle: dict[str, Any], index: int, helper: int) -> dict[str, An
     )
     row = result.to_dict()
     row["domain"] = [str(v) for v in b.decl.value_domain]
+    row["seconds"] = round(time.time() - started, 1)
+    row["expanded_chars"] = len(row["expanded"])
+    row["expanded"] = row["expanded"][:EXPANDED_KEEP]
+    row["undecided"] = {k: v[:TEXT_KEEP] for k, v in row["undecided"].items()}
+    return row
+
+
+def _derive_aux_row(
+    bundle: dict[str, Any], var_id: str, name: str, function: str, helper: int
+) -> dict[str, Any]:
+    """Derive one name the cycle cut off, as its own target.
+
+    Same machinery as a dimension, pointed at an ordinary host name instead of
+    an encode-site expression. Re-entering the cut is the point: this time the
+    name is the root of the walk, so its writes are expanded, and only the back
+    edge inside them is cut.
+    """
+    from uo_init.derive_key_fields import KeyFieldDeriver
+
+    deriver = KeyFieldDeriver(
+        host_ir=bundle["host_ir"],
+        resolver=bundle["resolver"],
+        var_model=bundle["var_model"],
+        max_helper_guards=helper,
+    )
+    started = time.time()
+    result = deriver.derive(
+        dim_name=var_id, index=-1, host_expr=name, function=function
+    )
+    row = result.to_dict()
     row["seconds"] = round(time.time() - started, 1)
     row["expanded_chars"] = len(row["expanded"])
     row["expanded"] = row["expanded"][:EXPANDED_KEEP]
@@ -747,16 +835,44 @@ def _reap(proc: Any, queue: Any) -> int | None:
     return exitcode
 
 
+def _aux_worker(
+    bundle_path: str,
+    sys_path: list[str],
+    var_id: str,
+    name: str,
+    function: str,
+    helper: int,
+    queue,
+) -> None:
+    for entry in sys_path:
+        if entry and entry not in sys.path:
+            sys.path.insert(0, entry)
+    sys.setrecursionlimit(20000)
+    try:
+        with open(bundle_path, "rb") as fh:
+            bundle = pickle.load(fh)
+        queue.put(_derive_aux_row(bundle, var_id, name, function, helper))
+    except Exception as exc:  # noqa: BLE001 — the parent turns this into a row
+        queue.put({"__error__": f"{type(exc).__name__}: {exc}"[:400]})
+
+
 def _derive_isolated(
     bundle_path: str, index: int, name: str, helper: int, timeout: int
 ) -> dict[str, Any]:
+    return _run_isolated(
+        _worker,
+        (bundle_path, list(sys.path), index, helper),
+        name=name,
+        index=index,
+        timeout=timeout,
+    )
+
+
+def _run_isolated(target, args: tuple, *, name: str, index: int, timeout: int) -> dict[str, Any]:
+    """Run one derivation in its own interpreter, and reap it whatever happens."""
     ctx = mp.get_context("spawn")
     queue = ctx.Queue()
-    proc = ctx.Process(
-        target=_worker,
-        args=(bundle_path, list(sys.path), index, helper, queue),
-        daemon=True,
-    )
+    proc = ctx.Process(target=target, args=(*args, queue), daemon=True)
     started = time.time()
     proc.start()
     row: dict[str, Any] | None = None
@@ -873,6 +989,17 @@ def _to_field(
         value_leaves=sorted(str(v) for v in _readopt(row, "value_leaves", [])),
         root_vars=sorted(str(v) for v in _roots_of(row)),
         variables=sorted(str(v) for v in _readopt(row, "variables", [])),
+        var_roots={
+            str(k): str(v) for k, v in (_readopt(row, "var_roots", {}) or {}).items()
+        },
+        aux_targets={
+            str(k): [str(x) for x in (v or [])]
+            for k, v in (_readopt(row, "aux_targets", {}) or {}).items()
+        },
+        state_targets={
+            str(k): [str(x) for x in (v or [])]
+            for k, v in (_readopt(row, "state_targets", {}) or {}).items()
+        },
         undecided_guards=guards,
         unresolved=list(_readopt(row, "unresolved", [])),
         def_sites=list(_readopt(row, "def_sites", [])),
@@ -984,6 +1111,150 @@ def _reregister_soft_vars(var_model: Any, doc: HostDerivation) -> None:
             )
 
 
+#: How many times a cut may expose a further cut before the chase stops.
+#: `blockOuter` needs two: itself, then `splitAxis` inside it. Past that the
+#: names repeat, and an unbounded chase on a graph with cycles does not end.
+MAX_AUX_ROUNDS = 3
+
+
+def _derive_auxiliaries(
+    doc: HostDerivation,
+    bundle: dict[str, Any],
+    *,
+    tmp_path: str,
+    isolate: bool,
+    helper: int,
+    timeout: int,
+    evidence: "GuardEvidenceIndex | None",
+) -> None:
+    """Derive every name expansion stopped on, and the ones they expose."""
+    pending: dict[str, list[str]] = {}
+    for fld in doc.fields:
+        pending.update(fld.aux_targets)
+        pending.update(fld.state_targets)
+    for _ in range(MAX_AUX_ROUNDS):
+        todo = {k: v for k, v in pending.items() if k not in doc.auxiliaries}
+        if not todo:
+            return
+        for var_id, where in sorted(todo.items()):
+            name, function = (list(where) + ["", ""])[:2]
+            if isolate and tmp_path:
+                row = _run_isolated(
+                    _aux_worker,
+                    (tmp_path, list(sys.path), var_id, name, function, helper),
+                    name=var_id,
+                    index=-1,
+                    timeout=timeout,
+                )
+            else:
+                started = time.time()
+                try:
+                    row = _derive_aux_row(bundle, var_id, name, function, helper)
+                except Exception as exc:  # noqa: BLE001
+                    row = _failed_row(
+                        var_id,
+                        -1,
+                        f"{type(exc).__name__}: {exc}"[:200],
+                        round(time.time() - started, 1),
+                    )
+            aux = _to_field(row, evidence)
+            if _says_nothing(aux, var_id):
+                continue
+            doc.auxiliaries[var_id] = aux
+            pending.update(aux.aux_targets)
+            pending.update(
+                {k: v for k, v in aux.state_targets.items() if k != var_id}
+            )
+
+
+def _says_nothing(aux: FieldDerivation, var_id: str) -> bool:
+    """Whether the derivation came back with the name it was asked about.
+
+    `num`, `prefixN` and the like are read at the leaf under a parameter name,
+    and the resolver maps that name straight back to the tiling field it was
+    passed from — so deriving it yields itself. Registering that is worse than
+    not deriving it at all: an unknown quantity a search could sample becomes
+    a quantity nothing can evaluate, and every draw that reads it is lost.
+    """
+    return set(aux.variables) == {var_id}
+
+
+def _regrade_through_auxiliaries(doc: HostDerivation) -> None:
+    """Charge a field for the auxiliaries it reads, or credit it for them.
+
+    A cut that came back with a closed expression over inputs is a definition,
+    not a hole: the field is as decided as it ever was, only written down in
+    two pieces, and its roots are the union of both. One that came back
+    unresolved, or that reads itself back, is a hole — the field cannot be
+    evaluated by walking it once — so the auxiliary stands in `free_vars` and
+    the field grades over-approximated, exactly as the `VAR_TDF_*` leaf it
+    replaced did. The difference is that now it says which name it stopped on.
+
+    A `VAR_TDF_*` target is credited the same way but never charged. Stopping
+    on host state was always allowed: the expression is exact with the leaf in
+    it, and the derivation only says how that leaf gets its value. Failing to
+    say leaves the field exactly where it was, so downgrading it would report
+    a loss where nothing was lost.
+    """
+    settled = _settled_auxiliaries(doc)
+    for fld in doc.fields:
+        closure = doc.aux_closure(set(fld.aux_targets) | set(fld.state_targets))
+        if not closure:
+            continue
+        charged = doc.aux_closure(fld.aux_targets, through_state=False)
+        open_aux = sorted(v for v in charged - settled if is_aux_var(v))
+        for var_id in sorted(closure & settled):
+            aux = doc.auxiliaries[var_id]
+            fld.var_roots.update(aux.var_roots)
+            fld.root_vars = sorted(set(fld.root_vars) | set(aux.root_vars))
+        if open_aux:
+            fld.free_vars = sorted(set(fld.free_vars) | set(open_aux))
+            # Reached through another cut rather than named here, but a free
+            # variable is only on the books if something says where it came
+            # from. `unrecorded_free_vars` reads this.
+            for var_id in open_aux:
+                origin = doc.auxiliaries.get(var_id)
+                fld.aux_targets.setdefault(
+                    var_id, [origin.host_expr if origin else "", ""]
+                )
+            if fld.exactness in (EX_EXACT, EX_CONSTANT):
+                fld.exactness = EX_OVERAPPROX
+            fld.note = "; ".join(
+                filter(None, [fld.note, "UNSETTLED_AUX: " + ",".join(open_aux[:4])])
+            )
+
+
+def _settled_auxiliaries(doc: HostDerivation) -> set[str]:
+    """Auxiliaries a single forward walk can evaluate.
+
+    Greatest fixpoint from the optimistic side: assume all are settled, then
+    strike out any that is unresolved, carries a free variable of its own, or
+    names one that has already been struck. An auxiliary in a cycle -- and
+    `blockOuter` reading `splitAxis` reading `blockOuter` is one -- never
+    stabilises, so it falls out on the round its partner does.
+    """
+    settled = {
+        var_id
+        for var_id, aux in doc.auxiliaries.items()
+        if aux.exactness in (EX_EXACT, EX_CONSTANT) and not aux.free_vars
+    }
+    while True:
+        drop = {
+            var_id
+            for var_id in settled
+            if any(
+                dep not in settled and dep != var_id
+                for dep in (
+                    set(doc.auxiliaries[var_id].aux_targets)
+                    | set(doc.auxiliaries[var_id].state_targets)
+                )
+            )
+        }
+        if not drop:
+            return settled
+        settled -= drop
+
+
 def derive_host_fields(
     bundle: dict[str, Any],
     *,
@@ -1049,11 +1320,24 @@ def derive_host_fields(
                         round(time.time() - started, 1),
                     )
             doc.fields.append(_to_field(row, evidence))
+        try:
+            _derive_auxiliaries(
+                doc,
+                bundle,
+                tmp_path=tmp_path,
+                isolate=isolate,
+                helper=max_helper_guards,
+                timeout=timeout,
+                evidence=evidence,
+            )
+        except Exception as exc:  # noqa: BLE001 — a cut we cannot chase stays a cut
+            doc.note = (doc.note + f" auxiliaries failed: {type(exc).__name__}").strip()
     finally:
         if tmp_path:
             Path(tmp_path).unlink(missing_ok=True)
 
     doc.fields.sort(key=lambda f: f.index)
+    _regrade_through_auxiliaries(doc)
     try:
         doc.premises = _derive_premises(
             bundle, host_ir, doc.encode_function, max_helper_guards

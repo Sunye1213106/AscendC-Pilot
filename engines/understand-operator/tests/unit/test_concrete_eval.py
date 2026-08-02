@@ -8,14 +8,22 @@ from dataclasses import dataclass, field
 import pytest
 
 from uo_init.concrete_eval import (
+    CANDIDATE,
+    CONFIRMED,
     OTHER,
+    Auxiliaries,
     Premises,
     Unknown,
     ValueTree,
+    axes_for,
     domain_for,
     domains_of,
+    drivable_root,
     enumerate_cells,
+    grade_witness,
+    invented_range,
     possible_values,
+    root_of_var,
     samples,
 )
 
@@ -108,6 +116,32 @@ def test_arithmetic_the_solver_stalls_on_is_just_arithmetic_here():
         }
     )
     assert tree.value({"S": 1000}) == 333 % 16
+
+
+def test_a_conjunct_that_guards_a_division_actually_guards_it():
+    """`n != 0 && total / n > 1` is what the source wrote. Evaluating the
+    second half anyway turns a legal input into a division by zero."""
+    tree = ValueTree(
+        {
+            "op": "and",
+            "args": [
+                _cmp("N", "ne", 0),
+                {
+                    "op": "gt",
+                    "lhs": {"op": "div", "args": [{"var": "TOTAL"}, {"var": "N"}]},
+                    "rhs": {"lit": 1},
+                },
+            ],
+        }
+    )
+    assert tree.value({"TOTAL": 8, "N": 0}) is False
+
+
+def test_a_disjunct_already_settled_is_not_read():
+    tree = ValueTree({"op": "or", "args": [_cmp("A", "eq", 1), {"var": "B"}]})
+    read: set[str] = set()
+    assert tree.value({"A": 1}, read=read) is True
+    assert read == {"A"}
 
 
 def test_dividing_by_zero_is_unknown_rather_than_a_crash():
@@ -275,6 +309,195 @@ def test_a_premise_nobody_could_read_is_skipped_not_believed():
 def test_a_premise_marked_unusable_never_enters():
     p = Premises([{"usable": False, "expr": _cmp("DT", "ne", 6), "why": "no inputs"}])
     assert p.trees == [] and len(p.dropped) == 1
+
+
+# -- what a witness is worth ------------------------------------------------
+
+
+def test_a_shape_is_something_a_case_can_set():
+    assert root_of_var("VAR_SHAPE_QUERY_D2") == "INPUT_SHAPE"
+    assert drivable_root("VAR_SHAPE_QUERY_D2") is True
+
+
+def test_tiling_state_is_not_an_input_however_the_expression_reads_it():
+    """`SplitAxis == 5` witnessed by `VAR_TDF_SPLITAXIS = 5` restates the
+    question. Counting it as coverage is how 5.2% came to mean nothing."""
+    assert root_of_var("VAR_TDF_SPLITAXIS") == "TILING_DATA"
+    assert drivable_root("VAR_TDF_SPLITAXIS") is False
+
+
+def test_what_the_analysis_minted_when_it_gave_up_is_never_an_input():
+    for vid in (
+        "VAR_UNDECIDED_ABC",
+        "VAR_SCHED_COREIDX",
+        "VAR_INIT_1234",
+        "VAR_LOOPELEM_INVALIDS1_1",
+        "VAR_AUX_BLOCKOUTER",
+    ):
+        assert drivable_root(vid) is False, vid
+
+
+def test_a_recorded_root_beats_the_prefix():
+    """`VAR_ELEM_*` is an element of a container, and only the derivation knows
+    whether that container came from an input."""
+    assert drivable_root("VAR_ELEM_ELEM_SEQLEN") is False
+    assert drivable_root("VAR_ELEM_ELEM_SEQLEN", {"VAR_ELEM_ELEM_SEQLEN": "INPUT_VALUE"})
+
+
+def test_a_recorded_root_cannot_rescue_a_variable_the_analysis_invented():
+    """The resolver puts a root behind `coreIdx` too. It is still not something
+    a case sets."""
+    assert drivable_root("VAR_SCHED_COREIDX", {"VAR_SCHED_COREIDX": "INPUT_SHAPE"}) is False
+
+
+def test_a_platform_value_counts_because_choosing_the_profile_fixes_it():
+    assert drivable_root("VAR_PLATFORM_CORE_COUNT") is True
+
+
+def test_a_witness_naming_only_inputs_is_confirmed():
+    assert grade_witness({"VAR_SHAPE_QUERY_D0": 8, "VAR_ATTR_SPARSEMODE": 3}) == (
+        CONFIRMED,
+        [],
+    )
+
+
+def test_a_witness_naming_host_state_is_a_candidate_and_says_which():
+    grade, blame = grade_witness({"VAR_SHAPE_QUERY_D0": 8, "VAR_TDF_LAYOUTTYPE": 4})
+    assert (grade, blame) == (CANDIDATE, ["VAR_TDF_LAYOUTTYPE"])
+
+
+def test_a_variable_nobody_bounded_or_compared_is_marked_made_up():
+    """`samples` still answers -- over-approximating is the safe direction --
+    but a verdict resting on `{0, 1, 2, 8, 64, 512}` rests on nothing read."""
+    assert invented_range(set()) is True
+    assert invented_range({128}) is False
+    assert invented_range(set(), _Domain(values=[0, 1])) is False
+
+
+def test_a_bound_alone_does_not_make_the_magnitudes_evidence():
+    assert invented_range(set(), _Domain(lo=1, hi=1024)) is True
+
+
+def test_an_axis_carries_both_gradings():
+    tree = ValueTree(
+        _ite(_cmp("VAR_TDF_SPLITAXIS", "eq", 5), {"var": "VAR_SHAPE_Q_D0"}, {"lit": 0})
+    )
+    got = {a.var: a for a in axes_for(tree)}
+    assert got["VAR_TDF_SPLITAXIS"].drivable is False
+    assert got["VAR_SHAPE_Q_D0"].drivable is True
+    # Compared against 5, so its points come from the source; the other is
+    # read for its value alone and nothing says what that value can be.
+    assert got["VAR_TDF_SPLITAXIS"].invented is False
+    assert got["VAR_SHAPE_Q_D0"].invented is True
+
+
+def test_the_walk_reports_what_it_could_not_model():
+    out = enumerate_cells(_ite(_cmp("VAR_TDF_LAYOUTTYPE", "eq", 4), {"lit": 1}, {"lit": 0}))
+    assert out["undrivable_vars"] == ["VAR_TDF_LAYOUTTYPE"]
+
+
+def test_a_value_is_graded_by_the_path_that_produced_it():
+    """The draw sets every variable; only the ones the taken branch read had
+    anything to do with the value."""
+    tree = _ite(_cmp("VAR_ATTR_MODE", "eq", 1), {"lit": 7}, {"var": "VAR_TDF_X"})
+    out = enumerate_cells(tree)
+    assert out["grades"][7] == CONFIRMED
+    assert set(out["grades"].values()) == {CONFIRMED, CANDIDATE}
+
+
+def test_the_input_that_needs_nothing_invented_is_the_one_kept():
+    """Both draws reach 1; only one of them is a test case."""
+    tree = {
+        "op": "if_then_else",
+        "condition": {
+            "op": "or",
+            "args": [
+                _cmp("VAR_ATTR_MODE", "eq", 1),
+                _cmp("VAR_TDF_LAYOUTTYPE", "eq", 4),
+            ],
+        },
+        "then": {"lit": 1},
+        "else": {"lit": 0},
+    }
+    out = enumerate_cells(tree)
+    assert out["grades"][1] == CONFIRMED
+
+
+def test_which_variables_a_run_consulted_is_not_which_ones_it_could_have():
+    tree = ValueTree(_ite(_cmp("A", "ge", 128), {"var": "B"}, {"var": "C"}))
+    read: set[str] = set()
+    tree.value({"A": 256, "B": 1, "C": 2}, read=read)
+    assert read == {"A", "B"}
+
+
+# -- values the operator computes for itself --------------------------------
+
+
+def test_an_auxiliary_is_computed_from_the_input_not_drawn_alongside_it():
+    aux = Auxiliaries({"VAR_AUX_BLOCKOUTER": {"op": "mul", "args": [{"var": "B"}, {"lit": 4}]}})
+    assert aux.resolve({"B": 8}) == {"VAR_AUX_BLOCKOUTER": 32}
+
+
+def test_one_auxiliary_reading_another_is_ordered_behind_it():
+    aux = Auxiliaries(
+        {
+            "VAR_AUX_OUTER": {"op": "add", "args": [{"var": "VAR_AUX_INNER"}, {"lit": 1}]},
+            "VAR_AUX_INNER": {"var": "B"},
+        }
+    )
+    assert aux.order == ["VAR_AUX_INNER", "VAR_AUX_OUTER"]
+    assert aux.resolve({"B": 7}) == {"VAR_AUX_INNER": 7, "VAR_AUX_OUTER": 8}
+
+
+def test_a_name_that_reads_itself_back_still_settles_when_it_converges():
+    """`blockOuter` is written from the shapes, then read by a guard deciding
+    which of its writes ran. Statically that is a cycle; at one input it is a
+    number, and iterating finds it."""
+    tree = _ite(_cmp("VAR_AUX_X", "eq", 5), {"lit": 5}, {"var": "N"})
+    assert Auxiliaries({"VAR_AUX_X": tree}).resolve({"N": 5}) == {"VAR_AUX_X": 5}
+
+
+def test_a_value_that_depends_on_where_the_iteration_started_is_not_reported():
+    """Both 0 and 1 are fixpoints of `x -> x`, so the source says nothing here,
+    and reporting either would be reporting the seed."""
+    assert Auxiliaries({"VAR_AUX_X": {"var": "VAR_AUX_X"}}).resolve({}) == {}
+
+
+def test_an_auxiliary_that_oscillates_is_left_out_rather_than_cut_off():
+    tree = _ite(_cmp("VAR_AUX_X", "eq", 0), {"lit": 1}, {"lit": 0})
+    assert Auxiliaries({"VAR_AUX_X": tree}).resolve({}) == {}
+
+
+def test_a_reader_of_an_unsettled_auxiliary_gets_no_value_either():
+    aux = Auxiliaries(
+        {
+            "VAR_AUX_BAD": _ite(_cmp("VAR_AUX_BAD", "eq", 0), {"lit": 1}, {"lit": 0}),
+            "VAR_AUX_READER": {"op": "add", "args": [{"var": "VAR_AUX_BAD"}, {"lit": 1}]},
+        }
+    )
+    assert aux.resolve({}) == {}
+
+
+def test_an_auxiliary_is_not_an_axis_and_not_a_charge_against_the_witness():
+    """Drawing it would assert host state; computing it asserts nothing the
+    input did not already."""
+    tree = _ite(_cmp("VAR_AUX_X", "ge", 8), {"lit": 1}, {"lit": 0})
+    aux = Auxiliaries({"VAR_AUX_X": {"op": "mul", "args": [{"var": "VAR_ATTR_N"}, {"lit": 4}]}})
+    out = enumerate_cells(tree, auxiliaries=aux)
+    assert "VAR_AUX_X" not in out["undrivable_vars"]
+    assert set(out["values"]) == {0, 1}
+    assert set(out["grades"].values()) == {CONFIRMED}
+    for env in out["values"].values():
+        assert "VAR_AUX_X" not in env
+
+
+def test_an_auxiliary_document_is_read_under_either_expression_key():
+    rows = {"VAR_AUX_A": {"value_expr": {"lit": 3}}, "VAR_AUX_B": {"expr": {"lit": 4}}}
+    assert Auxiliaries.from_rows(rows).resolve({}) == {"VAR_AUX_A": 3, "VAR_AUX_B": 4}
+
+
+def test_an_auxiliary_that_never_came_back_is_simply_absent():
+    assert Auxiliaries.from_rows({"VAR_AUX_A": {"value_expr": None}}).names == set()
 
 
 # -- what a free variable leaves open ---------------------------------------

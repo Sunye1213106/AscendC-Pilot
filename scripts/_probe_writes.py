@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Every write to a name, with the conditions it runs under.
+"""Where a host name is written, as the expander sees it.
 
-`def_sites` on a field record only covers the key field itself; when a minted
-initial value points at some member deep in the chain, this is how to see what
-the derivation had to work with. Usage: `_probe_writes.py fBaseParams.pseOptional`
+    python scripts/_probe_writes.py splitAxis fBaseParams.splitAxis
+
+`VAR_TDF_X` in an expression means the expander handed back the surface name.
+It does that for three reasons -- no write site, loop-scoped writes only, or a
+cycle -- and which one it was decides whether anything can be done about it.
 """
 from __future__ import annotations
 
@@ -13,34 +15,31 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "engines" / "understand-operator" / "src"))
-sys.path.insert(0, str(ROOT / "engines" / "common"))
 
 
 def main() -> int:
-    if len(sys.argv) < 2:
-        print(__doc__)
-        return 2
-    wanted = sys.argv[1]
-
-    with open(ROOT / ".probe_cache" / "fag_bundle.pkl", "rb") as fh:
+    names = sys.argv[1:] or ["splitAxis", "fBaseParams.splitAxis", "deterSparseType"]
+    with (ROOT / ".probe_cache" / "fag_bundle.pkl").open("rb") as fh:
         bundle = pickle.load(fh)
-    ir = bundle.host_ir if hasattr(bundle, "host_ir") else bundle["host_ir"]
+    from uo_init.derive_key_fields import KeyFieldDeriver
 
-    hits = [w for w in ir.writes if w.path == wanted or w.path.endswith("." + wanted)]
-    print(f"{wanted}: {len(hits)} write(s)")
-    for w in sorted(hits, key=lambda w: (w.file, w.line)):
-        print(f"\n  {w.file.rsplit('/', 1)[-1]}:{w.line}  [{w.function}]")
-        print(f"      = {w.rhs[:100]}")
-        for c in w.path_conditions:
-            kind = getattr(c, "kind", "")
-            neg = "not " if c.negated else ""
-            print(f"      under {neg}{c.text[:100]}" + (f"   <{kind}>" if kind else ""))
-        # `guards()` is what the derivation actually chains on: it drops the
-        # bail-out premises, which are conditions on the whole run rather than
-        # on this write.
-        kept = list(w.guards())
-        if len(kept) != len(w.path_conditions):
-            print(f"      -> guards() keeps {len(kept)} of {len(w.path_conditions)}")
+    d = KeyFieldDeriver(
+        host_ir=bundle["host_ir"],
+        resolver=bundle["resolver"],
+        var_model=bundle["var_model"],
+    )
+    ir = bundle["host_ir"]
+    print(f"class_fields: {len(getattr(ir, 'class_fields', ()) or ())}")
+    for name in names:
+        print(f"\n=== {name}")
+        print(f"  in class_fields: {name in (getattr(ir, 'class_fields', ()) or ())}")
+        for fn in ("", "DoBn2s2Sparse", "CalcleDeterParam", "DoSparse", "SetTilingKey"):
+            canon = d._canonical_name(name, fn)
+            pool = d._sites_for(name, canon, fn)
+            print(f"  in {fn or '<top>':<18} canon={canon:<32} {len(pool)} writes")
+            for s in pool[:4]:
+                print(f"      {Path(str(s.file)).name}:{s.line} in {s.function}"
+                      f"  = {str(getattr(s, 'value_text', ''))[:70]}")
     return 0
 
 

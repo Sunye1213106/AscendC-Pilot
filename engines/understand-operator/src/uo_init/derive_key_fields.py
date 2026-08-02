@@ -75,9 +75,18 @@ OVERAPPROX_PREFIXES = (
     LOOPELEM_PREFIX,
 )
 
+#: A name the dependency graph re-entered, standing for its own derivation
+#: rather than for something unknown. Not an over-approximation: the value is
+#: still decided by the source, only written down separately. See `_aux_leaf`.
+AUX_PREFIX = "VAR_AUX_"
+
 
 def is_overapprox_var(var_id: str) -> bool:
     return str(var_id).startswith(OVERAPPROX_PREFIXES)
+
+
+def is_aux_var(var_id: str) -> bool:
+    return str(var_id).startswith(AUX_PREFIX)
 
 
 def classify_exactness(
@@ -366,6 +375,20 @@ class KeyFieldDerivation:
     #: var_id -> declared type, for the variables this derivation minted. The
     #: parent process re-declares them and cannot otherwise know.
     var_types: dict[str, str] = field(default_factory=dict)
+    #: var_id -> the root it resolved to. `input_roots` is the set of these,
+    #: which answers "can the field be driven" but not "can this one variable
+    #: be set" — and that is the question a witness has to answer, one
+    #: assignment at a time. Reading it off the id prefix instead would have to
+    #: guess for `VAR_ELEM_*`, whose container may or may not come from an input.
+    var_roots: dict[str, str] = field(default_factory=dict)
+    #: var_id -> `[name, function]` for each `VAR_AUX_*` this expression reads.
+    #: The caller derives them and evaluates them ahead of this one.
+    aux_targets: dict[str, list[str]] = field(default_factory=dict)
+    #: The same, for the `VAR_TDF_*` leaves expansion stopped on. Kept apart
+    #: because these are not over-approximations of this expression -- it is
+    #: exactly as faithful with the leaf in it -- only values a run computes
+    #: before the key is built. See `_ValueNormalizer.state_surfaces`.
+    state_targets: dict[str, list[str]] = field(default_factory=dict)
     status: str = STATUS_UNRESOLVED
     exactness: str = EX_UNRESOLVED
     free_vars: list[str] = field(default_factory=list)
@@ -390,6 +413,9 @@ class KeyFieldDerivation:
             "blocked_on": dict(self.blocked_on),
             "var_scope": dict(self.var_scope),
             "var_types": dict(self.var_types),
+            "var_roots": dict(self.var_roots),
+            "aux_targets": {k: list(v) for k, v in self.aux_targets.items()},
+            "state_targets": {k: list(v) for k, v in self.state_targets.items()},
             "status": self.status,
             "exactness": self.exactness,
             "free_vars": list(self.free_vars),
@@ -1023,6 +1049,9 @@ class KeyFieldDeriver:
         self._encode_fn: str = ""
         self._encode_path_cache: set[str] | None = None
         self.cycles: set[str] = set()
+        #: var_id -> `[name, function]` of a value the cycle cut named instead
+        #: of losing. See `_aux_leaf`; the caller derives each of these.
+        self.aux_targets: dict[str, list[str]] = {}
         #: Sites where an if/else-if chain was closed with an assumed zero
         #: default. See `_chain`.
         self.implicit_zero: list[dict[str, Any]] = []
@@ -1834,7 +1863,14 @@ class KeyFieldDeriver:
         self._runs_once_cache[fn] = False
         calls = self._calls_to(fn)
         if not calls:
-            out = True  # never called from within: an entry point
+            # Nothing *we saw* calls it, which is not the same as an entry
+            # point: a call through a pointer, or from a translation unit
+            # outside the slice, looks exactly like this. Reading it as "runs
+            # once" lets a line comparison drop a write that did happen, and
+            # dropping a write is what narrows the feasible set. Only a
+            # function the encoding cannot be reached without is one we know
+            # ran — see `_encode_path`, which draws the same distinction.
+            out = fn.split("::")[-1] in self._encode_path()
         elif len(calls) > 1:
             out = False
         else:
@@ -2506,6 +2542,28 @@ class KeyFieldDeriver:
                 return f"{owner}.{name}"
         return name
 
+    def _aux_leaf(self, canon: str, fn: str) -> Expr:
+        """Name what the cycle cut off, rather than dropping to a surface leaf.
+
+        The dependency graph is cyclic; the program is not. `blockOuter` is
+        written from closed-form arithmetic over the shapes, and read back by a
+        guard that selects which of its write sites runs — so a static walk
+        re-enters it, while at run time the writes happen in order and it is a
+        number by the time any guard looks.
+
+        Handing back the surface name loses that. The resolver sees a tiling
+        field whose writer it cannot place and mints `VAR_TDF_*`: a free
+        variable, unbounded, that nothing a test sets can reach. Five of the
+        nineteen dimensions closed onto exactly that. A named auxiliary keeps
+        the edge instead, and is derived on its own afterwards — where the same
+        cut applies one level further in, which is where it terminates.
+        """
+        from uo_init.ids import slug
+
+        var_id = f"{AUX_PREFIX}{slug(self._ident(canon, fn))}"
+        self.aux_targets[var_id] = [canon, fn]
+        return Ref(var_id, scope=fn)
+
     def _sites_for(self, name: str, canon: str, fn: str) -> list[DefSite]:
         sites = self._defs_for(name, fn)
         if not sites and canon != name:
@@ -2568,7 +2626,7 @@ class KeyFieldDeriver:
                 finally:
                     self._earlier_frames.discard(frame)
             self.cycles.add(canon)
-            return leaf
+            return self._aux_leaf(canon, fn)
         cached = self._cache.get(generic)
         if cached is None and key != generic:
             cached = self._cache.get(key)
@@ -2656,6 +2714,7 @@ class KeyFieldDeriver:
     def derive(self, *, dim_name: str, index: int, host_expr: str, function: str):
         self._nodes = 0
         self.cycles = set()
+        self.aux_targets = {}
         self.implicit_zero = []
         self._implicit_seen = set()
         expanded = self._expand_text(host_expr, function, 0)
@@ -2696,11 +2755,27 @@ class KeyFieldDeriver:
             # Accumulating every leaf the normalizer touched while walking
             # softened guards (GetCoreNumAic, …) is how PLATFORM_CORE_COUNT
             # landed on IsTnd even though its SMT form is a single SCHED bool.
+            out.var_roots = {
+                v: norm.roots[v] for v in out.variables if v in norm.roots
+            }
+            # Only the ones that survived simplification. A cut the expression
+            # no longer mentions is nothing to go and derive.
+            survived = set(out.variables)
+            out.aux_targets = {
+                v: list(where)
+                for v, where in self.aux_targets.items()
+                if v in survived
+            }
+            out.state_targets = {
+                v: list(where)
+                for v, where in norm.state_surfaces.items()
+                if v in survived
+            }
             out.input_roots = sorted(
                 {
-                    norm.roots[v]
-                    for v in out.variables
-                    if v in norm.roots and not v.startswith(("VAR_SCHED_", "VAR_UNDECIDED_"))
+                    root
+                    for v, root in out.var_roots.items()
+                    if not v.startswith(("VAR_SCHED_", "VAR_UNDECIDED_"))
                 }
             )
         # Grade the result by what actually survived into `value_expr`, and let
@@ -3026,6 +3101,15 @@ class _ValueNormalizer(PredicateNormalizer):
         #: Guessing bool for the latter makes `coreIdx == 36` fail to compile
         #: and takes every dimension down with it.
         self.var_types: dict[str, str] = {}
+        #: `VAR_TDF_*` -> `[surface name, function]` of the host field it stands
+        #: for. Expansion deliberately stops on these: substituting a classifier
+        #: operand whose own writes are guarded by more host state grows the
+        #: expression by two orders of magnitude and settles nothing (see
+        #: `_expand_operand`). But the field is still written somewhere, so it
+        #: can be derived *once*, on its own, and shared — which is the same
+        #: bargain `_aux_leaf` strikes for a cycle. Without this record the
+        #: name is lost at the leaf and nothing can go back for it.
+        self.state_surfaces: dict[str, list[str]] = {}
         # The expanded expression is a DAG. Normalising it as a tree costs the
         # unfolded size, so each (node, position) is lowered exactly once and
         # the resulting SMT-lite object is shared by every reference to it.
@@ -3239,9 +3323,13 @@ class _ValueNormalizer(PredicateNormalizer):
 
     def _leaf(self, expr: Expr) -> dict[str, Any]:
         expr = _deref(expr)
-        if isinstance(expr, Ref) and expr.symbol.startswith(OVERAPPROX_PREFIXES):
+        if isinstance(expr, Ref) and expr.symbol.startswith(
+            OVERAPPROX_PREFIXES + (AUX_PREFIX,)
+        ):
             # Minted by the derivation, not read from the source, so the
             # resolver has no root for it and must not be asked for one.
+            if is_aux_var(expr.symbol):
+                self.var_types.setdefault(expr.symbol, "int")
             return {"var": expr.symbol}
         if isinstance(expr, Select):
             elem = self._element_or_cut(expr)
@@ -3271,6 +3359,9 @@ class _ValueNormalizer(PredicateNormalizer):
                 raise NormalizeError(REASON_UNMAPPED_LEAF, out["lit"])
         if "var" in out and out.get("root"):
             self.roots[out["var"]] = out["root"]
+            if out["root"] == "TILING_DATA" and text:
+                scope = getattr(expr, "scope", "") or _scope_under(expr)
+                self.state_surfaces.setdefault(out["var"], [text, scope])
         return out
 
     def _named_lit(self, symbol: str | None) -> int | None:

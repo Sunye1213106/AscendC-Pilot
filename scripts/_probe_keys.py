@@ -25,12 +25,17 @@ CACHE = ROOT / ".probe_cache"
 sys.path.insert(0, str(ROOT / "engines" / "understand-operator" / "src"))
 
 from uo_init.concrete_eval import (  # noqa: E402
+    CONFIRMED,
+    Auxiliaries,
     Premises,
     Unknown,
     ValueTree,
     ZeroDenominator,
     domain_for,
     domains_of,
+    drivable_root,
+    grade_witness,
+    invented_range,
     reaching_inputs,
     samples,
 )
@@ -60,16 +65,22 @@ def _declared_values(dim: str) -> list:
     return _DECLARED.get(dim, [])
 
 
-def _read_off(trees, env, per_dim, why, blame=None):
+def _read_off(trees, env, per_dim, why, blame=None, read=None, bans=None, shapes=None):
     """Every dimension's value on this one input, and which ones would not say."""
     row, missing = [], []
     for name, t in trees:
         try:
-            got = t.value(env)
+            got = t.value(env, read=read)
         except ZeroDenominator as exc:
             why[name]["division by zero"] += 1
             if blame is not None:
                 blame |= t.vars_under(exc.node)
+            if bans is not None:
+                learned = t.zero_blame(exc.node, env)
+                if learned is not None:
+                    bans[learned[0]].add(learned[1])
+                elif shapes is not None:
+                    shapes[tuple(sorted(t.vars_under(exc.node)))] += 1
             got = None
         except Unknown as exc:
             why[name][str(exc)[:70]] += 1
@@ -110,10 +121,17 @@ def main() -> int:
     doc = json.loads((CACHE / "fag_derive.json").read_text(encoding="utf-8"))
     with (CACHE / "fag_bundle.pkl").open("rb") as fh:
         domains, constants = domains_of(pickle.load(fh)["var_model"])
-    premises = Premises((doc.get("host_derivation") or {}).get("premises") or [])
+    saved = doc.get("host_derivation") or {}
+    premises = Premises(saved.get("premises") or [])
+    # Names the operator computes for itself. Evaluated from each draw rather
+    # than drawn: see `Auxiliaries`.
+    aux = Auxiliaries.from_rows(saved.get("auxiliaries") or {})
 
     fields = [f for f in doc["fields"] if f.get("value_expr") is not None]
     trees = [(f["name"], ValueTree(f["value_expr"])) for f in fields]
+    roots: dict[str, str] = {}
+    for f in doc["fields"]:
+        roots.update(f.get("var_roots") or {})
     print(f"{len(trees)} of {len(doc['fields'])} dimensions have an expression")
 
     # One shared input space: a key comes off a single run, so the dimensions
@@ -121,33 +139,58 @@ def main() -> int:
     cuts: dict[str, set] = defaultdict(set)
     allvars: set[str] = set()
     divisors: set[str] = set()
-    for _, t in trees:
+    for _, t in list(trees) + [("", t) for t in aux.trees.values()]:
         c, v = t.cuts()
         allvars |= v
         divisors |= t.divisors()
         for k, s in c.items():
             cuts[k] |= s
+    allvars -= aux.names
     for v in allvars & premises.vars:
         cuts[v] |= premises.cuts.get(v, set())
 
     axes: dict[str, list] = {}
+    invented: list[str] = []
     for v in sorted(allvars):
-        vals = samples(cuts.get(v, set()), domain_for(v, domains), constants)
+        domain = domain_for(v, domains)
+        vals = samples(cuts.get(v, set()), domain, constants)
         if v in divisors:
             vals = [x for x in vals if x != 0] or vals
         axes[v] = premises.keeps(v, vals)
+        if invented_range(cuts.get(v, set()), domain):
+            invented.append(v)
     space = 1
     for vals in axes.values():
         space *= len(vals)
-    print(f"{len(axes)} variables, {space:.3g} combinations in all\n")
+    print(f"{len(axes)} variables, {space:.3g} combinations in all")
+    if aux.names:
+        print(f"  {len(aux.names)} more the operator computes, not drawn: "
+              f"{sorted(aux.names)}")
+
+    # What the search is allowed to move decides what a hit is worth. A draw
+    # that sets one of these is describing host state, so the key it produces
+    # is proposed rather than demonstrated.
+    undrivable = sorted(v for v in axes if not drivable_root(v, roots))
+    print(f"  {len(axes) - len(undrivable)} a test case can set, "
+          f"{len(undrivable)} it cannot: {undrivable}")
+    if invented:
+        print(f"  {len(invented)} with no declared range and nothing comparing "
+              f"against them; their points are made up: {invented}\n")
+    else:
+        print()
 
     rng = random.Random(args.seed)
     keys: dict[tuple, dict] = {}
+    grades: dict[tuple, str] = {}
     per_dim: dict[str, Counter] = {name: Counter() for name, _ in trees}
     partial = Counter()
     why: dict[str, Counter] = defaultdict(Counter)
     refused = 0
     illegal = 0
+    #: variable -> values watched to zero a denominator on their own.
+    bans: dict[str, set] = defaultdict(set)
+    #: The variable sets behind zeros no single value explains.
+    zero_shapes: Counter = Counter()
     # Inputs worth going back to: one that reached something new is a better
     # place to look from than a fresh draw, because most of what it set is
     # already past the guards that a fresh draw has to clear again.
@@ -179,19 +222,36 @@ def main() -> int:
         # Redraw rather than record it. Charging it to the dimension is what
         # made four of them look unevaluable on a third of all inputs.
         row, missing = [], ["<undrawn>"]
-        env = _draw(axes, rng, base=base, aim=aim)
+        read: set[str] = set()
+        drawn = _draw(axes, rng, base=base, aim=aim)
         for attempt in range(args.repairs + 1):
-            if premises.rejects(env):
+            if premises.rejects(drawn):
                 refused += 1
                 break
             blame: set[str] = set()
-            row, missing = _read_off(trees, env, per_dim, why, blame)
+            read = set()
+            # The operator's own intermediate values, from this draw. A name
+            # this input does not settle is simply absent, and the dimensions
+            # reading it come back with nothing.
+            env = {**drawn, **aux.resolve(drawn)}
+            before = sum(len(s) for s in bans.values())
+            row, missing = _read_off(
+                trees, env, per_dim, why, blame, read, bans, zero_shapes
+            )
+            if sum(len(s) for s in bans.values()) != before:
+                # A denominator named a single value as the whole reason it was
+                # zero. That is a premise the operator never wrote down, so it
+                # narrows the space from here on rather than only this draw.
+                for v, bad in bans.items():
+                    kept = [x for x in axes[v] if x not in bad]
+                    if kept:
+                        axes[v] = kept
             if not missing:
                 break
             illegal += 1
             loose = sorted(blame - set(aim))
-            env = (
-                {**env, **{v: rng.choice(axes[v]) for v in loose if v in axes}}
+            drawn = (
+                {**drawn, **{v: rng.choice(axes[v]) for v in loose if v in axes}}
                 if loose
                 else _draw(axes, rng, base=base, aim=aim)
             )
@@ -208,15 +268,31 @@ def main() -> int:
             for name in missing:
                 partial[name] += 1
             if fresh:
-                corpus.append(env)
+                corpus.append(drawn)
             continue
-        if tuple(row) not in keys:
-            keys[tuple(row)] = env
-            corpus.append(env)
+        # Graded on the drawn variables the nineteen paths actually consulted:
+        # not on host state no taken branch looked at, and not on an auxiliary,
+        # which the draw decided rather than stood alongside.
+        grade, _ = grade_witness({k: drawn[k] for k in read if k in drawn}, roots)
+        seen = keys.get(tuple(row))
+        # A confirmed witness replaces a candidate one for the same key: both
+        # say the key exists, but only one of them is an input.
+        if seen is None or (grade == CONFIRMED and grades[tuple(row)] != CONFIRMED):
+            keys[tuple(row)] = drawn
+            grades[tuple(row)] = grade
+            corpus.append(drawn)
 
-    got = args.n - refused - sum(1 for _ in ())
+    confirmed = sum(1 for g in grades.values() if g == CONFIRMED)
     print(f"of {args.n} draws: {refused} refused by a premise, {illegal} redrawn "
-          f"after dividing by zero, {len(keys)} distinct whole keys found")
+          f"after dividing by zero, {len(keys)} distinct whole keys found "
+          f"({confirmed} on inputs alone, {len(keys) - confirmed} needing host state)")
+    if bans:
+        learned = {v: sorted(s) for v, s in sorted(bans.items()) if s}
+        print(f"  values ruled out as sole cause of a zero denominator: {learned}")
+    if zero_shapes:
+        print("  zero denominators no single value explains, most common first:")
+        for names, n in zero_shapes.most_common(6):
+            print(f"    {n:6}  {list(names)}")
     if partial:
         print("\ndraws lost because a dimension could not be evaluated:")
         for name, c in partial.most_common(8):
@@ -237,11 +313,11 @@ def main() -> int:
         print(f"  {name:<15} {len(seen)}/{len(declared) or '?'}  {note}")
     print(f"\n{len(trees) - short}/{len(trees)} dimensions fully covered")
 
-    _against_kernel_rules([n for n, _ in trees], keys, per_dim)
+    _against_kernel_rules([n for n, _ in trees], keys, per_dim, grades)
     return 0
 
 
-def _against_kernel_rules(names, keys, per_dim) -> None:
+def _against_kernel_rules(names, keys, per_dim, grades=None) -> None:
     """The kernel's own legality rules are the denominator for coverage.
 
     A key the host can produce but the kernel does not accept is a defect;
@@ -278,6 +354,17 @@ def _against_kernel_rules(names, keys, per_dim) -> None:
     hit = found & want
     print(f"  reached {len(hit)} of {len(want)} legal combinations "
           f"({100.0 * len(hit) / max(1, len(want)):.1f}%)")
+    if grades:
+        sure = {
+            tuple(norm(row[i]) for i in order)
+            for row, g in grades.items()
+            if g == CONFIRMED
+        } & want
+        # The number that survives contact with a generator. The rest name a
+        # value of host tiling state, which nothing a test sets reaches.
+        print(f"  of those, {len(sure)} come with an input a case can be built "
+              f"from ({100.0 * len(sure) / max(1, len(want)):.1f}%); "
+              f"{len(hit) - len(sure)} rest on host state")
     outside = found - want
     if outside:
         print(f"  {len(outside)} keys the host produces that the kernel does not declare")
