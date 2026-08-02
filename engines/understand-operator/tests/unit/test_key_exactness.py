@@ -233,6 +233,61 @@ def test_a_leaf_is_resolved_in_the_function_it_came_from():
     assert norm.undecided == {}
 
 
+def _packing_normalizer() -> _ValueNormalizer:
+    """Every function resolves `coreIdx` as a traversal position of its own."""
+    packing = SourceResolver(local_roots={"coreIdx": "LOOP_INDUCTION"})
+    return _ValueNormalizer(
+        SourceResolver(), VariableModel(), scope_for=lambda fn: packing
+    )
+
+
+def test_counters_of_the_same_name_in_two_functions_are_two_variables():
+    """Two functions pack blocks onto cores, each counting with a `coreIdx`.
+
+    One variable for both asserts the two counts are equal, which shrinks the
+    feasible set — the direction an over-approximation must never take, and on
+    its own enough to rule out keys that are reachable.
+    """
+    norm = _packing_normalizer()
+    one = norm._leaf(Ref("coreIdx", scope="FillBlockInfoLoadBalanceForBn2"))
+    two = norm._leaf(Ref("coreIdx", scope="CaclePerCoreBlockInfo"))
+    assert one["var"].startswith("VAR_SCHED_")
+    assert one["var"] != two["var"]
+    assert norm.var_scope[one["var"]] == "FillBlockInfoLoadBalanceForBn2"
+
+
+def test_the_same_counter_read_twice_stays_one_variable():
+    norm = _packing_normalizer()
+    scope = "FillBlockInfoLoadBalanceForBn2"
+    assert norm._leaf(Ref("coreIdx", scope=scope)) == norm._leaf(
+        Ref("coreIdx", scope=scope)
+    )
+
+
+def test_a_leaf_that_folded_to_a_constant_carries_the_value_not_the_name():
+    """A leaf reducible to a constant must emit the value it reduced to.
+
+    Emitting the name instead spells the literal like an identifier, and every
+    reader downstream then sees a symbol nobody modelled.
+    """
+    encode = SourceResolver().scoped(bindings={"blockSize": "128"})
+    norm = _ValueNormalizer(encode, VariableModel(), scope_for=lambda fn: encode)
+    out = norm._guard(Bin(">", Ref("blockSize"), Const(0)))
+    assert "blockSize" not in str(out), out
+
+
+def test_a_leaf_choosing_between_constants_is_not_folded_to_one():
+    """The arms of a ternary are all constants; the local is not a constant.
+
+    Folding it to the first arm deletes the branches that produce the others,
+    which is the direction that invents false "unreachable" answers.
+    """
+    encode = SourceResolver().scoped(bindings={"mode": "(a == b ? 0 : (a > b ? 2 : 1))"})
+    norm = _ValueNormalizer(encode, VariableModel(), scope_for=lambda fn: encode)
+    out = norm._guard(Bin("==", Ref("mode"), Const(2)))
+    assert "'lit': 0" not in str(out), out
+
+
 def test_the_same_leaf_without_a_scope_still_fails():
     """Confirms the previous test passes because of the scope, not because the
     encode resolver happens to know the symbol."""
@@ -277,6 +332,110 @@ def test_container_element_uses_the_scope_on_the_array_ref():
     assert "VAR_UNDECIDED_" not in str(out), out
     assert "array_subscript" not in norm.blocked_on.values()
     assert any(r == "INPUT_VALUE" for r in norm.roots.values()), norm.roots
+
+
+# -- an accessor chain routed through a local ------------------------------
+def _tagged(text: str, scope: str):
+    """The expression as `_expand_surface` hands it on: names stamped with
+    the function they were read in, accessor calls left for the resolver."""
+    from uo_init.derive_key_fields import KeyFieldDeriver
+
+    deriver = KeyFieldDeriver.__new__(KeyFieldDeriver)
+    return deriver._expand_surface(parse_expr(text), scope, 0)
+
+
+def _rope_like_normalizer() -> _ValueNormalizer:
+    """Two optional tensors, each fetched into a local of the same helper.
+
+    The ordinary shape of a rank test: a helper binds `<tensor>Shape` to an
+    accessor and then asks that local for its rank, and the encode function
+    never sees the local.
+    """
+    encode = SourceResolver()
+    shapes = SourceResolver(
+        bindings={
+            "queryRopeShape": "ctx->GetOptionalInputShape("
+            "static_cast<size_t>(InputIndex::QUERY_ROPE))",
+            "keyRopeShape": "ctx->GetOptionalInputShape("
+            "static_cast<size_t>(InputIndex::KEY_ROPE))",
+        }
+    )
+    return _ValueNormalizer(
+        encode,
+        VariableModel(),
+        scope_for=lambda fn: {"GetShapeAttrsInfo": shapes}.get(fn, encode),
+    )
+
+
+def test_a_call_is_resolved_in_the_scope_of_the_names_underneath_it():
+    """Only `Ref` carries a scope, and a whole accessor chain arrives as a
+    `Call`. Reading the stamp off that node alone found nothing, so the chain
+    was resolved in the encode function, where the local naming the tensor
+    does not exist."""
+    norm = _rope_like_normalizer()
+    out = norm._value(
+        _tagged("queryRopeShape->GetStorageShape().GetDimNum()", "GetShapeAttrsInfo")
+    )
+    assert out["var"] == "VAR_SHAPE_QUERY_ROPE"
+
+
+def test_two_tensors_read_through_locals_do_not_share_one_variable():
+    """What the collapse cost: `rank(a) != 0 && rank(b) != 0` became
+    `RANK != 0 && RANK != 0`, which asserts two unrelated tensors have equal
+    rank — a constraint the source never states, and one that makes keys look
+    unreachable."""
+    norm = _rope_like_normalizer()
+    q = norm._value(
+        _tagged("queryRopeShape->GetStorageShape().GetDimNum()", "GetShapeAttrsInfo")
+    )
+    k = norm._value(
+        _tagged("keyRopeShape->GetStorageShape().GetDimNum()", "GetShapeAttrsInfo")
+    )
+    assert q["var"] != k["var"]
+
+
+def test_the_same_chain_with_no_scope_still_falls_back_to_the_accessor_name():
+    """Confirms the two tests above pass because of the scope stamp, not
+    because the encode resolver happened to know the local."""
+    from uo_init.variable_model import names_an_accessor
+
+    norm = _rope_like_normalizer()
+    out = norm._value(parse_expr("queryRopeShape->GetStorageShape().GetDimNum()"))
+    assert names_an_accessor(out["var"]), out
+
+
+def test_a_chain_that_names_its_tensor_inline_never_needed_the_scope():
+    """Why only the reads routed through a local were affected: an operand
+    written into the expression is recognised from any scope."""
+    norm = _rope_like_normalizer()
+    out = norm._value(
+        _tagged(
+            "ctx->GetOptionalInputShape(static_cast<size_t>(InputIndex::KEY_ROPE))"
+            "->GetStorageShape().GetDimNum()",
+            "GetTilingKey",
+        )
+    )
+    assert out["var"] == "VAR_SHAPE_KEY_ROPE"
+
+
+def test_a_helper_call_is_classified_in_the_function_that_called_it():
+    """Guard classification resolves the callee name on its own, and that name
+    is looked up among the locals of the function that read it. Classified
+    from the encode function instead, an input-backed helper standing beside a
+    traversal position left the guard looking like a modelling gap."""
+    encode = SourceResolver()
+    helper = SourceResolver(
+        local_roots={"IsHighPrecision": "ATTRIBUTE", "coreIdx": "LOOP_INDUCTION"}
+    )
+    norm = _ValueNormalizer(
+        encode,
+        VariableModel(),
+        scope_for=lambda fn: {"F": helper}.get(fn, encode),
+    )
+    roots, _reached, unresolved = norm._guard_leaf_roots(
+        Call("IsHighPrecision", (Ref("coreIdx", scope="F"),))
+    )
+    assert "ATTRIBUTE" in roots and not unresolved
 
 
 # -- a container element nothing can resolve -------------------------------
@@ -885,6 +1044,318 @@ def test_a_non_constant_initialiser_is_not_used_as_a_default():
     assert len(deriver.implicit_zero) == 1
 
 
+def test_an_unread_default_becomes_a_free_variable_rather_than_zero():
+    """Recording the assumption was never enough on its own: the expression
+    still said the field is 0 there, so a solver would rule out every key where
+    it is not — the very keys the assumption cannot speak for."""
+    deriver = _fallthrough_deriver([("7", "cond", False)], [("Params", "opt", None)])
+    out = deriver._expand_text("fBaseParams.opt", "Writer", 0)
+    text = _pretty(out)
+    [record] = deriver.implicit_zero
+    assert record["variable"].startswith("VAR_INIT_")
+    assert record["variable"] in text, text
+    assert record["field"] == "fBaseParams.opt"
+
+
+def test_the_variable_standing_in_for_a_default_is_declared_to_the_model():
+    """K6 compiles a bare symbol it cannot find into `unmodelled_variable` and
+    drops the whole dimension. A variable this analysis mints has to be
+    declared, or making the derivation honest would make the solver blinder."""
+    deriver = _fallthrough_deriver([("7", "cond", False)], [("Params", "opt", None)])
+    deriver._expand_text("fBaseParams.opt", "Writer", 0)
+    [record] = deriver.implicit_zero
+    spec = deriver.model.get(record["variable"])
+    assert spec is not None
+    assert spec.value_type == "int"
+    assert spec.domain.completeness == "open"
+
+
+def test_the_same_site_mints_one_variable_however_often_it_is_chained():
+    deriver = _fallthrough_deriver([("7", "cond", False)], [("Params", "opt", None)])
+    first = _pretty(deriver._expand_text("fBaseParams.opt", "Writer", 0))
+    deriver._implicit_seen.clear()
+    deriver.implicit_zero.clear()
+    deriver._cache.clear()
+    second = _pretty(deriver._expand_text("fBaseParams.opt", "Writer", 0))
+    assert first == second
+
+
+def _member_chain_deriver(writes):
+    """A deriver over writes to one member: (line, rhs, [(cond, negated)], function)."""
+    from uo_init.clang_walk import PathCond
+    from uo_init.derive_key_fields import KeyFieldDeriver
+    from uo_init.host_ir import FuncSummary, HostIR, WriteEvent
+
+    events = [
+        WriteEvent(
+            path="fBaseParams.b",
+            line=line,
+            rhs=rhs,
+            file="f.cpp",
+            function=function,
+            path_conditions=tuple(
+                PathCond(text, neg, "f.cpp", 1) for text, neg in conds
+            ),
+        )
+        for line, rhs, conds, function in writes
+    ]
+    ir = HostIR(
+        writes=events,
+        class_fields={"fBaseParams", "b"},
+        summaries={fn: FuncSummary(name=fn) for _, _, _, fn in writes},
+    )
+    return KeyFieldDeriver(
+        host_ir=ir,
+        resolver=SourceResolver(host_ir=ir, local_roots={"layout": "ATTRIBUTE"}),
+        var_model=VariableModel(),
+    )
+
+
+def test_a_write_elsewhere_does_not_unmake_coverage_here():
+    """`fBaseParams.b` is assigned on every layout branch of `GetShapeAttrsInfo`
+    — the last a plain `else` — and once more in `DoOpTiling`. Letting that
+    sixth write veto the judgement minted a free variable for a path the five
+    branches leave no room for, and it blocked five dimensions."""
+    deriver = _member_chain_deriver(
+        [
+            (1, "10", [("layout == SBH", False)], "Shapes"),
+            (2, "20", [("layout == SBH", True)], "Shapes"),
+            (3, "30", [], "Later"),
+        ]
+    )
+    deriver._expand_text("fBaseParams.b", "Shapes", 0)
+    assert deriver.implicit_zero == [], deriver.implicit_zero
+
+
+def test_two_functions_each_writing_one_side_are_still_not_exhaustive():
+    """The rule that survives: either function can be called without the other,
+    so together they promise nothing about any single run."""
+    deriver = _member_chain_deriver(
+        [
+            (1, "10", [("layout == SBH", False)], "Shapes"),
+            (2, "20", [("layout == SBH", True)], "Other"),
+        ]
+    )
+    deriver._expand_text("fBaseParams.b", "Shapes", 0)
+    assert len(deriver.implicit_zero) == 1
+
+
+def _reached_symbols(expr):
+    """Names of the `__reached_` placeholders anywhere in an expansion."""
+    from uo_init.derive_key_fields import REACHED_PREFIX, Ref, _walk_dag
+
+    return {
+        n.symbol
+        for n in _walk_dag(expr)
+        if isinstance(n, Ref) and n.symbol.startswith(REACHED_PREFIX)
+    }
+
+
+def test_a_function_nobody_calls_does_not_get_to_overwrite():
+    """`Later` writes with no guard, and no call of it was recorded. Reading
+    that as "always runs" makes its write the answer outright, erasing what
+    `Shapes` put there — a claim about control flow with nothing behind it,
+    and erasing a value is what makes a satisfiable key look unreachable."""
+    deriver = _member_chain_deriver(
+        [
+            (1, "10", [("layout == SBH", False)], "Shapes"),
+            (2, "20", [("layout == SBH", True)], "Shapes"),
+            (3, "30", [], "Later"),
+        ]
+    )
+    out = deriver._expand_text("fBaseParams.b", "Shapes", 0)
+    assert _reached_symbols(out) == {"__reached_Later"}
+
+
+def test_the_function_the_question_is_asked_in_is_known_to_run():
+    """The other side of it: a read inside `Shapes` is a run that got to
+    `Shapes`, so nothing there needs a placeholder."""
+    deriver = _member_chain_deriver(
+        [(1, "10", [("layout == SBH", False)], "Shapes")]
+    )
+    deriver._expand_text("fBaseParams.b", "Shapes", 0)
+    assert deriver._always_runs("Shapes", 0)
+
+
+def test_a_sole_caller_of_the_asking_function_also_ran():
+    """Called from exactly one place, `Entry` had to run for `Helper` to. Two
+    call sites and the climb has to stop: either could have been the way in."""
+    deriver = _conditional_call_deriver(path="fBaseParams.b")
+    deriver._expand_text("fBaseParams.b", "Helper", 0)
+    assert deriver._encode_path() == {"Helper", "Entry"}
+    assert deriver._always_runs("Entry", 0)
+
+
+def test_a_guard_nobody_could_read_is_not_no_guard():
+    """The call of `Helper` sits under a macro-expanded condition. Dropping it
+    leaves the call looking unguarded, which says `Helper` always runs."""
+    deriver = _conditional_call_deriver(path="fBaseParams.b", opaque=True)
+    reached = deriver._reached("Helper", 0)
+    assert not deriver._always_runs("Helper", 0)
+    assert _reached_symbols(reached)
+
+
+def _conditional_call_deriver(*, path, decl=None, opaque=False):
+    """Writes covering both sides of one condition, inside a helper that is
+    itself only called under a guard."""
+    from uo_init.clang_walk import CallSite, PathCond
+    from uo_init.derive_key_fields import KeyFieldDeriver
+    from uo_init.host_ir import FuncSummary, HostIR, WriteEvent
+
+    events = [
+        WriteEvent(
+            path=path,
+            line=line,
+            rhs=rhs,
+            file="f.cpp",
+            function="Helper",
+            path_conditions=(PathCond("mode == 1", neg, "f.cpp", 1),),
+        )
+        for line, rhs, neg in ((2, "10", False), (3, "20", True))
+    ]
+    member = "." in path
+    ir = HostIR(
+        writes=events if member else [],
+        local_writes=[] if member else events,
+        class_fields={"fBaseParams", "b"} if member else set(),
+        summaries={
+            "Entry": FuncSummary(name="Entry"),
+            "Helper": FuncSummary(name="Helper"),
+        },
+        call_sites=[
+            CallSite(
+                caller="Entry",
+                callee="Helper",
+                file="f.cpp",
+                line=1,
+                args=(),
+                path_conditions=(
+                    PathCond("", False, "f.cpp", 1)
+                    if opaque
+                    else PathCond("wanted", False, "f.cpp", 1),
+                ),
+            )
+        ],
+        local_decls=[decl] if decl is not None else [],
+    )
+    return KeyFieldDeriver(
+        host_ir=ir,
+        resolver=SourceResolver(
+            host_ir=ir,
+            local_roots={"mode": "ATTRIBUTE", "wanted": "ATTRIBUTE"},
+        ),
+        var_model=VariableModel(),
+    )
+
+
+def test_a_member_covered_only_inside_a_conditional_helper_keeps_its_assumption():
+    """Coverage inside the helper says nothing about a run that never calls it,
+    and a member outlives the call: such a run reads whatever it held before."""
+    deriver = _conditional_call_deriver(path="fBaseParams.b")
+    deriver._expand_text("fBaseParams.b", "Helper", 0)
+    assert len(deriver.implicit_zero) == 1
+
+
+def test_a_local_covered_inside_a_conditional_helper_needs_no_assumption():
+    """Same shape, but a local does not outlive the call. A run that skips the
+    helper has nowhere to read it from, so there is no earlier value to name."""
+    from uo_init.clang_walk import LocalDecl
+
+    deriver = _conditional_call_deriver(
+        path="tmp", decl=LocalDecl("tmp", "Helper", "int64_t", None, "f.cpp", 1)
+    )
+    deriver._expand_text("tmp", "Helper", 0)
+    assert deriver.implicit_zero == [], deriver.implicit_zero
+
+
+def _local_decl_deriver(*, init, decl_line=1, write_line=1):
+    """A deriver over one guarded write to a local, with a declaration table.
+
+    Shaped like `seqQShapeSize`: declared with an initialiser inside the branch
+    that is the only place it can be read.
+    """
+    from uo_init.clang_walk import LocalDecl, PathCond
+    from uo_init.derive_key_fields import KeyFieldDeriver
+    from uo_init.host_ir import FuncSummary, HostIR, WriteEvent
+
+    events = [
+        WriteEvent(
+            path="seqSize",
+            line=write_line,
+            rhs="GetShapeSize()",
+            file="f.cpp",
+            function="Reader",
+            path_conditions=(PathCond("layoutType == TND", False, "f.cpp", 1),),
+        )
+    ]
+    ir = HostIR(
+        summaries={
+            "Reader": FuncSummary(name="Reader", locals={"seqSize": "GetShapeSize()"})
+        },
+        local_writes=events,
+        local_decls=[
+            LocalDecl("seqSize", "Reader", "size_t", init, "f.cpp", decl_line)
+        ],
+    )
+    return KeyFieldDeriver(
+        host_ir=ir,
+        resolver=SourceResolver(
+            host_ir=ir, local_roots={"layoutType": "ATTRIBUTE"}
+        ),
+        var_model=VariableModel(),
+    )
+
+
+def test_a_local_declared_in_a_branch_needs_no_value_for_the_other_side():
+    """`const size_t seqQShapeSize = ...;` inside the TND branch. Asking what
+    it holds when the layout is not TND asks about a block it is not declared
+    in, where no read of it exists — and the free variable minted to answer
+    kept five dimensions off `exact`."""
+    deriver = _local_decl_deriver(init="GetShapeSize()")
+    out = _pretty(deriver._expand_text("seqSize", "Reader", 0))
+    assert deriver.implicit_zero == [], deriver.implicit_zero
+    assert "VAR_INIT_" not in out, out
+
+
+def test_a_later_assignment_to_that_local_is_not_its_declaration():
+    """Only the declaration carries the scoping argument. A guarded write
+    further down really can be skipped with the variable already readable."""
+    deriver = _local_decl_deriver(init="0", write_line=9)
+    deriver._expand_text("seqSize", "Reader", 0)
+    assert len(deriver.implicit_zero) == 1
+
+
+def test_a_local_declared_without_a_value_keeps_its_assumption():
+    """`size_t seqSize;` and a guarded write: the read really can come first,
+    and what it sees is indeterminate rather than anything worth naming."""
+    deriver = _local_decl_deriver(init=None)
+    deriver._expand_text("seqSize", "Reader", 0)
+    assert len(deriver.implicit_zero) == 1
+
+
+def test_an_assumed_default_costs_the_field_its_exact_grade():
+    """The record and the grade must agree. A field graded `exact` while
+    resting on an assumption is the combination that makes the assumption
+    invisible to everyone downstream."""
+    grade, _ = classify_exactness(
+        value_expr={"op": "eq", "var": "VAR_ATTR_KEEP_PROB", "value": 1},
+        variables=["VAR_ATTR_KEEP_PROB"],
+        unresolved=[],
+        implicit_defaults=[{"function": "Writer", "file": "f.cpp", "line": 1}],
+    )
+    assert grade == EX_OVERAPPROX
+
+
+def test_a_field_with_no_assumptions_is_still_gradeable_as_exact():
+    grade, _ = classify_exactness(
+        value_expr={"op": "eq", "var": "VAR_ATTR_KEEP_PROB", "value": 1},
+        variables=["VAR_ATTR_KEEP_PROB"],
+        unresolved=[],
+        implicit_defaults=[],
+    )
+    assert grade == EX_EXACT
+
+
 # -- writes reaching a member through a reference parameter ----------------
 def _alias_deriver(calls, *, param="fBaseParams", helper="Helper"):
     """`this.fBaseParams.opt` written once directly and once through `helper`.
@@ -1213,3 +1684,232 @@ def _pretty(e):
     from uo_init.derive_key_fields import _pretty_dag
 
     return _pretty_dag(e)
+
+
+# -- program order: what a name held where it was read ----------------------
+def _save_restore_deriver():
+    """A member stashed in a local, changed under a condition, restored after.
+
+    The shape `fBaseParams.s2Inner` has: saved into a same-named local above
+    the change, doubled if the split mode says so, put back from the local at
+    the end. Expanding the local reads the member, whose last write reads the
+    local — round it goes, though the source has no cycle in it.
+    """
+    from uo_init.clang_walk import PathCond
+    from uo_init.derive_key_fields import KeyFieldDeriver
+    from uo_init.host_ir import FuncSummary, HostIR, WriteEvent
+
+    member = [
+        WriteEvent(
+            path="fBaseParams.s2Inner", line=505, rhs="bestSplit",
+            file="a.cpp", function="Setup",
+        ),
+        WriteEvent(
+            path="fBaseParams.s2Inner", line=907, rhs="fBaseParams.s2Inner * 2",
+            file="b.cpp", function="Adjust",
+            path_conditions=(PathCond("mode == 2", False, "b.cpp", 900),),
+        ),
+        WriteEvent(
+            path="fBaseParams.s2Inner", line=929, rhs="s2Inner",
+            file="b.cpp", function="Adjust",
+            path_conditions=(PathCond("changed", False, "b.cpp", 925),),
+        ),
+    ]
+    saved = [
+        WriteEvent(
+            path="s2Inner", line=898, rhs="fBaseParams.s2Inner",
+            file="b.cpp", function="Adjust",
+        )
+    ]
+    ir = HostIR(
+        writes=member,
+        local_writes=saved,
+        class_fields={"fBaseParams", "s2Inner"},
+        summaries={
+            "Setup": FuncSummary(name="Setup"),
+            "Adjust": FuncSummary(name="Adjust"),
+        },
+    )
+    return KeyFieldDeriver(
+        host_ir=ir,
+        resolver=SourceResolver(
+            host_ir=ir,
+            local_roots={
+                "bestSplit": "ATTRIBUTE",
+                "mode": "ATTRIBUTE",
+                "changed": "ATTRIBUTE",
+            },
+        ),
+        var_model=VariableModel(),
+    )
+
+
+def test_a_value_stashed_and_restored_is_not_a_cycle():
+    """At line 898 neither the doubling nor the restore has run, so what the
+    local saves is just the earlier value. Reading the writes without regard
+    to position made this a cycle, and that verdict cost five dimensions."""
+    deriver = _save_restore_deriver()
+    out = _pretty(deriver._expand_text("fBaseParams.s2Inner", "Adjust", 0))
+    assert deriver.cycles == set(), deriver.cycles
+    assert "bestSplit" in out, out
+
+
+def test_a_definition_that_really_is_circular_still_says_so():
+    """Position has to earn the verdict. Here every write could have run
+    before the read, so nothing explains the recursion away."""
+    from uo_init.derive_key_fields import KeyFieldDeriver
+    from uo_init.host_ir import FuncSummary, HostIR, WriteEvent
+
+    ir = HostIR(
+        writes=[
+            WriteEvent(path="fBaseParams.x", line=10, rhs="y", file="f.cpp", function="F")
+        ],
+        local_writes=[
+            WriteEvent(path="y", line=20, rhs="fBaseParams.x", file="f.cpp", function="F")
+        ],
+        class_fields={"fBaseParams", "x"},
+        summaries={"F": FuncSummary(name="F")},
+    )
+    deriver = KeyFieldDeriver(
+        host_ir=ir, resolver=SourceResolver(host_ir=ir), var_model=VariableModel()
+    )
+    deriver._expand_text("fBaseParams.x", "F", 0)
+    assert deriver.cycles == {"fBaseParams.x"}, deriver.cycles
+
+
+# -- the read's own condition ----------------------------------------------
+def _guarded_pair_deriver(read_guard: str | None):
+    """`b` is written only under one condition; `a` reads it under another.
+
+    Shaped like `fBaseParams.bandIdx`: written only where an attention mask is
+    present, and read only under the same test. `read_guard` of `None` puts
+    the read on an unguarded write, where nothing rules the fall-through out.
+    """
+    from uo_init.clang_walk import PathCond
+    from uo_init.derive_key_fields import KeyFieldDeriver
+    from uo_init.host_ir import FuncSummary, HostIR, WriteEvent
+
+    conds = (
+        () if read_guard is None else (PathCond(read_guard, False, "f.cpp", 1),)
+    )
+    ir = HostIR(
+        writes=[
+            WriteEvent(
+                path="fBaseParams.b", line=2, rhs="10", file="f.cpp", function="F",
+                path_conditions=(PathCond("mask != 0", False, "f.cpp", 1),),
+            ),
+            WriteEvent(
+                path="fBaseParams.a", line=3, rhs="fBaseParams.b + 1",
+                file="f.cpp", function="F", path_conditions=conds,
+            ),
+        ],
+        class_fields={"fBaseParams", "a", "b"},
+        summaries={"F": FuncSummary(name="F")},
+    )
+    return KeyFieldDeriver(
+        host_ir=ir,
+        resolver=SourceResolver(
+            host_ir=ir, local_roots={"mask": "ATTRIBUTE", "other": "ATTRIBUTE"}
+        ),
+        var_model=VariableModel(),
+    )
+
+
+def _assumed_fields(deriver) -> list[str]:
+    """Which names the derivation had to assume an initial value for.
+
+    `fBaseParams.a` is always among them: it is read at the top, where there
+    is no condition to rule its fall-through out. The question these tests ask
+    is about `b`, which is only ever read from inside `a`'s write.
+    """
+    deriver._expand_text("fBaseParams.a", "F", 0)
+    return [row["field"] for row in deriver.implicit_zero]
+
+
+def test_a_read_under_the_same_condition_as_the_write_assumes_nothing():
+    """One write does not cover both sides of its own condition, but the only
+    place the value is read is inside that condition — so no run reads it
+    unwritten, and there is no initial value to assume."""
+    assumed = _assumed_fields(_guarded_pair_deriver("mask != 0"))
+    assert "fBaseParams.b" not in assumed, assumed
+
+
+def test_a_read_under_an_unrelated_condition_still_assumes_one():
+    assumed = _assumed_fields(_guarded_pair_deriver("other != 0"))
+    assert "fBaseParams.b" in assumed, assumed
+
+
+def test_a_read_with_no_condition_of_its_own_still_assumes_one():
+    assumed = _assumed_fields(_guarded_pair_deriver(None))
+    assert "fBaseParams.b" in assumed, assumed
+
+
+def _same_name_locals_deriver():
+    """Two functions, each with a local called `s1Inner`, holding different
+    values. FAG spells 183 local names in more than one function, `s1Inner`
+    and `blockOuter` among them.
+    """
+    from uo_init.derive_key_fields import KeyFieldDeriver
+    from uo_init.host_ir import FuncSummary, HostIR, WriteEvent
+
+    ir = HostIR(
+        writes=[
+            WriteEvent(path="fBaseParams.x", line=3, rhs="s1Inner", file="f.cpp", function="F"),
+            WriteEvent(path="fBaseParams.y", line=13, rhs="s1Inner", file="f.cpp", function="G"),
+        ],
+        local_writes=[
+            WriteEvent(path="s1Inner", line=2, rhs="7", file="f.cpp", function="F"),
+            WriteEvent(path="s1Inner", line=12, rhs="9", file="f.cpp", function="G"),
+        ],
+        class_fields={"fBaseParams", "x", "y"},
+        summaries={"F": FuncSummary(name="F"), "G": FuncSummary(name="G")},
+    )
+    return KeyFieldDeriver(
+        host_ir=ir, resolver=SourceResolver(host_ir=ir), var_model=VariableModel()
+    )
+
+
+def test_two_functions_with_the_same_local_name_hold_two_variables():
+    """Reading one must not answer with the other's value, whichever is
+    expanded first: the cache is shared across scopes and a stale entry here
+    would put `7` where `9` belongs — a wrong equality, not a loose one."""
+    deriver = _same_name_locals_deriver()
+    first = _pretty(deriver._expand_text("fBaseParams.x", "F", 0))
+    second = _pretty(deriver._expand_text("fBaseParams.y", "G", 0))
+    assert "7" in first and "9" not in first, first
+    assert "9" in second and "7" not in second, second
+
+
+def test_the_same_local_name_in_another_function_is_not_recursion():
+    """`G`'s `s1Inner` expanded while `F`'s is still on the stack is a second
+    variable, not a cycle, and must expand rather than give up."""
+    deriver = _same_name_locals_deriver()
+    deriver._active.add(deriver._ident("s1Inner", "F"))
+    assert "9" in _pretty(deriver._expand_text("fBaseParams.y", "G", 0))
+    assert "s1Inner" not in deriver.cycles, deriver.cycles
+
+
+def test_what_counts_as_running_before_a_read():
+    from uo_init.derive_key_fields import DefSite
+
+    deriver = _save_restore_deriver()
+    loop = (("f.cpp", 5),)
+    read = DefSite(rhs="", file="f.cpp", line=10, function="F", loops=loop)
+
+    # Below the read but inside the same loop: it runs before it, one pass on.
+    assert deriver._runs_before(
+        DefSite(rhs="", file="f.cpp", line=20, function="F", loops=loop), read
+    )
+    # Below the read and outside the loop: the loop has finished by then.
+    assert not deriver._runs_before(
+        DefSite(rhs="", file="f.cpp", line=20, function="F"), read
+    )
+    # Another function, or no position at all: call order is not line order.
+    assert deriver._runs_before(
+        DefSite(rhs="", file="f.cpp", line=20, function="G"), read
+    )
+    assert deriver._runs_before(DefSite(rhs="", function="F"), read)
+    # Above the read, plainly.
+    assert deriver._runs_before(
+        DefSite(rhs="", file="f.cpp", line=3, function="F"), read
+    )

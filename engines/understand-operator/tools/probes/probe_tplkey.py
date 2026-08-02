@@ -2,11 +2,12 @@
 """Decisive probe: recover the 19 positional args at the GET_TPL_TILING_KEY
 call site, and cross-check them against the ASCENDC_TPL_ARGS_DECL schema
 scraped textually from the kernel-side tiling-key header."""
+import os
 import re
 import sys
 from clang import cindex
 
-sys.path.insert(0, r"D:\PR-review\_cann")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from probe_clang import ARGS, FAG, parse  # noqa: E402
 
 KEYHDR = FAG + r"\op_kernel\arch35\flash_attention_score_grad_template_tiling_key.h"

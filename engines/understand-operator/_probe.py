@@ -1,13 +1,22 @@
 # -*- coding: utf-8 -*-
+import sys
 from pathlib import Path
 
+from uo_init import paths
 from uo_init.build_context import BuildContext
 from uo_init.host_ir import build_host_ir
 
-FAG = Path(r"D:/PR-review/TEST/ops-transformer/attention/flash_attention_score_grad")
+DEFAULT_OPERATOR = "attention/flash_attention_score_grad"
+
+FAG = paths.op_dir(relative=DEFAULT_OPERATOR)
+CANN = paths.cann_root()
+OPS = paths.ops_root()
+if FAG is None or CANN is None or OPS is None:
+    sys.exit(f"CANN packages or operator sources not available\n{paths.explain()}")
+
 ctx = BuildContext.load(
-    cann_root=r"D:/PR-review/_cann/pkg",
-    ops_root=r"D:/PR-review/TEST/ops-transformer",
+    cann_root=str(CANN),
+    ops_root=str(OPS),
     op_dir=str(FAG),
 )
 targets = [

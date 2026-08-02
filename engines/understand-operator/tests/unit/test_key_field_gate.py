@@ -13,8 +13,6 @@ FIX = (
     / "fixtures"
     / "flash_attention_score_grad"
 )
-CANN = Path(r"d:\PR-review\_cann\pkg")
-
 
 def test_fixture_files_exist():
     assert (FIX / "key_field_truth.yaml").is_file()
@@ -26,12 +24,10 @@ def test_fixture_lists_19_fields():
     assert len(data["fields"]) == 19
 
 
-def test_fixture_platform_matches_ini():
-    if not CANN.is_dir():
-        return
+def test_fixture_platform_matches_ini(cann_root):
     data = yaml.safe_load((FIX / "key_field_truth.yaml").read_text(encoding="utf-8"))
     sku = data["platform"]["default_sku"]
-    prof = load_platform_profile(CANN, arch_dir="arch35", platform_sku=sku)
+    prof = load_platform_profile(cann_root, arch_dir="arch35", platform_sku=sku)
     assert prof.aic_num == data["platform"]["aic_num"]
 
 

@@ -6,19 +6,76 @@ from pathlib import Path
 
 import pytest
 
+from uo_init import paths
+
 UO_ROOT = Path(__file__).resolve().parents[1]
 SPEC = UO_ROOT / "spec"
-REPO = UO_ROOT.parents[1]  # AscendC-Pilot
-PR_REVIEW = REPO.parent  # PR-review
+REPO = paths.repo_root()
 
-FAG = PR_REVIEW / "TEST" / "ops-transformer" / "attention" / "flash_attention_score_grad"
-OPS = PR_REVIEW / "TEST" / "ops-transformer"
-CANN = PR_REVIEW / "_cann" / "pkg"
+#: None when the tree is absent. Tests that need one skip, and `--uo-strict`
+#: turns those skips into failures so CI cannot go green by finding nothing.
+#: The operator these tests are written against. Fixtures, recorded baselines
+#: and the counts asserted below all describe this one; the code under test
+#: must not (see test_no_operator_specialisation.py).
+DEFAULT_OPERATOR = "attention/flash_attention_score_grad"
+
+OPS = paths.ops_root()
+CANN = paths.cann_root()
+FAG = paths.op_dir(relative=DEFAULT_OPERATOR)
+
+_STRICT = False
+
+#: Architecture subdirectory under analysis. Every arch has its own host tiling
+#: sources and its own TilingKey schema, so this selects which one is measured.
+ARCH = "arch35"
+
+UPDATE_BASELINES = False
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--uo-strict",
+        action="store_true",
+        help="fail instead of skipping when CANN or the operator sources are missing",
+    )
+    parser.addoption(
+        "--uo-arch",
+        default=ARCH,
+        help="architecture subdirectory to analyse (arch35, arch22, ...)",
+    )
+    parser.addoption(
+        "--uo-update-baselines",
+        action="store_true",
+        help="rewrite recorded source-derived baselines to what was just measured",
+    )
 
 
 def pytest_configure(config):
+    global _STRICT, ARCH, UPDATE_BASELINES
+    _STRICT = bool(config.getoption("--uo-strict"))
+    ARCH = str(config.getoption("--uo-arch"))
+    UPDATE_BASELINES = bool(config.getoption("--uo-update-baselines"))
     config.addinivalue_line("markers", "requires_cann: needs CANN headers")
     config.addinivalue_line("markers", "requires_fag: needs FAG sources")
+
+
+def pytest_report_header(config):
+    """Say which external trees were found, so a skip is never a surprise."""
+    lines = [f"uo arch: {ARCH}", "uo paths:"]
+    lines += [f"  {line}" for line in paths.explain().splitlines()]
+    if FAG is not None:
+        tus = host_tiling_sources(FAG)
+        lines.append(f"  host tiling TUs: {len(tus)} ({', '.join(p.name for p in tus)})")
+    return lines
+
+
+def _need(value: Path | None, what: str):
+    if value is not None:
+        return value
+    message = f"{what} not available\n{paths.explain()}"
+    if _STRICT:
+        pytest.fail(message)
+    pytest.skip(message)
 
 
 @pytest.fixture
@@ -31,25 +88,24 @@ def spec_dir() -> Path:
     return SPEC
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def fag_dir() -> Path:
-    if not FAG.exists():
-        pytest.skip("FAG sources not found")
-    return FAG
+    return _need(FAG, "operator sources")
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def cann_root() -> Path:
-    if not CANN.exists():
-        pytest.skip("CANN pkg not extracted")
-    return CANN
+    return _need(CANN, "CANN packages")
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def ops_root() -> Path:
-    if not OPS.exists():
-        pytest.skip("ops-transformer not found")
-    return OPS
+    return _need(OPS, "ops-transformer")
+
+
+@pytest.fixture(scope="session")
+def arch_dir() -> str:
+    return ARCH
 
 
 @pytest.fixture
@@ -60,7 +116,7 @@ def build_ctx(fag_dir, cann_root, ops_root):
         cann_root=str(cann_root),
         ops_root=str(ops_root),
         op_dir=str(fag_dir),
-        arch_dir="arch35",
+        arch_dir=ARCH,
     )
 
 
@@ -74,28 +130,62 @@ def clang_exe():
     return exe
 
 
+def host_tiling_sources(op_dir: Path, arch: str | None = None) -> list[Path]:
+    """Host translation units that take part in tiling, for any operator.
+
+    Discovered rather than listed. A hand-written list silently omits whatever
+    the operator gains next -- this operator had grown a third arch35 tiling TU
+    that no analysis had ever looked at.
+
+    `*_def.cpp` and `*_infershape.cpp` are excluded: they register the operator
+    and infer output shapes, and neither runs on the path that computes a
+    TilingKey.
+    """
+    host = op_dir / "op_host"
+    if not host.is_dir():
+        return []
+    found = sorted(host.glob("*.cpp")) + sorted((host / (arch or ARCH)).glob("*.cpp"))
+    return [
+        p
+        for p in found
+        if not (p.stem.endswith("_def") or p.stem.endswith("_infershape"))
+    ]
+
+
+@pytest.fixture(scope="session")
+def op_name() -> str:
+    """The operator under analysis, taken from its directory name."""
+    return FAG.name if FAG is not None else "unknown"
+
+
+@pytest.fixture(scope="session")
+def update_baselines() -> bool:
+    return UPDATE_BASELINES
+
+
+@pytest.fixture(scope="session")
+def host_tus() -> dict[str, Path]:
+    """Host tiling TU paths, keyed the same way as `host_walks`."""
+    if FAG is None:
+        _need(None, "operator sources")
+    return {p.name: p for p in host_tiling_sources(FAG)}
+
+
 @pytest.fixture(scope="session")
 def host_walks():
-    """Parse the three FAG arch35 host TUs once; clang parsing costs ~8s each."""
+    """Every host tiling TU for the arch under analysis, parsed once (~8s each)."""
     from uo_init.branch_inventory import inventory_clang
     from uo_init.build_context import BuildContext
 
-    if not (FAG.exists() and CANN.exists() and OPS.exists()):
-        pytest.skip("FAG/CANN/ops sources not available")
+    if None in (FAG, CANN, OPS):
+        _need(None, "operator sources, CANN and ops-transformer")
     ctx = BuildContext.load(
-        cann_root=str(CANN), ops_root=str(OPS), op_dir=str(FAG), arch_dir="arch35"
+        cann_root=str(CANN), ops_root=str(OPS), op_dir=str(FAG), arch_dir=ARCH
     )
-    targets = {
-        "flash_attention_score_grad_tiling.cpp": FAG
-        / "op_host"
-        / "flash_attention_score_grad_tiling.cpp",
-        "flash_attention_score_grad_tiling_normal_regbase.cpp": FAG
-        / "op_host"
-        / "arch35"
-        / "flash_attention_score_grad_tiling_normal_regbase.cpp",
-        "flash_attention_score_grad_tiling_common_regbase.cpp": FAG
-        / "op_host"
-        / "arch35"
-        / "flash_attention_score_grad_tiling_common_regbase.cpp",
-    }
-    return {name: inventory_clang(p, ctx) for name, p in targets.items()}
+    targets = host_tiling_sources(FAG)
+    if not targets:
+        _need(None, f"host tiling sources under {FAG}")
+    names = [p.name for p in targets]
+    if len(set(names)) != len(names):
+        raise RuntimeError(f"two host TUs share a file name: {sorted(names)}")
+    return {p.name: inventory_clang(p, ctx) for p in targets}

@@ -238,9 +238,13 @@ class Blocker:
     affected_nodes: list[str] = field(default_factory=list)
     evidence: list[Evidence] = field(default_factory=list)
     hint: str = ""
+    #: Variables an answer to this blocker may name. Not a hint: a condition
+    #: mentioning anything else is rejected as invented, so a blocker without
+    #: this leaves a model guessing at names it cannot see.
+    readable_vars: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "id": self.id,
             "text": self.text,
             "reason_code": self.reason_code,
@@ -252,6 +256,9 @@ class Blocker:
             "evidence": [e.to_dict() for e in self.evidence[:5]],
             "hint": self.hint,
         }
+        if self.readable_vars:
+            out["readable_vars"] = list(self.readable_vars)
+        return out
 
 
 class KnowledgeBase:

@@ -4,11 +4,21 @@ Read-only; does not modify operator sources."""
 import collections
 import sys
 from clang import cindex
+from uo_init import paths
 
-CANN = r"D:\PR-review\_cann\pkg"
-COMPAT = r"D:\PR-review\_cann\compat"
-OPS = r"D:\PR-review\TEST\ops-transformer"
-FAG = OPS + r"\attention\flash_attention_score_grad"
+DEFAULT_OPERATOR = "attention/flash_attention_score_grad"
+
+_CANN = paths.cann_root()
+_OPS = paths.ops_root()
+_FAG = paths.op_dir(relative=DEFAULT_OPERATOR)
+if _CANN is None or _OPS is None or _FAG is None:
+    sys.exit(f"CANN packages or operator sources not available\n{paths.explain()}")
+
+CANN = str(_CANN)
+# Shims and the bisheng prelude ship with this repository, not with the toolkit.
+COMPAT = str(paths.repo_root() / "engines" / "understand-operator" / "spec" / "compat")
+OPS = str(_OPS)
+FAG = str(_FAG)
 
 INCLUDES = [
     COMPAT,

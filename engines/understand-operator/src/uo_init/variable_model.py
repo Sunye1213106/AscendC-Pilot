@@ -245,6 +245,19 @@ class VariableModel:
         if spec is not None:
             spec.identity_merged = True
 
+    def operand_names(self) -> dict[str, list[str]]:
+        """Operand names per kind, in declaration order.
+
+        Position is how the host picks one: `GetInputShape(1)` is the second
+        declared input. Without this mapping a positional accessor cannot say
+        which tensor it read, and every tensor collapses onto one variable.
+        """
+        out: dict[str, list[str]] = {}
+        for key in self.params:
+            kind, _, name = key.partition(":")
+            out.setdefault(kind, []).append(name)
+        return out
+
     # -- atom mapping ------------------------------------------------------
     def var_id_for(self, root: str, symbol: str, index: int | None = None) -> str | None:
         """Map a resolved atom onto a declared variable id.
@@ -284,12 +297,23 @@ class VariableModel:
             return f"VAR_TDF_{sym}"
         return None
 
-    def declare_on_demand(self, var_id: str, root: str) -> VarSpec:
+    def declare_on_demand(
+        self, var_id: str, root: str, index: int | None = None
+    ) -> VarSpec:
         """Mint a variable referenced by a guard but absent from the opdef.
 
         Shape dimensions are the common case: the definition lists no rank, so
         `VAR_SHAPE_QUERY_D2` only becomes known when a guard reads it. The
         domain stays open, which is the honest statement.
+
+        `index` is the axis the accessor named, and it decides the lower bound:
+        an axis of a tensor that is there has a length of at least one, but a
+        shape read without an axis is the shape as a whole — its rank, or its
+        element count — and zero is a value both take. Zero is in fact the
+        value the source looks for: the standard way to ask whether an optional
+        input was passed is `GetStorageShape().GetDimNum() == 0`, so a lower
+        bound of one on those variables makes the test false by construction
+        and deletes the absent-tensor branch it selects.
         """
         existing = self.variables.get(var_id)
         if existing is not None:
@@ -300,7 +324,7 @@ class VariableModel:
             value_type = "bool"
         else:
             value_type = "int"
-        lo = 1 if root == "INPUT_SHAPE" else None
+        lo = (1 if index is not None else 0) if root == "INPUT_SHAPE" else None
         return self.add(
             VarSpec(
                 var_id=var_id,

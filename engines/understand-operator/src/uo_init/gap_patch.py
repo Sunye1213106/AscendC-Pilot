@@ -16,6 +16,7 @@ escalating undecided set — that shrink is the loop gate, not a free-form
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -31,6 +32,14 @@ CLASSIFICATIONS = (
 
 BINDING_OPS = frozenset({"eq", "ne", "lt", "le", "gt", "ge", "in"})
 
+#: What a `condition` tree may be built from, on top of `BINDING_OPS`.
+CONDITION_OPS = frozenset({"and", "or", "not"})
+
+#: A guard is a guard, not a program. Two limits so that "restricted grammar"
+#: is a fact rather than an intention: past these the tree is rejected whole.
+MAX_CONDITION_DEPTH = 6
+MAX_CONDITION_NODES = 64
+
 SCHEMA_HINT = {
     "blocker_id": "BLK_… from ir/unresolved.yaml",
     "classification": " | ".join(CLASSIFICATIONS),
@@ -39,6 +48,13 @@ SCHEMA_HINT = {
         "op": " | ".join(sorted(BINDING_OPS)),
         "value": "literal or declared enum member inside the var's domain",
     },
+    "condition": (
+        "instead of `binding` when the answer needs more than one test: a tree of "
+        f"{{op: and|or, args: [...]}}, {{op: not, arg: {{...}}}} and leaves "
+        f"{{op: {'|'.join(sorted(BINDING_OPS))}, var: VAR_…, value: …}}. Same rules as "
+        "`binding` at every leaf: the var must already exist and the value must sit "
+        f"in its domain. At most {MAX_CONDITION_NODES} nodes, {MAX_CONDITION_DEPTH} deep."
+    ),
     "evidence": [{"file": "repo-relative path", "line": 1, "snippet": "must match source"}],
 }
 
@@ -136,23 +152,151 @@ def _value_in_domain(value: Any, spec) -> bool:
     return True
 
 
+def _check_leaf(
+    node: dict[str, Any], op: str, var_model: Any, path: str
+) -> list[PatchIssue]:
+    """One comparison, held to exactly the rules a `binding` is held to.
+
+    Sharing the rules rather than the code path is the point: a tree is a way
+    to say more, not a way to say things a single test could not. Inventing a
+    symbol or naming a value outside its domain is rejected the same either
+    way.
+    """
+    issues: list[PatchIssue] = []
+    var_id = str(node.get("var") or "")
+    if not var_id:
+        issues.append(PatchIssue("missing_binding", f"{op} needs a var", path=path))
+        return issues
+    spec = None if var_model is None else var_model.get(var_id)
+    if spec is None:
+        issues.append(
+            PatchIssue(
+                "invented_var",
+                f"var_id {var_id!r} is not in VariableModel",
+                path=f"{path}.var",
+            )
+        )
+    if op == "in":
+        values = node.get("values")
+        if not isinstance(values, list) or not values:
+            issues.append(
+                PatchIssue("missing_value", "in needs a non-empty values list", path=path)
+            )
+            return issues
+        candidates = values
+    else:
+        if "value" not in node:
+            issues.append(PatchIssue("missing_value", f"{op} needs a value", path=path))
+            return issues
+        candidates = [node.get("value")]
+    if spec is not None:
+        for value in candidates:
+            if isinstance(value, (dict, list)):
+                issues.append(
+                    PatchIssue(
+                        "bad_condition",
+                        "a value must be a literal, not an expression",
+                        path=f"{path}.value",
+                    )
+                )
+            elif not _value_in_domain(value, spec):
+                issues.append(
+                    PatchIssue(
+                        "value_out_of_domain",
+                        f"value {value!r} outside domain of {var_id}",
+                        path=f"{path}.value",
+                    )
+                )
+    return issues
+
+
+def _check_condition(
+    node: Any,
+    var_model: Any,
+    *,
+    path: str = "condition",
+    depth: int = 0,
+    budget: list[int] | None = None,
+) -> list[PatchIssue]:
+    """Walk a condition tree, rejecting anything outside the grammar."""
+    if budget is None:
+        budget = [MAX_CONDITION_NODES]
+    if depth > MAX_CONDITION_DEPTH:
+        return [
+            PatchIssue(
+                "condition_too_large",
+                f"condition nests deeper than {MAX_CONDITION_DEPTH}",
+                path=path,
+            )
+        ]
+    budget[0] -= 1
+    if budget[0] < 0:
+        return [
+            PatchIssue(
+                "condition_too_large",
+                f"condition has more than {MAX_CONDITION_NODES} nodes",
+                path=path,
+            )
+        ]
+    if not isinstance(node, dict):
+        return [PatchIssue("bad_condition", "each node must be a map", path=path)]
+    op = str(node.get("op") or "")
+    if op in ("and", "or"):
+        args = node.get("args")
+        if not isinstance(args, list) or not args:
+            return [
+                PatchIssue("bad_condition", f"{op} needs a non-empty args list", path=path)
+            ]
+        issues: list[PatchIssue] = []
+        for i, arg in enumerate(args):
+            issues += _check_condition(
+                arg, var_model, path=f"{path}.args[{i}]", depth=depth + 1, budget=budget
+            )
+        return issues
+    if op == "not":
+        if "arg" not in node:
+            return [PatchIssue("bad_condition", "not needs an arg", path=path)]
+        return _check_condition(
+            node.get("arg"), var_model, path=f"{path}.arg", depth=depth + 1, budget=budget
+        )
+    if op in BINDING_OPS:
+        return _check_leaf(node, op, var_model, path)
+    return [
+        PatchIssue(
+            "bad_op",
+            f"op {op!r} not in {sorted(BINDING_OPS | CONDITION_OPS)}",
+            path=f"{path}.op",
+        )
+    ]
+
+
+def _squash(text: str) -> str:
+    """Whitespace carries no meaning in C++ and none in a quote of it."""
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
 def _snippet_matches(file_path: Path, line: int, snippet: str) -> bool:
-    if not file_path.is_file() or line <= 0:
+    """Is this quote really in the code the blocker is about?
+
+    Matched against the whole enclosing function rather than three lines
+    around the blocker. The batch now hands over that function, so the line
+    worth quoting is routinely somewhere else inside it — the loop header when
+    the blocker sits on the loop body, the early return that explains why a
+    branch is dead. Held to the old window those answers were rejected for
+    quoting the code they had been given.
+
+    Still not "any file, any line": the quote has to be inside the block the
+    blocker is in, which is what a claim to have read that code means.
+    """
+    from uo_init.source_window import evidence_window
+
+    needle = _squash(snippet)[:80]
+    if not needle or not file_path.is_file() or line <= 0:
         return False
-    try:
-        lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
+    window = evidence_window(file_path, line)
+    if window is None:
         return False
-    if line > len(lines):
-        return False
-    # Allow the snippet to be a substring of a small window around the line.
-    window = "\n".join(lines[max(0, line - 2) : min(len(lines), line + 1)])
-    needle = (snippet or "").strip()
-    if not needle:
-        return False
-    # Snippets are often truncated; require a stable prefix.
-    probe = needle[:80]
-    return probe in window or needle[:40] in lines[line - 1]
+    return needle in _squash(window["text"])
 
 
 def validate_patch(
@@ -179,7 +323,27 @@ def validate_patch(
             )
         )
     binding = _as_dict(patch.get("binding"))
-    if classification == "input_derived":
+    condition = patch.get("condition")
+    if condition is not None and classification != "input_derived":
+        issues.append(
+            PatchIssue(
+                "unexpected_binding",
+                "condition only allowed when classification==input_derived "
+                f"(got {classification})",
+            )
+        )
+        condition = None
+    if condition is not None and binding:
+        issues.append(
+            PatchIssue(
+                "bad_condition",
+                "give either binding or condition, not both — two answers to one "
+                "question leave no way to tell which was meant",
+            )
+        )
+    if classification == "input_derived" and condition is not None:
+        issues += _check_condition(condition, var_model)
+    elif classification == "input_derived":
         var_id = str(binding.get("var_id") or "")
         op = str(binding.get("op") or "")
         if not var_id:
@@ -301,13 +465,22 @@ def merge_accepted(
             for g in guard_ids:
                 if g not in seen:
                     seen.append(str(g))
+            # An over-approximation the blocker names outright. The variable
+            # standing in for a member's value before any write has no guard
+            # record to hang a binding off, so without this there would be
+            # nothing for the substitution to aim at.
+            var_ids = [n for n in affected if str(n).startswith("VAR_")] + list(
+                row.get("var_ids") or []
+            )
             entry = {
                 "blocker_id": bid,
                 "classification": row.get("classification"),
                 "binding": _as_dict(row.get("binding")) or None,
+                "condition": row.get("condition") or None,
                 "evidence": list(row.get("evidence") or []),
                 "affected_nodes": affected,
                 "guard_ids": seen,
+                "var_ids": sorted({str(v) for v in var_ids}),
                 "text": blk.get("text") or row.get("text") or "",
             }
             by_id[bid] = entry
@@ -341,6 +514,21 @@ def binding_condition(binding: dict[str, Any]) -> dict[str, Any] | None:
     return {"op": op, "var": var_id, "value": value}
 
 
+def patch_condition(row: dict[str, Any]) -> dict[str, Any] | None:
+    """What a ledger row says the unreadable guard really tests.
+
+    A `condition` tree is already in the shape the solver and the evaluator
+    read, so it is passed through; a `binding` is the one-comparison spelling
+    of the same thing. Rows carrying neither say "it comes from the input"
+    without saying what it tests, which substitutes into nothing.
+    """
+    row = _as_dict(row)
+    condition = row.get("condition")
+    if isinstance(condition, dict) and condition.get("op"):
+        return condition
+    return binding_condition(row.get("binding"))
+
+
 def apply_bindings_to_derivation(doc: Any, bindings: list[dict[str, Any]]) -> dict[str, int]:
     """Mutate a HostDerivation in place using accepted ledger rows.
 
@@ -370,10 +558,13 @@ def apply_bindings_to_derivation(doc: Any, bindings: list[dict[str, Any]]) -> di
     before = sum(len(f.escalating) for f in getattr(doc, "fields", []) or [])
     by_guard: dict[str, dict[str, Any]] = {}
     by_text: dict[str, dict[str, Any]] = {}
+    by_var: dict[str, dict[str, Any]] = {}
     field_cls: dict[str, dict[str, Any]] = {}
     for b in bindings:
         for gid in b.get("guard_ids") or []:
             by_guard[str(gid)] = b
+        for vid in b.get("var_ids") or []:
+            by_var[str(vid)] = b
         text = str(b.get("text") or "").strip()
         if text:
             by_text[text] = b
@@ -409,7 +600,7 @@ def apply_bindings_to_derivation(doc: Any, bindings: list[dict[str, Any]]) -> di
                 kept.append(guard)
                 softened += 1
             elif cls == "input_derived":
-                condition = binding_condition(binding.get("binding"))
+                condition = patch_condition(binding)
                 if condition is None:
                     # "It comes from the input" with no statement of *what* it
                     # tests teaches us nothing substitutable. Keep the guard.
@@ -421,6 +612,22 @@ def apply_bindings_to_derivation(doc: Any, bindings: list[dict[str, Any]]) -> di
             else:
                 kept.append(guard)
 
+        # An over-approximation a blocker named directly. The variable standing
+        # in for a member's value before any write never was a guard, so the
+        # loop above cannot reach it, and it is the one keeping the dimension
+        # open. Guards already handled above are left alone.
+        for var_id in getattr(fld, "free_vars", None) or []:
+            row = by_var.get(str(var_id))
+            if row is None or var_id in substitutions:
+                continue
+            if str(row.get("classification") or "") != "input_derived":
+                continue
+            condition = patch_condition(row)
+            if condition is None:
+                unusable += 1
+                continue
+            substitutions[str(var_id)] = condition
+
         # Only count a guard resolved once its variable is *gone* from the
         # expression. A verdict that does not land must not lower the escalating
         # count: that is how a field reads `derived` while its condition is still
@@ -431,7 +638,8 @@ def apply_bindings_to_derivation(doc: Any, bindings: list[dict[str, Any]]) -> di
         new_expr = fld.value_expr
         if substitutions and fld.value_expr is None:
             # Nothing to substitute into, so nothing can be verified either.
-            rolled_back = list(guard_of_var.values())
+            rolled_back = [g for g in guard_of_var.values()]
+            reverted += len(substitutions)
         elif substitutions:
             pending = dict(substitutions)
             while True:
@@ -442,7 +650,10 @@ def apply_bindings_to_derivation(doc: Any, bindings: list[dict[str, Any]]) -> di
                     break
                 for var_id in stuck:
                     pending.pop(var_id, None)
-                    rolled_back.append(guard_of_var[var_id])
+                    reverted += 1
+                    guard = guard_of_var.get(var_id)
+                    if guard is not None:
+                        rolled_back.append(guard)
                 if not pending:
                     new_expr = fld.value_expr
                     break
@@ -450,14 +661,22 @@ def apply_bindings_to_derivation(doc: Any, bindings: list[dict[str, Any]]) -> di
         keep = {id(g) for g in kept} | {id(g) for g in rolled_back}
         fld.undecided_guards = [g for g in original if id(g) in keep]
         resolved += len(pending)
-        reverted += len(rolled_back)
         if pending:
+            # A record that has been substituted away no longer describes the
+            # expression, and leaving it behind would have the next pass
+            # re-declare a variable that is gone.
+            fld.implicit_defaults = [
+                d
+                for d in getattr(fld, "implicit_defaults", None) or []
+                if str(d.get("variable") or "") not in pending
+            ]
             fld.value_expr = new_expr
             fld.variables = sorted(collect_vars_dag(fld.value_expr))
             fld.exactness, fld.free_vars = classify_exactness(
                 value_expr=fld.value_expr,
                 variables=fld.variables,
                 unresolved=fld.unresolved,
+                implicit_defaults=getattr(fld, "implicit_defaults", None),
             )
             fld.status = status_of_exactness(fld.exactness)
     after = sum(len(f.escalating) for f in getattr(doc, "fields", []) or [])

@@ -85,6 +85,7 @@ def classify_exactness(
     value_expr: dict[str, Any] | None,
     variables: list[str],
     unresolved: list[dict[str, str]],
+    implicit_defaults: list[dict[str, Any]] | None = None,
 ) -> tuple[str, list[str]]:
     """Grade a derivation and list the variables standing in for what it lost."""
     if value_expr is None:
@@ -93,6 +94,13 @@ def classify_exactness(
     if unresolved:
         return EX_PARTIAL, free
     if free:
+        return EX_OVERAPPROX, free
+    if implicit_defaults:
+        # The chain rested on a default nobody read. Each such site mints a
+        # VAR_INIT_ variable, so this is normally already covered by `free` --
+        # unless simplification dropped the branch it sat on. Grading on the
+        # record as well means no route back to "exact" survives the
+        # assumption, whatever the expression ends up looking like.
         return EX_OVERAPPROX, free
     if not variables:
         return EX_CONSTANT, []
@@ -225,6 +233,11 @@ class DefSite:
     #: whether a chain of writes leaves any path falling through to the default.
     #: Empty for def sites that do not come from a recorded write.
     conds: tuple[Any, ...] = ()
+    #: Position of every loop header this write sits under, as `(file, line)`.
+    #: Taken before `_decisive_conds` drops loop guards, because ordering a
+    #: write against a read needs to know they share an iteration: inside one
+    #: loop a write below a read still runs before it on the next pass round.
+    loops: tuple[tuple[str, int], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -247,6 +260,15 @@ def _decisive_conds(w) -> tuple[Any, ...]:
     """
     return tuple(
         pc for pc in getattr(w, "path_conditions", ()) if not pc.is_opaque and _decides(pc)
+    )
+
+
+def _loops_of(w) -> tuple[tuple[str, int], ...]:
+    """Where the loops are that this write sits inside."""
+    return tuple(
+        (pc.file, pc.line)
+        for pc in getattr(w, "path_conditions", ())
+        if getattr(pc, "kind", "") in _LOOP_COND_KINDS
     )
 
 
@@ -341,6 +363,9 @@ class KeyFieldDerivation:
     #: containers in different functions share guard text, so evidence lookup
     #: needs this to cite the right one.
     var_scope: dict[str, str] = field(default_factory=dict)
+    #: var_id -> declared type, for the variables this derivation minted. The
+    #: parent process re-declares them and cannot otherwise know.
+    var_types: dict[str, str] = field(default_factory=dict)
     status: str = STATUS_UNRESOLVED
     exactness: str = EX_UNRESOLVED
     free_vars: list[str] = field(default_factory=list)
@@ -364,6 +389,7 @@ class KeyFieldDerivation:
             "undecided": dict(self.undecided),
             "blocked_on": dict(self.blocked_on),
             "var_scope": dict(self.var_scope),
+            "var_types": dict(self.var_types),
             "status": self.status,
             "exactness": self.exactness,
             "free_vars": list(self.free_vars),
@@ -758,27 +784,45 @@ def decode_expr_dag(node: Any) -> Any:
     if not (isinstance(node, dict) and _DAG_MARK in node):
         return node
     defs = node.get("defs") or {}
-    memo: dict[str, Any] = {}
-
-    def resolve(name: str) -> Any:
-        if name in memo:
-            return memo[name]
-        if name not in defs:
-            raise ValueError(f"expression DAG references undefined node {name!r}")
-        memo[name] = out = rebuild(defs[name])
-        return out
-
-    def rebuild(value: Any) -> Any:
+    # Iterative on purpose. Only nodes big and shared enough earn a definition,
+    # so what stays inline is one deep spine, and these run to tens of
+    # thousands of levels. Recursing needs the limit raised past what the C
+    # stack can carry, and that does not raise a Python error -- the process
+    # dies with no traceback.
+    done: dict[int, Any] = {}
+    # (node, are its children ready yet)
+    stack: list[tuple[Any, bool]] = [(node.get("root"), False)]
+    while stack:
+        value, expanded = stack.pop()
+        vid = id(value)
+        if vid in done:
+            continue
+        if not isinstance(value, (dict, list)):
+            done[vid] = value
+            continue
+        ref = value.get(_DAG_REF) if isinstance(value, dict) else None
+        if isinstance(ref, str):
+            if ref not in defs:
+                raise ValueError(f"expression DAG references undefined node {ref!r}")
+            body = defs[ref]
+            if id(body) in done:
+                # Every reference to a definition yields the same object, which
+                # is the sharing the envelope exists to restore.
+                done[vid] = done[id(body)]
+            else:
+                stack.append((value, True))
+                stack.append((body, False))
+            continue
+        if not expanded:
+            stack.append((value, True))
+            for child in value.values() if isinstance(value, dict) else value:
+                stack.append((child, False))
+            continue
         if isinstance(value, dict):
-            ref = value.get(_DAG_REF)
-            if isinstance(ref, str):
-                return resolve(ref)
-            return {k: rebuild(v) for k, v in value.items()}
-        if isinstance(value, list):
-            return [rebuild(v) for v in value]
-        return value
-
-    return rebuild(node.get("root"))
+            done[vid] = {k: done[id(v)] for k, v in value.items()}
+        else:
+            done[vid] = [done[id(v)] for v in value]
+    return done[id(node.get("root"))]
 
 
 # A *named* constant, as opposed to any old SCREAMING_CASE identifier. Axis
@@ -935,7 +979,11 @@ class KeyFieldDeriver:
         self.model = var_model
         self.max_helper_guards = max_helper_guards
         self._nodes = 0
-        self._cache: dict[tuple[str, str, tuple[tuple[str, int], ...]], Expr] = {}
+        #: `(function, name, versions in scope, writes in view) -> expansion`.
+        #: The last part is empty unless a write was dropped as not yet run;
+        #: without it two reads of one name at different points in a function
+        #: would share an entry. See `_visible_defs`.
+        self._cache: dict[tuple[str, str, tuple, tuple], Expr] = {}
         self._stack: set[tuple[str, str]] = set()
         #: Names whose chain is currently being built. Cycle detection has to
         #: key on identity alone — unlike the cache, which also keys on the
@@ -951,10 +999,29 @@ class KeyFieldDeriver:
         #: currently in progress, so a result that depended on someone else's
         #: half-built value can be kept out of the cache.
         self._prev_read: set[str] = set()
+        #: The write whose right-hand side is being expanded, which is where
+        #: the names inside it are being read. See `_visible_defs`.
+        self._read_at: DefSite | None = None
+        #: `(name, sites)` pairs already being re-expanded at an earlier
+        #: program point, so that re-entry cannot descend forever.
+        self._earlier_frames: set[tuple[Any, ...]] = set()
+        #: function -> entered at most once per run. See `_runs_once`.
+        self._runs_once_cache: dict[str, bool] = {}
+        #: read site -> the line it happens at in each enclosing function.
+        self._read_line_cache: dict[tuple[str, int, str], dict] = {}
+        #: (read site, name) -> reaching the read forces one of its writes.
+        #: Each miss costs a solver call, and the same question is asked once
+        #: per field whose derivation passes through the name.
+        self._read_cover_cache: dict[tuple[str, int, str, str], bool] = {}
         #: Functions whose reachability condition is being built, to stop
         #: recursion in the call graph.
         self._reach_stack: set[str] = set()
         self._reach_cache: dict[str, Expr] = {}
+        #: The function the key is encoded in, and every function that call
+        #: sits inside. Reaching the encoding means those ran, which is the
+        #: only ground on which "always reached" is a fact. See `_encode_path`.
+        self._encode_fn: str = ""
+        self._encode_path_cache: set[str] | None = None
         self.cycles: set[str] = set()
         #: Sites where an if/else-if chain was closed with an assumed zero
         #: default. See `_chain`.
@@ -994,6 +1061,7 @@ class KeyFieldDeriver:
                 line=w.line,
                 function=w.function,
                 conds=_decisive_conds(w),
+                loops=_loops_of(w),
             )
             for w in sorted(pool, key=lambda w: (w.file, w.line))
             if w.rhs.strip()
@@ -1036,6 +1104,7 @@ class KeyFieldDeriver:
                 line=w.line,
                 function=w.function,
                 conds=_decisive_conds(w),
+                loops=_loops_of(w),
             )
             for w in sorted(writes, key=lambda w: (w.file, w.line))
             if w.rhs.strip() and w.rhs.strip() != name
@@ -1224,7 +1293,13 @@ class KeyFieldDeriver:
 
     # -- expansion ---------------------------------------------------------
     def _chain(
-        self, sites: list[DefSite], fn: str, depth: int, *, defining: str = ""
+        self,
+        sites: list[DefSite],
+        fn: str,
+        depth: int,
+        *,
+        defining: str = "",
+        pool: list[DefSite] | None = None,
     ) -> Expr:
         """Sequential assignment semantics: a later write wins where its guard holds.
 
@@ -1241,28 +1316,61 @@ class KeyFieldDeriver:
         """
         result: Expr | None = None
         result_fn: str | None = None
-        outer = self._prev_version.pop(defining, None) if defining else None
+        ident = self._ident(defining, fn) if defining else ""
+        outer = self._prev_version.pop(ident, None) if ident else None
         try:
-            return self._chain_sites(sites, fn, depth, defining)
+            return self._chain_sites(sites, fn, depth, defining, pool or sites, ident)
         finally:
-            if defining:
+            if ident:
                 if outer is None:
-                    self._prev_version.pop(defining, None)
+                    self._prev_version.pop(ident, None)
                 else:
-                    self._prev_version[defining] = outer
+                    self._prev_version[ident] = outer
 
     def _chain_sites(
-        self, sites: list[DefSite], fn: str, depth: int, defining: str
+        self,
+        sites: list[DefSite],
+        fn: str,
+        depth: int,
+        defining: str,
+        pool: list[DefSite],
+        ident: str = "",
     ) -> Expr:
         result: Expr | None = None
         result_fn: str | None = None
-        # When the writes cover every path, the zero fall-through below is dead
-        # code and there is nothing being assumed about the declaration. Only
-        # within one function: two functions each writing one side of the same
-        # condition look exhaustive together, but either can be called alone.
-        exhaustive = len({s.function for s in sites}) == 1 and _paths_are_covered(
-            [s.conds for s in sites]
-        )
+        # When the writes cover every path, the fall-through below is dead code
+        # and there is nothing being assumed about the declaration.
+        #
+        # Judged on `pool` -- every write to the name -- while the value below
+        # is built from `sites`, the ones that have run by this read. The two
+        # differ where a name is read between its writes, and asking coverage
+        # of the shorter list gets the wrong answer: reading `n2` inside the
+        # branch that just set it leaves the other branch's write out of view,
+        # which looks like a path with no value and mints an initial-value
+        # variable for a path that cannot happen.
+        #
+        # Coverage is a property of one function's writes: two functions each
+        # writing one side of the same condition look exhaustive together, but
+        # either can be called alone. Asked per function rather than only when
+        # there is exactly one, because a write somewhere else does not unmake
+        # the coverage here. `fBaseParams.b` is assigned on all five layout
+        # branches of `GetShapeAttrsInfo` — the fifth a plain `else` — and once
+        # more in `DoOpTiling`; letting that sixth write veto the judgement
+        # minted a free variable for a path the five branches leave no room
+        # for, and it went on to block five dimensions.
+        # Coverage inside a function says its writes leave no path through it
+        # without a value. For a member that is only half the story: a run that
+        # never enters the function still reads whatever it held before, so the
+        # function has to be one that always runs. A local needs no such
+        # premise — a run that skips the function neither writes it nor has
+        # anywhere to read it from.
+        covered_in = {
+            name: _paths_are_covered(
+                [s.conds for s in pool if (s.function or fn) == name]
+            )
+            and (self._is_local_of(defining, name) or self._always_runs(name, depth))
+            for name in {s.function or fn for s in pool}
+        }
         for site in sites:
             scope = site.function or fn
             guards = self._live_guards(site.guards, scope)
@@ -1278,11 +1386,17 @@ class KeyFieldDeriver:
                 # self-reference there is a read before any write, which is
                 # a genuine unknown rather than a previous version.
                 if result is None:
-                    self._prev_version.pop(defining, None)
+                    self._prev_version.pop(ident or defining, None)
                 else:
-                    self._prev_version[defining] = result
-            value = self._expand_text(site.rhs, scope, depth + 1)
+                    self._prev_version[ident or defining] = result
+            value = self._expand_at(site, site.rhs, scope, depth + 1)
             guard_text = _conjoin_text(guards)
+            if guard_text and result is None and self._is_declaration_site(
+                defining, site, scope
+            ):
+                # Guards on a declaration say which block it is in, not which
+                # runs give it a value. See `_is_declaration_site`.
+                guard_text = ""
             if not guard_text:
                 if result is None or scope == result_fn:
                     result = value
@@ -1290,7 +1404,7 @@ class KeyFieldDeriver:
                 else:
                     result = Ite(self._reached(scope, depth), value, result)
                 continue
-            cond = self._expand_text(guard_text, scope, depth + 1)
+            cond = self._expand_at(site, guard_text, scope, depth + 1)
             # An if/else-if chain with no unguarded write falls through to the
             # declared default, which for tiling structs and enums is zero.
             #
@@ -1299,9 +1413,15 @@ class KeyFieldDeriver:
             # is initialised to anything else, every key derived through this
             # branch is wrong, and nothing else would show it.
             declared = None
-            if result is None and not exhaustive:
+            assumed: Expr | None = None
+            if (
+                result is None
+                and not covered_in.get(scope, False)
+                and not self._read_forces_a_write(pool, defining)
+            ):
                 declared = self._declared_default(defining, scope, depth)
                 if declared is None:
+                    assumed = self._init_var(defining, scope, site)
                     # One site, one assumption. A site can be chained more than
                     # once — different callers, different cache contexts — and
                     # counting it each time would report the number of visits
@@ -1315,15 +1435,53 @@ class KeyFieldDeriver:
                                 "file": site.file,
                                 "line": site.line,
                                 "guard": guard_text[:120],
+                                "field": defining,
+                                "variable": assumed.symbol,
                             }
                         )
             if result is not None:
                 fallthrough = result
+            elif declared is not None:
+                fallthrough = declared
             else:
-                fallthrough = declared if declared is not None else Const(0)
+                fallthrough = assumed if assumed is not None else Const(0)
             result = Ite(cond, value, fallthrough)
             result_fn = scope
         return result if result is not None else Unknown(REASON_NO_DEFINITION)
+
+    def _read_forces_a_write(self, pool: list[DefSite], defining: str) -> bool:
+        """Can this read be reached at all without one of the writes running?
+
+        Writes can look partial and still leave nothing to assume, because
+        where a name is *read* is a condition too. `fBaseParams.bandIdx` is
+        written only when an attention mask is present and read only under the
+        same test, so the two together admit no run that reads it unwritten --
+        and the free variable minted for that run went on to block five
+        dimensions.
+
+        Asked of the solver rather than by comparing guard text: the read's
+        condition and the writes' rarely match word for word, and only the
+        `unsat` answer is used, so a query that fails to prove anything leaves
+        the assumption exactly where it was.
+        """
+        read = self._read_at
+        if read is None or not read.conds or not pool:
+            return False
+        key = (read.file, read.line, read.function, defining)
+        hit = self._read_cover_cache.get(key)
+        if hit is None:
+            from uo_init.loop_summary import guards_cover
+
+            hit = bool(
+                guards_cover(
+                    read.conds,
+                    [(s.conds, s.function or read.function) for s in pool],
+                    read_function=read.function,
+                    members=getattr(self.ir, "class_fields", ()) or (),
+                )
+            )
+            self._read_cover_cache[key] = hit
+        return hit
 
     def _live_guards(self, guards: tuple[str, ...], scope: str) -> tuple[str, ...] | None:
         """`guards` without the ones already decided, or None if none can hold.
@@ -1363,6 +1521,91 @@ class KeyFieldDeriver:
             self._int_consts = cached
         return cached
 
+    def _init_var(self, defining: str, scope: str, site: DefSite) -> Ref:
+        """A free variable for the value a field holds before any write.
+
+        The chain ends at a guard that may not hold and no declaration could be
+        read, so the value on that path is whatever the field was initialised
+        to — which is unknown. Closing with `Const(0)` states a default nobody
+        read: sound only if it happens to be right, and when it is wrong the
+        solver rules out keys the operator does produce. An unconstrained
+        variable says the same thing honestly, and `classify_exactness` sees it
+        by its prefix and stops calling such a field exact.
+        """
+        from uo_init.ids import hash12
+
+        text = f"{scope}:{defining}:{site.file}:{site.line}"
+        var_id = f"VAR_INIT_{hash12(text)[:12]}"
+        if self.model is not None and self.model.get(var_id) is None:
+            self.model.add(
+                VarSpec(
+                    var_id=var_id,
+                    name=var_id,
+                    value_type="int",
+                    domain=Domain(
+                        var_id=var_id,
+                        value_type="int",
+                        completeness="open",
+                        source="init_unknown",
+                    ),
+                    origin="INIT_UNKNOWN",
+                    description=f"value of {defining} before any write ({site.file}:{site.line})",
+                )
+            )
+        return Ref(var_id)
+
+    def _always_runs(self, scope: str, depth: int) -> bool:
+        """Does `scope` run on every path that reaches the key encoding?"""
+        reached = self._reached(scope, depth)
+        return isinstance(reached, Const) and reached.value is True
+
+    def _is_local_of(self, defining: str, scope: str) -> bool:
+        """Is `defining` a variable local to `scope`?
+
+        Unlike `_is_declaration_site` this asks nothing about an initialiser.
+        The question here is lifetime, not value: a local does not outlive the
+        call, so a run that never enters the function has nowhere to read it
+        from and coverage inside the function is the whole story.
+        """
+        if not defining or "." in defining or self.ir is None:
+            return False
+        find = getattr(self.ir, "local_decl", None)
+        if find is None:
+            return False
+        return bool(find(defining, scope) or find(defining, scope.split("::")[-1]))
+
+    def _is_declaration_site(self, defining: str, site: DefSite, scope: str) -> bool:
+        """Is this write the declaration of a local, initialiser and all?
+
+        Such a write has already run wherever the variable can be read. C++
+        scoping is the whole argument: a read of a block-scoped local sits
+        inside the block that declares it and after the declaration, so the
+        guards on the declaration are conditions on reaching the block, not
+        conditions on the variable having a value. Reading them as the latter
+        asks what `seqQShapeSize` holds when the layout is not TND — a block it
+        is not declared in, where no read of it exists — and answers with a
+        free variable that then keeps five dimensions off `exact`.
+
+        Requires an initialiser. `int64_t x;` followed by a guarded assignment
+        really can be read before anything writes it, and that indeterminate
+        value is exactly what the chain's fall-through is for.
+
+        Members, parameters and out parameters are all excluded by asking for a
+        local declaration: each of those outlives the writes seen here, so a
+        read before them is a real path.
+        """
+        if not defining or "." in defining or self.ir is None:
+            return False
+        find = getattr(self.ir, "local_decl", None)
+        if find is None:
+            return False
+        decl = find(defining, scope) or find(defining, scope.split("::")[-1])
+        if decl is None or not (decl.init or "").strip():
+            return False
+        # The chain can hold several writes to one local; only the declaration
+        # itself carries this argument.
+        return decl.line == site.line and (not site.file or decl.file == site.file)
+
     def _declared_default(self, defining: str, scope: str, depth: int) -> Expr | None:
         """What the declaration initialises `defining` to, if that is knowable.
 
@@ -1388,6 +1631,85 @@ class KeyFieldDeriver:
             return None
         return expanded if _is_constant(expanded) else None
 
+    def _note_root(self, fn: str) -> None:
+        """Record the function the current question is asked in."""
+        if fn == self._encode_fn:
+            return
+        self._encode_fn = fn
+        self._encode_path_cache = None
+        self._reach_cache.clear()
+
+    def _encode_path(self) -> set[str]:
+        """Functions a run must have entered to reach the key encoding.
+
+        Every field's value is asked for at one program point: where the key
+        is built. So the function holding that point ran, and so did every
+        function that lies on all the ways of getting there — the dominators
+        of the encoding in the call graph.
+
+        Following single callers upward only finds a prefix of that set. The
+        framework's driver calls the encoding once for real and once more to
+        log it, and with two call sites the climb stopped immediately, leaving
+        the driver and every hook it calls looking like they might not run.
+
+        Entries are the functions nothing calls, restricted to those that can
+        reach the encoding at all; the hundreds of registry accessors with no
+        callers are not ways into this question. Edges the walk missed split
+        the entries and shrink the answer, which is the safe direction: a
+        function left out is merely one we decline to assume ran.
+        """
+        if self._encode_path_cache is not None:
+            return self._encode_path_cache
+        encode = self._encode_fn.split("::")[-1] if self._encode_fn else ""
+        if not encode:
+            self._encode_path_cache = set()
+            return self._encode_path_cache
+
+        preds: dict[str, set[str]] = {}
+        nodes = {encode}
+        queue = [encode]
+        while queue:
+            fn = queue.pop()
+            up: set[str] = set()
+            for site in self._calls_to(fn):
+                caller = str(getattr(site, "caller", "") or "").split("::")[-1]
+                if not caller or caller == fn:
+                    continue
+                up.add(caller)
+                if caller not in nodes:
+                    nodes.add(caller)
+                    queue.append(caller)
+            preds[fn] = up
+
+        roots = {fn for fn in nodes if not preds.get(fn)}
+        if not roots:
+            # Every way in is itself called: the graph closed into a cycle and
+            # there is no entry to start the argument from.
+            self._encode_path_cache = {encode}
+            return self._encode_path_cache
+
+        dom: dict[str, set[str]] = {fn: set(nodes) for fn in nodes}
+        for root in roots:
+            dom[root] = {root}
+        changed = True
+        while changed:
+            changed = False
+            for fn in nodes:
+                if fn in roots:
+                    continue
+                ps = preds.get(fn) or set()
+                if not ps:
+                    continue
+                merged = set(nodes)
+                for p in ps:
+                    merged &= dom[p]
+                merged.add(fn)
+                if merged != dom[fn]:
+                    dom[fn] = merged
+                    changed = True
+        self._encode_path_cache = dom[encode]
+        return self._encode_path_cache
+
     def _reached(self, scope: str, depth: int) -> Expr:
         """When does `scope` run? The disjunction over its call sites.
 
@@ -1397,13 +1719,16 @@ class KeyFieldDeriver:
         `__reached_` placeholder it replaces was a free boolean that let a
         solver have the write both ways.
 
-        A function with no call site inside the walked TUs is a framework
-        entry (virtual override, registry hook). The host tiling path is
-        entered exactly once per run, so treating it as always-reached is
-        exact for those roots — not an over-approximation. Leaving a free
-        boolean there forced every callee to re-expand the same path
-        conditions under an undecided parent, which both inflated free_vars
-        and made reachability quadratic in the call graph.
+        `Const(True)` is only ever emitted where it is a fact rather than a
+        guess, and there is exactly one such ground: the derivation answers
+        "what do the fields hold when a key is encoded", so every function the
+        encoding sits inside has run in any run that reaches the question.
+        `_encode_path` is that set. A function outside it with no recorded call
+        site is not a framework entry — it is a function whose callers the walk
+        never saw, and claiming it always runs lets an unguarded write in it
+        erase what earlier writes left. That is a claim about control flow with
+        nothing behind it, and the erased value is exactly what makes a
+        satisfiable key look unreachable.
         """
         short = scope.split("::")[-1]
         if short in self._reach_stack:
@@ -1417,15 +1742,32 @@ class KeyFieldDeriver:
             return hit
         sites = self.ir.calls_to(short) if hasattr(self.ir, "calls_to") else []
         if not sites:
-            # Framework entry / uncalled root of the walked corpus.
-            self._reach_cache[short] = Const(True)
-            return Const(True)
+            out: Expr = (
+                Const(True)
+                if short in self._encode_path()
+                else Ref(f"{REACHED_PREFIX}{scope}")
+            )
+            self._reach_cache[short] = out
+            return out
         self._reach_stack.add(short)
         try:
             terms: list[Expr] = []
             for site in sites:
+                # A bailout is not a condition on this call, it is a condition
+                # on the run existing at all: `if (ret != SUCCESS) return ret;`
+                # before the call means every run that got past it — every run
+                # that reaches the encoding — took the call. Carried here it
+                # reads as "this hook may not have run", which is how a driver
+                # that calls its hooks in a fixed order ends up looking
+                # optional. The condition is not lost; it is a premise on the
+                # inputs, collected by `legality_premises`.
+                conds = tuple(
+                    c
+                    for c in getattr(site, "path_conditions", ())
+                    if not getattr(c, "is_bailout", False)
+                )
                 guard_text = _conjoin_text(
-                    tuple(c.pretty() for c in site.path_conditions if not c.is_opaque)
+                    tuple(c.pretty() for c in conds if not c.is_opaque)
                 )
                 # Resolve caller reachability first: when the caller is a
                 # framework entry (Const True) and this call is unguarded, the
@@ -1438,6 +1780,16 @@ class KeyFieldDeriver:
                 else:
                     here = self._expand_text(guard_text, site.caller, depth + 1)
                     term = Bin("&&", up, here)
+                if any(getattr(c, "is_opaque", False) for c in conds):
+                    # A condition nobody could read is still a condition.
+                    # Dropped, this call site reads as easier to reach than it
+                    # is, and "reached" is what decides whether an unguarded
+                    # write here overwrites the value already there.
+                    unread = Ref(
+                        f"{REACHED_PREFIX}{site.caller}@"
+                        f"{getattr(site, 'line', 0)}"
+                    )
+                    term = unread if _is_true(term) else Bin("&&", term, unread)
                 if _is_true(term):
                     self._reach_cache[short] = Const(True)
                     return Const(True)
@@ -1450,7 +1802,139 @@ class KeyFieldDeriver:
         self._reach_cache[short] = out
         return out
 
+    def _expand_at(self, site: DefSite, text: str, fn: str, depth: int) -> Expr:
+        """Expand `text` knowing it is read at `site`.
+
+        Which writes to that name are in view depends on where it is read;
+        see `_visible_defs`.
+        """
+        outer = self._read_at
+        self._read_at = site
+        try:
+            return self._expand_text(text, fn, depth)
+        finally:
+            self._read_at = outer
+
+    def _calls_to(self, fn: str) -> list[Any]:
+        find = getattr(self.ir, "calls_to", None) if self.ir is not None else None
+        return list(find(fn)) if find and fn else []
+
+    def _runs_once(self, fn: str) -> bool:
+        """Is `fn` entered at most once per run?
+
+        Asked before a caller's line number is allowed to order anything. A
+        function entered twice has already run once by the second entry, so a
+        write below the first call sits above the second, and comparing lines
+        would rule out a write that did happen.
+        """
+        hit = self._runs_once_cache.get(fn)
+        if hit is not None:
+            return hit
+        # Pessimistic while recursing: mutual recursion means many entries.
+        self._runs_once_cache[fn] = False
+        calls = self._calls_to(fn)
+        if not calls:
+            out = True  # never called from within: an entry point
+        elif len(calls) > 1:
+            out = False
+        else:
+            site = calls[0]
+            out = not _under_loop(
+                getattr(site, "path_conditions", ())
+            ) and self._runs_once(getattr(site, "caller", ""))
+        self._runs_once_cache[fn] = out
+        return out
+
+    def _read_lines(self, read: DefSite) -> dict[tuple[str, str], int]:
+        """Where this read happens, expressed in each function it happens in.
+
+        A read inside a helper happens, as far as the caller is concerned, at
+        the call: by the line below it the helper has returned. That is the
+        only way to order `CalcleDeterParam`'s read of `isDeterministic`
+        against `DoSparse`'s write of it — same file, different functions, and
+        the write is below the call that does the reading.
+
+        Climbs only while each step is a single call outside any loop into a
+        caller that itself runs once. Any of those failing and the climb stops:
+        with two ways in, or a second visit, an earlier pass could have done
+        the write already.
+        """
+        key = (read.file, read.line, read.function)
+        hit = self._read_line_cache.get(key)
+        if hit is not None:
+            return hit
+        out: dict[tuple[str, str], int] = {}
+        fn = read.function
+        if fn and read.file and read.line:
+            out[(read.file, fn)] = read.line
+            while True:
+                calls = self._calls_to(fn)
+                if len(calls) != 1:
+                    break
+                site = calls[0]
+                caller = getattr(site, "caller", "")
+                if not caller or _under_loop(getattr(site, "path_conditions", ())):
+                    break
+                if not self._runs_once(caller):
+                    break
+                where = (getattr(site, "file", ""), caller)
+                if not where[0] or where in out:
+                    break
+                out[where] = getattr(site, "line", 0)
+                fn = caller
+        self._read_line_cache[key] = out
+        return out
+
+    def _runs_before(self, site: DefSite, read: DefSite) -> bool:
+        """Could `site` have run before control reached `read`?
+
+        Only says no when it can point at the reason: the write is below the
+        point the read happens, in a function the read happens inside. A write
+        anywhere else -- off the path in, or with no position -- is kept,
+        because call order is not line order.
+
+        Sharing a loop is the exception that makes this more than a line
+        comparison. A write below a read inside one loop still runs before it,
+        on the pass round after. Only a loop enclosing *both* does that; a loop
+        holding just the write runs to completion before the read.
+        """
+        if not (site.file and site.line):
+            return True
+        at = self._read_lines(read).get((site.file, site.function or ""))
+        if at is None:
+            return True
+        if site.line <= at:
+            return True
+        return bool(set(site.loops) & set(read.loops))
+
+    def _visible_defs(self, sites: list[DefSite]) -> list[DefSite]:
+        """Of `sites`, the writes that could have run by the current read.
+
+        This is what tells a save/modify/restore apart from a cycle. A member
+        is stashed in a local, changed under a condition, then restored from
+        the local. Expanding the local reads the member, whose last write
+        reads the local -- around it goes. But the stash sits *above* both the
+        change and the restore, so where the local is read from, neither has
+        run, and what remains is an ordinary value.
+
+        Dropping a write is a claim about order, so `_runs_before` only makes
+        it with a reason. Falls back to the whole pool when nothing is left:
+        a read before every write reads the declaration, which the chain's
+        fall-through already handles, and answering `leaf` here instead would
+        lose the declared value.
+        """
+        if self._read_at is None:
+            return sites
+        kept = [s for s in sites if self._runs_before(s, self._read_at)]
+        return kept or sites
+
     def _expand_text(self, text: str, fn: str, depth: int) -> Expr:
+        if depth == 0:
+            # The outermost ask names the function the question is posed in,
+            # and a question posed there is a run that got there. `_reached`
+            # needs that to tell a function it can prove ran from one whose
+            # callers it merely never saw.
+            self._note_root(fn)
         if not text or not text.strip():
             return Unknown(REASON_NO_DEFINITION)
         try:
@@ -2022,6 +2506,12 @@ class KeyFieldDeriver:
                 return f"{owner}.{name}"
         return name
 
+    def _sites_for(self, name: str, canon: str, fn: str) -> list[DefSite]:
+        sites = self._defs_for(name, fn)
+        if not sites and canon != name:
+            sites = self._defs_for(canon, fn)
+        return sites
+
     def _expand_name(self, name: str, original: Expr, fn: str, depth: int) -> Expr:
         """Substitute a name by its definitions, all the way to input roots.
 
@@ -2044,18 +2534,39 @@ class KeyFieldDeriver:
         # are valid everywhere — they go in the context-free slot so all uses
         # share one object. Only an expansion that actually read an enclosing
         # name's previous version is stored against that context.
-        generic = (fn, canon, ())
-        key = (fn, canon, self._version_context())
-        if canon in self._active:
+        # Which writes could have run by the time this read happens. Taken
+        # before the cache is consulted, because two reads of one name at
+        # different points in a function are two different values and must not
+        # share an entry. Almost always this is every write there is -- only a
+        # write below the read in the same function drops out -- so the tag is
+        # empty and the cache behaves as it did.
+        pool = self._sites_for(name, canon, fn)
+        sites = self._visible_defs(pool)
+        tag = () if len(sites) == len(pool) else tuple((s.file, s.line) for s in sites)
+        generic = (fn, canon, (), tag)
+        key = (fn, canon, self._version_context(), tag)
+        ident = self._ident(canon, fn)
+        if ident in self._active:
             # `x = f(x)` is not a cycle. Sites are chained in source order, so
             # the name on the right of the one being expanded refers to the
             # value the earlier sites produced. Treating it as a cycle used to
             # abandon the whole guard, and 24 of the remaining dropped guards
             # were nothing more than ordinary sequential assignment.
-            prev = self._prev_version.get(canon)
+            prev = self._prev_version.get(ident)
             if prev is not None:
-                self._prev_read.add(canon)
+                self._prev_read.add(ident)
                 return prev
+            # Re-entering with fewer writes in view is not recursion: it is the
+            # same name earlier in the function, where the writes that close
+            # the loop have not run. See `_visible_defs`.
+            frame = (ident, tag)
+            if tag and sites and frame not in self._earlier_frames:
+                self._earlier_frames.add(frame)
+                try:
+                    # Deliberately not cached: it holds at this read, no other.
+                    return self._chain(sites, fn, depth, defining=canon, pool=pool)
+                finally:
+                    self._earlier_frames.discard(frame)
             self.cycles.add(canon)
             return leaf
         cached = self._cache.get(generic)
@@ -2063,14 +2574,16 @@ class KeyFieldDeriver:
             cached = self._cache.get(key)
         if cached is not None:
             return cached
-        # Same host state under another caller scope.
-        for (scope2, other, ctx2), got in self._cache.items():
-            if other == canon and scope2 != fn and ctx2 == ():
-                self._cache[generic] = got
-                return got
-        sites = self._defs_for(name, fn)
-        if not sites and canon != name:
-            sites = self._defs_for(canon, fn)
+        # Same host state under another caller scope -- true of a member, which
+        # is one variable however many functions touch it. A local is a
+        # different variable in every function that declares one, so reusing
+        # another scope's result here would answer with an unrelated
+        # expression. See `_ident`.
+        if "." in canon:
+            for (scope2, other, ctx2, tag2), got in self._cache.items():
+                if other == canon and scope2 != fn and ctx2 == () and tag2 == tag:
+                    self._cache[generic] = got
+                    return got
         if not sites:
             return leaf
         # A for-init like `i = 0` carries only a discarded `for(...)` guard. If
@@ -2080,17 +2593,17 @@ class KeyFieldDeriver:
         if _loop_scoped_only(sites):
             self._cache[generic] = leaf
             return leaf
-        self._active.add(canon)
+        self._active.add(ident)
         outer_reads = self._prev_read
         self._prev_read = set()
         try:
-            out = self._chain(sites, fn, depth, defining=canon)
+            out = self._chain(sites, fn, depth, defining=canon, pool=pool)
             reads = self._prev_read
         finally:
-            self._active.discard(canon)
+            self._active.discard(ident)
             # Anything this expansion read of an *enclosing* name still makes
             # the caller's result context-dependent, so it propagates up.
-            self._prev_read = outer_reads | (self._prev_read - {canon})
+            self._prev_read = outer_reads | (self._prev_read - {ident})
         # A depth-truncated result is an artefact of *where* the name was first
         # reached, not a property of the name. Caching it would poison every
         # later, shallower use.
@@ -2105,8 +2618,23 @@ class KeyFieldDeriver:
             # Self-contained results are valid anywhere and go in the shared
             # slot; a result that leaned on an enclosing chain is only valid
             # under the same one.
-            self._cache[generic if not (reads - {canon}) else key] = out
+            self._cache[generic if not (reads - {ident}) else key] = out
         return out
+
+    def _ident(self, name: str, fn: str) -> str:
+        """What counts as "the same variable" for cycles and previous versions.
+
+        A member is one variable wherever it is read, which is why its writes
+        are gathered from the whole program. A local is not: 183 local names in
+        FAG are spelled the same in more than one function, `s1Inner`,
+        `s2Inner` and `blockOuter` among them. Their writes are already kept
+        apart — `_all_defs_for` asks `_local_defs(name, fn)` — but the
+        bookkeeping around them was keyed on the bare name, so one function's
+        half-built value could be handed to another function's variable. That
+        is not an over-approximation: it is a wrong equality, and a wrong
+        equality is what makes a satisfiable key look unreachable.
+        """
+        return name if "." in name else f"{fn}::{name}"
 
     def _version_context(self) -> tuple[tuple[str, int], ...]:
         """Identity of the part-built values an expansion could read.
@@ -2156,6 +2684,7 @@ class KeyFieldDeriver:
         out.undecided = dict(norm.undecided)
         out.blocked_on = dict(norm.blocked_on)
         out.var_scope = dict(norm.var_scope)
+        out.var_types = dict(norm.var_types)
         out.implicit_defaults = list(self.implicit_zero)
         for reason in sorted(set(_collect_unknowns(expanded))):
             out.unresolved.append({"text": "", "reason": reason})
@@ -2184,6 +2713,7 @@ class KeyFieldDeriver:
             value_expr=out.value_expr,
             variables=out.variables,
             unresolved=out.unresolved,
+            implicit_defaults=out.implicit_defaults,
         )
         out.status = status_of_exactness(out.exactness)
         if out.exactness == EX_OVERAPPROX and not out.input_roots:
@@ -2488,13 +3018,36 @@ class _ValueNormalizer(PredicateNormalizer):
         #: var_id -> the function it was read in, so evidence lookup can be
         #: confined to that function instead of matching guard text globally.
         self.var_scope: dict[str, str] = {}
+        #: var_id -> the type it was declared with. Minting happens in a
+        #: derivation worker, whose model the parent never sees, so the parent
+        #: re-declares from the record that comes back. Without the type there
+        #: it has to guess from the name, and `VAR_SCHED_` covers both a
+        #: softened guard (bool) and a traversal position like `coreIdx` (int).
+        #: Guessing bool for the latter makes `coreIdx == 36` fail to compile
+        #: and takes every dimension down with it.
+        self.var_types: dict[str, str] = {}
         # The expanded expression is a DAG. Normalising it as a tree costs the
         # unfolded size, so each (node, position) is lowered exactly once and
         # the resulting SMT-lite object is shared by every reference to it.
         self._memo: dict[tuple[int, str], tuple[Expr, dict[str, Any]]] = {}
 
     def _resolver_for(self, expr: Expr):
-        scope = getattr(expr, "scope", "")
+        """Resolver for the function this expression was read in.
+
+        Only `Ref` carries a scope, and an accessor chain reaches here as a
+        `Call` whose stamp sits on the receiver underneath it. Reading the
+        scope off the node alone therefore resolved every
+        `shape->GetStorageShape().GetDimNum()` against the encode function,
+        where the local naming the tensor does not exist: the operand stayed
+        unknown, the accessor's own name stood in for it, and every rank in the
+        operator collapsed onto one variable — forcing unrelated tensors to
+        have equal rank and inventing unreachable keys from it.
+
+        Chains that name their operand inline (`GetInputShape(QUERY_IDX)->...`)
+        survived the wrong scope, which is why only the ones routed through a
+        local were affected.
+        """
+        scope = getattr(expr, "scope", "") or _scope_under(expr)
         if scope and self._scope_for is not None:
             return self._scope_for(scope)
         return self.resolver
@@ -2600,7 +3153,10 @@ class _ValueNormalizer(PredicateNormalizer):
                     if node.func.startswith("field:")
                     else node.func
                 )
-                resolver = self.resolver
+                # Same scope rule as for `Ref`: a member tail (`field:isNzOut`)
+                # or a helper name is looked up among the locals and fields of
+                # the function that read it, and the encode function is not it.
+                resolver = self._resolver_for(node)
             else:
                 continue
             got = False
@@ -2678,10 +3234,15 @@ class _ValueNormalizer(PredicateNormalizer):
             )
         self.scheduling[var_id] = origin
         self.undecided[var_id] = f"{origin}: {text[:160]}"
+        self.var_types[var_id] = "bool"
         return {"op": "eq", "var": var_id, "value": True}
 
     def _leaf(self, expr: Expr) -> dict[str, Any]:
         expr = _deref(expr)
+        if isinstance(expr, Ref) and expr.symbol.startswith(OVERAPPROX_PREFIXES):
+            # Minted by the derivation, not read from the source, so the
+            # resolver has no root for it and must not be asked for one.
+            return {"var": expr.symbol}
         if isinstance(expr, Select):
             elem = self._element_or_cut(expr)
             if elem is not None:
@@ -2771,7 +3332,7 @@ class _ValueNormalizer(PredicateNormalizer):
             container = path or ""
         if not container:
             return None
-        res = self._resolver_for_tree(container_expr).resolve(container)
+        res = self._resolver_for(container_expr).resolve(container)
         atoms = [a for a in res.atoms if a.root and a.root != "CONSTANT"]
         if not atoms:
             return None
@@ -2912,6 +3473,7 @@ class _ValueNormalizer(PredicateNormalizer):
             )
         self.model.mark_identity_merged(var_id)
         self.undecided[var_id] = f"LOOP_ELEMENT: {surface[:160]}"
+        self.var_types[var_id] = "int"
         # Two same-named containers in different functions are different
         # variables here, but their guard *text* is identical, so evidence
         # lookup by text alone cites whichever it finds first. The two
@@ -2957,13 +3519,6 @@ class _ValueNormalizer(PredicateNormalizer):
             return None
         return self._element_or_cut(base, slot=_slot_short(expr.func))
 
-    def _resolver_for_tree(self, expr: Expr):
-        """Resolver for the first scoped Ref under `expr`, else encode scope."""
-        for node in _walk_dag(expr):
-            if isinstance(node, Ref) and getattr(node, "scope", ""):
-                return self._resolver_for(node)
-        return self.resolver
-
     def _container_reduction(self, short: str, args: list[Expr]) -> dict[str, Any] | None:
         """`*std::max_element(v.begin(), v.end())` as one input-derived value.
 
@@ -2983,7 +3538,7 @@ class _ValueNormalizer(PredicateNormalizer):
         container = _container_of(args[0])
         if not container:
             return None
-        res = self._resolver_for_tree(args[0]).resolve(container)
+        res = self._resolver_for(args[0]).resolve(container)
         atoms = [a for a in res.atoms if a.root and a.root != "CONSTANT"]
         if not atoms:
             return self._loop_reduction_var(args[0], kind)
@@ -3036,18 +3591,28 @@ class _ValueNormalizer(PredicateNormalizer):
         that has to be as visible as a softened guard. It was only in
         `scheduling`, which nothing downstream reads, so these leaves reached
         `value_expr` with no record explaining them.
+
+        Scoped, like every other local. Two functions each greedily packing
+        blocks onto cores both call their counter `coreIdx`; naming the
+        variable after the symbol alone made them one, which asserts the two
+        counts are equal. That narrows the feasible set rather than widening
+        it — the one direction an over-approximation must never take, and
+        enough on its own to rule out keys that are reachable.
         """
-        from uo_init.ids import slug
+        from uo_init.ids import hash12, slug
 
         text = _leaf_text(expr)
         if not text:
             return None
-        res = self.resolver.resolve(text)
+        scope = getattr(expr, "scope", "") or _scope_under(expr)
+        res = self._resolver_for(expr).resolve(text)
         atoms = [a for a in res.atoms if a.root and a.root != "CONSTANT"]
         if not atoms or atoms[0].root not in SCHEDULING_ROOTS:
             return None
         atom = atoms[0]
         var_id = f"VAR_SCHED_{slug(atom.symbol or text)}"
+        if scope:
+            var_id = f"{var_id}_{hash12(scope)}"
         if self.model.get(var_id) is None:
             self.model.add(
                 VarSpec(
@@ -3062,11 +3627,17 @@ class _ValueNormalizer(PredicateNormalizer):
                         source="scheduling_position",
                     ),
                     origin=atom.root,
-                    description="traversal position; unconstrained by input",
+                    description="traversal position; unconstrained by input"
+                    + (f" in {scope}" if scope else ""),
                 )
             )
         self.scheduling[var_id] = atom.root
         self.undecided[var_id] = f"{atom.root}: {atom.symbol or text}"
+        # A position, not a predicate: `coreIdx` gets compared with the core
+        # count, so it has to come back as the int it was declared as.
+        self.var_types[var_id] = "int"
+        if scope:
+            self.var_scope[var_id] = scope
         return {"var": var_id, "root": atom.root}
 
     def _bool(self, expr: Expr) -> dict[str, Any]:

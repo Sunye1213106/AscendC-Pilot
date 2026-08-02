@@ -11,6 +11,7 @@ These are pure structural tests: no operator source, no clang.
 from __future__ import annotations
 
 import json
+import sys
 
 import pytest
 
@@ -110,6 +111,48 @@ def test_lists_keep_their_order():
     back = decode_expr_dag(encode_expr_dag(expr, min_tree_nodes=0))
     assert back == expr
     assert back["args"][0] is back["args"][2]
+
+
+def deep_spine(depth: int) -> dict:
+    """A long chain nothing reuses.
+
+    `shared_chain` is deep but every level is shared, so each earns a
+    definition and the decoder never nests. A node has to be both shared and
+    large to be named, so an unshared spine like this stays inline however long
+    it grows -- and that is the shape a real guarded chain leaves behind.
+    """
+    node: dict = dict(LEAF)
+    for _ in range(depth):
+        node = {"op": "not", "arg": node}
+    return node
+
+
+def test_decoding_a_deep_spine_does_not_ride_the_stack():
+    """FAG's largest field is 380k characters of mostly unshared nesting.
+
+    Recursing over it needs the limit raised past what the C stack can carry,
+    and overrunning that does not raise: the process exits with no traceback.
+    The encoder has been iterative for this reason; the decoder had to be too.
+    """
+    encoded = encode_expr_dag(deep_spine(5000), min_tree_nodes=0)
+
+    # Decoded under a limit far below the depth: passing means the walk holds
+    # its state on the heap. A recursive decoder cannot get through this even
+    # with the limit raised, which is the whole point.
+    limit = sys.getrecursionlimit()
+    sys.setrecursionlimit(100)
+    try:
+        back = decode_expr_dag(encoded)
+    finally:
+        sys.setrecursionlimit(limit)
+
+    # Walked as a loop: `==` on two 5000-deep dicts recurses in C and would
+    # take out the very stack this test is about.
+    levels, node = 0, back
+    while isinstance(node, dict) and node.get("op") == "not":
+        node, levels = node["arg"], levels + 1
+    assert levels == 5000
+    assert node == LEAF
 
 
 def test_a_dangling_reference_is_an_error_not_a_silent_hole():

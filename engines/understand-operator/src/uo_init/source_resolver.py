@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping, Sequence
 
 from uo_init.cpp_expr import parse_expr
 from uo_init.expr_ir import Bin, Call, Const, Expr, Ite, Ref, Select, Un, Unknown
@@ -310,6 +310,42 @@ class Atom:
     partial: bool = False
 
 
+def _constant_values(atoms: Iterable[Atom]) -> set[str]:
+    """The distinct values a group of constant atoms folded to."""
+    return {str(a.symbol) for a in atoms}
+
+
+def _selects(e: Expr) -> bool:
+    """Whether an expression picks one of several values rather than combining them."""
+    if isinstance(e, (Ite, Select)):
+        return True
+    if isinstance(e, Un):
+        return _selects(e.arg)
+    if isinstance(e, Bin):
+        return _selects(e.left) or _selects(e.right)
+    if isinstance(e, Call):
+        return any(_selects(a) for a in e.args)
+    return False
+
+
+def _picks_between_constants(res: Resolution) -> bool:
+    """A resolution that is all-constant but still holds more than one value.
+
+    A ternary over shapes is the usual shape of this: `resolve_value` drops the
+    condition on purpose, so all that survives are the arms, and they are all
+    constants. Calling the whole thing a constant keeps whichever arm was seen
+    first and folds away the branches that would have produced the others --
+    which narrows what the analysis believes possible, the direction that
+    invents false "unreachable" answers. Arithmetic over constants is excluded:
+    `kBlockSize * 2` mentions two values but only ever produces one.
+    """
+    return (
+        res.expr is not None
+        and _selects(res.expr)
+        and len(_constant_values(res.atoms)) > 1
+    )
+
+
 @dataclass
 class Resolution:
     condition: str
@@ -351,16 +387,53 @@ def _index_name(e: Expr) -> str | None:
     return None
 
 
+def _const_int(e: Expr, constants: Mapping[str, int] | None = None) -> int | None:
+    """The integer an argument denotes, literal or named.
+
+    Operators index their inputs and axes through named constants far more
+    often than through literals (`GetDim(DIM_2)`, `GetInputShape(
+    QUERY_INPUT_INDEX)`). Reading only literals loses which axis and which
+    tensor was meant, and everything then collapses onto one variable.
+    """
+    if isinstance(e, Const) and isinstance(e.value, int) and not isinstance(e.value, bool):
+        return e.value
+    if isinstance(e, Ref) and constants:
+        got = constants.get(e.symbol)
+        if got is None and "::" in e.symbol:
+            got = constants.get(e.symbol.split("::")[-1])
+        if isinstance(got, int) and not isinstance(got, bool):
+            return got
+    return None
+
+
 # `GetDim(2)` names one axis; `GetDimNum()` names the rank, which is not an axis.
 _DIM_ACCESSOR_RE = re.compile(r"^GetDim$|^GetShapeDim$|^GetOriginDim$")
 
+#: Accessors that select one operand by position, and which list it indexes.
+#: The position is what tells `query`'s shape from `key`'s; without it every
+#: tensor in the operator shares a single variable.
+_OPERAND_ACCESSORS: list[tuple[str, str]] = [
+    (r"^GetOptionalOutputShape$|^GetOutputShape$|^GetOutputDesc$|^GetOutputTensor$", "output"),
+    (r"^GetOptionalInputShape$|^GetOptionalInputDesc$|^GetOptionalInputTensor$", "input"),
+    (r"^GetInputShape$|^GetInputDesc$|^GetInputTensor$|^GetInputPointer$", "input"),
+    (r"^GetAttrPointer$|^GetBool$|^GetInt$|^GetFloat$|^GetStr$", "attr"),
+]
 
-def _dim_index(name: str, args) -> int | None:
+
+def _operand_list(name: str) -> str | None:
+    for pat, kind in _OPERAND_ACCESSORS:
+        if re.match(pat, name):
+            return kind
+    return None
+
+
+def _dim_index(name: str, args, constants: Mapping[str, int] | None = None) -> int | None:
     if not _DIM_ACCESSOR_RE.match(name):
         return None
     for a in args:
-        if isinstance(a, Const) and isinstance(a.value, int):
-            return a.value
+        got = _const_int(a, constants)
+        if got is not None:
+            return got
     return None
 
 
@@ -399,9 +472,17 @@ class SourceResolver:
         parameters: set[str] | None = None,
         param_actuals: dict[str, list[str]] | None = None,
         def_lists: dict[str, list[str]] | None = None,
+        constants: Mapping[str, int] | None = None,
+        operands: Mapping[str, Sequence[str]] | None = None,
     ):
         self.host_ir = host_ir
         self.max_depth = max_depth
+        # Enum members and constexpr ints, so `GetDim(DIM_2)` names axis 2.
+        self.constants = dict(constants or {})
+        # "input"/"output"/"attr" -> operand names in declaration order, so a
+        # positional accessor resolves to the operand the opdef declared rather
+        # than to the name of the accessor that read it.
+        self.operands = {k: list(v) for k, v in (operands or {}).items()}
         # names bound by the enclosing signature: resolving them needs the caller
         self.parameters = set(parameters or ())
         # parameter name -> actual argument sources observed at call sites
@@ -416,6 +497,21 @@ class SourceResolver:
         # names currently being chased, so `a = b; b = a` terminates
         self._chasing: set[str] = set()
 
+    def adopt(self, var_model: Any) -> None:
+        """Take the constant table and operand order from the variable model.
+
+        The resolver is built before the model exists, but it cannot tell
+        `GetInputShape(QUERY_INPUT_INDEX)` from `GetInputShape(KEY_INPUT_INDEX)`
+        without both. Handing them over afterwards keeps the construction order
+        and still gives every later resolution the operand's real identity.
+        """
+        if var_model is None:
+            return
+        self.constants = dict(getattr(var_model, "named_constants", {}) or {})
+        getter = getattr(var_model, "operand_names", None)
+        if callable(getter):
+            self.operands = {k: list(v) for k, v in getter().items()}
+
     def scoped(
         self,
         *,
@@ -427,6 +523,8 @@ class SourceResolver:
     ) -> "SourceResolver":
         """A view with extra per-node bindings (function locals, loop variables)."""
         child = SourceResolver(host_ir=self.host_ir, max_depth=self.max_depth)
+        child.constants = self.constants
+        child.operands = self.operands
         child.bindings = {**self.bindings, **(bindings or {})}
         child.local_roots = {**self.local_roots, **(local_roots or {})}
         child.parameters = self.parameters | set(parameters or ())
@@ -449,6 +547,7 @@ class SourceResolver:
                         text=f"{base_txt}.{field}" if base_txt else field,
                         root=first.root,
                         symbol=first.symbol,
+                        index=first.index,
                         via=(f".{field}",) + first.via,
                         partial=first.partial,
                     )
@@ -481,23 +580,81 @@ class SourceResolver:
             if name in {"for", "while", "if", "switch", "return", "sizeof"}:
                 return Atom(text=name, reason=REASON_NO_CONDITION, root=None)
             return Atom(text=name, reason=REASON_UNMAPPED_CALL, root=None)
-        symbol = name
-        dim_index = _dim_index(name, e.args)
-        for a in e.args:
-            idx = _index_name(a)
-            if idx:
-                symbol = idx
-                break
-        else:
-            for a in e.args:
-                if isinstance(a, Call):
-                    inner = self.resolve_call(a, depth + 1)
-                    if inner.symbol and inner.root == root:
-                        symbol = inner.symbol
-                        if dim_index is None:
-                            dim_index = inner.index
-                        break
+        dim_index = _dim_index(name, e.args, self.constants)
+        symbol = self._operand_symbol(name, e.args)
+        if symbol is None:
+            inherited = self._inherit_operand(e, root, depth)
+            if inherited is not None:
+                symbol, inner_index = inherited
+                if dim_index is None:
+                    dim_index = inner_index
+        if symbol is None:
+            # Nothing said which operand this reads, so the accessor's own name
+            # has to stand for all of them. `identity_merged` marks the result.
+            symbol = name
         return Atom(text=name, root=root, symbol=symbol, index=dim_index)
+
+    def _operand_symbol(self, name: str, args: Sequence[Expr]) -> str | None:
+        """Which operand a positional accessor selects: `GetInputShape(1)` → key."""
+        for a in args:
+            named = _index_name(a)
+            if named:
+                return named
+        kind = _operand_list(name)
+        names = self.operands.get(kind or "") or []
+        if not names:
+            return None
+        for a in args:
+            pos = _const_int(a, self.constants)
+            if pos is not None and 0 <= pos < len(names):
+                return names[pos]
+        return None
+
+    def _inherit_operand(self, e: Call, root: str, depth: int) -> tuple[str, int | None] | None:
+        """Carry the operand down an accessor chain.
+
+        `GetInputShape(0)->GetStorageShape().GetDim(2)` parses as nested calls
+        with the receiver first, so which tensor is read is only known at the
+        innermost call. What is read off it — shape, dtype, format — is decided
+        by the outer accessor, which is why the receiver's root is not required
+        to match: `GetInputDesc(0)->GetDataType()` is query's dtype.
+        """
+        if depth >= self.max_depth or not e.args:
+            return None
+        got = self._operand_of(e.args[0], depth)
+        if got is not None:
+            return got[0], got[1]
+        for a in e.args[1:]:
+            other = self._operand_of(a, depth)
+            if other is not None and other[2] == root:
+                return other[0], other[1]
+        return None
+
+    def _operand_of(self, a: Expr, depth: int) -> tuple[str, int | None, str | None] | None:
+        """The operand an argument denotes, chasing locals that alias a chain."""
+        inner: Atom | None = None
+        if isinstance(a, Call):
+            inner = self.resolve_call(a, depth + 1)
+        elif isinstance(a, Ref) and (
+            a.symbol in self.bindings
+            or a.symbol in self.def_lists
+            # A helper's formal names the tensor its callers passed:
+            # `IsSameShape(dyShape, queryShape)` decides what `aShape` is. Left
+            # out, the accessor read off a formal had no operand and fell back
+            # to its own name, merging every helper's tensors into one.
+            or a.symbol in self.parameters
+            or a.symbol in self.param_actuals
+        ):
+            # `auto &queryShape = context->GetInputShape(...)->GetStorageShape();`
+            sub = self.resolve(a.symbol, depth + 1)
+            inner = sub.atoms[0] if sub.atoms else None
+        if inner is None or not inner.symbol or inner.reason:
+            return None
+        if _match(CALL_ROOTS, inner.symbol) is not None:
+            # The receiver did not resolve to an operand either; propagating its
+            # accessor name would just spread the collapse one level further.
+            return None
+        return inner.symbol, inner.index, inner.root
 
     def _resolve_tuple_elem(self, idx_expr: Expr, tup_expr: Expr, depth: int) -> Atom:
         """Resolve `__tuple_elem(i, tup)` through make_tuple / tie actuals."""
@@ -601,6 +758,7 @@ class SourceResolver:
             text=_call_name(e),
             root=first.root,
             symbol=first.symbol,
+            index=first.index,
             via=(f"{_call_name(e)}(...)",) + first.via,
             partial=first.partial,
         )
@@ -630,6 +788,7 @@ class SourceResolver:
                             text=sym,
                             root=base.root,
                             symbol=base.symbol,
+                            index=base.index,
                             via=(f"{head}->{rest}",) + base.via,
                         )
                 if (
@@ -641,6 +800,7 @@ class SourceResolver:
                         text=sym,
                         root=base.root,
                         symbol=base.symbol,
+                        index=base.index,
                         via=(f"{head}->{rest}",) + base.via,
                         partial=base.partial,
                     )
@@ -655,8 +815,16 @@ class SourceResolver:
             n = _norm_expr(self.bindings[sym])
             if n and n not in raw:
                 raw.insert(0, n)
-        independent = [c for c in raw if c != sym and not _mentions_sym(sym, c)]
-        candidates = (independent or [c for c in raw if c != sym])[:4]
+        others = [c for c in raw if c != sym]
+        independent = [c for c in others if not _mentions_sym(sym, c)]
+        candidates = (independent or others)[:4]
+        # Dropping the self-mentioning definitions is how `p = CeilDiv(...);
+        # p = p + q` still reaches the CeilDiv, but for a counter it leaves
+        # only the initialiser: `coreIdx = 0` beside `coreIdx += 1`. That is
+        # the value before the loop and never after it, so accepting it as
+        # the constant pins everything downstream to the empty case and rules
+        # out keys that are reachable.
+        accumulates = bool(independent) and len(independent) < len(others)
         if candidates and depth < self.max_depth and sym not in self._chasing:
             self._chasing.add(sym)
             try:
@@ -671,6 +839,7 @@ class SourceResolver:
                             text=sym if first.reason is None else f"{sym}<-{first.text}",
                             root=first.root,
                             symbol=first.symbol,
+                            index=first.index,
                             reason=first.reason,
                             via=(f"{sym}={rhs[:40]}",) + first.via,
                             partial=first.partial,
@@ -684,6 +853,8 @@ class SourceResolver:
                     # it. Remember the constant, but let a definition carrying
                     # actual provenance win over declaration order.
                     if sub.closed and sub.atoms and constant is None:
+                        if _picks_between_constants(sub):
+                            continue
                         constant = Atom(
                             text=sym,
                             root="CONSTANT",
@@ -705,7 +876,7 @@ class SourceResolver:
                             symbol=sym,
                             via=(f"{sym}={rhs[:40]}",),
                         )
-                if constant is not None:
+                if constant is not None and not accumulates:
                     return constant
             finally:
                 self._chasing.discard(sym)
@@ -805,7 +976,7 @@ class SourceResolver:
                 sub = callee.resolve(expr, depth + 1)
                 meaningful = [a for a in sub.atoms if a.root != "CONSTANT"]
                 if not meaningful:
-                    if sub.closed and sub.atoms:
+                    if sub.closed and sub.atoms and not _picks_between_constants(sub):
                         return Atom(
                             text=name,
                             root="CONSTANT",
@@ -824,6 +995,7 @@ class SourceResolver:
                     text=name,
                     root=meaningful[0].root,
                     symbol=meaningful[0].symbol,
+                    index=meaningful[0].index,
                     via=(f"{name}()->{expr[:40]}",) + meaningful[0].via,
                 )
 
@@ -838,6 +1010,7 @@ class SourceResolver:
                         text=name,
                         root=first.root,
                         symbol=first.symbol,
+                        index=first.index,
                         via=(f"{name}(&{p})={rhs[:40]}",) + first.via,
                         partial=first.partial,
                     )
@@ -1010,6 +1183,7 @@ class SourceResolver:
                         text=path,
                         root=root or first.root,
                         symbol=first.symbol,
+                        index=first.index,
                         via=via,
                     )
                 )
@@ -1025,7 +1199,7 @@ class SourceResolver:
         non_const = [a for a in closed if a.root != "CONSTANT"]
         if non_const:
             return non_const[0]
-        const_syms = {str(a.symbol) for a in closed}
+        const_syms = _constant_values(closed)
         if len(const_syms) > 1:
             # Distinct enum/constexpr assignments: the field is host state that
             # *holds* a constant, not a constant itself.
@@ -1128,10 +1302,11 @@ class SourceResolver:
         self._walk(expr, atoms, depth, as_value=True)
         non_const = [a for a in atoms if a.root != "CONSTANT"]
         if not non_const and atoms:
-            return Resolution(condition=expression, atoms=list(atoms))
+            return Resolution(condition=expression, atoms=list(atoms), expr=expr)
         return Resolution(
             condition=expression,
             atoms=non_const or list(atoms) or [Atom(text=expression[:40], reason=REASON_UNMAPPED_SYMBOL)],
+            expr=expr,
         )
 
     def resolve(self, condition: str, depth: int = 0) -> Resolution:

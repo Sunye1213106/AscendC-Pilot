@@ -16,13 +16,19 @@ from uo_init.derive_key_fields import (
     substitute_vars,
 )
 from uo_init.gap_patch import apply_bindings_to_derivation
-from uo_init.gaps import collect_derivation_gap_items
+from uo_init.gaps import (
+    cluster,
+    collect_derivation_gap_items,
+    collect_free_var_gap_items,
+)
 from uo_init.host_derivation import (
     PRESORT_LOOP_ELEMENT,
     PRESORT_UNMAPPED,
     FieldDerivation,
     HostDerivation,
     UndecidedGuard,
+    _guards_of,
+    _to_field,
 )
 from uo_init.kb_model import (
     IC_CONTROLLABLE,
@@ -90,6 +96,81 @@ def test_an_over_approximated_field_is_never_input_derivable():
     fld = _field(EX_OVERAPPROX, ["INPUT_SHAPE"], free_vars=["VAR_LOOPELEM_X_1"])
     assert fld.input_closure == IC_CONTROLLABLE
     assert fld.input_derivable is False
+
+
+def test_a_document_round_trip_keeps_what_grades_a_dimension():
+    """`to_dict` and `_to_field` are two halves of one format, and both ways of
+    disagreeing on a name fail quietly.
+
+    Losing the roots turns the `IsTnd` case above into the `IsRegbase` case
+    below it: an empty root set grades `IC_NONE`, which reads as "constant,
+    nothing needs setting" and counts as drivable. Losing the guards leaves
+    nothing for `_reregister_soft_vars` to re-declare, and the solver then meets
+    those variables as unknown symbols.
+    """
+    fld = _field(
+        EX_EXACT,
+        ["TILING_DATA"],
+        name="IsTnd",
+        undecided_guards=[
+            UndecidedGuard(
+                id="G1",
+                var_id="VAR_UNDECIDED_X",
+                reason="unmapped",
+                text="layoutType",
+                presort=PRESORT_UNMAPPED,
+                escalate=True,
+            )
+        ],
+    )
+    back = _to_field(fld.to_dict(), None)
+    assert back.root_vars == ["TILING_DATA"]
+    assert back.input_closure == IC_HOST_STATE
+    assert back.input_derivable is False
+    assert [g.var_id for g in back.undecided_guards] == ["VAR_UNDECIDED_X"]
+
+
+def _reregistered(row: dict) -> dict[str, str]:
+    """var_id -> declared type, after the parent re-declares a worker's row."""
+    from uo_init.host_derivation import _reregister_soft_vars
+    from uo_init.variable_model import VariableModel
+
+    doc = HostDerivation(op_name="Op", fields=[_field(EX_OVERAPPROX, [], undecided_guards=_guards_of(row, None))])
+    model = VariableModel()
+    _reregister_soft_vars(model, doc)
+    return {v: model.get(v).value_type for v in (row.get("undecided") or {})}
+
+
+def test_a_worker_declaring_a_type_is_believed_over_the_name():
+    """`VAR_SCHED_` covers two unrelated things: a softened guard, which is a
+    bool, and a traversal position like `coreIdx`, which is an int compared
+    against the core count. The bucket can only see the prefix, so the type has
+    to travel with the record. Guessing bool for `coreIdx` makes `coreIdx == 36`
+    fail to compile, and that took every dimension down with it.
+    """
+    row = {
+        "undecided": {
+            "VAR_SCHED_COREIDX": "LOOP_INDUCTION: coreIdx",
+            "VAR_SCHED_abcdef012345": "SCHED_SOFT: some guard",
+        },
+        "var_types": {"VAR_SCHED_COREIDX": "int"},
+    }
+    types = _reregistered(row)
+    assert types["VAR_SCHED_COREIDX"] == "int"
+    # The one the worker said nothing about still follows its bucket.
+    assert types["VAR_SCHED_abcdef012345"] == "bool"
+
+
+def test_the_declared_type_survives_a_document_round_trip():
+    """The record goes to disk between the worker and the solver, so a type
+    that is not serialised is a type that is lost."""
+    row = {
+        "undecided": {"VAR_SCHED_COREIDX": "LOOP_INDUCTION: coreIdx"},
+        "var_types": {"VAR_SCHED_COREIDX": "int"},
+    }
+    fld = _field(EX_OVERAPPROX, [], undecided_guards=_guards_of(row, None))
+    [back] = _to_field(fld.to_dict(), None).undecided_guards
+    assert back.var_type == "int"
 
 
 def test_an_unclassified_root_counts_as_host_state():
@@ -191,6 +272,89 @@ def test_an_unmapped_guard_is_still_escalated():
     # One question, tagged onto both the key field and the guard id so that
     # clustering can merge them.
     assert {i.node_id for i in items} == {"KEYFIELD_Dim", "G1"}
+
+
+# -- do the over-approximations themselves become questions? ----------------
+def _initial_value_field(**kw):
+    """A field whose expression still carries the value a member held before
+    any write — the shape `implicit_defaults` records."""
+    fld = _field(EX_OVERAPPROX, ["INPUT_SHAPE"], **kw)
+    fld.free_vars = ["VAR_INIT_ABC123"]
+    fld.implicit_defaults = [
+        {
+            "variable": "VAR_INIT_ABC123",
+            "field": "fBaseParams.someFlag",
+            "file": "f.cpp",
+            "line": 42,
+            "function": "Prepare",
+            "guard": "layout == TND",
+        }
+    ]
+    return fld
+
+
+def test_an_initial_value_assumption_becomes_a_question():
+    """It was never a guard, so `collect_derivation_gap_items` cannot see it —
+    and it is exactly what keeps the dimension from closing."""
+    items = collect_free_var_gap_items(HostDerivation(fields=[_initial_value_field()]))
+    assert [i.reason for i in items] == ["UNWRITTEN_INITIAL_VALUE"]
+    assert items[0].text == "fBaseParams.someFlag"
+    assert (items[0].file, items[0].line) == ("f.cpp", 42)
+
+
+def test_the_question_carries_the_variable_an_answer_would_remove():
+    """An initial-value variable has no guard record to hang a binding off, so
+    without naming it the substitution would have nothing to aim at."""
+    items = collect_free_var_gap_items(HostDerivation(fields=[_initial_value_field()]))
+    assert items[0].var_id == "VAR_INIT_ABC123"
+    blocker = cluster(items)[0]
+    assert "VAR_INIT_ABC123" in blocker.affected_nodes
+
+
+def test_two_dimensions_blocked_by_one_member_ask_once():
+    doc = HostDerivation(
+        fields=[
+            _initial_value_field(name="DimA"),
+            _initial_value_field(name="DimB"),
+        ]
+    )
+    assert len(cluster(collect_free_var_gap_items(doc))) == 1
+
+
+def test_a_loop_element_cut_becomes_a_question_even_though_it_never_escalates():
+    """Filtered out of the escalating queue on purpose — asking whether it is
+    input-derived collects a yes that changes nothing. Asking what the loop
+    computes is a different question, and it is the one worth asking."""
+    fld = _field(EX_OVERAPPROX, ["INPUT_SHAPE"])
+    fld.free_vars = ["VAR_LOOPELEM_INVALIDS1ARRAY_1"]
+    fld.undecided_guards = [_guard(PRESORT_LOOP_ELEMENT, escalate=False)]
+    items = collect_free_var_gap_items(HostDerivation(fields=[fld]))
+    assert [i.reason for i in items] == ["LOOP_SUMMARY_NEEDED"]
+    assert items[0].var_id == "VAR_LOOPELEM_INVALIDS1ARRAY_1"
+
+
+def test_a_scheduling_position_is_still_not_asked_about():
+    """Which core ran a block is not a property of the input, so any answer
+    would be invention."""
+    fld = _field(EX_OVERAPPROX, ["INPUT_SHAPE"])
+    fld.free_vars = ["VAR_SCHED_COREIDX", "VAR_REACHED_Helper"]
+    assert collect_free_var_gap_items(HostDerivation(fields=[fld])) == []
+
+
+def test_a_free_variable_with_nothing_behind_it_is_not_turned_into_a_question():
+    """`unrecorded_free_vars` gates on this, and it means the derivation has a
+    bug. Inventing a question would paper over it with a model's guess."""
+    fld = _field(EX_OVERAPPROX, ["INPUT_SHAPE"])
+    fld.free_vars = ["VAR_INIT_NOTHING_KNOWN"]
+    assert collect_free_var_gap_items(HostDerivation(fields=[fld])) == []
+
+
+def test_an_assumption_already_substituted_away_is_not_asked_about():
+    """`free_vars` is what survives in the expression; a record left over from
+    an answered question would spend a model's attention on nothing."""
+    fld = _initial_value_field()
+    fld.free_vars = []
+    assert collect_free_var_gap_items(HostDerivation(fields=[fld])) == []
 
 
 # -- does an accepted verdict actually change the expression? ---------------

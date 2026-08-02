@@ -4,18 +4,24 @@ from __future__ import annotations
 
 import collections
 import re
+import sys
 
 from clang import cindex
 
+from uo_init import paths
 from uo_init.build_context import BuildContext
 from uo_init.op_spec import discover
 
-FAG = r"d:\PR-review\TEST\ops-transformer\attention\flash_attention_score_grad"
-CANN = r"d:\PR-review\_cann\pkg"
-OPS = r"d:\PR-review\TEST\ops-transformer"
+DEFAULT_OPERATOR = "attention/flash_attention_score_grad"
+
+FAG = paths.op_dir(relative=DEFAULT_OPERATOR)
+CANN = paths.cann_root()
+OPS = paths.ops_root()
+if FAG is None or CANN is None or OPS is None:
+    sys.exit(f"CANN packages or operator sources not available\n{paths.explain()}")
 
 spec = discover(FAG)
-ctx = BuildContext.load(cann_root=CANN, ops_root=OPS, op_dir=str(spec.op_dir), arch_dir=spec.arch_dir)
+ctx = BuildContext.load(cann_root=str(CANN), ops_root=str(OPS), op_dir=str(spec.op_dir), arch_dir=spec.arch_dir)
 args = ctx.kernel_args("DT_FLOAT16")
 tu = cindex.Index.create().parse(
     str(spec.kernel_entry), args=args,

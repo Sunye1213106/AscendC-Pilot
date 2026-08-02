@@ -14,9 +14,13 @@ ROOT = Path(__file__).resolve().parents[1]
 UO_SRC = ROOT / "engines" / "understand-operator" / "src"
 sys.path.insert(0, str(UO_SRC))
 
-OP = Path(r"d:\PR-review\TEST\ops-transformer\attention\flash_attention_score_grad")
-CANN = r"d:\PR-review\_cann\pkg"
-OPS = r"d:\PR-review\TEST\ops-transformer"
+from uo_init import paths  # noqa: E402
+
+DEFAULT_OPERATOR = "attention/flash_attention_score_grad"
+
+OP = paths.op_dir(relative=DEFAULT_OPERATOR)
+CANN = paths.cann_root()
+OPS = paths.ops_root()
 DEBUG = ROOT / "docs" / "debug" / "uo-tg-closure"
 
 
@@ -131,6 +135,12 @@ def probe(uo: Path) -> dict:
 
 
 def main() -> int:
+    if OP is None or CANN is None or OPS is None:
+        print(
+            f"operator sources, CANN or ops-transformer not available\n{paths.explain()}",
+            file=sys.stderr,
+        )
+        return 1
     DEBUG.mkdir(parents=True, exist_ok=True)
     from uo_init.assemble_kb import export_operator_closure
     from uo_init.pilot_engines import prepare_layout, scope_confirm, scope_scan
@@ -153,8 +163,8 @@ def main() -> int:
     )
     receipt = export_operator_closure(
         op_dir=OP,
-        cann_root=CANN,
-        ops_root=OPS,
+        cann_root=str(CANN),
+        ops_root=str(OPS),
         fold_kernel=True,
         harness_workers=6,
     )

@@ -15,14 +15,17 @@ import os
 import re
 import sys
 
-FAG_HOST = (
-    r"D:\PR-review\TEST\ops-transformer\attention"
-    r"\flash_attention_score_grad\op_host"
-)
-REGISTRY_H = (
-    r"D:\PR-review\TEST\ops-transformer\common\include"
-    r"\op_host\tiling_templates_registry.h"
-)
+from uo_init import paths
+
+DEFAULT_OPERATOR = "attention/flash_attention_score_grad"
+
+_OPS = paths.ops_root()
+_FAG = paths.op_dir(relative=DEFAULT_OPERATOR)
+if _OPS is None or _FAG is None:
+    sys.exit(f"operator sources not available\n{paths.explain()}")
+
+FAG_HOST = str(_FAG / "op_host")
+REGISTRY_H = str(_OPS / "common" / "include" / "op_host" / "tiling_templates_registry.h")
 
 REG_RE = re.compile(
     r"REGISTER_TILING_TEMPLATE_WITH_ARCH\s*\(\s*"
@@ -132,7 +135,7 @@ def classify_atoms(body: str):
 def try_clang_iscapable(path: str):
     """Optional: locate IsCapable via libclang if build context available."""
     try:
-        sys.path.insert(0, r"D:\PR-review\_cann")
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from probe_clang import ARGS, parse, in_fag  # type: ignore
         from clang import cindex
     except Exception as e:

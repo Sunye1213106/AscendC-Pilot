@@ -15,9 +15,15 @@ ROOT = Path(__file__).resolve().parents[1]
 UO_SRC = ROOT / "engines" / "understand-operator" / "src"
 sys.path.insert(0, str(UO_SRC))
 
-OP = Path(r"d:\PR-review\TEST\ops-transformer\attention\flash_attention_score_grad")
+from uo_init import paths  # noqa: E402
+
+DEFAULT_OPERATOR = "attention/flash_attention_score_grad"
+
+OP = paths.op_dir(relative=DEFAULT_OPERATOR)
 DEBUG = ROOT / "docs" / "debug" / "uo-tg-closure"
-FAG_DATA = Path(r"d:\PR-review\TEST\fag_debug_tools\data")
+#: fag_debug_tools is a separate checkout sitting beside ops-transformer.
+_OPS = paths.ops_root()
+FAG_DATA = _OPS.parent / "fag_debug_tools" / "data" if _OPS is not None else None
 
 INPUT_DTYPE = {
     "0": "fp16",
@@ -108,6 +114,15 @@ def shape_from_dims(dims: dict[str, str]) -> dict[str, object]:
 
 
 def main() -> int:
+    if OP is None or FAG_DATA is None:
+        print(
+            f"operator sources or ops-transformer not available\n{paths.explain()}",
+            file=sys.stderr,
+        )
+        return 1
+    if not FAG_DATA.parent.is_dir():
+        print(f"fag_debug_tools checkout not found: {FAG_DATA.parent}", file=sys.stderr)
+        return 1
     uo = OP / ".ascendc-pilot" / "uo"
     tg = OP / ".ascendc-pilot" / "tg" / "cases"
     tg.mkdir(parents=True, exist_ok=True)

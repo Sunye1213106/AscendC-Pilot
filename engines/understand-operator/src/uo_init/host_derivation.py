@@ -294,6 +294,10 @@ class UndecidedGuard:
     #: Function the variable was read in. Part of its identity: same-named
     #: locals in two functions are two variables, not one.
     scope: str = ""
+    #: Type the worker declared the variable with, when it said. Empty means
+    #: fall back to guessing from the bucket, which is right for a softened
+    #: guard and wrong for anything else sharing its prefix.
+    var_type: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -304,6 +308,8 @@ class UndecidedGuard:
             "presort": self.presort,
             "escalate": self.escalate,
         }
+        if self.var_type:
+            out["var_type"] = self.var_type
         if self.blocked_on:
             out["blocked_on"] = self.blocked_on
         if self.scope:
@@ -388,15 +394,23 @@ class FieldDerivation:
         )
 
     def unrecorded_free_vars(self) -> list[str]:
-        """Over-approximations in `value_expr` that no guard record explains.
+        """Over-approximations in `value_expr` that nothing on the books explains.
 
-        This must always be empty. A free variable with no guard behind it is
+        This must always be empty. A free variable with nothing behind it is
         invisible to the gap machinery, so it can never be escalated or closed,
         while the solver still treats the condition it replaced as "either
         way" — an over-approximation that has dropped off the books rather
         than been resolved.
+
+        Two kinds of record answer for a variable. A softened guard is one. The
+        other is an assumed default: the chain reached a point where the field's
+        prior value was unreadable, which is not a guard at all but is recorded
+        just as precisely, down to the site that raised it.
         """
         recorded = {g.var_id for g in self.undecided_guards}
+        recorded |= {
+            str(d["variable"]) for d in self.implicit_defaults if d.get("variable")
+        }
         return sorted(v for v in self.free_vars if v not in recorded)
 
     def to_dict(self) -> dict[str, Any]:
@@ -435,6 +449,13 @@ class HostDerivation:
     encode_function: str = ""
     fields: list[FieldDerivation] = field(default_factory=list)
     note: str = ""
+    #: What the operator requires of its inputs, one entry per rejection it
+    #: writes. These hold on every run that produces a key, so they constrain
+    #: every field at once and belong to the document rather than to any one of
+    #: them. Without them an input the operator refuses — FAG's HIFLOAT8 query —
+    #: still looks available, and the values only it can produce are reported as
+    #: reachable. See `HostIR.legality_premises`.
+    premises: list[dict[str, Any]] = field(default_factory=list)
 
     def by_name(self) -> dict[str, FieldDerivation]:
         return {f.name: f for f in self.fields}
@@ -492,6 +513,7 @@ class HostDerivation:
             "encode_function": self.encode_function,
             "totals": self.totals(),
             "note": self.note,
+            "premises": [dict(p) for p in self.premises],
             "fields": [f.to_dict() for f in self.fields],
         }
 
@@ -524,6 +546,92 @@ def _derive_row(bundle: dict[str, Any], index: int, helper: int) -> dict[str, An
     row["expanded"] = row["expanded"][:EXPANDED_KEEP]
     row["undecided"] = {k: v[:TEXT_KEEP] for k, v in row["undecided"].items()}
     return row
+
+
+#: Names a premise may not depend on. A premise *narrows* the input space, so
+#: an inexact one hides reachable keys — the one failure mode worth being
+#: paranoid about here. A free variable means the expansion gave up somewhere,
+#: and "some unknown thing is false" excludes inputs on no evidence at all.
+_SOFT_PREFIXES = ("VAR_LOCAL_", "VAR_INIT_", "VAR_UNMODELLED_")
+
+
+def _mentions_soft(node: Any) -> bool:
+    if isinstance(node, dict):
+        name = node.get("var")
+        if isinstance(name, str) and name.startswith(_SOFT_PREFIXES):
+            return True
+        return any(_mentions_soft(v) for v in node.values())
+    if isinstance(node, list):
+        return any(_mentions_soft(v) for v in node)
+    return False
+
+
+def _mentions_any_var(node: Any) -> bool:
+    if isinstance(node, dict):
+        if isinstance(node.get("var"), str):
+            return True
+        return any(_mentions_any_var(v) for v in node.values())
+    if isinstance(node, list):
+        return any(_mentions_any_var(v) for v in node)
+    return False
+
+
+def _derive_premises(
+    bundle: dict[str, Any], host_ir: Any, function: str, helper: int
+) -> list[dict[str, Any]]:
+    """Expand each input-legality condition the same way a dimension is expanded.
+
+    A rejection is written in the operator's own vocabulary — `fBaseParams
+    .queryType`, a member assigned three calls earlier — so it needs the same
+    chasing a key field does, and gets it by going through the same deriver.
+    """
+    from uo_init.derive_key_fields import KeyFieldDeriver
+
+    out: list[dict[str, Any]] = []
+    for i, (text, fn, file, line) in enumerate(host_ir.legality_premises()):
+        try:
+            deriver = KeyFieldDeriver(
+                host_ir=host_ir,
+                resolver=bundle["resolver"],
+                var_model=bundle["var_model"],
+                max_helper_guards=helper,
+            )
+            row = deriver.derive(
+                dim_name=f"__premise{i}",
+                index=-1 - i,
+                host_expr=text,
+                function=fn or function,
+            ).to_dict()
+        except Exception as exc:  # noqa: BLE001 — a premise we cannot read is dropped
+            out.append({"text": text, "file": file, "line": line, "function": fn,
+                        "usable": False, "why": f"{type(exc).__name__}: {exc}"[:120]})
+            continue
+        expr = row.get("value_expr")
+        why = ""
+        if expr is None:
+            why = "no expression"
+        elif row.get("unresolved"):
+            why = str((row["unresolved"][0] or {}).get("reason") or "unresolved")[:120]
+        elif _mentions_soft(expr):
+            why = "free variable"
+        elif not _mentions_any_var(expr):
+            # A requirement on the inputs that mentions no input is not one:
+            # expansion lost it somewhere. `if (!IsSameShape(dy, attentionIn))`
+            # folds to a bare constant once the call cannot be read, and a
+            # constant-false premise would reject every input there is.
+            why = "no input dependence"
+        out.append(
+            {
+                "text": text,
+                "file": file,
+                "line": line,
+                "function": fn,
+                "usable": not why,
+                "why": why,
+                "expr": None if why else expr,
+            }
+        )
+    return out
 
 
 def _worker(bundle_path: str, sys_path: list[str], index: int, helper: int, queue) -> None:
@@ -561,6 +669,37 @@ def _failed_row(name: str, index: int, reason: str, seconds: float) -> dict[str,
     }
 
 
+def _reap(proc: Any, queue: Any) -> int | None:
+    """Leave no worker behind, whatever state it is in. Returns its exit code.
+
+    The caller cannot read `exitcode` afterwards -- closing the handle is part
+    of the cleanup -- so it is read here, while it is still there to read.
+    """
+    exitcode: int | None = None
+    try:
+        proc.join(timeout=5)
+        if proc.is_alive():
+            proc.terminate()
+            proc.join(timeout=5)
+        if proc.is_alive():
+            proc.kill()
+            proc.join(timeout=5)
+        exitcode = proc.exitcode
+    finally:
+        try:
+            # The queue's feeder thread keeps the pipe open, and on Windows an
+            # open handle keeps the process object alive after it has exited.
+            queue.close()
+            queue.join_thread()
+        except Exception:  # noqa: BLE001 — teardown must not mask the result
+            pass
+        try:
+            proc.close()
+        except Exception:  # noqa: BLE001 — already reaped, or never started
+            pass
+    return exitcode
+
+
 def _derive_isolated(
     bundle_path: str, index: int, name: str, helper: int, timeout: int
 ) -> dict[str, Any]:
@@ -574,20 +713,26 @@ def _derive_isolated(
     started = time.time()
     proc.start()
     row: dict[str, Any] | None = None
+    exitcode: int | None = None
     try:
-        row = queue.get(timeout=timeout)
-    except Exception:  # noqa: BLE001 — empty queue means timeout or crash
-        row = None
-    proc.join(timeout=5)
-    if proc.is_alive():
-        proc.terminate()
-        proc.join(timeout=5)
+        try:
+            row = queue.get(timeout=timeout)
+        except Exception:  # noqa: BLE001 — empty queue means timeout or crash
+            row = None
+    finally:
+        # One worker per dimension, so a worker that outlives its collection
+        # is not a one-off: it is one stray interpreter per dimension, holding
+        # its parsed translation units until the machine is out of memory.
+        # `daemon` only covers a clean parent exit, and the escalation matters
+        # because `terminate` posts a signal that a process wedged in a native
+        # call can ignore.
+        exitcode = _reap(proc, queue)
     elapsed = round(time.time() - started, 1)
     if row is not None and "__error__" not in row:
         return row
     if row is not None:
         return _failed_row(name, index, str(row["__error__"]), elapsed)
-    reason = "TIMEOUT" if elapsed >= timeout else f"CRASHED(exit={proc.exitcode})"
+    reason = "TIMEOUT" if elapsed >= timeout else f"CRASHED(exit={exitcode})"
     return _failed_row(name, index, reason, elapsed)
 
 
@@ -597,12 +742,40 @@ def _readopt(row: dict[str, Any], key: str, default: Any) -> Any:
     return default if got is None else got
 
 
-def _to_field(
+def _guards_of(
     row: dict[str, Any], evidence: GuardEvidenceIndex | None
-) -> FieldDerivation:
+) -> list[UndecidedGuard]:
+    """The softened guards, from either shape a row arrives in.
+
+    A worker hands back `undecided` as `{var_id: "reason: text"}`; a document
+    that has been through `to_dict` carries `undecided_guards` as whole records.
+    Reading only the worker shape leaves the guards empty after a round-trip,
+    and then `_reregister_soft_vars` declares nothing -- so the solver meets
+    those variables as unknown symbols, which is exactly the state that drops a
+    dimension.
+    """
+    records = row.get("undecided_guards")
+    if records:
+        return [
+            UndecidedGuard(
+                id=str(r.get("id") or guard_id(str(r.get("var_id") or ""))),
+                var_id=str(r.get("var_id") or ""),
+                reason=str(r.get("reason") or ""),
+                text=str(r.get("text") or "")[:TEXT_KEEP],
+                presort=str(r.get("presort") or ""),
+                escalate=bool(r.get("escalate")),
+                evidence=dict(r["evidence"]) if r.get("evidence") else None,
+                blocked_on=str(r.get("blocked_on") or ""),
+                scope=str(r.get("scope") or ""),
+                var_type=str(r.get("var_type") or ""),
+            )
+            for r in records
+        ]
+
     guards: list[UndecidedGuard] = []
     blocked_on = row.get("blocked_on") or {}
     var_scope = row.get("var_scope") or {}
+    var_types = row.get("var_types") or {}
     for var_id, detail in sorted((row.get("undecided") or {}).items()):
         reason, text = split_reason(detail)
         presort = presort_guard(var_id, detail)
@@ -618,8 +791,29 @@ def _to_field(
                 evidence=evidence.best(text, scope) if evidence is not None else None,
                 blocked_on=str(blocked_on.get(var_id) or ""),
                 scope=scope,
+                var_type=str(var_types.get(var_id) or ""),
             )
         )
+    return guards
+
+
+def _roots_of(row: dict[str, Any]) -> list[Any]:
+    """The input roots, under either name the two serialisations give them.
+
+    Losing them is not a quiet loss of detail: an empty root set grades as
+    `IC_NONE`, which reads as "constant, nothing needs setting" and counts as
+    drivable -- the opposite of "closed onto host state no test can drive".
+    """
+    value = row.get("input_roots")
+    if value is None:
+        value = row.get("root_vars")
+    return list(value or [])
+
+
+def _to_field(
+    row: dict[str, Any], evidence: GuardEvidenceIndex | None
+) -> FieldDerivation:
+    guards = _guards_of(row, evidence)
     return FieldDerivation(
         name=str(row.get("name") or ""),
         index=int(row.get("index") or 0),
@@ -630,7 +824,7 @@ def _to_field(
         domain=[str(v) for v in _readopt(row, "domain", [])],
         value_expr=decode_expr_dag(row.get("value_expr")),
         value_leaves=sorted(str(v) for v in _readopt(row, "value_leaves", [])),
-        root_vars=sorted(str(v) for v in _readopt(row, "input_roots", [])),
+        root_vars=sorted(str(v) for v in _roots_of(row)),
         variables=sorted(str(v) for v in _readopt(row, "variables", [])),
         undecided_guards=guards,
         unresolved=list(_readopt(row, "unresolved", [])),
@@ -683,6 +877,13 @@ def _reregister_soft_vars(var_model: Any, doc: HostDerivation) -> None:
     Softening happens inside the child process, so the parent's model never
     sees those `VarSpec`s. The solver needs them declared, and the patch
     validator needs `var_id` lookups to agree with what the derivation emitted.
+
+    Two kinds come back this way. A softened guard arrives as an
+    `UndecidedGuard`; the variable standing in for a field's value before any
+    write arrives on the `implicit_defaults` record instead, and it is an
+    unbounded int rather than a bool. Leaving the second kind undeclared is not
+    a silent no-op -- the solver reads an unknown symbol as `unmodelled_variable`
+    and drops the whole dimension.
     """
     from uo_init.kb_model import Domain
     from uo_init.variable_model import VarSpec
@@ -692,20 +893,46 @@ def _reregister_soft_vars(var_model: Any, doc: HostDerivation) -> None:
             if var_model.get(guard.var_id) is not None:
                 continue
             kind = _SOFT_VAR_KINDS.get(guard.presort) or _SOFT_VAR_KINDS[""]
+            # What the worker declared beats what the bucket suggests. The
+            # bucket only knows the prefix, and `VAR_SCHED_` carries both
+            # softened guards and traversal positions -- one bool, one int.
+            var_type = guard.var_type or kind["type"]
             var_model.add(
                 VarSpec(
                     var_id=guard.var_id,
                     name=guard.var_id,
-                    value_type=kind["type"],
+                    value_type=var_type,
                     domain=Domain(
                         var_id=guard.var_id,
-                        value_type=kind["type"],
+                        value_type=var_type,
                         completeness="open",
                         source=kind["source"],
                     ),
                     origin=kind["origin"],
                     description=f"{guard.reason}: {guard.text[:160]}",
                     identity_merged=bool(kind["merged"]),
+                )
+            )
+        for record in fld.implicit_defaults:
+            var_id = str(record.get("variable") or "")
+            if not var_id or var_model.get(var_id) is not None:
+                continue
+            where = f"{record.get('file')}:{record.get('line')}"
+            var_model.add(
+                VarSpec(
+                    var_id=var_id,
+                    name=var_id,
+                    value_type="int",
+                    domain=Domain(
+                        var_id=var_id,
+                        value_type="int",
+                        completeness="open",
+                        source="init_unknown",
+                    ),
+                    origin="INIT_UNKNOWN",
+                    description=(
+                        f"value of {record.get('field')} before any write ({where})"
+                    ),
                 )
             )
 
@@ -780,6 +1007,12 @@ def derive_host_fields(
             Path(tmp_path).unlink(missing_ok=True)
 
     doc.fields.sort(key=lambda f: f.index)
+    try:
+        doc.premises = _derive_premises(
+            bundle, host_ir, doc.encode_function, max_helper_guards
+        )
+    except Exception as exc:  # noqa: BLE001 — premises sharpen, they do not gate
+        doc.note = (doc.note + f" premises failed: {type(exc).__name__}").strip()
     if bundle.get("var_model") is not None:
         _reregister_soft_vars(bundle["var_model"], doc)
     return doc

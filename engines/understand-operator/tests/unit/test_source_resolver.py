@@ -19,6 +19,91 @@ def test_accessor_calls_map_to_roots():
     assert res.atoms[0].symbol == "actual_seq_q_len"
 
 
+class _Model:
+    """Just the two things `adopt` reads: constants and operand order."""
+
+    def __init__(self, constants, operands):
+        self.named_constants = dict(constants)
+        self._operands = dict(operands)
+
+    def operand_names(self):
+        return {k: list(v) for k, v in self._operands.items()}
+
+
+def _fag_like() -> SourceResolver:
+    r = SourceResolver()
+    r.adopt(
+        _Model(
+            {"QUERY_INPUT_INDEX": 0, "KEY_INPUT_INDEX": 1, "DIM_1": 1, "DIM_2": 2},
+            {"input": ["query", "key", "value"], "output": ["dq", "dk", "dv"]},
+        )
+    )
+    return r
+
+
+def test_two_axes_of_one_tensor_are_two_variables():
+    """`d` and `s1` are different numbers; sharing a variable invents UNSAT."""
+    r = _fag_like()
+    d = r.resolve("ctx->GetInputShape(QUERY_INPUT_INDEX)->GetStorageShape().GetDim(DIM_2)")
+    s1 = r.resolve("ctx->GetInputShape(QUERY_INPUT_INDEX)->GetStorageShape().GetDim(DIM_1)")
+    assert (d.atoms[0].symbol, d.atoms[0].index) == ("query", 2)
+    assert (s1.atoms[0].symbol, s1.atoms[0].index) == ("query", 1)
+
+
+def test_two_tensors_on_the_same_axis_are_two_variables():
+    r = _fag_like()
+    q = r.resolve("ctx->GetInputShape(QUERY_INPUT_INDEX)->GetStorageShape().GetDim(0)")
+    k = r.resolve("ctx->GetInputShape(KEY_INPUT_INDEX)->GetStorageShape().GetDim(0)")
+    assert q.atoms[0].symbol == "query"
+    assert k.atoms[0].symbol == "key"
+
+
+def test_a_local_alias_to_a_shape_keeps_the_tensor():
+    """`auto &queryShape = ...->GetStorageShape();` then `queryShape.GetDim(2)`."""
+    r = _fag_like().scoped(
+        bindings={
+            "queryShape": "ctx->GetInputShape(QUERY_INPUT_INDEX)->GetStorageShape()"
+        }
+    )
+    res = r.resolve("queryShape.GetDim(DIM_2)")
+    assert (res.atoms[0].symbol, res.atoms[0].index) == ("query", 2)
+
+
+def test_a_shape_passed_into_a_helper_is_the_tensor_the_caller_passed():
+    """`IsSameShape(dyShape, queryShape)` decides what `aShape` reads.
+
+    Without chasing the formal, the accessor called on it had no operand and
+    fell back to its own name, so every helper's tensors — and every caller's —
+    shared one variable and were forced to agree.
+    """
+    r = _fag_like().scoped(
+        parameters={"aShape"},
+        param_actuals={"aShape": ["ctx->GetInputShape(KEY_INPUT_INDEX)"]},
+    )
+    res = r.resolve("aShape->GetStorageShape().GetDimNum() == 0")
+    assert res.closed and res.atoms[0].symbol == "key"
+
+
+def test_dtype_is_read_off_the_tensor_it_was_asked_about():
+    """The outer accessor picks what is read; the receiver picks which tensor."""
+    r = _fag_like()
+    res = r.resolve("ctx->GetInputDesc(KEY_INPUT_INDEX)->GetDataType()")
+    assert res.roots == ["INPUT_DTYPE"]
+    assert res.atoms[0].symbol == "key"
+
+
+def test_outputs_are_indexed_against_the_output_list():
+    r = _fag_like()
+    res = r.resolve("ctx->GetOutputShape(1)->GetStorageShape().GetDim(0)")
+    assert res.atoms[0].symbol == "dk"
+
+
+def test_without_a_model_the_accessor_name_still_stands_in():
+    """No constants, no operand list: fall back rather than fail."""
+    res = SourceResolver().resolve("ctx->GetInputShape(QUERY_INPUT_INDEX)->GetDim(DIM_2)")
+    assert res.roots == ["INPUT_SHAPE"]
+
+
 def test_platform_arch_symbol():
     res = SourceResolver().resolve("npuArch == NpuArch::DAV_3510")
     assert res.closed and res.roots == ["PLATFORM_ARCH"]
@@ -113,6 +198,26 @@ def test_binding_all_constant_still_closed():
     """A4: locals that expand only to CONSTANT remain closed."""
     r = SourceResolver().scoped(bindings={"flag": "true"})
     res = r.resolve("flag")
+    assert res.closed and res.roots == ["CONSTANT"]
+
+
+def test_a_local_that_picks_between_constants_is_not_one():
+    """A ternary's arms are all constants, but the local is not a constant.
+
+    Reading it as one keeps the first arm and silently deletes the branches
+    that would have produced the others.
+    """
+    r = SourceResolver().scoped(
+        bindings={"mode": "(cubebaseM == cubebaseN ? 0 : (cubebaseM > cubebaseN ? 2 : 1))"}
+    )
+    res = r.resolve("mode")
+    assert res.roots != ["CONSTANT"]
+
+
+def test_arithmetic_over_constants_is_still_one_constant():
+    """`kBlockSize * 2` names two values but only ever produces one."""
+    r = SourceResolver().scoped(bindings={"span": "16 * 2"})
+    res = r.resolve("span")
     assert res.closed and res.roots == ["CONSTANT"]
 
 

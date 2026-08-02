@@ -43,6 +43,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from .predicate import VALUE_KIND_STRING
+
 __all__ = [
     "R_REACHABLE",
     "R_UNREACHABLE",
@@ -55,6 +57,11 @@ __all__ = [
     "KeyVerdict",
     "KeyReachability",
 ]
+
+#: Label a query puts on "this dimension takes this value", so that an unsat
+#: core can name the values that clashed rather than the definitions the proof
+#: happened to walk through.
+_ASKED = "asked:"
 
 R_REACHABLE = "reachable"
 R_UNREACHABLE = "unreachable"
@@ -93,9 +100,21 @@ _BOOL_OPS = frozenset(
     }
 )
 
+#: Ops whose operands must each be a proposition rather than a value.
+_CONNECTIVES = frozenset({"and", "or", "not", "implies", "requires", "mutex"})
+
+#: Tiling arithmetic is full of division and remainder, so the compiled system
+#: is nonlinear integer arithmetic -- undecidable, and in practice a solver that
+#: does not come back. A bounded budget turns that into an honest `unknown`,
+#: which the caller already handles; without one, a single key takes the run
+#: down. `rlimit` counts solver steps, so a verdict does not change with the
+#: machine it ran on; the wall clock is only there to catch what rlimit misses.
+DEFAULT_RLIMIT = 2_000_000
+DEFAULT_HARD_TIMEOUT_MS = 20_000
+
 #: Keys under which a string is a name rather than a value, so it must not be
 #: folded to a number.
-_NAME_KEYS = frozenset({"var", "op", "id", "kind", "reason"})
+_NAME_KEYS = frozenset({"var", "op", "id", "kind", "reason", "value_kind"})
 
 #: Variables whose id stands for several distinct values — see
 #: `VarSpec.identity_merged`. `VAR_SHAPE_GETSTORAGESHAPE` covers *every*
@@ -109,6 +128,19 @@ ISOLATE_MARK = "@"
 
 #: Marks the symbol-comparison half of a merged variable — see `_Domains`.
 SYMBOL_MARK = "#sym"
+
+#: Stands in for a name the guard reader left unexpanded -- a loop induction
+#: variable, a tiling intermediate, a reduction. Dropping the dimension instead
+#: was the conservative reading of "we do not know this value", but it is the
+#: expensive one: the dimension stops constraining anything at all. An
+#: unconstrained variable says the same thing and keeps the rest of the tree,
+#: because a free variable admits every value the real one could take.
+#:
+#: Isolated per dimension by `_Isolator`. Sharing one across dimensions would
+#: assert an equality nobody proved, and equalities are what invent UNSAT.
+LOCAL_PREFIX = "VAR_LOCAL_"
+
+_NOT_IDENT = re.compile(r"[^0-9A-Za-z_]+")
 
 _GETTER_MARK = re.compile(r"_GET[A-Z]")
 
@@ -187,6 +219,7 @@ class KeyReachability:
         unavailable: str = "",
         isolated: Iterable[str] = (),
         shared: Iterable[str] = (),
+        blockers: Mapping[str, Mapping[str, str]] | None = None,
     ) -> None:
         self._backend = backend
         self._dims = dict(dims)
@@ -196,6 +229,18 @@ class KeyReachability:
         self._unavailable = unavailable
         self._isolated = sorted(isolated)
         self._shared = sorted(shared)
+        self._blockers = {k: dict(v) for k, v in (blockers or {}).items()}
+        self._groups = _independent_groups(self._dims)
+        #: One entry per distinct combination a group takes, not per key.
+        self._group_cache: dict[tuple[tuple[str, Any], ...], dict[str, Any]] = {}
+        #: Minimal contradictions already proved, as dimension names -> the
+        #: value tuples that clash. UNSAT is monotone: if these few dimensions
+        #: cannot hold together, no assignment containing them can, whatever
+        #: the other dimensions do. Once the trees share real input variables a
+        #: group spans most of the key, so its combinations rarely repeat and
+        #: the cache above stops paying; the contradiction underneath is much
+        #: smaller and repeats constantly.
+        self._conflicts: dict[tuple[str, ...], set[tuple[Any, ...]]] = {}
 
     # -- construction ------------------------------------------------------
     @classmethod
@@ -221,6 +266,8 @@ class KeyReachability:
         var_model: Any,
         *,
         timeout_ms: int = 5000,
+        rlimit: int = DEFAULT_RLIMIT,
+        hard_timeout_ms: int = DEFAULT_HARD_TIMEOUT_MS,
     ) -> KeyReachability:
         """Compile every dimension we soundly can into one solver context."""
         fields = list(getattr(derivation, "fields", None) or [])
@@ -254,17 +301,26 @@ class KeyReachability:
             trees.append((name, fld, tree, rename))
         domains.resolve(symbols)
 
+        blockers: dict[str, dict[str, str]] = {}
         for name, fld, tree, rename in trees:
             rewrite = _Rewrite(symbols, rename, domains)
             try:
                 adapted = rewrite.run(tree)
             except _Unadaptable as exc:
                 omitted[name] = f"{exc.code}({exc.detail})" if exc.detail else exc.code
+                survey = _Rewrite(symbols, rename, domains, survey=True)
+                try:
+                    survey.run(tree)
+                except _Unadaptable:  # pragma: no cover - survey should not raise
+                    pass
+                blockers[name] = dict(survey.blocked)
                 continue
             decls = []
+            support: set[str] = set()
             for var_id in sorted(_collect_vars(adapted)):
                 if var_id == TRUE_VAR:
                     continue
+                support.add(var_id)
                 decls.append(
                     _declare(var_id, rename.origin_of(var_id), rewrite.nulls)
                 )
@@ -284,8 +340,16 @@ class KeyReachability:
             dims[name] = {
                 "var": dim_var,
                 "bool": is_bool,
-                "exact": bool(getattr(fld, "input_derivable", False)),
+                # A dimension standing on a free variable cannot be exact,
+                # whatever the derivation said: the variable admits values the
+                # host never produces, so only its `unknown` answers mean
+                # anything. Grading it exact would let a SAT result be read as
+                # `reachable`.
+                "exact": bool(getattr(fld, "input_derivable", False))
+                and not rewrite.minted,
                 "assumed": sorted(rewrite.assumed),
+                "minted": sorted(rewrite.minted),
+                "support": frozenset(support),
             }
 
         variables = _dedupe(variables)
@@ -296,7 +360,11 @@ class KeyReachability:
 
             backend = Z3Backend(
                 {"variables": variables, "constraints": constraints},
-                SolveConfig(timeout_ms=timeout_ms),
+                SolveConfig(
+                    timeout_ms=timeout_ms,
+                    rlimit=rlimit,
+                    hard_timeout_ms=hard_timeout_ms,
+                ),
             )
             # Show the dimension values in a witness. They are derived, so the
             # backend hides them by default, but they are the part a reader
@@ -312,6 +380,7 @@ class KeyReachability:
             layer=LAYER_SOLVER,
             isolated=isolated,
             shared=shared,
+            blockers=blockers,
         )
 
     # -- query -------------------------------------------------------------
@@ -319,6 +388,16 @@ class KeyReachability:
     def omitted(self) -> dict[str, str]:
         """Dimension name -> why its expression is not in the conjunction."""
         return dict(self._omitted)
+
+    @property
+    def blockers(self) -> dict[str, dict[str, str]]:
+        """Dropped dimension -> every symbol it trips over, not just the first.
+
+        `omitted` names where the rewrite stopped, which is whichever blocker
+        the tree happened to reach first. This is the set that has to be closed
+        before the dimension compiles.
+        """
+        return {k: dict(v) for k, v in self._blockers.items()}
 
     @property
     def available(self) -> bool:
@@ -331,9 +410,23 @@ class KeyReachability:
             "dimensions_compiled": len(self._dims),
             "dimensions_exact": sum(1 for d in self._dims.values() if d["exact"]),
             "omitted": dict(self._omitted),
+            # Every symbol a dropped dimension trips over. `omitted` names only
+            # the first, which understates what closing the dimension takes.
+            "blockers": {k: dict(v) for k, v in self._blockers.items()},
+            # Dimension -> names standing in as free variables. These compile,
+            # but only their `unreachable` answers carry weight.
+            "softened": {
+                name: list(d["minted"])
+                for name, d in sorted(self._dims.items())
+                if d.get("minted")
+            },
+            "blockers": {k: dict(v) for k, v in self._blockers.items()},
             # Variables the guard reader named after a getter. They are isolated
             # per dimension, so they carry no cross-dimension information; the
             # count is how much conflict detection we are giving up.
+            #: Dimensions that share no free variable can be solved apart; see
+            #: `_independent_groups`. Large groups are what make a run slow.
+            "groups": [list(g) for g in self._groups],
             "identity_isolated": list(self._isolated),
             #: Variables that do link dimensions together. If this is empty the
             #: solver can only rule out values dimension by dimension.
@@ -357,6 +450,7 @@ class KeyReachability:
         args: list[dict[str, Any]] = []
         taking: list[str] = []
         unfolded: list[str] = []
+        asked: dict[str, Any] = {}
         for name, target in sorted(key_dims.items()):
             spec = self._dims.get(name)
             if spec is None:
@@ -376,6 +470,7 @@ class KeyReachability:
                 )
             args.append({"op": "eq", "var": spec["var"], "value": value})
             taking.append(name)
+            asked[name] = value
 
         if not args:
             return KeyVerdict(
@@ -384,9 +479,8 @@ class KeyReachability:
                 layer=self._layer,
             )
 
-        expr = args[0] if len(args) == 1 else {"op": "and", "args": args}
         try:
-            result = self._backend.solve_expr(expr, label="key")
+            result = self._solve_by_group(asked)
         except Exception as exc:  # noqa: BLE001 - report, never crash the export
             return KeyVerdict(
                 status=R_UNKNOWN,
@@ -444,22 +538,140 @@ class KeyReachability:
             participating=tuple(taking),
         )
 
-    def _assumed_in(
-        self, core: Iterable[str], taking: Iterable[str]
-    ) -> set[str]:
-        """Invented symbols behind the dimensions Z3 blamed.
+    def _solve_by_group(self, asked: Mapping[str, Any]) -> dict[str, Any]:
+        """Answer one key as a question per independent group of dimensions.
 
-        The core names base assertions as `derived:<dim var>`, so it says which
-        dimensions the contradiction needed. If Z3 gives no usable core, every
-        participating dimension counts as blamed — an unreadable core must not
-        turn into a confident `unreachable`.
+        The groups share no free variable (`_independent_groups`), so the key
+        holds exactly when all of them do. Splitting is worth doing because the
+        answer depends only on the values inside a group, and across the legal
+        keys a group takes far fewer distinct combinations than there are keys
+        -- so most of these are cache hits. A group that comes back unsat
+        settles the key immediately; the rest need not be asked.
         """
+        combined: dict[str, Any] = {"status": "sat", "model": {}, "unsat_core": [], "reason": ""}
+        weakest = "sat"
+        for group in self._groups:
+            values = tuple((name, asked[name]) for name in group if name in asked)
+            if not values:
+                continue
+            hit = self._group_cache.get(values)
+            if hit is None:
+                hit = self._replay_conflict(values)
+                if hit is None:
+                    hit = self._solve_group(values)
+                    self._learn_conflict(values, hit)
+                self._group_cache[values] = hit
+            status = str(hit.get("status") or "unknown")
+            if status == "unsat":
+                return hit
+            if status != "sat":
+                # Keep looking: another group may still be unsat, which is a
+                # firmer answer than this one's "gave up".
+                weakest = status
+                combined["reason"] = str(hit.get("reason") or "solver gave up")
+                continue
+            combined["model"].update(hit.get("model") or {})
+        combined["status"] = weakest
+        return combined
+
+    def _replay_conflict(self, values: tuple[tuple[str, Any], ...]) -> dict[str, Any] | None:
+        """An already-proved contradiction that this combination contains."""
+        asked = dict(values)
+        for names, combos in self._conflicts.items():
+            if not all(n in asked for n in names):
+                continue
+            if tuple(asked[n] for n in names) in combos:
+                return {
+                    "status": "unsat",
+                    "unsat_core": [f"{_ASKED}{n}" for n in names]
+                    + [f"derived:{self._dims[n]['var']}" for n in names],
+                    "model": {},
+                    "reason": "",
+                }
+        return None
+
+    def _learn_conflict(
+        self, values: tuple[tuple[str, Any], ...], hit: dict[str, Any]
+    ) -> None:
+        """Keep the few dimensions Z3 actually blamed, not the whole group."""
+        if str(hit.get("status") or "") != "unsat":
+            return
+        asked = dict(values)
+        blamed = sorted(n for n in self._core_dims(hit.get("unsat_core") or ()) if n in asked)
+        # No usable core: the whole combination is all we can claim.
+        names = tuple(blamed) or tuple(sorted(asked))
+        self._conflicts.setdefault(names, set()).add(tuple(asked[n] for n in names))
+
+    def _core_dims(self, core: Iterable[str]) -> set[str]:
+        """Dimensions an unsat core blames.
+
+        `asked:<dim>` is the value this query put on a dimension, so a core
+        containing it says that value was needed for the contradiction — the
+        question actually being asked. `derived:<var>` is the dimension's
+        definition, which the proof may use for reasons having nothing to do
+        with the value asked for, so it is only read when nothing better is
+        there.
+        """
+        core = [item for item in core if isinstance(item, str)]
+        asked = {
+            item.split(":", 1)[1] for item in core if item.startswith(_ASKED)
+        }
+        if asked:
+            return {n for n in self._dims if n in asked}
         named = {
             item.split(":", 1)[1]
             for item in core
             if item.startswith("derived:") and ":" in item
         }
-        blamed = [n for n in taking if self._dims[n]["var"] in named] or list(taking)
+        return {n for n, spec in self._dims.items() if spec["var"] in named}
+
+    def _solve_group(self, values: tuple[tuple[str, Any], ...]) -> dict[str, Any]:
+        """Ask the group, naming each dimension's value separately.
+
+        Named, the unsat core says which of these values the contradiction
+        needed. Joined into one `And` it could only say "the key", and the
+        blame had to be guessed from which *definitions* Z3 happened to use —
+        which is not the same question and does not always give the same
+        answer, so the same contradiction was re-proved for every key that
+        contained it.
+        """
+        terms = [
+            (
+                {"op": "eq", "var": self._dims[name]["var"], "value": value},
+                f"{_ASKED}{name}",
+            )
+            for name, value in values
+        ]
+        solve_terms = getattr(self._backend, "solve_terms", None)
+        if solve_terms is None:
+            args = [t for t, _ in terms]
+            expr = args[0] if len(args) == 1 else {"op": "and", "args": args}
+            return self._backend.solve_expr(expr, label="key")
+        return solve_terms(terms)
+
+    def _assumed_in(
+        self, core: Iterable[str], taking: Iterable[str]
+    ) -> set[str]:
+        """Invented symbols behind the dimensions Z3 blamed.
+
+        A core entry is either the value this query asked for (`asked:<dim>`)
+        or a dimension's definition (`derived:<dim var>`); both say the
+        contradiction leaned on that dimension, so both count. Every one it
+        names is taken, unlike `_core_dims` which prefers the sharper of the
+        two — here a dimension left out is one whose invented symbols go
+        unnoticed, and that turns an `unknown` into a confident `unreachable`.
+        If Z3 gives no usable core, every participating dimension counts.
+        """
+        core = [item for item in core if isinstance(item, str)]
+        named = {
+            item.split(":", 1)[1]
+            for item in core
+            if item.startswith("derived:") and ":" in item
+        }
+        asked = {item.split(":", 1)[1] for item in core if item.startswith(_ASKED)}
+        blamed = [
+            n for n in taking if self._dims[n]["var"] in named or n in asked
+        ] or list(taking)
         out: set[str] = set()
         for name in blamed:
             out.update(self._dims[name]["assumed"])
@@ -555,11 +767,26 @@ class _Symbols:
             self._invented[name] = hit
         return hit
 
-    def plan(self, group: str, symbols: Iterable[str]) -> None:
+    def plan(
+        self, group: str, symbols: Iterable[str], quoted: Iterable[str] = ()
+    ) -> None:
         """Decide the encoding for one group. Idempotent per group."""
         if group in self._plans:
             return
         names = sorted(set(symbols))
+        if names and set(names) <= set(quoted):
+            # Every symbol here was a quoted string. Two different string
+            # literals are different strings -- that is the language, not an
+            # assumption -- so numbering them apart is exact and a
+            # contradiction between them is a real one.
+            #
+            # The constants table is deliberately not consulted. These
+            # spellings collide with unrelated names in the source: `TND` is a
+            # constexpr equal to 4 while `LayoutEnum::TND` is 3, and neither has
+            # anything to do with the string `"TND"`. Reading a value here would
+            # encode the string as whatever that other thing happens to be.
+            self._plans[group] = {name: self._invent(name) for name in names}
+            return
         read = {name: self.read(name) for name in names}
         if all(value is not None for value in read.values()):
             self._plans[group] = read
@@ -599,6 +826,11 @@ class _Domains:
         self._symbols: dict[str, set[str]] = {}
         self._numeric: set[str] = set()
         self._split: set[str] = set()
+        #: Symbols the source quoted. Tracked per variable because the claim
+        #: being made is about one comparison site, not about the spelling
+        #: everywhere: the same word can be a quoted string in one place and a
+        #: named constant in another.
+        self._quoted: dict[str, set[str]] = {}
         #: Symbols sitting where a variable should be (`rhs: "m0Max"`). No
         #: comparison gives them a value, so each is its own group.
         self._loose: set[str] = set()
@@ -612,7 +844,9 @@ class _Domains:
             if names and var in self._numeric and ISOLATE_MARK in var:
                 self._split.add(var)
         for var, names in self._symbols.items():
-            symbols.plan(self.symbol_var(var), names)
+            symbols.plan(
+                self.symbol_var(var), names, quoted=self._quoted.get(var, frozenset())
+            )
 
     def symbol_var(self, var: str) -> str:
         """The variable a symbol comparison on `var` belongs to."""
@@ -632,7 +866,7 @@ class _Domains:
                 if key in _NAME_KEYS:
                     continue
                 if key == "value" and var:
-                    self._note(var, value)
+                    self._note(var, value, node.get("value_kind"))
                     continue
                 self._walk(value, rename, seen)
         elif isinstance(node, list):
@@ -642,9 +876,11 @@ class _Domains:
             for item in node:
                 self._walk(item, rename, seen)
 
-    def _note(self, var: str, value: Any) -> None:
+    def _note(self, var: str, value: Any, kind: Any = None) -> None:
         if isinstance(value, str):
             self._symbols.setdefault(var, set()).add(value)
+            if kind == VALUE_KIND_STRING:
+                self._quoted.setdefault(var, set()).add(value)
         elif value is None:
             return  # a presence test; it becomes a boolean flag, not a number
         else:
@@ -659,14 +895,36 @@ class _Rewrite:
     the rewrite exponential.
     """
 
-    def __init__(self, symbols: _Symbols, rename: _Isolator, domains: _Domains) -> None:
+    def __init__(
+        self,
+        symbols: _Symbols,
+        rename: _Isolator,
+        domains: _Domains,
+        *,
+        survey: bool = False,
+    ) -> None:
         self._symbols = symbols
         self._rename = rename
         self._domains = domains
         self._memo: dict[int, Any] = {}
+        self._prop_memo: dict[int, Any] = {}
+        #: Both memos key on `id`, so every node they key on has to outlive the
+        #: rewrite; a freed node's address can be handed to a later one.
+        self._keep: list[Any] = []
         self.nulls: set[str] = set()
         #: Symbols whose value we invented; see `_Symbols`.
         self.assumed: set[str] = set()
+        #: Diagnostic pass: keep going past what we cannot compile and record it
+        #: all, instead of stopping at the first. Which name a dimension trips
+        #: over first is an artefact of tree order, so reporting only that one
+        #: understates the work to model the dimension -- five dimensions here
+        #: each blame a single symbol while in truth needing five or six.
+        #: The tree this pass builds is nonsense and must be thrown away.
+        self._survey = survey
+        self.blocked: dict[str, str] = {}
+        #: Names replaced by a free variable. The dimension still compiles, but
+        #: it no longer says anything exact, so it must not be graded as such.
+        self.minted: set[str] = set()
 
     def run(self, node: Any) -> Any:
         if isinstance(node, bool) or isinstance(node, int) or node is None:
@@ -677,7 +935,7 @@ class _Rewrite:
             # The IR is integer/boolean only. A float bound (the varlen
             # invalid-S1 path has them) would have to be rounded, and rounding
             # a bound is not a sound softening in either direction.
-            raise _Unadaptable("float_literal", repr(node))
+            return self._give_up("float_literal", repr(node), 0)
         hit = self._memo.get(id(node))
         if hit is not None:
             return hit
@@ -686,7 +944,7 @@ class _Rewrite:
         elif isinstance(node, dict):
             out = self._dict(node)
         else:
-            raise _Unadaptable("unsupported_node", type(node).__name__)
+            out = self._give_up("unsupported_node", type(node).__name__, 0)
         self._memo[id(node)] = out
         return out
 
@@ -699,16 +957,27 @@ class _Rewrite:
     def _loose(self, name: str) -> Any:
         """A bare symbol standing on its own, with no variable to compare with.
 
-        A constant is fine here. Anything else is a variable the guard reader
-        did not model — `m0Max`, a loop's `i` — and standing a variable in as a
-        number is not a sound softening: pick one far below the real range and
-        `x < m0Max` becomes false, which is the direction that invents
-        contradictions. So the dimension is dropped instead.
+        A constant folds. Anything else is a variable the guard reader did not
+        model -- `m0Max`, a loop's `i` -- and it must not be stood in as a
+        number: pick one far below the real range and `x < m0Max` becomes
+        false, which is the direction that invents contradictions. A free
+        variable has neither problem, since it admits every value the real one
+        could take, so the rest of the dimension survives.
         """
         known = self._symbols.read(name)
-        if known is None:
-            raise _Unadaptable("unmodelled_variable", name)
-        return known
+        if known is not None:
+            return known
+        var_id = LOCAL_PREFIX + _NOT_IDENT.sub("_", name).strip("_")
+        renamed = self._rename(var_id)
+        self.minted.add(name)
+        return {"var": renamed}
+
+    def _give_up(self, code: str, detail: str, stand_in: Any) -> Any:
+        """Refuse the tree, or -- when surveying -- note it and carry on."""
+        if not self._survey:
+            raise _Unadaptable(code, detail)
+        self.blocked[detail or code] = code
+        return stand_in
 
     def _dict(self, node: dict[str, Any]) -> Any:
         if set(node) == {"lit"}:
@@ -717,7 +986,7 @@ class _Rewrite:
             # A reference the derivation did not resolve. Folding the target's
             # name as if it were a symbol would silently compare against a
             # number that means nothing.
-            raise _Unadaptable("unresolved_ref", str(node.get("$ref")))
+            return self._give_up("unresolved_ref", str(node.get("$ref")), 0)
 
         var = node.get("var")
         if isinstance(var, str):
@@ -749,12 +1018,15 @@ class _Rewrite:
             return {
                 "op": "or",
                 "args": [
-                    {"op": "and", "args": [cond, _as_prop(self.run(node.get("then")))]},
+                    {
+                        "op": "and",
+                        "args": [cond, _as_prop(self.run(node.get("then")), self._prop_memo)],
+                    },
                     {
                         "op": "and",
                         "args": [
                             {"op": "not", "arg": cond},
-                            _as_prop(self.run(node.get("else"))),
+                            _as_prop(self.run(node.get("else")), self._prop_memo),
                         ],
                     },
                 ],
@@ -762,6 +1034,11 @@ class _Rewrite:
 
         out: dict[str, Any] = {}
         for key, value in node.items():
+            if key == "value_kind":
+                # Said where the value was written, which mattered when the
+                # encoding was chosen. The number is now fixed and the solver
+                # has no use for the provenance.
+                continue
             if key == "var" and isinstance(var, str):
                 out[key] = var
             elif key in _NAME_KEYS:
@@ -770,13 +1047,106 @@ class _Rewrite:
                 out[key] = self._fold(var, value)
             else:
                 out[key] = self.run(value)
+
+        if op in _CONNECTIVES:
+            if isinstance(out.get("args"), list):
+                self._keep.extend(out["args"])
+                out["args"] = [_as_prop(arg, self._prop_memo) for arg in out["args"]]
+            if "arg" in out:
+                self._keep.append(out["arg"])
+                out["arg"] = _as_prop(out["arg"], self._prop_memo)
         return out
 
 
-def _as_prop(node: Any) -> Any:
-    """A branch of a boolean `if_then_else`, forced into proposition shape."""
+def _independent_groups(dims: Mapping[str, Mapping[str, Any]]) -> list[tuple[str, ...]]:
+    """Split the dimensions into sets that share no free variable.
+
+    A key asks about all dimensions at once, but if two sets of them are written
+    over disjoint variables the question splits exactly: a solution to each can
+    be read off separately and laid side by side, because neither constrains
+    anything the other mentions. So all groups satisfiable means the key is
+    satisfiable, and any group unsatisfiable means the key is not -- both
+    directions, no approximation.
+
+    That is worth a great deal here. Dimensions do not vary freely across the
+    legal keys, so a group takes far fewer distinct combinations than there are
+    keys, and each combination need only be asked once.
+
+    `TRUE_VAR` is left out: it is pinned to true by a base constraint, so every
+    group's solution already agrees on it and it cannot carry a disagreement
+    between them.
+    """
+    parent: dict[str, str] = {}
+
+    def find(item: str) -> str:
+        parent.setdefault(item, item)
+        while parent[item] != item:
+            parent[item] = parent[parent[item]]
+            item = parent[item]
+        return item
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for name, spec in dims.items():
+        support = [v for v in spec.get("support") or () if v != TRUE_VAR]
+        # The dimension itself joins its variables: they all appear in its one
+        # defining equation, so they are constrained together.
+        for var in support:
+            union(name, var)
+
+    groups: dict[str, list[str]] = {}
+    for name in dims:
+        groups.setdefault(find(name), []).append(name)
+    return sorted((tuple(sorted(members)) for members in groups.values()), key=len, reverse=True)
+
+
+def _as_prop(node: Any, memo: dict[int, Any] | None = None) -> Any:
+    """Force a value into proposition shape, the way C reads a condition.
+
+    A connective's operand has to be a proposition. Most already are, but a
+    number in that position means `!= 0` -- which is exactly what the source
+    said, since `if (x)` is how it was written. This matters once unmodelled
+    names become free variables: before that they took the dimension down
+    before anything could ask what shape they were.
+
+    `memo` keys on node identity so a shared operand is converted once. The
+    expressions here are graphs, not trees; converting per parent would copy
+    the sharing away and leave a tree far too large to compile.
+    """
     if isinstance(node, bool):
         return {"op": "eq", "var": TRUE_VAR, "value": node}
+    if isinstance(node, int):
+        return {"op": "eq", "var": TRUE_VAR, "value": bool(node)}
+    if not isinstance(node, dict):
+        return node
+    if memo is not None:
+        hit = memo.get(id(node))
+        if hit is not None:
+            return hit
+    result = _as_prop_uncached(node, memo)
+    if memo is not None:
+        memo[id(node)] = result
+    return result
+
+
+def _as_prop_uncached(node: dict[str, Any], memo: dict[int, Any] | None) -> Any:
+    if "var" in node and "op" not in node:
+        return {"op": "ne", "var": node["var"], "value": 0}
+    if node.get("op") == "if_then_else" and not _is_bool_expr(node):
+        cond = node.get("condition")
+        return {
+            "op": "or",
+            "args": [
+                {"op": "and", "args": [cond, _as_prop(node.get("then"), memo)]},
+                {
+                    "op": "and",
+                    "args": [{"op": "not", "arg": cond}, _as_prop(node.get("else"), memo)],
+                },
+            ],
+        }
     return node
 
 

@@ -9,6 +9,13 @@ from typing import Any, Union
 @dataclass(frozen=True)
 class Const:
     value: Any
+    #: The value was written as a quoted string in the source. Worth keeping
+    #: separately from the text, because the quotes are stripped here and
+    #: `"TND"` then reads exactly like a reference to something named `TND` --
+    #: and in this operator both exist, with unrelated values. Two different
+    #: string literals are necessarily different strings, which a pair of names
+    #: cannot promise, so only the marked ones may be assumed distinct.
+    string_literal: bool = False
 
 
 @dataclass(frozen=True)

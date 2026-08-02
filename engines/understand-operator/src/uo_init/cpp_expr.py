@@ -280,8 +280,11 @@ class Parser:
                     break
             return Call("__init_list", tuple(items))
         if t.kind == "str":
-            return Const(t.text[1:-1])
+            return Const(t.text[1:-1], string_literal=True)
         if t.kind == "char":
+            # Deliberately unmarked: a character and a one-character string are
+            # written alike here once the quotes are gone, and only the string
+            # comparisons are what the distinctness argument is about.
             return Const(t.text[1:-1])
         if t.kind == "num":
             txt = t.text.rstrip("uUlL")

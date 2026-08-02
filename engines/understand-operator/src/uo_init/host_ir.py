@@ -48,7 +48,26 @@ class WriteEvent:
         return f"{self.path}@{self.version}"
 
     def guards(self) -> list[str]:
-        return [pc.pretty() for pc in self.path_conditions if not pc.is_opaque]
+        """What has to hold for this write to run.
+
+        Bail-out negations are left out: they hold on every run that reaches key
+        encoding, so as a guard they are noise, and as a *premise* they belong to
+        the run as a whole rather than to one write. `HostIR.legality_premises`
+        collects them.
+        """
+        return [
+            pc.pretty()
+            for pc in self.path_conditions
+            if not pc.is_opaque and not pc.is_bailout
+        ]
+
+    def premises(self) -> list[str]:
+        """The bail-out negations on the way here, as input legality conditions."""
+        return [
+            pc.pretty()
+            for pc in self.path_conditions
+            if not pc.is_opaque and pc.is_bailout
+        ]
 
 
 @dataclass
@@ -78,7 +97,25 @@ def _rhs_mentions(var: str, rhs: str) -> bool:
 
 
 def _pick_primary_def(var: str, candidates: list[str]) -> str | None:
-    """Prefer a definition that does not re-mention the variable (breaks p=p+q cycles)."""
+    """Prefer a definition that does not re-mention the variable (breaks p=p+q cycles).
+
+    Dropping the self-mentioning definitions leaves an accumulator with only
+    its initialiser, and that is not the value anyone reads: `coreIdx = 0`
+    holds before the packing loop and never after it. Taken as the definition
+    it pins `blockOuter = coreIdx + 1` to 1, and every key that needs more
+    than one core stops existing — narrowing the feasible set, which invents
+    unreachable keys rather than merely missing distinctions.
+
+    So a bare literal is only the answer when it is the only thing the
+    variable is ever set to. Two of them and there is nothing to choose
+    between — `hit = false` before a loop that sets it `true` is the same
+    mistake wearing different clothes. Where an update leaves something with
+    content behind — `aicNum` starts at `GetCoreNumAic()` and is clamped
+    later — that survives as before.
+
+    Returning nothing does not lose the definitions: `defs_by_function` keeps
+    them all, and a reader with no single binding consults that instead.
+    """
     cleaned: list[str] = []
     for c in candidates:
         n = (c or "").strip()
@@ -89,6 +126,8 @@ def _pick_primary_def(var: str, candidates: list[str]) -> str | None:
     independent = [c for c in cleaned if not _rhs_mentions(var, c)]
     pool = independent or cleaned
     nonlit = [c for c in pool if not _IS_LITERAL.match(c)]
+    if not nonlit and (len(set(pool)) > 1 or len(independent) < len(cleaned)):
+        return None
     return (nonlit or pool)[0]
 
 
@@ -186,6 +225,44 @@ class HostIR:
 
     def paths(self) -> list[str]:
         return [w.path for w in self.writes]
+
+    def legality_premises(self) -> list[tuple[str, str, str, int]]:
+        """What the operator requires of its inputs, as (text, function, file, line).
+
+        An operator states which inputs it accepts only by rejecting the rest:
+        `if (queryType == DT_HIFLOAT8) { return GRAPH_FAILED; }` is the whole
+        definition, written nowhere else. Every run that produces a key got past
+        all of them, so their negations hold together on any key worth asking
+        about — which makes them premises of the analysis rather than guards on
+        whichever statement happens to follow.
+
+        A rejection nested inside a test states a *conditional* requirement, and
+        the condition has to come with it. FAG demands `keepProb < 1` only after
+        establishing that a dropout mask was passed; read unconditionally it
+        rejects every run without dropout, which is most of them. So each premise
+        is the implication "if control got this far, the rejection did not fire",
+        and a rejection reached under conditions we cannot read is dropped rather
+        than weakened into an unconditional claim.
+
+        Deduplicated on the text: the same check reached along several paths is
+        one requirement, and repeating it would just enlarge the query.
+        """
+        seen: dict[str, tuple[str, str, str, int]] = {}
+        for w in (*self.writes, *self.local_writes):
+            conds = list(w.path_conditions)
+            for i, pc in enumerate(conds):
+                if not pc.is_bailout or pc.is_opaque:
+                    continue
+                context = conds[:i]
+                if any(c.is_opaque for c in context):
+                    continue
+                if context:
+                    guarded = " && ".join(f"({c.pretty()})" for c in context)
+                    text = f"!({guarded}) || ({pc.pretty()})"
+                else:
+                    text = pc.pretty()
+                seen.setdefault(text, (text, w.function, pc.file, pc.line))
+        return [seen[k] for k in sorted(seen)]
 
     def calls_to(self, callee: str) -> list[CallSite]:
         """Every recorded call of `callee`, with the guards reaching each one.

@@ -276,3 +276,49 @@ def test_a_boolean_bound_is_not_treated_as_one(tmp_path):
         step=1,
     )
     assert loop_bound(node).max_trip is None
+
+
+def _synthetic_bound(bound: int, *, init: int = 0, step: int = 1):
+    from uo_init.clang_walk import CtrlNode
+    from uo_init.loop_summary import loop_bound
+
+    node = CtrlNode(
+        id="L",
+        kind="for",
+        file="f.cpp",
+        line=1,
+        condition=f"i < {bound}",
+        induction_vars=("i",),
+        init_value=init,
+        step=step,
+    )
+    return loop_bound(node)
+
+
+@pytest.mark.parametrize(
+    "bound,step",
+    [
+        (2**53 + 1, 1),
+        (2**53 + 3, 2),
+        (2**62 + 7, 3),
+        (2**60 - 1, 7),
+    ],
+)
+def test_a_span_too_large_for_a_float_is_still_counted_exactly(bound, step):
+    """Above 2**53 a float cannot hold the span. Measured on these inputs the
+    error runs low -- 2**62+7 over a step of 3 came out 88 iterations short --
+    and a trip count below the real one is the dangerous direction here: it is
+    used to argue a container never exceeds some size."""
+    got = _synthetic_bound(bound, step=step).max_trip
+    assert got == -(-bound // step)
+
+
+def test_the_count_never_comes_back_as_a_float():
+    """A float trip count compares and indexes differently from an int, and the
+    difference only shows up on the inputs that were already the problem."""
+    got = _synthetic_bound(2**53 + 1).max_trip
+    assert isinstance(got, int) and not isinstance(got, bool)
+
+
+def test_a_span_that_divides_exactly_does_not_gain_an_iteration():
+    assert _synthetic_bound(2**54, step=2).max_trip == 2**53

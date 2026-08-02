@@ -39,7 +39,15 @@ def test_member_access_is_marked_as_field():
 def test_ternary_parses():
     e = parse_expr('n > 2 ? p : ""')
     assert isinstance(e, Ite)
-    assert e.else_ == Const("")
+    assert e.else_ == Const("", string_literal=True)
+
+
+def test_a_quoted_value_is_marked_and_a_bare_name_is_not():
+    # The quotes are dropped here, so whether they were there is recorded: with
+    # them the value is a string, without them it is a reference to a name.
+    quoted = parse_expr('layout == "TND"')
+    assert quoted.right == Const("TND", string_literal=True)
+    assert parse_expr("layout == TND").right == Ref("TND")
 
 
 def test_short_circuit_avoids_unbound_symbol():

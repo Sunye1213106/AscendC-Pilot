@@ -2,6 +2,7 @@
 """Clang-backed BranchInventory: the denominator the closure rate is computed on."""
 import pytest
 
+import baselines
 from uo_init.branch_inventory import (
     UNIVERSE,
     assert_no_sink_pruning,
@@ -11,21 +12,19 @@ from uo_init.clang_walk import CtrlNode, PathCond, classify_universe
 
 pytestmark = pytest.mark.requires_cann
 
-# FAG arch35 host baselines — fixture-local, not product code.
-GOLDEN_HOST_DENOMINATORS = {
-    "flash_attention_score_grad_tiling.cpp": 136,
-    "flash_attention_score_grad_tiling_normal_regbase.cpp": 324,
-    "flash_attention_score_grad_tiling_common_regbase.cpp": 377,
-}
+def test_control_node_counts_match_baseline(
+    host_walks, host_tus, op_name, update_baselines
+):
+    """The denominator the closure rate is computed on, per host TU.
 
-
-def test_golden_denominators(host_walks):
-    """Locked against the plan's baseline: 136 / 324 / 377 control nodes."""
-    got = {
-        name: sum(1 for n in inv.nodes if n.kind != "macro_dispatch")
+    Recorded per source revision: see tests/baselines.py for why the file's
+    digest is part of the comparison.
+    """
+    measured = {
+        name: (host_tus[name], sum(1 for n in inv.nodes if n.kind != "macro_dispatch"))
         for name, inv in host_walks.items()
     }
-    assert got == GOLDEN_HOST_DENOMINATORS
+    baselines.check(op_name, "host_control_nodes", measured, update=update_baselines)
 
 
 def test_macro_idiom_is_not_a_branch(host_walks):
@@ -113,3 +112,120 @@ def test_universe_classification_rules(condition, expected):
 def test_path_cond_pretty_marks_opaque_guards():
     assert PathCond("", False, "f", 1).pretty() == "<macro-expanded>"
     assert PathCond("a > 0", True, "f", 1).pretty() == "!(a > 0)"
+
+
+def test_a_bail_out_that_forwards_its_status_is_still_an_error_exit():
+    """`if (ret != GRAPH_SUCCESS) { return ret; }` names no failure code.
+
+    The exit statement alone cannot show it is the failure path, so the
+    condition has to. Reading it as normal flow hangs "every check so far
+    passed" onto the rest of the function, and a value only ever assigned
+    after such a check then looks like it might never be assigned.
+    """
+    from uo_init.clang_walk import _ERROR_EXIT_RE, _STATUS_FAILURE_RE
+
+    assert not _ERROR_EXIT_RE.search("return ret ;")
+    assert _STATUS_FAILURE_RE.search("ret != ge::GRAPH_SUCCESS")
+    assert _STATUS_FAILURE_RE.search("ret!=GRAPH_SUCCESS")
+    assert _STATUS_FAILURE_RE.search("GRAPH_SUCCESS != ret")
+
+
+def test_merely_naming_the_success_code_is_not_a_failure_test():
+    """The narrow reading is deliberate. Skipping a guard makes the writes
+    behind it look unconditional, which is the direction that can decide a
+    chain is exhaustive when it is not."""
+    from uo_init.clang_walk import _STATUS_FAILURE_RE
+
+    assert not _STATUS_FAILURE_RE.search("ret == ge::GRAPH_SUCCESS")
+    assert not _STATUS_FAILURE_RE.search("status < GRAPH_SUCCESS")
+
+
+def test_a_rejection_is_not_a_guard_on_what_follows():
+    """`if (bad) return GRAPH_FAILED;` says what a legal input is, not when the
+    next statement runs.
+
+    Hung on the following writes it says the wrong thing twice: they look
+    partial, so an initial value gets minted for a run that cannot happen, and
+    the requirement itself ends up buried in one field instead of constraining
+    the inputs everywhere. `is_bailout` keeps the two apart.
+    """
+    bail = PathCond("queryType == DT_HIFLOAT8", True, "f.cpp", 10, kind="bailout")
+    plain = PathCond("d > 64", True, "f.cpp", 20, kind="if")
+
+    assert bail.is_bailout and not plain.is_bailout
+    # Not a decision: the other side does not reach here at all, so it cannot be
+    # paired with its negation to prove a chain covers every path.
+    assert not bail.is_decision and plain.is_decision
+
+
+def test_writes_separate_their_guards_from_the_premises_they_ran_under():
+    from uo_init.host_ir import WriteEvent
+
+    w = WriteEvent(
+        path="p.outDtype",
+        line=30,
+        rhs="p.inputDtype",
+        path_conditions=(
+            PathCond("queryType == DT_HIFLOAT8", True, "f.cpp", 10, kind="bailout"),
+            PathCond("d > 64", False, "f.cpp", 20),
+        ),
+    )
+    assert w.guards() == ["d > 64"]
+    assert w.premises() == ["!(queryType == DT_HIFLOAT8)"]
+
+
+def _write_under(*conds):
+    from uo_init.host_ir import WriteEvent
+
+    return WriteEvent(path="p.x", line=1, rhs="1", function="F", path_conditions=conds)
+
+
+def test_a_rejection_at_the_top_of_a_function_asks_it_of_every_input():
+    from uo_init.host_ir import HostIR
+
+    ir = HostIR(
+        writes=[
+            _write_under(
+                PathCond("queryType == DT_HIFLOAT8", True, "f.cpp", 10, kind="bailout")
+            )
+        ]
+    )
+    assert [p[0] for p in ir.legality_premises()] == ["!(queryType == DT_HIFLOAT8)"]
+
+
+def test_a_rejection_inside_a_test_asks_it_only_of_the_inputs_that_reach_it():
+    """FAG demands `keepProb < 1` only once a dropout mask has been passed.
+
+    Read unconditionally it rejects every run without dropout, which is most of
+    them, and the keys only those runs produce disappear. The premise has to
+    carry the condition it was written under.
+    """
+    from uo_init.host_ir import HostIR
+
+    ir = HostIR(
+        writes=[
+            _write_under(
+                PathCond("dropMask != nullptr", False, "f.cpp", 5),
+                PathCond("!hasDrop", True, "f.cpp", 6, kind="bailout"),
+            )
+        ]
+    )
+    assert [p[0] for p in ir.legality_premises()] == [
+        "!((dropMask != nullptr)) || (!(!hasDrop))"
+    ]
+
+
+def test_a_rejection_reached_through_something_unreadable_is_dropped():
+    """An opaque context cannot be stated, and stating the rejection without it
+    would claim of every input what holds only of some."""
+    from uo_init.host_ir import HostIR
+
+    ir = HostIR(
+        writes=[
+            _write_under(
+                PathCond("", False, "f.cpp", 5),
+                PathCond("!hasDrop", True, "f.cpp", 6, kind="bailout"),
+            )
+        ]
+    )
+    assert ir.legality_premises() == []

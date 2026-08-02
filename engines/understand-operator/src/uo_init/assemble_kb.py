@@ -198,8 +198,18 @@ def extract_host_bundle(
     cann_root: str,
     ops_root: str | None = None,
     arch_dir: str | None = None,
+    with_closure: bool = True,
 ) -> dict[str, Any]:
-    """Host-only analyse → metrics/gap/binding (no FAG defaults)."""
+    """Host-only analyse → metrics/gap/binding (no FAG defaults).
+
+    `with_closure=False` stops once the facts are in — the IR, the resolver,
+    the variable model and the key binding — and skips the controllability
+    closure over every branch in the operator. That closure is five sixths of
+    the run: a second libclang parse of every translation unit, then several
+    hundred branches analysed one at a time. Key-field derivation reads none
+    of it, so a caller after the facts alone was waiting four and a half
+    minutes for a result it then dropped.
+    """
     from uo_init.branch_inventory import inventory_clang
     from uo_init.build_context import BuildContext
     from uo_init.controllability import ControllabilityBuilder, measure
@@ -269,6 +279,7 @@ def extract_host_bundle(
         enums=enums,
         header_texts=list(header_texts) + cpp_texts,
     )
+    resolver.adopt(model)
     platform_error = ""
     try:
         profile = load_platform_profile(
@@ -279,27 +290,32 @@ def extract_host_bundle(
         apply_platform_profile(model, profile)
     except FileNotFoundError as exc:
         platform_error = str(exc)
-    builder = ControllabilityBuilder(
-        resolver, model, side="host", op_root=str(spec.op_dir)
-    )
-    # Parallel TU inventory: each file is an independent libclang parse.
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    analyses: list = []
+    records: list = []
+    metrics = None
+    gap = None
+    if with_closure:
+        builder = ControllabilityBuilder(
+            resolver, model, side="host", op_root=str(spec.op_dir)
+        )
+        # Parallel TU inventory: each file is an independent libclang parse.
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    def _inv(path: Path):
-        return inventory_clang(path, ctx, op_needle=spec.op_needle).production()
+        def _inv(path: Path):
+            return inventory_clang(path, ctx, op_needle=spec.op_needle).production()
 
-    nodes: list = []
-    if len(targets) <= 1:
-        for t in targets:
-            nodes.extend(_inv(t))
-    else:
-        with ThreadPoolExecutor(max_workers=min(4, len(targets))) as pool:
-            futs = [pool.submit(_inv, t) for t in targets]
-            for fut in as_completed(futs):
-                nodes.extend(fut.result())
-    analyses, records = builder.build(nodes)
-    metrics = measure(analyses, records)
-    gap = build_gap_report(analyses)
+        nodes: list = []
+        if len(targets) <= 1:
+            for t in targets:
+                nodes.extend(_inv(t))
+        else:
+            with ThreadPoolExecutor(max_workers=min(4, len(targets))) as pool:
+                futs = [pool.submit(_inv, t) for t in targets]
+                for fut in as_completed(futs):
+                    nodes.extend(fut.result())
+        analyses, records = builder.build(nodes)
+        metrics = measure(analyses, records)
+        gap = build_gap_report(analyses)
     binding = None
     if targets and spec.tiling_key_header and spec.kernel_entry:
         try:

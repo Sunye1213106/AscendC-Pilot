@@ -13,21 +13,21 @@ pytestmark = pytest.mark.requires_cann
 
 
 @pytest.fixture(scope="module")
-def normal_ir(request):
+def normal_ir(fag_dir, cann_root, ops_root, arch_dir, host_tus):
     from uo_init.build_context import BuildContext
-    from tests.conftest import CANN, FAG, OPS  # type: ignore
 
-    if not (FAG.exists() and CANN.exists()):
-        pytest.skip("FAG/CANN not available")
     ctx = BuildContext.load(
-        cann_root=str(CANN), ops_root=str(OPS), op_dir=str(FAG), arch_dir="arch35"
+        cann_root=str(cann_root),
+        ops_root=str(ops_root),
+        op_dir=str(fag_dir),
+        arch_dir=arch_dir,
     )
-    p = (
-        FAG
-        / "op_host"
-        / "arch35"
-        / "flash_attention_score_grad_tiling_normal_regbase.cpp"
+    p = next(
+        (v for k, v in sorted(host_tus.items()) if k.endswith("normal_regbase.cpp")),
+        None,
     )
+    if p is None:
+        pytest.skip("no Normal-template host tiling TU for this operator")
     return build_host_ir([p], ctx=ctx, template_precondition="Normal"), p
 
 

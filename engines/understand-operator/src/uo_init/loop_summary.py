@@ -13,7 +13,6 @@ bounded loops with constant bounds.
 """
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -121,7 +120,12 @@ def loop_bound(node: Any, constants: dict[str, int] | None = None) -> LoopBound:
         span += 1
     if span <= 0:
         return LoopBound(0, exact=True)
-    return LoopBound(math.ceil(span / abs(step)), exact=True)
+    # Integer ceiling division. Going through a float rounds once the span
+    # exceeds 2**53, and it rounds down as readily as up -- a count short of the
+    # real one, which is what callers turn into "this container never exceeds
+    # that size".
+    magnitude = abs(step)
+    return LoopBound((span + magnitude - 1) // magnitude, exact=True)
 
 
 # --- container identity across functions ----------------------------------
@@ -565,6 +569,97 @@ def guards_exclusive(
         reason=f"not_proven:{status}" + (f":{detail[:80]}" if status == "error" else ""),
         checked=len(args),
     )
+
+
+@dataclass(frozen=True)
+class Implication:
+    """Whether reaching one point forces one of a set of writes to have run."""
+
+    holds: bool
+    #: Why it could not be shown, when it could not. Empty when it holds.
+    reason: str = ""
+    #: How many write guard sets went into the query, for diagnosis.
+    checked: int = 0
+
+    def __bool__(self) -> bool:
+        return self.holds
+
+
+def guards_cover(
+    read_conds: Any,
+    write_conds: Any,
+    *,
+    read_function: str = "",
+    members: Any = (),
+    timeout_ms: int = 2000,
+) -> Implication:
+    """Does getting to the read imply one of the writes already happened?
+
+    `write_conds` is `(conds, function)` per write. The query is
+    `read ∧ ¬(∨ write)`: unsat means no run reaches the read with the
+    variable unwritten, so the chain's fall-through is dead code and the
+    initial value it would assume is about a path that does not exist.
+
+    `fBaseParams.bandIdx` is the case this exists for. It is written only
+    under `attenMask` being present and read only where that holds, so the
+    writes look partial on their own and the free variable minted to stand
+    for the unwritten value went on to block five dimensions.
+
+    Unreadable guards are dropped, and the direction matters: dropping one
+    from a write shrinks the disjunction, dropping one from the read weakens
+    the premise, and both make the implication *harder* to prove. Only `unsat`
+    counts; `sat`, `unknown`, a timeout and a compile failure all mean the
+    same thing -- not shown -- because claiming coverage we cannot establish
+    would silently assume a value the source never wrote.
+    """
+    atoms = _Atoms(frozenset(members or ()))
+    premise: list[dict[str, Any]] = []
+    for cond in read_conds or ():
+        ir = _guard_ir(cond, atoms, read_function)
+        if ir is not None:
+            premise.append(ir)
+    if not premise:
+        return Implication(False, reason="no_readable_read_guards")
+
+    reached: list[dict[str, Any]] = []
+    for conds, function in write_conds or ():
+        parts = [
+            ir
+            for ir in (_guard_ir(c, atoms, function) for c in conds or ())
+            if ir is not None
+        ]
+        if len(parts) != len(tuple(conds or ())):
+            # A guard we cannot read could be false, so this write cannot be
+            # counted on. Leaving it out is the safe direction.
+            continue
+        if not parts:
+            # No guards at all: this write always runs, and nothing is assumed.
+            return Implication(True, checked=0)
+        reached.append(parts[0] if len(parts) == 1 else {"op": "and", "args": parts})
+    if not reached:
+        return Implication(False, reason="no_readable_write_guards")
+
+    try:
+        from acp_common.z3_backend import SolveConfig, Z3Backend
+    except ImportError as exc:  # pragma: no cover - solver always present
+        return Implication(False, reason=f"solver_unavailable:{exc}")
+
+    written = reached[0] if len(reached) == 1 else {"op": "or", "args": reached}
+    args = premise + [{"op": "not", "arg": written}]
+    variables = [{"id": name, "type": "int"} for name in sorted(atoms.names)]
+    try:
+        backend = Z3Backend(
+            {"variables": variables, "constraints": []},
+            SolveConfig(timeout_ms=timeout_ms),
+        )
+        result = backend.solve_expr({"op": "and", "args": args}, label="read_coverage")
+    except Exception as exc:
+        return Implication(False, reason=f"solver_error:{type(exc).__name__}")
+
+    status = str((result or {}).get("status") or "")
+    if status == "unsat":
+        return Implication(True, checked=len(reached))
+    return Implication(False, reason=f"not_proven:{status}", checked=len(reached))
 
 
 # --- how many elements can these containers hold between them --------------

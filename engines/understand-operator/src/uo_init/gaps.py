@@ -23,6 +23,8 @@ from uo_init.kb_model import Blocker, Evidence
 # Reasons ordered by how much a human/LLM can actually do about them. When one
 # node fails for several reasons, the most actionable one names the blocker.
 REASON_PRIORITY = [
+    "UNWRITTEN_INITIAL_VALUE",
+    "LOOP_SUMMARY_NEEDED",
     "UNMAPPED_SYMBOL",
     "UNMAPPED_CALL",
     "FUNCTION_PARAMETER",
@@ -40,6 +42,14 @@ REASON_PRIORITY = [
 # What each reason is actually asking for, so the prompt does not have to
 # re-derive it and every blocker of a kind is asked the same way.
 REASON_HINT = {
+    "UNWRITTEN_INITIAL_VALUE": (
+        "读到该字段时这条路径上没有写点，静态分析只能假设一个初值。"
+        "给出它真正的初值，或说明这条路径走不到（两者都要给 path:line 证据）"
+    ),
+    "LOOP_SUMMARY_NEEDED": (
+        "该值由循环产生（掩码扫描、前缀和一类），逐次迭代无法符号化。"
+        "读完整个循环体，把它总结成一个只用已声明输入变量的条件"
+    ),
     "UNMAPPED_SYMBOL": "识别该符号代表什么：算子输入/属性/平台量/常量，并给出 path:line 证据",
     "UNMAPPED_CALL": "确认该调用的返回值来源，是否等价于某个已知访问器",
     "FUNCTION_PARAMETER": "找出该形参在所有调用点传入的实参，判断是否统一来源",
@@ -111,6 +121,11 @@ class GapItem:
     line: int = 0
     snippet: str = ""
     function: str = ""
+    #: The over-approximation variable an answer would remove, when the item
+    #: is about one. Carried through to `affected_nodes` so the substitution
+    #: has something to aim at: an initial-value variable has no guard record
+    #: to hang a binding off, and without this there is nothing to replace.
+    var_id: str = ""
 
 
 def collect_gap_items(analyses) -> list[GapItem]:
@@ -204,6 +219,8 @@ def cluster(items: Iterable[GapItem]) -> list[Blocker]:
             by_key[key] = blocker
         if item.node_id not in blocker.affected_nodes:
             blocker.affected_nodes.append(item.node_id)
+        if item.var_id and item.var_id not in blocker.affected_nodes:
+            blocker.affected_nodes.append(item.var_id)
         if item.file and len(blocker.evidence) < 5:
             ev = Evidence.at(item.file, item.line, snippet=item.snippet)
             if ev.id not in {e.id for e in blocker.evidence}:
@@ -255,8 +272,8 @@ def collect_derivation_gap_items(host_derivation) -> list[GapItem]:
     fields = getattr(host_derivation, "fields", None) or []
     for fld in fields:
         for guard in getattr(fld, "escalating", None) or []:
-            text = normalize_atom_text(getattr(guard, "text", "") or "")
-            if not text or text in _NOISE_ATOMS:
+            norm = normalize_atom_text(getattr(guard, "text", "") or "")
+            if not norm or norm in _NOISE_ATOMS:
                 continue
             # Filter on the pre-sort, not on the reason text. The reason says
             # *how* normalization failed and is orthogonal: a loop element that
@@ -277,6 +294,16 @@ def collect_derivation_gap_items(host_derivation) -> list[GapItem]:
                 # key-field expansion rather than a host-branch predicate.
                 reason = "DERIVATION_UNDECIDED"
             ev = getattr(guard, "evidence", None) or {}
+            # Ask in the source's words, not the IR's. A normalized guard is
+            # the whole expression the field was folded into -- `let $1 =
+            # (__reached_DoOpTiling && ...`, thousands of characters of
+            # internal notation naming things no C++ reader has heard of. Cut
+            # to fit a question it becomes an unfinished sentence. It also
+            # clusters wrong: 33 guards over three files collapse onto three
+            # questions, because what they share is the expression they ended
+            # up inside rather than the code anyone has to read. The line the
+            # guard came from is the question.
+            text = (str(ev.get("snippet") or "").strip() or norm)[:200]
             items.append(
                 GapItem(
                     node_id=f"KEYFIELD_{fld.name}",
@@ -304,6 +331,139 @@ def collect_derivation_gap_items(host_derivation) -> list[GapItem]:
                     )
                 )
     return items
+
+
+#: Which over-approximations are a question somebody can answer, and what to
+#: ask about each. A scheduling position is not on this list and should not be:
+#: which core ran a block is not a property of the input, so an answer would be
+#: invention. Reachability placeholders are off it for the same reason — the
+#: right fix there is a complete call graph, not a model's opinion.
+FREE_VAR_ASKS = {
+    "VAR_INIT_": "UNWRITTEN_INITIAL_VALUE",
+    "VAR_LOOPELEM_": "LOOP_SUMMARY_NEEDED",
+}
+
+
+def _ask_for(var_id: str) -> str:
+    for prefix, reason in FREE_VAR_ASKS.items():
+        if var_id.startswith(prefix):
+            return reason
+    return ""
+
+
+def _initial_value_item(fld, var_id: str, record: dict[str, Any]) -> GapItem:
+    # The question is about the field, not about one read of it: two reads of
+    # the same uninitialised member are one thing to find out.
+    text = str(record.get("field") or var_id)
+    guard = str(record.get("guard") or "")
+    return GapItem(
+        node_id=f"KEYFIELD_{fld.name}",
+        text=text,
+        reason="UNWRITTEN_INITIAL_VALUE",
+        file=str(record.get("file") or ""),
+        line=int(record.get("line") or 0),
+        snippet=(f"{text} 在 {guard} 之外没有写点" if guard else text)[:200],
+        function=str(record.get("function") or ""),
+        var_id=var_id,
+    )
+
+
+def _loop_summary_item(fld, var_id: str, guard) -> GapItem:
+    ev = getattr(guard, "evidence", None) or {}
+    text = normalize_atom_text(getattr(guard, "text", "") or "") or var_id
+    return GapItem(
+        node_id=f"KEYFIELD_{fld.name}",
+        text=text,
+        reason="LOOP_SUMMARY_NEEDED",
+        file=str(ev.get("file") or ""),
+        line=int(ev.get("line") or 0),
+        snippet=str(ev.get("snippet") or text)[:200],
+        function=str(ev.get("function") or ""),
+        var_id=var_id,
+    )
+
+
+def collect_free_var_gap_items(host_derivation) -> list[GapItem]:
+    """Ask about the over-approximations still standing in the expressions.
+
+    `collect_derivation_gap_items` asks about guards the pre-sort escalated,
+    which is a different set and a smaller one: the variable standing in for a
+    member's value before any write is recorded on `implicit_defaults` and was
+    never a guard at all, and a loop-element cut is filtered out as
+    non-escalating. Both are exactly what keeps a dimension from closing, so
+    both are asked here.
+
+    Backed by the field's own `free_vars`, so an item exists only where an
+    over-approximation really survives in `value_expr` — asking about one that
+    was already substituted away would spend a model's attention on nothing.
+    """
+    items: list[GapItem] = []
+    for fld in getattr(host_derivation, "fields", None) or []:
+        defaults = {
+            str(d.get("variable")): d
+            for d in getattr(fld, "implicit_defaults", None) or []
+            if d.get("variable")
+        }
+        guards = {
+            str(getattr(g, "var_id", "") or ""): g
+            for g in getattr(fld, "undecided_guards", None) or []
+        }
+        for var_id in getattr(fld, "free_vars", None) or []:
+            ask = _ask_for(str(var_id))
+            if not ask:
+                continue
+            if ask == "UNWRITTEN_INITIAL_VALUE" and var_id in defaults:
+                items.append(_initial_value_item(fld, var_id, defaults[var_id]))
+            elif var_id in guards:
+                items.append(_loop_summary_item(fld, var_id, guards[var_id]))
+            # A free variable with no record behind it is reported by
+            # `unrecorded_free_vars` and gated on there. Inventing a question
+            # for it here would paper over a derivation bug with a model's
+            # guess, which is the one thing this channel must not do.
+    return items
+
+
+#: Free variables stand for what the analysis could not read. Offering one
+#: back as an answer would define one over-approximation in terms of another.
+_PLACEHOLDERS = (
+    "VAR_INIT_",
+    "VAR_UNDECIDED_",
+    "VAR_LOOPELEM_",
+    "VAR_SCHED_",
+    "VAR_REACHED_",
+    "__reached_",
+)
+
+
+def readable_vars(host_derivation, node_ids: Iterable[str]) -> list[str]:
+    """Variables the dimensions a blocker holds up already read.
+
+    Without this the batch says which *ops* a binding may use but not which
+    variables exist, so a model has to guess a name — and a guessed name is
+    rejected as invented however well it read the code. It is also the set the
+    first mechanical gate checks a condition against, so naming it here is not
+    a hint but the actual rule.
+
+    Scoped to the dimensions this blocker blocks rather than to the whole
+    model: a condition on a variable no affected dimension reads is not an
+    answer to this question, whatever else it is.
+
+    Read off `variables`, which the derivation already collected. Walking
+    `value_expr` gives the same answer and cannot be used: it is the expanded
+    tree, and for the widest dimension here that is hundreds of thousands of
+    nodes to cross once per blocker that touches it.
+    """
+    wanted = {
+        str(n)[len("KEYFIELD_") :]
+        for n in node_ids
+        if str(n).startswith("KEYFIELD_")
+    }
+    found: set[str] = set()
+    for fld in getattr(host_derivation, "fields", None) or []:
+        if wanted and fld.name not in wanted:
+            continue
+        found.update(str(v) for v in getattr(fld, "variables", None) or [])
+    return sorted(v for v in found if not v.startswith(_PLACEHOLDERS))
 
 
 def merge_gap_reports(*reports: GapReport) -> GapReport:
@@ -337,10 +497,15 @@ def build_gap_report(analyses) -> GapReport:
 
 def build_derivation_gap_report(host_derivation) -> GapReport:
     items = collect_derivation_gap_items(host_derivation)
+    items += collect_free_var_gap_items(host_derivation)
+    blockers = cluster(items)
+    for blocker in blockers:
+        blocker.readable_vars = readable_vars(host_derivation, blocker.affected_nodes)
     fields = getattr(host_derivation, "fields", None) or []
     open_fields = {
         f"KEYFIELD_{f.name}"
         for f in fields
         if any(getattr(g, "escalate", False) for g in getattr(f, "undecided_guards", []) or [])
+        or any(_ask_for(str(v)) for v in getattr(f, "free_vars", None) or [])
     }
-    return GapReport(blockers=cluster(items), open_node_count=len(open_fields))
+    return GapReport(blockers=blockers, open_node_count=len(open_fields))

@@ -29,17 +29,17 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "engines" / "understand-operator" / "src"
 sys.path.insert(0, str(SRC))
 
-# Resolved relative to the checkout, not to one machine. The operator tree and
-# the CANN package sit beside the repo; override either when they do not.
-WORKSPACE = Path(os.environ.get("UO_WORKSPACE", ROOT.parent))
-OP = Path(
-    os.environ.get(
-        "UO_OP_DIR",
-        WORKSPACE / "TEST/ops-transformer/attention/flash_attention_score_grad",
-    )
+from uo_init import paths  # noqa: E402 - needs the sys.path entry above
+
+DEFAULT_OPERATOR = os.environ.get(
+    "UO_OPERATOR", "attention/flash_attention_score_grad"
 )
-CANN = os.environ.get("UO_CANN_ROOT", str(WORKSPACE / "_cann/pkg"))
+OP = paths.op_dir(relative=DEFAULT_OPERATOR)
+CANN = paths.cann_root()
 ARCH = os.environ.get("UO_ARCH", "arch35")
+if OP is None or CANN is None:
+    raise SystemExit(f"cannot locate the sources to derive from.\n{paths.explain()}")
+CANN = str(CANN)
 
 CACHE = ROOT / ".probe_cache"
 BUNDLE = CACHE / "fag_bundle.pkl"
@@ -53,8 +53,14 @@ STATUS = ROOT / "docs" / "debug" / "current-status.md"
 def build_bundle() -> dict:
     from uo_init.assemble_kb import extract_host_bundle
 
+    # Only the facts below are kept, and the controllability closure is none
+    # of them: asking for it cost five sixths of the run and was thrown away.
     full = extract_host_bundle(
-        op_dir=OP, cann_root=CANN, ops_root=str(OP.parent.parent), arch_dir=ARCH
+        op_dir=OP,
+        cann_root=CANN,
+        ops_root=str(OP.parent.parent),
+        arch_dir=ARCH,
+        with_closure=False,
     )
     keep = {
         k: full[k]

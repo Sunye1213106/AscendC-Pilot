@@ -50,7 +50,27 @@ def compile_pattern_to_expr(pattern: Any) -> dict[str, Any] | None:
     args = [{"op": "eq", "var": _var_id(str(key)), "value": value} for key, value in sorted(pattern.items())]
     return args[0] if len(args) == 1 else {"op": "and", "args": args}
 
-def normalize_expr(expr: Any) -> dict[str, Any]:
+def normalize_expr(expr: Any, memo: dict[int, Any] | None = None) -> dict[str, Any]:
+    """Rewrite an expression into the canonical shape, recursively.
+
+    `memo` makes that recursion proportional to the number of distinct nodes
+    rather than to paths through them. An expression reached along many paths
+    is one shared node, and rebuilding it per path is what turns a DAG of ten
+    thousand nodes into a tree of more nodes than can be counted. Pass one
+    whenever the input may be a DAG; it is keyed on identity and holds a
+    reference to every node it answers for, so no id is recycled while in use.
+    """
+    if memo is not None and isinstance(expr, dict):
+        hit = memo.get(id(expr))
+        if hit is not None:
+            return hit[1]
+    out = _normalize_expr_uncached(expr, memo)
+    if memo is not None and isinstance(expr, dict):
+        memo[id(expr)] = (expr, out)
+    return out
+
+
+def _normalize_expr_uncached(expr: Any, memo: dict[int, Any] | None) -> dict[str, Any]:
     if not isinstance(expr, dict):
         raise ConstraintIRError(f"Constraint expression must be a mapping, got {type(expr).__name__}")
     op = str(expr.get("op") or expr.get("type") or "").strip()
@@ -64,8 +84,8 @@ def normalize_expr(expr: Any) -> dict[str, Any]:
     out: dict[str, Any] = {"op": op}
     if op in {"eq", "ne", "lt", "le", "gt", "ge"}:
         if "lhs" in expr or "rhs" in expr:
-            out["lhs"] = _normalize_value_or_expr(expr.get("lhs"))
-            out["rhs"] = _normalize_value_or_expr(expr.get("rhs"))
+            out["lhs"] = _normalize_value_or_expr(expr.get("lhs"), memo)
+            out["rhs"] = _normalize_value_or_expr(expr.get("rhs"), memo)
         else:
             out["var"] = _require_var(expr)
             out["value"] = expr.get("value")
@@ -73,16 +93,16 @@ def normalize_expr(expr: Any) -> dict[str, Any]:
         out["var"] = _require_var(expr)
         out["values"] = _as_list(expr.get("values") if "values" in expr else expr.get("value"))
     elif op in {"and", "or"}:
-        out["args"] = [normalize_expr(arg) for arg in _require_args(expr)]
+        out["args"] = [normalize_expr(arg, memo) for arg in _require_args(expr)]
     elif op == "not":
-        out["arg"] = normalize_expr(expr.get("arg") or expr.get("expr"))
+        out["arg"] = normalize_expr(expr.get("arg") or expr.get("expr"), memo)
     elif op in {"implies", "requires"}:
-        out["antecedent"] = normalize_expr(expr.get("antecedent") or expr.get("if") or expr.get("requires"))
-        out["consequent"] = normalize_expr(expr.get("consequent") or expr.get("then") or expr.get("required"))
+        out["antecedent"] = normalize_expr(expr.get("antecedent") or expr.get("if") or expr.get("requires"), memo)
+        out["consequent"] = normalize_expr(expr.get("consequent") or expr.get("then") or expr.get("required"), memo)
     elif op == "mutex":
-        out["args"] = [normalize_expr(arg) for arg in _require_args(expr)]
+        out["args"] = [normalize_expr(arg, memo) for arg in _require_args(expr)]
     elif op in {"add", "sub", "mul", "div", "mod"}:
-        out["args"] = [_normalize_arith_arg(arg) for arg in _require_args(expr)]
+        out["args"] = [_normalize_arith_arg(arg, memo) for arg in _require_args(expr)]
     elif op == "lit":
         out["value"] = expr.get("value")
     elif op == "aligned":
@@ -90,11 +110,11 @@ def normalize_expr(expr: Any) -> dict[str, Any]:
         out["alignment"] = int(expr.get("alignment") or expr.get("value") or 1)
     elif op == "derived":
         out["var"] = _require_var(expr)
-        out["expr"] = normalize_expr(expr.get("expr") or expr.get("definition"))
+        out["expr"] = normalize_expr(expr.get("expr") or expr.get("definition"), memo)
     elif op == "if_then_else":
-        out["condition"] = normalize_expr(expr.get("condition") or expr.get("if"))
-        out["then"] = _normalize_value_or_expr(expr.get("then"))
-        out["else"] = _normalize_value_or_expr(expr.get("else"))
+        out["condition"] = normalize_expr(expr.get("condition") or expr.get("if"), memo)
+        out["then"] = _normalize_value_or_expr(expr.get("then"), memo)
+        out["else"] = _normalize_value_or_expr(expr.get("else"), memo)
     return out
 
 def normalize_domain(var_type: str, spec: dict[str, Any]) -> Any:
@@ -295,18 +315,18 @@ def _require_args(expr: dict[str, Any]) -> list[Any]:
         raise ConstraintIRError(f"Expression requires non-empty args: {expr}")
     return args
 
-def _normalize_arith_arg(arg: Any) -> Any:
+def _normalize_arith_arg(arg: Any, memo: dict[int, Any] | None = None) -> Any:
     if isinstance(arg, dict):
         if arg.get("op") == "lit":
             return arg.get("value")
         if "op" in arg:
-            return normalize_expr(arg)
+            return normalize_expr(arg, memo)
         return {"var": _require_var(arg)}
     return arg
 
-def _normalize_value_or_expr(value: Any) -> Any:
+def _normalize_value_or_expr(value: Any, memo: dict[int, Any] | None = None) -> Any:
     if isinstance(value, dict) and "op" in value:
-        return normalize_expr(value)
+        return normalize_expr(value, memo)
     return value
 
 def _var_id(name: str) -> str:

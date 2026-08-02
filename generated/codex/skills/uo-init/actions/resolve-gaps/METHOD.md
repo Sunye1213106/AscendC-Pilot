@@ -28,6 +28,27 @@ acp next   # → apply_gap_patch
 - MUST NOT：在 prompt 里自行分片或数全局任务
 - MUST NOT：`acp finalize` / `acp next` / `acp advance`（仅 Host）
 
+## 一个 patch 会被什么挡下
+
+合入前有三道机械检查，各自带一个反例见证：
+
+- 只能引用**这段代码真的读到**的变量；正确但无关的条件同样被拒
+- 条件必须**能判开两边**；恒真或恒假等于把分支换成常量，不是对 guard 的解读
+- 代回原表达式后，该维**仍能取到模板声明的值**，且至少能取到一个
+
+机械检查判不了"这是不是代码实际实现的那个条件"，那一步由独立 referee 完成
+（`prompts/tasks/uo/review-gap-patches.md`）：只读 part 与 batch，逐条判
+accept/reject。判据是**方向**——比代码弱的条件只会放大可行域，可以接受；比
+代码强的条件会排除算子真正接受的输入，下游无从发现，必须拒。
+
+## 两类关于推导本身的问题
+
+`UNWRITTEN_INITIAL_VALUE`（成员在未证明被写的路径上被读）与
+`LOOP_SUMMARY_NEEDED`（值出自解不开的循环）走同一条队列、同一套闸门、同一个
+part 文件，patch 形状不变；差别只在答案的含义，写在 task prompt 里。这两类
+blocker 的 batch 会附上完整函数体或循环体（`source` 字段带
+`line_start`/`line_end`），snippet 也按该窗口校验——引用窗口内任意一行都算命中。
+
 ## Output
 
 - staging：`runs/{run_id}/actions/resolve_gaps/parts/part_{shard_id}.yaml`

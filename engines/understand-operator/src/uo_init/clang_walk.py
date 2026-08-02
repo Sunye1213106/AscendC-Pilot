@@ -49,8 +49,9 @@ class PathCond:
     file: str
     line: int
     #: What kind of statement put this guard on the path — `if`, `ternary`,
-    #: `switch`, a loop (`for` / `while` / `do` / `cxx_for_range`), or
-    #: `guard_clause` for the negation implied by an earlier `if (c) return;`.
+    #: `switch`, a loop (`for` / `while` / `do` / `cxx_for_range`),
+    #: `guard_clause` for the negation implied by an earlier `if (c) return;`,
+    #: or `bailout` for the same when that return reports the call was rejected.
     #: Loop and switch guards also spell their kind into `text`, but only as
     #: text: this is what lets a reader tell them apart without parsing it out.
     kind: str = "if"
@@ -71,9 +72,26 @@ class PathCond:
 
         A loop guard says "on some iteration" and a `switch` case is one of
         many with no promise of a `default`, so neither can be paired with a
-        negation that way.
+        negation that way. A `bailout` splits nothing either: the other way
+        does not reach here at all, which is why it is a premise of the whole
+        run rather than a condition on one write. See `is_bailout`.
         """
         return self.kind in ("if", "ternary", "guard_clause")
+
+    @property
+    def is_bailout(self) -> bool:
+        """True when this guard holds on every run that produces a key.
+
+        `if (dtype is one we reject) { return GRAPH_FAILED; }` does not make the
+        statements after it conditional in any useful sense: the other branch
+        never reaches key encoding, so on every run there *is* a key for, the
+        negation simply holds. Hanging it on the writes that follow says the
+        wrong thing twice over — those writes look partial, which mints an
+        initial value for a run that cannot happen, and the condition itself,
+        which is the operator's own definition of a legal input, ends up buried
+        inside one field instead of constraining the inputs everywhere.
+        """
+        return self.kind == "bailout"
 
     @property
     def records_what_follows(self) -> bool:
@@ -420,6 +438,75 @@ def _in_scope(file: str | None, needle: str, op_root: str = "") -> bool:
     return True
 
 
+def _base_class(cursor):
+    """The class a `CXX_BASE_SPECIFIER` names, or None."""
+    for get in (cursor.get_definition, lambda: cursor.type.get_declaration()):
+        try:
+            decl = get()
+        except Exception:  # noqa: BLE001 - binding raises on unresolved types
+            continue
+        if decl is not None and decl.location.file is not None:
+            return decl
+    return None
+
+
+def _framework_headers(cursor, needle: str, op_root: str = "") -> set[str]:
+    """Files holding the base classes this operator's tiling classes derive from.
+
+    A tiling class inheriting `TilingBaseClass` hands the framework the say in
+    when its hooks run, and the base class is where that decision is written
+    down — one template method calling the hooks in order. Scoped out by
+    filename, those calls vanish and every hook becomes a function nothing
+    appears to call, which reads downstream as "this may not run at all".
+
+    Derived from the inheritance edges rather than from a path, so it holds for
+    any operator on any base class. Bases inside the operator are already
+    visible and are followed but not returned.
+    """
+    if cindex is None:
+        return set()
+    out: set[str] = set()
+    seen: set[str] = set()
+
+    def _specifiers(node, only_in_scope: bool):
+        found = []
+        stack = list(node.get_children())
+        while stack:
+            child = stack.pop()
+            try:
+                kind = child.kind.name
+            except Exception:  # noqa: BLE001 - a cursor libclang cannot describe
+                continue
+            where = _file_of(child)
+            if where is None:
+                continue
+            if only_in_scope and not _in_scope(where, needle, op_root):
+                continue
+            if kind == "CXX_BASE_SPECIFIER":
+                found.append(child)
+            else:
+                stack.extend(child.get_children())
+        return found
+
+    pending = _specifiers(cursor, only_in_scope=True)
+    while pending:
+        base = _base_class(pending.pop())
+        if base is None:
+            continue
+        key = f"{base.get_usr()}"
+        if key in seen:
+            continue
+        seen.add(key)
+        where = _file_of(base)
+        if where is None or any(m in where for m in FOREIGN_MARKERS):
+            continue
+        if not _in_scope(where, needle, op_root):
+            out.add(where)
+        # A base may itself derive from the class holding the hooks.
+        pending.extend(_specifiers(base, only_in_scope=False))
+    return out
+
+
 def _is_out_param(cursor) -> bool:
     """True when a parameter is a non-const reference or pointer (writable out)."""
     if cindex is None:
@@ -523,9 +610,11 @@ class _Walker:
         collect_writes: bool = True,
         *,
         side: str = "host",
+        frame_files: frozenset[str] = frozenset(),
     ):
         self.needle = needle
         self.op_root = _norm(op_root) if op_root else ""
+        self.frame_files = frame_files
         self.collect_writes = collect_writes
         self.side = side
         self.controls: list[CtrlNode] = []
@@ -544,6 +633,19 @@ class _Walker:
     # -- helpers -----------------------------------------------------------
     def _in_scope(self, file: str | None) -> bool:
         return _in_scope(file, self.needle, self.op_root)
+
+    def _in_frame(self, file: str | None) -> bool:
+        """Scope for who-calls-whom, which reaches one step past the operator.
+
+        The base class that calls this operator's hooks is not part of the
+        operator and none of its state should be, but the order it calls them
+        in is the only record of when they run. So its functions and its calls
+        are read, and nothing else — writes, fields and control nodes all stay
+        on the strict test.
+        """
+        if file is None:
+            return False
+        return self._in_scope(file) or file in self.frame_files
 
     def _stable_id(self, file: str, line: int, col: int, kind: str) -> str:
         key = (file, line, kind)
@@ -671,7 +773,7 @@ class _Walker:
         if not func or func not in self.functions:
             return
         file = _file_of(cursor)
-        if not self._in_scope(file):
+        if not self._in_frame(file):
             return
         callee = cursor.spelling
         if not callee:
@@ -957,7 +1059,7 @@ class _Walker:
         if kind_name in ("CXX_METHOD", "FUNCTION_DECL", "FUNCTION_TEMPLATE", "CONSTRUCTOR"):
             if cursor.is_definition():
                 file = _file_of(cursor)
-                if self._in_scope(file):
+                if self._in_frame(file):
                     assert file is not None
                     name = cursor.spelling or func
                     rec = self.functions.setdefault(
@@ -982,9 +1084,7 @@ class _Walker:
             implied: list[PathCond] = []
             for ch in cursor.get_children():
                 self.walk(ch, stack + implied, func)
-                negation = _guard_clause_negation(ch)
-                if negation is not None:
-                    implied.append(negation)
+                implied.extend(_guard_clause_negations(ch))
             return
 
         if kind_name == "IF_STMT":
@@ -1213,12 +1313,24 @@ _EXIT_KINDS = frozenset(
     {"RETURN_STMT", "BREAK_STMT", "CONTINUE_STMT", "GOTO_STMT", "CXX_THROW_EXPR"}
 )
 
-# A guard clause that bails out on *invalid input* says nothing about the values
-# a valid call can carry: negating it would just restate "the inputs are legal",
-# which is already assumed. Only the negation of a normal-flow early exit is a
-# real condition on the inputs. Keeping these out also stops a validator with a
-# dozen `return GRAPH_FAILED`s from hanging a dozen guards on everything after it.
+# Returns that report the call was rejected. Which inputs an operator accepts is
+# stated nowhere else -- there is no separate legality model -- so these bail-outs
+# *are* the definition, and their negation is what holds on everything after them.
+# FAG rejects HIFLOAT8 this way; without the negation the analysis believes a
+# HIFLOAT8 query reaches key encoding and reports an output dtype the kernel never
+# declared.
 _ERROR_EXIT_RE = re.compile(r"GRAPH_FAILED|PARAM_INVALID|GRAPH_PARAM|FAILED\b")
+
+# The same bail-out written the other common way. `if (ret != GRAPH_SUCCESS)
+# { return ret; }` forwards the status it just tested rather than naming a
+# failure code, so the statement carries no word `_ERROR_EXIT_RE` can see --
+# but a branch guarded by "the status is not success" is the failure path
+# whatever it returns. Reading it as normal flow hangs "every check so far
+# passed" on the rest of the function, and a value only ever assigned after
+# such a check then looks like it might never be assigned at all.
+_STATUS_FAILURE_RE = re.compile(
+    r"!=\s*(?:\w+\s*::\s*)?GRAPH_SUCCESS|GRAPH_SUCCESS\s*!="
+)
 
 
 def _exit_statement(stmt):
@@ -1232,45 +1344,150 @@ def _exit_statement(stmt):
     return None
 
 
-def _guard_clause_negation(stmt) -> PathCond | None:
-    """`!cond` for an `if (cond) { ... return; }` whose fallthrough needs it.
+def _else_if_chain(stmt):
+    """An `if / else if / …` chain as its links, plus whatever trails it.
+
+    Each link is the condition and the branch it guards; the trailing part is
+    the final plain `else`, or None when the chain ends without one.
+    """
+    links = []
+    node = stmt
+    while node is not None and node.kind.name == "IF_STMT":
+        children = list(node.get_children())
+        if len(children) < 2:
+            break
+        links.append((children[0], children[1]))
+        node = children[2] if len(children) > 2 else None
+    return links, node
+
+
+def _exits_inside(body) -> list[PathCond]:
+    """Guards one level in that leave the function, as negations."""
+    kind = body.kind.name if body is not None else ""
+    stmts = list(body.get_children()) if kind == "COMPOUND_STMT" else [body]
+    out: list[PathCond] = []
+    for s in stmts:
+        if s is not None and s.kind.name == "IF_STMT":
+            out.extend(_guard_clause_negations(s))
+    return out
+
+
+def _implied_by_nested_guards(stmt, links) -> list[PathCond]:
+    """What an `if` whose branch only *sometimes* leaves still tells us.
+
+    `if (A) { … if (B) return X; }` does not stop the code after it, so the
+    negation of B is not on that path outright — but reaching there under A
+    does mean B was false. Recorded as `A implies !B`, which is weaker than
+    `!B` and holds either way.
+
+    Worth recording because this is the shape an operator's alternate exit
+    takes: a whole separate encoding for the degenerate case, guarded by an
+    arch test. Dropping it entirely, as reading only unconditional exits did,
+    left the main path free to claim the degenerate case's own key -- and the
+    keys built from that combination are ones no run produces.
+
+    Recorded as a bail-out, which is what it is from where the key is built:
+    the branch that leaves encodes its own key somewhere else, so every run
+    that reaches *this* encoding satisfies the implication. Hanging it on the
+    writes instead would make them look conditional and mint an initial value
+    for a run that does not happen.
+    """
+    file = _file_of(stmt) or ""
+    out: list[PathCond] = []
+    for cond, body in links:
+        outer = _text_of(cond, COND_TOKENS)
+        if not outer:
+            continue
+        for inner in _exits_inside(body):
+            if inner.is_opaque:
+                continue
+            out.append(
+                PathCond(
+                    f"!({outer}) || {inner.pretty()}",
+                    False,
+                    file,
+                    cond.location.line,
+                    kind="bailout",
+                )
+            )
+    return out
+
+
+def _guard_clause_negations(stmt) -> list[PathCond]:
+    """The conditions that hold for whatever follows this `if`.
 
     An if/else already walks both polarities inside the branches, but a
     statement *after* `if (c) { return; } else { ... }` only runs when the
     else was taken — i.e. under `!c`. Without recording that, a later
     unguarded write looks unconditional and wipes earlier definitions
     (FAG's `DoSparse` overwriting `SplitAxisEnum::BN2S2` is exactly this).
+
+    When every branch of an `else if` chain leaves, reaching the statement
+    after it means no condition in the chain held — all of them, not just the
+    first. Recording only the first understates the path, and the trailing
+    `return` of a function written that way then looks like a case the earlier
+    branches might not have covered, which mints an initial value for a member
+    the code always sets.
     """
     if stmt.kind.name != "IF_STMT":
-        return None
-    children = list(stmt.get_children())
-    if len(children) < 2:
-        return None
-    cond, then_stmt = children[0], children[1]
-    else_stmt = children[2] if len(children) > 2 else None
-    exit_stmt = _exit_statement(then_stmt)
-    if exit_stmt is None:
-        return None
-    if _ERROR_EXIT_RE.search(" ".join(_tokens(exit_stmt, 64))):
-        return None
-    # Both sides exit ⇒ nothing after the if is reachable from here.
-    if else_stmt is not None and _exit_statement(else_stmt) is not None:
-        return None
-    cond_text = _text_of(cond, COND_TOKENS)
-    if not cond_text:
-        return None
-    # `if (c) { return; }` with no else: `!c` is the whole condition on what
-    # follows, so it reads like any other branch. With an `else if` chain the
-    # chain's own conditions are never negated onto the path, so `!c` alone is
-    # weaker than the truth — `guard_clause` marks that, see
-    # `PathCond.records_what_follows`.
-    return PathCond(
-        cond_text,
-        True,
-        _file_of(stmt) or "",
-        stmt.location.line,
-        kind="guard_clause" if else_stmt is not None else "if",
+        return []
+    links, tail = _else_if_chain(stmt)
+    if not links:
+        return []
+    if _exit_statement(links[0][1]) is None:
+        return _implied_by_nested_guards(stmt, links)
+
+    exits = [_exit_statement(then) for _, then in links]
+    if (
+        all(e is not None for e in exits)
+        and tail is not None
+        and _exit_statement(tail) is not None
+    ):
+        # Every way through leaves: nothing after the chain runs at all.
+        return []
+
+    file = _file_of(stmt) or ""
+    texts = [_text_of(cond, COND_TOKENS) for cond, _ in links]
+    lines = [cond.location.line for cond, _ in links]
+    # `if (ret != GRAPH_SUCCESS) { return ret; }` is a bail-out too, but `ret`
+    # names no input: the condition that really failed is inside the callee,
+    # and negating this text would only add an opaque variable.
+    opaque = [bool(t) and bool(_STATUS_FAILURE_RE.search(t)) for t in texts]
+    rejects = [
+        bool(e is not None and _ERROR_EXIT_RE.search(" ".join(_tokens(e, 64))))
+        for e in exits
+    ]
+
+    whole_chain = (
+        len(links) > 1
+        and all(e is not None for e in exits)
+        and all(texts)
+        and not any(rejects)
+        and not any(opaque)
     )
+    if whole_chain:
+        return [
+            PathCond(text, True, file, line, kind="if")
+            for text, line in zip(texts, lines)
+        ]
+
+    # Otherwise only the first condition is known to hold, and with a chain
+    # behind it that is weaker than the truth — `guard_clause` marks that, see
+    # `PathCond.records_what_follows`.
+    if not texts[0] or opaque[0]:
+        return []
+    if rejects[0]:
+        return [PathCond(texts[0], True, file, lines[0], kind="bailout")]
+    trailing = len(links) > 1 or tail is not None
+    return [
+        PathCond(
+            texts[0],
+            True,
+            file,
+            lines[0],
+            kind="guard_clause" if trailing else "if",
+        )
+    ]
 
 
 #: Wrappers libclang inserts between a declaration and its literal initialiser.
@@ -1474,7 +1691,13 @@ def walk_file(
         for d in tu.diagnostics
     ]
     op_root = ctx.op_dir or ""
-    w = _Walker(op_needle, op_root=op_root, collect_writes=collect_writes, side=side)
+    w = _Walker(
+        op_needle,
+        op_root=op_root,
+        collect_writes=collect_writes,
+        side=side,
+        frame_files=frozenset(_framework_headers(tu.cursor, op_needle, op_root)),
+    )
     for child in tu.cursor.get_children():
         w.walk(child, [], "")
     return WalkResult(

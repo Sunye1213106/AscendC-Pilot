@@ -8,6 +8,8 @@ from typing import Any
 
 import yaml
 
+from uo_init import paths
+
 SPEC_DIR = Path(__file__).resolve().parents[2] / "spec"
 DEFAULT_CONTEXT = SPEC_DIR / "build_context.yaml"
 FUNCTION_LIKE_QUALIFIERS = {"__in_pipe__", "__out_pipe__", "__inout_pipe__"}
@@ -51,10 +53,14 @@ class BuildContext:
         defaults = dict(raw.get("defaults") or {})
         # AscendC-Pilot root: .../engines/understand-operator/src/uo_init -> parents[4]
         rr = repo_root or str(Path(__file__).resolve().parents[4])
+        # The spec file carries no machine-specific defaults; where the external
+        # trees live is a property of the checkout, resolved by uo_init.paths.
+        cann_fallback = cann_root or defaults.get("cann_root") or paths.cann_root() or ""
+        ops_fallback = ops_root or defaults.get("ops_root") or paths.ops_root() or ""
         mapping = {
             "repo_root": rr.replace("\\", "/"),
-            "cann_root": (cann_root or defaults.get("cann_root") or "").replace("\\", "/"),
-            "ops_root": (ops_root or defaults.get("ops_root") or "").replace("\\", "/"),
+            "cann_root": str(cann_fallback).replace("\\", "/"),
+            "ops_root": str(ops_fallback).replace("\\", "/"),
             "compat_root": "",
             "op_dir": (op_dir or "").replace("\\", "/"),
             "arch_dir": arch_dir,

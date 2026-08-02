@@ -6,14 +6,12 @@ Each entrypoint has signature ``fn(project_root, payload) -> dict`` with an
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-# Default CANN tree used by local regression; override via payload / env.
-_DEFAULT_CANN = r"d:\PR-review\_cann\pkg"
+from uo_init import paths
 
 
 def _uo_root(project_root: Path) -> Path:
@@ -60,21 +58,26 @@ def _ctx(payload: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _cann_root(ctx: dict[str, Any]) -> str:
-    return str(
-        ctx.get("cann_root")
-        or os.environ.get("ASCEND_CANN_PACKAGE_PATH")
-        or os.environ.get("CANN_ROOT")
-        or _DEFAULT_CANN
-    )
+    found = paths.cann_root(ctx.get("cann_root"))
+    if found is None:
+        # Returning a path that does not exist gives clang a clearer failure
+        # than returning None does three frames further down.
+        raise FileNotFoundError(f"CANN packages not found.\n{paths.explain()}")
+    return str(found)
 
 
 def _ops_root(ctx: dict[str, Any], project_root: Path) -> str | None:
     raw = ctx.get("ops_root")
     if raw:
         return str(raw)
-    # Typical layout: …/ops-transformer/attention/<op>
+    # Typical layout: …/ops-transformer/attention/<op>. Confirm by shape rather
+    # than by existence, or an operator two levels below anything at all would
+    # silently hand clang an include root with no headers in it.
     parent = project_root.parent.parent
-    return str(parent) if parent.is_dir() else None
+    if (parent / "common" / "include").is_dir():
+        return str(parent)
+    found = paths.ops_root()
+    return str(found) if found is not None else None
 
 
 def _run_dir(uo: Path, ctx: dict[str, Any]) -> Path:

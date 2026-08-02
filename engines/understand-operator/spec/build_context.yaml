@@ -17,18 +17,19 @@
 version: 1
 cann_version: "9.1.0-beta.3"
 
-# Defaults used by the FAG probes; override via env or CLI for other machines.
+# cann_root and ops_root are deliberately absent: they name trees outside this
+# repository and differ per checkout, so uo_init.paths resolves them from the
+# environment. Setting them here once made every other machine skip the tests
+# that need them, silently.
 defaults:
-  cann_root: "D:/PR-review/_cann/pkg"
-  ops_root: "D:/PR-review/TEST/ops-transformer"
   compat_root: "{repo_root}/engines/understand-operator/spec/compat"
 
-# The .run is a nested makeself archive: outer tar holds 30 inner .run files.
-# Peel with skip= from the shell header, count that many newlines, slice, untar.
+# The .run is a nested makeself archive: the outer tar holds one .run per
+# sub-package. `scripts/cann_extract.py` reads `skip=` out of the shell header
+# and derives the payload offset from it, so no byte offset is recorded here --
+# every CANN release moves them.
 provenance:
-  runfile: "Ascend-cann-toolkit_9.1.0-beta.3_linux-x86_64.run"
-  outer_skip: 712
-  outer_payload_offset: 19229
+  unpacked_by: "scripts/cann_extract.py"
   inner_packages_extracted:
     - cann-metadef        # register/*, exe_graph/*
     - cann-asc-devkit     # tiling/*, AscendC kernel API, TPL DSL

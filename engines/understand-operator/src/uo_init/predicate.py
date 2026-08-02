@@ -52,6 +52,19 @@ def _call_name(e: Expr) -> str:
     return name.split("::")[-1]
 
 
+#: Marks a comparison whose value side was quoted in the source. It rides on
+#: the comparison rather than on the literal because a bare `{"lit": ...}` is
+#: matched by exact key set elsewhere, and an extra key there would look like a
+#: different kind of node.
+VALUE_KIND_STRING = "string_literal"
+
+
+def _mark_literal(node: dict[str, Any], side: Expr) -> dict[str, Any]:
+    if isinstance(side, Const) and side.string_literal and isinstance(side.value, str):
+        node["value_kind"] = VALUE_KIND_STRING
+    return node
+
+
 def _string_lit(e: Expr) -> str | None:
     if not isinstance(e, Const):
         return None
@@ -82,9 +95,9 @@ def rewrite_strcmp_cmp(expr: Expr) -> Expr:
         a, b = call.args[0], call.args[1]
         sa, sb = _string_lit(a), _string_lit(b)
         if sb is not None and len(sb) <= _MAX_ENUM_LITERAL:
-            return Bin(expr.op, a, Const(sb))
+            return Bin(expr.op, a, Const(sb, string_literal=True))
         if sa is not None and len(sa) <= _MAX_ENUM_LITERAL:
-            return Bin(expr.op, b, Const(sa))
+            return Bin(expr.op, b, Const(sa, string_literal=True))
         return None
 
     got = _match(left, right) or _match(right, left)
@@ -181,9 +194,12 @@ class PredicateNormalizer:
         atoms = [a for a in res.atoms if a.root != "CONSTANT"]
         if not atoms:
             # The whole leaf folded to a constant, e.g. a scoped enum member.
+            # `symbol` is the value it folded to; `text` is the name it was
+            # written under, so reading `text` here spells the literal like an
+            # identifier and everything downstream sees an unmodelled symbol.
             const = next((a for a in res.atoms if a.root == "CONSTANT"), None)
             if const is not None:
-                return {"lit": _literal_of(const.text)}
+                return {"lit": _literal_of(const.symbol or const.text)}
             raise NormalizeError(REASON_UNMAPPED_LEAF, text[:80])
         if len(atoms) > 1:
             # A composite like `a * b` inside an accessor: the resolver split
@@ -195,7 +211,7 @@ class PredicateNormalizer:
         var_id = self.model.var_id_for(atom.root, atom.symbol, atom.index)
         if not var_id:
             raise NormalizeError(REASON_UNMAPPED_LEAF, f"{atom.root}:{atom.symbol}"[:80])
-        self.model.declare_on_demand(var_id, atom.root)
+        self.model.declare_on_demand(var_id, atom.root, atom.index)
         return {"var": var_id, "root": atom.root}
 
     def _value(self, expr: Expr) -> dict[str, Any]:
@@ -272,9 +288,11 @@ class PredicateNormalizer:
         # `{var, value}` is the shape the solver handles best; use it whenever
         # exactly one side is a plain variable and the other a literal.
         if "var" in lhs and "lit" in rhs:
-            return {"op": op, "var": lhs["var"], "value": rhs["lit"]}
+            return _mark_literal({"op": op, "var": lhs["var"], "value": rhs["lit"]}, right)
         if "lit" in lhs and "var" in rhs:
-            return {"op": _flip(op), "var": rhs["var"], "value": lhs["lit"]}
+            return _mark_literal(
+                {"op": _flip(op), "var": rhs["var"], "value": lhs["lit"]}, left
+            )
         return {"op": op, "lhs": _as_operand(lhs), "rhs": _as_operand(rhs)}
 
     def _null_comparison(

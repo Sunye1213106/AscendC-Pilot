@@ -6,11 +6,11 @@ import probe_kernel as P
 from clang import cindex
 
 EXTRA = [
-    r"D:\PR-review\_cann\pkg\cann-asc-devkit\x86_64-linux\asc\include\basic_api",
-    r"D:\PR-review\_cann\pkg\cann-asc-devkit\x86_64-linux\asc\impl\basic_api",
-    r"D:\PR-review\_cann\pkg\cann-asc-devkit\x86_64-linux\asc",
+    P.ASC + r"\asc\include\basic_api",
+    P.ASC + r"\asc\impl\basic_api",
+    P.ASC + r"\asc",
 ]
-PRELUDE = r"D:\PR-review\_cann\compat\bisheng_prelude.h"
+PRELUDE = P.COMPAT + r"\bisheng_prelude.h"
 QUALS2 = ["__simd_callee__", "__simd__", "__vec_callee__"]
 
 

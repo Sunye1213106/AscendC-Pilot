@@ -27,7 +27,8 @@
 | 共享求解器 | **已到**：`engines/common`（`acp_common`），TG / UO 同一套 IR 与 Z3 语义 |
 | 19 维结构对齐 | **FAIL=0**；`domain_violations` 唯一报例（OutDType）**已求证为本工具假阳性**，检查本身有设计缺陷 —— 见「`domain_violations` 比错了东西」 |
 | LLM 封闭回环 | 已联调；「只改账不改式」现由消元后校验 + 回退挡住，见 F.2 / F.12。**`LOOP_ELEMENT` 已移出 LLM 队列，且不再回收** |
-| key 判定 8705 / K6 真 Z3 | **已到**：8705 个合法 key 全部过 Z3，14/19 维进求解器；当前 8704 `unknown` + 1 `unreachable`（见 F.13） |
+| key 判定 8705 / K6 真 Z3 | **已到**：8705 个合法 key 全部过 Z3，**19/19** 维进求解器；当前 **2592 `unknown` + 6113 `unreachable`**（见 G） |
+| `unreachable` 的逐条证据 | **未做**（批次 C）。6113 条目前只有 `unsat_core` + `checked_dims`，不足以逐条复核，数量是否偏高尚未证实 |
 | G0 fixture / K5 / K7 | **未做** |
 
 **不能宣称三重全覆盖已达成。**
@@ -624,6 +625,340 @@ python .probe_cache/diag_align.py
 ```
 
 I2/I3 仍是**过近似**（未建模 `GRAPH_FAILED` 收窄），结构性「能支撑蕴含」即可，不算假成功。
+
+### G. 五维回归求解器，判决从 1 条推到 6113 条（2026-08-01）
+
+| | 2026-07-31 16:00 | 2026-08-01 05:26 |
+| --- | ---: | ---: |
+| `dimensions_compiled` | 14/19 | **19/19** |
+| `unreachable` / `unknown` | 1 / 8704 | **6113 / 2592** |
+| `free_vars` | 3（其中一批是假的，见 G.5） | **9** |
+| `implicit_defaults` | 135 | **22** |
+| K6 全量一轮耗时 | 跑不完（>6h 未返回） | **约 19 分钟** |
+
+`CLOSED 14/19` 与 `INPUT_DERIVABLE 12/19` 两个数**一格没动**，这是符合预期的：本轮动的是「判决」而不是「闭合」，两者由不同的东西卡住。
+
+**G.1 测试此前是静默 skip 的。** `conftest.py` 把路径写死在 `PR-review/...`，实际布局在 `d:\TEST\`，于是所有依赖 FAG / CANN 的用例一律 skip 而计入 passed。新增 `uo_init/paths.py` 统一解析（显式参数 → 环境变量 → 候选探测 → 报错说明怎么设），并把 skip 改成显式失败。在此之前的任何「全量通过」都不构成证据。配套把 CANN 从 `.run` 剥到 `_cann/pkg`，再由 `scripts/cann_slim.py` 按 include 根裁到 `slim`（裁的是整个 include 根而不是当前算子读到的闭包，换算子不会缺头）。
+
+**G.2 未知裸符号不再牺牲整维**（批次 B1/B3）。`_Rewrite` 读到 `m0Max` 这类读不出的符号就 `raise _Unadaptable`，整个维度退出求解 —— 五维缺席的直接原因。改为交给 `_Isolator` mint 一个维度隔离的自由变量，**绝不跨维共享**（共享等于凭空建立等式，会造出假 UNSAT）。同时凡 mint 过 local free var 的维度强制 `exact=False`，保证 SAT 侧只会给 `unknown`，不会误报 `reachable`。`dimensions_compiled` 由此 14/19 → 19/19，`omitted` 清空。
+
+**G.3 求解器从跑不完到 19 分钟。** 三处，缺一不可：
+
+- **DAG 被展开成了树。** `_compile_bool` / `_compile_value` / `normalize_expr` 都没有 memoization，磁盘上共享良好的 DAG 一进 Z3 就按引用次数指数展开。加 memo 后最大表达式的编译从「不返回」变成秒级。
+- **超时形同虚设。** `timeout_ms` 只在 Z3 自己愿意检查时生效，落进 QF_NIA 的死循环里它不看。改为 `rlimit`（确定性步数上限）+ 线程看门狗（超 `hard_timeout_ms` 直接中断 context），并在中断后**重建 context** —— 被中断的 context 会留在 wedged 状态，复用它后面每一次 `check()` 都立即返回 unknown。
+- **问题本来就不必整体解。** 按自由变量不相交把 19 维切成独立分量，各自求解并按分量的维度取值做投影缓存。同一个分量在 8705 个 key 里反复出现，缓存命中后整轮只剩 430 次真实查询。
+
+**G.4 字符串字面量此前和标识符没法区分。** IR 里 `"TND"` 和 `TND` 长得一样，于是 `layout == "TND"` 与 `layout == "BSH"` 无法判互斥。给字面量加标记后，两个不同字面量天然不等，`unknown` 8704 → 5952，`unreachable` 1 → 2753。
+
+**G.5 局部量常量折叠有一个会缩小可行域的 bug（本轮最重要的正确性修复）。** `source_resolver` 遇到「所有 RHS 都是常量」的局部量就折成单个 `CONSTANT` 原子，但**三元表达式的多个分支也满足这个条件** —— `deterTilingSplitMode` 有三个可能取值，被折成了其中一个。更糟的是 `predicate._leaf` 拿的是 `const.text`（标识符的**名字**）而不是 `const.symbol`（折出来的**值**），所以比较的是变量名。两个 bug 叠加，把「可能是 0/1/2」写成了「恒等于某个名字」，这是**缩小**可行域，直接违反 UNSAT 可信的前提。修法是新增 `_picks_between_constants`：全常量但存在 `Ite`/`Select` 选择的，不许折叠。`unknown` 5952 → 2592，`unreachable` 2753 → 6113，`free_vars` 49 → 55（那 6 个本来就在，只是被假常量盖住了）。
+
+**G.6 隐式初值的四连修，55 → 9。** A2 把 `fallthrough = Const(0)` 换成 mint `VAR_INIT_*` 之后，`free_vars` 3 → 49、一批字段降级为 `overapproximated`。这不是退步而是把「假的确定」换成「诚实的不确定」，随后四处修复是真的把不确定消掉：
+
+- **转发状态码的早退认不出来**。`_ERROR_EXIT_RE` 只认 `return GRAPH_FAILED` 这种字面常量，而 `if (ret != ge::GRAPH_SUCCESS) { return ret; }` 是转发，被当成正常路径，于是后续写入都挂上了一个本不该存在的守卫。加 `_STATUS_FAILURE_RE` 识别失败检测式。`free_vars` 55 → 49，`implicit_defaults` 135 → 115。
+- **带初始化器的块作用域声明**。`int64_t seqQShapeSize = ...;` 写在 `if (TND)` 里，链式分析问「不是 TND 时它等于几」并 mint 自由变量。但这个问题不成立：C++ 作用域保证这个局部只能在声明它的块内、声明之后被读，守卫说的是「进入哪个块」而不是「有没有值」。`_is_declaration_site` 要求是局部、有初始化器、且行号就是声明行（成员/形参/出参一律排除，它们活得比这些写点长）。`free_vars` 49 → 10，`implicit_defaults` 115 → 27。
+- **穷尽性判定不该按全局判**。`_paths_are_covered` 要求所有写点在同一函数才认穷尽，于是一个成员在 A 函数里四个 layout 分支写全、又在 B 函数里被写一次，就判不出穷尽。改为**按函数分别判**。
+- **但对成员这样判是不健全的**（这一步先把 `free_vars` 从 9 顶回 15，暴露了此前藏着的不健全假设，然后才修对）。函数内部写全，不代表这个函数一定会被调用；一个只在条件里调用的 helper，跳过它的那条路径读到的还是旧值。所以成员额外要求 `_always_runs`，而局部量不需要 —— 跳过这个函数的路径根本没地方读它。`_is_local_of` 做这个区分，最终落在 9。
+
+**G.7 序列化往返丢证据，K6 把 `exact` 高报成 14。** `to_dict()` 写出的 `root_vars` / `undecided_guards` 与 `_to_field()` 读回的键名和格式对不上，读回来是空的，于是 K6 看到的每一维都「没有未决守卫」。实际 `exact` 是 12。补 `_roots_of` / `_guards_of` 两个还原器，并加了一条往返测试钉死。
+
+**G.8 当前卡在哪：143 次求解超时。** 全量一轮共 430 次分组查询，287 次**在 0 秒内**判为 UNSAT，143 次烧满超时预算（合计 493 秒）后 `canceled` —— 2592 个 `unknown` 全部来自这里。值得注意的是超时不只发生在那个 13 维的大分量上，`InputDType`、`OutDType`、`IsDrop` 这些**单维分量也解不出来**，所以瓶颈不是组合爆炸，而是单维表达式本身的算术形态：tiling 算式里变量乘变量再除以第三个变量，编译出来是 QF_NIA，理论上不可判定。
+
+**G.9 松弛实验的结论是否定的，但把真凶指出来了。** 思路是：把非线性算子换成全新的无约束变量使系统线性化，这是**松弛**（可行域只会变大），所以松弛后的 UNSAT 对原系统仍成立，据此给出的 `unreachable` 健全；松弛后的 SAT 则什么都不能说明。脚本 `scripts/_probe_nia.py`（`--collect` 采集、`--relax` 分四档重解），抽 12 个不同形状的组合：
+
+| 档位 | 结果 | 耗时 |
+| --- | --- | ---: |
+| 原样 | 12 unknown | 39s |
+| 只松弛 `x * y` | 12 unknown | 28s |
+| 加上 `/` `%`（除数非常量） | **12 sat** | **1s** |
+| 连常量除法一并松弛 | 12 sat | 0s |
+
+**乘法不是瓶颈**——松弛掉之后一个都没变。真正卡住求解器的是**整数除法与取模**，tiling 里遍地 `CeilDivide`，一旦松弛立刻 1 秒返回。但返回的是 SAT，松弛下的 SAT 不可用，所以这条路换不到任何 `unreachable`，**不再往下走**。
+
+这个结果顺带确立了一件更要紧的事：**即便求解器算得动，这 2592 个也还是 `unknown`**。参与的 7 个维度是 `overapproximated`，SAT 会被 `_sat_caveats` 降级，只有 UNSAT 才能定案。所以出路不在求解器性能，在于让那些维度变精确 —— 见 G.10。
+
+**G.10 五个 `overapproximated` 维度全部卡在假环上。** `SplitAxis` / `DeterType` / `IsBn2MultiBlk` / `IsNzOut` / `IsTndSwizzle` 的 `note` 里都写着 `CYCLIC_DEFINITION`，涉及的名字只有五个：`fBaseParams.blockOuter`、`s2Inner`、`totalRound`、`fBaseParams.isDeterministic`、`s1Inner`。
+
+其中 `s1Inner` / `s2Inner` 已确认是 **save / modify / restore**（`..._tiling_normal_regbase.cpp:897-929`）：先把成员存进同名局部，中间有条件地翻倍，末尾再从局部还原。展开局部 `s2Inner` 会读 `fBaseParams.s2Inner`，而后者的最后一个写点又读那个局部，于是绕回起点。源码里并没有环 —— 第 898 行的读发生在第 907 行的写**之前**，环完全是位置不敏感的展开造出来的。
+
+`_expand_name` 已经有 `_prev_version` 机制处理 `x = f(x)` 这类顺序赋值，但它只在**同一个名字的写点链**内有效；这里绕环要经过另一个名字（局部量），拿不到前一版本就只能判环。
+
+**G.11 程序点敏感的展开（批次 I1/I2 已落地）。** 核心是一句话：一个名字的值取决于**在哪里读它**。`_visible_defs` 在取定义池时滤掉「此刻还没跑到的写」，`_runs_before` 负责给出理由，缺理由就保留：
+
+- **同函数比行号**。写在读下面就不算数。
+- **共享循环是例外**。同一个循环体内，读下面的写会在下一轮先于这次读，所以照留。只有**同时包住两者**的循环才算，仅包住写的循环在读之前已经跑完。
+- **跨函数靠调用点对齐**（`_read_lines`）。helper 里的读，站在调用者的角度发生在**调用那一行**，所以调用行下面的写与它无关。这一步只在整条调用链都「最多进入一次」（`_runs_once`：唯一调用点、不在循环里、调用者同样如此）时才走，否则第二次进入时上一轮的写早已生效，比行号就会漏掉真实发生过的写。
+- **缓存键带上「哪些写在视野内」**。同一个名字在函数里的两处读是两个值，不能共用条目。只有真丢了写才有这个后缀，所以绝大多数查找的缓存行为不变。
+
+踩到一个反直觉的坑：过滤会让**穷尽性判定**失真。`if (A) { n2 = 1; g = n1/n2; } else { n2 = 2; g = n1/n2; }` 里，在 A 分支读 `n2` 会把 else 分支那次写滤掉，剩下的写不再覆盖所有路径，于是给一条根本不存在的路径造了个初值变量 —— `implicit_zero` 一度从 22 涨到 37，`IsDNoEqual` 从 `exact` 掉级。修法是把两件事分开：**取值用过滤后的写，判覆盖用全集**（`_chain_sites` 的 `pool` 参数）。
+
+效果（`scripts/_probe_derive.py`，全量单测 493 passed 无回归）：
+
+| 指标 | 修前 | 修后 |
+| --- | ---: | ---: |
+| CLOSED | 14/19 | 14/19 |
+| unique free_vars | 9 | **7** |
+| implicit-default 站点 | 22 | **6** |
+| SplitAxis 自由变量 / 表达式 | 7 / 56391 字符 | **5 / 46272** |
+| IsTndSwizzle 自由变量 | 6 | **4** |
+
+`deterTilingSplitMode == 1` / `== 2` 这两个卡住 5 维的自由变量**消失了**，`fBaseParams.isDeterministic` 的假环也解开了。诊断脚本 `scripts/_probe_cycle.py`：它把「环在哪一层被判定」和「哪些查找因位置丢了写」分开报，是这轮定位的主要工具。
+
+**G.12 读点也是条件（批次 H2）。** 写点看起来不穷尽，未必真有「没赋值就被读」的路径 —— 因为**在哪里读**同样是个条件。`fBaseParams.bandIdx` 只在 attenMask 存在时被写（`ProcessSparseModeInfo` 开头有 attenMask 为空就 return 的提前返回），也只在同一前提下被读，两者合起来不留任何「未写先读」的运行。
+
+`loop_summary.guards_cover(read_conds, write_conds)` 把这件事交给求解器：查询 `read ∧ ¬(∨ write)`，`unsat` 才算数。方向上处处保守 —— 读不懂的守卫，从写这边丢会缩小析取，从读这边丢会削弱前提，两者都让蕴含**更难**证明；`sat` / `unknown` / 超时一律当作没证明，假设原样留着。
+
+效果：`implicit_zero` 22 → 19，`fBaseParams.blockOuter` 从卡住 5 维降到 2 维，SplitAxis 自由变量 5 → 4，IsBn2MultiBlk 5 → 4，DeterType 7 → 6。K6 全量从 19 分钟降到 **5.5 分钟**（表达式小了一大截），判决数不变（6113 / 2592）—— 与 G.9 的结论一致：`unknown` 卡在求解器超时，跟自由变量多少无关。
+
+`bandIdx` 仍未被证下来（还卡 5 维）。它的写守卫是 `!(attenMaskShape == nullptr || attenMaskShape->GetStorageShape().GetDimNum() == 0)`，读点那侧的条件多半拼写不同，原子对不上 —— 待查。
+
+**还剩一个环**：`s1Inner` @ `FuzzyForBestSplit`。它的读点是 `('?', 0, ...)` —— 来自函数摘要的局部量表，只有右值没有行号，位置过滤无从下手。而那个函数本身只有四行直线代码（`auto s1s2TemplateSize = GetS1S2TemplateType(...)` → `s1Inner = s1s2TemplateSize.first / 2` → `return std::tie(s1Inner, s2Inner, dInner)`），源码里没有环，怀疑是 pair/tuple 取分量时绕回了同名的返回槽，属于另一类问题。
+
+**G.13 6113 个 `unreachable` 里的绝大多数是假的 —— 变量身份坍缩（批次 C 的真答案）。**
+
+起因是一句质疑：这些 key 看着都该可达。查下去发现判决数虽多，**独立判断却极少**：K6 把维度按「不共享自由变量」拆成 10 个分量（一个 10 维的大分量 + 9 个单维），8705 个 key 只落成 430 次分组查询。逐条抽出来看，287 条 unsat 的 `unsat_core` 里往往只有**一个**维度的定义加上它自己的取值断言 —— 那不是「多维互斥」，而是「这一维产不出这个值」。
+
+再逐维单独问一遍（`scripts/_probe_dimvals.py`，把一维钉住、其余全放开），整张表只剩 **12 个取值**被判死，其中 6 个在合法 key 里只出现 1 次（SEL 几乎不选），真正的杀伤全来自 6 条：
+
+| 判定 | 杀掉的 key | 该不该死 |
+| --- | ---: | --- |
+| `IsTndSwizzle=1` | 1984 | 不该 |
+| `DeterType=4` | 1984 | 不该 |
+| `DeterType=3` | 1824 | 不该 |
+| `SplitAxis=5` | 800 | 不该 |
+| `IsNzOut=1` | 640 | 不该 |
+| `DeterType=1` | 544 | 不该 |
+| `IsRegbase=0` | 0 | **该**：该维恒为 1 |
+| `OutDType=0` 等 5 个 `=0` | 各 1 | **该**：穷尽 if-else 链末端够不着的 fallthrough |
+
+矛盾点在于：这 6 条全出自 **overapproximated** 维度。带自由变量意味着可行域只会被放大，**放大之后反而无解**，只能是有什么东西在收缩它。
+
+收缩的东西是变量名。`IsNzOut` 的写点是 `splitAxis == BN2GS1S2 && d > 64 && d < 128 && d % 16 != 0 && … && s1 >= NZ_OUT_MIN_S_SIZE && s2 >= …`，而 `d`、`s1`、`s2` 在 IR 里**全叫 `VAR_SHAPE_GETSTORAGESHAPE`**：一个变量同时背着 `gt64 / lt128 / ge2048 / le512 / le640`，Z3 当然判 UNSAT。`VAR_ATTR_GETATTRS` 更狠，layout 的四个字符串和 sparse_mode 的整数挤在一个符号里。
+
+这个风险 `VarSpec.identity_merged` 的注释里写着，但结论错了半句：
+
+> Within one expression the merge is a harmless over-approximation — the variable is free, so it can take whichever value that occurrence needs.
+
+只有当变量在表达式里**只出现一次**时这句才成立。出现 44 次时，Z3 强制这 44 处取同一个值。所以 `_Isolator` 那套「按维度隔离」防住了跨维度的假等式，却防不住维度**内部**的 —— 而后者才是这 6113 条的来源。
+
+**修法是把身份解析准，不是把冲突绕开。** `var_id_for` 早就支持 `VAR_SHAPE_QUERY_D2` 这样的命名，`VAR_DTYPE_QUERY` / `VAR_ATTR_SPARSE_MODE` 也早从 opdef 声明好了，`DIM_2=2` / `QUERY_INPUT_INDEX=0` 也都在 `named_constants` 里躺着 —— 缺的只是把它们接上：
+
+1. `_const_int` 让序号和轴号既认字面量也认命名常量。源码里 `GetDim(DIM_2)` / `GetInputShape(QUERY_INPUT_INDEX)` 远多于裸数字，只认字面量等于全丢。
+2. `_operand_symbol` 用 opdef 的声明顺序把位置翻译成操作数名（`GetInputShape(1)` → `key`），`VariableModel.operand_names()` 提供这张表。
+3. `_inherit_operand` 让操作数沿调用链传下去，且**不要求 root 相同** —— 外层访问器决定读什么（shape / dtype / format），接收者决定读谁，所以 `GetInputDesc(0)->GetDataType()` 是 query 的 dtype。局部别名（`auto &queryShape = …`）走 bindings 追一层。
+4. 轴号在 Atom 逐层转发时会掉，9 处转发点补 `index=`（字段写点回溯、局部 RHS 追踪、helper 返回值等）。
+
+`SourceResolver` 构造时模型还不存在，所以加了 `adopt(var_model)`，在 `assemble_kb` 里模型就绪后交接。
+
+效果：`VAR_SHAPE_GETSTORAGESHAPE` → `VAR_SHAPE_QUERY_D0` / `VAR_SHAPE_QUERY_D2` / `VAR_SHAPE_KEY_D0`，`VAR_ATTR_GETATTRS` → `VAR_ATTR_INPUT_LAYOUT` + `VAR_ATTR_SPARSE_MODE`，`VAR_DTYPE_GETDATATYPE` → `VAR_DTYPE_QUERY`。派生侧指标一个没动（CLOSED 14/19、`free_vars` 7、`implicit_zero` 19），502 单测全绿 —— 这一轮只改变量身份，不改派生。
+
+> **改完必须 `_probe_derive.py --refresh`。** `fag_bundle.pkl` 里 pickle 了 resolver 实例，旧对象没有新字段，直接跑会让 19 维全部 `unresolved`。
+
+新增探针：`_probe_unreach.py`（抽出分组查询里的矛盾组合，按杀伤量排序）、`_probe_dimvals.py`（逐维逐取值单独问，最小证据表）、`_probe_branch.py`（拆 if-else 链逐分支验守卫；对 DAG 展开达 46 亿节点的维度不适用）。
+
+---
+
+### H. 输入合法性前提：拒绝语句是唯一的合法性定义（2026-08-01）
+
+起因是 `OutDType` 报「host 编出 4/5/6，模板只声明 0–3」。查下去不是模板漏声明，是**推导把失败路径上的值当成了可达**。
+
+| 指标 | 修前 | 守卫挂在写点上（中间态，回归） | 提为前提（现在） |
+| --- | ---: | ---: | ---: |
+| CLOSED | 9/19 | 9/19 | **12/19** |
+| INPUT_DERIVABLE | 6/19 | 6/19 | **10/19** |
+| `free_vars` | 47 | 47 | **9** |
+| `implicit_zero` | 68 | 68 | **21** |
+| 最大表达式 | 151629 | 151629 | **56494** |
+
+#### H.1 为什么原来会把 4/5/6 当可达
+
+`_guard_clause_negation` 原先对 `if (c) { return GRAPH_FAILED; }` 直接返回 None，理由写在注释里：「拒绝非法输入的守卫，取反只是重述『输入合法』，而这已经假设过了」。
+
+**这个前提不成立。** 系统里没有任何地方编码「输入合法」——`queryType` 就是个自由变量，值域是整个 dtype 枚举。算子说明自己接受什么的**唯一**方式就是拒绝其余：
+
+```cpp
+if (queryType == DT_FLOAT8_E5M2 || … || queryType == DT_HIFLOAT8) return ge::GRAPH_FAILED;
+fBaseParams.outDtype = fBaseParams.inputDtype;      // 只有合法 dtype 能走到
+```
+
+跳过它，HIFLOAT8 就成了可用输入，`OutDType = 6` 自然「可达」。
+
+#### H.2 挂成守卫是错的，必须提为前提
+
+第一次修法是让它照常传播，结果 `free_vars` 7 → 47：写点有了守卫就不再是无条件写，fallthrough 需要初值，于是 mint 了一堆 `VAR_INIT`，值域反而更宽。
+
+根子在于**这个条件不属于任何单个变量**。它描述的是「这次调用的输入是否合法」，而失败的调用根本不产生 key。所以它是整个推导的前提：
+
+- `PathCond.kind = "bailout"`，`is_bailout` 为真、`is_decision` 为假（它不二分路径，另一侧到不了这里）；
+- `WriteEvent.guards()` 排除 bailout，写点回到无条件；`premises()` 单独取出；
+- `HostIR.legality_premises()` 汇总去重，`_derive_premises()` 用与维度相同的展开器把每条展开成 IR，写进 `HostDerivation.premises`。
+
+#### H.3 前提必须带自己的上下文
+
+嵌套在判断里的拒绝表达的是**条件性**要求：
+
+```cpp
+if (dropMask != nullptr && …) {          // 只有传了 dropMask
+    if (!hasDrop) return ge::GRAPH_FAILED;   // 才要求 keepProb < 1
+}
+```
+
+按无条件读会把所有不带 dropout 的输入全拒掉（`IsDrop` 的 0 就是这么丢的）。所以每条前提是蕴含式 `到达该检查的条件 ⇒ ¬拒绝条件`；上下文里有 opaque 守卫时整条丢弃，不弱化成无条件。
+
+#### H.4 两道健全性闸门
+
+前提是**收窄**操作，错一条就会漏掉真可达的 key，比误报不可达更危险。所以只有干净的才用：
+
+1. 展开后含自由变量（`VAR_LOCAL_` / `VAR_INIT_` / `VAR_UNMODELLED_`）→ 弃。「某个未知的东西为假」不构成对输入的约束。
+2. 展开后**不含任何变量** → 弃。`if (!IsSameShape(dy, attentionIn))` 在调用读不出来时会折叠成裸常量，一条恒假的前提会拒绝所有输入（实测正是它把全部格子清空的）。
+
+FAG 现状：26 条里 21 条可用。
+
+> `_ERROR_EXIT_RE` 折叠成常量这件事说明**未知调用被当成 0** 而不是 Unknown，这个更深的问题会不会影响维度表达式本身，尚未查。
+
+#### H.5 结果（全部经源码复核）
+
+| 维度 | 前提前 | 前提后 | 源码依据 |
+| --- | --- | --- | --- |
+| `InputDType` | 1–6 | **1,2,3** | `ProcessQuantInfo:1148` 拒 FP8/HIFP8/INT8 系 |
+| `OutDType` | 1–6 | **1,2,3** | 同上；`outDtype = inputDtype` 在拒绝之后 |
+| `S1TemplateNum` | 64,128,512 | **64,128** | `GetS1S2TemplateType` 里 512 只在 HIFLOAT8 分支 |
+| `S2TemplateNum` | 128,256,512 | **128** | 256 只在 FP8、512 只在 HIFLOAT8 分支 |
+| `IsDrop` | 0,1 | 0,1 | H.3 修好之前一度错成只有 1 |
+
+即：模板为 FP8/HIFP8 预留的档位还在，但当前 arch35 的 host 入口已经关闭。`OutDType` 的「契约冲突」是**假冲突**——`domain_violations` 目前仍按静态值域判定，没有用上前提，这处告警待改。
+
+---
+
+### I. 同名局部量跨函数串味：一处**收缩型**缺陷（2026-08-01）
+
+前面所有近似都只往「放宽」一个方向偏，这条不是。它写出的是**错误等式**，会把本来可满足的 key 判成 `unreachable`——即假的不可达。发现自一次专门的收缩型假设审计（按「近似只允许扩大可行域」逐环节复核）。
+
+#### I.1 现象
+
+`_expand_name` 里有两处只按名字索引、不按函数限定：
+
+1. **跨作用域缓存复用**——注释写的是「Same host state under another caller scope」；
+2. **`_active` / `_prev_version`**——环检测与「上一版本」台账。
+
+对**成员**（`fBaseParams.*`）这是对的：成员是全程序一个变量，写点也确实由 `_field_defs` 全局收集。对**局部量**则不成立：`DoSplit` 的 `s1Inner` 和 `FuzzyForBestSplit` 的 `s1Inner` 是两个变量。FAG 里有 **183 个局部名在多个函数中重名**，`s1Inner` / `s2Inner` / `blockOuter` / `s1Outer` 都在其中——正是卡住 5 个过近似维度和那个假环的名字。
+
+写点本身其实是隔离的（`_all_defs_for` 对无点号名走 `_local_defs(name, fn)`），所以泄漏口只有上面那两处台账，它们绕过写点直接交换结果。
+
+#### I.2 为什么这是收缩而不是放宽
+
+拿到别的函数的表达式，不是「多一些可能取值」，而是**断言了一个不成立的相等**。合取里混进一条错误等式，Z3 会因为它与其它约束冲突而报 UNSAT，于是一个真实可达的 key 被判死。且结果**取决于展开顺序**——谁先进缓存谁说了算，这也解释了为什么假环的表现一直不稳定。
+
+#### I.3 修法
+
+新增 `_ident(name, fn)`：成员用裸名，局部量用 `fn::name`。`_active`、`_prev_version`、`_prev_read`、`_earlier_frames` 全部改用它；跨作用域缓存复用加 `"." in canon` 闸门，只对成员开放。
+
+回归测试用两个各有一个 `s1Inner=7` / `s1Inner=9` 的函数。把 `_ident` 和缓存闸门临时退回原状后，两个测试都如实失败——`G` 的 `s1Inner` 拿到 `7`，另一场景下它被当成递归退化成裸名——确认测试确实抓得住这个 bug，而不是恰好通过。
+
+#### I.4 代价与结果
+
+| | 修复前 | 修复后 |
+| --- | --- | --- |
+| `CLOSED` | 12/19 | 12/19 |
+| `free_vars` | 9 | 10 |
+| `implicit_zero` | 21 | 21 |
+| `max_chars` | 56494 | **380290** |
+
+表达式规模涨 6.7 倍是**修复的必然代价**：先前 DAG 看着小，是因为它把不该合并的节点合并了。多出的 1 个自由变量同理——先前被错误复用掩盖。
+
+> K6 重跑的判决变化（`unreachable` 6113 / `unknown` 2592 的去向）待补。
+
+#### I.5 被它连带暴露的两个下游缺陷
+
+表达式一变大、局部量一分家，两个一直存在但被掩盖的问题当场浮出来，都不是新引入的。
+
+**（a）`decode_expr_dag` 是递归的，编码侧却早就是迭代的。**
+
+`_dag_postorder` 的注释写着「Iterative because a derived expression nests deeper than the default recursion limit」，解码侧却漏了。只有**又共享又够大**的节点才配得到定义，剩下的内联成一条长脊，深度轻松上万。改成显式栈后，新测试在 `recursionlimit=100` 下解 5000 层——递归实现无论把上限调到多少都过不去。
+
+> 这多半就是待办里那条**间歇性 native crash（约 10s 无输出、退出 -1、没有 traceback）**：Python 的递归上限能抬，C 栈抬不了，踩爆就是进程直接消失。仓库里还有 4 处 `setrecursionlimit(20000~200000)`（`_worker`、`z3_backend._deep_recursion`、两个 probe 脚本），都是同一个隐患，待逐个改成迭代。
+
+**（b）软变量的类型是靠名字猜的，`VAR_SCHED_` 下面躺着两类东西。**
+
+软化发生在子进程，父进程的 `var_model` 看不到那些 `VarSpec`，于是 `_reregister_soft_vars` 按 presort 桶重新声明。但 `VAR_SCHED_` 前缀有两个来源：
+
+| 铸造点 | 形如 | 真实类型 | 含义 |
+| --- | --- | --- | --- |
+| `_soft_var` | `VAR_SCHED_<12位哈希>` | `bool` | 被软化的守卫 |
+| `_scheduling_leaf` | `VAR_SCHED_COREIDX` | `int` | 遍历位置本身 |
+
+桶只看得见前缀，一律声明成 `bool`。于是 `coreIdx == 36` 编译失败，**19 个维度全军覆没，8705 个 key 全部 `solver unavailable`**。这与注释里记载的 loop-element 类型被改写是同一个 bug 的第二次发作，说明「按名字猜类型」这个做法本身就该退役。
+
+改法是让类型跟着记录回来：`Normalizer.var_types` → `FieldResult.var_types` → `UndecidedGuard.var_type`，父进程优先采信 worker 的声明，桶只作为缺省。顺带给 `Z3Backend._value` 的报错加上变量名——原来的消息只说「某个字面量不是布尔」，不说是谁，定位全靠猜。
+
+---
+
+### J. 同一个矛盾被反复求解：unsat core 问错了问题（2026-08-01）
+
+K6 里有一层冲突学习：一组维度取值判成 `unsat` 之后，从 Z3 的 unsat core 里取出「真正相
+撞的那几维」，记成一条最小冲突；后面任何包含这几维同样取值的 key 直接判死，不再进求解
+器。UNSAT 单调，这个复用在原理上是对的。
+
+问题在于「取出相撞的那几维」这一步。`_solve_group` 把整组维度的取值压成**一条** `and`
+断言，标签就叫 `key`。core 里因此只可能出现两种东西：这一条 `key`，和各维的**定义式**
+`derived:VAR_KEYDIM_X`。于是只能从「证明用到了谁的定义」反推「谁的取值相撞」——而这两
+件事并不等价：一个维度的定义式可能因为证明路径经过它而进 core，它的取值却与矛盾无关。
+
+后果是学到的冲突偏大。三维一组、真实矛盾只在 A、B 之间时，学成 `(A,B,C)=(1,1,0)`，换
+一个 C 就不命中，同一个矛盾重新证一遍。**这是用户抱怨「求解太慢」的一个真实来源。**
+
+它还带来一处测试脆弱性：core 具体包含谁取决于 Z3 内部状态，而 Z3 的全局 context 会被同
+一进程里跑过的其它查询影响。`test_a_contradiction_is_proved_once_and_reused_on_the_rest`
+因此**跑全量单测通过、去掉 `test_key_exactness.py` 就失败**——不是这个测试的问题，是被
+测的契约本来就建立在运气上。
+
+改法是让 core 回答被问的那个问题：每维取值**各自**带标签断言，标签 `asked:<dim>`。
+
+| | 之前 | 之后 |
+| --- | --- | --- |
+| 查询形状 | 一条 `and`，标签 `key` | 每维一条，标签 `asked:<dim>` |
+| core 能说什么 | 证明用到了哪些定义 | 哪些取值是矛盾必需的 |
+| 学到的冲突 | 偏大，命中率低 | 就是相撞的那几维 |
+
+`Z3Backend` 新增 `solve_terms(terms)`，`solve_expr` 委托给它；`_assert_tracked` 顺带补了
+标签去重（两条断言共用一个 marker 时，后一条会顶掉前一条，查询会**静默少一项**）。
+
+`_core_dims` 优先读 `asked:`，读不到才回退 `derived:`。但 `_assumed_in` 必须取**并集**：
+它判断的是「矛盾有没有踩在被铸造的符号上」，少算一维就是少发现一批自由变量，把
+`unknown` 说成 `unreachable`——这个方向的错误下游看不见。
+
+### K. 让弱模型能答对：问题、证据、词汇表三处都在漏（2026-08-01）
+
+准备用 `composer-2.5-fast` 实跑一轮 LLM 补洞时，先看了一眼 batch 里模型到底会读到什么，
+三处都不成立。
+
+**（a）问题文本是 IR，不是源码。** `UNMAPPED_SYMBOL` 类 blocker 的 `text` 取的是归一化
+后的守卫，也就是整棵折叠表达式——`let $1 = (__reached_DoOpTiling && (!(((splitAxis(...`，
+上千字符的内部记法，裁到 160 字还是个断句。它连聚类也聚错：FAG 里 35 条 escalating 守卫
+分布在三个文件，共享的是「最后被折进了哪个表达式」而不是「要读哪段代码」。改成用证据的
+源码原文（`evidence.snippet`）之后，三条 blocker 的文本变成 `inputLayout[0] == 'B'`、
+`fBaseParams.n2 == 1`、`fBaseParams.splitAxis == SplitAxisEnum::BN2S2 && ...`——聚类结
+果不变（确实只有三个问题），但现在是人和模型都读得懂的三个问题。
+
+**（b）证据窗口是三行。** 问「这个循环算什么」却只给循环里的一行，等于要求猜。新增
+`uo_init/source_window.py`：按大括号配平切出**包含该行的最内层块，能装下就扩到整个函
+数**（含签名），注释和字符串里的括号先抹掉再数。`materialize_blocker_batches` 为需要读
+代码的 blocker 附上这个窗口。FAG 当前一个 shard、20 条 blocker，19 条带源码共 473 行、
+74 KiB——一次能读完。
+
+`_snippet_matches` 相应放宽到「引用落在这个块里」并忽略空白差异。原来的三行窗口会把模
+型**引用刚发给它的代码**判成证据不符。放宽不等于放开：跨函数引用仍然拒。
+
+**（c）词汇表里没有变量。** `closed_vocabulary` 只列了 classification 和 binding_ops，
+可 `validate_patch` 的 `invented_var` 检查是拿 `var_id` 去 `VariableModel` 里查的。模型
+无从知道有哪些名字存在，只能猜，猜出来必被拒——这条通道原本走不通。
+
+新增 `gaps.readable_vars()`：blocker 挡住的那几个维度**已经读到**的变量，作为该 blocker
+的 `readable_vars` 写进 batch。它同时就是机械闸门一 (`check_reads_what_the_code_reads`)
+的判据，两边同源。占位符（`VAR_INIT_*` / `VAR_UNDECIDED_*` / …）排除在外——拿一个过近似
+去定义另一个过近似不是答案。
+
+> 实现上要用字段已有的 `variables`，不能去遍历 `value_expr`：那是展开后的树，最宽的一维
+> 有几十万节点，每条 blocker 走一遍会把生成 batch 从 5 秒拖到 4 分钟以上（踩过）。
 
 ---
 

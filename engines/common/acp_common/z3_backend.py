@@ -13,12 +13,33 @@ as the condition read off the source.
 """
 from __future__ import annotations
 
+import sys
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
 from acp_common.constraint_ir import ConstraintIRError, normalize_expr, parse_bool_literal
 
 __all__ = ["Z3BackendError", "SolveConfig", "Z3Backend"]
+
+#: Compilation recurses once per level of the expression, several Python frames
+#: deep per level. Real expressions reach a few hundred levels -- shallow in
+#: themselves, but past the default 1000-frame ceiling, which surfaces as a
+#: `RecursionError` from inside a z3 call rather than as anything readable.
+#: Depth is bounded by the source's nesting, so this is a ceiling, not a budget
+#: to be consumed.
+_COMPILE_RECURSION_LIMIT = 20000
+
+
+@contextmanager
+def _deep_recursion(limit: int = _COMPILE_RECURSION_LIMIT):
+    previous = sys.getrecursionlimit()
+    sys.setrecursionlimit(max(previous, limit))
+    try:
+        yield
+    finally:
+        sys.setrecursionlimit(previous)
 
 
 class Z3BackendError(RuntimeError):
@@ -28,6 +49,18 @@ class Z3BackendError(RuntimeError):
 @dataclass
 class SolveConfig:
     timeout_ms: int = 5000
+
+    #: Z3's deterministic resource bound. `timeout_ms` is polled by the search
+    #: loop and so does not fire while the solver is inside preprocessing --
+    #: which is exactly where a large nonlinear-integer system goes to die.
+    #: `rlimit` is checked in more places and, being a step count rather than a
+    #: clock, gives the same verdict on every machine. 0 leaves it unset.
+    rlimit: int = 0
+
+    #: Last resort: interrupt the context from a timer thread. Neither of the
+    #: bounds above is guaranteed to be polled everywhere, and a solver that
+    #: never returns takes the whole run with it. 0 disables the watchdog.
+    hard_timeout_ms: int = 0
 
 
 class Z3Backend:
@@ -54,16 +87,105 @@ class Z3Backend:
         self.enum_value_to_int: dict[str, dict[str, int]] = {}
         self.enum_int_to_value: dict[str, dict[int, str]] = {}
         self.variables = {item["id"]: item for item in ir.get("variables", []) if isinstance(item, dict)}
+        self._bool_memo: dict[int, Any] = {}
+        self._value_memo: dict[int, Any] = {}
+        self._norm_memo: dict[int, Any] = {}
+        #: Keeps memoised nodes alive so their ids cannot be reused.
+        self._memo_keep: list[Any] = []
+        #: Set while the base solver is being populated, so its assertions can
+        #: be replayed onto a replacement; see `_replace_base_solver`.
+        self._recording: list[tuple[Any, str]] | None = None
+        self._base_assertions: list[tuple[Any, str]] = []
         self._declare_symbols()
         self.base_solver, self.base_labels = self._build_base_solver()
 
-    def solve_expr(self, expr: dict[str, Any], *, label: str = "expr", obligation_id: Any = "") -> dict[str, Any]:
-        solver = self.base_solver
-        solver.push()
-        labels: dict[str, str] = dict(self.base_labels)
+    def _apply_limits(self, solver: Any) -> None:
+        """Give the solver its budget for one query.
+
+        Re-applied per query on purpose. Z3 counts resources on the context, not
+        on the call, so a budget set once is a budget for the whole session: the
+        first query to exhaust it leaves every later one raising `canceled`
+        before it does any work. Those come back as `unknown`, which is safe but
+        worthless -- the run looks like it solved thousands of queries when it
+        stopped solving at the first hard one.
+        """
+        solver.set(timeout=self.config.timeout_ms)
+        if self.config.rlimit > 0:
+            solver.set(rlimit=self.config.rlimit)
+
+    @contextmanager
+    def _watchdog(self, solver: Any):
+        """Interrupt the solver's context if it outstays the hard timeout."""
+        ms = self.config.hard_timeout_ms
+        if ms <= 0:
+            yield
+            return
+        timer = threading.Timer(ms / 1000.0, solver.ctx.interrupt)
+        timer.daemon = True
+        timer.start()
         try:
-            self._assert_tracked(solver, self._compile_bool(expr), label, labels)
-            check = solver.check()
+            yield
+        finally:
+            timer.cancel()
+
+    def solve_expr(self, expr: dict[str, Any], *, label: str = "expr", obligation_id: Any = "") -> dict[str, Any]:
+        return self.solve_terms([(expr, label)], obligation_id=obligation_id)
+
+    def solve_terms(
+        self,
+        terms: list[tuple[dict[str, Any], str]],
+        *,
+        obligation_id: Any = "",
+    ) -> dict[str, Any]:
+        """Ask whether several labelled conditions can hold together.
+
+        One `And` of the same conditions answers the same question, but its
+        unsat core cannot: the whole conjunction is one assertion, so a core
+        can only report that it took part. Named separately, the core says
+        which of them the contradiction needed — and that is what makes the
+        answer reusable for every other query containing those few.
+        """
+        try:
+            return self._solve_once(self.base_solver, terms, obligation_id)
+        except Exception:  # noqa: BLE001 - the solver, not the query, is at fault
+            # Anything z3 raises here is about the solver's state rather than
+            # this expression: a budget it already spent, an interrupt it is
+            # still holding. A replacement gets an honest answer for this query
+            # and for every one after it.
+            pass
+        solver = self._replace_base_solver()
+        try:
+            return self._solve_once(solver, terms, obligation_id)
+        except Exception as exc:  # noqa: BLE001 - report, do not take the run down
+            return {
+                "obligation_id": obligation_id,
+                "status": "error",
+                "model": {},
+                "unsat_core": [],
+                "reason": f"{type(exc).__name__}: {exc}",
+            }
+
+    def _solve_once(
+        self,
+        solver: Any,
+        terms: list[tuple[dict[str, Any], str]],
+        obligation_id: Any,
+    ) -> dict[str, Any]:
+        solver.push()
+        self._apply_limits(solver)
+        labels: dict[str, str] = dict(self.base_labels)
+        expr = terms[0][0] if len(terms) == 1 else {
+            "op": "and",
+            "args": [t for t, _ in terms],
+        }
+        try:
+            with _deep_recursion():
+                for term, label in terms:
+                    self._assert_tracked(
+                        solver, self._compile_bool(term), label, labels
+                    )
+            with self._watchdog(solver):
+                check = solver.check()
             if check == self.z3.sat:
                 model = solver.model()
                 abstract = self.abstract_model(model)
@@ -99,7 +221,10 @@ class Z3Backend:
                 "reason": str(exc),
             }
         finally:
-            solver.pop()
+            try:
+                solver.pop()
+            except Exception:  # noqa: BLE001 - a wedged solver is being replaced anyway
+                pass
 
     def prove_implies(self, antecedent: Any, consequent: Any) -> dict[str, Any]:
         """Is `antecedent -> consequent` valid under the base constraints?
@@ -107,12 +232,17 @@ class Z3Backend:
         Returns `status` in {proved, refuted, unknown, error}; a refutation
         carries the counterexample model so the caller can show why.
         """
-        return self._prove(self.z3.And(self._compile_bool(antecedent), self.z3.Not(self._compile_bool(consequent))))
+        with _deep_recursion():
+            negation = self.z3.And(
+                self._compile_bool(antecedent), self.z3.Not(self._compile_bool(consequent))
+            )
+        return self._prove(negation)
 
     def prove_equivalent(self, lhs: Any, rhs: Any) -> dict[str, Any]:
         """Is `lhs <-> rhs` valid under the base constraints?"""
         try:
-            negation = self.z3.Not(self._compile_bool(lhs) == self._compile_bool(rhs))
+            with _deep_recursion():
+                negation = self.z3.Not(self._compile_bool(lhs) == self._compile_bool(rhs))
         except (ConstraintIRError, Z3BackendError, TypeError, ValueError) as exc:
             return {"status": "error", "model": {}, "reason": str(exc)}
         return self._prove(negation)
@@ -122,7 +252,8 @@ class Z3Backend:
         solver.push()
         try:
             solver.add(negation)
-            check = solver.check()
+            with self._watchdog(solver):
+                check = solver.check()
             if check == self.z3.unsat:
                 return {"status": "proved", "model": {}, "reason": ""}
             if check == self.z3.sat:
@@ -135,12 +266,38 @@ class Z3Backend:
 
     def _build_base_solver(self) -> tuple[Any, dict[str, str]]:
         solver = self.z3.Solver()
-        solver.set(timeout=self.config.timeout_ms)
+        self._apply_limits(solver)
         labels: dict[str, str] = {}
-        self._add_base_domains(solver, labels)
-        self._add_derived_constraints(solver, labels)
-        self._add_contract_constraints(solver, labels)
+        self._recording = []
+        try:
+            with _deep_recursion():
+                self._add_base_domains(solver, labels)
+                self._add_derived_constraints(solver, labels)
+                self._add_contract_constraints(solver, labels)
+        finally:
+            self._base_assertions = self._recording
+            self._recording = None
         return solver, labels
+
+    def _replace_base_solver(self) -> Any:
+        """Start the base solver over from the assertions it was built from.
+
+        A query that exhausts its budget can leave the solver refusing to do any
+        further work: every later query comes straight back `canceled` in a few
+        milliseconds. That reads as thousands of solved-but-unknown queries when
+        really only the first few were ever attempted. Rebuilding costs the
+        preprocessing again but keeps each verdict honestly its own.
+
+        Only the z3 solver object is rebuilt -- the compiled expressions are
+        reused, so this does not repeat the expensive part.
+        """
+        solver = self.z3.Solver()
+        self._apply_limits(solver)
+        labels: dict[str, str] = {}
+        for expr, label in self._base_assertions:
+            self._assert_tracked(solver, expr, label, labels)
+        self.base_solver, self.base_labels = solver, labels
+        return solver
 
     def model_satisfies(self, model: dict[str, Any], expr: dict[str, Any]) -> bool:
         fast = self.fast_model_satisfies(model, expr)
@@ -148,7 +305,7 @@ class Z3Backend:
             return fast
         z3 = self.z3
         solver = z3.Solver()
-        solver.set(timeout=self.config.timeout_ms)
+        self._apply_limits(solver)
         labels: dict[str, str] = {}
         try:
             self._add_base_domains(solver, labels)
@@ -158,7 +315,8 @@ class Z3Backend:
                 if var_id in self.variables and not self.variables[var_id].get("derived"):
                     solver.add(self.symbols[var_id] == self._value(var_id, value))
             solver.add(self._compile_bool(expr))
-            return solver.check() == z3.sat
+            with self._watchdog(solver):
+                return solver.check() == z3.sat
         except (ConstraintIRError, Z3BackendError, TypeError, ValueError):
             return False
 
@@ -169,7 +327,7 @@ class Z3Backend:
             return None
 
     def _eval_bool_from_model(self, model: dict[str, Any], expr: Any) -> bool:
-        expr = normalize_expr(expr)
+        expr = normalize_expr(expr, self._norm_memo)
         op = expr["op"]
         if op in {"eq", "ne", "lt", "le", "gt", "ge"}:
             if "lhs" in expr:
@@ -217,7 +375,7 @@ class Z3Backend:
             if var_id not in model:
                 raise KeyError(var_id)
             return model[var_id]
-        expr = normalize_expr(expr)
+        expr = normalize_expr(expr, self._norm_memo)
         op = expr["op"]
         if op in {"eq", "ne", "lt", "le", "gt", "ge", "in", "not_in", "and", "or", "not", "implies", "requires", "mutex", "aligned"}:
             return self._eval_bool_from_model(model, expr)
@@ -322,7 +480,7 @@ class Z3Backend:
             definition = spec.get("definition")
             if not definition:
                 raise Z3BackendError(f"Derived variable {var_id} has no definition")
-            expr = normalize_expr(definition)
+            expr = normalize_expr(definition, self._norm_memo)
             self._assert_tracked(solver, self.symbols[var_id] == self._compile_value(expr), f"derived:{var_id}", labels)
 
     def _add_contract_constraints(self, solver: Any, labels: dict[str, str]) -> None:
@@ -336,8 +494,37 @@ class Z3Backend:
             self._assert_tracked(solver, self._compile_bool(expr), f"contract:{cid}", labels)
 
     def _compile_bool(self, expr: Any) -> Any:
+        return self._memoised(expr, self._bool_memo, self._compile_bool_uncached)
+
+    def _memoised(self, expr: Any, memo: dict, build: Any) -> Any:
+        """Compile `expr` once per distinct node.
+
+        The expression is a DAG -- a guard reached along several paths is one
+        shared node, not a copy. Recursing without remembering turns it back
+        into a tree, and for the widest dimensions that tree has more nodes
+        than there are atoms in anything: they never finish compiling, and
+        exhaust memory on the way. Sharing is what keeps them at five figures.
+
+        Keyed on identity, which is sound only while the nodes stay alive: the
+        IR holds them, and `_memo_keep` holds anything normalisation created,
+        so no id can be recycled underneath the table. Bool and value contexts
+        get separate tables because the same node compiles to different sorts
+        in each.
+        """
+        if not isinstance(expr, (dict, list)):
+            return build(expr)
+        key = id(expr)
+        hit = memo.get(key)
+        if hit is not None:
+            return hit
+        out = build(expr)
+        memo[key] = out
+        self._memo_keep.append(expr)
+        return out
+
+    def _compile_bool_uncached(self, expr: Any) -> Any:
         z3 = self.z3
-        expr = normalize_expr(expr)
+        expr = normalize_expr(expr, self._norm_memo)
         op = expr["op"]
         if op == "eq":
             if "lhs" in expr:
@@ -389,6 +576,9 @@ class Z3Backend:
         raise Z3BackendError(f"Expression op does not produce bool: {op}")
 
     def _compile_value(self, expr: Any) -> Any:
+        return self._memoised(expr, self._value_memo, self._compile_value_uncached)
+
+    def _compile_value_uncached(self, expr: Any) -> Any:
         z3 = self.z3
         if isinstance(expr, bool):
             return z3.BoolVal(expr)
@@ -396,7 +586,7 @@ class Z3Backend:
             return z3.IntVal(expr)
         if isinstance(expr, dict) and "var" in expr and "op" not in expr:
             return self._symbol(str(expr["var"]))
-        expr = normalize_expr(expr)
+        expr = normalize_expr(expr, self._norm_memo)
         op = expr["op"]
         if op in {"eq", "ne", "lt", "le", "gt", "ge", "in", "not_in", "and", "or", "not", "implies", "requires", "mutex", "aligned"}:
             return self._compile_bool(expr)
@@ -489,13 +679,28 @@ class Z3Backend:
                 raise Z3BackendError(f"Value {value} is outside enum domain for {var_id}")
             return self.enum_value_to_int[var_id][str(value)]
         if spec["type"] == "bool":
-            return parse_bool_literal(value)
+            try:
+                return parse_bool_literal(value)
+            except ConstraintIRError as exc:
+                # Naming the variable is the difference between a report that
+                # points at the declaration to fix and one that says only that
+                # some literal somewhere was not a boolean.
+                raise Z3BackendError(f"{exc} (comparing {var_id})") from exc
         return int(value)
 
     def _assert_tracked(self, solver: Any, expr: Any, label: str, labels: dict[str, str]) -> None:
-        safe = "LBL_" + "".join(ch if ch.isalnum() else "_" for ch in label)
+        base = "LBL_" + "".join(ch if ch.isalnum() else "_" for ch in label)
+        # Two assertions sharing a marker is not two assertions: the second
+        # replaces the first in the core, and the query silently loses a term.
+        safe = base
+        seq = 1
+        while safe in labels:
+            seq += 1
+            safe = f"{base}__{seq}"
         marker = self.z3.Bool(safe)
         labels[safe] = label
+        if self._recording is not None:
+            self._recording.append((expr, label))
         solver.assert_and_track(expr, marker)
 
     def _generalize_away_all_ones(
@@ -529,7 +734,9 @@ class Z3Backend:
             if not ors:
                 return abstract
             self._assert_tracked(solver, self.z3.Or(ors), "generalize:not_all_ones", labels)
-            if solver.check() == self.z3.sat:
+            with self._watchdog(solver):
+                verdict = solver.check()
+            if verdict == self.z3.sat:
                 return self.abstract_model(solver.model())
         except (ConstraintIRError, Z3BackendError, TypeError, ValueError):
             return abstract

@@ -11,12 +11,18 @@ Rules (source: op_host/arch35/flash_attention_score_grad_tiling_{common,normal}_
 from __future__ import annotations
 
 import csv
+import sys
 from collections import Counter
-from pathlib import Path
 
-CSV = Path(
-    r"d:\PR-review\TEST\ops-transformer\attention\flash_attention_score_grad"
-    r"\.ascendc-pilot\tg\cases\L2_legal_tilingkeys.csv"
+from uo_init import paths
+
+DEFAULT_OPERATOR = "attention/flash_attention_score_grad"
+
+_OP = paths.op_dir(relative=DEFAULT_OPERATOR)
+CSV = (
+    _OP / ".ascendc-pilot" / "tg" / "cases" / "L2_legal_tilingkeys.csv"
+    if _OP is not None
+    else None
 )
 
 BUCKET_LO = {64: 1, 128: 65, 192: 129, 256: 193, 768: 257}
@@ -33,6 +39,9 @@ def s1s2_expected(input_dtype: str, d: int) -> set[tuple[int, int]]:
 
 
 def main() -> int:
+    if CSV is None:
+        print(f"operator sources not available\n{paths.explain()}", file=sys.stderr)
+        return 1
     rows = list(csv.DictReader(CSV.open(encoding="utf-8")))
     v = Counter()
     samples: dict[str, list[str]] = {}

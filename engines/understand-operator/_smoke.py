@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from uo_init import paths
 from uo_init.branch_inventory import inventory_clang
 from uo_init.build_context import BuildContext
 from uo_init.controllability import ControllabilityBuilder, measure
@@ -16,15 +17,26 @@ from uo_init.source_resolver import SourceResolver
 from uo_init.tpl_dsl import parse_file
 from uo_init.variable_model import build_variable_model, infer_bounds_from_guards
 
-FAG = r"d:\PR-review\TEST\ops-transformer\attention\flash_attention_score_grad"
-CANN = r"d:\PR-review\_cann\pkg"
-OPS = r"d:\PR-review\TEST\ops-transformer"
+DEFAULT_OPERATOR = "attention/flash_attention_score_grad"
+
+FAG = paths.op_dir(relative=DEFAULT_OPERATOR)
+CANN = paths.cann_root()
+OPS = paths.ops_root()
 
 
 def main() -> None:
+    if FAG is None or CANN is None or OPS is None:
+        print(
+            f"CANN packages or operator sources not available\n{paths.explain()}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
     spec = discover(FAG)
     ctx = BuildContext.load(
-        cann_root=CANN, ops_root=OPS, op_dir=str(spec.op_dir), arch_dir=spec.arch_dir
+        cann_root=str(CANN),
+        ops_root=str(OPS),
+        op_dir=str(spec.op_dir),
+        arch_dir=spec.arch_dir,
     )
     targets = [p for p in spec.host_targets if p.exists()]
     print("targets:", [p.name for p in targets])
