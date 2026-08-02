@@ -87,6 +87,7 @@ UNMODELLED_PREFIXES = (
 #: classified.
 _ROOT_BY_PREFIX: tuple[tuple[str, str], ...] = (
     ("VAR_SHAPE_", "INPUT_SHAPE"),
+    ("VAR_RANK_", "INPUT_SHAPE"),
     ("VAR_DTYPE_", "INPUT_DTYPE"),
     ("VAR_FORMAT_", "INPUT_FORMAT"),
     ("VAR_VALUE_", "INPUT_VALUE"),
@@ -392,10 +393,21 @@ class ValueTree:
             # the run never looked at, and raises division by zero out of the
             # very conjunct that was written to guard against it —
             # `n != 0 && total / n > 1` is the shape most of them have.
+            # An operand that cannot be evaluated does not sink the whole
+            # connective: in `A || B` a true B settles it whatever A was. The
+            # guard idiom depends on this, since the conjunct that makes its
+            # neighbour unevaluable is usually the one that decides the answer
+            # -- `dq == nullptr || dq->size() == 0` on an absent tensor.
             decides = op == "or"
+            unknown: Unknown | None = None
             for a in node.get("args") or ():
-                if bool(self._eval(a, env)) is decides:
-                    return decides
+                try:
+                    if bool(self._eval(a, env)) is decides:
+                        return decides
+                except Unknown as exc:
+                    unknown = unknown or exc
+            if unknown is not None:
+                raise unknown
             return not decides
         if op == "not":
             return not self._eval(node.get("arg"), env)
@@ -418,12 +430,24 @@ class ValueTree:
 
     def _read(self, name: str, env: dict[str, Any]) -> Any:
         self._sink.add(name)
-        if name not in env:
+        got = env.get(name)
+        # None stands for an absent tensor, and there is nothing to read off
+        # one: comparing it to a concrete value is answered by the guard that
+        # led here, not by inventing a rank or a size. An unbound name and a
+        # bound-to-None name both read as "not there".
+        if got is None:
             raise Unknown(f"unbound {name}")
-        return env[name]
+        return got
 
 
 def _compare(op: str, a: Any, b: Any) -> bool:
+    # `None` is a tensor that was not passed. Its rank and its element count do
+    # not exist, and the source never asks for them: the read sits behind a
+    # null check. Answering `None != 4` with True instead reports a rank of
+    # "not 4" for an absent tensor, and a premise reading it then refuses every
+    # input that omits an optional tensor -- which was most of them.
+    if (a is None) != (b is None):
+        raise Unknown(f"{op} against an absent tensor")
     if op == "eq":
         return a == b
     if op == "ne":
@@ -577,6 +601,17 @@ def domain_for(vid: str, domains: dict[str, Any]) -> Any:
     return domains.get(_AXIS_SUFFIX.sub("", vid))
 
 
+#: Distinct from a variable bound to None, which means an absent tensor.
+_ABSENT = object()
+
+
+def _hashable(value: Any) -> Any:
+    """A memo key for a variable's value. Sequences arrive as lists."""
+    if isinstance(value, list):
+        return tuple(value)
+    return value
+
+
 def _refuses(tree: ValueTree, env: dict[str, Any]) -> bool:
     """Whether this premise turns the input down.
 
@@ -600,12 +635,21 @@ class Premises:
 
     def __init__(self, blobs: Iterable[dict[str, Any]]) -> None:
         blobs = list(blobs)
-        self.trees = [
-            ValueTree(p["expr"]) for p in blobs if p.get("usable") and p.get("expr")
-        ]
+        usable = [p for p in blobs if p.get("usable") and p.get("expr")]
+        self.trees = [ValueTree(p["expr"]) for p in usable]
+        #: Each tree beside the premise it came from, so a refusal can name the
+        #: source line that stated it rather than only that one exists.
+        self.sourced = list(zip(self.trees, usable))
         self.dropped = [p for p in blobs if not p.get("usable")]
         self.vars: set[str] = set()
         self.cuts: dict[str, set] = defaultdict(set)
+        #: Each tree's own variables, and its verdict for every combination of
+        #: them seen so far. A premise is a function of what it reads and
+        #: nothing else, and a corpus of inputs varies mostly in variables any
+        #: one premise ignores -- a dtype check has six answers to give however
+        #: many hundred thousand inputs it is asked about.
+        self._own: list[tuple[str, ...]] = []
+        self._memo: list[dict[tuple, bool]] = []
         #: Premises naming one variable only, which therefore decide it
         #: without needing to know anything else.
         self._alone: dict[str, list[ValueTree]] = defaultdict(list)
@@ -616,6 +660,8 @@ class Premises:
                 self.cuts[k] |= v
             if len(names) == 1:
                 self._alone[next(iter(names))].append(t)
+            self._own.append(tuple(sorted(names)))
+            self._memo.append({})
 
     def keeps(self, var: str, values: list[Any]) -> list[Any]:
         """Candidate values with the ones already ruled out dropped.
@@ -648,7 +694,26 @@ class Premises:
         assumed: it would exclude an input on no evidence, and excluding is
         the direction that loses reachable keys.
         """
-        return any(_refuses(t, env) for t in self.trees)
+        return any(self._verdict(i, env) for i in range(len(self.trees)))
+
+    def _verdict(self, i: int, env: dict[str, Any]) -> bool:
+        """Whether premise `i` refuses this input, remembering past answers."""
+        key = tuple(_hashable(env.get(v, _ABSENT)) for v in self._own[i])
+        memo = self._memo[i]
+        got = memo.get(key, _ABSENT)
+        if got is _ABSENT:
+            got = memo[key] = _refuses(self.trees[i], env)
+        return got
+
+    def violations(self, env: dict[str, Any]) -> list[dict[str, Any]]:
+        """Every premise this input breaks, each with where it was stated.
+
+        `rejects` answers whether to send the input; this answers why not, so
+        a generator that keeps producing refused inputs can be pointed at the
+        check that refuses them instead of at the error text the host prints.
+        """
+        return [p for i, (_, p) in enumerate(self.sourced)
+                if self._verdict(i, env)]
 
 
 @dataclass(frozen=True)

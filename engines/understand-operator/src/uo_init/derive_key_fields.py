@@ -17,6 +17,7 @@ Nothing here is operator-specific: the substitution set comes from the Host IR
 """
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -155,7 +156,8 @@ def _is_true(e: Expr) -> bool:
 # traversal position, and leaves the resolver could only call constant or
 # external. Everything else in LEGAL_ROOTS — shapes, dtypes, formats,
 # attributes, platform facts — is a real constraint and must survive.
-_UNCONSTRAINING_ROOTS = SCHEDULING_ROOTS | {"CONSTANT", "EXTERNAL"}
+_EXTERNAL_ROOT = "EXTERNAL"
+_UNCONSTRAINING_ROOTS = SCHEDULING_ROOTS | {"CONSTANT", _EXTERNAL_ROOT}
 
 _PLATFORM_CORE_CALLS = frozenset(
     {"GetCoreNumAic", "GetCoreNumAiv", "GetCoreNum", "GetL2Size"}
@@ -1049,6 +1051,13 @@ class KeyFieldDeriver:
         self._encode_fn: str = ""
         self._encode_path_cache: set[str] | None = None
         self.cycles: set[str] = set()
+        #: Fold scoped enum *values* (`DeterSparseType::DETER_OLD` → `1`) so a
+        #: classifier's returns read as integers. Off while expanding a guard:
+        #: folding `splitAxis != SplitAxisEnum::BN2S2` makes the compare
+        #: decidable, which re-enters the very field being derived and runs the
+        #: node budget out — the difference between `overapproximated` and
+        #: `unresolved`. See `_expand_uncached`'s `Ref` arm.
+        self._fold_enums: bool = os.environ.get("FAG_ENUM_FOLD", "1") != "0"
         #: var_id -> `[name, function]` of a value the cycle cut named instead
         #: of losing. See `_aux_leaf`; the caller derives each of these.
         self.aux_targets: dict[str, list[str]] = {}
@@ -1433,7 +1442,12 @@ class KeyFieldDeriver:
                 else:
                     result = Ite(self._reached(scope, depth), value, result)
                 continue
-            cond = self._expand_at(site, guard_text, scope, depth + 1)
+            saved_fold = self._fold_enums
+            self._fold_enums = False
+            try:
+                cond = self._expand_at(site, guard_text, scope, depth + 1)
+            finally:
+                self._fold_enums = saved_fold
             # An if/else-if chain with no unguarded write falls through to the
             # declared default, which for tiling structs and enums is zero.
             #
@@ -2007,11 +2021,26 @@ class KeyFieldDeriver:
             arg = self._expand(e.arg, fn, depth)
             if e.op in ("!", "not") and isinstance(arg, Const):
                 return Const(not bool(arg.value))
+            # `*ptr` where the pointer already names a value variable is the
+            # variable: `*(VAR_ATTR_SPARSE_MODE)` reads the attribute. Left as
+            # a dereference the evaluator sees an operator it has no rule for
+            # and goes Unknown on a read that was decided.
+            if e.op == "*" and isinstance(arg, (Ref, Const)):
+                return arg
             return Un(e.op, arg)
         if isinstance(e, Bin):
             rewritten = rewrite_strcmp_cmp(e)
             if rewritten is not e:
                 return self._expand(rewritten, fn, depth)
+            # `GetAttrNum(attrs) > AttrIndex::X` asks whether attribute X was
+            # passed. Neither side is a number the evaluator can bind — the
+            # count is host state and the member is a scoped name — so the
+            # compare goes Unknown and drags the ternary it guards down with
+            # it. The question is exactly "is VAR_ATTR_X set", which the env
+            # answers directly.
+            presence = self._attr_presence_cmp(e, fn)
+            if presence is not None:
+                return presence
             # Locked platform: GetPlatformInfo(...) == None is never true.
             if self._is_platform_null_cmp(e):
                 return Const(e.op in ("!=",))
@@ -2034,7 +2063,12 @@ class KeyFieldDeriver:
                 self._expand(e.right, fn, depth),
             )
         if isinstance(e, Ite):
-            cond = self._expand(e.cond, fn, depth)
+            saved_fold = self._fold_enums
+            self._fold_enums = False
+            try:
+                cond = self._expand(e.cond, fn, depth)
+            finally:
+                self._fold_enums = saved_fold
             then = self._expand(e.then, fn, depth)
             else_ = self._expand(e.else_, fn, depth)
             if isinstance(cond, Const):
@@ -2065,6 +2099,22 @@ class KeyFieldDeriver:
                 self._expand_surface(e.index, fn, depth),
             )
         if isinstance(e, Ref):
+            # A scoped enum member used as a *value* (`SparseMode::ALL_MASK`,
+            # `DeterSparseType::DETER_OLD`) names an integer the variable model
+            # already records. Left as a Ref it reaches the evaluator unbound
+            # and the guard it sits in turns Unknown, even though the value is
+            # decided at parse time. Folding it here is what lets
+            # `sparseMode == ALL_MASK` and the classifier returns read as
+            # ordinary integer compares. An *index* enum (`AttrIndex::SPARSE_MODE`,
+            # `InputIndex::ATTEN_MASK`) is not a value: it is the key the
+            # accessor model reads to name the slot, and folding it to `7`
+            # breaks the pattern that recovers `sparse_mode` from the access.
+            if "::" in e.symbol and self._fold_enums:
+                scope = e.symbol.split("::", 1)[0]
+                if not scope.endswith("Index"):
+                    known = self._int_named_constants().get(e.symbol)
+                    if known is not None:
+                        return Const(known)
             return self._expand_name(e.symbol, e, fn, depth)
         if isinstance(e, Call):
             return self._expand_call(e, fn, depth)
@@ -2200,17 +2250,39 @@ class KeyFieldDeriver:
 
         Truncated or cyclic expansions fail here too: an operand carrying
         `Unknown` is strictly worse than the surface leaf it replaced.
+
+        An accessor's receiver is exempt. `GetInputShape(context_, QUERY_IDX)`
+        lowers to `VAR_SHAPE_QUERY_*`, a shape a case sets, but `context_` on
+        its own resolves to EXTERNAL and used to veto the whole expansion.
+        That is how `fBaseParams.d` lost the five layout branches that define
+        it: rejected here, it fell back to a surface leaf the resolver could
+        only tie to one write, and every layout but TND got the wrong D. The
+        receiver is exempt only where it appears as an argument -- read
+        anywhere on its own it is external state again, and vetoes as before.
         """
         names: set[tuple[str, str]] = set()
+        arg_ids: set[int] = set()
+        for node in _walk_dag(e):
+            if isinstance(node, Call) and dotted_path(node) is None:
+                arg_ids |= {id(a) for a in node.args if isinstance(a, Ref)}
+        receivers: set[str] = set()
         for node in _walk_dag(e):
             if isinstance(node, Unknown):
                 return False
             if isinstance(node, Ref):
-                names.add((node.symbol, node.scope or fn))
+                if id(node) in arg_ids:
+                    receivers.add(node.symbol)
+                else:
+                    names.add((node.symbol, node.scope or fn))
             elif isinstance(node, Call):
                 path = dotted_path(node)
                 if path is not None:
                     names.add((path, fn))
+        for name in receivers:
+            res = self._scope(fn).resolve(name)
+            if res.roots and any(r not in _DRIVABLE_ROOTS for r in res.roots):
+                if res.roots != [_EXTERNAL_ROOT]:
+                    return False
         for name, scope in names:
             res = self._scope(scope).resolve(name)
             if not res.closed or not res.roots:
@@ -2352,11 +2424,89 @@ class KeyFieldDeriver:
             )
         return e
 
+    def _attr_presence_cmp(self, e: Bin, fn: str) -> Expr | None:
+        """`GetAttrNum(_) > AttrIndex::X` → read of `VAR_ATTR_X` against None.
+
+        Whether attribute X was passed is exactly whether the env binds
+        `VAR_ATTR_X`; the ordinal/count form the host uses is not a number the
+        evaluator can bind, so left alone the guard turns Unknown. Rewriting to
+        `VAR_ATTR_X != None` lets `_compare` answer "absent tensor" for a case
+        that omits it and True for one that sets it. Only the `>` / `>=` /
+        `!=` spellings assert presence; the reversed operands are handled by
+        the symmetric form.
+        """
+        if e.op not in (">", ">=", "!="):
+            return None
+
+        def _attr_index(side: Expr) -> str | None:
+            if isinstance(side, Ref) and side.symbol.startswith("AttrIndex::"):
+                return side.symbol.split("::", 1)[1]
+            if isinstance(side, Const) and isinstance(side.value, str) and side.value.startswith("AttrIndex::"):
+                return side.value.split("::", 1)[1]
+            return None
+
+        def _is_attr_num(side: Expr) -> bool:
+            if isinstance(side, Call):
+                nm = side.func[len("field:") :] if side.func.startswith("field:") else side.func
+                return nm.split("::")[-1] == "GetAttrNum"
+            if isinstance(side, Ref):
+                return side.symbol.split("::")[-1].split("(")[0] == "GetAttrNum"
+            return False
+
+        member = None
+        if _is_attr_num(e.left):
+            member = _attr_index(e.right)
+        elif _is_attr_num(e.right):
+            member = _attr_index(e.left)
+        if not member:
+            return None
+        var_id = f"VAR_ATTR_{member}"
+        spec = self.model.get(var_id)
+        if spec is None:
+            return None
+        # An attribute declared with a default (`attribute default=0`) is read
+        # by the host whether or not the caller passes it, so the presence
+        # check is always true. Folding it here stops the guard from dragging
+        # the attribute's value ternary into an Unknown it never had.
+        if "default" in (getattr(spec, "description", "") or ""):
+            return Const(True)
+        return Bin("ne", Ref(var_id, scope=fn), Const(None))
+
+    def _attr_index_ref(self, e: Call, fn: str) -> Ref | None:
+        """`GetAttrPointer(_, AttrIndex::SPARSE_MODE)` → the `VAR_ATTR_*` it reads.
+
+        The host reads an attribute through a typed pointer by ordinal; the
+        ordinal is the `AttrIndex` member, kept as a scoped Ref because folding
+        it to `7` would throw away the name. That name *is* the attribute: the
+        generator set `VAR_ATTR_SPARSE_MODE` from the same input slot, so the
+        whole indirection collapses to one variable read. Without this the
+        access stays a `Call`, the evaluator cannot bind it, and every guard
+        that compares `sparseMode` turns Unknown.
+        """
+        name = e.func[len("field:") :] if e.func.startswith("field:") else e.func
+        if name.split("::")[-1] not in ("GetAttrPointer", "GetBool", "GetInt", "GetFloat", "GetStr"):
+            return None
+        if len(e.args) < 2:
+            return None
+        idx = e.args[-1]
+        # `static_cast<size_t>(AttrIndex::X)` is peeled by the cast rule into
+        # the Ref already; anything else is not a compile-time attribute name.
+        if not (isinstance(idx, Ref) and idx.symbol.startswith("AttrIndex::")):
+            return None
+        member = idx.symbol.split("::", 1)[1]
+        var_id = f"VAR_ATTR_{member}"
+        if self.model.get(var_id) is not None:
+            return Ref(var_id, scope=fn)
+        return None
+
     def _expand_call(self, e: Call, fn: str, depth: int) -> Expr:
         name = e.func[len("field:") :] if e.func.startswith("field:") else e.func
         short = name.split("::")[-1]
         if name in _CAST_CALLS and len(e.args) == 1:
             return self._expand(e.args[0], fn, depth)
+        attr = self._attr_index_ref(e, fn)
+        if attr is not None:
+            return attr
         # Locked SKU: fold platform core / L2 queries to INI constants.
         folded = self._platform_const_call(short)
         if folded is not None:

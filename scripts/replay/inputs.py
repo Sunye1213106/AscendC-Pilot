@@ -45,6 +45,8 @@ FIXED_DT = {
 }
 
 ROPE_D = 64
+#: MAX_BASIC_BLOCK_SIZE, the fixed middle extent of the alibi pse shapes.
+PSE_ALIBI_S = 1024
 #: D that the host substitutes whenever rope inputs are present.
 ROPE_TOTAL_D = 192
 
@@ -64,7 +66,7 @@ class Case:
     d1: int | None = None          # value's D; defaults to d
     atten_mask: str = "none"       # none | ss | 2048 | bnss | b1ss | 11ss
     pse: bool = False
-    pse_shape: str = "full"        # full | 1n | b1 | slope
+    pse_shape: str = "bnss"        # bnss | b1ss | 1nss | 1nhs | bnhs
     rope: bool = False
     keep_prob: float = 1.0
     sparse_mode: int = 0
@@ -196,11 +198,19 @@ def _shapes(c: Case) -> tuple[dict[str, list[int]], dict[str, list[int]]]:
     if c.prefix_n:
         ins["prefix"] = [len(c.prefix_n)]
     if c.pse:
+        # The five shapes CheckPseShape accepts, named after the classification
+        # it assigns. The alibi pair carries a literal 1024 rather than s1, and
+        # TND accepts nothing else.
         ins["pse_shift"] = {
-            "full": [c.b, n1, c.s1, c.s2],
-            "1n": [1, n1, c.s1, c.s2],
-            "b1": [c.b, n1, 1, c.s2],
+            "bnss": [c.b, n1, c.s1, c.s2],
+            "b1ss": [c.b, n1, 1, c.s2],
+            "1nss": [1, n1, c.s1, c.s2],
+            "1nhs": [1, n1, PSE_ALIBI_S, c.s2],
+            "bnhs": [c.b, n1, PSE_ALIBI_S, c.s2],
+            # Rank 2: the alibi slope vector, checked on its own path rather
+            # than by CheckPseShape. It is the only pse TND accepts with no mask.
             "slope": [c.b, n1],
+            "slope_n": [n1],
         }.get(c.pse_shape, [c.b, n1, c.s1, c.s2])
     if c.rope:
         rope_shape = {
@@ -248,7 +258,12 @@ def to_csv_line(c: Case, case_id: str) -> str:
         elif name == "prefix" and c.prefix_n:
             field_text = f"{len(c.prefix_n)}@" + "/".join(str(v) for v in c.prefix_n)
         in_shapes.append(field_text)
-        in_dtypes.append(str(FIXED_DT.get(name, main)))
+        dt = FIXED_DT.get(name, main)
+        # The alibi slope vector is checked against FLOAT on its own, so it
+        # does not follow query's dtype the way a normal pse tensor does.
+        if name == "pse_shift" and c.pse_shape.startswith("slope"):
+            dt = DT["FLOAT"]
+        in_dtypes.append(str(dt))
 
     out_shapes = ["|".join(str(x) for x in outs.get(n, [])) for n in OUT_ORDER]
     out_dtypes = [str(main)] * len(OUT_ORDER)

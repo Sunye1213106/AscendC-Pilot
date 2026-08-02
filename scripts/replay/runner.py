@@ -84,16 +84,45 @@ def _parse_log(text: str) -> dict[str, Result]:
     return out
 
 
+def preflight(cases: dict[str, I.Case]) -> dict[str, Result]:
+    """Cases the host's own premises say it will refuse.
+
+    The premises are extracted from the same source that does the refusing, so
+    a case failing one produces no key however it is run. Filtering here costs
+    a dictionary lookup and saves a round trip through WSL; more usefully, the
+    result names the check that refused it and the line that states it, which
+    an error string from the host does not.
+    """
+    from . import bridge as B
+
+    out: dict[str, Result] = {}
+    for cid, case in cases.items():
+        bad = B.refused_by(case)
+        if bad:
+            p = bad[0]
+            where = f"{Path(str(p.get('file', ''))).name}:{p.get('line')}"
+            out[cid] = Result(
+                case_id=cid,
+                reject=f"PREFLIGHT {where} {str(p.get('text', ''))[:120]}",
+            )
+    return out
+
+
 def run(cases: dict[str, I.Case], *, with_log: bool = True,
-        tag: str = "batch") -> dict[str, Result]:
+        tag: str = "batch", check: bool = True) -> dict[str, Result]:
     """Replay every case and return one result each, keyed by case id."""
     CACHE.mkdir(parents=True, exist_ok=True)
     in_csv = CACHE / f"{tag}_in.csv"
     out_csv = CACHE / f"{tag}_out.csv"
     log_txt = CACHE / f"{tag}_log.txt"
 
+    refused = preflight(cases) if check else {}
+    send = {cid: c for cid, c in cases.items() if cid not in refused}
+    if not send:
+        return dict(refused)
+
     in_csv.write_text(
-        "\n".join(I.to_csv_line(c, cid) for cid, c in cases.items()) + "\n",
+        "\n".join(I.to_csv_line(c, cid) for cid, c in send.items()) + "\n",
         encoding="utf-8", newline="\n",
     )
 
@@ -110,6 +139,7 @@ def run(cases: dict[str, I.Case], *, with_log: bool = True,
         raise RuntimeError(f"replay did not finish: {proc.stdout}\n{proc.stderr}")
 
     results = _parse_log(log_txt.read_text(encoding="utf-8", errors="replace"))
+    results.update(refused)
     for cid in cases:
         r = results.setdefault(cid, Result(case_id=cid))
         if r.ok and r.key:

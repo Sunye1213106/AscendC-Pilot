@@ -304,6 +304,12 @@ class Atom:
     # Lets the variable layer name `VAR_SHAPE_QUERY_D2` instead of collapsing
     # every dimension of an input onto one variable.
     index: int | None = None
+    # Which quantity of the shape was read, when it was read whole. A rank and
+    # an element count are both "the shape without an axis" and used to share
+    # one variable, so `GetDimNum() != 4` and `GetShapeSize() != 0` constrained
+    # the same unknown -- and a premise stating the rank refused every input
+    # whose element count was not 4.
+    reads: str | None = None
     # A root was assigned by fallback rather than proven. `TILING_DATA` with no
     # locatable writer is the usual case: the field really is tiling state, but
     # nothing here shows what decides it, so it must not count as closed.
@@ -408,6 +414,11 @@ def _const_int(e: Expr, constants: Mapping[str, int] | None = None) -> int | Non
 
 # `GetDim(2)` names one axis; `GetDimNum()` names the rank, which is not an axis.
 _DIM_ACCESSOR_RE = re.compile(r"^GetDim$|^GetShapeDim$|^GetOriginDim$")
+
+#: Reads the rank rather than the extent. Kept apart from the element count so
+#: the two do not share a variable -- see `Atom.reads`.
+_RANK_ACCESSOR_RE = re.compile(r"^GetDimNum$|^GetShapeDimNum$|^GetOriginDimNum$")
+READS_RANK = "rank"
 
 #: Accessors that select one operand by position, and which list it indexes.
 #: The position is what tells `query`'s shape from `key`'s; without it every
@@ -597,6 +608,7 @@ class SourceResolver:
                         root=first.root,
                         symbol=first.symbol,
                         index=first.index,
+                        reads=first.reads,
                         via=(f".{field}",) + first.via,
                         partial=first.partial,
                     )
@@ -641,7 +653,10 @@ class SourceResolver:
             # Nothing said which operand this reads, so the accessor's own name
             # has to stand for all of them. `identity_merged` marks the result.
             symbol = name
-        return Atom(text=name, root=root, symbol=symbol, index=dim_index)
+        reads = READS_RANK if _RANK_ACCESSOR_RE.match(name) else None
+        return Atom(
+            text=name, root=root, symbol=symbol, index=dim_index, reads=reads
+        )
 
     def _operand_symbol(self, name: str, args: Sequence[Expr]) -> str | None:
         """Which operand a positional accessor selects: `GetInputShape(1)` → key."""
@@ -819,6 +834,7 @@ class SourceResolver:
             root=first.root,
             symbol=first.symbol,
             index=first.index,
+            reads=first.reads,
             via=(f"{_call_name(e)}(...)",) + first.via,
             partial=first.partial,
         )
@@ -849,6 +865,7 @@ class SourceResolver:
                             root=base.root,
                             symbol=base.symbol,
                             index=base.index,
+                            reads=base.reads,
                             via=(f"{head}->{rest}",) + base.via,
                         )
                 if (
@@ -861,6 +878,7 @@ class SourceResolver:
                         root=base.root,
                         symbol=base.symbol,
                         index=base.index,
+                        reads=base.reads,
                         via=(f"{head}->{rest}",) + base.via,
                         partial=base.partial,
                     )
@@ -900,6 +918,7 @@ class SourceResolver:
                             root=first.root,
                             symbol=first.symbol,
                             index=first.index,
+                            reads=first.reads,
                             reason=first.reason,
                             via=(f"{sym}={rhs[:40]}",) + first.via,
                             partial=first.partial,
@@ -1056,6 +1075,7 @@ class SourceResolver:
                     root=meaningful[0].root,
                     symbol=meaningful[0].symbol,
                     index=meaningful[0].index,
+                    reads=meaningful[0].reads,
                     via=(f"{name}()->{expr[:40]}",) + meaningful[0].via,
                 )
 
@@ -1071,6 +1091,7 @@ class SourceResolver:
                         root=first.root,
                         symbol=first.symbol,
                         index=first.index,
+                        reads=first.reads,
                         via=(f"{name}(&{p})={rhs[:40]}",) + first.via,
                         partial=first.partial,
                     )
@@ -1244,6 +1265,7 @@ class SourceResolver:
                         root=root or first.root,
                         symbol=first.symbol,
                         index=first.index,
+                        reads=first.reads,
                         via=via,
                     )
                 )

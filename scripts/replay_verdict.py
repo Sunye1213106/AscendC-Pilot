@@ -54,6 +54,50 @@ UNREACHABLE = {
         "(normal_regbase.cpp:1447)"),
 }
 
+#: Value combinations the host cannot emit together. Same rule as above: each
+#: entry names the code that rules it out, so "we never found one" is never the
+#: reason. Combinations, not just pairs, because some contradictions need three
+#: dimensions to state.
+UNREACHABLE_COMBOS = [
+    ({"IsRope": "1", "DTemplateNum": "64"}, "rope_d"),
+    ({"IsRope": "1", "DTemplateNum": "128"}, "rope_d"),
+    ({"IsRope": "1", "DTemplateNum": "256"}, "rope_d"),
+    ({"IsRope": "1", "DTemplateNum": "768"}, "rope_d"),
+    ({"IsTndSwizzle": "1", "DeterType": "1"}, "swizzle_deter"),
+    ({"IsTndSwizzle": "1", "DeterType": "2"}, "swizzle_deter"),
+    ({"IsTndSwizzle": "1", "DeterType": "3"}, "swizzle_deter"),
+    ({"IsTndSwizzle": "1", "DeterType": "4"}, "swizzle_deter"),
+    ({"IsAttenMask": "0", "DeterType": "3"}, "sparse_needs_mask"),
+    ({"IsAttenMask": "0", "DeterType": "4"}, "sparse_needs_mask"),
+]
+# Retracted: {"IsTnd": 1, "IsPse": 1, "IsAttenMask": 0} -> tnd_pse_needs_mask.
+# The reasoning covered CheckPseShape's four-dimension path, where TND only
+# accepts the alibi shapes and those need s2Token == 0, which an absent mask
+# rules out. But the alibi *slope* input is rank 2 and is checked somewhere
+# else entirely, so it reaches TND with no mask. The closure gate caught this
+# against 80 real witnesses; the rule would have wrongly excluded 512 keys.
+
+PAIR_EVIDENCE = {
+    "rope_d": (
+        "GetDTemplateType returns NUM192 as its first statement when hasRope, "
+        "so rope forces DTemplateNum=192 (common_regbase.cpp:849-852)"),
+    "swizzle_deter": (
+        "templateSupportCond's deterministic branch ends in '&& false', so the "
+        "swizzle only survives when !isDeterministic, and GetDeterSparseTilingKey "
+        "returns NO_DETER whenever !isDeterministic "
+        "(normal_regbase.cpp:453-461, 790-794)"),
+    "sparse_needs_mask": (
+        "DETER_CAUSAL and DETER_BAND both require isSparse, and SetSparseParams "
+        "returns false as soon as attenMask is empty "
+        "(common_regbase.cpp:1545-1549, 796-813)"),
+    "tnd_pse_needs_mask": (
+        "Under TND the only accepted pse shapes are the alibi pair, both gated "
+        "on isTndPse, which needs s2Token == 0; but ProcessTokensInfo forces "
+        "s1Token = s2Token = INT32_MAX whenever attenMask is the empty tensor, "
+        "so an absent mask makes every TND pse shape fail the check "
+        "(common_regbase.cpp:1277-1281, 1376-1382, 1431-1438)"),
+}
+
 
 def _witnesses(path: Path) -> dict[int, dict]:
     rows = path.read_text(encoding="utf-8").splitlines()
@@ -72,11 +116,28 @@ def _witnesses(path: Path) -> dict[int, dict]:
 
 
 def main() -> int:
-    src = R.CACHE / "fag_key_cases_full.csv"
-    if not src.exists():
-        src = R.CACHE / "fag_key_cases.csv"
-    seen = _witnesses(src)
-    print(f"{len(seen)} distinct keys produced, from {src.name}")
+    # A single search saturates without being complete: two runs that differed
+    # only in seed each stopped finding keys, yet each held ~85 the other never
+    # saw. Every run's witnesses count, so the default is the union of all of
+    # them rather than whichever file was written last.
+    args = [a for a in sys.argv[1:] if not a.startswith("-")]
+    if args:
+        srcs = [R.CACHE / a for a in args]
+    else:
+        srcs = sorted(R.CACHE.glob("fag_key_cases*.csv"))
+    srcs = [p for p in srcs if p.exists()]
+    if not srcs:
+        print(f"no fag_key_cases*.csv under {R.CACHE}")
+        return 1
+
+    seen: dict[int, dict] = {}
+    for p in srcs:
+        found = _witnesses(p)
+        fresh = len(set(found) - set(seen))
+        for k, v in found.items():
+            seen.setdefault(k, v)
+        print(f"  {p.name}: {len(found)} keys, {fresh} not seen in earlier files")
+    print(f"{len(seen)} distinct keys produced, from {len(srcs)} run(s)")
 
     declared = expand_legal_instances(R.SCHEMA)
     print(f"{len(declared)} template instances declared by the kernel")
@@ -93,11 +154,16 @@ def main() -> int:
             continue
         reasons = [UNREACHABLE[(d, v)] for d, v in inst.items()
                    if (d, str(v)) in UNREACHABLE]
+        for combo, tag in UNREACHABLE_COMBOS:
+            if all(str(inst.get(d)) == v for d, v in combo.items()):
+                reasons.append(PAIR_EVIDENCE[tag])
+                blocked_by[" + ".join(f"{d}={v}" for d, v in combo.items())] += 1
         if reasons:
             verdicts[key] = ("unreachable_static", reasons[0])
             for d, v in inst.items():
                 if (d, str(v)) in UNREACHABLE:
                     blocked_by[f"{d}={v}"] += 1
+            continue
         else:
             verdicts[key] = ("candidate_static", "")
 

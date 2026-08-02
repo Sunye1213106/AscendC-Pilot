@@ -582,6 +582,11 @@ def _derive_row(bundle: dict[str, Any], index: int, helper: int) -> dict[str, An
     """Derive one dimension. Pure function of the bundle — no I/O."""
     from uo_init.derive_key_fields import KeyFieldDeriver
 
+    # The isolated workers set this same ceiling (see `_run_isolated`). In-process
+    # runs inherit the interpreter default (1000), which SplitAxis's expansion
+    # blows straight through — surfacing as `unresolved` where the isolated path
+    # returns `partial` for the identical field. Keep the two paths consistent.
+    sys.setrecursionlimit(20000)
     host_ir = bundle["host_ir"]
     binding = bundle["binding"]
     b = binding.bindings[index]

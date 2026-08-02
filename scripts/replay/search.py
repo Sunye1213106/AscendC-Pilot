@@ -32,7 +32,10 @@ B_STEPS = [1, 2, 8, 24, 48]
 NG_STEPS = [(1, 1), (2, 1), (1, 2), (4, 1), (8, 1), (2, 2)]
 #: The host classifies the mask by rank and leading dims, so shape is a knob.
 MASKS = ["none", "ss", "2048", "bnss", "b1ss", "11ss"]
-PSE_SHAPES = ["full", "1n", "b1", "slope"]
+#: The four-dimension names CheckPseShape classifies into, plus the rank-2
+#: alibi slope forms, which take a different path and are the only pse TND
+#: accepts without an atten mask.
+PSE_SHAPES = ["bnss", "b1ss", "1nss", "1nhs", "bnhs", "slope", "slope_n"]
 
 
 def seeds() -> dict[str, I.Case]:

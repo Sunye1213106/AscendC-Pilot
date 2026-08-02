@@ -275,7 +275,13 @@ class VariableModel:
         return out
 
     # -- atom mapping ------------------------------------------------------
-    def var_id_for(self, root: str, symbol: str, index: int | None = None) -> str | None:
+    def var_id_for(
+        self,
+        root: str,
+        symbol: str,
+        index: int | None = None,
+        reads: str | None = None,
+    ) -> str | None:
         """Map a resolved atom onto a declared variable id.
 
         Returns None for roots that carry no solver variable (constants, loop
@@ -290,7 +296,12 @@ class VariableModel:
         if not sym:
             return None
         if root == "INPUT_SHAPE":
-            return f"VAR_SHAPE_{sym}_D{index}" if index is not None else f"VAR_SHAPE_{sym}"
+            if index is not None:
+                return f"VAR_SHAPE_{sym}_D{index}"
+            # A rank and an element count are both read off the whole shape,
+            # and sharing one variable made `GetDimNum() != 4` and
+            # `GetShapeSize() == 0` speak about the same unknown.
+            return f"VAR_RANK_{sym}" if reads == "rank" else f"VAR_SHAPE_{sym}"
         if root == "INPUT_DTYPE":
             return f"VAR_DTYPE_{sym}"
         if root == "INPUT_FORMAT":
@@ -505,7 +516,12 @@ def _apply_bound(model, resolver, node, m) -> tuple[str, str, int] | None:
     if len(atoms) != 1:
         return None
     atom = atoms[0]
-    var_id = model.var_id_for(atom.root, atom.symbol, getattr(atom, "index", None))
+    var_id = model.var_id_for(
+        atom.root,
+        atom.symbol,
+        getattr(atom, "index", None),
+        getattr(atom, "reads", None),
+    )
     if not var_id:
         return None
     spec = model.get(var_id)

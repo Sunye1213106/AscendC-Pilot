@@ -3,18 +3,18 @@
 > Written by `scripts/_probe_derive.py` on every full run. Do not edit.
 > Numbers quoted anywhere else are commentary and may lag this file.
 
-- run: `2026-08-02T07:03:55.399833+00:00`  op: `FlashAttentionScoreGrad`  arch: `arch35`
+- run: `2026-08-02T18:01:58.219263+00:00`  op: `FlashAttentionScoreGrad`  arch: `arch35`
 
 | metric | value |
 | --- | ---: |
 | CLOSED (exact + constant) | **14/19** |
 | INPUT_DERIVABLE | **12/19** |
 | unique free_vars | **11** |
-| unrecorded free_vars (must be 0) | **3** |
+| unrecorded free_vars (must be 0) | **0** |
 | implicit_defaults | 8 |
 | domain_violations | 1 |
-| max expanded chars | 380966 |
-| total seconds | 72.3 |
+| max expanded chars | 454534 |
+| total seconds | 81.5 |
 
 ## Remaining free variables
 

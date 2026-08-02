@@ -208,7 +208,9 @@ class PredicateNormalizer:
         atom = atoms[0]
         if atom.root is None:
             raise NormalizeError(atom.reason or REASON_UNMAPPED_LEAF, atom.text[:80])
-        var_id = self.model.var_id_for(atom.root, atom.symbol, atom.index)
+        var_id = self.model.var_id_for(
+            atom.root, atom.symbol, atom.index, getattr(atom, "reads", None)
+        )
         if not var_id:
             raise NormalizeError(REASON_UNMAPPED_LEAF, f"{atom.root}:{atom.symbol}"[:80])
         self.model.declare_on_demand(var_id, atom.root, atom.index)
