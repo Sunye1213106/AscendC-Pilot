@@ -427,6 +427,55 @@ def _operand_list(name: str) -> str | None:
     return None
 
 
+#: Suffixes a by-name layer adds to a declared operand. `attenMaskOptional` is
+#: `atten_mask`; `dqOut` is the output `dq`. Only tried once the plain name has
+#: missed, so an operand really ending this way still wins.
+#: `shape` and `dtype` are here because a by-name layer keeps what it read in
+#: a local named after both the tensor and the thing read: `auto queryShape =
+#: query->GetViewShape()`, then `queryShape.GetDimNum()`. The outer accessor
+#: already says which of the two it wants, so the operand is all that is left
+#: to recover.
+_OPERAND_SUFFIXES = (
+    "optional", "out", "tensor", "input", "in", "shape", "dtype", "type", "desc"
+)
+
+
+def _squash(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
+def _declared_operand(ident: str, operands: Mapping[str, Sequence[str]]) -> str | None:
+    """The declared operand a bare name refers to, if any.
+
+    Tiling reaches a tensor by position -- `GetInputDesc(0)` -- but every layer
+    written for people reaches it by name: `query->GetDataType()`, or a helper
+    taking `const aclTensor *query`. Both name the same operand, and only the
+    positional form was being recognised, so every by-name read fell back to
+    the accessor's own name and the whole operator shared one dtype variable.
+
+    Spellings are compared with separators and case removed, since the two
+    sides disagree on both (`queryRope` against `query_rope`).
+    """
+    want = _squash(ident)
+    if not want:
+        return None
+    known = {_squash(n): n for names in operands.values() for n in names}
+    hit = known.get(want)
+    if hit:
+        return hit
+    trimmed = want
+    while True:
+        for suffix in _OPERAND_SUFFIXES:
+            if trimmed.endswith(suffix) and len(trimmed) > len(suffix):
+                trimmed = trimmed[: -len(suffix)]
+                break
+        else:
+            return None
+        hit = known.get(trimmed)
+        if hit:
+            return hit
+
+
 def _dim_index(name: str, args, constants: Mapping[str, int] | None = None) -> int | None:
     if not _DIM_ACCESSOR_RE.match(name):
         return None
@@ -649,12 +698,23 @@ class SourceResolver:
             sub = self.resolve(a.symbol, depth + 1)
             inner = sub.atoms[0] if sub.atoms else None
         if inner is None or not inner.symbol or inner.reason:
-            return None
+            return self._named_operand(a)
         if _match(CALL_ROOTS, inner.symbol) is not None:
             # The receiver did not resolve to an operand either; propagating its
             # accessor name would just spread the collapse one level further.
-            return None
+            return self._named_operand(a)
         return inner.symbol, inner.index, inner.root
+
+    def _named_operand(self, a: Expr) -> tuple[str, None, None] | None:
+        """Last resort: the receiver is simply the operand's declared name.
+
+        True of the outermost function of a by-name layer, whose parameters no
+        caller in scope supplies, so there is nothing to chase them to.
+        """
+        if not isinstance(a, Ref):
+            return None
+        hit = _declared_operand(a.symbol, self.operands)
+        return (hit, None, None) if hit else None
 
     def _resolve_tuple_elem(self, idx_expr: Expr, tup_expr: Expr, depth: int) -> Atom:
         """Resolve `__tuple_elem(i, tup)` through make_tuple / tie actuals."""

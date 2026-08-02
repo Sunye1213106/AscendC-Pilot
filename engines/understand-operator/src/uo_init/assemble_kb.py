@@ -192,29 +192,51 @@ def export_operator_kb(
     return receipt
 
 
+def _proto_of(spec) -> Path | None:
+    """The `REG_OP` prototype, which sits in `op_graph` and is a header."""
+    scope = getattr(spec, "scope", None)
+    if scope is None:
+        return None
+    from uo_init import scope_scan as sscan
+
+    found = [p for p in scope.paths(role=sscan.ROLE_GRAPH) if p.suffix.lower() != ".cpp"]
+    return found[0] if found else None
+
+
 def extract_host_bundle(
     *,
     op_dir: str | Path,
     cann_root: str,
     ops_root: str | None = None,
     arch_dir: str | None = None,
-    with_closure: bool = True,
+    with_closure: bool = False,
+    with_kernel: bool = True,
 ) -> dict[str, Any]:
     """Host-only analyse → metrics/gap/binding (no FAG defaults).
 
-    `with_closure=False` stops once the facts are in — the IR, the resolver,
-    the variable model and the key binding — and skips the controllability
-    closure over every branch in the operator. That closure is five sixths of
-    the run: a second libclang parse of every translation unit, then several
-    hundred branches analysed one at a time. Key-field derivation reads none
-    of it, so a caller after the facts alone was waiting four and a half
-    minutes for a result it then dropped.
+    Stops by default once the facts are in — the IR, the resolver, the
+    variable model and the key binding — and skips the controllability closure
+    over every branch in the operator. That closure is five sixths of the run:
+    a second libclang parse of every translation unit, then several hundred
+    branches analysed one at a time. Key-field derivation reads none of it, so
+    a caller after the facts alone was waiting four and a half minutes for a
+    result it then dropped.
+
+    `with_closure=True` is for the callers that read `metrics` or `gap`, which
+    are `None` without it.
+
+    `with_kernel=False` skips the kernel parse. The kernel is not needed to
+    derive a key, only to say which code a key selects, and it costs one parse
+    per dtype variant.
     """
+    from uo_init.api_contract import extract_api_contract
     from uo_init.branch_inventory import inventory_clang
     from uo_init.build_context import BuildContext
     from uo_init.controllability import ControllabilityBuilder, measure
+    from uo_init.decl_facts import extract_decl_facts
     from uo_init.gaps import build_gap_report
     from uo_init.host_ir import build_host_ir
+    from uo_init.kernel_ir import build_kernel_ir
     from uo_init.op_spec import discover
     from uo_init.registry_capable import parse_enums
     from uo_init.source_resolver import SourceResolver
@@ -231,7 +253,9 @@ def extract_host_bundle(
         arch_dir=spec.arch_dir,
     )
     targets = [p for p in spec.host_targets if p.exists()]
-    ir = build_host_ir(list(targets), ctx=ctx, op_needle=spec.op_needle)
+    ir = build_host_ir(
+        list(targets), ctx=ctx, op_needle=spec.op_needle, scope=spec.scope
+    )
     resolver = SourceResolver(host_ir=ir)
     schema = parse_file(spec.tiling_key_header) if spec.tiling_key_header else None
     enums: dict = {}
@@ -309,13 +333,31 @@ def extract_host_bundle(
             for t in targets:
                 nodes.extend(_inv(t))
         else:
-            with ThreadPoolExecutor(max_workers=min(4, len(targets))) as pool:
+            with ThreadPoolExecutor(max_workers=len(targets)) as pool:
                 futs = [pool.submit(_inv, t) for t in targets]
                 for fut in as_completed(futs):
                     nodes.extend(fut.result())
         analyses, records = builder.build(nodes)
         metrics = measure(analyses, records)
         gap = build_gap_report(analyses)
+    # What the operator declares, what the API refuses, and what the kernel
+    # branches on. None of it is host tiling, and all of it constrains the
+    # keys tiling can produce: the declarations pair the dtypes, the API
+    # states which inputs may arrive together, and the kernel says which
+    # dimension decides which code.
+    facts = extract_decl_facts(spec.opdef, _proto_of(spec))
+    contract = extract_api_contract(spec, ctx, facts)
+    api_resolver = None
+    if contract.ir is not None:
+        # Its own resolver: `qDtype` is a local of the API layer and means
+        # nothing to the host one.
+        api_resolver = SourceResolver(host_ir=contract.ir)
+        api_resolver.adopt(model)
+    kernel = None
+    if with_kernel:
+        kernel = build_kernel_ir(
+            spec, ctx, dimensions=[d.name for d in schema.dims] if schema else []
+        )
     binding = None
     if targets and spec.tiling_key_header and spec.kernel_entry:
         try:
@@ -340,6 +382,10 @@ def extract_host_bundle(
         "binding": binding,
         "bind_error": bind_error,
         "tpl_schema": schema,
+        "decl_facts": facts,
+        "api_contract": contract,
+        "api_resolver": api_resolver,
+        "kernel_ir": kernel,
         "var_model": model,
         "tpl_header": str(spec.tiling_key_header or ""),
         # The guarded write set is what key-field derivation runs on; without
@@ -381,6 +427,7 @@ def export_operator_closure(
         cann_root=cann_root,
         ops_root=ops_root,
         arch_dir=arch_dir,
+        with_closure=True,
     )
     spec = bundle["spec"]
     kbr: list[MintedKernelBranch] = []

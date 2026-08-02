@@ -70,8 +70,18 @@ class ParamDecl:
 
     kind: str  # input | output | attr
     name: str
+    #: Position among entries of the same kind. This is what host tiling reads
+    #: an input by -- `GetInputDesc(4)` names nothing -- so it is the only thing
+    #: tying host code to the API layer, which reads the same input by name.
+    index: int = -1
     param_type: str = ""  # REQUIRED | OPTIONAL | DYNAMIC
+    #: Which dtypes this parameter may take, deduplicated.
     dtypes: list[str] = field(default_factory=list)
+    #: The same list as written, in order and with repeats. Entry `i` of every
+    #: parameter's row belongs to one supported combination, so deduplicating
+    #: breaks the alignment -- `dtypes` cannot say that a FLOAT8 query goes
+    #: with a FLOAT8 key.
+    dtype_row: list[str] = field(default_factory=list)
     formats: list[str] = field(default_factory=list)
     value_type: str = ""  # Int / Float / Bool / String for attrs
     default: str = ""
@@ -158,6 +168,7 @@ def parse_opdef(path: str | Path) -> list[ParamDecl]:
     text = path.read_text(encoding="utf-8", errors="replace")
     matches = list(MEMBER_RE.finditer(text))
     out: list[ParamDecl] = []
+    seen_of_kind: dict[str, int] = {}
     for i, m in enumerate(matches):
         kind = m.group(1).lower()
         name = m.group(2)
@@ -166,6 +177,7 @@ def parse_opdef(path: str | Path) -> list[ParamDecl]:
         decl = ParamDecl(
             kind=kind,
             name=name,
+            index=seen_of_kind.get(kind, 0),
             file=str(path).replace("\\", "/"),
             line=text[: m.start()].count("\n") + 1,
         )
@@ -173,7 +185,9 @@ def parse_opdef(path: str | Path) -> list[ParamDecl]:
         decl.param_type = pt.group(1) if pt else ""
         dt = DATATYPE_RE.search(block)
         if dt:
-            decl.dtypes = _uniq(_strip_ns(t) for t in dt.group(1).split(","))
+            row = [_strip_ns(t) for t in dt.group(1).split(",")]
+            decl.dtype_row = [t for t in row if t]
+            decl.dtypes = _uniq(row)
         fm = FORMAT_RE.search(block)
         if fm:
             decl.formats = _uniq(_strip_ns(t) for t in fm.group(1).split(","))
@@ -182,8 +196,10 @@ def parse_opdef(path: str | Path) -> list[ParamDecl]:
             if av:
                 decl.value_type = av.group(1)
                 decl.default = av.group(2).strip()
-        # Repeated names (an operator may re-declare a param) keep the first.
+        # Repeated names (an operator may re-declare a param) keep the first,
+        # and do not advance the position: a re-declaration is the same slot.
         if not any(d.kind == kind and d.name == name for d in out):
+            seen_of_kind[kind] = decl.index + 1
             out.append(decl)
     return out
 

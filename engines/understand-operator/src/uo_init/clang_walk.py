@@ -421,16 +421,26 @@ def _file_of(cursor) -> str | None:
     return _norm(f.name) if f is not None else None
 
 
-def _in_scope(file: str | None, needle: str, op_root: str = "") -> bool:
+def _in_scope(
+    file: str | None, needle: str, op_root: str = "", scope=None
+) -> bool:
     """True when a cursor belongs to the operator under analysis.
 
-    Preferred test is "lives under the operator directory"; the filename needle
-    stays available for repositories that spread one operator across trees.
+    A scanned scope answers this directly and is preferred, because it was
+    built from the include graph: it holds the shared headers a domain keeps
+    beside its operators, which carry no operator name. Judging those by name
+    drops them, and what they define then reads as undefined rather than as
+    missing input.
+
+    The filename needle and the operator root remain for callers that have no
+    scan to hand.
     """
     if file is None:
         return False
     if any(m in file for m in FOREIGN_MARKERS):
         return False
+    if scope is not None:
+        return scope.contains(file)
     if needle:
         return needle in file
     if op_root:
@@ -450,7 +460,7 @@ def _base_class(cursor):
     return None
 
 
-def _framework_headers(cursor, needle: str, op_root: str = "") -> set[str]:
+def _framework_headers(cursor, needle: str, op_root: str = "", scope=None) -> set[str]:
     """Files holding the base classes this operator's tiling classes derive from.
 
     A tiling class inheriting `TilingBaseClass` hands the framework the say in
@@ -480,7 +490,7 @@ def _framework_headers(cursor, needle: str, op_root: str = "") -> set[str]:
             where = _file_of(child)
             if where is None:
                 continue
-            if only_in_scope and not _in_scope(where, needle, op_root):
+            if only_in_scope and not _in_scope(where, needle, op_root, scope):
                 continue
             if kind == "CXX_BASE_SPECIFIER":
                 found.append(child)
@@ -500,7 +510,7 @@ def _framework_headers(cursor, needle: str, op_root: str = "") -> set[str]:
         where = _file_of(base)
         if where is None or any(m in where for m in FOREIGN_MARKERS):
             continue
-        if not _in_scope(where, needle, op_root):
+        if not _in_scope(where, needle, op_root, scope):
             out.add(where)
         # A base may itself derive from the class holding the hooks.
         pending.extend(_specifiers(base, only_in_scope=False))
@@ -611,10 +621,14 @@ class _Walker:
         *,
         side: str = "host",
         frame_files: frozenset[str] = frozenset(),
+        scope=None,
+        logs_rejections: bool = False,
     ):
         self.needle = needle
         self.op_root = _norm(op_root) if op_root else ""
         self.frame_files = frame_files
+        self.scope = scope
+        self.logs_rejections = logs_rejections
         self.collect_writes = collect_writes
         self.side = side
         self.controls: list[CtrlNode] = []
@@ -632,7 +646,7 @@ class _Walker:
 
     # -- helpers -----------------------------------------------------------
     def _in_scope(self, file: str | None) -> bool:
-        return _in_scope(file, self.needle, self.op_root)
+        return _in_scope(file, self.needle, self.op_root, self.scope)
 
     def _in_frame(self, file: str | None) -> bool:
         """Scope for who-calls-whom, which reaches one step past the operator.
@@ -1084,7 +1098,7 @@ class _Walker:
             implied: list[PathCond] = []
             for ch in cursor.get_children():
                 self.walk(ch, stack + implied, func)
-                implied.extend(_guard_clause_negations(ch))
+                implied.extend(_guard_clause_negations(ch, self.logs_rejections))
             return
 
         if kind_name == "IF_STMT":
@@ -1329,8 +1343,29 @@ _ERROR_EXIT_RE = re.compile(r"GRAPH_FAILED|PARAM_INVALID|GRAPH_PARAM|FAILED\b")
 # passed" on the rest of the function, and a value only ever assigned after
 # such a check then looks like it might never be assigned at all.
 _STATUS_FAILURE_RE = re.compile(
-    r"!=\s*(?:\w+\s*::\s*)?GRAPH_SUCCESS|GRAPH_SUCCESS\s*!="
+    r"!=\s*(?:\w+\s*::\s*)?\w*SUCCESS\b|\w*SUCCESS\s*!="
 )
+
+# A third way, and the one the user-facing API layer uses. A checker there
+# returns `false` or a forwarded status, so the return statement names no
+# failure at all -- what marks the branch as a refusal is that it logs an error
+# on the way out. `LOGE` is how every layer of this stack spells that.
+_ERROR_LOG_RE = re.compile(r"\w*LOGE\b")
+
+
+def _refuses(then, exit_stmt, by_log: bool) -> bool:
+    """Whether this branch is rejecting the input rather than handling a case.
+
+    `by_log` is off for tiling, where a bare `return false` is ordinary control
+    flow, and on for the API layer, where it is the house style for refusal.
+    Reading tiling that way would turn every early return into a premise about
+    the input, which is how a legal input gets excluded.
+    """
+    if exit_stmt is None:
+        return False
+    if _ERROR_EXIT_RE.search(" ".join(_tokens(exit_stmt, 64))):
+        return True
+    return by_log and bool(_ERROR_LOG_RE.search(" ".join(_tokens(then, 256))))
 
 
 def _exit_statement(stmt):
@@ -1361,18 +1396,18 @@ def _else_if_chain(stmt):
     return links, node
 
 
-def _exits_inside(body) -> list[PathCond]:
+def _exits_inside(body, by_log: bool = False) -> list[PathCond]:
     """Guards one level in that leave the function, as negations."""
     kind = body.kind.name if body is not None else ""
     stmts = list(body.get_children()) if kind == "COMPOUND_STMT" else [body]
     out: list[PathCond] = []
     for s in stmts:
         if s is not None and s.kind.name == "IF_STMT":
-            out.extend(_guard_clause_negations(s))
+            out.extend(_guard_clause_negations(s, by_log))
     return out
 
 
-def _implied_by_nested_guards(stmt, links) -> list[PathCond]:
+def _implied_by_nested_guards(stmt, links, by_log: bool = False) -> list[PathCond]:
     """What an `if` whose branch only *sometimes* leaves still tells us.
 
     `if (A) { … if (B) return X; }` does not stop the code after it, so the
@@ -1398,7 +1433,7 @@ def _implied_by_nested_guards(stmt, links) -> list[PathCond]:
         outer = _text_of(cond, COND_TOKENS)
         if not outer:
             continue
-        for inner in _exits_inside(body):
+        for inner in _exits_inside(body, by_log):
             if inner.is_opaque:
                 continue
             out.append(
@@ -1413,7 +1448,7 @@ def _implied_by_nested_guards(stmt, links) -> list[PathCond]:
     return out
 
 
-def _guard_clause_negations(stmt) -> list[PathCond]:
+def _guard_clause_negations(stmt, by_log: bool = False) -> list[PathCond]:
     """The conditions that hold for whatever follows this `if`.
 
     An if/else already walks both polarities inside the branches, but a
@@ -1435,7 +1470,7 @@ def _guard_clause_negations(stmt) -> list[PathCond]:
     if not links:
         return []
     if _exit_statement(links[0][1]) is None:
-        return _implied_by_nested_guards(stmt, links)
+        return _implied_by_nested_guards(stmt, links, by_log)
 
     exits = [_exit_statement(then) for _, then in links]
     if (
@@ -1453,10 +1488,7 @@ def _guard_clause_negations(stmt) -> list[PathCond]:
     # names no input: the condition that really failed is inside the callee,
     # and negating this text would only add an opaque variable.
     opaque = [bool(t) and bool(_STATUS_FAILURE_RE.search(t)) for t in texts]
-    rejects = [
-        bool(e is not None and _ERROR_EXIT_RE.search(" ".join(_tokens(e, 64))))
-        for e in exits
-    ]
+    rejects = [_refuses(then, e, by_log) for (_, then), e in zip(links, exits)]
 
     whole_chain = (
         len(links) > 1
@@ -1675,8 +1707,15 @@ def walk_file(
     dtype_variant: str | None = "DT_FLOAT16",
     op_needle: str = "",
     collect_writes: bool = True,
+    scope=None,
+    logs_rejections: bool = False,
 ) -> WalkResult:
-    """Parse one TU and extract control nodes / writes / function summaries."""
+    """Parse one TU and extract control nodes / writes / function summaries.
+
+    `logs_rejections` says this file refuses input by logging an error on the
+    way out rather than by returning a named failure code. True for the API
+    layer, false for tiling. See `_refuses`.
+    """
     _require_clang()
     path = str(path)
     args = (
@@ -1696,7 +1735,11 @@ def walk_file(
         op_root=op_root,
         collect_writes=collect_writes,
         side=side,
-        frame_files=frozenset(_framework_headers(tu.cursor, op_needle, op_root)),
+        frame_files=frozenset(
+            _framework_headers(tu.cursor, op_needle, op_root, scope)
+        ),
+        scope=scope,
+        logs_rejections=logs_rejections,
     )
     for child in tu.cursor.get_children():
         w.walk(child, [], "")

@@ -715,8 +715,15 @@ def build_host_ir(
     template_precondition: str | None = None,
     side: str = "host",
     op_needle: str = "",
+    scope=None,
+    logs_rejections: bool = False,
 ) -> HostIR:
-    """Build the host IR. Uses clang when a BuildContext is supplied."""
+    """Build the host IR. Uses clang when a BuildContext is supplied.
+
+    `scope` is the scanned file set; when given it decides what the walk may
+    read, in place of matching file names against the operator's own.
+    `logs_rejections` is for the API layer, see `clang_walk._refuses`.
+    """
     if ctx is None:
         writes: list[WriteEvent] = []
         for p in paths:
@@ -741,7 +748,14 @@ def build_host_ir(
     path_list = [Path(p) for p in paths]
 
     def _walk_one(p: Path):
-        return walk_file(p, ctx, side=side, op_needle=op_needle)
+        return walk_file(
+            p,
+            ctx,
+            side=side,
+            op_needle=op_needle,
+            scope=scope,
+            logs_rejections=logs_rejections,
+        )
 
     if len(path_list) <= 1:
         results = [_walk_one(p) for p in path_list]
@@ -749,7 +763,7 @@ def build_host_ir(
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         results = [None] * len(path_list)
-        with ThreadPoolExecutor(max_workers=min(4, len(path_list))) as pool:
+        with ThreadPoolExecutor(max_workers=len(path_list)) as pool:
             futs = {pool.submit(_walk_one, p): i for i, p in enumerate(path_list)}
             for fut in as_completed(futs):
                 results[futs[fut]] = fut.result()

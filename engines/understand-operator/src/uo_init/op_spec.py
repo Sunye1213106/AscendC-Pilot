@@ -9,6 +9,11 @@ resolves them from the Ascend C repository conventions instead:
     op_kernel/<snake>_apt.cpp | <snake>.cpp       kernel entry
     op_kernel/<arch>/<snake>_template_tiling_key.h TilingKey DSL
 
+Which files those roles draw from is decided by `scope_scan`, which reads the
+directory layout and the include graph rather than file names, so shared
+headers a domain keeps beside its operators come along. The globs here remain
+as a fallback for a tree the scan cannot make sense of.
+
 A repository that does not follow the convention can pin the answer with
 `spec/operators/<op>.yaml`; discovery reports ambiguities rather than guessing
 so `scope_confirm` knows when it must ask a human.
@@ -21,6 +26,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from uo_init import scope_scan as sscan
 
 SPEC_DIR = Path(__file__).resolve().parents[2] / "spec"
 OVERRIDE_DIR = SPEC_DIR / "operators"
@@ -52,6 +59,9 @@ class OpSpec:
     arch_dir: str = ""
     opdef: Path | None = None
     host_targets: list[Path] = field(default_factory=list)
+    api_targets: list[Path] = field(default_factory=list)
+    kernel_targets: list[Path] = field(default_factory=list)
+    decl_targets: list[Path] = field(default_factory=list)
     kernel_entry: Path | None = None
     kernel_headers: list[Path] = field(default_factory=list)
     tiling_key_header: Path | None = None
@@ -60,6 +70,7 @@ class OpSpec:
     docs: list[Path] = field(default_factory=list)
     available_archs: list[str] = field(default_factory=list)
     ambiguities: list[str] = field(default_factory=list)
+    scope: sscan.ScopeSet | None = None
     source: str = "discovered"
 
     @property
@@ -97,6 +108,10 @@ class OpSpec:
             "available_archs": list(self.available_archs),
             "opdef": rel(self.opdef),
             "host_targets": [rel(p) for p in self.host_targets],
+            "api_targets": [rel(p) for p in self.api_targets],
+            "kernel_targets": [rel(p) for p in self.kernel_targets],
+            "decl_targets": [rel(p) for p in self.decl_targets],
+            "scope_files": len(self.scope.files) if self.scope else 0,
             "kernel_entry": rel(self.kernel_entry),
             "tiling_key_header": rel(self.tiling_key_header),
             "tiling_data_header": rel(self.tiling_data_header),
@@ -170,8 +185,30 @@ def _host_targets(host_root: Path, arch_dir: str, op_snake: str) -> list[Path]:
     return owned or out
 
 
+def _targets_from_scope(spec: OpSpec) -> None:
+    """Split the scanned scope into the sets each parsing stage consumes.
+
+    Tiling stays on its own: the definition and shape-inference TUs describe the
+    operator rather than compute a TilingKey, and folding their writes into the
+    host IR would attribute assignments to runs that never make one.
+    """
+    scope = spec.scope
+    if scope is None:
+        return
+    spec.host_targets = scope.paths(role=sscan.ROLE_HOST_TILING, tu_only=True)
+    spec.api_targets = scope.paths(role=sscan.ROLE_API, tu_only=True)
+    spec.kernel_targets = scope.paths(role=sscan.ROLE_KERNEL_ENTRY, tu_only=True)
+    spec.decl_targets = scope.paths(
+        role=(sscan.ROLE_HOST_DEF, sscan.ROLE_HOST_INFERSHAPE), tu_only=True
+    )
+
+
 def _kernel_entry(kernel_root: Path, op_snake: str) -> tuple[Path | None, list[str]]:
-    """`*_apt.cpp` is the AscendC entry when present, else `<snake>.cpp`."""
+    """`*_apt.cpp` is the AscendC entry when present, else `<snake>.cpp`.
+
+    Fallback for a tree `scope_scan` could not read; the scan decides which
+    architecture an entry builds by what it includes, which names cannot say.
+    """
     if not kernel_root.is_dir():
         return None, ["kernel_entry_not_found: no op_kernel/"]
     apt = sorted(kernel_root.glob("*_apt.cpp"))
@@ -262,16 +299,31 @@ def discover(op_dir: str | Path, *, arch_dir: str | None = None) -> OpSpec:
     spec.ambiguities.extend(notes)
     spec.op_snake = camel_to_snake(spec.op_name)
 
+    # Scanned even when the spec is pinned: a pin says which files to parse,
+    # while the scope says which files the walk may read once parsing pulls
+    # them in, and the second question stands either way.
+    spec.scope = sscan.scan(op_dir, arch_dir=spec.arch_dir)
+
     override = load_override(spec.op_name)
     if override:
         return _apply_override(spec, override)
 
-    spec.host_targets = _host_targets(spec.host_root, spec.arch_dir, spec.op_snake)
+    _targets_from_scope(spec)
+
+    if not spec.host_targets:
+        spec.host_targets = _host_targets(spec.host_root, spec.arch_dir, spec.op_snake)
+        spec.ambiguities.append("host_targets_from_glob: scope scan found none")
     if not spec.host_targets:
         spec.ambiguities.append("host_targets_not_found: no op_host tiling TU")
 
-    spec.kernel_entry, notes = _kernel_entry(spec.kernel_root, spec.op_snake)
-    spec.ambiguities.extend(notes)
+    if spec.kernel_targets:
+        spec.kernel_entry = spec.kernel_targets[0]
+        if len(spec.kernel_targets) > 1:
+            names = ", ".join(p.name for p in spec.kernel_targets)
+            spec.ambiguities.append(f"multiple_kernel_entry: {names}")
+    else:
+        spec.kernel_entry, notes = _kernel_entry(spec.kernel_root, spec.op_snake)
+        spec.ambiguities.extend(notes)
 
     spec.tiling_key_header, notes = _tiling_key_header(
         spec.kernel_root, spec.arch_dir, spec.op_name

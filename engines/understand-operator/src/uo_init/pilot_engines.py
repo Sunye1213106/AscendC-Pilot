@@ -409,6 +409,9 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
             cann_root=_cann_root(ctx),
             ops_root=_ops_root(ctx, root),
             arch_dir=ctx.get("arch_dir"),
+            # This engine reports the closure metrics, so it is the caller that
+            # has to pay for them.
+            with_closure=True,
         )
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "extract_host", "error": str(exc)[:400]}

@@ -36,6 +36,7 @@ from uo_init.derive_key_fields import (
     EX_EXACT,
     EX_UNRESOLVED,
     LOOPELEM_PREFIX,
+    OVERAPPROX_PREFIXES,
     decode_expr_dag,
     encode_expr_dag,
 )
@@ -552,7 +553,12 @@ def _derive_row(bundle: dict[str, Any], index: int, helper: int) -> dict[str, An
 #: an inexact one hides reachable keys — the one failure mode worth being
 #: paranoid about here. A free variable means the expansion gave up somewhere,
 #: and "some unknown thing is false" excludes inputs on no evidence at all.
-_SOFT_PREFIXES = ("VAR_LOCAL_", "VAR_INIT_", "VAR_UNMODELLED_")
+#:
+#: Every variable the derivation invents when it cannot decide something
+#: counts, not merely the ones named after the giving up. A softened guard
+#: enters as `VAR_UNDECIDED_x` and is sampled like any other boolean, so half
+#: the draws read it as false and refuse inputs the operator accepts.
+_SOFT_PREFIXES = ("VAR_LOCAL_", "VAR_UNMODELLED_") + OVERAPPROX_PREFIXES
 
 
 def _mentions_soft(node: Any) -> bool:
@@ -577,22 +583,34 @@ def _mentions_any_var(node: Any) -> bool:
 
 
 def _derive_premises(
-    bundle: dict[str, Any], host_ir: Any, function: str, helper: int
+    bundle: dict[str, Any],
+    host_ir: Any,
+    function: str,
+    helper: int,
+    *,
+    resolver: Any = None,
+    layer: str = "host",
+    offset: int = 0,
 ) -> list[dict[str, Any]]:
     """Expand each input-legality condition the same way a dimension is expanded.
 
     A rejection is written in the operator's own vocabulary — `fBaseParams
     .queryType`, a member assigned three calls earlier — so it needs the same
     chasing a key field does, and gets it by going through the same deriver.
+
+    `resolver` and `offset` are for reading a second layer: the API states most
+    of the contract and states it in its own names, so it needs its own
+    resolver, and its premises need indices that do not collide with tiling's.
     """
     from uo_init.derive_key_fields import KeyFieldDeriver
 
     out: list[dict[str, Any]] = []
-    for i, (text, fn, file, line) in enumerate(host_ir.legality_premises()):
+    for n, (text, fn, file, line) in enumerate(host_ir.legality_premises()):
+        i = n + offset
         try:
             deriver = KeyFieldDeriver(
                 host_ir=host_ir,
-                resolver=bundle["resolver"],
+                resolver=resolver if resolver is not None else bundle["resolver"],
                 var_model=bundle["var_model"],
                 max_helper_guards=helper,
             )
@@ -604,7 +622,8 @@ def _derive_premises(
             ).to_dict()
         except Exception as exc:  # noqa: BLE001 — a premise we cannot read is dropped
             out.append({"text": text, "file": file, "line": line, "function": fn,
-                        "usable": False, "why": f"{type(exc).__name__}: {exc}"[:120]})
+                        "layer": layer, "usable": False,
+                        "why": f"{type(exc).__name__}: {exc}"[:120]})
             continue
         expr = row.get("value_expr")
         why = ""
@@ -626,12 +645,40 @@ def _derive_premises(
                 "file": file,
                 "line": line,
                 "function": fn,
+                "layer": layer,
                 "usable": not why,
                 "why": why,
                 "expr": None if why else expr,
             }
         )
     return out
+
+
+def _api_premises(
+    bundle: dict[str, Any], helper: int, offset: int
+) -> list[dict[str, Any]]:
+    """The same, read from the user-facing API layer.
+
+    Host tiling assumes it was handed a legal input and says almost nothing
+    about what that means; the API layer is where the operator states it, one
+    rejection at a time. Without those the analysis believes a FLOAT16 query
+    can arrive alongside a rope input, and reports keys the kernel never
+    declared.
+    """
+    contract = bundle.get("api_contract")
+    ir = getattr(contract, "ir", None)
+    if ir is None:
+        return []
+    resolver = bundle.get("api_resolver")
+    if resolver is None:
+        from uo_init.source_resolver import SourceResolver
+
+        resolver = SourceResolver(host_ir=ir)
+        if bundle.get("var_model") is not None:
+            resolver.adopt(bundle["var_model"])
+    return _derive_premises(
+        bundle, ir, "", helper, resolver=resolver, layer="api", offset=offset
+    )
 
 
 def _worker(bundle_path: str, sys_path: list[str], index: int, helper: int, queue) -> None:
@@ -1011,6 +1058,7 @@ def derive_host_fields(
         doc.premises = _derive_premises(
             bundle, host_ir, doc.encode_function, max_helper_guards
         )
+        doc.premises.extend(_api_premises(bundle, max_helper_guards, len(doc.premises)))
     except Exception as exc:  # noqa: BLE001 — premises sharpen, they do not gate
         doc.note = (doc.note + f" premises failed: {type(exc).__name__}").strip()
     if bundle.get("var_model") is not None:

@@ -3,7 +3,7 @@
 > Written by `scripts/_probe_derive.py` on every full run. Do not edit.
 > Numbers quoted anywhere else are commentary and may lag this file.
 
-- run: `2026-08-01T17:55:21.355619+00:00`  op: `FlashAttentionScoreGrad`  arch: `arch35`
+- run: `2026-08-02T04:30:29.695111+00:00`  op: `FlashAttentionScoreGrad`  arch: `arch35`
 
 | metric | value |
 | --- | ---: |
@@ -14,7 +14,7 @@
 | implicit_defaults | 8 |
 | domain_violations | 1 |
 | max expanded chars | 380290 |
-| total seconds | 73.6 |
+| total seconds | 75.4 |
 
 ## Remaining free variables
 

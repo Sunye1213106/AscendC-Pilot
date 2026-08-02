@@ -75,6 +75,10 @@ host:
     - "{cann_root}/cann-asc-devkit/x86_64-linux/asc/include"
     - "{cann_root}/cann-asc-devkit/x86_64-linux/ascendc/include/highlevel_api"
     - "{cann_root}/cann-opbase/x86_64-linux/include"
+    # The API layer includes `opdev/...`, which ships one level down under
+    # `aclnn/`. Without this the whole aclnn TU fails at its first include and
+    # the input contract it encodes stays invisible.
+    - "{cann_root}/cann-opbase/x86_64-linux/include/aclnn"
     - "{cann_root}/cann-opbase/x86_64-linux/include/op_common"
     - "{cann_root}/cann-opbase/x86_64-linux/pkg_inc"
     - "{cann_root}/cann-ge-compiler/x86_64-linux/include"
