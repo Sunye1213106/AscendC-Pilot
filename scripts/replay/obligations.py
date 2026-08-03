@@ -24,14 +24,31 @@ from .materialized import default_spec
 Generator = Callable[[I.Case, str, Mapping[str, Any]], list[I.Case]]
 
 
-def load_hints(path: str | Path | None = None) -> dict[str, Any]:
+_HINTS: dict[str, dict[str, Any]] = {}
+
+
+def load_hints(
+    path: str | Path | None = None, *, refresh: bool = False
+) -> dict[str, Any]:
+    """The operator's search hints, read once per file.
+
+    Callers ask this per dimension and per candidate -- several thousand times
+    in one search -- and parsing the file again for each of them costs far
+    more than the lookups it answers. Treat the result as read-only; `variants`
+    copies before it changes anything.
+    """
     if path is None:
         from .runner import default
         path = default().manifest.package / "search_hints.yaml"
     path = Path(path)
-    if not path.is_file():
-        return {}
-    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    key = str(path)
+    if not refresh and key in _HINTS:
+        return _HINTS[key]
+    doc: dict[str, Any] = {}
+    if path.is_file():
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    _HINTS[key] = doc
+    return doc
 
 
 def variants(case: I.Case, dim: str, want: str,

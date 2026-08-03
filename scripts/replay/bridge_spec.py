@@ -135,6 +135,29 @@ class BridgeSpec:
     def attrs(self) -> frozenset[str]:
         return frozenset(b.operand for b in self.bindings if b.kind == ATTR)
 
+    def identities(self) -> dict[str, str]:
+        """What each bound variable denotes, as a name two readings can share.
+
+        The solver isolates a variable per dimension unless it can show the
+        two dimensions mean the same thing by it, and it shows that from the
+        variable model -- which has no entry for a shape variable, so it
+        isolates every one of them. That is not conservatism working, it is
+        the conflicts that matter going undetected: `query` cannot have one D
+        in the dimension deciding `DTemplateNum` and another in the one
+        deciding `IsDNoEqual`, and while they were separate integers the
+        solver had no way to say so.
+
+        A binding is exactly the missing evidence. It was exported from the
+        derivation and says which tensor and which axis, so two readings that
+        land on the same operand and axis are one number and may be shared.
+        Anything the spec lists as unbound stays isolated: no claim, no share.
+        """
+        out: dict[str, str] = {}
+        for b in self.bindings:
+            axis = "" if b.axis is None else f".{b.axis}"
+            out[b.var] = f"{b.kind}:{b.operand}{axis}" if b.operand else b.kind
+        return out
+
     @staticmethod
     def load(path: str | Path) -> "BridgeSpec":
         path = Path(path)

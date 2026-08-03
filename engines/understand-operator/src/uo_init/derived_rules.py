@@ -185,20 +185,36 @@ def derive_rules(
     pairs: bool = True,
     implications: bool = True,
     on_progress: Callable[[str, int, int], None] | None = None,
+    pair_slice: tuple[int, int] | None = None,
 ) -> RuleSet:
     """Ask the solver for every exclusion among these candidate values.
 
     `candidates` is the declared value domain per dimension -- the template's,
     not this module's business to know. Dimensions absent from it, or with no
     compiled expression, are reported as skipped rather than assumed total.
+
+    `pair_slice=(index, count)` runs only every `count`-th pair, so a full
+    scan can be split across several cheap invocations instead of one long
+    one; singles and implications always run whole (implications fold whatever
+    this slice proved, and are only total on the last slice).
     """
     out = RuleSet()
     domains = _normalise(candidates)
     compiled = dict(getattr(reach, "_dims", {}) or {})
+    # A dimension whose UNSAT the reachability layer refuses to trust cannot
+    # yield a rule, however long the solver is given. Dropping it here is not
+    # a shortcut in the answer, only in the bill: every query it would take
+    # part in ends as `undecided` either way.
+    unprovable = set(getattr(reach, "unprovable_dims", ()) or ())
     for dim in sorted(domains):
         if dim not in compiled:
             out.skipped[dim] = "no compiled expression"
-    live = {d: v for d, v in domains.items() if d in compiled}
+        elif dim in unprovable:
+            out.skipped[dim] = "under-approximated: UNSAT would not be trusted"
+    live = {
+        d: v for d, v in domains.items()
+        if d in compiled and d not in unprovable
+    }
 
     def ask(combo: dict[str, Any]) -> KeyVerdict:
         out.queries += 1
@@ -247,6 +263,9 @@ def derive_rules(
         for vb in live[b]
         if (b, vb) not in dead
     ]
+    if pair_slice is not None:
+        index0, count = pair_slice
+        todo = todo[index0::count]
     exclusive: set[tuple[tuple[str, Any], tuple[str, Any]]] = set()
     for index, (a, va, b, vb) in enumerate(todo):
         if on_progress:

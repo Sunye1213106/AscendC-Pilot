@@ -14,6 +14,7 @@ grid itself as the candidate set, around the nearest witness.
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from collections import Counter
@@ -27,7 +28,11 @@ from replay import obligations as O  # noqa: E402
 from replay import runner as R  # noqa: E402
 from replay_nudge import _variants  # noqa: E402
 
-TIME_BUDGET_S = 240
+#: Wall clock this search may spend probing the host. Deliberately short: the
+#: search is run in a loop -- cover, measure, nudge, cone, measure again -- and
+#: a long budget buys fewer keys per hour than a short one run more often,
+#: because each round starts from the witnesses the last one found.
+TIME_BUDGET_S = int(os.environ.get("UO_SEARCH_BUDGET_S", "100"))
 MAX_PER_KEY = 12
 CAP = 8192
 
@@ -154,7 +159,7 @@ def main() -> int:
     for d in sorted(set(by_dim) | set(miss)):
         print(f"    {d:<16} {by_dim[d]:>4} hit, {miss[d]:>4} missed")
 
-    wide_out = R.CACHE / "key_cases_cone.csv"
+    wide_out = C.next_wide("key_cases_cone")
     R.write_wide(wide_out, all_cases, all_results)
     print(f"\nall probe results -> {wide_out} (feeds the witness pool)")
 

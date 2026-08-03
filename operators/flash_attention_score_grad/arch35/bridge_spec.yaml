@@ -12,11 +12,11 @@
 operator: FlashAttentionScoreGrad
 arch: arch35
 source:
-  derivation_timestamp: '2026-08-03T02:31:14.478372+00:00'
+  derivation_timestamp: '2026-08-03T08:40:57.675660+00:00'
   derivation_status: partial
   encode_function: GetTilingKey
   fields: 19
-  premises: 47
+  premises: 75
 bindings:
   VAR_ATTR_HEAD_NUM:
     root: ATTRIBUTE

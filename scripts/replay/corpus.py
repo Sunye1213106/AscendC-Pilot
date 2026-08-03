@@ -117,6 +117,25 @@ def wide_tables(cache: Path | None = None, pattern: str | None = None
     return sorted(cache.glob(pattern))
 
 
+def next_wide(stem: str, cache: Path | None = None) -> Path:
+    """A wide-table path that will not land on an earlier run's.
+
+    Search runs in a loop, and every round's probes are witnesses worth
+    keeping. Under a fixed name the second round overwrote the first, so the
+    corpus shrank between rounds and keys already reached fell back into the
+    gap -- the loop spent its budget re-finding what it had already found.
+
+    The stem must still match the manifest's wide glob to be read back.
+    """
+    cache = cache if cache is not None else R.CACHE
+    n = 0
+    while True:
+        path = cache / f"{stem}_{n:02d}.csv"
+        if not path.is_file():
+            return path
+        n += 1
+
+
 def scan(limit: int = 0, timeout: float = 300.0) -> tuple[list[Sample], Scan]:
     """Distinct inputs from every recorded run, newest file last.
 

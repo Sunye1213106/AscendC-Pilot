@@ -193,6 +193,7 @@ def run_derive(
     helper: int,
     isolate: bool,
     workers: int,
+    phases: tuple[str, ...],
 ) -> dict:
     from uo_init.host_derivation import derive_host_fields
 
@@ -204,6 +205,7 @@ def run_derive(
         isolate=isolate,
         only=only or None,
         workers=workers,
+        phases=phases,
     )
     fields = [_field_row(f) for f in doc.fields]
     if only and RESULT.is_file():
@@ -459,6 +461,16 @@ def main() -> int:
         default=None,
         help="isolated derivations in flight at once (memory-bound, default 4)",
     )
+    ap.add_argument(
+        "--bundle-only",
+        action="store_true",
+        help="rebuild the host bundle and stop, so the clang parse is its own run",
+    )
+    ap.add_argument(
+        "--phases",
+        default="",
+        help="measure a subset of fields,auxiliaries,premises; result is not written",
+    )
     args = ap.parse_args()
 
     if args.show is not None:
@@ -478,17 +490,27 @@ def main() -> int:
             print_detail(hit)
         return 0
 
-    if args.refresh or not BUNDLE.is_file():
+    if args.refresh or args.bundle_only or not BUNDLE.is_file():
         print("building host bundle…", flush=True)
         t0 = time.time()
         build_bundle()
-        print(f"bundle ready in {time.time() - t0:.1f}s", flush=True)
+        size = BUNDLE.stat().st_size / 1024 / 1024
+        print(f"bundle ready in {time.time() - t0:.1f}s ({size:.2f} MB)", flush=True)
+    if args.bundle_only:
+        print(f"wrote {BUNDLE}")
+        return 0
 
     prev = json.loads(RESULT.read_text(encoding="utf-8")) if RESULT.is_file() else None
-    from uo_init.host_derivation import DEFAULT_WORKERS
+    from uo_init.host_derivation import DEFAULT_WORKERS, PHASES
 
     workers = DEFAULT_WORKERS if args.workers is None else args.workers
-    print(f"deriving… ({workers} at a time)", flush=True)
+    phases = tuple(p.strip() for p in args.phases.split(",") if p.strip()) or PHASES
+    unknown = [p for p in phases if p not in PHASES]
+    if unknown:
+        print(f"unknown phase(s): {', '.join(unknown)}", file=sys.stderr)
+        return 1
+    partial = set(phases) != set(PHASES)
+    print(f"deriving… ({workers} at a time, phases: {', '.join(phases)})", flush=True)
     t0 = time.time()
     doc = run_derive(
         only=list(args.fields) or None,
@@ -496,10 +518,18 @@ def main() -> int:
         helper=args.helper,
         isolate=not args.no_isolate,
         workers=workers,
+        phases=phases,
     )
     by_phase = doc.get("phase_seconds") or {}
     detail = "  ".join(f"{k}={v}s" for k, v in by_phase.items())
     print(f"derive done in {time.time() - t0:.1f}s  {detail}", flush=True)
+    if partial:
+        # A phase subset leaves the document missing whole sections. Writing it
+        # would leave every downstream reader believing the operator has no
+        # premises, or no auxiliaries, which reads as a finding rather than a
+        # measurement.
+        print("phase subset: measured only, nothing written")
+        return 0
     CACHE.mkdir(parents=True, exist_ok=True)
     RESULT.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
     write_report(doc)

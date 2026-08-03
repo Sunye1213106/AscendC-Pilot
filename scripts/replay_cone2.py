@@ -178,7 +178,7 @@ def main() -> int:
     for d in sorted(set(by_dim) | set(miss)):
         print(f"    {d:<16} {by_dim[d]:>4} hit, {miss[d]:>4} missed")
 
-    wide_out = R.CACHE / "key_cases_cone2.csv"
+    wide_out = C.next_wide("key_cases_cone2")
     R.write_wide(wide_out, all_cases, all_results)
     print(f"\nall probe results -> {wide_out} (feeds the witness pool)")
 

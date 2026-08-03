@@ -91,24 +91,43 @@ def load_derived(path: str | Path, *, expected_hash: str = "") -> RuleBook:
     grade = "solver_derived"
     rules: list[Rule] = []
     for raw in doc.get("rules") or doc.get("value_unreachable") or []:
-        kind = str(raw.get("kind") or "value_unreachable")
-        if kind == "value_unreachable" or ("dim" in raw and "value" in raw):
-            dim, value = str(raw["dim"]), str(raw["value"])
+        # The solver states every rule the same way: the (dim, value) pairs
+        # that cannot hold at once. One pair is a value that never occurs,
+        # several are a combination. `dim`/`value` at the top level, and
+        # `left`/`right`, are the hand-written shapes, read here too so that
+        # either file can be loaded by this function.
+        pairs = [
+            (str(e["dim"]), str(e["value"]))
+            for e in (raw.get("excludes") or [])
+            if e.get("dim") is not None
+        ]
+        if not pairs and raw.get("dim") is not None and raw.get("value") is not None:
+            pairs = [(str(raw["dim"]), str(raw["value"]))]
+        if not pairs and raw.get("left") and raw.get("right"):
+            pairs = [
+                (str(raw["left"]["dim"]), str(raw["left"]["value"])),
+                (str(raw["right"]["dim"]), str(raw["right"]["value"])),
+            ]
+        if not pairs and raw.get("when"):
+            pairs = [(str(k), str(v)) for k, v in raw["when"].items()]
+        if not pairs:
+            continue
+        reason = str(raw.get("reason") or raw.get("statement") or "")
+        this_grade = str(raw.get("evidence_grade") or grade)
+        if len(pairs) == 1:
+            dim, value = pairs[0]
             rules.append(Rule(
-                kind="value_unreachable", grade=grade,
-                label=f"{dim}={value}",
-                reason=str(raw.get("reason") or raw.get("evidence") or ""),
-                dim=dim, value=value))
-        elif kind in ("pair_exclusive", "implication", "combo") or "when" in raw:
-            when = {str(k): str(v) for k, v in (raw.get("when") or {}).items()}
-            if not when and raw.get("left") and raw.get("right"):
-                when = {str(raw["left"]["dim"]): str(raw["left"]["value"]),
-                        str(raw["right"]["dim"]): str(raw["right"]["value"])}
-            label = str(raw.get("label") or
-                        " + ".join(f"{d}={v}" for d, v in when.items()))
+                kind="value_unreachable", grade=this_grade,
+                label=f"{dim}={value}", reason=reason, dim=dim, value=value))
+        else:
+            label = str(
+                raw.get("label")
+                or raw.get("statement")
+                or " + ".join(f"{d}={v}" for d, v in pairs)
+            )
             rules.append(Rule(
-                kind="combo", grade=grade, label=label,
-                reason=str(raw.get("reason") or ""), when=when))
+                kind="combo", grade=this_grade, label=label,
+                reason=reason, when=dict(pairs)))
     return RuleBook(
         rules=tuple(rules),
         source_hash=str(doc.get("source_hash") or ""),
@@ -117,17 +136,39 @@ def load_derived(path: str | Path, *, expected_hash: str = "") -> RuleBook:
 
 
 def merge(*books: RuleBook) -> RuleBook:
+    """Combine rule books, carrying the freshness stamp forward.
+
+    Only the derived book has one, because it is the only one that can go
+    stale: it was proved against a derivation that may since have changed. A
+    merge that dropped it left `hash_ok` answering yes to every question.
+    """
     rules: list[Rule] = []
+    src = exp = ""
     for book in books:
         rules.extend(book.rules)
-    return RuleBook(rules=tuple(rules))
+        src = src or book.source_hash
+        exp = exp or book.expected_hash
+    return RuleBook(rules=tuple(rules), source_hash=src, expected_hash=exp)
 
 
-def default_book() -> RuleBook:
-    """Proof rules of the active operator, plus derived rules if present."""
-    from .runner import default
-    package = default().manifest.package
-    cache = default().cache
-    proof = load_proof(package / "proof_rules.yaml")
-    derived = load_derived(cache / "derived_rules.yaml")
-    return merge(proof, derived)
+_BOOK: RuleBook | None = None
+
+
+def default_book(*, refresh: bool = False) -> RuleBook:
+    """Proof rules of the active operator, plus derived rules if present.
+
+    Held after the first read. Callers ask this per instance -- once per
+    declared key, tens of thousands of times -- and parsing both YAML files
+    again for each of them costs orders of magnitude more than answering the
+    question. `refresh` is for a process that rewrote the files and wants to
+    see its own output.
+    """
+    global _BOOK
+    if _BOOK is None or refresh:
+        from .runner import default
+        package = default().manifest.package
+        cache = default().cache
+        proof = load_proof(package / "proof_rules.yaml")
+        derived = load_derived(cache / "derived_rules.yaml")
+        _BOOK = merge(proof, derived)
+    return _BOOK

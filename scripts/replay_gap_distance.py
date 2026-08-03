@@ -41,21 +41,55 @@ def main() -> int:
            if k not in seen and not _excluded_by(i)]
     print(f"{len(gap)} keys in U - R, {len(wit)} witnesses to measure against")
 
+    # Every gap is measured against every witness, which is millions of
+    # comparisons. Encode each instance once as a row of small integers -- one
+    # column per dimension -- so the inner loop is an array compare instead of
+    # re-formatting nineteen values as strings on every pair.
+    dims = list(R.DIM_NAMES)
+    codes: dict[tuple[str, str], int] = {}
+
+    def _row(inst) -> list[int]:
+        out = []
+        for d in dims:
+            key = (d, str(inst.get(d)))
+            code = codes.get(key)
+            if code is None:
+                code = codes[key] = len(codes)
+            out.append(code)
+        return out
+
+    gap_rows = [_row(inst) for _k, inst in gap]
+    wit_rows = [_row(wd) for _wk, wd in wit]
+    wit_keys = [wk for wk, _wd in wit]
+
     dist: Counter = Counter()
     which: Counter = Counter()
     nearest: dict[int, tuple[int, int, tuple]] = {}
-    for k, inst in gap:
-        best, bestdiff = 99, ()
-        for wk, wd in wit:
-            diff = tuple(d for d in R.DIM_NAMES
-                         if str(inst.get(d)) != str(wd.get(d)))
-            if len(diff) < best:
-                best, bestdiff, bestk = len(diff), diff, wk
-                if best == 1:
-                    break
+
+    ceiling = len(dims) + 1
+    for (k, _inst), row in zip(gap, gap_rows):
+        best, bestj = ceiling, 0
+        for j, wrow in enumerate(wit_rows):
+            n = 0
+            for a, b in zip(row, wrow):
+                if a != b:
+                    n += 1
+                    # Already no better than the best so far, so how much
+                    # worse it gets does not matter. Most witnesses differ
+                    # in many dimensions and are dismissed in two or three
+                    # comparisons once a close one has been found.
+                    if n >= best:
+                        break
+            else:
+                if n < best:
+                    best, bestj = n, j
+                    if best == 1:
+                        break
+        wrow = wit_rows[bestj]
+        bestdiff = tuple(d for i, d in enumerate(dims) if row[i] != wrow[i])
         dist[best] += 1
         which[bestdiff] += 1
-        nearest[k] = (bestk, best, bestdiff)
+        nearest[k] = (wit_keys[bestj], best, bestdiff)
 
     print("\n=== distance to the nearest witness ===")
     for d in sorted(dist):

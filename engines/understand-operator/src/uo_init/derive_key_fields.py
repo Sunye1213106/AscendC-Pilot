@@ -58,6 +58,62 @@ EX_OVERAPPROX = "overapproximated"
 EX_PARTIAL = "partial"
 EX_UNRESOLVED = "unresolved"
 
+
+def has_constant_dead_arm(value_expr: Any) -> bool:
+    """Whether the expression still carries a constant-dead arm.
+
+    A derivation artefact can pin an arm that the host actually takes. The
+    signal is a `lit` boolean appearing in a *guard position*: as the
+    condition of an `if_then_else`, or inside the `and`/`or`/`not` connective
+    that forms a condition. Z3 folds such a constant and proves the other arm
+    unreachable, which is only sound if the constant was — and for
+    SplitAxis/DeterType it was not. A `lit` sitting in an if's *arm* is the
+    field's legitimate boolean output, not a guard, so it does not count.
+
+    Walks the DAG via `_smt_children` (shared nodes visited once), tracking
+    whether each node is reached in guard position.
+    """
+    if not isinstance(value_expr, dict):
+        return False
+    expr = decode_expr_dag(value_expr)
+    if not _is_expr_container(expr):
+        return False
+
+    # (node, is this node a guard / inside a guard)
+    seen: set[tuple[int, bool]] = set()
+    stack: list[tuple[Any, bool]] = [(expr, False)]
+    while stack:
+        node, in_guard = stack.pop()
+        key = (id(node), in_guard)
+        if key in seen:
+            continue
+        seen.add(key)
+        if isinstance(node, dict):
+            op = node.get("op")
+            if op == "lit":
+                if in_guard:
+                    return True
+                continue
+            if op == "if_then_else":
+                c = node.get("condition")
+                if isinstance(c, dict) and c.get("op") == "lit":
+                    return True
+                if _is_expr_container(c):
+                    stack.append((c, True))
+                # arms are values, not guards
+                for arm in (node.get("then"), node.get("else")):
+                    if _is_expr_container(arm):
+                        stack.append((arm, False))
+                continue
+            if op in ("and", "or", "not"):
+                # a connective only appears in guard position
+                for child in _smt_children(node):
+                    stack.append((child, True))
+                continue
+        for child in _smt_children(node):
+            stack.append((child, in_guard))
+    return False
+
 # Variables the derivation invents when it cannot decide something. Each one
 # widens the field's condition, so their presence in `value_expr` is exactly
 # what separates `exact` from `overapproximated`:
@@ -1440,7 +1496,11 @@ class KeyFieldDeriver:
                     result = value
                     result_fn = scope
                 else:
-                    result = Ite(self._reached(scope, depth), value, result)
+                    reached = self._reached(scope, depth)
+                    if isinstance(reached, Const):
+                        result = value if reached.value else result
+                    else:
+                        result = Ite(reached, value, result)
                 continue
             saved_fold = self._fold_enums
             self._fold_enums = False
@@ -1488,7 +1548,16 @@ class KeyFieldDeriver:
                 fallthrough = declared
             else:
                 fallthrough = assumed if assumed is not None else Const(0)
-            result = Ite(cond, value, fallthrough)
+            # A constant condition here is a derivation artefact, not a fact
+            # about the operator: leaving it in the tree lets Z3 prove the
+            # other arm unreachable, and for SplitAxis/DeterType that arm is
+            # the one the host actually takes. Fold it away now; any remaining
+            # constant-dead structure is still flagged by
+            # `underapproximated_dim_names`.
+            if isinstance(cond, Const):
+                result = value if cond.value else fallthrough
+            else:
+                result = Ite(cond, value, fallthrough)
             result_fn = scope
         return result if result is not None else Unknown(REASON_NO_DEFINITION)
 

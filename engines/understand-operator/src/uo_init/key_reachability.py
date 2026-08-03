@@ -43,6 +43,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from .derive_key_fields import has_constant_dead_arm
 from .predicate import VALUE_KIND_STRING
 
 __all__ = [
@@ -269,6 +270,7 @@ class KeyReachability:
         rlimit: int = DEFAULT_RLIMIT,
         hard_timeout_ms: int = DEFAULT_HARD_TIMEOUT_MS,
         only: Iterable[str] | None = None,
+        identities: Mapping[str, str] | None = None,
     ) -> KeyReachability:
         """Compile every dimension we soundly can into one solver context.
 
@@ -283,6 +285,14 @@ class KeyReachability:
         feasible set: a UNSAT that survives is still a UNSAT, and a SAT was
         never trusted on its own. Anything omitted this way is reported through
         `omitted` so a caller cannot mistake it for a compiled one.
+
+        `identities` maps a variable to what it denotes, for variables the
+        caller can vouch for. It goes the other way from everything above: it
+        *adds* the cross-dimension equalities that isolation drops, so it can
+        turn a SAT into an UNSAT. Only pass identities backed by evidence --
+        two dimensions reading the same tensor axis do read one number, and a
+        binding table exported from the derivation says so, but a guess here
+        invents contradictions and reports reachable keys as unreachable.
         """
         fields = list(getattr(derivation, "fields", None) or [])
         if not fields:
@@ -311,7 +321,7 @@ class KeyReachability:
             if tree is None:
                 omitted[name] = "no_expression"
                 continue
-            rename = _Isolator(name, var_model, {})
+            rename = _Isolator(name, var_model, {}, identities)
             domains.read(tree, rename)
             trees.append((name, fld, tree, rename))
         domains.resolve(symbols)
@@ -368,6 +378,10 @@ class KeyReachability:
                 "assumed": sorted(rewrite.assumed),
                 "minted": sorted(rewrite.minted),
                 "support": frozenset(support),
+                # Constant-dead arms make an UNSAT on this dimension unsafe:
+                # the solver can prove a value impossible that the host
+                # actually produces. See derive_key_fields.
+                "underapprox": has_constant_dead_arm(tree),
             }
 
         variables = _dedupe(variables)
@@ -420,6 +434,19 @@ class KeyReachability:
     @property
     def available(self) -> bool:
         return self._backend is not None
+
+    @property
+    def unprovable_dims(self) -> frozenset[str]:
+        """Dimensions an UNSAT can never settle, so asking about them is waste.
+
+        Their expressions still carry constant-dead arms, so `_answer`
+        downgrades any contradiction involving them to `unknown`. A rule pass
+        that asks anyway pays the solver for an answer it must then discard --
+        and these are the widest dimensions, so that is most of the bill.
+        """
+        return frozenset(
+            n for n, spec in self._dims.items() if spec.get("underapprox")
+        )
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -544,6 +571,25 @@ class KeyReachability:
                     reason=(
                         "conflict depends on symbols we could not read: "
                         f"{sorted(guessed)[:4]}"
+                    ),
+                    layer=self._layer,
+                    unsat_core=core,
+                    participating=tuple(taking),
+                )
+            shaky = sorted(
+                n for n in taking if self._dims[n].get("underapprox")
+            )
+            if shaky:
+                # The expression still carries constant-dead arms, so the
+                # solver can prove a value impossible that the host actually
+                # produces. Trusting that would publish a rule the runtime
+                # gate will later have to retract.
+                return KeyVerdict(
+                    status=R_UNKNOWN,
+                    reason=(
+                        "conflict depends on dimension(s) whose expression "
+                        "still has constant-dead arms (under-approximated): "
+                        f"{shaky[:4]}"
                     ),
                     layer=self._layer,
                     unsat_core=core,
@@ -1246,12 +1292,25 @@ class _Isolator:
     dimension, which drops a cross-dimension equality we could not justify.
     Dropping constraints only widens the feasible set, so an UNSAT that
     survives isolation is still an UNSAT.
+
+    `proven` names variables whose identity a caller can vouch for. Without it
+    an undeclared variable is isolated, and most shape variables are undeclared
+    -- so `query`'s axis 2 in one dimension and in another were two unrelated
+    integers, and no contradiction that rests on a tensor having one shape was
+    reachable. That is a whole class of conflict, not an edge case.
     """
 
-    def __init__(self, dim: str, var_model: Any, origins: dict[str, str]) -> None:
+    def __init__(
+        self,
+        dim: str,
+        var_model: Any,
+        origins: dict[str, str],
+        proven: Mapping[str, str] | None = None,
+    ) -> None:
         self._dim = dim
         self._model = var_model
         self._origins = origins
+        self._proven = dict(proven or {})
         self._map: dict[str, str] = {}
         self.isolated: set[str] = set()
         self.shared: set[str] = set()
@@ -1261,7 +1320,7 @@ class _Isolator:
         if hit is not None:
             return hit
         spec = self._model.get(var_id) if hasattr(self._model, "get") else None
-        if _identity_is_shared(var_id, spec):
+        if var_id in self._proven or _identity_is_shared(var_id, spec):
             out = var_id
             self.shared.add(var_id)
         else:

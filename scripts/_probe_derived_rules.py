@@ -34,7 +34,22 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 CACHE = ROOT / ".probe_cache"
 DERIVE = CACHE / "fag_derive.json"
-OUT = CACHE / "derived_rules.yaml"
+
+
+def _identities() -> dict[str, str]:
+    """What each bound variable denotes, from the operator's binding table.
+
+    Empty rather than fatal when the table is missing: without it the solver
+    isolates more than it needs to, which loses conflicts but invents none.
+    """
+    from replay import runner as R
+    from replay.bridge_spec import BridgeSpec
+
+    path = R.default().manifest.package / "bridge_spec.yaml"
+    if not path.is_file():
+        print(f"no binding table at {path}; variables stay isolated")
+        return {}
+    return BridgeSpec.load(path).identities()
 
 
 def _observations(glob: str):
@@ -63,16 +78,34 @@ def main() -> int:
     ap.add_argument("--no-pairs", action="store_true", help="跳过成对扫描")
     ap.add_argument("--no-implications", action="store_true", help="不折叠蕴含")
     ap.add_argument("--timeout", type=int, default=5000, help="每次查询的求解毫秒")
-    ap.add_argument("--out", type=Path, default=OUT)
+    # Default resolved from the replay runner rather than spelled out, because
+    # the reader (`rule_engine.default_book`) resolves it the same way. Written
+    # to `.probe_cache/` while read from `.probe_cache/replay/`, the solver's
+    # rules were produced every time and consumed never.
+    ap.add_argument("--out", type=Path, default=None)
     ap.add_argument(
         "--witness", default="*key_cases*.csv",
         help="拿来反驳规则的回放语料 glob; 空字符串跳过这道门",
     )
+    ap.add_argument("--slice", type=int, default=0,
+                    help="成对扫描的第几片 (0..slices-1)")
+    ap.add_argument("--slices", type=int, default=1,
+                    help="把成对扫描拆成几片; >1 时配合 --slice 与 --merge-out")
+    ap.add_argument("--merge-out", type=Path, default=None,
+                    help="把本片的成对规则追加合并进这个 yaml (跨片累积)")
     args = ap.parse_args()
 
     import yaml
 
     import _probe_reach as probe
+    from replay import runner as R
+
+    if args.out is None:
+        args.out = R.CACHE / "derived_rules.yaml"
+    if args.slices > 1 and args.merge_out is None:
+        args.merge_out = R.CACHE / "derived_rules_pairs.yaml"
+
+    pair_slice = (args.slice, args.slices) if args.slices > 1 else None
 
     from uo_init import key_reachability as kr
     from uo_init.derived_rules import (
@@ -88,19 +121,28 @@ def main() -> int:
     doc, var_model, schema, _binding = probe.load()
     print("building the solver context...", flush=True)
     t0 = time.time()
+    # The binding table doubles as proof of what a variable denotes. Without
+    # it every shape variable is isolated per dimension, and no conflict that
+    # rests on one tensor having one shape can be found -- which is most of
+    # them.
+    identities = _identities()
     reach = KeyReachability.from_derivation(
         doc,
         var_model,
         timeout_ms=args.timeout,
         rlimit=kr.DEFAULT_RLIMIT,
         hard_timeout_ms=kr.DEFAULT_HARD_TIMEOUT_MS,
+        identities=identities,
     )
     built = time.time() - t0
     summary = reach.summary()
     print(
         f"built in {built:.1f}s  "
         f"compiled {summary['dimensions_compiled']}/{summary['dimensions_total']}  "
-        f"exact {summary['dimensions_exact']}",
+        f"exact {summary['dimensions_exact']}  "
+        f"shared {len(summary['identity_shared'])} "
+        f"isolated {len(summary['identity_isolated'])}"
+        f"  (bindings vouched for {len(identities)})",
         flush=True,
     )
 
@@ -132,6 +174,7 @@ def main() -> int:
         pairs=not args.no_pairs,
         implications=not args.no_implications,
         on_progress=on_progress,
+        pair_slice=pair_slice,
     )
     solved = time.time() - t1
 
@@ -176,6 +219,43 @@ def main() -> int:
         yaml.safe_dump(doc, sort_keys=False, allow_unicode=True, width=100),
         encoding="utf-8",
     )
+
+    if args.merge_out is not None:
+        # Accumulate slices into one document shaped exactly like a whole-scan
+        # result, so the reader cannot tell a sliced scan from an unsliced one.
+        # `statement` is the identity: it is `describe()`, which spells out the
+        # dimensions and values a rule excludes and so is unique per rule.
+        # A rule that survived the refute gate here is kept; one refuted in any
+        # slice is dropped from the accumulation too, because the gate's
+        # verdict is about the derivation, not about this slice.
+        existing: dict = {}
+        if args.merge_out.is_file():
+            existing = yaml.safe_load(
+                args.merge_out.read_text(encoding="utf-8")) or {}
+        refuted_statements = {r.describe() for r, _ in refuted}
+        keep = [r for r in (existing.get("rules") or [])
+                if r.get("statement") not in refuted_statements]
+        by_statement = {r.get("statement"): i for i, r in enumerate(keep)}
+        for rule in out.rules:
+            rd = rule.to_dict()
+            if rd["statement"] in by_statement:
+                keep[by_statement[rd["statement"]]] = rd
+            else:
+                by_statement[rd["statement"]] = len(keep)
+                keep.append(rd)
+        merged = dict(doc)
+        merged["rules"] = keep
+        merged["counts"] = {**(doc.get("counts") or {}), "rules": len(keep)}
+        merged["slices_done"] = sorted(
+            set(existing.get("slices_done") or ()) | {args.slice})
+        args.merge_out.parent.mkdir(parents=True, exist_ok=True)
+        args.merge_out.write_text(
+            yaml.safe_dump(merged, sort_keys=False, allow_unicode=True,
+                           width=100), encoding="utf-8")
+        print(f"merged slice {args.slice}/{args.slices}: "
+              f"{len(out.rules)} rules this slice -> {args.merge_out} "
+              f"(total {len(keep)}, slices done "
+              f"{merged['slices_done']})", flush=True)
 
     print(f"\n{out.queries} queries in {solved:.0f}s -> {args.out}")
     for kind in (KIND_VALUE, KIND_PAIR, KIND_IMPLICATION):

@@ -115,6 +115,9 @@ DEFAULT_HELPER_GUARDS = 4
 #: interpreter at a time to start, read that copy, and be reaped.
 DEFAULT_WORKERS = 4
 
+#: The three phases of a derivation, in the order they must run.
+PHASES = ("fields", "auxiliaries", "premises")
+
 
 def short(value: str) -> str:
     """`DtypeEnum::FLOAT32` -> `FLOAT32`."""
@@ -1466,11 +1469,18 @@ def derive_host_fields(
     isolate: bool = True,
     only: list[str] | None = None,
     workers: int = DEFAULT_WORKERS,
+    phases: tuple[str, ...] = PHASES,
 ) -> HostDerivation:
     """Derive every bound TilingKey dimension of one operator.
 
     `isolate=False` runs in-process: no timeout protection, but usable from a
     test runner where spawning is more trouble than the protection is worth.
+
+    `phases` narrows the run to some of `fields`, `auxiliaries`, `premises`.
+    A narrowed run is for measuring one phase in isolation and its result is
+    incomplete by construction, so callers must not persist it. Auxiliaries
+    are derived from what the fields exposed and so say nothing without them;
+    premises stand alone.
     """
     binding = bundle.get("binding")
     spec = bundle.get("spec")
@@ -1524,6 +1534,8 @@ def derive_host_fields(
     phase = time.time()
     try:
         rows: list[dict[str, Any]] = []
+        if "fields" not in phases:
+            targets = []
         if isolate and tmp_path:
             rows = _run_isolated_batch(
                 [
@@ -1561,23 +1573,28 @@ def derive_host_fields(
             doc.fields.append(_to_field(row, evidence))
         doc.phase_seconds["fields"] = round(time.time() - phase, 1)
         phase = time.time()
-        try:
-            _derive_auxiliaries(
-                doc,
-                bundle,
-                tmp_path=tmp_path,
-                isolate=isolate,
-                helper=max_helper_guards,
-                timeout=timeout,
-                evidence=evidence,
-                workers=workers,
-            )
-        except Exception as exc:  # noqa: BLE001 — a cut we cannot chase stays a cut
-            doc.note = (doc.note + f" auxiliaries failed: {type(exc).__name__}").strip()
-        doc.phase_seconds["auxiliaries"] = round(time.time() - phase, 1)
+        if "auxiliaries" in phases:
+            try:
+                _derive_auxiliaries(
+                    doc,
+                    bundle,
+                    tmp_path=tmp_path,
+                    isolate=isolate,
+                    helper=max_helper_guards,
+                    timeout=timeout,
+                    evidence=evidence,
+                    workers=workers,
+                )
+            except Exception as exc:  # noqa: BLE001 — a cut we cannot chase stays a cut
+                doc.note = (
+                    doc.note + f" auxiliaries failed: {type(exc).__name__}"
+                ).strip()
+            doc.phase_seconds["auxiliaries"] = round(time.time() - phase, 1)
         phase = time.time()
         try:
-            if isolate and tmp_path:
+            if "premises" not in phases:
+                pass
+            elif isolate and tmp_path:
                 host_total = len(list(host_ir.legality_premises()))
                 doc.premises = _premises_isolated(
                     tmp_path,
@@ -1612,7 +1629,8 @@ def derive_host_fields(
                 )
         except Exception as exc:  # noqa: BLE001 — premises sharpen, they do not gate
             doc.note = (doc.note + f" premises failed: {type(exc).__name__}").strip()
-        doc.phase_seconds["premises"] = round(time.time() - phase, 1)
+        if "premises" in phases:
+            doc.phase_seconds["premises"] = round(time.time() - phase, 1)
     finally:
         for path in (tmp_path, api_path):
             if path:

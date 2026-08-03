@@ -74,10 +74,12 @@ def main() -> int:
 
     found: dict[int, str] = {}
     other: set[int] = set()
+    results: dict = {}
     items = list(cases.items())
     for i in range(0, len(items), 2000):
         chunk = dict(items[i:i + 2000])
         res = R.run(chunk, tag=f"nudge{i}")
+        results.update(res)
         for cid, r in res.items():
             if not r.ok:
                 continue
@@ -104,6 +106,14 @@ def main() -> int:
             for k, cid in found.items():
                 f.write(f"{k},{cid},{targets[k]}\n")
         print(f"\nhits -> {out}")
+
+    # Also as a wide table, under a name the corpus glob picks up. The hit list
+    # alone records which keys were reached but not the inputs that reached
+    # them, so every key this search found stayed outside the witness set and
+    # the next run went looking for it again.
+    wide = C.next_wide("key_cases_nudge")
+    R.write_wide(wide, cases, results)
+    print(f"{len(cases)} cases -> {wide}")
     return 0
 
 
