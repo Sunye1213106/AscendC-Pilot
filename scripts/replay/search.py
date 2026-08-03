@@ -18,7 +18,8 @@ import random
 from collections import Counter, defaultdict
 
 from . import inputs as I
-from .runner import DIM_NAMES, Result
+from . import runner as R
+from .runner import Result
 
 DTYPES = ["FLOAT", "FLOAT16", "BF16", "HIFLOAT8", "FLOAT8_E4M3FN", "FLOAT8_E5M2"]
 
@@ -254,6 +255,20 @@ def _with(base: I.Case, **kw) -> I.Case:
     return replace(base, tag=f"{base.layout}:{tag}", **kw)
 
 
+def _ragged(longest: int, n: int) -> list[int]:
+    """`n` batch lengths in three descending steps, the longest as asked.
+
+    The step scales with the length rather than being a flat 128. A short
+    case took the flat step below zero -- `s1=64` produced lengths of 64,
+    -64 and -192 -- and a negative length becomes a negative extent on six
+    tensors, which the host refuses. Those probes were spent on a case that
+    could never return a key, and read afterwards as the dimension being
+    unreachable rather than the case being malformed.
+    """
+    step = min(128, max(longest // 3, 0))
+    return [longest - (i % 3) * step for i in range(n)]
+
+
 def _resize(base: I.Case, **kw) -> I.Case:
     """Resize a case, keeping TND's vector in step with the requested sizes."""
     from dataclasses import replace
@@ -261,9 +276,8 @@ def _resize(base: I.Case, **kw) -> I.Case:
     c = replace(base, tag=f"{base.layout}:{tag}", **kw)
     if c.layout == "TND":
         n = kw.get("b", len(base.seq_q or [1]))
-        lens_q = [c.s1 - (i % 3) * 128 for i in range(n)]
-        lens_kv = [c.s2 - (i % 3) * 128 for i in range(n)]
-        c = replace(c, seq_q=_prefix(lens_q), seq_kv=_prefix(lens_kv))
+        c = replace(c, seq_q=_prefix(_ragged(c.s1, n)),
+                    seq_kv=_prefix(_ragged(c.s2, n)))
     return c
 
 
@@ -352,7 +366,7 @@ class Coverage:
         if r.key not in self.keys:
             self.keys[r.key] = cid
             fresh = True
-        for name in DIM_NAMES:
+        for name in R.dim_names():
             v = r.dims.get(name)
             if v is not None and v not in self.dim_values[name]:
                 self.dim_values[name].add(v)

@@ -94,9 +94,12 @@ for vid in ["VAR_SHAPE_PSE_SHIFT", "VAR_SHAPE_ATTEN_MASK", "VAR_SHAPE_QUERY", "V
 
 # FAG GetDimNum == 0 sites in arch35
 print("\n\n======== FAG arch35 GetDimNum == 0 ========")
-arch35 = Path(
-    r"D:\TEST\ops-transformer\attention\flash_attention_score_grad\op_host\arch35"
-)
+from uo_init import paths  # noqa: E402
+
+_op = paths.op_dir(relative="attention/flash_attention_score_grad")
+if _op is None:
+    raise SystemExit(f"operator sources not found\n{paths.explain()}")
+arch35 = _op / "op_host" / "arch35"
 pat = re.compile(r"GetDimNum\s*\(\s*\)\s*==\s*0|GetDimNum\s*\(\s*\)\s*!=\s*0")
 for p in sorted(arch35.glob("*.cpp")):
     text = p.read_text(encoding="utf-8", errors="replace")

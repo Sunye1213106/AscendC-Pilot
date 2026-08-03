@@ -29,9 +29,12 @@ from uo_init.concrete_eval import (  # noqa: E402
     ValueTree,
     ZeroDenominator,
 )
+from uo_init import paths  # noqa: E402
 from uo_init.tpl_dsl import parse_file  # noqa: E402
 
-OPS = Path(r"D:\TEST\ops-transformer")
+OPS = paths.ops_root()
+if OPS is None:
+    raise SystemExit(f"ops-transformer not found\n{paths.explain()}")
 UT = (
     OPS
     / "attention/flash_attention_score_grad/tests/ut/op_host/arch35"
@@ -202,6 +205,9 @@ def env_of(case: dict, *, layout_aware_d: bool = False) -> dict:
         "VAR_ATTR_NEXT_TOCKENS": at.get("next_tockens"),
         "VAR_ATTR_SPARSE_MODE": at.get("sparse_mode"),
         "VAR_ATTR_INPUT_LAYOUT": at.get("input_layout"),
+        # Spelled out rather than read from the bridge spec, deliberately.
+        # This tool exists to be a second opinion about the environment, and
+        # an opinion that consults the thing it is checking is not one.
         "VAR_PLATFORM_ARCH": 35,
         "VAR_SESSION_DETERMINISTIC": 0,
     }

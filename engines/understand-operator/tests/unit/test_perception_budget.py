@@ -26,6 +26,14 @@ from uo_init import scope_scan as sscan
 #: Seconds. Above this the tool stops being usable interactively.
 BUDGET = 300.0
 
+#: Measuring perception means performing it, so this file costs what it
+#: measures -- minutes, against the real operator and CANN trees. It carries
+#: the same markers as the other clang-heavy files so the day-to-day run
+#: skips it rather than being paced by the one test that is supposed to be
+#: slow. Nothing here is meaningful against a smaller input: a toy operator
+#: finishing quickly says nothing about whether this one still does.
+pytestmark = [pytest.mark.requires_cann, pytest.mark.requires_fag]
+
 
 @pytest.fixture(scope="module")
 def perception(fag_dir, cann_root, ops_root, arch_dir):

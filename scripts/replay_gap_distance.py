@@ -20,6 +20,7 @@ sys.path.insert(
 
 from uo_init.tpl_dsl import expand_legal_instances  # noqa: E402
 
+from replay import corpus as C  # noqa: E402
 from replay import runner as R  # noqa: E402
 from replay_closure_gate import excluded_by as _excluded_by  # noqa: E402
 from replay_verdict import _witnesses  # noqa: E402
@@ -27,7 +28,7 @@ from replay_verdict import _witnesses  # noqa: E402
 
 def main() -> int:
     seen: dict[int, dict] = {}
-    for p in sorted(R.CACHE.glob("fag_key_cases*.csv")):
+    for p in C.wide_tables():
         for k, v in _witnesses(p).items():
             seen.setdefault(k, v)
 

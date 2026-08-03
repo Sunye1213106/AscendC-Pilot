@@ -1,0 +1,80 @@
+# Human / LLM proof rules for FlashAttentionScoreGrad arch35.
+#
+# Grade is the point: solver-derived rules live in derived_rules.yaml and are
+# checked against a source_hash of the derivation; these are read from the
+# tiling source by a person and cite the file that rules the value out.
+# "We never found one" is never a reason here.
+version: 1
+grade: human
+
+value_unreachable:
+  - dim: InputDType
+    value: "4"
+    reason: >
+      FLOAT8_E5M2 input is rejected by ProcessQuantInfo before tiling runs
+      (flash_attention_score_grad_tiling_common_regbase.cpp:1148-1155)
+  - dim: InputDType
+    value: "5"
+    reason: >
+      FLOAT8_E4M3FN input is rejected by ProcessQuantInfo
+      (flash_attention_score_grad_tiling_common_regbase.cpp:1148-1155)
+  - dim: InputDType
+    value: "6"
+    reason: >
+      HIFLOAT8 input is rejected by ProcessQuantInfo
+      (flash_attention_score_grad_tiling_common_regbase.cpp:1148-1155)
+  - dim: S1TemplateNum
+    value: "512"
+    reason: >
+      only GetS1S2TemplateType's HIFLOAT8 branch sets 512, and HIFLOAT8
+      never reaches it (common_regbase.cpp:825-829)
+  - dim: S2TemplateNum
+    value: "256"
+    reason: >
+      only the FP8 branch sets 256, and FP8 is rejected earlier
+      (common_regbase.cpp:819-824)
+  - dim: S2TemplateNum
+    value: "512"
+    reason: >
+      only the HIFLOAT8 branch sets 512 (common_regbase.cpp:825-829)
+  - dim: IsRegbase
+    value: "0"
+    reason: >
+      GetTilingKey passes isRegbasePlatformValue as ENABLE unconditionally
+      (normal_regbase.cpp:1447)
+
+combos:
+  - when: {IsRope: "1", DTemplateNum: "64"}
+    tag: rope_d
+  - when: {IsRope: "1", DTemplateNum: "128"}
+    tag: rope_d
+  - when: {IsRope: "1", DTemplateNum: "256"}
+    tag: rope_d
+  - when: {IsRope: "1", DTemplateNum: "768"}
+    tag: rope_d
+  - when: {IsTndSwizzle: "1", DeterType: "1"}
+    tag: swizzle_deter
+  - when: {IsTndSwizzle: "1", DeterType: "2"}
+    tag: swizzle_deter
+  - when: {IsTndSwizzle: "1", DeterType: "3"}
+    tag: swizzle_deter
+  - when: {IsTndSwizzle: "1", DeterType: "4"}
+    tag: swizzle_deter
+  - when: {IsAttenMask: "0", DeterType: "3"}
+    tag: sparse_needs_mask
+  - when: {IsAttenMask: "0", DeterType: "4"}
+    tag: sparse_needs_mask
+
+combo_evidence:
+  rope_d: >
+    GetDTemplateType returns NUM192 as its first statement when hasRope,
+    so rope forces DTemplateNum=192 (common_regbase.cpp:849-852)
+  swizzle_deter: >
+    templateSupportCond's deterministic branch ends in '&& false', so the
+    swizzle only survives when !isDeterministic, and GetDeterSparseTilingKey
+    returns NO_DETER whenever !isDeterministic
+    (normal_regbase.cpp:453-461, 790-794)
+  sparse_needs_mask: >
+    DETER_CAUSAL and DETER_BAND both require isSparse, and SetSparseParams
+    returns false as soon as attenMask is empty
+    (common_regbase.cpp:1545-1549, 796-813)

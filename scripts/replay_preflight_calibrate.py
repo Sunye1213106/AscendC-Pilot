@@ -22,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from replay import bridge as B  # noqa: E402
+from replay import corpus as C  # noqa: E402
 from replay import runner as R  # noqa: E402
 from replay_derivation_check import case_of  # noqa: E402
 
@@ -36,7 +37,7 @@ def main() -> int:
     victim: dict[int, str] = {}
     rows = accepted = refused = blocked = 0
 
-    for path in sorted(R.CACHE.glob("fag_key_cases*.csv")):
+    for path in C.wide_tables():
         lines = path.read_text(encoding="utf-8").splitlines()
         head = lines[0].split(",")
         for line in lines[1:]:

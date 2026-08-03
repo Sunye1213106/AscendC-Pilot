@@ -38,7 +38,7 @@ def main() -> int:
     ap.add_argument("--rounds", type=int, default=6)
     ap.add_argument("--per-round", type=int, default=600)
     ap.add_argument("--seed", type=int, default=7)
-    ap.add_argument("--out", default="fag_key_cases.csv")
+    ap.add_argument("--out", default="key_cases.csv")
     args = ap.parse_args()
 
     rng = random.Random(args.seed)

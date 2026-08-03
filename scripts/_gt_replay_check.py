@@ -14,12 +14,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "engines" / "understand-operator" / "src"))
 
+from uo_init import paths  # noqa: E402
 from uo_init.tpl_dsl import parse_file  # noqa: E402
 
 CACHE = ROOT / ".probe_cache"
-TPL = Path(
-    "d:/TEST/ops-transformer/attention/flash_attention_score_grad/op_kernel/arch35/"
-    "flash_attention_score_grad_template_tiling_key.h"
+_OPS = paths.ops_root()
+if _OPS is None:
+    raise SystemExit(f"ops-transformer not found\n{paths.explain()}")
+TPL = (
+    _OPS
+    / "attention/flash_attention_score_grad/op_kernel/arch35"
+    / "flash_attention_score_grad_template_tiling_key.h"
 )
 
 

@@ -1,0 +1,248 @@
+# Which case quantity sets which derivation variable.
+#
+# Exported by scripts/_probe_bridge_spec.py from the derivation named under
+# `source`. Do not edit by hand: a value written here that the derivation
+# does not read is a value nothing will ever check, and one it does read that
+# is spelled wrong here fails as a missing variable rather than as an error.
+#
+# Every variable the derivation consults appears exactly once, under
+# `bindings` or under `unbound`. There is no third outcome, and that is the
+# point: an unbound variable used to be an absent dictionary key, which an
+# evaluator cannot tell from a variable nobody modelled.
+operator: FlashAttentionScoreGrad
+arch: arch35
+source:
+  derivation_timestamp: '2026-08-03T02:31:14.478372+00:00'
+  derivation_status: partial
+  encode_function: GetTilingKey
+  fields: 19
+  premises: 47
+bindings:
+  VAR_ATTR_HEAD_NUM:
+    root: ATTRIBUTE
+    kind: attr
+    attr: head_num
+  VAR_ATTR_INPUT_LAYOUT:
+    root: ATTRIBUTE
+    kind: attr
+    attr: input_layout
+  VAR_ATTR_KEEP_PROB:
+    root: ATTRIBUTE
+    kind: attr
+    attr: keep_prob
+  VAR_ATTR_NEXT_TOCKENS:
+    root: ATTRIBUTE
+    kind: attr
+    attr: next_tockens
+  VAR_ATTR_PRE_TOCKENS:
+    root: ATTRIBUTE
+    kind: attr
+    attr: pre_tockens
+  VAR_ATTR_SPARSE_MODE:
+    root: ATTRIBUTE
+    kind: attr
+    attr: sparse_mode
+  VAR_DTYPE_QUERY:
+    root: INPUT_DTYPE
+    kind: tensor_dtype
+    tensor: query
+  VAR_ELEM_ELEM_ACTUAL_SEQ_KV_LEN:
+    root: INPUT_VALUE
+    kind: tensor_value_last
+    tensor: actual_seq_kvlen
+  VAR_ELEM_ELEM_ACTUAL_SEQ_Q_LEN:
+    root: INPUT_VALUE
+    kind: tensor_value_last
+    tensor: actual_seq_qlen
+  VAR_ELEM_SECOND_QUERY:
+    root: INPUT_SHAPE
+    kind: tensor_axis
+    tensor: query
+    axis: 1
+  VAR_OPT_ATTEN_MASK:
+    root: OPTIONAL_INPUT_PRESENCE
+    kind: optional_presence
+    tensor: atten_mask
+  VAR_OPT_DROP_MASK:
+    root: OPTIONAL_INPUT_PRESENCE
+    kind: optional_presence
+    tensor: drop_mask
+  VAR_OPT_KEY_ROPE_IDX:
+    root: OPTIONAL_INPUT_PRESENCE
+    kind: optional_presence
+    tensor: key_rope
+    matched_via: index_enum_suffix
+  VAR_OPT_PSE_SHIFT:
+    root: OPTIONAL_INPUT_PRESENCE
+    kind: optional_presence
+    tensor: pse_shift
+  VAR_OPT_QUERY_ROPE_IDX:
+    root: OPTIONAL_INPUT_PRESENCE
+    kind: optional_presence
+    tensor: query_rope
+    matched_via: index_enum_suffix
+  VAR_PLATFORM_ARCH:
+    root: PLATFORM_ARCH
+    kind: context
+    value: 35
+  VAR_RANK_ATTEN_MASK:
+    root: INPUT_SHAPE
+    kind: tensor_rank
+    tensor: atten_mask
+  VAR_RANK_DROP_MASK:
+    root: INPUT_SHAPE
+    kind: tensor_rank
+    tensor: drop_mask
+  VAR_RANK_KEY_ROPE_IDX:
+    root: INPUT_SHAPE
+    kind: tensor_rank
+    tensor: key_rope
+    matched_via: index_enum_suffix
+  VAR_RANK_PSE_SHIFT:
+    root: INPUT_SHAPE
+    kind: tensor_rank
+    tensor: pse_shift
+  VAR_RANK_QUERY_ROPE_IDX:
+    root: INPUT_SHAPE
+    kind: tensor_rank
+    tensor: query_rope
+    matched_via: index_enum_suffix
+  VAR_REDUCE_MAX_ACTUAL_SEQ_KV_LEN:
+    root: INPUT_VALUE
+    kind: tensor_value_max
+    tensor: actual_seq_kvlen
+  VAR_REDUCE_MAX_ACTUAL_SEQ_Q_LEN:
+    root: INPUT_VALUE
+    kind: tensor_value_max
+    tensor: actual_seq_qlen
+  VAR_SESSION_DETERMINISTIC:
+    root: SESSION_OPTION
+    kind: context
+  VAR_SHAPE_ACTUAL_SEQ_Q_LEN:
+    root: INPUT_SHAPE
+    kind: tensor_numel
+    tensor: actual_seq_qlen
+  VAR_SHAPE_DK:
+    root: INPUT_SHAPE
+    kind: tensor_numel
+    tensor: dk
+  VAR_SHAPE_DK_ROPE:
+    root: INPUT_SHAPE
+    kind: tensor_numel
+    tensor: dk_rope
+  VAR_SHAPE_DQ:
+    root: INPUT_SHAPE
+    kind: tensor_numel
+    tensor: dq
+  VAR_SHAPE_DQ_ROPE:
+    root: INPUT_SHAPE
+    kind: tensor_numel
+    tensor: dq_rope
+  VAR_SHAPE_DV:
+    root: INPUT_SHAPE
+    kind: tensor_numel
+    tensor: dv
+  VAR_SHAPE_KEY_D0:
+    root: INPUT_SHAPE
+    kind: tensor_axis
+    tensor: key
+    axis: 0
+  VAR_SHAPE_KEY_D1:
+    root: INPUT_SHAPE
+    kind: tensor_axis
+    tensor: key
+    axis: 1
+  VAR_SHAPE_KEY_D2:
+    root: INPUT_SHAPE
+    kind: tensor_axis
+    tensor: key
+    axis: 2
+  VAR_SHAPE_QUERY_D0:
+    root: INPUT_SHAPE
+    kind: tensor_axis
+    tensor: query
+    axis: 0
+  VAR_SHAPE_QUERY_D1:
+    root: INPUT_SHAPE
+    kind: tensor_axis
+    tensor: query
+    axis: 1
+  VAR_SHAPE_QUERY_D2:
+    root: INPUT_SHAPE
+    kind: tensor_axis
+    tensor: query
+    axis: 2
+  VAR_SHAPE_QUERY_D3:
+    root: INPUT_SHAPE
+    kind: tensor_axis
+    tensor: query
+    axis: 3
+  VAR_SHAPE_VALUE_D2:
+    root: INPUT_SHAPE
+    kind: tensor_axis
+    tensor: value
+    axis: 2
+  VAR_SHAPE_VALUE_D3:
+    root: INPUT_SHAPE
+    kind: tensor_axis
+    tensor: value
+    axis: 3
+  VAR_VALUE_ACTUAL_SEQ_KV_LEN:
+    root: INPUT_VALUE
+    kind: tensor_values
+    tensor: actual_seq_kvlen
+  VAR_VALUE_ACTUAL_SEQ_Q_LEN:
+    root: INPUT_VALUE
+    kind: tensor_values
+    tensor: actual_seq_qlen
+unbound:
+  VAR_ELEM_BACK_DETERPREFIXDATA_PREFIX1:
+    root: TILING_DATA
+    reason: 'tiling state: the host works this out partway through, so no input sets it'
+  VAR_ELEM_BACK_DETERPREFIXDATA_PREFIX2:
+    root: TILING_DATA
+    reason: 'tiling state: the host works this out partway through, so no input sets it'
+  VAR_ELEM_ELEM_QUERY:
+    root: INPUT_SHAPE
+    reason: only ever compared against itself, which is true whatever it holds; the extraction
+      collapsed two quantities into one name
+  VAR_TDF_ACTURALBLOCKINFO:
+    root: TILING_DATA
+    reason: 'tiling state: the host works this out partway through, so no input sets it'
+  VAR_TDF_DETERSPARSETYPE:
+    root: TILING_DATA
+    reason: 'tiling state: the host works this out partway through, so no input sets it'
+  VAR_TDF_FBASEPARAMS_LAYOUTTYPE:
+    root: TILING_DATA
+    reason: 'tiling state: the host works this out partway through, so no input sets it'
+  VAR_TDF_FBASEPARAMS_PREFIXN:
+    root: TILING_DATA
+    reason: 'tiling state: the host works this out partway through, so no input sets it'
+  VAR_TDF_FBASEPARAMS_TAILZEROCOUNT:
+    root: TILING_DATA
+    reason: 'tiling state: the host works this out partway through, so no input sets it'
+  VAR_TDF_SPLITAXIS:
+    root: TILING_DATA
+    reason: 'tiling state: the host works this out partway through, so no input sets it'
+observations:
+- variable: VAR_TDF_FBASEPARAMS_LAYOUTTYPE
+  column: isTnd
+  withheld_from: IsTnd
+  reading: boolean_constant
+  when_true: 4
+  when_false: 1
+  constant_names:
+    when_true: INPUT_FORMAT_TND
+    when_false: INPUT_FORMAT_BS2N2GD
+- variable: VAR_TDF_SPLITAXIS
+  column: splitAxis
+  withheld_from: SplitAxis
+  reading: integer
+- variable: VAR_TDF_FBASEPARAMS_ISDETERMINISTIC
+  column: isDeterministic
+  withheld_from: DeterType
+  reading: boolean
+- variable: VAR_AUX_FBASEPARAMS_ISDETERMINISTIC
+  column: isDeterministic
+  withheld_from: DeterType
+  reading: boolean

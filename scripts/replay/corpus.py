@@ -94,11 +94,27 @@ def case_of(row: dict) -> I.Case:
         sparse_mode=int(s("sparse_mode", 0)),
         pre_tokens=int(s("pre_tokens", 65536)),
         next_tokens=int(s("next_tokens", 65536)),
+        inner_precise=int(s("inner_precise", 0)),
         out_dtype=int(s("out_dtype", 0)),
         deterministic=int(s("deterministic", 0)),
         seq_q=[int(x) for x in s("seq_q").split("/") if x] or None,
         seq_kv=[int(x) for x in s("seq_kv").split("/") if x] or None,
+        prefix_n=[int(x) for x in s("prefix_n").split("/") if x] or None,
+        tag=s("tag"),
     )
+
+
+def wide_tables(cache: Path | None = None, pattern: str | None = None
+                ) -> list[Path]:
+    """Wide CSV tables under the run root, by the manifest's glob.
+
+    Replaces every `fag_key_cases*.csv` glob. Old files still match
+    `*key_cases*.csv`; new ones need no operator prefix.
+    """
+    cache = cache if cache is not None else R.CACHE
+    pattern = pattern or getattr(R.default().manifest, "wide_glob",
+                                 "*key_cases*.csv")
+    return sorted(cache.glob(pattern))
 
 
 def scan(limit: int = 0, timeout: float = 300.0) -> tuple[list[Sample], Scan]:
@@ -113,7 +129,7 @@ def scan(limit: int = 0, timeout: float = 300.0) -> tuple[list[Sample], Scan]:
     seen: dict[tuple, Sample] = {}
     cols = [c for c in I.describe(I.Case()).keys()]
 
-    for path in sorted(R.CACHE.glob("fag_key_cases*.csv")):
+    for path in wide_tables():
         lines = path.read_text(encoding="utf-8").splitlines()
         if not lines:
             continue

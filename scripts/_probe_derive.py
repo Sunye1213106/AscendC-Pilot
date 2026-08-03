@@ -50,11 +50,61 @@ HISTORY = ROOT / "docs" / "debug" / "history.jsonl"
 STATUS = ROOT / "docs" / "debug" / "current-status.md"
 
 
+#: What the bundle keeps. The controllability closure is deliberately not in
+#: it: asking for it cost five sixths of the run and nothing here reads it.
+#:
+#: Everything else clang was asked for is kept, because the parse is the
+#: expensive part and dropping a product of it only means paying for it again.
+#: Two were being dropped after being built:
+#:
+#: - `api_contract`/`api_resolver` are where the operator states what a legal
+#:   input is. Host tiling assumes it was handed one. Without them
+#:   `_api_premises` silently derives nothing, and the analysis believes a
+#:   FLOAT32 query can arrive alongside a rope input.
+#: - `kernel_ir` is the only static record of which kernel branch a key
+#:   selects, which is what change-impact analysis has to read.
+KEEP = (
+    "binding",
+    "bind_error",
+    "host_ir",
+    "resolver",
+    "var_model",
+    "tpl_schema",
+    "spec",
+    "decl_facts",
+    "api_contract",
+    "api_resolver",
+    "kernel_ir",
+)
+
+
+def _dump_bundle(keep: dict) -> None:
+    """Write the bundle, and name whatever in it will not pickle.
+
+    A bundle that silently loses a member is the failure this cache already
+    had once, so an unpicklable member is reported rather than dropped
+    quietly.
+    """
+    try:
+        blob = pickle.dumps(keep, protocol=pickle.HIGHEST_PROTOCOL)
+    except Exception as exc:  # noqa: BLE001 — identify the offender, then re-raise
+        bad = []
+        for k, v in keep.items():
+            try:
+                pickle.dumps(v, protocol=pickle.HIGHEST_PROTOCOL)
+            except Exception as inner:  # noqa: BLE001
+                bad.append(f"{k} ({type(inner).__name__}: {inner})"[:200])
+        raise SystemExit(
+            f"cannot pickle the host bundle: {exc}\nunpicklable members: "
+            + (", ".join(bad) or "none found individually")
+        ) from exc
+    CACHE.mkdir(parents=True, exist_ok=True)
+    BUNDLE.write_bytes(blob)
+
+
 def build_bundle() -> dict:
     from uo_init.assemble_kb import extract_host_bundle
 
-    # Only the facts below are kept, and the controllability closure is none
-    # of them: asking for it cost five sixths of the run and was thrown away.
     full = extract_host_bundle(
         op_dir=OP,
         cann_root=CANN,
@@ -62,21 +112,11 @@ def build_bundle() -> dict:
         arch_dir=ARCH,
         with_closure=False,
     )
-    keep = {
-        k: full[k]
-        for k in (
-            "binding",
-            "bind_error",
-            "host_ir",
-            "resolver",
-            "var_model",
-            "tpl_schema",
-            "spec",
-        )
-    }
-    CACHE.mkdir(parents=True, exist_ok=True)
-    with BUNDLE.open("wb") as fh:
-        pickle.dump(keep, fh)
+    keep = {k: full[k] for k in KEEP if k in full}
+    missing = [k for k in KEEP if k not in full]
+    if missing:
+        print(f"note: bundle has no {', '.join(missing)}", flush=True)
+    _dump_bundle(keep)
     return keep
 
 
@@ -152,6 +192,7 @@ def run_derive(
     timeout: int,
     helper: int,
     isolate: bool,
+    workers: int,
 ) -> dict:
     from uo_init.host_derivation import derive_host_fields
 
@@ -162,6 +203,7 @@ def run_derive(
         max_helper_guards=helper,
         isolate=isolate,
         only=only or None,
+        workers=workers,
     )
     fields = [_field_row(f) for f in doc.fields]
     if only and RESULT.is_file():
@@ -183,6 +225,7 @@ def run_derive(
         "timeout": timeout,
         "status": doc.status,
         "totals": doc.totals(),
+        "phase_seconds": doc.phase_seconds,
         "fields": fields,
         "host_derivation": doc.to_dict(),
     }
@@ -410,6 +453,12 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=180)
     ap.add_argument("--helper", type=int, default=4)
     ap.add_argument("--no-isolate", action="store_true")
+    ap.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="isolated derivations in flight at once (memory-bound, default 4)",
+    )
     args = ap.parse_args()
 
     if args.show is not None:
@@ -436,13 +485,21 @@ def main() -> int:
         print(f"bundle ready in {time.time() - t0:.1f}s", flush=True)
 
     prev = json.loads(RESULT.read_text(encoding="utf-8")) if RESULT.is_file() else None
-    print("deriving…", flush=True)
+    from uo_init.host_derivation import DEFAULT_WORKERS
+
+    workers = DEFAULT_WORKERS if args.workers is None else args.workers
+    print(f"deriving… ({workers} at a time)", flush=True)
+    t0 = time.time()
     doc = run_derive(
         only=list(args.fields) or None,
         timeout=args.timeout,
         helper=args.helper,
         isolate=not args.no_isolate,
+        workers=workers,
     )
+    by_phase = doc.get("phase_seconds") or {}
+    detail = "  ".join(f"{k}={v}s" for k, v in by_phase.items())
+    print(f"derive done in {time.time() - t0:.1f}s  {detail}", flush=True)
     CACHE.mkdir(parents=True, exist_ok=True)
     RESULT.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
     write_report(doc)

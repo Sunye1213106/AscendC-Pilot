@@ -27,76 +27,79 @@ sys.path.insert(
 
 from uo_init.tpl_dsl import expand_legal_instances  # noqa: E402
 
+from replay import corpus as C  # noqa: E402
 from replay import runner as R  # noqa: E402
+from replay import rule_engine as RE  # noqa: E402
 
-#: Dimension values the host cannot emit, with the code that rules them out.
-#: These come from reading the tiling source, and replay agrees with all of them.
-UNREACHABLE = {
-    ("InputDType", "4"): (
-        "FLOAT8_E5M2 input is rejected by ProcessQuantInfo before tiling runs "
-        "(flash_attention_score_grad_tiling_common_regbase.cpp:1148-1155)"),
-    ("InputDType", "5"): (
-        "FLOAT8_E4M3FN input is rejected by ProcessQuantInfo "
-        "(flash_attention_score_grad_tiling_common_regbase.cpp:1148-1155)"),
-    ("InputDType", "6"): (
-        "HIFLOAT8 input is rejected by ProcessQuantInfo "
-        "(flash_attention_score_grad_tiling_common_regbase.cpp:1148-1155)"),
-    ("S1TemplateNum", "512"): (
-        "only GetS1S2TemplateType's HIFLOAT8 branch sets 512, and HIFLOAT8 "
-        "never reaches it (common_regbase.cpp:825-829)"),
-    ("S2TemplateNum", "256"): (
-        "only the FP8 branch sets 256, and FP8 is rejected earlier "
-        "(common_regbase.cpp:819-824)"),
-    ("S2TemplateNum", "512"): (
-        "only the HIFLOAT8 branch sets 512 (common_regbase.cpp:825-829)"),
-    ("IsRegbase", "0"): (
-        "GetTilingKey passes isRegbasePlatformValue as ENABLE unconditionally "
-        "(normal_regbase.cpp:1447)"),
-}
+# Compatibility re-exports for anything that still imports these names.
+_BOOK = None
 
-#: Value combinations the host cannot emit together. Same rule as above: each
-#: entry names the code that rules it out, so "we never found one" is never the
-#: reason. Combinations, not just pairs, because some contradictions need three
-#: dimensions to state.
-UNREACHABLE_COMBOS = [
-    ({"IsRope": "1", "DTemplateNum": "64"}, "rope_d"),
-    ({"IsRope": "1", "DTemplateNum": "128"}, "rope_d"),
-    ({"IsRope": "1", "DTemplateNum": "256"}, "rope_d"),
-    ({"IsRope": "1", "DTemplateNum": "768"}, "rope_d"),
-    ({"IsTndSwizzle": "1", "DeterType": "1"}, "swizzle_deter"),
-    ({"IsTndSwizzle": "1", "DeterType": "2"}, "swizzle_deter"),
-    ({"IsTndSwizzle": "1", "DeterType": "3"}, "swizzle_deter"),
-    ({"IsTndSwizzle": "1", "DeterType": "4"}, "swizzle_deter"),
-    ({"IsAttenMask": "0", "DeterType": "3"}, "sparse_needs_mask"),
-    ({"IsAttenMask": "0", "DeterType": "4"}, "sparse_needs_mask"),
-]
-# Retracted: {"IsTnd": 1, "IsPse": 1, "IsAttenMask": 0} -> tnd_pse_needs_mask.
-# The reasoning covered CheckPseShape's four-dimension path, where TND only
-# accepts the alibi shapes and those need s2Token == 0, which an absent mask
-# rules out. But the alibi *slope* input is rank 2 and is checked somewhere
-# else entirely, so it reaches TND with no mask. The closure gate caught this
-# against 80 real witnesses; the rule would have wrongly excluded 512 keys.
 
-PAIR_EVIDENCE = {
-    "rope_d": (
-        "GetDTemplateType returns NUM192 as its first statement when hasRope, "
-        "so rope forces DTemplateNum=192 (common_regbase.cpp:849-852)"),
-    "swizzle_deter": (
-        "templateSupportCond's deterministic branch ends in '&& false', so the "
-        "swizzle only survives when !isDeterministic, and GetDeterSparseTilingKey "
-        "returns NO_DETER whenever !isDeterministic "
-        "(normal_regbase.cpp:453-461, 790-794)"),
-    "sparse_needs_mask": (
-        "DETER_CAUSAL and DETER_BAND both require isSparse, and SetSparseParams "
-        "returns false as soon as attenMask is empty "
-        "(common_regbase.cpp:1545-1549, 796-813)"),
-    "tnd_pse_needs_mask": (
-        "Under TND the only accepted pse shapes are the alibi pair, both gated "
-        "on isTndPse, which needs s2Token == 0; but ProcessTokensInfo forces "
-        "s1Token = s2Token = INT32_MAX whenever attenMask is the empty tensor, "
-        "so an absent mask makes every TND pse shape fail the check "
-        "(common_regbase.cpp:1277-1281, 1376-1382, 1431-1438)"),
-}
+def _book() -> RE.RuleBook:
+    global _BOOK
+    if _BOOK is None:
+        _BOOK = RE.default_book()
+    return _BOOK
+
+
+def _unreachable_map() -> dict[tuple[str, str], str]:
+    out = {}
+    for rule in _book().rules:
+        if rule.kind == "value_unreachable":
+            out[(rule.dim, rule.value)] = rule.reason
+    return out
+
+
+def _combo_list() -> list[tuple[dict, str]]:
+    out = []
+    for rule in _book().rules:
+        if rule.kind == "combo":
+            tag = rule.label
+            out.append((dict(rule.when), tag))
+    return out
+
+
+# Lazy-looking aliases so `from replay_verdict import UNREACHABLE` still works
+# for the few remaining sites that import the constants at module load.
+class _LazyMap(dict):
+    def _fill(self):
+        if not self:
+            self.update(_unreachable_map())
+
+    def __contains__(self, key):
+        self._fill()
+        return dict.__contains__(self, key)
+
+    def __getitem__(self, key):
+        self._fill()
+        return dict.__getitem__(self, key)
+
+    def items(self):
+        self._fill()
+        return dict.items(self)
+
+
+UNREACHABLE = _LazyMap()
+
+
+class _LazyCombos(list):
+    def _fill(self):
+        if not self:
+            self.extend(_combo_list())
+
+    def __iter__(self):
+        self._fill()
+        return list.__iter__(self)
+
+    def __len__(self):
+        self._fill()
+        return list.__len__(self)
+
+
+UNREACHABLE_COMBOS = _LazyCombos()
+
+PAIR_EVIDENCE = {}  # reasons now live on each Rule in the book
+
 
 
 def _witnesses(path: Path) -> dict[int, dict]:
@@ -124,10 +127,10 @@ def main() -> int:
     if args:
         srcs = [R.CACHE / a for a in args]
     else:
-        srcs = sorted(R.CACHE.glob("fag_key_cases*.csv"))
+        srcs = C.wide_tables()
     srcs = [p for p in srcs if p.exists()]
     if not srcs:
-        print(f"no fag_key_cases*.csv under {R.CACHE}")
+        print(f"no wide tables matching the manifest glob under {R.CACHE}")
         return 1
 
     seen: dict[int, dict] = {}

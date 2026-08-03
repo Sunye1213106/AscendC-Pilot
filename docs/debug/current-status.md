@@ -3,7 +3,7 @@
 > Written by `scripts/_probe_derive.py` on every full run. Do not edit.
 > Numbers quoted anywhere else are commentary and may lag this file.
 
-- run: `2026-08-02T18:01:58.219263+00:00`  op: `FlashAttentionScoreGrad`  arch: `arch35`
+- run: `2026-08-03T02:31:14.478372+00:00`  op: `FlashAttentionScoreGrad`  arch: `arch35`
 
 | metric | value |
 | --- | ---: |
@@ -13,8 +13,8 @@
 | unrecorded free_vars (must be 0) | **0** |
 | implicit_defaults | 8 |
 | domain_violations | 1 |
-| max expanded chars | 454534 |
-| total seconds | 81.5 |
+| max expanded chars | 454327 |
+| total seconds | 127.3 |
 
 ## Remaining free variables
 
@@ -23,9 +23,9 @@
 | `VAR_AUX_DOBN2S2SPARSE_BLOCKOUTER` |  | 5 | DeterType, IsBn2MultiBlk, IsNzOut, IsTndSwizzle, SplitAxis |
 | `VAR_AUX_FBASEPARAMS_DETERSPARSETYPE` |  | 2 | DeterType, IsNzOut |
 | `VAR_AUX_FBASEPARAMS_ISDETERMINISTIC` |  | 3 | DeterType, IsNzOut, SplitAxis |
-| `VAR_INIT_2288AFE53928` |  | 1 | DeterType |
-| `VAR_INIT_36CDA3758519` |  | 5 | DeterType, IsBn2MultiBlk, IsNzOut, IsTndSwizzle, SplitAxis |
-| `VAR_INIT_ECF6DE7D873A` |  | 2 | IsNzOut, IsTndSwizzle |
+| `VAR_INIT_88BC16D7A53A` |  | 2 | IsNzOut, IsTndSwizzle |
+| `VAR_INIT_D322285C4E66` |  | 5 | DeterType, IsBn2MultiBlk, IsNzOut, IsTndSwizzle, SplitAxis |
+| `VAR_INIT_DFDBCA66F436` |  | 1 | DeterType |
 | `invalidS1Array[j]` | FillBlockInfoLoadBalanceForBn2 @ flash_attention_score_grad_tiling_varlen_regbase.cpp:899 | 5 | DeterType, IsBn2MultiBlk, IsNzOut, IsTndSwizzle, SplitAxis |
 | `invalidS1Array[j]` | GetParseS1S2OuterInfo @ flash_attention_score_grad_tiling_normal_regbase.cpp:1546 | 5 | DeterType, IsBn2MultiBlk, IsNzOut, IsTndSwizzle, SplitAxis |
 | `parseInfo[(s2Outer(fBaseParams) - 1)][LENGTH_IDX]` | GetSparseBlockInfo | 5 | DeterType, IsBn2MultiBlk, IsNzOut, IsTndSwizzle, SplitAxis |

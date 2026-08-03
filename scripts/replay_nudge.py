@@ -6,79 +6,28 @@ produced. Random mutation never lands on them because it moves several inputs
 at once and drifts off the ledge it is standing on. This walks the other way:
 start from the witness's exact inputs, change only what feeds the one dimension
 that differs, and keep everything else fixed.
+
+Which mutations to try comes from search_hints.yaml via obligations.variants,
+not from an if-ladder over dimension names.
 """
 
 from __future__ import annotations
 
 import sys
 from collections import Counter
-from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from replay import corpus as C  # noqa: E402
 from replay import inputs as I  # noqa: E402
+from replay import obligations as O  # noqa: E402
 from replay import runner as R  # noqa: E402
-
-#: How to move a dimension, given the value we want it to take. Only the ones
-#: with a direct input knob; SplitAxis, IsNzOut and IsBn2MultiBlk are decided
-#: by the tiling's own arithmetic and need a different tactic.
-D_LADDER = [64, 72, 96, 128, 192, 256, 512, 768]
 
 
 def _variants(c: I.Case, dim: str, want: str) -> list[I.Case]:
-    if dim == "IsPse":
-        if want == "1":
-            return [replace(c, pse=True, pse_shape=s)
-                    for s in ("full", "bnss", "b1ss", "1nss", "slope_bn", "slope_n")]
-        return [replace(c, pse=False)]
-    if dim == "IsDrop":
-        return [replace(c, keep_prob=0.5 if want == "1" else 1.0)]
-    if dim == "IsRope":
-        return ([replace(c, rope=True, d=192, d1=None)] if want == "1"
-                else [replace(c, rope=False)])
-    if dim == "IsAttenMask":
-        return ([replace(c, atten_mask=m) for m in ("ss", "bss", "b1ss", "1sss")]
-                if want == "1" else [replace(c, atten_mask="none")])
-    if dim == "IsTnd":
-        if want == "1":
-            n = max(1, c.b)
-            return [replace(c, layout="TND",
-                            seq_q=[c.s1] * n, seq_kv=[c.s2] * n),
-                    replace(c, layout="TND",
-                            seq_q=[c.s1] * n,
-                            seq_kv=[max(1, c.s2 // 2)] * n)]
-        return [replace(c, layout=lay, seq_q=None, seq_kv=None)
-                for lay in ("BSND", "BNSD", "BSH", "SBH")]
-    if dim == "DTemplateNum":
-        want_i = int(want)
-        # The template is a ceiling over D, so the value just under the step
-        # and the step itself both land in the same bucket.
-        lo = max([x for x in D_LADDER if x < want_i], default=0)
-        return [replace(c, d=v, d1=None if (c.d1 or c.d) >= v else c.d1)
-                for v in {want_i, max(1, want_i - 1), lo + 1} if v > 0]
-    if dim == "IsDNoEqual":
-        if want == "1":
-            return [replace(c, d1=v) for v in (16, 32, 64, 96, 128)
-                    if v < (c.d or 128)]
-        return [replace(c, d1=None)]
-    if dim == "S1TemplateNum":
-        want_i = int(want)
-        return [replace(c, s1=v) for v in
-                (want_i, want_i - 1, want_i + 1, want_i * 2, want_i * 4)
-                if v > 0]
-    if dim == "S2TemplateNum":
-        want_i = int(want)
-        return [replace(c, s2=v) for v in
-                (want_i, want_i - 1, want_i * 2, want_i * 4) if v > 0]
-    if dim == "InputDType":
-        code = {"1": "FLOAT", "2": "BF16", "3": "FLOAT16"}.get(want)
-        return [replace(c, dtype=code)] if code else []
-    if dim == "OutDType":
-        return [replace(c, out_dtype=int(want))]
-    if dim == "DeterType":
-        return [replace(c, deterministic=1, sparse_mode=m) for m in (0, 2, 3, 5)]
-    return []
+    """Kept as the historical name cone/cone2 import."""
+    return O.variants(c, dim, want)
 
 
 def main() -> int:
@@ -88,7 +37,7 @@ def main() -> int:
     lines = queue.read_text(encoding="utf-8").splitlines()[1:]
 
     wide: dict[str, dict] = {}
-    for p in sorted(R.CACHE.glob("fag_key_cases*.csv")):
+    for p in C.wide_tables():
         rows = p.read_text(encoding="utf-8").splitlines()
         head = rows[0].split(",")
         for line in rows[1:]:
@@ -109,29 +58,7 @@ def main() -> int:
             continue
         dim = dims
         want = str(R.SCHEMA.decode_tiling_key(int(key_s))[dim])
-        # Older runs predate some columns, so every read carries a default.
-        def s(name, dflt=""):
-            v = row.get(name, dflt)
-            return dflt if v in ("", "None") else v
-
-        base = I.Case(
-            layout=s("layout", "BSND"), dtype=s("dtype", "FLOAT16"),
-            b=int(s("b", 1)), s1=int(s("s1", 128)), s2=int(s("s2", 128)),
-            n2=int(s("n2", 1)), g=int(s("g", 1)), d=int(s("d", 128)),
-            d1=int(s("d1")) if s("d1") else None,
-            atten_mask=s("atten_mask", "none"), pse=s("pse", "0") == "1",
-            pse_shape=s("pse_shape", "full"),
-            pse_type=int(s("pse_type", 1)), rope=s("rope", "0") == "1",
-            keep_prob=float(s("keep_prob", 1.0)),
-            sparse_mode=int(s("sparse_mode", 0)),
-            pre_tokens=int(s("pre_tokens", 65536)),
-            next_tokens=int(s("next_tokens", 65536)),
-            out_dtype=int(s("out_dtype", 0)),
-            deterministic=int(s("deterministic", 0)),
-            seq_q=[int(x) for x in s("seq_q").split("/") if x] or None,
-            seq_kv=[int(x) for x in s("seq_kv").split("/") if x] or None,
-        )
-        vs = _variants(base, dim, want)
+        vs = _variants(C.case_of(row), dim, want)
         if not vs:
             skipped[f"no knob for {dim}"] += 1
             continue

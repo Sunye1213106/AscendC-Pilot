@@ -109,6 +109,12 @@ TEXT_KEEP = 400
 DEFAULT_TIMEOUT = 180
 DEFAULT_HELPER_GUARDS = 4
 
+#: How many isolated derivations may be in flight at once. The limit is memory,
+#: not CPU: every worker unpickles its own copy of the parsed translation units,
+#: and the sequential path was spending most of its wall clock waiting for one
+#: interpreter at a time to start, read that copy, and be reaped.
+DEFAULT_WORKERS = 4
+
 
 def short(value: str) -> str:
     """`DtypeEnum::FLOAT32` -> `FLOAT32`."""
@@ -485,6 +491,10 @@ class HostDerivation:
     #: field means evaluating these first. See `derive_key_fields._aux_leaf`
     #: and `_ValueNormalizer.state_surfaces`.
     auxiliaries: dict[str, FieldDerivation] = field(default_factory=dict)
+    #: Wall clock per phase. The per-field `seconds` only cover what happens
+    #: inside a worker, so a run whose fields sum to two minutes could still
+    #: take twelve without anything here saying where the rest went.
+    phase_seconds: dict[str, float] = field(default_factory=dict)
 
     def by_name(self) -> dict[str, FieldDerivation]:
         return {f.name: f for f in self.fields}
@@ -684,6 +694,7 @@ def _derive_premises(
     resolver: Any = None,
     layer: str = "host",
     offset: int = 0,
+    only_range: tuple[int, int] | None = None,
 ) -> list[dict[str, Any]]:
     """Expand each input-legality condition the same way a dimension is expanded.
 
@@ -698,15 +709,24 @@ def _derive_premises(
     from uo_init.derive_key_fields import KeyFieldDeriver
 
     out: list[dict[str, Any]] = []
+    lo, hi = only_range or (0, -1)
+    # One deriver for the whole run, not one per premise. Its caches are keyed
+    # by name and program point and `derive` resets what is per-derivation, so
+    # sharing them is what they were built for -- and a premise asks the same
+    # questions its neighbours do. A fresh deriver each time paid for every
+    # one of those answers again, including a solver call per `_read_cover`
+    # miss.
+    deriver = KeyFieldDeriver(
+        host_ir=host_ir,
+        resolver=resolver if resolver is not None else bundle["resolver"],
+        var_model=bundle["var_model"],
+        max_helper_guards=helper,
+    )
     for n, (text, fn, file, line) in enumerate(host_ir.legality_premises()):
+        if only_range is not None and not lo <= n < hi:
+            continue
         i = n + offset
         try:
-            deriver = KeyFieldDeriver(
-                host_ir=host_ir,
-                resolver=resolver if resolver is not None else bundle["resolver"],
-                var_model=bundle["var_model"],
-                max_helper_guards=helper,
-            )
             row = deriver.derive(
                 dim_name=f"__premise{i}",
                 index=-1 - i,
@@ -772,6 +792,137 @@ def _api_premises(
     return _derive_premises(
         bundle, ir, "", helper, resolver=resolver, layer="api", offset=offset
     )
+
+
+def _premise_worker(
+    bundle_path: str,
+    sys_path: list[str],
+    layer: str,
+    lo: int,
+    hi: int,
+    function: str,
+    helper: int,
+    offset: int,
+    queue,
+) -> None:
+    """Expand one contiguous run of premises.
+
+    Premises are chunked rather than spawned one apiece: each is small, and a
+    process per premise would spend more time starting up and reading the
+    bundle than deriving.
+    """
+    for entry in sys_path:
+        if entry and entry not in sys.path:
+            sys.path.insert(0, entry)
+    sys.setrecursionlimit(20000)
+    try:
+        with open(bundle_path, "rb") as fh:
+            bundle = pickle.load(fh)
+        resolver = None
+        if layer == "api":
+            ir = getattr(bundle.get("api_contract"), "ir", None)
+            if ir is None:
+                queue.put({"rows": []})
+                return
+            resolver = bundle.get("api_resolver")
+            if resolver is None:
+                from uo_init.source_resolver import SourceResolver
+
+                resolver = SourceResolver(host_ir=ir)
+                if bundle.get("var_model") is not None:
+                    resolver.adopt(bundle["var_model"])
+        else:
+            ir = bundle["host_ir"]
+        queue.put(
+            {
+                "rows": _derive_premises(
+                    bundle,
+                    ir,
+                    function,
+                    helper,
+                    resolver=resolver,
+                    layer=layer,
+                    offset=offset,
+                    only_range=(lo, hi),
+                )
+            }
+        )
+    except Exception as exc:  # noqa: BLE001 — the parent turns this into a note
+        queue.put({"__error__": f"{type(exc).__name__}: {exc}"[:400]})
+
+
+def _chunks(total: int, workers: int) -> list[tuple[int, int]]:
+    if total <= 0:
+        return []
+    width = max(1, min(workers, total))
+    size = (total + width - 1) // width
+    return [(i, min(i + size, total)) for i in range(0, total, size)]
+
+
+def _premises_isolated(
+    bundle_path: str,
+    *,
+    total: int,
+    layer: str,
+    function: str,
+    helper: int,
+    offset: int,
+    timeout: int,
+    workers: int,
+) -> list[dict[str, Any]]:
+    """Derive a layer's premises in parallel, in source order.
+
+    Cut into more chunks than there are workers. Premises are wildly uneven --
+    most resolve at once, a few chase a member through several calls -- so an
+    even split by count hands one worker all the slow ones and the run waits
+    on it. Smaller chunks let a worker that finished take the next.
+    """
+    spans = _chunks(total, workers * 2)
+    if not spans:
+        return []
+    results = _run_isolated_batch(
+        [
+            {
+                "target": _premise_worker,
+                "args": (
+                    bundle_path,
+                    list(sys.path),
+                    layer,
+                    lo,
+                    hi,
+                    function,
+                    helper,
+                    offset,
+                ),
+                "name": f"{layer}-premises[{lo}:{hi}]",
+                "index": -1,
+            }
+            for lo, hi in spans
+        ],
+        timeout=timeout,
+        workers=workers,
+    )
+    out: list[dict[str, Any]] = []
+    for (lo, hi), res in zip(spans, results):
+        rows = res.get("rows")
+        if rows is None:
+            # A chunk that dies takes its premises with it. Record the loss:
+            # a premise that quietly vanishes reads as a constraint the
+            # operator never stated.
+            out.append(
+                {
+                    "text": f"{layer} premises [{lo}:{hi}]",
+                    "file": "",
+                    "line": 0,
+                    "function": function,
+                    "layer": layer,
+                    "usable": False,
+                    "why": str(res.get("note") or "premise chunk failed")[:120],
+                }
+            )
+            continue
+        out.extend(rows)
+    return out
 
 
 def _worker(bundle_path: str, sys_path: list[str], index: int, helper: int, queue) -> None:
@@ -902,6 +1053,28 @@ def _run_isolated(target, args: tuple, *, name: str, index: int, timeout: int) -
         return _failed_row(name, index, str(row["__error__"]), elapsed)
     reason = "TIMEOUT" if elapsed >= timeout else f"CRASHED(exit={exitcode})"
     return _failed_row(name, index, reason, elapsed)
+
+
+def _run_isolated_batch(
+    jobs: list[dict[str, Any]], *, timeout: int, workers: int
+) -> list[dict[str, Any]]:
+    """Run independent isolated derivations at once, in submission order.
+
+    Each job still gets its own interpreter and is still reaped on its own
+    timeout, so nothing about the isolation changes -- only how many are in
+    flight. The threads here do no work: they wait on a child, which is why a
+    thread apiece is enough despite the GIL.
+    """
+    if not jobs:
+        return []
+    width = max(1, min(workers, len(jobs)))
+    if width == 1:
+        return [_run_isolated(timeout=timeout, **job) for job in jobs]
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=width) as pool:
+        return list(pool.map(lambda job: _run_isolated(timeout=timeout, **job), jobs))
 
 
 # -- assembly --------------------------------------------------------------
@@ -1131,8 +1304,13 @@ def _derive_auxiliaries(
     helper: int,
     timeout: int,
     evidence: "GuardEvidenceIndex | None",
+    workers: int = DEFAULT_WORKERS,
 ) -> None:
-    """Derive every name expansion stopped on, and the ones they expose."""
+    """Derive every name expansion stopped on, and the ones they expose.
+
+    Rounds are sequential because a round's results decide what the next one
+    asks for, but the names within one round are independent of each other.
+    """
     pending: dict[str, list[str]] = {}
     for fld in doc.fields:
         pending.update(fld.aux_targets)
@@ -1141,27 +1319,47 @@ def _derive_auxiliaries(
         todo = {k: v for k, v in pending.items() if k not in doc.auxiliaries}
         if not todo:
             return
-        for var_id, where in sorted(todo.items()):
-            name, function = (list(where) + ["", ""])[:2]
-            if isolate and tmp_path:
-                row = _run_isolated(
-                    _aux_worker,
-                    (tmp_path, list(sys.path), var_id, name, function, helper),
-                    name=var_id,
-                    index=-1,
-                    timeout=timeout,
-                )
-            else:
+        batch = sorted(todo.items())
+        rows: list[dict[str, Any]] = []
+        if isolate and tmp_path:
+            rows = _run_isolated_batch(
+                [
+                    {
+                        "target": _aux_worker,
+                        "args": (
+                            tmp_path,
+                            list(sys.path),
+                            var_id,
+                            (list(where) + ["", ""])[0],
+                            (list(where) + ["", ""])[1],
+                            helper,
+                        ),
+                        "name": var_id,
+                        "index": -1,
+                    }
+                    for var_id, where in batch
+                ],
+                timeout=timeout,
+                workers=workers,
+            )
+        else:
+            for var_id, where in batch:
+                name, function = (list(where) + ["", ""])[:2]
                 started = time.time()
                 try:
-                    row = _derive_aux_row(bundle, var_id, name, function, helper)
-                except Exception as exc:  # noqa: BLE001
-                    row = _failed_row(
-                        var_id,
-                        -1,
-                        f"{type(exc).__name__}: {exc}"[:200],
-                        round(time.time() - started, 1),
+                    rows.append(
+                        _derive_aux_row(bundle, var_id, name, function, helper)
                     )
+                except Exception as exc:  # noqa: BLE001
+                    rows.append(
+                        _failed_row(
+                            var_id,
+                            -1,
+                            f"{type(exc).__name__}: {exc}"[:200],
+                            round(time.time() - started, 1),
+                        )
+                    )
+        for (var_id, _where), row in zip(batch, rows):
             aux = _to_field(row, evidence)
             if _says_nothing(aux, var_id):
                 continue
@@ -1267,6 +1465,7 @@ def derive_host_fields(
     max_helper_guards: int = DEFAULT_HELPER_GUARDS,
     isolate: bool = True,
     only: list[str] | None = None,
+    workers: int = DEFAULT_WORKERS,
 ) -> HostDerivation:
     """Derive every bound TilingKey dimension of one operator.
 
@@ -1293,6 +1492,7 @@ def derive_host_fields(
     ]
 
     tmp_path = ""
+    api_path = ""
     if isolate:
         keep = {
             k: bundle[k]
@@ -1306,25 +1506,61 @@ def derive_host_fields(
         except Exception:  # noqa: BLE001 — fall back to in-process
             isolate = False
             tmp_path = ""
+    if isolate and tmp_path and bundle.get("api_contract") is not None:
+        # The API layer travels separately: only its own premises read it, and
+        # every field and auxiliary worker would otherwise pay to unpickle it.
+        api_keep = {
+            k: bundle[k]
+            for k in ("api_contract", "api_resolver", "var_model", "resolver")
+            if k in bundle
+        }
+        fd, api_path = tempfile.mkstemp(prefix="uo_derive_api_", suffix=".pkl")
+        try:
+            with open(fd, "wb") as fh:
+                pickle.dump(api_keep, fh)
+        except Exception:  # noqa: BLE001 — fall back to in-process for this layer
+            api_path = ""
 
+    phase = time.time()
     try:
-        for b in targets:
-            if isolate and tmp_path:
-                row = _derive_isolated(
-                    tmp_path, b.index, b.decl.name, max_helper_guards, timeout
-                )
-            else:
+        rows: list[dict[str, Any]] = []
+        if isolate and tmp_path:
+            rows = _run_isolated_batch(
+                [
+                    {
+                        "target": _worker,
+                        "args": (
+                            tmp_path,
+                            list(sys.path),
+                            b.index,
+                            max_helper_guards,
+                        ),
+                        "name": b.decl.name,
+                        "index": b.index,
+                    }
+                    for b in targets
+                ],
+                timeout=timeout,
+                workers=workers,
+            )
+        else:
+            for b in targets:
                 started = time.time()
                 try:
-                    row = _derive_row(bundle, b.index, max_helper_guards)
+                    rows.append(_derive_row(bundle, b.index, max_helper_guards))
                 except Exception as exc:  # noqa: BLE001
-                    row = _failed_row(
-                        b.decl.name,
-                        b.index,
-                        f"{type(exc).__name__}: {exc}"[:200],
-                        round(time.time() - started, 1),
+                    rows.append(
+                        _failed_row(
+                            b.decl.name,
+                            b.index,
+                            f"{type(exc).__name__}: {exc}"[:200],
+                            round(time.time() - started, 1),
+                        )
                     )
+        for row in rows:
             doc.fields.append(_to_field(row, evidence))
+        doc.phase_seconds["fields"] = round(time.time() - phase, 1)
+        phase = time.time()
         try:
             _derive_auxiliaries(
                 doc,
@@ -1334,22 +1570,56 @@ def derive_host_fields(
                 helper=max_helper_guards,
                 timeout=timeout,
                 evidence=evidence,
+                workers=workers,
             )
         except Exception as exc:  # noqa: BLE001 — a cut we cannot chase stays a cut
             doc.note = (doc.note + f" auxiliaries failed: {type(exc).__name__}").strip()
+        doc.phase_seconds["auxiliaries"] = round(time.time() - phase, 1)
+        phase = time.time()
+        try:
+            if isolate and tmp_path:
+                host_total = len(list(host_ir.legality_premises()))
+                doc.premises = _premises_isolated(
+                    tmp_path,
+                    total=host_total,
+                    layer="host",
+                    function=doc.encode_function,
+                    helper=max_helper_guards,
+                    offset=0,
+                    timeout=timeout,
+                    workers=workers,
+                )
+                api_ir = getattr(bundle.get("api_contract"), "ir", None)
+                if api_path and api_ir is not None:
+                    doc.premises.extend(
+                        _premises_isolated(
+                            api_path,
+                            total=len(list(api_ir.legality_premises())),
+                            layer="api",
+                            function="",
+                            helper=max_helper_guards,
+                            offset=len(doc.premises),
+                            timeout=timeout,
+                            workers=workers,
+                        )
+                    )
+            else:
+                doc.premises = _derive_premises(
+                    bundle, host_ir, doc.encode_function, max_helper_guards
+                )
+                doc.premises.extend(
+                    _api_premises(bundle, max_helper_guards, len(doc.premises))
+                )
+        except Exception as exc:  # noqa: BLE001 — premises sharpen, they do not gate
+            doc.note = (doc.note + f" premises failed: {type(exc).__name__}").strip()
+        doc.phase_seconds["premises"] = round(time.time() - phase, 1)
     finally:
-        if tmp_path:
-            Path(tmp_path).unlink(missing_ok=True)
+        for path in (tmp_path, api_path):
+            if path:
+                Path(path).unlink(missing_ok=True)
 
     doc.fields.sort(key=lambda f: f.index)
     _regrade_through_auxiliaries(doc)
-    try:
-        doc.premises = _derive_premises(
-            bundle, host_ir, doc.encode_function, max_helper_guards
-        )
-        doc.premises.extend(_api_premises(bundle, max_helper_guards, len(doc.premises)))
-    except Exception as exc:  # noqa: BLE001 — premises sharpen, they do not gate
-        doc.note = (doc.note + f" premises failed: {type(exc).__name__}").strip()
     if bundle.get("var_model") is not None:
         _reregister_soft_vars(bundle["var_model"], doc)
     return doc

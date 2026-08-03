@@ -19,18 +19,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from replay import corpus as C  # noqa: E402
 from replay import inputs as I  # noqa: E402
+from replay import obligations as O  # noqa: E402
 from replay import runner as R  # noqa: E402
 from replay_cone import MAX_PER_KEY, TIME_BUDGET_S, _base_case, _comp_grid
 from replay_nudge import _variants  # noqa: E402
 
-GRID_DIMS = {"SplitAxis", "IsBn2MultiBlk", "IsNzOut"}
 CAP = 8192
 
 
 def _wide_pool() -> dict[str, dict]:
     wide: dict[str, dict] = {}
-    for p in sorted(R.CACHE.glob("fag_key_cases*.csv")):
+    for p in C.wide_tables():
         rows = p.read_text(encoding="utf-8").splitlines()
         head = rows[0].split(",")
         for line in rows[1:]:
@@ -91,7 +92,7 @@ def _candidates(base: I.Case, key: int, row: dict) -> list[I.Case]:
         return []
 
     first = diffs[0]
-    if first in GRID_DIMS:
+    if O.is_host_state(first):
         out = _grid2(base)
     else:
         knobs = _variants(base, first, str(dims[first]))
@@ -101,7 +102,7 @@ def _candidates(base: I.Case, key: int, row: dict) -> list[I.Case]:
                 out.append(replace(k, s1=s1v, s2=s2v))
     if len(diffs) > 1:
         second = diffs[1]
-        if second not in GRID_DIMS:
+        if not O.is_host_state(second):
             extra: list[I.Case] = []
             for c in out[:4]:
                 extra.extend(_variants(c, second, str(dims[second])))
@@ -177,7 +178,7 @@ def main() -> int:
     for d in sorted(set(by_dim) | set(miss)):
         print(f"    {d:<16} {by_dim[d]:>4} hit, {miss[d]:>4} missed")
 
-    wide_out = R.CACHE / "fag_key_cases_cone2.csv"
+    wide_out = R.CACHE / "key_cases_cone2.csv"
     R.write_wide(wide_out, all_cases, all_results)
     print(f"\nall probe results -> {wide_out} (feeds the witness pool)")
 

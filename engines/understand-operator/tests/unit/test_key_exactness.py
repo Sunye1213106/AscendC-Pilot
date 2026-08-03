@@ -376,7 +376,10 @@ def test_a_call_is_resolved_in_the_scope_of_the_names_underneath_it():
     out = norm._value(
         _tagged("queryRopeShape->GetStorageShape().GetDimNum()", "GetShapeAttrsInfo")
     )
-    assert out["var"] == "VAR_SHAPE_QUERY_ROPE"
+    # A rank, not an element count: `GetDimNum()` answers how many axes there
+    # are, and the host checks a rank of 4 against an extent of 0 on the same
+    # tensor, so one variable cannot hold both.
+    assert out["var"] == "VAR_RANK_QUERY_ROPE"
 
 
 def test_two_tensors_read_through_locals_do_not_share_one_variable():
@@ -415,7 +418,7 @@ def test_a_chain_that_names_its_tensor_inline_never_needed_the_scope():
             "GetTilingKey",
         )
     )
-    assert out["var"] == "VAR_SHAPE_KEY_ROPE"
+    assert out["var"] == "VAR_RANK_KEY_ROPE"
 
 
 def test_a_helper_call_is_classified_in_the_function_that_called_it():

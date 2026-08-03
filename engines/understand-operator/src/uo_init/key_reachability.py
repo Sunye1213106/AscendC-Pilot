@@ -268,11 +268,26 @@ class KeyReachability:
         timeout_ms: int = 5000,
         rlimit: int = DEFAULT_RLIMIT,
         hard_timeout_ms: int = DEFAULT_HARD_TIMEOUT_MS,
+        only: Iterable[str] | None = None,
     ) -> KeyReachability:
-        """Compile every dimension we soundly can into one solver context."""
+        """Compile every dimension we soundly can into one solver context.
+
+        `only` restricts which dimensions get compiled. Handing the solver a
+        formula it will never be asked about still costs the whole compile, and
+        the big dimensions cost minutes between them, so a question about three
+        of them should not pay for nineteen. Every tree is still *read* first --
+        symbol folding groups constants per variable across all of them, and
+        reading fewer would regroup them and could change a verdict.
+
+        Leaving a dimension out only removes constraints, which widens the
+        feasible set: a UNSAT that survives is still a UNSAT, and a SAT was
+        never trusted on its own. Anything omitted this way is reported through
+        `omitted` so a caller cannot mistake it for a compiled one.
+        """
         fields = list(getattr(derivation, "fields", None) or [])
         if not fields:
             return cls.unavailable("derivation has no fields")
+        wanted = None if only is None else set(only)
 
         symbols = _Symbols(_named_constants(var_model))
         variables: list[dict[str, Any]] = [{"id": TRUE_VAR, "type": "bool"}]
@@ -303,6 +318,9 @@ class KeyReachability:
 
         blockers: dict[str, dict[str, str]] = {}
         for name, fld, tree, rename in trees:
+            if wanted is not None and name not in wanted:
+                omitted[name] = "not_requested"
+                continue
             rewrite = _Rewrite(symbols, rename, domains)
             try:
                 adapted = rewrite.run(tree)
@@ -442,12 +460,30 @@ class KeyReachability:
 
     def verdict(self, key_dims: Mapping[str, Any]) -> KeyVerdict:
         """Classify one key, given its dimension values from the template."""
+        return self._answer(key_dims, subset=False)
+
+    def joint_verdict(self, asked: Mapping[str, Any]) -> KeyVerdict:
+        """Whether these few dimensions can hold together, others left free.
+
+        `verdict` answers about a whole key, so a dimension it cannot see is a
+        gap that keeps a SAT from being read as `reachable`. Here the unnamed
+        dimensions are deliberately unconstrained -- the question is only
+        whether this combination is self-contradictory -- so their absence is
+        not a caveat. Everything else is the same, including the refusal to
+        call a contradiction `unreachable` when it leans on invented symbols.
+
+        Asking two dimensions at a time is what turns the derivation into
+        rules: an `unreachable` here says the pair excludes each other, whatever
+        the rest of the key does.
+        """
+        return self._answer(asked, subset=True)
+
+    def _answer(self, key_dims: Mapping[str, Any], *, subset: bool) -> KeyVerdict:
         if self._backend is None:
             return KeyVerdict(
                 status=R_UNDERIVABLE, reason=self._unavailable, layer=LAYER_NONE
             )
 
-        args: list[dict[str, Any]] = []
         taking: list[str] = []
         unfolded: list[str] = []
         asked: dict[str, Any] = {}
@@ -468,11 +504,10 @@ class KeyReachability:
                     layer=self._layer,
                     participating=(name,),
                 )
-            args.append({"op": "eq", "var": spec["var"], "value": value})
             taking.append(name)
             asked[name] = value
 
-        if not args:
+        if not asked:
             return KeyVerdict(
                 status=R_UNDERIVABLE,
                 reason="no dimension of this key has a compiled expression",
@@ -480,7 +515,14 @@ class KeyReachability:
             )
 
         try:
-            result = self._solve_by_group(asked)
+            if subset:
+                # One conjunction over exactly what was asked. The group split
+                # is an optimisation for whole keys, where a group's values
+                # repeat across thousands of them; a two-dimension question
+                # would only be split into halves that answer nothing.
+                result = self._solve_group(tuple(sorted(asked.items())))
+            else:
+                result = self._solve_by_group(asked)
         except Exception as exc:  # noqa: BLE001 - report, never crash the export
             return KeyVerdict(
                 status=R_UNKNOWN,
@@ -522,7 +564,8 @@ class KeyReachability:
                 participating=tuple(taking),
             )
 
-        gaps = self._sat_caveats(taking, key_dims, unfolded)
+        seen = dict(asked) if subset else key_dims
+        gaps = self._sat_caveats(taking, seen, unfolded)
         if gaps:
             return KeyVerdict(
                 status=R_UNKNOWN,

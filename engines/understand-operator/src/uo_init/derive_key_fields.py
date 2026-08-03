@@ -1057,7 +1057,7 @@ class KeyFieldDeriver:
         #: decidable, which re-enters the very field being derived and runs the
         #: node budget out — the difference between `overapproximated` and
         #: `unresolved`. See `_expand_uncached`'s `Ref` arm.
-        self._fold_enums: bool = os.environ.get("FAG_ENUM_FOLD", "1") != "0"
+        self._fold_enums: bool = os.environ.get("UO_ENUM_FOLD", "1") != "0"
         #: var_id -> `[name, function]` of a value the cycle cut named instead
         #: of losing. See `_aux_leaf`; the caller derives each of these.
         self.aux_targets: dict[str, list[str]] = {}

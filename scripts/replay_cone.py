@@ -21,39 +21,25 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from replay import corpus as C  # noqa: E402
 from replay import inputs as I  # noqa: E402
+from replay import obligations as O  # noqa: E402
 from replay import runner as R  # noqa: E402
 from replay_nudge import _variants  # noqa: E402
 
 TIME_BUDGET_S = 240
 MAX_PER_KEY = 12
-GRID_DIMS = {"SplitAxis", "IsBn2MultiBlk", "IsNzOut"}
-NO_COMP_DIMS = GRID_DIMS | {"S1TemplateNum", "S2TemplateNum"}
 CAP = 8192
 
 
 def _base_case(row: dict) -> I.Case:
-    def s(name, dflt=""):
-        v = row.get(name, dflt)
-        return dflt if v in ("", "None") else v
+    """The case a recorded row came from.
 
-    return I.Case(
-        layout=s("layout", "BSND"), dtype=s("dtype", "FLOAT16"),
-        b=int(s("b", 1)), s1=int(s("s1", 128)), s2=int(s("s2", 128)),
-        n2=int(s("n2", 1)), g=int(s("g", 1)), d=int(s("d", 128)),
-        d1=int(s("d1")) if s("d1") else None,
-        atten_mask=s("atten_mask", "none"), pse=s("pse", "0") == "1",
-        pse_shape=s("pse_shape", "full"),
-        pse_type=int(s("pse_type", 1)), rope=s("rope", "0") == "1",
-        keep_prob=float(s("keep_prob", 1.0)),
-        sparse_mode=int(s("sparse_mode", 0)),
-        pre_tokens=int(s("pre_tokens", 65536)),
-        next_tokens=int(s("next_tokens", 65536)),
-        out_dtype=int(s("out_dtype", 0)),
-        deterministic=int(s("deterministic", 0)),
-        seq_q=[int(x) for x in s("seq_q").split("/") if x] or None,
-        seq_kv=[int(x) for x in s("seq_kv").split("/") if x] or None,
-    )
+    There were three copies of this, and they had drifted: two defaulted an
+    absent pse shape to "full", which is not a shape the generator can build,
+    so the probe was replayed as bnss under a name that never ran.
+    """
+    return C.case_of(row)
 
 
 def _comp_grid(c: I.Case) -> list[tuple[int, int]]:
@@ -66,25 +52,31 @@ def _comp_grid(c: I.Case) -> list[tuple[int, int]]:
 def _candidates(base: I.Case, dim: str, want: str) -> list[I.Case]:
     from dataclasses import replace
 
-    if dim in GRID_DIMS:
+    hints = O.load_hints()
+    max_per = int(((hints.get("compensation") or {})
+                   .get("grid_host_state") or {}).get("max_per_key") or MAX_PER_KEY)
+    cap = int(((hints.get("compensation") or {}).get("s1_s2") or {}).get("cap")
+              or CAP)
+
+    if O.is_host_state(dim, hints):
         out = []
-        for f1 in (max(1, base.s1 // 2), base.s1, min(base.s1 * 2, CAP)):
-            for f2 in (max(1, base.s2 // 2), base.s2, min(base.s2 * 2, CAP)):
+        for f1 in (max(1, base.s1 // 2), base.s1, min(base.s1 * 2, cap)):
+            for f2 in (max(1, base.s2 // 2), base.s2, min(base.s2 * 2, cap)):
                 if (f1, f2) != (base.s1, base.s2):
                     out.append(replace(base, s1=f1, s2=f2))
-        return out[:MAX_PER_KEY]
+        return out[:max_per]
 
     knobs = _variants(base, dim, want)
     if not knobs:
         return []
-    if dim in NO_COMP_DIMS:
-        return knobs[:MAX_PER_KEY]
+    if not O.needs_compensation(dim, hints):
+        return knobs[:max_per]
 
     out: list[I.Case] = []
     for k in knobs:
         for s1v, s2v in _comp_grid(k):
             out.append(replace(k, s1=s1v, s2=s2v))
-    return out[:MAX_PER_KEY]
+    return out[:max_per]
 
 
 def main() -> int:
@@ -95,7 +87,7 @@ def main() -> int:
     lines = queue.read_text(encoding="utf-8").splitlines()[1:]
 
     wide: dict[str, dict] = {}
-    for p in sorted(R.CACHE.glob("fag_key_cases*.csv")):
+    for p in C.wide_tables():
         rows = p.read_text(encoding="utf-8").splitlines()
         head = rows[0].split(",")
         for line in rows[1:]:
@@ -162,7 +154,7 @@ def main() -> int:
     for d in sorted(set(by_dim) | set(miss)):
         print(f"    {d:<16} {by_dim[d]:>4} hit, {miss[d]:>4} missed")
 
-    wide_out = R.CACHE / "fag_key_cases_cone.csv"
+    wide_out = R.CACHE / "key_cases_cone.csv"
     R.write_wide(wide_out, all_cases, all_results)
     print(f"\nall probe results -> {wide_out} (feeds the witness pool)")
 

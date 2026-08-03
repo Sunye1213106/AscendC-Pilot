@@ -67,6 +67,14 @@ def normalize_expr(expr: Any, memo: dict[int, Any] | None = None) -> dict[str, A
     out = _normalize_expr_uncached(expr, memo)
     if memo is not None and isinstance(expr, dict):
         memo[id(expr)] = (expr, out)
+        # The result is canonical already, so normalising it again yields an
+        # equal value -- but a freshly built one, whose children are new
+        # objects that miss every identity-keyed memo below. Callers do
+        # normalise twice (once at the assertion, once inside the compile), and
+        # without this each pass rebuilt the whole graph one level deeper,
+        # turning a shared DAG back into work proportional to its paths.
+        if isinstance(out, dict):
+            memo.setdefault(id(out), (out, out))
     return out
 
 

@@ -29,6 +29,41 @@ def test_normalize_expr_rejects_unknown_op():
         normalize_expr({"op": "nand", "args": []})
 
 
+#: A DAG: one shared subtree reached along two paths, which is the shape the
+#: derived key expressions have and the one naive normalisation duplicates.
+def _shared_dag():
+    leaf = {"op": "eq", "var": "VAR_A", "value": True}
+    mid = {"op": "and", "args": [leaf, {"op": "gt", "lhs": {"var": "VAR_N"}, "rhs": 8}]}
+    return {"op": "or", "args": [mid, {"op": "not", "arg": mid}]}, mid
+
+
+def test_normalising_an_already_normal_expression_changes_nothing():
+    """Idempotence is what makes it safe to hand the result back to the memo."""
+    once = normalize_expr(_shared_dag()[0], {})
+    assert normalize_expr(once, {}) == once
+
+
+def test_a_normalised_result_is_returned_as_is_on_a_second_pass():
+    """Otherwise every re-normalisation rebuilds the graph one level deeper.
+
+    Callers normalise more than once -- at the assertion and again inside the
+    compile -- and each rebuild hands the layer below fresh objects that miss
+    every identity-keyed memo, which is what made compiling the key expressions
+    take minutes.
+    """
+    memo: dict = {}
+    once = normalize_expr(_shared_dag()[0], memo)
+    assert normalize_expr(once, memo) is once
+
+
+def test_a_shared_subtree_normalises_to_one_object():
+    memo: dict = {}
+    root = normalize_expr(_shared_dag()[0], memo)
+    left = root["args"][0]
+    right = root["args"][1]["arg"]
+    assert left is right, "sharing must survive normalisation, not be copied"
+
+
 def test_collect_expr_variables_walks_nested_expressions():
     expr = {
         "op": "and",

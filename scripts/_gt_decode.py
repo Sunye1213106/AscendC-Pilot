@@ -15,9 +15,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "engines" / "understand-operator" / "src"))
 
+from uo_init import paths  # noqa: E402
 from uo_init.tpl_dsl import parse_file  # noqa: E402
 
-OPS = Path(r"D:\TEST\ops-transformer")
+OPS = paths.ops_root()
+if OPS is None:
+    raise SystemExit(f"ops-transformer not found\n{paths.explain()}")
 UT = (
     OPS
     / "attention/flash_attention_score_grad/tests/ut/op_host/arch35"
