@@ -243,7 +243,10 @@ class PredicateNormalizer:
             return {"op": "lit", "value": bool(expr.value)}
         if isinstance(expr, Un):
             if expr.op in ("!", "not"):
-                return {"op": "not", "arg": self._bool(expr.arg)}
+                arg = self._bool(expr.arg)
+                if isinstance(arg, dict) and arg.get("op") == "lit":
+                    return {"op": "lit", "value": not bool(arg.get("value"))}
+                return {"op": "not", "arg": arg}
             raise NormalizeError(REASON_UNSUPPORTED_OP, expr.op)
         if isinstance(expr, Bin):
             if expr.op in BOOL_OPS:

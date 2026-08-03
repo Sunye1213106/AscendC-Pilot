@@ -2997,6 +2997,18 @@ class KeyFieldDeriver:
                     if not v.startswith(("VAR_SCHED_", "VAR_UNDECIDED_"))
                 }
             )
+            # Same survival rule as aux_targets: an implicit default whose
+            # VAR_INIT_ was folded out of value_expr (e.g. a later unguarded
+            # write under Const(True) reachability replaced the arm) is no
+            # longer an assumption the solver sees. Keeping the record would
+            # grade the field overapproximated with empty free_vars — the
+            # DeterType case — which blocks proofs without describing the
+            # expression. Dead-arm underapprox is tracked separately.
+            out.implicit_defaults = [
+                d
+                for d in out.implicit_defaults
+                if str(d.get("variable") or "") in survived
+            ]
         # Grade the result by what actually survived into `value_expr`, and let
         # `status` follow from that. The previous rule had an escape hatch: when
         # every guard had been softened it went looking for input roots in the
@@ -3382,12 +3394,36 @@ class _ValueNormalizer(PredicateNormalizer):
         # conjunct is undecidable, and collapsing the pair would throw away a
         # real input constraint.
         if isinstance(cond, Bin) and cond.op in BOOL_OPS:
-            return {
-                "op": BOOL_OPS[cond.op],
-                "args": [self._guard(cond.left), self._guard(cond.right)],
-            }
+            args = [self._guard(cond.left), self._guard(cond.right)]
+            op = BOOL_OPS[cond.op]
+            # Fold lit through and/or so a decided constant does not sit in a
+            # connective and make has_constant_dead_arm fire on a finished fact.
+            if op == "and":
+                if any(a.get("op") == "lit" and not a.get("value") for a in args):
+                    return {"op": "lit", "value": False}
+                args = [a for a in args if not (a.get("op") == "lit" and a.get("value"))]
+                if not args:
+                    return {"op": "lit", "value": True}
+                if len(args) == 1:
+                    return args[0]
+            elif op == "or":
+                if any(a.get("op") == "lit" and a.get("value") for a in args):
+                    return {"op": "lit", "value": True}
+                args = [a for a in args if not (a.get("op") == "lit" and not a.get("value"))]
+                if not args:
+                    return {"op": "lit", "value": False}
+                if len(args) == 1:
+                    return args[0]
+            return {"op": op, "args": args}
         if isinstance(cond, Un) and cond.op in ("!", "not"):
-            return {"op": "not", "arg": self._guard(cond.arg)}
+            arg = self._guard(cond.arg)
+            # Fold not(lit) here: expand already folds !Const, but GRAPH_SUCCESS
+            # / platform folds can leave lit false under a not that then poisons
+            # every or/and it sits in. Leaving the wrapper makes the field look
+            # under-approximated when the constant was already decided.
+            if isinstance(arg, dict) and arg.get("op") == "lit":
+                return {"op": "lit", "value": not bool(arg.get("value"))}
+            return {"op": "not", "arg": arg}
         # Schedule / GRAPH_SUCCESS / reachability — soft without expanding.
         soft = self._sched_soft_guard(cond)
         if soft is not None:
@@ -3983,9 +4019,18 @@ class _ValueNormalizer(PredicateNormalizer):
             if member is not None:
                 return member
         if isinstance(expr, Ite):
+            cond = self._guard(expr.cond)
+            if isinstance(cond, dict) and cond.get("op") == "lit":
+                # Return the arm as a value node, not an operand — `_value`
+                # callers expect a dict/expr, and a bare int breaks collectors.
+                return (
+                    self._value(expr.then)
+                    if cond.get("value")
+                    else self._value(expr.else_)
+                )
             return {
                 "op": "if_then_else",
-                "condition": self._guard(expr.cond),
+                "condition": cond,
                 "then": _as_operand(self._value(expr.then)),
                 "else": _as_operand(self._value(expr.else_)),
             }
