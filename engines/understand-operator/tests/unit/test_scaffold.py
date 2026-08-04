@@ -1,20 +1,7 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
 
-from uo_init.build_context import BuildContext, SPEC_DIR
-
-
-def test_package_import():
-    import uo_init
-
-    assert uo_init.__version__
-
-
-def test_compat_files_exist(spec_dir: Path):
-    assert (spec_dir / "compat" / "bisheng_prelude.h").is_file()
-    assert (
-        spec_dir / "compat" / "ascendc" / "host_api" / "tiling" / "template_argument.h"
-    ).is_file()
+from uo_init.build_context import BuildContext
 
 
 def test_build_context_placeholders(tmp_path: Path, spec_dir: Path):

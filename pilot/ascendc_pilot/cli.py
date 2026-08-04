@@ -1271,6 +1271,12 @@ def _doctor(project: Path) -> int:
         import testcase_agent  # noqa: F401
     except ImportError:
         issues.append("testcase_agent not installed (pip install -e ./engines/testcase-generation)")
+    try:
+        import code_engineering  # noqa: F401
+    except ImportError:
+        warnings.append(
+            "code_engineering not installed (pip install -e ./engines/code-engineering)"
+        )
 
     from ascendc_pilot.paths import AGENT_DIR, ensure_agent_layout
 
@@ -1287,14 +1293,30 @@ def _doctor(project: Path) -> int:
         scripts = repo / "scripts"
         if scripts.is_dir() and str(scripts) not in sys.path:
             sys.path.insert(0, str(scripts))
-        from compose_runtime import validate, validate_generated
+        from compose_runtime import (
+            check_generated_drift,
+            validate,
+            validate_generated,
+        )
 
         src_errors = validate(repo)
         for err in src_errors:
             issues.append(f"compose: {err}")
-        gen_errors = validate_generated(repo, host="opencode")
-        for err in gen_errors:
-            issues.append(f"generated: {err}")
+        for host in ("opencode", "cursor", "codex"):
+            gen_dir = repo / "generated" / host
+            if not gen_dir.is_dir():
+                warnings.append(
+                    f"generated/{host} missing — run: "
+                    f"python scripts/compose_runtime.py --repo . --host {host}"
+                )
+                continue
+            gen_errors = validate_generated(repo, host=host)
+            for err in gen_errors:
+                issues.append(f"generated/{host}: {err}")
+        drift = check_generated_drift(repo, hosts=["opencode", "cursor", "codex"])
+        for err in drift:
+            # Drift is a soft fail until install regenerates; still surface loudly.
+            warnings.append(err)
     except Exception as exc:  # noqa: BLE001
         warnings.append(f"compose validation skipped: {exc}")
 
@@ -1304,23 +1326,34 @@ def _doctor(project: Path) -> int:
     except ImportError:
         warnings.append("z3 not installed (pip install -e ./engines/testcase-generation[solver]) — /tg-solve will fail")
 
-    # CBM MCP: plugin install ≠ MCP configured
+    # CBM MCP: plugin install ≠ MCP configured (opencode + cursor)
     try:
         import json
+        import shutil
         from pathlib import Path as _P
 
-        oc = _P.home() / ".config" / "opencode" / "opencode.json"
-        if oc.is_file():
-            cfg = json.loads(oc.read_text(encoding="utf-8"))
+        if shutil.which("codebase-memory-mcp") is None:
+            warnings.append(
+                "codebase-memory-mcp binary not on PATH — "
+                "run: .\\install.ps1 cbm (UO source lookup degraded)"
+            )
+
+        mcp_cfgs = [
+            ("OpenCode", _P.home() / ".config" / "opencode" / "opencode.json"),
+            ("Cursor", _P.home() / ".cursor" / "mcp.json"),
+        ]
+        for label, cfg_path in mcp_cfgs:
+            if not cfg_path.is_file():
+                warnings.append(f"{label} MCP config missing ({cfg_path})")
+                continue
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
             mcp = cfg.get("mcp") or cfg.get("mcpServers") or {}
             names = {str(k).lower() for k in (mcp.keys() if isinstance(mcp, dict) else [])}
             if not any("codebase-memory" in n or n == "cbm" for n in names):
                 warnings.append(
-                    "OpenCode opencode.json has no codebase-memory-mcp — "
-                    "see docs/cbm-mcp-setup.md (UO source lookup degraded)"
+                    f"{label} config has no codebase-memory-mcp — "
+                    "see docs/cbm-mcp-setup.md"
                 )
-        else:
-            warnings.append("OpenCode opencode.json missing — CBM MCP not configured")
     except Exception as exc:  # noqa: BLE001
         warnings.append(f"CBM MCP check skipped: {exc}")
 

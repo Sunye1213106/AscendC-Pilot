@@ -4,8 +4,11 @@
 # Local-only eval oracles (do not commit)
 .tmp-oracle/
 
-# Cached clang bundles / derivation runs for scripts/_probe_derive.py
+# Cached clang bundles / derivation runs (keep replay corpus locally; never commit)
 .probe_cache/
+
+# Host runtime trees are composed at install time (see install.ps1)
+generated/
 
 # Python cache and test artifacts
 __pycache__/

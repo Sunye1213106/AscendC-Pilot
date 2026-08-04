@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "code-engineering"
+version = "0.1.0"
+description = "AscendC Code Engineering (CE) engine for AscendC-Pilot"
+requires-python = ">=3.10"
+dependencies = [
+  "PyYAML>=6.0",
+]
+
+[project.scripts]
+ce-impact = "code_engineering.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["code_engineering*"]

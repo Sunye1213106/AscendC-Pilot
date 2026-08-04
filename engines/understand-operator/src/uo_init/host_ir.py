@@ -42,6 +42,10 @@ class WriteEvent:
     #: See `WriteRecord.column`. Needed to order this write against a read on
     #: the same line.
     column: int = 0
+    #: When this write was promoted from a callee's `__return__` (or out-param)
+    #: onto the caller's assigned path. Empty for a direct write. Format:
+    #: `callee_of:<FunctionName>`.
+    via: str = ""
 
     @property
     def ssa_name(self) -> str:
@@ -291,6 +295,70 @@ class HostIR:
 
     def writes_to(self, needle: str) -> list[WriteEvent]:
         return [w for w in self.writes if needle in w.path]
+
+    def expand_callee_writers(self) -> list[WriteEvent]:
+        """One-level callee expansion for return-valued assignments.
+
+        A write ``path = F(...)`` records only the call site. The values and
+        guards that decide ``path`` live as ``__return__`` local writes inside
+        ``F``. Without promoting them, proof sites like
+        ``GetDeterSparseTilingKey`` and ``SetSparseParams`` look empty even
+        though the walker already recorded every return.
+
+        Each promoted write keeps ``function=F`` (so ``writers_of`` finds the
+        callee body) and prefixes the RHS with a ``via:callee_of:F`` marker
+        the codemap serialises separately. Direct writes are returned first,
+        unchanged.
+        """
+        from uo_init.clang_walk import RETURN_SLOT
+
+        by_fn: dict[str, list[WriteEvent]] = {}
+        for w in self.local_writes:
+            if w.path == RETURN_SLOT and w.function:
+                by_fn.setdefault(w.function, []).append(w)
+
+        # Bare identifier or TrailingCall(...). Member calls keep the method
+        # name in spelling; strip a receiver prefix when present.
+        call_name = re.compile(
+            r"^(?:(?:this\.)?[A-Za-z_]\w*(?:\.|->))*([A-Za-z_]\w*)\s*\("
+        )
+
+        out: list[WriteEvent] = list(self.writes)
+        seen: set[tuple] = set()
+        for w in self.writes:
+            m = call_name.match((w.rhs or "").strip())
+            if not m:
+                continue
+            callee = m.group(1)
+            returns = by_fn.get(callee) or []
+            if not returns:
+                # Try unqualified match when summaries use a shorter name.
+                for name, rws in by_fn.items():
+                    if name == callee or name.endswith("::" + callee) or name.endswith("_" + callee):
+                        returns = rws
+                        break
+            for rw in returns:
+                key = (w.path, rw.function, rw.line, rw.rhs)
+                if key in seen:
+                    continue
+                seen.add(key)
+                # Merge caller reachability with the return's own guards.
+                pcs = tuple(w.path_conditions) + tuple(rw.path_conditions)
+                out.append(
+                    WriteEvent(
+                        path=w.path,
+                        line=rw.line,
+                        rhs=rw.rhs,
+                        template_precondition=w.template_precondition,
+                        file=rw.file or w.file,
+                        function=rw.function or callee,
+                        path_conditions=pcs,
+                        kind="assign",
+                        column=rw.column,
+                        via=f"callee_of:{callee}",
+                    )
+                )
+        return out
 
     def field_decl(self, path: str) -> FieldDecl | None:
         """The declaration of the member `path` names, if it can be identified.

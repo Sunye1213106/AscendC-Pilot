@@ -46,7 +46,7 @@ def test_a_derivation_without_the_field_is_refused_not_read_as_empty():
         bridge.reads_host_state(_field())
     message = str(caught.value)
     assert "IsNzOut" in message
-    assert "_probe_derive.py" in message, "the error has to say how to fix it"
+    assert "derive_key_fields" in message, "the error has to say how to fix it"
 
 
 def test_the_set_of_roots_is_not_accepted_in_place_of_the_mapping():

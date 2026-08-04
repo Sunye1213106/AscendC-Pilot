@@ -549,15 +549,40 @@ bf16 和 fp16 都声明了 rope 变体，唯独 fp32 没有。而 Host tiling �
 | `.probe_cache/vg_excluded_why.csv` | 4536 个不可达 Key 与命中的规则 |
 | `operators/.../arch35/proof_rules.yaml` | 引理与源码引用 |
 
-`fag_arch35_reachable_cases.csv` 的每一行都经过复跑确认：把该行输入送给真实 Host，返回的就是该行 Key。列结构为
+`fag_arch35_reachable_cases.csv` 的每一行都经过复跑确认：把该行输入送给真实 Host，返回的就是该行 Key。
+
+该表已改写成 `fag_debug_tools/run_fag.py` 可直接读取的用例表结构（转换脚本 `scripts/fag_reachable_cases_to_fagtest.py`，`--check` 可复验），列结构为
 
 ```
-tiling_key, tiling_key_hex, declared,
-layout, dtype, b, s1, s2, n2, g, d, d1, atten_mask, pse, pse_shape,
-pse_type, rope, keep_prob, sparse_mode, pre_tokens, next_tokens,
-out_dtype, deterministic, seq_q, seq_kv,
+Testcase_Name, tiling_key, tiling_key_hex, declared,
+Enable, Dtype, out_dtype, Input_Layout, B, N1, N2, S1, S2, D, D_V,
+Drop_Out_Possibility, Pre_Tockens, Next_Tockens,
+Atten_mask_dtype, Atten_mask_shape, sparse_mode, PSE_type, PSE_shape,
+seqlens_list_q, seqlens_list_kv, is_deter, rope,
+est_attn_elems, adapt_note,
 dim_IsEmptyTensor ... dim_IsRegbase
 ```
+
+`Testcase_Name` 是 `tk_` 加该行的十进制 TilingKey（4226 行互不重复），跑测日志与结果表里 grep `tk_` 即可捞出用例名、按 Key 定位。
+
+跑测入口：
+
+```bash
+python3 run_fag.py --case fag_arch35_reachable_cases.csv --sheet Sheet1 --pta_mode only_grad --device 0
+```
+
+改写只动 Key 编码之外的字段——19 维里 PSE 只看 `IsPse`、mask 只看 `IsAttenMask`，形状拼写不参与编码，因此把不受测试工具支持的写法换成等价写法不会改变该行的可达性结论。逐条换算规则记在 `adapt_note` 列（2124 行有标注）：
+
+| 换算 | 行数 | 原因 |
+| --- | ---: | --- |
+| `atten_mask=2048` → `Atten_mask_shape=SS` | 1681 | 压缩 mask 由工具按 `sparse_mode` 自行生成 2048×2048，表里只需一个非 NONE 的二维写法保持 `IsAttenMask=1` |
+| rope 行 `D = d1 + 64` | 265 | 工具按 `D - D_V` 推 rope 宽度，而 `queryRope` 的 D 必须为 64（`normal_regbase.cpp:361`） |
+| `pse_shape=b1ss` → `BNSS` | 171 | 工具不支持 B1SS 形态的 pse_shift |
+| 压缩 alibi（`bnhs`/`1nhs`）在 `S1 ≤ 1024` 时 → `BNSS`/`1NSS` | 108 | `[*,N,1024,S]` 仅 `S1 > 1024` 时被算子接受 |
+| TND 外部 PSE 且 `S1 ≤ 1024` → 内部 alibi `BN`（`PSE_type=2`） | 113 | TND 下 pse_shift 要求 `Sq ≥ 1024` |
+| 无 PSE 行的 `pse_type=2/3` → `1` | 99 | 不传 pse_shift 时 alibi 类型会被 aclnn 拒绝 |
+
+`est_attn_elems`（`B×N1×S1×S2`）是给跑测方做规模筛选用的：160 行超过 1e9，golden 建议配 `--flash-golden`，否则容易 OOM。
 
 ---
 

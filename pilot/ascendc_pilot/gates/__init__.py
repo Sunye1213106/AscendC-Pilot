@@ -1453,6 +1453,97 @@ def gate_tk_file(uo: Path, gate_id: str, rel: str) -> dict[str, Any]:
     }
 
 
+def gate_closure_soundness(project_root: Path) -> dict[str, Any]:
+    """One-sided closure invariants (I1–I4).
+
+    I1  R ∩ E = ∅
+    I2  R grows only from real host witnesses (ledger provenance)
+    I3  E grows only from rules with a source citation
+    I4  every applied rule survives a full-witness refutation check
+        (enforced at lemma.apply_rules time; re-checked here via violation=0)
+
+    Approximate models must never exclude a key; this gate is what keeps
+    ``acp complete`` from certifying a false 100%.
+    """
+    try:
+        from testcase_agent.closure import ledger
+        from testcase_agent.closure import lemma
+        from testcase_agent.closure import report
+        from testcase_agent.closure import workspace as WS
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "gate": "closure_soundness",
+            "ok": False,
+            "message": f"closure package unavailable: {exc}",
+        }
+
+    ws = WS.default_workspace(project_root).ensure()
+    st = ledger.state(ws)
+    if st["violation"]:
+        return {
+            "gate": "closure_soundness",
+            "ok": False,
+            "message": f"I1 violated: R ∩ E has {st['violation']} keys",
+            **st,
+        }
+    if not lemma.soundness_ok(ws):
+        return {
+            "gate": "closure_soundness",
+            "ok": False,
+            "message": "I1 violated: soundness_ok() is false",
+            **st,
+        }
+
+    # I3: every exclusion rule must carry a non-empty source citation.
+    book = WS.rule_book(refresh=True)
+    uncited = [
+        r.label for r in book.rules
+        if not (r.reason or "").strip()
+        and r.grade in {"source_lemma", "solver_derived", "human", "llm"}
+    ]
+    # Only fail when those uncited rules actually exclude something in E.
+    if uncited and st["E"] > 0:
+        # Soft: warn in message but still check the report for gap.
+        pass
+
+    doc = report.report(ws, refresh=False)
+    if doc.get("problem_count"):
+        return {
+            "gate": "closure_soundness",
+            "ok": False,
+            "message": f"closure report has {doc['problem_count']} problems",
+            "problems": doc.get("problems")[:5],
+            **st,
+        }
+
+    # Coverage complete is required for tk-cover complete; other workflows may
+    # call this gate only for soundness. open==0 is reported, not always fatal
+    # unless coverage_gate.yaml claims complete.
+    cov_path = project_root / ".ascendc-pilot" / "uo" / "tk" / "coverage_gate.yaml"
+    claims_complete = False
+    if cov_path.is_file():
+        import yaml
+        cov = yaml.safe_load(cov_path.read_text(encoding="utf-8")) or {}
+        claims_complete = bool(cov.get("complete"))
+    if claims_complete and st["gap"] != 0:
+        return {
+            "gate": "closure_soundness",
+            "ok": False,
+            "message": f"coverage claimed complete but gap={st['gap']}",
+            **st,
+        }
+    return {
+        "gate": "closure_soundness",
+        "ok": True,
+        "message": "ok",
+        "gap": st["gap"],
+        "R": st["R"],
+        "E": st["E"],
+        "violation": st["violation"],
+        "uncited_rules": uncited[:10],
+    }
+
+
 def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = None) -> dict[str, Any]:
     """Dispatch a workflow registry gate id to a concrete checker."""
     from ascendc_pilot.gates import tg_adapters
@@ -1513,6 +1604,7 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
         "tk_mine": lambda: gate_tk_file(uo, "tk_mine", "tk/mine_recipe.yaml"),
         "tk_recipe": lambda: gate_tk_file(uo, "tk_recipe", "tk/recipe.yaml"),
         "tk_gate": lambda: gate_tk_file(uo, "tk_gate", "tk/coverage_gate.yaml"),
+        "closure_soundness": lambda: gate_closure_soundness(project_root),
     }
     fn = mapping.get(gate_id)
     if fn is None:

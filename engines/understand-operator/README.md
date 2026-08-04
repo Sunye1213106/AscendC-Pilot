@@ -30,9 +30,12 @@
 - 重构记录：[`docs/design/kb-extraction.md`](../../docs/design/kb-extraction.md)
 - 工作流：[`docs/workflows/uo-init.md`](../../docs/workflows/uo-init.md)
 
-## 本地探针
+## 本地派生
 
 ```powershell
-python scripts/_probe_derive.py
-python scripts/_probe_derive.py --refresh
+acp run-action derive_key_fields
+# 深度求解（可选写出 value_expr/expanded）:
+$env:UO_DEEP_SOLVE=1; acp run-action derive_key_fields
 ```
+
+覆盖门禁优先走沉淀包：`tg-closure report` / `testcase_agent.closure`。

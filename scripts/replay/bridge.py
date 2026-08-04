@@ -184,6 +184,6 @@ def reads_host_state(field: dict) -> list[str]:
     if roots is None:
         raise KeyError(
             f"dimension {field.get('name', '?')!r} carries no var_roots: this "
-            "derivation predates the field. Re-run scripts/_probe_derive.py"
+            "derivation predates the field. Re-run: acp run-action derive_key_fields"
         )
     return sorted(v for v, root in roots.items() if root in STATE_ROOTS)

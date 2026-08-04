@@ -1142,7 +1142,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             "prepare": ["tk_env"],
             "derive": ["tk_derive", "tk_codemap"],
             "close": ["tk_mine", "tk_recipe"],
-            "certify": ["tk_gate"],
+            "certify": ["tk_gate", "closure_soundness"],
         },
         "pipelines": {
             "prepare": ["env_probe"],
@@ -1150,7 +1150,10 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             "close": ["mine_recipe", "apply_recipe"],
             "certify": ["coverage_gate"],
         },
-        "complete_gates": ["tk_env", "tk_derive", "tk_codemap", "tk_mine", "tk_recipe", "tk_gate"],
+        "complete_gates": [
+            "tk_env", "tk_derive", "tk_codemap", "tk_mine", "tk_recipe",
+            "tk_gate", "closure_soundness",
+        ],
         "meta": {
             "max_recipe_attempts": 3,
             "recovery_by_reason": {

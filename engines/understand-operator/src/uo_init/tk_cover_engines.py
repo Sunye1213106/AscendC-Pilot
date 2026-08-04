@@ -3,55 +3,25 @@
 
 Only `mine_recipe` is a subagent action; everything here is CLI-driven so a
 weak model can still advance the pipeline by running `acp run-action`.
+
+The derive/codemap steps used to read `.probe_cache/fag_derive.json` and
+`fag_bundle.pkl`. Those are scratch artefacts. The durable inputs are now the
+UO KB under `.ascendc-pilot/uo/` (host_codemap + field summaries written by
+uo-init / export-codemap). Residual blockers that claimed coverage could not
+close are gone: FlashAttentionScoreGrad arch35 closed at gap=0.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-# Why U_sound − R cannot yet reach ∅. Composer must not invent exclusions
-# to paper over these; they need HostIR / model work first.
-RESIDUAL_BLOCKERS: list[dict[str, str]] = [
-    {
-        "id": "VAR_INIT_bandIdx",
-        "symbol": "fBaseParams.bandIdx",
-        "why": (
-            "guards_cover is sat: reads under sparseMode∈{7,8} do not share "
-            "the attenMask write guard; force-closing would be unsound"
-        ),
-    },
-    {
-        "id": "VAR_INIT_blockOuter",
-        "symbol": "fBaseParams.blockOuter",
-        "why": "cyclic dependence with deterSparseType; do not force-close",
-    },
-    {
-        "id": "VAR_LOOPELEM_invalidS1Array",
-        "symbol": "invalidS1Array[j]",
-        "why": (
-            "HostIR writers_of(invalidS1Array)=0; interval_union_covers "
-            "cannot attach until array write events exist (float32 Varlen "
-            "must stay refused)"
-        ),
-    },
-    {
-        "id": "VAR_UNDECIDED_CheckExceedL2Cache",
-        "symbol": "CheckExceedL2Cache()",
-        "why": "needs an L2 footprint / cardinality model; used for swizzle",
-    },
-    {
-        "id": "VAR_AUX_deterSparseType",
-        "symbol": "fBaseParams.deterSparseType",
-        "why": "tied to DeterType leaf-collapse demotion; keep overapproximated",
-    },
-]
+CODEMAP_YAML = "ir/host_codemap.yaml"
+DERIVE_SUMMARY = "tk/derive_fields.yaml"
 
 
 def _uo(project_root: Path, ctx: dict[str, Any]) -> Path:
@@ -87,31 +57,70 @@ def env_probe(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
 
 
 def derive_fields(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """Reuse an existing fag_derive.json; do not re-run Clang in the workflow gate."""
+    """Summarise key-field exactness from the durable UO artefacts.
+
+    Prefer `uo/ir/host_codemap.yaml` (codemap v2 fields[] once available) and
+    fall back to a previously written `tk/derive_fields.yaml`. The
+    `.probe_cache/fag_derive.json` scratch file is no longer required.
+    """
     uo = _uo(project_root, ctx)
+    codemap_path = uo / CODEMAP_YAML
+    summary_path = uo / DERIVE_SUMMARY
+
+    fields: list[Any] = []
+    source = ""
+    if codemap_path.is_file():
+        doc = yaml.safe_load(codemap_path.read_text(encoding="utf-8")) or {}
+        fields = list(doc.get("fields") or [])
+        source = str(codemap_path)
+        # v1 had no fields[]; synthesise a thin summary from writes.
+        if not fields and doc.get("writes"):
+            by_path: dict[str, int] = {}
+            for w in doc.get("writes") or []:
+                path = str(w.get("path") or "")
+                leaf = path.rsplit(".", 1)[-1] if path else ""
+                if leaf:
+                    by_path[leaf] = by_path.get(leaf, 0) + 1
+            fields = [{"name": k, "writers": v} for k, v in sorted(by_path.items())]
+    elif summary_path.is_file():
+        prev = yaml.safe_load(summary_path.read_text(encoding="utf-8")) or {}
+        if prev.get("ok"):
+            _dump(uo / "tk" / "derive_fields.yaml", prev)
+            return {"ok": True, "engine": "derive_fields", **prev}
+
+    # Optional: if a caller still has the old derive JSON, accept it as a
+    # migration aid but do not require it.
     probe = Path(project_root) / ".probe_cache" / "fag_derive.json"
-    if not probe.is_file():
-        doc = {"ok": False, "error": f"missing {probe}; run scripts/_probe_derive.py --refresh"}
+    if not fields and probe.is_file():
+        data = json.loads(probe.read_text(encoding="utf-8"))
+        hd = data.get("host_derivation") or {}
+        fields = hd.get("fields") or data.get("fields") or []
+        source = str(probe)
+
+    if not fields and not source:
+        doc = {
+            "ok": False,
+            "error": (
+                f"missing {codemap_path}; run export-codemap (or uo-init) first"
+            ),
+        }
         _dump(uo / "tk" / "derive_fields.yaml", doc)
         return doc
-    data = json.loads(probe.read_text(encoding="utf-8"))
-    hd = data.get("host_derivation") or {}
-    totals = hd.get("totals") or data.get("totals") or {}
-    fields = hd.get("fields") or data.get("fields") or []
-    free = totals.get("free_vars")
-    if free is None:
-        # Fall back: unique free_vars across fields.
-        seen: set[str] = set()
-        for f in fields:
-            for v in f.get("free_vars") or []:
-                seen.add(str(v))
-        free = len(seen)
-    closed = totals.get("closed") or totals.get("derived")
-    if closed is None:
-        closed = sum(1 for f in fields if (f.get("exactness") or "") in ("exact", "constant"))
+
+    free = 0
+    closed = 0
+    for f in fields:
+        if not isinstance(f, dict):
+            continue
+        for v in f.get("free_vars") or []:
+            free += 1
+        exact = str(f.get("exactness") or f.get("grade") or "")
+        if exact in ("exact", "constant", "exact_static"):
+            closed += 1
+
     doc = {
         "ok": True,
-        "source": str(probe),
+        "source": source,
         "fields": len(fields),
         "free_vars": free,
         "closed": closed,
@@ -121,12 +130,42 @@ def derive_fields(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
 
 
 def export_codemap(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Export HostIR as the durable codemap under `.ascendc-pilot/uo/`.
+
+    Accepts either a pickled host bundle (legacy probe path) or an already
+    built HostIR reachable through the UO KB. Prefer the in-tree bundle only
+    when the durable codemap is missing.
+    """
     uo = _uo(project_root, ctx)
+    durable = uo / CODEMAP_YAML
+    if durable.is_file() and not ctx.get("force"):
+        doc = yaml.safe_load(durable.read_text(encoding="utf-8")) or {}
+        result = {
+            "ok": True,
+            "yaml": str(durable),
+            "writes": len(doc.get("writes") or []),
+            "calls": len(doc.get("calls") or []),
+            "fields": len(doc.get("fields") or []),
+            "reused": True,
+        }
+        _dump(uo / "tk" / "export_codemap.yaml", result)
+        return {"ok": True, "engine": "export_codemap", **result}
+
     bundle = Path(project_root) / ".probe_cache" / "fag_bundle.pkl"
+    bundle_override = ctx.get("bundle")
+    if bundle_override:
+        bundle = Path(bundle_override)
     if not bundle.is_file():
-        doc = {"ok": False, "error": f"missing {bundle}"}
+        doc = {
+            "ok": False,
+            "error": (
+                f"missing host bundle at {bundle} and no durable codemap at "
+                f"{durable}; run uo-init / host IR build first"
+            ),
+        }
         _dump(uo / "tk" / "export_codemap.yaml", doc)
         return doc
+
     from uo_init.host_codemap import export_codemap_from_bundle
 
     result = export_codemap_from_bundle(bundle, uo)
@@ -152,7 +191,6 @@ def mine_recipe(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     )
     _dump(parts / "staging.yaml", staging)
     part0 = parts / "parts" / "part_0.yaml"
-    # Keep an existing mined part; only seed a placeholder when missing.
     if not part0.is_file():
         _dump(part0, {
             "schema": "tk-recipe-part/v1",
@@ -187,79 +225,64 @@ def apply_recipe(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
 
 
 def coverage_gate(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """Run the runtime counterexample gate and record residual blockers."""
+    """Run the closure report (preferred) or the legacy runtime gate."""
     uo = _uo(project_root, ctx)
-    scripts = Path(project_root) / "scripts"
-    if str(scripts) not in sys.path:
-        sys.path.insert(0, str(scripts))
-    cache = Path(project_root) / ".probe_cache" / "replay"
-    closure_path = cache / "coverage_closure.yaml"
 
-    # Prefer invoking the gate script so corpus + declared stay one source of truth.
-    env = os.environ.copy()
-    env["PYTHONPATH"] = ";".join([
-        str(scripts),
-        str(Path(project_root) / "engines" / "understand-operator" / "src"),
-        str(Path(project_root) / "engines" / "common" / "src"),
-        env.get("PYTHONPATH", ""),
-    ])
-    env.setdefault("UO_REPLAY_DISTRO", "Ubuntu-2204")
-    gate_ok = False
-    gate_err = ""
+    # Prefer the precipitated TG closure package: no .probe_cache required.
     try:
-        proc = subprocess.run(
-            [sys.executable, str(scripts / "replay_runtime_counterexample_gate.py")],
-            cwd=str(project_root),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=env,
-            timeout=180,
-        )
-        gate_ok = proc.returncode == 0
-        if not gate_ok:
-            gate_err = (proc.stdout or "")[-800:] + (proc.stderr or "")[-400:]
+        from testcase_agent.closure import ledger as L
+        from testcase_agent.closure import lemma as Lem
+        from testcase_agent.closure import report as Rep
+        from testcase_agent.closure import workspace as WS
+
+        ws = WS.default_workspace(project_root).ensure()
+        # Point artefacts at the operator's replay cache when present.
+        rebuilt = L.rebuild(ws)
+        if not rebuilt.get("ok"):
+            _dump(uo / "tk" / "coverage_gate.yaml", rebuilt)
+            return {"ok": False, "engine": "coverage_gate", **rebuilt}
+        applied = Lem.apply_rules(ws)
+        if not applied.get("ok"):
+            _dump(uo / "tk" / "coverage_gate.yaml", applied)
+            return {"ok": False, "engine": "coverage_gate", **applied}
+        summary_doc = Rep.report(ws)
+        gap = int(summary_doc.get("open") or 0)
+        complete = bool(summary_doc.get("gap_zero"))
+        summary: dict[str, Any] = {
+            "ok": bool(summary_doc.get("ok")),
+            "engine": "coverage_gate",
+            "complete": complete,
+            "gate_pass": bool(summary_doc.get("ok")),
+            "declared": summary_doc.get("declared"),
+            "R_declared": summary_doc.get("witnessed"),
+            "excluded_sound": summary_doc.get("excluded"),
+            "open_gap_sound": gap,
+            "closure_path": summary_doc.get("path"),
+            "residual_blockers": [],
+            "note": (
+                "Full sound coverage." if complete
+                else "Open keys remain; see closure report."
+            ),
+        }
+        _dump(uo / "tk" / "coverage_gate.yaml", summary)
+        _dump(uo / "tk" / "residual.yaml", {
+            "open_gap_sound": gap,
+            "complete": complete,
+            "blockers": [],
+        })
+        return summary
     except Exception as exc:  # noqa: BLE001
-        gate_err = str(exc)
-
-    closure: dict[str, Any] = {}
-    if closure_path.is_file():
-        closure = yaml.safe_load(closure_path.read_text(encoding="utf-8")) or {}
-
-    gap = int(closure.get("open_gap_sound") or closure.get("open_gap") or -1)
-    complete = bool(gate_ok and gap == 0)
-    summary: dict[str, Any] = {
-        "ok": bool(gate_ok),
-        "engine": "coverage_gate",
-        "complete": complete,
-        "gate_pass": gate_ok,
-        "declared": closure.get("declared"),
-        "R_declared": closure.get("R_declared"),
-        "upper_U_sound": closure.get("upper_U_sound"),
-        "excluded_sound": closure.get("excluded_sound"),
-        "open_gap_sound": gap,
-        "upper_U_reviewed": closure.get("upper_U_reviewed"),
-        "excluded_reviewed": closure.get("excluded_reviewed"),
-        "open_gap_reviewed": closure.get("open_gap_reviewed"),
-        "closure_path": str(closure_path),
-        "residual_blockers": RESIDUAL_BLOCKERS if gap != 0 else [],
-        "note": (
-            "U_sound - R = empty only when open_gap_sound == 0. "
-            "Residual blockers are HostIR/model gaps, not recipe misses."
-            if gap != 0
-            else "Full sound coverage."
-        ),
-    }
-    if gate_err and not gate_ok:
-        summary["error"] = gate_err[:1000]
-    _dump(uo / "tk" / "coverage_gate.yaml", summary)
-    _dump(uo / "tk" / "residual.yaml", {
-        "open_gap_sound": gap,
-        "complete": complete,
-        "blockers": RESIDUAL_BLOCKERS if gap != 0 else [],
-    })
-    return summary
+        err = {
+            "ok": False,
+            "engine": "coverage_gate",
+            "complete": False,
+            "error": (
+                f"testcase_agent.closure unavailable: {exc}. "
+                "Install engines/testcase-generation[ml] and rebuild the ledger."
+            ),
+        }
+        _dump(uo / "tk" / "coverage_gate.yaml", err)
+        return err
 
 
 TK_ENGINES: dict[str, Any] = {

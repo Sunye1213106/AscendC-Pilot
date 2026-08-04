@@ -16,12 +16,21 @@ dependencies = [
 solver = [
   "z3-solver>=4.12",
 ]
+ml = [
+  "scikit-learn>=1.3",
+  "pandas>=2.0",
+  "numpy>=1.24",
+]
+closure = [
+  "testcase-agent[ml]",
+]
 
 [project.scripts]
 # tg-contract removed from public CLI — invoke via acp run-action contract_build
 tg-plan = "testcase_agent.cli:plan_main"
 tg-solve = "testcase_agent.cli:solve_main"
 tg-init = "testcase_agent.cli:init_main"
+tg-closure = "testcase_agent.closure.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

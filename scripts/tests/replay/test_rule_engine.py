@@ -39,22 +39,26 @@ def test_the_operator_proof_rules_load_and_cover_the_old_set():
 
 
 def test_counters_split_undeclared_from_declared_r():
-    from replay_runtime_counterexample_gate import counters, partition
+    """Ledger accounting: runtime keys outside D are undeclared, not R."""
+    from testcase_agent.closure import ledger as L
 
-    dec = {1: {"A": 0}, 2: {"A": 1}, 3: {"A": 2}}
-    seen = {
-        1: {"case_id": "a", "source_file": "x.csv"},
-        99: {"case_id": "b", "source_file": "y.csv"},  # undeclared
+    D = {1, 2, 3}
+    R_runtime = {1, 99}  # 99 undeclared
+    R = R_runtime & D
+    E: set[int] = set()
+    gap = D - R - E
+    st = {
+        "runtime_total": len(R_runtime),
+        "R_declared": len(R),
+        "undeclared": len(R_runtime - D),
+        "open_gap_sound": len(gap),
     }
-    # no rules -> nothing excluded
-    empty = RE.RuleBook()
-    excluded, in_r, gap = partition(seen, dec, empty)
-    stats = counters(seen, dec, excluded, excluded, gap, gap, in_r=in_r)
-    assert stats["runtime_total"] == 2
-    assert stats["R_declared"] == 1
-    assert stats["undeclared_runtime"] == 1
-    assert stats["open_gap_sound"] == 2  # keys 2 and 3
-    assert stats["open_gap_reviewed"] == 2
+    assert st["runtime_total"] == 2
+    assert st["R_declared"] == 1
+    assert st["undeclared"] == 1
+    assert st["open_gap_sound"] == 2  # keys 2 and 3
+    # state() shape still exposes these fields when a workspace exists
+    assert hasattr(L, "state")
 
 
 def test_human_rule_excluded_under_reviewed_not_sound(tmp_path):

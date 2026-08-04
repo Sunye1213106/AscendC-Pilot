@@ -21,27 +21,30 @@ def test_compose_validate_clean():
 
 
 def test_action_composition_fields_present():
+    """Pick a live LLM action that still carries full composition fields."""
     from ascendc_pilot.workflows.specs import WORKFLOWS
 
-    act = next(a for a in WORKFLOWS["uo-init"]["actions"] if a["id"] == "key_resolution")
-    assert act["agent_id"] == "uo-key-resolve"
-    assert act["role_id"] == "producer"
-    assert "evidence" in act["policy_ids"]
-    assert "semantic-resolution" in act["capability_ids"]
-    assert act["action_method_id"] == "uo-init/key-resolution"
-    assert act["task_prompt_id"] == "uo/key-resolution"
-    assert act["actors"] == ["uo-key-resolve"]
+    act = next(
+        a for a in WORKFLOWS["uo-init"]["actions"] if a["id"] == "scope_confirm"
+    )
+    assert act["agent_id"] == "ascendc-pilot"
+    assert act["role_id"] == "controller"
+    assert act["task_prompt_id"] == "uo/scope-confirmation"
+    assert act["action_method_id"]
+    assert isinstance(act.get("actors"), list) and act["actors"]
 
 
 def test_compose_host_smoke(tmp_path: Path):
     from compose_runtime import compose_host
 
-    # Compose into real generated path for opencode (side effect ok in CI)
     result = compose_host(REPO, "opencode")
     assert result["ok"]
     skill = REPO / "generated" / "opencode" / "skills" / "uo-init" / "SKILL.md"
-    agent = REPO / "generated" / "opencode" / "agents" / "uo-key-resolve.md"
-    prompt = REPO / "generated" / "opencode" / "prompts" / "tasks" / "uo" / "key-resolution.md"
+    agent = REPO / "generated" / "opencode" / "agents" / "ascendc-pilot.md"
+    prompt = (
+        REPO / "generated" / "opencode" / "prompts" / "tasks" / "uo"
+        / "scope-confirmation.md"
+    )
     assert skill.is_file()
     assert agent.is_file()
     assert prompt.is_file()

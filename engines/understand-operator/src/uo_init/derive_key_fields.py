@@ -526,12 +526,18 @@ class KeyFieldDerivation:
     note: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        """Serialise one field.
+
+        ``value_expr`` / ``expanded`` are the deep symbolic solve. They made up
+        ~90% of fag_derive.json and were unused by the tiling-key closure. They
+        are emitted only when ``UO_DEEP_SOLVE=1`` (the optional uo-deep-solve
+        path); the default export keeps the lightweight metadata the closure
+        and codemap actually consume.
+        """
+        out: dict[str, Any] = {
             "name": self.name,
             "index": self.index,
             "host_expr": self.host_expr,
-            "expanded": self.expanded,
-            "value_expr": self.value_expr,
             "value_table": list(self.value_table),
             "value_leaves": list(self.value_leaves),
             "input_roots": list(self.input_roots),
@@ -552,6 +558,10 @@ class KeyFieldDerivation:
             "implicit_defaults": list(self.implicit_defaults),
             "note": self.note,
         }
+        if os.environ.get("UO_DEEP_SOLVE", "").strip() in ("1", "true", "yes"):
+            out["expanded"] = self.expanded
+            out["value_expr"] = self.value_expr
+        return out
 
 
 def strip_casts(text: str) -> str:

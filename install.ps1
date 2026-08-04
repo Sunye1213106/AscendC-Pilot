@@ -130,7 +130,11 @@ if ($Platform -like "uninstall-*") {
 }
 
 if ($SkipPip -ne "1") {
-  python -m pip install -e "$BundleRoot\engines\common" -e "$BundleRoot\pilot" -e "$BundleRoot\engines\understand-operator" -e "$BundleRoot\engines\testcase-generation[solver]"
+  python -m pip install -e "$BundleRoot\engines\common" `
+    -e "$BundleRoot\pilot" `
+    -e "$BundleRoot\engines\understand-operator" `
+    -e "$BundleRoot\engines\testcase-generation[solver,ml]" `
+    -e "$BundleRoot\engines\code-engineering"
 }
 
 # Compose sources → generated/<platform>/{skills,agents,prompts}
