@@ -64,6 +64,60 @@ combos:
     tag: sparse_needs_mask
   - when: {IsAttenMask: "0", DeterType: "4"}
     tag: sparse_needs_mask
+  - when: {IsRope: "1", IsDNoEqual: "0"}
+    tag: rope_forces_dnoequal
+  - when: {IsBn2MultiBlk: "1", IsRope: "1"}
+    tag: bn2multiblk_conjunction
+  - when: {IsBn2MultiBlk: "1", IsDNoEqual: "1"}
+    tag: bn2multiblk_conjunction
+  - when: {IsTnd: "1", IsBn2MultiBlk: "1"}
+    tag: bn2multiblk_not_tnd
+  - when: {IsBn2MultiBlk: "1", DeterType: "1"}
+    tag: bn2multiblk_no_deter
+  - when: {IsBn2MultiBlk: "1", DeterType: "2"}
+    tag: bn2multiblk_no_deter
+  - when: {IsBn2MultiBlk: "1", DeterType: "3"}
+    tag: bn2multiblk_no_deter
+  - when: {IsBn2MultiBlk: "1", DeterType: "4"}
+    tag: bn2multiblk_no_deter
+
+  # The BN2S2 route caps D, by two different clauses of the same condition.
+  - when: {SplitAxis: "5", IsDrop: "1", DTemplateNum: "192"}
+    tag: bn2s2_drop_caps_d
+  - when: {SplitAxis: "5", IsDrop: "1", DTemplateNum: "256"}
+    tag: bn2s2_drop_caps_d
+  - when: {SplitAxis: "5", IsDrop: "1", DTemplateNum: "768"}
+    tag: bn2s2_drop_caps_d
+  - when: {SplitAxis: "5", IsTnd: "0", DTemplateNum: "192"}
+    tag: bn2s2_nontnd_caps_d
+  - when: {SplitAxis: "5", IsTnd: "0", DTemplateNum: "256"}
+    tag: bn2s2_nontnd_caps_d
+  - when: {SplitAxis: "5", IsTnd: "0", DTemplateNum: "768"}
+    tag: bn2s2_nontnd_caps_d
+
+  # The BN2 route drops out entirely for TND above 128.
+  - when: {SplitAxis: "1", IsTnd: "1", DTemplateNum: "192"}
+    tag: bn2_tnd_caps_d
+  - when: {SplitAxis: "1", IsTnd: "1", DTemplateNum: "256"}
+    tag: bn2_tnd_caps_d
+  - when: {SplitAxis: "1", IsTnd: "1", DTemplateNum: "768"}
+    tag: bn2_tnd_caps_d
+
+  # fp32 above D=256 takes a fixed basic block.
+  - when: {InputDType: "1", DTemplateNum: "768", S1TemplateNum: "128"}
+    tag: fp32_wide_d_fixes_s1
+  - when: {InputDType: "1", DTemplateNum: "768", S1TemplateNum: "512"}
+    tag: fp32_wide_d_fixes_s1
+  - when: {InputDType: "1", DTemplateNum: "768", S2TemplateNum: "256"}
+    tag: fp32_wide_d_fixes_s1
+  - when: {InputDType: "1", DTemplateNum: "768", S2TemplateNum: "512"}
+    tag: fp32_wide_d_fixes_s1
+
+  # nEqual is not a shape fact at all; it is gated on the deter type.
+  - when: {IsNEqual: "1", DeterType: "0"}
+    tag: nequal_needs_deter
+  - when: {IsNEqual: "1", DeterType: "1"}
+    tag: nequal_needs_deter
 
 combo_evidence:
   rope_d: >
@@ -78,3 +132,67 @@ combo_evidence:
     DETER_CAUSAL and DETER_BAND both require isSparse, and SetSparseParams
     returns false as soon as attenMask is empty
     (common_regbase.cpp:1545-1549, 796-813)
+  rope_forces_dnoequal: >
+    GetTilingKey computes dNoEqual = (d1 != d) || hasRope, so rope raises the
+    bit whatever the head dims are (normal_regbase.cpp:1438). hasRope is
+    assigned once, before any tiling branch (normal_regbase.cpp:95)
+  bn2multiblk_conjunction: >
+    isBn2MultiBlk is a conjunction ending in (d == d1) and !hasRope
+    (common_regbase.cpp:1598,1602), and dNoEqual is exactly (d1 != d) ||
+    hasRope (normal_regbase.cpp:1438). d and d1 are written only while the
+    shapes are read (normal_regbase.cpp:107-330), which is before
+    SetSplitAxis, so the two see the same values
+  bn2multiblk_not_tnd: >
+    isBn2MultiBlk requires bnSparseLimit, which requires layoutType !=
+    INPUT_FORMAT_TND (common_regbase.cpp:1589). The one assignment that can
+    put layoutType back to TND is guarded by !isBn2
+    (common_regbase.cpp:1637-1638), and line 1603 has already forced isBn2
+    true whenever isBn2MultiBlk is; nothing else writes INPUT_FORMAT_TND after
+    the shapes are read. isTnd is read off layoutType in GetTilingKey
+    (normal_regbase.cpp:1442)
+  bn2multiblk_no_deter: >
+    SetSplitAxis clears isDeterministic whenever isBn2MultiBlk survives
+    (common_regbase.cpp:1612-1613), and GetDeterSparseTilingKey returns
+    NO_DETER when !isDeterministic (normal_regbase.cpp:790-794)
+  bn2s2_drop_caps_d: >
+    splitAxis becomes BN2S2 only at common_regbase.cpp:1639, under
+    bn2S2RouteLimit, whose dropout clause is
+    (keepProb >= 1 || (d <= NUM128 && keepProb < 1)) at lines 1631-1632.
+    IsDrop is keepProb < 1 (normal_regbase.cpp:1440), so the route with
+    dropout forces d <= 128, i.e. DTemplateNum in {64, 128}. Nothing
+    reassigns keepProb or d between the two points, and BN2S2 survives to
+    GetTilingKey only via the early return at normal_regbase.cpp:665-666 --
+    every other path overwrites splitAxis at line 691
+  bn2s2_nontnd_caps_d: >
+    bn2S2RouteLimit's layout clause is
+    (layoutType == TND || (isAllSame && !isDeterministic) || bn2S2NotTndLimit)
+    (common_regbase.cpp:1629-1630), and line 1638 then sets
+    layoutType = isAllSame ? TND : layoutType. So a BN2S2 key that still reads
+    isTnd == 0 took neither of the first two disjuncts, leaving
+    bn2S2NotTndLimit, which requires d <= BN2S2_WRITE_UB_D = 128
+    (lines 1621-1626, constant at common_regbase.h:116). Hence
+    DTemplateNum in {64, 128}
+  fp32_wide_d_fixes_s1: >
+    GetS1S2TemplateType's first branch is
+    (queryType == ge::DT_FLOAT && d > NUM256), and it returns the fixed pair
+    (NUM64, NUM128) (common_regbase.cpp:812-816). DTemplateNum is 768 exactly
+    when !hasRope and d > NUM256 (common_regbase.cpp:847-866), and InputDType
+    is FLOAT32 exactly when queryType is DT_FLOAT
+    (common_regbase.cpp:1650-1651). So an fp32 key at DTemplateNum=768 has
+    S1TemplateNum=64 and S2TemplateNum=128, and no other pair
+  nequal_needs_deter: >
+    The key's nEqual slot is isDeterNEqual, defined as
+    deterSparseType != DETER_OLD && deterSparseType != NO_DETER && g == 1
+    (normal_regbase.cpp:1444-1446). NO_DETER is 0 and DETER_OLD is 1
+    (common_regbase.h:309-315), and the DeterType slot is deterSparseType
+    itself (normal_regbase.cpp:1464), so nEqual cannot be set while DeterType
+    is 0 or 1
+  bn2_tnd_caps_d: >
+    For TND, isBn2MultiBlk is false (bnSparseLimit excludes TND,
+    common_regbase.cpp:1589), so the isBn2 && !isBn2MultiBlk branch at
+    lines 1604-1611 runs and clears isBn2 whenever layoutType == TND and
+    d > ALIGN128. splitAxis is BN2 only while isBn2 holds
+    (common_regbase.cpp:1640-1641, normal_regbase.cpp:691), and isBn2 is only
+    ever cleared, never re-set. layoutType cannot become TND afterwards
+    either: the one assignment that does so is guarded by !isBn2
+    (line 1637). So SplitAxis=BN2 with isTnd=1 implies d <= 128

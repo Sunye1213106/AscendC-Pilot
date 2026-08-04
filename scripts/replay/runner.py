@@ -33,6 +33,15 @@ from .manifest import (  # noqa: E402
     ManifestError, OperatorManifest, available, discover, slots_of)
 
 
+#: `reject` prefixes that mean "the host never gave a verdict", as opposed to
+#: the host having refused. Telling the two apart matters: a case the driver
+#: died on and a case it never reached are not evidence about the operator,
+#: and counting them as refusals both understates acceptance and feeds a
+#: learner negative examples nothing earned.
+CRASHED = "HOST_CRASHED"
+NOT_RUN = "NOT_RUN"
+
+
 @dataclass
 class Result:
     case_id: str
@@ -42,6 +51,11 @@ class Result:
     logged: dict = field(default_factory=dict)    # read off the tiling's own log
     diag: dict = field(default_factory=dict)      # intermediates
     reject: str = ""                              # why tiling refused, if it did
+
+    @property
+    def verdict(self) -> bool:
+        """Whether the host actually judged this case, either way."""
+        return not self.reject.startswith((CRASHED, NOT_RUN))
     #: Per-sample records, one list per named series. Unlike everything above
     #: these are evidence about individual batch entries rather than about the
     #: case, which is what a claim about a loop can be checked against.
@@ -148,6 +162,35 @@ class ReplayRunner:
         close()
         return out
 
+    def finished_ids(self, text: str) -> set[str]:
+        """Cases the driver saw all the way through.
+
+        `parse_log` also returns a Result for a case whose ###CASE was printed
+        and whose ###DONE never was -- the one the driver died on. That Result
+        is indistinguishable from a refusal, so the done marks are counted
+        separately.
+        """
+        done_mark = self.manifest.log.marks.get("done")
+        if done_mark is None:
+            return set()
+        out = set()
+        for line in text.splitlines():
+            m = done_mark.match(line)
+            if m:
+                out.add(m.group("case_id"))
+        return out
+
+    def started_ids(self, text: str) -> list[str]:
+        case_mark = self.manifest.log.marks.get("case")
+        if case_mark is None:
+            return []
+        out = []
+        for line in text.splitlines():
+            m = case_mark.match(line)
+            if m:
+                out.append(m.group("case_id"))
+        return out
+
     # --- running it ------------------------------------------------------
 
     def preflight(self, cases: dict[str, I.Case]) -> dict[str, Result]:
@@ -208,9 +251,50 @@ class ReplayRunner:
                 f"(see docs/workflows/tiling-key-coverage.md)"
             )
 
+    def _invoke(self, send: dict[str, I.Case], in_csv, out_csv, log_txt,
+                with_log: bool) -> tuple[str, int]:
+        """One driver invocation. Returns the log text and the driver's status."""
+        in_csv.write_text(
+            "\n".join(I.to_csv_line(c, cid) for cid, c in send.items()) + "\n",
+            encoding="utf-8", newline="\n",
+        )
+        proc = subprocess.run(
+            ["wsl", "-d", self.manifest.distro, "-e", "bash", self.manifest.entry,
+             _wsl(in_csv), _wsl(out_csv), _wsl(log_txt), "1" if with_log else "0"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        stdout = proc.stdout or ""
+        if self.manifest.done_marker not in stdout:
+            raise RuntimeError(
+                f"replay did not finish: {proc.stdout}\n{proc.stderr}")
+        # The entry script reports the driver's status in the done marker and
+        # exits zero itself, so the subprocess return code says nothing about
+        # whether the batch survived.
+        rc = proc.returncode
+        if "rc=" in stdout:
+            tail = stdout.split("rc=", 1)[1].split()
+            if tail and tail[0].lstrip("-").isdigit():
+                rc = int(tail[0])
+        return log_txt.read_text(encoding="utf-8", errors="replace"), rc
+
     def run(self, cases: dict[str, I.Case], *, with_log: bool = True,
-            tag: str = "batch", check: bool = True) -> dict[str, Result]:
-        """Replay every case and return one result each, keyed by case id."""
+            tag: str = "batch", check: bool = True,
+            restarts: int = 64) -> dict[str, Result]:
+        """Replay every case and return one result each, keyed by case id.
+
+        A driver that dies takes the rest of its batch with it. Nothing about
+        that is visible from the outside: the entry script reports success
+        either way, and the cases the driver never reached come back as
+        Results with no key and no reason -- the same shape a refusal has. A
+        single input could therefore turn most of a batch into silent negative
+        evidence, which is how a search comes to spend its budget on cases it
+        never ran.
+
+        So the batch is resumed. Whatever finished is kept, the case the
+        driver died on is recorded as such, and the remainder goes back for
+        another pass until every case has a verdict or the restart budget is
+        spent.
+        """
         self.cache.mkdir(parents=True, exist_ok=True)
         in_csv = self.cache / f"{tag}_in.csv"
         out_csv = self.cache / f"{tag}_out.csv"
@@ -220,24 +304,45 @@ class ReplayRunner:
         # Shadow: every case is sent. Filtering used to drop real witnesses
         # whenever the premise grade lagged; recording the would-reject is
         # enough to calibrate without losing coverage.
-        send = cases
-
-        in_csv.write_text(
-            "\n".join(I.to_csv_line(c, cid) for cid, c in send.items()) + "\n",
-            encoding="utf-8", newline="\n",
-        )
-
         self._require_host()
-        proc = subprocess.run(
-            ["wsl", "-d", self.manifest.distro, "-e", "bash", self.manifest.entry,
-             _wsl(in_csv), _wsl(out_csv), _wsl(log_txt), "1" if with_log else "0"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-        )
-        if self.manifest.done_marker not in (proc.stdout or ""):
-            raise RuntimeError(
-                f"replay did not finish: {proc.stdout}\n{proc.stderr}")
 
-        results = self.parse_log(log_txt.read_text(encoding="utf-8", errors="replace"))
+        results: dict[str, Result] = {}
+        transcript: list[str] = []
+        pending = dict(cases)
+        for _ in range(max(restarts, 0) + 1):
+            if not pending:
+                break
+            text, rc = self._invoke(pending, in_csv, out_csv, log_txt, with_log)
+            transcript.append(text)
+            done = self.finished_ids(text)
+            parsed = self.parse_log(text)
+            for cid in done:
+                if cid in parsed:
+                    results[cid] = parsed[cid]
+
+            # The case that started and never finished is the one that killed
+            # the driver. Record it, drop it, and carry on with the rest.
+            started = self.started_ids(text)
+            crashed = next((c for c in reversed(started) if c not in done), None)
+            for cid in done:
+                pending.pop(cid, None)
+            if crashed is not None:
+                results[crashed] = Result(
+                    case_id=crashed,
+                    reject=f"{CRASHED} driver exited rc={rc} after "
+                           f"{len(done)} of {len(pending) + len(done)} cases")
+                pending.pop(crashed, None)
+            elif not done:
+                break  # no progress and nobody to blame: stop rather than spin
+
+        for cid, case in pending.items():
+            results[cid] = Result(
+                case_id=cid,
+                reject=f"{NOT_RUN} restart budget exhausted")
+
+        if transcript:
+            log_txt.write_text("".join(transcript), encoding="utf-8", newline="\n")
+
         for cid, shadow_r in shadow.items():
             r = results.setdefault(cid, Result(case_id=cid))
             # Prefer the host's own refusal when it has one; otherwise keep the
@@ -269,8 +374,13 @@ class ReplayRunner:
         row += [str(r.dims.get(n, "")) for n in self.dim_names()]
         row += [str(r.logged.get(n, "")) for n in self.log_fields]
         row += [str(r.diag.get(n, "")) for n in self.manifest.log.report_state]
-        row += [r.reject.replace(",", " ")]
-        return row
+        row += [r.reject]
+        # Every field, not just the reject. `reject` was the only one scrubbed,
+        # but a case tag reads `BSND:d=64,d1=16` and split the row in two --
+        # silently, and for about a sixth of the corpus, which a strict reader
+        # then dropped. Whichever column grows a comma next should not cost
+        # another round of runs to notice.
+        return [_plain(v) for v in row]
 
     def write_wide(self, path: Path, cases: dict[str, I.Case],
                    results: dict[str, Result]) -> None:
@@ -279,6 +389,11 @@ class ReplayRunner:
             lines.append(",".join(self.wide_row(cid, case.normalised(), results[cid])))
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+
+
+def _plain(value: str) -> str:
+    """One CSV field, with nothing in it that would end the field early."""
+    return str(value).replace(",", " ").replace("\n", " ").replace("\r", " ")
 
 
 def _wsl(p: Path) -> str:

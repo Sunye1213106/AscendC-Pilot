@@ -168,9 +168,16 @@ int main(int argc, char** argv) {
     // arch35 / Ascend950. Keeping this in the driver (not the CSV) is why one
     // binary serves every arch35 replay; a different arch needs a rebuild, not
     // a new column.
+    // npuArch is the last field and was being left value-initialised, which
+    // reads as "not dav-3510". Only one thing branches on it -- the empty
+    // output path, which then picks the pre-regbase tiling and emits key 0 --
+    // so every other key came out right and the omission stayed invisible.
+    // Ascend950 is dav-3510, so saying so is what the rest of the struct
+    // already claims.
     FlashAttentionScoreGradCompileInfo compileInfo = {
         64, 32, 196608, 524288, 65536, 65536, 131072, 33554432, 32,
         platform_ascendc::SocVersion::ASCEND950,
+        NpuArch::DAV_3510,
     };
     static const char* kSocInfo =
         "{\"hardware_info\":{"

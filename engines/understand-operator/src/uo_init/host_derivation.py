@@ -201,6 +201,12 @@ class GuardEvidenceIndex:
 
     An expanded guard has no single origin, so `also` reports how many other
     source guards are in there with it.
+
+    A guard that *is* one opaque call has no path condition to match at all —
+    `CheckExceedL2Cache()` stood for a whole condition and was reported with no
+    file or line, so the residual table cited a hash. Such a guard does have a
+    recorded origin, just in `call_sites` rather than in a path condition, and
+    `_calls` is consulted for exactly that shape.
     """
 
     #: How much of a source guard must appear in the expansion. Below 1.0
@@ -228,6 +234,48 @@ class GuardEvidenceIndex:
                     self._rows.append(
                         (toks, cfile, cline, text, getattr(w, "function", "") or "")
                     )
+        #: callee -> the places it is called from. Keyed on the callee alone, so
+        #: an overload set collapses into one entry and is then refused for
+        #: being ambiguous, which is the safe direction.
+        self._calls: dict[str, list[tuple[str, int, str]]] = {}
+        for site in getattr(host_ir, "call_sites", []) or ():
+            callee = str(getattr(site, "callee", "") or "")
+            cfile = str(getattr(site, "file", "") or "")
+            if not callee or not cfile:
+                continue
+            self._calls.setdefault(callee, []).append(
+                (cfile, int(getattr(site, "line", 0) or 0), str(getattr(site, "caller", "") or ""))
+            )
+
+    def _call_origin(self, text: str, scope: str) -> dict[str, Any] | None:
+        """The one call site a guard that is nothing but a call came from.
+
+        Only for a guard whose entire text is a single call: an opaque call
+        standing in for a whole condition. A call named *among* other terms is
+        not this case — the guard is then a conjunction whose origin is the
+        path condition, which `best` has already looked for.
+
+        Exactly one call site, or nothing. Naming one of several is a guess, and
+        the reason this index exists at all is that a wrong line reads as an
+        answer while a missing one reads as a gap.
+        """
+        toks = _tokens(text)
+        if len(toks) != 1:
+            return None
+        name = next(iter(toks))
+        if f"{name}(" not in str(text or "").replace(" ", ""):
+            return None
+        found = [s for s in self._calls.get(name, ()) if not scope or s[2] == scope]
+        if len(found) != 1:
+            return None
+        cfile, cline, caller = found[0]
+        return {
+            "file": cfile.replace("\\", "/"),
+            "line": cline,
+            "snippet": f"{name}() called in {caller}" if caller else f"{name}()",
+            "match": 1.0,
+            "via": "call_site",
+        }
 
     def best(self, text: str, scope: str = "") -> dict[str, Any] | None:
         """Where this guard came from, optionally confined to one function.
@@ -241,8 +289,10 @@ class GuardEvidenceIndex:
         no line.
         """
         toks = _tokens(text)
-        if not toks or not self._rows:
+        if not toks:
             return None
+        if not self._rows:
+            return self._call_origin(text, scope)
         found: list[tuple[int, float, str, int, str]] = []
         for row_toks, cfile, cline, raw, fn in self._rows:
             if scope and fn and fn != scope:
@@ -254,7 +304,7 @@ class GuardEvidenceIndex:
             # specific one is the most useful place to start reading.
             found.append((len(row_toks), covered, cfile, cline, raw))
         if not found:
-            return None
+            return self._call_origin(text, scope)
         found.sort(key=lambda r: (r[0], r[1]), reverse=True)
         _n, covered, cfile, cline, raw = found[0]
         out: dict[str, Any] = {

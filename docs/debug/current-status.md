@@ -3,7 +3,7 @@
 > Written by `scripts/_probe_derive.py` on every full run. Do not edit.
 > Numbers quoted anywhere else are commentary and may lag this file.
 
-- run: `2026-08-03T15:51:29.713075+00:00`  op: `FlashAttentionScoreGrad`  arch: `arch35`
+- run: `2026-08-04T01:33:38.783156+00:00`  op: `FlashAttentionScoreGrad`  arch: `arch35`
 
 | metric | value |
 | --- | ---: |
@@ -15,15 +15,15 @@
 | domain_violations | 1 |
 | collapsed leaves (must be 0) | **1** |
 | max expanded chars | 123039 |
-| total seconds | 36.1 |
+| total seconds | 71.1 |
 
 ## Remaining free variables
 
 | variable | where | blocks | dimensions |
 | --- | --- | ---: | --- |
 | `VAR_AUX_FBASEPARAMS_DETERSPARSETYPE` |  | 1 | IsNzOut |
-| `VAR_INIT_36CDA3758519` |  | 3 | IsBn2MultiBlk, IsTndSwizzle, SplitAxis |
-| `VAR_INIT_ECF6DE7D873A` |  | 2 | IsNzOut, IsTndSwizzle |
+| `VAR_INIT_88BC16D7A53A` |  | 2 | IsNzOut, IsTndSwizzle |
+| `VAR_INIT_D322285C4E66` |  | 3 | IsBn2MultiBlk, IsTndSwizzle, SplitAxis |
 | `invalidS1Array[j]` | FillBlockInfoLoadBalanceForBn2 @ flash_attention_score_grad_tiling_varlen_regbase.cpp:899 | 3 | IsBn2MultiBlk, IsTndSwizzle, SplitAxis |
 | `invalidS1Array[j]` | GetParseS1S2OuterInfo @ flash_attention_score_grad_tiling_normal_regbase.cpp:1546 | 3 | IsBn2MultiBlk, IsTndSwizzle, SplitAxis |
 | `CheckExceedL2Cache()` | 235C48CE5B99 | 2 | IsNzOut, IsTndSwizzle |
