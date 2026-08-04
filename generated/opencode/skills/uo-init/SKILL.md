@@ -51,6 +51,7 @@ acp run-action <action_id>
 | `apply_gap_patch` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/apply-gap-patch` | `-` | `gap-patch-v1` |
 | `export_kb` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/export-kb` | `-` | `export-kb-v1` |
 | `build_index` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/build-index` | `-` | `build-index-v1` |
+| `export_tg_host_view` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/export-tg-host-view` | `-` | `export-tg-host-view-v1` |
 | `export_integrity` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/export-integrity` | `-` | `integrity-v1` |
 | `kb_review` | `subagent` | `uo-kb-review` | `referee` | `uo-init/kb-review` | `uo/kb-review` | `kb-review-v1` |
 
@@ -238,6 +239,7 @@ Pilot 独占状态、合法边、门禁与完成态。
 | `apply_gap_patch` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/apply-gap-patch` | `-` | `deterministic-uo-engine` |
 | `export_kb` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/export-kb` | `-` | `deterministic-uo-engine` |
 | `build_index` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/build-index` | `-` | `deterministic-uo-engine` |
+| `export_tg_host_view` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/export-tg-host-view` | `-` | `deterministic-uo-engine` |
 | `export_integrity` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `uo-init/export-integrity` | `-` | `deterministic-uo-engine` |
 | `kb_review` | source-authority,code-access,evidence,language,pilot-control,output-quality | structured-review,kb-query | `uo-init/kb-review` | `uo/kb-review` | `uo-kb-review` |
 
@@ -259,5 +261,6 @@ Pilot 独占状态、合法边、门禁与完成态。
 | `apply_gap_patch` | `actions/apply-gap-patch/METHOD.md` | `-` | `gap-patch-v1` | `deterministic_engine` |
 | `export_kb` | `actions/export-kb/METHOD.md` | `-` | `export-kb-v1` | `deterministic_engine` |
 | `build_index` | `actions/build-index/METHOD.md` | `-` | `build-index-v1` | `deterministic_engine` |
+| `export_tg_host_view` | `actions/export-tg-host-view/METHOD.md` | `-` | `export-tg-host-view-v1` | `deterministic_engine` |
 | `export_integrity` | `actions/export-integrity/METHOD.md` | `-` | `integrity-v1` | `deterministic_engine` |
 | `kb_review` | `actions/kb-review/METHOD.md` | `prompts/tasks/uo/kb-review.md` | `kb-review-v1` | `referee` |

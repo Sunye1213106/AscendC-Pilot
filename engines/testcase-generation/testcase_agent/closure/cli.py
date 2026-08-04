@@ -7,6 +7,12 @@
     python -m testcase_agent.closure.cli residual
     python -m testcase_agent.closure.cli mine
     python -m testcase_agent.closure.cli assess
+    python -m testcase_agent.closure.cli fit
+    python -m testcase_agent.closure.cli generate
+    python -m testcase_agent.closure.cli replay
+    python -m testcase_agent.closure.cli commit
+    python -m testcase_agent.closure.cli construct
+    python -m testcase_agent.closure.cli explain
 """
 
 from __future__ import annotations
@@ -32,7 +38,7 @@ def _print(doc: dict) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="tg-closure")
-    ap.add_argument("--root", default=None, help="AscendC-Pilot repo root")
+    ap.add_argument("--root", default=None, help="operator / project root")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("rebuild", help="recompute R from raw artefacts")
@@ -43,6 +49,29 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("state", help="print D/R/E/gap counts")
     sub.add_parser("assess", help="sklearn usability report for hard dims")
     sub.add_parser("corpus", help="corpus summary")
+    sub.add_parser("route", help="residual router reason code")
+    p_round = sub.add_parser("search-round", help="one bounded directed-search round")
+    p_round.add_argument("--budget", type=int, default=64)
+    p_round.add_argument("--seed", type=int, default=0)
+    p_round.add_argument("--stub", action="store_true", help="use StubOracle (no NPU)")
+
+    sub.add_parser("fit", help="fit surrogate models on current corpus")
+    p_gen = sub.add_parser("generate", help="sample a candidate pool")
+    p_gen.add_argument("-n", type=int, default=32)
+    p_gen.add_argument("--seed", type=int, default=0)
+    p_rep = sub.add_parser("replay", help="replay cases via HostOracle (needs NPU)")
+    p_rep.add_argument("-n", type=int, default=8)
+    p_rep.add_argument("--seed", type=int, default=0)
+    p_rep.add_argument("--tag", default="cli_replay")
+    p_commit = sub.add_parser("commit", help="commit judged rows into corpus")
+    p_commit.add_argument("--csv", required=True, help="path to judged wide CSV")
+    p_cons = sub.add_parser("construct", help="build cases for distance-1 open keys")
+    p_cons.add_argument("--limit", type=int, default=32)
+    p_exp = sub.add_parser("explain", help="explain disagreements on open keys")
+    p_exp.add_argument("--open-limit", type=int, default=60)
+    p_exp.add_argument("--per-target", type=int, default=24)
+    p_exp.add_argument("--dry-run", action="store_true",
+                       help="list targets without host replay")
 
     args = ap.parse_args(argv)
     ws = W.default_workspace(args.root).ensure()
@@ -72,6 +101,107 @@ def main(argv: list[str] | None = None) -> int:
         return _print({"ok": True, "nodes": models.assess(df)})
     if args.cmd == "corpus":
         return _print({"ok": True, **corpus.summary(ws)})
+    if args.cmd == "route":
+        from testcase_agent.closure import search_round
+
+        return _print({"ok": True, **search_round.route(ws)})
+    if args.cmd == "search-round":
+        from testcase_agent.closure import search_round
+        from testcase_agent.closure.oracle import StubOracle
+
+        oracle = StubOracle() if args.stub else None
+        return _print(search_round.run_round(
+            ws, budget=args.budget, seed=args.seed, oracle=oracle,
+        ))
+    if args.cmd == "fit":
+        df = corpus.dedup(corpus.load(ws))
+        if df is None or df.empty:
+            return _print({"ok": False, "error": "empty corpus"})
+        assessment = models.assess(df)
+        models.fit(df)
+        models_dir = ws.state / "models"
+        models_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            import yaml
+
+            (models_dir / "assessment.yaml").write_text(
+                yaml.safe_dump(assessment, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+        gap = models.write_parent_gap(df, ws) if hasattr(models, "write_parent_gap") else {}
+        return _print({"ok": True, "dims": len(assessment), "parent_gap": gap})
+    if args.cmd == "generate":
+        from testcase_agent.closure import generate as G
+
+        cases, frame = G.pool(n=args.n, seed=args.seed)
+        return _print({
+            "ok": True,
+            "n": len(cases),
+            "columns": list(frame.columns) if frame is not None else [],
+        })
+    if args.cmd == "replay":
+        from testcase_agent.closure import generate as G
+        from testcase_agent.closure.oracle import HostOracle
+
+        cases, _ = G.pool(n=args.n, seed=args.seed)
+        verdicts = HostOracle().judge(cases, tag=args.tag)
+        return _print({
+            "ok": True,
+            "sent": len(cases),
+            "judged": sum(1 for v in verdicts if v.verdict),
+            "accepted": sum(1 for v in verdicts if v.ok),
+            "keys": [v.key for v in verdicts if v.ok],
+        })
+    if args.cmd == "commit":
+        import pandas as pd
+
+        path = args.csv
+        frame = pd.read_csv(path)
+        out = corpus.commit(frame, ws)
+        recheck = lemma.reverify_active(ws) if hasattr(lemma, "reverify_active") else {}
+        return _print({"ok": True, "path": str(out), "reverify": recheck})
+    if args.cmd == "construct":
+        from testcase_agent.closure import construct
+
+        analysis = residual.analyse(ws)
+        targets = residual.distance_one_targets(analysis)[: args.limit]
+        built = 0
+        n_cases = 0
+        for t in targets:
+            try:
+                inst = W.decode(int(t["key"]))
+                cs = construct.build(inst)
+                n_cases += len(cs)
+                built += 1
+            except Exception:
+                continue
+        return _print({
+            "ok": True,
+            "targets": len(targets),
+            "built": built,
+            "cases": n_cases,
+        })
+    if args.cmd == "explain":
+        from testcase_agent.closure import construct
+        from testcase_agent.closure import explain
+
+        if args.dry_run:
+            analysis = residual.analyse(ws)
+            return _print({
+                "ok": True,
+                "dry_run": True,
+                "open": analysis.get("open"),
+                "distance_1": len(residual.distance_one_targets(analysis)),
+            })
+        out = explain.run_explain(
+            construct.build,
+            open_limit=args.open_limit,
+            per_target=args.per_target,
+            ws=ws,
+        )
+        return _print({"ok": True, **out})
     return 2
 
 

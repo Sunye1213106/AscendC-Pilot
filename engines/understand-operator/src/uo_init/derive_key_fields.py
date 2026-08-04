@@ -1223,12 +1223,31 @@ class KeyFieldDeriver:
     # -- definition lookup -------------------------------------------------
     def _field_defs(self, path: str) -> list[DefSite]:
         tail = path.rsplit(".", 1)[-1]
-        by_tail = self.ir.writes_by_tail().get(tail, [])
+        by_tail = list(self.ir.writes_by_tail().get(tail, []))
+        # Promote one-level callee returns onto field paths (same as host view).
+        expand = getattr(self.ir, "expand_callee_writers", None)
+        if callable(expand):
+            for w in expand():
+                if getattr(w, "via", "") and (
+                    w.path == path
+                    or w.path.endswith("." + path)
+                    or w.path.rsplit(".", 1)[-1] == tail
+                ):
+                    by_tail.append(w)
         exact = [w for w in by_tail if w.path == path or w.path.endswith("." + path)]
         exact += self._alias_writes(path, tail, exact)
         pool = exact or [
             w for w in by_tail if w.path.rsplit(".", 1)[0] == path.rsplit(".", 1)[0]
         ]
+        # Dedup by (file, line, rhs).
+        seen: set[tuple] = set()
+        unique = []
+        for w in sorted(pool, key=lambda w: (w.file, w.line)):
+            key = (w.file, w.line, w.rhs)
+            if key in seen or not w.rhs.strip():
+                continue
+            seen.add(key)
+            unique.append(w)
         return [
             DefSite(
                 rhs=w.rhs,
@@ -1239,8 +1258,7 @@ class KeyFieldDeriver:
                 conds=_decisive_conds(w),
                 loops=_loops_of(w),
             )
-            for w in sorted(pool, key=lambda w: (w.file, w.line))
-            if w.rhs.strip()
+            for w in unique
         ]
 
     def _alias_writes(self, path: str, tail: str, already: list) -> list:
@@ -1286,33 +1304,109 @@ class KeyFieldDeriver:
             if w.rhs.strip() and w.rhs.strip() != name
         ]
 
+    _CALL_NAME = re.compile(
+        r"^(?:(?:this\.)?[A-Za-z_]\w*(?:\.|->))*([A-Za-z_]\w*)\s*\("
+    )
+
+    def _return_callee_defs(self, sites: list[DefSite]) -> list[DefSite]:
+        """Promote ``__return__`` writes inside callees named by call-site RHS.
+
+        A local ``x = F(...)`` records only the call site. The values that
+        decide ``x`` live as ``__return__`` writes inside ``F``. Without
+        promoting them, proof sites like ``GetDeterSparseTilingKey`` and
+        ``SetSparseParams`` look empty even though the walker recorded every
+        return. One-level only — same discipline as ``HostIR.expand_callee_writers``.
+        """
+        by_fn: dict[str, list] = {}
+        for w in getattr(self.ir, "local_writes", ()) or ():
+            if getattr(w, "path", "") == RETURN_SLOT and getattr(w, "function", ""):
+                by_fn.setdefault(w.function, []).append(w)
+
+        out: list[DefSite] = []
+        seen: set[tuple] = set()
+        for site in sites:
+            m = self._CALL_NAME.match((site.rhs or "").strip())
+            if not m:
+                continue
+            callee = m.group(1)
+            returns = by_fn.get(callee) or []
+            if not returns:
+                for name, rws in by_fn.items():
+                    if (
+                        name == callee
+                        or name.endswith("::" + callee)
+                        or name.endswith("_" + callee)
+                    ):
+                        returns = rws
+                        break
+            for rw in returns:
+                key = (rw.function, rw.line, rw.rhs)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(
+                    DefSite(
+                        rhs=rw.rhs,
+                        guards=tuple(rw.guards()) if hasattr(rw, "guards") else (),
+                        file=rw.file or site.file,
+                        line=int(rw.line or 0),
+                        function=rw.function or callee,
+                        conds=_decisive_conds(rw) if hasattr(rw, "path_conditions") else (),
+                        loops=_loops_of(rw) if hasattr(rw, "path_conditions") else (),
+                    )
+                )
+        return out
+
+    def _merge_def_sites(self, *groups: list[DefSite]) -> list[DefSite]:
+        """Deduplicate by (file, line, function, rhs), preserving order."""
+        seen: set[tuple] = set()
+        out: list[DefSite] = []
+        for group in groups:
+            for d in group:
+                key = (d.file, d.line, d.function, d.rhs)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(d)
+        return out
+
     def _defs_for(self, name: str, fn: str) -> list[DefSite]:
         return [d for d in self._all_defs_for(name, fn) if "..." not in d.rhs]
 
     def _all_defs_for(self, name: str, fn: str) -> list[DefSite]:
+        """Collect every assignment that can define ``name``, including callees.
+
+        Local writes and callee return / out-param writes are **unioned** —
+        previously a non-empty local list short-circuited and hid the real
+        assignments inside ``SetSparseParams`` / ``GetDeterSparseTilingKey``.
+        """
         if "." in name:
-            return self._field_defs(name)
+            field = self._field_defs(name)
+            return self._merge_def_sites(field, self._return_callee_defs(field))
+
         local = self._local_defs(name, fn)
-        if local:
-            return local
         # Declared without a guarded write in this scope: fall back to the
         # function summary, which has the RHS but no path conditions.
         defs = self.ir.defs_by_function().get(fn, {}).get(name, [])
         sites = [
             DefSite(rhs=r, function=fn) for r in defs if r.strip() and r.strip() != name
         ]
-        if sites:
-            return sites
-        # A bare identifier naming a data member of the tiling class.
+        class_field: list[DefSite] = []
         if name in getattr(self.ir, "class_fields", ()):  # pragma: no branch
             for owner in ("fBaseParams", "tilingData"):
                 got = self._field_defs(f"{owner}.{name}")
                 if got:
-                    return got
+                    class_field = got
+                    break
         out_param = self._out_param_defs(name, fn)
-        if out_param:
-            return out_param
-        return self._unique_foreign_defs(name, fn)
+        foreign = self._unique_foreign_defs(name, fn)
+
+        # Seed for callee expansion: any RHS that looks like a call.
+        call_seeds = self._merge_def_sites(local, sites, class_field, out_param, foreign)
+        callee = self._return_callee_defs(call_seeds)
+        return self._merge_def_sites(
+            local, sites, class_field, out_param, foreign, callee
+        )
 
     def _out_param_defs(self, name: str, fn: str) -> list[DefSite]:
         """A local the callee writes through a reference parameter.

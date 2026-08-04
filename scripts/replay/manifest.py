@@ -175,7 +175,7 @@ class OperatorManifest:
             # property of that driver, and guessing it would turn a run that
             # died halfway into one that looks merely empty.
             done_marker=str(_need(replay, "done_marker", path)),
-            cache=str(artifacts.get("cache") or ".probe_cache/replay"),
+            cache=str(artifacts.get("cache") or "tg/replay"),
             wide_glob=str(artifacts.get("wide_glob") or "*key_cases*.csv"),
             log=LogProtocol.load(path.parent / log_name),
             package=path.parent,
@@ -203,13 +203,20 @@ def discover(root: Path, operator: str, arch: str) -> Path:
 
 
 def available(root: Path) -> list[tuple[str, str]]:
-    """Every operator package present, as (operator, arch) pairs."""
+    """Every operator package present, as (operator, arch) pairs.
+
+    Names starting with ``_`` are reserved for synthetic / test fixtures and
+    are only selected when ``UO_OPERATOR`` is set explicitly.
+    """
     base = root / OPERATORS_DIR
     if not base.is_dir():
         return []
     out = []
     for manifest in sorted(base.glob("*/*/operator.yaml")):
-        out.append((manifest.parent.parent.name, manifest.parent.name))
+        op = manifest.parent.parent.name
+        if op.startswith("_"):
+            continue
+        out.append((op, manifest.parent.name))
     return out
 
 

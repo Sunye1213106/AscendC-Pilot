@@ -18,48 +18,81 @@ from pathlib import Path
 from typing import Any
 
 _ROOT = Path(__file__).resolve().parents[2]
-_PACKAGE = (_ROOT / "operators" / "flash_attention_score_grad"
-            / "arch35" / "input_semantics.py")
+_MOD_NAME = "uo_operator_input_semantics"
+_mod: Any | None = None
+_loaded_from: Path | None = None
+
+_EXPORTS = (
+    "LAYOUTS",
+    "ATTEN_MASKS",
+    "PSE_SHAPES",
+    "DT",
+    "IN_ORDER",
+    "OUT_ORDER",
+    "FIXED_DT",
+    "ROPE_D",
+    "PSE_ALIBI_S",
+    "ROPE_TOTAL_D",
+    "Case",
+    "dtype_of",
+    "shapes",
+    "_shapes",
+    "describe",
+    "SEMANTICS",
+)
 
 
-def _load() -> Any:
-    name = "uo_operator_input_semantics"
-    if name in sys.modules:
-        return sys.modules[name]
-    if not _PACKAGE.is_file():
+def _semantics_path() -> Path:
+    from .package_data import active_package_dir
+
+    return active_package_dir(_ROOT) / "input_semantics.py"
+
+
+def _load(path: Path | None = None) -> Any:
+    global _mod, _loaded_from
+    target = path or _semantics_path()
+    if _mod is not None and _loaded_from == target:
+        return _mod
+    if _MOD_NAME in sys.modules:
+        del sys.modules[_MOD_NAME]
+    if not target.is_file():
         raise ImportError(
-            f"no input semantics at {_PACKAGE}; the operator package is "
-            f"incomplete")
-    spec = importlib.util.spec_from_file_location(name, _PACKAGE)
+            f"no input semantics at {target}; the operator package is incomplete"
+        )
+    spec = importlib.util.spec_from_file_location(_MOD_NAME, target)
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
+    sys.modules[_MOD_NAME] = mod
     spec.loader.exec_module(mod)
+    _mod = mod
+    _loaded_from = target
     return mod
 
 
-_mod = _load()
+def reload() -> Any:
+    """Drop the cached semantics module (tests switching UO_OPERATOR)."""
+    global _mod, _loaded_from
+    _mod = None
+    _loaded_from = None
+    if _MOD_NAME in sys.modules:
+        del sys.modules[_MOD_NAME]
+    from . import package_data
 
-# Re-export every public name the rest of the tree still imports.
-LAYOUTS = _mod.LAYOUTS
-ATTEN_MASKS = _mod.ATTEN_MASKS
-PSE_SHAPES = _mod.PSE_SHAPES
-DT = _mod.DT
-IN_ORDER = _mod.IN_ORDER
-OUT_ORDER = _mod.OUT_ORDER
-FIXED_DT = _mod.FIXED_DT
-ROPE_D = _mod.ROPE_D
-PSE_ALIBI_S = _mod.PSE_ALIBI_S
-ROPE_TOTAL_D = _mod.ROPE_TOTAL_D
-Case = _mod.Case
-dtype_of = _mod.dtype_of
-shapes = _mod.shapes
-_shapes = _mod._shapes
-describe = _mod.describe
-SEMANTICS = _mod.SEMANTICS
+    package_data.clear_caches()
+    return _load()
 
 
-def to_csv_line(c: Case, case_id: str) -> str:
+def __getattr__(name: str) -> Any:
+    if name in _EXPORTS:
+        return getattr(_load(), name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_EXPORTS) | {"reload", "to_csv_line"})
+
+
+def to_csv_line(c: Any, case_id: str) -> str:
     """Render the case in the replay driver's input format.
 
     Stays here rather than in the operator package because it goes through

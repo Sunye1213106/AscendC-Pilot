@@ -1,0 +1,6 @@
+# Toy seed rules — empty active set until review+promote.
+# grade: candidate only; must not enter E without review.
+version: 1
+value_unreachable: []
+combos: []
+combo_evidence: {}

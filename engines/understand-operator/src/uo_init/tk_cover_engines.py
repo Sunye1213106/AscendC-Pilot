@@ -130,45 +130,34 @@ def derive_fields(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
 
 
 def export_codemap(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """Export HostIR as the durable codemap under `.ascendc-pilot/uo/`.
+    """Compat shim: TG host view is produced by uo-init ``export_tg_host_view``.
 
-    Accepts either a pickled host bundle (legacy probe path) or an already
-    built HostIR reachable through the UO KB. Prefer the in-tree bundle only
-    when the durable codemap is missing.
+    Prefer the durable projection already stamped with the KB fingerprint.
+    Does **not** read ``.probe_cache/fag_bundle.pkl`` as a production input.
     """
+    from uo_init.pilot_engines import export_tg_host_view as _export_view
+
     uo = _uo(project_root, ctx)
     durable = uo / CODEMAP_YAML
-    if durable.is_file() and not ctx.get("force"):
-        doc = yaml.safe_load(durable.read_text(encoding="utf-8")) or {}
+    view = uo / "ir" / "tg_host_view.yaml"
+    if (view.is_file() or durable.is_file()) and not ctx.get("force"):
+        path = view if view.is_file() else durable
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        source = doc.get("source") or {}
         result = {
             "ok": True,
-            "yaml": str(durable),
-            "writes": len(doc.get("writes") or []),
-            "calls": len(doc.get("calls") or []),
+            "yaml": str(path),
             "fields": len(doc.get("fields") or []),
+            "predicates": len(doc.get("predicates") or []),
+            "graph_fingerprint": str(source.get("graph_fingerprint") or ""),
             "reused": True,
+            "note": "reuse durable tg_host_view; regenerate via uo-init export_tg_host_view",
         }
         _dump(uo / "tk" / "export_codemap.yaml", result)
         return {"ok": True, "engine": "export_codemap", **result}
 
-    bundle = Path(project_root) / ".probe_cache" / "fag_bundle.pkl"
-    bundle_override = ctx.get("bundle")
-    if bundle_override:
-        bundle = Path(bundle_override)
-    if not bundle.is_file():
-        doc = {
-            "ok": False,
-            "error": (
-                f"missing host bundle at {bundle} and no durable codemap at "
-                f"{durable}; run uo-init / host IR build first"
-            ),
-        }
-        _dump(uo / "tk" / "export_codemap.yaml", doc)
-        return doc
-
-    from uo_init.host_codemap import export_codemap_from_bundle
-
-    result = export_codemap_from_bundle(bundle, uo)
+    # Force / missing: delegate to the KB-stamped exporter (live HostIR).
+    result = _export_view(Path(project_root), ctx)
     _dump(uo / "tk" / "export_codemap.yaml", result)
     return {"ok": bool(result.get("ok")), "engine": "export_codemap", **result}
 

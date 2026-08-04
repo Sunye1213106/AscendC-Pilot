@@ -7,9 +7,9 @@ witness the host already accepted and turning one to three knobs keeps most
 of that agreement. Both sources are kept: mutation for yield, fresh sampling
 for exploration.
 
-The model arm of a directed search asks this module for a pool, then keeps
-only candidates whose predicted key is still open. The random arm draws from
-the same pool. That is how the 11x yield of model-over-random was measured.
+All Case field knowledge comes from the active operator's ``knob_schema()``
+and ``search_hints.yaml``. Missing hints fail closed — there is no FAG
+fallback table in the engine.
 """
 
 from __future__ import annotations
@@ -23,71 +23,83 @@ import pandas as pd
 
 from testcase_agent.closure import workspace as W
 
-#: Default sampling grid. Operator search_hints can narrow ladders later; this
-#: is the exploration envelope that produced the first closure.
-DEFAULT_GRID: dict[str, list[Any]] = {
-    "layout": ["SBH", "BSH", "BNSD", "BSND", "TND"],
-    "dtype": ["FLOAT16", "BF16", "FLOAT"],
-    "b": [1, 2, 3, 4, 8, 16, 32, 48, 64],
-    "s1": [1, 64, 128, 192, 256, 512, 768, 1024, 2048, 4096],
-    "s2": [1, 64, 128, 192, 256, 512, 768, 1024, 2048, 4096],
-    "n2": [1, 2, 4, 5, 8, 12, 16, 40],
-    "g": [1, 2, 4, 8],
-    "d": [16, 32, 64, 72, 96, 128, 144, 192, 256, 512, 768],
-    "pse_type": [0, 1, 2, 3],
-    "keep_prob": [1.0, 0.9, 0.5],
-    "sparse_mode": [0, 1, 2, 3, 4, 5, 6],
-    "tokens": [0, 1, 64, 128, 256, 512, 1024, 2048, 65536],
-    "out_dtype": [0, 1, 2, 3],
-}
+
+def _hints() -> dict[str, Any]:
+    from replay.package_data import load_yaml
+
+    doc = load_yaml("search_hints.yaml")
+    if not doc:
+        raise FileNotFoundError(
+            "operators/<op>/<arch>/search_hints.yaml is required "
+            "(no engine-side FAG fallback)"
+        )
+    return doc
 
 
 def _grid() -> dict[str, list[Any]]:
-    """Sampling grid, with enums filled from the operator's input semantics."""
+    """Sampling grid from search_hints; enums may fill categorical knobs."""
     I = W.replay_inputs()
-    g = dict(DEFAULT_GRID)
-    g["atten_mask"] = list(I.ATTEN_MASKS)
-    g["pse_shape"] = list(I.PSE_SHAPES)
+    raw = _hints().get("sampling_grid")
+    if not raw:
+        raise ValueError("search_hints.yaml missing sampling_grid")
+    g = {str(k): list(v) for k, v in dict(raw).items()}
+    sem = I.SEMANTICS
+    enums = sem.enums() if hasattr(sem, "enums") else {}
+    schema = sem.knob_schema() if hasattr(sem, "knob_schema") else {}
+    for name, meta in schema.items():
+        if name in g:
+            continue
+        if meta.get("kind") == "categorical" and name in enums:
+            g[name] = list(enums[name])
+        elif meta.get("kind") == "categorical" and meta.get("domain"):
+            g[name] = list(meta["domain"])
     return g
 
 
 def sample_case(rng: random.Random, grid: dict[str, list[Any]] | None = None):
-    """One fresh Case drawn from the grid."""
+    """One fresh Case drawn from the grid via knob_schema / from_knobs."""
     I = W.replay_inputs()
+    sem = I.SEMANTICS
+    if not hasattr(sem, "knob_schema") or not hasattr(sem, "from_knobs"):
+        raise TypeError(
+            "active InputSemantics must implement knob_schema() and from_knobs()"
+        )
     g = grid or _grid()
-    layout = rng.choice(g["layout"])
-    b = rng.choice(g["b"])
-    s1 = rng.choice(g["s1"])
-    s2 = rng.choice(g["s2"]) if rng.random() < 0.5 else s1
-    d = rng.choice(g["d"])
-    d1 = d if rng.random() < 0.7 else rng.choice(g["d"])
-    rope = rng.random() < 0.15
-    pse = rng.random() < 0.45
-    seq_q = seq_kv = None
-    if layout == "TND":
-        n = max(1, min(b, 16))
-        if rng.random() < 0.6:
-            seq_q = [s1 * (i + 1) for i in range(n)]
-            seq_kv = [s2 * (i + 1) for i in range(n)]
-        else:
-            lens_q = [rng.choice([0, 64, 128, 256, 512, 1024]) for _ in range(n)]
-            lens_kv = [rng.choice([0, 64, 128, 256, 512, 1024]) for _ in range(n)]
-            seq_q = list(np.cumsum(lens_q))
-            seq_kv = list(np.cumsum(lens_kv))
-    return I.Case(
-        layout=layout, dtype=rng.choice(g["dtype"]), b=b, s1=s1, s2=s2,
-        n2=rng.choice(g["n2"]), g=rng.choice(g["g"]), d=d, d1=d1,
-        atten_mask=rng.choice(g["atten_mask"]),
-        pse=pse, pse_shape=rng.choice(g["pse_shape"]),
-        pse_type=rng.choice(g["pse_type"]), rope=rope,
-        keep_prob=rng.choice(g["keep_prob"]),
-        sparse_mode=rng.choice(g["sparse_mode"]),
-        pre_tokens=rng.choice(g["tokens"]),
-        next_tokens=rng.choice(g["tokens"]),
-        out_dtype=rng.choice(g["out_dtype"]),
-        deterministic=rng.randint(0, 1),
-        seq_q=seq_q, seq_kv=seq_kv,
-    )
+    schema = sem.knob_schema()
+    knobs: dict[str, Any] = {}
+    for name, meta in schema.items():
+        if not meta.get("mutable", True) and name not in g:
+            if "default" in meta:
+                knobs[name] = meta["default"]
+            continue
+        if name in g and g[name]:
+            knobs[name] = rng.choice(g[name])
+        elif meta.get("domain"):
+            knobs[name] = rng.choice(list(meta["domain"]))
+        elif "default" in meta:
+            knobs[name] = meta["default"]
+    case = sem.from_knobs(knobs)
+    if hasattr(sem, "repair"):
+        case = sem.repair(case)
+    # Optional layout-specific sequence fill when the schema names seq_* knobs.
+    if (
+        knobs.get("layout") == "TND"
+        and "seq_q" in schema
+        and getattr(case, "seq_q", None) is None
+        and "s1" in knobs
+        and "b" in knobs
+    ):
+        n = max(1, min(int(knobs["b"]), 16))
+        s1 = int(knobs["s1"])
+        s2 = int(knobs.get("s2", s1))
+        case = replace(
+            case,
+            seq_q=[s1 * (i + 1) for i in range(n)],
+            seq_kv=[s2 * (i + 1) for i in range(n)],
+        )
+        if hasattr(sem, "repair"):
+            case = sem.repair(case)
+    return case
 
 
 def _seq(text) -> list[int] | None:
@@ -103,63 +115,79 @@ def _seq(text) -> list[int] | None:
 
 
 def case_from_row(row) -> Any | None:
-    """Rebuild the Case a corpus row describes."""
+    """Rebuild the Case a corpus row describes via from_knobs."""
     I = W.replay_inputs()
+    sem = I.SEMANTICS
+    if not hasattr(sem, "from_knobs") or not hasattr(sem, "knob_schema"):
+        return None
+    schema = sem.knob_schema()
+    knobs: dict[str, Any] = {}
     try:
-        return I.Case(
-            layout=str(row["layout"]), dtype=str(row["dtype"]),
-            b=int(row["b"]), s1=int(row["s1"]), s2=int(row["s2"]),
-            n2=int(row["n2"]), g=int(row["g"]), d=int(row["d"]),
-            d1=int(row["d1"]),
-            atten_mask=str(row["atten_mask"]) or "none",
-            pse=bool(int(row["pse"])),
-            pse_shape=str(row["pse_shape"]) or "bnss",
-            pse_type=int(row["pse_type"]), rope=bool(int(row["rope"])),
-            keep_prob=float(row["keep_prob"]),
-            sparse_mode=int(row["sparse_mode"]),
-            pre_tokens=int(row["pre_tokens"]),
-            next_tokens=int(row["next_tokens"]),
-            out_dtype=int(row["out_dtype"]),
-            deterministic=int(row["deterministic"]),
-            seq_q=_seq(row.get("seq_q")), seq_kv=_seq(row.get("seq_kv")),
-        )
+        for name, meta in schema.items():
+            if name not in row.index if hasattr(row, "index") else name not in row:
+                continue
+            raw = row[name]
+            kind = meta.get("kind")
+            if kind == "sequence":
+                knobs[name] = _seq(raw)
+            elif kind == "bool":
+                knobs[name] = bool(int(raw)) if str(raw) not in ("", "nan") else False
+            elif kind == "numeric":
+                if isinstance(raw, float) and pd.isna(raw):
+                    continue
+                text = str(raw)
+                knobs[name] = float(raw) if "." in text else int(float(raw))
+            else:
+                knobs[name] = str(raw) if raw is not None else meta.get("default", "")
+        return sem.from_knobs(knobs)
     except (ValueError, TypeError, KeyError):
         return None
 
 
 def _mutable(grid: dict[str, list[Any]]) -> list[tuple[str, list[Any]]]:
-    return [
-        ("dtype", grid["dtype"]), ("layout", grid["layout"]),
-        ("b", grid["b"]), ("s1", grid["s1"]), ("s2", grid["s2"]),
-        ("n2", grid["n2"]), ("g", grid["g"]), ("d", grid["d"]),
-        ("atten_mask", grid["atten_mask"]), ("pse_shape", grid["pse_shape"]),
-        ("pse_type", grid["pse_type"]), ("keep_prob", grid["keep_prob"]),
-        ("sparse_mode", grid["sparse_mode"]),
-        ("pre_tokens", grid["tokens"]), ("next_tokens", grid["tokens"]),
-        ("out_dtype", grid["out_dtype"]), ("deterministic", [0, 1]),
-        ("pse", [True, False]), ("rope", [True, False]),
-    ]
+    I = W.replay_inputs()
+    sem = I.SEMANTICS
+    schema = sem.knob_schema() if hasattr(sem, "knob_schema") else {}
+    out: list[tuple[str, list[Any]]] = []
+    for name, meta in schema.items():
+        if not meta.get("mutable", True):
+            continue
+        values = grid.get(name) or list(meta.get("domain") or [])
+        if not values and meta.get("kind") == "bool":
+            values = [True, False]
+        if values:
+            out.append((name, list(values)))
+    return out
 
 
 def mutate(case, rng: random.Random, k: int = 2, grid: dict | None = None):
     """Turn `k` knobs on a witness Case."""
+    I = W.replay_inputs()
+    sem = I.SEMANTICS
     g = grid or _grid()
     options = _mutable(g)
     out = case
     for name, values in rng.sample(options, min(k, len(options))):
         v = rng.choice(values)
-        if name == "d":
-            out = replace(out, d=v, d1=v if rng.random() < 0.7 else out.d1)
-        elif name == "layout" and v == "TND":
-            n = max(1, min(out.b, 16))
+        if name == "layout" and v == "TND" and hasattr(out, "s1") and hasattr(out, "b"):
+            n = max(1, min(int(out.b), 16))
             out = replace(
                 out, layout="TND",
                 seq_q=[out.s1 * (i + 1) for i in range(n)],
-                seq_kv=[out.s2 * (i + 1) for i in range(n)])
+                seq_kv=[getattr(out, "s2", out.s1) * (i + 1) for i in range(n)],
+            )
         elif name == "layout":
-            out = replace(out, layout=v, seq_q=None, seq_kv=None)
+            kwargs = {"layout": v}
+            if hasattr(out, "seq_q"):
+                kwargs["seq_q"] = None
+                kwargs["seq_kv"] = None
+            out = replace(out, **kwargs)
+        elif name == "d" and hasattr(out, "d1"):
+            out = replace(out, d=v, d1=v if rng.random() < 0.7 else out.d1)
         else:
             out = replace(out, **{name: v})
+    if hasattr(sem, "repair"):
+        out = sem.repair(out)
     return out
 
 
@@ -195,7 +223,7 @@ def pool(n: int, seed: int = 0, witnesses: list | None = None,
         else:
             c = sample_case(rng, grid)
         try:
-            desc = I.describe(c)
+            desc = I.describe(c) if hasattr(I, "describe") else I.SEMANTICS.describe(c)
         except Exception:
             stall += 1
             continue
@@ -205,32 +233,34 @@ def pool(n: int, seed: int = 0, witnesses: list | None = None,
             continue
         seen.add(sig)
         stall = 0
-        cases.append(c.normalised())
+        norm = c.normalised() if hasattr(c, "normalised") else c
+        cases.append(norm)
         recs.append(desc)
     return cases, pd.DataFrame(recs)
 
 
-#: Knobs to sweep when a residual key is one dimension away from a witness.
-NEAREST_KNOBS: dict[str, list[tuple[str, list]]] = {
-    "DTemplateNum": [("d", [64, 128, 192, 256, 512])],
-    "IsDrop": [("keep_prob", [1.0, 0.5])],
-    "IsAttenMask": [("atten_mask", ["none", "ss", "bnss", "b1ss", "11ss"])],
-    "DeterType": [
-        ("deterministic", [0, 1]),
-        ("sparse_mode", [0, 1, 2, 3, 4, 5, 6]),
-    ],
-    "IsPse": [("pse", [True, False])],
-    "IsRope": [("rope", [True, False])],
-    "InputDType": [("dtype", ["FLOAT16", "BF16", "FLOAT"])],
-    "IsNEqual": [("g", [1, 2, 4])],
-}
+def _nearest_knobs() -> dict[str, list[tuple[str, list]]]:
+    raw = _hints().get("nearest_knobs") or {}
+    if not raw:
+        raise ValueError("search_hints.yaml missing nearest_knobs")
+    out: dict[str, list[tuple[str, list]]] = {}
+    for dim, rows in raw.items():
+        entries: list[tuple[str, list]] = []
+        for row in rows or []:
+            if isinstance(row, dict):
+                entries.append((str(row["knob"]), list(row.get("values") or [])))
+            elif isinstance(row, (list, tuple)) and len(row) == 2:
+                entries.append((str(row[0]), list(row[1])))
+        out[str(dim)] = entries
+    return out
 
 
 def sweep_nearest(case, differing_dims: list[str]) -> list:
     """Variants of a witness that only touch the dimensions that still differ."""
+    table = _nearest_knobs()
     out = [case]
     for dim in differing_dims:
-        for name, values in NEAREST_KNOBS.get(dim, []):
+        for name, values in table.get(dim, []):
             next_round = []
             for base in out:
                 for v in values:
@@ -239,39 +269,35 @@ def sweep_nearest(case, differing_dims: list[str]) -> list:
     normalised = []
     for c in out:
         try:
-            normalised.append(c.normalised())
+            normalised.append(c.normalised() if hasattr(c, "normalised") else c)
         except Exception:
             continue
     return normalised
 
 
-#: Root categories that map onto Case knobs. Used by the influence cone.
-_ROOT_TO_KNOBS: dict[str, list[str]] = {
-    "ATTRIBUTE": ["layout", "sparse_mode", "pre_tokens", "next_tokens",
-                  "keep_prob", "deterministic", "pse_type", "out_dtype"],
-    "INPUT_DTYPE": ["dtype"],
-    "INPUT_SHAPE": ["b", "s1", "s2", "n2", "g", "d", "d1"],
-    "OPTIONAL_INPUT_PRESENCE": ["pse", "rope", "atten_mask"],
-    "SESSION_OPTION": ["deterministic"],
-    "INPUT_VALUE": ["seq_q", "seq_kv"],
-}
+def _root_to_knobs() -> dict[str, list[str]]:
+    try:
+        from replay.package_data import load_yaml
+
+        raw = (load_yaml("feature_bindings.yaml") or {}).get("root_to_knobs") or {}
+        return {str(k): [str(x) for x in (v or [])] for k, v in raw.items()}
+    except Exception:
+        return {}
 
 
 def knobs_for_field(field: str, uo_root: str | None = None) -> list[str]:
-    """Knobs in the influence cone of a key / host-state field.
-
-    Reads come from the durable codemap. When the field has no reads recorded,
-    every mutable knob is allowed (safe over-approximation for generation).
-    """
+    """Knobs in the influence cone of a key / host-state field."""
     from pathlib import Path
 
-    root = Path(uo_root) if uo_root else (
-        Path(__file__).resolve().parents[4] / ".ascendc-pilot" / "uo")
+    if uo_root is None:
+        raise ValueError("uo_root is required (pass the operator's .ascendc-pilot/<arch>/uo)")
+    root = Path(uo_root)
+    table = _root_to_knobs()
     knobs: set[str] = set()
     try:
         from uo_init.host_codemap import CodemapQuery
         for r in CodemapQuery(root).reads_of(field):
-            for k in _ROOT_TO_KNOBS.get(str(r.get("root") or ""), ()):
+            for k in table.get(str(r.get("root") or ""), ()):
                 knobs.add(k)
     except Exception:
         pass

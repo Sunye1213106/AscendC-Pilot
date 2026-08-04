@@ -73,17 +73,48 @@ class Workspace:
 
 
 def _repo_root() -> Path:
-    """The AscendC-Pilot checkout, found from this file rather than the cwd."""
+    """The AscendC-Pilot checkout — only for ``sys.path`` injection of ``scripts/``.
+
+    Must never be used as the default product root.
+    """
     return Path(__file__).resolve().parents[4]
+
+
+def _operator_root(explicit: str | Path | None = None) -> Path:
+    """Resolve the analysed operator source directory that owns products."""
+    if explicit is not None:
+        return Path(explicit).expanduser().resolve()
+    # Prefer TG_CLOSURE_STATE's parent chain when set.
+    state_env = os.environ.get(ENV_STATE)
+    if state_env:
+        # .../.ascendc-pilot/<arch>/tg/closure → op_src
+        p = Path(state_env).expanduser().resolve()
+        for parent in p.parents:
+            if parent.name == ".ascendc-pilot":
+                return parent.parent
+    for name in ("ASCENDC_PROJECT_ROOT", "UO_OP_DIR"):
+        raw = os.environ.get(name)
+        if raw:
+            return Path(raw).expanduser().resolve()
+    raise ValueError(
+        "closure workspace root unresolved: pass root= / set ASCENDC_PROJECT_ROOT "
+        "or UO_OP_DIR or TG_CLOSURE_STATE (must be the operator source directory, "
+        "not the AscendC-Pilot checkout)"
+    )
+
+
+def _arch_name() -> str:
+    return (os.environ.get("UO_ARCH") or os.environ.get("ASCENDC_ARCH") or "arch35").strip()
 
 
 def default_workspace(root: str | Path | None = None) -> Workspace:
     """Locations for the operator the environment currently names.
 
     `artifacts` follows the operator manifest so a replay and the ledger that
-    reads it never disagree about where a batch landed.
+    reads it never disagree about where a batch landed. Products live under
+    ``<op_src>/.ascendc-pilot/<arch>/tg/closure``.
     """
-    base = Path(root) if root else _repo_root()
+    base = _operator_root(root)
 
     artifacts_env = os.environ.get(ENV_ARTIFACTS)
     if artifacts_env:
@@ -92,8 +123,15 @@ def default_workspace(root: str | Path | None = None) -> Workspace:
         artifacts = _manifest_cache(base)
 
     state_env = os.environ.get(ENV_STATE)
-    state = (Path(state_env) if state_env
-             else base / ".ascendc-pilot" / "tg" / "closure")
+    if state_env:
+        state = Path(state_env)
+    else:
+        try:
+            from ascendc_pilot.paths import tg_root
+
+            state = tg_root(base, arch=_arch_name()) / "closure"
+        except Exception:
+            state = base / ".ascendc-pilot" / _arch_name() / "tg" / "closure"
     return Workspace(root=base, artifacts=artifacts, state=state)
 
 
@@ -101,9 +139,23 @@ def _manifest_cache(base: Path) -> Path:
     """The replay cache the active operator manifest declares."""
     try:
         runner = _replay().default()
+        cache = Path(runner.cache)
+        if not cache.is_absolute():
+            # Relative caches are under <op_src>/.ascendc-pilot/<arch>/
+            try:
+                from ascendc_pilot.paths import agent_root
+
+                return agent_root(base, _arch_name()) / cache
+            except Exception:
+                return base / ".ascendc-pilot" / _arch_name() / cache
+        return cache
     except Exception:
-        return base / ".probe_cache" / "replay"
-    return Path(runner.cache)
+        try:
+            from ascendc_pilot.paths import tg_root
+
+            return tg_root(base, arch=_arch_name()) / "replay"
+        except Exception:
+            return base / ".ascendc-pilot" / _arch_name() / "tg" / "replay"
 
 
 # -- the replay engine ----------------------------------------------------

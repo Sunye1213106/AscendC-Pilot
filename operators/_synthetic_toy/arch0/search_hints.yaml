@@ -1,0 +1,6 @@
+version: 1
+sampling_grid:
+  layout: [FLAT]
+  dtype: [FLOAT, FLOAT16]
+  n: [1, 2, 4, 8, 16]
+nearest_knobs: {}

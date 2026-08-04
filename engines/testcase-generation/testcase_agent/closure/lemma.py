@@ -85,9 +85,12 @@ def verify_lemmas(lemmas: Iterable[Mapping],
 
 
 def apply_rules(ws: W.Workspace | None = None, *, refresh: bool = True) -> dict:
-    """Apply the rule book to every declared key and write E_sound.
+    """Apply the sound rule book to every declared key and write E.
 
-    Refuses to write when any excluded key is also witnessed.
+    Only ``SOUND_GRADES`` (source_lemma / solver_derived) shrink E. When a
+    newly witnessed key intersects a rule's exclusion set, the conflicting
+    rules are recorded as revoked and E is rebuilt without them — not a
+    deadlock that refuses to write anything.
     """
     ws = (ws or W.default_workspace()).ensure()
     book = W.rule_book(refresh=refresh)
@@ -100,21 +103,48 @@ def apply_rules(ws: W.Workspace | None = None, *, refresh: bool = True) -> dict:
             inst = W.decode(int(k))
         except Exception:
             continue
-        labels = book.excluded_by(inst)
+        labels = book.excluded_by_sound(inst)
         if labels:
             excluded[k] = labels
 
     bad = {k: v for k, v in excluded.items() if k in Rset}
+    revoked: list[dict] = []
     if bad:
-        return {
-            "ok": False,
-            "error": "REFUTED RULES -- a real run produced these",
-            "violating": [
-                {"key": k, "rules": labels}
-                for k, labels in list(bad.items())[:15]
-            ],
-            "violating_count": len(bad),
+        # Revoke: drop every label that hit a real witness, then recompute E.
+        bad_labels = {lab for labs in bad.values() for lab in labs}
+        for lab in sorted(bad_labels):
+            revoked.append({
+                "label": lab,
+                "status": "refuted",
+                "reason": "new_R intersects rule_excluded_keys",
+                "witness_keys": sorted(k for k, labs in bad.items() if lab in labs)[:20],
+            })
+        excluded = {
+            k: [lab for lab in labs if lab not in bad_labels]
+            for k, labs in excluded.items()
+            if any(lab not in bad_labels for lab in labs)
         }
+        # Drop empty entries.
+        excluded = {k: labs for k, labs in excluded.items() if labs}
+        lemmas_dir = ws.state / "lemmas"
+        lemmas_dir.mkdir(parents=True, exist_ok=True)
+        revoked_path = lemmas_dir / "revoked_rules.yaml"
+        try:
+            import yaml
+
+            prev = []
+            if revoked_path.is_file():
+                prev = list(yaml.safe_load(revoked_path.read_text(encoding="utf-8")) or [])
+            yaml.safe_dump(
+                prev + revoked,
+                revoked_path.open("w", encoding="utf-8"),
+                allow_unicode=True,
+                sort_keys=False,
+            )
+        except Exception:
+            revoked_path.write_text(
+                "\n".join(str(r) for r in revoked) + "\n", encoding="utf-8"
+            )
 
     reasons = collections.Counter(labels[0] for labels in excluded.values())
     ws.e_path.write_text(
@@ -137,6 +167,8 @@ def apply_rules(ws: W.Workspace | None = None, *, refresh: bool = True) -> dict:
         "gap": len(gap),
         "by_rule": reasons.most_common(20),
         "e_path": str(ws.e_path),
+        "revoked": revoked,
+        "revoked_count": len(revoked),
     }
 
 
@@ -144,3 +176,151 @@ def soundness_ok(ws: W.Workspace | None = None) -> bool:
     """I1: R ∩ E = ∅."""
     ws = ws or W.default_workspace()
     return not (ledger.load_R(ws) & ledger.load_E(ws))
+
+
+def reverify_active(ws: W.Workspace | None = None) -> dict:
+    """Re-run sound apply after corpus growth; revoke rules contradicted by new R.
+
+    Called after every corpus.commit that may have enlarged R. Fail-closed on
+    freshness: rules whose uo_graph_fingerprint disagrees with the active
+    stamp are marked stale and dropped from E.
+    """
+    ws = (ws or W.default_workspace()).ensure()
+    import yaml
+
+    lemmas_dir = ws.state / "lemmas"
+    active_path = lemmas_dir / "active_rules.yaml"
+    if not active_path.is_file():
+        return apply_rules(ws, refresh=True)
+
+    doc = yaml.safe_load(active_path.read_text(encoding="utf-8")) or {}
+    expected_fp = str(doc.get("uo_graph_fingerprint") or "")
+    kept = []
+    stale = []
+    for raw in doc.get("rules") or []:
+        fp = str((raw.get("freshness") or {}).get("uo_graph_fingerprint") or "")
+        if expected_fp and fp and fp != expected_fp:
+            stale.append({
+                "label": raw.get("label") or raw.get("when"),
+                "status": "stale",
+                "reason": "uo_graph_fingerprint_mismatch",
+            })
+            continue
+        kept.append(raw)
+    if stale:
+        doc["rules"] = kept
+        active_path.write_text(
+            yaml.safe_dump(doc, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        stale_path = lemmas_dir / "stale_rules.yaml"
+        prev = []
+        if stale_path.is_file():
+            prev = list(yaml.safe_load(stale_path.read_text(encoding="utf-8")) or [])
+        stale_path.write_text(
+            yaml.safe_dump(prev + stale, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+    out = apply_rules(ws, refresh=True)
+    out["stale"] = stale
+    out["stale_count"] = len(stale)
+    return out
+
+
+def promote_reviewed(
+    review: Mapping,
+    ws: W.Workspace | None = None,
+    *,
+    source_revision: str = "",
+    uo_graph_fingerprint: str = "",
+) -> dict:
+    """Write accepted review entries into ``lemmas/active_rules.yaml``.
+
+    Only candidates with grade in SOUND_GRADES and a non-empty proof block
+    are promoted. Package ``proof_rules.yaml`` remains seed-only.
+    """
+    import yaml
+
+    try:
+        from replay.rule_engine import SOUND_GRADES as _SG
+    except Exception:
+        _SG = frozenset({"solver_derived", "source_lemma"})
+
+    ws = (ws or W.default_workspace()).ensure()
+    lemmas_dir = ws.state / "lemmas"
+    lemmas_dir.mkdir(parents=True, exist_ok=True)
+    active_path = lemmas_dir / "active_rules.yaml"
+
+    prev: dict = {}
+    if active_path.is_file():
+        prev = yaml.safe_load(active_path.read_text(encoding="utf-8")) or {}
+    rules = list(prev.get("rules") or [])
+    accepted = list(review.get("accepted") or [])
+    promoted = 0
+    skipped = 0
+    for raw in accepted:
+        grade = str(raw.get("grade") or "source_lemma")
+        if grade not in _SG and grade not in ("source_lemma_verified", "solver_unsat_verified"):
+            skipped += 1
+            continue
+        # Map verified aliases onto SOUND_GRADES storage grades.
+        if grade == "source_lemma_verified":
+            grade = "source_lemma"
+        if grade == "solver_unsat_verified":
+            grade = "solver_derived"
+        proof = raw.get("proof") or {}
+        required = (
+            "entry_branches_checked",
+            "early_returns_checked",
+            "all_writers_checked",
+            "execution_order_checked",
+            "exception_branches_checked",
+        )
+        if not all(proof.get(k) for k in required):
+            skipped += 1
+            continue
+        entry = {
+            "kind": str(raw.get("kind") or "combo"),
+            "grade": grade,
+            "when": dict(raw.get("when") or {}),
+            "dim": str(raw.get("dim") or ""),
+            "value": str(raw.get("value") or ""),
+            "label": str(raw.get("label") or ""),
+            "reason": str(raw.get("reason") or ""),
+            "proof": dict(proof),
+            "verification": dict(raw.get("verification") or {}),
+            "freshness": {
+                "source_revision": source_revision or str(
+                    (raw.get("freshness") or {}).get("source_revision") or ""
+                ),
+                "uo_graph_fingerprint": uo_graph_fingerprint or str(
+                    (raw.get("freshness") or {}).get("uo_graph_fingerprint") or ""
+                ),
+            },
+        }
+        rules.append(entry)
+        promoted += 1
+
+    doc = {
+        "schema": "tg-active-rules/v1",
+        "uo_graph_fingerprint": uo_graph_fingerprint,
+        "source_revision": source_revision,
+        "rules": rules,
+    }
+    active_path.write_text(
+        yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+    # Force rule_book reload on next apply.
+    try:
+        from replay import rule_engine as RE
+
+        RE.default_book(refresh=True)
+    except Exception:
+        pass
+    return {
+        "ok": True,
+        "promoted": promoted,
+        "skipped": skipped,
+        "active_path": str(active_path),
+        "active_count": len(rules),
+    }

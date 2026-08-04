@@ -39,9 +39,15 @@ def safe_op_name(project_root: Path, op_name: str) -> str:
         return "".join(ch for ch in op_name if ch.isalnum() or ch in {"_", "-", "."}).strip(".") or op_name
 
 
-def understand_root(project_root: Path, op_name: str) -> Path:
+def understand_root(project_root: Path, op_name: str, *, arch: str | None = None) -> Path:
     del op_name
-    return project_root / ".ascendc-pilot" / "uo"
+    try:
+        from ascendc_pilot.paths import uo_root
+
+        return uo_root(project_root, arch=arch)
+    except Exception:
+        arch_name = (arch or "").strip() or "arch35"
+        return project_root / ".ascendc-pilot" / arch_name / "uo"
 
 
 def built_kb_ready(uo_root: Path) -> bool:

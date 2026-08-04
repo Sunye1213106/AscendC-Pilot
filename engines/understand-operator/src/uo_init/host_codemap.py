@@ -1,16 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Persist HostIR as a queryable codemap (YAML authority + SQLite index).
+"""TG Host View: a disposable projection of HostIR facts for TG/CE search.
 
-Schema ``codemap/v2`` is the confluence of three producers that used to talk
-past each other:
+Authority lives in ``ir/operator_graph.yaml`` (KB). This module writes a
+human-reviewable search projection (``ir/tg_host_view.yaml``) stamped with
+``source.graph_fingerprint`` so freshness gates can detect drift.
+
+Schema ``tg-host-view/v1`` surfaces:
 
   HostIR writes (+ one-level callee expansion)  → fields[].writers
   PredicateNormalizer / var roots               → fields[].reads + predicates[]
   kernel tiling-key header                      → declared_keys
   npuArch / SocVersion guards                   → platform_gates
 
-The v1 surface (flat writes/calls/functions) is gone: calls belong to the
-navigation layer (CBM), and the 84% of functions with no writes were noise.
+The single SQLite authority is ``indexes/kb_graph.sqlite``. Legacy
+``host_codemap.yaml`` / ``host_codemap.sqlite`` aliases are no longer written.
 """
 
 from __future__ import annotations
@@ -22,9 +25,14 @@ from typing import Any
 
 import yaml
 
+# Durable projection (preferred name).
+TG_HOST_VIEW_YAML = "ir/tg_host_view.yaml"
+# Compat alias so existing consumers (tk-cover, CE impact, closure tests) keep working.
 CODEMAP_YAML = "ir/host_codemap.yaml"
 CODEMAP_SQLITE = "indexes/host_codemap.sqlite"
-SCHEMA = "codemap/v2"
+KB_GRAPH_SQLITE = "indexes/kb_graph.sqlite"
+SCHEMA = "tg-host-view/v1"
+COMPAT_SCHEMA = "codemap/v2"
 
 #: RHS length for writer rows. v1 capped at 200 and already overflowed.
 RHS_LIMIT = 800
@@ -49,25 +57,78 @@ def export_host_codemap(
     *,
     derive_fields: list[dict[str, Any]] | None = None,
     declared: dict[str, Any] | None = None,
+    graph_fingerprint: str = "",
+    source_revision: str = "",
+    manifest_hash: str = "",
 ) -> dict[str, Any]:
-    """Write the codemap under ``uo_root`` and rebuild the index."""
+    """Write the TG host view under ``uo_root`` and rebuild the query cache.
+
+    Prefer :func:`export_tg_host_view` at call sites; this name is kept for
+    older imports.
+    """
+    return export_tg_host_view(
+        host_ir,
+        uo_root,
+        derive_fields=derive_fields,
+        declared=declared,
+        graph_fingerprint=graph_fingerprint,
+        source_revision=source_revision,
+        manifest_hash=manifest_hash,
+    )
+
+
+def export_tg_host_view(
+    host_ir: Any,
+    uo_root: str | Path,
+    *,
+    derive_fields: list[dict[str, Any]] | None = None,
+    declared: dict[str, Any] | None = None,
+    graph_fingerprint: str = "",
+    source_revision: str = "",
+    manifest_hash: str = "",
+) -> dict[str, Any]:
+    """Project HostIR into ``tg_host_view.yaml`` stamped with the KB fingerprint.
+
+    Does not read ``.probe_cache/*.pkl``. Callers must supply a live HostIR
+    (typically from the same in-process extract that fed ``export_kb``).
+    """
     root = Path(uo_root)
     payload = host_ir_payload(
-        host_ir, derive_fields=derive_fields, declared=declared)
-    path = root / CODEMAP_YAML
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.safe_dump(payload, sort_keys=False, allow_unicode=True),
-        encoding="utf-8",
+        host_ir,
+        derive_fields=derive_fields,
+        declared=declared,
+        graph_fingerprint=graph_fingerprint,
+        source_revision=source_revision,
+        manifest_hash=manifest_hash,
     )
+    view_path = root / TG_HOST_VIEW_YAML
+    view_path.parent.mkdir(parents=True, exist_ok=True)
+    text = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
+    view_path.write_text(text, encoding="utf-8")
+    # No host_codemap.yaml alias — single authority is tg_host_view.yaml +
+    # indexes/kb_graph.sqlite (W4b).
     summary = rebuild_codemap_index(root)
+    kb_upsert: dict[str, Any] = {}
+    try:
+        from uo_init.kb_index import upsert_host_view_tables
+
+        kb_upsert = upsert_host_view_tables(root, payload)
+    except Exception as exc:  # noqa: BLE001
+        kb_upsert = {"ok": False, "error": str(exc)[:200]}
     return {
         "ok": True,
         "schema": SCHEMA,
-        "yaml": str(path),
+        "yaml": str(view_path),
+        "alias_yaml": "",
         "fields": len(payload.get("fields") or []),
-        "writers": sum(len(f.get("writers") or []) for f in payload.get("fields") or []),
+        "writers": sum(
+            len(f.get("writers") or []) for f in payload.get("fields") or []
+        ),
         "predicates": len(payload.get("predicates") or []),
+        "graph_fingerprint": str(
+            (payload.get("source") or {}).get("graph_fingerprint") or ""
+        ),
+        "kb_upsert": kb_upsert,
         **summary,
     }
 
@@ -77,6 +138,9 @@ def host_ir_payload(
     *,
     derive_fields: list[dict[str, Any]] | None = None,
     declared: dict[str, Any] | None = None,
+    graph_fingerprint: str = "",
+    source_revision: str = "",
+    manifest_hash: str = "",
 ) -> dict[str, Any]:
     """Serialise the query surfaces the coverage / CE agents need."""
     writers = _writer_rows(host_ir)
@@ -88,6 +152,15 @@ def host_ir_payload(
     ]
     return {
         "schema": SCHEMA,
+        "compat_schema": COMPAT_SCHEMA,
+        "source": {
+            "graph_fingerprint": graph_fingerprint or "",
+            "manifest_hash": manifest_hash or "",
+            "source_revision": source_revision or "",
+            "generated_by": "export_tg_host_view",
+            "authority": "uo/ir/operator_graph.yaml",
+            "role": "tg_host_projection",
+        },
         "fields": fields,
         "predicates": predicates,
         "declared_keys": declared or {},
@@ -232,101 +305,86 @@ def _predicates_from_writers(writers: list[dict[str, Any]]) -> list[dict[str, An
 
 
 def load_host_codemap(uo_root: str | Path) -> dict[str, Any]:
-    path = Path(uo_root) / CODEMAP_YAML
-    if not path.is_file():
-        return {}
-    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    """Load the TG host view (``tg_host_view.yaml`` only)."""
+    root = Path(uo_root)
+    path = root / TG_HOST_VIEW_YAML
+    if path.is_file():
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    # Read-only fallback for older checkouts that still have the alias.
+    legacy = root / CODEMAP_YAML
+    if legacy.is_file():
+        return yaml.safe_load(legacy.read_text(encoding="utf-8")) or {}
+    return {}
+
+
+def load_tg_host_view(uo_root: str | Path) -> dict[str, Any]:
+    return load_host_codemap(uo_root)
 
 
 def rebuild_codemap_index(uo_root: str | Path) -> dict[str, Any]:
+    """Ensure host-view rows live in ``kb_graph.sqlite`` (no second sqlite).
+
+    Historically this wrote ``indexes/host_codemap.sqlite``. That dual
+    authority is removed: we only upsert into kb_graph and report counts.
+    """
     root = Path(uo_root)
     doc = load_host_codemap(root)
-    db = root / CODEMAP_SQLITE
-    db.parent.mkdir(parents=True, exist_ok=True)
-    if db.exists():
-        db.unlink()
-    conn = sqlite3.connect(str(db))
+    fp = str((doc.get("source") or {}).get("graph_fingerprint") or "")
+    kb_upsert: dict[str, Any] = {}
     try:
-        conn.executescript(
-            """
-            CREATE TABLE writers (
-                path TEXT, function TEXT, file TEXT, line INTEGER,
-                rhs TEXT, via TEXT, field TEXT
-            );
-            CREATE TABLE guards (
-                file TEXT, line INTEGER, function TEXT, guard TEXT
-            );
-            CREATE TABLE fields (
-                name TEXT PRIMARY KEY, kind TEXT, exactness TEXT, grade TEXT
-            );
-            CREATE TABLE reads (
-                field TEXT, var TEXT, root TEXT
-            );
-            CREATE TABLE predicates (
-                id TEXT, file TEXT, line INTEGER, function TEXT,
-                condition TEXT, feature_hint TEXT
-            );
-            CREATE INDEX idx_writers_path ON writers(path);
-            CREATE INDEX idx_writers_field ON writers(field);
-            CREATE INDEX idx_guards_loc ON guards(file, line);
-            CREATE INDEX idx_preds_hint ON predicates(feature_hint);
-            """
-        )
-        for f in doc.get("fields") or []:
-            conn.execute(
-                "INSERT OR REPLACE INTO fields VALUES (?,?,?,?)",
-                (f.get("name"), f.get("kind"), f.get("exactness"), f.get("grade")),
-            )
-            for r in f.get("reads") or []:
-                conn.execute(
-                    "INSERT INTO reads VALUES (?,?,?)",
-                    (f.get("name"), r.get("var"), r.get("root")),
-                )
-            for w in f.get("writers") or []:
-                conn.execute(
-                    "INSERT INTO writers VALUES (?,?,?,?,?,?,?)",
-                    (w.get("path"), w.get("function"), w.get("file"),
-                     int(w.get("line") or 0), w.get("rhs"),
-                     w.get("via") or "direct", f.get("name")),
-                )
-                for g in w.get("guards") or []:
-                    conn.execute(
-                        "INSERT INTO guards VALUES (?,?,?,?)",
-                        (w.get("file"), int(w.get("line") or 0),
-                         w.get("function"), str(g)),
-                    )
-        for p in doc.get("predicates") or []:
-            conn.execute(
-                "INSERT INTO predicates VALUES (?,?,?,?,?,?)",
-                (p.get("id"), p.get("file"), int(p.get("line") or 0),
-                 p.get("function"), p.get("condition"), p.get("feature_hint")),
-            )
-        conn.commit()
-    finally:
-        conn.close()
+        from uo_init.kb_index import upsert_host_view_tables
+
+        kb_upsert = upsert_host_view_tables(root, doc)
+    except Exception as exc:  # noqa: BLE001
+        kb_upsert = {"ok": False, "error": str(exc)[:200]}
+    legacy = root / CODEMAP_SQLITE
+    if legacy.is_file():
+        try:
+            legacy.unlink()
+        except OSError:
+            pass
     return {
-        "sqlite": str(db),
+        "ok": True,
+        "mode": "kb_graph",
         "field_rows": len(doc.get("fields") or []),
         "predicate_rows": len(doc.get("predicates") or []),
+        "graph_fingerprint": fp,
+        "kb_upsert": kb_upsert,
     }
 
 
+def _kb_has_host_view_tables(db: Path) -> bool:
+    if not db.is_file():
+        return False
+    try:
+        with sqlite3.connect(str(db)) as conn:
+            row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='field_writer'"
+            ).fetchone()
+            return bool(row)
+    except sqlite3.Error:
+        return False
+
+
 class CodemapQuery:
-    """Read-only queries over the exported HostIR codemap."""
+    """Read-only queries over the TG host-view projection in kb_graph.sqlite."""
 
     def __init__(self, uo_root: str | Path):
         self.root = Path(uo_root)
-        self.db = self.root / CODEMAP_SQLITE
-        if not self.db.is_file():
+        kb = self.root / KB_GRAPH_SQLITE
+        if not _kb_has_host_view_tables(kb):
             rebuild_codemap_index(self.root)
+        self.db = kb
+        self._mode = "kb"
 
     def _conn(self) -> sqlite3.Connection:
         return sqlite3.connect(str(self.db))
 
     def writers_of(self, symbol: str) -> list[dict[str, Any]]:
+        table = "field_writer" if self._mode == "kb" else "writers"
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT path, function, file, line, rhs, via FROM writers "
+                f"SELECT path, function, file, line, rhs, via FROM {table} "
                 "WHERE path LIKE ? OR field LIKE ? ORDER BY file, line",
                 (f"%{symbol}%", f"%{symbol}%"),
             ).fetchall()
@@ -337,32 +395,35 @@ class CodemapQuery:
         ]
 
     def guards_at(self, file: str, line: int) -> list[str]:
+        table = "field_guard" if self._mode == "kb" else "guards"
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT DISTINCT guard FROM guards WHERE file LIKE ? AND line = ?",
+                f"SELECT DISTINCT guard FROM {table} WHERE file LIKE ? AND line = ?",
                 (f"%{file}%", int(line)),
             ).fetchall()
         return [r[0] for r in rows if r[0]]
 
     def reads_of(self, field: str) -> list[dict[str, str]]:
+        table = "field_read" if self._mode == "kb" else "reads"
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT var, root FROM reads WHERE field = ?", (field,),
+                f"SELECT var, root FROM {table} WHERE field = ?", (field,),
             ).fetchall()
         return [{"var": r[0], "root": r[1]} for r in rows]
 
     def predicates(self, *, feature_hint: str | None = None) -> list[dict[str, Any]]:
+        table = "field_predicate" if self._mode == "kb" else "predicates"
         with self._conn() as conn:
             if feature_hint:
                 rows = conn.execute(
-                    "SELECT id, file, line, function, condition, feature_hint "
-                    "FROM predicates WHERE feature_hint = ?",
+                    f"SELECT id, file, line, function, condition, feature_hint "
+                    f"FROM {table} WHERE feature_hint = ?",
                     (feature_hint,),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT id, file, line, function, condition, feature_hint "
-                    "FROM predicates"
+                    f"SELECT id, file, line, function, condition, feature_hint "
+                    f"FROM {table}"
                 ).fetchall()
         return [
             {"id": r[0], "file": r[1], "line": r[2], "function": r[3],
@@ -382,7 +443,12 @@ class CodemapQuery:
 def export_codemap_from_bundle(
     bundle_path: str | Path, uo_root: str | Path
 ) -> dict[str, Any]:
-    """Load a pickled host bundle and export its HostIR."""
+    """Legacy helper: load a pickled host bundle and export its HostIR.
+
+    Production paths must not call this. Prefer live HostIR from
+    ``extract_host_bundle`` / in-process ``_STORE``. Kept for migration
+    scripts only.
+    """
     import pickle
 
     path = Path(bundle_path)
@@ -408,5 +474,5 @@ def export_codemap_from_bundle(
         }
     except Exception:
         declared = None
-    return export_host_codemap(
+    return export_tg_host_view(
         host_ir, uo_root, derive_fields=derive, declared=declared)

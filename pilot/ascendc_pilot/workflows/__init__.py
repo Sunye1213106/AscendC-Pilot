@@ -9,6 +9,7 @@ from ascendc_pilot.workflows.specs import WORKFLOWS
 
 _TG_PIPELINES: dict[str, dict[str, list[str]]] = {
     "tg-init": {
+        "intent": ["init_intent"],
         "kb_ready": ["kb_check"],
         "contract": ["contract_build"],
         "bind": ["semantic_bind"],
@@ -30,8 +31,17 @@ _TG_PIPELINES: dict[str, dict[str, list[str]]] = {
         "approve": ["plan_approve"],
     },
     "tg-solve": {
+        # Default = tilingkey_full_coverage closure loop.
         "gate": ["solve_precheck"],
-        # z3_solve performs encoding, solving, and CSV projection atomically.
+        "oracle": ["oracle_probe"],
+        "ledger": ["closure_ledger"],
+        "search": ["closure_search"],
+        "residual": ["closure_residual"],
+        "construct": ["closure_construct", "closure_explain"],
+        "lemma": ["lemma_leads", "lemma_mine", "lemma_review", "lemma_apply"],
+        "audit": ["closure_audit"],
+        "certify": ["closure_certify"],
+        # csv_consumer compatibility (selected when mode=csv_consumer via overlay).
         "encode": ["z3_solve"],
         "solve": ["z3_solve"],
         "project": ["z3_solve"],
@@ -41,6 +51,10 @@ _TG_PIPELINES: dict[str, dict[str, list[str]]] = {
 
 _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
     "tg-init": {
+        "init_intent": {
+            "read": ["uo/manifest.yaml", "context/**"],
+            "write": ["tg/init/init_intent.yaml"],
+        },
         "kb_check": {
             "read": ["uo/manifest.yaml", "uo/checks/integrity.yaml"],
             "write": [],
@@ -120,6 +134,88 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
         "solve_precheck": {
             "read": ["tg/init/**", "tg/plan/**", "tg/snapshot/**", "uo/manifest.yaml"],
             "write": [],
+        },
+        "oracle_probe": {
+            "read": ["uo/**", "tg/init/**", "operators/**"],
+            "write": ["tg/closure/oracle_probe.yaml"],
+        },
+        "closure_ledger": {
+            "read": ["tg/closure/**", "uo/**"],
+            "write": [
+                "tg/closure/R.txt",
+                "tg/closure/open.txt",
+                "tg/closure/excluded.txt",
+                "tg/closure/excluded_why.csv",
+            ],
+        },
+        "closure_search": {
+            "read": ["tg/closure/**", "uo/ir/tg_host_view.yaml", "uo/ir/host_codemap.yaml"],
+            "write": ["tg/closure/rounds/**", "tg/closure/models/**"],
+        },
+        "closure_residual": {
+            "read": ["tg/closure/**"],
+            "write": ["tg/closure/residual/**", "tg/closure/route.yaml"],
+        },
+        "closure_construct": {
+            "read": ["tg/closure/**", "uo/**"],
+            "write": ["tg/closure/construct/**"],
+        },
+        "closure_explain": {
+            "read": ["tg/closure/**"],
+            "write": ["tg/closure/why.csv", "tg/closure/construct/**"],
+        },
+        "lemma_leads": {
+            "read": ["tg/closure/**"],
+            "write": ["tg/closure/lemmas/leads.yaml", "tg/closure/leads.csv", "tg/closure/leads3.csv"],
+        },
+        "lemma_mine": {
+            "read": [
+                "tg/closure/lemmas/leads.yaml",
+                "uo/ir/**",
+                "uo/tiling/**",
+                "runs/**/actions/lemma_mine/**",
+            ],
+            "write": [
+                "runs/{run_id}/actions/lemma_mine/parts/**",
+                "runs/{run_id}/actions/lemma_mine/scratch/**",
+                "runs/{run_id}/actions/lemma_mine/staging.yaml",
+            ],
+        },
+        "lemma_review": {
+            "read": [
+                "runs/**/actions/lemma_mine/**",
+                "tg/closure/lemmas/**",
+                "uo/ir/**",
+            ],
+            "write": [
+                "runs/{run_id}/actions/lemma_review/review.yaml",
+                "tg/closure/lemmas/reviews.yaml",
+            ],
+        },
+        "lemma_apply": {
+            "read": [
+                "runs/**/actions/lemma_review/review.yaml",
+                "tg/closure/lemmas/**",
+                "operators/**/proof_rules.yaml",
+            ],
+            "write": [
+                "tg/closure/excluded.txt",
+                "tg/closure/excluded_why.csv",
+                "tg/closure/open.txt",
+                "tg/closure/lemmas/active_rules.yaml",
+                "tg/closure/lemmas/revoked_rules.yaml",
+            ],
+        },
+        "closure_audit": {
+            "read": ["tg/closure/**", "uo/**"],
+            "write": [
+                "runs/{run_id}/actions/closure_audit/review.yaml",
+                "tg/closure/audit_report.yaml",
+            ],
+        },
+        "closure_certify": {
+            "read": ["tg/closure/**"],
+            "write": ["tg/closure/closure.csv", "tg/closure/certificate.yaml"],
         },
         "z3_solve": {
             "read": [
@@ -205,7 +301,7 @@ def _apply_tg_control_plane_contracts() -> None:
     }
     solve = WORKFLOWS.get("tg-solve") or {}
     solve["reset_policy"] = {
-        "reinit_delete": ["tg/solve", "tg/cases"],
+        "reinit_delete": ["tg/solve", "tg/cases", "tg/closure"],
         "reinit_preserve": [*upstream, "tg/plan", "tg/extract"],
         "reinit_wipe_runs": "current",
         "continue_scrub": "from_contracts",
@@ -215,14 +311,35 @@ def _apply_tg_control_plane_contracts() -> None:
 _apply_tg_control_plane_contracts()
 
 
+def resolve_workflow_id(workflow_id: str) -> str:
+    """Follow ``alias_of`` chains (e.g. tk-cover → tg-solve)."""
+    seen: set[str] = set()
+    wid = str(workflow_id or "").strip()
+    while wid and wid not in seen:
+        seen.add(wid)
+        meta = WORKFLOWS.get(wid)
+        if not isinstance(meta, dict):
+            break
+        alias = str(meta.get("alias_of") or "").strip()
+        if not alias:
+            break
+        wid = alias
+    return wid
+
+
 def get_workflow(workflow_id: str) -> dict[str, Any]:
-    if workflow_id not in WORKFLOWS:
+    wid = resolve_workflow_id(workflow_id)
+    if wid not in WORKFLOWS:
         raise KeyError(f"Unknown workflow: {workflow_id}")
-    return dict(WORKFLOWS[workflow_id])
+    return dict(WORKFLOWS[wid])
 
 
 def list_user_workflows() -> list[str]:
-    return [wid for wid, meta in WORKFLOWS.items() if meta.get("slash") and not meta.get("reserved")]
+    return [
+        wid
+        for wid, meta in WORKFLOWS.items()
+        if meta.get("slash") and not meta.get("reserved") and not meta.get("alias_of")
+    ]
 
 
 def state_ids(workflow_id: str) -> list[str]:

@@ -1,0 +1,140 @@
+# Static parent feature bindings for model scoring (closure/features.py).
+version: 1
+
+floor_terms: [bn1s1s2, qkv_bytes, s1_mod128, band]
+
+# Codemap root category → Case knobs (generation influence cone).
+root_to_knobs:
+  ATTRIBUTE: [layout, sparse_mode, pre_tokens, next_tokens, keep_prob, deterministic, pse_type, out_dtype]
+  INPUT_DTYPE: [dtype]
+  INPUT_SHAPE: [b, s1, s2, n2, g, d, d1]
+  OPTIONAL_INPUT_PRESENCE: [pse, rope, atten_mask]
+  SESSION_OPTION: [deterministic]
+  INPUT_VALUE: [seq_q, seq_kv]
+
+# Derived feature expressions (DataFrame.eval / column aliases).
+categorical: [layout, dtype, atten_mask, pse_shape]
+base_numeric:
+  - b
+  - s1
+  - s2
+  - n2
+  - g
+  - d
+  - d1
+  - pse
+  - pse_type
+  - rope
+  - sparse_mode
+  - pre_tokens
+  - next_tokens
+  - out_dtype
+  - deterministic
+  - all_same
+  - s1s2_same
+  - seq_has_zero
+derived_terms:
+  n1: "n2 * g"
+  dtype_is_fp32: null  # special: text compare on dtype
+  is_tnd: null
+  has_mask: null
+  has_drop: "keep_prob < 1.0"
+  d_ne_d1: "d != d1"
+  bn1s1: "b * n1 * s1"
+  bn2s2: "b * n2 * s2"
+  bn1s1s2: "bn1s1 * s2"
+  s1_mod128: "s1 % 128"
+  s2_mod128: "s2 % 128"
+  s1_div64: "s1 // 64"
+  d_le64: "d <= 64"
+  s1_eq_s2: "s1 == s2"
+
+static_parents:
+  SplitAxis:
+    - layout
+    - dtype
+    - n1
+    - n2
+    - g
+    - b
+    - s1
+    - s2
+    - d
+    - d1
+    - sparse_mode
+    - pre_tokens
+    - next_tokens
+    - deterministic
+    - has_mask
+    - has_drop
+    - rope
+    - all_same
+    - s1s2_same
+    - seq_has_zero
+    - is_tnd
+  DeterType:
+    - deterministic
+  IsBn2MultiBlk:
+    - layout
+    - dtype
+    - n1
+    - n2
+    - g
+    - b
+    - s1
+    - s2
+    - d
+    - d1
+    - sparse_mode
+    - pre_tokens
+    - next_tokens
+    - has_mask
+    - has_drop
+    - rope
+    - all_same
+    - s1s2_same
+    - seq_has_zero
+    - is_tnd
+  IsNzOut:
+    - layout
+    - dtype
+    - n1
+    - n2
+    - b
+    - s1
+    - s2
+    - d
+    - d1
+    - sparse_mode
+    - deterministic
+    - rope
+    - is_tnd
+  IsTndSwizzle:
+    - layout
+    - dtype
+    - n1
+    - n2
+    - g
+    - b
+    - s1
+    - s2
+    - d
+    - d1
+    - sparse_mode
+    - pre_tokens
+    - next_tokens
+    - deterministic
+    - has_mask
+    - has_drop
+    - rope
+    - all_same
+    - s1s2_same
+    - seq_has_zero
+    - is_tnd
+  IsTnd:
+    - layout
+    - is_tnd
+    - all_same
+    - s1s2_same
+    - seq_has_zero
+    - b

@@ -33,6 +33,7 @@ env/
 
 # Operator-local agent products
 .ascendc-agent/
+.ascendc-pilot/
 .understand-operator/
 .testcase-generator/
 

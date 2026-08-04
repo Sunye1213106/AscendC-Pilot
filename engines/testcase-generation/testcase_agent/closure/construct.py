@@ -1,72 +1,124 @@
 # -*- coding: utf-8 -*-
 """Build the input a target key asks for, instead of searching for it.
 
-By the construction stage every dimension's provenance is known, so a target
-key can be read as a specification and turned straight into Cases. Sampling
-had to stumble onto these combinations; construction just writes them down.
-What construction cannot do is guarantee the host agrees -- the dimensions
-interact -- so several spellings of each target are sent and the host still
-decides.
+Tables live in ``operators/<op>/<arch>/construction_hints.yaml``. Missing
+hints fail closed — there is no engine-side FAG construction table.
 """
 
 from __future__ import annotations
 
-from typing import Mapping
+from functools import lru_cache
+from typing import Any, Mapping
 
 from testcase_agent.closure import workspace as W
 
-DTYPE = {"1": "FLOAT", "2": "BF16", "3": "FLOAT16"}
-D_FOR = {
-    "64": [64, 63], "128": [128, 96, 72], "192": [192, 160],
-    "256": [256, 224], "768": [320, 512, 384, 768],
-}
-DETER_FOR = {
-    "0": [(0, 0), (0, 2), (0, 3)],
-    "1": [(1, 6), (1, 5)],
-    "2": [(1, 0), (1, 1), (1, 4)],
-    "3": [(1, 2)],
-    "4": [(1, 3)],
-}
-S1_FOR = {"128": [1024, 2048, 512, 256], "64": [256, 2048, 1024], "0": [0]}
-MASKS = ["ss", "bnss", "b1ss", "11ss"]
+
+@lru_cache(maxsize=4)
+def _hints() -> dict[str, Any]:
+    from replay.package_data import load_yaml
+
+    doc = load_yaml("construction_hints.yaml")
+    if not doc:
+        raise FileNotFoundError(
+            "operators/<op>/<arch>/construction_hints.yaml is required"
+        )
+    return doc
+
+
+def _dtype_map() -> dict[str, str]:
+    raw = _hints().get("dtype") or {}
+    return {str(k): str(v) for k, v in raw.items()}
+
+
+def _d_for() -> dict[str, list[int]]:
+    raw = _hints().get("d_for") or {}
+    return {str(k): [int(x) for x in (v or [])] for k, v in raw.items()}
+
+
+def _deter_for() -> dict[str, list[tuple[int, int]]]:
+    raw = _hints().get("deter_for") or {}
+    out: dict[str, list[tuple[int, int]]] = {}
+    for k, rows in raw.items():
+        out[str(k)] = [tuple(int(x) for x in row) for row in (rows or [])]  # type: ignore[misc]
+    return out
+
+
+def _s1_for() -> dict[str, list[int]]:
+    raw = _hints().get("s1_for") or {}
+    return {str(k): [int(x) for x in (v or [])] for k, v in raw.items()}
+
+
+def _masks() -> list[str]:
+    return [str(x) for x in (_hints().get("masks") or [])]
 
 
 def build(t: Mapping[str, str], seed: int = 0) -> list:
-    """Spellings of one target key, most likely first."""
+    """Spellings of one target key, most likely first.
+
+    Uses construction_hints tables. Optional operator hook
+    ``construct_case(target)`` on the semantics module overrides entirely.
+    """
+    del seed
     I = W.replay_inputs()
-    dtype = DTYPE.get(str(t.get("InputDType")))
-    if dtype is None or str(t.get("IsRegbase")) != "1" or str(t.get("IsEmptyTensor")) == "1":
+    mod = I
+    if hasattr(mod, "construct_case"):
+        return list(mod.construct_case(t) or [])
+
+    # Declared construction via yaml tables + from_knobs.
+    sem = I.SEMANTICS
+    if not hasattr(sem, "from_knobs"):
+        raise TypeError("InputSemantics.from_knobs required for construct.build")
+
+    dtype = _dtype_map().get(str(t.get("InputDType")))
+    require = _hints().get("require") or {}
+    for dim, want in require.items():
+        if str(t.get(str(dim))) != str(want):
+            return []
+    if dtype is None:
         return []
-    if str(t.get("OutDType")) != str(t.get("InputDType")):
-        return []
+    if str(t.get("OutDType", t.get("InputDType"))) != str(t.get("InputDType")):
+        # Default symmetry unless hints say otherwise.
+        if not _hints().get("allow_out_dtype_mismatch"):
+            return []
+
     out = []
-    for d in D_FOR.get(str(t.get("DTemplateNum")), []):
-        for s1 in S1_FOR.get(str(t.get("S1TemplateNum")), [1024]):
-            for det, sparse in DETER_FOR.get(str(t.get("DeterType")), []):
-                for mask in (MASKS if str(t.get("IsAttenMask")) == "1" else ["none"]):
-                    rope = str(t.get("IsRope")) == "1"
-                    if rope and str(t.get("DTemplateNum")) != "192":
+    for d in _d_for().get(str(t.get("DTemplateNum")), []):
+        for s1 in _s1_for().get(str(t.get("S1TemplateNum")), [1024]):
+            for det, sparse in _deter_for().get(str(t.get("DeterType")), [(0, 0)]):
+                for mask in (_masks() if str(t.get("IsAttenMask")) == "1" else ["none"]):
+                    knobs = dict(_hints().get("defaults") or {})
+                    knobs.update({
+                        "dtype": dtype,
+                        "d": d,
+                        "s1": s1,
+                        "sparse_mode": sparse,
+                        "deterministic": det,
+                        "atten_mask": mask,
+                        "rope": str(t.get("IsRope")) == "1",
+                        "pse": str(t.get("IsPse")) == "1",
+                        "keep_prob": 0.5 if str(t.get("IsDrop")) == "1" else 1.0,
+                        "g": 1 if str(t.get("IsNEqual")) == "1" else knobs.get("g", 2),
+                        "layout": "TND" if str(t.get("IsTnd")) == "1" else knobs.get("layout", "BSND"),
+                    })
+                    # Derived rules from hints.
+                    for rule in _hints().get("derived") or []:
+                        when = rule.get("when") or {}
+                        if all(str(t.get(k)) == str(v) for k, v in when.items()):
+                            knobs.update(rule.get("set") or {})
+                    if knobs.get("rope") and str(t.get("DTemplateNum")) not in (
+                        str(x) for x in (_hints().get("rope_d_templates") or ["192"])
+                    ):
                         continue
-                    g = 1 if str(t.get("IsNEqual")) == "1" else 2
                     d1 = d if str(t.get("IsDNoEqual")) == "0" else max(16, d // 2)
-                    if rope:
+                    if knobs.get("rope"):
                         d1 = None
-                    s2 = 1024 if str(t.get("S2TemplateNum")) == "128" else s1
-                    case = I.Case(
-                        layout="TND" if str(t.get("IsTnd")) == "1" else "BSND",
-                        dtype=dtype, b=2, s1=s1, s2=s2, n2=2, g=g,
-                        d=d, d1=d1, atten_mask=mask,
-                        pse=(str(t.get("IsPse")) == "1"),
-                        pse_shape="bnss" if str(t.get("IsTnd")) == "0" else "slope",
-                        pse_type=2 if str(t.get("IsTnd")) == "1" else 1,
-                        rope=rope,
-                        keep_prob=0.5 if str(t.get("IsDrop")) == "1" else 1.0,
-                        sparse_mode=sparse, deterministic=det,
-                        pre_tokens=65536, next_tokens=65536,
-                        out_dtype=0,
-                    )
+                    knobs["d1"] = d1
+                    knobs["s2"] = 1024 if str(t.get("S2TemplateNum")) == "128" else s1
                     try:
-                        out.append(case.normalised())
+                        case = sem.from_knobs(knobs)
+                        if hasattr(sem, "repair"):
+                            case = sem.repair(case)
+                        out.append(case.normalised() if hasattr(case, "normalised") else case)
                     except Exception:
                         pass
     return out

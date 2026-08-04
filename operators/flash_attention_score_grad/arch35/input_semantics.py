@@ -356,5 +356,48 @@ class FagInputSemantics:
             "pse_shape": PSE_SHAPES,
         }
 
+    def knob_schema(self) -> dict:
+        return {
+            "layout": {"kind": "categorical", "domain": list(LAYOUTS), "mutable": True},
+            "dtype": {"kind": "categorical", "domain": ["FLOAT16", "BF16", "FLOAT"], "mutable": True},
+            "b": {"kind": "numeric", "mutable": True, "default": 1},
+            "s1": {"kind": "numeric", "mutable": True, "default": 128},
+            "s2": {"kind": "numeric", "mutable": True, "default": 128},
+            "n2": {"kind": "numeric", "mutable": True, "default": 1},
+            "g": {"kind": "numeric", "mutable": True, "default": 1},
+            "d": {"kind": "numeric", "mutable": True, "default": 128},
+            "d1": {"kind": "numeric", "mutable": True, "default": None},
+            "atten_mask": {"kind": "categorical", "domain": list(ATTEN_MASKS), "mutable": True},
+            "pse": {"kind": "bool", "mutable": True, "default": False},
+            "pse_shape": {"kind": "categorical", "domain": list(PSE_SHAPES), "mutable": True},
+            "pse_type": {"kind": "numeric", "mutable": True, "default": 1},
+            "rope": {"kind": "bool", "mutable": True, "default": False},
+            "keep_prob": {"kind": "numeric", "mutable": True, "default": 1.0},
+            "sparse_mode": {"kind": "numeric", "mutable": True, "default": 0},
+            "pre_tokens": {"kind": "numeric", "mutable": True, "default": 65536},
+            "next_tokens": {"kind": "numeric", "mutable": True, "default": 65536},
+            "out_dtype": {"kind": "numeric", "mutable": True, "default": 0},
+            "deterministic": {"kind": "numeric", "mutable": True, "default": 0},
+            "seq_q": {"kind": "sequence", "mutable": False, "default": None},
+            "seq_kv": {"kind": "sequence", "mutable": False, "default": None},
+            "prefix_n": {"kind": "sequence", "mutable": False, "default": None},
+        }
+
+    def from_knobs(self, knobs: dict) -> Case:
+        schema = self.knob_schema()
+        payload = {}
+        for name, meta in schema.items():
+            if name in knobs:
+                payload[name] = knobs[name]
+            elif "default" in meta:
+                payload[name] = meta["default"]
+        return Case(**payload)
+
+    def knobs_of(self, case: Case) -> dict:
+        return describe(case)
+
+    def repair(self, case: Case) -> Case:
+        return case.normalised()
+
 
 SEMANTICS = FagInputSemantics()

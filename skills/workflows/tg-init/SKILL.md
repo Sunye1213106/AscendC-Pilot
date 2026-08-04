@@ -29,6 +29,7 @@ description: 构建测例契约 / 测项合同与绑定、测试工具初始化�
 
 | action_id | execution_mode | agent | role | method | prompt | output_contract |
 |---|---|---|---|---|---|---|
+| `init_intent` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-init/init-intent` | `-` | `tg-init-intent-v1` |
 | `kb_check` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-init/kb-check` | `-` | `uo-ready-v1` |
 | `contract_build` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-init/contract-build` | `-` | `csv-contract-v1` |
 | `semantic_bind` | `subagent` | `tg-semantic-bind` | `producer` | `tg-init/semantic-bind` | `tg/semantic-bind` | `semantic-bind-v1` |

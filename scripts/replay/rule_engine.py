@@ -206,21 +206,74 @@ def merge(*books: RuleBook) -> RuleBook:
 _BOOK: RuleBook | None = None
 
 
+def load_active(path: str | Path) -> RuleBook:
+    """Load reviewed+promoted active rules (may be empty)."""
+    path = Path(path)
+    if not path.is_file():
+        return RuleBook()
+    doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    # Same shape as proof_rules.yaml, or a list under ``rules``.
+    if "value_unreachable" in doc or "combos" in doc:
+        return load_proof(path)
+    rules: list[Rule] = []
+    for raw in doc.get("rules") or []:
+        grade = str(raw.get("grade") or "source_lemma")
+        kind = str(raw.get("kind") or "combo")
+        if kind == "value_unreachable":
+            dim, value = str(raw["dim"]), str(raw["value"])
+            rules.append(Rule(
+                kind=kind, grade=grade, label=f"{dim}={value}",
+                reason=str(raw.get("reason") or ""), dim=dim, value=value))
+        else:
+            when = {str(k): str(v) for k, v in (raw.get("when") or {}).items()}
+            label = str(raw.get("label") or " + ".join(f"{d}={v}" for d, v in when.items()))
+            rules.append(Rule(
+                kind="combo", grade=grade, label=label,
+                reason=str(raw.get("reason") or ""), when=when))
+    return RuleBook(rules=tuple(rules),
+                    source_hash=str(doc.get("uo_graph_fingerprint") or ""),
+                    expected_hash=str(doc.get("expected_fingerprint") or ""))
+
+
 def default_book(*, refresh: bool = False) -> RuleBook:
-    """Proof rules of the active operator, plus derived rules if present.
+    """Active lemmas first; package proof_rules.yaml is seed-only when active exists.
 
     Held after the first read. Callers ask this per instance -- once per
-    declared key, tens of thousands of times -- and parsing both YAML files
-    again for each of them costs orders of magnitude more than answering the
-    question. `refresh` is for a process that rewrote the files and wants to
-    see its own output.
+    declared key, tens of thousands of times -- and parsing YAML again for
+    each of them costs orders of magnitude more than answering the question.
+    ``refresh`` is for a process that rewrote the files and wants to see its
+    own output.
     """
     global _BOOK
     if _BOOK is None or refresh:
         from .runner import default
         package = default().manifest.package
         cache = default().cache
-        proof = load_proof(package / "proof_rules.yaml")
+        # Prefer promoted active rules under the closure state directory.
+        active_path = None
+        import os
+        state = os.environ.get("TG_CLOSURE_STATE")
+        if state:
+            active_path = Path(state) / "lemmas" / "active_rules.yaml"
+        else:
+            try:
+                from testcase_agent.closure import workspace as WS
+
+                active_path = WS.default_workspace().state / "lemmas" / "active_rules.yaml"
+            except Exception:
+                active_path = None
+
+        books: list[RuleBook] = []
+        if active_path is not None and active_path.is_file():
+            books.append(load_active(active_path))
+        else:
+            # No active book yet: seed from package proof_rules (must still be
+            # SOUND_GRADES). Inheritance without review is temporary until W3
+            # promote runs once.
+            proof_path = package / "proof_rules.yaml"
+            if proof_path.is_file():
+                books.append(load_proof(proof_path))
         derived = load_derived(cache / "derived_rules.yaml")
-        _BOOK = merge(proof, derived)
+        books.append(derived)
+        _BOOK = merge(*books) if books else RuleBook()
     return _BOOK

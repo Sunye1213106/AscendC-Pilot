@@ -804,7 +804,11 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
     compiled: list[str] = []
 
     # Workflow skills + operator
-    workflow_ids = [wid for wid, m in WORKFLOWS.items() if m.get("slash") and not m.get("reserved")]
+    workflow_ids = [
+        wid
+        for wid, m in WORKFLOWS.items()
+        if m.get("slash") and not m.get("reserved") and not m.get("alias_of")
+    ]
     workflow_ids.append("operator")
     for wid in workflow_ids:
         src = skills / "workflows" / wid

@@ -400,3 +400,163 @@ def gate_solve_terminal(project_root: Path) -> dict[str, Any]:
         }
 
     return _wrap_exc("solve_terminal", _run)
+
+
+_ADAPTER_METHODS = (
+    "declared_keys",
+    "decode_key",
+    "sample_case",
+    "mutate",
+    "construct",
+    "describe",
+    "replay",
+    "actual_key",
+    "generation_knobs",
+)
+
+_REQUIRED_YAML = (
+    "operator.yaml",
+    "log_protocol.yaml",
+    "search_hints.yaml",
+    "construction_hints.yaml",
+    "feature_bindings.yaml",
+    "proof_rules.yaml",
+    "observations.yaml",
+)
+
+_REQUIRED_SECTIONS = {
+    "search_hints.yaml": ("sampling_grid",),
+    "construction_hints.yaml": ("defaults",),
+    "feature_bindings.yaml": ("categorical", "base_numeric"),
+    "log_protocol.yaml": ("marks", "scrapes", "report_state"),
+}
+
+
+def gate_adapter_completeness(
+    project_root: Path,
+    *,
+    package_dir: Path | None = None,
+    examples_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Static completeness gate so FAG-runnable ≠ platform-generic.
+
+    Checks:
+      - OperatorAdapter protocol surface (9 methods) when an adapter is loaded
+      - knob_schema covers every describe() column
+      - 7 required yaml segments non-empty
+      - construction_hints / feature_bindings are not byte-identical to skill examples
+    """
+    import hashlib
+    import sys
+
+    issues: list[str] = []
+    repo = Path(project_root).resolve()
+    scripts = repo / "scripts"
+    if scripts.is_dir() and str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+
+    pkg = package_dir
+    if pkg is None:
+        try:
+            from replay import package_data
+
+            pkg = package_data.active_package_dir(repo)
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "gate": "adapter_completeness",
+                "ok": False,
+                "message": f"package resolve failed: {exc}",
+            }
+    pkg = Path(pkg)
+
+    for name in _REQUIRED_YAML:
+        path = pkg / name
+        if not path.is_file():
+            # bridge_spec is optional for toy; proof/observations required by plan.
+            if name == "bridge_spec.yaml":
+                continue
+            issues.append(f"missing:{name}")
+            continue
+        doc = _load(path)
+        if not isinstance(doc, dict) or not doc:
+            issues.append(f"empty:{name}")
+            continue
+        for section in _REQUIRED_SECTIONS.get(name, ()):
+            if section not in doc:
+                issues.append(f"missing_section:{name}:{section}")
+
+    # Anti-copy: must not match skill examples byte-for-byte (ignoring provenance comments).
+    examples = examples_dir or (
+        repo / "skills" / "capabilities" / "tilingkey-closure" / "examples"
+    )
+    for yaml_name, excerpt_name in (
+        ("construction_hints.yaml", "construction_hints.excerpt.yaml"),
+        ("feature_bindings.yaml", "feature_bindings.excerpt.yaml"),
+    ):
+        pkg_path = pkg / yaml_name
+        ex_path = examples / excerpt_name
+        if not pkg_path.is_file() or not ex_path.is_file():
+            continue
+        def _norm(text: str) -> str:
+            lines = [
+                ln for ln in text.splitlines()
+                if ln.strip() and not ln.strip().startswith("#")
+            ]
+            return "\n".join(lines).strip()
+
+        if _norm(pkg_path.read_text(encoding="utf-8")) == _norm(
+            ex_path.read_text(encoding="utf-8")
+        ):
+            issues.append(f"copied_from_example:{yaml_name}")
+
+    # knob_schema vs describe columns
+    try:
+        from replay import inputs as I
+
+        sem = I.SEMANTICS
+        if hasattr(sem, "knob_schema") and hasattr(sem, "describe"):
+            schema = dict(sem.knob_schema() or {})
+            # Build a default case when possible.
+            case = None
+            if hasattr(sem, "from_knobs"):
+                defaults = {
+                    k: (v.get("domain") or [v.get("default")])[0]
+                    if isinstance(v, dict) and v.get("domain")
+                    else (v.get("default") if isinstance(v, dict) else None)
+                    for k, v in schema.items()
+                }
+                defaults = {k: v for k, v in defaults.items() if v is not None}
+                try:
+                    case = sem.from_knobs(defaults)
+                except Exception:
+                    case = None
+            if case is not None:
+                cols = set(sem.describe(case).keys())
+                missing = cols - set(schema.keys())
+                if missing:
+                    issues.append(f"knob_schema_missing_describe_cols:{sorted(missing)}")
+    except Exception as exc:  # noqa: BLE001
+        issues.append(f"semantics_check_failed:{exc}")
+
+    # Adapter methods — the Protocol must declare all 9; a materialize-only
+    # package adapter is fine as long as OperatorAdapter lists the surface.
+    try:
+        from replay.operator_adapter import OperatorAdapter
+
+        for m in _ADAPTER_METHODS:
+            if not hasattr(OperatorAdapter, m):
+                issues.append(f"protocol_missing:{m}")
+    except Exception as exc:  # noqa: BLE001
+        issues.append(f"adapter_protocol_failed:{exc}")
+
+    ok = not issues
+    return {
+        "gate": "adapter_completeness",
+        "ok": ok,
+        "message": "ok" if ok else f"issues={issues[:8]}",
+        "issues": issues,
+        "package": str(pkg),
+        "fingerprint": hashlib.sha256(
+            "".join(issues).encode("utf-8")
+        ).hexdigest()[:12],
+    }

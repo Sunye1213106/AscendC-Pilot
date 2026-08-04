@@ -217,3 +217,121 @@ def index_summary(db_path: str | Path) -> dict[str, Any]:
     finally:
         connection.close()
 
+
+# Host-view projection tables living inside kb_graph.sqlite so TG has one
+# SQLite lifecycle. Populated by export_tg_host_view after rebuild_index.
+HOST_VIEW_TABLES = """
+CREATE TABLE IF NOT EXISTS field_writer (
+  path TEXT, function TEXT, file TEXT, line INTEGER,
+  rhs TEXT, via TEXT, field TEXT
+);
+CREATE TABLE IF NOT EXISTS field_guard (
+  file TEXT, line INTEGER, function TEXT, guard TEXT
+);
+CREATE TABLE IF NOT EXISTS field_meta (
+  name TEXT PRIMARY KEY, kind TEXT, exactness TEXT, grade TEXT
+);
+CREATE TABLE IF NOT EXISTS field_read (
+  field TEXT, var TEXT, root TEXT
+);
+CREATE TABLE IF NOT EXISTS field_predicate (
+  id TEXT, file TEXT, line INTEGER, function TEXT,
+  condition TEXT, feature_hint TEXT
+);
+CREATE TABLE IF NOT EXISTS field_generation_knob (
+  field TEXT, knob TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_fw_path ON field_writer(path);
+CREATE INDEX IF NOT EXISTS idx_fw_field ON field_writer(field);
+CREATE INDEX IF NOT EXISTS idx_fg_loc ON field_guard(file, line);
+CREATE INDEX IF NOT EXISTS idx_fp_hint ON field_predicate(feature_hint);
+"""
+
+
+def upsert_host_view_tables(
+    uo_root: str | Path, view: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Upsert TG host-view query tables into the existing kb_graph.sqlite.
+
+    Requires ``rebuild_index`` to have already created the DB. Does not
+    recreate the graph tables — only the projection side-car tables.
+    """
+    root = Path(uo_root).expanduser().resolve()
+    db = root / "indexes" / "kb_graph.sqlite"
+    if not db.is_file():
+        return {"ok": False, "error": f"missing {db}; run build_index first"}
+
+    if view is None:
+        from uo_init.host_codemap import load_tg_host_view
+
+        view = load_tg_host_view(root)
+    if not view:
+        return {"ok": False, "error": "empty tg_host_view"}
+
+    fp = str((view.get("source") or {}).get("graph_fingerprint") or "")
+    connection = sqlite3.connect(str(db))
+    try:
+        connection.executescript(HOST_VIEW_TABLES)
+        for table in (
+            "field_writer", "field_guard", "field_meta",
+            "field_read", "field_predicate", "field_generation_knob",
+        ):
+            connection.execute(f"DELETE FROM {table}")
+        connection.execute(
+            "INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
+            ("host_view_fingerprint", fp),
+        )
+        for f in view.get("fields") or []:
+            name = f.get("name")
+            connection.execute(
+                "INSERT OR REPLACE INTO field_meta VALUES (?,?,?,?)",
+                (name, f.get("kind"), f.get("exactness"), f.get("grade")),
+            )
+            for r in f.get("reads") or []:
+                connection.execute(
+                    "INSERT INTO field_read VALUES (?,?,?)",
+                    (name, r.get("var"), r.get("root")),
+                )
+                root_name = str(r.get("root") or "")
+                if root_name:
+                    connection.execute(
+                        "INSERT INTO field_generation_knob VALUES (?,?)",
+                        (name, root_name),
+                    )
+            for w in f.get("writers") or []:
+                connection.execute(
+                    "INSERT INTO field_writer VALUES (?,?,?,?,?,?,?)",
+                    (w.get("path"), w.get("function"), w.get("file"),
+                     int(w.get("line") or 0), w.get("rhs"),
+                     w.get("via") or "direct", name),
+                )
+                for g in w.get("guards") or []:
+                    connection.execute(
+                        "INSERT INTO field_guard VALUES (?,?,?,?)",
+                        (w.get("file"), int(w.get("line") or 0),
+                         w.get("function"), str(g)),
+                    )
+        for p in view.get("predicates") or []:
+            connection.execute(
+                "INSERT INTO field_predicate VALUES (?,?,?,?,?,?)",
+                (p.get("id"), p.get("file"), int(p.get("line") or 0),
+                 p.get("function"), p.get("condition"), p.get("feature_hint")),
+            )
+        connection.commit()
+        writer_count = connection.execute(
+            "SELECT count(*) FROM field_writer"
+        ).fetchone()[0]
+        pred_count = connection.execute(
+            "SELECT count(*) FROM field_predicate"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    return {
+        "ok": True,
+        "database": db.as_posix(),
+        "host_view_fingerprint": fp,
+        "field_writer_count": writer_count,
+        "field_predicate_count": pred_count,
+        "field_count": len(view.get("fields") or []),
+    }
+

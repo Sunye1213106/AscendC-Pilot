@@ -553,6 +553,79 @@ def write_legal_key_index(uo_root: Path, legal_keys: list[dict[str, Any]]) -> Pa
     return path
 
 
+def write_key_index(uo_root: Path, fields: list[dict[str, Any]]) -> Path:
+    """Lightweight closure-facing index (~8% of derive payload).
+
+    Carries def_sites / status / exactness / value_leaves / input_roots —
+    not value_expr / expanded (those belong to optional uo-deep-solve shards).
+    """
+    import yaml
+
+    root = Path(uo_root)
+    rows = []
+    for f in fields or []:
+        if not isinstance(f, dict):
+            continue
+        rows.append({
+            "name": f.get("name"),
+            "index": f.get("index"),
+            "status": f.get("status"),
+            "exactness": f.get("exactness"),
+            "value_leaves": list(f.get("value_leaves") or []),
+            "input_roots": list(f.get("input_roots") or []),
+            "def_sites": list(f.get("def_sites") or []),
+            "free_vars": list(f.get("free_vars") or []),
+        })
+    path = root / "tiling" / "key_index.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump(
+            {"schema": "uo-key-index/v1", "fields": rows},
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def write_expr_shards(uo_root: Path, fields: list[dict[str, Any]]) -> list[Path]:
+    """Optional deep-solve shards under ``tiling/expr/<dim>.yaml``."""
+    import os
+
+    import yaml
+
+    if os.environ.get("UO_DEEP_SOLVE", "").strip() not in ("1", "true", "yes"):
+        return []
+    root = Path(uo_root) / "tiling" / "expr"
+    root.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    for f in fields or []:
+        if not isinstance(f, dict):
+            continue
+        name = str(f.get("name") or "").strip()
+        if not name:
+            continue
+        if f.get("value_expr") is None and not f.get("expanded"):
+            continue
+        path = root / f"{name}.yaml"
+        path.write_text(
+            yaml.safe_dump(
+                {
+                    "schema": "uo-deep-solve-expr/v1",
+                    "name": name,
+                    "value_expr": f.get("value_expr"),
+                    "expanded": f.get("expanded"),
+                },
+                allow_unicode=True,
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        written.append(path)
+    return written
+
+
 def load_schema_from_notes_or_header(
     kb: KnowledgeBase, header: str | Path | None
 ) -> TplSchema | None:

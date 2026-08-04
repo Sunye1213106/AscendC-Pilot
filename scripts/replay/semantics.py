@@ -45,3 +45,23 @@ class InputSemantics(Protocol):
     def enums(self) -> Mapping[str, Sequence[Any]]:
         """Closed sets the contract gate checks against."""
         ...
+
+    def knob_schema(self) -> Mapping[str, Mapping[str, Any]]:
+        """Name → {kind, domain?, mutable?, default?} for every Case knob.
+
+        ``kind`` is ``categorical`` | ``numeric`` | ``bool`` | ``sequence``.
+        Engines sample / mutate / rebuild Cases only through this table.
+        """
+        ...
+
+    def from_knobs(self, knobs: Mapping[str, Any]) -> Any:
+        """Build a Case from a flat knob dict (missing keys use defaults)."""
+        ...
+
+    def knobs_of(self, case: Any) -> Mapping[str, Any]:
+        """Flatten a Case into the knob dict ``describe`` / corpus use."""
+        ...
+
+    def repair(self, case: Any) -> Any:
+        """Cross-knob consistency (e.g. layout-specific sequences)."""
+        ...

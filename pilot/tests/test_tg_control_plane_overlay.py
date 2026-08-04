@@ -14,8 +14,45 @@ def test_tg_pipelines_are_explicit_and_fail_closed() -> None:
     assert phase_pipeline("tg-init", "confirm") == ["human_confirm"]
     assert phase_pipeline("tg-plan", "build") == ["plan_build"]
     assert phase_pipeline("tg-plan", "approve") == ["plan_approve"]
+    # Default tilingkey_full_coverage closure loop
+    assert phase_pipeline("tg-solve", "oracle") == ["oracle_probe"]
+    assert phase_pipeline("tg-solve", "ledger") == ["closure_ledger"]
+    assert phase_pipeline("tg-solve", "search") == ["closure_search"]
+    assert phase_pipeline("tg-solve", "residual") == ["closure_residual"]
+    assert phase_pipeline("tg-solve", "lemma") == [
+        "lemma_leads",
+        "lemma_mine",
+        "lemma_review",
+        "lemma_apply",
+    ]
+    assert phase_pipeline("tg-solve", "audit") == ["closure_audit"]
+    assert phase_pipeline("tg-solve", "certify") == ["closure_certify"]
+    # csv_consumer compatibility phases remain available
     assert phase_pipeline("tg-solve", "encode") == ["z3_solve"]
     assert phase_pipeline("tg-solve", "cover") == ["cover_confirm"]
+
+
+def test_tg_solve_closure_actions_registered() -> None:
+    from ascendc_pilot.actions.engines import ENGINE_REGISTRY
+
+    for action_id in (
+        "oracle_probe",
+        "closure_ledger",
+        "closure_search",
+        "closure_residual",
+        "closure_construct",
+        "closure_explain",
+        "lemma_leads",
+        "lemma_mine",
+        "lemma_review",
+        "lemma_apply",
+        "closure_audit",
+        "closure_certify",
+    ):
+        assert ("tg-solve", action_id) in ENGINE_REGISTRY
+        row = action_by_id("tg-solve", action_id) or {}
+        assert row.get("id") == action_id
+        assert "tilingkey-closure" in (row.get("capability_ids") or [])
 
 
 def test_tg_primary_actions_have_named_controller_identity_and_precise_writes() -> None:
@@ -58,9 +95,40 @@ def test_downstream_reinit_preserves_upstream_tg_contracts() -> None:
     assert plan["reinit_delete"] == ["tg/plan", "tg/solve", "tg/cases", "tg/extract"]
     assert "tg/init" in plan["reinit_preserve"]
     assert "tg/contract" in plan["reinit_preserve"]
-    assert solve["reinit_delete"] == ["tg/solve", "tg/cases"]
+    assert solve["reinit_delete"] == ["tg/solve", "tg/cases", "tg/closure"]
     assert "tg/plan" in solve["reinit_preserve"]
     assert "tg/extract" in solve["reinit_preserve"]
+
+
+def test_tg_solve_lemma_mine_is_staged_producer() -> None:
+    mine = action_by_id("tg-solve", "lemma_mine") or {}
+    review = action_by_id("tg-solve", "lemma_review") or {}
+    assert mine.get("execution_mode") == "subagent"
+    assert mine.get("agent_id") == "tg-lemma-producer"
+    assert mine.get("output_mode") == "staged"
+    assert mine.get("merge_action_id") == "lemma_apply"
+    assert any("lemma_mine/parts" in p for p in (mine.get("allowed_write_paths") or []))
+    assert review.get("agent_id") == "tg-closure-referee"
+    assert review.get("referee_required") is True
+
+
+def test_tk_cover_alias_has_no_independent_pipeline() -> None:
+    from ascendc_pilot.router import route
+    from ascendc_pilot.workflows import get_workflow, list_user_workflows, resolve_workflow_id
+
+    assert resolve_workflow_id("tk-cover") == "tg-solve"
+    assert "tk-cover" not in list_user_workflows()
+    assert "tg-solve" in list_user_workflows()
+    # Spec entry itself has no pipelines/actions
+    raw = WORKFLOWS["tk-cover"]
+    assert raw.get("alias_of") == "tg-solve"
+    assert not (raw.get("pipelines") or {})
+    assert not (raw.get("actions") or [])
+    # get_workflow follows the alias
+    assert get_workflow("tk-cover").get("slash") == "/tg-solve"
+    routed = route("/tk-cover")
+    assert routed.get("ok") is True
+    assert routed.get("workflow_id") == "tg-solve"
 
 
 def test_primary_steps_do_not_inherit_uo_scope_recipe(tmp_path: Path) -> None:

@@ -35,7 +35,8 @@ def _slash_map() -> dict[str, str]:
             continue
         slash = str(meta.get("slash") or "").strip()
         if slash:
-            out[slash] = wid
+            # Alias entries keep their slash but resolve to the target workflow.
+            out[slash] = str(meta.get("alias_of") or wid)
     return out
 
 
@@ -108,10 +109,12 @@ def route(text: str) -> dict[str, Any]:
 
     # Also accept bare workflow id as first token (uo-init)
     if first in WORKFLOWS and (WORKFLOWS[first].get("slash") and not WORKFLOWS[first].get("reserved")):
+        meta = WORKFLOWS[first]
+        wid = str(meta.get("alias_of") or first)
         return {
             "ok": True,
-            "workflow_id": first,
-            "slash": WORKFLOWS[first].get("slash"),
+            "workflow_id": wid,
+            "slash": WORKFLOWS[wid].get("slash") if wid in WORKFLOWS else meta.get("slash"),
             "method": "workflow_id",
         }
 

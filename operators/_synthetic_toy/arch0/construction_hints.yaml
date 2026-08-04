@@ -1,0 +1,8 @@
+version: 1
+dtype: {}
+d_for: {}
+deter_for: {}
+s1_for: {}
+masks: []
+require: {}
+defaults: {layout: FLAT, n: 4}

@@ -14,8 +14,15 @@ import yaml
 from uo_init import paths
 
 
-def _uo_root(project_root: Path) -> Path:
-    return Path(project_root).expanduser().resolve() / ".ascendc-pilot" / "uo"
+def _uo_root(project_root: Path, *, arch: str | None = None) -> Path:
+    root = Path(project_root).expanduser().resolve()
+    try:
+        from ascendc_pilot.paths import uo_root
+
+        return uo_root(root, arch=arch)
+    except Exception:
+        arch_name = (arch or "").strip() or "arch35"
+        return root / ".ascendc-pilot" / arch_name / "uo"
 
 
 def _dump(path: Path, payload: Any) -> None:
@@ -619,6 +626,25 @@ def derive_key_fields(project_root: Path, payload: dict[str, Any] | None = None)
         # TG-facing view is written early so export_kb can attach it without
         # re-deriving; still a contract stub until TG consumes it.
         _dump(uo / "tiling" / "key_derivations.yaml", to_key_derivations(doc))
+        try:
+            from uo_init.materialize_tiling import write_expr_shards, write_key_index
+
+            field_dicts = [f.to_dict() for f in doc.fields]
+            write_key_index(uo, field_dicts)
+            # Deep shards only when UO_DEEP_SOLVE is set (and to_dict emits exprs).
+            write_expr_shards(
+                uo,
+                [
+                    {
+                        **fd,
+                        "value_expr": getattr(f, "value_expr", None),
+                        "expanded": getattr(f, "expanded", ""),
+                    }
+                    for f, fd in zip(doc.fields, field_dicts)
+                ],
+            )
+        except Exception:
+            pass
         totals = doc.totals()
         receipt = {
             "ok": True,
@@ -993,9 +1019,110 @@ def build_index(project_root: Path, payload: dict[str, Any] | None = None) -> di
         return {"ok": False, "engine": "build_index", "error": str(exc)[:400]}
 
 
+def export_tg_host_view(
+    project_root: Path, payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Project live HostIR into tg_host_view.yaml stamped with the KB fingerprint.
+
+    Must run after ``export_kb`` + ``build_index``. Does not read
+    ``.probe_cache/fag_bundle.pkl`` — HostIR comes from the in-process extract
+    bundle (same source that fed the KB).
+    """
+    from uo_init.host_codemap import export_tg_host_view as _export_view
+    from uo_init.host_derivation import HostDerivation
+    from uo_init.kb_export import load_graph
+
+    ctx = _ctx(payload)
+    root = Path(project_root).expanduser().resolve()
+    uo = _uo_root(root)
+    graph_path = uo / "ir" / "operator_graph.yaml"
+    if not graph_path.is_file():
+        return {
+            "ok": False,
+            "engine": "export_tg_host_view",
+            "error": "missing ir/operator_graph.yaml; run export_kb first",
+        }
+    sqlite = uo / "indexes" / "kb_graph.sqlite"
+    if not sqlite.is_file():
+        return {
+            "ok": False,
+            "engine": "export_tg_host_view",
+            "error": "missing indexes/kb_graph.sqlite; run build_index first",
+        }
+    try:
+        graph = load_graph(uo)
+        fingerprint = str(graph.get("fingerprint") or "")
+        manifest = _load(uo / "manifest.yaml")
+        manifest_hash = str(manifest.get("content_hash") or manifest.get("hash") or "")
+        source_revision = str(
+            manifest.get("source_revision")
+            or (manifest.get("source") or {}).get("revision")
+            or ""
+        )
+
+        bundle = _ensure_bundle(root, ctx)
+        host_ir = bundle.get("host_ir")
+        if host_ir is None:
+            return {
+                "ok": False,
+                "engine": "export_tg_host_view",
+                "error": "bundle has no host_ir; re-run extract_host",
+            }
+        derive_fields: list[dict[str, Any]] | None = None
+        derivation = bundle.get("host_derivation")
+        if isinstance(derivation, HostDerivation):
+            derive_fields = [f.to_dict() for f in derivation.fields]
+        elif isinstance(derivation, dict):
+            derive_fields = list(derivation.get("fields") or [])
+        else:
+            kd = _load(uo / "tiling" / "key_derivations.yaml")
+            derive_fields = list(kd.get("fields") or []) or None
+
+        declared: dict[str, Any] | None = None
+        try:
+            from testcase_agent.closure import workspace as WS
+
+            sch = WS.schema()
+            declared = {
+                "count": len(WS.declared()),
+                "dims": [
+                    {
+                        "name": d.name,
+                        "bw": getattr(d, "bw", 0),
+                        "domain": list(getattr(d, "value_domain", []) or []),
+                    }
+                    for d in sch.dims
+                ],
+            }
+        except Exception:
+            declared = None
+
+        result = _export_view(
+            host_ir,
+            uo,
+            derive_fields=derive_fields,
+            declared=declared,
+            graph_fingerprint=fingerprint,
+            source_revision=source_revision,
+            manifest_hash=manifest_hash,
+        )
+        receipt = {
+            "ok": bool(result.get("ok")),
+            "engine": "export_tg_host_view",
+            "graph_fingerprint": fingerprint,
+            **{k: v for k, v in result.items() if k != "ok"},
+        }
+        _dump(uo / "checks" / "tg_host_view_receipt.yaml", receipt)
+        return receipt
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "export_tg_host_view", "error": str(exc)[:400]}
+
+
 def export_integrity(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     del payload
     from uo_init.kb_export import knowledge_base_from_payload, load_graph
+    from uo_init.host_codemap import TG_HOST_VIEW_YAML, CODEMAP_YAML, load_tg_host_view
+    from uo_init.kb_index import index_summary
 
     uo = _uo_root(project_root)
     graph = uo / "ir" / "operator_graph.yaml"
@@ -1003,6 +1130,8 @@ def export_integrity(project_root: Path, payload: dict[str, Any] | None = None) 
     unresolved = uo / "ir" / "unresolved.yaml"
     hashes = uo / "checks" / "artifact_hashes.yaml"
     sqlite = uo / "indexes" / "kb_graph.sqlite"
+    view_path = uo / TG_HOST_VIEW_YAML
+    alias_path = uo / CODEMAP_YAML
     errors: list[str] = []
     if not graph.is_file():
         errors.append("missing ir/operator_graph.yaml")
@@ -1012,12 +1141,52 @@ def export_integrity(project_root: Path, payload: dict[str, Any] | None = None) 
         errors.append("missing checks/artifact_hashes.yaml")
     if not sqlite.is_file():
         errors.append("missing indexes/kb_graph.sqlite")
+    graph_fp = ""
     if graph.is_file():
         try:
-            kb = knowledge_base_from_payload(load_graph(uo))
+            payload_graph = load_graph(uo)
+            graph_fp = str(payload_graph.get("fingerprint") or "")
+            kb = knowledge_base_from_payload(payload_graph)
             errors.extend(kb.check_invariants())
         except Exception as exc:  # noqa: BLE001
             errors.append(f"graph_load_failed: {exc}")
+    if sqlite.is_file() and graph_fp:
+        try:
+            summary = index_summary(sqlite)
+            idx_fp = str(summary.get("graph_fingerprint") or "")
+            if idx_fp != graph_fp:
+                errors.append(
+                    f"kb_graph fingerprint drift: index={idx_fp!r} graph={graph_fp!r}"
+                )
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"kb_index_summary_failed: {exc}")
+    if not view_path.is_file() and not alias_path.is_file():
+        errors.append(f"missing {TG_HOST_VIEW_YAML} (run export_tg_host_view)")
+    else:
+        view = load_tg_host_view(uo)
+        view_fp = str((view.get("source") or {}).get("graph_fingerprint") or "")
+        if not view_fp:
+            errors.append("tg_host_view missing source.graph_fingerprint")
+        elif graph_fp and view_fp != graph_fp:
+            errors.append(
+                f"tg_host_view fingerprint drift: view={view_fp!r} graph={graph_fp!r}"
+            )
+        if sqlite.is_file() and view_fp:
+            try:
+                import sqlite3
+
+                with sqlite3.connect(str(sqlite)) as conn:
+                    row = conn.execute(
+                        "SELECT value FROM meta WHERE key='host_view_fingerprint'"
+                    ).fetchone()
+                    hv_fp = row[0] if row else ""
+                    if hv_fp and hv_fp != view_fp:
+                        errors.append(
+                            "kb_graph host_view_fingerprint drift: "
+                            f"meta={hv_fp!r} view={view_fp!r}"
+                        )
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"host_view_meta_failed: {exc}")
     ur = _load(unresolved)
     q = _load(quality)
     blocker_count = int(ur.get("blocker_count") or len(ur.get("blockers") or []))
@@ -1027,6 +1196,7 @@ def export_integrity(project_root: Path, payload: dict[str, Any] | None = None) 
         "ok": not errors,
         "blocker_count": blocker_count,
         "source_closure": q.get("source_closure"),
+        "graph_fingerprint": graph_fp,
         "errors": errors,
     }
     _dump(uo / "checks" / "integrity.yaml", doc)
@@ -1076,6 +1246,7 @@ ENGINES: dict[str, Any] = {
     "apply_gap_patch": apply_gap_patch,
     "export_kb": export_kb_action,
     "build_index": build_index,
+    "export_tg_host_view": export_tg_host_view,
     "export_integrity": export_integrity,
     "kb_review": kb_review,
     # tk-cover (imported lazily via names below)

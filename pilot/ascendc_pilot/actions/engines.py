@@ -9,16 +9,22 @@ from typing import Any, Callable
 EngineFn = Callable[[Path, dict[str, Any]], dict[str, Any]]
 
 
-def _uo(project_root: Path):
+def _uo(project_root: Path, *, arch: str | None = None):
     from ascendc_pilot.paths import uo_root
 
-    return uo_root(project_root)
+    return uo_root(project_root, arch=arch)
 
 
-def _tg(project_root: Path):
+def _tg(project_root: Path, *, arch: str | None = None):
     from ascendc_pilot.paths import tg_root
 
-    return tg_root(project_root)
+    return tg_root(project_root, arch=arch)
+
+
+def _ctx_root(project_root: Path, *, arch: str | None = None):
+    from ascendc_pilot.paths import context_root
+
+    return context_root(project_root, arch=arch)
 
 
 
@@ -260,22 +266,36 @@ def _load_yaml(path: Path) -> Any:
 
 
 def _resolve_tg_ctx(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """Resolve op_name / architecture / consumer root / level / focus for TG engines."""
+    """Resolve op_name / architecture / consumer root / level / focus / mode for TG engines."""
     import os
 
+    from ascendc_pilot.paths import resolve_arch
     from ascendc_pilot.state import load_state
 
+    arch_hint = resolve_arch(
+        str(ctx.get("architecture") or "").strip() or None
+    )
     state = load_state(project_root) or {}
-    params = _load_yaml(project_root / ".ascendc-pilot" / "context" / "pilot_params.yaml") or {}
+    params = _load_yaml(_ctx_root(project_root, arch=arch_hint) / "pilot_params.yaml") or {}
     if not isinstance(params, dict):
         params = {}
-    pack = _load_yaml(project_root / ".ascendc-pilot" / "context" / "context_pack.yaml") or {}
+    pack = _load_yaml(_ctx_root(project_root, arch=arch_hint) / "context_pack.yaml") or {}
     if not isinstance(pack, dict):
         pack = {}
-    run_ctx = _load_yaml(project_root / ".ascendc-pilot" / "tg" / "init" / "run_context.yaml") or {}
+    run_ctx = _load_yaml(_tg(project_root, arch=arch_hint) / "init" / "run_context.yaml") or {}
     if not isinstance(run_ctx, dict):
         run_ctx = {}
-    man = _load_yaml(project_root / ".ascendc-pilot" / "uo" / "manifest.yaml") or {}
+    init_intent = _load_yaml(
+        _tg(project_root, arch=arch_hint) / "init" / "init_intent.yaml"
+    ) or {}
+    if not isinstance(init_intent, dict):
+        init_intent = {}
+    plan_intent = _load_yaml(
+        _tg(project_root, arch=arch_hint) / "plan" / "plan_intent.yaml"
+    ) or {}
+    if not isinstance(plan_intent, dict):
+        plan_intent = {}
+    man = _load_yaml(_uo(project_root, arch=arch_hint) / "manifest.yaml") or {}
     if not isinstance(man, dict):
         man = {}
 
@@ -303,7 +323,7 @@ def _resolve_tg_ctx(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         params.get("architecture"),
         pack.get("architecture"),
         man.get("architecture"),
-        default="arch35",
+        default=arch_hint,
     )
     level = _pick(ctx.get("level"), state.get("level"), params.get("level"), pack.get("level"), default="L0")
     focus = _pick(ctx.get("focus"), state.get("focus"), params.get("focus"), pack.get("focus"))
@@ -317,8 +337,18 @@ def _resolve_tg_ctx(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         pack.get("csv_consumer_root"),
         pack.get("test_script_root"),
         run_ctx.get("test_script_root"),
+        init_intent.get("consumer_root"),
         os.environ.get("ASCENDC_CSV_CONSUMER_ROOT"),
         os.environ.get("ASCENDC_TEST_SCRIPT_ROOT"),
+    )
+    mode = _pick(
+        ctx.get("mode"),
+        ctx.get("tg_mode"),
+        state.get("mode"),
+        params.get("mode"),
+        init_intent.get("mode"),
+        plan_intent.get("mode"),
+        default="tilingkey_full_coverage",
     )
     return {
         "op_name": op_name,
@@ -327,20 +357,158 @@ def _resolve_tg_ctx(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         "focus": focus,
         "test_script_root": consumer,
         "csv_consumer_root": consumer,
+        "mode": mode,
     }
 
 
-def _require_consumer_root(tg_ctx: dict[str, Any]) -> Path:
+_FULL_TK_MODES = frozenset({"tilingkey_full_coverage", "tilingkey_full"})
+
+
+def _is_tilingkey_full(tg_ctx: dict[str, Any]) -> bool:
+    return str(tg_ctx.get("mode") or "").strip() in _FULL_TK_MODES
+
+
+def _require_consumer_root(
+    tg_ctx: dict[str, Any], *, optional: bool | None = None
+) -> Path | None:
+    """Return the CSV consumer root.
+
+    When ``mode`` is ``tilingkey_full_coverage`` (the default), consumer is
+    optional — full TilingKey closure does not need a CSV sheet. Pass
+    ``optional=False`` to force the legacy requirement.
+    """
+    if optional is None:
+        optional = _is_tilingkey_full(tg_ctx)
     raw = str(tg_ctx.get("csv_consumer_root") or tg_ctx.get("test_script_root") or "").strip()
     if not raw:
+        if optional:
+            return None
         raise RuntimeError(
             "TEST_SCRIPT_ROOT_REQUIRED: set acp context test_script_root/csv_consumer_root "
-            "(context/pilot_params.yaml, workflow state, or ASCENDC_TEST_SCRIPT_ROOT)"
+            "(context/pilot_params.yaml, workflow state, or ASCENDC_TEST_SCRIPT_ROOT); "
+            "or set mode=tilingkey_full_coverage to skip CSV consumer"
         )
     path = Path(raw).expanduser().resolve()
     if not path.is_dir():
         raise RuntimeError(f"TEST_SCRIPT_ROOT_INVALID: not a directory: {path}")
     return path
+
+
+def _run_tg_init_intent(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Write tg/init/init_intent.yaml — defaults to tilingkey_full_coverage."""
+    tg_ctx = _resolve_tg_ctx(project_root, ctx)
+    intent_path = _tg(project_root) / "init" / "init_intent.yaml"
+    intent_path.parent.mkdir(parents=True, exist_ok=True)
+    existing = _load_yaml(intent_path) or {}
+    if not isinstance(existing, dict):
+        existing = {}
+    mode = str(
+        ctx.get("mode")
+        or existing.get("mode")
+        or tg_ctx.get("mode")
+        or "tilingkey_full_coverage"
+    ).strip()
+    doc = {
+        "schema": "tg-init-intent/v1",
+        "mode": mode,
+        "source": str(ctx.get("source") or existing.get("source") or "default"),
+        "consumer_root": str(
+            ctx.get("consumer_root")
+            or existing.get("consumer_root")
+            or tg_ctx.get("csv_consumer_root")
+            or ""
+        ),
+        "op_name": tg_ctx["op_name"],
+        "architecture": tg_ctx["architecture"],
+        "description": str(ctx.get("description") or existing.get("description") or ""),
+    }
+    try:
+        import yaml
+
+        intent_path.write_text(
+            yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "init_intent", "error": str(exc)[:200]}
+    return {"ok": True, "engine": "init_intent", "artifact": intent_path.as_posix(), **doc}
+
+
+def _write_tilingkey_contract(project_root: Path, tg_ctx: dict[str, Any]) -> dict[str, Any]:
+    """Minimal UO-based contract for tilingkey_full_coverage (no CSV consumer)."""
+    import yaml
+
+    tg = _tg(project_root)
+    uo = _uo(project_root)
+    for rel in (
+        "ir/operator_graph.yaml",
+        "tiling/exhaustive_key_space.yaml",
+        "ir/tg_host_view.yaml",
+        "ir/host_codemap.yaml",
+    ):
+        # tg_host_view OR host_codemap alias is enough for the view check.
+        pass
+    graph = uo / "ir" / "operator_graph.yaml"
+    keys = uo / "tiling" / "exhaustive_key_space.yaml"
+    view = uo / "ir" / "tg_host_view.yaml"
+    alias = uo / "ir" / "host_codemap.yaml"
+    errors: list[str] = []
+    if not graph.is_file():
+        errors.append("missing uo/ir/operator_graph.yaml")
+    if not keys.is_file():
+        errors.append("missing uo/tiling/exhaustive_key_space.yaml")
+    if not view.is_file() and not alias.is_file():
+        errors.append("missing uo/ir/tg_host_view.yaml (run uo-init export_tg_host_view)")
+    key_doc = _load_yaml(keys) or {}
+    graph_doc = _load_yaml(graph) or {}
+    declared_count = int(
+        key_doc.get("count")
+        or len(key_doc.get("keys") or key_doc.get("declared_keys") or [])
+        or 0
+    )
+    contract = {
+        "schema": "tg-tilingkey-contract/v1",
+        "status": "pass" if not errors else "fail",
+        "mode": "tilingkey_full_coverage",
+        "op_name": tg_ctx["op_name"],
+        "architecture": tg_ctx["architecture"],
+        "declared_set": {
+            "source": "uo/tiling/exhaustive_key_space.yaml",
+            "fingerprint": str(
+                key_doc.get("fingerprint")
+                or graph_doc.get("fingerprint")
+                or ""
+            ),
+            "count": declared_count,
+        },
+        "graph_fingerprint": str(graph_doc.get("fingerprint") or ""),
+        "host_view": "uo/ir/tg_host_view.yaml",
+        "errors": errors,
+    }
+    out = tg / "contract" / "tilingkey_contract.yaml"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(yaml.safe_dump(contract, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    # Snapshot stub so later bind steps have a file to open.
+    snap = tg / "snapshot" / "understand_contract.json"
+    snap.parent.mkdir(parents=True, exist_ok=True)
+    if not snap.is_file():
+        import json
+
+        snap.write_text(
+            json.dumps(
+                {
+                    "schema": "tg-tilingkey-snapshot/v1",
+                    "mode": "tilingkey_full_coverage",
+                    "op_name": tg_ctx["op_name"],
+                    "architecture": tg_ctx["architecture"],
+                    "files": {},
+                    "snapshot_hash": contract["declared_set"]["fingerprint"],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    return contract
 
 
 def _run_tg_contract_build(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -350,11 +518,51 @@ def _run_tg_contract_build(project_root: Path, ctx: dict[str, Any]) -> dict[str,
         return {"ok": False, "engine": "contract_build", "error": "op_name required"}
     try:
         consumer = _require_consumer_root(tg_ctx)
+        if _is_tilingkey_full(tg_ctx) and consumer is None:
+            payload = _write_tilingkey_contract(project_root, tg_ctx)
+            ok = str(payload.get("status") or "").lower() == "pass"
+            # Persist mode for subsequent TG actions.
+            params_path = _ctx_root(project_root) / "pilot_params.yaml"
+            params_path.parent.mkdir(parents=True, exist_ok=True)
+            existing = _load_yaml(params_path) or {}
+            if not isinstance(existing, dict):
+                existing = {}
+            existing.update(
+                {
+                    "op_name": op_name,
+                    "architecture": tg_ctx["architecture"],
+                    "mode": tg_ctx["mode"],
+                    "test_script_root": "",
+                    "csv_consumer_root": "",
+                    "level": tg_ctx["level"],
+                    "focus": tg_ctx["focus"],
+                }
+            )
+            try:
+                import yaml
+
+                params_path.write_text(
+                    yaml.safe_dump(existing, allow_unicode=True, sort_keys=False),
+                    encoding="utf-8",
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            return {
+                "ok": ok,
+                "engine": "contract_build",
+                "op_name": op_name,
+                "mode": tg_ctx["mode"],
+                "csv_consumer_root": "",
+                "payload": payload,
+                "errors": payload.get("errors") or [],
+            }
+
         from testcase_agent.contract import tg_contract
 
+        assert consumer is not None
         payload = tg_contract(project_root, op_name, csv_consumer_root=consumer)
         # Persist resolved params for subsequent TG actions.
-        params_path = project_root / ".ascendc-pilot" / "context" / "pilot_params.yaml"
+        params_path = _ctx_root(project_root) / "pilot_params.yaml"
         params_path.parent.mkdir(parents=True, exist_ok=True)
         existing = _load_yaml(params_path) or {}
         if not isinstance(existing, dict):
@@ -363,6 +571,7 @@ def _run_tg_contract_build(project_root: Path, ctx: dict[str, Any]) -> dict[str,
             {
                 "op_name": op_name,
                 "architecture": tg_ctx["architecture"],
+                "mode": tg_ctx.get("mode") or "csv_consumer",
                 "test_script_root": consumer.as_posix(),
                 "csv_consumer_root": consumer.as_posix(),
                 "level": tg_ctx["level"],
@@ -379,6 +588,7 @@ def _run_tg_contract_build(project_root: Path, ctx: dict[str, Any]) -> dict[str,
             "ok": str(payload.get("status") or "").lower() in {"pass", "ok", "passed", ""} or bool(payload),
             "engine": "contract_build",
             "op_name": op_name,
+            "mode": tg_ctx.get("mode") or "csv_consumer",
             "csv_consumer_root": consumer.as_posix(),
             "payload": payload if isinstance(payload, dict) else {},
         }
@@ -391,10 +601,52 @@ def _run_tg_semantic_bind(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
     tg = _tg(project_root)
     try:
         consumer = _require_consumer_root(tg_ctx)
+        if _is_tilingkey_full(tg_ctx) and consumer is None:
+            import yaml
+
+            from uo_init.host_codemap import CodemapQuery, load_tg_host_view
+
+            uo = _uo(project_root)
+            view = load_tg_host_view(uo)
+            q = CodemapQuery(uo)
+            rows = []
+            for f in view.get("fields") or []:
+                name = str(f.get("name") or "")
+                if not name:
+                    continue
+                reads = q.reads_of(name) or list(f.get("reads") or [])
+                rows.append({
+                    "field": name,
+                    "kind": f.get("kind"),
+                    "reads": reads,
+                    "exactness": f.get("exactness"),
+                })
+            inv = {
+                "schema": "tg-tilingkey-binding-inventory/v1",
+                "mode": "tilingkey_full_coverage",
+                "fields": rows,
+                "field_count": len(rows),
+            }
+            inv_path = tg / "realization" / "binding_inventory.yaml"
+            inv_path.parent.mkdir(parents=True, exist_ok=True)
+            inv_path.write_text(
+                yaml.safe_dump(inv, allow_unicode=True, sort_keys=False), encoding="utf-8"
+            )
+            return {
+                "ok": True,
+                "engine": "semantic_bind",
+                "mode": "tilingkey_full_coverage",
+                "artifacts": {},
+                "inventory_path": inv_path.as_posix(),
+                "csv_consumer_root": "",
+                "field_count": len(rows),
+            }
+
         from testcase_agent.binding_inventory import build_binding_inventory, fingerprint_consumer
         from testcase_agent.init import write_bind_scaffolds
         from testcase_agent.io import read_json, read_yaml
 
+        assert consumer is not None
         snapshot_path = tg / "snapshot" / "understand_contract.json"
         if not snapshot_path.is_file():
             return {"ok": False, "engine": "semantic_bind", "error": "missing snapshot; run contract_build first"}
@@ -475,7 +727,27 @@ def _run_tg_mid_nest(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
 def _run_tg_integrity(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     from ascendc_pilot.gates import run_named_gate
 
-    op = str(ctx.get("op_name") or "") or None
+    tg_ctx = _resolve_tg_ctx(project_root, ctx)
+    op = str(tg_ctx.get("op_name") or "") or None
+    if _is_tilingkey_full(tg_ctx):
+        # Full TK mode: key contract / host-view readiness instead of CSV closure.
+        contract = _load_yaml(
+            _tg(project_root) / "contract" / "tilingkey_contract.yaml"
+        ) or {}
+        status = str(contract.get("status") or "").lower()
+        ok = status == "pass" and not list(contract.get("errors") or [])
+        return {
+            "ok": ok,
+            "engine": "integrity_gate",
+            "mode": "tilingkey_full_coverage",
+            "gates": {
+                "tilingkey_contract": {
+                    "ok": ok,
+                    "status": status or "missing",
+                    "errors": list(contract.get("errors") or []),
+                }
+            },
+        }
     domain = run_named_gate(project_root, "domain_symmetry", op_name=op)
     closure = run_named_gate(project_root, "csv_closure", op_name=op)
     ok = bool(domain.get("ok")) and bool(closure.get("ok"))
@@ -499,15 +771,28 @@ def _run_tg_plan_scope(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         "op_name": tg_ctx["op_name"],
         "level": level,
         "focus": tg_ctx["focus"],
-        "csv_consumer_root": consumer.as_posix(),
+        "mode": tg_ctx.get("mode") or "tilingkey_full_coverage",
+        "csv_consumer_root": consumer.as_posix() if consumer else "",
         "architecture": tg_ctx["architecture"],
     }
     out = tg / "plan" / "levels" / level / "plan_scope.yaml"
     out.parent.mkdir(parents=True, exist_ok=True)
+    # Mirror mode into plan_intent for solve to read.
+    intent = {
+        "schema": "tg-plan-intent/v1",
+        "mode": scope["mode"],
+        "source": "init_intent",
+        "op_name": tg_ctx["op_name"],
+    }
+    intent_path = tg / "plan" / "plan_intent.yaml"
+    intent_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         import yaml
 
         out.write_text(yaml.safe_dump(scope, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        intent_path.write_text(
+            yaml.safe_dump(intent, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "plan_scope", "error": str(exc)[:200]}
     return {"ok": True, "engine": "plan_scope", "artifact": out.as_posix(), **scope}
@@ -530,17 +815,79 @@ def _run_tg_plan_build(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         return {"ok": False, "engine": "plan_build", "error": "op_name required"}
     try:
         consumer = _require_consumer_root(tg_ctx)
+        level = tg_ctx["level"] or "L0"
+        if _is_tilingkey_full(tg_ctx) and consumer is None:
+            import yaml
+
+            uo = _uo(project_root)
+            keys = _load_yaml(uo / "tiling" / "exhaustive_key_space.yaml") or {}
+            graph = _load_yaml(uo / "ir" / "operator_graph.yaml") or {}
+            count = int(
+                keys.get("count")
+                or len(keys.get("keys") or keys.get("declared_keys") or [])
+                or 0
+            )
+            fp = str(keys.get("fingerprint") or graph.get("fingerprint") or "")
+            obligations = {
+                "schema": "coverage-obligations/v2",
+                "mode": "tilingkey_full_coverage",
+                "version": 2,
+                "plan_hash": fp,
+                "declared_set": {
+                    "source": "uo/tiling/exhaustive_key_space.yaml",
+                    "fingerprint": fp,
+                    "count": count,
+                },
+                "obligations": [
+                    {
+                        "id": "CLOSE_DECLARED_SET",
+                        "kind": "set_closure",
+                        "invariant": "D = (R ∩ D) ∪ E",
+                    },
+                    {
+                        "id": "EXCLUSION_SOUNDNESS",
+                        "kind": "proof_policy",
+                        "invariant": "R ∩ E = ∅",
+                    },
+                    {
+                        "id": "WITNESS_PROVENANCE",
+                        "kind": "provenance",
+                        "invariant": "every R key has successful replay evidence",
+                    },
+                    {
+                        "id": "EXCLUSION_PROVENANCE",
+                        "kind": "provenance",
+                        "invariant": "every E key has verified rule evidence",
+                    },
+                ],
+            }
+            obl = _tg(project_root) / "plan" / "levels" / level / "coverage_obligations.yaml"
+            obl.parent.mkdir(parents=True, exist_ok=True)
+            obl.write_text(
+                yaml.safe_dump(obligations, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+            )
+            return {
+                "ok": True,
+                "engine": "plan_build",
+                "op_name": op_name,
+                "level": level,
+                "mode": "tilingkey_full_coverage",
+                "artifact": obl.as_posix(),
+                "declared_count": count,
+            }
+
         from testcase_agent.planner import tg_plan
 
+        assert consumer is not None
         payload = tg_plan(
             project_root,
             op_name,
-            level=tg_ctx["level"] or "L0",
+            level=level,
             focus=tg_ctx["focus"] or "",
             csv_consumer_root=consumer,
             reuse_snapshot=True,
         )
-        level = tg_ctx["level"] or "L0"
         obl = _tg(project_root) / "plan" / "levels" / level / "coverage_obligations.yaml"
         if not obl.is_file() or obl.stat().st_size == 0:
             # Some planners write under plan/coverage_obligations.yaml
@@ -557,6 +904,7 @@ def _run_tg_plan_build(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
             "engine": "plan_build",
             "op_name": op_name,
             "level": level,
+            "mode": tg_ctx.get("mode") or "csv_consumer",
             "payload": payload if isinstance(payload, dict) else {},
         }
     except Exception as exc:  # noqa: BLE001
@@ -568,14 +916,19 @@ def _run_tg_solve_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str,
 
     tg_ctx = _resolve_tg_ctx(project_root, ctx)
     try:
-        _require_consumer_root(tg_ctx)
+        _require_consumer_root(tg_ctx)  # optional under tilingkey_full_coverage
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "solve_precheck", "error": str(exc)[:400]}
     op = tg_ctx.get("op_name") or None
     g1 = run_named_gate(project_root, "plan_approved", op_name=op)
     g2 = run_named_gate(project_root, "kb_fingerprint_fresh", op_name=op)
     ok = bool(g1.get("ok")) and bool(g2.get("ok"))
-    return {"ok": ok, "engine": "solve_precheck", "gates": {"plan_approved": g1, "kb_fingerprint_fresh": g2}}
+    return {
+        "ok": ok,
+        "engine": "solve_precheck",
+        "mode": tg_ctx.get("mode"),
+        "gates": {"plan_approved": g1, "kb_fingerprint_fresh": g2},
+    }
 
 
 def _run_tg_z3_solve(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -583,10 +936,24 @@ def _run_tg_z3_solve(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     op_name = tg_ctx["op_name"]
     if not op_name:
         return {"ok": False, "engine": "z3_solve", "error": "op_name required"}
+    if _is_tilingkey_full(tg_ctx):
+        # CSV/Z3 path is not used for full TK closure; Phase 4 wires closure_*.
+        return {
+            "ok": True,
+            "engine": "z3_solve",
+            "mode": "tilingkey_full_coverage",
+            "op_name": op_name,
+            "skipped": True,
+            "note": (
+                "tilingkey_full_coverage uses closure_ledger/search/residual "
+                "(Phase 4); z3_solve is a no-op in this mode"
+            ),
+        }
     try:
         consumer = _require_consumer_root(tg_ctx)
         from testcase_agent.solve import tg_solve
 
+        assert consumer is not None
         payload = tg_solve(
             project_root,
             op_name,
@@ -621,6 +988,528 @@ def _run_tg_cover_confirm(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
     op = str((_resolve_tg_ctx(project_root, ctx)).get("op_name") or "") or None
     result = run_named_gate(project_root, "solve_terminal", op_name=op)
     return {"ok": bool(result.get("ok")), "engine": "cover_confirm", "gate": result}
+
+
+def _closure_ws(project_root: Path):
+    from testcase_agent.closure import workspace as WS
+
+    return WS.default_workspace(project_root).ensure()
+
+
+def _dump_closure_yaml(path: Path, doc: dict[str, Any]) -> None:
+    import yaml
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
+def _run_oracle_probe(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Oracle integrity probe — live Host when available, else schema-only."""
+    tg = _tg(project_root)
+    ws = _closure_ws(project_root)
+    issues: list[str] = []
+    live: dict[str, Any] = {"attempted": False}
+    try:
+        from testcase_agent.closure import workspace as WS
+
+        sch = WS.schema()
+        if not sch.dims:
+            issues.append("tiling schema has no dims")
+    except Exception as exc:  # noqa: BLE001
+        issues.append(f"schema_unavailable: {exc}")
+
+    if bool(ctx.get("live_probe")):
+        live["attempted"] = True
+        try:
+            from testcase_agent.closure import generate as G
+            from testcase_agent.closure.oracle import HostOracle
+
+            rng = __import__("random").Random(0)
+            cases = [G.sample_case(rng) for _ in range(int(ctx.get("probe_n") or 10))]
+            # One illegal / empty case for reject path when possible.
+            verdicts = HostOracle().judge(cases, tag="oracle_probe")
+            judged = sum(1 for v in verdicts if v.verdict)
+            accepted = sum(1 for v in verdicts if v.ok)
+            live.update({
+                "sent": len(cases),
+                "judged": judged,
+                "accepted": accepted,
+                "with_key": sum(1 for v in verdicts if v.key),
+            })
+            if judged < len(cases):
+                issues.append("ORACLE_SUSPECT:batch_truncated")
+                (ws.state / "oracle_suspect").write_text("1", encoding="utf-8")
+            if accepted == 0 and judged > 0:
+                issues.append("no_accepted_keys_in_probe")
+        except Exception as exc:  # noqa: BLE001
+            issues.append(f"live_probe_failed: {exc}")
+            live["error"] = str(exc)[:300]
+
+    doc = {
+        "schema": "tg-oracle-probe/v1",
+        "ok": len(issues) == 0,
+        "issues": issues,
+        "state": str(ws.state),
+        "live": live,
+        "note": (
+            "Set live_probe=true for Host replay of ~10 cases; "
+            "default is schema/ledger reachability only (CI-safe)"
+        ),
+    }
+    out = tg / "closure" / "oracle_probe.yaml"
+    _dump_closure_yaml(out, doc)
+    return {"ok": doc["ok"], "engine": "oracle_probe", "artifact": out.as_posix(), **doc}
+
+
+def _run_closure_ledger(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    del ctx
+    from testcase_agent.closure import ledger
+    from testcase_agent.closure import lemma
+
+    ws = _closure_ws(project_root)
+    try:
+        rebuilt = ledger.rebuild(ws)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "closure_ledger", "error": str(exc)[:300]}
+    try:
+        applied = lemma.apply_rules(ws, refresh=True)
+    except Exception as exc:  # noqa: BLE001
+        applied = {"ok": False, "error": str(exc)[:200]}
+    st = ledger.state(ws)
+    return {
+        "ok": bool(rebuilt.get("ok", True)) and bool(applied.get("ok", True)),
+        "engine": "closure_ledger",
+        "rebuild": rebuilt,
+        "apply_rules": {
+            "excluded": applied.get("excluded"),
+            "gap": applied.get("gap"),
+            "revoked_count": applied.get("revoked_count", 0),
+            "error": applied.get("error"),
+        },
+        **st,
+    }
+
+
+def _run_closure_search(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from testcase_agent.closure import search_round
+
+    ws = _closure_ws(project_root)
+    budget = int(ctx.get("budget") or 64)
+    seed = int(ctx.get("seed") or 0)
+    try:
+        out = search_round.run_round(ws, budget=budget, seed=seed)
+    except Exception as exc:  # noqa: BLE001
+        # Still leave a round stub so the output contract is satisfiable.
+        rounds = ws.state / "rounds" / "round_0001"
+        rounds.mkdir(parents=True, exist_ok=True)
+        stub = {
+            "schema": "tg-closure-search-stub/v1",
+            "ok": False,
+            "error": str(exc)[:300],
+            "new_R": 0,
+        }
+        _dump_closure_yaml(rounds / "progress.yaml", stub)
+        return {"ok": False, "engine": "closure_search", **stub}
+    return {"engine": "closure_search", **out}
+
+
+def _run_closure_residual(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from testcase_agent.closure import residual
+    from testcase_agent.closure import search_round
+
+    ws = _closure_ws(project_root)
+    analysis = residual.analyse(ws)
+    routed = search_round.route(ws)
+    reason = str(routed.get("reason") or "PROOF_BLOCKED")
+
+    # Round budget for automatic rework (control plane closes the loop).
+    budget = int(ctx.get("round_budget") or 32)
+    budget_path = ws.state / "round_budget.yaml"
+    used = 0
+    try:
+        import yaml
+
+        if budget_path.is_file():
+            used = int((yaml.safe_load(budget_path.read_text(encoding="utf-8")) or {}).get("used") or 0)
+    except Exception:
+        used = 0
+
+    auto_rework: dict[str, Any] = {"attempted": False}
+    escalate = reason in {"ORACLE_SUSPECT", "PROOF_BLOCKED"}
+    if reason not in {"GAP_ZERO"} and not escalate and used < budget:
+        try:
+            from ascendc_pilot.state import rework_phase
+
+            auto_rework = rework_phase(
+                project_root, reason_code=reason,
+            )
+            auto_rework = {"attempted": True, **(auto_rework if isinstance(auto_rework, dict) else {})}
+            used += 1
+            try:
+                import yaml
+
+                budget_path.write_text(
+                    yaml.safe_dump(
+                        {"used": used, "budget": budget, "last_reason": reason},
+                        allow_unicode=True,
+                    ),
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
+        except Exception as exc:  # noqa: BLE001
+            auto_rework = {"attempted": True, "ok": False, "error": str(exc)[:200]}
+    elif used >= budget and reason not in {"GAP_ZERO"}:
+        escalate = True
+        reason = "PROOF_BLOCKED"
+        auto_rework = {"attempted": False, "budget_exhausted": True, "used": used}
+
+    route_doc = {
+        "schema": "tg-closure-route/v1",
+        "reason": reason,
+        "round_budget": {"used": used, "budget": budget},
+        "auto_rework": auto_rework,
+        "rework_hint": (
+            f"acp rework --reason {reason}"
+            if reason not in {"GAP_ZERO", "PROOF_BLOCKED"} and not auto_rework.get("ok")
+            else ""
+        ),
+        "residual": {
+            "open": analysis.get("open"),
+            "distance": analysis.get("distance"),
+            "mostly_distance_1": analysis.get("mostly_distance_1"),
+        },
+        "state": {k: routed.get(k) for k in ("declared", "R", "E", "gap", "violation")},
+    }
+    out = _tg(project_root) / "closure" / "route.yaml"
+    _dump_closure_yaml(out, route_doc)
+    return {
+        "ok": True,
+        "engine": "closure_residual",
+        "reason_code": reason,
+        "reason_codes": [reason],
+        "needs_rework": reason not in {"GAP_ZERO"} and not auto_rework.get("ok"),
+        "escalate": escalate,
+        "artifact": out.as_posix(),
+        **route_doc,
+    }
+
+
+def _run_closure_construct(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from testcase_agent.closure import construct
+    from testcase_agent.closure import residual
+    from testcase_agent.closure import workspace as WS
+
+    ws = _closure_ws(project_root)
+    analysis = residual.analyse(ws)
+    targets = residual.distance_one_targets(analysis)[: int(ctx.get("limit") or 32)]
+    built = 0
+    cases: list = []
+    for t in targets:
+        key = t.get("key")
+        try:
+            inst = WS.decode(int(key))
+            cases.extend(construct.build(inst))
+            built += 1
+        except Exception:
+            continue
+    # Optional live replay when requested.
+    replayed = 0
+    if cases and bool(ctx.get("live_replay")):
+        try:
+            from testcase_agent.closure.oracle import HostOracle
+
+            verdicts = HostOracle().judge(cases[:64], tag="construct")
+            replayed = sum(1 for v in verdicts if v.verdict)
+            rows = []
+            for i, v in enumerate(verdicts):
+                if not v.verdict:
+                    continue
+                rows.append({
+                    "ok": int(v.ok),
+                    "tiling_key": int(v.key),
+                    "reject": v.reject,
+                    "_arm": "construct",
+                })
+            if rows:
+                from testcase_agent.closure import corpus as C
+                from testcase_agent.closure import ledger
+
+                C.commit(rows, ws, name="construct_commit.csv")
+                ledger.rebuild(ws)
+        except Exception as exc:  # noqa: BLE001
+            doc_err = str(exc)[:200]
+        else:
+            doc_err = ""
+    else:
+        doc_err = ""
+
+    doc = {
+        "schema": "tg-closure-construct/v1",
+        "targets": len(targets),
+        "built_cases": len(cases),
+        "targets_decoded": built,
+        "replayed": replayed,
+        "sample_keys": [t.get("key") for t in targets[:10]],
+        "error": doc_err,
+    }
+    out = _tg(project_root) / "closure" / "construct" / "targets.yaml"
+    _dump_closure_yaml(out, doc)
+    return {"ok": True, "engine": "closure_construct", "artifact": out.as_posix(), **doc}
+
+
+def _run_closure_explain(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    ws = _closure_ws(project_root)
+    why = ws.state / "why.csv"
+    ran = False
+    err = ""
+    result: dict[str, Any] = {}
+    if bool(ctx.get("live_explain")):
+        try:
+            from testcase_agent.closure import construct
+            from testcase_agent.closure import explain
+
+            result = explain.run_explain(
+                construct.build,
+                open_limit=int(ctx.get("open_limit") or 60),
+                per_target=int(ctx.get("per_target") or 24),
+                ws=ws,
+            )
+            ran = True
+            why = Path(result.get("path") or why)
+        except Exception as exc:  # noqa: BLE001
+            err = str(exc)[:300]
+    doc = {
+        "schema": "tg-closure-explain/v1",
+        "why_exists": why.is_file() if why else False,
+        "path": str(why) if why and why.is_file() else "",
+        "ran": ran,
+        "accepted": result.get("accepted", 0),
+        "error": err,
+    }
+    out = _tg(project_root) / "closure" / "construct" / "explain_receipt.yaml"
+    _dump_closure_yaml(out, doc)
+    return {"ok": True, "engine": "closure_explain", **doc}
+
+
+def _run_lemma_leads(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    del ctx
+    from testcase_agent.closure import mine
+
+    ws = _closure_ws(project_root)
+    try:
+        pairs = mine.mine_pairs(ws, top=40)
+        triples = mine.mine_triples(ws, top=40)
+    except Exception as exc:  # noqa: BLE001
+        pairs, triples = [], []
+        err = str(exc)[:300]
+    else:
+        err = ""
+    leads = {
+        "schema": "tg-lemma-leads/v1",
+        "pairs": pairs,
+        "triples": triples,
+        "pair_count": len(pairs),
+        "triple_count": len(triples),
+        "error": err,
+    }
+    out = _tg(project_root) / "closure" / "lemmas" / "leads.yaml"
+    _dump_closure_yaml(out, leads)
+    return {
+        "ok": not err,
+        "engine": "lemma_leads",
+        "artifact": out.as_posix(),
+        "pair_count": len(pairs),
+        "triple_count": len(triples),
+        "error": err,
+    }
+
+
+def _run_lemma_mine(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Producer scaffold — real proof writing is done by tg-lemma-producer subagent."""
+    import yaml
+
+    run_id = str(ctx.get("run_id") or "local")
+    parts = (
+        project_root / ".ascendc-pilot" / "runs" / run_id / "actions" / "lemma_mine"
+    )
+    parts.mkdir(parents=True, exist_ok=True)
+    leads = _load_yaml(_tg(project_root) / "closure" / "lemmas" / "leads.yaml") or {}
+    staging = {
+        "schema": "tg-lemma-mine-staging/v1",
+        "status": "awaiting_subagent",
+        "lead_count": int(leads.get("pair_count") or 0) + int(leads.get("triple_count") or 0),
+        "instructions": (
+            "Write parts/part_0.yaml with source-cited lemma candidates only; "
+            "do not invent leads; follow tilingkey-closure LEMMA.md"
+        ),
+    }
+    (parts / "staging.yaml").write_text(
+        yaml.safe_dump(staging, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+    part0 = parts / "parts" / "part_0.yaml"
+    if not part0.is_file():
+        part0.parent.mkdir(parents=True, exist_ok=True)
+        _dump_closure_yaml(part0, {
+            "schema": "tg-lemma-part/v1",
+            "candidates": [],
+            "note": "placeholder — producer replaces with cited lemmas",
+        })
+    return {
+        "ok": True,
+        "engine": "lemma_mine",
+        "staging": str(parts / "staging.yaml"),
+        "need_subagent": True,
+    }
+
+
+def _run_lemma_review(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Referee scaffold — tg-closure-referee fills review; engine persists receipt."""
+    import yaml
+
+    run_id = str(ctx.get("run_id") or "local")
+    tg = _tg(project_root)
+    review_dir = (
+        project_root / ".ascendc-pilot" / "runs" / run_id / "actions" / "lemma_review"
+    )
+    review_dir.mkdir(parents=True, exist_ok=True)
+    existing = review_dir / "review.yaml"
+    if existing.is_file():
+        doc = yaml.safe_load(existing.read_text(encoding="utf-8")) or {}
+    else:
+        doc = {
+            "schema": "tg-lemma-review/v1",
+            "status": "awaiting_referee",
+            "accepted": [],
+            "rejected": [],
+            "note": "Referee must verify source citations before lemma_apply",
+        }
+        existing.write_text(
+            yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
+    canon = tg / "closure" / "lemmas" / "reviews.yaml"
+    _dump_closure_yaml(canon, doc)
+    return {
+        "ok": True,
+        "engine": "lemma_review",
+        "artifact": existing.as_posix(),
+        "status": doc.get("status"),
+    }
+
+
+def _run_lemma_apply(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from testcase_agent.closure import lemma
+
+    ws = _closure_ws(project_root)
+    tg = _tg(project_root)
+    review = _load_yaml(tg / "closure" / "lemmas" / "reviews.yaml") or {}
+    promoted = {"promoted": 0}
+    if review.get("accepted"):
+        tg_ctx = _resolve_tg_ctx(project_root, ctx)
+        uo = _uo(project_root, arch=tg_ctx.get("architecture"))
+        man = _load_yaml(uo / "manifest.yaml") or {}
+        promoted = lemma.promote_reviewed(
+            review,
+            ws,
+            source_revision=str(man.get("source_revision") or ""),
+            uo_graph_fingerprint=str(
+                ((man.get("fingerprint") or man.get("graph_fingerprint") or ""))
+            ),
+        )
+    out = lemma.apply_rules(ws, refresh=True)
+    return {"engine": "lemma_apply", "promote": promoted, **out}
+
+
+def _run_closure_audit(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Referee scaffold for post-apply invariant review."""
+    import yaml
+
+    from testcase_agent.closure import ledger
+    from testcase_agent.closure import lemma
+
+    run_id = str(ctx.get("run_id") or "local")
+    ws = _closure_ws(project_root)
+    st = ledger.state(ws)
+    audit_dir = (
+        project_root / ".ascendc-pilot" / "runs" / run_id / "actions" / "closure_audit"
+    )
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    existing = audit_dir / "review.yaml"
+    if existing.is_file():
+        doc = yaml.safe_load(existing.read_text(encoding="utf-8")) or {}
+    else:
+        doc = {
+            "schema": "tg-closure-audit/v1",
+            "status": "awaiting_referee" if st.get("gap", 1) else "auto_ok",
+            "state": st,
+            "soundness_ok": lemma.soundness_ok(ws),
+            "note": "Referee confirms I1–I4 before certify",
+        }
+        existing.write_text(
+            yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
+    canon = _tg(project_root) / "closure" / "audit_report.yaml"
+    _dump_closure_yaml(canon, doc)
+    return {
+        "ok": True,
+        "engine": "closure_audit",
+        "artifact": existing.as_posix(),
+        "status": doc.get("status"),
+        **st,
+    }
+
+
+def _run_closure_certify(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from ascendc_pilot.gates import run_named_gate
+    from testcase_agent.closure import ledger
+    from testcase_agent.closure import report
+
+    ws = _closure_ws(project_root)
+    gate = run_named_gate(project_root, "closure_soundness")
+    rep = report.report(ws, refresh=True)
+    st = ledger.state(ws)
+
+    tg_ctx = _resolve_tg_ctx(project_root, ctx)
+    uo = _uo(project_root, arch=tg_ctx.get("architecture"))
+    man = _load_yaml(uo / "manifest.yaml") or {}
+    uo_fp = str(man.get("fingerprint") or man.get("graph_fingerprint") or "")
+    invariants = report.certify_invariants(ws, uo_graph_fingerprint=uo_fp)
+
+    cert = {
+        "schema": "tg-closure-certificate/v1",
+        "ok": (
+            bool(gate.get("ok"))
+            and bool(rep.get("gap_zero"))
+            and bool(invariants.get("ok"))
+        ),
+        "gate": gate,
+        "invariants": invariants,
+        "report": {
+            "gap_zero": rep.get("gap_zero"),
+            "open": rep.get("open"),
+            "problem_count": rep.get("problem_count"),
+            "undeclared": rep.get("undeclared"),
+            "undeclared_path": rep.get("undeclared_path"),
+        },
+        "state": st,
+        "note": "R−D is reported separately and does not block D-closure when I9 path exists",
+    }
+    out = _tg(project_root) / "closure" / "certificate.yaml"
+    _dump_closure_yaml(out, cert)
+    # Also drop a standalone undeclared defect receipt.
+    if rep.get("undeclared_path"):
+        defect = {
+            "schema": "tg-undeclared-key-defect/v1",
+            "count": rep.get("undeclared"),
+            "path": rep.get("undeclared_path"),
+        }
+        _dump_closure_yaml(_tg(project_root) / "closure" / "undeclared_defect.yaml", defect)
+    return {
+        "ok": cert["ok"],
+        "engine": "closure_certify",
+        "artifact": out.as_posix(),
+        **cert,
+    }
 
 
 def _uo_op_ctx(project_root: Path, ctx: dict[str, Any]) -> tuple[Path, str, str]:
@@ -664,14 +1553,10 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("uo-init", "apply_gap_patch"): _uo_init_engine("apply_gap_patch"),
     ("uo-init", "export_kb"): _uo_init_engine("export_kb"),
     ("uo-init", "build_index"): _uo_init_engine("build_index"),
+    ("uo-init", "export_tg_host_view"): _uo_init_engine("export_tg_host_view"),
     ("uo-init", "export_integrity"): _uo_init_engine("export_integrity"),
     ("uo-init", "kb_review"): _uo_init_engine("kb_review"),
-    ("tk-cover", "env_probe"): _uo_init_engine("env_probe"),
-    ("tk-cover", "derive_fields"): _uo_init_engine("derive_fields"),
-    ("tk-cover", "export_codemap"): _uo_init_engine("export_codemap"),
-    ("tk-cover", "mine_recipe"): _uo_init_engine("mine_recipe"),
-    ("tk-cover", "apply_recipe"): _uo_init_engine("apply_recipe"),
-    ("tk-cover", "coverage_gate"): _uo_init_engine("coverage_gate"),
+    # tk-cover actions removed: workflow is alias_of tg-solve (W5).
     ("uo-update", "detect_changes"): _run_detect_changes,
     ("uo-update", "plan_update"): _run_plan_update,
     ("uo-update", "apply_update"): _run_apply_update,
@@ -682,6 +1567,7 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("uo-update", "export_integrity"): _run_export_integrity,
     ("uo-update", "diff_summary"): _run_diff_summary,
     ("uo-update", "diff_only"): _run_diff_summary,
+    ("tg-init", "init_intent"): _run_tg_init_intent,
     ("tg-init", "kb_check"): _run_tg_kb_check,
     ("tg-init", "contract_build"): _run_tg_contract_build,
     ("tg-init", "semantic_bind"): _run_tg_semantic_bind,
@@ -692,6 +1578,18 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("tg-plan", "plan_precheck"): _run_tg_plan_precheck,
     ("tg-plan", "plan_build"): _run_tg_plan_build,
     ("tg-solve", "solve_precheck"): _run_tg_solve_precheck,
+    ("tg-solve", "oracle_probe"): _run_oracle_probe,
+    ("tg-solve", "closure_ledger"): _run_closure_ledger,
+    ("tg-solve", "closure_search"): _run_closure_search,
+    ("tg-solve", "closure_residual"): _run_closure_residual,
+    ("tg-solve", "closure_construct"): _run_closure_construct,
+    ("tg-solve", "closure_explain"): _run_closure_explain,
+    ("tg-solve", "lemma_leads"): _run_lemma_leads,
+    ("tg-solve", "lemma_mine"): _run_lemma_mine,
+    ("tg-solve", "lemma_review"): _run_lemma_review,
+    ("tg-solve", "lemma_apply"): _run_lemma_apply,
+    ("tg-solve", "closure_audit"): _run_closure_audit,
+    ("tg-solve", "closure_certify"): _run_closure_certify,
     ("tg-solve", "z3_solve"): _run_tg_z3_solve,
     ("tg-solve", "cover_confirm"): _run_tg_cover_confirm,
 }
@@ -725,6 +1623,10 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "gap-patch-v1": ["uo/ir/gap_patch_receipt.yaml", "uo/ir/gap_bindings.yaml"],
     "export-kb-v1": ["uo/ir/operator_graph.yaml", "uo/quality.yaml"],
     "build-index-v1": ["uo/indexes/kb_graph.sqlite"],
+    "export-tg-host-view-v1": [
+        "uo/ir/tg_host_view.yaml",
+        "uo/checks/tg_host_view_receipt.yaml",
+    ],
     "detect-score-pre-v1": [
         "uo/ir/entrypoint_graph.yaml",
         "uo/ir/operator_boundary.yaml",
@@ -783,6 +1685,7 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "ce/review/bug_report.yaml",
     ],
     "uo-ready-v1": ["uo/manifest.yaml", "uo/checks/integrity.yaml"],
+    "tg-init-intent-v1": ["tg/init/init_intent.yaml"],
     "csv-contract-v1": [
         "tg/snapshot/understand_contract.json",
         "tg/realization/realization_map.yaml",
@@ -816,6 +1719,39 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "plan-build-v1": ["tg/plan"],
     "plan-approved-v1": ["tg/plan/levels/*/human_supplement.yaml"],
     "solve-precheck-v1": ["tg/plan/levels/*/human_supplement.yaml"],
+    "oracle-probe-v1": ["tg/closure/oracle_probe.yaml"],
+    "closure-ledger-v1": [
+        "tg/closure/R.txt",
+        "tg/closure/open.txt",
+        "tg/closure/excluded.txt",
+    ],
+    "closure-search-v1": ["tg/closure/rounds/**"],
+    "closure-residual-v1": ["tg/closure/route.yaml"],
+    "closure-construct-v1": ["tg/closure/construct/**"],
+    "closure-explain-v1": ["tg/closure/construct/explain_receipt.yaml"],
+    "lemma-leads-v1": ["tg/closure/lemmas/leads.yaml"],
+    "lemma-mine-staging-v1": [
+        "runs/{run_id}/actions/lemma_mine/parts/**",
+        "runs/{run_id}/actions/lemma_mine/staging.yaml",
+    ],
+    "lemma-mine-v1": [
+        "runs/{run_id}/actions/lemma_mine/parts/**",
+        "runs/{run_id}/actions/lemma_mine/staging.yaml",
+    ],
+    "lemma-review-v1": [
+        "runs/{run_id}/actions/lemma_review/review.yaml",
+        "tg/closure/lemmas/reviews.yaml",
+    ],
+    "lemma-apply-v1": [
+        "tg/closure/excluded.txt",
+        "tg/closure/excluded_why.csv",
+        "tg/closure/open.txt",
+    ],
+    "closure-audit-v1": [
+        "runs/{run_id}/actions/closure_audit/review.yaml",
+        "tg/closure/audit_report.yaml",
+    ],
+    "closure-certify-v1": ["tg/closure/certificate.yaml"],
     "z3-solve-v1": ["tg/solve"],
     "cover-confirm-v1": [
         "tg/solve/**/realize_report.yaml",

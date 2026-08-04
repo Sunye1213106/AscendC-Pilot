@@ -28,8 +28,12 @@ VALUE_SOURCE = {
 }
 
 
-class FagInputAdapter:
-    """Expand a case the way the host will read it."""
+class OperatorInputAdapter:
+    """Expand a case the way the host will read it.
+
+    Historically named ``FagInputAdapter``; kept as an alias below. New code
+    should depend on ``scripts.replay.operator_adapter.OperatorAdapter``.
+    """
 
     def materialize(self, case: I.Case, case_id: str = "") -> MaterializedCase:
         sem = I.SEMANTICS
@@ -99,4 +103,6 @@ class FagInputAdapter:
             for name, kind, value, text in raw)
 
 
-ADAPTER = FagInputAdapter()
+ADAPTER = OperatorInputAdapter()
+# Backward-compatible alias.
+FagInputAdapter = OperatorInputAdapter

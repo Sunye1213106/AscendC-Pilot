@@ -1,0 +1,20 @@
+id: tilingkey-closure
+version: 1
+name_zh: TilingKey 全覆盖闭环方法论
+description: >
+  维护 (D,R,E,Corpus,Models,RuleBook)；真实 Host 裁决抬 R；源码证明抬 E；
+  近似模型只生成/排序，不得排除 Key。供 tg-solve 各 closure action 引用。
+applies_when:
+  - tg-solve 进入 tilingkey_full_coverage 模式
+  - 需要定向搜索、残差路由、引理挖掘或闭环证书
+requires:
+  inputs: [declared_set, oracle_protocol, host_view]
+  tools: [tg-closure, host-replay]
+  context: [uo_graph_fingerprint, source_revision]
+produces: [closure_state, R, E, open, residual_route]
+compatible_roles: [deterministic_engine, producer, referee]
+policies: [source-authority, evidence, language, pilot-control]
+method_file: METHOD.md
+lemma_file: LEMMA.md
+proof_file: PROOF.md
+oracle_file: ORACLE.md

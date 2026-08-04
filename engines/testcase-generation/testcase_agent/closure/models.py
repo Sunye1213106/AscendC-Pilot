@@ -201,7 +201,7 @@ def importances(df: pd.DataFrame, dim: str, top: int = 8) -> list[dict]:
         return []
     clf = DecisionTreeClassifier(random_state=0, min_samples_leaf=3)
     clf.fit(X[allf].values, y)
-    named = set(F.static_parents(dim, allf)) if dim in F.STATIC_PARENTS else set()
+    named = set(F.static_parents(dim, allf)) if F.has_static_parents(dim) else set()
     ranked = sorted(zip(allf, clf.feature_importances_),
                     key=lambda kv: kv[1], reverse=True)
     return [
@@ -209,3 +209,70 @@ def importances(df: pd.DataFrame, dim: str, top: int = 8) -> list[dict]:
          "static_parent": name in named}
         for name, w in ranked[:top] if w > 0
     ]
+
+
+def write_parent_gap(df, ws=None, *, top: int = 8) -> dict:
+    """Emit observation-only UO parent-gap candidates from MISSED features.
+
+    TG must not mutate the KB; uo-update consumes this file and verifies
+    against source before any derivation change.
+    """
+    from pathlib import Path
+
+    import yaml
+
+    from testcase_agent.closure import workspace as W
+
+    ws = (ws or W.default_workspace()).ensure()
+    # Prefer tg/feedback under artifact root when available.
+    feedback = Path(ws.root) / "feedback" if hasattr(ws, "root") else ws.state / "feedback"
+    # Workspace.state is tg/closure/...; climb to tg/ when possible.
+    try:
+        tg_root = Path(ws.state).parents[0]  # .../tg/closure → .../tg  OR state parent
+        # Prefer dedicated tg/feedback; fall back beside state.
+        if (Path(ws.state).name == "closure") or "closure" in str(ws.state):
+            candidate = Path(ws.state)
+            for _ in range(3):
+                if candidate.name == "tg" or (candidate / "closure").is_dir():
+                    break
+                candidate = candidate.parent
+            feedback = candidate / "feedback"
+    except Exception:
+        feedback = ws.state / "feedback"
+    feedback.mkdir(parents=True, exist_ok=True)
+
+    missed: list[dict] = []
+    try:
+        assessment = assess(df) if df is not None and not getattr(df, "empty", True) else []
+    except Exception:
+        assessment = []
+    for row in assessment:
+        dim = str(row.get("dim") or "")
+        if row.get("verdict") != "static_parents_incomplete" or not dim:
+            continue
+        try:
+            ranks = importances(df, dim, top=top)
+        except Exception:
+            ranks = []
+        for item in ranks:
+            if item.get("static_parent"):
+                continue
+            if float(item.get("importance") or 0) <= 0:
+                continue
+            missed.append({
+                "dim": dim,
+                "feature": item["feature"],
+                "importance": item["importance"],
+                "status": "observation_only",
+                "note": "sklearn MISSED vs STATIC_PARENTS — verify in source via uo-update",
+            })
+    path = feedback / "uo_parent_gap_candidates.yaml"
+    doc = {
+        "schema": "tg-uo-parent-gap/v1",
+        "status": "observation_only",
+        "candidates": missed,
+    }
+    path.write_text(
+        yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+    return {"ok": True, "path": str(path), "count": len(missed)}

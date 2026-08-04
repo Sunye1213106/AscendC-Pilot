@@ -30,11 +30,27 @@ from testcase_agent.closure import workspace as W
 #: `seq_has_zero`, ...) are separate columns.
 SEQ_COLUMNS = ("seq_q", "seq_kv", "prefix_n")
 
-#: Host intermediates the tiling prints on its own.
+#: Host intermediates the tiling prints on its own — overridden by log_protocol.
 STATES = ("isExceedL2Cache", "enableSwizzle", "sparseType")
 
-#: Knob columns that are numeric once parsed. Everything else describe()
-#: produces is either categorical text or a sequence.
+
+def _numeric_knobs() -> tuple[str, ...]:
+    try:
+        I = W.replay_inputs()
+        schema = I.SEMANTICS.knob_schema()
+        return tuple(
+            name for name, meta in schema.items()
+            if meta.get("kind") in ("numeric", "bool")
+        )
+    except Exception:
+        return (
+            "b", "s1", "s2", "n2", "g", "d", "d1", "pse", "pse_type", "rope",
+            "sparse_mode", "pre_tokens", "next_tokens", "inner_precise", "out_dtype",
+            "deterministic", "all_same", "s1s2_same", "seq_has_zero",
+        )
+
+
+# Retained name for callers; resolved dynamically.
 NUMERIC_KNOBS = (
     "b", "s1", "s2", "n2", "g", "d", "d1", "pse", "pse_type", "rope",
     "sparse_mode", "pre_tokens", "next_tokens", "inner_precise", "out_dtype",
@@ -112,7 +128,7 @@ def coerce(df: pd.DataFrame) -> pd.DataFrame:
     for col in STATES:
         if col in df:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-    for col in NUMERIC_KNOBS:
+    for col in _numeric_knobs():
         if col in df:
             df[col] = pd.to_numeric(df[col], errors="coerce")
     if "keep_prob" in df:
@@ -131,7 +147,46 @@ def dedup(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def accepted(df: pd.DataFrame) -> pd.DataFrame:
-    return df[df.ok == 1].reset_index(drop=True) if not df.empty else df
+    """Rows the host actually judged as accepted (ok=1), excluding non-verdicts."""
+    if df.empty:
+        return df
+    if "reject" in df.columns:
+        bad = df["reject"].astype(str).str.startswith(("HOST_CRASHED", "NOT_RUN"))
+        judged = df[~bad]
+    else:
+        judged = df
+    return judged[judged.ok == 1].reset_index(drop=True)
+
+
+def commit(rows: pd.DataFrame | list[dict], ws: W.Workspace | None = None,
+           *, name: str = "closure_commit.csv",
+           reverify: bool = True) -> Path:
+    """Append judged rows to the workspace corpus (wide table).
+
+    Only rows with a real host verdict are written. After a successful append,
+    active lemmas are re-checked against the enlarged R (fail-closed revoke).
+    """
+    ws = (ws or W.default_workspace()).ensure()
+    path = Path(ws.artifacts) / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame = rows if isinstance(rows, pd.DataFrame) else pd.DataFrame(rows)
+    if frame.empty:
+        return path
+    if "reject" in frame.columns:
+        bad = frame["reject"].astype(str).str.startswith(("HOST_CRASHED", "NOT_RUN"))
+        frame = frame[~bad]
+    if frame.empty:
+        return path
+    header = not path.is_file()
+    frame.to_csv(path, mode="a", header=header, index=False)
+    if reverify:
+        try:
+            from testcase_agent.closure import lemma
+
+            lemma.reverify_active(ws)
+        except (Exception, SystemExit):
+            pass
+    return path
 
 
 def summary(ws: W.Workspace | None = None) -> dict:

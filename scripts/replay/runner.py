@@ -74,7 +74,20 @@ class ReplayRunner:
 
     @property
     def cache(self) -> Path:
-        return self.root / self.manifest.cache
+        """Replay batch directory under ``<op_src>/.ascendc-pilot/<arch>/``."""
+        cache = Path(self.manifest.cache)
+        if cache.is_absolute():
+            return cache
+        op_src = (
+            os.environ.get("ASCENDC_PROJECT_ROOT")
+            or os.environ.get("UO_OP_DIR")
+            or ""
+        )
+        if op_src:
+            base = Path(op_src).expanduser().resolve()
+            return base / ".ascendc-pilot" / self.manifest.arch / cache
+        # Fallback: relative to the AscendC-Pilot checkout (legacy / tests).
+        return self.root / ".ascendc-pilot" / self.manifest.arch / cache
 
     @property
     def log_fields(self) -> list[str]:

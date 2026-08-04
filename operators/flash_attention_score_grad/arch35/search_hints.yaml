@@ -52,3 +52,39 @@ compensation:
     cap: 8192
   grid_host_state:
     max_per_key: 12
+
+# Directed-search sampling envelope (closure/generate.py).
+sampling_grid:
+  layout: [SBH, BSH, BNSD, BSND, TND]
+  dtype: [FLOAT16, BF16, FLOAT]
+  b: [1, 2, 3, 4, 8, 16, 32, 48, 64]
+  s1: [1, 64, 128, 192, 256, 512, 768, 1024, 2048, 4096]
+  s2: [1, 64, 128, 192, 256, 512, 768, 1024, 2048, 4096]
+  n2: [1, 2, 4, 5, 8, 12, 16, 40]
+  g: [1, 2, 4, 8]
+  d: [16, 32, 64, 72, 96, 128, 144, 192, 256, 512, 768]
+  pse_type: [0, 1, 2, 3]
+  keep_prob: [1.0, 0.9, 0.5]
+  sparse_mode: [0, 1, 2, 3, 4, 5, 6]
+  tokens: [0, 1, 64, 128, 256, 512, 1024, 2048, 65536]
+  out_dtype: [0, 1, 2, 3]
+
+# Residual distance-1 sweeps (closure/generate.sweep_nearest).
+nearest_knobs:
+  DTemplateNum:
+    - {knob: d, values: [64, 128, 192, 256, 512]}
+  IsDrop:
+    - {knob: keep_prob, values: [1.0, 0.5]}
+  IsAttenMask:
+    - {knob: atten_mask, values: [none, ss, bnss, b1ss, 11ss]}
+  DeterType:
+    - {knob: deterministic, values: [0, 1]}
+    - {knob: sparse_mode, values: [0, 1, 2, 3, 4, 5, 6]}
+  IsPse:
+    - {knob: pse, values: [true, false]}
+  IsRope:
+    - {knob: rope, values: [true, false]}
+  InputDType:
+    - {knob: dtype, values: [FLOAT16, BF16, FLOAT]}
+  IsNEqual:
+    - {knob: g, values: [1, 2, 4]}

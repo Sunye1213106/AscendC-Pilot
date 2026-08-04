@@ -40,10 +40,9 @@ replay:
     tiling_key_header: UO_REPLAY_TPL
 
 artifacts:
-  #: Relative to the repository root. Batches, logs and snapshots for this
-  #: operator live here and nowhere else, so a second operator does not have
-  #: to be told apart by filename.
-  cache: .probe_cache/replay
+  #: Relative to ``<op_src>/.ascendc-pilot/<arch>/``. Batches, logs and
+  #: snapshots for this operator live here and nowhere else.
+  cache: tg/replay
   #: Wide tables that record a run. Operator-agnostic so a second package
   #: does not need a fag_ prefix to be found.
   wide_glob: "*key_cases*.csv"

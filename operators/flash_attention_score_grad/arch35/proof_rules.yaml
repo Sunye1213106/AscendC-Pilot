@@ -4,8 +4,13 @@
 # checked against a source_hash of the derivation; these are read from the
 # tiling source by a person and cite the file that rules the value out.
 # "We never found one" is never a reason here.
+#
+# grade=source_lemma (not "human"): authorship is human, but each rule cites
+# file:line evidence and has passed full-witness refutation. Only SOUND_GRADES
+# (source_lemma | solver_derived) may shrink E. Bare human/llm hypotheses stay
+# out of the sound upper bound until reviewed into source_lemma.
 version: 1
-grade: human
+grade: source_lemma
 
 value_unreachable:
   - dim: InputDType

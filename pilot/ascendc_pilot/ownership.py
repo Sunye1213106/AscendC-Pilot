@@ -52,6 +52,19 @@ ACTION_PRODUCER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "runs/{run_id}/actions/mine_recipe/staging.yaml",
         ],
     },
+    "tg-solve": {
+        "lemma_mine": [
+            "runs/{run_id}/actions/lemma_mine/parts/**",
+            "runs/{run_id}/actions/lemma_mine/scratch/**",
+            "runs/{run_id}/actions/lemma_mine/staging.yaml",
+        ],
+        "lemma_review": [
+            "runs/{run_id}/actions/lemma_review/review.yaml",
+        ],
+        "closure_audit": [
+            "runs/{run_id}/actions/closure_audit/review.yaml",
+        ],
+    },
 }
 ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     "uo-init": {
@@ -71,6 +84,26 @@ ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "apply_recipe": [
             "uo/tk/recipe.yaml",
             "uo/tk/apply_recipe.yaml",
+        ],
+    },
+    "tg-solve": {
+        "lemma_mine": [
+            "runs/{run_id}/actions/lemma_mine/staging.yaml",
+        ],
+        "lemma_review": [
+            "runs/{run_id}/actions/lemma_review/review.yaml",
+            "tg/closure/lemmas/reviews.yaml",
+        ],
+        "lemma_apply": [
+            "tg/closure/excluded.txt",
+            "tg/closure/excluded_why.csv",
+            "tg/closure/open.txt",
+            "tg/closure/lemmas/active_rules.yaml",
+            "tg/closure/lemmas/revoked_rules.yaml",
+        ],
+        "closure_audit": [
+            "runs/{run_id}/actions/closure_audit/review.yaml",
+            "tg/closure/audit_report.yaml",
         ],
     },
 }
@@ -108,6 +141,13 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "apply_gap_patch": ["uo/ir/gap_patch_receipt.yaml", "uo/ir/**"],
         "export_kb": ["uo/**"],
         "build_index": ["uo/indexes/**"],
+        "export_tg_host_view": [
+            "uo/ir/tg_host_view.yaml",
+            "uo/ir/host_codemap.yaml",
+            "uo/indexes/host_codemap.sqlite",
+            "uo/indexes/kb_graph.sqlite",
+            "uo/checks/tg_host_view_receipt.yaml",
+        ],
         "export_integrity": ["uo/checks/integrity.yaml", "uo/summary/**", "uo/checks/**"],
         "kb_review": ["uo/review/kb_product_review.yaml"],
     },

@@ -30,6 +30,7 @@ disable-model-invocation: false
 
 | action_id | execution_mode | agent | role | method | prompt | output_contract |
 |---|---|---|---|---|---|---|
+| `init_intent` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-init/init-intent` | `-` | `tg-init-intent-v1` |
 | `kb_check` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-init/kb-check` | `-` | `uo-ready-v1` |
 | `contract_build` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-init/contract-build` | `-` | `csv-contract-v1` |
 | `semantic_bind` | `subagent` | `tg-semantic-bind` | `producer` | `tg-init/semantic-bind` | `tg/semantic-bind` | `semantic-bind-v1` |
@@ -203,6 +204,7 @@ Pilot 独占状态、合法边、门禁与完成态。
 
 | action_id | policies | capabilities | method | prompt | agent |
 |---|---|---|---|---|---|
+| `init_intent` | source-authority,code-access,evidence,language,pilot-control,output-quality | - | `tg-init/init-intent` | `-` | `deterministic-tg-engine` |
 | `kb_check` | source-authority,code-access,evidence,language,pilot-control,output-quality | kb-query | `tg-init/kb-check` | `-` | `deterministic-tg-engine` |
 | `contract_build` | source-authority,code-access,evidence,language,pilot-control,output-quality | contract-building,kb-query,obligation-analysis | `tg-init/contract-build` | `-` | `deterministic-tg-engine` |
 | `semantic_bind` | source-authority,code-access,evidence,language,pilot-control,output-quality | kb-query,semantic-resolution | `tg-init/semantic-bind` | `tg/semantic-bind` | `tg-semantic-bind` |
@@ -216,6 +218,7 @@ Pilot 独占状态、合法边、门禁与完成态。
 
 | action_id | method_path | prompt_path | output_contract | role |
 |---|---|---|---|---|
+| `init_intent` | `actions/init-intent/METHOD.md` | `-` | `tg-init-intent-v1` | `deterministic_engine` |
 | `kb_check` | `actions/kb-check/METHOD.md` | `-` | `uo-ready-v1` | `deterministic_engine` |
 | `contract_build` | `actions/contract-build/METHOD.md` | `-` | `csv-contract-v1` | `deterministic_engine` |
 | `semantic_bind` | `actions/semantic-bind/METHOD.md` | `prompts/tasks/tg/semantic-bind.md` | `semantic-bind-v1` | `producer` |
