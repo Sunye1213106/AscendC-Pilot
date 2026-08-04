@@ -960,11 +960,12 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             "reinit_wipe_runs": "current",
             "continue_scrub": "from_contracts",
         },
-        "phases": ["kb_ready", "contract", "bind", "merge", "nest", "gate", "confirm"],
+        "phases": ["intent", "kb_ready", "contract", "bind", "merge", "nest", "gate", "confirm"],
         "gates": [
             "uo_ready",
             "kb_fingerprint_fresh",
             "bind_progress",
+            "tilingkey_binding_ready",
             "merge_pass",
             "domain_symmetry",
             "csv_closure",
@@ -1049,7 +1050,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         ],
         "static_obligations": [{"id": "plan_approved", "label_zh": "规划已批准"}],
         "dynamic_obligation_sources": ["plan/**/uncovered_obligations.yaml"],
-        "write_roots": ["tg", "runs", "state"],
+        "write_roots": ["tg", "runs", "state", "context"],
         "read_only_uo": True,
         "reset_policy": {
             "reinit_delete": ["tg"],
@@ -1076,7 +1077,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             _st("lemma", "引理封口"),
             _st("audit", "闭环审查"),
             _st("certify", "签发证书"),
-            # csv_consumer 兼容相位（pipelines_by_mode 选用；默认不走）
+            # csv_consumer 兼容相位（mode_overlays 选用；默认不走）
             _st("encode", "编码约束"),
             _st("solve", "Z3 求解"),
             _st("project", "CSV 投影"),
@@ -1096,7 +1097,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             _tr("residual", "construct", kind="rework", reason_codes=["CONSTRUCT_TARGETS"]),
             _tr("residual", "lemma", kind="rework", reason_codes=["NEED_LEMMA"]),
             _tr("audit", "lemma", kind="rework", reason_codes=["AUDIT_REWORK", "LEMMA_REWORK"]),
-            # csv_consumer 路径
+            # csv_consumer 路径（仅 csv_consumer overlay 激活）
             _tr("gate", "encode"),
             _tr("encode", "solve"),
             _tr("solve", "project"),
@@ -1109,6 +1110,55 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             "cover": ["solve_terminal"],
         },
         "complete_gates": ["plan_approved", "closure_soundness"],
+        "mode_overlays": {
+            "tilingkey_full_coverage": {
+                "terminal_ready_states": ["certify"],
+                "complete_gates": ["plan_approved", "closure_soundness"],
+                "transitions": [
+                    _tr("gate", "oracle"),
+                    _tr("oracle", "ledger"),
+                    _tr("ledger", "search"),
+                    _tr("search", "residual"),
+                    _tr("residual", "audit"),
+                    _tr("audit", "certify"),
+                    _tr("construct", "residual"),
+                    _tr("lemma", "ledger"),
+                    _tr("residual", "search", kind="rework", reason_codes=["SEARCH_PROGRESS", "SEARCH_STALLED"]),
+                    _tr("residual", "construct", kind="rework", reason_codes=["CONSTRUCT_TARGETS"]),
+                    _tr("residual", "lemma", kind="rework", reason_codes=["NEED_LEMMA"]),
+                    _tr("audit", "lemma", kind="rework", reason_codes=["AUDIT_REWORK", "LEMMA_REWORK"]),
+                ],
+                "pipelines": {
+                    "gate": ["solve_precheck"],
+                    "oracle": ["oracle_probe"],
+                    "ledger": ["closure_ledger"],
+                    "search": ["closure_search"],
+                    "residual": ["closure_residual"],
+                    "construct": ["closure_construct", "closure_explain"],
+                    "lemma": ["lemma_leads", "lemma_mine", "lemma_review", "lemma_apply"],
+                    "audit": ["closure_audit"],
+                    "certify": ["closure_certify"],
+                },
+            },
+            "csv_consumer": {
+                "terminal_ready_states": ["cover"],
+                "complete_gates": ["plan_approved", "solve_terminal", "domain_symmetry"],
+                "transitions": [
+                    _tr("gate", "encode"),
+                    _tr("encode", "solve"),
+                    _tr("solve", "project"),
+                    _tr("project", "cover"),
+                    _tr("solve", "encode", kind="rework", reason_codes=["SOLVE_REWORK"]),
+                ],
+                "pipelines": {
+                    "gate": ["solve_precheck"],
+                    "encode": ["z3_solve"],
+                    "solve": ["z3_solve"],
+                    "project": ["z3_solve"],
+                    "cover": ["cover_confirm"],
+                },
+            },
+        },
         "meta": {
             "default_mode": "tilingkey_full_coverage",
             "capability_ids": ["tilingkey-closure"],
@@ -1217,7 +1267,8 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 output_contract_id="lemma-mine-v1",
                 output_mode="staged",
                 staging_contract_id="lemma-mine-staging-v1",
-                merge_action_id="lemma_apply",
+                # Producer staging is finalized by referee, not by apply.
+                merge_action_id="lemma_review",
                 allowed_write_paths=[
                     "runs/{run_id}/actions/lemma_mine/parts/**",
                     "runs/{run_id}/actions/lemma_mine/scratch/**",
@@ -1304,7 +1355,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             {"id": "solve_terminal", "label_zh": "CSV 求解终态（csv_consumer）"},
         ],
         "dynamic_obligation_sources": ["tg/closure/**", "solve/**/uncovered_obligations.yaml"],
-        "write_roots": ["tg", "runs", "state"],
+        "write_roots": ["tg", "runs", "state", "context"],
         "read_only_uo": True,
         "reset_policy": {
             "reinit_delete": ["tg/solve", "tg/cases", "tg/closure"],

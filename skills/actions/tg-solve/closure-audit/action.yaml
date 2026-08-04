@@ -19,11 +19,11 @@ context_profile_id: tg-solve-closure-audit
 output_contract_id: closure-audit-v1
 allowed_write_paths:
 - runs/{run_id}/actions/closure_audit/review.yaml
-- tg/closure/audit_report.yaml
 forbidden_write_paths: []
 allowed_read_paths:
 - tg/closure/**
-- uo/**
+- uo/ir/**
+- uo/tiling/**
 forbidden_read_paths: []
 checker:
   required: true

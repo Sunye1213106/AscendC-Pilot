@@ -178,12 +178,18 @@ def soundness_ok(ws: W.Workspace | None = None) -> bool:
     return not (ledger.load_R(ws) & ledger.load_E(ws))
 
 
-def reverify_active(ws: W.Workspace | None = None) -> dict:
+def reverify_active(
+    ws: W.Workspace | None = None,
+    *,
+    current_uo_graph_fingerprint: str = "",
+) -> dict:
     """Re-run sound apply after corpus growth; revoke rules contradicted by new R.
 
     Called after every corpus.commit that may have enlarged R. Fail-closed on
-    freshness: rules whose uo_graph_fingerprint disagrees with the active
-    stamp are marked stale and dropped from E.
+    freshness: rules whose uo_graph_fingerprint disagrees with the *current*
+    UO fingerprint (preferred) or the active book stamp are marked stale and
+    dropped from E. Without an active book, E stays empty (seed rules never
+    auto-apply).
     """
     ws = (ws or W.default_workspace()).ensure()
     import yaml
@@ -191,22 +197,58 @@ def reverify_active(ws: W.Workspace | None = None) -> dict:
     lemmas_dir = ws.state / "lemmas"
     active_path = lemmas_dir / "active_rules.yaml"
     if not active_path.is_file():
-        return apply_rules(ws, refresh=True)
+        # No promoted rules yet — leave E empty and rebuild open from R only.
+        D = ledger.declared()
+        Rset = ledger.load_R(ws)
+        ws.e_path.write_text("", encoding="utf-8", newline="\n")
+        if ws.e_why_path:
+            try:
+                ws.e_why_path.write_text("key,rules\n", encoding="utf-8")
+            except Exception:
+                pass
+        gap = D - (Rset & D)
+        ws.open_path.write_text(
+            "".join("%d\n" % k for k in sorted(gap)),
+            encoding="utf-8",
+            newline="\n",
+        )
+        return {
+            "ok": True,
+            "excluded": 0,
+            "gap": len(gap),
+            "revoked_count": 0,
+            "stale": [],
+            "note": "no_active_rules",
+        }
 
     doc = yaml.safe_load(active_path.read_text(encoding="utf-8")) or {}
-    expected_fp = str(doc.get("uo_graph_fingerprint") or "")
+    book_fp = str(doc.get("uo_graph_fingerprint") or "")
+    expected_fp = str(current_uo_graph_fingerprint or "")
     kept = []
     stale = []
-    for raw in doc.get("rules") or []:
-        fp = str((raw.get("freshness") or {}).get("uo_graph_fingerprint") or "")
-        if expected_fp and fp and fp != expected_fp:
-            stale.append({
-                "label": raw.get("label") or raw.get("when"),
-                "status": "stale",
-                "reason": "uo_graph_fingerprint_mismatch",
-            })
-            continue
-        kept.append(raw)
+    if expected_fp and book_fp and book_fp != expected_fp:
+        stale.append({
+            "label": "*",
+            "status": "stale",
+            "reason": "active_book_uo_graph_fingerprint_mismatch",
+            "book_fp": book_fp,
+            "current_fp": expected_fp,
+        })
+        kept = []
+    else:
+        compare_fp = expected_fp or book_fp
+        for raw in doc.get("rules") or []:
+            fp = str((raw.get("freshness") or {}).get("uo_graph_fingerprint") or "")
+            if compare_fp and fp and fp != compare_fp:
+                stale.append({
+                    "label": raw.get("label") or raw.get("when"),
+                    "status": "stale",
+                    "reason": "uo_graph_fingerprint_mismatch",
+                    "rule_fp": fp,
+                    "current_fp": compare_fp,
+                })
+                continue
+            kept.append(raw)
     if stale:
         doc["rules"] = kept
         active_path.write_text(

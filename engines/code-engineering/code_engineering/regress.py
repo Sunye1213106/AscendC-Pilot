@@ -25,15 +25,15 @@ def regress_cases(
     candidates = []
     if reachable_csv:
         candidates.append(Path(reachable_csv))
-    candidates.extend([
-        root / "docs" / "fag" / "data" / "fag_arch35_reachable_cases.csv",
-        root / ".ascendc-pilot" / "tg" / "closure" / "reachable_cases.csv",
-    ])
+    # Prefer runtime closure corpus; never fall back to checked-in FAG answers.
+    for arch_dir in sorted((root / ".ascendc-pilot").glob("*")) if (root / ".ascendc-pilot").is_dir() else []:
+        candidates.append(arch_dir / "tg" / "closure" / "reachable_cases.csv")
+    candidates.append(root / ".ascendc-pilot" / "tg" / "closure" / "reachable_cases.csv")
     path = next((p for p in candidates if p.is_file()), None)
     if path is None:
         return {
             "ok": False,
-            "error": "no reachable_cases.csv found",
+            "error": "no reachable_cases.csv found (pass --reachable-csv or run closure first)",
             "cases": [],
             "fields": impact.fields,
         }

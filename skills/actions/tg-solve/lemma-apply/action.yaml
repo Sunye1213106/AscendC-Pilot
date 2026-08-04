@@ -22,6 +22,7 @@ allowed_write_paths:
 - tg/closure/open.txt
 - tg/closure/lemmas/active_rules.yaml
 - tg/closure/lemmas/revoked_rules.yaml
+- tg/closure/lemmas/reviews.yaml
 forbidden_write_paths: []
 allowed_read_paths:
 - runs/**/actions/lemma_review/review.yaml

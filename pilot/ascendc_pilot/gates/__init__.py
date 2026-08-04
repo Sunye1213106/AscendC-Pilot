@@ -1604,6 +1604,7 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
         "kb_fingerprint_fresh": lambda: tg_adapters.gate_kb_fingerprint_fresh(project_root, op_name=op_name),
         "merge_pass": lambda: tg_adapters.gate_merge_pass(project_root),
         "bind_progress": lambda: tg_adapters.gate_bind_progress(project_root),
+        "tilingkey_binding_ready": lambda: tg_adapters.gate_tilingkey_binding_ready(project_root),
         "domain_symmetry": lambda: tg_adapters.gate_domain_symmetry(project_root),
         "csv_closure": lambda: tg_adapters.gate_csv_closure(project_root),
         "audit_pass": lambda: tg_adapters.gate_audit_pass(project_root),

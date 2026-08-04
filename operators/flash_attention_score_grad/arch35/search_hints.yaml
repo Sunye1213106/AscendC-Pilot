@@ -47,6 +47,57 @@ input_dtype_codes:
 
 deter_sparse_modes: [0, 2, 3, 5]
 
+# Binding reverse-map without engine if-ladders (obligations._binding_named).
+named_bindings:
+  IsPse:
+    kind: presence
+    var: VAR_OPT_PSE_SHIFT
+    tensor: pse_shift
+    on_field: pse_shape
+    on_values_attr: PSE_SHAPES
+  IsDrop:
+    kind: presence
+    var: VAR_OPT_DROP_MASK
+    tensor: drop_mask
+  IsRope:
+    kind: presence
+    var: VAR_OPT_QUERY_ROPE_IDX
+    tensor: query_rope
+  IsAttenMask:
+    kind: presence
+    var: VAR_OPT_ATTEN_MASK
+    tensor: atten_mask
+    on_field: atten_mask
+    on_values_attr: ATTEN_MASKS
+  InputDType:
+    kind: dtype
+    var: VAR_DTYPE_QUERY
+    root: INPUT_DTYPE
+    operand: query
+    codes_key: input_dtype_codes
+  OutDType:
+    kind: case_field
+    field: out_dtype
+    cast: int
+  IsDNoEqual:
+    kind: d1_pair
+  S1TemplateNum:
+    kind: ladder
+    field: s1
+    mode: template
+  S2TemplateNum:
+    kind: ladder
+    field: s2
+    mode: s2
+  DTemplateNum:
+    kind: ladder
+    field: d
+    mode: d
+  IsNEqual:
+    kind: group_equal
+    on: {g: 1}
+    off: {g: 2, n2: max1}
+
 compensation:
   s1_s2:
     cap: 8192

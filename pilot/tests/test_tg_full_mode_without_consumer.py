@@ -7,6 +7,8 @@ from pathlib import Path
 
 import yaml
 
+from ascendc_pilot.paths import ensure_agent_layout, tg_root, uo_root
+
 
 def test_require_consumer_optional_under_tilingkey_mode():
     from ascendc_pilot.actions.engines import (
@@ -27,14 +29,14 @@ def test_require_consumer_optional_under_tilingkey_mode():
 def test_init_intent_defaults_to_tilingkey(tmp_path: Path):
     from ascendc_pilot.actions.engines import _run_tg_init_intent
 
-    (tmp_path / ".ascendc-pilot" / "uo").mkdir(parents=True)
-    (tmp_path / ".ascendc-pilot" / "uo" / "manifest.yaml").write_text(
+    ensure_agent_layout(tmp_path)
+    (uo_root(tmp_path) / "manifest.yaml").write_text(
         "op_name: demo\narchitecture: arch35\n", encoding="utf-8"
     )
     out = _run_tg_init_intent(tmp_path, {"op_name": "demo"})
     assert out["ok"] is True
     assert out["mode"] == "tilingkey_full_coverage"
-    path = tmp_path / ".ascendc-pilot" / "tg" / "init" / "init_intent.yaml"
+    path = tg_root(tmp_path) / "init" / "init_intent.yaml"
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert doc["schema"] == "tg-init-intent/v1"
     assert doc["mode"] == "tilingkey_full_coverage"
@@ -43,8 +45,8 @@ def test_init_intent_defaults_to_tilingkey(tmp_path: Path):
 def test_plan_scope_without_consumer(tmp_path: Path):
     from ascendc_pilot.actions.engines import _run_tg_init_intent, _run_tg_plan_scope
 
-    (tmp_path / ".ascendc-pilot" / "uo").mkdir(parents=True)
-    (tmp_path / ".ascendc-pilot" / "uo" / "manifest.yaml").write_text(
+    ensure_agent_layout(tmp_path)
+    (uo_root(tmp_path) / "manifest.yaml").write_text(
         "op_name: demo\narchitecture: arch35\n", encoding="utf-8"
     )
     assert _run_tg_init_intent(tmp_path, {"op_name": "demo"})["ok"]

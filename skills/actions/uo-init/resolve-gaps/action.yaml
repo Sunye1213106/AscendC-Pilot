@@ -32,8 +32,7 @@ forbidden_write_paths:
 - uo/ir/gap_patch_receipt.yaml
 allowed_read_paths:
 - uo/ir/unresolved.yaml
-- uo/quality.yaml
-- uo/ir/operator_graph.yaml
+- uo/ir/resolve_gaps_staging.yaml
 - runs/{run_id}/actions/resolve_gaps/parts/**
 - runs/{run_id}/actions/resolve_gaps/scratch/**
 forbidden_read_paths: []

@@ -16,9 +16,9 @@ def test_kernel_dispatch_recovery_reruns_deterministic_entrypoint_stage() -> Non
     assert resolved["ok"] is True
     recovery = resolved["recovery"]
     if recovery["type"] == "transition":
-        assert recovery["next_action"] == "detect_score_pre"
+        assert recovery["next_action"] == "extract_kernel"
     else:
-        assert recovery["action_id"] == "detect_score_pre"
+        assert recovery["action_id"] == "extract_kernel"
 
 
 def test_kernel_only_no_progress_does_not_add_llm_loop() -> None:

@@ -1252,6 +1252,4 @@ ENGINES: dict[str, Any] = {
     # tk-cover (imported lazily via names below)
 }
 
-from uo_init.tk_cover_engines import TK_ENGINES  # noqa: E402
-
-ENGINES.update(TK_ENGINES)
+# TK cover engines removed — workflow is alias_of tg-solve.

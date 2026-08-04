@@ -129,15 +129,34 @@ def path_matches_scope(rel_under_agent: str, scopes: list[str]) -> bool:
 
 
 def rel_under_agent_dir(path: str | Path, project_root: Path | None) -> str | None:
-    """Return path relative to ``.ascendc-pilot`` if contained; else None."""
+    """Return path relative to the arch-scoped agent root (``uo/…``, ``tg/…``).
+
+    After W0, durable products live under ``.ascendc-pilot/<arch>/``. Write
+    scopes are still declared without the arch segment (``uo/**``), so this
+    helper strips the architecture directory when present.
+    """
     try:
         resolved = Path(path).expanduser().resolve()
     except OSError:
         return None
+
+    if project_root is not None:
+        try:
+            from ascendc_pilot.paths import agent_root
+
+            return resolved.relative_to(agent_root(project_root)).as_posix()
+        except ValueError:
+            pass
+
     norm = str(resolved).replace("\\", "/")
     marker = "/.ascendc-pilot/"
     if marker not in norm:
         if norm.rstrip("/").endswith("/.ascendc-pilot"):
             return ""
         return None
-    return norm.split(marker, 1)[1]
+    rel = norm.split(marker, 1)[1]
+    parts = rel.split("/")
+    roots = {"uo", "tg", "ce", "runs", "state", "context", "memory"}
+    if len(parts) >= 2 and parts[0] not in roots and parts[1] in roots:
+        return "/".join(parts[1:])
+    return rel

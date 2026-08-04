@@ -59,7 +59,7 @@ def test_router_slash_only_no_nl_keywords():
 
 
 def test_state_machine_and_no_progress(tmp_path: Path):
-    start_workflow(tmp_path, "uo-init", phase="resolve", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="normalize", force_phase=True)
     record_gate(tmp_path, "g1", ok=False)
     record_gate(tmp_path, "g1", ok=False)
     record_gate(tmp_path, "g1", ok=False)
@@ -71,7 +71,7 @@ def test_state_machine_and_no_progress(tmp_path: Path):
 
 def test_start_rejects_arbitrary_phase(tmp_path: Path):
     with pytest.raises(RuntimeError, match="entry_state"):
-        start_workflow(tmp_path, "uo-init", phase="resolve")
+        start_workflow(tmp_path, "uo-init", phase="normalize")
 
 
 def test_start_uses_entry_and_next(tmp_path: Path):
@@ -432,7 +432,7 @@ def test_actions_for_phase_strict_binding(tmp_path: Path):
     prepare = actions_for_phase("uo-init", "prepare")
     assert [a["id"] for a in prepare] == ["prepare_layout"]
     scope = actions_for_phase("uo-init", "scope")
-    assert [a["id"] for a in scope] == ["scope_confirmation"]
+    assert [a["id"] for a in scope] == ["scope_scan", "scope_confirm"]
     empty = actions_for_phase("uo-init", "nonexistent_phase")
     assert empty == []
     start_workflow(tmp_path, "uo-init")
@@ -472,12 +472,12 @@ def test_complete_rejects_open_obligations(tmp_path: Path):
 def test_authorize_action_and_role(tmp_path: Path):
     from ascendc_pilot.authorize import authorize
 
-    start_workflow(tmp_path, "uo-init", phase="resolve", force_phase=True)
+    start_workflow(tmp_path, "uo-update", phase="resolve", force_phase=True)
     bad_action = authorize(
         tmp_path,
         tool="write",
-        path=str(tmp_path / ".ascendc-pilot" / "uo" / "ir" / "x.yaml"),
-        agent="uo-key-resolve",
+        path=str(uo_root(tmp_path) / "ir" / "x.yaml"),
+        agent="deterministic-uo-engine",
         action="prepare_layout",
     )
     assert bad_action.get("decision") == "deny"
@@ -486,8 +486,8 @@ def test_authorize_action_and_role(tmp_path: Path):
     ok = authorize(
         tmp_path,
         tool="write",
-        path=str(tmp_path / ".ascendc-pilot" / "uo" / "ir" / "input_derivable_patch.yaml"),
-        agent="uo-key-resolve",
+        path=str(uo_root(tmp_path) / "ir" / "input_derivable_patch.yaml"),
+        agent="deterministic-uo-engine",
         action="key_resolution",
     )
     assert ok.get("decision") == "allow"
@@ -495,7 +495,7 @@ def test_authorize_action_and_role(tmp_path: Path):
     primary = authorize(
         tmp_path,
         tool="write",
-        path=str(tmp_path / ".ascendc-pilot" / "uo" / "ir" / "x.yaml"),
+        path=str(uo_root(tmp_path) / "ir" / "x.yaml"),
         agent="ascendc-pilot",
         action="key_resolution",
     )
@@ -506,12 +506,12 @@ def test_verify_receipt_strict(tmp_path: Path):
     from ascendc_pilot.runs import issue_receipt, verify_receipt
     from ascendc_pilot.spec_hashes import workflow_spec_hash
 
-    start_workflow(tmp_path, "uo-init", phase="resolve", force_phase=True)
-    wf = workflow_spec_hash("uo-init")
+    start_workflow(tmp_path, "uo-update", phase="resolve", force_phase=True)
+    wf = workflow_spec_hash("uo-update")
     issue_receipt(
         tmp_path,
         actor_type="producer",
-        actor_id="uo-key-resolve",
+        actor_id="deterministic-uo-engine",
         action_id="key_resolution",
         workflow_spec_hash=wf,
         input_hashes={"triage": "abc"},
@@ -521,7 +521,7 @@ def test_verify_receipt_strict(tmp_path: Path):
     )
     ok = verify_receipt(
         tmp_path,
-        actor_id="uo-key-resolve",
+        actor_id="deterministic-uo-engine",
         action_id="key_resolution",
         require_hashes=True,
         require_action_id=True,
@@ -530,7 +530,7 @@ def test_verify_receipt_strict(tmp_path: Path):
     assert ok.get("ok") is True
     bad = verify_receipt(
         tmp_path,
-        actor_id="uo-key-resolve",
+        actor_id="deterministic-uo-engine",
         action_id="wrong_action",
         require_action_id=True,
     )

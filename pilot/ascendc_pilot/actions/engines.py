@@ -460,11 +460,37 @@ def _write_tilingkey_contract(project_root: Path, tg_ctx: dict[str, Any]) -> dic
         errors.append("missing uo/ir/tg_host_view.yaml (run uo-init export_tg_host_view)")
     key_doc = _load_yaml(keys) or {}
     graph_doc = _load_yaml(graph) or {}
-    declared_count = int(
-        key_doc.get("count")
-        or len(key_doc.get("keys") or key_doc.get("declared_keys") or [])
-        or 0
-    )
+    declared_count = int(key_doc.get("legal_key_count") or 0)
+    if declared_count <= 0:
+        # Legacy aliases — UO export uses legal_key_count only.
+        declared_count = int(
+            key_doc.get("count")
+            or len(key_doc.get("keys") or key_doc.get("declared_keys") or [])
+            or 0
+        )
+    if declared_count <= 0 and keys.is_file():
+        errors.append("DECLARED_SET_EMPTY: legal_key_count missing or zero")
+    index_rel = str(key_doc.get("legal_key_index") or "")
+    if index_rel and declared_count > 0:
+        index_path = uo / index_rel.replace("\\", "/").lstrip("/")
+        if not index_path.is_file():
+            # legal_key_index is relative to uo/tiling/ in some exports
+            alt = uo / "tiling" / Path(index_rel).name
+            index_path = alt if alt.is_file() else index_path
+        if index_path.is_file():
+            try:
+                n_lines = sum(
+                    1
+                    for line in index_path.read_text(encoding="utf-8").splitlines()
+                    if line.strip() and not line.strip().startswith("#")
+                )
+                if n_lines != declared_count:
+                    errors.append(
+                        f"DECLARED_SET_MISMATCH: legal_key_count={declared_count} "
+                        f"but {index_path.name} has {n_lines} rows"
+                    )
+            except OSError as exc:
+                errors.append(f"legal_key_index_unreadable: {exc}")
     contract = {
         "schema": "tg-tilingkey-contract/v1",
         "status": "pass" if not errors else "fail",
@@ -479,6 +505,7 @@ def _write_tilingkey_contract(project_root: Path, tg_ctx: dict[str, Any]) -> dic
                 or ""
             ),
             "count": declared_count,
+            "legal_key_index": index_rel,
         },
         "graph_fingerprint": str(graph_doc.get("fingerprint") or ""),
         "host_view": "uo/ir/tg_host_view.yaml",
@@ -626,6 +653,10 @@ def _run_tg_semantic_bind(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
                 "mode": "tilingkey_full_coverage",
                 "fields": rows,
                 "field_count": len(rows),
+                "graph_fingerprint": str(
+                    (_load_yaml(uo / "ir" / "operator_graph.yaml") or {}).get("fingerprint")
+                    or ""
+                ),
             }
             inv_path = tg / "realization" / "binding_inventory.yaml"
             inv_path.parent.mkdir(parents=True, exist_ok=True)
@@ -694,8 +725,28 @@ def _run_tg_semantic_bind(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
 
 
 def _run_tg_bind_merge(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    del ctx
+    tg_ctx = _resolve_tg_ctx(project_root, ctx)
     tg = _tg(project_root)
+    if _is_tilingkey_full(tg_ctx) and _require_consumer_root(tg_ctx) is None:
+        import yaml
+
+        inv = tg / "realization" / "binding_inventory.yaml"
+        report = {
+            "schema": "tg-bind-merge/v1",
+            "mode": "tilingkey_full_coverage",
+            "status": "pass" if inv.is_file() else "fail",
+            "note": "full mode skips CSV realization merge; host-view inventory is authoritative",
+            "inventory": inv.as_posix() if inv.is_file() else "",
+        }
+        out = tg / "realization" / "uo_merge_report.yaml"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(yaml.safe_dump(report, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        return {
+            "ok": report["status"] == "pass",
+            "engine": "bind_merge",
+            "mode": "tilingkey_full_coverage",
+            "payload": report,
+        }
     try:
         from testcase_agent.uo_resolve_merge import merge_uo_resolve
 
@@ -713,8 +764,27 @@ def _run_tg_bind_merge(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
 
 
 def _run_tg_mid_nest(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    del ctx
+    tg_ctx = _resolve_tg_ctx(project_root, ctx)
     tg = _tg(project_root)
+    if _is_tilingkey_full(tg_ctx) and _require_consumer_root(tg_ctx) is None:
+        import yaml
+
+        queue = {
+            "schema": "tg-mid-nest/v1",
+            "mode": "tilingkey_full_coverage",
+            "status": "pass",
+            "symbols": [],
+            "note": "full mode has no CSV mid-symbol queue",
+        }
+        out = tg / "realization" / "mid_symbol_queue.yaml"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(yaml.safe_dump(queue, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        return {
+            "ok": True,
+            "engine": "mid_nest",
+            "mode": "tilingkey_full_coverage",
+            "artifact": out.as_posix(),
+        }
     try:
         from testcase_agent.resolve_policy import write_mid_symbol_queue
 
@@ -822,11 +892,20 @@ def _run_tg_plan_build(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
             uo = _uo(project_root)
             keys = _load_yaml(uo / "tiling" / "exhaustive_key_space.yaml") or {}
             graph = _load_yaml(uo / "ir" / "operator_graph.yaml") or {}
-            count = int(
-                keys.get("count")
-                or len(keys.get("keys") or keys.get("declared_keys") or [])
-                or 0
-            )
+            count = int(keys.get("legal_key_count") or 0)
+            if count <= 0:
+                count = int(
+                    keys.get("count")
+                    or len(keys.get("keys") or keys.get("declared_keys") or [])
+                    or 0
+                )
+            if count <= 0:
+                return {
+                    "ok": False,
+                    "engine": "plan_build",
+                    "error": "DECLARED_SET_EMPTY",
+                    "mode": "tilingkey_full_coverage",
+                }
             fp = str(keys.get("fingerprint") or graph.get("fingerprint") or "")
             obligations = {
                 "schema": "coverage-obligations/v2",
@@ -837,6 +916,7 @@ def _run_tg_plan_build(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
                     "source": "uo/tiling/exhaustive_key_space.yaml",
                     "fingerprint": fp,
                     "count": count,
+                    "legal_key_index": str(keys.get("legal_key_index") or ""),
                 },
                 "obligations": [
                     {
@@ -1003,8 +1083,21 @@ def _dump_closure_yaml(path: Path, doc: dict[str, Any]) -> None:
     path.write_text(yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
 
+def _closure_live_default(ctx: dict[str, Any], key: str) -> bool:
+    """Production defaults to live Host; CI/synthetic may opt out explicitly."""
+    if key in ctx:
+        return bool(ctx.get(key))
+    import os
+
+    if str(os.environ.get("TG_CLOSURE_CI") or "").strip().lower() in {"1", "true", "yes"}:
+        return False
+    if str(os.environ.get("UO_OPERATOR") or "").startswith("_synthetic"):
+        return False
+    return True
+
+
 def _run_oracle_probe(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """Oracle integrity probe — live Host when available, else schema-only."""
+    """Oracle integrity probe — live Host by default (CI/synthetic may opt out)."""
     tg = _tg(project_root)
     ws = _closure_ws(project_root)
     issues: list[str] = []
@@ -1018,7 +1111,8 @@ def _run_oracle_probe(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
     except Exception as exc:  # noqa: BLE001
         issues.append(f"schema_unavailable: {exc}")
 
-    if bool(ctx.get("live_probe")):
+    live_probe = _closure_live_default(ctx, "live_probe")
+    if live_probe:
         live["attempted"] = True
         try:
             from testcase_agent.closure import generate as G
@@ -1030,20 +1124,30 @@ def _run_oracle_probe(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
             verdicts = HostOracle().judge(cases, tag="oracle_probe")
             judged = sum(1 for v in verdicts if v.verdict)
             accepted = sum(1 for v in verdicts if v.ok)
+            with_key = sum(1 for v in verdicts if v.key)
             live.update({
                 "sent": len(cases),
                 "judged": judged,
                 "accepted": accepted,
-                "with_key": sum(1 for v in verdicts if v.key),
+                "with_key": with_key,
             })
-            if judged < len(cases):
+            if judged != len(cases):
                 issues.append("ORACLE_SUSPECT:batch_truncated")
                 (ws.state / "oracle_suspect").write_text("1", encoding="utf-8")
-            if accepted == 0 and judged > 0:
-                issues.append("no_accepted_keys_in_probe")
+            if accepted == 0:
+                issues.append("ORACLE_SUSPECT:accepted==0")
+            if with_key == 0:
+                issues.append("ORACLE_SUSPECT:accepted_with_key==0")
         except Exception as exc:  # noqa: BLE001
             issues.append(f"live_probe_failed: {exc}")
             live["error"] = str(exc)[:300]
+    else:
+        issues.append("live_probe_disabled: schema-only probe (CI/synthetic)")
+        # Schema-only is allowed only when explicitly opted out; do not fail CI.
+        if str((__import__("os").environ.get("TG_CLOSURE_CI") or "")).strip().lower() in {
+            "1", "true", "yes",
+        } or str((__import__("os").environ.get("UO_OPERATOR") or "")).startswith("_synthetic"):
+            issues = [i for i in issues if not i.startswith("live_probe_disabled")]
 
     doc = {
         "schema": "tg-oracle-probe/v1",
@@ -1051,9 +1155,10 @@ def _run_oracle_probe(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
         "issues": issues,
         "state": str(ws.state),
         "live": live,
+        "live_probe": live_probe,
         "note": (
-            "Set live_probe=true for Host replay of ~10 cases; "
-            "default is schema/ledger reachability only (CI-safe)"
+            "Production requires live_probe; set TG_CLOSURE_CI=1 or UO_OPERATOR=_synthetic_* "
+            "for schema-only CI probes"
         ),
     }
     out = tg / "closure" / "oracle_probe.yaml"
@@ -1071,8 +1176,28 @@ def _run_closure_ledger(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
         rebuilt = ledger.rebuild(ws)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "closure_ledger", "error": str(exc)[:300]}
+    # Only re-verify / apply already-promoted active rules. Package seed rules
+    # must not enter E before lemma_review (methodology §6.5).
     try:
-        applied = lemma.apply_rules(ws, refresh=True)
+        current_fp = ""
+        try:
+            import yaml
+
+            graph = _uo(project_root) / "ir" / "operator_graph.yaml"
+            if graph.is_file():
+                current_fp = str(
+                    (yaml.safe_load(graph.read_text(encoding="utf-8")) or {}).get("fingerprint")
+                    or ""
+                )
+        except Exception:
+            current_fp = ""
+        applied = lemma.reverify_active(ws, current_uo_graph_fingerprint=current_fp)
+    except TypeError:
+        # Older signature without fingerprint kwarg.
+        try:
+            applied = lemma.reverify_active(ws)
+        except Exception as exc:  # noqa: BLE001
+            applied = {"ok": False, "error": str(exc)[:200]}
     except Exception as exc:  # noqa: BLE001
         applied = {"ok": False, "error": str(exc)[:200]}
     st = ledger.state(ws)
@@ -1091,13 +1216,27 @@ def _run_closure_ledger(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
 
 
 def _run_closure_search(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    import os
+
     from testcase_agent.closure import search_round
 
     ws = _closure_ws(project_root)
     budget = int(ctx.get("budget") or 64)
     seed = int(ctx.get("seed") or 0)
+    oracle = ctx.get("oracle")
+    if oracle is None and (
+        str(os.environ.get("TG_CLOSURE_CI") or "").strip().lower() in {"1", "true", "yes"}
+        or str(os.environ.get("UO_OPERATOR") or "").startswith("_synthetic")
+    ):
+        try:
+            from testcase_agent.closure.oracle import StubOracle
+
+            keys = ctx.get("stub_keys") or []
+            oracle = StubOracle(keys=[int(k) for k in keys] if keys else [1, 2, 3, 4])
+        except Exception:
+            oracle = None
     try:
-        out = search_round.run_round(ws, budget=budget, seed=seed)
+        out = search_round.run_round(ws, budget=budget, seed=seed, oracle=oracle)
     except Exception as exc:  # noqa: BLE001
         # Still leave a round stub so the output contract is satisfiable.
         rounds = ws.state / "rounds" / "round_0001"
@@ -1134,35 +1273,38 @@ def _run_closure_residual(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
     except Exception:
         used = 0
 
-    auto_rework: dict[str, Any] = {"attempted": False}
+    # Do not mutate workflow state inside this action. Controllers / acp
+    # advance apply rework after the action receipt is finalized.
+    auto_rework: dict[str, Any] = {"attempted": False, "deferred": True}
     escalate = reason in {"ORACLE_SUSPECT", "PROOF_BLOCKED"}
-    if reason not in {"GAP_ZERO"} and not escalate and used < budget:
-        try:
-            from ascendc_pilot.state import rework_phase
-
-            auto_rework = rework_phase(
-                project_root, reason_code=reason,
-            )
-            auto_rework = {"attempted": True, **(auto_rework if isinstance(auto_rework, dict) else {})}
-            used += 1
-            try:
-                import yaml
-
-                budget_path.write_text(
-                    yaml.safe_dump(
-                        {"used": used, "budget": budget, "last_reason": reason},
-                        allow_unicode=True,
-                    ),
-                    encoding="utf-8",
-                )
-            except Exception:
-                pass
-        except Exception as exc:  # noqa: BLE001
-            auto_rework = {"attempted": True, "ok": False, "error": str(exc)[:200]}
-    elif used >= budget and reason not in {"GAP_ZERO"}:
+    needs_rework = reason not in {"GAP_ZERO"} and not escalate and used < budget
+    if used >= budget and reason not in {"GAP_ZERO"} and not escalate:
         escalate = True
         reason = "PROOF_BLOCKED"
-        auto_rework = {"attempted": False, "budget_exhausted": True, "used": used}
+        auto_rework = {"attempted": False, "budget_exhausted": True, "used": used, "deferred": False}
+        needs_rework = False
+    elif needs_rework:
+        used += 1
+        try:
+            import yaml
+
+            budget_path.write_text(
+                yaml.safe_dump(
+                    {"used": used, "budget": budget, "last_reason": reason},
+                    allow_unicode=True,
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+        auto_rework = {
+            "attempted": False,
+            "deferred": True,
+            "reason_code": reason,
+            "used": used,
+            "budget": budget,
+        }
 
     route_doc = {
         "schema": "tg-closure-route/v1",
@@ -1171,7 +1313,7 @@ def _run_closure_residual(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
         "auto_rework": auto_rework,
         "rework_hint": (
             f"acp rework --reason {reason}"
-            if reason not in {"GAP_ZERO", "PROOF_BLOCKED"} and not auto_rework.get("ok")
+            if needs_rework
             else ""
         ),
         "residual": {
@@ -1188,7 +1330,7 @@ def _run_closure_residual(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
         "engine": "closure_residual",
         "reason_code": reason,
         "reason_codes": [reason],
-        "needs_rework": reason not in {"GAP_ZERO"} and not auto_rework.get("ok"),
+        "needs_rework": needs_rework,
         "escalate": escalate,
         "artifact": out.as_posix(),
         **route_doc,
@@ -1213,9 +1355,9 @@ def _run_closure_construct(project_root: Path, ctx: dict[str, Any]) -> dict[str,
             built += 1
         except Exception:
             continue
-    # Optional live replay when requested.
+    # Production defaults to live Host; CI/synthetic may opt out.
     replayed = 0
-    if cases and bool(ctx.get("live_replay")):
+    if cases and _closure_live_default(ctx, "live_replay"):
         try:
             from testcase_agent.closure.oracle import HostOracle
 
@@ -1235,7 +1377,7 @@ def _run_closure_construct(project_root: Path, ctx: dict[str, Any]) -> dict[str,
                 from testcase_agent.closure import corpus as C
                 from testcase_agent.closure import ledger
 
-                C.commit(rows, ws, name="construct_commit.csv")
+                C.commit(rows, ws, name="construct_key_cases.csv")
                 ledger.rebuild(ws)
         except Exception as exc:  # noqa: BLE001
             doc_err = str(exc)[:200]
@@ -1264,7 +1406,7 @@ def _run_closure_explain(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
     ran = False
     err = ""
     result: dict[str, Any] = {}
-    if bool(ctx.get("live_explain")):
+    if _closure_live_default(ctx, "live_explain"):
         try:
             from testcase_agent.closure import construct
             from testcase_agent.closure import explain
@@ -1364,14 +1506,13 @@ def _run_lemma_mine(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
 
 
 def _run_lemma_review(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """Referee scaffold — tg-closure-referee fills review; engine persists receipt."""
+    """Referee scaffold — tg-closure-referee fills runs/.../review.yaml only."""
     import yaml
 
     run_id = str(ctx.get("run_id") or "local")
-    tg = _tg(project_root)
-    review_dir = (
-        project_root / ".ascendc-pilot" / "runs" / run_id / "actions" / "lemma_review"
-    )
+    from ascendc_pilot.paths import agent_root
+
+    review_dir = agent_root(project_root) / "runs" / run_id / "actions" / "lemma_review"
     review_dir.mkdir(parents=True, exist_ok=True)
     existing = review_dir / "review.yaml"
     if existing.is_file():
@@ -1387,8 +1528,7 @@ def _run_lemma_review(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
         existing.write_text(
             yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
         )
-    canon = tg / "closure" / "lemmas" / "reviews.yaml"
-    _dump_closure_yaml(canon, doc)
+    # Persistent canon is promoted by lemma_apply (deterministic), not referee.
     return {
         "ok": True,
         "engine": "lemma_review",
@@ -1402,7 +1542,16 @@ def _run_lemma_apply(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
 
     ws = _closure_ws(project_root)
     tg = _tg(project_root)
-    review = _load_yaml(tg / "closure" / "lemmas" / "reviews.yaml") or {}
+    run_id = str(ctx.get("run_id") or "local")
+    from ascendc_pilot.paths import agent_root
+
+    review_path = (
+        agent_root(project_root) / "runs" / run_id / "actions" / "lemma_review" / "review.yaml"
+    )
+    review = _load_yaml(review_path) or _load_yaml(tg / "closure" / "lemmas" / "reviews.yaml") or {}
+    # Persist referee receipt into the closure ledger for subsequent rounds.
+    if review:
+        _dump_closure_yaml(tg / "closure" / "lemmas" / "reviews.yaml", review)
     promoted = {"promoted": 0}
     if review.get("accepted"):
         tg_ctx = _resolve_tg_ctx(project_root, ctx)
@@ -1421,18 +1570,17 @@ def _run_lemma_apply(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
 
 
 def _run_closure_audit(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """Referee scaffold for post-apply invariant review."""
+    """Referee scaffold for post-apply invariant review (runs/.../review.yaml only)."""
     import yaml
 
     from testcase_agent.closure import ledger
     from testcase_agent.closure import lemma
+    from ascendc_pilot.paths import agent_root
 
     run_id = str(ctx.get("run_id") or "local")
     ws = _closure_ws(project_root)
     st = ledger.state(ws)
-    audit_dir = (
-        project_root / ".ascendc-pilot" / "runs" / run_id / "actions" / "closure_audit"
-    )
+    audit_dir = agent_root(project_root) / "runs" / run_id / "actions" / "closure_audit"
     audit_dir.mkdir(parents=True, exist_ok=True)
     existing = audit_dir / "review.yaml"
     if existing.is_file():
@@ -1448,8 +1596,6 @@ def _run_closure_audit(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         existing.write_text(
             yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
         )
-    canon = _tg(project_root) / "closure" / "audit_report.yaml"
-    _dump_closure_yaml(canon, doc)
     return {
         "ok": True,
         "engine": "closure_audit",
@@ -1461,6 +1607,7 @@ def _run_closure_audit(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
 
 def _run_closure_certify(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     from ascendc_pilot.gates import run_named_gate
+    from ascendc_pilot.paths import agent_root
     from testcase_agent.closure import ledger
     from testcase_agent.closure import report
 
@@ -1474,6 +1621,15 @@ def _run_closure_certify(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
     man = _load_yaml(uo / "manifest.yaml") or {}
     uo_fp = str(man.get("fingerprint") or man.get("graph_fingerprint") or "")
     invariants = report.certify_invariants(ws, uo_graph_fingerprint=uo_fp)
+
+    # Promote referee audit receipt into the durable closure ledger.
+    run_id = str(ctx.get("run_id") or "local")
+    audit_review = (
+        agent_root(project_root) / "runs" / run_id / "actions" / "closure_audit" / "review.yaml"
+    )
+    audit_doc = _load_yaml(audit_review) or {}
+    if audit_doc:
+        _dump_closure_yaml(_tg(project_root) / "closure" / "audit_report.yaml", audit_doc)
 
     cert = {
         "schema": "tg-closure-certificate/v1",
@@ -1740,18 +1896,20 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     ],
     "lemma-review-v1": [
         "runs/{run_id}/actions/lemma_review/review.yaml",
-        "tg/closure/lemmas/reviews.yaml",
     ],
     "lemma-apply-v1": [
         "tg/closure/excluded.txt",
         "tg/closure/excluded_why.csv",
         "tg/closure/open.txt",
+        "tg/closure/lemmas/reviews.yaml",
     ],
     "closure-audit-v1": [
         "runs/{run_id}/actions/closure_audit/review.yaml",
+    ],
+    "closure-certify-v1": [
+        "tg/closure/certificate.yaml",
         "tg/closure/audit_report.yaml",
     ],
-    "closure-certify-v1": ["tg/closure/certificate.yaml"],
     "z3-solve-v1": ["tg/solve"],
     "cover-confirm-v1": [
         "tg/solve/**/realize_report.yaml",

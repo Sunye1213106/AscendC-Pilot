@@ -92,7 +92,6 @@ ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         ],
         "lemma_review": [
             "runs/{run_id}/actions/lemma_review/review.yaml",
-            "tg/closure/lemmas/reviews.yaml",
         ],
         "lemma_apply": [
             "tg/closure/excluded.txt",
@@ -100,9 +99,14 @@ ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "tg/closure/open.txt",
             "tg/closure/lemmas/active_rules.yaml",
             "tg/closure/lemmas/revoked_rules.yaml",
+            "tg/closure/lemmas/reviews.yaml",
         ],
         "closure_audit": [
             "runs/{run_id}/actions/closure_audit/review.yaml",
+        ],
+        "closure_certify": [
+            "tg/closure/closure.csv",
+            "tg/closure/certificate.yaml",
             "tg/closure/audit_report.yaml",
         ],
     },
@@ -168,13 +172,56 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "apply_recipe": ["uo/tk/recipe.yaml", "uo/tk/apply_recipe.yaml"],
         "coverage_gate": ["uo/tk/coverage_gate.yaml"],
     },
+    "tg-solve": {
+        "oracle_probe": ["tg/closure/oracle_probe.yaml"],
+        "closure_ledger": [
+            "tg/closure/R.txt",
+            "tg/closure/open.txt",
+            "tg/closure/excluded.txt",
+            "tg/closure/excluded_why.csv",
+        ],
+        "closure_search": ["tg/closure/rounds/**", "tg/closure/models/**"],
+        "closure_residual": ["tg/closure/residual/**", "tg/closure/route.yaml"],
+        "closure_construct": ["tg/closure/construct/**"],
+        "closure_explain": ["tg/closure/why.csv", "tg/closure/construct/**"],
+        "lemma_leads": [
+            "tg/closure/lemmas/leads.yaml",
+            "tg/closure/leads.csv",
+            "tg/closure/leads3.csv",
+        ],
+        "lemma_mine": [
+            "runs/{run_id}/actions/lemma_mine/parts/**",
+            "runs/{run_id}/actions/lemma_mine/scratch/**",
+            "runs/{run_id}/actions/lemma_mine/staging.yaml",
+        ],
+        "lemma_review": [
+            "runs/{run_id}/actions/lemma_review/review.yaml",
+        ],
+        "lemma_apply": [
+            "tg/closure/excluded.txt",
+            "tg/closure/excluded_why.csv",
+            "tg/closure/open.txt",
+            "tg/closure/lemmas/active_rules.yaml",
+            "tg/closure/lemmas/revoked_rules.yaml",
+            "tg/closure/lemmas/reviews.yaml",
+        ],
+        "closure_audit": [
+            "runs/{run_id}/actions/closure_audit/review.yaml",
+        ],
+        "closure_certify": [
+            "tg/closure/closure.csv",
+            "tg/closure/certificate.yaml",
+            "tg/closure/audit_report.yaml",
+        ],
+        "z3_solve": ["tg/solve/**", "tg/cases/**", "tg/realization/**"],
+        "cover_confirm": ["tg/solve/**", "tg/cases/**"],
+    },
 }
 ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
     "uo-init": {
         "resolve_gaps": [
             "uo/ir/unresolved.yaml",
-            "uo/quality.yaml",
-            "uo/ir/operator_graph.yaml",
+            "uo/ir/resolve_gaps_staging.yaml",
             "runs/{run_id}/actions/resolve_gaps/parts/**",
             "runs/{run_id}/actions/resolve_gaps/scratch/**",
         ],

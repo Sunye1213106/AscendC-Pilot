@@ -19,7 +19,6 @@ context_profile_id: tg-solve-lemma-review
 output_contract_id: lemma-review-v1
 allowed_write_paths:
 - runs/{run_id}/actions/lemma_review/review.yaml
-- tg/closure/lemmas/reviews.yaml
 forbidden_write_paths: []
 allowed_read_paths:
 - runs/**/actions/lemma_mine/**

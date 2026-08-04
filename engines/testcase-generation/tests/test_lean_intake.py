@@ -33,7 +33,7 @@ def test_validate_intake_accepts_lean_external_hashes() -> None:
     assert "MISSING_TESTCASE_CONTRACT" not in codes
 
 
-def test_validate_intake_ignores_legacy_uo_contract() -> None:
+def test_validate_intake_rejects_legacy_uo_contract() -> None:
     files: dict = {
         "contracts/testcase.yaml": {"version": 2, "source": {}, "interface": {}},
         "checks/artifact_hashes.yaml": {"hashes": {"tiling/key_space.yaml": "c" * 64}},
@@ -45,6 +45,6 @@ def test_validate_intake_ignores_legacy_uo_contract() -> None:
         {"files": files, "context_slice": {}},
         {"status": "pass", "source_artifact_hashes": {"tiling/key_space.yaml": "c" * 64}},
     )
-    warn_codes = [i.code for i in report.warnings]
-    assert "LEGACY_UO_CONTRACT_IGNORED" in warn_codes
-    assert report.status != "fail"
+    codes = [i.code for i in report.blocking_issues]
+    assert "UO_CONTRACT_FORBIDDEN" in codes
+    assert report.status == "fail"

@@ -43,7 +43,7 @@ def test_slim_checker_result_drops_engine_blob():
 def test_issue_receipt_stores_slim_checker(tmp_path: Path):
     import yaml
 
-    start_workflow(tmp_path, "uo-init", phase="resolve", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="normalize", force_phase=True)
     wf = workflow_spec_hash("uo-init")
     fat_engine = {"ok": True, "report": {"huge": ["x" * 200] * 50}}
     path = issue_receipt(
@@ -66,7 +66,7 @@ def test_issue_receipt_stores_slim_checker(tmp_path: Path):
 
 def test_verify_receipt_filters_by_action_id_before_scanning_others(tmp_path: Path):
     """With many fat unrelated receipts, action_id verify must stay cheap."""
-    start_workflow(tmp_path, "uo-init", phase="resolve", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="normalize", force_phase=True)
     wf = workflow_spec_hash("uo-init")
     fat = {"ok": True, "engine": {"report": {"blob": ["y" * 1000] * 80}}}
     for i in range(6):
@@ -101,7 +101,7 @@ def test_verify_receipt_filters_by_action_id_before_scanning_others(tmp_path: Pa
 
 def test_verify_receipt_missing_action_does_not_scan_siblings(tmp_path: Path):
     """Incomplete action_id must not HMAC every unrelated fat receipt."""
-    start_workflow(tmp_path, "uo-init", phase="resolve", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="normalize", force_phase=True)
     wf = workflow_spec_hash("uo-init")
     fat = {"ok": True, "engine": {"report": {"blob": ["y" * 2000] * 100}}}
     for i in range(4):
@@ -126,7 +126,7 @@ def test_verify_receipt_missing_action_does_not_scan_siblings(tmp_path: Path):
 def test_recommend_next_uses_single_pass_cache(tmp_path: Path, monkeypatch):
     from ascendc_pilot.workflows import pipeline as pipe_mod
 
-    start_workflow(tmp_path, "uo-init", phase="resolve", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="normalize", force_phase=True)
     calls: list[str] = []
 
     def fake_ok(project_root: Path, action_id: str) -> bool:
@@ -143,7 +143,7 @@ def test_recommend_next_uses_single_pass_cache(tmp_path: Path, monkeypatch):
         {"id": "c", "label_zh": "C"},
     ]
     rec = pipe_mod.recommend_next_action(
-        tmp_path, workflow_id="uo-init", phase="resolve", allowed_actions=allowed
+        tmp_path, workflow_id="uo-init", phase="normalize", allowed_actions=allowed
     )
     assert rec and rec["id"] == "a"
     assert calls == ["a", "b", "c"]
@@ -157,7 +157,7 @@ def test_verify_compacts_bloated_legacy_receipt(tmp_path: Path):
     from ascendc_pilot.runs import run_dir, sign_receipt_payload
     from ascendc_pilot.state import load_state
 
-    start_workflow(tmp_path, "uo-init", phase="resolve", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="normalize", force_phase=True)
     state = load_state(tmp_path)
     run_id = str(state["run_id"])
     wf = workflow_spec_hash("uo-init")

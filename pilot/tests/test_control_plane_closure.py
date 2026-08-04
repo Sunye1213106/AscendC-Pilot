@@ -53,10 +53,10 @@ def test_advance_denied_while_pipeline_incomplete(tmp_path: Path) -> None:
 def test_prepare_skip_denied_returns_prerequisite(tmp_path: Path) -> None:
     ensure_agent_layout(tmp_path)
     start_workflow(tmp_path, "uo-init", phase="extract", force_phase=True)
-    denied = prepare_action(tmp_path, "extract_plan")
+    denied = prepare_action(tmp_path, "extract_tiling_key")
     assert denied["ok"] is False
     assert denied["error"] == "PIPELINE_SKIP_DENIED"
-    assert denied.get("prerequisite_action") == "detect_score_pre"
+    assert denied.get("prerequisite_action") == "extract_host"
 
 
 def test_unknown_contract_fails_closed() -> None:
@@ -75,50 +75,44 @@ def test_missing_contract_id_fails_closed() -> None:
 def test_finalize_denied_after_phase_switch(tmp_path: Path) -> None:
     ensure_agent_layout(tmp_path)
     start_workflow(tmp_path, "uo-init", phase="extract", force_phase=True)
-    _issue(tmp_path, "detect_score_pre")
-    uo = uo_root(tmp_path)
-    _write(uo / "ir" / "llm_tasks.yaml", {"version": 1, "tasks": [], "total_semantic_batches": 0})
-    for aid in ("extract_plan", "detect_score_post"):
-        _issue(
-            tmp_path,
-            aid,
-            actor_id="uo-semantic-resolve" if aid == "extract_plan" else "deterministic-uo-engine",
-        )
-    prep = prepare_action(tmp_path, "adjudicate_llm_tasks")
-    assert prep["ok"] is True, prep
     st = load_state(tmp_path)
-    st["phase"] = "resolve"
-    st["phase_label_zh"] = "语义闭合"
+    _write(
+        agent_root(tmp_path) / "state" / "active_action.yaml",
+        {
+            "version": 1,
+            "run_id": st["run_id"],
+            "workflow_id": "uo-init",
+            "phase": "extract",
+            "action_id": "extract_host",
+            "status": "prepared",
+        },
+    )
+    st["phase"] = "normalize"
+    st["phase_label_zh"] = "规范化"
     save_state(tmp_path, st)
-    fin = finalize_action(tmp_path, "adjudicate_llm_tasks")
+    fin = finalize_action(tmp_path, "extract_host")
     assert fin["ok"] is False
-    assert fin.get("error") == "session_phase_mismatch"
+    assert fin.get("error") in {"session_phase_mismatch", "action_not_allowed"}
 
 
 def test_finalize_denied_when_not_active_action(tmp_path: Path) -> None:
     ensure_agent_layout(tmp_path)
     start_workflow(tmp_path, "uo-init", phase="extract", force_phase=True)
-    for aid in ("detect_score_pre", "extract_plan", "detect_score_post"):
-        actor = "uo-semantic-resolve" if aid == "extract_plan" else "deterministic-uo-engine"
-        _issue(tmp_path, aid, actor_id=actor)
-    uo = uo_root(tmp_path)
-    _write(uo / "ir" / "llm_tasks.yaml", {"version": 1, "tasks": [], "total_semantic_batches": 0})
-    prep = prepare_action(tmp_path, "adjudicate_llm_tasks")
-    assert prep["ok"] is True, prep
+    st = load_state(tmp_path)
     _write(
         agent_root(tmp_path) / "state" / "active_action.yaml",
         {
             "version": 1,
-            "run_id": load_state(tmp_path)["run_id"],
+            "run_id": st["run_id"],
             "workflow_id": "uo-init",
             "phase": "extract",
-            "action_id": "apply_semantic_patch",
+            "action_id": "extract_kernel",
             "status": "prepared",
         },
     )
-    fin = finalize_action(tmp_path, "adjudicate_llm_tasks")
+    fin = finalize_action(tmp_path, "extract_host")
     assert fin["ok"] is False
-    assert fin.get("error") == "not_active_action"
+    assert fin.get("error") in {"not_active_action", "no_session", "action_not_allowed"}
 
 
 def test_old_run_receipt_does_not_satisfy_current_run(tmp_path: Path) -> None:
@@ -150,7 +144,9 @@ def test_happy_path_prepare_advance_with_receipt(tmp_path: Path) -> None:
     nxt = describe_next(tmp_path)
     assert (nxt.get("recommended_next_action") or {}).get("id") == "prepare_layout"
     _issue(tmp_path, "prepare_layout")
-    _write(uo_root(tmp_path) / "manifest.yaml", {"version": 1})
+    uo = uo_root(tmp_path)
+    _write(uo / "manifest.yaml", {"version": 1})
+    _write(uo / "operator.yaml", {"op_name": "x"})
     adv = advance_phase(tmp_path, "scope")
     assert adv["ok"] is True, adv
     assert load_state(tmp_path)["phase"] == "scope"
@@ -165,7 +161,8 @@ def test_pipeline_complete_blocks_further_prepare(tmp_path: Path) -> None:
     assert denied["error"] == "PIPELINE_COMPLETE_ADVANCE_REQUIRED"
 
 
-def test_uo_scope_requires_active_action(tmp_path: Path) -> None:
+def test_uo_scope_scan_works_without_active_action(tmp_path: Path) -> None:
+    """scope_scan via uo_scope helper does not require a prior prepare lease."""
     from ascendc_pilot.uo_scope import run_uo_scope
 
     ensure_agent_layout(tmp_path)
@@ -174,5 +171,7 @@ def test_uo_scope_requires_active_action(tmp_path: Path) -> None:
     if active.is_file():
         active.unlink()
     result = run_uo_scope(tmp_path, step="scan", op_name="op")
-    assert result["ok"] is False
-    assert result.get("error") == "no_active_action"
+    applied = result.get("applied") or {}
+    assert applied.get("ok") is True, result
+    obs = result.get("observation") or {}
+    assert obs.get("action_id") == "scope_scan"

@@ -33,7 +33,15 @@ ENV_STATE = "TG_CLOSURE_STATE"
 
 #: Wide tables a replay batch appends to. Operator-agnostic; the manifest may
 #: narrow it.
+#: Primary wide-table pattern. Also load round/construct commits under
+#: nested dirs via CORPUS_GLOBS in corpus.load / ledger.from_wide.
 WIDE_GLOB = "*key_cases*.csv"
+CORPUS_GLOBS = (
+    "*key_cases*.csv",
+    "rounds/**/*key_cases*.csv",
+    "rounds/**/*.csv",
+    "corpus/**/*.csv",
+)
 
 
 @dataclass(frozen=True)

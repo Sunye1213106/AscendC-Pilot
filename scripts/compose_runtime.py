@@ -359,7 +359,7 @@ def validate(repo: Path) -> list[str]:
     # Pre-compose validate only checks sources so install can regenerate stale trees.
 
     for wid, meta in WORKFLOWS.items():
-        if meta.get("reserved") or not meta.get("slash"):
+        if meta.get("reserved") or meta.get("alias_of") or not meta.get("slash"):
             continue
         skill_md = skills / "workflows" / wid / "SKILL.md"
         if not skill_md.is_file():

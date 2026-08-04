@@ -189,7 +189,6 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
             ],
             "write": [
                 "runs/{run_id}/actions/lemma_review/review.yaml",
-                "tg/closure/lemmas/reviews.yaml",
             ],
         },
         "lemma_apply": {
@@ -204,18 +203,25 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
                 "tg/closure/open.txt",
                 "tg/closure/lemmas/active_rules.yaml",
                 "tg/closure/lemmas/revoked_rules.yaml",
+                "tg/closure/lemmas/reviews.yaml",
             ],
         },
         "closure_audit": {
-            "read": ["tg/closure/**", "uo/**"],
+            "read": ["tg/closure/**", "uo/ir/**", "uo/tiling/**"],
             "write": [
                 "runs/{run_id}/actions/closure_audit/review.yaml",
-                "tg/closure/audit_report.yaml",
             ],
         },
         "closure_certify": {
-            "read": ["tg/closure/**"],
-            "write": ["tg/closure/closure.csv", "tg/closure/certificate.yaml"],
+            "read": [
+                "tg/closure/**",
+                "runs/**/actions/closure_audit/review.yaml",
+            ],
+            "write": [
+                "tg/closure/closure.csv",
+                "tg/closure/certificate.yaml",
+                "tg/closure/audit_report.yaml",
+            ],
         },
         "z3_solve": {
             "read": [
@@ -258,7 +264,18 @@ def _apply_tg_control_plane_contracts() -> None:
         meta = WORKFLOWS.get(workflow_id)
         if not isinstance(meta, dict):
             continue
+        # Keep the union for discovery; mode_overlays (if present) select the
+        # active pipeline at get_workflow() time.
         meta["pipelines"] = {phase: list(actions) for phase, actions in pipelines.items()}
+        overlays = meta.get("mode_overlays")
+        if isinstance(overlays, dict):
+            for _mode, overlay in overlays.items():
+                if not isinstance(overlay, dict):
+                    continue
+                # Fill missing pipeline keys from the overlay only — do not
+                # reintroduce the opposite mode's phases.
+                if "pipelines" not in overlay:
+                    continue
 
         for action_id, io in _TG_ACTION_IO.get(workflow_id, {}).items():
             row = _action(meta, action_id)
@@ -327,11 +344,73 @@ def resolve_workflow_id(workflow_id: str) -> str:
     return wid
 
 
-def get_workflow(workflow_id: str) -> dict[str, Any]:
+def resolve_tg_mode(project_root: Any | None = None, *, default: str = "tilingkey_full_coverage") -> str:
+    """Read frozen plan/init intent mode when available."""
+    if project_root is None:
+        return default
+    try:
+        from pathlib import Path
+
+        from ascendc_pilot.paths import tg_root
+
+        root = Path(project_root)
+        tg = tg_root(root)
+        for rel in ("plan/plan_intent.yaml", "init/init_intent.yaml"):
+            path = tg / rel
+            if not path.is_file():
+                continue
+            try:
+                import yaml
+
+                doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            except Exception:
+                continue
+            mode = str((doc or {}).get("mode") or "").strip()
+            if mode:
+                return mode
+    except Exception:
+        return default
+    return default
+
+
+def _apply_mode_overlay(meta: dict[str, Any], mode: str | None) -> dict[str, Any]:
+    overlays = meta.get("mode_overlays") if isinstance(meta.get("mode_overlays"), dict) else {}
+    if not overlays:
+        return meta
+    default = str((meta.get("meta") or {}).get("default_mode") or "tilingkey_full_coverage")
+    chosen = mode or default
+    overlay = overlays.get(chosen) or overlays.get(default) or {}
+    if not isinstance(overlay, dict):
+        return meta
+    out = dict(meta)
+    for key in (
+        "pipelines",
+        "transitions",
+        "phase_gates",
+        "complete_gates",
+        "terminal_ready_states",
+        "phases",
+    ):
+        if key in overlay:
+            out[key] = overlay[key]
+    out["_active_mode"] = chosen
+    return out
+
+
+def get_workflow(
+    workflow_id: str,
+    *,
+    project_root: Any | None = None,
+    mode: str | None = None,
+) -> dict[str, Any]:
     wid = resolve_workflow_id(workflow_id)
     if wid not in WORKFLOWS:
         raise KeyError(f"Unknown workflow: {workflow_id}")
-    return dict(WORKFLOWS[wid])
+    meta = dict(WORKFLOWS[wid])
+    if meta.get("mode_overlays"):
+        resolved = mode or resolve_tg_mode(project_root)
+        meta = _apply_mode_overlay(meta, resolved)
+    return meta
 
 
 def list_user_workflows() -> list[str]:
@@ -368,8 +447,16 @@ def entry_state(workflow_id: str) -> str:
     return ids[0]
 
 
-def allowed_transition(workflow_id: str, frm: str, to: str, *, kind: str = "forward") -> bool:
-    meta = get_workflow(workflow_id)
+def allowed_transition(
+    workflow_id: str,
+    frm: str,
+    to: str,
+    *,
+    kind: str = "forward",
+    project_root: Any | None = None,
+    mode: str | None = None,
+) -> bool:
+    meta = get_workflow(workflow_id, project_root=project_root, mode=mode)
     for edge in meta.get("transitions") or []:
         if not isinstance(edge, dict):
             continue
@@ -378,8 +465,15 @@ def allowed_transition(workflow_id: str, frm: str, to: str, *, kind: str = "forw
     return False
 
 
-def rework_targets(workflow_id: str, frm: str, *, reason_code: str = "") -> list[str]:
-    meta = get_workflow(workflow_id)
+def rework_targets(
+    workflow_id: str,
+    frm: str,
+    *,
+    reason_code: str = "",
+    project_root: Any | None = None,
+    mode: str | None = None,
+) -> list[str]:
+    meta = get_workflow(workflow_id, project_root=project_root, mode=mode)
     out: list[str] = []
     for edge in meta.get("transitions") or []:
         if not isinstance(edge, dict):
@@ -402,9 +496,15 @@ def actions_for_phase(workflow_id: str, phase: str) -> list[dict[str, Any]]:
     return [a for a in actions if phase in set(a.get("phases") or [])]
 
 
-def phase_pipeline(workflow_id: str, phase: str) -> list[str]:
+def phase_pipeline(
+    workflow_id: str,
+    phase: str,
+    *,
+    project_root: Any | None = None,
+    mode: str | None = None,
+) -> list[str]:
     """Ordered mandatory actions for a phase (Spec ``pipelines`` is the sole authority)."""
-    meta = get_workflow(workflow_id)
+    meta = get_workflow(workflow_id, project_root=project_root, mode=mode)
     pipes = meta.get("pipelines") or {}
     raw = pipes.get(phase) if isinstance(pipes, dict) else None
     if isinstance(raw, list):

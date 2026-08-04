@@ -237,23 +237,28 @@ def run_round(
         except Exception:
             oracle = None
 
-    r_before = set(ledger.load_R(ws)) if ws.r_path.is_file() else set()
+    r_initial = set(ledger.load_R(ws)) if ws.r_path.is_file() else set()
+    try:
+        D = set(ledger.declared())
+    except Exception:
+        D = set()
 
-    def _arm(name: str, cases: list, arm: dict) -> None:
-        nonlocal new_r, oracle_suspect
+    def _arm(name: str, cases: list, arm: dict, r_before: set) -> set:
+        nonlocal oracle_suspect
         if not cases or oracle is None:
-            return
+            return r_before
         try:
             verdicts = oracle.judge(cases, tag=f"r{idx}_{name}")
         except Exception as exc:  # noqa: BLE001
             (rd / f"{name}_error.txt").write_text(str(exc)[:500], encoding="utf-8")
-            return
+            return r_before
         if hasattr(oracle, "batch_integrity"):
             flag = oracle.batch_integrity(len(cases), len(verdicts))
             if flag == "ORACLE_SUSPECT":
                 oracle_suspect = True
                 (ws.state / "oracle_suspect").write_text("1", encoding="utf-8")
 
+        arm_keys: set[int] = set()
         rows = []
         for i, v in enumerate(verdicts):
             if not v.verdict:
@@ -267,24 +272,31 @@ def run_round(
                 pass
             desc.update({
                 "ok": int(v.ok),
-                "tiling_key": int(v.key),
+                "tiling_key": int(v.key) if v.key is not None else -1,
                 "reject": v.reject,
                 "_arm": name,
             })
             rows.append(desc)
-            if v.ok and v.key and v.key not in r_before:
-                arm["new_declared_keys"] += 1
+            if v.ok and v.key is not None:
+                try:
+                    k = int(v.key)
+                except (TypeError, ValueError):
+                    continue
+                if (not D or k in D):
+                    arm_keys.add(k)
+        arm["new_declared_keys"] = len(arm_keys - r_before)
         if rows:
-            C.commit(rows, ws, name=f"round_{idx:04d}_{name}.csv")
+            C.commit(rows, ws, name=f"round_{idx:04d}_{name}_key_cases.csv")
             try:
                 ledger.rebuild(ws)
             except Exception:
                 pass
-            r_after = ledger.load_R(ws)
-            new_r += len(r_after - r_before)
+            return set(ledger.load_R(ws)) if ws.r_path.is_file() else r_before
+        return r_before
 
-    _arm("model", model_cases, model_arm)
-    _arm("random", random_cases, random_arm)
+    r_after_model = _arm("model", model_cases, model_arm, r_initial)
+    r_final = _arm("random", random_cases, random_arm, r_after_model)
+    new_r = len(r_final - r_initial)
 
     lift = None
     if random_arm["judged"] and model_arm["judged"]:
@@ -303,7 +315,7 @@ def run_round(
         "model_lift": lift,
         "new_R": new_r,
         "oracle_suspect": oracle_suspect,
-        "distance_histogram": (R.analyse(ws) or {}).get("histogram"),
+        "distance_histogram": (R.analyse(ws) or {}).get("distance"),
     }
     try:
         import yaml

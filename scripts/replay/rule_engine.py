@@ -266,13 +266,10 @@ def default_book(*, refresh: bool = False) -> RuleBook:
         books: list[RuleBook] = []
         if active_path is not None and active_path.is_file():
             books.append(load_active(active_path))
-        else:
-            # No active book yet: seed from package proof_rules (must still be
-            # SOUND_GRADES). Inheritance without review is temporary until W3
-            # promote runs once.
-            proof_path = package / "proof_rules.yaml"
-            if proof_path.is_file():
-                books.append(load_proof(proof_path))
+        # Package proof_rules.yaml is seed/candidate only — never load into the
+        # active book. Until referee promote writes active_rules.yaml, E stays
+        # empty aside from verified derived rules.
+        _ = package  # retained for package_data side effects / future seed leads
         derived = load_derived(cache / "derived_rules.yaml")
         books.append(derived)
         _BOOK = merge(*books) if books else RuleBook()

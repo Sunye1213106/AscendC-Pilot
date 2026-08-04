@@ -1,4 +1,5 @@
 version: 1
+dtype_dim: InputDType
 dtype: {}
 d_for: {}
 deter_for: {}
@@ -6,3 +7,6 @@ s1_for: {}
 masks: []
 require: {}
 defaults: {layout: FLAT, n: 4}
+loops: []
+bool_knobs: {}
+post: []

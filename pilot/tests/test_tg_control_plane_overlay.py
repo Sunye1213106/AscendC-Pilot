@@ -27,9 +27,13 @@ def test_tg_pipelines_are_explicit_and_fail_closed() -> None:
     ]
     assert phase_pipeline("tg-solve", "audit") == ["closure_audit"]
     assert phase_pipeline("tg-solve", "certify") == ["closure_certify"]
-    # csv_consumer compatibility phases remain available
-    assert phase_pipeline("tg-solve", "encode") == ["z3_solve"]
-    assert phase_pipeline("tg-solve", "cover") == ["cover_confirm"]
+    # Default mode is tilingkey_full_coverage — csv phases are not active.
+    assert phase_pipeline("tg-solve", "encode") == []
+    assert phase_pipeline("tg-solve", "cover") == []
+    # csv_consumer overlay exposes the legacy path.
+    assert phase_pipeline("tg-solve", "encode", mode="csv_consumer") == ["z3_solve"]
+    assert phase_pipeline("tg-solve", "cover", mode="csv_consumer") == ["cover_confirm"]
+    assert phase_pipeline("tg-solve", "oracle", mode="csv_consumer") == []
 
 
 def test_tg_solve_closure_actions_registered() -> None:
@@ -106,7 +110,7 @@ def test_tg_solve_lemma_mine_is_staged_producer() -> None:
     assert mine.get("execution_mode") == "subagent"
     assert mine.get("agent_id") == "tg-lemma-producer"
     assert mine.get("output_mode") == "staged"
-    assert mine.get("merge_action_id") == "lemma_apply"
+    assert mine.get("merge_action_id") == "lemma_review"
     assert any("lemma_mine/parts" in p for p in (mine.get("allowed_write_paths") or []))
     assert review.get("agent_id") == "tg-closure-referee"
     assert review.get("referee_required") is True

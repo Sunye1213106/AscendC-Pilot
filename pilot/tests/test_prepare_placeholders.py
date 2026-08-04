@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from ascendc_pilot.actions.runtime import (
     _build_task_prompt_stub,
     _render_placeholders,
@@ -80,14 +82,8 @@ def test_task_prompt_stub_injects_must_read_order_for_summary() -> None:
         },
     )
     assert "MUST_READ_ORDER" in stub
-    assert "section_lines" in stub
-    assert "readonly_search" in stub
     assert "extract_plan_candidates.summary.yaml" in stub
-    assert "candidates_sha256_rule" in stub
-    assert "evidence_sha_rule" in stub
-    assert "neighbor candidate" in stub
-    assert "non_sink_rule" in stub
-    assert "non_sink_root_names" in stub
+    # SHA / evidence / neighbor rules are action-specific; MUST_READ_ORDER is the contract.
 
 
 def test_task_prompt_stub_must_read_order_is_action_agnostic() -> None:
@@ -109,6 +105,7 @@ def test_task_prompt_stub_must_read_order_is_action_agnostic() -> None:
     assert "evidence_tools:" not in stub  # extract_plan-only contract
 
 
+@pytest.mark.skip(reason="extract_plan removed; extract pipeline starts at extract_host")
 def test_prepare_extract_plan_writes_filled_prompt(tmp_path: Path, monkeypatch) -> None:
     """Integration-ish: prepare on extract phase fills UO_ROOT and stub file."""
     from ascendc_pilot.runs import issue_receipt

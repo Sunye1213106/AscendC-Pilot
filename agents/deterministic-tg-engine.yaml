@@ -8,11 +8,13 @@ read_scopes:
   - "tg/**"
   - "uo/**"
   - "runs/**"
+  - "context/**"
+  - "operators/**"
 write_scopes:
   - "tg/**"
   - "runs/**"
+  - "context/pilot_params.yaml"
 forbidden:
   - modify_pilot_state
   - declare_workflow_passed
   - write_outside_declared_scope
-

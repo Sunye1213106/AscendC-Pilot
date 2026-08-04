@@ -48,7 +48,16 @@ def from_logs(ws: W.Workspace) -> dict[int, str]:
 def from_wide(ws: W.Workspace) -> dict[int, str]:
     """Keys from the wide tables, with the tag-split repair applied."""
     out: dict[int, str] = {}
-    for path in sorted(Path(ws.artifacts).glob(W.WIDE_GLOB)):
+    root = Path(ws.artifacts)
+    patterns = getattr(W, "CORPUS_GLOBS", (W.WIDE_GLOB,))
+    seen: set[Path] = set()
+    paths: list[Path] = []
+    for pat in patterns:
+        for path in sorted(root.glob(pat)):
+            if path.is_file() and path not in seen:
+                seen.add(path)
+                paths.append(path)
+    for path in paths:
         src = path.stem
         with open(path, encoding="utf-8", newline="") as fh:
             rows = list(csv.reader(fh))

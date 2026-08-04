@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  opencode-generated:
+  compose-runtime:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -18,10 +18,12 @@ jobs:
           python-version: "3.11"
       - name: Install PyYAML
         run: pip install "PyYAML>=6.0"
-      - name: Compose OpenCode runtime
-        run: python scripts/compose_runtime.py --host opencode
-      - name: Fail on generated/opencode drift
+      - name: Compose all hosts
         run: |
-          git add -A generated/opencode
-          git diff --cached --exit-code -- generated/opencode
-          git diff --exit-code -- generated/opencode
+          python scripts/compose_runtime.py --host opencode
+          python scripts/compose_runtime.py --host cursor
+          python scripts/compose_runtime.py --host codex
+      - name: Check contracts
+        run: |
+          python scripts/check_contracts.py
+          python scripts/check_ownership_contracts.py

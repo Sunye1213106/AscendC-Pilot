@@ -103,18 +103,24 @@ def test_shared_prompts_use_workflow_placeholder(repo_root: Path) -> None:
     from ascendc_pilot.workflows.specs import WORKFLOWS
 
     shared = _collect_shared_task_prompts(WORKFLOWS)
-    assert "uo/key-triage" in shared
-    assert "uo/confidence-review" in shared
+    # KEY triage/resolution live on uo-update; confidence review may be shared.
     for tpid in ("uo/key-triage", "uo/key-resolution", "uo/confidence-review"):
+        if tpid not in shared:
+            continue
         dom, name = tpid.split("/", 1)
         text = (repo_root / "prompts" / "tasks" / dom / f"{name}.md").read_text(encoding="utf-8")
         assert "`<WORKFLOW_ID>`" in text, tpid
+    # At least one shared prompt must still use the placeholder convention.
+    assert shared == {} or any(
+        "`<WORKFLOW_ID>`" in (repo_root / "prompts" / "tasks" / tpid.split("/")[0] / f"{tpid.split('/')[1]}.md").read_text(encoding="utf-8")
+        for tpid in shared
+    )
 
 
-def test_uo_init_extract_resolve_pipeline_matches_preferred() -> None:
+def test_uo_init_extract_normalize_pipeline_matches_preferred() -> None:
     from ascendc_pilot.workflows import phase_pipeline
     from ascendc_pilot.workflows.pipeline import preferred_pipeline
 
-    for phase in ("extract", "resolve"):
+    for phase in ("extract", "normalize"):
         assert phase_pipeline("uo-init", phase) == preferred_pipeline("uo-init", phase)
         assert preferred_pipeline("uo-init", phase)

@@ -105,9 +105,9 @@ def test_export_tg_host_view_stamps_fingerprint(tmp_path: Path):
     assert any(r.get("root") == "SESSION_OPTION" for r in reads)
 
 
-def test_export_codemap_does_not_require_probe_cache(tmp_path: Path):
-    """tk-cover export_codemap must reuse durable view without fag_bundle.pkl."""
-    from uo_init.tk_cover_engines import export_codemap
+def test_load_tg_host_view_without_probe_cache(tmp_path: Path):
+    """export/load path must reuse durable tg_host_view without fag_bundle.pkl."""
+    from uo_init.host_codemap import load_tg_host_view
 
     uo = tmp_path / ".ascendc-pilot" / "uo"
     (uo / "ir").mkdir(parents=True)
@@ -127,8 +127,6 @@ def test_export_codemap_does_not_require_probe_cache(tmp_path: Path):
     (uo / "ir" / "tg_host_view.yaml").write_text(
         yaml.safe_dump(doc, sort_keys=False), encoding="utf-8",
     )
-    # No .probe_cache at all.
-    result = export_codemap(tmp_path, {"uo_root": str(uo)})
-    assert result["ok"] is True
-    assert result.get("reused") is True
-    assert result.get("graph_fingerprint") == "fp-x"
+    loaded = load_tg_host_view(uo)
+    assert loaded.get("source", {}).get("graph_fingerprint") == "fp-x"
+    assert any(f.get("name") == "SplitAxis" for f in (loaded.get("fields") or []))

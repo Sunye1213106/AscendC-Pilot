@@ -44,33 +44,32 @@ _DEFAULT_ROUTES: dict[str, dict[str, Any]] = {
         "type": "transition",
         "target_phase": "scope",
         "reason_code": SCOPE_REWORK,
-        "next_action": "scope_confirmation",
+        "next_action": "scope_scan",
     },
     ENTRYPOINT_REWORK: {
         "type": "action",
-        "action_id": "detect_score_pre",
+        "action_id": "extract_host",
         "reason_code": ENTRYPOINT_REWORK,
     },
     KERNEL_DISPATCH_REWORK: {
         "type": "action",
-        # Kernel dispatch is now deterministic inside entrypoint/macro materialization.
-        # Re-run that stage instead of entering an LLM adjudication loop with no tasks.
-        "action_id": "detect_score_pre",
+        # Kernel dispatch is deterministic inside extract_kernel.
+        "action_id": "extract_kernel",
         "reason_code": KERNEL_DISPATCH_REWORK,
     },
     BRIDGE_REWORK: {
         "type": "action",
-        "action_id": "adjudicate_llm_tasks",
+        "action_id": "resolve_gaps",
         "reason_code": BRIDGE_REWORK,
     },
     SEMANTIC_PATCH_REWORK: {
         "type": "action",
-        "action_id": "adjudicate_llm_tasks",
+        "action_id": "apply_gap_patch",
         "reason_code": SEMANTIC_PATCH_REWORK,
     },
     LEDGER_REBUILD_REWORK: {
         "type": "action",
-        "action_id": "rebuild_from_ledger",
+        "action_id": "normalize_predicates",
         "reason_code": LEDGER_REBUILD_REWORK,
     },
     NO_PROGRESS_RECHECK: {
@@ -81,7 +80,7 @@ _DEFAULT_ROUTES: dict[str, dict[str, Any]] = {
     },
     MACRO_MATERIALIZE_REWORK: {
         "type": "action",
-        "action_id": "rebuild_from_ledger",
+        "action_id": "extract_host",
         "reason_code": MACRO_MATERIALIZE_REWORK,
     },
     KEY_DERIVATION_REWORK: {
@@ -91,7 +90,7 @@ _DEFAULT_ROUTES: dict[str, dict[str, Any]] = {
     },
     SCOPE_EXPANSION_REWORK: {
         "type": "action",
-        "action_id": "apply_scope_expansion",
+        "action_id": "scope_scan",
         "reason_code": SCOPE_EXPANSION_REWORK,
     },
 }

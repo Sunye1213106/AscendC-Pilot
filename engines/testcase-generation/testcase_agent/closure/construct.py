@@ -3,6 +3,9 @@
 
 Tables live in ``operators/<op>/<arch>/construction_hints.yaml``. Missing
 hints fail closed — there is no engine-side FAG construction table.
+
+The engine never names operator-specific Key dimensions. Loops, bool knobs
+and post-rules are declared in yaml (``loops`` / ``bool_knobs`` / ``post``).
 """
 
 from __future__ import annotations
@@ -25,100 +28,167 @@ def _hints() -> dict[str, Any]:
     return doc
 
 
+def _table(name: str) -> dict[str, Any]:
+    raw = _hints().get(name) or {}
+    return {str(k): v for k, v in raw.items()}
+
+
 def _dtype_map() -> dict[str, str]:
     raw = _hints().get("dtype") or {}
     return {str(k): str(v) for k, v in raw.items()}
 
 
-def _d_for() -> dict[str, list[int]]:
-    raw = _hints().get("d_for") or {}
-    return {str(k): [int(x) for x in (v or [])] for k, v in raw.items()}
-
-
-def _deter_for() -> dict[str, list[tuple[int, int]]]:
-    raw = _hints().get("deter_for") or {}
-    out: dict[str, list[tuple[int, int]]] = {}
-    for k, rows in raw.items():
-        out[str(k)] = [tuple(int(x) for x in row) for row in (rows or [])]  # type: ignore[misc]
-    return out
-
-
-def _s1_for() -> dict[str, list[int]]:
-    raw = _hints().get("s1_for") or {}
-    return {str(k): [int(x) for x in (v or [])] for k, v in raw.items()}
-
-
-def _masks() -> list[str]:
-    return [str(x) for x in (_hints().get("masks") or [])]
-
-
 def build(t: Mapping[str, str], seed: int = 0) -> list:
     """Spellings of one target key, most likely first.
 
-    Uses construction_hints tables. Optional operator hook
-    ``construct_case(target)`` on the semantics module overrides entirely.
+    Optional operator hook ``construct_case(target)`` overrides entirely.
+    Otherwise interprets ``loops`` / ``bool_knobs`` / ``post`` from hints.
     """
     del seed
     I = W.replay_inputs()
-    mod = I
-    if hasattr(mod, "construct_case"):
-        return list(mod.construct_case(t) or [])
+    if hasattr(I, "construct_case"):
+        return list(I.construct_case(t) or [])
 
-    # Declared construction via yaml tables + from_knobs.
     sem = I.SEMANTICS
     if not hasattr(sem, "from_knobs"):
         raise TypeError("InputSemantics.from_knobs required for construct.build")
 
-    dtype = _dtype_map().get(str(t.get("InputDType")))
-    require = _hints().get("require") or {}
+    hints = _hints()
+    require = hints.get("require") or {}
     for dim, want in require.items():
         if str(t.get(str(dim))) != str(want):
             return []
+
+    dtype_dim = str(hints.get("dtype_dim") or "InputDType")
+    out_dtype_dim = str(hints.get("out_dtype_dim") or dtype_dim)
+    dtype = _dtype_map().get(str(t.get(dtype_dim)))
     if dtype is None:
         return []
-    if str(t.get("OutDType", t.get("InputDType"))) != str(t.get("InputDType")):
-        # Default symmetry unless hints say otherwise.
-        if not _hints().get("allow_out_dtype_mismatch"):
+    if str(t.get(out_dtype_dim, t.get(dtype_dim))) != str(t.get(dtype_dim)):
+        if not hints.get("allow_out_dtype_mismatch"):
             return []
 
+    loops = list(hints.get("loops") or [])
+    if not loops:
+        # No declared construction loops → nothing to enumerate.
+        return []
+
+    # Expand cartesian product of loop axes declared in yaml.
+    axes: list[list[dict[str, Any]]] = []
+    for loop in loops:
+        table_name = str(loop.get("table") or "")
+        dim = str(loop.get("dim") or "")
+        default = loop.get("default")
+        when = loop.get("when")
+        else_value = loop.get("else_value")
+        table = _table(table_name) if table_name not in {"masks"} else {}
+        key = str(t.get(dim)) if dim else ""
+
+        choices: list[Any]
+        if table_name == "masks":
+            masks = [str(x) for x in (hints.get("masks") or [])]
+            if when is not None and key == str(when):
+                choices = masks
+            else:
+                choices = list(else_value or ["none"])
+        elif table_name and key in table:
+            choices = list(table[key] or [])
+        elif default is not None:
+            choices = list(default)
+        else:
+            choices = []
+
+        axis: list[dict[str, Any]] = []
+        knob = loop.get("knob")
+        pair_knobs = loop.get("pair_knobs")
+        for choice in choices:
+            upd: dict[str, Any] = {}
+            if pair_knobs and isinstance(choice, (list, tuple)) and len(choice) >= 2:
+                for i, pk in enumerate(pair_knobs):
+                    upd[str(pk)] = choice[i]
+            elif knob:
+                upd[str(knob)] = choice
+            axis.append(upd)
+        if not axis:
+            return []
+        axes.append(axis)
+
+    # Cartesian product
+    combos: list[dict[str, Any]] = [{}]
+    for axis in axes:
+        nxt: list[dict[str, Any]] = []
+        for base in combos:
+            for upd in axis:
+                row = dict(base)
+                row.update(upd)
+                nxt.append(row)
+        combos = nxt
+
+    bool_knobs = hints.get("bool_knobs") or {}
+    defaults = dict(hints.get("defaults") or {})
     out = []
-    for d in _d_for().get(str(t.get("DTemplateNum")), []):
-        for s1 in _s1_for().get(str(t.get("S1TemplateNum")), [1024]):
-            for det, sparse in _deter_for().get(str(t.get("DeterType")), [(0, 0)]):
-                for mask in (_masks() if str(t.get("IsAttenMask")) == "1" else ["none"]):
-                    knobs = dict(_hints().get("defaults") or {})
-                    knobs.update({
-                        "dtype": dtype,
-                        "d": d,
-                        "s1": s1,
-                        "sparse_mode": sparse,
-                        "deterministic": det,
-                        "atten_mask": mask,
-                        "rope": str(t.get("IsRope")) == "1",
-                        "pse": str(t.get("IsPse")) == "1",
-                        "keep_prob": 0.5 if str(t.get("IsDrop")) == "1" else 1.0,
-                        "g": 1 if str(t.get("IsNEqual")) == "1" else knobs.get("g", 2),
-                        "layout": "TND" if str(t.get("IsTnd")) == "1" else knobs.get("layout", "BSND"),
-                    })
-                    # Derived rules from hints.
-                    for rule in _hints().get("derived") or []:
-                        when = rule.get("when") or {}
-                        if all(str(t.get(k)) == str(v) for k, v in when.items()):
-                            knobs.update(rule.get("set") or {})
-                    if knobs.get("rope") and str(t.get("DTemplateNum")) not in (
-                        str(x) for x in (_hints().get("rope_d_templates") or ["192"])
-                    ):
-                        continue
-                    d1 = d if str(t.get("IsDNoEqual")) == "0" else max(16, d // 2)
-                    if knobs.get("rope"):
-                        d1 = None
-                    knobs["d1"] = d1
-                    knobs["s2"] = 1024 if str(t.get("S2TemplateNum")) == "128" else s1
-                    try:
-                        case = sem.from_knobs(knobs)
-                        if hasattr(sem, "repair"):
-                            case = sem.repair(case)
-                        out.append(case.normalised() if hasattr(case, "normalised") else case)
-                    except Exception:
-                        pass
+    for combo in combos:
+        knobs = dict(defaults)
+        knobs["dtype"] = dtype
+        knobs.update(combo)
+        for dim, spec in bool_knobs.items():
+            if not isinstance(spec, dict):
+                continue
+            knob = str(spec.get("knob") or "")
+            on_val = spec.get("on", True)
+            off_val = spec.get("off", False)
+            if "off_default" in spec:
+                off_val = knobs.get(knob, spec.get("off_default"))
+            if "off_from_defaults" in spec:
+                off_val = knobs.get(str(spec["off_from_defaults"]), knobs.get(knob))
+            knobs[knob] = on_val if str(t.get(str(dim))) == "1" else off_val
+
+        # Named derived rules (when/set) still supported.
+        for rule in hints.get("derived") or []:
+            when = rule.get("when") or {}
+            if all(str(t.get(k)) == str(v) for k, v in when.items()):
+                knobs.update(rule.get("set") or {})
+
+        skip = False
+        for step in hints.get("post") or []:
+            kind = str(step.get("kind") or "")
+            if kind == "skip_unless":
+                when_knob = str(step.get("when_knob") or "")
+                dim = str(step.get("dim") or "")
+                allowed = [str(x) for x in (step.get("in") or [])]
+                if knobs.get(when_knob) and str(t.get(dim)) not in allowed:
+                    skip = True
+                    break
+            elif kind == "d1_split":
+                dim = str(step.get("dim") or "")
+                d_val = knobs.get("d")
+                if d_val is None:
+                    continue
+                d_int = int(d_val)
+                equal = str(step.get("equal") or "0")
+                d1 = d_int if str(t.get(dim)) == equal else max(16, d_int // 2)
+                if knobs.get("rope"):
+                    d1 = None
+                knobs["d1"] = d1
+            elif kind == "s2_from_s1":
+                dim = str(step.get("dim") or "")
+                match = str(step.get("match") or "")
+                then_val = step.get("then")
+                else_as = step.get("else")
+                if str(t.get(dim)) == match:
+                    knobs["s2"] = then_val
+                elif else_as == "s1":
+                    knobs["s2"] = knobs.get("s1")
+                elif else_as is not None:
+                    knobs["s2"] = else_as
+        if skip:
+            continue
+
+        try:
+            case = sem.from_knobs(knobs)
+            if hasattr(sem, "repair"):
+                case = sem.repair(case)
+            out.append(case.normalised() if hasattr(case, "normalised") else case)
+        except Exception:
+            pass
     return out

@@ -105,4 +105,6 @@ class OperatorInputAdapter:
 
 ADAPTER = OperatorInputAdapter()
 # Backward-compatible alias.
+#: DEPRECATED — FAG-only historical alias. Do not use as the TG facade;
+#: depend on ``operator_adapter.OperatorAdapter`` / package materialize instead.
 FagInputAdapter = OperatorInputAdapter

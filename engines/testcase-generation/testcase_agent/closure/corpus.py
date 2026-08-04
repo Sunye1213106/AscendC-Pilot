@@ -99,7 +99,15 @@ def _read_repaired(path: Path) -> pd.DataFrame:
 def load(ws: W.Workspace | None = None, pattern: str = W.WIDE_GLOB) -> pd.DataFrame:
     """Concatenate every wide table under the workspace's artifacts directory."""
     ws = ws or W.default_workspace()
-    files = sorted(Path(ws.artifacts).glob(pattern))
+    root = Path(ws.artifacts)
+    patterns = (pattern,) if pattern != W.WIDE_GLOB else getattr(W, "CORPUS_GLOBS", (pattern,))
+    seen: set[Path] = set()
+    files: list[Path] = []
+    for pat in patterns:
+        for f in sorted(root.glob(pat)):
+            if f.is_file() and f not in seen:
+                seen.add(f)
+                files.append(f)
     frames = []
     for f in files:
         df = _read_repaired(f)

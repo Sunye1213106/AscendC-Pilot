@@ -9,8 +9,7 @@ description: >-
   On start, read session prompt.md first.
 read_scopes:
   - "tg/closure/**"
-  - "uo/ir/**"
-  - "uo/tiling/**"
+  - "uo/**"
   - "operators/**"
   - "runs/**"
   - "context/**"

@@ -84,8 +84,62 @@ def gate_merge_pass(project_root: Path) -> dict[str, Any]:
     return _wrap_exc("merge_pass", _run)
 
 
+def _tg_mode(project_root: Path) -> str:
+    tg = tg_root(project_root)
+    for rel in ("plan/plan_intent.yaml", "init/init_intent.yaml"):
+        doc = _load(tg / rel)
+        if isinstance(doc, dict) and doc.get("mode"):
+            return str(doc["mode"]).strip()
+    return "tilingkey_full_coverage"
+
+
+def gate_tilingkey_binding_ready(project_root: Path) -> dict[str, Any]:
+    """Full-mode bind gate: host-view inventory + declared Key space must align."""
+    tg = tg_root(project_root)
+    uo = uo_root(project_root)
+    issues: list[str] = []
+    inv = _load(tg / "realization" / "binding_inventory.yaml")
+    if not isinstance(inv, dict):
+        return {
+            "gate": "tilingkey_binding_ready",
+            "ok": False,
+            "message": "realization/binding_inventory.yaml missing",
+        }
+    fields = list(inv.get("fields") or [])
+    if not fields:
+        issues.append("binding_inventory.fields empty")
+    keys = _load(uo / "tiling" / "exhaustive_key_space.yaml") or {}
+    count = int((keys or {}).get("legal_key_count") or 0) if isinstance(keys, dict) else 0
+    if count <= 0:
+        issues.append("DECLARED_SET_EMPTY")
+    view = _load(uo / "ir" / "tg_host_view.yaml") or {}
+    view_fields = list((view or {}).get("fields") or []) if isinstance(view, dict) else []
+    if view_fields and fields and len(fields) != len(view_fields):
+        # Soft mismatch note — inventory may filter; fail only when inventory empty above.
+        pass
+    graph = _load(uo / "ir" / "operator_graph.yaml") or {}
+    fp = str((graph or {}).get("fingerprint") or "") if isinstance(graph, dict) else ""
+    inv_fp = str(inv.get("graph_fingerprint") or "")
+    if fp and inv_fp and fp != inv_fp:
+        issues.append("graph_fingerprint_mismatch")
+    return {
+        "gate": "tilingkey_binding_ready",
+        "ok": not issues,
+        "message": "ok" if not issues else "; ".join(issues),
+        "field_count": len(fields),
+        "declared_count": count,
+        "issues": issues,
+    }
+
+
 def gate_bind_progress(project_root: Path) -> dict[str, Any]:
-    """Bind phase: lexicon must exist; ready_for_llm with zero applied progress fails."""
+    """Bind phase gate — mode-aware.
+
+    ``tilingkey_full_coverage`` uses host-view inventory (no CSV lexicon).
+    ``csv_consumer`` still requires lexicon / unresolved progress.
+    """
+    if _tg_mode(project_root) == "tilingkey_full_coverage":
+        return gate_tilingkey_binding_ready(project_root)
     out = tg_root(project_root)
     lex = out / "realization" / "binding_lexicon.yaml"
     unresolved = _load(out / "realization" / "unresolved.yaml")

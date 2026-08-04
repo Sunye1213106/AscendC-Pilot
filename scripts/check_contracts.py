@@ -25,7 +25,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.path.insert(0, str(repo / "scripts"))
         try:
             from compose_runtime import (  # noqa: WPS433
-                check_generated_drift,
+                compose_host,
                 validate,
                 validate_generated,
             )
@@ -33,9 +33,17 @@ def main(argv: list[str] | None = None) -> int:
             errors.append(f"compose_runtime unavailable: {exc}")
         else:
             errors.extend(validate(repo))
+            # generated/ is gitignored — always recompose, then validate the
+            # fresh tree. Do not compare against a committed golden copy.
             for host in ("opencode", "cursor", "codex"):
+                try:
+                    result = compose_host(repo, host)
+                    if not result.get("ok", True) and result.get("errors"):
+                        errors.extend(str(e) for e in result["errors"])
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"compose/{host} failed: {exc}")
+                    continue
                 errors.extend(validate_generated(repo, host=host))
-            errors.extend(check_generated_drift(repo))
 
     sys.path.insert(0, str(repo / "pilot"))
     sys.path.insert(0, str(repo / "engines" / "understand-operator"))

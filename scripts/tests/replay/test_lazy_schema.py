@@ -19,7 +19,7 @@ import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[2]
 
-PURE = ["inputs", "bridge", "search", "corpus", "constraints"]
+PURE = ["inputs", "bridge", "search", "corpus"]
 
 
 def _in_subprocess(body: str, **env_overrides: str) -> str:
@@ -42,7 +42,7 @@ def _in_subprocess(body: str, **env_overrides: str) -> str:
 
 def test_importing_the_package_builds_no_runner():
     out = _in_subprocess(
-        "from replay import runner, inputs, bridge, search, corpus, constraints\n"
+        "from replay import runner, inputs, bridge, search, corpus\n"
         "print(runner._default)"
     )
     assert out == "None"

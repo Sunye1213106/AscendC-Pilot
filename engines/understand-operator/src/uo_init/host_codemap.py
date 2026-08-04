@@ -27,9 +27,11 @@ import yaml
 
 # Durable projection (preferred name).
 TG_HOST_VIEW_YAML = "ir/tg_host_view.yaml"
-# Compat alias so existing consumers (tk-cover, CE impact, closure tests) keep working.
-CODEMAP_YAML = "ir/host_codemap.yaml"
-CODEMAP_SQLITE = "indexes/host_codemap.sqlite"
+# Legacy read-only fallbacks for old on-disk caches. New writers must not
+# create these; load_tg_host_view still accepts them when the preferred file
+# is missing.
+CODEMAP_YAML = "ir/host_codemap.yaml"  # legacy alias (read-only)
+CODEMAP_SQLITE = "indexes/host_codemap.sqlite"  # legacy; unlinked when present
 KB_GRAPH_SQLITE = "indexes/kb_graph.sqlite"
 SCHEMA = "tg-host-view/v1"
 COMPAT_SCHEMA = "codemap/v2"

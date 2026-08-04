@@ -152,8 +152,15 @@ def test_inventory_marks_thin_and_consumer_kind(tmp_path: Path) -> None:
         schema=schema,
         lexicon={"key_derivations": []},
         snapshot_files={
-            "contracts/testcase.yaml": {
-                "key_determinants": {"KEY_ISDROP": {"needs_binding": True, "csv_determinants": []}}
+            "tiling/key_space.yaml": {
+                "fields": [
+                    {
+                        "id": "KEY_ISDROP",
+                        "needs_binding": True,
+                        "csv_determinants": [],
+                        "input_derivable": True,
+                    }
+                ]
             }
         },
         consumer_root=tools,

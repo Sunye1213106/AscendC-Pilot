@@ -206,78 +206,125 @@ def _from_bindings(case: I.Case, dim: str, want: str) -> list[I.Case]:
 
 
 def _binding_named(case: I.Case, dim: str, want: str) -> list[I.Case] | None:
-    """Dims whose Case knobs are known independently of the expression tree.
+    """Dims whose Case knobs are declared in ``search_hints.named_bindings``.
 
     Returns None when this dim has no named knob (caller tries generic).
     Returns [] when the named knob exists but cannot produce a Case for want.
     """
+    hints = load_hints()
+    table = hints.get("named_bindings") or {}
+    spec = table.get(dim)
+    if not isinstance(spec, dict):
+        return None
+    return _apply_named_binding(case, want, spec, hints)
+
+
+def _apply_named_binding(
+    case: I.Case,
+    want: str,
+    spec: Mapping[str, Any],
+    hints: Mapping[str, Any],
+) -> list[I.Case]:
     from .knobs import write_binding
     from .bridge_spec import Binding
 
-    def presence(var: str, tensor: str, on: bool) -> I.Case | None:
-        return write_binding(
+    kind = str(spec.get("kind") or "").strip()
+    if kind == "presence":
+        var = str(spec.get("var") or "")
+        tensor = str(spec.get("tensor") or "")
+        if not var or not tensor:
+            return []
+        got = write_binding(
             case,
             Binding(var=var, root="OPTIONAL_INPUT_PRESENCE",
                     kind="optional_presence", operand=tensor),
-            on,
+            want == "1",
         )
+        if got is None:
+            return []
+        if want == "1" and spec.get("on_field"):
+            field = str(spec["on_field"])
+            values = list(spec.get("on_values") or [])
+            if not values and str(spec.get("on_values_attr") or "") == "PSE_SHAPES":
+                values = list(I.PSE_SHAPES)
+            if not values and str(spec.get("on_values_attr") or "") == "ATTEN_MASKS":
+                values = [m for m in I.ATTEN_MASKS if m != "none"]
+            if values:
+                return [replace(got, **{field: v}) for v in values]
+        return [got]
 
-    if dim == "IsPse":
-        got = presence("VAR_OPT_PSE_SHIFT", "pse_shift", want == "1")
-        if got is None:
-            return []
-        if want == "1":
-            return [replace(got, pse_shape=s) for s in I.PSE_SHAPES]
-        return [got]
-    if dim == "IsDrop":
-        got = presence("VAR_OPT_DROP_MASK", "drop_mask", want == "1")
-        return [got] if got is not None else []
-    if dim == "IsRope":
-        got = presence("VAR_OPT_QUERY_ROPE_IDX", "query_rope", want == "1")
-        return [got] if got is not None else []
-    if dim == "IsAttenMask":
-        got = presence("VAR_OPT_ATTEN_MASK", "atten_mask", want == "1")
-        if got is None:
-            return []
-        if want == "1":
-            return [replace(got, atten_mask=m)
-                    for m in I.ATTEN_MASKS if m != "none"]
-        return [got]
-    if dim == "InputDType":
-        codes = (load_hints().get("input_dtype_codes") or {})
+    if kind == "dtype":
+        codes = hints.get(str(spec.get("codes_key") or "input_dtype_codes")) or {}
         name = codes.get(want)
         if not name:
             return []
         got = write_binding(
             case,
-            Binding(var="VAR_DTYPE_QUERY", root="INPUT_DTYPE",
-                    kind="tensor_dtype", operand="query"),
+            Binding(
+                var=str(spec.get("var") or "VAR_DTYPE_QUERY"),
+                root=str(spec.get("root") or "INPUT_DTYPE"),
+                kind="tensor_dtype",
+                operand=str(spec.get("operand") or "query"),
+            ),
             name,
         )
         return [got] if got is not None else []
-    if dim == "OutDType":
-        return [replace(case, out_dtype=int(want))]
-    if dim == "IsDNoEqual":
+
+    if kind == "case_field":
+        field = str(spec.get("field") or "")
+        if not field:
+            return []
+        cast = str(spec.get("cast") or "str")
+        value: Any = want
+        if cast == "int":
+            value = int(want)
+        elif cast == "bool":
+            value = want in ("1", "true", "True")
+        return [replace(case, **{field: value})]
+
+    if kind == "ladder":
+        field = str(spec.get("field") or "")
+        if not field:
+            return []
+        want_i = int(want)
+        mode = str(spec.get("mode") or "template")
+        values: list[int]
+        if mode == "template":
+            values = [want_i, want_i - 1, want_i + 1, want_i * 2]
+        elif mode == "s2":
+            values = [want_i, want_i - 1, want_i * 2]
+        elif mode == "d":
+            values = list({want_i, max(1, want_i - 1)})
+        else:
+            values = [want_i]
+        out = []
+        for v in values:
+            if v <= 0:
+                continue
+            kwargs: dict[str, Any] = {field: v}
+            if field == "d" and getattr(case, "d1", None) is not None:
+                kwargs["d1"] = None if (case.d1 or case.d) >= v else case.d1
+            out.append(replace(case, **kwargs))
+        return out
+
+    if kind == "d1_pair":
         if want == "1":
-            steps = list((load_hints().get("ladders") or {}).get("d1_on") or (64,))
+            steps = list((hints.get("ladders") or {}).get("d1_on") or (64,))
             return [replace(case, d1=v) for v in steps if v < (case.d or 128)]
         return [replace(case, d1=None)]
-    if dim in ("S1TemplateNum", "S2TemplateNum", "DTemplateNum"):
-        want_i = int(want)
-        if dim == "S1TemplateNum":
-            return [replace(case, s1=v) for v in
-                    (want_i, want_i - 1, want_i + 1, want_i * 2) if v > 0]
-        if dim == "S2TemplateNum":
-            return [replace(case, s2=v) for v in
-                    (want_i, want_i - 1, want_i * 2) if v > 0]
-        return [replace(case, d=v, d1=None if (case.d1 or case.d) >= v else case.d1)
-                for v in {want_i, max(1, want_i - 1)} if v > 0]
-    if dim == "IsNEqual":
-        # n1 == n2 when g == 1; want 0 needs g > 1.
+
+    if kind == "group_equal":
+        # e.g. IsNEqual: want 1 → g=1; want 0 → g>1
+        on = dict(spec.get("on") or {"g": 1})
+        off = dict(spec.get("off") or {"g": 2})
         if want == "1":
-            return [replace(case, g=1)]
-        return [replace(case, g=2, n2=max(1, case.n2))]
-    return None
+            return [replace(case, **on)]
+        kwargs = dict(off)
+        if "n2" in kwargs and kwargs["n2"] == "max1":
+            kwargs["n2"] = max(1, case.n2)
+        return [replace(case, **kwargs)]
+
+    return []
 
 
 def _binding_generic(
