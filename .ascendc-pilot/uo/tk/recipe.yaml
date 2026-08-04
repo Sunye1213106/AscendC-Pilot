@@ -1,0 +1,19 @@
+schema: tk-recipe/v1
+recipes: []
+count: 0
+artifact_identity:
+  run_id: RUN_20260803_162337_29193cd2
+  workflow_id: tk-cover
+  phase: close
+  action_id: apply_recipe
+  actor_id: deterministic-uo-engine
+  role_id: deterministic_engine
+  action_session_id: ACTION_SESSION_a10a5a2fe9310a4d
+  prepare_nonce_hash: a5fe2ce02576f4adb020b8a1c8512763eb182b65d0bab7b219f09192022a8cd1
+  lease_id: LEASE_87ed57402365
+  execution_mode: deterministic
+  produced_by: pilot-finalizer
+run_id: RUN_20260803_162337_29193cd2
+workflow_id: tk-cover
+action_id: apply_recipe
+actor_id: deterministic-uo-engine

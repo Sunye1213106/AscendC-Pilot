@@ -181,7 +181,15 @@ def _from_bindings(case: I.Case, dim: str, want: str) -> list[I.Case]:
     Returns empty when the dimension only reads tiling state or when no
     Binding maps onto a Case field we know how to write. That emptiness is
     the signal cone uses to fall back to a size grid.
+
+    Named knobs below mirror the special generators so a hints file that
+    omits them still drives search, and so the write side is testable on its
+    own. Generic presence/attr/context inversion covers anything else whose
+    `variables` intersect the bridge_spec bindings.
     """
+    named = _binding_named(case, dim, want)
+    if named is not None:
+        return named
     try:
         from . import bridge as B
         field = B.fields().get(dim)
@@ -191,8 +199,128 @@ def _from_bindings(case: I.Case, dim: str, want: str) -> list[I.Case]:
         return []
     spec = default_spec()
     by_var = {b.var: b for b in spec.bindings}
-    # If every variable is unbound tiling state, there is no CaseKnob.
     vars_ = list(field.get("variables") or [])
     if vars_ and all(v not in by_var for v in vars_):
         return []
-    return []
+    return _binding_generic(case, want, vars_, by_var)
+
+
+def _binding_named(case: I.Case, dim: str, want: str) -> list[I.Case] | None:
+    """Dims whose Case knobs are known independently of the expression tree.
+
+    Returns None when this dim has no named knob (caller tries generic).
+    Returns [] when the named knob exists but cannot produce a Case for want.
+    """
+    from .knobs import write_binding
+    from .bridge_spec import Binding
+
+    def presence(var: str, tensor: str, on: bool) -> I.Case | None:
+        return write_binding(
+            case,
+            Binding(var=var, root="OPTIONAL_INPUT_PRESENCE",
+                    kind="optional_presence", operand=tensor),
+            on,
+        )
+
+    if dim == "IsPse":
+        got = presence("VAR_OPT_PSE_SHIFT", "pse_shift", want == "1")
+        if got is None:
+            return []
+        if want == "1":
+            return [replace(got, pse_shape=s) for s in I.PSE_SHAPES]
+        return [got]
+    if dim == "IsDrop":
+        got = presence("VAR_OPT_DROP_MASK", "drop_mask", want == "1")
+        return [got] if got is not None else []
+    if dim == "IsRope":
+        got = presence("VAR_OPT_QUERY_ROPE_IDX", "query_rope", want == "1")
+        return [got] if got is not None else []
+    if dim == "IsAttenMask":
+        got = presence("VAR_OPT_ATTEN_MASK", "atten_mask", want == "1")
+        if got is None:
+            return []
+        if want == "1":
+            return [replace(got, atten_mask=m)
+                    for m in I.ATTEN_MASKS if m != "none"]
+        return [got]
+    if dim == "InputDType":
+        codes = (load_hints().get("input_dtype_codes") or {})
+        name = codes.get(want)
+        if not name:
+            return []
+        got = write_binding(
+            case,
+            Binding(var="VAR_DTYPE_QUERY", root="INPUT_DTYPE",
+                    kind="tensor_dtype", operand="query"),
+            name,
+        )
+        return [got] if got is not None else []
+    if dim == "OutDType":
+        return [replace(case, out_dtype=int(want))]
+    if dim == "IsDNoEqual":
+        if want == "1":
+            steps = list((load_hints().get("ladders") or {}).get("d1_on") or (64,))
+            return [replace(case, d1=v) for v in steps if v < (case.d or 128)]
+        return [replace(case, d1=None)]
+    if dim in ("S1TemplateNum", "S2TemplateNum", "DTemplateNum"):
+        want_i = int(want)
+        if dim == "S1TemplateNum":
+            return [replace(case, s1=v) for v in
+                    (want_i, want_i - 1, want_i + 1, want_i * 2) if v > 0]
+        if dim == "S2TemplateNum":
+            return [replace(case, s2=v) for v in
+                    (want_i, want_i - 1, want_i * 2) if v > 0]
+        return [replace(case, d=v, d1=None if (case.d1 or case.d) >= v else case.d1)
+                for v in {want_i, max(1, want_i - 1)} if v > 0]
+    if dim == "IsNEqual":
+        # n1 == n2 when g == 1; want 0 needs g > 1.
+        if want == "1":
+            return [replace(case, g=1)]
+        return [replace(case, g=2, n2=max(1, case.n2))]
+    return None
+
+
+def _binding_generic(
+    case: I.Case,
+    want: str,
+    vars_: list[str],
+    by_var: dict[str, Any],
+) -> list[I.Case]:
+    """Invert boolean-ish wants against presence / attr / context bindings.
+
+    Non-boolean wants (e.g. SplitAxis=5) must stay empty: a dim whose
+    variables merely *mention* presence knobs must not invent Cases by
+    flipping those knobs when the target value is numeric host state.
+    """
+    from .knobs import write_binding
+
+    if want not in ("0", "1", "true", "false", "True", "False"):
+        return []
+    out: list[I.Case] = []
+    truthy = want not in ("0", "false", "False")
+    for var in vars_:
+        binding = by_var.get(var)
+        if binding is None:
+            continue
+        if binding.kind == "optional_presence":
+            got = write_binding(case, binding, truthy)
+            if got is not None:
+                out.append(got)
+        elif binding.kind == "attr" and binding.operand == "keep_prob":
+            got = write_binding(case, binding, 0.5 if truthy else 1.0)
+            if got is not None:
+                out.append(got)
+        elif binding.kind == "context" and binding.var == "VAR_SESSION_DETERMINISTIC":
+            got = write_binding(case, binding, truthy)
+            if got is not None:
+                out.append(got)
+    # Deduplicate by Case field snapshot.
+    seen: set[tuple] = set()
+    uniq: list[I.Case] = []
+    for c in out:
+        key = (c.pse, c.atten_mask, c.keep_prob, c.rope, c.deterministic,
+               c.dtype, c.layout, c.sparse_mode, c.s1, c.s2, c.d, c.d1, c.g)
+        if key not in seen:
+            seen.add(key)
+            uniq.append(c)
+    return uniq

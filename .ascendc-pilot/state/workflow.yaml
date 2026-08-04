@@ -1,0 +1,40 @@
+workflow_id: tk-cover
+run_id: RUN_20260803_162337_29193cd2
+phase: certify
+phase_label_zh: 覆盖门禁
+status: passed
+intent: ''
+op_name: FlashAttentionScoreGrad
+architecture: arch35
+test_script_root: ''
+csv_consumer_root: ''
+level: L0
+focus: ''
+retry_budget: 3
+no_progress_streak: 0
+failed_gates: []
+passed_gates:
+- tk_env
+- tk_derive
+- tk_codemap
+- tk_mine
+- tk_recipe
+- tk_gate
+open_items: []
+last_failure: null
+created_at: '2026-08-03T16:23:37Z'
+meta: {}
+kb_schema_hash: 730ebce153453f255a8e0d24f5a7644bd1c7e84fcb09583fa0e134271aaa3a6f
+workflow_spec_hash: 01da02d39362475290cadb24d9f92c919a1ddf0aad3c9473d031e56674164ecf
+agent_contract_hash: 569cd73edd0ce3090226bf451a3d4250c8fc4db379e72631bf0a7f3ebe7ec40d
+tg_contract_hash: dcf83d43f8f66905fd994ad654dcccbd5a370fcbd036f4b3256f5ba94bac2d5a
+progress_fingerprint:
+  open_obligation_ids: []
+  failed_gate_ids: []
+  error_finding_ids: []
+  status: running
+  phase: certify
+open_items_count: 0
+updated_at: '2026-08-03T16:23:49Z'
+last_observation_id: OBS_335b94c6080f
+terminal_reason: all_gates_passed

@@ -611,6 +611,14 @@ def guards_cover(
     counts; `sat`, `unknown`, a timeout and a compile failure all mean the
     same thing -- not shown -- because claiming coverage we cannot establish
     would silently assume a value the source never wrote.
+
+    An empty premise is `True`, and asking anyway is the point. It is the
+    weakest premise there is, so `True and not(or writes)` coming back unsat is
+    a *stronger* result than the same query under any real read condition --
+    it says the writes cover every run, wherever the read sits. This used to
+    return not-shown, which reads as caution and is the opposite: it threw away
+    the one case an if/else-if chain covering every path falls into, and left
+    the VAR_INIT minted for the fall-through standing on three dimensions.
     """
     atoms = _Atoms(frozenset(members or ()))
     premise: list[dict[str, Any]] = []
@@ -618,8 +626,6 @@ def guards_cover(
         ir = _guard_ir(cond, atoms, read_function)
         if ir is not None:
             premise.append(ir)
-    if not premise:
-        return Implication(False, reason="no_readable_read_guards")
 
     reached: list[dict[str, Any]] = []
     for conds, function in write_conds or ():
@@ -646,13 +652,16 @@ def guards_cover(
 
     written = reached[0] if len(reached) == 1 else {"op": "or", "args": reached}
     args = premise + [{"op": "not", "arg": written}]
+    # With no premise there is one conjunct, and an `and` of one is a shape the
+    # backend need not be asked to understand.
+    query = args[0] if len(args) == 1 else {"op": "and", "args": args}
     variables = [{"id": name, "type": "int"} for name in sorted(atoms.names)]
     try:
         backend = Z3Backend(
             {"variables": variables, "constraints": []},
             SolveConfig(timeout_ms=timeout_ms),
         )
-        result = backend.solve_expr({"op": "and", "args": args}, label="read_coverage")
+        result = backend.solve_expr(query, label="read_coverage")
     except Exception as exc:
         return Implication(False, reason=f"solver_error:{type(exc).__name__}")
 
@@ -883,3 +892,110 @@ def guard_truth(
     if _solve(negated, variables, timeout_ms) == "unsat":
         return GuardTruth(always_true=True, detail=detail)
     return GuardTruth()
+
+
+# --- interval coverage & next-fit (summary primitives) ---------------------
+
+
+@dataclass(frozen=True)
+class IntervalCover:
+    """Whether a universe of indices is covered by a union of intervals."""
+
+    covers: bool
+    #: Indices in ``[0, universe)`` that no interval touches. Empty when covers.
+    uncovered: tuple[int, ...] = ()
+    reason: str = ""
+
+    def __bool__(self) -> bool:
+        return self.covers
+
+
+def interval_union_covers(
+    universe: int,
+    intervals: list[tuple[int, int]],
+    *,
+    dtype: str = "int",
+) -> IntervalCover:
+    """Does ``⋃[lo, hi)`` cover every index in ``[0, universe)``?
+
+    `invalidS1Array[j]` is the case: a bool array of length ``s1Outer`` is
+    marked true on each sparse band ``[begin, end)``, then scanned for a false
+    slot. When the bands cover the universe the scan never finds one, and the
+    free ``VAR_LOOPELEM_`` standing for that slot is dead.
+
+    ``dtype`` records the coordinate domain. ``int`` is Normal-path block
+    indices. ``float32`` is the Varlen path, where token bounds are compared
+    against block indices with C++ float32 semantics — callers must not widen
+    those to real arithmetic; this helper only accepts already-quantised
+    integer intervals and refuses ``float32`` so the wrong domain cannot
+    silently prove coverage.
+    """
+    if dtype == "float32":
+        return IntervalCover(
+            False, reason="float32_domain_requires_quantised_intervals"
+        )
+    if dtype != "int":
+        return IntervalCover(False, reason=f"unsupported_dtype:{dtype}")
+    if universe <= 0:
+        return IntervalCover(True, reason="empty_universe")
+    covered = [False] * universe
+    for lo, hi in intervals:
+        if lo is None or hi is None:
+            continue
+        a, b = int(lo), int(hi)
+        if b <= a:
+            continue
+        for i in range(max(0, a), min(universe, b)):
+            covered[i] = True
+    missing = tuple(i for i, ok in enumerate(covered) if not ok)
+    if missing:
+        return IntervalCover(False, uncovered=missing, reason="gaps")
+    return IntervalCover(True)
+
+
+@dataclass(frozen=True)
+class NextFitBound:
+    """How many bins a next-fit packing needs, or why it could not be counted."""
+
+    cores: int | None
+    overflows: bool = False
+    reason: str = ""
+
+    def __bool__(self) -> bool:
+        return self.cores is not None and not self.overflows
+
+
+def next_fit_cores(
+    block_sizes: list[int],
+    *,
+    capacity: int,
+    max_cores: int | None = None,
+) -> NextFitBound:
+    """Simulate the host's next-fit core assignment.
+
+    ``coreIdx >= CORE_LIST_NUM`` is not scheduling uncertainty: it is a
+    deterministic local counter. Given the per-block sizes and the per-core
+    capacity the host uses, the final ``coreIdx + 1`` is decided. Returning
+    that number (or ``overflows=True`` when it would exceed ``max_cores``)
+    is what lets the soft-guard path stop minting ``VAR_SCHED_`` for it.
+    """
+    if capacity <= 0:
+        return NextFitBound(None, reason="non_positive_capacity")
+    core_idx = 0
+    current = 0
+    for raw in block_sizes:
+        n = int(raw)
+        if n <= 0:
+            continue
+        if n > capacity:
+            return NextFitBound(None, reason=f"block_exceeds_capacity:{n}>{capacity}")
+        if current + n > capacity:
+            core_idx += 1
+            current = 0
+            if max_cores is not None and core_idx >= max_cores:
+                return NextFitBound(core_idx, overflows=True, reason="core_list_full")
+        current += n
+    cores = core_idx + 1 if block_sizes else 0
+    if max_cores is not None and cores > max_cores:
+        return NextFitBound(cores, overflows=True, reason="core_list_full")
+    return NextFitBound(cores)

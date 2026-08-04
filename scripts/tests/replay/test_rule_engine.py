@@ -49,11 +49,51 @@ def test_counters_split_undeclared_from_declared_r():
     # no rules -> nothing excluded
     empty = RE.RuleBook()
     excluded, in_r, gap = partition(seen, dec, empty)
-    stats = counters(seen, dec, excluded, in_r, gap)
+    stats = counters(seen, dec, excluded, excluded, gap, gap, in_r=in_r)
     assert stats["runtime_total"] == 2
     assert stats["R_declared"] == 1
     assert stats["undeclared_runtime"] == 1
-    assert stats["open_gap"] == 2  # keys 2 and 3
+    assert stats["open_gap_sound"] == 2  # keys 2 and 3
+    assert stats["open_gap_reviewed"] == 2
+
+
+def test_human_rule_excluded_under_reviewed_not_sound(tmp_path):
+    book = RE.load_proof(write_proof(tmp_path))
+    inst = {"InputDType": 4}
+    assert book.excluded_by(inst) == ["InputDType=4"]
+    assert book.excluded_by(inst, grades=RE.SOUND_GRADES) == []
+    assert book.excluded_by_sound(inst) == []
+
+
+def test_load_derived_implications_become_combos_not_value_bans(tmp_path):
+    """Implication antecedents must not wipe a whole dimension."""
+    path = tmp_path / "derived_rules.yaml"
+    path.write_text(
+        "version: 1\nsource_hash: abc\nrules:\n"
+        "  - kind: pair_exclusive\n"
+        "    evidence_grade: solver_derived\n"
+        "    statement: DTemplateNum=64 and IsRope=1 cannot hold together\n"
+        "    excludes:\n"
+        "      - {dim: DTemplateNum, value: 64}\n"
+        "      - {dim: IsRope, value: 1}\n"
+        "  - kind: implication\n"
+        "    evidence_grade: solver_derived\n"
+        "    statement: IsRope=1 forces DTemplateNum=192\n"
+        "    excludes:\n"
+        "      - {dim: IsRope, value: 1}\n"
+        "    forces: {dim: DTemplateNum, value: 192}\n"
+        "    folded_from:\n"
+        "      - [{dim: DTemplateNum, value: 64}, {dim: IsRope, value: 1}]\n"
+        "      - [{dim: DTemplateNum, value: 128}, {dim: IsRope, value: 1}]\n",
+        encoding="utf-8",
+    )
+    book = RE.load_derived(path)
+    labels = {r.label for r in book.rules}
+    assert "IsRope=1" not in labels  # must not ban all rope
+    assert "DTemplateNum=64" not in labels
+    assert book.excluded_by_sound({"IsRope": 1, "DTemplateNum": 64})
+    assert book.excluded_by_sound({"IsRope": 1, "DTemplateNum": 192}) == []
+    assert book.excluded_by_sound({"IsRope": 0, "DTemplateNum": 64}) == []
 
 
 def test_wide_tables_uses_manifest_glob(tmp_path, monkeypatch):

@@ -1,0 +1,23 @@
+id: tk-recipe-miner
+version: 1
+name_zh: TilingKey recipe miner
+role: producer
+mode: subagent
+description: >-
+  Mine Case-mutation recipes that close U_sound − R gaps. Read the derive
+  receipt, codemap, and gap clusters; write only parts/part_*.yaml under the
+  mine_recipe action staging directory. Do not write canonical uo/tk/recipe.yaml.
+read_scopes:
+  - "uo/tk/**"
+  - "uo/ir/host_codemap.yaml"
+  - "uo/ir/host_derivation.yaml"
+  - "runs/**/actions/mine_recipe/**"
+write_scopes:
+  - "runs/*/actions/mine_recipe/parts/**"
+  - "runs/*/actions/mine_recipe/scratch/**"
+  - "runs/*/actions/mine_recipe/staging.yaml"
+forbidden:
+  - modify_pilot_state
+  - declare_workflow_passed
+  - write_outside_declared_scope
+  - write_canonical_uo_ir

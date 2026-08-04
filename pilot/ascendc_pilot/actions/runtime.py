@@ -2316,6 +2316,12 @@ def _finalize_owned_artifact_path(
         / str(session.get("run_id") or "")
         / "scope"
         / "scope_confirmed.yaml",
+        "env_probe": _uo_root(project_root) / "tk" / "env_probe.yaml",
+        "derive_fields": _uo_root(project_root) / "tk" / "derive_fields.yaml",
+        "export_codemap": _uo_root(project_root) / "tk" / "export_codemap.yaml",
+        "mine_recipe": _uo_root(project_root) / "tk" / "mine_recipe.yaml",
+        "apply_recipe": _uo_root(project_root) / "tk" / "recipe.yaml",
+        "coverage_gate": _uo_root(project_root) / "tk" / "coverage_gate.yaml",
     }
     return owned.get(action_id)
 

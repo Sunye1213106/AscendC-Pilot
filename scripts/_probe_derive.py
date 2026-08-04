@@ -167,6 +167,7 @@ def _field_row(f) -> dict:
         "value_expr": encode_expr_dag(f.value_expr),
         "value_leaves": list(f.value_leaves),
         "domain_violations": f.domain_violations,
+        "collapsed_leaves": f.collapsed_leaves,
         "input_roots": list(f.root_vars),
         "input_closure": f.input_closure,
         "input_derivable": f.input_derivable,
@@ -250,6 +251,15 @@ def totals(fields: list[dict]) -> dict:
         "input_derivable": sum(1 for f in fields if f.get("input_derivable")),
         # Operator-side: the host writes key values the template never declared.
         "domain_violations": sum(1 for f in fields if f.get("domain_violations")),
+        # Ours, not the operator's: normalisation dropped a value arm the
+        # expansion reached, and with the arm went the variable that would have
+        # kept the field out of `exact`. Counted only where nothing is left to
+        # stand for what was lost, which is where the grade becomes a false claim.
+        "collapsed": sum(
+            1
+            for f in fields
+            if f.get("collapsed_leaves") and not f.get("free_vars")
+        ),
         "derived": sum(1 for f in fields if f["status"] == "derived"),
         "partial": sum(1 for f in fields if f["status"] == "partial"),
         "unresolved": sum(1 for f in fields if f["status"] == "unresolved"),
@@ -404,6 +414,7 @@ def write_status(doc: dict) -> None:
         f"| unrecorded free_vars (must be 0) | **{t['unrecorded']}** |",
         f"| implicit_defaults | {t['implicit_defaults']} |",
         f"| domain_violations | {t['domain_violations']} |",
+        f"| collapsed leaves (must be 0) | **{t['collapsed']}** |",
         f"| max expanded chars | {t['max_chars']} |",
         f"| total seconds | {t['seconds']} |",
         "",
@@ -554,6 +565,22 @@ def main() -> int:
                 f"WARNING: {f['name']} encodes {f['domain_violations']} "
                 f"but the template declares {f.get('domain')} "
                 "— operator-side contract conflict, not a derivation gap"
+            )
+    for f in doc["fields"]:
+        # The opposite direction, and this one is a derivation bug: the field
+        # can no longer return values its own expansion reached, and has no
+        # free variable left to admit it. Grading that `exact` lets a solver
+        # prove a real key unreachable -- the worker demotes it, so this only
+        # fires when the demotion itself failed to fire.
+        if (
+            f.get("collapsed_leaves")
+            and not f.get("free_vars")
+            and f.get("exactness") in ("exact", "constant")
+        ):
+            print(
+                f"LEAF_COLLAPSE: {f['name']} is graded {f['exactness']} but "
+                f"normalisation dropped {f['collapsed_leaves']} — the "
+                "expression under-approximates and nothing records it"
             )
     wrote = [str(RESULT), str(REPORT)]
     if not args.fields:

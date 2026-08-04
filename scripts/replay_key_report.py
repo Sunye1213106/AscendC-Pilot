@@ -27,6 +27,7 @@ sys.path.insert(
 from replay import corpus as C  # noqa: E402
 from replay import inputs as I  # noqa: E402
 from replay import runner as R  # noqa: E402
+from replay import rule_engine as RE  # noqa: E402
 from replay_runtime_counterexample_gate import (  # noqa: E402
     excluded_by, load_declared, load_runtime, partition,
 )
@@ -56,7 +57,8 @@ def wide_cases() -> dict[tuple[str, str], dict]:
 def main() -> int:
     dec = load_declared()
     seen = load_runtime()
-    excluded, in_r, gap = partition(seen, dec)
+    excluded, in_r, gap = partition(seen, dec, grades=None)
+    _, _, gap_sound = partition(seen, dec, grades=RE.SOUND_GRADES)
     undeclared = {k: seen[k] for k in seen if k not in dec}
     cases = wide_cases()
     dims = R.DIM_NAMES
@@ -80,7 +82,7 @@ def main() -> int:
                 w.writerow([key, "unreachable"] + vals + ["", ""]
                            + [""] * len(INPUT_COLS)
                            + ["; ".join(excluded[key])])
-            else:
+            elif key in gap_sound:
                 w.writerow([key, "unknown"] + vals + ["", ""]
                            + [""] * len(INPUT_COLS) + [""])
         for key, wrow in sorted(undeclared.items()):
@@ -94,7 +96,7 @@ def main() -> int:
                 + ["host produced this key but the kernel declaration does not list it"])
 
     print(f"declared {len(dec)}  reachable {len(in_r)}  unreachable {len(excluded)}  "
-          f"unknown {len(gap)}  undeclared_runtime {len(undeclared)}")
+          f"unknown {len(gap_sound)}  undeclared_runtime {len(undeclared)}")
     print(f"-> {out}")
 
     by = Counter()
@@ -102,7 +104,7 @@ def main() -> int:
         by["reachable"] += 1
     for key in excluded:
         by["unreachable"] += 1
-    for key in gap:
+    for key in gap_sound:
         by["unknown"] += 1
     return 0
 

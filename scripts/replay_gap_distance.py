@@ -23,6 +23,7 @@ from uo_init.tpl_dsl import expand_legal_instances  # noqa: E402
 from replay import corpus as C  # noqa: E402
 from replay import runner as R  # noqa: E402
 from replay_closure_gate import excluded_by as _excluded_by  # noqa: E402
+from replay import rule_engine as RE  # noqa: E402
 from replay_verdict import _witnesses  # noqa: E402
 
 
@@ -38,7 +39,7 @@ def main() -> int:
 
     wit = [(k, R.SCHEMA.decode_tiling_key(k)) for k in seen if k in dec_key]
     gap = [(k, i) for k, i in dec_key.items()
-           if k not in seen and not _excluded_by(i)]
+           if k not in seen and not _excluded_by(i, grades=RE.SOUND_GRADES)]
     print(f"{len(gap)} keys in U - R, {len(wit)} witnesses to measure against")
 
     # Every gap is measured against every witness, which is millions of

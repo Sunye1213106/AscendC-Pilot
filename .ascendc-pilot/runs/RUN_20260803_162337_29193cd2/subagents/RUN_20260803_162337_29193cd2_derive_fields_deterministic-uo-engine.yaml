@@ -1,0 +1,47 @@
+identity: RUN_20260803_162337_29193cd2:derive_fields:deterministic-uo-engine
+run_id: RUN_20260803_162337_29193cd2
+workflow_id: tk-cover
+phase: derive
+actor_type: deterministic_engine
+actor_id: deterministic-uo-engine
+action_id: derive_fields
+workflow_spec_hash: 01da02d39362475290cadb24d9f92c919a1ddf0aad3c9473d031e56674164ecf
+input_hashes:
+  context_pack: 0ea53bdfda6aa5b76c967eef4016eab36d0e6adc815e970bb18d4c4b5051c522
+  prompt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  prepare_nonce: 0724220ebd3d334a452db398da8de152
+  lease_id: LEASE_7eb17894276e
+output_hashes:
+  uo/tk/derive_fields.yaml: aa1c0b92f080804333a6d2f5ee30a85ee1d07a93ab786d2a8873711d83f2ce19
+checker_result:
+  ok: true
+  schema: receipt_checker_v1
+  full_checker_sha256: 650ff6bc0f60d83f0c088ddddd6724d9e64fd77fbc8be934108381fb42fbe56f
+  producer_identity:
+    ok: true
+    error: ''
+  identity_injection:
+    ok: true
+    skipped: false
+    error: ''
+  gates:
+  - id: tk_derive
+    ok: true
+    error: ''
+  output_contract:
+    ok: true
+    skipped: false
+    error: ''
+    contract_id: tk-derive-v1
+  engine:
+    ok: true
+    engine: derive_fields
+    checkpoint: ''
+    payload_sha256: 2a5dd2d3d5e23214479d01c251f410e13b6f8b47dd07a56fa0314aed39fa95cb
+  apply: {}
+  target_violation: {}
+nonce: 0724220ebd3d334a452db398da8de152
+artifact: ''
+issued_by: pilot
+recorded_at: '2026-08-03T16:23:38Z'
+signature: a11fbaf613afffd43929f77f0329fd2c8f7e5d93e37289d9d7091c200ca0b880

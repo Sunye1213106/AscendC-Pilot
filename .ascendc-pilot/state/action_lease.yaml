@@ -1,0 +1,65 @@
+lease_id: LEASE_68ddbfe14057
+run_id: RUN_20260803_162337_29193cd2
+workflow_id: tk-cover
+action_id: coverage_gate
+actor_id: deterministic-uo-engine
+phase: certify
+state_version: 0
+mode: normal
+status: revoked
+allowed_tools:
+- bash
+- shell
+- terminal
+- question
+- ask_user
+- read
+- glob
+- grep
+- write
+- edit
+- apply_patch
+- strreplace
+- patch
+- task
+- subagent
+- task_tool
+allowed_commands:
+- acp next
+- acp status
+- acp run-action
+- acp advance
+- acp uo-scope
+- acp cbm
+- acp authorize
+- acp context
+- acp complete
+- acp rework
+- acp abort
+- acp start
+- python -m ascendc_pilot
+- python3 -m ascendc_pilot
+allowed_read_roots:
+- D:/TEST/AscendC-Pilot/.ascendc-pilot/runs/RUN_20260803_162337_29193cd2/actions/coverage_gate
+allowed_write_roots:
+- uo
+- runs
+- state
+allowed_write_paths:
+- uo/tk/coverage_gate.yaml
+allowed_read_paths:
+- runs/RUN_20260803_162337_29193cd2/actions/coverage_gate/**
+- runs/RUN_20260803_162337_29193cd2/actions/coverage_gate/environment_capabilities.yaml
+- runs/RUN_20260803_162337_29193cd2/actions/coverage_gate/prompt.md
+- runs/RUN_20260803_162337_29193cd2/actions/coverage_gate/method.md
+- runs/RUN_20260803_162337_29193cd2/actions/coverage_gate/bundle.yaml
+- runs/RUN_20260803_162337_29193cd2/actions/coverage_gate/session.yaml
+- uo/tk/coverage_gate.yaml
+forbidden_write_paths: []
+forbidden_read_paths: []
+allowed_target_ids: []
+allowed_source_roots: []
+allowed_source_files: []
+issued_at: '2026-08-03T16:23:45Z'
+revoked_at: '2026-08-03T16:23:48Z'
+revoke_reason: finalize_ok

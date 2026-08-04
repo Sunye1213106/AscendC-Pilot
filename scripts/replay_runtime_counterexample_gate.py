@@ -6,6 +6,9 @@ produced, and U, the keys a sound over-approximation still allows. R ⊆ H ⊆ U
 holds by construction, so D - U is proven unreachable and U - R is what is
 genuinely unknown. Completion is U - R = 0.
 
+U_sound counts only solver-derived / source-lemma rules. Human and LLM rules
+feed U_reviewed but do not shrink the sound upper bound by default.
+
 All of that collapses if one rule excludes a key that really happens. This
 checks that first and fails loudly.
 
@@ -31,9 +34,18 @@ from replay import rule_engine as RE  # noqa: E402
 from replay import runner as R  # noqa: E402
 
 
-def excluded_by(inst: dict, book: RE.RuleBook | None = None) -> list[str]:
-    """Every rule claiming this instance cannot occur."""
-    return (book or RE.default_book()).excluded_by(inst)
+def excluded_by(
+    inst: dict,
+    book: RE.RuleBook | None = None,
+    *,
+    grades: frozenset[str] | set[str] | None = None,
+) -> list[str]:
+    """Every rule claiming this instance cannot occur.
+
+    ``grades=None`` is the reviewed view (all rules). Pass ``RE.SOUND_GRADES``
+    for the sound upper bound.
+    """
+    return (book or RE.default_book()).excluded_by(inst, grades=grades)
 
 
 def load_runtime() -> dict[int, dict]:
@@ -72,13 +84,18 @@ def load_declared() -> dict[int, dict]:
             for i in expand_legal_instances(R.SCHEMA)}
 
 
-def partition(seen: dict[int, dict], dec: dict[int, dict],
-              book: RE.RuleBook | None = None):
+def partition(
+    seen: dict[int, dict],
+    dec: dict[int, dict],
+    book: RE.RuleBook | None = None,
+    *,
+    grades: frozenset[str] | set[str] | None = None,
+):
     """Split the declared space into proven-unreachable, R, and the gap."""
     book = book or RE.default_book()
     excluded, in_r, gap = {}, {}, {}
     for key, inst in dec.items():
-        rules = excluded_by(inst, book)
+        rules = excluded_by(inst, book, grades=grades)
         if rules:
             excluded[key] = rules
         elif key in seen:
@@ -88,18 +105,45 @@ def partition(seen: dict[int, dict], dec: dict[int, dict],
     return excluded, in_r, gap
 
 
-def counters(seen: dict[int, dict], dec: dict[int, dict],
-             excluded: dict, in_r: dict, gap: dict) -> dict:
+def excluded_by_grade(dec: dict[int, dict], book: RE.RuleBook) -> dict[str, int]:
+    """Keys excluded by at least one rule of each grade."""
+    known = {r.grade for r in book.rules}
+    counts = {g: 0 for g in sorted(known)}
+    for inst in dec.values():
+        for grade in known:
+            if book.excluded_by(inst, grades={grade}):
+                counts[grade] += 1
+    return counts
+
+
+def counters(
+    seen: dict[int, dict],
+    dec: dict[int, dict],
+    excluded_sound: dict,
+    excluded_reviewed: dict,
+    gap_sound: dict,
+    gap_reviewed: dict,
+    *,
+    in_r: dict | None = None,
+) -> dict:
     """Runtime totals split so undeclared keys stop looking like R."""
     undeclared = {k: seen[k] for k in seen if k not in dec}
+    r_declared = len(in_r) if in_r is not None else sum(1 for k in dec if k in seen)
     return {
         "declared": len(dec),
         "runtime_total": len(seen),
-        "R_declared": len(in_r),
+        "R_declared": r_declared,
         "undeclared_runtime": len(undeclared),
-        "upper_U": len(dec) - len(excluded),
-        "excluded": len(excluded),
-        "open_gap": len(gap),
+        "upper_U_sound": len(dec) - len(excluded_sound),
+        "upper_U_reviewed": len(dec) - len(excluded_reviewed),
+        "excluded_sound": len(excluded_sound),
+        "excluded_reviewed": len(excluded_reviewed),
+        "open_gap_sound": len(gap_sound),
+        "open_gap_reviewed": len(gap_reviewed),
+        # Backward-compatible aliases (reviewed view).
+        "upper_U": len(dec) - len(excluded_reviewed),
+        "excluded": len(excluded_reviewed),
+        "open_gap": len(gap_reviewed),
     }
 
 
@@ -112,26 +156,39 @@ def main() -> int:
 
     seen = load_runtime()
     dec = load_declared()
-    excluded, in_r, gap = partition(seen, dec, book)
-    stats = counters(seen, dec, excluded, in_r, gap)
-    conflicts = {k: excluded[k] for k in excluded if k in seen}
+    excluded_sound, in_r, gap_sound = partition(
+        seen, dec, book, grades=RE.SOUND_GRADES)
+    excluded_reviewed, _, gap_reviewed = partition(seen, dec, book, grades=None)
+    stats = counters(
+        seen, dec, excluded_sound, excluded_reviewed, gap_sound, gap_reviewed,
+        in_r=in_r)
+    by_grade = excluded_by_grade(dec, book)
+    conflicts = {k: excluded_reviewed[k] for k in excluded_reviewed if k in seen}
 
     out = R.CACHE / "coverage_closure.yaml"
     with out.open("w", encoding="utf-8") as f:
         for k, v in stats.items():
             f.write(f"{k}: {v}\n")
+        f.write("excluded_by_grade:\n")
+        for grade, n in sorted(by_grade.items()):
+            f.write(f"  {grade}: {n}\n")
         # Backward-compatible alias used by older readers.
         f.write(f"runtime_R: {stats['runtime_total']}\n")
         f.write("soundness_gate:\n")
         f.write(f"  runtime_excluded_intersection: {len(conflicts)}\n")
         f.write(f"  passed: {'true' if not conflicts else 'false'}\n")
         f.write("closure:\n")
-        f.write(f"  complete: {'true' if not gap else 'false'}\n")
-        f.write(f"  gap: {len(gap)}\n")
+        f.write(f"  complete: {'true' if not gap_sound else 'false'}\n")
+        f.write(f"  gap: {len(gap_sound)}\n")
+        f.write(f"  gap_reviewed: {len(gap_reviewed)}\n")
 
-    print(f"declared {stats['declared']}   runtime_total {stats['runtime_total']}   "
-          f"R_declared {stats['R_declared']}   undeclared {stats['undeclared_runtime']}   "
-          f"U {stats['upper_U']}   excluded {stats['excluded']}   U-R {stats['open_gap']}")
+    print(
+        f"declared {stats['declared']}   runtime_total {stats['runtime_total']}   "
+        f"R_declared {stats['R_declared']}   undeclared {stats['undeclared_runtime']}   "
+        f"U_sound {stats['upper_U_sound']}   excluded_sound {stats['excluded_sound']}   "
+        f"U_sound-R {stats['open_gap_sound']}   "
+        f"U_reviewed {stats['upper_U_reviewed']}   excluded_reviewed {stats['excluded_reviewed']}   "
+        f"U_reviewed-R {stats['open_gap_reviewed']}")
     print(f"-> {out}")
 
     if conflicts:

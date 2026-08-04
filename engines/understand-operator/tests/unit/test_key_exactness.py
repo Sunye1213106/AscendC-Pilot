@@ -22,6 +22,7 @@ from uo_init.derive_key_fields import (
     STATUS_UNRESOLVED,
     _ValueNormalizer,
     classify_exactness,
+    collapsed_leaf_values,
     is_overapprox_var,
     status_of_exactness,
 )
@@ -69,6 +70,30 @@ def test_no_expression_at_all_is_unresolved():
     assert classify_exactness(value_expr=None, variables=["X"], unresolved=[]) == (EX_UNRESOLVED, [])
 
 
+# -- normalisation collapse detection --------------------------------------
+def test_leaves_lost_between_expansion_and_normalisation_are_seen():
+    """The DeterType shape: expansion reached 0..4, the SMT form only 0 and 2."""
+    expr = {"op": "if_then_else", "condition": {"op": "eq", "var": "VAR_X", "value": True},
+            "then": {"lit": 0}, "else": {"lit": 2}}
+    assert collapsed_leaf_values(expr, ["0", "1", "2", "3", "4"]) == ["1", "3", "4"]
+
+
+def test_leaves_the_expression_can_still_reach_are_not_a_collapse():
+    expr = {"op": "if_then_else", "condition": {"op": "eq", "var": "VAR_X", "value": True},
+            "then": {"lit": 0}, "else": {"lit": 1}}
+    assert collapsed_leaf_values(expr, ["0", "1"]) == []
+
+
+def test_non_numeric_spellings_are_not_treated_as_lost_values():
+    """Enum spellings survive expansion without naming a reachable value."""
+    expr = {"lit": 1}
+    assert collapsed_leaf_values(expr, ["1", "DtypeEnum::FLOAT32"]) == []
+
+
+def test_no_expression_means_no_collapse():
+    assert collapsed_leaf_values(None, ["1", "2"]) == []
+
+
 def test_every_over_approximation_prefix_is_recognized():
     for var in (
         "VAR_UNDECIDED_A",
@@ -105,6 +130,21 @@ def test_a_guard_on_traversal_position_is_softened():
     out = _guard_of(norm, "coreIdx > 0")
     assert out["var"].startswith("VAR_SCHED_")
     assert norm.scheduling[out["var"]] == "SCHED_SOFT"
+
+
+def test_next_fit_overflow_guard_folds_false_on_key_paths():
+    """coreIdx >= CORE_LIST_NUM is a bailout, not a free schedule bit."""
+    norm = _normalizer(coreIdx="LOOP_INDUCTION", CORE_LIST_NUM="CONSTANT")
+    out = _guard_of(norm, "coreIdx >= CORE_LIST_NUM")
+    assert out == {"op": "lit", "value": False, "origin": "bailout"}
+    assert not norm.scheduling
+
+
+def test_next_fit_overflow_against_aicNum_also_folds():
+    norm = _normalizer(coreIdx="LOOP_INDUCTION", aicNum="CONSTANT")
+    out = _guard_of(norm, "coreIdx >= aicNum")
+    assert out.get("op") == "lit" and out.get("value") is False
+
 
 
 def test_a_screaming_case_local_is_not_softened_as_schedule():

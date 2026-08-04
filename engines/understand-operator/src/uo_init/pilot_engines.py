@@ -1078,4 +1078,9 @@ ENGINES: dict[str, Any] = {
     "build_index": build_index,
     "export_integrity": export_integrity,
     "kb_review": kb_review,
+    # tk-cover (imported lazily via names below)
 }
+
+from uo_init.tk_cover_engines import TK_ENGINES  # noqa: E402
+
+ENGINES.update(TK_ENGINES)

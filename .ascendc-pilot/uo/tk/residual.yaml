@@ -1,0 +1,20 @@
+open_gap_sound: 4077
+complete: false
+blockers:
+- id: VAR_INIT_bandIdx
+  symbol: fBaseParams.bandIdx
+  why: 'guards_cover is sat: reads under sparseMode∈{7,8} do not share the attenMask
+    write guard; force-closing would be unsound'
+- id: VAR_INIT_blockOuter
+  symbol: fBaseParams.blockOuter
+  why: cyclic dependence with deterSparseType; do not force-close
+- id: VAR_LOOPELEM_invalidS1Array
+  symbol: invalidS1Array[j]
+  why: HostIR writers_of(invalidS1Array)=0; interval_union_covers cannot attach until
+    array write events exist (float32 Varlen must stay refused)
+- id: VAR_UNDECIDED_CheckExceedL2Cache
+  symbol: CheckExceedL2Cache()
+  why: needs an L2 footprint / cardinality model; used for swizzle
+- id: VAR_AUX_deterSparseType
+  symbol: fBaseParams.deterSparseType
+  why: tied to DeterType leaf-collapse demotion; keep overapproximated

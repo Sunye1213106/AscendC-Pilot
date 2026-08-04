@@ -1,0 +1,64 @@
+version: 1
+identity:
+  run_id: RUN_20260803_162337_29193cd2
+  workflow_id: tk-cover
+  phase: derive
+  action_id: derive_fields
+  actor_id: deterministic-uo-engine
+  role_id: deterministic_engine
+  action_session_id: ACTION_SESSION_617bb58065cfbdd4
+  prepare_nonce_hash: ee589bcf442cf1566be74209f4b5ac724b121286b895f6866085244b4b985db9
+  lease_id: LEASE_7eb17894276e
+  execution_mode: deterministic
+run_id: RUN_20260803_162337_29193cd2
+workflow_id: tk-cover
+phase: derive
+action_id: derive_fields
+actor_id: deterministic-uo-engine
+role_id: deterministic_engine
+execution_mode: deterministic
+action_session_id: ACTION_SESSION_617bb58065cfbdd4
+prepare_nonce: 0724220ebd3d334a452db398da8de152
+nonce: 0724220ebd3d334a452db398da8de152
+policy_ids:
+- source-authority
+- code-access
+- evidence
+- language
+- pilot-control
+- output-quality
+capability_ids: []
+action_method_id: tk-cover/derive-fields
+task_prompt_id: null
+context_profile_id: tk-cover-derive-fields
+output_contract_id: tk-derive-v1
+checker_required: true
+referee_required: false
+gates:
+- tk_derive
+context_pack_path: D:/TEST/AscendC-Pilot/.ascendc-pilot/context/context_pack.yaml
+project_root: D:/TEST/AscendC-Pilot
+uo_root: D:/TEST/AscendC-Pilot/.ascendc-pilot/uo
+tg_root: D:/TEST/AscendC-Pilot/.ascendc-pilot/tg
+op_name: FlashAttentionScoreGrad
+architecture: arch35
+status: finalized
+identity_note: Bundle identity is authoritative. Do not replace, infer, normalize,
+  or copy identity from old artifacts.
+lease_id: LEASE_7eb17894276e
+prepared_at: '2026-08-03T16:23:38Z'
+allowed_write_paths:
+- uo/tk/derive_fields.yaml
+forbidden_write_paths: []
+allowed_read_paths:
+- runs/RUN_20260803_162337_29193cd2/actions/derive_fields/**
+- runs/RUN_20260803_162337_29193cd2/actions/derive_fields/environment_capabilities.yaml
+- runs/RUN_20260803_162337_29193cd2/actions/derive_fields/prompt.md
+- runs/RUN_20260803_162337_29193cd2/actions/derive_fields/method.md
+- runs/RUN_20260803_162337_29193cd2/actions/derive_fields/bundle.yaml
+- runs/RUN_20260803_162337_29193cd2/actions/derive_fields/session.yaml
+- uo/tk/derive_fields.yaml
+forbidden_read_paths: []
+allowed_target_ids: []
+staging_dir: D:/TEST/AscendC-Pilot/.ascendc-pilot/runs/RUN_20260803_162337_29193cd2/actions/derive_fields/staging
+receipt: D:\TEST\AscendC-Pilot\.ascendc-pilot\runs\RUN_20260803_162337_29193cd2\subagents\RUN_20260803_162337_29193cd2_derive_fields_deterministic-uo-engine.yaml

@@ -15,6 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from replay import rule_engine as RE  # noqa: E402
 from replay import runner as R  # noqa: E402
 from replay_closure_gate import load_declared, load_runtime, partition  # noqa: E402
 
@@ -41,7 +42,7 @@ def main() -> int:
 
     seen = load_runtime()
     dec = load_declared()
-    _, _, gap = partition(seen, dec)
+    _, _, gap = partition(seen, dec, grades=RE.SOUND_GRADES)
 
     wit = {k: R.SCHEMA.decode_tiling_key(k) for k in seen if k in dec}
 

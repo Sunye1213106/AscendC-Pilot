@@ -59,7 +59,40 @@ EX_PARTIAL = "partial"
 EX_UNRESOLVED = "unresolved"
 
 
-def has_constant_dead_arm(value_expr: Any) -> bool:
+def _folded_lit(value: bool, args: list[Any], *, origin: str | None = None) -> dict[str, Any]:
+    """A guard constant produced by folding, tagged with where it came from.
+
+    `origin` is `assumed` when any folded-away operand was itself an assumed
+    constant, otherwise `source`. Explicit `origin=` overrides that (used for
+    key-path bailout folds such as next-fit overflow). Softened guards become
+    free booleans instead, so the tag is mostly plumbing: it keeps a
+    derivation-decided constant from ever passing for a source one.
+    `has_constant_dead_arm` fires on either by default; `source_only=True` is
+    the knob that opens UNSAT only on source constants.
+    """
+    out: dict[str, Any] = {"op": "lit", "value": value}
+    if origin is not None:
+        out["origin"] = origin
+    elif any(
+        isinstance(a, dict) and a.get("op") == "lit" and a.get("origin") == "assumed"
+        for a in args
+    ):
+        out["origin"] = "assumed"
+    else:
+        out["origin"] = "source"
+    return out
+
+
+#: Next-fit packing overflow: `coreIdx >= CORE_LIST_NUM` (or aicNum). On any
+#: run that reaches key encoding the packing succeeded, so this check was
+#: false at every iteration. Softening it to a free boolean invents keys.
+_NEXT_FIT_OVERFLOW_RE = re.compile(
+    r"\bcoreIdx\s*>=\s*(?:CORE_LIST_NUM|aicNum|fBaseParams\.aicNum)\b",
+    re.I,
+)
+
+
+def has_constant_dead_arm(value_expr: Any, *, source_only: bool = False) -> bool:
     """Whether the expression still carries a constant-dead arm.
 
     A derivation artefact can pin an arm that the host actually takes. The
@@ -72,12 +105,20 @@ def has_constant_dead_arm(value_expr: Any) -> bool:
 
     Walks the DAG via `_smt_children` (shared nodes visited once), tracking
     whether each node is reached in guard position.
+
+    With `source_only=True`, only assumed constants count: a lit the source
+    itself wrote (`&& false`, a platform fold) really does pin the arm, so an
+    UNSAT built on it stands. The default stays conservative and fires on
+    either.
     """
     if not isinstance(value_expr, dict):
         return False
     expr = decode_expr_dag(value_expr)
     if not _is_expr_container(expr):
         return False
+
+    def counts(node: dict) -> bool:
+        return not source_only or node.get("origin") != "source"
 
     # (node, is this node a guard / inside a guard)
     seen: set[tuple[int, bool]] = set()
@@ -91,13 +132,15 @@ def has_constant_dead_arm(value_expr: Any) -> bool:
         if isinstance(node, dict):
             op = node.get("op")
             if op == "lit":
-                if in_guard:
+                if in_guard and counts(node):
                     return True
                 continue
             if op == "if_then_else":
                 c = node.get("condition")
                 if isinstance(c, dict) and c.get("op") == "lit":
-                    return True
+                    if counts(c):
+                        return True
+                    continue
                 if _is_expr_container(c):
                     stack.append((c, True))
                 # arms are values, not guards
@@ -171,6 +214,35 @@ def classify_exactness(
     if not variables:
         return EX_CONSTANT, []
     return EX_EXACT, []
+
+
+def collapsed_leaf_values(
+    value_expr: dict[str, Any] | None, value_leaves: list[str]
+) -> list[str]:
+    """Numeric leaves the expanded form reached that the normalised one cannot.
+
+    A folded-away arm takes its variables with it, so `classify_exactness`
+    sees no free variable and would grade the field `exact` — while the
+    expression it hands the solver can no longer return values the same
+    derivation reached one pass earlier. That is the one direction the
+    derivation must never move in: `exact` is what lets a proof call a key
+    dead. Only numeric leaves count; enum spellings survive expansion without
+    saying anything about reachable values.
+    """
+    if value_expr is None:
+        return []
+
+    def as_int(v: Any) -> int | None:
+        try:
+            return int(str(v).strip())
+        except (TypeError, ValueError):
+            return None
+
+    reachable = {
+        n for n in (as_int(v) for v in smt_value_leaves(value_expr)) if n is not None
+    }
+    recorded = {n for n in (as_int(v) for v in value_leaves) if n is not None}
+    return [str(n) for n in sorted(recorded - reachable)]
 
 
 #: `status` is the coarse view older consumers read; keep it a projection of
@@ -1520,7 +1592,7 @@ class KeyFieldDeriver:
             if (
                 result is None
                 and not covered_in.get(scope, False)
-                and not self._read_forces_a_write(pool, defining)
+                and not self._read_forces_a_write(pool, defining, depth)
             ):
                 declared = self._declared_default(defining, scope, depth)
                 if declared is None:
@@ -1561,7 +1633,9 @@ class KeyFieldDeriver:
             result_fn = scope
         return result if result is not None else Unknown(REASON_NO_DEFINITION)
 
-    def _read_forces_a_write(self, pool: list[DefSite], defining: str) -> bool:
+    def _read_forces_a_write(
+        self, pool: list[DefSite], defining: str, depth: int = 0
+    ) -> bool:
         """Can this read be reached at all without one of the writes running?
 
         Writes can look partial and still leave nothing to assume, because
@@ -1575,20 +1649,48 @@ class KeyFieldDeriver:
         condition and the writes' rarely match word for word, and only the
         `unsat` answer is used, so a query that fails to prove anything leaves
         the assumption exactly where it was.
+
+        A read with no condition, and a read we never located, are both asked
+        about rather than given up on: the premise is then `True`, the weakest
+        one available, so an unsat says the writes cover every run whatever the
+        read's own condition turns out to be. That is worth asking -- an
+        if/else-if chain that closes over every path is settled at once -- but
+        only under the premise `covered_in` already insists on, and for the
+        same reason.
+
+        A write's recorded guards are the ones *inside* its function. They say
+        nothing about whether the function is called, and a member outlives the
+        call: a run that skips the helper reads whatever the member held
+        before. With a real read condition that gap is usually closed by the
+        read sitting behind the same test as the call; with `True` there is
+        nothing to close it, so the writes have to be ones that cannot be
+        skipped -- the function always runs, or the name is its own local and a
+        run that skips it has nowhere to read from.
         """
         read = self._read_at
-        if read is None or not read.conds or not pool:
+        if not pool:
             return False
-        key = (read.file, read.line, read.function, defining)
+        if read is None:
+            key = ("", 0, "", defining)
+            conds, scope = (), ""
+        else:
+            key = (read.file, read.line, read.function, defining)
+            conds, scope = read.conds, read.function
+        if not conds and not all(
+            self._is_local_of(defining, s.function or scope)
+            or self._always_runs(s.function or scope, depth)
+            for s in pool
+        ):
+            return False
         hit = self._read_cover_cache.get(key)
         if hit is None:
             from uo_init.loop_summary import guards_cover
 
             hit = bool(
                 guards_cover(
-                    read.conds,
-                    [(s.conds, s.function or read.function) for s in pool],
-                    read_function=read.function,
+                    conds,
+                    [(s.conds, s.function or scope) for s in pool],
+                    read_function=scope,
                     members=getattr(self.ir, "class_fields", ()) or (),
                 )
             )
@@ -3021,6 +3123,16 @@ class KeyFieldDeriver:
             unresolved=out.unresolved,
             implicit_defaults=out.implicit_defaults,
         )
+        collapsed = collapsed_leaf_values(out.value_expr, out.value_leaves)
+        if collapsed and out.exactness in (EX_EXACT, EX_CONSTANT):
+            # Normalisation dropped arms the expansion reached, and took the
+            # variables that would have admitted it along with them. Grading
+            # exact here would let the solver prove those values unreachable;
+            # demote instead and keep the loss on the note.
+            out.exactness = EX_OVERAPPROX
+            out.note = "; ".join(
+                filter(None, [out.note, "LEAF_COLLAPSE: " + ",".join(collapsed)])
+            )
         out.status = status_of_exactness(out.exactness)
         if out.exactness == EX_OVERAPPROX and not out.input_roots:
             out.note = "; ".join(filter(None, [out.note, "ALL_GUARDS_SOFTENED"]))
@@ -3398,20 +3510,24 @@ class _ValueNormalizer(PredicateNormalizer):
             op = BOOL_OPS[cond.op]
             # Fold lit through and/or so a decided constant does not sit in a
             # connective and make has_constant_dead_arm fire on a finished fact.
+            # The fold keeps provenance: a constant the derivation *assumed*
+            # stays distinguishable from one the source wrote, so UNSAT can
+            # never be opened on the strength of an assumption. See
+            # `has_constant_dead_arm(..., source_only=True)`.
             if op == "and":
                 if any(a.get("op") == "lit" and not a.get("value") for a in args):
-                    return {"op": "lit", "value": False}
+                    return _folded_lit(False, args)
                 args = [a for a in args if not (a.get("op") == "lit" and a.get("value"))]
                 if not args:
-                    return {"op": "lit", "value": True}
+                    return _folded_lit(True, args)
                 if len(args) == 1:
                     return args[0]
             elif op == "or":
                 if any(a.get("op") == "lit" and a.get("value") for a in args):
-                    return {"op": "lit", "value": True}
+                    return _folded_lit(True, args)
                 args = [a for a in args if not (a.get("op") == "lit" and not a.get("value"))]
                 if not args:
-                    return {"op": "lit", "value": False}
+                    return _folded_lit(False, args)
                 if len(args) == 1:
                     return args[0]
             return {"op": op, "args": args}
@@ -3422,7 +3538,7 @@ class _ValueNormalizer(PredicateNormalizer):
             # every or/and it sits in. Leaving the wrapper makes the field look
             # under-approximated when the constant was already decided.
             if isinstance(arg, dict) and arg.get("op") == "lit":
-                return {"op": "lit", "value": not bool(arg.get("value"))}
+                return _folded_lit(not bool(arg.get("value")), [arg])
             return {"op": "not", "arg": arg}
         # Schedule / GRAPH_SUCCESS / reachability — soft without expanding.
         soft = self._sched_soft_guard(cond)
@@ -3548,7 +3664,29 @@ class _ValueNormalizer(PredicateNormalizer):
         # labelled schedule. Those are modelling gaps; report them as UNDECIDED.
         if unresolved or not (roots & SCHEDULING_ROOTS):
             return None
+        folded = self._fold_next_fit_overflow_guard(cond)
+        if folded is not None:
+            return folded
         return self._soft_var(cond, prefix="VAR_SCHED", origin="SCHED_SOFT")
+
+    def _fold_next_fit_overflow_guard(self, cond: Expr) -> dict[str, Any] | None:
+        """Fold next-fit capacity overflow to false on key-encoding paths.
+
+        `coreIdx >= CORE_LIST_NUM` is not scheduling uncertainty: it is the
+        host's deterministic packing refusing to continue. A run that still
+        reaches GetTilingKey has already passed every such check, so the
+        positive guard never holds on a key we can observe. Softening it
+        invented a free boolean (and keys) the host does not emit.
+
+        Ordinary `coreIdx > 0` comparisons stay schedule-softened — only the
+        capacity-overflow shape is folded.
+        """
+        text = _pretty_dag(cond)
+        if not _NEXT_FIT_OVERFLOW_RE.search(text):
+            return None
+        # Also record that next_fit_cores could confirm this when block sizes
+        # are known; the fold below is the key-path soundness argument.
+        return _folded_lit(False, [], origin="bailout")
 
     def _soft_var(self, cond: Expr, *, prefix: str, origin: str) -> dict[str, Any]:
         from uo_init.ids import hash12

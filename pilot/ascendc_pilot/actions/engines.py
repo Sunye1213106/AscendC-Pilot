@@ -666,6 +666,12 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("uo-init", "build_index"): _uo_init_engine("build_index"),
     ("uo-init", "export_integrity"): _uo_init_engine("export_integrity"),
     ("uo-init", "kb_review"): _uo_init_engine("kb_review"),
+    ("tk-cover", "env_probe"): _uo_init_engine("env_probe"),
+    ("tk-cover", "derive_fields"): _uo_init_engine("derive_fields"),
+    ("tk-cover", "export_codemap"): _uo_init_engine("export_codemap"),
+    ("tk-cover", "mine_recipe"): _uo_init_engine("mine_recipe"),
+    ("tk-cover", "apply_recipe"): _uo_init_engine("apply_recipe"),
+    ("tk-cover", "coverage_gate"): _uo_init_engine("coverage_gate"),
     ("uo-update", "detect_changes"): _run_detect_changes,
     ("uo-update", "plan_update"): _run_plan_update,
     ("uo-update", "apply_update"): _run_apply_update,
@@ -815,6 +821,18 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "tg/solve/**/realize_report.yaml",
         "tg/solve/**/solver_report.yaml",
     ],
+    "tk-env-v1": ["uo/tk/env_probe.yaml"],
+    "tk-derive-v1": ["uo/tk/derive_fields.yaml"],
+    "tk-codemap-v1": [
+        "uo/tk/export_codemap.yaml",
+        "uo/ir/host_codemap.yaml",
+    ],
+    "tk-recipe-staging-v1": [
+        "runs/{run_id}/actions/mine_recipe/parts/**",
+        "runs/{run_id}/actions/mine_recipe/staging.yaml",
+    ],
+    "tk-recipe-v1": ["uo/tk/recipe.yaml", "uo/tk/apply_recipe.yaml"],
+    "tk-gate-v1": ["uo/tk/coverage_gate.yaml"],
 }
 
 # Contracts that must contain at least one nonempty concrete artifact (not empty dir / empty file)

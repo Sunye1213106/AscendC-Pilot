@@ -18,6 +18,10 @@ from typing import Any, Mapping
 
 import yaml
 
+# Grades that may shrink the sound upper bound U_sound. Human/LLM rules are
+# reviewed evidence only until separately checked; they must not default into U.
+SOUND_GRADES = frozenset({"solver_derived", "source_lemma"})
+
 
 @dataclass(frozen=True)
 class Rule:
@@ -36,9 +40,21 @@ class RuleBook:
     source_hash: str = ""
     expected_hash: str = ""
 
-    def excluded_by(self, inst: Mapping[str, Any]) -> list[str]:
+    def excluded_by(
+        self,
+        inst: Mapping[str, Any],
+        *,
+        grades: frozenset[str] | set[str] | None = None,
+    ) -> list[str]:
+        """Rule labels claiming this instance cannot occur.
+
+        ``grades=None`` applies every rule (reviewed / legacy view).
+        Pass ``SOUND_GRADES`` for the sound upper bound.
+        """
         out = []
         for rule in self.rules:
+            if grades is not None and rule.grade not in grades:
+                continue
             if rule.kind == "value_unreachable":
                 if str(inst.get(rule.dim)) == rule.value:
                     out.append(rule.label)
@@ -46,6 +62,9 @@ class RuleBook:
                 if all(str(inst.get(d)) == v for d, v in rule.when.items()):
                     out.append(rule.label)
         return out
+
+    def excluded_by_sound(self, inst: Mapping[str, Any]) -> list[str]:
+        return self.excluded_by(inst, grades=SOUND_GRADES)
 
     def hash_ok(self) -> bool:
         if not self.expected_hash:
@@ -90,12 +109,47 @@ def load_derived(path: str | Path, *, expected_hash: str = "") -> RuleBook:
     doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     grade = "solver_derived"
     rules: list[Rule] = []
+    seen_combo: set[tuple[tuple[str, str], ...]] = set()
+
+    def add_combo(
+        pairs: list[tuple[str, str]], *, reason: str, this_grade: str, label: str = ""
+    ) -> None:
+        if len(pairs) < 2:
+            return
+        key = tuple(sorted(pairs))
+        if key in seen_combo:
+            return
+        seen_combo.add(key)
+        rules.append(Rule(
+            kind="combo", grade=this_grade,
+            label=label or " + ".join(f"{d}={v}" for d, v in pairs),
+            reason=reason, when=dict(pairs)))
+
     for raw in doc.get("rules") or doc.get("value_unreachable") or []:
         # The solver states every rule the same way: the (dim, value) pairs
         # that cannot hold at once. One pair is a value that never occurs,
         # several are a combination. `dim`/`value` at the top level, and
         # `left`/`right`, are the hand-written shapes, read here too so that
         # either file can be loaded by this function.
+        reason = str(raw.get("reason") or raw.get("statement") or "")
+        this_grade = str(raw.get("evidence_grade") or grade)
+        kind = str(raw.get("kind") or "")
+
+        # Implications encode "A=a forces B=b" with only the antecedent in
+        # `excludes`. Treating that as value_unreachable would ban every key
+        # with A=a. Expand via `folded_from` (the pairs that proved it), or
+        # skip when those pairs are already listed as pair_exclusive rules.
+        if kind == "implication":
+            for fold in raw.get("folded_from") or []:
+                pairs = [
+                    (str(e["dim"]), str(e["value"]))
+                    for e in fold
+                    if e.get("dim") is not None
+                ]
+                add_combo(pairs, reason=reason, this_grade=this_grade,
+                          label=str(raw.get("statement") or ""))
+            continue
+
         pairs = [
             (str(e["dim"]), str(e["value"]))
             for e in (raw.get("excludes") or [])
@@ -112,22 +166,20 @@ def load_derived(path: str | Path, *, expected_hash: str = "") -> RuleBook:
             pairs = [(str(k), str(v)) for k, v in raw["when"].items()]
         if not pairs:
             continue
-        reason = str(raw.get("reason") or raw.get("statement") or "")
-        this_grade = str(raw.get("evidence_grade") or grade)
         if len(pairs) == 1:
             dim, value = pairs[0]
             rules.append(Rule(
                 kind="value_unreachable", grade=this_grade,
                 label=f"{dim}={value}", reason=reason, dim=dim, value=value))
         else:
-            label = str(
-                raw.get("label")
-                or raw.get("statement")
-                or " + ".join(f"{d}={v}" for d, v in pairs)
+            add_combo(
+                pairs, reason=reason, this_grade=this_grade,
+                label=str(
+                    raw.get("label")
+                    or raw.get("statement")
+                    or " + ".join(f"{d}={v}" for d, v in pairs)
+                ),
             )
-            rules.append(Rule(
-                kind="combo", grade=this_grade, label=label,
-                reason=reason, when=dict(pairs)))
     return RuleBook(
         rules=tuple(rules),
         source_hash=str(doc.get("source_hash") or ""),

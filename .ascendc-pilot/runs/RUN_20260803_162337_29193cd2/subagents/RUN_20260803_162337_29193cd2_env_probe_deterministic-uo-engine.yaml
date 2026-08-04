@@ -1,0 +1,47 @@
+identity: RUN_20260803_162337_29193cd2:env_probe:deterministic-uo-engine
+run_id: RUN_20260803_162337_29193cd2
+workflow_id: tk-cover
+phase: prepare
+actor_type: deterministic_engine
+actor_id: deterministic-uo-engine
+action_id: env_probe
+workflow_spec_hash: 01da02d39362475290cadb24d9f92c919a1ddf0aad3c9473d031e56674164ecf
+input_hashes:
+  context_pack: 69c0d2cbbd7c357c4aa961eb7e9da49342d2b938b20817073ee725d79ade0f74
+  prompt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  prepare_nonce: a7cacbde3100f23a07c8e0f630a0b290
+  lease_id: LEASE_683d0fcfd89f
+output_hashes:
+  uo/tk/env_probe.yaml: ba3a1817f7819d0be8f6c08831ebf6986930c1e33cad6f976faacc3b85c371fb
+checker_result:
+  ok: true
+  schema: receipt_checker_v1
+  full_checker_sha256: b560a9ae3e252b3a590f86f380faec9ae7a8c2e27a4c55ca57f7463d423d6c3e
+  producer_identity:
+    ok: true
+    error: ''
+  identity_injection:
+    ok: true
+    skipped: false
+    error: ''
+  gates:
+  - id: tk_env
+    ok: true
+    error: ''
+  output_contract:
+    ok: true
+    skipped: false
+    error: ''
+    contract_id: tk-env-v1
+  engine:
+    ok: true
+    engine: env_probe
+    checkpoint: ''
+    payload_sha256: c2d4d75a64093b8a1a49908f71366734adf47a3fe0ca9279d93e7c1749ebc023
+  apply: {}
+  target_violation: {}
+nonce: a7cacbde3100f23a07c8e0f630a0b290
+artifact: ''
+issued_by: pilot
+recorded_at: '2026-08-03T16:23:37Z'
+signature: 08aa5a12a5dc29742d1f4ef63971946d77c0d26568175bb252f4d7659fd916e8

@@ -1442,6 +1442,17 @@ def gate_gap_patch_evidence(uo: Path, project_root: Path | None = None) -> dict[
     }
 
 
+def gate_tk_file(uo: Path, gate_id: str, rel: str) -> dict[str, Any]:
+    path = uo / rel
+    ok = path.is_file() and path.stat().st_size > 0
+    return {
+        "gate": gate_id,
+        "ok": ok,
+        "message": "ok" if ok else f"missing {rel}",
+        "path": str(path),
+    }
+
+
 def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = None) -> dict[str, Any]:
     """Dispatch a workflow registry gate id to a concrete checker."""
     from ascendc_pilot.gates import tg_adapters
@@ -1495,6 +1506,13 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
         "audit_pass": lambda: tg_adapters.gate_audit_pass(project_root),
         "allow_solve": lambda: tg_adapters.gate_allow_solve(project_root),
         "solve_terminal": lambda: tg_adapters.gate_solve_terminal(project_root),
+        # tk-cover — receipt / artifact presence
+        "tk_env": lambda: gate_tk_file(uo, "tk_env", "tk/env_probe.yaml"),
+        "tk_derive": lambda: gate_tk_file(uo, "tk_derive", "tk/derive_fields.yaml"),
+        "tk_codemap": lambda: gate_tk_file(uo, "tk_codemap", "ir/host_codemap.yaml"),
+        "tk_mine": lambda: gate_tk_file(uo, "tk_mine", "tk/mine_recipe.yaml"),
+        "tk_recipe": lambda: gate_tk_file(uo, "tk_recipe", "tk/recipe.yaml"),
+        "tk_gate": lambda: gate_tk_file(uo, "tk_gate", "tk/coverage_gate.yaml"),
     }
     fn = mapping.get(gate_id)
     if fn is None:

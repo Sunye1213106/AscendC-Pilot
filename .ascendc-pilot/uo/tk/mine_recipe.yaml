@@ -1,0 +1,19 @@
+ok: true
+need_subagent: true
+staging: D:\TEST\AscendC-Pilot\.ascendc-pilot\runs\RUN_20260803_162337_29193cd2\actions\mine_recipe\staging.yaml
+artifact_identity:
+  run_id: RUN_20260803_162337_29193cd2
+  workflow_id: tk-cover
+  phase: close
+  action_id: mine_recipe
+  actor_id: tk-recipe-miner
+  role_id: producer
+  action_session_id: ACTION_SESSION_8153b94b3514259d
+  prepare_nonce_hash: 8e717e57c1d44f921f76461f3232e56afb7a2c106b966aa9e72001eb4f53e5d6
+  lease_id: LEASE_4a9f8e184a7c
+  execution_mode: subagent
+  produced_by: pilot-finalizer
+run_id: RUN_20260803_162337_29193cd2
+workflow_id: tk-cover
+action_id: mine_recipe
+actor_id: tk-recipe-miner

@@ -397,6 +397,46 @@ class FieldDerivation:
         return [str(n) for n in sorted(bad - allowed)]
 
     @property
+    def collapsed_leaves(self) -> list[str]:
+        """Values the expansion reached that the normalised form cannot.
+
+        The mirror of `domain_violations`, and the direction that actually
+        threatens soundness. That one asks whether the field can produce more
+        than the template declares; this one asks whether normalisation quietly
+        made it produce *less* than the same derivation said one pass earlier.
+
+        `value_leaves` is the union of both readings, so the difference against
+        a fresh walk of `value_expr` is exactly what folding dropped. Nothing
+        about the operator can explain that away: the arms were there before
+        `_guard` folded a constant through them.
+
+        Why it needs its own check: a dropped arm takes its variables with it,
+        so `free_vars` comes back empty and the field is graded `exact` -- the
+        derivation ends up claiming precise knowledge of a value set it just
+        shrank. `DeterType` is the case this was written for. Five writes, five
+        declared values, and an SMT form that can only ever return 0 or 2;
+        replay puts its accuracy at 87.5%.
+
+        Values the *template* declares and the expression cannot reach are a
+        weaker signal and deliberately not reported here -- `IsRegbase=0` does
+        not exist on arch35, and `S1TemplateNum` reads 0 only when
+        `IsEmptyTensor=1` short-circuits it, which is another dimension's
+        business. Those need a witness, not a failure.
+        """
+        if self.value_expr is None:
+            return []
+        from uo_init.derive_key_fields import smt_value_leaves
+
+        reachable = {
+            n for n in (_as_int(v) for v in smt_value_leaves(self.value_expr))
+            if n is not None
+        }
+        recorded = {
+            n for n in (_as_int(v) for v in self.value_leaves) if n is not None
+        }
+        return [str(n) for n in sorted(recorded - reachable)]
+
+    @property
     def input_closure(self) -> str:
         """Whether a test case can drive this field, which `exactness` cannot say.
 
@@ -458,6 +498,7 @@ class FieldDerivation:
             "value_expr": encode_expr_dag(self.value_expr),
             "value_leaves": list(self.value_leaves),
             "domain_violations": self.domain_violations,
+            "collapsed_leaves": self.collapsed_leaves,
             "root_vars": list(self.root_vars),
             "variables": list(self.variables),
             "var_roots": dict(self.var_roots),
@@ -550,6 +591,14 @@ class HostDerivation:
             # Operator-side contract conflicts, reported not gated: the template
             # and the host disagree, and neither is ours to change.
             "domain_violations": sum(1 for f in self.fields if f.domain_violations),
+            # Normalisation dropping a value arm the expansion reached. Unlike
+            # domain_violations this is ours, not the operator's: it means the
+            # derivation under-approximates while grading itself exact.
+            "collapsed_leaves": sum(
+                1
+                for f in self.fields
+                if f.collapsed_leaves and not f.free_vars
+            ),
             "implicit_defaults": sum(len(f.implicit_defaults) for f in self.fields),
             "undecided": sum(len(f.undecided_guards) for f in self.fields),
             "scheduling": sum(

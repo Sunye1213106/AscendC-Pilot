@@ -1,0 +1,49 @@
+ok: true
+engine: coverage_gate
+complete: false
+gate_pass: true
+declared: 8705
+R_declared: 4116
+upper_U_sound: 8193
+excluded_sound: 512
+open_gap_sound: 4077
+upper_U_reviewed: 5073
+excluded_reviewed: 3632
+open_gap_reviewed: 957
+closure_path: D:\TEST\AscendC-Pilot\.probe_cache\replay\coverage_closure.yaml
+residual_blockers:
+- id: VAR_INIT_bandIdx
+  symbol: fBaseParams.bandIdx
+  why: 'guards_cover is sat: reads under sparseMode∈{7,8} do not share the attenMask
+    write guard; force-closing would be unsound'
+- id: VAR_INIT_blockOuter
+  symbol: fBaseParams.blockOuter
+  why: cyclic dependence with deterSparseType; do not force-close
+- id: VAR_LOOPELEM_invalidS1Array
+  symbol: invalidS1Array[j]
+  why: HostIR writers_of(invalidS1Array)=0; interval_union_covers cannot attach until
+    array write events exist (float32 Varlen must stay refused)
+- id: VAR_UNDECIDED_CheckExceedL2Cache
+  symbol: CheckExceedL2Cache()
+  why: needs an L2 footprint / cardinality model; used for swizzle
+- id: VAR_AUX_deterSparseType
+  symbol: fBaseParams.deterSparseType
+  why: tied to DeterType leaf-collapse demotion; keep overapproximated
+note: U_sound - R = empty only when open_gap_sound == 0. Residual blockers are HostIR/model
+  gaps, not recipe misses.
+artifact_identity:
+  run_id: RUN_20260803_162337_29193cd2
+  workflow_id: tk-cover
+  phase: certify
+  action_id: coverage_gate
+  actor_id: deterministic-uo-engine
+  role_id: deterministic_engine
+  action_session_id: ACTION_SESSION_093afa250797233e
+  prepare_nonce_hash: d7476d3aa63fad5359632f85798329608a223c4d03b02b2be581178853f19fc5
+  lease_id: LEASE_68ddbfe14057
+  execution_mode: deterministic
+  produced_by: pilot-finalizer
+run_id: RUN_20260803_162337_29193cd2
+workflow_id: tk-cover
+action_id: coverage_gate
+actor_id: deterministic-uo-engine

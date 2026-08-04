@@ -1,0 +1,23 @@
+ok: true
+yaml: D:\TEST\AscendC-Pilot\.ascendc-pilot\uo\ir\host_codemap.yaml
+writes: 393
+calls: 4160
+sqlite: D:\TEST\AscendC-Pilot\.ascendc-pilot\uo\indexes\host_codemap.sqlite
+writer_rows: 393
+caller_rows: 4160
+artifact_identity:
+  run_id: RUN_20260803_162337_29193cd2
+  workflow_id: tk-cover
+  phase: derive
+  action_id: export_codemap
+  actor_id: deterministic-uo-engine
+  role_id: deterministic_engine
+  action_session_id: ACTION_SESSION_626219801d5576a3
+  prepare_nonce_hash: 488330af1215dbcbe44b4185513b02dd3100d42105601079b0dc5ce1981731c7
+  lease_id: LEASE_9d3013aa7427
+  execution_mode: deterministic
+  produced_by: pilot-finalizer
+run_id: RUN_20260803_162337_29193cd2
+workflow_id: tk-cover
+action_id: export_codemap
+actor_id: deterministic-uo-engine
