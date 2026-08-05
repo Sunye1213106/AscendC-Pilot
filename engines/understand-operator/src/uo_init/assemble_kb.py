@@ -30,6 +30,78 @@ def _as_minted(item: MintedKernelBranch | str | dict[str, Any]) -> MintedKernelB
     return None
 
 
+def _add_kernel_ir(
+    kb: KnowledgeBase,
+    ir,
+    *,
+    op_root: str = "",
+    dimensions: list[str] | None = None,
+) -> None:
+    """Land the pre-instantiation `if constexpr` branches and what decides them.
+
+    Must run after the key space is materialized: the dimension nodes these
+    edges point at are created there, and a dangling edge fails
+    `check_invariants`.
+    """
+    from uo_init.ids import named_id
+
+    ir.mint_ids(op_root)
+    for b in ir.branches:
+        if not b.id:
+            continue
+        ev = Evidence.at(b.file, b.line, snippet=(b.condition or b.id)[:200])
+        kb.add_node(
+            Node(
+                id=b.id,
+                kind="KernelBranch",
+                layer="kernel",
+                status=STATUS_EXTRACTED,
+                confidence=1.0,
+                evidence=[ev],
+                data={
+                    "side": "kernel",
+                    "ctrl_kind": "if_constexpr",
+                    "stage": "constexpr",
+                    "condition": b.condition,
+                    "function": b.function,
+                    "dimensions": list(b.dimensions),
+                    "derived": list(b.derived),
+                    "symbols": list(b.symbols),
+                    # Not `variants`: the TG branch contract already uses that
+                    # name for guard polarity. These are dtype macro values.
+                    "dtype_variants": list(b.variants),
+                },
+            )
+        )
+        for dim in (*b.dimensions, *b.derived):
+            kid = named_id("TilingKeyDim", dim)
+            if kid not in kb.nodes:
+                continue
+            kb.link(
+                "controls",
+                kid,
+                b.id,
+                data={
+                    "exactness": "exact" if dim in b.dimensions else "derived",
+                },
+            )
+    kb.notes["kernel_ir"] = {
+        "variants": list(ir.variants),
+        "branch_count": len(ir.branches),
+        "by_dimension": ir.by_dimension(),
+        "variant_only": len(ir.variant_only()),
+        # Reported, never guessed at: a dimension with no branch either decides
+        # nothing at compile time or was renamed on the way into the inner
+        # template. Matching on name similarity would attach branches to the
+        # wrong dimension, which is worse than a missing one.
+        "silent_dimensions": ir.silent_dimensions(list(dimensions or ())),
+        "unmapped_symbols": [
+            {"symbol": sym, "count": n} for sym, n in ir.unmapped_symbols(limit=50)
+        ],
+        "notes": list(ir.notes),
+    }
+
+
 def assemble_kb(
     *,
     op_name: str,
@@ -41,11 +113,16 @@ def assemble_kb(
     binding: BindingResult | None = None,
     kernel_branches: Iterable[MintedKernelBranch | str | dict[str, Any]] = (),
     kernel_branch_ids: Iterable[str] | None = None,
+    kernel_ir=None,
+    op_root: str = "",
     notes: dict[str, Any] | None = None,
     tpl_schema=None,
     var_model=None,
     derivation=None,
     tpl_header: str = "",
+    tiling_data_ir=None,
+    host_ir=None,
+    op_spec=None,
 ) -> KnowledgeBase:
     """Build an in-memory KB ready for :func:`export_kb`."""
     kb = KnowledgeBase(op_name=op_name, architecture=architecture)
@@ -147,7 +224,75 @@ def assemble_kb(
             derivation=derivation,
             header_path=tpl_header,
         )
+    if kernel_ir is not None:
+        _add_kernel_ir(
+            kb,
+            kernel_ir,
+            op_root=op_root,
+            dimensions=(
+                [d.name for d in tpl_schema.dims] if tpl_schema is not None else None
+            ),
+        )
+    # TilingData + call graph: join declared fields to host writers / kernel
+    # readers so AI can answer "what does this field affect" from the KB.
+    from uo_init.tiling_data_ir import (
+        build_tiling_data_ir,
+        materialize_call_graph,
+        materialize_tiling_data,
+    )
+
+    td_ir = tiling_data_ir
+    if td_ir is None and op_spec is not None:
+        td_ir = build_tiling_data_ir(op_spec, host_ir, op_root=op_root)
+    if td_ir is not None:
+        materialize_tiling_data(kb, td_ir, op_root=op_root)
+    if host_ir is not None:
+        materialize_call_graph(kb, host_ir, op_root=op_root)
+    # Named constants already mined into var_model — promote any that are not
+    # yet nodes so constexpr / #define / platform locks are queryable.
+    if var_model is not None:
+        _add_named_constants(kb, var_model, op_root=op_root)
     return kb
+
+
+def _add_named_constants(kb: KnowledgeBase, var_model, *, op_root: str = "") -> None:
+    """Ensure ``var_model.named_constants`` appear as Variable nodes."""
+    from uo_init.ids import named_id
+
+    del op_root
+    constants = getattr(var_model, "named_constants", None) or {}
+    added = 0
+    for name, value in sorted(constants.items(), key=lambda kv: str(kv[0])):
+        # Skip scoped duplicates like ge::DT_FLOAT when DT_FLOAT already exists.
+        short = str(name).split("::")[-1]
+        vid = named_id("Variable", f"CONST_{short}")
+        if vid in kb.nodes:
+            # Keep the first value; still record alias in data if different name.
+            continue
+        ev = Evidence.at("<named_constant>", 0, snippet=f"{name}={value}"[:200])
+        kb.add_node(
+            Node(
+                id=vid,
+                kind="Variable",
+                name=short,
+                layer="tiling",
+                status=STATUS_EXTRACTED,
+                confidence=1.0,
+                evidence=[ev],
+                data={
+                    "value_type": "named_constant",
+                    "origin": "variable_model",
+                    "value": value,
+                    "symbol": name,
+                },
+            )
+        )
+        added += 1
+    kb.notes.setdefault("named_constants", {})
+    kb.notes["named_constants"] = {
+        "count": added,
+        "source_count": len(constants),
+    }
 
 
 def export_operator_kb(
@@ -203,38 +348,110 @@ def _proto_of(spec) -> Path | None:
     return found[0] if found else None
 
 
+def _production_controls_from_host_ir(host_ir, targets: list[Path]) -> list:
+    """PRODUCTION control nodes already walked into HostIR, plus invoke macros.
+
+    Replaces a second ``inventory_clang`` pass over the same translation units.
+    HostIR deduplicates cross-TU header controls; the old inventory summed per
+    TU and double-counted shared headers.
+    """
+    from uo_init.branch_inventory import _invoke_nodes
+
+    nodes = [
+        n
+        for n in (getattr(host_ir, "controls", None) or [])
+        if getattr(n, "universe", "PRODUCTION") == "PRODUCTION"
+    ]
+    # Stable order for ordinal assignment downstream.
+    nodes.sort(key=lambda n: (n.file, n.line, getattr(n, "column", 0), n.kind, n.id))
+    # Macro dispatch sites clang expands away — same recovery as inventory_clang.
+    seen_ids = {n.id for n in nodes}
+    for path in targets:
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for n in _invoke_nodes(text, str(path).replace("\\", "/"), {}):
+            if n.id not in seen_ids:
+                seen_ids.add(n.id)
+                nodes.append(n)
+    return nodes
+
+
+def _select_closure_nodes(
+    host_ir,
+    targets: list[Path],
+    *,
+    mode: str,
+    max_nodes: int = 96,
+) -> list:
+    """Pick which control nodes pay for deep resolve under a wall-time budget.
+
+    ``full`` — every PRODUCTION control (minutes on FAG; opt-in only).
+    ``keypath`` — controls in functions that write tiling / call setters, capped.
+    ``off`` — nothing.
+    """
+    nodes = _production_controls_from_host_ir(host_ir, targets)
+    mode = (mode or "off").strip().lower()
+    if mode in {"off", "none", "0", "false"}:
+        return []
+    if mode in {"full", "all", "true", "1"}:
+        return nodes
+    # keypath (default when closure is requested without "full")
+    writer_fns = {
+        str(getattr(w, "function", "") or "")
+        for w in (getattr(host_ir, "writes", None) or [])
+        if getattr(w, "function", None)
+    }
+    for site in getattr(host_ir, "call_sites", None) or []:
+        cal = str(getattr(site, "callee", "") or "")
+        if cal.startswith("set_") or "Tiling" in cal or "TilingKey" in cal:
+            writer_fns.add(str(getattr(site, "caller", "") or ""))
+    # Prefer branchy controls; loops are numerous and rarely TG knobs.
+    ranked = [
+        n
+        for n in nodes
+        if (n.function in writer_fns)
+        and n.kind in {"if", "if_constexpr", "switch", "ternary", "guard_clause"}
+    ]
+    if not ranked:
+        ranked = [n for n in nodes if n.function in writer_fns]
+    return ranked[: max(0, int(max_nodes))]
+
+
 def extract_host_bundle(
     *,
     op_dir: str | Path,
     cann_root: str,
     ops_root: str | None = None,
     arch_dir: str | None = None,
-    with_closure: bool = False,
+    with_closure: bool | str = False,
     with_kernel: bool = True,
+    closure_mode: str | None = None,
+    closure_max_nodes: int = 10**9,
 ) -> dict[str, Any]:
     """Host-only analyse → metrics/gap/binding (no FAG defaults).
 
-    Stops by default once the facts are in — the IR, the resolver, the
-    variable model and the key binding — and skips the controllability closure
-    over every branch in the operator. That closure is five sixths of the run:
-    a second libclang parse of every translation unit, then several hundred
-    branches analysed one at a time. Key-field derivation reads none of it, so
-    a caller after the facts alone was waiting four and a half minutes for a
-    result it then dropped.
+    Library default is ``closure_mode=off`` so callers that only need HostIR /
+    binding (e.g. key derivation) do not pay. ``extract_host`` passes
+    ``closure_mode=full`` so the uo-init product path keeps complete closure.
 
-    `with_closure=True` is for the callers that read `metrics` or `gap`, which
-    are `None` without it.
+    Speedups must come from removing duplicate work (re-inventory of the same
+    TUs, re-parse / re-normalize of the same guards), not from dropping closure
+    on the product path.
 
-    `with_kernel=False` skips the kernel parse. The kernel is not needed to
-    derive a key, only to say which code a key selects, and it costs one parse
-    per dtype variant.
+    Closure modes (``closure_mode`` overrides ``with_closure``):
+    - ``full``: every PRODUCTION control (uo-init extract_host default).
+    - ``keypath``: tiling-writer functions only (capped by ``closure_max_nodes``).
+    - ``off``: skip controllability.
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     from uo_init.api_contract import extract_api_contract
-    from uo_init.branch_inventory import inventory_clang
     from uo_init.build_context import BuildContext
-    from uo_init.controllability import ControllabilityBuilder, measure
+    from uo_init.controllability import ControllabilityBuilder, ClosureMetrics, measure
     from uo_init.decl_facts import extract_decl_facts
-    from uo_init.gaps import build_gap_report
+    from uo_init.gaps import GapReport, build_gap_report
     from uo_init.host_ir import build_host_ir
     from uo_init.kernel_ir import build_kernel_ir
     from uo_init.op_spec import discover
@@ -245,133 +462,210 @@ def extract_host_bundle(
     from uo_init.variable_model import apply_platform_profile, build_variable_model
     from uo_init.platform_ini import load_platform_profile
 
-    spec = discover(op_dir, arch_dir=arch_dir)
-    ctx = BuildContext.load(
-        cann_root=cann_root,
-        ops_root=ops_root,
-        op_dir=str(spec.op_dir),
-        arch_dir=spec.arch_dir,
-    )
-    targets = [p for p in spec.host_targets if p.exists()]
-    ir = build_host_ir(
-        list(targets), ctx=ctx, op_needle=spec.op_needle, scope=spec.scope
-    )
-    resolver = SourceResolver(host_ir=ir)
-    schema = parse_file(spec.tiling_key_header) if spec.tiling_key_header else None
-    enums: dict = {}
-    header_texts: list[str] = []
-    header_paths: list[Path] = []
-    for h in list((spec.host_root / (spec.arch_dir or ".")).glob("*.h")) + list(
-        spec.host_root.glob("*.h")
-    ):
-        header_paths.append(h)
-    # Kernel tiling-data headers often hold shared constexprs (e.g. prefix lengths)
-    # referenced from host guards.
-    kernel_arch = spec.op_dir / "op_kernel" / (spec.arch_dir or ".")
-    if kernel_arch.is_dir():
-        header_paths.extend(kernel_arch.glob("*.h"))
-    # Shared tiling enums (DtypeEnum / OptionEnum / …) live under the ops
-    # tree's common include, not the operator's own headers. Without them
-    # named-constant fold cannot map ENABLE / FLOAT32 onto TPL domains.
-    ops = Path(ctx.ops_root) if ctx.ops_root else None
-    if ops and ops.is_dir():
-        common_host = ops / "common" / "include" / "op_host"
-        if common_host.is_dir():
-            header_paths.extend(common_host.glob("*.h"))
-    # Host .cpp also carries constexprs used as key literals (e.g. TILING_KEY_1
-    # on the empty-tensor path). Enums are rare there; only the constexpr pass
-    # needs the text.
-    cpp_texts: list[str] = []
-    for cpp in list((spec.host_root / (spec.arch_dir or ".")).glob("*.cpp")) + list(
-        spec.host_root.glob("*.cpp")
-    ):
-        if cpp.is_file():
-            cpp_texts.append(cpp.read_text(encoding="utf-8", errors="replace"))
-    seen_headers: set[Path] = set()
-    for h in header_paths:
-        key = h.resolve()
-        if key in seen_headers or not h.is_file():
-            continue
-        seen_headers.add(key)
-        text = h.read_text(encoding="utf-8", errors="replace")
-        header_texts.append(text)
-        enums.update(parse_enums(text))
-    model = build_variable_model(
-        opdef_path=spec.opdef,
-        tpl_schema=schema,
-        tpl_header=str(spec.tiling_key_header or ""),
-        enums=enums,
-        header_texts=list(header_texts) + cpp_texts,
-    )
-    resolver.adopt(model)
-    platform_error = ""
-    try:
-        profile = load_platform_profile(
-            cann_root,
-            arch_dir=spec.arch_dir or "arch35",
-            platform_sku=None,
-        )
-        apply_platform_profile(model, profile)
-    except FileNotFoundError as exc:
-        platform_error = str(exc)
-    analyses: list = []
-    records: list = []
-    metrics = None
-    gap = None
-    if with_closure:
-        builder = ControllabilityBuilder(
-            resolver, model, side="host", op_root=str(spec.op_dir)
-        )
-        # Parallel TU inventory: each file is an independent libclang parse.
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+    if closure_mode is not None:
+        mode = str(closure_mode).strip().lower()
+    elif isinstance(with_closure, str):
+        mode = with_closure.strip().lower() or "off"
+    elif with_closure:
+        mode = "full"
+    else:
+        mode = "off"
+    if mode in {"true", "1", "yes"}:
+        mode = "full"
+    if mode in {"false", "0", "no", "none"}:
+        mode = "off"
 
-        def _inv(path: Path):
-            return inventory_clang(path, ctx, op_needle=spec.op_needle).production()
+    from uo_init.timing import PhaseTimer, log as _tlog
 
-        nodes: list = []
-        if len(targets) <= 1:
-            for t in targets:
-                nodes.extend(_inv(t))
-        else:
-            with ThreadPoolExecutor(max_workers=len(targets)) as pool:
-                futs = [pool.submit(_inv, t) for t in targets]
-                for fut in as_completed(futs):
-                    nodes.extend(fut.result())
-        analyses, records = builder.build(nodes)
-        metrics = measure(analyses, records)
-        gap = build_gap_report(analyses)
-    # What the operator declares, what the API refuses, and what the kernel
-    # branches on. None of it is host tiling, and all of it constrains the
-    # keys tiling can produce: the declarations pair the dtypes, the API
-    # states which inputs may arrive together, and the kernel says which
-    # dimension decides which code.
-    facts = extract_decl_facts(spec.opdef, _proto_of(spec))
-    contract = extract_api_contract(spec, ctx, facts)
-    api_resolver = None
-    if contract.ir is not None:
-        # Its own resolver: `qDtype` is a local of the API layer and means
-        # nothing to the host one.
-        api_resolver = SourceResolver(host_ir=contract.ir)
-        api_resolver.adopt(model)
-    kernel = None
-    if with_kernel:
-        kernel = build_kernel_ir(
+    timer = PhaseTimer()
+    _tlog(f"extract_host_bundle start  closure_mode={mode} with_kernel={with_kernel}")
+
+    with timer.span("discover"):
+        spec = discover(op_dir, arch_dir=arch_dir)
+        targets = [p for p in spec.host_targets if p.exists()]
+    _tlog(f"  targets={[p.name for p in targets]}")
+
+    with timer.span("BuildContext.load"):
+        ctx = BuildContext.load(
+            cann_root=cann_root,
+            ops_root=ops_root,
+            op_dir=str(spec.op_dir),
+            arch_dir=spec.arch_dir,
+        )
+
+    with timer.span("build_host_ir", tus=len(targets)):
+        ir = build_host_ir(
+            list(targets), ctx=ctx, op_needle=spec.op_needle, scope=spec.scope
+        )
+    _tlog(
+        f"  host_ir controls={len(ir.controls)} writes={len(ir.writes)} "
+        f"local_writes={len(ir.local_writes)} calls={len(ir.call_sites)}"
+    )
+
+    with timer.span("var_model+platform"):
+        resolver = SourceResolver(host_ir=ir)
+        schema = parse_file(spec.tiling_key_header) if spec.tiling_key_header else None
+        enums: dict = {}
+        header_texts: list[str] = []
+        header_paths: list[Path] = []
+        for h in list((spec.host_root / (spec.arch_dir or ".")).glob("*.h")) + list(
+            spec.host_root.glob("*.h")
+        ):
+            header_paths.append(h)
+        # Kernel tiling-data headers often hold shared constexprs (e.g. prefix lengths)
+        # referenced from host guards.
+        kernel_arch = spec.op_dir / "op_kernel" / (spec.arch_dir or ".")
+        if kernel_arch.is_dir():
+            header_paths.extend(kernel_arch.glob("*.h"))
+        # Shared tiling enums (DtypeEnum / OptionEnum / …) live under the ops
+        # tree's common include, not the operator's own headers. Without them
+        # named-constant fold cannot map ENABLE / FLOAT32 onto TPL domains.
+        ops = Path(ctx.ops_root) if ctx.ops_root else None
+        if ops and ops.is_dir():
+            common_host = ops / "common" / "include" / "op_host"
+            if common_host.is_dir():
+                header_paths.extend(common_host.glob("*.h"))
+        # Host .cpp also carries constexprs used as key literals (e.g. TILING_KEY_1
+        # on the empty-tensor path). Enums are rare there; only the constexpr pass
+        # needs the text.
+        cpp_texts: list[str] = []
+        for cpp in list((spec.host_root / (spec.arch_dir or ".")).glob("*.cpp")) + list(
+            spec.host_root.glob("*.cpp")
+        ):
+            if cpp.is_file():
+                cpp_texts.append(cpp.read_text(encoding="utf-8", errors="replace"))
+        seen_headers: set[Path] = set()
+        for h in header_paths:
+            key = h.resolve()
+            if key in seen_headers or not h.is_file():
+                continue
+            seen_headers.add(key)
+            text = h.read_text(encoding="utf-8", errors="replace")
+            header_texts.append(text)
+            enums.update(parse_enums(text))
+        model = build_variable_model(
+            opdef_path=spec.opdef,
+            tpl_schema=schema,
+            tpl_header=str(spec.tiling_key_header or ""),
+            enums=enums,
+            header_texts=list(header_texts) + cpp_texts,
+        )
+        resolver.adopt(model)
+        platform_error = ""
+        try:
+            profile = load_platform_profile(
+                cann_root,
+                arch_dir=spec.arch_dir or "arch35",
+                platform_sku=None,
+            )
+            apply_platform_profile(model, profile)
+        except FileNotFoundError as exc:
+            platform_error = str(exc)
+
+    # Clang-heavy legs that do not depend on each other: overlap only these.
+    # Do NOT overlap full Python controllability with them — that fights the
+    # GIL and made FAG slower (540s → 683s).
+    import time as _time
+
+    def _run_api():
+        t0 = _time.perf_counter()
+        _tlog("api_contract.start")
+        local_facts = extract_decl_facts(spec.opdef, _proto_of(spec))
+        t_facts = _time.perf_counter() - t0
+        t1 = _time.perf_counter()
+        local_contract = extract_api_contract(spec, ctx, local_facts)
+        t_contract = _time.perf_counter() - t1
+        local_resolver = None
+        if local_contract.ir is not None:
+            local_resolver = SourceResolver(host_ir=local_contract.ir)
+            local_resolver.adopt(model)
+        dt = _time.perf_counter() - t0
+        _tlog(
+            f"{dt:7.3f}s{' SLOW' if dt > 180 else ''}  api_contract.done  "
+            f"facts={t_facts:.3f}s contract={t_contract:.3f}s "
+            f"premises={len(getattr(local_contract, 'premises', []) or [])}"
+        )
+        return local_facts, local_contract, local_resolver
+
+    def _run_kernel():
+        if not with_kernel:
+            return None
+        t0 = _time.perf_counter()
+        _tlog("kernel_ir.start")
+        out = build_kernel_ir(
             spec, ctx, dimensions=[d.name for d in schema.dims] if schema else []
         )
-    binding = None
-    if targets and spec.tiling_key_header and spec.kernel_entry:
+        dt = _time.perf_counter() - t0
+        _tlog(
+            f"{dt:7.3f}s{' SLOW' if dt > 180 else ''}  kernel_ir.done  "
+            f"branches={len(getattr(out, 'branches', []) or [])}"
+        )
+        return out
+
+    def _run_bind():
+        if not (targets and spec.tiling_key_header and spec.kernel_entry):
+            return None, "missing host tiling / key header / kernel entry"
+        t0 = _time.perf_counter()
         try:
-            # All host targets: the encode site is chosen by DECL arity and by
-            # being host-derived, not by filename.
-            binding = bind_from_spec(spec, targets)
-            binding = merge_literal_encode_alts(binding, ir)
-        except Exception as exc:  # noqa: BLE001 — surface in notes, don't abort export
-            binding = None
-            bind_error = str(exc)
-        else:
-            bind_error = ""
+            local_binding = bind_from_spec(spec, targets)
+            local_binding = merge_literal_encode_alts(local_binding, ir)
+            dt = _time.perf_counter() - t0
+            _tlog(f"{dt:7.3f}s  bind.done  bindings={len(local_binding.bindings)}")
+            return local_binding, ""
+        except Exception as exc:  # noqa: BLE001
+            dt = _time.perf_counter() - t0
+            _tlog(f"{dt:7.3f}s  bind.fail  err={exc}")
+            return None, str(exc)
+
+    with timer.span("api||kernel||bind"):
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            fut_api = pool.submit(_run_api)
+            fut_kernel = pool.submit(_run_kernel)
+            fut_bind = pool.submit(_run_bind)
+            facts, contract, api_resolver = fut_api.result()
+            kernel = fut_kernel.result()
+            binding, bind_error = fut_bind.result()
+    _tlog(
+        f"  api_premises={len(getattr(contract, 'premises', []) or [])} "
+        f"kernel_branches={len(getattr(kernel, 'branches', []) or [])} "
+        f"bindings={len(binding.bindings) if binding else 0}"
+    )
+
+    analyses: list = []
+    records: list = []
+    metrics: ClosureMetrics | None = None
+    gap: GapReport | None = None
+    closure_selected = 0
+    if mode != "off":
+        with timer.span("controllability", mode=mode):
+            builder = ControllabilityBuilder(
+                resolver, model, side="host", op_root=str(spec.op_dir)
+            )
+            nodes = _select_closure_nodes(
+                ir, targets, mode=mode, max_nodes=closure_max_nodes
+            )
+            closure_selected = len(nodes)
+            _tlog(f"  closure_nodes={closure_selected} mode={mode}")
+            analyses, records = builder.build(nodes)
+            metrics = measure(analyses, records)
+            gap = build_gap_report(analyses)
+        _tlog(
+            f"  closure={metrics.source_closure:.3f} blockers={len(gap.blockers)} "
+            f"core_cache={len(builder._core_cache)}"
+        )
     else:
-        bind_error = "missing host tiling / key header / kernel entry"
+        metrics = ClosureMetrics()
+        gap = GapReport()
+        _tlog("  controllability skipped (mode=off)")
+
+    timing = timer.summary()
+    _tlog(
+        f"extract_host_bundle TOTAL {timing['total_seconds']:.1f}s  "
+        f"slow={timing['slow_phases'] or 'none'}"
+    )
+    for row in timing["phases"]:
+        _tlog(f"  summary  {row['seconds']:7.3f}s  {row['phase']}")
+
     return {
         "spec": spec,
         "ctx": ctx,
@@ -394,6 +688,9 @@ def extract_host_bundle(
         "resolver": resolver,
         "platform_error": platform_error,
         "platform_profile": getattr(model, "platform_profile", None),
+        "closure_mode": mode,
+        "closure_selected": closure_selected,
+        "timing": timing,
     }
 
 
@@ -488,11 +785,15 @@ def export_operator_closure(
         gap=bundle["gap"],
         binding=bundle["binding"],
         kernel_branches=kbr,
+        kernel_ir=bundle.get("kernel_ir"),
+        op_root=str(spec.op_dir or ""),
         notes=notes,
         tpl_schema=bundle.get("tpl_schema"),
         var_model=bundle.get("var_model"),
         derivation=bundle.get("host_derivation"),
         tpl_header=bundle.get("tpl_header") or "",
+        host_ir=bundle.get("host_ir"),
+        op_spec=spec,
     )
     receipt = export_operator_kb(kb, spec.op_dir)
     receipt["source_closure"] = bundle["metrics"].source_closure

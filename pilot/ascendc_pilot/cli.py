@@ -304,6 +304,24 @@ def main(argv: list[str] | None = None) -> int:
     p_uq.add_argument("--op-name", default="")
     p_uq.add_argument("--pattern", default="")
     p_uq.add_argument("--target", default="")
+    p_uq.add_argument(
+        "--mode",
+        default="search",
+        choices=(
+            "search",
+            "constraints",
+            "neighbors",
+            "impact",
+            "field",
+            "branches",
+            "templates",
+        ),
+        help="search|constraints|neighbors|impact|field|branches|templates",
+    )
+    p_uq.add_argument("--file", default="", help="impact 模式：源码相对路径")
+    p_uq.add_argument("--line", type=int, default=0, help="impact 模式：起始行")
+    p_uq.add_argument("--line-end", type=int, default=0, help="impact 模式：结束行（默认=--line）")
+    p_uq.add_argument("--kind", default="", help="search 时限定 node kind，逗号分隔")
     p_uq.add_argument("--depth", type=int, default=1)
     p_uq.add_argument("--limit", type=int, default=50)
     p_uq.add_argument("--relation-type", default="")
@@ -313,13 +331,19 @@ def main(argv: list[str] | None = None) -> int:
     p_uo_sub = p_uo.add_subparsers(dest="uo_cmd", required=True)
     for explain_name, help_zh in (
         ("explain-host-value", "解释 HostValue 推导路径"),
-        ("explain-tiling-field", "解释 TilingField 写入链"),
+        ("explain-tiling-field", "解释 TilingField 写入/读点与影响范围"),
         ("explain-key-dimension", "解释 KeyDimension 组成"),
+        ("impact", "按源码位置查影响子图"),
+        ("search", "KB 全文/子串检索"),
     ):
         p_ex = p_uo_sub.add_parser(explain_name, help=help_zh)
-        p_ex.add_argument("entity_id", help="实体 id / qualified_name / field_path / dimension_name")
+        p_ex.add_argument("entity_id", nargs="?", default="", help="实体 id / 字段名 / 检索词")
         p_ex.add_argument("--project", type=Path, default=Path.cwd())
         p_ex.add_argument("--op-name", default="")
+        p_ex.add_argument("--file", default="")
+        p_ex.add_argument("--line", type=int, default=0)
+        p_ex.add_argument("--line-end", type=int, default=0)
+        p_ex.add_argument("--limit", type=int, default=50)
 
     p_cbm = sub.add_parser(
         "cbm",
@@ -799,29 +823,66 @@ def main(argv: list[str] | None = None) -> int:
                 }
             )
             return 0 if db.is_file() else 1
-        pattern = str(args.pattern or "").strip()
-        if not pattern:
+        pattern = str(args.pattern or args.target or "").strip()
+        mode = str(getattr(args, "mode", "search") or "search")
+        if mode != "impact" and not pattern:
             print_json(
-                {"ok": False, "error": "pattern_required", "message_zh": "非 --status-only 时需要 --pattern"}
+                {
+                    "ok": False,
+                    "error": "pattern_required",
+                    "message_zh": "非 --status-only 时需要 --pattern（impact 模式用 --file/--line）",
+                }
             )
             return 2
         try:
             q = open_query(uo)
-            # Narrow CLI: treat pattern as entity id for constraints_for.
-            rows = q.constraints_for(pattern)
-            if not rows and hasattr(q, "entities_in_files"):
-                rows = q.entities_in_files(pattern)  # type: ignore[call-arg]
-            print_json(
-                {
+            limit = int(args.limit or 50)
+            if mode == "constraints":
+                rows = q.constraints_for(pattern)
+                payload = {"ok": True, "mode": mode, "pattern": pattern, "count": len(rows), "rows": rows[:limit]}
+            elif mode == "neighbors":
+                rows = q.neighbors(pattern, depth=int(args.depth or 1), limit=limit)
+                payload = {"ok": True, "mode": mode, "pattern": pattern, "count": len(rows), "rows": rows}
+            elif mode == "impact":
+                f = str(getattr(args, "file", "") or pattern)
+                line = int(getattr(args, "line", 0) or 0)
+                line_end = int(getattr(args, "line_end", 0) or line or 0)
+                if not f or not line:
+                    print_json({"ok": False, "error": "impact_needs_file_line"})
+                    return 2
+                rows = q.impact_of(f, (line, line_end or line))
+                payload = {
                     "ok": True,
-                    "pattern": pattern,
+                    "mode": mode,
+                    "file": f,
+                    "line": line,
+                    "line_end": line_end or line,
                     "count": len(rows),
-                    "rows": rows[: int(args.limit or 50)],
-                    "engine": "uo_init.uo_query",
-                },
-                default=str,
-            )
-            return 0
+                    "rows": rows[:limit],
+                }
+            elif mode == "field":
+                payload = q.field_impact(pattern)
+                payload["mode"] = mode
+            elif mode == "branches":
+                rows = q.branches_for_key(pattern)
+                payload = {"ok": True, "mode": mode, "pattern": pattern, "count": len(rows), "rows": rows[:limit]}
+            elif mode == "templates":
+                rows = q.templates_for_key(pattern)
+                payload = {"ok": True, "mode": mode, "pattern": pattern, "count": len(rows), "rows": rows[:limit]}
+            else:
+                kinds = [k for k in str(getattr(args, "kind", "") or "").split(",") if k.strip()]
+                rows = q.search(pattern, kinds=kinds, limit=limit)
+                payload = {
+                    "ok": True,
+                    "mode": "search",
+                    "pattern": pattern,
+                    "kinds": kinds,
+                    "count": len(rows),
+                    "rows": rows,
+                }
+            payload["engine"] = "uo_init.uo_query"
+            print_json(payload, default=str)
+            return 0 if payload.get("ok") else 1
         except Exception as exc:  # noqa: BLE001
             print_json({"ok": False, "error": str(exc)[:300]})
             return 1
@@ -837,7 +898,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.uo_cmd == "explain-host-value":
                 result = {"ok": True, "entity_id": eid, "constraints": q.constraints_for(eid)}
             elif args.uo_cmd == "explain-tiling-field":
-                result = {"ok": True, "entity_id": eid, "constraints": q.constraints_for(eid)}
+                result = q.field_impact(eid)
+                result["entity_id"] = eid
             elif args.uo_cmd == "explain-key-dimension":
                 result = {
                     "ok": True,
@@ -845,6 +907,24 @@ def main(argv: list[str] | None = None) -> int:
                     "branches": q.branches_for_key(eid) if hasattr(q, "branches_for_key") else [],
                     "templates": q.templates_for_key(eid) if hasattr(q, "templates_for_key") else [],
                 }
+            elif args.uo_cmd == "impact":
+                f = str(getattr(args, "file", "") or "")
+                line = int(getattr(args, "line", 0) or 0)
+                line_end = int(getattr(args, "line_end", 0) or line or 0)
+                if not f or not line:
+                    result = {"ok": False, "error": "impact_needs_file_line"}
+                else:
+                    rows = q.impact_of(f, (line, line_end or line))
+                    result = {
+                        "ok": True,
+                        "file": f,
+                        "line": line,
+                        "count": len(rows),
+                        "rows": rows[: int(getattr(args, "limit", 50) or 50)],
+                    }
+            elif args.uo_cmd == "search":
+                rows = q.search(eid, limit=int(getattr(args, "limit", 50) or 50))
+                result = {"ok": True, "pattern": eid, "count": len(rows), "rows": rows}
             else:
                 print_json({"ok": False, "error": f"未知 uo 子命令: {args.uo_cmd}"})
                 return 2

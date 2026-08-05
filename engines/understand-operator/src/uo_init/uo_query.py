@@ -109,7 +109,7 @@ class UoQuery:
               SELECT DISTINCT ne.node_id
               FROM evidence ev
               JOIN node_evidence ne ON ne.evidence_id=ev.id
-              WHERE replace(ev.file, '\\', '/')=replace(?, '\\', '/')
+              WHERE replace(ev.file, '\\', '/') LIKE '%' || replace(?, '\\', '/')
                 AND ev.line_end>=? AND ev.line_start<=?
               UNION
               SELECT e.dst FROM edge e JOIN hit ON e.src=hit.id
@@ -121,8 +121,156 @@ class UoQuery:
             LEFT JOIN node_evidence ne ON ne.node_id=n.id
             GROUP BY n.id ORDER BY n.kind, n.id
             """,
-            (file, start, end),
+            (file.replace("\\", "/"), start, end),
         )
+
+    def search(
+        self, pattern: str, *, kinds: Iterable[str] = (), limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Substring search over node id/name/data JSON and evidence snippets."""
+        needle = f"%{pattern}%"
+        kind_filter = ""
+        params: list[Any] = [needle, needle, needle, needle]
+        kinds_list = [str(k) for k in kinds if str(k)]
+        if kinds_list:
+            placeholders = ",".join("?" for _ in kinds_list)
+            kind_filter = f" AND n.kind IN ({placeholders})"
+            params.extend(kinds_list)
+        params.append(int(limit))
+        return self._all(
+            f"""
+            SELECT DISTINCT n.*, group_concat(ne.evidence_id) AS evidence_refs
+            FROM node n
+            LEFT JOIN node_evidence ne ON ne.node_id=n.id
+            LEFT JOIN evidence ev ON ev.id=ne.evidence_id
+            WHERE n.id LIKE ?
+               OR IFNULL(n.name,'') LIKE ?
+               OR n.data LIKE ?
+               OR IFNULL(ev.snippet,'') LIKE ?
+               {kind_filter}
+            GROUP BY n.id
+            ORDER BY n.kind, n.id
+            LIMIT ?
+            """,
+            params,
+        )
+
+    def neighbors(
+        self, entity_id: str, *, depth: int = 1, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        """Undirected neighborhood around a node (edges + endpoints)."""
+        depth = max(1, min(int(depth), 4))
+        return self._all(
+            """
+            WITH RECURSIVE reach(id, dist) AS (
+              SELECT ?, 0
+              UNION
+              SELECT e.dst, r.dist+1 FROM edge e JOIN reach r ON e.src=r.id
+               WHERE r.dist < ?
+              UNION
+              SELECT e.src, r.dist+1 FROM edge e JOIN reach r ON e.dst=r.id
+               WHERE r.dist < ?
+            )
+            SELECT n.*, r.dist AS distance,
+                   group_concat(ne.evidence_id) AS evidence_refs
+            FROM node n
+            JOIN reach r ON r.id=n.id
+            LEFT JOIN node_evidence ne ON ne.node_id=n.id
+            GROUP BY n.id
+            ORDER BY r.dist, n.kind, n.id
+            LIMIT ?
+            """,
+            (entity_id, depth, depth, int(limit)),
+        )
+
+    def edges_of(
+        self, entity_id: str, *, kind: str = "", limit: int = 100
+    ) -> list[dict[str, Any]]:
+        if kind:
+            return self._all(
+                """
+                SELECT * FROM edge
+                WHERE (src=? OR dst=?) AND kind=?
+                ORDER BY kind, src, dst LIMIT ?
+                """,
+                (entity_id, entity_id, kind, int(limit)),
+            )
+        return self._all(
+            """
+            SELECT * FROM edge
+            WHERE src=? OR dst=?
+            ORDER BY kind, src, dst LIMIT ?
+            """,
+            (entity_id, entity_id, int(limit)),
+        )
+
+    def tiling_field(self, name_or_id: str) -> list[dict[str, Any]]:
+        """Resolve a TilingData field by id, qualified name, or short name."""
+        key = str(name_or_id or "").strip()
+        if not key:
+            return []
+        rows = self._all(
+            """
+            SELECT n.*, group_concat(ne.evidence_id) AS evidence_refs
+            FROM node n
+            LEFT JOIN node_evidence ne ON ne.node_id=n.id
+            WHERE n.kind='TilingDataField'
+              AND (
+                n.id=? OR n.name=? OR n.id LIKE ?
+                OR n.data LIKE ?
+              )
+            GROUP BY n.id
+            ORDER BY n.id
+            """,
+            (
+                key,
+                key,
+                f"%{key.upper().replace('.', '_')}%",
+                f'%"{key}"%',
+            ),
+        )
+        return rows
+
+    def field_impact(self, name_or_id: str) -> dict[str, Any]:
+        """Writers / readers / neighboring branches for one TilingData field."""
+        fields = self.tiling_field(name_or_id)
+        if not fields:
+            return {"ok": False, "error": "tiling_field_not_found", "query": name_or_id}
+        primary = fields[0]
+        fid = str(primary["id"])
+        edges = self.edges_of(fid, limit=200)
+        neighbors = self.neighbors(fid, depth=2, limit=80)
+        # Surface writer/reader lists stored on the node data JSON.
+        data = primary.get("data") if isinstance(primary.get("data"), dict) else {}
+        if not data:
+            # Flattened columns from sqlite json may already be top-level.
+            data = {
+                k: primary.get(k)
+                for k in (
+                    "struct",
+                    "ctype",
+                    "writers",
+                    "readers",
+                    "defect",
+                    "writer_count",
+                    "reader_count",
+                    "qualified",
+                )
+                if k in primary
+            }
+        return {
+            "ok": True,
+            "field": primary,
+            "fields_matched": len(fields),
+            "writers": data.get("writers") or [],
+            "readers": data.get("readers") or [],
+            "defect": data.get("defect"),
+            "edges": edges,
+            "neighbors": neighbors,
+        }
+
+    def constant(self, name: str) -> list[dict[str, Any]]:
+        return self.search(name, kinds=("Variable",), limit=20)
 
     def _reachable(
         self, start_id: str, kinds: set[str]

@@ -1716,33 +1716,55 @@ def walk_file(
     way out rather than by returning a named failure code. True for the API
     layer, false for tiling. See `_refuses`.
     """
+    import time as _time
+
+    from uo_init.timing import log as _tlog, phase_budget_s
+
     _require_clang()
     path = str(path)
+    name = Path(path).name
+    t_all = _time.perf_counter()
     args = (
         ctx.host_args()
         if side == "host"
         else ctx.kernel_args(dtype_variant=dtype_variant)
     )
     idx = cindex.Index.create()
+    t0 = _time.perf_counter()
     tu = idx.parse(path, args=args, options=cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD)
+    t_parse = _time.perf_counter() - t0
     diags = [
         (int(d.severity), _norm(d.location.file.name) if d.location.file else "?", d.spelling)
         for d in tu.diagnostics
     ]
     op_root = ctx.op_dir or ""
+    t0 = _time.perf_counter()
+    frame_files = frozenset(
+        _framework_headers(tu.cursor, op_needle, op_root, scope)
+    )
+    t_frame = _time.perf_counter() - t0
     w = _Walker(
         op_needle,
         op_root=op_root,
         collect_writes=collect_writes,
         side=side,
-        frame_files=frozenset(
-            _framework_headers(tu.cursor, op_needle, op_root, scope)
-        ),
+        frame_files=frame_files,
         scope=scope,
         logs_rejections=logs_rejections,
     )
+    t0 = _time.perf_counter()
     for child in tu.cursor.get_children():
         w.walk(child, [], "")
+    t_walk = _time.perf_counter() - t0
+    t_total = _time.perf_counter() - t_all
+    budget = phase_budget_s()
+    flag = " SLOW" if t_total > budget else ""
+    _tlog(
+        f"{t_total:7.3f}s{flag}  walk_file  file={name} side={side} "
+        f"parse={t_parse:.3f}s frame={t_frame:.3f}s ast_walk={t_walk:.3f}s "
+        f"controls={len(w.controls)} writes={len(w.writes)} "
+        f"calls={len(w.call_sites)} diags={len(diags)} frames={len(frame_files)}"
+    )
     return WalkResult(
         path=_norm(path),
         controls=w.controls,

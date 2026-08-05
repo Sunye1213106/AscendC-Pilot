@@ -7,13 +7,14 @@ reason with: per-key reachability fell back to a pair of hand-written
 invariants, and TG had no key derivations to bind against.
 
 This module runs the derivation for a whole operator and turns it into
-`ir/host_derivation.yaml`. Two consumers depend on it:
+`ir/host_derivation.yaml`. By default the YAML (and the in-memory document)
+keep lightweight metadata only (status / leaves / roots / def_sites / guards).
+Full ``value_expr`` DAGs and the truncated ``expanded`` text are kept only when
+``UO_DEEP_SOLVE=1`` — that optional path feeds Z3 key-reachability and
+``tiling/expr/`` shards. Default uo-init does not solve or retain them.
 
-- `materialize_tiling` compiles the 19 `value_expr` trees into one solver
-  context, so cross-dimension conflicts fall out of the shared root variables
-  instead of being enumerated by hand.
-- `gaps` escalates the guards that could not be reduced, which is exactly the
-  set of questions source analysis cannot answer on its own.
+Lightweight consumers (codemap / gaps pre-sort / key_index) read metadata only.
+Deep consumers need ``UO_DEEP_SOLVE=1`` before derive.
 
 Every field derives in its own process. One runaway expansion must not be able
 to stall or crash the rest of the run, and a field that times out is recorded
@@ -22,6 +23,7 @@ as `unresolved` rather than failing the export.
 from __future__ import annotations
 
 import multiprocessing as mp
+import os
 import pickle
 import re
 import sys
@@ -47,6 +49,28 @@ from uo_init.ids import hash12
 from uo_init.kb_model import classify_input_closure, input_closure_is_drivable
 
 DERIVATION_VERSION = 1
+
+
+def deep_solve_enabled() -> bool:
+    """Whether to retain ``value_expr`` / ``expanded`` after grading.
+
+    Default off: derive still grades from the live trees, then drops them so
+    YAML / RAM / materialize stay on lightweight metadata. Set
+    ``UO_DEEP_SOLVE=1`` to keep DAGs for Z3 reachability and ``tiling/expr/``.
+    """
+    return os.environ.get("UO_DEEP_SOLVE", "").strip().lower() in ("1", "true", "yes")
+
+
+def strip_deep_payload(doc: "HostDerivation") -> None:
+    """Drop ``value_expr`` / ``expanded`` from every field when deep-solve is off."""
+    if deep_solve_enabled():
+        return
+    for fld in doc.fields:
+        fld.value_expr = None
+        fld.expanded = ""
+    for aux in doc.auxiliaries.values():
+        aux.value_expr = None
+        aux.expanded = ""
 
 # How a guard that survived normalization failure should be treated. The split
 # is deterministic: it comes from the reason code and the guard text, never
@@ -533,7 +557,8 @@ class FieldDerivation:
         return sorted(v for v in self.free_vars if v not in recorded)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        """Persist one field. ``value_expr`` / ``expanded`` only when deep-solve on."""
+        out: dict[str, Any] = {
             "name": self.name,
             "index": self.index,
             "status": self.status,
@@ -543,9 +568,6 @@ class FieldDerivation:
             "free_vars": list(self.free_vars),
             "host_expr": self.host_expr,
             "domain": list(self.domain),
-            # Shared sub-expressions are named rather than repeated; see
-            # `encode_expr_dag`. Read it back with `decode_expr_dag`.
-            "value_expr": encode_expr_dag(self.value_expr),
             "value_leaves": list(self.value_leaves),
             "domain_violations": self.domain_violations,
             "collapsed_leaves": self.collapsed_leaves,
@@ -562,6 +584,14 @@ class FieldDerivation:
             "seconds": self.seconds,
             "expanded_chars": self.expanded_chars,
         }
+        if deep_solve_enabled():
+            # Shared sub-expressions are named rather than repeated; see
+            # `encode_expr_dag`. Read it back with `decode_expr_dag`.
+            out["value_expr"] = encode_expr_dag(self.value_expr)
+            # Truncated text render — only kept for deep-solve debugging.
+            if self.expanded:
+                out["expanded"] = self.expanded[:EXPANDED_KEEP]
+        return out
 
 
 @dataclass
@@ -1463,6 +1493,7 @@ def _derive_auxiliaries(
                     )
         for (var_id, _where), row in zip(batch, rows):
             aux = _to_field(row, evidence)
+            aux.expanded = ""
             if _says_nothing(aux, var_id):
                 continue
             doc.auxiliaries[var_id] = aux
@@ -1669,7 +1700,11 @@ def derive_host_fields(
                         )
                     )
         for row in rows:
-            doc.fields.append(_to_field(row, evidence))
+            fld = _to_field(row, evidence)
+            # Text render is debug-only; grading uses value_expr. Deep trees
+            # are stripped after regrade when UO_DEEP_SOLVE is off.
+            fld.expanded = ""
+            doc.fields.append(fld)
         doc.phase_seconds["fields"] = round(time.time() - phase, 1)
         phase = time.time()
         if "auxiliaries" in phases:
@@ -1739,6 +1774,8 @@ def derive_host_fields(
     _regrade_through_auxiliaries(doc)
     if bundle.get("var_model") is not None:
         _reregister_soft_vars(bundle["var_model"], doc)
+    # Default path does not solve / persist value_expr or expanded.
+    strip_deep_payload(doc)
     return doc
 
 
@@ -1746,27 +1783,31 @@ def to_key_derivations(doc: HostDerivation) -> dict[str, Any]:
     """TG-facing view: one entry per dimension, no derivation bookkeeping.
 
     TG binds `key_derivations` to decide which CSV variables move a key field.
-    It needs the expression and the roots, not the guard audit trail.
+    Default omits ``expr`` (same deep-solve gate as ``host_derivation.yaml``);
+    roots / leaves / status are enough for the closure path.
     """
+    deep = deep_solve_enabled()
+    entries: dict[str, Any] = {}
+    for f in doc.fields:
+        row: dict[str, Any] = {
+            "index": f.index,
+            "status": f.status,
+            "host_expr": f.host_expr,
+            "domain": list(f.domain),
+            "value_leaves": list(f.value_leaves),
+            "root_vars": list(f.root_vars),
+            "variables": list(f.variables),
+            "input_closure": f.input_closure,
+            "input_derivable": f.input_derivable,
+            "undecided_guard_ids": [g.id for g in f.undecided_guards],
+        }
+        if deep:
+            row["expr"] = encode_expr_dag(f.value_expr)
+        entries[f.name] = row
     return {
         "version": DERIVATION_VERSION,
         "status": doc.status,
         "source": "uo_init.host_derivation",
         "encode_site": dict(doc.encode_site),
-        "key_derivations": {
-            f.name: {
-                "index": f.index,
-                "status": f.status,
-                "host_expr": f.host_expr,
-                "expr": encode_expr_dag(f.value_expr),
-                "domain": list(f.domain),
-                "value_leaves": list(f.value_leaves),
-                "root_vars": list(f.root_vars),
-                "variables": list(f.variables),
-                "input_closure": f.input_closure,
-                "input_derivable": f.input_derivable,
-                "undecided_guard_ids": [g.id for g in f.undecided_guards],
-            }
-            for f in doc.fields
-        },
+        "key_derivations": entries,
     }

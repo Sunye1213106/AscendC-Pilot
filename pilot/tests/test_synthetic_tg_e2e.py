@@ -186,3 +186,70 @@ def test_mode_overlay_terminals():
     assert "solve_terminal" in (csv.get("complete_gates") or [])
     assert "encode" in (csv.get("pipelines") or {})
     assert "oracle" not in (csv.get("pipelines") or {})
+
+    init_full = get_workflow("tg-init", mode="tilingkey_full_coverage")
+    assert "merge" not in (init_full.get("phases") or [])
+    assert init_full.get("_active_mode") == "tilingkey_full_coverage"
+    bind = next(a for a in init_full["actions"] if a["id"] == "contract_build")
+    assert bind["output_contract_id"] == "tilingkey-contract-v1"
+
+    init_csv = get_workflow("tg-init", mode="csv_consumer")
+    assert "merge" in (init_csv.get("phases") or [])
+    csv_bind = next(a for a in init_csv["actions"] if a["id"] == "contract_build")
+    assert csv_bind["output_contract_id"] == "csv-contract-v1"
+
+
+def test_preferred_pipeline_reads_plan_intent_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("UO_ARCH", "arch0")
+    from ascendc_pilot.paths import ensure_tg_layout, tg_root
+    from ascendc_pilot.workflows.pipeline import preferred_pipeline
+
+    ensure_tg_layout(tmp_path, arch="arch0")
+    plan = tg_root(tmp_path, arch="arch0") / "plan"
+    plan.mkdir(parents=True, exist_ok=True)
+    (plan / "plan_intent.yaml").write_text(
+        "schema: tg-plan-intent/v1\nmode: csv_consumer\n", encoding="utf-8"
+    )
+    assert preferred_pipeline("tg-solve", "encode", project_root=tmp_path) == ["z3_solve"]
+    assert preferred_pipeline("tg-solve", "oracle", project_root=tmp_path) == []
+
+
+def test_lemma_mine_writes_arch_scoped_runs(synthetic_root: Path):
+    from ascendc_pilot.actions.engines import _run_lemma_mine
+    from ascendc_pilot.paths import agent_root
+
+    out = _run_lemma_mine(synthetic_root, {"run_id": "RUN_LEMMA"})
+    assert out["ok"] is True
+    staging = agent_root(synthetic_root) / "runs" / "RUN_LEMMA" / "actions" / "lemma_mine" / "staging.yaml"
+    assert staging.is_file()
+    # Must not use flat .ascendc-pilot/runs without <arch>.
+    flat = synthetic_root / ".ascendc-pilot" / "runs" / "RUN_LEMMA" / "actions" / "lemma_mine" / "staging.yaml"
+    assert not flat.is_file()
+
+
+def test_full_mode_contract_build_finalize_paths(synthetic_root: Path):
+    from ascendc_pilot.actions.engines import (
+        _run_tg_contract_build,
+        _run_tg_integrity,
+        _run_tg_semantic_bind,
+    )
+    from ascendc_pilot.paths import tg_root
+
+    ctx = {"op_name": "_synthetic_toy", "architecture": "arch0", "mode": "tilingkey_full_coverage"}
+    built = _run_tg_contract_build(synthetic_root, ctx)
+    assert built["ok"] is True
+    tg = tg_root(synthetic_root, arch="arch0")
+    assert (tg / "contract" / "tilingkey_contract.yaml").is_file()
+    assert (tg / "snapshot" / "understand_contract.json").is_file()
+
+    bind = _run_tg_semantic_bind(synthetic_root, ctx)
+    assert bind["ok"] is True
+    assert (tg / "realization" / "binding_inventory.yaml").is_file()
+    # Full mode must NOT invent CSV realization placeholders.
+    assert not (tg / "realization" / "realization_map.yaml").is_file()
+    assert not (tg / "realization" / "binding_lexicon.yaml").is_file()
+
+    integ = _run_tg_integrity(synthetic_root, ctx)
+    assert integ["ok"] is True
+    assert (tg / "contract" / "integrity_gate.yaml").is_file()
+

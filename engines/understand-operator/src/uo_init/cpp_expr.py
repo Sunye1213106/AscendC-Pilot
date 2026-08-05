@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Callable
 
 from uo_init.expr_ir import Bin, Call, Const, Expr, Ite, Ref, Select, Un, Unknown, pretty
@@ -306,7 +307,11 @@ class Parser:
         return Unknown(f"unexpected_token:{t.text}")
 
 
+@lru_cache(maxsize=16384)
 def parse_expr(src: str) -> Expr:
+    """Parse a C++-ish expression. Cached: controllability re-parses the same
+    guard / path-condition strings hundreds of times per operator.
+    """
     return Parser(tokenize(src)).parse()
 
 

@@ -34,7 +34,8 @@
 
 ```powershell
 acp run-action derive_key_fields
-# 深度求解（可选写出 value_expr/expanded）:
+# 默认只保留 status/leaves/roots 等轻量元数据；value_expr/expanded 评分后丢弃。
+# 需要 Z3 key 可达性或 tiling/expr 分片时再开深度求解：
 $env:UO_DEEP_SOLVE=1; acp run-action derive_key_fields
 ```
 

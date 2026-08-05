@@ -123,6 +123,8 @@ $pluginText = Get-Content -LiteralPath $pluginDst -Raw -Encoding UTF8
 Assert-True ($pluginText -match 'tool === "read"') "installed plugin intercepts read"
 Assert-True ($pluginText -match 'shell:\s*false') "installed plugin uses shell:false (Windows-safe)"
 Assert-True ($pluginText -match 'resolveAcpBin|never use shell:true') "installed plugin documents Windows spawn fix"
+Assert-True ($pluginText -match '\["acp"\]') "installed plugin resolves acp (not legacy pilot)"
+Assert-True ($pluginText -notmatch '\["pilot"\]') "installed plugin no longer looks up pilot binary"
 
 # Skills / primary agent
 $skillLink = Join-Path $HOME ".config\opencode\skills\uo-init"

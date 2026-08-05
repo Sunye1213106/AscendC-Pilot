@@ -1,25 +1,43 @@
 ---
 name: tg-solve
-description: TilingKey 全覆盖闭环（维护 R/E 直至可审计 gap=0）。用户说求解、tg-solve、tilingkey 闭环、生成 csv
-  时加载。Pilot 管阶段；加载后执行 acp start tg-solve。
+description: TilingKey 全覆盖闭环：动态运行抬 R、源码引理抬 E，直至可审计 gap=0。用户说求解、 tg-solve、tilingkey
+  闭环、生成 csv 时加载。Pilot 管阶段；加载后 acp start tg-solve。
 ---
 
 # tg-solve
 
 维护 `(D, R, E, Corpus, Models, RuleBook)`：靠 Host 裁决抬 R，靠源码证明抬 E，反例时撤销，直到签发可审计的 gap=0 certificate。
 
-默认 mode = `tilingkey_full_coverage`（不强制 CSV consumer）。`csv_consumer` 仍走 encode/solve/cover。
+## 链路位置
 
-本 Skill 不定义工作流阶段。执行时：
+```text
+uo-init → tg-init → tg-plan → tg-solve
+```
 
-1. 调用 `acp start`（同 workflow 活动 run 则复用）；
-2. 调用 `acp next`；
-3. 对返回的 action_id 调用 `acp run-action <action_id>`（prepare；确定性 Action 会自动 finalize）；
-4. 语义 Action：按 Runtime Bundle 派发声明 actor，产出后调用 `acp run-action <action_id> --finalize`；
-5. `closure_residual` 写出 `tg/closure/route.yaml`：若 reason 不是 `GAP_ZERO`，执行 `acp rework --reason <code>`（勿在单 action 内死循环）；
-6. 调用 `acp advance`（仅消费 run-action 签发的可信收据）。
+默认 mode = `tilingkey_full_coverage`（不强制 CSV）。`csv_consumer` 仍走 encode/solve/cover。
 
-证据与引理纪律见 capability `tilingkey-closure`，勿在 Action prompt 复制。
+## 硬规则
+
+1. `acp start` → `acp next` → `acp run-action` →（语义则 finalize）→ `acp advance`
+2. `closure_residual` 写出 `tg/closure/route.yaml`：若 reason 不是 `GAP_ZERO`，执行 `acp rework --reason <code>`（勿在单 action 内死循环）
+3. **单边原则**：近似模型只生成/排序候选；排除必须有 `file:line` 源码证明
+4. 证据与引理纪律见 capability `tilingkey-closure`，勿在 Action prompt 复制
+
+## 角色分离
+
+| 角色 | Agent | 可写 | 禁止 |
+|---|---|---|---|
+| 运动员 | `tg-lemma-producer` | `lemma_mine` staging parts | 写 E / certificate / 宣称 complete |
+| 裁判 | `tg-closure-referee` | `lemma_review` / `closure_audit` review.yaml | 改 RuleBook / R / excluded |
+
+确定性引擎负责 ledger / search / apply / certify。
+
+## 阶段意图（tilingkey）
+
+```text
+gate → oracle → ledger → search → residual → construct
+     → lemma → audit → certify
+```
 
 ## Actions
 

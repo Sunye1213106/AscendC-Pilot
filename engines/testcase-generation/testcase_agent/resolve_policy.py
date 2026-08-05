@@ -58,6 +58,16 @@ AUDIT_CHECKLIST_IDS: tuple[str, ...] = (
     "kernel_shape_progress",
 )
 
+# Full tilingkey_full_coverage audit — no CSV lexicon/shape-graph obligations.
+TILINGKEY_AUDIT_CHECKLIST_IDS: tuple[str, ...] = (
+    "tilingkey_contract",
+    "declared_set_nonempty",
+    "binding_inventory",
+    "host_view_aligned",
+    "graph_fingerprint",
+    "integrity_gate",
+)
+
 # Subset enforced by --verify-csv-closure (same names as checklist ids).
 VERIFY_GATE_IDS: tuple[str, ...] = (
     "merge_report",

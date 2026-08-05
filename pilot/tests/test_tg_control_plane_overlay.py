@@ -12,6 +12,7 @@ from ascendc_pilot.workflows import WORKFLOWS, action_by_id, phase_pipeline
 def test_tg_pipelines_are_explicit_and_fail_closed() -> None:
     assert phase_pipeline("tg-init", "gate") == ["integrity_gate", "init_audit"]
     assert phase_pipeline("tg-init", "confirm") == ["human_confirm"]
+    assert phase_pipeline("tg-plan", "intent") == ["plan_intent"]
     assert phase_pipeline("tg-plan", "build") == ["plan_build"]
     assert phase_pipeline("tg-plan", "approve") == ["plan_approve"]
     # Default tilingkey_full_coverage closure loop
@@ -69,14 +70,18 @@ def test_tg_primary_actions_have_named_controller_identity_and_precise_writes() 
     assert init_action["allowed_write_paths"] == [
         "tg/init/status.yaml",
         "tg/init/kb_fingerprint.yaml",
-        "tg/realization/domain_review.yaml",
-        "tg/realization/binding_lexicon.yaml",
+        "tg/init/confirmation.yaml",
     ]
 
     assert plan_action["execution_mode"] == "primary_interactive"
     assert plan_action["agent_id"] == "ascendc-pilot"
     assert plan_action["role_id"] == "controller"
     assert plan_action["allowed_write_paths"] == ["tg/plan/levels/*/human_supplement.yaml"]
+
+    intent = action_by_id("tg-plan", "plan_intent") or {}
+    assert intent["execution_mode"] == "primary_interactive"
+    assert intent["task_prompt_id"] == "tg/plan-intent"
+    assert "tg/plan/plan_intent.yaml" in (intent.get("allowed_write_paths") or [])
 
 
 def test_deterministic_tg_leases_cover_domain_engine_outputs() -> None:
@@ -116,23 +121,23 @@ def test_tg_solve_lemma_mine_is_staged_producer() -> None:
     assert review.get("referee_required") is True
 
 
-def test_tk_cover_alias_has_no_independent_pipeline() -> None:
+def test_tk_cover_is_removed() -> None:
     from ascendc_pilot.router import route
-    from ascendc_pilot.workflows import get_workflow, list_user_workflows, resolve_workflow_id
+    from ascendc_pilot.workflows import list_user_workflows
 
-    assert resolve_workflow_id("tk-cover") == "tg-solve"
+    assert "tk-cover" not in WORKFLOWS
     assert "tk-cover" not in list_user_workflows()
     assert "tg-solve" in list_user_workflows()
-    # Spec entry itself has no pipelines/actions
-    raw = WORKFLOWS["tk-cover"]
-    assert raw.get("alias_of") == "tg-solve"
-    assert not (raw.get("pipelines") or {})
-    assert not (raw.get("actions") or [])
-    # get_workflow follows the alias
-    assert get_workflow("tk-cover").get("slash") == "/tg-solve"
     routed = route("/tk-cover")
-    assert routed.get("ok") is True
-    assert routed.get("workflow_id") == "tg-solve"
+    assert routed.get("ok") is False
+
+
+def test_plan_intent_is_primary_interactive() -> None:
+    intent = action_by_id("tg-plan", "plan_intent")
+    assert intent is not None
+    assert intent.get("execution_mode") == "primary_interactive"
+    assert intent.get("task_prompt_id") == "tg/plan-intent"
+    assert intent.get("agent_id") == "ascendc-pilot"
 
 
 def test_primary_steps_do_not_inherit_uo_scope_recipe(tmp_path: Path) -> None:

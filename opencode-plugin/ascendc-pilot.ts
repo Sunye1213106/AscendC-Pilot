@@ -249,8 +249,11 @@ function resolveAcpBin(): string {
   const fromEnv = String(process.env.ASCENDC_HARNESS_BIN || "").trim()
   if (fromEnv && existsSync(fromEnv)) return fromEnv
 
+  const exeName = process.platform === "win32" ? "acp.exe" : "acp"
+
   // Prefer PATH lookup without shell (Windows-safe argv).
-  const probe = spawnSync(process.platform === "win32" ? "where" : "which", ["pilot"], {
+  // Note: OpenCode's Node process may have a thinner PATH than the user shell.
+  const probe = spawnSync(process.platform === "win32" ? "where" : "which", ["acp"], {
     encoding: "utf-8",
     shell: false,
     windowsHide: true,
@@ -261,22 +264,41 @@ function resolveAcpBin(): string {
     .find((s) => s && existsSync(s))
   if (first) return first
 
-  // Common Windows pip user-script location
+  // Scan PATH directories directly (covers cases where `where` is unavailable).
+  const pathEnv = process.env.PATH || process.env.Path || ""
+  const pathSep = process.platform === "win32" ? ";" : ":"
+  for (const dir of pathEnv.split(pathSep)) {
+    const trimmed = dir.trim()
+    if (!trimmed) continue
+    const candidate = resolve(trimmed, exeName)
+    if (existsSync(candidate)) return candidate
+  }
+
+  // Common Windows install locations (pip --user, conda/miniconda, store Python).
   if (process.platform === "win32") {
     const roaming = process.env.APPDATA || ""
     const local = process.env.LOCALAPPDATA || ""
+    const home = process.env.USERPROFILE || ""
+    const conda = process.env.CONDA_PREFIX || ""
     const candidates = [
+      conda ? resolve(conda, "Scripts", "acp.exe") : "",
       resolve(roaming, "Python", "Python313", "Scripts", "acp.exe"),
       resolve(roaming, "Python", "Python312", "Scripts", "acp.exe"),
       resolve(roaming, "Python", "Python311", "Scripts", "acp.exe"),
       resolve(local, "Programs", "Python", "Python313", "Scripts", "acp.exe"),
       resolve(local, "Programs", "Python", "Python312", "Scripts", "acp.exe"),
+      resolve(local, "miniconda3", "Scripts", "acp.exe"),
+      resolve(local, "anaconda3", "Scripts", "acp.exe"),
+      resolve(home, "miniconda3", "Scripts", "acp.exe"),
+      resolve(home, "anaconda3", "Scripts", "acp.exe"),
+      "C:\\ProgramData\\miniconda3\\Scripts\\acp.exe",
+      "C:\\ProgramData\\anaconda3\\Scripts\\acp.exe",
     ]
     for (const c of candidates) {
-      if (existsSync(c)) return c
+      if (c && existsSync(c)) return c
     }
   }
-  return "pilot"
+  return "acp"
 }
 
 function runAuthorize(args: {

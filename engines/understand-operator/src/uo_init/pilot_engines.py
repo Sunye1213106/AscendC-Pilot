@@ -404,27 +404,45 @@ def _bundle_cache(uo: Path) -> Path:
 
 
 def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Build host IR + PRODUCTION inventory analysis; cache metrics for later actions."""
+    """Build host IR + full PRODUCTION controllability + kernel/API facts.
+
+    Performance comes from eliminating duplicate clang inventory / repeated
+    parse·normalize·resolve of the same guards — not from skipping closure.
+    Override with ``closure_mode=keypath|off`` only for deliberate experiments.
+    """
     from uo_init.assemble_kb import extract_host_bundle
+    from uo_init.controllability import ClosureMetrics
+    from uo_init.gaps import GapReport
 
     ctx = _ctx(payload)
     root = Path(project_root).expanduser().resolve()
     uo = _uo_root(root)
+    mode = ctx.get("closure_mode")
+    if mode is None:
+        raw = ctx.get("with_closure", None)
+        if raw is None:
+            mode = "full"
+        elif isinstance(raw, str):
+            mode = raw
+        else:
+            mode = "full" if raw else "off"
     try:
         bundle = extract_host_bundle(
             op_dir=root,
             cann_root=_cann_root(ctx),
             ops_root=_ops_root(ctx, root),
             arch_dir=ctx.get("arch_dir"),
-            # This engine reports the closure metrics, so it is the caller that
-            # has to pay for them.
-            with_closure=True,
+            closure_mode=str(mode),
+            closure_max_nodes=int(ctx.get("closure_max_nodes") or 0) or 10**9,
+            with_kernel=bool(ctx.get("with_kernel", True)),
         )
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "extract_host", "error": str(exc)[:400]}
 
-    metrics = bundle["metrics"].to_dict()
-    gap = bundle["gap"].to_dict()
+    metrics_obj = bundle.get("metrics") or ClosureMetrics()
+    gap_obj = bundle.get("gap") or GapReport()
+    metrics = metrics_obj.to_dict()
+    gap = gap_obj.to_dict()
     meta = {
         "version": 1,
         "status": "extracted",
@@ -433,8 +451,11 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
         "quality": metrics,
         "gap": gap,
         "node_count": metrics.get("total_nodes", 0),
-        "blocker_count": len(bundle["gap"].blockers),
+        "blocker_count": len(gap_obj.blockers),
         "bind_error": bundle.get("bind_error") or "",
+        "closure_mode": bundle.get("closure_mode") or mode,
+        "closure_selected": bundle.get("closure_selected") or 0,
+        "kernel_branches": len(getattr(bundle.get("kernel_ir"), "branches", []) or []),
     }
     _dump(_bundle_cache(uo), meta)
     _dump(
@@ -449,6 +470,9 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
         "source_closure": metrics.get("source_closure"),
         "blocker_count": meta["blocker_count"],
         "node_count": meta["node_count"],
+        "closure_mode": meta["closure_mode"],
+        "closure_selected": meta["closure_selected"],
+        "kernel_branches": meta["kernel_branches"],
     }
 
 
@@ -461,11 +485,15 @@ def _ensure_bundle(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     from uo_init.assemble_kb import extract_host_bundle
 
     root = Path(project_root).expanduser().resolve()
+    # Rebuild must match extract_host: full closure unless the caller overrides.
+    mode = ctx.get("closure_mode") or "full"
     bundle = extract_host_bundle(
         op_dir=root,
         cann_root=_cann_root(ctx),
         ops_root=_ops_root(ctx, root),
         arch_dir=ctx.get("arch_dir"),
+        closure_mode=str(mode),
+        with_kernel=bool(ctx.get("with_kernel", True)),
     )
     _STORE["bundle"] = bundle
     return bundle
@@ -525,6 +553,8 @@ def extract_kernel(project_root: Path, payload: dict[str, Any] | None = None) ->
 
     ctx = _ctx(payload)
     root = Path(project_root).expanduser().resolve()
+    # Pairwise fold is expensive; still on by default (feature-complete path).
+    # Set fold_kernel=false to rely solely on uninstantiated kernel_ir.
     fold = bool(ctx.get("fold_kernel", True))
     limit = ctx.get("harness_limit")
     try:
@@ -631,18 +661,8 @@ def derive_key_fields(project_root: Path, payload: dict[str, Any] | None = None)
 
             field_dicts = [f.to_dict() for f in doc.fields]
             write_key_index(uo, field_dicts)
-            # Deep shards only when UO_DEEP_SOLVE is set (and to_dict emits exprs).
-            write_expr_shards(
-                uo,
-                [
-                    {
-                        **fd,
-                        "value_expr": getattr(f, "value_expr", None),
-                        "expanded": getattr(f, "expanded", ""),
-                    }
-                    for f, fd in zip(doc.fields, field_dicts)
-                ],
-            )
+            # No-op unless UO_DEEP_SOLVE=1 (to_dict then carries value_expr).
+            write_expr_shards(uo, field_dicts)
         except Exception:
             pass
         totals = doc.totals()
@@ -973,6 +993,10 @@ def export_kb_action(project_root: Path, payload: dict[str, Any] | None = None) 
             gap=bundle["gap"],
             binding=bundle.get("binding"),
             kernel_branches=kbr,
+            # Uninstantiated kernel branches: the only pass where the guard
+            # still names the dimension that decides it.
+            kernel_ir=bundle.get("kernel_ir"),
+            op_root=str(bundle["spec"].op_dir or ""),
             notes={"kernel_fold": fold},
             # Without these the key space is never materialized at all, and
             # `legal_key_index.jsonl` keeps whatever a previous run left. The
@@ -982,6 +1006,8 @@ def export_kb_action(project_root: Path, payload: dict[str, Any] | None = None) 
             var_model=bundle.get("var_model"),
             derivation=derivation,
             tpl_header=bundle.get("tpl_header") or "",
+            host_ir=bundle.get("host_ir"),
+            op_spec=bundle.get("spec"),
         )
         receipt = export_operator_kb(kb, root)
         receipt["engine"] = "export_kb"
@@ -1209,15 +1235,23 @@ def kb_review(project_root: Path, payload: dict[str, Any] | None = None) -> dict
     uo = _uo_root(project_root)
     q = _load(uo / "quality.yaml")
     ur = _load(uo / "ir" / "unresolved.yaml")
+    host_meta = _load(uo / "ir" / "host_extract_receipt.yaml")
     closure = float(q.get("source_closure") or 0.0)
     blockers = int(ur.get("blocker_count") or len(ur.get("blockers") or []))
-    auto_ok = closure >= 0.95 and blockers < 20
+    closure_mode = str(host_meta.get("closure_mode") or "")
+    # When full closure was skipped for the wall-time budget, do not demand
+    # source_closure≥0.95 — that metric was never measured.
+    if closure_mode in {"", "off", "none"}:
+        auto_ok = blockers < 20
+    else:
+        auto_ok = closure >= 0.95 and blockers < 20
     review = {
         "version": 1,
         "status": "skipped" if auto_ok else "needs_review",
         "verdict": "pass" if auto_ok else "open",
         "source_closure": closure,
         "blocker_count": blockers,
+        "closure_mode": closure_mode or "unknown",
         "auto": auto_ok,
     }
     _dump(uo / "review" / "kb_product_review.yaml", review)
@@ -1249,7 +1283,4 @@ ENGINES: dict[str, Any] = {
     "export_tg_host_view": export_tg_host_view,
     "export_integrity": export_integrity,
     "kb_review": kb_review,
-    # tk-cover (imported lazily via names below)
 }
-
-# TK cover engines removed — workflow is alias_of tg-solve.

@@ -172,6 +172,12 @@ layers:
     optional:
       - kernel/pipeline.yaml
       - kernel/resources.yaml
+  views:
+    required:
+      - views/tilingdata.yaml
+      - views/kernel.yaml
+    optional:
+      - views/call_graph.yaml
   cross_layer:
     required:
       - cross_layer/tiling_to_kernel.yaml

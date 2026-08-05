@@ -551,19 +551,20 @@ bf16 和 fp16 都声明了 rope 变体，唯独 fp32 没有。而 Host tiling �
 
 `fag_arch35_reachable_cases.csv` 的每一行都经过复跑确认：把该行输入送给真实 Host，返回的就是该行 Key。
 
-该表已改写成 `fag_debug_tools/run_fag.py` 可直接读取的用例表结构（转换脚本 `scripts/fag_reachable_cases_to_fagtest.py`，`--check` 可复验），列结构为
+该表已改写成与 `TEST/fag_debug_tools/data/FASG.xls` 同构的用例表（转换脚本 `scripts/fag_reachable_cases_to_fagtest.py`，`--check` 可复验）。列顺序与 xls 一致：
 
 ```
-Testcase_Name, tiling_key, tiling_key_hex, declared,
-Enable, Dtype, out_dtype, Input_Layout, B, N1, N2, S1, S2, D, D_V,
-Drop_Out_Possibility, Pre_Tockens, Next_Tockens,
-Atten_mask_dtype, Atten_mask_shape, sparse_mode, PSE_type, PSE_shape,
-seqlens_list_q, seqlens_list_kv, is_deter, rope,
-est_attn_elems, adapt_note,
+Testcase_Name, enable, is_deter, Level, Network_Type,
+B, N1, N2, S1, S2, D, D_V, Dtype, out_dtype, sparse_mode, sparse, prefix,
+pre_tockens, next_tockens, Layout, PSE_type, PSE_shape,
+Atten_mask_Dtype, Atten_mask_Shape, Drop_Out_Possibility, Padding_Mask,
+seed, offset, inner_drop, rope, T(B*S), seqlens_list_q, seqlens_list_kv,
+same_as_input, EOD,
+tiling_key, tiling_key_hex, declared, est_attn_elems, adapt_note,
 dim_IsEmptyTensor ... dim_IsRegbase
 ```
 
-`Testcase_Name` 是 `tk_` 加该行的十进制 TilingKey（4226 行互不重复），跑测日志与结果表里 grep `tk_` 即可捞出用例名、按 Key 定位。
+与 xls 对齐的默认值：`prefix` 整列为空（脚本自动 `get_prefix*`）、`seed=2`、`offset=0`、`inner_drop=1`、`Padding_Mask=NONE`。`Testcase_Name` 是 `tk_` 加该行的十进制 TilingKey（4226 行互不重复），跑测日志与结果表里 grep `tk_` 即可捞出用例名、按 Key 定位。
 
 跑测入口：
 
@@ -576,6 +577,8 @@ python3 run_fag.py --case fag_arch35_reachable_cases.csv --sheet Sheet1 --pta_mo
 | 换算 | 行数 | 原因 |
 | --- | ---: | --- |
 | `atten_mask=2048` → `Atten_mask_shape=SS` | 1681 | 压缩 mask 由工具按 `sparse_mode` 自行生成 2048×2048，表里只需一个非 NONE 的二维写法保持 `IsAttenMask=1` |
+| TND 的 `B1SS`/`BNSS` → `SS` | 197 | PTA 变长路径只接受 `SS`/`11SS`/`NONE`，否则 kernel launch 拒 shape |
+| `sparse_mode∈{5,6}` 且 mask 为 `NONE` → 定长 `B1SS` / TND `SS` | 274 | 否则脚本提前返回 `prefix=None`，随后 `0 in prefix` 崩溃 |
 | rope 行 `D = d1 + 64` | 265 | 工具按 `D - D_V` 推 rope 宽度，而 `queryRope` 的 D 必须为 64（`normal_regbase.cpp:361`） |
 | `pse_shape=b1ss` → `BNSS` | 171 | 工具不支持 B1SS 形态的 pse_shift |
 | 压缩 alibi（`bnhs`/`1nhs`）在 `S1 ≤ 1024` 时 → `BNSS`/`1NSS` | 108 | `[*,N,1024,S]` 仅 `S1 > 1024` 时被算子接受 |

@@ -74,6 +74,20 @@ def _wrap_exc(gate: str, fn: Any) -> dict[str, Any]:
 
 
 def gate_merge_pass(project_root: Path) -> dict[str, Any]:
+    if _tg_mode(project_root) == "tilingkey_full_coverage":
+        tg = tg_root(project_root)
+        inv = tg / "realization" / "binding_inventory.yaml"
+        report = _load(tg / "realization" / "uo_merge_report.yaml")
+        ok = inv.is_file() and (
+            not isinstance(report, dict)
+            or str(report.get("status") or "pass").lower() in {"pass", "passed", "ok", ""}
+        )
+        return {
+            "gate": "merge_pass",
+            "ok": ok,
+            "message": "ok" if ok else "full-mode merge requires binding_inventory.yaml",
+            "mode": "tilingkey_full_coverage",
+        }
     out = tg_root(project_root)
 
     def _run() -> Any:
@@ -215,11 +229,12 @@ def gate_csv_closure(project_root: Path) -> dict[str, Any]:
 def gate_audit_pass(project_root: Path) -> dict[str, Any]:
     """Full audit contract via engine require_audit_pass — not shallow status read."""
     out = tg_root(project_root)
+    checklist = "tilingkey" if _tg_mode(project_root) == "tilingkey_full_coverage" else "csv"
 
     def _run() -> Any:
         from testcase_agent.init_status import require_audit_pass
 
-        return require_audit_pass(out)
+        return require_audit_pass(out, checklist=checklist)
 
     return _wrap_exc("audit_pass", _run)
 

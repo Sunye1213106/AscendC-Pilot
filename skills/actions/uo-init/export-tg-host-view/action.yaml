@@ -17,8 +17,6 @@ context_profile_id: uo-init-export-tg-host-view
 output_contract_id: export-tg-host-view-v1
 allowed_write_paths:
 - uo/ir/tg_host_view.yaml
-- uo/ir/host_codemap.yaml
-- uo/indexes/host_codemap.sqlite
 - uo/indexes/kb_graph.sqlite
 - uo/checks/tg_host_view_receipt.yaml
 forbidden_write_paths: []

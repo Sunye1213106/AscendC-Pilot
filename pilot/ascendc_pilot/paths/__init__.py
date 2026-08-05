@@ -219,7 +219,53 @@ def migrate_legacy_agent_dir(project_root: Path, *, arch: str | None = None) -> 
     return {"ok": True, "migrated": False, "root": str(target)}
 
 
+def ensure_control_layout(project_root: Path, *, arch: str | None = None) -> Path:
+    """Create only control-plane dirs: state / context / runs."""
+    migrate_legacy_agent_dir(project_root, arch=arch)
+    root = agent_root(project_root, arch)
+    for rel in (STATE_SUBDIR, CONTEXT_SUBDIR, RUNS_SUBDIR):
+        (root / rel).mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def ensure_uo_layout(project_root: Path, *, arch: str | None = None) -> Path:
+    root = ensure_control_layout(project_root, arch=arch)
+    (root / UO_SUBDIR).mkdir(parents=True, exist_ok=True)
+    return root / UO_SUBDIR
+
+
+def ensure_tg_layout(project_root: Path, *, arch: str | None = None) -> Path:
+    root = ensure_control_layout(project_root, arch=arch)
+    (root / TG_SUBDIR).mkdir(parents=True, exist_ok=True)
+    return root / TG_SUBDIR
+
+
+def ensure_closure_layout(project_root: Path, *, arch: str | None = None) -> Path:
+    tg = ensure_tg_layout(project_root, arch=arch)
+    for rel in ("closure", "replay"):
+        (tg / rel).mkdir(parents=True, exist_ok=True)
+    return tg / "closure"
+
+
+def ensure_ce_layout(project_root: Path, *, arch: str | None = None) -> Path:
+    root = ensure_control_layout(project_root, arch=arch)
+    (root / CE_SUBDIR).mkdir(parents=True, exist_ok=True)
+    return root / CE_SUBDIR
+
+
+def ensure_memory_layout(project_root: Path, *, arch: str | None = None) -> Path:
+    root = ensure_control_layout(project_root, arch=arch)
+    for rel in (f"{MEMORY_SUBDIR}/candidate", f"{MEMORY_SUBDIR}/stable"):
+        (root / rel).mkdir(parents=True, exist_ok=True)
+    return root / MEMORY_SUBDIR
+
+
 def ensure_agent_layout(project_root: Path, *, arch: str | None = None) -> Path:
+    """Backward-compatible full layout.
+
+    Prefer ``ensure_control_layout`` / ``ensure_uo_layout`` / ``ensure_tg_layout``
+    at workflow entry points so unused product trees are not pre-created.
+    """
     migrate_legacy_agent_dir(project_root, arch=arch)
     root = agent_root(project_root, arch)
     for rel in (

@@ -815,8 +815,12 @@ def build_host_ir(
     class_fields: set[str] = set()
     path_list = [Path(p) for p in paths]
 
+    from uo_init.timing import log as _tlog
+    import time as _time
+
     def _walk_one(p: Path):
-        return walk_file(
+        t0 = _time.perf_counter()
+        res = walk_file(
             p,
             ctx,
             side=side,
@@ -824,6 +828,13 @@ def build_host_ir(
             scope=scope,
             logs_rejections=logs_rejections,
         )
+        dt = _time.perf_counter() - t0
+        _tlog(
+            f"{dt:7.3f}s{' SLOW' if dt > 180 else ''}  host_ir.walk_tu  "
+            f"file={p.name} controls={len(getattr(res, 'controls', []) or [])} "
+            f"writes={len(getattr(res, 'writes', []) or [])}"
+        )
+        return res
 
     if len(path_list) <= 1:
         results = [_walk_one(p) for p in path_list]
@@ -831,6 +842,7 @@ def build_host_ir(
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         results = [None] * len(path_list)
+        _tlog(f"host_ir.parallel_tus  n={len(path_list)} workers={len(path_list)}")
         with ThreadPoolExecutor(max_workers=len(path_list)) as pool:
             futs = {pool.submit(_walk_one, p): i for i, p in enumerate(path_list)}
             for fut in as_completed(futs):

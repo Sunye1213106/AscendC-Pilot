@@ -181,6 +181,9 @@ def mark_init_confirmed(out_root: Path, *, notes: str = "", require_merge: bool 
                 payload=closure,
             )
         require_audit_pass(out_root)
+    else:
+        # Full tilingkey mode: still require referee audit, but not CSV merge/closure.
+        require_audit_pass(out_root, checklist="tilingkey")
     doc = read_init_status(out_root)
     if not doc:
         doc = {"version": 1}
@@ -234,9 +237,19 @@ def mark_init_confirmed(out_root: Path, *, notes: str = "", require_merge: bool 
     return doc
 
 
-def require_audit_pass(out_root: Path) -> dict[str, Any]:
+def require_audit_pass(
+    out_root: Path,
+    *,
+    checklist: str = "csv",
+) -> dict[str, Any]:
     """Require init/audit_report.yaml from tg-init-audit subagent before confirm."""
-    from .resolve_policy import AUDIT_CHECKLIST_IDS
+    from .resolve_policy import AUDIT_CHECKLIST_IDS, TILINGKEY_AUDIT_CHECKLIST_IDS
+
+    required = (
+        TILINGKEY_AUDIT_CHECKLIST_IDS
+        if checklist in {"tilingkey", "tilingkey_full_coverage", "full"}
+        else AUDIT_CHECKLIST_IDS
+    )
 
     path = Path(out_root) / "init" / "audit_report.yaml"
     if not path.is_file():
@@ -261,13 +274,13 @@ def require_audit_pass(out_root: Path) -> dict[str, Any]:
         for c in checks
         if isinstance(c, dict) and c.get("id")
     }
-    missing_ids = [cid for cid in AUDIT_CHECKLIST_IDS if cid not in seen]
+    missing_ids = [cid for cid in required if cid not in seen]
     if missing_ids:
         raise InitGateError(
             f"init/audit_report.yaml missing checklist ids: {missing_ids[:12]}. "
-            "tg-init-audit MUST cover AUDIT_CHECKLIST_IDS.",
+            "tg-init-audit MUST cover the mode checklist.",
             ask="audit_incomplete",
-            payload={"missing_ids": missing_ids},
+            payload={"missing_ids": missing_ids, "checklist": checklist},
         )
     failed_checks = [
         str(c.get("id"))

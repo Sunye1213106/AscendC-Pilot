@@ -1,10 +1,13 @@
-# 导出 TG Host View 投影
+# 导出 TG Host View
 
-> **acp 是真实 CLI。** 本 Action 走 uo_init.pilot_engines.export_tg_host_view。
+> **`acp` 是真实 CLI。** 本 Action 走 `uo_init.pilot_engines.export_tg_host_view`（确定性）。
 
 ## Goal
 
-在 `export_kb` + `build_index` 之后，把 live HostIR 投影为 `ir/tg_host_view.yaml`，并写入 `source.graph_fingerprint`，供 TG/CE 查询。**不是**第二套语义权威。
+在 KB 已导出之后，写出 TG/CE 搜索投影：
+
+- `uo/ir/tg_host_view.yaml` — fields/writers/reads/predicates/declared_keys/platform_gates
+- `source.graph_fingerprint` 必须与 `operator_graph` 对齐
 
 ## Domain Procedure
 
@@ -12,11 +15,16 @@
 acp run-action export_tg_host_view --project <算子目录>
 ```
 
-前置：`ir/operator_graph.yaml` 与 `indexes/kb_graph.sqlite` 已存在。禁止把 `.probe_cache/fag_bundle.pkl` 当作生产输入。
+成功标志：finalize ok；`tg_host_view.yaml` 存在且含非空 `fields`。
 
-成功标志：finalize ok: true，并满足本 Action 的 output contract；`source.graph_fingerprint` 与 operator_graph 一致。
+## Hard Constraints
+
+- MUST NOT：手工编辑 `tg_host_view.yaml`
+- MUST NOT：在 `export_kb` / `build_index` 之前跑本步
+- MUST NOT：默认写出完整 `value_expr` / `expanded`
+- MUST NOT：再写权威副本到 `host_codemap.yaml`（旧文件只读兼容）
 
 ## Output
 
-- 仅写 Spec / ownership 声明路径。
-- 本文件不得描述 Pilot advance、complete 或其他阶段。
+- 合同：`export-tg-host-view-v1`
+- 写域：`uo/ir/tg_host_view.yaml`、`uo/indexes/kb_graph.sqlite`（VIEW/表）、receipt

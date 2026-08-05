@@ -9,16 +9,19 @@ from ascendc_pilot.workflows.specs import WORKFLOWS
 
 _TG_PIPELINES: dict[str, dict[str, list[str]]] = {
     "tg-init": {
+        # Default = tilingkey_full_coverage (no CSV merge/nest).
         "intent": ["init_intent"],
         "kb_ready": ["kb_check"],
         "contract": ["contract_build"],
         "bind": ["semantic_bind"],
-        "merge": ["bind_merge"],
-        "nest": ["mid_nest"],
         "gate": ["integrity_gate", "init_audit"],
         "confirm": ["human_confirm"],
+        # csv_consumer overlay reintroduces these phases.
+        "merge": ["bind_merge"],
+        "nest": ["mid_nest"],
     },
     "tg-plan": {
+        "intent": ["plan_intent"],
         "scope": ["plan_scope"],
         "gate": ["plan_precheck"],
         # plan_build performs generation, filtering, and review materialization
@@ -73,12 +76,18 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
         },
         "semantic_bind": {
             "read": [
+                "uo/ir/tg_host_view.yaml",
+                "uo/ir/operator_graph.yaml",
+                "tg/contract/**",
                 "tg/realization/llm_bind_prompt_bundle.yaml",
                 "tg/realization/binding_inventory.yaml",
                 "tg/realization/binding_gaps.yaml",
                 "tg/realization/unresolved.yaml",
             ],
-            "write": ["tg/realization/semantic_bind_patch.yaml"],
+            "write": [
+                "tg/realization/binding_inventory.yaml",
+                "tg/realization/semantic_bind_patch.yaml",
+            ],
         },
         "bind_merge": {
             "read": ["tg/snapshot/**", "tg/realization/**"],
@@ -89,27 +98,36 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
             "write": ["tg/realization/mid_symbol_queue.yaml"],
         },
         "integrity_gate": {
-            "read": ["tg/snapshot/**", "tg/realization/**"],
-            "write": [],
+            "read": ["tg/snapshot/**", "tg/realization/**", "tg/contract/**"],
+            "write": ["tg/contract/integrity_gate.yaml"],
         },
         "init_audit": {
             "read": ["tg/snapshot/**", "tg/contract/**", "tg/realization/**", "tg/init/**"],
             "write": ["tg/init/audit_report.yaml"],
         },
         "human_confirm": {
-            "read": ["tg/init/**", "tg/realization/**", "tg/snapshot/**"],
+            "read": ["tg/init/**", "tg/realization/**", "tg/snapshot/**", "tg/contract/**"],
             "write": [
                 "tg/init/status.yaml",
                 "tg/init/kb_fingerprint.yaml",
-                "tg/realization/domain_review.yaml",
-                "tg/realization/binding_lexicon.yaml",
+                "tg/init/confirmation.yaml",
             ],
         },
     },
     "tg-plan": {
+        "plan_intent": {
+            "read": ["tg/init/**", "context/**", "uo/manifest.yaml"],
+            "write": ["tg/plan/plan_intent.yaml"],
+        },
         "plan_scope": {
-            "read": ["tg/init/**", "tg/snapshot/**", "tg/realization/**", "context/**"],
-            "write": ["tg/plan/levels/*/plan_scope.yaml"],
+            "read": [
+                "tg/init/**",
+                "tg/plan/plan_intent.yaml",
+                "tg/snapshot/**",
+                "tg/realization/**",
+                "context/**",
+            ],
+            "write": ["tg/plan/levels/*/plan_scope.yaml", "tg/plan/plan_intent.yaml"],
         },
         "plan_precheck": {
             "read": ["tg/init/status.yaml", "tg/snapshot/**", "uo/manifest.yaml"],
@@ -118,6 +136,7 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
         "plan_build": {
             "read": [
                 "tg/init/**",
+                "tg/plan/plan_intent.yaml",
                 "tg/snapshot/**",
                 "tg/realization/**",
                 "tg/contract/**",
@@ -126,7 +145,7 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
             "write": ["tg/plan/**", "tg/extract/**", "tg/realization/**", "tg/contract/**", "tg/run.yaml"],
         },
         "plan_approve": {
-            "read": ["tg/plan/levels/*/**"],
+            "read": ["tg/plan/levels/*/**", "tg/plan/plan_intent.yaml"],
             "write": ["tg/plan/levels/*/human_supplement.yaml"],
         },
     },
@@ -286,7 +305,11 @@ def _apply_tg_control_plane_contracts() -> None:
 
     # Human decisions execute in the current primary session; they are never
     # anonymous actors and must not inherit the UO scope-confirmation recipe.
-    for workflow_id, action_id in (("tg-init", "human_confirm"), ("tg-plan", "plan_approve")):
+    for workflow_id, action_id in (
+        ("tg-init", "human_confirm"),
+        ("tg-plan", "plan_intent"),
+        ("tg-plan", "plan_approve"),
+    ):
         meta = WORKFLOWS.get(workflow_id) or {}
         row = _action(meta, action_id)
         if row is None:
@@ -329,7 +352,7 @@ _apply_tg_control_plane_contracts()
 
 
 def resolve_workflow_id(workflow_id: str) -> str:
-    """Follow ``alias_of`` chains (e.g. tk-cover → tg-solve)."""
+    """Follow ``alias_of`` chains when present."""
     seen: set[str] = set()
     wid = str(workflow_id or "").strip()
     while wid and wid not in seen:
@@ -390,9 +413,31 @@ def _apply_mode_overlay(meta: dict[str, Any], mode: str | None) -> dict[str, Any
         "complete_gates",
         "terminal_ready_states",
         "phases",
+        "states",
+        "gates",
     ):
         if key in overlay:
             out[key] = overlay[key]
+    # Per-action contract / gate / actor overrides (e.g. full-mode Output Contracts).
+    overrides = overlay.get("action_overrides")
+    if isinstance(overrides, dict) and overrides:
+        actions: list[dict[str, Any]] = []
+        for row in out.get("actions") or []:
+            if not isinstance(row, dict):
+                continue
+            aid = str(row.get("id") or "")
+            patch = overrides.get(aid)
+            if isinstance(patch, dict) and patch:
+                merged = dict(row)
+                for k, v in patch.items():
+                    if v is None:
+                        merged.pop(k, None)
+                    else:
+                        merged[k] = v
+                actions.append(merged)
+            else:
+                actions.append(dict(row))
+        out["actions"] = actions
     out["_active_mode"] = chosen
     return out
 
@@ -489,9 +534,15 @@ def rework_targets(
     return out
 
 
-def actions_for_phase(workflow_id: str, phase: str) -> list[dict[str, Any]]:
+def actions_for_phase(
+    workflow_id: str,
+    phase: str,
+    *,
+    project_root: Any | None = None,
+    mode: str | None = None,
+) -> list[dict[str, Any]]:
     """Return actions explicitly bound to ``phase`` via action.phases."""
-    meta = get_workflow(workflow_id)
+    meta = get_workflow(workflow_id, project_root=project_root, mode=mode)
     actions = [a for a in (meta.get("actions") or []) if isinstance(a, dict)]
     return [a for a in actions if phase in set(a.get("phases") or [])]
 
@@ -512,8 +563,14 @@ def phase_pipeline(
     return []
 
 
-def action_by_id(workflow_id: str, action_id: str) -> dict[str, Any] | None:
-    meta = get_workflow(workflow_id)
+def action_by_id(
+    workflow_id: str,
+    action_id: str,
+    *,
+    project_root: Any | None = None,
+    mode: str | None = None,
+) -> dict[str, Any] | None:
+    meta = get_workflow(workflow_id, project_root=project_root, mode=mode)
     for a in meta.get("actions") or []:
         if isinstance(a, dict) and str(a.get("id") or "") == action_id:
             return dict(a)

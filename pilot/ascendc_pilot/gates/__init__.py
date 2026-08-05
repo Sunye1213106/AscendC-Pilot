@@ -12,7 +12,7 @@ try:
 except ImportError:  # pragma: no cover
     yaml = None  # type: ignore[assignment]
 
-from ascendc_pilot.paths import runs_root, uo_root
+from ascendc_pilot.paths import agent_root, runs_root, uo_root
 
 EMPTY_PATH_MARKERS = (
     "runemptytiling",
@@ -1528,10 +1528,12 @@ def gate_closure_soundness(project_root: Path) -> dict[str, Any]:
             **st,
         }
 
-    # Coverage complete is required for tk-cover complete; other workflows may
-    # call this gate only for soundness. open==0 is reported, not always fatal
-    # unless coverage_gate.yaml claims complete.
-    cov_path = project_root / ".ascendc-pilot" / "uo" / "tk" / "coverage_gate.yaml"
+    # Coverage complete is required when a coverage receipt claims complete;
+    # other workflows may call this gate only for soundness. open==0 is
+    # reported, not always fatal unless the receipt claims complete.
+    from ascendc_pilot.paths import agent_root, uo_root
+
+    cov_path = uo_root(project_root) / "tk" / "coverage_gate.yaml"
     claims_complete = False
     if cov_path.is_file():
         import yaml
@@ -1544,6 +1546,47 @@ def gate_closure_soundness(project_root: Path) -> dict[str, Any]:
             "message": f"coverage claimed complete but gap={st['gap']}",
             **st,
         }
+
+    # Referee audit must already have passed for the current run (when present).
+    # Missing audit is allowed here — certify action enforces it — but an explicit
+    # awaiting/fail receipt must fail soundness.
+    try:
+        from ascendc_pilot.state import load_state
+
+        run_id = str((load_state(project_root) or {}).get("run_id") or "")
+    except Exception:  # noqa: BLE001
+        run_id = ""
+    if run_id:
+        audit_path = (
+            agent_root(project_root)
+            / "runs"
+            / run_id
+            / "actions"
+            / "closure_audit"
+            / "review.yaml"
+        )
+        if audit_path.is_file():
+            import yaml
+
+            audit = yaml.safe_load(audit_path.read_text(encoding="utf-8")) or {}
+            astatus = str((audit or {}).get("status") or "").strip().lower()
+            if astatus in {
+                "awaiting_referee",
+                "pending",
+                "open",
+                "fail",
+                "failed",
+                "reject",
+                "rejected",
+            }:
+                return {
+                    "gate": "closure_soundness",
+                    "ok": False,
+                    "message": f"closure_audit status={astatus!r}; referee must pass before certify",
+                    "audit_status": astatus,
+                    **st,
+                }
+
     return {
         "gate": "closure_soundness",
         "ok": True,
@@ -1591,9 +1634,9 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
         "family_path_obligation": lambda: tg_adapters.gate_family_path_obligation(project_root),
         "context_pack": lambda: {
             "gate": "context_pack",
-            "ok": (project_root / ".ascendc-pilot" / "context" / "context_pack.yaml").is_file(),
+            "ok": (agent_root(project_root) / "context" / "context_pack.yaml").is_file(),
             "message": "ok"
-            if (project_root / ".ascendc-pilot" / "context" / "context_pack.yaml").is_file()
+            if (agent_root(project_root) / "context" / "context_pack.yaml").is_file()
             else "context pack missing",
         },
         # TG — real engine adapters (kb_fingerprint is NOT an alias of uo_ready)
@@ -1610,18 +1653,12 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
         "audit_pass": lambda: tg_adapters.gate_audit_pass(project_root),
         "allow_solve": lambda: tg_adapters.gate_allow_solve(project_root),
         "solve_terminal": lambda: tg_adapters.gate_solve_terminal(project_root),
-        # tk-cover — receipt / artifact presence
-        "tk_env": lambda: gate_tk_file(uo, "tk_env", "tk/env_probe.yaml"),
-        "tk_derive": lambda: gate_tk_file(uo, "tk_derive", "tk/derive_fields.yaml"),
-        "tk_codemap": lambda: gate_tk_file(
+        "tg_host_view_ready": lambda: gate_tk_file(
             uo,
-            "tk_codemap",
+            "tg_host_view_ready",
             "ir/tg_host_view.yaml",
             alt="ir/host_codemap.yaml",
         ),
-        "tk_mine": lambda: gate_tk_file(uo, "tk_mine", "tk/mine_recipe.yaml"),
-        "tk_recipe": lambda: gate_tk_file(uo, "tk_recipe", "tk/recipe.yaml"),
-        "tk_gate": lambda: gate_tk_file(uo, "tk_gate", "tk/coverage_gate.yaml"),
         "closure_soundness": lambda: gate_closure_soundness(project_root),
         "adapter_completeness": lambda: tg_adapters.gate_adapter_completeness(project_root),
     }
@@ -1654,7 +1691,7 @@ def run_workflow_gates(project_root: Path, *, gate_ids: list[str] | None = None)
     wid = str(state.get("workflow_id") or "")
     if not wid:
         return {"ok": False, "error": "no_active_workflow", "gates": []}
-    meta = get_workflow(wid)
+    meta = get_workflow(wid, project_root=project_root)
     ids = list(gate_ids if gate_ids is not None else (meta.get("gates") or []))
     results = [run_named_gate(project_root, gid) for gid in ids]
     ok = all(r.get("ok") for r in results)

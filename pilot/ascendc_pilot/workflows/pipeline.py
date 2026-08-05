@@ -73,8 +73,14 @@ def _action_done(
     return ok
 
 
-def preferred_pipeline(workflow_id: str, phase: str) -> list[str]:
-    return phase_pipeline(workflow_id, phase)
+def preferred_pipeline(
+    workflow_id: str,
+    phase: str,
+    *,
+    project_root: Path | None = None,
+    mode: str | None = None,
+) -> list[str]:
+    return phase_pipeline(workflow_id, phase, project_root=project_root, mode=mode)
 
 
 def missing_phase_actions(
@@ -83,11 +89,14 @@ def missing_phase_actions(
     phase: str,
     *,
     done_cache: dict[str, bool] | None = None,
+    mode: str | None = None,
 ) -> list[str]:
     """Pipeline actions not yet proven complete for the current run."""
     cache = done_cache if done_cache is not None else {}
     missing: list[str] = []
-    for aid in preferred_pipeline(workflow_id, phase):
+    for aid in preferred_pipeline(
+        workflow_id, phase, project_root=project_root, mode=mode
+    ):
         if not _action_done(project_root, aid, done_cache=cache):
             missing.append(aid)
     return missing
@@ -99,13 +108,16 @@ def recommend_next_action(
     workflow_id: str,
     phase: str,
     allowed_actions: list[dict[str, Any]] | None,
+    mode: str | None = None,
 ) -> dict[str, Any] | None:
     """Pick the first incomplete preferred action that is also currently allowed."""
     allowed = [a for a in (allowed_actions or []) if isinstance(a, dict) and a.get("id")]
     if not allowed:
         return None
     by_id = {str(a["id"]): a for a in allowed}
-    pipe = preferred_pipeline(workflow_id, phase)
+    pipe = preferred_pipeline(
+        workflow_id, phase, project_root=project_root, mode=mode
+    )
     if not pipe:
         a0 = allowed[0]
         return {
@@ -116,7 +128,11 @@ def recommend_next_action(
     # Single-pass completion index: never re-verify the whole pipeline twice.
     done_cache: dict[str, bool] = {}
     missing = missing_phase_actions(
-        project_root, workflow_id, phase, done_cache=done_cache
+        project_root,
+        workflow_id,
+        phase,
+        done_cache=done_cache,
+        mode=mode,
     )
     for aid in pipe:
         if aid not in by_id:

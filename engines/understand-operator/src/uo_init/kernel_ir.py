@@ -37,6 +37,8 @@ class KernelBranch:
     file: str
     line: int
     function: str = ""
+    #: `KBR_*`, assigned by :meth:`KernelIR.mint_ids`. Empty until then.
+    id: str = ""
     #: TilingKey dimensions the condition names outright.
     dimensions: list[str] = field(default_factory=list)
     #: Names built from a dimension rather than being one, such as a
@@ -59,6 +61,30 @@ class KernelIR:
     branches: list[KernelBranch] = field(default_factory=list)
     variants: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+
+    def mint_ids(self, op_root: str = "") -> None:
+        """Assign `KBR_*` ids using the same material as the folded branches.
+
+        Same scheme, but the guard differs: a folded branch carries the
+        instantiated condition while these carry the one that still names the
+        dimension, so the two never collide and both can sit in the graph. The
+        overlap is the source location, which is what joins them.
+        """
+        from uo_init.ids import branch_id
+
+        ordinals: dict[tuple[str, str, str], int] = {}
+        for b in self.branches:
+            key = (b.file, b.function, b.condition)
+            n = ordinals.get(key, 0)
+            ordinals[key] = n + 1
+            b.id = branch_id(
+                side="kernel",
+                file=b.file,
+                function=b.function,
+                guard=b.condition,
+                ordinal=n,
+                root=op_root,
+            )
 
     def touching(self, dimension: str) -> list[KernelBranch]:
         return [
@@ -109,6 +135,7 @@ class KernelIR:
             "notes": list(self.notes),
             "detail": [
                 {
+                    "id": b.id,
                     "condition": b.condition,
                     "file": Path(b.file).name,
                     "line": b.line,
@@ -191,40 +218,66 @@ def build_kernel_ir(spec, ctx, *, dimensions: list[str] | None = None) -> Kernel
     dims = _Dimensions(list(dimensions or ()))
 
     found: dict[tuple[str, int, str], KernelBranch] = {}
-    for entry in entries:
-        for variant in variants:
-            res = walk_file(
-                entry,
-                ctx,
-                side="kernel",
-                dtype_variant=variant,
-                op_needle=getattr(spec, "op_needle", ""),
-                scope=getattr(spec, "scope", None),
-                collect_writes=False,
-            )
-            label = variant or "default"
-            for node in res.controls:
-                if node.kind != "if_constexpr":
-                    continue
-                condition = (node.condition or "").strip()
-                if not condition:
-                    continue
-                key = (node.file, node.line, condition)
-                branch = found.get(key)
-                if branch is None:
-                    exact, derived, others = _classify(condition, dims)
-                    branch = KernelBranch(
-                        condition=condition,
-                        file=node.file,
-                        line=node.line,
-                        function=getattr(node, "function", "") or "",
-                        dimensions=exact,
-                        derived=derived,
-                        symbols=others,
-                    )
-                    found[key] = branch
-                if label not in branch.variants:
-                    branch.variants.append(label)
+    jobs = [(entry, variant) for entry in entries for variant in variants]
+
+    import time as _time
+    from uo_init.timing import log as _tlog
+
+    def _walk_one(job: tuple[Path, str | None]):
+        entry, variant = job
+        t0 = _time.perf_counter()
+        res = walk_file(
+            entry,
+            ctx,
+            side="kernel",
+            dtype_variant=variant,
+            op_needle=getattr(spec, "op_needle", ""),
+            scope=getattr(spec, "scope", None),
+            collect_writes=False,
+        )
+        dt = _time.perf_counter() - t0
+        label = variant or "default"
+        _tlog(
+            f"{dt:7.3f}s{' SLOW' if dt > 180 else ''}  kernel_ir.walk  "
+            f"entry={Path(entry).name} variant={label} "
+            f"controls={len(getattr(res, 'controls', []) or [])}"
+        )
+        return label, res
+
+    # libclang releases the GIL during parse — parallel variants cut wall time.
+    if len(jobs) <= 1:
+        walked = [_walk_one(j) for j in jobs]
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+
+        workers = min(len(jobs), 4)
+        _tlog(f"kernel_ir.parallel  jobs={len(jobs)} workers={workers}")
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            walked = list(pool.map(_walk_one, jobs))
+
+    for label, res in walked:
+        for node in res.controls:
+            if node.kind != "if_constexpr":
+                continue
+            condition = (node.condition or "").strip()
+            if not condition:
+                continue
+            key = (node.file, node.line, condition)
+            branch = found.get(key)
+            if branch is None:
+                exact, derived, others = _classify(condition, dims)
+                branch = KernelBranch(
+                    condition=condition,
+                    file=node.file,
+                    line=node.line,
+                    function=getattr(node, "function", "") or "",
+                    dimensions=exact,
+                    derived=derived,
+                    symbols=others,
+                )
+                found[key] = branch
+            if label not in branch.variants:
+                branch.variants.append(label)
 
     ir.branches = sorted(found.values(), key=lambda b: (b.file, b.line))
     named = sum(1 for b in ir.branches if b.dimensions or b.derived)

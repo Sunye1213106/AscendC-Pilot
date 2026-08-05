@@ -631,17 +631,28 @@ def _run_tg_semantic_bind(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
         if _is_tilingkey_full(tg_ctx) and consumer is None:
             import yaml
 
-            from uo_init.host_codemap import CodemapQuery, load_tg_host_view
+            from uo_init.host_codemap import load_tg_host_view
 
             uo = _uo(project_root)
             view = load_tg_host_view(uo)
-            q = CodemapQuery(uo)
+            reads_of = None
+            try:
+                from uo_init.host_codemap import CodemapQuery
+
+                reads_of = CodemapQuery(uo).reads_of
+            except Exception:  # noqa: BLE001
+                reads_of = None
             rows = []
             for f in view.get("fields") or []:
                 name = str(f.get("name") or "")
                 if not name:
                     continue
-                reads = q.reads_of(name) or list(f.get("reads") or [])
+                reads = list(f.get("reads") or [])
+                if reads_of is not None:
+                    try:
+                        reads = reads_of(name) or reads
+                    except Exception:  # noqa: BLE001
+                        pass
                 rows.append({
                     "field": name,
                     "kind": f.get("kind"),
@@ -797,19 +808,31 @@ def _run_tg_mid_nest(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
 def _run_tg_integrity(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     from ascendc_pilot.gates import run_named_gate
 
+    import yaml
+
     tg_ctx = _resolve_tg_ctx(project_root, ctx)
     op = str(tg_ctx.get("op_name") or "") or None
+    tg = _tg(project_root)
     if _is_tilingkey_full(tg_ctx):
         # Full TK mode: key contract / host-view readiness instead of CSV closure.
-        contract = _load_yaml(
-            _tg(project_root) / "contract" / "tilingkey_contract.yaml"
-        ) or {}
+        contract = _load_yaml(tg / "contract" / "tilingkey_contract.yaml") or {}
         status = str(contract.get("status") or "").lower()
         ok = status == "pass" and not list(contract.get("errors") or [])
+        receipt = {
+            "schema": "tg-tilingkey-integrity/v1",
+            "mode": "tilingkey_full_coverage",
+            "status": "pass" if ok else "fail",
+            "tilingkey_contract_status": status or "missing",
+            "errors": list(contract.get("errors") or []),
+        }
+        out = tg / "contract" / "integrity_gate.yaml"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(yaml.safe_dump(receipt, allow_unicode=True, sort_keys=False), encoding="utf-8")
         return {
             "ok": ok,
             "engine": "integrity_gate",
             "mode": "tilingkey_full_coverage",
+            "artifact": out.as_posix(),
             "gates": {
                 "tilingkey_contract": {
                     "ok": ok,
@@ -821,11 +844,56 @@ def _run_tg_integrity(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
     domain = run_named_gate(project_root, "domain_symmetry", op_name=op)
     closure = run_named_gate(project_root, "csv_closure", op_name=op)
     ok = bool(domain.get("ok")) and bool(closure.get("ok"))
+    receipt = {
+        "schema": "tg-csv-integrity/v1",
+        "mode": "csv_consumer",
+        "status": "pass" if ok else "fail",
+        "gates": {"domain_symmetry": domain, "csv_closure": closure},
+    }
+    out = tg / "contract" / "integrity_gate.yaml"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(yaml.safe_dump(receipt, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    # CSV contract still expects uo_merge_report for tg-integrity-v1.
     return {
         "ok": ok,
         "engine": "integrity_gate",
+        "artifact": out.as_posix(),
         "gates": {"domain_symmetry": domain, "csv_closure": closure},
     }
+
+
+def _run_tg_plan_intent(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Write plan_intent.yaml. Default mode = tilingkey_full_coverage."""
+    import yaml
+
+    tg_ctx = _resolve_tg_ctx(project_root, ctx)
+    tg = _tg(project_root)
+    init_intent = _load_yaml(tg / "init" / "init_intent.yaml") or {}
+    existing = _load_yaml(tg / "plan" / "plan_intent.yaml") or {}
+    mode = (
+        str(ctx.get("mode") or "").strip()
+        or str(existing.get("mode") or "").strip()
+        or str(init_intent.get("mode") or "").strip()
+        or "tilingkey_full_coverage"
+    )
+    source = (
+        str(ctx.get("source") or "").strip()
+        or str(existing.get("source") or "").strip()
+        or ("init_intent" if init_intent.get("mode") else "default")
+    )
+    intent = {
+        "schema": "tg-plan-intent/v1",
+        "mode": mode,
+        "source": source,
+        "description": str(ctx.get("description") or existing.get("description") or ""),
+        "pr_ref": str(ctx.get("pr_ref") or existing.get("pr_ref") or ""),
+        "op_name": tg_ctx.get("op_name") or "",
+        "architecture": tg_ctx.get("architecture") or "",
+    }
+    out = tg / "plan" / "plan_intent.yaml"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(yaml.safe_dump(intent, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return {"ok": True, "engine": "plan_intent", "artifact": out.as_posix(), **intent}
 
 
 def _run_tg_plan_scope(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -836,33 +904,39 @@ def _run_tg_plan_scope(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         return {"ok": False, "engine": "plan_scope", "error": str(exc)[:400]}
     tg = _tg(project_root)
     level = tg_ctx["level"] or "L0"
+    intent = _load_yaml(tg / "plan" / "plan_intent.yaml") or {}
+    mode = (
+        str(intent.get("mode") or "").strip()
+        or tg_ctx.get("mode")
+        or "tilingkey_full_coverage"
+    )
     scope = {
         "version": 1,
         "op_name": tg_ctx["op_name"],
         "level": level,
         "focus": tg_ctx["focus"],
-        "mode": tg_ctx.get("mode") or "tilingkey_full_coverage",
+        "mode": mode,
         "csv_consumer_root": consumer.as_posix() if consumer else "",
         "architecture": tg_ctx["architecture"],
     }
     out = tg / "plan" / "levels" / level / "plan_scope.yaml"
     out.parent.mkdir(parents=True, exist_ok=True)
-    # Mirror mode into plan_intent for solve to read.
-    intent = {
-        "schema": "tg-plan-intent/v1",
-        "mode": scope["mode"],
-        "source": "init_intent",
-        "op_name": tg_ctx["op_name"],
-    }
-    intent_path = tg / "plan" / "plan_intent.yaml"
-    intent_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         import yaml
 
         out.write_text(yaml.safe_dump(scope, allow_unicode=True, sort_keys=False), encoding="utf-8")
-        intent_path.write_text(
-            yaml.safe_dump(intent, allow_unicode=True, sort_keys=False), encoding="utf-8"
-        )
+        # Keep plan_intent in sync with resolved mode.
+        if not intent:
+            intent = {
+                "schema": "tg-plan-intent/v1",
+                "mode": mode,
+                "source": "plan_scope",
+                "op_name": tg_ctx["op_name"],
+            }
+            intent_path = tg / "plan" / "plan_intent.yaml"
+            intent_path.write_text(
+                yaml.safe_dump(intent, allow_unicode=True, sort_keys=False), encoding="utf-8"
+            )
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "plan_scope", "error": str(exc)[:200]}
     return {"ok": True, "engine": "plan_scope", "artifact": out.as_posix(), **scope}
@@ -1471,9 +1545,15 @@ def _run_lemma_mine(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     """Producer scaffold — real proof writing is done by tg-lemma-producer subagent."""
     import yaml
 
+    from ascendc_pilot.paths import agent_root
+
     run_id = str(ctx.get("run_id") or "local")
     parts = (
-        project_root / ".ascendc-pilot" / "runs" / run_id / "actions" / "lemma_mine"
+        agent_root(project_root)
+        / "runs"
+        / run_id
+        / "actions"
+        / "lemma_mine"
     )
     parts.mkdir(parents=True, exist_ok=True)
     leads = _load_yaml(_tg(project_root) / "closure" / "lemmas" / "leads.yaml") or {}
@@ -1596,11 +1676,15 @@ def _run_closure_audit(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         existing.write_text(
             yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
         )
+    status = str(doc.get("status") or "").strip().lower()
+    # Scaffold may still be awaiting a human/subagent referee — do not claim success.
+    awaiting = status in {"", "awaiting_referee", "pending", "open"}
     return {
-        "ok": True,
+        "ok": not awaiting,
         "engine": "closure_audit",
         "artifact": existing.as_posix(),
         "status": doc.get("status"),
+        "needs_referee": awaiting,
         **st,
     }
 
@@ -1631,14 +1715,30 @@ def _run_closure_certify(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
     if audit_doc:
         _dump_closure_yaml(_tg(project_root) / "closure" / "audit_report.yaml", audit_doc)
 
+    audit_status = str(audit_doc.get("status") or "").strip().lower()
+    audit_ok = audit_status in {"pass", "passed", "accepted", "auto_ok"} and bool(
+        audit_doc.get("soundness_ok", True)
+    )
+    if not audit_doc:
+        audit_ok = False
+    if audit_status in {"awaiting_referee", "pending", "open", "fail", "failed", "reject", "rejected"}:
+        audit_ok = False
+
     cert = {
         "schema": "tg-closure-certificate/v1",
         "ok": (
             bool(gate.get("ok"))
             and bool(rep.get("gap_zero"))
             and bool(invariants.get("ok"))
+            and audit_ok
         ),
         "gate": gate,
+        "audit": {
+            "ok": audit_ok,
+            "status": audit_status or "missing",
+            "path": audit_review.as_posix() if audit_review.is_file() else "",
+            "soundness_ok": audit_doc.get("soundness_ok"),
+        },
         "invariants": invariants,
         "report": {
             "gap_zero": rep.get("gap_zero"),
@@ -1650,6 +1750,11 @@ def _run_closure_certify(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
         "state": st,
         "note": "R−D is reported separately and does not block D-closure when I9 path exists",
     }
+    if not audit_ok:
+        cert["error"] = (
+            f"closure_audit status={audit_status or 'missing'!r}; "
+            "require status in {{pass, accepted, auto_ok}} before certify"
+        )
     out = _tg(project_root) / "closure" / "certificate.yaml"
     _dump_closure_yaml(out, cert)
     # Also drop a standalone undeclared defect receipt.
@@ -1712,7 +1817,7 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("uo-init", "export_tg_host_view"): _uo_init_engine("export_tg_host_view"),
     ("uo-init", "export_integrity"): _uo_init_engine("export_integrity"),
     ("uo-init", "kb_review"): _uo_init_engine("kb_review"),
-    # tk-cover actions removed: workflow is alias_of tg-solve (W5).
+    # Legacy tk-cover workflow removed; closure lives under tg-solve.
     ("uo-update", "detect_changes"): _run_detect_changes,
     ("uo-update", "plan_update"): _run_plan_update,
     ("uo-update", "apply_update"): _run_apply_update,
@@ -1730,6 +1835,7 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("tg-init", "bind_merge"): _run_tg_bind_merge,
     ("tg-init", "mid_nest"): _run_tg_mid_nest,
     ("tg-init", "integrity_gate"): _run_tg_integrity,
+    ("tg-plan", "plan_intent"): _run_tg_plan_intent,
     ("tg-plan", "plan_scope"): _run_tg_plan_scope,
     ("tg-plan", "plan_precheck"): _run_tg_plan_precheck,
     ("tg-plan", "plan_build"): _run_tg_plan_build,
@@ -1842,6 +1948,16 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     ],
     "uo-ready-v1": ["uo/manifest.yaml", "uo/checks/integrity.yaml"],
     "tg-init-intent-v1": ["tg/init/init_intent.yaml"],
+    "tilingkey-contract-v1": [
+        "tg/contract/tilingkey_contract.yaml",
+        "tg/snapshot/understand_contract.json",
+    ],
+    "tilingkey-binding-v1": [
+        "tg/realization/binding_inventory.yaml",
+    ],
+    "tilingkey-integrity-v1": [
+        "tg/contract/integrity_gate.yaml",
+    ],
     "csv-contract-v1": [
         "tg/snapshot/understand_contract.json",
         "tg/realization/realization_map.yaml",
@@ -1871,6 +1987,7 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "init-audit-v1": ["tg/init/audit_report.yaml"],
     "init-confirmed-v1": ["tg/init/status.yaml"],
     "plan-scope-v1": ["tg/plan/levels/*/plan_scope.yaml"],
+    "plan-intent-v1": ["tg/plan/plan_intent.yaml"],
     "plan-precheck-v1": ["tg/init/status.yaml"],
     "plan-build-v1": ["tg/plan"],
     "plan-approved-v1": ["tg/plan/levels/*/human_supplement.yaml"],
@@ -1983,6 +2100,15 @@ OUTPUT_CONTRACT_NONEMPTY_GLOBS: dict[str, list[str]] = {
     ],
     "csv-contract-v1": [
         "tg/realization/realization_map.yaml",
+    ],
+    "tilingkey-contract-v1": [
+        "tg/contract/tilingkey_contract.yaml",
+    ],
+    "tilingkey-binding-v1": [
+        "tg/realization/binding_inventory.yaml",
+    ],
+    "tilingkey-integrity-v1": [
+        "tg/contract/integrity_gate.yaml",
     ],
     "semantic-bind-v1": [
         "tg/realization/semantic_bind_apply.yaml",

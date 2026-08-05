@@ -1402,13 +1402,14 @@ class SourceResolver:
         if cache is None:
             self._resolve_cache = {}
             cache = self._resolve_cache
-        # Cache only at top-ish depths to avoid exploding memory on deep chains
-        cache_key = None
-        if depth <= 2:
-            cache_key = (condition, frozenset(self._chasing), depth)
-            hit = cache.get(cache_key)
-            if hit is not None:
-                return hit
+        # Cache at every depth. Controllability re-resolves the same leaf /
+        # guard texts across hundreds of sibling branches; the old depth<=2
+        # cutoff threw away most of those hits. `_chasing` stays in the key so
+        # recursive frames remain correct.
+        cache_key = (condition, frozenset(self._chasing), depth)
+        hit = cache.get(cache_key)
+        if hit is not None:
+            return hit
         try:
             expr = parse_expr(condition)
         except Exception as exc:  # pragma: no cover - parser is total in practice
@@ -1421,8 +1422,7 @@ class SourceResolver:
         # A guard made only of literals carries no source dependency.
         non_const = [a for a in atoms if a.root != "CONSTANT"]
         res = Resolution(condition=condition, atoms=non_const or atoms, expr=expr)
-        if cache_key is not None:
-            cache[cache_key] = res
+        cache[cache_key] = res
         return res
 
 

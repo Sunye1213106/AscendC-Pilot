@@ -45,13 +45,6 @@ ACTION_PRODUCER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "runs/{run_id}/actions/resolve_gaps/staging.yaml",
         ],
     },
-    "tk-cover": {
-        "mine_recipe": [
-            "runs/{run_id}/actions/mine_recipe/parts/**",
-            "runs/{run_id}/actions/mine_recipe/scratch/**",
-            "runs/{run_id}/actions/mine_recipe/staging.yaml",
-        ],
-    },
     "tg-solve": {
         "lemma_mine": [
             "runs/{run_id}/actions/lemma_mine/parts/**",
@@ -75,15 +68,6 @@ ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "apply_gap_patch": [
             "uo/ir/gap_patch_receipt.yaml",
             "uo/ir/**",
-        ],
-    },
-    "tk-cover": {
-        "mine_recipe": [
-            "uo/tk/mine_recipe.yaml",
-        ],
-        "apply_recipe": [
-            "uo/tk/recipe.yaml",
-            "uo/tk/apply_recipe.yaml",
         ],
     },
     "tg-solve": {
@@ -147,30 +131,14 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "build_index": ["uo/indexes/**"],
         "export_tg_host_view": [
             "uo/ir/tg_host_view.yaml",
-            "uo/ir/host_codemap.yaml",
-            "uo/indexes/host_codemap.sqlite",
             "uo/indexes/kb_graph.sqlite",
             "uo/checks/tg_host_view_receipt.yaml",
         ],
         "export_integrity": ["uo/checks/integrity.yaml", "uo/summary/**", "uo/checks/**"],
         "kb_review": ["uo/review/kb_product_review.yaml"],
     },
-    "tk-cover": {
-        "env_probe": ["uo/tk/env_probe.yaml"],
-        "derive_fields": ["uo/tk/derive_fields.yaml"],
-        "export_codemap": [
-            "uo/tk/export_codemap.yaml",
-            "uo/ir/host_codemap.yaml",
-            "uo/indexes/host_codemap.sqlite",
-        ],
-        "mine_recipe": [
-            "runs/{run_id}/actions/mine_recipe/parts/**",
-            "runs/{run_id}/actions/mine_recipe/scratch/**",
-            "runs/{run_id}/actions/mine_recipe/staging.yaml",
-            "uo/tk/mine_recipe.yaml",
-        ],
-        "apply_recipe": ["uo/tk/recipe.yaml", "uo/tk/apply_recipe.yaml"],
-        "coverage_gate": ["uo/tk/coverage_gate.yaml"],
+    "tg-plan": {
+        "plan_intent": ["tg/plan/plan_intent.yaml"],
     },
     "tg-solve": {
         "oracle_probe": ["tg/closure/oracle_probe.yaml"],

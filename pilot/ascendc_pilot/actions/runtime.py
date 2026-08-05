@@ -18,7 +18,7 @@ from ascendc_pilot.actions.engines import (
     OUTPUT_CONTRACT_PATHS,
     invoke_engine,
 )
-from ascendc_pilot.paths import agent_root, ensure_agent_layout, runs_root, tg_root
+from ascendc_pilot.paths import agent_root, ensure_control_layout, ensure_tg_layout, runs_root, tg_root
 from ascendc_pilot.runs import append_event, file_sha256, issue_receipt, run_dir
 from ascendc_pilot.state import load_state
 from ascendc_pilot.workflows import actions_for_phase, get_workflow
@@ -234,15 +234,21 @@ def _repo_root(project_root: Path) -> Path:
     return root
 
 
-def _action_spec(workflow_id: str, action_id: str, phase: str) -> dict[str, Any] | None:
-    allowed = actions_for_phase(workflow_id, phase)
+def _action_spec(
+    workflow_id: str,
+    action_id: str,
+    phase: str,
+    *,
+    project_root: Path | None = None,
+) -> dict[str, Any] | None:
+    allowed = actions_for_phase(workflow_id, phase, project_root=project_root)
     for row in allowed:
         if str(row.get("id") or "") == action_id:
             return row
     # Also allow lookup in full workflow for clearer error messages
-    meta = get_workflow(workflow_id)
+    meta = get_workflow(workflow_id, project_root=project_root)
     for row in meta.get("actions") or []:
-        if str(row.get("id") or "") == action_id:
+        if isinstance(row, dict) and str(row.get("id") or "") == action_id:
             return {**row, "_not_in_phase": True}
     return None
 
@@ -845,14 +851,16 @@ def _check_output_contract(
 
 
 def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
-    ensure_agent_layout(project_root)
+    ensure_control_layout(project_root)
     state = load_state(project_root)
     if not state:
         return {"ok": False, "error": "no_active_workflow", "message_zh": "无活动 workflow；请先 acp start"}
     wid = str(state.get("workflow_id") or "")
+    if wid.startswith("tg-"):
+        ensure_tg_layout(project_root)
     phase = str(state.get("phase") or "")
     run_id = str(state.get("run_id") or "")
-    action = _action_spec(wid, action_id, phase)
+    action = _action_spec(wid, action_id, phase, project_root=project_root)
     if action is None:
         return {
             "ok": False,
@@ -866,7 +874,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             "error": "action_not_allowed",
             "message_zh": f"动作 {action_id!r} 不在当前阶段 {phase!r} 的 allowed_actions 中",
             "phase": phase,
-            "allowed": [a.get("id") for a in actions_for_phase(wid, phase)],
+            "allowed": [a.get("id") for a in actions_for_phase(wid, phase, project_root=project_root)],
         }
 
     # Prefer pipeline order: block Host skip (e.g. apply before detect_score_post / adjudicate).
@@ -878,7 +886,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             project_root,
             workflow_id=wid,
             phase=phase,
-            allowed_actions=actions_for_phase(wid, phase),
+            allowed_actions=actions_for_phase(wid, phase, project_root=project_root),
         )
         rec_reason = str((recommended or {}).get("reason") or "")
         rec_id = (recommended or {}).get("id")
@@ -2035,7 +2043,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         read_paths = deduped_rp
     allowed_targets = [str(x) for x in (dt.get("target_ids") or []) if str(x).strip()]
     # Outer containment: workflow write_roots; precise paths are Action lease.
-    wf_roots = list((get_workflow(wid) or {}).get("write_roots") or [])
+    wf_roots = list((get_workflow(wid, project_root=project_root) or {}).get("write_roots") or [])
     src_scope = source_scope_for_lease(project_root, run_id=run_id)
     lease = issue_action_lease(
         project_root,
@@ -2620,14 +2628,14 @@ def finalize_action(
     *,
     engine_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    ensure_agent_layout(project_root)
+    ensure_control_layout(project_root)
     state = load_state(project_root)
     if not state:
         return {"ok": False, "error": "no_active_workflow"}
     wid = str(state.get("workflow_id") or "")
     phase = str(state.get("phase") or "")
     run_id = str(state.get("run_id") or "")
-    action = _action_spec(wid, action_id, phase)
+    action = _action_spec(wid, action_id, phase, project_root=project_root)
     if action is None or action.get("_not_in_phase"):
         return {"ok": False, "error": "action_not_allowed", "action_id": action_id, "phase": phase}
 

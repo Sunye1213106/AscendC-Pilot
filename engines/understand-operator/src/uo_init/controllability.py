@@ -17,6 +17,8 @@ Two things live here because they answer the same question from both ends:
 """
 from __future__ import annotations
 
+import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
@@ -28,6 +30,16 @@ from uo_init.source_resolver import LEGAL_ROOTS, SourceResolver
 
 # Roots that close a lineage but give a test case nothing to set.
 NON_STEERABLE_ROOTS = frozenset(LEGAL_ROOTS) - CONTROLLABLE_ROOTS
+
+# Controllability is overwhelmingly pure-Python (GIL-bound). Default to one
+# worker and lean on per-function resolve-cache reuse. Set UO_CTRL_WORKERS>1
+# only when experimenting — private per-chunk caches usually lose the warm hit.
+def _ctrl_workers() -> int:
+    raw = os.environ.get("UO_CTRL_WORKERS", "1").strip()
+    try:
+        return max(1, min(16, int(raw)))
+    except ValueError:
+        return 1
 
 
 @dataclass
@@ -129,6 +141,11 @@ class ControllabilityBuilder:
         self.op_root = op_root
         self.normalizer = PredicateNormalizer(resolver, model)
         self._ordinals: dict[tuple[str, str, str], int] = {}
+        # Warm resolve caches across nodes that share a function scope.
+        self._scope_cache: dict[tuple[str, tuple[str, ...]], SourceResolver] = {}
+        self._normalizer_cache: dict[int, PredicateNormalizer] = {}
+        # Identical (function, guard, path) repeats under template / macros.
+        self._core_cache: dict[tuple[Any, ...], dict[str, Any]] = {}
 
     def _next_ordinal(self, file: str, function: str, guard: str) -> int:
         key = (file, function, guard)
@@ -138,6 +155,13 @@ class ControllabilityBuilder:
 
     def _scoped(self, node) -> SourceResolver:
         """Resolve a node's guard with its own function's locals in view."""
+        inductions = tuple(sorted(str(v) for v in (node.induction_vars or ())))
+        cache_key = (str(node.function or ""), inductions)
+        hit = self._scope_cache.get(cache_key)
+        if hit is not None:
+            # A prior resolve must not leave chase state that bleeds into the next.
+            hit._chasing.clear()
+            return hit
         host_ir = self.resolver.host_ir
         if host_ir is None or not node.function:
             base = self.resolver
@@ -150,21 +174,53 @@ class ControllabilityBuilder:
                 parameters=host_ir.params_by_function().get(node.function, set()),
                 param_actuals=host_ir.param_bindings().get(node.function, {}),
             )
-        if node.induction_vars:
+        if inductions:
             base = base.scoped(
-                local_roots={v: "LOOP_INDUCTION" for v in node.induction_vars}
+                local_roots={v: "LOOP_INDUCTION" for v in inductions}
             )
+        self._scope_cache[cache_key] = base
         return base
 
-    def analyse(self, node) -> NodeAnalysis:
-        resolver = self._scoped(node)
+    def _normalizer_for(self, resolver: SourceResolver) -> PredicateNormalizer:
+        key = id(resolver)
+        hit = self._normalizer_cache.get(key)
+        if hit is not None:
+            return hit
         normalizer = PredicateNormalizer(resolver, self.model)
-        own = normalizer.normalize(node.condition or "")
-        path = [
-            normalizer.normalize(pc.pretty())
+        self._normalizer_cache[key] = normalizer
+        return normalizer
+
+    def _analyse_core(self, node) -> dict[str, Any]:
+        """Resolve + normalize one node without minting a branch id.
+
+        Separated so ``build`` can run many cores and then assign ordinals in
+        input order (stable ids) without sharing mutable ordinal state across
+        threads.
+        """
+        inductions = tuple(sorted(str(v) for v in (node.induction_vars or ())))
+        path_texts = tuple(
+            pc.pretty()
             for pc in node.path_conditions
             if not pc.is_opaque
-        ]
+        )
+        memo_key = (
+            str(node.function or ""),
+            inductions,
+            str(node.condition or ""),
+            path_texts,
+            str(getattr(node, "kind", "") or ""),
+        )
+        hit = self._core_cache.get(memo_key)
+        if hit is not None:
+            return dict(hit)
+
+        resolver = self._scoped(node)
+        normalizer = self._normalizer_for(resolver)
+        # Normalize first: it resolve()s leaves and the full guard. The explicit
+        # resolve below then hits the scoped resolver cache instead of redoing
+        # the chase — same roots/atoms, no duplicate work.
+        own = normalizer.normalize(node.condition or "")
+        path = [normalizer.normalize(text) for text in path_texts]
         res = resolver.resolve(node.condition or "")
         closed = res.closed
         roots = list(res.roots)
@@ -223,6 +279,21 @@ class ControllabilityBuilder:
             closed = True
             roots = ["LOOP_INDUCTION"] if node.induction_vars else ["CONSTANT"]
             reasons = []
+        out = {
+            "own": own,
+            "path": path,
+            "roots": roots,
+            "closed": closed,
+            "partial": res.partial and not closed,
+            "reasons": reasons,
+            "atoms": list(res.atoms),
+        }
+        self._core_cache[memo_key] = out
+        return dict(out)
+
+    def analyse(self, node) -> NodeAnalysis:
+        core = self._analyse_core(node)
+        own = core["own"]
         bid = make_branch_id(
             side=self.side,
             file=node.file,
@@ -237,12 +308,12 @@ class ControllabilityBuilder:
             node=node,
             branch_id=bid,
             own=own,
-            path=path,
-            roots=roots,
-            closed=closed,
-            partial=res.partial and not closed,
-            reasons=reasons,
-            atoms=list(res.atoms),
+            path=core["path"],
+            roots=core["roots"],
+            closed=core["closed"],
+            partial=core["partial"],
+            reasons=core["reasons"],
+            atoms=core["atoms"],
         )
 
     def records_for(self, analysis: NodeAnalysis) -> list[BranchRecord]:
@@ -275,12 +346,109 @@ class ControllabilityBuilder:
             )
         return out
 
-    def build(self, nodes: Iterable[Any]) -> tuple[list[NodeAnalysis], list[BranchRecord]]:
-        analyses = [self.analyse(n) for n in nodes]
+    def build(
+        self,
+        nodes: Iterable[Any],
+        *,
+        workers: int | None = None,
+    ) -> tuple[list[NodeAnalysis], list[BranchRecord]]:
+        node_list = list(nodes)
+        # Warm HostIR lazy indexes once on the main thread so workers do not
+        # race the first materialization.
+        host_ir = self.resolver.host_ir
+        if host_ir is not None:
+            host_ir.locals_by_function()
+            host_ir.defs_by_function()
+            host_ir.params_by_function()
+            host_ir.param_bindings()
+            host_ir.output_bindings_by_function()
+
+        n_workers = _ctrl_workers() if workers is None else max(1, int(workers))
+        from uo_init.timing import log as _tlog
+        import time as _time
+
+        # Shared per-function resolver caches are not thread-safe (`_chasing`,
+        # `_resolve_cache`). Parallel cores each get a private builder view.
+        if n_workers <= 1 or len(node_list) < 8:
+            analyses = []
+            n = len(node_list)
+            step = max(32, n // 10) if n else 1
+            t0 = _time.perf_counter()
+            t_batch = t0
+            for i, node in enumerate(node_list, 1):
+                analyses.append(self.analyse(node))
+                if i % step == 0 or i == n:
+                    now = _time.perf_counter()
+                    batch_dt = now - t_batch
+                    rate = step / batch_dt if batch_dt > 0 else 0
+                    _tlog(
+                        f"{now - t0:7.3f}s  controllability.progress  "
+                        f"{i}/{n}  batch={batch_dt:.2f}s  "
+                        f"{rate:.1f} nodes/s  core_cache={len(self._core_cache)}"
+                    )
+                    t_batch = now
+        else:
+            cores = self._analyse_cores_parallel(node_list, n_workers)
+            analyses = []
+            for node, core in zip(node_list, cores):
+                own = core["own"]
+                bid = make_branch_id(
+                    side=self.side,
+                    file=node.file,
+                    function=node.function,
+                    guard=own.canonical,
+                    ordinal=self._next_ordinal(
+                        node.file, node.function, own.canonical
+                    ),
+                    root=self.op_root,
+                )
+                analyses.append(
+                    NodeAnalysis(
+                        node=node,
+                        branch_id=bid,
+                        own=own,
+                        path=core["path"],
+                        roots=core["roots"],
+                        closed=core["closed"],
+                        partial=core["partial"],
+                        reasons=core["reasons"],
+                        atoms=core["atoms"],
+                    )
+                )
         records: list[BranchRecord] = []
         for a in analyses:
             records.extend(self.records_for(a))
         return analyses, records
+
+    def _analyse_cores_parallel(
+        self, node_list: list[Any], workers: int
+    ) -> list[dict[str, Any]]:
+        """Run ``_analyse_core`` in worker threads with private scope caches.
+
+        Ordinal / branch-id assignment stays on the caller so ids remain a
+        pure function of input order.
+        """
+
+        def _worker(chunk: list[Any]) -> list[dict[str, Any]]:
+            local = ControllabilityBuilder(
+                self.resolver,
+                self.model,
+                side=self.side,
+                op_root=self.op_root,
+            )
+            return [local._analyse_core(n) for n in chunk]
+
+        # Split into contiguous chunks so map order is trivial to reassemble.
+        n = len(node_list)
+        chunk_size = max(1, (n + workers - 1) // workers)
+        chunks = [
+            node_list[i : i + chunk_size] for i in range(0, n, chunk_size)
+        ]
+        out: list[dict[str, Any]] = []
+        with ThreadPoolExecutor(max_workers=len(chunks)) as pool:
+            for part in pool.map(_worker, chunks):
+                out.extend(part)
+        return out
 
 
 def _vars_of(preds: list[NormalizedPredicate]) -> set[str]:

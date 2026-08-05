@@ -438,10 +438,15 @@ def materialize_into_kb(
             )
 
     blocker_ids = sorted(kb.blockers.keys())
+    from uo_init.host_derivation import deep_solve_enabled
+
     if derivation is None or var_model is None:
         reachability = KeyReachability.unavailable(
             "no host derivation" if derivation is None else "no variable model"
         )
+    elif not deep_solve_enabled():
+        # Default path strips value_expr after grading; Z3 needs those trees.
+        reachability = KeyReachability.unavailable("deep_solve_off")
     else:
         reachability = KeyReachability.from_derivation(derivation, var_model)
     legal_rows = build_legal_key_rows(
@@ -591,11 +596,11 @@ def write_key_index(uo_root: Path, fields: list[dict[str, Any]]) -> Path:
 
 def write_expr_shards(uo_root: Path, fields: list[dict[str, Any]]) -> list[Path]:
     """Optional deep-solve shards under ``tiling/expr/<dim>.yaml``."""
-    import os
-
     import yaml
 
-    if os.environ.get("UO_DEEP_SOLVE", "").strip() not in ("1", "true", "yes"):
+    from uo_init.host_derivation import deep_solve_enabled
+
+    if not deep_solve_enabled():
         return []
     root = Path(uo_root) / "tiling" / "expr"
     root.mkdir(parents=True, exist_ok=True)

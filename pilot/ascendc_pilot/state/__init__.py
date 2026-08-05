@@ -12,7 +12,7 @@ try:
 except ImportError:  # pragma: no cover
     yaml = None  # type: ignore[assignment]
 
-from ascendc_pilot.paths import ensure_agent_layout, runs_root, state_root
+from ascendc_pilot.paths import ensure_control_layout, runs_root, state_root
 
 RUNNING_LIKE = frozenset({"running", "rework_required", "human_required"})
 TERMINAL = frozenset({"blocked", "failed", "passed"})
@@ -240,10 +240,26 @@ def start_workflow(
     """Start at entry_state. Arbitrary phase only when force_phase=True (tests)."""
     from ascendc_pilot.obligations import collect_obligations, open_obligations
     from ascendc_pilot.runs import append_event
+    from ascendc_pilot.paths import (
+        ensure_ce_layout,
+        ensure_closure_layout,
+        ensure_control_layout,
+        ensure_tg_layout,
+        ensure_uo_layout,
+    )
     from ascendc_pilot.workflows import entry_state, get_workflow, label_zh_for, state_ids
 
-    meta = get_workflow(workflow_id)
-    ensure_agent_layout(project_root)
+    meta = get_workflow(workflow_id, project_root=project_root)
+    ensure_control_layout(project_root)
+    engine = str(meta.get("engine") or "")
+    if engine == "uo" or workflow_id.startswith("uo-"):
+        ensure_uo_layout(project_root)
+    elif engine == "tg" or workflow_id.startswith("tg-"):
+        ensure_tg_layout(project_root)
+        if workflow_id == "tg-solve":
+            ensure_closure_layout(project_root)
+    elif engine == "ce" or workflow_id.startswith("ce-"):
+        ensure_ce_layout(project_root)
     entry = entry_state(workflow_id)
     if phase and phase != entry and not force_phase:
         raise RuntimeError(

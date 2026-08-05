@@ -33,7 +33,7 @@ def describe_next(project_root: Path) -> dict[str, Any]:
     save_state(project_root, state)
 
     status = str(state.get("status") or "running")
-    phase_actions = actions_for_phase(wid, phase)
+    phase_actions = actions_for_phase(wid, phase, project_root=project_root)
     lf = state.get("last_failure") if isinstance(state.get("last_failure"), dict) else {}
 
     # Status-first decision (never phase → allowed_actions alone).
@@ -213,7 +213,7 @@ def advance_phase(
             project_root,
             workflow_id=wid,
             phase=current,
-            allowed_actions=actions_for_phase(wid, current),
+            allowed_actions=actions_for_phase(wid, current, project_root=project_root),
         )
         msgs = [
             f"阶段 `{current}` 流水线未完成：缺少 Action {missing}",

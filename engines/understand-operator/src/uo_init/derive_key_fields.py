@@ -526,18 +526,19 @@ class KeyFieldDerivation:
     note: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialise one field.
+        """Serialise one field for worker → parent IPC.
 
-        ``value_expr`` / ``expanded`` are the deep symbolic solve. They made up
-        ~90% of fag_derive.json and were unused by the tiling-key closure. They
-        are emitted only when ``UO_DEEP_SOLVE=1`` (the optional uo-deep-solve
-        path); the default export keeps the lightweight metadata the closure
-        and codemap actually consume.
+        Always includes ``value_expr`` / ``expanded`` so the parent can grade,
+        patch gaps, and optionally persist deep-solve shards. Persistence to
+        ``host_derivation.yaml`` / ``key_derivations.yaml`` strips these unless
+        ``UO_DEEP_SOLVE=1`` (see ``host_derivation.FieldDerivation.to_dict``).
         """
-        out: dict[str, Any] = {
+        return {
             "name": self.name,
             "index": self.index,
             "host_expr": self.host_expr,
+            "expanded": self.expanded,
+            "value_expr": self.value_expr,
             "value_table": list(self.value_table),
             "value_leaves": list(self.value_leaves),
             "input_roots": list(self.input_roots),
@@ -558,10 +559,6 @@ class KeyFieldDerivation:
             "implicit_defaults": list(self.implicit_defaults),
             "note": self.note,
         }
-        if os.environ.get("UO_DEEP_SOLVE", "").strip() in ("1", "true", "yes"):
-            out["expanded"] = self.expanded
-            out["value_expr"] = self.value_expr
-        return out
 
 
 def strip_casts(text: str) -> str:
@@ -3143,11 +3140,18 @@ class KeyFieldDeriver:
         self.implicit_zero = []
         self._implicit_seen = set()
         expanded = self._expand_text(host_expr, function, 0)
+        # Pretty text of the expansion is only for optional deep-solve debug;
+        # grading / SMT use the DAG. Skip the render unless UO_DEEP_SOLVE=1.
+        keep_expanded = os.environ.get("UO_DEEP_SOLVE", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
         out = KeyFieldDerivation(
             name=dim_name,
             index=index,
             host_expr=host_expr,
-            expanded=_pretty_dag(expanded),
+            expanded=_pretty_dag(expanded) if keep_expanded else "",
             def_sites=self._defs_for(strip_casts(host_expr), function),
         )
         norm = _ValueNormalizer(

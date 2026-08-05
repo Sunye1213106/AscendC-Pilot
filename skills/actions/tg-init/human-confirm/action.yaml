@@ -20,13 +20,13 @@ output_contract_id: init-confirmed-v1
 allowed_write_paths:
 - tg/init/status.yaml
 - tg/init/kb_fingerprint.yaml
-- tg/realization/domain_review.yaml
-- tg/realization/binding_lexicon.yaml
+- tg/init/confirmation.yaml
 forbidden_write_paths: []
 allowed_read_paths:
 - tg/init/**
 - tg/realization/**
 - tg/snapshot/**
+- tg/contract/**
 forbidden_read_paths: []
 checker:
   required: true

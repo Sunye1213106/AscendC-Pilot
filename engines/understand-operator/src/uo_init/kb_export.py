@@ -116,6 +116,163 @@ def _quality(kb: KnowledgeBase, payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _tilingdata_view(
+    kb: KnowledgeBase,
+    payload: dict[str, Any],
+    data_fields: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Prefer the structured view built at materialize time; fall back to nodes."""
+    cached = kb.notes.get("tiling_data_view")
+    if isinstance(cached, dict) and cached.get("structs") is not None:
+        out = dict(cached)
+        out["graph_fingerprint"] = payload.get("fingerprint") or ""
+        out["status"] = "extracted" if out.get("structs") else "not_extracted"
+        return out
+    # Rebuild a minimal projection from TDF nodes alone.
+    by_struct: dict[str, list[dict[str, Any]]] = {}
+    for row in data_fields:
+        data = row.get("data") or row
+        st = str(data.get("struct") or "Unknown")
+        by_struct.setdefault(st, []).append(
+            {
+                "id": row.get("id"),
+                "name": row.get("name") or data.get("name"),
+                "type": data.get("ctype") or "",
+                "default": data.get("default"),
+                "writers": list(data.get("writers") or []),
+                "readers": list(data.get("readers") or []),
+                "closure": {
+                    "writer_count": data.get("writer_count") or 0,
+                    "reader_count": data.get("reader_count") or 0,
+                    "status": "open",
+                    "defect": data.get("defect"),
+                },
+            }
+        )
+    constants = [
+        {
+            "name": row.get("name"),
+            "value": (row.get("data") or row).get("value"),
+            "kind": (row.get("data") or row).get("origin") or "named_constant",
+        }
+        for row in payload.get("nodes") or []
+        if row.get("kind") == "Variable"
+        and ((row.get("data") or {}).get("value_type") == "named_constant")
+    ]
+    return {
+        "schema": "uo-view-tilingdata/v1",
+        "version": FORMAT_VERSION,
+        "status": "extracted" if by_struct else "not_extracted",
+        "graph_fingerprint": payload.get("fingerprint") or "",
+        "structs": [
+            {"name": name, "form": "", "source": {}, "fields": fields}
+            for name, fields in sorted(by_struct.items())
+        ],
+        "constants": constants[:500],
+        "defects": dict((kb.notes.get("tiling_data_ir") or {}).get("defects") or {}),
+        "notes": list((kb.notes.get("tiling_data_ir") or {}).get("notes") or []),
+    }
+
+
+def _call_graph_view(kb: KnowledgeBase, payload: dict[str, Any]) -> dict[str, Any]:
+    cg = kb.notes.get("call_graph") if isinstance(kb.notes.get("call_graph"), dict) else {}
+    edges = list(cg.get("edges") or [])
+    return {
+        "schema": "uo-view-call-graph/v1",
+        "version": FORMAT_VERSION,
+        "status": "extracted" if edges else "not_extracted",
+        "graph_fingerprint": payload.get("fingerprint") or "",
+        "count": int(cg.get("count") or len(edges)),
+        "setter_count": int(cg.get("setter_count") or 0),
+        "getter_count": int(cg.get("getter_count") or 0),
+        "edges": edges,
+    }
+
+
+def _kernel_view(
+    payload: dict[str, Any], kernel_branches: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """The kernel domain in the shape a closure ledger reads.
+
+    Rows are the pre-instantiation `if constexpr` branches, because only those
+    still name the dimension that decides them — once instantiated the guard has
+    folded and nothing is left saying which dimension chose the surviving arm.
+    A folded branch minted at the same source location is static witness that
+    the branch survives some real instantiation, so it is attached to the row
+    rather than listed as a second, unrelated branch.
+
+    `D` is therefore `(branch, dtype_variant)` pairs and reachability is a
+    downstream consequence of key reachability, reached through `dimensions`.
+    """
+    loc: dict[str, tuple[str, int]] = {}
+    for row in payload.get("evidence") or []:
+        loc[str(row.get("id"))] = (
+            str(row.get("file") or ""),
+            int(row.get("line_start") or 0),
+        )
+
+    def _where(row: dict[str, Any]) -> tuple[str, int]:
+        for ref in row.get("evidence_refs") or []:
+            hit = loc.get(str(ref))
+            if hit:
+                return hit
+        return ("", 0)
+
+    constexpr = [r for r in kernel_branches if r.get("stage") == "constexpr"]
+    folded = [r for r in kernel_branches if r.get("stage") != "constexpr"]
+    folded_at: dict[tuple[str, int], list[str]] = {}
+    for row in folded:
+        folded_at.setdefault(_where(row), []).append(str(row.get("id")))
+
+    constexpr_at = {_where(row) for row in constexpr}
+    rows: list[dict[str, Any]] = []
+    for row in constexpr:
+        file, line = _where(row)
+        witness = sorted(folded_at.get((file, line)) or [])
+        rows.append(
+            {
+                "id": row.get("id"),
+                "condition": row.get("condition") or "",
+                "source": {"file": file, "line": line, "function": row.get("function") or ""},
+                "dimensions": list(row.get("dimensions") or []),
+                "derived": list(row.get("derived") or []),
+                "symbols": list(row.get("symbols") or []),
+                "dtype_variants": list(row.get("dtype_variants") or []),
+                "closure": {
+                    # A folded twin proves the branch compiles in at least one
+                    # sampled instance. That is real evidence and it costs no
+                    # hardware, but it is not per-key coverage, so it lands in
+                    # its own field rather than in `witness_keys`.
+                    "status": "witnessed_folded" if witness else "open",
+                    "folded_witness": witness,
+                    "witness_keys": [],
+                    "excluded_by": None,
+                },
+            }
+        )
+
+    ir_notes = payload.get("notes") or {}
+    ir_notes = ir_notes.get("kernel_ir") if isinstance(ir_notes.get("kernel_ir"), dict) else {}
+    return {
+        "schema": "uo-view-kernel/v1",
+        "version": FORMAT_VERSION,
+        "status": "extracted" if rows else "not_extracted",
+        "graph_fingerprint": payload["fingerprint"],
+        "dtype_variants": list(ir_notes.get("variants") or []),
+        "branches": rows,
+        # Folded branches with no `if constexpr` at that location: runtime ifs,
+        # or constexpr the uninstantiated parse could not reach. Listed so the
+        # two passes disagreeing stays visible instead of being averaged away.
+        "folded_only": sorted(
+            str(r.get("id")) for r in folded if _where(r) not in constexpr_at
+        ),
+        "by_dimension": dict(ir_notes.get("by_dimension") or {}),
+        "silent_dimensions": list(ir_notes.get("silent_dimensions") or []),
+        "unmapped_symbols": list(ir_notes.get("unmapped_symbols") or []),
+        "notes": list(ir_notes.get("notes") or []),
+    }
+
+
 def export_kb(kb: KnowledgeBase, uo_root: str | Path) -> dict[str, Any]:
     """Write every new-contract YAML artifact and return an export receipt.
 
@@ -326,7 +483,9 @@ def export_kb(kb: KnowledgeBase, uo_root: str | Path) -> dict[str, Any]:
         "tiling/data_model.yaml": _view(
             status="extracted" if data_fields else "not_extracted",
             nodes=data_fields,
+            summary=dict(kb.notes.get("tiling_data_ir") or {}),
         ),
+        "views/tilingdata.yaml": _tilingdata_view(kb, payload, data_fields),
         "kernel/branches.yaml": {
             "version": FORMAT_VERSION,
             "status": "extracted" if (kernel_branches or controllable_preds) else "not_extracted",
@@ -336,6 +495,7 @@ def export_kb(kb: KnowledgeBase, uo_root: str | Path) -> dict[str, Any]:
                 row for row in predicates if row.get("side") == "kernel"
             ],
         },
+        "views/kernel.yaml": _kernel_view(payload, kernel_branches),
         "kernel/paths.yaml": _view(nodes=paths),
         "kernel/compile_model.yaml": _view(
             status="extracted" if bindings else "not_extracted",
@@ -348,11 +508,32 @@ def export_kb(kb: KnowledgeBase, uo_root: str | Path) -> dict[str, Any]:
         "kernel/resources.yaml": _view(status="not_extracted"),
         "cross_layer/tiling_to_kernel.yaml": {
             "version": FORMAT_VERSION,
-            "status": "extracted" if (mat.get("bind_edges") or bindings) else "not_extracted",
-            "edges": _select_edges(payload, "encodes", "binds", "selects", "implements"),
+            "status": (
+                "extracted"
+                if (
+                    mat.get("bind_edges")
+                    or bindings
+                    or data_fields
+                    or _select_edges(payload, "writes", "reads")
+                )
+                else "not_extracted"
+            ),
+            "edges": _select_edges(
+                payload,
+                "encodes",
+                "binds",
+                "selects",
+                "implements",
+                "writes",
+                "reads",
+            ),
             "binds": list(mat.get("bind_edges") or []),
+            "writes": _select_edges(payload, "writes"),
+            "reads": _select_edges(payload, "reads"),
             "template_blocks": template_blocks,
+            "tiling_data": dict(kb.notes.get("tiling_data_ir") or {}),
         },
+        "views/call_graph.yaml": _call_graph_view(kb, payload),
         "cross_layer/impact_graph.yaml": _view(edges=payload["edges"]),
         "cross_layer/variable_lineage.yaml": _view(
             status="extracted" if variables else "not_extracted",

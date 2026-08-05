@@ -178,6 +178,9 @@ class PredicateNormalizer:
     def __init__(self, resolver: SourceResolver, model) -> None:
         self.resolver = resolver
         self.model = model
+        # Controllability re-normalizes the same path-condition strings on
+        # every nested branch in a function; keep the rewrite.
+        self._normalize_cache: dict[str, NormalizedPredicate] = {}
 
     def _resolver_for(self, expr: Expr) -> SourceResolver:
         """Which scope to read this leaf in. One resolver unless overridden."""
@@ -328,33 +331,42 @@ class PredicateNormalizer:
             return NormalizedPredicate(
                 condition=condition or "", status=STATUS_UNRESOLVED, reason=REASON_EMPTY
             )
+        hit = self._normalize_cache.get(text)
+        if hit is not None:
+            return hit
         try:
             tree = parse_expr(text)
         except Exception as exc:  # noqa: BLE001 - parser failure is a real outcome
-            return NormalizedPredicate(
+            out = NormalizedPredicate(
                 condition=text,
                 status=STATUS_UNRESOLVED,
                 reason=REASON_PARSE_FAILED,
                 detail=str(exc)[:120],
             )
+            self._normalize_cache[text] = out
+            return out
         try:
             smt = self._bool(tree)
         except NormalizeError as exc:
             res = self.resolver.resolve(text)
-            return NormalizedPredicate(
+            out = NormalizedPredicate(
                 condition=text,
                 status=STATUS_UNRESOLVED,
                 reason=exc.reason,
                 detail=exc.detail,
                 roots=res.roots,
             )
+            self._normalize_cache[text] = out
+            return out
         res = self.resolver.resolve(text)
-        return NormalizedPredicate(
+        out = NormalizedPredicate(
             condition=text,
             smt=smt,
             variables=sorted(collect_vars(smt)),
             roots=res.roots,
         )
+        self._normalize_cache[text] = out
+        return out
 
 
 def _flip(op: str) -> str:
