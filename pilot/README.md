@@ -3,7 +3,7 @@
 唯一控制面：工作流状态、质量门禁、Context Pack、本地/全局记忆、legacy 迁移。
 
 ```text
-pip install -e ./pilot -e ./engines/understand-operator -e "./engines/testcase-generation[solver]"
+pip install -e ./pilot -e ./engines/understand-operator -e "./engines/testcase-generation[ml]"
 acp doctor
 acp migrate-legacy <算子仓> --op-name <op>
 acp start uo-init --project <算子仓>   # 仅 entry_state

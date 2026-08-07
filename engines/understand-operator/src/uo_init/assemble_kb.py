@@ -19,6 +19,18 @@ from uo_init.kb_model import (
 from uo_init.tpl_bind import BindingResult
 
 
+def _arch_scoped_uo_root(op_dir: str | Path, arch_dir: str | None) -> Path:
+    """Return the durable architecture-scoped UO artifact directory."""
+
+    try:
+        from ascendc_pilot.paths import uo_root
+
+        return uo_root(Path(op_dir), arch=arch_dir)
+    except Exception:
+        arch = (arch_dir or "").strip() or "arch35"
+        return Path(op_dir) / ".ascendc-pilot" / arch / "uo"
+
+
 def _as_minted(item: MintedKernelBranch | str | dict[str, Any]) -> MintedKernelBranch | None:
     if isinstance(item, MintedKernelBranch):
         return item
@@ -192,8 +204,13 @@ def assemble_kb(
                 data={
                     "side": "kernel",
                     "ctrl_kind": item.kind,
+                    "stage": item.stage,
                     "condition": item.condition,
                     "function": item.function,
+                    "dimensions": list(item.dimensions),
+                    "derived": list(item.derived),
+                    "symbols": list(item.symbols),
+                    "dtype_variants": list(item.dtype_variants),
                 },
             )
         )
@@ -224,6 +241,24 @@ def assemble_kb(
             derivation=derivation,
             header_path=tpl_header,
         )
+    if kernel_ir is None and minted:
+        from uo_init.ids import named_id
+
+        for item in minted:
+            for dim in (*item.dimensions, *item.derived):
+                kid = named_id("TilingKeyDim", dim)
+                if kid not in kb.nodes:
+                    continue
+                kb.link(
+                    "controls",
+                    kid,
+                    item.id,
+                    data={
+                        "exactness": (
+                            "exact" if dim in item.dimensions else "derived"
+                        ),
+                    },
+                )
     if kernel_ir is not None:
         _add_kernel_ir(
             kb,
@@ -299,13 +334,23 @@ def export_operator_kb(
     kb: KnowledgeBase,
     op_dir: str | Path,
     *,
+    uo_root_override: str | Path | None = None,
     rebuild_index: bool = True,
     write_integrity: bool = True,
 ) -> dict[str, Any]:
-    """Write `.ascendc-pilot/uo/` under the operator tree and derived index."""
+    """Write UO KB artifacts and derived index.
+
+    ``uo_root_override`` is the production path for architecture-scoped runs
+    (``.ascendc-pilot/<arch>/uo``).  The historical default is preserved for
+    older direct callers and unit tests that still expect ``.ascendc-pilot/uo``.
+    """
     import yaml
 
-    uo_root = Path(op_dir) / ".ascendc-pilot" / "uo"
+    uo_root = (
+        Path(uo_root_override)
+        if uo_root_override is not None
+        else Path(op_dir) / ".ascendc-pilot" / "uo"
+    )
     receipt = export_kb(kb, uo_root)
     invariant_errors = kb.check_invariants()
     receipt["invariant_errors"] = invariant_errors
@@ -752,7 +797,8 @@ def export_operator_closure(
                 logical_file=str(spec.kernel_entry).replace("\\", "/"),
             )
             fold_note = f"folded {len(jobs)} harness jobs → {len(kbr)} KBR"
-            fold_path = Path(spec.op_dir) / ".ascendc-pilot" / "uo" / "kernel" / "fold_receipt.yaml"
+            uo_root = _arch_scoped_uo_root(spec.op_dir, spec.arch_dir or arch_dir)
+            fold_path = uo_root / "kernel" / "fold_receipt.yaml"
             fold_path.parent.mkdir(parents=True, exist_ok=True)
             import yaml as _yaml
 
@@ -795,7 +841,11 @@ def export_operator_closure(
         host_ir=bundle.get("host_ir"),
         op_spec=spec,
     )
-    receipt = export_operator_kb(kb, spec.op_dir)
+    receipt = export_operator_kb(
+        kb,
+        spec.op_dir,
+        uo_root_override=_arch_scoped_uo_root(spec.op_dir, spec.arch_dir or arch_dir),
+    )
     receipt["source_closure"] = bundle["metrics"].source_closure
     receipt["blocker_count"] = len(bundle["gap"].blockers)
     receipt["kernel_branch_count"] = len(kbr)

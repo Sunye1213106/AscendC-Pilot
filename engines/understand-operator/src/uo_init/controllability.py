@@ -26,7 +26,12 @@ from uo_init.ids import branch_id as make_branch_id
 from uo_init.ids import predicate_id
 from uo_init.kb_model import CONTROLLABLE_ROOTS, Evidence
 from uo_init.predicate import NormalizedPredicate, PredicateNormalizer, conjoin
-from uo_init.source_resolver import LEGAL_ROOTS, SourceResolver
+from uo_init.source_resolver import (
+    LEGAL_ROOTS,
+    SourceResolver,
+    inferred_function_local_roots,
+    inferred_parameter_roots,
+)
 
 # Roots that close a lineage but give a test case nothing to set.
 NON_STEERABLE_ROOTS = frozenset(LEGAL_ROOTS) - CONTROLLABLE_ROOTS
@@ -168,8 +173,11 @@ class ControllabilityBuilder:
         else:
             bindings = dict(host_ir.locals_by_function().get(node.function, {}))
             bindings.update(host_ir.output_bindings_by_function().get(node.function, {}))
+            local_roots = inferred_function_local_roots(host_ir, node.function)
+            local_roots.update(inferred_parameter_roots(host_ir, node.function))
             base = self.resolver.scoped(
                 bindings=bindings,
+                local_roots=local_roots,
                 def_lists=host_ir.defs_by_function().get(node.function, {}),
                 parameters=host_ir.params_by_function().get(node.function, set()),
                 param_actuals=host_ir.param_bindings().get(node.function, {}),

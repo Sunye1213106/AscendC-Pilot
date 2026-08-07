@@ -16,6 +16,7 @@ import pandas as pd
 
 from testcase_agent.closure import corpus as C
 from testcase_agent.closure import generate as G
+from testcase_agent.closure.key_utils import int_exact
 from testcase_agent.closure import ledger
 from testcase_agent.closure import models as M
 from testcase_agent.closure import residual as R
@@ -201,31 +202,31 @@ def run_round(
             witnesses = []
 
     model_cases: list = []
-    random_cases: list = []
     try:
-        model_cases, model_df = G.pool(n=half, seed=seed, witnesses=witnesses or None)
-    except Exception:
-        model_df = pd.DataFrame()
-    try:
-        random_cases, random_df = G.pool(
-            n=half, seed=seed + 1, witnesses=witnesses or None, mutate_share=0.0
+        model_cases, model_df = G.kb_guided_pool(
+            n=half,
+            seed=seed,
+            witnesses=witnesses or None,
+            open_keys=open_keys,
+            surrogate=surrogate,
+            control=False,
+            ws=ws,
         )
     except Exception:
-        random_df = pd.DataFrame()
+        model_df = pd.DataFrame()
 
-    # Rank / filter model arm by predicted open keys when surrogate exists.
-    if surrogate is not None and not model_df.empty and open_keys:
-        try:
-            accept, keys = surrogate.predict(model_df)
-            keep = [i for i, k in enumerate(keys) if int(k) in open_keys and accept[i]]
-            if keep:
-                model_cases = [model_cases[i] for i in keep if i < len(model_cases)]
-                model_df = model_df.iloc[keep].reset_index(drop=True)
-        except Exception:
-            pass
-
-    model_arm = {"candidates": len(model_cases), "judged": 0, "new_declared_keys": 0}
-    random_arm = {"candidates": len(random_cases), "judged": 0, "new_declared_keys": 0}
+    model_arm = {
+        "candidates": len(model_cases),
+        "judged": 0,
+        "new_declared_keys": 0,
+        "new_undeclared_keys": 0,
+    }
+    random_arm = {
+        "candidates": 0,
+        "judged": 0,
+        "new_declared_keys": 0,
+        "new_undeclared_keys": 0,
+    }
     new_r = 0
     oracle_suspect = False
 
@@ -243,7 +244,10 @@ def run_round(
     except Exception:
         D = set()
 
-    def _arm(name: str, cases: list, arm: dict, r_before: set) -> set:
+    def _intish(value: Any, default: int = 0) -> int:
+        return int_exact(value, default=default)
+
+    def _arm(name: str, cases: list, arm: dict, r_before: set, frame: pd.DataFrame) -> set:
         nonlocal oracle_suspect
         if not cases or oracle is None:
             return r_before
@@ -252,6 +256,15 @@ def run_round(
         except Exception as exc:  # noqa: BLE001
             (rd / f"{name}_error.txt").write_text(str(exc)[:500], encoding="utf-8")
             return r_before
+        acct = dict(getattr(oracle, "last_accounting", {}) or {})
+        if acct:
+            arm["accounting"] = acct
+            arm["not_run"] = int(acct.get("not_run") or 0)
+            arm["crashed"] = int(acct.get("crashed") or 0)
+            arm["parse_failed"] = int(acct.get("parse_failed") or 0)
+            if arm["not_run"] or arm["crashed"] or arm["parse_failed"]:
+                oracle_suspect = True
+                (ws.state / "oracle_suspect").write_text("1", encoding="utf-8")
         if hasattr(oracle, "batch_integrity"):
             flag = oracle.batch_integrity(len(cases), len(verdicts))
             if flag == "ORACLE_SUSPECT":
@@ -259,22 +272,47 @@ def run_round(
                 (ws.state / "oracle_suspect").write_text("1", encoding="utf-8")
 
         arm_keys: set[int] = set()
+        arm_undeclared: set[int] = set()
         rows = []
         for i, v in enumerate(verdicts):
             if not v.verdict:
                 continue
             arm["judged"] += 1
+            meta = {}
+            if frame is not None and not frame.empty and i < len(frame):
+                meta = {
+                    str(k): frame.iloc[i][k]
+                    for k in frame.columns
+                    if str(k).startswith("_")
+                }
             desc = {}
             try:
                 I = W.replay_inputs()
                 desc = dict(I.SEMANTICS.describe(cases[i]))
             except Exception:
                 pass
+            actual_key = _intish(v.key)
+            target_key = _intish(meta.get("_target_key"))
+            predicted_key = _intish(meta.get("_predicted_key"))
+            mismatch = ""
+            if v.ok and target_key and actual_key:
+                try:
+                    want = W.decode(target_key)
+                    got = W.decode(actual_key)
+                    dims = W.dim_names()
+                    mismatch = "|".join(d for d in dims if str(want.get(d)) != str(got.get(d)))
+                except Exception:
+                    mismatch = ""
             desc.update({
                 "ok": int(v.ok),
-                "tiling_key": int(v.key) if v.key is not None else -1,
+                "tiling_key": actual_key if v.key is not None else -1,
                 "reject": v.reject,
                 "_arm": name,
+                **meta,
+                "_actual_declared": int(bool(v.ok and actual_key and (not D or actual_key in D))),
+                "_target_hit": int(bool(v.ok and target_key and actual_key == target_key)),
+                "_prediction_hit": int(bool(v.ok and predicted_key and actual_key == predicted_key)),
+                "_mismatch_dims": mismatch,
             })
             rows.append(desc)
             if v.ok and v.key is not None:
@@ -282,9 +320,15 @@ def run_round(
                     k = int(v.key)
                 except (TypeError, ValueError):
                     continue
-                if (not D or k in D):
+                if D and k not in D:
+                    arm_undeclared.add(k)
+                else:
                     arm_keys.add(k)
         arm["new_declared_keys"] = len(arm_keys - r_before)
+        arm["new_undeclared_keys"] = len(arm_undeclared - r_before)
+        if arm_undeclared:
+            arm["undeclared_keys"] = len(arm_undeclared)
+            arm["undeclared_sample"] = sorted(arm_undeclared)[:10]
         if rows:
             C.commit(rows, ws, name=f"round_{idx:04d}_{name}_key_cases.csv")
             try:
@@ -294,9 +338,50 @@ def run_round(
             return set(ledger.load_R(ws)) if ws.r_path.is_file() else r_before
         return r_before
 
-    r_after_model = _arm("model", model_cases, model_arm, r_initial)
-    r_final = _arm("random", random_cases, random_arm, r_after_model)
+    r_after_model = _arm("model", model_cases, model_arm, r_initial, model_df)
+    if D:
+        open_after_model = D - (r_after_model & D) - set(ledger.load_E(ws))
+    else:
+        open_after_model = open_keys
+    random_cases: list = []
+    try:
+        random_cases, random_df = G.kb_guided_pool(
+            n=half,
+            seed=seed + 1,
+            witnesses=witnesses or None,
+            open_keys=open_after_model,
+            control=True,
+            ws=ws,
+        )
+    except Exception:
+        random_df = pd.DataFrame()
+    random_arm["candidates"] = len(random_cases)
+    r_final = _arm("random", random_cases, random_arm, r_after_model, random_df)
     new_r = len(r_final - r_initial)
+    if D:
+        new_declared_r = len((r_final & D) - (r_initial & D))
+        new_undeclared_r = len((r_final - D) - (r_initial - D))
+        undeclared_r = r_final - D
+    else:
+        new_declared_r = new_r
+        new_undeclared_r = 0
+        undeclared_r = set()
+    domain_suspect = bool(undeclared_r)
+    undeclared_path = ""
+    if undeclared_r:
+        try:
+            from testcase_agent.closure import report as closure_report
+
+            undeclared_path = closure_report.write_undeclared(ws, undeclared_r)
+        except Exception:
+            undeclared_path = ""
+    blocker_model = {}
+    try:
+        df_after = C.dedup(C.coerce(C.load(ws)))
+        if hasattr(M, "write_blocker_model"):
+            blocker_model = M.write_blocker_model(df_after, ws)
+    except Exception as exc:  # noqa: BLE001
+        blocker_model = {"ok": False, "error": str(exc)[:200]}
 
     lift = None
     if random_arm["judged"] and model_arm["judged"]:
@@ -314,7 +399,13 @@ def run_round(
         "random_arm": random_arm,
         "model_lift": lift,
         "new_R": new_r,
+        "new_declared_R": new_declared_r,
+        "new_undeclared_R": new_undeclared_r,
+        "undeclared_R": len(undeclared_r),
+        "undeclared_path": undeclared_path,
         "oracle_suspect": oracle_suspect,
+        "domain_suspect": domain_suspect,
+        "blocker_model": blocker_model,
         "distance_histogram": (R.analyse(ws) or {}).get("distance"),
     }
     try:
@@ -332,7 +423,7 @@ def run_round(
         (rd / "progress.yaml").write_text(json.dumps(progress), encoding="utf-8")
 
     return {
-        "ok": not oracle_suspect,
+        "ok": not oracle_suspect and not domain_suspect,
         "round_dir": str(rd),
         "progress": progress,
         "assessment_dims": len(assessment),

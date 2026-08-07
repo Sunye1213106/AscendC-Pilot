@@ -1622,6 +1622,10 @@ def _loop_header(children: list, kind: str):
             for d in h.get_children():
                 if d.kind.name == "VAR_DECL" and d.spelling:
                     induction.append(d.spelling)
+        elif h.kind.name == "VAR_DECL" and h.spelling:
+            # CXX_FOR_RANGE_STMT commonly exposes `for (auto x : xs)` as a
+            # VAR_DECL directly, not wrapped in DECL_STMT.
+            induction.append(h.spelling)
     if kind == "while":
         return (header[0] if header else None), (), None, None
     if kind == "do":

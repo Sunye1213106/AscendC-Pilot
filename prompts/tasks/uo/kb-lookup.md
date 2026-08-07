@@ -32,7 +32,7 @@ Only process the listed targets. Do not expand scope unless the Action Method ex
 
 ## Required Procedure
 
-1. Apply loaded capabilities in order (read-only KB / CBM query).
+1. Apply loaded capabilities in order (read-only KB / UO graph query).
 2. Evaluate each listed target independently.
 3. Record evidence for every accepted conclusion **in the task reply** (not by rewriting KB files).
 4. Preserve unresolved items when evidence is insufficient.

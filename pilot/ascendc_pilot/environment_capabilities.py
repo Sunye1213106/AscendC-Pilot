@@ -28,29 +28,6 @@ def _which(name: str) -> str | None:
     return shutil.which(name)
 
 
-def _cbm_meta(project_root: Path) -> dict[str, Any]:
-    from ascendc_pilot.paths import uo_root
-
-    meta = _load_yaml(uo_root(project_root) / "cbm" / "index_meta.json")
-    if not meta:
-        # json fallback
-        p = uo_root(project_root) / "cbm" / "index_meta.json"
-        if p.is_file():
-            try:
-                import json
-
-                loaded = json.loads(p.read_text(encoding="utf-8"))
-                meta = loaded if isinstance(loaded, dict) else {}
-            except Exception:  # noqa: BLE001
-                meta = {}
-    return {
-        "project": str(meta.get("cbm_project") or meta.get("project") or "").strip() or None,
-        "index_status": str(meta.get("status") or meta.get("index_status") or "").strip() or "unknown",
-        "index_commit": str(meta.get("commit") or meta.get("index_commit") or "").strip() or None,
-        "fallback": "acp cbm lookup",
-    }
-
-
 def _source_scope(project_root: Path, *, run_id: str = "") -> dict[str, Any]:
     from ascendc_pilot.paths import runs_root, uo_root
 
@@ -115,12 +92,7 @@ def build_environment_capabilities(
     acp = _which("acp")
     rg = _which("rg") or _which("ripgrep")
     python = _which("python") or _which("python3")
-    cbm = _cbm_meta(root)
     scope = _source_scope(root, run_id=run_id)
-    mcp_cfg = Path.home() / ".config" / "opencode" / "opencode.json"
-    mcp_present = mcp_cfg.is_file() and "codebase-memory" in mcp_cfg.read_text(
-        encoding="utf-8", errors="ignore"
-    )
     return {
         "version": 1,
         "kind": "environment_capabilities",
@@ -135,16 +107,12 @@ def build_environment_capabilities(
             "acp": "available" if acp else "missing",
             "rg": "available" if rg else "missing",
             "python": "available" if python else "missing",
-            "codebase-memory-mcp_search_graph": "configured" if mcp_present else "unknown",
-            "codebase-memory-mcp_get_code_snippet": "configured" if mcp_present else "unknown",
-            "acp_cbm_lookup": "available" if acp else "missing",
         },
         "paths": {
             "acp": acp,
             "rg": rg,
             "python": python,
         },
-        "cbm": cbm,
         "source_scope": scope,
         "commands": {
             "python": python,
@@ -152,8 +120,8 @@ def build_environment_capabilities(
             "rg": rg,
         },
         "note": (
-            "Deterministic prepare snapshot. Prefer listed CBM tool full names; "
-            "on MCP miss use acp cbm lookup or windowed Read within source_scope."
+            "Deterministic prepare snapshot. Use UO KB queries or a bounded source read "
+            "within source_scope."
         ),
     }
 

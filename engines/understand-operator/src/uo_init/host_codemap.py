@@ -436,7 +436,7 @@ class CodemapQuery:
     def callers_of(self, function: str) -> list[dict[str, Any]]:
         """Deprecated in v2: call graph lives in the navigation layer.
 
-        Kept as an empty list so old call sites do not crash; prefer CBM.
+        Kept as an empty list so old call sites do not crash; use UO graph queries.
         """
         del function
         return []

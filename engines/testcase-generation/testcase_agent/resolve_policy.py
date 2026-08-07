@@ -718,7 +718,7 @@ def _norm_mid_name(name: str) -> str:
 def collect_open_mid_symbols(out_root: Path, *, limit: int = 32) -> dict[str, Any]:
     """
     Queue of intermediate symbols that still need nested uo-query Tasks
-    (ses_07c3 style: uncertain → CBM/subagent until CSV).
+    (ses_07c3 style: uncertain → UO query/subagent until CSV).
     """
     root = Path(out_root)
     open_syms: dict[str, dict[str, Any]] = {}

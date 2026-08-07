@@ -5,7 +5,7 @@ role: producer
 mode: subagent
 description: >
   UO semantic producer for action-scoped extraction planning and semantic adjudication.
-  Evidence path: CBM MCP (search_graph → get_code_snippet) or `acp cbm lookup`, then
+  Evidence path: UO KB query followed by a confirmed-scope bounded source read, then
   windowed Read on confirmed-scope sources — never whole-file dumps. Writes limited by Action lease.
 read_scopes:
   - "uo/**"
@@ -18,4 +18,3 @@ forbidden:
   - modify_pilot_state
   - declare_workflow_passed
   - write_outside_declared_scope
-

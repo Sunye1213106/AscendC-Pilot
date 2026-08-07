@@ -1174,6 +1174,9 @@ def _run_oracle_probe(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
     """Oracle integrity probe — live Host by default (CI/synthetic may opt out)."""
     tg = _tg(project_root)
     ws = _closure_ws(project_root)
+    from testcase_agent.closure.ledger import baseline_fingerprint
+
+    baseline = baseline_fingerprint(project_root)
     issues: list[str] = []
     live: dict[str, Any] = {"attempted": False}
     try:
@@ -1195,18 +1198,23 @@ def _run_oracle_probe(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
             rng = __import__("random").Random(0)
             cases = [G.sample_case(rng) for _ in range(int(ctx.get("probe_n") or 10))]
             # One illegal / empty case for reject path when possible.
-            verdicts = HostOracle().judge(cases, tag="oracle_probe")
-            judged = sum(1 for v in verdicts if v.verdict)
-            accepted = sum(1 for v in verdicts if v.ok)
+            oracle = HostOracle()
+            verdicts = oracle.judge(cases, tag="oracle_probe")
+            batch_accounting = oracle.last_accounting
+            judged = batch_accounting["judged"]
+            accepted = batch_accounting["accepted"]
             with_key = sum(1 for v in verdicts if v.key)
             live.update({
                 "sent": len(cases),
                 "judged": judged,
                 "accepted": accepted,
                 "with_key": with_key,
+                "accounting": batch_accounting,
             })
-            if judged != len(cases):
-                issues.append("ORACLE_SUSPECT:batch_truncated")
+            if not batch_accounting["conserved"]:
+                issues.append("ORACLE_ACCOUNTING_MISMATCH")
+            if batch_accounting["not_run"]:
+                issues.append("ORACLE_SUSPECT:not_run")
                 (ws.state / "oracle_suspect").write_text("1", encoding="utf-8")
             if accepted == 0:
                 issues.append("ORACLE_SUSPECT:accepted==0")
@@ -1224,10 +1232,11 @@ def _run_oracle_probe(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
             issues = [i for i in issues if not i.startswith("live_probe_disabled")]
 
     doc = {
-        "schema": "tg-oracle-probe/v1",
+        "schema": "tg-oracle-probe/v2",
         "ok": len(issues) == 0,
         "issues": issues,
         "state": str(ws.state),
+        "baseline": baseline,
         "live": live,
         "live_probe": live_probe,
         "note": (
@@ -1241,9 +1250,9 @@ def _run_oracle_probe(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
 
 
 def _run_closure_ledger(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    del ctx
     from testcase_agent.closure import ledger
     from testcase_agent.closure import lemma
+    from testcase_agent.closure import closure_state
 
     ws = _closure_ws(project_root)
     try:
@@ -1275,8 +1284,12 @@ def _run_closure_ledger(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
     except Exception as exc:  # noqa: BLE001
         applied = {"ok": False, "error": str(exc)[:200]}
     st = ledger.state(ws)
+    try:
+        snapshot = closure_state.write(ws, relations=list(ctx.get("finite_relations") or []))
+    except Exception as exc:  # noqa: BLE001
+        snapshot = {"error": str(exc)[:200]}
     return {
-        "ok": bool(rebuilt.get("ok", True)) and bool(applied.get("ok", True)),
+        "ok": bool(rebuilt.get("ok", True)) and bool(applied.get("ok", True)) and not snapshot.get("error"),
         "engine": "closure_ledger",
         "rebuild": rebuilt,
         "apply_rules": {
@@ -1285,6 +1298,7 @@ def _run_closure_ledger(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
             "revoked_count": applied.get("revoked_count", 0),
             "error": applied.get("error"),
         },
+        "closure_state": snapshot,
         **st,
     }
 
@@ -2051,7 +2065,6 @@ OUTPUT_CONTRACT_NONEMPTY_GLOBS: dict[str, list[str]] = {
     "scope-confirmed-v1": [
         "uo/runs/{run_id}/scope/scope_confirmed.yaml",
         "uo/runs/{run_id}/scope/receipt.yaml",
-        "uo/cbm/index_meta.json",
     ],
     "extract-plan-v1": [
         "uo/ir/extract_plan.yaml",

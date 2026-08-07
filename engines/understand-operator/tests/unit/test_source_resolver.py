@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-from uo_init.host_ir import HostIR, WriteEvent
+from uo_init.clang_walk import FieldDecl
+from uo_init.host_ir import FuncSummary, HostIR, LocalDecl, WriteEvent
 from uo_init.source_resolver import (
     LEGAL_ROOTS,
     REASON_FUNCTION_PARAMETER,
@@ -7,6 +8,8 @@ from uo_init.source_resolver import (
     REASON_UNMAPPED_SYMBOL,
     SourceResolver,
     dotted_path,
+    inferred_function_local_roots,
+    inferred_parameter_roots,
 )
 from uo_init.cpp_expr import parse_expr
 
@@ -334,6 +337,217 @@ def test_multi_def_prefers_independent_rhs():
     res = r.resolve("p < 0")
     assert res.closed, res.reasons
     assert "INPUT_SHAPE" in res.roots or "TILING_DATA" in res.roots
+
+
+def test_self_derived_counter_is_loop_derived_not_initial_constant():
+    """`needCoreNum = 1; needCoreNum += 1` is host loop state, not literal 1."""
+    ir = HostIR(
+        summaries={
+            "f": FuncSummary(
+                name="f",
+                locals={"needCoreNum": "1"},
+                assign_lists={"needCoreNum": ["1", "needCoreNum + 1"]},
+                assigns={"needCoreNum": "needCoreNum + 1"},
+            )
+        }
+    )
+    local_roots = inferred_function_local_roots(ir, "f")
+    assert local_roots["needCoreNum"] == "LOOP_DERIVED"
+    r = SourceResolver(host_ir=ir).scoped(
+        bindings=ir.locals_by_function()["f"],
+        def_lists=ir.defs_by_function()["f"],
+        local_roots=local_roots,
+    )
+    res = r.resolve("needCoreNum > fBaseParams.aicNum")
+    assert res.closed
+    assert "LOOP_DERIVED" in res.roots
+    assert "CONSTANT" not in res.roots
+
+
+def test_local_container_member_access_inherits_loop_derived_root():
+    ir = HostIR(
+        summaries={"f": FuncSummary(name="f")},
+        local_decls=[
+            LocalDecl(
+                name="invalidS1Array",
+                function="f",
+                type_text="std::vector<bool>",
+                init=None,
+                file="f.cpp",
+                line=1,
+            )
+        ],
+    )
+    local_roots = inferred_function_local_roots(ir, "f")
+    assert local_roots["invalidS1Array"] == "LOOP_DERIVED"
+    r = SourceResolver(host_ir=ir).scoped(local_roots=local_roots)
+    assert r.resolve("invalidS1Array.size() > 0").roots == ["LOOP_DERIVED"]
+    assert r.resolve("!invalidS1Array[j]").roots == ["LOOP_DERIVED"]
+
+
+def test_caller_container_root_flows_to_same_named_formal():
+    ir = HostIR(
+        summaries={
+            "caller": FuncSummary(name="caller", calls=[("callee", ("syncRounds",))]),
+            "callee": FuncSummary(name="callee", params=["syncRounds"]),
+        },
+        local_decls=[
+            LocalDecl(
+                name="syncRounds",
+                function="caller",
+                type_text="std::vector<std::pair<uint64_t, uint64_t>>",
+                init=None,
+                file="f.cpp",
+                line=1,
+            )
+        ],
+    )
+    assert inferred_parameter_roots(ir, "callee")["syncRounds"] == "LOOP_DERIVED"
+    r = SourceResolver(host_ir=ir).scoped(
+        parameters={"syncRounds"},
+        local_roots=inferred_parameter_roots(ir, "callee"),
+        param_actuals=ir.param_bindings()["callee"],
+    )
+    res = r.resolve("syncRounds.size() == 0")
+    assert res.closed and res.roots == ["LOOP_DERIVED"]
+
+
+def test_loop_derived_local_flows_through_local_expression_and_formal():
+    ir = HostIR(
+        summaries={
+            "caller": FuncSummary(
+                name="caller",
+                locals={"left": "0", "right": "100", "mid": "0"},
+                assign_lists={
+                    "left": ["0", "mid + 1"],
+                    "right": ["100", "mid"],
+                    "mid": ["0", "(left + right) / 2"],
+                },
+                calls=[("callee", ("mid",))],
+            ),
+            "callee": FuncSummary(name="callee", params=["possibleMax"]),
+        }
+    )
+    caller_roots = inferred_function_local_roots(ir, "caller")
+    assert caller_roots["mid"] == "LOOP_DERIVED"
+    assert inferred_parameter_roots(ir, "callee")["possibleMax"] == "LOOP_DERIVED"
+    r = SourceResolver(host_ir=ir).scoped(
+        parameters={"possibleMax"},
+        local_roots=inferred_parameter_roots(ir, "callee"),
+        param_actuals=ir.param_bindings()["callee"],
+    )
+    res = r.resolve("possibleMax > 0")
+    assert res.closed and res.roots == ["LOOP_DERIVED"]
+
+
+def test_loop_root_inside_actual_expression_flows_to_formal():
+    from uo_init.clang_walk import CtrlNode
+
+    ir = HostIR(
+        summaries={
+            "caller": FuncSummary(name="caller", calls=[("callee", ("coreId + 1",))]),
+            "callee": FuncSummary(name="callee", params=["coreId"]),
+        },
+        controls=[
+            CtrlNode(
+                id="L1",
+                kind="for",
+                file="f.cpp",
+                line=1,
+                function="caller",
+                condition="coreId < 4",
+                induction_vars=("coreId",),
+            )
+        ],
+    )
+    assert inferred_parameter_roots(ir, "callee")["coreId"] == "LOOP_DERIVED"
+    r = SourceResolver(host_ir=ir).scoped(
+        parameters={"coreId"},
+        local_roots=inferred_parameter_roots(ir, "callee"),
+        param_actuals=ir.param_bindings()["callee"],
+    )
+    assert r.resolve("coreId > 0").roots == ["LOOP_DERIVED"]
+
+
+def test_mixed_loop_roots_flow_to_formal_as_loop_derived():
+    from uo_init.clang_walk import CtrlNode
+
+    ir = HostIR(
+        summaries={
+            "caller_a": FuncSummary(name="caller_a", calls=[("callee", ("round",))]),
+            "caller_b": FuncSummary(
+                name="caller_b",
+                assign_lists={"round": ["__tuple_elem(coordinateInfo, 8)"]},
+                assigns={"round": "__tuple_elem(coordinateInfo, 8)"},
+                calls=[("callee", ("round",))],
+            ),
+            "callee": FuncSummary(name="callee", params=["round"]),
+        },
+        controls=[
+            CtrlNode(
+                id="L1",
+                kind="for",
+                file="f.cpp",
+                line=1,
+                function="caller_a",
+                condition="round > 0",
+                induction_vars=("round",),
+            )
+        ],
+    )
+    assert inferred_parameter_roots(ir, "callee")["round"] == "LOOP_DERIVED"
+
+
+def test_tuple_unpack_local_is_loop_derived():
+    ir = HostIR(
+        summaries={
+            "f": FuncSummary(
+                name="f",
+                assign_lists={"x": ["__tuple_elem(coordinateInfo, 4)"]},
+                assigns={"x": "__tuple_elem(coordinateInfo, 4)"},
+            )
+        }
+    )
+    roots = inferred_function_local_roots(ir, "f")
+    assert roots["x"] == "LOOP_DERIVED"
+    r = SourceResolver(host_ir=ir).scoped(
+        bindings=ir.locals_by_function()["f"],
+        def_lists=ir.defs_by_function()["f"],
+        local_roots=roots,
+    )
+    assert r.resolve("x < 0").roots == ["LOOP_DERIVED"]
+
+
+def test_generated_tiling_pointer_decl_closes_as_tiling_data():
+    ir = HostIR(
+        class_fields={"tndParam_"},
+        field_decls={
+            ("FlashAttentionScoreGradTilingNormalRegbase", "tndParam_"): FieldDecl(
+                host="FlashAttentionScoreGradTilingNormalRegbase",
+                name="tndParam_",
+                init="nullptr",
+                file="f.h",
+                line=60,
+            )
+        },
+    )
+    res = SourceResolver(host_ir=ir).resolve("tndParam_ != nullptr")
+    assert res.closed and res.roots == ["TILING_DATA"]
+
+
+def test_constant_ternary_value_uses_selector_provenance():
+    """`cond ? 0 : 1` is a mode selected by `cond`, not an opaque constant."""
+    r = SourceResolver().scoped(
+        bindings={
+            "cubebaseM": "fBaseParams.s1Inner * fBaseParams.s1CvRatio",
+            "cubebaseN": "fBaseParams.s2Inner * fBaseParams.s2CvRatio",
+            "mode": "(cubebaseM == cubebaseN ? 0 : (cubebaseM > cubebaseN ? 2 : 1))",
+        },
+        local_roots={"fBaseParams": "TILING_DATA"},
+    )
+    res = r.resolve("mode == 2")
+    assert res.closed, res.reasons
+    assert "TILING_DATA" in res.roots
 
 
 def _filled_aggregate(name: str) -> HostIR:

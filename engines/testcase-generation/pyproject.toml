@@ -13,8 +13,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-solver = [
+legacy-solver = [
   "z3-solver>=4.12",
+  "acp-common[legacy-solver]",
 ]
 ml = [
   "scikit-learn>=1.3",

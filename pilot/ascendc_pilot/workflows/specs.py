@@ -156,10 +156,10 @@ CLOSED_OBLIGATION_STATUSES = frozenset(
     }
 )
 
-_CAPS_CODE = ["source-reading", "cbm-navigation", "kb-query"]
+_CAPS_CODE = ["source-reading", "source-navigation", "kb-query"]
 _CAPS_EXTRACT = [
     "source-reading",
-    "cbm-navigation",
+    "source-navigation",
     "kb-query",
     "semantic-resolution",
     "structured-ir-query",
@@ -171,7 +171,7 @@ _CAPS_EXTRACT = [
 ]
 _CAPS_ADJUDICATE = [
     "source-reading",
-    "cbm-navigation",
+    "source-navigation",
     "kb-query",
     "semantic-resolution",
     "structured-ir-query",
@@ -184,7 +184,7 @@ _CAPS_ADJUDICATE = [
 ]
 _CAPS_RESOLVE = [
     "source-reading",
-    "cbm-navigation",
+    "source-navigation",
     "kb-query",
     "semantic-resolution",
     "action-scratch",
@@ -306,7 +306,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 role_id="controller",
                 execution_mode="primary_interactive",
                 gates=["scope_receipt"],
-                capability_ids=["cbm-navigation", "source-reading"],
+                capability_ids=["source-navigation", "source-reading"],
                 task_prompt_id="uo/scope-confirmation",
                 output_contract_id="scope-confirmed-v1",
             ),
@@ -727,7 +727,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 agent_id="uo-query",
                 role_id="readonly_analyst",
                 gates=["kb_ready"],
-                capability_ids=["kb-query", "cbm-navigation", "source-reading"],
+                capability_ids=["kb-query", "source-navigation", "source-reading"],
                 task_prompt_id="uo/kb-lookup",
                 output_contract_id="kb-answer-v1",
             ),
@@ -772,7 +772,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 workflow_id="ce-review",
                 agent_id="ce-reviewer",
                 role_id="readonly_reviewer",
-                capability_ids=["structured-review", "kb-query", "cbm-navigation", "source-reading"],
+                capability_ids=["structured-review", "kb-query", "source-navigation", "source-reading"],
                 task_prompt_id="ce/code-review",
                 output_contract_id="code-review-v1",
             ),
@@ -1442,7 +1442,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 agent_id="tg-lemma-producer",
                 role_id="producer",
                 execution_mode="subagent",
-                capability_ids=["tilingkey-closure", "source-reading", "cbm-navigation"],
+                capability_ids=["tilingkey-closure", "source-reading", "source-navigation"],
                 task_prompt_id="tg/lemma-mine",
                 output_contract_id="lemma-mine-v1",
                 output_mode="staged",

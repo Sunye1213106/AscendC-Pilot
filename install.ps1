@@ -2,7 +2,6 @@
 #
 # Usage:
 #   .\install.ps1 opencode|cursor|codex
-#   .\install.ps1 cbm
 #   .\install.ps1 uninstall-opencode
 #   $env:SKIP_PIP=1; .\install.ps1 cursor
 param(
@@ -13,33 +12,6 @@ param(
 $ErrorActionPreference = "Stop"
 $BundleRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SkipPip = $env:SKIP_PIP
-
-function Install-CbmMcp {
-  # Download upstream installer to TEMP - never overwrite this repo's install.ps1.
-  $uri = "https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.ps1"
-  $cbmScript = Join-Path $env:TEMP "ascendc-pilot-cbm-install.ps1"
-  Write-Host "Downloading CBM installer → $cbmScript"
-  Invoke-WebRequest -Uri $uri -OutFile $cbmScript
-  Unblock-File -LiteralPath $cbmScript -ErrorAction SilentlyContinue
-  Write-Host "Running upstream CBM installer..."
-  $proc = Start-Process -FilePath "powershell.exe" `
-    -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $cbmScript) `
-    -Wait -PassThru -NoNewWindow
-  if ($proc.ExitCode -ne 0) {
-    throw "CBM upstream installer failed with exit $($proc.ExitCode)"
-  }
-  Write-Host ""
-  Write-Host "CBM binary install finished. Verify:"
-  Write-Host "  codebase-memory-mcp --help"
-  Write-Host "  opencode mcp list"
-  Write-Host "Check MCP config: $env:USERPROFILE\.config\opencode\opencode.json"
-  Write-Host "See: docs\cbm-mcp-setup.md"
-}
-
-if ($Platform -eq "cbm") {
-  Install-CbmMcp
-  exit 0
-}
 
 function Get-PluginDest([string]$plat) {
   switch ($plat) {
@@ -133,7 +105,7 @@ if ($SkipPip -ne "1") {
   python -m pip install -e "$BundleRoot\engines\common" `
     -e "$BundleRoot\pilot" `
     -e "$BundleRoot\engines\understand-operator" `
-    -e "$BundleRoot\engines\testcase-generation[solver,ml]" `
+    -e "$BundleRoot\engines\testcase-generation[ml]" `
     -e "$BundleRoot\engines\code-engineering"
 }
 
@@ -155,7 +127,7 @@ foreach ($name in @("skills","prompts","agents","docs","pilot","templates","scri
     Copy-Item -Recurse -Force $src (Join-Path $Dest $name)
   }
 }
-# Engines: only packages still installed / required (no understand-operator-old / codebase-memory-mcp)
+# Engines bundled by the runtime installer.
 $enginesDest = Join-Path $Dest "engines"
 New-Item -ItemType Directory -Force -Path $enginesDest | Out-Null
 foreach ($eng in @("common","understand-operator","testcase-generation","code-engineering")) {

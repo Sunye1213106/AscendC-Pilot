@@ -269,17 +269,13 @@ def main(argv: list[str] | None = None) -> int:
 
     p_scope = sub.add_parser(
         "uo-scope",
-        help="Run UO scope_confirmation deterministic steps (scan/checkpoint/stage/…)",
+        help="Run UO scope_confirmation deterministic steps (scan/checkpoint/finalize)",
     )
     p_scope.add_argument(
         "step",
         choices=[
             "scan",
             "checkpoint",
-            "build-evidence",
-            "closure",
-            "stage",
-            "record-index",
             "finalize",
         ],
         help="Deterministic scope step",
@@ -293,11 +289,6 @@ def main(argv: list[str] | None = None) -> int:
         help="For checkpoint: continue|revise|stop|manual_supplement",
     )
     p_scope.add_argument("--notes", default="")
-    p_scope.add_argument(
-        "--cbm-project",
-        default="",
-        help="For record-index: MCP index_repository project name",
-    )
 
     p_uq = sub.add_parser("uo-query", help="Query UO KB graph (wraps uo_kb_query; no direct .py)")
     p_uq.add_argument("--project", type=Path, default=Path.cwd())
@@ -344,23 +335,6 @@ def main(argv: list[str] | None = None) -> int:
         p_ex.add_argument("--line", type=int, default=0)
         p_ex.add_argument("--line-end", type=int, default=0)
         p_ex.add_argument("--limit", type=int, default=50)
-
-    p_cbm = sub.add_parser(
-        "cbm",
-        help="CBM locate + windowed source read for producers (wraps CbmClient)",
-    )
-    p_cbm_sub = p_cbm.add_subparsers(dest="cbm_cmd", required=True)
-    p_cbm_lu = p_cbm_sub.add_parser(
-        "lookup",
-        help="Resolve symbol → bounded snippet (prefer before whole-file Read)",
-    )
-    p_cbm_lu.add_argument("--project", type=Path, default=Path.cwd())
-    p_cbm_lu.add_argument("--name", required=True, help="Symbol short name or qualified_name")
-    p_cbm_lu.add_argument("--file-contains", default="", help="Prefer/narrow by path fragment")
-    p_cbm_lu.add_argument("--architecture", default="", help="e.g. arch35 (ranking only)")
-    p_cbm_lu.add_argument("--class-qn", default="", help="Owning class / namespace hint")
-    p_cbm_lu.add_argument("--pad", type=int, default=2, help="Snippet line padding")
-    p_cbm_lu.add_argument("--limit", type=int, default=8, help="Max ambiguous hits")
 
     p_dbg = sub.add_parser(
         "debug",
@@ -803,7 +777,6 @@ def main(argv: list[str] | None = None) -> int:
             architecture=args.architecture or "arch35",
             decision=args.decision or "",
             notes=args.notes or "",
-            cbm_project=getattr(args, "cbm_project", "") or "",
         )
         return print_result(payload)
     if args.cmd == "uo-query":
@@ -932,22 +905,6 @@ def main(argv: list[str] | None = None) -> int:
             result = {"ok": False, "error": str(exc)[:300]}
         print_json(result, default=str)
         return 0 if result.get("ok") else 1
-    if args.cmd == "cbm":
-        if args.cbm_cmd == "lookup":
-            from ascendc_pilot.cbm_lookup import lookup_symbol
-
-            payload = lookup_symbol(
-                Path(args.project).resolve(),
-                name=str(args.name or ""),
-                file_contains=str(args.file_contains or ""),
-                architecture=str(args.architecture or ""),
-                class_qn=str(getattr(args, "class_qn", "") or ""),
-                pad=int(args.pad or 2),
-                limit=int(args.limit or 8),
-            )
-            print_json(payload)
-            return 0 if payload.get("ok") else 1
-        return 2
     if args.cmd == "debug":
         return _cmd_debug(args)
     return 2
@@ -1404,38 +1361,7 @@ def _doctor(project: Path) -> int:
     try:
         import z3  # noqa: F401
     except ImportError:
-        warnings.append("z3 not installed (pip install -e ./engines/testcase-generation[solver]) — /tg-solve will fail")
-
-    # CBM MCP: plugin install ≠ MCP configured (opencode + cursor)
-    try:
-        import json
-        import shutil
-        from pathlib import Path as _P
-
-        if shutil.which("codebase-memory-mcp") is None:
-            warnings.append(
-                "codebase-memory-mcp binary not on PATH — "
-                "run: .\\install.ps1 cbm (UO source lookup degraded)"
-            )
-
-        mcp_cfgs = [
-            ("OpenCode", _P.home() / ".config" / "opencode" / "opencode.json"),
-            ("Cursor", _P.home() / ".cursor" / "mcp.json"),
-        ]
-        for label, cfg_path in mcp_cfgs:
-            if not cfg_path.is_file():
-                warnings.append(f"{label} MCP config missing ({cfg_path})")
-                continue
-            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-            mcp = cfg.get("mcp") or cfg.get("mcpServers") or {}
-            names = {str(k).lower() for k in (mcp.keys() if isinstance(mcp, dict) else [])}
-            if not any("codebase-memory" in n or n == "cbm" for n in names):
-                warnings.append(
-                    f"{label} config has no codebase-memory-mcp — "
-                    "see docs/cbm-mcp-setup.md"
-                )
-    except Exception as exc:  # noqa: BLE001
-        warnings.append(f"CBM MCP check skipped: {exc}")
+        warnings.append("z3 not installed; only explicit legacy-solver comparison is unavailable")
 
     # TG consumer root hint
     import os

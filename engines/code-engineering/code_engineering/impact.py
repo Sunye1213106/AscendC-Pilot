@@ -12,6 +12,7 @@ import yaml
 
 _HUNK = re.compile(r"^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@")
 _DIFF_FILE = re.compile(r"^\+\+\+\s+b/(.+)$|^\+\+\+\s+(.+)$")
+_OLD_FILE = re.compile(r"^---\s+a/(.+)$|^---\s+(.+)$")
 
 
 @dataclass
@@ -22,6 +23,7 @@ class ImpactReport:
     fields: list[str] = field(default_factory=list)
     key_dims: list[str] = field(default_factory=list)
     affected_keys: list[int] = field(default_factory=list)
+    two_sided_spans: list[dict[str, Any]] = field(default_factory=list)
     note: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -33,6 +35,7 @@ class ImpactReport:
             "key_dims": self.key_dims,
             "affected_key_count": len(self.affected_keys),
             "affected_keys_sample": self.affected_keys[:50],
+            "two_sided_spans": self.two_sided_spans,
             "note": self.note,
         }
 
@@ -57,6 +60,41 @@ def parse_diff_ranges(diff_text: str) -> dict[str, list[tuple[int, int]]]:
     return ranges
 
 
+def parse_two_sided_spans(diff_text: str) -> list[dict[str, Any]]:
+    """Preserve both old/new hunk spans and add/delete/modify/rename status."""
+    rows: list[dict[str, Any]] = []
+    old_path = ""
+    new_path = ""
+    for line in diff_text.splitlines():
+        old = _OLD_FILE.match(line)
+        if old:
+            old_path = (old.group(1) or old.group(2) or "").strip()
+            continue
+        new = _DIFF_FILE.match(line)
+        if new:
+            new_path = (new.group(1) or new.group(2) or "").strip()
+            continue
+        hunk = _HUNK.match(line)
+        if not hunk:
+            continue
+        old_start, old_count = int(hunk.group(1)), int(hunk.group(2) or "1")
+        new_start, new_count = int(hunk.group(3)), int(hunk.group(4) or "1")
+        if old_path == "/dev/null":
+            status = "add"
+        elif new_path == "/dev/null":
+            status = "delete"
+        elif old_path and new_path and old_path != new_path:
+            status = "rename"
+        else:
+            status = "modify"
+        rows.append({
+            "status": status,
+            "old": {"file": old_path or None, "start": old_start, "end": old_start + max(old_count, 1) - 1},
+            "new": {"file": new_path or None, "start": new_start, "end": new_start + max(new_count, 1) - 1},
+        })
+    return rows
+
+
 def _path_matches(writer_file: str, diff_path: str) -> bool:
     wf = writer_file.replace("\\", "/")
     dp = diff_path.replace("\\", "/")
@@ -75,6 +113,7 @@ def impact_from_diff(
     )
     ranges = parse_diff_ranges(diff_text)
     report = ImpactReport(files=sorted(ranges))
+    report.two_sided_spans = parse_two_sided_spans(diff_text)
     if not ranges:
         report.note = "no file hunks in diff"
         return report

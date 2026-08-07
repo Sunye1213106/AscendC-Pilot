@@ -34,7 +34,6 @@ masks: [ss, bnss, b1ss, 11ss]
 
 require:
   IsRegbase: "1"
-  IsEmptyTensor: "0"
 
 defaults:
   layout: BSND
@@ -56,9 +55,9 @@ loops:
   - {table: masks, dim: IsAttenMask, when: "1", knob: atten_mask, else_value: [none]}
 
 bool_knobs:
-  IsRope: {knob: rope, on: true, off: false}
-  IsPse: {knob: pse, on: true, off: false}
-  IsDrop: {knob: keep_prob, on: 0.5, off: 1.0}
+  IsRope: {knob: rope, "on": true, "off": false}
+  IsPse: {knob: pse, "on": true, "off": false}
+  IsDrop: {knob: keep_prob, "on": 0.5, "off": 1.0}
   IsNEqual: {knob: g, on: 1, off_default: 2}
   IsTnd: {knob: layout, on: TND, off_from_defaults: layout}
 

@@ -36,13 +36,6 @@ acp uo-scope scan --project <PROJECT_ROOT> --architecture <ARCHITECTURE>
 # AskQuestion: continue | revise | stop | manual_supplement
 
 acp uo-scope checkpoint --project <PROJECT_ROOT> --decision <decision>
-acp uo-scope build-evidence --project <PROJECT_ROOT>
-acp uo-scope closure --project <PROJECT_ROOT>
-acp uo-scope stage --project <PROJECT_ROOT>
-# MUST：MCP index_repository → …/.ascendc-pilot/uo/cbm/index_stage  (mode=fast)
-#       MCP 只建图；记下返回的 project 名
-acp uo-scope record-index --project <PROJECT_ROOT> --cbm-project <MCP返回的project名>
-# ↑ 写出 uo/cbm/index_meta.json（indexed_via=mcp）；禁止跳过直接 finalize
 acp uo-scope finalize --project <PROJECT_ROOT>
 acp run-action <ACTION_ID> --finalize --project <PROJECT_ROOT>
 ```
@@ -50,7 +43,7 @@ acp run-action <ACTION_ID> --finalize --project <PROJECT_ROOT>
 若 scan 输出没有 `Detected AscendC common library` / `common_files`，而仓库存在 `../common`，停止并报告，不要手补。
 
 正式 Output Contract 产物：
-`uo/runs/<RUN_ID>/scope/scope_confirmed.yaml` + `receipt.yaml` + `uo/cbm/index_meta.json`
+`uo/runs/<RUN_ID>/scope/scope_confirmed.yaml` + `receipt.yaml`
 （不是 `uo/summary/scope_confirmed.yaml`，也不是任意旧 run 的 `uo/runs/*/…`）。
 
 ## Output Contract

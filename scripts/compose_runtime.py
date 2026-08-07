@@ -725,7 +725,7 @@ You may read:
 {reads}
 
 Confirmed-scope **operator sources** (`op_host/**`, `op_kernel/**`, …) are outside `.ascendc-pilot`.
-Locate with CBM first (`search_graph` → `get_code_snippet`, or `acp cbm lookup`), then windowed `Read` — never whole-file dumps.
+Locate with UO KB query first, then confirmed-scope windowed `Read` — never whole-file dumps.
 
 You may write:
 
@@ -742,7 +742,7 @@ At runtime, follow:
 1. **First**: Read the session `prompt.md` from the prepared Action Bundle (path given by Host `task_prompt_stub` / `session_dir`). Treat it as the sole task body.
 2. Then the current Pilot Action / METHOD only as referenced by that prompt;
 3. the composed Policies;
-4. the composed Capabilities (`cbm-navigation`, `source-reading` when declared on the Action);
+4. the composed Capabilities (`source-navigation`, `source-reading` when declared on the Action);
 5. the declared Output Contract.
 
 When these sources conflict, follow the session `prompt.md` and Pilot Action / source-authority Policy.

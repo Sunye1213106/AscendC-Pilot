@@ -46,18 +46,18 @@ def build(t: Mapping[str, str], seed: int = 0) -> list:
     """
     del seed
     I = W.replay_inputs()
+    hints = _hints()
+    require = hints.get("require") or {}
+    for dim, want in require.items():
+        if str(t.get(str(dim))) != str(want):
+            return []
+
     if hasattr(I, "construct_case"):
         return list(I.construct_case(t) or [])
 
     sem = I.SEMANTICS
     if not hasattr(sem, "from_knobs"):
         raise TypeError("InputSemantics.from_knobs required for construct.build")
-
-    hints = _hints()
-    require = hints.get("require") or {}
-    for dim, want in require.items():
-        if str(t.get(str(dim))) != str(want):
-            return []
 
     dtype_dim = str(hints.get("dtype_dim") or "InputDType")
     out_dtype_dim = str(hints.get("out_dtype_dim") or dtype_dim)
@@ -192,3 +192,34 @@ def build(t: Mapping[str, str], seed: int = 0) -> list:
         except Exception:
             pass
     return out
+
+
+def explain(t: Mapping[str, str], seed: int = 0) -> list[str]:
+    """Human-readable reasons a target key is not constructible.
+
+    Operator-specific input semantics may provide ``construct_reasons`` for
+    source-derived guards.  If no guard explains the failure, fall back to the
+    generic constructor result so the caller can separate "blocked by known
+    source lemma" from "constructor gap".
+    """
+    del seed
+    I = W.replay_inputs()
+    hints = _hints()
+    reasons: list[str] = []
+    require = hints.get("require") or {}
+    for dim, want in require.items():
+        if str(t.get(str(dim))) != str(want):
+            reasons.append(f"require:{dim}={want}")
+    if hasattr(I, "construct_reasons"):
+        try:
+            reasons.extend(str(x) for x in (I.construct_reasons(t) or []))
+        except Exception as exc:  # noqa: BLE001
+            reasons.append(f"construct_reasons_error:{str(exc)[:120]}")
+    if reasons:
+        return reasons
+    try:
+        if build(t):
+            return []
+    except Exception as exc:  # noqa: BLE001
+        return [f"construct.build error:{str(exc)[:120]}"]
+    return ["constructor:no_case"]

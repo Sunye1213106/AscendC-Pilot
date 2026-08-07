@@ -12,7 +12,7 @@
 
                 1. 使用 capability `structured-review`。
 2. 使用 capability `kb-query`。
-3. 使用 capability `cbm-navigation`。
+3. 使用 capability `source-navigation`。
 4. 使用 capability `source-reading`。
                 5. 只处理当前 Action 指定的 ID 或文件。
                 6. 按输出合同生成候选产物；证据不足保留 unresolved。

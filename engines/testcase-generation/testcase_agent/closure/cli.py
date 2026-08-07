@@ -44,10 +44,16 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("rebuild", help="recompute R from raw artefacts")
     sub.add_parser("apply-rules", help="apply proof rules → E_sound")
     sub.add_parser("report", help="per-key closure report")
-    sub.add_parser("residual", help="distance of open keys from witnesses")
+    p_res = sub.add_parser("residual", help="distance of open keys from witnesses")
+    p_res.add_argument(
+        "--rows",
+        default="50",
+        help="number of sample rows to print; use 'all' for the full residue",
+    )
     sub.add_parser("mine", help="pair + triple lemma leads")
     sub.add_parser("state", help="print D/R/E/gap counts")
     sub.add_parser("assess", help="sklearn usability report for hard dims")
+    sub.add_parser("blocker-model", help="observation-only sklearn blocker report")
     sub.add_parser("corpus", help="corpus summary")
     sub.add_parser("route", help="residual router reason code")
     p_round = sub.add_parser("search-round", help="one bounded directed-search round")
@@ -83,7 +89,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "report":
         return _print(report.report(ws))
     if args.cmd == "residual":
-        return _print({"ok": True, **residual.analyse(ws)})
+        if str(args.rows).lower() == "all":
+            max_rows = None
+        else:
+            try:
+                max_rows = max(0, int(args.rows))
+            except ValueError:
+                return _print({"ok": False, "error": "--rows must be an integer or 'all'"})
+        return _print({"ok": True, **residual.analyse(ws, max_rows=max_rows)})
     if args.cmd == "mine":
         pairs = mine.mine_pairs(ws, top=30)
         triples = mine.mine_triples(ws, top=30)
@@ -99,6 +112,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "assess":
         df = corpus.dedup(corpus.load(ws))
         return _print({"ok": True, "nodes": models.assess(df)})
+    if args.cmd == "blocker-model":
+        df = corpus.dedup(corpus.load(ws))
+        return _print({"ok": True, "report": models.write_blocker_model(df, ws)})
     if args.cmd == "corpus":
         return _print({"ok": True, **corpus.summary(ws)})
     if args.cmd == "route":

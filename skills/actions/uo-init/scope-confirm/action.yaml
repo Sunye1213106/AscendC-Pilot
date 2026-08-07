@@ -5,7 +5,7 @@ role_id: controller
 agent_id: ascendc-pilot
 execution_mode: primary_interactive
 capabilities:
-- cbm-navigation
+- source-navigation
 - source-reading
 policies:
 - source-authority

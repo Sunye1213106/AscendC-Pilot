@@ -7,7 +7,7 @@
 ## Method
 
 1. 只处理当前 Action 列出的 ID。
-2. 组合 source-reading / cbm-navigation / kb-query 收集证据。
+2. 组合 source-reading / source-navigation / kb-query 收集证据。
 3. 仅 high confidence 可闭合；否则保留 open 并写明缺证类型。
 4. 输出符合合同的 patch / 候选，不写裁判 verdict。
 

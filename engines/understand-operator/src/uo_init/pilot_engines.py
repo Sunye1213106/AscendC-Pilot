@@ -60,8 +60,45 @@ def _load(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _load_yaml_scalar(path: Path, key: str) -> str:
+    """Read one top-level YAML scalar without parsing a large graph file."""
+    if not path.is_file():
+        return ""
+    prefix = f"{key}:"
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                text = line.strip()
+                if not text.startswith(prefix):
+                    continue
+                value = text[len(prefix):].strip()
+                if not value:
+                    return ""
+                if " #" in value:
+                    value = value.split(" #", 1)[0].strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+                    value = value[1:-1]
+                return value
+    except OSError:
+        return ""
+    return ""
+
+
 def _ctx(payload: dict[str, Any] | None) -> dict[str, Any]:
     return dict(payload or {})
+
+
+def _flag(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off", ""}:
+        return False
+    return bool(value)
 
 
 def _cann_root(ctx: dict[str, Any]) -> str:
@@ -181,7 +218,6 @@ _UO_SEED_DIRS = (
 
 _DISALLOWED_TOP_DIRS = (
     "analysis",
-    "cbm",
     "diff",
     "docs_cache",
     "test",
@@ -386,6 +422,13 @@ def scope_confirm(project_root: Path, payload: dict[str, Any] | None = None) -> 
     receipt = {
         "version": 1,
         "status": "confirmed",
+        # Run-scoped identity is required by the Pilot output contract.  The
+        # compatibility ``uo-scope`` wrapper supplies these fields from the
+        # active workflow state; keeping them in the producer artifact also
+        # makes direct static execution auditable.
+        "run_id": str(ctx.get("run_id") or ""),
+        "workflow_id": str(ctx.get("workflow_id") or "uo-init"),
+        "action_id": str(ctx.get("action_id") or "scope_confirmation"),
         "op_name": cand.get("op_name") or root.name,
         "arch_dir": cand.get("arch_dir") or "",
         "host_targets": cand.get("host_targets") or [],
@@ -434,7 +477,7 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
             arch_dir=ctx.get("arch_dir"),
             closure_mode=str(mode),
             closure_max_nodes=int(ctx.get("closure_max_nodes") or 0) or 10**9,
-            with_kernel=bool(ctx.get("with_kernel", True)),
+            with_kernel=_flag(ctx.get("with_kernel"), True),
         )
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "extract_host", "error": str(exc)[:400]}
@@ -485,15 +528,21 @@ def _ensure_bundle(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     from uo_init.assemble_kb import extract_host_bundle
 
     root = Path(project_root).expanduser().resolve()
-    # Rebuild must match extract_host: full closure unless the caller overrides.
-    mode = ctx.get("closure_mode") or "full"
+    # ``acp run-action`` launches each deterministic action in a fresh
+    # process, so the in-memory bundle from extract_host is not available to
+    # the next action.  The durable host receipt already records the full
+    # closure; downstream extraction only needs the structural bundle and can
+    # safely rebuild with closure disabled instead of repeating the expensive
+    # full controllability walk.  An explicit closure_mode still wins.
+    cached_meta = _load(_bundle_cache(_uo_root(root)))
+    mode = ctx.get("closure_mode") or ("off" if cached_meta else "full")
     bundle = extract_host_bundle(
         op_dir=root,
         cann_root=_cann_root(ctx),
         ops_root=_ops_root(ctx, root),
         arch_dir=ctx.get("arch_dir"),
         closure_mode=str(mode),
-        with_kernel=bool(ctx.get("with_kernel", True)),
+        with_kernel=_flag(ctx.get("with_kernel"), True),
     )
     _STORE["bundle"] = bundle
     return bundle
@@ -502,7 +551,9 @@ def _ensure_bundle(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
 def extract_tiling_key(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     ctx = _ctx(payload)
     try:
-        bundle = _ensure_bundle(project_root, ctx)
+        local_ctx = dict(ctx)
+        local_ctx.setdefault("with_kernel", False)
+        bundle = _ensure_bundle(project_root, local_ctx)
         binding = bundle.get("binding")
         n = len(binding.bindings) if binding is not None else 0
         _dump(
@@ -569,7 +620,29 @@ def extract_kernel(project_root: Path, payload: dict[str, Any] | None = None) ->
             return {"ok": True, "engine": "extract_kernel", "skipped": True, "kernel_branch_count": 0}
         exe = find_clang(ctx.get("clang_exe"))
         if exe is None:
-            return {"ok": False, "engine": "extract_kernel", "error": "clang driver missing"}
+            # libclang has already produced the uninstantiated kernel IR in
+            # extract_host.  A folded harness additionally needs the clang
+            # executable; keep that limitation explicit while emitting a
+            # valid receipt so the static pipeline can continue to TG/replay.
+            meta = _load(_bundle_cache(_uo_root(root)))
+            branch_count = int(meta.get("kernel_branches") or 0)
+            _dump(
+                _uo_root(root) / "kernel" / "fold_receipt.yaml",
+                {
+                    "ok": True,
+                    "skipped": True,
+                    "reason": "clang_driver_missing",
+                    "kernel_branch_count": branch_count,
+                    "kernel_branches": [],
+                },
+            )
+            return {
+                "ok": True,
+                "engine": "extract_kernel",
+                "skipped": True,
+                "reason": "clang_driver_missing",
+                "kernel_branch_count": branch_count,
+            }
         bctx = BuildContext.load(
             cann_root=_cann_root(ctx),
             ops_root=_ops_root(ctx, root),
@@ -638,7 +711,9 @@ def derive_key_fields(project_root: Path, payload: dict[str, Any] | None = None)
     root = Path(project_root).expanduser().resolve()
     uo = _uo_root(root)
     try:
-        bundle = _ensure_bundle(root, ctx)
+        local_ctx = dict(ctx)
+        local_ctx.setdefault("with_kernel", False)
+        bundle = _ensure_bundle(root, local_ctx)
         timeout = int(ctx.get("derive_timeout") or 180)
         helper = int(ctx.get("max_helper_guards") or 4)
         isolate = ctx.get("derive_isolate", True)
@@ -691,6 +766,42 @@ def normalize_predicates(project_root: Path, payload: dict[str, Any] | None = No
 
     ctx = _ctx(payload)
     try:
+        # Fast cross-process path: extract_host persists the complete gap
+        # ledger in its receipt, while the Python object graph is process
+        # local.  Rehydrate the facts directly instead of reparsing all clang
+        # translation units for this normalization-only action.
+        uo = _uo_root(project_root)
+        host_receipt = _load(uo / "ir" / "host_extract_receipt.yaml")
+        cached_gap = host_receipt.get("gap") if isinstance(host_receipt, dict) else None
+        if isinstance(cached_gap, dict) and isinstance(cached_gap.get("blockers"), list):
+            blockers = list(cached_gap.get("blockers") or [])
+            unresolved = {
+                "version": 1,
+                "status": "unresolved" if blockers else "closed",
+                "blocker_count": len(blockers),
+                "predicate_blocker_count": len(blockers),
+                "derivation_blocker_count": 0,
+                "blockers": blockers,
+                "closed_vocabulary": {
+                    "classification": [
+                        "scheduling",
+                        "input_derived",
+                        "validation_assumption",
+                        "genuinely_unknown",
+                    ],
+                    "binding_ops": ["eq", "ne", "lt", "le", "gt", "ge", "in"],
+                },
+                "source": "host_extract_receipt",
+            }
+            _dump(uo / "ir" / "unresolved.yaml", unresolved)
+            return {
+                "ok": True,
+                "engine": "normalize_predicates",
+                "blocker_count": len(blockers),
+                "derivation_blocker_count": 0,
+                "source_closure": host_receipt.get("quality", {}).get("source_closure"),
+                "rehydrated": True,
+            }
         bundle = _ensure_bundle(project_root, ctx)
         gap = bundle["gap"]
         # Prefer an in-memory derivation from derive_key_fields; otherwise load
@@ -750,6 +861,7 @@ def resolve_gaps(project_root: Path, payload: dict[str, Any] | None = None) -> d
     from uo_init.gap_patch import SCHEMA_HINT
 
     ctx = _ctx(payload)
+    root = Path(project_root).expanduser().resolve()
     uo = _uo_root(project_root)
     run = _run_dir(uo, ctx)
     unresolved = _load(uo / "ir" / "unresolved.yaml") or {}
@@ -786,6 +898,16 @@ def resolve_gaps(project_root: Path, payload: dict[str, Any] | None = None) -> d
     _dump(run / "actions" / "resolve_gaps" / "staging.yaml", staging)
     # Mirror under ir for humans / older readers (Host-only).
     _dump(uo / "ir" / "resolve_gaps_staging.yaml", staging)
+    try:
+        from uo_init.blocker_review import write_review
+
+        static_review = write_review(
+            uo,
+            ops_root=_ops_root(ctx, root),
+            project_root=root,
+        )
+    except Exception as exc:  # noqa: BLE001
+        static_review = {"ok": False, "error": str(exc)[:200]}
     _dump(
         uo / "ir" / "resolve_gaps_receipt.yaml",
         {
@@ -796,6 +918,7 @@ def resolve_gaps(project_root: Path, payload: dict[str, Any] | None = None) -> d
             "need_subagent": need_subagent,
             "deferred": not need_subagent,
             "staging": staging_rel,
+            "static_review": static_review,
         },
     )
     return {
@@ -805,6 +928,7 @@ def resolve_gaps(project_root: Path, payload: dict[str, Any] | None = None) -> d
         "blocker_count": count,
         "need_subagent": need_subagent,
         "deferred": not need_subagent,
+        "static_review": static_review,
         "message_zh": (
             f"有 {count} 个 blocker（派生 {der_count}）"
             + ("，交 resolve_gaps subagent" if need_subagent else "（确定性记录后继续）")
@@ -850,7 +974,9 @@ def apply_gap_patch(project_root: Path, payload: dict[str, Any] | None = None) -
             patches.append(data)
 
     blockers = load_unresolved(uo / "ir" / "unresolved.yaml")
-    bundle = _ensure_bundle(root, ctx)
+    local_ctx = dict(ctx)
+    local_ctx.setdefault("with_kernel", False)
+    bundle = _ensure_bundle(root, local_ctx)
     var_model = bundle.get("var_model")
     ops_root = Path(_ops_root(ctx, root)) if _ops_root(ctx, root) else None
     verdicts = validate_patches(
@@ -949,6 +1075,32 @@ def export_kb_action(project_root: Path, payload: dict[str, Any] | None = None) 
 
         bundle = _ensure_bundle(root, ctx)
         uo = _uo_root(root)
+        host_receipt = _load(uo / "ir" / "host_extract_receipt.yaml")
+        cached_quality = (
+            host_receipt.get("quality") if isinstance(host_receipt, dict) else None
+        )
+        if isinstance(cached_quality, dict) and cached_quality.get("total_nodes"):
+            from uo_init.controllability import ClosureMetrics
+
+            bundle["metrics"] = ClosureMetrics(
+                total_nodes=int(cached_quality.get("total_nodes") or 0),
+                closed_nodes=int(cached_quality.get("closed_nodes") or 0),
+                partial_nodes=int(cached_quality.get("partial_nodes") or 0),
+                open_nodes=int(cached_quality.get("open_nodes") or 0),
+                controllable_nodes=int(cached_quality.get("controllable_nodes") or 0),
+                normalized_predicates=int(
+                    cached_quality.get("normalized_predicates") or 0
+                ),
+                total_predicates=int(cached_quality.get("total_predicates") or 0),
+                root_histogram={
+                    str(k): int(v)
+                    for k, v in (cached_quality.get("root_histogram") or {}).items()
+                },
+                reason_histogram={
+                    str(k): int(v)
+                    for k, v in (cached_quality.get("reason_histogram") or {}).items()
+                },
+            )
         fold = _load(uo / "kernel" / "fold_receipt.yaml")
         kbr = list(_STORE.get("kbr") or [])
         if not kbr:
@@ -977,13 +1129,32 @@ def export_kb_action(project_root: Path, payload: dict[str, Any] | None = None) 
                         condition=str(node.get("condition") or ""),
                         function=str(node.get("function") or ""),
                         kind=str(node.get("ctrl_kind") or "if"),
+                        dimensions=tuple(
+                            str(x) for x in (node.get("dimensions") or [])
+                        ),
+                        derived=tuple(str(x) for x in (node.get("derived") or [])),
+                        symbols=tuple(str(x) for x in (node.get("symbols") or [])),
+                        dtype_variants=tuple(
+                            str(x) for x in (node.get("dtype_variants") or [])
+                        ),
+                        stage=str(node.get("stage") or ""),
                     )
                 )
         if not kbr:
             kbr = list(fold.get("kernel_branch_ids") or [])
-        from uo_init.host_derivation import HostDerivation, to_key_derivations
+        from uo_init.host_derivation import (
+            HostDerivation,
+            host_derivation_from_dict,
+            to_key_derivations,
+        )
 
         derivation = bundle.get("host_derivation")
+        if not isinstance(derivation, HostDerivation):
+            raw_derivation = _load(uo / "ir" / "host_derivation.yaml")
+            if isinstance(raw_derivation, dict) and raw_derivation.get("fields"):
+                derivation = host_derivation_from_dict(raw_derivation)
+                bundle["host_derivation"] = derivation
+        kernel_ir_count = len(getattr(bundle.get("kernel_ir"), "branches", []) or [])
         kb = assemble_kb(
             op_name=bundle["spec"].op_name,
             architecture=bundle["spec"].arch_dir or "",
@@ -1009,11 +1180,13 @@ def export_kb_action(project_root: Path, payload: dict[str, Any] | None = None) 
             host_ir=bundle.get("host_ir"),
             op_spec=bundle.get("spec"),
         )
-        receipt = export_operator_kb(kb, root)
+        receipt = export_operator_kb(kb, root, uo_root_override=uo)
         receipt["engine"] = "export_kb"
         receipt["source_closure"] = bundle["metrics"].source_closure
         receipt["blocker_count"] = len(bundle["gap"].blockers)
-        receipt["kernel_branch_count"] = len(kbr)
+        receipt["kernel_branch_count"] = len(kbr) or kernel_ir_count
+        receipt["folded_kernel_branch_count"] = len(kbr)
+        receipt["kernel_ir_branch_count"] = kernel_ir_count
         materialized = kb.notes.get("tiling_materialize")
         if isinstance(materialized, dict) and materialized.get("ok"):
             receipt["key_status_counts"] = dict(materialized["key_status_counts"])
@@ -1054,9 +1227,12 @@ def export_tg_host_view(
     ``.probe_cache/fag_bundle.pkl`` — HostIR comes from the in-process extract
     bundle (same source that fed the KB).
     """
-    from uo_init.host_codemap import export_tg_host_view as _export_view
+    from uo_init.host_codemap import (
+        TG_HOST_VIEW_YAML,
+        export_tg_host_view as _export_view,
+        rebuild_codemap_index,
+    )
     from uo_init.host_derivation import HostDerivation
-    from uo_init.kb_export import load_graph
 
     ctx = _ctx(payload)
     root = Path(project_root).expanduser().resolve()
@@ -1076,8 +1252,12 @@ def export_tg_host_view(
             "error": "missing indexes/kb_graph.sqlite; run build_index first",
         }
     try:
-        graph = load_graph(uo)
-        fingerprint = str(graph.get("fingerprint") or "")
+        fingerprint = _load_yaml_scalar(graph_path, "fingerprint")
+        if not fingerprint:
+            from uo_init.kb_export import load_graph
+
+            graph = load_graph(uo)
+            fingerprint = str(graph.get("fingerprint") or "")
         manifest = _load(uo / "manifest.yaml")
         manifest_hash = str(manifest.get("content_hash") or manifest.get("hash") or "")
         source_revision = str(
@@ -1085,8 +1265,53 @@ def export_tg_host_view(
             or (manifest.get("source") or {}).get("revision")
             or ""
         )
+        existing_view = _load(uo / TG_HOST_VIEW_YAML)
+        if isinstance(existing_view, dict):
+            source = existing_view.get("source") or {}
+            view_fp = str(source.get("graph_fingerprint") or "")
+            view_manifest_hash = str(source.get("manifest_hash") or "")
+            view_source_revision = str(source.get("source_revision") or "")
+            same_manifest = (
+                not manifest_hash
+                or not view_manifest_hash
+                or view_manifest_hash == manifest_hash
+            )
+            same_revision = (
+                not source_revision
+                or not view_source_revision
+                or view_source_revision == source_revision
+            )
+            if (
+                fingerprint
+                and view_fp == fingerprint
+                and same_manifest
+                and same_revision
+                and (existing_view.get("fields") or existing_view.get("predicates"))
+            ):
+                summary = rebuild_codemap_index(uo)
+                receipt = {
+                    "ok": bool(summary.get("ok", True)),
+                    "engine": "export_tg_host_view",
+                    "cached": True,
+                    "graph_fingerprint": fingerprint,
+                    "schema": existing_view.get("schema"),
+                    "yaml": str(uo / TG_HOST_VIEW_YAML),
+                    "alias_yaml": "",
+                    "fields": len(existing_view.get("fields") or []),
+                    "writers": sum(
+                        len(f.get("writers") or [])
+                        for f in existing_view.get("fields") or []
+                        if isinstance(f, dict)
+                    ),
+                    "predicates": len(existing_view.get("predicates") or []),
+                    **summary,
+                }
+                _dump(uo / "checks" / "tg_host_view_receipt.yaml", receipt)
+                return receipt
 
-        bundle = _ensure_bundle(root, ctx)
+        local_ctx = dict(ctx)
+        local_ctx.setdefault("with_kernel", False)
+        bundle = _ensure_bundle(root, local_ctx)
         host_ir = bundle.get("host_ir")
         if host_ir is None:
             return {

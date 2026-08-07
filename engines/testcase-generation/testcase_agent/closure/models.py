@@ -20,6 +20,8 @@ input the model trained on measures nothing.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -28,6 +30,7 @@ from sklearn.model_selection import GroupKFold, train_test_split
 from sklearn.tree import DecisionTreeClassifier
 
 from testcase_agent.closure import features as F
+from testcase_agent.closure.key_utils import int_exact
 from testcase_agent.closure import workspace as W
 
 #: Below this many labelled rows a tree is not fitted; the majority value is
@@ -276,3 +279,247 @@ def write_parent_gap(df, ws=None, *, top: int = 8) -> dict:
         yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
     return {"ok": True, "path": str(path), "count": len(missed)}
+
+
+def _feedback_dir(ws=None) -> Path:
+    ws = (ws or W.default_workspace()).ensure()
+    try:
+        candidate = Path(ws.state)
+        for _ in range(4):
+            if candidate.name == "tg":
+                return candidate / "feedback"
+            candidate = candidate.parent
+    except Exception:
+        pass
+    return Path(ws.state) / "feedback"
+
+
+def _uo_root(ws=None) -> Path:
+    ws = (ws or W.default_workspace()).ensure()
+    try:
+        return Path(ws.state).parent.parent / "uo"
+    except Exception:
+        return Path(ws.root) / ".ascendc-pilot" / "arch35" / "uo"
+
+
+def _load_yaml(path: Path) -> dict:
+    if not path.is_file():
+        return {}
+    try:
+        import yaml
+
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _load_static_blockers(ws=None) -> list[dict]:
+    doc = _load_yaml(_uo_root(ws) / "ir" / "unresolved.yaml")
+    rows = doc.get("blockers") or []
+    return [r for r in rows if isinstance(r, dict)]
+
+
+_TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _tokens(obj: object) -> set[str]:
+    return {m.group(0).lower() for m in _TOKEN.finditer(str(obj or ""))}
+
+
+def _dim_aliases(features: list[str]) -> dict[str, set[str]]:
+    aliases: dict[str, set[str]] = {}
+    for dim in W.dim_names():
+        items = {dim.lower(), ("dim_" + dim).lower()}
+        try:
+            items |= {
+                str(x).lower()
+                for x in F.static_parents(dim, features)
+                if len(str(x)) >= 3
+            }
+        except Exception:
+            pass
+        aliases[dim] = items
+    return aliases
+
+
+def _target_rows(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty or "_target_key" not in df:
+        return pd.DataFrame()
+    out = df.copy()
+    out["_target_key_num"] = out["_target_key"].map(int_exact).astype(object)
+    out = out[out["_target_key_num"] > 0].reset_index(drop=True)
+    return out
+
+
+def _intish(value: object, default: int = 0) -> int:
+    return int_exact(value, default=default)
+
+
+def _mismatch_report(rows: pd.DataFrame) -> dict[str, dict]:
+    dims = W.dim_names()
+    report = {
+        d: {"targeted": 0, "hits": 0, "misses": 0, "refused": 0}
+        for d in dims
+    }
+    for _, row in rows.iterrows():
+        tkey = _intish(row.get("_target_key_num"))
+        if not tkey:
+            continue
+        try:
+            want = W.decode(tkey)
+        except Exception:
+            continue
+        ok = _intish(row.get("ok")) == 1
+        actual_key = _intish(row.get("tiling_key"))
+        got = {}
+        if ok and actual_key:
+            try:
+                got = W.decode(actual_key)
+            except Exception:
+                got = {}
+        hinted = {
+            x for x in str(row.get("_target_differing_dims") or "").split("|") if x
+        }
+        for dim in dims:
+            if hinted and dim not in hinted:
+                continue
+            report[dim]["targeted"] += 1
+            if not ok or not got:
+                report[dim]["refused"] += 1
+                report[dim]["misses"] += 1
+            elif str(want.get(dim)) == str(got.get(dim)):
+                report[dim]["hits"] += 1
+            else:
+                report[dim]["misses"] += 1
+    for row in report.values():
+        denom = max(1, int(row["targeted"]))
+        row["hit_rate"] = round(float(row["hits"]) / denom, 3)
+    return report
+
+
+def _dim_tree_leads(rows: pd.DataFrame, dim: str, *, top: int = 6) -> dict:
+    if rows.empty:
+        return {}
+    y_vals = []
+    keep_index = []
+    for i, row in rows.iterrows():
+        tkey = _intish(row.get("_target_key_num"))
+        actual = _intish(row.get("tiling_key"))
+        if not tkey or not actual or _intish(row.get("ok")) != 1:
+            continue
+        try:
+            want = W.decode(tkey)
+            got = W.decode(actual)
+        except Exception:
+            continue
+        y_vals.append(int(str(want.get(dim)) == str(got.get(dim))))
+        keep_index.append(i)
+    if len(y_vals) < MIN_ROWS or len(set(y_vals)) < 2:
+        return {"status": "insufficient_labels", "rows": len(y_vals)}
+    sub = rows.loc[keep_index].reset_index(drop=True)
+    try:
+        X = F.build(sub)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "feature_build_failed", "error": str(exc)[:120]}
+    feats = list(X.columns)
+    y = np.array(y_vals, dtype=int)
+    try:
+        score, leaves = _score(X, y, feats)
+        clf = DecisionTreeClassifier(random_state=0, min_samples_leaf=3)
+        clf.fit(X[feats].values, y)
+        ranked = sorted(
+            zip(feats, clf.feature_importances_),
+            key=lambda kv: kv[1],
+            reverse=True,
+        )
+        return {
+            "status": "fit",
+            "score": round(score, 3),
+            "leaves": leaves,
+            "top_features": [
+                {"feature": name, "importance": round(float(weight), 3)}
+                for name, weight in ranked[:top]
+                if weight > 0
+            ],
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "fit_failed", "error": str(exc)[:120]}
+
+
+def write_blocker_model(df: pd.DataFrame, ws=None, *, top: int = 20) -> dict:
+    """Rank static blockers from Host replay successes/failures.
+
+    This is an observation-only sklearn report. It does not exclude keys and
+    does not update the UO KB; source proof still owns those actions.
+    """
+    ws = (ws or W.default_workspace()).ensure()
+    feedback = _feedback_dir(ws)
+    feedback.mkdir(parents=True, exist_ok=True)
+    path = feedback / "blocker_model_report.yaml"
+    rows = _target_rows(df)
+    blockers = _load_static_blockers(ws)
+    try:
+        features = list(F.build(rows if not rows.empty else df).columns)
+    except Exception:
+        features = []
+    dim_report = _mismatch_report(rows) if not rows.empty else {}
+    tree_report = {
+        dim: _dim_tree_leads(rows, dim)
+        for dim, stats in dim_report.items()
+        if int(stats.get("targeted") or 0) > 0
+    }
+    aliases = _dim_aliases(features)
+    ranked_blockers: list[dict] = []
+    for blocker in blockers:
+        text = " ".join(str(blocker.get(k) or "") for k in (
+            "id", "reason", "reason_code", "text", "snippet", "readable_vars",
+            "affected_nodes", "evidence",
+        ))
+        toks = _tokens(text)
+        linked = [
+            dim for dim, names in aliases.items()
+            if toks & {n.lower() for n in names}
+        ]
+        score = sum(int(dim_report.get(dim, {}).get("misses") or 0) for dim in linked)
+        score += min(10, len(blocker.get("affected_nodes") or []))
+        ranked_blockers.append({
+            "blocker_id": str(blocker.get("id") or blocker.get("blocker_id") or ""),
+            "reason_code": str(blocker.get("reason_code") or ""),
+            "linked_dims": linked,
+            "score": int(score),
+            "affected_nodes": len(blocker.get("affected_nodes") or []),
+            "status": "observation_only",
+        })
+    ranked_blockers.sort(key=lambda r: (r["score"], r["affected_nodes"]), reverse=True)
+    doc = {
+        "schema": "tg-blocker-sklearn-report/v1",
+        "status": "observation_only",
+        "input": {
+            "rows": int(len(df)) if df is not None else 0,
+            "targeted_rows": int(len(rows)),
+            "static_blockers": len(blockers),
+        },
+        "dim_report": dim_report,
+        "tree_report": tree_report,
+        "ranked_blockers": ranked_blockers[:top],
+        "note": (
+            "Models rank replay blockers only. They are not proof and must not "
+            "write E or mutate UO derivations without source review."
+        ),
+    }
+    try:
+        import yaml
+
+        path.write_text(
+            yaml.safe_dump(doc, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        path.write_text(str(doc), encoding="utf-8")
+    return {
+        "ok": True,
+        "path": str(path),
+        "targeted_rows": int(len(rows)),
+        "ranked_blockers": len(ranked_blockers[:top]),
+    }

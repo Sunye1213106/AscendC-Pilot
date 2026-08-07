@@ -43,12 +43,12 @@ AscendC-Pilot
 pip install -r requirements.txt
 pip install -e "./pilot"
 pip install -e "./engines/understand-operator"
-pip install -e "./engines/testcase-generation[solver]"
+pip install -e "./engines/testcase-generation[ml]"
 ./install.ps1 opencode   # 或 cursor / codex
 acp doctor
 ```
 
-CBM（可选导航）：`.\install.ps1 cbm` 下载**上游**临时脚本安装，与本仓引擎目录无关。详见 docs 中 CBM 说明（若有）或 doctor 提示。
+源码导航由仓内 UO 图与 confirmed-scope 的有界源码读取提供；安装器不依赖外部代码索引服务。
 
 ---
 

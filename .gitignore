@@ -1,6 +1,5 @@
 .claude/
 .opencode/
-.tmp-cbm-install/
 # Local-only eval oracles (do not commit)
 .tmp-oracle/
 

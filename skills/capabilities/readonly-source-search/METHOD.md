@@ -7,7 +7,7 @@
 ## Method
 
 1. `acp ro-search --pattern ... --paths ...`
-2. 命中后用 source-reading / CBM 取连续证据窗。
+2. 命中后用 source-reading 取连续证据窗。
 3. locate-only 结果不算 verified 证据。
 
 ## Hard Constraints

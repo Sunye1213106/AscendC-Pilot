@@ -4,6 +4,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from ascendc_pilot.io import print_json
+
+
+def print_result(payload: dict[str, Any]) -> int:
+    """CLI adapter for the legacy-compatible ``uo-scope`` wrapper."""
+    print_json(payload)
+    return 0 if bool(payload.get("ok")) else 1
+
 
 def _resolve_op_name(project: Path, op_name: str) -> str:
     name = str(op_name or "").strip()
@@ -45,10 +53,8 @@ def run_uo_scope(
     architecture: str = "arch35",
     decision: str = "",
     notes: str = "",
-    cbm_project: str = "",
 ) -> dict[str, Any]:
     """Map legacy acp uo-scope steps onto uo_init.pilot_engines."""
-    del cbm_project
     root = Path(project).expanduser().resolve()
     op = _resolve_op_name(root, op_name)
     ctx = {"op_name": op, "arch_dir": architecture or "arch35", "run_id": ""}

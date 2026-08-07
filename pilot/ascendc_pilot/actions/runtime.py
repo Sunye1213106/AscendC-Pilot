@@ -359,7 +359,6 @@ def _render_placeholders(
     role_id: str = "",
     lease_id: str = "",
     action_session_id: str = "",
-    cbm_project: str = "",
     candidates_sha256: str = "",
     shard_id: str = "",
     **_ignored: Any,
@@ -382,7 +381,6 @@ def _render_placeholders(
         "<ROLE_ID>": role_id,
         "<LEASE_ID>": lease_id,
         "<ACTION_SESSION_ID>": action_session_id,
-        "<CBM_PROJECT>": cbm_project or "(read uo/cbm/index_meta.json → cbm_project)",
         "<CANDIDATES_SHA256>": candidates_sha256
         or "(copy from task_prompt_stub candidates_sha256=…)",
     }
@@ -405,7 +403,6 @@ def _build_task_prompt_stub(
     bundle_path: str,
     dispatch_targets: dict[str, Any] | None = None,
     agent_root_path: str = "",
-    cbm_project: str = "",
     project_root: str = "",
     architecture: str = "",
     candidates_sha256: str = "",
@@ -441,8 +438,6 @@ def _build_task_prompt_stub(
         lines.append("write: " + ", ".join(_abs_under_agent(str(x)) for x in dt["write"]))
     if dt.get("forbid_read"):
         lines.append("forbid_read: " + ", ".join(str(x) for x in dt["forbid_read"]))
-    if cbm_project:
-        lines.append(f"cbm_project: {cbm_project}")
     if candidates_sha256:
         lines.append(f"candidates_sha256: {candidates_sha256}")
     if environment_path:
@@ -595,7 +590,10 @@ def _contract_identity_ok(
     action_owned = path.name in _ACTION_OWNED_ARTIFACT_NAMES or "/runs/" in posix
 
     # Missing identity on older artifacts is a migration error for run-scoped contracts.
-    if any(ch in posix for ch in ("/runs/", "scope_confirmed", "receipt.yaml")):
+    # Only the run-scoped scope receipts require identity before finalizer
+    # stamping.  Do not match the substring ``receipt.yaml`` in deterministic
+    # IR names such as ``host_extract_receipt.yaml``.
+    if "/runs/" in posix or path.name in {"scope_confirmed.yaml", "receipt.yaml"}:
         if not checks["run_id"]:
             return {
                 "ok": False,
@@ -653,6 +651,16 @@ def _contract_identity_ok(
             continue
         expected_value = expected.get(field, "")
         if not expected_value or not actual or actual == expected_value:
+            continue
+        # ``uo-init`` exposes the public action as ``scope_confirm`` while
+        # the scope receipt contract historically used the canonical producer
+        # id ``scope_confirmation``.  Treat these two spellings as the same
+        # owner so a valid run-scoped receipt is not rejected at finalize.
+        if (
+            field == "action_id"
+            and {str(expected_value), str(actual)}
+            == {"scope_confirm", "scope_confirmation"}
+        ):
             continue
         # Canonical IR may be shared across actions; only enforce action-owned
         # producer/session fields where the artifact is owned by this action.
@@ -991,17 +999,6 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     pack_path = str(pack.get("path") or "")
     op_name = str(state.get("op_name") or Path(project_root).name or "")
     architecture = str(state.get("architecture") or "arch35")
-    cbm_project = ""
-    try:
-        meta_path = Path(uo_s) / "cbm" / "index_meta.json"
-        if meta_path.is_file():
-            import json
-
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            if isinstance(meta, dict):
-                cbm_project = str(meta.get("cbm_project") or "").strip()
-    except Exception:  # noqa: BLE001
-        cbm_project = ""
     ph_kwargs = {
         "run_id": run_id,
         "action_id": action_id,
@@ -1016,7 +1013,6 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         "architecture": architecture,
         "role_id": role_id,
         "action_session_id": action_sid,
-        "cbm_project": cbm_project,
     }
     method_r = _render_placeholders(method, **ph_kwargs)
     prompt_r = _render_placeholders(prompt, **ph_kwargs)
@@ -1932,7 +1928,6 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             if isinstance(bundle.get("dispatch_targets"), dict)
             else None,
             agent_root_path=agent_root_posix,
-            cbm_project=cbm_project,
             project_root=root_s,
             architecture=architecture,
             candidates_sha256=str(bundle.get("candidates_sha256") or ph_kwargs.get("candidates_sha256") or ""),
@@ -2167,11 +2162,6 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             f"acp uo-scope scan --project <PROJECT_ROOT> --architecture {architecture}",
             "AskQuestion: continue | revise | stop | manual_supplement",
             "acp uo-scope checkpoint --project <PROJECT_ROOT> --decision <decision>",
-            "acp uo-scope build-evidence --project <PROJECT_ROOT>",
-            "acp uo-scope closure --project <PROJECT_ROOT>",
-            "acp uo-scope stage --project <PROJECT_ROOT>",
-            "MCP index_repository → uo/cbm/index_stage",
-            "acp uo-scope record-index --project <PROJECT_ROOT> --cbm-project <MCP_PROJECT>",
             "acp uo-scope finalize --project <PROJECT_ROOT>",
             f"acp run-action {action_id} --finalize --project <PROJECT_ROOT>",
         ]

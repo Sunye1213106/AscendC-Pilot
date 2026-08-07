@@ -98,7 +98,7 @@ case "$PLATFORM" in
 esac
 
 if [[ "$SKIP_PIP" != "1" ]]; then
-  python -m pip install -e "$BUNDLE_ROOT/engines/common" -e "$BUNDLE_ROOT/pilot" -e "$BUNDLE_ROOT/engines/understand-operator" -e "$BUNDLE_ROOT/engines/testcase-generation[solver]"
+  python -m pip install -e "$BUNDLE_ROOT/engines/common" -e "$BUNDLE_ROOT/pilot" -e "$BUNDLE_ROOT/engines/understand-operator" -e "$BUNDLE_ROOT/engines/testcase-generation[ml]"
 fi
 
 python "$BUNDLE_ROOT/scripts/compose_runtime.py" --repo "$BUNDLE_ROOT" --host "$PLATFORM"

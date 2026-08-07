@@ -16,11 +16,13 @@ from __future__ import annotations
 
 import random
 from dataclasses import replace
-from typing import Any
+from pathlib import Path
+from typing import Any, Iterable, Mapping
 
 import numpy as np
 import pandas as pd
 
+from testcase_agent.closure.key_utils import int_exact
 from testcase_agent.closure import workspace as W
 
 
@@ -237,6 +239,276 @@ def pool(n: int, seed: int = 0, witnesses: list | None = None,
         cases.append(norm)
         recs.append(desc)
     return cases, pd.DataFrame(recs)
+
+
+def _describe_case(case) -> dict[str, Any] | None:
+    I = W.replay_inputs()
+    try:
+        desc = I.describe(case) if hasattr(I, "describe") else I.SEMANTICS.describe(case)
+    except Exception:
+        return None
+    return dict(desc)
+
+
+def _add_case(
+    cases: list,
+    recs: list[dict[str, Any]],
+    seen: set[tuple],
+    case,
+    *,
+    meta: Mapping[str, Any] | None = None,
+) -> bool:
+    desc = _describe_case(case)
+    if desc is None:
+        return False
+    sig = tuple(desc.values())
+    if sig in seen:
+        return False
+    seen.add(sig)
+    norm = case.normalised() if hasattr(case, "normalised") else case
+    cases.append(norm)
+    row = dict(desc)
+    if meta:
+        row.update(dict(meta))
+    recs.append(row)
+    return True
+
+
+def _open_target_rows(
+    ws: W.Workspace,
+    open_keys: Iterable[int] | None,
+    *,
+    seed: int = 0,
+    control: bool = False,
+) -> list[dict[str, Any]]:
+    keys = {int(k) for k in (open_keys or []) if str(k).strip()}
+    rows: list[dict[str, Any]] = []
+    if keys:
+        try:
+            from testcase_agent.closure import residual
+
+            res = residual.analyse(ws)
+            rows = [r for r in (res.get("rows") or []) if int(r.get("key")) in keys]
+        except Exception:
+            rows = [{"key": k, "distance": 99, "differing_dims": ""} for k in sorted(keys)]
+    else:
+        try:
+            from testcase_agent.closure import ledger
+
+            rset, eset, dset = ledger.load_R(ws), ledger.load_E(ws), ledger.declared()
+            rows = [{"key": k, "distance": 99, "differing_dims": ""} for k in sorted(dset - rset - eset)]
+        except Exception:
+            rows = []
+
+    rng = random.Random(seed)
+    if control:
+        rng.shuffle(rows)
+        return rows
+    return sorted(rows, key=lambda r: (int(r.get("distance") or 99), rng.random(), int(r.get("key") or 0)))
+
+
+def _target_meta(row: Mapping[str, Any], source: str) -> dict[str, Any]:
+    return {
+        "_generation": source,
+        "_target_key": int(row.get("key") or 0),
+        "_target_distance": int(row.get("distance") or 99),
+        "_target_differing_dims": str(row.get("differing_dims") or ""),
+    }
+
+
+def _explore_meta(row: Mapping[str, Any], source: str) -> dict[str, Any]:
+    """Metadata for exploratory candidates that are not meant to hit a key.
+
+    A witness mutation can be useful for learning which host checks still
+    reject nearby regions, but it is not an inverse construction for the row's
+    key.  Keeping ``_target_key`` at zero prevents the later accounting from
+    treating a drifted mutation as a failed attempt at one specific open key.
+    """
+    return {
+        "_generation": source,
+        "_target_key": 0,
+        "_target_distance": int(row.get("distance") or 99) if row else 99,
+        "_target_differing_dims": str(row.get("differing_dims") or ""),
+    }
+
+
+def _intish(value: Any, default: int = 0) -> int:
+    return int_exact(value, default=default)
+
+
+def _floatish(value: Any, default: float = 0.0) -> float:
+    try:
+        if value is None or pd.isna(value):
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _rank_by_surrogate(
+    cases: list,
+    frame: pd.DataFrame,
+    *,
+    surrogate: Any | None,
+    open_keys: set[int],
+) -> tuple[list, pd.DataFrame]:
+    """Put likely useful rows first; never discard solely on a model opinion."""
+    if surrogate is None or frame.empty:
+        return cases, frame
+    try:
+        accept, keys = surrogate.predict(frame)
+    except Exception:
+        return cases, frame
+    scores = []
+    for i, pred in enumerate(keys):
+        pkey = _intish(pred)
+        target = _intish(frame.iloc[i].get("_target_key"))
+        generation = str(frame.iloc[i].get("_generation") or "")
+        score = 0.0
+        # Direct KB inverse construction is the only arm that claims to hit a
+        # specific open key.  Surrogate ranking can choose among those rows, but
+        # must not bury them under exploratory mutations whose actual key is
+        # intentionally free to drift.
+        score += 100.0 if generation == "kb_construct" else 0.0
+        score += 4.0 if _intish(accept[i]) else 0.0
+        score += 3.0 if pkey in open_keys else 0.0
+        score += 2.0 if target and pkey == target else 0.0
+        score -= _floatish(frame.iloc[i].get("_target_distance"), 99.0) * 0.01
+        scores.append((score, i, pkey, _intish(accept[i])))
+    by_index = {i: (pkey, acc) for _score, i, pkey, acc in scores}
+    order = [i for _score, i, _pkey, _acc in sorted(scores, reverse=True)]
+    ranked = frame.iloc[order].reset_index(drop=True).copy()
+    ranked["_predicted_key"] = [by_index[i][0] for i in order]
+    ranked["_predicted_accept"] = [by_index[i][1] for i in order]
+    return [cases[i] for i in order], ranked
+
+
+def kb_guided_pool(
+    n: int,
+    seed: int = 0,
+    witnesses: list | None = None,
+    *,
+    open_keys: Iterable[int] | None = None,
+    surrogate: Any | None = None,
+    control: bool = False,
+    ws: W.Workspace | None = None,
+    oversample: int = 4,
+    explore_fill: bool = False,
+) -> tuple[list, pd.DataFrame]:
+    """Build candidates from the KB/open set first, then mutate witnesses.
+
+    The random control arm still uses the KB envelope: it randomises target
+    order and knob choices, but it does not go back to unconstrained draws.
+    """
+    if n <= 0:
+        return [], pd.DataFrame()
+    ws = (ws or W.default_workspace()).ensure()
+    rng = random.Random(seed)
+    target_n = n if control else max(n, n * max(1, oversample))
+    cases: list = []
+    recs: list[dict[str, Any]] = []
+    seen: set[tuple] = set()
+    uo_root = ""
+    try:
+        # .../.ascendc-pilot/<arch>/tg/closure -> .../<arch>/uo
+        uo_root = str(Path(ws.state).parent.parent / "uo")
+    except Exception:
+        uo_root = ""
+
+    try:
+        from testcase_agent.closure import construct
+
+        for row in _open_target_rows(ws, open_keys, seed=seed, control=control):
+            if len(cases) >= target_n:
+                break
+            try:
+                inst = W.decode(int(row["key"]))
+                built = construct.build(inst, seed=seed)
+            except Exception:
+                built = []
+            if control:
+                rng.shuffle(built)
+            for c in built:
+                if _add_case(cases, recs, seen, c, meta=_target_meta(row, "kb_construct")):
+                    if len(cases) >= target_n:
+                        break
+    except Exception:
+        pass
+
+    # If the KB inverse constructor can already spell enough open keys, stop
+    # here.  Sklearn may rank these direct candidates, but witness mutation is
+    # only an exploration fallback and must not displace target-preserving
+    # construction.
+    if len(cases) >= n:
+        frame = pd.DataFrame(recs)
+        open_set = {int(k) for k in (open_keys or []) if str(k).strip()}
+        cases, frame = _rank_by_surrogate(cases, frame, surrogate=surrogate, open_keys=open_set)
+        if len(cases) > n:
+            cases = cases[:n]
+            frame = frame.iloc[:n].reset_index(drop=True)
+        return cases, frame
+
+    if not explore_fill:
+        frame = pd.DataFrame(recs)
+        open_set = {int(k) for k in (open_keys or []) if str(k).strip()}
+        cases, frame = _rank_by_surrogate(cases, frame, surrogate=surrogate, open_keys=open_set)
+        if len(cases) > n:
+            cases = cases[:n]
+            frame = frame.iloc[:n].reset_index(drop=True)
+        return cases, frame
+
+    # If construction cannot spell enough targets, mutate accepted witnesses in
+    # the UO influence cone of near-open dimensions. This is still KB-guided.
+    if len(cases) < target_n and witnesses:
+        rows = _open_target_rows(ws, open_keys, seed=seed + 17, control=True)
+        stall = 0
+        while len(cases) < target_n and stall < target_n * 20:
+            row = rows[stall % len(rows)] if rows else {}
+            fields = [
+                x for x in str(row.get("differing_dims") or "").split("|") if x
+            ]
+            base = rng.choice(witnesses)
+            if fields:
+                try:
+                    c = mutate_in_cone(
+                        base,
+                        rng.choice(fields),
+                        rng,
+                        k=rng.choice([1, 2, 2, 3]),
+                        uo_root=uo_root or None,
+                    )
+                except Exception:
+                    c = mutate(base, rng, k=rng.choice([1, 2, 2, 3]))
+            else:
+                c = mutate(base, rng, k=rng.choice([1, 2, 2, 3]))
+            if _add_case(cases, recs, seen, c, meta=_explore_meta(row, "kb_mutate_explore")):
+                stall = 0
+            else:
+                stall += 1
+
+    # Last resort: schema/hints sampling. This is bounded fallback, not the
+    # main arm; the caller can see it through _generation.
+    if len(cases) < target_n:
+        extra, frame = pool(
+            target_n - len(cases),
+            seed=seed + 101,
+            witnesses=witnesses,
+            mutate_share=0.5 if witnesses else 0.0,
+        )
+        for i, c in enumerate(extra):
+            meta = {"_generation": "schema_fallback"}
+            if frame is not None and not frame.empty and i < len(frame):
+                row_meta = {k: v for k, v in frame.iloc[i].to_dict().items() if k.startswith("_")}
+                meta.update(row_meta)
+            _add_case(cases, recs, seen, c, meta=meta)
+
+    frame = pd.DataFrame(recs)
+    open_set = {int(k) for k in (open_keys or []) if str(k).strip()}
+    cases, frame = _rank_by_surrogate(cases, frame, surrogate=surrogate, open_keys=open_set)
+    if len(cases) > n:
+        cases = cases[:n]
+        frame = frame.iloc[:n].reset_index(drop=True)
+    return cases, frame
 
 
 def _nearest_knobs() -> dict[str, list[tuple[str, list]]]:

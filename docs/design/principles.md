@@ -12,7 +12,7 @@
 1. **全局规则进 Policy / Capability / 共享模块**，禁止只改个别 Action skill 导致系统碎片化。  
 2. **先搜再写**：扩展现有 helper / lease / gate / compose，不平行发明第二套证据或读码路径。  
 3. **合同与韧性在产品层**：finalize/sanitize/lease 不变量；不靠「再写一段 CRITICAL 教模型」。  
-4. **分层落点清晰**：证据→`evidence`+`source_evidence`；CBM→`cbm-navigation`；权限→`lease`；本步字段→该 Action 合同。  
+4. **分层落点清晰**：证据→`evidence`+`source_evidence`；源码导航→`source-navigation`；权限→`lease`；本步字段→该 Action 合同。
 5. **改完 compose + 单测 +（需要时）更新 `docs/`**；安装侧 `refresh-opencode.ps1` 后重启才算生效。
 
 ## 反模式（禁止）

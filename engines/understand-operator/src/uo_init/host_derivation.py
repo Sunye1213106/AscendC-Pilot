@@ -1321,6 +1321,42 @@ def _to_field(
     )
 
 
+def host_derivation_from_dict(raw: dict[str, Any] | None) -> HostDerivation:
+    """Rehydrate a persisted HostDerivation without rerunning source analysis."""
+
+    if not isinstance(raw, dict):
+        return HostDerivation()
+    fields = [
+        _to_field(row, None)
+        for row in (raw.get("fields") or [])
+        if isinstance(row, dict)
+    ]
+    auxiliaries = {
+        str(name): _to_field(row, None)
+        for name, row in (raw.get("auxiliaries") or {}).items()
+        if isinstance(row, dict)
+    }
+    return HostDerivation(
+        op_name=str(raw.get("op_name") or ""),
+        architecture=str(raw.get("architecture") or ""),
+        encode_site=dict(raw.get("encode_site") or {}),
+        encode_function=str(raw.get("encode_function") or ""),
+        fields=fields,
+        note=str(raw.get("note") or ""),
+        premises=[
+            dict(row)
+            for row in (raw.get("premises") or [])
+            if isinstance(row, dict)
+        ],
+        auxiliaries=auxiliaries,
+        phase_seconds={
+            str(k): float(v)
+            for k, v in (raw.get("phase_seconds") or {}).items()
+            if isinstance(v, (int, float))
+        },
+    )
+
+
 #: How to re-declare a softened guard, by the bucket it was sorted into. This
 #: has to reproduce what the worker declared: a loop element is an unbounded
 #: int (`_truthy` renders it as `!= 0`, which only type-checks as an int) while

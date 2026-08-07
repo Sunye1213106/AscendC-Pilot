@@ -30,12 +30,12 @@ def test_prepare_layout_scrubs_disallowed_and_seeds_not_extracted(tmp_path: Path
         "class DummyOp : public OpDef {};\nOP_ADD(DummyOp);\n",
         encoding="utf-8",
     )
-    uo = op / ".ascendc-pilot" / "uo"
+    uo = op / ".ascendc-pilot" / "arch35" / "uo"
     (uo / "ir").mkdir(parents=True)
     (uo / "ir" / "bridge.yaml").write_text("version: 2\nbridge_nodes: []\n", encoding="utf-8")
     (uo / "ir" / "extract_plan.yaml").write_text("version: 1\n", encoding="utf-8")
-    (uo / "cbm").mkdir()
-    (uo / "cbm" / "x.bin").write_text("x", encoding="utf-8")
+    (uo / "docs_cache").mkdir()
+    (uo / "docs_cache" / "x.bin").write_text("x", encoding="utf-8")
     (uo / "analysis").mkdir()
 
     import uo_init.op_spec as op_spec_mod
@@ -63,7 +63,7 @@ def test_prepare_layout_scrubs_disallowed_and_seeds_not_extracted(tmp_path: Path
     assert out["ok"] is True
     assert out.get("layout_reset") is True
     assert not (uo / "ir" / "bridge.yaml").exists()
-    assert not (uo / "cbm").exists()
+    assert not (uo / "docs_cache").exists()
     assert not (uo / "analysis").exists()
     manifest = (uo / "manifest.yaml").read_text(encoding="utf-8")
     assert "kb_schema-v1" in manifest
@@ -74,7 +74,7 @@ def test_prepare_layout_scrubs_disallowed_and_seeds_not_extracted(tmp_path: Path
 
 
 def test_resolve_gaps_autoskips_when_closed(tmp_path: Path):
-    uo = tmp_path / ".ascendc-pilot" / "uo" / "ir"
+    uo = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "ir"
     uo.mkdir(parents=True)
     (uo / "unresolved.yaml").write_text(
         "version: 1\nstatus: closed\nblocker_count: 0\nblockers: []\n",

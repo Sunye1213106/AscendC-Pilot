@@ -38,6 +38,8 @@ _EXPORTS = (
     "shapes",
     "_shapes",
     "describe",
+    "construct_case",
+    "construct_reasons",
     "SEMANTICS",
 )
 

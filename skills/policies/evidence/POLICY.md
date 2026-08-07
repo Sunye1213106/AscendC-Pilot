@@ -13,12 +13,12 @@
 5. 证据不足时保留 `unresolved` / `needs_human`，不得猜测闭合。
 6. 仅 `confidence: high` 可闭合 true / false / not_input_derivable 类字段。
 7. **高置信 = 源码比对（全局硬规则）**：凡写入 `confidence: high` 或 `source_verified: true` 的结论，必须同时具备：
-   - `evidence_source: source|cbm`（禁止 `candidate_only` 冒充 verified）
+   - `evidence_source: source|uo_graph`（禁止 `candidate_only` 冒充 verified）
    - 非空 `evidence_files` + `evidence_lines: [start, end]`（1-based inclusive）
    - `evidence_window_sha256`：磁盘窗口 sha（pad=0；可从候选 `source_window.sha256` 拷贝）
    - `evidence_snippet`：该窗口内**连续**真实源码文本（足够长），**必须为磁盘窗口连续子串**（可去缩进比对）；禁止挑行拼贴
    - `decision_reason`：说明「读了哪段、为何成立」
-8. **CBM / search 不是比对**：`search_graph` / `search_code` / 候选表只能定位；定位后必须 `get_code_snippet` 或定向 Read 窗口，再写 snippet。仅有搜索命中不得标 high / source_verified。
+8. **UO 图 / search 不是比对**：图查询与候选表只能定位；定位后必须用定向 Read 窗口核验，再写 snippet。仅有搜索命中不得标 high / source_verified。
 9. **证据载体（硬 · AND 不是 OR）**：高置信必须 **同时** 有 `evidence_window_sha256` **与** 连续 `evidence_snippet`。仅 sha、仅 snippet、或 sha 对但 snippet 非连续窗口子串 → Gate / apply **拒绝**。共享校验：`uo.scripts.source_evidence.require_disk_window_proof`。
 10. **产品韧性（公共）**：apply 可在 files/lines 可解析时从磁盘窗口（或候选 `source_window.text`）**回填**连续 snippet 与 sha（`enrich_item_evidence_from_disk`）；禁止省略号拼贴残留。回填不是放宽合同，而是消除易碎 YAML。
 11. **禁止占位证据**：`candidates_sha256`、snippet、行号不得填 `PLACEHOLDER` / `TODO` / 编造 hash；Gate 必须拒绝。

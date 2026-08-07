@@ -11,7 +11,7 @@
                 ## Domain Procedure
 
                 1. 使用 capability `source-reading`。
-2. 使用 capability `cbm-navigation`。
+2. 使用 capability `source-navigation`。
 3. 使用 capability `kb-query`。
 4. 使用 capability `semantic-resolution`。
                 5. 只处理当前 Action 指定的 ID 或文件。

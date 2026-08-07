@@ -20,7 +20,63 @@ class Verdict:
 
     @property
     def verdict(self) -> bool:
-        return self.judged and not self.reject.startswith(("HOST_CRASHED", "NOT_RUN"))
+        return self.judged and not self.reject.startswith(
+            ("HOST_CRASHED", "NOT_RUN", "PARSE_FAILED")
+        )
+
+
+def accounting(
+    verdicts: Sequence[Verdict],
+    *,
+    generated: int | None = None,
+    normalised_unique: int | None = None,
+    serialized: int | None = None,
+) -> dict[str, int]:
+    """Return the complete Oracle accounting ledger for one replay batch.
+
+    Only ``accepted`` and ``rejected`` are judged outcomes.  A driver crash,
+    a missing result and a parse failure remain operational evidence; none is
+    a negative model result or evidence for E.
+    """
+    requested = len(verdicts)
+    counts = {
+        "requested": requested,
+        "generated": requested if generated is None else int(generated),
+        "normalised_unique": requested if normalised_unique is None else int(normalised_unique),
+        "serialized": requested if serialized is None else int(serialized),
+        "driver_started": 0,
+        "accepted": 0,
+        "rejected": 0,
+        "crashed": 0,
+        "not_run": 0,
+        "parse_failed": 0,
+    }
+    for verdict in verdicts:
+        reason = str(verdict.reject or "").upper()
+        if reason.startswith("PARSE_FAILED") or reason.startswith("PARSE_FAIL"):
+            counts["parse_failed"] += 1
+        elif reason.startswith("HOST_CRASHED") or reason.startswith("CRASH"):
+            counts["crashed"] += 1
+        elif reason.startswith("NOT_RUN") or not verdict.judged:
+            counts["not_run"] += 1
+        elif verdict.ok:
+            counts["accepted"] += 1
+        else:
+            counts["rejected"] += 1
+    counts["driver_started"] = (
+        counts["accepted"] + counts["rejected"] + counts["crashed"]
+    )
+    counts["actually_run"] = counts["driver_started"]
+    counts["judged"] = counts["accepted"] + counts["rejected"]
+    counts["conserved"] = int(
+        counts["requested"]
+        == counts["accepted"]
+        + counts["rejected"]
+        + counts["crashed"]
+        + counts["not_run"]
+        + counts["parse_failed"]
+    )
+    return counts
 
 
 @runtime_checkable
@@ -34,6 +90,7 @@ class HostOracle:
 
     def __init__(self, runner=None):
         self.runner = runner or W.replay_runner()
+        self.last_accounting: dict[str, int] = accounting(())
 
     def judge(self, cases: Sequence[Any], *, tag: str = "closure") -> list[Verdict]:
         sent = list(cases)
@@ -47,7 +104,19 @@ class HostOracle:
             batch[cid] = case
             order.append(cid)
 
-        raw = self.runner.run(batch, tag=tag, check=False)
+        try:
+            raw = self.runner.run(batch, tag=tag, check=False)
+        except Exception as exc:  # noqa: BLE001
+            out = [
+                Verdict(
+                    case_id=cid,
+                    reject=f"HOST_CRASHED:{type(exc).__name__}",
+                    judged=False,
+                )
+                for cid in order
+            ]
+            self.last_accounting = accounting(out, generated=len(sent), serialized=len(sent))
+            return out
         # Runner returns dict[str, Result]; preserve send order.
         results_by_id = raw if isinstance(raw, dict) else {}
         if not isinstance(raw, dict) and isinstance(raw, (list, tuple)):
@@ -84,6 +153,7 @@ class HostOracle:
                 (ws.state / "oracle_suspect").write_text(flag, encoding="utf-8")
             except Exception:
                 pass
+        self.last_accounting = accounting(out, generated=len(sent), serialized=len(sent))
         return out
 
     def batch_integrity(self, sent: int, done: int) -> str | None:

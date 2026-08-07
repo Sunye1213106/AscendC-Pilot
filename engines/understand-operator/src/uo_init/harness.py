@@ -302,9 +302,21 @@ CLANG_SEARCH = [
 
 def find_clang(explicit: str | None = None) -> str | None:
     """Locate a clang driver. libclang alone cannot produce the folded AST."""
+    import os
     import shutil
 
-    for cand in ([explicit] if explicit else []) + CLANG_SEARCH:
+    env = [
+        os.environ.get("CLANG_EXE"),
+        (str(Path(os.environ["LLVM_BIN"]) / "clang.exe") if os.environ.get("LLVM_BIN") else None),
+        (str(Path(os.environ["LLVM_HOME"]) / "bin" / "clang.exe") if os.environ.get("LLVM_HOME") else None),
+    ]
+    common = [
+        r"C:\Program Files\LLVM\bin\clang.exe",
+        r"C:\Program Files (x86)\LLVM\bin\clang.exe",
+        r"C:\msys64\clang64\bin\clang.exe",
+        r"C:\msys64\ucrt64\bin\clang.exe",
+    ]
+    for cand in ([explicit] if explicit else []) + env + common + CLANG_SEARCH:
         if not cand:
             continue
         found = shutil.which(cand) or (cand if Path(cand).exists() else None)
@@ -511,9 +523,14 @@ class MintedKernelBranch:
     condition: str = ""
     function: str = ""
     kind: str = "if"
+    dimensions: tuple[str, ...] = ()
+    derived: tuple[str, ...] = ()
+    symbols: tuple[str, ...] = ()
+    dtype_variants: tuple[str, ...] = ()
+    stage: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "id": self.id,
             "file": self.file,
             "line": self.line,
@@ -522,6 +539,17 @@ class MintedKernelBranch:
             "function": self.function,
             "kind": self.kind,
         }
+        if self.dimensions:
+            out["dimensions"] = list(self.dimensions)
+        if self.derived:
+            out["derived"] = list(self.derived)
+        if self.symbols:
+            out["symbols"] = list(self.symbols)
+        if self.dtype_variants:
+            out["dtype_variants"] = list(self.dtype_variants)
+        if self.stage:
+            out["stage"] = self.stage
+        return out
 
     @classmethod
     def from_dict(cls, row: dict[str, Any]) -> "MintedKernelBranch":
@@ -533,6 +561,11 @@ class MintedKernelBranch:
             condition=str(row.get("condition") or ""),
             function=str(row.get("function") or ""),
             kind=str(row.get("kind") or "if"),
+            dimensions=tuple(str(x) for x in (row.get("dimensions") or [])),
+            derived=tuple(str(x) for x in (row.get("derived") or [])),
+            symbols=tuple(str(x) for x in (row.get("symbols") or [])),
+            dtype_variants=tuple(str(x) for x in (row.get("dtype_variants") or [])),
+            stage=str(row.get("stage") or ""),
         )
 
 

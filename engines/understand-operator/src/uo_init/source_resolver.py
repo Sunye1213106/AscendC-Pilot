@@ -147,6 +147,29 @@ _PARAMS_DERIVED_RE = re.compile(
 #: An identifier immediately followed by a member access.
 _DOTTED_HEAD_RE = re.compile(r"\b([A-Za-z_]\w*)\s*\.")
 _TUPLE_ACCESSORS = frozenset({"first", "second", "third", "data", "value", "get"})
+_LOCAL_TRANSPARENT_ACCESSORS = _TUPLE_ACCESSORS | frozenset(
+    {
+        "size",
+        "empty",
+        "find",
+        "count",
+        "contains",
+        "begin",
+        "end",
+        "cbegin",
+        "cend",
+        "front",
+        "back",
+        "at",
+    }
+)
+_CONTAINER_TYPE_RE = re.compile(
+    r"\b(?:std::)?(?:vector|deque|list|set|multiset|map|multimap|unordered_(?:set|map|multiset|multimap)|array|string)\b"
+)
+_LITERAL_OR_CONSTANT_RE = re.compile(
+    r"^\s*(?:[-+]?\d+(?:\.\d+)?(?:[uUlLfF]*)?|true|false|nullptr|NULL|[A-Z][A-Z0-9_]*(?:::[A-Z][A-Z0-9_]*)?)\s*$"
+)
+_TUPLE_ELEM_RE = re.compile(r"\b(?:__tuple_elem|std::get|get)\s*(?:<|\()")
 
 
 def _mentions_sym(var: str, rhs: str) -> bool:
@@ -350,6 +373,191 @@ def _picks_between_constants(res: Resolution) -> bool:
         and _selects(res.expr)
         and len(_constant_values(res.atoms)) > 1
     )
+
+
+def _literal_or_empty_ctor(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return False
+    if _LITERAL_OR_CONSTANT_RE.match(t):
+        return True
+    return t in {"{}", "[]"} or bool(
+        re.match(r"^(?:std::)?\w+(?:<[^>]*>)?\s*\(\s*\)$", t)
+    )
+
+
+def _self_derived_local(var: str, candidates: Sequence[str]) -> bool:
+    """Whether a local's value is a recurrence over its previous value.
+
+    Only locals whose non-self definitions are literal/default values are
+    classified this way.  A local seeded from an accessor (`aicNum =
+    GetCoreNumAic(); aicNum = min(aicNum, ...)`) must still chase the accessor.
+    """
+    cleaned = [_norm_expr(c) for c in candidates if str(c or "").strip()]
+    if not cleaned:
+        return False
+    self_refs = [c for c in cleaned if _mentions_sym(var, c)]
+    if not self_refs:
+        return False
+    independent = [c for c in cleaned if not _mentions_sym(var, c)]
+    if not independent:
+        return True
+    return all(_literal_or_empty_ctor(c) for c in independent)
+
+
+def _multi_def_local_state(
+    var: str, candidates: Sequence[str], local_names: set[str]
+) -> bool:
+    """State updated through other locals, e.g. binary-search left/right/mid."""
+    cleaned = [_norm_expr(c) for c in candidates if str(c or "").strip()]
+    if len(cleaned) < 2:
+        return False
+    if not any(_literal_or_empty_ctor(c) for c in cleaned):
+        return False
+    for rhs in cleaned:
+        if _literal_or_empty_ctor(rhs):
+            continue
+        if any(name != var and _mentions_sym(name, rhs) for name in local_names):
+            return True
+    return False
+
+
+def inferred_function_local_roots(host_ir: Any, function: str) -> dict[str, str]:
+    """Infer cheap local roots from HostIR without solving loop semantics.
+
+    The result is intentionally conservative: these locals are host-side
+    loop/container state, not user-controllable inputs.  Marking them as
+    LOOP_* removes fake unresolved-symbol blockers without inventing a source
+    lemma.
+    """
+    if host_ir is None or not function:
+        return {}
+    cache = getattr(host_ir, "_inferred_function_local_roots", None)
+    if cache is None:
+        cache = {}
+        setattr(host_ir, "_inferred_function_local_roots", cache)
+    if function in cache:
+        return dict(cache[function])
+    roots: dict[str, str] = {}
+
+    for node in getattr(host_ir, "controls", ()) or ():
+        if getattr(node, "function", "") != function:
+            continue
+        for name in getattr(node, "induction_vars", ()) or ():
+            if name:
+                roots.setdefault(str(name), "LOOP_INDUCTION")
+
+    try:
+        defs = host_ir.defs_by_function().get(function, {})
+    except Exception:
+        defs = {}
+    for var, candidates in defs.items():
+        if _self_derived_local(str(var), candidates):
+            roots.setdefault(str(var), "LOOP_DERIVED")
+
+    local_names = {str(v) for v in defs}
+    for var, candidates in defs.items():
+        if str(var) in roots:
+            continue
+        if _multi_def_local_state(str(var), candidates, local_names):
+            roots.setdefault(str(var), "LOOP_DERIVED")
+
+    for var, candidates in defs.items():
+        if str(var) in roots:
+            continue
+        if any(_TUPLE_ELEM_RE.search(_norm_expr(rhs)) for rhs in candidates):
+            roots.setdefault(str(var), "LOOP_DERIVED")
+
+    for decl in getattr(host_ir, "local_decls", ()) or ():
+        if getattr(decl, "function", "") != function:
+            continue
+        if _CONTAINER_TYPE_RE.search(getattr(decl, "type_text", "") or ""):
+            roots.setdefault(str(getattr(decl, "name", "") or ""), "LOOP_DERIVED")
+
+    # Cheap fixed point: locals computed from loop/container locals are also
+    # host-derived.  Keep the root non-steerable even when the RHS also reads
+    # input/tiling data; the loop state is what prevents direct TG control.
+    for _ in range(4):
+        changed = False
+        for var, candidates in defs.items():
+            var = str(var)
+            if var in roots:
+                continue
+            if any(
+                _mentions_sym(src, rhs)
+                for rhs in candidates
+                for src in roots
+                if src and src != var
+            ):
+                roots[var] = "LOOP_DERIVED"
+                changed = True
+        if not changed:
+            break
+    clean = {k: v for k, v in roots.items() if k}
+    cache[function] = dict(clean)
+    return clean
+
+
+def inferred_parameter_roots(host_ir: Any, function: str) -> dict[str, str]:
+    """Propagate caller-local LOOP_* roots through call-site formals.
+
+    This covers same-name by-reference containers (`foo(v)` where `foo` also
+    names the parameter `v`) without teaching the closed-vocabulary layer an
+    invented input binding.
+    """
+    if host_ir is None or not function:
+        return {}
+    cache = getattr(host_ir, "_inferred_parameter_roots", None)
+    if cache is None:
+        cache = {}
+        setattr(host_ir, "_inferred_parameter_roots", cache)
+    if function in cache:
+        return dict(cache[function])
+    summary = getattr(host_ir, "summaries", {}).get(function)
+    if summary is None:
+        cache[function] = {}
+        return {}
+    candidates: dict[str, set[str]] = {p: set() for p in getattr(summary, "params", ()) or ()}
+    call_edges: list[tuple[str, str, tuple[str, ...]]] = []
+    for site in getattr(host_ir, "call_sites", ()) or ():
+        call_edges.append(
+            (
+                getattr(site, "caller", "") or "",
+                getattr(site, "callee", "") or "",
+                tuple(getattr(site, "args", ()) or ()),
+            )
+        )
+    if not call_edges:
+        for caller_summary in getattr(host_ir, "summaries", {}).values():
+            caller_name = getattr(caller_summary, "name", "") or ""
+            for callee, args in getattr(caller_summary, "calls", ()) or ():
+                call_edges.append((caller_name, callee, tuple(args or ())))
+
+    for caller, callee, args in call_edges:
+        if callee != function:
+            continue
+        caller_roots = inferred_function_local_roots(host_ir, caller)
+        for i, actual in enumerate(args):
+            if i >= len(summary.params):
+                continue
+            text = (actual or "").strip().lstrip("&*").strip()
+            if re.fullmatch(r"[A-Za-z_]\w*", text or "") and text in caller_roots:
+                candidates[summary.params[i]].add(caller_roots[text])
+                continue
+            if any(_mentions_sym(src, text) for src in caller_roots):
+                candidates[summary.params[i]].add("LOOP_DERIVED")
+    out: dict[str, str] = {}
+    for param, roots in candidates.items():
+        if not roots or not roots <= {"LOOP_INDUCTION", "LOOP_DERIVED"}:
+            continue
+        if roots == {"LOOP_INDUCTION"}:
+            out[param] = "LOOP_INDUCTION"
+        else:
+            # Mixed induction/derived call sites are still non-steerable host
+            # loop state.  Use the less precise root instead of rejecting.
+            out[param] = "LOOP_DERIVED"
+    cache[function] = dict(out)
+    return out
 
 
 @dataclass
@@ -859,7 +1067,11 @@ class SourceResolver:
                 base = self.resolve_symbol(head, depth + 1)
                 accessor = rest.split(".", 1)[0]
                 if base.root in LEGAL_ROOTS and not base.partial and not base.reason:
-                    if accessor in _TUPLE_ACCESSORS or self.tiling_derived(f"x.{rest}"):
+                    if (
+                        base.root == "TILING_DATA"
+                        or accessor in _LOCAL_TRANSPARENT_ACCESSORS
+                        or self.tiling_derived(f"x.{rest}")
+                    ):
                         return Atom(
                             text=sym,
                             root=base.root,
@@ -869,7 +1081,10 @@ class SourceResolver:
                             via=(f"{head}->{rest}",) + base.via,
                         )
                 if (
-                    accessor in _TUPLE_ACCESSORS
+                    (
+                        base.root == "TILING_DATA"
+                        or accessor in _LOCAL_TRANSPARENT_ACCESSORS
+                    )
                     and base.root in LEGAL_ROOTS
                     and not base.reason
                 ):
@@ -895,6 +1110,13 @@ class SourceResolver:
                 raw.insert(0, n)
         others = [c for c in raw if c != sym]
         independent = [c for c in others if not _mentions_sym(sym, c)]
+        if _self_derived_local(sym, others):
+            return Atom(
+                text=sym,
+                root="LOOP_DERIVED",
+                symbol=sym,
+                via=(f"{sym}=self-derived",),
+            )
         candidates = (independent or others)[:4]
         # Dropping the self-mentioning definitions is how `p = CeilDiv(...);
         # p = p + q` still reaches the CeilDiv, but for a counter it leaves
@@ -1002,8 +1224,11 @@ class SourceResolver:
             return self
         bindings = dict(self.host_ir.locals_by_function().get(fn, {}))
         bindings.update(self.host_ir.output_bindings_by_function().get(fn, {}))
+        local_roots = inferred_function_local_roots(self.host_ir, fn)
+        local_roots.update(inferred_parameter_roots(self.host_ir, fn))
         return self.scoped(
             bindings=bindings,
+            local_roots=local_roots,
             def_lists=self.host_ir.defs_by_function().get(fn, {}),
             parameters=set(summary.params),
             param_actuals=self.host_ir.param_bindings().get(fn, {}),
@@ -1226,6 +1451,18 @@ class SourceResolver:
                 r"(?:BaseParams|Params|TilingData|tilingData|PrefixData)\.", path
             ):
                 return Atom(text=path, root="TILING_DATA", symbol=path)
+            decl = self.host_ir.field_decl(path) if hasattr(self.host_ir, "field_decl") else None
+            if (
+                decl is not None
+                and str(getattr(decl, "init", "") or "").strip() in {"nullptr", "NULL"}
+                and re.search(r"(?:Param|Params)_$", tail)
+            ):
+                return Atom(
+                    text=path,
+                    root="TILING_DATA",
+                    symbol=path,
+                    via=(f"{tail} declared nullptr generated-tiling-pointer",),
+                )
             return _unproven_field(path, REASON_TILING_DATA_NO_WRITER)
 
         self._chasing.add(path)
@@ -1338,8 +1575,20 @@ class SourceResolver:
             # the optional-input presence test inside `c` (hasRope).
             if not as_value:
                 self._walk(e.cond, out, depth, as_value=False)
-            self._walk(e.then, out, depth, as_value=True)
-            self._walk(e.else_, out, depth, as_value=True)
+                self._walk(e.then, out, depth, as_value=True)
+                self._walk(e.else_, out, depth, as_value=True)
+                return
+            branch_atoms: list[Atom] = []
+            self._walk(e.then, branch_atoms, depth, as_value=True)
+            self._walk(e.else_, branch_atoms, depth, as_value=True)
+            if any(a.root != "CONSTANT" for a in branch_atoms):
+                out.extend(branch_atoms)
+                return
+            # If every arm is a literal, the selector is the provenance of the
+            # chosen enum/mode.  Without this, `cond ? 0 : 1` is neither a safe
+            # constant nor traced back to the inputs deciding `cond`.
+            self._walk(e.cond, out, depth, as_value=False)
+            out.extend(branch_atoms)
             return
         if isinstance(e, Select):
             # Prefer the array's root; the index is often a loop induction var

@@ -563,7 +563,7 @@ def gate_kb_review_file(uo: Path) -> dict[str, Any]:
 
 
 def gate_scope_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
-    """Scope confirmation for the *current* run only + MCP index_meta (indexed_via=mcp).
+    """Scope confirmation for the *current* run only.
 
     Fail-closed: never scan other runs or pick newest-by-mtime. Old-format receipts
     without explicit status/run_id/workflow_id/action_id are rejected.
@@ -585,18 +585,6 @@ def gate_scope_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
         }
 
     confirmed_path = uo / "runs" / run_id / "scope" / "scope_confirmed.yaml"
-    meta = uo / "cbm" / "index_meta.json"
-    indexed_via = ""
-    if meta.is_file():
-        try:
-            import json
-
-            loaded = json.loads(meta.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                indexed_via = str(loaded.get("indexed_via") or loaded.get("via") or "")
-        except Exception:  # noqa: BLE001
-            indexed_via = ""
-
     if not confirmed_path.is_file():
         manifest_run = ""
         try:
@@ -694,32 +682,9 @@ def gate_scope_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
             "message": f"scope action_id must be scope_confirmation (got {file_action!r})",
         }
 
-    mcp_ok = meta.is_file() and indexed_via.lower() in {"mcp", "codebase-memory", "cbm"}
-    if not meta.is_file():
-        return {
-            "gate": "scope_receipt",
-            "ok": False,
-            "error": "SCOPE_RECEIPT_MCP_MISSING",
-            "scope_path": confirmed_path.as_posix(),
-            "indexed_via": indexed_via,
-            "message": (
-                "缺少 cbm/index_meta.json（MCP index 后须执行 "
-                "acp uo-scope record-index --cbm-project <name>）"
-            ),
-        }
-    if not mcp_ok:
-        return {
-            "gate": "scope_receipt",
-            "ok": False,
-            "error": "SCOPE_RECEIPT_MCP_INVALID",
-            "scope_path": confirmed_path.as_posix(),
-            "indexed_via": indexed_via,
-            "message": f"cbm/index_meta.json indexed_via 必须为 mcp（当前={indexed_via!r}）",
-        }
     return {
         "gate": "scope_receipt",
         "ok": True,
-        "indexed_via": indexed_via,
         "scope_path": confirmed_path.as_posix(),
         "run_id": run_id,
         "workflow_id": workflow_id,

@@ -39,7 +39,7 @@ python scripts/compile_skills.py --repo .
 ## 证据与 Lease
 
 - **高置信 / `source_verified`** 规则只写在公共 `skills/policies/{evidence,code-access,source-authority}` + 共享校验模块，Action prompt **只引用、不另立例外**。  
-- **CBM 工具全名与失败回退** 写在 `skills/capabilities/cbm-navigation`，不写进单个 Action 特例。  
+- **源码导航与失败回退** 写在 `skills/capabilities/source-navigation`，不写进单个 Action 特例。
 - **Lease 不变量**：`allowed_write_paths ⊆ allowed_read_paths`（签发层强制）。  
 - 嵌入源码的 YAML：优先 `evidence_window_sha256`；加载层对 `|` literal 做缩进 sanitize。  
 - **大 IR 摘要**：Pilot `ir_summary`（stub `MUST_READ_ORDER`）+ `code-access` policy；Action 只填本步 summary 字段形状。  

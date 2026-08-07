@@ -130,3 +130,79 @@ def test_load_tg_host_view_without_probe_cache(tmp_path: Path):
     loaded = load_tg_host_view(uo)
     assert loaded.get("source", {}).get("graph_fingerprint") == "fp-x"
     assert any(f.get("name") == "SplitAxis" for f in (loaded.get("fields") or []))
+
+
+def test_pilot_export_tg_host_view_reuses_matching_view(tmp_path: Path, monkeypatch):
+    """A matching durable TG host view must not force another host extract."""
+    import sqlite3
+
+    from uo_init import pilot_engines as P
+    from uo_init.host_codemap import TG_HOST_VIEW_YAML
+
+    project = tmp_path / "op"
+    uo = P._uo_root(project)
+    (uo / "ir").mkdir(parents=True)
+    (uo / "indexes").mkdir(parents=True)
+    (uo / "checks").mkdir(parents=True)
+
+    (uo / "ir" / "operator_graph.yaml").write_text(
+        yaml.safe_dump({
+            "version": 1,
+            "fingerprint": "fp-cache",
+            "nodes": [],
+            "edges": [],
+            "evidence": [],
+            "domains": [],
+        }),
+        encoding="utf-8",
+    )
+    (uo / "manifest.yaml").write_text(
+        yaml.safe_dump({
+            "content_hash": "mh-cache",
+            "source_revision": "rev-cache",
+        }),
+        encoding="utf-8",
+    )
+    view = {
+        "schema": "tg-host-view/v1",
+        "source": {
+            "graph_fingerprint": "fp-cache",
+            "manifest_hash": "mh-cache",
+            "source_revision": "rev-cache",
+            "authority": "uo/ir/operator_graph.yaml",
+            "role": "tg_host_projection",
+            "generated_by": "export_tg_host_view",
+        },
+        "fields": [{
+            "name": "SplitAxis",
+            "kind": "key_dim",
+            "exactness": "exact",
+            "grade": "green",
+            "writers": [],
+            "reads": [],
+        }],
+        "predicates": [],
+        "declared_keys": {},
+        "platform_gates": [],
+    }
+    (uo / TG_HOST_VIEW_YAML).parent.mkdir(parents=True, exist_ok=True)
+    (uo / TG_HOST_VIEW_YAML).write_text(
+        yaml.safe_dump(view, sort_keys=False), encoding="utf-8",
+    )
+
+    db = uo / "indexes" / "kb_graph.sqlite"
+    conn = sqlite3.connect(str(db))
+    conn.execute("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    conn.commit()
+    conn.close()
+
+    def _explode(*args, **kwargs):
+        raise AssertionError("_ensure_bundle should not run on cache hit")
+
+    monkeypatch.setattr(P, "_ensure_bundle", _explode)
+    out = P.export_tg_host_view(project, {})
+
+    assert out["ok"] is True
+    assert out["cached"] is True
+    assert out["fields"] == 1
+    assert out["graph_fingerprint"] == "fp-cache"

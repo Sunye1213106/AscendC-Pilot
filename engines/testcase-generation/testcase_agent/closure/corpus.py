@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from testcase_agent.closure.key_utils import int_exact
 from testcase_agent.closure import workspace as W
 
 #: Columns that are sequence vectors rendered as text. They define the input,
@@ -32,6 +33,8 @@ SEQ_COLUMNS = ("seq_q", "seq_kv", "prefix_n")
 
 #: Host intermediates the tiling prints on its own — overridden by log_protocol.
 STATES = ("isExceedL2Cache", "enableSwizzle", "sparseType")
+KEY_COLUMNS = ("tiling_key", "_target_key", "_predicted_key")
+FLAG_COLUMNS = ("_target_hit", "_prediction_hit", "_predicted_accept")
 
 
 def _numeric_knobs() -> tuple[str, ...]:
@@ -127,8 +130,12 @@ def coerce(df: pd.DataFrame) -> pd.DataFrame:
         return df
     df = df.copy()
     df["ok"] = pd.to_numeric(df.get("ok"), errors="coerce").fillna(0).astype(int)
-    key = pd.to_numeric(df.get("tiling_key"), errors="coerce").fillna(0)
-    df["tiling_key"] = key.astype("int64")
+    for col in KEY_COLUMNS:
+        if col in df:
+            df[col] = df[col].map(int_exact).astype(object)
+    for col in FLAG_COLUMNS:
+        if col in df:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
     for name in W.dim_names():
         col = "dim_" + name
         if col in df:

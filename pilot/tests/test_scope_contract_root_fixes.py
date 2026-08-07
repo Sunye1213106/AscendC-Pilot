@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import yaml
@@ -12,6 +11,7 @@ from ascendc_pilot.actions.runtime import _check_output_contract
 from ascendc_pilot.authorize import authorize
 from ascendc_pilot.authorize.lease import extract_pilot_command
 from ascendc_pilot.gates import gate_scope_receipt
+from ascendc_pilot.paths import uo_root
 from ascendc_pilot.state import start_workflow
 
 
@@ -23,13 +23,12 @@ def test_scope_confirmed_contract_is_run_scoped_not_summary() -> None:
     assert "uo/runs/{run_id}/scope/scope_confirmed.yaml" in joined
     assert "uo/runs/{run_id}/scope/receipt.yaml" in joined
     assert "uo/runs/*/" not in joined
-    assert "uo/cbm/index_meta.json" in joined
     assert "scope-confirmed-v1" in OUTPUT_CONTRACT_NONEMPTY_GLOBS
 
 
 def test_output_contract_accepts_run_scoped_scope(tmp_path: Path) -> None:
     start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
-    run = tmp_path / ".ascendc-pilot" / "uo" / "runs" / "UO_RUN_T" / "scope"
+    run = uo_root(tmp_path) / "runs" / "UO_RUN_T" / "scope"
     run.mkdir(parents=True)
     (run / "scope_confirmed.yaml").write_text(
         "status: confirmed\nrun_id: UO_RUN_T\nworkflow_id: uo-init\n"
@@ -37,12 +36,6 @@ def test_output_contract_accepts_run_scoped_scope(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     (run / "receipt.yaml").write_text("status: pass\nrun_id: UO_RUN_T\n", encoding="utf-8")
-    cbm = tmp_path / ".ascendc-pilot" / "uo" / "cbm"
-    cbm.mkdir(parents=True)
-    (cbm / "index_meta.json").write_text(
-        json.dumps({"indexed_via": "mcp", "cbm_project": "p", "indexed_at": "t"}),
-        encoding="utf-8",
-    )
     checked = _check_output_contract(
         tmp_path,
         "scope-confirmed-v1",
@@ -56,7 +49,7 @@ def test_output_contract_accepts_run_scoped_scope(tmp_path: Path) -> None:
 
 def test_output_contract_rejects_summary_only_legacy(tmp_path: Path) -> None:
     start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
-    summary = tmp_path / ".ascendc-pilot" / "uo" / "summary"
+    summary = uo_root(tmp_path) / "summary"
     summary.mkdir(parents=True)
     (summary / "scope_confirmed.yaml").write_text("status: confirmed\n", encoding="utf-8")
     checked = _check_output_contract(
@@ -72,10 +65,10 @@ def test_output_contract_rejects_summary_only_legacy(tmp_path: Path) -> None:
     assert any("runs/{run_id}/scope/scope_confirmed.yaml" in m or "RUN_CURRENT" in m for m in missing)
 
 
-def test_gate_scope_receipt_requires_mcp(tmp_path: Path) -> None:
+def test_gate_scope_receipt_requires_current_run_confirmation(tmp_path: Path) -> None:
     state = start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
     run_id = str(state.get("run_id") or "")
-    uo = tmp_path / ".ascendc-pilot" / "uo"
+    uo = uo_root(tmp_path)
     scope = uo / "runs" / run_id / "scope"
     scope.mkdir(parents=True)
     (scope / "scope_confirmed.yaml").write_text(
@@ -88,13 +81,6 @@ def test_gate_scope_receipt_requires_mcp(tmp_path: Path) -> None:
                 "confirmed_file_list": [{"path": "a.cpp"}],
             }
         ),
-        encoding="utf-8",
-    )
-    assert gate_scope_receipt(tmp_path, uo).get("ok") is False
-    cbm = uo / "cbm"
-    cbm.mkdir(parents=True)
-    (cbm / "index_meta.json").write_text(
-        json.dumps({"indexed_via": "mcp", "cbm_project": "x"}),
         encoding="utf-8",
     )
     assert gate_scope_receipt(tmp_path, uo).get("ok") is True
@@ -138,23 +124,9 @@ def test_authorize_allows_cd_and_acp(tmp_path: Path) -> None:
     assert verdict.get("ok") is True
 
 
-def test_authorize_allows_acp_record_index_with_ascendc_pilot_path(tmp_path: Path) -> None:
-    """ses_0663: "cp " ⊂ "acp " must not trip BASH_PROTECTED_WRITE when args contain .ascendc-pilot/."""
-    start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
-    cmd = (
-        'acp uo-scope record-index '
-        f'--project "{tmp_path}" '
-        f'--cbm-repo "{tmp_path / ".ascendc-pilot" / "uo" / "cbm" / "index_stage"}"'
-    )
-    verdict = authorize(tmp_path, tool="bash", command=cmd, agent="ascendc-pilot")
-    assert verdict.get("decision") == "allow", verdict
-    assert verdict.get("ok") is True
-    assert verdict.get("reason_code") == "HARNESS_CLI"
-
-
 def test_authorize_still_denies_shell_write_into_ascendc_pilot(tmp_path: Path) -> None:
     start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
-    cmd = f'echo hi > "{tmp_path / ".ascendc-pilot" / "uo" / "cbm" / "index_meta.json"}"'
+    cmd = f'echo hi > "{tmp_path / ".ascendc-pilot" / "uo" / "runs" / "receipt.yaml"}"'
     verdict = authorize(tmp_path, tool="bash", command=cmd, agent="ascendc-pilot")
     assert verdict.get("decision") == "deny", verdict
     assert verdict.get("reason_code") == "BASH_PROTECTED_WRITE"
@@ -165,7 +137,7 @@ def test_output_contract_accepts_receipt_with_snapshot_run_id_only(tmp_path: Pat
     from ascendc_pilot.actions.runtime import _contract_identity_ok
 
     start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
-    run = tmp_path / ".ascendc-pilot" / "uo" / "runs" / "RUN_SNAP" / "scope"
+    run = uo_root(tmp_path) / "runs" / "RUN_SNAP" / "scope"
     run.mkdir(parents=True)
     (run / "scope_confirmed.yaml").write_text(
         "status: confirmed\nrun_id: RUN_SNAP\nworkflow_id: uo-init\n"
@@ -185,13 +157,6 @@ def test_output_contract_accepts_receipt_with_snapshot_run_id_only(tmp_path: Pat
         ),
         encoding="utf-8",
     )
-    cbm = tmp_path / ".ascendc-pilot" / "uo" / "cbm"
-    cbm.mkdir(parents=True)
-    (cbm / "index_meta.json").write_text(
-        json.dumps({"indexed_via": "mcp", "cbm_project": "p", "indexed_at": "t"}),
-        encoding="utf-8",
-    )
-
     id_check = _contract_identity_ok(
         run / "receipt.yaml",
         run_id="RUN_SNAP",

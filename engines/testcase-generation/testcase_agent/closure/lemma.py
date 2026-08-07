@@ -282,6 +282,7 @@ def promote_reviewed(
     are promoted. Package ``proof_rules.yaml`` remains seed-only.
     """
     import yaml
+    from testcase_agent.closure.certificate import validate as validate_certificate
 
     try:
         from replay.rule_engine import SOUND_GRADES as _SG
@@ -301,6 +302,10 @@ def promote_reviewed(
     promoted = 0
     skipped = 0
     for raw in accepted:
+        certificate_check = validate_certificate(raw)
+        if not certificate_check["ok"]:
+            skipped += 1
+            continue
         grade = str(raw.get("grade") or "source_lemma")
         if grade not in _SG and grade not in ("source_lemma_verified", "solver_unsat_verified"):
             skipped += 1
@@ -331,6 +336,7 @@ def promote_reviewed(
             "reason": str(raw.get("reason") or ""),
             "proof": dict(proof),
             "verification": dict(raw.get("verification") or {}),
+            "certificate": dict(raw.get("certificate") or {}),
             "freshness": {
                 "source_revision": source_revision or str(
                     (raw.get("freshness") or {}).get("source_revision") or ""

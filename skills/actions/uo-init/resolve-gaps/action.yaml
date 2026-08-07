@@ -6,7 +6,7 @@ agent_id: uo-gap-resolve
 execution_mode: subagent
 capabilities:
 - source-reading
-- cbm-navigation
+- source-navigation
 - kb-query
 - semantic-resolution
 - action-scratch

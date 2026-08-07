@@ -8,7 +8,7 @@ agent_id: uo-query
 execution_mode: subagent
 capabilities:
 - kb-query
-- cbm-navigation
+- source-navigation
 - source-reading
 policies:
 - source-authority

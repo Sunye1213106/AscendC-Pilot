@@ -20,12 +20,51 @@ already produced but never counted, at no machine cost.
 from __future__ import annotations
 
 import csv
+import hashlib
 import re
+import subprocess
 from pathlib import Path
 
 from testcase_agent.closure import workspace as W
 
 DONE = re.compile(r"^###DONE (?P<cid>\S+) ok=(?P<ok>\d+) key=(?P<key>\d+)")
+_SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".inc"}
+
+
+def baseline_fingerprint(root: Path, *, protocol_version: str = "tg-oracle-probe/v2") -> dict:
+    """Fingerprint semantic Host/Kernel inputs without persisting process-local state."""
+    root = Path(root).resolve()
+    roles: dict[str, list[dict[str, str]]] = {}
+    digest = hashlib.sha256()
+    for role in ("op_host", "op_kernel", "common", "op_graph"):
+        base = root / role
+        entries: list[dict[str, str]] = []
+        if base.is_dir():
+            for path in sorted(base.rglob("*")):
+                if not path.is_file() or path.suffix.lower() not in _SOURCE_SUFFIXES:
+                    continue
+                rel = path.relative_to(root).as_posix()
+                content_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+                entries.append({"path": rel, "sha256": content_hash})
+                digest.update(f"{rel}\0{content_hash}\n".encode("utf-8"))
+        roles[role] = entries
+    try:
+        revision = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            text=True,
+            capture_output=True,
+            check=False,
+        ).stdout.strip()
+    except OSError:
+        revision = ""
+    digest.update(f"protocol\0{protocol_version}\nrevision\0{revision}\n".encode("utf-8"))
+    return {
+        "schema": "tg-closure-baseline/v1",
+        "protocol_version": protocol_version,
+        "source_revision": revision or None,
+        "source_fingerprint": digest.hexdigest(),
+        "roles": roles,
+    }
 
 
 def from_logs(ws: W.Workspace) -> dict[int, str]:

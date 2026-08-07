@@ -11,11 +11,11 @@ requires-python = ">=3.10"
 dependencies = [
   "libclang>=18.1.1",
   "PyYAML>=6.0",
-  "z3-solver>=4.12",
   "acp-common",
 ]
 
 [project.optional-dependencies]
+legacy-solver = ["z3-solver>=4.12", "acp-common[legacy-solver]"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]

@@ -9,7 +9,7 @@ execution_mode: subagent
 capabilities:
 - structured-review
 - kb-query
-- cbm-navigation
+- source-navigation
 - source-reading
 policies:
 - source-authority
