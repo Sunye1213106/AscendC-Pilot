@@ -9,7 +9,6 @@ execution_mode: deterministic
 capabilities:
 - contract-building
 - kb-query
-- obligation-analysis
 policies:
 - source-authority
 - code-access

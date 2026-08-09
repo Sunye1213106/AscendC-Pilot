@@ -1,25 +1,26 @@
 # Task
 
-Replay 引理 producer 的证明证书并给出裁决。
+Replay producer lemma certificates and adjudicate.
 
 # Targets
 
 `<TARGET_IDS_OR_FILES>`
 
+# Evidence
+
+- Evidence pack: `<LEMMA_EVIDENCE_PATH>`
+- Producer certificates for the assigned targets
+
 # Context
 
-- Project root: `<PROJECT_ROOT>`
-- UO root: `<UO_ROOT>`
-- TG root: `<TG_ROOT>`
-- Topic: `<TOPIC>`
-- Context pack: `<CONTEXT_PACK_PATH>`
-- Lemma evidence pack: `<LEMMA_EVIDENCE_PATH>`
+- Project: `<PROJECT_ROOT>`
+- TG: `<TG_ROOT>`
 
-# Method
+# Requirements
 
-遵循 `skills/domain/source-lemma-proof/SKILL.md`，并必读 `references/referee-replay.md`。
-只 replay 证书；禁止自由开新 hypothesis。
+- Follow `skills/domain/source-lemma-proof/SKILL.md` and `references/referee-replay.md`
+- Replay only; do not open new hypotheses
 
-# Done when
+# Return
 
-每条候选 `accept` / `reject` / `defer`。
+`accept` | `reject` | `defer` per candidate.

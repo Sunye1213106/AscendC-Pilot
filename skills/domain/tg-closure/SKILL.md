@@ -16,18 +16,18 @@ description: >
 ```text
 oracle 就绪 → 构造/搜索 → Host 回放分类
  ├─ HIT → 增长 R
- ├─ REWRITE / REFUSE → 观测 → 可转引理
+ ├─ REWRITE / REFUSE → 观测 → 可产生 lemma lead
  ├─ CRASH / NOT_RUN → 修环境，禁止写 E
- → 残差：继续搜 / 引理 / 审计签发
+ → 残差：继续搜 / 请求 lemma task / 审计签发
 ```
 
 ## 何时 search / lemma / 停止
 
 - **search**：仍可能有新命中；尚无可靠观测支撑引理
-- **lemma**：饱和且有 REWRITE/REFUSE 观测；证明走 `domain/source-lemma-proof`
+- **lemma**：饱和且有 REWRITE/REFUSE 观测 → 由工作流**派发**独立的 source-lemma-proof 任务（本 Skill 不 include 其 SKILL.md）；用返回的证书裁决
 - **停止**：`GAP_ZERO` 且不变量成立；或 oracle 可疑；或完整性阻塞
 
-Producer 只给 `PROVED|REFUTED|INSUFFICIENT`；是否进 E 由裁判与引擎决定。
+Producer 证明结果为 `PROVED|REFUTED|INSUFFICIENT`；是否进 E 由裁判与引擎决定。
 
 ## 按需参考
 
@@ -39,4 +39,3 @@ Producer 只给 `PROVED|REFUTED|INSUFFICIENT`；是否进 E 由裁判与引擎�
 | 搜索/构造 | `references/search.md` |
 | 审计签发 | `references/certificate.md` |
 | 旧证书能否用 | `_shared/artifact-freshness.md` |
-| 源码证明 | `../source-lemma-proof/SKILL.md` |

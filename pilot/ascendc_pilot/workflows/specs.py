@@ -205,9 +205,9 @@ _CAPS_RESOLVE = [
     "bounded-semantic-batch",
     "producer-self-check",
 ]
-_CAPS_REVIEW = ["structured-review", "kb-query"]
-_CAPS_CONTRACT = ["contract-building", "kb-query", "obligation-analysis"]
-_CAPS_OBLIGATION = ["obligation-analysis", "kb-query"]
+_CAPS_REVIEW = ["kb-query"]
+_CAPS_CONTRACT = ["contract-building", "kb-query"]
+_CAPS_OBLIGATION = ["kb-query"]
 
 WORKFLOWS: dict[str, dict[str, Any]] = {
     "uo-init": {
@@ -805,7 +805,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 workflow_id="ce-review",
                 agent_id="ce-reviewer",
                 role_id="readonly_reviewer",
-                capability_ids=["structured-review", "kb-query", "source-navigation", "source-reading"],
+                capability_ids=["kb-query", "source-navigation", "source-reading"],
                 task_prompt_id="ce/code-review",
                 output_contract_id="code-review-v1",
             ),
@@ -923,7 +923,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 workflow_id="tg-init",
                 agent_id="deterministic-tg-engine",
                 role_id="deterministic_engine",
-                capability_ids=["obligation-analysis"],
+                capability_ids=[],
                 output_contract_id="mid-nest-v1",
             ),
             _act(
@@ -1380,7 +1380,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         },
         "meta": {
             "default_mode": "tilingkey_full_coverage",
-            "capability_ids": ["tilingkey-closure"],
+            "capability_ids": [],
             "recovery_by_reason": {
                 "SEARCH_PROGRESS": {"type": "phase", "phase": "search"},
                 "SEARCH_STALLED": {"type": "phase", "phase": "search"},
@@ -1400,7 +1400,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 agent_id="deterministic-tg-engine",
                 role_id="deterministic_engine",
                 gates=["plan_approved", "kb_fingerprint_fresh"],
-                capability_ids=["tilingkey-closure"],
+                capability_ids=[],
                 output_contract_id="solve-precheck-v1",
             ),
             _act(
@@ -1410,7 +1410,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 workflow_id="tg-solve",
                 agent_id="deterministic-tg-engine",
                 role_id="deterministic_engine",
-                capability_ids=["tilingkey-closure"],
+                capability_ids=[],
                 output_contract_id="oracle-probe-v1",
             ),
             _act(
@@ -1420,7 +1420,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 workflow_id="tg-solve",
                 agent_id="deterministic-tg-engine",
                 role_id="deterministic_engine",
-                capability_ids=["tilingkey-closure"],
+                capability_ids=[],
                 output_contract_id="closure-ledger-v1",
             ),
             _act(
@@ -1430,7 +1430,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 workflow_id="tg-solve",
                 agent_id="deterministic-tg-engine",
                 role_id="deterministic_engine",
-                capability_ids=["tilingkey-closure"],
+                capability_ids=[],
                 output_contract_id="closure-search-v1",
             ),
             _act(
@@ -1440,7 +1440,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 workflow_id="tg-solve",
                 agent_id="deterministic-tg-engine",
                 role_id="deterministic_engine",
-                capability_ids=["tilingkey-closure"],
+                capability_ids=[],
                 output_contract_id="closure-residual-v1",
             ),
             _act(
@@ -1450,7 +1450,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 workflow_id="tg-solve",
                 agent_id="deterministic-tg-engine",
                 role_id="deterministic_engine",
-                capability_ids=["tilingkey-closure"],
+                capability_ids=[],
                 output_contract_id="closure-construct-v1",
             ),
             _act(
@@ -1460,7 +1460,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 workflow_id="tg-solve",
                 agent_id="deterministic-tg-engine",
                 role_id="deterministic_engine",
-                capability_ids=["tilingkey-closure"],
+                capability_ids=[],
                 output_contract_id="closure-explain-v1",
             ),
             _act(
@@ -1470,7 +1470,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 workflow_id="tg-solve",
                 agent_id="deterministic-tg-engine",
                 role_id="deterministic_engine",
-                capability_ids=["tilingkey-closure"],
+                capability_ids=[],
                 output_contract_id="lemma-leads-v1",
             ),
             _act(
@@ -1480,7 +1480,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 workflow_id="tg-solve",
                 agent_id="deterministic-tg-engine",
                 role_id="deterministic_engine",
-                capability_ids=["tilingkey-closure"],
+                capability_ids=[],
                 output_contract_id="lemma-evidence-v1",
             ),
             _act(
@@ -1491,7 +1491,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 agent_id="tg-lemma-producer",
                 role_id="producer",
                 execution_mode="subagent",
-                capability_ids=["tilingkey-closure", "source-reading", "source-navigation"],
+                capability_ids=["source-reading", "source-navigation"],
                 task_prompt_id="tg/lemma-mine",
                 output_contract_id="lemma-mine-v1",
                 output_mode="staged",
@@ -1513,7 +1513,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 role_id="referee",
                 referee_required=True,
                 execution_mode="subagent",
-                capability_ids=["tilingkey-closure", "structured-review"],
+                capability_ids=["source-reading"],
                 task_prompt_id="tg/lemma-review",
                 output_contract_id="lemma-review-v1",
             ),
@@ -1524,7 +1524,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 workflow_id="tg-solve",
                 agent_id="deterministic-tg-engine",
                 role_id="deterministic_engine",
-                capability_ids=["tilingkey-closure"],
+                capability_ids=[],
                 output_contract_id="lemma-apply-v1",
             ),
             _act(
@@ -1536,7 +1536,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 role_id="referee",
                 referee_required=True,
                 execution_mode="subagent",
-                capability_ids=["tilingkey-closure", "structured-review"],
+                capability_ids=["source-reading"],
                 task_prompt_id="tg/closure-audit",
                 output_contract_id="closure-audit-v1",
             ),
@@ -1548,7 +1548,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 agent_id="deterministic-tg-engine",
                 role_id="deterministic_engine",
                 gates=["closure_soundness"],
-                capability_ids=["tilingkey-closure"],
+                capability_ids=[],
                 output_contract_id="closure-certify-v1",
             ),
             # csv_consumer 兼容
@@ -1559,7 +1559,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 workflow_id="tg-solve",
                 agent_id="deterministic-tg-engine",
                 role_id="deterministic_engine",
-                capability_ids=["obligation-analysis"],
+                capability_ids=[],
                 output_contract_id="z3-solve-v1",
             ),
             _act(
@@ -1570,7 +1570,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 agent_id="deterministic-tg-engine",
                 role_id="deterministic_engine",
                 gates=["solve_terminal"],
-                capability_ids=["obligation-analysis"],
+                capability_ids=[],
                 output_contract_id="cover-confirm-v1",
             ),
         ],

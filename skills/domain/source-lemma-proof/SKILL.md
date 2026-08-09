@@ -59,7 +59,7 @@ KB/Codemap：`definition` `writers` `readers` `guards` `callers` `callees` `root
 ## 5. 证明方式
 
 条件蕴含 / 完备赋值分析 / 路径不可满足（见 obligations）。  
-排除型证明对 derivation 质量要求：`uo-kb-build/references/derivation-quality.md` 与 `_shared/completeness.md`。
+排除型证明要求推导为 EXACT（或已补齐必要完整性）；见 `references/static-evidence.md` 与 `_shared/completeness.md`。
 
 ## 6. 主动寻反例
 

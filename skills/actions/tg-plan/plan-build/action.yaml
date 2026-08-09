@@ -7,7 +7,6 @@ role_id: deterministic_engine
 agent_id: deterministic-tg-engine
 execution_mode: deterministic
 capabilities:
-- obligation-analysis
 - kb-query
 policies:
 - source-authority

@@ -573,7 +573,7 @@ def gate_adapter_completeness(
 
     # Anti-copy: must not match skill examples byte-for-byte (ignoring provenance comments).
     examples = examples_dir or (
-        repo / "skills" / "capabilities" / "tilingkey-closure" / "examples"
+        repo / "skills" / "domain" / "tg-closure" / "examples"
     )
     for yaml_name, excerpt_name in (
         ("construction_hints.yaml", "construction_hints.excerpt.yaml"),

@@ -6,20 +6,23 @@ description: 首次建立 UO KB：范围确认 → 静态扫描 → 导出 tg_ho
 
 # uo-init
 
-首次建立 UO KB，并产出 TG/CE 消费的 Host 搜索投影。
+编排首次 UO KB 建立与 Host 投影导出。
 
-语义方法：`skills/domain/uo-kb-build/SKILL.md`。  
-引擎：`engines/understand-operator`（包 `uo_init`）。
+领域认知（勿在此复述）：`skills/domain/uo-kb-build`。  
+引擎：`engines/understand-operator`。
 
-链路：`uo-init → tg-init → tg-plan → tg-solve`（本 Skill 只做前半）。
+阶段关系：
+
+```text
+prepare → scope → extract → normalize → export → review
+```
+
+语义 Action（如 resolve_gaps / kb_review）走 Bundle 声明 actor。
 
 ## Pilot
 
-1. 关键参数不清（算子目录、architecture）→ AskQuestion
-2. `acp start` → `acp next` → `acp run-action <action_id>`
-3. 语义 Action（如 `resolve_gaps` / `kb_review`）：prepare → 派发 Bundle 声明 actor → `--finalize`
-4. `acp advance`（仅消费可信收据）
-5. 禁止用手工文件表代替 `acp uo-scope scan`
+`acp start` → `next` → `run-action` →（语义则 finalize）→ `advance`。  
+关键参数不清时 AskQuestion。禁止用手工文件表代替 `acp uo-scope scan`。
 
 ## Actions
 

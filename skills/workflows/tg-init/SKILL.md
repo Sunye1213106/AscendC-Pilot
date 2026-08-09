@@ -6,18 +6,13 @@ description: 测例契约与绑定：变量/IO/TilingKey 维信息提取。用�
 
 # tg-init
 
-从定稿 UO KB + `tg_host_view` 构建测项合同与绑定。
+编排 TG 初始化。领域认知：`skills/domain/tg-init`。
 
-语义方法：`skills/domain/tg-init/SKILL.md`。
-
-链路：`uo-init → tg-init → tg-plan → tg-solve`。
+阶段：`intent → kb_ready → contract → bind → gate → confirm`。
 
 ## Pilot
 
-1. `acp start` → `acp next` → `acp run-action <action_id>`
-2. 语义 Action：派发 Bundle 声明 actor → `--finalize`
-3. `acp advance`（仅消费可信收据）
-4. 前置：`uo_ready` + 新鲜 `uo/ir/tg_host_view.yaml`；csv_consumer 才需要 test_script_root
+`acp start` → `next` → `run-action` →（语义则 finalize）→ `advance`。
 
 ## Actions
 

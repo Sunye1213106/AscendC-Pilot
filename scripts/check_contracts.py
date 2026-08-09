@@ -126,6 +126,13 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001
         errors.append(f"ownership auditor unavailable: {exc}")
 
+    try:
+        from check_skill_architecture import _errors as skill_arch_errors  # noqa: WPS433
+
+        errors.extend(skill_arch_errors())
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"skill architecture lint unavailable: {exc}")
+
     import json
 
     payload = (

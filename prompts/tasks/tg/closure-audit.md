@@ -1,6 +1,6 @@
 # Task
 
-审计 TilingKey 闭环是否满足可签发条件。
+Audit whether the TilingKey closure is ready to certify.
 
 # Targets
 
@@ -8,17 +8,14 @@
 
 # Context
 
-- Project root: `<PROJECT_ROOT>`
-- UO root: `<UO_ROOT>`
-- TG root: `<TG_ROOT>`
-- Topic: `<TOPIC>`
-- Context pack: `<CONTEXT_PACK_PATH>`
+- Project: `<PROJECT_ROOT>`
+- TG: `<TG_ROOT>`
 
-# Method
+# Requirements
 
-遵循 `skills/domain/tg-closure/SKILL.md` 与 `references/closure-safety.md`、`references/certificate.md`。
-验证 R/E 不变量与证书可 replay；不发明新排除规则。
+- Follow `skills/domain/tg-closure/SKILL.md` and `references/closure-safety.md`
+- Do not invent new exclusion rules
 
-# Done when
+# Return
 
-给出通过/退回及理由。
+Pass or reject with reasons.

@@ -1,6 +1,6 @@
 # Task
 
-消解 UO KB 语义缺口。
+Resolve assigned UO KB semantic gaps.
 
 # Targets
 
@@ -8,15 +8,14 @@
 
 # Context
 
-- Project root: `<PROJECT_ROOT>`
-- UO root: `<UO_ROOT>`
-- Topic: `<TOPIC>`
-- Context pack: `<CONTEXT_PACK_PATH>`
+- Project: `<PROJECT_ROOT>`
+- UO: `<UO_ROOT>`
 
-# Method
+# Requirements
 
-遵循 `skills/domain/uo-kb-build/SKILL.md`（缺口消解）。先结构查询再读源码；不足则 `UNRESOLVED`。
+- Follow `skills/domain/uo-kb-build/SKILL.md` (gap resolution)
+- Structure query first; do not treat miss as absence
 
-# Done when
+# Return
 
-每个 gap 有补丁、解释或明确缺失。
+Patch, explanation, or explicit `UNRESOLVED` per gap.

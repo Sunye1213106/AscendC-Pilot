@@ -1,6 +1,6 @@
 # Task
 
-审查 UO KB 一致性与证据质量。
+Review UO KB consistency and evidence quality for the assigned targets.
 
 # Targets
 
@@ -8,15 +8,14 @@
 
 # Context
 
-- Project root: `<PROJECT_ROOT>`
-- UO root: `<UO_ROOT>`
+- Project: `<PROJECT_ROOT>`
+- UO: `<UO_ROOT>`
 - Topic: `<TOPIC>`
-- Context pack: `<CONTEXT_PACK_PATH>`
 
-# Method
+# Requirements
 
-遵循 `skills/domain/uo-kb-build/SKILL.md`（KB 审查）与 `references/authority-model.md`。
+- Follow `skills/domain/uo-kb-build/SKILL.md` (review + authority-model)
 
-# Done when
+# Return
 
-`ACCEPT` / `NEED_PATCH` / `UNRESOLVED`。
+`ACCEPT` | `NEED_PATCH` | `UNRESOLVED`.

@@ -1,27 +1,27 @@
 # Task
 
-证明或反驳指定的引理 leads。
+Prove or refute the assigned source lemma leads.
 
 # Targets
 
 `<TARGET_IDS_OR_FILES>`
 
+# Evidence
+
+Closed lead pack only (do not invent leads). Use the companion evidence pack when present.
+
 # Context
 
-- Project root: `<PROJECT_ROOT>`
-- UO root: `<UO_ROOT>`
-- TG root: `<TG_ROOT>`
-- Topic: `<TOPIC>`
-- Context pack: `<CONTEXT_PACK_PATH>`
-- Leads: 仅消费封闭 lead 包（勿发明 lead）
-- Evidence: 同批 evidence pack（若有）
+- Project: `<PROJECT_ROOT>`
+- UO: `<UO_ROOT>`
+- TG: `<TG_ROOT>`
 
-# Method
+# Requirements
 
-遵循 `skills/domain/source-lemma-proof/SKILL.md`。
-对每条 lead：关闭证明义务、主动寻反例。
-返回 `PROVED` / `REFUTED` / `INSUFFICIENT`。
+- Follow `skills/domain/source-lemma-proof/SKILL.md`
+- Close required proof obligations; actively seek counterexamples
+- Do not convert missing/search failure into exclusion
 
-# Done when
+# Return
 
-每条 lead 有可 replay 的证明摘要。
+`PROVED` | `REFUTED` | `INSUFFICIENT` with evidence.

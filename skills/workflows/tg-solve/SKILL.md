@@ -6,20 +6,23 @@ description: TilingKey 全覆盖闭环：动态运行抬 R、源码引理抬 E�
 
 # tg-solve
 
-合法增长可达集 R 与排除集 E，直至可审计 gap=0。
+编排 TilingKey 全覆盖闭环，直至可审计 gap=0。
 
-领域方法：
+领域认知（勿在此复述）：`skills/domain/tg-closure`；需要排除证明时由工作流派发 lemma Action（领域：`skills/domain/source-lemma-proof`）。
 
-- 闭环策略：`skills/domain/tg-closure/SKILL.md`
-- 源码引理：`skills/domain/source-lemma-proof/SKILL.md`
+阶段关系：
 
-链路：`uo-init → tg-init → tg-plan → tg-solve`。
+```text
+precheck → oracle → ledger → search → residual
+  → construct / lemma* → audit → certify
+```
+
+`*` lemma：leads → evidence → mine → review → apply。
 
 ## Pilot
 
-1. `acp start` → `acp next` → `acp run-action` →（语义则 finalize）→ `acp advance`
-2. `closure_residual` 给出非 `GAP_ZERO` 时按 route 执行 `acp rework`（勿在单 action 内死循环）
-3. 近似模型只排序候选；排除必须有可审计证明
+`acp start` → `next` → `run-action` →（语义则 finalize）→ `advance`。  
+非 `GAP_ZERO` 时按 residual route `acp rework`。
 
 ## Actions
 

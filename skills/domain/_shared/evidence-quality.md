@@ -23,3 +23,4 @@
 - 近似模型预测
 - 静态分析 `unknown` / `partial`
 - 构造器先验拒采
+- 仅有 derived 表达式但非 EXACT（`derived ≠ exact`）

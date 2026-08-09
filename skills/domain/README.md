@@ -1,27 +1,21 @@
 # Domain Skills（Agent 认知层）
 
-本目录是语义 Agent 的**主入口**。Workflow Skill（`skills/workflows/`）属于 Pilot Harness。
-
-旧闭环 Agent SOP 等第二真相源已删除；以本目录 `SKILL.md` + `references/` + `_shared/` 为准。
+Workflow Skill 只做编排。Domain Skill 是唯一领域 authority。
 
 ## 规则
 
-- 每个 `SKILL.md` ≤ 200 行，含 frontmatter `name` + `description`
-- 禁止 Harness 词：`run_id`、`action_id`、`finalize`、`advance`、`acp start`、`acp next`
-- 复杂规则放 `references/`；跨 skill 共用放 `_shared/`
-- Task Prompt → 一个 domain skill → 按需 reference（最多一次跳转）
-- FAG 等算子只是案例来源；reference 必须可迁移到任意 AscendC/C++ 算子
+- `SKILL.md` ≤ 200 行；禁止 Harness 词
+- 可引用 `_shared/` 与本 Skill `references/`；**禁止** include 另一 Domain `SKILL.md`
+- 跨领域协作用 **task delegation**（工作流派发另一 Action），用结构化产物交接
+- Capability 只保留检索/导航类；领域推理不得放在 `skills/capabilities/`
 
 ## 目录
 
 | id | 用途 |
 |---|---|
-| `_shared/` | 证据、完整性、新鲜度、C++ 语义 |
-| `source-lemma-proof` | 源码语义命题证明/反驳 |
-| `code-review` | 代码审查与影响分析 |
-| `tg-closure` | TilingKey 闭环：R/E 增长与停止 |
-| `tg-init` | TG 初始化（薄，本轮不扩展 FAG） |
-| `tg-plan` | TG 计划（薄） |
-| `uo-kb-build` | UO KB 建立 |
-| `uo-kb-query` | UO KB 查询 |
-| `uo-kb-update` | UO KB 更新 |
+| `_shared/` | 证据、完整性、新鲜度、C++、finding 格式 |
+| `source-lemma-proof` | 源码命题证明 |
+| `code-review` | 代码审查 |
+| `tg-closure` | 闭环 R/E（含 examples 适配器样例） |
+| `tg-init` / `tg-plan` | 初始化 / 计划（薄） |
+| `uo-kb-build` / `uo-kb-query` / `uo-kb-update` | UO KB |

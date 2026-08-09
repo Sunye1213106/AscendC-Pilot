@@ -6,16 +6,11 @@ description: 只读查询 UO 知识库 / 问答 / 查某个 KEY。用户提问�
 
 # uo-query
 
-只读查询 UO KB。
-
-语义方法：`skills/domain/uo-kb-query/SKILL.md`。
+编排只读 KB 查询。领域认知：`skills/domain/uo-kb-query`。
 
 ## Pilot
 
-1. `acp start`（同 workflow 活动 run 则复用）
-2. `acp next`
-3. `acp run-action <action_id>`（确定性自动 finalize；语义产出后 `--finalize`）
-4. `acp advance`（仅消费可信收据）
+`acp start` → `next` → `run-action` →（语义则 finalize）→ `advance`。
 
 ## Actions
 

@@ -1,6 +1,6 @@
 # Task
 
-基于 UO KB 与源码回答查询。
+Answer the query from UO KB and source evidence.
 
 # Targets
 
@@ -8,15 +8,14 @@
 
 # Context
 
-- Project root: `<PROJECT_ROOT>`
-- UO root: `<UO_ROOT>`
+- Project: `<PROJECT_ROOT>`
+- UO: `<UO_ROOT>`
 - Topic: `<TOPIC>`
-- Context pack: `<CONTEXT_PACK_PATH>`
 
-# Method
+# Requirements
 
-遵循 `skills/domain/uo-kb-query/SKILL.md`。
+- Follow `skills/domain/uo-kb-query/SKILL.md`
 
-# Done when
+# Return
 
-`ANSWERED` / `PARTIAL` / `UNKNOWN`，并附证据。
+`ANSWERED` | `PARTIAL` | `UNKNOWN` with evidence.

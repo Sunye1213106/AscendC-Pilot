@@ -5,8 +5,7 @@ role_id: referee
 agent_id: tg-closure-referee
 execution_mode: subagent
 capabilities:
-- tilingkey-closure
-- structured-review
+- source-reading
 policies:
 - source-authority
 - code-access

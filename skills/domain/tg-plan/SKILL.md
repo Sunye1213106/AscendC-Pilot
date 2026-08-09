@@ -39,3 +39,5 @@ description: >
 - **APPROVE**：计划可执行
 - **REVISE**：需改意图或范围
 - **BLOCKED**：前置不满足
+
+覆盖义务集合：`references/coverage-obligations.md`。

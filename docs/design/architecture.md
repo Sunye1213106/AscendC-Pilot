@@ -54,7 +54,7 @@ D = (R ∩ D) ∪ E    且    R ∩ E = ∅
 CLI：`tg-closure`（`python -m testcase_agent.closure.cli`）。  
 确定性路由：`search_round.route()` → `GAP_ZERO | ORACLE_SUSPECT | SEARCH_STALLED | CONSTRUCT_TARGETS | NEED_LEMMA | SEARCH_PROGRESS`。
 
-Pilot 工作流 `tg-solve`（mode `tilingkey_full_coverage`）把上述步骤编排进 `acp` 阶段机；领域证据纪律见 `skills/domain/tg-closure` 与 `skills/domain/source-lemma-proof`（capability `tilingkey-closure` 仅作兼容索引 + examples）。
+Pilot 工作流 `tg-solve`（mode `tilingkey_full_coverage`）把上述步骤编排进 `acp` 阶段机；领域证据纪律见 `skills/domain/tg-closure` 与 `skills/domain/source-lemma-proof`。
 
 算子侧冷启动契约（目标）：`operators/<op>/<arch>/` 仅保留
 

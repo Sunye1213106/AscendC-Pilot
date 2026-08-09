@@ -1,6 +1,6 @@
 # Task
 
-澄清 TG 求解意图与成功标准。
+Clarify TG solve intent and success criteria.
 
 # Targets
 
@@ -8,16 +8,13 @@
 
 # Context
 
-- Project root: `<PROJECT_ROOT>`
-- UO root: `<UO_ROOT>`
-- TG root: `<TG_ROOT>`
-- Topic: `<TOPIC>`
-- Context pack: `<CONTEXT_PACK_PATH>`
+- Project: `<PROJECT_ROOT>`
+- TG: `<TG_ROOT>`
 
-# Method
+# Requirements
 
-遵循 `skills/domain/tg-plan/SKILL.md`。
+- Follow `skills/domain/tg-plan/SKILL.md`
 
-# Done when
+# Return
 
-模式、范围、成功标准可检查；冲突已暴露。
+Mode, scope, and checkable success criteria; expose conflicts.

@@ -6,17 +6,11 @@ description: 增量更新 / 刷新已有 UO 知识库（含 diff_only）。用�
 
 # uo-update
 
-增量更新 UO KB。
-
-语义方法：`skills/domain/uo-kb-update/SKILL.md`。  
-引擎：`uo_init.update`（与 uo-init 同一包）。
+编排 UO KB 增量更新。领域认知：`skills/domain/uo-kb-update`。
 
 ## Pilot
 
-1. `acp start uo-update` → `acp next` → `acp run-action <action_id>`
-2. 多数步骤为确定性 Action；语义步骤按 Bundle finalize
-3. `acp advance`（仅消费可信收据）
-4. 禁止依赖已删除的旧 `extract_plan.yaml` / semantic ledger
+`acp start` → `next` → `run-action` → `advance`。
 
 ## Actions
 

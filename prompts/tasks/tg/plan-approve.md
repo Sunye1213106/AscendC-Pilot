@@ -1,6 +1,6 @@
 # Task
 
-批准或退回 TG 求解计划。
+Approve or send back the TG solve plan.
 
 # Targets
 
@@ -8,16 +8,13 @@
 
 # Context
 
-- Project root: `<PROJECT_ROOT>`
-- UO root: `<UO_ROOT>`
-- TG root: `<TG_ROOT>`
-- Topic: `<TOPIC>`
-- Context pack: `<CONTEXT_PACK_PATH>`
+- Project: `<PROJECT_ROOT>`
+- TG: `<TG_ROOT>`
 
-# Method
+# Requirements
 
-遵循 `skills/domain/tg-plan/SKILL.md`（批准条件）。
+- Follow `skills/domain/tg-plan/SKILL.md` (approve criteria)
 
-# Done when
+# Return
 
-结果为 `APPROVE` / `REVISE` / `BLOCKED`，并写明理由。
+`APPROVE` | `REVISE` | `BLOCKED` with reasons.

@@ -6,18 +6,14 @@ description: 覆盖规划：默认全量 TilingKey 闭环；也可按用户描�
 
 # tg-plan
 
-生成覆盖义务并批准。
+编排覆盖计划。领域认知：`skills/domain/tg-plan`。
 
-语义方法：`skills/domain/tg-plan/SKILL.md`。
-
-链路：`uo-init → tg-init → tg-plan → tg-solve`。  
-默认意图：`mode=tilingkey_full_coverage`。
+阶段：`intent → scope → gate → build → approve`。
 
 ## Pilot
 
-1. `acp start` → `acp next` → `acp run-action` →（语义则 finalize）→ `acp advance`
-2. 禁止跳过 `plan_intent` 直接 build
-3. 禁止自行宣布 workflow passed
+`acp start` → `next` → `run-action` →（语义则 finalize）→ `advance`。  
+禁止跳过 `plan_intent` 直接 build。
 
 ## Actions
 

@@ -277,7 +277,7 @@ def test_adapter_completeness_rejects_copied_example(tmp_path, toy_env):
 
     pkg = tmp_path / "bad_op" / "arch0"
     pkg.mkdir(parents=True)
-    examples = REPO / "skills" / "capabilities" / "tilingkey-closure" / "examples"
+    examples = REPO / "skills" / "domain" / "tg-closure" / "examples"
     # Copy required files from toy, then overwrite construction with example body.
     toy = REPO / "operators" / "_synthetic_toy" / "arch0"
     for name in (
@@ -306,6 +306,6 @@ def test_adapter_completeness_toy_passes(toy_env):
     result = tg_adapters.gate_adapter_completeness(
         REPO,
         package_dir=REPO / "operators" / "_synthetic_toy" / "arch0",
-        examples_dir=REPO / "skills" / "capabilities" / "tilingkey-closure" / "examples",
+        examples_dir=REPO / "skills" / "domain" / "tg-closure" / "examples",
     )
     assert result["ok"] is True, result

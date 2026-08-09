@@ -28,6 +28,7 @@ jobs:
         run: |
           python scripts/check_contracts.py
           python scripts/check_ownership_contracts.py
+          python scripts/check_skill_architecture.py
       # This gate existed but ran nowhere, so an archive move broke it unnoticed.
       # Step name avoids the retired product's initials on purpose: the gate
       # greps the whole tree, and it would otherwise flag this line.

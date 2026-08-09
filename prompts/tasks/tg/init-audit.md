@@ -1,6 +1,6 @@
 # Task
 
-审计 TG 初始化缺口与阻断项。
+Audit TG init gaps and blockers.
 
 # Targets
 
@@ -8,16 +8,14 @@
 
 # Context
 
-- Project root: `<PROJECT_ROOT>`
-- UO root: `<UO_ROOT>`
-- TG root: `<TG_ROOT>`
-- Topic: `<TOPIC>`
-- Context pack: `<CONTEXT_PACK_PATH>`
+- Project: `<PROJECT_ROOT>`
+- TG: `<TG_ROOT>`
+- UO: `<UO_ROOT>`
 
-# Method
+# Requirements
 
-遵循 `skills/domain/tg-init/SKILL.md`（审计段）。
+- Follow `skills/domain/tg-init/SKILL.md` (audit)
 
-# Done when
+# Return
 
-缺口分类为可自动修 / 需人确认 / 需回 UO。
+Gaps classified: auto-fixable / needs human / needs UO rebuild.

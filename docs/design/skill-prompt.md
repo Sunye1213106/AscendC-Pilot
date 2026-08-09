@@ -33,14 +33,18 @@ Level 1  name + description
             ↓ triggered
 Level 2  domain/SKILL.md   （核心循环，≤200 行）
             ↓ only when needed
-Level 3  references/ / scripts/
+Level 3  references/ / _shared/
 ```
 
 语义 Action 阅读链：
 
 ```text
-Task Prompt  →  一个 Domain Skill  →  按需 references
+Task Prompt  →  一个 Domain Skill  →  按需 references/_shared
 ```
+
+**禁止** Domain Skill include 另一 Domain `SKILL.md`（跨领域用工作流派发任务 + 结构化产物交接）。  
+**禁止** Prompt / Workflow 复述领域不变量（E 资格、证明 acceptance 等）。  
+Lint：`scripts/check_skill_architecture.py`（已挂 CI / `check_contracts`）。
 
 ## Composer
 

@@ -1,6 +1,6 @@
 # Task
 
-将契约符号语义绑定到 KB/源码实体。
+Bind contract symbols to KB/source entities.
 
 # Targets
 
@@ -8,16 +8,14 @@
 
 # Context
 
-- Project root: `<PROJECT_ROOT>`
-- UO root: `<UO_ROOT>`
-- TG root: `<TG_ROOT>`
-- Topic: `<TOPIC>`
-- Context pack: `<CONTEXT_PACK_PATH>`
+- Project: `<PROJECT_ROOT>`
+- TG: `<TG_ROOT>`
+- UO: `<UO_ROOT>`
 
-# Method
+# Requirements
 
-遵循 `skills/domain/tg-init/SKILL.md` 与 `references/binding.md`。
+- Follow `skills/domain/tg-init/SKILL.md` and `references/binding.md`
 
-# Done when
+# Return
 
-每个目标已绑定、标歧义或 `UNRESOLVED`。
+Bound, ambiguous, or `UNRESOLVED` per target.

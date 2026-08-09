@@ -1,6 +1,6 @@
 # Task
 
-确认 UO 分析范围（算子根、architecture、纳入文件集合）。
+Confirm the UO analysis scope.
 
 # Targets
 
@@ -8,16 +8,13 @@
 
 # Context
 
-- Project root: `<PROJECT_ROOT>`
-- UO root: `<UO_ROOT>`
-- Topic: `<TOPIC>`
-- Context pack: `<CONTEXT_PACK_PATH>`
+- Project: `<PROJECT_ROOT>`
 - Architecture: `<ARCHITECTURE>`
 
-# Method
+# Requirements
 
-遵循 `skills/domain/uo-kb-build/SKILL.md`（范围确认）。
+- Follow `skills/domain/uo-kb-build/SKILL.md` (scope)
 
-# Done when
+# Return
 
-范围边界明确可执行；不清项已提问或标阻断。
+Explicit include/exclude boundary, or blocking questions.
