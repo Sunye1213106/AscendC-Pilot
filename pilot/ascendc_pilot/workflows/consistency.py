@@ -106,7 +106,7 @@ def _check_staged_output(
     formal_paths: list[str],
     root: Path,
 ) -> list[str]:
-    """Mode B: agent writes staging contract; merge action writes formal contract."""
+    """Mode B: producer writes a staging contract; a later action writes formal output."""
     from ascendc_pilot.actions.engines import OUTPUT_CONTRACT_PATHS
     from ascendc_pilot.agents_registry import path_matches_scope
 
@@ -139,7 +139,7 @@ def _check_staged_output(
             )
 
     if merge_id == aid:
-        # Same-action finalize_engine merge: formal paths are not agent-written.
+        # Same-action finalize_engine merge: formal paths are not producer-written.
         return errors
 
     merge_action = actions_by_id.get(merge_id)
@@ -156,10 +156,31 @@ def _check_staged_output(
         errors.append(f"{wid}/{aid}: merge_action_id {merge_id!r} missing from pipeline order")
 
     merge_role = str(merge_action.get("role_id") or "")
+    merge_mode = str(merge_action.get("execution_mode") or "").strip().lower()
     if merge_role not in {"deterministic_engine", "producer", "referee"}:
         errors.append(
             f"{wid}/{aid}: merge action {merge_id} role {merge_role!r} cannot write formal contract"
         )
+        return errors
+
+    # Deterministic merge actions are engine calls, not model-selectable agents.
+    # Validate their Action-owned write paths directly; requiring agent_id here
+    # would force a fake deterministic subagent back into OpenCode/Cursor.
+    if merge_role == "deterministic_engine" or merge_mode == "deterministic":
+        merge_scopes = [str(x) for x in (merge_action.get("allowed_write_paths") or [])]
+        if not merge_scopes:
+            errors.append(
+                f"{wid}/{aid}: deterministic merge action {merge_id} has empty allowed_write_paths"
+            )
+            return errors
+        for rel in formal_paths:
+            if not path_matches_scope(rel, merge_scopes):
+                errors.append(
+                    f"{wid}/{aid}: formal contract path {rel!r} not writable by "
+                    f"deterministic merge action {merge_id}"
+                )
+        return errors
+
     merge_agent = str(merge_action.get("agent_id") or "").strip()
     if not merge_agent:
         errors.append(f"{wid}/{aid}: merge action {merge_id} missing agent_id")
@@ -265,9 +286,9 @@ def check_all(
                         f"{wid}/{phase}: Spec pipelines mismatch preferred_pipeline(): "
                         f"{pipe!r} vs {preferred_pipeline(wid, phase)!r}"
                     )
-                for aid in pipe:
-                    if aid not in spec_action_set:
-                        errors.append(f"{wid}/{phase}: pipeline action {aid!r} not in Spec actions")
+                for action_id in pipe:
+                    if action_id not in spec_action_set:
+                        errors.append(f"{wid}/{phase}: pipeline action {action_id!r} not in Spec actions")
 
         all_gate_refs: set[str] = set()
         for gs in (meta.get("phase_gates") or {}).values():
@@ -281,13 +302,13 @@ def check_all(
         actions_by_id = {str(a.get("id") or ""): a for a in actions if a.get("id")}
         pipeline_order: list[str] = []
         for phase in meta.get("phases") or []:
-            for aid in [str(x) for x in ((meta.get("pipelines") or {}).get(phase) or [])]:
-                if aid and aid not in pipeline_order:
-                    pipeline_order.append(aid)
+            for action_id in [str(x) for x in ((meta.get("pipelines") or {}).get(phase) or [])]:
+                if action_id and action_id not in pipeline_order:
+                    pipeline_order.append(action_id)
         # Fallback: Spec action declaration order when pipelines sparse (e.g. tg-init)
-        for aid in action_ids:
-            if aid and aid not in pipeline_order:
-                pipeline_order.append(aid)
+        for action_id in action_ids:
+            if action_id and action_id not in pipeline_order:
+                pipeline_order.append(action_id)
 
         for action in actions:
             aid = str(action.get("id") or "")
@@ -366,9 +387,7 @@ def check_all(
                             )
                         )
                     else:
-                        in_scope = [
-                            r for r in rel_paths if scopes and path_matches_scope(r, scopes)
-                        ]
+                        in_scope = [r for r in rel_paths if scopes and path_matches_scope(r, scopes)]
                         if not in_scope:
                             errors.append(
                                 f"{wid}/{aid}: agent has no writable output path for contract {cid}"
