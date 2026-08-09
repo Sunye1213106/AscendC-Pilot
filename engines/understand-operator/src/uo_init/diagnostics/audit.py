@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Soundness/completeness audit for a committed ``.uo`` CodeMap.
 
-Presence is not completeness.  A CodeMap is useful to an Agent only when the
+Presence is not completeness. A CodeMap is useful to an Agent only when the
 binary preserves source-backed API roots, compile-time selection, TilingData
 transport, Kernel execution and output flow without synthetic Cartesian edges.
 """
@@ -27,6 +27,7 @@ _FLOW_KINDS = {
     RelationKind.SELECTS.value,
     RelationKind.INSTANTIATES.value,
     RelationKind.LAUNCHES.value,
+    RelationKind.CALLS.value,
     RelationKind.READS.value,
     RelationKind.WRITES.value,
 }
@@ -207,6 +208,7 @@ def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
         RelationKind.INSTANTIATES.value,
         RelationKind.LAUNCHES.value,
         RelationKind.FLOWS_TO.value,
+        RelationKind.CALLS.value,
     }
     unbound_kernels = [
         e.name
