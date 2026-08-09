@@ -1,12 +1,12 @@
 id: uo-semantic-resolver
 version: 1
-name_zh: UO CodeMap semantic gap resolver
+name_zh: UO CodeMap 语义缺口消解
 role: producer
 mode: subagent
-description: Resolve unresolved CodeMap semantic gaps. Read session prompt.md first,
-  then skills/domain/uo-codemap-build/SKILL.md. Write only declared staging parts.
-  Merges former uo-gap-resolve / uo-key-resolve / uo-semantic-resolve producer duties
-  for uo-init resolve.
+description: >
+  仅消解当前 Action Bundle 明确分配的 unresolved CodeMap semantic gaps。
+  先读 session prompt.md，再按需读取 skills/domain/uo-codemap-build/SKILL.md；
+  只产出有 provenance 的 staging patch，不能替代确定性 frontend/pass。
 read_scopes:
 - uo/ir/unresolved.yaml
 - uo/ir/resolve_gaps_staging.yaml
@@ -26,3 +26,4 @@ forbidden:
 - declare_workflow_passed
 - write_outside_declared_scope
 - write_canonical_uo_ir
+- invent_unresolved_ids
