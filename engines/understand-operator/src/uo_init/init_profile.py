@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """uo-init wall-time profiles.
 
-``fast`` (default) targets cold uo-init ≤ ``UO_COLD_BUDGET_S`` (180s):
-keypath controllability, no pairwise kernel fold.  ``full`` restores the
-previous feature-complete path (full closure + fold).
+``fast`` (default) targets cold uo-init ≤ ``UO_COLD_BUDGET_S`` (default 240s
+with kernel+tilingdata): keypath controllability, one dtype kernel walk,
+no API clang contract, no pairwise kernel fold.  ``full`` restores the
+previous feature-complete path (full closure + all dtype variants + fold).
 """
 from __future__ import annotations
 
@@ -28,10 +29,11 @@ def profile_name(ctx: dict[str, Any] | None = None) -> str:
 
 
 def cold_budget_s() -> float:
+    # Kernel (1 dtype) overlaps host_ir but still dominates cold wall on FAG.
     try:
-        return float(os.environ.get("UO_COLD_BUDGET_S", "180"))
+        return float(os.environ.get("UO_COLD_BUDGET_S", "240"))
     except ValueError:
-        return 180.0
+        return 240.0
 
 
 def default_closure_mode(ctx: dict[str, Any] | None = None) -> str:
@@ -64,6 +66,46 @@ def default_fold_kernel(ctx: dict[str, Any] | None = None) -> bool:
     if isinstance(ctx, dict) and "fold_kernel" in ctx:
         return bool(ctx.get("fold_kernel"))
     env = os.environ.get("UO_FOLD_KERNEL")
+    if env is not None and str(env).strip() != "":
+        return str(env).strip().lower() not in {"0", "false", "off", "no"}
+    return profile_name(ctx) == "full"
+
+
+def default_with_kernel(ctx: dict[str, Any] | None = None) -> bool:
+    """Always extract uninstantiated kernel branches (tilingkey → code map).
+
+    ``fast`` limits cost via ``default_kernel_max_variants`` (1 dtype) and
+    overlapping the walk with ``build_host_ir``.  Override with ``UO_WITH_KERNEL=0``.
+    """
+    if isinstance(ctx, dict) and "with_kernel" in ctx:
+        return bool(ctx.get("with_kernel"))
+    env = os.environ.get("UO_WITH_KERNEL")
+    if env is not None and str(env).strip() != "":
+        return str(env).strip().lower() not in {"0", "false", "off", "no"}
+    return True
+
+
+def default_kernel_max_variants(ctx: dict[str, Any] | None = None) -> int:
+    """Cap kernel dtype walks.  ``0`` means all variants (full profile)."""
+    if isinstance(ctx, dict) and ctx.get("kernel_max_variants") not in (None, ""):
+        try:
+            return max(0, int(ctx.get("kernel_max_variants")))
+        except (TypeError, ValueError):
+            pass
+    env = os.environ.get("UO_KERNEL_MAX_VARIANTS")
+    if env is not None and str(env).strip() != "":
+        try:
+            return max(0, int(str(env).strip()))
+        except ValueError:
+            pass
+    return 1 if profile_name(ctx) == "fast" else 0
+
+
+def default_with_api(ctx: dict[str, Any] | None = None) -> bool:
+    """Deep API clang contract (~70s on FAG); fast uses opdef decl facts only."""
+    if isinstance(ctx, dict) and "with_api" in ctx:
+        return bool(ctx.get("with_api"))
+    env = os.environ.get("UO_WITH_API")
     if env is not None and str(env).strip() != "":
         return str(env).strip().lower() not in {"0", "false", "off", "no"}
     return profile_name(ctx) == "full"

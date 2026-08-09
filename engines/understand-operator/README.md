@@ -42,18 +42,21 @@ $env:UO_DEEP_SOLVE=1; acp run-action derive_key_fields
 
 | 目标 | 环境 | 说明 |
 |------|------|------|
-| 冷启动 ≤ 3 分钟 | `UO_INIT_PROFILE=fast`（默认）、`UO_COLD_BUDGET_S=180` | `closure_mode=keypath` + 跳过 pairwise fold |
+| 冷启动 ≤ 4 分钟 | `UO_INIT_PROFILE=fast`（默认）、`UO_COLD_BUDGET_S=240` | `keypath` + **1 dtype kernel walk**（与 host 并行）+ tilingdata + 跳过 API clang / pairwise fold |
 | 热重跑 ≤ 2 分钟 | 源码未变 + TU/derive/fold 缓存 | `UO_WARM_REPLAY_BUDGET_S=120` |
-| 完整闭包（可更慢） | `UO_INIT_PROFILE=full` | full controllability + kernel fold |
+| 完整闭包（可更慢） | `UO_INIT_PROFILE=full` | full controllability + 全 dtype kernel + kernel fold |
 
 缓存目录：`.ascendc-pilot/<arch>/uo/cache/{tu,derive,fold}/`（可用 `UO_CACHE_ROOT` 覆盖）。
 
 | Env | 默认 | 作用 |
 |-----|------|------|
 | `UO_INIT_PROFILE` | `fast` | `fast`=冷启动预算路径；`full`=完整闭包 |
-| `UO_COLD_BUDGET_S` | `180` | 冷启动墙钟预算（秒） |
+| `UO_COLD_BUDGET_S` | `240` | 冷启动墙钟预算（秒；含 kernel+tilingdata） |
 | `UO_KEYPATH_MAX_NODES` | `96` | fast 路径 controllability 上限 |
 | `UO_FOLD_KERNEL` | 随 profile | 覆盖是否做 pairwise fold |
+| `UO_WITH_KERNEL` | `1` | 默认开；写 `0` 可关（不推荐，views/kernel 会空） |
+| `UO_KERNEL_MAX_VARIANTS` | fast=`1` / full=全量 | 限制 kernel dtype walk 次数 |
+| `UO_WITH_API` | 随 profile | `fast` 默认关（省 ~70s API clang contract） |
 | `UO_TIMING` | `1` | stderr `[uo-timing]` 相位计时 |
 | `UO_TU_CACHE` | `1` | libclang walk IR 磁盘缓存（按源文件 sha256 + 编译指纹） |
 | `UO_DERIVE_CACHE` | `1` | `derive_key_fields` 按字段结果缓存 |

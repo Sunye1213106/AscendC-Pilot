@@ -148,6 +148,81 @@ class KernelIR:
             ],
         }
 
+    def to_persist_dict(self) -> dict:
+        """Full branch payload for cross-process reload (export_kb)."""
+        return {
+            "schema": "uo-kernel-ir/v1",
+            "variants": list(self.variants),
+            "notes": list(self.notes),
+            "branches": [
+                {
+                    "id": b.id,
+                    "condition": b.condition,
+                    "file": b.file,
+                    "line": b.line,
+                    "function": b.function,
+                    "dimensions": list(b.dimensions),
+                    "derived": list(b.derived),
+                    "symbols": list(b.symbols),
+                    "variants": list(b.variants),
+                }
+                for b in self.branches
+            ],
+        }
+
+
+def kernel_ir_from_dict(data: dict | None) -> KernelIR | None:
+    """Rebuild :class:`KernelIR` from :meth:`KernelIR.to_persist_dict`."""
+    if not isinstance(data, dict):
+        return None
+    rows = data.get("branches")
+    if not isinstance(rows, list):
+        return None
+    ir = KernelIR(
+        variants=[str(v) for v in (data.get("variants") or [])],
+        notes=[str(n) for n in (data.get("notes") or [])],
+    )
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        cond = str(row.get("condition") or "").strip()
+        if not cond:
+            continue
+        ir.branches.append(
+            KernelBranch(
+                condition=cond,
+                file=str(row.get("file") or ""),
+                line=int(row.get("line") or 0),
+                function=str(row.get("function") or ""),
+                id=str(row.get("id") or ""),
+                dimensions=[str(x) for x in (row.get("dimensions") or [])],
+                derived=[str(x) for x in (row.get("derived") or [])],
+                symbols=[str(x) for x in (row.get("symbols") or [])],
+                variants=[str(x) for x in (row.get("variants") or [])],
+            )
+        )
+    return ir
+
+
+def _select_dtype_variants(
+    variants: list[str | None], max_variants: int | None
+) -> list[str | None]:
+    """Keep preferred dtypes first; ``max_variants<=0`` or None keeps all."""
+    if not variants:
+        return [None]
+    if max_variants is None or int(max_variants) <= 0:
+        return list(variants)
+    cap = int(max_variants)
+    preferred = ("DT_FLOAT16", "FLOAT16", "float16", "DT_BF16", "BF16", "DT_FLOAT", "FLOAT32")
+    ordered: list[str | None] = []
+    for p in preferred:
+        if p in variants and p not in ordered:
+            ordered.append(p)
+    for v in variants:
+        if v not in ordered:
+            ordered.append(v)
+    return ordered[:cap]
+
 
 def _squash(name: str) -> str:
     return name.replace("_", "").lower()
@@ -199,8 +274,19 @@ def _classify(condition: str, dims: _Dimensions) -> tuple[list, list, list]:
     return exact, derived, others
 
 
-def build_kernel_ir(spec, ctx, *, dimensions: list[str] | None = None) -> KernelIR:
-    """Parse the kernel entry once per dtype variant and index its branches."""
+def build_kernel_ir(
+    spec,
+    ctx,
+    *,
+    dimensions: list[str] | None = None,
+    max_variants: int | None = None,
+) -> KernelIR:
+    """Parse the kernel entry once per dtype variant and index its branches.
+
+    ``max_variants`` caps how many dtype walks run (``fast`` uses 1).  Branch
+    conditions are usually shared across dtypes; capping still populates the
+    tilingkey→code map, and only thins ``branch.variants`` tags.
+    """
     from uo_init.clang_walk import walk_file
 
     ir = KernelIR()
@@ -213,8 +299,13 @@ def build_kernel_ir(spec, ctx, *, dimensions: list[str] | None = None) -> Kernel
         ir.notes.append("no_kernel_entry")
         return ir
 
-    variants = list((ctx.dtype_variants() or {}).get("values") or []) or [None]
+    all_variants = list((ctx.dtype_variants() or {}).get("values") or []) or [None]
+    variants = _select_dtype_variants(all_variants, max_variants)
     ir.variants = [v or "default" for v in variants]
+    if len(variants) < len(all_variants):
+        ir.notes.append(
+            f"dtype_variants_capped={len(variants)}/{len(all_variants)}"
+        )
     dims = _Dimensions(list(dimensions or ()))
 
     found: dict[tuple[str, int, str], KernelBranch] = {}

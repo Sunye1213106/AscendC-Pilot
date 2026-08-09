@@ -515,20 +515,25 @@ def extract_host_bundle(
     arch_dir: str | None = None,
     with_closure: bool | str = False,
     with_kernel: bool = True,
+    with_api: bool = True,
     closure_mode: str | None = None,
     closure_max_nodes: int = 10**9,
+    kernel_max_variants: int | None = None,
 ) -> dict[str, Any]:
     """Host-only analyse → metrics/gap/binding (no FAG defaults).
 
     Library default is ``closure_mode=off`` so callers that only need HostIR /
     binding (e.g. key derivation) do not pay.  Product ``extract_host`` defaults
-    to ``keypath`` under ``UO_INIT_PROFILE=fast`` (cold ≤3 min); use
-    ``UO_INIT_PROFILE=full`` / ``closure_mode=full`` for every PRODUCTION control.
+    to ``keypath`` under ``UO_INIT_PROFILE=fast``; use ``UO_INIT_PROFILE=full``
+    / ``closure_mode=full`` for every PRODUCTION control.
 
     Closure modes (``closure_mode`` overrides ``with_closure``):
     - ``full``: every PRODUCTION control (opt-in complete path).
     - ``keypath``: tiling-writer functions only (capped by ``closure_max_nodes``).
     - ``off``: skip controllability.
+
+    Kernel IR walks in parallel with ``build_host_ir`` (both release the GIL in
+    libclang).  ``kernel_max_variants`` caps dtype walks on the fast path.
     """
     from concurrent.futures import ThreadPoolExecutor
 
@@ -563,7 +568,11 @@ def extract_host_bundle(
     from uo_init.timing import PhaseTimer, log as _tlog
 
     timer = PhaseTimer()
-    _tlog(f"extract_host_bundle start  closure_mode={mode} with_kernel={with_kernel}")
+    _tlog(
+        f"extract_host_bundle start  closure_mode={mode} "
+        f"with_kernel={with_kernel} with_api={with_api} "
+        f"kernel_max_variants={kernel_max_variants}"
+    )
 
     with timer.span("discover"):
         spec = discover(op_dir, arch_dir=arch_dir)
@@ -578,18 +587,61 @@ def extract_host_bundle(
             arch_dir=spec.arch_dir,
         )
 
-    with timer.span("build_host_ir", tus=len(targets)):
-        ir = build_host_ir(
+    # Schema is cheap text parse; needed for kernel dimension tags before host IR.
+    schema = parse_file(spec.tiling_key_header) if spec.tiling_key_header else None
+    kernel_dims = [d.name for d in schema.dims] if schema else []
+
+    import time as _time
+
+    def _run_host():
+        t0 = _time.perf_counter()
+        out = build_host_ir(
             list(targets), ctx=ctx, op_needle=spec.op_needle, scope=spec.scope
         )
+        dt = _time.perf_counter() - t0
+        _tlog(
+            f"{dt:7.3f}s  build_host_ir.done  controls={len(out.controls)} "
+            f"writes={len(out.writes)} local_writes={len(out.local_writes)} "
+            f"calls={len(out.call_sites)}"
+        )
+        return out
+
+    def _run_kernel_early():
+        if not with_kernel:
+            return None
+        t0 = _time.perf_counter()
+        _tlog("kernel_ir.start")
+        out = build_kernel_ir(
+            spec,
+            ctx,
+            dimensions=kernel_dims,
+            max_variants=kernel_max_variants,
+        )
+        dt = _time.perf_counter() - t0
+        _tlog(
+            f"{dt:7.3f}s{' SLOW' if dt > 180 else ''}  kernel_ir.done  "
+            f"branches={len(getattr(out, 'branches', []) or [])}"
+        )
+        return out
+
+    # libclang releases the GIL — overlap host TU walks with kernel dtype walk.
+    with timer.span("host||kernel", tus=len(targets)):
+        if with_kernel:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                fut_host = pool.submit(_run_host)
+                fut_kernel = pool.submit(_run_kernel_early)
+                ir = fut_host.result()
+                kernel = fut_kernel.result()
+        else:
+            ir = _run_host()
+            kernel = None
     _tlog(
         f"  host_ir controls={len(ir.controls)} writes={len(ir.writes)} "
-        f"local_writes={len(ir.local_writes)} calls={len(ir.call_sites)}"
+        f"kernel_branches={len(getattr(kernel, 'branches', []) or [])}"
     )
 
     with timer.span("var_model+platform"):
         resolver = SourceResolver(host_ir=ir)
-        schema = parse_file(spec.tiling_key_header) if spec.tiling_key_header else None
         enums: dict = {}
         header_texts: list[str] = []
         header_paths: list[Path] = []
@@ -647,16 +699,25 @@ def extract_host_bundle(
         except FileNotFoundError as exc:
             platform_error = str(exc)
 
-    # Clang-heavy legs that do not depend on each other: overlap only these.
-    # Do NOT overlap full Python controllability with them — that fights the
-    # GIL and made FAG slower (540s → 683s).
-    import time as _time
-
+    # Remaining clang-light / text legs. Do NOT overlap full Python
+    # controllability with clang — GIL contention made FAG slower before.
     def _run_api():
         t0 = _time.perf_counter()
         _tlog("api_contract.start")
         local_facts = extract_decl_facts(spec.opdef, _proto_of(spec))
         t_facts = _time.perf_counter() - t0
+        if not with_api:
+            # Fast cold path: keep opdef facts, skip the clang API TU walk.
+            class _EmptyContract:
+                ir = None
+                premises: list = []
+
+            dt = _time.perf_counter() - t0
+            _tlog(
+                f"{dt:7.3f}s  api_contract.done  facts={t_facts:.3f}s "
+                f"contract=skipped premises=0"
+            )
+            return local_facts, _EmptyContract(), None
         t1 = _time.perf_counter()
         local_contract = extract_api_contract(spec, ctx, local_facts)
         t_contract = _time.perf_counter() - t1
@@ -671,21 +732,6 @@ def extract_host_bundle(
             f"premises={len(getattr(local_contract, 'premises', []) or [])}"
         )
         return local_facts, local_contract, local_resolver
-
-    def _run_kernel():
-        if not with_kernel:
-            return None
-        t0 = _time.perf_counter()
-        _tlog("kernel_ir.start")
-        out = build_kernel_ir(
-            spec, ctx, dimensions=[d.name for d in schema.dims] if schema else []
-        )
-        dt = _time.perf_counter() - t0
-        _tlog(
-            f"{dt:7.3f}s{' SLOW' if dt > 180 else ''}  kernel_ir.done  "
-            f"branches={len(getattr(out, 'branches', []) or [])}"
-        )
-        return out
 
     def _run_bind():
         if not (targets and spec.tiling_key_header and spec.kernel_entry):
@@ -702,13 +748,11 @@ def extract_host_bundle(
             _tlog(f"{dt:7.3f}s  bind.fail  err={exc}")
             return None, str(exc)
 
-    with timer.span("api||kernel||bind"):
-        with ThreadPoolExecutor(max_workers=3) as pool:
+    with timer.span("api||bind"):
+        with ThreadPoolExecutor(max_workers=2) as pool:
             fut_api = pool.submit(_run_api)
-            fut_kernel = pool.submit(_run_kernel)
             fut_bind = pool.submit(_run_bind)
             facts, contract, api_resolver = fut_api.result()
-            kernel = fut_kernel.result()
             binding, bind_error = fut_bind.result()
     _tlog(
         f"  api_premises={len(getattr(contract, 'premises', []) or [])} "

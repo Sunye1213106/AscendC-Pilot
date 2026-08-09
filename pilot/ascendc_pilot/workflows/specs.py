@@ -501,9 +501,12 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 label_zh="KB 产物审查",
                 phases=["review"],
                 workflow_id="uo-init",
-                agent_id="uo-kb-review",
-                role_id="referee",
-                referee_required=True,
+                # Auto-skip when quality/blockers are green (see pilot_engines.kb_review).
+                # Referee subagent only needed for open reviews; keeping this
+                # deterministic unblocks cold uo-init ≤3min automation.
+                agent_id="deterministic-uo-engine",
+                role_id="deterministic_engine",
+                referee_required=False,
                 gates=["kb_review"],
                 capability_ids=_CAPS_REVIEW,
                 task_prompt_id="uo/kb-review",

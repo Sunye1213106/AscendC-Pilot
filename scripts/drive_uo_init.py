@@ -123,6 +123,9 @@ def main() -> int:
                         if "--finalize" not in args:
                             print(json.dumps(step_res, ensure_ascii=False, indent=2)[:2000])
                             return 1
+                continue
+
+            # Deterministic actions already finalized above.
             continue
 
         # No recommended action → advance phase when pipeline_complete.

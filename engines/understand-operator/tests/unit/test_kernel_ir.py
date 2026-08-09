@@ -11,7 +11,14 @@ from __future__ import annotations
 
 import pytest
 
-from uo_init.kernel_ir import KernelBranch, KernelIR, _classify, _Dimensions
+from uo_init.kernel_ir import (
+    KernelBranch,
+    KernelIR,
+    _classify,
+    _Dimensions,
+    _select_dtype_variants,
+    kernel_ir_from_dict,
+)
 
 DIMS = ["SplitAxis", "IsRope", "OutDType", "IsTnd", "DeterType"]
 
@@ -159,3 +166,32 @@ def test_no_dimensions_given_means_nothing_is_claimed():
     assert exact == []
     assert derived == []
     assert others == ["IS_ROPE", "SPLIT_AXIS"]
+
+
+def test_persist_roundtrip_keeps_full_file_path():
+    ir = KernelIR(
+        variants=["DT_FLOAT16"],
+        notes=["dtype_variants_capped=1/3"],
+        branches=[
+            KernelBranch(
+                condition="IS_ROPE",
+                file="/ops/op_kernel/arch35/apt.cpp",
+                line=42,
+                function="Process",
+                dimensions=["IsRope"],
+                variants=["DT_FLOAT16"],
+            )
+        ],
+    )
+    restored = kernel_ir_from_dict(ir.to_persist_dict())
+    assert restored is not None
+    assert restored.variants == ["DT_FLOAT16"]
+    assert restored.branches[0].file.endswith("apt.cpp")
+    assert restored.branches[0].dimensions == ["IsRope"]
+
+
+def test_select_dtype_variants_prefers_float16():
+    all_v = ["DT_FLOAT", "DT_BF16", "DT_FLOAT16"]
+    assert _select_dtype_variants(all_v, 1) == ["DT_FLOAT16"]
+    assert _select_dtype_variants(all_v, 0) == all_v
+    assert _select_dtype_variants(all_v, None) == all_v

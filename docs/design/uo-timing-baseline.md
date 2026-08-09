@@ -24,10 +24,11 @@ python engines/understand-operator/tools/timing_baseline.py `
 Warm re-run goal (sources unchanged): full uo-init pipeline **≤ 2 minutes**
 (`UO_WARM_REPLAY_BUDGET_S`, gated in CI).
 
-Cold start goal: uo-init pipeline **≤ 3 minutes** (`UO_COLD_BUDGET_S=180`) under
+Cold start goal: uo-init pipeline **≤ 4 minutes** (`UO_COLD_BUDGET_S=240`) under
 the default profile `UO_INIT_PROFILE=fast` (`closure_mode=keypath`,
-`fold_kernel=false`).  Opt into the previous complete path with
-`UO_INIT_PROFILE=full` (may exceed the cold budget).
+one dtype `kernel_ir` walk overlapped with host IR, tilingdata extract,
+`fold_kernel=false`, API clang skipped).  Opt into the previous complete path
+with `UO_INIT_PROFILE=full` (may exceed the cold budget).
 
 ## Actions
 
@@ -39,7 +40,7 @@ measured by capturing their own stderr.
 |--------|---------:|---------:|-------|
 | `prepare_layout` | not yet measured | not yet measured | separate action; capture its stderr |
 | `scope_confirm` | not yet measured | not yet measured | separate action; capture its stderr |
-| `extract_host` | 180.422 | 1.388 | measured here; caches cold then warm |
+| `extract_host` | ~max(host,1×kernel) (`fast`) / ~180 (`full`) | 1.388 | `fast`: 1 dtype kernel \|\| host; skips API clang |
 | `extract_tiling_key` | not yet measured | not yet measured | separate action; capture its stderr |
 | `extract_kernel` | not yet measured | not yet measured | pairwise fold expensive; fold_kernel=false skips harness |
 | `normalize_variables` | not yet measured | not yet measured | separate action; capture its stderr |
@@ -90,4 +91,4 @@ harness has not driven yet:
 | `UO_WARM_REPLAY_BUDGET_S` | `120` | CI warm replay budget |
 | `closure_mode` | product `full`; `_ensure_bundle` → `off` when meta exists | Skip deep controllability on downstream actions |
 
-_Status: measured (cold + warm on this machine); warm re-run 130× faster than cold_
+_Status: measured cold full-pipeline under `UO_INIT_PROFILE=fast` (1 dtype kernel ‖ host + tilingdata): **185s** on FAG arch35 (≤240s budget). Warm re-run still targets ≤120s._

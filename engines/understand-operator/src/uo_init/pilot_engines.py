@@ -472,8 +472,9 @@ def _bundle_cache(uo: Path) -> Path:
 def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     """Build host IR + controllability + kernel/API facts.
 
-    Default profile is ``UO_INIT_PROFILE=fast``: ``closure_mode=keypath`` so
-    cold uo-init stays within ``UO_COLD_BUDGET_S`` (180s).  Set
+    Default profile is ``UO_INIT_PROFILE=fast``: ``closure_mode=keypath``,
+    one dtype kernel walk (overlapped with host IR), no API clang contract,
+    so cold uo-init stays within ``UO_COLD_BUDGET_S``.  Set
     ``UO_INIT_PROFILE=full`` (or ``closure_mode=full``) for every PRODUCTION
     control.  Per-TU walks hit ``UO_TU_CACHE`` on warm runs.
     """
@@ -488,6 +489,9 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
     from uo_init.init_profile import (
         default_closure_max_nodes,
         default_closure_mode,
+        default_kernel_max_variants,
+        default_with_api,
+        default_with_kernel,
         profile_name,
     )
 
@@ -496,6 +500,9 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
     uo = _uo_root(root, arch=ctx.get("arch_dir"))
     mode = default_closure_mode(ctx)
     max_nodes = default_closure_max_nodes(ctx)
+    with_kernel = default_with_kernel(ctx)
+    with_api = default_with_api(ctx)
+    kernel_max_variants = default_kernel_max_variants(ctx)
     skip_plan = skip_reextract_for_unchanged_tus(
         root, uo_root=uo, arch=ctx.get("arch_dir") or "arch35"
     )
@@ -507,7 +514,9 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
             arch_dir=ctx.get("arch_dir"),
             closure_mode=str(mode),
             closure_max_nodes=int(max_nodes),
-            with_kernel=_flag(ctx.get("with_kernel"), True),
+            with_kernel=with_kernel,
+            with_api=with_api,
+            kernel_max_variants=kernel_max_variants,
         )
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "extract_host", "error": str(exc)[:400]}
@@ -520,6 +529,11 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
         root, uo_root=uo, arch=getattr(bundle["spec"], "arch_dir", None)
     )
     store_extract_fingerprint(uo, fp_meta)
+    kir = bundle.get("kernel_ir")
+    kernel_branches = len(getattr(kir, "branches", []) or [])
+    if kir is not None and hasattr(kir, "to_persist_dict"):
+        # Cross-process export_kb must not lose uninstantiated branches.
+        _dump(uo / "ir" / "kernel_ir.yaml", kir.to_persist_dict())
     meta = {
         "version": 1,
         "status": "extracted",
@@ -534,7 +548,10 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
         "closure_selected": bundle.get("closure_selected") or 0,
         "closure_max_nodes": int(max_nodes),
         "init_profile": profile_name(ctx),
-        "kernel_branches": len(getattr(bundle.get("kernel_ir"), "branches", []) or []),
+        "with_kernel": bool(with_kernel),
+        "with_api": bool(with_api),
+        "kernel_max_variants": int(kernel_max_variants or 0),
+        "kernel_branches": kernel_branches,
         "extract_fingerprint": fp_meta.get("extract_fingerprint"),
         "sources_unchanged_at_start": bool(skip_plan.get("skip_reextract")),
     }
@@ -566,25 +583,57 @@ def _ensure_bundle(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     if "bundle" in _STORE:
         return _STORE["bundle"]
     from uo_init.assemble_kb import extract_host_bundle
+    from uo_init.kernel_ir import kernel_ir_from_dict
 
     root = Path(project_root).expanduser().resolve()
     # ``acp run-action`` launches each deterministic action in a fresh
     # process, so the in-memory bundle from extract_host is not available to
     # the next action. Downstream only needs the structural bundle — rebuild
     # with closure off when meta exists (TU cache makes this cheap).
-    from uo_init.init_profile import default_closure_mode
+    from uo_init.init_profile import (
+        default_closure_mode,
+        default_kernel_max_variants,
+        default_with_api,
+        default_with_kernel,
+    )
 
     uo = _uo_root(root, arch=ctx.get("arch_dir"))
     cached_meta = _load(_bundle_cache(uo))
     mode = ctx.get("closure_mode") or ("off" if cached_meta else default_closure_mode(ctx))
+    persisted_kir = _load(uo / "ir" / "kernel_ir.yaml")
+    has_persist = isinstance(persisted_kir, dict) and bool(persisted_kir.get("branches"))
+    # Prefer the persisted uninstantiated kernel IR from extract_host so
+    # export_kb does not drop branches (and does not re-pay a cold walk).
+    with_kernel = False if (cached_meta and has_persist) else default_with_kernel(ctx)
+    with_api = False if cached_meta else default_with_api(ctx)
+    kernel_max_variants = default_kernel_max_variants(ctx)
+    if "with_kernel" in ctx:
+        with_kernel = bool(ctx.get("with_kernel"))
+    if "with_api" in ctx:
+        with_api = bool(ctx.get("with_api"))
+    if "kernel_max_variants" in ctx:
+        try:
+            kernel_max_variants = int(ctx.get("kernel_max_variants"))
+        except (TypeError, ValueError):
+            pass
     bundle = extract_host_bundle(
         op_dir=root,
         cann_root=_cann_root(ctx),
         ops_root=_ops_root(ctx, root),
         arch_dir=ctx.get("arch_dir"),
         closure_mode=str(mode),
-        with_kernel=_flag(ctx.get("with_kernel"), True),
+        with_kernel=with_kernel,
+        with_api=with_api,
+        kernel_max_variants=kernel_max_variants,
     )
+    if not getattr(bundle.get("kernel_ir"), "branches", None) and has_persist:
+        restored = kernel_ir_from_dict(persisted_kir)
+        if restored is not None:
+            bundle["kernel_ir"] = restored
+    elif bundle.get("kernel_ir") is not None and hasattr(
+        bundle["kernel_ir"], "to_persist_dict"
+    ):
+        _dump(uo / "ir" / "kernel_ir.yaml", bundle["kernel_ir"].to_persist_dict())
     _STORE["bundle"] = bundle
     return bundle
 
