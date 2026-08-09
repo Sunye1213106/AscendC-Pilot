@@ -7,63 +7,30 @@ description: >
 
 # UO 知识库建立
 
-目标：产出可被 TG/CE 消费的、证据充分的算子 KB，而不是「扫过一遍文件」。
-
-## 核心循环
+目标：证据充分的算子 KB，而非「扫过一遍文件」。
 
 ```text
-确认范围
- ↓
-评估抽取完整性
- ↓
-定位语义缺口
- ↓
-源码消解 / 标注不可消解
- ↓
-审查 KB 一致性
- ↓
-可导出投影
+确认范围 → 评估抽取完整性 → 定位缺口 → 消解/标注 → 审查 → 可导出投影
 ```
 
-## 1. 范围确认
+权威分层见 `references/authority-model.md`。  
+完整性见 `references/completeness.md` 与 `_shared/completeness.md`。
 
-- 明确算子根目录、目标 architecture、纳入/排除的源文件集合
-- 范围不清时先澄清，不要猜测整库扫描
-- 后续结论不得悄悄超出已确认范围
+## 要点
 
-## 2. 抽取完整性
-
-检查 Host / Kernel / Registry / TilingKey / 变量与谓词等抽取是否覆盖确认范围：
-
-- 关键符号是否有定义
-- 关键字段是否有写入与消费
-- 模板/宏分支是否被静默丢掉
-
-完整性 `partial` 时：继续补证据，或显式记录 gap，禁止假装完备。
-
-## 3. 缺口消解
-
-对每个 gap：
-
-1. 用 KB/Codemap 定位相关符号
-2. 读最小必要源码
-3. 给出有证据的补丁或解释
-4. 无法消解 → 保留 unresolved，写明缺什么
-
-**查询未命中 ≠ 源码不存在。**
-
-## 4. KB 审查
-
-审查关注：
-
-- 生产者/消费者语义是否一致
-- Key 维度与谓词是否自洽
-- 导出投影（如 host view）是否丢字段
-- 高置信结论是否都有源码锚点
-
-结果：`ACCEPT` / `NEED_PATCH` / `UNRESOLVED`（按任务输出合同序列化）。
+1. **范围**：确认根目录与 architecture；结论不超出范围。
+2. **完整性**：`existence ≠ completeness`；receipt 驱动，非计划 profile。
+3. **推导**：有表达式 ≠ exact；见 `references/derivation-quality.md`。
+4. **缺口**：结构查询 → 最小源码 → 补丁或 `UNRESOLVED`。
+5. **审查**：产消一致、锚点齐全；LLM digest 不得回写权威层。
 
 ## 按需参考
 
-- `references/extraction-quality.md`
-- `references/completeness.md`
+| 条件 | 文件 |
+|---|---|
+| 权威/投影/digest | `references/authority-model.md` |
+| 文件在但语义空 | `references/completeness.md` |
+| 字段推导质量 | `references/derivation-quality.md` |
+| 抽取覆盖 | `references/extraction-quality.md` |
+| 共享证据纪律 | `_shared/evidence-quality.md` |
+| 投影是否过期 | `_shared/artifact-freshness.md` |

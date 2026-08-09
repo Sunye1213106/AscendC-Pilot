@@ -1,7 +1,5 @@
 # Task
 
-Bundle identity is authoritative. Do not replace identity from other artifacts.
-
 审计 TG 初始化缺口与阻断项。
 
 # Targets
@@ -22,4 +20,4 @@ Bundle identity is authoritative. Do not replace identity from other artifacts.
 
 # Done when
 
-缺口分类为可自动修 / 需人确认 / 需回 UO；合同以 Bundle 为准。
+缺口分类为可自动修 / 需人确认 / 需回 UO。

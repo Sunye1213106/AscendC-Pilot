@@ -95,7 +95,7 @@ def _run_key_triage_stub(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
         "status": "not_applicable",
         "keys": [],
         "engine": "uo_init.update",
-        "message": "key_triage deferred on new KB; see docs/debug/open-problems.md",
+        "message": "key_triage deferred on new KB (layered IDs not yet rewritten)",
     }
     write_yaml(ir / "key_triage.yaml", payload)
     return {"ok": True, "skipped": True, "payload": payload}
@@ -113,7 +113,7 @@ def _run_key_resolution_stub(project_root: Path, ctx: dict[str, Any]) -> dict[st
         "status": "not_applicable",
         "patches": [],
         "engine": "uo_init.update",
-        "message": "key_resolution deferred on new KB; see docs/debug/open-problems.md",
+        "message": "key_resolution deferred on new KB (layered IDs not yet rewritten)",
     }
     write_yaml(ir / "input_derivable_patch.yaml", payload)
     return {"ok": True, "skipped": True, "payload": payload}

@@ -1,5 +1,7 @@
 # 证明证书
 
+**何时加载**：准备写出 PROVED/REFUTED/INSUFFICIENT 证书，或裁判 replay 时。
+
 Producer 产出可被裁判 replay 的证书。语义结论只有：
 
 ```text
@@ -14,8 +16,15 @@ PROVED | REFUTED | INSUFFICIENT
 claim:
   premise: ...
   conclusion: ...
+obligations:
+  entry: CLOSED | OPEN | BLOCKED
+  control: CLOSED | OPEN | BLOCKED
+  writes: CLOSED | OPEN | BLOCKED
+  calls: CLOSED | OPEN | BLOCKED
+  overwrite: CLOSED | OPEN | BLOCKED
+  alternatives: CLOSED | OPEN | BLOCKED
+  completeness: CLOSED | OPEN | BLOCKED
 result: PROVED | REFUTED | INSUFFICIENT
-obligations: { ... }   # 见 SKILL
 reasoning:
   - step: ...
     cites: [EV_..., file:line]
@@ -32,6 +41,8 @@ completeness:
   macros: full | partial | unknown
 ```
 
+序列化 Schema 由调用方 / Runtime 合同定义。
+
 ## 写作标准（对应三种形态）
 
 1. **后续赋值被 guard 排除**：列全赋值点；说明每个对立写入被何 guard 挡住。
@@ -42,4 +53,4 @@ completeness:
 
 ## 与观测的关系
 
-有证据包时，五检查引用的位点应以包内 `EV_…` 为可引用集合。无观测事实不得声称运行时不可达。
+有证据包时，引用位点应以包内 `EV_…` 为可引用集合。无观测事实不得声称运行时不可达。

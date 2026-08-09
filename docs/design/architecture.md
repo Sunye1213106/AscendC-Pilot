@@ -1,6 +1,6 @@
 # AscendC-Pilot 架构现状
 
-本文只写**当前已落地的形态**，不写历史计划。闭环方法论见 [tilingkey-closure-agent.md](./tilingkey-closure-agent.md)；组合式 skill 原则见 [skill-prompt.md](./skill-prompt.md)；系统数据流见 [system-design.md](./system-design.md)。
+本文只写**当前已落地的形态**，不写历史计划。闭环认知见 `skills/domain/tg-closure` 与 `skills/domain/source-lemma-proof`；组合式 skill 原则见 [skill-prompt.md](./skill-prompt.md)；系统数据流见 [system-design.md](./system-design.md)。
 
 ---
 
@@ -84,9 +84,10 @@ TilingKey / KernelBranch / TilingDataField 共用同一账本形状 `(D,R,E)`：
 
 | 文档 | 用途 |
 | --- | --- |
-| [tilingkey-closure-agent.md](./tilingkey-closure-agent.md) | 闭环可执行 SOP |
+| `skills/domain/tg-closure` | 闭环认知（含 `closure-safety`） |
+| `skills/domain/source-lemma-proof` | 源码引理证明 |
 | [system-design.md](./system-design.md) | 数据流与模块边界 |
-| [skill-prompt.md](./skill-prompt.md) | Policy/Capability/Action 原则 |
+| [skill-prompt.md](./skill-prompt.md) | Domain / Prompt / Harness 原则 |
 | [principles.md](./principles.md) | 产品修改口诀 |
-| [../fag/tilingkey-closure-report.md](../fag/tilingkey-closure-report.md) | FAG arch35 一次校准结果 |
-| [../_archive/](../_archive/) | 已归档的计划/快照（非契约） |
+| [../fag/tilingkey-closure-report.md](../fag/tilingkey-closure-report.md) | 历史校准结果（非 Skill） |
+| [../case-studies/](../case-studies/) | 命名案例溯源（Agent 默认不读） |

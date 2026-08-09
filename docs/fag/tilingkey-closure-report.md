@@ -599,4 +599,4 @@ python -m testcase_agent.closure.cli --root <op_src> report      # 逐 Key 闭�
 python -m testcase_agent.closure.cli --root <op_src> state       # D/R/E/gap 计数
 ```
 
-完整 SOP 见 [`docs/design/tilingkey-closure-agent.md`](../design/tilingkey-closure-agent.md)。
+Agent 闭环认知见 `skills/domain/tg-closure` 与 `skills/domain/source-lemma-proof`。

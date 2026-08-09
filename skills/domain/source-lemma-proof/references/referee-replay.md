@@ -1,5 +1,7 @@
 # 裁判：Replay 证书
 
+**何时加载**：担任 lemma / closure 裁判，验证 producer 证书时。
+
 裁判**不**自由探索新 hypothesis，**不**重新做一遍开放式源码研究。
 
 任务是 replay producer 的证书：

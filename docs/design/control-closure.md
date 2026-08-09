@@ -4,4 +4,4 @@
 TilingKey 的可追溯关系。源码证据必须来自 confirmed scope 的有界读取，图查询只能用于定位而不能单独
 作为 `source_verified` 结论。
 
-现状架构与三域同构见 [architecture.md](./architecture.md)；闭环 SOP 见 [tilingkey-closure-agent.md](./tilingkey-closure-agent.md)。
+现状架构与三域同构见 [architecture.md](./architecture.md)；闭环认知见 `skills/domain/tg-closure`。

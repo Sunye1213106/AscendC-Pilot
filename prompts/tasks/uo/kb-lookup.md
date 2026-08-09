@@ -1,7 +1,5 @@
 # Task
 
-Bundle identity is authoritative. Do not replace identity from other artifacts.
-
 基于 UO KB 与源码回答查询。
 
 # Targets

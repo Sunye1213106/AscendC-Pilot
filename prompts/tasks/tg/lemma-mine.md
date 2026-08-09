@@ -1,8 +1,6 @@
 # Task
 
-Bundle identity is authoritative. Do not replace identity from other artifacts.
-
-证明或反驳指定的 TilingKey 引理 leads。
+证明或反驳指定的引理 leads。
 
 # Targets
 
@@ -21,9 +19,9 @@ Bundle identity is authoritative. Do not replace identity from other artifacts.
 # Method
 
 遵循 `skills/domain/source-lemma-proof/SKILL.md`。
-对每条 lead：关闭证明义务、主动寻反例、仅用源码证据做排除向结论。
-返回 `PROVED` / `REFUTED` / `INSUFFICIENT`（不要自行映射排除集等级）。
+对每条 lead：关闭证明义务、主动寻反例。
+返回 `PROVED` / `REFUTED` / `INSUFFICIENT`。
 
 # Done when
 
-每条 lead 有证书摘要；产物写入本 Action 声明的 staging 范围；合同 `lemma-mine-v1`。
+每条 lead 有可 replay 的证明摘要。

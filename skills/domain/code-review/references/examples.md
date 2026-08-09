@@ -1,4 +1,23 @@
-# 审查示例要点
+# 审查示例与 Finding 形态
+
+**何时加载**：准备写 finding，或核对报告结构时。
+
+## Finding 推荐结构
+
+```yaml
+severity: high | medium | low
+title: ...
+condition: ...
+invariant: ...
+path: [...]
+impact: ...
+evidence:
+  - source: <file:line>
+    reason: ...
+verification:
+  counterargument_checked: true
+  notes: ...
+```
 
 ## 高质量 finding
 

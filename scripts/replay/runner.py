@@ -261,7 +261,7 @@ class ReplayRunner:
                 f"replay entry script not found at {entry} inside {distro}\n"
                 f"build the driver there, or point the manifest's replay.entry "
                 f"at wherever it was built "
-                f"(see docs/design/tilingkey-closure-agent.md)"
+                f"(see skills/domain/tg-closure and skills/domain/source-lemma-proof)"
             )
 
     def _invoke(self, send: dict[str, I.Case], in_csv, out_csv, log_txt,

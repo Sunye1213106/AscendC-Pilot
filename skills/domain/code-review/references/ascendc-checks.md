@@ -1,6 +1,6 @@
 # AscendC 专项检查（按需）
 
-仅当分析触及对应层时加载。
+**何时加载**：分析触及 Host/Kernel、TilingKey、buffer 或 AIC/AIV 同步时。
 
 ## Host → TilingData → Kernel
 

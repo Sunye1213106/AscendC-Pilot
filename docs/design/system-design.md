@@ -1,7 +1,7 @@
 # AscendC-Pilot 系统设计
 
 > 描述系统**如何设计、如何工作**：UO 如何从源码建成知识库，TG 如何用知识库做 TilingKey 全覆盖。  
-> 方法论细节见 [tilingkey-closure-agent.md](./tilingkey-closure-agent.md)；现状架构见 [architecture.md](./architecture.md)；UO 控制闭合见 [control-closure.md](./control-closure.md)。
+> 闭环认知见 `skills/domain/tg-closure` 与 `skills/domain/source-lemma-proof`；现状架构见 [architecture.md](./architecture.md)；UO 控制闭合见 [control-closure.md](./control-closure.md)。
 
 ---
 
@@ -438,9 +438,7 @@ acp start tg-solve ...
 | 文档 | 内容 |
 | --- | --- |
 | [control-closure.md](./control-closure.md) | UO 控制来源闭合图细节 |
-| [tilingkey-closure-agent.md](./tilingkey-closure-agent.md) | 全覆盖方法论（规格书级） |
+| `skills/domain/tg-closure` / `source-lemma-proof` | 闭环与引理认知 |
 | [architecture.md](./architecture.md) | 现状架构（UO / TG / 三域） |
-| [../fag/tilingkey-closure-report.md](../fag/tilingkey-closure-report.md) | FAG arch35 实证报告 |
-| [../debug/handoff.md](../debug/handoff.md) | Clang/派生解析问题记录 |
-| [../debug/open-problems.md](../debug/open-problems.md) | 未决问题 |
-| `skills/workflows/*/SKILL.md` | 各工作流 Action 合同 |
+| [../fag/tilingkey-closure-report.md](../fag/tilingkey-closure-report.md) | 历史校准报告（非 Skill） |
+| `skills/workflows/*/SKILL.md` | 各工作流 Harness 入口 |

@@ -153,8 +153,8 @@ def audit(repo: Path) -> list[str]:
                                 errors.append(
                                     f"{wid}/{aid}: prompt hardcoded conflicting workflow_id {m.group(1)!r}"
                                 )
-                        if "Bundle identity is authoritative" not in ptext and mode == EXECUTION_SUBAGENT:
-                            errors.append(f"{wid}/{aid}: prompt missing bundle identity authority note")
+                        # Bundle identity is enforced by Runtime Bundle / prepare,
+                        # not by requiring a natural-language note in the Task Prompt.
 
             ag: dict[str, Any] = {}
             if agent_id and agent_id != PRIMARY_AGENT_ID:

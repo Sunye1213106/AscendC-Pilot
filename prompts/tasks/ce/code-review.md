@@ -1,7 +1,5 @@
 # Task
 
-Bundle identity is authoritative. Do not replace identity from other artifacts.
-
 对给定目标做源码级代码审查，报告有证据的缺陷或明确未确认/未决项。
 
 # Targets
@@ -22,4 +20,4 @@ Bundle identity is authoritative. Do not replace identity from other artifacts.
 
 # Done when
 
-每个目标给出 `FINDING` / `NO_CONFIRMED_ISSUE` / `UNRESOLVED`；输出符合合同 `code-review-v1`。
+每个目标给出 `FINDING` / `NO_CONFIRMED_ISSUE` / `UNRESOLVED`。

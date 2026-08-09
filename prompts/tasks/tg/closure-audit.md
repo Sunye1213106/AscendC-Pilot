@@ -1,7 +1,5 @@
 # Task
 
-Bundle identity is authoritative. Do not replace identity from other artifacts.
-
 审计 TilingKey 闭环是否满足可签发条件。
 
 # Targets
@@ -18,9 +16,9 @@ Bundle identity is authoritative. Do not replace identity from other artifacts.
 
 # Method
 
-遵循 `skills/domain/tg-closure/SKILL.md`（审计视角）与 `references/certificate.md`。
-验证 R/E 不变量、证书可 replay、与当前 R 无冲突；不发明新排除规则。
+遵循 `skills/domain/tg-closure/SKILL.md` 与 `references/closure-safety.md`、`references/certificate.md`。
+验证 R/E 不变量与证书可 replay；不发明新排除规则。
 
 # Done when
 
-给出通过/退回及理由；合同 `closure-audit-v1`（以 Bundle 为准）。
+给出通过/退回及理由。

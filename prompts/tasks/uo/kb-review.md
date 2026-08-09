@@ -1,7 +1,5 @@
 # Task
 
-Bundle identity is authoritative. Do not replace identity from other artifacts.
-
 审查 UO KB 一致性与证据质量。
 
 # Targets
@@ -17,8 +15,8 @@ Bundle identity is authoritative. Do not replace identity from other artifacts.
 
 # Method
 
-遵循 `skills/domain/uo-kb-build/SKILL.md`（KB 审查）。
+遵循 `skills/domain/uo-kb-build/SKILL.md`（KB 审查）与 `references/authority-model.md`。
 
 # Done when
 
-`ACCEPT` / `NEED_PATCH` / `UNRESOLVED`；合同以 Bundle 为准。
+`ACCEPT` / `NEED_PATCH` / `UNRESOLVED`。

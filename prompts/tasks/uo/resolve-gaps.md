@@ -1,7 +1,5 @@
 # Task
 
-Bundle identity is authoritative. Do not replace identity from other artifacts.
-
 消解 UO KB 语义缺口。
 
 # Targets
@@ -21,4 +19,4 @@ Bundle identity is authoritative. Do not replace identity from other artifacts.
 
 # Done when
 
-每个 gap 有补丁、解释或明确缺失；合同以 Bundle 为准。
+每个 gap 有补丁、解释或明确缺失。
