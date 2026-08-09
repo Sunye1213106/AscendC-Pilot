@@ -29,7 +29,6 @@ _SEMANTIC_FLOW = {
     RelationKind.LAUNCHES.value,
     RelationKind.READS.value,
     RelationKind.WRITES.value,
-    RelationKind.DEPENDS_ON.value,
 }
 
 
