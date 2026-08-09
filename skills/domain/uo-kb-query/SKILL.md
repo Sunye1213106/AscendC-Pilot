@@ -1,37 +1,54 @@
 ---
 name: uo-kb-query
 description: >
-  基于 UO 知识库与源码回答关于算子结构、数据流、TilingKey、调用关系的问题。
-  用于查询、解释、定位，而非修改 KB。
+  基于统一 UO CodeMap 与源码证据回答算子 API、Host、TilingKey、TilingData、Kernel、模板、宏、架构与数据流问题。
+  用于查询、解释、定位与完整性检查，不修改 UO。
 ---
 
-# UO 知识库查询
+# UO CodeMap 查询
+
+## 权威入口
+
+查询优先读取 `.ascendc-pilot/uo/<op>.<arch>.uo`。调用方只使用 `uo_init.uo_query.open_query(...)` / `CodeMapQuery`，不得依赖底层 SQLite 表结构或手写 SQL。
+
+旧 `indexes/kb_graph.sqlite` 仅是迁移期 fallback；新 `.uo` 存在时不得绕回旧库。
 
 ## 核心循环
 
 ```text
 理解问题
  ↓
-精确解析符号
+解析实体 / 关系 / 路径
  ↓
-KB / Codemap 查询
+CodeMap 结构化查询
  ↓
-必要时读源码校验
+必要时读取源码切片验证
  ↓
-回答并附证据
+回答并附 provenance / source span
 ```
 
-## 方法
+## 查询面
 
-1. 把问题收成可查询的实体或关系（定义、读写、调用、路径、完整性）。
-2. 先结构化查询，再读源码切片验证。
-3. 多候选同名时列出歧义，不要静默择一。
-4. 答案必须带来源码或 KB 证据；不确定则标明。
+优先按问题使用最窄的结构化接口：
 
-**查询未命中 ≠ 源码不存在。**
+- API：`operator_api`、`input_roots`、`output_roots`
+- TilingKey：`tiling_keys`、`selected_kernel`；保留声明顺序、bit width / offset 与 packed-key registration
+- TilingData：`tiling_data`、`tiling_fields`、`tiling_registrations`、`field_impact`
+- 代码图：`search`、`neighbors`、`callers`、`callees`、`find_path`、`upstream`、`downstream`
+- 编译期：宏、compile var、template arg / instance、active build variant、available arch
+- 质量：`audit`、`unresolved`、`summary`
+
+## 证据规则
+
+1. 结构化边必须有源码、编译器或确定性 pass provenance；不能用节点共存推断关系。
+2. `TilingKey → Kernel`、`Template → Kernel`、`Input → Kernel` 等跨层链必须沿真实 relation 回答，禁止补 Cartesian 边。
+3. 当前源码声明的 API、TilingKey、TilingData、Kernel ABI 优先于历史 archive；历史自由文本只作为线索，不自动升级为 relation。
+4. 同名多候选时返回歧义；不得静默择一。
+5. 查询未命中不等于源码不存在。必要时定位源码验证，并把结果标成 `PARTIAL` 或 `UNKNOWN`。
+6. `unresolved` 仍存在时，不得把对应子图描述成 compiler-complete。语法级 call inventory 不能冒充完整 C++ call-target graph。
 
 ## 结果
 
-- **ANSWERED**：有证据的直接回答
-- **PARTIAL**：部分回答 + 缺失项
-- **UNKNOWN**：证据不足
+- **ANSWERED**：结构化证据足以直接回答
+- **PARTIAL**：主问题可回答，但存在明确 unresolved / compiler gap
+- **UNKNOWN**：证据不足，不能可靠推断
