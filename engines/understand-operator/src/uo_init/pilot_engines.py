@@ -811,13 +811,20 @@ def derive_key_fields(project_root: Path, payload: dict[str, Any] | None = None)
         isolate = ctx.get("derive_isolate", True)
         if isinstance(isolate, str):
             isolate = isolate.strip().lower() not in {"0", "false", "no"}
-        doc = derive_host_fields(
-            bundle,
-            timeout=timeout,
-            max_helper_guards=helper,
-            isolate=bool(isolate),
-            only=ctx.get("derive_only"),
-        )
+        workers = ctx.get("derive_workers") or ctx.get("workers")
+        try:
+            workers_n = int(workers) if workers is not None else 0
+        except (TypeError, ValueError):
+            workers_n = 0
+        derive_kwargs: dict[str, Any] = {
+            "timeout": timeout,
+            "max_helper_guards": helper,
+            "isolate": bool(isolate),
+            "only": ctx.get("derive_only"),
+        }
+        if workers_n > 0:
+            derive_kwargs["workers"] = workers_n
+        doc = derive_host_fields(bundle, **derive_kwargs)
         bundle["host_derivation"] = doc
         _dump(uo / "ir" / "host_derivation.yaml", doc.to_dict())
         # TG-facing view is written early so export_kb can attach it without

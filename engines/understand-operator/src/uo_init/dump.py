@@ -17,6 +17,7 @@ from uo_init.kb_index import (
     load_host_derivation_from_db,
     load_legal_keys_from_db,
     load_view_blob,
+    materialize_lazy_view,
 )
 
 # Short aliases → view_blob names stored by export_kb / rebuild_index.
@@ -119,6 +120,8 @@ def dump_view(
         raise KeyError(
             f"view not found in DB: {name}; available={available[:40]}"
         )
+
+    payload = materialize_lazy_view(db, name, payload)
 
     if out is not None:
         path = Path(out)

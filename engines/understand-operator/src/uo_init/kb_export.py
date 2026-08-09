@@ -537,11 +537,24 @@ def assemble_artifacts(kb: KnowledgeBase) -> dict[str, Any]:
             "tiling_data": dict(kb.notes.get("tiling_data_ir") or {}),
         },
         "views/call_graph.yaml": _call_graph_view(kb, payload),
-        "cross_layer/impact_graph.yaml": _view(edges=payload["edges"]),
-        "cross_layer/variable_lineage.yaml": _view(
-            status="extracted" if variables else "not_extracted",
-            edges=_select_edges(payload, "derives_from", "controls", "reads", "writes"),
-        ),
+        # Lazy projections: authority is the edge table / operator_graph.
+        # dump_view materializes full edge lists on demand.
+        "cross_layer/impact_graph.yaml": {
+            "version": FORMAT_VERSION,
+            "status": "lazy",
+            "schema": "uo-view-impact-lazy/v1",
+            "projection": "all_edges",
+            "edge_count": len(payload.get("edges") or []),
+            "fingerprint": payload.get("fingerprint") or "",
+        },
+        "cross_layer/variable_lineage.yaml": {
+            "version": FORMAT_VERSION,
+            "status": "lazy" if variables else "not_extracted",
+            "schema": "uo-view-lineage-lazy/v1",
+            "projection": "edge_kinds",
+            "kinds": ["derives_from", "controls", "reads", "writes"],
+            "fingerprint": payload.get("fingerprint") or "",
+        },
         "flow/golden_model.yaml": _view(status="not_extracted"),
         "flow/numerical_model.yaml": _view(status="not_extracted"),
     }
@@ -587,13 +600,19 @@ def assemble_artifacts(kb: KnowledgeBase) -> dict[str, Any]:
     }
 
 
+def canonical_json_bytes(payload: Any) -> bytes:
+    """Stable JSON bytes shared by content hashes and ``view_blob`` storage."""
+    from uo_init.kb_index import canonical_json_bytes as _bytes
+
+    return _bytes(payload)
+
+
 def _content_sha256(payload: Any) -> str:
-    raw = yaml.safe_dump(
-        payload,
-        allow_unicode=True,
-        sort_keys=True,
-        default_flow_style=False,
-    ).encode("utf-8")
+    """SHA-256 of canonical JSON (not YAML). Prefer :func:`_sha256_bytes`."""
+    return hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
+
+
+def _sha256_bytes(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
@@ -602,6 +621,9 @@ def export_kb(kb: KnowledgeBase, uo_root: str | Path) -> dict[str, Any]:
 
     Primary write is always ``indexes/kb_graph.sqlite`` (all layers as blobs).
     YAML write is gated by :func:`yaml_export_enabled` (``UO_KB_YAML``, default off).
+
+    Each artifact is serialized to canonical JSON **once**; the same bytes feed
+    both the content hash and ``view_blob.data``.
     """
     root = Path(uo_root).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -610,36 +632,70 @@ def export_kb(kb: KnowledgeBase, uo_root: str | Path) -> dict[str, Any]:
     legal_keys: list[dict[str, Any]] = list(assembled["legal_keys"] or [])
     payload = assembled["graph"]
 
-    hashes = {
-        rel_path: {
-            "sha256": _content_sha256(content),
+    # Serialize-once: payload → JSON bytes → hash + DB blob.
+    view_json: dict[str, str] = {}
+    hashes: dict[str, dict[str, Any]] = {}
+    for rel_path, content in sorted(artifacts.items()):
+        raw = canonical_json_bytes(content)
+        view_json[rel_path] = raw.decode("utf-8")
+        hashes[rel_path] = {
+            "sha256": _sha256_bytes(raw),
             "status": "extracted",
         }
-        for rel_path, content in sorted(artifacts.items())
-    }
     if legal_keys:
         legal_raw = "".join(
-            json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n"
+            json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            + "\n"
             for row in legal_keys
         ).encode("utf-8")
         hashes["tiling/legal_key_index.jsonl"] = {
-            "sha256": hashlib.sha256(legal_raw).hexdigest(),
+            "sha256": _sha256_bytes(legal_raw),
             "status": "extracted",
         }
-    hash_payload = {
+    # Hash document excludes its own entry to avoid self-referential hashing.
+    hash_doc = {
         "version": FORMAT_VERSION,
         "status": "extracted",
-        "artifacts": hashes,
+        "encoding": "canonical_json",
+        "artifacts": dict(hashes),
         "hashes": {rel: meta["sha256"] for rel, meta in hashes.items()},
     }
-    artifacts["checks/artifact_hashes.yaml"] = hash_payload
+    hash_raw = canonical_json_bytes(hash_doc)
+    view_json["checks/artifact_hashes.yaml"] = hash_raw.decode("utf-8")
+    hashes["checks/artifact_hashes.yaml"] = {
+        "sha256": _sha256_bytes(hash_raw),
+        "status": "extracted",
+    }
+    artifacts["checks/artifact_hashes.yaml"] = hash_doc
 
+    from uo_init.host_codemap import default_codemap_completeness
     from uo_init.kb_index import write_kb_database
+
+    completeness = kb.notes.get("codemap_completeness")
+    if not isinstance(completeness, dict):
+        profile = str(
+            (kb.notes.get("init_profile") or os.environ.get("UO_INIT_PROFILE") or "fast")
+        )
+        closure = str(
+            (kb.notes.get("closure_mode") or os.environ.get("UO_CLOSURE_MODE") or "keypath")
+        )
+        completeness = default_codemap_completeness(
+            init_profile=profile, closure_mode=closure
+        )
+    completeness_raw = canonical_json_bytes(completeness)
+    view_json["codemap/completeness.yaml"] = completeness_raw.decode("utf-8")
+    artifacts["codemap/completeness.yaml"] = completeness
+    hashes["codemap/completeness.yaml"] = {
+        "sha256": _sha256_bytes(completeness_raw),
+        "status": "extracted",
+    }
 
     db_receipt = write_kb_database(
         root,
         payload,
         views=artifacts,
+        view_json=view_json,
+        artifact_hashes=hashes,
         legal_keys=legal_keys,
         host_derivation=assembled.get("host_derivation"),
         key_reachability=artifacts.get("tiling/key_reachability.yaml"),
@@ -647,6 +703,8 @@ def export_kb(kb: KnowledgeBase, uo_root: str | Path) -> dict[str, Any]:
             "authority": "db",
             "yaml_export": yaml_export_enabled(),
             "integrity_status": "unknown",
+            "hash_encoding": "canonical_json",
+            "codemap_completeness": completeness,
         },
     )
 
@@ -674,6 +732,7 @@ def export_kb(kb: KnowledgeBase, uo_root: str | Path) -> dict[str, Any]:
         "authority": "db",
         "database": db_receipt.get("database"),
         "yaml_export": wrote_yaml,
+        "hash_encoding": "canonical_json",
     }
 
 

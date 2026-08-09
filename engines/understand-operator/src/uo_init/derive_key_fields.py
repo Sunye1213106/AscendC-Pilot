@@ -1147,6 +1147,12 @@ class KeyFieldDeriver:
         #: without it two reads of one name at different points in a function
         #: would share an entry. See `_visible_defs`.
         self._cache: dict[tuple[str, str, tuple, tuple], Expr] = {}
+        #: Cross-dimension semantic expansions (function/variable/program point).
+        #: Survives across ``derive()`` calls on this deriver — critical for
+        #: persistent workers that reuse one deriver for many fields.
+        from uo_init.derive_cache import SemanticExpansionCache
+
+        self._semantic = SemanticExpansionCache()
         self._stack: set[tuple[str, str]] = set()
         #: Names whose chain is currently being built. Cycle detection has to
         #: key on identity alone — unlike the cache, which also keys on the
@@ -3071,6 +3077,13 @@ class KeyFieldDeriver:
             cached = self._cache.get(key)
         if cached is not None:
             return cached
+        # Semantic layer: same (function, variable, program-point tag) across
+        # dimensions — e.g. many keys read ``fBaseParams.blockOuter``.
+        point = repr(tag) if tag else ""
+        semantic = self._semantic.get(fn, canon, program_point=point)
+        if semantic is not None:
+            self._cache[generic] = semantic
+            return semantic
         # Same host state under another caller scope -- true of a member, which
         # is one variable however many functions touch it. A local is a
         # different variable in every function that declares one, so reusing
@@ -3080,6 +3093,7 @@ class KeyFieldDeriver:
             for (scope2, other, ctx2, tag2), got in self._cache.items():
                 if other == canon and scope2 != fn and ctx2 == () and tag2 == tag:
                     self._cache[generic] = got
+                    self._semantic.put(fn, canon, got, program_point=point)
                     return got
         if not sites:
             return leaf
@@ -3089,6 +3103,7 @@ class KeyFieldDeriver:
         # leaf so the resolver can classify it as LOOP_INDUCTION / scheduling.
         if _loop_scoped_only(sites):
             self._cache[generic] = leaf
+            self._semantic.put(fn, canon, leaf, program_point=point)
             return leaf
         self._active.add(ident)
         outer_reads = self._prev_read
@@ -3115,7 +3130,10 @@ class KeyFieldDeriver:
             # Self-contained results are valid anywhere and go in the shared
             # slot; a result that leaned on an enclosing chain is only valid
             # under the same one.
-            self._cache[generic if not (reads - {ident}) else key] = out
+            slot = generic if not (reads - {ident}) else key
+            self._cache[slot] = out
+            if slot == generic:
+                self._semantic.put(fn, canon, out, program_point=point)
         return out
 
     def _ident(self, name: str, fn: str) -> str:

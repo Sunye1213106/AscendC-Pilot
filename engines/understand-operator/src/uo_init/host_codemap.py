@@ -18,10 +18,12 @@ The single SQLite product / authority is ``indexes/kb_graph.sqlite``. Legacy
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import yaml
 
@@ -368,8 +370,65 @@ def _kb_has_host_view_tables(db: Path) -> bool:
         return False
 
 
+@dataclass
+class QueryResult:
+    """Uniform Codemap query envelope: facts + completeness + evidence."""
+
+    facts: list[Any] = field(default_factory=list)
+    completeness: str = "unknown"
+    evidence: list[dict[str, Any]] = field(default_factory=list)
+    fingerprint: str = ""
+    scope: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "facts": list(self.facts),
+            "completeness": self.completeness,
+            "evidence": list(self.evidence),
+            "fingerprint": self.fingerprint,
+            "scope": self.scope,
+        }
+
+
+def default_codemap_completeness(
+    *,
+    init_profile: str = "fast",
+    closure_mode: str = "keypath",
+) -> dict[str, Any]:
+    """Profile-level completeness contract stored in KB meta / view blob."""
+    profile = (init_profile or "fast").strip().lower()
+    mode = (closure_mode or "keypath").strip().lower()
+    host_complete = mode == "full" and profile == "full"
+    return {
+        "schema": "codemap-completeness/v1",
+        "init_profile": profile,
+        "closure_mode": mode,
+        "host": {
+            "functions": {
+                "mode": mode,
+                "entry_roots_complete": True,
+                "call_closure": "complete" if host_complete else "partial",
+            },
+            "writes": "complete" if mode in {"full", "keypath"} else "partial",
+            "reads": "complete" if mode in {"full", "keypath"} else "partial",
+        },
+        "kernel": {
+            "completeness": "partial" if profile == "fast" else "complete",
+            "dtype_variants": "fast_one" if profile == "fast" else "full",
+        },
+        "api": {"completeness": "skipped" if profile == "fast" else "partial"},
+        "macros": {"completeness": "partial"},
+        "lemma_certificate": {
+            "assignment_sites_complete": host_complete,
+            "call_closure_complete": host_complete,
+            "alias_state_exact": False,
+            "macro_context_complete": False,
+        },
+    }
+
+
 class CodemapQuery:
-    """Read-only queries over the TG host-view projection in kb_graph.sqlite."""
+    """Unified read API over ``indexes/kb_graph.sqlite`` (Host view + graph)."""
 
     def __init__(self, uo_root: str | Path):
         self.root = Path(uo_root)
@@ -378,9 +437,146 @@ class CodemapQuery:
             rebuild_codemap_index(self.root)
         self.db = kb
         self._mode = "kb"
+        self._fingerprint = self._load_fingerprint()
+        self._completeness = self._load_completeness()
 
     def _conn(self) -> sqlite3.Connection:
         return sqlite3.connect(str(self.db))
+
+    def _load_fingerprint(self) -> str:
+        try:
+            with self._conn() as conn:
+                row = conn.execute(
+                    "SELECT value FROM meta WHERE key='graph_fingerprint'"
+                ).fetchone()
+                return str(row[0]) if row else ""
+        except sqlite3.Error:
+            return ""
+
+    def _load_completeness(self) -> dict[str, Any]:
+        try:
+            with self._conn() as conn:
+                row = conn.execute(
+                    "SELECT value FROM meta WHERE key='codemap_completeness'"
+                ).fetchone()
+                if row:
+                    try:
+                        payload = json.loads(row[0])
+                        if isinstance(payload, dict):
+                            return payload
+                    except json.JSONDecodeError:
+                        pass
+                blob = conn.execute(
+                    "SELECT data FROM view_blob WHERE name=?",
+                    ("codemap/completeness.yaml",),
+                ).fetchone()
+                if blob:
+                    try:
+                        payload = json.loads(blob[0])
+                        if isinstance(payload, dict):
+                            return payload
+                    except json.JSONDecodeError:
+                        pass
+        except sqlite3.Error:
+            pass
+        return default_codemap_completeness()
+
+    def _result(
+        self,
+        facts: Iterable[Any],
+        *,
+        completeness: str | None = None,
+        evidence: list[dict[str, Any]] | None = None,
+        scope: str = "",
+    ) -> QueryResult:
+        return QueryResult(
+            facts=list(facts),
+            completeness=completeness or "unknown",
+            evidence=list(evidence or []),
+            fingerprint=self._fingerprint,
+            scope=scope,
+        )
+
+    def completeness(self, scope: str = "") -> QueryResult:
+        """Return the stored completeness contract (optionally scoped)."""
+        payload: Any = self._completeness
+        level = "partial"
+        if scope:
+            parts = scope.split(".")
+            cur: Any = self._completeness
+            for part in parts:
+                if isinstance(cur, dict) and part in cur:
+                    cur = cur[part]
+                else:
+                    cur = None
+                    break
+            payload = cur
+            if isinstance(cur, str):
+                level = cur
+            elif isinstance(cur, dict):
+                level = str(cur.get("completeness") or cur.get("call_closure") or "partial")
+        else:
+            lemma = self._completeness.get("lemma_certificate") or {}
+            if all(bool(lemma.get(k)) for k in (
+                "assignment_sites_complete",
+                "call_closure_complete",
+                "alias_state_exact",
+                "macro_context_complete",
+            )):
+                level = "complete"
+            else:
+                level = "partial"
+        return self._result(
+            [payload] if payload is not None else [],
+            completeness=level,
+            scope=scope or "codemap",
+        )
+
+    def fields(self) -> list[dict[str, Any]]:
+        """All host-view fields with writers (and attached guards)."""
+        with self._conn() as conn:
+            metas = conn.execute(
+                "SELECT name, kind, exactness, grade FROM field_meta ORDER BY name"
+            ).fetchall()
+            writers = conn.execute(
+                "SELECT field, path, function, file, line, rhs, via FROM field_writer "
+                "ORDER BY field, file, line"
+            ).fetchall()
+            guards = conn.execute(
+                "SELECT file, line, guard FROM field_guard"
+            ).fetchall()
+        guard_map: dict[tuple[str, int], list[str]] = {}
+        for file, line, guard in guards:
+            if not guard:
+                continue
+            guard_map.setdefault((str(file), int(line or 0)), []).append(str(guard))
+        by_field: dict[str, dict[str, Any]] = {}
+        for name, kind, exactness, grade in metas:
+            by_field[str(name)] = {
+                "name": str(name),
+                "kind": kind,
+                "exactness": exactness,
+                "grade": grade,
+                "writers": [],
+            }
+        for field_name, path, function, file, line, rhs, via in writers:
+            key = str(field_name or path or "")
+            row = by_field.setdefault(
+                key, {"name": key, "kind": "", "exactness": "", "grade": "", "writers": []}
+            )
+            g = guard_map.get((str(file), int(line or 0)), [])
+            row["writers"].append(
+                {
+                    "path": path,
+                    "function": function,
+                    "file": file,
+                    "line": line,
+                    "rhs": rhs,
+                    "via": via,
+                    "guards": list(g),
+                }
+            )
+        return list(by_field.values())
 
     def writers_of(self, symbol: str) -> list[dict[str, Any]]:
         table = "field_writer" if self._mode == "kb" else "writers"
@@ -396,6 +592,11 @@ class CodemapQuery:
             for r in rows
         ]
 
+    def writers(self, symbol: str) -> QueryResult:
+        host = (self._completeness.get("host") or {}).get("writes") or "partial"
+        facts = self.writers_of(symbol)
+        return self._result(facts, completeness=str(host), scope=f"writers:{symbol}")
+
     def guards_at(self, file: str, line: int) -> list[str]:
         table = "field_guard" if self._mode == "kb" else "guards"
         with self._conn() as conn:
@@ -405,6 +606,10 @@ class CodemapQuery:
             ).fetchall()
         return [r[0] for r in rows if r[0]]
 
+    def guards(self, file: str, line: int) -> QueryResult:
+        facts = [{"guard": g} for g in self.guards_at(file, line)]
+        return self._result(facts, completeness="partial", scope=f"guards:{file}:{line}")
+
     def reads_of(self, field: str) -> list[dict[str, str]]:
         table = "field_read" if self._mode == "kb" else "reads"
         with self._conn() as conn:
@@ -412,6 +617,21 @@ class CodemapQuery:
                 f"SELECT var, root FROM {table} WHERE field = ?", (field,),
             ).fetchall()
         return [{"var": r[0], "root": r[1]} for r in rows]
+
+    def readers(self, field: str) -> QueryResult:
+        host = (self._completeness.get("host") or {}).get("reads") or "partial"
+        return self._result(
+            self.reads_of(field), completeness=str(host), scope=f"reads:{field}"
+        )
+
+    def roots(self, field: str) -> QueryResult:
+        roots = sorted({r.get("root") for r in self.reads_of(field) if r.get("root")})
+        host = (self._completeness.get("host") or {}).get("reads") or "partial"
+        return self._result(
+            [{"root": r} for r in roots],
+            completeness=str(host),
+            scope=f"roots:{field}",
+        )
 
     def predicates(self, *, feature_hint: str | None = None) -> list[dict[str, Any]]:
         table = "field_predicate" if self._mode == "kb" else "predicates"
@@ -433,13 +653,225 @@ class CodemapQuery:
             for r in rows
         ]
 
-    def callers_of(self, function: str) -> list[dict[str, Any]]:
-        """Deprecated in v2: call graph lives in the navigation layer.
+    def _function_node_id(self, function: str) -> str | None:
+        from uo_init.ids import named_id
 
-        Kept as an empty list so old call sites do not crash; use UO graph queries.
-        """
-        del function
-        return []
+        name = str(function or "").strip()
+        if not name:
+            return None
+        return named_id("Function", name)
+
+    def callers_of(self, function: str) -> list[dict[str, Any]]:
+        """Callers of ``function`` from first-class ``calls`` edges."""
+        # edges where function is the callee
+        node_id = self._function_node_id(function)
+        if not node_id:
+            return []
+        short = function.rsplit("::", 1)[-1]
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT e.src, e.dst, e.data, src.name, dst.name FROM edge e "
+                "JOIN node src ON src.id = e.src "
+                "JOIN node dst ON dst.id = e.dst "
+                "WHERE e.kind = 'calls' AND "
+                "(e.dst = ? OR dst.name = ? OR dst.name LIKE ?)",
+                (node_id, function, f"%{short}"),
+            ).fetchall()
+        return _expand_call_rows(rows, want="caller")
+
+    def callees_of(self, function: str) -> list[dict[str, Any]]:
+        node_id = self._function_node_id(function)
+        if not node_id:
+            return []
+        short = function.rsplit("::", 1)[-1]
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT e.src, e.dst, e.data, src.name, dst.name FROM edge e "
+                "JOIN node src ON src.id = e.src "
+                "JOIN node dst ON dst.id = e.dst "
+                "WHERE e.kind = 'calls' AND "
+                "(e.src = ? OR src.name = ? OR src.name LIKE ?)",
+                (node_id, function, f"%{short}"),
+            ).fetchall()
+        return _expand_call_rows(rows, want="callee")
+
+    def callers(self, function: str) -> QueryResult:
+        host = (
+            ((self._completeness.get("host") or {}).get("functions") or {}).get(
+                "call_closure"
+            )
+            or "partial"
+        )
+        return self._result(
+            self.callers_of(function), completeness=str(host), scope=f"callers:{function}"
+        )
+
+    def callees(self, function: str) -> QueryResult:
+        host = (
+            ((self._completeness.get("host") or {}).get("functions") or {}).get(
+                "call_closure"
+            )
+            or "partial"
+        )
+        return self._result(
+            self.callees_of(function), completeness=str(host), scope=f"callees:{function}"
+        )
+
+    def influence(self, symbol: str, *, limit: int = 64) -> QueryResult:
+        """Bounded BFS over outbound edges from nodes matching ``symbol``."""
+        with self._conn() as conn:
+            seeds = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT id FROM node WHERE name LIKE ? OR id LIKE ? LIMIT 16",
+                    (f"%{symbol}%", f"%{symbol}%"),
+                ).fetchall()
+            ]
+            seen = set(seeds)
+            frontier = list(seeds)
+            facts: list[dict[str, Any]] = []
+            while frontier and len(facts) < limit:
+                cur = frontier.pop(0)
+                rows = conn.execute(
+                    "SELECT id, kind, src, dst, data FROM edge WHERE src = ?",
+                    (cur,),
+                ).fetchall()
+                for eid, kind, src, dst, data_json in rows:
+                    facts.append(
+                        {
+                            "edge_id": eid,
+                            "kind": kind,
+                            "src": src,
+                            "dst": dst,
+                        }
+                    )
+                    if dst not in seen and len(seen) < limit:
+                        seen.add(dst)
+                        frontier.append(dst)
+                    if len(facts) >= limit:
+                        break
+        return self._result(facts, completeness="partial", scope=f"influence:{symbol}")
+
+    def path(self, src: str, dst: str, *, limit: int = 32) -> QueryResult:
+        """Shortest node path via edges (ids or name substrings)."""
+        with self._conn() as conn:
+            def resolve(token: str) -> str | None:
+                row = conn.execute(
+                    "SELECT id FROM node WHERE id = ? OR name = ? LIMIT 1",
+                    (token, token),
+                ).fetchone()
+                if row:
+                    return row[0]
+                row = conn.execute(
+                    "SELECT id FROM node WHERE name LIKE ? OR id LIKE ? LIMIT 1",
+                    (f"%{token}%", f"%{token}%"),
+                ).fetchone()
+                return row[0] if row else None
+
+            start = resolve(src)
+            goal = resolve(dst)
+            if not start or not goal:
+                return self._result([], completeness="unknown", scope=f"path:{src}->{dst}")
+            prev: dict[str, str | None] = {start: None}
+            queue = [start]
+            while queue and len(prev) < limit * 4:
+                cur = queue.pop(0)
+                if cur == goal:
+                    break
+                for (nxt,) in conn.execute(
+                    "SELECT dst FROM edge WHERE src = ?", (cur,)
+                ).fetchall():
+                    if nxt not in prev:
+                        prev[nxt] = cur
+                        queue.append(nxt)
+            if goal not in prev:
+                return self._result([], completeness="partial", scope=f"path:{src}->{dst}")
+            chain = []
+            cur: str | None = goal
+            while cur is not None:
+                chain.append(cur)
+                cur = prev.get(cur)
+            chain.reverse()
+        return self._result(
+            [{"nodes": chain}],
+            completeness="partial",
+            scope=f"path:{src}->{dst}",
+        )
+
+    def search(self, text: str, *, limit: int = 32) -> QueryResult:
+        q = f"%{text}%"
+        with self._conn() as conn:
+            nodes = conn.execute(
+                "SELECT id, kind, name FROM node WHERE name LIKE ? OR id LIKE ? LIMIT ?",
+                (q, q, limit),
+            ).fetchall()
+            try:
+                fts = conn.execute(
+                    "SELECT evidence_id, snippet FROM evidence_fts "
+                    "WHERE evidence_fts MATCH ? LIMIT ?",
+                    (text, limit),
+                ).fetchall()
+            except sqlite3.Error:
+                fts = []
+        facts = (
+            [{"id": r[0], "kind": r[1], "name": r[2], "match": "node"} for r in nodes]
+            + [
+                {"id": r[0], "snippet": r[1], "match": "evidence"}
+                for r in fts
+            ]
+        )
+        return self._result(facts[:limit], completeness="partial", scope=f"search:{text}")
+
+    def source(self, node_id: str) -> QueryResult:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT e.id, e.file, e.line_start, e.line_end, e.snippet "
+                "FROM evidence e "
+                "LEFT JOIN node_evidence ne ON ne.evidence_id = e.id "
+                "WHERE e.node_id = ? OR ne.node_id = ? OR e.id = ?",
+                (node_id, node_id, node_id),
+            ).fetchall()
+        facts = [
+            {
+                "id": r[0],
+                "file": r[1],
+                "line_start": r[2],
+                "line_end": r[3],
+                "snippet": r[4],
+            }
+            for r in rows
+        ]
+        return self._result(facts, completeness="partial", scope=f"source:{node_id}")
+
+
+def _expand_call_rows(
+    rows: list[tuple], *, want: str
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for src, dst, data_json, src_name, dst_name in rows:
+        try:
+            data = json.loads(data_json) if data_json else {}
+        except json.JSONDecodeError:
+            data = {}
+        sites = data.get("sites") if isinstance(data.get("sites"), list) else None
+        if not sites:
+            sites = [data]
+        for site in sites:
+            if not isinstance(site, dict):
+                continue
+            out.append(
+                {
+                    "caller": src_name,
+                    "callee": dst_name,
+                    "file": site.get("file") or data.get("file") or "",
+                    "line": int(site.get("line") or data.get("line") or 0),
+                    "guards": list(site.get("guards") or data.get("guards") or []),
+                    "args": list(site.get("args") or data.get("args") or []),
+                    "receiver": site.get("receiver") or data.get("receiver") or "",
+                    "peer": dst_name if want == "callee" else src_name,
+                }
+            )
+    return out
 
 
 def export_codemap_from_bundle(

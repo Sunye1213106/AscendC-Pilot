@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
+import hashlib
+import json
+import sqlite3
 from pathlib import Path
 
 import yaml
 
 from uo_init.ids import named_id, predicate_id
-from uo_init.kb_export import export_kb
+from uo_init.kb_export import canonical_json_bytes, export_kb
 from uo_init.kb_index import index_summary, rebuild_index
 from uo_init.kb_model import Domain, Edge, Evidence, KnowledgeBase, Node
 from uo_init.uo_query import open_query
@@ -90,6 +93,56 @@ def test_db_is_authority_and_sqlite_rebuild_is_idempotent(tmp_path: Path):
     hashes = load_view_blob(db, "checks/artifact_hashes.yaml")
     assert isinstance(hashes.get("hashes"), dict) and hashes["hashes"]
     assert "tiling/variables.yaml" in hashes["hashes"]
+    assert hashes.get("encoding") == "canonical_json"
+    assert receipt.get("hash_encoding") == "canonical_json"
+
+    # Serialize-once: artifact table sha256 matches view_blob bytes.
+    conn = sqlite3.connect(db)
+    try:
+        blob = conn.execute(
+            "SELECT data FROM view_blob WHERE name = ?",
+            ("tiling/variables.yaml",),
+        ).fetchone()[0]
+        art = conn.execute(
+            "SELECT sha256 FROM artifact WHERE rel_path = ?",
+            ("tiling/variables.yaml",),
+        ).fetchone()
+        assert art is not None
+        assert art[0] == hashlib.sha256(blob.encode("utf-8")).hexdigest()
+        assert art[0] == hashes["hashes"]["tiling/variables.yaml"]
+        assert get_meta_hash_encoding(conn) == "canonical_json"
+    finally:
+        conn.close()
+
+
+def get_meta_hash_encoding(conn: sqlite3.Connection) -> str:
+    row = conn.execute(
+        "SELECT value FROM meta WHERE key = ?", ("hash_encoding",)
+    ).fetchone()
+    return row[0] if row else ""
+
+
+def test_canonical_json_bytes_stable():
+    payload = {"b": 2, "a": [1, {"z": 0}]}
+    raw = canonical_json_bytes(payload)
+    assert raw == json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+
+
+def test_lazy_impact_graph_materializes_from_edges(tmp_path: Path):
+    from uo_init.kb_index import load_view_blob, load_view_blob_raw
+
+    root = tmp_path / "uo"
+    export_kb(_sample_kb(), root)
+    db = root / "indexes" / "kb_graph.sqlite"
+    stub = load_view_blob_raw(db, "cross_layer/impact_graph.yaml")
+    assert isinstance(stub, dict) and stub.get("status") == "lazy"
+    full = load_view_blob(db, "cross_layer/impact_graph.yaml")
+    assert isinstance(full, dict)
+    assert full.get("status") == "extracted"
+    assert isinstance(full.get("edges"), list) and full["edges"]
+    assert full.get("materialized_from") == "ir/operator_graph.yaml"
 
 
 def test_fixed_queries_return_evidence_and_recursive_impact(tmp_path: Path):

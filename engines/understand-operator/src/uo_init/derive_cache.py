@@ -170,3 +170,78 @@ def store_field_row(
         return path
     except Exception:  # noqa: BLE001
         return None
+
+
+def expansion_cache_key(
+    function: str,
+    variable: str,
+    *,
+    program_point: str = "",
+    macro_context: str = "",
+    bundle_fp: str = "",
+) -> str:
+    """Disk key for a semantic expansion (shared across tiling-key dimensions)."""
+    payload = (
+        f"v{CACHE_VERSION}\0expansion\0{function}\0{variable}\0"
+        f"{program_point}\0{macro_context}\0{bundle_fp}"
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+class SemanticExpansionCache:
+    """In-process cache keyed by (function, variable, program_point, macro_context).
+
+    Persistent derive workers keep one deriver (and thus one of these) for many
+    field jobs, so expansions of ``blockOuter`` / ``s1Inner`` / … are reused
+    across dimensions without re-walking HostIR.
+    """
+
+    def __init__(self) -> None:
+        self._mem: dict[tuple[str, str, str, str], Any] = {}
+        self.hits = 0
+        self.misses = 0
+
+    @staticmethod
+    def _key(
+        function: str,
+        variable: str,
+        program_point: str = "",
+        macro_context: str = "",
+    ) -> tuple[str, str, str, str]:
+        return (
+            str(function or ""),
+            str(variable or ""),
+            str(program_point or ""),
+            str(macro_context or ""),
+        )
+
+    def get(
+        self,
+        function: str,
+        variable: str,
+        *,
+        program_point: str = "",
+        macro_context: str = "",
+    ) -> Any | None:
+        key = self._key(function, variable, program_point, macro_context)
+        if key in self._mem:
+            self.hits += 1
+            return self._mem[key]
+        self.misses += 1
+        return None
+
+    def put(
+        self,
+        function: str,
+        variable: str,
+        value: Any,
+        *,
+        program_point: str = "",
+        macro_context: str = "",
+    ) -> None:
+        self._mem[self._key(function, variable, program_point, macro_context)] = value
+
+    def clear(self) -> None:
+        self._mem.clear()
+        self.hits = 0
+        self.misses = 0

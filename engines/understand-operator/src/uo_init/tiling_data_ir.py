@@ -915,11 +915,14 @@ def materialize_call_graph(
     op_root: str = "",
     limit: int = 4000,
 ) -> dict[str, Any]:
-    """Project host call sites into ``kb.notes['call_graph']`` for AI navigation.
+    """Project host call sites into notes + first-class ``Function``/``calls`` edges.
 
-    Call sites are not first-class schema nodes (no CallSite kind). The note +
-    ``views`` export is enough for "who calls whom / under what guard".
+    CallSite is not a node kind (too many). Each site becomes
+    ``Function --calls--> Function`` with site metadata on ``edge.data``.
     """
+    from uo_init.ids import edge_id, named_id
+    from uo_init.kb_model import Edge, Evidence, Node, STATUS_EXTRACTED, STATUS_PARTIAL
+
     if host_ir is None:
         kb.notes["call_graph"] = {"edges": [], "count": 0}
         return kb.notes["call_graph"]
@@ -962,9 +965,94 @@ def materialize_call_graph(
         if m2 and m2.group(1) in field_names:
             e["tiling_field"] = m2.group(1)
             e["role"] = "tiling_getter"
+
+    # First-class Function nodes + calls edges for CodemapQuery.
+    func_meta: dict[str, dict[str, Any]] = {}
+    for name, rec in (getattr(host_ir, "functions", None) or {}).items():
+        func_meta[str(name)] = {
+            "file": rel_posix(str(getattr(rec, "file", "") or ""), op_root),
+            "line": int(getattr(rec, "line", 0) or 0),
+        }
+    for e in edges:
+        for key in ("caller", "callee"):
+            name = str(e.get(key) or "")
+            if not name:
+                continue
+            meta = func_meta.setdefault(name, {})
+            if not meta.get("file") and e.get("file"):
+                meta["file"] = e["file"]
+                meta["line"] = int(e.get("line") or 0)
+
+    for name, meta in sorted(func_meta.items()):
+        if not name:
+            continue
+        file = str(meta.get("file") or "")
+        line = int(meta.get("line") or 0)
+        ev = Evidence.at(file or "<unknown>", max(line, 1), snippet=name) if file else None
+        node = Node(
+            id=named_id("Function", name),
+            kind="Function",
+            name=name,
+            layer="host",
+            status=STATUS_EXTRACTED if ev is not None else STATUS_PARTIAL,
+            data={"file": file, "line": line},
+            evidence=[ev] if ev is not None else [],
+        )
+        kb.add_node(node)
+
+    graph_edge_count = 0
+    for e in edges:
+        caller = str(e.get("caller") or "")
+        callee = str(e.get("callee") or "")
+        if not caller or not callee:
+            continue
+        src = named_id("Function", caller)
+        dst = named_id("Function", callee)
+        if src not in kb.nodes or dst not in kb.nodes:
+            continue
+        site = {
+            "file": e.get("file") or "",
+            "line": int(e.get("line") or 0),
+            "guards": list(e.get("guards") or []),
+            "args": list(e.get("args") or []),
+            "receiver": str(e.get("receiver") or ""),
+            "role": str(e.get("role") or ""),
+            "tiling_field": str(e.get("tiling_field") or ""),
+        }
+        eid = edge_id("calls", src, dst)
+        existing = kb.edges.get(eid)
+        if existing is not None:
+            sites = existing.data.setdefault("sites", [])
+            if not sites and existing.data.get("file"):
+                sites.append(
+                    {
+                        "file": existing.data.get("file"),
+                        "line": existing.data.get("line"),
+                        "guards": existing.data.get("guards") or [],
+                        "args": existing.data.get("args") or [],
+                        "receiver": existing.data.get("receiver") or "",
+                        "role": existing.data.get("role") or "",
+                        "tiling_field": existing.data.get("tiling_field") or "",
+                    }
+                )
+            sites.append(site)
+            # Keep primary site fields from the first observation.
+            continue
+        kb.add_edge(
+            Edge.make(
+                "calls",
+                src,
+                dst,
+                data={**site, "sites": [site]},
+            )
+        )
+        graph_edge_count += 1
+
     kb.notes["call_graph"] = {
         "count": len(edges),
         "edges": edges,
+        "graph_edge_count": graph_edge_count,
+        "function_count": len(func_meta),
         "setter_count": sum(1 for e in edges if e.get("role") == "tiling_setter"),
         "getter_count": sum(1 for e in edges if e.get("role") == "tiling_getter"),
     }

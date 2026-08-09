@@ -113,6 +113,12 @@ node_kinds:
     layer: evidence
     id_rule: content
     id_material: [rel_file, line_start, line_end]
+  Function:
+    prefix: FN
+    layer: host
+    id_rule: named
+    source: host_ir.call_sites / clang_walk.FuncRecord
+    carries: [file, line]
 
 # ---------------------------------------------------------------------------
 # Edge kinds. Edge ids are `REL_<hash12(kind, src, dst)>`.
@@ -125,6 +131,7 @@ edge_kinds:
   binds: {src: TilingKeyDim, dst: TemplateBinding, meaning: KEY 维度绑定到模板实参}
   writes: {src: any, dst: TilingDataField, meaning: host 侧写入该字段}
   reads: {src: any, dst: any}
+  calls: {src: Function, dst: Function, meaning: caller 在某 call site 调用 callee}
   selects: {src: Family, dst: TemplateBinding, meaning: registry 竞价选中}
   implements: {src: TemplateBinding, dst: KernelPath}
   uses_api: {src: any, dst: ApiContract}

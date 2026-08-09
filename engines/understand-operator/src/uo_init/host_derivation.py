@@ -16,9 +16,11 @@ Full ``value_expr`` DAGs and the truncated ``expanded`` text are kept only when
 Lightweight consumers (codemap / gaps pre-sort / key_index) read metadata only.
 Deep consumers need ``UO_DEEP_SOLVE=1`` before derive.
 
-Every field derives in its own process. One runaway expansion must not be able
-to stall or crash the rest of the run, and a field that times out is recorded
-as `unresolved` rather than failing the export.
+Field / aux / premise jobs run in a persistent-but-replaceable worker pool:
+each worker loads the HostIR bundle once and reuses one ``KeyFieldDeriver``
+across jobs. A timed-out or crashed worker is killed and replaced so one
+runaway expansion cannot stall the rest of the run; that field is recorded
+as ``unresolved`` rather than failing the export.
 """
 from __future__ import annotations
 
@@ -28,7 +30,9 @@ import pickle
 import re
 import sys
 import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -1057,19 +1061,6 @@ def _premises_isolated(
     return out
 
 
-def _worker(bundle_path: str, sys_path: list[str], index: int, helper: int, queue) -> None:
-    for entry in sys_path:
-        if entry and entry not in sys.path:
-            sys.path.insert(0, entry)
-    sys.setrecursionlimit(20000)
-    try:
-        with open(bundle_path, "rb") as fh:
-            bundle = pickle.load(fh)
-        queue.put(_derive_row(bundle, index, helper))
-    except Exception as exc:  # noqa: BLE001 — the parent turns this into a row
-        queue.put({"__error__": f"{type(exc).__name__}: {exc}"[:400]})
-
-
 def _failed_row(name: str, index: int, reason: str, seconds: float) -> dict[str, Any]:
     return {
         "name": name,
@@ -1092,12 +1083,8 @@ def _failed_row(name: str, index: int, reason: str, seconds: float) -> dict[str,
     }
 
 
-def _reap(proc: Any, queue: Any) -> int | None:
-    """Leave no worker behind, whatever state it is in. Returns its exit code.
-
-    The caller cannot read `exitcode` afterwards -- closing the handle is part
-    of the cleanup -- so it is read here, while it is still there to read.
-    """
+def _reap(proc: Any, *queues: Any) -> int | None:
+    """Leave no worker behind, whatever state it is in. Returns its exit code."""
     exitcode: int | None = None
     try:
         proc.join(timeout=5)
@@ -1109,18 +1096,179 @@ def _reap(proc: Any, queue: Any) -> int | None:
             proc.join(timeout=5)
         exitcode = proc.exitcode
     finally:
-        try:
-            # The queue's feeder thread keeps the pipe open, and on Windows an
-            # open handle keeps the process object alive after it has exited.
-            queue.close()
-            queue.join_thread()
-        except Exception:  # noqa: BLE001 — teardown must not mask the result
-            pass
+        for queue in queues:
+            try:
+                queue.close()
+                queue.join_thread()
+            except Exception:  # noqa: BLE001 — teardown must not mask the result
+                pass
         try:
             proc.close()
         except Exception:  # noqa: BLE001 — already reaped, or never started
             pass
     return exitcode
+
+
+def _premise_rows_from_bundle(
+    bundle: dict[str, Any],
+    *,
+    layer: str,
+    lo: int,
+    hi: int,
+    function: str,
+    helper: int,
+    offset: int,
+) -> dict[str, Any]:
+    """Expand one premise chunk against an already-loaded bundle."""
+    resolver = None
+    if layer == "api":
+        ir = getattr(bundle.get("api_contract"), "ir", None)
+        if ir is None:
+            return {"rows": []}
+        resolver = bundle.get("api_resolver")
+        if resolver is None:
+            from uo_init.source_resolver import SourceResolver
+
+            resolver = SourceResolver(host_ir=ir)
+            if bundle.get("var_model") is not None:
+                resolver.adopt(bundle["var_model"])
+    else:
+        ir = bundle["host_ir"]
+    return {
+        "rows": _derive_premises(
+            bundle,
+            ir,
+            function,
+            helper,
+            resolver=resolver,
+            layer=layer,
+            offset=offset,
+            only_range=(lo, hi),
+        )
+    }
+
+
+def _persistent_worker_main(
+    bundle_path: str, sys_path: list[str], request_q, response_q
+) -> None:
+    """Load the bundle once; serve field/aux/premise jobs until shutdown."""
+    for entry in sys_path:
+        if entry and entry not in sys.path:
+            sys.path.insert(0, entry)
+    sys.setrecursionlimit(20000)
+    try:
+        with open(bundle_path, "rb") as fh:
+            bundle = pickle.load(fh)
+    except Exception as exc:  # noqa: BLE001
+        # Parent will see no usable replies and replace this worker.
+        try:
+            response_q.put(
+                {"job_id": -1, "row": {"__error__": f"bundle_load: {exc}"[:400]}}
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return
+    while True:
+        try:
+            job = request_q.get()
+        except Exception:  # noqa: BLE001
+            break
+        if job is None:
+            break
+        job_id = int(job.get("job_id", -1))
+        try:
+            op = str(job.get("op") or "")
+            if op == "field":
+                row = _derive_row(bundle, int(job["index"]), int(job["helper"]))
+            elif op == "aux":
+                row = _derive_aux_row(
+                    bundle,
+                    str(job["var_id"]),
+                    str(job.get("name") or ""),
+                    str(job.get("function") or ""),
+                    int(job["helper"]),
+                )
+            elif op == "premise":
+                row = _premise_rows_from_bundle(
+                    bundle,
+                    layer=str(job.get("layer") or "host"),
+                    lo=int(job["lo"]),
+                    hi=int(job["hi"]),
+                    function=str(job.get("function") or ""),
+                    helper=int(job["helper"]),
+                    offset=int(job.get("offset") or 0),
+                )
+            else:
+                row = {"__error__": f"unknown op {op!r}"}
+            response_q.put({"job_id": job_id, "row": row})
+        except Exception as exc:  # noqa: BLE001 — parent turns this into a row
+            response_q.put(
+                {
+                    "job_id": job_id,
+                    "row": {"__error__": f"{type(exc).__name__}: {exc}"[:400]},
+                }
+            )
+
+
+def _legacy_job_to_op(job: dict[str, Any]) -> dict[str, Any]:
+    """Convert a legacy ``{target, args, name, index}`` job into a pool op."""
+    if "op" in job:
+        return {
+            "op": job["op"],
+            "name": job.get("name") or "",
+            "index": int(job.get("index", -1)),
+            **{k: v for k, v in job.items() if k not in {"name", "index"}},
+        }
+    target = job.get("target")
+    args = tuple(job.get("args") or ())
+    name = str(job.get("name") or "")
+    index = int(job.get("index", -1))
+    if target is _worker or getattr(target, "__name__", "") == "_worker":
+        return {
+            "op": "field",
+            "index": int(args[2]),
+            "helper": int(args[3]),
+            "name": name,
+            "out_index": index,
+        }
+    if target is _aux_worker or getattr(target, "__name__", "") == "_aux_worker":
+        return {
+            "op": "aux",
+            "var_id": str(args[2]),
+            "name": str(args[3]),
+            "function": str(args[4]),
+            "helper": int(args[5]),
+            "out_index": index,
+            "label": name,
+        }
+    if target is _premise_worker or getattr(target, "__name__", "") == "_premise_worker":
+        return {
+            "op": "premise",
+            "layer": str(args[2]),
+            "lo": int(args[3]),
+            "hi": int(args[4]),
+            "function": str(args[5]),
+            "helper": int(args[6]),
+            "offset": int(args[7]),
+            "name": name,
+            "out_index": index,
+        }
+    raise TypeError(f"unsupported derive job target: {target!r}")
+
+
+# Keep names importable for legacy job detection / tests.
+def _worker(bundle_path: str, sys_path: list[str], index: int, helper: int, queue) -> None:
+    """Legacy one-shot worker (tests / fallback). Prefer the persistent pool."""
+    for entry in sys_path:
+        if entry and entry not in sys.path:
+            sys.path.insert(0, entry)
+    sys.setrecursionlimit(20000)
+    try:
+        with open(bundle_path, "rb") as fh:
+            bundle = pickle.load(fh)
+        queue.put(_derive_row(bundle, index, helper))
+    except Exception as exc:  # noqa: BLE001
+        queue.put({"__error__": f"{type(exc).__name__}: {exc}"[:400]})
 
 
 def _aux_worker(
@@ -1132,6 +1280,7 @@ def _aux_worker(
     helper: int,
     queue,
 ) -> None:
+    """Legacy one-shot aux worker. Prefer the persistent pool."""
     for entry in sys_path:
         if entry and entry not in sys.path:
             sys.path.insert(0, entry)
@@ -1140,73 +1289,134 @@ def _aux_worker(
         with open(bundle_path, "rb") as fh:
             bundle = pickle.load(fh)
         queue.put(_derive_aux_row(bundle, var_id, name, function, helper))
-    except Exception as exc:  # noqa: BLE001 — the parent turns this into a row
+    except Exception as exc:  # noqa: BLE001
         queue.put({"__error__": f"{type(exc).__name__}: {exc}"[:400]})
 
 
-def _derive_isolated(
-    bundle_path: str, index: int, name: str, helper: int, timeout: int
-) -> dict[str, Any]:
-    return _run_isolated(
-        _worker,
-        (bundle_path, list(sys.path), index, helper),
-        name=name,
-        index=index,
-        timeout=timeout,
-    )
+class _WorkerSlot:
+    """One persistent derive process; replaceable on timeout/crash."""
 
+    def __init__(self, bundle_path: str, sys_path: list[str]) -> None:
+        self.bundle_path = bundle_path
+        self.sys_path = list(sys_path)
+        self.proc: Any = None
+        self.req: Any = None
+        self.resp: Any = None
+        self._start()
 
-def _run_isolated(target, args: tuple, *, name: str, index: int, timeout: int) -> dict[str, Any]:
-    """Run one derivation in its own interpreter, and reap it whatever happens."""
-    ctx = mp.get_context("spawn")
-    queue = ctx.Queue()
-    proc = ctx.Process(target=target, args=(*args, queue), daemon=True)
-    started = time.time()
-    proc.start()
-    row: dict[str, Any] | None = None
-    exitcode: int | None = None
-    try:
+    def _start(self) -> None:
+        ctx = mp.get_context("spawn")
+        self.req = ctx.Queue()
+        self.resp = ctx.Queue()
+        self.proc = ctx.Process(
+            target=_persistent_worker_main,
+            args=(self.bundle_path, self.sys_path, self.req, self.resp),
+            daemon=True,
+        )
+        self.proc.start()
+
+    def _restart(self) -> None:
+        if self.proc is not None:
+            _reap(self.proc, self.req, self.resp)
+        self._start()
+
+    def close(self) -> None:
+        if self.proc is None:
+            return
         try:
-            row = queue.get(timeout=timeout)
-        except Exception:  # noqa: BLE001 — empty queue means timeout or crash
-            row = None
-    finally:
-        # One worker per dimension, so a worker that outlives its collection
-        # is not a one-off: it is one stray interpreter per dimension, holding
-        # its parsed translation units until the machine is out of memory.
-        # `daemon` only covers a clean parent exit, and the escalation matters
-        # because `terminate` posts a signal that a process wedged in a native
-        # call can ignore.
-        exitcode = _reap(proc, queue)
-    elapsed = round(time.time() - started, 1)
-    if row is not None and "__error__" not in row:
+            self.req.put(None)
+        except Exception:  # noqa: BLE001
+            pass
+        _reap(self.proc, self.req, self.resp)
+        self.proc = None
+
+    def run(self, op: dict[str, Any], *, timeout: int) -> dict[str, Any]:
+        name = str(op.get("label") or op.get("name") or op.get("var_id") or "?")
+        index = int(op.get("out_index", op.get("index", -1)))
+        job_id = int(time.time() * 1e6) ^ id(op) & 0x7FFFFFFF
+        payload = {k: v for k, v in op.items() if k not in {"label", "out_index"}}
+        payload["job_id"] = job_id
+        started = time.time()
+        try:
+            self.req.put(payload)
+        except Exception as exc:  # noqa: BLE001
+            self._restart()
+            return _failed_row(
+                name, index, f"QUEUE:{type(exc).__name__}", round(time.time() - started, 1)
+            )
+        msg: dict[str, Any] | None = None
+        try:
+            msg = self.resp.get(timeout=timeout)
+        except Exception:  # noqa: BLE001 — timeout or broken pipe
+            msg = None
+        elapsed = round(time.time() - started, 1)
+        if msg is None or int(msg.get("job_id", -2)) != job_id:
+            # Timed out or desynced — kill and replace before the next job.
+            self._restart()
+            reason = "TIMEOUT" if elapsed >= timeout else "CRASHED"
+            if op.get("op") == "premise":
+                return {"note": reason, "seconds": elapsed}
+            return _failed_row(name, index, reason, elapsed)
+        row = msg.get("row")
+        if not isinstance(row, dict):
+            self._restart()
+            return _failed_row(name, index, "CRASHED", elapsed)
+        if "__error__" in row:
+            # Soft error: worker stays alive for the next job.
+            if op.get("op") == "premise":
+                return {"note": str(row["__error__"]), "seconds": elapsed}
+            return _failed_row(name, index, str(row["__error__"]), elapsed)
+        if "seconds" not in row:
+            row = dict(row)
+            row["seconds"] = elapsed
         return row
-    if row is not None:
-        return _failed_row(name, index, str(row["__error__"]), elapsed)
-    reason = "TIMEOUT" if elapsed >= timeout else f"CRASHED(exit={exitcode})"
-    return _failed_row(name, index, reason, elapsed)
 
 
 def _run_isolated_batch(
     jobs: list[dict[str, Any]], *, timeout: int, workers: int
 ) -> list[dict[str, Any]]:
-    """Run independent isolated derivations at once, in submission order.
+    """Run jobs on a persistent worker pool (submission order preserved).
 
-    Each job still gets its own interpreter and is still reaped on its own
-    timeout, so nothing about the isolation changes -- only how many are in
-    flight. The threads here do no work: they wait on a child, which is why a
-    thread apiece is enough despite the GIL.
+    Workers load the HostIR bundle once. A per-job timeout kills and replaces
+    only that worker; other slots keep their caches.
     """
     if not jobs:
         return []
-    width = max(1, min(workers, len(jobs)))
-    if width == 1:
-        return [_run_isolated(timeout=timeout, **job) for job in jobs]
+    ops = [_legacy_job_to_op(job) for job in jobs]
+    first_args = tuple(jobs[0].get("args") or ())
+    if first_args:
+        bundle_path = str(first_args[0])
+        sys_path = list(first_args[1])
+    else:
+        bundle_path = str(jobs[0]["bundle_path"])
+        sys_path = list(jobs[0].get("sys_path") or sys.path)
+    width = max(1, min(workers, len(ops)))
+    slots = [_WorkerSlot(bundle_path, sys_path) for _ in range(width)]
+    results: list[dict[str, Any] | None] = [None] * len(ops)
+    cursor = 0
+    lock = threading.Lock()
 
-    from concurrent.futures import ThreadPoolExecutor
+    def _drive(slot: _WorkerSlot) -> None:
+        nonlocal cursor
+        while True:
+            with lock:
+                if cursor >= len(ops):
+                    return
+                i = cursor
+                cursor += 1
+                op = ops[i]
+            results[i] = slot.run(op, timeout=timeout)
 
-    with ThreadPoolExecutor(max_workers=width) as pool:
-        return list(pool.map(lambda job: _run_isolated(timeout=timeout, **job), jobs))
+    try:
+        if width == 1:
+            _drive(slots[0])
+        else:
+            with ThreadPoolExecutor(max_workers=width) as pool:
+                list(pool.map(_drive, slots))
+    finally:
+        for slot in slots:
+            slot.close()
+    return [r if isinstance(r, dict) else _failed_row("?", -1, "CRASHED", 0.0) for r in results]
 
 
 # -- assembly --------------------------------------------------------------

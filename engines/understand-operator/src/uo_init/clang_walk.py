@@ -22,6 +22,28 @@ except ImportError:  # pragma: no cover
 
 FOREIGN_MARKERS = ("cann-asc-devkit", "/_cann/", "cann-metadef", "bisheng")
 
+# Top-level / namespace declarations we may prune when outside operator+frame.
+_PRUNE_DECL_KINDS = frozenset(
+    {
+        "FUNCTION_DECL",
+        "FUNCTION_TEMPLATE",
+        "CXX_METHOD",
+        "CONSTRUCTOR",
+        "CLASS_DECL",
+        "CLASS_TEMPLATE",
+        "STRUCT_DECL",
+        "UNION_DECL",
+        "NAMESPACE",
+        "ENUM_DECL",
+        "VAR_DECL",
+        "TYPEDEF_DECL",
+        "TYPE_ALIAS_DECL",
+    }
+)
+_FUNCTION_DEF_KINDS = frozenset(
+    {"CXX_METHOD", "FUNCTION_DECL", "FUNCTION_TEMPLATE", "CONSTRUCTOR"}
+)
+
 # Guard expressions are read back as text and re-parsed; 48 tokens truncated
 # real conditions mid-expression and produced spurious parse failures.
 COND_TOKENS = 200
@@ -612,6 +634,48 @@ def classify_universe(node: CtrlNode, *, op_root: str = "") -> str:
     return "PRODUCTION"
 
 
+def _is_foreign_file(file: str | None) -> bool:
+    return bool(file) and any(m in file for m in FOREIGN_MARKERS)
+
+
+def reachable_function_names(
+    functions: dict[str, FuncRecord],
+    call_sites: list[CallSite],
+    *,
+    frame_files: frozenset[str],
+    needle: str = "",
+    op_root: str = "",
+    scope=None,
+) -> frozenset[str]:
+    """Call-closure from framework hooks (or all in-scope functions).
+
+    Seeds are functions defined in ``frame_files``. When the frame set is
+    empty, every in-scope definition is a seed. The closure follows recorded
+    call edges to other known function definitions.
+    """
+    callees_of: dict[str, set[str]] = {}
+    for site in call_sites:
+        callees_of.setdefault(site.caller, set()).add(site.callee)
+
+    seeds: set[str] = set()
+    for name, rec in functions.items():
+        if rec.file in frame_files:
+            seeds.add(name)
+    if not seeds:
+        for name, rec in functions.items():
+            if _in_scope(rec.file, needle, op_root, scope):
+                seeds.add(name)
+    reach = set(seeds)
+    stack = list(seeds)
+    while stack:
+        cur = stack.pop()
+        for callee in callees_of.get(cur, ()):
+            if callee in functions and callee not in reach:
+                reach.add(callee)
+                stack.append(callee)
+    return frozenset(reach)
+
+
 class _Walker:
     def __init__(
         self,
@@ -623,6 +687,7 @@ class _Walker:
         frame_files: frozenset[str] = frozenset(),
         scope=None,
         logs_rejections: bool = False,
+        reachable: frozenset[str] | None = None,
     ):
         self.needle = needle
         self.op_root = _norm(op_root) if op_root else ""
@@ -631,6 +696,7 @@ class _Walker:
         self.logs_rejections = logs_rejections
         self.collect_writes = collect_writes
         self.side = side
+        self.reachable = reachable
         self.controls: list[CtrlNode] = []
         self.writes: list[WriteRecord] = []
         self.local_writes: list[WriteRecord] = []
@@ -660,6 +726,59 @@ class _Walker:
         if file is None:
             return False
         return self._in_scope(file) or file in self.frame_files
+
+    def _should_prune(self, cursor, kind_name: str, file: str | None, func: str) -> bool:
+        """Phase A/B: skip subtrees that cannot contribute HostIR facts."""
+        if _is_foreign_file(file):
+            return True
+        # Phase A: out-of-frame top-level declarations (not inside a function).
+        if (
+            not func
+            and kind_name in _PRUNE_DECL_KINDS
+            and file is not None
+            and not self._in_frame(file)
+        ):
+            return True
+        # Phase B: skip bodies of functions outside the call closure.
+        if (
+            self.reachable is not None
+            and kind_name in _FUNCTION_DEF_KINDS
+            and cursor.is_definition()
+        ):
+            name = cursor.spelling or func
+            if name and name not in self.reachable:
+                return True
+        return False
+
+    def index_walk(self, cursor, func: str = "") -> None:
+        """Light pass: function boundaries + call sites only (Phase B pass 1)."""
+        try:
+            kind_name = cursor.kind.name
+        except Exception:  # noqa: BLE001
+            return
+        file = _file_of(cursor)
+        if self._should_prune(cursor, kind_name, file, func):
+            return
+        if kind_name in _FUNCTION_DEF_KINDS and cursor.is_definition():
+            if self._in_frame(file):
+                assert file is not None
+                name = cursor.spelling or func
+                rec = self.functions.setdefault(
+                    name,
+                    FuncRecord(name=name, file=file, line=cursor.location.line),
+                )
+                for ch in cursor.get_children():
+                    if ch.kind.name == "PARM_DECL" and ch.spelling:
+                        if ch.spelling not in rec.params:
+                            rec.params.append(ch.spelling)
+                        if _is_out_param(ch) and ch.spelling not in rec.out_params:
+                            rec.out_params.append(ch.spelling)
+                func = name
+        elif kind_name in ("CALL_EXPR", "CXX_MEMBER_CALL_EXPR"):
+            if func:
+                self._record_call(cursor, func, [])
+        for ch in cursor.get_children():
+            self.index_walk(ch, func)
 
     def _stable_id(self, file: str, line: int, col: int, kind: str) -> str:
         key = (file, line, kind)
@@ -1068,11 +1187,16 @@ class _Walker:
 
     # -- traversal ---------------------------------------------------------
     def walk(self, cursor, stack: list[PathCond], func: str) -> None:
-        kind_name = cursor.kind.name
+        try:
+            kind_name = cursor.kind.name
+        except Exception:  # noqa: BLE001
+            return
+        file = _file_of(cursor)
+        if self._should_prune(cursor, kind_name, file, func):
+            return
 
-        if kind_name in ("CXX_METHOD", "FUNCTION_DECL", "FUNCTION_TEMPLATE", "CONSTRUCTOR"):
+        if kind_name in _FUNCTION_DEF_KINDS:
             if cursor.is_definition():
-                file = _file_of(cursor)
                 if self._in_frame(file):
                     assert file is not None
                     name = cursor.spelling or func
@@ -1114,7 +1238,6 @@ class _Walker:
             self._walk_loop(cursor, stack, func, CONTROL_KINDS[kind_name])
             return
         if kind_name == "FIELD_DECL":
-            file = _file_of(cursor)
             if (
                 cursor.spelling
                 and self._in_scope(file)
@@ -1779,6 +1902,31 @@ def walk_file(
         _framework_headers(tu.cursor, op_needle, op_root, scope)
     )
     t_frame = _time.perf_counter() - t0
+
+    # Phase B pass 1: light index of function boundaries + calls (with Phase A
+    # pruning). Then deep-walk only the reachable call closure.
+    t0 = _time.perf_counter()
+    indexer = _Walker(
+        op_needle,
+        op_root=op_root,
+        collect_writes=False,
+        side=side,
+        frame_files=frame_files,
+        scope=scope,
+        logs_rejections=logs_rejections,
+    )
+    for child in tu.cursor.get_children():
+        indexer.index_walk(child, "")
+    reachable = reachable_function_names(
+        indexer.functions,
+        indexer.call_sites,
+        frame_files=frame_files,
+        needle=op_needle,
+        op_root=op_root,
+        scope=scope,
+    )
+    t_index = _time.perf_counter() - t0
+
     w = _Walker(
         op_needle,
         op_root=op_root,
@@ -1787,6 +1935,7 @@ def walk_file(
         frame_files=frame_files,
         scope=scope,
         logs_rejections=logs_rejections,
+        reachable=reachable,
     )
     t0 = _time.perf_counter()
     for child in tu.cursor.get_children():
@@ -1815,9 +1964,10 @@ def walk_file(
     flag = " SLOW" if t_total > budget else ""
     _tlog(
         f"{t_total:7.3f}s{flag}  walk_file  file={name} side={side} "
-        f"parse={t_parse:.3f}s frame={t_frame:.3f}s ast_walk={t_walk:.3f}s "
-        f"cache={'store' if cache_key else 'off'} "
-        f"controls={len(w.controls)} writes={len(w.writes)} "
-        f"calls={len(w.call_sites)} diags={len(diags)} frames={len(frame_files)}"
+        f"parse={t_parse:.3f}s frame={t_frame:.3f}s index={t_index:.3f}s "
+        f"ast_walk={t_walk:.3f}s cache={'store' if cache_key else 'off'} "
+        f"reachable={len(reachable)} controls={len(w.controls)} "
+        f"writes={len(w.writes)} calls={len(w.call_sites)} "
+        f"diags={len(diags)} frames={len(frame_files)}"
     )
     return result

@@ -70,12 +70,32 @@ parallelism, not an inconsistency.
 | `var_model+platform` | 0.537 | 0.605 |
 | `walk_file` | 674.316 | 1.674 |
 
+## FAG cold-fast hotspot baseline (2026-08)
+
+Operator: FAG arch35, `UO_INIT_PROFILE=fast`, cold cache.
+Source: full-pipeline `UO_TIMING=1` action walls (not yet driven by
+`timing_baseline.py` harness for every action).
+
+| Action | Cold wall (s) | Notes | First target |
+|--------|--------------:|-------|-------------:|
+| `scope_scan` | 10.9 | inventory; P2 cache later | — |
+| `extract_host` | **49.5** | parse 2–3s/TU; `ast_walk` 37–38s/TU | 25–35 |
+| `extract_tiling_key` | 1.5 | leave alone | — |
+| `extract_kernel` | 0.6 | fast path | — |
+| `normalize_variables` | 0.4 | leave alone | — |
+| `derive_key_fields` | **33.8** | HostIR cache hit ~0.9s; rest is field derive + spawn | ≤20 |
+| `normalize_predicates` | 0.5 | leave alone | — |
+| `export_kb` | **29.1** | HostIR cache hit ~0.8s; YAML-hash + JSON dump dominate | ≤12 |
+| `build_index` | 0.5 | already fast | — |
+| **pipeline** | **~130–140** | three hotspots ≈ 112s | **&lt;100** (stretch 70–90) |
+
+Optimization order: AST walk pruning → persistent derive workers →
+serialize-once export (see Codemap / uo-init acceleration plan).
+
 ## Still anecdotal
 
-Numbers from code comments / execution notes, for the actions this
-harness has not driven yet:
+Numbers from code comments / execution notes:
 
-- `derive_key_fields`: per-field seconds can sum to minutes; isolate workers hide more wall time (`host_derivation.HostDerivation.phase_seconds`).
 - Kernel pairwise fold: expensive; disable with `fold_kernel=false`.
 - `export_tg_host_view`: FAG cached export **31.7s → 2.0s** after fingerprint reuse (`docs/fag/fag-arch35-static-blocker-execution-20260806.md`).
 

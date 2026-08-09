@@ -34,6 +34,7 @@ KIND_PREFIX: dict[str, str] = {
     "Family": "FAM",
     "ApiContract": "API",
     "Evidence": "EV",
+    "Function": "FN",
 }
 
 PREFIX_KIND = {v: k for k, v in KIND_PREFIX.items()}

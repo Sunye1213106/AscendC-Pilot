@@ -6,8 +6,10 @@ exports (see ``UO_KB_YAML`` / :mod:`uo_init.dump`) reconstructed from this DB.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +81,11 @@ def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def canonical_json_bytes(value: Any) -> bytes:
+    """Stable JSON encoding used for both view_blob storage and content hashes."""
+    return _json(value).encode("utf-8")
+
+
 def _meta_rows(meta: dict[str, Any] | None) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
     for key, value in sorted((meta or {}).items()):
@@ -96,6 +103,8 @@ def write_kb_database(
     graph: dict[str, Any],
     *,
     views: dict[str, Any] | None = None,
+    view_json: dict[str, str] | None = None,
+    artifact_hashes: dict[str, dict[str, Any]] | None = None,
     legal_keys: list[dict[str, Any]] | None = None,
     host_derivation: dict[str, Any] | None = None,
     key_reachability: dict[str, Any] | None = None,
@@ -103,7 +112,12 @@ def write_kb_database(
     db_path: str | Path | None = None,
     preserve_host_view: bool = False,
 ) -> dict[str, Any]:
-    """Write a complete KB sqlite product (graph + view blobs + indexes)."""
+    """Write a complete KB sqlite product (graph + view blobs + indexes).
+
+    When ``view_json`` is provided, those pre-serialized canonical JSON strings
+    are written to ``view_blob`` as-is (serialize-once). Otherwise each view in
+    ``views`` is serialized with :func:`_json`.
+    """
     root = Path(uo_root).expanduser().resolve()
     target = (
         Path(db_path).expanduser().resolve()
@@ -141,8 +155,30 @@ def write_kb_database(
         }
         view_map.setdefault("key_reachability_summary", reach_summary)
 
+    # Build the final blob text once. Pre-serialized entries win.
+    blob_text: dict[str, str] = {}
+    if view_json:
+        blob_text.update({str(k): v for k, v in view_json.items() if v is not None})
+    for name, payload in view_map.items():
+        key = str(name)
+        if key in blob_text or payload is None:
+            continue
+        blob_text[key] = _json(payload)
+
     fingerprint = str(graph.get("fingerprint") or "")
-    manifest = view_map.get("manifest.yaml") if isinstance(view_map.get("manifest.yaml"), dict) else {}
+    manifest_payload = None
+    if "manifest.yaml" in blob_text:
+        try:
+            manifest_payload = json.loads(blob_text["manifest.yaml"])
+        except json.JSONDecodeError:
+            manifest_payload = None
+    if not isinstance(manifest_payload, dict):
+        manifest_payload = (
+            view_map.get("manifest.yaml")
+            if isinstance(view_map.get("manifest.yaml"), dict)
+            else {}
+        )
+    manifest = manifest_payload if isinstance(manifest_payload, dict) else {}
     meta_out: dict[str, Any] = {
         "authority": "db",
         "graph_fingerprint": fingerprint,
@@ -151,6 +187,7 @@ def write_kb_database(
         "architecture": graph.get("architecture") or manifest.get("architecture") or "",
         "legal_key_count": len(legal_keys or []),
         "integrity_status": "unknown",
+        "hash_encoding": "canonical_json",
     }
     if isinstance(manifest, dict):
         for key in (
@@ -264,15 +301,42 @@ def write_kb_database(
                 ),
             )
 
-        for name, payload in sorted(view_map.items()):
-            if payload is None:
-                continue
+        for name, text in sorted(blob_text.items()):
             schema_id = ""
-            if isinstance(payload, dict):
-                schema_id = str(payload.get("schema") or payload.get("schema_id") or "")
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict):
+                schema_id = str(parsed.get("schema") or parsed.get("schema_id") or "")
             connection.execute(
                 "INSERT INTO view_blob(name, schema_id, data) VALUES(?,?,?)",
-                (str(name), schema_id, _json(payload)),
+                (str(name), schema_id, text),
+            )
+
+        hash_rows = artifact_hashes or {}
+        if not hash_rows:
+            # Derive from blob bytes when caller did not pass a hash map.
+            for name, text in blob_text.items():
+                hash_rows[name] = {
+                    "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                    "status": "extracted",
+                }
+
+        generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for rel_path, meta_row in sorted(hash_rows.items()):
+            sha = ""
+            status = "extracted"
+            if isinstance(meta_row, dict):
+                sha = str(meta_row.get("sha256") or "")
+                status = str(meta_row.get("status") or "extracted")
+            elif isinstance(meta_row, str):
+                sha = meta_row
+            layer = str(rel_path).split("/", 1)[0] if "/" in str(rel_path) else "root"
+            connection.execute(
+                "INSERT INTO artifact(rel_path, sha256, layer, status, generated_at) "
+                "VALUES(?,?,?,?,?)",
+                (str(rel_path), sha, layer, status, generated_at),
             )
 
         for ordinal, row in enumerate(legal_keys or []):
@@ -313,8 +377,9 @@ def write_kb_database(
         "node_count": len(nodes),
         "edge_count": len(edges),
         "evidence_count": len(evidence),
-        "view_count": len(view_map),
+        "view_count": len(blob_text),
         "legal_key_count": len(legal_keys or []),
+        "artifact_count": len(hash_rows),
         "authority": str(meta_out.get("authority") or "db"),
     }
 
@@ -477,7 +542,44 @@ def db_authority_ok(db_path: str | Path) -> bool:
     return bool(summary.get("graph_fingerprint") or summary.get("node_count"))
 
 
-def load_view_blob(db_path: str | Path, name: str) -> Any | None:
+def materialize_lazy_view(
+    db_path: str | Path, name: str, payload: Any, *, graph: dict[str, Any] | None = None
+) -> Any:
+    """Expand lazy projection stubs into full view documents on demand."""
+    if not isinstance(payload, dict) or payload.get("status") != "lazy":
+        return payload
+    if graph is None:
+        graph = load_view_blob_raw(db_path, "ir/operator_graph.yaml")
+    if not isinstance(graph, dict):
+        return payload
+    edges = list(graph.get("edges") or [])
+    if name == "cross_layer/impact_graph.yaml":
+        return {
+            "version": payload.get("version") or 1,
+            "status": "extracted",
+            "schema": "uo-view-impact/v1",
+            "nodes": [],
+            "edges": edges,
+            "fingerprint": payload.get("fingerprint") or graph.get("fingerprint") or "",
+            "materialized_from": "ir/operator_graph.yaml",
+        }
+    if name == "cross_layer/variable_lineage.yaml":
+        kinds = set(payload.get("kinds") or [])
+        subset = [e for e in edges if str(e.get("kind") or "") in kinds]
+        return {
+            "version": payload.get("version") or 1,
+            "status": "extracted",
+            "schema": "uo-view-lineage/v1",
+            "nodes": [],
+            "edges": subset,
+            "fingerprint": payload.get("fingerprint") or graph.get("fingerprint") or "",
+            "materialized_from": "ir/operator_graph.yaml",
+        }
+    return payload
+
+
+def load_view_blob_raw(db_path: str | Path, name: str) -> Any | None:
+    """Load a view_blob without lazy materialization."""
     connection = sqlite3.connect(Path(db_path))
     try:
         row = connection.execute(
@@ -490,6 +592,13 @@ def load_view_blob(db_path: str | Path, name: str) -> Any | None:
         return None
     finally:
         connection.close()
+
+
+def load_view_blob(db_path: str | Path, name: str) -> Any | None:
+    payload = load_view_blob_raw(db_path, name)
+    if payload is None:
+        return None
+    return materialize_lazy_view(db_path, name, payload)
 
 
 def list_view_blobs(db_path: str | Path) -> list[str]:
@@ -517,6 +626,12 @@ def load_all_view_blobs(db_path: str | Path) -> dict[str, Any]:
                 out[str(name)] = json.loads(data)
             except json.JSONDecodeError:
                 out[str(name)] = data
+        graph = out.get("ir/operator_graph.yaml")
+        if isinstance(graph, dict):
+            for name, payload in list(out.items()):
+                out[name] = materialize_lazy_view(
+                    db_path, name, payload, graph=graph
+                )
         return out
     except sqlite3.Error:
         return {}
