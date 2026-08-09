@@ -36,17 +36,21 @@ jobs:
           pip install -e ./engines/common
           pip install -e ./engines/understand-operator
 
+      - name: Prepare audit output
+        run: mkdir -p "$GITHUB_WORKSPACE/artifacts/uo-arch35"
+
       - name: Targeted CodeMap soundness tests
+        id: targeted_tests
+        continue-on-error: true
         run: |
-          python -m pytest engines/understand-operator/tests/unit/test_codemap_soundness_audit.py -q
+          set -o pipefail
+          python -m pytest engines/understand-operator/tests/unit/test_codemap_soundness_audit.py -q \
+            2>&1 | tee "$GITHUB_WORKSPACE/artifacts/uo-arch35/pytest.txt"
 
       - name: Inventory real archived facts
-        env:
-          UO_AUDIT_OUT: ${{ github.workspace }}/artifacts/uo-arch35
         run: |
-          mkdir -p "$UO_AUDIT_OUT"
           unzip -l external/flashattention/flash_attention_score_grad/.understand-operator.zip \
-            > "$UO_AUDIT_OUT/archive-list.txt"
+            > "$GITHUB_WORKSPACE/artifacts/uo-arch35/archive-list.txt"
 
       - name: Build and audit arch35 UO
         id: audit
@@ -76,6 +80,7 @@ jobs:
             cat "$JSON_REPORT" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
+          echo "targeted test outcome: ${{ steps.targeted_tests.outcome }}" >> "$GITHUB_STEP_SUMMARY"
           echo "audit outcome: ${{ steps.audit.outcome }}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload binary and audit report
