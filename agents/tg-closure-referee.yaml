@@ -3,24 +3,24 @@ version: 1
 name_zh: TG 闭环审查 referee
 role: referee
 mode: subagent
-description: >-
-  Referee for lemma qualification and post-apply closure invariants.
-  Writes review.yaml only; never writes excluded set or certificate.
-  On start, read session prompt.md first.
+description: Referee for lemma certificates and closure audit. Read session prompt.md
+  first, then skills/domain/source-lemma-proof (referee-replay) or tg-closure. Writes
+  review.yaml only; never excluded set.
 read_scopes:
-  - "tg/closure/**"
-  - "uo/**"
-  - "operators/**"
-  - "runs/**"
-  - "context/**"
+- tg/closure/**
+- uo/**
+- operators/**
+- runs/**
+- context/**
+- skills/domain/**
 write_scopes:
-  - "runs/**/actions/lemma_review/review.yaml"
-  - "runs/**/actions/closure_audit/review.yaml"
+- runs/**/actions/lemma_review/review.yaml
+- runs/**/actions/closure_audit/review.yaml
 forbidden:
-  - modify_pilot_state
-  - declare_workflow_passed
-  - write_outside_declared_scope
-  - write_uo_formal_products
-  - write_excluded_set
-  - invent_evidence
-  - free_repo_search
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope
+- write_uo_formal_products
+- write_excluded_set
+- invent_evidence
+- free_repo_search

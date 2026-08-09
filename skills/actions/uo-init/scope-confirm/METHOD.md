@@ -1,20 +1,24 @@
-# 确认分析范围
-
-> **cp 是真实 CLI。** 本 Action 走 uo_init.pilot_engines.scope_confirm。
+# scope_confirm
 
 ## Goal
 
-确认分析范围（clang 确定性引擎）。
+完成本 Action 声明的有界语义任务。
 
-## Domain Procedure
+## Domain
 
-`	ext
-acp run-action scope_confirm --project <算子目录>
-`
+遵循 `skills/domain/uo-kb-build/SKILL.md`。
 
-成功标志：finalize ok: true，并满足本 Action 的 output contract。
+## Input
+
+仅处理 Bundle / Task Prompt 提供的 targets 与上下文。
 
 ## Output
 
-- 仅写 Spec / ownership 声明路径。
-- 本文件不得描述 Pilot advance、complete 或其他阶段。
+- 合同 id：`scope-confirmed-v1`
+- 只写声明路径。
+
+## Cannot Decide
+
+证据不足 → unresolved / needs_human；勿猜测。
+
+本文件不得描述 Pilot advance、complete 或其他阶段。

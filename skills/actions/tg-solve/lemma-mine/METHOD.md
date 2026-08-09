@@ -1,34 +1,24 @@
-﻿# 源码引理挖掘
+# lemma_mine
 
 ## Goal
 
-针对 leads 中「构造后未命中」的观测，从源码写出可审查的 staging 证明。
+完成本 Action 声明的有界语义任务。
 
-## Input Interpretation
+## Domain
 
-仅处理 `acp next` 提供的当前 unresolved / target 子集与上下文包。  
-每条 lead 应带：目标 key、构造 case、oracle 结果（REWRITE/REFUSE）、可选 `construct_reasons` 假设。
+遵循 `skills/domain/source-lemma-proof/SKILL.md`。
 
-## Domain Procedure
+## Input
 
-1. 仅消费 leads 封闭包（observation leads；无观测不得发明）。
-2. 读取同批 `lemma_evidence` 产物：`lead.evidence_path` → `tg/closure/lemmas/evidence/<lead_id>.yaml`。
-3. 对每条 lead：对照构造 case 走源码入口 → 解释拒绝或改写 → 按 LEMMA.md 路径 A/B/C 写 staging parts；证明五检查必须引用证据包内 `EV_…` ID。
-4. 禁止写 excluded；禁止虚构 lead；禁止把假设列表直接写成 `grade=source_lemma`。
-
-## Domain Decisions
-
-- 证据规则见 capability `tilingkey-closure`（`LEMMA.md` + `PROOF.md`），勿在本文件复制。
-- 合格 `combo_evidence` 必须交代：源码定位、推理链、为何不被后续覆盖推翻、**与本条构造 case 的对应关系**。
+仅处理 Bundle / Task Prompt 提供的 targets 与上下文。
 
 ## Output
 
 - 合同 id：`lemma-mine-v1`
-- 不得写声明外路径。
+- 只写声明路径。
 
 ## Cannot Decide
 
-- 回放显示其实可命中 / 与 R 冲突 → reject lead，回到 construct
-- 证据不足 → unresolved / needs_human
+证据不足 → unresolved / needs_human；勿猜测。
 
 本文件不得描述 Pilot advance、complete 或其他阶段。

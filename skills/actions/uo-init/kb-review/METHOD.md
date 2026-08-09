@@ -1,32 +1,24 @@
-                # KB 产物审查
+# kb_review
 
-                ## Goal
+## Goal
 
-                裁判审查 KB 产物。
+完成本 Action 声明的有界语义任务。
 
-                ## Input Interpretation
+## Domain
 
-                仅处理 `acp next` 提供的当前 unresolved / target 子集与上下文包。
+遵循 `skills/domain/uo-kb-build/SKILL.md`。
 
-                ## Domain Procedure
+## Input
 
-                1. 使用 capability `structured-review`。
-2. 使用 capability `kb-query`。
-                3. 只处理当前 Action 指定的 ID 或文件。
-                4. 按输出合同生成候选产物；证据不足保留 unresolved。
+仅处理 Bundle / Task Prompt 提供的 targets 与上下文。
 
-                ## Domain Decisions
+## Output
 
-                - 本 Action 特有分类/闭合规则见关联 task prompt（若有）。
+- 合同 id：`kb-review-v1`
+- 只写声明路径。
 
-                ## Output
+## Cannot Decide
 
-                - 合同 id：`kb-review-v1`
-                - 不得写声明外路径。
+证据不足 → unresolved / needs_human；勿猜测。
 
-                ## Cannot Decide
-
-                - 证据不足 → unresolved / needs_human
-                - 缺工具或 gate 前置 → 停止并回报 blocking reason
-
-                本文件不得描述 Pilot advance、complete 或其他阶段。
+本文件不得描述 Pilot advance、complete 或其他阶段。

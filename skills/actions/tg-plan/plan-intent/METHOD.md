@@ -1,29 +1,24 @@
-# 确认规划意图
-
-> **`acp` 是真实 CLI。** Primary 交互 Action。
+# plan_intent
 
 ## Goal
 
-落盘 `tg/plan/plan_intent.yaml`。默认 `mode=tilingkey_full_coverage`。
+完成本 Action 声明的有界语义任务。
 
-## Domain Procedure
+## Domain
 
-1. 按 task prompt `tg/plan-intent` AskQuestion（默认 / 用户描述 / PR）
-2. 执行：
+遵循 `skills/domain/tg-plan/SKILL.md`。
 
-```text
-acp run-action plan_intent --project <算子目录>
-```
+## Input
 
-（若 prepare 要求 human 选择，先选再 finalize。）
-
-## Hard Constraints
-
-- MUST NOT：跳过意图直接 `plan_build`
-- MUST NOT：在默认全量路径上追问 CSV 路径
-- MUST NOT：自行宣布 workflow passed
+仅处理 Bundle / Task Prompt 提供的 targets 与上下文。
 
 ## Output
 
-- 合同：`plan-intent-v1`
-- 写域：`tg/plan/plan_intent.yaml`
+- 合同 id：`plan-intent-v1`
+- 只写声明路径。
+
+## Cannot Decide
+
+证据不足 → unresolved / needs_human；勿猜测。
+
+本文件不得描述 Pilot advance、complete 或其他阶段。

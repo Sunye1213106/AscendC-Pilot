@@ -1,18 +1,15 @@
-# 抽取 TilingKey 绑定
-
-> **`acp` 是真实 CLI。** 本 Action 走 `uo_init.pilot_engines.extract_tiling_key`（确定性）。
+# extract_tiling_key
 
 ## Goal
 
-从上一步 `extract_host` 的 bundle 取出 binding，写出回执（**不重算**绑定）。
+由确定性引擎执行本 Action；无 Agent 自由分析。
 
-## Domain Procedure
+## Engine
 
-```text
-acp run-action extract_tiling_key --project <算子目录>
-```
+按 Workflow Spec 与引擎实现运行；输入输出来自 Bundle。
 
 ## Output
 
-- `uo/tiling/key_bind_receipt.yaml`（`binding_count` / `bind_error`）
-- 合同：`extract-tiling-key-v1`
+- 合同 id：`extract-tiling-key-v1`
+
+本文件不得描述 Pilot advance、complete 或其他阶段。

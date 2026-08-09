@@ -1,31 +1,26 @@
-# 人工确认
+# human_confirm
 
 ## Goal
 
-人工确认 init（非 Referee Agent）。
+完成本 Action 声明的有界语义任务。
 
-## Input Interpretation
+## Domain
 
-仅处理 `acp next` 提供的当前 unresolved / target 子集与上下文包。
+遵循 `skills/domain/tg-init/SKILL.md`。
 
-## Domain Procedure
+仅确认机器无法安全决定的边界。
 
-1. 按确定性引擎 / Pilot 包装命令执行。
-1. 只处理当前 Action 指定的 ID 或文件。
-2. 按输出合同生成候选产物；证据不足保留 unresolved。
+## Input
 
-## Domain Decisions
-
-- 本 Action 特有分类/闭合规则见关联 task prompt（若有）。
+仅处理 Bundle / Task Prompt 提供的 targets 与上下文。
 
 ## Output
 
 - 合同 id：`init-confirmed-v1`
-- 不得写声明外路径。
+- 只写声明路径。
 
 ## Cannot Decide
 
-- 证据不足 → unresolved / needs_human
-- 缺工具或 gate 前置 → 停止并回报 blocking reason
+证据不足 → unresolved / needs_human；勿猜测。
 
 本文件不得描述 Pilot advance、complete 或其他阶段。

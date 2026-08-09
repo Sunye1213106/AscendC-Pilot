@@ -1,18 +1,15 @@
-# 抽取 Kernel 折叠分支
-
-> **`acp` 是真实 CLI。** 本 Action 走 `uo_init.pilot_engines.extract_kernel`（确定性）。
+# extract_kernel
 
 ## Goal
 
-在有 tiling key header 与 kernel 入口时，按模板维折叠 kernel 分支；缺失则可 skip。
+由确定性引擎执行本 Action；无 Agent 自由分析。
 
-## Domain Procedure
+## Engine
 
-```text
-acp run-action extract_kernel --project <算子目录>
-```
+按 Workflow Spec 与引擎实现运行；输入输出来自 Bundle。
 
 ## Output
 
-- `uo/kernel/fold_receipt.yaml`
-- 合同：`extract-kernel-v1`
+- 合同 id：`extract-kernel-v1`
+
+本文件不得描述 Pilot advance、complete 或其他阶段。

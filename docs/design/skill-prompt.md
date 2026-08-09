@@ -1,28 +1,46 @@
-# Skill / Prompt / Agent / Capability 设计原则（组合式）
+# Skill / Prompt / Domain / Harness 设计原则
 
 ## 一句话区分
 
 | 层 | 负责 | 不负责 |
 |---|---|---|
-| Pilot Workflow | 阶段、状态、合法边、Action、门禁、完成条件 | 领域分析细节 |
-| Policy | 全局稳定规则 | 具体任务步骤 |
-| Capability | 可复用原子工程能力 | 工作流推进 |
-| Action Method | 当前 Action 的领域方法 | 其他阶段 / advance |
-| Prompt | 一次有界任务 | 完整 Workflow |
-| Agent Role | 角色身份、读写边界、输出责任 | 场景路由和状态推进 |
+| Pilot / Harness | 阶段、状态、合法边、Action、门禁、finalize | 领域分析细节 |
+| Domain Skill | 「怎么做好这类任务」的稳定方法 | Runtime 身份、ACP 状态机 |
+| Task Prompt | 一次有界任务的 targets / context | 完整 Workflow、证明长文 |
+| Action Method | 指向 domain skill + 本步 I/O | 其他阶段 / advance |
+| Capability | 底层工具纪律（导航、阅读、查询） | 认知主入口、工作流推进 |
+| Policy | 全局稳定规则（证据、源码权威） | 具体任务步骤 |
+| Agent Role | 角色身份、读写边界 | 场景路由和状态推进 |
 | Generated | 宿主运行产物 | 人工维护业务源 |
 
 ## 源目录
 
 | 路径 | 内容 |
 |---|---|
+| `skills/domain/` | **Agent 认知主入口**（progressive disclosure） |
+| `skills/workflows/` | Pilot / primary 极薄入口（可含 ACP + Actions 表） |
+| `skills/actions/` | 薄 Action Method |
+| `skills/capabilities/` | 原子工具能力（非主算法） |
 | `skills/policies/` | 全局 Policy |
-| `skills/capabilities/` | 原子 Capability |
-| `skills/actions/` | Action Method |
-| `skills/workflows/` | 薄入口 Skill |
-| `prompts/tasks/` | 有界 task prompt |
+| `prompts/tasks/` | 短 Task Prompt |
 | `agents/` | Agent YAML（角色/边界运行时权威） |
 | `generated/` | Composer 产物（可丢弃） |
+
+## Progressive disclosure
+
+```text
+Level 1  name + description
+            ↓ triggered
+Level 2  domain/SKILL.md   （核心循环，≤200 行）
+            ↓ only when needed
+Level 3  references/ / scripts/
+```
+
+语义 Action 阅读链：
+
+```text
+Task Prompt  →  一个 Domain Skill  →  按需 references
+```
 
 ## Composer
 
@@ -33,18 +51,12 @@ python scripts/compose_runtime.py --repo .
 python scripts/compile_skills.py --repo .
 ```
 
-安装只部署 `generated/<host>/{skills,agents,prompts}`。改 `policies` / `actions` / `prompts` / `agents` 后必须 compose 并提交 `generated/opencode`；CI `ci.yml` 的 `gates` job 重新 compose 并跑 `check_contracts` / `check_ownership_contracts` / `check_no_cbm` 防漂移。
+安装部署 `generated/<host>/{skills,agents,prompts}`（含 `skills/domain/`）。改 domain / policies / actions / prompts / agents 后必须 compose；CI 跑 `check_contracts` / `check_ownership_contracts` / `check_no_cbm`。
 
 ## 证据与 Lease
 
-- **高置信 / `source_verified`** 规则只写在公共 `skills/policies/{evidence,code-access,source-authority}` + 共享校验模块，Action prompt **只引用、不另立例外**。  
-- **源码导航与失败回退** 写在 `skills/capabilities/source-navigation`，不写进单个 Action 特例。
-- **Lease 不变量**：`allowed_write_paths ⊆ allowed_read_paths`（签发层强制）。  
-- 嵌入源码的 YAML：优先 `evidence_window_sha256`；加载层对 `|` literal 做缩进 sanitize。  
-- **大 IR 摘要**：Pilot `ir_summary`（stub `MUST_READ_ORDER`）+ `code-access` policy；Action 只填本步 summary 字段形状。  
-- **引擎边界**：`uo-init` / `uo-update` / `uo-query` 均走 `uo_init`；文档与 Prompt 勿引用已删除的旧包。
-
-## 八问（落在 Capability / Action Method）
-
-Capability / Action Method 应回答：何时用、输入、方法、输出、硬限制、停止条件。  
-**不得**描述 Pilot advance / complete / 完整 phase WHILE。
+- **高置信 / `source_verified`** 规则只写在公共 `skills/policies/{evidence,code-access,source-authority}`；Action prompt **只引用**。
+- **公共证据纪律（只写一次）**：查询未命中 ≠ 源码不存在。
+- **源码导航失败回退** 写在 `skills/capabilities/source-navigation`。
+- **Lease 不变量**：`allowed_write_paths ⊆ allowed_read_paths`（签发层强制）。
+- Domain Skill / Capability / Action Method **不得**描述 Pilot advance / complete / 完整 phase WHILE。

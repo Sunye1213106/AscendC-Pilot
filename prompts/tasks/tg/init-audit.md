@@ -1,28 +1,14 @@
-## Task
+# Task
 
-Bundle identity is authoritative.
-Do not replace, infer, normalize, or copy identity from old artifacts.
+Bundle identity is authoritative. Do not replace identity from other artifacts.
 
-Perform `init_audit` for the targets provided by the Pilot action.
+审计 TG 初始化缺口与阻断项。
 
-Follow the assigned role contract and loaded capabilities.
-Do not manage workflow state or declare completion.
-
-## Mode
-
-- mode: `task`
-- task_id: `init-audit`
-- workflow_id: `tg-init`
-- action_id: `init_audit`
-- run_id: `<RUN_ID>`
-
-## Target
+# Targets
 
 `<TARGET_IDS_OR_FILES>`
 
-Only process the listed targets. Do not expand scope unless the Action Method explicitly permits it.
-
-## Context
+# Context
 
 - Project root: `<PROJECT_ROOT>`
 - UO root: `<UO_ROOT>`
@@ -30,36 +16,10 @@ Only process the listed targets. Do not expand scope unless the Action Method ex
 - Topic: `<TOPIC>`
 - Context pack: `<CONTEXT_PACK_PATH>`
 
-## Required Procedure
+# Method
 
-1. Apply loaded capabilities in order.
-2. Evaluate each listed target independently.
-3. Record evidence for every accepted conclusion.
-4. Preserve unresolved items when evidence is insufficient.
-5. Write only the declared output artifact.
-6. Stop after producing the artifact and concise task result.
+遵循 `skills/domain/tg-init/SKILL.md`（审计段）。
 
-## Hard Constraints
+# Done when
 
-- MUST NOT: modify Pilot state.
-- MUST NOT: process IDs outside the supplied target set.
-- MUST NOT: invent evidence or confidence.
-- MUST NOT: write referee verdicts when acting as producer.
-- MUST NOT: modify reviewed artifacts when acting as referee.
-
-## Output Contract
-
-Contract id: `init-audit-v1`
-
-## Acceptance Criteria
-
-- Every target was attempted.
-- Every closed conclusion has required evidence.
-- Output conforms to the declared schema.
-- No undeclared file was modified.
-- Unresolved items are explicit and honest.
-
-## Failure Handling
-
-When evidence is insufficient: retain unresolved or needs_human;
-include the missing evidence type; do not guess; stop and return the blocking reason.
+缺口分类为可自动修 / 需人确认 / 需回 UO；合同以 Bundle 为准。

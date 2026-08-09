@@ -1,18 +1,15 @@
-# 变量归一化
-
-> **`acp` 是真实 CLI。** 本 Action 走 `uo_init.pilot_engines.normalize_variables`（确定性）。
+# normalize_variables
 
 ## Goal
 
-流水线占位。变量域已在 `extract_host` → `extract_host_bundle` 内建好；本步只写 deferred receipt，满足阶段顺序。
+由确定性引擎执行本 Action；无 Agent 自由分析。
 
-## Domain Procedure
+## Engine
 
-```text
-acp run-action normalize_variables --project <算子目录>
-```
+按 Workflow Spec 与引擎实现运行；输入输出来自 Bundle。
 
 ## Output
 
-- `uo/tiling/normalize_variables_receipt.yaml`（`deferred_to: export_kb`）
-- 合同：`normalize-variables-v1`
+- 合同 id：`normalize-variables-v1`
+
+本文件不得描述 Pilot advance、complete 或其他阶段。

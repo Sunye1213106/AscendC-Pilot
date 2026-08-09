@@ -1,57 +1,29 @@
-## Task
+# Task
 
-Bundle identity supplied by Pilot is authoritative.
-Identity from any other artifact must not be used.
+Bundle identity is authoritative. Do not replace identity from other artifacts.
 
-Perform `lemma_mine` for the targets provided by the Pilot action.
+证明或反驳指定的 TilingKey 引理 leads。
 
-Follow the assigned role contract and loaded capabilities.
-Do not manage workflow state or declare completion.
-
-## Mode
-
-- mode: `task`
-- task_id: `lemma-mine`
-- workflow_id: `tg-solve`
-- action_id: `lemma_mine`
-- run_id: `<RUN_ID>`
-
-## Target
+# Targets
 
 `<TARGET_IDS_OR_FILES>`
 
-Only process the listed targets. Do not expand scope unless the Action Method explicitly permits it.
-
-## Context
+# Context
 
 - Project root: `<PROJECT_ROOT>`
 - UO root: `<UO_ROOT>`
 - TG root: `<TG_ROOT>`
 - Topic: `<TOPIC>`
 - Context pack: `<CONTEXT_PACK_PATH>`
+- Leads: 仅消费封闭 lead 包（勿发明 lead）
+- Evidence: 同批 evidence pack（若有）
 
-## Required Procedure
+# Method
 
-1. Load capability `tilingkey-closure` (especially LEMMA.md and PROOF.md).
-2. Read only `tg/closure/lemmas/leads.yaml` as the closed lead pack — never invent leads.
-3. For each assigned lead, attempt a source-cited proof via paths A/B/C in LEMMA.md; writing standard in PROOF.md.
-4. Write candidates only to `runs/<run_id>/actions/lemma_mine/parts/part_*.yaml`.
-5. Set `grade: source_lemma` only when PROOF.md's three requirements are met (sites + chain + no later overwrite).
-6. Stop after producing staging parts; do not call finalize or write excluded set.
+遵循 `skills/domain/source-lemma-proof/SKILL.md`。
+对每条 lead：关闭证明义务、主动寻反例、仅用源码证据做排除向结论。
+返回 `PROVED` / `REFUTED` / `INSUFFICIENT`（不要自行映射排除集等级）。
 
-## Hard Constraints
+# Done when
 
-- MUST NOT: invent leads or keys outside the lead pack.
-- MUST NOT: write `tg/closure/excluded*` or `proof_rules.yaml`.
-- MUST NOT: use approximate models to exclude keys.
-- MUST NOT: modify Pilot state or declare gap=0.
-
-## Output Contract
-
-Contract id: `lemma-mine-v1`
-
-## Acceptance Criteria
-
-- Every candidate carries source citations or is left unresolved.
-- Output stays inside staging write scopes.
-- No undeclared file was modified.
+每条 lead 有证书摘要；产物写入本 Action 声明的 staging 范围；合同 `lemma-mine-v1`。

@@ -3,16 +3,16 @@ version: 1
 name_zh: TG init audit referee
 role: referee
 mode: subagent
-description: TG init audit referee
+description: TG init audit referee. Read session prompt.md first, then skills/domain/tg-init/SKILL.md.
 read_scopes:
-  - "tg/**"
-  - "uo/**"
-  - "runs/**"
+- tg/**
+- uo/**
+- runs/**
+- skills/domain/**
 write_scopes:
-  - "tg/init/audit_report.yaml"
-  - "tg/init/**"
+- tg/init/audit_report.yaml
+- tg/init/**
 forbidden:
-  - modify_pilot_state
-  - declare_workflow_passed
-  - write_outside_declared_scope
-
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope

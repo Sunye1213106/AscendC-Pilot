@@ -1,32 +1,15 @@
-﻿# 签发 gap=0 证书
+# closure_certify
 
 ## Goal
 
-签发 gap=0 证书。
+由确定性引擎执行本 Action；无 Agent 自由分析。
 
-## Input Interpretation
+## Engine
 
-仅处理 `acp next` 提供的当前 unresolved / target 子集与上下文包。
-
-## Domain Procedure
-
-1. 跑 `closure_soundness` gate。
-2. 写 `tg/closure/certificate.yaml`。
-3. gap≠0 或健全失败则不得 ok。
-
-## Domain Decisions
-
-- 证据规则见 capability `tilingkey-closure`，勿在本文件复制。
-- `R − D` 单独报 undeclared-key defect；范例：`examples/undeclared_keys.excerpt.csv`。
+按 Workflow Spec 与引擎实现运行；输入输出来自 Bundle。
 
 ## Output
 
 - 合同 id：`closure-certify-v1`
-- 不得写声明外路径。
-
-## Cannot Decide
-
-- 证据不足 → unresolved / needs_human
-- 缺工具或 gate 前置 → 停止并回报 blocking reason
 
 本文件不得描述 Pilot advance、complete 或其他阶段。

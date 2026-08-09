@@ -5,13 +5,13 @@ role: deterministic_engine
 mode: subagent
 description: UO deterministic engine
 read_scopes:
-  - "uo/**"
-  - "runs/**"
+- uo/**
+- runs/**
+- skills/domain/**
 write_scopes:
-  - "uo/**"
-  - "runs/**"
+- uo/**
+- runs/**
 forbidden:
-  - modify_pilot_state
-  - declare_workflow_passed
-  - write_outside_declared_scope
-
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope

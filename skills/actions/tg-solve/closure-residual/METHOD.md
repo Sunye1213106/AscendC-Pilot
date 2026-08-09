@@ -1,31 +1,15 @@
-﻿# 残差分析与路由
+# closure_residual
 
 ## Goal
 
-残差分析与路由。
+由确定性引擎执行本 Action；无 Agent 自由分析。
 
-## Input Interpretation
+## Engine
 
-仅处理 `acp next` 提供的当前 unresolved / target 子集与上下文包。
-
-## Domain Procedure
-
-1. 调用 `residual.analyse` + `search_round.route`。
-2. 写出 `tg/closure/route.yaml`（reason code）。
-3. gap≠0 时由 Agent 执行 `acp rework --reason <code>`；GAP_ZERO 才 advance 到 audit。
-
-## Domain Decisions
-
-- 证据规则见 capability `tilingkey-closure`，勿在本文件复制。
+按 Workflow Spec 与引擎实现运行；输入输出来自 Bundle。
 
 ## Output
 
 - 合同 id：`closure-residual-v1`
-- 不得写声明外路径。
-
-## Cannot Decide
-
-- 证据不足 → unresolved / needs_human
-- 缺工具或 gate 前置 → 停止并回报 blocking reason
 
 本文件不得描述 Pilot advance、complete 或其他阶段。

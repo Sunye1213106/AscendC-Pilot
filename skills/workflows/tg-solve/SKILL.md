@@ -6,38 +6,20 @@ description: TilingKey 全覆盖闭环：动态运行抬 R、源码引理抬 E�
 
 # tg-solve
 
-维护 `(D, R, E, Corpus, Models, RuleBook)`：靠 Host 裁决抬 R，靠源码证明抬 E，反例时撤销，直到签发可审计的 gap=0 certificate。
+合法增长可达集 R 与排除集 E，直至可审计 gap=0。
 
-## 链路位置
+领域方法：
 
-```text
-uo-init → tg-init → tg-plan → tg-solve
-```
+- 闭环策略：`skills/domain/tg-closure/SKILL.md`
+- 源码引理：`skills/domain/source-lemma-proof/SKILL.md`
 
-默认 mode = `tilingkey_full_coverage`（不强制 CSV）。`csv_consumer` 仍走 encode/solve/cover。
+链路：`uo-init → tg-init → tg-plan → tg-solve`。
 
-## 硬规则
+## Pilot
 
 1. `acp start` → `acp next` → `acp run-action` →（语义则 finalize）→ `acp advance`
-2. `closure_residual` 写出 `tg/closure/route.yaml`：若 reason 不是 `GAP_ZERO`，执行 `acp rework --reason <code>`（勿在单 action 内死循环）
-3. **单边原则**：近似模型只生成/排序候选；排除必须有 `file:line` 源码证明
-4. 证据与引理纪律见 capability `tilingkey-closure`，勿在 Action prompt 复制
-
-## 角色分离
-
-| 角色 | Agent | 可写 | 禁止 |
-|---|---|---|---|
-| 运动员 | `tg-lemma-producer` | `lemma_mine` staging parts | 写 E / certificate / 宣称 complete |
-| 裁判 | `tg-closure-referee` | `lemma_review` / `closure_audit` review.yaml | 改 RuleBook / R / excluded |
-
-确定性引擎负责 ledger / search / apply / certify。
-
-## 阶段意图（tilingkey）
-
-```text
-gate → oracle → ledger → search → residual → construct
-     → lemma → audit → certify
-```
+2. `closure_residual` 给出非 `GAP_ZERO` 时按 route 执行 `acp rework`（勿在单 action 内死循环）
+3. 近似模型只排序候选；排除必须有可审计证明
 
 ## Actions
 

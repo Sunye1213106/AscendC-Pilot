@@ -153,6 +153,51 @@ def _scan_forbidden(path: Path, text: str, errors: list[str]) -> None:
                 errors.append(f"forbidden pattern {pat.pattern!r} in {path.as_posix()}:{i}")
 
 
+_DOMAIN_HARNESS_PATTERNS = [
+    re.compile(r"\brun_id\b", re.I),
+    re.compile(r"\baction_id\b", re.I),
+    re.compile(r"\bfinalize\b", re.I),
+    re.compile(r"\badvance\b", re.I),
+    re.compile(r"\bacp\s+start\b", re.I),
+    re.compile(r"\bacp\s+next\b", re.I),
+]
+
+
+def validate_domain_skills(repo: Path) -> list[str]:
+    """Lint Agent-facing domain skills: frontmatter, line budget, no harness leakage."""
+    errors: list[str] = []
+    domain_root = repo / "skills" / "domain"
+    if not domain_root.is_dir():
+        errors.append("missing skills/domain/")
+        return errors
+    for skill_md in sorted(domain_root.glob("*/SKILL.md")):
+        text = skill_md.read_text(encoding="utf-8")
+        try:
+            meta, body = _require_skill_frontmatter(text, path=skill_md)
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
+        if not str(meta.get("name") or "").strip():
+            errors.append(f"{skill_md.as_posix()}: missing frontmatter name")
+        if not str(meta.get("description") or "").strip():
+            errors.append(f"{skill_md.as_posix()}: missing frontmatter description")
+        # Count non-empty lines in full file (progressive-disclosure budget).
+        n_lines = len(text.splitlines())
+        if n_lines > 200:
+            errors.append(
+                f"DOMAIN_SKILL_TOO_LONG {skill_md.as_posix()}: {n_lines} lines > 200"
+            )
+        for i, line in enumerate(body.splitlines(), 1):
+            for pat in _DOMAIN_HARNESS_PATTERNS:
+                if pat.search(line):
+                    errors.append(
+                        f"DOMAIN_HARNESS_LEAK {skill_md.as_posix()}:{i}: "
+                        f"pattern {pat.pattern!r} belongs in Harness, not domain Skill"
+                    )
+    return errors
+
+
+
 def _glob_prefix(pattern: str) -> str:
     """Return the literal directory prefix before the first glob metachar."""
     norm = pattern.replace("\\", "/").strip("/")
@@ -335,6 +380,7 @@ def validate(repo: Path) -> list[str]:
     agents = paths["agents"]
     errors: list[str] = []
     errors.extend(check_skill_action_markers(repo))
+    errors.extend(validate_domain_skills(repo))
 
     sys.path.insert(0, str(repo / "pilot"))
     from ascendc_pilot.workflows.specs import WORKFLOWS  # noqa: WPS433
@@ -893,6 +939,19 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
                     shutil.rmtree(cdst)
                 shutil.copytree(csrc, cdst)
         compiled.append(f"{host}/skills/{wid}")
+
+    # Domain cognitive skills (Agent-facing progressive disclosure)
+    domain_src = skills / "domain"
+    if domain_src.is_dir():
+        domain_dst = out_skills / "domain"
+        if domain_dst.exists():
+            shutil.rmtree(domain_dst)
+        shutil.copytree(
+            domain_src,
+            domain_dst,
+            ignore=shutil.ignore_patterns("README.md"),
+        )
+        compiled.append(f"{host}/skills/domain")
 
     # Shared policies pack under each host
     pol_dst = out_skills / "_policies"

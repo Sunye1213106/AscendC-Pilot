@@ -1,20 +1,21 @@
 ---
 name: ce-review
-description: 基于 KB 的代码审查 / code review / 查 bug。用户要审查算子代码时加载。 Pilot 管阶段；加载后执行 acp start
+description: 基于 KB 的代码审查 / code review / 查 bug。用户要审查算子代码时加载。Pilot 管阶段；加载后执行 acp start
   ce-review。
 ---
 
 # ce-review
 
-基于 KB 的代码审查。
+对算子代码做有源码证据的审查。
 
-本 Skill 不定义工作流阶段。执行时：
+语义方法：`skills/domain/code-review/SKILL.md`。
 
-1. 调用 `acp start`（同 workflow 活动 run 则复用）；
-2. 调用 `acp next`；
-3. 对返回的 action_id 调用 `acp run-action <action_id>`（prepare；确定性 Action 会自动 finalize）；
-4. 语义 Action：按 Runtime Bundle 派发声明 actor，产出后调用 `acp run-action <action_id> --finalize`；
-5. 调用 `acp advance`（仅消费 run-action 签发的可信收据）。
+## Pilot
+
+1. `acp start`（同 workflow 活动 run 则复用）
+2. `acp next`
+3. `acp run-action <action_id>`（确定性自动 finalize；语义产出后 `--finalize`）
+4. `acp advance`（仅消费可信收据）
 
 ## Actions
 
@@ -25,4 +26,3 @@ description: 基于 KB 的代码审查 / code review / 查 bug。用户要审查
 | `code_review` | `subagent` | `ce-reviewer` | `readonly_reviewer` | `ce-review/code-review` | `ce/code-review` | `code-review-v1` |
 
 <!-- END GENERATED ACTIONS -->
-

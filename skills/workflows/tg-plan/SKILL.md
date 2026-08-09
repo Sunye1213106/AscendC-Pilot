@@ -6,35 +6,18 @@ description: 覆盖规划：默认全量 TilingKey 闭环；也可按用户描�
 
 # tg-plan
 
-生成覆盖义务并人工批准。
+生成覆盖义务并批准。
 
-## 链路位置
+语义方法：`skills/domain/tg-plan/SKILL.md`。
 
-```text
-uo-init → tg-init → tg-plan → tg-solve
-```
+链路：`uo-init → tg-init → tg-plan → tg-solve`。  
+默认意图：`mode=tilingkey_full_coverage`。
 
-## 默认意图
-
-未指定时：`mode=tilingkey_full_coverage`（目标 `D=(R∩D)∪E`，不依赖 CSV）。
-
-`plan_intent`（primary）AskQuestion 三选一：默认全量 / 用户描述 / PR。
-
-## 硬规则
+## Pilot
 
 1. `acp start` → `acp next` → `acp run-action` →（语义则 finalize）→ `acp advance`
 2. 禁止跳过 `plan_intent` 直接 build
-3. 禁止自行宣布 passed；终态只认 `acp complete`
-4. 进度只进原生 Todo
-
-## 阶段意图
-
-```text
-intent → scope → gate → build → approve
-```
-
-- `plan_build`：tilingkey 模式写闭环义务；csv 模式走原 `tg_plan()`
-- `plan_approve`：人工批准
+3. 禁止自行宣布 workflow passed
 
 ## Actions
 

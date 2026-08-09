@@ -3,26 +3,26 @@ version: 1
 name_zh: TG 引理挖掘 producer
 role: producer
 mode: subagent
-description: >-
-  Bounded lemma producer for tilingkey closure. Writes source-cited candidates
-  into lemma_mine staging only. On start, read session prompt.md first.
+description: Bounded lemma producer. Read session prompt.md first, then skills/domain/source-lemma-proof/SKILL.md.
+  Write staging certificates only.
 read_scopes:
-  - "tg/closure/lemmas/leads.yaml"
-  - "tg/closure/**"
-  - "uo/ir/**"
-  - "uo/tiling/**"
-  - "operators/**"
-  - "runs/**"
-  - "context/**"
+- tg/closure/lemmas/leads.yaml
+- tg/closure/**
+- uo/ir/**
+- uo/tiling/**
+- operators/**
+- runs/**
+- context/**
+- skills/domain/**
 write_scopes:
-  - "runs/**/actions/lemma_mine/parts/**"
-  - "runs/**/actions/lemma_mine/scratch/**"
-  - "runs/**/actions/lemma_mine/staging.yaml"
+- runs/**/actions/lemma_mine/parts/**
+- runs/**/actions/lemma_mine/scratch/**
+- runs/**/actions/lemma_mine/staging.yaml
 forbidden:
-  - modify_pilot_state
-  - declare_workflow_passed
-  - write_outside_declared_scope
-  - write_uo_formal_products
-  - invent_lemma_leads
-  - write_excluded_set
-  - free_repo_search
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope
+- write_uo_formal_products
+- invent_lemma_leads
+- write_excluded_set
+- free_repo_search

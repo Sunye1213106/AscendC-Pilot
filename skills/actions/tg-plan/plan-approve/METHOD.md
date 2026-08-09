@@ -1,25 +1,24 @@
-# plan_approve (migrated domain method)
+# plan_approve
 
-> Domain content migrated from skills/tg-plan/references/approval-gate.md. Do not advance Pilot state from this file.
+## Goal
 
-# Approve 门禁（tg-plan）
+完成本 Action 声明的有界语义任务。
 
-## Allow solve:yes 前提
+## Domain
 
-- `init.status=confirmed`
-- 无开放 `DOMAIN_REVIEW_REQUIRED` / `BINDING_REVIEW_REQUIRED`（回 `/tg-init`）
-- L1 无阻塞性 `KEY_DERIVATION_MISSING`
-- L2 未因 exhaustive KEY 空间不可用而 `blocked`
+遵循 `skills/domain/tg-plan/SKILL.md`。
 
-## AskQuestion
+## Input
 
-`approve` | `reject` | `suggest`
+仅处理 Bundle / Task Prompt 提供的 targets 与上下文。
 
-- approve：**仅**当 review 标明 Allow solve:yes
-- reject：停
-- suggest：只改 plan 草案，禁改 lexicon
+## Output
 
-## MUST NOT
+- 合同 id：`plan-approved-v1`
+- 只写声明路径。
 
-- 手改 lexicon「凑」Allow solve
-- 未闭合 KEY 强行批准
+## Cannot Decide
+
+证据不足 → unresolved / needs_human；勿猜测。
+
+本文件不得描述 Pilot advance、complete 或其他阶段。

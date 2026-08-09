@@ -1718,7 +1718,7 @@ def _run_lemma_mine(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         "instructions": (
             "Write parts/part_0.yaml with source-cited lemma candidates only; "
             "use observation leads + lemmas/evidence/<lead_id>.yaml; "
-            "do not invent leads; follow tilingkey-closure LEMMA.md"
+            "do not invent leads; follow skills/domain/source-lemma-proof/SKILL.md"
         ),
     }
     (parts / "staging.yaml").write_text(

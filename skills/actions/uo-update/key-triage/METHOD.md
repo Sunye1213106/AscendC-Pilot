@@ -1,5 +1,15 @@
-﻿# key_triage（uo-update · stub）
+# key_triage
 
-新分层 KB 上暂无旧 `escalate_keys` / KeyField LLM 粗分链。本 Action 由确定性引擎写出 `uo/ir/key_triage.yaml`（`status=not_applicable`）。
+## Goal
 
-详见 `docs/debug/open-problems.md`。
+由确定性引擎执行本 Action；无 Agent 自由分析。
+
+## Engine
+
+按 Workflow Spec 与引擎实现运行；输入输出来自 Bundle。
+
+## Output
+
+- 合同 id：`key-triage-v1`
+
+本文件不得描述 Pilot advance、complete 或其他阶段。

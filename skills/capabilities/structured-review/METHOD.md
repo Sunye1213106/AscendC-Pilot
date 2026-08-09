@@ -1,17 +1,7 @@
-# 结构化审查
+# 结构化审查（兼容索引）
 
-## Purpose
+审查主算法见：
 
-独立审查既有产物，写符合 schema 的 review，不修改被审正文。
+`skills/domain/code-review/SKILL.md`
 
-## Method
-
-1. 只读被审产物与声明的证据面。
-2. 按 schema 逐项判定 pass / fail / needs_human。
-3. finding 用中文；reason_code 用英文。
-4. 写唯一允许的 review 输出路径。
-
-## Hard Constraints
-
-- MUST NOT：改被审产物。
-- MUST NOT：缺少证据却标 pass。
+本 capability 仅保留工具纪律：只读被审产物与声明证据面；按输出合同写 review；不得改被审正文；缺少证据不得标 pass。

@@ -1,18 +1,15 @@
-# 抽取 Registry 竞价
-
-> **`acp` 是真实 CLI。** 本 Action 走 `uo_init.pilot_engines.extract_registry`（确定性）。
+# extract_registry
 
 ## Goal
 
-从 host registry / 能力注册排出 tiling family 竞争顺序与 predicate。
+由确定性引擎执行本 Action；无 Agent 自由分析。
 
-## Domain Procedure
+## Engine
 
-```text
-acp run-action extract_registry --project <算子目录>
-```
+按 Workflow Spec 与引擎实现运行；输入输出来自 Bundle。
 
 ## Output
 
-- `uo/tiling/families.yaml`（`ordered` / `pred_count`）
-- 合同：`extract-registry-v1`
+- 合同 id：`extract-registry-v1`
+
+本文件不得描述 Pilot advance、complete 或其他阶段。

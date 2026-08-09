@@ -1,5 +1,15 @@
-# confidence_review（uo-update · stub）
+# confidence_review
 
-对照 `checks/confidence_gate.yaml`（由 `quality.yaml` 驱动）自动签发 `uo/review/confidence_reason_review.yaml`。完整 referee 审查链待新 KB 合同补齐。
+## Goal
 
-详见 `docs/debug/open-problems.md`。
+由确定性引擎执行本 Action；无 Agent 自由分析。
+
+## Engine
+
+按 Workflow Spec 与引擎实现运行；输入输出来自 Bundle。
+
+## Output
+
+- 合同 id：`confidence-reason-review-v1`
+
+本文件不得描述 Pilot advance、complete 或其他阶段。

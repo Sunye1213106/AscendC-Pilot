@@ -3,18 +3,18 @@ version: 1
 name_zh: KB readonly query
 role: readonly_analyst
 mode: subagent
-description: KB readonly query
+description: UO KB query. Read session prompt.md first, then skills/domain/uo-kb-query/SKILL.md.
 read_scopes:
-  - "uo/**"
-  - "runs/**"
-  - "context/**"
-  - "memory/**"
+- uo/**
+- runs/**
+- context/**
+- memory/**
+- skills/domain/**
 write_scopes:
-  - "runs/**"
-  - "context/**"
-  - "memory/**"
+- runs/**
+- context/**
+- memory/**
 forbidden:
-  - modify_pilot_state
-  - declare_workflow_passed
-  - write_outside_declared_scope
-
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope

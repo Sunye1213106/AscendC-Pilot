@@ -3,18 +3,21 @@ version: 1
 name_zh: UO semantic producer
 role: producer
 mode: subagent
-description: >
-  UO semantic producer for action-scoped extraction planning and semantic adjudication.
-  Evidence path: UO KB query followed by a confirmed-scope bounded source read, then
-  windowed Read on confirmed-scope sources — never whole-file dumps. Writes limited by Action lease.
+description: 'UO semantic producer for action-scoped extraction planning and semantic
+  adjudication. Evidence path: UO KB query followed by a confirmed-scope bounded source
+  read, then windowed Read on confirmed-scope sources — never whole-file dumps. Writes
+  limited by Action lease.
+
+  '
 read_scopes:
-  - "uo/**"
-  - "runs/**"
-  - "context/**"
+- uo/**
+- runs/**
+- context/**
+- skills/domain/**
 write_scopes:
-  - "uo/ir/**"
-  - "runs/**"
+- uo/ir/**
+- runs/**
 forbidden:
-  - modify_pilot_state
-  - declare_workflow_passed
-  - write_outside_declared_scope
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope

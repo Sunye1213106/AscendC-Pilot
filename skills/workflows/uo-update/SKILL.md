@@ -6,24 +6,17 @@ description: 增量更新 / 刷新已有 UO 知识库（含 diff_only）。用�
 
 # uo-update
 
-增量更新 UO KB。引擎：`uo_init.update`（与 `uo-init` 同一包，消费新分层 KB）。
+增量更新 UO KB。
 
-## 硬规则
+语义方法：`skills/domain/uo-kb-update/SKILL.md`。  
+引擎：`uo_init.update`（与 uo-init 同一包）。
 
-1. `acp start uo-update` → `acp next` → `acp run-action <action_id>`。
-2. 变更检测 / 计划 / 应用 / diff / 置信度 / 完整性均为确定性 Action。
-3. `key_triage` / `key_resolution` / `confidence_review` 当前为**确定性 stub**（新 KB 尚无旧 escalate 链）；见 `docs/debug/open-problems.md`。
-4. **禁止**读取或依赖 `extract_plan.yaml` / 旧 semantic ledger。
+## Pilot
 
-## 启动
-
-```text
-acp start uo-update --project <算子目录>
-acp next
-acp run-action detect_changes
-```
-
-diff_only：按 Bundle 进入 `diff` 管线即可。
+1. `acp start uo-update` → `acp next` → `acp run-action <action_id>`
+2. 多数步骤为确定性 Action；语义步骤按 Bundle finalize
+3. `acp advance`（仅消费可信收据）
+4. 禁止依赖已删除的旧 `extract_plan.yaml` / semantic ledger
 
 ## Actions
 

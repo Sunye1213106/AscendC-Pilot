@@ -7,21 +7,18 @@ description: >-
 
 # operator
 
-本 Skill **不**做自然语言意图匹配。Agent 应按各 workflow skill 的 `description` 自行决定加载哪个 Skill。
+选择正确工作流；领域方法见 `skills/domain/operator/SKILL.md`。
 
-## 主链路（TilingKey 闭环）
+## 主链路
 
 ```text
-/uo-init   范围确认 → 静态扫描 → tg_host_view
-/tg-init   变量绑定 / IO / TilingKey 基础信息
-/tg-plan   默认全量 TilingKey 义务（也可按描述/PR）
-/tg-solve  动态运行 + 引理 + 闭环证书
+/uo-init → /tg-init → /tg-plan → /tg-solve
 ```
 
-`/tk-cover` 已删除；请用 `/tg-solve`。
+审查：`/ce-review`。查询：`/uo-query`。更新：`/uo-update`。
 
-## 可选用法
+## Pilot
 
-1. 用户给出 **slash**（如 `/uo-init`）时：调用 `acp route "/uo-init"`，再 `acp start`；
-2. 用户意图不清时：列出候选 workflow skill（见 `acp route` 的 `skill_candidates`），请用户确认后加载对应 Skill；
-3. **禁止**维护第二套关键词/路由表。
+1. 用户给出 slash 时：`acp route "<slash>"`，再 `acp start`
+2. 意图不清时：列出 `skill_candidates`，确认后加载对应 workflow Skill
+3. 禁止维护第二套关键词路由表

@@ -1,33 +1,15 @@
-﻿# 定向搜索一轮
+# closure_search
 
 ## Goal
 
-定向搜索一轮。
+由确定性引擎执行本 Action；无 Agent 自由分析。
 
-## Input Interpretation
+## Engine
 
-仅处理 `acp next` 提供的当前 unresolved / target 子集与上下文包。
-
-## Domain Procedure
-
-1. 执行有界 `search_round.run_round`（fit→generate→progress）。
-2. 写 `tg/closure/rounds/round_*/progress.yaml`。
-3. 不在本 Action 内死循环；外环由 residual rework 驱动。
-
-## Domain Decisions
-
-- 证据规则见 capability `tilingkey-closure`，勿在本文件复制。
-- Schema 范例：`capabilities/tilingkey-closure/examples/search_hints.excerpt.yaml`（结构可照抄，数值不可搬）。
-- `feature_bindings` 的 `floor_terms` 见同目录 `feature_bindings.excerpt.yaml`。
+按 Workflow Spec 与引擎实现运行；输入输出来自 Bundle。
 
 ## Output
 
 - 合同 id：`closure-search-v1`
-- 不得写声明外路径。
-
-## Cannot Decide
-
-- 证据不足 → unresolved / needs_human
-- 缺工具或 gate 前置 → 停止并回报 blocking reason
 
 本文件不得描述 Pilot advance、complete 或其他阶段。

@@ -1,31 +1,15 @@
-# 求解前置校验
+# solve_precheck
 
 ## Goal
 
-求解前置校验。
+由确定性引擎执行本 Action；无 Agent 自由分析。
 
-## Input Interpretation
+## Engine
 
-仅处理 `acp next` 提供的当前 unresolved / target 子集与上下文包。
-
-## Domain Procedure
-
-1. 按确定性引擎 / Pilot 包装命令执行。
-1. 只处理当前 Action 指定的 ID 或文件。
-2. 按输出合同生成候选产物；证据不足保留 unresolved。
-
-## Domain Decisions
-
-- 本 Action 特有分类/闭合规则见关联 task prompt（若有）。
+按 Workflow Spec 与引擎实现运行；输入输出来自 Bundle。
 
 ## Output
 
 - 合同 id：`solve-precheck-v1`
-- 不得写声明外路径。
-
-## Cannot Decide
-
-- 证据不足 → unresolved / needs_human
-- 缺工具或 gate 前置 → 停止并回报 blocking reason
 
 本文件不得描述 Pilot advance、complete 或其他阶段。

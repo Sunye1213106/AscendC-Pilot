@@ -3,14 +3,14 @@ version: 1
 name_zh: KB product referee
 role: referee
 mode: subagent
-description: KB product referee. On start, read session prompt.md first.
+description: KB review. Read session prompt.md first, then skills/domain/uo-kb-build/SKILL.md.
 read_scopes:
-  - "uo/**"
-  - "runs/**"
+- uo/**
+- runs/**
+- skills/domain/**
 write_scopes:
-  - "uo/review/kb_product_review.yaml"
+- uo/review/kb_product_review.yaml
 forbidden:
-  - modify_pilot_state
-  - declare_workflow_passed
-  - write_outside_declared_scope
-
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope

@@ -1,30 +1,26 @@
-﻿# 闭环不变量审查
+# closure_audit
 
 ## Goal
 
-闭环不变量审查。
+完成本 Action 声明的有界语义任务。
 
-## Input Interpretation
+## Domain
 
-仅处理 `acp next` 提供的当前 unresolved / target 子集与上下文包。
+遵循 `skills/domain/tg-closure/SKILL.md`。
 
-## Domain Procedure
+审计视角；见 `references/certificate.md`。
 
-1. 核对 I1–I4 与 ledger 状态。
-2. 写 audit review；不签发证书。
+## Input
 
-## Domain Decisions
-
-- 证据规则见 capability `tilingkey-closure`，勿在本文件复制。
+仅处理 Bundle / Task Prompt 提供的 targets 与上下文。
 
 ## Output
 
 - 合同 id：`closure-audit-v1`
-- 不得写声明外路径。
+- 只写声明路径。
 
 ## Cannot Decide
 
-- 证据不足 → unresolved / needs_human
-- 缺工具或 gate 前置 → 停止并回报 blocking reason
+证据不足 → unresolved / needs_human；勿猜测。
 
 本文件不得描述 Pilot advance、complete 或其他阶段。
