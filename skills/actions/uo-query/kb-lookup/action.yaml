@@ -1,6 +1,6 @@
 # GENERATED from Workflow Spec — do not hand-edit identity fields
 version: 1
-name_zh: KB 查询
+name_zh: CodeMap 查询
 id: kb_lookup
 workflow_id: uo-query
 role_id: readonly_analyst
@@ -17,7 +17,7 @@ policies:
 - language
 - pilot-control
 - output-quality
-task_prompt_id: uo/kb-lookup
+task_prompt_id: uo/codemap-query
 context_profile_id: uo-query-kb-lookup
 output_contract_id: kb-answer-v1
 allowed_write_paths: []
