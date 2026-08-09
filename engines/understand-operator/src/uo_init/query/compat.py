@@ -1,0 +1,379 @@
+# -*- coding: utf-8 -*-
+"""Compatibility facade exposing legacy UO-query methods over a unified .uo.
+
+The public Agent contract stays stable while storage moves from the legacy
+``kb_graph.sqlite`` schema to the CodeMap ``.uo`` product.  This module never
+issues raw SQL; all navigation is performed on the typed CodeMap graph.
+"""
+from __future__ import annotations
+
+import json
+import re
+from collections import deque
+from pathlib import Path
+from typing import Any, Iterable
+
+from uo_init.ir.entity import Entity, EntityKind
+from uo_init.ir.relation import RelationKind
+from uo_init.query.engine import CodeMapQuery
+from uo_init.store.reader import read_codemap
+
+_LEGACY_KIND_MAP: dict[str, set[str]] = {
+    "Variable": {"VARIABLE", "COMPILE_VAR", "MACRO"},
+    "Input": {"INPUT"},
+    "OptionalInput": {"INPUT"},
+    "Output": {"OUTPUT"},
+    "TilingDataField": {"TILING_FIELD"},
+    "HostBranch": {"BRANCH"},
+    "KernelBranch": {"BRANCH"},
+    "TemplateBinding": {"TEMPLATE", "TEMPLATE_ARG", "TEMPLATE_INSTANCE"},
+}
+
+
+def _kind_names(kinds: Iterable[str]) -> set[str]:
+    out: set[str] = set()
+    valid = {k.value for k in EntityKind}
+    for raw in kinds:
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        if text in _LEGACY_KIND_MAP:
+            out.update(_LEGACY_KIND_MAP[text])
+        upper = text.upper()
+        if upper in valid:
+            out.add(upper)
+    return out
+
+
+def _entity_row(ent: Entity, *, distance: int | None = None) -> dict[str, Any]:
+    row = ent.to_dict()
+    row["data"] = dict(ent.attrs)
+    if distance is not None:
+        row["distance"] = int(distance)
+    row.setdefault("evidence_refs", [])
+    return row
+
+
+class CodeMapUoQuery:
+    """Legacy-compatible query API backed by a committed ``.uo`` CodeMap."""
+
+    backend = "codemap"
+
+    def __init__(self, product: str | Path):
+        self.product = Path(product).expanduser().resolve()
+        if not self.product.is_file() or self.product.suffix != ".uo":
+            raise FileNotFoundError(self.product)
+        self.database = self.product  # compatibility for callers that display the path
+        self.codemap = read_codemap(self.product)
+        self.query = CodeMapQuery(self.codemap, path=str(self.product))
+
+    # ---- legacy navigation -------------------------------------------------
+
+    def search(
+        self, pattern: str, *, kinds: Iterable[str] = (), limit: int = 50
+    ) -> list[dict[str, Any]]:
+        needle = str(pattern or "").lower()
+        allowed = _kind_names(kinds)
+        rows: list[Entity] = []
+        for ent in self.codemap.entities.values():
+            if allowed and ent.kind_name() not in allowed:
+                continue
+            hay = "\n".join(
+                (
+                    ent.id,
+                    ent.name,
+                    ent.kind_name(),
+                    json.dumps(ent.attrs, ensure_ascii=False, sort_keys=True, default=str),
+                )
+            ).lower()
+            if needle in hay:
+                rows.append(ent)
+        rows.sort(key=lambda e: (e.kind_name(), e.name, e.id))
+        return [_entity_row(e) for e in rows[: max(0, int(limit))]]
+
+    def neighbors(
+        self, entity_id: str, *, depth: int = 1, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        start = self._entity(entity_id)
+        if start is None:
+            return []
+        max_depth = max(1, min(int(depth), 8))
+        seen = {start.id}
+        queue: deque[tuple[str, int]] = deque([(start.id, 0)])
+        out: list[dict[str, Any]] = []
+        while queue and len(out) < int(limit):
+            cur, dist = queue.popleft()
+            ent = self.codemap.entities.get(cur)
+            if ent is not None:
+                out.append(_entity_row(ent, distance=dist))
+            if dist >= max_depth:
+                continue
+            for _rel, other in self.codemap.neighbors(cur, direction="both"):
+                if other.id in seen:
+                    continue
+                seen.add(other.id)
+                queue.append((other.id, dist + 1))
+        return out[: int(limit)]
+
+    def edges_of(
+        self, entity_id: str, *, kind: str = "", limit: int = 100
+    ) -> list[dict[str, Any]]:
+        ent = self._entity(entity_id)
+        if ent is None:
+            return []
+        wanted = str(kind or "").upper()
+        rows = [
+            rel.to_dict()
+            for rel in self.codemap.relations.values()
+            if (rel.src == ent.id or rel.dst == ent.id)
+            and (not wanted or rel.kind_name().upper() == wanted)
+        ]
+        rows.sort(key=lambda r: (str(r.get("kind")), str(r.get("src")), str(r.get("dst"))))
+        return rows[: int(limit)]
+
+    def constraints_for(self, entity_id: str) -> list[dict[str, Any]]:
+        ent = self._entity(entity_id)
+        if ent is None:
+            return []
+        ids = {ent.id}
+        for rel, other in self.codemap.neighbors(ent.id, direction="both"):
+            if rel.kind_name() in {
+                RelationKind.GUARDED_BY.value,
+                RelationKind.CONTROLS.value,
+                RelationKind.DERIVES.value,
+                RelationKind.BINDS.value,
+            }:
+                ids.add(other.id)
+        return [
+            _entity_row(e)
+            for eid in ids
+            if (e := self.codemap.entities.get(eid)) is not None
+            and e.kind_name() == EntityKind.PREDICATE.value
+        ]
+
+    def branches_for_key(self, key_id: str) -> list[dict[str, Any]]:
+        return self._reachable_kinds(key_id, {EntityKind.BRANCH.value})
+
+    def templates_for_key(self, key_id: str) -> list[dict[str, Any]]:
+        return self._reachable_kinds(
+            key_id,
+            {
+                EntityKind.TEMPLATE.value,
+                EntityKind.TEMPLATE_ARG.value,
+                EntityKind.TEMPLATE_INSTANCE.value,
+            },
+        )
+
+    def affected_shapes(self, entity_id: str) -> list[dict[str, Any]]:
+        return self._reachable_kinds(
+            entity_id,
+            {EntityKind.INPUT.value, EntityKind.FIELD.value, EntityKind.TILING_FIELD.value},
+        )
+
+    def controllability_of(self, branch_id: str) -> list[dict[str, Any]]:
+        branch = self._entity(branch_id)
+        if branch is None:
+            return []
+        rows: list[dict[str, Any]] = []
+        for rel, other in self.codemap.neighbors(branch.id, direction="both"):
+            if rel.kind_name() in {
+                RelationKind.CONTROLS.value,
+                RelationKind.GUARDED_BY.value,
+                RelationKind.DERIVES.value,
+            } or other.kind_name() in {
+                EntityKind.PREDICATE.value,
+                EntityKind.TILING_KEY.value,
+                EntityKind.INPUT.value,
+            }:
+                rows.append(_entity_row(other))
+        return rows
+
+    def entities_in_files(self, files: Iterable[str]) -> list[dict[str, Any]]:
+        normalized = {str(p).replace("\\", "/").lstrip("./") for p in files}
+        if not normalized:
+            return []
+        rows = []
+        for ent in self.codemap.entities.values():
+            file = str(ent.file or "").replace("\\", "/").lstrip("./")
+            if any(file == p or file.endswith("/" + p) or p.endswith("/" + file) for p in normalized):
+                rows.append(_entity_row(ent))
+        return sorted(rows, key=lambda r: (str(r.get("kind")), str(r.get("id"))))
+
+    def impact_of(self, file: str, line_range: tuple[int, int]) -> list[dict[str, Any]]:
+        start, end = sorted((int(line_range[0]), int(line_range[1])))
+        needle = str(file or "").replace("\\", "/").lstrip("./")
+        seeds: list[Entity] = []
+        for ent in self.codemap.entities.values():
+            current = str(ent.file or "").replace("\\", "/").lstrip("./")
+            if not (current == needle or current.endswith("/" + needle) or needle.endswith("/" + current)):
+                continue
+            lo = int(ent.line_start or 0)
+            hi = int(ent.line_end or lo)
+            if not lo or not hi or (hi >= start and lo <= end):
+                seeds.append(ent)
+        seen: dict[str, int] = {e.id: 0 for e in seeds}
+        queue: deque[tuple[str, int]] = deque((e.id, 0) for e in seeds)
+        while queue:
+            cur, dist = queue.popleft()
+            if dist >= 2:
+                continue
+            for _rel, other in self.codemap.neighbors(cur, direction="both"):
+                if other.id in seen:
+                    continue
+                seen[other.id] = dist + 1
+                queue.append((other.id, dist + 1))
+        rows = [
+            _entity_row(self.codemap.entities[eid], distance=dist)
+            for eid, dist in seen.items()
+            if eid in self.codemap.entities
+        ]
+        return sorted(rows, key=lambda r: (int(r.get("distance") or 0), str(r.get("kind")), str(r.get("id"))))
+
+    def tiling_field(self, name_or_id: str) -> list[dict[str, Any]]:
+        key = str(name_or_id or "").strip().lower()
+        if not key:
+            return []
+        rows = [
+            e for e in self.codemap.by_kind(EntityKind.TILING_FIELD)
+            if key in e.id.lower()
+            or key == e.name.lower()
+            or key in str(e.attrs.get("qualified_name") or "").lower()
+        ]
+        return [_entity_row(e) for e in rows]
+
+    def field_impact(self, name_or_id: str) -> dict[str, Any]:
+        fields = self.tiling_field(name_or_id)
+        if not fields:
+            return {"ok": False, "error": "tiling_field_not_found", "query": name_or_id}
+        primary = fields[0]
+        fid = str(primary["id"])
+        edges = self.edges_of(fid, limit=300)
+        readers = []
+        writers = []
+        for rel in edges:
+            src = self.codemap.entities.get(str(rel.get("src") or ""))
+            dst = self.codemap.entities.get(str(rel.get("dst") or ""))
+            if rel.get("kind") == RelationKind.READS.value and dst and dst.id == fid and src:
+                readers.append(_entity_row(src))
+            if rel.get("kind") in {RelationKind.WRITES.value, RelationKind.DERIVES.value} and dst and dst.id == fid and src:
+                writers.append(_entity_row(src))
+        return {
+            "ok": True,
+            "field": primary,
+            "fields_matched": len(fields),
+            "writers": writers,
+            "readers": readers,
+            "edges": edges,
+            "neighbors": self.neighbors(fid, depth=2, limit=120),
+        }
+
+    def constant(self, name: str) -> list[dict[str, Any]]:
+        needle = str(name or "").lower()
+        rows = [
+            e for e in self.codemap.entities.values()
+            if e.kind_name() in {EntityKind.COMPILE_VAR.value, EntityKind.MACRO.value}
+            and needle in e.name.lower()
+        ]
+        return [_entity_row(e) for e in rows[:20]]
+
+    def locate(
+        self, query: str, *, kinds: Iterable[str] | None = None, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        rows = self.search(query, kinds=kinds or (), limit=limit)
+        return [self._location(row) for row in rows if row.get("file")]
+
+    def locate_dim(self, name: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        rows = [
+            _entity_row(e)
+            for e in self.codemap.by_name(name, kind=EntityKind.TILING_KEY)
+        ]
+        return [self._location(row) for row in rows[:limit] if row.get("file")]
+
+    def locate_branch(self, branch_id: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        ent = self._entity(branch_id)
+        if ent is None or ent.kind_name() != EntityKind.BRANCH.value:
+            return []
+        return [self._location(_entity_row(ent))][:limit]
+
+    def locate_field(self, name: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        return [self._location(row) for row in self.tiling_field(name)[:limit] if row.get("file")]
+
+    # ---- new unified CodeMap API ------------------------------------------
+
+    def operator_api(self) -> dict[str, Any]:
+        return self.query.operator_api()
+
+    def input_roots(self) -> list[dict[str, Any]]:
+        return self.query.input_roots()
+
+    def output_roots(self) -> list[dict[str, Any]]:
+        return self.query.output_roots()
+
+    def tiling_keys(self) -> list[dict[str, Any]]:
+        return self.query.tiling_keys()
+
+    def tiling_data(self, name: str = "") -> list[dict[str, Any]]:
+        return self.query.tiling_data(name)
+
+    def tiling_fields(self, owner: str = "") -> list[dict[str, Any]]:
+        return self.query.tiling_fields(owner)
+
+    def tiling_registrations(self) -> list[dict[str, Any]]:
+        return self.query.tiling_registrations()
+
+    def unresolved(self) -> list[dict[str, Any]]:
+        return self.query.unresolved()
+
+    def audit(self) -> dict[str, Any]:
+        return self.query.audit()
+
+    def summary(self) -> dict[str, Any]:
+        return self.query.summary()
+
+    def find_path(self, start: str, end: str | None = None, *, end_kind: str = "") -> list[dict[str, Any]]:
+        return self.query.find_path(start, end, end_kind=end_kind)
+
+    def selected_kernel(self, key_name: str = "") -> list[dict[str, Any]]:
+        return self.query.selected_kernel(key_name)
+
+    def available_arch(self) -> list[dict[str, Any]]:
+        return self.query.available_arch()
+
+    # ---- internals ---------------------------------------------------------
+
+    def _entity(self, name_or_id: str) -> Entity | None:
+        key = str(name_or_id or "")
+        if key in self.codemap.entities:
+            return self.codemap.entities[key]
+        hits = self.codemap.by_name(key)
+        return hits[0] if hits else None
+
+    def _reachable_kinds(self, start_id: str, kinds: set[str]) -> list[dict[str, Any]]:
+        start = self._entity(start_id)
+        if start is None:
+            return []
+        seen = {start.id}
+        queue = deque([start.id])
+        out: list[dict[str, Any]] = []
+        while queue:
+            cur = queue.popleft()
+            for _rel, other in self.codemap.neighbors(cur, direction="both"):
+                if other.id in seen:
+                    continue
+                seen.add(other.id)
+                queue.append(other.id)
+                if other.kind_name() in kinds:
+                    out.append(_entity_row(other))
+        return out
+
+    @staticmethod
+    def _location(row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": row.get("id"),
+            "kind": row.get("kind"),
+            "name": row.get("name"),
+            "file": row.get("file"),
+            "line_start": row.get("line_start"),
+            "line_end": row.get("line_end"),
+            "snippet": (row.get("data") or {}).get("snippet") if isinstance(row.get("data"), dict) else "",
+        }
