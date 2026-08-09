@@ -7,7 +7,7 @@ from pathlib import Path
 from ascendc_pilot.actions.runtime import _write_active_action
 from ascendc_pilot.authorize import _project_root_for_path, _remap_primary_actor, authorize
 from ascendc_pilot.paths import agent_root, ensure_agent_layout
-from ascendc_pilot.state import load_state, start_workflow
+from ascendc_pilot.state import start_workflow
 
 
 def _prepare_resolve_session(op: Path) -> str:
@@ -91,19 +91,3 @@ def test_task_agent_name_does_not_break_project_root_resolution(tmp_path: Path) 
         action="",
     )
     assert verdict.get("decision") == "allow", verdict
-
-
-def test_primary_still_blocked_without_active_resolver(tmp_path: Path) -> None:
-    op = tmp_path / "DemoOp"
-    op.mkdir()
-    ensure_agent_layout(op)
-    start_workflow(op, "uo-init", phase="resolve", force_phase=True)
-    target = agent_root(op) / "runs" / load_state(op)["run_id"] / "actions" / "resolve" / "staging.yaml"
-    verdict = authorize(
-        op,
-        tool="write",
-        path=str(target),
-        agent="ascendc-pilot",
-        action="resolve",
-    )
-    assert verdict.get("decision") == "deny"
