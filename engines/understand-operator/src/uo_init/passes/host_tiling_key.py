@@ -3,12 +3,13 @@
 
 AscendC declares packed key dimensions in ``ASCENDC_TPL_ARGS_DECL`` and Host
 code constructs the packed value by passing ordered arguments to
-``GET_TPL_TILING_KEY``.  The positional mapping is a source-level contract and
+``GET_TPL_TILING_KEY``. The positional mapping is a source-level contract and
 is stronger than historical natural-language derivations.
 
 This pass is operator-agnostic. It records each argument expression, links
-known runtime/compile/API symbols to it when possible, and preserves unresolved
-local expressions without inventing an upstream root.
+known runtime/compile/API symbols to it when possible, and marks matched Host
+variables for the subsequent def-use pass instead of treating an archive node
+as an already-rooted value.
 """
 from __future__ import annotations
 
@@ -56,7 +57,7 @@ def bind_host_tiling_key_expressions(
             if not path.is_file() or path.suffix.lower() not in _SOURCE_SUFFIXES:
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
-            for start, end, args_text in _calls(text, _CALL_TOKEN):
+            for start, _end, args_text in _calls(text, _CALL_TOKEN):
                 args = _split_args(args_text)
                 calls += 1
                 if len(args) != len(keys):
@@ -148,6 +149,16 @@ def _symbol_index(codemap: CodeMap) -> dict[str, list[Entity]]:
     return out
 
 
+def _mark_host_key_source(source: Entity, key_name: str) -> None:
+    """Ensure an existing Host variable is still traced to its real roots."""
+    if source.kind_name() != EntityKind.VARIABLE.value:
+        return
+    source.attrs["host_key_argument"] = True
+    keys = source.attrs.setdefault("host_key_argument_keys", [])
+    if key_name not in keys:
+        keys.append(key_name)
+
+
 def _link_expression_sources(
     codemap: CodeMap,
     expression: Entity,
@@ -201,6 +212,7 @@ def _link_expression_sources(
                 EntityKind.ARCH.value,
             }:
                 continue
+            _mark_host_key_source(source, key_name)
             codemap.link(
                 RelationKind.DERIVES,
                 source.id,
@@ -218,8 +230,6 @@ def _link_expression_sources(
     if linked:
         return
 
-    # Exact source occurrence, but no upstream definition has been resolved yet.
-    # Keep it as a VARIABLE rather than pretending it is an API/compile root.
     tokens = _identifiers(expr)
     if tokens:
         token = tokens[-1]
@@ -230,6 +240,7 @@ def _link_expression_sources(
             attrs={
                 "source_name": _normalize_symbol(token).split(".")[-1].split("::")[-1],
                 "host_key_argument": True,
+                "host_key_argument_keys": [key_name],
                 "upstream_unresolved": True,
                 "provenance": "source_get_tpl_tiling_key_symbol",
             },
