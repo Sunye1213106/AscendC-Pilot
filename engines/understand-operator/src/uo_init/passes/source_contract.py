@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Current-source structural enrichment for the unified AscendC CodeMap.
+"""Operator-agnostic current-source enrichment for an AscendC CodeMap.
 
-This is the no-CANN fallback used when a full libclang translation unit cannot
-be built.  It consumes only machine-verifiable syntax from the operator source:
-REG_OP API declarations, AscendC template-argument declarations, TilingData
-classes/members, Host setter calls and __aicore__ kernel signatures.  Natural
-language comments/derivations are never promoted into semantic edges.
+This pass is the deterministic fallback when the complete CANN translation unit
+is unavailable.  It records only source-verifiable contracts shared by AscendC
+operators: REG_OP API declarations, InputIndex/AttrIndex aliases, template
+TilingKey declarations, TilingData classes and members, Host setter writes,
+__aicore__ kernel templates, ABI positions and GET_TILING_DATA_WITH_STRUCT.
+
+No operator name, repository macro name or free-text derivation is special-cased.
 """
 from __future__ import annotations
 
@@ -24,11 +26,11 @@ _DECL_RE = re.compile(
 )
 _ENUM_RE = re.compile(r"enum\s+class\s+(InputIndex|AttrIndex)\s*:[^{]+\{(.*?)\};", re.S)
 _ALIAS_INPUT_RE = re.compile(
-    r"\b(?:auto|const\s+auto|[A-Za-z_:<>\s\*&]+)\s+([A-Za-z_]\w*)\s*=.{0,260}?InputIndex::([A-Za-z_]\w*)",
+    r"\b(?:auto|const\s+auto|[A-Za-z_:<>\s\*&]+)\s+([A-Za-z_]\w*)\s*=.{0,320}?InputIndex::([A-Za-z_]\w*)",
     re.S,
 )
 _ALIAS_ATTR_RE = re.compile(
-    r"\b(?:auto|const\s+auto|[A-Za-z_:<>\s\*&]+)\s+([A-Za-z_]\w*)\s*=.{0,320}?AttrIndex::([A-Za-z_]\w*)",
+    r"\b(?:auto|const\s+auto|[A-Za-z_:<>\s\*&]+)\s+([A-Za-z_]\w*)\s*=.{0,420}?AttrIndex::([A-Za-z_]\w*)",
     re.S,
 )
 _SETTER_RE = re.compile(r"(?:\.|->)set_([A-Za-z_]\w*)\s*\((.*?)\)\s*;", re.S)
@@ -56,7 +58,6 @@ def enrich_codemap_from_operator_source(
     *,
     architecture: str = "arch35",
 ) -> CodeMap:
-    """Add source-verifiable API/TilingKey/TilingData/Kernel facts."""
     root = Path(operator_root).expanduser().resolve()
     if not root.is_dir():
         raise FileNotFoundError(root)
@@ -75,7 +76,7 @@ def enrich_codemap_from_operator_source(
     _link_tiling_data_reads(codemap, root, architecture)
     _link_nested_tiling_data_types(codemap)
 
-    codemap.meta["source_contract"] = "ascendc-source-contract/v1"
+    codemap.meta["source_contract"] = "ascendc-source-contract/v2"
     codemap.meta["source_contract_architecture"] = architecture
     codemap.meta["source_contract_stats"] = stats
     return codemap
@@ -255,6 +256,17 @@ def _source_spans(ent: Entity) -> list[dict[str, Any]]:
     return spans
 
 
+def _resolve_source_file(root: Path, raw: str) -> Path | None:
+    rel = raw.replace("\\", "/").lstrip("./")
+    candidates = [root.parent / rel, root / rel]
+    if rel.startswith(root.name + "/"):
+        candidates.append(root / rel[len(root.name) + 1 :])
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
 def _link_api_to_historical_variables(
     codemap: CodeMap,
     root: Path,
@@ -266,11 +278,8 @@ def _link_api_to_historical_variables(
 
     for var in variables:
         for src in _source_spans(var):
-            rel_file = str(src.get("file") or "")
-            candidate = root.parent / rel_file
-            if not candidate.is_file():
-                candidate = root / rel_file
-            if not candidate.is_file():
+            candidate = _resolve_source_file(root, str(src.get("file") or ""))
+            if candidate is None:
                 continue
             if candidate not in cache:
                 text = _read(candidate)
@@ -339,7 +348,7 @@ def _parse_allowed_values(tail: str) -> list[int | str]:
     after = tail.split("ASCENDC_TPL_UI_LIST", 1)[1]
     out: list[int | str] = []
     for token in _split_args(after.lstrip(", \n\t")):
-        token = token.strip()
+        token = token.strip().rstrip(")")
         if not token:
             continue
         try:
@@ -360,6 +369,7 @@ def _parse_tiling_keys(codemap: CodeMap, root: Path, architecture: str) -> dict[
             decl_kind, name, width_token, tail = m.groups()
             if name in declared:
                 continue
+            order = len(declared)
             declared.append(name)
             if decl_kind == "BOOL":
                 width = 1
@@ -372,15 +382,15 @@ def _parse_tiling_keys(codemap: CodeMap, root: Path, architecture: str) -> dict[
                     width = ints.get(token)
                 allowed = _parse_allowed_values(tail)
             line = _line_of(text, m.start())
-            existing = codemap.by_name(name, kind=EntityKind.TILING_KEY)
             attrs = {
                 "bit_width": width,
                 "allowed_values": allowed,
                 "decl_kind": decl_kind.lower(),
                 "source_declared": True,
                 "provenance": "source_tpl_args_decl",
-                "decl_order": len(declared) - 1,
+                "decl_order": order,
             }
+            existing = codemap.by_name(name, kind=EntityKind.TILING_KEY)
             if existing:
                 ent = existing[0]
                 ent.attrs.update(attrs)
@@ -543,11 +553,16 @@ def _link_host_setters(codemap: CodeMap, root: Path, architecture: str) -> None:
 
 
 def _kernel_candidates(root: Path, architecture: str) -> list[Path]:
+    kernel_root = root / "op_kernel"
     out: list[Path] = []
-    apt = root / "op_kernel" / "flash_attention_score_grad_apt.cpp"
-    if apt.is_file() and f'"{architecture}/' in _read(apt):
-        out.append(apt)
-    out.extend(_cpp_files(root / "op_kernel" / architecture))
+    # Architecture-local headers/sources contain templates and helpers.
+    out.extend(_cpp_files(kernel_root / architecture))
+    # Top-level entry files are operator-specific by name, so discover them by
+    # source semantics instead of filename conventions.
+    for path in _cpp_files(kernel_root, recursive=False):
+        text = _read(path)
+        if "__aicore__" in text or "GET_TILING_DATA_WITH_STRUCT" in text or f'"{architecture}/' in text:
+            out.append(path)
     seen: set[Path] = set()
     result: list[Path] = []
     for path in out:
@@ -669,17 +684,16 @@ def _parse_kernel_contract(codemap: CodeMap, root: Path, architecture: str, api:
 
 def _link_tiling_data_reads(codemap: CodeMap, root: Path, architecture: str) -> None:
     owners = {e.name: e for e in codemap.by_kind(EntityKind.TILING_DATA)}
-    kernels = codemap.by_kind(EntityKind.KERNEL)
     for path in _kernel_candidates(root, architecture):
         text = _read(path)
         used = {name.split("::")[-1] for name in _GET_TILING_RE.findall(text)}
         if not used:
             continue
+        entry_names = {m.group("name") for m in _GLOBAL_KERNEL_RE.finditer(text)}
         target_kernels = [
-            k
-            for k in kernels
-            if (k.name == "flash_attention_score_grad" and path.name.endswith("_apt.cpp"))
-            or str(k.file).replace("\\", "/").endswith(path.relative_to(root.parent).as_posix())
+            k for k in codemap.by_kind(EntityKind.KERNEL)
+            if k.name in entry_names
+            or str(k.file).replace("\\", "/") == _rel(root, path)
         ]
         for type_name in used:
             tdata = owners.get(type_name)
