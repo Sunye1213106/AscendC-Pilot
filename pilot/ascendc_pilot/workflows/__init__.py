@@ -1,4 +1,4 @@
-"""Workflow registry — sole authority for phases, transitions, actions, gates."""
+"""Workflow registry — normalized runtime authority for phases/actions/gates."""
 
 from __future__ import annotations
 
@@ -9,14 +9,12 @@ from ascendc_pilot.workflows.specs import WORKFLOWS
 
 _TG_PIPELINES: dict[str, dict[str, list[str]]] = {
     "tg-init": {
-        # Default = tilingkey_full_coverage (no CSV merge/nest).
         "intent": ["init_intent"],
         "kb_ready": ["kb_check"],
         "contract": ["contract_build"],
         "bind": ["semantic_bind"],
         "gate": ["integrity_gate", "init_audit"],
         "confirm": ["human_confirm"],
-        # csv_consumer overlay reintroduces these phases.
         "merge": ["bind_merge"],
         "nest": ["mid_nest"],
     },
@@ -24,17 +22,12 @@ _TG_PIPELINES: dict[str, dict[str, list[str]]] = {
         "intent": ["plan_intent"],
         "scope": ["plan_scope"],
         "gate": ["plan_precheck"],
-        # plan_build performs generation, filtering, and review materialization
-        # in one deterministic engine invocation. Reusing the same receipt in
-        # the following two states prevents skipping the build while avoiding
-        # duplicate planner execution.
         "build": ["plan_build"],
         "filter": ["plan_build"],
         "review": ["plan_build"],
         "approve": ["plan_approve"],
     },
     "tg-solve": {
-        # Default = tilingkey_full_coverage closure loop.
         "gate": ["solve_precheck"],
         "oracle": ["oracle_probe"],
         "ledger": ["closure_ledger"],
@@ -44,7 +37,6 @@ _TG_PIPELINES: dict[str, dict[str, list[str]]] = {
         "lemma": ["lemma_leads", "lemma_evidence", "lemma_mine", "lemma_review", "lemma_apply"],
         "audit": ["closure_audit"],
         "certify": ["closure_certify"],
-        # csv_consumer compatibility (selected when mode=csv_consumer via overlay).
         "encode": ["z3_solve"],
         "solve": ["z3_solve"],
         "project": ["z3_solve"],
@@ -55,11 +47,11 @@ _TG_PIPELINES: dict[str, dict[str, list[str]]] = {
 _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
     "tg-init": {
         "init_intent": {
-            "read": ["uo/manifest.yaml", "context/**"],
+            "read": ["uo/*.uo", "context/**"],
             "write": ["tg/init/init_intent.yaml"],
         },
         "kb_check": {
-            "read": ["uo/manifest.yaml", "uo/checks/integrity.yaml"],
+            "read": ["uo/*.uo", "context/**"],
             "write": [],
         },
         "contract_build": {
@@ -76,8 +68,7 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
         },
         "semantic_bind": {
             "read": [
-                "uo/ir/tg_host_view.yaml",
-                "uo/ir/operator_graph.yaml",
+                "uo/**",
                 "tg/contract/**",
                 "tg/realization/llm_bind_prompt_bundle.yaml",
                 "tg/realization/binding_inventory.yaml",
@@ -116,7 +107,7 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
     },
     "tg-plan": {
         "plan_intent": {
-            "read": ["tg/init/**", "context/**", "uo/manifest.yaml"],
+            "read": ["tg/init/**", "context/**", "uo/*.uo"],
             "write": ["tg/plan/plan_intent.yaml"],
         },
         "plan_scope": {
@@ -130,7 +121,7 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
             "write": ["tg/plan/levels/*/plan_scope.yaml", "tg/plan/plan_intent.yaml"],
         },
         "plan_precheck": {
-            "read": ["tg/init/status.yaml", "tg/snapshot/**", "uo/manifest.yaml"],
+            "read": ["tg/init/status.yaml", "tg/snapshot/**", "uo/*.uo"],
             "write": [],
         },
         "plan_build": {
@@ -151,7 +142,7 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
     },
     "tg-solve": {
         "solve_precheck": {
-            "read": ["tg/init/**", "tg/plan/**", "tg/snapshot/**", "uo/manifest.yaml"],
+            "read": ["tg/init/**", "tg/plan/**", "tg/snapshot/**", "uo/*.uo"],
             "write": [],
         },
         "oracle_probe": {
@@ -168,7 +159,7 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
             ],
         },
         "closure_search": {
-            "read": ["tg/closure/**", "uo/ir/tg_host_view.yaml", "uo/ir/host_codemap.yaml"],
+            "read": ["tg/closure/**", "uo/**"],
             "write": ["tg/closure/rounds/**", "tg/closure/models/**"],
         },
         "closure_residual": {
@@ -188,7 +179,7 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
             "write": ["tg/closure/lemmas/leads.yaml", "tg/closure/leads.csv", "tg/closure/leads3.csv"],
         },
         "lemma_evidence": {
-            "read": ["tg/closure/lemmas/leads.yaml", "uo/ir/**", "uo/tiling/**"],
+            "read": ["tg/closure/lemmas/leads.yaml", "uo/**"],
             "write": [
                 "tg/closure/lemmas/evidence/**",
                 "tg/closure/lemmas/evidence_receipt.yaml",
@@ -199,8 +190,7 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
             "read": [
                 "tg/closure/lemmas/leads.yaml",
                 "tg/closure/lemmas/evidence/**",
-                "uo/ir/**",
-                "uo/tiling/**",
+                "uo/**",
                 "runs/**/actions/lemma_mine/**",
             ],
             "write": [
@@ -210,14 +200,8 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
             ],
         },
         "lemma_review": {
-            "read": [
-                "runs/**/actions/lemma_mine/**",
-                "tg/closure/lemmas/**",
-                "uo/ir/**",
-            ],
-            "write": [
-                "runs/{run_id}/actions/lemma_review/review.yaml",
-            ],
+            "read": ["runs/**/actions/lemma_mine/**", "tg/closure/lemmas/**", "uo/**"],
+            "write": ["runs/{run_id}/actions/lemma_review/review.yaml"],
         },
         "lemma_apply": {
             "read": [
@@ -235,16 +219,11 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
             ],
         },
         "closure_audit": {
-            "read": ["tg/closure/**", "uo/ir/**", "uo/tiling/**"],
-            "write": [
-                "runs/{run_id}/actions/closure_audit/review.yaml",
-            ],
+            "read": ["tg/closure/**", "uo/**"],
+            "write": ["runs/{run_id}/actions/closure_audit/review.yaml"],
         },
         "closure_certify": {
-            "read": [
-                "tg/closure/**",
-                "runs/**/actions/closure_audit/review.yaml",
-            ],
+            "read": ["tg/closure/**", "runs/**/actions/closure_audit/review.yaml"],
             "write": [
                 "tg/closure/closure.csv",
                 "tg/closure/certificate.yaml",
@@ -286,35 +265,70 @@ def _ensure_agent(meta: dict[str, Any], agent_id: str, role_id: str) -> None:
 
 
 def _make_deterministic(row: dict[str, Any]) -> None:
-    """Expose a deterministic Action as an engine step, never a model-selectable agent."""
     row["agent_id"] = None
     row["role_id"] = "deterministic_engine"
     row["execution_mode"] = "deterministic"
     row["actors"] = []
     row["task_prompt_id"] = None
-    # Agent-facing capabilities are irrelevant for a deterministic engine call.
     row["capability_ids"] = []
 
 
 def _apply_uo_control_plane_contracts() -> None:
-    """Align UO runtime ownership with the CodeMap compiler architecture.
-
-    Stable/compiler work is deterministic.  Only genuine ambiguity is exposed
-    to a model: prepare may ask the primary to choose an ambiguous source scope,
-    resolve delegates unresolved semantic gaps, and uo-query remains read-only.
-    """
+    """Expose the six-stage `.uo` compiler without legacy KB control gates."""
     init = WORKFLOWS.get("uo-init") or {}
     for action_id in ("extract", "analyze", "apply_gap_patch", "commit", "review"):
         row = _action(init, action_id)
         if row is not None:
             _make_deterministic(row)
+
+    # The action receipts prove stage completion.  Semantic gates only check
+    # facts not already guaranteed by the output contract.
+    init["phase_gates"] = {
+        "prepare": ["layout_receipt"],
+        "extract": ["extract_receipt"],
+        "analyze": [],
+        "resolve": ["gap_patch_evidence"],
+        "commit": ["uo_product_ready"],
+        "review": [],
+    }
+    init["complete_gates"] = ["uo_product_ready"]
+    init["gates"] = ["layout_receipt", "extract_receipt", "gap_patch_evidence", "uo_product_ready"]
+
+    action_gates = {
+        "prepare": ["layout_receipt"],
+        "extract": ["extract_receipt"],
+        "analyze": [],
+        "resolve": ["gap_patch_evidence"],
+        "apply_gap_patch": [],
+        "commit": ["uo_product_ready"],
+        "review": [],
+    }
+    for action_id, gates in action_gates.items():
+        row = _action(init, action_id)
+        if row is not None:
+            row["gates"] = list(gates)
+
     init["agents"] = [
         {"id": "ascendc-pilot", "role": "controller"},
         {"id": "uo-semantic-resolver", "role": "producer"},
     ]
-    for obligation in init.get("static_obligations") or []:
-        if isinstance(obligation, dict) and obligation.get("id") == "kb_review_passed":
-            obligation["label_zh"] = "CodeMap 结构审查通过"
+    init["static_obligations"] = [
+        {"id": "scope_confirmed", "label_zh": "范围已确认"},
+        {"id": "uo_product_ready", "label_zh": ".uo CodeMap 已写入"},
+    ]
+    meta = init.setdefault("meta", {})
+    recovery = meta.setdefault("recovery_by_reason", {})
+    recovery.pop("KB_REVIEW_REWORK", None)
+    recovery["CODEMAP_REVIEW_REWORK"] = {"type": "action", "action_id": "review"}
+
+    # Normalize legacy reason labels that were still present in the source spec.
+    for edge in init.get("transitions") or []:
+        if not isinstance(edge, dict):
+            continue
+        codes = [str(code) for code in (edge.get("reason_codes") or [])]
+        codes = ["CODEMAP_REVIEW_REWORK" if code == "KB_REVIEW_REWORK" else code for code in codes]
+        codes = ["commit" if code == "export_kb" else code for code in codes]
+        edge["reason_codes"] = codes
 
     update = WORKFLOWS.get("uo-update") or {}
     for row in update.get("actions") or []:
@@ -337,9 +351,6 @@ def _apply_uo_control_plane_contracts() -> None:
         row = _action(update, action_id)
         if row is not None:
             row["label_zh"] = label
-    for obligation in update.get("static_obligations") or []:
-        if isinstance(obligation, dict) and obligation.get("id") == "kb_integrity_passed":
-            obligation["label_zh"] = "CodeMap 完整性通过"
 
     query = WORKFLOWS.get("uo-query") or {}
     lookup = _action(query, "kb_lookup")
@@ -352,25 +363,11 @@ def _apply_uo_control_plane_contracts() -> None:
 
 
 def _apply_tg_control_plane_contracts() -> None:
-    """Close TG ordering, ownership, and reset-policy gaps at registry load."""
-
     for workflow_id, pipelines in _TG_PIPELINES.items():
         meta = WORKFLOWS.get(workflow_id)
         if not isinstance(meta, dict):
             continue
-        # Keep the union for discovery; mode_overlays (if present) select the
-        # active pipeline at get_workflow() time.
         meta["pipelines"] = {phase: list(actions) for phase, actions in pipelines.items()}
-        overlays = meta.get("mode_overlays")
-        if isinstance(overlays, dict):
-            for _mode, overlay in overlays.items():
-                if not isinstance(overlay, dict):
-                    continue
-                # Fill missing pipeline keys from the overlay only — do not
-                # reintroduce the opposite mode's phases.
-                if "pipelines" not in overlay:
-                    continue
-
         for action_id, io in _TG_ACTION_IO.get(workflow_id, {}).items():
             row = _action(meta, action_id)
             if row is None:
@@ -378,8 +375,6 @@ def _apply_tg_control_plane_contracts() -> None:
             row["allowed_read_paths"] = list(io.get("read") or [])
             row["allowed_write_paths"] = list(io.get("write") or [])
 
-    # Human decisions execute in the current primary session; they are never
-    # anonymous actors and must not inherit the UO scope-confirmation recipe.
     for workflow_id, action_id in (
         ("tg-init", "human_confirm"),
         ("tg-plan", "plan_intent"),
@@ -395,9 +390,6 @@ def _apply_tg_control_plane_contracts() -> None:
         row["actors"] = ["ascendc-pilot"]
         _ensure_agent(meta, "ascendc-pilot", "controller")
 
-    # Reinitializing a downstream TG workflow must preserve its upstream
-    # contracts. Only products owned by that workflow and its descendants are
-    # invalidated.
     upstream = [
         "uo",
         "tg/intake",
@@ -428,7 +420,6 @@ _apply_tg_control_plane_contracts()
 
 
 def resolve_workflow_id(workflow_id: str) -> str:
-    """Follow ``alias_of`` chains when present."""
     seen: set[str] = set()
     wid = str(workflow_id or "").strip()
     while wid and wid not in seen:
@@ -444,23 +435,19 @@ def resolve_workflow_id(workflow_id: str) -> str:
 
 
 def resolve_tg_mode(project_root: Any | None = None, *, default: str = "tilingkey_full_coverage") -> str:
-    """Read frozen plan/init intent mode when available."""
     if project_root is None:
         return default
     try:
         from pathlib import Path
-
         from ascendc_pilot.paths import tg_root
 
-        root = Path(project_root)
-        tg = tg_root(root)
+        tg = tg_root(Path(project_root))
         for rel in ("plan/plan_intent.yaml", "init/init_intent.yaml"):
             path = tg / rel
             if not path.is_file():
                 continue
             try:
                 import yaml
-
                 doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
             except Exception:
                 continue
@@ -473,14 +460,6 @@ def resolve_tg_mode(project_root: Any | None = None, *, default: str = "tilingke
 
 
 def _rederive_actor_fields(merged: dict[str, Any], patch: dict[str, Any]) -> None:
-    """Re-derive what ``_act`` computed from ``agent_id`` / ``role_id``.
-
-    ``actors`` and ``execution_mode`` are derived at spec-build time, so an
-    overlay that hands an action to a different agent has to refresh them.
-    Leaving the base ``actors`` behind is not cosmetic: authorize matches the
-    calling agent against that list, so the overlay's own producer gets
-    ``ACTOR_MISMATCH`` on the paths the overlay just granted it.
-    """
     if "agent_id" not in patch and "role_id" not in patch:
         return
     agent_id = str(merged.get("agent_id") or "")
@@ -519,7 +498,6 @@ def _apply_mode_overlay(meta: dict[str, Any], mode: str | None) -> dict[str, Any
     ):
         if key in overlay:
             out[key] = overlay[key]
-    # Per-action contract / gate / actor overrides (e.g. full-mode Output Contracts).
     overrides = overlay.get("action_overrides")
     if isinstance(overrides, dict) and overrides:
         actions: list[dict[str, Any]] = []
@@ -530,11 +508,11 @@ def _apply_mode_overlay(meta: dict[str, Any], mode: str | None) -> dict[str, Any
             patch = overrides.get(aid)
             if isinstance(patch, dict) and patch:
                 merged = dict(row)
-                for k, v in patch.items():
-                    if v is None:
-                        merged.pop(k, None)
+                for key, value in patch.items():
+                    if value is None:
+                        merged.pop(key, None)
                     else:
-                        merged[k] = v
+                        merged[key] = value
                 _rederive_actor_fields(merged, patch)
                 actions.append(merged)
             else:
@@ -555,8 +533,7 @@ def get_workflow(
         raise KeyError(f"Unknown workflow: {workflow_id}")
     meta = dict(WORKFLOWS[wid])
     if meta.get("mode_overlays"):
-        resolved = mode or resolve_tg_mode(project_root)
-        meta = _apply_mode_overlay(meta, resolved)
+        meta = _apply_mode_overlay(meta, mode or resolve_tg_mode(project_root))
     return meta
 
 
@@ -572,15 +549,15 @@ def state_ids(workflow_id: str) -> list[str]:
     meta = get_workflow(workflow_id)
     states = meta.get("states") or []
     if states:
-        return [str(s["id"]) for s in states if isinstance(s, dict) and s.get("id")]
+        return [str(state["id"]) for state in states if isinstance(state, dict) and state.get("id")]
     return list(meta.get("phases") or [])
 
 
 def label_zh_for(workflow_id: str, phase: str) -> str:
     meta = get_workflow(workflow_id)
-    for s in meta.get("states") or []:
-        if isinstance(s, dict) and s.get("id") == phase:
-            return str(s.get("label_zh") or phase)
+    for state in meta.get("states") or []:
+        if isinstance(state, dict) and state.get("id") == phase:
+            return str(state.get("label_zh") or phase)
     return phase
 
 
@@ -630,9 +607,9 @@ def rework_targets(
         codes = edge.get("reason_codes") or []
         if reason_code and codes and reason_code not in codes:
             continue
-        to = str(edge.get("to") or "")
-        if to and to not in out:
-            out.append(to)
+        target = str(edge.get("to") or "")
+        if target and target not in out:
+            out.append(target)
     return out
 
 
@@ -643,10 +620,9 @@ def actions_for_phase(
     project_root: Any | None = None,
     mode: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return actions explicitly bound to ``phase`` via action.phases."""
     meta = get_workflow(workflow_id, project_root=project_root, mode=mode)
-    actions = [a for a in (meta.get("actions") or []) if isinstance(a, dict)]
-    return [a for a in actions if phase in set(a.get("phases") or [])]
+    actions = [action for action in (meta.get("actions") or []) if isinstance(action, dict)]
+    return [action for action in actions if phase in set(action.get("phases") or [])]
 
 
 def phase_pipeline(
@@ -656,12 +632,11 @@ def phase_pipeline(
     project_root: Any | None = None,
     mode: str | None = None,
 ) -> list[str]:
-    """Ordered mandatory actions for a phase (Spec ``pipelines`` is the sole authority)."""
     meta = get_workflow(workflow_id, project_root=project_root, mode=mode)
     pipes = meta.get("pipelines") or {}
     raw = pipes.get(phase) if isinstance(pipes, dict) else None
     if isinstance(raw, list):
-        return [str(a) for a in raw if str(a).strip()]
+        return [str(action) for action in raw if str(action).strip()]
     return []
 
 
@@ -673,7 +648,7 @@ def action_by_id(
     mode: str | None = None,
 ) -> dict[str, Any] | None:
     meta = get_workflow(workflow_id, project_root=project_root, mode=mode)
-    for a in meta.get("actions") or []:
-        if isinstance(a, dict) and str(a.get("id") or "") == action_id:
-            return dict(a)
+    for action in meta.get("actions") or []:
+        if isinstance(action, dict) and str(action.get("id") or "") == action_id:
+            return dict(action)
     return None
