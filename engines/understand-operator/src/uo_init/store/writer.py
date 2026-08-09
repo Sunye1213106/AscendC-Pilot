@@ -10,23 +10,48 @@ from pathlib import Path
 from typing import Any
 
 from uo_init.ir.codemap import CodeMap
+from uo_init.ir.entity import EntityKind
+from uo_init.ir.relation import RelationKind
 from uo_init.store.schema import SCHEMA_SQL, SCHEMA_VERSION
 
 
 def uo_product_dir(op_root: str | Path) -> Path:
-    """``.ascendc-pilot/uo/`` — arch-neutral product directory."""
     root = Path(op_root).expanduser().resolve()
     return root / ".ascendc-pilot" / "uo"
 
 
-def uo_product_path(
-    op_root: str | Path,
-    op_name: str,
-    architecture: str,
-) -> Path:
+def uo_product_path(op_root: str | Path, op_name: str, architecture: str) -> Path:
     safe_op = (op_name or "operator").replace("/", "_").replace("\\", "_")
     arch = (architecture or "arch35").strip() or "arch35"
     return uo_product_dir(op_root) / f"{safe_op}.{arch}.uo"
+
+
+def _drop_unproven_direct_selection_edges(codemap: CodeMap) -> int:
+    """Prevent legacy Cartesian TilingKey→Kernel edges entering the product.
+
+    Old adapters can still construct direct SELECTS/LAUNCHES edges without any
+    source/compiler provenance.  Such edges are not facts.  Explicit legacy KB
+    edges retain ``legacy_kind`` and current-source edges retain ``provenance``;
+    both are preserved.
+    """
+    removed: list[str] = []
+    for rid, rel in list(codemap.relations.items()):
+        if rel.kind_name() not in {RelationKind.SELECTS.value, RelationKind.LAUNCHES.value}:
+            continue
+        src = codemap.entities.get(rel.src)
+        dst = codemap.entities.get(rel.dst)
+        if not src or not dst:
+            continue
+        if src.kind_name() != EntityKind.TILING_KEY.value or dst.kind_name() != EntityKind.KERNEL.value:
+            continue
+        if rel.attrs.get("provenance") or rel.attrs.get("legacy_kind") or rel.attrs.get("evidence"):
+            continue
+        removed.append(rid)
+    for rid in removed:
+        codemap.relations.pop(rid, None)
+    if removed:
+        codemap.meta["dropped_unproven_direct_key_kernel_edges"] = len(removed)
+    return len(removed)
 
 
 def write_codemap(
@@ -43,9 +68,8 @@ def write_codemap(
     if tmp.exists():
         tmp.unlink()
 
-    # User-facing/queryable summaries must use the same soundness semantics as
-    # uo-query and uo-dump. The legacy CodeMap.summary() fallback may infer a
-    # Host→Kernel path from node presence alone, so never persist it verbatim.
+    _drop_unproven_direct_selection_edges(codemap)
+
     from uo_init.diagnostics.audit import audit_codemap
 
     strict_summary = dict(audit_codemap(codemap)["summary"])
@@ -67,18 +91,11 @@ def write_codemap(
                 **{f"cm_{k}": _jsonable(v) for k, v in codemap.meta.items()},
             },
         )
-        # Build variants.
         for ent in codemap.by_kind("BUILD_VARIANT"):
             conn.execute(
                 "INSERT OR REPLACE INTO build_variant(id, name, architecture, data) VALUES (?,?,?,?)",
-                (
-                    ent.id,
-                    ent.name,
-                    codemap.architecture,
-                    json.dumps(ent.to_dict(), ensure_ascii=False),
-                ),
+                (ent.id, ent.name, codemap.architecture, json.dumps(ent.to_dict(), ensure_ascii=False)),
             )
-        # Entities.
         for ent in codemap.entities.values():
             data = ent.to_dict()
             conn.execute(
@@ -102,13 +119,12 @@ def write_codemap(
                     "INSERT OR IGNORE INTO file(id, path, sha256, role) VALUES (?,?,?,?)",
                     (ent.file, ent.file, "", ent.attrs.get("layer") or ""),
                 )
-                span_id = f"span:{ent.id}"
                 conn.execute(
                     "INSERT OR REPLACE INTO source_span("
                     "id, entity_id, file, line_start, line_end, snippet"
                     ") VALUES (?,?,?,?,?,?)",
                     (
-                        span_id,
+                        f"span:{ent.id}",
                         ent.id,
                         ent.file,
                         int(ent.line_start),
@@ -121,9 +137,7 @@ def write_codemap(
                     "INSERT OR REPLACE INTO attribute(entity_id, key, value) VALUES (?,?,?)",
                     (ent.id, str(key), _jsonable(value)),
                 )
-        # Relations (defer FK: insert entities first — done).
         for rel in codemap.relations.values():
-            # Skip dangling edges.
             if rel.src not in codemap.entities or rel.dst not in codemap.entities:
                 continue
             conn.execute(
@@ -145,13 +159,10 @@ def write_codemap(
                 "INSERT OR REPLACE INTO view_blob(name, schema_id, data) VALUES (?,?,?)",
                 (
                     str(name),
-                    str((payload or {}).get("schema") or "")
-                    if isinstance(payload, dict)
-                    else "",
+                    str((payload or {}).get("schema") or "") if isinstance(payload, dict) else "",
                     json.dumps(payload, ensure_ascii=False),
                 ),
             )
-        # Summary view always present and semantically strict.
         conn.execute(
             "INSERT OR REPLACE INTO view_blob(name, schema_id, data) VALUES (?,?,?)",
             ("summary", "codemap-summary/v1", json.dumps(strict_summary, ensure_ascii=False)),
