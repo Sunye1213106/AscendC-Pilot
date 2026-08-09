@@ -1,10 +1,10 @@
 # GENERATED from Workflow Spec — do not hand-edit identity fields
 version: 1
-name_zh: 生成置信度报告
+name_zh: 生成更新质量报告
 id: confidence_report
 workflow_id: uo-update
 role_id: deterministic_engine
-agent_id: deterministic-uo-engine
+agent_id: null
 execution_mode: deterministic
 capabilities: []
 policies:
