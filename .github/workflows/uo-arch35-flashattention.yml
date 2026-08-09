@@ -45,8 +45,19 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          python -m pytest engines/understand-operator/tests/unit/test_codemap_soundness_audit.py -q \
-            2>&1 | tee "$GITHUB_WORKSPACE/artifacts/uo-arch35/pytest.txt"
+          python -m pytest engines/understand-operator/tests/unit/test_codemap_soundness_audit.py \
+            engines/understand-operator/tests/unit/test_understand_archive_import.py -q \
+            2>&1 | tee "$GITHUB_WORKSPACE/artifacts/uo-arch35/pytest-targeted.txt"
+
+      - name: Full UO test suite diagnostic
+        id: full_uo_tests
+        continue-on-error: true
+        env:
+          PYTHONPATH: ${{ github.workspace }}/engines/understand-operator/src
+        run: |
+          set -o pipefail
+          cd engines/understand-operator
+          python -m pytest tests -q 2>&1 | tee "$GITHUB_WORKSPACE/artifacts/uo-arch35/pytest-full.txt"
 
       - name: Inventory real archived facts
         run: |
@@ -93,6 +104,7 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "targeted test outcome: ${{ steps.targeted_tests.outcome }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "full UO test outcome: ${{ steps.full_uo_tests.outcome }}" >> "$GITHUB_STEP_SUMMARY"
           echo "audit outcome: ${{ steps.audit.outcome }}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload binary and audit report
