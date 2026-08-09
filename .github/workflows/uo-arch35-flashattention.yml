@@ -39,19 +39,30 @@ jobs:
       - name: Build and audit arch35 UO
         id: audit
         continue-on-error: true
+        env:
+          UO_AUDIT_OUT: ${{ github.workspace }}/artifacts/uo-arch35
         run: |
+          mkdir -p "$UO_AUDIT_OUT"
           python engines/understand-operator/tools/arch35_flashattention_audit.py \
             --operator external/flashattention/flash_attention_score_grad \
-            --out-dir artifacts/uo-arch35
+            --out-dir "$UO_AUDIT_OUT"
+
+      - name: Inspect audit outputs
+        if: always()
+        run: |
+          echo "workspace=$GITHUB_WORKSPACE"
+          find "$GITHUB_WORKSPACE/artifacts" -maxdepth 3 -type f -printf '%p %s bytes\n' 2>/dev/null || true
 
       - name: Publish audit summary
         if: always()
         run: |
-          if [ -f artifacts/uo-arch35/arch35-audit.md ]; then
-            cat artifacts/uo-arch35/arch35-audit.md >> "$GITHUB_STEP_SUMMARY"
-          elif [ -f artifacts/uo-arch35/arch35-audit.json ]; then
+          REPORT="$GITHUB_WORKSPACE/artifacts/uo-arch35/arch35-audit.md"
+          JSON_REPORT="$GITHUB_WORKSPACE/artifacts/uo-arch35/arch35-audit.json"
+          if [ -f "$REPORT" ]; then
+            cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+          elif [ -f "$JSON_REPORT" ]; then
             echo '```json' >> "$GITHUB_STEP_SUMMARY"
-            cat artifacts/uo-arch35/arch35-audit.json >> "$GITHUB_STEP_SUMMARY"
+            cat "$JSON_REPORT" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "audit outcome: ${{ steps.audit.outcome }}" >> "$GITHUB_STEP_SUMMARY"
@@ -61,5 +72,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: flash-attention-score-grad-arch35-uo-audit
-          path: artifacts/uo-arch35/
+          path: ${{ github.workspace }}/artifacts/uo-arch35/
           if-no-files-found: error
