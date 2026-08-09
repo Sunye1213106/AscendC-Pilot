@@ -15,6 +15,7 @@ from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes.frontier_resolution import resolve_class_frontiers
 from uo_init.passes.source_contract import enrich_codemap_from_operator_source
+from uo_init.passes.source_inventory import inventory_source_files
 from uo_init.passes.source_resolution import resolve_source_gaps
 from uo_init.passes.tiling_registration import enrich_tiling_registrations
 from uo_init.store.writer import write_codemap
@@ -228,7 +229,7 @@ def read_understand_archive(
 
         cm.meta.update(
             {
-                "archive_import": "understand-operator/v5+source-contract+registration+resolution",
+                "archive_import": "understand-operator/v6+source-inventory+contract+registration+resolution",
                 "archive_path": str(archive_path),
                 "archive_manifest_stage_status": manifest.get("stages") or {},
                 "archive_graph_status": manifest.get("graphs") or {},
@@ -240,6 +241,7 @@ def read_understand_archive(
         )
 
         if operator_root is not None:
+            inventory_source_files(cm, operator_root, architecture=architecture)
             enrich_codemap_from_operator_source(cm, operator_root, architecture=architecture)
             enrich_tiling_registrations(cm, operator_root, architecture=architecture)
             resolve_source_gaps(cm, operator_root, architecture=architecture)
@@ -291,4 +293,5 @@ def understand_archive_to_uo(
     written["resolved_archive_gaps"] = cm.meta.get("resolved_archive_gaps")
     written["source_tiling_registrations"] = cm.meta.get("source_tiling_registrations")
     written["remaining_unresolved_count"] = cm.meta.get("remaining_unresolved_count")
+    written["source_inventory_file_count"] = cm.meta.get("source_inventory_file_count")
     return written
