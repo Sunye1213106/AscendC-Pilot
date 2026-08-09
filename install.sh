@@ -44,14 +44,16 @@ plugins_dest() {
 
 purge_legacy_ascendc_agent() {
   local plat="$1" skills="$2" agents="$3" plugins="$4"
-  local name p
+  local name
   for name in uo-code-review understand-operator uo-diff; do
     if [[ -e "$skills/$name" || -L "$skills/$name" ]]; then
       rm -rf "$skills/$name"
       echo "Removed legacy skill → $skills/$name"
     fi
   done
-  for name in ascendc-agent uo-code-reviewer README; do
+  for name in \
+    ascendc-agent uo-code-reviewer deterministic-uo-engine deterministic-tg-engine \
+    uo-semantic-resolve uo-gap-resolve uo-key-resolve uo-confidence-review uo-kb-review README; do
     if [[ -f "$agents/$name.md" || -L "$agents/$name.md" ]]; then
       rm -f "$agents/$name.md"
       echo "Removed legacy agent → $agents/$name.md"
@@ -76,7 +78,10 @@ uninstall() {
   for name in uo-init uo-update uo-query ce-review tg-init tg-plan tg-solve operator _policies uo-code-review; do
     rm -rf "$skills/$name"
   done
-  for name in ascendc-pilot ascendc-agent uo-semantic-resolve uo-key-resolve uo-confidence-review uo-kb-review ce-reviewer uo-query uo-code-reviewer tg-csv-contract tg-semantic-bind tg-init-audit deterministic-uo-engine deterministic-tg-engine README; do
+  for name in \
+    ascendc-pilot ascendc-agent uo-semantic-resolve uo-semantic-resolver uo-gap-resolve uo-key-resolve \
+    uo-confidence-review uo-kb-review ce-reviewer uo-query uo-code-reviewer tg-csv-contract \
+    tg-semantic-bind tg-init-audit deterministic-uo-engine deterministic-tg-engine README; do
     rm -f "$agents/$name.md"
   done
   if [[ "$plat" == "opencode" && -n "$plugins" ]]; then
@@ -101,7 +106,9 @@ if [[ "$SKIP_PIP" != "1" ]]; then
   python -m pip install -e "$BUNDLE_ROOT/engines/common" -e "$BUNDLE_ROOT/pilot" -e "$BUNDLE_ROOT/engines/understand-operator" -e "$BUNDLE_ROOT/engines/testcase-generation[ml]"
 fi
 
+# Compose sources, then retain only model-reachable runtime context.
 python "$BUNDLE_ROOT/scripts/compose_runtime.py" --repo "$BUNDLE_ROOT" --host "$PLATFORM"
+python "$BUNDLE_ROOT/scripts/prune_runtime_context.py" --repo "$BUNDLE_ROOT" --host "$PLATFORM"
 
 DEST="$(plugin_dest "$PLATFORM")"
 SKILLS="$(skills_dest "$PLATFORM")"
@@ -110,15 +117,21 @@ mkdir -p "$DEST" "$SKILLS" "$AGENTS"
 rm -rf "$DEST"
 mkdir -p "$DEST"
 
-for name in skills prompts agents docs engines acp templates scripts opencode-plugin; do
+# Bundle runtime implementation only.  Agent-facing assets come exclusively
+# from generated/<host>; docs/templates/source prompts are not runtime context.
+for name in pilot acp scripts opencode-plugin; do
   if [[ -d "$BUNDLE_ROOT/$name" ]]; then
     cp -R "$BUNDLE_ROOT/$name" "$DEST/"
   fi
 done
+mkdir -p "$DEST/engines"
+for eng in common understand-operator testcase-generation code-engineering; do
+  if [[ -d "$BUNDLE_ROOT/engines/$eng" ]]; then
+    cp -R "$BUNDLE_ROOT/engines/$eng" "$DEST/engines/"
+  fi
+done
 
 GEN="$BUNDLE_ROOT/generated/$PLATFORM"
-# Remove source-bundled trees first — otherwise cp -R nests as dest/skills/skills
-# when dest/skills already exists, and skill junctions silently skip.
 for name in skills agents prompts; do
   rm -rf "$DEST/$name"
 done
@@ -128,7 +141,7 @@ if [[ -d "$GEN/prompts" ]]; then
   cp -R "$GEN/prompts" "$DEST/prompts"
 fi
 
-# Purge pre-pilot leftovers (wrong Tab agents / free-form LLM KB skills).
+# Purge leftovers from earlier installs before linking the current closure.
 purge_legacy_ascendc_agent "$PLATFORM" "$SKILLS" "$AGENTS" "$(plugins_dest "$PLATFORM")"
 
 for name in uo-init uo-update uo-query ce-review tg-init tg-plan tg-solve operator; do
@@ -137,7 +150,7 @@ for name in uo-init uo-update uo-query ce-review tg-init tg-plan tg-solve operat
   ln -sfn "$DEST/skills/$name" "$SKILLS/$name" 2>/dev/null || cp -R "$DEST/skills/$name" "$SKILLS/$name"
 done
 
-# OpenCode treats every .md under agents/ as a Tab entry — never install README.md.
+# Every installed agent is now reachable from a non-deterministic Action.
 for f in "$DEST/agents"/*.md; do
   [[ -f "$f" ]] || continue
   base="$(basename "$f")"

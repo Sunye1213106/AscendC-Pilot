@@ -1,14 +1,12 @@
 # GENERATED from Workflow Spec — do not hand-edit identity fields
 version: 1
-name_zh: 应用变更
+name_zh: 应用 CodeMap 增量更新
 id: apply_update
 workflow_id: uo-update
 role_id: deterministic_engine
-agent_id: deterministic-uo-engine
+agent_id: null
 execution_mode: deterministic
-capabilities:
-- source-reading
-- kb-query
+capabilities: []
 policies:
 - source-authority
 - code-access

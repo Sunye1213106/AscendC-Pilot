@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "uo-init"
 version = "0.1.0"
-description = "Ascend C understand-operator init: control-source closure graph"
+description = "AscendC UO CodeMap compiler"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -15,7 +15,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-legacy-solver = ["z3-solver>=4.12", "acp-common[legacy-solver]"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]

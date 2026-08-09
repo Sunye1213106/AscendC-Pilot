@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Fixed, parameterized query patterns over the derived UO SQLite index."""
+"""Agent-facing UO query facade.
+
+The unified ``.uo`` CodeMap is the primary query authority. ``UoQuery`` below
+is retained only as the legacy ``kb_graph.sqlite`` compatibility backend; new
+callers should obtain a backend through :func:`open_query` and remain storage
+agnostic.
+"""
 from __future__ import annotations
 
 import json
@@ -9,6 +15,10 @@ from typing import Any, Iterable
 
 
 class UoQuery:
+    """Legacy read-only query backend over ``indexes/kb_graph.sqlite``."""
+
+    backend = "legacy-sqlite"
+
     def __init__(self, database: str | Path):
         self.database = Path(database).expanduser().resolve()
         if not self.database.is_file():
@@ -80,9 +90,7 @@ class UoQuery:
             (branch_id,),
         )
 
-    def entities_in_files(
-        self, files: Iterable[str]
-    ) -> list[dict[str, Any]]:
+    def entities_in_files(self, files: Iterable[str]) -> list[dict[str, Any]]:
         normalized = sorted({str(path).replace("\\", "/") for path in files})
         if not normalized:
             return []
@@ -99,9 +107,7 @@ class UoQuery:
             normalized,
         )
 
-    def impact_of(
-        self, file: str, line_range: tuple[int, int]
-    ) -> list[dict[str, Any]]:
+    def impact_of(self, file: str, line_range: tuple[int, int]) -> list[dict[str, Any]]:
         start, end = sorted((int(line_range[0]), int(line_range[1])))
         return self._all(
             """
@@ -127,7 +133,6 @@ class UoQuery:
     def search(
         self, pattern: str, *, kinds: Iterable[str] = (), limit: int = 50
     ) -> list[dict[str, Any]]:
-        """Substring search over node id/name/data JSON and evidence snippets."""
         needle = f"%{pattern}%"
         kind_filter = ""
         params: list[Any] = [needle, needle, needle, needle]
@@ -158,7 +163,6 @@ class UoQuery:
     def neighbors(
         self, entity_id: str, *, depth: int = 1, limit: int = 100
     ) -> list[dict[str, Any]]:
-        """Undirected neighborhood around a node (edges + endpoints)."""
         depth = max(1, min(int(depth), 4))
         return self._all(
             """
@@ -205,22 +209,17 @@ class UoQuery:
         )
 
     def tiling_field(self, name_or_id: str) -> list[dict[str, Any]]:
-        """Resolve a TilingData field by id, qualified name, or short name."""
         key = str(name_or_id or "").strip()
         if not key:
             return []
-        rows = self._all(
+        return self._all(
             """
             SELECT n.*, group_concat(ne.evidence_id) AS evidence_refs
             FROM node n
             LEFT JOIN node_evidence ne ON ne.node_id=n.id
             WHERE n.kind='TilingDataField'
-              AND (
-                n.id=? OR n.name=? OR n.id LIKE ?
-                OR n.data LIKE ?
-              )
-            GROUP BY n.id
-            ORDER BY n.id
+              AND (n.id=? OR n.name=? OR n.id LIKE ? OR n.data LIKE ?)
+            GROUP BY n.id ORDER BY n.id
             """,
             (
                 key,
@@ -229,10 +228,8 @@ class UoQuery:
                 f'%"{key}"%',
             ),
         )
-        return rows
 
     def field_impact(self, name_or_id: str) -> dict[str, Any]:
-        """Writers / readers / neighboring branches for one TilingData field."""
         fields = self.tiling_field(name_or_id)
         if not fields:
             return {"ok": False, "error": "tiling_field_not_found", "query": name_or_id}
@@ -240,10 +237,8 @@ class UoQuery:
         fid = str(primary["id"])
         edges = self.edges_of(fid, limit=200)
         neighbors = self.neighbors(fid, depth=2, limit=80)
-        # Surface writer/reader lists stored on the node data JSON.
         data = primary.get("data") if isinstance(primary.get("data"), dict) else {}
         if not data:
-            # Flattened columns from sqlite json may already be top-level.
             data = {
                 k: primary.get(k)
                 for k in (
@@ -279,14 +274,11 @@ class UoQuery:
         kinds: Iterable[str] | None = None,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
-        """Locate entity source spans (file:line + snippet). See source_locator."""
         from uo_init.source_locator import SourceLocator
 
         return [
             loc.to_dict()
-            for loc in SourceLocator(self.database).locate(
-                query, kinds=kinds, limit=limit
-            )
+            for loc in SourceLocator(self.database).locate(query, kinds=kinds, limit=limit)
         ]
 
     def locate_dim(self, name: str, *, limit: int = 20) -> list[dict[str, Any]]:
@@ -297,16 +289,12 @@ class UoQuery:
             for loc in SourceLocator(self.database).locate_dim(name, limit=limit)
         ]
 
-    def locate_branch(
-        self, branch_id: str, *, limit: int = 20
-    ) -> list[dict[str, Any]]:
+    def locate_branch(self, branch_id: str, *, limit: int = 20) -> list[dict[str, Any]]:
         from uo_init.source_locator import SourceLocator
 
         return [
             loc.to_dict()
-            for loc in SourceLocator(self.database).locate_branch(
-                branch_id, limit=limit
-            )
+            for loc in SourceLocator(self.database).locate_branch(branch_id, limit=limit)
         ]
 
     def locate_field(self, name: str, *, limit: int = 20) -> list[dict[str, Any]]:
@@ -317,9 +305,7 @@ class UoQuery:
             for loc in SourceLocator(self.database).locate_field(name, limit=limit)
         ]
 
-    def _reachable(
-        self, start_id: str, kinds: set[str]
-    ) -> list[dict[str, Any]]:
+    def _reachable(self, start_id: str, kinds: set[str]) -> list[dict[str, Any]]:
         placeholders = ",".join("?" for _ in kinds)
         return self._all(
             f"""
@@ -340,6 +326,59 @@ class UoQuery:
         )
 
 
-def open_query(uo_root: str | Path) -> UoQuery:
-    return UoQuery(Path(uo_root) / "indexes" / "kb_graph.sqlite")
+def _find_codemap_product(root: Path) -> Path | None:
+    """Locate the nearest unified product without assuming caller path shape."""
+    if root.is_file() and root.suffix == ".uo":
+        return root
+    if root.is_dir():
+        direct = sorted(root.glob("*.uo"))
+        if direct:
+            return direct[0]
+    # ``open_query`` is historically called with <project>/.ascendc-pilot/<arch>/uo,
+    # while the new authority lives under <project>/.ascendc-pilot/uo. Walk a
+    # bounded ancestor chain so both call conventions resolve to the same file.
+    bases = [root] + list(root.parents)[:8]
+    for base in bases:
+        product_dir = base / ".ascendc-pilot" / "uo"
+        if product_dir.is_dir():
+            products = sorted(product_dir.glob("*.uo"))
+            if products:
+                return products[0]
+    return None
 
+
+def _find_legacy_database(root: Path) -> Path | None:
+    if root.is_file() and root.name == "kb_graph.sqlite":
+        return root
+    direct = root / "indexes" / "kb_graph.sqlite"
+    if direct.is_file():
+        return direct
+    for base in [root] + list(root.parents)[:8]:
+        pilot = base / ".ascendc-pilot"
+        if not pilot.is_dir():
+            continue
+        candidates = sorted(pilot.glob("*/uo/indexes/kb_graph.sqlite"))
+        if candidates:
+            return candidates[0]
+    return None
+
+
+def open_query(uo_root: str | Path):
+    """Open the unified ``.uo`` backend, falling back to legacy SQLite only.
+
+    Callers intentionally receive a duck-typed query facade rather than a
+    storage-specific class. This is the sole backend selection point used by
+    `/uo-query` consumers.
+    """
+    root = Path(uo_root).expanduser().resolve()
+    product = _find_codemap_product(root)
+    if product is not None:
+        from uo_init.query.compat import CodeMapUoQuery
+
+        return CodeMapUoQuery(product)
+    legacy = _find_legacy_database(root)
+    if legacy is not None:
+        return UoQuery(legacy)
+    raise FileNotFoundError(
+        f"no unified .uo product or legacy indexes/kb_graph.sqlite reachable from {root}"
+    )

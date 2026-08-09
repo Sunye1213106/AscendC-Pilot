@@ -30,6 +30,7 @@ class EntityKind(str, Enum):
     PREDICATE = "PREDICATE"
 
     TILING_KEY = "TILING_KEY"
+    TILING_DATA = "TILING_DATA"
     TILING_FIELD = "TILING_FIELD"
 
     KERNEL = "KERNEL"

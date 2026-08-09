@@ -1,15 +1,14 @@
-"""Structured recovery routing for UO control plane.
+"""Structured recovery routing for the public UO CodeMap workflow.
 
-Engine emits stable reason codes; this module resolves them to Workflow Spec
-transitions and/or registered action_ids. Human-descriptive strings are never
-valid recovery targets.
+Engines emit stable reason codes.  Recovery may only target the six public
+uo-init Actions; internal compiler helpers are implementation details and must
+never be surfaced to OpenCode/Cursor as runnable recovery actions.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-# Reason codes engines may emit.
 SCOPE_REWORK = "SCOPE_REWORK"
 ENTRYPOINT_REWORK = "ENTRYPOINT_REWORK"
 KERNEL_DISPATCH_REWORK = "KERNEL_DISPATCH_REWORK"
@@ -36,71 +35,80 @@ KNOWN_REASON_CODES = frozenset(
     }
 )
 
-# Default recovery map: reason_code → structured route.
-# type=action: same-phase runnable action_id
-# type=transition: must change phase first, then next_action
+# Public six-stage recovery map.  Internal helpers such as scope_scan,
+# extract_kernel, normalize_predicates, resolve_gaps and key_triage are never
+# executable recovery targets.
 _DEFAULT_ROUTES: dict[str, dict[str, Any]] = {
     SCOPE_REWORK: {
         "type": "transition",
-        "target_phase": "scope",
+        "target_phase": "prepare",
+        "next_action": "prepare",
         "reason_code": SCOPE_REWORK,
-        "next_action": "scope_scan",
+    },
+    SCOPE_EXPANSION_REWORK: {
+        "type": "transition",
+        "target_phase": "prepare",
+        "next_action": "prepare",
+        "reason_code": SCOPE_EXPANSION_REWORK,
     },
     ENTRYPOINT_REWORK: {
-        "type": "action",
-        "action_id": "extract_host",
+        "type": "transition",
+        "target_phase": "extract",
+        "next_action": "extract",
         "reason_code": ENTRYPOINT_REWORK,
     },
     KERNEL_DISPATCH_REWORK: {
-        "type": "action",
-        # Kernel dispatch is deterministic inside extract_kernel.
-        "action_id": "extract_kernel",
+        "type": "transition",
+        "target_phase": "extract",
+        "next_action": "extract",
         "reason_code": KERNEL_DISPATCH_REWORK,
     },
+    MACRO_MATERIALIZE_REWORK: {
+        "type": "transition",
+        "target_phase": "analyze",
+        "next_action": "analyze",
+        "reason_code": MACRO_MATERIALIZE_REWORK,
+    },
+    KEY_DERIVATION_REWORK: {
+        "type": "transition",
+        "target_phase": "analyze",
+        "next_action": "analyze",
+        "reason_code": KEY_DERIVATION_REWORK,
+    },
+    LEDGER_REBUILD_REWORK: {
+        "type": "transition",
+        "target_phase": "analyze",
+        "next_action": "analyze",
+        "reason_code": LEDGER_REBUILD_REWORK,
+    },
     BRIDGE_REWORK: {
-        "type": "action",
-        "action_id": "resolve_gaps",
+        "type": "transition",
+        "target_phase": "resolve",
+        "next_action": "resolve",
         "reason_code": BRIDGE_REWORK,
     },
     SEMANTIC_PATCH_REWORK: {
-        "type": "action",
-        "action_id": "apply_gap_patch",
+        "type": "transition",
+        "target_phase": "resolve",
+        "next_action": "resolve",
         "reason_code": SEMANTIC_PATCH_REWORK,
     },
-    LEDGER_REBUILD_REWORK: {
-        "type": "action",
-        "action_id": "normalize_predicates",
-        "reason_code": LEDGER_REBUILD_REWORK,
-    },
     NO_PROGRESS_RECHECK: {
-        # Same fingerprint with no closure progress → stop LLM retry loops.
         "type": "human_required",
         "reason_code": NO_PROGRESS_RECHECK,
         "diagnosis": "deadlock_no_progress",
     },
-    MACRO_MATERIALIZE_REWORK: {
-        "type": "action",
-        "action_id": "extract_host",
-        "reason_code": MACRO_MATERIALIZE_REWORK,
-    },
-    KEY_DERIVATION_REWORK: {
-        "type": "action",
-        "action_id": "key_triage",
-        "reason_code": KEY_DERIVATION_REWORK,
-    },
-    SCOPE_EXPANSION_REWORK: {
-        "type": "action",
-        "action_id": "scope_scan",
-        "reason_code": SCOPE_EXPANSION_REWORK,
-    },
 }
 
-
+# Historical triage labels can still occur in old intermediate evidence.  They
+# are interpreted only as reason categories; execution always resolves through
+# the public routes above.
 _ROUTE_TO_REASON: dict[str, str] = {
     "macro_semantic_materializer": MACRO_MATERIALIZE_REWORK,
     "uo-key-resolve": KEY_DERIVATION_REWORK,
     "deterministic_accept": LEDGER_REBUILD_REWORK,
     "uo-semantic-resolve": SEMANTIC_PATCH_REWORK,
+    "uo-semantic-resolver": SEMANTIC_PATCH_REWORK,
 }
 
 
@@ -110,7 +118,7 @@ def recoveries_for_task_routes(
     workflow_id: str = "uo-init",
     current_phase: str = "extract",
 ) -> dict[str, Any]:
-    """Map blocking tasks to recovery actions by triage route / effective type."""
+    """Map blocking task categories to public recovery actions."""
     reason_codes: list[str] = []
     for task in tasks:
         if not isinstance(task, dict):
@@ -119,11 +127,9 @@ def recoveries_for_task_routes(
         category = str(task.get("triage_category") or "").strip()
         effective = str(task.get("effective_task_type") or task.get("type") or "").strip()
         if category == "incomplete_scope_candidate" or effective == "evidence_enrichment":
-            # Sequencing: propose first; apply only after pending_scope_expansion.
-            if task.get("pending_scope_expansion"):
-                reason_codes.append(SCOPE_EXPANSION_REWORK)
-            else:
-                reason_codes.append(SEMANTIC_PATCH_REWORK)
+            reason_codes.append(
+                SCOPE_EXPANSION_REWORK if task.get("pending_scope_expansion") else SEMANTIC_PATCH_REWORK
+            )
         elif effective == "candidate_generation" or category == "candidate_generation_required":
             reason_codes.append(SEMANTIC_PATCH_REWORK)
         elif effective == "macro_semantics" or route == "macro_semantic_materializer":
@@ -135,34 +141,11 @@ def recoveries_for_task_routes(
         else:
             reason_codes.append(SEMANTIC_PATCH_REWORK)
 
-    recoveries: list[dict[str, Any]] = []
-    action_ids: list[str] = []
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for code in reason_codes:
-        if code in seen:
-            continue
-        seen.add(code)
-        ordered.append(code)
-        resolved = resolve_recovery(code, workflow_id=workflow_id, current_phase=current_phase)
-        if not resolved.get("ok"):
-            continue
-        rec = resolved["recovery"]
-        recoveries.append(rec)
-        if rec.get("type") == "action" and rec.get("action_id"):
-            action_ids.append(str(rec["action_id"]))
-        elif rec.get("type") == "transition" and current_phase == rec.get("target_phase") and rec.get("next_action"):
-            action_ids.append(str(rec["next_action"]))
-
-    uniq: list[str] = []
-    for action in action_ids:
-        if action not in uniq:
-            uniq.append(action)
-    return {
-        "reason_codes": ordered,
-        "recoveries": recoveries,
-        "recovery_actions": uniq,
-    }
+    return _resolve_many(
+        reason_codes,
+        workflow_id=workflow_id,
+        current_phase=current_phase,
+    )
 
 
 def _workflow_action_ids(workflow_id: str = "uo-init") -> set[str]:
@@ -180,9 +163,9 @@ def _action_phases(workflow_id: str, action_id: str) -> list[str]:
         from ascendc_pilot.workflows import get_workflow
 
         meta = get_workflow(workflow_id) or {}
-        for a in meta.get("actions") or []:
-            if str(a.get("id")) == action_id:
-                return [str(p) for p in (a.get("phases") or [])]
+        for action in meta.get("actions") or []:
+            if str(action.get("id")) == action_id:
+                return [str(phase) for phase in (action.get("phases") or [])]
     except Exception:  # noqa: BLE001
         pass
     return []
@@ -195,64 +178,40 @@ def resolve_recovery(
     current_phase: str = "",
     routes: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Resolve a stable reason code into an executable recovery route."""
+    """Resolve one stable reason code into an executable public route."""
     code = str(reason_code or "").strip()
     table = dict(_DEFAULT_ROUTES)
+
+    # Workflow metadata may refine a public route, but cannot introduce an
+    # unregistered internal action because validation below is fail-closed.
     try:
         from ascendc_pilot.workflows import get_workflow
 
         meta = (get_workflow(workflow_id) or {}).get("meta") or {}
         spec_routes = meta.get("recovery_by_reason") or {}
         if isinstance(spec_routes, dict):
-            for k, v in spec_routes.items():
-                if isinstance(v, dict):
-                    row = dict(v)
-                    row.setdefault("reason_code", str(k))
-                    table[str(k)] = row
+            for key, value in spec_routes.items():
+                if isinstance(value, dict):
+                    row = dict(value)
+                    row.setdefault("reason_code", str(key))
+                    table[str(key)] = row
     except Exception:  # noqa: BLE001
         pass
     if routes:
         table.update(routes)
-    # Kernel dispatch is a source-derived deterministic responsibility. Keep the
-    # recovery fail-closed even when an older workflow spec still points at LLM
-    # adjudication; this also makes mixed-version installations safe.
-    if code == KERNEL_DISPATCH_REWORK:
-        table[code] = dict(_DEFAULT_ROUTES[KERNEL_DISPATCH_REWORK])
+
+    # UO public-route safety wins over stale spec metadata.
+    if workflow_id == "uo-init" and code in _DEFAULT_ROUTES:
+        table[code] = dict(_DEFAULT_ROUTES[code])
+
     route = dict(table.get(code) or {})
     if not route:
-        return {
-            "ok": False,
-            "error": "UNKNOWN_RECOVERY_REASON",
-            "reason_code": code,
-        }
+        return {"ok": False, "error": "UNKNOWN_RECOVERY_REASON", "reason_code": code}
     route.setdefault("reason_code", code)
-    rtype = str(route.get("type") or "")
+    route_type = str(route.get("type") or "")
     registered = _workflow_action_ids(workflow_id)
 
-    if rtype == "action":
-        aid = str(route.get("action_id") or "")
-        if not aid or (registered and aid not in registered):
-            return {
-                "ok": False,
-                "error": "UNREGISTERED_RECOVERY_ACTION",
-                "reason_code": code,
-                "action_id": aid,
-            }
-        phases = _action_phases(workflow_id, aid)
-        if current_phase and phases and current_phase not in phases:
-            # Cross-phase: convert to transition toward the first legal phase.
-            return {
-                "ok": True,
-                "recovery": {
-                    "type": "transition",
-                    "target_phase": phases[0],
-                    "reason_code": code,
-                    "next_action": aid,
-                },
-            }
-        return {"ok": True, "recovery": {"type": "action", "action_id": aid, "reason_code": code}}
-
-    if rtype == "human_required":
+    if route_type == "human_required":
         return {
             "ok": True,
             "recovery": {
@@ -262,7 +221,32 @@ def resolve_recovery(
             },
         }
 
-    if rtype == "transition":
+    if route_type == "action":
+        action_id = str(route.get("action_id") or "")
+        if not action_id or (registered and action_id not in registered):
+            return {
+                "ok": False,
+                "error": "UNREGISTERED_RECOVERY_ACTION",
+                "reason_code": code,
+                "action_id": action_id,
+            }
+        phases = _action_phases(workflow_id, action_id)
+        if current_phase and phases and current_phase not in phases:
+            return {
+                "ok": True,
+                "recovery": {
+                    "type": "transition",
+                    "target_phase": phases[0],
+                    "reason_code": code,
+                    "next_action": action_id,
+                },
+            }
+        return {
+            "ok": True,
+            "recovery": {"type": "action", "action_id": action_id, "reason_code": code},
+        }
+
+    if route_type == "transition":
         next_action = str(route.get("next_action") or "")
         target_phase = str(route.get("target_phase") or "")
         if next_action and registered and next_action not in registered:
@@ -294,6 +278,53 @@ def resolve_recovery(
     return {"ok": False, "error": "INVALID_RECOVERY_ROUTE", "reason_code": code, "route": route}
 
 
+def _resolve_many(
+    reason_codes: list[str],
+    *,
+    workflow_id: str,
+    current_phase: str,
+) -> dict[str, Any]:
+    recoveries: list[dict[str, Any]] = []
+    action_ids: list[str] = []
+    ordered: list[str] = []
+    seen: set[str] = set()
+    human_required = False
+    diagnoses: list[str] = []
+
+    for code in reason_codes:
+        if code in seen:
+            continue
+        seen.add(code)
+        ordered.append(code)
+        resolved = resolve_recovery(code, workflow_id=workflow_id, current_phase=current_phase)
+        if not resolved.get("ok"):
+            continue
+        recovery = resolved["recovery"]
+        recoveries.append(recovery)
+        if recovery.get("type") == "human_required":
+            human_required = True
+            if recovery.get("diagnosis"):
+                diagnoses.append(str(recovery["diagnosis"]))
+        elif recovery.get("type") == "action" and recovery.get("action_id"):
+            action_ids.append(str(recovery["action_id"]))
+        elif recovery.get("type") == "transition" and current_phase == recovery.get("target_phase") and recovery.get("next_action"):
+            action_ids.append(str(recovery["next_action"]))
+
+    unique_actions: list[str] = []
+    for action in action_ids:
+        if action not in unique_actions:
+            unique_actions.append(action)
+    result: dict[str, Any] = {
+        "reason_codes": ordered,
+        "recoveries": recoveries,
+        "recovery_actions": unique_actions,
+    }
+    if human_required:
+        result["human_required"] = True
+        result["deadlock_diagnosis"] = diagnoses or ["deadlock_no_progress"]
+    return result
+
+
 def recoveries_for_closure_gaps(
     *,
     host_closed: bool,
@@ -305,15 +336,14 @@ def recoveries_for_closure_gaps(
     current_phase: str = "extract",
     blocking_tasks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Build structured recovery list from recheck closure gaps."""
+    """Build public recovery routes from closure gaps."""
     reason_codes: list[str] = []
     if not host_closed:
-        reason_codes.append(SCOPE_REWORK)
-        reason_codes.append(ENTRYPOINT_REWORK)
+        reason_codes.extend([SCOPE_REWORK, ENTRYPOINT_REWORK])
     if not kernel_closed:
         reason_codes.append(KERNEL_DISPATCH_REWORK)
     if blocking_gap_count:
-        tasks = [t for t in (blocking_tasks or []) if isinstance(t, dict)]
+        tasks = [task for task in (blocking_tasks or []) if isinstance(task, dict)]
         if tasks:
             routed = recoveries_for_task_routes(
                 tasks,
@@ -322,13 +352,10 @@ def recoveries_for_closure_gaps(
             )
             reason_codes.extend(list(routed.get("reason_codes") or []))
         else:
-            # Fallback when triage fields unavailable.
-            reason_codes.append(BRIDGE_REWORK)
-            reason_codes.append(SEMANTIC_PATCH_REWORK)
+            reason_codes.extend([BRIDGE_REWORK, SEMANTIC_PATCH_REWORK])
     if unconsumed_patch_count:
         reason_codes.append(LEDGER_REBUILD_REWORK)
-    # Kernel-only no-progress is already handled by the deterministic entrypoint rerun.
-    # Do not append a second LLM recovery that would immediately no-op and loop.
+
     kernel_only_stall = (
         no_progress
         and not kernel_closed
@@ -339,61 +366,19 @@ def recoveries_for_closure_gaps(
     if no_progress and not kernel_only_stall:
         reason_codes.append(NO_PROGRESS_RECHECK)
 
-    recoveries: list[dict[str, Any]] = []
-    action_ids: list[str] = []
-    seen: set[str] = set()
-    ordered_reason_codes: list[str] = []
-    human_required = False
-    diagnoses: list[str] = []
-    for code in reason_codes:
-        if code in seen:
-            continue
-        seen.add(code)
-        ordered_reason_codes.append(code)
-        resolved = resolve_recovery(code, workflow_id=workflow_id, current_phase=current_phase)
-        if not resolved.get("ok"):
-            continue
-        rec = resolved["recovery"]
-        recoveries.append(rec)
-        if rec.get("type") == "human_required":
-            human_required = True
-            if rec.get("diagnosis"):
-                diagnoses.append(str(rec["diagnosis"]))
-            continue
-        if rec.get("type") == "action" and rec.get("action_id"):
-            action_ids.append(str(rec["action_id"]))
-        elif rec.get("type") == "transition" and rec.get("next_action"):
-            # Expose next_action only after noting transition is required.
-            # For authorize compatibility, also list next_action when already in target phase.
-            if current_phase == rec.get("target_phase"):
-                action_ids.append(str(rec["next_action"]))
-
-    # Deduplicate while preserving order.
-    uniq_actions: list[str] = []
-    for action in action_ids:
-        if action not in uniq_actions:
-            uniq_actions.append(action)
-
-    out = {
-        "reason_codes": ordered_reason_codes,
-        "recoveries": recoveries,
-        # Legacy flat list: ONLY registered action_ids (never prose).
-        "recovery_actions": uniq_actions,
-    }
-    if human_required:
-        out["human_required"] = True
-        out["deadlock_diagnosis"] = diagnoses or ["deadlock_no_progress"]
-    return out
+    return _resolve_many(
+        reason_codes,
+        workflow_id=workflow_id,
+        current_phase=current_phase,
+    )
 
 
 def is_registered_action_id(action_id: str, *, workflow_id: str = "uo-init") -> bool:
-    aid = str(action_id or "").strip()
-    if not aid or " " in aid or "/" in aid:
+    value = str(action_id or "").strip()
+    if not value or " " in value or "/" in value:
         return False
     registered = _workflow_action_ids(workflow_id)
-    if not registered:
-        return bool(aid) and " " not in aid
-    return aid in registered
+    return value in registered if registered else bool(value)
 
 
 def filter_executable_recovery_actions(
@@ -401,7 +386,7 @@ def filter_executable_recovery_actions(
     *,
     workflow_id: str = "uo-init",
 ) -> list[str]:
-    """Drop any descriptive / unregistered strings from a recovery_actions list."""
+    """Drop descriptive/internal strings from an executable recovery list."""
     out: list[str] = []
     for action in actions:
         value = str(action or "").strip()

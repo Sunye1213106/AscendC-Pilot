@@ -1,22 +1,20 @@
 # -*- coding: utf-8 -*-
-"""P3: scope/content fingerprint + warm replay budget."""
+"""Content fingerprint and TU-cache correctness."""
 from __future__ import annotations
 
-import time
 from pathlib import Path
 
 import yaml
 
+from uo_init import tu_cache
+from uo_init.clang_walk import CtrlNode, WalkResult, walk_file
 from uo_init.extract_cache import (
-    assert_warm_replay_under_budget,
     compute_extract_fingerprint,
     content_fingerprint,
     skip_reextract_for_unchanged_tus,
     sources_unchanged,
     store_extract_fingerprint,
 )
-from uo_init import tu_cache
-from uo_init.clang_walk import CtrlNode, WalkResult, walk_file
 
 
 class _FakeCtx:
@@ -41,13 +39,7 @@ def _seed_scope(uo: Path, rels: list[str]) -> None:
         encoding="utf-8",
     )
     (run / "receipt.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "frozen_scope": {
-                    "confirmed_source_files": rels,
-                }
-            }
-        ),
+        yaml.safe_dump({"frozen_scope": {"confirmed_source_files": rels}}),
         encoding="utf-8",
     )
 
@@ -55,12 +47,12 @@ def _seed_scope(uo: Path, rels: list[str]) -> None:
 def test_content_fingerprint_changes_with_bytes(tmp_path):
     host = tmp_path / "op_host"
     host.mkdir()
-    f = host / "a.cpp"
-    f.write_text("int a;\n", encoding="utf-8")
-    fp1 = content_fingerprint(tmp_path, ["op_host/a.cpp"])
-    f.write_text("int a; int b;\n", encoding="utf-8")
-    fp2 = content_fingerprint(tmp_path, ["op_host/a.cpp"])
-    assert fp1 != fp2
+    source = host / "a.cpp"
+    source.write_text("int a;\n", encoding="utf-8")
+    first = content_fingerprint(tmp_path, ["op_host/a.cpp"])
+    source.write_text("int a; int b;\n", encoding="utf-8")
+    second = content_fingerprint(tmp_path, ["op_host/a.cpp"])
+    assert first != second
 
 
 def test_sources_unchanged_after_store(tmp_path):
@@ -79,54 +71,38 @@ def test_sources_unchanged_after_store(tmp_path):
     assert plan["unchanged_tus"] == ["op_host/a.cpp"]
 
 
-def test_warm_replay_under_budget_with_tu_cache(tmp_path, monkeypatch):
+def test_warm_walk_reuses_tu_cache_without_cold_parse(tmp_path, monkeypatch):
     monkeypatch.setenv("UO_TU_CACHE", "1")
     monkeypatch.setenv("UO_CACHE_ROOT", str(tmp_path / "cache"))
     tu_cache.reset_stats()
 
-    src = tmp_path / "tiny.cpp"
-    src.write_text("int f(int x) { return x; }\n", encoding="utf-8")
+    source = tmp_path / "tiny.cpp"
+    source.write_text("int f(int x) { return x; }\n", encoding="utf-8")
     ctx = _FakeCtx()
     ctx.op_dir = str(tmp_path)
     primed = WalkResult(
-        path=str(src).replace("\\", "/"),
+        path=str(source).replace("\\", "/"),
         controls=[
             CtrlNode(
                 id="t:1:0:if:0",
                 kind="if",
-                file=str(src).replace("\\", "/"),
+                file=str(source).replace("\\", "/"),
                 line=1,
                 condition="1",
                 function="f",
             )
         ],
     )
-    key = tu_cache.walk_cache_key(src, ctx, side="host")
+    key = tu_cache.walk_cache_key(source, ctx, side="host")
     tu_cache.store_walk(key, primed, op_dir=str(tmp_path), arch="arch35")
 
-    def _boom(*_a, **_k):  # pragma: no cover
-        raise AssertionError("cold parse on warm replay")
+    def _boom(*_args, **_kwargs):  # pragma: no cover
+        raise AssertionError("cold parse on unchanged cached TU")
 
     monkeypatch.setattr("uo_init.clang_walk._require_clang", _boom)
+    first = walk_file(source, ctx, side="host")
+    second = walk_file(source, ctx, side="host")
 
-    def _walk(p: Path):
-        return walk_file(p, ctx, side="host")
-
-    # Warm path should be near-instant; budget of a few seconds for CI.
-    report = assert_warm_replay_under_budget([src, src], _walk, budget_s=3.0)
-    assert report["ok"] is True
-    assert report["n_paths"] == 2
+    assert first.path == primed.path
+    assert second.path == primed.path
     assert tu_cache.stats()["hit"] >= 2
-
-
-def test_warm_replay_budget_failure(tmp_path):
-    def _slow(_p: Path):
-        time.sleep(0.05)
-        return None
-
-    try:
-        assert_warm_replay_under_budget([tmp_path], _slow, budget_s=0.001)
-        raised = False
-    except AssertionError:
-        raised = True
-    assert raised

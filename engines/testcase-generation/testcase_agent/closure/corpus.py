@@ -25,13 +25,7 @@ import pandas as pd
 from testcase_agent.closure.key_utils import int_exact
 from testcase_agent.closure import workspace as W
 
-#: Columns that are sequence vectors rendered as text. They define the input,
-#: so they take part in dedup, but no tree splits on them directly; the
-#: summary properties the TND branch actually reads (`all_same`,
-#: `seq_has_zero`, ...) are separate columns.
 SEQ_COLUMNS = ("seq_q", "seq_kv", "prefix_n")
-
-#: Host intermediates the tiling prints on its own — overridden by log_protocol.
 STATES = ("isExceedL2Cache", "enableSwizzle", "sparseType")
 KEY_COLUMNS = ("tiling_key", "_target_key", "_predicted_key")
 FLAG_COLUMNS = ("_target_hit", "_prediction_hit", "_predicted_accept")
@@ -45,7 +39,7 @@ def _numeric_knobs() -> tuple[str, ...]:
             name for name, meta in schema.items()
             if meta.get("kind") in ("numeric", "bool")
         )
-    except Exception:
+    except (Exception, SystemExit):
         return (
             "b", "s1", "s2", "n2", "g", "d", "d1", "pse", "pse_type", "rope",
             "sparse_mode", "pre_tokens", "next_tokens", "inner_precise", "out_dtype",
@@ -53,7 +47,6 @@ def _numeric_knobs() -> tuple[str, ...]:
         )
 
 
-# Retained name for callers; resolved dynamically.
 NUMERIC_KNOBS = (
     "b", "s1", "s2", "n2", "g", "d", "d1", "pse", "pse_type", "rope",
     "sparse_mode", "pre_tokens", "next_tokens", "inner_precise", "out_dtype",
@@ -62,21 +55,13 @@ NUMERIC_KNOBS = (
 
 
 def knob_columns() -> list[str]:
-    """The knobs a case is built from, taken from the operator's semantics.
-
-    Asking `describe` rather than listing them keeps this working when the
-    operator package grows a knob.
-    """
+    """The knobs a case is built from, taken from the operator's semantics."""
     I = W.replay_inputs()
     return list(I.describe(I.Case()).keys())
 
 
 def _read_repaired(path: Path) -> pd.DataFrame:
-    """Read a wide table, re-joining the `tag` column when it split.
-
-    `tag` is the last column before `ok`, and every column after `ok` is fixed
-    width, so an overflow can only have come from `tag`.
-    """
+    """Read a wide table, re-joining the `tag` column when it split."""
     with open(path, encoding="utf-8", newline="") as fh:
         rows = list(csv.reader(fh))
     if not rows:
@@ -84,18 +69,20 @@ def _read_repaired(path: Path) -> pd.DataFrame:
     head, body = rows[0], rows[1:]
     n = len(head)
     if "tag" not in head:
-        return pd.DataFrame([r for r in body if len(r) == n],
-                            columns=head, dtype=str)
+        return pd.DataFrame([r for r in body if len(r) == n], columns=head, dtype=str)
     i_tag = head.index("tag")
     fixed = []
-    for r in body:
-        extra = len(r) - n
+    for row in body:
+        extra = len(row) - n
         if extra > 0:
-            r = (r[:i_tag] + [",".join(r[i_tag:i_tag + 1 + extra])]
-                 + r[i_tag + 1 + extra:])
+            row = (
+                row[:i_tag]
+                + [",".join(row[i_tag : i_tag + 1 + extra])]
+                + row[i_tag + 1 + extra :]
+            )
         elif extra < 0:
             continue
-        fixed.append(r)
+        fixed.append(row)
     return pd.DataFrame(fixed, columns=head, dtype=str)
 
 
@@ -107,25 +94,29 @@ def load(ws: W.Workspace | None = None, pattern: str = W.WIDE_GLOB) -> pd.DataFr
     seen: set[Path] = set()
     files: list[Path] = []
     for pat in patterns:
-        for f in sorted(root.glob(pat)):
-            if f.is_file() and f not in seen:
-                seen.add(f)
-                files.append(f)
+        for path in sorted(root.glob(pat)):
+            if path.is_file() and path not in seen:
+                seen.add(path)
+                files.append(path)
     frames = []
-    for f in files:
-        df = _read_repaired(f)
-        if df.empty:
+    for path in files:
+        frame = _read_repaired(path)
+        if frame.empty:
             continue
-        df["_src"] = f.name
-        frames.append(df)
+        frame["_src"] = path.name
+        frames.append(frame)
     if not frames:
         return pd.DataFrame()
-    df = pd.concat(frames, ignore_index=True)
-    return coerce(df)
+    return coerce(pd.concat(frames, ignore_index=True))
 
 
 def coerce(df: pd.DataFrame) -> pd.DataFrame:
-    """Give the numeric columns numeric dtypes, leaving text alone."""
+    """Give known numeric columns numeric dtypes while preserving exact keys.
+
+    Generic/key-only corpus normalization must not require locating the real
+    operator. Dimension schema discovery is therefore lazy and happens only
+    when `dim_*` columns are actually present.
+    """
     if df.empty:
         return df
     df = df.copy()
@@ -136,10 +127,17 @@ def coerce(df: pd.DataFrame) -> pd.DataFrame:
     for col in FLAG_COLUMNS:
         if col in df:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
-    for name in W.dim_names():
-        col = "dim_" + name
-        if col in df:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    dim_columns = [str(col) for col in df.columns if str(col).startswith("dim_")]
+    if dim_columns:
+        try:
+            known_dims = {"dim_" + name for name in W.dim_names()}
+        except (Exception, SystemExit):
+            known_dims = set(dim_columns)
+        for col in dim_columns:
+            if col in known_dims:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+
     for col in STATES:
         if col in df:
             df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -155,14 +153,14 @@ def dedup(df: pd.DataFrame) -> pd.DataFrame:
     """One row per distinct input."""
     if df.empty:
         return df
-    keys = [c for c in knob_columns() if c in df.columns]
+    keys = [col for col in knob_columns() if col in df.columns]
     if not keys:
         return df.reset_index(drop=True)
     return df.drop_duplicates(subset=keys, keep="first").reset_index(drop=True)
 
 
 def accepted(df: pd.DataFrame) -> pd.DataFrame:
-    """Rows the host actually judged as accepted (ok=1), excluding non-verdicts."""
+    """Rows the host judged as accepted, excluding non-verdicts."""
     if df.empty:
         return df
     if "reject" in df.columns:
@@ -173,14 +171,14 @@ def accepted(df: pd.DataFrame) -> pd.DataFrame:
     return judged[judged.ok == 1].reset_index(drop=True)
 
 
-def commit(rows: pd.DataFrame | list[dict], ws: W.Workspace | None = None,
-           *, name: str = "closure_commit.csv",
-           reverify: bool = True) -> Path:
-    """Append judged rows to the workspace corpus (wide table).
-
-    Only rows with a real host verdict are written. After a successful append,
-    active lemmas are re-checked against the enlarged R (fail-closed revoke).
-    """
+def commit(
+    rows: pd.DataFrame | list[dict],
+    ws: W.Workspace | None = None,
+    *,
+    name: str = "closure_commit.csv",
+    reverify: bool = True,
+) -> Path:
+    """Append judged rows to the workspace corpus (wide table)."""
     ws = (ws or W.default_workspace()).ensure()
     path = Path(ws.artifacts) / name
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -205,7 +203,7 @@ def commit(rows: pd.DataFrame | list[dict], ws: W.Workspace | None = None,
 
 
 def summary(ws: W.Workspace | None = None) -> dict:
-    """Counts a caller can print or gate on, without holding the frame."""
+    """Counts a caller can print or gate on without retaining the full frame."""
     df = dedup(load(ws))
     if df.empty:
         return {"rows": 0, "inputs": 0, "accepted": 0, "refused": 0, "keys": 0}

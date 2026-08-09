@@ -1,10 +1,10 @@
 # GENERATED from Workflow Spec — do not hand-edit identity fields
 version: 1
-name_zh: 导出与完整性校验
+name_zh: 校验 CodeMap 完整性
 id: export_integrity
 workflow_id: uo-update
 role_id: deterministic_engine
-agent_id: deterministic-uo-engine
+agent_id: null
 execution_mode: deterministic
 capabilities: []
 policies:
