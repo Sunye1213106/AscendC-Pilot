@@ -14,6 +14,7 @@ from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes.frontier_resolution import resolve_class_frontiers
+from uo_init.passes.host_defuse import trace_host_key_roots
 from uo_init.passes.host_tiling_key import bind_host_tiling_key_expressions
 from uo_init.passes.source_contract import enrich_codemap_from_operator_source
 from uo_init.passes.source_inventory import inventory_source_files
@@ -215,7 +216,7 @@ def read_understand_archive(
 
         cm.meta.update(
             {
-                "archive_import": "understand-operator/v7+source-inventory+host-key+contract+registration+resolution",
+                "archive_import": "understand-operator/v8+source-inventory+host-key-defuse+contract+registration+resolution",
                 "archive_path": str(archive_path),
                 "archive_manifest_stage_status": manifest.get("stages") or {},
                 "archive_graph_status": manifest.get("graphs") or {},
@@ -230,6 +231,7 @@ def read_understand_archive(
             inventory_source_files(cm, operator_root, architecture=architecture)
             enrich_codemap_from_operator_source(cm, operator_root, architecture=architecture)
             bind_host_tiling_key_expressions(cm, operator_root, architecture=architecture)
+            trace_host_key_roots(cm, operator_root, architecture=architecture)
             enrich_tiling_registrations(cm, operator_root, architecture=architecture)
             resolve_source_gaps(cm, operator_root, architecture=architecture)
             resolve_class_frontiers(cm, operator_root, architecture=architecture)
@@ -270,6 +272,7 @@ def understand_archive_to_uo(
     written["resolved_archive_gaps"] = cm.meta.get("resolved_archive_gaps")
     written["source_tiling_registrations"] = cm.meta.get("source_tiling_registrations")
     written["host_tiling_key_packing"] = cm.meta.get("host_tiling_key_packing")
+    written["host_key_root_trace"] = cm.meta.get("host_key_root_trace")
     written["remaining_unresolved_count"] = cm.meta.get("remaining_unresolved_count")
     written["source_inventory_file_count"] = cm.meta.get("source_inventory_file_count")
     return written
