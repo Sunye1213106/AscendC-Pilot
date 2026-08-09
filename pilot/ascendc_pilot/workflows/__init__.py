@@ -47,11 +47,11 @@ _TG_PIPELINES: dict[str, dict[str, list[str]]] = {
 _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
     "tg-init": {
         "init_intent": {
-            "read": ["uo/*.uo", "context/**"],
+            "read": ["uo/manifest.yaml", "context/**"],
             "write": ["tg/init/init_intent.yaml"],
         },
         "kb_check": {
-            "read": ["uo/*.uo", "context/**"],
+            "read": ["uo/manifest.yaml", "uo/checks/integrity.yaml"],
             "write": [],
         },
         "contract_build": {
@@ -68,7 +68,8 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
         },
         "semantic_bind": {
             "read": [
-                "uo/**",
+                "uo/ir/tg_host_view.yaml",
+                "uo/ir/operator_graph.yaml",
                 "tg/contract/**",
                 "tg/realization/llm_bind_prompt_bundle.yaml",
                 "tg/realization/binding_inventory.yaml",
@@ -107,7 +108,7 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
     },
     "tg-plan": {
         "plan_intent": {
-            "read": ["tg/init/**", "context/**", "uo/*.uo"],
+            "read": ["tg/init/**", "context/**", "uo/manifest.yaml"],
             "write": ["tg/plan/plan_intent.yaml"],
         },
         "plan_scope": {
@@ -121,7 +122,7 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
             "write": ["tg/plan/levels/*/plan_scope.yaml", "tg/plan/plan_intent.yaml"],
         },
         "plan_precheck": {
-            "read": ["tg/init/status.yaml", "tg/snapshot/**", "uo/*.uo"],
+            "read": ["tg/init/status.yaml", "tg/snapshot/**", "uo/manifest.yaml"],
             "write": [],
         },
         "plan_build": {
@@ -142,7 +143,7 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
     },
     "tg-solve": {
         "solve_precheck": {
-            "read": ["tg/init/**", "tg/plan/**", "tg/snapshot/**", "uo/*.uo"],
+            "read": ["tg/init/**", "tg/plan/**", "tg/snapshot/**", "uo/manifest.yaml"],
             "write": [],
         },
         "oracle_probe": {
@@ -159,7 +160,7 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
             ],
         },
         "closure_search": {
-            "read": ["tg/closure/**", "uo/**"],
+            "read": ["tg/closure/**", "uo/ir/tg_host_view.yaml", "uo/ir/host_codemap.yaml"],
             "write": ["tg/closure/rounds/**", "tg/closure/models/**"],
         },
         "closure_residual": {
@@ -179,7 +180,7 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
             "write": ["tg/closure/lemmas/leads.yaml", "tg/closure/leads.csv", "tg/closure/leads3.csv"],
         },
         "lemma_evidence": {
-            "read": ["tg/closure/lemmas/leads.yaml", "uo/**"],
+            "read": ["tg/closure/lemmas/leads.yaml", "uo/ir/**", "uo/tiling/**"],
             "write": [
                 "tg/closure/lemmas/evidence/**",
                 "tg/closure/lemmas/evidence_receipt.yaml",
@@ -190,7 +191,8 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
             "read": [
                 "tg/closure/lemmas/leads.yaml",
                 "tg/closure/lemmas/evidence/**",
-                "uo/**",
+                "uo/ir/**",
+                "uo/tiling/**",
                 "runs/**/actions/lemma_mine/**",
             ],
             "write": [
@@ -200,7 +202,11 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
             ],
         },
         "lemma_review": {
-            "read": ["runs/**/actions/lemma_mine/**", "tg/closure/lemmas/**", "uo/**"],
+            "read": [
+                "runs/**/actions/lemma_mine/**",
+                "tg/closure/lemmas/**",
+                "uo/ir/**",
+            ],
             "write": ["runs/{run_id}/actions/lemma_review/review.yaml"],
         },
         "lemma_apply": {
@@ -219,7 +225,7 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
             ],
         },
         "closure_audit": {
-            "read": ["tg/closure/**", "uo/**"],
+            "read": ["tg/closure/**", "uo/ir/**", "uo/tiling/**"],
             "write": ["runs/{run_id}/actions/closure_audit/review.yaml"],
         },
         "closure_certify": {
@@ -281,8 +287,6 @@ def _apply_uo_control_plane_contracts() -> None:
         if row is not None:
             _make_deterministic(row)
 
-    # The action receipts prove stage completion.  Semantic gates only check
-    # facts not already guaranteed by the output contract.
     init["phase_gates"] = {
         "prepare": ["layout_receipt"],
         "extract": ["extract_receipt"],
@@ -321,7 +325,6 @@ def _apply_uo_control_plane_contracts() -> None:
     recovery.pop("KB_REVIEW_REWORK", None)
     recovery["CODEMAP_REVIEW_REWORK"] = {"type": "action", "action_id": "review"}
 
-    # Normalize legacy reason labels that were still present in the source spec.
     for edge in init.get("transitions") or []:
         if not isinstance(edge, dict):
             continue
