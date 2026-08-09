@@ -11,6 +11,7 @@ from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes.frontier_resolution import resolve_class_frontiers
+from uo_init.passes.host_tiling_key import bind_host_tiling_key_expressions
 from uo_init.passes.manager import run_analyze_passes
 from uo_init.passes.source_contract import enrich_codemap_from_operator_source
 from uo_init.passes.source_inventory import inventory_source_files
@@ -39,11 +40,12 @@ def compile_codemap(
 ) -> dict[str, Any]:
     """Compile deterministic facts + current source into the unified CodeMap.
 
-    ``host_ir`` / ``kernel_ir`` remain useful compiler-derived facts.  When an
+    ``host_ir`` / ``kernel_ir`` remain useful compiler-derived facts. When an
     operator source root is available, source-declared API, TilingKey,
-    TilingData, registration, runtime-resource and frontier facts are always
-    merged before the product is committed.  This keeps normal ``/uo-init`` and
-    calibration/import paths on the same semantic pipeline.
+    TilingData, Host packed-key expressions, registration, runtime-resource and
+    frontier facts are merged before the product is committed. Normal
+    ``/uo-init`` and calibration/import paths therefore share the same semantic
+    pipeline.
     """
     arch = (architecture or "arch35").strip() or "arch35"
     variant = build_variant_from_context(
@@ -82,6 +84,7 @@ def compile_codemap(
     if source_root is not None and _looks_like_operator_source(source_root):
         inventory_source_files(cm, source_root, architecture=arch)
         enrich_codemap_from_operator_source(cm, source_root, architecture=arch)
+        bind_host_tiling_key_expressions(cm, source_root, architecture=arch)
         enrich_tiling_registrations(cm, source_root, architecture=arch)
         resolve_source_gaps(cm, source_root, architecture=arch)
         resolve_class_frontiers(cm, source_root, architecture=arch)
@@ -89,7 +92,6 @@ def compile_codemap(
     else:
         cm.meta["production_source_enrichment"] = False
 
-    # Query/dump/write all use the same strict completeness semantics.
     from uo_init.diagnostics.audit import audit_codemap
 
     audit = audit_codemap(cm)
