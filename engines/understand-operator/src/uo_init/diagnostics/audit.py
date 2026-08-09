@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
 """Soundness/completeness audit for a committed ``.uo`` CodeMap.
 
-The audit intentionally distinguishes *presence* from *evidence-backed
-connectivity*. A graph with TilingKeys and Kernels but no proven selection path
-must fail instead of being treated as complete.
+Presence is not completeness.  A CodeMap is useful to an Agent only when the
+binary preserves source-backed API roots, compile-time selection, TilingData
+transport, Kernel execution and output flow without synthetic Cartesian edges.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-from collections import defaultdict
+from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any
 
@@ -19,18 +19,69 @@ from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes.host_kernel import evidence_backed_host_kernel_path_exists
 
+_FLOW_KINDS = {
+    RelationKind.DERIVES.value,
+    RelationKind.FLOWS_TO.value,
+    RelationKind.CONTROLS.value,
+    RelationKind.BINDS.value,
+    RelationKind.SELECTS.value,
+    RelationKind.INSTANTIATES.value,
+    RelationKind.LAUNCHES.value,
+    RelationKind.READS.value,
+    RelationKind.WRITES.value,
+}
+
+
+def _path_exists(
+    codemap: CodeMap,
+    *,
+    start_kind: EntityKind,
+    end_kind: EntityKind,
+    require_kind: EntityKind | None = None,
+) -> bool:
+    starts = codemap.by_kind(start_kind)
+    ends = {e.id for e in codemap.by_kind(end_kind)}
+    if not starts or not ends:
+        return False
+    adj: dict[str, list[str]] = defaultdict(list)
+    for rel in codemap.relations.values():
+        if rel.kind_name() in _FLOW_KINDS:
+            adj[rel.src].append(rel.dst)
+    required = require_kind.value if require_kind is not None else ""
+    q: deque[tuple[str, bool]] = deque(
+        (e.id, e.kind_name() == required if required else True) for e in starts
+    )
+    seen = set(q)
+    while q:
+        cur, has_required = q.popleft()
+        if cur in ends and has_required:
+            return True
+        for nxt in adj.get(cur, ()):
+            ent = codemap.entities.get(nxt)
+            next_required = has_required or bool(ent and ent.kind_name() == required)
+            state = (nxt, next_required)
+            if state not in seen:
+                seen.add(state)
+                q.append(state)
+    return False
+
 
 def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
     blocking: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
 
     inputs = codemap.by_kind(EntityKind.INPUT)
+    tensor_inputs = [e for e in inputs if e.attrs.get("api_kind") == "tensor"]
+    attributes = [e for e in inputs if e.attrs.get("api_kind") == "attribute"]
+    outputs = codemap.by_kind(EntityKind.OUTPUT)
     hosts = (
         codemap.by_kind(EntityKind.FUNCTION)
         + codemap.by_kind(EntityKind.FIELD)
         + codemap.by_kind(EntityKind.VARIABLE)
     )
     keys = codemap.by_kind(EntityKind.TILING_KEY)
+    tiling_data = codemap.by_kind(EntityKind.TILING_DATA)
+    tiling_fields = codemap.by_kind(EntityKind.TILING_FIELD)
     kernels = codemap.by_kind(EntityKind.KERNEL)
     instances = codemap.by_kind(EntityKind.TEMPLATE_INSTANCE)
 
@@ -43,17 +94,60 @@ def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
     if not hosts:
         block("MISSING_HOST", "no Host function/field/variable entities")
     if not inputs:
-        block("MISSING_INPUT", "no API input entities")
+        block("MISSING_INPUT", "no API input/attribute entities")
+    if not outputs:
+        block("MISSING_OUTPUT", "no API output entities")
     if not keys:
         block("MISSING_TILING_KEY", "no TilingKey entities")
+    if not tiling_data or not tiling_fields:
+        block("MISSING_TILING_DATA", "no structured TilingData class/field model")
     if not kernels:
         block("MISSING_KERNEL", "no Kernel entities")
 
+    source_key_count = int(codemap.meta.get("source_declared_tiling_key_count") or 0)
+    if source_key_count and len(keys) != source_key_count:
+        block(
+            "TILING_KEY_CARDINALITY_MISMATCH",
+            f"current source declares {source_key_count} TilingKeys but CodeMap contains {len(keys)}",
+            declared=codemap.meta.get("source_declared_tiling_keys") or [],
+        )
+
     strict_path = evidence_backed_host_kernel_path_exists(codemap)
+    input_key_kernel = _path_exists(
+        codemap,
+        start_kind=EntityKind.INPUT,
+        end_kind=EntityKind.KERNEL,
+        require_kind=EntityKind.TILING_KEY,
+    )
+    tdata_kernel = _path_exists(
+        codemap,
+        start_kind=EntityKind.TILING_DATA,
+        end_kind=EntityKind.KERNEL,
+    )
+    input_output = _path_exists(
+        codemap,
+        start_kind=EntityKind.INPUT,
+        end_kind=EntityKind.OUTPUT,
+    )
     if kernels and not strict_path:
         block(
             "MISSING_EVIDENCE_BACKED_HOST_KERNEL_PATH",
             "no semantic INPUT→…→KERNEL path; node presence alone is insufficient",
+        )
+    if inputs and keys and kernels and not input_key_kernel:
+        block(
+            "MISSING_INPUT_TILINGKEY_KERNEL_PATH",
+            "no source-backed INPUT→…→TILING_KEY→…→KERNEL selection path",
+        )
+    if tiling_data and kernels and not tdata_kernel:
+        block(
+            "MISSING_TILINGDATA_KERNEL_PATH",
+            "TilingData is present but no source-backed TILING_DATA→KERNEL consumption path exists",
+        )
+    if inputs and outputs and kernels and not input_output:
+        block(
+            "MISSING_INPUT_OUTPUT_PATH",
+            "no source-backed INPUT→…→KERNEL→OUTPUT execution/data path exists",
         )
 
     legacy_summary = codemap.summary()
@@ -63,14 +157,12 @@ def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
             "SUMMARY_HOST_KERNEL_PATH_FALSE_POSITIVE",
             "CodeMap.summary() reports a Host→Kernel path without an evidence-backed semantic path",
         )
-    # Audit output is authoritative: never repeat the permissive legacy value.
     strict_summary = dict(legacy_summary)
     strict_summary["has_host_kernel_path"] = strict_path
+    strict_summary["has_input_tilingkey_kernel_path"] = input_key_kernel
+    strict_summary["has_tilingdata_kernel_path"] = tdata_kernel
+    strict_summary["has_input_output_path"] = input_output
 
-    # Detect the exact anti-pattern that previously made every key select every
-    # kernel. It is almost always a synthetic Cartesian product, not source
-    # evidence. A genuine operator can still be represented by explicit branch
-    # controls without requiring this matrix.
     select_pairs = {
         (rel.src, rel.dst)
         for rel in codemap.relations.values()
@@ -114,6 +206,7 @@ def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
         RelationKind.CONTROLS.value,
         RelationKind.INSTANTIATES.value,
         RelationKind.LAUNCHES.value,
+        RelationKind.FLOWS_TO.value,
     }
     unbound_kernels = [
         e.name
@@ -123,7 +216,7 @@ def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
     if unbound_kernels:
         warn(
             "UNBOUND_KERNELS",
-            f"{len(unbound_kernels)} Kernels have no incoming select/control/instantiate edge",
+            f"{len(unbound_kernels)} Kernels have no incoming semantic edge",
             examples=sorted(unbound_kernels)[:20],
         )
 
@@ -171,10 +264,19 @@ def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
         "summary": strict_summary,
         "legacy_summary_has_host_kernel_path": legacy_path,
         "evidence_backed_host_kernel_path": strict_path,
+        "evidence_backed_input_tilingkey_kernel_path": input_key_kernel,
+        "evidence_backed_tilingdata_kernel_path": tdata_kernel,
+        "evidence_backed_input_output_path": input_output,
         "counts": {
             "inputs": len(inputs),
+            "tensor_inputs": len(tensor_inputs),
+            "attributes": len(attributes),
+            "outputs": len(outputs),
             "host_entities": len(hosts),
             "tiling_keys": len(keys),
+            "source_declared_tiling_keys": source_key_count,
+            "tiling_data": len(tiling_data),
+            "tiling_fields": len(tiling_fields),
             "kernels": len(kernels),
             "template_instances": len(instances),
             "unbound_tiling_keys": len(unbound_keys),
