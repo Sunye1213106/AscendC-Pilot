@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from uo_init.diagnostics.audit import audit_codemap
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes import host_kernel, template
 from uo_init.query.engine import CodeMapQuery
+from uo_init.store.reader import load_view_blob
+from uo_init.store.writer import write_codemap
 
 
 def _base_map() -> CodeMap:
@@ -73,6 +77,15 @@ def test_query_summary_rejects_presence_without_real_path() -> None:
     # Agent-facing query contract must not expose that permissive value.
     assert cm.summary()["has_host_kernel_path"] is True
     summary = CodeMapQuery(cm).summary()
+    assert summary["has_host_kernel_path"] is False
+
+
+def test_binary_summary_view_rejects_presence_without_real_path(tmp_path: Path) -> None:
+    cm = _base_map()
+    product = tmp_path / "toy.arch35.uo"
+    write_codemap(cm, product)
+    summary = load_view_blob(product, "summary")
+    assert summary is not None
     assert summary["has_host_kernel_path"] is False
 
 
