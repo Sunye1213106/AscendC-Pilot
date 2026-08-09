@@ -15,10 +15,9 @@ from ascendc_pilot.actions.tg_primary import (
     rollback_primary_decision,
 )
 
-# Public uo-init Actions are composites over the existing deterministic
-# extract/pass engines.  Register their receipts as first-class contracts so
-# Workflow Spec, Action mirrors, and runtime validation speak the same six-stage
-# CodeMap vocabulary without exposing the old fine-grained pipeline to Agents.
+# Public uo-init Actions are composites over deterministic compiler steps.
+# Intermediate receipts remain action-local evidence; commit/review are bound
+# directly to the single binary CodeMap authority.
 _UO_COMPOSITE_OUTPUT_CONTRACTS: dict[str, list[str]] = {
     "uo-prepare-v1": [
         "uo/runs/{run_id}/scope/scope_confirmed.yaml",
@@ -35,16 +34,8 @@ _UO_COMPOSITE_OUTPUT_CONTRACTS: dict[str, list[str]] = {
         "uo/ir/derive_key_fields_receipt.yaml",
         "uo/ir/unresolved.yaml",
     ],
-    # The authoritative binary is arch-neutral at .ascendc-pilot/uo/*.uo.
-    # commit itself already fails closed when writing that product fails; these
-    # arch-scoped receipts make the generic Action contract checker verifiable.
-    "uo-commit-v1": [
-        "uo/manifest.yaml",
-        "uo/checks/integrity.yaml",
-    ],
-    "uo-review-v1": [
-        "uo/review/kb_product_review.yaml",
-    ],
+    "uo-commit-v1": ["uo/*.uo"],
+    "uo-review-v1": ["uo/*.uo"],
 }
 _engines.OUTPUT_CONTRACT_PATHS.update(_UO_COMPOSITE_OUTPUT_CONTRACTS)
 _engines.OUTPUT_CONTRACT_NONEMPTY_GLOBS.update(_UO_COMPOSITE_OUTPUT_CONTRACTS)
