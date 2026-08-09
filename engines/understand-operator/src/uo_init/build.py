@@ -11,6 +11,7 @@ from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes.frontier_resolution import resolve_class_frontiers
+from uo_init.passes.host_defuse import trace_host_key_roots
 from uo_init.passes.host_tiling_key import bind_host_tiling_key_expressions
 from uo_init.passes.manager import run_analyze_passes
 from uo_init.passes.source_contract import enrich_codemap_from_operator_source
@@ -40,29 +41,18 @@ def compile_codemap(
 ) -> dict[str, Any]:
     """Compile deterministic facts + current source into the unified CodeMap.
 
-    ``host_ir`` / ``kernel_ir`` remain useful compiler-derived facts. When an
-    operator source root is available, source-declared API, TilingKey,
-    TilingData, Host packed-key expressions, registration, runtime-resource and
-    frontier facts are merged before the product is committed. Normal
-    ``/uo-init`` and calibration/import paths therefore share the same semantic
-    pipeline.
+    Compiler-derived Host/Kernel IR remains authoritative where available. When
+    an operator source root exists, deterministic source passes additionally
+    inventory the selected architecture, recover API/Key/TilingData contracts,
+    bind Host packed-key arguments, trace their def-use roots, model TilingData
+    registrations/resources/frontiers and then run the strict completeness audit.
     """
     arch = (architecture or "arch35").strip() or "arch35"
-    variant = build_variant_from_context(
-        architecture=arch,
-        build_context=build_context,
-        name=arch,
-    )
+    variant = build_variant_from_context(architecture=arch, build_context=build_context, name=arch)
     cm = CodeMap(op_name=op_name, architecture=arch)
     bv = cm.upsert(EntityKind.BUILD_VARIANT, variant.name, attrs=variant.to_dict())
     arch_e = cm.upsert(EntityKind.ARCH, arch)
-    cm.link(
-        RelationKind.ACTIVE_UNDER,
-        arch_e.id,
-        bv.id,
-        attrs={"provenance": "build_variant"},
-        status="confirmed",
-    )
+    cm.link(RelationKind.ACTIVE_UNDER, arch_e.id, bv.id, attrs={"provenance": "build_variant"}, status="confirmed")
 
     context: dict[str, Any] = {
         "host_ir": host_ir,
@@ -85,6 +75,7 @@ def compile_codemap(
         inventory_source_files(cm, source_root, architecture=arch)
         enrich_codemap_from_operator_source(cm, source_root, architecture=arch)
         bind_host_tiling_key_expressions(cm, source_root, architecture=arch)
+        trace_host_key_roots(cm, source_root, architecture=arch)
         enrich_tiling_registrations(cm, source_root, architecture=arch)
         resolve_source_gaps(cm, source_root, architecture=arch)
         resolve_class_frontiers(cm, source_root, architecture=arch)
@@ -111,6 +102,4 @@ def compile_codemap(
 
 
 def _looks_like_operator_source(root: Path) -> bool:
-    return root.is_dir() and any(
-        (root / name).is_dir() for name in ("op_graph", "op_host", "op_kernel")
-    )
+    return root.is_dir() and any((root / name).is_dir() for name in ("op_graph", "op_host", "op_kernel"))
