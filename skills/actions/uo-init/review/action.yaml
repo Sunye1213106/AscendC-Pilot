@@ -2,10 +2,9 @@
 id: review
 workflow_id: uo-init
 role_id: deterministic_engine
-agent_id: deterministic-uo-engine
+agent_id: null
 execution_mode: deterministic
-capabilities:
-- kb-query
+capabilities: []
 policies:
 - source-authority
 - code-access
@@ -13,7 +12,7 @@ policies:
 - language
 - pilot-control
 - output-quality
-task_prompt_id: uo/kb-review
+task_prompt_id: null
 context_profile_id: uo-init-review
 output_contract_id: uo-review-v1
 allowed_write_paths: []
