@@ -1,9 +1,12 @@
 id: uo-query
 version: 1
-name_zh: KB readonly query
+name_zh: UO CodeMap 只读查询
 role: readonly_analyst
 mode: subagent
-description: UO KB query. Read session prompt.md first, then skills/domain/uo-kb-query/SKILL.md.
+description: >
+  只读回答当前 Action Bundle 中的 UO CodeMap 查询。先读 session prompt.md，
+  再按需读取 skills/domain/uo-codemap-query/SKILL.md；优先结构化 `.uo` 查询，
+  仅在证据不足时读取最小源码窗口。
 read_scopes:
 - uo/**
 - runs/**
@@ -18,3 +21,4 @@ forbidden:
 - modify_pilot_state
 - declare_workflow_passed
 - write_outside_declared_scope
+- modify_uo_product
