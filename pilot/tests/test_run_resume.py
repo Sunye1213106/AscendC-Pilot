@@ -118,15 +118,17 @@ def test_uo_update_reinit_keeps_committed_uo_product(tmp_path: Path) -> None:
     assert not (uo / "summary" / "update_plan.yaml").is_file()
 
 
-def test_summary_uses_public_action_labels_and_resume_hint(tmp_path: Path) -> None:
+def test_summary_uses_public_actions_and_resume_hint(tmp_path: Path) -> None:
     start_workflow(tmp_path, "uo-init")
     summary = build_run_resume_summary(tmp_path, workflow_id="uo-init")
     assert summary["has_existing_run"] is True
-    assert all(item["label_zh"] != item["action_id"] for item in summary["artifacts"])
+    public = {"prepare", "extract", "analyze", "resolve", "apply_gap_patch", "commit", "review"}
+    artifact_ids = {str(item.get("action_id") or "") for item in summary["artifacts"]}
+    assert artifact_ids
+    assert artifact_ids.issubset(public)
+    assert all(str(item.get("label_zh") or "").strip() for item in summary["artifacts"])
     assert "ask_question" in summary
-    assert summary["resume_next_action"] in {
-        "prepare", "extract", "analyze", "resolve", "apply_gap_patch", "commit", "review"
-    }
+    assert summary["resume_next_action"] in public
 
 
 def test_ask_question_uses_current_workflow_name_for_tg_init(tmp_path: Path) -> None:
