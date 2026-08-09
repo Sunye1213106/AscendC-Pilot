@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
 
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
@@ -31,7 +30,10 @@ def resolve_class_frontiers(
     resolved = 0
     branch_count = 0
 
-    for gap in codemap.entities.values():
+    # Enrichment adds METHOD/BRANCH entities, so iterate over the pre-pass
+    # snapshot rather than the live dict.
+    unresolved = list(codemap.entities.values())
+    for gap in unresolved:
         if str(gap.status).lower() != "unresolved":
             continue
         if str(gap.attrs.get("reason") or "") != "frontier_sites":
@@ -91,7 +93,6 @@ def resolve_class_frontiers(
                         status="confirmed",
                     )
                     local += 1
-                # Preprocessor conditions can be inside long method bodies too.
                 for match in _PP_RE.finditer(body):
                     absolute = body_start + match.start()
                     line = _line(text, absolute)
@@ -148,8 +149,6 @@ def _resolve_source(root: Path, raw: str) -> Path | None:
 
 
 def _method_bodies(text: str, symbol: str):
-    # Allow arbitrary template arguments in the class qualifier, but stop at a
-    # brace/semicolon so unrelated declarations cannot be swallowed.
     pattern = re.compile(
         rf"\b{re.escape(symbol)}\s*<[^;{{}}]*>\s*::\s*([A-Za-z_]\w*)\s*\([^;{{}}]*\)\s*(?:const\s*)?\{{",
         re.S,
