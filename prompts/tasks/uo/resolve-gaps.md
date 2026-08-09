@@ -13,7 +13,7 @@ Resolve assigned UO KB semantic gaps.
 
 # Requirements
 
-- Follow `skills/domain/uo-kb-build/SKILL.md` (gap resolution)
+- Follow `skills/domain/uo-codemap-build/SKILL.md` (gap resolution)
 - Structure query first; do not treat miss as absence
 
 # Return

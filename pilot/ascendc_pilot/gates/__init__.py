@@ -888,6 +888,40 @@ def gate_input_derivable_closed(uo: Path) -> dict[str, Any]:
     }
 
 
+def gate_uo_product_ready(project_root: Path, uo: Path) -> dict[str, Any]:
+    """Pass when the single ``.uo`` CodeMap product exists under ``.ascendc-pilot/uo/``."""
+    try:
+        import sys
+
+        uo_src = Path(__file__).resolve().parents[3] / "engines" / "understand-operator" / "src"
+        if uo_src.is_dir() and str(uo_src) not in sys.path:
+            sys.path.insert(0, str(uo_src))
+        from uo_init.store.reader import find_uo_product
+
+        op_name = ""
+        arch = ""
+        try:
+            manifest = _load(uo / "manifest.yaml") if (uo / "manifest.yaml").is_file() else {}
+            op_name = str((manifest or {}).get("op_name") or "")
+            arch = str((manifest or {}).get("architecture") or "")
+        except Exception:  # noqa: BLE001
+            pass
+        found = find_uo_product(project_root, op_name=op_name, architecture=arch)
+        ok = bool(found and found.is_file() and found.suffix == ".uo")
+        return {
+            "gate": "uo_product_ready",
+            "ok": ok,
+            "path": str(found or ""),
+            "message": "ok" if ok else "missing .ascendc-pilot/uo/<op>.<arch>.uo",
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "gate": "uo_product_ready",
+            "ok": False,
+            "message": f"uo product probe failed: {exc}"[:240],
+        }
+
+
 def gate_uo_ready(uo: Path) -> dict[str, Any]:
     """TG intake readiness for the new uo_init KB contract (no old uo.scripts)."""
     manifest = uo / "manifest.yaml"
@@ -1624,6 +1658,7 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
             "ir/tg_host_view.yaml",
             alt="ir/host_codemap.yaml",
         ),
+        "uo_product_ready": lambda: gate_uo_product_ready(project_root, uo),
         "closure_soundness": lambda: gate_closure_soundness(project_root),
         "adapter_completeness": lambda: tg_adapters.gate_adapter_completeness(project_root),
     }

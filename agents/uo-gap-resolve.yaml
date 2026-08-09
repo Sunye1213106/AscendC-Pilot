@@ -1,10 +1,11 @@
 id: uo-gap-resolve
 version: 1
-name_zh: Gap blocker producer
+name_zh: Gap blocker producer (alias)
 role: producer
 mode: subagent
-description: Resolve KB gaps. Read session prompt.md first, then skills/domain/uo-kb-build/SKILL.md.
-  Write only declared staging parts.
+description: Compatibility alias of uo-semantic-resolver. Prefer uo-semantic-resolver
+  for new uo-init resolve. Read skills/domain/uo-codemap-build/SKILL.md.
+alias_of: uo-semantic-resolver
 read_scopes:
 - uo/ir/unresolved.yaml
 - uo/ir/resolve_gaps_staging.yaml

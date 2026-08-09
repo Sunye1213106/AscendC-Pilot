@@ -136,6 +136,24 @@ def uo_root(
     return agent_root(project_root, arch) / UO_SUBDIR
 
 
+def uo_product_root(project_root: Path) -> Path:
+    """Arch-neutral CodeMap product dir: ``<op>/.ascendc-pilot/uo/``."""
+    root = Path(project_root).expanduser().resolve()
+    return root / AGENT_DIR / UO_SUBDIR
+
+
+def uo_codemap_path(
+    project_root: Path,
+    op_name: str,
+    *,
+    arch: str | None = None,
+) -> Path:
+    """``<op>/.ascendc-pilot/uo/<op_name>.<arch>.uo``."""
+    arch_name = resolve_arch(arch)
+    safe = (op_name or "operator").replace("/", "_").replace("\\", "_")
+    return uo_product_root(project_root) / f"{safe}.{arch_name}.uo"
+
+
 def tg_root(
     project_root: Path,
     op_name: str | None = None,

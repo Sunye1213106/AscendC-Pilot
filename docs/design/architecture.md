@@ -31,7 +31,7 @@ prepare_layout → scope_scan → scope_confirm
 
 - **静态主路径**：libclang HostIR、`kernel_ir`（`if constexpr`）、`tiling_data_ir`、派生 `host_derivation`。
 - **Z3 默认关闭**：`UO_DEEP_SOLVE` 未设时 materialize 走 `deep_solve_off`。
-- **产物目录**：`<op>/.ascendc-pilot/<arch>/uo/`；权威产物为 `indexes/kb_graph.sqlite`（`meta.authority=db`）。
+- **产物目录**：工作区仍可在 `<op>/.ascendc-pilot/<arch>/uo/`；**正式权威产物**为 `<op>/.ascendc-pilot/uo/<op>.<arch>.uo`（统一 CodeMap SQLite，`meta.authority=uo`）。旧 `indexes/kb_graph.sqlite` / YAML 投影由 `uo-dump` 临时展开，不再作为产品面。
 - **YAML**：可选导出，由 `UO_KB_YAML` 控制（默认 `1` 兼容测试；生产目标 `0`）。按需：`python -m uo_init.dump <view>`。
 
 `resolve_gaps` 的 LLM 补洞**不得**默认进 sound 排除集；默认应关闭或产出 `grade: llm`。

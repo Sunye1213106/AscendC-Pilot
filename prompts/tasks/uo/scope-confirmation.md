@@ -13,7 +13,7 @@ Confirm the UO analysis scope.
 
 # Requirements
 
-- Follow `skills/domain/uo-kb-build/SKILL.md` (scope)
+- Follow `skills/domain/uo-codemap-build/SKILL.md` (scope)
 
 # Return
 

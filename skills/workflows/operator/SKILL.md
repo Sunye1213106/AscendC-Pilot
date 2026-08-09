@@ -7,7 +7,7 @@ description: >-
 
 # operator
 
-按各 workflow skill 的 `description` 选择正确工作流。领域方法见对应 `skills/domain/<id>/SKILL.md`（如 `uo-kb-build`、`tg-closure`、`code-review`）。本 Skill 不做口语意图匹配，不承载领域算法。
+按各 workflow skill 的 `description` 选择正确工作流。领域方法见对应 `skills/domain/<id>/SKILL.md`（如 `uo-codemap-build`、`tg-closure`、`code-review`）。本 Skill 不做口语意图匹配，不承载领域算法。
 
 ## 主链路
 

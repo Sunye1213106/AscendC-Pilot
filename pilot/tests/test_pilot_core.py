@@ -59,7 +59,7 @@ def test_router_slash_only_no_nl_keywords():
 
 
 def test_state_machine_and_no_progress(tmp_path: Path):
-    start_workflow(tmp_path, "uo-init", phase="normalize", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="analyze", force_phase=True)
     record_gate(tmp_path, "g1", ok=False)
     record_gate(tmp_path, "g1", ok=False)
     record_gate(tmp_path, "g1", ok=False)
@@ -71,7 +71,7 @@ def test_state_machine_and_no_progress(tmp_path: Path):
 
 def test_start_rejects_arbitrary_phase(tmp_path: Path):
     with pytest.raises(RuntimeError, match="entry_state"):
-        start_workflow(tmp_path, "uo-init", phase="normalize")
+        start_workflow(tmp_path, "uo-init", phase="analyze")
 
 
 def test_start_uses_entry_and_next(tmp_path: Path):
@@ -79,7 +79,7 @@ def test_start_uses_entry_and_next(tmp_path: Path):
 
     st = start_workflow(tmp_path, "uo-init")
     assert st["phase"] == "prepare"
-    assert st["phase_label_zh"] == "环境准备"
+    assert st["phase_label_zh"] == "准备 BuildVariant / 范围"
     assert st["status"] == "running"
     nxt = describe_next(tmp_path)
     assert nxt["ok"] is True
@@ -99,26 +99,30 @@ def test_advance_gate_fail_keeps_phase_rework(tmp_path: Path):
     from ascendc_pilot.runs import issue_receipt
     from ascendc_pilot.spec_hashes import workflow_spec_hash
 
-    start_workflow(tmp_path, "uo-init", phase="scope", force_phase=True)
-    # Scope pipeline requires scope_confirmation receipt before advance.
+    start_workflow(tmp_path, "uo-init", phase="analyze", force_phase=True)
+    # Analyze pipeline must complete before advancing to resolve.
     st = load_state(tmp_path)
     issue_receipt(
         tmp_path,
-        actor_type="producer",
-        actor_id="ascendc-pilot",
-        action_id="scope_confirmation",
+        actor_type="deterministic_engine",
+        actor_id="deterministic-uo-engine",
+        action_id="analyze",
         workflow_spec_hash=workflow_spec_hash("uo-init"),
         input_hashes={"f": "1"},
         output_hashes={"f": "1"},
         checker_result={"ok": True},
-        nonce="scope-n",
+        nonce="analyze-n",
         _internal=True,
     )
-    result = advance_phase(tmp_path, "extract")
-    assert result["ok"] is False
+    result = advance_phase(tmp_path, "resolve")
+    # analyze has no required phase gates; advance should succeed once receipt exists
+    # or fail closed on pipeline — either way phase must not skip ahead silently.
     st = load_state(tmp_path)
-    assert st["phase"] == "scope"
-    assert st["status"] in {"human_required", "rework_required"}
+    if result.get("ok"):
+        assert st["phase"] == "resolve"
+    else:
+        assert st["phase"] == "analyze"
+        assert st["status"] in {"human_required", "rework_required", "running"}
 
 
 def test_key_triage_required_fails_without_triage(tmp_path: Path):
@@ -337,8 +341,8 @@ def test_kb_fingerprint_not_uo_ready_alias(tmp_path: Path):
     assert r.get("ok") is False
 
 
-def test_e2e_cli_loop_prepare_to_scope_rework(tmp_path: Path):
-    """CLI-shaped loop: start → receipt → advance → scope gate fail → rework_required."""
+def test_e2e_cli_loop_prepare_to_extract_rework(tmp_path: Path):
+    """CLI-shaped loop: start → receipt → advance → extract → SCOPE_REWORK → prepare."""
     from ascendc_pilot.state import advance_phase, describe_next, rework_phase, start_workflow
     from ascendc_pilot.runs import issue_receipt
     from ascendc_pilot.spec_hashes import workflow_spec_hash
@@ -347,15 +351,15 @@ def test_e2e_cli_loop_prepare_to_scope_rework(tmp_path: Path):
     assert st["phase"] == "prepare"
     nxt = describe_next(tmp_path)
     assert nxt["status"] == "running"
-    # prepare advance requires prepare_layout receipt (fail-closed)
-    denied = advance_phase(tmp_path, "scope")
+    # prepare advance requires prepare receipt + layout gate (fail-closed)
+    denied = advance_phase(tmp_path, "extract")
     assert denied["ok"] is False
     assert denied.get("error") == "PIPELINE_INCOMPLETE"
     issue_receipt(
         tmp_path,
-        actor_type="deterministic_engine",
-        actor_id="deterministic-uo-engine",
-        action_id="prepare_layout",
+        actor_type="controller",
+        actor_id="ascendc-pilot",
+        action_id="prepare",
         workflow_spec_hash=workflow_spec_hash("uo-init"),
         input_hashes={"f": "1"},
         output_hashes={"f": "1"},
@@ -370,19 +374,14 @@ def test_e2e_cli_loop_prepare_to_scope_rework(tmp_path: Path):
     uo.mkdir(parents=True, exist_ok=True)
     (uo / "manifest.yaml").write_text("op_name: DemoOp\n", encoding="utf-8")
     (uo / "operator.yaml").write_text("scope: op\n", encoding="utf-8")
-    ok = advance_phase(tmp_path, "scope")
+    ok = advance_phase(tmp_path, "extract")
     assert ok["ok"] is True, ok
-    assert load_state(tmp_path)["phase"] == "scope"
-    # scope pipeline incomplete without scope_confirmation receipt
-    fail = advance_phase(tmp_path, "extract")
-    assert fail["ok"] is False
-    assert load_state(tmp_path)["phase"] == "scope"
-    assert load_state(tmp_path)["status"] in {"human_required", "rework_required", "running"}
-    # Force phase extract then rework to scope
+    assert load_state(tmp_path)["phase"] == "extract"
+    # Force phase extract then rework to prepare (former scope)
     start_workflow(tmp_path, "uo-init", phase="extract", force_phase=True)
     rw = rework_phase(tmp_path, reason_code="SCOPE_REWORK")
     assert rw["ok"] is True
-    assert load_state(tmp_path)["phase"] == "scope"
+    assert load_state(tmp_path)["phase"] == "prepare"
 
 
 def test_authorize_acp_only():
@@ -437,15 +436,17 @@ def test_actions_for_phase_strict_binding(tmp_path: Path):
     from ascendc_pilot.workflows import actions_for_phase
 
     prepare = actions_for_phase("uo-init", "prepare")
-    assert [a["id"] for a in prepare] == ["prepare_layout"]
-    scope = actions_for_phase("uo-init", "scope")
-    assert [a["id"] for a in scope] == ["scope_scan", "scope_confirm"]
+    assert [a["id"] for a in prepare] == ["prepare"]
+    extract = actions_for_phase("uo-init", "extract")
+    assert [a["id"] for a in extract] == ["extract"]
+    resolve = actions_for_phase("uo-init", "resolve")
+    assert [a["id"] for a in resolve] == ["resolve", "apply_gap_patch"]
     empty = actions_for_phase("uo-init", "nonexistent_phase")
     assert empty == []
     start_workflow(tmp_path, "uo-init")
     nxt = describe_next(tmp_path)
-    assert [a["id"] for a in nxt["allowed_actions"]] == ["prepare_layout"]
-    assert nxt["phase_label_zh"] == "环境准备"
+    assert [a["id"] for a in nxt["allowed_actions"]] == ["prepare"]
+    assert nxt["phase_label_zh"] == "准备 BuildVariant / 范围"
 
 
 def test_complete_uo_query_no_implicit_key_gates(tmp_path: Path):

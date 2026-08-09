@@ -3,7 +3,7 @@ version: 1
 name_zh: KB product referee
 role: referee
 mode: subagent
-description: KB review. Read session prompt.md first, then skills/domain/uo-kb-build/SKILL.md.
+description: KB/CodeMap review. Read session prompt.md first, then skills/domain/uo-codemap-build/SKILL.md.
 read_scopes:
 - uo/**
 - runs/**

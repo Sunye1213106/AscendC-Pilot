@@ -10,7 +10,7 @@
 | [design/principles.md](./design/principles.md) | 产品修改口诀 |
 | [design/control-closure.md](./design/control-closure.md) | UO 控制来源闭合（短注） |
 
-**Agent 认知权威**：`skills/domain/`（`tg-closure`、`source-lemma-proof`、`code-review`、`uo-kb-build` 等），不是本目录下的长篇 SOP。
+**Agent 认知权威**：`skills/domain/`（`tg-closure`、`source-lemma-proof`、`code-review`、`uo-codemap-build` 等），不是本目录下的长篇 SOP。
 
 ## fag（校准样本，非 Skill）
 

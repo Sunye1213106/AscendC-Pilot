@@ -30,4 +30,4 @@ Host 产出 `x ∉ D` 时丢弃或强行投影进 D。
 ## 假完整性放行
 
 required 文件存在但内容为 `not_extracted` / 空壳，gate 当通过。  
-**对策**：`uo-kb-build/references/completeness.md` — existence ≠ completeness。
+**对策**：`uo-codemap-build/references/completeness.md` — existence ≠ completeness。

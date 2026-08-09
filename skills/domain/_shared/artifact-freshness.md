@@ -28,5 +28,5 @@ C → STALE
 |---|---|
 | source-lemma-proof | 旧 proof certificate 不可直接 accept |
 | tg-closure | 旧 R/E / closure certificate 须重算或重审 |
-| uo-kb-build | 旧 projection/index 须重建或标过期 |
+| uo-codemap-build | 旧 projection/index 须重建或标过期；权威以 `.uo` 为准 |
 | code-review | 旧 finding 须对照当前 revision 复核 |

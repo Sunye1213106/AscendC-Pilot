@@ -18,4 +18,4 @@ Workflow Skill 只做编排。Domain Skill 是唯一领域 authority。
 | `code-review` | 代码审查 |
 | `tg-closure` | 闭环 R/E（含 examples 适配器样例） |
 | `tg-init` / `tg-plan` | 初始化 / 计划（薄） |
-| `uo-kb-build` / `uo-kb-query` / `uo-kb-update` | UO KB |
+| `uo-codemap-build` / `uo-kb-query` / `uo-kb-update` | UO CodeMap |

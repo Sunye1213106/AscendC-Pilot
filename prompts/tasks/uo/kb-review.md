@@ -14,7 +14,7 @@ Review UO KB consistency and evidence quality for the assigned targets.
 
 # Requirements
 
-- Follow `skills/domain/uo-kb-build/SKILL.md` (review + authority-model)
+- Follow `skills/domain/uo-codemap-build/SKILL.md` (review + authority-model)
 
 # Return
 

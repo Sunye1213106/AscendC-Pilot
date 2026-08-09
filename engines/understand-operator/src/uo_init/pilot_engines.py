@@ -1732,8 +1732,36 @@ def kb_review(project_root: Path, payload: dict[str, Any] | None = None) -> dict
     }
 
 
+def _codemap_engine(name: str):
+    """Lazy import to avoid circular import with codemap_engines."""
+    from uo_init import codemap_engines as ce
+
+    return getattr(ce, name)
+
+
 # Stable names for ENGINE_REGISTRY adapters.
+# Public CodeMap surface: prepare / extract / analyze / resolve / commit / review.
+# Fine-grained names remain for internal chaining and debug run-action.
 ENGINES: dict[str, Any] = {
+    "prepare": lambda project_root, payload=None: _codemap_engine("prepare")(
+        project_root, payload
+    ),
+    "extract": lambda project_root, payload=None: _codemap_engine("extract")(
+        project_root, payload
+    ),
+    "analyze": lambda project_root, payload=None: _codemap_engine("analyze")(
+        project_root, payload
+    ),
+    "resolve": lambda project_root, payload=None: _codemap_engine("resolve")(
+        project_root, payload
+    ),
+    "commit": lambda project_root, payload=None: _codemap_engine("commit")(
+        project_root, payload
+    ),
+    "review": lambda project_root, payload=None: _codemap_engine("review")(
+        project_root, payload
+    ),
+    # Internal / merge helpers (also used by composites).
     "prepare_layout": prepare_layout,
     "scope_scan": scope_scan,
     "scope_confirm": scope_confirm,

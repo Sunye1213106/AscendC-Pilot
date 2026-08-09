@@ -1955,6 +1955,15 @@ def _uo_init_engine(action_id: str) -> EngineFn:
 
 
 ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
+    # CodeMap compiler public surface (6 Actions + resolve merge helper).
+    ("uo-init", "prepare"): _uo_init_engine("prepare"),
+    ("uo-init", "extract"): _uo_init_engine("extract"),
+    ("uo-init", "analyze"): _uo_init_engine("analyze"),
+    ("uo-init", "resolve"): _uo_init_engine("resolve"),
+    ("uo-init", "apply_gap_patch"): _uo_init_engine("apply_gap_patch"),
+    ("uo-init", "commit"): _uo_init_engine("commit"),
+    ("uo-init", "review"): _uo_init_engine("review"),
+    # Fine-grained internals (debug / compatibility).
     ("uo-init", "prepare_layout"): _uo_init_engine("prepare_layout"),
     ("uo-init", "scope_scan"): _uo_init_engine("scope_scan"),
     ("uo-init", "scope_confirm"): _uo_init_engine("scope_confirm"),
@@ -1966,7 +1975,6 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("uo-init", "derive_key_fields"): _uo_init_engine("derive_key_fields"),
     ("uo-init", "normalize_predicates"): _uo_init_engine("normalize_predicates"),
     ("uo-init", "resolve_gaps"): _uo_init_engine("resolve_gaps"),
-    ("uo-init", "apply_gap_patch"): _uo_init_engine("apply_gap_patch"),
     ("uo-init", "export_kb"): _uo_init_engine("export_kb"),
     ("uo-init", "build_index"): _uo_init_engine("build_index"),
     ("uo-init", "export_tg_host_view"): _uo_init_engine("export_tg_host_view"),

@@ -309,7 +309,13 @@ def _predicates_from_writers(writers: list[dict[str, Any]]) -> list[dict[str, An
 
 
 def load_host_codemap(uo_root: str | Path) -> dict[str, Any]:
-    """Load the TG host view (``tg_host_view.yaml`` only)."""
+    """Load the TG host view.
+
+    Preference order:
+    1. Durable YAML (legacy / transition)
+    2. ``view_blob`` inside ``.uo`` CodeMap product
+    3. ``view_blob`` / host_view tables inside ``kb_graph.sqlite``
+    """
     root = Path(uo_root)
     path = root / TG_HOST_VIEW_YAML
     if path.is_file():
@@ -318,10 +324,45 @@ def load_host_codemap(uo_root: str | Path) -> dict[str, Any]:
     legacy = root / CODEMAP_YAML
     if legacy.is_file():
         return yaml.safe_load(legacy.read_text(encoding="utf-8")) or {}
+
+    # Prefer single-file ``.uo`` product (arch-neutral or beside op root).
+    try:
+        from uo_init.store.reader import find_uo_product, load_view_blob
+
+        # uo_root is typically ``<op>/.ascendc-pilot/<arch>/uo`` → op = parents[2]
+        # or ``<op>/.ascendc-pilot/uo`` → op = parents[1]
+        if root.name == "uo" and root.parent.name == ".ascendc-pilot":
+            op_root = root.parent.parent
+        elif root.name == "uo":
+            op_root = root.parents[2]
+        else:
+            op_root = root
+        found = find_uo_product(op_root)
+        if found is not None and found.suffix == ".uo":
+            for key in ("ir/tg_host_view.yaml", "tg_host_view"):
+                blob = load_view_blob(found, key)
+                if isinstance(blob, dict) and blob:
+                    return blob
+    except Exception:
+        pass
+
+    # Legacy sqlite view_blob.
+    db = root / KB_GRAPH_SQLITE
+    if db.is_file():
+        try:
+            from uo_init.kb_index import load_view_blob as _kb_blob
+
+            for key in ("ir/tg_host_view.yaml", "tg_host_view"):
+                blob = _kb_blob(db, key)
+                if isinstance(blob, dict) and blob:
+                    return blob
+        except Exception:
+            pass
     return {}
 
 
 def load_tg_host_view(uo_root: str | Path) -> dict[str, Any]:
+    """TG shim: materialize host view from YAML or ``.uo`` (no new authority)."""
     return load_host_codemap(uo_root)
 
 
