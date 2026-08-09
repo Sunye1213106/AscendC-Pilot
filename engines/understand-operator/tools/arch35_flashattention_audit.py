@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Build/audit a new .uo from the real FlashAttentionScoreGrad arch35 archive.
+"""Build/audit FlashAttentionScoreGrad arch35 as a unified ``.uo``.
 
-GitHub-hosted runners do not provide CANN. The calibration therefore imports
-only the structured facts already committed in ``.understand-operator.zip``
-and cross-checks every retained source path against the current arch35 source
-tree. Missing structured relations remain audit gaps; they are never filled by
-free-text interpretation or Cartesian graph edges.
+The GitHub runner has no installed CANN SDK, so the calibration combines the
+historical structured UO archive with deterministic facts parsed from the
+*current* operator source.  Current REG_OP, template-key, TilingData and Kernel
+signatures override archive cardinality.  No free-text derivation is promoted.
 """
 
 from __future__ import annotations
@@ -93,16 +92,11 @@ def _arch35_source_check(operator: Path, uo: Path) -> dict[str, Any]:
         "stale_evidence_files": stale_evidence[:100],
         "expected_host_files": expected_host,
         "matched_host_files": matched_host,
-        "current_host_files_without_archive_evidence": sorted(set(expected_host) - host_evidence),
+        "current_host_files_without_evidence": sorted(set(expected_host) - host_evidence),
         "expected_kernel_file_count": len(expected_kernel),
         "matched_kernel_file_count": len(matched_kernel),
         "foreign_arch_evidence": foreign_arch[:50],
-        "ok": (
-            cm.architecture == ARCH
-            and not foreign_arch
-            and not stale_evidence
-            and bool(files)
-        ),
+        "ok": cm.architecture == ARCH and not foreign_arch and not stale_evidence and bool(files),
     }
 
 
@@ -122,6 +116,7 @@ def run(operator: Path, archive: Path, out_dir: Path) -> dict[str, Any]:
         product,
         op_name=OP_NAME,
         architecture=ARCH,
+        operator_root=operator,
     )
 
     binary = audit_uo(product)
@@ -131,16 +126,13 @@ def run(operator: Path, archive: Path, out_dir: Path) -> dict[str, Any]:
         blocking.append(
             {
                 "code": "ARCH35_SOURCE_CROSSCHECK_FAILED",
-                "detail": (
-                    "archived evidence is stale, foreign-arch, empty, or not labelled arch35; "
-                    "the historical archive cannot be treated as fresh current-source truth"
-                ),
+                "detail": "retained CodeMap evidence is stale, foreign-arch, empty, or not scoped to arch35",
                 "source": source,
             }
         )
     report = {
         "ok": not blocking,
-        "mode": "historical-structured-facts+live-arch35-source-crosscheck",
+        "mode": "historical-structured-facts+current-source-structural-enrichment",
         "fresh_clang_extraction": False,
         "operator": str(operator),
         "archive": str(archive),
@@ -163,14 +155,16 @@ def run(operator: Path, archive: Path, out_dir: Path) -> dict[str, Any]:
         f"- fresh Clang extraction: `{report['fresh_clang_extraction']}`",
         f"- product: `{product.name}`",
         f"- size_bytes: `{binary.get('size_bytes')}`",
-        f"- entities: `{(binary.get('summary') or {}).get('entity_count')}`",
-        f"- relations: `{(binary.get('summary') or {}).get('relation_count')}`",
-        f"- inputs: `{counts.get('inputs')}`",
-        f"- tiling keys: `{counts.get('tiling_keys')}`",
-        f"- kernels: `{counts.get('kernels')}`",
+        f"- entities / relations: `{(binary.get('summary') or {}).get('entity_count')}` / `{(binary.get('summary') or {}).get('relation_count')}`",
+        f"- API tensor inputs / attributes / outputs: `{counts.get('tensor_inputs')}` / `{counts.get('attributes')}` / `{counts.get('outputs')}`",
+        f"- TilingKeys: `{counts.get('tiling_keys')}` (current source declares `{counts.get('source_declared_tiling_keys')}`)",
+        f"- TilingData classes / fields: `{counts.get('tiling_data')}` / `{counts.get('tiling_fields')}`",
+        f"- Kernels: `{counts.get('kernels')}`",
         f"- unresolved entities: `{counts.get('unresolved_entities')}`",
         f"- exact archived runtime→key bindings: `{imported.get('archive_exact_runtime_bindings')}`",
-        f"- evidence_backed_host_kernel_path: `{binary.get('evidence_backed_host_kernel_path')}`",
+        f"- INPUT→TILING_KEY→KERNEL: `{binary.get('evidence_backed_input_tilingkey_kernel_path')}`",
+        f"- TILING_DATA→KERNEL: `{binary.get('evidence_backed_tilingdata_kernel_path')}`",
+        f"- INPUT→KERNEL→OUTPUT: `{binary.get('evidence_backed_input_output_path')}`",
         f"- blocking: `{len(blocking)}`",
         f"- warnings: `{len(binary.get('warnings') or [])}`",
         "",
@@ -198,7 +192,7 @@ def run(operator: Path, archive: Path, out_dir: Path) -> dict[str, Any]:
         f"- matched current arch35 kernel files: `{source['matched_kernel_file_count']}/{source['expected_kernel_file_count']}`",
         f"- foreign arch evidence: `{len(source['foreign_arch_evidence'])}`",
         "",
-        "> This calibration deliberately preserves incompleteness. Historical free-text derivations are not converted into semantic graph edges. A fresh local CANN/Clang run is still required before the binary can be certified against current source.",
+        "> Current-source structural facts are authoritative for API, TilingKey cardinality, TilingData declarations and Kernel ABI. Historical prose remains diagnostic only. A local CANN/Clang run can add deeper compiler facts but must not change these source-declared contracts.",
     ]
     (out_dir / "arch35-audit.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return report
