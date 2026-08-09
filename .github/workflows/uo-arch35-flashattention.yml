@@ -1,0 +1,65 @@
+name: UO arch35 FlashAttention audit
+
+on:
+  pull_request:
+    paths:
+      - "engines/understand-operator/**"
+      - ".github/workflows/uo-arch35-flashattention.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  arch35-binary-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout AscendC-Pilot
+        uses: actions/checkout@v4
+
+      - name: Checkout real FlashAttention source
+        uses: actions/checkout@v4
+        with:
+          repository: Sunye1213106/flashattention
+          ref: main
+          path: external/flashattention
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install UO
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e ./engines/common
+          pip install -e ./engines/understand-operator
+
+      - name: Build and audit arch35 UO
+        id: audit
+        continue-on-error: true
+        run: |
+          python engines/understand-operator/tools/arch35_flashattention_audit.py \
+            --operator external/flashattention/flash_attention_score_grad \
+            --out-dir artifacts/uo-arch35
+
+      - name: Publish audit summary
+        if: always()
+        run: |
+          if [ -f artifacts/uo-arch35/arch35-audit.md ]; then
+            cat artifacts/uo-arch35/arch35-audit.md >> "$GITHUB_STEP_SUMMARY"
+          elif [ -f artifacts/uo-arch35/arch35-audit.json ]; then
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat artifacts/uo-arch35/arch35-audit.json >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "audit outcome: ${{ steps.audit.outcome }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload binary and audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flash-attention-score-grad-arch35-uo-audit
+          path: artifacts/uo-arch35/
+          if-no-files-found: error
