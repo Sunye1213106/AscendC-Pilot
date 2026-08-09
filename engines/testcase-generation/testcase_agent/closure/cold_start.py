@@ -19,23 +19,58 @@ from testcase_agent.closure import workspace as W
 
 
 def _fingerprint(ws: W.Workspace) -> str:
-    """Stable-ish fingerprint of D size + UO graph if available."""
+    """Fingerprint from declared domain + UO/adapter identity (not a weak prefix hash)."""
     parts: list[str] = []
     try:
         from testcase_agent.closure import ledger
 
         D = ledger.declared()
         parts.append(f"D={len(D)}")
+        # Content hash of declared keys (order-independent).
+        blob = ",".join(str(k) for k in sorted(D))
+        parts.append("Dhash=" + hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16])
     except Exception:
         parts.append("D=?")
     try:
         uo = ws.root / ".ascendc-pilot"
+        for man in sorted(uo.glob("*/uo/manifest.yaml")):
+            try:
+                import yaml
+
+                doc = yaml.safe_load(man.read_text(encoding="utf-8")) or {}
+            except Exception:
+                doc = {}
+            parts.append(f"src_rev={doc.get('source_revision') or ''}")
+            parts.append(
+                f"graph_fp={doc.get('fingerprint') or doc.get('graph_fingerprint') or ''}"
+            )
+            break
         for cand in sorted(uo.glob("*/uo/ir/operator_graph.yaml")):
-            text = cand.read_text(encoding="utf-8", errors="replace")[:4096]
-            parts.append(hashlib.sha256(text.encode("utf-8")).hexdigest()[:16])
+            # Prefer explicit fingerprint field when present; else full-file hash.
+            try:
+                import yaml
+
+                gdoc = yaml.safe_load(cand.read_text(encoding="utf-8")) or {}
+                gfp = str(gdoc.get("fingerprint") or gdoc.get("graph_fingerprint") or "")
+            except Exception:
+                gfp = ""
+            if gfp:
+                parts.append(f"op_graph={gfp}")
+            else:
+                text = cand.read_text(encoding="utf-8", errors="replace")
+                parts.append(
+                    "op_graph=" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+                )
+            break
+        for ap in sorted(uo.glob("*/uo/adapter/feature_bindings.yaml")):
+            text = ap.read_text(encoding="utf-8", errors="replace")
+            parts.append(
+                "adapter=" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+            )
             break
     except Exception:
         pass
+    parts.append("oracle_protocol=host_v1")
     raw = "|".join(parts) or "empty"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 

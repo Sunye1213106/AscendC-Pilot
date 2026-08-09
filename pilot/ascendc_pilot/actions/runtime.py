@@ -1059,8 +1059,8 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         "architecture": architecture,
         "status": "prepared",
         "identity_note": (
-            "Bundle identity is authoritative. "
-            "Do not replace, infer, normalize, or copy identity from old artifacts."
+            "Bundle identity supplied by Pilot is authoritative. "
+            "Identity from any other artifact must not be used."
         ),
     }
 

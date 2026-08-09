@@ -144,6 +144,7 @@ def assess(df: pd.DataFrame, dims: list[str] | None = None,
             continue
         shifted = y - y.min()
         majority = float(np.bincount(shifted).max()) / len(y)
+        parent_status = F.static_parent_status(dim)
         static_acc, _ = _score(X, y, F.static_parents(dim, allf))
         all_acc, leaves = _score(X, y, allf)
 
@@ -172,16 +173,27 @@ def assess(df: pd.DataFrame, dims: list[str] | None = None,
             "extrapolated": (round(extrapolated, 3)
                              if extrapolated is not None else None),
             "leaves": leaves,
-            "verdict": _verdict(majority, static_acc, all_acc),
+            "static_parent_status": parent_status,
+            "verdict": _verdict(
+                majority, static_acc, all_acc, parent_status=parent_status
+            ),
         })
     return out
 
 
-def _verdict(majority: float, static: float, all_knob: float) -> str:
+def _verdict(
+    majority: float,
+    static: float,
+    all_knob: float,
+    *,
+    parent_status: str = "present",
+) -> str:
     """What the three numbers say to do next."""
     if all_knob - majority < 0.02:
         return "not_a_function_of_inputs"
-    if all_knob - static > 0.05:
+    if parent_status == "missing" and all_knob - majority > 0.05:
+        return "kb_parent_spec_missing"
+    if parent_status != "missing" and all_knob - static > 0.05:
         return "static_parents_incomplete"
     return "skeleton_usable"
 
@@ -251,7 +263,8 @@ def write_parent_gap(df, ws=None, *, top: int = 8) -> dict:
         assessment = []
     for row in assessment:
         dim = str(row.get("dim") or "")
-        if row.get("verdict") != "static_parents_incomplete" or not dim:
+        verdict = str(row.get("verdict") or "")
+        if verdict not in ("static_parents_incomplete", "kb_parent_spec_missing") or not dim:
             continue
         try:
             ranks = importances(df, dim, top=top)

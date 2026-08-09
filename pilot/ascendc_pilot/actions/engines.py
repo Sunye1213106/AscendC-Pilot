@@ -1618,33 +1618,74 @@ def _run_closure_explain(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
 
 def _run_lemma_leads(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     del ctx
-    from testcase_agent.closure import mine
+    from testcase_agent.closure import observations as OBS
 
     ws = _closure_ws(project_root)
     try:
-        pairs = mine.mine_pairs(ws, top=40)
-        triples = mine.mine_triples(ws, top=40)
+        leads = OBS.build_leads(ws, top=40)
+        err = str(leads.get("error") or "")
     except Exception as exc:  # noqa: BLE001
-        pairs, triples = [], []
-        err = str(exc)[:300]
-    else:
-        err = ""
-    leads = {
-        "schema": "tg-lemma-leads/v1",
-        "pairs": pairs,
-        "triples": triples,
-        "pair_count": len(pairs),
-        "triple_count": len(triples),
-        "error": err,
-    }
+        leads = {
+            "schema": "tg-lemma-leads/v1",
+            "source": "oracle_observation",
+            "observation_count": 0,
+            "lead_count": 0,
+            "leads": [],
+            "pairs": [],
+            "triples": [],
+            "pair_count": 0,
+            "triple_count": 0,
+            "error": str(exc)[:300],
+            "note": "lemma leads require Host REWRITE/REFUSE observations",
+        }
+        err = leads["error"]
     out = _tg(project_root) / "closure" / "lemmas" / "leads.yaml"
     _dump_closure_yaml(out, leads)
     return {
         "ok": not err,
         "engine": "lemma_leads",
         "artifact": out.as_posix(),
-        "pair_count": len(pairs),
-        "triple_count": len(triples),
+        "lead_count": int(leads.get("lead_count") or 0),
+        "observation_count": int(leads.get("observation_count") or 0),
+        "pair_count": int(leads.get("pair_count") or 0),
+        "triple_count": int(leads.get("triple_count") or 0),
+        "error": err,
+    }
+
+
+def _run_lemma_evidence(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Deterministic evidence packs for observation leads (pre-mine)."""
+    del ctx
+    from testcase_agent.closure import lemma_evidence as LE
+
+    ws = _closure_ws(project_root)
+    leads_path = _tg(project_root) / "closure" / "lemmas" / "leads.yaml"
+    leads_doc = _load_yaml(leads_path) or {}
+    try:
+        out = LE.collect_for_leads(leads_doc, ws=ws, top=40)
+        err = ""
+    except Exception as exc:  # noqa: BLE001
+        out = {"ok": False, "written": [], "lead_count": 0, "error": str(exc)[:300]}
+        err = str(exc)[:300]
+    receipt = {
+        "schema": "tg-lemma-evidence-batch/v1",
+        "ok": bool(out.get("ok")),
+        "lead_count": int(out.get("lead_count") or 0),
+        "written": list(out.get("written") or []),
+        "evidence_dir": str(
+            out.get("evidence_dir")
+            or (_tg(project_root) / "closure" / "lemmas" / "evidence")
+        ),
+        "error": err,
+    }
+    receipt_path = _tg(project_root) / "closure" / "lemmas" / "evidence_receipt.yaml"
+    _dump_closure_yaml(receipt_path, receipt)
+    return {
+        "ok": bool(out.get("ok")) and not err,
+        "engine": "lemma_evidence",
+        "artifact": receipt_path.as_posix(),
+        "lead_count": receipt["lead_count"],
+        "written_count": len(receipt["written"]),
         "error": err,
     }
 
@@ -1665,12 +1706,18 @@ def _run_lemma_mine(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     )
     parts.mkdir(parents=True, exist_ok=True)
     leads = _load_yaml(_tg(project_root) / "closure" / "lemmas" / "leads.yaml") or {}
+    lead_n = int(
+        leads.get("lead_count")
+        or len(leads.get("leads") or [])
+        or (int(leads.get("pair_count") or 0) + int(leads.get("triple_count") or 0))
+    )
     staging = {
         "schema": "tg-lemma-mine-staging/v1",
         "status": "awaiting_subagent",
-        "lead_count": int(leads.get("pair_count") or 0) + int(leads.get("triple_count") or 0),
+        "lead_count": lead_n,
         "instructions": (
             "Write parts/part_0.yaml with source-cited lemma candidates only; "
+            "use observation leads + lemmas/evidence/<lead_id>.yaml; "
             "do not invent leads; follow tilingkey-closure LEMMA.md"
         ),
     }
@@ -1956,6 +2003,7 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("tg-solve", "closure_construct"): _run_closure_construct,
     ("tg-solve", "closure_explain"): _run_closure_explain,
     ("tg-solve", "lemma_leads"): _run_lemma_leads,
+    ("tg-solve", "lemma_evidence"): _run_lemma_evidence,
     ("tg-solve", "lemma_mine"): _run_lemma_mine,
     ("tg-solve", "lemma_review"): _run_lemma_review,
     ("tg-solve", "lemma_apply"): _run_lemma_apply,
@@ -2120,6 +2168,10 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "closure-construct-v1": ["tg/closure/construct/**"],
     "closure-explain-v1": ["tg/closure/construct/explain_receipt.yaml"],
     "lemma-leads-v1": ["tg/closure/lemmas/leads.yaml"],
+    "lemma-evidence-v1": [
+        "tg/closure/lemmas/evidence_receipt.yaml",
+        "tg/closure/lemmas/evidence/**",
+    ],
     "lemma-mine-staging-v1": [
         "runs/{run_id}/actions/lemma_mine/parts/**",
         "runs/{run_id}/actions/lemma_mine/staging.yaml",

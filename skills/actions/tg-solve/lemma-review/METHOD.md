@@ -11,7 +11,7 @@
 
 ## Domain Procedure
 
-1. 定位证据包：`tg/closure/lemmas/evidence_*.yaml` 或 context pack 中的 `lemma_evidence` 路径。
+1. 定位证据包：优先 `lead.evidence_path` → `tg/closure/lemmas/evidence/<lead_id>.yaml`；兼容 context pack 显式路径。
 2. 对每个 staging 候选做**填空式**审查（缺项则 reject / defer，不得臆造）：
 
 | 字段 | 要求 |

@@ -170,7 +170,27 @@ def build_feature_bindings(derivation: dict[str, Any], uo: Path | None = None) -
     derived_terms: dict[str, str] = {}
     floor_terms: list[str] = []
     static_parents: dict[str, list[str]] = {}
+    dim_to_roots: dict[str, list[str]] = {}
     root_to_knobs: dict[str, list[str]] = {}
+    schema_keys = list(schema.keys())
+
+    def _knobs_for_root(root: str) -> list[str]:
+        """Map one source root onto case knobs (conservative over-approx OK)."""
+        r = str(root or "")
+        if not r:
+            return []
+        named = [k for k in schema_keys if k.lower() in r.lower()]
+        if named:
+            return named
+        if r.startswith("INPUT_"):
+            return list(base_numeric)
+        if r.startswith("ATTR_"):
+            matched = [
+                k for k in categorical
+                if k.lower() in r.lower() or r.lower().endswith(k.lower())
+            ]
+            return matched or list(categorical)
+        return []
 
     for fld in derivation.get("fields") or []:
         if not isinstance(fld, dict):
@@ -178,11 +198,18 @@ def build_feature_bindings(derivation: dict[str, Any], uo: Path | None = None) -
         dim = str(fld.get("name") or fld.get("dim") or "")
         roots = [str(r) for r in (fld.get("root_vars") or [])]
         if dim and roots:
-            root_to_knobs[dim] = roots
-            # Heuristic: parents = knobs whose names appear in roots.
-            parents = [k for k in schema if any(k.lower() in r.lower() for r in roots)]
+            dim_to_roots[dim] = roots
+            parents = [k for k in schema_keys if any(k.lower() in r.lower() for r in roots)]
             if parents:
                 static_parents[dim] = parents
+            for root in roots:
+                knobs = _knobs_for_root(root)
+                if not knobs:
+                    continue
+                bucket = root_to_knobs.setdefault(root, [])
+                for k in knobs:
+                    if k not in bucket:
+                        bucket.append(k)
 
     if uo is not None:
         view = _load(Path(uo) / "ir" / "tg_host_view.yaml")
@@ -201,6 +228,7 @@ def build_feature_bindings(derivation: dict[str, Any], uo: Path | None = None) -
         "base_numeric": base_numeric,
         "derived_terms": derived_terms,
         "static_parents": static_parents,
+        "dim_to_roots": dim_to_roots,
         "root_to_knobs": root_to_knobs,
     }
 

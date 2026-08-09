@@ -289,7 +289,7 @@ solve_precheck → oracle_probe → closure_ledger
                 │
                 ├─ SEARCH_PROGRESS  → rework search（有界 round）
                 ├─ CONSTRUCT_TARGETS → construct → explain → residual
-                ├─ NEED_LEMMA → lemma_leads → mine → review → apply → ledger
+                ├─ NEED_LEMMA → lemma_leads → evidence → mine → review → apply → ledger
                 └─ GAP_ZERO → audit → certify
 ```
 
@@ -304,7 +304,7 @@ solve_precheck → oracle_probe → closure_ledger
 | 定向搜索 | `closure_search` | 一轮：评估/重训模型 → 候选池 → A/B（模型臂+随机臂）→ replay → 提交 corpus → 更新 R |
 | 残差路由 | `closure_residual` | 决定继续搜 / 构造 / 挖引理 / 结案 / 升级 |
 | 构造收尾 | `closure_construct` / `explain` | 按目标维反推 knobs；稳定替换 → lemma lead |
-| 引理 | `lemma_leads` → `mine` → `review` → `apply` | lead 确定性生成；producer 只证；referee 审查；engine 写入 E |
+| 引理 | `lemma_leads` → `evidence` → `mine` → `review` → `apply` | observation lead；证据包；producer 只证；referee 审查；engine 写入 E |
 | 结案 | `closure_audit` / `closure_certify` | 不变量 + gap=0 证书 |
 
 #### 有界 search round

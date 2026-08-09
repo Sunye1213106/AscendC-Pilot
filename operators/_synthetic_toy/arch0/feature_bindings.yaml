@@ -5,4 +5,5 @@ categorical: [layout, dtype]
 base_numeric: [n]
 derived_terms: {}
 static_parents: {}
+dim_to_roots: {}
 root_to_knobs: {}

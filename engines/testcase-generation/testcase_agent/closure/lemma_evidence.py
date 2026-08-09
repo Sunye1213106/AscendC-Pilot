@@ -191,8 +191,14 @@ def _from_source_regex(
 def collect(
     combo: Mapping[str, str] | str,
     ws: W.Workspace | None = None,
+    *,
+    lead_id: str = "",
 ) -> dict[str, Any]:
-    """Build an evidence pack for the combo."""
+    """Build an evidence pack for the combo.
+
+    Canonical path: ``tg/closure/lemmas/evidence/<lead_id>.yaml`` when
+    ``lead_id`` is supplied; otherwise a stable combo label is used.
+    """
     ws = (ws or W.default_workspace()).ensure()
     when = parse_combo(combo) if isinstance(combo, str) else {
         str(k): str(v) for k, v in combo.items()
@@ -210,8 +216,10 @@ def collect(
         by_id[str(e["id"])] = e
     ordered = sorted(by_id.values(), key=lambda e: (e.get("kind"), e.get("file"), e.get("line")))
 
+    lid = str(lead_id or "").strip()
     pack = {
         "schema": "tg-lemma-evidence/v1",
+        "lead_id": lid,
         "combo": when,
         "fields": fields,
         "entry_count": len(ordered),
@@ -221,8 +229,12 @@ def collect(
             for kind in sorted({str(e.get("kind")) for e in ordered})
         },
         "review_template": {
+            "lead_id": lid,
             "when": when,
             "grade": "source_lemma",
+            "evidence_path": (
+                f"tg/closure/lemmas/evidence/{lid}.yaml" if lid else ""
+            ),
             "proof": {
                 "entry_branches_checked": False,
                 "early_returns_checked": False,
@@ -259,9 +271,9 @@ def collect(
 
     out_dir = ws.state / "lemmas" / "evidence"
     out_dir.mkdir(parents=True, exist_ok=True)
-    label = "_".join(f"{k}-{v}" for k, v in when.items())
-    yaml_path = out_dir / f"{label}.yaml"
-    json_path = out_dir / f"{label}.json"
+    stem = lid or "_".join(f"{k}-{v}" for k, v in sorted(when.items()))
+    yaml_path = out_dir / f"{stem}.yaml"
+    json_path = out_dir / f"{stem}.json"
     yaml_path.write_text(
         yaml.safe_dump(pack, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
@@ -272,10 +284,78 @@ def collect(
     )
     return {
         "ok": True,
+        "lead_id": lid,
         "combo": when,
         "entry_count": len(ordered),
         "yaml": str(yaml_path),
         "json": str(json_path),
+        "evidence_path": f"tg/closure/lemmas/evidence/{stem}.yaml",
         "entry_ids": [e["id"] for e in ordered],
         "pack": pack,
+    }
+
+
+def collect_for_leads(
+    leads_doc: Mapping[str, Any] | None = None,
+    ws: W.Workspace | None = None,
+    *,
+    top: int = 40,
+) -> dict[str, Any]:
+    """Collect evidence packs for each observation lead in ``leads.yaml``."""
+    import yaml as _yaml
+
+    ws = (ws or W.default_workspace()).ensure()
+    doc = dict(leads_doc or {})
+    if not doc:
+        path = ws.state / "lemmas" / "leads.yaml"
+        if path.is_file():
+            doc = _yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    leads = list(doc.get("leads") or [])
+    if top:
+        leads = leads[:top]
+    written: list[dict[str, Any]] = []
+    for lead in leads:
+        if not isinstance(lead, Mapping):
+            continue
+        lid = str(lead.get("id") or "").strip()
+        when = lead.get("when") or {}
+        if not when and not lead.get("combo"):
+            continue
+        try:
+            out = collect(when or str(lead.get("combo") or ""), ws=ws, lead_id=lid)
+        except Exception as exc:  # noqa: BLE001
+            written.append({"lead_id": lid, "ok": False, "error": str(exc)[:200]})
+            continue
+        lead["evidence_path"] = out.get("evidence_path") or lead.get("evidence_path")
+        lead["evidence_entry_count"] = int(out.get("entry_count") or 0)
+        written.append({
+            "lead_id": lid,
+            "ok": True,
+            "entry_count": out.get("entry_count"),
+            "evidence_path": out.get("evidence_path"),
+        })
+    # Persist lead→evidence_path contract back into leads.yaml.
+    if leads and doc:
+        doc["leads"] = list(doc.get("leads") or [])
+        # Merge updated paths for the processed prefix.
+        by_id = {str(x.get("id")): x for x in leads if isinstance(x, Mapping)}
+        merged = []
+        for lead in doc["leads"]:
+            if isinstance(lead, Mapping) and str(lead.get("id")) in by_id:
+                merged.append(by_id[str(lead.get("id"))])
+            else:
+                merged.append(lead)
+        doc["leads"] = merged
+        out_leads = ws.state / "lemmas" / "leads.yaml"
+        out_leads.parent.mkdir(parents=True, exist_ok=True)
+        out_leads.write_text(
+            _yaml.safe_dump(doc, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+    return {
+        "ok": True,
+        "schema": "tg-lemma-evidence-batch/v1",
+        "lead_count": len(leads),
+        "written": written,
+        "evidence_dir": str(ws.state / "lemmas" / "evidence"),
     }

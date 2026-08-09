@@ -165,13 +165,32 @@ def _static_parents_table() -> dict[str, list[str]]:
     return {str(k): [str(x) for x in (v or [])] for k, v in raw.items()}
 
 
+def static_parent_status(dim: str) -> str:
+    """Return ``present`` / ``missing`` / ``explicit_empty`` for ``dim``.
+
+    ``missing`` means the KB never emitted a static_parents entry — callers
+    must not pretend static == all features.
+    """
+    table = _static_parents_table()
+    if dim not in table:
+        return "missing"
+    if not table[dim]:
+        return "explicit_empty"
+    return "present"
+
+
 def static_parents(dim: str, available: list[str]) -> list[str]:
-    """Parent columns for `dim`, filtered to those the frame actually has."""
-    named = _static_parents_table().get(dim)
-    if not named:
-        return list(available)
+    """Parent columns for `dim`, filtered to those the frame actually has.
+
+    Missing / explicit-empty specs return ``[]`` so gap detectors can see
+    ``KB_PARENT_SPEC_MISSING`` instead of silently equating static to all.
+    """
+    status = static_parent_status(dim)
+    if status != "present":
+        return []
+    named = _static_parents_table().get(dim) or []
     return [c for c in named if c in available]
 
 
 def has_static_parents(dim: str) -> bool:
-    return dim in _static_parents_table()
+    return static_parent_status(dim) == "present"

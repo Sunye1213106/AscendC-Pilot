@@ -22,6 +22,7 @@ def test_tg_pipelines_are_explicit_and_fail_closed() -> None:
     assert phase_pipeline("tg-solve", "residual") == ["closure_residual"]
     assert phase_pipeline("tg-solve", "lemma") == [
         "lemma_leads",
+        "lemma_evidence",
         "lemma_mine",
         "lemma_review",
         "lemma_apply",
@@ -48,6 +49,7 @@ def test_tg_solve_closure_actions_registered() -> None:
         "closure_construct",
         "closure_explain",
         "lemma_leads",
+        "lemma_evidence",
         "lemma_mine",
         "lemma_review",
         "lemma_apply",

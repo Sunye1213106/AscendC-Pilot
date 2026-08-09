@@ -39,7 +39,7 @@ gate → oracle → ledger → construct/search → replay → classify
   ├─ REWRITE（key≠target） → 记观测；agent 查源码为何改写 → lemma 候选
   ├─ REFUSE / FAIL         → 记观测；agent 查源码为何拒绝 → lemma 候选
   ├─ SEARCH_PROGRESS       → 继续 construct/search-round
-  ├─ NEED_LEMMA            → lemma_leads → lemma_mine → lemma_review → lemma_apply
+  ├─ NEED_LEMMA            → lemma_leads → lemma_evidence → lemma_mine → lemma_review → lemma_apply
   ├─ ORACLE_SUSPECT        → escalate / human_required
   └─ GAP_ZERO              → closure_audit → closure_certify
 ```

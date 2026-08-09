@@ -161,6 +161,11 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "tg/closure/leads.csv",
             "tg/closure/leads3.csv",
         ],
+        "lemma_evidence": [
+            "tg/closure/lemmas/evidence/**",
+            "tg/closure/lemmas/evidence_receipt.yaml",
+            "tg/closure/lemmas/leads.yaml",
+        ],
         "lemma_mine": [
             "runs/{run_id}/actions/lemma_mine/parts/**",
             "runs/{run_id}/actions/lemma_mine/scratch/**",

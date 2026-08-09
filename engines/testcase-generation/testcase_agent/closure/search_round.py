@@ -193,7 +193,13 @@ def run_round(
             if x.strip().isdigit()
         }
 
-    half = max(1, budget // 2)
+    # Budget split: ~50% direct+relation construct, ~35% relation repair fill,
+    # ~15% control exploration. explore_fill stays False by default in the
+    # library; search explicitly enables relation repair so constructor stalls
+    # do not collapse both arms.
+    n_model = max(1, int(budget * 0.50))
+    n_relation = max(0, int(budget * 0.35))
+    n_control = max(1, budget - n_model - n_relation)
     witnesses = []
     if judged is not None and not judged.empty:
         try:
@@ -202,24 +208,57 @@ def run_round(
             witnesses = []
 
     model_cases: list = []
+    model_df = pd.DataFrame()
     try:
         model_cases, model_df = G.kb_guided_pool(
-            n=half,
+            n=n_model,
             seed=seed,
             witnesses=witnesses or None,
             open_keys=open_keys,
             surrogate=surrogate,
             control=False,
             ws=ws,
+            explore_fill=True,
         )
     except Exception:
-        model_df = pd.DataFrame()
+        model_cases, model_df = [], pd.DataFrame()
+
+    if n_relation > 0:
+        try:
+            rel_cases, rel_df = G.kb_guided_pool(
+                n=n_relation,
+                seed=seed + 3,
+                witnesses=witnesses or None,
+                open_keys=open_keys,
+                surrogate=surrogate,
+                control=False,
+                ws=ws,
+                explore_fill=True,
+            )
+            if rel_cases:
+                seen_ids = {id(c) for c in model_cases}
+                extra_rows: list[dict[str, Any]] = []
+                for i, c in enumerate(rel_cases):
+                    if id(c) in seen_ids:
+                        continue
+                    model_cases.append(c)
+                    if rel_df is not None and not rel_df.empty and i < len(rel_df):
+                        extra_rows.append(rel_df.iloc[i].to_dict())
+                if extra_rows:
+                    extra = pd.DataFrame(extra_rows)
+                    model_df = (
+                        extra if model_df is None or model_df.empty
+                        else pd.concat([model_df, extra], ignore_index=True)
+                    )
+        except Exception:
+            pass
 
     model_arm = {
         "candidates": len(model_cases),
         "judged": 0,
         "new_declared_keys": 0,
         "new_undeclared_keys": 0,
+        "budget": {"model": n_model, "relation": n_relation, "control": n_control},
     }
     random_arm = {
         "candidates": 0,
@@ -346,12 +385,13 @@ def run_round(
     random_cases: list = []
     try:
         random_cases, random_df = G.kb_guided_pool(
-            n=half,
+            n=n_control,
             seed=seed + 1,
             witnesses=witnesses or None,
             open_keys=open_after_model,
             control=True,
             ws=ws,
+            explore_fill=True,
         )
     except Exception:
         random_df = pd.DataFrame()

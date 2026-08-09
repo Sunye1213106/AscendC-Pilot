@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import collections
 import csv
+from pathlib import Path
 from typing import Iterable, Mapping
 
 from testcase_agent.closure import ledger
@@ -301,8 +302,42 @@ def promote_reviewed(
     accepted = list(review.get("accepted") or [])
     promoted = 0
     skipped = 0
+
+    def _load_evidence_pack(raw: Mapping) -> dict | None:
+        path_hint = str(
+            raw.get("evidence_path")
+            or (raw.get("certificate") or {}).get("evidence_path")
+            or ""
+        ).strip().replace("\\", "/")
+        lead_id = str(raw.get("lead_id") or "").strip()
+        candidates: list[Path] = []
+        if path_hint:
+            p = Path(path_hint)
+            if p.is_absolute():
+                candidates.append(p)
+            else:
+                candidates.append(ws.root / path_hint)
+                if "lemmas/evidence/" in path_hint:
+                    candidates.append(ws.state / "lemmas" / "evidence" / Path(path_hint).name)
+                elif path_hint.startswith("tg/closure/"):
+                    candidates.append(ws.state / path_hint[len("tg/closure/"):])
+                else:
+                    candidates.append(ws.state / path_hint)
+        if lead_id:
+            candidates.append(ws.state / "lemmas" / "evidence" / f"{lead_id}.yaml")
+        for cand in candidates:
+            try:
+                if cand.is_file():
+                    doc = yaml.safe_load(cand.read_text(encoding="utf-8")) or {}
+                    if isinstance(doc, dict) and doc.get("entries") is not None:
+                        return doc
+            except Exception:
+                continue
+        return None
+
     for raw in accepted:
-        certificate_check = validate_certificate(raw)
+        evidence_pack = _load_evidence_pack(raw)
+        certificate_check = validate_certificate(raw, evidence_pack=evidence_pack)
         if not certificate_check["ok"]:
             skipped += 1
             continue

@@ -76,6 +76,6 @@ acp run-action <action_id>
 | `export_tg_host_view` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/export-tg-host-view` | `-` | `export-tg-host-view-v1` |
 | `export_adapter_pack` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/export-adapter-pack` | `-` | `export-adapter-pack-v1` |
 | `export_integrity` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/export-integrity` | `-` | `integrity-v1` |
-| `kb_review` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/kb-review` | `-` | `kb-review-v1` |
+| `kb_review` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/kb-review` | `uo/kb-review` | `kb-review-v1` |
 
 <!-- END GENERATED ACTIONS -->

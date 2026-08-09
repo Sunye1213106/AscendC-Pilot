@@ -1,7 +1,7 @@
 ## Task
 
-Bundle identity is authoritative.
-Do not replace, infer, normalize, or copy identity from old artifacts.
+Bundle identity supplied by Pilot is authoritative.
+Identity from any other artifact must not be used.
 
 Perform `lemma_review` for the targets provided by the Pilot action.
 

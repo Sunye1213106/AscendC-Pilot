@@ -103,11 +103,12 @@ def test_closure_tables_loaded_from_operator_package():
     if features.get("static_parents"):
         from testcase_agent.closure import features as F
 
+        status = F.static_parent_status("DeterType")
         parents = F.static_parents(
             "DeterType", ["deterministic", "layout", "dtype"]
         )
-        assert parents == ["deterministic"] or parents == [
-            "deterministic",
-            "layout",
-            "dtype",
-        ]
+        if status == "present":
+            assert "deterministic" in parents
+        else:
+            # missing / explicit_empty must not pretend static == all features
+            assert parents == []

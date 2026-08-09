@@ -41,7 +41,7 @@ _TG_PIPELINES: dict[str, dict[str, list[str]]] = {
         "search": ["closure_search"],
         "residual": ["closure_residual"],
         "construct": ["closure_construct", "closure_explain"],
-        "lemma": ["lemma_leads", "lemma_mine", "lemma_review", "lemma_apply"],
+        "lemma": ["lemma_leads", "lemma_evidence", "lemma_mine", "lemma_review", "lemma_apply"],
         "audit": ["closure_audit"],
         "certify": ["closure_certify"],
         # csv_consumer compatibility (selected when mode=csv_consumer via overlay).
@@ -187,9 +187,18 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
             "read": ["tg/closure/**"],
             "write": ["tg/closure/lemmas/leads.yaml", "tg/closure/leads.csv", "tg/closure/leads3.csv"],
         },
+        "lemma_evidence": {
+            "read": ["tg/closure/lemmas/leads.yaml", "uo/ir/**", "uo/tiling/**"],
+            "write": [
+                "tg/closure/lemmas/evidence/**",
+                "tg/closure/lemmas/evidence_receipt.yaml",
+                "tg/closure/lemmas/leads.yaml",
+            ],
+        },
         "lemma_mine": {
             "read": [
                 "tg/closure/lemmas/leads.yaml",
+                "tg/closure/lemmas/evidence/**",
                 "uo/ir/**",
                 "uo/tiling/**",
                 "runs/**/actions/lemma_mine/**",

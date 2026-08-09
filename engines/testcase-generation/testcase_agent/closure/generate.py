@@ -537,32 +537,95 @@ def sweep_nearest(case, differing_dims: list[str]) -> list:
     return normalised
 
 
-def _root_to_knobs() -> dict[str, list[str]]:
+def _feature_bindings_tables() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Return ``(dim_to_roots, root_to_knobs)`` with legacy inversion repair.
+
+    Older adapter packs mistakenly stored ``root_to_knobs`` as dim→roots.
+    Detect that shape (values look like INPUT_/ATTR_ roots) and recover.
+    """
     try:
         from replay.package_data import load_yaml
 
-        raw = (load_yaml("feature_bindings.yaml") or {}).get("root_to_knobs") or {}
-        return {str(k): [str(x) for x in (v or [])] for k, v in raw.items()}
+        doc = load_yaml("feature_bindings.yaml") or {}
     except Exception:
-        return {}
+        return {}, {}
+
+    dim_to_roots = {
+        str(k): [str(x) for x in (v or [])]
+        for k, v in (doc.get("dim_to_roots") or {}).items()
+    }
+    root_to_knobs = {
+        str(k): [str(x) for x in (v or [])]
+        for k, v in (doc.get("root_to_knobs") or {}).items()
+    }
+
+    def _looks_like_roots(values: list[str]) -> bool:
+        if not values:
+            return False
+        return any(
+            v.startswith("INPUT_") or v.startswith("ATTR_") or v.startswith("VAR_")
+            for v in values
+        )
+
+    # Legacy: root_to_knobs was actually dim→roots.
+    if not dim_to_roots and root_to_knobs and any(
+        _looks_like_roots(v) for v in root_to_knobs.values()
+    ):
+        dim_to_roots = dict(root_to_knobs)
+        root_to_knobs = {}
+        schema_keys: list[str] = []
+        try:
+            I = W.replay_inputs()
+            schema_keys = list((I.SEMANTICS.knob_schema() or {}).keys())
+        except Exception:
+            schema_keys = []
+        for roots in dim_to_roots.values():
+            for r in roots:
+                named = [k for k in schema_keys if k.lower() in r.lower()]
+                if not named:
+                    continue
+                bucket = root_to_knobs.setdefault(r, [])
+                for k in named:
+                    if k not in bucket:
+                        bucket.append(k)
+    return dim_to_roots, root_to_knobs
 
 
 def knobs_for_field(field: str, uo_root: str | None = None) -> list[str]:
-    """Knobs in the influence cone of a key / host-state field."""
+    """Knobs in the influence cone of a key / host-state field.
+
+    Path: ``field → dim_to_roots / Codemap roots → root_to_knobs``.
+    Falls back to ``static_parents[field]`` when the cone is empty.
+    """
     from pathlib import Path
 
     if uo_root is None:
         raise ValueError("uo_root is required (pass the operator's .ascendc-pilot/<arch>/uo)")
     root = Path(uo_root)
-    table = _root_to_knobs()
+    dim_to_roots, table = _feature_bindings_tables()
     knobs: set[str] = set()
+    roots: list[str] = []
+    roots.extend(dim_to_roots.get(str(field), ()))
     try:
         from uo_init.host_codemap import CodemapQuery
         for r in CodemapQuery(root).reads_of(field):
-            for k in table.get(str(r.get("root") or ""), ()):
-                knobs.add(k)
+            roots.append(str(r.get("root") or ""))
     except Exception:
         pass
+    for r in roots:
+        if not r:
+            continue
+        for k in table.get(r, ()):
+            knobs.add(k)
+    if not knobs:
+        try:
+            from replay.package_data import load_yaml
+
+            parents = (load_yaml("feature_bindings.yaml") or {}).get("static_parents") or {}
+            for k in parents.get(str(field), ()) or []:
+                knobs.add(str(k))
+        except Exception:
+            pass
     return sorted(knobs)
 
 

@@ -3,8 +3,8 @@
 
 ``fast`` (default) targets cold uo-init ≤ ``UO_COLD_BUDGET_S`` (default 240s
 with kernel+tilingdata): keypath controllability, one dtype kernel walk,
-no API clang contract, no pairwise kernel fold.  ``full`` restores the
-previous feature-complete path (full closure + all dtype variants + fold).
+no API clang contract, no pairwise kernel fold.  ``full`` enables the
+complete extract path (full closure + all dtype variants + fold).
 """
 from __future__ import annotations
 

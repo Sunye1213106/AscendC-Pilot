@@ -11,9 +11,9 @@
 
 ## Domain Procedure
 
-1. 仅消费 leads 封闭包。
-2. 对每条 lead：对照构造 case 走源码入口 → 解释拒绝或改写 → 按 LEMMA.md 路径 A/B/C 写 staging parts。
-3. 调用 `lemma-evidence` 填空证据包 ID；证明五检查必须引用真实条目。
+1. 仅消费 leads 封闭包（observation leads；无观测不得发明）。
+2. 读取同批 `lemma_evidence` 产物：`lead.evidence_path` → `tg/closure/lemmas/evidence/<lead_id>.yaml`。
+3. 对每条 lead：对照构造 case 走源码入口 → 解释拒绝或改写 → 按 LEMMA.md 路径 A/B/C 写 staging parts；证明五检查必须引用证据包内 `EV_…` ID。
 4. 禁止写 excluded；禁止虚构 lead；禁止把假设列表直接写成 `grade=source_lemma`。
 
 ## Domain Decisions
