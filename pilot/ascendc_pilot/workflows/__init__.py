@@ -285,6 +285,72 @@ def _ensure_agent(meta: dict[str, Any], agent_id: str, role_id: str) -> None:
     meta["agents"] = agents
 
 
+def _make_deterministic(row: dict[str, Any]) -> None:
+    """Expose a deterministic Action as an engine step, never a model-selectable agent."""
+    row["agent_id"] = None
+    row["role_id"] = "deterministic_engine"
+    row["execution_mode"] = "deterministic"
+    row["actors"] = []
+    row["task_prompt_id"] = None
+    # Agent-facing capabilities are irrelevant for a deterministic engine call.
+    row["capability_ids"] = []
+
+
+def _apply_uo_control_plane_contracts() -> None:
+    """Align UO runtime ownership with the CodeMap compiler architecture.
+
+    Stable/compiler work is deterministic.  Only genuine ambiguity is exposed
+    to a model: prepare may ask the primary to choose an ambiguous source scope,
+    resolve delegates unresolved semantic gaps, and uo-query remains read-only.
+    """
+    init = WORKFLOWS.get("uo-init") or {}
+    for action_id in ("extract", "analyze", "apply_gap_patch", "commit", "review"):
+        row = _action(init, action_id)
+        if row is not None:
+            _make_deterministic(row)
+    init["agents"] = [
+        {"id": "ascendc-pilot", "role": "controller"},
+        {"id": "uo-semantic-resolver", "role": "producer"},
+    ]
+    for obligation in init.get("static_obligations") or []:
+        if isinstance(obligation, dict) and obligation.get("id") == "kb_review_passed":
+            obligation["label_zh"] = "CodeMap 结构审查通过"
+
+    update = WORKFLOWS.get("uo-update") or {}
+    for row in update.get("actions") or []:
+        if isinstance(row, dict):
+            _make_deterministic(row)
+    update["agents"] = []
+    update_labels = {
+        "detect_changes": "检测源码变更",
+        "plan_update": "规划 CodeMap 增量更新",
+        "apply_update": "应用 CodeMap 增量更新",
+        "key_triage": "分类受影响语义关系",
+        "key_resolution": "重建受影响语义关系",
+        "confidence_report": "生成更新质量报告",
+        "confidence_review": "审查更新一致性",
+        "export_integrity": "校验 CodeMap 完整性",
+        "diff_summary": "CodeMap 差异摘要",
+        "diff_only": "仅生成 CodeMap 差异摘要",
+    }
+    for action_id, label in update_labels.items():
+        row = _action(update, action_id)
+        if row is not None:
+            row["label_zh"] = label
+    for obligation in update.get("static_obligations") or []:
+        if isinstance(obligation, dict) and obligation.get("id") == "kb_integrity_passed":
+            obligation["label_zh"] = "CodeMap 完整性通过"
+
+    query = WORKFLOWS.get("uo-query") or {}
+    lookup = _action(query, "kb_lookup")
+    if lookup is not None:
+        lookup["label_zh"] = "CodeMap 查询"
+        lookup["task_prompt_id"] = "uo/codemap-query"
+    for obligation in query.get("static_obligations") or []:
+        if isinstance(obligation, dict) and obligation.get("id") == "kb_ready":
+            obligation["label_zh"] = "CodeMap 就绪"
+
+
 def _apply_tg_control_plane_contracts() -> None:
     """Close TG ordering, ownership, and reset-policy gaps at registry load."""
 
@@ -357,6 +423,7 @@ def _apply_tg_control_plane_contracts() -> None:
     }
 
 
+_apply_uo_control_plane_contracts()
 _apply_tg_control_plane_contracts()
 
 
