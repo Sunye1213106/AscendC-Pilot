@@ -43,7 +43,8 @@ function Get-PluginsDest([string]$plat) {
 }
 
 function Remove-LegacyAscendcAgentBits([string]$plat, [string]$skills, [string]$agents, [string]$plugins) {
-  # Pre-pilot ascendc-agent leftovers (show up as Tab agents / wrong harness).
+  # Remove previous or deterministic-only entries that would otherwise appear
+  # as selectable OpenCode/Cursor agents after an upgrade.
   foreach ($name in @("uo-code-review", "understand-operator", "uo-diff")) {
     $p = Join-Path $skills $name
     if (Test-Path -LiteralPath $p) {
@@ -51,7 +52,10 @@ function Remove-LegacyAscendcAgentBits([string]$plat, [string]$skills, [string]$
       Write-Host "Removed legacy skill → $p"
     }
   }
-  foreach ($name in @("ascendc-agent", "uo-code-reviewer", "README")) {
+  foreach ($name in @(
+    "ascendc-agent", "uo-code-reviewer", "deterministic-uo-engine", "deterministic-tg-engine",
+    "uo-semantic-resolve", "uo-key-resolve", "uo-confidence-review", "uo-kb-review", "README"
+  )) {
     $p = Join-Path $agents "$name.md"
     if (Test-Path -LiteralPath $p) {
       Remove-Item -Force -LiteralPath $p
@@ -85,7 +89,7 @@ if ($Platform -like "uninstall-*") {
     $p = Join-Path $skills $name
     if (Test-Path $p) { Remove-Item -Recurse -Force $p }
   }
-  foreach ($name in @("ascendc-pilot","ascendc-agent","uo-semantic-resolve","uo-key-resolve","uo-confidence-review","uo-kb-review","ce-reviewer","uo-query","uo-code-reviewer","tg-csv-contract","tg-semantic-bind","tg-init-audit","deterministic-uo-engine","deterministic-tg-engine","README")) {
+  foreach ($name in @("ascendc-pilot","ascendc-agent","uo-semantic-resolve","uo-semantic-resolver","uo-key-resolve","uo-confidence-review","uo-kb-review","ce-reviewer","uo-query","uo-code-reviewer","tg-csv-contract","tg-semantic-bind","tg-init-audit","deterministic-uo-engine","deterministic-tg-engine","README")) {
     $p = Join-Path $agents "$name.md"
     if (Test-Path $p) { Remove-Item -Force $p }
   }
@@ -109,9 +113,11 @@ if ($SkipPip -ne "1") {
     -e "$BundleRoot\engines\code-engineering"
 }
 
-# Compose sources → generated/<platform>/{skills,agents,prompts}
+# Compose sources, then retain only model-reachable runtime context.
 python "$BundleRoot\scripts\compose_runtime.py" --repo "$BundleRoot" --host $Platform
 if ($LASTEXITCODE -ne 0) { throw "compose_runtime failed" }
+python "$BundleRoot\scripts\prune_runtime_context.py" --repo "$BundleRoot" --host $Platform
+if ($LASTEXITCODE -ne 0) { throw "prune_runtime_context failed" }
 
 $Dest = Get-PluginDest $Platform
 $Skills = Get-SkillsDest $Platform
@@ -120,8 +126,9 @@ New-Item -ItemType Directory -Force -Path $Dest, $Skills, $Agents | Out-Null
 if (Test-Path $Dest) { Remove-Item -Recurse -Force $Dest }
 New-Item -ItemType Directory -Force -Path $Dest | Out-Null
 
-# Bundle sources for offline reference (not runtime authority)
-foreach ($name in @("skills","prompts","agents","docs","pilot","templates","scripts","opencode-plugin")) {
+# Bundle runtime implementation only.  Agent-facing skills/prompts/agents are
+# copied exclusively from generated/<host> below; docs/templates are not runtime context.
+foreach ($name in @("pilot","scripts","opencode-plugin")) {
   $src = Join-Path $BundleRoot $name
   if (Test-Path $src) {
     Copy-Item -Recurse -Force $src (Join-Path $Dest $name)
@@ -138,8 +145,6 @@ foreach ($eng in @("common","understand-operator","testcase-generation","code-en
 }
 
 # Install ONLY generated runtime trees.
-# Windows Copy-Item nests (dest/skills/skills) when dest already exists from the
-# source bundle above — remove first so generated becomes runtime authority.
 $genRoot = Join-Path $BundleRoot "generated\$Platform"
 foreach ($name in @("skills", "agents", "prompts")) {
   $p = Join-Path $Dest $name
@@ -151,7 +156,7 @@ if (Test-Path (Join-Path $genRoot "prompts")) {
   Copy-Item -Recurse -Force (Join-Path $genRoot "prompts") (Join-Path $Dest "prompts")
 }
 
-# Purge pre-pilot leftovers (wrong Tab agents / free-form LLM KB skills).
+# Purge leftovers from earlier installs before linking the current closure.
 Remove-LegacyAscendcAgentBits -plat $Platform -skills $Skills -agents $Agents -plugins (Get-PluginsDest $Platform)
 
 foreach ($name in @("uo-init","uo-update","uo-query","ce-review","tg-init","tg-plan","tg-solve","operator")) {
@@ -175,7 +180,7 @@ $agentDir = Join-Path $Dest "agents"
 if (-not (Test-Path $agentDir)) {
   throw "generated agents missing under $agentDir (compose may have failed)"
 }
-# OpenCode treats every .md under agents/ as a Tab entry — never install README.md etc.
+# OpenCode treats every .md under agents/ as a Tab entry.
 $agentFiles = @(Get-ChildItem -Path $agentDir -Filter "*.md" -File | Where-Object {
   $_.Name -ne "README.md" -and $_.Name -notmatch '(?i)^readme'
 })
@@ -189,7 +194,6 @@ foreach ($agentFile in $agentFiles) {
   try {
     New-Item -ItemType SymbolicLink -Path $link -Target $agentFile.FullName -ErrorAction Stop | Out-Null
   } catch {
-    # NOTE: inside catch, $_ is the ErrorRecord — must use $agentFile, not $_.FullName
     Copy-Item -Force -LiteralPath $agentFile.FullName -Destination $link
   }
   if (-not (Test-Path -LiteralPath $link)) {
