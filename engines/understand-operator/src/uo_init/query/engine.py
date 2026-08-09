@@ -21,7 +21,6 @@ class CodeMapQuery:
     def find_symbol(self, name: str, *, kind: str | None = None) -> list[dict[str, Any]]:
         ents = self.codemap.by_name(name, kind=kind)
         if not ents:
-            # substring fallback
             ents = [
                 e
                 for e in self.codemap.entities.values()
@@ -64,18 +63,19 @@ class CodeMapQuery:
     def find_path(self, start: str, end: str | None = None, *, end_kind: str = "") -> list[dict[str, Any]]:
         start_ents = self.codemap.by_name(start)
         if not start_ents:
-            # allow kind-qualified "input.query"
             start_ents = [
                 e for e in self.codemap.entities.values() if e.name.endswith(start) or start in e.name
             ]
         if not start_ents:
             return []
-        # Prefer INPUT / TILING_KEY roots over same-named VARIABLE shadows.
         rank = {
             "INPUT": 0,
-            "TILING_KEY": 1,
-            "FIELD": 2,
-            "VARIABLE": 3,
+            "OUTPUT": 1,
+            "TILING_KEY": 2,
+            "TILING_DATA": 3,
+            "TILING_FIELD": 4,
+            "FIELD": 5,
+            "VARIABLE": 6,
         }
         start_ents = sorted(start_ents, key=lambda e: rank.get(e.kind_name(), 9))
         end_kinds = [end_kind] if end_kind else None
@@ -88,11 +88,7 @@ class CodeMapQuery:
                 end_kinds = [end.upper()]
         kinds = end_kinds or (["KERNEL"] if not end else None)
         for ent in start_ents:
-            path_ids = self.codemap.find_path(
-                ent.id,
-                end_id=end_id,
-                end_kinds=kinds,
-            )
+            path_ids = self.codemap.find_path(ent.id, end_id=end_id, end_kinds=kinds)
             if path_ids:
                 return [
                     self.codemap.entities[i].to_dict()
@@ -101,8 +97,79 @@ class CodeMapQuery:
                 ]
         return []
 
+    # ---- Operator contract -------------------------------------------------
+
+    def operator_api(self) -> dict[str, Any]:
+        """Return current-source public operator inputs, attributes and outputs."""
+        inputs = self.codemap.by_kind(EntityKind.INPUT)
+        tensor_inputs = sorted(
+            (e for e in inputs if e.attrs.get("api_kind") == "tensor"),
+            key=lambda e: int(e.attrs.get("api_index") or 0),
+        )
+        attributes = sorted(
+            (e for e in inputs if e.attrs.get("api_kind") == "attribute"),
+            key=lambda e: int(e.attrs.get("api_attr_index") or 0),
+        )
+        outputs = sorted(
+            self.codemap.by_kind(EntityKind.OUTPUT),
+            key=lambda e: int(e.attrs.get("api_index") or 0),
+        )
+        return {
+            "tensor_inputs": [e.to_dict() for e in tensor_inputs],
+            "attributes": [e.to_dict() for e in attributes],
+            "outputs": [e.to_dict() for e in outputs],
+        }
+
     def input_roots(self) -> list[dict[str, Any]]:
         return [e.to_dict() for e in self.codemap.by_kind(EntityKind.INPUT)]
+
+    def output_roots(self) -> list[dict[str, Any]]:
+        return [e.to_dict() for e in self.codemap.by_kind(EntityKind.OUTPUT)]
+
+    # ---- Tiling ------------------------------------------------------------
+
+    def tiling_keys(self) -> list[dict[str, Any]]:
+        """Return source-declared TilingKey dimensions in packed bit order."""
+        rows = self.codemap.by_kind(EntityKind.TILING_KEY)
+        rows = sorted(rows, key=lambda e: int(e.attrs.get("decl_order") or 0))
+        return [e.to_dict() for e in rows]
+
+    def tiling_data(self, name: str = "") -> list[dict[str, Any]]:
+        if name:
+            return self.find_symbol(name, kind=EntityKind.TILING_DATA.value)
+        return [e.to_dict() for e in self.codemap.by_kind(EntityKind.TILING_DATA)]
+
+    def tiling_fields(self, owner: str = "") -> list[dict[str, Any]]:
+        rows = self.codemap.by_kind(EntityKind.TILING_FIELD)
+        if owner:
+            rows = [e for e in rows if str(e.attrs.get("owner") or "") == owner]
+        return [e.to_dict() for e in rows]
+
+    def tiling_registrations(self) -> list[dict[str, Any]]:
+        """Return REGISTER_TILING_FOR_TILINGKEY predicate→TilingData bindings."""
+        out: list[dict[str, Any]] = []
+        for rel in self.codemap.relations.values():
+            if rel.kind_name() != RelationKind.SELECTS.value:
+                continue
+            src = self.codemap.entities.get(rel.src)
+            dst = self.codemap.entities.get(rel.dst)
+            if not src or not dst:
+                continue
+            if (
+                src.kind_name() == EntityKind.PREDICATE.value
+                and src.attrs.get("predicate_role") == "packed_tiling_key_registration"
+                and dst.kind_name() == EntityKind.TILING_DATA.value
+            ):
+                out.append(
+                    {
+                        "predicate": src.to_dict(),
+                        "tiling_data": dst.to_dict(),
+                        "relation": rel.to_dict(),
+                    }
+                )
+        return out
+
+    # ---- Template / architecture / kernels --------------------------------
 
     def guards(self, name: str) -> list[dict[str, Any]]:
         return self._adj(name, RelationKind.GUARDED_BY, direction="out") + self._adj(
@@ -126,8 +193,17 @@ class CodeMapQuery:
 
     def selected_kernel(self, key_name: str = "") -> list[dict[str, Any]]:
         if key_name:
-            return self._adj(key_name, RelationKind.SELECTS, direction="out")
+            return self._adj(key_name, RelationKind.SELECTS, direction="out") + self._adj(
+                key_name, RelationKind.CONTROLS, direction="out"
+            )
         return [e.to_dict() for e in self.codemap.by_kind(EntityKind.KERNEL)]
+
+    def unresolved(self) -> list[dict[str, Any]]:
+        return [
+            e.to_dict()
+            for e in self.codemap.entities.values()
+            if str(e.status).lower() in {"unresolved", "partial", "unknown"}
+        ]
 
     def source(self, name: str) -> dict[str, Any] | None:
         ent = self.definition(name)
@@ -198,7 +274,6 @@ def open_codemap_query(
         raise FileNotFoundError(f"no .uo product under {path}")
     if found.suffix == ".uo":
         return CodeMapQuery(codemap=read_codemap(found), path=str(found))
-    # Legacy sqlite: empty CodeMap with note; caller may still use UoQuery.
     cm = CodeMap(op_name=op_name, architecture=architecture or "arch35")
     cm.meta["legacy_db"] = str(found)
     return CodeMapQuery(codemap=cm, path=str(found))
