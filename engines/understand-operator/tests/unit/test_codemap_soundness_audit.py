@@ -5,6 +5,7 @@ from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes import host_kernel, template
+from uo_init.query.engine import CodeMapQuery
 
 
 def _base_map() -> CodeMap:
@@ -64,6 +65,15 @@ def test_audit_rejects_presence_without_real_path() -> None:
     assert report["ok"] is False
     codes = {item["code"] for item in report["blocking"]}
     assert "MISSING_EVIDENCE_BACKED_HOST_KERNEL_PATH" in codes
+
+
+def test_query_summary_rejects_presence_without_real_path() -> None:
+    cm = _base_map()
+    # The legacy CodeMap fallback currently says true from node presence. The
+    # Agent-facing query contract must not expose that permissive value.
+    assert cm.summary()["has_host_kernel_path"] is True
+    summary = CodeMapQuery(cm).summary()
+    assert summary["has_host_kernel_path"] is False
 
 
 def test_audit_accepts_evidence_backed_input_to_kernel_path() -> None:
