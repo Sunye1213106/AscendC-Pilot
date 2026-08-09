@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """Import a historical ``.understand-operator.zip`` into the unified UO store.
 
-This adapter is intentionally conservative. It preserves structured facts that
-are present in the archive and only creates relations when the archive exposes
-an exact machine-readable binding (for example ``runtime_source_name``).
-Natural-language ``derivation``/``question`` text is retained as evidence but
-is never promoted into a semantic edge.
+The archive is treated as historical evidence, not current-source authority.
+When ``operator_root`` is supplied, deterministic current-source passes enrich
+it with API, TilingKey, TilingData and Kernel contract facts before the single
+``.uo`` product is written.  Natural-language derivations/questions are never
+promoted into semantic edges.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ import yaml
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.passes.source_contract import enrich_codemap_from_operator_source
 from uo_init.store.writer import write_codemap
 
 _HOST_KIND: dict[str, EntityKind] = {
@@ -33,8 +34,11 @@ _HOST_KIND: dict[str, EntityKind] = {
     "requires_constraint": EntityKind.PREDICATE,
     "implies_constraint": EntityKind.PREDICATE,
     "value_constraint": EntityKind.PREDICATE,
-    "tilingdata_write": EntityKind.TILING_FIELD,
-    "workspace_write": EntityKind.TILING_FIELD,
+    # A field definition is a field. Write/workspace records are events and must
+    # not inflate TilingData field cardinality.
+    "tilingdata_field": EntityKind.TILING_FIELD,
+    "tilingdata_write": EntityKind.OTHER,
+    "workspace_write": EntityKind.OTHER,
 }
 
 _KERNEL_KIND: dict[str, EntityKind] = {
@@ -140,8 +144,9 @@ def read_understand_archive(
     *,
     op_name: str,
     architecture: str = "arch35",
+    operator_root: str | Path | None = None,
 ) -> CodeMap:
-    """Read the active historical fact partition into a conservative CodeMap."""
+    """Read historical facts and optionally enrich them from current source."""
     archive_path = Path(archive).expanduser().resolve()
     if not archive_path.is_file():
         raise FileNotFoundError(archive_path)
@@ -215,9 +220,7 @@ def read_understand_archive(
                     _add_unresolved(cm, item, section=f"kernel/{section}")
                     imported[f"unresolved:kernel:{section}"] += 1
 
-        # Exact archived bindings: TilingKey.runtime_source_name names the host
-        # runtime variable directly. Only these machine-readable links are
-        # promoted. Free-form `derivation` text stays in attrs.
+        # Exact archived bindings are safe to promote before source enrichment.
         variables: dict[str, Any] = {}
         for ent in cm.by_kind(EntityKind.VARIABLE):
             norm = ((ent.attrs.get("identity") or {}).get("normalized") or {})
@@ -241,8 +244,6 @@ def read_understand_archive(
             )
             exact_bindings += 1
 
-        # Kernel/Template availability under the selected arch is metadata, not
-        # selection. No key→kernel edge is synthesized here.
         for ent in cm.by_kind(EntityKind.KERNEL):
             cm.link(
                 RelationKind.AVAILABLE_ON,
@@ -253,7 +254,7 @@ def read_understand_archive(
 
         cm.meta.update(
             {
-                "archive_import": "understand-operator/v1",
+                "archive_import": "understand-operator/v2+current-source",
                 "archive_path": str(archive_path),
                 "archive_manifest_stage_status": manifest.get("stages") or {},
                 "archive_graph_status": manifest.get("graphs") or {},
@@ -263,6 +264,13 @@ def read_understand_archive(
                 "archive_relation_policy": "structured-only/no-free-text-inference",
             }
         )
+
+        if operator_root is not None:
+            enrich_codemap_from_operator_source(
+                cm,
+                operator_root,
+                architecture=architecture,
+            )
         return cm
 
 
@@ -272,17 +280,25 @@ def understand_archive_to_uo(
     *,
     op_name: str,
     architecture: str = "arch35",
+    operator_root: str | Path | None = None,
 ) -> dict[str, Any]:
-    cm = read_understand_archive(archive, op_name=op_name, architecture=architecture)
+    cm = read_understand_archive(
+        archive,
+        op_name=op_name,
+        architecture=architecture,
+        operator_root=operator_root,
+    )
     written = write_codemap(
         cm,
         dest,
         meta={
-            "import_kind": "historical_understand_operator",
+            "import_kind": "historical_understand_operator+current_source",
             "imported_from": str(Path(archive)),
+            "operator_root": str(Path(operator_root).resolve()) if operator_root is not None else "",
         },
     )
     written["summary"] = cm.summary()
     written["archive_imported"] = cm.meta.get("archive_imported")
     written["archive_exact_runtime_bindings"] = cm.meta.get("archive_exact_runtime_bindings")
+    written["source_contract_stats"] = cm.meta.get("source_contract_stats")
     return written
