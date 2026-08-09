@@ -1,15 +1,13 @@
-"""Doc contracts: public surface = 3 TG skills under AscendC-Pilot layout."""
+"""Documentation/runtime contracts for the three public TG workflows."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-# engines/testcase-generation/tests → repo root
 ROOT = Path(__file__).resolve().parents[3]
 SKILLS = ROOT / "skills" / "workflows"
 SKILLS_ROOT = ROOT / "skills"
 AGENTS = ROOT / "agents"
-GENERATED_AGENTS = ROOT / "generated" / "opencode" / "agents"
 
 PUBLIC_SKILLS = ("tg-init", "tg-plan", "tg-solve")
 MAX_LINES = 220
@@ -30,15 +28,30 @@ def test_public_skill_shells_within_line_limit() -> None:
     for name in PUBLIC_SKILLS:
         path = SKILLS / name / "SKILL.md"
         assert path.is_file(), f"missing {path}"
-        n = _line_count(path)
-        assert n <= MAX_LINES, f"{path} has {n} lines (max {MAX_LINES})"
+        assert _line_count(path) <= MAX_LINES, f"{path} exceeds {MAX_LINES} lines"
 
 
-def test_generated_tg_agents_exist() -> None:
-    for name in ("tg-csv-contract.md", "tg-init-audit.md", "tg-semantic-bind.md"):
-        path = GENERATED_AGENTS / name
-        assert path.is_file(), f"missing {path}"
-        assert _line_count(path) <= 400
+def test_tg_model_agents_are_derived_from_workflow_spec() -> None:
+    from ascendc_pilot.workflows import WORKFLOWS
+
+    expected: set[str] = set()
+    for workflow_id in PUBLIC_SKILLS:
+        for action in WORKFLOWS[workflow_id].get("actions") or []:
+            if not isinstance(action, dict):
+                continue
+            if str(action.get("execution_mode") or "") == "deterministic":
+                continue
+            agent_id = str(action.get("agent_id") or "").strip()
+            if agent_id and agent_id != "ascendc-pilot":
+                expected.add(agent_id)
+
+    assert expected, "TG workflow has no model-facing agents"
+    for agent_id in sorted(expected):
+        path = AGENTS / f"{agent_id}.yaml"
+        assert path.is_file(), f"workflow references missing agent {path}"
+
+    # Deterministic engines are never selectable agents.
+    assert "deterministic-tg-engine" not in expected
 
 
 def test_readme_mentions_three_tg_commands() -> None:
@@ -52,14 +65,13 @@ def test_paths_md_hard_isolation() -> None:
     assert ".ascendc-pilot" in text
 
 
-def test_install_skips_tg_domain_review_agent() -> None:
+def test_install_skips_retired_tg_domain_review_agent() -> None:
     ps1 = (ROOT / "install.ps1").read_text(encoding="utf-8")
     sh = (ROOT / "install.sh").read_text(encoding="utf-8")
-    # Retired agent must not be in the primary agent install list.
     assert "tg-domain-review" not in ps1.split("foreach ($name in @(")[1].split("))")[0]
     assert "tg-domain-review" not in sh
 
 
-def test_tg_dispatch_mentions_plugin_paths() -> None:
+def test_tg_dispatch_mentions_runtime_control_plane() -> None:
     skill = (SKILLS / "tg-init" / "SKILL.md").read_text(encoding="utf-8")
     assert "acp" in skill or "Pilot" in skill or "TG" in skill
