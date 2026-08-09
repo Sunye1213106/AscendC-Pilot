@@ -36,13 +36,24 @@ jobs:
           pip install -e ./engines/common
           pip install -e ./engines/understand-operator
 
+      - name: Targeted CodeMap soundness tests
+        run: |
+          python -m pytest engines/understand-operator/tests/unit/test_codemap_soundness_audit.py -q
+
+      - name: Inventory real archived facts
+        env:
+          UO_AUDIT_OUT: ${{ github.workspace }}/artifacts/uo-arch35
+        run: |
+          mkdir -p "$UO_AUDIT_OUT"
+          unzip -l external/flashattention/flash_attention_score_grad/.understand-operator.zip \
+            > "$UO_AUDIT_OUT/archive-list.txt"
+
       - name: Build and audit arch35 UO
         id: audit
         continue-on-error: true
         env:
           UO_AUDIT_OUT: ${{ github.workspace }}/artifacts/uo-arch35
         run: |
-          mkdir -p "$UO_AUDIT_OUT"
           python engines/understand-operator/tools/arch35_flashattention_audit.py \
             --operator external/flashattention/flash_attention_score_grad \
             --out-dir "$UO_AUDIT_OUT"
