@@ -50,11 +50,22 @@ def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
         block("MISSING_KERNEL", "no Kernel entities")
 
     strict_path = evidence_backed_host_kernel_path_exists(codemap)
-    if inputs and kernels and not strict_path:
+    if kernels and not strict_path:
         block(
             "MISSING_EVIDENCE_BACKED_HOST_KERNEL_PATH",
             "no semantic INPUT→…→KERNEL path; node presence alone is insufficient",
         )
+
+    legacy_summary = codemap.summary()
+    legacy_path = bool(legacy_summary.get("has_host_kernel_path"))
+    if legacy_path and not strict_path:
+        warn(
+            "SUMMARY_HOST_KERNEL_PATH_FALSE_POSITIVE",
+            "CodeMap.summary() reports a Host→Kernel path without an evidence-backed semantic path",
+        )
+    # Audit output is authoritative: never repeat the permissive legacy value.
+    strict_summary = dict(legacy_summary)
+    strict_summary["has_host_kernel_path"] = strict_path
 
     # Detect the exact anti-pattern that previously made every key select every
     # kernel. It is almost always a synthetic Cartesian product, not source
@@ -157,7 +168,8 @@ def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
         "ok": not blocking,
         "op_name": codemap.op_name,
         "architecture": codemap.architecture,
-        "summary": codemap.summary(),
+        "summary": strict_summary,
+        "legacy_summary_has_host_kernel_path": legacy_path,
         "evidence_backed_host_kernel_path": strict_path,
         "counts": {
             "inputs": len(inputs),
