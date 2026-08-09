@@ -31,11 +31,12 @@ def test_unknown_output_contract_fail_closed() -> None:
 
 
 def test_injected_action_missing_contract_fails(repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from ascendc_pilot.workflows import WORKFLOWS
     from ascendc_pilot.workflows import specs as specs_mod
     from ascendc_pilot.workflows.consistency import check_all
 
     fake_wid = "_ssot_test_workflow"
-    base = copy.deepcopy(specs_mod.WORKFLOWS["uo-query"])
+    base = copy.deepcopy(WORKFLOWS["uo-query"])
     base["slash"] = "/ssot-test"
     base["actions"] = list(base["actions"]) + [
         {
@@ -47,6 +48,7 @@ def test_injected_action_missing_contract_fails(repo_root: Path, monkeypatch: py
             "gates": [],
             "agent_id": "uo-query",
             "role_id": "readonly_analyst",
+            "execution_mode": "subagent",
             "policy_ids": [],
             "capability_ids": ["kb-query"],
             "action_method_id": "uo-query/kb-lookup",
@@ -56,7 +58,7 @@ def test_injected_action_missing_contract_fails(repo_root: Path, monkeypatch: py
             "actors": ["uo-query"],
         }
     ]
-    patched = dict(specs_mod.WORKFLOWS)
+    patched = dict(WORKFLOWS)
     patched[fake_wid] = base
     monkeypatch.setattr(specs_mod, "WORKFLOWS", patched)
 
@@ -73,7 +75,7 @@ def test_injected_unknown_contract_id_fails(repo_root: Path) -> None:
         "slash": "/x",
         "phases": ["p"],
         "gates": [],
-        "pipelines": {"p": []},
+        "pipelines": {"p": ["bad_contract"]},
         "actions": [
             {
                 "id": "bad_contract",
@@ -82,15 +84,16 @@ def test_injected_unknown_contract_id_fails(repo_root: Path) -> None:
                 "checker_required": True,
                 "referee_required": False,
                 "gates": [],
-                "agent_id": "deterministic-uo-engine",
+                "agent_id": None,
                 "role_id": "deterministic_engine",
+                "execution_mode": "deterministic",
                 "policy_ids": [],
                 "capability_ids": [],
-                "action_method_id": "uo-init/prepare-layout",
+                "action_method_id": "uo-init/extract",
                 "task_prompt_id": None,
                 "context_profile_id": "x",
                 "output_contract_id": "not-registered-contract-xyz",
-                "actors": ["deterministic-uo-engine"],
+                "actors": [],
             }
         ],
     }
@@ -98,29 +101,27 @@ def test_injected_unknown_contract_id_fails(repo_root: Path) -> None:
     assert any("unknown output_contract_id" in e for e in errors)
 
 
-def test_shared_prompts_use_workflow_placeholder(repo_root: Path) -> None:
-    from ascendc_pilot.workflows.consistency import _collect_shared_task_prompts
-    from ascendc_pilot.workflows.specs import WORKFLOWS
+def test_uo_deterministic_actions_have_no_task_prompt() -> None:
+    from ascendc_pilot.workflows import WORKFLOWS
 
-    shared = _collect_shared_task_prompts(WORKFLOWS)
-    # KEY triage/resolution live on uo-update; confidence review may be shared.
-    for tpid in ("uo/key-triage", "uo/key-resolution", "uo/confidence-review"):
-        if tpid not in shared:
-            continue
-        dom, name = tpid.split("/", 1)
-        text = (repo_root / "prompts" / "tasks" / dom / f"{name}.md").read_text(encoding="utf-8")
-        assert "`<WORKFLOW_ID>`" in text, tpid
-    # At least one shared prompt must still use the placeholder convention.
-    assert shared == {} or any(
-        "`<WORKFLOW_ID>`" in (repo_root / "prompts" / "tasks" / tpid.split("/")[0] / f"{tpid.split('/')[1]}.md").read_text(encoding="utf-8")
-        for tpid in shared
-    )
+    for workflow_id in ("uo-init", "uo-update"):
+        for action in WORKFLOWS[workflow_id]["actions"]:
+            if action.get("execution_mode") == "deterministic":
+                assert not action.get("task_prompt_id"), (workflow_id, action["id"])
+                assert not action.get("agent_id"), (workflow_id, action["id"])
 
 
-def test_uo_init_extract_normalize_pipeline_matches_preferred() -> None:
+def test_uo_query_uses_codemap_prompt() -> None:
+    from ascendc_pilot.workflows import WORKFLOWS
+
+    action = next(a for a in WORKFLOWS["uo-query"]["actions"] if a["id"] == "kb_lookup")
+    assert action["task_prompt_id"] == "uo/codemap-query"
+
+
+def test_uo_init_pipeline_matches_preferred() -> None:
     from ascendc_pilot.workflows import phase_pipeline
     from ascendc_pilot.workflows.pipeline import preferred_pipeline
 
-    for phase in ("extract", "normalize"):
+    for phase in ("prepare", "extract", "analyze", "resolve", "commit", "review"):
         assert phase_pipeline("uo-init", phase) == preferred_pipeline("uo-init", phase)
         assert preferred_pipeline("uo-init", phase)
