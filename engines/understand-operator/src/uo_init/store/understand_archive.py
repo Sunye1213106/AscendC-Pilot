@@ -1,13 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Import a historical ``.understand-operator.zip`` into the unified UO store.
-
-The archive is treated as historical evidence, not current-source authority.
-When ``operator_root`` is supplied, deterministic current-source passes enrich
-it with API, TilingKey, TilingData and Kernel contract facts before the single
-``.uo`` product is written. Natural-language derivations/questions are never
-promoted into semantic edges.
-"""
-
+"""Import historical UO facts and enrich them from current AscendC source."""
 from __future__ import annotations
 
 import tempfile
@@ -21,6 +13,7 @@ import yaml
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.passes.frontier_resolution import resolve_class_frontiers
 from uo_init.passes.source_contract import enrich_codemap_from_operator_source
 from uo_init.passes.source_resolution import resolve_source_gaps
 from uo_init.passes.tiling_registration import enrich_tiling_registrations
@@ -53,8 +46,7 @@ _KERNEL_KIND: dict[str, EntityKind] = {
 def _first_source(item: dict[str, Any]) -> tuple[str, int, int]:
     sources = item.get("sources") or []
     if not sources:
-        file = str(item.get("file") or "")
-        return file, 0, 0
+        return str(item.get("file") or ""), 0, 0
     src = sources[0] if isinstance(sources[0], dict) else {}
     span = src.get("span") or {}
     return (
@@ -77,24 +69,14 @@ def _is_arch_allowed(item: dict[str, Any], architecture: str) -> bool:
 
 
 def _attrs(item: dict[str, Any], *, section: str, archive_kind: str) -> dict[str, Any]:
-    out = {
-        k: v
-        for k, v in item.items()
-        if k not in {"id", "kind", "name", "status", "file"}
-    }
+    out = {k: v for k, v in item.items() if k not in {"id", "kind", "name", "status", "file"}}
     out["archive_section"] = section
     out["archive_kind"] = archive_kind
     out["provenance"] = "historical_understand_operator"
     return out
 
 
-def _add_item(
-    cm: CodeMap,
-    item: dict[str, Any],
-    *,
-    section: str,
-    kind: EntityKind,
-) -> None:
+def _add_item(cm: CodeMap, item: dict[str, Any], *, section: str, kind: EntityKind) -> None:
     file, line_start, line_end = _first_source(item)
     name = str(item.get("name") or item.get("symbol") or item.get("id") or "")
     ent = cm.upsert(
@@ -182,8 +164,7 @@ def read_understand_archive(
 
         imported = Counter()
         skipped = Counter()
-        host_sections = host.get("sections") or {}
-        for section, payload in host_sections.items():
+        for section, payload in (host.get("sections") or {}).items():
             if not isinstance(payload, dict):
                 continue
             for item in payload.get("items") or []:
@@ -193,16 +174,14 @@ def read_understand_archive(
                     skipped[f"host:{section}"] += 1
                     continue
                 raw_kind = str(item.get("kind") or "")
-                kind = _HOST_KIND.get(raw_kind, EntityKind.OTHER)
-                _add_item(cm, item, section=f"host/{section}", kind=kind)
+                _add_item(cm, item, section=f"host/{section}", kind=_HOST_KIND.get(raw_kind, EntityKind.OTHER))
                 imported[f"host:{section}"] += 1
             for item in payload.get("unresolved") or []:
                 if isinstance(item, dict) and _is_arch_allowed(item, architecture):
                     _add_unresolved(cm, item, section=f"host/{section}")
                     imported[f"unresolved:host:{section}"] += 1
 
-        kernel_sections = kernel.get("sections") or {}
-        for section, payload in kernel_sections.items():
+        for section, payload in (kernel.get("sections") or {}).items():
             if not isinstance(payload, dict):
                 continue
             for item in payload.get("items") or []:
@@ -212,8 +191,7 @@ def read_understand_archive(
                     skipped[f"kernel:{section}"] += 1
                     continue
                 raw_kind = str(item.get("kind") or "")
-                kind = _KERNEL_KIND.get(raw_kind, EntityKind.OTHER)
-                _add_item(cm, item, section=f"kernel/{section}", kind=kind)
+                _add_item(cm, item, section=f"kernel/{section}", kind=_KERNEL_KIND.get(raw_kind, EntityKind.OTHER))
                 imported[f"kernel:{section}"] += 1
             for item in payload.get("unresolved") or []:
                 if isinstance(item, dict) and _is_arch_allowed(item, architecture):
@@ -236,10 +214,7 @@ def read_understand_archive(
                 RelationKind.DERIVES,
                 source.id,
                 key.id,
-                attrs={
-                    "runtime_source_name": runtime_source,
-                    "provenance": "archive_runtime_source_name",
-                },
+                attrs={"runtime_source_name": runtime_source, "provenance": "archive_runtime_source_name"},
             )
             exact_bindings += 1
 
@@ -253,7 +228,7 @@ def read_understand_archive(
 
         cm.meta.update(
             {
-                "archive_import": "understand-operator/v4+source-contract+tiling-registration+resolution",
+                "archive_import": "understand-operator/v5+source-contract+registration+resolution",
                 "archive_path": str(archive_path),
                 "archive_manifest_stage_status": manifest.get("stages") or {},
                 "archive_graph_status": manifest.get("graphs") or {},
@@ -268,6 +243,20 @@ def read_understand_archive(
             enrich_codemap_from_operator_source(cm, operator_root, architecture=architecture)
             enrich_tiling_registrations(cm, operator_root, architecture=architecture)
             resolve_source_gaps(cm, operator_root, architecture=architecture)
+            resolve_class_frontiers(cm, operator_root, architecture=architecture)
+
+        remaining = [
+            e for e in cm.entities.values()
+            if str(e.status).lower() in {"unresolved", "partial", "unknown"}
+        ]
+        for gap in remaining:
+            if str(gap.attrs.get("reason") or "") == "kernel_call_edges":
+                gap.attrs["resolution_blocker"] = "requires_compiler_call_target_resolution"
+                gap.attrs["syntax_call_inventory_available"] = True
+                gap.attrs["syntax_call_edge_count"] = int(
+                    (cm.meta.get("source_resolution_stats") or {}).get("source_call_edges") or 0
+                )
+        cm.meta["remaining_unresolved_count"] = len(remaining)
         return cm
 
 
@@ -301,4 +290,5 @@ def understand_archive_to_uo(
     written["source_resolution_stats"] = cm.meta.get("source_resolution_stats")
     written["resolved_archive_gaps"] = cm.meta.get("resolved_archive_gaps")
     written["source_tiling_registrations"] = cm.meta.get("source_tiling_registrations")
+    written["remaining_unresolved_count"] = cm.meta.get("remaining_unresolved_count")
     return written
