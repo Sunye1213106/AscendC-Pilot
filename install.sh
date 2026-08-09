@@ -53,7 +53,7 @@ purge_legacy_ascendc_agent() {
   done
   for name in \
     ascendc-agent uo-code-reviewer deterministic-uo-engine deterministic-tg-engine \
-    uo-semantic-resolve uo-key-resolve uo-confidence-review uo-kb-review README; do
+    uo-semantic-resolve uo-gap-resolve uo-key-resolve uo-confidence-review uo-kb-review README; do
     if [[ -f "$agents/$name.md" || -L "$agents/$name.md" ]]; then
       rm -f "$agents/$name.md"
       echo "Removed legacy agent → $agents/$name.md"
@@ -79,7 +79,7 @@ uninstall() {
     rm -rf "$skills/$name"
   done
   for name in \
-    ascendc-pilot ascendc-agent uo-semantic-resolve uo-semantic-resolver uo-key-resolve \
+    ascendc-pilot ascendc-agent uo-semantic-resolve uo-semantic-resolver uo-gap-resolve uo-key-resolve \
     uo-confidence-review uo-kb-review ce-reviewer uo-query uo-code-reviewer tg-csv-contract \
     tg-semantic-bind tg-init-audit deterministic-uo-engine deterministic-tg-engine README; do
     rm -f "$agents/$name.md"
