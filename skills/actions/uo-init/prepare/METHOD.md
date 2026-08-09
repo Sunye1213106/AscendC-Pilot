@@ -1,6 +1,7 @@
 # prepare
 
-Seed operator layout, scan source scope, confirm scope, and write BuildVariant marker.
+确定性发现 operator root、architecture、BuildVariant 与候选源码范围。
 
-Internal steps: `prepare_layout` → `scope_scan` → `scope_confirm`.
-Domain rules: `skills/domain/uo-codemap-build`.
+内部步骤：`prepare_layout` → `scope_scan` → `scope_confirm`。范围唯一时自动接受；只有确定性扫描留下真实歧义时，才由 primary 使用 `uo/scope-confirmation` 做最小选择。
+
+不在本 Action 做 Host/Kernel 语义分析。
