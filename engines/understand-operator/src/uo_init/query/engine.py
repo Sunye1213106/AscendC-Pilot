@@ -140,8 +140,15 @@ class CodeMapQuery:
             "line_end": ent.get("line_end"),
         }
 
+    def audit(self) -> dict[str, Any]:
+        """Return the evidence-backed completeness report for this CodeMap."""
+        from uo_init.diagnostics.audit import audit_codemap
+
+        return audit_codemap(self.codemap)
+
     def summary(self) -> dict[str, Any]:
-        return self.codemap.summary()
+        """Agent-facing summary uses strict semantic-path semantics."""
+        return dict(self.audit()["summary"])
 
     def _adj(
         self,
