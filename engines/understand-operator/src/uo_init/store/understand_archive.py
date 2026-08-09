@@ -23,6 +23,7 @@ from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes.source_contract import enrich_codemap_from_operator_source
 from uo_init.passes.source_resolution import resolve_source_gaps
+from uo_init.passes.tiling_registration import enrich_tiling_registrations
 from uo_init.store.writer import write_codemap
 
 _HOST_KIND: dict[str, EntityKind] = {
@@ -252,7 +253,7 @@ def read_understand_archive(
 
         cm.meta.update(
             {
-                "archive_import": "understand-operator/v3+current-source-resolution",
+                "archive_import": "understand-operator/v4+source-contract+tiling-registration+resolution",
                 "archive_path": str(archive_path),
                 "archive_manifest_stage_status": manifest.get("stages") or {},
                 "archive_graph_status": manifest.get("graphs") or {},
@@ -265,6 +266,7 @@ def read_understand_archive(
 
         if operator_root is not None:
             enrich_codemap_from_operator_source(cm, operator_root, architecture=architecture)
+            enrich_tiling_registrations(cm, operator_root, architecture=architecture)
             resolve_source_gaps(cm, operator_root, architecture=architecture)
         return cm
 
@@ -298,4 +300,5 @@ def understand_archive_to_uo(
     written["source_contract_stats"] = cm.meta.get("source_contract_stats")
     written["source_resolution_stats"] = cm.meta.get("source_resolution_stats")
     written["resolved_archive_gaps"] = cm.meta.get("resolved_archive_gaps")
+    written["source_tiling_registrations"] = cm.meta.get("source_tiling_registrations")
     return written
