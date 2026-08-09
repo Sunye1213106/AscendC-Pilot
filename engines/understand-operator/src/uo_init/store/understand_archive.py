@@ -14,6 +14,7 @@ from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes.frontier_resolution import resolve_class_frontiers
+from uo_init.passes.host_tiling_key import bind_host_tiling_key_expressions
 from uo_init.passes.source_contract import enrich_codemap_from_operator_source
 from uo_init.passes.source_inventory import inventory_source_files
 from uo_init.passes.source_resolution import resolve_source_gaps
@@ -156,12 +157,7 @@ def read_understand_archive(
                 "provenance": "historical_understand_operator",
             },
         )
-        cm.link(
-            RelationKind.ACTIVE_UNDER,
-            arch.id,
-            variant.id,
-            attrs={"provenance": "archive_requested_architecture"},
-        )
+        cm.link(RelationKind.ACTIVE_UNDER, arch.id, variant.id, attrs={"provenance": "archive_requested_architecture"})
 
         imported = Counter()
         skipped = Counter()
@@ -211,25 +207,15 @@ def read_understand_archive(
             source = variables.get(runtime_source)
             if not runtime_source or source is None:
                 continue
-            cm.link(
-                RelationKind.DERIVES,
-                source.id,
-                key.id,
-                attrs={"runtime_source_name": runtime_source, "provenance": "archive_runtime_source_name"},
-            )
+            cm.link(RelationKind.DERIVES, source.id, key.id, attrs={"runtime_source_name": runtime_source, "provenance": "archive_runtime_source_name"})
             exact_bindings += 1
 
         for ent in cm.by_kind(EntityKind.KERNEL):
-            cm.link(
-                RelationKind.AVAILABLE_ON,
-                ent.id,
-                arch.id,
-                attrs={"provenance": "archive_architecture_variant"},
-            )
+            cm.link(RelationKind.AVAILABLE_ON, ent.id, arch.id, attrs={"provenance": "archive_architecture_variant"})
 
         cm.meta.update(
             {
-                "archive_import": "understand-operator/v6+source-inventory+contract+registration+resolution",
+                "archive_import": "understand-operator/v7+source-inventory+host-key+contract+registration+resolution",
                 "archive_path": str(archive_path),
                 "archive_manifest_stage_status": manifest.get("stages") or {},
                 "archive_graph_status": manifest.get("graphs") or {},
@@ -243,21 +229,17 @@ def read_understand_archive(
         if operator_root is not None:
             inventory_source_files(cm, operator_root, architecture=architecture)
             enrich_codemap_from_operator_source(cm, operator_root, architecture=architecture)
+            bind_host_tiling_key_expressions(cm, operator_root, architecture=architecture)
             enrich_tiling_registrations(cm, operator_root, architecture=architecture)
             resolve_source_gaps(cm, operator_root, architecture=architecture)
             resolve_class_frontiers(cm, operator_root, architecture=architecture)
 
-        remaining = [
-            e for e in cm.entities.values()
-            if str(e.status).lower() in {"unresolved", "partial", "unknown"}
-        ]
+        remaining = [e for e in cm.entities.values() if str(e.status).lower() in {"unresolved", "partial", "unknown"}]
         for gap in remaining:
             if str(gap.attrs.get("reason") or "") == "kernel_call_edges":
                 gap.attrs["resolution_blocker"] = "requires_compiler_call_target_resolution"
                 gap.attrs["syntax_call_inventory_available"] = True
-                gap.attrs["syntax_call_edge_count"] = int(
-                    (cm.meta.get("source_resolution_stats") or {}).get("source_call_edges") or 0
-                )
+                gap.attrs["syntax_call_edge_count"] = int((cm.meta.get("source_resolution_stats") or {}).get("source_call_edges") or 0)
         cm.meta["remaining_unresolved_count"] = len(remaining)
         return cm
 
@@ -270,12 +252,7 @@ def understand_archive_to_uo(
     architecture: str = "arch35",
     operator_root: str | Path | None = None,
 ) -> dict[str, Any]:
-    cm = read_understand_archive(
-        archive,
-        op_name=op_name,
-        architecture=architecture,
-        operator_root=operator_root,
-    )
+    cm = read_understand_archive(archive, op_name=op_name, architecture=architecture, operator_root=operator_root)
     written = write_codemap(
         cm,
         dest,
@@ -292,6 +269,7 @@ def understand_archive_to_uo(
     written["source_resolution_stats"] = cm.meta.get("source_resolution_stats")
     written["resolved_archive_gaps"] = cm.meta.get("resolved_archive_gaps")
     written["source_tiling_registrations"] = cm.meta.get("source_tiling_registrations")
+    written["host_tiling_key_packing"] = cm.meta.get("host_tiling_key_packing")
     written["remaining_unresolved_count"] = cm.meta.get("remaining_unresolved_count")
     written["source_inventory_file_count"] = cm.meta.get("source_inventory_file_count")
     return written
