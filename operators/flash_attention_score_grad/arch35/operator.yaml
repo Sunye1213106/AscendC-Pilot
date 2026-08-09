@@ -1,12 +1,6 @@
-# Everything about FlashAttentionScoreGrad on arch35 that the replay engine
-# would otherwise have to know by name.
-#
-# The engine reads this and nothing else about the operator. Anything that has
-# to be spelled here rather than derived is a boundary that is not clean yet,
-# so the list is meant to shrink: P3 moves the variable bindings out of
-# bridge.py into bridge_spec.yaml, P4 moves the shape semantics, P5 the search
-# hints. What stays for good is the part that is genuinely a choice -- where
-# the sources live, which machine runs the driver.
+# Identity + replay wiring for FlashAttentionScoreGrad on arch35.
+# Adapter pack YAML (bridge_spec / search_hints / …) is exported by UO
+# (export_adapter_pack), not checked in as priors.
 version: 1
 
 operator:

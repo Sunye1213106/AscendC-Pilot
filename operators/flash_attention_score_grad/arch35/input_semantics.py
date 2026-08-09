@@ -338,29 +338,38 @@ def describe(c: Case) -> dict:
 
 
 def construct_reasons(target: dict[str, str]) -> list[str]:
-    """Why this target is not attempted by the inverse constructor."""
+    """Diagnostic rewrite-risk hints for a target key — investigation only.
+
+    These strings are **not** a construction gate and **must not** be promoted
+    into E.  The constructor always attempts a best-effort case; Host replay
+    then classifies hit / refuse / rewrite.  An agent may use these hints when
+    analysing a miss, but the lemma must be proved from source + that oracle
+    outcome, never from this list alone.
+    """
     t = {str(k): str(v) for k, v in target.items()}
     reasons: list[str] = []
     if t.get("IsEmptyTensor") == "1":
         return reasons
     if t.get("DeterType") in {"0", "1"} and t.get("IsNEqual") == "1":
-        reasons.append("GetTilingKey:IsNEqual only for deterministic sparse DeterType 2/3/4")
+        reasons.append("hypothesis:GetTilingKey:IsNEqual only for deterministic sparse DeterType 2/3/4")
     if t.get("IsRope") == "1" and t.get("DTemplateNum") not in {"192"}:
-        reasons.append("GetDTemplateType: IsRope=1 forces DTemplateNum=192")
+        reasons.append("hypothesis:GetDTemplateType: IsRope=1 forces DTemplateNum=192")
     if t.get("IsRope") == "1" and t.get("IsDNoEqual") == "0":
-        reasons.append("GetTilingKey: IsRope=1 forces IsDNoEqual=1")
+        reasons.append("hypothesis:GetTilingKey: IsRope=1 forces IsDNoEqual=1")
     s1_tpl = t.get("S1TemplateNum", "128")
     s2_tpl = t.get("S2TemplateNum", "128")
     d_tpl = t.get("DTemplateNum", "128")
     if t.get("InputDType") == "1":
-        # GetS1S2TemplateType special-cases FLOAT+d>256 to (64, 128).
         expected_s1 = "64" if d_tpl == "768" else "128"
         if s1_tpl != expected_s1 or s2_tpl != "128":
-            reasons.append("GetS1S2TemplateType: FLOAT expects S1/S2=(64,128) only for DTemplate=768 else (128,128)")
+            reasons.append(
+                "hypothesis:GetS1S2TemplateType: FLOAT expects S1/S2=(64,128) "
+                "only for DTemplate=768 else (128,128)"
+            )
     elif s1_tpl != "128" or s2_tpl != "128":
-        reasons.append("GetS1S2TemplateType: non-FLOAT constructor only models S1/S2=(128,128)")
+        reasons.append("hypothesis:GetS1S2TemplateType: non-FLOAT usually S1/S2=(128,128)")
     if t.get("DeterType") in {"3", "4"} and t.get("IsAttenMask") != "1":
-        reasons.append("ProcessSparseModeInfo: DeterType 3/4 requires atten_mask")
+        reasons.append("hypothesis:ProcessSparseModeInfo: DeterType 3/4 often needs atten_mask")
     if t.get("SplitAxis") == "5" and (
         t.get("InputDType") == "1"
         or t.get("IsRope") == "1"
@@ -369,7 +378,10 @@ def construct_reasons(target: dict[str, str]) -> list[str]:
         or t.get("IsBn2MultiBlk") == "1"
         or d_tpl not in {"64", "128"}
     ):
-        reasons.append("SetSplitAxis: SplitAxis=5 requires non-FLOAT, no rope/deter/NEqual/BN2MultiBlk, DTemplate 64/128")
+        reasons.append(
+            "hypothesis:SetSplitAxis: SplitAxis=5 may rewrite under FLOAT/rope/"
+            "deter/NEqual/BN2MultiBlk/large D"
+        )
     if t.get("SplitAxis") == "1" and (
         t.get("InputDType") == "1"
         or t.get("IsDrop") == "1"
@@ -378,13 +390,16 @@ def construct_reasons(target: dict[str, str]) -> list[str]:
         or s1_tpl != "128"
         or s2_tpl != "128"
     ):
-        reasons.append("SetSplitAxis: SplitAxis=1 requires non-FLOAT, no drop/deter/NEqual, S1/S2=(128,128)")
+        reasons.append(
+            "hypothesis:SetSplitAxis: SplitAxis=1 may rewrite under FLOAT/drop/"
+            "deter/NEqual/non-(128,128) templates"
+        )
     if (
         t.get("SplitAxis") == "1"
         and t.get("IsTnd") == "1"
         and (d_tpl not in {"64", "128"} or t.get("IsRope") == "1")
     ):
-        reasons.append("SetSplitAxis: TND SplitAxis=1 requires DTemplate 64/128 and no rope")
+        reasons.append("hypothesis:SetSplitAxis: TND SplitAxis=1 may rewrite under large D/rope")
     if t.get("IsBn2MultiBlk") == "1" and (
         t.get("SplitAxis") != "1"
         or t.get("IsTnd") == "1"
@@ -397,7 +412,10 @@ def construct_reasons(target: dict[str, str]) -> list[str]:
         or s1_tpl != "128"
         or s2_tpl != "128"
     ):
-        reasons.append("SetSplitAxis: IsBn2MultiBlk=1 only on non-TND SplitAxis=1 clean BN2 shape")
+        reasons.append(
+            "hypothesis:SetSplitAxis: IsBn2MultiBlk=1 may require clean non-TND "
+            "SplitAxis=1 BN2 shape"
+        )
     if t.get("IsTndSwizzle") == "1" and (
         t.get("IsTnd") != "1"
         or t.get("SplitAxis") != "5"
@@ -406,7 +424,10 @@ def construct_reasons(target: dict[str, str]) -> list[str]:
         or t.get("DTemplateNum") not in {"64", "128"}
         or t.get("InputDType") == "1"
     ):
-        reasons.append("SetSplitAxis: IsTndSwizzle=1 only on TND SplitAxis=5 non-FLOAT DTemplate 64/128")
+        reasons.append(
+            "hypothesis:SetSplitAxis: IsTndSwizzle=1 may require TND SplitAxis=5 "
+            "non-FLOAT DTemplate 64/128"
+        )
     if t.get("IsNzOut") == "1" and (
         t.get("SplitAxis") != "0"
         or t.get("IsTnd") == "1"
@@ -414,90 +435,94 @@ def construct_reasons(target: dict[str, str]) -> list[str]:
         or d_tpl != "128"
         or t.get("DeterType") not in {"0", "2"}
     ):
-        reasons.append("IsNzOut: requires SplitAxis=0, non-TND, non-FLOAT, DTemplate=128, DeterType 0/2")
+        reasons.append(
+            "hypothesis:IsNzOut: may rewrite unless SplitAxis=0 non-TND "
+            "non-FLOAT DTemplate=128 DeterType 0/2"
+        )
     return reasons
 
 
 def construct_case(target: dict[str, str]) -> list[Case]:
-    """FAG-specific inverse construction for derived tiling dimensions.
+    """Best-effort inverse construction aimed at ``target`` dims.
 
-    The generic hint table can set attributes and optional-input presence, but
-    SplitAxis/BN2 multi-block/NZ output/TND swizzle are host-derived state.
-    These bounded cases invert the source predicates without treating the
-    requested key as a Host verdict.
+    Always emit at least one case when the knobs are expressible.  Do **not**
+    refuse because ``construct_reasons`` is non-empty — that list is diagnostic
+    only.  Host replay decides hit / refuse / rewrite; the agent proves lemmas
+    from those oracle outcomes plus source evidence.
     """
     t = {str(k): str(v) for k, v in target.items()}
     if t.get("IsEmptyTensor") == "1":
         return [Case(layout="BSND", dtype="FLOAT16", b=1, s1=0, s2=128, n2=1, g=1, d=128,
                      tag="construct_case_empty").normalised()]
-    # Source-level reachability guards.  These do not prove exclusions by
-    # themselves; they keep the constructor from spending replay budget on
-    # combinations the host immediately rewrites to a different key.
-    if construct_reasons(t):
-        return []
 
-    s1_tpl = t.get("S1TemplateNum", "128")
-    s2_tpl = t.get("S2TemplateNum", "128")
     d_tpl = t.get("DTemplateNum", "128")
     dtype = {"1": "FLOAT", "2": "BF16", "3": "FLOAT16"}.get(t.get("InputDType", "3"), "FLOAT16")
     dvals = {"64": 64, "128": 128, "192": 192, "256": 256, "768": 512}
-    d = dvals.get(t.get("DTemplateNum", "128"), 128)
+    d = dvals.get(d_tpl, 128)
     if t.get("IsRope") == "1":
         d = ROPE_TOTAL_D
+
+    # Preserve the target's sparse / deterministic / dropout intent.  Shape
+    # heuristics may steer the SplitAxis route, but must not silently clear
+    # drop/deter/NEqual — that was how historically reachable keys were never
+    # even attempted.
     deter = t.get("DeterType", "0")
     sparse = {"0": 0, "1": 6, "2": 0, "3": 2, "4": 4}.get(deter, 0)
     deterministic = 0 if deter == "0" else 1
-    if t.get("IsTnd") == "1":
-        layout = "TND"
-    else:
-        layout = "BSND"
+    keep = 0.5 if t.get("IsDrop") == "1" else 1.0
 
-    # Start from dimensions that make the derived route requested by the key.
+    want_tnd = t.get("IsTnd") == "1" or t.get("IsTndSwizzle") == "1"
+    layout = "TND" if want_tnd else "BSND"
+
     split = t.get("SplitAxis", "0")
     b, n2, s1, s2, g = 2, 2, 1024, 1024, 2
     if split == "1":
         b, n2, s1, s2, g = 2, 2, 128, 128, 1
-        deterministic = 0
-        sparse = 0
     elif split == "5":
         b, n2, s1, s2, g = 2, 4, 128, 512, 1
         if layout == "TND":
             s1, s2 = 1024, 2048
+
     if t.get("IsBn2MultiBlk") == "1":
         # BN2 multi-block is bounded by BN2_MULTIBLK_SEQ=640 in the host.
-        # 640 is > BN2_MAX_S, <= BN2_MULTIBLK_SEQ, and 128-aligned, so it
-        # satisfies both the route and bnLimit predicates.
-        layout, b, n2, s1, s2, g, deterministic, sparse = "BSND", 32, 8, 640, 640, 1, 0, 0
+        # Keep target deter/drop/sparse; only force the BN2 shape envelope.
+        layout = "BSND" if t.get("IsTnd") != "1" else layout
+        b, n2, s1, s2, g = 32, 8, 640, 640, 1
+        if t.get("IsTnd") == "1":
+            # Still attempt: TND + multiblock may rewrite; that outcome feeds lemmas.
+            layout, b, n2, s1, s2, g = "TND", 8, 8, 640, 640, 1
+
     if t.get("IsNzOut") == "1":
-        # IsNzOut is derived after DoSparse.  It needs the large-S/d=72 L2
-        # swizzle shape, but it does not force NO_DETER; preserving the target
-        # deterministic/sparse route is necessary for DETER_CAUSAL/BAND keys.
-        layout, b, n2, s1, s2, d = "BSND", 2, 8, 4096, 4096, 72
+        # Large-S / d=72 L2 swizzle shape.  Preserve layout when target asks TND
+        # (historical witnesses include IsNzOut=1 ∧ IsTnd=1).
+        if layout == "TND":
+            b, n2, s1, s2, d = 2, 8, 4096, 4096, 72
+        else:
+            layout, b, n2, s1, s2, d = "BSND", 2, 8, 4096, 4096, 72
+
     if t.get("IsTndSwizzle") == "1":
-        layout, b, n2, s1, s2, g, deterministic, sparse = "TND", 8, 8, 2048, 2176, 1, 0, 0
+        layout, b, n2, s1, s2, g = "TND", 8, 8, 2048, 2176, 1
 
     if t.get("IsNEqual") == "1":
         g = 1
     elif t.get("DeterType") not in {"0", "1"}:
-        g = 2
+        g = max(g, 2)
+
     if t.get("IsRope") == "1":
         d1 = None
     elif t.get("IsDNoEqual") == "1":
         d1 = 16 if d <= 64 else max(16, min(d - 16, d // 2))
     else:
         d1 = d
-    keep = 0.5 if t.get("IsDrop") == "1" else 1.0
+
     atten_variants = ["none"]
     if t.get("IsAttenMask") == "1":
-        # For compressed sparse masks (LEFT/RIGHT/BAND/PREFIX_COMPRESS), the
-        # source checks the logical mask extent as 2048-wide.  For dense/normal
-        # masks the last two dims must match s1/s2; one canonical rank-2 shape
-        # is enough to witness the tiling key and avoids replaying four
-        # equivalent shape-type variants for every target.
         if t.get("IsNzOut") == "1" and sparse == 0:
             atten_variants = ["bnss"]
         else:
             atten_variants = ["2048"] if sparse in {2, 3, 4, 6, 7, 8} else ["ss"]
+    # DeterType 3/4 often needs a mask in host; still attempt without when
+    # target says IsAttenMask=0 so replay can refuse/rewrite for lemma work.
     pse = t.get("IsPse") == "1"
     pse_shape = "slope" if layout == "TND" else "bnss"
     pse_type = 2 if layout == "TND" and pse else 1
@@ -506,14 +531,14 @@ def construct_case(target: dict[str, str]) -> list[Case]:
     out: list[Case] = []
     for atten in atten_variants:
         if layout == "TND":
-            # Unequal sequence lengths prevent the host's all-same TND->BSND
-            # rewrite and exercise the actual-sequence path.
             q_tail = 64 if s1 <= 128 else 128
             kv_tail = 64 if s2 <= 128 else 128
             q = [s1, q_tail]
             kv = [s2, kv_tail]
             if t.get("IsTndSwizzle") == "1":
                 q, kv = [2048, 2176] * 4, [2176, 2304] * 4
+            elif t.get("IsNzOut") == "1":
+                q, kv = [4096, 4224], [4096, 4224]
             case = Case(layout=layout, dtype=dtype, n2=n2, g=g, d=d, d1=d1,
                         seq_q=[sum(q[:i + 1]) for i in range(len(q))],
                         seq_kv=[sum(kv[:i + 1]) for i in range(len(kv))],

@@ -130,6 +130,15 @@ def test_the_kernel_branch_map_is_built(perception):
 
 
 def test_the_closure_is_not_paid_for_unless_asked(perception):
-    """It is five sixths of the run and key derivation reads none of it."""
-    assert perception["metrics"] is None
-    assert perception["gap"] is None
+    """It is five sixths of the run and key derivation reads none of it.
+
+    The skipped path still hands back empty ``ClosureMetrics`` / ``GapReport``
+    rather than ``None``, because ``assemble_kb`` reads their fields
+    unconditionally. Emptiness is the evidence that nothing was computed.
+    """
+    metrics = perception["metrics"]
+    gap = perception["gap"]
+    assert metrics is not None and gap is not None
+    assert metrics.total_nodes == 0, "closure nodes were built without being asked"
+    assert metrics.total_predicates == 0
+    assert not gap.blockers

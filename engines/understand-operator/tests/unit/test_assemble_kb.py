@@ -103,23 +103,20 @@ def test_assemble_kb_exports_blockers_under_20(tmp_path: Path):
         assert node.evidence
         assert node.status == "extracted"
     receipt = export_operator_kb(kb, tmp_path)
-    unresolved = yaml.safe_load(
-        (tmp_path / ".ascendc-pilot" / "uo" / "ir" / "unresolved.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
+    # The DB is the product; views are read out of it, not off disk.
+    from uo_init.kb_index import load_view_blob
+
+    unresolved = load_view_blob(Path(receipt["database"]), "ir/unresolved.yaml")
     assert unresolved["blocker_count"] == 1
     assert unresolved["blocker_count"] < 20
     assert receipt["ok"]
     assert receipt["blocker_count"] == 1
     assert receipt["artifact_count"] > 0
-    assert (tmp_path / ".ascendc-pilot" / "uo" / "indexes" / "kb_graph.sqlite").is_file()
-    assert (tmp_path / ".ascendc-pilot" / "uo" / "checks" / "integrity.yaml").is_file()
-    branches = yaml.safe_load(
-        (tmp_path / ".ascendc-pilot" / "uo" / "kernel" / "branches.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
+    db = Path(receipt["database"])
+    assert db == tmp_path / ".ascendc-pilot" / "uo" / "indexes" / "kb_graph.sqlite"
+    assert db.is_file()
+    assert isinstance(load_view_blob(db, "checks/integrity.yaml"), dict)
+    branches = load_view_blob(db, "kernel/branches.yaml")
     assert branches["nodes"][0]["evidence_refs"]
 
 
@@ -138,10 +135,14 @@ def test_export_operator_kb_accepts_arch_scoped_uo_root(tmp_path: Path):
     receipt = export_operator_kb(kb, tmp_path, uo_root_override=uo_root)
 
     assert receipt["ok"]
-    assert (uo_root / "ir" / "operator_graph.yaml").is_file()
-    assert (uo_root / "quality.yaml").is_file()
     assert (uo_root / "indexes" / "kb_graph.sqlite").is_file()
-    assert not (tmp_path / ".ascendc-pilot" / "uo" / "ir" / "operator_graph.yaml").exists()
+    from uo_init.kb_index import load_view_blob
+
+    db = uo_root / "indexes" / "kb_graph.sqlite"
+    assert isinstance(load_view_blob(db, "ir/operator_graph.yaml"), dict)
+    assert isinstance(load_view_blob(db, "quality.yaml"), dict)
+    # The flat, non-arch-scoped location must stay empty.
+    assert not (tmp_path / ".ascendc-pilot" / "uo").exists()
 
 
 def test_host_derivation_rehydrates_persisted_fields():

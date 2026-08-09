@@ -1702,8 +1702,31 @@ def derive_host_fields(
         rows: list[dict[str, Any]] = []
         if "fields" not in phases:
             targets = []
-        if isolate and tmp_path:
-            rows = _run_isolated_batch(
+        # Warm per-field cache (UO_DERIVE_CACHE). Hits are resolved in-parent
+        # before isolate workers spawn, so isolate mode stays intact for misses.
+        from uo_init import derive_cache
+
+        op_dir = getattr(spec, "op_dir", None) or ""
+        arch = getattr(spec, "arch_dir", None) or doc.architecture or "arch35"
+        bundle_fp = derive_cache.bundle_fingerprint(bundle) if targets else ""
+        cached_by_name: dict[str, dict[str, Any]] = {}
+        miss_targets = []
+        for b in targets:
+            key = derive_cache.field_cache_key(
+                b.decl.name,
+                bundle_fp,
+                max_helper_guards=max_helper_guards,
+                kind="field",
+            )
+            hit = derive_cache.load_field_row(key, op_dir=op_dir or None, arch=arch)
+            if hit is not None:
+                cached_by_name[b.decl.name] = hit
+            else:
+                miss_targets.append(b)
+
+        miss_rows: list[dict[str, Any]] = []
+        if isolate and tmp_path and miss_targets:
+            miss_rows = _run_isolated_batch(
                 [
                     {
                         "target": _worker,
@@ -1716,18 +1739,18 @@ def derive_host_fields(
                         "name": b.decl.name,
                         "index": b.index,
                     }
-                    for b in targets
+                    for b in miss_targets
                 ],
                 timeout=timeout,
                 workers=workers,
             )
         else:
-            for b in targets:
+            for b in miss_targets:
                 started = time.time()
                 try:
-                    rows.append(_derive_row(bundle, b.index, max_helper_guards))
+                    miss_rows.append(_derive_row(bundle, b.index, max_helper_guards))
                 except Exception as exc:  # noqa: BLE001
-                    rows.append(
+                    miss_rows.append(
                         _failed_row(
                             b.decl.name,
                             b.index,
@@ -1735,6 +1758,19 @@ def derive_host_fields(
                             round(time.time() - started, 1),
                         )
                     )
+        # Persist non-crash miss rows, then rebuild in original target order.
+        for b, row in zip(miss_targets, miss_rows):
+            note = str(row.get("note") or "")
+            if row and "TIMEOUT" not in note and "CRASHED" not in note:
+                key = derive_cache.field_cache_key(
+                    b.decl.name,
+                    bundle_fp,
+                    max_helper_guards=max_helper_guards,
+                    kind="field",
+                )
+                derive_cache.store_field_row(key, row, op_dir=op_dir or None, arch=arch)
+            cached_by_name[b.decl.name] = row
+        rows = [cached_by_name[b.decl.name] for b in targets]
         for row in rows:
             fld = _to_field(row, evidence)
             # Text render is debug-only; grading uses value_expr. Deep trees

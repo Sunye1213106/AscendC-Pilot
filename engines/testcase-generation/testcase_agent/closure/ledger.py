@@ -28,6 +28,12 @@ from pathlib import Path
 from testcase_agent.closure import workspace as W
 
 DONE = re.compile(r"^###DONE (?P<cid>\S+) ok=(?P<ok>\d+) key=(?P<key>\d+)")
+
+#: What the wide tables write when the run reported no key at all. Zero is a
+#: real key — dimensions are encoded by their index in the declared value list,
+#: so the all-first-value combination *is* key 0 — and treating it as a
+#: sentinel left that key permanently open on every operator that declares it.
+NO_KEY = -1
 _SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".inc"}
 
 
@@ -78,14 +84,21 @@ def from_logs(ws: W.Workspace) -> dict[int, str]:
                     continue
                 m = DONE.match(line)
                 if m and m.group("ok") == "1":
-                    key = int(m.group("key"))
-                    if key:
-                        out.setdefault(key, f"{src}:{m.group('cid')}")
+                    # ok and key are separate protocol fields: ok=1 key=0 is a
+                    # run that produced key 0, not a run that produced nothing.
+                    out.setdefault(int(m.group("key")), f"{src}:{m.group('cid')}")
     return out
 
 
 def from_wide(ws: W.Workspace) -> dict[int, str]:
-    """Keys from the wide tables, with the tag-split repair applied."""
+    """Keys from the wide tables, with the tag-split repair applied.
+
+    ``ok`` and ``tiling_key`` are the only columns a witness needs. ``tag`` is
+    optional: it is where an unescaped comma used to split a row, so the repair
+    below runs only when the column is there. Requiring it meant every table
+    ``corpus.commit`` writes — that is, every row a search round judged — was
+    skipped, and R could only ever grow from driver logs.
+    """
     out: dict[int, str] = {}
     root = Path(ws.artifacts)
     patterns = getattr(W, "CORPUS_GLOBS", (W.WIDE_GLOB,))
@@ -105,22 +118,27 @@ def from_wide(ws: W.Workspace) -> dict[int, str]:
         head = rows[0]
         n = len(head)
         try:
-            i_tag = head.index("tag")
             i_ok = head.index("ok")
             i_key = head.index("tiling_key")
         except ValueError:
             continue
+        i_tag = head.index("tag") if "tag" in head else -1
         for r in rows[1:]:
             extra = len(r) - n
             if extra > 0:
+                if i_tag < 0:
+                    continue
                 r = (r[:i_tag] + [",".join(r[i_tag:i_tag + 1 + extra])]
                      + r[i_tag + 1 + extra:])
             elif extra < 0:
                 continue
-            if r[i_ok] != "1" or not r[i_key].isdigit():
+            if r[i_ok] != "1":
                 continue
-            key = int(r[i_key])
-            if key:
+            try:
+                key = int(r[i_key])
+            except (TypeError, ValueError):
+                continue
+            if key != NO_KEY:
                 out.setdefault(key, f"{src}:{r[0]}")
     return out
 
@@ -134,9 +152,13 @@ def from_results(ws: W.Workspace) -> dict[int, str]:
             for row in csv.DictReader(fh):
                 if row.get("ok") != "1":
                     continue
-                actual = str(row.get("actual_key", ""))
-                if actual.isdigit() and int(actual):
-                    out.setdefault(int(actual), f"{src}:{row.get('case_id', '')}")
+                actual = str(row.get("actual_key", "")).strip()
+                try:
+                    key = int(actual)
+                except (TypeError, ValueError):
+                    continue
+                if key != NO_KEY:
+                    out.setdefault(key, f"{src}:{row.get('case_id', '')}")
     return out
 
 

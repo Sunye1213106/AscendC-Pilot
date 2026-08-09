@@ -2,7 +2,7 @@
 
 ## Goal
 
-构造式收尾。
+对 open / distance-1 目标做 **best-effort 构造**，产出可回放 case；不在此步判定不可达。
 
 ## Input Interpretation
 
@@ -10,15 +10,17 @@
 
 ## Domain Procedure
 
-1. 列出 distance-1 目标。
-2. 写 `tg/closure/construct/targets.yaml`。
-3. 完整 construct+replay 依赖 Host oracle。
+1. 列出目标（优先 distance-1，可扩到更远 open）。
+2. 对每个目标调用 inverse construct（`construct_case` / hints）。
+3. **禁止**因 `construct_reasons` 非空而跳过；理由只写入观测/explain。
+4. 写 `tg/closure/construct/targets.yaml`（目标 key、case 摘要、诊断假设）。
+5. 完整 construct+replay 依赖 Host oracle；本 action 不写 R/E。
 
 ## Domain Decisions
 
-- 遵循已加载 Policy 与 Capability 硬限制。
 - 证据规则见 capability `tilingkey-closure`，勿在本文件复制。
 - Schema 范例：`capabilities/tilingkey-closure/examples/construction_hints.excerpt.yaml`。
+- 构造失败（引擎无法编码 knobs）→ 记 `constructor_gap` 观测，转 explain / harness，**不是** lemma。
 
 ## Output
 

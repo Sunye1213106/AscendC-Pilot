@@ -642,21 +642,53 @@ def fold_controls(
 
     ``logical_file`` is the stable path used for `KBR_*` minting (kernel source),
     not the ephemeral harness TU path — otherwise pairwise jobs never union.
+
+    When ``UO_FOLD_CACHE`` is enabled (default), results are keyed by harness
+    source + kernel parse args + entry under ``uo/cache/fold/``.
     """
     import subprocess
+
+    from uo_init import fold_cache
 
     if not entry:
         raise ValueError("entry (kernel function name) is required")
     exe = find_clang(clang_exe)
     if exe is None:
         raise RuntimeError("no clang driver found; set clang_exe")
+    op_dir = getattr(ctx, "op_dir", None) or ""
+    arch = getattr(ctx, "arch_dir", None) or "arch35"
+    cache_key = ""
+    if fold_cache.cache_enabled():
+        try:
+            cache_key = fold_cache.signature_for_path(
+                path,
+                ctx,
+                entry=entry,
+                logical_file=logical_file or entry,
+                clang_exe=exe,
+            )
+            hit = fold_cache.load_fold_controls(
+                cache_key, op_dir=op_dir or None, arch=arch
+            )
+            if hit is not None:
+                return hit
+        except Exception:  # noqa: BLE001
+            cache_key = ""
     cmd = ast_dump_command(path, ctx, clang_exe=exe, entry=entry)
     proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
-    return parse_fold_controls(
+    controls = parse_fold_controls(
         proc.stdout,
         entry=entry,
         file=logical_file or entry,
     )
+    if cache_key:
+        try:
+            fold_cache.store_fold_controls(
+                cache_key, controls, op_dir=op_dir or None, arch=arch
+            )
+        except Exception:  # noqa: BLE001
+            pass
+    return controls
 
 
 def baseline_error_set(path: str | Path, ctx, *, clang_exe: str | None = None) -> set[str]:

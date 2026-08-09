@@ -48,6 +48,8 @@ Producer（`lemma_mine`）写 `combo_evidence` / `proof` 时必须达到本文�
 ## Hard Constraints
 
 - MUST NOT：用「跑了很多次没出现」代替源码链。
+- MUST NOT：用 `construct_reasons` / 构造器空返回代替回放事实。
 - MUST NOT：只写行号不写推理。
 - MUST NOT：跳过「全部赋值点」检查却声称路径 B 已完成。
+- MUST：证明绑定具体构造 case 与 oracle 结果（REWRITE / REFUSE）。
 - MUST：每条 `combo_evidence` 可被 referee 按七步清单逐项勾选。

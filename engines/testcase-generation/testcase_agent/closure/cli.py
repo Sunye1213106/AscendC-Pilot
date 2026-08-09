@@ -13,6 +13,8 @@
     python -m testcase_agent.closure.cli commit
     python -m testcase_agent.closure.cli construct
     python -m testcase_agent.closure.cli explain
+    python -m testcase_agent.closure.cli cold-start
+    python -m testcase_agent.closure.cli lemma-evidence --combo Dim=Val
 """
 
 from __future__ import annotations
@@ -78,10 +80,46 @@ def main(argv: list[str] | None = None) -> int:
     p_exp.add_argument("--per-target", type=int, default=24)
     p_exp.add_argument("--dry-run", action="store_true",
                        help="list targets without host replay")
+    p_cold = sub.add_parser("cold-start", help="clear R/E/lemmas; stamp cold_start.yaml")
+    p_cold.add_argument(
+        "--keep-rounds",
+        action="store_true",
+        help="do not clear rounds/ budget / oracle_suspect",
+    )
+    p_ev = sub.add_parser("lemma-evidence", help="collect source evidence for a combo")
+    p_ev.add_argument(
+        "--combo",
+        required=True,
+        help="Dim=Val[,Dim=Val...] for the lemma under review",
+    )
+    sub.add_parser("kernel-coverage", help="compute R_kernel from views/kernel.yaml")
+    sub.add_parser("tilingdata-coverage", help="tilingdata probe + static over-approx")
 
     args = ap.parse_args(argv)
     ws = W.default_workspace(args.root).ensure()
 
+    if args.cmd == "cold-start":
+        from testcase_agent.closure import cold_start as CS
+
+        return _print(CS.cold_start(ws, clear_rounds=not args.keep_rounds))
+    if args.cmd == "lemma-evidence":
+        from testcase_agent.closure import lemma_evidence as LE
+
+        try:
+            out = LE.collect(args.combo, ws=ws)
+        except ValueError as exc:
+            return _print({"ok": False, "error": str(exc)})
+        # Drop full pack from stdout for readability; paths + ids remain.
+        slim = {k: v for k, v in out.items() if k != "pack"}
+        return _print(slim)
+    if args.cmd == "kernel-coverage":
+        from testcase_agent.closure import kernel_domain as KD
+
+        return _print(KD.compute_r_kernel(ws))
+    if args.cmd == "tilingdata-coverage":
+        from testcase_agent.closure import tilingdata_domain as TD
+
+        return _print(TD.compute_tilingdata_coverage(ws))
     if args.cmd == "rebuild":
         return _print(ledger.rebuild(ws))
     if args.cmd == "apply-rules":

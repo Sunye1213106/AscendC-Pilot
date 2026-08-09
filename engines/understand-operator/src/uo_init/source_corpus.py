@@ -54,7 +54,11 @@ class SourceCorpus:
 
 @dataclass
 class ProcessLocalClangCache:
-    """Never serialize this cache: it may contain TU/cursor/native pointers."""
+    """Never serialize this cache: it may contain TU/cursor/native pointers.
+
+    Durable warm re-runs use :mod:`uo_init.tu_cache` (serialized WalkResult IR
+    under ``uo/cache/tu/``), not this process-local map.
+    """
 
     translation_units: dict[str, Any] = field(default_factory=dict)
     cursors: dict[str, Any] = field(default_factory=dict)

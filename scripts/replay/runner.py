@@ -261,7 +261,7 @@ class ReplayRunner:
                 f"replay entry script not found at {entry} inside {distro}\n"
                 f"build the driver there, or point the manifest's replay.entry "
                 f"at wherever it was built "
-                f"(see docs/workflows/tiling-key-coverage.md)"
+                f"(see docs/design/tilingkey-closure-agent.md)"
             )
 
     def _invoke(self, send: dict[str, I.Case], in_csv, out_csv, log_txt,
@@ -445,6 +445,14 @@ def manifest_path(root: Path = ROOT) -> Path:
 
 
 _default: ReplayRunner | None = None
+_default_selection: tuple[str, str, str] | None = None
+
+SELECTION_ENV_VARS = ("UO_REPLAY_MANIFEST", "UO_OPERATOR", "UO_ARCH")
+
+
+def _selection() -> tuple[str, str, str]:
+    """The env that decides which operator ``default()`` is about."""
+    return tuple((os.environ.get(name) or "").strip() for name in SELECTION_ENV_VARS)
 
 
 def default() -> ReplayRunner:
@@ -453,20 +461,33 @@ def default() -> ReplayRunner:
     Built on first use like the schema is, and for the same reason: reading
     the manifest is cheap but not free, and a module that only wants `Result`
     should not pay for it or fail without it.
+
+    Rebuilt when the selecting env changes: holding the first operator asked
+    for would make a later caller's results quietly about the wrong package.
     """
-    global _default
-    if _default is None:
+    global _default, _default_selection
+    selection = _selection()
+    if _default is None or _default_selection != selection:
         _default = ReplayRunner(OperatorManifest.load(manifest_path()))
+        _default_selection = selection
     return _default
 
 
 def use(manifest: OperatorManifest | str | os.PathLike[str]) -> ReplayRunner:
     """Point the module-level names at a different operator."""
-    global _default
+    global _default, _default_selection
     if not isinstance(manifest, OperatorManifest):
         manifest = OperatorManifest.load(manifest)
     _default = ReplayRunner(manifest)
+    _default_selection = _selection()
     return _default
+
+
+def reset() -> None:
+    """Forget the cached default so the next call re-reads the selection."""
+    global _default, _default_selection
+    _default = None
+    _default_selection = None
 
 
 def tpl_path() -> Path:

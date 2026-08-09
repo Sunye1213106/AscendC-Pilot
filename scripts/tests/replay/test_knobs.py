@@ -70,6 +70,18 @@ def test_deterministic_context_write():
 
 def test_from_bindings_covers_presence_dims_without_hints():
     """Named knobs work even when special_generators would have intercepted."""
+    import pytest
+    from replay.package_data import active_package_dir, load_yaml, repo_root
+
+    pkg = active_package_dir(repo_root())
+    hints = load_yaml("search_hints.yaml", refresh=True) or {}
+    has_named = bool(hints.get("named_bindings"))
+    has_bridge = (pkg / "bridge_spec.yaml").is_file()
+    if not has_named and not has_bridge:
+        pytest.skip(
+            "needs search_hints.named_bindings or bridge_spec "
+            "(run export_adapter_pack)"
+        )
     base = I.Case()
     assert any(c.pse for c in O._from_bindings(base, "IsPse", "1"))
     assert any(c.keep_prob < 1 for c in O._from_bindings(base, "IsDrop", "1"))

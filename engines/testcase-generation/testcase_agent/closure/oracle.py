@@ -167,6 +167,7 @@ class StubOracle:
 
     def __init__(self, keys: Sequence[int] | None = None):
         self.keys = list(keys or [])
+        self.last_accounting: dict[str, int] = accounting(())
 
     def judge(self, cases: Sequence[Any], *, tag: str = "") -> list[Verdict]:
         out = []
@@ -178,4 +179,133 @@ class StubOracle:
                 key=int(key),
                 judged=True,
             ))
+        self.last_accounting = accounting(out, generated=len(cases), serialized=len(cases))
         return out
+
+
+def count_done_marks(text: str) -> int:
+    """Count ``###DONE`` lines in driver log text."""
+    return sum(1 for line in str(text or "").splitlines() if line.lstrip().startswith("###DONE"))
+
+
+def validate_wide_csv(path: Any) -> dict[str, Any]:
+    """Check every data row has the same column count as the header."""
+    from pathlib import Path
+
+    p = Path(path)
+    if not p.is_file():
+        return {"ok": False, "error": "missing", "bad_rows": []}
+    lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+    if not lines:
+        return {"ok": False, "error": "empty", "bad_rows": []}
+    header_n = len(lines[0].split(","))
+    bad: list[dict[str, Any]] = []
+    for i, line in enumerate(lines[1:], start=2):
+        if not line.strip():
+            continue
+        n = len(line.split(","))
+        if n != header_n:
+            bad.append({"line": i, "cols": n, "expected": header_n})
+    return {
+        "ok": len(bad) == 0,
+        "header_cols": header_n,
+        "rows": max(0, len(lines) - 1),
+        "bad_rows": bad[:20],
+    }
+
+
+def check_driver_config(manifest_or_protocol: dict[str, Any] | None) -> dict[str, Any]:
+    """If compileInfo / required driver config keys exist, they must be non-empty."""
+    doc = dict(manifest_or_protocol or {})
+    required_keys = []
+    for key in ("compileInfo", "compile_info", "driver_config", "required_driver_config"):
+        if key in doc:
+            required_keys.append(key)
+    nested = doc.get("driver") if isinstance(doc.get("driver"), dict) else {}
+    for key in ("compileInfo", "compile_info"):
+        if key in nested:
+            required_keys.append(f"driver.{key}")
+    empty: list[str] = []
+    for key in required_keys:
+        if key.startswith("driver."):
+            val = nested.get(key.split(".", 1)[1])
+        else:
+            val = doc.get(key)
+        if val is None or val == "" or val == {} or val == []:
+            empty.append(key)
+    return {
+        "ok": len(empty) == 0,
+        "checked": required_keys,
+        "empty": empty,
+    }
+
+
+def warn_singleton_dims(corpus_rows: Sequence[dict[str, Any]], dims: Sequence[str]) -> list[str]:
+    """Warn when a dim has only one observed value across the corpus."""
+    from collections import defaultdict
+
+    seen: dict[str, set[str]] = defaultdict(set)
+    for row in corpus_rows:
+        for d in dims:
+            if d in row and row[d] is not None and str(row[d]) != "":
+                seen[d].add(str(row[d]))
+    return [d for d in dims if len(seen.get(d, ())) == 1]
+
+
+def write_oracle_suspect(ws: W.Workspace | None, reason: str) -> str:
+    ws = (ws or W.default_workspace()).ensure()
+    path = ws.state / "oracle_suspect"
+    prev = path.read_text(encoding="utf-8") if path.is_file() else ""
+    text = (prev + "\n" + reason).strip() if prev.strip() else reason
+    path.write_text(text + "\n", encoding="utf-8")
+    return str(path)
+
+
+def selfcheck(
+    *,
+    sent: int | None = None,
+    done_count: int | None = None,
+    wide_csv: Any = None,
+    driver_doc: dict[str, Any] | None = None,
+    corpus_rows: Sequence[dict[str, Any]] | None = None,
+    dims: Sequence[str] | None = None,
+    ws: W.Workspace | None = None,
+) -> dict[str, Any]:
+    """Run oracle integrity checks; write ``oracle_suspect`` on hard failures."""
+    issues: list[str] = []
+    warnings: list[str] = []
+
+    if sent is not None and done_count is not None and int(sent) != int(done_count):
+        issues.append(
+            f"ORACLE_SUSPECT:sent_vs_DONE mismatch sent={sent} done={done_count}"
+        )
+
+    if wide_csv is not None:
+        csv_check = validate_wide_csv(wide_csv)
+        if not csv_check.get("ok"):
+            issues.append(
+                f"ORACLE_SUSPECT:wide_csv_columns bad_rows={len(csv_check.get('bad_rows') or [])}"
+            )
+
+    if driver_doc is not None:
+        cfg = check_driver_config(driver_doc)
+        if not cfg.get("ok"):
+            issues.append(
+                f"ORACLE_SUSPECT:driver_config_empty:{','.join(cfg.get('empty') or [])}"
+            )
+
+    if corpus_rows is not None and dims:
+        singles = warn_singleton_dims(corpus_rows, dims)
+        for d in singles:
+            warnings.append(f"dim_singleton_value:{d}")
+
+    flag_path = ""
+    if issues:
+        flag_path = write_oracle_suspect(ws, "\n".join(issues))
+
+    return {
+        "ok": len(issues) == 0,
+        "issues": issues,
+        "warnings": warnings,
+        "oracle_suspect": flag_path,
+    }

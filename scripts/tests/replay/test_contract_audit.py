@@ -4,25 +4,60 @@
 Each drift here is one that was actually there. Keeping them as tests is the
 point: the gate passing today says nothing unless it would still fail on the
 thing it once let through.
+
+FAG surface audits need exported ``bridge_spec.yaml``. Without it (priors
+purged / cold-start) those tests skip rather than depend on checked-in priors.
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Any, Mapping
 
 import pytest
 
 from replay import bridge as B
 from replay import contract_audit as CA
+from replay import corpus as C
 from replay import inputs as I
-from replay import surfaces as S
 from replay.adapter import ADAPTER
+from replay.contract_audit import Surfaces
 from replay.materialized import default_spec
+from replay.package_data import active_package_dir, repo_root
+
+_VALUE_TENSORS = frozenset({"actual_seq_qlen", "actual_seq_kvlen", "prefix"})
+
+
+def _rebuild(row: Mapping[str, Any]) -> I.Case:
+    return C.case_of({k: "" if v is None else str(v) for k, v in row.items()})
+
+
+def _fag_surfaces() -> Surfaces:
+    """Inline Surfaces builder (replaces deleted replay.surfaces)."""
+    return Surfaces(
+        in_order=tuple(I.IN_ORDER),
+        out_order=tuple(I.OUT_ORDER),
+        spec=default_spec(),
+        serialize=I.to_csv_line,
+        static_env=B.env_of,
+        report=I.describe,
+        rebuild=_rebuild,
+        value_tensors=_VALUE_TENSORS,
+        enums=I.SEMANTICS.enums(),
+        enum_guards={"pse_shape": lambda c: bool(c.pse)},
+        float_tol=1e-7,
+        materialize=ADAPTER.materialize,
+    )
 
 
 @pytest.fixture(scope="module")
 def fag():
-    return S.fag()
+    pkg = active_package_dir(repo_root())
+    if not (pkg / "bridge_spec.yaml").is_file():
+        pytest.skip(
+            "bridge_spec.yaml missing (FAG priors purged; run export_adapter_pack)"
+        )
+    return _fag_surfaces()
 
 
 def line_of(case, fag, case_id="t"):
@@ -141,7 +176,7 @@ def test_the_prefix_tensor_is_read_by_value_too(fag):
 def test_inner_precise_survives_the_report(fag):
     """The row had no column for it, so a rebuilt case always ran with 0."""
     case = I.Case(inner_precise=1)
-    back = S._rebuild(I.describe(case))
+    back = _rebuild(I.describe(case))
 
     assert back.inner_precise == 1
     assert CA.audit(case, "inner", fag) == []
@@ -149,7 +184,7 @@ def test_inner_precise_survives_the_report(fag):
 
 def test_a_named_prefix_survives_the_report(fag):
     case = I.Case(b=3, sparse_mode=5, prefix_n=[7, 11, 13])
-    back = S._rebuild(I.describe(case))
+    back = _rebuild(I.describe(case))
 
     assert back.normalised().prefix_n == [7, 11, 13]
 
@@ -217,7 +252,7 @@ def test_an_attr_the_spec_binds_and_the_host_never_hears_is_reported(fag):
 def test_a_field_lost_in_the_round_trip_is_reported(fag):
     """Rebuild that drops a field the line carries, as `describe` once did."""
     def forgetful(row):
-        return replace(S._rebuild(row), inner_precise=0)
+        return replace(_rebuild(row), inner_precise=0)
 
     bad = replace(fag, rebuild=forgetful)
     violations = CA.audit_roundtrip(I.Case(inner_precise=1), "x", bad)
@@ -251,8 +286,10 @@ def test_the_generator_refuses_a_mask_it_cannot_build():
 
 
 def test_the_generator_refuses_a_pse_shape_it_cannot_build():
+    # Names that start with "slope" are repaired by Case.normalised() on BSND;
+    # use a non-slope unknown so the generator still refuses.
     with pytest.raises(ValueError, match="not a pse shape"):
-        I.to_csv_line(I.Case(pse=True, pse_shape="slope_bn"), "x")
+        I.to_csv_line(I.Case(pse=True, pse_shape="not_a_real_pse"), "x")
 
 
 def test_a_refusal_is_reported_rather_than_raised(fag):
@@ -265,6 +302,9 @@ def test_a_refusal_is_reported_rather_than_raised(fag):
 
 def test_the_search_only_asks_for_shapes_the_generator_has():
     """The probe lists once said "full", "slope_bn", "bss", "1sss"."""
+    pkg = active_package_dir(repo_root())
+    if not (pkg / "search_hints.yaml").is_file():
+        pytest.skip("search_hints.yaml missing (run export_adapter_pack)")
     import replay_nudge
 
     for dim in ("IsPse", "IsAttenMask"):
@@ -291,15 +331,25 @@ def test_the_declared_masks_are_the_ones_shapes_builds():
 def test_the_declared_pse_shapes_all_build_something_distinct():
     shapes = {}
     for name in I.PSE_SHAPES:
-        # b > 1, or the batched and unbatched shapes coincide and the test
-        # cannot tell a real name from one that fell through.
-        case = I.Case(b=2, pse=True, pse_shape=name).normalised()
+        # Slope shapes are only kept on TND; BSND rewrites them to bnss.
+        if name.startswith("slope"):
+            case = I.Case(
+                b=2, layout="TND", seq_q=[128, 256], seq_kv=[128, 256],
+                pse=True, pse_shape=name,
+            ).normalised()
+        else:
+            # b > 1, or the batched and unbatched shapes coincide and the test
+            # cannot tell a real name from one that fell through.
+            case = I.Case(b=2, pse=True, pse_shape=name).normalised()
         shapes[name] = I._shapes(case)[0]["pse_shift"]
 
-    # A name that reached the fallback would be indistinguishable from bnss.
-    fallbacks = [n for n, s in shapes.items()
-                 if n != "bnss" and s == shapes["bnss"]]
+    # Non-slope names must not collapse to bnss; slope pair must stay distinct.
+    fallbacks = [
+        n for n, s in shapes.items()
+        if n != "bnss" and not n.startswith("slope") and s == shapes["bnss"]
+    ]
     assert fallbacks == []
+    assert shapes["slope"] != shapes["slope_n"]
 
 
 # --- the whole surface, over cases that walk every field ----------------

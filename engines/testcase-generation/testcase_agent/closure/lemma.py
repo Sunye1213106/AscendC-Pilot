@@ -349,10 +349,18 @@ def promote_reviewed(
         rules.append(entry)
         promoted += 1
 
+    cold_fp = ""
+    try:
+        from testcase_agent.closure.cold_start import load_cold_start
+
+        cold_fp = str(load_cold_start(ws).get("fingerprint") or "")
+    except Exception:
+        cold_fp = ""
     doc = {
         "schema": "tg-active-rules/v1",
         "uo_graph_fingerprint": uo_graph_fingerprint,
         "source_revision": source_revision,
+        "cold_start_fingerprint": cold_fp,
         "rules": rules,
     }
     active_path.write_text(

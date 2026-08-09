@@ -17,7 +17,7 @@ AscendC-Pilot
 | [engines/code-engineering/](./engines/code-engineering/) | CE（`/ce-review`） |
 | [skills/](./skills/) · [prompts/](./prompts/) · [agents/](./agents/) | 组合式业务源 |
 | [generated/](./generated/) | Composer 宿主产物 |
-| [docs/](./docs/README.md) | 文档四夹：design / workflows / fag / debug |
+| [docs/](./docs/README.md) | 文档：design / fag / debug（归档见 docs/_archive） |
 
 支持安装到 **OpenCode / Codex / Cursor**。
 
@@ -67,5 +67,6 @@ acp uo-query --help
 ## 文档
 
 - [docs/README.md](./docs/README.md)
-- [docs/workflows/overview.md](./docs/workflows/overview.md)
+- [docs/design/architecture.md](./docs/design/architecture.md)
+- [docs/design/tilingkey-closure-agent.md](./docs/design/tilingkey-closure-agent.md)
 - [docs/debug/open-problems.md](./docs/debug/open-problems.md)

@@ -16,6 +16,7 @@ layout. Guessing from the name would be right for TND and wrong for BSND.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +24,78 @@ from . import inputs as I
 from .adapter import ADAPTER
 
 ROOT = Path(__file__).resolve().parents[2]
-DERIVE = ROOT / ".probe_cache" / "fag_derive.json"
+
+
+def _host_derivation_candidates() -> list[Path]:
+    """UO host_derivation paths, most authoritative first."""
+    out: list[Path] = []
+    env = (os.environ.get("UO_ROOT") or "").strip()
+    if env:
+        root = Path(env)
+        out.append(root / "ir" / "host_derivation.yaml")
+        out.append(root / "ir" / "host_derivation.json")
+    arch = (os.environ.get("UO_ARCH") or "").strip()
+    if not arch:
+        try:
+            from .package_data import active_operator_arch
+
+            _, arch = active_operator_arch()
+        except Exception:
+            arch = ""
+    if arch:
+        base = ROOT / ".ascendc-pilot" / arch / "uo" / "ir"
+        out.append(base / "host_derivation.yaml")
+        out.append(base / "host_derivation.json")
+    # Flat / legacy layout under the checkout.
+    out.append(ROOT / ".ascendc-pilot" / "uo" / "ir" / "host_derivation.yaml")
+    try:
+        from ascendc_pilot.paths import uo_root
+
+        uo = uo_root(ROOT, arch=arch or None)
+        out.append(uo / "ir" / "host_derivation.yaml")
+        out.append(uo / "ir" / "host_derivation.json")
+    except Exception:
+        pass
+    # Dedupe while preserving order.
+    seen: set[str] = set()
+    uniq: list[Path] = []
+    for p in out:
+        key = str(p.resolve()) if p.exists() else str(p)
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(p)
+    return uniq
+
+
+def host_derivation_path() -> Path:
+    """Resolve ``host_derivation`` under UO; never the purged probe cache."""
+    tried: list[str] = []
+    for path in _host_derivation_candidates():
+        tried.append(str(path))
+        if path.is_file():
+            return path
+    raise FileNotFoundError(
+        "host_derivation not found under UO. Set UO_ROOT to the operator's "
+        ".ascendc-pilot/<arch>/uo (expected ir/host_derivation.yaml), or run "
+        "uo-init / derive_key_fields. Tried:\n  - " + "\n  - ".join(tried)
+    )
+
+
+def _load_derivation_doc(path: Path) -> dict[str, Any]:
+    text = path.read_text(encoding="utf-8")
+    if path.suffix.lower() == ".json":
+        doc = json.loads(text)
+    else:
+        import yaml
+
+        doc = yaml.safe_load(text) or {}
+    if not isinstance(doc, dict):
+        raise ValueError(f"{path}: expected a mapping at the top level")
+    inner = doc.get("host_derivation")
+    if isinstance(inner, dict):
+        return inner
+    return doc
 
 
 def env_of(case: I.Case) -> dict[str, Any]:
@@ -95,10 +167,9 @@ _cache: dict[str, Any] = {}
 
 
 def derivation() -> dict[str, Any]:
-    """The static derivation, read once."""
+    """The static derivation from UO ``ir/host_derivation.yaml``, read once."""
     if "d" not in _cache:
-        with DERIVE.open(encoding="utf-8") as f:
-            _cache["d"] = json.load(f)["host_derivation"]
+        _cache["d"] = _load_derivation_doc(host_derivation_path())
     return _cache["d"]
 
 

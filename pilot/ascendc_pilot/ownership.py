@@ -134,6 +134,10 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "uo/indexes/kb_graph.sqlite",
             "uo/checks/tg_host_view_receipt.yaml",
         ],
+        "export_adapter_pack": [
+            "uo/adapter/**",
+            "uo/checks/adapter_pack_receipt.yaml",
+        ],
         "export_integrity": ["uo/checks/integrity.yaml", "uo/summary/**", "uo/checks/**"],
         "kb_review": ["uo/review/kb_product_review.yaml"],
     },
@@ -605,6 +609,9 @@ def path_within_scopes(path_or_pattern: str, scopes: list[str], *, run_id: str =
     ]
     if not ceilings:
         return False
+    # Universal ceilings cover every path / pattern.
+    if any(c in {"**", "*", "**/**"} for c in ceilings):
+        return True
     # Concrete file / already-expanded path.
     if "*" not in rel and "?" not in rel and "[" not in rel:
         return path_matches_patterns(rel, ceilings)

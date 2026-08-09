@@ -16,7 +16,6 @@ Oracle 可信度探测。
 
 ## Domain Decisions
 
-- 遵循已加载 Policy 与 Capability 硬限制。
 - 证据规则见 capability `tilingkey-closure`（含 `ORACLE.md`），勿在本文件复制。
 - Schema 范例：`capabilities/tilingkey-closure/examples/log_protocol.excerpt.yaml`。
 

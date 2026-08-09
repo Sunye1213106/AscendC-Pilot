@@ -53,6 +53,25 @@ def _seed_uo_kb(uo: Path, *, revision: str = "rev1", extra_hash: str = "abc") ->
     (uo / "indexes" / "kb_graph.sqlite").write_bytes(b"sqlite-fake-" + revision.encode())
 
 
+def _seed_audit_report(out_root: Path, *, checklist: str = "tilingkey") -> None:
+    """Stand in for the tg-init-audit subagent that gates --confirm."""
+    from testcase_agent.resolve_policy import AUDIT_CHECKLIST_IDS, TILINGKEY_AUDIT_CHECKLIST_IDS
+
+    ids = TILINGKEY_AUDIT_CHECKLIST_IDS if checklist == "tilingkey" else AUDIT_CHECKLIST_IDS
+    path = out_root / "init" / "audit_report.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_yaml(
+        path,
+        {
+            "version": 1,
+            "status": "pass",
+            "checklist": checklist,
+            "checks": [{"id": cid, "status": "pass"} for cid in ids],
+            "blockers": [],
+        },
+    )
+
+
 def test_fingerprint_stable_then_changes(tmp_path: Path) -> None:
     project = tmp_path / "op"
     project.mkdir()
@@ -112,6 +131,7 @@ def test_mark_init_confirmed_writes_fingerprint(tmp_path: Path) -> None:
             "understand_root": uo.as_posix(),
         },
     )
+    _seed_audit_report(out)
     doc = mark_init_confirmed(out, notes="test", require_merge=False)
     assert doc["status"] == "confirmed"
     assert (out / "init" / "kb_fingerprint.yaml").is_file()

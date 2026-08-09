@@ -161,11 +161,9 @@ def test_materialize_exports_view_and_query(tmp_path: Path):
     )
     receipt = export_operator_kb(kb, tmp_path)
     assert receipt.get("ok") is not False
-    view = yaml.safe_load(
-        (tmp_path / ".ascendc-pilot" / "uo" / "views" / "tilingdata.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
+    from uo_init.kb_index import load_view_blob
+
+    view = load_view_blob(Path(receipt["database"]), "views/tilingdata.yaml")
     assert view["schema"] == "uo-view-tilingdata/v1"
     assert view["status"] == "extracted"
     assert view["structs"]

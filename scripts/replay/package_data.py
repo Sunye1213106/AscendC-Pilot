@@ -75,17 +75,82 @@ def package_file(name: str, *, root: Path | None = None) -> Path:
     return active_package_dir(root) / name
 
 
+def _arch_name() -> str:
+    return (os.environ.get("UO_ARCH") or os.environ.get("ASCENDC_ARCH") or "arch35").strip()
+
+
+def adapter_pack_dir(root: Path | None = None) -> Path | None:
+    """Prefer ``<op>/.ascendc-pilot/<arch>/uo/adapter`` when present.
+
+    ``export_adapter_pack`` writes adapter YAML here so ``operators/`` stays
+    limited to identity + log_protocol + input_semantics. Legacy
+    ``tg/adapter`` is still accepted if present.
+    """
+    bases: list[Path] = []
+    if root is not None:
+        bases.append(Path(root))
+    for env in ("ASCENDC_PROJECT_ROOT", "UO_OP_DIR"):
+        raw = (os.environ.get(env) or "").strip()
+        if raw:
+            bases.append(Path(raw).expanduser().resolve())
+    seen: set[Path] = set()
+    arch = _arch_name()
+    for base in bases:
+        if base in seen:
+            continue
+        seen.add(base)
+        candidates: list[Path] = []
+        try:
+            from ascendc_pilot.paths import uo_root, tg_root
+
+            candidates.append(uo_root(base, arch=arch) / "adapter")
+            candidates.append(tg_root(base, arch=arch) / "adapter")
+        except Exception:
+            candidates.append(base / ".ascendc-pilot" / arch / "uo" / "adapter")
+            candidates.append(base / ".ascendc-pilot" / arch / "tg" / "adapter")
+        for cand in candidates:
+            if cand.is_dir():
+                return cand
+    return None
+
+
+def resolve_adapter_file(name: str, *, root: Path | None = None) -> Path | None:
+    """Locate an adapter YAML: ``uo/adapter/`` first, then operator package."""
+    adapter = adapter_pack_dir(root)
+    if adapter is not None:
+        path = adapter / name
+        if path.is_file():
+            return path
+    path = package_file(name, root=root)
+    return path if path.is_file() else None
+
+
 @lru_cache(maxsize=32)
-def load_yaml(name: str, *, refresh: bool = False) -> dict[str, Any]:
-    """Read a YAML file from the active package (cached per name+mtime)."""
-    if refresh:
-        load_yaml.cache_clear()
-    path = package_file(name)
-    if not path.is_file():
+def _load_yaml_cached(name: str) -> dict[str, Any]:
+    path = resolve_adapter_file(name)
+    if path is None:
         return {}
     doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return doc if isinstance(doc, dict) else {}
 
 
+def load_yaml(name: str, *, refresh: bool = False) -> dict[str, Any]:
+    """Read adapter YAML (uo/adapter first, then operators package).
+
+    ``refresh`` must not participate in the cache key: the resolved path
+    depends on ambient env (``ASCENDC_PROJECT_ROOT`` / ``UO_OPERATOR``), so a
+    cached ``refresh=True`` entry would keep serving another operator's pack.
+    """
+    if refresh:
+        _load_yaml_cached.cache_clear()
+    return _load_yaml_cached(name)
+
+
 def clear_caches() -> None:
-    load_yaml.cache_clear()
+    _load_yaml_cached.cache_clear()
+    try:
+        from .runner import reset
+
+        reset()
+    except Exception:
+        pass

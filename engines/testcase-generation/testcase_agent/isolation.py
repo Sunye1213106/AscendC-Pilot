@@ -46,8 +46,46 @@ def assert_tg_write_path(path: Path | str, *, out_root: Path | None = None) -> P
     return resolved
 
 
+def _meta_from_sqlite(sqlite_path: Path) -> dict[str, str]:
+    try:
+        import sqlite3
+
+        conn = sqlite3.connect(str(sqlite_path))
+        try:
+            rows = conn.execute("SELECT key, value FROM meta").fetchall()
+            return {str(k): str(v) for k, v in rows}
+        finally:
+            conn.close()
+    except Exception:
+        return {}
+
+
+def _view_blob_from_sqlite(sqlite_path: Path, name: str) -> dict[str, Any] | None:
+    try:
+        import json
+        import sqlite3
+
+        conn = sqlite3.connect(str(sqlite_path))
+        try:
+            row = conn.execute(
+                "SELECT data FROM view_blob WHERE name=?", (name,)
+            ).fetchone()
+        finally:
+            conn.close()
+        if not row:
+            return None
+        payload = json.loads(row[0])
+        return payload if isinstance(payload, dict) else None
+    except Exception:
+        return None
+
+
 def compute_kb_fingerprint(uo_root: Path) -> dict[str, Any]:
-    """Stable fingerprint of a finalized UO KB (read-only)."""
+    """Stable fingerprint of a finalized UO KB (read-only).
+
+    Prefers on-disk YAML when present; falls back to sqlite ``view_blob`` /
+    ``meta`` so DB-only products still fingerprint stably.
+    """
     root = Path(uo_root).expanduser().resolve()
     hashes: dict[str, str] = {}
     artifact_path = root / "checks" / "artifact_hashes.yaml"
@@ -59,12 +97,16 @@ def compute_kb_fingerprint(uo_root: Path) -> dict[str, Any]:
                 hashes = {str(k): str(v) for k, v in raw.items()}
 
     revision = ""
+    authority = ""
+    graph_fingerprint = ""
     manifest_path = root / "manifest.yaml"
     if manifest_path.is_file():
         manifest = read_yaml(manifest_path)
         if isinstance(manifest, dict):
             source = manifest.get("source") if isinstance(manifest.get("source"), dict) else {}
             revision = str(source.get("revision") or manifest.get("revision") or "")
+            authority = str(manifest.get("authority") or "")
+            graph_fingerprint = str(manifest.get("graph_fingerprint") or "")
 
     integrity_status = ""
     integrity_path = root / "checks" / "integrity.yaml"
@@ -88,6 +130,18 @@ def compute_kb_fingerprint(uo_root: Path) -> dict[str, Any]:
             for chunk in iter(lambda: fh.read(1024 * 1024), b""):
                 h.update(chunk)
         sqlite_sha = h.hexdigest()
+        meta = _meta_from_sqlite(sqlite_path)
+        authority = authority or str(meta.get("authority") or "")
+        graph_fingerprint = graph_fingerprint or str(meta.get("graph_fingerprint") or "")
+        integrity_status = integrity_status or str(meta.get("integrity_status") or "")
+        if not hashes:
+            blob = _view_blob_from_sqlite(sqlite_path, "checks/artifact_hashes.yaml")
+            if isinstance(blob, dict):
+                raw = blob.get("hashes") or blob.get("files") or {}
+                if isinstance(raw, dict):
+                    hashes = {str(k): str(v) for k, v in raw.items()}
+        if not revision:
+            revision = str(meta.get("revision") or "")
 
     payload = {
         "artifact_hashes": dict(sorted(hashes.items())),
@@ -95,6 +149,8 @@ def compute_kb_fingerprint(uo_root: Path) -> dict[str, Any]:
         "integrity_status": integrity_status,
         "confidence_status": confidence_status,
         "kb_graph_sha256": sqlite_sha,
+        "authority": authority,
+        "graph_fingerprint": graph_fingerprint,
     }
     digest = hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -107,6 +163,8 @@ def compute_kb_fingerprint(uo_root: Path) -> dict[str, Any]:
         "integrity_status": integrity_status,
         "confidence_status": confidence_status,
         "kb_graph_sha256": sqlite_sha,
+        "authority": authority,
+        "graph_fingerprint": graph_fingerprint,
         "artifact_hash_count": len(hashes),
     }
 

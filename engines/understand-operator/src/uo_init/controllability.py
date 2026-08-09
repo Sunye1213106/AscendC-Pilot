@@ -36,9 +36,10 @@ from uo_init.source_resolver import (
 # Roots that close a lineage but give a test case nothing to set.
 NON_STEERABLE_ROOTS = frozenset(LEGAL_ROOTS) - CONTROLLABLE_ROOTS
 
-# Controllability is overwhelmingly pure-Python (GIL-bound). Default to one
-# worker and lean on per-function resolve-cache reuse. Set UO_CTRL_WORKERS>1
-# only when experimenting — private per-chunk caches usually lose the warm hit.
+# Controllability is overwhelmingly pure-Python (GIL-bound). Default stays 1:
+# raising the pool (min(4, cpu) etc.) previously *regressed* FAG wall time
+# because private per-chunk caches lose resolve-cache reuse (540s → 683s when
+# overlapped with other Python work). Set UO_CTRL_WORKERS>1 only to experiment.
 def _ctrl_workers() -> int:
     raw = os.environ.get("UO_CTRL_WORKERS", "1").strip()
     try:

@@ -14,14 +14,16 @@ def test_start_attaches_native_items_not_todo_md(tmp_path: Path) -> None:
     todo = state.get("todo") or {}
     assert todo.get("sync") == "opencode_native_todowrite"
     items = todo.get("native_items") or []
-    assert [it["content"] for it in items[:6]] == [
-        "环境准备",
-        "范围确认",
-        "结构抽取",
-        "语义闭合",
-        "导出与校验",
-        "产物审查",
+    # One item per phase, in spec order. Assert the ids — the Chinese labels
+    # live in the Workflow Spec and restating them here only duplicates it.
+    from ascendc_pilot.workflows import get_workflow
+
+    phases = [
+        str(p.get("id") if isinstance(p, dict) else p)
+        for p in get_workflow("uo-init").get("phases") or []
     ]
+    assert [it["id"] for it in items] == phases
+    assert all(str(it["content"]).strip() for it in items)
     assert items[0]["status"] == "in_progress"
     assert items[0]["id"] == "prepare"
     assert items[0]["priority"] == "high"

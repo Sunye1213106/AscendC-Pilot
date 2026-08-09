@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .io import read_yaml
-from .validation import OPTIONAL_KB_EXPORT_FILES, REQUIRED_KB_EXPORT_FILES
+from .validation import KB_GRAPH_SQLITE, OPTIONAL_KB_EXPORT_FILES, REQUIRED_KB_EXPORT_FILES
 
 
 class UnderstandExportError(RuntimeError):
@@ -16,13 +16,10 @@ class UnderstandExportError(RuntimeError):
 
 
 def add_understand_to_path(repo_root: Path) -> None:
+    """Make the in-tree ``uo_init`` package importable for DB / locator reads."""
     candidates = [
-        repo_root / "understand-operator" / "understand-operator-plugin",
-        repo_root.parent / "understand-operator" / "understand-operator-plugin",
-        Path.cwd() / "understand-operator" / "understand-operator-plugin",
-        # AscendC-Pilot-upload layout
-        repo_root.parent / "AscendC-Pilot-upload" / "understand-operator" / "understand-operator-plugin",
-        Path(r"d:\PR-review\AscendC-Pilot-upload\understand-operator\understand-operator-plugin"),
+        repo_root / "engines" / "understand-operator" / "src",
+        repo_root.parent / "engines" / "understand-operator" / "src",
     ]
     for candidate in candidates:
         if candidate.exists() and str(candidate) not in sys.path:
@@ -30,13 +27,8 @@ def add_understand_to_path(repo_root: Path) -> None:
 
 
 def safe_op_name(project_root: Path, op_name: str) -> str:
-    add_understand_to_path(project_root)
-    try:
-        from understand_operator._operator.artifacts import safe_op_name as _safe_op_name
-
-        return _safe_op_name(op_name, project_root)
-    except Exception:
-        return "".join(ch for ch in op_name if ch.isalnum() or ch in {"_", "-", "."}).strip(".") or op_name
+    del project_root
+    return "".join(ch for ch in op_name if ch.isalnum() or ch in {"_", "-", "."}).strip(".") or op_name
 
 
 def understand_root(project_root: Path, op_name: str, *, arch: str | None = None) -> Path:
@@ -50,8 +42,53 @@ def understand_root(project_root: Path, op_name: str, *, arch: str | None = None
         return project_root / ".ascendc-pilot" / arch_name / "uo"
 
 
-def built_kb_ready(uo_root: Path) -> bool:
-    """KB ready when layered export + quality + tiling materialize exist."""
+def _db_path(uo_root: Path) -> Path:
+    return uo_root / KB_GRAPH_SQLITE
+
+
+def _db_product_ready(uo_root: Path) -> bool:
+    """Ready when sqlite exists with meta.authority and integrity not fail."""
+    db = _db_path(uo_root)
+    if not db.is_file():
+        return False
+    try:
+        add_understand_to_path(uo_root)
+        # Prefer uo_init helpers when importable.
+        from uo_init.kb_index import db_authority_ok, load_view_blob
+
+        if not db_authority_ok(db):
+            return False
+        exhaustive = load_view_blob(db, "tiling/exhaustive_key_space.yaml")
+        coverage = load_view_blob(db, "tiling/coverage_model.yaml")
+        if not isinstance(exhaustive, dict) or not (exhaustive.get("template_blocks") or []):
+            return False
+        if not isinstance(coverage, dict) or not (coverage.get("key_field_obligations") or {}):
+            return False
+        return True
+    except Exception:
+        # Fallback: accept DB with graph_fingerprint meta (legacy / partial import).
+        try:
+            import sqlite3
+
+            conn = sqlite3.connect(str(db))
+            try:
+                fp = conn.execute(
+                    "SELECT value FROM meta WHERE key='graph_fingerprint'"
+                ).fetchone()
+                integrity = conn.execute(
+                    "SELECT value FROM meta WHERE key='integrity_status'"
+                ).fetchone()
+            finally:
+                conn.close()
+            if integrity and str(integrity[0]).lower() == "fail":
+                return False
+            return bool(fp and fp[0])
+        except Exception:
+            return False
+
+
+def _legacy_yaml_ready(uo_root: Path) -> bool:
+    """Legacy readiness: layered YAML export + tiling materialize."""
     required = (
         uo_root / "manifest.yaml",
         uo_root / "quality.yaml",
@@ -75,51 +112,135 @@ def built_kb_ready(uo_root: Path) -> bool:
         return False
     if (uo_root / "checks" / "artifact_hashes.yaml").is_file():
         return True
-    if (uo_root / "indexes" / "kb_graph.sqlite").is_file():
+    if _db_path(uo_root).is_file():
         return True
     return all((uo_root / Path(rel)).is_file() for rel in REQUIRED_KB_EXPORT_FILES)
 
 
-def load_built_kb(uo_root: Path, op_name: str) -> dict[str, Any]:
-    """Load a pre-built Understand KB from disk. No understand_operator plugin required."""
-    if not built_kb_ready(uo_root):
-        raise UnderstandExportError(
-            "BUILT_KB_MISSING",
-            f"Pre-built KB incomplete under {uo_root} (need manifest/quality/tiling/kernel; not UO contracts)",
-        )
+def built_kb_ready(uo_root: Path) -> bool:
+    """KB ready when DB authority product exists, or legacy YAML set is present."""
+    if _db_product_ready(uo_root):
+        return True
+    return _legacy_yaml_ready(uo_root)
 
+
+def _kb_missing_message(uo_root: Path) -> str:
+    return (
+        f"no built KB at {uo_root}: need {KB_GRAPH_SQLITE} with meta.authority=db, "
+        "or the layered YAML export. Run the uo-init workflow for this operator "
+        "(acp start uo-init) before tg-init."
+    )
+
+
+def _load_files_from_db(uo_root: Path) -> dict[str, Any]:
+    """Reconstruct the TG snapshot ``files`` dict from sqlite view_blobs."""
+    add_understand_to_path(uo_root)
+    from uo_init.kb_index import get_meta, load_all_view_blobs, load_view_blob
+
+    db = _db_path(uo_root)
+    blobs = load_all_view_blobs(db)
     files: dict[str, Any] = {}
-    missing: list[str] = []
-    for rel in REQUIRED_KB_EXPORT_FILES:
-        path = uo_root / Path(rel)
-        if not path.is_file():
-            missing.append(rel)
-            continue
-        files[rel] = read_yaml(path)
-
-    # Optional legacy residue (UO no longer writes key_cards by default).
-    key_cards_dir = uo_root / "tiling" / "key_cards"
-    if key_cards_dir.is_dir():
-        for path in sorted(key_cards_dir.glob("*.yaml")):
-            files[f"tiling/key_cards/{path.name}"] = read_yaml(path)
-
-    for optional in (
+    for rel in (
+        *REQUIRED_KB_EXPORT_FILES,
         "manifest.yaml",
-        "registry/aliases.yaml",
-        "registry/variables.yaml",
-        "query/terminology.yaml",
-        "tiling/key_predicates.yaml",
-        "checks/final.yaml",
         "checks/artifact_hashes.yaml",
         "checks/integrity.yaml",
         "ir/operator_graph.yaml",
         "ir/input_derivable.yaml",
-        "summary/keys_table.yaml",
         *OPTIONAL_KB_EXPORT_FILES,
     ):
-        path = uo_root / Path(optional)
-        if path.is_file():
-            files[optional] = read_yaml(path)
+        payload = blobs.get(rel)
+        if payload is None:
+            payload = load_view_blob(db, rel)
+        if isinstance(payload, dict):
+            files[rel] = payload
+    if "manifest.yaml" not in files:
+        meta = get_meta(db)
+        files["manifest.yaml"] = {
+            "version": 1,
+            "status": meta.get("manifest_status") or "extracted",
+            "authority": meta.get("authority") or "db",
+            "product": KB_GRAPH_SQLITE,
+            "derived_index": KB_GRAPH_SQLITE,
+            "op_name": meta.get("op_name") or "",
+            "architecture": meta.get("architecture") or "",
+            "graph_fingerprint": meta.get("graph_fingerprint") or "",
+            "schema": meta.get("schema") or "kb_schema-v1",
+        }
+    return files
+
+
+def load_built_kb(uo_root: Path, op_name: str) -> dict[str, Any]:
+    """Load a pre-built Understand KB from disk (YAML or DB). No plugin required."""
+    if not built_kb_ready(uo_root):
+        raise UnderstandExportError(
+            "BUILT_KB_MISSING",
+            f"Pre-built KB incomplete under {uo_root} "
+            "(need DB authority product or manifest/quality/tiling/kernel YAML)",
+        )
+
+    yaml_present = (uo_root / "manifest.yaml").is_file() and (
+        uo_root / "quality.yaml"
+    ).is_file()
+    use_db = (not yaml_present) and _db_product_ready(uo_root)
+
+    files: dict[str, Any] = {}
+    missing: list[str] = []
+    intake_mode = "built_kb_filesystem"
+
+    if use_db:
+        intake_mode = "built_kb_db"
+        files = _load_files_from_db(uo_root)
+        for rel in REQUIRED_KB_EXPORT_FILES:
+            if rel not in files:
+                missing.append(rel)
+    else:
+        for rel in REQUIRED_KB_EXPORT_FILES:
+            path = uo_root / Path(rel)
+            if not path.is_file():
+                missing.append(rel)
+                continue
+            files[rel] = read_yaml(path)
+
+        # Optional legacy residue (UO no longer writes key_cards by default).
+        key_cards_dir = uo_root / "tiling" / "key_cards"
+        if key_cards_dir.is_dir():
+            for path in sorted(key_cards_dir.glob("*.yaml")):
+                files[f"tiling/key_cards/{path.name}"] = read_yaml(path)
+
+        for optional in (
+            "manifest.yaml",
+            "registry/aliases.yaml",
+            "registry/variables.yaml",
+            "query/terminology.yaml",
+            "tiling/key_predicates.yaml",
+            "checks/final.yaml",
+            "checks/artifact_hashes.yaml",
+            "checks/integrity.yaml",
+            "ir/operator_graph.yaml",
+            "ir/input_derivable.yaml",
+            "summary/keys_table.yaml",
+            *OPTIONAL_KB_EXPORT_FILES,
+        ):
+            path = uo_root / Path(optional)
+            if path.is_file():
+                files[optional] = read_yaml(path)
+
+        # Fill gaps from DB when YAML set is partial but sqlite has blobs.
+        if missing and _db_path(uo_root).is_file():
+            try:
+                db_files = _load_files_from_db(uo_root)
+                still_missing: list[str] = []
+                for rel in missing:
+                    if rel in db_files:
+                        files[rel] = db_files[rel]
+                    else:
+                        still_missing.append(rel)
+                missing = still_missing
+                if db_files:
+                    intake_mode = "built_kb_hybrid"
+            except Exception:
+                pass
 
     if missing:
         raise UnderstandExportError(
@@ -135,7 +256,7 @@ def load_built_kb(uo_root: Path, op_name: str) -> dict[str, Any]:
         "view": "kb-export",
         "files": files,
         "context_slice": context_slice,
-        "intake_mode": "built_kb_filesystem",
+        "intake_mode": intake_mode,
     }
 
 
@@ -160,8 +281,10 @@ def synth_final_validation(uo_root: Path, export_payload: dict[str, Any]) -> dic
         "relation_count": 0,
         "unresolved_count": 0,
         "conflict_count": 0,
-        "intake_mode": "built_kb_filesystem",
-        "manifest_ok": (uo_root / "manifest.yaml").is_file(),
+        "intake_mode": str(export_payload.get("intake_mode") or "built_kb_filesystem"),
+        "manifest_ok": (uo_root / "manifest.yaml").is_file()
+        or isinstance(files.get("manifest.yaml"), dict)
+        or _db_product_ready(uo_root),
     }
 
 
@@ -181,68 +304,20 @@ def _load_source_hashes(uo_root: Path, contract: dict[str, Any], files: dict[str
 
 
 def run_final_validation(project_root: Path, op_name: str, uo_root: Path) -> dict[str, Any]:
-    # Prefer pre-built KB: do not require understand_operator plugin.
-    if built_kb_ready(uo_root):
-        export_payload = load_built_kb(uo_root, op_name)
-        return synth_final_validation(uo_root, export_payload)
-
-    add_understand_to_path(project_root)
-    try:
-        from understand_operator._operator.kb_compiler import validate_kb
-    except Exception as exc:  # pragma: no cover
-        raise RuntimeError(
-            f"Understand final validation unavailable and no pre-built KB at {uo_root}: {exc}"
-        ) from exc
-
-    result = validate_kb(uo_root, op_name, phase="final", write_outputs=False)
-    return {
-        "status": result.status,
-        "phase": result.phase,
-        "issues": [issue.to_dict() for issue in result.issues],
-        "source_artifact_hashes": dict(sorted(result.artifact_hashes.items())),
-        "entity_count": result.entity_count,
-        "relation_count": result.relation_count,
-        "unresolved_count": result.unresolved_count,
-        "conflict_count": result.conflict_count,
-    }
+    """Validate against the built KB. UO is the only producer of that KB."""
+    del project_root
+    if not built_kb_ready(uo_root):
+        raise UnderstandExportError("BUILT_KB_MISSING", _kb_missing_message(uo_root))
+    export_payload = load_built_kb(uo_root, op_name)
+    return synth_final_validation(uo_root, export_payload)
 
 
 def export_testcase_contract(project_root: Path, op_name: str, uo_root: Path) -> dict[str, Any]:
-    # Prefer pre-built on-disk KB (user already built knowledge base).
-    if built_kb_ready(uo_root):
-        return load_built_kb(uo_root, op_name)
-
-    add_understand_to_path(project_root)
-    try:
-        from understand_operator.scripts.kb_query_export import export_context_slice, export_view
-    except Exception as exc:  # pragma: no cover
-        raise RuntimeError(
-            f"uo-kb-export unavailable and no pre-built KB at {uo_root}: {exc}"
-        ) from exc
-
-    try:
-        contract_view = export_view(uo_root, op_name, "testcase-contract")
-    except (FileNotFoundError, ValueError, RuntimeError) as exc:
-        raise UnderstandExportError("CONTRACT_VIEW_EXPORT_FAILED", str(exc)) from exc
-
-    try:
-        context_slice = export_context_slice(uo_root, op_name, view="testcase-contract", detail_level="full")
-    except (ImportError, AttributeError) as exc:
-        raise UnderstandExportError("CONTEXT_EXPORT_FAILED", f"Full context API is unavailable: {exc}") from exc
-    except (FileNotFoundError, ValueError, RuntimeError) as exc:
-        raise UnderstandExportError("CONTEXT_EXPORT_FAILED", str(exc)) from exc
-
-    files = contract_view.get("files") if isinstance(contract_view.get("files"), dict) else {}
-    files.pop("contracts/testcase.yaml", None)
-
-    return {
-        "op_name": op_name,
-        "uo_root": uo_root.as_posix(),
-        "view": "kb-export",
-        "files": files,
-        "context_slice": context_slice if isinstance(context_slice, dict) else {},
-        "intake_mode": "plugin_export",
-    }
+    """Read the KB UO already built. TG never produces the KB itself."""
+    del project_root
+    if not built_kb_ready(uo_root):
+        raise UnderstandExportError("BUILT_KB_MISSING", _kb_missing_message(uo_root))
+    return load_built_kb(uo_root, op_name)
 
 
 def _context_slice_from_files(files: dict[str, Any], contract: dict[str, Any]) -> dict[str, Any]:

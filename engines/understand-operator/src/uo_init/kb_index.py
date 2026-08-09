@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Pure YAML -> SQLite derivation for the UO knowledge graph."""
+"""SQLite knowledge-base product for the UO graph.
+
+``indexes/kb_graph.sqlite`` is the on-disk authority. YAML layers are optional
+exports (see ``UO_KB_YAML`` / :mod:`uo_init.dump`) reconstructed from this DB.
+"""
 from __future__ import annotations
 
 import json
 import sqlite3
 from pathlib import Path
 from typing import Any
-
-from uo_init.kb_export import load_graph
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -46,11 +48,27 @@ CREATE TABLE artifact(
   rel_path TEXT PRIMARY KEY, sha256 TEXT, layer TEXT,
   status TEXT, generated_at TEXT
 );
+CREATE TABLE view_blob(
+  name TEXT PRIMARY KEY,
+  schema_id TEXT,
+  data TEXT NOT NULL
+);
+CREATE TABLE legal_key_index(
+  ordinal INTEGER PRIMARY KEY,
+  key_id TEXT,
+  status TEXT,
+  data TEXT NOT NULL
+);
+CREATE TABLE host_derivation_blob(
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  data TEXT NOT NULL
+);
 CREATE INDEX idx_edge_src ON edge(src, kind);
 CREATE INDEX idx_edge_dst ON edge(dst, kind);
 CREATE INDEX idx_node_kind ON node(kind);
 CREATE INDEX idx_ev_file ON evidence(file, line_start);
 CREATE INDEX idx_node_ev_evidence ON node_evidence(evidence_id);
+CREATE INDEX idx_legal_key_id ON legal_key_index(key_id);
 CREATE VIRTUAL TABLE evidence_fts USING fts5(
   evidence_id UNINDEXED, snippet, tokenize='unicode61'
 );
@@ -61,12 +79,32 @@ def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def rebuild_index(
-    uo_root: str | Path, db_path: str | Path | None = None
+def _meta_rows(meta: dict[str, Any] | None) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    for key, value in sorted((meta or {}).items()):
+        if value is None:
+            continue
+        if isinstance(value, (dict, list)):
+            rows.append((str(key), _json(value)))
+        else:
+            rows.append((str(key), str(value)))
+    return rows
+
+
+def write_kb_database(
+    uo_root: str | Path,
+    graph: dict[str, Any],
+    *,
+    views: dict[str, Any] | None = None,
+    legal_keys: list[dict[str, Any]] | None = None,
+    host_derivation: dict[str, Any] | None = None,
+    key_reachability: dict[str, Any] | None = None,
+    meta: dict[str, Any] | None = None,
+    db_path: str | Path | None = None,
+    preserve_host_view: bool = False,
 ) -> dict[str, Any]:
-    """Rebuild the disposable database from authoritative YAML only."""
+    """Write a complete KB sqlite product (graph + view blobs + indexes)."""
     root = Path(uo_root).expanduser().resolve()
-    graph = load_graph(root)
     target = (
         Path(db_path).expanduser().resolve()
         if db_path is not None
@@ -88,13 +126,62 @@ def rebuild_index(
         for evidence_id in node.get("evidence_refs") or []:
             owners.setdefault(str(evidence_id), []).append(str(node["id"]))
 
+    view_map = dict(views or {})
+    # Always persist the canonical graph as a reconstructible blob.
+    view_map.setdefault("ir/operator_graph.yaml", graph)
+    if key_reachability is not None:
+        view_map.setdefault("tiling/key_reachability.yaml", key_reachability)
+    reach_summary = {}
+    if isinstance(key_reachability, dict):
+        reach_summary = {
+            "status": key_reachability.get("status"),
+            "legal_key_count": key_reachability.get("legal_key_count"),
+            "status_counts": key_reachability.get("status_counts") or {},
+            "solver": key_reachability.get("solver") or {},
+        }
+        view_map.setdefault("key_reachability_summary", reach_summary)
+
+    fingerprint = str(graph.get("fingerprint") or "")
+    manifest = view_map.get("manifest.yaml") if isinstance(view_map.get("manifest.yaml"), dict) else {}
+    meta_out: dict[str, Any] = {
+        "authority": "db",
+        "graph_fingerprint": fingerprint,
+        "schema": "kb_schema-v1",
+        "op_name": graph.get("op_name") or manifest.get("op_name") or "",
+        "architecture": graph.get("architecture") or manifest.get("architecture") or "",
+        "legal_key_count": len(legal_keys or []),
+        "integrity_status": "unknown",
+    }
+    if isinstance(manifest, dict):
+        for key in (
+            "version",
+            "status",
+            "template_block_count",
+            "schema",
+            "op_name",
+            "architecture",
+            "legal_key_count",
+        ):
+            if key in manifest and manifest[key] is not None:
+                meta_out[key if key != "status" else "manifest_status"] = manifest[key]
+    if reach_summary:
+        meta_out["key_reachability_legal_key_count"] = reach_summary.get("legal_key_count")
+        meta_out["key_reachability_status"] = reach_summary.get("status")
+    meta_out.update(meta or {})
+
+    host_view_snapshot: dict[str, list[tuple]] | None = None
+    if preserve_host_view and target.is_file():
+        host_view_snapshot = _snapshot_host_view_tables(target)
+
     connection = sqlite3.connect(temporary)
     try:
         connection.executescript(SCHEMA)
-        connection.execute(
-            "INSERT INTO meta(key,value) VALUES(?,?)",
-            ("graph_fingerprint", str(graph.get("fingerprint") or "")),
-        )
+        connection.executescript(HOST_VIEW_TABLES)
+        for key, value in _meta_rows(meta_out):
+            connection.execute(
+                "INSERT INTO meta(key,value) VALUES(?,?)",
+                (key, value),
+            )
         for row in nodes:
             known = {
                 "id", "kind", "layer", "name", "status", "confidence",
@@ -176,6 +263,40 @@ def rebuild_index(
                     row.get("unresolved_reason", ""),
                 ),
             )
+
+        for name, payload in sorted(view_map.items()):
+            if payload is None:
+                continue
+            schema_id = ""
+            if isinstance(payload, dict):
+                schema_id = str(payload.get("schema") or payload.get("schema_id") or "")
+            connection.execute(
+                "INSERT INTO view_blob(name, schema_id, data) VALUES(?,?,?)",
+                (str(name), schema_id, _json(payload)),
+            )
+
+        for ordinal, row in enumerate(legal_keys or []):
+            if not isinstance(row, dict):
+                continue
+            connection.execute(
+                "INSERT INTO legal_key_index(ordinal, key_id, status, data) VALUES(?,?,?,?)",
+                (
+                    ordinal,
+                    str(row.get("id") or row.get("key_id") or ""),
+                    str(row.get("status") or ""),
+                    _json(row),
+                ),
+            )
+
+        if isinstance(host_derivation, dict) and host_derivation:
+            connection.execute(
+                "INSERT INTO host_derivation_blob(id, data) VALUES(1, ?)",
+                (_json(host_derivation),),
+            )
+
+        if host_view_snapshot:
+            _restore_host_view_tables(connection, host_view_snapshot)
+
         connection.commit()
         connection.execute("PRAGMA optimize")
         connection.commit()
@@ -188,11 +309,269 @@ def rebuild_index(
     return {
         "ok": True,
         "database": target.as_posix(),
-        "graph_fingerprint": str(graph.get("fingerprint") or ""),
+        "graph_fingerprint": fingerprint,
         "node_count": len(nodes),
         "edge_count": len(edges),
         "evidence_count": len(evidence),
+        "view_count": len(view_map),
+        "legal_key_count": len(legal_keys or []),
+        "authority": str(meta_out.get("authority") or "db"),
     }
+
+
+def rebuild_index(
+    uo_root: str | Path, db_path: str | Path | None = None
+) -> dict[str, Any]:
+    """Rebuild the KB database from YAML layers, or accept an existing DB product."""
+    root = Path(uo_root).expanduser().resolve()
+    target = (
+        Path(db_path).expanduser().resolve()
+        if db_path is not None
+        else root / "indexes" / "kb_graph.sqlite"
+    )
+    graph_path = root / "ir" / "operator_graph.yaml"
+    if graph_path.is_file():
+        from uo_init.kb_export import load_graph
+
+        graph = load_graph(root)
+        views = load_yaml_view_layers(root)
+        legal_keys = load_legal_key_index_rows(root)
+        host_derivation = _load_yaml_dict(root / "ir" / "host_derivation.yaml")
+        key_reachability = views.get("tiling/key_reachability.yaml")
+        integrity = _load_yaml_dict(root / "checks" / "integrity.yaml")
+        meta: dict[str, Any] = {"authority": "db", "rebuild_source": "yaml"}
+        if integrity:
+            meta["integrity_status"] = str(integrity.get("status") or "unknown")
+            meta["integrity"] = integrity
+        return write_kb_database(
+            root,
+            graph,
+            views=views,
+            legal_keys=legal_keys,
+            host_derivation=host_derivation or None,
+            key_reachability=key_reachability if isinstance(key_reachability, dict) else None,
+            meta=meta,
+            db_path=target,
+            preserve_host_view=True,
+        )
+
+    if target.is_file() and db_authority_ok(target):
+        summary = index_summary(target)
+        return {
+            "ok": True,
+            "database": target.as_posix(),
+            "skipped_rebuild": "db_authority",
+            **summary,
+        }
+    raise FileNotFoundError(
+        f"authoritative graph missing: {graph_path} "
+        f"(and no DB authority product at {target})"
+    )
+
+
+def load_yaml_view_layers(uo_root: str | Path) -> dict[str, Any]:
+    """Load reconstructible YAML view layers from disk (best-effort)."""
+    root = Path(uo_root)
+    names = [
+        "manifest.yaml",
+        "operator.yaml",
+        "quality.yaml",
+        "ir/operator_graph.yaml",
+        "ir/unresolved.yaml",
+        "ir/host_ir.yaml",
+        "ir/input_derivable.yaml",
+        "ir/host_derivation.yaml",
+        "ir/tg_host_view.yaml",
+        "tiling/variables.yaml",
+        "tiling/key_space.yaml",
+        "tiling/exhaustive_key_space.yaml",
+        "tiling/constraints.yaml",
+        "tiling/families.yaml",
+        "tiling/coverage_model.yaml",
+        "tiling/key_reachability.yaml",
+        "tiling/data_model.yaml",
+        "tiling/key_derivations.yaml",
+        "views/tilingdata.yaml",
+        "views/kernel.yaml",
+        "views/call_graph.yaml",
+        "kernel/branches.yaml",
+        "kernel/paths.yaml",
+        "kernel/compile_model.yaml",
+        "kernel/variables.yaml",
+        "kernel/pipeline.yaml",
+        "kernel/resources.yaml",
+        "cross_layer/tiling_to_kernel.yaml",
+        "cross_layer/impact_graph.yaml",
+        "cross_layer/variable_lineage.yaml",
+        "flow/golden_model.yaml",
+        "flow/numerical_model.yaml",
+        "checks/artifact_hashes.yaml",
+        "checks/integrity.yaml",
+    ]
+    out: dict[str, Any] = {}
+    for rel in names:
+        payload = _load_yaml_dict(root / rel)
+        if payload is not None:
+            out[rel] = payload
+    return out
+
+
+def load_legal_key_index_rows(uo_root: str | Path) -> list[dict[str, Any]]:
+    path = Path(uo_root) / "tiling" / "legal_key_index.jsonl"
+    if not path.is_file():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def _load_yaml_dict(path: Path) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    try:
+        import yaml
+    except ImportError:  # pragma: no cover
+        return None
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return payload if isinstance(payload, dict) else None
+
+
+def get_meta(db_path: str | Path) -> dict[str, str]:
+    connection = sqlite3.connect(Path(db_path))
+    try:
+        rows = connection.execute("SELECT key, value FROM meta").fetchall()
+        return {str(k): str(v) for k, v in rows}
+    except sqlite3.Error:
+        return {}
+    finally:
+        connection.close()
+
+
+def db_authority_ok(db_path: str | Path) -> bool:
+    """True when sqlite exists with authority=db and integrity not failing."""
+    path = Path(db_path)
+    if not path.is_file():
+        return False
+    meta = get_meta(path)
+    authority = str(meta.get("authority") or "").lower()
+    if authority not in {"db", "sqlite"}:
+        # Legacy DBs without authority key: accept if graph_fingerprint present.
+        if not meta.get("graph_fingerprint"):
+            return False
+    integrity = str(meta.get("integrity_status") or "").lower()
+    if integrity == "fail":
+        return False
+    try:
+        summary = index_summary(path)
+    except sqlite3.Error:
+        return False
+    return bool(summary.get("graph_fingerprint") or summary.get("node_count"))
+
+
+def load_view_blob(db_path: str | Path, name: str) -> Any | None:
+    connection = sqlite3.connect(Path(db_path))
+    try:
+        row = connection.execute(
+            "SELECT data FROM view_blob WHERE name=?", (name,)
+        ).fetchone()
+        if not row:
+            return None
+        return json.loads(row[0])
+    except (sqlite3.Error, json.JSONDecodeError):
+        return None
+    finally:
+        connection.close()
+
+
+def list_view_blobs(db_path: str | Path) -> list[str]:
+    connection = sqlite3.connect(Path(db_path))
+    try:
+        rows = connection.execute(
+            "SELECT name FROM view_blob ORDER BY name"
+        ).fetchall()
+        return [str(r[0]) for r in rows]
+    except sqlite3.Error:
+        return []
+    finally:
+        connection.close()
+
+
+def load_all_view_blobs(db_path: str | Path) -> dict[str, Any]:
+    connection = sqlite3.connect(Path(db_path))
+    try:
+        rows = connection.execute(
+            "SELECT name, data FROM view_blob ORDER BY name"
+        ).fetchall()
+        out: dict[str, Any] = {}
+        for name, data in rows:
+            try:
+                out[str(name)] = json.loads(data)
+            except json.JSONDecodeError:
+                out[str(name)] = data
+        return out
+    except sqlite3.Error:
+        return {}
+    finally:
+        connection.close()
+
+
+def load_legal_keys_from_db(db_path: str | Path) -> list[dict[str, Any]]:
+    connection = sqlite3.connect(Path(db_path))
+    try:
+        rows = connection.execute(
+            "SELECT data FROM legal_key_index ORDER BY ordinal"
+        ).fetchall()
+        out: list[dict[str, Any]] = []
+        for (data,) in rows:
+            try:
+                row = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict):
+                out.append(row)
+        return out
+    except sqlite3.Error:
+        return []
+    finally:
+        connection.close()
+
+
+def load_host_derivation_from_db(db_path: str | Path) -> dict[str, Any] | None:
+    connection = sqlite3.connect(Path(db_path))
+    try:
+        row = connection.execute(
+            "SELECT data FROM host_derivation_blob WHERE id=1"
+        ).fetchone()
+        if not row:
+            return None
+        payload = json.loads(row[0])
+        return payload if isinstance(payload, dict) else None
+    except (sqlite3.Error, json.JSONDecodeError):
+        return None
+    finally:
+        connection.close()
+
+
+def set_meta_values(db_path: str | Path, values: dict[str, Any]) -> None:
+    connection = sqlite3.connect(Path(db_path))
+    try:
+        for key, value in _meta_rows(values):
+            connection.execute(
+                "INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
+                (key, value),
+            )
+        connection.commit()
+    finally:
+        connection.close()
 
 
 def index_summary(db_path: str | Path) -> dict[str, Any]:
@@ -202,8 +581,28 @@ def index_summary(db_path: str | Path) -> dict[str, Any]:
         fingerprint = connection.execute(
             "SELECT value FROM meta WHERE key='graph_fingerprint'"
         ).fetchone()
+        authority = connection.execute(
+            "SELECT value FROM meta WHERE key='authority'"
+        ).fetchone()
+        integrity = connection.execute(
+            "SELECT value FROM meta WHERE key='integrity_status'"
+        ).fetchone()
+        try:
+            view_count = connection.execute(
+                "SELECT count(*) FROM view_blob"
+            ).fetchone()[0]
+        except sqlite3.Error:
+            view_count = 0
+        try:
+            legal_count = connection.execute(
+                "SELECT count(*) FROM legal_key_index"
+            ).fetchone()[0]
+        except sqlite3.Error:
+            legal_count = 0
         return {
             "graph_fingerprint": fingerprint[0] if fingerprint else "",
+            "authority": authority[0] if authority else "",
+            "integrity_status": integrity[0] if integrity else "",
             "node_count": connection.execute("SELECT count(*) FROM node").fetchone()[0],
             "edge_count": connection.execute("SELECT count(*) FROM edge").fetchone()[0],
             "evidence_count": connection.execute(
@@ -213,6 +612,8 @@ def index_summary(db_path: str | Path) -> dict[str, Any]:
             "predicate_count": connection.execute(
                 "SELECT count(*) FROM predicate"
             ).fetchone()[0],
+            "view_count": view_count,
+            "legal_key_count": legal_count,
         }
     finally:
         connection.close()
@@ -247,14 +648,72 @@ CREATE INDEX IF NOT EXISTS idx_fg_loc ON field_guard(file, line);
 CREATE INDEX IF NOT EXISTS idx_fp_hint ON field_predicate(feature_hint);
 """
 
+_HOST_VIEW_TABLE_NAMES = (
+    "field_writer",
+    "field_guard",
+    "field_meta",
+    "field_read",
+    "field_predicate",
+    "field_generation_knob",
+)
+
+
+def _snapshot_host_view_tables(db_path: Path) -> dict[str, list[tuple]] | None:
+    connection = sqlite3.connect(str(db_path))
+    try:
+        names = {
+            str(r[0])
+            for r in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if "field_meta" not in names:
+            return None
+        out: dict[str, list[tuple]] = {}
+        for table in _HOST_VIEW_TABLE_NAMES:
+            if table not in names:
+                continue
+            out[table] = list(connection.execute(f"SELECT * FROM {table}").fetchall())
+        fp = connection.execute(
+            "SELECT value FROM meta WHERE key='host_view_fingerprint'"
+        ).fetchone()
+        if fp:
+            out["__meta_host_view_fingerprint__"] = [(fp[0],)]
+        return out
+    except sqlite3.Error:
+        return None
+    finally:
+        connection.close()
+
+
+def _restore_host_view_tables(
+    connection: sqlite3.Connection, snapshot: dict[str, list[tuple]]
+) -> None:
+    for table in _HOST_VIEW_TABLE_NAMES:
+        rows = snapshot.get(table) or []
+        if not rows:
+            continue
+        placeholders = ",".join("?" for _ in rows[0])
+        connection.executemany(
+            f"INSERT INTO {table} VALUES ({placeholders})",
+            rows,
+        )
+    fp_rows = snapshot.get("__meta_host_view_fingerprint__") or []
+    if fp_rows:
+        connection.execute(
+            "INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
+            ("host_view_fingerprint", fp_rows[0][0]),
+        )
+
 
 def upsert_host_view_tables(
     uo_root: str | Path, view: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     """Upsert TG host-view query tables into the existing kb_graph.sqlite.
 
-    Requires ``rebuild_index`` to have already created the DB. Does not
-    recreate the graph tables — only the projection side-car tables.
+    Requires ``rebuild_index`` / ``write_kb_database`` to have already created
+    the DB. Does not recreate the graph tables — only the projection side-car
+    tables. Also stores the full tg_host_view document as a view_blob.
     """
     root = Path(uo_root).expanduser().resolve()
     db = root / "indexes" / "kb_graph.sqlite"
@@ -272,10 +731,12 @@ def upsert_host_view_tables(
     connection = sqlite3.connect(str(db))
     try:
         connection.executescript(HOST_VIEW_TABLES)
-        for table in (
-            "field_writer", "field_guard", "field_meta",
-            "field_read", "field_predicate", "field_generation_knob",
-        ):
+        # Ensure view_blob exists on legacy DBs built before D1.
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS view_blob("
+            "name TEXT PRIMARY KEY, schema_id TEXT, data TEXT NOT NULL)"
+        )
+        for table in _HOST_VIEW_TABLE_NAMES:
             connection.execute(f"DELETE FROM {table}")
         connection.execute(
             "INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
@@ -317,6 +778,14 @@ def upsert_host_view_tables(
                 (p.get("id"), p.get("file"), int(p.get("line") or 0),
                  p.get("function"), p.get("condition"), p.get("feature_hint")),
             )
+        connection.execute(
+            "INSERT OR REPLACE INTO view_blob(name, schema_id, data) VALUES(?,?,?)",
+            (
+                "ir/tg_host_view.yaml",
+                str(view.get("schema") or "uo-view-tg-host/v1"),
+                _json(view),
+            ),
+        )
         connection.commit()
         writer_count = connection.execute(
             "SELECT count(*) FROM field_writer"
@@ -334,4 +803,3 @@ def upsert_host_view_tables(
         "field_predicate_count": pred_count,
         "field_count": len(view.get("fields") or []),
     }
-

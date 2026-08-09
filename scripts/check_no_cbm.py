@@ -11,12 +11,11 @@ from pathlib import Path
 
 PATTERN = re.compile(r"(?i)(codebase[-_ ]memory|\bcbm\b|cbm_project|cbm_db_path)")
 ALLOWLIST = {
-    "docs/fag/fag-arch35-z3-free-implementation-plan.md",
-    "docs/fag/fag-arch35-z3-free-optimization-plan.md",
     "scripts/check_no_cbm.py",
 }
 SKIP_PARTS = {
     ".git",
+    "_archive",
     "generated",
     ".ascendc-pilot",
     ".probe_cache",

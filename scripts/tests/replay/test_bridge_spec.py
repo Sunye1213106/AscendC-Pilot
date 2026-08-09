@@ -220,17 +220,28 @@ def test_a_coded_observation_without_its_constants_is_refused(tmp_path):
 # --- the exported spec, against the derivation it came from --------------
 
 
+def _require_exported_bridge_spec():
+    from replay.package_data import active_package_dir, repo_root
+
+    pkg = active_package_dir(repo_root())
+    if not (pkg / "bridge_spec.yaml").is_file():
+        pytest.skip(
+            "bridge_spec.yaml missing (FAG priors purged; run export_adapter_pack)"
+        )
+
+
 def test_the_spec_accounts_for_every_variable_the_derivation_reads():
     """The claim the file makes. A variable in neither list is a spec that no
     longer matches the derivation it was exported from."""
-    import json
+    _require_exported_bridge_spec()
+    from replay import bridge as B
 
-    root = Path(__file__).resolve().parents[3]
-    doc = json.loads((root / ".probe_cache" / "fag_derive.json")
-                     .read_text(encoding="utf-8"))
-    hd = doc["host_derivation"]
+    try:
+        hd = B.derivation()
+    except FileNotFoundError as exc:
+        pytest.skip(str(exc))
     read = set()
-    for field in hd["fields"]:
+    for field in hd.get("fields") or []:
         read.update(field.get("var_roots") or {})
     for premise in hd.get("premises") or []:
         read.update(premise.get("var_roots") or {})
@@ -242,6 +253,7 @@ def test_the_spec_accounts_for_every_variable_the_derivation_reads():
 def test_the_environment_supplies_what_is_read_and_no_more():
     """157 surplus variables used to be supplied. Harmless to the solver and
     misleading to a reader, who could not tell which ones mattered."""
+    _require_exported_bridge_spec()
     spec = default_spec()
     env = ADAPTER.materialize(I.Case(), "c").build_static_env()
 
@@ -252,6 +264,7 @@ def test_the_environment_supplies_what_is_read_and_no_more():
 def test_the_unbound_tiling_state_stays_unbound():
     """Supplying a guess would turn an honest unknown into a confident wrong
     answer, which is worse than the unknown."""
+    _require_exported_bridge_spec()
     spec = default_spec()
     state = {u.var for u in spec.unbound if u.root == "TILING_DATA"}
 

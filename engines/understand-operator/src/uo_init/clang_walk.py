@@ -1719,15 +1719,47 @@ def walk_file(
     `logs_rejections` says this file refuses input by logging an error on the
     way out rather than by returning a named failure code. True for the API
     layer, false for tiling. See `_refuses`.
+
+    When ``UO_TU_CACHE`` is enabled (default), a durable WalkResult disk cache
+    keyed by source sha256 + build/parse fingerprint is consulted before
+    libclang parse. Process-local ``TranslationUnit`` objects are never stored.
     """
     import time as _time
 
     from uo_init.timing import log as _tlog, phase_budget_s
+    from uo_init import tu_cache
 
-    _require_clang()
     path = str(path)
     name = Path(path).name
     t_all = _time.perf_counter()
+    arch = getattr(ctx, "arch_dir", None) or "arch35"
+    op_dir = getattr(ctx, "op_dir", None) or ""
+    cache_key = ""
+    if tu_cache.cache_enabled():
+        try:
+            cache_key = tu_cache.walk_cache_key(
+                path,
+                ctx,
+                side=side,
+                dtype_variant=dtype_variant,
+                op_needle=op_needle,
+                collect_writes=collect_writes,
+                scope=scope,
+                logs_rejections=logs_rejections,
+            )
+            cached = tu_cache.load_walk(cache_key, op_dir=op_dir or None, arch=arch)
+            if cached is not None:
+                dt = _time.perf_counter() - t_all
+                _tlog(
+                    f"{dt:7.3f}s  walk_file  file={name} side={side} "
+                    f"cache=hit controls={len(cached.controls)} "
+                    f"writes={len(cached.writes)}"
+                )
+                return cached
+        except Exception:  # noqa: BLE001 — cache must never block extract
+            cache_key = ""
+
+    _require_clang()
     args = (
         ctx.host_args()
         if side == "host"
@@ -1760,16 +1792,7 @@ def walk_file(
     for child in tu.cursor.get_children():
         w.walk(child, [], "")
     t_walk = _time.perf_counter() - t0
-    t_total = _time.perf_counter() - t_all
-    budget = phase_budget_s()
-    flag = " SLOW" if t_total > budget else ""
-    _tlog(
-        f"{t_total:7.3f}s{flag}  walk_file  file={name} side={side} "
-        f"parse={t_parse:.3f}s frame={t_frame:.3f}s ast_walk={t_walk:.3f}s "
-        f"controls={len(w.controls)} writes={len(w.writes)} "
-        f"calls={len(w.call_sites)} diags={len(diags)} frames={len(frame_files)}"
-    )
-    return WalkResult(
+    result = WalkResult(
         path=_norm(path),
         controls=w.controls,
         writes=w.writes,
@@ -1782,3 +1805,19 @@ def walk_file(
         field_decls=w.field_decls,
         local_decls=w.local_decls,
     )
+    if cache_key:
+        try:
+            tu_cache.store_walk(cache_key, result, op_dir=op_dir or None, arch=arch)
+        except Exception:  # noqa: BLE001
+            pass
+    t_total = _time.perf_counter() - t_all
+    budget = phase_budget_s()
+    flag = " SLOW" if t_total > budget else ""
+    _tlog(
+        f"{t_total:7.3f}s{flag}  walk_file  file={name} side={side} "
+        f"parse={t_parse:.3f}s frame={t_frame:.3f}s ast_walk={t_walk:.3f}s "
+        f"cache={'store' if cache_key else 'off'} "
+        f"controls={len(w.controls)} writes={len(w.writes)} "
+        f"calls={len(w.call_sites)} diags={len(diags)} frames={len(frame_files)}"
+    )
+    return result

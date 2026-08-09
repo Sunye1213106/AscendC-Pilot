@@ -20,6 +20,7 @@ dev = ["pytest>=8.0"]
 
 [project.scripts]
 uo-init = "uo_init.workflow:main"
+uo-dump = "uo_init.dump:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

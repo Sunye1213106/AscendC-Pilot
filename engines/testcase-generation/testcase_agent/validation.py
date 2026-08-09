@@ -35,6 +35,7 @@ STABLE_ID_RE = re.compile(rf"^({'|'.join(STABLE_PREFIXES)})_[A-Z0-9_]+$")
 LEGACY_ID_RE = re.compile(r"^(TF\d+|K\d+|C\d+|D\d+|P\d+|R\d+|IR\d+|KR\d+|VC\d+|KU\d+|PR\d+|MG\d+)$")
 ID_TOKEN_RE = re.compile(rf"\b(?:{'|'.join(STABLE_PREFIXES)})_[A-Za-z0-9_]+\b")
 # Layered KB export: hard requirements vs declared-optional (not_extracted ok).
+# When intake_mode is built_kb_db these may be reconstructed from sqlite view_blobs.
 REQUIRED_KB_EXPORT_FILES = (
     "tiling/variables.yaml",
     "tiling/key_space.yaml",
@@ -50,6 +51,7 @@ REQUIRED_KB_EXPORT_FILES = (
     "cross_layer/tiling_to_kernel.yaml",
     "quality.yaml",
 )
+KB_GRAPH_SQLITE = "indexes/kb_graph.sqlite"
 OPTIONAL_KB_EXPORT_FILES = (
     "test/contract.yaml",
     "tiling/data_model.yaml",
@@ -130,7 +132,6 @@ def validate_intake(export_payload: dict[str, Any], final_validation: dict[str, 
     report = ValidationReport()
     files = _as_dict(export_payload.get("files"))
     context_slice = _as_dict(export_payload.get("context_slice"))
-
     for rel in REQUIRED_KB_EXPORT_FILES:
         if rel not in files:
             report.add(

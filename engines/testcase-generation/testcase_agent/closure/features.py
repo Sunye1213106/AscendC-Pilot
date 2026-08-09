@@ -3,7 +3,8 @@
 
 A decision tree splits on one axis at a time, so products the host compares
 must be supplied. Which products come from ``feature_bindings.yaml`` (and
-codemap ``feature_hint`` values), never from an engine-side FAG table.
+codemap ``feature_hint`` values). Missing bindings are empty until
+``export_adapter_pack``; there is no engine-side FAG table.
 """
 
 from __future__ import annotations
@@ -34,13 +35,7 @@ class Ctx:
 def _feature_bindings() -> dict:
     from replay.package_data import load_yaml
 
-    doc = load_yaml("feature_bindings.yaml")
-    if not doc:
-        raise FileNotFoundError(
-            "operators/<op>/<arch>/feature_bindings.yaml is required "
-            "(no engine-side FAG fallback)"
-        )
-    return doc
+    return load_yaml("feature_bindings.yaml") or {}
 
 
 def _categorical() -> tuple[str, ...]:
@@ -167,8 +162,6 @@ def coverage_from_codemap(uo_root: str | None = None) -> dict[str, list[str]]:
 
 def _static_parents_table() -> dict[str, list[str]]:
     raw = _feature_bindings().get("static_parents") or {}
-    if not raw:
-        raise ValueError("feature_bindings.yaml missing static_parents")
     return {str(k): [str(x) for x in (v or [])] for k, v in raw.items()}
 
 

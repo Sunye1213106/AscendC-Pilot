@@ -70,7 +70,7 @@ def _sample_kb() -> KnowledgeBase:
     return kb
 
 
-def test_yaml_is_authority_and_sqlite_rebuild_is_idempotent(tmp_path: Path):
+def test_db_is_authority_and_sqlite_rebuild_is_idempotent(tmp_path: Path):
     root = tmp_path / "uo"
     receipt = export_kb(_sample_kb(), root)
     first = rebuild_index(root)
@@ -78,11 +78,16 @@ def test_yaml_is_authority_and_sqlite_rebuild_is_idempotent(tmp_path: Path):
     second = rebuild_index(root)
     assert index_summary(second["database"]) == first_summary
     assert receipt["graph_fingerprint"] == first_summary["graph_fingerprint"]
+    assert first_summary.get("authority") == "db"
+    assert receipt.get("authority") == "db"
 
-    manifest = yaml.safe_load((root / "manifest.yaml").read_text(encoding="utf-8"))
-    assert manifest["authority"] == "yaml"
+    from uo_init.kb_index import load_view_blob
+
+    db = Path(first["database"])
+    manifest = load_view_blob(db, "manifest.yaml")
+    assert manifest["authority"] == "db"
     assert manifest["derived_index"] == "indexes/kb_graph.sqlite"
-    hashes = yaml.safe_load((root / "checks" / "artifact_hashes.yaml").read_text(encoding="utf-8"))
+    hashes = load_view_blob(db, "checks/artifact_hashes.yaml")
     assert isinstance(hashes.get("hashes"), dict) and hashes["hashes"]
     assert "tiling/variables.yaml" in hashes["hashes"]
 

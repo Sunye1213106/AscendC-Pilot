@@ -16,7 +16,6 @@ domain_symmetry / csv_closure 等完整性门禁。
 
 ## Domain Decisions
 
-- 遵循已加载 Policy 与 Capability 硬限制。
 - 本 Action 特有分类/闭合规则见关联 task prompt（若有）。
 
 ## Output

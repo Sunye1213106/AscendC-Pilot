@@ -8,8 +8,8 @@ of that agreement. Both sources are kept: mutation for yield, fresh sampling
 for exploration.
 
 All Case field knowledge comes from the active operator's ``knob_schema()``
-and ``search_hints.yaml``. Missing hints fail closed — there is no FAG
-fallback table in the engine.
+and ``search_hints.yaml``. Missing hints are empty (cold-start / before
+``export_adapter_pack``); there is no engine-side FAG fallback table.
 """
 
 from __future__ import annotations
@@ -29,21 +29,13 @@ from testcase_agent.closure import workspace as W
 def _hints() -> dict[str, Any]:
     from replay.package_data import load_yaml
 
-    doc = load_yaml("search_hints.yaml")
-    if not doc:
-        raise FileNotFoundError(
-            "operators/<op>/<arch>/search_hints.yaml is required "
-            "(no engine-side FAG fallback)"
-        )
-    return doc
+    return load_yaml("search_hints.yaml") or {}
 
 
 def _grid() -> dict[str, list[Any]]:
     """Sampling grid from search_hints; enums may fill categorical knobs."""
     I = W.replay_inputs()
-    raw = _hints().get("sampling_grid")
-    if not raw:
-        raise ValueError("search_hints.yaml missing sampling_grid")
+    raw = _hints().get("sampling_grid") or {}
     g = {str(k): list(v) for k, v in dict(raw).items()}
     sem = I.SEMANTICS
     enums = sem.enums() if hasattr(sem, "enums") else {}
@@ -513,8 +505,6 @@ def kb_guided_pool(
 
 def _nearest_knobs() -> dict[str, list[tuple[str, list]]]:
     raw = _hints().get("nearest_knobs") or {}
-    if not raw:
-        raise ValueError("search_hints.yaml missing nearest_knobs")
     out: dict[str, list[tuple[str, list]]] = {}
     for dim, rows in raw.items():
         entries: list[tuple[str, list]] = []

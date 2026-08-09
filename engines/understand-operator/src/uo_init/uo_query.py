@@ -272,6 +272,51 @@ class UoQuery:
     def constant(self, name: str) -> list[dict[str, Any]]:
         return self.search(name, kinds=("Variable",), limit=20)
 
+    def locate(
+        self,
+        query: str,
+        *,
+        kinds: Iterable[str] | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Locate entity source spans (file:line + snippet). See source_locator."""
+        from uo_init.source_locator import SourceLocator
+
+        return [
+            loc.to_dict()
+            for loc in SourceLocator(self.database).locate(
+                query, kinds=kinds, limit=limit
+            )
+        ]
+
+    def locate_dim(self, name: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        from uo_init.source_locator import SourceLocator
+
+        return [
+            loc.to_dict()
+            for loc in SourceLocator(self.database).locate_dim(name, limit=limit)
+        ]
+
+    def locate_branch(
+        self, branch_id: str, *, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        from uo_init.source_locator import SourceLocator
+
+        return [
+            loc.to_dict()
+            for loc in SourceLocator(self.database).locate_branch(
+                branch_id, limit=limit
+            )
+        ]
+
+    def locate_field(self, name: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        from uo_init.source_locator import SourceLocator
+
+        return [
+            loc.to_dict()
+            for loc in SourceLocator(self.database).locate_field(name, limit=limit)
+        ]
+
     def _reachable(
         self, start_id: str, kinds: set[str]
     ) -> list[dict[str, Any]]:

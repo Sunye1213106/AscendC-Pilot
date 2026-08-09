@@ -81,5 +81,5 @@ def test_realize_legacy_build_case_row_removed() -> None:
     realization = match_realization(model, {"id": "C1"}, {})
     assert realization["status"] == "blocked"
     assert "DEFAULT_SHAPE" in realization["reason"] or "input_realization" in realization["reason"]
-    with pytest.raises(RuntimeError, match="LEGACY_BUILD_CASE_ROW_REMOVED"):
+    with pytest.raises(RuntimeError, match="CSV_CONTRACT_REQUIRED"):
         build_case_row({"id": "C1"}, model, {"status": "ok", "shape": {}}, 1)

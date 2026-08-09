@@ -15,10 +15,20 @@ from replay import inputs as I
 from replay import materialized as M
 from replay.adapter import ADAPTER
 from replay.materialized import default_spec
+from replay.package_data import active_package_dir, repo_root
 
 
 def expand(case: I.Case, cid: str = "c0") -> M.MaterializedCase:
     return ADAPTER.materialize(case, cid)
+
+
+@pytest.fixture
+def bridge_spec_required():
+    """Env binding tests need exported bridge_spec (adapter pack)."""
+    if not (active_package_dir(repo_root()) / "bridge_spec.yaml").is_file():
+        pytest.skip(
+            "bridge_spec.yaml missing (FAG priors purged; run export_adapter_pack)"
+        )
 
 
 def tensor_of(m: M.MaterializedCase, name: str) -> M.MaterializedTensor:
@@ -69,7 +79,8 @@ def test_the_line_is_told_a_dtype_even_for_an_absent_tensor():
     assert ";" in m.serialize_for_host()
 
 
-def test_the_derivation_is_not_told_the_shape_of_a_tensor_that_is_absent():
+def test_the_derivation_is_not_told_the_shape_of_a_tensor_that_is_absent(
+        bridge_spec_required):
     """Measuring an optional nobody passed is measuring nothing.
 
     None rather than zero: the host tests the pointer before the extent, so
@@ -82,14 +93,15 @@ def test_the_derivation_is_not_told_the_shape_of_a_tensor_that_is_absent():
     assert env["VAR_RANK_ATTEN_MASK"] is None
 
 
-def test_a_present_tensor_reaches_the_derivation_with_its_shape():
+def test_a_present_tensor_reaches_the_derivation_with_its_shape(
+        bridge_spec_required):
     env = expand(I.Case(atten_mask="bnss")).build_static_env()
 
     assert env["VAR_OPT_ATTEN_MASK"] is True
     assert env["VAR_RANK_ATTEN_MASK"] == 4
 
 
-def test_only_the_dtype_the_derivation_reads_is_supplied():
+def test_only_the_dtype_the_derivation_reads_is_supplied(bridge_spec_required):
     """The spec supplies what is read, which is one dtype and not twenty-two.
 
     Every tensor used to get one whether anything consulted it or not. The
@@ -131,7 +143,8 @@ def test_an_attribute_with_no_rendering_is_spelled_with_str():
 # --- values the host reads rather than measures --------------------------
 
 
-def test_a_sequence_tensor_carries_its_contents_into_the_environment():
+def test_a_sequence_tensor_carries_its_contents_into_the_environment(
+        bridge_spec_required):
     env = expand(I.Case(layout="TND", seq_q=[128, 256], seq_kv=[128, 256])) \
         .build_static_env()
 
@@ -143,7 +156,8 @@ def test_a_sequence_tensor_carries_its_contents_into_the_environment():
     assert env["VAR_SHAPE_ACTUAL_SEQ_Q_LEN"] == 2
 
 
-def test_a_sequence_tensor_nobody_passed_is_absent_everywhere():
+def test_a_sequence_tensor_nobody_passed_is_absent_everywhere(
+        bridge_spec_required):
     """Absent, but still asked about: the variable is there, bound to None."""
     env = expand(I.Case(layout="BSND")).build_static_env()
 
@@ -153,7 +167,8 @@ def test_a_sequence_tensor_nobody_passed_is_absent_everywhere():
     assert "VAR_VALUE_ACTUAL_SEQ_Q_LEN" in env
 
 
-def test_the_environment_asks_about_the_same_variables_for_every_case():
+def test_the_environment_asks_about_the_same_variables_for_every_case(
+        bridge_spec_required):
     """A key that appears only for some cases is a key the evaluator cannot
     tell from one that was never modelled. Which variables exist is a
     property of the operator; only their values vary."""
@@ -168,7 +183,7 @@ def test_the_environment_asks_about_the_same_variables_for_every_case():
     assert len(keys) == 1, "the variable set moves with the case"
 
 
-def test_the_context_reaches_the_environment():
+def test_the_context_reaches_the_environment(bridge_spec_required):
     """The session's flag comes from the case; the architecture does not.
 
     There is one spec per architecture, so the spec carries it and the
@@ -259,7 +274,8 @@ def test_every_declared_input_appears_in_the_expansion():
     assert [t.name for t in m.outputs] == list(I.OUT_ORDER)
 
 
-def test_a_tensor_no_variable_models_reaches_the_line_but_not_the_environment():
+def test_a_tensor_no_variable_models_reaches_the_line_but_not_the_environment(
+        bridge_spec_required):
     """The host is handed it and the derivation never asks about it.
 
     That is now a finding rather than an omission: the spec was exported from

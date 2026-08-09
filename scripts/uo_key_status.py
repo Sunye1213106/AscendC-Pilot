@@ -67,7 +67,7 @@ def exactness_of(field: dict[str, Any]) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "derivation", type=Path, help="host_derivation.yaml, or the probe's fag_derive.json"
+        "derivation", type=Path, help="UO ir/host_derivation.yaml (or JSON with host_derivation)"
     )
     parser.add_argument("--verbose", action="store_true", help="list every free variable")
     args = parser.parse_args(argv)

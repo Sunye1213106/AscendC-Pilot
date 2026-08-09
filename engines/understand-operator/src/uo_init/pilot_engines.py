@@ -406,9 +406,32 @@ def scope_confirm(project_root: Path, payload: dict[str, Any] | None = None) -> 
     run = _run_dir(uo, ctx)
     scope = run / "scope"
     cand = _load(scope / "candidates.yaml") or _load(uo / "summary" / "scope_candidates.yaml")
-    force = bool(ctx.get("force_confirm") or ctx.get("confirmed"))
+    prior = _load(scope / "scope_confirmed.yaml") or _load(uo / "summary" / "scope_confirmed.yaml")
+    if str((prior or {}).get("status") or "") == "confirmed":
+        return {
+            "ok": True,
+            "engine": "scope_confirm",
+            "auto": bool((prior or {}).get("auto")),
+            "already_confirmed": True,
+            "receipt": prior,
+        }
+    decision = str(ctx.get("decision") or "").strip().lower()
+    force = bool(
+        ctx.get("force_confirm")
+        or ctx.get("confirmed")
+        or decision in {"continue", "accept", "confirm", "yes", "y"}
+    )
     ambiguous = bool(cand.get("ambiguities"))
     probe_clean = bool(cand.get("probe_clean", False))
+    # Automation / cold-start drivers: probe-clean + explicit continue accepts
+    # mild discover ambiguities (extra headers) without a human prompt.
+    if (
+        not force
+        and probe_clean
+        and str(ctx.get("step") or "").strip().lower() in {"finalize", "confirm", "scope_confirm", ""}
+        and bool(ctx.get("auto_accept_clean"))
+    ):
+        force = True
     need_human = (ambiguous or not probe_clean) and not force
     if need_human:
         return {
@@ -447,28 +470,35 @@ def _bundle_cache(uo: Path) -> Path:
 
 
 def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Build host IR + full PRODUCTION controllability + kernel/API facts.
+    """Build host IR + controllability + kernel/API facts.
 
-    Performance comes from eliminating duplicate clang inventory / repeated
-    parse·normalize·resolve of the same guards — not from skipping closure.
-    Override with ``closure_mode=keypath|off`` only for deliberate experiments.
+    Default profile is ``UO_INIT_PROFILE=fast``: ``closure_mode=keypath`` so
+    cold uo-init stays within ``UO_COLD_BUDGET_S`` (180s).  Set
+    ``UO_INIT_PROFILE=full`` (or ``closure_mode=full``) for every PRODUCTION
+    control.  Per-TU walks hit ``UO_TU_CACHE`` on warm runs.
     """
     from uo_init.assemble_kb import extract_host_bundle
     from uo_init.controllability import ClosureMetrics
+    from uo_init.extract_cache import (
+        compute_extract_fingerprint,
+        skip_reextract_for_unchanged_tus,
+        store_extract_fingerprint,
+    )
     from uo_init.gaps import GapReport
+    from uo_init.init_profile import (
+        default_closure_max_nodes,
+        default_closure_mode,
+        profile_name,
+    )
 
     ctx = _ctx(payload)
     root = Path(project_root).expanduser().resolve()
-    uo = _uo_root(root)
-    mode = ctx.get("closure_mode")
-    if mode is None:
-        raw = ctx.get("with_closure", None)
-        if raw is None:
-            mode = "full"
-        elif isinstance(raw, str):
-            mode = raw
-        else:
-            mode = "full" if raw else "off"
+    uo = _uo_root(root, arch=ctx.get("arch_dir"))
+    mode = default_closure_mode(ctx)
+    max_nodes = default_closure_max_nodes(ctx)
+    skip_plan = skip_reextract_for_unchanged_tus(
+        root, uo_root=uo, arch=ctx.get("arch_dir") or "arch35"
+    )
     try:
         bundle = extract_host_bundle(
             op_dir=root,
@@ -476,7 +506,7 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
             ops_root=_ops_root(ctx, root),
             arch_dir=ctx.get("arch_dir"),
             closure_mode=str(mode),
-            closure_max_nodes=int(ctx.get("closure_max_nodes") or 0) or 10**9,
+            closure_max_nodes=int(max_nodes),
             with_kernel=_flag(ctx.get("with_kernel"), True),
         )
     except Exception as exc:  # noqa: BLE001
@@ -486,6 +516,10 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
     gap_obj = bundle.get("gap") or GapReport()
     metrics = metrics_obj.to_dict()
     gap = gap_obj.to_dict()
+    fp_meta = compute_extract_fingerprint(
+        root, uo_root=uo, arch=getattr(bundle["spec"], "arch_dir", None)
+    )
+    store_extract_fingerprint(uo, fp_meta)
     meta = {
         "version": 1,
         "status": "extracted",
@@ -498,7 +532,11 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
         "bind_error": bundle.get("bind_error") or "",
         "closure_mode": bundle.get("closure_mode") or mode,
         "closure_selected": bundle.get("closure_selected") or 0,
+        "closure_max_nodes": int(max_nodes),
+        "init_profile": profile_name(ctx),
         "kernel_branches": len(getattr(bundle.get("kernel_ir"), "branches", []) or []),
+        "extract_fingerprint": fp_meta.get("extract_fingerprint"),
+        "sources_unchanged_at_start": bool(skip_plan.get("skip_reextract")),
     }
     _dump(_bundle_cache(uo), meta)
     _dump(
@@ -516,6 +554,8 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
         "closure_mode": meta["closure_mode"],
         "closure_selected": meta["closure_selected"],
         "kernel_branches": meta["kernel_branches"],
+        "extract_fingerprint": meta["extract_fingerprint"],
+        "sources_unchanged_at_start": meta["sources_unchanged_at_start"],
     }
 
 
@@ -530,12 +570,13 @@ def _ensure_bundle(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     root = Path(project_root).expanduser().resolve()
     # ``acp run-action`` launches each deterministic action in a fresh
     # process, so the in-memory bundle from extract_host is not available to
-    # the next action.  The durable host receipt already records the full
-    # closure; downstream extraction only needs the structural bundle and can
-    # safely rebuild with closure disabled instead of repeating the expensive
-    # full controllability walk.  An explicit closure_mode still wins.
-    cached_meta = _load(_bundle_cache(_uo_root(root)))
-    mode = ctx.get("closure_mode") or ("off" if cached_meta else "full")
+    # the next action. Downstream only needs the structural bundle — rebuild
+    # with closure off when meta exists (TU cache makes this cheap).
+    from uo_init.init_profile import default_closure_mode
+
+    uo = _uo_root(root, arch=ctx.get("arch_dir"))
+    cached_meta = _load(_bundle_cache(uo))
+    mode = ctx.get("closure_mode") or ("off" if cached_meta else default_closure_mode(ctx))
     bundle = extract_host_bundle(
         op_dir=root,
         cann_root=_cann_root(ctx),
@@ -602,11 +643,13 @@ def extract_kernel(project_root: Path, payload: dict[str, Any] | None = None) ->
     from uo_init.op_spec import discover
     from uo_init.build_context import BuildContext
 
+    from uo_init.init_profile import default_fold_kernel
+
     ctx = _ctx(payload)
     root = Path(project_root).expanduser().resolve()
-    # Pairwise fold is expensive; still on by default (feature-complete path).
-    # Set fold_kernel=false to rely solely on uninstantiated kernel_ir.
-    fold = bool(ctx.get("fold_kernel", True))
+    # Pairwise fold is expensive.  ``UO_INIT_PROFILE=fast`` (default) skips it
+    # and relies on uninstantiated kernel_ir from extract_host.
+    fold = default_fold_kernel(ctx)
     limit = ctx.get("harness_limit")
     try:
         spec = discover(root, arch_dir=ctx.get("arch_dir"))
@@ -857,7 +900,14 @@ def normalize_predicates(project_root: Path, payload: dict[str, Any] | None = No
 
 
 def resolve_gaps(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Subagent trigger point: skip when unresolved is empty/closed."""
+    """Subagent trigger point: skip when unresolved is empty/closed.
+
+    Auto LLM / subagent gap resolve is **off by default**. Set
+    ``UO_RESOLVE_GAPS_LLM=1`` (or payload ``enable_llm=true``) to allow the
+    closed-vocabulary producer path. LLM patches are graded ``llm``, never sound.
+    """
+    import os
+
     from uo_init.gap_patch import SCHEMA_HINT
 
     ctx = _ctx(payload)
@@ -879,19 +929,26 @@ def resolve_gaps(project_root: Path, payload: dict[str, Any] | None = None) -> d
             "blocker_count": 0,
             "message_zh": "无残余 blocker，auto-skip",
         }
-    # Key-field derivation residuals always need the closed-vocabulary subagent,
-    # even when the absolute count is small (FAG's leftover is typically <20).
-    need_subagent = der_count > 0 or count >= 20
+    llm_env = str(os.environ.get("UO_RESOLVE_GAPS_LLM") or "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+    llm_enabled = llm_env or _flag(ctx.get("enable_llm"), default=False)
+    # Key-field derivation residuals need the closed-vocabulary subagent only
+    # when LLM resolve is explicitly enabled.
+    need_subagent = llm_enabled and (der_count > 0 or count >= 20)
     staging = {
         "version": 1,
         "contract": "resolve-gaps-staging-v1",
         "schema": SCHEMA_HINT,
         "blocker_count": count,
         "derivation_blocker_count": der_count,
+        "llm_enabled": llm_enabled,
+        "patch_grade": "llm",
         "blockers": unresolved.get("blockers") or [],
         "instruction_zh": (
             "对每个 blocker 只从封闭词汇表选 classification；"
             "input_derived 时 binding.var_id 必须已在 VariableModel 中，禁止发明符号或写自由表达式。"
+            "每条 patch 必须带 grade: llm（不得标 sound）。"
         ),
     }
     staging_rel = f"runs/{run.name}/actions/resolve_gaps/staging.yaml"
@@ -917,6 +974,7 @@ def resolve_gaps(project_root: Path, payload: dict[str, Any] | None = None) -> d
             "derivation_blocker_count": der_count,
             "need_subagent": need_subagent,
             "deferred": not need_subagent,
+            "llm_enabled": llm_enabled,
             "staging": staging_rel,
             "static_review": static_review,
         },
@@ -928,10 +986,19 @@ def resolve_gaps(project_root: Path, payload: dict[str, Any] | None = None) -> d
         "blocker_count": count,
         "need_subagent": need_subagent,
         "deferred": not need_subagent,
+        "llm_enabled": llm_enabled,
         "static_review": static_review,
         "message_zh": (
             f"有 {count} 个 blocker（派生 {der_count}）"
-            + ("，交 resolve_gaps subagent" if need_subagent else "（确定性记录后继续）")
+            + (
+                "，交 resolve_gaps subagent"
+                if need_subagent
+                else (
+                    "（LLM 默认关闭，设 UO_RESOLVE_GAPS_LLM=1 启用；确定性记录后继续）"
+                    if not llm_enabled
+                    else "（确定性记录后继续）"
+                )
+            )
         ),
     }
 
@@ -997,6 +1064,17 @@ def apply_gap_patch(project_root: Path, payload: dict[str, Any] | None = None) -
     merged, accepted, rejected = merge_accepted(
         existing, verdicts, blockers=blockers
     )
+    # LLM / subagent patches are never sound — force grade llm.
+    for row in merged:
+        if isinstance(row, dict):
+            src = str(row.get("source") or row.get("origin") or "llm")
+            if src in {"llm", "subagent", "producer", ""} or "grade" not in row:
+                row["grade"] = "llm"
+            elif str(row.get("grade") or "") in {"sound", "source_lemma", "solver_derived"}:
+                row["grade"] = "llm"
+    for row in accepted:
+        if isinstance(row, dict):
+            row["grade"] = "llm"
     # Tentatively apply; roll back accepted rows that fail the loop gate.
     dump_bindings(uo / "ir" / "gap_bindings.yaml", merged)
     after_doc = derive_host_fields(
@@ -1238,36 +1316,45 @@ def export_tg_host_view(
     root = Path(project_root).expanduser().resolve()
     uo = _uo_root(root)
     graph_path = uo / "ir" / "operator_graph.yaml"
-    if not graph_path.is_file():
+    sqlite = uo / "indexes" / "kb_graph.sqlite"
+    if not sqlite.is_file() and not graph_path.is_file():
         return {
             "ok": False,
             "engine": "export_tg_host_view",
-            "error": "missing ir/operator_graph.yaml; run export_kb first",
+            "error": "missing KB product (indexes/kb_graph.sqlite); run export_kb first",
         }
-    sqlite = uo / "indexes" / "kb_graph.sqlite"
     if not sqlite.is_file():
         return {
             "ok": False,
             "engine": "export_tg_host_view",
-            "error": "missing indexes/kb_graph.sqlite; run build_index first",
+            "error": "missing indexes/kb_graph.sqlite; run build_index / export_kb first",
         }
     try:
-        fingerprint = _load_yaml_scalar(graph_path, "fingerprint")
+        fingerprint = ""
+        if graph_path.is_file():
+            fingerprint = _load_yaml_scalar(graph_path, "fingerprint")
         if not fingerprint:
             from uo_init.kb_export import load_graph
 
             graph = load_graph(uo)
             fingerprint = str(graph.get("fingerprint") or "")
         manifest = _load(uo / "manifest.yaml")
+        if not isinstance(manifest, dict):
+            manifest = {}
         manifest_hash = str(manifest.get("content_hash") or manifest.get("hash") or "")
+        manifest_source = manifest.get("source")
+        if not isinstance(manifest_source, dict):
+            manifest_source = {}
         source_revision = str(
             manifest.get("source_revision")
-            or (manifest.get("source") or {}).get("revision")
+            or manifest_source.get("revision")
             or ""
         )
         existing_view = _load(uo / TG_HOST_VIEW_YAML)
         if isinstance(existing_view, dict):
-            source = existing_view.get("source") or {}
+            source = existing_view.get("source")
+            if not isinstance(source, dict):
+                source = {}
             view_fp = str(source.get("graph_fingerprint") or "")
             view_manifest_hash = str(source.get("manifest_hash") or "")
             view_source_revision = str(source.get("source_revision") or "")
@@ -1369,11 +1456,41 @@ def export_tg_host_view(
         return {"ok": False, "engine": "export_tg_host_view", "error": str(exc)[:400]}
 
 
+def export_adapter_pack(
+    project_root: Path, payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Export TG adapter YAML from host_derivation into ``tg/adapter/``."""
+    from uo_init.adapter_pack import export_adapter_pack as _export
+
+    ctx = _ctx(payload)
+    root = Path(project_root).expanduser().resolve()
+    arch = str(ctx.get("architecture") or ctx.get("arch") or "").strip() or None
+    write_package = _flag(ctx.get("write_package"), default=False)
+    sampling_grid = ctx.get("sampling_grid")
+    if sampling_grid is not None and not isinstance(sampling_grid, dict):
+        return {
+            "ok": False,
+            "engine": "export_adapter_pack",
+            "error": "sampling_grid must be a mapping",
+        }
+    return _export(
+        root,
+        arch=arch,
+        write_package=write_package,
+        sampling_grid=sampling_grid,
+    )
+
+
 def export_integrity(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     del payload
     from uo_init.kb_export import knowledge_base_from_payload, load_graph
     from uo_init.host_codemap import TG_HOST_VIEW_YAML, CODEMAP_YAML, load_tg_host_view
-    from uo_init.kb_index import index_summary
+    from uo_init.kb_index import (
+        db_authority_ok,
+        index_summary,
+        load_view_blob,
+        set_meta_values,
+    )
 
     uo = _uo_root(project_root)
     graph = uo / "ir" / "operator_graph.yaml"
@@ -1384,22 +1501,27 @@ def export_integrity(project_root: Path, payload: dict[str, Any] | None = None) 
     view_path = uo / TG_HOST_VIEW_YAML
     alias_path = uo / CODEMAP_YAML
     errors: list[str] = []
-    if not graph.is_file():
-        errors.append("missing ir/operator_graph.yaml")
-    if not quality.is_file():
+    db_ready = sqlite.is_file() and db_authority_ok(sqlite)
+    if not graph.is_file() and not db_ready:
+        errors.append("missing ir/operator_graph.yaml (and no DB authority product)")
+    if not quality.is_file() and not (
+        db_ready and load_view_blob(sqlite, "quality.yaml") is not None
+    ):
         errors.append("missing quality.yaml")
-    if not hashes.is_file():
+    if not hashes.is_file() and not (
+        db_ready and load_view_blob(sqlite, "checks/artifact_hashes.yaml") is not None
+    ):
         errors.append("missing checks/artifact_hashes.yaml")
     if not sqlite.is_file():
         errors.append("missing indexes/kb_graph.sqlite")
     graph_fp = ""
-    if graph.is_file():
-        try:
-            payload_graph = load_graph(uo)
-            graph_fp = str(payload_graph.get("fingerprint") or "")
-            kb = knowledge_base_from_payload(payload_graph)
-            errors.extend(kb.check_invariants())
-        except Exception as exc:  # noqa: BLE001
+    try:
+        payload_graph = load_graph(uo)
+        graph_fp = str(payload_graph.get("fingerprint") or "")
+        kb = knowledge_base_from_payload(payload_graph)
+        errors.extend(kb.check_invariants())
+    except Exception as exc:  # noqa: BLE001
+        if graph.is_file() or db_ready:
             errors.append(f"graph_load_failed: {exc}")
     if sqlite.is_file() and graph_fp:
         try:
@@ -1411,11 +1533,21 @@ def export_integrity(project_root: Path, payload: dict[str, Any] | None = None) 
                 )
         except Exception as exc:  # noqa: BLE001
             errors.append(f"kb_index_summary_failed: {exc}")
-    if not view_path.is_file() and not alias_path.is_file():
+    host_view_in_db = bool(
+        db_ready and load_view_blob(sqlite, "ir/tg_host_view.yaml") is not None
+    )
+    if not view_path.is_file() and not alias_path.is_file() and not host_view_in_db:
         errors.append(f"missing {TG_HOST_VIEW_YAML} (run export_tg_host_view)")
     else:
         view = load_tg_host_view(uo)
-        view_fp = str((view.get("source") or {}).get("graph_fingerprint") or "")
+        if not view and host_view_in_db:
+            view = load_view_blob(sqlite, "ir/tg_host_view.yaml") or {}
+        if not isinstance(view, dict):
+            view = {}
+        view_source = view.get("source")
+        if not isinstance(view_source, dict):
+            view_source = {}
+        view_fp = str(view_source.get("graph_fingerprint") or "")
         if not view_fp:
             errors.append("tg_host_view missing source.graph_fingerprint")
         elif graph_fp and view_fp != graph_fp:
@@ -1439,7 +1571,11 @@ def export_integrity(project_root: Path, payload: dict[str, Any] | None = None) 
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"host_view_meta_failed: {exc}")
     ur = _load(unresolved)
+    if not ur and db_ready:
+        ur = load_view_blob(sqlite, "ir/unresolved.yaml") or {}
     q = _load(quality)
+    if not q and db_ready:
+        q = load_view_blob(sqlite, "quality.yaml") or {}
     blocker_count = int(ur.get("blocker_count") or len(ur.get("blockers") or []))
     doc = {
         "version": 1,
@@ -1450,6 +1586,43 @@ def export_integrity(project_root: Path, payload: dict[str, Any] | None = None) 
         "graph_fingerprint": graph_fp,
         "errors": errors,
     }
+    if sqlite.is_file():
+        try:
+            import json as _json
+            import sqlite3
+
+            conn = sqlite3.connect(str(sqlite))
+            try:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS view_blob("
+                    "name TEXT PRIMARY KEY, schema_id TEXT, data TEXT NOT NULL)"
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO view_blob(name, schema_id, data) VALUES(?,?,?)",
+                    (
+                        "checks/integrity.yaml",
+                        "",
+                        _json.dumps(
+                            doc, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                        ),
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            set_meta_values(
+                sqlite,
+                {
+                    "integrity_status": doc["status"],
+                    "integrity_ok": doc["ok"],
+                    "authority": "db",
+                },
+            )
+        except Exception:  # noqa: BLE001
+            pass
+    # Always materialize the gate receipt on disk — the pilot integrity gate
+    # and integrity-v1 contract read this path. The heavy YAML layers stay
+    # opt-in via UO_KB_YAML; this file is a few hundred bytes.
     _dump(uo / "checks" / "integrity.yaml", doc)
     return {"ok": not errors, "engine": "export_integrity", **doc}
 
@@ -1457,16 +1630,29 @@ def export_integrity(project_root: Path, payload: dict[str, Any] | None = None) 
 def kb_review(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     """Referee trigger: auto-skip when quality gate already green."""
     del payload
+    from uo_init.kb_index import db_authority_ok, load_view_blob
+
     uo = _uo_root(project_root)
     q = _load(uo / "quality.yaml")
     ur = _load(uo / "ir" / "unresolved.yaml")
     host_meta = _load(uo / "ir" / "host_extract_receipt.yaml")
+    sqlite = uo / "indexes" / "kb_graph.sqlite"
+    if sqlite.is_file() and db_authority_ok(sqlite):
+        if not q:
+            blob = load_view_blob(sqlite, "quality.yaml")
+            if isinstance(blob, dict):
+                q = blob
+        if not ur:
+            blob = load_view_blob(sqlite, "ir/unresolved.yaml")
+            if isinstance(blob, dict):
+                ur = blob
+    from uo_init.init_profile import review_skips_closure_gate
+
     closure = float(q.get("source_closure") or 0.0)
     blockers = int(ur.get("blocker_count") or len(ur.get("blockers") or []))
     closure_mode = str(host_meta.get("closure_mode") or "")
-    # When full closure was skipped for the wall-time budget, do not demand
-    # source_closure≥0.95 — that metric was never measured.
-    if closure_mode in {"", "off", "none"}:
+    # keypath/off never measured full source_closure — do not demand ≥0.95.
+    if review_skips_closure_gate(closure_mode):
         auto_ok = blockers < 20
     else:
         auto_ok = closure >= 0.95 and blockers < 20
@@ -1477,6 +1663,7 @@ def kb_review(project_root: Path, payload: dict[str, Any] | None = None) -> dict
         "source_closure": closure,
         "blocker_count": blockers,
         "closure_mode": closure_mode or "unknown",
+        "init_profile": host_meta.get("init_profile") or "",
         "auto": auto_ok,
     }
     _dump(uo / "review" / "kb_product_review.yaml", review)
@@ -1506,6 +1693,7 @@ ENGINES: dict[str, Any] = {
     "export_kb": export_kb_action,
     "build_index": build_index,
     "export_tg_host_view": export_tg_host_view,
+    "export_adapter_pack": export_adapter_pack,
     "export_integrity": export_integrity,
     "kb_review": kb_review,
 }

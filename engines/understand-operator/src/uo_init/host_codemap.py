@@ -12,7 +12,7 @@ Schema ``tg-host-view/v1`` surfaces:
   kernel tiling-key header                      → declared_keys
   npuArch / SocVersion guards                   → platform_gates
 
-The single SQLite authority is ``indexes/kb_graph.sqlite``. Legacy
+The single SQLite product / authority is ``indexes/kb_graph.sqlite``. Legacy
 ``host_codemap.yaml`` / ``host_codemap.sqlite`` aliases are no longer written.
 """
 

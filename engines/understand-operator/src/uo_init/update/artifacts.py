@@ -262,3 +262,22 @@ def load_update_plan_if_fresh(
 
 def resolve_uo_root(project_root: Path) -> Path:
     return Path(project_root).expanduser().resolve() / ".ascendc-pilot" / "uo"
+
+
+def source_content_fingerprint(
+    project_root: Path,
+    *,
+    uo_root: Path | None = None,
+    arch: str | None = None,
+) -> dict[str, Any]:
+    """Scope identity + confirmed-source content hash (incremental extract).
+
+    Thin wrapper around :func:`uo_init.extract_cache.compute_extract_fingerprint`
+    so update/plan callers can share the same fingerprint without importing the
+    cache package by name.
+    """
+    from uo_init.extract_cache import compute_extract_fingerprint
+
+    return compute_extract_fingerprint(
+        project_root, uo_root=uo_root, arch=arch
+    )

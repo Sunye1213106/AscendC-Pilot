@@ -19,10 +19,9 @@
 | `skills/policies/` | 全局 Policy |
 | `skills/capabilities/` | 原子 Capability |
 | `skills/actions/` | Action Method |
-| `skills/roles/` | Role 合同 |
 | `skills/workflows/` | 薄入口 Skill |
 | `prompts/tasks/` | 有界 task prompt |
-| `agents/` | Agent YAML |
+| `agents/` | Agent YAML（角色/边界运行时权威） |
 | `generated/` | Composer 产物（可丢弃） |
 
 ## Composer
@@ -34,7 +33,7 @@ python scripts/compose_runtime.py --repo .
 python scripts/compile_skills.py --repo .
 ```
 
-安装只部署 `generated/<host>/{skills,agents,prompts}`。改 `policies` / `actions` / `prompts` / `agents` 后必须 compose 并提交 `generated/opencode`；CI `compose-drift.yml` 用 `git diff --exit-code` 防漂移。
+安装只部署 `generated/<host>/{skills,agents,prompts}`。改 `policies` / `actions` / `prompts` / `agents` 后必须 compose 并提交 `generated/opencode`；CI `ci.yml` 的 `gates` job 重新 compose 并跑 `check_contracts` / `check_ownership_contracts` / `check_no_cbm` 防漂移。
 
 ## 证据与 Lease
 

@@ -16,7 +16,6 @@
 
 ## Domain Decisions
 
-- 遵循已加载 Policy 与 Capability 硬限制。
 - 证据规则见 capability `tilingkey-closure`，勿在本文件复制。
 
 ## Output

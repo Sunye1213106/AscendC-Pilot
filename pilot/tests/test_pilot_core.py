@@ -363,8 +363,15 @@ def test_e2e_cli_loop_prepare_to_scope_rework(tmp_path: Path):
         nonce="prep-n",
         _internal=True,
     )
+    # layout_receipt checks the products too, not just the receipt.
+    from ascendc_pilot.paths import uo_root
+
+    uo = uo_root(tmp_path)
+    uo.mkdir(parents=True, exist_ok=True)
+    (uo / "manifest.yaml").write_text("op_name: DemoOp\n", encoding="utf-8")
+    (uo / "operator.yaml").write_text("scope: op\n", encoding="utf-8")
     ok = advance_phase(tmp_path, "scope")
-    assert ok["ok"] is True
+    assert ok["ok"] is True, ok
     assert load_state(tmp_path)["phase"] == "scope"
     # scope pipeline incomplete without scope_confirmation receipt
     fail = advance_phase(tmp_path, "extract")

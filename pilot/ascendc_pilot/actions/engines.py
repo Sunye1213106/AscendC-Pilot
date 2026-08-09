@@ -29,7 +29,7 @@ def _ctx_root(project_root: Path, *, arch: str | None = None):
 
 
 def _run_confidence_report(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """Emit confidence gate from new-engine quality.yaml (no old classify/ledger)."""
+    """Emit confidence gate from KB quality view (YAML dump or DB blob)."""
     uo = _uo(project_root)
     del ctx
     try:
@@ -37,6 +37,22 @@ def _run_confidence_report(project_root: Path, ctx: dict[str, Any]) -> dict[str,
 
         quality = read_yaml(uo / "quality.yaml") or {}
         unresolved = read_yaml(uo / "ir" / "unresolved.yaml") or {}
+        if not quality:
+            db = uo / "indexes" / "kb_graph.sqlite"
+            if db.is_file():
+                from uo_init.kb_index import load_view_blob
+
+                blob = load_view_blob(db, "quality.yaml")
+                if isinstance(blob, dict):
+                    quality = blob
+        if not unresolved:
+            db = uo / "indexes" / "kb_graph.sqlite"
+            if db.is_file():
+                from uo_init.kb_index import load_view_blob
+
+                blob = load_view_blob(db, "ir/unresolved.yaml")
+                if isinstance(blob, dict):
+                    unresolved = blob
         blockers = unresolved.get("blockers") if isinstance(unresolved.get("blockers"), list) else []
         ok = bool(quality) and len(blockers) == 0
         status = "pass" if ok else "reported"
@@ -1189,10 +1205,12 @@ def _run_oracle_probe(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
         issues.append(f"schema_unavailable: {exc}")
 
     live_probe = _closure_live_default(ctx, "live_probe")
+    selfcheck_doc: dict[str, Any] = {}
     if live_probe:
         live["attempted"] = True
         try:
             from testcase_agent.closure import generate as G
+            from testcase_agent.closure import oracle as O
             from testcase_agent.closure.oracle import HostOracle
 
             rng = __import__("random").Random(0)
@@ -1215,11 +1233,63 @@ def _run_oracle_probe(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
                 issues.append("ORACLE_ACCOUNTING_MISMATCH")
             if batch_accounting["not_run"]:
                 issues.append("ORACLE_SUSPECT:not_run")
-                (ws.state / "oracle_suspect").write_text("1", encoding="utf-8")
+                O.write_oracle_suspect(ws, "ORACLE_SUSPECT:not_run")
             if accepted == 0:
                 issues.append("ORACLE_SUSPECT:accepted==0")
             if with_key == 0:
                 issues.append("ORACLE_SUSPECT:accepted_with_key==0")
+
+            # Strengthened selfcheck: DONE count, wide CSV, driver config, singleton dims.
+            done_count = batch_accounting.get("judged")
+            log_text = str(ctx.get("driver_log") or live.get("driver_log") or "")
+            if log_text:
+                done_count = O.count_done_marks(log_text)
+            wide = ctx.get("wide_csv")
+            if not wide:
+                # Best-effort: newest key_cases CSV under artifacts.
+                try:
+                    cands = sorted(ws.artifacts.glob("*key_cases*.csv"), key=lambda p: p.stat().st_mtime)
+                    wide = str(cands[-1]) if cands else None
+                except Exception:
+                    wide = None
+            driver_doc = None
+            try:
+                from replay.package_data import resolve_adapter_file, package_file, load_yaml
+                import yaml as _yaml
+
+                man = resolve_adapter_file("operator.yaml") or package_file("operator.yaml")
+                if man.is_file():
+                    driver_doc = _yaml.safe_load(man.read_text(encoding="utf-8")) or {}
+                proto = load_yaml("log_protocol.yaml", refresh=True)
+                if proto:
+                    driver_doc = {**(driver_doc or {}), **proto}
+            except Exception:
+                pass
+            corpus_rows: list[dict[str, Any]] = []
+            try:
+                from testcase_agent.closure import corpus as C
+
+                df = C.load(ws)
+                if df is not None and not df.empty:
+                    corpus_rows = df.to_dict(orient="records")
+            except Exception:
+                corpus_rows = []
+            dim_names: list[str] = []
+            try:
+                dim_names = list(WS.dim_names())
+            except Exception:
+                dim_names = []
+            selfcheck_doc = O.selfcheck(
+                sent=len(cases),
+                done_count=int(done_count) if done_count is not None else None,
+                wide_csv=wide,
+                driver_doc=driver_doc,
+                corpus_rows=corpus_rows,
+                dims=dim_names,
+                ws=ws,
+            )
+            issues.extend(selfcheck_doc.get("issues") or [])
+            live["selfcheck_warnings"] = list(selfcheck_doc.get("warnings") or [])
         except Exception as exc:  # noqa: BLE001
             issues.append(f"live_probe_failed: {exc}")
             live["error"] = str(exc)[:300]
@@ -1230,15 +1300,39 @@ def _run_oracle_probe(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
             "1", "true", "yes",
         } or str((__import__("os").environ.get("UO_OPERATOR") or "")).startswith("_synthetic"):
             issues = [i for i in issues if not i.startswith("live_probe_disabled")]
+        # Still run offline selfcheck pieces when artifacts exist.
+        try:
+            from testcase_agent.closure import oracle as O
+
+            wide = ctx.get("wide_csv")
+            selfcheck_doc = O.selfcheck(
+                sent=ctx.get("sent"),
+                done_count=ctx.get("done_count"),
+                wide_csv=wide,
+                driver_doc=ctx.get("driver_doc"),
+                corpus_rows=ctx.get("corpus_rows"),
+                dims=ctx.get("dims"),
+                ws=ws,
+            )
+            # Offline mismatches still raise suspect, but CI schema-only may ignore.
+            if selfcheck_doc.get("issues") and not (
+                str((__import__("os").environ.get("TG_CLOSURE_CI") or "")).strip().lower()
+                in {"1", "true", "yes"}
+            ):
+                issues.extend(selfcheck_doc["issues"])
+            live["selfcheck_warnings"] = list(selfcheck_doc.get("warnings") or [])
+        except Exception:
+            pass
 
     doc = {
-        "schema": "tg-oracle-probe/v2",
+        "schema": "tg-oracle-probe/v3",
         "ok": len(issues) == 0,
         "issues": issues,
         "state": str(ws.state),
         "baseline": baseline,
         "live": live,
         "live_probe": live_probe,
+        "selfcheck": selfcheck_doc,
         "note": (
             "Production requires live_probe; set TG_CLOSURE_CI=1 or UO_OPERATOR=_synthetic_* "
             "for schema-only CI probes"
@@ -1829,6 +1923,7 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("uo-init", "export_kb"): _uo_init_engine("export_kb"),
     ("uo-init", "build_index"): _uo_init_engine("build_index"),
     ("uo-init", "export_tg_host_view"): _uo_init_engine("export_tg_host_view"),
+    ("uo-init", "export_adapter_pack"): _uo_init_engine("export_adapter_pack"),
     ("uo-init", "export_integrity"): _uo_init_engine("export_integrity"),
     ("uo-init", "kb_review"): _uo_init_engine("kb_review"),
     # Legacy tk-cover workflow removed; closure lives under tg-solve.
@@ -1897,11 +1992,19 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "runs/{run_id}/actions/resolve_gaps/staging.yaml",
     ],
     "gap-patch-v1": ["uo/ir/gap_patch_receipt.yaml", "uo/ir/gap_bindings.yaml"],
-    "export-kb-v1": ["uo/ir/operator_graph.yaml", "uo/quality.yaml"],
+    # DB is the product; YAML layers are opt-in (UO_KB_YAML=1) / `uo dump`.
+    "export-kb-v1": ["uo/indexes/kb_graph.sqlite"],
     "build-index-v1": ["uo/indexes/kb_graph.sqlite"],
     "export-tg-host-view-v1": [
         "uo/ir/tg_host_view.yaml",
         "uo/checks/tg_host_view_receipt.yaml",
+    ],
+    "export-adapter-pack-v1": [
+        "uo/adapter/bridge_spec.yaml",
+        "uo/adapter/feature_bindings.yaml",
+        "uo/adapter/search_hints.yaml",
+        "uo/adapter/construction_hints.yaml",
+        "uo/checks/adapter_pack_receipt.yaml",
     ],
     "detect-score-pre-v1": [
         "uo/ir/entrypoint_graph.yaml",

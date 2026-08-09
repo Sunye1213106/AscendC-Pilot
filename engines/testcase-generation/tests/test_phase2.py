@@ -77,7 +77,7 @@ def _pending(oid: str, *, priority: str = "normal", constraints: dict[str, Any] 
 
 def _repo_with_phase1(tmp_path: Path, contract: dict[str, Any], obligations: dict[str, Any], supplement: dict[str, Any] | None = None) -> Path:
     repo = tmp_path / "repo"
-    root = repo / ".ascendc-pilot" / "tg"
+    root = repo / ".ascendc-pilot" / "arch35" / "tg"
     (root / "snapshot").mkdir(parents=True)
     level = str(obligations.get("test_level") or "L1")
     plan_dir = root / "plan" / "levels" / level
@@ -317,7 +317,7 @@ def test_tg_solve_emits_csv_by_default(tmp_path: Path) -> None:
 
     result = tg_solve(repo, "DemoOp", level="L1")
 
-    root = repo / ".ascendc-pilot" / "tg"
+    root = repo / ".ascendc-pilot" / "arch35" / "tg"
     assert (root / "cases" / "levels" / "L1" / "L1.csv").exists()
     assert result["realize_report"]["realized_count"] >= 1
     assert not (root / "run" / "operator_execution.yaml").exists()
@@ -334,7 +334,7 @@ def test_tg_solve_dry_run_skips_csv(tmp_path: Path) -> None:
 
     tg_solve(repo, "DemoOp", dry_run=True, level="L1")
 
-    root = repo / ".ascendc-pilot" / "tg"
+    root = repo / ".ascendc-pilot" / "arch35" / "tg"
     assert not (root / "cases" / "levels" / "L1" / "L1.csv").exists()
     assert (root / "cases" / "levels" / "L1" / "L1.realize_report.yaml").exists()
     solve_dir = root / "solve" / "levels" / "L1"
@@ -350,7 +350,7 @@ def test_tg_solve_requires_approval(tmp_path: Path) -> None:
 
 def test_tg_solve_rejects_legacy_coverage_plan_filename(tmp_path: Path) -> None:
     repo = _repo_with_phase1(tmp_path, _contract(), _obligations([_pending("OB_A")]))
-    plan_dir = repo / ".ascendc-pilot" / "tg" / "plan" / "levels" / "L1"
+    plan_dir = repo / ".ascendc-pilot" / "arch35" / "tg" / "plan" / "levels" / "L1"
     legacy = read_yaml(plan_dir / "coverage_obligations.yaml")
     (plan_dir / "coverage_obligations.yaml").unlink()
     write_yaml(plan_dir / "coverage_plan.yaml", legacy)
@@ -364,7 +364,7 @@ def test_tg_solve_writes_outputs(tmp_path: Path) -> None:
 
     tg_solve(repo, "DemoOp", level="L1")
 
-    root = repo / ".ascendc-pilot" / "tg" / "solve" / "levels" / "L1"
+    root = repo / ".ascendc-pilot" / "arch35" / "tg" / "solve" / "levels" / "L1"
     assert read_yaml(root / "solver_report.yaml")["total_obligations"] == 1
     assert (root / "selected_candidates.yaml").exists()
     assert (root / "unsat_obligations.yaml").exists()
@@ -373,7 +373,7 @@ def test_tg_solve_writes_outputs(tmp_path: Path) -> None:
 
 def test_tg_solve_requires_contract_artifacts_by_default(tmp_path: Path) -> None:
     repo = _repo_with_phase1(tmp_path, _contract(), _obligations([]))
-    realization_root = repo / ".ascendc-pilot" / "tg" / "realization"
+    realization_root = repo / ".ascendc-pilot" / "arch35" / "tg" / "realization"
     for name in ("consumer_evidence.yaml", "consumer_schema.yaml", "realization_map.yaml"):
         (realization_root / name).unlink()
 
@@ -531,7 +531,7 @@ def test_context_slice_entities_create_ir_variables_without_top_level_variables(
 
 def test_tg_solve_rejects_stale_approval_and_plan_hash(tmp_path: Path) -> None:
     repo = _repo_with_phase1(tmp_path, _contract(), _obligations([_pending("OB_A")]))
-    root = repo / ".ascendc-pilot" / "tg"
+    root = repo / ".ascendc-pilot" / "arch35" / "tg"
     plan_dir = root / "plan" / "levels" / "L1"
     supplement = read_yaml(plan_dir / "human_supplement.yaml")
     supplement["approved_plan_hash"] = "stale"
@@ -543,7 +543,7 @@ def test_tg_solve_rejects_stale_approval_and_plan_hash(tmp_path: Path) -> None:
 
 def test_tg_solve_rejects_blocked_unresolved(tmp_path: Path) -> None:
     repo = _repo_with_phase1(tmp_path, _contract(), _obligations([_pending("OB_A")]))
-    root = repo / ".ascendc-pilot" / "tg"
+    root = repo / ".ascendc-pilot" / "arch35" / "tg"
     plan_dir = root / "plan" / "levels" / "L1"
     unresolved = read_yaml(plan_dir / "unresolved.yaml")
     unresolved["status"] = "blocked"
@@ -576,7 +576,7 @@ def test_tg_solve_rejects_blocked_unresolved(tmp_path: Path) -> None:
 
 def test_snapshot_hash_mismatch_is_rejected(tmp_path: Path) -> None:
     repo = _repo_with_phase1(tmp_path, _contract(), _obligations([_pending("OB_A")]))
-    root = repo / ".ascendc-pilot" / "tg"
+    root = repo / ".ascendc-pilot" / "arch35" / "tg"
     snapshot = read_yaml(root / "snapshot" / "understand_contract.json")
     snapshot["files"]["quality.yaml"]["status"] = "warn"
     write_json(root / "snapshot" / "understand_contract.json", snapshot)
@@ -673,7 +673,7 @@ def test_nested_relation_schema_and_nonsemantic_combination_deduplication() -> N
             "key_relation_obligations": [{"id": "REL", "constraints": {"relation_type": "compatible_set", "combinations": [{"KEY_A": 0, "notes": "first"}, {"KEY_A": 0, "notes": "second"}]}}],
         },
     }
-    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"})
+    plan = build_plan({"op_name": "DemoOp", "files": files, "snapshot_hash": "s"}, level="L1")
     relations = [item for item in plan["obligations"] if item["kind"] == "tiling_key_relation"]
 
     assert len(relations) == 1

@@ -393,12 +393,13 @@ def test_observation_persisted_to_run_dir(tmp_path: Path):
     )
     applied = apply_observation(tmp_path, obs)
     assert applied.get("ok") is False
+    from ascendc_pilot.paths import runs_root
+
     run_id = load_state(tmp_path)["run_id"]
-    obs_dir = tmp_path / ".ascendc-pilot" / "runs" / run_id / "observations"
+    run_dir = runs_root(tmp_path) / run_id
+    obs_dir = run_dir / "observations"
     assert obs_dir.is_dir()
     assert list(obs_dir.glob("OBS_*.yaml"))
-    events = (tmp_path / ".ascendc-pilot" / "runs" / run_id / "events.jsonl").read_text(
-        encoding="utf-8"
-    )
+    events = (run_dir / "events.jsonl").read_text(encoding="utf-8")
     assert "ObservationRecorded" in events
     assert "HumanRequired" in events

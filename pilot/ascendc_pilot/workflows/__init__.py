@@ -396,6 +396,31 @@ def resolve_tg_mode(project_root: Any | None = None, *, default: str = "tilingke
     return default
 
 
+def _rederive_actor_fields(merged: dict[str, Any], patch: dict[str, Any]) -> None:
+    """Re-derive what ``_act`` computed from ``agent_id`` / ``role_id``.
+
+    ``actors`` and ``execution_mode`` are derived at spec-build time, so an
+    overlay that hands an action to a different agent has to refresh them.
+    Leaving the base ``actors`` behind is not cosmetic: authorize matches the
+    calling agent against that list, so the overlay's own producer gets
+    ``ACTOR_MISMATCH`` on the paths the overlay just granted it.
+    """
+    if "agent_id" not in patch and "role_id" not in patch:
+        return
+    agent_id = str(merged.get("agent_id") or "")
+    merged["actors"] = [agent_id] if agent_id else []
+    try:
+        from ascendc_pilot.ownership import infer_execution_mode
+
+        merged["execution_mode"] = infer_execution_mode(
+            agent_id=agent_id or None,
+            role_id=str(merged.get("role_id") or "") or None,
+            execution_mode=None,
+        )
+    except Exception:
+        pass
+
+
 def _apply_mode_overlay(meta: dict[str, Any], mode: str | None) -> dict[str, Any]:
     overlays = meta.get("mode_overlays") if isinstance(meta.get("mode_overlays"), dict) else {}
     if not overlays:
@@ -434,6 +459,7 @@ def _apply_mode_overlay(meta: dict[str, Any], mode: str | None) -> dict[str, Any
                         merged.pop(k, None)
                     else:
                         merged[k] = v
+                _rederive_actor_fields(merged, patch)
                 actions.append(merged)
             else:
                 actions.append(dict(row))

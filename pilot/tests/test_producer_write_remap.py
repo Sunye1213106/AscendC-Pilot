@@ -48,18 +48,19 @@ def test_primary_mislabeled_write_allowed_via_active_action(tmp_path: Path) -> N
     op = tmp_path / "DemoOp"
     op.mkdir()
     ensure_agent_layout(op)
-    start_workflow(op, "uo-init", phase="extract", force_phase=True)
+    state = start_workflow(op, "uo-init", phase="normalize", force_phase=True)
+    run_id = str(state["run_id"])
     _write_active_action(
         op,
         {
-            "action_id": "extract_plan",
-            "actor_id": "uo-semantic-resolve",
+            "action_id": "resolve_gaps",
+            "actor_id": "uo-gap-resolve",
             "workflow_id": "uo-init",
-            "phase": "extract",
+            "phase": "normalize",
             "status": "prepared",
         },
     )
-    target = agent_root(op) / "uo" / "ir" / "extract_plan.yaml"
+    target = agent_root(op) / "runs" / run_id / "actions" / "resolve_gaps" / "staging.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)
 
     # Wrong project_root (parent) + primary agent label — previously PRIMARY_PROTECTED_WRITE
@@ -68,7 +69,7 @@ def test_primary_mislabeled_write_allowed_via_active_action(tmp_path: Path) -> N
         tool="write",
         path=str(target),
         agent="ascendc-pilot",
-        action="extract_plan",
+        action="resolve_gaps",
     )
     assert verdict.get("decision") == "allow", verdict
     assert verdict.get("ok") is not False
@@ -127,18 +128,19 @@ def test_task_path_agent_name_does_not_break_project_root(tmp_path: Path) -> Non
 
 
 def test_primary_still_blocked_without_active_producer(tmp_path: Path) -> None:
+    """A protected artifact needs a prepared producer, not just a phase."""
     op = tmp_path / "DemoOp"
     op.mkdir()
     ensure_agent_layout(op)
-    start_workflow(op, "uo-init", phase="extract", force_phase=True)
+    start_workflow(op, "uo-init", phase="normalize", force_phase=True)
     # No active_action / or primary is the declared actor for scope only
-    target = agent_root(op) / "uo" / "ir" / "extract_plan.yaml"
+    target = agent_root(op) / "uo" / "ir" / "unresolved.yaml"
     verdict = authorize(
         op,
         tool="write",
         path=str(target),
         agent="ascendc-pilot",
-        action="extract_plan",
+        action="resolve_gaps",
     )
     assert verdict.get("decision") == "deny"
     assert verdict.get("reason_code") == "PRIMARY_PROTECTED_WRITE"

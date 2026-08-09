@@ -14,6 +14,19 @@ DEFAULT_POLICY_IDS: list[str] = [
     "output-quality",
 ]
 
+# Optional global capabilities merged into every action (prepended, de-duped).
+# Keep empty unless a capability is truly universal; prefer per-action lists.
+DEFAULT_CAPABILITY_IDS: list[str] = []
+
+
+def _merge_capability_ids(capability_ids: list[str] | None) -> list[str]:
+    """Merge DEFAULT_CAPABILITY_IDS with per-action ids (defaults first, de-duped)."""
+    merged: list[str] = []
+    for cid in list(DEFAULT_CAPABILITY_IDS) + list(capability_ids or []):
+        if cid and cid not in merged:
+            merged.append(cid)
+    return merged
+
 
 def _st(sid: str, label_zh: str) -> dict[str, str]:
     return {"id": sid, "label_zh": label_zh}
@@ -102,7 +115,7 @@ def _act(
         "role_id": role_id,
         "execution_mode": mode,
         "policy_ids": list(policy_ids if policy_ids is not None else DEFAULT_POLICY_IDS),
-        "capability_ids": list(capability_ids or []),
+        "capability_ids": _merge_capability_ids(capability_ids),
         "action_method_id": method_id,
         "task_prompt_id": task_prompt_id,
         "context_profile_id": context_profile_id or f"{workflow_id}-{action_id.replace('_', '-')}",
@@ -248,7 +261,13 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 "resolve_gaps",
                 "apply_gap_patch",
             ],
-            "export": ["export_kb", "build_index", "export_tg_host_view", "export_integrity"],
+            "export": [
+                "export_kb",
+                "build_index",
+                "export_tg_host_view",
+                "export_adapter_pack",
+                "export_integrity",
+            ],
             "review": ["kb_review"],
         },
         "complete_gates": [
@@ -453,6 +472,17 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 capability_ids=[],
                 task_prompt_id=None,
                 output_contract_id="export-tg-host-view-v1",
+            ),
+            _act(
+                "export_adapter_pack",
+                label_zh="导出 TG adapter pack",
+                phases=["export"],
+                workflow_id="uo-init",
+                agent_id="deterministic-uo-engine",
+                role_id="deterministic_engine",
+                capability_ids=[],
+                task_prompt_id=None,
+                output_contract_id="export-adapter-pack-v1",
             ),
             _act(
                 "export_integrity",

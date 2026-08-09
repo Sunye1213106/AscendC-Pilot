@@ -371,12 +371,55 @@ def export_operator_kb(
             "source_closure": (kb.notes.get("quality") or {}).get("source_closure"),
             "errors": list(invariant_errors),
         }
-        path = uo_root / "checks" / "integrity.yaml"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            yaml.safe_dump(integrity, allow_unicode=True, sort_keys=True),
-            encoding="utf-8",
-        )
+        db = uo_root / "indexes" / "kb_graph.sqlite"
+        if db.is_file():
+            try:
+                import json as _json
+                import sqlite3
+
+                from uo_init.kb_index import set_meta_values
+
+                conn = sqlite3.connect(str(db))
+                try:
+                    conn.execute(
+                        "CREATE TABLE IF NOT EXISTS view_blob("
+                        "name TEXT PRIMARY KEY, schema_id TEXT, data TEXT NOT NULL)"
+                    )
+                    conn.execute(
+                        "INSERT OR REPLACE INTO view_blob(name, schema_id, data) "
+                        "VALUES(?,?,?)",
+                        (
+                            "checks/integrity.yaml",
+                            "",
+                            _json.dumps(
+                                integrity,
+                                ensure_ascii=False,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                        ),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+                set_meta_values(
+                    db,
+                    {
+                        "integrity_status": integrity["status"],
+                        "integrity_ok": integrity["ok"],
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                pass
+        from uo_init.kb_export import yaml_export_enabled
+
+        if yaml_export_enabled():
+            path = uo_root / "checks" / "integrity.yaml"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                yaml.safe_dump(integrity, allow_unicode=True, sort_keys=True),
+                encoding="utf-8",
+            )
         receipt["integrity"] = integrity
         receipt["ok"] = bool(receipt.get("ok")) and not invariant_errors
     return receipt
@@ -478,15 +521,12 @@ def extract_host_bundle(
     """Host-only analyse → metrics/gap/binding (no FAG defaults).
 
     Library default is ``closure_mode=off`` so callers that only need HostIR /
-    binding (e.g. key derivation) do not pay. ``extract_host`` passes
-    ``closure_mode=full`` so the uo-init product path keeps complete closure.
-
-    Speedups must come from removing duplicate work (re-inventory of the same
-    TUs, re-parse / re-normalize of the same guards), not from dropping closure
-    on the product path.
+    binding (e.g. key derivation) do not pay.  Product ``extract_host`` defaults
+    to ``keypath`` under ``UO_INIT_PROFILE=fast`` (cold ≤3 min); use
+    ``UO_INIT_PROFILE=full`` / ``closure_mode=full`` for every PRODUCTION control.
 
     Closure modes (``closure_mode`` overrides ``with_closure``):
-    - ``full``: every PRODUCTION control (uo-init extract_host default).
+    - ``full``: every PRODUCTION control (opt-in complete path).
     - ``keypath``: tiling-writer functions only (capped by ``closure_max_nodes``).
     - ``off``: skip controllability.
     """

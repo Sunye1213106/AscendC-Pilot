@@ -1,12 +1,37 @@
+# Inverse of the toy bridge: given a target key, which knobs spell it.
+#
+# The toy TilingKey has one dimension, `A`, encoded as the index of the chosen
+# value, so the declared set is 0..4. It stands in for a real operator's key
+# only in shape — enough to exercise the closure loop and a stub oracle without
+# an NPU. Every table here is keyed by the encoded value of `A`.
 version: 1
-dtype_dim: InputDType
-dtype: {}
-d_for: {}
-deter_for: {}
-s1_for: {}
+
+# `A` selects the dtype knob as well as the length, so it is the dtype dim.
+dtype_dim: A
+dtype:
+  "0": FLOAT
+  "1": FLOAT16
+  "2": FLOAT
+  "3": FLOAT16
+  "4": FLOAT
+
+# One construction loop: the target value of `A` picks the `n` knob. The
+# acceptance harness inverts this table to answer as the oracle.
+loops:
+  - dim: A
+    knob: n
+    table: n_for
+    default: [4]
+
+n_for:
+  "0": [1]
+  "1": [2]
+  "2": [4]
+  "3": [8]
+  "4": [16]
+
+defaults: {layout: FLAT, n: 4}
 masks: []
 require: {}
-defaults: {layout: FLAT, n: 4}
-loops: []
 bool_knobs: {}
 post: []

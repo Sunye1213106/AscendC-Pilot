@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Export the new UO graph as authoritative, reviewable YAML layers.
+"""Assemble the UO knowledge-base product and export it as one binary库.
 
-The SQLite database is deliberately absent from this module.  YAML is the
-single source of truth; :mod:`uo_init.kb_index` derives the disposable query
-index from ``ir/operator_graph.yaml``.
+SQLite (``indexes/kb_graph.sqlite``) is the on-disk authority and the only
+product written by default. Layered YAML is an opt-in human/debug export
+(``UO_KB_YAML=1``); reconstruct any single view on demand with
+:mod:`uo_init.dump` instead of keeping 27MB of duplicated text on disk.
 """
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -16,6 +19,17 @@ import yaml
 from uo_init.kb_model import Blocker, Domain, Edge, Evidence, KnowledgeBase, Node
 
 FORMAT_VERSION = 1
+
+
+def yaml_export_enabled() -> bool:
+    """Whether layered YAML files should be written beside the DB product.
+
+    Default off: the DB is the authority, and a second copy on disk is a second
+    thing that can disagree with it. ``UO_KB_YAML=1`` opts a run back in for
+    hand review; ``uo dump <view>`` is the reviewable path that does not.
+    """
+    raw = str(os.environ.get("UO_KB_YAML", "0")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 def _dump(path: Path, payload: Any) -> None:
@@ -273,14 +287,12 @@ def _kernel_view(
     }
 
 
-def export_kb(kb: KnowledgeBase, uo_root: str | Path) -> dict[str, Any]:
-    """Write every new-contract YAML artifact and return an export receipt.
+def assemble_artifacts(kb: KnowledgeBase) -> dict[str, Any]:
+    """Build every layered view in memory (no I/O).
 
-    Existing old-format files are neither read nor translated.  Re-running
-    with the same graph produces the same YAML bytes and artifact hashes.
+    Returns a dict with ``graph``, ``artifacts``, ``legal_keys``,
+    ``host_derivation``, ``materialize_ok``, and count fields used by export.
     """
-    root = Path(uo_root).expanduser().resolve()
-    root.mkdir(parents=True, exist_ok=True)
     payload = graph_payload(kb)
 
     interface = _select_nodes(
@@ -327,7 +339,6 @@ def export_kb(kb: KnowledgeBase, uo_root: str | Path) -> dict[str, Any]:
         if row.get("input_controllable") is True
         or (row.get("data") or {}).get("input_controllable") is True
     ]
-    # Prefer flattened fields from to_dict().
     for row in predicates:
         ic = row.get("input_controllable")
         if ic is None:
@@ -381,10 +392,6 @@ def export_kb(kb: KnowledgeBase, uo_root: str | Path) -> dict[str, Any]:
             "keys": {
                 str(d.get("name")): {
                     "id": d.get("id"),
-                    # Per-dimension, from the derivation. Reading the realization
-                    # *mode* instead marked all 19 dimensions derivable whenever
-                    # any binding existed, including the ones that close onto
-                    # host state a generator cannot set.
                     "input_derivable": bool(d.get("input_derivable")),
                     "input_closure": d.get("input_closure") or "",
                     "completeness": d.get("completeness") or "closed",
@@ -473,10 +480,6 @@ def export_kb(kb: KnowledgeBase, uo_root: str | Path) -> dict[str, Any]:
             "status": "extracted" if legal_keys else "not_extracted",
             "legal_key_count": len(legal_keys),
             "status_counts": dict(mat.get("key_status_counts") or {}),
-            # Which dimensions the solver could actually use, and which
-            # variables it had to isolate. Without this the counts below cannot
-            # be read: `unknown` means something different when 10 of 19
-            # dimensions never entered the conjunction.
             "solver": dict(mat.get("reachability") or {}),
             "keys": legal_keys,
         },
@@ -545,8 +548,10 @@ def export_kb(kb: KnowledgeBase, uo_root: str | Path) -> dict[str, Any]:
     manifest = {
         "version": FORMAT_VERSION,
         "status": "extracted",
-        "authority": "yaml",
+        "authority": "db",
+        "product": "indexes/kb_graph.sqlite",
         "derived_index": "indexes/kb_graph.sqlite",
+        "yaml_export": yaml_export_enabled(),
         "op_name": kb.op_name,
         "architecture": kb.architecture,
         "graph_fingerprint": payload["fingerprint"],
@@ -556,60 +561,151 @@ def export_kb(kb: KnowledgeBase, uo_root: str | Path) -> dict[str, Any]:
     }
     artifacts["manifest.yaml"] = manifest
 
-    for rel_path, content in sorted(artifacts.items()):
-        _dump(root / rel_path, content)
+    host_derivation = None
+    for key in ("host_derivation", "host_derivation_dict"):
+        raw = kb.notes.get(key)
+        if isinstance(raw, dict) and raw:
+            host_derivation = raw
+            break
+        to_dict = getattr(raw, "to_dict", None)
+        if callable(to_dict):
+            host_derivation = to_dict()
+            break
 
-    if legal_keys:
-        from uo_init.materialize_tiling import write_legal_key_index
+    return {
+        "graph": payload,
+        "artifacts": artifacts,
+        "legal_keys": legal_keys,
+        "host_derivation": host_derivation,
+        "materialize_ok": mat_ok,
+        "node_count": len(payload["nodes"]),
+        "edge_count": len(payload["edges"]),
+        "blocker_count": len(kb.blockers),
+        "legal_key_count": len(legal_keys),
+        "template_block_count": len(template_blocks),
+        "graph_fingerprint": payload["fingerprint"],
+    }
 
-        write_legal_key_index(root, legal_keys)
+
+def _content_sha256(payload: Any) -> str:
+    raw = yaml.safe_dump(
+        payload,
+        allow_unicode=True,
+        sort_keys=True,
+        default_flow_style=False,
+    ).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def export_kb(kb: KnowledgeBase, uo_root: str | Path) -> dict[str, Any]:
+    """Write the SQLite KB product and optionally YAML layers; return a receipt.
+
+    Primary write is always ``indexes/kb_graph.sqlite`` (all layers as blobs).
+    YAML write is gated by :func:`yaml_export_enabled` (``UO_KB_YAML``, default off).
+    """
+    root = Path(uo_root).expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    assembled = assemble_artifacts(kb)
+    artifacts: dict[str, Any] = assembled["artifacts"]
+    legal_keys: list[dict[str, Any]] = list(assembled["legal_keys"] or [])
+    payload = assembled["graph"]
 
     hashes = {
         rel_path: {
-            "sha256": _sha256(root / rel_path),
+            "sha256": _content_sha256(content),
             "status": "extracted",
         }
-        for rel_path in sorted(artifacts)
+        for rel_path, content in sorted(artifacts.items())
     }
-    if (root / "tiling" / "legal_key_index.jsonl").is_file():
+    if legal_keys:
+        legal_raw = "".join(
+            json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n"
+            for row in legal_keys
+        ).encode("utf-8")
         hashes["tiling/legal_key_index.jsonl"] = {
-            "sha256": _sha256(root / "tiling" / "legal_key_index.jsonl"),
+            "sha256": hashlib.sha256(legal_raw).hexdigest(),
             "status": "extracted",
         }
-    # Flat `hashes` map is what TG validate_intake / understand intake consume.
     hash_payload = {
         "version": FORMAT_VERSION,
         "status": "extracted",
         "artifacts": hashes,
         "hashes": {rel: meta["sha256"] for rel, meta in hashes.items()},
     }
-    _dump(root / "checks" / "artifact_hashes.yaml", hash_payload)
+    artifacts["checks/artifact_hashes.yaml"] = hash_payload
+
+    from uo_init.kb_index import write_kb_database
+
+    db_receipt = write_kb_database(
+        root,
+        payload,
+        views=artifacts,
+        legal_keys=legal_keys,
+        host_derivation=assembled.get("host_derivation"),
+        key_reachability=artifacts.get("tiling/key_reachability.yaml"),
+        meta={
+            "authority": "db",
+            "yaml_export": yaml_export_enabled(),
+            "integrity_status": "unknown",
+        },
+    )
+
+    wrote_yaml = False
+    if yaml_export_enabled():
+        wrote_yaml = True
+        for rel_path, content in sorted(artifacts.items()):
+            _dump(root / rel_path, content)
+        if legal_keys:
+            from uo_init.materialize_tiling import write_legal_key_index
+
+            write_legal_key_index(root, legal_keys)
+
     return {
         "ok": True,
         "uo_root": root.as_posix(),
-        "graph_fingerprint": payload["fingerprint"],
-        "artifact_count": len(artifacts) + 1,
-        "node_count": len(payload["nodes"]),
-        "edge_count": len(payload["edges"]),
-        "blocker_count": len(kb.blockers),
-        "legal_key_count": len(legal_keys),
-        "template_block_count": len(template_blocks),
-        "materialize_ok": mat_ok,
+        "graph_fingerprint": assembled["graph_fingerprint"],
+        "artifact_count": len(artifacts),
+        "node_count": assembled["node_count"],
+        "edge_count": assembled["edge_count"],
+        "blocker_count": assembled["blocker_count"],
+        "legal_key_count": assembled["legal_key_count"],
+        "template_block_count": assembled["template_block_count"],
+        "materialize_ok": assembled["materialize_ok"],
+        "authority": "db",
+        "database": db_receipt.get("database"),
+        "yaml_export": wrote_yaml,
     }
 
 
 
 def load_graph(uo_root: str | Path) -> dict[str, Any]:
-    """Load the sole canonical YAML graph used by the index builder."""
-    path = Path(uo_root) / "ir" / "operator_graph.yaml"
-    if not path.is_file():
-        raise FileNotFoundError(f"authoritative graph missing: {path}")
-    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    """Load the canonical operator graph: the DB first, YAML only as a fallback.
+
+    Reading YAML first would make a stale hand-edited export outrank the
+    product every action writes — the same inversion ``authority: db`` in the
+    meta table exists to state.
+    """
+    root = Path(uo_root)
+    path = root / "ir" / "operator_graph.yaml"
+    db = root / "indexes" / "kb_graph.sqlite"
+    payload: Any = None
+    source: Any = db
+    if db.is_file():
+        from uo_init.kb_index import load_view_blob
+
+        payload = load_view_blob(db, "ir/operator_graph.yaml")
+    if not isinstance(payload, dict):
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"authoritative graph missing: no DB blob at {db} and no {path}"
+            )
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        source = path
     if not isinstance(payload, dict) or payload.get("version") != FORMAT_VERSION:
-        raise ValueError(f"unsupported operator graph: {path}")
+        raise ValueError(f"unsupported operator graph: {source}")
     for key in ("nodes", "edges", "evidence", "domains"):
         if key not in payload:
-            raise ValueError(f"operator graph missing {key}: {path}")
+            raise ValueError(f"operator graph missing {key}: {source}")
     return payload
 
 

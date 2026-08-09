@@ -5,7 +5,7 @@ alwaysApply: true
 
 # AscendC-Pilot 产品修改准则
 
-改 Pilot / UO / TG / OpenCode 插件时遵守。细则见 `docs/README.md`、`docs/skill-and-prompt-principles.md`、`docs/product-change-principles.md`。
+改 Pilot / UO / TG / OpenCode 插件时遵守。细则见 `docs/README.md`、`docs/design/skill-prompt.md`、`docs/design/principles.md`。
 
 ## 1. 公共优先，禁止碎片化
 

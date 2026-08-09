@@ -1,7 +1,7 @@
 # AscendC-Pilot 系统设计
 
 > 描述系统**如何设计、如何工作**：UO 如何从源码建成知识库，TG 如何用知识库做 TilingKey 全覆盖。  
-> 方法论细节见 [tilingkey-closure-agent.md](./tilingkey-closure-agent.md)；重构缺口见 [refactor-plan-v3.md](./refactor-plan-v3.md)；UO 控制闭合见 [control-closure.md](./control-closure.md)。
+> 方法论细节见 [tilingkey-closure-agent.md](./tilingkey-closure-agent.md)；现状架构见 [architecture.md](./architecture.md)；UO 控制闭合见 [control-closure.md](./control-closure.md)。
 
 ---
 
@@ -131,8 +131,8 @@ prepare → scope → extract → normalize → export → review
 | normalize | `derive_key_fields` | 各 TilingKey 维回溯到输入根 |
 | | `normalize_predicates` | 谓词归一，未决守卫进 gap |
 | | `resolve_gaps` / `apply_gap_patch` | LLM 补洞 → 确定性打补丁（须改表达式） |
-| export | `export_kb` | 组装分层 YAML + materialize |
-| | `build_index` | SQLite 派生索引 |
+| export | `export_kb` | 组装图 → 写 sqlite 权威库（可选 YAML，`UO_KB_YAML`） |
+| | `build_index` | 从 YAML 重建 sqlite，或确认 DB-only 产品就绪 |
 | | `export_tg_host_view` | TG 搜索投影 |
 | | `export_integrity` | 指纹一致性 |
 | review | `kb_review` | 质量门禁（referee） |
@@ -155,7 +155,7 @@ HostIR
   │ materialize_tiling：TPL 组笛卡尔 → 合法 key 表 D
   │ key_reachability：共享 acp_common Z3 判静态可达性
   ▼
-分层 KB（kb_export，authority: yaml）
+分层 KB（kb_export → sqlite authority: db；YAML 可选）
 ```
 
 | 模块 | 职责 |
@@ -232,18 +232,13 @@ UO 的 Z3 **不是**全覆盖终点，而是给 TG 的静态骨架与剪枝证�
 
 | 路径 | 内容 |
 | --- | --- |
-| `manifest.yaml` | 状态、`authority: yaml`、fingerprint |
-| `ir/operator_graph.yaml` | **唯一语义权威图** |
+| `indexes/kb_graph.sqlite` | **唯一 on-disk 权威产物**（graph + view_blob + legal_key_index + host_derivation + field_*） |
+| `manifest.yaml` 等分层 YAML | 可选导出（`UO_KB_YAML=1`）；可用 `uo_init.dump` 从 DB 重建 |
+| `ir/operator_graph.yaml` | 图的可读导出（权威在 DB） |
 | `ir/host_derivation.yaml` | 完整派生（含守卫审计） |
 | `ir/tg_host_view.yaml` | TG 投影：字段 → roots → writers → knobs |
-| `ir/input_derivable.yaml` | 每维是否可输入驱动 |
-| `ir/unresolved.yaml` | blockers |
-| `tiling/key_derivations.yaml` | TG 用精简派生 |
-| `tiling/exhaustive_key_space.yaml` | 维定义 + 模板块笛卡尔 |
-| `tiling/legal_key_index.jsonl` | 声明集 D 逐行 |
+| `tiling/legal_key_index.jsonl` | 声明集 D 逐行（DB 表可 dump） |
 | `tiling/key_reachability.yaml` | 静态可达性 |
-| `tiling/variables.yaml` / `constraints.yaml` | 变量与约束 |
-| `indexes/kb_graph.sqlite` | 可丢弃查询索引 |
 
 ### 4.6 UO 能力边界
 
@@ -444,7 +439,7 @@ acp start tg-solve ...
 | --- | --- |
 | [control-closure.md](./control-closure.md) | UO 控制来源闭合图细节 |
 | [tilingkey-closure-agent.md](./tilingkey-closure-agent.md) | 全覆盖方法论（规格书级） |
-| [refactor-plan-v3.md](./refactor-plan-v3.md) | 闭环产品化缺口与改造计划 |
+| [architecture.md](./architecture.md) | 现状架构（UO / TG / 三域） |
 | [../fag/tilingkey-closure-report.md](../fag/tilingkey-closure-report.md) | FAG arch35 实证报告 |
 | [../debug/handoff.md](../debug/handoff.md) | Clang/派生解析问题记录 |
 | [../debug/open-problems.md](../debug/open-problems.md) | 未决问题 |

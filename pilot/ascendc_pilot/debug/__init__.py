@@ -631,9 +631,15 @@ def patch_child_session_id(
             action_id=aid,
         )
 
+    # The control-plane row spells the bound session `external_task_session_id`;
+    # this is the debug-facing API, so expose `child_session_id` too. Without it
+    # the returned shape depends on whether debug happens to be enabled.
+    registration = dict(reg_row or debug_target or {})
+    registration.setdefault("child_session_id", child)
+
     return {
         "ok": True,
-        "registration": reg_row or debug_target,
+        "registration": registration,
         "registration_id": reg_id,
         "dispatch_nonce": nonce,
         "control_plane": True,

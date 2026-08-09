@@ -1,15 +1,20 @@
 # Unified UO knowledge-base schema.
 #
-# One graph, several layered views. The YAML files under `.ascendc-pilot/uo/`
-# are authoritative; `indexes/kb_graph.sqlite` is a pure derivation of them and
-# must never be edited by hand.
+# One graph, several layered views. On-disk authority is
+# `indexes/kb_graph.sqlite` (`meta.authority=db`). Layered YAML under
+# `.ascendc-pilot/uo/` is an optional human/debug export gated by `UO_KB_YAML`
+# (default 1 for test compat; production target 0). Every dumpable view must be
+# reconstructible from DB `view_blob` / tables via `uo_init.dump`.
 #
 # Consumed by:
-#   - uo_init.kb_export   (writes the YAML layers)
-#   - uo_init.kb_index    (rebuilds the sqlite index from the YAML)
-#   - uo_init.uo_query    (fixed query patterns for CE)
-#   - testcase-generation (variables + constraints -> Z3)
+#   - uo_init.kb_export   (assembles views; writes sqlite; optional YAML)
+#   - uo_init.kb_index    (sqlite product writer / YAML→DB rebuild)
+#   - uo_init.dump        (YAML-on-demand from DB)
+#   - uo_init.uo_query / source_locator (query + file:line locate)
+#   - testcase-generation (variables + constraints -> Z3; loads DB or YAML)
 version: 1
+authority: db
+product: indexes/kb_graph.sqlite
 
 # ---------------------------------------------------------------------------
 # Status vocabulary. Every node, edge and artifact carries one.
@@ -143,12 +148,18 @@ invariants:
     rule: 每个 Predicate 的 owner_id 必须是已声明的分支节点
   - id: artifact_hash_match
     rule: checks/artifact_hashes.yaml 中每个条目的 sha256 与实际文件一致
-  - id: derived_index_is_pure
-    rule: 由 YAML 重建 sqlite 两次必须得到同样的内容摘要
+  - id: db_product_idempotent
+    rule: >
+      同一 graph 写入 sqlite 两次必须得到同样的内容摘要；
+      若存在 YAML，由 YAML rebuild 与内存 assemble→write 指纹一致
+  - id: dump_reconstructible
+    rule: manifest / quality / tilingdata / kernel 等 view 必须能从 DB dump 还原
 
 # ---------------------------------------------------------------------------
-# Layer -> files. `required` files must exist for TG intake; `optional` may
-# carry `status: not_extracted` and still pass, but are counted in quality.
+# Layer -> files. When YAML is exported (`UO_KB_YAML=1`), `required` files must
+# exist for legacy TG intake. With DB authority (`UO_KB_YAML=0`), the same
+# logical views live in sqlite `view_blob` and TG loads them via adapters.
+# `optional` may carry `status: not_extracted` and still pass.
 # ---------------------------------------------------------------------------
 layers:
   meta:

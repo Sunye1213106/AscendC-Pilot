@@ -24,6 +24,16 @@ _FORBIDDEN_PATTERNS = [
     re.compile(r"(?i)\bpython\s+.*\b(tg-init|tg-plan|tg-solve|build_layered_kb)\b"),
 ]
 
+# Shared policies injected into both workflow skills and agents (same set).
+COMPOSE_POLICY_IDS: tuple[str, ...] = (
+    "pilot-control",
+    "language",
+    "evidence",
+    "code-access",
+    "source-authority",
+    "output-quality",
+)
+
 
 def _load_yaml(path: Path) -> dict[str, Any]:
     if yaml is None or not path.is_file():
@@ -554,12 +564,7 @@ def _compose_skill_body(skills: Path, wid: str, meta: dict[str, Any]) -> str:
     _, body = _require_skill_frontmatter(raw, path=src if src.is_file() else None)
     body = _replace_actions_table(body, meta)
     # Inject shared policies once (same core as agents — avoid skill-local forks).
-    for pid in (
-        "pilot-control",
-        "evidence",
-        "code-access",
-        "source-authority",
-    ):
+    for pid in COMPOSE_POLICY_IDS:
         marker = f"## Composed: {pid}"
         text = _read_policy(skills, pid)
         if marker not in body and text:
@@ -673,17 +678,9 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any]) -> str:
     reads = "\n".join(f"- `{x}`" for x in (agent_meta.get("read_scopes") or [])) or "- (none)"
     writes = "\n".join(f"- `{x}`" for x in (agent_meta.get("write_scopes") or [])) or "- (none)"
     forbidden = "\n".join(f"- {x}" for x in (agent_meta.get("forbidden") or []))
-    # Shared policies for ALL agents (DEFAULT_POLICY_IDS core). Do not push
-    # high-confidence / source-window rules into individual skill prompts only.
-    _agent_policy_ids = (
-        "pilot-control",
-        "language",
-        "evidence",
-        "code-access",
-        "source-authority",
-        "output-quality",
-    )
-    _agent_policies = {pid: _read_policy(skills, pid) for pid in _agent_policy_ids}
+    # Shared policies for ALL agents (same COMPOSE_POLICY_IDS as workflow skills).
+    # Do not push high-confidence / source-window rules into individual skill prompts only.
+    _agent_policies = {pid: _read_policy(skills, pid) for pid in COMPOSE_POLICY_IDS}
     hc = _agent_policies["pilot-control"]
     lang = _agent_policies["language"]
     front: dict[str, Any] = {

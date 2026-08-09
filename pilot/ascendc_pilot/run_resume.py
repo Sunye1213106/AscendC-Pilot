@@ -200,20 +200,30 @@ def _remove_contract_paths(agent: Path, rels: tuple[str, ...]) -> list[str]:
 def _artifact_checklist(agent: Path, workflow_id: str) -> list[dict[str, Any]]:
     """Key artifacts for summary display (workflow-scoped)."""
     owned = action_owned_artifacts(workflow_id)
+    # Keyed by the action ids that own artifacts today. An id with no entry
+    # falls back to itself, so a stale map silently shows raw ids instead of
+    # labels — keep this in step with the Workflow Spec.
     label_map = {
+        # uo-init
         "prepare_layout": "布局/manifest",
-        "scope_confirmation": "范围确认",
-        "detect_score_pre": "抽取前评分",
-        "extract_plan": "抽取计划",
-        "detect_score_post": "抽取后评分",
-        "adjudicate_llm_tasks": "语义补丁(裁决)",
-        "apply_semantic_patch": "语义账本",
-        "key_triage": "KEY 粗分",
-        "key_resolution": "KEY 语义闭合",
-        "rebuild_from_ledger": "账本重建图",
-        "confidence_report": "置信度报告",
+        "scope_scan": "范围扫描",
+        "scope_confirm": "范围确认",
+        "extract_host": "Host 抽取",
+        "extract_tiling_key": "TilingKey 抽取",
+        "extract_registry": "算子族登记",
+        "extract_kernel": "Kernel 抽取",
+        "normalize_variables": "变量归一",
+        "normalize_predicates": "谓词归一",
+        "derive_key_fields": "KEY 字段推导",
+        "resolve_gaps": "缺口补齐",
+        "apply_gap_patch": "缺口补丁应用",
+        "export_kb": "KB 导出",
+        "export_adapter_pack": "适配包导出",
+        "export_tg_host_view": "TG Host 视图",
         "export_integrity": "完整性检查",
+        "build_index": "KB 索引库",
         "kb_review": "KB 审查",
+        # tg / ce
         "kb_check": "UO KB 就绪",
         "contract_build": "TG 合同",
         "code_review": "CE 审查",

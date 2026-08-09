@@ -10,7 +10,14 @@ from ascendc_pilot.io import print_json
 def print_result(payload: dict[str, Any]) -> int:
     """CLI adapter for the legacy-compatible ``uo-scope`` wrapper."""
     print_json(payload)
-    return 0 if bool(payload.get("ok")) else 1
+    ok = payload.get("ok")
+    if ok is None:
+        obs = payload.get("observation") if isinstance(payload, dict) else None
+        if isinstance(obs, dict):
+            ok = str(obs.get("outcome") or "") == "success"
+        else:
+            ok = False
+    return 0 if bool(ok) else 1
 
 
 def _resolve_op_name(project: Path, op_name: str) -> str:
@@ -96,6 +103,14 @@ def run_uo_scope(
     if action == "scope_confirm" and decision:
         ctx["decision"] = decision
         ctx["notes"] = notes
+        if str(decision).strip().lower() in {
+            "continue",
+            "accept",
+            "confirm",
+            "yes",
+            "y",
+        }:
+            ctx["force_confirm"] = True
 
     fn = pe.ENGINES[action]
     try:
@@ -105,4 +120,9 @@ def run_uo_scope(
     out = dict(out or {})
     out.setdefault("step", step)
     out.setdefault("engine", action)
-    return _record_step_result(root, out, action_id=action, step_id=step)
+    recorded = _record_step_result(root, out, action_id=action, step_id=step)
+    # Observation wrapper historically omitted top-level ``ok``; drivers and
+    # print_result need it to distinguish success from parse-only payloads.
+    recorded = dict(recorded or {})
+    recorded.setdefault("ok", bool(out.get("ok")))
+    return recorded

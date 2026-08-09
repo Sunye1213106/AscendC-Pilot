@@ -23,23 +23,24 @@ D = 8705   R = 0   E = 0   未判定 = 8705
 
 | 判定 | 数量 | 依据 |
 | --- | ---: | --- |
-| 可达（有真实 Host witness） | 4169 | 每个 Key 都有一条真实跑通的输入，见 `fag_arch35_reachable_cases.csv` |
-| 不可达（有源码引理证明） | 4536 | 13 组引理，每条引用具体源码行 |
-| **合计** | **8705** | 恰好等于声明数 |
-| 未判定 | 0 | — |
+| 声明且可达（`R ∩ D`） | 4169 | 每个 Key 都有真实 Host witness |
+| 不可达（`E`，源码引理） | 4536 | 13 组引理，每条引用具体源码行 |
+| **声明合计** | **8705** | `\|D\| = \|R∩D\| + \|E\|`，未判定 = 0 |
+| 未声明但曾产生（`R − D`） | 57 | 分发缺口，不计入声明闭合 |
+| 可达用例表总行数（`\|R\|`） | 4226 | `4169 + 57`，见 `fag_arch35_reachable_cases.csv` |
 
-两个集合互不相交（`R ∩ E = ∅`），在 4227 个真实 Key 上逐个校验过。
+两个集合互不相交（`R ∩ E = ∅`），在全部 4226 个真实 witness 上做过反例校验。
 
 ### 校验方式
 
-`vg_verify_csv.py` 对交付物做四项检查，全部通过：
+历史脚本（`.probe_cache/vg_*.py`，已退役）对交付物做过四项检查，全部通过：
 
 - 表中每一行的 19 维反向编码回 TilingKey，与该行 Key 一致（0 处不符）
 - 表中没有任何一个 Key 被某条引理判为不可达（0 处冲突）
 - 所有"声明且可达"的 Key 都在表中（0 处缺失）
 - 4169 + 4536 = 8705
 
-`vg_exclude.py` 另有一道硬门禁：任何被规则判为不可达、却存在真实 witness 的 Key，都会让它拒绝写出结果并报错退出。这是防"假 100%"的最后一道防线。
+现行等价门禁在 `tg-closure apply-rules` / `report`（`testcase_agent.closure`）：任何被规则判为不可达却存在真实 witness 的 Key，都会撤销冲突规则或拒绝认证。这是防"假 100%"的最后一道防线。
 
 ---
 
@@ -535,19 +536,17 @@ InputDType=1 (fp32) + IsRope=1 + IsDNoEqual=1 + DTemplateNum=192
 
 bf16 和 fp16 都声明了 rope 变体，唯独 fp32 没有。而 Host tiling 会为 fp32+rope 的输入算出对应 Key，运行时将找不到 kernel 模板。这是与覆盖率相反方向的问题：不是测试缺口，是**分发缺口**。
 
-明细见 `fag_arch35_undeclared_keys.csv`。
+未声明 Key 明细可用 `tg-closure report` 再生（历史文件 `fag_arch35_undeclared_keys.csv` 未随仓库预置）。
 
 ---
 
 ## 4. 交付物
 
-| 文件 | 内容 |
-| --- | --- |
-| `docs/fag/data/fag_arch35_reachable_cases.csv` | 4226 个可达 Key，每个附完整输入与 19 维取值 |
-| `docs/fag/data/fag_arch35_closure.csv` | 8705 个声明 Key 逐个判定与依据 |
-| `docs/fag/data/fag_arch35_undeclared_keys.csv` | 57 个未声明但可产生的 Key |
-| `.probe_cache/vg_excluded_why.csv` | 4536 个不可达 Key 与命中的规则 |
-| `operators/.../arch35/proof_rules.yaml` | 引理与源码引用 |
+| 文件 | 内容 | 状态 |
+| --- | --- | --- |
+| `docs/fag/data/fag_arch35_reachable_cases.csv` | 4226 行 witness（4169 声明可达 + 57 未声明），每行附完整输入与 19 维 | **在库** |
+| 逐 Key 闭合报告 / undeclared 明细 | 历史跑时由 `vg_closure` 写出；现行用 `tg-closure report` 再生 | 不随仓库预置 |
+| `operators/.../arch35/proof_rules.yaml` | 当时的引理与源码引用（冷启动应清空，由闭环自证） | 历史校准痕迹 |
 
 `fag_arch35_reachable_cases.csv` 的每一行都经过复跑确认：把该行输入送给真实 Host，返回的就是该行 Key。
 
@@ -589,13 +588,15 @@ python3 run_fag.py --case fag_arch35_reachable_cases.csv --sheet Sheet1 --pta_mo
 
 ---
 
-## 5. 复现方式
+## 5. 复现方式（现行 CLI）
+
+历史 `.probe_cache/vg_*.py` 已退役。等价命令：
 
 ```bash
-python .probe_cache/vg_ledger.py            # 从原始记录重建 R 账本
-python .probe_cache/vg_check_inherited.py   # 引理的数据侧交叉验证
-python .probe_cache/vg_exclude.py           # 应用引理生成 E（含反例门禁）
-python .probe_cache/vg_closure.py           # 逐 Key 闭合报告
-python .probe_cache/vg_witness_csv.py       # 重建并复跑确认可达用例表
-python .probe_cache/vg_verify_csv.py        # 交付物自检
+python -m testcase_agent.closure.cli --root <op_src> rebuild      # 从原始记录重建 R
+python -m testcase_agent.closure.cli --root <op_src> apply-rules # 应用 sound 引理 → E
+python -m testcase_agent.closure.cli --root <op_src> report      # 逐 Key 闭合报告
+python -m testcase_agent.closure.cli --root <op_src> state       # D/R/E/gap 计数
 ```
+
+完整 SOP 见 [`docs/design/tilingkey-closure-agent.md`](../design/tilingkey-closure-agent.md)。

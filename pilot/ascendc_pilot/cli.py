@@ -335,6 +335,26 @@ def main(argv: list[str] | None = None) -> int:
         p_ex.add_argument("--line", type=int, default=0)
         p_ex.add_argument("--line-end", type=int, default=0)
         p_ex.add_argument("--limit", type=int, default=50)
+    p_dump = p_uo_sub.add_parser("dump", help="从 kb_graph.sqlite 按需导出 YAML view")
+    p_dump.add_argument(
+        "view",
+        nargs="?",
+        default="",
+        help="view 名/别名：manifest, quality, tilingdata, kernel, …",
+    )
+    p_dump.add_argument("--project", type=Path, default=Path.cwd())
+    p_dump.add_argument("--out", type=Path, default=None, help="输出路径（省略则打印 YAML）")
+    p_dump.add_argument("--list", action="store_true", help="列出 DB 中可用 view")
+    p_loc = p_uo_sub.add_parser("locate", help="定位实体源码 file:line")
+    p_loc.add_argument("query", help="实体 id / 维名 / 字段名 / 分支 id")
+    p_loc.add_argument("--project", type=Path, default=Path.cwd())
+    p_loc.add_argument("--kind", default="", help="逗号分隔 node kinds")
+    p_loc.add_argument(
+        "--mode",
+        choices=("search", "dim", "branch", "field"),
+        default="search",
+    )
+    p_loc.add_argument("--limit", type=int, default=20)
 
     p_dbg = sub.add_parser(
         "debug",
@@ -861,10 +881,74 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     if args.cmd == "uo":
         from ascendc_pilot.paths import uo_root
-        from uo_init.uo_query import open_query
 
         project = Path(args.project).resolve()
         uo = uo_root(project)
+        if args.uo_cmd == "dump":
+            from uo_init.dump import dump_view
+            from uo_init.kb_index import list_view_blobs
+
+            db = uo / "indexes" / "kb_graph.sqlite"
+            if getattr(args, "list", False):
+                print_json(
+                    {"ok": db.is_file(), "views": list_view_blobs(db) if db.is_file() else []}
+                )
+                return 0 if db.is_file() else 1
+            if not str(getattr(args, "view", "") or "").strip():
+                print_json({"ok": False, "error": "view_required"})
+                return 2
+            try:
+                result = dump_view(uo, str(args.view), out=getattr(args, "out", None))
+                if getattr(args, "out", None):
+                    print_json({k: v for k, v in result.items() if k != "payload"})
+                else:
+                    import yaml
+
+                    print(
+                        yaml.safe_dump(
+                            result.get("payload"),
+                            allow_unicode=True,
+                            sort_keys=True,
+                            default_flow_style=False,
+                        ),
+                        end="",
+                    )
+                return 0
+            except Exception as exc:  # noqa: BLE001
+                print_json({"ok": False, "error": str(exc)[:300]})
+                return 1
+        if args.uo_cmd == "locate":
+            from uo_init.source_locator import open_locator
+
+            try:
+                loc = open_locator(uo)
+                kinds = [k for k in str(getattr(args, "kind", "") or "").split(",") if k.strip()]
+                mode = str(getattr(args, "mode", "search") or "search")
+                query = str(args.query or "")
+                limit = int(getattr(args, "limit", 20) or 20)
+                if mode == "dim":
+                    rows = loc.locate_dim(query, limit=limit)
+                elif mode == "branch":
+                    rows = loc.locate_branch(query, limit=limit)
+                elif mode == "field":
+                    rows = loc.locate_field(query, limit=limit)
+                else:
+                    rows = loc.locate(query, kinds=kinds or None, limit=limit)
+                print_json(
+                    {
+                        "ok": True,
+                        "mode": mode,
+                        "count": len(rows),
+                        "locations": [r.to_dict() for r in rows],
+                    }
+                )
+                return 0
+            except Exception as exc:  # noqa: BLE001
+                print_json({"ok": False, "error": str(exc)[:300]})
+                return 1
+
+        from uo_init.uo_query import open_query
+
         eid = str(args.entity_id or "")
         try:
             q = open_query(uo)

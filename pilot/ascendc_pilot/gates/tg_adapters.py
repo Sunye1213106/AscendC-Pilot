@@ -483,12 +483,19 @@ _ADAPTER_METHODS = (
     "generation_knobs",
 )
 
+# Cold-start packages keep only identity + log protocol. Adapter pack YAML
+# (search/construction/feature/bridge/proof/observations) is optional until
+# export_adapter_pack writes it.
 _REQUIRED_YAML = (
     "operator.yaml",
     "log_protocol.yaml",
+)
+
+_OPTIONAL_ADAPTER_YAML = (
     "search_hints.yaml",
     "construction_hints.yaml",
     "feature_bindings.yaml",
+    "bridge_spec.yaml",
     "proof_rules.yaml",
     "observations.yaml",
 )
@@ -512,7 +519,8 @@ def gate_adapter_completeness(
     Checks:
       - OperatorAdapter protocol surface (9 methods) when an adapter is loaded
       - knob_schema covers every describe() column
-      - 7 required yaml segments non-empty
+      - operator.yaml + log_protocol.yaml present (adapter pack optional)
+      - when adapter-pack YAML is present, required sections are non-empty
       - construction_hints / feature_bindings are not byte-identical to skill examples
     """
     import hashlib
@@ -541,10 +549,19 @@ def gate_adapter_completeness(
     for name in _REQUIRED_YAML:
         path = pkg / name
         if not path.is_file():
-            # bridge_spec is optional for toy; proof/observations required by plan.
-            if name == "bridge_spec.yaml":
-                continue
             issues.append(f"missing:{name}")
+            continue
+        doc = _load(path)
+        if not isinstance(doc, dict) or not doc:
+            issues.append(f"empty:{name}")
+            continue
+        for section in _REQUIRED_SECTIONS.get(name, ()):
+            if section not in doc:
+                issues.append(f"missing_section:{name}:{section}")
+
+    for name in _OPTIONAL_ADAPTER_YAML:
+        path = pkg / name
+        if not path.is_file():
             continue
         doc = _load(path)
         if not isinstance(doc, dict) or not doc:

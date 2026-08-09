@@ -16,8 +16,6 @@
 
 ## Domain Decisions
 
-- 遵循已加载 Policy 与 Capability 硬限制。
-
 ## Output
 
 - 合同 id：`tg-init-intent-v1`

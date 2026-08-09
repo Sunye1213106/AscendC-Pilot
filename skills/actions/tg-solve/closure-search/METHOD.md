@@ -16,7 +16,6 @@
 
 ## Domain Decisions
 
-- 遵循已加载 Policy 与 Capability 硬限制。
 - 证据规则见 capability `tilingkey-closure`，勿在本文件复制。
 - Schema 范例：`capabilities/tilingkey-closure/examples/search_hints.excerpt.yaml`（结构可照抄，数值不可搬）。
 - `feature_bindings` 的 `floor_terms` 见同目录 `feature_bindings.excerpt.yaml`。

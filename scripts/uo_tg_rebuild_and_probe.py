@@ -59,21 +59,33 @@ def probe(uo: Path) -> dict:
     quality = _load_yaml(uo / "quality.yaml")
     integrity = _load_yaml(uo / "checks" / "integrity.yaml")
 
-    if len(legal) != 8705:
-        add("LEGAL_COUNT", "blocking", True, f"legal={len(legal)} expected 8705")
     dims = key_space.get("dimensions") or []
     fields = key_space.get("fields") or {}
     if not dims and not fields:
         add("KEY_SPACE_EMPTY", "blocking", True, "key_space missing dimensions/fields")
     blocks = exhaustive.get("template_blocks") or []
+    product_sum = sum(int(b.get("product_count") or 0) for b in blocks)
+    declared = (
+        exhaustive.get("legal_key_count")
+        or key_space.get("legal_key_count")
+        or coverage.get("legal_key_count")
+        or (product_sum if product_sum else None)
+    )
+    if declared is not None and len(legal) != int(declared):
+        add(
+            "LEGAL_COUNT",
+            "blocking",
+            True,
+            f"legal={len(legal)} declared={int(declared)}",
+        )
     if not blocks:
         add("TEMPLATE_BLOCKS_EMPTY", "blocking", True, "exhaustive.template_blocks empty")
-    elif abs(sum(int(b.get("product_count") or 0) for b in blocks) - len(legal)) > 0:
+    elif abs(product_sum - len(legal)) > 0:
         add(
             "PRODUCT_SUM_MISMATCH",
             "blocking",
             True,
-            f"sum(product_count)={sum(int(b.get('product_count') or 0) for b in blocks)} legal={len(legal)}",
+            f"sum(product_count)={product_sum} legal={len(legal)}",
         )
     kfo = coverage.get("key_field_obligations") or {}
     if not kfo:
@@ -130,7 +142,8 @@ def probe(uo: Path) -> dict:
         "breaks": breaks,
         "blocking_count": len(blocking),
         "encode_sample_ok": f"{sample_ok}/50" if schema else "n/a",
-        "gate_pass": len(blocking) == 0 and len(legal) == 8705,
+        "declared_key_count": declared,
+        "gate_pass": len(blocking) == 0,
     }
 
 

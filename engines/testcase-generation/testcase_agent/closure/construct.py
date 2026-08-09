@@ -2,7 +2,7 @@
 """Build the input a target key asks for, instead of searching for it.
 
 Tables live in ``operators/<op>/<arch>/construction_hints.yaml``. Missing
-hints fail closed — there is no engine-side FAG construction table.
+hints are empty (cold-start / before ``export_adapter_pack``).
 
 The engine never names operator-specific Key dimensions. Loops, bool knobs
 and post-rules are declared in yaml (``loops`` / ``bool_knobs`` / ``post``).
@@ -18,14 +18,10 @@ from testcase_agent.closure import workspace as W
 
 @lru_cache(maxsize=4)
 def _hints() -> dict[str, Any]:
+    """Construction tables from the adapter pack; empty when not exported yet."""
     from replay.package_data import load_yaml
 
-    doc = load_yaml("construction_hints.yaml")
-    if not doc:
-        raise FileNotFoundError(
-            "operators/<op>/<arch>/construction_hints.yaml is required"
-        )
-    return doc
+    return load_yaml("construction_hints.yaml") or {}
 
 
 def _table(name: str) -> dict[str, Any]:
@@ -195,12 +191,12 @@ def build(t: Mapping[str, str], seed: int = 0) -> list:
 
 
 def explain(t: Mapping[str, str], seed: int = 0) -> list[str]:
-    """Human-readable reasons a target key is not constructible.
+    """Diagnostic notes for a target — never a reachability verdict.
 
-    Operator-specific input semantics may provide ``construct_reasons`` for
-    source-derived guards.  If no guard explains the failure, fall back to the
-    generic constructor result so the caller can separate "blocked by known
-    source lemma" from "constructor gap".
+    Prefers operator ``construct_reasons`` (rewrite-risk *hypotheses*) and
+    whether ``build`` can spell a case.  Callers must still construct + replay;
+    lemmas come from oracle HIT/REWRITE/REFUSE plus source proof, not from
+    this list alone.
     """
     del seed
     I = W.replay_inputs()
@@ -215,11 +211,13 @@ def explain(t: Mapping[str, str], seed: int = 0) -> list[str]:
             reasons.extend(str(x) for x in (I.construct_reasons(t) or []))
         except Exception as exc:  # noqa: BLE001
             reasons.append(f"construct_reasons_error:{str(exc)[:120]}")
-    if reasons:
-        return reasons
     try:
-        if build(t):
-            return []
+        built = build(t)
     except Exception as exc:  # noqa: BLE001
-        return [f"construct.build error:{str(exc)[:120]}"]
-    return ["constructor:no_case"]
+        reasons.append(f"construct.build error:{str(exc)[:120]}")
+        return reasons or ["constructor:error"]
+    if not built:
+        reasons.append("constructor:no_case")
+    elif reasons:
+        reasons.append("constructor:best_effort_case_emitted")
+    return reasons

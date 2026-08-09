@@ -1384,10 +1384,19 @@ class KeyFieldDeriver:
         local = self._local_defs(name, fn)
         # Declared without a guarded write in this scope: fall back to the
         # function summary, which has the RHS but no path conditions.
-        defs = self.ir.defs_by_function().get(fn, {}).get(name, [])
-        sites = [
-            DefSite(rhs=r, function=fn) for r in defs if r.strip() and r.strip() != name
-        ]
+        #
+        # Only when there is no write of our own. The summary entry carries no
+        # guard, so beside a guarded write it is an unguarded twin of it, and
+        # the chain then reads the value as unconditional — erasing the very
+        # branch that says the read can happen before anything wrote it.
+        sites: list[DefSite] = []
+        if not local:
+            defs = self.ir.defs_by_function().get(fn, {}).get(name, [])
+            sites = [
+                DefSite(rhs=r, function=fn)
+                for r in defs
+                if r.strip() and r.strip() != name
+            ]
         class_field: list[DefSite] = []
         if name in getattr(self.ir, "class_fields", ()):  # pragma: no branch
             for owner in ("fBaseParams", "tilingData"):
@@ -1446,8 +1455,16 @@ class KeyFieldDeriver:
         often not the scope we are expanding in. Accepting the definition only
         when exactly one function declares the name keeps this from confusing
         two unrelated locals that happen to share a name.
+
+        A scope that writes the name itself needs no help from elsewhere, and
+        taking it anyway is the wrong-equality case `_ident` warns about: FAG
+        spells 183 local names in more than one function, so unioning another
+        function's value in would answer a read in one scope with the other's
+        number under a `__reached_` guard.
         """
         if not name or name == RETURN_SLOT:
+            return []
+        if self.ir.local_writes_in(fn).get(name):
             return []
         owners = [
             other

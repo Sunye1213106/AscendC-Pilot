@@ -774,6 +774,7 @@ def record_pilot_result(
     )
     applied = apply_observation(project_root, obs)
     return {
+        "ok": bool(ok),
         "observation": obs,
         "applied": applied,
         "status": (applied.get("state") or {}).get("status"),

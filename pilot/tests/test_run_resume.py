@@ -150,7 +150,8 @@ def test_summary_lists_complete_and_interrupt(tmp_path: Path) -> None:
     assert summary["has_existing_run"] is True
     labels = {a["label_zh"] for a in summary["artifacts"] if a["present"]}
     assert "布局/manifest" in labels
-    assert "抽取前评分" in labels
+    # Every owned action must be labelled, not shown as a raw id.
+    assert all(a["label_zh"] != a["action_id"] for a in summary["artifacts"])
     assert "ask_question" in summary
     assert summary["resume_next_action"]
 
@@ -164,11 +165,13 @@ def test_ask_question_uses_current_workflow_name_for_tg_init(tmp_path: Path) -> 
 
 def test_owned_artifact_map_from_contracts() -> None:
     owned = action_owned_artifacts("uo-init")
-    assert "key_resolution" in owned
+    assert "derive_key_fields" in owned
     assert "input_derivable" not in owned
-    assert "apply_semantic_patch" in owned
-    assert "rebuild_from_ledger" in owned
-    assert any("input_derivable_patch" in p for p in owned["key_resolution"])
+    assert "export_kb" in owned
+    assert "export_adapter_pack" in owned
+    assert any("host_derivation" in p for p in owned["derive_key_fields"])
+    # The adapter pack is generated, so it is owned rather than a prior.
+    assert any("adapter/bridge_spec.yaml" in p for p in owned["export_adapter_pack"])
 
 
 def test_different_workflow_resume_do_not_pollute(tmp_path: Path) -> None:
@@ -184,74 +187,72 @@ def test_different_workflow_resume_do_not_pollute(tmp_path: Path) -> None:
     assert load_state(tmp_path)["run_id"] == uo_run
 
 
-def test_continue_scrubs_failed_extract_plan_products(tmp_path: Path) -> None:
+def test_continue_scrubs_failed_derive_key_fields_products(tmp_path: Path) -> None:
     st = start_workflow(tmp_path, "uo-init")
     run_id = st["run_id"]
     uo = uo_root(tmp_path)
 
     _write(uo / "manifest.yaml", {"ok": True})
     _write(uo / "ir" / "entrypoint_graph.yaml", {"nodes": []})
-    _write(uo / "ir" / "extract_plan_candidates.yaml", {"version": 1, "writer_candidates": []})
-    _issue_receipt(tmp_path, "detect_score_pre")
 
-    _write(uo / "ir" / "extract_plan.yaml", {"version": 1, "writers": [{"name": "Foo"}]})
-    _write(uo / "ir" / "host_subgraph.yaml", {"nodes": []})
-    _write(uo / "ir" / "kernel_subgraph.yaml", {"nodes": []})
+    # Owned by derive_key_fields → scrubbed.
+    _write(uo / "ir" / "host_derivation.yaml", {"version": 1, "fields": [{"name": "Foo"}]})
+    _write(uo / "ir" / "derive_key_fields_receipt.yaml", {"ok": True})
+    _write(uo / "tiling" / "key_derivations.yaml", {"derivations": []})
     _write(
         state_root(tmp_path) / "active_action.yaml",
         {
             "version": 1,
             "run_id": run_id,
-            "action_id": "extract_plan",
+            "action_id": "derive_key_fields",
             "status": "finalize_failed",
-            "actor_id": "uo-semantic-resolve",
+            "actor_id": "deterministic-uo-engine",
         },
     )
     _write(
-        runs_root(tmp_path) / run_id / "actions" / "extract_plan" / "session.yaml",
-        {"status": "finalize_failed", "action_id": "extract_plan", "run_id": run_id},
+        runs_root(tmp_path) / run_id / "actions" / "derive_key_fields" / "session.yaml",
+        {"status": "finalize_failed", "action_id": "derive_key_fields", "run_id": run_id},
     )
     st["status"] = "rework_required"
-    st["phase"] = "extract"
-    st["failed_gates"] = [{"id": "extract_plan_contract", "detail": {"error_code": "SCHEMA"}}]
-    st["last_failure"] = {"message_zh": "extract_plan 分层构建失败"}
+    st["phase"] = "normalize"
+    st["failed_gates"] = [{"id": "derive_key_fields_contract", "detail": {"error_code": "SCHEMA"}}]
+    st["last_failure"] = {"message_zh": "derive_key_fields 推导失败"}
     save_state(tmp_path, st)
 
     result = apply_resume_decision(tmp_path, "uo-init", "continue")
     assert result["ok"] is True
     assert result.get("resumed") is True
     scrub = result.get("resume_scrub") or {}
-    assert "extract_plan" in (scrub.get("scrubbed_actions") or [])
-    assert not (uo / "ir" / "extract_plan.yaml").is_file()
-    assert not (uo / "ir" / "host_subgraph.yaml").is_file()
-    assert not (uo / "ir" / "kernel_subgraph.yaml").is_file()
-    assert (uo / "ir" / "extract_plan_candidates.yaml").is_file()
+    assert "derive_key_fields" in (scrub.get("scrubbed_actions") or [])
+    assert not (uo / "ir" / "host_derivation.yaml").is_file()
+    assert not (uo / "ir" / "derive_key_fields_receipt.yaml").is_file()
+    assert not (uo / "tiling" / "key_derivations.yaml").is_file()
+    # Not owned by the failed action → kept.
     assert (uo / "ir" / "entrypoint_graph.yaml").is_file()
     assert not (state_root(tmp_path) / "active_action.yaml").is_file()
-    assert not (runs_root(tmp_path) / run_id / "actions" / "extract_plan").is_dir()
-    assert result.get("resume_next_action") == "extract_plan"
+    assert not (runs_root(tmp_path) / run_id / "actions" / "derive_key_fields").is_dir()
     assert load_state(tmp_path)["status"] == "running"
     assert load_state(tmp_path).get("failed_gates") == []
 
 
-def test_continue_scrubs_failed_key_resolution_and_semantic_ledger(tmp_path: Path) -> None:
+def test_continue_scrubs_failed_gap_patch_products(tmp_path: Path) -> None:
     st = start_workflow(tmp_path, "uo-init")
     run_id = st["run_id"]
     uo = uo_root(tmp_path)
 
     _write(uo / "manifest.yaml", {"ok": True})
-    _write(uo / "ir" / "key_triage.yaml", {"keys": []})
-    _write(uo / "ir" / "input_derivable_patch.yaml", {"partial": True})
-    _write(uo / "ir" / "semantic_resolution_ledger.yaml", {"entries": [{"bad": True}]})
+    _write(uo / "ir" / "unresolved.yaml", {"blockers": []})
+    _write(uo / "ir" / "gap_patch_receipt.yaml", {"partial": True})
+    _write(uo / "ir" / "gap_bindings.yaml", {"bindings": [{"bad": True}]})
 
-    st["phase"] = "resolve"
+    st["phase"] = "normalize"
     st["status"] = "rework_required"
     save_state(tmp_path, st)
     _write(
         state_root(tmp_path) / "active_action.yaml",
         {
             "run_id": run_id,
-            "action_id": "key_resolution",
+            "action_id": "apply_gap_patch",
             "status": "finalize_failed",
         },
     )
@@ -260,6 +261,8 @@ def test_continue_scrubs_failed_key_resolution_and_semantic_ledger(tmp_path: Pat
     assert result["ok"] is True
     scrub = result.get("resume_scrub") or {}
     scrubbed = set(scrub.get("scrubbed_actions") or [])
-    assert "key_resolution" in scrubbed
-    assert not (uo / "ir" / "input_derivable_patch.yaml").is_file()
-    assert not (uo / "ir" / "semantic_resolution_ledger.yaml").is_file()
+    assert "apply_gap_patch" in scrubbed
+    assert not (uo / "ir" / "gap_patch_receipt.yaml").is_file()
+    assert not (uo / "ir" / "gap_bindings.yaml").is_file()
+    # normalize_predicates owns unresolved.yaml → untouched.
+    assert (uo / "ir" / "unresolved.yaml").is_file()

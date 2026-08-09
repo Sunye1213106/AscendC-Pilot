@@ -134,7 +134,7 @@ def test_recommend_next_uses_single_pass_cache(tmp_path: Path, monkeypatch):
         return False
 
     monkeypatch.setattr(pipe_mod, "action_receipt_ok", fake_ok)
-    monkeypatch.setattr(pipe_mod, "preferred_pipeline", lambda wid, phase: ["a", "b", "c"])
+    monkeypatch.setattr(pipe_mod, "preferred_pipeline", lambda *a, **k: ["a", "b", "c"])
     monkeypatch.setattr(pipe_mod, "_not_applicable_proof", lambda *a, **k: False)
 
     allowed = [

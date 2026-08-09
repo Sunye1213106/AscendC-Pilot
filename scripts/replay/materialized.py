@@ -202,12 +202,26 @@ def default_spec() -> Any:
 
     Loaded once and lazily, like the schema, so a module that only wants the
     dataclasses does not need an operator package on disk to import.
+
+    Cold-start: missing ``bridge_spec.yaml`` yields an empty spec (run
+    ``export_adapter_pack`` to populate). Soft-fail so unit tests and
+    packages without an adapter pack still import.
+
+    Lookup order: ``.ascendc-pilot/<arch>/tg/adapter/bridge_spec.yaml``,
+    then ``operators/<op>/<arch>/bridge_spec.yaml``.
     """
     global _SPEC
     if _SPEC is None:
         from . import bridge_spec as S
+        from . import package_data
         from .runner import default
-        _SPEC = S.BridgeSpec.load(default().manifest.package / "bridge_spec.yaml")
+
+        path = package_data.resolve_adapter_file("bridge_spec.yaml")
+        if path is not None and path.is_file():
+            _SPEC = S.BridgeSpec.load(path)
+        else:
+            man = default().manifest
+            _SPEC = S.BridgeSpec(operator=man.name, arch=man.arch)
     return _SPEC
 
 

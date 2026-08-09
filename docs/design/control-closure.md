@@ -4,5 +4,4 @@
 TilingKey 的可追溯关系。源码证据必须来自 confirmed scope 的有界读取，图查询只能用于定位而不能单独
 作为 `source_verified` 结论。
 
-当前的 FAG 有限域、D/R/E 证书、缓存边界和迁移门禁见
-[FAG arch35 Z3-free 实施版计划](../fag/fag-arch35-z3-free-implementation-plan.md)。
+现状架构与三域同构见 [architecture.md](./architecture.md)；闭环 SOP 见 [tilingkey-closure-agent.md](./tilingkey-closure-agent.md)。

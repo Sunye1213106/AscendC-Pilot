@@ -27,6 +27,20 @@ def _write(path: Path, data: object) -> None:
         path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
 
+def _select_csv_consumer_mode(project_root: Path) -> None:
+    """Freeze the intent that makes ``tg-semantic-bind`` the producer.
+
+    Without it ``resolve_tg_mode`` answers ``tilingkey_full_coverage``, where
+    ``semantic_bind`` is a deterministic engine step with different write scope.
+    """
+    from ascendc_pilot.paths import tg_root
+
+    _write(
+        tg_root(project_root) / "init" / "init_intent.yaml",
+        {"schema": "tg-init-intent/v1", "mode": "csv_consumer"},
+    )
+
+
 def test_composer_detects_missing_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from compose_runtime import validate
     from ascendc_pilot.workflows import specs as specs_mod
@@ -54,17 +68,25 @@ def test_composer_rejects_type_subagent_in_generated(tmp_path: Path):
 
 
 def test_generated_skill_matches_workflow_agents():
+    """``semantic_bind`` has two owners; the mode overlay picks which one."""
     from compose_runtime import compose_host, validate_generated
+    from ascendc_pilot.workflows import get_workflow
     from ascendc_pilot.workflows.specs import WORKFLOWS
 
     compose_host(REPO, "opencode")
     errors = validate_generated(REPO, host="opencode")
     assert errors == [], errors
     skill = (REPO / "generated" / "opencode" / "skills" / "tg-init" / "SKILL.md").read_text(encoding="utf-8")
-    act = next(a for a in WORKFLOWS["tg-init"]["actions"] if a["id"] == "semantic_bind")
+
+    csv_mode = get_workflow("tg-init", mode="csv_consumer")
+    act = next(a for a in csv_mode["actions"] if a["id"] == "semantic_bind")
     assert act["agent_id"] == "tg-semantic-bind"
     assert "`tg-semantic-bind`" in skill
     assert act["role_id"] == "producer"
+
+    # Default (tilingkey full coverage) runs the same action deterministically.
+    base = next(a for a in WORKFLOWS["tg-init"]["actions"] if a["id"] == "semantic_bind")
+    assert base["agent_id"] == "deterministic-tg-engine"
     cb = next(a for a in WORKFLOWS["tg-init"]["actions"] if a["id"] == "contract_build")
     assert cb["agent_id"] == "deterministic-tg-engine"
     assert cb["role_id"] == "deterministic_engine"
@@ -101,6 +123,7 @@ def test_action_id_propagates_via_active_action(tmp_path: Path):
     from ascendc_pilot.paths import agent_root, ensure_agent_layout
 
     ensure_agent_layout(tmp_path)
+    _select_csv_consumer_mode(tmp_path)
     start_workflow(tmp_path, "tg-init", phase="bind", force_phase=True)
     _write_active_action(
         tmp_path,
@@ -145,6 +168,7 @@ def test_agent_write_scope_enforced(tmp_path: Path):
     from ascendc_pilot.paths import agent_root, ensure_agent_layout
 
     ensure_agent_layout(tmp_path)
+    _select_csv_consumer_mode(tmp_path)
     start_workflow(tmp_path, "tg-init", phase="bind", force_phase=True)
     # Out of scope: lexicon is applied by finalize, not producer
     denied = authorize(
@@ -169,10 +193,11 @@ def test_agent_write_scope_enforced(tmp_path: Path):
 
 def test_semantic_bind_closed_loop_and_stale_rejection(tmp_path: Path):
     from ascendc_pilot.actions.runtime import finalize_action, prepare_action
-    from ascendc_pilot.paths import ensure_agent_layout, tg_root
+    from ascendc_pilot.paths import context_root, ensure_agent_layout, tg_root
     from ascendc_pilot.state import start_workflow
 
     ensure_agent_layout(tmp_path)
+    _select_csv_consumer_mode(tmp_path)
     start_workflow(tmp_path, "tg-init", phase="bind", force_phase=True)
     tg = tg_root(tmp_path)
     real = tg / "realization"
@@ -208,7 +233,7 @@ def test_semantic_bind_closed_loop_and_stale_rejection(tmp_path: Path):
     consumer.mkdir()
     (consumer / "run.py").write_text("COLS=['A']\n", encoding="utf-8")
     _write(
-        tmp_path / ".ascendc-pilot" / "context" / "pilot_params.yaml",
+        context_root(tmp_path) / "pilot_params.yaml",
         {"op_name": "toy", "test_script_root": consumer.as_posix(), "csv_consumer_root": consumer.as_posix()},
     )
 
