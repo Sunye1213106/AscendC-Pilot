@@ -35,6 +35,7 @@ jobs:
           pip install -r requirements.txt
           pip install -e ./engines/common
           pip install -e ./engines/understand-operator
+          pip install pytest
 
       - name: Prepare audit output
         run: mkdir -p "$GITHUB_WORKSPACE/artifacts/uo-arch35"
@@ -49,8 +50,19 @@ jobs:
 
       - name: Inventory real archived facts
         run: |
-          unzip -l external/flashattention/flash_attention_score_grad/.understand-operator.zip \
-            > "$GITHUB_WORKSPACE/artifacts/uo-arch35/archive-list.txt"
+          ARCHIVE=external/flashattention/flash_attention_score_grad/.understand-operator.zip
+          OUT="$GITHUB_WORKSPACE/artifacts/uo-arch35"
+          TMP="$RUNNER_TEMP/fa-uo-archive"
+          rm -rf "$TMP" && mkdir -p "$TMP"
+          unzip -l "$ARCHIVE" > "$OUT/archive-list.txt"
+          unzip -q "$ARCHIVE" -d "$TMP"
+          ROOT="$TMP/.understand-operator/flash_attention_score_grad"
+          mkdir -p "$OUT/archive-snapshot/facts/kernel" "$OUT/archive-snapshot/indexes" "$OUT/archive-snapshot/checks/step2"
+          for f in manifest.yaml facts/host.yaml facts/compute.yaml facts/kernel/overview.yaml indexes/entity_registry.json checks/step2/host_validation.yaml checks/step2/kernel_overview_validation.yaml checks/step2/review.yaml; do
+            if [ -f "$ROOT/$f" ]; then
+              cp "$ROOT/$f" "$OUT/archive-snapshot/$f"
+            fi
+          done
 
       - name: Build and audit arch35 UO
         id: audit
@@ -66,7 +78,7 @@ jobs:
         if: always()
         run: |
           echo "workspace=$GITHUB_WORKSPACE"
-          find "$GITHUB_WORKSPACE/artifacts" -maxdepth 3 -type f -printf '%p %s bytes\n' 2>/dev/null || true
+          find "$GITHUB_WORKSPACE/artifacts" -maxdepth 6 -type f -printf '%p %s bytes\n' 2>/dev/null || true
 
       - name: Publish audit summary
         if: always()
