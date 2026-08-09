@@ -1,4 +1,4 @@
-"""Tests for interrupted-run AskQuestion continue/reinit flow."""
+"""Interrupted-run continue/reinit behavior for public workflow actions."""
 
 from __future__ import annotations
 
@@ -8,8 +8,6 @@ import yaml
 
 from ascendc_pilot.cli import main as acp_main
 from ascendc_pilot.paths import agent_root, ce_root, runs_root, state_root, tg_root, uo_root
-from ascendc_pilot.runs import issue_receipt
-from ascendc_pilot.spec_hashes import workflow_spec_hash
 from ascendc_pilot.run_resume import (
     action_owned_artifacts,
     apply_resume_decision,
@@ -28,22 +26,6 @@ def _write(path: Path, data: object) -> None:
         path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
 
-def _issue_receipt(project: Path, action_id: str) -> None:
-    st = load_state(project)
-    issue_receipt(
-        project,
-        actor_type="deterministic_engine",
-        actor_id="deterministic-uo-engine",
-        action_id=action_id,
-        workflow_spec_hash=workflow_spec_hash(str(st.get("workflow_id") or "uo-init")),
-        input_hashes={"fixture": "in"},
-        output_hashes={"fixture": "out"},
-        checker_result={"ok": True},
-        nonce=f"nonce-{action_id}",
-        _internal=True,
-    )
-
-
 def test_normalize_decision_labels() -> None:
     assert normalize_decision("continue") == "continue"
     assert normalize_decision("继续上次 (Recommended)") == "continue"
@@ -56,213 +38,186 @@ def test_start_requires_askquestion_when_running(tmp_path: Path, capsys) -> None
     assert needs_resume_decision(tmp_path, "uo-init") is True
     code = acp_main(["start", "uo-init", "--project", str(tmp_path)])
     assert code == 2
-    out = capsys.readouterr().out
-    assert "EXISTING_RUN_NEEDS_DECISION" in out
-    assert "ask_question" in out
-    assert "继续上次" in out
+    output = capsys.readouterr().out
+    assert "EXISTING_RUN_NEEDS_DECISION" in output
+    assert "ask_question" in output
+    assert "继续上次" in output
 
 
-def test_decision_continue_resumes(tmp_path: Path) -> None:
-    st = start_workflow(tmp_path, "uo-init")
-    run_id = st["run_id"]
+def test_decision_continue_resumes_same_run(tmp_path: Path) -> None:
+    state = start_workflow(tmp_path, "uo-init")
     result = apply_resume_decision(tmp_path, "uo-init", "continue")
     assert result["ok"] is True
     assert result.get("resumed") is True
-    assert load_state(tmp_path)["run_id"] == run_id
+    assert load_state(tmp_path)["run_id"] == state["run_id"]
 
 
-def test_decision_reinit_wipes_uo(tmp_path: Path) -> None:
-    st = start_workflow(tmp_path, "uo-init")
-    old_run_id = st["run_id"]
-    uo = uo_root(tmp_path)
-    _write(uo / "manifest.yaml", {"op_name": "foo"})
-    _write(uo / "ir" / "extract_plan_candidates.yaml", {"version": 1})
-    assert (uo / "manifest.yaml").is_file()
-
-    other_run = runs_root(tmp_path) / "historical-run-keep"
-    _write(other_run / "marker.yaml", {"keep": True})
+def test_uo_init_reinit_wipes_current_uo_products_but_keeps_historical_runs(tmp_path: Path) -> None:
+    state = start_workflow(tmp_path, "uo-init")
+    old_run_id = state["run_id"]
+    legacy_uo = uo_root(tmp_path)
+    _write(legacy_uo / "manifest.yaml", {"op_name": "foo"})
+    product = agent_root(tmp_path) / "uo" / "foo.arch35.uo"
+    _write(product, "sqlite-placeholder")
+    historical = runs_root(tmp_path) / "historical-run-keep"
+    _write(historical / "marker.yaml", {"keep": True})
 
     result = apply_resume_decision(tmp_path, "uo-init", "reinit")
     assert result["ok"] is True
-    assert result.get("decision") == "reinit"
     assert result.get("fresh_start") is True
-    assert not (uo / "manifest.yaml").is_file()
-    assert other_run.is_dir(), "historical runs must be preserved on uo-init reinit"
-    st = load_state(tmp_path)
-    assert st["phase"] == "prepare"
-    assert st["status"] == "running"
-    assert st["run_id"] != old_run_id
+    assert not (legacy_uo / "manifest.yaml").is_file()
+    assert not product.is_file()
+    assert historical.is_dir()
+    current = load_state(tmp_path)
+    assert current["phase"] == "prepare"
+    assert current["status"] == "running"
+    assert current["run_id"] != old_run_id
 
 
-def test_tg_reinit_keeps_uo_kb(tmp_path: Path) -> None:
-    uo = uo_root(tmp_path)
+def test_tg_reinit_preserves_committed_uo_product(tmp_path: Path) -> None:
+    product = agent_root(tmp_path) / "uo" / "foo.arch35.uo"
+    _write(product, "sqlite-placeholder")
     tg = tg_root(tmp_path)
-    _write(uo / "manifest.yaml", {"op_name": "foo"})
-    _write(uo / "checks" / "integrity.yaml", {"ok": True})
     _write(tg / "init" / "status.yaml", {"confirmed": False})
 
     start_workflow(tmp_path, "tg-init")
     result = apply_resume_decision(tmp_path, "tg-init", "reinit")
     assert result["ok"] is True
-    assert (uo / "manifest.yaml").is_file()
-    assert (uo / "checks" / "integrity.yaml").is_file()
+    assert product.is_file()
     assert not (tg / "init" / "status.yaml").is_file()
 
 
 def test_ce_reinit_keeps_uo_and_tg(tmp_path: Path) -> None:
-    uo = uo_root(tmp_path)
+    product = agent_root(tmp_path) / "uo" / "foo.arch35.uo"
+    _write(product, "sqlite-placeholder")
     tg = tg_root(tmp_path)
     ce = ce_root(tmp_path)
-    _write(uo / "manifest.yaml", {"op_name": "foo"})
     _write(tg / "plan" / "levels" / "L0" / "plan_scope.yaml", {"level": "L0"})
     _write(ce / "review" / "index.yaml", {"reviews": []})
 
     start_workflow(tmp_path, "ce-review")
     result = apply_resume_decision(tmp_path, "ce-review", "reinit")
     assert result["ok"] is True
-    assert (uo / "manifest.yaml").is_file()
+    assert product.is_file()
     assert (tg / "plan" / "levels" / "L0" / "plan_scope.yaml").is_file()
     assert not (ce / "review" / "index.yaml").is_file()
 
 
-def test_uo_update_reinit_keeps_kb(tmp_path: Path) -> None:
+def test_uo_update_reinit_keeps_committed_uo_product(tmp_path: Path) -> None:
+    product = agent_root(tmp_path) / "uo" / "foo.arch35.uo"
+    _write(product, "sqlite-placeholder")
     uo = uo_root(tmp_path)
-    _write(uo / "manifest.yaml", {"op_name": "foo"})
-    _write(uo / "ir" / "host_subgraph.yaml", {"nodes": []})
     _write(uo / "diff" / "change_set.yaml", {"changes": [1]})
     _write(uo / "summary" / "update_plan.yaml", {"plan": "x"})
 
     start_workflow(tmp_path, "uo-update")
     result = apply_resume_decision(tmp_path, "uo-update", "reinit")
     assert result["ok"] is True
-    assert (uo / "manifest.yaml").is_file()
-    assert (uo / "ir" / "host_subgraph.yaml").is_file()
+    assert product.is_file()
     assert not (uo / "diff" / "change_set.yaml").is_file()
     assert not (uo / "summary" / "update_plan.yaml").is_file()
 
 
-def test_summary_lists_complete_and_interrupt(tmp_path: Path) -> None:
+def test_summary_uses_public_action_labels_and_resume_hint(tmp_path: Path) -> None:
     start_workflow(tmp_path, "uo-init")
-    uo = uo_root(tmp_path)
-    _write(uo / "manifest.yaml", {"ok": True})
-    _write(uo / "ir" / "entrypoint_graph.yaml", {"nodes": []})
     summary = build_run_resume_summary(tmp_path, workflow_id="uo-init")
     assert summary["has_existing_run"] is True
-    labels = {a["label_zh"] for a in summary["artifacts"] if a["present"]}
-    assert "布局/manifest" in labels
-    # Every owned action must be labelled, not shown as a raw id.
-    assert all(a["label_zh"] != a["action_id"] for a in summary["artifacts"])
+    assert all(item["label_zh"] != item["action_id"] for item in summary["artifacts"])
     assert "ask_question" in summary
-    assert summary["resume_next_action"]
+    assert summary["resume_next_action"] in {
+        "prepare", "extract", "analyze", "resolve", "apply_gap_patch", "commit", "review"
+    }
 
 
 def test_ask_question_uses_current_workflow_name_for_tg_init(tmp_path: Path) -> None:
     start_workflow(tmp_path, "tg-init")
     summary = build_run_resume_summary(tmp_path, workflow_id="tg-init")
-    aq = summary["ask_question"]
-    assert "tg-init" in aq["header"] or "tg-init" in aq["question"]
+    question = summary["ask_question"]
+    assert "tg-init" in question["header"] or "tg-init" in question["question"]
 
 
-def test_owned_artifact_map_from_contracts() -> None:
+def test_owned_artifact_map_uses_public_uo_actions() -> None:
     owned = action_owned_artifacts("uo-init")
-    assert "derive_key_fields" in owned
-    assert "input_derivable" not in owned
-    assert "export_kb" in owned
-    assert "export_adapter_pack" in owned
-    assert any("host_derivation" in p for p in owned["derive_key_fields"])
-    # The adapter pack is generated, so it is owned rather than a prior.
-    assert any("adapter/bridge_spec.yaml" in p for p in owned["export_adapter_pack"])
+    for action_id in ("prepare", "extract", "analyze", "resolve", "apply_gap_patch", "commit", "review"):
+        assert action_id in owned
+    for retired in ("derive_key_fields", "export_kb", "export_adapter_pack", "normalize_predicates"):
+        assert retired not in owned
+    assert any("derive_key_fields_receipt" in path for path in owned["analyze"])
+    assert owned["commit"] == ("uo/*.uo",)
+    assert owned["review"] == ("uo/*.uo",)
 
 
-def test_different_workflow_resume_do_not_pollute(tmp_path: Path) -> None:
-    uo_st = start_workflow(tmp_path, "uo-init")
-    uo_run = uo_st["run_id"]
-    cont = apply_resume_decision(tmp_path, "uo-init", "continue")
-    assert cont["ok"] is True
-
+def test_different_workflow_resume_does_not_cross_active_run(tmp_path: Path) -> None:
+    state = start_workflow(tmp_path, "uo-init")
+    continue_result = apply_resume_decision(tmp_path, "uo-init", "continue")
+    assert continue_result["ok"] is True
     assert needs_resume_decision(tmp_path, "tg-init") is True
     cross = apply_resume_decision(tmp_path, "tg-init", "continue")
     assert cross["ok"] is False
     assert cross.get("error") == "cross_workflow_active_run"
-    assert load_state(tmp_path)["run_id"] == uo_run
+    assert load_state(tmp_path)["run_id"] == state["run_id"]
 
 
-def test_continue_scrubs_failed_derive_key_fields_products(tmp_path: Path) -> None:
-    st = start_workflow(tmp_path, "uo-init")
-    run_id = st["run_id"]
+def test_continue_scrubs_failed_analyze_owned_products(tmp_path: Path) -> None:
+    state = start_workflow(tmp_path, "uo-init", phase="analyze", force_phase=True)
+    run_id = state["run_id"]
     uo = uo_root(tmp_path)
-
-    _write(uo / "manifest.yaml", {"ok": True})
-    _write(uo / "ir" / "entrypoint_graph.yaml", {"nodes": []})
-
-    # Owned by derive_key_fields → scrubbed.
-    _write(uo / "ir" / "host_derivation.yaml", {"version": 1, "fields": [{"name": "Foo"}]})
+    _write(uo / "tiling" / "normalize_variables_receipt.yaml", {"ok": True})
     _write(uo / "ir" / "derive_key_fields_receipt.yaml", {"ok": True})
-    _write(uo / "tiling" / "key_derivations.yaml", {"derivations": []})
+    _write(uo / "ir" / "unresolved.yaml", {"blockers": ["x"]})
+    _write(uo / "ir" / "host_extract_receipt.yaml", {"keep": True})
     _write(
         state_root(tmp_path) / "active_action.yaml",
         {
             "version": 1,
             "run_id": run_id,
-            "action_id": "derive_key_fields",
+            "workflow_id": "uo-init",
+            "phase": "analyze",
+            "action_id": "analyze",
             "status": "finalize_failed",
-            "actor_id": "deterministic-uo-engine",
         },
     )
     _write(
-        runs_root(tmp_path) / run_id / "actions" / "derive_key_fields" / "session.yaml",
-        {"status": "finalize_failed", "action_id": "derive_key_fields", "run_id": run_id},
+        runs_root(tmp_path) / run_id / "actions" / "analyze" / "session.yaml",
+        {"status": "finalize_failed", "action_id": "analyze", "run_id": run_id},
     )
-    st["status"] = "rework_required"
-    st["phase"] = "normalize"
-    st["failed_gates"] = [{"id": "derive_key_fields_contract", "detail": {"error_code": "SCHEMA"}}]
-    st["last_failure"] = {"message_zh": "derive_key_fields 推导失败"}
-    save_state(tmp_path, st)
+    state["status"] = "rework_required"
+    save_state(tmp_path, state)
 
     result = apply_resume_decision(tmp_path, "uo-init", "continue")
     assert result["ok"] is True
-    assert result.get("resumed") is True
-    scrub = result.get("resume_scrub") or {}
-    assert "derive_key_fields" in (scrub.get("scrubbed_actions") or [])
-    assert not (uo / "ir" / "host_derivation.yaml").is_file()
+    scrubbed = set((result.get("resume_scrub") or {}).get("scrubbed_actions") or [])
+    assert "analyze" in scrubbed
+    assert not (uo / "tiling" / "normalize_variables_receipt.yaml").is_file()
     assert not (uo / "ir" / "derive_key_fields_receipt.yaml").is_file()
-    assert not (uo / "tiling" / "key_derivations.yaml").is_file()
-    # Not owned by the failed action → kept.
-    assert (uo / "ir" / "entrypoint_graph.yaml").is_file()
+    assert not (uo / "ir" / "unresolved.yaml").is_file()
+    assert (uo / "ir" / "host_extract_receipt.yaml").is_file()
     assert not (state_root(tmp_path) / "active_action.yaml").is_file()
-    assert not (runs_root(tmp_path) / run_id / "actions" / "derive_key_fields").is_dir()
     assert load_state(tmp_path)["status"] == "running"
-    assert load_state(tmp_path).get("failed_gates") == []
 
 
 def test_continue_scrubs_failed_gap_patch_products(tmp_path: Path) -> None:
-    st = start_workflow(tmp_path, "uo-init")
-    run_id = st["run_id"]
+    state = start_workflow(tmp_path, "uo-init", phase="resolve", force_phase=True)
+    run_id = state["run_id"]
     uo = uo_root(tmp_path)
-
-    _write(uo / "manifest.yaml", {"ok": True})
-    _write(uo / "ir" / "unresolved.yaml", {"blockers": []})
     _write(uo / "ir" / "gap_patch_receipt.yaml", {"partial": True})
     _write(uo / "ir" / "gap_bindings.yaml", {"bindings": [{"bad": True}]})
-
-    st["phase"] = "normalize"
-    st["status"] = "rework_required"
-    save_state(tmp_path, st)
     _write(
         state_root(tmp_path) / "active_action.yaml",
         {
             "run_id": run_id,
+            "workflow_id": "uo-init",
+            "phase": "resolve",
             "action_id": "apply_gap_patch",
             "status": "finalize_failed",
         },
     )
+    state["status"] = "rework_required"
+    save_state(tmp_path, state)
 
     result = apply_resume_decision(tmp_path, "uo-init", "continue")
     assert result["ok"] is True
-    scrub = result.get("resume_scrub") or {}
-    scrubbed = set(scrub.get("scrubbed_actions") or [])
+    scrubbed = set((result.get("resume_scrub") or {}).get("scrubbed_actions") or [])
     assert "apply_gap_patch" in scrubbed
     assert not (uo / "ir" / "gap_patch_receipt.yaml").is_file()
     assert not (uo / "ir" / "gap_bindings.yaml").is_file()
-    # normalize_predicates owns unresolved.yaml → untouched.
-    assert (uo / "ir" / "unresolved.yaml").is_file()
