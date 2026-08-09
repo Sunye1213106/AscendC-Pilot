@@ -31,6 +31,18 @@ _FLOW_KINDS = {
     RelationKind.READS.value,
     RelationKind.WRITES.value,
 }
+_ROOT_FLOW_KINDS = {
+    RelationKind.DERIVES.value,
+    RelationKind.FLOWS_TO.value,
+    RelationKind.CONTROLS.value,
+}
+_ROOT_KINDS = {
+    EntityKind.INPUT.value,
+    EntityKind.COMPILE_VAR.value,
+    EntityKind.MACRO.value,
+    EntityKind.BUILD_VARIANT.value,
+    EntityKind.ARCH.value,
+}
 
 
 def _path_exists(
@@ -67,6 +79,27 @@ def _path_exists(
     return False
 
 
+def _source_rooted_entities(codemap: CodeMap) -> set[str]:
+    roots = {
+        ent.id
+        for ent in codemap.entities.values()
+        if ent.kind_name() in _ROOT_KINDS
+    }
+    adj: dict[str, list[str]] = defaultdict(list)
+    for rel in codemap.relations.values():
+        if rel.kind_name() in _ROOT_FLOW_KINDS:
+            adj[rel.src].append(rel.dst)
+    seen = set(roots)
+    queue = deque(roots)
+    while queue:
+        cur = queue.popleft()
+        for nxt in adj.get(cur, ()):
+            if nxt not in seen:
+                seen.add(nxt)
+                queue.append(nxt)
+    return seen
+
+
 def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
     blocking: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
@@ -81,6 +114,10 @@ def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
         + codemap.by_kind(EntityKind.VARIABLE)
     )
     keys = codemap.by_kind(EntityKind.TILING_KEY)
+    declared_keys = sorted(
+        (e for e in keys if e.attrs.get("source_declared")),
+        key=lambda e: int(e.attrs.get("decl_order") or 0),
+    )
     tiling_data = codemap.by_kind(EntityKind.TILING_DATA)
     tiling_fields = codemap.by_kind(EntityKind.TILING_FIELD)
     kernels = codemap.by_kind(EntityKind.KERNEL)
@@ -111,6 +148,29 @@ def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
             "TILING_KEY_CARDINALITY_MISMATCH",
             f"current source declares {source_key_count} TilingKeys but CodeMap contains {len(keys)}",
             declared=codemap.meta.get("source_declared_tiling_keys") or [],
+        )
+
+    host_packing = codemap.meta.get("host_tiling_key_packing") or {}
+    packing_calls = int(host_packing.get("calls") or 0)
+    packing_bound = int(host_packing.get("fields_bound") or 0)
+    packing_mismatches = list(host_packing.get("argument_count_mismatches") or [])
+    packing_missing = [e.name for e in declared_keys if not e.attrs.get("host_packing_expressions")]
+    if packing_calls and (packing_bound != len(declared_keys) or packing_missing or packing_mismatches):
+        block(
+            "INCOMPLETE_HOST_TILINGKEY_PACKING",
+            f"Host packing covers {packing_bound}/{len(declared_keys)} source-declared TilingKeys",
+            missing=packing_missing,
+            argument_count_mismatches=packing_mismatches,
+        )
+
+    rooted = _source_rooted_entities(codemap)
+    rooted_keys = [e.name for e in declared_keys if e.id in rooted]
+    unrooted_keys = [e.name for e in declared_keys if e.id not in rooted]
+    if declared_keys and unrooted_keys:
+        block(
+            "UNROOTED_TILING_KEYS",
+            f"{len(unrooted_keys)}/{len(declared_keys)} source-declared TilingKeys have no API/compile root",
+            unrooted=unrooted_keys,
         )
 
     strict_path = evidence_backed_host_kernel_path_exists(codemap)
@@ -163,6 +223,8 @@ def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
     strict_summary["has_input_tilingkey_kernel_path"] = input_key_kernel
     strict_summary["has_tilingdata_kernel_path"] = tdata_kernel
     strict_summary["has_input_output_path"] = input_output
+    strict_summary["tiling_key_root_coverage"] = f"{len(rooted_keys)}/{len(declared_keys)}"
+    strict_summary["tiling_key_host_packing_coverage"] = f"{packing_bound}/{len(declared_keys)}"
 
     select_pairs = {
         (rel.src, rel.dst)
@@ -269,6 +331,8 @@ def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
         "evidence_backed_input_tilingkey_kernel_path": input_key_kernel,
         "evidence_backed_tilingdata_kernel_path": tdata_kernel,
         "evidence_backed_input_output_path": input_output,
+        "tiling_key_rooted": rooted_keys,
+        "tiling_key_unrooted": unrooted_keys,
         "counts": {
             "inputs": len(inputs),
             "tensor_inputs": len(tensor_inputs),
@@ -277,6 +341,9 @@ def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
             "host_entities": len(hosts),
             "tiling_keys": len(keys),
             "source_declared_tiling_keys": source_key_count,
+            "host_packing_bound_tiling_keys": packing_bound,
+            "rooted_tiling_keys": len(rooted_keys),
+            "unrooted_tiling_keys": len(unrooted_keys),
             "tiling_data": len(tiling_data),
             "tiling_fields": len(tiling_fields),
             "kernels": len(kernels),
