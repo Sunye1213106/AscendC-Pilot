@@ -43,6 +43,13 @@ def write_codemap(
     if tmp.exists():
         tmp.unlink()
 
+    # User-facing/queryable summaries must use the same soundness semantics as
+    # uo-query and uo-dump. The legacy CodeMap.summary() fallback may infer a
+    # Host→Kernel path from node presence alone, so never persist it verbatim.
+    from uo_init.diagnostics.audit import audit_codemap
+
+    strict_summary = dict(audit_codemap(codemap)["summary"])
+
     conn = sqlite3.connect(str(tmp))
     try:
         conn.executescript(SCHEMA_SQL)
@@ -144,10 +151,10 @@ def write_codemap(
                     json.dumps(payload, ensure_ascii=False),
                 ),
             )
-        # Summary view always present.
+        # Summary view always present and semantically strict.
         conn.execute(
             "INSERT OR REPLACE INTO view_blob(name, schema_id, data) VALUES (?,?,?)",
-            ("summary", "codemap-summary/v1", json.dumps(codemap.summary(), ensure_ascii=False)),
+            ("summary", "codemap-summary/v1", json.dumps(strict_summary, ensure_ascii=False)),
         )
         conn.commit()
     finally:
