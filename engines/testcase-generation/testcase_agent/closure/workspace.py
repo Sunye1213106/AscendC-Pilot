@@ -1,22 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Where the closure reads and writes, and what the kernel declares.
+"""Closure workspace and the finalized kernel-declared key domain.
 
-The exploration that produced the first closure kept all of this in
-`.probe_cache/`: the ledger files, the corpus, and an absolute path to a CSV of
-declared keys someone had generated earlier. None of that survives a change of
-machine, so none of it belongs in the engine.
-
-Two things are separated here that were previously one directory:
-
-  artifacts   batches, logs and wide tables a replay wrote. The operator
-              manifest already says where these go, so the manifest is asked.
-  state       the ledger itself -- R, E, the open set. This is a conclusion
-              rather than a raw observation, so it lives with the other
-              Pilot artifacts under `.ascendc-pilot/`.
-
-The declared set D is parsed from the kernel's tiling-key header. It used to be
-read from a generated CSV, which meant the closure could silently be judged
-against a stale D.
+Durable D/decode information comes from the CodeMap ``.uo`` legal-key index.
+The replay TPL parser remains a runtime implementation detail for generating
+new cases and a fallback for tests that intentionally have no product.
 """
 
 from __future__ import annotations
@@ -26,15 +13,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-#: Overrides, so a caller can point the closure at a saved corpus without
-#: touching the manifest.
 ENV_ARTIFACTS = "TG_CLOSURE_ARTIFACTS"
 ENV_STATE = "TG_CLOSURE_STATE"
-
-#: Wide tables a replay batch appends to. Operator-agnostic; the manifest may
-#: narrow it.
-#: Primary wide-table pattern. Also load round/construct commits under
-#: nested dirs via CORPUS_GLOBS in corpus.load / ledger.from_wide.
 WIDE_GLOB = "*key_cases*.csv"
 CORPUS_GLOBS = (
     "*key_cases*.csv",
@@ -46,16 +26,12 @@ CORPUS_GLOBS = (
 
 @dataclass(frozen=True)
 class Workspace:
-    """Resolved locations for one operator's closure run."""
-
     root: Path
     artifacts: Path
     state: Path
 
-    # -- ledger files ------------------------------------------------------
     @property
     def r_path(self) -> Path:
-        """Witness set: one `key,provenance` line per key a real run produced."""
         return self.state / "R.txt"
 
     @property
@@ -71,7 +47,6 @@ class Workspace:
         return self.state / "open.txt"
 
     def report(self, name: str) -> Path:
-        """A generated report, e.g. `residual.csv`."""
         self.state.mkdir(parents=True, exist_ok=True)
         return self.state / name
 
@@ -81,21 +56,14 @@ class Workspace:
 
 
 def _repo_root() -> Path:
-    """The AscendC-Pilot checkout — only for ``sys.path`` injection of ``scripts/``.
-
-    Must never be used as the default product root.
-    """
     return Path(__file__).resolve().parents[4]
 
 
 def _operator_root(explicit: str | Path | None = None) -> Path:
-    """Resolve the analysed operator source directory that owns products."""
     if explicit is not None:
         return Path(explicit).expanduser().resolve()
-    # Prefer TG_CLOSURE_STATE's parent chain when set.
     state_env = os.environ.get(ENV_STATE)
     if state_env:
-        # .../.ascendc-pilot/<arch>/tg/closure → op_src
         p = Path(state_env).expanduser().resolve()
         for parent in p.parents:
             if parent.name == ".ascendc-pilot":
@@ -106,8 +74,7 @@ def _operator_root(explicit: str | Path | None = None) -> Path:
             return Path(raw).expanduser().resolve()
     raise ValueError(
         "closure workspace root unresolved: pass root= / set ASCENDC_PROJECT_ROOT "
-        "or UO_OP_DIR or TG_CLOSURE_STATE (must be the operator source directory, "
-        "not the AscendC-Pilot checkout)"
+        "or UO_OP_DIR or TG_CLOSURE_STATE"
     )
 
 
@@ -116,27 +83,15 @@ def _arch_name() -> str:
 
 
 def default_workspace(root: str | Path | None = None) -> Workspace:
-    """Locations for the operator the environment currently names.
-
-    `artifacts` follows the operator manifest so a replay and the ledger that
-    reads it never disagree about where a batch landed. Products live under
-    ``<op_src>/.ascendc-pilot/<arch>/tg/closure``.
-    """
     base = _operator_root(root)
-
     artifacts_env = os.environ.get(ENV_ARTIFACTS)
-    if artifacts_env:
-        artifacts = Path(artifacts_env)
-    else:
-        artifacts = _manifest_cache(base)
-
+    artifacts = Path(artifacts_env) if artifacts_env else _manifest_cache(base)
     state_env = os.environ.get(ENV_STATE)
     if state_env:
         state = Path(state_env)
     else:
         try:
             from ascendc_pilot.paths import tg_root
-
             state = tg_root(base, arch=_arch_name()) / "closure"
         except Exception:
             state = base / ".ascendc-pilot" / _arch_name() / "tg" / "closure"
@@ -144,15 +99,12 @@ def default_workspace(root: str | Path | None = None) -> Workspace:
 
 
 def _manifest_cache(base: Path) -> Path:
-    """The replay cache the active operator manifest declares."""
     try:
         runner = _replay().default()
         cache = Path(runner.cache)
         if not cache.is_absolute():
-            # Relative caches are under <op_src>/.ascendc-pilot/<arch>/
             try:
                 from ascendc_pilot.paths import agent_root
-
                 return agent_root(base, _arch_name()) / cache
             except Exception:
                 return base / ".ascendc-pilot" / _arch_name() / cache
@@ -160,153 +112,143 @@ def _manifest_cache(base: Path) -> Path:
     except Exception:
         try:
             from ascendc_pilot.paths import tg_root
-
             return tg_root(base, arch=_arch_name()) / "replay"
         except Exception:
             return base / ".ascendc-pilot" / _arch_name() / "tg" / "replay"
 
 
-# -- the replay engine ----------------------------------------------------
-#
-# It lives under `scripts/replay/` rather than in this package: twenty-odd
-# scripts and its own test suite import it from there, and the driver protocol
-# is operator-plumbing rather than test generation. Reached through one
-# function so the closure modules carry no path arithmetic.
-
 @lru_cache(maxsize=1)
 def _replay():
     import sys
-
     scripts = _repo_root() / "scripts"
     if str(scripts) not in sys.path:
         sys.path.insert(0, str(scripts))
-    from replay import runner  # noqa: PLC0415 - deferred by design
-
+    from replay import runner
     return runner
 
 
 def replay_runner():
-    """The configured `ReplayRunner` (drives the host, decodes the key)."""
     return _replay().default()
 
 
 @lru_cache(maxsize=1)
 def replay_inputs():
-    """The active operator's input semantics: `Case`, `describe`, the enums."""
     import sys
-
     scripts = _repo_root() / "scripts"
     if str(scripts) not in sys.path:
         sys.path.insert(0, str(scripts))
-    from replay import inputs  # noqa: PLC0415
-
+    from replay import inputs
     return inputs
 
 
 def schema():
-    """The kernel's tiling-key schema: dimensions, packing, legal selections."""
+    """Runtime TPL schema, used only when case construction needs it."""
     return _replay().default().schema()
 
 
+def _product_rows() -> list[dict]:
+    try:
+        from testcase_agent import product_uo
+        root = _operator_root()
+        return product_uo.legal_key_rows(
+            root,
+            op_name=os.environ.get("UO_OPERATOR") or "",
+            architecture=_arch_name(),
+        )
+    except Exception:
+        return []
+
+
+def _row_key(row: dict) -> int | None:
+    raw = row.get("tiling_key") if row.get("tiling_key") is not None else row.get("key")
+    try:
+        return int(str(raw), 0)
+    except (TypeError, ValueError):
+        return None
+
+
 def dim_names() -> list[str]:
+    """Dimension order from product rows; TPL fallback for no-product tests."""
+    rows = _product_rows()
+    for row in rows:
+        dims = row.get("dims")
+        if isinstance(dims, dict) and dims:
+            return [str(name) for name in dims]
     return [d.name for d in schema().dims]
 
 
 def rule_book(*, refresh: bool = False):
-    """Proof and derived rules for the active operator."""
     import sys
-
     scripts = _repo_root() / "scripts"
     if str(scripts) not in sys.path:
         sys.path.insert(0, str(scripts))
-    from replay import rule_engine  # noqa: PLC0415
-
+    from replay import rule_engine
     return rule_engine.default_book(refresh=refresh)
 
 
 @lru_cache(maxsize=1)
 def declared() -> frozenset[int]:
-    """D from CodeMap ``.uo`` ``tiling/legal_key_index`` (TPL ARGS_SEL).
+    """D from ``.uo`` without requiring WSL, CANN, replay or a local TPL parse."""
+    uo_keys = _declared_from_uo()
+    if uo_keys is not None:
+        return frozenset(uo_keys)
 
-    When a local TPL schema is also loadable, it must agree with ``.uo``;
-    mismatch raises ``DECLARED_SET_DIVERGENCE``. Without ``.uo``, expand the
-    TPL schema only (unit / adapter contexts with no CodeMap product).
-    """
-    from uo_init.tpl_dsl import expand_legal_instances  # noqa: PLC0415
-
+    # Compatibility path for synthetic/unit contexts with no CodeMap product.
+    from uo_init.tpl_dsl import expand_legal_instances
     sch = schema()
     fallback = {d.name: (list(d.value_domain) or ["0"])[0] for d in sch.dims}
-    schema_keys: set[int] = set()
+    keys: set[int] = set()
     for inst in expand_legal_instances(sch):
         full = {name: str(inst.get(name, fallback[name])) for name in fallback}
         try:
-            schema_keys.add(int(sch.encode_tiling_key(full)))
+            keys.add(int(sch.encode_tiling_key(full)))
         except (ValueError, KeyError):
             continue
-
-    uo_keys = _declared_from_uo()
-    if uo_keys is not None:
-        if schema_keys and uo_keys != schema_keys:
-            only_uo = sorted(uo_keys - schema_keys)[:5]
-            only_sch = sorted(schema_keys - uo_keys)[:5]
-            raise RuntimeError(
-                "DECLARED_SET_DIVERGENCE: .uo legal_key_index disagrees with "
-                f"TPL schema (uo_only={only_uo} schema_only={only_sch})"
-            )
-        return frozenset(uo_keys)
-    return frozenset(schema_keys)
+    return frozenset(keys)
 
 
 def _declared_from_uo() -> set[int] | None:
-    """Load packed keys from ``.uo`` view_blob when available."""
-    import os
-    from pathlib import Path
-
-    try:
-        from uo_init.store.reader import find_uo_product
-        from uo_init.tg_projection import legal_key_rows
-    except Exception:
-        return None
-    root = os.environ.get("ASCENDC_PROJECT_ROOT") or os.environ.get("UO_OP_DIR") or ""
-    if not root:
-        try:
-            root = str(Path(default_workspace().state).parents[3])
-        except Exception:
-            return None
-    product = find_uo_product(
-        Path(root),
-        op_name=os.environ.get("UO_OPERATOR") or "",
-        architecture=os.environ.get("UO_ARCH") or "",
-    )
-    if product is None:
-        return None
-    rows = legal_key_rows(product)
+    rows = _product_rows()
     if not rows:
         return None
-    out: set[int] = set()
-    for row in rows:
-        try:
-            out.add(int(row.get("tiling_key")))
-        except (TypeError, ValueError):
-            continue
+    out = {key for key in (_row_key(row) for row in rows) if key is not None}
     return out or None
 
 
 def decode(key: int) -> dict[str, str]:
-    return schema().decode_tiling_key(int(key))
+    """Decode from the product legal-key index; TPL fallback if unavailable."""
+    want = int(key)
+    for row in _product_rows():
+        if _row_key(row) != want:
+            continue
+        dims = row.get("dims")
+        if isinstance(dims, dict):
+            return {str(k): str(v) for k, v in dims.items()}
+    return schema().decode_tiling_key(want)
 
 
 def encode(inst: dict[str, str]) -> int:
+    """Encode exact legal rows from the product before consulting replay TPL."""
+    want = {str(k): str(v) for k, v in inst.items()}
+    rows = _product_rows()
+    if rows:
+        for row in rows:
+            dims = row.get("dims")
+            if not isinstance(dims, dict):
+                continue
+            normalized = {str(k): str(v) for k, v in dims.items()}
+            if all(normalized.get(k) == v for k, v in want.items()):
+                key = _row_key(row)
+                if key is not None:
+                    return key
     return int(schema().encode_tiling_key(inst))
 
 
 def decode_many(keys) -> list[dict[str, str]]:
-    """Decoded instances, skipping keys this schema cannot express."""
-    sch = schema()
     out = []
     for k in keys:
         try:
-            out.append(sch.decode_tiling_key(int(k)))
+            out.append(decode(int(k)))
         except (ValueError, KeyError, IndexError):
             continue
     return out
