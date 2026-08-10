@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Six public uo-init Actions for the CodeMap compiler.
+"""Six public uo-init Actions for the source-backed CodeMap compiler.
 
-Fine-grained extraction/normalization helpers remain internal implementation
-steps.  The public control plane produces exactly one authority:
-``.ascendc-pilot/uo/<op>.<arch>.uo``.
+UO extracts facts an Agent can query.  It does not solve the operator's full
+19-dimensional TilingKey function.  In particular the public analyze path does
+not run ``derive_key_fields`` / KeyReachability / global SAT.  Test construction
+and local lemma reasoning belong to TG.
 """
 
 from __future__ import annotations
@@ -89,32 +90,109 @@ def extract(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
     )
 
 
+def _compiler_inputs(
+    project_root: Path, ctx: dict[str, Any]
+) -> tuple[str, str, Any, Any, dict[str, Any], Path]:
+    """Resolve only structural inputs for CodeMap compilation.
+
+    ``tiling/key_space.yaml`` is a deterministic declaration/schema artefact and
+    is allowed.  ``host_derivation.yaml`` and per-key value expressions are
+    intentionally not loaded here.
+    """
+    from uo_init.op_spec import discover
+
+    root = project_root.expanduser().resolve()
+    spec = discover(root, arch_dir=ctx.get("arch_dir"))
+    op_name = str(ctx.get("op_name") or spec.op_name)
+    arch = str(ctx.get("arch_dir") or ctx.get("architecture") or spec.arch_dir or "arch35")
+    uo = pe._uo_root(root, arch=arch)
+
+    host_ir = None
+    kernel_ir = None
+    try:
+        bundle = pe._ensure_bundle(root, ctx)
+        host_ir = bundle.get("host_ir")
+        kernel_ir = bundle.get("kernel_ir")
+    except Exception:
+        # Current-source enrichment in compile_codemap remains authoritative;
+        # missing compiler IR becomes an explicit structural gap, not a reason
+        # to fall back to symbolic Key derivation.
+        pass
+
+    declared = pe._load(uo / "tiling" / "key_space.yaml") or pe._load(
+        uo / "ir" / "tiling_key_bindings.yaml"
+    ) or {}
+    if not isinstance(declared, dict):
+        declared = {}
+    return op_name, arch, host_ir, kernel_ir, declared, uo
+
+
 def analyze(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Run deterministic normalization/derivation passes and emit gaps."""
-    return _chain(
-        project_root,
-        payload,
-        [
-            ("normalize_variables", pe.normalize_variables),
-            ("derive_key_fields", pe.derive_key_fields),
-            ("normalize_predicates", pe.normalize_predicates),
+    """Build a structural CodeMap dry-run and emit only extraction gaps.
+
+    This stage answers: did UO recover API, Host provenance, TilingKey packing,
+    TilingData transport, template/kernel structure and evidence-backed paths?
+    It explicitly does *not* answer whether every declared packed key is
+    reachable or derive a closed-form formula for every key dimension.
+    """
+    from uo_init.build import compile_codemap
+
+    ctx = dict(payload or {})
+    root = Path(project_root).expanduser().resolve()
+    try:
+        op_name, arch, host_ir, kernel_ir, declared, uo = _compiler_inputs(root, ctx)
+        result = compile_codemap(
+            op_name=op_name,
+            architecture=arch,
+            op_root=root,
+            host_ir=host_ir,
+            kernel_ir=kernel_ir,
+            declared=declared,
+            key_fields=[],
+            commit=False,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "analyze", "error": str(exc)[:400]}
+
+    gaps = [g for g in (result.get("gaps") or []) if isinstance(g, dict)]
+    unresolved = {
+        "schema": "codemap-structural-gaps/v1",
+        "status": "unresolved" if gaps else "closed",
+        "blocker_count": len(gaps),
+        "derivation_blocker_count": 0,
+        "blockers": gaps,
+        "scope": "structural_source_extraction",
+        "non_goals": [
+            "global_tilingkey_value_derivation",
+            "global_key_reachability_sat",
+            "container_cardinality_proofs",
+            "read_coverage_implication_proofs",
         ],
-        engine="analyze",
-    )
+    }
+    receipt = {
+        "ok": True,
+        "engine": "analyze",
+        "schema": "uo-codemap-analyze/v1",
+        "op_name": op_name,
+        "architecture": arch,
+        "summary": dict(result.get("summary") or {}),
+        "gap_count": len(gaps),
+        "analysis_policy": "structure_and_provenance_only",
+        "deep_key_derivation": False,
+        "global_sat": False,
+    }
+    pe._dump(uo / "ir" / "unresolved.yaml", unresolved)
+    pe._dump(uo / "ir" / "codemap_analyze_receipt.yaml", receipt)
+    return receipt
 
 
 def resolve(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Prepare/consume only explicit semantic-gap staging output."""
+    """Escalate only structural gaps that deterministic extraction left open."""
     return pe.resolve_gaps(project_root, payload)
 
 
 def commit(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Compile current facts/source directly into the single ``.uo`` product.
-
-    Legacy YAML/SQLite exports are not a prerequisite and are not refreshed as
-    a second authority.  Debug/intermediate facts produced by earlier phases may
-    still be consumed as compiler evidence by ``compile_codemap``.
-    """
+    """Compile current structural facts/source into the single ``.uo`` product."""
     ctx = dict(payload or {})
     product = _commit_uo_product(Path(project_root), ctx)
     return {
@@ -159,49 +237,19 @@ def review(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
 
 
 def _commit_uo_product(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    try:
-        from uo_init.build import compile_codemap
-        from uo_init.op_spec import discover
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": f"import_failed:{exc}"[:200]}
+    from uo_init.build import compile_codemap
 
     root = project_root.expanduser().resolve()
     try:
-        spec = discover(root, arch_dir=ctx.get("arch_dir"))
-        op_name = str(ctx.get("op_name") or spec.op_name)
-        arch = str(ctx.get("arch_dir") or spec.arch_dir or "arch35")
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": f"discover_failed:{exc}"[:200]}
-
-    host_ir = None
-    kernel_ir = None
-    key_fields: list[dict[str, Any]] = []
-    declared: dict[str, Any] = {}
-    uo = pe._uo_root(root, arch=arch)
-
-    try:
-        bundle = pe._ensure_bundle(root, ctx)
-        host_ir = bundle.get("host_ir")
-        kernel_ir = bundle.get("kernel_ir")
-    except Exception:
-        pass
-
-    derivation = pe._load(uo / "ir" / "host_derivation.yaml")
-    if isinstance(derivation, dict):
-        key_fields = list(derivation.get("fields") or derivation.get("dimensions") or [])
-    declared = pe._load(uo / "tiling" / "key_space.yaml") or pe._load(
-        uo / "ir" / "tiling_key_bindings.yaml"
-    ) or {}
-
-    try:
+        op_name, arch, host_ir, kernel_ir, declared, _uo = _compiler_inputs(root, ctx)
         result = compile_codemap(
             op_name=op_name,
             architecture=arch,
             op_root=root,
             host_ir=host_ir,
             kernel_ir=kernel_ir,
-            key_fields=key_fields,
-            declared=declared if isinstance(declared, dict) else {},
+            declared=declared,
+            key_fields=[],
             commit=True,
         )
     except Exception as exc:  # noqa: BLE001
@@ -214,4 +262,5 @@ def _commit_uo_product(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         "audit": result.get("audit"),
         "gaps": result.get("gaps"),
         "uo": result.get("uo"),
+        "analysis_policy": "structure_and_provenance_only",
     }

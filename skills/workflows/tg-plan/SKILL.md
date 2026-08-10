@@ -1,19 +1,35 @@
 ---
 name: tg-plan
-description: 覆盖规划：默认全量 TilingKey 闭环；也可按用户描述或 PR 生成计划。用户要覆盖计划、 tg-plan、tilingkey 义务时加载。Pilot
-  管阶段；加载后 acp start tg-plan。
+description: >
+  制定 TG 测试目标并冻结 target set。用户未指定目标时默认计划全部源码声明 TilingKey；
+  指定 packed keys 或维度过滤条件时只计划该子集。Plan 不构造 case、不做可达性求解。
 ---
 
 # tg-plan
 
-编排覆盖计划。领域认知：`skills/domain/tg-plan`。
+领域规则：`skills/domain/tg-plan/SKILL.md`。
 
-阶段：`intent → scope → gate → build → approve`。
+```text
+intent → scope → gate → build → approve
+```
+
+核心产品是：
+
+```text
+tg/plan/levels/<level>/target_set.yaml
+```
+
+- `D` = 当前 Kernel template 声明域；
+- `T` = 本次 Solve 目标，`T ⊆ D`；
+- 无显式目标时 `T=D`；
+- approve 冻结 `target_hash + snapshot_hash + plan_hash`；
+- `tg-solve` 不得扩大 T。
+
+Full TilingKey mode 的 precheck 直接检查 `.uo` 和当前 Kernel schema。`csv_consumer` 兼容模式仍由自己的 precheck 检查旧契约。
 
 ## Pilot
 
-`acp start` → `next` → `run-action` →（语义则 finalize）→ `advance`。  
-禁止跳过 `plan_intent` 直接 build。
+`acp start tg-plan` → 按顺序执行 Action → `plan_approve`。禁止跳过 intent/build；目标变更必须重新 Plan/Approve。
 
 ## Actions
 

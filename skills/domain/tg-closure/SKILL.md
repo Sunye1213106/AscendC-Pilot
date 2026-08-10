@@ -1,41 +1,57 @@
 ---
 name: tg-closure
 description: >
-  TilingKey 全覆盖闭环的领域方法：如何合法增长可达集 R 与排除集 E，
-  何时继续搜索构造、何时转入源码引理、何时停止并审计。不描述 Pilot 编排。
+  基于 approved target set 的 TilingKey 闭环方法：真实 Host witness 增长 R，源码引理增长 E，
+  构造/搜索与局部证明交替，直到目标 T 闭合；不描述 Pilot 编排。
 ---
 
-# TilingKey 闭环
+# TilingKey Target Closure
 
-维护可审计闭环：声明域 D、可达集 R、排除集 E、观测 Corpus、候选模型、RuleBook。
+集合：
 
-安全不变量与负证据纪律：`references/closure-safety.md`。
+- `D`：Kernel 当前声明的全部 legal Key；
+- `T`：tg-plan 批准的目标，`T ⊆ D`，默认 `T=D`；
+- `R`：真实 Host replay 产生过的 Key，可包含 T 外的真实 witness；
+- `E`：对 T 中 Key 的源码证明不可达集。
+
+完成条件：
+
+```text
+T = (R ∩ T) ∪ E
+R ∩ E = ∅
+```
 
 ## 核心循环
 
 ```text
-oracle 就绪 → 构造/搜索 → Host 回放分类
- ├─ HIT → 增长 R
- ├─ REWRITE / REFUSE → 观测 → 可产生 lemma lead
- ├─ CRASH / NOT_RUN → 修环境，禁止写 E
- → 残差：继续搜 / 请求 lemma task / 审计签发
+approved T
+  → oracle
+  → rebuild R from raw replay
+  → search / construct against open(T)
+  → Host verdict
+     ├─ HIT      → R
+     ├─ REWRITE  → residual / explain
+     ├─ REFUSE   → residual / explain
+     └─ CRASH/NOT_RUN → oracle/tool issue, never E
+  → repeated stable residual
+     → query UO producer/all-writes/guards/source
+     → source lemma candidate
+     → counterexample check against all real R
+     → referee
+     → E
+  → certify T
 ```
 
-## 何时 search / lemma / 停止
+## 纪律
 
-- **search**：仍可能有新命中；尚无可靠观测支撑引理
-- **lemma**：饱和且有 REWRITE/REFUSE 观测 → 由工作流**派发**独立的 source-lemma-proof 任务（本 Skill 不 include 其 SKILL.md）；用返回的证书裁决
-- **停止**：`GAP_ZERO` 且不变量成立；或 oracle 可疑；或完整性阻塞
+- 预测、统计模型、Z3-approx、长期未命中都只能帮助**生成/排序**，不能进入 E。
+- Lemma 必须有源码引用，并检查入口分支、early return、all writers、execution order、exception branches。
+- 任何真实 witness 推翻 lemma 时立即撤销该 rule 并重建 E。
+- Solve 不因额外命中 `D-T` 而扩大 T；它们可进入 Corpus/R，下一次 Plan 可以选择复用。
+- 需要改变 T 时回到 tg-plan，不在 tg-solve 内改计划。
 
-Producer 证明结果为 `PROVED|REFUTED|INSUFFICIENT`；是否进 E 由裁判与引擎决定。
+## UO 的使用方式
 
-## 按需参考
+UO 提供结构证据，不提供全局 19 维 closed-form：Key producer、Host CALLS/READS/WRITES、all writes、guards、TilingData flow、Template/Kernel、source span。Agent 只为当前 residual 拉局部 slice 并推理。
 
-| 条件 | 文件 |
-|---|---|
-| R/E/负证据/未声明/冲突 | `references/closure-safety.md` |
-| 假闭环踩坑 | `references/failure-patterns.md` |
-| oracle 观测 | `references/oracle.md` |
-| 搜索/构造 | `references/search.md` |
-| 审计签发 | `references/certificate.md` |
-| 旧证书能否用 | `_shared/artifact-freshness.md` |
+安全不变量：`references/closure-safety.md`；搜索/构造：`references/search.md`；oracle：`references/oracle.md`；签发：`references/certificate.md`。
