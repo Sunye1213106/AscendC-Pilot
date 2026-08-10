@@ -13,6 +13,7 @@ from uo_init.ir.relation import RelationKind
 from uo_init.passes.frontier_resolution import resolve_class_frontiers
 from uo_init.passes.host_defuse import trace_host_key_roots
 from uo_init.passes.host_tiling_key import bind_host_tiling_key_expressions
+from uo_init.passes.kernel_call_boundaries import classify_kernel_call_boundaries
 from uo_init.passes.kernel_call_read_refine import refine_kernel_calls_and_tiling_reads
 from uo_init.passes.kernel_call_resolution import resolve_kernel_call_frontiers
 from uo_init.passes.kernel_tiling_closure import finalize_kernel_tiling_closure
@@ -54,7 +55,8 @@ def compile_codemap(
     bind Host packed-key arguments, trace their def-use roots, complete scalar
     and array TilingData ABI fields, and finally rebuild an architecture-pure
     Kernel call/read/write closure from qualified current-source symbols before
-    the strict completeness audit runs.
+    the strict completeness audit runs. Dependent/external calls that cannot be
+    uniquely bound remain explicit call boundaries rather than guessed edges.
     """
     arch = (architecture or "arch35").strip() or "arch35"
     variant = build_variant_from_context(architecture=arch, build_context=build_context, name=arch)
@@ -92,6 +94,7 @@ def compile_codemap(
         finalize_kernel_tiling_closure(cm, source_root, architecture=arch)
         refine_kernel_calls_and_tiling_reads(cm, source_root, architecture=arch)
         resolve_kernel_call_frontiers(cm, source_root, architecture=arch)
+        classify_kernel_call_boundaries(cm)
         rebuild_verified_tiling_reads(cm, source_root, architecture=arch)
         enrich_tiling_host_writes(cm, source_root, architecture=arch)
         finalize_kernel_tiling_metrics(cm)
