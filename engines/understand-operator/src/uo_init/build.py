@@ -18,6 +18,7 @@ from uo_init.passes.manager import run_analyze_passes
 from uo_init.passes.source_contract import enrich_codemap_from_operator_source
 from uo_init.passes.source_inventory import inventory_source_files
 from uo_init.passes.source_resolution import resolve_source_gaps
+from uo_init.passes.tiling_host_writes import enrich_tiling_host_writes
 from uo_init.passes.tiling_registration import enrich_tiling_registrations
 from uo_init.resolve.semantic_gap import list_gaps
 from uo_init.store.writer import uo_product_path, write_codemap
@@ -83,6 +84,7 @@ def compile_codemap(
         resolve_source_gaps(cm, source_root, architecture=arch)
         resolve_class_frontiers(cm, source_root, architecture=arch)
         finalize_kernel_tiling_closure(cm, source_root, architecture=arch)
+        enrich_tiling_host_writes(cm, source_root, architecture=arch)
         cm.meta["production_source_enrichment"] = True
     else:
         cm.meta["production_source_enrichment"] = False
