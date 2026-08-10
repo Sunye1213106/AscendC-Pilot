@@ -7,7 +7,7 @@ from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes import compile_time
-from uo_init.passes.host_defuse import trace_host_key_roots
+from uo_init.passes.host_defuse import _function_scopes, _identifiers, trace_host_key_roots
 from uo_init.passes.host_tiling_key import bind_host_tiling_key_expressions
 from uo_init.passes.symbol_identity import normalize_symbol
 
@@ -53,6 +53,7 @@ def test_member_identity_strips_this_without_using_bare_initializer(tmp_path: Pa
     sites = field.attrs.get("producer_sites") or []
     assert any(site.get("file", "").endswith("toy.cpp") and site.get("lhs") == "fBaseParams.isNzOut" for site in sites)
     assert not any(site.get("file", "").endswith("toy.h") for site in sites)
+    assert not any(site.get("lhs") == "isNzOut" for site in sites)
     assert field.attrs.get("rooted_by_current_source") is True
 
     packing = [
@@ -61,6 +62,34 @@ def test_member_identity_strips_this_without_using_bare_initializer(tmp_path: Pa
         and r.attrs.get("provenance") == "source_get_tpl_tiling_key"
     ]
     assert len(packing) == 1
+
+
+def test_member_short_name_never_aliases_back_to_member_target(tmp_path: Path) -> None:
+    root = _host_root(tmp_path)
+    (root / "op_host" / "arch35" / "toy.h").write_text(
+        "struct Params { bool x = false; };\n",
+        encoding="utf-8",
+    )
+    (root / "op_host" / "arch35" / "toy.cpp").write_text(
+        """
+        void T::DoOpTiling() {
+          local = x;
+          fBaseParams.x = local;
+        }
+        uint64_t T::GetTilingKey() const {
+          return GET_TPL_TILING_KEY(fBaseParams.x);
+        }
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.upsert(EntityKind.INPUT, "query", attrs={"api_kind": "tensor", "api_index": 0})
+    cm.upsert(EntityKind.TILING_KEY, "X", attrs={"source_declared": True, "decl_order": 0})
+    member = cm.upsert(EntityKind.FIELD, "this.fBaseParams.x")
+    bind_host_tiling_key_expressions(cm, root)
+    trace_host_key_roots(cm, root)
+    sites = member.attrs.get("producer_sites") or []
+    assert {site.get("lhs") for site in sites} == {"fBaseParams.x"}
 
 
 def test_ambiguous_short_name_is_not_linked_to_every_entity(tmp_path: Path) -> None:
@@ -82,6 +111,34 @@ def test_ambiguous_short_name_is_not_linked_to_every_entity(tmp_path: Path) -> N
     incoming = [r for r in cm.relations.values() if r.dst == packing_node.id]
     assert not any(r.src in {foo.id, bar.id} for r in incoming)
     assert any(cm.entities[r.src].attrs.get("host_key_argument") for r in incoming if r.src in cm.entities)
+
+
+def test_identifier_scan_ignores_strings_cast_types_and_calls() -> None:
+    expr = '''
+      strcmp(inputLayout, "TND") == 0 &&
+      tensor.GetData<int64_t>() != nullptr &&
+      static_cast<optiling::DtypeEnum>(queryType) == optiling::DtypeEnum::FLOAT16 &&
+      /* all but fake words */ realValue > 0 // same set fake words
+    '''
+    identifiers = set(_identifiers(expr))
+    assert "inputLayout" in identifiers
+    assert "queryType" in identifiers
+    assert "realValue" in identifiers
+    assert "optiling::DtypeEnum::FLOAT16" in identifiers
+    for noise in ("TND", "tensor.GetData", "int64_t", "optiling::DtypeEnum", "all", "but", "fake", "words", "same", "set"):
+        assert noise not in identifiers
+
+
+def test_function_scope_parser_does_not_name_control_statement_if() -> None:
+    text = """
+    void T::Run() {
+      if (x) {
+        y = 1;
+      }
+    }
+    """
+    scopes = _function_scopes(text)
+    assert [scope.name for scope in scopes] == ["T::Run"]
 
 
 def test_compile_time_does_not_promote_uppercase_branch_spelling() -> None:
