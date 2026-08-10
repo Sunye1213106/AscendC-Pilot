@@ -35,7 +35,7 @@ def assert_tg_write_path(path: Path | str, *, out_root: Path | None = None) -> P
     resolved = Path(path).expanduser().resolve()
     if _is_uo_tree(resolved):
         raise IsolationError(
-            f"TG isolation: refuse write under UO authority/work tree: {resolved}. "
+            f"UO_ROOT: TG isolation refuses write under UO authority/work tree: {resolved}. "
             "TG artifacts must stay under .ascendc-pilot/<arch>/tg."
         )
     if out_root is not None:
