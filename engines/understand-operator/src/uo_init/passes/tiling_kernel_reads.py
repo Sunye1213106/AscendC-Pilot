@@ -1,0 +1,316 @@
+# -*- coding: utf-8 -*-
+"""Build source-sound Kernel reads of TilingData fields.
+
+Only pointer/member chains that are structurally TilingData-like are accepted;
+ordinary ``this->member`` accesses are never treated as TilingData reads.  The
+pass supports both ``tilingData->field`` and ``this->tilingData->nested.field``
+forms and resolves nested fields through their declared TilingData owner type,
+including ``std::conditional`` member types.
+"""
+from __future__ import annotations
+
+import re
+from collections import defaultdict, deque
+from pathlib import Path
+
+from uo_init.ir.codemap import CodeMap
+from uo_init.ir.entity import Entity, EntityKind
+from uo_init.ir.relation import RelationKind
+
+_ACCESS_RE = re.compile(
+    r"(?:(?:this\s*->\s*)?(?P<base>[A-Za-z_]\w*))\s*->\s*"
+    r"(?P<outer>[A-Za-z_]\w*)"
+    r"(?:\s*(?:\.|->)\s*(?P<inner>[A-Za-z_]\w*))?"
+)
+_WORD_RE = re.compile(r"\b[A-Za-z_]\w*\b")
+_ALIAS_RE = re.compile(r"\busing\s+([A-Za-z_]\w*)\s*=\s*([^;]+);", re.S)
+_BOUND_CALLS = {
+    "source_kernel_call_bound_v2", "source_kernel_macro_call_bound_v2",
+    "source_kernel_call_bound_v3", "source_kernel_call_dispatch_set_v3",
+}
+
+
+def rebuild_verified_tiling_reads(
+    codemap: CodeMap,
+    operator_root: str | Path,
+    *,
+    architecture: str = "arch35",
+) -> CodeMap:
+    root = Path(operator_root).expanduser().resolve()
+    selected = list((codemap.meta.get("kernel_tiling_closure") or {}).get("selected_kernel_files") or [])
+    texts = _load(root, selected)
+    _purge_old_reads(codemap)
+
+    types = {e.name: e for e in codemap.by_kind(EntityKind.TILING_DATA)}
+    known_types = set(types)
+    fields: dict[tuple[str, str], Entity] = {}
+    by_name: dict[str, list[Entity]] = defaultdict(list)
+    nested: dict[str, set[str]] = defaultdict(set)
+    for field in codemap.by_kind(EntityKind.TILING_FIELD):
+        owner = str(field.attrs.get("owner") or "")
+        fields[(owner, field.name)] = field
+        by_name[field.name].append(field)
+        nested[field.name].update(_referenced_types(str(field.attrs.get("cpp_type") or ""), known_types))
+
+    scopes = [
+        e for e in codemap.entities.values()
+        if str(e.attrs.get("provenance") or "") in {
+            "source_kernel_definition_v2", "source_kernel_macro_definition_v2"
+        }
+    ]
+    aliases_by_file = {file: _aliases(raw, known_types) for file, raw in texts.items()}
+    variable_types_by_file = {
+        file: _declared_variable_types(raw, known_types, aliases_by_file[file])
+        for file, raw in texts.items()
+    }
+
+    sites = resolved = unresolved = 0
+    for scope in scopes:
+        file = str(scope.file or "")
+        raw = texts.get(file)
+        if raw is None or not scope.line_start:
+            continue
+        body = _scope_body(raw, int(scope.line_start), scope.name.split("::")[-1])
+        if body is None:
+            continue
+        body_start, body_end = body
+        body_text = raw[body_start:body_end]
+        var_types = dict(variable_types_by_file.get(file) or {})
+        for match in _ACCESS_RE.finditer(body_text):
+            base, outer, inner = match.group("base"), match.group("outer"), match.group("inner")
+            looks_tiling = "tiling" in base.lower() or bool(var_types.get(base)) or outer in nested
+            if not looks_tiling:
+                continue
+            sites += 1
+            leaf = inner or outer
+            if leaf.startswith("get_"):
+                leaf = leaf[4:]
+            candidates: list[Entity] = []
+            if inner:
+                for child_type in nested.get(outer) or ():
+                    candidates.append(fields.get((child_type, leaf)))
+            else:
+                for owner in var_types.get(base) or ():
+                    candidates.append(fields.get((owner, leaf)))
+                candidates = _unique(candidates)
+                if not candidates:
+                    declared = by_name.get(leaf) or []
+                    if len(declared) == 1:
+                        candidates.extend(declared)
+            candidates = _unique(candidates)
+            absolute = body_start + match.start()
+            line = _line(raw, absolute)
+            expression = raw[absolute:body_start + match.end()].replace("\n", " ").strip()
+            if len(candidates) == 1:
+                field = candidates[0]
+                rel = codemap.link(
+                    RelationKind.READS,
+                    scope.id,
+                    field.id,
+                    attrs={
+                        "provenance": "source_tilingdata_read_verified",
+                        "file": file, "line": line, "expression": expression,
+                        "field_owner": field.attrs.get("owner"),
+                    },
+                    status="confirmed",
+                )
+                rel.attrs["provenance"] = "source_tilingdata_read_verified"
+                site = {"file": file, "line": line, "expression": expression}
+                if site not in rel.attrs.setdefault("sites", []):
+                    rel.attrs["sites"].append(site)
+                resolved += 1
+            else:
+                ref = codemap.upsert(
+                    EntityKind.OTHER,
+                    expression,
+                    eid=f"TDREADVER::{file}::{line}::{scope.id}::{outer}::{inner or ''}",
+                    attrs={
+                        "role": "tilingdata_read_unresolved",
+                        "reason": "field_owner_ambiguous" if candidates else "field_owner_unknown",
+                        "candidate_fields": [f.attrs.get("qualified_name") for f in candidates],
+                        "provenance": "source_tilingdata_read_unresolved_verified",
+                    },
+                    file=file, line=line, status="partial", confidence=0.5,
+                )
+                codemap.link(
+                    RelationKind.REFERENCES,
+                    scope.id,
+                    ref.id,
+                    attrs={
+                        "provenance": "source_tilingdata_read_unresolved_verified",
+                        "file": file, "line": line,
+                    },
+                    status="partial", confidence=0.5,
+                )
+                unresolved += 1
+
+    reachable = _reachable(codemap)
+    reachable_fields: set[str] = set()
+    reachable_sites: set[str] = set()
+    reachable_unresolved = 0
+    for rel in codemap.relations.values():
+        prov = str(rel.attrs.get("provenance") or "")
+        if prov == "source_tilingdata_read_verified":
+            is_reachable = rel.src in reachable
+            rel.attrs["entry_reachable"] = is_reachable
+            if is_reachable:
+                reachable_fields.add(rel.dst)
+                for site in rel.attrs.get("sites") or []:
+                    reachable_sites.add(f"{site.get('file')}:{site.get('line')}:{rel.src}:{rel.dst}")
+        elif prov == "source_tilingdata_read_unresolved_verified" and rel.src in reachable:
+            reachable_unresolved += 1
+
+    closure = dict(codemap.meta.get("kernel_tiling_closure") or {})
+    closure.update(
+        {
+            "tiling_read_sites": sites,
+            "tiling_resolved_read_sites": resolved,
+            "tiling_ambiguous_read_sites": unresolved,
+            "tiling_entry_reachable_read_sites": len(reachable_sites),
+            "tiling_entry_reachable_fields": len(reachable_fields),
+            "tiling_entry_reachable_unresolved_read_sites": reachable_unresolved,
+            "tiling_read_policy": "tiling-pointer-chain-conditional/v2",
+        }
+    )
+    codemap.meta["kernel_tiling_closure"] = closure
+    return codemap
+
+
+def _purge_old_reads(codemap: CodeMap) -> None:
+    rel_prov = {
+        "source_tilingdata_read_qualified_v2", "source_tilingdata_read_unresolved_v2",
+        "source_tilingdata_read_verified", "source_tilingdata_read_unresolved_verified",
+    }
+    ent_prov = {
+        "source_tilingdata_read_unresolved_v2", "source_tilingdata_read_unresolved_verified",
+    }
+    remove_rel = {rid for rid, rel in codemap.relations.items() if str(rel.attrs.get("provenance") or "") in rel_prov}
+    remove_ent = {eid for eid, ent in codemap.entities.items() if str(ent.attrs.get("provenance") or "") in ent_prov}
+    for rid, rel in list(codemap.relations.items()):
+        if rel.src in remove_ent or rel.dst in remove_ent:
+            remove_rel.add(rid)
+    for rid in remove_rel:
+        codemap.relations.pop(rid, None)
+    for eid in remove_ent:
+        codemap.entities.pop(eid, None)
+
+
+def _scope_body(raw: str, start_line: int, short_name: str) -> tuple[int, int] | None:
+    lines = raw.splitlines(keepends=True)
+    offsets: list[int] = []
+    pos = 0
+    for line in lines:
+        offsets.append(pos); pos += len(line)
+    start_idx = max(0, start_line - 4)
+    start_pos = offsets[start_idx] if start_idx < len(offsets) else 0
+    limit_idx = min(len(offsets) - 1, start_line + 16) if offsets else 0
+    limit_pos = offsets[limit_idx] if offsets else len(raw)
+    name_match = re.search(rf"\b{re.escape(short_name)}\s*(?:<[^;{{}}]*>)?\s*\(", raw[start_pos:limit_pos], re.S)
+    if not name_match:
+        return None
+    open_brace = raw.find("{", start_pos + name_match.end(), min(len(raw), limit_pos + 1200))
+    if open_brace < 0:
+        return None
+    close_brace = _matching_brace(raw, open_brace)
+    if close_brace < 0:
+        return None
+    return open_brace + 1, close_brace
+
+
+def _declared_variable_types(raw: str, known: set[str], aliases: dict[str, set[str]]) -> dict[str, set[str]]:
+    out: dict[str, set[str]] = defaultdict(set)
+    symbols = sorted(known | set(aliases), key=len, reverse=True)
+    if not symbols:
+        return out
+    alt = "|".join(re.escape(x) for x in symbols)
+    pattern = re.compile(rf"\b(?P<type>{alt})\b(?:\s*<[^;{{}}]*>)?\s*(?:const\s*)?[*&]*\s*(?P<name>[A-Za-z_]\w*)\b")
+    for match in pattern.finditer(raw):
+        token = match.group("type")
+        if token in known:
+            out[match.group("name")].add(token)
+        out[match.group("name")].update(aliases.get(token) or ())
+    return out
+
+
+def _aliases(raw: str, known: set[str]) -> dict[str, set[str]]:
+    out: dict[str, set[str]] = defaultdict(set)
+    matches = [(m.group(1), m.group(2)) for m in _ALIAS_RE.finditer(raw)]
+    for _ in range(3):
+        for alias, expr in matches:
+            tokens = set(_WORD_RE.findall(expr))
+            out[alias].update(tokens & known)
+            for token in tokens:
+                out[alias].update(out.get(token) or ())
+    return out
+
+
+def _referenced_types(raw: str, known: set[str]) -> set[str]:
+    return set(_WORD_RE.findall(raw or "")) & known
+
+
+def _reachable(codemap: CodeMap) -> set[str]:
+    starts = {e.id for e in codemap.by_kind(EntityKind.KERNEL) if e.attrs.get("source_signature")}
+    adj: dict[str, set[str]] = defaultdict(set)
+    for rel in codemap.relations.values():
+        if rel.kind_name() == RelationKind.CALLS.value and str(rel.attrs.get("provenance") or "") in _BOUND_CALLS:
+            adj[rel.src].add(rel.dst)
+    seen = set(starts)
+    q = deque(starts)
+    while q:
+        cur = q.popleft()
+        for nxt in adj.get(cur, ()):
+            if nxt not in seen:
+                seen.add(nxt); q.append(nxt)
+    return seen
+
+
+def _load(root: Path, selected: list[str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for raw in selected:
+        path = _resolve_file(root, raw)
+        if path is not None:
+            out[raw.replace("\\", "/").lstrip("./")] = path.read_text(encoding="utf-8", errors="replace")
+    return out
+
+
+def _unique(items: list[Entity | None]) -> list[Entity]:
+    out: list[Entity] = []
+    seen: set[str] = set()
+    for item in items:
+        if item is None or item.id in seen:
+            continue
+        seen.add(item.id); out.append(item)
+    return out
+
+
+def _matching_brace(text: str, open_pos: int) -> int:
+    depth = 0
+    quote = ""
+    escape = False
+    for idx in range(open_pos, len(text)):
+        ch = text[idx]
+        if quote:
+            if escape: escape = False
+            elif ch == "\\": escape = True
+            elif ch == quote: quote = ""
+            continue
+        if ch in {'\"', "'"}: quote = ch
+        elif ch == "{": depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0: return idx
+    return -1
+
+
+def _resolve_file(root: Path, raw: str) -> Path | None:
+    rel = raw.replace("\\", "/").lstrip("./")
+    candidates = [root.parent / rel, root / rel]
+    if rel.startswith(root.name + "/"):
+        candidates.append(root / rel[len(root.name) + 1:])
+    for path in candidates:
+        if path.is_file(): return path
+    return None
+
+
+def _line(text: str, offset: int) -> int:
+    return text.count("\n", 0, max(0, offset)) + 1

@@ -71,7 +71,13 @@ class _KernelIR:
         self.notes = []
 
 
-def test_codemap_host_kernel_path(tmp_path: Path):
+def test_codemap_store_does_not_promote_legacy_key_fields(tmp_path: Path):
+    """Legacy derived ``key_fields`` may not manufacture an input→key path.
+
+    Current-source host_tiling_key/host_defuse is the authority for TilingKey
+    provenance. This synthetic test intentionally has no operator source, so the
+    old injected ``input_roots`` must stay inert.
+    """
     host = _HostIR()
     kernel = _KernelIR()
     result = compile_codemap(
@@ -102,10 +108,10 @@ def test_codemap_host_kernel_path(tmp_path: Path):
     summary = cm.summary()
     assert summary["has_host"]
     assert summary["has_kernel"]
-    assert summary["has_host_kernel_path"]
     assert cm.by_kind(EntityKind.INPUT)
     assert cm.by_kind(EntityKind.TILING_KEY)
     assert cm.by_kind(EntityKind.KERNEL)
+    assert "input_root" not in list(cm.meta.get("passes_run") or [])
 
     path = Path(result["path"])
     assert path.is_file()
@@ -117,8 +123,8 @@ def test_codemap_host_kernel_path(tmp_path: Path):
     assert loaded.by_kind(EntityKind.KERNEL)
     q = CodeMapQuery(codemap=loaded, path=str(path))
     trail = q.find_path("queryType", end_kind="KERNEL")
-    assert trail, "expected INPUT/VARIABLE → … → KERNEL path"
-    assert any(e.get("kind") == "KERNEL" for e in trail)
+    assert trail == [], "legacy key_fields/input_roots must not invent an Agent-visible source path"
+    assert q.summary()["has_host_kernel_path"] is False
 
 
 def test_reachability_pass_contract():
