@@ -19,7 +19,7 @@ allowed_write_paths:
 - tg/closure/oracle_probe.yaml
 forbidden_write_paths: []
 allowed_read_paths:
-- uo/**
+- ../uo/*.uo
 - tg/init/**
 - operators/**
 forbidden_read_paths: []

@@ -94,6 +94,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub.add_parser("kernel-coverage", help="compute R_kernel from views/kernel.yaml")
     sub.add_parser("tilingdata-coverage", help="tilingdata probe + static over-approx")
+    p_obl = sub.add_parser(
+        "obligation-collect",
+        help="project TD+Kernel obligations over R; write inventory + histograms (no case gen)",
+    )
+    p_obl.add_argument("--max-keys", type=int, default=0, help="limit reachable keys (0=all)")
+    p_joint = sub.add_parser(
+        "joint-cover",
+        help="joint TD+Kernel candidate construct + greedy set-cover (after obligation-collect)",
+    )
+    p_joint.add_argument("--max-keys", type=int, default=0, help="limit reachable keys (0=all)")
+    p_prod = sub.add_parser("producer-chain", help="resolve Host→TilingData reverse chain for a field")
+    p_prod.add_argument("--field", required=True, help="TilingData field name")
 
     args = ap.parse_args(argv)
     ws = W.default_workspace(args.root).ensure()
@@ -120,6 +132,18 @@ def main(argv: list[str] | None = None) -> int:
         from testcase_agent.closure import tilingdata_domain as TD
 
         return _print(TD.compute_tilingdata_coverage(ws))
+    if args.cmd == "obligation-collect":
+        from testcase_agent.closure import obligations as OBL
+
+        return _print(OBL.collect_obligations(ws, max_keys=int(args.max_keys or 0)))
+    if args.cmd == "joint-cover":
+        from testcase_agent.closure import joint_cover as JC
+
+        return _print(JC.joint_cover_keys(ws=ws, max_keys=int(args.max_keys or 0)))
+    if args.cmd == "producer-chain":
+        from testcase_agent.closure import producer_chain as PC
+
+        return _print({"ok": True, **PC.resolve_field_to_inputs(str(args.field), ws=ws)})
     if args.cmd == "rebuild":
         return _print(ledger.rebuild(ws))
     if args.cmd == "apply-rules":

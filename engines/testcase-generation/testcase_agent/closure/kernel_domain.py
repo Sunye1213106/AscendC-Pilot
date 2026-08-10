@@ -94,11 +94,12 @@ def load_kernel_view(ws: W.Workspace | None = None) -> tuple[dict[str, Any], dic
 
 def load_kernel_branches(uo: Path | None = None, *, ws: W.Workspace | None = None) -> list[dict[str, Any]]:
     # ``uo`` retained for API compatibility; product identity comes from ws.root.
+    # Return all projected branches. Runtime (TilingData-dependent) branches are
+    # first-class coverage targets; do not drop them when constexpr rows exist.
     del uo
     doc, _ = load_kernel_view(ws)
     rows = list(doc.get("branches") or doc.get("nodes") or [])
-    out = [row for row in rows if isinstance(row, dict) and (not row.get("stage") or row.get("stage") == "constexpr")]
-    return out or [row for row in rows if isinstance(row, dict)]
+    return [row for row in rows if isinstance(row, dict)]
 
 
 def _condition_to_expr(branch: dict[str, Any]) -> dict[str, Any] | None:
@@ -142,8 +143,7 @@ def compute_r_kernel(ws: W.Workspace | None = None, *, write: bool = True) -> di
     ws = (ws or W.default_workspace()).ensure()
     doc, source = load_kernel_view(ws)
     rows0 = list(doc.get("branches") or doc.get("nodes") or [])
-    branches = [r for r in rows0 if isinstance(r, dict) and (not r.get("stage") or r.get("stage") == "constexpr")]
-    branches = branches or [r for r in rows0 if isinstance(r, dict)]
+    branches = [r for r in rows0 if isinstance(r, dict)]
     Rset = ledger.load_R(ws)
     r_kernel: dict[str, list[int]] = {}
     branches_by_key: dict[int, list[str]] = {}

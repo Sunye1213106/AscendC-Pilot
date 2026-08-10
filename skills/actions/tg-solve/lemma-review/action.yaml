@@ -20,10 +20,10 @@ allowed_write_paths:
 - runs/{run_id}/actions/lemma_review/review.yaml
 forbidden_write_paths: []
 allowed_read_paths:
+- ../uo/*.uo
 - runs/**/actions/lemma_mine/**
 - runs/**/actions/lemma_verify/**
 - tg/closure/lemmas/**
-- uo/ir/**
 forbidden_read_paths: []
 checker:
   required: true

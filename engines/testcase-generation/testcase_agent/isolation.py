@@ -196,11 +196,27 @@ def compute_kb_fingerprint(uo_root: Path) -> dict[str, Any]:
 
     ``uo_root`` remains an argument only for compatibility with the old TG API;
     it is treated as a project/arch hint, not as the production authority.
+    An empty or absent tree yields ``digest=""`` so confirm can fail closed.
     """
     product = _product_fingerprint(Path(uo_root))
     if product is not None:
         return product
-    return _legacy_fingerprint(Path(uo_root))
+    root = Path(uo_root).expanduser().resolve()
+    legacy = _legacy_fingerprint(root)
+    has_authority = bool(
+        legacy.get("kb_graph_sha256")
+        or int(legacy.get("artifact_hash_count") or 0) > 0
+        or (root / "manifest.yaml").is_file()
+    )
+    if has_authority:
+        return legacy
+    return {
+        "version": 2,
+        "authority": "missing",
+        "digest": "",
+        "uo_root": root.as_posix(),
+        "reason": "no_uo_product_or_legacy_export",
+    }
 
 
 def write_kb_fingerprint(out_root: Path, uo_root: Path) -> dict[str, Any]:

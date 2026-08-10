@@ -20,9 +20,9 @@ output_contract_id: plan-precheck-v1
 allowed_write_paths: []
 forbidden_write_paths: []
 allowed_read_paths:
+- ../uo/*.uo
 - tg/init/status.yaml
 - tg/snapshot/**
-- uo/manifest.yaml
 forbidden_read_paths: []
 checker:
   required: true

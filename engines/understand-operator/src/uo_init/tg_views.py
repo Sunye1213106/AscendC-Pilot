@@ -117,10 +117,121 @@ def project_tg_host_view(codemap: CodeMap, *, fingerprint: str = "") -> dict[str
     }
 
 
+_COMPARE_RE = re.compile(
+    r"(?P<field>[A-Za-z_]\w*)\s*(?P<op>==|!=|<=|>=|<|>)\s*(?P<value>-?\d+|true|false)",
+    re.IGNORECASE,
+)
+_RISK_TOKENS = ("overflow", "align", "alignment", "tail", "zero", "minimum", "maximum", "min", "max")
+
+
+def _infer_stage(attrs: dict[str, Any], condition: str, key_dims: list[str], td_fields: list[str]) -> str:
+    explicit = str(attrs.get("stage") or attrs.get("evaluation_stage") or "").strip().lower()
+    if explicit in {"constexpr", "runtime", "compile_time", "host"}:
+        return "constexpr" if explicit in {"constexpr", "compile_time"} else "runtime"
+    # Constexpr-like when only tiling-key dims appear; runtime when TilingData is involved.
+    if td_fields and not key_dims:
+        return "runtime"
+    if td_fields and key_dims:
+        return "runtime"
+    if "constexpr" in condition or condition.startswith("std::is_same") or "sizeof" in condition:
+        return "constexpr"
+    if key_dims and not td_fields:
+        return "constexpr"
+    if td_fields:
+        return "runtime"
+    return explicit or "runtime"
+
+
+def _value_classes_from_expressions(field: str, expressions: list[str]) -> list[dict[str, Any]]:
+    """Extract semantic boundary predicates; never enumerate full domains."""
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for expr in expressions:
+        for match in _COMPARE_RE.finditer(str(expr or "")):
+            if match.group("field") != field:
+                continue
+            op = match.group("op")
+            raw = match.group("value")
+            value: Any
+            if raw.lower() in {"true", "false"}:
+                value = raw.lower() == "true"
+            else:
+                try:
+                    value = int(raw)
+                except ValueError:
+                    value = raw
+            pred = f"{field} {op} {value}"
+            if pred in seen:
+                continue
+            seen.add(pred)
+            out.append({"field": field, "op": op, "value": value, "predicate": pred})
+            # Companion polarity for equality / inequality and threshold cuts.
+            if op == "==":
+                companion = f"{field} != {value}"
+                if companion not in seen:
+                    seen.add(companion)
+                    out.append({"field": field, "op": "!=", "value": value, "predicate": companion})
+            elif op == "!=":
+                companion = f"{field} == {value}"
+                if companion not in seen:
+                    seen.add(companion)
+                    out.append({"field": field, "op": "==", "value": value, "predicate": companion})
+            elif op == ">=":
+                companion = f"{field} < {value}"
+                if companion not in seen:
+                    seen.add(companion)
+                    out.append({"field": field, "op": "<", "value": value, "predicate": companion})
+            elif op == "<":
+                companion = f"{field} >= {value}"
+                if companion not in seen:
+                    seen.add(companion)
+                    out.append({"field": field, "op": ">=", "value": value, "predicate": companion})
+            elif op == ">":
+                companion = f"{field} <= {value}"
+                if companion not in seen:
+                    seen.add(companion)
+                    out.append({"field": field, "op": "<=", "value": value, "predicate": companion})
+            elif op == "<=":
+                companion = f"{field} > {value}"
+                if companion not in seen:
+                    seen.add(companion)
+                    out.append({"field": field, "op": ">", "value": value, "predicate": companion})
+    return out
+
+
+def _classify_tilingdata_field(
+    *,
+    name: str,
+    attrs: dict[str, Any],
+    readers: list[dict[str, Any]],
+    writers: list[Any],
+    value_classes: list[dict[str, Any]],
+) -> str:
+    explicit = str(attrs.get("coverage_class") or attrs.get("field_class") or "").strip().lower()
+    if explicit in {"control", "boundary", "derived", "payload"}:
+        return explicit
+    if attrs.get("derived_from") or attrs.get("derived") or str(attrs.get("exactness") or "") == "derived":
+        return "derived"
+    reader_text = " ".join(str(r.get("expression") or "") for r in readers).lower()
+    name_l = name.lower()
+    if value_classes or any(tok in reader_text for tok in ("if", "?", "for", "while", "switch")):
+        if any(tok in name_l or tok in reader_text for tok in ("tail", "inner", "outer", "split", "block", "align")):
+            return "boundary"
+        return "control"
+    if any(tok in name_l or tok in reader_text for tok in _RISK_TOKENS):
+        return "payload"
+    if writers and not readers:
+        return "payload"
+    if readers and not value_classes:
+        return "payload"
+    return "payload"
+
+
 def project_kernel_view(codemap: CodeMap, *, fingerprint: str = "") -> dict[str, Any]:
-    """Project constexpr/kernel branch evidence required by TG certification."""
+    """Project kernel branch evidence required by TG certification (schema v2)."""
     fp = fingerprint or graph_fingerprint(codemap)
     key_names = [e.name for e in codemap.by_kind(EntityKind.TILING_KEY)]
+    td_names = [e.name for e in codemap.by_kind(EntityKind.TILING_FIELD)]
     rows: list[dict[str, Any]] = []
     for ent in codemap.by_kind(EntityKind.BRANCH):
         attrs = ent.attrs or {}
@@ -128,12 +239,22 @@ def project_kernel_view(codemap: CodeMap, *, fingerprint: str = "") -> dict[str,
         dims = list(attrs.get("dimensions") or attrs.get("tiling_key_dims") or [])
         if not dims and condition:
             dims = [name for name in key_names if re.search(rf"\b{re.escape(name)}\b", condition)]
+        td_fields = list(attrs.get("tilingdata_fields") or attrs.get("tiling_data_fields") or [])
+        if not td_fields and condition:
+            td_fields = [name for name in td_names if re.search(rf"\b{re.escape(name)}\b", condition)]
+        stage = _infer_stage(attrs, condition, dims, td_fields)
+        key_specialization = {
+            "tiling_key_dims": dims,
+            "fixes_branch_when_constant": bool(dims) and stage == "constexpr",
+        }
         rows.append({
             "id": ent.id,
             "name": ent.name,
-            "stage": str(attrs.get("stage") or attrs.get("evaluation_stage") or "constexpr"),
+            "stage": stage,
             "condition": condition,
             "dimensions": dims,
+            "tilingdata_fields": td_fields,
+            "key_specialization": key_specialization,
             "finite_predicate": attrs.get("finite_predicate"),
             "file": ent.file,
             "line": ent.line_start,
@@ -141,14 +262,15 @@ def project_kernel_view(codemap: CodeMap, *, fingerprint: str = "") -> dict[str,
             "status": getattr(ent, "status", "extracted"),
         })
     return {
-        "schema": "uo-kernel-view/v1",
+        "schema": "uo-kernel-view/v2",
+        "compat_schema": "uo-kernel-view/v1",
         "source": {"graph_fingerprint": fp, "authority": "uo_codemap", "generated_by": "uo_init.tg_views.project_kernel_view"},
         "branches": rows,
     }
 
 
 def project_tilingdata_view(codemap: CodeMap, *, fingerprint: str = "") -> dict[str, Any]:
-    """Project TilingData ABI fields, Host writers and Kernel readers."""
+    """Project TilingData ABI fields with A/B/C/D classification (schema v2)."""
     fp = fingerprint or graph_fingerprint(codemap)
     fields = list(codemap.by_kind(EntityKind.TILING_FIELD))
     readers: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -171,11 +293,27 @@ def project_tilingdata_view(codemap: CodeMap, *, fingerprint: str = "") -> dict[
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     no_writer: list[str] = []
     no_reader: list[str] = []
+    class_counts: Counter[str] = Counter()
     for ent in fields:
         attrs = ent.attrs or {}
         owner = str(attrs.get("owner") or attrs.get("struct") or "TilingData")
         writers = list(attrs.get("host_writer_sites") or attrs.get("producer_sites") or [])
         rds = readers.get(ent.id, [])
+        expressions = [str(r.get("expression") or "") for r in rds if r.get("expression")]
+        for w in writers:
+            if isinstance(w, dict) and w.get("expression"):
+                expressions.append(str(w.get("expression")))
+        value_classes = _value_classes_from_expressions(ent.name, expressions)
+        field_class = _classify_tilingdata_field(
+            name=ent.name, attrs=attrs, readers=rds, writers=writers, value_classes=value_classes
+        )
+        class_counts[field_class] += 1
+        risk_markers = [tok for tok in _RISK_TOKENS if tok in ent.name.lower() or any(tok in str(e).lower() for e in expressions)]
+        writer_formula = ""
+        for w in writers:
+            if isinstance(w, dict) and (w.get("expression") or w.get("formula")):
+                writer_formula = str(w.get("expression") or w.get("formula"))
+                break
         row = {
             "id": ent.id,
             "name": ent.name,
@@ -186,6 +324,12 @@ def project_tilingdata_view(codemap: CodeMap, *, fingerprint: str = "") -> dict[
             "readers": rds,
             "file": ent.file,
             "line": ent.line_start,
+            "field_class": field_class,
+            "value_classes": value_classes,
+            "writer_formula": writer_formula,
+            "risk_markers": risk_markers,
+            "coverage_priority": field_class in {"control", "boundary"}
+            or (field_class == "payload" and bool(risk_markers)),
         }
         grouped[owner].append(row)
         if not writers:
@@ -198,10 +342,18 @@ def project_tilingdata_view(codemap: CodeMap, *, fingerprint: str = "") -> dict[
         for name, rows in sorted(grouped.items())
     ]
     return {
-        "schema": "uo-tilingdata-view/v1",
+        "schema": "uo-tilingdata-view/v2",
+        "compat_schema": "uo-tilingdata-view/v1",
         "source": {"graph_fingerprint": fp, "authority": "uo_codemap", "generated_by": "uo_init.tg_views.project_tilingdata_view"},
         "structs": structs,
         "defects": {"no_writer": sorted(set(no_writer)), "no_reader": sorted(set(no_reader))},
+        "class_counts": dict(class_counts),
+        "classification": {
+            "control": "participates in kernel if/loop/dispatch",
+            "boundary": "affects loop count / tail / block split / offset",
+            "derived": "fully determined by other values; never alone creates a case",
+            "payload": "address/length/compute params; obligations only with risk markers",
+        },
     }
 
 

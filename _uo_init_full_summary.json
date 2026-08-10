@@ -1,0 +1,390 @@
+{
+  "start": {
+    "ok": true,
+    "run_id": "RUN_20260810_020122_ee6cea44",
+    "phase": "prepare"
+  },
+  "prepare": {
+    "ok": true,
+    "engine": "prepare",
+    "steps": [
+      {
+        "step": "prepare_layout",
+        "ok": true,
+        "error": null,
+        "engine": "prepare_layout"
+      },
+      {
+        "step": "scope_scan",
+        "ok": true,
+        "error": null,
+        "engine": "scope_scan"
+      },
+      {
+        "step": "scope_confirm",
+        "ok": true,
+        "error": null,
+        "engine": "scope_confirm"
+      }
+    ]
+  },
+  "extract": {
+    "ok": true,
+    "engine": "extract",
+    "steps": [
+      {
+        "step": "extract_host",
+        "ok": true,
+        "error": null,
+        "engine": "extract_host"
+      },
+      {
+        "step": "extract_tiling_key",
+        "ok": true,
+        "error": null,
+        "engine": "extract_tiling_key"
+      },
+      {
+        "step": "extract_registry",
+        "ok": true,
+        "error": null,
+        "engine": "extract_registry"
+      },
+      {
+        "step": "extract_kernel",
+        "ok": true,
+        "error": null,
+        "engine": "extract_kernel"
+      }
+    ]
+  },
+  "analyze": {
+    "ok": true,
+    "engine": "analyze",
+    "summary": {
+      "op_name": "flash_attention_score_grad",
+      "architecture": "arch35",
+      "entity_count": 8388,
+      "relation_count": 11761,
+      "entities_by_kind": {
+        "ARCH": 1,
+        "BRANCH": 1205,
+        "BUILD_VARIANT": 1,
+        "COMPILE_VAR": 458,
+        "FIELD": 854,
+        "FILE": 47,
+        "FUNCTION": 1241,
+        "INPUT": 40,
+        "KERNEL": 1,
+        "MACRO": 158,
+        "METHOD": 3053,
+        "OUTPUT": 7,
+        "PREDICATE": 648,
+        "TEMPLATE": 1,
+        "TEMPLATE_ARG": 39,
+        "TILING_DATA": 11,
+        "TILING_FIELD": 146,
+        "TILING_KEY": 19,
+        "TYPE": 49,
+        "VARIABLE": 409
+      },
+      "relations_by_kind": {
+        "ACTIVE_UNDER": 297,
+        "AVAILABLE_ON": 47,
+        "BINDS": 19,
+        "CALLS": 5353,
+        "CONTROLS": 1654,
+        "DECLARES": 918,
+        "DEFINES": 1,
+        "DERIVES": 2009,
+        "FLOWS_TO": 260,
+        "GUARDED_BY": 411,
+        "READS": 552,
+        "REFERENCES": 5,
+        "SELECTS": 84,
+        "WRITES": 151
+      },
+      "has_host": true,
+      "has_kernel": true,
+      "has_host_kernel_path": true,
+      "has_input_tilingkey_kernel_path": true,
+      "has_tilingdata_kernel_path": true,
+      "has_input_output_path": true,
+      "tiling_key_root_coverage": "17/19",
+      "tiling_key_host_packing_coverage": "19/19"
+    }
+  },
+  "resolve": {
+    "ok": true,
+    "engine": "resolve_gaps"
+  },
+  "apply_gap_patch": {
+    "ok": true,
+    "engine": "apply_gap_patch"
+  },
+  "commit": {
+    "ok": true,
+    "engine": "commit",
+    "path": "/mnt/d/TEST/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/uo/flash_attention_score_grad.arch35.uo",
+    "summary": {
+      "op_name": "flash_attention_score_grad",
+      "architecture": "arch35",
+      "entity_count": 8388,
+      "relation_count": 11761,
+      "entities_by_kind": {
+        "ARCH": 1,
+        "BRANCH": 1205,
+        "BUILD_VARIANT": 1,
+        "COMPILE_VAR": 458,
+        "FIELD": 854,
+        "FILE": 47,
+        "FUNCTION": 1241,
+        "INPUT": 40,
+        "KERNEL": 1,
+        "MACRO": 158,
+        "METHOD": 3053,
+        "OUTPUT": 7,
+        "PREDICATE": 648,
+        "TEMPLATE": 1,
+        "TEMPLATE_ARG": 39,
+        "TILING_DATA": 11,
+        "TILING_FIELD": 146,
+        "TILING_KEY": 19,
+        "TYPE": 49,
+        "VARIABLE": 409
+      },
+      "relations_by_kind": {
+        "ACTIVE_UNDER": 297,
+        "AVAILABLE_ON": 47,
+        "BINDS": 19,
+        "CALLS": 5353,
+        "CONTROLS": 1654,
+        "DECLARES": 918,
+        "DEFINES": 1,
+        "DERIVES": 2009,
+        "FLOWS_TO": 260,
+        "GUARDED_BY": 411,
+        "READS": 552,
+        "REFERENCES": 5,
+        "SELECTS": 84,
+        "WRITES": 151
+      },
+      "has_host": true,
+      "has_kernel": true,
+      "has_host_kernel_path": true,
+      "has_input_tilingkey_kernel_path": true,
+      "has_tilingdata_kernel_path": true,
+      "has_input_output_path": true,
+      "tiling_key_root_coverage": "17/19",
+      "tiling_key_host_packing_coverage": "19/19"
+    },
+    "uo_product": {
+      "ok": true,
+      "path": "/mnt/d/TEST/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/uo/flash_attention_score_grad.arch35.uo",
+      "summary": {
+        "op_name": "flash_attention_score_grad",
+        "architecture": "arch35",
+        "entity_count": 8388,
+        "relation_count": 11761,
+        "entities_by_kind": {
+          "ARCH": 1,
+          "BRANCH": 1205,
+          "BUILD_VARIANT": 1,
+          "COMPILE_VAR": 458,
+          "FIELD": 854,
+          "FILE": 47,
+          "FUNCTION": 1241,
+          "INPUT": 40,
+          "KERNEL": 1,
+          "MACRO": 158,
+          "METHOD": 3053,
+          "OUTPUT": 7,
+          "PREDICATE": 648,
+          "TEMPLATE": 1,
+          "TEMPLATE_ARG": 39,
+          "TILING_DATA": 11,
+          "TILING_FIELD": 146,
+          "TILING_KEY": 19,
+          "TYPE": 49,
+          "VARIABLE": 409
+        },
+        "relations_by_kind": {
+          "ACTIVE_UNDER": 297,
+          "AVAILABLE_ON": 47,
+          "BINDS": 19,
+          "CALLS": 5353,
+          "CONTROLS": 1654,
+          "DECLARES": 918,
+          "DEFINES": 1,
+          "DERIVES": 2009,
+          "FLOWS_TO": 260,
+          "GUARDED_BY": 411,
+          "READS": 552,
+          "REFERENCES": 5,
+          "SELECTS": 84,
+          "WRITES": 151
+        },
+        "has_host": true,
+        "has_kernel": true,
+        "has_host_kernel_path": true,
+        "has_input_tilingkey_kernel_path": true,
+        "has_tilingdata_kernel_path": true,
+        "has_input_output_path": true,
+        "tiling_key_root_coverage": "17/19",
+        "tiling_key_host_packing_coverage": "19/19"
+      },
+      "audit": {
+        "ok": false,
+        "op_name": "flash_attention_score_grad",
+        "architecture": "arch35",
+        "summary": {
+          "op_name": "flash_attention_score_grad",
+          "architecture": "arch35",
+          "entity_count": 8388,
+          "relation_count": 11761,
+          "entities_by_kind": {
+            "ARCH": 1,
+            "BRANCH": 1205,
+            "BUILD_VARIANT": 1,
+            "COMPILE_VAR": 458,
+            "FIELD": 854,
+            "FILE": 47,
+            "FUNCTION": 1241,
+            "INPUT": 40,
+            "KERNEL": 1,
+            "MACRO": 158,
+            "METHOD": 3053,
+            "OUTPUT": 7,
+            "PREDICATE": 648,
+            "TEMPLATE": 1,
+            "TEMPLATE_ARG": 39,
+            "TILING_DATA": 11,
+            "TILING_FIELD": 146,
+            "TILING_KEY": 19,
+            "TYPE": 49,
+            "VARIABLE": 409
+          },
+          "relations_by_kind": {
+            "ACTIVE_UNDER": 297,
+            "AVAILABLE_ON": 47,
+            "BINDS": 19,
+            "CALLS": 5353,
+            "CONTROLS": 1654,
+            "DECLARES": 918,
+            "DEFINES": 1,
+            "DERIVES": 2009,
+            "FLOWS_TO": 260,
+            "GUARDED_BY": 411,
+            "READS": 552,
+            "REFERENCES": 5,
+            "SELECTS": 84,
+            "WRITES": 151
+          },
+          "has_host": true,
+          "has_kernel": true,
+          "has_host_kernel_path": true,
+          "has_input_tilingkey_kernel_path": true,
+          "has_tilingdata_kernel_path": true,
+          "has_input_output_path": true,
+          "tiling_key_root_coverage": "17/19",
+          "tiling_key_host_packing_coverage": "19/19"
+        },
+        "legacy_summary_has_host_kernel_path": true,
+        "evidence_backed_host_kernel_path": true,
+        "evidence_backed_input_tilingkey_kernel_path": true,
+        "evidence_backed_tilingdata_kernel_path": true,
+        "evidence_backed_input_output_path": true,
+        "tiling_key_rooted": [
+          "IsEmptyTensor",
+          "SplitAxis",
+          "InputDType",
+          "IsTnd",
+          "IsDrop",
+          "IsPse",
+          "IsAttenMask",
+          "S1TemplateNum",
+          "S2TemplateNum",
+          "DTemplateNum",
+          "DeterType",
+          "IsNEqual",
+          "IsBn2MultiBlk",
+          "IsDNoEqual",
+          "IsRope",
+          "OutDType",
+          "IsRegbase"
+        ],
+        "tiling_key_unrooted": [
+          "IsNzOut",
+          "IsTndSwizzle"
+        ],
+        "counts": {
+          "inputs": 40,
+          "tensor_inputs": 27,
+          "attributes": 13,
+          "outputs": 7,
+          "host_entities": 2504,
+          "tiling_keys": 19,
+          "source_declared_tiling_keys": 19,
+          "host_packing_bound_tiling_keys": 19,
+          "rooted_tiling_keys": 17,
+          "unrooted_tiling_keys": 2,
+          "tiling_data": 11,
+          "tiling_fields": 146,
+          "kernels": 1,
+          "template_instances": 0,
+          "unbound_tiling_keys": 0,
+          "unbound_kernels": 0,
+          "unbound_template_instances": 0,
+          "unresolved_entities": 0,
+          "unresolved_relations": 0
+        },
+        "blocking": [
+          {
+            "code": "UNROOTED_TILING_KEYS",
+            "detail": "2/19 source-declared TilingKeys have no API/compile root",
+            "unrooted": [
+              "IsNzOut",
+              "IsTndSwizzle"
+            ]
+          }
+        ],
+        "warnings": []
+      },
+      "gaps": [
+        {
+          "code": "unrooted_tiling_keys",
+          "message": "2/19 source-declared TilingKeys have no API/compile root",
+          "audit_code": "UNROOTED_TILING_KEYS",
+          "unrooted": [
+            "IsNzOut",
+            "IsTndSwizzle"
+          ]
+        }
+      ],
+      "uo": {
+        "ok": true,
+        "path": "/mnt/d/TEST/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/uo/flash_attention_score_grad.arch35.uo",
+        "schema": "codemap-uo/v1",
+        "entities": 8388,
+        "relations": 11748
+      },
+      "analysis_policy": "structure_and_provenance_only"
+    },
+    "gaps": [
+      {
+        "code": "unrooted_tiling_keys",
+        "message": "2/19 source-declared TilingKeys have no API/compile root",
+        "audit_code": "UNROOTED_TILING_KEYS",
+        "unrooted": [
+          "IsNzOut",
+          "IsTndSwizzle"
+        ]
+      }
+    ]
+  },
+  "review": {
+    "ok": false,
+    "engine": "review",
+    "path": "/mnt/d/TEST/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/uo/flash_attention_score_grad.arch35.uo"
+  }
+}

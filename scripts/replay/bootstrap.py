@@ -292,14 +292,96 @@ def _windows_wsl_bootstrap(runner: Any, distro: str) -> dict[str, Any]:
     }
 
 
+def _operator_path_bridge(runner: Any, *, distro: str = "") -> dict[str, str]:
+    """Resolve Windows controller path and Linux/WSL execution path for the op."""
+    op_root = (os.environ.get("ASCENDC_PROJECT_ROOT") or os.environ.get("UO_OP_DIR") or "").strip()
+    windows_root = ""
+    linux_root = ""
+    if op_root:
+        root = Path(op_root).expanduser().resolve()
+        windows_root = str(root)
+        if sys.platform.startswith("linux"):
+            linux_root = root.as_posix()
+        elif distro:
+            try:
+                linux_root = _wsl_path(distro, root)
+            except Exception as exc:
+                linux_root = f"WSL_PATH_FAILED:{exc}"[:180]
+    return {
+        "windows_root": windows_root,
+        "linux_root": linux_root,
+        "ops_root_env": (os.environ.get("OPS_TRANSFORMER_ROOT") or os.environ.get("UO_OPS_ROOT") or "").strip(),
+    }
+
+
+def _write_environment_receipt(runner: Any, result: dict[str, Any]) -> dict[str, Any]:
+    """Persist a durable replay environment receipt under tg/replay/."""
+    try:
+        import yaml
+    except Exception:
+        return result
+    cache = Path(runner.cache).expanduser().resolve()
+    cache.mkdir(parents=True, exist_ok=True)
+    path = cache / "environment.yaml"
+    distro = str(result.get("distro") or getattr(runner.manifest, "distro", "") or "")
+    bridge = _operator_path_bridge(runner, distro=distro)
+    cann_env = str(result.get("cann_env") or "")
+    entry = str(result.get("entry") or getattr(runner.manifest, "entry", "") or "")
+    driver_status = "missing"
+    if result.get("ok") and (result.get("reused") or result.get("bootstrapped")):
+        driver_status = "ready"
+    elif result.get("skipped"):
+        driver_status = "skipped"
+    elif not result.get("ok"):
+        driver_status = "error"
+    receipt = {
+        "schema": "tg-replay-environment/v1",
+        "controller": {
+            "os": "windows" if sys.platform.startswith("win") else ("wsl" if _inside_wsl() else "linux"),
+            "platform": sys.platform,
+        },
+        "executor": {
+            "kind": "wsl" if str(getattr(runner.manifest, "host", "") or "").lower() == "wsl" and not sys.platform.startswith("linux") else ("native" if sys.platform.startswith("linux") else str(getattr(runner.manifest, "host", "") or "")),
+            "distro": distro,
+            "host": str(getattr(runner.manifest, "host", "") or ""),
+        },
+        "operator": {
+            "name": str(getattr(runner.manifest, "name", "") or ""),
+            "architecture": str(getattr(runner.manifest, "arch", "") or ""),
+            "windows_root": bridge.get("windows_root") or "",
+            "linux_root": bridge.get("linux_root") or "",
+            "ops_root": str(result.get("ops_root") or bridge.get("ops_root_env") or ""),
+        },
+        "cann": {
+            "set_env": cann_env,
+            "root": str(Path(cann_env).parent) if cann_env else "",
+            "usable": bool(cann_env) or driver_status in {"ready", "skipped"},
+        },
+        "driver": {
+            "status": driver_status,
+            "entry": entry,
+            "bin": str(result.get("bin") or ""),
+            "reused": bool(result.get("reused")),
+            "bootstrapped": bool(result.get("bootstrapped")),
+            "error": str(result.get("error") or ""),
+        },
+        "result": {k: result.get(k) for k in ("ok", "skipped", "error", "controller") if k in result},
+    }
+    path.write_text(yaml.safe_dump(receipt, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    result = dict(result)
+    result["environment"] = path.as_posix()
+    return result
+
+
 def ensure_runner(runner: Any) -> dict[str, Any]:
     """Ensure a usable replay entry and binary exist, then bind the runner to it.
 
     Existing explicit runtimes are reused. Otherwise the generated runtime is
-    created under TG's replay cache. The function is idempotent.
+    created under TG's replay cache. The function is idempotent and always
+    writes ``tg/replay/environment.yaml`` (except CI/synthetic skips).
     """
     if _disabled(runner):
-        return {"ok": True, "skipped": "ci_or_synthetic"}
+        return _write_environment_receipt(runner, {"ok": True, "skipped": "ci_or_synthetic"})
 
     manifest = runner.manifest
     explicit_entry = bool((os.environ.get("UO_REPLAY_SCRIPT") or "").strip())
@@ -308,27 +390,42 @@ def ensure_runner(runner: Any) -> dict[str, Any]:
     if native:
         entry = str(manifest.entry or "")
         if entry and Path(entry).expanduser().is_file():
-            return {"ok": True, "reused": True, "entry": entry, "controller": "wsl" if _inside_wsl() else "linux"}
+            return _write_environment_receipt(
+                runner,
+                {"ok": True, "reused": True, "entry": entry, "controller": "wsl" if _inside_wsl() else "linux"},
+            )
         if explicit_entry:
-            return {"ok": False, "error": "EXPLICIT_REPLAY_ENTRY_MISSING", "entry": entry}
-        return _native_bootstrap(runner)
+            return _write_environment_receipt(
+                runner,
+                {"ok": False, "error": "EXPLICIT_REPLAY_ENTRY_MISSING", "entry": entry},
+            )
+        return _write_environment_receipt(runner, _native_bootstrap(runner))
 
     host = str(manifest.host or "wsl").lower()
     if host != "wsl":
-        return {"ok": False, "error": f"UNSUPPORTED_REPLAY_HOST:{host}"}
+        return _write_environment_receipt(runner, {"ok": False, "error": f"UNSUPPORTED_REPLAY_HOST:{host}"})
     distro = str(os.environ.get("UO_REPLAY_DISTRO") or manifest.distro or "").strip()
     if not distro:
-        return {"ok": False, "error": "WSL_DISTRO_UNRESOLVED"}
+        return _write_environment_receipt(runner, {"ok": False, "error": "WSL_DISTRO_UNRESOLVED"})
 
     listing = _run(["wsl", "-l", "-q"])
     if listing.returncode != 0:
-        return {"ok": False, "error": "WSL_UNAVAILABLE", "stderr": listing.stderr[-300:]}
+        return _write_environment_receipt(
+            runner,
+            {"ok": False, "error": "WSL_UNAVAILABLE", "stderr": listing.stderr[-300:], "distro": distro},
+        )
     probe = _wsl(distro, "test", "-f", str(manifest.entry or "")) if manifest.entry else None
     if probe is not None and probe.returncode == 0:
-        return {"ok": True, "reused": True, "entry": manifest.entry, "distro": distro, "controller": "windows"}
+        return _write_environment_receipt(
+            runner,
+            {"ok": True, "reused": True, "entry": manifest.entry, "distro": distro, "controller": "windows"},
+        )
     if explicit_entry:
-        return {"ok": False, "error": "EXPLICIT_REPLAY_ENTRY_MISSING", "entry": manifest.entry, "distro": distro}
-    return _windows_wsl_bootstrap(runner, distro)
+        return _write_environment_receipt(
+            runner,
+            {"ok": False, "error": "EXPLICIT_REPLAY_ENTRY_MISSING", "entry": manifest.entry, "distro": distro},
+        )
+    return _write_environment_receipt(runner, _windows_wsl_bootstrap(runner, distro))
 
 
 def sh_quote(value: str) -> str:

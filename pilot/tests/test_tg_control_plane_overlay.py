@@ -88,7 +88,7 @@ def test_tg_primary_actions_have_named_controller_identity_and_precise_writes() 
     assert plan_action["allowed_write_paths"] == ["tg/plan/levels/*/human_supplement.yaml"]
 
     intent = action_by_id("tg-plan", "plan_intent") or {}
-    assert intent["execution_mode"] == "primary_interactive"
+    assert intent["execution_mode"] == "deterministic"
     assert intent["task_prompt_id"] == "tg/plan-intent"
     assert "tg/plan/plan_intent.yaml" in (intent.get("allowed_write_paths") or [])
 
@@ -141,12 +141,12 @@ def test_tk_cover_is_removed() -> None:
     assert routed.get("ok") is False
 
 
-def test_plan_intent_is_primary_interactive() -> None:
+def test_plan_intent_is_deterministic() -> None:
     intent = action_by_id("tg-plan", "plan_intent")
     assert intent is not None
-    assert intent.get("execution_mode") == "primary_interactive"
+    assert intent.get("execution_mode") == "deterministic"
     assert intent.get("task_prompt_id") == "tg/plan-intent"
-    assert intent.get("agent_id") == "ascendc-pilot"
+    assert intent.get("agent_id") == "deterministic-tg-engine"
 
 
 def test_primary_steps_do_not_inherit_uo_scope_recipe(tmp_path: Path) -> None:

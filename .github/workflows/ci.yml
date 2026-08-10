@@ -29,6 +29,7 @@ jobs:
           python scripts/check_contracts.py
           python scripts/check_ownership_contracts.py
           python scripts/check_skill_architecture.py
+          python scripts/check_contract_dag.py
 
   tests:
     name: ${{ matrix.suite }} tests

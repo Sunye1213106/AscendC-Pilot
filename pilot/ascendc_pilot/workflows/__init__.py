@@ -82,53 +82,53 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
         },
     },
     "tg-plan": {
-        "plan_intent": {"read": ["tg/init/**", "context/**", "uo/manifest.yaml"], "write": ["tg/plan/plan_intent.yaml"]},
+        "plan_intent": {"read": ["../uo/*.uo", "tg/init/**", "context/**"], "write": ["tg/plan/plan_intent.yaml"]},
         "plan_scope": {
-            "read": ["tg/init/**", "tg/plan/plan_intent.yaml", "tg/snapshot/**", "tg/realization/**", "context/**"],
+            "read": ["../uo/*.uo", "tg/init/**", "tg/plan/plan_intent.yaml", "tg/snapshot/**", "tg/realization/**", "context/**"],
             "write": ["tg/plan/levels/*/plan_scope.yaml", "tg/plan/plan_intent.yaml"],
         },
-        "plan_precheck": {"read": ["tg/init/status.yaml", "tg/snapshot/**", "uo/manifest.yaml"], "write": []},
+        "plan_precheck": {"read": ["../uo/*.uo", "tg/init/status.yaml", "tg/snapshot/**"], "write": []},
         "plan_build": {
-            "read": ["tg/init/**", "tg/plan/plan_intent.yaml", "tg/snapshot/**", "tg/realization/**", "tg/contract/**", "context/**"],
+            "read": ["../uo/*.uo", "tg/init/**", "tg/plan/plan_intent.yaml", "tg/snapshot/**", "tg/realization/**", "tg/contract/**", "context/**"],
             "write": ["tg/plan/**", "tg/extract/**", "tg/realization/**", "tg/contract/**", "tg/run.yaml"],
         },
         "plan_approve": {"read": ["tg/plan/levels/*/**", "tg/plan/plan_intent.yaml"], "write": ["tg/plan/levels/*/human_supplement.yaml"]},
     },
     "tg-solve": {
-        "solve_precheck": {"read": ["tg/init/**", "tg/plan/**", "tg/snapshot/**", "uo/manifest.yaml"], "write": []},
-        "oracle_probe": {"read": ["uo/**", "tg/init/**", "operators/**"], "write": ["tg/closure/oracle_probe.yaml"]},
+        "solve_precheck": {"read": ["../uo/*.uo", "tg/init/**", "tg/plan/**", "tg/snapshot/**"], "write": []},
+        "oracle_probe": {"read": ["../uo/*.uo", "tg/init/**", "operators/**"], "write": ["tg/closure/oracle_probe.yaml"]},
         "closure_ledger": {
-            "read": ["tg/closure/**", "uo/**"],
+            "read": ["../uo/*.uo", "tg/closure/**"],
             "write": ["tg/closure/R.txt", "tg/closure/open.txt", "tg/closure/excluded.txt", "tg/closure/excluded_why.csv"],
         },
-        "closure_search": {"read": ["tg/closure/**", "uo/ir/tg_host_view.yaml", "uo/ir/host_codemap.yaml"], "write": ["tg/closure/rounds/**", "tg/closure/models/**"]},
+        "closure_search": {"read": ["../uo/*.uo", "tg/closure/**"], "write": ["tg/closure/rounds/**", "tg/closure/models/**"]},
         "closure_residual": {"read": ["tg/closure/**"], "write": ["tg/closure/residual/**", "tg/closure/route.yaml"]},
-        "closure_construct": {"read": ["tg/closure/**", "uo/**"], "write": ["tg/closure/construct/**"]},
+        "closure_construct": {"read": ["../uo/*.uo", "tg/closure/**"], "write": ["tg/closure/construct/**"]},
         "closure_explain": {"read": ["tg/closure/**"], "write": ["tg/closure/why.csv", "tg/closure/construct/**"]},
         "lemma_leads": {"read": ["tg/closure/**"], "write": ["tg/closure/lemmas/leads.yaml", "tg/closure/leads.csv", "tg/closure/leads3.csv"]},
         "lemma_evidence": {
-            "read": ["tg/closure/lemmas/leads.yaml", "uo/ir/**", "uo/tiling/**"],
+            "read": ["../uo/*.uo", "tg/closure/lemmas/leads.yaml"],
             "write": ["tg/closure/lemmas/evidence/**", "tg/closure/lemmas/evidence_receipt.yaml", "tg/closure/lemmas/leads.yaml"],
         },
         "lemma_mine": {
-            "read": ["tg/closure/lemmas/leads.yaml", "tg/closure/lemmas/evidence/**", "uo/ir/**", "uo/tiling/**", "runs/**/actions/lemma_mine/**"],
+            "read": ["../uo/*.uo", "tg/closure/lemmas/leads.yaml", "tg/closure/lemmas/evidence/**", "runs/**/actions/lemma_mine/**"],
             "write": ["runs/{run_id}/actions/lemma_mine/parts/**", "runs/{run_id}/actions/lemma_mine/scratch/**", "runs/{run_id}/actions/lemma_mine/staging.yaml"],
         },
         "lemma_verify": {
             "read": ["runs/**/actions/lemma_mine/**", "tg/closure/**"],
             "write": ["runs/{run_id}/actions/lemma_verify/verify.yaml", "tg/closure/lemmas/verify.yaml"],
         },
-        "lemma_review": {"read": ["runs/**/actions/lemma_mine/**", "runs/**/actions/lemma_verify/**", "tg/closure/lemmas/**", "uo/ir/**"], "write": ["runs/{run_id}/actions/lemma_review/review.yaml"]},
+        "lemma_review": {"read": ["../uo/*.uo", "runs/**/actions/lemma_mine/**", "runs/**/actions/lemma_verify/**", "tg/closure/lemmas/**"], "write": ["runs/{run_id}/actions/lemma_review/review.yaml"]},
         "lemma_apply": {
             "read": ["runs/**/actions/lemma_review/review.yaml", "tg/closure/lemmas/**", "operators/**/proof_rules.yaml"],
             "write": ["tg/closure/excluded.txt", "tg/closure/excluded_why.csv", "tg/closure/open.txt", "tg/closure/lemmas/active_rules.yaml", "tg/closure/lemmas/revoked_rules.yaml", "tg/closure/lemmas/reviews.yaml"],
         },
         "lemma_loop": {
             "read": [
+                "../uo/*.uo",
                 "tg/closure/**",
                 "runs/**/actions/lemma_mine/**",
                 "runs/**/actions/lemma_review/**",
-                "uo/ir/**",
             ],
             "write": [
                 "tg/closure/lemma_loop.yaml",
@@ -142,7 +142,7 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
                 "tg/closure/lemmas/reviews.yaml",
             ],
         },
-        "closure_audit": {"read": ["tg/closure/**", "uo/ir/**", "uo/tiling/**"], "write": ["runs/{run_id}/actions/closure_audit/review.yaml"]},
+        "closure_audit": {"read": ["../uo/*.uo", "tg/closure/**"], "write": ["runs/{run_id}/actions/closure_audit/review.yaml"]},
         "closure_certify": {
             "read": ["tg/closure/**", "runs/**/actions/closure_audit/review.yaml"],
             "write": ["tg/closure/closure.csv", "tg/closure/certificate.yaml", "tg/closure/audit_report.yaml"],
@@ -265,7 +265,9 @@ def _apply_tg_control_plane_contracts() -> None:
                 row["allowed_read_paths"] = list(io.get("read") or [])
                 row["allowed_write_paths"] = list(io.get("write") or [])
 
-    for workflow_id, action_id in (("tg-init", "human_confirm"), ("tg-plan", "plan_intent"), ("tg-plan", "plan_approve")):
+    # Human approval stays on human_confirm / plan_approve only.
+    # plan_intent is deterministic: default T=D unless CLI/context supplies a selector.
+    for workflow_id, action_id in (("tg-init", "human_confirm"), ("tg-plan", "plan_approve")):
         meta = WORKFLOWS.get(workflow_id) or {}
         row = _action(meta, action_id)
         if row is None:
@@ -275,6 +277,14 @@ def _apply_tg_control_plane_contracts() -> None:
         row["execution_mode"] = "primary_interactive"
         row["actors"] = ["ascendc-pilot"]
         _ensure_agent(meta, "ascendc-pilot", "controller")
+
+    plan_meta = WORKFLOWS.get("tg-plan") or {}
+    plan_intent = _action(plan_meta, "plan_intent")
+    if plan_intent is not None:
+        plan_intent["agent_id"] = "deterministic-tg-engine"
+        plan_intent["role_id"] = "deterministic_engine"
+        plan_intent["execution_mode"] = "deterministic"
+        plan_intent["actors"] = ["deterministic-tg-engine"]
 
     upstream = ["uo", "tg/intake", "tg/snapshot", "tg/contract", "tg/realization", "tg/init", "tg/run.yaml"]
     plan = WORKFLOWS.get("tg-plan") or {}

@@ -23,7 +23,9 @@ replay:
   #: whatever it was imported as, and the driver lives wherever it was built.
   host: wsl
   distro: Ubuntu-22.04
-  entry: /work/wsl/setup/run_replay.sh
+  #: Leave empty so Pilot bootstrap owns the runtime under tg/replay/runtime.
+  #: Override with UO_REPLAY_SCRIPT only when a custom entry is intentional.
+  entry: ""
   #: Printed by the driver once a batch is complete. Its absence is how an
   #: empty run is told from a finished one that produced nothing.
   done_marker: BATCH_DONE

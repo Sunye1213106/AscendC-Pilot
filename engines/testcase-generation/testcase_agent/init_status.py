@@ -17,19 +17,67 @@ class InitGateError(RuntimeError):
         self.payload = payload or {}
 
 
+def _product_uo_root(project_root: Path, *, op_name: str = "", architecture: str = "") -> Path | None:
+    """Return the formal product dir (``.ascendc-pilot/uo``) when a ``.uo`` exists."""
+    try:
+        from testcase_agent import product_uo
+
+        product = product_uo.product(project_root, op_name=op_name, architecture=architecture)
+    except Exception:
+        return None
+    if product is None or not product.is_file() or product.suffix != ".uo":
+        return None
+    return product.parent
+
+
+def _fingerprint_hint(project_root: Path, op_name: str, *, understand_hint: Path | None = None) -> Path:
+    """Build a path that still contains ``.ascendc-pilot`` even without an arch UO tree.
+
+    ``compute_kb_fingerprint`` treats its argument as a project/arch hint; the
+    formal ``.uo`` product is the authority whenever one exists.
+    """
+    if understand_hint is not None:
+        hint = Path(understand_hint).expanduser()
+        if ".ascendc-pilot" in hint.parts:
+            return hint
+    product_dir = _product_uo_root(project_root, op_name=op_name)
+    if product_dir is not None:
+        return product_dir
+    try:
+        from ascendc_pilot.paths import uo_product_root
+
+        return uo_product_root(project_root)
+    except Exception:
+        return Path(project_root).expanduser().resolve() / ".ascendc-pilot" / "uo"
+
+
 def kb_exists(project_root: Path, op_name: str, kb_root: Path | None = None) -> Path | None:
-    """Return understand root if present, else None."""
+    """Return understand root if present, else None.
+
+    Product-only layouts are valid: a finalized ``.uo`` under
+    ``.ascendc-pilot/uo/`` is sufficient KB presence even when the retired
+    arch-scoped YAML/DB export tree is absent.
+    """
     if kb_root is not None:
         root = kb_root.expanduser().resolve()
+        if root.suffix == ".uo" and root.is_file():
+            return root.parent
         # New layout
         if root.name == "uo" and root.parent.name == ".ascendc-pilot":
+            if root.is_dir() and any(root.glob("*.uo")):
+                return root
             return root if root.is_dir() else None
         if root.name == ".ascendc-pilot":
             candidate = root / "uo"
+            if candidate.is_dir() and any(candidate.glob("*.uo")):
+                return candidate
             return candidate if candidate.is_dir() else None
         if root.is_dir():
             return root
         return None
+    product_dir = _product_uo_root(project_root, op_name=op_name)
+    if product_dir is not None:
+        return product_dir
     uo = understand_root(project_root, op_name)
     return uo if uo.is_dir() else None
 
@@ -38,13 +86,18 @@ def require_kb(project_root: Path, op_name: str, kb_root: Path | None = None) ->
     found = kb_exists(project_root, op_name, kb_root=kb_root)
     if found is not None:
         return found
-    expected = understand_root(project_root, op_name)
+    try:
+        from ascendc_pilot.paths import uo_product_root
+
+        expected = uo_product_root(project_root)
+    except Exception:
+        expected = Path(project_root).expanduser().resolve() / ".ascendc-pilot" / "uo"
     raise InitGateError(
-        f"KB missing: {expected}. Run /uo-init to build .ascendc-pilot/uo, then tg-init.",
+        f"KB missing: {expected}. Run /uo-init to build .ascendc-pilot/uo/*.uo, then tg-init.",
         ask="uo_init_required",
         payload={
             "expected_kb": expected.as_posix(),
-            "hint": "tg-init defaults to <算子仓>/.ascendc-pilot/uo; optional --kb-root only overrides.",
+            "hint": "tg-init defaults to <算子仓>/.ascendc-pilot/uo/*.uo; optional --kb-root only overrides.",
             "next": f"uo-init <算子仓> --op-name {op_name}",
         },
     )
@@ -102,11 +155,12 @@ def require_kb_fingerprint_fresh(
 
     root = out_root or output_root(project_root, op_name)
     doc = status_doc if isinstance(status_doc, dict) else read_init_status(root)
-    uo_path = Path(str(doc.get("understand_root") or "")).expanduser() if doc.get("understand_root") else understand_root(
-        project_root, op_name
+    understand_hint = (
+        Path(str(doc.get("understand_root") or "")).expanduser()
+        if doc.get("understand_root")
+        else None
     )
-    if not uo_path.is_dir():
-        uo_path = understand_root(project_root, op_name)
+    uo_path = _fingerprint_hint(project_root, op_name, understand_hint=understand_hint)
     stored = read_kb_fingerprint(root)
     if not stored.get("digest"):
         # Legacy confirms without fingerprint: require re-confirm once.
@@ -192,21 +246,38 @@ def mark_init_confirmed(out_root: Path, *, notes: str = "", require_merge: bool 
     if notes:
         doc["notes"] = notes
 
-    # Fingerprint UO KB into OUT_ROOT only (hard isolation).
+    # Fingerprint the formal .uo product into OUT_ROOT only (hard isolation).
+    # Must succeed even when the retired arch-scoped UO YAML/DB tree is absent.
     from .isolation import write_kb_fingerprint
 
-    uo_path = Path(str(doc.get("understand_root") or "")).expanduser()
-    if not uo_path.is_dir():
-        project = Path(str(doc.get("project_root") or ".")).expanduser()
-        op = str(doc.get("op_name") or "")
-        if not op or op in {"tg", "uo"}:
-            # out_root is .ascendc-pilot/tg — never treat directory name as op_name
-            op = project.name if project.name not in {".", ""} else "unknown_operator"
-        uo_path = understand_root(project, op)
-    if uo_path.is_dir():
-        fp = write_kb_fingerprint(out_root, uo_path)
-        doc["kb_fingerprint_digest"] = fp.get("digest")
-        doc["kb_fingerprint"] = "init/kb_fingerprint.yaml"
+    project = Path(str(doc.get("project_root") or ".")).expanduser().resolve()
+    op = str(doc.get("op_name") or "")
+    if not op or op in {"tg", "uo"}:
+        # out_root is .ascendc-pilot/tg — never treat directory name as op_name
+        op = project.name if project.name not in {".", ""} else "unknown_operator"
+    understand_hint = (
+        Path(str(doc.get("understand_root") or "")).expanduser()
+        if doc.get("understand_root")
+        else None
+    )
+    uo_path = _fingerprint_hint(project, op, understand_hint=understand_hint)
+    fp = write_kb_fingerprint(out_root, uo_path)
+    digest = str(fp.get("digest") or "")
+    if not digest:
+        raise InitGateError(
+            "Cannot fingerprint UO product for confirm. Need .ascendc-pilot/uo/*.uo "
+            "(or a legacy arch UO export). Refusing to mark confirmed without a lock.",
+            ask="kb_fingerprint_unavailable",
+            payload={
+                "output_root": out_root.as_posix(),
+                "fingerprint_hint": uo_path.as_posix(),
+                "next": f"uo-init <算子仓> --op-name {op} then tg-init --confirm",
+            },
+        )
+    doc["kb_fingerprint_digest"] = digest
+    doc["kb_fingerprint"] = "init/kb_fingerprint.yaml"
+    if fp.get("uo_product"):
+        doc["uo_product"] = str(fp.get("uo_product"))
 
     write_init_status(out_root, doc)
     # Align domain_review only when no pending columns (never forge confirmed over open review).

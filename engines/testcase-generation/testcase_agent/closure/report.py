@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import collections
 import csv
+from pathlib import Path
 from typing import Any
 
 from testcase_agent.closure import ledger
@@ -415,6 +416,81 @@ def certify_invariants(ws: W.Workspace | None = None, *,
         domain_extra["tilingdata"] = {"ok": False, "error": str(exc)[:200]}
         checks["I1_tilingdata"] = {"ok": False, "detail": f"tilingdata_domain_error:{type(exc).__name__}"}
 
+    # Runtime coverage ledger (same-key TD + Kernel obligations). Fail-closed
+    # when the inventory exists; absent inventory is reported but does not
+    # vacuity-pass the new gates until collector has been run.
+    try:
+        from testcase_agent.closure import obligations as OBL
+
+        inv_path = ws.report("obligation_inventory.yaml")
+        if Path(inv_path).is_file():
+            import yaml as _yaml
+
+            inv = _yaml.safe_load(Path(inv_path).read_text(encoding="utf-8")) or {}
+            keys = list(inv.get("keys") or [])
+            td_total = sum(len(k.get("tilingdata_obligations") or []) for k in keys if isinstance(k, dict))
+            kb_total = sum(len(k.get("kernel_obligations") or []) for k in keys if isinstance(k, dict))
+            td_covered = sum(
+                1
+                for k in keys if isinstance(k, dict)
+                for o in (k.get("tilingdata_obligations") or [])
+                if str(o.get("status")) == "COVERED"
+            )
+            kb_covered = sum(
+                1
+                for k in keys if isinstance(k, dict)
+                for o in (k.get("kernel_obligations") or [])
+                if str(o.get("status")) == "COVERED"
+            )
+            unknown = sum(
+                1
+                for k in keys if isinstance(k, dict)
+                for o in list(k.get("tilingdata_obligations") or []) + list(k.get("kernel_obligations") or [])
+                if str(o.get("status")) == "UNRESOLVED"
+            )
+            mismatch = sum(
+                1
+                for k in keys if isinstance(k, dict)
+                for o in list(k.get("tilingdata_obligations") or []) + list(k.get("kernel_obligations") or [])
+                if str(o.get("status")) == "REPLAY_MISMATCH"
+            )
+            domain_extra["runtime_coverage"] = {
+                "reachable_keys": int(inv.get("reachable_keys") or len(keys)),
+                "td_obligations": td_total,
+                "td_covered": td_covered,
+                "kernel_outcomes": kb_total,
+                "kernel_covered": kb_covered,
+                "unknown_reachability": unknown,
+                "replay_key_mismatch": mismatch,
+            }
+            # Gates are fail-closed once inventory exists. Full 100% coverage is
+            # the stage goal; until then certify reports the gap honestly.
+            checks["I_runtime_td"] = {
+                "ok": td_total == 0 or td_covered == td_total,
+                "detail": f"td_obligation_coverage={td_covered}/{td_total}",
+            }
+            checks["I_runtime_kernel"] = {
+                "ok": kb_total == 0 or kb_covered == kb_total,
+                "detail": f"kernel_outcome_coverage={kb_covered}/{kb_total}",
+            }
+            checks["I_runtime_unknown"] = {
+                "ok": unknown == 0,
+                "detail": f"unknown_reachability={unknown}",
+            }
+            checks["I_runtime_replay_mismatch"] = {
+                "ok": mismatch == 0,
+                "detail": f"replay_key_mismatch={mismatch}",
+            }
+        else:
+            domain_extra["runtime_coverage"] = {
+                "established": False,
+                "reason": "obligation_inventory.yaml missing; run obligation-collect",
+            }
+            # Not established yet — do not vacuity-pass; mark gates absent via
+            # required list only when inventory is present (below).
+    except Exception as exc:  # noqa: BLE001
+        domain_extra["runtime_coverage"] = {"ok": False, "error": str(exc)[:200]}
+
     # Extend closure.csv with domain summary columns when available.
     try:
         _extend_closure_csv_domains(ws, domain_extra)
@@ -428,6 +504,13 @@ def certify_invariants(ws: W.Workspace | None = None, *,
         "I0_kernel", "I1_kernel", "I4_kernel", "I8_kernel",
         "I0_tilingdata", "I1_tilingdata", "I4_tilingdata", "I8_tilingdata",
     )
+    if (domain_extra.get("runtime_coverage") or {}).get("reachable_keys") is not None:
+        required = required + (
+            "I_runtime_td",
+            "I_runtime_kernel",
+            "I_runtime_unknown",
+            "I_runtime_replay_mismatch",
+        )
     # A domain whose check is absent entirely is not a domain that passed.
     missing = [k for k in required if k not in checks]
     ok = all(checks[k]["ok"] for k in required if k in checks) and not missing

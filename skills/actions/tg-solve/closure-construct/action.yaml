@@ -19,8 +19,8 @@ allowed_write_paths:
 - tg/closure/construct/**
 forbidden_write_paths: []
 allowed_read_paths:
+- ../uo/*.uo
 - tg/closure/**
-- uo/**
 forbidden_read_paths: []
 checker:
   required: true
