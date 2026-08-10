@@ -128,7 +128,20 @@ def _replay():
 
 
 def replay_runner():
-    return _replay().default()
+    """Configured runner, with bundled runtime bootstrap on production Hosts."""
+    runner = _replay().default()
+    # Import through the same scripts package as runner.py. CI/synthetic runs
+    # are explicitly skipped inside ensure_runner, so this has no machine side
+    # effects in pure tests.
+    from replay.bootstrap import ensure_runner
+
+    ready = ensure_runner(runner)
+    if not ready.get("ok"):
+        raise RuntimeError(
+            f"REPLAY_BOOTSTRAP_FAILED:{ready.get('error') or 'unknown'}:"
+            f"{ready.get('stderr') or ready.get('stdout') or ''}"[:1200]
+        )
+    return runner
 
 
 @lru_cache(maxsize=1)
@@ -193,7 +206,6 @@ def declared() -> frozenset[int]:
     if uo_keys is not None:
         return frozenset(uo_keys)
 
-    # Compatibility path for synthetic/unit contexts with no CodeMap product.
     from uo_init.tpl_dsl import expand_legal_instances
     sch = schema()
     fallback = {d.name: (list(d.value_domain) or ["0"])[0] for d in sch.dims}
