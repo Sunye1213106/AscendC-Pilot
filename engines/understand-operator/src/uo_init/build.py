@@ -12,6 +12,7 @@ from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes.frontier_resolution import resolve_class_frontiers
 from uo_init.passes.host_defuse import trace_host_key_roots
+from uo_init.passes.host_defuse_validate import validate_host_defuse
 from uo_init.passes.host_tiling_key import bind_host_tiling_key_expressions
 from uo_init.passes.kernel_call_boundaries import classify_kernel_call_boundaries
 from uo_init.passes.kernel_call_read_refine import refine_kernel_calls_and_tiling_reads
@@ -53,11 +54,12 @@ def compile_codemap(
     Compiler-derived Host/Kernel IR remains authoritative where available. When
     an operator source root exists, deterministic source passes additionally
     inventory the selected architecture, recover API/Key/TilingData contracts,
-    bind Host packed-key arguments, trace their def-use roots, complete scalar
-    and array TilingData ABI fields, and finally rebuild an architecture-pure
-    Kernel call/read/write closure from qualified current-source symbols before
-    the strict completeness audit runs. Dependent/external calls that cannot be
-    uniquely bound remain explicit call boundaries rather than guessed edges.
+    bind Host packed-key arguments, trace and lexically revalidate their def-use
+    roots, complete scalar and array TilingData ABI fields, and finally rebuild
+    an architecture-pure Kernel call/read/write closure from qualified current-
+    source symbols before the strict completeness audit runs. Dependent/external
+    calls that cannot be uniquely bound remain explicit call boundaries rather
+    than guessed edges.
     """
     arch = (architecture or "arch35").strip() or "arch35"
     variant = build_variant_from_context(architecture=arch, build_context=build_context, name=arch)
@@ -89,6 +91,7 @@ def compile_codemap(
         complete_tiling_fields(cm, source_root, architecture=arch)
         bind_host_tiling_key_expressions(cm, source_root, architecture=arch)
         trace_host_key_roots(cm, source_root, architecture=arch)
+        validate_host_defuse(cm, source_root, architecture=arch)
         enrich_tiling_registrations(cm, source_root, architecture=arch)
         resolve_source_gaps(cm, source_root, architecture=arch)
         resolve_class_frontiers(cm, source_root, architecture=arch)
