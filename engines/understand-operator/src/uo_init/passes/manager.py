@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""PassManager — run deterministic CodeMap analyze passes in order."""
+"""PassManager — run deterministic structural CodeMap analyze passes in order."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from uo_init.passes import (
     compile_time,
     dataflow,
     host_kernel,
-    input_root,
     kernel,
     macro,
     reachability,
@@ -21,7 +20,11 @@ from uo_init.passes import (
 
 PassFn = Callable[..., CodeMap]
 
-# Canonical analyze order (after BuildVariant + Clang frontend).
+# Canonical structural analyze order (after BuildVariant + Clang frontend).
+# Host API→packed-key roots are recovered later from *current source* by
+# host_tiling_key + host_defuse. The retired ``input_root`` pass consumed
+# derive_key_fields/host_derivation and therefore has no place in the new UO
+# product pipeline.
 ANALYZE_PASSES: list[tuple[str, PassFn]] = [
     ("reachability", reachability.run),
     ("core_codemap", symbol.run),
@@ -29,7 +32,6 @@ ANALYZE_PASSES: list[tuple[str, PassFn]] = [
     ("macro", macro.run),
     ("template", template.run),
     ("dataflow", dataflow.run),
-    ("input_root", input_root.run),
     ("tiling", tiling.run),
     ("kernel", kernel.run),
     ("host_kernel_bind", host_kernel.run),
