@@ -27,9 +27,10 @@ def run(codemap: CodeMap, *, context: dict[str, Any] | None = None) -> CodeMap:
         codemap.meta["tpl_schema_pass"] = "v1-missing"
         return codemap
 
-    _upsert_dims(codemap, schema, header)
-    _upsert_sel_groups(codemap, schema, header)
-    views = _build_tpl_views(schema, header)
+    header_ref = _portable_header_ref(header, ctx)
+    _upsert_dims(codemap, schema, header_ref)
+    _upsert_sel_groups(codemap, schema, header_ref)
+    views = _build_tpl_views(schema, header_ref)
     existing = ctx.get("tg_views")
     if not isinstance(existing, dict):
         existing = {}
@@ -43,7 +44,7 @@ def run(codemap: CodeMap, *, context: dict[str, Any] | None = None) -> CodeMap:
         "dim_count": len(schema.dims),
         "args_sel_group_count": len(schema.selections),
         "legal_key_count": int(views["tiling/exhaustive_key_space.yaml"]["legal_key_count"]),
-        "header": str(header or ""),
+        "header": header_ref,
     }
     codemap.meta["args_sel_group_count"] = len(schema.selections)
     codemap.meta["legal_key_count"] = int(
@@ -71,6 +72,31 @@ def _resolve_schema(
         schema.selections = parse_args_sel(dsl)
         return schema, None
     return None, None
+
+
+def _portable_header_ref(header: Path | None, ctx: dict[str, Any]) -> str:
+    """Return a machine-independent source reference for a discovered TPL header.
+
+    UO products are portable artifacts.  Absolute build-machine paths must not
+    leak into entity ``file`` fields, TG views or metadata because downstream
+    source freshness checks resolve evidence relative to the operator checkout.
+    The canonical in-tree form matches the other source passes:
+    ``<operator>/op_kernel/...``.
+    """
+    if header is None:
+        return ""
+    resolved = header.expanduser().resolve()
+    op_root = str(ctx.get("op_root") or "").strip()
+    if op_root:
+        root = Path(op_root).expanduser().resolve()
+        try:
+            return resolved.relative_to(root.parent).as_posix()
+        except ValueError:
+            pass
+    # An explicitly supplied external header is unusual but still must not make
+    # a committed .uo host-specific.  Preserve a stable basename rather than an
+    # absolute path; parse-time resolution has already happened above.
+    return resolved.name
 
 
 def _find_header(codemap: CodeMap, ctx: dict[str, Any]) -> Path | None:
@@ -121,11 +147,8 @@ def _find_header(codemap: CodeMap, ctx: dict[str, Any]) -> Path | None:
     return None
 
 
-def _upsert_dims(codemap: CodeMap, schema: TplSchema, header: Path | None) -> None:
+def _upsert_dims(codemap: CodeMap, schema: TplSchema, header_ref: str) -> None:
     shift = 0
-    header_s = ""
-    if header is not None:
-        header_s = header.as_posix()
     for order, dim in enumerate(schema.dims):
         domain = [str(v) for v in dim.value_domain]
         bit_lo = int(dim.bit_lo or shift)
@@ -152,14 +175,13 @@ def _upsert_dims(codemap: CodeMap, schema: TplSchema, header: Path | None) -> No
                 "value_domain": domain,
                 "provenance": "source_tpl_args_decl",
             },
-            file=header_s,
+            file=header_ref,
             status="confirmed",
         )
         shift += max(int(dim.bw), 1)
 
 
-def _upsert_sel_groups(codemap: CodeMap, schema: TplSchema, header: Path | None) -> None:
-    header_s = header.as_posix() if header is not None else ""
+def _upsert_sel_groups(codemap: CodeMap, schema: TplSchema, header_ref: str) -> None:
     blocks = build_template_blocks(schema)
     for block in blocks:
         tpl = codemap.upsert(
@@ -174,7 +196,7 @@ def _upsert_sel_groups(codemap: CodeMap, schema: TplSchema, header: Path | None)
                 "product_count": int(block.product_count),
                 "provenance": "source_tpl_args_sel",
             },
-            file=header_s,
+            file=header_ref,
             status="confirmed",
         )
         for dim_name in list(block.fixed_fields) + list(block.field_domains):
@@ -194,7 +216,7 @@ def _upsert_sel_groups(codemap: CodeMap, schema: TplSchema, header: Path | None)
             )
 
 
-def _build_tpl_views(schema: TplSchema, header: Path | None) -> dict[str, Any]:
+def _build_tpl_views(schema: TplSchema, header_ref: str) -> dict[str, Any]:
     blocks = [b.to_dict() for b in build_template_blocks(schema)]
     fallback = {d.name: (list(d.value_domain) or ["0"])[0] for d in schema.dims}
     rows: list[dict[str, Any]] = []
@@ -242,12 +264,11 @@ def _build_tpl_views(schema: TplSchema, header: Path | None) -> dict[str, Any]:
             }
         )
 
-    header_s = header.as_posix() if header is not None else ""
     return {
         "tiling/tpl_schema.yaml": {
             "schema": "uo-tpl-schema/v1",
             "op_tag": schema.op_tag,
-            "header": header_s,
+            "header": header_ref,
             "dims": dims_doc,
             "selections": selections,
         },
@@ -261,7 +282,7 @@ def _build_tpl_views(schema: TplSchema, header: Path | None) -> dict[str, Any]:
             "legal_key_count": len(rows),
             "legal_key_index": "tiling/legal_key_index.jsonl",
             "template_blocks": blocks,
-            "header": header_s,
+            "header": header_ref,
             "status": "template_admissible",
         },
         "tiling/legal_key_index.jsonl": {
