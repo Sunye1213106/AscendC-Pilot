@@ -126,13 +126,43 @@ class CodeMap:
         confidence: float = 1.0,
     ) -> Entity:
         kind_name = kind.value if isinstance(kind, EntityKind) else str(kind)
+        attrs_doc = dict(attrs or {})
+
+        # A selected source Kernel is first materialised from its verified
+        # __global__ signature, then the generic body scanner sees the same
+        # definition as a free FUNCTION.  Forking those identities moves CALLS
+        # and READS off the actual Kernel and makes entry reachability false.
+        # Reuse only the exact, source-verified same-name Kernel case; ordinary
+        # same-name functions remain distinct entities.
+        if (
+            eid is not None
+            and kind_name == EntityKind.FUNCTION.value
+            and attrs_doc.get("provenance") == "source_kernel_definition"
+        ):
+            kernels = [
+                ent
+                for ent in self.by_name(name, kind=EntityKind.KERNEL)
+                if ent.attrs.get("source_signature") is True
+                or ent.attrs.get("provenance") == "source_kernel_signature"
+            ]
+            if len(kernels) == 1:
+                entity = kernels[0]
+                entity.attrs.update(attrs_doc)
+                if file:
+                    entity.file = file
+                    entity.line_start = int(line)
+                    entity.line_end = int(line)
+                entity.status = status
+                entity.confidence = confidence
+                return entity
+
         entity_id = eid or _eid(kind_name, name)
         return self.add_entity(
             Entity(
                 id=entity_id,
                 kind=kind,
                 name=name,
-                attrs=dict(attrs or {}),
+                attrs=attrs_doc,
                 file=file,
                 line_start=int(line),
                 line_end=int(line),
