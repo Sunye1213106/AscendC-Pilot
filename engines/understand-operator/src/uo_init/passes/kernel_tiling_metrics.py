@@ -1,0 +1,105 @@
+# -*- coding: utf-8 -*-
+"""Compute strict source-backed Kernel/TilingData closure metrics."""
+from __future__ import annotations
+
+from collections import defaultdict, deque
+
+from uo_init.ir.codemap import CodeMap
+from uo_init.ir.entity import EntityKind
+from uo_init.ir.relation import RelationKind
+
+_BOUND_CALLS = {
+    "source_kernel_call_bound_v2",
+    "source_kernel_macro_call_bound_v2",
+    "source_kernel_call_bound_v3",
+    "source_kernel_call_dispatch_set_v3",
+}
+
+
+def finalize_kernel_tiling_metrics(codemap: CodeMap) -> CodeMap:
+    closure = dict(codemap.meta.get("kernel_tiling_closure") or {})
+    starts = {
+        e.id for e in codemap.by_kind(EntityKind.KERNEL)
+        if e.attrs.get("source_signature")
+    }
+    adj: dict[str, set[str]] = defaultdict(set)
+    for rel in codemap.relations.values():
+        if rel.kind_name() == RelationKind.CALLS.value and str(rel.attrs.get("provenance") or "") in _BOUND_CALLS:
+            adj[rel.src].add(rel.dst)
+    reachable = set(starts)
+    q = deque(starts)
+    while q:
+        cur = q.popleft()
+        for nxt in adj.get(cur, ()):
+            if nxt not in reachable:
+                reachable.add(nxt)
+                q.append(nxt)
+
+    incoming: dict[str, list] = defaultdict(list)
+    for rel in codemap.relations.values():
+        incoming[rel.dst].append(rel)
+
+    consumed: set[str] = set()
+    unresolved_reads = 0
+    unresolved_calls = 0
+    for rel in codemap.relations.values():
+        provenance = str(rel.attrs.get("provenance") or "")
+        if provenance == "source_tilingdata_read_verified" and rel.src in reachable:
+            consumed.add(rel.dst)
+        elif provenance == "source_tilingdata_read_unresolved_verified" and rel.src in reachable:
+            unresolved_reads += 1
+        elif provenance == "source_kernel_call_unresolved_v2" and rel.src in reachable:
+            unresolved_calls += 1
+
+    with_producer: list[str] = []
+    without_producer: list[str] = []
+    for field_id in sorted(consumed):
+        field = codemap.entities.get(field_id)
+        if field is None:
+            continue
+        has_writer = any(
+            rel.kind_name() == RelationKind.WRITES.value
+            and str(rel.attrs.get("provenance") or "") == "source_tilingdata_host_write_verified"
+            for rel in incoming.get(field_id, ())
+        )
+        has_default = "default_initializer" in field.attrs
+        qualified = str(field.attrs.get("qualified_name") or f"{field.attrs.get('owner')}::{field.name}")
+        if has_writer or has_default:
+            with_producer.append(qualified)
+        else:
+            without_producer.append(qualified)
+
+    selected_types = set(closure.get("tiling_selected_type_closure") or ())
+    selected_field_ids = {
+        e.id for e in codemap.by_kind(EntityKind.TILING_FIELD)
+        if str(e.attrs.get("owner") or "") in selected_types
+    }
+    consumed_selected = consumed & selected_field_ids if selected_field_ids else consumed
+
+    closure.update(
+        {
+            "kernel_reachable_scopes": len(reachable),
+            "kernel_reachable_unresolved_internal_call_sites": unresolved_calls,
+            "tiling_entry_reachable_fields": len(consumed),
+            "tiling_entry_reachable_selected_fields": len(consumed_selected),
+            "tiling_entry_reachable_unresolved_read_sites": unresolved_reads,
+            "tiling_consumed_fields_with_producer": len(with_producer),
+            "tiling_consumed_fields_without_producer": without_producer,
+            "tiling_consumed_field_producer_coverage": f"{len(with_producer)}/{len(consumed)}",
+            "strict_closure_ok": bool(
+                closure.get("architecture_pure")
+                and int(closure.get("kernel_entries") or 0) > 0
+                and int(closure.get("kernel_template_args") or 0) > 0
+                and int(closure.get("kernel_abi_links") or 0) > 0
+                and len(reachable) > len(starts)
+                and unresolved_calls == 0
+                and len(consumed) > 0
+                and unresolved_reads == 0
+                and not without_producer
+                and int(closure.get("tiling_ambiguous_writer_sites") or 0) == 0
+            ),
+            "metrics_policy": "entry-reachable-consumed-fields/v1",
+        }
+    )
+    codemap.meta["kernel_tiling_closure"] = closure
+    return codemap
