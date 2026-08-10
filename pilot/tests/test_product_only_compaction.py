@@ -1,0 +1,95 @@
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
+
+def _minimal_uo(path: Path, *, arch: str = "arch35") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.execute("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        conn.execute("INSERT INTO meta(key,value) VALUES('schema','uo-codemap/v1')")
+        conn.execute("INSERT INTO meta(key,value) VALUES('architecture',?)", (arch,))
+        conn.execute("INSERT INTO meta(key,value) VALUES('op_name','flash_attention_score_grad')")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_uo_review_compaction_leaves_only_formal_product(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.uo_product_compaction import compact_reviewed_uo
+
+    product = tmp_path / ".ascendc-pilot" / "uo" / "flash_attention_score_grad.arch35.uo"
+    _minimal_uo(product)
+    work = tmp_path / ".ascendc-pilot" / "arch35" / "uo"
+    (work / "ir").mkdir(parents=True)
+    (work / "ir" / "operator_graph.yaml").write_text("nodes: []\n", encoding="utf-8")
+    (work / "indexes").mkdir()
+    (work / "indexes" / "kb_graph.sqlite").write_bytes(b"legacy")
+
+    out = compact_reviewed_uo(tmp_path, {"ok": True, "verdict": "pass", "path": str(product)})
+    assert out["ok"] is True, out
+    assert product.is_file()
+    assert work.is_dir()
+    assert not any(p.is_file() for p in work.rglob("*"))
+    assert out["removed_files"] == 2
+
+
+def test_tg_plan_compaction_preserves_evidence(tmp_path: Path, monkeypatch) -> None:
+    import ascendc_pilot.workflows as workflows
+    from ascendc_pilot.actions.tg_compaction import compact_after_plan_approve
+    from ascendc_pilot.paths import tg_root
+
+    monkeypatch.setattr(workflows, "resolve_tg_mode", lambda _root: "tilingkey_full_coverage")
+    tg = tg_root(tmp_path, arch="arch35")
+    for rel in (
+        "intake/a.yaml",
+        "snapshot/b.yaml",
+        "plan/coverage_obligations.yaml",
+        "init/uo_ready.yaml",
+        "realization/llm_bind_prompt_bundle.yaml",
+        "plan/levels/L0/target_set.yaml",
+        "plan/levels/L0/human_supplement.yaml",
+        "closure/R.txt",
+        "closure/excluded.txt",
+        "replay/raw.log",
+    ):
+        p = tg / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("x\n", encoding="utf-8")
+
+    out = compact_after_plan_approve(tmp_path)
+    assert out["ok"] is True, out
+    assert not (tg / "intake").exists()
+    assert not (tg / "snapshot").exists()
+    assert not (tg / "plan" / "coverage_obligations.yaml").exists()
+    assert not (tg / "init" / "uo_ready.yaml").exists()
+    assert not (tg / "realization" / "llm_bind_prompt_bundle.yaml").exists()
+    for rel in (
+        "plan/levels/L0/target_set.yaml",
+        "plan/levels/L0/human_supplement.yaml",
+        "closure/R.txt",
+        "closure/excluded.txt",
+        "replay/raw.log",
+    ):
+        assert (tg / rel).is_file(), rel
+
+
+def test_effective_tg_io_contract_reads_only_binary_uo() -> None:
+    # Importing actions installs the runtime overlay used by acp.
+    import ascendc_pilot.actions  # noqa: F401
+    from ascendc_pilot.actions.engines import OUTPUT_CONTRACT_PATHS
+    from ascendc_pilot.workflows import WORKFLOWS
+
+    assert OUTPUT_CONTRACT_PATHS["uo-commit-v1"] == ["../uo/*.uo"]
+    assert OUTPUT_CONTRACT_PATHS["uo-review-v1"] == ["../uo/*.uo"]
+
+    for workflow_id in ("tg-init", "tg-plan", "tg-solve"):
+        for action in (WORKFLOWS.get(workflow_id) or {}).get("actions") or []:
+            reads = [str(p) for p in (action.get("allowed_read_paths") or [])]
+            assert not any(p == "uo" or p == "uo/**" or p.startswith("uo/") for p in reads), (
+                workflow_id,
+                action.get("id"),
+                reads,
+            )
