@@ -4,7 +4,8 @@
 Only pointer/member chains that are structurally TilingData-like are accepted;
 ordinary ``this->member`` accesses are never treated as TilingData reads.  The
 pass supports both ``tilingData->field`` and ``this->tilingData->nested.field``
-forms and resolves nested fields through their declared TilingData owner type.
+forms and resolves nested fields through their declared TilingData owner type,
+including ``std::conditional`` member types.
 """
 from __future__ import annotations
 
@@ -41,6 +42,7 @@ def rebuild_verified_tiling_reads(
     _purge_old_reads(codemap)
 
     types = {e.name: e for e in codemap.by_kind(EntityKind.TILING_DATA)}
+    known_types = set(types)
     fields: dict[tuple[str, str], Entity] = {}
     by_name: dict[str, list[Entity]] = defaultdict(list)
     nested: dict[str, set[str]] = defaultdict(set)
@@ -48,9 +50,7 @@ def rebuild_verified_tiling_reads(
         owner = str(field.attrs.get("owner") or "")
         fields[(owner, field.name)] = field
         by_name[field.name].append(field)
-        child = _base_type(str(field.attrs.get("cpp_type") or ""))
-        if child in types:
-            nested[field.name].add(child)
+        nested[field.name].update(_referenced_types(str(field.attrs.get("cpp_type") or ""), known_types))
 
     scopes = [
         e for e in codemap.entities.values()
@@ -58,9 +58,9 @@ def rebuild_verified_tiling_reads(
             "source_kernel_definition_v2", "source_kernel_macro_definition_v2"
         }
     ]
-    aliases_by_file = {file: _aliases(raw, set(types)) for file, raw in texts.items()}
+    aliases_by_file = {file: _aliases(raw, known_types) for file, raw in texts.items()}
     variable_types_by_file = {
-        file: _declared_variable_types(raw, set(types), aliases_by_file[file])
+        file: _declared_variable_types(raw, known_types, aliases_by_file[file])
         for file, raw in texts.items()
     }
 
@@ -76,15 +76,9 @@ def rebuild_verified_tiling_reads(
         body_start, body_end = body
         body_text = raw[body_start:body_end]
         var_types = dict(variable_types_by_file.get(file) or {})
-        # Function parameters and local declarations are already covered by the
-        # file-level declaration index; aliases additionally recover fagTiling.
         for match in _ACCESS_RE.finditer(body_text):
             base, outer, inner = match.group("base"), match.group("outer"), match.group("inner")
-            looks_tiling = (
-                "tiling" in base.lower()
-                or bool(var_types.get(base))
-                or outer in nested
-            )
+            looks_tiling = "tiling" in base.lower() or bool(var_types.get(base)) or outer in nested
             if not looks_tiling:
                 continue
             sites += 1
@@ -93,15 +87,13 @@ def rebuild_verified_tiling_reads(
                 leaf = leaf[4:]
             candidates: list[Entity] = []
             if inner:
-                child_types = set(nested.get(outer) or ())
-                candidates.extend(fields.get((owner, leaf)) for owner in child_types)
+                for child_type in nested.get(outer) or ():
+                    candidates.append(fields.get((child_type, leaf)))
             else:
                 for owner in var_types.get(base) or ():
                     candidates.append(fields.get((owner, leaf)))
                 candidates = _unique(candidates)
                 if not candidates:
-                    # If every selected TilingData declaration agrees on one
-                    # owner for this field name, owner identity is unambiguous.
                     declared = by_name.get(leaf) or []
                     if len(declared) == 1:
                         candidates.extend(declared)
@@ -177,7 +169,7 @@ def rebuild_verified_tiling_reads(
             "tiling_entry_reachable_read_sites": len(reachable_sites),
             "tiling_entry_reachable_fields": len(reachable_fields),
             "tiling_entry_reachable_unresolved_read_sites": reachable_unresolved,
-            "tiling_read_policy": "tiling-pointer-chain/v1",
+            "tiling_read_policy": "tiling-pointer-chain-conditional/v2",
         }
     )
     codemap.meta["kernel_tiling_closure"] = closure
@@ -204,8 +196,6 @@ def _purge_old_reads(codemap: CodeMap) -> None:
 
 
 def _scope_body(raw: str, start_line: int, short_name: str) -> tuple[int, int] | None:
-    # Search close to the source-definition line to avoid matching another
-    # overload with the same short name elsewhere in a large header.
     lines = raw.splitlines(keepends=True)
     offsets: list[int] = []
     pos = 0
@@ -229,7 +219,6 @@ def _scope_body(raw: str, start_line: int, short_name: str) -> tuple[int, int] |
 
 def _declared_variable_types(raw: str, known: set[str], aliases: dict[str, set[str]]) -> dict[str, set[str]]:
     out: dict[str, set[str]] = defaultdict(set)
-    # Source declarations containing a known TilingData type or alias.
     symbols = sorted(known | set(aliases), key=len, reverse=True)
     if not symbols:
         return out
@@ -253,6 +242,10 @@ def _aliases(raw: str, known: set[str]) -> dict[str, set[str]]:
             for token in tokens:
                 out[alias].update(out.get(token) or ())
     return out
+
+
+def _referenced_types(raw: str, known: set[str]) -> set[str]:
+    return set(_WORD_RE.findall(raw or "")) & known
 
 
 def _reachable(codemap: CodeMap) -> set[str]:
@@ -288,13 +281,6 @@ def _unique(items: list[Entity | None]) -> list[Entity]:
             continue
         seen.add(item.id); out.append(item)
     return out
-
-
-def _base_type(raw: str) -> str:
-    text = re.sub(r"\b(?:const|volatile|typename|class|struct)\b", " ", raw or "")
-    text = text.replace("*", " ").replace("&", " ").strip()
-    text = re.sub(r"<.*>", "", text).strip()
-    return text.split("::")[-1].strip().split()[-1] if text else ""
 
 
 def _matching_brace(text: str, open_pos: int) -> int:
