@@ -42,8 +42,16 @@ _UO_COMPOSITE_OUTPUT_CONTRACTS: dict[str, list[str]] = {
     "uo-commit-v1": ["../uo/*.uo"],
     "uo-review-v1": ["../uo/*.uo"],
 }
+_TG_LOOP_OUTPUT_CONTRACTS: dict[str, list[str]] = {
+    # lemma_loop is a deterministic orchestration action. Its stable receipt is
+    # the loop summary; per-round scratch/evidence remains governed by ownership
+    # paths and must not be required to exist on a zero-round terminal pass.
+    "lemma-loop-v1": ["tg/closure/lemma_loop.yaml"],
+}
 _engines.OUTPUT_CONTRACT_PATHS.update(_UO_COMPOSITE_OUTPUT_CONTRACTS)
+_engines.OUTPUT_CONTRACT_PATHS.update(_TG_LOOP_OUTPUT_CONTRACTS)
 _engines.OUTPUT_CONTRACT_NONEMPTY_GLOBS.update(_UO_COMPOSITE_OUTPUT_CONTRACTS)
+_engines.OUTPUT_CONTRACT_NONEMPTY_GLOBS.update(_TG_LOOP_OUTPUT_CONTRACTS)
 
 # Full TilingKey TG is plan-scoped: tg-plan freezes T, tg-solve closes exactly
 # T with the existing replay/construct/lemma engine. CSV-consumer compatibility
