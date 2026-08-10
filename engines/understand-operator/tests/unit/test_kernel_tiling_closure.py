@@ -6,6 +6,7 @@ from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes.kernel_tiling_closure import finalize_kernel_tiling_closure
+from uo_init.passes.tiling_host_writes import enrich_tiling_host_writes
 
 
 def _root(tmp_path: Path) -> Path:
@@ -190,11 +191,12 @@ def test_host_setter_is_bound_to_receiver_tiling_type_not_short_name(tmp_path: P
     cm.link(RelationKind.DECLARES, b.id, bx.id)
 
     finalize_kernel_tiling_closure(cm, root, architecture="arch35")
+    enrich_tiling_host_writes(cm, root, architecture="arch35")
 
     writes = [
         r for r in cm.relations.values()
         if r.kind_name() == RelationKind.WRITES.value
-        and r.attrs.get("provenance") == "source_tilingdata_host_write"
+        and r.attrs.get("provenance") == "source_tilingdata_host_write_verified"
     ]
     assert {r.dst for r in writes} == {ax.id}
     assert cm.meta["kernel_tiling_closure"]["tiling_ambiguous_writer_sites"] == 0
