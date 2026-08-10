@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Build/audit FlashAttentionScoreGrad arch35 as a unified ``.uo``.
+"""Build/audit FlashAttentionScoreGrad arch35 from *current source only*.
 
-The GitHub runner has no installed CANN SDK, so the calibration combines the
-historical structured UO archive with deterministic facts parsed from the
-*current* operator source.  Current REG_OP, template-key, TilingData and Kernel
-signatures override archive cardinality.  No free-text derivation is promoted.
+This is the real-source regression gate for the structural CodeMap compiler. It
+must not import ``.understand-operator.zip`` or any historical Host derivation.
+The GitHub runner has no CANN SDK, so compiler-enriched IR is absent; the same
+current-source passes used by production ``compile_codemap`` must nevertheless
+recover the API/Host packing/TilingData/Kernel graph and all 19 TilingKey
+producer roots.
 """
-
 from __future__ import annotations
 
 import argparse
@@ -15,12 +16,23 @@ import json
 from pathlib import Path
 from typing import Any
 
+from uo_init.build import compile_codemap
 from uo_init.diagnostics.audit import audit_uo
+from uo_init.ir.entity import EntityKind
 from uo_init.store.reader import read_codemap
-from uo_init.store.understand_archive import understand_archive_to_uo
+from uo_init.store.writer import write_codemap
 
 OP_NAME = "flash_attention_score_grad"
 ARCH = "arch35"
+EXPECTED_KEY_COUNT = 19
+CRITICAL_PRODUCER_KEYS = {
+    "IsNzOut",
+    "IsTndSwizzle",
+    "SplitAxis",
+    "S1TemplateNum",
+    "S2TemplateNum",
+    "DTemplateNum",
+}
 
 
 def _source_files(cm: Any) -> set[str]:
@@ -29,14 +41,6 @@ def _source_files(cm: Any) -> set[str]:
         f = rel.attrs.get("file")
         if f:
             files.add(str(f))
-        for ev in rel.attrs.get("evidence") or []:
-            if isinstance(ev, dict) and ev.get("file"):
-                files.add(str(ev["file"]))
-    for ent in cm.entities.values():
-        for key in ("evidence", "sources", "candidate_sources"):
-            for ev in ent.attrs.get(key) or []:
-                if isinstance(ev, dict) and ev.get("file"):
-                    files.add(str(ev["file"]))
     return files
 
 
@@ -53,14 +57,11 @@ def _arch35_source_check(operator: Path, uo: Path) -> dict[str, Any]:
     kernel_dir = operator / "op_kernel" / ARCH
     expected_host = sorted(p.name for p in host_dir.glob("*.cpp")) if host_dir.is_dir() else []
     expected_kernel = sorted(
-        p.name
-        for p in kernel_dir.rglob("*")
+        p.name for p in kernel_dir.rglob("*")
         if p.is_file() and p.suffix.lower() in {".cpp", ".h", ".hpp"}
     ) if kernel_dir.is_dir() else []
-
     foreign_arch = sorted(
-        f
-        for f in files
+        f for f in files
         if any(token in f.replace("\\", "/").lower() for token in ("/arch22/", "/arch32/", "/arch40/"))
     )
     stale_evidence: list[str] = []
@@ -72,17 +73,8 @@ def _arch35_source_check(operator: Path, uo: Path) -> dict[str, Any]:
             existing_evidence.append(f)
         else:
             stale_evidence.append(f)
-
-    host_evidence = {
-        Path(_relative_to_operator(f)).name
-        for f in files
-        if "/op_host/" in f.replace("\\", "/")
-    }
-    kernel_evidence = {
-        Path(_relative_to_operator(f)).name
-        for f in files
-        if "/op_kernel/" in f.replace("\\", "/")
-    }
+    host_evidence = {Path(_relative_to_operator(f)).name for f in files if "/op_host/" in f.replace("\\", "/")}
+    kernel_evidence = {Path(_relative_to_operator(f)).name for f in files if "/op_kernel/" in f.replace("\\", "/")}
     matched_host = sorted(set(expected_host) & host_evidence)
     matched_kernel = sorted(set(expected_kernel) & kernel_evidence)
     return {
@@ -100,28 +92,75 @@ def _arch35_source_check(operator: Path, uo: Path) -> dict[str, Any]:
     }
 
 
-def run(operator: Path, archive: Path, out_dir: Path) -> dict[str, Any]:
+def _fresh_soundness_checks(uo: Path, binary: dict[str, Any]) -> list[dict[str, Any]]:
+    cm = read_codemap(uo)
+    blocking: list[dict[str, Any]] = []
+    summary = binary.get("summary") or {}
+    expected = f"{EXPECTED_KEY_COUNT}/{EXPECTED_KEY_COUNT}"
+    for field in (
+        "tiling_key_declaration_coverage",
+        "tiling_key_host_packing_coverage",
+        "tiling_key_host_producer_coverage",
+        "tiling_key_root_coverage",
+    ):
+        if summary.get(field) != expected:
+            blocking.append({"code": "FRESH_KEY_COVERAGE_FAILED", "detail": f"{field}={summary.get(field)!r}, expected {expected}"})
+
+    evidence = {row.get("key"): row for row in (binary.get("tiling_key_evidence") or []) if isinstance(row, dict)}
+    for key in sorted(CRITICAL_PRODUCER_KEYS):
+        row = evidence.get(key) or {}
+        if not row.get("producer") or not row.get("rooted") or not row.get("producer_sites"):
+            blocking.append(
+                {
+                    "code": "CRITICAL_KEY_PRODUCER_MISSING",
+                    "detail": f"{key} must have a current-source producer site and trusted root",
+                    "evidence": row,
+                }
+            )
+
+    synthetic_branch_roots = [
+        e.id for e in cm.by_kind(EntityKind.COMPILE_VAR)
+        if e.attrs.get("from_branch") and not e.attrs.get("compile_root") and not str(e.attrs.get("provenance") or "").startswith("source_")
+    ]
+    if synthetic_branch_roots:
+        blocking.append(
+            {
+                "code": "SYNTHETIC_BRANCH_COMPILE_ROOT",
+                "detail": "uppercase branch spellings were promoted to compile roots",
+                "examples": synthetic_branch_roots[:20],
+            }
+        )
+
+    meta_text = json.dumps(cm.meta, ensure_ascii=False, sort_keys=True)
+    if "archive_import" in meta_text or "understand-operator.zip" in meta_text or "historical_understand_operator" in meta_text:
+        blocking.append({"code": "HISTORICAL_FACT_LEAK", "detail": "fresh audit graph contains archive/historical import metadata"})
+    return blocking
+
+
+def run(operator: Path, out_dir: Path) -> dict[str, Any]:
     operator = operator.expanduser().resolve()
-    archive = archive.expanduser().resolve()
     out_dir = out_dir.expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
-    if not archive.is_file():
-        raise FileNotFoundError(f"missing archived UO facts: {archive}")
     if not (operator / "op_host" / ARCH).is_dir():
         raise FileNotFoundError(f"missing current arch35 host source: {operator / 'op_host' / ARCH}")
 
-    product = out_dir / f"{OP_NAME}.{ARCH}.uo"
-    imported = understand_archive_to_uo(
-        archive,
-        product,
+    result = compile_codemap(
         op_name=OP_NAME,
         architecture=ARCH,
-        operator_root=operator,
+        op_root=operator,
+        host_ir=None,
+        kernel_ir=None,
+        declared={},
+        key_fields=[],
+        commit=False,
     )
+    product = out_dir / f"{OP_NAME}.{ARCH}.uo"
+    write_codemap(result["codemap"], product)
 
     binary = audit_uo(product)
     source = _arch35_source_check(operator, product)
     blocking = list(binary.get("blocking") or [])
+    blocking.extend(_fresh_soundness_checks(product, binary))
     if not source["ok"]:
         blocking.append(
             {
@@ -130,47 +169,51 @@ def run(operator: Path, archive: Path, out_dir: Path) -> dict[str, Any]:
                 "source": source,
             }
         )
+
     report = {
         "ok": not blocking,
-        "mode": "historical-structured-facts+current-source-structural-enrichment",
-        "fresh_clang_extraction": False,
+        "mode": "fresh-current-source-structural-compiler",
+        "fresh_source_graph": True,
+        "historical_archive_used": False,
+        "compiler_ir_used": False,
         "operator": str(operator),
-        "archive": str(archive),
         "product": str(product),
-        "archive_import": imported,
         "binary": binary,
         "source_crosscheck": source,
         "blocking": blocking,
     }
-    (out_dir / "arch35-audit.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
+    (out_dir / "arch35-audit.json").write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+
     counts = binary.get("counts") or {}
+    summary = binary.get("summary") or {}
     lines = [
-        "# FlashAttentionScoreGrad arch35 UO audit",
+        "# FlashAttentionScoreGrad arch35 fresh UO audit",
         "",
         f"- ok: `{report['ok']}`",
         f"- mode: `{report['mode']}`",
-        f"- fresh Clang extraction: `{report['fresh_clang_extraction']}`",
+        f"- historical archive used: `{report['historical_archive_used']}`",
         f"- product: `{product.name}`",
-        f"- size_bytes: `{binary.get('size_bytes')}`",
-        f"- entities / relations: `{(binary.get('summary') or {}).get('entity_count')}` / `{(binary.get('summary') or {}).get('relation_count')}`",
+        f"- entities / relations: `{summary.get('entity_count')}` / `{summary.get('relation_count')}`",
+        f"- TilingKey declaration: `{summary.get('tiling_key_declaration_coverage')}`",
+        f"- Host packing: `{summary.get('tiling_key_host_packing_coverage')}`",
+        f"- Host producer: `{summary.get('tiling_key_host_producer_coverage')}`",
+        f"- trusted root: `{summary.get('tiling_key_root_coverage')}`",
+        f"- dependency skeleton complete: `{summary.get('tiling_key_dependency_coverage')}`",
         f"- API tensor inputs / attributes / outputs: `{counts.get('tensor_inputs')}` / `{counts.get('attributes')}` / `{counts.get('outputs')}`",
-        f"- TilingKeys: `{counts.get('tiling_keys')}` (current source declares `{counts.get('source_declared_tiling_keys')}`)",
         f"- TilingData classes / fields: `{counts.get('tiling_data')}` / `{counts.get('tiling_fields')}`",
         f"- Kernels: `{counts.get('kernels')}`",
-        f"- unresolved entities: `{counts.get('unresolved_entities')}`",
-        f"- exact archived runtime→key bindings: `{imported.get('archive_exact_runtime_bindings')}`",
-        f"- INPUT→TILING_KEY→KERNEL: `{binary.get('evidence_backed_input_tilingkey_kernel_path')}`",
-        f"- TILING_DATA→KERNEL: `{binary.get('evidence_backed_tilingdata_kernel_path')}`",
-        f"- INPUT→KERNEL→OUTPUT: `{binary.get('evidence_backed_input_output_path')}`",
         f"- blocking: `{len(blocking)}`",
         f"- warnings: `{len(binary.get('warnings') or [])}`",
         "",
-        "## Blocking",
+        "## Critical producer sites",
         "",
     ]
+    evidence = {row.get("key"): row for row in (binary.get("tiling_key_evidence") or []) if isinstance(row, dict)}
+    for key in sorted(CRITICAL_PRODUCER_KEYS):
+        row = evidence.get(key) or {}
+        sites = row.get("producer_sites") or []
+        lines.append(f"- `{key}`: producer=`{row.get('producer')}`, rooted=`{row.get('rooted')}`, sites=`{sites[:6]}`")
+    lines += ["", "## Blocking", ""]
     if blocking:
         lines.extend(f"- `{item.get('code')}`: {item.get('detail')}" for item in blocking)
     else:
@@ -181,19 +224,6 @@ def run(operator: Path, archive: Path, out_dir: Path) -> dict[str, Any]:
         lines.extend(f"- `{item.get('code')}`: {item.get('detail')}" for item in warnings)
     else:
         lines.append("- none")
-    lines += [
-        "",
-        "## Source cross-check",
-        "",
-        f"- evidence files: `{source['source_evidence_files']}`",
-        f"- existing evidence files: `{source['existing_evidence_files']}`",
-        f"- stale evidence files: `{len(source['stale_evidence_files'])}`",
-        f"- matched current arch35 host files: `{len(source['matched_host_files'])}/{len(source['expected_host_files'])}`",
-        f"- matched current arch35 kernel files: `{source['matched_kernel_file_count']}/{source['expected_kernel_file_count']}`",
-        f"- foreign arch evidence: `{len(source['foreign_arch_evidence'])}`",
-        "",
-        "> Current-source structural facts are authoritative for API, TilingKey cardinality, TilingData declarations and Kernel ABI. Historical prose remains diagnostic only. A local CANN/Clang run can add deeper compiler facts but must not change these source-declared contracts.",
-    ]
     (out_dir / "arch35-audit.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return report
 
@@ -201,18 +231,14 @@ def run(operator: Path, archive: Path, out_dir: Path) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--operator", type=Path, required=True)
-    parser.add_argument("--archive", type=Path, default=None)
     parser.add_argument("--out-dir", type=Path, default=Path("artifacts/uo-arch35"))
     args = parser.parse_args()
-    archive = args.archive or (args.operator / ".understand-operator.zip")
     try:
-        report = run(args.operator, archive, args.out_dir)
+        report = run(args.operator, args.out_dir)
     except Exception as exc:  # noqa: BLE001
         args.out_dir.mkdir(parents=True, exist_ok=True)
         failure = {"ok": False, "error": str(exc), "architecture": ARCH}
-        (args.out_dir / "arch35-audit.json").write_text(
-            json.dumps(failure, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        (args.out_dir / "arch35-audit.json").write_text(json.dumps(failure, ensure_ascii=False, indent=2), encoding="utf-8")
         print(json.dumps(failure, ensure_ascii=False, indent=2))
         return 2
     print(json.dumps(report, ensure_ascii=False, indent=2))
