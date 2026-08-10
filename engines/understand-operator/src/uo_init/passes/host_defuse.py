@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """Source-backed Host producer/def-use graph for packed TilingKey arguments.
 
-This pass deliberately stops at a dependency skeleton.  It finds the current
+This pass deliberately stops at a dependency skeleton. It finds the current
 source producer sites for every Host value passed to ``GET_TPL_TILING_KEY`` and
 links API/compile/runtime dependencies without deriving a closed-form key
-formula.  Member identity is canonical (``this.foo.x == foo.x``); ambiguous
+formula. Member identity is canonical (``this.foo.x == foo.x``); ambiguous
 short names are never silently merged.
 """
 from __future__ import annotations
@@ -52,11 +52,16 @@ _INPUT_ACCESS_RE = re.compile(
 _ATTR_ACCESS_RE = re.compile(
     r"\bGetAttrPointer(?:\s*<[^>]+>)?\s*\(\s*(?P<arg>[A-Za-z_]\w*(?:::[A-Za-z_]\w*)?|[-+]?\d+)"
 )
+_CAST_RE = re.compile(r"\b(?:static_cast|reinterpret_cast|const_cast|dynamic_cast)\s*<[^<>]*>")
+_LINE_COMMENT_RE = re.compile(r"//[^\n]*")
+_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.S)
+_STRING_RE = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
+_CONTROL_NAMES = {"if", "else", "for", "while", "switch", "catch", "return", "sizeof", "alignof"}
 _IGNORED = {
     "auto", "const", "static_cast", "reinterpret_cast", "const_cast", "dynamic_cast", "true", "false",
     "uint8_t", "uint16_t", "uint32_t", "uint64_t", "int8_t", "int16_t", "int32_t",
-    "int64_t", "size_t", "bool", "int", "unsigned", "long", "short", "float", "double",
-    "return", "nullptr", "std", "ge", "this",
+    "int64_t", "size_t", "bool", "int", "unsigned", "long", "short", "float", "double", "char", "void",
+    "return", "nullptr", "std", "ge", "this", "typename", "decltype",
 }
 _RUNTIME_KINDS = {EntityKind.VARIABLE.value, EntityKind.FIELD.value}
 _ROOT_RELATIONS = {RelationKind.DERIVES.value, RelationKind.FLOWS_TO.value}
@@ -114,8 +119,11 @@ def trace_host_key_roots(
                 continue
             canonical = normalize_symbol(str(ent.attrs.get("canonical_symbol") or ent.name))
             symbol_nodes[canonical] = ent
+            # A member must never be aliased by its bare leaf name. Otherwise
+            # ``fBaseParams.isNzOut`` can accidentally absorb an unrelated
+            # declaration initializer ``isNzOut = false``.
             source_name = str(ent.attrs.get("source_name") or "")
-            if source_name:
+            if source_name and not is_member_symbol(canonical):
                 symbol_nodes.setdefault(normalize_symbol(source_name), ent)
 
     targets = [
@@ -165,7 +173,7 @@ def trace_host_key_roots(
         "producer_variables": producer_targets,
         "rooted_variables": rooted_targets,
         "assignment_records": len(records),
-        "policy": "canonical-source-producer/v2",
+        "policy": "canonical-source-producer/v3",
     }
     return codemap
 
@@ -173,10 +181,13 @@ def trace_host_key_roots(
 def _function_scopes(text: str) -> list[_Scope]:
     out: list[_Scope] = []
     for match in _FUNCTION_RE.finditer(text):
+        name = match.group("name")
+        if name.split("::")[-1] in _CONTROL_NAMES:
+            continue
         open_pos = text.find("{", match.start(), match.end())
         close_pos = _matching_brace(text, open_pos)
         if close_pos >= 0:
-            out.append(_Scope(match.group("name"), open_pos + 1, close_pos))
+            out.append(_Scope(name, open_pos + 1, close_pos))
     return out
 
 
@@ -304,9 +315,6 @@ def _select_records(
     spellings = {r.lhs for r in candidates}
     if len(spellings) == 1:
         return candidates, False
-    # A member target must never degrade to a bare short-name guess.  The
-    # canonical ``this.`` normalization should have produced an exact hit; if it
-    # did not, retain the ambiguity instead of inventing a producer.
     return [], True
 
 
@@ -388,23 +396,13 @@ def _resolve_symbol(
                         eid=f"HOSTCONST::{ref_norm}",
                         attrs={
                             "compile_root": True,
-                            "provenance": (
-                                "source_host_compile_symbol"
-                                if ref_norm in compile_symbols
-                                else "source_host_qualified_constant"
-                            ),
+                            "provenance": "source_host_compile_symbol" if ref_norm in compile_symbols else "source_host_qualified_constant",
                         },
                         file=record.file,
                         line=record.line,
                         status="confirmed",
                     )
-                    codemap.link(
-                        RelationKind.DERIVES,
-                        compile_root.id,
-                        expr.id,
-                        attrs={"provenance": compile_root.attrs["provenance"]},
-                        status="confirmed",
-                    )
+                    codemap.link(RelationKind.DERIVES, compile_root.id, expr.id, attrs={"provenance": compile_root.attrs["provenance"]}, status="confirmed")
                     continue
 
                 upstream_records, upstream_ambiguous = _select_records(
@@ -432,13 +430,7 @@ def _resolve_symbol(
                             status="confirmed",
                         )
                         symbol_nodes[ref_norm] = upstream
-                    codemap.link(
-                        RelationKind.DERIVES,
-                        upstream.id,
-                        expr.id,
-                        attrs={"provenance": "source_host_defuse_dependency", "symbol": ref_norm},
-                        status="confirmed",
-                    )
+                    codemap.link(RelationKind.DERIVES, upstream.id, expr.id, attrs={"provenance": "source_host_defuse_dependency", "symbol": ref_norm}, status="confirmed")
                     _resolve_symbol(
                         codemap,
                         upstream,
@@ -455,8 +447,6 @@ def _resolve_symbol(
                     )
                     continue
 
-                # Preserve an unresolved runtime dependency in the graph rather
-                # than silently dropping it or promoting it to a compile root.
                 if _looks_like_runtime_reference(ref_norm):
                     unresolved = codemap.upsert(
                         EntityKind.FIELD if is_member_symbol(ref_norm) else EntityKind.VARIABLE,
@@ -473,36 +463,18 @@ def _resolve_symbol(
                         line=record.line,
                         status="partial",
                     )
-                    codemap.link(
-                        RelationKind.DERIVES,
-                        unresolved.id,
-                        expr.id,
-                        attrs={"provenance": "source_host_unresolved_dependency", "symbol": ref_norm},
-                        status="partial",
-                    )
+                    codemap.link(RelationKind.DERIVES, unresolved.id, expr.id, attrs={"provenance": "source_host_unresolved_dependency", "symbol": ref_norm}, status="partial")
 
-        if not _identifiers(record.rhs) and not _link_api_accesses(
-            codemap, expr, record.rhs, api_maps, file=record.file, line=record.line
-        ):
+        if not _identifiers(record.rhs) and not _link_api_accesses(codemap, expr, record.rhs, api_maps, file=record.file, line=record.line):
             root = codemap.upsert(
                 EntityKind.COMPILE_VAR,
                 f"host-expr:{record.file}:{record.line}",
-                attrs={
-                    "value_expr": record.rhs,
-                    "compile_root": True,
-                    "provenance": "source_host_constant_expr",
-                },
+                attrs={"value_expr": record.rhs, "compile_root": True, "provenance": "source_host_constant_expr"},
                 file=record.file,
                 line=record.line,
                 status="confirmed",
             )
-            codemap.link(
-                RelationKind.DERIVES,
-                root.id,
-                expr.id,
-                attrs={"provenance": "source_host_constant_expr"},
-                status="confirmed",
-            )
+            codemap.link(RelationKind.DERIVES, root.id, expr.id, attrs={"provenance": "source_host_constant_expr"}, status="confirmed")
 
     if producer_sites:
         existing = [s for s in (target.attrs.get("producer_sites") or []) if isinstance(s, dict)]
@@ -530,57 +502,29 @@ def _link_api_accesses(
     for kind, token in _API_TOKEN_RE.findall(text):
         api = api_maps.get(kind, {}).get(token)
         if api is not None:
-            codemap.link(
-                RelationKind.DERIVES,
-                api.id,
-                expression.id,
-                attrs={"provenance": "source_host_api_index", "token": f"{kind}::{token}"},
-                status="confirmed",
-            )
+            codemap.link(RelationKind.DERIVES, api.id, expression.id, attrs={"provenance": "source_host_api_index", "token": f"{kind}::{token}"}, status="confirmed")
             linked = True
     for match in _INPUT_ACCESS_RE.finditer(text):
         api = _api_from_index(match.group("arg"), "input", api_maps)
         if api is not None:
-            codemap.link(
-                RelationKind.DERIVES,
-                api.id,
-                expression.id,
-                attrs={"provenance": "source_host_api_accessor", "accessor": match.group(0)},
-                status="confirmed",
-            )
+            codemap.link(RelationKind.DERIVES, api.id, expression.id, attrs={"provenance": "source_host_api_accessor", "accessor": match.group(0)}, status="confirmed")
             linked = True
     for match in _ATTR_ACCESS_RE.finditer(text):
         api = _api_from_index(match.group("arg"), "attr", api_maps)
         if api is not None:
-            codemap.link(
-                RelationKind.DERIVES,
-                api.id,
-                expression.id,
-                attrs={"provenance": "source_host_api_accessor", "accessor": match.group(0)},
-                status="confirmed",
-            )
+            codemap.link(RelationKind.DERIVES, api.id, expression.id, attrs={"provenance": "source_host_api_accessor", "accessor": match.group(0)}, status="confirmed")
             linked = True
     if "GetDeterministic(" in text:
         runtime = codemap.upsert(
             EntityKind.INPUT,
             "__context__.deterministic",
             eid="HOST_CONTEXT::deterministic",
-            attrs={
-                "api_kind": "runtime_context",
-                "source_accessor": "GetDeterministic",
-                "provenance": "source_host_runtime_context",
-            },
+            attrs={"api_kind": "runtime_context", "source_accessor": "GetDeterministic", "provenance": "source_host_runtime_context"},
             file=file,
             line=line,
             status="confirmed",
         )
-        codemap.link(
-            RelationKind.DERIVES,
-            runtime.id,
-            expression.id,
-            attrs={"provenance": "source_host_runtime_context"},
-            status="confirmed",
-        )
+        codemap.link(RelationKind.DERIVES, runtime.id, expression.id, attrs={"provenance": "source_host_runtime_context"}, status="confirmed")
         linked = True
     return linked
 
@@ -606,9 +550,8 @@ def _is_compile_reference(value: str, compile_symbols: set[str]) -> bool:
     if "::" not in value:
         return False
     tail = value.rsplit("::", 1)[-1]
-    # Qualified value tokens such as ge::DT_FLOAT or OptionEnum::ENABLE may be
-    # declared in external CANN headers.  Only constant-like value spellings are
-    # accepted; method/type names are not promoted merely for containing '::'.
+    # External CANN enum values are accepted only when the value token itself
+    # is constant-like; a qualified type or method name is not a root.
     return bool(re.fullmatch(r"[A-Z][A-Z0-9_]*|NUM\d+|DT_[A-Z0-9_]+", tail))
 
 
@@ -619,16 +562,27 @@ def _looks_like_runtime_reference(value: str) -> bool:
     return head not in _IGNORED and not value.isdigit()
 
 
+def _code_only(text: str) -> str:
+    """Remove lexical regions that cannot contain value dependencies."""
+    cleaned = _BLOCK_COMMENT_RE.sub(" ", text or "")
+    cleaned = _LINE_COMMENT_RE.sub(" ", cleaned)
+    cleaned = _STRING_RE.sub(" ", cleaned)
+    cleaned = _CAST_RE.sub("static_cast", cleaned)
+    return cleaned
+
+
 def _identifiers(text: str) -> list[str]:
+    cleaned = _code_only(text)
     out: list[str] = []
-    for match in _IDENT_RE.finditer(text):
+    for match in _IDENT_RE.finditer(cleaned):
         token = normalize_symbol(match.group(0))
         head = token.split(".")[0].split("::")[0]
         if head in _IGNORED or token in _IGNORED or token.isdigit():
             continue
-        # Function/method names are call-graph facts, not value dependencies.
-        rest = text[match.end():]
-        if re.match(r"\s*\(", rest):
+        rest = cleaned[match.end():]
+        # Function/method calls, including template calls such as
+        # ``tensor.GetData<int64_t>()``, are call facts rather than values.
+        if re.match(r"\s*(?:<[^;{}()]*>)?\s*\(", rest):
             continue
         out.append(token)
     return out
@@ -663,12 +617,7 @@ def _trusted_root(entity: Entity) -> bool:
 def _trusted_compile_root(entity: Entity) -> bool:
     provenance = str(entity.attrs.get("provenance") or "")
     origin = str(entity.attrs.get("origin") or "")
-    return bool(
-        entity.attrs.get("compile_root")
-        or provenance.startswith("source_")
-        or provenance.startswith("source_host_")
-        or origin == "constexpr_or_define"
-    )
+    return bool(entity.attrs.get("compile_root") or provenance.startswith("source_") or provenance.startswith("source_host_") or origin == "constexpr_or_define")
 
 
 def _enum_names(body: str) -> list[str]:
