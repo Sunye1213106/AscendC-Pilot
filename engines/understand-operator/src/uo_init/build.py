@@ -13,11 +13,13 @@ from uo_init.ir.relation import RelationKind
 from uo_init.passes.frontier_resolution import resolve_class_frontiers
 from uo_init.passes.host_defuse import trace_host_key_roots
 from uo_init.passes.host_tiling_key import bind_host_tiling_key_expressions
+from uo_init.passes.kernel_call_read_refine import refine_kernel_calls_and_tiling_reads
 from uo_init.passes.kernel_tiling_closure import finalize_kernel_tiling_closure
 from uo_init.passes.manager import run_analyze_passes
 from uo_init.passes.source_contract import enrich_codemap_from_operator_source
 from uo_init.passes.source_inventory import inventory_source_files
 from uo_init.passes.source_resolution import resolve_source_gaps
+from uo_init.passes.tiling_field_complete import complete_tiling_fields
 from uo_init.passes.tiling_host_writes import enrich_tiling_host_writes
 from uo_init.passes.tiling_registration import enrich_tiling_registrations
 from uo_init.resolve.semantic_gap import list_gaps
@@ -46,10 +48,10 @@ def compile_codemap(
     Compiler-derived Host/Kernel IR remains authoritative where available. When
     an operator source root exists, deterministic source passes additionally
     inventory the selected architecture, recover API/Key/TilingData contracts,
-    bind Host packed-key arguments, trace their def-use roots, model TilingData
-    registrations/resources/frontiers, and finally rebuild an architecture-
-    pure Kernel/TilingData call/read/write closure from qualified current-source
-    symbols before the strict completeness audit runs.
+    bind Host packed-key arguments, trace their def-use roots, complete scalar
+    and array TilingData ABI fields, and finally rebuild an architecture-pure
+    Kernel call/read/write closure from qualified current-source symbols before
+    the strict completeness audit runs.
     """
     arch = (architecture or "arch35").strip() or "arch35"
     variant = build_variant_from_context(architecture=arch, build_context=build_context, name=arch)
@@ -78,12 +80,14 @@ def compile_codemap(
     if source_root is not None and _looks_like_operator_source(source_root):
         inventory_source_files(cm, source_root, architecture=arch)
         enrich_codemap_from_operator_source(cm, source_root, architecture=arch)
+        complete_tiling_fields(cm, source_root, architecture=arch)
         bind_host_tiling_key_expressions(cm, source_root, architecture=arch)
         trace_host_key_roots(cm, source_root, architecture=arch)
         enrich_tiling_registrations(cm, source_root, architecture=arch)
         resolve_source_gaps(cm, source_root, architecture=arch)
         resolve_class_frontiers(cm, source_root, architecture=arch)
         finalize_kernel_tiling_closure(cm, source_root, architecture=arch)
+        refine_kernel_calls_and_tiling_reads(cm, source_root, architecture=arch)
         enrich_tiling_host_writes(cm, source_root, architecture=arch)
         cm.meta["production_source_enrichment"] = True
     else:
