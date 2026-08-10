@@ -21,7 +21,7 @@ precheck(target hash / UO snapshot)
   → certify
 ```
 
-`lemma*`：leads → evidence → mine → review → apply。
+`lemma*`：leads → evidence → mine → review → apply → loop。
 
 ## 核心不变量
 
@@ -70,6 +70,7 @@ precheck(target hash / UO snapshot)
 | `lemma_verify` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-solve/lemma-verify` | `-` | `-` |
 | `lemma_review` | `subagent` | `tg-closure-referee` | `referee` | `tg-solve/lemma-review` | `tg/lemma-review` | `lemma-review-v1` |
 | `lemma_apply` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-solve/lemma-apply` | `-` | `lemma-apply-v1` |
+| `lemma_loop` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-solve/lemma-loop` | `-` | `lemma-loop-v1` |
 | `closure_audit` | `subagent` | `tg-closure-referee` | `referee` | `tg-solve/closure-audit` | `tg/closure-audit` | `closure-audit-v1` |
 | `closure_certify` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-solve/closure-certify` | `-` | `closure-certify-v1` |
 | `z3_solve` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-solve/z3-solve` | `-` | `z3-solve-v1` |
