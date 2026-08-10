@@ -8,6 +8,7 @@ read_scopes:
 - tg/realization/**
 - tg/snapshot/**
 - tg/contract/**
+- ../uo/**
 - uo/**
 - runs/**
 - context/**
