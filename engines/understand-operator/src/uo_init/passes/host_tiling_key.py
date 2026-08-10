@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """Bind source-declared TilingKey fields to Host ``GET_TPL_TILING_KEY`` args.
 
-The positional packed-key call is a source contract.  This pass records that
-contract and identifies the concrete Host symbol used for every argument.  It
+The positional packed-key call is a source contract. This pass records that
+contract and identifies the concrete Host symbol used for every argument. It
 must not derive the full value function and must not guess across ambiguous
 short names.
 """
@@ -57,7 +57,7 @@ def bind_host_tiling_key_expressions(
         codemap.meta["host_tiling_key_packing"] = {"calls": 0, "fields_bound": 0, "declared": 0}
         return codemap
 
-    symbol_index = _symbol_index(codemap)
+    exact_index, short_index = _symbol_indexes(codemap)
     calls = 0
     bound_names: set[str] = set()
     mismatches: list[dict[str, Any]] = []
@@ -125,7 +125,8 @@ def bind_host_tiling_key_expressions(
                         codemap,
                         node,
                         expr,
-                        symbol_index=symbol_index,
+                        exact_index=exact_index,
+                        short_index=short_index,
                         file=file,
                         line=line,
                         function=function,
@@ -146,29 +147,38 @@ def bind_host_tiling_key_expressions(
     return codemap
 
 
-def _symbol_index(codemap: CodeMap) -> dict[str, list[Entity]]:
-    out: dict[str, list[Entity]] = {}
+def _entity_spellings(ent: Entity) -> set[str]:
+    candidates = {ent.name}
+    norm = ((ent.attrs.get("identity") or {}).get("normalized") or {})
+    for key in ("source_name", "qualified_name"):
+        value = norm.get(key) if isinstance(norm, dict) else None
+        if value:
+            candidates.add(str(value))
+        value = ent.attrs.get(key)
+        if value:
+            candidates.add(str(value))
+    owner = str(ent.attrs.get("owner") or "")
+    if owner and ent.name:
+        candidates.add(f"{owner}.{ent.name}")
+        candidates.add(f"{owner}::{ent.name}")
+    return {normalize_symbol(value) for value in candidates if normalize_symbol(value)}
+
+
+def _symbol_indexes(codemap: CodeMap) -> tuple[dict[str, list[Entity]], dict[str, list[Entity]]]:
+    """Build separate canonical and short-name indexes.
+
+    A previous implementation inserted short aliases into the same map as exact
+    identities, so looking up bare ``x`` incorrectly looked "exact" when the
+    only entities were ``foo.x`` and ``bar.x``. Keeping the namespaces separate
+    makes the fallback policy explicit and auditable.
+    """
+    exact: dict[str, list[Entity]] = {}
+    short: dict[str, list[Entity]] = {}
     for ent in codemap.entities.values():
-        candidates = {ent.name}
-        norm = ((ent.attrs.get("identity") or {}).get("normalized") or {})
-        for key in ("source_name", "qualified_name"):
-            value = norm.get(key) if isinstance(norm, dict) else None
-            if value:
-                candidates.add(str(value))
-            value = ent.attrs.get(key)
-            if value:
-                candidates.add(str(value))
-        owner = str(ent.attrs.get("owner") or "")
-        if owner and ent.name:
-            candidates.add(f"{owner}.{ent.name}")
-            candidates.add(f"{owner}::{ent.name}")
-        for value in candidates:
-            text = normalize_symbol(value)
-            if not text:
-                continue
-            out.setdefault(text, []).append(ent)
-            out.setdefault(short_symbol(text), []).append(ent)
-    return out
+        for spelling in _entity_spellings(ent):
+            exact.setdefault(spelling, []).append(ent)
+            short.setdefault(short_symbol(spelling), []).append(ent)
+    return exact, short
 
 
 def _dedupe_entities(values: list[Entity]) -> list[Entity]:
@@ -181,21 +191,17 @@ def _dedupe_entities(values: list[Entity]) -> list[Entity]:
     return out
 
 
-def _source_matches(symbol_index: dict[str, list[Entity]], token: str) -> tuple[list[Entity], bool]:
-    """Prefer canonical exact identity; short-name fallback must be unique.
-
-    Returning every short-name candidate was unsound (``Foo.x`` and ``Bar.x``
-    both became producers).  If the fallback is ambiguous we deliberately create
-    a source-local unresolved symbol and let Host def-use resolve it from source.
-    """
+def _source_matches(
+    exact_index: dict[str, list[Entity]],
+    short_index: dict[str, list[Entity]],
+    token: str,
+) -> tuple[list[Entity], bool]:
+    """Prefer canonical exact identity; short-name fallback must be unique."""
     normalized = normalize_symbol(token)
-    exact = _dedupe_entities(list(symbol_index.get(normalized) or []))
+    exact = _dedupe_entities(list(exact_index.get(normalized) or []))
     if exact:
         runtime = [e for e in exact if e.kind_name() in _RUNTIME_KINDS]
         if runtime:
-            # A FIELD is the canonical representation for a member path; a
-            # VARIABLE is preferred for a local.  Keep one representative so
-            # later def-use does not duplicate the same packed argument.
             preferred = sorted(
                 runtime,
                 key=lambda e: (
@@ -207,8 +213,15 @@ def _source_matches(symbol_index: dict[str, list[Entity]], token: str) -> tuple[
             return [preferred[0]], False
         return exact, False
 
-    short = _dedupe_entities(list(symbol_index.get(short_symbol(normalized)) or []))
-    if len(short) == 1:
+    short = _dedupe_entities(list(short_index.get(short_symbol(normalized)) or []))
+    # A short fallback is safe only when all hits describe one canonical symbol.
+    canonical = {
+        spelling
+        for ent in short
+        for spelling in _entity_spellings(ent)
+        if short_symbol(spelling) == short_symbol(normalized)
+    }
+    if len(short) == 1 and len(canonical) == 1:
         return short, False
     return [], bool(short)
 
@@ -221,7 +234,6 @@ def _mark_host_key_source(
     line: int,
     function: str,
 ) -> None:
-    """Mark a concrete Host local/member for current-source producer tracing."""
     if source.kind_name() not in _RUNTIME_KINDS:
         return
     source.attrs["host_key_argument"] = True
@@ -240,7 +252,8 @@ def _link_expression_sources(
     expression: Entity,
     expr: str,
     *,
-    symbol_index: dict[str, list[Entity]],
+    exact_index: dict[str, list[Entity]],
+    short_index: dict[str, list[Entity]],
     file: str,
     line: int,
     function: str,
@@ -252,29 +265,19 @@ def _link_expression_sources(
             EntityKind.COMPILE_VAR,
             f"{key_name}=literal:{literal}",
             eid=f"HOSTKEYCONST::{key_name}::{literal}",
-            attrs={
-                "value": literal,
-                "compile_root": True,
-                "provenance": "source_get_tpl_tiling_key_literal",
-            },
+            attrs={"value": literal, "compile_root": True, "provenance": "source_get_tpl_tiling_key_literal"},
             file=file,
             line=line,
             status="confirmed",
         )
-        codemap.link(
-            RelationKind.DERIVES,
-            root.id,
-            expression.id,
-            attrs={"provenance": "source_get_tpl_tiling_key_literal"},
-            status="confirmed",
-        )
+        codemap.link(RelationKind.DERIVES, root.id, expression.id, attrs={"provenance": "source_get_tpl_tiling_key_literal"}, status="confirmed")
         return None
 
     tokens = _identifiers(expr)
     linked: set[str] = set()
     ambiguous_tokens: list[str] = []
     for token in tokens:
-        matches, ambiguous = _source_matches(symbol_index, token)
+        matches, ambiguous = _source_matches(exact_index, short_index, token)
         if ambiguous:
             ambiguous_tokens.append(normalize_symbol(token))
         for source in matches:
@@ -302,9 +305,6 @@ def _link_expression_sources(
     if linked and not ambiguous_tokens:
         return None
 
-    # Create one canonical runtime symbol for the actual source token instead of
-    # linking every unrelated short-name hit.  ``trace_host_key_roots`` resolves
-    # this node against assignments in the current Host source.
     runtime_tokens = [t for t in tokens if "::" not in normalize_symbol(t)]
     if runtime_tokens:
         token = runtime_tokens[-1]
@@ -350,9 +350,8 @@ def _calls(text: str, token: str):
     for match in pattern.finditer(text):
         open_pos = text.find("(", match.start(), match.end())
         close_pos = _matching_paren(text, open_pos)
-        if close_pos < 0:
-            continue
-        yield match.start(), close_pos + 1, text[open_pos + 1 : close_pos]
+        if close_pos >= 0:
+            yield match.start(), close_pos + 1, text[open_pos + 1 : close_pos]
 
 
 def _matching_paren(text: str, open_pos: int) -> int:
