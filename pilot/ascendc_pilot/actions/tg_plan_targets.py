@@ -1,10 +1,10 @@
 """Plan-scoped TilingKey closure for the default TG workflow.
 
 The kernel declaration remains the global domain ``D``. ``tg-plan`` freezes an
-approved target set ``T ⊆ D`` and ``tg-solve`` closes exactly ``T``.  When the
+approved target set ``T ⊆ D`` and ``tg-solve`` closes exactly ``T``. When the
 user does not select targets, ``T = D``.
 
-This module deliberately reuses the proven closure/replay implementation.  It
+This module deliberately reuses the proven closure/replay implementation. It
 only supplies the missing plan boundary; it does not introduce a second solver
 or derive 19-dimensional closed-form key predicates.
 """
@@ -108,9 +108,19 @@ def _current_level(project_root: Path, ctx: dict[str, Any]) -> str:
 
 
 def _global_declared(project_root: Path) -> set[int]:
+    """Read the real declared key domain without leaking CLI-style SystemExit.
+
+    Replay/workspace is also used by standalone scripts and historically raises
+    ``SystemExit`` when its operator/schema cannot be located. Pilot engines must
+    return a structured failure instead of terminating the caller process.
+    """
     from testcase_agent.closure import workspace as W
 
-    return set(W.declared())
+    try:
+        return set(W.declared())
+    except SystemExit as exc:
+        message = str(exc).strip() or "declared TilingKey source unavailable"
+        raise RuntimeError(message) from None
 
 
 def _uo_identity(project_root: Path, *, op_name: str, architecture: str) -> dict[str, Any]:
@@ -130,9 +140,7 @@ def _uo_identity(project_root: Path, *, op_name: str, architecture: str) -> dict
     }
 
 
-def _select_targets(
-    declared: set[int], selection: dict[str, Any]
-) -> tuple[set[int], list[str]]:
+def _select_targets(declared: set[int], selection: dict[str, Any]) -> tuple[set[int], list[str]]:
     from testcase_agent.closure import workspace as W
 
     errors: list[str] = []
@@ -208,26 +216,16 @@ def plan_build(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     if not targets:
         errors.append("TARGET_SET_EMPTY")
     if errors:
-        return {
-            "ok": False,
-            "engine": "plan_build",
-            "errors": errors,
-            "target_mode": selection["target_mode"],
-        }
+        return {"ok": False, "engine": "plan_build", "errors": errors, "target_mode": selection["target_mode"]}
 
     declared_hash = _hash_json(sorted(declared))
     target_hash = _hash_json(sorted(targets))
-    snapshot_hash = _hash_json(
-        {"uo_sha256": uo["sha256"], "declared_hash": declared_hash, "architecture": arch}
-    )
+    snapshot_hash = _hash_json({"uo_sha256": uo["sha256"], "declared_hash": declared_hash, "architecture": arch})
     target_doc = {
         "schema": "tg-target-set/v1",
         "mode": "tilingkey_full_coverage",
         "target_mode": selection["target_mode"],
-        "selector": {
-            "keys": selection.get("target_keys") or [],
-            "dimensions": selection.get("target_dimensions") or {},
-        },
+        "selector": {"keys": selection.get("target_keys") or [], "dimensions": selection.get("target_dimensions") or {}},
         "keys": sorted(targets),
         "count": len(targets),
         "target_hash": target_hash,
@@ -237,13 +235,7 @@ def plan_build(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         "snapshot_hash": snapshot_hash,
         "scope_rule": "tg-solve must not widen beyond these keys",
     }
-    plan_hash = _hash_json(
-        {
-            "snapshot_hash": snapshot_hash,
-            "target_hash": target_hash,
-            "mode": target_doc["target_mode"],
-        }
-    )
+    plan_hash = _hash_json({"snapshot_hash": snapshot_hash, "target_hash": target_hash, "mode": target_doc["target_mode"]})
     target_doc["plan_hash"] = plan_hash
 
     plan_dir = _plan_dir(project_root, level)
@@ -317,11 +309,7 @@ def solve_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
                 "error": "TARGET_SET_STALE_OR_OUTSIDE_DECLARED",
                 "outside": sorted(keys - declared)[:20],
             }
-        uo = _uo_identity(
-            project_root,
-            op_name=str(tg_ctx.get("op_name") or ""),
-            architecture=str(tg_ctx.get("architecture") or "arch35"),
-        )
+        uo = _uo_identity(project_root, op_name=str(tg_ctx.get("op_name") or ""), architecture=str(tg_ctx.get("architecture") or "arch35"))
         snapshot_hash = _hash_json(
             {
                 "uo_sha256": uo["sha256"],
@@ -358,8 +346,8 @@ def _activate_target_scope(project_root: Path, ctx: dict[str, Any]) -> Iterator[
     from testcase_agent.closure import workspace as W
 
     path, target = _target_doc(project_root, ctx)
-    keys = set(_parse_keys(target.get("keys"))) if target else set(W.declared())
-    global_declared = set(W.declared())
+    global_declared = _global_declared(project_root)
+    keys = set(_parse_keys(target.get("keys"))) if target else set(global_declared)
     if not keys:
         keys = set(global_declared)
     if not keys <= global_declared:
@@ -381,11 +369,7 @@ def _activate_target_scope(project_root: Path, ctx: dict[str, Any]) -> Iterator[
         ledger.declared = original_l_declared  # type: ignore[assignment]
 
 
-def _scoped(
-    base: Callable[[Path, dict[str, Any]], dict[str, Any]],
-    *,
-    certify: bool = False,
-) -> Callable[[Path, dict[str, Any]], dict[str, Any]]:
+def _scoped(base: Callable[[Path, dict[str, Any]], dict[str, Any]], *, certify: bool = False) -> Callable[[Path, dict[str, Any]], dict[str, Any]]:
     def run(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         try:
             with _activate_target_scope(project_root, ctx) as scope:
@@ -397,9 +381,6 @@ def _scoped(
         result.setdefault("declared_count", scope["declared_count"])
         result["target_set"] = scope["target_path"]
         if certify:
-            # The core reporter ran over T. Rewrite its diagnostic R-D list using
-            # the true global D so an out-of-plan but declared witness is not
-            # mislabeled as a dispatch defect.
             try:
                 from testcase_agent.closure import ledger, report, workspace as W
 
