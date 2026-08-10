@@ -1,20 +1,16 @@
-# Task
+<task>
+Approve or reject the exact TG target set produced by plan_build.
+</task>
 
-Approve or send back the TG solve plan.
+<instructions>
+1. Review `target_set.yaml` and `coverage_obligations.yaml` for the current level.
+2. Verify the target mode matches the user's intent. No explicit target means `all_declared`.
+3. Require non-empty T, T ⊆ D, and present `target_hash`, `snapshot_hash`, and `plan_hash`.
+4. Approval freezes that exact target set. `tg-solve` must not widen it; any target change requires a new plan.
+5. Do not approve reachability/unreachability conclusions here; Plan only approves what Solve must attempt to close.
+6. Follow `skills/domain/tg-plan/SKILL.md`.
+</instructions>
 
-# Targets
-
-`<TARGET_IDS_OR_FILES>`
-
-# Context
-
-- Project: `<PROJECT_ROOT>`
-- TG: `<TG_ROOT>`
-
-# Requirements
-
-- Follow `skills/domain/tg-plan/SKILL.md` (approve criteria)
-
-# Return
-
-`APPROVE` | `REVISE` | `BLOCKED` with reasons.
+<output>
+`APPROVE` | `REVISE` | `BLOCKED`, with a concise reason. On APPROVE the deterministic primary action records the approved plan hash.
+</output>
