@@ -8,6 +8,7 @@ from typing import Any
 from ascendc_pilot.actions import engines as _engines
 from ascendc_pilot.actions import runtime as _runtime
 from ascendc_pilot.actions.fast_uo_engines import invoke_fast_uo_engine
+from ascendc_pilot.actions.tg_full_precheck import install as _install_tg_full_precheck
 from ascendc_pilot.actions.tg_plan_targets import install as _install_tg_plan_targets
 from ascendc_pilot.actions.tg_primary import (
     PRIMARY_TG_ACTIONS,
@@ -44,6 +45,7 @@ _engines.OUTPUT_CONTRACT_NONEMPTY_GLOBS.update(_UO_COMPOSITE_OUTPUT_CONTRACTS)
 # T with the existing replay/construct/lemma engine. CSV-consumer compatibility
 # remains untouched and is the only route that may still use the SMT backend.
 _install_tg_plan_targets(_engines.ENGINE_REGISTRY)
+_install_tg_full_precheck(_engines.ENGINE_REGISTRY)
 
 
 def _sanitize_semantic_bind_session(result: dict[str, Any]) -> None:
