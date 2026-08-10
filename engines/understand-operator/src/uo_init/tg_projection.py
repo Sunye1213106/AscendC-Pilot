@@ -23,34 +23,29 @@ REQUIRED_TG_VIEWS = (
 )
 
 
-def backfill_from_source(project_root: str | Path, *, op_name: str = "", architecture: str = "", tiling_key_header: str | Path | None = None, uo_path: str | Path | None = None) -> dict[str, Any]:
-    root = Path(project_root).expanduser().resolve()
-    product = Path(uo_path).expanduser().resolve() if uo_path else find_uo_product(root, op_name=op_name, architecture=architecture)
-    if product is None or not product.is_file() or product.suffix != ".uo":
-        return {"ok": False, "error": "missing .uo CodeMap product"}
-    meta = read_meta(product)
-    op = op_name or str(meta.get("op_name") or "")
-    arch = architecture or str(meta.get("architecture") or "arch35")
-    cm = read_codemap(product)
-    cm.op_name = cm.op_name or op
-    cm.architecture = cm.architecture or arch
-    ctx: dict[str, Any] = {"op_root": str(root), "architecture": arch, "op_name": op, "tg_views": {}}
-    if tiling_key_header:
-        ctx["tiling_key_header"] = str(Path(tiling_key_header).expanduser().resolve())
-    cm = run_tpl_schema(cm, context=ctx)
-    views = finalize_tg_views(cm, existing=dict(ctx.get("tg_views") or {}))
-    if int((views.get("tiling/exhaustive_key_space.yaml") or {}).get("legal_key_count") or 0) <= 0:
-        return {"ok": False, "error": "TPL ARGS_SEL expansion produced empty D (header missing?)", "path": str(product), "header": ctx.get("tiling_key_header") or (cm.meta.get("tpl_schema") or {}).get("header")}
-    missing = [name for name in REQUIRED_TG_VIEWS if name not in views]
-    if missing:
-        return {"ok": False, "error": "TG_VIEW_INCOMPLETE", "missing": missing, "path": str(product)}
-    written = write_codemap(cm, product, views=views)
-    return {"ok": True, "path": str(product), "sha256": hashlib.sha256(product.read_bytes()).hexdigest(), "legal_key_count": int(cm.meta.get("legal_key_count") or 0), "args_sel_group_count": int(cm.meta.get("args_sel_group_count") or 0), "views": sorted(views), "graph_fingerprint": str(cm.meta.get("graph_fingerprint") or ""), "uo": written}
-
-
 def load_tg_view(uo_path: str | Path, name: str) -> dict[str, Any] | list[Any] | None:
     from uo_init.store.reader import load_view_blob
     return load_view_blob(uo_path, name)
+
+
+def list_view_names(uo_path: str | Path) -> list[str]:
+    conn = sqlite3.connect(str(uo_path))
+    try:
+        return [str(r[0]) for r in conn.execute("SELECT name FROM view_blob ORDER BY name")]
+    finally:
+        conn.close()
+
+
+def _existing_views(product: Path) -> dict[str, Any]:
+    """Read every embedded view before ``write_codemap`` atomically replaces DB."""
+    out: dict[str, Any] = {}
+    for name in list_view_names(product):
+        if name == "summary":
+            continue
+        value = load_tg_view(product, name)
+        if value is not None:
+            out[name] = value
+    return out
 
 
 def legal_key_rows(uo_path: str | Path) -> list[dict[str, Any]]:
@@ -73,7 +68,95 @@ def legal_key_count(uo_path: str | Path) -> int:
     return len(legal_key_rows(uo_path))
 
 
-def ensure_tg_views(project_root: str | Path, *, op_name: str = "", architecture: str = "", tiling_key_header: str | Path | None = None) -> dict[str, Any]:
+def _view_legal_key_count(views: dict[str, Any]) -> int:
+    space = views.get("tiling/exhaustive_key_space.yaml")
+    if isinstance(space, dict):
+        n = int(space.get("legal_key_count") or 0)
+        if n > 0:
+            return n
+    rows = views.get("tiling/legal_key_index.jsonl")
+    if isinstance(rows, dict):
+        rows = rows.get("rows")
+    return len(rows) if isinstance(rows, list) else 0
+
+
+def backfill_from_source(
+    project_root: str | Path,
+    *,
+    op_name: str = "",
+    architecture: str = "",
+    tiling_key_header: str | Path | None = None,
+    uo_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Upgrade a CodeMap product in place while preserving existing view blobs.
+
+    A product that already embeds the declared TilingKey domain is self-contained:
+    adding newer derived views (kernel/TilingData/host/graph) must not require the
+    original source checkout or a replay environment.  TPL parsing is therefore
+    rerun only when D is absent, or when the caller explicitly supplies a header.
+    """
+    root = Path(project_root).expanduser().resolve()
+    product = Path(uo_path).expanduser().resolve() if uo_path else find_uo_product(root, op_name=op_name, architecture=architecture)
+    if product is None or not product.is_file() or product.suffix != ".uo":
+        return {"ok": False, "error": "missing .uo CodeMap product"}
+
+    meta = read_meta(product)
+    op = op_name or str(meta.get("op_name") or "")
+    arch = architecture or str(meta.get("architecture") or "arch35")
+    cm = read_codemap(product)
+    cm.op_name = cm.op_name or op
+    cm.architecture = cm.architecture or arch
+
+    existing = _existing_views(product)
+    ctx: dict[str, Any] = {
+        "op_root": str(root),
+        "architecture": arch,
+        "op_name": op,
+        "tg_views": dict(existing),
+    }
+    if tiling_key_header:
+        ctx["tiling_key_header"] = str(Path(tiling_key_header).expanduser().resolve())
+
+    before_d = _view_legal_key_count(existing)
+    tpl_rerun = bool(tiling_key_header) or before_d <= 0
+    if tpl_rerun:
+        cm = run_tpl_schema(cm, context=ctx)
+
+    views = finalize_tg_views(cm, existing=dict(ctx.get("tg_views") or existing))
+    d_count = _view_legal_key_count(views)
+    if d_count <= 0:
+        return {
+            "ok": False,
+            "error": "TPL ARGS_SEL expansion produced empty D (header missing?)",
+            "path": str(product),
+            "header": ctx.get("tiling_key_header") or (cm.meta.get("tpl_schema") or {}).get("header"),
+        }
+    missing = [name for name in REQUIRED_TG_VIEWS if name not in views or views.get(name) is None]
+    if missing:
+        return {"ok": False, "error": "TG_VIEW_INCOMPLETE", "missing": missing, "path": str(product)}
+
+    written = write_codemap(cm, product, views=views)
+    return {
+        "ok": True,
+        "path": str(product),
+        "sha256": hashlib.sha256(product.read_bytes()).hexdigest(),
+        "legal_key_count": d_count,
+        "args_sel_group_count": int(cm.meta.get("args_sel_group_count") or 0),
+        "views": sorted(views),
+        "graph_fingerprint": str(cm.meta.get("graph_fingerprint") or ""),
+        "tpl_rerun": tpl_rerun,
+        "preserved_view_count": len(existing),
+        "uo": written,
+    }
+
+
+def ensure_tg_views(
+    project_root: str | Path,
+    *,
+    op_name: str = "",
+    architecture: str = "",
+    tiling_key_header: str | Path | None = None,
+) -> dict[str, Any]:
     root = Path(project_root).expanduser().resolve()
     product = find_uo_product(root, op_name=op_name, architecture=architecture)
     if product is None:
@@ -82,14 +165,19 @@ def ensure_tg_views(project_root: str | Path, *, op_name: str = "", architecture
     count = legal_key_count(product)
     if count > 0 and all(doc is not None for doc in docs.values()):
         graph = docs["ir/operator_graph.yaml"] if isinstance(docs["ir/operator_graph.yaml"], dict) else {}
-        return {"ok": True, "path": str(product), "legal_key_count": count, "backfilled": False, "graph_fingerprint": str(graph.get("fingerprint") or ""), "views": list(REQUIRED_TG_VIEWS)}
-    result = backfill_from_source(root, op_name=op_name, architecture=architecture, tiling_key_header=tiling_key_header, uo_path=product)
+        return {
+            "ok": True,
+            "path": str(product),
+            "legal_key_count": count,
+            "backfilled": False,
+            "graph_fingerprint": str(graph.get("fingerprint") or ""),
+            "views": list(REQUIRED_TG_VIEWS),
+        }
+    result = backfill_from_source(
+        root,
+        op_name=op_name,
+        architecture=architecture,
+        tiling_key_header=tiling_key_header,
+        uo_path=product,
+    )
     return {**result, "backfilled": True}
-
-
-def list_view_names(uo_path: str | Path) -> list[str]:
-    conn = sqlite3.connect(str(uo_path))
-    try:
-        return [str(r[0]) for r in conn.execute("SELECT name FROM view_blob ORDER BY name")]
-    finally:
-        conn.close()
