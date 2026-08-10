@@ -1,0 +1,581 @@
+{
+  "uo": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/uo/flash_attention_score_grad.arch35.uo",
+  "IsTndSwizzle": {
+    "dim": "IsTndSwizzle",
+    "tiling_key": {
+      "layer": "tiling",
+      "source_declared": true,
+      "decl_kind": "BOOL",
+      "kind_tpl": "BOOL",
+      "bit_width": 1,
+      "bw": 1,
+      "bit_offset": 53,
+      "bit_lo": 53,
+      "bit_hi": 53,
+      "bit_end": 53,
+      "decl_order": 17,
+      "allowed_values": [
+        "0",
+        "1"
+      ],
+      "value_domain": [
+        "0",
+        "1"
+      ],
+      "provenance": "source_tpl_args_decl",
+      "host_packing_expressions": [
+        "static_cast<uint8_t>(tndBaseInfo.isTndSwizzle)"
+      ],
+      "id": "E_TILING_KEY_ca8f4be0201d",
+      "kind": "TILING_KEY",
+      "name": "IsTndSwizzle",
+      "status": "confirmed",
+      "confidence": 1.0,
+      "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+      "line_start": 122,
+      "line_end": 122
+    },
+    "path_to_kernel": [
+      {
+        "layer": "tiling",
+        "source_declared": true,
+        "decl_kind": "BOOL",
+        "kind_tpl": "BOOL",
+        "bit_width": 1,
+        "bw": 1,
+        "bit_offset": 53,
+        "bit_lo": 53,
+        "bit_hi": 53,
+        "bit_end": 53,
+        "decl_order": 17,
+        "allowed_values": [
+          "0",
+          "1"
+        ],
+        "value_domain": [
+          "0",
+          "1"
+        ],
+        "provenance": "source_tpl_args_decl",
+        "host_packing_expressions": [
+          "static_cast<uint8_t>(tndBaseInfo.isTndSwizzle)"
+        ],
+        "id": "E_TILING_KEY_ca8f4be0201d",
+        "kind": "TILING_KEY",
+        "name": "IsTndSwizzle",
+        "status": "confirmed",
+        "confidence": 1.0,
+        "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+        "line_start": 122,
+        "line_end": 122
+      },
+      {
+        "layer": "kernel",
+        "condition": "(uint32_t)dTemplateType>64){ FlashAttentionScoreGradPresfmgRegbase<INPUT_TYPE, CALC_TYPE, OUTDTYPE, dTemplateType, IS_D_NO_EQUAL, DETER_SPARSE_TYPE, IS_TND, SPLIT_AXIS, IS_TND_SWIZZLE>opPre;opPre.Init(dq, dk, dv, dy, attention_in, deqScaleDy, actual_seq_qlen, user, tilingData, & pipeIn);opPre.Process();opPre.SyncALLCores();} } else { FlashAttentionScoreGradS1S2BNGS1S2PreRegbase<INPUT_TYPE, float, DETER_SPARSE_TYPE, IS_TND, SPLIT_AXIS, IS_TND_SWIZZLE, IS_ATTEN_MASK>opPre;opPre.Init(dq, dk, dv, actual_seq_kvlen, drop_mask, user, tilingData, & pipeIn);opPre.Process();opPre.SyncALLCores();} pipeIn.Destroy();TPipe pipeBase;using CubeBlockType = typename std::conditional<g_coreType == AscendC::AIC, FagBaseApi::FAGBlockCube<INPUT_TYPE, CALC_TYPE, OUTDTYPE, IS_ATTEN_MASK, IS_PSE, IS_DROP, IS_TND, IS_BN2_MULTIBLK, DETER_SPARSE_TYPE, IS_N_EQUAL, IS_D_NO_EQUAL, IS_ROPE, IS_NZ_OUT, IS_TND_SWIZZLE, SPLIT_AXIS, s1TemplateType, s2TemplateType, dTemplateType>, FagBaseApi::FAGBlockCubeDummy<INPUT_TYPE, CALC_TYPE, OUTDTYPE, IS_ATTEN_MASK...",
+        "dimensions": [
+          "OutDType",
+          "IsDNoEqual",
+          "IsTnd",
+          "SplitAxis",
+          "IsTndSwizzle",
+          "IsAttenMask",
+          "IsPse",
+          "IsDrop",
+          "IsBn2MultiBlk",
+          "IsNEqual",
+          "IsRope",
+          "IsNzOut"
+        ],
+        "variants": [
+          "DT_FLOAT16"
+        ],
+        "id": "E_BRANCH_cf869b82b7db",
+        "kind": "BRANCH",
+        "name": "(uint32_t)dTemplateType>64){ FlashAttentionScoreGradPresfmgRegbase<INPUT_TYPE, CALC_TYPE, OUTDTYPE, dTemplateType, IS_D_",
+        "status": "extracted",
+        "confidence": 1.0,
+        "file": "/work/ops-transformer/attention/flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+        "line_start": 226,
+        "line_end": 226
+      },
+      {
+        "layer": "kernel",
+        "variants": [
+          "DT_FLOAT16"
+        ],
+        "source_signature": true,
+        "architecture": "arch35",
+        "provenance": "source_kernel_signature_verified",
+        "source_definition": true,
+        "id": "E_KERNEL_6dc3f0d6a999",
+        "kind": "KERNEL",
+        "name": "flash_attention_score_grad",
+        "status": "confirmed",
+        "confidence": 1.0,
+        "file": "flash_attention_score_grad/op_kernel/flash_attention_score_grad_apt.cpp",
+        "line_start": 35,
+        "line_end": 35
+      }
+    ],
+    "guards": [],
+    "writers": []
+  },
+  "IsAttenMask": {
+    "dim": "IsAttenMask",
+    "tiling_key": {
+      "layer": "tiling",
+      "source_declared": true,
+      "decl_kind": "BOOL",
+      "kind_tpl": "BOOL",
+      "bit_width": 1,
+      "bw": 1,
+      "bit_offset": 10,
+      "bit_lo": 10,
+      "bit_hi": 10,
+      "bit_end": 10,
+      "decl_order": 6,
+      "allowed_values": [
+        "0",
+        "1"
+      ],
+      "value_domain": [
+        "0",
+        "1"
+      ],
+      "provenance": "source_tpl_args_decl",
+      "host_packing_expressions": [
+        "static_cast<uint8_t>(attenMaskCfg)"
+      ],
+      "id": "E_TILING_KEY_3ca7da17ffe2",
+      "kind": "TILING_KEY",
+      "name": "IsAttenMask",
+      "status": "confirmed",
+      "confidence": 1.0,
+      "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+      "line_start": 80,
+      "line_end": 80
+    },
+    "path_to_kernel": [
+      {
+        "layer": "tiling",
+        "source_declared": true,
+        "decl_kind": "BOOL",
+        "kind_tpl": "BOOL",
+        "bit_width": 1,
+        "bw": 1,
+        "bit_offset": 10,
+        "bit_lo": 10,
+        "bit_hi": 10,
+        "bit_end": 10,
+        "decl_order": 6,
+        "allowed_values": [
+          "0",
+          "1"
+        ],
+        "value_domain": [
+          "0",
+          "1"
+        ],
+        "provenance": "source_tpl_args_decl",
+        "host_packing_expressions": [
+          "static_cast<uint8_t>(attenMaskCfg)"
+        ],
+        "id": "E_TILING_KEY_3ca7da17ffe2",
+        "kind": "TILING_KEY",
+        "name": "IsAttenMask",
+        "status": "confirmed",
+        "confidence": 1.0,
+        "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+        "line_start": 80,
+        "line_end": 80
+      },
+      {
+        "layer": "kernel",
+        "condition": "(uint32_t)dTemplateType>64){ FlashAttentionScoreGradPresfmgRegbase<INPUT_TYPE, CALC_TYPE, OUTDTYPE, dTemplateType, IS_D_NO_EQUAL, DETER_SPARSE_TYPE, IS_TND, SPLIT_AXIS, IS_TND_SWIZZLE>opPre;opPre.Init(dq, dk, dv, dy, attention_in, deqScaleDy, actual_seq_qlen, user, tilingData, & pipeIn);opPre.Process();opPre.SyncALLCores();} } else { FlashAttentionScoreGradS1S2BNGS1S2PreRegbase<INPUT_TYPE, float, DETER_SPARSE_TYPE, IS_TND, SPLIT_AXIS, IS_TND_SWIZZLE, IS_ATTEN_MASK>opPre;opPre.Init(dq, dk, dv, actual_seq_kvlen, drop_mask, user, tilingData, & pipeIn);opPre.Process();opPre.SyncALLCores();} pipeIn.Destroy();TPipe pipeBase;using CubeBlockType = typename std::conditional<g_coreType == AscendC::AIC, FagBaseApi::FAGBlockCube<INPUT_TYPE, CALC_TYPE, OUTDTYPE, IS_ATTEN_MASK, IS_PSE, IS_DROP, IS_TND, IS_BN2_MULTIBLK, DETER_SPARSE_TYPE, IS_N_EQUAL, IS_D_NO_EQUAL, IS_ROPE, IS_NZ_OUT, IS_TND_SWIZZLE, SPLIT_AXIS, s1TemplateType, s2TemplateType, dTemplateType>, FagBaseApi::FAGBlockCubeDummy<INPUT_TYPE, CALC_TYPE, OUTDTYPE, IS_ATTEN_MASK...",
+        "dimensions": [
+          "OutDType",
+          "IsDNoEqual",
+          "IsTnd",
+          "SplitAxis",
+          "IsTndSwizzle",
+          "IsAttenMask",
+          "IsPse",
+          "IsDrop",
+          "IsBn2MultiBlk",
+          "IsNEqual",
+          "IsRope",
+          "IsNzOut"
+        ],
+        "variants": [
+          "DT_FLOAT16"
+        ],
+        "id": "E_BRANCH_cf869b82b7db",
+        "kind": "BRANCH",
+        "name": "(uint32_t)dTemplateType>64){ FlashAttentionScoreGradPresfmgRegbase<INPUT_TYPE, CALC_TYPE, OUTDTYPE, dTemplateType, IS_D_",
+        "status": "extracted",
+        "confidence": 1.0,
+        "file": "/work/ops-transformer/attention/flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+        "line_start": 226,
+        "line_end": 226
+      },
+      {
+        "layer": "kernel",
+        "variants": [
+          "DT_FLOAT16"
+        ],
+        "source_signature": true,
+        "architecture": "arch35",
+        "provenance": "source_kernel_signature_verified",
+        "source_definition": true,
+        "id": "E_KERNEL_6dc3f0d6a999",
+        "kind": "KERNEL",
+        "name": "flash_attention_score_grad",
+        "status": "confirmed",
+        "confidence": 1.0,
+        "file": "flash_attention_score_grad/op_kernel/flash_attention_score_grad_apt.cpp",
+        "line_start": 35,
+        "line_end": 35
+      }
+    ],
+    "guards": [],
+    "writers": []
+  },
+  "SplitAxis": {
+    "dim": "SplitAxis",
+    "tiling_key": {
+      "layer": "tiling",
+      "source_declared": true,
+      "decl_kind": "UINT",
+      "kind_tpl": "UINT",
+      "bit_width": 3,
+      "bw": 3,
+      "bit_offset": 1,
+      "bit_lo": 1,
+      "bit_hi": 3,
+      "bit_end": 3,
+      "decl_order": 1,
+      "allowed_values": [
+        "0",
+        "1",
+        "5"
+      ],
+      "value_domain": [
+        "0",
+        "1",
+        "5"
+      ],
+      "provenance": "source_tpl_args_decl",
+      "host_packing_expressions": [
+        "static_cast<uint8_t>(splitAxis)"
+      ],
+      "id": "E_TILING_KEY_a1c228ac40b0",
+      "kind": "TILING_KEY",
+      "name": "SplitAxis",
+      "status": "confirmed",
+      "confidence": 1.0,
+      "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+      "line_start": 56,
+      "line_end": 56
+    },
+    "path_to_kernel": [
+      {
+        "layer": "tiling",
+        "source_declared": true,
+        "decl_kind": "UINT",
+        "kind_tpl": "UINT",
+        "bit_width": 3,
+        "bw": 3,
+        "bit_offset": 1,
+        "bit_lo": 1,
+        "bit_hi": 3,
+        "bit_end": 3,
+        "decl_order": 1,
+        "allowed_values": [
+          "0",
+          "1",
+          "5"
+        ],
+        "value_domain": [
+          "0",
+          "1",
+          "5"
+        ],
+        "provenance": "source_tpl_args_decl",
+        "host_packing_expressions": [
+          "static_cast<uint8_t>(splitAxis)"
+        ],
+        "id": "E_TILING_KEY_a1c228ac40b0",
+        "kind": "TILING_KEY",
+        "name": "SplitAxis",
+        "status": "confirmed",
+        "confidence": 1.0,
+        "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+        "line_start": 56,
+        "line_end": 56
+      },
+      {
+        "layer": "kernel",
+        "condition": "SPLIT_AXIS == BN2",
+        "dimensions": [
+          "SplitAxis"
+        ],
+        "variants": [
+          "DT_FLOAT16"
+        ],
+        "id": "E_BRANCH_dc9e7504bcd7",
+        "kind": "BRANCH",
+        "name": "SPLIT_AXIS == BN2",
+        "status": "extracted",
+        "confidence": 1.0,
+        "file": "/work/ops-transformer/attention/flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h",
+        "line_start": 845,
+        "line_end": 845
+      },
+      {
+        "layer": "kernel",
+        "variants": [
+          "DT_FLOAT16"
+        ],
+        "source_signature": true,
+        "architecture": "arch35",
+        "provenance": "source_kernel_signature_verified",
+        "source_definition": true,
+        "id": "E_KERNEL_6dc3f0d6a999",
+        "kind": "KERNEL",
+        "name": "flash_attention_score_grad",
+        "status": "confirmed",
+        "confidence": 1.0,
+        "file": "flash_attention_score_grad/op_kernel/flash_attention_score_grad_apt.cpp",
+        "line_start": 35,
+        "line_end": 35
+      }
+    ],
+    "guards": [],
+    "writers": []
+  },
+  "DeterType": {
+    "dim": "DeterType",
+    "tiling_key": {
+      "layer": "tiling",
+      "source_declared": true,
+      "decl_kind": "UINT",
+      "kind_tpl": "UINT",
+      "bit_width": 4,
+      "bw": 4,
+      "bit_offset": 41,
+      "bit_lo": 41,
+      "bit_hi": 44,
+      "bit_end": 44,
+      "decl_order": 10,
+      "allowed_values": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4"
+      ],
+      "value_domain": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4"
+      ],
+      "provenance": "source_tpl_args_decl",
+      "host_packing_expressions": [
+        "static_cast<uint8_t>(fBaseParams.deterSparseType)"
+      ],
+      "id": "E_TILING_KEY_8a503f282079",
+      "kind": "TILING_KEY",
+      "name": "DeterType",
+      "status": "confirmed",
+      "confidence": 1.0,
+      "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+      "line_start": 93,
+      "line_end": 93
+    },
+    "path_to_kernel": [
+      {
+        "layer": "tiling",
+        "source_declared": true,
+        "decl_kind": "UINT",
+        "kind_tpl": "UINT",
+        "bit_width": 4,
+        "bw": 4,
+        "bit_offset": 41,
+        "bit_lo": 41,
+        "bit_hi": 44,
+        "bit_end": 44,
+        "decl_order": 10,
+        "allowed_values": [
+          "0",
+          "1",
+          "2",
+          "3",
+          "4"
+        ],
+        "value_domain": [
+          "0",
+          "1",
+          "2",
+          "3",
+          "4"
+        ],
+        "provenance": "source_tpl_args_decl",
+        "host_packing_expressions": [
+          "static_cast<uint8_t>(fBaseParams.deterSparseType)"
+        ],
+        "id": "E_TILING_KEY_8a503f282079",
+        "kind": "TILING_KEY",
+        "name": "DeterType",
+        "status": "confirmed",
+        "confidence": 1.0,
+        "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+        "line_start": 93,
+        "line_end": 93
+      },
+      {
+        "owner": "flash_attention_score_grad",
+        "order": 10,
+        "provenance": "source_kernel_template_verified",
+        "id": "SRCKTPLARG::flash_attention_score_grad/op_kernel/flash_attention_score_grad_apt.cpp::flash_attention_score_grad::10::DeterType",
+        "kind": "TEMPLATE_ARG",
+        "name": "DeterType",
+        "status": "confirmed",
+        "confidence": 1.0,
+        "file": "flash_attention_score_grad/op_kernel/flash_attention_score_grad_apt.cpp",
+        "line_start": 35,
+        "line_end": 35
+      },
+      {
+        "layer": "kernel",
+        "variants": [
+          "DT_FLOAT16"
+        ],
+        "source_signature": true,
+        "architecture": "arch35",
+        "provenance": "source_kernel_signature_verified",
+        "source_definition": true,
+        "id": "E_KERNEL_6dc3f0d6a999",
+        "kind": "KERNEL",
+        "name": "flash_attention_score_grad",
+        "status": "confirmed",
+        "confidence": 1.0,
+        "file": "flash_attention_score_grad/op_kernel/flash_attention_score_grad_apt.cpp",
+        "line_start": 35,
+        "line_end": 35
+      }
+    ],
+    "guards": [],
+    "writers": []
+  },
+  "IsRope": {
+    "dim": "IsRope",
+    "tiling_key": {
+      "layer": "tiling",
+      "source_declared": true,
+      "decl_kind": "BOOL",
+      "kind_tpl": "BOOL",
+      "bit_width": 1,
+      "bw": 1,
+      "bit_offset": 48,
+      "bit_lo": 48,
+      "bit_hi": 48,
+      "bit_end": 48,
+      "decl_order": 14,
+      "allowed_values": [
+        "0",
+        "1"
+      ],
+      "value_domain": [
+        "0",
+        "1"
+      ],
+      "provenance": "source_tpl_args_decl",
+      "host_packing_expressions": [
+        "static_cast<uint8_t>(fBaseParams.hasRope)"
+      ],
+      "id": "E_TILING_KEY_b33ab9f46cd8",
+      "kind": "TILING_KEY",
+      "name": "IsRope",
+      "status": "confirmed",
+      "confidence": 1.0,
+      "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+      "line_start": 109,
+      "line_end": 109
+    },
+    "path_to_kernel": [
+      {
+        "layer": "tiling",
+        "source_declared": true,
+        "decl_kind": "BOOL",
+        "kind_tpl": "BOOL",
+        "bit_width": 1,
+        "bw": 1,
+        "bit_offset": 48,
+        "bit_lo": 48,
+        "bit_hi": 48,
+        "bit_end": 48,
+        "decl_order": 14,
+        "allowed_values": [
+          "0",
+          "1"
+        ],
+        "value_domain": [
+          "0",
+          "1"
+        ],
+        "provenance": "source_tpl_args_decl",
+        "host_packing_expressions": [
+          "static_cast<uint8_t>(fBaseParams.hasRope)"
+        ],
+        "id": "E_TILING_KEY_b33ab9f46cd8",
+        "kind": "TILING_KEY",
+        "name": "IsRope",
+        "status": "confirmed",
+        "confidence": 1.0,
+        "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+        "line_start": 109,
+        "line_end": 109
+      },
+      {
+        "layer": "kernel",
+        "condition": "IS_ROPE",
+        "dimensions": [
+          "IsRope"
+        ],
+        "variants": [
+          "DT_FLOAT16"
+        ],
+        "id": "E_BRANCH_9918ea2a1785",
+        "kind": "BRANCH",
+        "name": "IS_ROPE",
+        "status": "extracted",
+        "confidence": 1.0,
+        "file": "/work/ops-transformer/attention/flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h",
+        "line_start": 348,
+        "line_end": 348
+      },
+      {
+        "layer": "kernel",
+        "variants": [
+          "DT_FLOAT16"
+        ],
+        "source_signature": true,
+        "architecture": "arch35",
+        "provenance": "source_kernel_signature_verified",
+        "source_definition": true,
+        "id": "E_KERNEL_6dc3f0d6a999",
+        "kind": "KERNEL",
+        "name": "flash_attention_score_grad",
+        "status": "confirmed",
+        "confidence": 1.0,
+        "file": "flash_attention_score_grad/op_kernel/flash_attention_score_grad_apt.cpp",
+        "line_start": 35,
+        "line_end": 35
+      }
+    ],
+    "guards": [],
+    "writers": []
+  }
+}

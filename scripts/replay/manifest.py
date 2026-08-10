@@ -126,7 +126,12 @@ def _scrape(raw: Mapping[str, Any], path: Path, i: int) -> Scrape:
 
 @dataclass(frozen=True)
 class OperatorManifest:
-    """One operator on one architecture, and how to replay it."""
+    """One operator on one architecture, and how to replay it.
+
+    ``replay.host`` selects the driver environment: ``wsl`` (default) runs the
+    entry script inside a WSL distribution; ``native`` (or Linux / ``UO_REPLAY_HOST=native``)
+    invokes ``replay.entry`` directly with bash on the current machine.
+    """
 
     name: str
     relative_path: str

@@ -1,0 +1,6 @@
+{
+  "ok": false,
+  "error": "not_human_required",
+  "status": "rework_required",
+  "message_zh": "仅 human_required/blocked 可在环境修复后重试；rework_required 请直接按 acp next 的 retry_command 重试"
+}

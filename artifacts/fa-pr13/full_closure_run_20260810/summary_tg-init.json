@@ -1,0 +1,17 @@
+{
+  "workflow": "tg-init",
+  "steps": [
+    {
+      "step": 0,
+      "next_ok": null,
+      "phase": null,
+      "status": null
+    }
+  ],
+  "stop": {
+    "parse_error": true,
+    "tail": "\"pending\",\n          \"priority\": \"medium\"\n        },\n        {\n          \"id\": \"contract\",\n          \"content\": \"合同构建\",\n          \"status\": \"pending\",\n          \"priority\": \"medium\"\n        },\n        {\n          \"id\": \"bind\",\n          \"content\": \"Host 视图绑定\",\n          \"status\": \"pending\",\n          \"priority\": \"medium\"\n        },\n        {\n          \"id\": \"gate\",\n          \"content\": \"完整性校验\",\n          \"status\": \"pending\",\n          \"priority\": \"medium\"\n        },\n        {\n          \"id\": \"confirm\",\n          \"content\": \"人工确认\",\n          \"status\": \"pending\",\n          \"priority\": \"medium\"\n        }\n      ],\n      \"instruction_zh\": \"有变化才 todowrite（merge=true）；items 与上次同步完全相同则跳过；一旦调用必须全量等于 todo.todo_sync.items（含全部 id/content/status/priority）；禁止子集；禁止在回复里讨论要不要同步；与下一步 acp 同轮并行。\"\n    }\n  }\n}\n",
+    "_ec": 0,
+    "_log": "/mnt/d/PR-review/AscendC-Pilot/artifacts/fa-pr13/full_closure_run_20260810/logs/next_20260810T202145.log"
+  }
+}

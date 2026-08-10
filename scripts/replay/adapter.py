@@ -31,8 +31,8 @@ VALUE_SOURCE = {
 class OperatorInputAdapter:
     """Expand a case the way the host will read it.
 
-    Historically named ``FagInputAdapter``; kept as an alias below. New code
-    should depend on ``scripts.replay.operator_adapter.OperatorAdapter``.
+    New code should depend on
+    ``scripts.replay.operator_adapter.OperatorAdapter``.
     """
 
     def materialize(self, case: I.Case, case_id: str = "") -> MaterializedCase:
@@ -104,7 +104,3 @@ class OperatorInputAdapter:
 
 
 ADAPTER = OperatorInputAdapter()
-# Backward-compatible alias.
-#: DEPRECATED — FAG-only historical alias. Do not use as the TG facade;
-#: depend on ``operator_adapter.OperatorAdapter`` / package materialize instead.
-FagInputAdapter = OperatorInputAdapter

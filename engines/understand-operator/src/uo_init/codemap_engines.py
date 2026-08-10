@@ -135,7 +135,7 @@ def analyze(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
     It explicitly does *not* answer whether every declared packed key is
     reachable or derive a closed-form formula for every key dimension.
     """
-    from uo_init.build import compile_codemap
+    from uo_init.build import compile_codemap, store_compile_cache
 
     ctx = dict(payload or {})
     root = Path(project_root).expanduser().resolve()
@@ -151,6 +151,7 @@ def analyze(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
             key_fields=[],
             commit=False,
         )
+        store_compile_cache(root, op_name, arch, result)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "analyze", "error": str(exc)[:400]}
 
@@ -180,6 +181,7 @@ def analyze(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
         "analysis_policy": "structure_and_provenance_only",
         "deep_key_derivation": False,
         "global_sat": False,
+        "compile_cached": True,
     }
     pe._dump(uo / "ir" / "unresolved.yaml", unresolved)
     pe._dump(uo / "ir" / "codemap_analyze_receipt.yaml", receipt)
@@ -202,6 +204,7 @@ def commit(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
         "path": product.get("path"),
         "summary": product.get("summary"),
         "gaps": product.get("gaps"),
+        "reused_analyze": bool(product.get("reused_analyze")),
         **({"error": product.get("error") or "uo_commit_failed"} if not product.get("ok") else {}),
     }
 
@@ -237,11 +240,31 @@ def review(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
 
 
 def _commit_uo_product(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    from uo_init.build import compile_codemap
+    from uo_init.build import compile_codemap, load_compile_cache
+    from uo_init.store.writer import uo_product_path, write_codemap
 
     root = project_root.expanduser().resolve()
     try:
         op_name, arch, host_ir, kernel_ir, declared, _uo = _compiler_inputs(root, ctx)
+        cached = load_compile_cache(root, op_name, arch)
+        if cached is not None and cached.get("codemap") is not None:
+            path = uo_product_path(root, op_name, arch)
+            written = write_codemap(
+                cached["codemap"],
+                path,
+                views=cached.get("views") or {},
+                summary=cached.get("summary"),
+            )
+            return {
+                "ok": bool(written.get("ok")),
+                "path": written.get("path"),
+                "summary": cached.get("summary"),
+                "audit": cached.get("audit"),
+                "gaps": cached.get("gaps"),
+                "uo": written,
+                "reused_analyze": True,
+                "analysis_policy": "structure_and_provenance_only",
+            }
         result = compile_codemap(
             op_name=op_name,
             architecture=arch,
@@ -262,5 +285,6 @@ def _commit_uo_product(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         "audit": result.get("audit"),
         "gaps": result.get("gaps"),
         "uo": result.get("uo"),
+        "reused_analyze": False,
         "analysis_policy": "structure_and_provenance_only",
     }

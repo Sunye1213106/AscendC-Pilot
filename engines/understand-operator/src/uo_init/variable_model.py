@@ -158,14 +158,18 @@ def _strip_ns(token: str) -> str:
     return token.split("::")[-1].strip()
 
 
-def parse_opdef(path: str | Path) -> list[ParamDecl]:
+def parse_opdef(path: str | Path, *, text_cache: dict[str, str] | None = None) -> list[ParamDecl]:
     """Structured read of the operator definition.
 
     Each `this->Input("x")` opens a chained-call block terminated by the next
     `this->`, so the block text is sliced between successive matches.
     """
     path = Path(path)
-    text = path.read_text(encoding="utf-8", errors="replace")
+    key = str(path.resolve()).replace("\\", "/")
+    if text_cache is not None and key in text_cache:
+        text = text_cache[key]
+    else:
+        text = path.read_text(encoding="utf-8", errors="replace")
     matches = list(MEMBER_RE.finditer(text))
     out: list[ParamDecl] = []
     seen_of_kind: dict[str, int] = {}
@@ -645,6 +649,7 @@ def build_variable_model(
     tpl_header: str | Path = "",
     enums: dict[str, dict[str, int]] | None = None,
     header_texts: Iterable[str] | None = None,
+    text_cache: dict[str, str] | None = None,
 ) -> VariableModel:
     """Assemble the variable layer from every evidence source available."""
     model = VariableModel()
@@ -652,7 +657,7 @@ def build_variable_model(
     model.named_constants = _named_constants_from(enums, header_texts=header_texts or ())
 
     if opdef_path:
-        for decl in parse_opdef(opdef_path):
+        for decl in parse_opdef(opdef_path, text_cache=text_cache):
             model.params[f"{decl.kind}:{decl.name}"] = decl
             if decl.kind == "attr":
                 model.add(_attr_spec(decl, enums))

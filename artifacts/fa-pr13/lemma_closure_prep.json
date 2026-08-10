@@ -1,0 +1,86 @@
+{
+  "timestamp": 1786354276.649802,
+  "run_id": "lemma_closure_composer",
+  "state": {
+    "declared": 8705,
+    "R": 4121,
+    "R_declared": 4121,
+    "undeclared": 0,
+    "E": 0,
+    "violation": 0,
+    "gap": 4584
+  },
+  "residual": {
+    "open": 4584,
+    "distance": {
+      "1": 3456,
+      "2": 1064,
+      "3": 64
+    },
+    "mostly_distance_1": false,
+    "blame_top": [
+      [
+        "IsAttenMask",
+        1160
+      ],
+      [
+        "IsTndSwizzle",
+        1136
+      ],
+      [
+        "IsAttenMask|IsTndSwizzle",
+        448
+      ],
+      [
+        "SplitAxis",
+        328
+      ],
+      [
+        "IsRope",
+        208
+      ],
+      [
+        "S1TemplateNum",
+        192
+      ],
+      [
+        "IsBn2MultiBlk",
+        128
+      ],
+      [
+        "SplitAxis|DeterType",
+        112
+      ],
+      [
+        "IsTnd",
+        96
+      ],
+      [
+        "IsTnd|IsRope",
+        80
+      ]
+    ]
+  },
+  "route": {
+    "reason": "NEED_LEMMA",
+    "target_hit_rate": 0.0,
+    "rewrite_share": 1.0
+  },
+  "leads": {
+    "lead_count": 19
+  },
+  "mine_staging": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/runs/lemma_closure_composer/actions/lemma_mine/staging.yaml",
+  "hint_families": [
+    "SetSplitAxis: IsTndSwizzle=1 only on TND SplitAxis=5 non-FLOAT DTemplate 64/128",
+    "ProcessSparseModeInfo: DeterType 3/4 requires atten_mask",
+    "SetSplitAxis: SplitAxis=1 requires non-FLOAT, no drop/deter/NEqual, S1/S2=(128,128)",
+    "SetSplitAxis: SplitAxis=5 requires non-FLOAT, no rope/deter/NEqual/BN2MultiBlk, DTemplate 64/128",
+    "SetSplitAxis: IsBn2MultiBlk=1 only on non-TND SplitAxis=1 clean BN2 shape",
+    "IsNzOut: requires SplitAxis=0, non-TND, non-FLOAT, DTemplate=128, DeterType 0/2",
+    "SetSplitAxis: TND SplitAxis=1 requires DTemplate 64/128 and no rope",
+    "GetDTemplateType: IsRope=1 forces DTemplateNum=192",
+    "GetS1S2TemplateType: FLOAT expects S1/S2=(64,128) only for DTemplate=768 else (128,128)",
+    "GetTilingKey: IsRope=1 forces IsDNoEqual=1"
+  ],
+  "note": "Historical families are HYPOTHESES only — must re-prove from current source+CodeMap."
+}

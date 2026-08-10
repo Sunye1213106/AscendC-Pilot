@@ -156,15 +156,44 @@ def iter_observations(
 
 
 def _cluster_key(obs: Mapping[str, Any]) -> tuple:
-    when = obs.get("when") or {}
-    when_items = tuple(sorted((str(k), str(v)) for k, v in when.items()))
     mismatch = tuple(sorted(str(x) for x in (obs.get("mismatch_dims") or [])))
-    return (str(obs.get("kind") or ""), when_items, mismatch, str(obs.get("reject_family") or ""))
+    rewrite = obs.get("rewrite_to") or {}
+    rewrite_sig = tuple(sorted((str(k), str(v)) for k, v in rewrite.items()))
+    return (
+        str(obs.get("kind") or ""),
+        mismatch,
+        rewrite_sig,
+        str(obs.get("reject_family") or ""),
+    )
 
 
-def _lead_id(kind: str, when: Mapping[str, str], idx: int) -> str:
-    combo = ",".join(f"{k}={v}" for k, v in sorted(when.items()))
-    raw = f"{kind}|{combo}|{idx}"
+def _converge_when(members: list[Mapping[str, Any]]) -> dict[str, str]:
+    """Intersection of when dicts across cluster members (same key/value only)."""
+    if not members:
+        return {}
+    common: dict[str, str] | None = None
+    for m in members:
+        when = m.get("when") or {}
+        if not when:
+            return {}
+        normalized = {str(k): str(v) for k, v in when.items()}
+        if common is None:
+            common = dict(normalized)
+            continue
+        common = {k: v for k, v in common.items() if k in normalized and normalized[k] == v}
+        if not common:
+            return {}
+    return common or {}
+
+
+def _family_key_str(key: tuple) -> str:
+    return "|".join(str(x) for x in key)
+
+
+def _lead_id(kind: str, mismatch: list[str], rewrite_to: Mapping[str, str], idx: int) -> str:
+    mismatch_sig = ",".join(sorted(str(x) for x in mismatch))
+    rewrite_sig = ",".join(f"{k}={v}" for k, v in sorted(rewrite_to.items()))
+    raw = f"{kind}|{mismatch_sig}|{rewrite_sig}|{idx}"
     return "OBS_LEAD_" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8].upper()
 
 
@@ -246,15 +275,18 @@ def build_leads(
         clusters.setdefault(_cluster_key(obs), []).append(obs)
 
     leads: list[dict[str, Any]] = []
-    for i, (_key, members) in enumerate(clusters.items()):
+    for i, (fam_key, members) in enumerate(clusters.items()):
         kind = str(members[0]["kind"])
-        when = dict(members[0]["when"])
-        lead_id = _lead_id(kind, when, i)
+        when = _converge_when(members)
+        mismatch_dims = sorted(
+            {str(x) for m in members for x in (m.get("mismatch_dims") or [])}
+        )
         rewrite_counter: collections.Counter[tuple[str, str]] = collections.Counter()
         for m in members:
             for dim, val in (m.get("rewrite_to") or {}).items():
                 rewrite_counter[(str(dim), str(val))] += 1
         rewrite_to = {d: v for (d, v), _n in rewrite_counter.most_common(8)}
+        lead_id = _lead_id(kind, mismatch_dims, rewrite_to, i)
         support = {
             "attempts": len(members),
             "rewrite": sum(1 for m in members if m["kind"] == KIND_REWRITE),
@@ -263,17 +295,29 @@ def build_leads(
         }
         combo = ",".join(f"{k}={v}" for k, v in sorted(when.items()))
         evidence_rel = f"tg/closure/lemmas/evidence/{lead_id}.yaml"
+        instances = [
+            {
+                "id": m["id"],
+                "when": dict(m.get("when") or {}),
+                "target_key": int(m.get("target_key") or 0),
+                "actual_key": int(m.get("actual_key") or 0),
+            }
+            for m in members[:20]
+        ]
         leads.append({
             "id": lead_id,
             "kind": kind,
             "when": when,
             "combo": combo,
+            "family": True,
+            "family_key": _family_key_str(fam_key),
+            "instances": instances,
             "observations": [m["id"] for m in members],
             "observation_count": len(members),
             "support": support,
             "rewrite_to": rewrite_to,
             "reject_family": str(members[0].get("reject_family") or ""),
-            "mismatch_dims": list(members[0].get("mismatch_dims") or []),
+            "mismatch_dims": mismatch_dims,
             "affected_open_keys": _affected_open(when, open_insts),
             "evidence_path": evidence_rel,
             "source": "oracle_observation",

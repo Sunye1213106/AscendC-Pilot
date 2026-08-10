@@ -23,6 +23,64 @@ import yaml
 SOUND_GRADES = frozenset({"solver_derived", "source_lemma"})
 
 
+def match_term(actual: Any, expected: Any) -> bool:
+    """One ``when`` term.
+
+    Besides plain equality, a term may be a set: ``[a, b]`` or ``{in: [...]}``
+    means membership, ``{not_in: [...]}`` its complement. Without this, a guard
+    that pins one dimension to a single value needs one rule per rejected value
+    of that dimension, so a proof of one proposition arrives split into many.
+    """
+    got = str(actual)
+    if isinstance(expected, Mapping):
+        if "in" in expected:
+            if got not in {str(x) for x in (expected.get("in") or [])}:
+                return False
+        if "not_in" in expected:
+            if got in {str(x) for x in (expected.get("not_in") or [])}:
+                return False
+        return "in" in expected or "not_in" in expected
+    if isinstance(expected, (list, tuple, set, frozenset)):
+        return got in {str(x) for x in expected}
+    return got == str(expected)
+
+
+def match_when(inst: Mapping[str, Any], when: Mapping[str, Any]) -> bool:
+    return all(match_term(inst.get(d), v) for d, v in when.items())
+
+
+def norm_when(raw: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Keep set terms structured; only scalars collapse to ``str``."""
+    out: dict[str, Any] = {}
+    for k, v in (raw or {}).items():
+        if isinstance(v, Mapping):
+            term = {}
+            if "in" in v:
+                term["in"] = [str(x) for x in (v.get("in") or [])]
+            if "not_in" in v:
+                term["not_in"] = [str(x) for x in (v.get("not_in") or [])]
+            out[str(k)] = term or str(v)
+        elif isinstance(v, (list, tuple, set, frozenset)):
+            out[str(k)] = [str(x) for x in v]
+        else:
+            out[str(k)] = str(v)
+    return out
+
+
+def when_label(when: Mapping[str, Any]) -> str:
+    def _term(value: Any) -> str:
+        if isinstance(value, Mapping):
+            if "in" in value:
+                return "in[" + ",".join(str(x) for x in (value.get("in") or [])) + "]"
+            if "not_in" in value:
+                return "!in[" + ",".join(str(x) for x in (value.get("not_in") or [])) + "]"
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return "in[" + ",".join(str(x) for x in value) + "]"
+        return str(value)
+
+    return " + ".join(f"{d}={_term(v)}" for d, v in when.items())
+
+
 @dataclass(frozen=True)
 class Rule:
     kind: str                 # value_unreachable | combo
@@ -31,7 +89,7 @@ class Rule:
     reason: str = ""
     dim: str = ""
     value: str = ""
-    when: Mapping[str, str] = field(default_factory=dict)
+    when: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -59,7 +117,7 @@ class RuleBook:
                 if str(inst.get(rule.dim)) == rule.value:
                     out.append(rule.label)
             elif rule.kind == "combo":
-                if all(str(inst.get(d)) == v for d, v in rule.when.items()):
+                if rule.when and match_when(inst, rule.when):
                     out.append(rule.label)
         return out
 
@@ -92,9 +150,9 @@ def load_proof(path: str | Path) -> RuleBook:
             dim=dim, value=value))
     evidence = doc.get("combo_evidence") or {}
     for raw in doc.get("combos") or []:
-        when = {str(k): str(v) for k, v in (raw.get("when") or {}).items()}
+        when = norm_when(raw.get("when"))
         tag = str(raw.get("tag") or "")
-        label = " + ".join(f"{d}={v}" for d, v in when.items())
+        label = when_label(when)
         rules.append(Rule(
             kind="combo", grade=grade, label=label,
             reason=str(evidence.get(tag) or raw.get("reason") or ""),
@@ -225,8 +283,8 @@ def load_active(path: str | Path) -> RuleBook:
                 kind=kind, grade=grade, label=f"{dim}={value}",
                 reason=str(raw.get("reason") or ""), dim=dim, value=value))
         else:
-            when = {str(k): str(v) for k, v in (raw.get("when") or {}).items()}
-            label = str(raw.get("label") or " + ".join(f"{d}={v}" for d, v in when.items()))
+            when = norm_when(raw.get("when"))
+            label = str(raw.get("label") or when_label(when))
             rules.append(Rule(
                 kind="combo", grade=grade, label=label,
                 reason=str(raw.get("reason") or ""), when=when))

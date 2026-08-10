@@ -1,0 +1,24 @@
+schema: tg-closure-round-analysis/v1
+blame:
+- - IsBn2MultiBlk
+  - 80
+- - SplitAxis
+  - 48
+- - DeterType
+  - 32
+- - IsTnd
+  - 16
+distance_histogram:
+  1: 176
+mostly_distance_1: true
+reason: NEED_LEMMA
+state:
+  declared: 8705
+  R: 4121
+  E: 4408
+  gap: 176
+  violation: 0
+target_hit_rate: 0.0
+rewrite_share: 1.0
+new_R: 0
+timestamp: 1786355538.4533522

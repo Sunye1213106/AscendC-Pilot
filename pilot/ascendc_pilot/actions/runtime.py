@@ -662,9 +662,10 @@ def _contract_identity_ok(
             == {"scope_confirm", "scope_confirmation"}
         ):
             continue
-        # Canonical IR may be shared across actions; only enforce action-owned
-        # producer/session fields where the artifact is owned by this action.
-        if field not in {"run_id", "workflow_id"} and not action_owned:
+        # Shared / upstream IR (e.g. tg/init/status.yaml on tg-plan plan_precheck)
+        # keeps its originating run_id/workflow_id. Only action-owned writes must
+        # match the current finalize identity.
+        if not action_owned:
             continue
         return {
             "ok": False,

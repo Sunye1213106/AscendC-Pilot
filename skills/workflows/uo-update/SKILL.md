@@ -1,9 +1,9 @@
 ---
 name: uo-update
-description: >
-  在已有 `.uo` 上根据源码变更执行确定性增量刷新、重建受影响 CodeMap 关系、
-  校验完整性并输出差异摘要。用户要求刷新已有 UO/CodeMap 或查看源码变更对
-  CodeMap 的影响时使用。
+description: '在已有 `.uo` 上根据源码变更执行确定性增量刷新、重建受影响 CodeMap 关系、 校验完整性并输出差异摘要。用户要求刷新已有 UO/CodeMap
+  或查看源码变更对 CodeMap 的影响时使用。
+
+  '
 ---
 
 # uo-update
@@ -24,15 +24,15 @@ description: >
 
 | action_id | execution_mode | agent | role | method | prompt | output_contract |
 |---|---|---|---|---|---|---|
-| `detect_changes` | `deterministic` | `engine` | `deterministic_engine` | `uo-update/detect-changes` | `-` | `change-detect-v1` |
-| `plan_update` | `deterministic` | `engine` | `deterministic_engine` | `uo-update/plan-update` | `-` | `update-plan-v1` |
-| `apply_update` | `deterministic` | `engine` | `deterministic_engine` | `uo-update/apply-update` | `-` | `update-apply-v1` |
-| `key_triage` | `deterministic` | `engine` | `deterministic_engine` | `uo-update/key-triage` | `-` | `key-triage-v1` |
-| `key_resolution` | `deterministic` | `engine` | `deterministic_engine` | `uo-update/key-resolution` | `-` | `input-derivable-patch-v1` |
-| `confidence_report` | `deterministic` | `engine` | `deterministic_engine` | `uo-update/confidence-report` | `-` | `confidence-report-v1` |
-| `confidence_review` | `deterministic` | `engine` | `deterministic_engine` | `uo-update/confidence-review` | `-` | `confidence-reason-review-v1` |
-| `export_integrity` | `deterministic` | `engine` | `deterministic_engine` | `uo-update/export-integrity` | `-` | `integrity-v1` |
-| `diff_summary` | `deterministic` | `engine` | `deterministic_engine` | `uo-update/diff-summary` | `-` | `diff-summary-v1` |
-| `diff_only` | `deterministic` | `engine` | `deterministic_engine` | `uo-update/diff-only` | `-` | `diff-summary-v1` |
+| `detect_changes` | `deterministic` | `human` | `deterministic_engine` | `uo-update/detect-changes` | `-` | `change-detect-v1` |
+| `plan_update` | `deterministic` | `human` | `deterministic_engine` | `uo-update/plan-update` | `-` | `update-plan-v1` |
+| `apply_update` | `deterministic` | `human` | `deterministic_engine` | `uo-update/apply-update` | `-` | `update-apply-v1` |
+| `key_triage` | `deterministic` | `human` | `deterministic_engine` | `uo-update/key-triage` | `-` | `key-triage-v1` |
+| `key_resolution` | `deterministic` | `human` | `deterministic_engine` | `uo-update/key-resolution` | `-` | `input-derivable-patch-v1` |
+| `confidence_report` | `deterministic` | `human` | `deterministic_engine` | `uo-update/confidence-report` | `-` | `confidence-report-v1` |
+| `confidence_review` | `deterministic` | `human` | `deterministic_engine` | `uo-update/confidence-review` | `-` | `confidence-reason-review-v1` |
+| `export_integrity` | `deterministic` | `human` | `deterministic_engine` | `uo-update/export-integrity` | `-` | `integrity-v1` |
+| `diff_summary` | `deterministic` | `human` | `deterministic_engine` | `uo-update/diff-summary` | `-` | `diff-summary-v1` |
+| `diff_only` | `deterministic` | `human` | `deterministic_engine` | `uo-update/diff-only` | `-` | `diff-summary-v1` |
 
 <!-- END GENERATED ACTIONS -->

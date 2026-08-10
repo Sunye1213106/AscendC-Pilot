@@ -19,10 +19,15 @@ from testcase_agent.closure import workspace as W
 
 # Last CodeMap construct traces (entity ids / packing) for audit.
 _LAST_TRACES: list[dict[str, Any]] = []
+_LAST_BUILD_PATH: str = ""  # codemap|hook|hints|empty
 
 
 def last_traces() -> list[dict[str, Any]]:
     return list(_LAST_TRACES)
+
+
+def last_build_path() -> str:
+    return _LAST_BUILD_PATH
 
 
 @lru_cache(maxsize=4)
@@ -348,20 +353,47 @@ def build(t: Mapping[str, str], seed: int = 0) -> list:
 
     Order: operator hook → CodeMap-directed → adapter hints tables.
     """
+    cases, _meta = build_with_meta(t, seed=seed)
+    return cases
+
+
+def build_with_meta(t: Mapping[str, str], seed: int = 0) -> tuple[list, dict[str, Any]]:
+    """Like ``build`` but also returns path metadata (hook/codemap/hints/empty)."""
+    global _LAST_BUILD_PATH, _LAST_TRACES
+    path = "empty"
+    traces_before = len(_LAST_TRACES)
+
     # Operator hook still wins when present.
     I = W.replay_inputs()
     if hasattr(I, "construct_case"):
         try:
             hooked = list(I.construct_case(t) or [])
             if hooked:
-                return hooked
+                _LAST_BUILD_PATH = "hook"
+                # Best-effort codemap traces for audit without using its cases.
+                try:
+                    _codemap_build(t, seed=seed)
+                except Exception:
+                    pass
+                return hooked, {"path": "hook", "trace_count": len(_LAST_TRACES)}
         except Exception:
             pass
 
     coded = _codemap_build(t, seed=seed)
     if coded:
-        return coded
-    return _hints_build(t, seed=seed)
+        _LAST_BUILD_PATH = "codemap"
+        return coded, {"path": "codemap", "trace_count": len(_LAST_TRACES)}
+
+    hinted = _hints_build(t, seed=seed)
+    if hinted:
+        _LAST_BUILD_PATH = "hints"
+        return hinted, {"path": "hints", "trace_count": len(_LAST_TRACES)}
+
+    _LAST_BUILD_PATH = "empty"
+    trace_count = len(_LAST_TRACES) - traces_before
+    if trace_count < 0:
+        trace_count = len(_LAST_TRACES)
+    return [], {"path": "empty", "trace_count": trace_count}
 
 
 def explain(t: Mapping[str, str], seed: int = 0) -> list[str]:

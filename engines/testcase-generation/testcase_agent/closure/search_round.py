@@ -31,21 +31,130 @@ def _fp(rows: Any, *extra: str) -> str:
     return h.hexdigest()[:16]
 
 
+def _oracle_saturation(ws: W.Workspace) -> tuple[float, float]:
+    """Return (target_hit_rate, rewrite_share) from recent oracle rows."""
+    target_hit_rate = 0.0
+    rewrite_share = 0.0
+    try:
+        from testcase_agent.closure import observations as OBS
+
+        df = C.dedup(C.load(ws))
+        if df is None or getattr(df, "empty", True):
+            return target_hit_rate, rewrite_share
+        hits = 0
+        rewrites = 0
+        non_hits = 0
+        recent = df.tail(128)
+        for _, row in recent.iterrows():
+            kind = OBS.classify_row(row)
+            if kind is None:
+                continue
+            if kind == OBS.KIND_HIT:
+                hits += 1
+            else:
+                non_hits += 1
+                if kind == OBS.KIND_REWRITE:
+                    rewrites += 1
+        judged = hits + non_hits
+        if judged:
+            target_hit_rate = hits / judged
+        if non_hits:
+            rewrite_share = rewrites / non_hits
+    except Exception:
+        pass
+    return target_hit_rate, rewrite_share
+
+
+def _leads_available(ws: W.Workspace) -> bool:
+    leads_path = ws.state / "lemmas" / "leads.yaml"
+    if not leads_path.is_file():
+        return False
+    try:
+        import yaml
+
+        doc = yaml.safe_load(leads_path.read_text(encoding="utf-8")) or {}
+        return int(doc.get("lead_count") or len(doc.get("leads") or [])) > 0
+    except Exception:
+        return False
+
+
+def _lockout_path(ws: W.Workspace) -> Path:
+    return ws.state / "search_lockout.yaml"
+
+
+def read_lockout(ws: W.Workspace) -> dict[str, Any]:
+    path = _lockout_path(ws)
+    if not path.is_file():
+        return {}
+    try:
+        import yaml
+
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return doc if isinstance(doc, dict) else {}
+    except Exception:
+        return {}
+
+
+def set_lockout(ws: W.Workspace, st: dict[str, Any]) -> dict[str, Any]:
+    """Record the (E, gap) at which search saturated.
+
+    Search only reopens once E actually grows; otherwise every round repeats an
+    identical zero-yield replay sweep.
+    """
+    import yaml
+
+    doc = {
+        "schema": "tg-search-lockout/v1",
+        "E": int(st.get("E") or 0),
+        "gap": int(st.get("gap") or 0),
+        "reason": "NEED_LEMMA",
+    }
+    _lockout_path(ws).write_text(
+        yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+    return doc
+
+
+def clear_lockout(ws: W.Workspace) -> None:
+    _lockout_path(ws).unlink(missing_ok=True)
+
+
+def lockout_active(ws: W.Workspace, st: dict[str, Any]) -> bool:
+    lock = read_lockout(ws)
+    if not lock:
+        return False
+    if int(st.get("E") or 0) > int(lock.get("E") or 0):
+        clear_lockout(ws)
+        return False
+    return True
+
+
 def route(ws: W.Workspace | None = None) -> dict[str, Any]:
     """Deterministic residual router reason codes for the tg-solve state machine."""
     ws = (ws or W.default_workspace()).ensure()
     st = ledger.state(ws)
     if st.get("gap", 1) == 0 and st.get("violation", 1) == 0:
-        return {"reason": "GAP_ZERO", **st}
+        clear_lockout(ws)
+        return {"reason": "GAP_ZERO", "target_hit_rate": 0.0, "rewrite_share": 0.0, **st}
 
     # Oracle suspect flag left by a prior round.
     flag = ws.state / "oracle_suspect"
     if flag.is_file():
-        return {"reason": "ORACLE_SUSPECT", **st}
+        return {"reason": "ORACLE_SUSPECT", "target_hit_rate": 0.0, "rewrite_share": 0.0, **st}
+
+    if lockout_active(ws, st):
+        return {
+            "reason": "NEED_LEMMA",
+            "target_hit_rate": 0.0,
+            "rewrite_share": 1.0,
+            "search_locked": True,
+            **st,
+        }
 
     res = R.analyse(ws)
     open_n = int(st.get("gap") or 0)
     mostly_near = bool(res.get("mostly_distance_1"))
+    target_hit_rate, rewrite_share = _oracle_saturation(ws)
 
     progress_path = ws.state / "rounds"
     zero_gain = 0
@@ -70,15 +179,40 @@ def route(ws: W.Workspace | None = None) -> dict[str, Any]:
             except Exception:
                 pass
 
+    def _routed(reason: str, **extra: Any) -> dict[str, Any]:
+        if reason == "NEED_LEMMA":
+            set_lockout(ws, st)
+        return {
+            "reason": reason,
+            "mostly_distance_1": mostly_near,
+            "target_hit_rate": target_hit_rate,
+            "rewrite_share": rewrite_share,
+            **extra,
+            **st,
+        }
+
+    if zero_gain >= 2 and target_hit_rate <= 0.05 and rewrite_share >= 0.7:
+        return _routed("NEED_LEMMA")
     if zero_gain >= 2 and hist_unchanged >= 1 and not mostly_near:
-        return {"reason": "SEARCH_STALLED", "mostly_distance_1": mostly_near, **st}
+        return _routed("NEED_LEMMA" if _leads_available(ws) else "SEARCH_STALLED")
     if zero_gain >= 2 and mostly_near:
-        return {"reason": "CONSTRUCT_TARGETS", "mostly_distance_1": True, **st}
+        return _routed("CONSTRUCT_TARGETS", mostly_distance_1=True)
     if zero_gain >= 2:
-        return {"reason": "NEED_LEMMA", "mostly_distance_1": mostly_near, **st}
+        return _routed("NEED_LEMMA")
     if open_n > 0:
-        return {"reason": "SEARCH_PROGRESS", "mostly_distance_1": mostly_near, **st}
-    return {"reason": "PROOF_BLOCKED", **st}
+        return {
+            "reason": "SEARCH_PROGRESS",
+            "mostly_distance_1": mostly_near,
+            "target_hit_rate": target_hit_rate,
+            "rewrite_share": rewrite_share,
+            **st,
+        }
+    return {
+        "reason": "PROOF_BLOCKED",
+        "target_hit_rate": target_hit_rate,
+        "rewrite_share": rewrite_share,
+        **st,
+    }
 
 
 def run_round(

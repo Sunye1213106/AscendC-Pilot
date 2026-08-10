@@ -1,9 +1,9 @@
 ---
 name: uo-query
-description: >
-  只读查询已有 AscendC `.uo` CodeMap，回答 API、Host、TilingKey/TilingData、
-  Kernel、模板、宏、编译期变量、架构和数据流问题。用户询问已有 UO 内容、
-  某个 KEY/字段/路径或 CodeMap 完整性时使用。
+description: '只读查询已有 AscendC `.uo` CodeMap，回答 API、Host、TilingKey/TilingData、 Kernel、模板、宏、编译期变量、架构和数据流问题。用户询问已有
+  UO 内容、 某个 KEY/字段/路径或 CodeMap 完整性时使用。
+
+  '
 ---
 
 # uo-query

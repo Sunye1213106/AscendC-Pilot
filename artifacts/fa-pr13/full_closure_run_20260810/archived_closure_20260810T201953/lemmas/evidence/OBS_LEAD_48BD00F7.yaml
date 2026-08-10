@@ -1,0 +1,715 @@
+schema: tg-lemma-evidence/v1
+lead_id: OBS_LEAD_48BD00F7
+combo: &id001
+  IsEmptyTensor: '0'
+  SplitAxis: '1'
+  IsTnd: '0'
+  IsPse: '1'
+  IsAttenMask: '0'
+  S1TemplateNum: '128'
+  S2TemplateNum: '128'
+  DTemplateNum: '64'
+  DeterType: '0'
+  IsNEqual: '0'
+  IsBn2MultiBlk: '0'
+  IsDNoEqual: '0'
+  IsRope: '1'
+  IsNzOut: '0'
+  IsTndSwizzle: '0'
+  IsRegbase: '1'
+fields: &id002
+- IsEmptyTensor
+- SplitAxis
+- IsTnd
+- IsPse
+- IsAttenMask
+- S1TemplateNum
+- S2TemplateNum
+- DTemplateNum
+- DeterType
+- IsNEqual
+- IsBn2MultiBlk
+- IsDNoEqual
+- IsRope
+- IsNzOut
+- IsTndSwizzle
+- IsRegbase
+entry_count: 80
+entries:
+- id: EV_1924083103e9
+  kind: assignment
+  field: mmPreIsNZOut
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_bngs1s2_b.cpp
+  line: 153
+  snippet: 'mmPreIsNZOut = basicParams.mmPreIsNZOut ? OptionEnum::ENABLE : OptionEnum::DISABLE;'
+  source: regex
+- id: EV_4f10ac035414
+  kind: assignment
+  field: mmNextIsNZOut
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_bngs1s2_b.cpp
+  line: 154
+  snippet: 'mmNextIsNZOut = basicParams.mmNextIsNZOut ? OptionEnum::ENABLE : OptionEnum::DISABLE;'
+  source: regex
+- id: EV_66f23b5179c3
+  kind: assignment
+  field: mmPreIsNZOut
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_bngs1s2_b.cpp
+  line: 625
+  snippet: 'mmPreIsNZOut = td_->opInfo.get_sQ() >= 4 ? true : false;'
+  source: regex
+- id: EV_317e08260f5a
+  kind: assignment
+  field: mmPreIsNZOut
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_ngs1s2_bn.cpp
+  line: 96
+  snippet: mmPreIsNZOut = false;
+  source: regex
+- id: EV_cffcddd1af5c
+  kind: assignment
+  field: mmNextIsNZOut
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_ngs1s2_bn.cpp
+  line: 97
+  snippet: mmNextIsNZOut = false;
+  source: regex
+- id: EV_ae3530e5a83d
+  kind: assignment
+  field: mmPreIsNZOut
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_ngs1s2_bn.cpp
+  line: 148
+  snippet: 'mmPreIsNZOut = basicParams.mmPreIsNZOut ? OptionEnum::ENABLE : OptionEnum::DISABLE;'
+  source: regex
+- id: EV_2b1d69fbc97a
+  kind: assignment
+  field: mmNextIsNZOut
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_ngs1s2_bn.cpp
+  line: 149
+  snippet: 'mmNextIsNZOut = basicParams.mmNextIsNZOut ? OptionEnum::ENABLE : OptionEnum::DISABLE;'
+  source: regex
+- id: EV_95800821e34f
+  kind: assignment
+  field: mmPreIsNZOut
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_ngs1s2_bn.cpp
+  line: 614
+  snippet: 'mmPreIsNZOut = td_->opInfo.get_sQ() >= 4 ? true : false;'
+  source: regex
+- id: EV_ea4b81f0b11d
+  kind: assignment
+  field: isTnd
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2.cpp
+  line: 214
+  snippet: isTnd = tmpData_.layout == static_cast<uint32_t>(InputLayout::TND);
+  source: regex
+- id: EV_3235d417ae19
+  kind: assignment
+  field: isTnd
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2.cpp
+  line: 1939
+  snippet: isTnd = layout == static_cast<uint32_t>(InputLayout::TND);
+  source: regex
+- id: EV_73956952af5f
+  kind: assignment
+  field: isTnd
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2.cpp
+  line: 2013
+  snippet: isTnd = layout == static_cast<uint32_t>(InputLayout::TND);
+  source: regex
+- id: EV_78286e01838b
+  kind: assignment
+  field: isTnd
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2.cpp
+  line: 2098
+  snippet: isTnd = layout == static_cast<uint32_t>(InputLayout::TND);
+  source: regex
+- id: EV_7a6d63c99640
+  kind: assignment
+  field: mm1IsNZOut
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp
+  line: 147
+  snippet: 'mm1IsNZOut = fBaseParams.mm1IsNZOut ? OptionEnum::ENABLE : OptionEnum::DISABLE;'
+  source: regex
+- id: EV_d86f806eadbf
+  kind: assignment
+  field: mm2IsNZOut
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp
+  line: 148
+  snippet: 'mm2IsNZOut = fBaseParams.mm2IsNZOut ? OptionEnum::ENABLE : OptionEnum::DISABLE;'
+  source: regex
+- id: EV_bbcdf34e35f7
+  kind: assignment
+  field: tndS1Pingpong
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp
+  line: 149
+  snippet: 'tndS1Pingpong = fBaseParams.isTndS1PingPong ? OptionEnum::ENABLE : OptionEnum::DISABLE;'
+  source: regex
+- id: EV_fab502bef7af
+  kind: assignment
+  field: isTnd
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp
+  line: 347
+  snippet: isTnd = strcmp(inputLayout, "TND") == 0;
+  source: regex
+- id: EV_c6e5a94a10e7
+  kind: assignment
+  field: isTndPse
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp
+  line: 348
+  snippet: isTndPse = isTnd && fBaseParams.s1 <= fBaseParams.s1Token && fBaseParams.s2Token
+    == 0;
+  source: regex
+- id: EV_27c053c1f33a
+  kind: assignment
+  field: isAlibi1NHS
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp
+  line: 349
+  snippet: isAlibi1NHS = isPse && isAlibiPse && (dim0 == 1);
+  source: regex
+- id: EV_79d4f3ccfe5e
+  kind: assignment
+  field: isAlibiBNHS
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp
+  line: 350
+  snippet: isAlibiBNHS = isPse && isAlibiPse && (dim0 == fBaseParams.b);
+  source: regex
+- id: EV_04e4c401c164
+  kind: assignment
+  field: isTndAlibiPse1NHS
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp
+  line: 351
+  snippet: isTndAlibiPse1NHS = isTndPse && isAlibiPse && (dim0 == 1);
+  source: regex
+- id: EV_79cab382b38e
+  kind: assignment
+  field: isTndAlibiPseBNHS
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp
+  line: 352
+  snippet: isTndAlibiPseBNHS = isTndPse && isAlibiPse && (dim0 == fBaseParams.b);
+  source: regex
+- id: EV_b0b509f8f928
+  kind: assignment
+  field: isTnd
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp
+  line: 434
+  snippet: isTnd = strcmp(inputLayout, "TND") == 0;
+  source: regex
+- id: EV_7231185210b8
+  kind: assignment
+  field: isTndPseBN1S
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp
+  line: 489
+  snippet: isTndPseBN1S = isTnd && (dim0 == effectiveT2 * fBaseParams.n1);
+  source: regex
+- id: EV_0b192db1817b
+  kind: assignment
+  field: isTndPseBNSS
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp
+  line: 490
+  snippet: isTndPseBNSS = isTnd && (dim0 == fBaseParams.sumS1S2Product * fBaseParams.n1);
+  source: regex
+- id: EV_c21f9df27ae9
+  kind: assignment
+  field: outFormat
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp
+  line: 1347
+  snippet: 'outFormat = fBaseParams.mm2IsNZOut ? matmul_tiling::CubeFormat::NZ : matmul_tiling::CubeFormat::ND;'
+  source: regex
+- id: EV_6047f617b229
+  kind: assignment
+  field: curPostCoexNode
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp
+  line: 2467
+  snippet: 'curPostCoexNode = fBaseParams.mm2IsNZOut ? POST_NZ_COEX_NODE : POST_COEX_NODE;'
+  source: regex
+- id: EV_a9409cea56c8
+  kind: assignment
+  field: nzReservedSize
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp
+  line: 2468
+  snippet: 'nzReservedSize = fBaseParams.mm2IsNZOut ? dAlign / C0_SIZE * BLOCK_SIZE
+    * POST_NZ_RESERVED_N : 0;'
+  source: regex
+- id: EV_f2a0e0b0d346
+  kind: assignment
+  field: mm1IsNZOut
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 227
+  snippet: 'mm1IsNZOut = fBaseParams.mm1IsNZOut ? OptionEnum::ENABLE : OptionEnum::DISABLE;'
+  source: regex
+- id: EV_0f1792ed999c
+  kind: assignment
+  field: mm2IsNZOut
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 228
+  snippet: 'mm2IsNZOut = fBaseParams.mm2IsNZOut ? OptionEnum::ENABLE : OptionEnum::DISABLE;'
+  source: regex
+- id: EV_0f0694c2b61f
+  kind: assignment
+  field: isTnd
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 454
+  snippet: isTnd = strcmp(inputLayout, "TND") == 0;
+  source: regex
+- id: EV_f867bd228bfe
+  kind: assignment
+  field: isTndPse
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 455
+  snippet: isTndPse = isTnd && fBaseParams.s1 <= fBaseParams.s1Token && fBaseParams.s2Token
+    == 0;
+  source: regex
+- id: EV_1bbc8cb28913
+  kind: assignment
+  field: isAlibi1NHS
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 456
+  snippet: isAlibi1NHS = isPse && isAlibiPse && (dim0 == 1);
+  source: regex
+- id: EV_e95985b8961e
+  kind: assignment
+  field: isAlibiBNHS
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 457
+  snippet: isAlibiBNHS = isPse && isAlibiPse && (dim0 == fBaseParams.b);
+  source: regex
+- id: EV_e3152679c38d
+  kind: assignment
+  field: isTndAlibiPse1NHS
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 458
+  snippet: isTndAlibiPse1NHS = isTndPse && isAlibiPse && (dim0 == 1);
+  source: regex
+- id: EV_6ef8c7526074
+  kind: assignment
+  field: isTndAlibiPseBNHS
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 459
+  snippet: isTndAlibiPseBNHS = isTndPse && isAlibiPse && (dim0 == fBaseParams.b);
+  source: regex
+- id: EV_cafabc6c23c3
+  kind: assignment
+  field: isTnd
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 530
+  snippet: isTnd = strcmp(inputLayout, "TND") == 0;
+  source: regex
+- id: EV_9c8e1947d5f7
+  kind: assignment
+  field: isTndPseBN1S
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 559
+  snippet: isTndPseBN1S = isTnd && (dim0 == effectiveT2 * fBaseParams.n1);
+  source: regex
+- id: EV_4a81d472895e
+  kind: assignment
+  field: isTndPseBNSS
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 560
+  snippet: isTndPseBNSS = isTnd && (dim0 == fBaseParams.sumS1S2Product * fBaseParams.n1);
+  source: regex
+- id: EV_c83967ea8a3d
+  kind: assignment
+  field: mm1IsNZOut
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 1007
+  snippet: mm1IsNZOut = false;
+  source: regex
+- id: EV_5f6dc11142d9
+  kind: assignment
+  field: mm2IsNZOut
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 1008
+  snippet: mm2IsNZOut = false;
+  source: regex
+- id: EV_f724c19c55b1
+  kind: assignment
+  field: mm1IsNZOut
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 1011
+  snippet: mm1IsNZOut = (fBaseParams.layoutType != INPUT_FORMAT_TND) && mm1NzRangeS2;
+  source: regex
+- id: EV_f92f7b05c8e4
+  kind: assignment
+  field: mm2IsNZOut
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 1015
+  snippet: mm2IsNZOut = (mm2NzRangeD && fBaseParams.s1 >= S1_NZ_SIZE);
+  source: regex
+- id: EV_efad018dea82
+  kind: assignment
+  field: mm1IsNZOut
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 1243
+  snippet: mm1IsNZOut = true;
+  source: regex
+- id: EV_087b518e69d2
+  kind: assignment
+  field: mm2IsNZOut
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 1244
+  snippet: mm2IsNZOut = true;
+  source: regex
+- id: EV_d9b0b61013de
+  kind: assignment
+  field: mm1IsNZOut
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 1248
+  snippet: mm1IsNZOut = true;
+  source: regex
+- id: EV_96e47722843c
+  kind: assignment
+  field: mm2IsNZOut
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 1249
+  snippet: mm2IsNZOut = false;
+  source: regex
+- id: EV_826518171ec5
+  kind: assignment
+  field: mm1IsNZOut
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 1254
+  snippet: mm1IsNZOut = true;
+  source: regex
+- id: EV_176ae7ffefa7
+  kind: assignment
+  field: mm2IsNZOut
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 1255
+  snippet: mm2IsNZOut = false;
+  source: regex
+- id: EV_91b7fa269363
+  kind: assignment
+  field: outFormat
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 1401
+  snippet: 'outFormat = fBaseParams.mm2IsNZOut ? matmul_tiling::CubeFormat::NZ : matmul_tiling::CubeFormat::ND;'
+  source: regex
+- id: EV_46e4ee667dab
+  kind: assignment
+  field: curPostCoexNode
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 1928
+  snippet: 'curPostCoexNode = fBaseParams.mm2IsNZOut ? POST_NZ_COEX_NODE : POST_COEX_NODE;'
+  source: regex
+- id: EV_799b74e9b902
+  kind: assignment
+  field: nzReservedSize
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2_sab.cpp
+  line: 1929
+  snippet: 'nzReservedSize = fBaseParams.mm2IsNZOut ? dAlign / C0_SIZE * BLOCK_SIZE
+    * POST_NZ_RESERVED_N : 0;'
+  source: regex
+- id: EV_e699ba614b96
+  kind: assignment
+  field: isTnd
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp
+  line: 1372
+  snippet: isTnd = strcmp(inputLayout, "TND") == 0;
+  source: regex
+- id: EV_e0d71605e876
+  kind: assignment
+  field: isTndPse
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp
+  line: 1373
+  snippet: isTndPse = isTnd && int64_t(fBaseParams.s1) <= fBaseParams.s1Token && fBaseParams.s2Token
+    == 0;
+  source: regex
+- id: EV_29c7a4a1da5b
+  kind: assignment
+  field: isAlibi1NHS
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp
+  line: 1374
+  snippet: isAlibi1NHS = isPse && isAlibiPse && (dim0 == 1);
+  source: regex
+- id: EV_bb193c8f7e25
+  kind: assignment
+  field: isAlibiBNHS
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp
+  line: 1375
+  snippet: isAlibiBNHS = isPse && isAlibiPse && (dim0 == fBaseParams.b);
+  source: regex
+- id: EV_a695e94144fe
+  kind: assignment
+  field: isTndAlibiPse1NHS
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp
+  line: 1376
+  snippet: isTndAlibiPse1NHS = isTndPse && isAlibiPse && (dim0 == 1);
+  source: regex
+- id: EV_36b7e541d56e
+  kind: assignment
+  field: isTndAlibiPseBNHS
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp
+  line: 1377
+  snippet: isTndAlibiPseBNHS = isTndPse && isAlibiPse && (dim0 == fBaseParams.b);
+  source: regex
+- id: EV_cdfb1f09b7ab
+  kind: assignment
+  field: isTnd
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp
+  line: 1487
+  snippet: isTnd = strcmp(inputLayout, "TND") == 0;
+  source: regex
+- id: EV_7763b978f67c
+  kind: assignment
+  field: isTndPseBN1S
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp
+  line: 1496
+  snippet: isTndPseBN1S = isTnd && (dim0 == fBaseParams.t2 * fBaseParams.n1);
+  source: regex
+- id: EV_e6552d0ab27d
+  kind: assignment
+  field: isTndPseBNSS
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp
+  line: 1497
+  snippet: isTndPseBNSS = isTnd && (dim0 == fBaseParams.sumS1S2Product * fBaseParams.n1);
+  source: regex
+- id: EV_680eb6a11d9b
+  kind: assignment
+  field: isBn2
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp
+  line: 1603
+  snippet: 'isBn2 = fBaseParams.isBn2MultiBlk ? true : fBaseParams.isBn2;'
+  source: regex
+- id: EV_b0f8c09e9b21
+  kind: assignment
+  field: isBn2MultiBlk
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp
+  line: 1616
+  snippet: isBn2MultiBlk = false;
+  source: regex
+- id: EV_5abdf32fa393
+  kind: assignment
+  field: splitAxis
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp
+  line: 1639
+  snippet: splitAxis = SplitAxisEnum::BN2S2;
+  source: regex
+- id: EV_3d498333c904
+  kind: assignment
+  field: splitAxis
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp
+  line: 1641
+  snippet: splitAxis = SplitAxisEnum::BN2;
+  source: regex
+- id: EV_b2517658b630
+  kind: assignment
+  field: splitAxis
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp
+  line: 1643
+  snippet: splitAxis = SplitAxisEnum::BN2GS1S2;
+  source: regex
+- id: EV_9e082bc5ebd7
+  kind: assignment
+  field: isBn2MultiBlk
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  line: 682
+  snippet: isBn2MultiBlk = false;
+  source: regex
+- id: EV_80ededac4a14
+  kind: assignment
+  field: splitAxis
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  line: 684
+  snippet: splitAxis = SplitAxisEnum::BN2GS1S2;
+  source: regex
+- id: EV_980fbeddd9d8
+  kind: assignment
+  field: splitAxis
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  line: 691
+  snippet: 'splitAxis = fBaseParams.isBn2 ? SplitAxisEnum::BN2 : SplitAxisEnum::BN2GS1S2;'
+  source: regex
+- id: EV_74dcb79da2dc
+  kind: assignment
+  field: isRegbasePlatformValue
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  line: 1441
+  snippet: isRegbasePlatformValue = OptionEnum::ENABLE;
+  source: regex
+- id: EV_ef0ffbd87272
+  kind: assignment
+  field: isTnd
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  line: 1442
+  snippet: isTnd = (fBaseParams.layoutType == INPUT_FORMAT_TND);
+  source: regex
+- id: EV_cbd308850600
+  kind: assignment
+  field: splitAxis
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  line: 1443
+  snippet: splitAxis = fBaseParams.splitAxis;
+  source: regex
+- id: EV_fb1ff3b3ac88
+  kind: assignment
+  field: isTnd
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+  line: 1754
+  snippet: isTnd = (fBaseParams.layoutType == INPUT_FORMAT_TND);
+  source: regex
+- id: EV_5ffff9fa4400
+  kind: assignment
+  field: splitAxis
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp
+  line: 126
+  snippet: splitAxis = SplitAxisEnum::BN2GS1S2;
+  source: regex
+- id: EV_518655251e98
+  kind: assignment
+  field: splitAxis
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp
+  line: 190
+  snippet: splitAxis = SplitAxisEnum::BN2GS1S2;
+  source: regex
+- id: EV_5e34812a5416
+  kind: assignment
+  field: splitAxis
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp
+  line: 389
+  snippet: splitAxis = SplitAxisEnum::BN2GS1S2;
+  source: regex
+- id: EV_b3979f884cea
+  kind: assignment
+  field: splitAxis
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp
+  line: 760
+  snippet: splitAxis = SplitAxisEnum::BN2GS1S2;
+  source: regex
+- id: EV_a42bf9bd9a8f
+  kind: assignment
+  field: isRope
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_host/flash_attention_score_grad_tiling.cpp
+  line: 225
+  snippet: isRope = (dqRopeNum > 0 || dkRopeNum > 0);
+  source: regex
+- id: EV_76346e18ae50
+  kind: assignment
+  field: mm12Format
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_kernel/flash_attention_score_grad.cpp
+  line: 528
+  snippet: 'mm12Format = bool(Mm12IsNZOut) ? MM_NZ_OUT_FORMAT : MM_ND_OUT_NOALIGN;'
+  source: regex
+- id: EV_28ef199756bd
+  kind: assignment
+  field: mm345Format
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_kernel/flash_attention_score_grad.cpp
+  line: 529
+  snippet: 'mm345Format = bool(Mm345IsNZOut) ? MM_NZ_OUT_FORMAT : MM_ND_OUT_NOALIGN;'
+  source: regex
+- id: EV_6b2fccaca2e1
+  kind: assignment
+  field: needDeterPrefix
+  file: /work/ops-transformer/attention/flash_attention_score_grad/op_kernel/flash_attention_score_grad_apt.cpp
+  line: 51
+  snippet: needDeterPrefix = NEED_DETER_PREFIX(DeterType, IsTnd);
+  source: regex
+by_kind:
+  assignment: 80
+review_template:
+  lead_id: OBS_LEAD_48BD00F7
+  when: *id001
+  grade: source_lemma
+  evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_48BD00F7.yaml
+  proof:
+    entry_branches_checked: false
+    early_returns_checked: false
+    all_writers_checked: false
+    execution_order_checked: false
+    exception_branches_checked: false
+    evidence_entry_ids:
+    - EV_1924083103e9
+    - EV_4f10ac035414
+    - EV_66f23b5179c3
+    - EV_317e08260f5a
+    - EV_cffcddd1af5c
+    - EV_ae3530e5a83d
+    - EV_2b1d69fbc97a
+    - EV_95800821e34f
+    - EV_ea4b81f0b11d
+    - EV_3235d417ae19
+    - EV_73956952af5f
+    - EV_78286e01838b
+    - EV_7a6d63c99640
+    - EV_d86f806eadbf
+    - EV_bbcdf34e35f7
+    - EV_fab502bef7af
+    - EV_c6e5a94a10e7
+    - EV_27c053c1f33a
+    - EV_79d4f3ccfe5e
+    - EV_04e4c401c164
+    - EV_79cab382b38e
+    - EV_b0b509f8f928
+    - EV_7231185210b8
+    - EV_0b192db1817b
+    - EV_c21f9df27ae9
+    - EV_6047f617b229
+    - EV_a9409cea56c8
+    - EV_f2a0e0b0d346
+    - EV_0f1792ed999c
+    - EV_0f0694c2b61f
+    - EV_f867bd228bfe
+    - EV_1bbc8cb28913
+  certificate:
+    proof_scope:
+      target_dimensions: *id002
+      relevant_functions: []
+      assignments:
+      - /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_bngs1s2_b.cpp:153
+      - /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_bngs1s2_b.cpp:154
+      - /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_bngs1s2_b.cpp:625
+      - /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_ngs1s2_bn.cpp:96
+      - /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_ngs1s2_bn.cpp:97
+      - /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_ngs1s2_bn.cpp:148
+      - /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_ngs1s2_bn.cpp:149
+      - /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_ngs1s2_bn.cpp:614
+      - /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2.cpp:214
+      - /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2.cpp:1939
+      - /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2.cpp:2013
+      - /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2.cpp:2098
+      - /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp:147
+      - /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp:148
+      - /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp:149
+      - /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp:347
+      - /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp:348
+      - /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp:349
+      - /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp:350
+      - /work/ops-transformer/attention/flash_attention_score_grad/op_host/arch22/flash_attention_score_grad_tiling_s1s2_bn2gs1s2.cpp:351
+      guards: []
+    assumptions: []
+    completeness_evidence:
+      assignment_sites_complete: false
+      call_closure_complete: false
+      alias_state_exact: false
+      macro_context_complete: false
+    counterexample_strategy: {}
+    evidence_entry_ids:
+    - EV_1924083103e9
+    - EV_4f10ac035414
+    - EV_66f23b5179c3
+    - EV_317e08260f5a
+    - EV_cffcddd1af5c
+    - EV_ae3530e5a83d
+    - EV_2b1d69fbc97a
+    - EV_95800821e34f
+    - EV_ea4b81f0b11d
+    - EV_3235d417ae19
+    - EV_73956952af5f
+    - EV_78286e01838b
+    - EV_7a6d63c99640
+    - EV_d86f806eadbf
+    - EV_bbcdf34e35f7
+    - EV_fab502bef7af
+    - EV_c6e5a94a10e7
+    - EV_27c053c1f33a
+    - EV_79d4f3ccfe5e
+    - EV_04e4c401c164
+    - EV_79cab382b38e
+    - EV_b0b509f8f928
+    - EV_7231185210b8
+    - EV_0b192db1817b
+    - EV_c21f9df27ae9
+    - EV_6047f617b229
+    - EV_a9409cea56c8
+    - EV_f2a0e0b0d346
+    - EV_0f1792ed999c
+    - EV_0f0694c2b61f
+    - EV_f867bd228bfe
+    - EV_1bbc8cb28913

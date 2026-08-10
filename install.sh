@@ -172,3 +172,15 @@ mkdir -p "$DEST/templates/$PLATFORM"
 echo "plugin_root=$DEST" > "$DEST/templates/$PLATFORM/install_stamp.txt"
 echo "Installed AscendC-Pilot → $DEST"
 echo "Run: acp doctor"
+
+# optional native walker (best-effort)
+if command -v cmake >/dev/null 2>&1; then
+  UO_WALK_BUILD="$DEST/engines/understand-operator/native/uo_walk/build"
+  mkdir -p "$UO_WALK_BUILD"
+  if cmake -S "$DEST/engines/understand-operator/native/uo_walk" -B "$UO_WALK_BUILD" \
+      && cmake --build "$UO_WALK_BUILD"; then
+    echo "Built optional uo_walk → $UO_WALK_BUILD"
+  else
+    echo "uo_walk optional build skipped"
+  fi
+fi

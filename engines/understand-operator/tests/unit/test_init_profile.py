@@ -27,7 +27,7 @@ def test_fast_is_default(monkeypatch):
     assert default_kernel_max_variants({}) == 1
     assert default_with_api({}) is False
     assert default_closure_max_nodes({}) == 96
-    assert cold_budget_s() == 240.0
+    assert cold_budget_s() == 180.0
 
 
 def test_full_profile(monkeypatch):

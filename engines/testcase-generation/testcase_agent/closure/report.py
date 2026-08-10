@@ -140,6 +140,36 @@ def write_undeclared(ws: W.Workspace, keys) -> str:
     return str(path)
 
 
+def _domain_established(name: str, cov: dict) -> dict:
+    """Did this domain have an input at all?
+
+    Every other per-domain invariant forbids something -- an excluded branch a
+    witness reached, an unsound grade, a soft-graded exclusion. A domain that
+    loaded no view satisfies all of them without checking anything, so a
+    certificate can read "kernel ok" when the kernel view was never built. This
+    check is the one that fails in that case.
+    """
+    source = dict(cov.get("source") or {})
+    # A domain that reports no source is not a domain that found one: staying
+    # silent must not be an easier way to pass than saying "missing".
+    if source.get("kind") in (None, "", "missing"):
+        return {
+            "ok": False,
+            "detail": (
+                f"{name}_domain_not_established: "
+                f"{source.get('reason') or 'domain reported no view source'}"
+                " -- zero rows here means no input, so the other "
+                f"{name} invariants held vacuously"
+            ),
+            "source": source,
+        }
+    return {
+        "ok": True,
+        "detail": f"{name}_view={source.get('kind')}:{source.get('path')}",
+        "source": source,
+    }
+
+
 def certify_invariants(ws: W.Workspace | None = None, *,
                        uo_graph_fingerprint: str = "") -> dict:
     """Certify I4 / I6 / I7 / I8 (plus I1 via soundness_ok).
@@ -277,6 +307,7 @@ def certify_invariants(ws: W.Workspace | None = None, *,
 
     # Per-domain I1/I4-style checks when kernel / tilingdata data exists.
     domain_extra: dict[str, Any] = {}
+
     try:
         from testcase_agent.closure import kernel_domain as KD
 
@@ -285,8 +316,11 @@ def certify_invariants(ws: W.Workspace | None = None, *,
             "branches": kcov.get("branches"),
             "covered": kcov.get("covered"),
             "path": kcov.get("path"),
+            "source": kcov.get("source"),
+            "established": kcov.get("established"),
             "kernel_branches": kcov.get("kernel_branches"),
         }
+        checks["I0_kernel"] = _domain_established("kernel", kcov)
         # I1: a branch cannot be both hit by a witness and declared unreachable.
         kernel_rows = list(kcov.get("kernel_branches") or [])
         conflicting = [
@@ -337,8 +371,11 @@ def certify_invariants(ws: W.Workspace | None = None, *,
             "defects": tcov.get("defects"),
             "over_approximated": tcov.get("over_approximated"),
             "path": tcov.get("path"),
+            "source": tcov.get("source"),
+            "established": tcov.get("established"),
             "tilingdata_fields": tcov.get("tilingdata_fields"),
         }
+        checks["I0_tilingdata"] = _domain_established("tilingdata", tcov)
         # I1: never exclude tilingdata → no R∩E concern.
         # I4: over-approx must not pretend sound exclusion.
         bad_exclude = [
@@ -388,10 +425,17 @@ def certify_invariants(ws: W.Workspace | None = None, *,
     # reading them is what let a three-domain report certify on one domain.
     required = (
         "I1", "I4", "I6", "I7", "I8", "I_cold_start",
-        "I1_kernel", "I4_kernel", "I8_kernel",
-        "I1_tilingdata", "I4_tilingdata", "I8_tilingdata",
+        "I0_kernel", "I1_kernel", "I4_kernel", "I8_kernel",
+        "I0_tilingdata", "I1_tilingdata", "I4_tilingdata", "I8_tilingdata",
     )
-    ok = all(checks[k]["ok"] for k in required if k in checks)
+    # A domain whose check is absent entirely is not a domain that passed.
+    missing = [k for k in required if k not in checks]
+    ok = all(checks[k]["ok"] for k in required if k in checks) and not missing
+    if missing:
+        checks["I_checks_present"] = {
+            "ok": False,
+            "detail": f"invariants never computed: {missing}",
+        }
     return {
         "ok": ok,
         "checks": checks,

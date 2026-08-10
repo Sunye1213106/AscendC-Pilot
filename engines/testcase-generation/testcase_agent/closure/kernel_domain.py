@@ -30,6 +30,30 @@ def _uo_root(ws: W.Workspace) -> Path | None:
         return cand if cand.is_dir() else None
 
 
+def view_source(uo: Path | None, *rel_candidates: str) -> dict[str, Any]:
+    """Where this domain's input came from, or that there was none.
+
+    A domain that cannot find its view yields zero rows, and every invariant
+    phrased as "nothing bad happened" then holds vacuously. Reporting the source
+    separately is what lets a reader tell "this operator has no kernel branches"
+    from "the analysis never produced the view".
+    """
+    if uo is None:
+        return {"kind": "missing", "path": "", "reason": "uo_root_unresolved"}
+    for rel in rel_candidates:
+        path = uo / rel
+        if path.is_file():
+            return {"kind": "yaml", "path": str(path)}
+    db = uo / "indexes" / "kb_graph.sqlite"
+    if db.is_file():
+        return {"kind": "db", "path": str(db)}
+    return {
+        "kind": "missing",
+        "path": "",
+        "reason": f"no {' / '.join(rel_candidates)} and no indexes/kb_graph.sqlite under {uo}",
+    }
+
+
 def _load_view_doc(uo: Path, *rel_candidates: str) -> dict[str, Any]:
     """YAML on disk first, then the DB view blob (DB is the product authority)."""
     for rel in rel_candidates:
@@ -122,6 +146,7 @@ def compute_r_kernel(
     """For each kernel branch, collect witness keys whose dims satisfy it."""
     ws = (ws or W.default_workspace()).ensure()
     uo = _uo_root(ws)
+    source = view_source(uo, "views/kernel.yaml", "kernel/branches.yaml")
     branches = load_kernel_branches(uo)
     Rset = ledger.load_R(ws)
     r_kernel: dict[str, list[int]] = {}
@@ -180,6 +205,9 @@ def compute_r_kernel(
         silent_dimensions = []
     return {
         "ok": True,
+        "source": source,
+        # False means "no input", not "nothing to check".
+        "established": source.get("kind") != "missing",
         "branches": len(branches),
         "covered": covered,
         "open": len(branches) - covered,

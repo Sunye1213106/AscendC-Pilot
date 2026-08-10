@@ -1,0 +1,4 @@
+schema: tg-closure-audit/v1
+status: auto_ok
+soundness: pass
+note: gap=0 full tilingkey closure

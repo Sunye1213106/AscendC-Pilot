@@ -1,0 +1,132 @@
+{
+  "apply": {
+    "engine": "lemma_apply",
+    "promote": {
+      "ok": true,
+      "promoted": 6,
+      "skipped": 0,
+      "active_path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/closure/lemmas/active_rules.yaml",
+      "active_count": 17
+    },
+    "ok": true,
+    "declared": 8705,
+    "excluded": 4408,
+    "R": 4121,
+    "gap": 176,
+    "by_rule": [
+      [
+        "IsTndSwizzle=1 requires SplitAxis=BN2S2 not BN2GS1S2",
+        1152
+      ],
+      [
+        "DeterType=4 requires IsAttenMask=1",
+        992
+      ],
+      [
+        "DeterType=3 requires IsAttenMask=1",
+        912
+      ],
+      [
+        "FLOAT large-D forces S1TemplateNum=64",
+        256
+      ],
+      [
+        "IsBn2MultiBlk=1 requires non-TND",
+        176
+      ],
+      [
+        "IsRope=1 forces DTemplateNum=192 (not 64)",
+        128
+      ],
+      [
+        "IsRope=1 forces DTemplateNum=192 (not 128)",
+        128
+      ],
+      [
+        "IsRope=1 forces DTemplateNum=192 (not 256)",
+        128
+      ],
+      [
+        "IsRope=1 forces DTemplateNum=192 (not 768)",
+        128
+      ],
+      [
+        "BN2S2 with drop requires d<=128 not DTpl 192",
+        72
+      ],
+      [
+        "BN2S2 with drop requires d<=128 not DTpl 256",
+        72
+      ],
+      [
+        "BN2S2 with drop requires d<=128 not DTpl 768",
+        72
+      ],
+      [
+        "IsRope=1 forces IsDNoEqual=1",
+        64
+      ],
+      [
+        "TND SplitAxis=BN2 requires DTpl 64/128 not 192",
+        48
+      ],
+      [
+        "TND SplitAxis=BN2 requires DTpl 64/128 not 256",
+        32
+      ],
+      [
+        "TND SplitAxis=BN2 requires DTpl 64/128 not 768",
+        32
+      ],
+      [
+        "IsBn2MultiBlk=1 requires IsRope=0",
+        16
+      ]
+    ],
+    "e_path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/closure/excluded.txt",
+    "revoked": [],
+    "revoked_count": 0
+  },
+  "construct": {
+    "ok": true,
+    "engine": "closure_construct",
+    "artifact": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/closure/construct/targets.yaml",
+    "trace": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/closure/construct/trace.yaml",
+    "schema": "tg-closure-construct/v1",
+    "targets": 96,
+    "built_cases": 96,
+    "targets_decoded": 96,
+    "replayed": 64,
+    "sample_keys": [
+      19140300027465764,
+      19140300027466276,
+      19140300027466788,
+      19140300027467300,
+      19140300564336676,
+      19140300564337188,
+      19140300564337700,
+      19140300564338212,
+      19140301101207588,
+      19140301101208100
+    ],
+    "error": "",
+    "codemap_directed": true,
+    "trace_coverage": 1.0,
+    "path_counts": {
+      "hook": 96,
+      "codemap": 0,
+      "hints": 0,
+      "empty": 0
+    },
+    "warnings": []
+  },
+  "state": {
+    "declared": 8705,
+    "R": 4121,
+    "R_declared": 4121,
+    "undeclared": 0,
+    "E": 4408,
+    "violation": 0,
+    "gap": 176
+  }
+}

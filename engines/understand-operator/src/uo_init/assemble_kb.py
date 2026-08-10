@@ -672,6 +672,7 @@ def extract_host_bundle(
             if cpp.is_file():
                 cpp_texts.append(cpp.read_text(encoding="utf-8", errors="replace"))
         seen_headers: set[Path] = set()
+        text_cache: dict[str, str] = {}
         for h in header_paths:
             key = h.resolve()
             if key in seen_headers or not h.is_file():
@@ -679,13 +680,21 @@ def extract_host_bundle(
             seen_headers.add(key)
             text = h.read_text(encoding="utf-8", errors="replace")
             header_texts.append(text)
+            text_cache[str(key).replace("\\", "/")] = text
             enums.update(parse_enums(text))
+        if spec.opdef and spec.opdef.is_file():
+            opdef_key = str(spec.opdef.resolve()).replace("\\", "/")
+            if opdef_key not in text_cache:
+                text_cache[opdef_key] = spec.opdef.read_text(
+                    encoding="utf-8", errors="replace"
+                )
         model = build_variable_model(
             opdef_path=spec.opdef,
             tpl_schema=schema,
             tpl_header=str(spec.tiling_key_header or ""),
             enums=enums,
             header_texts=list(header_texts) + cpp_texts,
+            text_cache=text_cache,
         )
         resolver.adopt(model)
         platform_error = ""

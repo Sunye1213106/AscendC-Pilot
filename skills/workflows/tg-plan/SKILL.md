@@ -1,8 +1,9 @@
 ---
 name: tg-plan
-description: >
-  制定 TG 测试目标并冻结 target set。用户未指定目标时默认计划全部源码声明 TilingKey；
-  指定 packed keys 或维度过滤条件时只计划该子集。Plan 不构造 case、不做可达性求解。
+description: '制定 TG 测试目标并冻结 target set。用户未指定目标时默认计划全部源码声明 TilingKey； 指定 packed keys
+  或维度过滤条件时只计划该子集。Plan 不构造 case、不做可达性求解。
+
+  '
 ---
 
 # tg-plan

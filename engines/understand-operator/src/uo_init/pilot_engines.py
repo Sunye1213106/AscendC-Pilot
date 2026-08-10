@@ -286,7 +286,14 @@ def _reset_uo_skeleton(uo: Path, *, run_id: str, keep_other_runs: bool = False) 
             continue
         path.mkdir(parents=True, exist_ok=True)
 
-    keep_top = set(_UO_SEED_DIRS) | {"manifest.yaml", "operator.yaml", "quality.yaml"}
+    # Keep durable libclang WalkResult cache across prepare — deleting it forces
+    # a full host||kernel rewalk (FAG cold ~5min). Product YAML/IR still reset.
+    keep_top = set(_UO_SEED_DIRS) | {
+        "manifest.yaml",
+        "operator.yaml",
+        "quality.yaml",
+        "cache",
+    }
     for child in list(uo.iterdir()):
         if child.name in keep_top:
             if child.name == "quality.yaml" and child.is_file():
@@ -317,7 +324,7 @@ def _reset_uo_skeleton(uo: Path, *, run_id: str, keep_other_runs: bool = False) 
 def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     """List host/kernel candidates and probe libclang diagnostics."""
     from uo_init.build_context import BuildContext
-    from uo_init.clang_tu import parse_path
+    from uo_init.clang_walk import probe_diagnostics
     from uo_init.op_spec import discover
 
     ctx = _ctx(payload)
@@ -341,31 +348,56 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
     probes: list[dict[str, Any]] = []
     host_errors = 0
     kernel_errors = 0
-    for path in hosts[:3]:  # bound: probe cost; full parse happens in extract
-        try:
-            res = parse_path(str(path), bctx.host_args())
-            errs = res.errors_in_paths([spec.op_needle]) if spec.op_needle else res.error_count
-        except Exception as exc:  # noqa: BLE001
-            probes.append({"file": path.as_posix(), "error": str(exc)[:200]})
-            continue
-        host_errors += max(errs, 0)
-        probes.append({"file": path.as_posix(), "errors": errs, "side": "host"})
-    if kernel is not None:
-        try:
-            res = parse_path(str(kernel), bctx.kernel_args(dtype_variant="DT_FLOAT16"))
-            # Kernel preamble noise is expected; only count op-owned paths.
-            kernel_errors = res.errors_in_paths([spec.op_needle]) if spec.op_needle else 0
+    # Probe only asks whether the build flags resolve; a deep walk here would
+    # repeat the work extract does with a different scope and cache key.
+    # When the caller already force-confirms the scope (automation / cold
+    # measure), skip the TU parses entirely — extract will surface real errors.
+    force = bool(
+        ctx.get("force_confirm")
+        or ctx.get("confirmed")
+        or str(ctx.get("decision") or "").strip().lower()
+        in {"continue", "accept", "confirm", "yes", "y"}
+    )
+    skip_probe = force and bool(ctx.get("auto_accept_clean", True))
+    if not skip_probe:
+        for path in hosts[:3]:
+            try:
+                res = probe_diagnostics(str(path), bctx, side="host")
+                errs = int(res.get("error_count") or 0)
+            except Exception as exc:  # noqa: BLE001
+                probes.append({"file": path.as_posix(), "error": str(exc)[:200]})
+                continue
+            host_errors += max(errs, 0)
             probes.append(
                 {
-                    "file": kernel.as_posix(),
-                    "errors": kernel_errors,
-                    "side": "kernel",
-                    "raw_error_count": res.error_count,
+                    "file": path.as_posix(),
+                    "errors": errs,
+                    "side": "host",
+                    "probe": "declarations_only",
                 }
             )
-        except Exception as exc:  # noqa: BLE001
-            probes.append({"file": kernel.as_posix(), "error": str(exc)[:200], "side": "kernel"})
-            kernel_errors = -1
+        if kernel is not None:
+            try:
+                res = probe_diagnostics(
+                    str(kernel), bctx, side="kernel", dtype_variant="DT_FLOAT16"
+                )
+                kernel_errors = int(res.get("error_count") or 0)
+                probes.append(
+                    {
+                        "file": kernel.as_posix(),
+                        "errors": kernel_errors,
+                        "side": "kernel",
+                        "raw_error_count": kernel_errors,
+                        "probe": "declarations_only",
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                probes.append(
+                    {"file": kernel.as_posix(), "error": str(exc)[:200], "side": "kernel"}
+                )
+                kernel_errors = -1
+    else:
+        probes.append({"probe": "skipped", "reason": "force_confirm_auto_accept"})
 
     candidate = {
         "version": 1,
@@ -382,7 +414,8 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
         "probes": probes,
         "host_probe_errors": host_errors,
         "kernel_probe_errors": kernel_errors,
-        "probe_clean": host_errors == 0 and kernel_errors == 0,
+        "probe_clean": True if skip_probe else (host_errors == 0 and kernel_errors == 0),
+        "probe_skipped": skip_probe,
     }
     out = run / "scope" / "candidates.yaml"
     _dump(out, candidate)
@@ -521,6 +554,21 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "extract_host", "error": str(exc)[:400]}
 
+    # Same-process follow-on actions (tiling_key / analyze / commit) must not
+    # rebuild the bundle; cross-process callers fall back to the pickle below.
+    _STORE["bundle"] = bundle
+    try:
+        import pickle
+
+        hir = bundle.get("host_ir")
+        if hir is not None:
+            (uo / "ir").mkdir(parents=True, exist_ok=True)
+            (uo / "ir" / "host_ir.pkl").write_bytes(
+                pickle.dumps(hir, protocol=pickle.HIGHEST_PROTOCOL)
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
     metrics_obj = bundle.get("metrics") or ClosureMetrics()
     gap_obj = bundle.get("gap") or GapReport()
     metrics = metrics_obj.to_dict()
@@ -599,9 +647,37 @@ def _ensure_bundle(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
 
     uo = _uo_root(root, arch=ctx.get("arch_dir"))
     cached_meta = _load(_bundle_cache(uo))
-    mode = ctx.get("closure_mode") or ("off" if cached_meta else default_closure_mode(ctx))
     persisted_kir = _load(uo / "ir" / "kernel_ir.yaml")
     has_persist = isinstance(persisted_kir, dict) and bool(persisted_kir.get("branches"))
+    host_pkl = uo / "ir" / "host_ir.pkl"
+    # Prefer a pickled HostIR from extract_host: rebuild would re-pay
+    # var_model (~20s) even when every TU walk is a cache hit.
+    if cached_meta and host_pkl.is_file():
+        try:
+            import pickle
+
+            from uo_init.op_spec import discover
+
+            hir = pickle.loads(host_pkl.read_bytes())
+            kir = None
+            if has_persist:
+                kir = kernel_ir_from_dict(persisted_kir)
+            bundle = {
+                "spec": discover(root, arch_dir=ctx.get("arch_dir")),
+                "host_ir": hir,
+                "kernel_ir": kir,
+                "binding": None,
+                "metrics": None,
+                "gap": None,
+                "closure_mode": "off",
+                "restored_from": "host_ir.pkl",
+            }
+            _STORE["bundle"] = bundle
+            return bundle
+        except Exception:  # noqa: BLE001
+            pass
+
+    mode = ctx.get("closure_mode") or ("off" if cached_meta else default_closure_mode(ctx))
     # Prefer the persisted uninstantiated kernel IR from extract_host so
     # export_kb does not drop branches (and does not re-pay a cold walk).
     with_kernel = False if (cached_meta and has_persist) else default_with_kernel(ctx)

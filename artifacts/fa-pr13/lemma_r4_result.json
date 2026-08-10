@@ -1,0 +1,217 @@
+{
+  "state": {
+    "declared": 8705,
+    "R": 4121,
+    "R_declared": 4121,
+    "undeclared": 0,
+    "E": 4408,
+    "violation": 0,
+    "gap": 176
+  },
+  "search": {
+    "ok": true,
+    "new_R": null
+  },
+  "open_traces": [
+    {
+      "key": 19140300027465764,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19140300027466276,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19140300027466788,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19140300027467300,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19140300564336676,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19140300564337188,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19140300564337700,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19140300564338212,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19140301101207588,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19140301101208100,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19140301101208612,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19140301101209124,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19281037515821092,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19281037515821604,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19281037515822116,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19281037515822628,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19281038052692004,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19281038052692516,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19281038052693028,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19281038052693540,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19281038589562916,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19281038589563428,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19281038589563940,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19281038589564452,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19351405186256930,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19351405186257186,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19351405186257442,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19351405186257698,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19351405186257954,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19351405186258210,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19351405186258466,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19351405186258722,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19351405723127842,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19351405723128098,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19351405723128354,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19351405723128610,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19351405723128866,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19351405723129122,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19351405723129378,
+      "spelled": 1,
+      "path": "hook"
+    },
+    {
+      "key": 19351405723129634,
+      "spelled": 1,
+      "path": "hook"
+    }
+  ]
+}

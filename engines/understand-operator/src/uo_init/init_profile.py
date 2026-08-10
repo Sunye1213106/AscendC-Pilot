@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """uo-init wall-time profiles.
 
-``fast`` (default) targets cold uo-init ≤ ``UO_COLD_BUDGET_S`` (default 240s
+``fast`` (default) targets cold uo-init ≤ ``UO_COLD_BUDGET_S`` (default 180s
 with kernel+tilingdata): keypath controllability, one dtype kernel walk,
 no API clang contract, no pairwise kernel fold.  ``full`` enables the
 complete extract path (full closure + all dtype variants + fold).
@@ -31,9 +31,9 @@ def profile_name(ctx: dict[str, Any] | None = None) -> str:
 def cold_budget_s() -> float:
     # Kernel (1 dtype) overlaps host_ir but still dominates cold wall on FAG.
     try:
-        return float(os.environ.get("UO_COLD_BUDGET_S", "240"))
+        return float(os.environ.get("UO_COLD_BUDGET_S", "180"))
     except ValueError:
-        return 240.0
+        return 180.0
 
 
 def default_closure_mode(ctx: dict[str, Any] | None = None) -> str:

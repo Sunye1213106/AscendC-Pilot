@@ -229,6 +229,15 @@ class ReplayRunner:
                 )
         return out
 
+    def _native_host(self) -> bool:
+        if sys.platform.startswith("linux"):
+            return True
+        if str(self.manifest.host or "").lower() == "native":
+            return True
+        if os.environ.get("UO_REPLAY_HOST", "").lower() == "native":
+            return True
+        return False
+
     def _require_host(self) -> None:
         """Fail with what to fix, rather than on a blank done-marker check.
 
@@ -236,10 +245,20 @@ class ReplayRunner:
         stdout, which reads as "the replay produced nothing" and sends the
         reader looking at the cases.
         """
+        entry = self.manifest.entry
+        if self._native_host():
+            if not entry or not Path(entry).expanduser().exists():
+                raise RuntimeError(
+                    f"replay entry script not found at {entry!r}\n"
+                    f"build the driver locally, or point the manifest's replay.entry "
+                    f"at wherever it was built "
+                    f"(see skills/domain/tg-closure and skills/domain/source-lemma-proof)"
+                )
+            return
         if self.manifest.host != "wsl":
             raise ManifestError(
                 f"replay host {self.manifest.host!r} is not supported; this "
-                f"engine can only drive a wsl distribution")
+                f"engine can only drive wsl or native hosts")
         distro, entry = self.manifest.distro, self.manifest.entry
         listing = subprocess.run(
             ["wsl", "-l", "-q"], capture_output=True, text=True,
@@ -271,11 +290,18 @@ class ReplayRunner:
             "\n".join(I.to_csv_line(c, cid) for cid, c in send.items()) + "\n",
             encoding="utf-8", newline="\n",
         )
-        proc = subprocess.run(
-            ["wsl", "-d", self.manifest.distro, "-e", "bash", self.manifest.entry,
-             _wsl(in_csv), _wsl(out_csv), _wsl(log_txt), "1" if with_log else "0"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-        )
+        if self._native_host():
+            proc = subprocess.run(
+                ["bash", self.manifest.entry, str(in_csv), str(out_csv), str(log_txt),
+                 "1" if with_log else "0"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
+        else:
+            proc = subprocess.run(
+                ["wsl", "-d", self.manifest.distro, "-e", "bash", self.manifest.entry,
+                 _wsl(in_csv), _wsl(out_csv), _wsl(log_txt), "1" if with_log else "0"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
         stdout = proc.stdout or ""
         if self.manifest.done_marker not in stdout:
             raise RuntimeError(

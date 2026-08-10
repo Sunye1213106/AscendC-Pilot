@@ -121,7 +121,7 @@ def require_kb_fingerprint_fresh(
         )
     ok, detail = kb_fingerprint_matches(root, uo_path)
     if ok:
-        return detail
+        return {"ok": True, **(detail if isinstance(detail, dict) else {"detail": detail})}
     raise InitGateError(
         "UO KB fingerprint changed since tg-init confirm. Re-run /tg-init (do not edit $UO_ROOT from TG).",
         ask="kb_stale_reinit",

@@ -34,7 +34,7 @@ _TG_PIPELINES: dict[str, dict[str, list[str]]] = {
         "search": ["closure_search"],
         "residual": ["closure_residual"],
         "construct": ["closure_construct", "closure_explain"],
-        "lemma": ["lemma_leads", "lemma_evidence", "lemma_mine", "lemma_review", "lemma_apply"],
+        "lemma": ["lemma_leads", "lemma_evidence", "lemma_mine", "lemma_verify", "lemma_review", "lemma_apply", "lemma_loop"],
         "audit": ["closure_audit"],
         "certify": ["closure_certify"],
         "encode": ["z3_solve"],
@@ -114,10 +114,33 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
             "read": ["tg/closure/lemmas/leads.yaml", "tg/closure/lemmas/evidence/**", "uo/ir/**", "uo/tiling/**", "runs/**/actions/lemma_mine/**"],
             "write": ["runs/{run_id}/actions/lemma_mine/parts/**", "runs/{run_id}/actions/lemma_mine/scratch/**", "runs/{run_id}/actions/lemma_mine/staging.yaml"],
         },
-        "lemma_review": {"read": ["runs/**/actions/lemma_mine/**", "tg/closure/lemmas/**", "uo/ir/**"], "write": ["runs/{run_id}/actions/lemma_review/review.yaml"]},
+        "lemma_verify": {
+            "read": ["runs/**/actions/lemma_mine/**", "tg/closure/**"],
+            "write": ["runs/{run_id}/actions/lemma_verify/verify.yaml", "tg/closure/lemmas/verify.yaml"],
+        },
+        "lemma_review": {"read": ["runs/**/actions/lemma_mine/**", "runs/**/actions/lemma_verify/**", "tg/closure/lemmas/**", "uo/ir/**"], "write": ["runs/{run_id}/actions/lemma_review/review.yaml"]},
         "lemma_apply": {
             "read": ["runs/**/actions/lemma_review/review.yaml", "tg/closure/lemmas/**", "operators/**/proof_rules.yaml"],
             "write": ["tg/closure/excluded.txt", "tg/closure/excluded_why.csv", "tg/closure/open.txt", "tg/closure/lemmas/active_rules.yaml", "tg/closure/lemmas/revoked_rules.yaml", "tg/closure/lemmas/reviews.yaml"],
+        },
+        "lemma_loop": {
+            "read": [
+                "tg/closure/**",
+                "runs/**/actions/lemma_mine/**",
+                "runs/**/actions/lemma_review/**",
+                "uo/ir/**",
+            ],
+            "write": [
+                "tg/closure/lemma_loop.yaml",
+                "tg/closure/rounds/**/lemma.yaml",
+                "runs/{run_id}/actions/lemma_mine/staging.yaml",
+                "runs/{run_id}/actions/lemma_review/review.yaml",
+                "tg/closure/excluded.txt",
+                "tg/closure/excluded_why.csv",
+                "tg/closure/open.txt",
+                "tg/closure/lemmas/active_rules.yaml",
+                "tg/closure/lemmas/reviews.yaml",
+            ],
         },
         "closure_audit": {"read": ["tg/closure/**", "uo/ir/**", "uo/tiling/**"], "write": ["runs/{run_id}/actions/closure_audit/review.yaml"]},
         "closure_certify": {

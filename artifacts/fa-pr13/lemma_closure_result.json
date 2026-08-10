@@ -1,0 +1,236 @@
+{
+  "state": {
+    "declared": 8705,
+    "R": 4121,
+    "R_declared": 4121,
+    "undeclared": 0,
+    "E": 2928,
+    "violation": 0,
+    "gap": 1656
+  },
+  "apply": {
+    "engine": "lemma_apply",
+    "promote": {
+      "ok": true,
+      "promoted": 10,
+      "skipped": 0,
+      "active_path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/closure/lemmas/active_rules.yaml",
+      "active_count": 10
+    },
+    "ok": true,
+    "declared": 8705,
+    "excluded": 2928,
+    "R": 4121,
+    "gap": 1656,
+    "by_rule": [
+      [
+        "DeterType=4 requires IsAttenMask=1",
+        992
+      ],
+      [
+        "DeterType=3 requires IsAttenMask=1",
+        912
+      ],
+      [
+        "FLOAT large-D forces S1TemplateNum=64",
+        256
+      ],
+      [
+        "IsBn2MultiBlk=1 requires non-TND",
+        176
+      ],
+      [
+        "IsRope=1 forces DTemplateNum=192 (not 64)",
+        128
+      ],
+      [
+        "IsRope=1 forces DTemplateNum=192 (not 128)",
+        128
+      ],
+      [
+        "IsRope=1 forces DTemplateNum=192 (not 256)",
+        128
+      ],
+      [
+        "IsRope=1 forces DTemplateNum=192 (not 768)",
+        128
+      ],
+      [
+        "IsRope=1 forces IsDNoEqual=1",
+        64
+      ],
+      [
+        "IsBn2MultiBlk=1 requires IsRope=0",
+        16
+      ]
+    ],
+    "e_path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/closure/excluded.txt",
+    "revoked": [],
+    "revoked_count": 0
+  },
+  "certify": {
+    "ok": false,
+    "engine": "closure_certify",
+    "artifact": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/closure/certificate.yaml",
+    "schema": "tg-closure-certificate/v1",
+    "gate": {
+      "gate": "closure_soundness",
+      "ok": false,
+      "message": "closure report has 1656 problems",
+      "problems": [
+        [
+          19140300027465764,
+          "neither witnessed nor excluded"
+        ],
+        [
+          19140300027465890,
+          "neither witnessed nor excluded"
+        ],
+        [
+          19140300027466020,
+          "neither witnessed nor excluded"
+        ],
+        [
+          19140300027466146,
+          "neither witnessed nor excluded"
+        ],
+        [
+          19140300027466148,
+          "neither witnessed nor excluded"
+        ]
+      ],
+      "declared": 8705,
+      "R": 4121,
+      "R_declared": 4121,
+      "undeclared": 0,
+      "E": 2928,
+      "violation": 0,
+      "gap": 1656
+    },
+    "audit": {
+      "ok": false,
+      "status": "awaiting_referee",
+      "path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/runs/lemma_closure_composer/actions/closure_audit/review.yaml",
+      "soundness_ok": true
+    },
+    "invariants": {
+      "ok": false,
+      "checks": {
+        "I1": {
+          "ok": true,
+          "detail": "R∩E=0"
+        },
+        "I4": {
+          "ok": true,
+          "unsupported": [],
+          "detail": "unsupported_E=0"
+        },
+        "I6": {
+          "ok": true,
+          "stale": [],
+          "detail": "stale_rules=0"
+        },
+        "I7": {
+          "ok": true,
+          "uncited": [],
+          "affecting": [],
+          "detail": "uncited_affecting=0"
+        },
+        "I8": {
+          "ok": true,
+          "soft_hits": [],
+          "detail": "soft_only_E=0"
+        },
+        "I9": {
+          "ok": true,
+          "count": 0,
+          "path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/closure/undeclared_keys.csv",
+          "detail": "R−D=0"
+        },
+        "I_cold_start": {
+          "ok": false,
+          "issues": [
+            "cold_start_missing_with_nonempty_E"
+          ],
+          "detail": "provenance_issues=1"
+        },
+        "I1_kernel": {
+          "ok": true,
+          "detail": "R_kernel_branches=0/0"
+        },
+        "I4_kernel": {
+          "ok": true,
+          "detail": "kernel_domain_never_excludes"
+        },
+        "I8_kernel": {
+          "ok": true,
+          "detail": "soft_graded_exclusions=[]"
+        },
+        "I1_tilingdata": {
+          "ok": true,
+          "detail": "forbid_exclude hits=0"
+        },
+        "I4_tilingdata": {
+          "ok": true,
+          "detail": "over_approximated=true; never_exclude"
+        },
+        "I8_tilingdata": {
+          "ok": true,
+          "detail": "tilingdata_never_contributes_to_E"
+        }
+      },
+      "declared": 8705,
+      "R": 4121,
+      "E": 2928,
+      "gap": 1656,
+      "undeclared": 0,
+      "domains": {
+        "kernel": {
+          "branches": 0,
+          "covered": 0,
+          "path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/closure/kernel_coverage.csv",
+          "kernel_branches": []
+        },
+        "tilingdata": {
+          "fields": 0,
+          "defects": [],
+          "over_approximated": true,
+          "path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/closure/tilingdata_coverage.csv",
+          "tilingdata_fields": []
+        }
+      }
+    },
+    "report": {
+      "gap_zero": false,
+      "open": 1656,
+      "problem_count": 1656,
+      "undeclared": 0,
+      "undeclared_path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/closure/undeclared_keys.csv"
+    },
+    "state": {
+      "declared": 8705,
+      "R": 4121,
+      "R_declared": 4121,
+      "undeclared": 0,
+      "E": 2928,
+      "violation": 0,
+      "gap": 1656
+    },
+    "note": "R−D is reported separately and does not block D-closure when I9 path exists",
+    "error": "closure_audit status='awaiting_referee'; require status in {{pass, accepted, auto_ok}} before certify"
+  },
+  "audit": {
+    "ok": false,
+    "engine": "closure_audit",
+    "artifact": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/runs/lemma_closure_composer/actions/closure_audit/review.yaml",
+    "status": "awaiting_referee",
+    "needs_referee": true,
+    "declared": 8705,
+    "R": 4121,
+    "R_declared": 4121,
+    "undeclared": 0,
+    "E": 2928,
+    "violation": 0,
+    "gap": 1656
+  }
+}

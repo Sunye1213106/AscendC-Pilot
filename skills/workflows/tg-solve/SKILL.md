@@ -1,8 +1,9 @@
 ---
 name: tg-solve
-description: >
-  执行已批准 TG Plan：对 target set T 构造/replay case，用真实 Host witness 扩大 R，
-  对残差按需推导源码引理扩大 E，直到 T=(R∩T)∪E。未指定目标由 tg-plan 默认 T=D。
+description: '执行已批准 TG Plan：对 target set T 构造/replay case，用真实 Host witness 扩大 R， 对残差按需推导源码引理扩大
+  E，直到 T=(R∩T)∪E。未指定目标由 tg-plan 默认 T=D。
+
+  '
 ---
 
 # tg-solve
@@ -40,6 +41,16 @@ precheck(target hash / UO snapshot)
 
 领域规则：`skills/domain/tg-closure/SKILL.md`；源码不可达证明：`skills/domain/source-lemma-proof/SKILL.md`。
 
+## 执行强制规则
+
+1. Host/search 后必须跑 residual 产出 round_analysis，才允许下一轮 construct
+2. 连续 2 轮 new_R=0 且 rewrite 主导 → NEED_LEMMA，禁止继续狂搜
+3. SEARCH_STALLED + leads → lemma 相位，不是再 search
+4. lemma_mine 必须写出 P⇒Q + CodeMap 锚点 + 义务 + PROVED/REFUTED/INSUFFICIENT；空 candidates 不得 lemma_apply
+5. E 只经 referee accepted 后 promote；explain 失败不算 E 证据
+6. construct hook 只是 knob 实现；CodeMap 主路径与 trace.yaml 必须保留
+7. 历史 guard 家族仅作假设提示，禁止直接抄旧证书
+
 ## Actions
 
 <!-- BEGIN GENERATED ACTIONS -->
@@ -56,6 +67,7 @@ precheck(target hash / UO snapshot)
 | `lemma_leads` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-solve/lemma-leads` | `-` | `lemma-leads-v1` |
 | `lemma_evidence` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-solve/lemma-evidence` | `-` | `lemma-evidence-v1` |
 | `lemma_mine` | `subagent` | `tg-lemma-producer` | `producer` | `tg-solve/lemma-mine` | `tg/lemma-mine` | `lemma-mine-v1` |
+| `lemma_verify` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-solve/lemma-verify` | `-` | `-` |
 | `lemma_review` | `subagent` | `tg-closure-referee` | `referee` | `tg-solve/lemma-review` | `tg/lemma-review` | `lemma-review-v1` |
 | `lemma_apply` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-solve/lemma-apply` | `-` | `lemma-apply-v1` |
 | `closure_audit` | `subagent` | `tg-closure-referee` | `referee` | `tg-solve/closure-audit` | `tg/closure-audit` | `closure-audit-v1` |

@@ -151,7 +151,7 @@ def contract_main(argv: list[str] | None = None) -> int:
         "--csv-consumer-root",
         type=Path,
         default=None,
-        help="Test script / CSV consumer project root (e.g. TEST/fag_debug_tools)",
+        help="Test script / CSV consumer project root (the debug-tools checkout)",
     )
     parser.add_argument(
         "--test-script-root",

@@ -26,8 +26,7 @@ allowed_write_paths:
 - tg/realization/semantic_bind_patch.yaml
 forbidden_write_paths: []
 allowed_read_paths:
-- uo/ir/tg_host_view.yaml
-- uo/ir/operator_graph.yaml
+- ../uo/*.uo
 - tg/contract/**
 - tg/realization/llm_bind_prompt_bundle.yaml
 - tg/realization/binding_inventory.yaml

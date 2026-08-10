@@ -1,0 +1,128 @@
+{
+  "workflow_id": "tg-plan",
+  "run_id": "RUN_20260810_122900_4b97a2e5",
+  "phase": "approve",
+  "phase_label_zh": "人工批准",
+  "status": "rework_required",
+  "intent": "",
+  "op_name": "flash_attention_score_grad",
+  "architecture": "arch35",
+  "test_script_root": "",
+  "csv_consumer_root": "",
+  "level": "L0",
+  "focus": "",
+  "retry_budget": 1,
+  "no_progress_streak": 2,
+  "failed_gates":
+{
+  "ok": true,
+  "phase_runtime": "prepare",
+  "action_id": "plan_approve",
+  "actor_id": "ascendc-pilot",
+  "role_id": "controller",
+  "execution_mode": "primary_interactive",
+  "action_session_id": "ACTION_SESSION_5eadf8b1ecd025a6",
+  "run_id": "RUN_20260810_122900_4b97a2e5",
+  "session_dir": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/runs/RUN_20260810_122900_4b97a2e5/actions/plan_approve",
+  "bundle_path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/runs/RUN_20260810_122900_4b97a2e5/actions/plan_approve/bundle.yaml",
+  "prompt_path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/runs/RUN_20260810_122900_4b97a2e5/actions/plan_approve/prompt.md",
+  "method_path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/runs/RUN_20260810_122900_4b97a2e5/actions/plan_approve/method.md",
+  "primary_instructions_path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/runs/RUN_20260810_122900_4b97a2e5/actions/plan_approve/prompt.md",
+  "lease_id": "LEASE_529ed0e1715d",
+  "prepare_nonce": "ec88995aebfd1610956a795b5b1acc91",
+  "auto_finalize": false,
+  "identity": {
+    "run_id": "RUN_20260810_122900_4b97a2e5",
+    "workflow_id": "tg-plan",
+    "phase": "approve",
+    "action_id": "plan_approve",
+    "actor_id": "ascendc-pilot",
+    "role_id": "controller",
+    "action_session_id": "ACTION_SESSION_5eadf8b1ecd025a6",
+    "prepare_nonce_hash": "2989d74badb93aa3ece8eb68d740b5a5e48bc926bca7e73ff5e2f7010038f81e",
+    "lease_id": "LEASE_529ed0e1715d",
+    "execution_mode": "primary_interactive"
+  },
+  "interactive_steps": [
+    "Review the current level under /work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/tg/plan/levels/.",
+    "Check coverage_obligations.yaml, unresolved.yaml, and any human-required items.",
+    "AskQuestion: approve | rework | stop.",
+    "Only after `approve`, run: acp run-action plan_approve --finalize --project /work/ops-transformer/attention/flash_attention_score_grad",
+    "For `rework` or `stop`, do not finalize and report the blocking reason."
+  ],
+  "message_zh": "已准备 TG primary_interactive Action `plan_approve`。请先审阅合同与 unresolved，并通过 AskQuestion 获取明确决定；只有确认/批准分支才能调用 --finalize。",
+  "dispatch_task": false
+}
+{
+  "ok": true,
+  "phase_runtime": "finalize",
+  "action_id": "plan_approve",
+  "actor_id": "ascendc-pilot",
+  "run_id": "RUN_20260810_122900_4b97a2e5",
+  "receipt": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/runs/RUN_20260810_122900_4b97a2e5/subagents/RUN_20260810_122900_4b97a2e5_plan_approve_ascendc-pilot.yaml",
+  "checker_result": {
+    "ok": true,
+    "producer_identity": {
+      "ok": true,
+      "skipped": true
+    },
+    "identity_injection": {
+      "ok": true,
+      "skipped": true,
+      "reason": "no_owned_artifact",
+      "contract_id": "plan-approved-v1"
+    },
+    "gates": [
+      {
+        "gate": "plan_approved",
+        "ok": true,
+        "detail": {
+          "ok": true,
+          "status": "approved",
+          "allow_solve": true,
+          "plan_dir": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/plan/levels/L0",
+          "approved_snapshot_hash": "65a8218178cab4211dd4f191b75a1cb9c80825a80fe7421e59ca26323e72ff62",
+          "approved_plan_hash": "57f3d6d75de578e27ba675016a9732feebddf77286aa8c153e86a0b3a623fa2e"
+        }
+      }
+    ],
+    "output_contract": {
+      "ok": true,
+      "contract_id": "plan-approved-v1",
+      "missing": [],
+      "empty": [],
+      "missing_globs": [],
+      "identity_errors": [],
+      "message": "ok"
+    },
+    "engine": {},
+    "apply": {},
+    "target_violation": {}
+  },
+  "message_zh": "Action 已 finalize 并签发可信收据；下一步必须 `acp next`（取 recommended_next_action），禁止跳步；仅 phase 门禁齐备时才 `acp advance`",
+  "observation": {
+    "observation_id": "OBS_aa502c350513",
+    "run_id": "RUN_20260810_122900_4b97a2e5",
+    "workflow_id": "tg-plan",
+    "phase": "approve",
+    "action_id": "plan_approve",
+    "step_id": "action_finalize",
+    "outcome": "success",
+    "failure_class": null,
+    "error_code": null,
+    "retryable": false,
+    "findings": [],
+    "recommended_transition": "running",
+    "legal_recovery_actions": [],
+    "forbidden_recovery_actions": [],
+    "source": "finalize_action",
+    "created_at": "2026-08-10T12:38:21Z",
+    "failure_fingerprint": null
+  },
+  "primary_decision_artifact": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/plan/levels/L0/human_supplement.yaml"
+}
+====FINAL_STATUS====
+phase approve status running
+err None 
+passed ['init_confirmed', 'kb_fingerprint_fresh']
+failed [{'id': 'action_finalize', 'gate': 'action_finalize', 'ok': False, 'at': '2026-08-10T12:37:09Z', 'detail': {'error_code': 'ACTION_FINALIZE_FAILED_PLAN_APPROVE', 'failure_class': 'checker_gate'}}]

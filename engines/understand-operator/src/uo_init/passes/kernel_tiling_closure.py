@@ -51,13 +51,14 @@ _TEMPLATE_PARAM_RE = re.compile(
     r"(?:bool|u?int(?:8|16|32|64)_t|int(?:8|16|32|64)_t|size_t|int|unsigned(?:\s+int)?)\s+([A-Za-z_]\w*)"
 )
 _CLASS_RE = re.compile(r"\b(?:class|struct)\s+([A-Za-z_]\w*)[^;{]*\{", re.S)
-_FUNCTION_RE = re.compile(
-    r"(?:(?:template\s*<[^;{}]*>\s*)*)"
-    r"(?:(?:inline|static|virtual|constexpr|__aicore__|__global__|__forceinline__|friend)\s+)*"
-    r"(?:[A-Za-z_~][\w:<>,\s*&~]*?\s+)?"
-    r"(?P<name>(?:[A-Za-z_]\w*(?:\s*<[^;{}()]*>)?\s*::\s*)*[A-Za-z_~]\w*)\s*"
-    r"\((?P<params>[^;{}]*)\)\s*(?:const\s*)?(?:noexcept\s*)?(?:override\s*)?\{",
-    re.S,
+# Body-start anchor only. The old single regex used reluctant ``[\w:<>,\s*&~]*?``
+# under DOTALL and spent ~30s/MB backtracking; walking back from ``) ... {`` is
+# linear and keeps the same definition surface.
+_FUNC_BODY_START_RE = re.compile(
+    r"\)\s*(?:const\s*)?(?:noexcept(?:\s*\([^;{}()]*\))?\s*)?(?:override\s*)?\{"
+)
+_FUNC_NAME_TAIL_RE = re.compile(
+    r"(?P<name>(?:[A-Za-z_]\w*(?:\s*<[^;{}()]{0,200}>)?\s*::\s*)*[A-Za-z_~]\w*)\s*$"
 )
 _CALL_RE = re.compile(
     r"(?:(?P<receiver>[A-Za-z_]\w*)\s*(?:\.|->)\s*)?"
@@ -205,19 +206,21 @@ def finalize_kernel_tiling_closure(
 
 
 def _selected_kernel_texts(root: Path, architecture: str) -> dict[Path, tuple[str, str]]:
+    from uo_init.passes.source_text_cache import read_text
+
     out: dict[Path, tuple[str, str]] = {}
     arch_dir = root / "op_kernel" / architecture
     if arch_dir.is_dir():
         for path in sorted(arch_dir.rglob("*")):
             if path.is_file() and path.suffix.lower() in _CPP_SUFFIXES:
-                raw = path.read_text(encoding="utf-8", errors="replace")
+                raw = read_text(path)
                 out[path.resolve()] = (raw, _mask_non_code(raw))
     kernel_root = root / "op_kernel"
     if kernel_root.is_dir():
         for path in sorted(kernel_root.iterdir()):
             if not path.is_file() or path.suffix.lower() not in _CPP_SUFFIXES:
                 continue
-            raw = path.read_text(encoding="utf-8", errors="replace")
+            raw = read_text(path)
             if f'"{architecture}/' not in raw and f"<{architecture}/" not in raw:
                 continue
             out[path.resolve()] = (raw, _mask_non_code(raw))
@@ -225,13 +228,15 @@ def _selected_kernel_texts(root: Path, architecture: str) -> dict[Path, tuple[st
 
 
 def _host_texts(root: Path, architecture: str) -> dict[Path, tuple[str, str]]:
+    from uo_init.passes.source_text_cache import read_text
+
     out: dict[Path, tuple[str, str]] = {}
     host_dir = root / "op_host" / architecture
     if not host_dir.is_dir():
         return out
     for path in sorted(host_dir.rglob("*")):
         if path.is_file() and path.suffix.lower() in _CPP_SUFFIXES:
-            raw = path.read_text(encoding="utf-8", errors="replace")
+            raw = read_text(path)
             out[path.resolve()] = (raw, _mask_non_code(raw))
     return out
 
@@ -406,6 +411,82 @@ def _rebuild_kernel_contract(
     return entries, template_args, abi_links
 
 
+def _matching_paren(text: str, close_pos: int) -> int:
+    """Index of the ``(`` that matches ``text[close_pos] == ')'``, or -1."""
+    if close_pos < 0 or close_pos >= len(text) or text[close_pos] != ")":
+        return -1
+    depth = 0
+    quote = ""
+    escape = False
+    i = close_pos
+    while i >= 0:
+        ch = text[i]
+        if quote:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == quote:
+                quote = ""
+            i -= 1
+            continue
+        if ch in {'"', "'"}:
+            quote = ch
+            i -= 1
+            continue
+        if ch == ")":
+            depth += 1
+        elif ch == "(":
+            depth -= 1
+            if depth == 0:
+                return i
+        i -= 1
+    return -1
+
+
+@dataclass(frozen=True)
+class _FuncHit:
+    start: int
+    open_brace: int
+    name: str
+    params: str
+
+
+def _iter_function_defs(masked: str) -> list[_FuncHit]:
+    """Linear scan for ``name(params) ... {`` definitions.
+
+    Same surface as the previous single regex, without catastrophic backtracking:
+    anchor on ``) ... {``, walk back to the matching ``(``, then take the
+    trailing qualified identifier as the name.
+    """
+    out: list[_FuncHit] = []
+    for body in _FUNC_BODY_START_RE.finditer(masked):
+        close_paren = body.start()
+        open_paren = _matching_paren(masked, close_paren)
+        if open_paren < 0:
+            continue
+        # Look behind the ``(`` for a bounded window of return-type + name.
+        window_lo = max(0, open_paren - 400)
+        prefix = masked[window_lo:open_paren]
+        name_match = _FUNC_NAME_TAIL_RE.search(prefix)
+        if name_match is None:
+            continue
+        name = name_match.group("name")
+        start = window_lo + name_match.start("name")
+        params = masked[open_paren + 1 : close_paren]
+        if "{" in params or "}" in params:
+            continue
+        out.append(
+            _FuncHit(
+                start=start,
+                open_brace=body.end() - 1,
+                name=name,
+                params=params,
+            )
+        )
+    return out
+
+
 def _rebuild_kernel_scopes(
     codemap: CodeMap,
     root: Path,
@@ -441,31 +522,31 @@ def _rebuild_kernel_scopes(
                 _Scope(ent, macro.name, "", file, raw, masked, macro.start, macro.end, "", 0, "macro")
             )
 
-        accepted: list[tuple[int, int]] = []
-        for match in _FUNCTION_RE.finditer(masked):
-            if _inside_span(match.start(), macro_spans):
+        accepted_end = -1
+        for match in _iter_function_defs(masked):
+            if _inside_span(match.start, macro_spans):
                 continue
-            name_expr = _compact_qualified(match.group("name"))
+            name_expr = _compact_qualified(match.name)
             short = _short_qualified(name_expr)
             if short in _CONTROL or short == "":
                 continue
-            open_pos = masked.find("{", match.start(), match.end())
+            open_pos = match.open_brace
             close_pos = _matching(masked, open_pos, "{", "}")
             if close_pos < 0:
                 continue
-            # A regex hit inside an already accepted function body is a call-like
-            # false positive, not a nested C++ function definition.
-            if any(start <= match.start() <= end for start, end in accepted):
+            # Hits are left-to-right; anything still inside the latest accepted
+            # body is a call-like false positive, not a nested definition.
+            if match.start <= accepted_end:
                 continue
-            accepted.append((open_pos + 1, close_pos))
+            accepted_end = close_pos
 
-            containing = [c for c in classes if c.start <= match.start() <= c.end]
+            containing = [c for c in classes if c.start <= match.start <= c.end]
             owner = min(containing, key=lambda c: c.end - c.start).name if containing else _owner_qualified(name_expr)
             kind = EntityKind.METHOD if owner else EntityKind.FUNCTION
-            line = _line(raw, match.start())
+            line = _line(raw, match.start)
 
             kernel_hits = codemap.by_name(short, kind=EntityKind.KERNEL) if not owner else []
-            if kernel_hits and "__global__" in masked[match.start():open_pos]:
+            if kernel_hits and "__global__" in masked[match.start:open_pos]:
                 ent = kernel_hits[0]
             else:
                 ent = codemap.upsert(
@@ -482,7 +563,7 @@ def _rebuild_kernel_scopes(
                     line=line,
                     status="confirmed",
                 )
-            params = match.group("params") or ""
+            params = match.params or ""
             scopes.append(
                 _Scope(
                     ent,

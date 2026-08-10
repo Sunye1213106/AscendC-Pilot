@@ -1,0 +1,6 @@
+schema: tg-closure-explain/v1
+why_exists: false
+path: ''
+ran: false
+accepted: 0
+error: '[Errno 2] No such file or directory: ''wsl'''

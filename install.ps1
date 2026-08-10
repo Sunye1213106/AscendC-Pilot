@@ -217,3 +217,21 @@ New-Item -ItemType Directory -Force -Path $stampDir | Out-Null
 Set-Content -Path (Join-Path $stampDir "install_stamp.txt") -Value "plugin_root=$Dest"
 Write-Host "Installed AscendC-Pilot → $Dest"
 Write-Host "Run: acp doctor"
+
+# optional native walker (best-effort)
+$uoWalkSrc = Join-Path $Dest "engines\understand-operator\native\uo_walk"
+$uoWalkBuild = Join-Path $uoWalkSrc "build"
+if (Get-Command cmake -ErrorAction SilentlyContinue) {
+  New-Item -ItemType Directory -Force -Path $uoWalkBuild | Out-Null
+  cmake -S $uoWalkSrc -B $uoWalkBuild
+  if ($LASTEXITCODE -eq 0) {
+    cmake --build $uoWalkBuild
+    if ($LASTEXITCODE -eq 0) {
+      Write-Host "Built optional uo_walk → $uoWalkBuild"
+    } else {
+      Write-Host "uo_walk optional build skipped"
+    }
+  } else {
+    Write-Host "uo_walk optional build skipped"
+  }
+}

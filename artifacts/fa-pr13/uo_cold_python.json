@@ -1,0 +1,72 @@
+{
+  "label": "python",
+  "native_walk": "0",
+  "phases": {
+    "prepare": 57.16,
+    "extract": 55.39,
+    "analyze": 118.18,
+    "resolve": 0.14,
+    "commit": 111.58,
+    "total": 342.46
+  },
+  "codemap": {
+    "entity_count": 4583,
+    "relation_count": 9293,
+    "has_host": true,
+    "has_kernel": true,
+    "has_host_kernel_path": true,
+    "has_input_tilingkey_kernel_path": true,
+    "has_tilingdata_kernel_path": true,
+    "has_input_output_path": true,
+    "tiling_key_declaration_coverage": "19/19",
+    "tiling_key_host_packing_coverage": "19/19",
+    "tiling_key_host_producer_coverage": "19/19",
+    "tiling_key_root_coverage": "19/19",
+    "tiling_key_dependency_coverage": "12/19"
+  },
+  "entities_by_kind": {
+    "ARCH": 1,
+    "BRANCH": 359,
+    "BUILD_VARIANT": 1,
+    "COMPILE_VAR": 412,
+    "FIELD": 939,
+    "FILE": 47,
+    "FUNCTION": 504,
+    "INPUT": 41,
+    "KERNEL": 1,
+    "MACRO": 140,
+    "METHOD": 630,
+    "OUTPUT": 7,
+    "PREDICATE": 802,
+    "TEMPLATE": 66,
+    "TEMPLATE_ARG": 19,
+    "TILING_DATA": 11,
+    "TILING_FIELD": 163,
+    "TILING_KEY": 19,
+    "TYPE": 49,
+    "VARIABLE": 372
+  },
+  "relations_by_kind": {
+    "ACTIVE_UNDER": 288,
+    "AVAILABLE_ON": 47,
+    "BINDS": 1254,
+    "CALLS": 2022,
+    "CONTROLS": 691,
+    "DECLARES": 926,
+    "DEFINES": 1,
+    "DERIVES": 1694,
+    "FLOWS_TO": 445,
+    "GUARDED_BY": 539,
+    "READS": 763,
+    "REFERENCES": 5,
+    "SELECTS": 84,
+    "WRITES": 534
+  },
+  "product": {
+    "entity_count": "4583",
+    "relation_count": "9280",
+    "legal_key_count": 8705,
+    "host_fields": 93,
+    "graph_fp": "5d29d0d84b2629bb2b8a2b86f89c7a2dae338e0e8edc3a1136e9ec5a9b98cfbf"
+  }
+}

@@ -4,10 +4,16 @@
 Clears R / E / open / lemmas and writes ``cold_start.yaml`` with a timestamp
 and fingerprint so later certify can prove E rules were promoted after this
 run — not inherited from package ``proof_rules.yaml``.
+
+Provenance is an append-only hash chain (``provenance_chain.yaml``) whose
+genesis entry is sealed by ``cold_start``.  Every promote links to the previous
+entry and records the cold-start seal it observed, so a cold_start stamped
+after the fact cannot retroactively legitimise an already-grown E.
 """
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +22,108 @@ from typing import Any
 import yaml
 
 from testcase_agent.closure import workspace as W
+
+CHAIN_NAME = "provenance_chain.yaml"
+
+
+def _canonical(payload: Any) -> str:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _digest(payload: Any) -> str:
+    return hashlib.sha256(_canonical(payload).encode("utf-8")).hexdigest()[:32]
+
+
+def _chain_path(ws: W.Workspace) -> Path:
+    return ws.state / CHAIN_NAME
+
+
+def load_chain(ws: W.Workspace | None = None) -> list[dict[str, Any]]:
+    ws = (ws or W.default_workspace()).ensure()
+    path = _chain_path(ws)
+    if not path.is_file():
+        return []
+    doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    entries = doc.get("entries") if isinstance(doc, dict) else None
+    return [dict(x) for x in (entries or []) if isinstance(x, dict)]
+
+
+def _link(entry: dict[str, Any]) -> dict[str, Any]:
+    """Return ``entry`` with its content hash attached."""
+    body = {k: v for k, v in entry.items() if k != "hash"}
+    entry["hash"] = _digest(body)
+    return entry
+
+
+def append_chain(
+    ws: W.Workspace,
+    kind: str,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Append a linked provenance entry and return it.
+
+    The cold-start seal observed *at this moment* is recorded in the entry; an
+    empty seal is a permanent record that the step ran without a cold start.
+    """
+    entries = load_chain(ws)
+    prev = entries[-1]["hash"] if entries else ""
+    entry = _link(
+        {
+            "seq": len(entries),
+            "kind": str(kind),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "cold_seal": str(load_cold_start(ws).get("seal") or ""),
+            "prev": prev,
+            **(payload or {}),
+        }
+    )
+    entries.append(entry)
+    _chain_path(ws).write_text(
+        yaml.safe_dump(
+            {"schema": "tg-provenance-chain/v1", "entries": entries},
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    return entry
+
+
+def verify_chain(ws: W.Workspace | None = None) -> dict[str, Any]:
+    """Recompute every link; report the first structural break."""
+    ws = (ws or W.default_workspace()).ensure()
+    entries = load_chain(ws)
+    issues: list[str] = []
+    if not entries:
+        return {"ok": False, "entries": 0, "issues": ["provenance_chain_missing"]}
+
+    prev_hash = ""
+    for i, entry in enumerate(entries):
+        body = {k: v for k, v in entry.items() if k != "hash"}
+        if _digest(body) != str(entry.get("hash") or ""):
+            issues.append(f"provenance_chain_tampered:seq={i}")
+            break
+        if str(entry.get("prev") or "") != prev_hash:
+            issues.append(f"provenance_chain_broken:seq={i}")
+            break
+        if int(entry.get("seq", -1)) != i:
+            issues.append(f"provenance_chain_seq_gap:seq={i}")
+            break
+        prev_hash = str(entry.get("hash") or "")
+
+    genesis = entries[0]
+    if str(genesis.get("kind") or "") != "cold_start":
+        issues.append("provenance_chain_genesis_not_cold_start")
+    cold_seal = str(load_cold_start(ws).get("seal") or "")
+    if cold_seal and str(genesis.get("seal") or "") != cold_seal:
+        issues.append("cold_start_seal_mismatch")
+
+    return {
+        "ok": not issues,
+        "entries": len(entries),
+        "promotes": sum(1 for x in entries if str(x.get("kind")) == "promote"),
+        "issues": issues,
+    }
 
 
 def _fingerprint(ws: W.Workspace) -> str:
@@ -125,11 +233,24 @@ def cold_start(
         "state": str(ws.state),
         "cleared": cleared,
     }
+    # Seal binds the stamp to the state it actually cleared, so a stamp written
+    # later (when R/E are already populated) cannot reproduce it.
+    doc["seal"] = _digest(
+        {
+            "fingerprint": fp,
+            "timestamp": ts,
+            "cleared": sorted(cleared),
+            "state": str(ws.state),
+        }
+    )
     path = ws.state / "cold_start.yaml"
     path.write_text(
         yaml.safe_dump(doc, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
     )
+    # Genesis of the append-only chain; every later promote links back to it.
+    _chain_path(ws).unlink(missing_ok=True)
+    append_chain(ws, "cold_start", {"seal": doc["seal"], "fingerprint": fp})
     return {"ok": True, "path": str(path), **doc}
 
 
@@ -140,6 +261,31 @@ def load_cold_start(ws: W.Workspace | None = None) -> dict[str, Any]:
         return {}
     doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return doc if isinstance(doc, dict) else {}
+
+
+def require_cold_start(ws: W.Workspace | None = None) -> dict[str, Any]:
+    """Pre-promote gate: a sealed cold start with an intact chain must exist.
+
+    ``check_e_provenance`` short-circuits while E is still empty, so the very
+    first promote would otherwise slip through and only fail at certify.
+    """
+    ws = (ws or W.default_workspace()).ensure()
+    cold = load_cold_start(ws)
+    issues: list[str] = []
+    if not cold:
+        issues.append("cold_start_missing")
+    elif not str(cold.get("seal") or ""):
+        # Alias kept for the fa-pr13 acceptance check name.
+        issues.extend(["cold_start_unsealed", "cold_start_unsigned"])
+    else:
+        chain = verify_chain(ws)
+        if not chain["ok"]:
+            issues.extend(chain["issues"])
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "detail": f"cold_start_issues={len(issues)}",
+    }
 
 
 def check_e_provenance(ws: W.Workspace | None = None) -> dict[str, Any]:
@@ -166,6 +312,27 @@ def check_e_provenance(ws: W.Workspace | None = None) -> dict[str, Any]:
 
     if not cold:
         issues.append("cold_start_missing_with_nonempty_E")
+    elif not str(cold.get("seal") or ""):
+        issues.extend(["cold_start_unsealed", "cold_start_unsigned"])
+
+    chain = verify_chain(ws)
+    if not chain["ok"]:
+        issues.extend(chain["issues"])
+    elif not chain["promotes"]:
+        issues.append("no_promote_in_provenance_chain")
+    else:
+        # A promote that ran before any cold start records an empty seal for
+        # ever; back-dating cold_start.yaml afterwards cannot repair it.
+        for entry in load_chain(ws):
+            if str(entry.get("kind")) != "promote":
+                continue
+            if not str(entry.get("cold_seal") or ""):
+                issues.append(f"promote_without_cold_start:seq={entry.get('seq')}")
+                break
+            if str(entry.get("cold_seal")) != str(cold.get("seal") or ""):
+                issues.append(f"promote_cold_seal_mismatch:seq={entry.get('seq')}")
+                break
+
     if not active.is_file():
         issues.append("active_rules_missing_with_nonempty_E")
         # Detect package-only proof_rules as sole source.
@@ -204,11 +371,28 @@ def check_e_provenance(ws: W.Workspace | None = None) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001
             issues.append(f"active_rules_unreadable:{exc}")
 
+    # Every active rule must be accounted for by a promote entry.
+    if active.is_file() and chain["ok"]:
+        try:
+            rule_count = len((yaml.safe_load(active.read_text(encoding="utf-8")) or {}).get("rules") or [])
+            chained = sum(
+                int(x.get("promoted") or 0)
+                for x in load_chain(ws)
+                if str(x.get("kind")) == "promote"
+            )
+            if rule_count != chained:
+                issues.append(
+                    f"active_rules_not_chain_backed:rules={rule_count},chain={chained}"
+                )
+        except Exception as exc:  # noqa: BLE001
+            issues.append(f"active_rules_chain_check_failed:{exc}")
+
     return {
         "ok": len(issues) == 0,
         "E": len(E),
         "cold_start": bool(cold),
         "active_rules": active.is_file(),
+        "chain": {k: chain[k] for k in ("ok", "entries", "promotes") if k in chain},
         "issues": issues,
         "detail": f"provenance_issues={len(issues)}",
     }

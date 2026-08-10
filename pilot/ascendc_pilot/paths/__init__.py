@@ -72,7 +72,7 @@ def resolve_operator_root(
                 raise ValueError(
                     f"refusing to use AscendC-Pilot checkout as operator root: {root}. "
                     "Pass the analysed operator source directory "
-                    "(e.g. ops-transformer/.../flash_attention_score_grad)."
+                    "(the one containing op_host/ and op_kernel/)."
                 )
         return root
 

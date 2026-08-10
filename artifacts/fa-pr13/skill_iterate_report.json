@@ -1,0 +1,60 @@
+{
+  "stop_reason": "SEARCH_STALLED",
+  "elapsed_sec": 96.17,
+  "final_state": {
+    "declared": 8705,
+    "R": 4121,
+    "R_declared": 4121,
+    "undeclared": 0,
+    "E": 0,
+    "violation": 0,
+    "gap": 4584
+  },
+  "residual_reason": "SEARCH_STALLED",
+  "certify": {
+    "ok": false,
+    "error": "closure_audit status='missing'; require status in {{pass, accepted, auto_ok}} before certify",
+    "message": null
+  },
+  "history": [
+    {
+      "round": 0,
+      "reason": "SEARCH_PROGRESS",
+      "gap": 4584,
+      "R": 4121,
+      "E": 0,
+      "distance": {
+        "1": 3456,
+        "2": 1064,
+        "3": 64
+      },
+      "mostly_distance_1": false,
+      "gained_R": 0,
+      "construct": {
+        "targets": 32,
+        "built": 32,
+        "replayed": 32
+      },
+      "search_new_R": 0
+    },
+    {
+      "round": 1,
+      "reason": "SEARCH_STALLED",
+      "gap": 4584,
+      "R": 4121,
+      "E": 0,
+      "distance": {
+        "1": 3456,
+        "2": 1064,
+        "3": 64
+      },
+      "mostly_distance_1": false,
+      "after_lemma": {
+        "gap": 4584,
+        "E": 0,
+        "R": 4121
+      }
+    }
+  ],
+  "closed": false
+}

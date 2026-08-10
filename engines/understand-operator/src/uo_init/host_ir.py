@@ -20,9 +20,80 @@ from uo_init.clang_walk import (
     FieldDecl,
     LocalDecl,
     PathCond,
+    WalkResult,
     WriteRecord,
     walk_file,
 )
+
+
+def _walk_tu_worker(payload: dict) -> WalkResult:
+    """ProcessPool entry: rebuild context and walk one TU (pickle-safe)."""
+    import time as _time
+    from pathlib import Path
+
+    from uo_init.build_context import BuildContext
+    from uo_init.clang_walk import walk_file as _walk_file
+    from uo_init.scope_scan import ScopeSet
+    from uo_init.timing import log as _tlog
+
+    p = Path(payload["path"])
+    ctx = BuildContext.from_dict(payload["ctx"])
+    scope = None
+    raw_scope = payload.get("scope")
+    if isinstance(raw_scope, dict):
+        scope = ScopeSet.from_dict(raw_scope)
+    t0 = _time.perf_counter()
+    res = _walk_file(
+        p,
+        ctx,
+        side=str(payload.get("side") or "host"),
+        op_needle=str(payload.get("op_needle") or ""),
+        scope=scope,
+        logs_rejections=bool(payload.get("logs_rejections")),
+    )
+    dt = _time.perf_counter() - t0
+    _tlog(
+        f"{dt:7.3f}s{' SLOW' if dt > 180 else ''}  host_ir.walk_tu  "
+        f"file={p.name} controls={len(getattr(res, 'controls', []) or [])} "
+        f"writes={len(getattr(res, 'writes', []) or [])}"
+    )
+    return res
+
+
+def _walk_tu_payload(
+    path: Path,
+    ctx,
+    *,
+    side: str,
+    op_needle: str,
+    scope,
+    logs_rejections: bool,
+) -> dict:
+    from uo_init.build_context import BuildContext
+
+    scope_payload = None
+    if scope is not None and hasattr(scope, "to_dict"):
+        scope_payload = scope.to_dict()
+    if isinstance(ctx, BuildContext):
+        ctx_payload = ctx.to_dict()
+    else:
+        ctx_payload = {
+            "raw": {},
+            "cann_root": getattr(ctx, "cann_root", ""),
+            "ops_root": getattr(ctx, "ops_root", ""),
+            "compat_root": getattr(ctx, "compat_root", ""),
+            "op_dir": getattr(ctx, "op_dir", ""),
+            "arch_dir": getattr(ctx, "arch_dir", "arch35"),
+            "repo_root": getattr(ctx, "repo_root", ""),
+        }
+    return {
+        "path": str(path),
+        "ctx": ctx_payload,
+        "side": side,
+        "op_needle": op_needle,
+        "scope": scope_payload,
+        "logs_rejections": logs_rejections,
+    }
 
 
 
@@ -839,14 +910,46 @@ def build_host_ir(
     if len(path_list) <= 1:
         results = [_walk_one(p) for p in path_list]
     else:
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import os
+        from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
+        max_workers = min(len(path_list), os.cpu_count() or 4)
+        use_proc = os.environ.get("UO_HOST_IR_POOL", "process").lower() != "thread"
         results = [None] * len(path_list)
-        _tlog(f"host_ir.parallel_tus  n={len(path_list)} workers={len(path_list)}")
-        with ThreadPoolExecutor(max_workers=len(path_list)) as pool:
-            futs = {pool.submit(_walk_one, p): i for i, p in enumerate(path_list)}
-            for fut in as_completed(futs):
-                results[futs[fut]] = fut.result()
+        pool_kind = "process" if use_proc else "thread"
+        _tlog(
+            f"host_ir.parallel_tus  n={len(path_list)} workers={max_workers} "
+            f"pool={pool_kind}"
+        )
+        if use_proc:
+            try:
+                payloads = [
+                    _walk_tu_payload(
+                        p,
+                        ctx,
+                        side=side,
+                        op_needle=op_needle,
+                        scope=scope,
+                        logs_rejections=logs_rejections,
+                    )
+                    for p in path_list
+                ]
+                with ProcessPoolExecutor(max_workers=max_workers) as pool:
+                    futs = {
+                        pool.submit(_walk_tu_worker, pl): i
+                        for i, pl in enumerate(payloads)
+                    }
+                    for fut in as_completed(futs):
+                        results[futs[fut]] = fut.result()
+            except Exception as exc:  # noqa: BLE001 — fall back to threads
+                _tlog(f"host_ir.process_pool_fallback  reason={type(exc).__name__}")
+                use_proc = False
+                results = [None] * len(path_list)
+        if not use_proc:
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futs = {pool.submit(_walk_one, p): i for i, p in enumerate(path_list)}
+                for fut in as_completed(futs):
+                    results[futs[fut]] = fut.result()
 
     for res in results:
         all_writes.extend(_to_event(r, template_precondition) for r in res.writes)

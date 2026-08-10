@@ -21,6 +21,7 @@ allowed_write_paths:
 forbidden_write_paths: []
 allowed_read_paths:
 - runs/**/actions/lemma_mine/**
+- runs/**/actions/lemma_verify/**
 - tg/closure/lemmas/**
 - uo/ir/**
 forbidden_read_paths: []

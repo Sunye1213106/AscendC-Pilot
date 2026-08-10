@@ -74,6 +74,10 @@ ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "lemma_mine": [
             "runs/{run_id}/actions/lemma_mine/staging.yaml",
         ],
+        "lemma_verify": [
+            "runs/{run_id}/actions/lemma_verify/verify.yaml",
+            "tg/closure/lemmas/verify.yaml",
+        ],
         "lemma_review": [
             "runs/{run_id}/actions/lemma_review/review.yaml",
         ],
@@ -83,6 +87,17 @@ ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "tg/closure/open.txt",
             "tg/closure/lemmas/active_rules.yaml",
             "tg/closure/lemmas/revoked_rules.yaml",
+            "tg/closure/lemmas/reviews.yaml",
+        ],
+        "lemma_loop": [
+            "tg/closure/lemma_loop.yaml",
+            "tg/closure/rounds/**/lemma.yaml",
+            "runs/{run_id}/actions/lemma_mine/staging.yaml",
+            "runs/{run_id}/actions/lemma_review/review.yaml",
+            "tg/closure/excluded.txt",
+            "tg/closure/excluded_why.csv",
+            "tg/closure/open.txt",
+            "tg/closure/lemmas/active_rules.yaml",
             "tg/closure/lemmas/reviews.yaml",
         ],
         "closure_audit": [
@@ -171,6 +186,10 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "runs/{run_id}/actions/lemma_mine/scratch/**",
             "runs/{run_id}/actions/lemma_mine/staging.yaml",
         ],
+        "lemma_verify": [
+            "runs/{run_id}/actions/lemma_verify/verify.yaml",
+            "tg/closure/lemmas/verify.yaml",
+        ],
         "lemma_review": [
             "runs/{run_id}/actions/lemma_review/review.yaml",
         ],
@@ -180,6 +199,17 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "tg/closure/open.txt",
             "tg/closure/lemmas/active_rules.yaml",
             "tg/closure/lemmas/revoked_rules.yaml",
+            "tg/closure/lemmas/reviews.yaml",
+        ],
+        "lemma_loop": [
+            "tg/closure/lemma_loop.yaml",
+            "tg/closure/rounds/**/lemma.yaml",
+            "runs/{run_id}/actions/lemma_mine/staging.yaml",
+            "runs/{run_id}/actions/lemma_review/review.yaml",
+            "tg/closure/excluded.txt",
+            "tg/closure/excluded_why.csv",
+            "tg/closure/open.txt",
+            "tg/closure/lemmas/active_rules.yaml",
             "tg/closure/lemmas/reviews.yaml",
         ],
         "closure_audit": [

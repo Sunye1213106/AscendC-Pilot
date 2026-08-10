@@ -1,0 +1,10 @@
+a_dim,a_val,b_dim,b_val,c_dim,c_val,open_keys,min_pair_support
+SplitAxis,5,IsDrop,1,DTemplateNum,192,72,56
+SplitAxis,5,IsDrop,1,DTemplateNum,256,72,56
+SplitAxis,5,IsDrop,1,DTemplateNum,768,72,56
+SplitAxis,1,IsTnd,1,DTemplateNum,192,48,64
+SplitAxis,5,IsTnd,0,DTemplateNum,192,32,56
+SplitAxis,5,IsTnd,0,DTemplateNum,256,32,56
+SplitAxis,5,IsTnd,0,DTemplateNum,768,32,56
+SplitAxis,1,IsTnd,1,DTemplateNum,256,32,48
+SplitAxis,1,IsTnd,1,DTemplateNum,768,32,48

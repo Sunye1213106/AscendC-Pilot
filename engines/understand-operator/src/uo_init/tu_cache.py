@@ -363,6 +363,60 @@ def load_walk(
         return None
 
 
+def load_probe(
+    key: str,
+    *,
+    op_dir: str | Path | None,
+    arch: str | None = None,
+) -> dict[str, Any] | None:
+    """Diagnostics-only probe payload (plain dict, not a WalkResult)."""
+    if not cache_enabled():
+        _bump("bypass")
+        return None
+    path = _cache_path(op_dir, arch, key).with_suffix(".probe.pkl")
+    if not path.is_file():
+        _bump("miss")
+        return None
+    try:
+        with open(path, "rb") as fh:
+            payload = pickle.load(fh)
+        if not isinstance(payload, dict) or int(payload.get("version") or 0) != CACHE_VERSION:
+            _bump("miss")
+            return None
+        _bump("hit")
+        return dict(payload.get("probe") or {})
+    except Exception:  # noqa: BLE001
+        _bump("miss")
+        return None
+
+
+def store_probe(
+    key: str,
+    probe: dict[str, Any],
+    *,
+    op_dir: str | Path | None,
+    arch: str | None = None,
+) -> Path | None:
+    if not cache_enabled():
+        _bump("bypass")
+        return None
+    path = _cache_path(op_dir, arch, key).with_suffix(".probe.pkl")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        with open(tmp, "wb") as fh:
+            pickle.dump(
+                {"version": CACHE_VERSION, "probe": dict(probe)},
+                fh,
+                protocol=pickle.HIGHEST_PROTOCOL,
+            )
+        tmp.replace(path)
+        _bump("store")
+        return path
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def store_walk(
     key: str,
     result: Any,

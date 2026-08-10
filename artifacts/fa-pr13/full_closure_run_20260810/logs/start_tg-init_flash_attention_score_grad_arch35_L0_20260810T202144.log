@@ -1,0 +1,194 @@
+{
+  "workflow_id": "tg-init",
+  "run_id": "RUN_20260810_122145_d11b202c",
+  "phase": "intent",
+  "phase_label_zh": "意图确认",
+  "status": "running",
+  "intent": "",
+  "op_name": "flash_attention_score_grad",
+  "architecture": "arch35",
+  "test_script_root": "",
+  "csv_consumer_root": "",
+  "level": "L0",
+  "focus": "",
+  "retry_budget": 3,
+  "no_progress_streak": 0,
+  "failed_gates": [],
+  "passed_gates": [],
+  "open_items": [
+    {
+      "id": "uo_ready",
+      "status": "open",
+      "kind": "static",
+      "settled_by_gate": "uo_ready"
+    },
+    {
+      "id": "init_confirmed",
+      "status": "open",
+      "kind": "static",
+      "settled_by_gate": "init_confirmed"
+    }
+  ],
+  "last_failure": null,
+  "created_at": "2026-08-10T12:21:45Z",
+  "meta": {},
+  "kb_schema_hash": "8b51c26b2012bdfc0f78ae52597f42cc3448687fc47a8ddb7cd3b93b1be83bbe",
+  "workflow_spec_hash": "b03817059e0a7c1e70a991faaed18efc0696bb42aa22cb337b3e9ced95c93afb",
+  "agent_contract_hash": "93e1515f70e678ce7d87c7400291b9a849437f4605771d423e67ca11968fcf74",
+  "tg_contract_hash": "ae40d64dc82db6814d49fa9c074b3c00a204861e5502de75c8f294a2f1963072",
+  "progress_fingerprint": {
+    "open_obligation_ids": [
+      "init_confirmed",
+      "uo_ready"
+    ],
+    "failed_gate_ids": [],
+    "error_finding_ids": [],
+    "status": "running",
+    "phase": "intent"
+  },
+  "open_items_count": 2,
+  "updated_at": "2026-08-10T12:21:45Z",
+  "fresh_start": true,
+  "todo": {
+    "workflow_id": "tg-init",
+    "run_id": "RUN_20260810_122145_d11b202c",
+    "phase": "intent",
+    "phase_label_zh": "意图确认",
+    "status": "running",
+    "sync": "opencode_native_todowrite",
+    "phases": [
+      {
+        "id": "intent",
+        "label_zh": "意图确认",
+        "status": "current"
+      },
+      {
+        "id": "kb_ready",
+        "label_zh": "KB 检查",
+        "status": "pending"
+      },
+      {
+        "id": "contract",
+        "label_zh": "合同构建",
+        "status": "pending"
+      },
+      {
+        "id": "bind",
+        "label_zh": "Host 视图绑定",
+        "status": "pending"
+      },
+      {
+        "id": "gate",
+        "label_zh": "完整性校验",
+        "status": "pending"
+      },
+      {
+        "id": "confirm",
+        "label_zh": "人工确认",
+        "status": "pending"
+      }
+    ],
+    "native_items": [
+      {
+        "id": "intent",
+        "content": "意图确认",
+        "status": "in_progress",
+        "priority": "high"
+      },
+      {
+        "id": "kb_ready",
+        "content": "KB 检查",
+        "status": "pending",
+        "priority": "medium"
+      },
+      {
+        "id": "contract",
+        "content": "合同构建",
+        "status": "pending",
+        "priority": "medium"
+      },
+      {
+        "id": "bind",
+        "content": "Host 视图绑定",
+        "status": "pending",
+        "priority": "medium"
+      },
+      {
+        "id": "gate",
+        "content": "完整性校验",
+        "status": "pending",
+        "priority": "medium"
+      },
+      {
+        "id": "confirm",
+        "content": "人工确认",
+        "status": "pending",
+        "priority": "medium"
+      }
+    ],
+    "open_items": [
+      {
+        "id": "uo_ready",
+        "label_zh": "uo_ready",
+        "status": "open"
+      },
+      {
+        "id": "init_confirmed",
+        "label_zh": "init_confirmed",
+        "status": "open"
+      }
+    ],
+    "next_actions": [
+      {
+        "id": "init_intent",
+        "label_zh": "确认 TG 模式意图"
+      }
+    ],
+    "todo_sync": {
+      "tool": "todowrite",
+      "merge": false,
+      "require_full_list": true,
+      "require_ids": true,
+      "forbid_partial_overwrite": true,
+      "items": [
+        {
+          "id": "intent",
+          "content": "意图确认",
+          "status": "in_progress",
+          "priority": "high"
+        },
+        {
+          "id": "kb_ready",
+          "content": "KB 检查",
+          "status": "pending",
+          "priority": "medium"
+        },
+        {
+          "id": "contract",
+          "content": "合同构建",
+          "status": "pending",
+          "priority": "medium"
+        },
+        {
+          "id": "bind",
+          "content": "Host 视图绑定",
+          "status": "pending",
+          "priority": "medium"
+        },
+        {
+          "id": "gate",
+          "content": "完整性校验",
+          "status": "pending",
+          "priority": "medium"
+        },
+        {
+          "id": "confirm",
+          "content": "人工确认",
+          "status": "pending",
+          "priority": "medium"
+        }
+      ],
+      "instruction_zh": "有变化才 todowrite（merge=false）；items 与上次同步完全相同则跳过；一旦调用必须全量等于 todo.todo_sync.items（含全部 id/content/status/priority）；禁止子集；禁止在回复里讨论要不要同步；与下一步 acp 同轮并行。"
+    }
+  }
+}

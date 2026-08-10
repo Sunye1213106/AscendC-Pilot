@@ -17,21 +17,30 @@ from __future__ import annotations
 import collections
 import csv
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping
 
 from testcase_agent.closure import ledger
 from testcase_agent.closure import workspace as W
 
 
-def verify(when: Mapping[str, str], witnesses: Iterable[Mapping[str, str]]
+def _match_when(inst: Mapping[str, Any], when: Mapping[str, Any]) -> bool:
+    try:
+        from replay.rule_engine import match_when
+
+        return match_when(inst, when)
+    except Exception:
+        return all(str(inst.get(d)) == str(v) for d, v in when.items())
+
+
+def verify(when: Mapping[str, Any], witnesses: Iterable[Mapping[str, Any]]
            ) -> dict:
     """Return whether `when` holds of any real witness."""
-    hits = [w for w in witnesses
-            if all(str(w.get(d)) == str(v) for d, v in when.items())]
+    hits = [w for w in witnesses if _match_when(w, when)]
     return {
         "ok": len(hits) == 0,
         "refuted": len(hits) > 0,
         "hit_count": len(hits),
+        "counterexamples": [dict(w) for w in hits[:5]],
         "when": dict(when),
     }
 
@@ -50,22 +59,34 @@ def verify_lemmas(lemmas: Iterable[Mapping],
     open_keys = sorted(D - Rset - E)
     opn = list(zip(open_keys, W.decode_many(open_keys)))
 
+    try:
+        from replay.rule_engine import norm_when, when_label
+    except Exception:  # pragma: no cover - fallback when replay is unavailable
+        def norm_when(raw):  # type: ignore[misc]
+            return {str(k): str(v) for k, v in (raw or {}).items()}
+
+        def when_label(w):  # type: ignore[misc]
+            return " + ".join("%s=%s" % kv for kv in w.items())
+
     survivors, closed, refuted = [], set(), []
     for lem in lemmas:
-        when = {str(k): str(v) for k, v in (lem.get("when") or {}).items()}
+        when = norm_when(lem.get("when"))
         if not when:
             continue
         check = verify(when, wit)
-        label = " + ".join("%s=%s" % kv for kv in when.items())
-        n_open = sum(1 for _, o in opn
-                     if all(o.get(d) == v for d, v in when.items()))
+        label = str(lem.get("label") or when_label(when))
+        n_open = sum(1 for _, o in opn if _match_when(o, when))
         if check["refuted"]:
-            refuted.append({"label": label, "hits": check["hit_count"],
-                            "tag": lem.get("tag", "")})
+            refuted.append({
+                "label": label,
+                "hits": check["hit_count"],
+                "tag": lem.get("tag", ""),
+                "counterexamples": check["counterexamples"],
+            })
             continue
         survivors.append({**lem, "when": when, "label": label, "closes": n_open})
         for k, o in opn:
-            if all(o.get(d) == v for d, v in when.items()):
+            if _match_when(o, when):
                 closed.add(k)
 
     (ws.state / "lemmas_ok.txt").write_text(
@@ -337,7 +358,11 @@ def promote_reviewed(
 
     for raw in accepted:
         evidence_pack = _load_evidence_pack(raw)
-        certificate_check = validate_certificate(raw, evidence_pack=evidence_pack)
+        certificate_check = validate_certificate(
+            raw,
+            evidence_pack=evidence_pack,
+            operator_root=ws.root,
+        )
         if not certificate_check["ok"]:
             skipped += 1
             continue
@@ -401,6 +426,21 @@ def promote_reviewed(
     active_path.write_text(
         yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
+    try:
+        from testcase_agent.closure.cold_start import append_chain
+
+        append_chain(
+            ws,
+            "promote",
+            {
+                "promoted": promoted,
+                "skipped": skipped,
+                "active_count": len(rules),
+                "labels": [str(r.get("label") or "") for r in rules[-promoted:]] if promoted else [],
+            },
+        )
+    except Exception:
+        pass
     # Force rule_book reload on next apply.
     try:
         from replay import rule_engine as RE

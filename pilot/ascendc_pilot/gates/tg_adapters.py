@@ -307,7 +307,16 @@ def _load_plan_hashes(plan_dir: Path) -> tuple[str | None, str | None]:
     """Load snapshot_hash and plan_hash from plan artifacts."""
     snapshot_hash: str | None = None
     plan_hash: str | None = None
-    for rel in ("plan.yaml", "snapshot.yaml", "coverage_matrix.yaml", "unresolved.yaml"):
+    # tilingkey_full_coverage writes hashes primarily into coverage_obligations.yaml
+    # / target_set.yaml; keep legacy plan.yaml paths as fallbacks.
+    for rel in (
+        "coverage_obligations.yaml",
+        "target_set.yaml",
+        "plan.yaml",
+        "snapshot.yaml",
+        "coverage_matrix.yaml",
+        "unresolved.yaml",
+    ):
         doc = _load(plan_dir / rel)
         if not isinstance(doc, dict):
             continue

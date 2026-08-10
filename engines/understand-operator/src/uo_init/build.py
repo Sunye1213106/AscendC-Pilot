@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import pickle
+import time
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +32,99 @@ from uo_init.passes.tiling_kernel_reads import rebuild_verified_tiling_reads
 from uo_init.passes.tiling_registration import enrich_tiling_registrations
 from uo_init.resolve.semantic_gap import list_gaps
 from uo_init.store.writer import uo_product_path, write_codemap
+from uo_init.timing import log as _tlog, timing_enabled
+
+# Same-process reuse between analyze (commit=False) and commit. Avoids paying
+# the full source-enrichment stack twice in one uo-init run.
+_COMPILE_MEM: dict[str, dict[str, Any]] = {}
+
+
+def _cache_key(op_root: Path, op_name: str, architecture: str) -> str:
+    return f"{op_root.resolve()}|{op_name}|{architecture}"
+
+
+def _cache_path(op_root: Path, architecture: str) -> Path:
+    return (
+        Path(op_root).expanduser().resolve()
+        / ".ascendc-pilot"
+        / architecture
+        / "uo"
+        / "ir"
+        / "_codemap_compile_cache.pkl"
+    )
+
+
+def store_compile_cache(
+    op_root: Path,
+    op_name: str,
+    architecture: str,
+    result: dict[str, Any],
+) -> None:
+    """Keep analyze's compile result for a later commit in this (or next) process."""
+    key = _cache_key(op_root, op_name, architecture)
+    payload = {
+        "op_name": op_name,
+        "architecture": architecture,
+        "codemap": result.get("codemap"),
+        "views": result.get("_merged_views") or {},
+        "summary": result.get("summary") or {},
+        "gaps": result.get("gaps") or [],
+        "audit": result.get("audit"),
+        "tg_views": result.get("tg_views") or {},
+    }
+    _COMPILE_MEM[key] = payload
+    try:
+        path = _cache_path(op_root, architecture)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def load_compile_cache(
+    op_root: Path,
+    op_name: str,
+    architecture: str,
+) -> dict[str, Any] | None:
+    key = _cache_key(op_root, op_name, architecture)
+    hit = _COMPILE_MEM.get(key)
+    if hit is not None and hit.get("codemap") is not None:
+        return hit
+    try:
+        path = _cache_path(op_root, architecture)
+        if not path.is_file():
+            return None
+        data = pickle.loads(path.read_bytes())
+        if not isinstance(data, dict) or data.get("codemap") is None:
+            return None
+        if data.get("op_name") != op_name or data.get("architecture") != architecture:
+            return None
+        _COMPILE_MEM[key] = data
+        return data
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def clear_compile_cache(op_root: Path | None = None, architecture: str | None = None) -> None:
+    if op_root is None:
+        _COMPILE_MEM.clear()
+        return
+    arch = architecture or "arch35"
+    key_prefix = f"{Path(op_root).expanduser().resolve()}|"
+    for k in list(_COMPILE_MEM):
+        if k.startswith(key_prefix):
+            _COMPILE_MEM.pop(k, None)
+    try:
+        path = _cache_path(Path(op_root), arch)
+        if path.is_file():
+            path.unlink()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _span(name: str, t0: float) -> None:
+    if timing_enabled():
+        _tlog(f"{time.perf_counter() - t0:7.3f}s  compile.{name}")
 
 
 def compile_codemap(
@@ -61,6 +156,7 @@ def compile_codemap(
     calls that cannot be uniquely bound remain explicit call boundaries rather
     than guessed edges.
     """
+    t_all = time.perf_counter()
     arch = (architecture or "arch35").strip() or "arch35"
     variant = build_variant_from_context(architecture=arch, build_context=build_context, name=arch)
     cm = CodeMap(op_name=op_name, architecture=arch)
@@ -82,27 +178,40 @@ def compile_codemap(
     }
     if kb is not None:
         CodeMap.from_kb(kb, codemap=cm)
+    t0 = time.perf_counter()
     cm = run_analyze_passes(cm, context=context)
+    _span("analyze_passes", t0)
 
     source_root = Path(op_root).expanduser().resolve() if op_root is not None else None
     if source_root is not None and _looks_like_operator_source(source_root):
-        inventory_source_files(cm, source_root, architecture=arch)
-        enrich_codemap_from_operator_source(cm, source_root, architecture=arch)
-        complete_tiling_fields(cm, source_root, architecture=arch)
-        bind_host_tiling_key_expressions(cm, source_root, architecture=arch)
-        trace_host_key_roots(cm, source_root, architecture=arch)
-        validate_host_defuse(cm, source_root, architecture=arch)
-        enrich_tiling_registrations(cm, source_root, architecture=arch)
-        resolve_source_gaps(cm, source_root, architecture=arch)
-        resolve_class_frontiers(cm, source_root, architecture=arch)
-        finalize_kernel_tiling_closure(cm, source_root, architecture=arch)
-        refine_kernel_calls_and_tiling_reads(cm, source_root, architecture=arch)
-        resolve_kernel_call_frontiers(cm, source_root, architecture=arch)
-        classify_kernel_call_boundaries(cm)
-        rebuild_verified_tiling_reads(cm, source_root, architecture=arch)
-        enrich_tiling_host_writes(cm, source_root, architecture=arch)
-        finalize_kernel_tiling_truth(cm)
-        finalize_kernel_tiling_metrics(cm)
+        from uo_init.passes.source_text_cache import clear as clear_source_text
+
+        clear_source_text()
+        for name, fn, kwargs in (
+            ("inventory", inventory_source_files, {}),
+            ("source_contract", enrich_codemap_from_operator_source, {}),
+            ("tiling_fields", complete_tiling_fields, {}),
+            ("host_tiling_key", bind_host_tiling_key_expressions, {}),
+            ("host_defuse", trace_host_key_roots, {}),
+            ("host_defuse_validate", validate_host_defuse, {}),
+            ("tiling_registration", enrich_tiling_registrations, {}),
+            ("source_gaps", resolve_source_gaps, {}),
+            ("class_frontiers", resolve_class_frontiers, {}),
+            ("kernel_tiling_closure", finalize_kernel_tiling_closure, {}),
+            ("kernel_call_refine", refine_kernel_calls_and_tiling_reads, {}),
+            ("kernel_call_frontiers", resolve_kernel_call_frontiers, {}),
+            ("kernel_call_boundaries", classify_kernel_call_boundaries, {"skip_arch": True}),
+            ("tiling_reads", rebuild_verified_tiling_reads, {}),
+            ("tiling_host_writes", enrich_tiling_host_writes, {}),
+            ("kernel_tiling_truth", finalize_kernel_tiling_truth, {"skip_arch": True}),
+            ("kernel_tiling_metrics", finalize_kernel_tiling_metrics, {"skip_arch": True}),
+        ):
+            t0 = time.perf_counter()
+            if kwargs.get("skip_arch"):
+                fn(cm)  # type: ignore[misc]
+            else:
+                fn(cm, source_root, architecture=arch)  # type: ignore[misc]
+            _span(name, t0)
         cm.meta["production_source_enrichment"] = True
     else:
         cm.meta["production_source_enrichment"] = False
@@ -113,32 +222,44 @@ def compile_codemap(
 
     # Ensure TPL/D blobs exist even when header was only discoverable after
     # source inventory; then stamp host/graph projections with packing facts.
+    t0 = time.perf_counter()
     if "tiling/exhaustive_key_space.yaml" not in (context.get("tg_views") or {}):
         if source_root is not None:
             context["op_root"] = str(source_root)
             context["architecture"] = arch
         cm = tpl_schema_pass.run(cm, context=context)
+    _span("tpl_schema", t0)
+    t0 = time.perf_counter()
     merged_views = dict(views or {})
     merged_views.update(context.get("tg_views") or {})
     merged_views = finalize_tg_views(cm, existing=merged_views)
+    _span("finalize_views", t0)
 
+    t0 = time.perf_counter()
     audit = audit_codemap(cm)
+    _span("audit", t0)
     result: dict[str, Any] = {
         "ok": True,
         "summary": dict(audit["summary"]),
         "audit": audit,
         "gaps": list_gaps(cm),
         "codemap": cm,
+        "_merged_views": merged_views,
         "tg_views": {
             "legal_key_count": int(cm.meta.get("legal_key_count") or 0),
             "view_names": sorted(merged_views),
         },
     }
     if commit and source_root is not None:
+        t0 = time.perf_counter()
         path = uo_product_path(source_root, op_name, arch)
-        written = write_codemap(cm, path, views=merged_views)
+        written = write_codemap(
+            cm, path, views=merged_views, summary=dict(audit["summary"])
+        )
         result["uo"] = written
         result["path"] = written.get("path")
+        _span("write_uo", t0)
+    _span("total", t_all)
     return result
 
 

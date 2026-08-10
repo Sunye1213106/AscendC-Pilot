@@ -482,6 +482,43 @@ def _base_class(cursor):
     return None
 
 
+def _base_specifiers_under(node, *, needle: str, op_root: str, scope=None, only_in_scope: bool):
+    """CXX_BASE_SPECIFIER nodes under one class/struct decl."""
+    found = []
+    stack = list(node.get_children())
+    while stack:
+        child = stack.pop()
+        try:
+            kind = child.kind.name
+        except Exception:  # noqa: BLE001
+            continue
+        where = _file_of(child)
+        if where is None:
+            continue
+        if only_in_scope and not _in_scope(where, needle, op_root, scope):
+            continue
+        if kind == "CXX_BASE_SPECIFIER":
+            found.append(child)
+        else:
+            stack.extend(child.get_children())
+    return found
+
+
+_FRAMEWORK_HEADERS_CACHE: dict[tuple[str, float], frozenset[str]] = {}
+
+
+def _framework_headers_cached(
+    path: str, mtime: float, cursor, needle: str, op_root: str = "", scope=None
+) -> frozenset[str]:
+    key = (path, mtime)
+    hit = _FRAMEWORK_HEADERS_CACHE.get(key)
+    if hit is not None:
+        return hit
+    out = frozenset(_framework_headers(cursor, needle, op_root, scope))
+    _FRAMEWORK_HEADERS_CACHE[key] = out
+    return out
+
+
 def _framework_headers(cursor, needle: str, op_root: str = "", scope=None) -> set[str]:
     """Files holding the base classes this operator's tiling classes derive from.
 
@@ -688,6 +725,7 @@ class _Walker:
         scope=None,
         logs_rejections: bool = False,
         reachable: frozenset[str] | None = None,
+        collect_bases: bool = False,
     ):
         self.needle = needle
         self.op_root = _norm(op_root) if op_root else ""
@@ -697,6 +735,7 @@ class _Walker:
         self.collect_writes = collect_writes
         self.side = side
         self.reachable = reachable
+        self.collect_bases = collect_bases
         self.controls: list[CtrlNode] = []
         self.writes: list[WriteRecord] = []
         self.local_writes: list[WriteRecord] = []
@@ -709,6 +748,9 @@ class _Walker:
         self._ordinal: dict[tuple[str, int, str], int] = {}
         # induction variables of every loop currently enclosing the cursor
         self._loop_vars: tuple[str, ...] = ()
+        self._pending_bases: list = []
+        self._base_seen: set[str] = set()
+        self._frame_candidates: set[str] = set()
 
     # -- helpers -----------------------------------------------------------
     def _in_scope(self, file: str | None) -> bool:
@@ -725,7 +767,7 @@ class _Walker:
         """
         if file is None:
             return False
-        return self._in_scope(file) or file in self.frame_files
+        return self._in_scope(file) or file in self.frame_files or file in self._frame_candidates
 
     def _should_prune(self, cursor, kind_name: str, file: str | None, func: str) -> bool:
         """Phase A/B: skip subtrees that cannot contribute HostIR facts."""
@@ -750,6 +792,68 @@ class _Walker:
                 return True
         return False
 
+    def _collect_class_bases(self, cursor) -> None:
+        """Record external base-class files while walking in-scope class decls."""
+        for spec in _base_specifiers_under(
+            cursor,
+            needle=self.needle,
+            op_root=self.op_root,
+            scope=self.scope,
+            only_in_scope=True,
+        ):
+            self._pending_bases.append(spec)
+            base = _base_class(spec)
+            if base is None:
+                continue
+            key = f"{base.get_usr()}"
+            if key in self._base_seen:
+                continue
+            self._base_seen.add(key)
+            where = _file_of(base)
+            if where is None or any(m in where for m in FOREIGN_MARKERS):
+                continue
+            if not _in_scope(where, self.needle, self.op_root, self.scope):
+                self._frame_candidates.add(where)
+            else:
+                self._pending_bases.extend(
+                    _base_specifiers_under(
+                        base,
+                        needle=self.needle,
+                        op_root=self.op_root,
+                        scope=self.scope,
+                        only_in_scope=False,
+                    )
+                )
+
+    def resolve_frame_files(self) -> frozenset[str]:
+        """Transitive external base-class files collected during index_walk."""
+        out: set[str] = set(self._frame_candidates)
+        pending = list(self._pending_bases)
+        seen = set(self._base_seen)
+        while pending:
+            base = _base_class(pending.pop())
+            if base is None:
+                continue
+            key = f"{base.get_usr()}"
+            if key in seen:
+                continue
+            seen.add(key)
+            where = _file_of(base)
+            if where is None or any(m in where for m in FOREIGN_MARKERS):
+                continue
+            if not _in_scope(where, self.needle, self.op_root, self.scope):
+                out.add(where)
+            pending.extend(
+                _base_specifiers_under(
+                    base,
+                    needle=self.needle,
+                    op_root=self.op_root,
+                    scope=self.scope,
+                    only_in_scope=False,
+                )
+            )
+        return frozenset(out)
+
     def index_walk(self, cursor, func: str = "") -> None:
         """Light pass: function boundaries + call sites only (Phase B pass 1)."""
         try:
@@ -759,6 +863,12 @@ class _Walker:
         file = _file_of(cursor)
         if self._should_prune(cursor, kind_name, file, func):
             return
+        if (
+            self.collect_bases
+            and kind_name in ("CLASS_DECL", "STRUCT_DECL", "CLASS_TEMPLATE")
+            and self._in_scope(file)
+        ):
+            self._collect_class_bases(cursor)
         if kind_name in _FUNCTION_DEF_KINDS and cursor.is_definition():
             if self._in_frame(file):
                 assert file is not None
@@ -1826,6 +1936,252 @@ def member_path(n) -> str:
     return ".".join(reversed([p for p in parts if p]))
 
 
+def _native_walk_bin() -> Path | None:
+    """Locate optional native uo_walk executable."""
+    import os
+    import sys
+
+    override = os.environ.get("UO_WALK_BIN", "").strip()
+    if override:
+        p = Path(override).expanduser()
+        if p.is_file():
+            return p.resolve()
+    here = Path(__file__).resolve()
+    uo_root = here.parents[2]
+    candidates = [
+        uo_root / "native" / "uo_walk" / "build" / "uo_walk",
+        uo_root / "native" / "uo_walk" / "build" / "Release" / "uo_walk.exe",
+        uo_root / "native" / "uo_walk" / "build" / "Debug" / "uo_walk.exe",
+    ]
+    if sys.platform == "win32":
+        candidates = [
+            uo_root / "native" / "uo_walk" / "build" / "Release" / "uo_walk.exe",
+            uo_root / "native" / "uo_walk" / "build" / "Debug" / "uo_walk.exe",
+            uo_root / "native" / "uo_walk" / "build" / "uo_walk.exe",
+        ] + candidates
+    for cand in candidates:
+        if cand.is_file():
+            return cand.resolve()
+    return None
+
+
+def _walk_result_from_native(data: dict, *, path: str) -> WalkResult:
+    """Map native JSON into WalkResult (empty lists for unimplemented fields)."""
+    functions: dict[str, FuncRecord] = {}
+    for row in data.get("functions") or []:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or "")
+        if not name:
+            continue
+        functions[name] = FuncRecord(
+            name=name,
+            file=str(row.get("file") or path),
+            line=int(row.get("line") or 0),
+            params=[str(p) for p in (row.get("params") or [])],
+        )
+    call_sites: list[CallSite] = []
+    for row in data.get("call_sites") or []:
+        if not isinstance(row, dict):
+            continue
+        call_sites.append(
+            CallSite(
+                caller=str(row.get("caller") or ""),
+                callee=str(row.get("callee") or ""),
+                file=str(row.get("file") or path),
+                line=int(row.get("line") or 0),
+                column=int(row.get("column") or 0),
+                receiver=str(row.get("receiver") or ""),
+                args=tuple(str(a) for a in (row.get("args") or ())),
+            )
+        )
+    controls: list[CtrlNode] = []
+    for row in data.get("controls") or []:
+        if not isinstance(row, dict):
+            continue
+        controls.append(
+            CtrlNode(
+                id=str(row.get("id") or f"{row.get('file')}:{row.get('line')}:0:{row.get('kind')}:0"),
+                kind=str(row.get("kind") or "if"),
+                file=str(row.get("file") or path),
+                line=int(row.get("line") or 0),
+                column=int(row.get("column") or 0),
+                condition=str(row.get("condition") or "")[:512],
+                function=str(row.get("function") or ""),
+            )
+        )
+    writes: list[WriteRecord] = []
+    for row in data.get("writes") or []:
+        if not isinstance(row, dict):
+            continue
+        writes.append(
+            WriteRecord(
+                path=str(row.get("path") or ""),
+                line=int(row.get("line") or 0),
+                rhs=str(row.get("rhs") or ""),
+                file=str(row.get("file") or path),
+                function=str(row.get("function") or ""),
+                column=int(row.get("column") or 0),
+            )
+        )
+    diags = [
+        (int(d[0]), str(d[1]), str(d[2]))
+        for d in (data.get("diagnostics") or [])
+        if isinstance(d, (list, tuple)) and len(d) >= 3
+    ]
+    return WalkResult(
+        path=_norm(path),
+        controls=controls,
+        writes=writes,
+        local_writes=[],
+        call_sites=call_sites,
+        functions=functions,
+        diagnostics=diags,
+        class_fields=set(data.get("class_fields") or []),
+        field_decls={},
+        local_decls=[],
+    )
+
+
+def _try_native_walk(
+    path: str,
+    args: list[str],
+    *,
+    side: str,
+    op_needle: str,
+    op_root: str,
+) -> WalkResult | None:
+    """Run native uo_walk when available; return None on any failure."""
+    import json
+    import os
+    import subprocess
+    import tempfile
+
+    if os.environ.get("UO_NATIVE_WALK", "1").strip().lower() in {"0", "false", "off", "no"}:
+        return None
+    exe = _native_walk_bin()
+    if exe is None:
+        return None
+    with tempfile.TemporaryDirectory(prefix="uo_walk_") as td:
+        td_path = Path(td)
+        argfile = td_path / "args.txt"
+        outfile = td_path / "out.json"
+        argfile.write_text("\n".join(args) + "\n", encoding="utf-8")
+        cmd = [
+            str(exe),
+            "--file",
+            path,
+            "--side",
+            side,
+            "--args",
+            str(argfile),
+            "--out",
+            str(outfile),
+        ]
+        if op_needle:
+            cmd += ["--needle", op_needle]
+        if op_root:
+            cmd += ["--op-root", op_root]
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=int(os.environ.get("UO_NATIVE_WALK_TIMEOUT", "600")),
+                check=False,
+            )
+            if proc.returncode != 0 or not outfile.is_file():
+                return None
+            data = json.loads(outfile.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                return None
+            return _walk_result_from_native(data, path=path)
+        except Exception:  # noqa: BLE001
+            return None
+
+
+def probe_diagnostics(
+    path: str | Path,
+    ctx: BuildContext,
+    *,
+    side: str = "host",
+    dtype_variant: str | None = "DT_FLOAT16",
+) -> dict[str, Any]:
+    """Error count for a TU without walking it.
+
+    ``scope_scan`` only needs to know whether the build flags resolve, and the
+    problems it looks for (missing headers, bad flags) are all reported while
+    parsing declarations. Skipping function bodies keeps that answer without
+    paying for the deep walk extract will do anyway.
+    """
+    import time as _time
+
+    from uo_init.timing import log as _tlog
+    from uo_init import tu_cache
+
+    path = str(path)
+    name = Path(path).name
+    t0 = _time.perf_counter()
+    arch = getattr(ctx, "arch_dir", None) or "arch35"
+    op_dir = getattr(ctx, "op_dir", None) or ""
+
+    cache_key = ""
+    if tu_cache.cache_enabled():
+        try:
+            cache_key = tu_cache.walk_cache_key(
+                path, ctx, side=side, dtype_variant=dtype_variant, op_needle="probe"
+            )
+            cached = tu_cache.load_probe(cache_key, op_dir=op_dir or None, arch=arch)
+            if cached is not None:
+                _tlog(
+                    f"{_time.perf_counter() - t0:7.3f}s  probe  file={name} "
+                    f"side={side} cache=hit errors={cached.get('error_count')}"
+                )
+                return cached
+        except Exception:  # noqa: BLE001
+            cache_key = ""
+
+    args = (
+        ctx.host_args()
+        if side == "host"
+        else ctx.kernel_args(dtype_variant=dtype_variant)
+    )
+    _require_clang()
+    idx = cindex.Index.create()
+    tu = idx.parse(
+        path,
+        args=args,
+        options=cindex.TranslationUnit.PARSE_SKIP_FUNCTION_BODIES,
+    )
+    errors = 0
+    fatals = 0
+    samples: list[str] = []
+    for d in tu.diagnostics:
+        sev = int(d.severity)
+        if sev >= 4:
+            fatals += 1
+        if sev >= 3:
+            errors += 1
+            if len(samples) < 5:
+                samples.append(str(d.spelling)[:200])
+    out = {
+        "error_count": errors,
+        "fatal_count": fatals,
+        "samples": samples,
+        "skipped_bodies": True,
+    }
+    if cache_key:
+        try:
+            tu_cache.store_probe(cache_key, out, op_dir=op_dir or None, arch=arch)
+        except Exception:  # noqa: BLE001
+            pass
+    _tlog(
+        f"{_time.perf_counter() - t0:7.3f}s  probe  file={name} side={side} "
+        f"cache={'store' if cache_key else 'off'} errors={errors} fatal={fatals}"
+    )
+    return out
+
+
 def walk_file(
     path: str | Path,
     ctx: BuildContext,
@@ -1857,6 +2213,7 @@ def walk_file(
     t_all = _time.perf_counter()
     arch = getattr(ctx, "arch_dir", None) or "arch35"
     op_dir = getattr(ctx, "op_dir", None) or ""
+    op_root = ctx.op_dir or ""
     cache_key = ""
     if tu_cache.cache_enabled():
         try:
@@ -1882,12 +2239,31 @@ def walk_file(
         except Exception:  # noqa: BLE001 — cache must never block extract
             cache_key = ""
 
-    _require_clang()
     args = (
         ctx.host_args()
         if side == "host"
         else ctx.kernel_args(dtype_variant=dtype_variant)
     )
+    native = _try_native_walk(
+        path, args, side=side, op_needle=op_needle, op_root=op_root
+    )
+    if native is not None:
+        if cache_key:
+            try:
+                tu_cache.store_walk(cache_key, native, op_dir=op_dir or None, arch=arch)
+            except Exception:  # noqa: BLE001
+                pass
+        dt = _time.perf_counter() - t_all
+        budget = phase_budget_s()
+        flag = " SLOW" if dt > budget else ""
+        _tlog(
+            f"{dt:7.3f}s{flag}  walk_file  file={name} side={side} "
+            f"backend=native controls={len(native.controls)} "
+            f"writes={len(native.writes)} calls={len(native.call_sites)}"
+        )
+        return native
+
+    _require_clang()
     idx = cindex.Index.create()
     t0 = _time.perf_counter()
     tu = idx.parse(path, args=args, options=cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD)
@@ -1896,27 +2272,24 @@ def walk_file(
         (int(d.severity), _norm(d.location.file.name) if d.location.file else "?", d.spelling)
         for d in tu.diagnostics
     ]
-    op_root = ctx.op_dir or ""
-    t0 = _time.perf_counter()
-    frame_files = frozenset(
-        _framework_headers(tu.cursor, op_needle, op_root, scope)
-    )
-    t_frame = _time.perf_counter() - t0
 
-    # Phase B pass 1: light index of function boundaries + calls (with Phase A
-    # pruning). Then deep-walk only the reachable call closure.
+    # Phase B pass 1 merges framework-header discovery into the index walk.
     t0 = _time.perf_counter()
     indexer = _Walker(
         op_needle,
         op_root=op_root,
         collect_writes=False,
         side=side,
-        frame_files=frame_files,
+        frame_files=frozenset(),
         scope=scope,
         logs_rejections=logs_rejections,
+        collect_bases=True,
     )
     for child in tu.cursor.get_children():
         indexer.index_walk(child, "")
+    frame_files = indexer.resolve_frame_files()
+    t_frame = 0.0
+    frame_merged = True
     reachable = reachable_function_names(
         indexer.functions,
         indexer.call_sites,
@@ -1937,6 +2310,7 @@ def walk_file(
         logs_rejections=logs_rejections,
         reachable=reachable,
     )
+    w.functions = indexer.functions
     t0 = _time.perf_counter()
     for child in tu.cursor.get_children():
         w.walk(child, [], "")
@@ -1962,9 +2336,10 @@ def walk_file(
     t_total = _time.perf_counter() - t_all
     budget = phase_budget_s()
     flag = " SLOW" if t_total > budget else ""
+    frame_label = "merged" if frame_merged else f"{t_frame:.3f}"
     _tlog(
         f"{t_total:7.3f}s{flag}  walk_file  file={name} side={side} "
-        f"parse={t_parse:.3f}s frame={t_frame:.3f}s index={t_index:.3f}s "
+        f"parse={t_parse:.3f}s frame={frame_label} index={t_index:.3f}s "
         f"ast_walk={t_walk:.3f}s cache={'store' if cache_key else 'off'} "
         f"reachable={len(reachable)} controls={len(w.controls)} "
         f"writes={len(w.writes)} calls={len(w.call_sites)} "

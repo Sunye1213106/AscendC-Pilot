@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Mapping
 
 
@@ -26,7 +27,59 @@ def _collect_evidence_ids(raw: Mapping[str, Any], certificate: Mapping[str, Any]
     return ids
 
 
-def validate(raw: Mapping[str, Any], *, evidence_pack: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def _source_refs(raw: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Gather file:line citations from every place a producer may put them."""
+    refs: list[dict[str, Any]] = []
+    cert = raw.get("certificate") if isinstance(raw.get("certificate"), Mapping) else {}
+    scope = cert.get("proof_scope") if isinstance(cert.get("proof_scope"), Mapping) else {}
+    for src in (
+        raw.get("source_refs"),
+        raw.get("source_citations"),
+        cert.get("source_refs"),
+        scope.get("assignments"),
+        scope.get("guards"),
+    ):
+        if not isinstance(src, list):
+            continue
+        for item in src:
+            if isinstance(item, Mapping):
+                refs.append(dict(item))
+            elif isinstance(item, str) and item.strip():
+                # "path/to/file.cpp:123" form used by proof_scope.assignments
+                path, _, line = item.partition(":")
+                refs.append({"file": path, "line": line or ""})
+    return refs
+
+
+def live_source_refs(
+    raw: Mapping[str, Any],
+    *,
+    roots: list[Path] | None = None,
+) -> list[dict[str, Any]]:
+    """Subset of citations whose file exists under one of ``roots`` (or absolute)."""
+    live: list[dict[str, Any]] = []
+    for ref in _source_refs(raw):
+        f = str(ref.get("file") or ref.get("path") or "").strip()
+        if not f:
+            continue
+        p = Path(f)
+        if p.is_file():
+            live.append(ref)
+            continue
+        for root in roots or []:
+            cand = root / f
+            if cand.is_file():
+                live.append({**ref, "file": str(cand)})
+                break
+    return live
+
+
+def validate(
+    raw: Mapping[str, Any],
+    *,
+    evidence_pack: Mapping[str, Any] | None = None,
+    operator_root: Path | str | None = None,
+) -> dict[str, Any]:
     certificate = raw.get("certificate")
     if not isinstance(certificate, Mapping):
         return {"ok": False, "status": "needs_evidence", "errors": ["certificate_missing"]}
@@ -64,7 +117,6 @@ def validate(raw: Mapping[str, Any], *, evidence_pack: Mapping[str, Any] | None 
                 pack_ids.add(str(e["id"]))
     if pack_ids:
         if not cited:
-            # Pack present → fill-in required; skip/reject without entry IDs.
             errors.append("evidence_entry_ids_missing_while_pack_present")
         else:
             unknown = [i for i in cited if i not in pack_ids]
@@ -72,13 +124,26 @@ def validate(raw: Mapping[str, Any], *, evidence_pack: Mapping[str, Any] | None 
                 bad = ",".join(unknown[:5])
                 errors.append(f"evidence_entry_ids_unknown:{bad}")
     elif cited:
-        # Citations without a pack are fine; pack may live on disk separately.
         pass
     else:
-        # Soft hint for review templates that expect IDs once lemma-evidence ran.
         proof = raw.get("proof") if isinstance(raw.get("proof"), Mapping) else {}
         if proof and not cited:
             warnings.append("proof_missing_evidence_entry_ids")
+
+    # Hint families are hypotheses about a previous operator run. Promote only
+    # when this run's source is cited with a file that still exists.
+    origin = str(raw.get("origin") or raw.get("from") or "").strip().lower()
+    from_hint = origin in {"hint", "hint_family", "hint_families"} or bool(
+        raw.get("from_hint") or raw.get("hint_family")
+    )
+    roots = [Path(operator_root)] if operator_root else []
+    live = live_source_refs(raw, roots=roots)
+    if from_hint and not live:
+        errors.append("hint_requires_live_source_ref")
+    elif not live and isinstance(scope, Mapping) and (
+        scope.get("assignments") or scope.get("guards")
+    ):
+        warnings.append("source_refs_unresolved")
 
     return {
         "ok": not errors,
@@ -86,4 +151,6 @@ def validate(raw: Mapping[str, Any], *, evidence_pack: Mapping[str, Any] | None 
         "errors": errors,
         "warnings": warnings,
         "evidence_entry_ids": cited,
+        "live_source_refs": live,
+        "from_hint": from_hint,
     }

@@ -281,12 +281,14 @@ def _reachable(codemap: CodeMap) -> set[str]:
 
 
 def _load(root: Path, selected: list[str]) -> dict[str, str]:
+    from uo_init.passes.source_text_cache import read_text
+
     out: dict[str, str] = {}
     for raw in selected:
         path = _resolve_file(root, raw)
         if path is None:
             continue
-        out[raw.replace("\\", "/").lstrip("./")] = path.read_text(encoding="utf-8", errors="replace")
+        out[raw.replace("\\", "/").lstrip("./")] = read_text(path)
     return out
 
 

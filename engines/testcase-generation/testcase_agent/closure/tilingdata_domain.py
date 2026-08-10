@@ -243,6 +243,9 @@ def compute_tilingdata_coverage(
     ws = (ws or W.default_workspace()).ensure()
     probe = probe_scrape_capability(ws)
     uo = _uo_root(ws)
+    from testcase_agent.closure.kernel_domain import view_source
+
+    source = view_source(uo, "views/tilingdata.yaml")
     fields = load_tilingdata_fields(uo)
     Rset = ledger.load_R(ws)
     rows: list[list[Any]] = []
@@ -321,6 +324,9 @@ def compute_tilingdata_coverage(
     any_approx = any(bool(f.get("over_approximated")) for f in field_summaries)
     return {
         "ok": True,
+        "source": source,
+        # False means "no input", not "this operator has no tiling data".
+        "established": source.get("kind") != "missing",
         "probe": probe,
         "fields": len(fields),
         "defects": defects,

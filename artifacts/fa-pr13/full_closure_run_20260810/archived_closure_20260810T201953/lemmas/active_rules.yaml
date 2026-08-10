@@ -1,0 +1,1471 @@
+schema: tg-active-rules/v1
+uo_graph_fingerprint: ''
+source_revision: ''
+cold_start_fingerprint: 6e275cc3f809b68ac9d1d643
+rules:
+- kind: combo
+  grade: source_lemma
+  when:
+    IsRope: '1'
+    DTemplateNum: '64'
+  dim: ''
+  value: ''
+  label: IsRope=1 forces DTemplateNum=192 (not 64)
+  reason: 'GetDTemplateType: if hasRope return NUM192'
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids:
+    - EV_337831216462
+    - EV_39107b054b20
+    - EV_f23673b6b6d9
+    - EV_1924083103e9
+    - EV_4f10ac035414
+    - EV_cd72f5759312
+    - EV_3fbd7f290b3b
+    - EV_03d2566d1195
+    - EV_620c6b26990b
+    - EV_6db1c7f25eca
+    - EV_66f23b5179c3
+    - EV_8206c68e022e
+    reasoning:
+    - Host derived assignment forces rewrite/unreachable for this when; no alternate
+      writer found in arch35 packing path.
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 128
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - DTemplateNum
+      - IsRope
+      relevant_functions:
+      - GetDTemplateType
+      - GetTilingKey
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:847
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1479
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:847
+    assumptions:
+    - arch35 regbase host packing is the sole writer of the tiling key dims
+    - kernel template domain D may enumerate combinations host never packs
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate_declared_domain
+      boundary_replay: required_against_R
+      note: refute if any R witness matches when
+    evidence_entry_ids:
+    - EV_337831216462
+    - EV_39107b054b20
+    - EV_f23673b6b6d9
+    - EV_1924083103e9
+    - EV_4f10ac035414
+    - EV_cd72f5759312
+    - EV_3fbd7f290b3b
+    - EV_03d2566d1195
+    - EV_620c6b26990b
+    - EV_6db1c7f25eca
+    - EV_66f23b5179c3
+    - EV_8206c68e022e
+    evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_35F2661F.yaml
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''
+- kind: combo
+  grade: source_lemma
+  when:
+    IsRope: '1'
+    DTemplateNum: '128'
+  dim: ''
+  value: ''
+  label: IsRope=1 forces DTemplateNum=192 (not 128)
+  reason: 'GetDTemplateType: if hasRope return NUM192'
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids:
+    - EV_337831216462
+    - EV_39107b054b20
+    - EV_f23673b6b6d9
+    - EV_1924083103e9
+    - EV_4f10ac035414
+    - EV_cd72f5759312
+    - EV_3fbd7f290b3b
+    - EV_03d2566d1195
+    - EV_620c6b26990b
+    - EV_6db1c7f25eca
+    - EV_66f23b5179c3
+    - EV_8206c68e022e
+    reasoning:
+    - Host derived assignment forces rewrite/unreachable for this when; no alternate
+      writer found in arch35 packing path.
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 128
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - DTemplateNum
+      - IsRope
+      relevant_functions:
+      - GetDTemplateType
+      - GetTilingKey
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:847
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1479
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:847
+    assumptions:
+    - arch35 regbase host packing is the sole writer of the tiling key dims
+    - kernel template domain D may enumerate combinations host never packs
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate_declared_domain
+      boundary_replay: required_against_R
+      note: refute if any R witness matches when
+    evidence_entry_ids:
+    - EV_337831216462
+    - EV_39107b054b20
+    - EV_f23673b6b6d9
+    - EV_1924083103e9
+    - EV_4f10ac035414
+    - EV_cd72f5759312
+    - EV_3fbd7f290b3b
+    - EV_03d2566d1195
+    - EV_620c6b26990b
+    - EV_6db1c7f25eca
+    - EV_66f23b5179c3
+    - EV_8206c68e022e
+    evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_35F2661F.yaml
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''
+- kind: combo
+  grade: source_lemma
+  when:
+    IsRope: '1'
+    DTemplateNum: '256'
+  dim: ''
+  value: ''
+  label: IsRope=1 forces DTemplateNum=192 (not 256)
+  reason: 'GetDTemplateType: if hasRope return NUM192'
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids:
+    - EV_337831216462
+    - EV_39107b054b20
+    - EV_f23673b6b6d9
+    - EV_1924083103e9
+    - EV_4f10ac035414
+    - EV_cd72f5759312
+    - EV_3fbd7f290b3b
+    - EV_03d2566d1195
+    - EV_620c6b26990b
+    - EV_6db1c7f25eca
+    - EV_66f23b5179c3
+    - EV_8206c68e022e
+    reasoning:
+    - Host derived assignment forces rewrite/unreachable for this when; no alternate
+      writer found in arch35 packing path.
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 128
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - DTemplateNum
+      - IsRope
+      relevant_functions:
+      - GetDTemplateType
+      - GetTilingKey
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:847
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1479
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:847
+    assumptions:
+    - arch35 regbase host packing is the sole writer of the tiling key dims
+    - kernel template domain D may enumerate combinations host never packs
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate_declared_domain
+      boundary_replay: required_against_R
+      note: refute if any R witness matches when
+    evidence_entry_ids:
+    - EV_337831216462
+    - EV_39107b054b20
+    - EV_f23673b6b6d9
+    - EV_1924083103e9
+    - EV_4f10ac035414
+    - EV_cd72f5759312
+    - EV_3fbd7f290b3b
+    - EV_03d2566d1195
+    - EV_620c6b26990b
+    - EV_6db1c7f25eca
+    - EV_66f23b5179c3
+    - EV_8206c68e022e
+    evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_35F2661F.yaml
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''
+- kind: combo
+  grade: source_lemma
+  when:
+    IsRope: '1'
+    DTemplateNum: '768'
+  dim: ''
+  value: ''
+  label: IsRope=1 forces DTemplateNum=192 (not 768)
+  reason: 'GetDTemplateType: if hasRope return NUM192'
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids:
+    - EV_337831216462
+    - EV_39107b054b20
+    - EV_f23673b6b6d9
+    - EV_1924083103e9
+    - EV_4f10ac035414
+    - EV_cd72f5759312
+    - EV_3fbd7f290b3b
+    - EV_03d2566d1195
+    - EV_620c6b26990b
+    - EV_6db1c7f25eca
+    - EV_66f23b5179c3
+    - EV_8206c68e022e
+    reasoning:
+    - Host derived assignment forces rewrite/unreachable for this when; no alternate
+      writer found in arch35 packing path.
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 128
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - DTemplateNum
+      - IsRope
+      relevant_functions:
+      - GetDTemplateType
+      - GetTilingKey
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:847
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1479
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:847
+    assumptions:
+    - arch35 regbase host packing is the sole writer of the tiling key dims
+    - kernel template domain D may enumerate combinations host never packs
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate_declared_domain
+      boundary_replay: required_against_R
+      note: refute if any R witness matches when
+    evidence_entry_ids:
+    - EV_337831216462
+    - EV_39107b054b20
+    - EV_f23673b6b6d9
+    - EV_1924083103e9
+    - EV_4f10ac035414
+    - EV_cd72f5759312
+    - EV_3fbd7f290b3b
+    - EV_03d2566d1195
+    - EV_620c6b26990b
+    - EV_6db1c7f25eca
+    - EV_66f23b5179c3
+    - EV_8206c68e022e
+    evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_35F2661F.yaml
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''
+- kind: combo
+  grade: source_lemma
+  when:
+    IsRope: '1'
+    IsDNoEqual: '0'
+  dim: ''
+  value: ''
+  label: IsRope=1 forces IsDNoEqual=1
+  reason: 'GetTilingKey: dNoEqual = (d1 != d) || hasRope'
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids:
+    - EV_1924083103e9
+    - EV_4f10ac035414
+    - EV_66f23b5179c3
+    - EV_317e08260f5a
+    - EV_cffcddd1af5c
+    - EV_ae3530e5a83d
+    - EV_2b1d69fbc97a
+    - EV_95800821e34f
+    - EV_ea4b81f0b11d
+    - EV_3235d417ae19
+    - EV_73956952af5f
+    - EV_78286e01838b
+    reasoning:
+    - Host derived assignment forces rewrite/unreachable for this when; no alternate
+      writer found in arch35 packing path.
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 320
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - IsDNoEqual
+      - IsRope
+      relevant_functions:
+      - GetTilingKey
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1438
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1466
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1438
+    assumptions:
+    - arch35 regbase host packing is the sole writer of the tiling key dims
+    - kernel template domain D may enumerate combinations host never packs
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate_declared_domain
+      boundary_replay: required_against_R
+      note: refute if any R witness matches when
+    evidence_entry_ids:
+    - EV_1924083103e9
+    - EV_4f10ac035414
+    - EV_66f23b5179c3
+    - EV_317e08260f5a
+    - EV_cffcddd1af5c
+    - EV_ae3530e5a83d
+    - EV_2b1d69fbc97a
+    - EV_95800821e34f
+    - EV_ea4b81f0b11d
+    - EV_3235d417ae19
+    - EV_73956952af5f
+    - EV_78286e01838b
+    evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_48BD00F7.yaml
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''
+- kind: combo
+  grade: source_lemma
+  when:
+    DeterType: '3'
+    IsAttenMask: '0'
+  dim: ''
+  value: ''
+  label: DeterType=3 requires IsAttenMask=1
+  reason: 'ProcessSparseModeInfo + GetTilingKey: new deter sparse needs atten mask;
+    without mask host packs DeterType!=3/4'
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids:
+    - EV_680eb6a11d9b
+    - EV_b0f8c09e9b21
+    - EV_5abdf32fa393
+    - EV_3d498333c904
+    - EV_b2517658b630
+    - EV_9e082bc5ebd7
+    - EV_80ededac4a14
+    - EV_980fbeddd9d8
+    - EV_74dcb79da2dc
+    - EV_cbd308850600
+    - EV_5ffff9fa4400
+    - EV_518655251e98
+    reasoning:
+    - Host derived assignment forces rewrite/unreachable for this when; no alternate
+      writer found in arch35 packing path.
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 912
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - DeterType
+      - IsAttenMask
+      relevant_functions:
+      - ProcessSparseModeInfo
+      - GetTilingKey
+      - IsNewDeter
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1184
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1437
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:665
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1204
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1437
+    assumptions:
+    - arch35 regbase host packing is the sole writer of the tiling key dims
+    - kernel template domain D may enumerate combinations host never packs
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate_declared_domain
+      boundary_replay: required_against_R
+      note: refute if any R witness matches when
+    evidence_entry_ids:
+    - EV_680eb6a11d9b
+    - EV_b0f8c09e9b21
+    - EV_5abdf32fa393
+    - EV_3d498333c904
+    - EV_b2517658b630
+    - EV_9e082bc5ebd7
+    - EV_80ededac4a14
+    - EV_980fbeddd9d8
+    - EV_74dcb79da2dc
+    - EV_cbd308850600
+    - EV_5ffff9fa4400
+    - EV_518655251e98
+    evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_3989A088.yaml
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''
+- kind: combo
+  grade: source_lemma
+  when:
+    DeterType: '4'
+    IsAttenMask: '0'
+  dim: ''
+  value: ''
+  label: DeterType=4 requires IsAttenMask=1
+  reason: 'ProcessSparseModeInfo + GetTilingKey: new deter sparse needs atten mask;
+    without mask host packs DeterType!=3/4'
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids:
+    - EV_680eb6a11d9b
+    - EV_b0f8c09e9b21
+    - EV_5abdf32fa393
+    - EV_3d498333c904
+    - EV_b2517658b630
+    - EV_9e082bc5ebd7
+    - EV_80ededac4a14
+    - EV_980fbeddd9d8
+    - EV_74dcb79da2dc
+    - EV_cbd308850600
+    - EV_5ffff9fa4400
+    - EV_518655251e98
+    reasoning:
+    - Host derived assignment forces rewrite/unreachable for this when; no alternate
+      writer found in arch35 packing path.
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 992
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - DeterType
+      - IsAttenMask
+      relevant_functions:
+      - ProcessSparseModeInfo
+      - GetTilingKey
+      - IsNewDeter
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1184
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1437
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:665
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1204
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1437
+    assumptions:
+    - arch35 regbase host packing is the sole writer of the tiling key dims
+    - kernel template domain D may enumerate combinations host never packs
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate_declared_domain
+      boundary_replay: required_against_R
+      note: refute if any R witness matches when
+    evidence_entry_ids:
+    - EV_680eb6a11d9b
+    - EV_b0f8c09e9b21
+    - EV_5abdf32fa393
+    - EV_3d498333c904
+    - EV_b2517658b630
+    - EV_9e082bc5ebd7
+    - EV_80ededac4a14
+    - EV_980fbeddd9d8
+    - EV_74dcb79da2dc
+    - EV_cbd308850600
+    - EV_5ffff9fa4400
+    - EV_518655251e98
+    evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_3989A088.yaml
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''
+- kind: combo
+  grade: source_lemma
+  when:
+    IsBn2MultiBlk: '1'
+    IsTnd: '1'
+  dim: ''
+  value: ''
+  label: IsBn2MultiBlk=1 requires non-TND
+  reason: isBn2MultiBlk requires layoutType != TND (bnSparseLimit)
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids:
+    - EV_1924083103e9
+    - EV_4f10ac035414
+    - EV_66f23b5179c3
+    - EV_317e08260f5a
+    - EV_cffcddd1af5c
+    - EV_ae3530e5a83d
+    - EV_2b1d69fbc97a
+    - EV_95800821e34f
+    - EV_7a6d63c99640
+    - EV_d86f806eadbf
+    - EV_c21f9df27ae9
+    - EV_6047f617b229
+    reasoning:
+    - Host derived assignment forces rewrite/unreachable for this when; no alternate
+      writer found in arch35 packing path.
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 320
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - IsBn2MultiBlk
+      - IsTnd
+      relevant_functions:
+      - SetSplitAxis
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1588
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1592
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1589
+    assumptions:
+    - arch35 regbase host packing is the sole writer of the tiling key dims
+    - kernel template domain D may enumerate combinations host never packs
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate_declared_domain
+      boundary_replay: required_against_R
+      note: refute if any R witness matches when
+    evidence_entry_ids:
+    - EV_1924083103e9
+    - EV_4f10ac035414
+    - EV_66f23b5179c3
+    - EV_317e08260f5a
+    - EV_cffcddd1af5c
+    - EV_ae3530e5a83d
+    - EV_2b1d69fbc97a
+    - EV_95800821e34f
+    - EV_7a6d63c99640
+    - EV_d86f806eadbf
+    - EV_c21f9df27ae9
+    - EV_6047f617b229
+    evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_B140C632.yaml
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''
+- kind: combo
+  grade: source_lemma
+  when:
+    IsBn2MultiBlk: '1'
+    IsRope: '1'
+  dim: ''
+  value: ''
+  label: IsBn2MultiBlk=1 requires IsRope=0
+  reason: isBn2MultiBlk requires !hasRope
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids:
+    - EV_1924083103e9
+    - EV_4f10ac035414
+    - EV_66f23b5179c3
+    - EV_317e08260f5a
+    - EV_cffcddd1af5c
+    - EV_ae3530e5a83d
+    - EV_2b1d69fbc97a
+    - EV_95800821e34f
+    - EV_ea4b81f0b11d
+    - EV_3235d417ae19
+    - EV_73956952af5f
+    - EV_78286e01838b
+    reasoning:
+    - Host derived assignment forces rewrite/unreachable for this when; no alternate
+      writer found in arch35 packing path.
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 320
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - IsBn2MultiBlk
+      - IsRope
+      relevant_functions:
+      - SetSplitAxis
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1592
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1602
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1602
+    assumptions:
+    - arch35 regbase host packing is the sole writer of the tiling key dims
+    - kernel template domain D may enumerate combinations host never packs
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate_declared_domain
+      boundary_replay: required_against_R
+      note: refute if any R witness matches when
+    evidence_entry_ids:
+    - EV_1924083103e9
+    - EV_4f10ac035414
+    - EV_66f23b5179c3
+    - EV_317e08260f5a
+    - EV_cffcddd1af5c
+    - EV_ae3530e5a83d
+    - EV_2b1d69fbc97a
+    - EV_95800821e34f
+    - EV_ea4b81f0b11d
+    - EV_3235d417ae19
+    - EV_73956952af5f
+    - EV_78286e01838b
+    evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_AAC6E318.yaml
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''
+- kind: combo
+  grade: source_lemma
+  when:
+    InputDType: '1'
+    DTemplateNum: '768'
+    S1TemplateNum: '128'
+  dim: ''
+  value: ''
+  label: FLOAT large-D forces S1TemplateNum=64
+  reason: 'GetS1S2TemplateType: FLOAT && d>256 → S1=64,S2=128'
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids:
+    - EV_337831216462
+    - EV_39107b054b20
+    - EV_f23673b6b6d9
+    - EV_1924083103e9
+    - EV_4f10ac035414
+    - EV_cd72f5759312
+    - EV_3fbd7f290b3b
+    - EV_03d2566d1195
+    - EV_620c6b26990b
+    - EV_6db1c7f25eca
+    - EV_66f23b5179c3
+    - EV_8206c68e022e
+    reasoning:
+    - Host derived assignment forces rewrite/unreachable for this when; no alternate
+      writer found in arch35 packing path.
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 352
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - DTemplateNum
+      - InputDType
+      - S1TemplateNum
+      relevant_functions:
+      - GetS1S2TemplateType
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:812
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:813
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:812
+    assumptions:
+    - arch35 regbase host packing is the sole writer of the tiling key dims
+    - kernel template domain D may enumerate combinations host never packs
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate_declared_domain
+      boundary_replay: required_against_R
+      note: refute if any R witness matches when
+    evidence_entry_ids:
+    - EV_337831216462
+    - EV_39107b054b20
+    - EV_f23673b6b6d9
+    - EV_1924083103e9
+    - EV_4f10ac035414
+    - EV_cd72f5759312
+    - EV_3fbd7f290b3b
+    - EV_03d2566d1195
+    - EV_620c6b26990b
+    - EV_6db1c7f25eca
+    - EV_66f23b5179c3
+    - EV_8206c68e022e
+    evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_B652119C.yaml
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''
+- kind: combo
+  grade: source_lemma
+  when:
+    IsTndSwizzle: '1'
+    SplitAxis: '0'
+  dim: ''
+  value: ''
+  label: IsTndSwizzle=1 requires SplitAxis=BN2S2 not BN2GS1S2
+  reason: 'templateSupportCond: (deter&&BN2GS1S2&&DETER_DENSE&&false)||(!deter&&BN2S2&&...);
+    BN2GS1S2 arm is dead; IsTndSwizzle never packs with SplitAxis=0'
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids: []
+    reasoning:
+    - 'templateSupportCond: (deter&&BN2GS1S2&&DETER_DENSE&&false)||(!deter&&BN2S2&&...);
+      BN2GS1S2 arm is dead; IsTndSwizzle never packs with SplitAxis=0'
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 1152
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - IsTndSwizzle
+      - SplitAxis
+      relevant_functions:
+      - DoTiling
+      - GetTilingKey
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:453
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:461
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:453
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:456
+    assumptions:
+    - arch35 regbase host packing is sole tiling-key writer
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate_declared_domain
+      boundary_replay: required_against_R
+    evidence_entry_ids: []
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''
+- kind: combo
+  grade: source_lemma
+  when:
+    IsTnd: '1'
+    SplitAxis: '1'
+    DTemplateNum: '192'
+  dim: ''
+  value: ''
+  label: TND SplitAxis=BN2 requires DTpl 64/128 not 192
+  reason: TND BN2 route limited by d; large DTemplate rewritten off SplitAxis=1
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids: []
+    reasoning:
+    - TND BN2 route limited by d; large DTemplate rewritten off SplitAxis=1
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 48
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - DTemplateNum
+      - IsTnd
+      - SplitAxis
+      relevant_functions:
+      - SetSplitAxis
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1604
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1628
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1606
+    assumptions:
+    - arch35 regbase packing sole writer
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate
+      boundary_replay: required
+    evidence_entry_ids: []
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''
+- kind: combo
+  grade: source_lemma
+  when:
+    IsTnd: '1'
+    SplitAxis: '1'
+    DTemplateNum: '256'
+  dim: ''
+  value: ''
+  label: TND SplitAxis=BN2 requires DTpl 64/128 not 256
+  reason: TND BN2 route limited by d; large DTemplate rewritten off SplitAxis=1
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids: []
+    reasoning:
+    - TND BN2 route limited by d; large DTemplate rewritten off SplitAxis=1
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 32
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - DTemplateNum
+      - IsTnd
+      - SplitAxis
+      relevant_functions:
+      - SetSplitAxis
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1604
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1628
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1606
+    assumptions:
+    - arch35 regbase packing sole writer
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate
+      boundary_replay: required
+    evidence_entry_ids: []
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''
+- kind: combo
+  grade: source_lemma
+  when:
+    IsTnd: '1'
+    SplitAxis: '1'
+    DTemplateNum: '768'
+  dim: ''
+  value: ''
+  label: TND SplitAxis=BN2 requires DTpl 64/128 not 768
+  reason: TND BN2 route limited by d; large DTemplate rewritten off SplitAxis=1
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids: []
+    reasoning:
+    - TND BN2 route limited by d; large DTemplate rewritten off SplitAxis=1
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 32
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - DTemplateNum
+      - IsTnd
+      - SplitAxis
+      relevant_functions:
+      - SetSplitAxis
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1604
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1628
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1606
+    assumptions:
+    - arch35 regbase packing sole writer
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate
+      boundary_replay: required
+    evidence_entry_ids: []
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''
+- kind: combo
+  grade: source_lemma
+  when:
+    SplitAxis: '5'
+    IsDrop: '1'
+    DTemplateNum: '192'
+  dim: ''
+  value: ''
+  label: BN2S2 with drop requires d<=128 not DTpl 192
+  reason: 'bn2S2RouteLimit: keepProb<1 requires d<=NUM128'
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids: []
+    reasoning:
+    - 'bn2S2RouteLimit: keepProb<1 requires d<=NUM128'
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 72
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - DTemplateNum
+      - IsDrop
+      - SplitAxis
+      relevant_functions:
+      - SetSplitAxis
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1631
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1632
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1632
+    assumptions:
+    - arch35 regbase packing sole writer
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate
+      boundary_replay: required
+    evidence_entry_ids: []
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''
+- kind: combo
+  grade: source_lemma
+  when:
+    SplitAxis: '5'
+    IsDrop: '1'
+    DTemplateNum: '256'
+  dim: ''
+  value: ''
+  label: BN2S2 with drop requires d<=128 not DTpl 256
+  reason: 'bn2S2RouteLimit: keepProb<1 requires d<=NUM128'
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids: []
+    reasoning:
+    - 'bn2S2RouteLimit: keepProb<1 requires d<=NUM128'
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 72
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - DTemplateNum
+      - IsDrop
+      - SplitAxis
+      relevant_functions:
+      - SetSplitAxis
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1631
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1632
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1632
+    assumptions:
+    - arch35 regbase packing sole writer
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate
+      boundary_replay: required
+    evidence_entry_ids: []
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''
+- kind: combo
+  grade: source_lemma
+  when:
+    SplitAxis: '5'
+    IsDrop: '1'
+    DTemplateNum: '768'
+  dim: ''
+  value: ''
+  label: BN2S2 with drop requires d<=128 not DTpl 768
+  reason: 'bn2S2RouteLimit: keepProb<1 requires d<=NUM128'
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids: []
+    reasoning:
+    - 'bn2S2RouteLimit: keepProb<1 requires d<=NUM128'
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 72
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - DTemplateNum
+      - IsDrop
+      - SplitAxis
+      relevant_functions:
+      - SetSplitAxis
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1631
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1632
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1632
+    assumptions:
+    - arch35 regbase packing sole writer
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate
+      boundary_replay: required
+    evidence_entry_ids: []
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''
+- kind: combo
+  grade: source_lemma
+  when:
+    SplitAxis: '5'
+    IsTnd: '0'
+    DTemplateNum: '192'
+    IsDrop: '0'
+  dim: ''
+  value: ''
+  label: non-TND BN2S2 unreachable for DTpl=192 (d>BN2S2_WRITE_UB_D)
+  reason: bn2S2NotTndLimit requires d<=BN2S2_WRITE_UB_D=128; DTemplate 192 implies
+    d>128; non-TND without isAllSame cannot take BN2S2
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids: []
+    reasoning:
+    - bn2S2NotTndLimit requires d<=BN2S2_WRITE_UB_D=128; DTemplate 192 implies d>128;
+      non-TND without isAllSame cannot take BN2S2
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 16
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - DTemplateNum
+      - IsDrop
+      - IsTnd
+      - SplitAxis
+      relevant_functions:
+      - SetSplitAxis
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1621
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1624
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1628
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1624
+    assumptions:
+    - non-TND BN2S2 route requires bn2S2NotTndLimit (d<=BN2S2_WRITE_UB_D=128) or isAllSame;
+      isAllSame does not hold for ordinary BSND unequal-shape packing that would be
+      needed to realize these open keys; R has zero witnesses
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate
+      boundary_replay: required_against_R
+    evidence_entry_ids: []
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''
+- kind: combo
+  grade: source_lemma
+  when:
+    SplitAxis: '5'
+    IsTnd: '0'
+    DTemplateNum: '256'
+    IsDrop: '0'
+  dim: ''
+  value: ''
+  label: non-TND BN2S2 unreachable for DTpl=256 (d>BN2S2_WRITE_UB_D)
+  reason: bn2S2NotTndLimit requires d<=BN2S2_WRITE_UB_D=128; DTemplate 256 implies
+    d>128; non-TND without isAllSame cannot take BN2S2
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids: []
+    reasoning:
+    - bn2S2NotTndLimit requires d<=BN2S2_WRITE_UB_D=128; DTemplate 256 implies d>128;
+      non-TND without isAllSame cannot take BN2S2
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 16
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - DTemplateNum
+      - IsDrop
+      - IsTnd
+      - SplitAxis
+      relevant_functions:
+      - SetSplitAxis
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1621
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1624
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1628
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1624
+    assumptions:
+    - non-TND BN2S2 route requires bn2S2NotTndLimit (d<=BN2S2_WRITE_UB_D=128) or isAllSame;
+      isAllSame does not hold for ordinary BSND unequal-shape packing that would be
+      needed to realize these open keys; R has zero witnesses
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate
+      boundary_replay: required_against_R
+    evidence_entry_ids: []
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''
+- kind: combo
+  grade: source_lemma
+  when:
+    SplitAxis: '5'
+    IsTnd: '0'
+    DTemplateNum: '768'
+    IsDrop: '0'
+  dim: ''
+  value: ''
+  label: non-TND BN2S2 unreachable for DTpl=768 (d>BN2S2_WRITE_UB_D)
+  reason: bn2S2NotTndLimit requires d<=BN2S2_WRITE_UB_D=128; DTemplate 768 implies
+    d>128; non-TND without isAllSame cannot take BN2S2
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids: []
+    reasoning:
+    - bn2S2NotTndLimit requires d<=BN2S2_WRITE_UB_D=128; DTemplate 768 implies d>128;
+      non-TND without isAllSame cannot take BN2S2
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 16
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - DTemplateNum
+      - IsDrop
+      - IsTnd
+      - SplitAxis
+      relevant_functions:
+      - SetSplitAxis
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1621
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1624
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1628
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1624
+    assumptions:
+    - non-TND BN2S2 route requires bn2S2NotTndLimit (d<=BN2S2_WRITE_UB_D=128) or isAllSame;
+      isAllSame does not hold for ordinary BSND unequal-shape packing that would be
+      needed to realize these open keys; R has zero witnesses
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate
+      boundary_replay: required_against_R
+    evidence_entry_ids: []
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''
+- kind: combo
+  grade: source_lemma
+  when:
+    IsBn2MultiBlk: '1'
+    IsDNoEqual: '1'
+  dim: ''
+  value: ''
+  label: IsBn2MultiBlk requires d==d1 so IsDNoEqual=0
+  reason: isBn2MultiBlk requires (d == d1) && !hasRope; GetTilingKey packs dNoEqual=(d1!=d)||hasRope
+    → IsBn2MultiBlk=1 ⇒ IsDNoEqual=0
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids: []
+    reasoning:
+    - isBn2MultiBlk requires (d == d1) && !hasRope; GetTilingKey packs dNoEqual=(d1!=d)||hasRope
+      → IsBn2MultiBlk=1 ⇒ IsDNoEqual=0
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 80
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - IsBn2MultiBlk
+      - IsDNoEqual
+      relevant_functions:
+      - SetSplitAxis
+      - GetTilingKey
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1598
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1438
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:1598
+    assumptions:
+    - arch35 regbase packing is sole tiling-key writer
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate
+      boundary_replay: required_against_R
+    evidence_entry_ids: []
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''
+- kind: combo
+  grade: source_lemma
+  when:
+    IsNzOut: '1'
+    DeterType: '4'
+    IsNEqual: '1'
+  dim: ''
+  value: ''
+  label: IsNzOut∧DeterType=4∧IsNEqual=1 unreachable on arch35
+  reason: R has 0 witnesses; isNzOut enableSwizzle + DETER_BAND path does not pack
+    IsNEqual=1 together
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids: []
+    reasoning:
+    - R has 0 witnesses; isNzOut enableSwizzle + DETER_BAND path does not pack IsNEqual=1
+      together
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 32
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - DeterType
+      - IsNEqual
+      - IsNzOut
+      relevant_functions:
+      - DoTiling
+      - GetTilingKey
+      - GetDeterSparseTilingKey
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:444
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1444
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:450
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:807
+    assumptions:
+    - Host replay over declared domain produced 0 witnesses for this when
+    - DETER_BAND (4) packing path does not co-occur with isNzOut∧isDeterNEqual on
+      arch35
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate
+      boundary_replay: required_against_R
+    evidence_entry_ids: []
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''
+- kind: combo
+  grade: source_lemma
+  when:
+    IsNzOut: '1'
+    DeterType: '3'
+    IsNEqual: '1'
+    IsTnd: '0'
+  dim: ''
+  value: ''
+  label: IsNzOut∧DETER_CAUSAL∧IsNEqual requires TND (not BSND)
+  reason: R witnesses for IsNzOut∧DeterType=3∧IsNEqual=1 all have IsTnd=1; non-TND
+    path does not co-realize Nz enableSwizzle with DETER_CAUSAL∧IsNEqual
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids: []
+    reasoning:
+    - GetDeterSparseTilingKey returns DETER_CAUSAL=3 for LEFT_UP_CAUSAL / matching
+      NO_MASK tokens
+    - isNzOut requires enableSwizzle + BN2GS1S2 + d in (64,128)
+    - 'Enumerated R: all Nz∧Deter3∧NEqual witnesses are IsTnd=1; zero IsTnd=0'
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 16
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - DeterType
+      - IsNEqual
+      - IsNzOut
+      - IsTnd
+      relevant_functions:
+      - DoTiling
+      - GetTilingKey
+      - GetDeterSparseTilingKey
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:444
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1444
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:450
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:800
+    assumptions:
+    - Host replay of declared domain is complete for this family
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate
+      boundary_replay: required_against_R
+    evidence_entry_ids: []
+  freshness:
+    source_revision: ''
+    uo_graph_fingerprint: ''

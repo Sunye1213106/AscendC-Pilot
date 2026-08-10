@@ -24,9 +24,10 @@ python engines/understand-operator/tools/timing_baseline.py `
 Warm re-run goal (sources unchanged): full uo-init pipeline **≤ 2 minutes**
 (`UO_WARM_REPLAY_BUDGET_S`, gated in CI).
 
-Cold start goal: uo-init pipeline **≤ 4 minutes** (`UO_COLD_BUDGET_S=240`) under
+Cold start goal: uo-init pipeline **≤ 3 minutes** (`UO_COLD_BUDGET_S=180`) under
 the default profile `UO_INIT_PROFILE=fast` (`closure_mode=keypath`,
-one dtype `kernel_ir` walk overlapped with host IR, tilingdata extract,
+one dtype `kernel_ir` walk overlapped with host IR via **ProcessPool** TU walks,
+merged frame/index AST pass, optional native `uo_walk`, tilingdata extract,
 `fold_kernel=false`, API clang skipped).  Opt into the previous complete path
 with `UO_INIT_PROFILE=full` (may exceed the cold budget).
 
@@ -105,10 +106,13 @@ Numbers from code comments / execution notes:
 |-----|---------|--------|
 | `UO_TIMING` | `1` | Emit `[uo-timing]` stderr lines |
 | `UO_TU_CACHE` | `1` | Durable libclang walk IR under `uo/cache/tu/` |
+| `UO_HOST_IR_POOL` | `process` | Multi-TU host walks: `process` (default) or `thread` |
+| `UO_NATIVE_WALK` | `1` | Use optional native `uo_walk` when built |
+| `UO_WALK_BIN` | — | Override path to native walker |
 | `UO_DERIVE_CACHE` | `1` | Per-field derive rows under `uo/cache/derive/` |
 | `UO_FOLD_CACHE` | `1` | clang `-ast-dump` fold under `uo/cache/fold/` |
 | `UO_CTRL_WORKERS` | `1` | Controllability pool size (keep 1; >1 often regresses) |
 | `UO_WARM_REPLAY_BUDGET_S` | `120` | CI warm replay budget |
 | `closure_mode` | product `full`; `_ensure_bundle` → `off` when meta exists | Skip deep controllability on downstream actions |
 
-_Status: measured cold full-pipeline under `UO_INIT_PROFILE=fast` (1 dtype kernel ‖ host + tilingdata): **185s** on FAG arch35 (≤240s budget). Warm re-run still targets ≤120s._
+_Status: cold target **≤180s** (`UO_COLD_BUDGET_S`); ProcessPool TU walks + merged frame/index pass + optional native `uo_walk`. Prior FAG fast cold was ~185s (≤240s budget). Warm re-run still targets ≤120s._

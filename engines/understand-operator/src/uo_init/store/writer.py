@@ -60,6 +60,7 @@ def write_codemap(
     *,
     views: dict[str, Any] | None = None,
     meta: dict[str, Any] | None = None,
+    summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Persist CodeMap to ``path`` (``.uo`` SQLite). Overwrites atomically."""
     dest = Path(path).expanduser().resolve()
@@ -70,9 +71,12 @@ def write_codemap(
 
     _drop_unproven_direct_selection_edges(codemap)
 
-    from uo_init.diagnostics.audit import audit_codemap
+    if summary is None:
+        from uo_init.diagnostics.audit import audit_codemap
 
-    strict_summary = dict(audit_codemap(codemap)["summary"])
+        strict_summary = dict(audit_codemap(codemap)["summary"])
+    else:
+        strict_summary = dict(summary)
 
     conn = sqlite3.connect(str(tmp))
     try:

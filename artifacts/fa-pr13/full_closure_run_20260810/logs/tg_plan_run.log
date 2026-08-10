@@ -1,0 +1,348 @@
+>>> acp start tg-plan --op-name flash_attention_score_grad --architecture arch35 --level L0
+{
+  "workflow_id": "tg-plan",
+  "run_id": "RUN_20260810_122900_4b97a2e5",
+  "phase": "intent",
+  "phase_label_zh": "规划意图",
+  "status": "running",
+  "intent": "",
+  "op_name": "flash_attention_score_grad",
+  "architecture": "arch35",
+  "test_script_root": "",
+  "csv_consumer_root": "",
+  "level": "L0",
+  "focus": "",
+  "retry_budget": 3,
+  "no_progress_streak": 0,
+  "failed_gates": [],
+  "passed_gates": [],
+  "open_items": [
+    {
+      "id": "plan_approved",
+      "status": "open",
+      "kind": "static",
+      "settled_by_gate": "plan_approved"
+    }
+  ],
+  "last_failure": null,
+  "created_at": "2026-08-10T12:29:00Z",
+  "meta": {},
+  "kb_schema_hash": "8b51c26b2012bdfc0f78ae52597f42cc3448687fc47a8ddb7cd3b93b1be83bbe",
+  "workflow_spec_hash": "2ec0d1e67e7e6f7b5c4de82be9067ba47f659a19bdcb2a57107d5d11e7b64351",
+  "agent_contract_hash": "93e1515f70e678ce7d87c7400291b9a849437f4605771d423e67ca11968fcf74",
+  "tg_contract_hash": "ae40d64dc82db6814d49fa9c074b3c00a204861e5502de75c8f294a2f1963072",
+  "progress_fingerprint": {
+    "open_obligation_ids": [
+      "plan_approved"
+    ],
+    "failed_gate_ids": [],
+    "error_finding_ids": [],
+    "status": "running",
+    "phase": "intent"
+  },
+  "open_items_count": 1,
+  "updated_at": "2026-08-10T12:29:00Z",
+  "fresh_start": true,
+  "todo": {
+    "workflow_id": "tg-plan",
+    "run_id": "RUN_20260810_122900_4b97a2e5",
+    "phase": "intent",
+    "phase_label_zh": "规划意图",
+    "status": "running",
+    "sync": "opencode_native_todowrite",
+    "phases": [
+      {
+        "id": "intent",
+        "label_zh": "规划意图",
+        "status": "current"
+      },
+      {
+        "id": "scope",
+        "label_zh": "规划范围",
+        "status": "pending"
+      },
+      {
+        "id": "gate",
+        "label_zh": "前置门禁",
+        "status": "pending"
+      },
+      {
+        "id": "build",
+        "label_zh": "生成义务",
+        "status": "pending"
+      },
+      {
+        "id": "filter",
+        "label_zh": "过滤裁剪",
+        "status": "pending"
+      },
+      {
+        "id": "review",
+        "label_zh": "规划审查",
+        "status": "pending"
+      },
+      {
+        "id": "approve",
+        "label_zh": "人工批准",
+        "status": "pending"
+      }
+    ],
+    "native_items": [
+      {
+        "id": "intent",
+        "content": "规划意图",
+        "status": "in_progress",
+        "priority": "high"
+      },
+      {
+        "id": "scope",
+        "content": "规划范围",
+        "status": "pending",
+        "priority": "medium"
+      },
+      {
+        "id": "gate",
+        "content": "前置门禁",
+        "status": "pending",
+        "priority": "medium"
+      },
+      {
+        "id": "build",
+        "content": "生成义务",
+        "status": "pending",
+        "priority": "medium"
+      },
+      {
+        "id": "filter",
+        "content": "过滤裁剪",
+        "status": "pending",
+        "priority": "medium"
+      },
+      {
+        "id": "review",
+        "content": "规划审查",
+        "status": "pending",
+        "priority": "medium"
+      },
+      {
+        "id": "approve",
+        "content": "人工批准",
+        "status": "pending",
+        "priority": "medium"
+      }
+    ],
+    "open_items": [
+      {
+        "id": "plan_approved",
+        "label_zh": "plan_approved",
+        "status": "open"
+      }
+    ],
+    "next_actions": [
+      {
+        "id": "plan_intent",
+        "label_zh": "确认规划意图"
+      }
+    ],
+    "todo_sync": {
+      "tool": "todowrite",
+      "merge": false,
+      "require_full_list": true,
+      "require_ids": true,
+      "forbid_partial_overwrite": true,
+      "items": [
+        {
+          "id": "intent",
+          "content": "规划意图",
+          "status": "in_progress",
+          "priority": "high"
+        },
+        {
+          "id": "scope",
+          "content": "规划范围",
+          "status": "pending",
+          "priority": "medium"
+        },
+        {
+          "id": "gate",
+          "content": "前置门禁",
+          "status": "pending",
+          "priority": "medium"
+        },
+        {
+          "id": "build",
+          "content": "生成义务",
+          "status": "pending",
+          "priority": "medium"
+        },
+        {
+          "id": "filter",
+          "content": "过滤裁剪",
+          "status": "pending",
+          "priority": "medium"
+        },
+        {
+          "id": "review",
+          "content": "规划审查",
+          "status": "pending",
+          "priority": "medium"
+        },
+        {
+          "id": "approve",
+          "content": "人工批准",
+          "status": "pending",
+          "priority": "medium"
+        }
+      ],
+      "instruction_zh": "有变化才 todowrite（merge=false）；items 与上次同步完全相同则跳过；一旦调用必须全量等于 todo.todo_sync.items（含全部 id/content/status/priority）；禁止子集；禁止在回复里讨论要不要同步；与下一步 acp 同轮并行。"
+    }
+  }
+}
+>>> acp run-action plan_intent
+{
+  "ok": true,
+  "phase_runtime": "prepare",
+  "action_id": "plan_intent",
+  "actor_id": "ascendc-pilot",
+  "role_id": "controller",
+  "execution_mode": "primary_interactive",
+  "action_session_id": "ACTION_SESSION_e72a3781748c25a9",
+  "run_id": "RUN_20260810_122900_4b97a2e5",
+  "session_dir": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/runs/RUN_20260810_122900_4b97a2e5/actions/plan_intent",
+  "bundle_path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/runs/RUN_20260810_122900_4b97a2e5/actions/plan_intent/bundle.yaml",
+  "prompt_path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/runs/RUN_20260810_122900_4b97a2e5/actions/plan_intent/prompt.md",
+  "method_path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/runs/RUN_20260810_122900_4b97a2e5/actions/plan_intent/method.md",
+  "primary_instructions_path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/runs/RUN_20260810_122900_4b97a2e5/actions/plan_intent/prompt.md",
+  "lease_id": "LEASE_55ebab8c8b24",
+  "prepare_nonce": "571b51e3590fc9f1447c8dd079cf83d4",
+  "auto_finalize": false,
+  "identity": {
+    "run_id": "RUN_20260810_122900_4b97a2e5",
+    "workflow_id": "tg-plan",
+    "phase": "intent",
+    "action_id": "plan_intent",
+    "actor_id": "ascendc-pilot",
+    "role_id": "controller",
+    "action_session_id": "ACTION_SESSION_e72a3781748c25a9",
+    "prepare_nonce_hash": "62fee747f1e075a84d442c5891a8ff42b36ceced392dbc5055096a0a571fc507",
+    "lease_id": "LEASE_55ebab8c8b24",
+    "execution_mode": "primary_interactive"
+  },
+  "interactive_steps": [
+    "acp uo-scope scan --project /work/ops-transformer/attention/flash_attention_score_grad --architecture arch35",
+    "AskQuestion: continue | revise | stop | manual_supplement",
+    "acp uo-scope checkpoint --project /work/ops-transformer/attention/flash_attention_score_grad --decision <decision>",
+    "acp uo-scope finalize --project /work/ops-transformer/attention/flash_attention_score_grad",
+    "acp run-action plan_intent --finalize --project /work/ops-transformer/attention/flash_attention_score_grad"
+  ],
+  "message_zh": "已准备 primary_interactive Action `plan_intent`。请在当前 primary 会话按 `primary_instructions_path` / interactive_steps 执行；禁止 Task 派发自身或再次 `acp run-action plan_intent`（prepare）。完成后 `acp run-action plan_intent --finalize`。",
+  "dispatch_task": false
+}
+>>> acp run-action plan_intent --finalize
+{
+  "ok": false,
+  "phase_runtime": "finalize",
+  "action_id": "plan_intent",
+  "actor_id": "ascendc-pilot",
+  "run_id": "RUN_20260810_122900_4b97a2e5",
+  "receipt": null,
+  "checker_result": {
+    "ok": false,
+    "producer_identity": {
+      "ok": true,
+      "skipped": true
+    },
+    "identity_injection": {
+      "ok": true,
+      "skipped": true
+    },
+    "gates": [],
+    "output_contract": {
+      "ok": false,
+      "contract_id": "plan-intent-v1",
+      "missing": [
+        "tg/plan/plan_intent.yaml"
+      ],
+      "empty": [],
+      "missing_globs": [],
+      "identity_errors": [],
+      "message": "missing outputs: ['tg/plan/plan_intent.yaml']"
+    },
+    "engine": {},
+    "apply": {},
+    "target_violation": {}
+  },
+  "message_zh": "Finalize 失败：Checker/Output Contract 未通过",
+  "observation": {
+    "observation_id": "OBS_75d76b0eecbc",
+    "run_id": "RUN_20260810_122900_4b97a2e5",
+    "workflow_id": "tg-plan",
+    "phase": "intent",
+    "action_id": "plan_intent",
+    "step_id": "action_finalize",
+    "outcome": "failed",
+    "failure_class": "checker_gate",
+    "error_code": "ACTION_FINALIZE_FAILED_PLAN_INTENT",
+    "retryable": true,
+    "findings": [
+      {
+        "code": "OUTPUT_CONTRACT_FAILED",
+        "message": "Finalize 失败：Checker/Output Contract 未通过",
+        "evidence": {}
+      },
+      {
+        "code": "MISSING_OUTPUTS_TG_PLAN_PLAN_INTENT_YAML",
+        "message": "missing outputs: ['tg/plan/plan_intent.yaml']",
+        "evidence": {}
+      }
+    ],
+    "recommended_transition": "rework_required",
+    "legal_recovery_actions": [
+      "retry_failed_action",
+      "inspect_failure"
+    ],
+    "forbidden_recovery_actions": [
+      "advance",
+      "direct_domain_cli",
+      "write_pilot_artifact_outside_contract"
+    ],
+    "source": "finalize_action",
+    "created_at": "2026-08-10T12:29:02Z",
+    "failure_fingerprint": "3961bf0c84631ca4bdfbe347"
+  },
+  "status": "rework_required",
+  "last_failure": {
+    "action_id": "plan_intent",
+    "step_id": "action_finalize",
+    "error_code": "ACTION_FINALIZE_FAILED_PLAN_INTENT",
+    "failure_class": "checker_gate",
+    "retryable": true,
+    "reason_code": "ACTION_FINALIZE_FAILED_PLAN_INTENT",
+    "message_zh": "[checker_gate] Finalize 失败：Checker/Output Contract 未通过；missing outputs: ['tg/plan/plan_intent.yaml']",
+    "findings": [
+      {
+        "code": "OUTPUT_CONTRACT_FAILED",
+        "message": "Finalize 失败：Checker/Output Contract 未通过",
+        "evidence": {}
+      },
+      {
+        "code": "MISSING_OUTPUTS_TG_PLAN_PLAN_INTENT_YAML",
+        "message": "missing outputs: ['tg/plan/plan_intent.yaml']",
+        "evidence": {}
+      }
+    ],
+    "observation_id": "OBS_75d76b0eecbc",
+    "failure_fingerprint": "3961bf0c84631ca4bdfbe347",
+    "recommended_transition": "rework_required",
+    "legal_recovery_actions": [
+      "retry_failed_action",
+      "inspect_failure"
+    ],
+    "forbidden_recovery_actions": [
+      "advance",
+      "direct_domain_cli",
+      "write_pilot_artifact_outside_contract"
+    ]
+  },
+  "failure_card": "当前阶段：intent\n失败 Action：plan_intent\n失败步骤：action_finalize\n状态：rework_required\n\n失败类型：checker_gate\n错误代码：ACTION_FINALIZE_FAILED_PLAN_INTENT\n\n失败项：\n- Finalize 失败：Checker/Output Contract 未通过\n- missing outputs: ['tg/plan/plan_intent.yaml']\n\n已进入返工模式：仅可重试失败 Action 及相关 acp 命令。\n禁止直调领域脚本或修改 Pilot 正式产物绕过控制面。\n\n合法后续：\n- 按 rework target 重试失败 Action\n- 查看结构化失败信息"
+}

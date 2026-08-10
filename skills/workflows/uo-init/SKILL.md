@@ -1,9 +1,9 @@
 ---
 name: uo-init
-description: >
-  首次构建 AscendC `.uo` CodeMap：确定范围与 BuildVariant、抽取 CompilerFacts、
-  运行确定性 CodeMap Pass、只消解显式语义缺口、写入并审查单一 `.uo`。
-  用户要求建 UO/CodeMap、首次分析算子或指定 architecture 建图时使用。
+description: '首次构建 AscendC `.uo` CodeMap：确定范围与 BuildVariant、抽取 CompilerFacts、 运行确定性
+  CodeMap Pass、只消解显式语义缺口、写入并审查单一 `.uo`。 用户要求建 UO/CodeMap、首次分析算子或指定 architecture 建图时使用。
+
+  '
 ---
 
 # uo-init
@@ -32,11 +32,11 @@ Pilot 只按 `acp start` / `next` / `run-action` / `advance` 返回的当前 Act
 | action_id | execution_mode | agent | role | method | prompt | output_contract |
 |---|---|---|---|---|---|---|
 | `prepare` | `primary_interactive` | `ascendc-pilot` | `controller` | `uo-init/prepare` | `uo/scope-confirmation` | `uo-prepare-v1` |
-| `extract` | `deterministic` | `engine` | `deterministic_engine` | `uo-init/extract` | `-` | `uo-extract-v1` |
-| `analyze` | `deterministic` | `engine` | `deterministic_engine` | `uo-init/analyze` | `-` | `uo-analyze-v1` |
+| `extract` | `deterministic` | `human` | `deterministic_engine` | `uo-init/extract` | `-` | `uo-extract-v1` |
+| `analyze` | `deterministic` | `human` | `deterministic_engine` | `uo-init/analyze` | `-` | `uo-analyze-v1` |
 | `resolve` | `subagent` | `uo-semantic-resolver` | `producer` | `uo-init/resolve` | `uo/resolve-gaps` | `resolve-gaps-v1` |
-| `apply_gap_patch` | `deterministic` | `engine` | `deterministic_engine` | `uo-init/apply-gap-patch` | `-` | `gap-patch-v1` |
-| `commit` | `deterministic` | `engine` | `deterministic_engine` | `uo-init/commit` | `-` | `uo-commit-v1` |
-| `review` | `deterministic` | `engine` | `deterministic_engine` | `uo-init/review` | `-` | `uo-review-v1` |
+| `apply_gap_patch` | `deterministic` | `human` | `deterministic_engine` | `uo-init/apply-gap-patch` | `-` | `gap-patch-v1` |
+| `commit` | `deterministic` | `human` | `deterministic_engine` | `uo-init/commit` | `-` | `uo-commit-v1` |
+| `review` | `deterministic` | `human` | `deterministic_engine` | `uo-init/review` | `-` | `uo-review-v1` |
 
 <!-- END GENERATED ACTIONS -->

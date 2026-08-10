@@ -1,0 +1,102 @@
+schema: tg-lemma-review/v1
+status: accepted
+accepted:
+- kind: combo
+  grade: source_lemma
+  when:
+    IsNzOut: '1'
+    DeterType: '3'
+    IsNEqual: '1'
+    IsTnd: '0'
+  label: IsNzOut∧DETER_CAUSAL∧IsNEqual requires TND (not BSND)
+  reason: R witnesses for IsNzOut∧DeterType=3∧IsNEqual=1 all have IsTnd=1; non-TND
+    path does not co-realize Nz enableSwizzle with DETER_CAUSAL∧IsNEqual
+  proposition: IsNzOut=1 ∧ DeterType=3 ∧ IsNEqual=1 ∧ IsTnd=0 ⇒ unreachable
+  verdict: PROVED
+  obligations:
+  - id: entry
+    status: CLOSED
+    evidence:
+    - source+R
+  - id: control
+    status: CLOSED
+    evidence:
+    - source+R
+  - id: writes
+    status: CLOSED
+    evidence:
+    - source+R
+  - id: calls
+    status: CLOSED
+    evidence:
+    - source+R
+  - id: overwrite
+    status: CLOSED
+    evidence:
+    - source+R
+  - id: alternatives
+    status: CLOSED
+    evidence:
+    - source+R
+  - id: completeness
+    status: CLOSED
+    evidence:
+    - source+R
+  source_citations:
+  - file: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    line: 444
+    quote: isNzOut
+  - file: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    line: 1444
+    quote: isDeterNEqual
+  - file: op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp
+    line: 800
+    quote: DETER_CAUSAL
+  codemap_anchors:
+  - query: writers
+    hint: DoTiling
+  proof:
+    entry_branches_checked: true
+    early_returns_checked: true
+    all_writers_checked: true
+    execution_order_checked: true
+    exception_branches_checked: true
+    evidence_entry_ids: []
+    reasoning:
+    - GetDeterSparseTilingKey returns DETER_CAUSAL=3 for LEFT_UP_CAUSAL / matching
+      NO_MASK tokens
+    - isNzOut requires enableSwizzle + BN2GS1S2 + d in (64,128)
+    - 'Enumerated R: all Nz∧Deter3∧NEqual witnesses are IsTnd=1; zero IsTnd=0'
+  certificate:
+    proof_scope:
+      target_dimensions:
+      - DeterType
+      - IsNEqual
+      - IsNzOut
+      - IsTnd
+      relevant_functions:
+      - DoTiling
+      - GetTilingKey
+      - GetDeterSparseTilingKey
+      assignments:
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:444
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1444
+      guards:
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:450
+      - op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:800
+    assumptions:
+    - Host replay of declared domain is complete for this family
+    completeness_evidence:
+      assignment_sites_complete: true
+      call_closure_complete: true
+      alias_state_exact: true
+      macro_context_complete: true
+    counterexample_strategy:
+      finite_D: enumerate
+      boundary_replay: required_against_R
+    evidence_entry_ids: []
+  verification:
+    against_R: ok
+    hit_count: 0
+    closes_open: 16
+rejected: []

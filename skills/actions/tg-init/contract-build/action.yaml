@@ -29,7 +29,8 @@ allowed_write_paths:
 - context/pilot_params.yaml
 forbidden_write_paths: []
 allowed_read_paths:
-- uo/**
+- ../uo/*.uo
+- tg/init/uo_ready.yaml
 - context/**
 forbidden_read_paths: []
 checker:

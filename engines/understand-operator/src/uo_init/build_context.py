@@ -142,6 +142,30 @@ class BuildContext:
             args += ["-I", p]
         return args
 
+    def to_dict(self) -> dict[str, Any]:
+        """Pickle-safe snapshot for ProcessPool workers."""
+        return {
+            "raw": self.raw,
+            "cann_root": self.cann_root,
+            "ops_root": self.ops_root,
+            "compat_root": self.compat_root,
+            "op_dir": self.op_dir,
+            "arch_dir": self.arch_dir,
+            "repo_root": self.repo_root,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "BuildContext":
+        return cls(
+            raw=dict(data.get("raw") or {}),
+            cann_root=str(data.get("cann_root") or ""),
+            ops_root=str(data.get("ops_root") or ""),
+            compat_root=str(data.get("compat_root") or ""),
+            op_dir=str(data.get("op_dir") or ""),
+            arch_dir=str(data.get("arch_dir") or "arch35"),
+            repo_root=str(data.get("repo_root") or ""),
+        )
+
     def kernel_args(self, dtype_variant: str | None = None) -> list[str]:
         args = list(self.base_flags())
         for q in self.erase_qualifiers():

@@ -165,6 +165,15 @@ def _host_symbols_for_key(
     for expr in packing:
         for tok in _extract_symbols(expr):
             tokens.add(tok)
+
+    # Pre-index mid-nodes that DERIVE into this key so we never scan the full
+    # relation table per candidate entity (that was O(|E|·|R|) per key).
+    mid_ids = {
+        rel.src
+        for rel in incoming.get(key.id, [])
+        if rel.kind_name() == RelationKind.DERIVES.value
+    }
+
     for ent in codemap.entities.values():
         if ent.kind_name() not in {
             EntityKind.FIELD.value,
@@ -188,21 +197,20 @@ def _host_symbols_for_key(
         for rel in incoming.get(key.id, []):
             if rel.kind_name() == RelationKind.DERIVES.value and rel.src == ent.id:
                 related = True
-        # Also: DERIVES chain expr → key, and ent → expr
-        for rel in codemap.relations.values():
-            if rel.kind_name() != RelationKind.DERIVES.value:
-                continue
-            if rel.dst != key.id:
-                continue
-            mid = codemap.entities.get(rel.src)
-            if mid is None:
-                continue
-            for r2 in incoming.get(mid.id, []):
-                if r2.src == ent.id:
-                    related = True
-        if related or (ent.attrs.get("host_key_argument") and tokens and any(
-            t in ent.name or ent.name in t for t in tokens
-        )):
+                break
+        if not related and mid_ids:
+            for mid in mid_ids:
+                for r2 in incoming.get(mid, []):
+                    if r2.src == ent.id:
+                        related = True
+                        break
+                if related:
+                    break
+        if related or (
+            ent.attrs.get("host_key_argument")
+            and tokens
+            and any(t in ent.name or ent.name in t for t in tokens)
+        ):
             if ent.id not in seen:
                 seen.add(ent.id)
                 out.append(ent)

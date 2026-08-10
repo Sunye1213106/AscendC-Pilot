@@ -1,0 +1,122 @@
+PRODUCT /work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/uo/flash_attention_score_grad.arch35.uo size=23744512
+{"meta": {"schema": "codemap-uo/v1", "op_name": "flash_attention_score_grad", "architecture": "arch35", "entity_count": "4442", "relation_count": "8430"}, "legal_key_count": 8705, "host_fields": 93, "ensure": {"ok": true, "path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/uo/flash_attention_score_grad.arch35.uo", "legal_key_count": 8705, "backfilled": false, "graph_fingerprint": "ae9c34769761decb26d8157c50ffc186a3500ebecbc329d1838fec5299c372db"}}
+-- init_intent --
+{"ok": true, "error": null, "mode": "tilingkey_full_coverage", "engine": "init_intent", "field_count": null}
+-- kb_check --
+{"ok": true, "error": null, "mode": "tilingkey_full_coverage", "engine": "kb_check", "field_count": null}
+-- contract_build --
+{"ok": true, "error": null, "mode": "tilingkey_full_coverage", "engine": "contract_build", "field_count": null, "declared": {"source": "uo:tiling/exhaustive_key_space.yaml", "fingerprint": "ae9c34769761decb26d8157c50ffc186a3500ebecbc329d1838fec5299c372db", "count": 8705, "legal_key_index": "tiling/legal_key_index.jsonl"}}
+-- semantic_bind --
+{"ok": true, "error": null, "mode": "tilingkey_full_coverage", "engine": "semantic_bind", "field_count": 93}
+-- integrity --
+{"ok": true, "error": null, "mode": "tilingkey_full_coverage", "engine": "integrity_gate", "field_count": null}
+init/uo_ready.yaml: OK
+contract/tilingkey_contract.yaml: OK
+realization/binding_inventory.yaml: OK
+D_rows=8705
+progress 500/8705 ok=500 empty=0 errors=0
+progress 1000/8705 ok=1000 empty=0 errors=0
+progress 1500/8705 ok=1500 empty=0 errors=0
+progress 2000/8705 ok=2000 empty=0 errors=0
+progress 2500/8705 ok=2500 empty=0 errors=0
+progress 3000/8705 ok=3000 empty=0 errors=0
+progress 3500/8705 ok=3500 empty=0 errors=0
+progress 4000/8705 ok=4000 empty=0 errors=0
+progress 4500/8705 ok=4500 empty=0 errors=0
+progress 5000/8705 ok=5000 empty=0 errors=0
+progress 5500/8705 ok=5500 empty=0 errors=0
+progress 6000/8705 ok=6000 empty=0 errors=0
+progress 6500/8705 ok=6500 empty=0 errors=0
+progress 7000/8705 ok=7000 empty=0 errors=0
+progress 7500/8705 ok=7500 empty=0 errors=0
+progress 8000/8705 ok=8000 empty=0 errors=0
+progress 8500/8705 ok=8500 empty=0 errors=0
+{
+  "D": 8705,
+  "construct_ok": 8705,
+  "construct_empty": 0,
+  "construct_errors": 0,
+  "coverage": 1.0,
+  "elapsed_sec": 1.46,
+  "reason_hist": {},
+  "samples_ok": [
+    {
+      "key": 19703248907145264,
+      "n_cases": 1,
+      "dims": {
+        "IsEmptyTensor": "0",
+        "SplitAxis": "0",
+        "InputDType": "3",
+        "IsTnd": "0",
+        "IsDrop": "0",
+        "IsPse": "0",
+        "IsAttenMask": "0",
+        "S1TemplateNum": "128",
+        "S2TemplateNum": "128",
+        "DTemplateNum": "64",
+        "DeterType": "0",
+        "IsNEqual": "0",
+        "IsBn2MultiBlk": "0",
+        "IsDNoEqual": "0",
+        "IsRope": "0",
+        "OutDType": "3",
+        "IsNzOut": "0",
+        "IsTndSwizzle": "0",
+        "IsRegbase": "1"
+      }
+    },
+    {
+      "key": 19843986395500592,
+      "n_cases": 1,
+      "dims": {
+        "IsEmptyTensor": "0",
+        "SplitAxis": "0",
+        "InputDType": "3",
+        "IsTnd": "0",
+        "IsDrop": "0",
+        "IsPse": "0",
+        "IsAttenMask": "0",
+        "S1TemplateNum": "128",
+        "S2TemplateNum": "128",
+        "DTemplateNum": "64",
+        "DeterType": "0",
+        "IsNEqual": "0",
+        "IsBn2MultiBlk": "0",
+        "IsDNoEqual": "1",
+        "IsRope": "0",
+        "OutDType": "3",
+        "IsNzOut": "0",
+        "IsTndSwizzle": "0",
+        "IsRegbase": "1"
+      }
+    },
+    {
+      "key": 19703249980887088,
+      "n_cases": 1,
+      "dims": {
+        "IsEmptyTensor": "0",
+        "SplitAxis": "0",
+        "InputDType": "3",
+        "IsTnd": "0",
+        "IsDrop": "0",
+        "IsPse": "0",
+        "IsAttenMask": "0",
+        "S1TemplateNum": "128",
+        "S2TemplateNum": "128",
+        "DTemplateNum": "192",
+        "DeterType": "0",
+        "IsNEqual": "0",
+        "IsBn2MultiBlk": "0",
+        "IsDNoEqual": "0",
+        "IsRope": "0",
+        "OutDType": "3",
+        "IsNzOut": "0",
+        "IsTndSwizzle": "0",
+        "IsRegbase": "1"
+      }
+    }
+  ],
+  "samples_fail": [],
+  "traces_tail": []
+}
+WROTE /mnt/d/PR-review/AscendC-Pilot/artifacts/fa-pr13/construct_coverage.json

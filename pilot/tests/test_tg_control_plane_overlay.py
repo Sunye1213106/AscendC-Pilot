@@ -24,8 +24,10 @@ def test_tg_pipelines_are_explicit_and_fail_closed() -> None:
         "lemma_leads",
         "lemma_evidence",
         "lemma_mine",
+        "lemma_verify",
         "lemma_review",
         "lemma_apply",
+        "lemma_loop",
     ]
     assert phase_pipeline("tg-solve", "audit") == ["closure_audit"]
     assert phase_pipeline("tg-solve", "certify") == ["closure_certify"]
@@ -51,8 +53,10 @@ def test_tg_solve_closure_actions_registered() -> None:
         "lemma_leads",
         "lemma_evidence",
         "lemma_mine",
+        "lemma_verify",
         "lemma_review",
         "lemma_apply",
+        "lemma_loop",
         "closure_audit",
         "closure_certify",
     ):

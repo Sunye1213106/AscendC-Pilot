@@ -138,6 +138,33 @@ class ScopeSet:
             "notes": list(self.notes),
         }
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "ScopeSet":
+        workspace_root = Path(data["workspace_root"])
+        op_dir = Path(data["op_dir"])
+        files: list[ScopeFile] = []
+        for row in data.get("files") or []:
+            rel = row.get("path") or ""
+            path = Path(rel)
+            if not path.is_absolute():
+                path = (workspace_root / rel).resolve()
+            files.append(
+                ScopeFile(
+                    path=path,
+                    role=str(row.get("role") or ""),
+                    side=str(row.get("side") or ""),
+                    is_tu=bool(row.get("is_tu")),
+                    shared=bool(row.get("shared")),
+                )
+            )
+        return cls(
+            op_dir=op_dir,
+            workspace_root=workspace_root,
+            arch_dir=str(data.get("arch_dir") or ""),
+            files=files,
+            notes=list(data.get("notes") or []),
+        )
+
 
 def _key(path: str | Path) -> str:
     """Comparable form of a path: clang spells them with forward slashes and

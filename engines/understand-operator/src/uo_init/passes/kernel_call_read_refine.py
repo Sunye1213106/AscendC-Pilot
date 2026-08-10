@@ -131,6 +131,8 @@ def refine_kernel_calls_and_tiling_reads(
 def _load_selected(
     root: Path, selected: list[str], architecture: str
 ) -> dict[Path, tuple[str, str]]:
+    from uo_init.passes.source_text_cache import read_text
+
     paths: set[Path] = set()
     for raw in selected:
         path = _resolve_file(root, raw)
@@ -148,12 +150,12 @@ def _load_selected(
             for path in kernel_root.iterdir():
                 if not path.is_file() or path.suffix.lower() not in _SUFFIXES:
                     continue
-                raw = path.read_text(encoding="utf-8", errors="replace")
+                raw = read_text(path)
                 if f'"{architecture}/' in raw or f"<{architecture}/" in raw:
                     paths.add(path.resolve())
     out: dict[Path, tuple[str, str]] = {}
     for path in sorted(paths):
-        raw = path.read_text(encoding="utf-8", errors="replace")
+        raw = read_text(path)
         out[path] = (raw, _mask_non_code(raw))
     return out
 

@@ -1,0 +1,3524 @@
+schema: tg-lemma-leads/v1
+source: oracle_observation
+observation_count: 194
+lead_count: 19
+leads:
+- id: OBS_LEAD_16747472
+  kind: rewrite
+  when:
+    IsEmptyTensor: '0'
+    SplitAxis: '0'
+    IsTnd: '1'
+    S2TemplateNum: '128'
+    IsBn2MultiBlk: '0'
+    IsTndSwizzle: '1'
+    IsRegbase: '1'
+  combo: IsBn2MultiBlk=0,IsEmptyTensor=0,IsRegbase=1,IsTnd=1,IsTndSwizzle=1,S2TemplateNum=128,SplitAxis=0
+  family: true
+  family_key: rewrite|('IsTndSwizzle',)|(('IsTndSwizzle', '0'),)|
+  instances:
+  - id: OBS_3f1c575d2d
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '64'
+      DeterType: '2'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28714846208398256
+    actual_key: 19707646953657264
+  - id: OBS_d175b9c466
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '256'
+      DeterType: '4'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28297033400457120
+    actual_key: 19289834145716128
+  - id: OBS_c0e5d1d5ea
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '64'
+      DeterType: '2'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28714846208398000
+    actual_key: 19707646953657008
+  - id: OBS_38aac9c694
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '192'
+      DeterType: '4'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '1'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28578507840296864
+    actual_key: 19571308585555872
+  - id: OBS_bba289756f
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '3'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 27731883350038416
+    actual_key: 18724684095297424
+  - id: OBS_ae10d2b532
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '4'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28754430774482864
+    actual_key: 19747231519741872
+  - id: OBS_1f9494cfde
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '2'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28750032727971760
+    actual_key: 19742833473230768
+  - id: OBS_918062bb76
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '192'
+      DeterType: '4'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28297032863585696
+    actual_key: 19289833608844704
+  - id: OBS_69b68e0f73
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '256'
+      DeterType: '4'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 27734083447035280
+    actual_key: 18726884192294288
+  - id: OBS_129fb09023
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '192'
+      DeterType: '4'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28719245328651952
+    actual_key: 19712046073910960
+  - id: OBS_960cb937fc
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '2'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28151898402460064
+    actual_key: 19144699147719072
+  - id: OBS_9c8ddc2547
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '192'
+      DeterType: '2'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28151897328718752
+    actual_key: 19144698073977760
+  - id: OBS_efa16e8bde
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '4'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '1'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 33363581907507120
+    actual_key: 24356382652766128
+  - id: OBS_719626c490
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '64'
+      DeterType: '4'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28719244254910384
+    actual_key: 19712045000169392
+  - id: OBS_cdfe7c84a0
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '64'
+      DeterType: '2'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 27588946301555344
+    actual_key: 18581747046814352
+  - id: OBS_c1c70317d9
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '64'
+      DeterType: '2'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28151896254977184
+    actual_key: 19144697000236192
+  - id: OBS_94a1606c6a
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '192'
+      DeterType: '3'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 27626330770642576
+    actual_key: 18619131515901584
+  - id: OBS_afef9141e2
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '4'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28859983890748848
+    actual_key: 19852784636007856
+  - id: OBS_edc69df770
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '64'
+      DeterType: '3'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 27767067185256336
+    actual_key: 18759867930515344
+  - id: OBS_ac1633005d
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '2'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '1'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 33218446372640176
+    actual_key: 24211247117899184
+  observations:
+  - OBS_3f1c575d2d
+  - OBS_d175b9c466
+  - OBS_c0e5d1d5ea
+  - OBS_38aac9c694
+  - OBS_bba289756f
+  - OBS_ae10d2b532
+  - OBS_1f9494cfde
+  - OBS_918062bb76
+  - OBS_69b68e0f73
+  - OBS_129fb09023
+  - OBS_960cb937fc
+  - OBS_9c8ddc2547
+  - OBS_efa16e8bde
+  - OBS_719626c490
+  - OBS_cdfe7c84a0
+  - OBS_c1c70317d9
+  - OBS_94a1606c6a
+  - OBS_afef9141e2
+  - OBS_edc69df770
+  - OBS_ac1633005d
+  - OBS_65d29b4a4b
+  - OBS_3c102aea25
+  - OBS_3d59294f6b
+  - OBS_a4231617e2
+  - OBS_f3779079af
+  - OBS_02d6a8b528
+  - OBS_f740fcf3d7
+  - OBS_e9dc810eee
+  - OBS_87bf011c33
+  - OBS_9edb3d0fc2
+  - OBS_1363774716
+  - OBS_3838352955
+  - OBS_3df3531a9e
+  - OBS_aa6cf751d5
+  - OBS_7c888d255a
+  - OBS_7c88621957
+  - OBS_d5c6f71224
+  - OBS_2570cab7e5
+  - OBS_5bf8d36d00
+  - OBS_ae16f11195
+  - OBS_0bbccd4102
+  - OBS_91e778914f
+  - OBS_f61faa6de5
+  - OBS_e9b8ffbad3
+  - OBS_4e61d41e08
+  - OBS_06cf5c86dc
+  - OBS_80546c8e1d
+  - OBS_93337c4e94
+  - OBS_65ebafda52
+  - OBS_8a0fc93b9a
+  - OBS_b18dc0054d
+  - OBS_9f329f352a
+  - OBS_31e13ae53e
+  - OBS_8ec636acbe
+  - OBS_0d04787289
+  - OBS_324ee03ef0
+  - OBS_a3e6cf1318
+  observation_count: 57
+  support:
+    attempts: 57
+    rewrite: 57
+    refuse: 0
+    hit: 0
+  rewrite_to:
+    IsTndSwizzle: '0'
+  reject_family: ''
+  mismatch_dims:
+  - IsTndSwizzle
+  affected_open_keys: 1152
+  evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_16747472.yaml
+  source: oracle_observation
+  mine_open: 0
+  mine_min_support: 0
+  mine_kind: ''
+  priority: 68520
+- id: OBS_LEAD_3989A088
+  kind: rewrite
+  when:
+    IsEmptyTensor: '0'
+    SplitAxis: '0'
+    IsAttenMask: '0'
+    S2TemplateNum: '128'
+    IsBn2MultiBlk: '0'
+    IsTndSwizzle: '0'
+    IsRegbase: '1'
+  combo: IsAttenMask=0,IsBn2MultiBlk=0,IsEmptyTensor=0,IsRegbase=1,IsTndSwizzle=0,S2TemplateNum=128,SplitAxis=0
+  family: true
+  family_key: rewrite|('DeterType',)|(('DeterType', '2'),)|
+  instances:
+  - id: OBS_22d2d0a730
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '192'
+      DeterType: '4'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 18621330539156112
+    actual_key: 18616932492645008
+  - id: OBS_423e3f612f
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '4'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19325019054674848
+    actual_key: 19320621008163744
+  - id: OBS_477ce7cf05
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '0'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '64'
+      DeterType: '4'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19149095046746656
+    actual_key: 19144697000235552
+  - id: OBS_7459712d6d
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '3'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19709848124396464
+    actual_key: 19707649101140912
+  - id: OBS_96fd24f05a
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '0'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '192'
+      DeterType: '3'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19709847050654000
+    actual_key: 19707648027398448
+  - id: OBS_340c3f5b38
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '0'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '192'
+      DeterType: '3'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 18759869004256016
+    actual_key: 18757669981000464
+  - id: OBS_9698004ad2
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '3'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19745030885872048
+    actual_key: 19742831862616496
+  - id: OBS_31bb9f1f18
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '0'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '4'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19712045537038896
+    actual_key: 19707647490527792
+  - id: OBS_b6ad88fb3e
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '0'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '256'
+      DeterType: '3'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19709847587525168
+    actual_key: 19707648564269616
+  - id: OBS_03a5c82b1f
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '0'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '3'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19287634048717344
+    actual_key: 19285435025461792
+  - id: OBS_38fb2d2182
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '0'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '3'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19182080932450848
+    actual_key: 19179881909195296
+  - id: OBS_dc349a6167
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '0'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '64'
+      DeterType: '3'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 18724683558425104
+    actual_key: 18722484535169552
+  - id: OBS_a812ddff2c
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '3'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 18724684095296400
+    actual_key: 18722485072040848
+  - id: OBS_c9f605e7bf
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '192'
+      DeterType: '4'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '1'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19571308585554592
+    actual_key: 19566910539043488
+  - id: OBS_fec3db4ea2
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '0'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '4'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19325019054674208
+    actual_key: 19320621008163104
+  - id: OBS_f1c948e93a
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '0'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '3'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '1'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 24354183629508912
+    actual_key: 24351984606253360
+  - id: OBS_a95793a88a
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '4'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19887967397483440
+    actual_key: 19883569350972336
+  - id: OBS_334a8c856e
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '0'
+      IsDrop: '0'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '4'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '1'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 23652695210987552
+    actual_key: 23648297164476448
+  - id: OBS_f00a44cec8
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '64'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '4'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 18621331612895632
+    actual_key: 18616933566384528
+  - id: OBS_39a4b60381
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '0'
+      IsDrop: '0'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '3'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19182082543063072
+    actual_key: 19179883519807520
+  observations:
+  - OBS_22d2d0a730
+  - OBS_423e3f612f
+  - OBS_477ce7cf05
+  - OBS_7459712d6d
+  - OBS_96fd24f05a
+  - OBS_340c3f5b38
+  - OBS_9698004ad2
+  - OBS_31bb9f1f18
+  - OBS_b6ad88fb3e
+  - OBS_03a5c82b1f
+  - OBS_38fb2d2182
+  - OBS_dc349a6167
+  - OBS_a812ddff2c
+  - OBS_c9f605e7bf
+  - OBS_fec3db4ea2
+  - OBS_f1c948e93a
+  - OBS_a95793a88a
+  - OBS_334a8c856e
+  - OBS_f00a44cec8
+  - OBS_39a4b60381
+  - OBS_9510e5a0c8
+  - OBS_ab90fda381
+  - OBS_cdf308c0e9
+  - OBS_b9a60124c3
+  - OBS_caab0c425e
+  - OBS_6f9116eef4
+  - OBS_554e46af2b
+  - OBS_68bc5bb410
+  - OBS_a5f2dde6c9
+  - OBS_16156e805b
+  - OBS_5bd80df2d3
+  - OBS_ecdc0ee34d
+  - OBS_a1becce858
+  - OBS_fdb9361f12
+  - OBS_1961eb01a0
+  - OBS_b44234a6ec
+  - OBS_b8448cd44d
+  - OBS_f790e7546e
+  - OBS_11c7710058
+  - OBS_594badd12a
+  - OBS_59c130dc2b
+  - OBS_5e17d270e9
+  - OBS_aca8d47f20
+  - OBS_30d238aa48
+  - OBS_b297a63bbd
+  - OBS_c6a6d4e7e8
+  - OBS_a7ce121057
+  - OBS_c4b0e52a95
+  - OBS_818ac13db7
+  - OBS_ff1b41ea18
+  - OBS_5ae49cbd8f
+  - OBS_6c00b68ef9
+  - OBS_0aa6ccae68
+  - OBS_4bbe2744b4
+  - OBS_8c015d8ce7
+  - OBS_7d7a3f2082
+  - OBS_e5b114459f
+  - OBS_e5f8ef386d
+  - OBS_a906762ba4
+  - OBS_04c81254e6
+  - OBS_0ba45e36ed
+  - OBS_149e431ee3
+  - OBS_6959db8a4c
+  - OBS_c54697f5c3
+  - OBS_187dad82dd
+  - OBS_9696316bf1
+  - OBS_96b12aad4e
+  - OBS_f722aaaba4
+  observation_count: 68
+  support:
+    attempts: 68
+    rewrite: 68
+    refuse: 0
+    hit: 0
+  rewrite_to:
+    DeterType: '2'
+  reject_family: ''
+  mismatch_dims:
+  - DeterType
+  affected_open_keys: 0
+  evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_3989A088.yaml
+  source: oracle_observation
+  mine_open: 0
+  mine_min_support: 0
+  mine_kind: ''
+  priority: 68000
+- id: OBS_LEAD_FA46F2EC
+  kind: rewrite
+  when:
+    IsEmptyTensor: '0'
+    S1TemplateNum: '128'
+    S2TemplateNum: '128'
+    IsBn2MultiBlk: '0'
+    IsNzOut: '0'
+    IsTndSwizzle: '0'
+    IsRegbase: '1'
+  combo: IsBn2MultiBlk=0,IsEmptyTensor=0,IsNzOut=0,IsRegbase=1,IsTndSwizzle=0,S1TemplateNum=128,S2TemplateNum=128
+  family: true
+  family_key: rewrite|('SplitAxis',)|(('SplitAxis', '0'),)|
+  instances:
+  - id: OBS_131420f236
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '192'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '1'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19562512492532130
+    actual_key: 19562512492532128
+  - id: OBS_7706acbab9
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19281038589564834
+    actual_key: 19281038589564832
+  - id: OBS_a012806ba2
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19703251054629810
+    actual_key: 19703251054629808
+  - id: OBS_c3c8a1c610
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '192'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19281037515821218
+    actual_key: 19281037515821216
+  - id: OBS_f30e48f17a
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '5'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '256'
+      DeterType: '2'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19179882982938020
+    actual_key: 19179882982938016
+  - id: OBS_f7fde890a7
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '192'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19281037515822498
+    actual_key: 19281037515822496
+  - id: OBS_c859df6475
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '5'
+      InputDType: '3'
+      IsTnd: '0'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '256'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19703250517758772
+    actual_key: 19703250517758768
+  - id: OBS_b5f524a631
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '5'
+      InputDType: '3'
+      IsTnd: '0'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19703251054629428
+    actual_key: 19703251054629424
+  - id: OBS_2552311c6c
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '5'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '192'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19703249980888500
+    actual_key: 19703249980888496
+  - id: OBS_90ba431d33
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '5'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '2'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19320621008164772
+    actual_key: 19320621008164768
+  - id: OBS_a7bb8a9525
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '5'
+      InputDType: '3'
+      IsTnd: '0'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19843988542985780
+    actual_key: 19843988542985776
+  - id: OBS_8bf2c2b145
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19281038589563810
+    actual_key: 19281038589563808
+  - id: OBS_bbec425433
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '256'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19140300564337826
+    actual_key: 19140300564337824
+  - id: OBS_0ddc533d04
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '5'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '256'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19703250517759924
+    actual_key: 19703250517759920
+  - id: OBS_bfbd2d99cb
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '5'
+      InputDType: '2'
+      IsTnd: '0'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19281038589564452
+    actual_key: 19281038589564448
+  - id: OBS_1f42253836
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '5'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '256'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19703250517759412
+    actual_key: 19703250517759408
+  observations:
+  - OBS_131420f236
+  - OBS_7706acbab9
+  - OBS_a012806ba2
+  - OBS_c3c8a1c610
+  - OBS_f30e48f17a
+  - OBS_f7fde890a7
+  - OBS_c859df6475
+  - OBS_b5f524a631
+  - OBS_2552311c6c
+  - OBS_90ba431d33
+  - OBS_a7bb8a9525
+  - OBS_8bf2c2b145
+  - OBS_bbec425433
+  - OBS_0ddc533d04
+  - OBS_bfbd2d99cb
+  - OBS_1f42253836
+  observation_count: 16
+  support:
+    attempts: 16
+    rewrite: 16
+    refuse: 0
+    hit: 0
+  rewrite_to:
+    SplitAxis: '0'
+  reject_family: ''
+  mismatch_dims:
+  - SplitAxis
+  affected_open_keys: 328
+  evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_FA46F2EC.yaml
+  source: oracle_observation
+  mine_open: 0
+  mine_min_support: 0
+  mine_kind: ''
+  priority: 19280
+- id: OBS_LEAD_2E57DE26
+  kind: rewrite
+  when:
+    IsEmptyTensor: '0'
+    SplitAxis: '0'
+    IsTnd: '1'
+    S1TemplateNum: '128'
+    S2TemplateNum: '128'
+    IsNEqual: '1'
+    IsBn2MultiBlk: '0'
+    IsRope: '0'
+    IsNzOut: '0'
+    IsTndSwizzle: '1'
+    IsRegbase: '1'
+  combo: IsBn2MultiBlk=0,IsEmptyTensor=0,IsNEqual=1,IsNzOut=0,IsRegbase=1,IsRope=0,IsTnd=1,IsTndSwizzle=1,S1TemplateNum=128,S2TemplateNum=128,SplitAxis=0
+  family: true
+  family_key: rewrite|('IsTndSwizzle', 'SplitAxis')|(('IsTndSwizzle', '0'), ('SplitAxis',
+    '5'))|
+  instances:
+  - id: OBS_72830f359b
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '2'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28187081163936416
+    actual_key: 19179881909195428
+  - id: OBS_68284572b1
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '4'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28191479210448032
+    actual_key: 19184279955707044
+  - id: OBS_275a4062a9
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '4'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28754429163869616
+    actual_key: 19747229909128628
+  - id: OBS_2981bf53cb
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '256'
+      DeterType: '4'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28191480284189856
+    actual_key: 19184281029448868
+  - id: OBS_d40f2daca7
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '2'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28187081163937184
+    actual_key: 19179881909196196
+  - id: OBS_07e16438ed
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '2'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28890768605712816
+    actual_key: 19883569350971828
+  - id: OBS_d92e12493d
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '64'
+      DeterType: '4'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28754428626998448
+    actual_key: 19747229372257460
+  - id: OBS_1efef68777
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '192'
+      DeterType: '2'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28750031654228144
+    actual_key: 19742832399487156
+  - id: OBS_f16f3722ee
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '2'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28187081163936928
+    actual_key: 19179881909195940
+  observations:
+  - OBS_72830f359b
+  - OBS_68284572b1
+  - OBS_275a4062a9
+  - OBS_2981bf53cb
+  - OBS_d40f2daca7
+  - OBS_07e16438ed
+  - OBS_d92e12493d
+  - OBS_1efef68777
+  - OBS_f16f3722ee
+  observation_count: 9
+  support:
+    attempts: 9
+    rewrite: 9
+    refuse: 0
+    hit: 0
+  rewrite_to:
+    SplitAxis: '5'
+    IsTndSwizzle: '0'
+  reject_family: ''
+  mismatch_dims:
+  - IsTndSwizzle
+  - SplitAxis
+  affected_open_keys: 448
+  evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_2E57DE26.yaml
+  source: oracle_observation
+  mine_open: 0
+  mine_min_support: 0
+  mine_kind: ''
+  priority: 13480
+- id: OBS_LEAD_B652119C
+  kind: rewrite
+  when:
+    IsEmptyTensor: '0'
+    SplitAxis: '0'
+    InputDType: '1'
+    S1TemplateNum: '128'
+    S2TemplateNum: '128'
+    DTemplateNum: '768'
+    IsBn2MultiBlk: '0'
+    IsRope: '0'
+    OutDType: '1'
+    IsNzOut: '0'
+    IsTndSwizzle: '0'
+    IsRegbase: '1'
+  combo: DTemplateNum=768,InputDType=1,IsBn2MultiBlk=0,IsEmptyTensor=0,IsNzOut=0,IsRegbase=1,IsRope=0,IsTndSwizzle=0,OutDType=1,S1TemplateNum=128,S2TemplateNum=128,SplitAxis=0
+  family: true
+  family_key: rewrite|('S1TemplateNum',)|(('S1TemplateNum', '64'),)|
+  instances:
+  - id: OBS_f9eb7c6bdd
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '0'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '1'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 18579550171042576
+    actual_key: 18579550171040528
+  - id: OBS_e7f7eea020
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '0'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '4'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 18621331612899088
+    actual_key: 18621331612897040
+  - id: OBS_b215617af5
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '4'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 18762069101254032
+    actual_key: 18762069101251984
+  - id: OBS_fb52d43e17
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '0'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '2'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 18722486682653456
+    actual_key: 18722486682651408
+  - id: OBS_3e8fa6c973
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 18577351147786896
+    actual_key: 18577351147784848
+  - id: OBS_dfee678cb8
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '3'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 18619132589643408
+    actual_key: 18619132589641360
+  - id: OBS_7cebdf4caf
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '0'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '2'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 18722486682653968
+    actual_key: 18722486682651920
+  - id: OBS_547277bc7f
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '0'
+      IsDrop: '0'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '1'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 18579550171042832
+    actual_key: 18579550171040784
+  - id: OBS_d7a853eda8
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '0'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '1'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 18579550171043600
+    actual_key: 18579550171041552
+  - id: OBS_1384c2e1d2
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '0'
+      IsDrop: '0'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '2'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 18722486682653712
+    actual_key: 18722486682651664
+  observations:
+  - OBS_f9eb7c6bdd
+  - OBS_e7f7eea020
+  - OBS_b215617af5
+  - OBS_fb52d43e17
+  - OBS_3e8fa6c973
+  - OBS_dfee678cb8
+  - OBS_7cebdf4caf
+  - OBS_547277bc7f
+  - OBS_d7a853eda8
+  - OBS_1384c2e1d2
+  observation_count: 10
+  support:
+    attempts: 10
+    rewrite: 10
+    refuse: 0
+    hit: 0
+  rewrite_to:
+    S1TemplateNum: '64'
+  reject_family: ''
+  mismatch_dims:
+  - S1TemplateNum
+  affected_open_keys: 0
+  evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_B652119C.yaml
+  source: oracle_observation
+  mine_open: 0
+  mine_min_support: 0
+  mine_kind: ''
+  priority: 10000
+- id: OBS_LEAD_B140C632
+  kind: rewrite
+  when:
+    IsEmptyTensor: '0'
+    SplitAxis: '1'
+    S1TemplateNum: '128'
+    S2TemplateNum: '128'
+    DeterType: '0'
+    IsNEqual: '0'
+    IsBn2MultiBlk: '1'
+    IsRope: '0'
+    IsNzOut: '0'
+    IsTndSwizzle: '0'
+    IsRegbase: '1'
+  combo: DeterType=0,IsBn2MultiBlk=1,IsEmptyTensor=0,IsNEqual=0,IsNzOut=0,IsRegbase=1,IsRope=0,IsTndSwizzle=0,S1TemplateNum=128,S2TemplateNum=128,SplitAxis=1
+  family: true
+  family_key: rewrite|('IsBn2MultiBlk', 'SplitAxis')|(('IsBn2MultiBlk', '0'), ('SplitAxis',
+    '0'))|
+  instances:
+  - id: OBS_39e9cd83c6
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '3'
+      IsTnd: '0'
+      IsDrop: '0'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '1'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19914357287162930
+    actual_key: 19843988542985264
+  - id: OBS_947451f0ab
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '2'
+      IsTnd: '0'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '256'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '1'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19351406796871202
+    actual_key: 19281038052693536
+  - id: OBS_f3471f5fc4
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '64'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '1'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19210667697902498
+    actual_key: 19140298953724832
+  - id: OBS_4e435a911a
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '3'
+      IsTnd: '0'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '256'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '1'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19914356750292530
+    actual_key: 19843988006114864
+  - id: OBS_823496f085
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '1'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19914355676549298
+    actual_key: 19843986932371632
+  observations:
+  - OBS_39e9cd83c6
+  - OBS_947451f0ab
+  - OBS_f3471f5fc4
+  - OBS_4e435a911a
+  - OBS_823496f085
+  observation_count: 5
+  support:
+    attempts: 5
+    rewrite: 5
+    refuse: 0
+    hit: 0
+  rewrite_to:
+    SplitAxis: '0'
+    IsBn2MultiBlk: '0'
+  reject_family: ''
+  mismatch_dims:
+  - IsBn2MultiBlk
+  - SplitAxis
+  affected_open_keys: 80
+  evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_B140C632.yaml
+  source: oracle_observation
+  mine_open: 0
+  mine_min_support: 0
+  mine_kind: ''
+  priority: 5800
+- id: OBS_LEAD_9B1B7232
+  kind: rewrite
+  when:
+    IsEmptyTensor: '0'
+    SplitAxis: '5'
+    IsTnd: '1'
+    IsDrop: '1'
+    IsAttenMask: '0'
+    S1TemplateNum: '128'
+    S2TemplateNum: '128'
+    DeterType: '0'
+    IsNEqual: '0'
+    IsBn2MultiBlk: '0'
+    IsRope: '0'
+    IsNzOut: '0'
+    IsTndSwizzle: '1'
+    IsRegbase: '1'
+  combo: DeterType=0,IsAttenMask=0,IsBn2MultiBlk=0,IsDrop=1,IsEmptyTensor=0,IsNEqual=0,IsNzOut=0,IsRegbase=1,IsRope=0,IsTnd=1,IsTndSwizzle=1,S1TemplateNum=128,S2TemplateNum=128,SplitAxis=5
+  family: true
+  family_key: rewrite|('IsTndSwizzle', 'SplitAxis')|(('IsTndSwizzle', '0'), ('SplitAxis',
+    '0'))|
+  instances:
+  - id: OBS_2ac776730c
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '5'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '192'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28288236770562980
+    actual_key: 19281037515821984
+  - id: OBS_4fc47f1fdb
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '5'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '256'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28288237307433380
+    actual_key: 19281038052692384
+  - id: OBS_ef233627e5
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '5'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '192'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28147499282207140
+    actual_key: 19140300027466144
+  - id: OBS_50fbb26949
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '5'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '256'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28851187260854708
+    actual_key: 19843988006113712
+  - id: OBS_3651ccb114
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '5'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28851187797725620
+    actual_key: 19843988542984624
+  observations:
+  - OBS_2ac776730c
+  - OBS_4fc47f1fdb
+  - OBS_ef233627e5
+  - OBS_50fbb26949
+  - OBS_3651ccb114
+  observation_count: 5
+  support:
+    attempts: 5
+    rewrite: 5
+    refuse: 0
+    hit: 0
+  rewrite_to:
+    SplitAxis: '0'
+    IsTndSwizzle: '0'
+  reject_family: ''
+  mismatch_dims:
+  - IsTndSwizzle
+  - SplitAxis
+  affected_open_keys: 24
+  evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_9B1B7232.yaml
+  source: oracle_observation
+  mine_open: 0
+  mine_min_support: 0
+  mine_kind: ''
+  priority: 5240
+- id: OBS_LEAD_7B43D4B5
+  kind: rewrite
+  when:
+    IsEmptyTensor: '0'
+    SplitAxis: '0'
+    IsTnd: '1'
+    S1TemplateNum: '128'
+    S2TemplateNum: '128'
+    DTemplateNum: '128'
+    DeterType: '2'
+    IsNEqual: '1'
+    IsBn2MultiBlk: '0'
+    IsRope: '0'
+    IsNzOut: '1'
+    IsTndSwizzle: '1'
+    IsRegbase: '1'
+  combo: DTemplateNum=128,DeterType=2,IsBn2MultiBlk=0,IsEmptyTensor=0,IsNEqual=1,IsNzOut=1,IsRegbase=1,IsRope=0,IsTnd=1,IsTndSwizzle=1,S1TemplateNum=128,S2TemplateNum=128,SplitAxis=0
+  family: true
+  family_key: rewrite|('IsNzOut', 'IsTndSwizzle', 'SplitAxis')|(('IsNzOut', '0'),
+    ('IsTndSwizzle', '0'), ('SplitAxis', '5'))|
+  instances:
+  - id: OBS_c90154764a
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '2'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '1'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 33253630744727984
+    actual_key: 19742831862616500
+  - id: OBS_8bd9e1af40
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '2'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '1'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 32831418279663520
+    actual_key: 19320619397552036
+  - id: OBS_fcd36e2166
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '2'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '1'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 32690680791306400
+    actual_key: 19179881909194916
+  - id: OBS_ae8c000dbc
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '2'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '1'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 32831418279661984
+    actual_key: 19320619397550500
+  observations:
+  - OBS_c90154764a
+  - OBS_8bd9e1af40
+  - OBS_fcd36e2166
+  - OBS_ae8c000dbc
+  observation_count: 4
+  support:
+    attempts: 4
+    rewrite: 4
+    refuse: 0
+    hit: 0
+  rewrite_to:
+    SplitAxis: '5'
+    IsNzOut: '0'
+    IsTndSwizzle: '0'
+  reject_family: ''
+  mismatch_dims:
+  - IsNzOut
+  - IsTndSwizzle
+  - SplitAxis
+  affected_open_keys: 32
+  evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_7B43D4B5.yaml
+  source: oracle_observation
+  mine_open: 0
+  mine_min_support: 0
+  mine_kind: ''
+  priority: 4320
+- id: OBS_LEAD_AAC6E318
+  kind: rewrite
+  when:
+    IsEmptyTensor: '0'
+    SplitAxis: '1'
+    IsTnd: '0'
+    S1TemplateNum: '128'
+    S2TemplateNum: '128'
+    DeterType: '0'
+    IsNEqual: '0'
+    IsBn2MultiBlk: '1'
+    IsDNoEqual: '0'
+    IsRope: '1'
+    IsNzOut: '0'
+    IsTndSwizzle: '0'
+    IsRegbase: '1'
+  combo: DeterType=0,IsBn2MultiBlk=1,IsDNoEqual=0,IsEmptyTensor=0,IsNEqual=0,IsNzOut=0,IsRegbase=1,IsRope=1,IsTnd=0,IsTndSwizzle=0,S1TemplateNum=128,S2TemplateNum=128,SplitAxis=1
+  family: true
+  family_key: rewrite|('DTemplateNum', 'IsBn2MultiBlk', 'IsDNoEqual', 'SplitAxis')|(('DTemplateNum',
+    '192'), ('IsBn2MultiBlk', '0'), ('IsDNoEqual', '1'), ('SplitAxis', '0'))|
+  instances:
+  - id: OBS_0f1acb8970
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '2'
+      IsTnd: '0'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '256'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '1'
+      IsDNoEqual: '0'
+      IsRope: '1'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19492144285226274
+    actual_key: 19562512492533024
+  - id: OBS_a758508101
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '3'
+      IsTnd: '0'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '1'
+      IsDNoEqual: '0'
+      IsRope: '1'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 20055094775517490
+    actual_key: 20125462445953328
+  - id: OBS_e561ee5450
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '2'
+      IsTnd: '0'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '256'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '1'
+      IsDNoEqual: '0'
+      IsRope: '1'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19492144285225762
+    actual_key: 19562512492532512
+  - id: OBS_95bf8fad64
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '2'
+      IsTnd: '0'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '256'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '1'
+      IsDNoEqual: '0'
+      IsRope: '1'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19492144285226530
+    actual_key: 19562512492533280
+  observations:
+  - OBS_0f1acb8970
+  - OBS_a758508101
+  - OBS_e561ee5450
+  - OBS_95bf8fad64
+  observation_count: 4
+  support:
+    attempts: 4
+    rewrite: 4
+    refuse: 0
+    hit: 0
+  rewrite_to:
+    SplitAxis: '0'
+    DTemplateNum: '192'
+    IsBn2MultiBlk: '0'
+    IsDNoEqual: '1'
+  reject_family: ''
+  mismatch_dims:
+  - DTemplateNum
+  - IsBn2MultiBlk
+  - IsDNoEqual
+  - SplitAxis
+  affected_open_keys: 0
+  evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_AAC6E318.yaml
+  source: oracle_observation
+  mine_open: 0
+  mine_min_support: 0
+  mine_kind: ''
+  priority: 4000
+- id: OBS_LEAD_444E2224
+  kind: rewrite
+  when:
+    IsEmptyTensor: '0'
+    SplitAxis: '0'
+    InputDType: '2'
+    IsTnd: '0'
+    IsAttenMask: '1'
+    S1TemplateNum: '128'
+    S2TemplateNum: '128'
+    DTemplateNum: '128'
+    DeterType: '3'
+    IsNEqual: '1'
+    IsBn2MultiBlk: '0'
+    IsDNoEqual: '0'
+    IsRope: '0'
+    OutDType: '2'
+    IsNzOut: '1'
+    IsTndSwizzle: '0'
+    IsRegbase: '1'
+  combo: DTemplateNum=128,DeterType=3,InputDType=2,IsAttenMask=1,IsBn2MultiBlk=0,IsDNoEqual=0,IsEmptyTensor=0,IsNEqual=1,IsNzOut=1,IsRegbase=1,IsRope=0,IsTnd=0,IsTndSwizzle=0,OutDType=2,S1TemplateNum=128,S2TemplateNum=128,SplitAxis=0
+  family: true
+  family_key: rewrite|('IsNzOut',)|(('IsNzOut', '0'),)|
+  instances:
+  - id: OBS_1744e3b634
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '0'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '3'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '1'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 23685680559822368
+    actual_key: 19182080932451872
+  - id: OBS_bab0db5923
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '2'
+      IsTnd: '0'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '3'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '1'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 23685680559822112
+    actual_key: 19182080932451616
+  observations:
+  - OBS_1744e3b634
+  - OBS_bab0db5923
+  observation_count: 2
+  support:
+    attempts: 2
+    rewrite: 2
+    refuse: 0
+    hit: 0
+  rewrite_to:
+    IsNzOut: '0'
+  reject_family: ''
+  mismatch_dims:
+  - IsNzOut
+  affected_open_keys: 4
+  evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_444E2224.yaml
+  source: oracle_observation
+  mine_open: 0
+  mine_min_support: 0
+  mine_kind: ''
+  priority: 2040
+- id: OBS_LEAD_48BD00F7
+  kind: rewrite
+  when:
+    IsEmptyTensor: '0'
+    SplitAxis: '1'
+    IsTnd: '0'
+    IsPse: '1'
+    IsAttenMask: '0'
+    S1TemplateNum: '128'
+    S2TemplateNum: '128'
+    DTemplateNum: '64'
+    DeterType: '0'
+    IsNEqual: '0'
+    IsBn2MultiBlk: '0'
+    IsDNoEqual: '0'
+    IsRope: '1'
+    IsNzOut: '0'
+    IsTndSwizzle: '0'
+    IsRegbase: '1'
+  combo: DTemplateNum=64,DeterType=0,IsAttenMask=0,IsBn2MultiBlk=0,IsDNoEqual=0,IsEmptyTensor=0,IsNEqual=0,IsNzOut=0,IsPse=1,IsRegbase=1,IsRope=1,IsTnd=0,IsTndSwizzle=0,S1TemplateNum=128,S2TemplateNum=128,SplitAxis=1
+  family: true
+  family_key: rewrite|('DTemplateNum', 'IsDNoEqual')|(('DTemplateNum', '192'), ('IsDNoEqual',
+    '1'))|
+  instances:
+  - id: OBS_0aea07054d
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '3'
+      IsTnd: '0'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '64'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '1'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19984723883856434
+    actual_key: 20125462445953586
+  - id: OBS_bdd9db8dd1
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '2'
+      IsTnd: '0'
+      IsDrop: '1'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '64'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '1'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19421773930435362
+    actual_key: 19562512492532514
+  observations:
+  - OBS_0aea07054d
+  - OBS_bdd9db8dd1
+  observation_count: 2
+  support:
+    attempts: 2
+    rewrite: 2
+    refuse: 0
+    hit: 0
+  rewrite_to:
+    DTemplateNum: '192'
+    IsDNoEqual: '1'
+  reject_family: ''
+  mismatch_dims:
+  - DTemplateNum
+  - IsDNoEqual
+  affected_open_keys: 0
+  evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_48BD00F7.yaml
+  source: oracle_observation
+  mine_open: 0
+  mine_min_support: 0
+  mine_kind: ''
+  priority: 2000
+- id: OBS_LEAD_35F2661F
+  kind: rewrite
+  when:
+    IsEmptyTensor: '0'
+    SplitAxis: '1'
+    InputDType: '2'
+    IsTnd: '0'
+    S1TemplateNum: '128'
+    S2TemplateNum: '128'
+    DeterType: '0'
+    IsNEqual: '0'
+    IsBn2MultiBlk: '0'
+    IsDNoEqual: '1'
+    IsRope: '1'
+    OutDType: '2'
+    IsNzOut: '0'
+    IsTndSwizzle: '0'
+    IsRegbase: '1'
+  combo: DeterType=0,InputDType=2,IsBn2MultiBlk=0,IsDNoEqual=1,IsEmptyTensor=0,IsNEqual=0,IsNzOut=0,IsRegbase=1,IsRope=1,IsTnd=0,IsTndSwizzle=0,OutDType=2,S1TemplateNum=128,S2TemplateNum=128,SplitAxis=1
+  family: true
+  family_key: rewrite|('DTemplateNum',)|(('DTemplateNum', '192'),)|
+  instances:
+  - id: OBS_dd38538be8
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '2'
+      IsTnd: '0'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '1'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19562513566274082
+    actual_key: 19562512492532258
+  - id: OBS_06571777ad
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '2'
+      IsTnd: '0'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '1'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19562511955662114
+    actual_key: 19562512492533026
+  observations:
+  - OBS_dd38538be8
+  - OBS_06571777ad
+  observation_count: 2
+  support:
+    attempts: 2
+    rewrite: 2
+    refuse: 0
+    hit: 0
+  rewrite_to:
+    DTemplateNum: '192'
+  reject_family: ''
+  mismatch_dims:
+  - DTemplateNum
+  affected_open_keys: 0
+  evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_35F2661F.yaml
+  source: oracle_observation
+  mine_open: 0
+  mine_min_support: 0
+  mine_kind: ''
+  priority: 2000
+- id: OBS_LEAD_2BF7BBEE
+  kind: rewrite
+  when:
+    IsEmptyTensor: '0'
+    SplitAxis: '5'
+    IsTnd: '1'
+    IsAttenMask: '0'
+    S1TemplateNum: '128'
+    S2TemplateNum: '128'
+    DTemplateNum: '128'
+    DeterType: '4'
+    IsNEqual: '1'
+    IsBn2MultiBlk: '0'
+    IsRope: '0'
+    IsNzOut: '0'
+    IsTndSwizzle: '0'
+    IsRegbase: '1'
+  combo: DTemplateNum=128,DeterType=4,IsAttenMask=0,IsBn2MultiBlk=0,IsEmptyTensor=0,IsNEqual=1,IsNzOut=0,IsRegbase=1,IsRope=0,IsTnd=1,IsTndSwizzle=0,S1TemplateNum=128,S2TemplateNum=128,SplitAxis=5
+  family: true
+  family_key: rewrite|('DeterType', 'SplitAxis')|(('DeterType', '2'), ('SplitAxis',
+    '0'))|
+  instances:
+  - id: OBS_345bfd246b
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '5'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '4'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19325017444061604
+    actual_key: 19320619397550496
+  - id: OBS_bffa5d3292
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '5'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '4'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19747229909127860
+    actual_key: 19742831862616752
+  observations:
+  - OBS_345bfd246b
+  - OBS_bffa5d3292
+  observation_count: 2
+  support:
+    attempts: 2
+    rewrite: 2
+    refuse: 0
+    hit: 0
+  rewrite_to:
+    SplitAxis: '0'
+    DeterType: '2'
+  reject_family: ''
+  mismatch_dims:
+  - DeterType
+  - SplitAxis
+  affected_open_keys: 0
+  evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_2BF7BBEE.yaml
+  source: oracle_observation
+  mine_open: 0
+  mine_min_support: 0
+  mine_kind: ''
+  priority: 2000
+- id: OBS_LEAD_69BE75AC
+  kind: rewrite
+  when:
+    IsEmptyTensor: '0'
+    SplitAxis: '0'
+    InputDType: '1'
+    IsTnd: '0'
+    IsDrop: '0'
+    IsAttenMask: '0'
+    S1TemplateNum: '128'
+    S2TemplateNum: '128'
+    DTemplateNum: '768'
+    DeterType: '4'
+    IsNEqual: '0'
+    IsBn2MultiBlk: '0'
+    IsRope: '0'
+    OutDType: '1'
+    IsNzOut: '0'
+    IsTndSwizzle: '0'
+    IsRegbase: '1'
+  combo: DTemplateNum=768,DeterType=4,InputDType=1,IsAttenMask=0,IsBn2MultiBlk=0,IsDrop=0,IsEmptyTensor=0,IsNEqual=0,IsNzOut=0,IsRegbase=1,IsRope=0,IsTnd=0,IsTndSwizzle=0,OutDType=1,S1TemplateNum=128,S2TemplateNum=128,SplitAxis=0
+  family: true
+  family_key: rewrite|('DeterType', 'S1TemplateNum')|(('DeterType', '2'), ('S1TemplateNum',
+    '64'))|
+  instances:
+  - id: OBS_7aa91e7784
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '0'
+      IsDrop: '0'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '4'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 18586147240808464
+    actual_key: 18581749194295312
+  - id: OBS_739777fd21
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '0'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '4'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 18726884729164304
+    actual_key: 18722486682651152
+  observations:
+  - OBS_7aa91e7784
+  - OBS_739777fd21
+  observation_count: 2
+  support:
+    attempts: 2
+    rewrite: 2
+    refuse: 0
+    hit: 0
+  rewrite_to:
+    S1TemplateNum: '64'
+    DeterType: '2'
+  reject_family: ''
+  mismatch_dims:
+  - DeterType
+  - S1TemplateNum
+  affected_open_keys: 0
+  evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_69BE75AC.yaml
+  source: oracle_observation
+  mine_open: 0
+  mine_min_support: 0
+  mine_kind: ''
+  priority: 2000
+- id: OBS_LEAD_C1F7EC48
+  kind: rewrite
+  when:
+    IsEmptyTensor: '0'
+    SplitAxis: '1'
+    IsTnd: '1'
+    IsDrop: '0'
+    IsPse: '1'
+    S1TemplateNum: '128'
+    S2TemplateNum: '128'
+    DeterType: '0'
+    IsNEqual: '0'
+    IsBn2MultiBlk: '1'
+    IsDNoEqual: '1'
+    IsRope: '1'
+    IsNzOut: '0'
+    IsTndSwizzle: '0'
+    IsRegbase: '1'
+  combo: DeterType=0,IsBn2MultiBlk=1,IsDNoEqual=1,IsDrop=0,IsEmptyTensor=0,IsNEqual=0,IsNzOut=0,IsPse=1,IsRegbase=1,IsRope=1,IsTnd=1,IsTndSwizzle=0,S1TemplateNum=128,S2TemplateNum=128,SplitAxis=1
+  family: true
+  family_key: rewrite|('DTemplateNum', 'IsBn2MultiBlk', 'SplitAxis')|(('DTemplateNum',
+    '192'), ('IsBn2MultiBlk', '0'), ('SplitAxis', '0'))|
+  instances:
+  - id: OBS_a3afdf54b2
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '64'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '1'
+      IsDNoEqual: '1'
+      IsRope: '1'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 20195830116390578
+    actual_key: 20125462445954736
+  - id: OBS_4733395013
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '256'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '1'
+      IsDNoEqual: '1'
+      IsRope: '1'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19632881773580962
+    actual_key: 19562512492532384
+  observations:
+  - OBS_a3afdf54b2
+  - OBS_4733395013
+  observation_count: 2
+  support:
+    attempts: 2
+    rewrite: 2
+    refuse: 0
+    hit: 0
+  rewrite_to:
+    SplitAxis: '0'
+    DTemplateNum: '192'
+    IsBn2MultiBlk: '0'
+  reject_family: ''
+  mismatch_dims:
+  - DTemplateNum
+  - IsBn2MultiBlk
+  - SplitAxis
+  affected_open_keys: 0
+  evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_C1F7EC48.yaml
+  source: oracle_observation
+  mine_open: 0
+  mine_min_support: 0
+  mine_kind: ''
+  priority: 2000
+- id: OBS_LEAD_2654044A
+  kind: rewrite
+  when:
+    IsEmptyTensor: '0'
+    SplitAxis: '1'
+    InputDType: '2'
+    IsTnd: '1'
+    IsDrop: '0'
+    IsPse: '0'
+    IsAttenMask: '1'
+    S1TemplateNum: '128'
+    S2TemplateNum: '128'
+    DTemplateNum: '128'
+    DeterType: '0'
+    IsNEqual: '0'
+    IsBn2MultiBlk: '0'
+    IsDNoEqual: '0'
+    IsRope: '1'
+    OutDType: '2'
+    IsNzOut: '0'
+    IsTndSwizzle: '0'
+    IsRegbase: '1'
+  combo: DTemplateNum=128,DeterType=0,InputDType=2,IsAttenMask=1,IsBn2MultiBlk=0,IsDNoEqual=0,IsDrop=0,IsEmptyTensor=0,IsNEqual=0,IsNzOut=0,IsPse=0,IsRegbase=1,IsRope=1,IsTnd=1,IsTndSwizzle=0,OutDType=2,S1TemplateNum=128,S2TemplateNum=128,SplitAxis=1
+  family: true
+  family_key: rewrite|('DTemplateNum', 'IsDNoEqual', 'SplitAxis')|(('DTemplateNum',
+    '192'), ('IsDNoEqual', '1'), ('SplitAxis', '0'))|
+  instances:
+  - id: OBS_3f49775800
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '1'
+      InputDType: '2'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '0'
+      IsAttenMask: '1'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '0'
+      IsNEqual: '0'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '1'
+      OutDType: '2'
+      IsNzOut: '0'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 19421774467306658
+    actual_key: 19562512492532896
+  observations:
+  - OBS_3f49775800
+  observation_count: 1
+  support:
+    attempts: 1
+    rewrite: 1
+    refuse: 0
+    hit: 0
+  rewrite_to:
+    SplitAxis: '0'
+    DTemplateNum: '192'
+    IsDNoEqual: '1'
+  reject_family: ''
+  mismatch_dims:
+  - DTemplateNum
+  - IsDNoEqual
+  - SplitAxis
+  affected_open_keys: 0
+  evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_2654044A.yaml
+  source: oracle_observation
+  mine_open: 0
+  mine_min_support: 0
+  mine_kind: ''
+  priority: 1000
+- id: OBS_LEAD_B7DF212F
+  kind: rewrite
+  when:
+    IsEmptyTensor: '0'
+    SplitAxis: '0'
+    InputDType: '1'
+    IsTnd: '1'
+    IsDrop: '0'
+    IsPse: '1'
+    IsAttenMask: '0'
+    S1TemplateNum: '128'
+    S2TemplateNum: '128'
+    DTemplateNum: '768'
+    DeterType: '3'
+    IsNEqual: '1'
+    IsBn2MultiBlk: '0'
+    IsDNoEqual: '0'
+    IsRope: '0'
+    OutDType: '1'
+    IsNzOut: '0'
+    IsTndSwizzle: '1'
+    IsRegbase: '1'
+  combo: DTemplateNum=768,DeterType=3,InputDType=1,IsAttenMask=0,IsBn2MultiBlk=0,IsDNoEqual=0,IsDrop=0,IsEmptyTensor=0,IsNEqual=1,IsNzOut=0,IsPse=1,IsRegbase=1,IsRope=0,IsTnd=1,IsTndSwizzle=1,OutDType=1,S1TemplateNum=128,S2TemplateNum=128,SplitAxis=0
+  family: true
+  family_key: rewrite|('DeterType', 'IsTndSwizzle', 'S1TemplateNum')|(('DeterType',
+    '2'), ('IsTndSwizzle', '0'), ('S1TemplateNum', '64'))|
+  instances:
+  - id: OBS_c7f84a979c
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '1'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '1'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '768'
+      DeterType: '3'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '1'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 27626331844383376
+    actual_key: 18616933566384784
+  observations:
+  - OBS_c7f84a979c
+  observation_count: 1
+  support:
+    attempts: 1
+    rewrite: 1
+    refuse: 0
+    hit: 0
+  rewrite_to:
+    S1TemplateNum: '64'
+    DeterType: '2'
+    IsTndSwizzle: '0'
+  reject_family: ''
+  mismatch_dims:
+  - DeterType
+  - IsTndSwizzle
+  - S1TemplateNum
+  affected_open_keys: 0
+  evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_B7DF212F.yaml
+  source: oracle_observation
+  mine_open: 0
+  mine_min_support: 0
+  mine_kind: ''
+  priority: 1000
+- id: OBS_LEAD_85FB1785
+  kind: rewrite
+  when:
+    IsEmptyTensor: '0'
+    SplitAxis: '0'
+    InputDType: '3'
+    IsTnd: '1'
+    IsDrop: '1'
+    IsPse: '0'
+    IsAttenMask: '0'
+    S1TemplateNum: '128'
+    S2TemplateNum: '128'
+    DTemplateNum: '128'
+    DeterType: '4'
+    IsNEqual: '1'
+    IsBn2MultiBlk: '0'
+    IsDNoEqual: '0'
+    IsRope: '0'
+    OutDType: '3'
+    IsNzOut: '1'
+    IsTndSwizzle: '0'
+    IsRegbase: '1'
+  combo: DTemplateNum=128,DeterType=4,InputDType=3,IsAttenMask=0,IsBn2MultiBlk=0,IsDNoEqual=0,IsDrop=1,IsEmptyTensor=0,IsNEqual=1,IsNzOut=1,IsPse=0,IsRegbase=1,IsRope=0,IsTnd=1,IsTndSwizzle=0,OutDType=3,S1TemplateNum=128,S2TemplateNum=128,SplitAxis=0
+  family: true
+  family_key: rewrite|('DeterType', 'IsNzOut')|(('DeterType', '2'), ('IsNzOut', '0'))|
+  instances:
+  - id: OBS_67f14fd97a
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '1'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '128'
+      DeterType: '4'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '0'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '1'
+      IsTndSwizzle: '0'
+      IsRegbase: '1'
+    target_key: 24250829536498096
+    actual_key: 19742831862616496
+  observations:
+  - OBS_67f14fd97a
+  observation_count: 1
+  support:
+    attempts: 1
+    rewrite: 1
+    refuse: 0
+    hit: 0
+  rewrite_to:
+    DeterType: '2'
+    IsNzOut: '0'
+  reject_family: ''
+  mismatch_dims:
+  - DeterType
+  - IsNzOut
+  affected_open_keys: 0
+  evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_85FB1785.yaml
+  source: oracle_observation
+  mine_open: 0
+  mine_min_support: 0
+  mine_kind: ''
+  priority: 1000
+- id: OBS_LEAD_EBD2F5E4
+  kind: rewrite
+  when:
+    IsEmptyTensor: '0'
+    SplitAxis: '0'
+    InputDType: '3'
+    IsTnd: '1'
+    IsDrop: '0'
+    IsPse: '0'
+    IsAttenMask: '0'
+    S1TemplateNum: '128'
+    S2TemplateNum: '128'
+    DTemplateNum: '192'
+    DeterType: '3'
+    IsNEqual: '1'
+    IsBn2MultiBlk: '0'
+    IsDNoEqual: '1'
+    IsRope: '0'
+    OutDType: '3'
+    IsNzOut: '0'
+    IsTndSwizzle: '1'
+    IsRegbase: '1'
+  combo: DTemplateNum=192,DeterType=3,InputDType=3,IsAttenMask=0,IsBn2MultiBlk=0,IsDNoEqual=1,IsDrop=0,IsEmptyTensor=0,IsNEqual=1,IsNzOut=0,IsPse=0,IsRegbase=1,IsRope=0,IsTnd=1,IsTndSwizzle=1,OutDType=3,S1TemplateNum=128,S2TemplateNum=128,SplitAxis=0
+  family: true
+  family_key: rewrite|('DeterType', 'IsTndSwizzle', 'SplitAxis')|(('DeterType', '2'),
+    ('IsTndSwizzle', '0'), ('SplitAxis', '5'))|
+  instances:
+  - id: OBS_565908c335
+    when:
+      IsEmptyTensor: '0'
+      SplitAxis: '0'
+      InputDType: '3'
+      IsTnd: '1'
+      IsDrop: '0'
+      IsPse: '0'
+      IsAttenMask: '0'
+      S1TemplateNum: '128'
+      S2TemplateNum: '128'
+      DTemplateNum: '192'
+      DeterType: '3'
+      IsNEqual: '1'
+      IsBn2MultiBlk: '0'
+      IsDNoEqual: '1'
+      IsRope: '0'
+      OutDType: '3'
+      IsNzOut: '0'
+      IsTndSwizzle: '1'
+      IsRegbase: '1'
+    target_key: 28892968165839024
+    actual_key: 19883569887842484
+  observations:
+  - OBS_565908c335
+  observation_count: 1
+  support:
+    attempts: 1
+    rewrite: 1
+    refuse: 0
+    hit: 0
+  rewrite_to:
+    SplitAxis: '5'
+    DeterType: '2'
+    IsTndSwizzle: '0'
+  reject_family: ''
+  mismatch_dims:
+  - DeterType
+  - IsTndSwizzle
+  - SplitAxis
+  affected_open_keys: 0
+  evidence_path: tg/closure/lemmas/evidence/OBS_LEAD_EBD2F5E4.yaml
+  source: oracle_observation
+  mine_open: 0
+  mine_min_support: 0
+  mine_kind: ''
+  priority: 1000
+pairs: []
+triples: []
+pair_count: 0
+triple_count: 0
+error: ''
+note: leads require Host REWRITE/REFUSE observations; mine_pairs/triples used only
+  for ranking

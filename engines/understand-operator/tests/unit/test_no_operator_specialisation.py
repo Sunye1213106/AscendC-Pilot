@@ -23,7 +23,17 @@ import pytest
 
 from uo_init import paths
 
-SRC = paths.repo_root() / "engines" / "understand-operator" / "src" / "uo_init"
+#: Every directory whose code has to work on an operator it has never seen.
+#: The analysis engine was the original scope; the closure ledger, the replay
+#: driver and the control plane make the same promise and were unguarded, which
+#: is how a per-operator alias survived in the replay adapter.
+#: ``operators/`` is deliberately absent: that is where specialisation belongs.
+PRODUCT_DIRS = (
+    Path("engines/understand-operator/src/uo_init"),
+    Path("engines/testcase-generation/testcase_agent"),
+    Path("scripts/replay"),
+    Path("pilot/ascendc_pilot"),
+)
 
 #: Abbreviations no rule can derive from a directory name.
 EXTRA_TOKENS = {"fag", "FAG"}
@@ -68,7 +78,9 @@ def _code_without_prose(path: Path) -> str:
     String *literals* stay: `if op == "FlashAttentionScoreGrad"` is exactly the
     thing being looked for, and it is a literal.
     """
-    text = path.read_text(encoding="utf-8")
+    # ``utf-8-sig``: a byte-order mark makes ``ast.parse`` raise, and a file the
+    # gate cannot parse is a file the gate cannot check.
+    text = path.read_text(encoding="utf-8-sig")
     lines = text.splitlines(keepends=True)
 
     drop: set[int] = set()
@@ -100,17 +112,25 @@ def _code_without_prose(path: Path) -> str:
 
 
 def _sources() -> list[Path]:
-    return sorted(SRC.rglob("*.py"))
+    root = paths.repo_root()
+    out: list[Path] = []
+    for rel in PRODUCT_DIRS:
+        base = root / rel
+        out.extend(p for p in base.rglob("*.py") if "__pycache__" not in p.parts)
+    return sorted(out)
 
 
 def test_the_gate_has_something_to_check():
-    assert _sources(), f"no product sources under {SRC}"
+    root = paths.repo_root()
+    for rel in PRODUCT_DIRS:
+        assert sorted((root / rel).rglob("*.py")), f"no product sources under {rel}"
     tokens = _operator_tokens()
     assert len(tokens) >= len(SEED_OPERATORS)
 
 
 def test_product_code_names_no_operator():
     tokens = _operator_tokens()
+    root = paths.repo_root()
     offenders: list[str] = []
     for path in _sources():
         allowed = ALLOWLIST.get(path.name, set())
@@ -124,7 +144,7 @@ def test_product_code_names_no_operator():
             for number, line in enumerate(code.splitlines(), start=1):
                 if token.lower() in line.lower():
                     offenders.append(
-                        f"{path.relative_to(SRC)}:{number}: {token}: {line.strip()[:100]}"
+                        f"{path.relative_to(root)}:{number}: {token}: {line.strip()[:100]}"
                     )
     assert not offenders, (
         "product code refers to a specific operator; move it to configuration "

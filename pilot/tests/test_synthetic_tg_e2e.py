@@ -247,6 +247,41 @@ def test_lemma_mine_writes_arch_scoped_runs(synthetic_root: Path):
     assert not flat.is_file()
 
 
+def test_lemma_mine_still_issues_a_contract_without_a_parseable_schema(
+    synthetic_root: Path,
+):
+    """Hypotheses are aiming information, not a precondition.
+
+    This operator has no resolvable key header, so residual analysis cannot
+    run. The producer must still receive the obligation contract; degrading to
+    "no hypotheses" is correct, failing the action is not.
+    """
+    import yaml
+
+    from ascendc_pilot.actions.engines import _run_lemma_mine
+    from ascendc_pilot.paths import agent_root
+
+    out = _run_lemma_mine(synthetic_root, {"run_id": "RUN_NOSCHEMA"})
+    assert out["ok"] is True
+
+    staging = yaml.safe_load(
+        (
+            agent_root(synthetic_root)
+            / "runs"
+            / "RUN_NOSCHEMA"
+            / "actions"
+            / "lemma_mine"
+            / "staging.yaml"
+        ).read_text(encoding="utf-8")
+    )
+    assert staging["contract"]["required_fields"]
+    assert staging["hypotheses"] == []
+    assert staging["hypothesis_stats"].get("unavailable"), (
+        "a skipped analysis must say why, or the empty list reads as "
+        "'nothing left to prove'"
+    )
+
+
 def test_full_mode_contract_build_finalize_paths(synthetic_root: Path):
     from ascendc_pilot.actions.engines import (
         _run_tg_contract_build,

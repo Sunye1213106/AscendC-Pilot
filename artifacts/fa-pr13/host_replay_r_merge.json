@@ -1,0 +1,11 @@
+{
+  "D": 8705,
+  "HIT_targets": 3937,
+  "unique_actual_ok": 4121,
+  "actual_in_D": 4121,
+  "REWRITE_actual_in_D": 2024,
+  "REWRITE_actual_out_D": 0,
+  "R_after_merge": 4121,
+  "open_D_minus_R": 4584,
+  "coverage_R_over_D": 0.4734
+}

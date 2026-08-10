@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -1088,12 +1090,14 @@ def _run_tg_plan_build(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
                     },
                 ],
             }
+            text = yaml.safe_dump(obligations, allow_unicode=True, sort_keys=False)
             obl = _tg(project_root) / "plan" / "levels" / level / "coverage_obligations.yaml"
             obl.parent.mkdir(parents=True, exist_ok=True)
-            obl.write_text(
-                yaml.safe_dump(obligations, allow_unicode=True, sort_keys=False),
-                encoding="utf-8",
-            )
+            obl.write_text(text, encoding="utf-8")
+            # plan-build-v1 also requires the root alias used by ownership/contracts.
+            root_obl = _tg(project_root) / "plan" / "coverage_obligations.yaml"
+            root_obl.parent.mkdir(parents=True, exist_ok=True)
+            root_obl.write_text(text, encoding="utf-8")
             return {
                 "ok": True,
                 "engine": "plan_build",
@@ -1101,6 +1105,7 @@ def _run_tg_plan_build(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
                 "level": level,
                 "mode": "tilingkey_full_coverage",
                 "artifact": obl.as_posix(),
+                "root_artifact": root_obl.as_posix(),
                 "declared_count": count,
             }
 
@@ -1561,9 +1566,47 @@ def _run_closure_residual(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
             "mostly_distance_1": analysis.get("mostly_distance_1"),
         },
         "state": {k: routed.get(k) for k in ("declared", "R", "E", "gap", "violation")},
+        "target_hit_rate": routed.get("target_hit_rate"),
+        "rewrite_share": routed.get("rewrite_share"),
     }
     out = _tg(project_root) / "closure" / "route.yaml"
     _dump_closure_yaml(out, route_doc)
+
+    new_r = None
+    rounds_dir = ws.state / "rounds"
+    if rounds_dir.is_dir():
+        rounds = sorted(rounds_dir.glob("round_*"))
+        if rounds:
+            latest_prog = rounds[-1] / "progress.yaml"
+            if latest_prog.is_file():
+                try:
+                    import yaml
+
+                    prog_doc = yaml.safe_load(latest_prog.read_text(encoding="utf-8")) or {}
+                    new_r = prog_doc.get("new_R")
+                except Exception:
+                    new_r = None
+
+    round_analysis = {
+        "schema": "tg-closure-round-analysis/v1",
+        "blame": analysis.get("blame"),
+        "distance_histogram": analysis.get("distance"),
+        "mostly_distance_1": analysis.get("mostly_distance_1"),
+        "open_patterns": analysis.get("open_patterns"),
+        "pattern_dims": analysis.get("pattern_dims"),
+        "r_witness_values": analysis.get("r_witness_values"),
+        "reason": reason,
+        "state": route_doc["state"],
+        "target_hit_rate": routed.get("target_hit_rate"),
+        "rewrite_share": routed.get("rewrite_share"),
+        "new_R": new_r,
+        "timestamp": time.time(),
+    }
+    analysis_out = _tg(project_root) / "closure" / "round_analysis.yaml"
+    _dump_closure_yaml(analysis_out, round_analysis)
+    stamp_path = ws.state / "round_analysis.stamp"
+    stamp_path.write_text(str(round_analysis["timestamp"]), encoding="utf-8")
+
     return {
         "ok": True,
         "engine": "closure_residual",
@@ -1572,6 +1615,7 @@ def _run_closure_residual(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
         "needs_rework": needs_rework,
         "escalate": escalate,
         "artifact": out.as_posix(),
+        "round_analysis": analysis_out.as_posix(),
         **route_doc,
     }
 
@@ -1582,16 +1626,51 @@ def _run_closure_construct(project_root: Path, ctx: dict[str, Any]) -> dict[str,
     from testcase_agent.closure import workspace as WS
 
     ws = _closure_ws(project_root)
+    skip_gate = bool(ctx.get("skip_analysis_gate")) or os.environ.get("TG_SKIP_ANALYSIS_GATE") == "1"
+    analysis_path = _tg(project_root) / "closure" / "round_analysis.yaml"
+    stamp_path = ws.state / "round_analysis.stamp"
+    if not skip_gate:
+        if not analysis_path.is_file() or not stamp_path.is_file():
+            return {
+                "ok": False,
+                "engine": "closure_construct",
+                "reason": "ANALYSIS_REQUIRED",
+                "error": "Host/residual round_analysis required before construct",
+            }
+        try:
+            import yaml
+
+            analysis_doc = yaml.safe_load(analysis_path.read_text(encoding="utf-8")) or {}
+            analysis_ts = float(analysis_doc.get("timestamp") or 0)
+            corpus_mtime = 0.0
+            for pattern in ("*key_cases*.csv", "rounds/**/*key_cases*.csv"):
+                for csv_path in ws.artifacts.glob(pattern):
+                    if csv_path.is_file():
+                        corpus_mtime = max(corpus_mtime, csv_path.stat().st_mtime)
+            if corpus_mtime > analysis_ts + 1:
+                return {
+                    "ok": False,
+                    "engine": "closure_construct",
+                    "reason": "ANALYSIS_REQUIRED",
+                    "error": "Host corpus newer than round_analysis; rerun residual",
+                }
+        except Exception:
+            pass
+
     analysis = residual.analyse(ws)
     targets = residual.distance_one_targets(analysis)[: int(ctx.get("limit") or 32)]
     built = 0
     cases: list = []
     traces: list[dict[str, Any]] = []
+    path_counts: dict[str, int] = {"hook": 0, "codemap": 0, "hints": 0, "empty": 0}
     for t in targets:
         key = t.get("key")
         try:
             inst = WS.decode(int(key))
-            spelled = construct.build(inst)
+            spelled, meta = construct.build_with_meta(inst)
+            path = str(meta.get("path") or construct.last_build_path() or "empty")
+            path_counts[path] = path_counts.get(path, 0) + 1
+            codemap_traces = construct.last_traces()
             cases.extend(spelled)
             built += 1
             traces.append(
@@ -1599,7 +1678,8 @@ def _run_closure_construct(project_root: Path, ctx: dict[str, Any]) -> dict[str,
                     "key": int(key),
                     "differing_dims": t.get("differing_dims"),
                     "spelled": len(spelled),
-                    "codemap": construct.last_traces(),
+                    "path": path,
+                    "codemap": codemap_traces,
                 }
             )
         except Exception as exc:  # noqa: BLE001
@@ -1636,6 +1716,27 @@ def _run_closure_construct(project_root: Path, ctx: dict[str, Any]) -> dict[str,
     else:
         doc_err = ""
 
+    trace_with_codemap = sum(1 for x in traces if x.get("codemap"))
+    trace_coverage = (trace_with_codemap / len(traces)) if traces else 0.0
+    warnings: list[str] = []
+    # trace_coverage cannot detect hook dominance: the hook path also emits
+    # CodeMap traces, so it sits at 1.0 even when nothing was CodeMap-directed.
+    codemap_share = (path_counts.get("codemap", 0) / built) if built else 0.0
+    hook_share = (path_counts.get("hook", 0) / built) if built else 0.0
+    if trace_coverage < 0.2 and built > 0:
+        warnings.append("codemap_trace_low")
+    if built > 0 and codemap_share < 0.5:
+        warnings.append(
+            f"construct_hook_dominated:codemap_share={codemap_share:.2f}"
+        )
+    construct_issues: list[str] = []
+    if built > 0 and hook_share >= 1.0:
+        # A hook may implement knobs but must not replace the CodeMap path.
+        construct_issues.append(
+            "construct_bypassed_codemap: every target came from the "
+            "operator hook; CodeMap-directed construction produced nothing"
+        )
+
     doc = {
         "schema": "tg-closure-construct/v1",
         "targets": len(targets),
@@ -1645,6 +1746,11 @@ def _run_closure_construct(project_root: Path, ctx: dict[str, Any]) -> dict[str,
         "sample_keys": [t.get("key") for t in targets[:10]],
         "error": doc_err,
         "codemap_directed": any(bool(x.get("codemap")) for x in traces),
+        "trace_coverage": round(trace_coverage, 4),
+        "path_counts": path_counts,
+        "codemap_share": round(codemap_share, 4),
+        "warnings": warnings,
+        "issues": construct_issues,
     }
     out = _tg(project_root) / "closure" / "construct" / "targets.yaml"
     _dump_closure_yaml(out, doc)
@@ -1653,11 +1759,13 @@ def _run_closure_construct(project_root: Path, ctx: dict[str, Any]) -> dict[str,
         trace_path,
         {"schema": "tg-closure-construct-trace/v1", "traces": traces[:64]},
     )
+    ok = not construct_issues or bool(ctx.get("allow_hook_only"))
     return {
-        "ok": True,
+        "ok": ok,
         "engine": "closure_construct",
         "artifact": out.as_posix(),
         "trace": trace_path.as_posix(),
+        "reason": "" if ok else "CODEMAP_PATH_REQUIRED",
         **doc,
     }
 
@@ -1683,6 +1791,16 @@ def _run_closure_explain(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
             why = Path(result.get("path") or why)
         except Exception as exc:  # noqa: BLE001
             err = str(exc)[:300]
+            return {
+                "ok": True,
+                "engine": "closure_explain",
+                "evidence": "none",
+                "why_exists": why.is_file() if why else False,
+                "path": "",
+                "ran": False,
+                "accepted": 0,
+                "error": err,
+            }
     doc = {
         "schema": "tg-closure-explain/v1",
         "why_exists": why.is_file() if why else False,
@@ -1791,14 +1909,75 @@ def _run_lemma_mine(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         or len(leads.get("leads") or [])
         or (int(leads.get("pair_count") or 0) + int(leads.get("triple_count") or 0))
     )
+    # Hand the producer minimised, R-consistent antecedents plus the values R
+    # actually witnessed per dimension. Without these it has to invent
+    # propositions and most get refuted on arrival.
+    #
+    # Aiming information, not a precondition: an operator whose key schema does
+    # not parse still gets a staging contract, just without hypotheses. Catching
+    # SystemExit is deliberate — the replay runner exits rather than raises when
+    # it cannot locate the key header.
+    hyp: dict[str, Any] = {}
+    r_witness: dict[str, Any] = {}
+    try:
+        from testcase_agent.closure import hypothesis as HYP
+        from testcase_agent.closure import residual as RES
+
+        ws_mine = _closure_ws(project_root)
+        analysis = RES.analyse(ws_mine)
+        hyp = HYP.propose(ws_mine, analysis=analysis)
+        r_witness = analysis.get("r_witness_values") or {}
+    except (Exception, SystemExit) as exc:  # noqa: BLE001
+        hyp = {"unavailable": str(exc)[:300].splitlines()[0], "hypotheses": []}
+
     staging = {
         "schema": "tg-lemma-mine-staging/v1",
         "status": "awaiting_subagent",
         "lead_count": lead_n,
+        "hypotheses": hyp.get("hypotheses") or [],
+        "hypothesis_stats": {
+            k: hyp.get(k)
+            for k in (
+                "open",
+                "R",
+                "candidate_count",
+                "covered_open",
+                "pattern_dims",
+                "unavailable",
+            )
+            if hyp.get(k) is not None
+        },
+        "r_witness_values": r_witness,
+        "contract": {
+            "required_fields": [
+                "proposition",
+                "codemap_anchors",
+                "obligations",
+                "source_citations",
+                "verdict",
+            ],
+            "verdict_enum": ["PROVED", "REFUTED", "INSUFFICIENT"],
+            "obligation_status": ["OPEN", "CLOSED", "BLOCKED"],
+            "rules": [
+                "Each candidate must state P => Q as proposition",
+                "codemap_anchors: list of {entity_id or relation_id, query}",
+                "obligations: list of {id, status, evidence}",
+                "source_citations: list of {file, line, quote}",
+                "PROVED requires all required obligations CLOSED",
+                "No empty candidates allowed for lemma_apply",
+                "A hypothesis is not evidence: absence from R never proves unreachability",
+                "Never exclude a value listed under r_witness_values[dim].in_R",
+                "when values may be scalars, [a,b], {in:[...]} or {not_in:[...]}",
+            ],
+        },
         "instructions": (
-            "Write parts/part_0.yaml with source-cited lemma candidates only; "
-            "use observation leads + lemmas/evidence/<lead_id>.yaml; "
-            "do not invent leads; follow skills/domain/source-lemma-proof/SKILL.md"
+            "Start from staging hypotheses: each is a minimised antecedent that no "
+            "witness satisfies. For each one, either cite the host code that forbids "
+            "the combination (verdict PROVED, obligations CLOSED) or mark it REFUTED / "
+            "INSUFFICIENT with the reason. Write results to parts/part_0.yaml keeping "
+            "the `when` clause as given unless the source says a weaker or stronger "
+            "antecedent is the real one. Check r_witness_values before narrowing. "
+            "Follow skills/domain/source-lemma-proof/SKILL.md."
         ),
     }
     (parts / "staging.yaml").write_text(
@@ -1810,13 +1989,15 @@ def _run_lemma_mine(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         _dump_closure_yaml(part0, {
             "schema": "tg-lemma-part/v1",
             "candidates": [],
-            "note": "placeholder — producer replaces with cited lemmas",
+            "note": "placeholder — producer replaces with cited lemmas per staging contract",
         })
     return {
         "ok": True,
         "engine": "lemma_mine",
         "staging": str(parts / "staging.yaml"),
         "need_subagent": True,
+        "hypotheses": len(staging["hypotheses"]),
+        "covered_open": hyp.get("covered_open"),
     }
 
 
@@ -1852,6 +2033,84 @@ def _run_lemma_review(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
     }
 
 
+def _mine_candidates(project_root: Path, run_id: str) -> list[dict[str, Any]]:
+    """Candidates written by lemma_mine, placeholders dropped."""
+    from ascendc_pilot.paths import agent_root
+
+    mine = agent_root(project_root) / "runs" / run_id / "actions" / "lemma_mine"
+    out: list[dict[str, Any]] = []
+    paths = sorted(mine.glob("parts/*.yaml"))
+    if not paths and (mine / "staging.yaml").is_file():
+        paths = [mine / "staging.yaml"]
+    for path in paths:
+        doc = _load_yaml(path) or {}
+        for cand in doc.get("candidates") or []:
+            if not isinstance(cand, dict) or not cand:
+                continue
+            if "placeholder" in str(cand.get("note") or "").lower():
+                continue
+            out.append(cand)
+    return out
+
+
+def _verify_candidates(ws, candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    """Project each candidate onto R and report refutations with witnesses."""
+    from testcase_agent.closure import lemma
+
+    checked = lemma.verify_lemmas(candidates, ws)
+    return {
+        "candidates": len(candidates),
+        "survivors": checked.get("survivors"),
+        "refuted": checked.get("refuted") or [],
+        "closes": checked.get("closed"),
+        "open_before": checked.get("open_before"),
+        "open_after": checked.get("open_after"),
+        "lemmas": checked.get("lemmas") or [],
+    }
+
+
+def _run_lemma_verify(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Refute mined candidates against R before a referee reviews them.
+
+    A candidate that some witness already satisfies is wrong no matter how good
+    the prose is, and finding that out here costs nothing.
+    """
+    ws = _closure_ws(project_root)
+    run_id = str(ctx.get("run_id") or "local")
+    candidates = _mine_candidates(project_root, run_id)
+    if not candidates:
+        return {
+            "ok": False,
+            "engine": "lemma_verify",
+            "reason": "PROOF_REQUIRED",
+            "error": "no lemma_mine candidates to verify",
+            "candidates": 0,
+        }
+
+    result = _verify_candidates(ws, candidates)
+    doc = {
+        "schema": "tg-lemma-verify/v1",
+        **{k: result[k] for k in ("candidates", "survivors", "refuted", "closes", "open_before", "open_after")},
+        "survivor_labels": [
+            {"label": s.get("label"), "closes": s.get("closes")}
+            for s in result["lemmas"]
+        ],
+    }
+    from ascendc_pilot.paths import agent_root
+
+    out = agent_root(project_root) / "runs" / run_id / "actions" / "lemma_verify" / "verify.yaml"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    _dump_closure_yaml(out, doc)
+    _dump_closure_yaml(_tg(project_root) / "closure" / "lemmas" / "verify.yaml", doc)
+    return {
+        "ok": True,
+        "engine": "lemma_verify",
+        "artifact": out.as_posix(),
+        "reason": "REFUTED" if result["refuted"] else "",
+        **doc,
+    }
+
+
 def _run_lemma_apply(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     from testcase_agent.closure import lemma
 
@@ -1864,11 +2123,124 @@ def _run_lemma_apply(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         agent_root(project_root) / "runs" / run_id / "actions" / "lemma_review" / "review.yaml"
     )
     review = _load_yaml(review_path) or _load_yaml(tg / "closure" / "lemmas" / "reviews.yaml") or {}
+    parts_dir = agent_root(project_root) / "runs" / run_id / "actions" / "lemma_mine" / "parts"
+    part_docs: list[dict[str, Any]] = []
+    if parts_dir.is_dir():
+        for part_path in sorted(parts_dir.glob("*.yaml")):
+            doc = _load_yaml(part_path) or {}
+            if doc:
+                part_docs.append(doc)
+
+    def _candidate_count(docs: list[dict[str, Any]]) -> int:
+        total = 0
+        for doc in docs:
+            for cand in doc.get("candidates") or []:
+                if isinstance(cand, dict) and cand:
+                    note = str(cand.get("note") or "").lower()
+                    if "placeholder" in note:
+                        continue
+                    total += 1
+        return total
+
+    accepted = list(review.get("accepted") or [])
+    review_status = str(review.get("status") or "").strip().lower()
+    candidate_n = _candidate_count(part_docs)
+
+    if review_status in {"awaiting_referee", "pending", "open", ""} and not accepted:
+        return {
+            "ok": False,
+            "engine": "lemma_apply",
+            "reason": "REVIEW_REQUIRED",
+            "error": "lemma_review awaiting referee before apply",
+        }
+
+    if not accepted:
+        if part_docs and candidate_n == 0 and not ctx.get("allow_empty_apply"):
+            return {
+                "ok": False,
+                "engine": "lemma_apply",
+                "reason": "PROOF_REQUIRED",
+                "error": (
+                    "lemma_mine produced no candidates; producer must write "
+                    "PROVED/REFUTED certificates before apply"
+                ),
+            }
+        if not part_docs and not ctx.get("allow_empty_apply"):
+            return {
+                "ok": False,
+                "engine": "lemma_apply",
+                "reason": "PROOF_REQUIRED",
+                "error": "lemma_mine parts missing; proof required before apply",
+            }
+
+    for entry in accepted:
+        if not isinstance(entry, dict):
+            continue
+        if not str(entry.get("proposition") or "").strip():
+            return {
+                "ok": False,
+                "engine": "lemma_apply",
+                "reason": "PROOF_REQUIRED",
+                "error": "accepted entry missing proposition",
+            }
+        verdict = str(entry.get("verdict") or "").strip().upper()
+        if verdict != "PROVED":
+            return {
+                "ok": False,
+                "engine": "lemma_apply",
+                "reason": "PROOF_REQUIRED",
+                "error": f"accepted entry verdict must be PROVED (got {verdict or 'missing'})",
+            }
+        obligations = entry.get("obligations") or []
+        if obligations:
+            open_obs = [
+                o for o in obligations
+                if isinstance(o, dict)
+                and str(o.get("status") or "").strip().upper() not in {"CLOSED"}
+            ]
+            if open_obs:
+                return {
+                    "ok": False,
+                    "engine": "lemma_apply",
+                    "reason": "PROOF_REQUIRED",
+                    "error": "PROVED certificate has open obligations",
+                }
+
     # Persist referee receipt into the closure ledger for subsequent rounds.
     if review:
         _dump_closure_yaml(tg / "closure" / "lemmas" / "reviews.yaml", review)
     promoted = {"promoted": 0}
-    if review.get("accepted"):
+    verification: dict[str, Any] = {}
+    if accepted:
+        # An accepted entry that a witness already satisfies must never reach E,
+        # whatever the referee wrote.
+        verification = _verify_candidates(ws, [e for e in accepted if isinstance(e, dict)])
+        if verification["refuted"]:
+            return {
+                "ok": False,
+                "engine": "lemma_apply",
+                "reason": "REFUTED_BY_R",
+                "error": (
+                    f"{len(verification['refuted'])} accepted lemma(s) are satisfied "
+                    "by real witnesses; they cannot exclude declared keys"
+                ),
+                "refuted": verification["refuted"],
+            }
+
+        from testcase_agent.closure import cold_start as _cs
+
+        pre = _cs.require_cold_start(ws)
+        if not pre["ok"]:
+            return {
+                "ok": False,
+                "engine": "lemma_apply",
+                "reason": "PROVENANCE_REQUIRED",
+                "error": (
+                    "E may not grow without a sealed cold start: "
+                    f"{','.join(pre['issues'])}; run tg-cold-start before apply"
+                ),
+                "provenance": pre,
+            }
         tg_ctx = _resolve_tg_ctx(project_root, ctx)
         uo = _uo(project_root, arch=tg_ctx.get("architecture"))
         man = _load_yaml(uo / "manifest.yaml") or {}
@@ -1881,7 +2253,205 @@ def _run_lemma_apply(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
             ),
         )
     out = lemma.apply_rules(ws, refresh=True)
-    return {"engine": "lemma_apply", "promote": promoted, **out}
+    if promoted.get("promoted"):
+        # E grew, so a saturated search may be worth reopening.
+        try:
+            from testcase_agent.closure import search_round
+
+            search_round.clear_lockout(ws)
+        except Exception:
+            pass
+    return {
+        "engine": "lemma_apply",
+        "promote": promoted,
+        "verification": {
+            k: verification.get(k) for k in ("candidates", "survivors", "closes")
+        } if verification else {},
+        **out,
+    }
+
+
+def _run_lemma_loop(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Re-entrant lemma convergence: analyse → hypothesize → verify → apply.
+
+    Replaces the one-shot scripts under artifacts/fa-pr13. Each round records
+    ``tg/closure/rounds/round_N/lemma.yaml``. The engine cannot invent source
+    citations: when survivors need a producer proof it stops with
+    ``NEED_PRODUCER`` and leaves the verified hypotheses in staging for the
+    next mine/review turn. When proved candidates are already present it
+    promotes them and continues until gap stops falling or the round budget
+    is spent.
+    """
+    from testcase_agent.closure import hypothesis as HYP
+    from testcase_agent.closure import ledger
+    from testcase_agent.closure import residual as RES
+    from ascendc_pilot.paths import agent_root
+
+    ws = _closure_ws(project_root)
+    run_id = str(ctx.get("run_id") or "local")
+    max_rounds = int(ctx.get("max_rounds") or 8)
+    rounds_dir = ws.state / "rounds"
+    rounds_dir.mkdir(parents=True, exist_ok=True)
+
+    history: list[dict[str, Any]] = []
+    stop_reason = "ROUND_BUDGET"
+    final_st = ledger.state(ws)
+
+    for i in range(max_rounds):
+        analysis = RES.analyse(ws)
+        gap_before = int(analysis.get("open") or 0)
+        if gap_before == 0:
+            stop_reason = "GAP_ZERO"
+            final_st = ledger.state(ws)
+            break
+
+        hyp = HYP.propose(ws, analysis=analysis)
+        hypotheses = list(hyp.get("hypotheses") or [])
+        verification = _verify_candidates(ws, hypotheses) if hypotheses else {
+            "candidates": 0, "survivors": 0, "refuted": [], "closes": 0, "lemmas": []
+        }
+
+        # Prefer already-proved candidates from mine parts / ctx; otherwise
+        # stage the verified hypotheses for a producer.
+        proved = [
+            c for c in _mine_candidates(project_root, run_id)
+            if str(c.get("verdict") or "").upper() == "PROVED"
+        ]
+        proved.extend(
+            c for c in (ctx.get("proved") or [])
+            if isinstance(c, dict) and str(c.get("verdict") or "").upper() == "PROVED"
+        )
+
+        apply_out: dict[str, Any] = {"skipped": True}
+        if proved:
+            # Re-verify proved set against R before promote.
+            pv = _verify_candidates(ws, proved)
+            survivors = [
+                c for c in proved
+                if not any(
+                    str(r.get("label")) == str(c.get("label"))
+                    for r in (pv.get("refuted") or [])
+                )
+            ]
+            if not survivors:
+                apply_out = {
+                    "ok": False,
+                    "reason": "REFUTED_BY_R",
+                    "refuted": pv.get("refuted"),
+                }
+            else:
+                apply_ctx = {
+                    **ctx,
+                    "run_id": run_id,
+                    "review": {
+                        "schema": "tg-lemma-review/v1",
+                        "status": "accepted",
+                        "accepted": survivors,
+                        "rejected": [],
+                    },
+                }
+                # lemma_apply reads review from disk normally; inject via the
+                # same path the referee writes.
+                review_dir = (
+                    agent_root(project_root)
+                    / "runs"
+                    / run_id
+                    / "actions"
+                    / "lemma_review"
+                )
+                review_dir.mkdir(parents=True, exist_ok=True)
+                _dump_closure_yaml(review_dir / "review.yaml", apply_ctx["review"])
+                apply_out = _run_lemma_apply(project_root, apply_ctx)
+        else:
+            # Deterministic fallback: put verified hypotheses into mine staging
+            # so a producer (or the next loop call after proof) can continue.
+            mine_dir = (
+                agent_root(project_root) / "runs" / run_id / "actions" / "lemma_mine"
+            )
+            mine_dir.mkdir(parents=True, exist_ok=True)
+            staging = {
+                "schema": "tg-lemma-mine-staging/v1",
+                "status": "awaiting_subagent",
+                "hypotheses": verification.get("lemmas") or hypotheses,
+                "r_witness_values": analysis.get("r_witness_values") or {},
+                "open_patterns": analysis.get("open_patterns") or [],
+                "loop_round": i,
+                "note": (
+                    "Engine-verified antecedents for this round. Absence from R "
+                    "is not unreachability — source proof required before apply."
+                ),
+            }
+            _dump_closure_yaml(mine_dir / "staging.yaml", staging)
+            apply_out = {
+                "ok": False,
+                "reason": "NEED_PRODUCER",
+                "hypotheses": len(hypotheses),
+                "survivors": verification.get("survivors"),
+            }
+
+        st_after = ledger.state(ws)
+        gap_after = int(st_after.get("gap") or 0)
+        round_doc = {
+            "schema": "tg-lemma-loop-round/v1",
+            "round": i,
+            "gap_before": gap_before,
+            "gap_after": gap_after,
+            "hypotheses": len(hypotheses),
+            "verify": {
+                k: verification.get(k)
+                for k in ("candidates", "survivors", "closes", "refuted")
+            },
+            "apply": {
+                k: apply_out.get(k)
+                for k in ("ok", "reason", "promote", "E", "gap", "error")
+                if k in apply_out or apply_out.get(k) is not None
+            },
+            "state": st_after,
+        }
+        round_path = rounds_dir / f"round_{i}" / "lemma.yaml"
+        round_path.parent.mkdir(parents=True, exist_ok=True)
+        _dump_closure_yaml(round_path, round_doc)
+        history.append(round_doc)
+        final_st = st_after
+
+        if gap_after == 0:
+            stop_reason = "GAP_ZERO"
+            break
+        if apply_out.get("reason") == "NEED_PRODUCER":
+            stop_reason = "NEED_PRODUCER"
+            break
+        if apply_out.get("reason") == "PROVENANCE_REQUIRED":
+            stop_reason = "PROVENANCE_REQUIRED"
+            break
+        if gap_after >= gap_before:
+            stop_reason = "GAP_STALLED"
+            break
+
+    summary = {
+        "schema": "tg-lemma-loop/v1",
+        "ok": stop_reason == "GAP_ZERO",
+        "engine": "lemma_loop",
+        "stop_reason": stop_reason,
+        "rounds": len(history),
+        "history": history,
+        "state": final_st,
+    }
+    out = _tg(project_root) / "closure" / "lemma_loop.yaml"
+    _dump_closure_yaml(out, summary)
+    return {**summary, "artifact": out.as_posix()}
+
+
+def _producer_id(project_root: Path, run_id: str) -> str:
+    """Identity that mined the lemmas, read from lemma_mine parts/staging."""
+    from ascendc_pilot.paths import agent_root
+
+    mine = agent_root(project_root) / "runs" / run_id / "actions" / "lemma_mine"
+    for path in sorted(mine.glob("parts/*.yaml")) + [mine / "staging.yaml"]:
+        doc = _load_yaml(path) or {}
+        pid = str(doc.get("producer_id") or doc.get("producer") or "").strip()
+        if pid:
+            return pid
+    return ""
 
 
 def _run_closure_audit(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -1898,14 +2468,26 @@ def _run_closure_audit(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
     audit_dir = agent_root(project_root) / "runs" / run_id / "actions" / "closure_audit"
     audit_dir.mkdir(parents=True, exist_ok=True)
     existing = audit_dir / "review.yaml"
+    soundness = lemma.soundness_ok(ws)
     if existing.is_file():
         doc = yaml.safe_load(existing.read_text(encoding="utf-8")) or {}
+        # A referee may set the verdict, but never invent the facts or the
+        # writer_role — leaving role empty is how certify rejects a hand-written
+        # review that bypasses this action.
+        doc["state"] = st
+        doc["soundness_ok"] = soundness
+        existing.write_text(
+            yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
     else:
+        # auto_ok is an engine shortcut only: gap already closed and soundness
+        # holds. Certify refuses auto_ok unless writer_role=engine.
         doc = {
             "schema": "tg-closure-audit/v1",
             "status": "awaiting_referee" if st.get("gap", 1) else "auto_ok",
             "state": st,
-            "soundness_ok": lemma.soundness_ok(ws),
+            "soundness_ok": soundness,
+            "writer_role": "engine",
             "note": "Referee confirms I1–I4 before certify",
         }
         existing.write_text(
@@ -1951,13 +2533,56 @@ def _run_closure_certify(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
         _dump_closure_yaml(_tg(project_root) / "closure" / "audit_report.yaml", audit_doc)
 
     audit_status = str(audit_doc.get("status") or "").strip().lower()
-    audit_ok = audit_status in {"pass", "passed", "accepted", "auto_ok"} and bool(
-        audit_doc.get("soundness_ok", True)
-    )
+    audit_reason = ""
+    writer_role = str(audit_doc.get("writer_role") or "").strip().lower()
+    # Never trust the verdict written in the file: recompute the facts it claims.
+    from testcase_agent.closure import lemma as _lemma
+
+    soundness_now = bool(_lemma.soundness_ok(ws))
     if not audit_doc:
         audit_ok = False
-    if audit_status in {"awaiting_referee", "pending", "open", "fail", "failed", "reject", "rejected"}:
+        audit_reason = "audit_missing"
+    elif not writer_role:
+        # Hand-written review.yaml without role is the bypass
+        # certify_with_provenance.py used; refuse it by name.
         audit_ok = False
+        audit_reason = "audit_writer_role_invalid"
+    elif audit_status in {"awaiting_referee", "pending", "open", "fail", "failed", "reject", "rejected"}:
+        audit_ok = False
+        audit_reason = f"audit_status={audit_status or 'empty'}"
+    elif audit_status == "auto_ok":
+        # auto_ok is only an engine shortcut and must be re-derivable right now.
+        if writer_role != "engine":
+            audit_ok = False
+            audit_reason = "audit_writer_role_invalid"
+        else:
+            audit_ok = soundness_now and bool(rep.get("gap_zero"))
+            if not audit_ok:
+                audit_reason = (
+                    f"auto_ok_not_rederivable soundness={soundness_now} "
+                    f"gap_zero={bool(rep.get('gap_zero'))}"
+                )
+    elif audit_status in {"pass", "passed", "accepted"}:
+        # A human/model referee verdict requires writer_role=referee and an
+        # identity distinct from the producer that mined the lemmas.
+        referee_id = str(audit_doc.get("referee_id") or "").strip()
+        producer_id = _producer_id(project_root, run_id)
+        if writer_role != "referee":
+            audit_ok = False
+            audit_reason = "audit_writer_role_invalid"
+        elif not referee_id:
+            audit_ok = False
+            audit_reason = "referee_id_missing"
+        elif producer_id and referee_id == producer_id:
+            audit_ok = False
+            audit_reason = f"referee_equals_producer={referee_id}"
+        else:
+            audit_ok = soundness_now
+            if not audit_ok:
+                audit_reason = "referee_verdict_contradicts_soundness"
+    else:
+        audit_ok = False
+        audit_reason = f"audit_status_unknown={audit_status}"
 
     cert = {
         "schema": "tg-closure-certificate/v1",
@@ -1972,7 +2597,9 @@ def _run_closure_certify(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
             "ok": audit_ok,
             "status": audit_status or "missing",
             "path": audit_review.as_posix() if audit_review.is_file() else "",
-            "soundness_ok": audit_doc.get("soundness_ok"),
+            "soundness_ok": soundness_now,
+            "reason": audit_reason,
+            "writer_role": audit_doc.get("writer_role") or "",
         },
         "invariants": invariants,
         "report": {
@@ -1986,10 +2613,7 @@ def _run_closure_certify(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
         "note": "R−D is reported separately and does not block D-closure when I9 path exists",
     }
     if not audit_ok:
-        cert["error"] = (
-            f"closure_audit status={audit_status or 'missing'!r}; "
-            "require status in {{pass, accepted, auto_ok}} before certify"
-        )
+        cert["error"] = f"closure_audit rejected: {audit_reason or 'unknown'}"
     out = _tg(project_root) / "closure" / "certificate.yaml"
     _dump_closure_yaml(out, cert)
     # Also drop a standalone undeclared defect receipt.
@@ -2093,8 +2717,10 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("tg-solve", "lemma_leads"): _run_lemma_leads,
     ("tg-solve", "lemma_evidence"): _run_lemma_evidence,
     ("tg-solve", "lemma_mine"): _run_lemma_mine,
+    ("tg-solve", "lemma_verify"): _run_lemma_verify,
     ("tg-solve", "lemma_review"): _run_lemma_review,
     ("tg-solve", "lemma_apply"): _run_lemma_apply,
+    ("tg-solve", "lemma_loop"): _run_lemma_loop,
     ("tg-solve", "closure_audit"): _run_closure_audit,
     ("tg-solve", "closure_certify"): _run_closure_certify,
     ("tg-solve", "z3_solve"): _run_tg_z3_solve,

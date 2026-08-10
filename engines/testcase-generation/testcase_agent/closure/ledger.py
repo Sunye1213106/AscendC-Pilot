@@ -252,6 +252,9 @@ def rebuild(ws: W.Workspace | None = None) -> dict:
     ws.open_path.write_text(
         "".join("%d\n" % k for k in sorted(gap)),
         encoding="utf-8", newline="\n")
+    ws.e_path.write_text(
+        "".join("%d\n" % k for k in sorted(E)) if E else "# E=0\n",
+        encoding="utf-8", newline="\n")
     return {
         "ok": True,
         "declared": len(D),

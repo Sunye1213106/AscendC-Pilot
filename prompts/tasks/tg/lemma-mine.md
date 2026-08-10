@@ -21,6 +21,13 @@ Closed lead pack only (do not invent leads). Use the companion evidence pack whe
 - Follow `skills/domain/source-lemma-proof/SKILL.md`
 - Close required proof obligations; actively seek counterexamples
 - Do not convert missing/search failure into exclusion
+- Each candidate must include structured fields:
+  - `proposition`: P ⇒ Q
+  - `codemap_anchors`: list of `{entity_id or relation_id, query}`
+  - `obligations`: list of `{id, status, evidence}` (OPEN/CLOSED/BLOCKED)
+  - `source_citations`: list of `{file, line, quote}`
+  - `verdict`: PROVED | REFUTED | INSUFFICIENT
+- PROVED requires all obligations CLOSED; empty candidates block `lemma_apply`
 
 # Return
 

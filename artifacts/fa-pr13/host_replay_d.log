@@ -1,0 +1,1342 @@
+D=8705 sample=64 batch=16 full=True
+manifest distro=Ubuntu-22.04 entry=/work/wsl/setup/run_replay.sh
+cache=/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/replay
+selected=8705
+batch drep_0: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=16 HIT=16 REWRITE=0 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_1: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=32 HIT=32 REWRITE=0 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_2: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=48 HIT=48 REWRITE=0 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_3: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=64 HIT=64 REWRITE=0 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_4: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=80 HIT=80 REWRITE=0 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_5: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=96 HIT=96 REWRITE=0 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_6: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=112 HIT=112 REWRITE=0 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_7: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=128 HIT=128 REWRITE=0 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_8: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=144 HIT=144 REWRITE=0 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_9: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=160 HIT=160 REWRITE=0 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_10: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=176 HIT=176 REWRITE=0 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_11: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=192 HIT=192 REWRITE=0 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_12: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=208 HIT=208 REWRITE=0 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_13: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=224 HIT=224 REWRITE=0 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_14: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=240 HIT=240 REWRITE=0 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_15: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=256 HIT=256 REWRITE=0 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_16: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=272 HIT=272 REWRITE=0 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_17: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=288 HIT=288 REWRITE=0 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_18: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=304 HIT=304 REWRITE=0 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_19: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=320 HIT=320 REWRITE=0 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_20: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=336 HIT=336 REWRITE=0 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_21: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=352 HIT=352 REWRITE=0 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_22: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=368 HIT=360 REWRITE=8 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_23: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=384 HIT=364 REWRITE=20 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_24: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=400 HIT=368 REWRITE=32 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_25: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=416 HIT=384 REWRITE=32 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_26: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=432 HIT=400 REWRITE=32 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_27: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=448 HIT=416 REWRITE=32 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_28: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=464 HIT=424 REWRITE=40 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_29: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=480 HIT=428 REWRITE=52 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_30: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=496 HIT=432 REWRITE=64 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_31: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=512 HIT=448 REWRITE=64 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_32: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=528 HIT=464 REWRITE=64 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_33: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=544 HIT=480 REWRITE=64 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_34: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=560 HIT=488 REWRITE=72 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_35: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=576 HIT=492 REWRITE=84 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_36: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=592 HIT=496 REWRITE=96 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_37: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=608 HIT=512 REWRITE=96 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_38: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=624 HIT=528 REWRITE=96 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_39: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=640 HIT=544 REWRITE=96 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_40: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=656 HIT=552 REWRITE=104 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_41: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=672 HIT=556 REWRITE=116 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_42: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=688 HIT=560 REWRITE=128 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_43: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=704 HIT=576 REWRITE=128 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_44: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=720 HIT=592 REWRITE=128 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_45: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=736 HIT=608 REWRITE=128 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_46: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=752 HIT=616 REWRITE=136 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_47: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=768 HIT=624 REWRITE=144 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_48: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=784 HIT=636 REWRITE=148 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_49: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=800 HIT=644 REWRITE=156 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_50: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=816 HIT=652 REWRITE=164 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_51: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=832 HIT=664 REWRITE=168 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_52: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=848 HIT=672 REWRITE=176 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_53: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=864 HIT=680 REWRITE=184 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_54: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=880 HIT=692 REWRITE=188 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_55: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=896 HIT=700 REWRITE=196 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_56: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=912 HIT=708 REWRITE=204 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_57: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=928 HIT=720 REWRITE=208 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_58: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=944 HIT=728 REWRITE=216 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_59: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=960 HIT=732 REWRITE=228 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_60: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=976 HIT=736 REWRITE=240 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_61: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=992 HIT=752 REWRITE=240 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_62: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1008 HIT=768 REWRITE=240 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_63: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1024 HIT=784 REWRITE=240 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_64: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1040 HIT=792 REWRITE=248 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_65: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1056 HIT=796 REWRITE=260 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_66: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1072 HIT=800 REWRITE=272 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_67: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1088 HIT=816 REWRITE=272 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_68: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1104 HIT=832 REWRITE=272 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_69: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1120 HIT=848 REWRITE=272 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_70: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1136 HIT=856 REWRITE=280 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_71: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1152 HIT=860 REWRITE=292 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_72: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1168 HIT=864 REWRITE=304 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_73: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1184 HIT=880 REWRITE=304 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_74: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1200 HIT=896 REWRITE=304 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_75: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1216 HIT=912 REWRITE=304 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_76: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1232 HIT=920 REWRITE=312 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_77: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1248 HIT=924 REWRITE=324 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_78: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1264 HIT=928 REWRITE=336 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_79: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1280 HIT=944 REWRITE=336 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_80: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1296 HIT=960 REWRITE=336 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_81: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1312 HIT=976 REWRITE=336 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_82: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1328 HIT=984 REWRITE=344 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_83: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1344 HIT=992 REWRITE=352 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_84: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1360 HIT=1004 REWRITE=356 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_85: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1376 HIT=1012 REWRITE=364 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_86: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1392 HIT=1020 REWRITE=372 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_87: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1408 HIT=1032 REWRITE=376 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_88: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1424 HIT=1040 REWRITE=384 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_89: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1440 HIT=1048 REWRITE=392 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_90: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1456 HIT=1060 REWRITE=396 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_91: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1472 HIT=1068 REWRITE=404 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_92: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1488 HIT=1076 REWRITE=412 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_93: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1504 HIT=1088 REWRITE=416 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_94: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1520 HIT=1088 REWRITE=432 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_95: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1536 HIT=1088 REWRITE=448 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_96: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1552 HIT=1088 REWRITE=464 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_97: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1568 HIT=1088 REWRITE=480 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_98: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1584 HIT=1088 REWRITE=496 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_99: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1600 HIT=1088 REWRITE=512 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_100: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1616 HIT=1088 REWRITE=528 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_101: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1632 HIT=1088 REWRITE=544 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_102: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1648 HIT=1088 REWRITE=560 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_103: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1664 HIT=1088 REWRITE=576 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_104: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1680 HIT=1088 REWRITE=592 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_105: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1696 HIT=1088 REWRITE=608 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_106: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1712 HIT=1088 REWRITE=624 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_107: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1728 HIT=1088 REWRITE=640 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_108: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1744 HIT=1088 REWRITE=656 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_109: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1760 HIT=1088 REWRITE=672 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_110: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1776 HIT=1088 REWRITE=688 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_111: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1792 HIT=1088 REWRITE=704 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_112: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1808 HIT=1088 REWRITE=720 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_113: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1824 HIT=1088 REWRITE=736 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_114: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1840 HIT=1088 REWRITE=752 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_115: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1856 HIT=1088 REWRITE=768 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_116: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1872 HIT=1088 REWRITE=784 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_117: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1888 HIT=1088 REWRITE=800 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_118: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1904 HIT=1088 REWRITE=816 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_119: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1920 HIT=1088 REWRITE=832 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_120: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1936 HIT=1088 REWRITE=848 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_121: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1952 HIT=1088 REWRITE=864 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_122: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1968 HIT=1088 REWRITE=880 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_123: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=1984 HIT=1088 REWRITE=896 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_124: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2000 HIT=1088 REWRITE=912 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_125: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2016 HIT=1088 REWRITE=928 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_126: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2032 HIT=1088 REWRITE=944 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_127: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2048 HIT=1088 REWRITE=960 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_128: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2064 HIT=1088 REWRITE=976 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_129: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2080 HIT=1088 REWRITE=992 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_130: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2096 HIT=1088 REWRITE=1008 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_131: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2112 HIT=1088 REWRITE=1024 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_132: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2128 HIT=1088 REWRITE=1040 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_133: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2144 HIT=1088 REWRITE=1056 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_134: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2160 HIT=1088 REWRITE=1072 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_135: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2176 HIT=1088 REWRITE=1088 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_136: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2192 HIT=1088 REWRITE=1104 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_137: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2208 HIT=1088 REWRITE=1120 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_138: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2224 HIT=1088 REWRITE=1136 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_139: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2240 HIT=1088 REWRITE=1152 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_140: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2256 HIT=1104 REWRITE=1152 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_141: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2272 HIT=1120 REWRITE=1152 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_142: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2288 HIT=1130 REWRITE=1158 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_143: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2304 HIT=1140 REWRITE=1164 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_144: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2320 HIT=1152 REWRITE=1168 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_145: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2336 HIT=1162 REWRITE=1174 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_146: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2352 HIT=1172 REWRITE=1180 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_147: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2368 HIT=1184 REWRITE=1184 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_148: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2384 HIT=1184 REWRITE=1200 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_149: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2400 HIT=1184 REWRITE=1216 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_150: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2416 HIT=1184 REWRITE=1232 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_151: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2432 HIT=1190 REWRITE=1242 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_152: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2448 HIT=1197 REWRITE=1251 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_153: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2464 HIT=1203 REWRITE=1261 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_154: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2480 HIT=1210 REWRITE=1270 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_155: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2496 HIT=1216 REWRITE=1280 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_156: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2512 HIT=1222 REWRITE=1290 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_157: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2528 HIT=1229 REWRITE=1299 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_158: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2544 HIT=1235 REWRITE=1309 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_159: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2560 HIT=1242 REWRITE=1318 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_160: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2576 HIT=1248 REWRITE=1328 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_161: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2592 HIT=1254 REWRITE=1338 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_162: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2608 HIT=1261 REWRITE=1347 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_163: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2624 HIT=1267 REWRITE=1357 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_164: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2640 HIT=1274 REWRITE=1366 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_165: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2656 HIT=1280 REWRITE=1376 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_166: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2672 HIT=1286 REWRITE=1386 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_167: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2688 HIT=1293 REWRITE=1395 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_168: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2704 HIT=1299 REWRITE=1405 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_169: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2720 HIT=1306 REWRITE=1414 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_170: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2736 HIT=1312 REWRITE=1424 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_171: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2752 HIT=1316 REWRITE=1436 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_172: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2768 HIT=1316 REWRITE=1452 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_173: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2784 HIT=1318 REWRITE=1466 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_174: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2800 HIT=1320 REWRITE=1480 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_175: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2816 HIT=1320 REWRITE=1496 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_176: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2832 HIT=1324 REWRITE=1508 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_177: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2848 HIT=1324 REWRITE=1524 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_178: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2864 HIT=1326 REWRITE=1538 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_179: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2880 HIT=1328 REWRITE=1552 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_180: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2896 HIT=1328 REWRITE=1568 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_181: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2912 HIT=1332 REWRITE=1580 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_182: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2928 HIT=1332 REWRITE=1596 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_183: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2944 HIT=1334 REWRITE=1610 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_184: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2960 HIT=1336 REWRITE=1624 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_185: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2976 HIT=1336 REWRITE=1640 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_186: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=2992 HIT=1340 REWRITE=1652 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_187: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3008 HIT=1340 REWRITE=1668 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_188: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3024 HIT=1342 REWRITE=1682 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_189: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3040 HIT=1344 REWRITE=1696 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_190: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3056 HIT=1344 REWRITE=1712 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_191: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3072 HIT=1352 REWRITE=1720 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_192: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3088 HIT=1358 REWRITE=1730 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_193: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3104 HIT=1364 REWRITE=1740 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_194: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3120 HIT=1372 REWRITE=1748 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_195: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3136 HIT=1376 REWRITE=1760 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_196: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3152 HIT=1392 REWRITE=1760 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_197: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3168 HIT=1408 REWRITE=1760 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_198: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3184 HIT=1420 REWRITE=1764 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_199: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3200 HIT=1428 REWRITE=1772 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_200: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3216 HIT=1432 REWRITE=1784 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_201: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3232 HIT=1448 REWRITE=1784 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_202: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3248 HIT=1464 REWRITE=1784 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_203: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3264 HIT=1476 REWRITE=1788 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_204: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3280 HIT=1484 REWRITE=1796 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_205: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3296 HIT=1488 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_206: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3312 HIT=1504 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_207: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3328 HIT=1520 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_208: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3344 HIT=1536 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_209: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3360 HIT=1552 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_210: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3376 HIT=1568 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_211: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3392 HIT=1584 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_212: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3408 HIT=1600 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_213: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3424 HIT=1616 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_214: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3440 HIT=1632 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_215: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3456 HIT=1648 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_216: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3472 HIT=1664 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_217: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3488 HIT=1680 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_218: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3504 HIT=1696 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_219: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3520 HIT=1712 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_220: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3536 HIT=1728 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_221: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3552 HIT=1744 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_222: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3568 HIT=1760 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_223: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3584 HIT=1776 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_224: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3600 HIT=1792 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_225: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3616 HIT=1808 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_226: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3632 HIT=1824 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_227: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3648 HIT=1840 REWRITE=1808 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_228: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3664 HIT=1848 REWRITE=1816 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_229: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3680 HIT=1852 REWRITE=1828 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_230: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3696 HIT=1856 REWRITE=1840 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_231: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3712 HIT=1872 REWRITE=1840 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_232: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3728 HIT=1888 REWRITE=1840 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_233: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3744 HIT=1904 REWRITE=1840 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_234: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3760 HIT=1912 REWRITE=1848 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_235: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3776 HIT=1916 REWRITE=1860 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_236: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3792 HIT=1920 REWRITE=1872 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_237: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3808 HIT=1936 REWRITE=1872 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_238: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3824 HIT=1952 REWRITE=1872 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_239: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3840 HIT=1968 REWRITE=1872 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_240: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3856 HIT=1976 REWRITE=1880 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_241: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3872 HIT=1980 REWRITE=1892 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_242: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3888 HIT=1984 REWRITE=1904 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_243: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3904 HIT=2000 REWRITE=1904 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_244: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3920 HIT=2016 REWRITE=1904 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_245: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3936 HIT=2032 REWRITE=1904 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_246: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3952 HIT=2040 REWRITE=1912 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_247: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3968 HIT=2044 REWRITE=1924 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_248: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=3984 HIT=2048 REWRITE=1936 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_249: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4000 HIT=2064 REWRITE=1936 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_250: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4016 HIT=2080 REWRITE=1936 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_251: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4032 HIT=2096 REWRITE=1936 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_252: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4048 HIT=2104 REWRITE=1944 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_253: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4064 HIT=2112 REWRITE=1952 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_254: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4080 HIT=2124 REWRITE=1956 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_255: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4096 HIT=2132 REWRITE=1964 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_256: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4112 HIT=2140 REWRITE=1972 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_257: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4128 HIT=2152 REWRITE=1976 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_258: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4144 HIT=2160 REWRITE=1984 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_259: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4160 HIT=2168 REWRITE=1992 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_260: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4176 HIT=2180 REWRITE=1996 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_261: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4192 HIT=2188 REWRITE=2004 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_262: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4208 HIT=2196 REWRITE=2012 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_263: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4224 HIT=2208 REWRITE=2016 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_264: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4240 HIT=2216 REWRITE=2024 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_265: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4256 HIT=2220 REWRITE=2036 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_266: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4272 HIT=2224 REWRITE=2048 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_267: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4288 HIT=2240 REWRITE=2048 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_268: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4304 HIT=2256 REWRITE=2048 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_269: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4320 HIT=2272 REWRITE=2048 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_270: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4336 HIT=2280 REWRITE=2056 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_271: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4352 HIT=2284 REWRITE=2068 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_272: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4368 HIT=2288 REWRITE=2080 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_273: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4384 HIT=2304 REWRITE=2080 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_274: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4400 HIT=2320 REWRITE=2080 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_275: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4416 HIT=2336 REWRITE=2080 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_276: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4432 HIT=2344 REWRITE=2088 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_277: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4448 HIT=2348 REWRITE=2100 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_278: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4464 HIT=2352 REWRITE=2112 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_279: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4480 HIT=2368 REWRITE=2112 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_280: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4496 HIT=2384 REWRITE=2112 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_281: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4512 HIT=2400 REWRITE=2112 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_282: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4528 HIT=2408 REWRITE=2120 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_283: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4544 HIT=2412 REWRITE=2132 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_284: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4560 HIT=2416 REWRITE=2144 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_285: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4576 HIT=2432 REWRITE=2144 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_286: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4592 HIT=2448 REWRITE=2144 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_287: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4608 HIT=2464 REWRITE=2144 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_288: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4624 HIT=2472 REWRITE=2152 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_289: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4640 HIT=2480 REWRITE=2160 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_290: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4656 HIT=2492 REWRITE=2164 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_291: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4672 HIT=2500 REWRITE=2172 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_292: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4688 HIT=2508 REWRITE=2180 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_293: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4704 HIT=2520 REWRITE=2184 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_294: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4720 HIT=2528 REWRITE=2192 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_295: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4736 HIT=2536 REWRITE=2200 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_296: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4752 HIT=2548 REWRITE=2204 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_297: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4768 HIT=2556 REWRITE=2212 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_298: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4784 HIT=2564 REWRITE=2220 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_299: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4800 HIT=2576 REWRITE=2224 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_300: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4816 HIT=2576 REWRITE=2240 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_301: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4832 HIT=2576 REWRITE=2256 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_302: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4848 HIT=2576 REWRITE=2272 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_303: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4864 HIT=2576 REWRITE=2288 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_304: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4880 HIT=2576 REWRITE=2304 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_305: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4896 HIT=2576 REWRITE=2320 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_306: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4912 HIT=2576 REWRITE=2336 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_307: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4928 HIT=2576 REWRITE=2352 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_308: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4944 HIT=2576 REWRITE=2368 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_309: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4960 HIT=2576 REWRITE=2384 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_310: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4976 HIT=2576 REWRITE=2400 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_311: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=4992 HIT=2576 REWRITE=2416 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_312: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5008 HIT=2576 REWRITE=2432 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_313: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5024 HIT=2576 REWRITE=2448 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_314: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5040 HIT=2576 REWRITE=2464 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_315: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5056 HIT=2576 REWRITE=2480 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_316: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5072 HIT=2576 REWRITE=2496 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_317: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5088 HIT=2576 REWRITE=2512 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_318: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5104 HIT=2576 REWRITE=2528 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_319: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5120 HIT=2576 REWRITE=2544 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_320: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5136 HIT=2576 REWRITE=2560 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_321: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5152 HIT=2576 REWRITE=2576 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_322: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5168 HIT=2576 REWRITE=2592 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_323: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5184 HIT=2576 REWRITE=2608 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_324: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5200 HIT=2576 REWRITE=2624 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_325: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5216 HIT=2576 REWRITE=2640 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_326: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5232 HIT=2576 REWRITE=2656 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_327: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5248 HIT=2576 REWRITE=2672 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_328: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5264 HIT=2576 REWRITE=2688 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_329: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5280 HIT=2576 REWRITE=2704 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_330: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5296 HIT=2576 REWRITE=2720 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_331: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5312 HIT=2576 REWRITE=2736 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_332: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5328 HIT=2576 REWRITE=2752 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_333: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5344 HIT=2576 REWRITE=2768 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_334: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5360 HIT=2576 REWRITE=2784 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_335: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5376 HIT=2576 REWRITE=2800 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_336: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5392 HIT=2576 REWRITE=2816 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_337: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5408 HIT=2576 REWRITE=2832 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_338: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5424 HIT=2576 REWRITE=2848 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_339: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5440 HIT=2576 REWRITE=2864 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_340: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5456 HIT=2576 REWRITE=2880 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_341: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5472 HIT=2576 REWRITE=2896 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_342: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5488 HIT=2576 REWRITE=2912 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_343: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5504 HIT=2576 REWRITE=2928 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_344: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5520 HIT=2576 REWRITE=2944 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_345: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5536 HIT=2576 REWRITE=2960 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_346: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5552 HIT=2592 REWRITE=2960 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_347: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5568 HIT=2608 REWRITE=2960 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_348: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5584 HIT=2618 REWRITE=2966 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_349: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5600 HIT=2628 REWRITE=2972 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_350: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5616 HIT=2640 REWRITE=2976 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_351: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5632 HIT=2650 REWRITE=2982 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_352: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5648 HIT=2660 REWRITE=2988 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_353: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5664 HIT=2672 REWRITE=2992 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_354: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5680 HIT=2672 REWRITE=3008 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_355: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5696 HIT=2672 REWRITE=3024 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_356: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5712 HIT=2672 REWRITE=3040 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_357: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5728 HIT=2678 REWRITE=3050 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_358: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5744 HIT=2685 REWRITE=3059 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_359: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5760 HIT=2691 REWRITE=3069 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_360: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5776 HIT=2698 REWRITE=3078 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_361: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5792 HIT=2704 REWRITE=3088 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_362: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5808 HIT=2710 REWRITE=3098 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_363: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5824 HIT=2717 REWRITE=3107 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_364: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5840 HIT=2723 REWRITE=3117 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_365: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5856 HIT=2730 REWRITE=3126 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_366: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5872 HIT=2736 REWRITE=3136 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_367: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5888 HIT=2742 REWRITE=3146 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_368: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5904 HIT=2749 REWRITE=3155 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_369: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5920 HIT=2755 REWRITE=3165 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_370: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5936 HIT=2762 REWRITE=3174 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_371: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5952 HIT=2768 REWRITE=3184 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_372: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5968 HIT=2774 REWRITE=3194 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_373: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=5984 HIT=2781 REWRITE=3203 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_374: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6000 HIT=2787 REWRITE=3213 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_375: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6016 HIT=2794 REWRITE=3222 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_376: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6032 HIT=2800 REWRITE=3232 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_377: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6048 HIT=2804 REWRITE=3244 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_378: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6064 HIT=2804 REWRITE=3260 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_379: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6080 HIT=2806 REWRITE=3274 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_380: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6096 HIT=2808 REWRITE=3288 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_381: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6112 HIT=2808 REWRITE=3304 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_382: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6128 HIT=2812 REWRITE=3316 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_383: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6144 HIT=2812 REWRITE=3332 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_384: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6160 HIT=2814 REWRITE=3346 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_385: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6176 HIT=2816 REWRITE=3360 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_386: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6192 HIT=2816 REWRITE=3376 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_387: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6208 HIT=2820 REWRITE=3388 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_388: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6224 HIT=2820 REWRITE=3404 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_389: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6240 HIT=2822 REWRITE=3418 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_390: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6256 HIT=2824 REWRITE=3432 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_391: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6272 HIT=2824 REWRITE=3448 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_392: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6288 HIT=2828 REWRITE=3460 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_393: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6304 HIT=2828 REWRITE=3476 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_394: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6320 HIT=2830 REWRITE=3490 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_395: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6336 HIT=2832 REWRITE=3504 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_396: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6352 HIT=2832 REWRITE=3520 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_397: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6368 HIT=2840 REWRITE=3528 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_398: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6384 HIT=2846 REWRITE=3538 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_399: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6400 HIT=2852 REWRITE=3548 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_400: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6416 HIT=2860 REWRITE=3556 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_401: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6432 HIT=2864 REWRITE=3568 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_402: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6448 HIT=2880 REWRITE=3568 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_403: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6464 HIT=2896 REWRITE=3568 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_404: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6480 HIT=2908 REWRITE=3572 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_405: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6496 HIT=2916 REWRITE=3580 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_406: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6512 HIT=2920 REWRITE=3592 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_407: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6528 HIT=2936 REWRITE=3592 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_408: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6544 HIT=2952 REWRITE=3592 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_409: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6560 HIT=2964 REWRITE=3596 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_410: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6576 HIT=2972 REWRITE=3604 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_411: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6592 HIT=2976 REWRITE=3616 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_412: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6608 HIT=2990 REWRITE=3618 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_413: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6624 HIT=3002 REWRITE=3622 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_414: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6640 HIT=3016 REWRITE=3624 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_415: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6656 HIT=3028 REWRITE=3628 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_416: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6672 HIT=3040 REWRITE=3632 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_417: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6688 HIT=3054 REWRITE=3634 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_418: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6704 HIT=3066 REWRITE=3638 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_419: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6720 HIT=3080 REWRITE=3640 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_420: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6736 HIT=3092 REWRITE=3644 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_421: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6752 HIT=3104 REWRITE=3648 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_422: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6768 HIT=3118 REWRITE=3650 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_423: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6784 HIT=3130 REWRITE=3654 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_424: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6800 HIT=3144 REWRITE=3656 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_425: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6816 HIT=3156 REWRITE=3660 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_426: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6832 HIT=3168 REWRITE=3664 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_427: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6848 HIT=3182 REWRITE=3666 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_428: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6864 HIT=3194 REWRITE=3670 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_429: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6880 HIT=3208 REWRITE=3672 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_430: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6896 HIT=3220 REWRITE=3676 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_431: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6912 HIT=3232 REWRITE=3680 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_432: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6928 HIT=3240 REWRITE=3688 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_433: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6944 HIT=3244 REWRITE=3700 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_434: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6960 HIT=3248 REWRITE=3712 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_435: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6976 HIT=3252 REWRITE=3724 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_436: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=6992 HIT=3268 REWRITE=3724 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_437: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7008 HIT=3284 REWRITE=3724 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_438: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7024 HIT=3296 REWRITE=3728 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_439: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7040 HIT=3300 REWRITE=3740 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_440: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7056 HIT=3304 REWRITE=3752 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_441: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7072 HIT=3312 REWRITE=3760 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_442: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7088 HIT=3312 REWRITE=3776 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_443: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7104 HIT=3324 REWRITE=3780 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_444: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7120 HIT=3340 REWRITE=3780 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_445: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7136 HIT=3356 REWRITE=3780 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_446: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7152 HIT=3360 REWRITE=3792 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_447: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7168 HIT=3368 REWRITE=3800 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_448: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7184 HIT=3372 REWRITE=3812 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_449: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7200 HIT=3376 REWRITE=3824 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_450: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7216 HIT=3380 REWRITE=3836 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_451: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7232 HIT=3396 REWRITE=3836 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_452: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7248 HIT=3412 REWRITE=3836 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_453: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7264 HIT=3424 REWRITE=3840 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_454: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7280 HIT=3428 REWRITE=3852 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_455: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7296 HIT=3432 REWRITE=3864 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_456: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7312 HIT=3440 REWRITE=3872 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_457: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7328 HIT=3440 REWRITE=3888 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_458: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7344 HIT=3452 REWRITE=3892 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_459: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7360 HIT=3468 REWRITE=3892 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_460: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7376 HIT=3484 REWRITE=3892 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_461: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7392 HIT=3488 REWRITE=3904 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_462: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7408 HIT=3496 REWRITE=3912 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_463: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7424 HIT=3500 REWRITE=3924 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_464: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7440 HIT=3504 REWRITE=3936 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_465: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7456 HIT=3508 REWRITE=3948 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_466: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7472 HIT=3524 REWRITE=3948 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_467: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7488 HIT=3540 REWRITE=3948 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_468: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7504 HIT=3552 REWRITE=3952 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_469: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7520 HIT=3556 REWRITE=3964 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_470: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7536 HIT=3560 REWRITE=3976 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_471: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7552 HIT=3568 REWRITE=3984 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_472: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7568 HIT=3568 REWRITE=4000 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_473: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7584 HIT=3580 REWRITE=4004 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_474: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7600 HIT=3596 REWRITE=4004 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_475: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7616 HIT=3612 REWRITE=4004 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_476: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7632 HIT=3616 REWRITE=4016 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_477: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7648 HIT=3624 REWRITE=4024 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_478: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7664 HIT=3628 REWRITE=4036 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_479: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7680 HIT=3632 REWRITE=4048 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_480: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7696 HIT=3636 REWRITE=4060 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_481: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7712 HIT=3652 REWRITE=4060 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_482: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7728 HIT=3668 REWRITE=4060 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_483: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7744 HIT=3680 REWRITE=4064 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_484: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7760 HIT=3684 REWRITE=4076 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_485: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7776 HIT=3688 REWRITE=4088 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_486: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7792 HIT=3696 REWRITE=4096 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_487: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7808 HIT=3696 REWRITE=4112 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_488: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7824 HIT=3708 REWRITE=4116 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_489: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7840 HIT=3724 REWRITE=4116 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_490: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7856 HIT=3740 REWRITE=4116 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_491: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7872 HIT=3744 REWRITE=4128 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_492: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7888 HIT=3744 REWRITE=4144 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_493: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7904 HIT=3744 REWRITE=4160 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_494: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7920 HIT=3744 REWRITE=4176 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_495: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7936 HIT=3744 REWRITE=4192 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_496: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7952 HIT=3744 REWRITE=4208 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_497: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7968 HIT=3744 REWRITE=4224 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_498: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=7984 HIT=3744 REWRITE=4240 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_499: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8000 HIT=3744 REWRITE=4256 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_500: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8016 HIT=3744 REWRITE=4272 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_501: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8032 HIT=3744 REWRITE=4288 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_502: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8048 HIT=3744 REWRITE=4304 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_503: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8064 HIT=3744 REWRITE=4320 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_504: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8080 HIT=3744 REWRITE=4336 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_505: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8096 HIT=3744 REWRITE=4352 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_506: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8112 HIT=3744 REWRITE=4368 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_507: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8128 HIT=3744 REWRITE=4384 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_508: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8144 HIT=3744 REWRITE=4400 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_509: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8160 HIT=3744 REWRITE=4416 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_510: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8176 HIT=3744 REWRITE=4432 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_511: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8192 HIT=3744 REWRITE=4448 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_512: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8208 HIT=3744 REWRITE=4464 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_513: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8224 HIT=3744 REWRITE=4480 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_514: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8240 HIT=3744 REWRITE=4496 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_515: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8256 HIT=3744 REWRITE=4512 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_516: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8272 HIT=3744 REWRITE=4528 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_517: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8288 HIT=3744 REWRITE=4544 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_518: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8304 HIT=3744 REWRITE=4560 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_519: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8320 HIT=3744 REWRITE=4576 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_520: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8336 HIT=3744 REWRITE=4592 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_521: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8352 HIT=3744 REWRITE=4608 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_522: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8368 HIT=3760 REWRITE=4608 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_523: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8384 HIT=3776 REWRITE=4608 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_524: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8400 HIT=3792 REWRITE=4608 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_525: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8416 HIT=3808 REWRITE=4608 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_526: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8432 HIT=3816 REWRITE=4616 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_527: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8448 HIT=3828 REWRITE=4620 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_528: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8464 HIT=3840 REWRITE=4624 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_529: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8480 HIT=3848 REWRITE=4632 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_530: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8496 HIT=3860 REWRITE=4636 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_531: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8512 HIT=3872 REWRITE=4640 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_532: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8528 HIT=3880 REWRITE=4648 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_533: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8544 HIT=3892 REWRITE=4652 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_534: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8560 HIT=3904 REWRITE=4656 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_535: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8576 HIT=3912 REWRITE=4664 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_536: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8592 HIT=3924 REWRITE=4668 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_537: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8608 HIT=3936 REWRITE=4672 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_538: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8624 HIT=3936 REWRITE=4688 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_539: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8640 HIT=3936 REWRITE=4704 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_540: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8656 HIT=3936 REWRITE=4720 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_541: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8672 HIT=3936 REWRITE=4736 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_542: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8688 HIT=3936 REWRITE=4752 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_543: rc_wrapper=0 marker=BATCH_DONE rc=0
+progress judged=8704 HIT=3936 REWRITE=4768 REFUSE=0 CRASH=0 NOT_RUN=0
+batch drep_544: rc_wrapper=0 marker=BATCH_DONE rc=0
+{
+  "D": 8705,
+  "selected": 8705,
+  "judged": 8705,
+  "hist": {
+    "HIT": 3937,
+    "REWRITE": 4768,
+    "REFUSE": 0,
+    "CRASH": 0,
+    "NOT_RUN": 0,
+    "PARSE_FAILED": 0,
+    "UNKNOWN": 0,
+    "NO_CASE": 0
+  },
+  "hit_count": 3937,
+  "hit_keys_sample": [
+    18014398509481985,
+    18577349000302608,
+    18577349000302736,
+    18577349000302864,
+    18577349000302992,
+    18577349000303120,
+    18577349000303248,
+    18577349000303376,
+    18577349000303504,
+    18577349000303632,
+    18577349000303760,
+    18577349000303888,
+    18577349000304016,
+    18577349000304144,
+    18577349000304272,
+    18577349000304400,
+    18577349000304528,
+    18577349537173520,
+    18577349537173648,
+    18577349537173776
+  ],
+  "R_path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/closure/R.txt",
+  "R_total": 3937,
+  "elapsed_sec": 89.61,
+  "details_head": [
+    {
+      "cid": "k0_19703248907145264",
+      "target": 19703248907145264,
+      "actual": 19703248907145264,
+      "ok": true,
+      "reject": "",
+      "verdict": "HIT",
+      "dims": {
+        "IsEmptyTensor": "0",
+        "SplitAxis": "0",
+        "InputDType": "3",
+        "IsTnd": "0",
+        "IsDrop": "0",
+        "IsPse": "0",
+        "IsAttenMask": "0",
+        "S1TemplateNum": "128",
+        "S2TemplateNum": "128",
+        "DTemplateNum": "64",
+        "DeterType": "0",
+        "IsNEqual": "0",
+        "IsBn2MultiBlk": "0",
+        "IsDNoEqual": "0",
+        "IsRope": "0",
+        "OutDType": "3",
+        "IsNzOut": "0",
+        "IsTndSwizzle": "0",
+        "IsRegbase": "1"
+      }
+    },
+    {
+      "cid": "k1_19843986395500592",
+      "target": 19843986395500592,
+      "actual": 19843986395500592,
+      "ok": true,
+      "reject": "",
+      "verdict": "HIT",
+      "dims": {
+        "IsEmptyTensor": "0",
+        "SplitAxis": "0",
+        "InputDType": "3",
+        "IsTnd": "0",
+        "IsDrop": "0",
+        "IsPse": "0",
+        "IsAttenMask": "0",
+        "S1TemplateNum": "128",
+        "S2TemplateNum": "128",
+        "DTemplateNum": "64",
+        "DeterType": "0",
+        "IsNEqual": "0",
+        "IsBn2MultiBlk": "0",
+        "IsDNoEqual": "1",
+        "IsRope": "0",
+        "OutDType": "3",
+        "IsNzOut": "0",
+        "IsTndSwizzle": "0",
+        "IsRegbase": "1"
+      }
+    },
+    {
+      "cid": "k2_19703249980887088",
+      "target": 19703249980887088,
+      "actual": 19703249980887088,
+      "ok": true,
+      "reject": "",
+      "verdict": "HIT",
+      "dims": {
+        "IsEmptyTensor": "0",
+        "SplitAxis": "0",
+        "InputDType": "3",
+        "IsTnd": "0",
+        "IsDrop": "0",
+        "IsPse": "0",
+        "IsAttenMask": "0",
+        "S1TemplateNum": "128",
+        "S2TemplateNum": "128",
+        "DTemplateNum": "192",
+        "DeterType": "0",
+        "IsNEqual": "0",
+        "IsBn2MultiBlk": "0",
+        "IsDNoEqual": "0",
+        "IsRope": "0",
+        "OutDType": "3",
+        "IsNzOut": "0",
+        "IsTndSwizzle": "0",
+        "IsRegbase": "1"
+      }
+    },
+    {
+      "cid": "k3_19843987469242416",
+      "target": 19843987469242416,
+      "actual": 19843987469242416,
+      "ok": true,
+      "reject": "",
+      "verdict": "HIT",
+      "dims": {
+        "IsEmptyTensor": "0",
+        "SplitAxis": "0",
+        "InputDType": "3",
+        "IsTnd": "0",
+        "IsDrop": "0",
+        "IsPse": "0",
+        "IsAttenMask": "0",
+        "S1TemplateNum": "128",
+        "S2TemplateNum": "128",
+        "DTemplateNum": "192",
+        "DeterType": "0",
+        "IsNEqual": "0",
+        "IsBn2MultiBlk": "0",
+        "IsDNoEqual": "1",
+        "IsRope": "0",
+        "OutDType": "3",
+        "IsNzOut": "0",
+        "IsTndSwizzle": "0",
+        "IsRegbase": "1"
+      }
+    },
+    {
+      "cid": "k4_19703250517758000",
+      "target": 19703250517758000,
+      "actual": 19703250517758000,
+      "ok": true,
+      "reject": "",
+      "verdict": "HIT",
+      "dims": {
+        "IsEmptyTensor": "0",
+        "SplitAxis": "0",
+        "InputDType": "3",
+        "IsTnd": "0",
+        "IsDrop": "0",
+        "IsPse": "0",
+        "IsAttenMask": "0",
+        "S1TemplateNum": "128",
+        "S2TemplateNum": "128",
+        "DTemplateNum": "256",
+        "DeterType": "0",
+        "IsNEqual": "0",
+        "IsBn2MultiBlk": "0",
+        "IsDNoEqual": "0",
+        "IsRope": "0",
+        "OutDType": "3",
+        "IsNzOut": "0",
+        "IsTndSwizzle": "0",
+        "IsRegbase": "1"
+      }
+    },
+    {
+      "cid": "k5_19843988006113328",
+      "target": 19843988006113328,
+      "actual": 19843988006113328,
+      "ok": true,
+      "reject": "",
+      "verdict": "HIT",
+      "dims": {
+        "IsEmptyTensor": "0",
+        "SplitAxis": "0",
+        "InputDType": "3",
+        "IsTnd": "0",
+        "IsDrop": "0",
+        "IsPse": "0",
+        "IsAttenMask": "0",
+        "S1TemplateNum": "128",
+        "S2TemplateNum": "128",
+        "DTemplateNum": "256",
+        "DeterType": "0",
+        "IsNEqual": "0",
+        "IsBn2MultiBlk": "0",
+        "IsDNoEqual": "1",
+        "IsRope": "0",
+        "OutDType": "3",
+        "IsNzOut": "0",
+        "IsTndSwizzle": "0",
+        "IsRegbase": "1"
+      }
+    },
+    {
+      "cid": "k6_19703251054628912",
+      "target": 19703251054628912,
+      "actual": 19703251054628912,
+      "ok": true,
+      "reject": "",
+      "verdict": "HIT",
+      "dims": {
+        "IsEmptyTensor": "0",
+        "SplitAxis": "0",
+        "InputDType": "3",
+        "IsTnd": "0",
+        "IsDrop": "0",
+        "IsPse": "0",
+        "IsAttenMask": "0",
+        "S1TemplateNum": "128",
+        "S2TemplateNum": "128",
+        "DTemplateNum": "768",
+        "DeterType": "0",
+        "IsNEqual": "0",
+        "IsBn2MultiBlk": "0",
+        "IsDNoEqual": "0",
+        "IsRope": "0",
+        "OutDType": "3",
+        "IsNzOut": "0",
+        "IsTndSwizzle": "0",
+        "IsRegbase": "1"
+      }
+    },
+    {
+      "cid": "k7_19843988542984240",
+      "target": 19843988542984240,
+      "actual": 1984398854298424
+WROTE /mnt/d/PR-review/AscendC-Pilot/artifacts/fa-pr13/host_replay_report.json

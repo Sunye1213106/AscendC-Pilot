@@ -1,0 +1,11 @@
+{
+  "state": {
+    "declared": 8705,
+    "R": 4121,
+    "R_declared": 4121,
+    "undeclared": 0,
+    "E": 4456,
+    "violation": 0,
+    "gap": 128
+  }
+}

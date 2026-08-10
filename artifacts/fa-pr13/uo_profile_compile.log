@@ -1,0 +1,52 @@
+[uo-timing] extract_host_bundle start  closure_mode=off with_kernel=False with_api=False kernel_max_variants=1
+[uo-timing]   0.079s  discover
+[uo-timing]   targets=['flash_attention_score_grad_tiling_common_regbase.cpp', 'flash_attention_score_grad_tiling_normal_regbase.cpp', 'flash_attention_score_grad_tiling_varlen_regbase.cpp', 'flash_attention_score_grad_tiling.cpp']
+[uo-timing]   0.042s  BuildContext.load
+[uo-timing] host_ir.parallel_tus  n=4 workers=4 pool=process
+[uo-timing]   0.044s  walk_file  file=flash_attention_score_grad_tiling.cpp side=host cache=hit controls=114 writes=4
+[uo-timing]   0.095s  host_ir.walk_tu  file=flash_attention_score_grad_tiling.cpp controls=114 writes=4
+[uo-timing]   0.062s  walk_file  file=flash_attention_score_grad_tiling_varlen_regbase.cpp side=host cache=hit controls=226 writes=105
+[uo-timing]   0.113s  host_ir.walk_tu  file=flash_attention_score_grad_tiling_varlen_regbase.cpp controls=226 writes=105
+[uo-timing]   0.121s  walk_file  file=flash_attention_score_grad_tiling_normal_regbase.cpp side=host cache=hit controls=308 writes=158
+[uo-timing]   0.184s  host_ir.walk_tu  file=flash_attention_score_grad_tiling_normal_regbase.cpp controls=308 writes=158
+[uo-timing]   0.180s  walk_file  file=flash_attention_score_grad_tiling_common_regbase.cpp side=host cache=hit controls=361 writes=126
+[uo-timing]   0.219s  host_ir.walk_tu  file=flash_attention_score_grad_tiling_common_regbase.cpp controls=361 writes=126
+[uo-timing]   0.446s  build_host_ir.done  controls=911 writes=393 local_writes=2054 calls=4022
+[uo-timing]   0.446s  host||kernel  tus=4
+[uo-timing]   host_ir controls=911 writes=393 kernel_branches=0
+[uo-timing]  18.893s  var_model+platform
+[uo-timing] api_contract.start
+[uo-timing]   0.012s  api_contract.done  facts=0.012s contract=skipped premises=0
+[uo-timing]   0.039s  bind.done  bindings=19
+[uo-timing]   0.040s  api||bind
+[uo-timing]   api_premises=0 kernel_branches=0 bindings=19
+[uo-timing]   controllability skipped (mode=off)
+[uo-timing] extract_host_bundle TOTAL 19.5s  slow=none
+[uo-timing]   summary    0.079s  discover
+[uo-timing]   summary    0.042s  BuildContext.load
+[uo-timing]   summary    0.446s  host||kernel
+[uo-timing]   summary   18.893s  var_model+platform
+[uo-timing]   summary    0.040s  api||bind
+[uo-timing]   0.782s  compile.analyze_passes
+[uo-timing]   0.007s  compile.inventory
+[uo-timing]   0.223s  compile.source_contract
+[uo-timing]   0.015s  compile.tiling_fields
+[uo-timing]   0.166s  compile.host_tiling_key
+[uo-timing]   0.904s  compile.host_defuse
+[uo-timing]   0.372s  compile.host_defuse_validate
+[uo-timing]   0.009s  compile.tiling_registration
+[uo-timing]  33.287s  compile.source_gaps
+[uo-timing]   0.004s  compile.class_frontiers
+[uo-timing]  34.146s  compile.kernel_tiling_closure
+[uo-timing]   4.384s  compile.kernel_call_refine
+[uo-timing]   6.373s  compile.kernel_call_frontiers
+[uo-timing]   0.020s  compile.kernel_call_boundaries
+[uo-timing]   0.749s  compile.tiling_reads
+[uo-timing]   0.499s  compile.tiling_host_writes
+[uo-timing]   0.076s  compile.kernel_tiling_truth
+[uo-timing]   0.036s  compile.kernel_tiling_metrics
+[uo-timing]  46.244s  compile.tpl_and_views
+[uo-timing]   0.259s  compile.audit
+[uo-timing] 128.987s  compile.total
+analyze 150.81 ok True entities 4583
+commit 0.99 ok True reused True

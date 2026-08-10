@@ -33,12 +33,11 @@ _MEMBER_RE = re.compile(
 )
 _TILING_READ_RE = re.compile(r"\btilingData\s*->\s*([A-Za-z_]\w*)(?:\s*\.\s*([A-Za-z_]\w*))?")
 _FUNCTION_RE = re.compile(
-    r"(?:(?:template\s*<.*?>)\s*)?"
-    r"(?:inline\s+|static\s+|constexpr\s+|__aicore__\s+|__global__\s+)*"
-    r"[A-Za-z_][\w:<>,\s*&]*?\s+"
-    r"(?P<name>[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*"
-    r"\((?P<params>[^;{}]*)\)\s*(?:const\s*)?\{",
-    re.S,
+    r"(?:(?:template\s*<[^;{}]{0,1500}>\s*){0,4})"
+    r"(?:(?:inline|static|constexpr|__aicore__|__global__)\s+){0,8}"
+    r"[A-Za-z_][\w:<>,\s*&]{0,200}?\s+"
+    r"(?P<name>[A-Za-z_]\w*(?:::[A-Za-z_]\w*){0,6})\s*"
+    r"\((?P<params>[^;{}]{0,4000})\)\s*(?:const\s*)?\{",
 )
 _CALL_RE = re.compile(
     r"(?:(?P<receiver>[A-Za-z_]\w*)\s*(?:\.|->)\s*)?"
@@ -122,7 +121,9 @@ def _kernel_files(root: Path, architecture: str) -> list[Path]:
 
 
 def _read(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="replace")
+    from uo_init.passes.source_text_cache import read_text
+
+    return read_text(path)
 
 
 def _rel(root: Path, path: Path) -> str:
@@ -134,6 +135,17 @@ def _rel(root: Path, path: Path) -> str:
 
 def _line(text: str, offset: int) -> int:
     return text.count("\n", 0, max(0, offset)) + 1
+
+
+def _line_index(text: str) -> list[int]:
+    """Newline offsets for O(log n) line lookup via bisect."""
+    return [i for i, ch in enumerate(text) if ch == "\n"]
+
+
+def _line_at(newlines: list[int], offset: int) -> int:
+    import bisect
+
+    return bisect.bisect_right(newlines, max(0, offset)) + 1
 
 
 def _matching_brace(text: str, open_pos: int) -> int:
@@ -161,19 +173,37 @@ def _matching_brace(text: str, open_pos: int) -> int:
     return -1
 
 
-def _find_kernel(codemap: CodeMap, source_name: str) -> Entity | None:
+def _find_kernel(
+    codemap: CodeMap,
+    source_name: str,
+    cache: dict[str, Entity | None] | None = None,
+) -> Entity | None:
     short = source_name.split("::")[-1]
+    if cache is not None and short in cache:
+        return cache[short]
     exact = codemap.by_name(source_name, kind=EntityKind.KERNEL)
     if exact:
-        return exact[0]
+        hit = exact[0]
+        if cache is not None:
+            cache[short] = hit
+        return hit
+    hit = None
     for ent in codemap.by_kind(EntityKind.KERNEL):
         if ent.name.split("::")[-1] == short:
-            return ent
-    return None
+            hit = ent
+            break
+    if cache is not None:
+        cache[short] = hit
+    return hit
 
 
-def _function_scopes(text: str, file: str) -> list[_Scope]:
+def _function_scopes(
+    text: str, file: str, *, newlines: list[int] | None = None
+) -> list[_Scope]:
     out: list[_Scope] = []
+    line_of = (lambda off: _line_at(newlines, off)) if newlines is not None else (
+        lambda off: _line(text, off)
+    )
     for match in _FUNCTION_RE.finditer(text):
         name = match.group("name")
         if name in _CALL_SKIP:
@@ -186,8 +216,8 @@ def _function_scopes(text: str, file: str) -> list[_Scope]:
             _Scope(
                 name=name,
                 file=file,
-                start=_line(text, match.start()),
-                end=_line(text, close_pos),
+                start=line_of(match.start()),
+                end=line_of(close_pos),
                 body_start=open_pos + 1,
                 body_end=close_pos,
                 kind="function",
@@ -265,30 +295,56 @@ def _extract_calls_macros_and_frontiers(codemap: CodeMap, root: Path, architectu
     type_dispatch_edges = 0
     branch_sites = 0
     macro_scopes_count = 0
+    kernel_cache: dict[str, Entity | None] = {}
+    kernel_by_short: dict[str, list] = {}
+    for kernel in codemap.by_kind(EntityKind.KERNEL):
+        short = kernel.name.split("::")[-1]
+        if short:
+            kernel_by_short.setdefault(short, []).append(kernel)
+    kernel_type_re = None
+    if kernel_by_short:
+        shorts = sorted(kernel_by_short, key=len, reverse=True)
+        kernel_type_re = re.compile(
+            r"\b(" + "|".join(re.escape(s) for s in shorts) + r")\s*<"
+        )
 
     for path in _kernel_files(root, architecture):
         text = _read(path)
         file = _rel(root, path)
-        functions = _function_scopes(text, file)
+        newlines = _line_index(text)
+        functions = _function_scopes(text, file, newlines=newlines)
         macros = _macro_scopes(text, file)
         macro_scopes_count += len(macros)
         all_scopes = functions + macros
         scope_entities = {scope: _scope_entity(codemap, scope) for scope in all_scopes}
 
         # Macro references from functions are explicit source expansion edges.
+        macro_by_name = {m.name: m for m in macros}
+        macro_re = None
+        if macro_by_name:
+            # Longest-first so prefixes do not steal longer macro names.
+            names = sorted(macro_by_name, key=len, reverse=True)
+            macro_re = re.compile(r"\b(" + "|".join(re.escape(n) for n in names) + r")\s*\(")
         for function in functions:
             body = text[function.body_start:function.body_end]
             caller = scope_entities[function]
-            for macro in macros:
-                if re.search(rf"\b{re.escape(macro.name)}\s*\(", body):
-                    codemap.link(
-                        RelationKind.CALLS,
-                        caller.id,
-                        scope_entities[macro].id,
-                        attrs={"provenance": "source_macro_invocation", "file": file},
-                        status="confirmed",
-                    )
-                    call_edges += 1
+            if macro_re is None:
+                continue
+            seen_macros: set[str] = set()
+            for hit in macro_re.finditer(body):
+                mname = hit.group(1)
+                if mname in seen_macros:
+                    continue
+                seen_macros.add(mname)
+                macro = macro_by_name[mname]
+                codemap.link(
+                    RelationKind.CALLS,
+                    caller.id,
+                    scope_entities[macro].id,
+                    attrs={"provenance": "source_macro_invocation", "file": file},
+                    status="confirmed",
+                )
+                call_edges += 1
 
         for scope in all_scopes:
             caller = scope_entities[scope]
@@ -302,7 +358,8 @@ def _extract_calls_macros_and_frontiers(codemap: CodeMap, root: Path, architectu
                 if target_name in _CALL_SKIP or target_name == scope.name.split("::")[-1]:
                     continue
                 absolute = body_abs + match.start()
-                target_kernel = _find_kernel(codemap, target_name)
+                line = _line_at(newlines, absolute)
+                target_kernel = _find_kernel(codemap, target_name, kernel_cache)
                 if target_kernel is not None and target_kernel.id != caller.id:
                     target = target_kernel
                     direct_kernel_calls += 1
@@ -312,14 +369,14 @@ def _extract_calls_macros_and_frontiers(codemap: CodeMap, root: Path, architectu
                     target = codemap.upsert(
                         EntityKind.METHOD,
                         display,
-                        eid=f"CALLTARGET::{file}::{_line(text, absolute)}::{display}",
+                        eid=f"CALLTARGET::{file}::{line}::{display}",
                         attrs={
                             "call_target": target_name,
                             "receiver": receiver,
                             "provenance": "source_call_site",
                         },
                         file=file,
-                        line=_line(text, absolute),
+                        line=line,
                         status="confirmed",
                     )
                 codemap.link(
@@ -329,7 +386,7 @@ def _extract_calls_macros_and_frontiers(codemap: CodeMap, root: Path, architectu
                     attrs={
                         "provenance": "source_call_site",
                         "file": file,
-                        "line": _line(text, absolute),
+                        "line": line,
                     },
                     status="confirmed",
                 )
@@ -338,25 +395,30 @@ def _extract_calls_macros_and_frontiers(codemap: CodeMap, root: Path, architectu
             # Template/class types named in a scope can choose an existing
             # kernel implementation even when the invocation is indirect via an
             # object or std::conditional. Record only textual type references.
-            for kernel in codemap.by_kind(EntityKind.KERNEL):
-                short = kernel.name.split("::")[-1]
-                if kernel.id == caller.id or not short:
-                    continue
-                if re.search(rf"\b{re.escape(short)}\s*<", body):
-                    codemap.link(
-                        RelationKind.CONTROLS,
-                        caller.id,
-                        kernel.id,
-                        attrs={"provenance": "source_kernel_type_reference", "file": file},
-                        status="confirmed",
-                    )
-                    type_dispatch_edges += 1
+            if kernel_type_re is not None:
+                seen_shorts: set[str] = set()
+                for hit in kernel_type_re.finditer(body):
+                    short = hit.group(1)
+                    if short in seen_shorts:
+                        continue
+                    seen_shorts.add(short)
+                    for kernel in kernel_by_short.get(short, []):
+                        if kernel.id == caller.id:
+                            continue
+                        codemap.link(
+                            RelationKind.CONTROLS,
+                            caller.id,
+                            kernel.id,
+                            attrs={"provenance": "source_kernel_type_reference", "file": file},
+                            status="confirmed",
+                        )
+                        type_dispatch_edges += 1
 
             # Control-flow frontier inventory.
             for branch in _BRANCH_RE.finditer(body):
                 absolute = body_abs + branch.start()
                 kind = branch.group(1).replace(" ", "_")
-                line = _line(text, absolute)
+                line = _line_at(newlines, absolute)
                 node = codemap.upsert(
                     EntityKind.BRANCH,
                     f"{scope.name}:{kind}@{line}",
@@ -376,7 +438,7 @@ def _extract_calls_macros_and_frontiers(codemap: CodeMap, root: Path, architectu
                 branch_sites += 1
 
         for branch in _PP_BRANCH_RE.finditer(text):
-            line = _line(text, branch.start())
+            line = _line_at(newlines, branch.start())
             node = codemap.upsert(
                 EntityKind.BRANCH,
                 f"pp_{branch.group(1)}@{line}",

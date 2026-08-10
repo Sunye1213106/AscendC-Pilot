@@ -59,3 +59,8 @@ UO（CodeMap `.uo`）提供结构证据，不提供全局 19 维 closed-form：K
 「没找到 hint」≠ 不可达。
 
 安全不变量：`references/closure-safety.md`；搜索/构造：`references/search.md`；oracle：`references/oracle.md`；签发：`references/certificate.md`。
+
+## round_analysis 与 guard-family leads
+
+- `closure_residual` 必须写入 `tg/closure/round_analysis.yaml` 与 `round_analysis.stamp`；`closure_construct` 在 stamp 缺失或 corpus 比 analysis 新时拒绝执行（可用 `TG_SKIP_ANALYSIS_GATE=1` 绕过测试）。
+- `lemma_leads` 按 guard **家族**聚类（kind + mismatch + rewrite + reject_family），`when` 为成员交集；`instances` 保留具体 when 供 mine 引用，禁止把历史 guard 证书直接当 E。

@@ -1,0 +1,137 @@
+{
+  "state": {
+    "declared": 8705,
+    "R": 4121,
+    "R_declared": 4121,
+    "undeclared": 0,
+    "E": 4584,
+    "violation": 0,
+    "gap": 0
+  },
+  "provenance": {
+    "ok": true,
+    "E": 4584,
+    "cold_start": true,
+    "active_rules": true,
+    "issues": [],
+    "detail": "provenance_issues=0"
+  },
+  "certify_ok": true,
+  "certify": {
+    "ok": true,
+    "error": null,
+    "gate": {
+      "gate": "closure_soundness",
+      "ok": true,
+      "message": "ok",
+      "gap": 0,
+      "R": 4121,
+      "E": 4584,
+      "violation": 0,
+      "uncited_rules": []
+    },
+    "audit": {
+      "ok": true,
+      "status": "auto_ok",
+      "path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/runs/lemma_closure_composer_done/actions/closure_audit/review.yaml",
+      "soundness_ok": null
+    },
+    "invariants": {
+      "ok": true,
+      "checks": {
+        "I1": {
+          "ok": true,
+          "detail": "R∩E=0"
+        },
+        "I4": {
+          "ok": true,
+          "unsupported": [],
+          "detail": "unsupported_E=0"
+        },
+        "I6": {
+          "ok": true,
+          "stale": [],
+          "detail": "stale_rules=0"
+        },
+        "I7": {
+          "ok": true,
+          "uncited": [],
+          "affecting": [],
+          "detail": "uncited_affecting=0"
+        },
+        "I8": {
+          "ok": true,
+          "soft_hits": [],
+          "detail": "soft_only_E=0"
+        },
+        "I9": {
+          "ok": true,
+          "count": 0,
+          "path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/closure/undeclared_keys.csv",
+          "detail": "R−D=0"
+        },
+        "I_cold_start": {
+          "ok": true,
+          "issues": [],
+          "detail": "provenance_issues=0"
+        },
+        "I1_kernel": {
+          "ok": true,
+          "detail": "R_kernel_branches=0/0"
+        },
+        "I4_kernel": {
+          "ok": true,
+          "detail": "kernel_domain_never_excludes"
+        },
+        "I8_kernel": {
+          "ok": true,
+          "detail": "soft_graded_exclusions=[]"
+        },
+        "I1_tilingdata": {
+          "ok": true,
+          "detail": "forbid_exclude hits=0"
+        },
+        "I4_tilingdata": {
+          "ok": true,
+          "detail": "over_approximated=true; never_exclude"
+        },
+        "I8_tilingdata": {
+          "ok": true,
+          "detail": "tilingdata_never_contributes_to_E"
+        }
+      },
+      "declared": 8705,
+      "R": 4121,
+      "E": 4584,
+      "gap": 0,
+      "undeclared": 0,
+      "domains": {
+        "kernel": {
+          "branches": 0,
+          "covered": 0,
+          "path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/closure/kernel_coverage.csv",
+          "kernel_branches": []
+        },
+        "tilingdata": {
+          "fields": 0,
+          "defects": [],
+          "over_approximated": true,
+          "path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/closure/tilingdata_coverage.csv",
+          "tilingdata_fields": []
+        }
+      }
+    }
+  },
+  "active_rules": 23,
+  "progress": {
+    "D": 8705,
+    "R": 4121,
+    "E": 4584,
+    "gap": 0,
+    "started_from": {
+      "R": 4121,
+      "E": 0,
+      "gap": 4584
+    }
+  }
+}

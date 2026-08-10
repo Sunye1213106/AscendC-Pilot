@@ -1,0 +1,81 @@
+{
+  "kept": 1,
+  "rejected": 12,
+  "closes_sum": 1152,
+  "labels": [
+    "IsTndSwizzle=1 requires SplitAxis=BN2S2 not BN2GS1S2"
+  ],
+  "apply": {
+    "engine": "lemma_apply",
+    "promote": {
+      "ok": true,
+      "promoted": 1,
+      "skipped": 0,
+      "active_path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/closure/lemmas/active_rules.yaml",
+      "active_count": 11
+    },
+    "ok": true,
+    "declared": 8705,
+    "excluded": 4080,
+    "R": 4121,
+    "gap": 504,
+    "by_rule": [
+      [
+        "IsTndSwizzle=1 requires SplitAxis=BN2S2 not BN2GS1S2",
+        1152
+      ],
+      [
+        "DeterType=4 requires IsAttenMask=1",
+        992
+      ],
+      [
+        "DeterType=3 requires IsAttenMask=1",
+        912
+      ],
+      [
+        "FLOAT large-D forces S1TemplateNum=64",
+        256
+      ],
+      [
+        "IsBn2MultiBlk=1 requires non-TND",
+        176
+      ],
+      [
+        "IsRope=1 forces DTemplateNum=192 (not 64)",
+        128
+      ],
+      [
+        "IsRope=1 forces DTemplateNum=192 (not 128)",
+        128
+      ],
+      [
+        "IsRope=1 forces DTemplateNum=192 (not 256)",
+        128
+      ],
+      [
+        "IsRope=1 forces DTemplateNum=192 (not 768)",
+        128
+      ],
+      [
+        "IsRope=1 forces IsDNoEqual=1",
+        64
+      ],
+      [
+        "IsBn2MultiBlk=1 requires IsRope=0",
+        16
+      ]
+    ],
+    "e_path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/closure/excluded.txt",
+    "revoked": [],
+    "revoked_count": 0
+  },
+  "state": {
+    "declared": 8705,
+    "R": 4121,
+    "R_declared": 4121,
+    "undeclared": 0,
+    "E": 4080,
+    "violation": 0,
+    "gap": 504
+  }
+}
