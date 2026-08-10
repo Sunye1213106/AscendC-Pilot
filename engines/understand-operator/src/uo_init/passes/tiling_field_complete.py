@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Complete current-source TilingData declarations, including array members.
+"""Complete current-source TilingData declarations, including array/conditional members.
 
-The original lightweight member regex accepted scalar declarations only.  Array
-members are real ABI fields and are frequently consumed by Kernel code, so they
-must be present in the CodeMap before read/write closure is built.
+The original lightweight member regex accepted scalar declarations only and
+rejected types containing template predicates such as ``!isNewDeter``.  Those
+members are real ABI fields and must exist before read/write closure is built.
 """
 from __future__ import annotations
 
@@ -16,8 +16,11 @@ from uo_init.ir.relation import RelationKind
 
 _SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
 _CLASS_RE = re.compile(r"(?:template\s*<.*?>\s*)?class\s+([A-Za-z_]\w*)[^\{;]*\{", re.S)
+# Type text is intentionally permissive.  The field declarator at the end of a
+# top-level class line is the stable anchor; restricting the type grammar loses
+# valid std::conditional/decltype/template spellings.
 _MEMBER_RE = re.compile(
-    r"^\s*(?P<type>[A-Za-z_][\w:\s<>,*&]*?)\s+"
+    r"^\s*(?P<type>.+?)\s+"
     r"(?P<name>[A-Za-z_]\w*)\s*"
     r"(?P<arrays>(?:\[[^\]]+\]\s*)*)"
     r"(?:=\s*(?P<init>[^;]+))?;\s*$"
@@ -61,6 +64,12 @@ def complete_tiling_fields(
                     mm = _MEMBER_RE.match(stripped)
                     if mm:
                         cpp_type = " ".join(mm.group("type").split())
+                        # Access labels and other non-declarations are already
+                        # excluded above; still fail closed on obviously empty
+                        # or preprocessor-like type text.
+                        if not cpp_type or cpp_type.startswith("#"):
+                            mm = None
+                    if mm:
                         field_name = mm.group("name")
                         array_suffix = re.sub(r"\s+", "", mm.group("arrays") or "")
                         initializer = (mm.group("init") or "").strip()
@@ -93,7 +102,7 @@ def complete_tiling_fields(
                             field = existing
                             field.attrs.setdefault("owner", owner_name)
                             field.attrs.setdefault("qualified_name", f"{owner_name}::{field_name}")
-                            field.attrs.setdefault("cpp_type", cpp_type)
+                            field.attrs["cpp_type"] = cpp_type
                         if array_suffix:
                             field.attrs["array_extent"] = array_suffix
                             field.attrs["is_array"] = True
@@ -113,7 +122,7 @@ def complete_tiling_fields(
         "array_fields": arrays,
         "default_initializers": initializers,
         "total_fields": len(codemap.by_kind(EntityKind.TILING_FIELD)),
-        "policy": "source-member-array/v1",
+        "policy": "source-member-array-conditional/v2",
     }
     return codemap
 
